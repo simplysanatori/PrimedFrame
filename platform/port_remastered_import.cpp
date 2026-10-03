@@ -706,6 +706,10 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   // Ids the import has given out: no two resources of it share one, whatever their types.
   std::mutex takenMutex;
   std::unordered_set<uint32_t> taken;
+  // The PBR maps a model worker has taken on, so that a map several models
+  // share is converted once rather than once per worker that meets it.
+  std::mutex modelClaimMutex;
+  std::unordered_set<uint32_t> modelClaimed;
   auto makeIO = [&](int worker, const fs::path& folder) {
     ConvertIO io;
     io.retail = [&](uint32_t type, uint32_t id, std::vector<uint8_t>& out) { return retail.Read(type, id, out); };
@@ -722,8 +726,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       out.rgba = std::move(image.rgba);
       return true;
     };
-    // Workers can meet the same texture at once; each writes its own temporary
-    // file and the rename decides, the content being the same either way.
+    // Workers can still meet the same texture at once (a TEV slot's, a solid
+    // colour); each writes its own temporary file and the rename decides, the
+    // content being the same either way.
     io.write = [&, worker, folder](const std::string& name, const std::vector<uint8_t>& data) {
       {
         std::lock_guard<std::mutex> lock(takenMutex);
@@ -854,6 +859,10 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   auto work = [&](int worker) {
     YieldToGame();
     ConvertIO io = makeIO(worker, staging);
+    io.claim = [&](uint32_t id) {
+      std::lock_guard<std::mutex> lock(modelClaimMutex);
+      return modelClaimed.insert(id).second;
+    };
     const auto write = io.write;
     Converter converter(std::move(io));
     for (size_t i = next++; i < count && !sCancel; i = next++) {

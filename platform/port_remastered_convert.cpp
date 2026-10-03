@@ -975,10 +975,6 @@ struct Converter::State {
     }
     owner[tid] = tag;
     ids[tag] = tid;
-    // A PBR map's id is its tag's alone, so whoever wrote it wrote the same file.
-    if (k >= 0 && io.claim && !io.claim(tid)) {
-      return tid;
-    }
     const std::string name = Hex8(tid);
     if (!src) {
       const unsigned long rgb = std::strtoul(tag.substr(6, 6).c_str(), nullptr, 16);
@@ -1033,6 +1029,13 @@ struct Converter::State {
         col[c] = uint8_t(std::nearbyint(double(sum[c]) / double(count)));
       }
       Write(name + ".TXTR", EncodeTxtrRgba8(Solid(col[0], col[1], col[2]), 8));
+      return tid;
+    }
+    // A PBR map's id is its tag's alone, so whoever wrote it wrote the same file.
+    // Asked only now: up to here the tag alone decides whether there is a
+    // texture at all (none, a solid, or a failed decode), so every converter
+    // that gets this far would write one, and the costly part below runs once.
+    if (k >= 0 && io.claim && !io.claim(tid)) {
       return tid;
     }
     if (bake.on) {
