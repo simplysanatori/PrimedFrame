@@ -429,6 +429,45 @@ void TestShapes() {
   }
 }
 
+// A gradient over as many frames as the particle lives (LTM2) ends with the
+// life: its last key is the last stop.
+void TestGradientFrames() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "LTM2", 3);
+  PutConstant(out, 20);
+  PutProperty(out, "COLR", 3);
+  PutFourCC(out, "GRAD");
+  out.push_back(2);
+  for (int stop = 0; stop < 2; ++stop) {
+    for (int c = 0; c < 4; ++c) {
+      const uint16_t half = stop == 0 ? 0x3c00 : 0x0000;
+      out.push_back(uint8_t(half));
+      out.push_back(uint8_t(half >> 8));
+    }
+    Put32(out, Bits(float(stop)));
+  }
+  PutConstant(out, 20);
+  out.push_back(0);
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "frame gradient parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Retail want;
+  want.f("GPSM").f("LTME").f("CNST").w(19).f("COLR").f("KEYP").w(1).w(0).b(0).b(0).w(101).w(0).w(101);
+  for (int percent = 0; percent <= 100; ++percent) {
+    const float t = float(percent) / 100.0f;
+    for (int c = 0; c < 4; ++c) {
+      want.w(Bits(1.0f - t));
+    }
+  }
+  want.f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "a gradient over the life in frames ends with it");
+}
+
 int main() {
   TestRetailId();
   TestConvert();
@@ -437,6 +476,7 @@ int main() {
   TestMappedElements();
   TestSplitRejects();
   TestShapes();
+  TestGradientFrames();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

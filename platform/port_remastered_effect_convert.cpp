@@ -669,13 +669,14 @@ public:
     std::vector<uint8_t>& out = result.part;
     PutBe32(out, F("GPSM"));
     const auto& retail = RetailProperties();
-    // A constant lifetime, for gradients timed in frames.
+    // A constant lifetime, for gradients timed in frames. Both count in
+    // Remastered's frames, so LTM2 is taken as it is (one above retail's).
     m_lifetime = 0;
     for (const EffectProperty& property : node.properties) {
       if ((property.fourcc == F("LTM2") || property.fourcc == F("LTME")) && property.value.size() == 1 &&
           IsElement(property.value[0], F("CNST")) && property.value[0].args.size() == 1 &&
           property.value[0].args[0].kind == EffectValue::Kind::Word) {
-        m_lifetime = int32_t(property.value[0].args[0].word) - (property.fourcc == F("LTM2") ? 1 : 0);
+        m_lifetime = int32_t(property.value[0].args[0].word);
       }
     }
     bool texture = false;
