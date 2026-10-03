@@ -630,6 +630,36 @@ void salCtrlDsp(s16* dest) {
     if (stp->auxB[salAuxFrame])
       memset(stp->auxB[salAuxFrame], 0, SAL_SAMPLES_PER_FRAME * 3 * sizeof(s32));
 
+    /* Per-frame break cleanup, mirroring the original's pre-pass in
+     * salBuildCommandList (hw_dspctrl.c) before the per-subframe mix loop.
+     *
+     * Without it a break relied entirely on the ADSR release reaching its end:
+     * changed[] is only cleared by hwInitSamplePlayback, so the break bit stayed
+     * set on a running voice and every frame re-ran adsrStartRelease, resetting
+     * adsr.cnt before adsrHandle could count it down. A looping voice (the charge
+     * beam hum) then never reached salDeactivateVoice and looped forever with no
+     * synth voice left to stop it. Deactivating here also stops a repeated break
+     * bit from reviving the voice.
+     *
+     * Only RUNNING voices (state != 0 && state != 1) are handled here. A new
+     * voice (state == 1) is left to the startupBreak rule in the init block
+     * below, so the stale break bit salActivateVoice leaves on a reused slot
+     * cannot kill the voice that just took it. Voices are unlinked by
+     * salDeactivateVoice, so the next pointer is read first and a dead voice
+     * skipped. */
+    for (DSPvoice* bp = stp->voiceRoot; bp != NULL;) {
+      DSPvoice* nextBp = bp->next; /* save in case voice is deactivated */
+      if (bp->state != 0 && bp->state != 1 &&
+          (bp->postBreak != 0 || (bp->changed[0] & 0x20) != 0)) {
+        if (bp->virtualSampleID != (u32)-1) {
+          salSynthSendMessage(bp, 3);
+        }
+        salDeactivateVoice(bp);
+        bp->startupBreak = 0;
+      }
+      bp = nextBp;
+    }
+
     /* Render all voices in this studio */
     DSPvoice* vp = stp->voiceRoot;
     while (vp != NULL) {
