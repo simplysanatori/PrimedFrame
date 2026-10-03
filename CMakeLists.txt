@@ -147,6 +147,7 @@ set(MP_PORT_SOURCES
     platform/port_data_folder.cpp
     platform/port_mods.cpp
     platform/port_mods_pak.cpp
+    platform/port_actor_collision_bounds.cpp
     platform/port_importers.cpp
     platform/port_importers_lines.cpp
     platform/port_remastered_nsp.cpp
@@ -410,6 +411,16 @@ if(MP_BUILD_TESTS)
         "MP_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"")
     add_executable(port_mods_tests tests/port_mods.cpp platform/port_mods_pak.cpp)
     target_include_directories(port_mods_tests PRIVATE platform/include)
+    # The collision-box reader indexes PAK tables and inflates them; a test
+    # drives it over synthetic PAKs instead of a disc, so the DVD calls the
+    # production source is built from are stubbed out.
+    add_executable(port_actor_collision_bounds_tests tests/port_actor_collision_bounds.cpp
+        platform/port_actor_collision_bounds.cpp platform/port_mods_pak.cpp platform/port_ws.cpp)
+    target_include_directories(port_actor_collision_bounds_tests PRIVATE platform/include)
+    target_compile_definitions(port_actor_collision_bounds_tests PRIVATE PORT_ACTOR_COLLISION_BOUNDS_NO_DVD)
+    if(WIN32)
+        target_link_libraries(port_actor_collision_bounds_tests PRIVATE ws2_32)
+    endif()
     add_executable(port_room_env_tests tests/port_room_env.cpp platform/port_room_env_file.cpp)
     target_include_directories(port_room_env_tests PRIVATE platform/include)
     add_executable(port_room_geo_tests tests/port_room_geo.cpp platform/port_room_geo_file.cpp)
@@ -478,7 +489,7 @@ if(MP_BUILD_TESTS)
     add_test(NAME port_gci_tests COMMAND port_gci_tests)
     set_tests_properties(port_gci_tests PROPERTIES TIMEOUT 15 LABELS port)
     aurora_copy_runtime_dlls(port_gci_tests)
-    foreach(test IN ITEMS port_buffer_tests port_ai_tests port_randomizer_tests port_apclient_tests port_ap_logic_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_mouse_tests port_touch_pad_tests port_json_tests port_ws_tests port_mods_tests port_room_env_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_hud_tests port_remastered_movie_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_lits_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_remastered_effect_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_tick_pair_tests port_livesplit_tests port_discord_tests port_savestate_tests port_timing_tests port_audio_math_tests)
+    foreach(test IN ITEMS port_buffer_tests port_ai_tests port_randomizer_tests port_apclient_tests port_ap_logic_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_mouse_tests port_touch_pad_tests port_json_tests port_ws_tests port_mods_tests port_actor_collision_bounds_tests port_room_env_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_hud_tests port_remastered_movie_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_lits_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_remastered_effect_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_tick_pair_tests port_livesplit_tests port_discord_tests port_savestate_tests port_timing_tests port_audio_math_tests)
         add_test(NAME ${test} COMMAND ${test})
         set_tests_properties(${test} PROPERTIES TIMEOUT 15 LABELS port)
         aurora_copy_runtime_dlls(${test})

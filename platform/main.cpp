@@ -15,6 +15,7 @@
 
 #include "port_debug.h"
 #include "port_paths.h"
+#include "port_actor_collision_bounds.h"
 #include "port_apclient.h"
 #include "port_randomizer.h"
 #include "port_textures.h"
@@ -826,6 +827,10 @@ int main(int argc, char** argv) {
         PortLog::Write("metroid_prime_port: installed the imported Remastered models\n");
     }
     PortMods::Initialize();
+    // The index that gives solid actors their disc model's collision box reads
+    // the base disc, so it belongs to the disc's lifecycle rather than to a
+    // mods reload: drop anything an earlier disc left open.
+    PortActorCollisionBounds::Reset();
 
     // Prime the window/event state so the game's first aurora_begin_frame can
     // succeed (the game submits GX during early init, before its main loop).

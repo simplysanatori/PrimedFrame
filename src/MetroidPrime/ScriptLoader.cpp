@@ -15,6 +15,7 @@
 #include "MetroidPrime/CModelData.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/CWorld.hpp"
+#include "port_actor_collision_bounds.h"
 #include "port_apclient.h"
 #include "port_hints.h"
 #include "port_log.h"
@@ -887,8 +888,45 @@ CEntity* ScriptLoader::LoadActor(CStateManager& mgr, CInputStream& in, int propC
     data = CModelData(CStaticRes(staticId, head.x40_scale));
   }
 
-  if (collisionExtent == CVector3f::Zero() || negativeCollisionExtent)
+  if (collisionExtent == CVector3f::Zero() || negativeCollisionExtent) {
     aabb = data.GetBounds(xf.GetRotation());
+#ifdef TARGET_PC
+    // No authored extent, so the collision box is the model's own box - and a
+    // mod can replace the model, which would replace the collider with it: the
+    // Magmoor Workstation lava crust, drawn a few centimetres thick, walls off
+    // the floor the disc's model is flush with. The disc's own CMDL carries the
+    // box the actor was authored against, so read that instead. Rendering is
+    // untouched. (port_actor_collision_bounds.h)
+    if (solid && animType != 'ANCS' && staticId != 0) {
+      float bounds[6] = {};
+      if (PortActorCollisionBounds::ReadOriginalModelBounds(uint32_t(staticId), bounds)) {
+        CAABox original(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]);
+        // CModelData::GetBounds unions the X-ray and thermal models in, so the
+        // disc's box has to cover them too. A variant this actor names whose
+        // disc model cannot be read leaves the box alone rather than shrink it
+        // to the normal model alone.
+        bool whole = true;
+        for (const CAssetId variant : { actParms.GetXRay().first, actParms.GetInfra().first }) {
+          float variantBounds[6] = {};
+          if (variant == 0) {
+            continue;
+          }
+          if (!PortActorCollisionBounds::ReadOriginalModelBounds(uint32_t(variant), variantBounds)) {
+            whole = false;
+            break;
+          }
+          original.Include(CAABox(variantBounds[0], variantBounds[1], variantBounds[2], variantBounds[3],
+                                  variantBounds[4], variantBounds[5]));
+        }
+        if (whole) {
+          aabb = original.GetTransformedAABox(
+              xf.GetRotation() * CTransform4f::Scale(head.x40_scale.GetX(), head.x40_scale.GetY(),
+                                                     head.x40_scale.GetZ()));
+        }
+      }
+    }
+#endif
+  }
 
   return rs_new CScriptActor(mgr.AllocateUniqueId(), head.x0_actorHead.x0_name, info, xf, data,
                              aabb, list, mass, zMomentum, hInfo, dVuln, actParms, looping, active,

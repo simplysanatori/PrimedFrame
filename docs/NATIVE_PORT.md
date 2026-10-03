@@ -694,6 +694,20 @@ for the `.nsp` and one for the key file. Neither file is copied: the import
 reads them where they are. It runs on two threads there to keep its memory
 down. Not yet run on a device.
 
+#### Collision stays on the disc's model
+
+A solid static actor with no authored collision extent (zero or negative) takes
+its collision box from its model's bounds. A mod that replaces the model would
+replace the collider with it (a lava crust drawn a few centimetres thick walls
+off a floor the disc's model is flush with), so `ScriptLoader::LoadActor` reads
+the box from the original disc's CMDL header instead
+(`platform/port_actor_collision_bounds.cpp`): via `aurora_dvd_base_*` only, so
+no overlay or loose mod file is ever consulted, indexed once from the base PAK
+tables and cached per model. The X-ray and thermal models are unioned in, as
+`CModelData::GetBounds` does. Authored extents, `ANCS` actors and non-solid
+actors are unchanged, and a missing or malformed disc model falls back to the
+drawn model's bounds. Rendering is not affected.
+
 ### Platforms
 
 The port is built and tested on Linux and Windows. Its own platform code is
