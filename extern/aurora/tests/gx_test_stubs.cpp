@@ -233,6 +233,7 @@ TextureHandle face(uint32_t face) { return {}; }
 void create_cube(uint32_t id, uint32_t size, uint32_t mipCount, const uint8_t* texels, size_t length) {}
 void destroy_cube(uint32_t id) {}
 bool has_cube(uint32_t id) { return false; }
+bool blend_cubes(uint32_t dst, const uint32_t* src, const float* weights, uint32_t count) { return false; }
 void create_volume(uint32_t id, uint32_t sizeX, uint32_t sizeY, uint32_t sizeZ, const uint8_t* texels, size_t length) {}
 void destroy_volume(uint32_t id) {}
 bool has_volume(uint32_t id) { return false; }

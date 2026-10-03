@@ -2669,6 +2669,13 @@ void CStateManager::PortCaptureProbeFace() const {
     PortRoomGeo::Stats(geoAreas, instances, models, loaded, drawn);
     PortRoomEnv::UpdateFrame(PortRoomGeo::GetMode() != PortRoomGeo::Mode::Off && drawn > 0);
   }
+  {
+    // The room's reflection probes blend around the camera, as Remastered's do.
+    const CVector3f eye =
+        PortFreeCam::View(x870_cameraManager->GetCurrentCameraTransform(*this)).GetTranslation();
+    const float at[3] = {eye.GetX(), eye.GetY(), eye.GetZ()};
+    PortRoomEnv::SetViewPoint(at);
+  }
   static uint lastDraws = 0;
   static int face = 0;
   static int filled = 0;

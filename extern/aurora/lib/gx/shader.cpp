@@ -1369,6 +1369,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                                     dot(pbr_vrn, pbr_vb.xyz * 2.0 - 1.0)) * 0.5 + 0.5, vec3f(0.0), vec3f(1.0));
           pbr_envspec = max(pbr_vmean - pbr_vlobe + 2.0 * pbr_vlobe * (1.0 + pbr_vs) * pow(pbr_vrq, 1.0 + 2.0 * pbr_vs),
                             vec3f(0.0)) * ubuf.pbr_volume[3].w;
+          // With a room cube and Remastered's reflection occlusion (w of probe rows 1 and 2,
+          // GXSetPBRProbeEx), the cube is reflected instead, darkened where the baked light
+          // is weak: mix(min, 1, saturate(brightest channel of the mean / max)).
+          if (pbr_hdr > 0.0 && ubuf.pbr_probe[0].w > 0.0 && ubuf.pbr_probe[2].w > 0.0) {{
+              let pbr_vocc = clamp(max(pbr_vmean.r, max(pbr_vmean.g, pbr_vmean.b)) * ubuf.pbr_probe[2].w, 0.0, 1.0);
+              pbr_envspec = pbr_cubel * mix(ubuf.pbr_probe[1].w, 1.0, pbr_vocc);
+          }}
           // Diagnostics (w of row 5): 1 the texture coordinates, 2 the light alone, 3 the
           // normal.
           pbr_vdiag = select(pbr_ambd, pbr_vuv, ubuf.pbr_volume[5].w < 1.5);

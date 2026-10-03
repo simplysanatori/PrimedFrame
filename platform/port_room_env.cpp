@@ -183,6 +183,22 @@ void Invalidate() {
   ++sEpoch;
 }
 
+// The reflection probes blended around the camera (UpdateBlend), and the cube Aurora draws
+// them into. That cube is bound by its id, and a draw only binds a new one when the id
+// changes, so a new blend goes into the other of two ids.
+struct ProbeBlendState {
+  int enabled = -1;
+  bool hasView = false;
+  float view[3] = {};
+  Blend blend;
+  uint32_t dst[2] = {};
+  int shown = -1; // which dst holds `keys`/`weights`; -1: none
+  uint64_t keys[kMaxBlend] = {};
+  float weights[kMaxBlend] = {};
+  size_t count = 0;
+};
+ProbeBlendState sBlend;
+
 float HalfToFloat(uint16_t h) {
   const int exponent = (h >> 10) & 0x1F;
   const int mantissa = h & 0x3FF;
@@ -700,6 +716,114 @@ void TakeResults() {
   }
 }
 
+// A probe's GPU cube; null when it is black or the worker has not made it yet.
+GpuCube* ProbeCube(Area& area, const Probe& probe) {
+  GpuCube& gpu = area.cubes[probe.cube];
+  return gpu.id != 0 ? &gpu : nullptr;
+}
+
+// The blend's keys are an area's MREA (high half) and the probe's index in its file.
+uint64_t ProbeKey(uint32_t mrea, size_t index) { return (uint64_t(mrea) << 32) | uint64_t(index); }
+
+bool FindProbe(uint64_t key, Area*& area, const Probe*& probe) {
+  const auto found = sAreas.find(uint32_t(key >> 32));
+  const size_t index = size_t(key & 0xFFFFFFFFu);
+  if (found == sAreas.end() || index >= found->second.file.probes.size()) {
+    return false;
+  }
+  area = &found->second;
+  probe = &found->second.file.probes[index];
+  return true;
+}
+
+// The blend's probes that have a cube: a black one adds nothing to the blended cube.
+struct BlendSource {
+  uint64_t key;
+  Area* area;
+  const Probe* probe;
+  GpuCube* gpu;
+  float weight;
+};
+size_t BlendSources(BlendSource out[kMaxBlend]) {
+  size_t count = 0;
+  for (const BlendEntry& entry : sBlend.blend.entries) {
+    Area* area = nullptr;
+    const Probe* probe = nullptr;
+    if (count == kMaxBlend || !FindProbe(entry.key, area, probe)) {
+      continue;
+    }
+    GpuCube* const gpu = ProbeCube(*area, *probe);
+    if (gpu != nullptr) {
+      out[count++] = {entry.key, area, probe, gpu, entry.weight};
+    }
+  }
+  return count;
+}
+
+void FreeBlend() {
+  for (uint32_t& id : sBlend.dst) {
+    if (id != 0) {
+      GXDestroyPBRCube(id);
+      id = 0;
+    }
+  }
+  sBlend.shown = -1;
+  sBlend.count = 0;
+  sBlend.blend = {};
+}
+
+// Moves the blend to the camera, and has Aurora draw a new blended cube when its probes or
+// their weights changed.
+void UpdateProbeBlend() {
+  ProbeBlendState& s = sBlend;
+  if (!Enabled() || !ProbeBlend() || !s.hasView) {
+    s.blend = {};
+    return;
+  }
+  std::vector<BlendCandidate> candidates;
+  for (auto& [mrea, area] : sAreas) {
+    for (size_t i = 0; i < area.file.probes.size(); ++i) {
+      candidates.push_back({ProbeKey(mrea, i), &area.file.probes[i]});
+    }
+  }
+  UpdateBlend(candidates.data(), candidates.size(), s.view, s.blend);
+  sLastValid = false;
+  BlendSource sources[kMaxBlend];
+  const size_t count = BlendSources(sources);
+  if (count < 2) {
+    return; // a lone cube is bound as it is
+  }
+  bool same = s.shown >= 0 && s.count == count;
+  for (size_t i = 0; same && i < count; ++i) {
+    same = s.keys[i] == sources[i].key && std::fabs(s.weights[i] - sources[i].weight) < 1e-3f;
+  }
+  if (same) {
+    return;
+  }
+  const int next = s.shown == 0 ? 1 : 0;
+  if (s.dst[next] == 0) {
+    s.dst[next] = sNextCube++;
+    if (sNextCube == 0) {
+      sNextCube = 1;
+    }
+  }
+  uint32_t ids[kMaxBlend];
+  float weights[kMaxBlend];
+  for (size_t i = 0; i < count; ++i) {
+    ids[i] = sources[i].gpu->id;
+    weights[i] = sources[i].weight;
+  }
+  // It fails outside a frame's drawing; the next frame tries again.
+  if (GXPortBlendPBRCube(s.dst[next], ids, weights, uint32_t(count))) {
+    s.shown = next;
+    s.count = count;
+    for (size_t i = 0; i < count; ++i) {
+      s.keys[i] = sources[i].key;
+      s.weights[i] = sources[i].weight;
+    }
+  }
+}
+
 } // namespace
 
 void BuildTone(float mid, float contrast, float toe, float shoulder, float rows[3][4]) {
@@ -990,6 +1114,26 @@ void SetViewArea(uint32_t mrea) {
   }
 }
 
+bool ProbeBlend() {
+  if (sBlend.enabled < 0) {
+    const char* const env = std::getenv("MP_ROOM_ENV_BLEND");
+    sBlend.enabled = env != nullptr && env[0] == '0' ? 0 : 1;
+  }
+  return sBlend.enabled != 0;
+}
+
+void SetProbeBlend(bool on) {
+  sBlend.enabled = on ? 1 : 0;
+  sBlend.blend = {};
+  sLastValid = false;
+}
+
+void SetViewPoint(const float pos[3]) {
+  std::memcpy(sBlend.view, pos, sizeof(sBlend.view));
+  sBlend.hasView = true;
+  UpdateProbeBlend();
+}
+
 bool VolumesEnabled() {
   if (sVolumes < 0) {
     const char* const env = std::getenv("MP_ROOM_ENV_VOLUME");
@@ -1089,6 +1233,7 @@ void Reset() {
     Free(area);
   }
   sAreas.clear();
+  FreeBlend();
   sFrame = {};
   Invalidate();
 }
@@ -1233,7 +1378,47 @@ bool Compose(const Located& located, Selection& out) {
   const float ambient = AmbientScale();
   const float grey = 0.18f * gain;
   out = {};
-  if (located.cube != nullptr) {
+  BlendSource sources[kMaxBlend];
+  const size_t sourceCount = ProbeBlend() ? BlendSources(sources) : 0;
+  if (sourceCount != 0) {
+    // Remastered's blend around the camera: every model reflects the same cube, scaled by
+    // the blended intensity (a lone probe's cube by its share of it, the rest being black).
+    const Blend& blend = sBlend.blend;
+    const BlendSource* heaviest = &sources[0];
+    float average = 0.f;
+    uint32_t mips = sources[0].gpu->mipCount;
+    for (size_t i = 0; i < sourceCount; ++i) {
+      heaviest = sources[i].weight > heaviest->weight ? &sources[i] : heaviest;
+      average += sources[i].weight * sources[i].gpu->average;
+      mips = std::min(mips, sources[i].gpu->mipCount);
+    }
+    float share = 1.f;
+    const ProbeBlendState& s = sBlend;
+    if (sourceCount == 1) {
+      out.cube = sources[0].gpu->id;
+      share = sources[0].weight;
+      average = sources[0].gpu->average;
+    } else if (s.shown >= 0) {
+      // The last blend drawn, which is this one but for a frame where Aurora could not draw.
+      out.cube = s.dst[s.shown];
+    } else {
+      out.cube = heaviest->gpu->id;
+      average = heaviest->gpu->average;
+      mips = heaviest->gpu->mipCount;
+    }
+    const float exposure = RoomExposed() ? FrameExposure(*heaviest->area) : 0.f;
+    const bool room = exposure > 0.f;
+    out.params[0] = room ? exposure * blend.intensity * share * gain : grey / average;
+    out.params[1] = std::min(lod, float(mips - 1));
+    out.params[2] = float(mips > 2 ? mips - 2 : 0);
+    out.params[3] = ambient > 0.f ? 1.f / (room ? average * out.params[0] : grey) : 0.f;
+    // Each probe's cube may be turned its own way; the blend takes the heaviest one's.
+    std::memcpy(out.worldToCube, heaviest->probe->worldToCube, sizeof(out.worldToCube));
+    if (room && blend.max > 1e-6f && std::fabs(blend.intensity) >= 1e-5f) {
+      out.occlusionMin = blend.min / blend.intensity;
+      out.occlusionInvMax = 1.f / blend.max;
+    }
+  } else if (located.cube != nullptr) {
     const Probe& probe = *located.probe;
     const GpuCube& gpu = *located.cube;
     // The cube is exposed so that its average direction is middle grey, which is what
@@ -1296,6 +1481,18 @@ bool Compose(const Located& located, Selection& out) {
       out.ambient[1][i] = 2.f * sample.lobe[i] * (1.f + sample.sharpness[i]) * exposure;
       out.ambient[2][i] = 1.f + 2.f * sample.sharpness[i];
       std::memcpy(out.ambient[3 + i], sample.direction[i], sizeof(sample.direction[i]));
+    }
+    if (out.volume == 0 && out.occlusionInvMax > 0.f) {
+      // The shader occludes the reflection by the grid at each pixel; without the grid on
+      // the GPU, the model's spot stands for all of it. The ambient the cube shapes stays.
+      const float brightest = std::max(std::max(sample.mean[0], sample.mean[1]), sample.mean[2]);
+      const float seen = std::min(std::max(brightest * out.occlusionInvMax, 0.f), 1.f);
+      // Not 0: the shader takes an exposure of 0 for a cube that is not HDR.
+      const float factor = std::max(out.occlusionMin + (1.f - out.occlusionMin) * seen, 1e-4f);
+      out.params[0] *= factor;
+      out.params[3] /= factor;
+      out.occlusionMin = 0.f;
+      out.occlusionInvMax = 0.f;
     }
   }
   return out.cube != 0 || out.hasAmbient || out.volume != 0;
@@ -1374,6 +1571,33 @@ std::string Info(const float pos[3]) {
                   f.shown[5], GlowScale());
     out += line;
   }
+  if (ProbeBlend()) {
+    const ProbeBlendState& s = sBlend;
+    BlendSource sources[kMaxBlend];
+    const size_t count = BlendSources(sources);
+    char cube[48] = "";
+    if (count >= 2 && s.shown >= 0) {
+      std::snprintf(cube, sizeof(cube), ", blended cube %u", s.dst[s.shown]);
+    }
+    std::snprintf(line, sizeof(line), "probe blend at %.2f %.2f %.2f: intensity %g, occlusion %g..%g%s%s\n",
+                  s.view[0], s.view[1], s.view[2], s.blend.intensity, s.blend.min, s.blend.max, cube,
+                  s.blend.entries.empty() ? " (no probe: each model picks)" : "");
+    out += line;
+    for (const BlendEntry& entry : s.blend.entries) {
+      Area* area = nullptr;
+      const Probe* probe = nullptr;
+      if (FindProbe(entry.key, area, probe)) {
+        bool inside = false;
+        const float fade = ProbeFade(*probe, s.view, inside);
+        std::snprintf(line, sizeof(line), "  %08X probe %u: weight %g, fade %g%s, priority %d\n",
+                      uint32_t(entry.key >> 32), uint32_t(entry.key), entry.weight, fade, inside ? " (inside)" : "",
+                      probe->priority);
+        out += line;
+      }
+    }
+  } else {
+    out += "probe blend off: each model picks a probe\n";
+  }
   for (const auto& [mrea, area] : sAreas) {
     const File& file = area.file;
     if (file.probes.empty() && file.grids.empty()) {
@@ -1395,13 +1619,32 @@ std::string Info(const float pos[3]) {
       out += line;
     }
     const Pick pick = PickProbe(file, pos);
-    if (pick.probe >= 0) {
-      const Probe& probe = file.probes[pick.probe];
+    for (size_t i = 0; i < file.probes.size(); ++i) {
+      const Probe& probe = file.probes[i];
       const GpuCube& cube = area.cubes[probe.cube];
+      // The box's centre solves worldToBox * p = 0.
+      const float* const m = probe.worldToBox;
+      const float a[9] = {m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]};
+      const float det = a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6]) +
+                        a[2] * (a[3] * a[7] - a[4] * a[6]);
+      float centre[3] = {};
+      if (std::fabs(det) > 1e-12f) {
+        const float b[3] = {-m[3], -m[7], -m[11]};
+        centre[0] = (b[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (b[1] * a[8] - a[5] * b[2]) +
+                     a[2] * (b[1] * a[7] - a[4] * b[2])) / det;
+        centre[1] = (a[0] * (b[1] * a[8] - a[5] * b[2]) - b[0] * (a[3] * a[8] - a[5] * a[6]) +
+                     a[2] * (a[3] * b[2] - b[1] * a[6])) / det;
+        centre[2] = (a[0] * (a[4] * b[2] - b[1] * a[7]) - a[1] * (a[3] * b[2] - b[1] * a[6]) +
+                     b[0] * (a[3] * a[7] - a[4] * a[6])) / det;
+      }
+      bool inside = false;
+      const float fade = ProbeFade(probe, pos, inside);
       std::snprintf(line, sizeof(line),
-                    "  probe %d (%s, %s %g): cube %u, scale %g, blend %g, average %g, peak %g%s\n", pick.probe,
-                    pick.inside ? "inside" : "outside", pick.inside ? "volume" : "distance", pick.score, probe.cube,
-                    probe.scale, probe.blend, cube.average * probe.scale, cube.peak * probe.scale,
+                    "  probe %zu%s: centre %.1f %.1f %.1f, fade %g, cube %u, scale %g, padding %g, priority %d, "
+                    "intensity %g..%g, average %g, peak %g%s\n",
+                    i, int(i) == pick.probe ? " (picked)" : "", centre[0], centre[1], centre[2],
+                    fade, probe.cube, probe.scale, probe.padding, probe.priority,
+                    probe.intensityMin, probe.intensityMax, cube.average * probe.scale, cube.peak * probe.scale,
                     cube.failed ? ", black" : "");
       out += line;
     }

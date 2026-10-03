@@ -2,6 +2,7 @@
 #include "__gx.h"
 #include "dolphin/gx/GXAurora.h"
 #include "../../gfx/bloom.hpp"
+#include "../../gfx/probe.hpp"
 
 #include <cstring>
 #include <vector>
@@ -31,6 +32,8 @@ struct LastPBRWrite {
 struct PBRProbeWrite {
   f32 rows[3][3];
   f32 weight;
+  f32 occlusionMin;
+  f32 occlusionInvMax;
 };
 struct PBRCubeWrite {
   u32 id;
@@ -165,21 +168,30 @@ void GXCopyProbeFace(u32 face) {
   aurora::gx::fifo::publish();
 }
 
-void GXSetPBRProbe(const f32 viewToProbe[3][3], f32 weight) {
+void GXSetPBRProbe(const f32 viewToProbe[3][3], f32 weight) { GXSetPBRProbeEx(viewToProbe, weight, 0.f, 0.f); }
+
+void GXSetPBRProbeEx(const f32 viewToProbe[3][3], f32 weight, f32 occlusionMin, f32 occlusionInvMax) {
   static LastPBRWrite<PBRProbeWrite> sLast;
   PBRProbeWrite now{};
   std::memcpy(now.rows, viewToProbe, sizeof(now.rows));
   now.weight = weight;
+  now.occlusionMin = occlusionMin;
+  now.occlusionInvMax = occlusionInvMax;
   if (sLast.repeats(now)) {
     return;
   }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_PROBE);
+  const f32 w[3]{weight, occlusionMin, occlusionInvMax};
   for (int col = 0; col < 3; ++col) {
     GX_WRITE_F32(viewToProbe[0][col]);
     GX_WRITE_F32(viewToProbe[1][col]);
     GX_WRITE_F32(viewToProbe[2][col]);
-    GX_WRITE_F32(col == 0 ? weight : 0.f);
+    GX_WRITE_F32(w[col]);
   }
+}
+
+GXBool GXPortBlendPBRCube(u32 dst, const u32* src, const f32* weights, u32 count) {
+  return aurora::gfx::probe::blend_cubes(dst, src, weights, count);
 }
 
 static u32 sPBRDebugView = 0;

@@ -26,6 +26,11 @@ void destroy_cube(uint32_t id);
 // The view of a room cube, or the probe's when there is no such cube.
 const wgpu::TextureView& cube_view(uint32_t id);
 bool has_cube(uint32_t id);
+// GX_AURORA_BLEND_PBR_CUBE, on the game thread: renders sum(weights[i] * src[i]) into room cube
+// `dst` (created or resized to the first source's size), face by face and mip by mip. Returns
+// false, leaving `dst` as it was or blank, when a source is missing or no EFB pass is open.
+constexpr uint32_t MaxBlend = 4;
+bool blend_cubes(uint32_t dst, const uint32_t* src, const float* weights, uint32_t count);
 
 // Ambient volumes (GX_AURORA_CREATE_PBR_VOLUME): a room's baked ambient light as five 3D
 // textures (mean, lobe, and the direction and sharpness of red, green and blue), which a

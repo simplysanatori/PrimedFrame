@@ -9,10 +9,11 @@ namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 7;
+constexpr uint32_t kVersion = 8;
 constexpr uint32_t kMaxGrades = 64;
 constexpr size_t kHeaderSize = 32;
-constexpr size_t kProbeSize = 100;
+constexpr size_t kProbeSizeV1 = 100;
+constexpr size_t kProbeSize = 112;
 constexpr size_t kCubeHeaderSize = 16;
 constexpr uint32_t kMaxProbes = 4096;
 constexpr uint32_t kMaxCubeSize = 1024;
@@ -123,7 +124,8 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
   }
   const uint32_t probes = Get32(data.data() + 24);
   const uint32_t cubes = Get32(data.data() + 28);
-  if (probes > kMaxProbes || cubes > kMaxProbes || data.size() - kHeaderSize < size_t(probes) * kProbeSize) {
+  const size_t probeSize = version >= 8 ? kProbeSize : kProbeSizeV1;
+  if (probes > kMaxProbes || cubes > kMaxProbes || data.size() - kHeaderSize < size_t(probes) * probeSize) {
     error = "cut short";
     return false;
   }
@@ -140,7 +142,22 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
     probe.layer = int32_t(Get32(p + 84));
     probe.cube = Get32(p + 88);
     probe.scale = GetFloat(p + 92);
-    probe.blend = GetFloat(p + 96);
+    if (version >= 8) {
+      probe.padding = GetFloat(p + 96);
+      probe.priority = int32_t(Get32(p + 100));
+      probe.intensityMin = GetFloat(p + 104);
+      probe.intensityMax = GetFloat(p + 108);
+      if (!std::isfinite(probe.padding)) {
+        probe.padding = 1.f;
+      }
+      if (!std::isfinite(probe.intensityMin) || !std::isfinite(probe.intensityMax)) {
+        probe.intensityMin = 0.f;
+        probe.intensityMax = 1.f;
+      }
+    }
+    if (!std::isfinite(probe.scale)) {
+      probe.scale = 1.f;
+    }
     SetExtents(probe);
     if (probe.cube >= cubes) {
       error = "a probe names a cube the file does not have";
@@ -152,7 +169,7 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
         return false;
       }
     }
-    at += kProbeSize;
+    at += probeSize;
   }
   out.cubes.resize(cubes);
   for (Cube& cube : out.cubes) {
@@ -409,6 +426,102 @@ Pick PickProbe(const File& file, const float pos[3]) {
     }
   }
   return best;
+}
+
+float ProbeFade(const Probe& probe, const float pos[3], bool& inside) {
+  // The farthest a point is outside the box along any of its axes, in metres.
+  float farthest = 0.f;
+  for (int row = 0; row < 3; ++row) {
+    const float* r = probe.worldToBox + row * 4;
+    const float u = r[0] * pos[0] + r[1] * pos[1] + r[2] * pos[2] + r[3];
+    const float scale = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+    const float over = std::max(std::fabs(u) - 1.f, 0.f);
+    farthest = std::max(farthest, scale > 1e-12f ? over / scale : over);
+  }
+  inside = farthest <= 0.f;
+  if (inside) {
+    return 1.f;
+  }
+  if (!(probe.padding > 0.f)) {
+    return 0.f;
+  }
+  return 1.f - std::min(farthest / probe.padding, 1.f);
+}
+
+void UpdateBlend(const BlendCandidate* candidates, size_t count, const float pos[3], Blend& blend) {
+  auto find = [&](uint64_t key) -> const Probe* {
+    for (size_t i = 0; i < count; ++i) {
+      if (candidates[i].key == key) {
+        return candidates[i].probe;
+      }
+    }
+    return nullptr;
+  };
+  std::vector<BlendEntry> next;
+  auto listed = [&](uint64_t key) {
+    return std::any_of(next.begin(), next.end(), [key](const BlendEntry& e) { return e.key == key; });
+  };
+  bool inside = false;
+  // The last frame's probes first, so that they win ties of priority.
+  for (const BlendEntry& entry : blend.entries) {
+    const Probe* probe = find(entry.key);
+    if (probe != nullptr && !listed(entry.key) && ProbeFade(*probe, pos, inside) > 0.f) {
+      next.push_back({entry.key, probe, 0.f});
+    }
+  }
+  for (size_t i = 0; i < count; ++i) {
+    const BlendCandidate& c = candidates[i];
+    if (c.probe != nullptr && !listed(c.key) && ProbeFade(*c.probe, pos, inside) > 0.f) {
+      next.push_back({c.key, c.probe, 0.f});
+    }
+  }
+  std::stable_sort(next.begin(), next.end(),
+                   [](const BlendEntry& a, const BlendEntry& b) { return a.probe->priority > b.probe->priority; });
+  if (next.size() > kMaxBlend) {
+    next.resize(kMaxBlend);
+  }
+  float remaining = 1.f;
+  for (BlendEntry& entry : next) {
+    const float fade = ProbeFade(*entry.probe, pos, inside);
+    if (inside) {
+      entry.weight = remaining;
+      remaining = 0.f;
+    } else {
+      entry.weight = remaining * fade;
+      remaining *= 1.f - fade;
+    }
+  }
+  next.erase(std::remove_if(next.begin(), next.end(), [](const BlendEntry& e) { return std::fabs(e.weight) < 1e-5f; }),
+             next.end());
+  blend.entries = std::move(next);
+  if (blend.entries.empty()) {
+    blend.intensity = 1.f;
+    blend.min = 0.f;
+    blend.max = 1.f;
+  } else if (blend.entries.size() == 1) {
+    BlendEntry& only = blend.entries[0];
+    only.weight = 1.f;
+    blend.intensity = only.probe->scale;
+    blend.min = only.probe->intensityMin;
+    blend.max = only.probe->intensityMax;
+  } else {
+    float sum = 0.f;
+    float min = 0.f;
+    float max = 0.f;
+    for (const BlendEntry& entry : blend.entries) {
+      sum += entry.weight * entry.probe->scale;
+      min += entry.weight * entry.probe->intensityMin;
+      max += entry.weight * entry.probe->intensityMax;
+    }
+    if (std::fabs(sum) >= 1e-5f) {
+      for (BlendEntry& entry : blend.entries) {
+        entry.weight = entry.weight * entry.probe->scale / sum;
+      }
+    }
+    blend.intensity = sum;
+    blend.min = min;
+    blend.max = max;
+  }
 }
 
 bool SampleGrid(const File& file, const Grid& grid, const float pos[3], Ambient& out) {

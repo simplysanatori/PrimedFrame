@@ -331,7 +331,8 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
                                  env.worldToCube[row * 3 + 2] * viewToWorld[2][col];
         }
       }
-      GXSetPBRProbe(viewToCube, mode > 1 ? static_cast< float >(mode) : 1.f);
+      GXSetPBRProbeEx(viewToCube, mode > 1 ? static_cast< float >(mode) : 1.f, env.occlusionMin,
+                      env.occlusionInvMax);
       GXSetPBRCube(env.cube, env.params);
     } else {
       const f32 viewToProbe[3][3] = {

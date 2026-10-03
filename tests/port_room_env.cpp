@@ -225,6 +225,24 @@ void TestGrid() {
             file.staticLerp == 0.5f,
         "convergence: out of range values fall back");
 
+  // Version 8 adds a probe's priority and intensity range after its padding.
+  std::vector<uint8_t> v8 = v7;
+  v8[4] = 8;
+  for (int i = 2; i >= 0; --i) {
+    std::vector<uint8_t> extra;
+    Put32(extra, uint32_t(10 + i));
+    PutFloat(extra, 0.25f);
+    PutFloat(extra, 2.f);
+    v8.insert(v8.begin() + 32 + 100 * (i + 1), extra.begin(), extra.end());
+  }
+  Check(PortRoomEnv::Parse(std::vector<uint8_t>(v8), file, error) && file.probes.size() == 3 &&
+            file.probes[1].padding == 0.05f && file.probes[1].priority == 11 && file.probes[2].intensityMin == 0.25f &&
+            file.probes[0].intensityMax == 2.f && file.exposureSigma == 32.f && file.grids.size() == 1,
+        "probe: version 8 record");
+  Check(PortRoomEnv::Parse(std::vector<uint8_t>(v7), file, error) && file.probes[1].padding == 1.f &&
+            file.probes[1].priority == 0 && file.probes[1].intensityMin == 0.f && file.probes[1].intensityMax == 1.f,
+        "probe: version 7 has the defaults");
+
   {
     PortRoomEnv::Convergence c;
     c.SetSigma(32.f);
@@ -295,7 +313,7 @@ void TestParse() {
   Check(PortRoomEnv::Parse(std::vector<uint8_t>(good), file, error), "parse");
   Check(file.probes.size() == 3 && file.cubes.size() == 2, "parse: counts");
   Check(file.tonemap[1] == 0.18f, "parse: tonemap");
-  Check(file.probes[1].cube == 1 && file.probes[1].blend == 0.05f, "parse: probe");
+  Check(file.probes[1].cube == 1 && file.probes[1].padding == 1.f, "parse: probe");
   Check(file.cubes[1].size == 4 && file.cubes[1].mipCount == 3 && file.data[file.cubes[1].offset] == 0x22 &&
             file.data[file.cubes[0].offset + file.cubes[0].length - 1] == 0x11,
         "parse: cubes");
@@ -436,6 +454,102 @@ void TestPickExact() {
   Check(inside > 100 && inside < 19900, "pick exact: points both in and out of boxes");
   Check(file.probes[5].half[2] == 0.f && file.probes[5].volume == 0.f, "pick exact: a flat box has no volume");
 }
+
+// An axis-aligned probe along x: centre, half extent (all three axes).
+PortRoomEnv::Probe BoxProbe(float cx, float half, int32_t priority, float scale, float padding) {
+  PortRoomEnv::Probe p{};
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 4; ++col) {
+      p.worldToBox[row * 4 + col] = row == col ? 1.f / half : 0.f;
+    }
+  }
+  p.worldToBox[3] = -cx / half;
+  p.scale = scale;
+  p.padding = padding;
+  p.priority = priority;
+  p.intensityMin = 0.1f * scale;
+  p.intensityMax = 2.f * scale;
+  return p;
+}
+
+void TestBlend() {
+  bool inside = false;
+  const PortRoomEnv::Probe room = BoxProbe(0.f, 10.f, 0, 2.f, 4.f);
+  const float centre[3] = {0.f, 0.f, 0.f};
+  const float out1[3] = {11.f, 0.f, 0.f};
+  const float corner[3] = {11.f, 13.f, 0.f}; // 1 m out in x, 3 m in y: the farthest counts
+  const float far[3] = {20.f, 0.f, 0.f};
+  Check(PortRoomEnv::ProbeFade(room, centre, inside) == 1.f && inside, "fade: inside");
+  Check(Near(PortRoomEnv::ProbeFade(room, out1, inside), 0.75f) && !inside, "fade: in the padding");
+  Check(Near(PortRoomEnv::ProbeFade(room, corner, inside), 0.25f), "fade: farthest axis");
+  Check(PortRoomEnv::ProbeFade(room, far, inside) == 0.f, "fade: past the padding");
+  PortRoomEnv::Probe tight = room;
+  tight.padding = 0.f;
+  Check(PortRoomEnv::ProbeFade(tight, out1, inside) == 0.f && PortRoomEnv::ProbeFade(tight, centre, inside) == 1.f,
+        "fade: no padding");
+
+  // A small high-priority probe inside the room, and a room next door.
+  const PortRoomEnv::Probe alcove = BoxProbe(5.f, 1.f, 1, 1.f, 2.f);
+  const PortRoomEnv::Probe nextDoor = BoxProbe(22.f, 10.f, 0, 4.f, 4.f);
+  const PortRoomEnv::BlendCandidate all[3] = {{1, &room}, {2, &alcove}, {3, &nextDoor}};
+  PortRoomEnv::Blend blend;
+  PortRoomEnv::UpdateBlend(all, 3, centre, blend);
+  Check(blend.entries.size() == 1 && blend.entries[0].key == 1 && blend.entries[0].weight == 1.f &&
+            blend.intensity == 2.f && Near(blend.min, 0.2f) && blend.max == 4.f,
+        "blend: one probe keeps its own values");
+
+  // 1 m outside the alcove: it takes half, the room (which holds the point) the rest.
+  const float byAlcove[3] = {7.f, 0.f, 0.f};
+  PortRoomEnv::UpdateBlend(all, 3, byAlcove, blend);
+  Check(blend.entries.size() == 2 && blend.entries[0].key == 2 && blend.entries[1].key == 1, "blend: priority first");
+  // Raw weights 0.5 and 0.5; intensity 0.5 * 1 + 0.5 * 2.
+  Check(Near(blend.intensity, 1.5f) && Near(blend.entries[0].weight, 1.f / 3.f) &&
+            Near(blend.entries[1].weight, 2.f / 3.f) && Near(blend.min, 0.15f) && Near(blend.max, 3.f),
+        "blend: weights by share and intensity");
+
+  // Between the rooms (both 1 m outside, padding 4): 0.75 of the first, 0.25 * 0.75 of the
+  // second. The room was listed last frame, so it stays first.
+  const float between[3] = {11.f, 0.f, 0.f};
+  PortRoomEnv::UpdateBlend(all, 3, between, blend);
+  Check(blend.entries.size() == 2 && blend.entries[0].key == 1 && blend.entries[1].key == 3, "blend: old first on ties");
+  const float sum = 0.75f * 2.f + 0.1875f * 4.f;
+  Check(Near(blend.intensity, sum) && Near(blend.entries[0].weight, 1.5f / sum), "blend: fading out of two rooms");
+
+  // Swapped order with no history: the candidates' order decides.
+  PortRoomEnv::Blend fresh;
+  const PortRoomEnv::BlendCandidate swapped[2] = {{3, &nextDoor}, {1, &room}};
+  PortRoomEnv::UpdateBlend(swapped, 2, between, fresh);
+  Check(fresh.entries.size() == 2 && fresh.entries[0].key == 3, "blend: new ones in the candidates' order");
+
+  // A probe that left the candidates (its area unloaded) drops out.
+  PortRoomEnv::UpdateBlend(all + 2, 1, between, blend);
+  Check(blend.entries.size() == 1 && blend.entries[0].key == 3 && blend.intensity == 4.f, "blend: unloaded probe");
+  PortRoomEnv::UpdateBlend(all, 3, far, blend);
+  Check(blend.entries.size() == 1 && blend.entries[0].key == 3, "blend: inside next door");
+  const float nowhere[3] = {100.f, 0.f, 0.f};
+  PortRoomEnv::UpdateBlend(all, 3, nowhere, blend);
+  Check(blend.entries.empty() && blend.intensity == 1.f && blend.min == 0.f && blend.max == 1.f, "blend: none");
+
+  // At most four, by priority.
+  std::vector<PortRoomEnv::Probe> many;
+  for (int i = 0; i < 6; ++i) {
+    many.push_back(BoxProbe(0.f, 10.f + float(i), i, 1.f, 10.f));
+  }
+  std::vector<PortRoomEnv::BlendCandidate> manyCandidates;
+  for (int i = 0; i < 6; ++i) {
+    manyCandidates.push_back({uint64_t(100 + i), &many[i]});
+  }
+  PortRoomEnv::Blend capped;
+  // Outside every box; the smallest is out of reach, the next four of five fade 0.5..0.2.
+  const float edge[3] = {20.f, 0.f, 0.f};
+  PortRoomEnv::UpdateBlend(manyCandidates.data(), manyCandidates.size(), edge, capped);
+  Check(capped.entries.size() == 4 && capped.entries[0].key == 105 && capped.entries[3].key == 102,
+        "blend: four, by priority");
+  // The point inside the top probe: it takes everything.
+  const float edgeIn[3] = {14.f, 0.f, 0.f};
+  PortRoomEnv::UpdateBlend(manyCandidates.data(), manyCandidates.size(), edgeIn, capped);
+  Check(capped.entries.size() == 1 && capped.entries[0].key == 105, "blend: the top probe holds the point");
+}
 } // namespace
 
 int main() {
@@ -443,6 +557,7 @@ int main() {
   TestParse();
   TestPick();
   TestPickExact();
+  TestBlend();
   TestGrid();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);

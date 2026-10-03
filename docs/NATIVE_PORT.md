@@ -1148,6 +1148,15 @@ a temporary directory instead of mounting.
   the grid; adding them as well blew actors out near lamps.
   `MP_ROOM_ENV_AREA_LIGHTS=1` (console `roomenv arealights on|off`) adds them
   back. This also applies to room geometry under `MP_ROOM_GEO_AREA_LIGHTS=1`.
+  Reflection probes blend around the camera, as Remastered's do: up to four
+  of the loaded areas' probes, each fading out over its padding outside its
+  box, higher priority first, are mixed into one cube that every PBR model
+  reflects, and the reflection is dimmed where the baked light is below the
+  probes' intensity range (Remastered's probe occlusion). Version 8 adds the
+  padding, priority and intensity range; older files fade over 1 m with no
+  occlusion. `MP_ROOM_ENV_BLEND=0` (console `roomenv blend on|off`) lets each
+  model pick its own probe again; `roomenv info` lists the blend's probes,
+  weights and fades, and every probe's box centre.
   `MP_BLOOM=0` (console `roomenv bloom on|off`) drops Remastered's bloom
   (version 5: the room's BloomEffect, else the world's), and `MP_COLOR_GRADE=0`
   (console `roomenv grade on|off`) its colour grade (version 6: the world's and

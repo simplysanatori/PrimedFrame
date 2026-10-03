@@ -13,8 +13,10 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 7), f32 tonemap[4], u32 probes, u32 cubes
-//   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 blend
+//   'MPEV', u32 version (1 to 8), f32 tonemap[4], u32 probes, u32 cubes
+//   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
+//          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
+//          (before it the padding is unused, 1 m, and the rest 0, 0, 1)
 //   cube:  u32 size, u32 mips, u32 signed, u32 bytes, then BC6H blocks, every face of
 //          mip 0, then of mip 1 and so on
 // Version 2 goes on:
@@ -58,8 +60,14 @@ struct Probe {
   float worldToCube[9];
   int32_t layer;
   uint32_t cube;
-  float scale;
-  float blend;
+  float scale; // Remastered's intensity
+  // Remastered's ReflectionProbe: how far outside the box (metres) the probe fades out, which
+  // probes win where boxes overlap, and the intensity's range for the ambient occlusion
+  // (see UpdateBlend).
+  float padding = 1.f;
+  int32_t priority = 0;
+  float intensityMin = 0.f;
+  float intensityMax = 1.f;
   // Worked out from worldToBox when the file is parsed (SetExtents): the box's half extent
   // along each row (0 for a row of length 0), and its volume, 8 times their product.
   float half[3];
@@ -134,6 +142,38 @@ Pick PickProbe(const File& file, const float pos[3]);
 // Fills in a probe's half extents and volume from its worldToBox.
 void SetExtents(Probe& probe);
 
+// How much of a probe reaches a point, as Remastered fades it: 1 inside the box, falling to
+// 0 at `padding` metres outside it (by the farthest axis). `inside`: within the box itself.
+float ProbeFade(const Probe& probe, const float pos[3], bool& inside);
+
+// Remastered's blend of reflection probes (CReflectionProbeManager), for the camera's
+// position. Each frame: probes of the last frame stay while the point is within their padding,
+// new ones join when it is, then the list is sorted by priority (the old ones first among
+// equals) and cut to four. Down that list each takes its fade of what the ones above left,
+// and one whose box holds the point takes all of the rest.
+struct BlendCandidate {
+  uint64_t key = 0; // stays the same for a probe across frames
+  const Probe* probe = nullptr;
+};
+struct BlendEntry {
+  uint64_t key = 0;
+  const Probe* probe = nullptr;
+  float weight = 0.f; // of the probe's cube in the blended one; together they make 1
+};
+struct Blend {
+  std::vector<BlendEntry> entries;
+  // The blended intensity (each probe's scale by its share), which the blended cube is
+  // multiplied by, and the range the shader's ambient occlusion maps into: the reflection is
+  // multiplied by mix(min, intensity, saturate(ambient / max)) in place of the intensity.
+  // A lone probe keeps its own values, whatever its fade.
+  float intensity = 1.f;
+  float min = 0.f;
+  float max = 1.f;
+};
+constexpr size_t kMaxBlend = 4;
+// `blend` holds the last frame's list on input. Candidates whose keys repeat count once.
+void UpdateBlend(const BlendCandidate* candidates, size_t count, const float pos[3], Blend& blend);
+
 // The baked ambient at a point, as Remastered's shaders evaluate it: per colour channel c
 // and for a surface normal n,
 //   mean[c] - lobe[c] + 2 * lobe[c] * (1 + sharpness[c]) * q ^ (1 + 2 * sharpness[c]),
@@ -176,6 +216,11 @@ struct Selection {
   uint32_t cube = 0;       // for GXSetPBRCube; 0 when the room has none
   float params[4] = {};    // for GXSetPBRCube
   float worldToCube[9] = {};
+  // For GXSetPBRProbeEx, Remastered's ambient occlusion of the reflection: where the baked
+  // light is dark the cube drops to `occlusionMin` of its level, reaching all of it at
+  // 1 / `occlusionInvMax` of radiance (0: no occlusion).
+  float occlusionMin = 0.f;
+  float occlusionInvMax = 0.f;
   bool hasAmbient = false;
   // For GXSetPBRAmbient: scaled so that the game's ambient level multiplies it, with the
   // directions still in world space.
@@ -277,6 +322,13 @@ bool StaticExposure();
 // (the console's `roomenv arealights`).
 void SetAreaLights(bool on);
 bool AreaLights();
+// Whether the reflection is Remastered's blend of probes around the camera (UpdateBlend,
+// drawn into one cube on the GPU) with its ambient occlusion; otherwise each model reflects
+// the one probe it stands in (PickProbe). MP_ROOM_ENV_BLEND=0, the console's `roomenv blend`.
+void SetProbeBlend(bool on);
+bool ProbeBlend();
+// The camera's position, once a frame: the probe blend follows it.
+void SetViewPoint(const float pos[3]);
 // The frame's tone curve, for GXSetPBRTone; false when rooms are not exposed or the
 // camera's room has no environment.
 bool Tone(float rows[3][4]);

@@ -46,7 +46,12 @@ constexpr uint32_t kActorMP1 = 0xb6200be6;
 // Property ids.
 constexpr uint32_t kPropRoomId = 0x30a4d63d;
 constexpr uint32_t kPropProbeRefl = 0x020e5559;
-constexpr uint32_t kPropProbeBlend = 0x362216cf;
+// A probe's padding (blend distance, default 1), priority (s32), intensity min (0) and max (1)
+// (CReflectionProbe's loader).
+constexpr uint32_t kPropProbePadding = 0x422b37b8;
+constexpr uint32_t kPropProbePriority = 0x0e68307f;
+constexpr uint32_t kPropProbeMin = 0x362216cf;
+constexpr uint32_t kPropProbeMax = 0xcd8ea2be;
 // Exposure value, middle grey, toe, shoulder, contrast (SLdrTonemap::Load).
 constexpr uint32_t kPropTonemap[5] = {0x44a2e298, 0x34bb937d, 0x49ee7747, 0x295132dd, 0x3373d845};
 // Bloom threshold, and a u32 count of RGBA float tints (SLdrBloomEffect).
@@ -2145,16 +2150,41 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       index[txtrId] = cubes.size();
       cubes.push_back(std::move(blob));
     }
-    if (std::fabs(euler[0]) > 0.01 || std::fabs(euler[1]) > 0.01 || std::fabs(euler[2]) > 0.01) {
-      char line[160];
-      std::snprintf(line, sizeof line, "  %s: rotated probe (%g, %g, %g) (rotation ignored)", r.name.c_str(),
-                    euler[0], euler[1], euler[2]);
-      Log(line);
+    // Remastered tests the world box around the rotated unit box (half = |R| |scale| / 2) and samples
+    // the cube with the world direction, so a rotation only grows the box. Rz Ry Rx in degrees; the
+    // order does not matter for the disc's probes (one axis, or under 1.2 degrees off one).
+    double rr[3][3];
+    {
+      const double d = 3.14159265358979323846 / 180.0;
+      const double cx = std::cos(euler[0] * d), sx = std::sin(euler[0] * d);
+      const double cy = std::cos(euler[1] * d), sy = std::sin(euler[1] * d);
+      const double cz = std::cos(euler[2] * d), sz = std::sin(euler[2] * d);
+      const double rz[3][3] = {{cz, -sz, 0}, {sz, cz, 0}, {0, 0, 1}};
+      const double ry[3][3] = {{cy, 0, sy}, {0, 1, 0}, {-sy, 0, cy}};
+      const double rx[3][3] = {{1, 0, 0}, {0, cx, -sx}, {0, sx, cx}};
+      double zy[3][3];
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          zy[i][j] = rz[i][0] * ry[0][j] + rz[i][1] * ry[1][j] + rz[i][2] * ry[2][j];
+        }
+      }
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          rr[i][j] = zy[i][0] * rx[0][j] + zy[i][1] * rx[1][j] + zy[i][2] * rx[2][j];
+        }
+      }
+    }
+    Vec3 remHalf;
+    for (int i = 0; i < 3; ++i) {
+      remHalf[size_t(i)] = 0;
+      for (int j = 0; j < 3; ++j) {
+        remHalf[size_t(i)] += std::fabs(rr[i][j]) * std::fabs(scale[size_t(j)]) / 2;
+      }
     }
     const Vec3 centre = MulR2G(pos);
-    Vec3 half = MulR2G(scale);
+    Vec3 half = MulR2G(remHalf);
     for (double& v : half) {
-      v = std::fabs(v) / 2;
+      v = std::max(std::fabs(v), 1e-4);
     }
     // world -> area -> unit box; inv is the area's rotation transposed.
     double inv[3][3];
@@ -2183,11 +2213,18 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
         PutFloat(probes, (cr[i][0] * inv[0][j] + cr[i][1] * inv[1][j]) + cr[i][2] * inv[2][j]);
       }
     }
-    const auto blend = f.find(kPropProbeBlend);
+    const auto prop = [&](uint32_t id, float fallback) {
+      const auto p = f.find(id);
+      return p != f.end() && p->second.size >= 4 ? LeFloat(r.room.Bytes(p->second)) : fallback;
+    };
+    const auto priority = f.find(kPropProbePriority);
     PutLe32(probes, uint32_t(c->layer));
     PutLe32(probes, uint32_t(index[txtrId]));
     PutFloat(probes, probeScale);
-    PutFloat(probes, blend != f.end() && blend->second.size >= 4 ? LeFloat(r.room.Bytes(blend->second)) : 0.0f);
+    PutFloat(probes, prop(kPropProbePadding, 1.0f));
+    PutLe32(probes, priority != f.end() && priority->second.size >= 4 ? Le32(r.room.Bytes(priority->second)) : 0u);
+    PutFloat(probes, prop(kPropProbeMin, 0.0f));
+    PutFloat(probes, prop(kPropProbeMax, 1.0f));
     ++probeCount;
   }
 
@@ -2203,7 +2240,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  PutLe32(out, 7);
+  PutLe32(out, 8);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);

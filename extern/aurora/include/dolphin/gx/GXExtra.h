@@ -38,6 +38,10 @@ u32 GXPortCopySerial(void);
 // GX_AURORA_SET_PBR_PROBE).
 void GXCopyProbeFace(u32 face);
 void GXSetPBRProbe(const f32 viewToProbe[3][3], f32 weight);
+// As GXSetPBRProbe, plus Remastered's reflection occlusion for draws with an ambient volume:
+// the reflection is scaled by mix(occlusionMin, 1, saturate(max channel of the baked mean *
+// occlusionInvMax)). occlusionInvMax 0 is none.
+void GXSetPBRProbeEx(const f32 viewToProbe[3][3], f32 weight, f32 occlusionMin, f32 occlusionInvMax);
 // Aurora extension: the emissive multiplier and backlight weight of the following PBR
 // draws (see GX_AURORA_SET_PBR_MATERIAL). `heightBlend` above 0 is the threshold of a
 // height-blended alpha (0: the base map's alpha is the opacity), and `mode` 1 draws the
@@ -66,6 +70,12 @@ void GXDestroyPBRCube(u32 id);
 // the normal, and the scale that takes that sample to 1 for an average direction (0 = the
 // ambient is left alone). Id 0, or one never created, selects the probe.
 void GXSetPBRCube(u32 id, const f32 params[4]);
+// Renders sum(weights[i] * cube src[i]) (up to four room cubes) into room cube `dst`, made
+// or resized to the first's size. Not a FIFO command: it ends the current pass, and draws
+// recorded after it see the result. False (dst unusable) when a source is missing or it
+// could not be recorded. A dst that changes texture is only picked up by a GXSetPBRCube to
+// a different id, so alternate between two.
+GXBool GXPortBlendPBRCube(u32 dst, const u32* src, const f32* weights, u32 count);
 // Aurora extension: baked ambient light as a function of the normal n (view space), per
 // colour channel c: base[c] + lobe[c] * pow(clamp(0.5 + 0.5 * dot(n, dir[c]), 0, 1), power[c]).
 // The rows are base, lobe, power, then the direction of red, green and blue; the
