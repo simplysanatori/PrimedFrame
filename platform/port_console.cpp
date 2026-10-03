@@ -1453,6 +1453,9 @@ void RunFrame() {
       } else if (arg == "bloom" && sCmd.args.size() > 2 &&
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomEnv::SetBloomEnabled(Lower(sCmd.args[2]) == "on");
+      } else if (arg == "grades") {
+        OutLines(PortRoomEnv::GradeInfo());
+        return Finish();
       } else if (arg == "grade" && sCmd.args.size() > 2 &&
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomEnv::SetColorGradeEnabled(Lower(sCmd.args[2]) == "on");
@@ -1470,7 +1473,7 @@ void RunFrame() {
       } else {
         return Finish("usage: roomenv [on|off|info [<x> <y> <z>]|exposure on|off|auto on|off|static on|off|"
                       "arealights on|off|blend on|off|bloom on|off|"
-                      "grade on|off|"
+                      "grade on|off|grades|"
                       "volume on|off|ambient <scale>|"
                       "show off|coords|light]");
       }

@@ -6,6 +6,7 @@
 #include "port_log.h"
 #include "port_mods.h"
 #include "port_remastered_txtr.h"
+#include "port_room_geo.h"
 
 #include <dolphin/gx/GXExtra.h>
 
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -49,6 +51,13 @@ struct Area {
   float tone[3][4] = {}; // its tone curve
   bool hasGeo = false;   // the mod replaces its geometry
   uint64_t layers = ~uint64_t(0); // its active script layers (SetAreaLayers)
+  // Its grades' requests (Remastered's CAreaPrioritizedGameHintManager): on or off, and
+  // when they were last turned on, which decides between equal priorities.
+  struct GradeRequest {
+    bool on = false;
+    uint64_t order = 0;
+  };
+  std::vector<GradeRequest> grades;
 };
 
 // The frame's exposure and tone curve, as CPostFXManager::UpdateTonemapping moves them.
@@ -167,6 +176,12 @@ struct GradeFade {
   std::chrono::steady_clock::time_point start;
 };
 GradeFade sGradeFade;
+// The grade on screen: its area and index, to tell a grade turned off from one outranked.
+uint32_t sGradeArea = 0;
+int sGradeIndex = -1;
+uint64_t sGradeOrder = 0;
+bool sPlayerFluid = false;
+bool sCameraWater = false;
 // LUTs handed to Aurora already; they are kept there for the run.
 std::unordered_set<uint32_t> sGradeLuts;
 // Model draws come in runs at one position; the last answer is kept until the frame or a
@@ -447,6 +462,46 @@ std::vector<uint8_t> ReadAll(std::ifstream& in) {
   return data;
 }
 
+// The grades `sender` drives on `state`.
+void DriveGrades(uint32_t mrea, Area& area, uint32_t sender, int state) {
+  for (size_t i = 0; i < area.grades.size() && i < area.file.grades.size(); ++i) {
+    for (const GradeLink& link : area.file.grades[i].links) {
+      if (link.sender != sender || link.state != state) {
+        continue;
+      }
+      Area::GradeRequest& request = area.grades[i];
+      const bool on = link.action == PortRoomGeo::kShow ? true
+                      : link.action == PortRoomGeo::kHide ? false
+                      : link.action == PortRoomGeo::kToggle ? !request.on
+                                                             : request.on;
+      if (on && !request.on) {
+        // Above every file-order start (StartGrades).
+        request.order = (uint64_t(1) << 32) + ++sGradeOrder;
+      }
+      if (on != request.on) {
+        PortLog::Write("room env: %08X grade %zu %s by %08X state %d\n", mrea, i, on ? "on" : "off", sender, state);
+      }
+      request.on = on;
+    }
+  }
+}
+
+// Every grade as it starts, then the fluids the player and camera are in already.
+void StartGrades(uint32_t mrea, Area& area) {
+  area.grades.assign(area.file.grades.size(), {});
+  for (size_t i = 0; i < area.grades.size(); ++i) {
+    area.grades[i].on = area.file.grades[i].on;
+    // In file order, below anything turned on later: the last of equals wins, as before.
+    area.grades[i].order = i;
+  }
+  if (sPlayerFluid) {
+    DriveGrades(mrea, area, kSenderPlayerFluid, 0);
+  }
+  if (sCameraWater) {
+    DriveGrades(mrea, area, kSenderCameraWater, 0);
+  }
+}
+
 void Load(uint32_t mrea, Area& area) {
   area.hasGeo = !PortMods::RoomGeoPath(mrea).empty();
   const std::string path = PortMods::RoomEnvPath(mrea);
@@ -468,6 +523,7 @@ void Load(uint32_t mrea, Area& area) {
     area.cubes[i].failed = !(area.cubes[i].average > 1e-6f);
   }
   area.volumes.resize(area.file.grids.size());
+  StartGrades(mrea, area);
   area.exposure = RoomExposure(area);
   const float* const t = area.file.tonemap;
   if (area.exposure > 0.f && t[1] > 0.f && t[1] < 1.f) {
@@ -1062,17 +1118,40 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
     sGradeFade.started = false;
     return false;
   }
-  // The room's grade: the last one whose layer is active. A room without a file keeps
-  // whatever the frame had, as the doors between two rooms do.
+  // The room's grade, as CAreaPrioritizedGameHintManager picks it: of the requested ones
+  // whose layer is active, the highest priority, then the one turned on last. A room
+  // without a file keeps whatever the frame had, as the doors between two rooms do.
   const auto view = sAreas.find(sViewArea);
   if (view != sAreas.end() && view->second.hasFile) {
-    const File& file = view->second.file;
+    const Area& area = view->second;
+    const File& file = area.file;
     const Grade* pick = nullptr;
-    for (const Grade& grade : file.grades) {
-      if (grade.layer < 0 || layerActive == nullptr || layerActive(grade.layer, context)) {
+    int pickIndex = -1;
+    uint64_t pickOrder = 0;
+    for (size_t i = 0; i < file.grades.size(); ++i) {
+      const Grade& grade = file.grades[i];
+      const bool on = i < area.grades.size() ? area.grades[i].on : grade.on;
+      const uint64_t order = i < area.grades.size() ? area.grades[i].order : i;
+      if (!on || (grade.layer >= 0 && layerActive != nullptr && !layerActive(grade.layer, context))) {
+        continue;
+      }
+      if (pick == nullptr || grade.priority > pick->priority ||
+          (grade.priority == pick->priority && order >= pickOrder)) {
         pick = &grade;
+        pickIndex = int(i);
+        pickOrder = order;
       }
     }
+    // The grade shown so far, when it is this room's and has been turned off: the fade is
+    // its fade-out, not the new one's fade-in.
+    const Grade* off = nullptr;
+    if (sGradeArea == sViewArea && sGradeIndex >= 0 && sGradeIndex != pickIndex &&
+        size_t(sGradeIndex) < file.grades.size() &&
+        !(size_t(sGradeIndex) < area.grades.size() ? area.grades[sGradeIndex].on : file.grades[sGradeIndex].on)) {
+      off = &file.grades[sGradeIndex];
+    }
+    sGradeArea = sViewArea;
+    sGradeIndex = pickIndex;
     const uint32_t target = pick != nullptr ? pick->id : 0;
     if (target != 0 && sGradeLuts.insert(target).second) {
       GXPortColorGradeLut(target, file.data.data() + pick->offset);
@@ -1087,7 +1166,7 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
           ? std::chrono::duration<float>(now - f.start).count() / f.seconds : 1.f;
       f.from = shown >= 0.5f ? f.to : f.from;
       f.to = target;
-      f.seconds = pick != nullptr ? pick->fadeIn : f.fadeOut;
+      f.seconds = off != nullptr ? off->fadeOut : pick != nullptr ? pick->fadeIn : f.fadeOut;
       f.start = now;
     }
     f.fadeOut = pick != nullptr ? pick->fadeOut : 0.f;
@@ -1108,6 +1187,73 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
   b = f.to;
   weight = t;
   return a != 0 || b != 0;
+}
+
+void OnScriptState(uint32_t mrea, uint32_t sender, int state) {
+  auto found = sAreas.find(mrea);
+  if (found == sAreas.end()) {
+    // Script objects send states before the next SetLoadedAreas, which keeps the area.
+    found = sAreas.emplace(mrea, Area()).first;
+    Load(mrea, found->second);
+    Invalidate();
+  }
+  DriveGrades(mrea, found->second, sender, state);
+}
+
+void SetFluid(bool player, bool camera) {
+  // State 0 as the fluid is entered, 1 as it is left (the writer's convention).
+  if (player != sPlayerFluid) {
+    sPlayerFluid = player;
+    for (auto& [mrea, area] : sAreas) {
+      DriveGrades(mrea, area, kSenderPlayerFluid, player ? 0 : 1);
+    }
+  }
+  if (camera != sCameraWater) {
+    sCameraWater = camera;
+    for (auto& [mrea, area] : sAreas) {
+      DriveGrades(mrea, area, kSenderCameraWater, camera ? 0 : 1);
+    }
+  }
+}
+
+void ResetGrades() {
+  sPlayerFluid = false;
+  sCameraWater = false;
+  sGradeIndex = -1;
+  for (auto& [mrea, area] : sAreas) {
+    StartGrades(mrea, area);
+  }
+}
+
+std::string GradeInfo() {
+  std::string out;
+  char line[160];
+  std::snprintf(line, sizeof(line), "player in fluid %d, camera in water %d\n", int(sPlayerFluid), int(sCameraWater));
+  out += line;
+  for (const auto& [mrea, area] : sAreas) {
+    const File& file = area.file;
+    if (file.grades.empty()) {
+      continue;
+    }
+    std::snprintf(line, sizeof(line), "%08X%s: %zu grades\n", mrea, mrea == sViewArea ? " (view)" : "",
+                  file.grades.size());
+    out += line;
+    for (size_t i = 0; i < file.grades.size(); ++i) {
+      const Grade& grade = file.grades[i];
+      const bool on = i < area.grades.size() ? area.grades[i].on : grade.on;
+      const bool shown = mrea == sGradeArea && int(i) == sGradeIndex;
+      std::snprintf(line, sizeof(line), "  %zu: %s priority %d layer %d fade %g/%g links %zu lut %08X%s\n", i,
+                    on ? "on " : "off", int(grade.priority), int(grade.layer), grade.fadeIn, grade.fadeOut,
+                    grade.links.size(), grade.id, shown ? " (shown)" : "");
+      out += line;
+      for (const GradeLink& link : grade.links) {
+        std::snprintf(line, sizeof(line), "     by %08X state %d action %d\n", link.sender, int(link.state),
+                      int(link.action));
+        out += line;
+      }
+    }
+  }
+  return out;
 }
 
 void SetViewArea(uint32_t mrea) {
@@ -1239,6 +1385,7 @@ void Reset() {
   FreeBlend();
   sFrame = {};
   Invalidate();
+  sGradeIndex = -1;
 }
 
 void SetLoadedAreas(const uint32_t* mreas, size_t count) {

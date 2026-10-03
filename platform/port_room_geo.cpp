@@ -661,11 +661,15 @@ void OnScriptState(CStateManager& mgr, uint32_t editorId, int state) {
   const CWorld* const world = mgr.GetWorld();
   // An area's objects are made after it counts as loaded (CGameArea::PostConstructArea), so
   // a state from elsewhere (editor id 0 reads as area 0) loads nothing.
-  if (GetMode() == Mode::Off || world == nullptr || areaId.Value() >= world->GetNumAreas() ||
-      !world->GetArea(areaId)->IsLoaded()) {
+  if (world == nullptr || areaId.Value() >= world->GetNumAreas() || !world->GetArea(areaId)->IsLoaded()) {
     return;
   }
   const uint32_t mrea = world->GetArea(areaId)->GetAreaAssetId();
+  // The room's colour grade hints follow the scripts too, room geometry or not.
+  PortRoomEnv::OnScriptState(mrea, editorId & 0x3ffffff, state);
+  if (GetMode() == Mode::Off) {
+    return;
+  }
   auto& areas = Areas();
   auto found = areas.find(mrea);
   if (found == areas.end()) {

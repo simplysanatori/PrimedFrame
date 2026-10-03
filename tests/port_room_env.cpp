@@ -258,6 +258,41 @@ void TestGrid() {
   Check(PortRoomEnv::ProbeOn(file.probes[0], 0) && PortRoomEnv::ProbeOn(file.probes[1], 1u << 2) &&
             !PortRoomEnv::ProbeOn(file.probes[1], ~uint64_t(1u << 2)),
         "probe: on by its layer");
+  Check(file.grades.size() == 2 && file.grades[1].on && file.grades[1].priority == 0 && file.grades[1].links.empty(),
+        "grade: version 9 is on, priority 0, no links");
+
+  // Version 10 adds a grade's start, priority and links after its fades.
+  {
+    std::vector<uint8_t> v10 = v9;
+    v10[4] = 10;
+    // The grades come after the bloom, which version 8 moved by three probes' 12 bytes.
+    const size_t first = v5.size() + 4 + 36;
+    const size_t record = 12 + PortRoomEnv::kGradeLutBytes;
+    std::vector<uint8_t> extra1;
+    extra1.push_back(0);
+    extra1.insert(extra1.end(), 3, 0);
+    Put32(extra1, 55);
+    Put32(extra1, 2);
+    Put32(extra1, PortRoomEnv::kSenderCameraWater);
+    extra1.insert(extra1.end(), {0, 1, 0, 0});
+    Put32(extra1, 0x04100022);
+    extra1.insert(extra1.end(), {9, 2, 0, 0});
+    std::vector<uint8_t> extra0 = {1, 0, 0, 0};
+    Put32(extra0, 50);
+    Put32(extra0, 0);
+    v10.insert(v10.begin() + std::ptrdiff_t(first + record + 12), extra1.begin(), extra1.end());
+    v10.insert(v10.begin() + std::ptrdiff_t(first + 12), extra0.begin(), extra0.end());
+    Check(PortRoomEnv::Parse(std::vector<uint8_t>(v10), file, error) && file.grades.size() == 2 &&
+              file.grades[0].on && file.grades[0].priority == 50 && file.grades[0].links.empty() &&
+              !file.grades[1].on && file.grades[1].priority == 55 && file.grades[1].links.size() == 2 &&
+              file.grades[1].links[0].sender == PortRoomEnv::kSenderCameraWater && file.grades[1].links[0].action == 1 &&
+              file.grades[1].links[1].sender == 0x04100022 && file.grades[1].links[1].state == 9 &&
+              file.grades[1].fadeOut == 0.5f && file.grades[1].id != 0 && file.exposureSigma == 32.f,
+          "grade: version 10 record");
+    std::vector<uint8_t> bad = v10;
+    bad[first + 12 + record + 12 + 9] = 2;  // grade 1's link count, now 514
+    Check(!PortRoomEnv::Parse(std::vector<uint8_t>(bad), file, error), "grade: too many links");
+  }
 
   {
     PortRoomEnv::Convergence c;
