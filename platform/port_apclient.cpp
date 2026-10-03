@@ -155,19 +155,35 @@ struct Runtime {
     {
       std::lock_guard<std::mutex> lock(mutex);
       exiting = true; // a restart still in flight must not start a new worker
+      // Set under the lock: WaitBackoff checks it under the lock, so a notify
+      // sent between its check and its wait would otherwise be lost.
+      stop.store(true, std::memory_order_release);
     }
-    stop.store(true, std::memory_order_release);
     wake.notify_all();
-    if (worker.joinable()) {
-      bool done;
-      {
-        std::unique_lock<std::mutex> lock(mutex);
-        done = wake.wait_for(lock, std::chrono::seconds(2), [this] { return workerDone; });
-      }
+    // A restart in flight holds the old worker itself and joins it, so it is
+    // waited for too; with `exiting` set it starts nothing new.
+    std::thread current;
+    std::vector<std::thread> restarts;
+    bool done;
+    {
+      std::unique_lock<std::mutex> lock(mutex);
+      done = wake.wait_for(lock, std::chrono::seconds(2), [this] {
+        return restartsRunning == 0 && (!worker.joinable() || workerDone);
+      });
+      current = std::move(worker);
+      restarts = std::move(restarters);
+    }
+    for (std::thread& thread : restarts) {
       if (done)
-        worker.join();
+        thread.join(); // finished, or returning from the lambda
       else
-        worker.detach();
+        thread.detach();
+    }
+    if (current.joinable()) {
+      if (done)
+        current.join();
+      else
+        current.detach();
     }
     FlushState(); // whatever the worker had not written yet
   }
@@ -256,6 +272,11 @@ struct Runtime {
   // Held for the whole of a restart (Connect/Disconnect), so two in a row run
   // one after the other.
   std::mutex restartMutex;
+  // The restart threads (under mutex), kept so Shutdown() can join them, and
+  // how many have not returned yet. Finished ones are joined by the next
+  // StartRestart.
+  std::vector<std::thread> restarters;
+  int restartsRunning = 0;
   // The last logic evaluation and what it was made from; it only changes with
   // an item or the seed's options, and the map asks every frame.
   bool logicValid = false;
@@ -1086,8 +1107,9 @@ void Restart(Runtime& runtime) {
     if (runtime.exiting)
       return;
     old = std::move(runtime.worker);
+    // Under the lock, so WaitBackoff cannot miss the wake-up below.
+    runtime.stop.store(true, std::memory_order_release);
   }
-  runtime.stop.store(true, std::memory_order_release);
   runtime.wake.notify_all();
   if (old.joinable())
     old.join();
@@ -1128,17 +1150,39 @@ void Restart(Runtime& runtime) {
 }
 
 void StartRestart(Runtime& runtime) {
-  std::thread(
-      [&runtime] {
-        try {
-          Restart(runtime);
-        } catch (const std::exception& error) {
-          PortLog::Write("archipelago: restart failed: %s\n", error.what());
-        } catch (...) {
-          PortLog::Write("archipelago: restart failed\n");
-        }
-      })
-      .detach();
+  // Restarts that have all returned (counted down under the lock, so only the
+  // lambda's own return is left) are joined here rather than piling up.
+  std::vector<std::thread> finished;
+  {
+    std::lock_guard<std::mutex> lock(runtime.mutex);
+    if (runtime.exiting)
+      return;
+    if (runtime.restartsRunning == 0)
+      finished.swap(runtime.restarters);
+  }
+  for (std::thread& thread : finished)
+    thread.join();
+  std::lock_guard<std::mutex> lock(runtime.mutex);
+  if (runtime.exiting)
+    return;
+  ++runtime.restartsRunning;
+  try {
+    runtime.restarters.emplace_back([&runtime] {
+      try {
+        Restart(runtime);
+      } catch (const std::exception& error) {
+        PortLog::Write("archipelago: restart failed: %s\n", error.what());
+      } catch (...) {
+        PortLog::Write("archipelago: restart failed\n");
+      }
+      std::lock_guard<std::mutex> done(runtime.mutex);
+      --runtime.restartsRunning;
+      runtime.wake.notify_all();
+    });
+  } catch (...) {
+    --runtime.restartsRunning; // no thread, so nothing to wait for
+    throw;
+  }
 }
 
 } // namespace
