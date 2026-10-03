@@ -578,6 +578,7 @@ struct RemMaterial {
   double emissive = 1.0;   // Remastered's emissive strength
   double backlight = 0.0;  // and its backlight strength
   bool cutout = false;     // the base map's alpha cuts holes: leaves, grates
+  bool twoSided = false;   // seen from behind too; the game culls back faces, so they are doubled
   bool blended = false;    // drawn over what is behind it: glass, decals, ice
   bool tinted = false;     // its vertices carry a colour
   bool unlit = false;      // a screen: its own colour and glow, no lighting
@@ -615,6 +616,7 @@ struct Buffer {
   bool colored = false;
   const ModelVertexBuffer* src = nullptr;
   bool skinned = false;
+  std::vector<uint32_t> copyOf;  // vertices past src's: the src vertex each was copied from
 };
 
 struct Prim {
@@ -1107,6 +1109,7 @@ constexpr uint32_t kTransparentFlag = 0x1;   // blended over what is behind it
 constexpr uint32_t kVertexColorFlag = 0x10;  // the vertex colour tints it
 constexpr uint32_t kCutoutFlag = 0x20;       // one-bit alpha: ground leaves, grates, foliage
 constexpr uint32_t kIncanMaskFlag = 0x200;   // the base map's alpha masks the glow
+constexpr uint32_t kTwoSidedFlag = 0x400;    // drawn from both sides: grates, ferns, hologlass
 // The first four bytes of the id of a shader whose alpha is read below.
 constexpr uint32_t kShaderHeightBlend = 0xCA10C453;  // snow and ice over rock
 // Shaders with maps and parameters of their own (TCHn, CCHn), read from their code.
@@ -1152,6 +1155,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   RemMaterial out;
   out.name = mat.name;
   out.cutout = (mat.unk1 & kCutoutFlag) != 0;
+  out.twoSided = (mat.unk1 & kTwoSidedFlag) != 0;
   out.blended = (mat.unk1 & kTransparentFlag) != 0 && !out.cutout;
   uint8_t sid[4];
   std::memcpy(sid, &mat.shaderId, 4);
@@ -2157,13 +2161,44 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     p.I = mesh.indices;
     p.I.resize(p.I.size() / 3 * 3);
     for (uint32_t i : p.I) {
-      if (i >= b.n) {
+      if (i >= b.src->vertexCount) {
         throw Fail{"a Remastered mesh indexes past its vertex buffer"};
       }
     }
     if (det < 0) {
       for (size_t t = 0; t + 2 < p.I.size(); t += 3) {
         std::swap(p.I[t], p.I[t + 2]);
+      }
+    }
+    if (mats[mesh.material].twoSided) {
+      // The back: each vertex again with its normal turned round, each triangle
+      // wound the other way.
+      std::unordered_map<uint32_t, uint32_t> back;
+      for (uint32_t i : p.I) {
+        if (back.count(i) != 0) {
+          continue;
+        }
+        back[i] = uint32_t(b.n++);
+        for (int r = 0; r < 3; ++r) {
+          b.P.push_back(b.P[size_t(i) * 3 + r]);
+          b.N.push_back(-b.N[size_t(i) * 3 + r]);
+        }
+        for (std::vector<double>& uv : b.uv) {
+          if (!uv.empty()) {
+            uv.push_back(uv[size_t(i) * 2]);
+            uv.push_back(uv[size_t(i) * 2 + 1]);
+          }
+        }
+        for (int c = 0; c < 4; ++c) {
+          b.C.push_back(b.C[size_t(i) * 4 + c]);
+        }
+        b.copyOf.push_back(i);
+      }
+      const size_t front = p.I.size();
+      for (size_t t = 0; t < front; t += 3) {
+        p.I.push_back(back[p.I[t + 2]]);
+        p.I.push_back(back[p.I[t + 1]]);
+        p.I.push_back(back[p.I[t]]);
       }
     }
     if (!b.used) {
@@ -2610,8 +2645,13 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     std::vector<float> W;
     if (skinned) {
       for (uint32_t bi : bufOrder) {
-        J.insert(J.end(), buffers[bi].src->joints.begin(), buffers[bi].src->joints.end());
-        W.insert(W.end(), buffers[bi].src->weights.begin(), buffers[bi].src->weights.end());
+        const ModelVertexBuffer& src = *buffers[bi].src;
+        J.insert(J.end(), src.joints.begin(), src.joints.end());
+        W.insert(W.end(), src.weights.begin(), src.weights.end());
+        for (uint32_t v : buffers[bi].copyOf) {
+          J.insert(J.end(), src.joints.begin() + size_t(v) * 4, src.joints.begin() + size_t(v) * 4 + 4);
+          W.insert(W.end(), src.weights.begin() + size_t(v) * 4, src.weights.begin() + size_t(v) * 4 + 4);
+        }
       }
     }
     const std::vector<WeightKey> perVertex =
