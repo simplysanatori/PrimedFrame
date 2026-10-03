@@ -13,10 +13,12 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 8), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 9), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
-//          (before it the padding is unused, 1 m, and the rest 0, 0, 1)
+//          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
+//          on the layer is the retail script layer the probe is on (-1: every layer);
+//          before it, it is unused.
 //   cube:  u32 size, u32 mips, u32 signed, u32 bytes, then BC6H blocks, every face of
 //          mip 0, then of mip 1 and so on
 // Version 2 goes on:
@@ -58,7 +60,7 @@ struct Probe {
   float worldToBox[12];
   // Rows of world direction -> cube lookup direction.
   float worldToCube[9];
-  int32_t layer;
+  int32_t layer = -1; // the area's script layer it is on; -1: every layer (ProbeOn)
   uint32_t cube;
   float scale; // Remastered's intensity
   // Remastered's ReflectionProbe: how far outside the box (metres) the probe fades out, which
@@ -136,9 +138,14 @@ struct Pick {
     return probe >= 0 && (other.probe < 0 || (inside != other.inside ? inside : score < other.score));
   }
 };
-// The probe for a point: the smallest box that holds it, else the nearest one. Reads the
-// probes' half extents and volumes, which Parse fills in.
-Pick PickProbe(const File& file, const float pos[3]);
+// Whether a probe is in the room now: its layer is one of `activeLayers` (bit n: layer n),
+// as Remastered's ReflectionProbe only registers while its layer is loaded.
+bool ProbeOn(const Probe& probe, uint64_t activeLayers);
+
+// The probe for a point: the smallest box that holds it, else the nearest one. Probes off
+// `activeLayers` are left out. Reads the probes' half extents and volumes, which Parse
+// fills in.
+Pick PickProbe(const File& file, const float pos[3], uint64_t activeLayers = ~uint64_t(0));
 // Fills in a probe's half extents and volume from its worldToBox.
 void SetExtents(Probe& probe);
 
@@ -211,6 +218,9 @@ struct Convergence {
 // A new area's cubes are decoded and its volumes filled in on a worker thread, and handed
 // to the GPU by UpdateFrame; until each is, Select goes without it.
 void SetLoadedAreas(const uint32_t* mreas, size_t count);
+// The script layers of an area in memory that are active (bit n: layer n); every layer
+// until it is set.
+void SetAreaLayers(uint32_t mrea, uint64_t active);
 
 struct Selection {
   uint32_t cube = 0;       // for GXSetPBRCube; 0 when the room has none

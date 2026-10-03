@@ -15,20 +15,38 @@ class CVector3f;
 // them in place of the area's own world geometry.
 //
 // The file is little endian:
-//   'MPRG', u32 version (1 or 2), u32 instances
+//   'MPRG', u32 version (1 to 3), u32 instances
 //   instance: u32 CMDL id, f32 transform[12] (rows of model -> area)
-//     version 2 adds: u8 layer, u8 active, u16 links, then per link
-//     u32 sender, u8 state, u8 action, u16 0
+//     version 2 adds: u8 layer, u8 active, u16 links,
+//     version 3 then: u32 platform, f32 platformStart[3],
+//     then (2 and 3) per link: u32 sender, u8 state, u8 action, u16 0
 // An instance whose CMDL does not exist is skipped.
 //
 // Version 2 is for scenery Remastered added as actors, which its scripts show and hide:
 // such an instance is drawn only while the area's script layer `layer` is on (kEveryLayer:
 // always), starts shown or hidden by `active`, and changes when the retail object with
 // editor id `sender` sends `state` (an EScriptObjectState).
+//
+// Version 3 adds the actors a platform carries (its Play -> Activate connections, which
+// retail's CScriptPlatform::BuildSlaveList takes as slaves): `platform` is the retail
+// platform's editor id (0: none) and `platformStart` where it stands in the world when its
+// area is made. Such an instance moves by what the platform has moved since, as a slave
+// is dragged by the platform's translation alone.
+//
+// Version 3 may end with Remastered's own script objects that show and hide geometry, which
+// retail has no object for (Script):
+//   'SCRP', u32 nodes, u32 edges
+//   node: u8 kind, u8 active, u16 0, u32 counter max, f32 centre[3], half[3], axes[9]
+//   edge: u8 retail, u8 event, u8 action, u8 0, u32 from, u32 to
+//   then u32 group per instance (kNoGroup: none)
 namespace PortRoomGeo {
 
 enum : uint8_t { kEveryLayer = 0xff };
-enum LinkAction : uint8_t { kShow = 1, kHide = 2, kToggle = 3 };
+enum : uint32_t { kNoGroup = 0xffffffff };
+// kFollow (with state MaxReached): `sender` is a DamageableTrigger, and the instance is one
+// of the actors retail's trigger shows and fades with itself (SetLinkedObjectAlpha): drawn
+// at the trigger's puddle alpha while it is active, hidden once it goes inactive.
+enum LinkAction : uint8_t { kShow = 1, kHide = 2, kToggle = 3, kFollow = 4 };
 
 struct Link {
   uint32_t sender; // retail editor id, layer bits included
@@ -42,15 +60,68 @@ struct Instance {
   uint8_t layer = kEveryLayer;
   bool active = true;
   std::vector<Link> links;
+  uint32_t platform = 0; // retail editor id, layer bits included
+  float platformStart[3] = {};
+  uint32_t group = kNoGroup; // the Remastered entity the scripts show and hide it by
+};
+
+// Remastered's script objects between what happens in game and a group of instances.
+enum NodeKind : uint8_t {
+  // A TriggerMP1 that detects the camera: sends Entered (event 0) when the camera comes into
+  // its box and Exited (1) when it leaves. The box is in area space: a point p is inside when
+  // |dot(p - centre, axis i)| <= half[i] for each axis (axes[3i..3i+2], unit length).
+  kCameraVolume = 1,
+  // A Counter: kIncrement/kDecrement move it within 0..max; a change to 1 or more sends
+  // MaxReached (event 2, at max) and then NonZero (0), a change to 0 sends Zero (1).
+  kCounter = 2,
+  // Remastered's Relay: kFire sends Fired (event 0).
+  kRelay = 3,
+};
+enum ScriptAction : uint8_t {
+  kIncrement = 1,
+  kDecrement = 2,
+  kFire = 3,
+  kGroupShow = 4, // `to` is a group
+  kGroupHide = 5,
+  kGroupToggle = 6,
+  kNodeActivate = 7, // `to` is a node; an inactive node takes no action and sends nothing
+  kNodeDeactivate = 8,
+};
+
+struct ScriptNode {
+  uint8_t kind = 0;
+  bool active = true;
+  uint32_t max = 0;
+  float centre[3] = {};
+  float half[3] = {};
+  float axes[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+};
+
+// `from` is a node index, or for `retail` a retail editor id (layer bits included) whose
+// state `event` (an EScriptObjectState) sets it off.
+struct ScriptEdge {
+  bool retail = false;
+  uint8_t event = 0;
+  uint8_t action = 0;
+  uint32_t from = 0;
+  uint32_t to = 0;
+};
+
+struct Script {
+  std::vector<ScriptNode> nodes;
+  std::vector<ScriptEdge> edges;
+  bool Empty() const { return nodes.empty() && edges.empty(); }
 };
 
 // --- The file (port_room_geo_file.cpp; no game or GX dependencies) -------------
 
 // "1A2B3C4D.roomgeo" (any case) -> 0x1A2B3C4D.
 bool ParseFileName(const std::string& fileName, uint32_t& id);
-bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::string& error);
-// The file for these instances (version 2).
-std::vector<uint8_t> Write(const std::vector<Instance>& instances);
+bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::string& error,
+           Script* script = nullptr);
+// The file for these instances (version 3), with the script section when there is a script
+// or a group.
+std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script* script = nullptr);
 
 // --- The game side (port_room_geo.cpp) -----------------------------------------
 
@@ -74,6 +145,15 @@ void Reset();
 // linked to it. Loads the area's file if the area is newer than the last SetLoadedAreas,
 // since objects send states while their area is still being set up.
 void OnScriptState(CStateManager& mgr, uint32_t editorId, int state);
+// Once a frame, where the game's objects think (CStateManager::Update): runs the camera
+// volumes of every loaded area's Script against the current camera, as CScriptTrigger
+// does for its own.
+void Think(CStateManager& mgr);
+// The console's `roomgeo script`: each loaded area's Script now (camera, nodes, groups).
+std::string ScriptInfo();
+// The console's `roomgeo group <n> show|hide`: sets every loaded area's group n until its
+// script next changes it; how many instances it set.
+int SetGroupShown(uint32_t group, bool shown);
 // A new game, a death or a save state builds a new CStateManager: every instance goes back
 // to how the file starts it, since the scripts will not resend what already happened.
 void ResetScriptState();

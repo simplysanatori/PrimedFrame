@@ -243,6 +243,22 @@ void TestGrid() {
             file.probes[1].priority == 0 && file.probes[1].intensityMin == 0.f && file.probes[1].intensityMax == 1.f,
         "probe: version 7 has the defaults");
 
+  // Version 9 makes the layer field the retail script layer; before it, it is unused.
+  for (size_t i = 0; i < 3; ++i) {
+    const uint32_t layer = i == 1 ? 2u : uint32_t(-1);
+    std::memcpy(v8.data() + 32 + 112 * i + 84, &layer, 4);
+  }
+  Check(PortRoomEnv::Parse(std::vector<uint8_t>(v8), file, error) && file.probes[1].layer == -1,
+        "probe: version 8 ignores the layer");
+  std::vector<uint8_t> v9 = v8;
+  v9[4] = 9;
+  Check(PortRoomEnv::Parse(std::vector<uint8_t>(v9), file, error) && file.probes[0].layer == -1 &&
+            file.probes[1].layer == 2 && file.probes[1].priority == 11,
+        "probe: version 9 layer");
+  Check(PortRoomEnv::ProbeOn(file.probes[0], 0) && PortRoomEnv::ProbeOn(file.probes[1], 1u << 2) &&
+            !PortRoomEnv::ProbeOn(file.probes[1], ~uint64_t(1u << 2)),
+        "probe: on by its layer");
+
   {
     PortRoomEnv::Convergence c;
     c.SetSigma(32.f);
@@ -359,6 +375,12 @@ void TestPick() {
   Check(pick.probe == 2 && !pick.inside && pick.score > 4.99f && pick.score < 5.01f, "pick: the nearest box");
   pick = PortRoomEnv::PickProbe(file, nearRoom);
   Check(pick.probe == 0 && !pick.inside, "pick: outside, nearest");
+  file.probes[1].layer = 3;
+  pick = PortRoomEnv::PickProbe(file, inAlcove, ~(uint64_t(1) << 3));
+  Check(pick.probe == 0 && pick.inside, "pick: a probe whose layer is off is left out");
+  pick = PortRoomEnv::PickProbe(file, inAlcove, uint64_t(1) << 3);
+  Check(pick.probe == 1, "pick: its layer on");
+  file.probes[1].layer = -1;
 
   PortRoomEnv::Pick none;
   Check(!none.Better(pick) && pick.Better(none), "pick: against none");

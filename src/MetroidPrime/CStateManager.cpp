@@ -1500,6 +1500,7 @@ void CStateManager::Update(float dt) {
 
   if (x904_gameState == kGS_Running || x904_gameState == kGS_SoftPaused) {
     Think(dt);
+    PortRoomGeo::Think(*this);
   }
 
   if (x904_gameState != kGS_SoftPaused) {
@@ -2657,6 +2658,23 @@ void CStateManager::PortCaptureProbeFace() const {
     }
   }
   PortRoomEnv::SetLoadedAreas(mreas, mreaCount);
+  // Their probes follow the script layers, as Remastered's ReflectionProbe entities do.
+  if (const CScriptLayerManager* const layers = x8c8_worldLayerState.GetPtr()) {
+    for (int i = 0; i < x850_world->GetNumAreas(); ++i) {
+      const CGameArea& area = *x850_world->GetArea(TAreaId(i));
+      if (!area.IsLoaded()) {
+        continue;
+      }
+      uint64_t active = 0;
+      const int count = layers->GetAreaLayerCount(TAreaId(i));
+      for (int layer = 0; layer < 64; ++layer) {
+        if (layer >= count || layers->IsLayerActive(TAreaId(i), TLayerId(layer))) {
+          active |= uint64_t(1) << layer;
+        }
+      }
+      PortRoomEnv::SetAreaLayers(area.GetAreaAssetId(), active);
+    }
+  }
   if (x8cc_nextAreaId != kInvalidAreaId) {
     PortRoomEnv::SetViewArea(x850_world->GetArea(x8cc_nextAreaId)->GetAreaAssetId());
   }

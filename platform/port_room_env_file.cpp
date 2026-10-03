@@ -9,7 +9,7 @@ namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 8;
+constexpr uint32_t kVersion = 9;
 constexpr uint32_t kMaxGrades = 64;
 constexpr size_t kHeaderSize = 32;
 constexpr size_t kProbeSizeV1 = 100;
@@ -139,7 +139,7 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
     for (int i = 0; i < 9; ++i) {
       probe.worldToCube[i] = GetFloat(p + 48 + i * 4);
     }
-    probe.layer = int32_t(Get32(p + 84));
+    probe.layer = version >= 9 ? int32_t(Get32(p + 84)) : -1;
     probe.cube = Get32(p + 88);
     probe.scale = GetFloat(p + 92);
     if (version >= 8) {
@@ -401,10 +401,17 @@ void SetExtents(Probe& probe) {
   probe.volume = volume;
 }
 
-Pick PickProbe(const File& file, const float pos[3]) {
+bool ProbeOn(const Probe& probe, uint64_t activeLayers) {
+  return probe.layer < 0 || probe.layer >= 64 || (activeLayers >> probe.layer & 1) != 0;
+}
+
+Pick PickProbe(const File& file, const float pos[3], uint64_t activeLayers) {
   Pick best;
   for (size_t i = 0; i < file.probes.size(); ++i) {
     const Probe& probe = file.probes[i];
+    if (!ProbeOn(probe, activeLayers)) {
+      continue;
+    }
     const float* m = probe.worldToBox;
     Pick pick;
     pick.probe = int(i);

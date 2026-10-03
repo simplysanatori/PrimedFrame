@@ -48,6 +48,7 @@ struct Area {
   float exposure = 0.f; // what takes the room's radiance to the display's range; 0: unknown
   float tone[3][4] = {}; // its tone curve
   bool hasGeo = false;   // the mod replaces its geometry
+  uint64_t layers = ~uint64_t(0); // its active script layers (SetAreaLayers)
 };
 
 // The frame's exposure and tone curve, as CPostFXManager::UpdateTonemapping moves them.
@@ -783,7 +784,9 @@ void UpdateProbeBlend() {
   std::vector<BlendCandidate> candidates;
   for (auto& [mrea, area] : sAreas) {
     for (size_t i = 0; i < area.file.probes.size(); ++i) {
-      candidates.push_back({ProbeKey(mrea, i), &area.file.probes[i]});
+      if (ProbeOn(area.file.probes[i], area.layers)) {
+        candidates.push_back({ProbeKey(mrea, i), &area.file.probes[i]});
+      }
     }
   }
   UpdateBlend(candidates.data(), candidates.size(), s.view, s.blend);
@@ -1260,6 +1263,14 @@ void SetLoadedAreas(const uint32_t* mreas, size_t count) {
   }
 }
 
+void SetAreaLayers(uint32_t mrea, uint64_t active) {
+  const auto found = sAreas.find(mrea);
+  if (found != sAreas.end() && found->second.layers != active) {
+    found->second.layers = active;
+    Invalidate(); // the probes Locate may pick
+  }
+}
+
 namespace {
 
 // Where a model's cube, volume and ambient come from, before any exposure: what the point
@@ -1314,7 +1325,7 @@ void Locate(const float pos[3], Located& out) {
   Area* bestArea = nullptr;
   Pick best;
   for (auto& [mrea, area] : sAreas) {
-    const Pick pick = PickProbe(area.file, pos);
+    const Pick pick = PickProbe(area.file, pos, area.layers);
     if (pick.Better(best)) {
       best = pick;
       bestArea = &area;
@@ -1618,7 +1629,7 @@ std::string Info(const float pos[3]) {
                     grade.fadeIn, grade.fadeOut, grade.id, grade.id == 0 ? " (identity)" : "");
       out += line;
     }
-    const Pick pick = PickProbe(file, pos);
+    const Pick pick = PickProbe(file, pos, area.layers);
     for (size_t i = 0; i < file.probes.size(); ++i) {
       const Probe& probe = file.probes[i];
       const GpuCube& cube = area.cubes[probe.cube];
@@ -1640,9 +1651,10 @@ std::string Info(const float pos[3]) {
       bool inside = false;
       const float fade = ProbeFade(probe, pos, inside);
       std::snprintf(line, sizeof(line),
-                    "  probe %zu%s: centre %.1f %.1f %.1f, fade %g, cube %u, scale %g, padding %g, priority %d, "
-                    "intensity %g..%g, average %g, peak %g%s\n",
-                    i, int(i) == pick.probe ? " (picked)" : "", centre[0], centre[1], centre[2],
+                    "  probe %zu%s: layer %d%s, centre %.1f %.1f %.1f, fade %g, cube %u, scale %g, padding %g, "
+                    "priority %d, intensity %g..%g, average %g, peak %g%s\n",
+                    i, int(i) == pick.probe ? " (picked)" : "", probe.layer,
+                    ProbeOn(probe, area.layers) ? "" : " (off)", centre[0], centre[1], centre[2],
                     fade, probe.cube, probe.scale, probe.padding, probe.priority,
                     probe.intensityMin, probe.intensityMax, cube.average * probe.scale, cube.peak * probe.scale,
                     cube.failed ? ", black" : "");

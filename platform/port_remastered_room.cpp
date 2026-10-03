@@ -73,7 +73,6 @@ constexpr uint32_t kPropModConMcon = 0xa8e2ba93;
 constexpr uint32_t kPropActorModel = 0xcb1c52f6;
 // Unnamed in retrotool's templates; what they mean is read off which actors carry them.
 constexpr uint32_t kPropActorAdded = 0x9a25df3b;
-constexpr uint32_t kPropActorAttached = 0x1285da4d;
 // Liquids. A WaterMP1 is the retail water object; the surface drawn for it is a render
 // volume on the same entity.
 constexpr uint32_t kWaterMP1 = 0x12db855d;
@@ -216,6 +215,7 @@ struct Prop {
 struct Component {
   uint32_t type = 0;
   int layer = 0;
+  bool baseLayer = false;  // on the layer that is always loaded (no layer unit, "LU__")
   Span raw;
   Span idta;
   Id16 guid{};
@@ -365,6 +365,12 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
   }
   std::map<Id16, size_t>& byGuid = m_byGuid;
   for (size_t li = 0; li < layers.size(); ++li) {
+    // The header (LHED) names the layer "LU_<layer unit>_PG_…"; the base layer has no unit.
+    static constexpr char kUnit[] = "LU_";
+    const uint8_t* const head = d.data() + layers[li].start;
+    const uint8_t* const headEnd = head + std::min<size_t>(layers[li].size, 256);
+    const uint8_t* const unit = std::search(head, headEnd, kUnit, kUnit + 3);
+    const bool baseLayer = unit + 3 < headEnd && unit[3] == '_';
     std::vector<Span> comps;
     const uint32_t pComp[] = {Tag("SRIP"), Tag("COMP")};
     if (!Find(layers[li].start, layers[li].start + layers[li].size, pComp, 2, comps, error)) {
@@ -381,6 +387,7 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
         Component c;
         c.type = type;
         c.layer = int(li);
+        c.baseLayer = baseLayer;
         const Span s = sden[pi];
         c.raw = s.size >= 4 ? Span{s.start + 4, s.size - 4} : Span{s.start, 0};
         c.idta = idta[ii];
@@ -695,12 +702,39 @@ struct RemasteredScriptEvent {
 #include "port_remastered_script_tables.inc"
 
 constexpr uint32_t kTemplateManager = 0xd645278a;
+constexpr uint8_t kRetailPlatform = 0x08;
+constexpr int kStatePlay = 18;  // EScriptObjectState kSS_Play
+constexpr int kRetailDamageableTrigger = 0x1a;
+constexpr int kStateMaxReached = 7;
 // Actions a connection asks of its target.
 constexpr uint32_t kActionActivate = 0xa34e100f;
 constexpr uint32_t kActionDeactivate = 0xdd169ff3;
 constexpr uint32_t kActionIncrement = 0xd5883f10;
 constexpr uint32_t kActionDecrement = 0x767a0969;
 constexpr uint32_t kActionToggleActive = 0xcdeb03ba;
+// What an Entity is told to do with itself and every component it holds.
+constexpr uint32_t kActionEntityActivate = 0x41435456;    // 'ACTV'
+constexpr uint32_t kActionEntityDeactivate = 0x49435456;  // 'ICTV'
+// Remastered's own script objects, which show and hide room geometry and which retail has
+// no object for (PortRoomGeo::Script).
+constexpr uint32_t kTriggerMP1 = 0xf526fc2a;
+constexpr uint32_t kCounter = 0xa7db53c1;
+constexpr uint32_t kRelay = 0x8fe0bfc9;
+constexpr uint32_t kDebugOptions = 0xef2184e8;  // answers the debug menu only
+constexpr uint32_t kPropTriggerFlags = 0x7ad69562;
+constexpr uint32_t kTriggerDetectCamera = 0x4000;
+constexpr uint32_t kPropCounterMax = 0xce73c1a7;
+constexpr uint32_t kEventEntered = 0xcba5a77b;
+constexpr uint32_t kEventExited = 0x8e8dd42d;
+constexpr uint32_t kEventCounterNonZero = 0x646cf055;
+constexpr uint32_t kEventCounterZero = 0x14f6ecb8;
+constexpr uint32_t kEventCounterMax = 0xe5d0b94a;
+constexpr uint32_t kEventRelayFired = 0xb4a0c8c1;
+constexpr uint32_t kActionCounterIncrement = 0x787f7b2b;
+constexpr uint32_t kActionCounterDecrement = 0x93c513fb;
+constexpr uint32_t kActionRelayFire = 0xd432447e;
+constexpr uint32_t kActionTriggerActivate = 0x3067f115;
+constexpr uint32_t kActionTriggerDeactivate = 0xb5dd4543;
 // Retail types of the Remastered objects a message passes through, and the actions that
 // make each pass it on.
 struct Pass {
@@ -848,7 +882,14 @@ struct SceneryScripts {
   std::map<int, uint8_t> layer;  // by entity: the retail layer it is drawn on
   std::map<int, std::vector<PortRoomGeo::Link>> links;  // by entity
   std::map<int, size_t> unresolved;                      // by entity: connections not traced
+  std::map<int, const ScriptObject*> platform;           // by entity: the platform carrying it
   size_t entities = 0, matched = 0;
+  // Remastered's own objects in between (camera volumes, counters, relays) and the
+  // entities they show and hide, by group number.
+  PortRoomGeo::Script script;
+  std::map<int, uint32_t> group;  // by entity
+  std::set<int> scriptShows;      // entities a script edge can show
+  size_t scriptUnresolved = 0;    // connections into the script not traced
 };
 
 SceneryScripts MatchScripts(const Room& room, const Area& area) {
@@ -860,6 +901,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
   struct Ent {
     int entity;
     int layer;
+    bool baseLayer;  // always loaded: drawn on no retail layer
     int type;
     bool hasPos;
     Vec3 w;  // GameCube world position
@@ -870,7 +912,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     if (c.entity < 0 || c.type == kEntity || entIndex.count(c.entity) != 0) {
       continue;
     }
-    Ent e{c.entity, c.layer, RetailType(c.type), false, {}};
+    Ent e{c.entity, c.layer, c.baseLayer, RetailType(c.type), false, {}};
     Vec3 pos, rot, scale;
     if (room.Xform(c, pos, rot, scale)) {
       e.hasPos = true;
@@ -1019,6 +1061,8 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     }
   }
   // A Remastered layer is drawn on the retail layer most of its matched entities are on.
+  // Remastered's base layer is always loaded, whatever its entities' retail layers (in
+  // Phendrana Shorelines its vote picked a 15-object layer), so it is on no layer.
   std::map<int, std::vector<std::pair<uint8_t, int>>> votes;
   for (size_t k = 0; k < ents.size(); ++k) {
     if (match[k] < 0) {
@@ -1035,16 +1079,60 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     }
   }
   // Incoming connections, followed back to matched senders.
+  // A connection to an Entity is to that entity (its own `entity` is its parent's), one to
+  // any other component is to the entity holding it.
+  auto targetEntity = [&](const Connection& c) -> int {
+    const int t = room.ByGuid(c.target);
+    return t < 0 ? -1 : comps[size_t(t)].type == kEntity ? t : comps[size_t(t)].entity;
+  };
   std::map<int, std::vector<const Connection*>> incoming;  // by target entity component
   for (const Connection& c : conns) {
-    const int t = room.ByGuid(c.target);
-    if (t >= 0 && comps[size_t(t)].entity >= 0) {
-      incoming[comps[size_t(t)].entity].push_back(&c);
+    const int t = targetEntity(c);
+    if (t >= 0) {
+      incoming[t].push_back(&c);
+    }
+  }
+  // The entities that are Remastered's own script objects, and the component of each that
+  // says what it is.
+  std::map<int, std::pair<uint8_t, size_t>> scriptObject;  // by entity: node kind, component
+  for (size_t i = 0; i < comps.size(); ++i) {
+    const Component& c = comps[i];
+    if (c.entity < 0) {
+      continue;
+    }
+    uint8_t kind = 0;
+    if (c.type == kTriggerMP1) {
+      const auto f = room.Flat(c);
+      const auto flags = f.find(kPropTriggerFlags);
+      if (flags != f.end() && flags->second.size == 4 &&
+          (Le32(room.Bytes(flags->second)) & kTriggerDetectCamera) != 0) {
+        kind = PortRoomGeo::kCameraVolume;
+      }
+    } else if (c.type == kCounter) {
+      kind = PortRoomGeo::kCounter;
+    } else if (c.type == kRelay) {
+      kind = PortRoomGeo::kRelay;
+    }
+    if (kind != 0) {
+      scriptObject[c.entity] = {kind, i};
+    }
+  }
+  auto isScriptObject = [&](size_t comp) { return comps[comp].entity >= 0 && scriptObject.count(comps[comp].entity) != 0; };
+  // A platform's Play -> Activate connections name the actors it carries
+  // (CScriptPlatform::BuildSlaveList).
+  for (const Connection& c : conns) {
+    const int t = room.ByGuid(c.target), s = entityOf(int(c.sender));
+    if (t < 0 || comps[size_t(t)].entity < 0 || s < 0 || match[size_t(s)] < 0 || c.action != kActionActivate) {
+      continue;
+    }
+    const ScriptObject& sender = objects[size_t(match[size_t(s)])];
+    if (sender.type == kRetailPlatform && RetailState(comps[c.sender].type, c.event) == kStatePlay) {
+      result.platform[comps[size_t(t)].entity] = &sender;
     }
   }
   for (const Ent& e : ents) {
     const auto v = votes.find(e.layer);
-    if (v != votes.end()) {
+    if (v != votes.end() && !e.baseLayer) {
       auto best = v->second.begin();
       for (auto it = v->second.begin(); it != v->second.end(); ++it) {
         if (it->second > best->second) {
@@ -1063,7 +1151,9 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       }
       for (const Connection* c : in->second) {
         const Component& sender = comps[c->sender];
-        if (sender.type == kTemplateManager || (depth > 0 && !PassFires(via, c->action))) {
+        // Remastered's own objects are followed by the script (below).
+        if (sender.type == kTemplateManager || sender.type == kDebugOptions || isScriptObject(c->sender) ||
+            (depth > 0 && !PassFires(via, c->action))) {
           continue;
         }
         const int s = entityOf(int(c->sender));
@@ -1071,10 +1161,18 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
         const uint32_t first = depth > 0 ? action : c->action;
         const int type = RetailType(sender.type);
         if (s >= 0 && match[size_t(s)] >= 0 && state >= 0) {
-          const uint8_t act = first == kActionActivate || first == kActionIncrement     ? PortRoomGeo::kShow
-                              : first == kActionDeactivate || first == kActionDecrement ? PortRoomGeo::kHide
-                              : first == kActionToggleActive                            ? PortRoomGeo::kToggle
-                                                                                        : 0;
+          // A DamageableTrigger reads its own MaxReached -> Activate connections and never
+          // sends them, so only a direct one counts.
+          const bool follows = depth == 0 && type == kRetailDamageableTrigger && state == kStateMaxReached &&
+                               first == kActionActivate;
+          const uint8_t act = follows ? PortRoomGeo::kFollow
+                              : first == kActionActivate || first == kActionIncrement || first == kActionEntityActivate
+                                  ? PortRoomGeo::kShow
+                              : first == kActionDeactivate || first == kActionDecrement ||
+                                      first == kActionEntityDeactivate
+                                  ? PortRoomGeo::kHide
+                              : first == kActionToggleActive ? PortRoomGeo::kToggle
+                                                             : 0;
           if (act != 0 && state < 256) {
             links.push_back({objects[size_t(match[size_t(s)])].id, uint8_t(state), act});
           }
@@ -1095,6 +1193,153 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     if (bad != 0) {
       result.unresolved[e.entity] = bad;
     }
+  }
+  // Remastered's own objects that show and hide geometry, followed back from the geometry
+  // through whatever drives them: the camera volumes that count which side of a wall the
+  // camera is on, the counters they count with and the relays in between.
+  std::set<int> geometry;  // entities with a ModCon or an added actor
+  for (const Component& c : comps) {
+    if (c.entity >= 0 && (c.type == kModCon || (c.type == kActorMP1 && room.Flat(c).count(kPropActorAdded) != 0))) {
+      geometry.insert(c.entity);
+    }
+  }
+  PortRoomGeo::Script& script = result.script;
+  std::map<int, uint32_t> nodeOf;  // by entity
+  std::vector<int> pending;
+  auto nodeFor = [&](int entity) -> uint32_t {
+    const auto known = nodeOf.find(entity);
+    if (known != nodeOf.end()) {
+      return known->second;
+    }
+    const auto& [kind, comp] = scriptObject.at(entity);
+    const Component& c = comps[comp];
+    PortRoomGeo::ScriptNode node;
+    node.kind = kind;
+    node.active = room.Active(c);
+    if (kind == PortRoomGeo::kCounter) {
+      const auto f = room.Flat(c);
+      const auto max = f.find(kPropCounterMax);
+      if (max != f.end() && max->second.size == 4) {
+        node.max = Le32(room.Bytes(max->second));
+      }
+    }
+    Vec3 pos, rot, scale;
+    if (kind == PortRoomGeo::kCameraVolume && !room.Xform(c, pos, rot, scale)) {
+      // No box to be in: a volume no point is inside, even once something activates it.
+      for (float& half : node.half) {
+        half = -1.f;
+      }
+    } else if (kind == PortRoomGeo::kCameraVolume) {
+      // The box is the entity's: centred on it, `scale` across, turned Rz * Ry * Rx, here
+      // in area space (gc[i] = kSign[i] * remastered[kAxis[i]]) as the instances are.
+      static const int kAxis[3] = {0, 2, 1};
+      static const double kSign[3] = {-1, 1, 1};
+      double s[3], k[3];
+      for (int i = 0; i < 3; ++i) {
+        s[i] = std::sin(rot[i] * (3.14159265358979323846 / 180.0));
+        k[i] = std::cos(rot[i] * (3.14159265358979323846 / 180.0));
+      }
+      const double m[3][3] = {
+          {k[2] * k[1], k[2] * s[1] * s[0] - s[2] * k[0], k[2] * s[1] * k[0] + s[2] * s[0]},
+          {s[2] * k[1], s[2] * s[1] * s[0] + k[2] * k[0], s[2] * s[1] * k[0] - k[2] * s[0]},
+          {-s[1], k[1] * s[0], k[1] * k[0]},
+      };
+      for (int col = 0; col < 3; ++col) {
+        node.centre[col] = float(kSign[col] * pos[kAxis[col]]);
+        node.half[col] = float(std::fabs(scale[kAxis[col]]) / 2);
+        for (int row = 0; row < 3; ++row) {
+          node.axes[3 * col + row] = float(kSign[row] * kSign[col] * m[kAxis[row]][kAxis[col]]);
+        }
+      }
+    }
+    nodeOf[entity] = uint32_t(script.nodes.size());
+    script.nodes.push_back(node);
+    pending.push_back(entity);
+    return nodeOf[entity];
+  };
+  // The node event a script object's event is, -1 for one it does not send.
+  auto nodeEvent = [](uint8_t kind, uint32_t event) -> int {
+    switch (kind) {
+    case PortRoomGeo::kCameraVolume:
+      return event == kEventEntered ? 0 : event == kEventExited ? 1 : -1;
+    case PortRoomGeo::kCounter:
+      return event == kEventCounterNonZero ? 0 : event == kEventCounterZero ? 1 : event == kEventCounterMax ? 2 : -1;
+    default:
+      return event == kEventRelayFired ? 0 : -1;
+    }
+  };
+  // What an action asks of a group (kind 0) or a node of this kind, 0 for nothing known.
+  auto scriptAction = [](uint8_t kind, uint32_t action) -> uint8_t {
+    const bool on = action == kActionActivate || action == kActionEntityActivate;
+    const bool off = action == kActionDeactivate || action == kActionEntityDeactivate;
+    if (kind == 0) {
+      return on ? PortRoomGeo::kGroupShow
+             : off ? PortRoomGeo::kGroupHide
+             : action == kActionToggleActive ? PortRoomGeo::kGroupToggle
+                                              : 0;
+    }
+    if (on || (kind == PortRoomGeo::kCameraVolume && action == kActionTriggerActivate)) {
+      return PortRoomGeo::kNodeActivate;
+    }
+    if (off || (kind == PortRoomGeo::kCameraVolume && action == kActionTriggerDeactivate)) {
+      return PortRoomGeo::kNodeDeactivate;
+    }
+    if (kind == PortRoomGeo::kCounter) {
+      return action == kActionCounterIncrement ? PortRoomGeo::kIncrement
+             : action == kActionCounterDecrement ? PortRoomGeo::kDecrement
+                                                 : 0;
+    }
+    return kind == PortRoomGeo::kRelay && action == kActionRelayFire ? PortRoomGeo::kFire : 0;
+  };
+  // The edges into a geometry entity (group: from the script objects only, the walk above
+  // has the rest) or a node (from anything).
+  auto inputs = [&](int target, bool group, uint8_t kind) {
+    const auto in = incoming.find(target);
+    if (in == incoming.end()) {
+      return;
+    }
+    for (const Connection* c : in->second) {
+      const Component& sender = comps[c->sender];
+      const bool fromScript = isScriptObject(c->sender);
+      if (sender.type == kTemplateManager || sender.type == kDebugOptions || (group && !fromScript)) {
+        continue;
+      }
+      const uint8_t action = scriptAction(kind, c->action);
+      int event = -1;
+      if (fromScript) {
+        event = nodeEvent(scriptObject.at(sender.entity).first, c->event);
+      } else {
+        const int s = entityOf(int(c->sender));
+        const int state = RetailState(sender.type, c->event);
+        event = s >= 0 && match[size_t(s)] >= 0 && state < 256 ? state : -1;
+      }
+      if (action == 0 || event < 0) {
+        ++result.scriptUnresolved;
+        continue;
+      }
+      PortRoomGeo::ScriptEdge edge;
+      edge.retail = !fromScript;
+      edge.event = uint8_t(event);
+      edge.action = action;
+      if (group) {
+        const uint32_t next = uint32_t(result.group.size());
+        edge.to = result.group.emplace(target, next).first->second;
+        if (action != PortRoomGeo::kGroupHide) {
+          result.scriptShows.insert(target);
+        }
+      } else {
+        edge.to = nodeOf.at(target);
+      }
+      edge.from = fromScript ? nodeFor(sender.entity) : objects[size_t(match[size_t(entityOf(int(c->sender)))])].id;
+      script.edges.push_back(edge);
+    }
+  };
+  for (int entity : geometry) {
+    inputs(entity, true, 0);
+  }
+  for (size_t i = 0; i < pending.size(); ++i) {
+    const int entity = pending[i];
+    inputs(entity, false, scriptObject.at(entity).first);
   }
   return result;
 }
@@ -1822,7 +2067,49 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   const RoomPak home{r.name, r.pak};
   std::vector<PortRoomGeo::Instance> instances;
   size_t dropped = 0;
+  const SceneryScripts scripts = MatchScripts(r.room, area);
+  // Whether an entity that starts inactive can be shown: by a retail object (links) or by
+  // Remastered's own script. One that cannot is never seen: the ships of the landing
+  // cutscene sit in the sky and on the pad, where retail's own ship already is.
+  auto canShow = [&](int entity) {
+    const auto links = scripts.links.find(entity);
+    return scripts.scriptShows.count(entity) != 0 ||
+           (links != scripts.links.end() &&
+            std::any_of(links->second.begin(), links->second.end(),
+                        [](const PortRoomGeo::Link& l) { return l.action != PortRoomGeo::kHide; }));
+  };
+  size_t gated = 0, linked = 0, grouped = 0, inactive = 0, unresolved = 0;
+  // What the entity's scripts make of an instance: its layer, whether it starts shown, and
+  // what shows and hides it.
+  auto script = [&](PortRoomGeo::Instance& inst, int entity, bool active) {
+    inst.active = active;
+    const auto layer = scripts.layer.find(entity);
+    if (layer != scripts.layer.end() && layer->second != 0) {
+      // Layer 0 is always on; leaving it unset skips the lookup.
+      inst.layer = layer->second;
+      ++gated;
+    }
+    const auto links = scripts.links.find(entity);
+    if (links != scripts.links.end()) {
+      inst.links = links->second;
+      ++linked;
+    }
+    const auto group = scripts.group.find(entity);
+    if (group != scripts.group.end()) {
+      inst.group = group->second;
+      ++grouped;
+    }
+    if (scripts.unresolved.count(entity) != 0) {
+      ++unresolved;
+    }
+  };
+  size_t modcons = 0;
   for (const Component* c : r.room.Of(kModCon)) {
+    const bool active = r.room.Active(*c);
+    if (!active && !canShow(c->entity)) {
+      ++inactive;
+      continue;
+    }
     const auto f = r.room.Flat(*c);
     const auto prop = f.find(kPropModConMcon);
     std::vector<uint8_t> data;
@@ -1865,17 +2152,19 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
         }
         inst.transform[4 * row + 3] = float(kSign[row] * double(LeFloat(from + 12)));
       }
+      script(inst, c->entity, active);
+      ++modcons;
     }
   }
   // Scenery Remastered added as actors rather than as room geometry: the frame around each
   // door, and pieces of the room itself that sit on its "RS" layer. They carry kPropActorAdded,
-  // which no actor that retail also has does. One that also has kPropActorAttached may follow
-  // another object (platforms carry them), so it is left out rather than drawn where it starts.
-  // Each is drawn on the retail layer its own layer stands for, and shown and hidden by the
-  // retail objects that drive it (MatchScripts).
+  // which no actor that retail also has does. Each is drawn on the retail layer its own layer
+  // stands for, shown and hidden by the retail objects that drive it, and moved by the
+  // platform that carries it, if one does (MatchScripts). Property 1285da4d, which some
+  // carry, names no parent: most actors with it stand still, and the room's script
+  // connections are what make one a platform's.
   std::map<Id16, uint32_t> actorModels;  // 0 when the model did not convert
-  size_t actors = 0, attached = 0, inactive = 0, linked = 0, unresolved = 0, gated = 0;
-  const SceneryScripts scripts = MatchScripts(r.room, area);
+  size_t actors = 0, riding = 0;
   for (const Component* c : r.room.Of(kActorMP1)) {
     const auto f = r.room.Flat(*c);
     const auto prop = f.find(kPropActorModel);
@@ -1884,19 +2173,8 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
         !r.room.Xform(*c, pos, rot, scale)) {
       continue;
     }
-    if (f.find(kPropActorAttached) != f.end()) {
-      ++attached;
-      continue;
-    }
-    // One that starts inactive waits for a script: the ships of the landing cutscene sit in
-    // the sky and on the pad, where retail's own ship already is. Without a script that can
-    // show it, it is left out.
     const bool active = r.room.Active(*c);
-    const auto links = scripts.links.find(c->entity);
-    const bool canShow =
-        links != scripts.links.end() &&
-        std::any_of(links->second.begin(), links->second.end(), [](const PortRoomGeo::Link& l) { return l.action != PortRoomGeo::kHide; });
-    if (!active && !canShow) {
+    if (!active && !canShow(c->entity)) {
       ++inactive;
       continue;
     }
@@ -1935,19 +2213,14 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       }
       inst.transform[4 * row + 3] = float(kSign[row] * pos[kAxis[row]]);
     }
-    inst.active = active;
-    const auto layer = scripts.layer.find(c->entity);
-    if (layer != scripts.layer.end() && layer->second != 0) {
-      // Layer 0 is always on; leaving it unset skips the lookup.
-      inst.layer = layer->second;
-      ++gated;
-    }
-    if (links != scripts.links.end()) {
-      inst.links = links->second;
-      ++linked;
-    }
-    if (scripts.unresolved.count(c->entity) != 0) {
-      ++unresolved;
+    script(inst, c->entity, active);
+    const auto platform = scripts.platform.find(c->entity);
+    if (platform != scripts.platform.end()) {
+      inst.platform = platform->second->id;
+      for (int i = 0; i < 3; ++i) {
+        inst.platformStart[i] = float(platform->second->pos[i]);
+      }
+      ++riding;
     }
     ++actors;
   }
@@ -1955,19 +2228,21 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     return;
   }
   const uint32_t count = uint32_t(instances.size());
-  const std::vector<uint8_t> out = PortRoomGeo::Write(instances);
+  const std::vector<uint8_t> out = PortRoomGeo::Write(instances, &scripts.script);
   char file[32];
   std::snprintf(file, sizeof file, "%08X.roomgeo", mrea);
   if (!m_io.write || !m_io.write(file, out)) {
     Log("  " + r.name + ": could not write " + file);
     return;
   }
-  char line[320];
+  char line[512];
   std::snprintf(line, sizeof line,
-                "  %s: %u instances (%zu actors, %zu attached and %zu inactive ones left out; %zu on a layer, %zu "
-                "scripted, %zu with untraced links; %zu of %zu entities matched), %zu dropped",
-                r.name.c_str(), count, actors, attached, inactive, gated, linked, unresolved, scripts.matched,
-                scripts.entities, dropped);
+                "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu inactive objects left out; %zu on a layer, "
+                "%zu scripted, %zu in %zu groups of %zu script objects and %zu connections (%zu untraced), %zu on a "
+                "platform, %zu with untraced links; %zu of %zu entities matched), %zu dropped",
+                r.name.c_str(), mrea, count, modcons, actors, inactive, gated, linked, grouped, scripts.group.size(),
+                scripts.script.nodes.size(), scripts.script.edges.size(), scripts.scriptUnresolved, riding, unresolved,
+                scripts.matched, scripts.entities, dropped);
   Log(line);
 }
 
@@ -2105,6 +2380,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     trans[i] = m.a[size_t(i)][3];
   }
 
+  const SceneryScripts scripts = MatchScripts(r.room, *m.area);
   std::vector<uint8_t> probes;
   size_t probeCount = 0;
   std::vector<std::vector<uint8_t>> cubes;
@@ -2218,7 +2494,9 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       return p != f.end() && p->second.size >= 4 ? LeFloat(r.room.Bytes(p->second)) : fallback;
     };
     const auto priority = f.find(kPropProbePriority);
-    PutLe32(probes, uint32_t(c->layer));
+    // The retail layer its own layer is drawn on (MatchScripts), as for colour grades.
+    const auto layer = scripts.layer.find(c->entity);
+    PutLe32(probes, uint32_t(layer != scripts.layer.end() ? int32_t(layer->second) : -1));
     PutLe32(probes, uint32_t(index[txtrId]));
     PutFloat(probes, probeScale);
     PutFloat(probes, prop(kPropProbePadding, 1.0f));
@@ -2240,7 +2518,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  PutLe32(out, 8);
+  PutLe32(out, 9);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);

@@ -1015,6 +1015,12 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       io.liquid = liquidId;
       io.wantsGeometry = WantsGeometry;
       io.cancelled = [] { return sCancel.load(); };
+      // One line a room (what was left out and why): too many for the panel, so the log.
+      io.log = [](const std::string& line) {
+        static std::mutex logMutex;
+        std::lock_guard<std::mutex> lock(logMutex);
+        std::printf("remastered import: %s\n", line.c_str());
+      };
       int written = 0;
       std::string worldError;
       bool ok = false;

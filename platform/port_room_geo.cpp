@@ -15,12 +15,17 @@
 #include "Kyoto/Graphics/CModelFlags.hpp"
 #include "Kyoto/Math/CAABox.hpp"
 #include "Kyoto/Math/CFrustumPlanes.hpp"
+#include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/CActorLights.hpp"
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "MetroidPrime/Cameras/CGameCamera.hpp"
 #include "MetroidPrime/CGameArea.hpp"
 #include "MetroidPrime/CModelData.hpp"
 #include "MetroidPrime/CScriptLayerManager.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/CWorld.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptDamageableTrigger.hpp"
+#include "MetroidPrime/TCastTo.hpp"
 #include "MetaRender/CCubeRenderer.hpp"
 
 #include <algorithm>
@@ -59,6 +64,23 @@ struct Placed {
   uint8_t layer = kEveryLayer; // drawn only while this script layer is on
   bool shown = true;           // by the area's scripts
   bool active = true;          // what the file starts it as
+  // A platform's slave (0: none): the platform's editor id, where it stood when its area
+  // was made, and how far from there it was when `xf` was last moved with it.
+  uint32_t platform = 0;
+  CVector3f platformStart = CVector3f::Zero();
+  CVector3f dragged = CVector3f::Zero();
+  // A DamageableTrigger's linked actor (kFollow; 0: none): the trigger's editor id, whether
+  // it was last seen active, and the alpha it draws this instance at.
+  uint32_t follow = 0;
+  bool following = false;
+  float alpha = 1.f;
+};
+
+// A script node now (see ScriptNode).
+struct NodeState {
+  bool active = true;
+  bool inside = false; // a camera volume: the camera was in it when last looked at
+  uint32_t count = 0;  // a counter's value
 };
 
 // An instance shown or hidden when a script object sends a state.
@@ -79,6 +101,14 @@ struct Area {
   std::vector< Trigger > triggers;
   bool gated = false; // some instance has a layer
   size_t loaded = 0;
+  // Remastered's own script objects (Script), what each is now, the items of each group,
+  // and each node's edges out.
+  Script script;
+  std::vector< NodeState > nodes;
+  std::vector< std::vector< size_t > > groups;
+  std::vector< std::vector< size_t > > edgesFrom;
+  bool retailEdges = false; // some edge starts at a retail object
+  float camera[3] = {};      // where Think last saw the camera, in area space
 };
 
 // Areas in memory; one without a file has no instances. Never destroyed: the models' tokens
@@ -152,6 +182,14 @@ std::vector< uint8_t > ReadAll(std::ifstream& in) {
   return data;
 }
 
+// The script objects as the file has them: a counter at 0, the camera in no volume.
+void ResetNodes(Area& area) {
+  area.nodes.assign(area.script.nodes.size(), NodeState());
+  for (size_t i = 0; i < area.nodes.size(); ++i) {
+    area.nodes[i].active = area.script.nodes[i].active;
+  }
+}
+
 void Load(uint32_t mrea, Area& area) {
   const std::string path = PortMods::RoomGeoPath(mrea);
   if (path.empty() || gpResourceFactory == nullptr) {
@@ -160,9 +198,10 @@ void Load(uint32_t mrea, Area& area) {
   std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
   const std::vector< uint8_t > data = ReadAll(in);
   std::string error;
-  if (!in || !Parse(data, area.instances, error)) {
+  if (!in || !Parse(data, area.instances, error, &area.script)) {
     PortLog::Write("room geo: %s: %s\n", path.c_str(), error.empty() ? "cannot read" : error.c_str());
     area.instances.clear();
+    area.script = Script();
     return;
   }
   // A model the import could not convert leaves its instances behind.
@@ -191,20 +230,134 @@ void Load(uint32_t mrea, Area& area) {
     item.xf = CTransform4f(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11]);
     item.layer = instance.layer;
     item.shown = item.active = instance.active;
+    item.platform = instance.platform;
+    item.platformStart =
+        CVector3f(instance.platformStart[0], instance.platformStart[1], instance.platformStart[2]);
     area.gated = area.gated || item.layer != kEveryLayer;
+    if (instance.group != kNoGroup) {
+      if (area.groups.size() <= instance.group) {
+        area.groups.resize(size_t(instance.group) + 1);
+      }
+      area.groups[instance.group].push_back(area.items.size() - 1);
+    }
     for (const Link& link : instance.links) {
+      if (link.action == kFollow) {
+        // GetIdForScript wants the layer bits too.
+        item.follow = link.sender;
+        continue;
+      }
       area.triggers.push_back({link.sender & 0x3ffffff, link.state, link.action, area.items.size() - 1});
     }
   }
   for (Placed& item : area.items) {
     item.owner = &area;
   }
-  sTriggers = sTriggers || !area.triggers.empty();
+  area.edgesFrom.assign(area.script.nodes.size(), {});
+  for (size_t i = 0; i < area.script.edges.size(); ++i) {
+    const ScriptEdge& edge = area.script.edges[i];
+    if (edge.retail) {
+      area.retailEdges = true;
+    } else {
+      area.edgesFrom[edge.from].push_back(i);
+    }
+  }
+  ResetNodes(area);
+  sTriggers = sTriggers || !area.triggers.empty() || area.retailEdges;
   area.instances.clear();
   area.instances.shrink_to_fit();
   area.hasFile = !area.items.empty();
-  PortLog::Write("room geo: %08X: %zu instance(s) of %zu model(s), %zu without a model, %zu trigger(s)\n", mrea,
-                 area.items.size(), area.models.size(), missing, area.triggers.size());
+  PortLog::Write("room geo: %08X: %zu instance(s) of %zu model(s), %zu without a model, %zu trigger(s), %zu script "
+                 "node(s), %zu edge(s), %zu group(s)\n",
+                 mrea, area.items.size(), area.models.size(), missing, area.triggers.size(),
+                 area.script.nodes.size(), area.script.edges.size(), area.groups.size());
+}
+
+void Apply(Area& area, const ScriptEdge& edge, int depth);
+
+// Edges one outside event may set off. A loop that fans out would otherwise take
+// exponential time before the depth limit stops it.
+constexpr int kApplyBudget = 4096;
+int sApplyBudget = kApplyBudget;
+bool sBudgetLogged = false;
+
+// A node sends an event: every edge out of it with that event acts, in the file's order,
+// each before the next as retail's SendScriptMsgs does.
+void Send(Area& area, uint32_t node, uint8_t event, int depth) {
+  // Remastered's objects can be wired in a loop; retail's would recurse until the stack
+  // ran out, which no room depends on.
+  if (depth > 32) {
+    return;
+  }
+  if (sApplyBudget <= 0) {
+    if (!sBudgetLogged) {
+      PortLog::Write("room geo: script loop; stopped after %d edges\n", kApplyBudget);
+      sBudgetLogged = true;
+    }
+    return;
+  }
+  for (const size_t i : area.edgesFrom[node]) {
+    const ScriptEdge& edge = area.script.edges[i];
+    if (edge.event == event) {
+      Apply(area, edge, depth + 1);
+    }
+  }
+}
+
+void Apply(Area& area, const ScriptEdge& edge, int depth) {
+  --sApplyBudget;
+  if (edge.action == kGroupShow || edge.action == kGroupHide || edge.action == kGroupToggle) {
+    if (edge.to >= area.groups.size()) {
+      return;
+    }
+    size_t changed = 0;
+    for (const size_t i : area.groups[edge.to]) {
+      Placed& item = area.items[i];
+      const bool shown = edge.action == kGroupShow ? true : edge.action == kGroupHide ? false : !item.shown;
+      changed += shown != item.shown;
+      item.shown = shown;
+    }
+    if (changed != 0) {
+      PortLog::Write("room geo: group %u: %zu of %zu instance(s) %s\n", unsigned(edge.to), changed,
+                     area.groups[edge.to].size(), edge.action == kGroupShow ? "shown" : edge.action == kGroupHide ? "hidden" : "toggled");
+    }
+    return;
+  }
+  NodeState& node = area.nodes[edge.to];
+  const ScriptNode& kind = area.script.nodes[edge.to];
+  switch (edge.action) {
+  case kNodeActivate:
+    node.active = true;
+    return;
+  case kNodeDeactivate:
+    // A trigger told to stop forgets what is inside it (CScriptTrigger::AcceptScriptMsg),
+    // so it sends Entered again once it is back on and the camera is still in it.
+    node.active = false;
+    node.inside = false;
+    return;
+  default:
+    break;
+  }
+  if (!node.active) {
+    return;
+  }
+  if (edge.action == kFire && kind.kind == kRelay) {
+    Send(area, edge.to, 0, depth);
+  } else if (edge.action == kIncrement && kind.kind == kCounter) {
+    if (kind.max != 0 && node.count >= kind.max) {
+      return;
+    }
+    ++node.count;
+    if (node.count == kind.max) {
+      Send(area, edge.to, 2, depth);
+    }
+    Send(area, edge.to, 0, depth);
+  } else if (edge.action == kDecrement && kind.kind == kCounter) {
+    if (node.count == 0) {
+      return;
+    }
+    --node.count;
+    Send(area, edge.to, node.count == 0 ? 1 : 0, depth);
+  }
 }
 
 } // namespace
@@ -232,7 +385,7 @@ void SetLoadedAreas(const uint32_t* mreas, size_t count) {
       it = areas.erase(it);
       ++sGeneration;
     } else {
-      sTriggers = sTriggers || !it->second.triggers.empty();
+      sTriggers = sTriggers || !it->second.triggers.empty() || it->second.retailEdges;
       ++it;
     }
   }
@@ -271,6 +424,25 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     }
     area.placed = true;
   }
+  // Slaves go where the platform has taken them (CScriptPlatform::DragSlaves adds each
+  // translation the platform makes, never its turns). One whose platform is gone stays
+  // where it was last taken.
+  for (Placed& item : area.items) {
+    if (item.platform == 0) {
+      continue;
+    }
+    const CActor* const platform =
+        TCastToConstPtr< CActor >(mgr.GetObjectById(mgr.GetIdForScript(TEditorId(item.platform))));
+    if (platform == nullptr) {
+      continue;
+    }
+    const CVector3f dragged = platform->GetTranslation() - item.platformStart;
+    if (dragged != item.dragged) {
+      item.xf.AddTranslation(dragged - item.dragged);
+      item.dragged = dragged;
+      item.bounded = false;
+    }
+  }
   if (area.loaded != area.models.size()) {
     area.loaded = 0;
     for (Model& model : area.models) {
@@ -289,12 +461,30 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       return false;
     }
   }
+  // A trigger's linked actors are made active and given its alpha every frame it is active
+  // (CScriptDamageableTrigger::Think); when it goes inactive, after its death fade or by a
+  // Deactivate at alpha 0, they are not seen again until it is.
+  for (Placed& item : area.items) {
+    if (item.follow == 0) {
+      continue;
+    }
+    const CScriptDamageableTrigger* const trigger = dynamic_cast< const CScriptDamageableTrigger* >(
+        mgr.GetObjectById(mgr.GetIdForScript(TEditorId(item.follow))));
+    if (trigger != nullptr && trigger->GetActive()) {
+      item.shown = true;
+      item.following = true;
+      item.alpha = trigger->PortLinkedAlpha();
+    } else if (item.following) {
+      item.shown = false;
+      item.following = false;
+    }
+  }
   const bool baked = !AreaLights() && PortRoomEnv::HasVolume(gameArea.GetAreaAssetId());
   CScriptLayerManager* const layers =
       area.gated ? const_cast< CStateManager& >(mgr).WorldLayerState().GetPtr() : nullptr;
   for (Placed& item : area.items) {
     const Model& model = area.models[item.model];
-    if (!model.loaded || model.hidden || !item.shown) {
+    if (!model.loaded || model.hidden || !item.shown || item.alpha <= 0.f) {
       continue;
     }
     if (item.layer != kEveryLayer && layers != nullptr &&
@@ -329,7 +519,13 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     item.volume = baked ? gameArea.GetAreaAssetId() : 0;
     // Blended surfaces (glass, decals) wait for the sorted pass, where they are drawn
     // back to front among the actors.
+    // A faded one is drawn whole among them, as retail's CActor with blend flags is.
     const CModel& cmodel = **model.data->PickStaticModel(CModelData::kWM_Normal);
+    if (item.alpha < 1.f) {
+      area.sorted.push_back(&item);
+      ++sDrawn;
+      continue;
+    }
     gpRender->SetModelMatrix(item.xf);
     item.lights->ActivateLights();
     cmodel.DrawUnsortedParts(CModelFlags::Normal());
@@ -385,7 +581,12 @@ void DrawSorted(const void* drawable) {
   }
   gpRender->SetModelMatrix(item.xf);
   item.lights->ActivateLights();
-  (**model.data->PickStaticModel(CModelData::kWM_Normal)).DrawSortedParts(CModelFlags::Normal());
+  const CModel& cmodel = **model.data->PickStaticModel(CModelData::kWM_Normal);
+  if (item.alpha < 1.f) {
+    cmodel.Draw(CModelFlags(CModelFlags::kT_Blend, item.alpha));
+  } else {
+    cmodel.DrawSortedParts(CModelFlags::Normal());
+  }
   gpRender->SetAmbientColor(CColor::White());
   CGraphics::DisableAllLights();
   if (item.volume != 0) {
@@ -432,12 +633,121 @@ void OnScriptState(CStateManager& mgr, uint32_t editorId, int state) {
     }
     item.shown = shown;
   }
+  if (area.retailEdges) {
+    for (const ScriptEdge& edge : area.script.edges) {
+      if (edge.retail && (edge.from & 0x3ffffff) == sender && edge.event == state) {
+        sApplyBudget = kApplyBudget;
+        Apply(area, edge, 0);
+      }
+    }
+  }
+}
+
+void Think(CStateManager& mgr) {
+  const CWorld* const world = mgr.GetWorld();
+  if (GetMode() == Mode::Off || world == nullptr) {
+    return;
+  }
+  auto& areas = Areas();
+  bool any = false;
+  for (const auto& [mrea, area] : areas) {
+    any = any || !area.script.nodes.empty();
+  }
+  if (!any) {
+    return;
+  }
+  const CVector3f camera = mgr.CameraManager()->CurrentCamera(mgr).GetTranslation();
+  for (int i = 0; i < world->GetNumAreas(); ++i) {
+    const CGameArea* const gameArea = world->GetArea(TAreaId(i));
+    if (!gameArea->IsLoaded()) {
+      continue;
+    }
+    const auto found = areas.find(gameArea->GetAreaAssetId());
+    if (found == areas.end() || found->second.script.nodes.empty()) {
+      continue;
+    }
+    Area& area = found->second;
+    // Volumes are in the area's own space, as its script objects are.
+    const CVector3f local = gameArea->GetInverseTransform() * camera;
+    const float at[3] = {local.GetX(), local.GetY(), local.GetZ()};
+    std::memcpy(area.camera, at, sizeof(at));
+    for (size_t n = 0; n < area.nodes.size(); ++n) {
+      const ScriptNode& node = area.script.nodes[n];
+      NodeState& state = area.nodes[n];
+      // An inactive trigger does not think (CScriptTrigger::Think), so it sees nothing.
+      if (node.kind != kCameraVolume || !state.active) {
+        continue;
+      }
+      const float d[3] = {at[0] - node.centre[0], at[1] - node.centre[1], at[2] - node.centre[2]};
+      bool inside = true;
+      for (int axis = 0; axis < 3 && inside; ++axis) {
+        const float* const a = node.axes + 3 * axis;
+        inside = std::fabs(d[0] * a[0] + d[1] * a[1] + d[2] * a[2]) <= node.half[axis];
+      }
+      if (inside != state.inside) {
+        state.inside = inside;
+        sApplyBudget = kApplyBudget;
+        Send(area, uint32_t(n), inside ? 0 : 1, 0);
+      }
+    }
+  }
+}
+
+std::string ScriptInfo() {
+  std::string out;
+  char line[200];
+  for (const auto& [mrea, area] : Areas()) {
+    if (area.script.nodes.empty()) {
+      continue;
+    }
+    std::snprintf(line, sizeof(line), "%08X: camera %.1f %.1f %.1f, %zu node(s), %zu group(s)\n", mrea,
+                  area.camera[0], area.camera[1], area.camera[2], area.nodes.size(), area.groups.size());
+    out += line;
+    for (size_t n = 0; n < area.nodes.size(); ++n) {
+      const ScriptNode& node = area.script.nodes[n];
+      const NodeState& state = area.nodes[n];
+      if (node.kind == kCameraVolume) {
+        std::snprintf(line, sizeof(line), "  %zu volume%s%s at %.1f %.1f %.1f, half %.1f %.1f %.1f\n", n,
+                      state.active ? "" : " (off)", state.inside ? " CAMERA IN" : "", node.centre[0],
+                      node.centre[1], node.centre[2], node.half[0], node.half[1], node.half[2]);
+      } else {
+        std::snprintf(line, sizeof(line), "  %zu %s%s %u/%u\n", n, node.kind == kCounter ? "counter" : "relay",
+                      state.active ? "" : " (off)", state.count, node.max);
+      }
+      out += line;
+    }
+    for (size_t g = 0; g < area.groups.size(); ++g) {
+      size_t shown = 0;
+      for (const size_t i : area.groups[g]) {
+        shown += area.items[i].shown;
+      }
+      std::snprintf(line, sizeof(line), "  group %zu: %zu of %zu shown\n", g, shown, area.groups[g].size());
+      out += line;
+    }
+  }
+  return out;
+}
+
+int SetGroupShown(uint32_t group, bool shown) {
+  int count = 0;
+  for (auto& [mrea, area] : Areas()) {
+    if (group < area.groups.size()) {
+      for (const size_t i : area.groups[group]) {
+        area.items[i].shown = shown;
+        ++count;
+      }
+    }
+  }
+  return count;
 }
 
 void ResetScriptState() {
   for (auto& [mrea, area] : Areas()) {
+    ResetNodes(area);
     for (Placed& item : area.items) {
       item.shown = item.active;
+      item.following = false;
+      item.alpha = 1.f;
     }
   }
 }

@@ -37,13 +37,16 @@ void TestRoundTrip() {
   gated.active = false;
   gated.links.push_back({0x0c1a0042, 9, PortRoomGeo::kShow});
   gated.links.push_back({0x001a0043, 10, PortRoomGeo::kToggle});
+  gated.platform = 0x041a0044;
+  gated.platformStart[0] = -142.f;
+  gated.platformStart[2] = 3.25f;
   in.push_back(gated);
   in.push_back(MakeInstance(0x33333333, 0.f));
 
   std::vector<PortRoomGeo::Instance> out;
   std::string error;
   const std::vector<uint8_t> file = PortRoomGeo::Write(in);
-  Check(PortRoomGeo::Parse(file, out, error), "v2 file parses");
+  Check(PortRoomGeo::Parse(file, out, error), "v3 file parses");
   Check(out.size() == 3, "three instances");
   if (out.size() != 3) {
     return;
@@ -51,6 +54,9 @@ void TestRoundTrip() {
   Check(out[0].layer == PortRoomGeo::kEveryLayer && out[0].active && out[0].links.empty(), "plain instance");
   Check(out[1].model == 0x22222222 && out[1].transform[3] == -2.5f, "model and transform");
   Check(out[1].layer == 3 && !out[1].active, "layer and active");
+  Check(out[0].platform == 0 && out[1].platform == 0x041a0044 && out[1].platformStart[0] == -142.f &&
+            out[1].platformStart[1] == 0.f && out[1].platformStart[2] == 3.25f,
+        "platform");
   Check(out[1].links.size() == 2, "two links");
   if (out[1].links.size() == 2) {
     Check(out[1].links[0].sender == 0x0c1a0042 && out[1].links[0].state == 9 &&
@@ -86,14 +92,109 @@ void TestVersion1() {
   Check(out.size() == 2 && out[1].model == 0xabc00001, "v1 instances");
   Check(out.size() == 2 && out[1].active && out[1].layer == PortRoomGeo::kEveryLayer, "v1 defaults");
 
-  file[4] = 3;
+  file[4] = 4;
   Check(!PortRoomGeo::Parse(file, out, error), "unknown version rejected");
+}
+
+// Version 2: the platform fields are absent, the links follow the fixed part.
+void TestVersion2() {
+  std::vector<uint8_t> file;
+  Put32(file, 0x4752504D);
+  Put32(file, 2);
+  Put32(file, 2);
+  for (uint32_t i = 0; i < 2; ++i) {
+    Put32(file, 0xabc00000 + i);
+    for (int j = 0; j < 12; ++j) {
+      Put32(file, 0);
+    }
+    file.push_back(1);
+    file.push_back(0);
+    file.push_back(1);
+    file.push_back(0);
+    Put32(file, 0x00100020 + i);
+    file.push_back(9);
+    file.push_back(PortRoomGeo::kShow);
+    file.push_back(0);
+    file.push_back(0);
+  }
+  std::vector<PortRoomGeo::Instance> out;
+  std::string error;
+  Check(PortRoomGeo::Parse(file, out, error), "v2 file parses");
+  Check(out.size() == 2 && out[1].model == 0xabc00001 && out[1].layer == 1 && !out[1].active, "v2 instances");
+  Check(out.size() == 2 && out[1].links.size() == 1 && out[1].links[0].sender == 0x00100021, "v2 links");
+  Check(out.size() == 2 && out[1].platform == 0, "v2 has no platform");
+}
+// The script section: nodes, edges and each instance's group.
+void TestScript() {
+  std::vector<PortRoomGeo::Instance> in;
+  in.push_back(MakeInstance(0x11111111, 1.f));
+  in.push_back(MakeInstance(0x22222222, 2.f));
+  in[1].group = 7;
+  in[1].active = false;
+
+  PortRoomGeo::Script script;
+  PortRoomGeo::ScriptNode volume;
+  volume.kind = PortRoomGeo::kCameraVolume;
+  volume.centre[0] = 10.f;
+  volume.half[1] = 2.5f;
+  volume.axes[0] = 0.f;
+  volume.axes[1] = 1.f;
+  PortRoomGeo::ScriptNode counter;
+  counter.kind = PortRoomGeo::kCounter;
+  counter.max = 50;
+  counter.active = false;
+  script.nodes = {volume, counter};
+  script.edges.push_back({false, 0, PortRoomGeo::kIncrement, 0, 1});
+  script.edges.push_back({false, 1, PortRoomGeo::kGroupHide, 1, 7});
+  script.edges.push_back({true, 9, PortRoomGeo::kNodeActivate, 0x0c1a0042, 1});
+
+  const std::vector<uint8_t> file = PortRoomGeo::Write(in, &script);
+  std::vector<PortRoomGeo::Instance> out;
+  PortRoomGeo::Script back;
+  std::string error;
+  Check(PortRoomGeo::Parse(file, out, error, &back), "script file parses");
+  Check(out.size() == 2 && out[0].group == PortRoomGeo::kNoGroup && out[1].group == 7, "groups");
+  Check(back.nodes.size() == 2 && back.edges.size() == 3, "script sizes");
+  if (back.nodes.size() == 2 && back.edges.size() == 3) {
+    Check(back.nodes[0].kind == PortRoomGeo::kCameraVolume && back.nodes[0].centre[0] == 10.f &&
+              back.nodes[0].half[1] == 2.5f && back.nodes[0].axes[0] == 0.f && back.nodes[0].axes[1] == 1.f &&
+              back.nodes[0].active,
+          "volume node");
+    Check(back.nodes[1].kind == PortRoomGeo::kCounter && back.nodes[1].max == 50 && !back.nodes[1].active,
+          "counter node");
+    Check(!back.edges[1].retail && back.edges[1].event == 1 && back.edges[1].action == PortRoomGeo::kGroupHide &&
+              back.edges[1].from == 1 && back.edges[1].to == 7,
+          "group edge");
+    Check(back.edges[2].retail && back.edges[2].event == 9 && back.edges[2].from == 0x0c1a0042, "retail edge");
+  }
+
+  // Without groups or a script the section is left out.
+  in[1].group = PortRoomGeo::kNoGroup;
+  Check(PortRoomGeo::Write(in).size() + 12 + 2 * 68 + 3 * 12 + 2 * 4 == PortRoomGeo::Write(in, &back).size(),
+        "no empty section");
+
+  for (size_t cut = 13; cut < file.size(); ++cut) {
+    const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
+    if (PortRoomGeo::Parse(part, out, error, &back) && cut != PortRoomGeo::Write(in).size()) {
+      std::fprintf(stderr, "FAIL: script truncated at %zu parses\n", cut);
+      ++sFailures;
+    }
+  }
+
+  std::vector<uint8_t> bad = file;
+  bad[bad.size() - 8 - 3 * 12 + 4] = 9; // the first edge's from: no such node
+  Check(!PortRoomGeo::Parse(bad, out, error, &back), "edge from a missing node rejected");
+  bad = PortRoomGeo::Write(in);
+  bad.push_back(1);
+  Check(!PortRoomGeo::Parse(bad, out, error, &back), "trailing bytes rejected");
 }
 } // namespace
 
 int main() {
   TestRoundTrip();
   TestVersion1();
+  TestVersion2();
+  TestScript();
   uint32_t id = 0;
   Check(PortRoomGeo::ParseFileName("1a2B3c4D.ROOMGEO", id) && id == 0x1A2B3C4D, "file name");
   if (sFailures == 0) {
