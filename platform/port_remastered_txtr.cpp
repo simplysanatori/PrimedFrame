@@ -2765,6 +2765,14 @@ bool DecodeTxtr(const uint8_t* data, size_t size, TxtrImage& out, std::string& e
     error = "remastered txtr: the texture has a zero dimension";
     return false;
   }
+  // No real texture is larger; a corrupt header would otherwise ask for
+  // gigabytes of RGBA below before the surface check could refuse it.
+  constexpr uint32_t kMaxSide = 16384;
+  if (head.width > kMaxSide || head.height > kMaxSide) {
+    error = "remastered txtr: " + std::to_string(head.width) + "x" + std::to_string(head.height) +
+            " is larger than any texture can be";
+    return false;
+  }
 
   BlockSize block{};
   size_t bytesPerPixel = 1;

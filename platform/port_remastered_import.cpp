@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -863,22 +864,29 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       ModelUuid id;
       std::memcpy(id.data(), entry.rem, 16);
       std::string modelError = look.error;
-      std::vector<uint8_t> raw;
-      Model model;
-      ConvertOptions options = OptionsFor(entry);
-      options.outputModel = look.model;
-      options.outputSkins = look.skins;
-      bool ok = look.ok && remastered.ReadModel(id, raw, modelError) &&
-                ParseModel(raw.data(), raw.size(), model, modelError) &&
-                converter.Convert(model, options, modelError);
-      // The character copy last, so that it never names a model that failed.
-      if (ok && look.ancs != 0) {
-        char name[16];
-        std::snprintf(name, sizeof(name), "%08X", look.ancs);
-        ok = write(std::string(name) + ".ANCS", look.ancsData);
-        if (!ok) {
-          modelError = "could not write " + std::string(name) + ".ANCS";
+      bool ok = false;
+      // A worker thread that lets an exception out (bad_alloc on a phone)
+      // terminates the game, so a model that throws only fails itself.
+      try {
+        std::vector<uint8_t> raw;
+        Model model;
+        ConvertOptions options = OptionsFor(entry);
+        options.outputModel = look.model;
+        options.outputSkins = look.skins;
+        ok = look.ok && remastered.ReadModel(id, raw, modelError) &&
+             ParseModel(raw.data(), raw.size(), model, modelError) && converter.Convert(model, options, modelError);
+        // The character copy last, so that it never names a model that failed.
+        if (ok && look.ancs != 0) {
+          char name[16];
+          std::snprintf(name, sizeof(name), "%08X", look.ancs);
+          ok = write(std::string(name) + ".ANCS", look.ancsData);
+          if (!ok) {
+            modelError = "could not write " + std::string(name) + ".ANCS";
+          }
         }
+      } catch (const std::exception& e) {
+        ok = false;
+        modelError = e.what();
       }
       if (ok) {
         ++converted;
@@ -992,7 +1000,14 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       io.cancelled = [] { return sCancel.load(); };
       int written = 0;
       std::string worldError;
-      if (!WriteWorldRoomEnvs(worlds[i].mlvl, master, rooms, allPaks, io, written, worldError) && !sCancel) {
+      bool ok = false;
+      // As for the models: an exception here would terminate the game.
+      try {
+        ok = WriteWorldRoomEnvs(worlds[i].mlvl, master, rooms, allPaks, io, written, worldError);
+      } catch (const std::exception& e) {
+        worldError = e.what();
+      }
+      if (!ok && !sCancel) {
         AddLine(std::string(worlds[i].dir) + ": " + worldError);
       }
       roomFiles += written;
@@ -1056,10 +1071,17 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
           }
         }
         std::string modelError;
-        std::vector<uint8_t> raw;
-        Model model;
-        if (remastered.ReadModel(geometry[i].uuid, raw, modelError) &&
-            ParseModel(raw.data(), raw.size(), model, modelError) && converter.Convert(model, options, modelError)) {
+        bool ok = false;
+        // As for the models: an exception here would terminate the game.
+        try {
+          std::vector<uint8_t> raw;
+          Model model;
+          ok = remastered.ReadModel(geometry[i].uuid, raw, modelError) &&
+               ParseModel(raw.data(), raw.size(), model, modelError) && converter.Convert(model, options, modelError);
+        } catch (const std::exception& e) {
+          modelError = e.what();
+        }
+        if (ok) {
           ++geometryDone;
         } else {
           char name[16];
