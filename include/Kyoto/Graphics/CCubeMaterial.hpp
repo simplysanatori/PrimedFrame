@@ -55,6 +55,10 @@ public:
   // 0 off, 1 on, 2 mirror, 3 window; -1 takes it from MP_PBR_PROBE on first use.
   static int sPortPBRProbeMode;
   static uint sPortPBRDraws;
+  // The PBR draws outside the probe's own capture that reflected the live probe rather than a
+  // room environment's cube; while none do, the capture is skipped.
+  static uint sPortPBRProbeDraws;
+  static bool sPortCapturingProbe;
   // Port: a draw that keeps PBR under the thermal visor, as the fluid planes keep their own
   // shader there (port_room_liquid.cpp); additive is the hot pass's blend.
   enum EPortPBRThermal { kPT_None, kPT_Cold, kPT_Additive };

@@ -883,6 +883,8 @@ void CCubeModel::DisableShadowMaps() { sbRenderModelShadow = false; }
 float CCubeMaterial::sPortPBRProbeWeight = 0.f;
 int CCubeMaterial::sPortPBRProbeMode = -1;
 uint CCubeMaterial::sPortPBRDraws = 0;
+uint CCubeMaterial::sPortPBRProbeDraws = 0;
+bool CCubeMaterial::sPortCapturingProbe = false;
 CCubeMaterial::EPortPBRThermal CCubeMaterial::sPortPBRThermal = CCubeMaterial::kPT_None;
 uint CCubeMaterial::sPortAreaLights = 0;
 

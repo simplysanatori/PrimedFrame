@@ -2672,7 +2672,7 @@ void CStateManager::PortCaptureProbeFace() const {
   static uint lastDraws = 0;
   static int face = 0;
   static int filled = 0;
-  const uint draws = CCubeMaterial::sPortPBRDraws;
+  const uint draws = CCubeMaterial::sPortPBRProbeDraws;
   const bool used = draws != lastDraws;
   lastDraws = draws;
   if (!enabled) {
@@ -2684,8 +2684,9 @@ void CStateManager::PortCaptureProbeFace() const {
   }
   if (!used || x8b8_playerState->GetActiveVisor(*this) == CPlayerState::kPV_Thermal ||
       x8b8_playerState->GetActiveVisor(*this) == CPlayerState::kPV_XRay) {
-    // Nothing reflects it, or the world is not drawn in its own colours. A probe that
-    // was filled stays in use, stale, and catches up when the captures resume.
+    // Nothing reflects it (no PBR draw, or every one had its room's own cube), or the world
+    // is not drawn in its own colours. A probe that was filled stays in use, stale, and
+    // catches up when the captures resume.
     return;
   }
 
@@ -2700,6 +2701,18 @@ void CStateManager::PortCaptureProbeFace() const {
   const CGameCamera& cam = x870_cameraManager->GetCurrentCamera(*this);
   const CVector3f pos =
       PortFreeCam::View(x870_cameraManager->GetCurrentCameraTransform(*this)).GetTranslation();
+  // Each face redraws the world around the camera. Once the probe is filled and the camera
+  // is holding still, a face every fourth frame keeps it as fresh as the scene needs.
+  static CVector3f lastPos = CVector3f::Zero();
+  static int idleFrames = 0;
+  if (filled == 6 && (pos - lastPos).MagSquared() < 0.25f) {
+    if (++idleFrames % 4 != 0) {
+      return;
+    }
+  } else {
+    idleFrames = 0;
+  }
+  lastPos = pos;
   const CVector3f fwd(kFaces[face][0], kFaces[face][1], kFaces[face][2]);
   const CVector3f up(kFaces[face][3], kFaces[face][4], kFaces[face][5]);
   const CVector3f right = CVector3f::Cross(fwd, up);
@@ -2724,6 +2737,7 @@ void CStateManager::PortCaptureProbeFace() const {
   gpRender->SetThermal(false, 0.f, CColor::Black());
 
   const TAreaId visAreaId = GetVisAreaId();
+  CCubeMaterial::sPortCapturingProbe = true;
   x850_world->TouchSky();
   int areaCount = 0;
   const CGameArea* lastArea = nullptr;
@@ -2750,6 +2764,7 @@ void CStateManager::PortCaptureProbeFace() const {
     SetupFogForArea(*lastArea);
   }
 
+  CCubeMaterial::sPortCapturingProbe = false;
   CGX::SetZMode(true, GX_LEQUAL, true);
   GXCopyProbeFace(face);
   CGraphics::SetViewport(oldViewport.mLeft, oldViewport.mTop, oldViewport.mWidth,

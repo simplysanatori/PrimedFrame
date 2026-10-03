@@ -342,6 +342,9 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       static const f32 kNoCube[4] = {0.f, 0.f, 0.f, 0.f};
       GXSetPBRProbe(viewToProbe, CCubeMaterial::sPortPBRProbeWeight);
       GXSetPBRCube(0, kNoCube);
+      if (!CCubeMaterial::sPortCapturingProbe) {
+        ++CCubeMaterial::sPortPBRProbeDraws;
+      }
     }
     if (found && env.hasAmbient) {
       // The baked ambient's directions are in world space, the shader's normal in view space.
