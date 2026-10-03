@@ -7,11 +7,13 @@
 #include <algorithm>
 #include <cstring>
 #include <map>
+#include <memory>
 
 #include <cstdlib>
 #include <sstream>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -33,6 +35,11 @@ bool SourceFile::Open(const std::string& path) {
     }
     m_fd = dup(int(fd));
     return m_fd >= 0;
+  }
+  // A descriptor of its own, so that reads can run side by side with pread.
+  m_fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+  if (m_fd >= 0) {
+    return true;
   }
 #endif
   m_stream.open(path, std::ios::binary);
@@ -65,6 +72,7 @@ size_t SourceFile::ReadSome(uint64_t offset, void* out, size_t size) {
     return done;
   }
 #endif
+  std::lock_guard<std::mutex> lock(m_streamMutex);
   m_stream.clear();
   m_stream.seekg(std::streamoff(offset), std::ios::beg);
   if (!m_stream) {
@@ -226,7 +234,9 @@ bool DecryptEcb(const uint8_t* key, const uint8_t* in, uint8_t* out) {
 
 // The counter is the section's 8-byte nonce (stored reversed) followed by the
 // big-endian count of 16-byte blocks from the start of the NCA.
-bool DecryptCtr(const uint8_t* key, const uint8_t* nonce, uint64_t ncaOffset, uint8_t* data, size_t size) {
+// `ctx` is the caller's, reused across the chunks of one read.
+bool DecryptCtr(EVP_CIPHER_CTX* ctx, const uint8_t* key, const uint8_t* nonce, uint64_t ncaOffset, uint8_t* data,
+                size_t size) {
   uint8_t iv[16];
   for (int i = 0; i < 8; ++i) {
     iv[i] = nonce[7 - i];
@@ -236,15 +246,9 @@ bool DecryptCtr(const uint8_t* key, const uint8_t* nonce, uint64_t ncaOffset, ui
     iv[i] = uint8_t(block);
     block >>= 8;
   }
-  EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-  if (!ctx) {
-    return false;
-  }
   int outLen = 0;
-  bool ok = EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), nullptr, key, iv) == 1 &&
-            EVP_DecryptUpdate(ctx, data, &outLen, data, int(size)) == 1 && size_t(outLen) == size;
-  EVP_CIPHER_CTX_free(ctx);
-  return ok;
+  return EVP_DecryptInit_ex(ctx, EVP_aes_128_ctr(), nullptr, key, iv) == 1 &&
+         EVP_DecryptUpdate(ctx, data, &outLen, data, int(size)) == 1 && size_t(outLen) == size;
 }
 
 } // namespace
@@ -255,7 +259,6 @@ void Nsp::Close() {
   OPENSSL_cleanse(m_contentKey, sizeof(m_contentKey));
   m_file.Close();
   m_files.clear();
-  m_scratch.clear();
   m_open = false;
 }
 
@@ -558,22 +561,29 @@ bool Nsp::ReadSection(uint64_t offset, void* out, size_t size, std::string& erro
     error = "read past the end of the section";
     return false;
   }
+  // Per call, so that reads from several threads share nothing but the file.
+  std::unique_ptr<EVP_CIPHER_CTX, void (*)(EVP_CIPHER_CTX*)> ctx(EVP_CIPHER_CTX_new(), EVP_CIPHER_CTX_free);
+  if (!ctx) {
+    error = "decryption failed";
+    return false;
+  }
+  std::vector<uint8_t> scratch;
   while (size) {
     uint64_t position = offset;
     uint64_t aligned = position & ~uint64_t(15);
     size_t head = size_t(position - aligned);
     size_t take = std::min(size, kChunk - head);
     // CTR is a stream cipher, so only the start has to sit on a 16-byte boundary.
-    m_scratch.resize(head + take);
-    if (!m_file.ReadAt(m_sectionBase + aligned, m_scratch.data(), head + take)) {
+    scratch.resize(head + take);
+    if (!m_file.ReadAt(m_sectionBase + aligned, scratch.data(), head + take)) {
       error = "short read from the .nsp";
       return false;
     }
-    if (!DecryptCtr(m_contentKey, m_ctrHigh, m_sectionInNca + aligned, m_scratch.data(), head + take)) {
+    if (!DecryptCtr(ctx.get(), m_contentKey, m_ctrHigh, m_sectionInNca + aligned, scratch.data(), head + take)) {
       error = "decryption failed";
       return false;
     }
-    std::memcpy(dst, m_scratch.data() + head, take);
+    std::memcpy(dst, scratch.data() + head, take);
     dst += take;
     offset += take;
     size -= take;

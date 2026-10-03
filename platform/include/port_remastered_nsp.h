@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -42,12 +43,15 @@ public:
 
   bool Open(const std::string& path);
   void Close();
-  // The bytes read, fewer than `size` at the end of the file.
+  // The bytes read, fewer than `size` at the end of the file. Safe from any
+  // number of threads at once: a descriptor is read with pread, and the stream
+  // (Windows) takes a lock around its seek and read.
   size_t ReadSome(uint64_t offset, void* out, size_t size);
   // False unless all of `size` bytes were read.
   bool ReadAt(uint64_t offset, void* out, size_t size);
 
 private:
+  std::mutex m_streamMutex;
   std::ifstream m_stream;
   int m_fd = -1;
 };
@@ -67,8 +71,9 @@ public:
   const std::vector<RomfsFile>& Files() const { return m_files; }
   const RomfsFile* Find(const std::string& path) const;
 
-  // Decrypts [offset, offset + size) of `file` into `out`. Thread-compatible:
-  // safe from one thread at a time (it shares the file handle and a scratch buffer).
+  // Decrypts [offset, offset + size) of `file` into `out`. Safe from several
+  // threads at once once Open() has returned: each call has its own buffer and
+  // cipher context, and SourceFile's reads are positional.
   bool Read(const RomfsFile& file, uint64_t offset, void* out, size_t size, std::string& error) const;
 
 private:
@@ -87,7 +92,6 @@ private:
   uint8_t m_ctrHigh[8] = {};
   uint8_t m_contentKey[16] = {};
   std::vector<RomfsFile> m_files;
-  mutable std::vector<uint8_t> m_scratch;
 };
 
 } // namespace PortRemastered

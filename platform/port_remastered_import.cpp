@@ -329,8 +329,8 @@ public:
       const RomfsFile* file = files[i];
       auto pak = std::make_unique<Pak>();
       std::string pakError;
+      // Nsp::Read is safe from the workers side by side.
       const ReadFn read = [this, file](uint64_t offset, void* out, size_t size) {
-        std::lock_guard<std::mutex> lock(m_mutex);
         std::string ignored;
         return m_nsp.Read(*file, offset, out, size, ignored);
       };
@@ -518,8 +518,6 @@ private:
   }
 
   Nsp m_nsp;
-  // Nsp::Read is for one thread at a time.
-  mutable std::mutex m_mutex;
   std::vector<std::unique_ptr<Pak>> m_paks;
   std::vector<std::string> m_paths;  // of m_paks, in the image
   Index m_models;
