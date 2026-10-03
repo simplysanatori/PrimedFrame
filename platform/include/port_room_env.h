@@ -166,6 +166,8 @@ struct Convergence {
 // --- The game side (port_room_env.cpp) -----------------------------------------
 
 // The areas in memory now. Loads the files of new ones and frees those of areas that left.
+// A new area's cubes are decoded and its volumes filled in on a worker thread, and handed
+// to the GPU by UpdateFrame; until each is, Select goes without it.
 void SetLoadedAreas(const uint32_t* mreas, size_t count);
 
 struct Selection {
@@ -196,7 +198,8 @@ bool Select(const float pos[3], Selection& out);
 // when it is done. MP_ROOM_ENV_VOLUME=0 turns volumes off.
 void SetVolumeHint(uint32_t mrea, const float centre[3]);
 void ClearVolumeHint();
-// Whether a model announced for this area would get a volume.
+// Whether a model announced for this area would get a volume: false until all of the
+// area's volumes are on the GPU.
 bool HasVolume(uint32_t mrea);
 // MP_ROOM_ENV_VOLUME, the console's `roomenv volume`.
 void SetVolumesEnabled(bool on);
@@ -247,7 +250,8 @@ void SetViewArea(uint32_t mrea);
 // Convergence towards the one measured from the last frames' average radiance
 // (GXPortFrameRadiance) when `roomGeoDrawing` (only then does the picture follow the
 // exposure, so measuring it can settle), else towards the one of the room's probes. It
-// jumps when the camera's previous room is gone (a world load or a teleport).
+// jumps when the camera's previous room is gone (a world load or a teleport). Also hands
+// one cube or volume the worker has finished to the GPU.
 void UpdateFrame(bool roomGeoDrawing);
 // The exposure to measure the frame at, for GXPortPostProcess; 0 when nothing would use
 // the measurement.

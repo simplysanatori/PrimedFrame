@@ -10,12 +10,17 @@
 #include <dolphin/gx/GXExtra.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <iterator>
+#include <mutex>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -23,7 +28,7 @@ namespace PortRoomEnv {
 namespace {
 
 struct GpuCube {
-  uint32_t id = 0;      // 0: not made yet (or it failed)
+  uint32_t id = 0;      // 0: not made yet (the worker is decoding it), or it failed
   bool failed = false;
   float average = 0.f;  // luminance over every direction, as stored
   float peak = 0.f;     // the largest channel of the colour over every direction
@@ -31,11 +36,13 @@ struct GpuCube {
 };
 
 struct GpuVolume {
-  uint32_t id = 0; // 0: not made yet
+  uint32_t id = 0; // 0: not made yet (the worker is filling it in)
 };
 
 struct Area {
   File file;
+  bool hasFile = false; // the file was read
+  uint32_t serial = 0;  // of this load, which the worker's jobs for it carry
   std::vector<GpuCube> cubes;
   std::vector<GpuVolume> volumes; // one a grid
   float exposure = 0.f; // what takes the room's radiance to the display's range; 0: unknown
@@ -76,6 +83,63 @@ int sAreaLights = -1;
 
 // Areas in memory; one without a file has an empty File.
 std::unordered_map<uint32_t, Area> sAreas;
+uint32_t sNextSerial = 1;
+
+// Work kept off the render thread: decoding a cube's BC6H into the RGBA16F that
+// GXCreatePBRCube takes, and filling a grid's empty points in for GXCreatePBRVolume. Load
+// queues every cube and volume of an area as it reads the file; one thread works through
+// them in order, and UpdateFrame hands what is done to the GPU, one a frame. A job reads
+// its area's File, which stays as it is until the job is done: Free cancels the area's
+// jobs, and waits for the one running to stop, before the file goes.
+// Defined after sAreas so that it is destroyed, and its thread joined, first.
+enum class JobKind { Cube, Volume };
+
+struct Job {
+  JobKind kind = JobKind::Cube;
+  uint32_t area = 0;
+  uint32_t serial = 0; // Area::serial
+  size_t index = 0;    // of the cube or grid in the file
+  const File* file = nullptr;
+};
+
+struct Result {
+  JobKind kind = JobKind::Cube;
+  uint32_t area = 0;
+  uint32_t serial = 0;
+  size_t index = 0;
+  std::vector<uint16_t> cube;  // RGBA16F, as GXCreatePBRCube takes it
+  std::vector<uint8_t> volume; // as GXCreatePBRVolume takes it
+};
+
+struct Worker {
+  // Decoded cubes waiting for the GPU; the thread waits while this many are.
+  static constexpr size_t kMaxResults = 2;
+
+  ~Worker();
+  void Submit(const Job& job);
+  // Drops the jobs and results of a load, and waits for its job that is running to stop.
+  void Cancel(uint32_t serial);
+  // The oldest result, if there is one.
+  bool Take(Result& out);
+
+  void Run();
+  // False when cancelled.
+  bool Do(const Job& job, Result& out);
+
+  std::mutex mutex;
+  std::condition_variable wake; // the thread: a job, room for its result, or stop
+  std::condition_variable done; // Cancel: the running job ended
+  std::deque<Job> jobs;
+  std::deque<Result> results;
+  bool running = false;
+  uint32_t runningSerial = 0;
+  std::atomic<bool> cancel{false};
+  bool stop = false;
+  bool noThread = false; // the thread could not start: jobs run in Submit
+  std::thread thread;
+};
+Worker sWorker;
+
 uint32_t sNextCube = 1;
 uint32_t sNextVolume = 1;
 int sVolumes = -1;
@@ -136,6 +200,8 @@ float EnvFloat(const char* name, float fallback) {
 }
 
 void Free(Area& area) {
+  // Before the file goes: the worker may be reading it.
+  sWorker.Cancel(area.serial);
   for (GpuCube& cube : area.cubes) {
     if (cube.id != 0) {
       GXDestroyPBRCube(cube.id);
@@ -169,7 +235,8 @@ uint16_t FloatToHalf(float value) {
 // A grid as the textures of GXCreatePBRVolume. The points inside walls are empty, and a
 // surface sits between those and the lit ones, so the texture filter would darken every
 // wall; the empty points take the light of their lit neighbours first, layer by layer.
-void UploadVolume(const File& file, const Grid& grid, GpuVolume& gpu) {
+// On the worker; false when cancelled.
+bool FillVolume(const File& file, const Grid& grid, std::vector<uint8_t>& texels, const std::atomic<bool>& cancel) {
   constexpr size_t kPoint = 24;
   constexpr int kLayers = 16;
   const size_t sx = grid.size[0], sy = grid.size[1], sz = grid.size[2];
@@ -190,6 +257,9 @@ void UploadVolume(const File& file, const Grid& grid, GpuVolume& gpu) {
     size_t filled = 0;
     size_t index = 0;
     for (size_t z = 0; z < sz; ++z) {
+      if (cancel.load(std::memory_order_relaxed)) {
+        return false;
+      }
       for (size_t y = 0; y < sy; ++y) {
         for (size_t x = 0; x < sx; ++x, ++index) {
           if (state[index] != 0) {
@@ -242,7 +312,7 @@ void UploadVolume(const File& file, const Grid& grid, GpuVolume& gpu) {
       value = value != 0 ? 1 : 0;
     }
   }
-  std::vector<uint8_t> texels(count * 28);
+  texels.assign(count * 28, 0);
   uint8_t* mean = texels.data();
   uint8_t* lobe = mean + count * 8;
   uint8_t* direction = lobe + count * 8;
@@ -257,11 +327,7 @@ void UploadVolume(const File& file, const Grid& grid, GpuVolume& gpu) {
       out[3] = p[12 + channel];
     }
   }
-  gpu.id = sNextVolume++;
-  if (sNextVolume == 0) {
-    sNextVolume = 1;
-  }
-  GXCreatePBRVolume(gpu.id, grid.size[0], grid.size[1], grid.size[2], texels.data(), uint32_t(texels.size()));
+  return true;
 }
 
 // How far outside a grid a point is, in metres; 0 inside.
@@ -391,6 +457,23 @@ void Load(uint32_t mrea, Area& area) {
                  mrea, area.exposure, area.exposure > 0.f ? 3.f - std::log2(area.exposure) : 0.f,
                  area.file.exposure[0], area.file.exposure[1], area.file.exposureBias, t[1], area.file.contrast, t[2],
                  t[3]);
+  area.hasFile = true;
+  area.serial = sNextSerial++;
+  if (sNextSerial == 0) {
+    sNextSerial = 1;
+  }
+  // The worker makes them all now, so no draw waits for one. The volumes first: until its
+  // area's are made, room geometry is lit as without volumes (see HasVolume).
+  for (size_t i = 0; i < area.file.grids.size(); ++i) {
+    if (area.file.grids[i].average > 0.f) {
+      sWorker.Submit({JobKind::Volume, mrea, area.serial, i, &area.file});
+    }
+  }
+  for (size_t i = 0; i < area.cubes.size(); ++i) {
+    if (!area.cubes[i].failed) {
+      sWorker.Submit({JobKind::Cube, mrea, area.serial, i, &area.file});
+    }
+  }
 }
 
 // The frame's exposure, for radiance from `area`: one exposure covers the whole picture
@@ -399,10 +482,9 @@ float FrameExposure(const Area& area) {
   return sFrame.exposure > 0.f ? sFrame.exposure : area.exposure;
 }
 
-// Decodes a cube and hands it to the GPU.
-void Upload(const File& file, const Cube& cube, GpuCube& gpu) {
-  // RGBA16Float, every mip of face 0, then face 1 (GXCreatePBRCube); the file has every
-  // face of mip 0, then mip 1.
+// Decodes a cube into RGBA16Float, every mip of face 0, then face 1 (GXCreatePBRCube); the
+// file has every face of mip 0, then mip 1. On the worker; false when cancelled.
+bool DecodeCube(const File& file, const Cube& cube, std::vector<uint16_t>& texels, const std::atomic<bool>& cancel) {
   std::vector<size_t> mipOffset(cube.mipCount);
   size_t perFace = 0;
   for (uint32_t mip = 0; mip < cube.mipCount; ++mip) {
@@ -410,23 +492,164 @@ void Upload(const File& file, const Cube& cube, GpuCube& gpu) {
     mipOffset[mip] = perFace;
     perFace += edge * edge * 8;
   }
-  std::vector<uint16_t> texels(perFace * 6 / 2);
+  texels.assign(perFace * 6 / 2, 0);
   const uint8_t* blocks = file.data.data() + cube.offset;
   for (uint32_t mip = 0; mip < cube.mipCount; ++mip) {
     const uint32_t edge = std::max(cube.size >> mip, 1u);
     const size_t blockBytes = size_t((edge + 3) / 4) * ((edge + 3) / 4) * 16;
     for (uint32_t face = 0; face < 6; ++face) {
+      if (cancel.load(std::memory_order_relaxed)) {
+        return false;
+      }
       uint16_t* out = texels.data() + (perFace * face + mipOffset[mip]) / 2;
       PortRemastered::DecodeBc6hFace(blocks, edge, cube.isSigned, out);
       blocks += blockBytes;
     }
   }
-  gpu.id = sNextCube++;
-  if (sNextCube == 0) {
-    sNextCube = 1;
+  return true;
+}
+
+Worker::~Worker() {
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    stop = true;
+    cancel = true;
   }
-  gpu.mipCount = cube.mipCount;
-  GXCreatePBRCube(gpu.id, cube.size, cube.mipCount, texels.data(), uint32_t(texels.size() * 2));
+  wake.notify_all();
+  if (thread.joinable()) {
+    thread.join();
+  }
+}
+
+void Worker::Submit(const Job& job) {
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (!thread.joinable() && !noThread) {
+      try {
+        thread = std::thread(&Worker::Run, this);
+      } catch (...) {
+        noThread = true;
+        PortLog::Write("room env: no worker thread; cubes and volumes are made as areas load\n");
+      }
+    }
+    if (!noThread) {
+      jobs.push_back(job);
+      wake.notify_one();
+      return;
+    }
+  }
+  Result result;
+  if (Do(job, result)) {
+    std::lock_guard<std::mutex> lock(mutex);
+    results.push_back(std::move(result));
+  }
+}
+
+void Worker::Cancel(uint32_t serial) {
+  std::unique_lock<std::mutex> lock(mutex);
+  jobs.erase(std::remove_if(jobs.begin(), jobs.end(), [serial](const Job& job) { return job.serial == serial; }),
+             jobs.end());
+  results.erase(std::remove_if(results.begin(), results.end(),
+                               [serial](const Result& result) { return result.serial == serial; }),
+                results.end());
+  if (running && runningSerial == serial) {
+    cancel = true;
+    done.wait(lock, [this, serial] { return !running || runningSerial != serial; });
+  }
+  wake.notify_all();
+}
+
+bool Worker::Take(Result& out) {
+  std::lock_guard<std::mutex> lock(mutex);
+  if (results.empty()) {
+    return false;
+  }
+  out = std::move(results.front());
+  results.pop_front();
+  wake.notify_all();
+  return true;
+}
+
+void Worker::Run() {
+  for (;;) {
+    Job job;
+    {
+      std::unique_lock<std::mutex> lock(mutex);
+      wake.wait(lock, [this] { return stop || (!jobs.empty() && results.size() < kMaxResults); });
+      if (stop) {
+        return;
+      }
+      job = jobs.front();
+      jobs.pop_front();
+      running = true;
+      runningSerial = job.serial;
+      cancel = false;
+    }
+    Result result;
+    const bool finished = Do(job, result);
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      running = false;
+      if (finished && !cancel) {
+        results.push_back(std::move(result));
+      }
+    }
+    done.notify_all();
+  }
+}
+
+bool Worker::Do(const Job& job, Result& out) {
+  out.kind = job.kind;
+  out.area = job.area;
+  out.serial = job.serial;
+  out.index = job.index;
+  switch (job.kind) {
+  case JobKind::Cube:
+    return DecodeCube(*job.file, job.file->cubes[job.index], out.cube, cancel);
+  case JobKind::Volume:
+    return FillVolume(*job.file, job.file->grids[job.index], out.volume, cancel);
+  }
+  return false;
+}
+
+// Hands the worker's decoded cubes and filled volumes to the GPU, one a frame: each is
+// megabytes for Aurora to copy and upload, and an area brings several at once.
+void TakeResults() {
+  if (!Enabled()) {
+    return; // nothing would use them; they wait, and so does the worker
+  }
+  Result result;
+  if (!sWorker.Take(result)) {
+    return;
+  }
+  const auto found = sAreas.find(result.area);
+  if (found == sAreas.end() || found->second.serial != result.serial) {
+    return; // Free drops an area's results, so this does not happen
+  }
+  Area& area = found->second;
+  if (result.kind == JobKind::Cube) {
+    const Cube& cube = area.file.cubes[result.index];
+    GpuCube& gpu = area.cubes[result.index];
+    gpu.id = sNextCube++;
+    if (sNextCube == 0) {
+      sNextCube = 1;
+    }
+    gpu.mipCount = cube.mipCount;
+    GXCreatePBRCube(gpu.id, cube.size, cube.mipCount, result.cube.data(), uint32_t(result.cube.size() * 2));
+  } else {
+    const Grid& grid = area.file.grids[result.index];
+    GpuVolume& gpu = area.volumes[result.index];
+    gpu.id = sNextVolume++;
+    if (sNextVolume == 0) {
+      sNextVolume = 1;
+    }
+    GXCreatePBRVolume(gpu.id, grid.size[0], grid.size[1], grid.size[2], result.volume.data(),
+                      uint32_t(result.volume.size()));
+    PortLog::Write("room env: %08X volume %u %ux%ux%u average %g\n", result.area, gpu.id, grid.size[0],
+                   grid.size[1], grid.size[2], grid.average);
+  }
+  // What Select finds changes with what is on the GPU.
+  Invalidate();
 }
 
 } // namespace
@@ -471,6 +694,7 @@ void UpdateFrame(bool roomGeoDrawing) {
   constexpr float kGrey = 0.2158605f; // sRGB 128, linear
   constexpr uint32_t kInFlight = 3;   // readbacks Aurora may have queued
   using Clock = std::chrono::steady_clock;
+  TakeResults();
   // The exposure moves every frame, so a model's last answer is stale.
   sLastValid = false;
   FrameState& f = sFrame;
@@ -482,7 +706,7 @@ void UpdateFrame(bool roomGeoDrawing) {
     loaded.push_back(entry.first);
   }
   const auto view = sAreas.find(sViewArea);
-  if (view == sAreas.end() || view->second.file.data.empty()) {
+  if (view == sAreas.end() || !view->second.hasFile) {
     // A room without an environment keeps the frame as it was, unless the one it came from
     // is gone too.
     if (f.started && f.area != sViewArea && sAreas.find(f.area) == sAreas.end()) {
@@ -666,7 +890,7 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
   // The room's grade: the last one whose layer is active. A room without a file keeps
   // whatever the frame had, as the doors between two rooms do.
   const auto view = sAreas.find(sViewArea);
-  if (view != sAreas.end() && !view->second.file.data.empty()) {
+  if (view != sAreas.end() && view->second.hasFile) {
     const File& file = view->second.file;
     const Grade* pick = nullptr;
     for (const Grade& grade : file.grades) {
@@ -797,12 +1021,19 @@ bool HasVolume(uint32_t mrea) {
   if (found == sAreas.end()) {
     return false;
   }
-  for (const Grid& grid : found->second.file.grids) {
-    if (grid.average > 0.f) {
-      return true;
+  // Only once the worker has made every volume the area has: until then its models are lit
+  // as they are without volumes.
+  const Area& area = found->second;
+  bool lit = false;
+  for (size_t i = 0; i < area.file.grids.size(); ++i) {
+    if (area.file.grids[i].average > 0.f) {
+      if (area.volumes[i].id == 0) {
+        return false;
+      }
+      lit = true;
     }
   }
-  return false;
+  return lit;
 }
 
 void Reset() {
@@ -883,10 +1114,10 @@ std::unordered_map<SelectKey, Located, SelectKeyHash> sLocatedOld;
 uint32_t sLocatedEpoch = 0;
 SelectKey sLastKey;
 
-// The probe, volume and ambient for a point. `freshVolume`: the volume was made just now.
-void Locate(const float pos[3], Located& out, bool& freshVolume) {
+// The probe, volume and ambient for a point. A cube or volume the worker has not made yet
+// is left out, as a black cube is.
+void Locate(const float pos[3], Located& out) {
   out = {};
-  freshVolume = false;
   Area* bestArea = nullptr;
   Pick best;
   for (auto& [mrea, area] : sAreas) {
@@ -898,10 +1129,7 @@ void Locate(const float pos[3], Located& out, bool& freshVolume) {
   }
   if (bestArea != nullptr) {
     const Probe& probe = bestArea->file.probes[best.probe];
-    GpuCube& gpu = bestArea->cubes[probe.cube];
-    if (gpu.id == 0 && !gpu.failed) {
-      Upload(bestArea->file, bestArea->file.cubes[probe.cube], gpu);
-    }
+    const GpuCube& gpu = bestArea->cubes[probe.cube];
     if (gpu.id != 0) {
       out.cubeArea = bestArea;
       out.probe = &probe;
@@ -922,15 +1150,12 @@ void Locate(const float pos[3], Located& out, bool& freshVolume) {
         }
       }
       if (pick >= 0) {
-        const Grid& grid = area.file.grids[pick];
-        GpuVolume& gpu = area.volumes[pick];
-        freshVolume = gpu.id == 0;
-        if (freshVolume) {
-          UploadVolume(area.file, grid, gpu);
+        const GpuVolume& gpu = area.volumes[pick];
+        if (gpu.id != 0) {
+          out.volumeArea = &area;
+          out.grid = &area.file.grids[pick];
+          out.volume = gpu.id;
         }
-        out.volumeArea = &area;
-        out.grid = &grid;
-        out.volume = gpu.id;
       }
     }
   }
@@ -1052,7 +1277,6 @@ bool Select(const float origin[3], Selection& out) {
     sLocatedEpoch = sEpoch;
   }
   const Located* located = nullptr;
-  bool freshVolume = false;
   const auto found = sLocated.find(key);
   if (found != sLocated.end()) {
     located = &found->second;
@@ -1066,17 +1290,11 @@ bool Select(const float origin[3], Selection& out) {
       located = &sLocated.emplace(key, old->second).first->second;
     } else {
       Located fresh;
-      Locate(pos, fresh, freshVolume);
+      Locate(pos, fresh);
       located = &sLocated.emplace(key, fresh).first->second;
     }
   }
   sLastFound = Compose(*located, sLast);
-  if (freshVolume) {
-    const Grid& grid = *located->grid;
-    const float exposure = RoomExposed() ? FrameExposure(*located->volumeArea) : 0.f;
-    PortLog::Write("room env: %08X volume %u %ux%ux%u exposure %g average %g level %g\n", sHintArea, sLast.volume,
-                   grid.size[0], grid.size[1], grid.size[2], exposure, grid.average, sLast.volumeLevel);
-  }
   out = sLast;
   return sLastFound;
 }
