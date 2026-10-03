@@ -10,6 +10,7 @@
 #include "gx.hpp"
 #include "pipeline.hpp"
 #include "regs.hpp"
+#include "resident.hpp"
 #include "shader_info.hpp"
 #include "texture.hpp"
 
@@ -426,7 +427,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
       continue;
     }
     auto& array = state.arrays[i];
-    if (array.cachedRange.size == 0) {
+    if (array.cachedRange.size == 0 && !resident::array_range(array.data, array.size, array.cachedRange)) {
       array.cachedRange = gfx::push_storage(static_cast<const uint8_t*>(array.data), array.size);
     }
     immediates.arrayStart[i - GX_VA_POS] = array.cachedRange.offset + array.baseIndex * array.stride;
@@ -580,6 +581,127 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
   }
 
   handle_draw_unmerged(prim, fmt, vtxCount, vertRange);
+}
+
+// How many indices prepare_idx_buffer makes of a draw, or 0 for one it cannot make into
+// whole triangles.
+static u32 triangle_index_count(GXPrimitive prim, u16 vtxCount) noexcept {
+  switch (prim) {
+  case GX_TRIANGLES:
+    return vtxCount >= 3 && vtxCount % 3 == 0 ? vtxCount : 0;
+  case GX_QUADS:
+    return vtxCount >= 4 && vtxCount % 4 == 0 ? vtxCount / 4 * 6 : 0;
+  case GX_TRIANGLESTRIP:
+  case GX_TRIANGLEFAN:
+    return vtxCount >= 3 ? (u32(vtxCount) - 2) * 3 : 0;
+  default:
+    return 0;
+  }
+}
+
+static u32 current_vtx_size(GXVtxFmt fmt) noexcept {
+  return g_gxState.lastVtxFmt == fmt ? g_gxState.lastVtxSize : calc_vtx_size(fmt);
+}
+
+// Makes a retained display list into triangle lists in the resident buffers, as the
+// processor would draw it now (merged draws, with their index buffers). False when it holds
+// anything but triangle draws, or there is no room for it.
+static bool build_resident_dl(resident::Entry& entry) noexcept {
+  ZoneScoped;
+  const std::vector<u8>& bytes = *entry.bytes;
+  std::array<u32, GX_MAX_VTXFMT> sizes{};
+  std::vector<resident::Chunk> chunks;
+  std::vector<u8> verts;
+  std::vector<u8> indices;
+  ByteBuffer idxBuf;
+  size_t pos = 0;
+  while (pos < bytes.size()) {
+    const u8 cmd = bytes[pos++];
+    if (cmd == CP_CMD_NOP) {
+      continue;
+    }
+    if (cmd < 0x80 || bytes.size() - pos < 2) {
+      return false;
+    }
+    const auto fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
+    const auto prim = static_cast<GXPrimitive>(cmd & CP_OPCODE_MASK);
+    const u16 vtxCount = static_cast<u16>((bytes[pos] << 8) | bytes[pos + 1]);
+    pos += 2;
+    const u32 numIndices = triangle_index_count(prim, vtxCount);
+    if (numIndices == 0 || numIndices > 0xFFFF) {
+      return false;
+    }
+    if (sizes[fmt] == 0) {
+      sizes[fmt] = current_vtx_size(fmt);
+    }
+    const size_t vtxBytes = size_t(vtxCount) * sizes[fmt];
+    if (sizes[fmt] == 0 || vtxBytes > bytes.size() - pos) {
+      return false;
+    }
+    if (chunks.empty() || chunks.back().fmt != fmt || u32(chunks.back().vtxCount) + vtxCount > 0xFFFF) {
+      // A new draw starts where push_verts and push_indices would start one: 4-aligned.
+      verts.resize(AURORA_ALIGN(verts.size(), 4));
+      indices.resize(AURORA_ALIGN(indices.size(), 4));
+      chunks.push_back(resident::Chunk{
+          .fmt = fmt,
+          .vtxCount = 0,
+          .vertOffset = static_cast<u32>(verts.size()),
+          .vertSize = 0,
+          .idxOffset = static_cast<u32>(indices.size()),
+          .idxCount = 0,
+      });
+    }
+    resident::Chunk& chunk = chunks.back();
+    verts.insert(verts.end(), bytes.begin() + pos, bytes.begin() + pos + vtxBytes);
+    pos += vtxBytes;
+    idxBuf.clear();
+    const u32 made = prepare_idx_buffer(idxBuf, prim, chunk.vtxCount, vtxCount);
+    indices.insert(indices.end(), idxBuf.data(), idxBuf.data() + idxBuf.size());
+    chunk.vtxCount = static_cast<u16>(chunk.vtxCount + vtxCount);
+    chunk.vertSize += static_cast<u32>(vtxBytes);
+    chunk.idxCount += made;
+  }
+  if (chunks.empty() || !resident::store_dl(entry, verts, indices)) {
+    return false;
+  }
+  entry.vtxSizes = sizes;
+  entry.chunks = std::move(chunks);
+  return true;
+}
+
+static void call_resident_dl(const void* key, u32 size) noexcept {
+  ZoneScoped;
+  resident::Entry* const entry = resident::find(key);
+  if (entry == nullptr || size > entry->bytes->size()) {
+    Log.error("GX_AURORA_RESIDENT_CALL_DL: {} is not retained with {} bytes", key, size);
+    return;
+  }
+  if (!entry->chunks.empty()) {
+    // Parsed with other vertex sizes: what the vertices are has changed since.
+    for (int fmt = 0; fmt < GX_MAX_VTXFMT; ++fmt) {
+      const u32 parsed = entry->vtxSizes[fmt];
+      if (parsed != 0 && parsed != current_vtx_size(static_cast<GXVtxFmt>(fmt))) {
+        resident::free_dl(*entry);
+        break;
+      }
+    }
+  }
+  if (entry->chunks.empty() && !entry->dlTried) {
+    entry->dlTried = true;
+    build_resident_dl(*entry);
+  }
+  if (entry->chunks.empty()) {
+    // As GXCallDisplayList would have sent it.
+    process(entry->bytes->data(), size);
+    return;
+  }
+  for (const resident::Chunk& chunk : entry->chunks) {
+    const gfx::Range vertRange{entry->vert.offset + chunk.vertOffset, chunk.vertSize};
+    const gfx::Range idxRange{entry->idx.offset + chunk.idxOffset, chunk.idxCount * u32(sizeof(u16))};
+    push_gx_draw(GX_TRIANGLES, chunk.fmt, chunk.vtxCount, vertRange, idxRange, chunk.idxCount);
+  }
+  // The next draw must not merge into these: its vertices are not after them.
+  sDrawCache.lastDrawFmt = GX_MAX_VTXFMT;
 }
 
 static void handle_draw(u8 cmd, ByteReader& reader) noexcept {
@@ -760,6 +882,23 @@ void handle_aurora(ByteReader& reader) noexcept {
       AURORA_ASSERT(vtxCount <= 0xFFFF, "GX_AURORA_DRAW_SIZED: too many vertices ({})", vtxCount);
       draw_prim(prim, fmt, static_cast<u16>(vtxCount), reader);
     }
+  } else if (subCmd == GX_AURORA_RESIDENT_RETAIN) {
+    const auto* key = reinterpret_cast<const void*>(reader.read<u64>());
+    std::unique_ptr<std::vector<u8>> bytes{reinterpret_cast<std::vector<u8>*>(reader.read<u64>())};
+    resident::retain(key, std::move(bytes));
+  } else if (subCmd == GX_AURORA_RESIDENT_RELEASE) {
+    const auto* key = reinterpret_cast<const void*>(reader.read<u64>());
+    resident::release(key);
+    // An array still set to it reads its resident copy no more.
+    for (auto& array : g_gxState.arrays) {
+      if (array.data == key) {
+        array.cachedRange = {};
+      }
+    }
+  } else if (subCmd == GX_AURORA_RESIDENT_CALL_DL) {
+    const auto* key = reinterpret_cast<const void*>(reader.read<u64>());
+    const u32 size = reader.read<u32>();
+    call_resident_dl(key, size);
   } else if (subCmd == GX_AURORA_DRAW_INDEXED) {
     ZoneScopedN("DRAW_INDEXED");
     const u8 cmd = reader.read<u8>();

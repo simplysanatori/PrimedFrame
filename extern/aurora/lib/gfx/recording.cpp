@@ -208,6 +208,7 @@ StagingHighWater current_high_water(const FramePacket& frame) noexcept {
       .storage = static_cast<uint32_t>(frame.storage.size()),
       .textureUpload = static_cast<uint32_t>(frame.textureUpload.size()),
       .textureUploadCount = frame.textureUploads.size(),
+      .bufferUploadCount = frame.bufferUploads.size(),
   };
 }
 
@@ -227,6 +228,10 @@ FrameOp capture_frame_op(FramePacket& frame, FrameOpType type, uint32_t index) {
   op.textureUploads.reserve(op.highWater.textureUploadCount);
   for (size_t i = 0; i < op.highWater.textureUploadCount; ++i) {
     op.textureUploads.push_back(&frame.textureUploads[i]);
+  }
+  op.bufferUploads.reserve(op.highWater.bufferUploadCount);
+  for (size_t i = 0; i < op.highWater.bufferUploadCount; ++i) {
+    op.bufferUploads.push_back(&frame.bufferUploads[i]);
   }
   return op;
 }
@@ -667,6 +672,46 @@ void queue_texture_upload_data(const uint8_t* data, uint32_t bytesPerRow, uint32
       .rowsPerImage = rowsPerImage,
   };
   queue_texture_upload(TextureUpload{layout, std::move(tex), size, std::move(buffer)});
+}
+
+bool queue_resident_upload(ResidentBuffer kind, uint32_t offset, const uint8_t* data, size_t size) {
+  if (size == 0) {
+    return true;
+  }
+  if (!check_recording("queue_resident_upload")) {
+    return false;
+  }
+  auto& res = resources();
+  const wgpu::Buffer& dst = kind == ResidentBuffer::Vertex  ? res.vertexBuffer
+                            : kind == ResidentBuffer::Index ? res.indexBuffer
+                                                            : res.storageBuffer;
+  // A buffer copy moves whole words.
+  const uint64_t copySize = AURORA_ALIGN(uint64_t(size), 4);
+  const wgpu::BufferDescriptor descriptor{
+      .label = "Resident Upload Buffer",
+      .usage = wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc,
+      .size = copySize,
+      .mappedAtCreation = true,
+  };
+  auto buffer = webgpu::g_device.CreateBuffer(&descriptor);
+  auto* mapped = static_cast<uint8_t*>(buffer.GetMappedRange(0, copySize));
+  memcpy(mapped, data, size);
+  if (copySize > size) {
+    memset(mapped + size, 0, copySize - size);
+  }
+  buffer.Unmap();
+  if (g_recorder.currentRenderPass != UINT32_MAX) {
+    AURORA_ASSERT(!current_render_passes()[g_recorder.currentRenderPass].sealed,
+                  "Attempted to append buffer upload to sealed render pass {}", g_recorder.currentRenderPass);
+  }
+  // Copied with the staging data before the pass being recorded is encoded.
+  current_frame_packet().bufferUploads.emplace_back(BufferUpload{
+      .src = std::move(buffer),
+      .dst = dst,
+      .dstOffset = offset,
+      .size = copySize,
+  });
+  return true;
 }
 
 void queue_texture_copy(wgpu::TexelCopyTextureInfo src, wgpu::TexelCopyTextureInfo dst, wgpu::Extent3D size) {

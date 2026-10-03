@@ -123,6 +123,13 @@ typedef struct {
    * its buffers aborts, so raise this for content denser than the original game's.
    */
   uint32_t frameBufferScale;
+
+  /*
+   * MiB of the shared vertex, index and array buffers set aside for data kept across frames
+   * (GXPortRetainResident), on top of what a frame holds. 0 sets none aside; the device's
+   * limits may allow less.
+   */
+  uint32_t residentGeometryMiB;
 } AuroraConfig;
 
 typedef struct {

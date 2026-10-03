@@ -133,6 +133,15 @@ Range push_indices(const uint8_t* data, size_t length, size_t alignment) { retur
 Range push_uniform(const uint8_t* data, size_t length) { return {}; }
 Range push_storage(const uint8_t* data, size_t length) { return {}; }
 
+// The resident regions: tests set them, and see the uploads.
+Range g_testResidentRegions[3]{};
+uint32_t g_testResidentUploads = 0;
+Range resident_region(ResidentBuffer kind) noexcept { return g_testResidentRegions[static_cast<int>(kind)]; }
+bool queue_resident_upload(ResidentBuffer kind, uint32_t offset, const uint8_t* data, size_t size) {
+  ++g_testResidentUploads;
+  return true;
+}
+
 Vec2<uint32_t> get_render_target_size() noexcept { return {640, 480}; }
 void set_viewport(const Viewport& viewport) noexcept {}
 void set_scissor(uint32_t x, uint32_t y, uint32_t w, uint32_t h) noexcept {}

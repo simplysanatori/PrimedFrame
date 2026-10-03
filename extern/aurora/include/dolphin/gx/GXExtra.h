@@ -34,6 +34,13 @@ void GXSetDrawTag(u32 asset, u32 model, u32 material);
 // Port extension: goes up with every GXCopyTex, so a caller can tell whether a copy it made
 // is still the latest (nothing has copied into, or cleared through, a texture since).
 u32 GXPortCopySerial(void);
+// Port extension: keeps a copy of `data`, a vertex array or a display list that stays as it is,
+// on the GPU, so a draw that uses it no longer copies it into the frame's buffers: a vertex
+// array given to GXSetArray at this pointer, or a GXCallDisplayList of it. Retains are counted
+// by pointer; the last release must come before the memory is freed or reused. Without room
+// for it (AuroraConfig::residentGeometryMiB), it is sent every frame as before.
+void GXPortRetainResident(const void* data, u32 size);
+void GXPortReleaseResident(const void* data);
 // Aurora extension: the PBR environment probe (see GX_AURORA_COPY_PROBE_FACE and
 // GX_AURORA_SET_PBR_PROBE).
 void GXCopyProbeFace(u32 face);

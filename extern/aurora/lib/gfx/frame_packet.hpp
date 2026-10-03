@@ -21,6 +21,15 @@ struct StagingHighWater {
   uint32_t storage = 0;
   uint32_t textureUpload = 0;
   size_t textureUploadCount = 0;
+  size_t bufferUploadCount = 0;
+};
+
+// A copy into a shared buffer's resident region (queue_resident_upload).
+struct BufferUpload {
+  wgpu::Buffer src;
+  wgpu::Buffer dst;
+  uint64_t dstOffset = 0;
+  uint64_t size = 0;
 };
 
 struct CustomDrawCommand {
@@ -179,6 +188,7 @@ struct FrameOp {
   EncoderTask* encoderTask = nullptr;
   StagingHighWater highWater;
   std::vector<const TextureUpload*> textureUploads;
+  std::vector<const BufferUpload*> bufferUploads;
 };
 
 using RenderPassList = std::deque<RenderPass>;
@@ -189,6 +199,7 @@ struct FramePacket {
   std::deque<EncoderTask> encoderTasks;
   std::deque<FrameOp> ops;
   std::deque<TextureUpload> textureUploads;
+  std::deque<BufferUpload> bufferUploads;
 #ifdef AURORA_GFX_DEBUG_GROUPS
   std::vector<std::string> debugMarkers;
 #endif

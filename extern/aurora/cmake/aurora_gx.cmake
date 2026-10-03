@@ -19,6 +19,7 @@ add_library(aurora_gx STATIC
         lib/gx/attr_fmt.cpp
         lib/gx/command_processor.cpp
         lib/gx/regs.cpp
+        lib/gx/resident.cpp
         lib/gx/dl.cpp
         lib/gx/fifo.cpp
         lib/gx/gx.cpp

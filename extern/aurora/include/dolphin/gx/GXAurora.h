@@ -211,6 +211,15 @@ extern "C" {
 //   32 u32: aurora::gfx::bloom::Params, word for word
 #define GX_AURORA_PORT_POST_PROCESS 0x0052
 
+// Port extension: data kept on the GPU across frames (GXPortRetainResident).
+// RETAIN payload: u64 the game's pointer, u64 a heap std::vector<u8> copy the processor takes.
+// RELEASE payload: u64 the pointer.
+// CALL_DL payload: u64 the pointer of a retained display list, u32 its size; drawn as
+// GXCallDisplayList would draw it.
+#define GX_AURORA_RESIDENT_RETAIN 0x0060
+#define GX_AURORA_RESIDENT_RELEASE 0x0061
+#define GX_AURORA_RESIDENT_CALL_DL 0x0062
+
 #define GX2_SET_POLYGON_OFFSET 0x1000
 
 
