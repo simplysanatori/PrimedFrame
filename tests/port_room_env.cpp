@@ -1,9 +1,12 @@
 #include "port_room_env.h"
 
+#include "port_room_env_lod.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -607,6 +610,38 @@ void TestBlend() {
   PortRoomEnv::UpdateBlend(manyCandidates.data(), manyCandidates.size(), edgeIn, capped);
   Check(capped.entries.size() == 1 && capped.entries[0].key == 105, "blend: the top probe holds the point");
 }
+
+// The mip a reflection is read from: the cube's own top one, as Remastered reads it (roughness
+// times the probe cube's mip count minus one). A cap only lowers it, and nothing makes it
+// negative or past the cube. A locally imported 128^2 cube has 8 mips, so it reads at 7.
+void TestLod() {
+  const float none = PortRoomEnvLod::kNoCap;
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float inf = std::numeric_limits<float>::infinity();
+  Check(PortRoomEnvLod::CubeLod(8, none) == 7.f, "lod: 8 mips, no cap");
+  Check(PortRoomEnvLod::CubeLod(1, none) == 0.f, "lod: 1 mip, no cap");
+  Check(PortRoomEnvLod::CubeLod(0, none) == 0.f, "lod: no mips, no cap");
+  Check(PortRoomEnvLod::CubeLod(8, 5.f) == 5.f, "lod: capped to 5");
+  Check(PortRoomEnvLod::CubeLod(8, 0.f) == 0.f, "lod: capped to 0");
+  Check(PortRoomEnvLod::CubeLod(8, 99.f) == 7.f, "lod: a cap past the range does not raise it");
+  Check(PortRoomEnvLod::CubeLod(3, 99.f) == 2.f, "lod: a cap past a short cube's range");
+  Check(PortRoomEnvLod::CubeLod(8, 7.f) == 7.f, "lod: a cap at the range is that range");
+  Check(PortRoomEnvLod::CubeLod(2, 1.f) == 1.f, "lod: capped, 2 mips");
+  Check(PortRoomEnvLod::CubeLod(2, 3.f) == 1.f, "lod: a cap past 2 mips");
+  // A fraction of a mip is fine: the sampler interpolates between the two.
+  Check(PortRoomEnvLod::CubeLod(8, 2.5f) == 2.5f, "lod: a fractional cap");
+  Check(PortRoomEnvLod::CubeLod(2, 0.25f) == 0.25f, "lod: a fractional cap under the range");
+  // A negative or nonfinite value is not a mip, so the cube's own range stands.
+  Check(PortRoomEnvLod::CubeLod(8, -1.f) == 7.f, "lod: a negative cap is ignored");
+  Check(PortRoomEnvLod::CubeLod(8, -0.5f) == 7.f, "lod: a small negative cap is ignored");
+  Check(PortRoomEnvLod::CubeLod(8, nan) == 7.f, "lod: a NaN cap is ignored");
+  Check(PortRoomEnvLod::CubeLod(8, inf) == 7.f, "lod: an infinite cap is ignored");
+  Check(PortRoomEnvLod::CubeLod(8, -inf) == 7.f, "lod: a negative infinite cap is ignored");
+  // Whatever the cap, a cube of one mip or none is read at 0, never below.
+  Check(PortRoomEnvLod::CubeLod(1, 0.f) == 0.f && PortRoomEnvLod::CubeLod(0, 0.f) == 0.f &&
+            PortRoomEnvLod::CubeLod(0, none) == 0.f && PortRoomEnvLod::CubeLod(1, -3.f) == 0.f,
+        "lod: one mip or none stays at 0");
+}
 } // namespace
 
 int main() {
@@ -616,6 +651,7 @@ int main() {
   TestPickExact();
   TestBlend();
   TestGrid();
+  TestLod();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

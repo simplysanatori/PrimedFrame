@@ -6,6 +6,7 @@
 #include "port_log.h"
 #include "port_mods.h"
 #include "port_remastered_txtr.h"
+#include "port_room_env_lod.h"
 #include "port_room_geo.h"
 
 #include <dolphin/gx/GXExtra.h>
@@ -1537,7 +1538,9 @@ void Locate(const float pos[3], Located& out) {
 // The Selection for what Locate found, at the frame's exposure and the settings now.
 bool Compose(const Located& located, Selection& out) {
   static const float gain = EnvFloat("MP_ROOM_ENV_GAIN", 1.f);
-  static const float lod = EnvFloat("MP_ROOM_ENV_LOD", 5.f);
+  // The mip a reflection is read from is the cube's own top one, as Remastered's is; the
+  // variable only lowers it (PortRoomEnvLod::CubeLod).
+  static const float lod = EnvFloat("MP_ROOM_ENV_LOD", PortRoomEnvLod::kNoCap);
   static const float volumeBias = EnvFloat("MP_ROOM_ENV_VOLUME_BIAS", 0.25f);
   const float ambient = AmbientScale();
   const float grey = 0.18f * gain;
@@ -1573,7 +1576,7 @@ bool Compose(const Located& located, Selection& out) {
     const float exposure = RoomExposed() ? FrameExposure(*heaviest->area) : 0.f;
     const bool room = exposure > 0.f;
     out.params[0] = room ? exposure * blend.intensity * share * gain : grey / average;
-    out.params[1] = std::min(lod, float(mips - 1));
+    out.params[1] = PortRoomEnvLod::CubeLod(mips, lod);
     out.params[2] = float(mips > 2 ? mips - 2 : 0);
     out.params[3] = ambient > 0.f ? 1.f / (room ? average * out.params[0] : grey) : 0.f;
     // Each probe's cube may be turned its own way; the blend takes the heaviest one's.
@@ -1594,7 +1597,7 @@ bool Compose(const Located& located, Selection& out) {
     const bool room = exposure > 0.f;
     out.cube = gpu.id;
     out.params[0] = room ? exposure * probe.scale * gain : grey / gpu.average;
-    out.params[1] = std::min(lod, float(gpu.mipCount - 1));
+    out.params[1] = PortRoomEnvLod::CubeLod(gpu.mipCount, lod);
     out.params[2] = float(gpu.mipCount > 2 ? gpu.mipCount - 2 : 0);
     out.params[3] = ambient > 0.f ? 1.f / (room ? gpu.average * out.params[0] : grey) : 0.f;
     std::memcpy(out.worldToCube, probe.worldToCube, sizeof(out.worldToCube));

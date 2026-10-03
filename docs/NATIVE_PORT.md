@@ -1149,8 +1149,9 @@ a temporary directory instead of mounting.
   loaded and drawn).
 - `MP_ROOM_ENV=0`: ignore the mods' `.roomenv` files (console `roomenv
   [on|off]`, which also counts what is loaded). For tuning:
-  `MP_ROOM_ENV_GAIN` (exposure, default 1), `MP_ROOM_ENV_LOD` (the mip a
-  roughness of 1 reflects, default 5) and `MP_ROOM_ENV_AMBIENT` (scale of the
+  `MP_ROOM_ENV_GAIN` (exposure, default 1), `MP_ROOM_ENV_LOD` (a cap on
+  the mip a roughness of 1 reflects; unset, the cube's own top mip, which is
+  what Remastered reads) and `MP_ROOM_ENV_AMBIENT` (scale of the
   baked ambient light, default 1; 0 keeps the game's ambient colour).
   `MP_ROOM_ENV_EXPOSURE=0` (console `roomenv exposure on|off`) exposes each
   cube on its own instead of the frame by the camera's room, and drops the
