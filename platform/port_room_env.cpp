@@ -69,6 +69,7 @@ struct FrameState {
   float tone[3][4] = {};
 };
 FrameState sFrame;
+std::vector<uint32_t> sLoadedSpare; // FrameState::loaded of the frame before last
 int sAuto = -1;
 int sStatic = -1;
 int sAreaLights = -1;
@@ -465,8 +466,9 @@ void UpdateFrame(bool roomGeoDrawing) {
   sLastValid = false;
   FrameState& f = sFrame;
   const auto now = Clock::now();
-  std::vector<uint32_t> loaded;
-  loaded.reserve(sAreas.size());
+  // Built in last frame's spare list and swapped in, so no frame allocates.
+  std::vector<uint32_t>& loaded = sLoadedSpare;
+  loaded.clear();
   for (const auto& entry : sAreas) {
     loaded.push_back(entry.first);
   }
@@ -478,7 +480,7 @@ void UpdateFrame(bool roomGeoDrawing) {
       f = {};
     }
     f.last = now;
-    f.loaded = std::move(loaded);
+    f.loaded.swap(loaded);
     return;
   }
   const Area& area = view->second;
@@ -496,7 +498,7 @@ void UpdateFrame(bool roomGeoDrawing) {
   // once; arriving in one that wasn't (a world load, a warp) starts there.
   const bool jump = !f.started || (f.area != sViewArea &&
                                    std::find(f.loaded.begin(), f.loaded.end(), sViewArea) == f.loaded.end());
-  f.loaded = std::move(loaded);
+  f.loaded.swap(loaded);
   if (jump) {
     f.started = true;
     std::memcpy(f.from, target, sizeof(target));
