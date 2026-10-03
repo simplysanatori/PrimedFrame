@@ -282,7 +282,12 @@ struct Runtime {
   bool logicValid = false;
   PortApLogic::Options logicOptions;
   bool logicHasWorld = false;
-  PortApWorld::Layout logicWorld;
+  uint64_t logicWorldRevision = 0; // Session::WorldRevision
+  // The seed's layout as last copied out of the session, handed out shared
+  // (SessionWorldLocked) and copied again only when the session's world
+  // revision moves on.
+  std::shared_ptr<const PortApWorld::Layout> worldCache;
+  uint64_t worldCacheRevision = 0;
   PortApLogic::Items logicItems;
   std::vector<PortApLogic::Level> logicLevels;
   bool enabled = false;
@@ -341,6 +346,17 @@ Runtime& GetRuntime() {
     ~Stopper() { runtime->Shutdown(); }
   } stopper{runtime};
   return *runtime;
+}
+
+// The session's layout, shared. `mutex` is held and the session exists.
+std::shared_ptr<const PortApWorld::Layout> SessionWorldLocked(Runtime& runtime) {
+  const uint64_t revision = runtime.session->WorldRevision();
+  if (runtime.worldCache == nullptr || runtime.worldCacheRevision != revision) {
+    runtime.worldCache =
+        std::make_shared<const PortApWorld::Layout>(runtime.session->GetState().world);
+    runtime.worldCacheRevision = revision;
+  }
+  return runtime.worldCache;
 }
 
 // Names the session a save's received items came from: FNV-1a over the seed
@@ -478,18 +494,21 @@ void ApplyBuiltinWorld(Runtime& runtime, CStateManager& mgr, CPlayerState& playe
   namespace Prime = MetroidPrime;
   bool unlimitedMissiles = false;
   bool unlimitedPowerBombs = false;
-  PortApWorld::Layout layout;
+  // The disc's values outside a seed's game.
+  static const PortApWorld::Layout kNoLayout;
+  std::shared_ptr<const PortApWorld::Layout> seedLayout;
   {
     std::lock_guard<std::mutex> lock(runtime.mutex);
     const bool builtin = runtime.config.builtin && runtime.session != nullptr;
     if (builtin && runtime.session->GetState().hasWorld)
-      layout = runtime.session->GetState().world;
+      seedLayout = SessionWorldLocked(runtime);
     // The world's item limits (its Config.py; not in slot data) hold in a
     // seed's game, the disc's anywhere else.
     const bool seedGame = builtin && runtime.session->GetState().hasWorld;
     CPlayerState::PortSetAmmoLimits(seedGame ? 999 : 250, seedGame ? 99 : 8);
     // The seed's tank capacity; a game outside Archipelago has the disc's.
-    const float capacity = static_cast<float>(layout.etankCapacity);
+    const float capacity =
+        static_cast<float>((seedLayout != nullptr ? *seedLayout : kNoLayout).etankCapacity);
     if (CPlayerState::GetEnergyTankCapacity() != capacity) {
       // Full health stays full under the new capacity.
       const bool full = player.GetHealthInfo().GetHP() >= player.CalculateHealth();
@@ -527,6 +546,7 @@ void ApplyBuiltinWorld(Runtime& runtime, CStateManager& mgr, CPlayerState& playe
   if (world != nullptr && world->IGetWorldAssetId() == Prime::kTallonWorld)
     temple = world->IGetAreaId(Prime::kArtifactTempleArea);
   // The layers the seed keeps on or off.
+  const PortApWorld::Layout& layout = seedLayout != nullptr ? *seedLayout : kNoLayout;
   for (const PortApWorld::LayerChange& change : PortApWorld::Layers(layout)) {
     CScriptLayerManager* state = gpGameState->StateForWorld(change.mlvl).GetLayerState().GetPtr();
     TAreaId area(change.area);
@@ -1595,16 +1615,16 @@ bool BuiltinRules() {
 }
 
 // The layout of the seed in play, once its slot_data has been seen (in this
-// session or an earlier one).
-bool SeedLayout(PortApWorld::Layout& out) {
+// session or an earlier one), else null. Shared rather than copied: this is
+// asked on every hit the player takes and every room load.
+std::shared_ptr<const PortApWorld::Layout> SeedLayout() {
   EnsureLoaded();
   Runtime& runtime = GetRuntime();
   std::lock_guard<std::mutex> lock(runtime.mutex);
   if (!runtime.enabled || runtime.session == nullptr || !runtime.session->GetConfig().builtin ||
       !runtime.session->GetState().hasWorld)
-    return false;
-  out = runtime.session->GetState().world;
-  return true;
+    return nullptr;
+  return SessionWorldLocked(runtime);
 }
 
 } // namespace
@@ -1724,10 +1744,10 @@ bool NewGameStart(uint32_t& world, uint32_t& area) {
       return false;
     world = MetroidPrime::kTallonWorld;
     area = 0;
-    PortApWorld::Layout layout;
-    if (SeedLayout(layout)) {
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    if (seedLayout != nullptr) {
       PortApWorld::Place place;
-      if (PortApWorld::StartRoom(layout, place)) {
+      if (PortApWorld::StartRoom(*seedLayout, place)) {
         world = place.mlvl;
         area = place.mrea;
       }
@@ -1740,9 +1760,10 @@ bool NewGameStart(uint32_t& world, uint32_t& area) {
 
 bool WarpToStart(uint32_t& world, uint32_t& area) {
   try {
-    PortApWorld::Layout layout;
-    if (!SeedLayout(layout))
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    if (seedLayout == nullptr)
       return false;
+    const PortApWorld::Layout& layout = *seedLayout;
     // A start room the tables don't have is the Landing Site, as for a new game.
     PortApWorld::Place place;
     place.mlvl = MetroidPrime::kTallonWorld;
@@ -1757,8 +1778,8 @@ bool WarpToStart(uint32_t& world, uint32_t& area) {
 
 bool SeedStrings(uint32_t strg, std::vector< std::string >& out) {
   try {
-    PortApWorld::Layout layout;
-    return SeedLayout(layout) && PortApWorld::Strings(layout, strg, out);
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    return seedLayout != nullptr && PortApWorld::Strings(*seedLayout, strg, out);
   } catch (...) {
     return false;
   }
@@ -1766,8 +1787,7 @@ bool SeedStrings(uint32_t strg, std::vector< std::string >& out) {
 
 bool SuitDamageReduction(int mode, bool varia, bool gravity, bool phazon, float& out) {
   try {
-    PortApWorld::Layout layout;
-    if (!SeedLayout(layout))
+    if (SeedLayout() == nullptr)
       return false;
     const float reduction = PortApWorld::SuitDamageReduction(mode, varia, gravity, phazon);
     if (reduction < 0.f)
@@ -1797,8 +1817,7 @@ bool SeedResultsLine(std::string& out) {
 
 bool SeedGivesStartItems() {
   try {
-    PortApWorld::Layout layout;
-    return SeedLayout(layout);
+    return SeedLayout() != nullptr;
   } catch (...) {
     return false;
   }
@@ -1807,9 +1826,10 @@ bool SeedGivesStartItems() {
 bool TeleporterDestination(uint32_t world, uint32_t editorId, uint32_t& destWorld,
                            uint32_t& destArea) {
   try {
-    PortApWorld::Layout layout;
-    if (!SeedLayout(layout))
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    if (seedLayout == nullptr)
       return false;
+    const PortApWorld::Layout& layout = *seedLayout;
     PortApWorld::Place retail, place;
     retail.mlvl = destWorld;
     retail.mrea = destArea;
@@ -1825,9 +1845,10 @@ bool TeleporterDestination(uint32_t world, uint32_t editorId, uint32_t& destWorl
 
 bool TempleOps(std::vector< uint8_t >& ops) {
   try {
-    PortApWorld::Layout layout;
-    if (!SeedLayout(layout))
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    if (seedLayout == nullptr)
       return false;
+    const PortApWorld::Layout& layout = *seedLayout;
     ops = PortApWorld::TempleOps(layout);
     return !ops.empty();
   } catch (...) {
@@ -1902,9 +1923,10 @@ void WatchShields(CStateManager& mgr, CGameState::ApProgress& progress) {
 
 bool RoomOps(uint32_t mrea, const uint8_t* scly, size_t size, std::vector< uint8_t >& ops) {
   try {
-    PortApWorld::Layout layout;
-    if (!SeedLayout(layout))
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    if (seedLayout == nullptr)
       return false;
+    const PortApWorld::Layout& layout = *seedLayout;
     std::vector< PortSkipCutscenes::ScriptObject > objects;
     if (!PortSkipCutscenes::ScanObjects(scly, size, objects))
       return false;
@@ -1921,9 +1943,10 @@ bool DoorOps(uint32_t mrea, const uint8_t* scly, size_t size, std::vector< uint8
       std::lock_guard< std::mutex > lock(PlacedShieldsMutex());
       PlacedShields().erase(mrea);
     }
-    PortApWorld::Layout layout;
-    if (!SeedLayout(layout))
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    if (seedLayout == nullptr)
       return false;
+    const PortApWorld::Layout& layout = *seedLayout;
     uint32_t broken[4];
     const std::vector< PortApWorld::DoorChange > doors =
         PortApWorld::Doors(layout, mrea, BrokenShields(broken));
@@ -1952,9 +1975,10 @@ bool DoorOps(uint32_t mrea, const uint8_t* scly, size_t size, std::vector< uint8
 bool MapDoors(uint32_t mapa, std::vector< std::pair< uint32_t, int > >& doors) {
   try {
     doors.clear();
-    PortApWorld::Layout layout;
-    if (!SeedLayout(layout))
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    if (seedLayout == nullptr)
       return false;
+    const PortApWorld::Layout& layout = *seedLayout;
     uint32_t broken[4];
     for (const PortApWorld::MapDoor& door :
          PortApWorld::MapDoors(layout, mapa, BrokenShields(broken)))
@@ -1967,8 +1991,8 @@ bool MapDoors(uint32_t mapa, std::vector< std::pair< uint32_t, int > >& doors) {
 
 int RequiredArtifacts() {
   try {
-    PortApWorld::Layout layout;
-    return SeedLayout(layout) ? layout.requiredArtifacts : 12;
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    return seedLayout != nullptr ? seedLayout->requiredArtifacts : 12;
   } catch (...) {
     return 12;
   }
@@ -2044,11 +2068,12 @@ bool Logic(LogicState& out) {
       if (!state.hasLogic)
         return false;
       if (!runtime.logicValid || runtime.logicOptions != state.logic ||
-          runtime.logicHasWorld != state.hasWorld || runtime.logicWorld != state.world ||
+          runtime.logicHasWorld != state.hasWorld ||
+          runtime.logicWorldRevision != runtime.session->WorldRevision() ||
           runtime.logicItems != state.progressive) {
         runtime.logicOptions = state.logic;
         runtime.logicHasWorld = state.hasWorld;
-        runtime.logicWorld = state.world;
+        runtime.logicWorldRevision = runtime.session->WorldRevision();
         runtime.logicItems = state.progressive;
         PortApLogic::Options options = state.logic;
         if (state.hasWorld)
