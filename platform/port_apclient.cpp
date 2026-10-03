@@ -739,7 +739,10 @@ void WorkerLoop(Runtime& runtime) {
     } else {
       while (!runtime.stop.load(std::memory_order_acquire) && client.IsOpen()) {
         std::string message;
-        const bool received = client.ReceiveText(message, 1000);
+        // Checks, chat and the goal queued by the game go out after this
+        // wait, so it is kept short: a check reaches the server within about
+        // a tenth of a second. A frame cut by the timeout stays in the decoder.
+        const bool received = client.ReceiveText(message, 100);
         if (!received && !client.IsOpen()) {
           connectionError = ErrorText(client.Error());
           connectionFailed = true;
@@ -1489,7 +1492,7 @@ bool SendChat(const std::string& text, std::string& error) {
       error = "not connected";
       return false;
     }
-    // The socket thread sends these after its receive wait (up to a second).
+    // The socket thread sends these after its receive wait (up to 100 ms).
     constexpr size_t kPendingSay = 64;
     if (runtime.pendingSay.size() >= kPendingSay) {
       error = "still sending the last messages";
