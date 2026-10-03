@@ -2,6 +2,8 @@
 //
 //   tool dump <file.GENP>            print the parsed effect
 //   tool scan <romfs> [outdir]       parse every GENP in every pak under <romfs>
+//   tool convert <romfs> <retail> <outdir>
+//                                    convert every GENP to retail PART
 //
 // scan reports parse coverage (unique ids and every copy), lists the files that
 // do not parse with the offset and FourCC the parse stopped at, and resolves the
@@ -9,11 +11,21 @@
 // <outdir> it also writes one dump per effect, <outdir>/<id>.txt, for diffing
 // against retail PART dumps.
 //
+// convert writes <outdir>/<id>.PART for every effect that converts (the
+// root under its retail id when it kept one, else under its own id; children
+// as <root>-<child>.PART), and a line per effect of what was left out. With
+// <retail> a folder of the disc's PART files named <8 hex digits>.PART ("-"
+// for none), each converted root that kept its retail id is compared with the
+// disc's PART property by property, and the totals per property are printed:
+// identical, different, only on the disc, only converted.
+//
 // Not part of the build:
 //   g++ -std=c++20 -O2 -Iplatform/include tests/port_remastered_effect_tool.cpp
-//       platform/port_remastered_effect.cpp platform/port_remastered_pak.cpp -lzstd -o effect_tool
+//       platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp
+//       platform/port_remastered_pak.cpp -lzstd -o effect_tool
 
 #include "port_remastered_effect.h"
+#include "port_remastered_effect_convert.h"
 #include "port_remastered_pak.h"
 
 #include <algorithm>
@@ -62,6 +74,7 @@ private:
 
 constexpr uint32_t kGenp = PortRemastered::EffectFourCC("GENP");
 constexpr uint32_t kMati = PortRemastered::EffectFourCC("MATI");
+constexpr uint32_t kTxtr = PortRemastered::EffectFourCC("TXTR");
 
 // Ids inside an effect are stored as little-endian UUIDs; the pak reader keeps
 // asset ids in printed order. Swap the first three groups to look one up.
@@ -229,6 +242,173 @@ int Scan(const std::string& romfs, const std::string& outDir) {
   return 0;
 }
 
+
+struct PropertyTally {
+  size_t same = 0;
+  size_t different = 0;
+  size_t discOnly = 0;
+  size_t convertedOnly = 0;
+};
+
+std::vector<uint8_t> ReadFile(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
+
+int Convert(const std::string& romfs, const std::string& retailDir, const std::string& outDir) {
+  using namespace PortRemastered;
+  std::vector<std::filesystem::path> paks;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(romfs)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".pak") {
+      paks.push_back(entry.path());
+    }
+  }
+  std::sort(paks.begin(), paks.end());
+  std::filesystem::create_directories(outDir);
+
+  // Every effect and material instance, read once.
+  std::map<EffectGuid, uint32_t> types;
+  std::map<EffectGuid, std::vector<uint8_t>> effects;
+  std::map<EffectGuid, std::vector<uint8_t>> materials;
+  std::map<EffectGuid, std::string> names;
+  for (const std::filesystem::path& path : paks) {
+    FileReader reader;
+    std::string error;
+    Pak pak;
+    if (!reader.Open(path.string(), error) ||
+        !pak.Open([&reader](uint64_t offset, void* out, size_t size) { return reader.Read(offset, out, size); },
+                  reader.Size(), error)) {
+      std::cerr << path.string() << ": " << error << "\n";
+      return 1;
+    }
+    for (const PakAsset& asset : pak.Assets()) {
+      types[asset.id] = asset.type;
+      auto& store = asset.type == kGenp ? effects : materials;
+      if ((asset.type != kGenp && asset.type != kMati) || store.count(asset.id) != 0) {
+        continue;
+      }
+      if (!pak.ReadAsset(asset, store[asset.id], error)) {
+        std::cerr << path.string() << ": " << error << "\n";
+        return 1;
+      }
+      if (!asset.names.empty()) {
+        names[asset.id] = asset.names.front();
+      }
+    }
+  }
+
+  EffectConvertIO io;
+  // The first TXTR a material instance names, when it is one carried over from retail.
+  io.materialTexture = [&](const EffectGuid& material) -> uint32_t {
+    auto it = materials.find(PakId(material));
+    if (it == materials.end()) {
+      return 0;
+    }
+    const std::vector<uint8_t>& data = it->second;
+    for (size_t at = 0; at + 16 <= data.size(); ++at) {
+      EffectGuid guid;
+      std::copy(data.begin() + long(at), data.begin() + long(at) + 16, guid.begin());
+      // Ids inside a material instance are stored as they are in an effect.
+      auto type = types.find(PakId(guid));
+      if (type != types.end() && type->second == kTxtr) {
+        return EffectRetailId(guid).value_or(0);
+      }
+    }
+    return 0;
+  };
+
+  std::map<std::string, PropertyTally> tally;
+  std::map<std::string, size_t> dropReasons;
+  size_t parsed = 0, written = 0, clean = 0, compared = 0, identical = 0, invalid = 0;
+  std::ofstream log(std::filesystem::path(outDir) / "convert.txt");
+  for (const auto& [id, data] : effects) {
+    EffectNode effect;
+    std::string error;
+    if (!ParseEffect(data.data(), data.size(), effect, error)) {
+      continue;
+    }
+    ++parsed;
+    // An asset id in pak order is an effect id with its first groups swapped.
+    const EffectGuid effectId = PakId(id);
+    const std::optional<uint32_t> retailId = EffectRetailId(effectId);
+    char rootName[16];
+    std::snprintf(rootName, sizeof(rootName), "%08X", retailId.value_or(0));
+    const std::string root = retailId ? std::string(rootName) : IdToString(id);
+    const std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
+    bool allClean = true;
+    for (const ConvertedPart& part : parts) {
+      std::vector<RetailPartProperty> check;
+      if (!SplitRetailPart(part.part.data(), part.part.size(), check, error)) {
+        ++invalid;
+        log << root << " writes a PART retail does not read: " << error << "\n";
+        continue;
+      }
+      const std::string file = part.root ? root : root + "-" + EffectGuidString(part.id);
+      std::ofstream(std::filesystem::path(outDir) / (file + ".PART"), std::ios::binary)
+          .write(reinterpret_cast<const char*>(part.part.data()), std::streamsize(part.part.size()));
+      ++written;
+      allClean = allClean && part.droppedRetail == 0;
+      for (const std::string& dropped : part.dropped) {
+        log << file << (names.count(id) ? " " + names[id] : "") << " dropped " << dropped << "\n";
+        dropReasons[dropped.substr(0, 4)] += 1;
+      }
+    }
+    clean += allClean ? 1 : 0;
+
+    if (!retailId || retailDir == "-" || parts.empty()) {
+      continue;
+    }
+    const std::filesystem::path disc = std::filesystem::path(retailDir) / (std::string(rootName) + ".PART");
+    if (!std::filesystem::exists(disc)) {
+      continue;
+    }
+    const std::vector<uint8_t> retail = ReadFile(disc);
+    std::vector<RetailPartProperty> want, got;
+    if (!SplitRetailPart(retail.data(), retail.size(), want, error)) {
+      log << rootName << ".PART on the disc does not split: " << error << "\n";
+      continue;
+    }
+    SplitRetailPart(parts[0].part.data(), parts[0].part.size(), got, error);
+    ++compared;
+    bool same = want.size() == got.size();
+    for (const RetailPartProperty& w : want) {
+      const std::string name = EffectFourCCString(w.fourcc);
+      auto g = std::find_if(got.begin(), got.end(), [&](const RetailPartProperty& p) { return p.fourcc == w.fourcc; });
+      if (g == got.end()) {
+        tally[name].discOnly += 1;
+        same = false;
+      } else if (g->value == w.value) {
+        tally[name].same += 1;
+      } else {
+        tally[name].different += 1;
+        same = false;
+      }
+    }
+    for (const RetailPartProperty& g : got) {
+      if (std::none_of(want.begin(), want.end(), [&](const RetailPartProperty& p) { return p.fourcc == g.fourcc; })) {
+        tally[EffectFourCCString(g.fourcc)].convertedOnly += 1;
+      }
+    }
+    identical += same ? 1 : 0;
+  }
+
+  std::cout << parsed << " effects parse, " << written << " PARTs written, " << clean
+            << " effects with no retail property left out, " << invalid << " PARTs retail would not read\n";
+  std::cout << "left out, by property:\n";
+  for (const auto& [name, count] : dropReasons) {
+    std::cout << "  " << name << " " << count << "\n";
+  }
+  if (compared != 0) {
+    std::cout << compared << " compared with the disc, " << identical << " identical; per property"
+              << " (same / different / disc only / converted only):\n";
+    for (const auto& [name, t] : tally) {
+      std::cout << "  " << name << " " << t.same << " / " << t.different << " / " << t.discOnly << " / "
+                << t.convertedOnly << "\n";
+    }
+  }
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -239,6 +419,9 @@ int main(int argc, char** argv) {
   if (mode == "scan" && (argc == 3 || argc == 4)) {
     return Scan(argv[2], argc == 4 ? argv[3] : "");
   }
-  std::cerr << "usage: " << argv[0] << " dump <file.GENP> | scan <romfs> [outdir]\n";
+  if (mode == "convert" && argc == 5) {
+    return Convert(argv[2], argv[3], argv[4]);
+  }
+  std::cerr << "usage: " << argv[0] << " dump <file.GENP> | scan <romfs> [outdir] | convert <romfs> <retail|-> <outdir>\n";
   return 2;
 }

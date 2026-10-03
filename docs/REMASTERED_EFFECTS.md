@@ -5,7 +5,8 @@ unique in the romfs). They replace retail's `PART` and fold its separate
 swoosh, electric, weapon, collision and decal assets into the same file. This
 page describes the format as far as `platform/port_remastered_effect.cpp`
 reads it, how it maps onto retail, and what does not parse yet. Nothing in the
-game loads these yet; the reader is the groundwork for converting them.
+game loads these yet: the converter writes retail PART, but the import does
+not call it yet.
 
 ## Container
 
@@ -116,17 +117,55 @@ those are the grammar gaps to close next.
 11 of the failures are exact pairs. The gun effects parse except `IceCharge`,
 `PlasmaCharge`, `Plasma2nd_1` and `PowerBombExplo`.
 
+## Converting to retail PART
+
+`platform/port_remastered_effect_convert.cpp` writes a parsed effect as retail
+PART. It is driven by retail's reader (`CParticleDataFactory`): each property
+retail knows is written as the type retail reads it as, and each element in it
+must be one retail has for that type, with retail's arguments. On the way it
+undoes the re-encodings above: LTM2 is written as LTME, LFOT/LTYP go back down
+by one, MPCB is stripped (cartesian form only), ROTA is negated back (a
+`MULT(x, -1)` becomes `x`, anything else is wrapped in one), TEXR's
+`CNST(id), NONE` becomes `CNST CNST id`, an MTIN stands in for a missing TEXR
+through its material's texture, words and keyframe blocks are byte-swapped,
+and ids become retail ids through a callback (by default only the ids carried
+over from retail resolve).
+
+What does not convert is left out and listed: Remastered-only properties, an
+element retail does not have in that slot (RADD, REUL, MPRD, the parameter
+reads...), MPCB's angle form, an id with no retail id, and KSSM (Remastered's
+spawn table is a different layout). Retail then uses its default for the
+property. `droppedRetail` counts the left-out properties retail does read, so
+a caller can skip effects that lose something that matters.
+
+Embedded GPSM children come out as PARTs of their own under their child ids.
+The swoosh, electric, weapon, collision and decal children are not converted
+yet, so SSWH/SELC on a converted effect only survive when their id is a retail
+one.
+
+`SplitRetailPart` reads a retail PART back the same way, property by property.
+The tests use it to check every converted PART is one retail's reader takes,
+and `effect_tool convert` uses it to compare converted effects with the disc's.
+Run on the disc's own PARTs it also checks the type tables against real files.
+
 ## Tools
 
 `tests/port_remastered_effect_tool.cpp` is a dev tool, not built by CMake:
 
 ```
 g++ -std=c++20 -O2 -Iplatform/include tests/port_remastered_effect_tool.cpp \
-    platform/port_remastered_effect.cpp platform/port_remastered_pak.cpp -lzstd -o effect_tool
+    platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp platform/port_remastered_pak.cpp -lzstd -o effect_tool
 ./effect_tool dump <file.GENP>             # one effect as text
 ./effect_tool scan <romfs> [outdir]        # coverage, references, failures;
                                            # outdir gets one dump per effect
+./effect_tool convert <romfs> <retail|-> <outdir>
+                                           # every effect as retail PART, what
+                                           # was left out, and (with a folder of
+                                           # the disc's <id>.PART) a comparison
 ```
 
+
 `tests/port_remastered_effect.cpp` (`port_remastered_effect_tests`) checks
-the reader on a synthetic effect.
+the reader on a synthetic effect, and `tests/port_remastered_effect_convert.cpp`
+(`port_remastered_effect_convert_tests`) checks the converter against
+hand-written retail bytes.

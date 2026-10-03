@@ -1,0 +1,78 @@
+#pragma once
+
+// Writes a Remastered particle effect (a parsed GENP, port_remastered_effect.h)
+// as retail PART: the big-endian GPSM stream CParticleDataFactory reads.
+//
+// The conversion is driven by retail's own reader: each property retail knows
+// is read as the type retail reads it as (int, real, vector, mod vector,
+// colour, emitter, texture, bool or an asset id), and each element in it must
+// be one retail has for that type, with retail's arguments. Remastered's
+// re-encodings are undone on the way (docs/REMASTERED_EFFECTS.md):
+//
+// - LTM2 is written as LTME; LFOT and LTYP enum bytes go back down by one.
+// - MPCB around a vector is stripped (only its cartesian form).
+// - ROTA is negated back.
+// - TEXR's `CNST(id), NONE` becomes retail's `CNST(CNST id)`, and an MTIN
+//   material stands in for a missing TEXR through its texture.
+// - Ids become 32-bit retail ids through ConvertIO.
+// - Keyframe blocks and words are byte-swapped.
+//
+// A property that does not convert (a Remastered-only property, an element
+// retail does not have, an id with no retail id) is left out and listed in
+// `dropped`, so the caller can decide whether the effect is still worth
+// writing. Retail fills a left-out property with its default.
+//
+// Embedded child generators (GPSM children) come out as PARTs of their own,
+// under the ids ConvertIO gives their child ids. The other embedded forms
+// (swoosh, electric, weapon, collision, decal) are not converted yet.
+
+#include "port_remastered_effect.h"
+
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace PortRemastered {
+
+struct EffectConvertIO {
+  // The retail id an asset id stands for, as the type it is read as ('TXTR',
+  // 'CMDL', 'PART', 'SWHC', 'ELSC'), or 0 when it has none. Left empty, only
+  // ids carried over from retail (EffectRetailId) resolve.
+  std::function<uint32_t(const EffectGuid& id, uint32_t type)> assetId;
+  // The retail TXTR id of a material instance's texture (MTIN), or 0.
+  std::function<uint32_t(const EffectGuid& material)> materialTexture;
+};
+
+struct ConvertedPart {
+  EffectGuid id{};  // the child id it was embedded under; zero for the root
+  bool root = false;
+  std::vector<uint8_t> part;          // the retail PART file
+  std::vector<std::string> dropped;   // "FOURCC: why", one per left-out property
+  // Properties retail reads that were left out. Remastered-only ones are not
+  // counted: retail never had them.
+  int droppedRetail = 0;
+};
+
+// The retail id an id carried over from retail holds: Remastered writes those
+// as 10000000-0000-f000-f000-0000XXXXXXXX (in pak order).
+std::optional<uint32_t> EffectRetailId(const EffectGuid& id);
+
+// The root and every embedded GPSM child, root first. `data` is the GENP the
+// effect was parsed from (keyframe blocks are copied out of it).
+std::vector<ConvertedPart> ConvertEffect(const EffectNode& effect, const uint8_t* data, const EffectConvertIO& io);
+
+// One property of a retail PART: its FourCC and its value's bytes.
+struct RetailPartProperty {
+  uint32_t fourcc = 0;
+  std::vector<uint8_t> value;
+};
+
+// Splits a retail PART into its properties, reading each as CParticleDataFactory
+// does. False (with the property that does not read in `error`) for a file
+// retail's reader would not take. Checks the converter's output, and lets
+// a converted effect be compared property by property with the disc's.
+bool SplitRetailPart(const uint8_t* data, size_t size, std::vector<RetailPartProperty>& out, std::string& error);
+
+}  // namespace PortRemastered
