@@ -54,16 +54,16 @@ struct ElementSig {
 };
 constexpr ElementSig kElementSigs[] = {
     {"ADD_", "ee"},    {"ANCR", "eeee ebeee"}, {"ANGC", "eeeee"},   {"ASPH", "eeeeeee"},
-    {"ASPR", "eeeeee"}, {"ATEX", "geeeeeb"},    {"BNCE", "eeeeb"},   {"CCLU", "eeee"},
+    {"ASPR", "eeeeee"}, {"ATEX", "geeeeee geeeeeb"},    {"BNCE", "eeeeb"},   {"CCLU", "eeee"},
     {"CEQL", "eeee"},  {"CEXT", "e"},          {"CFDE", "eeee"},    {"CHAN", "eee"},
     {"CIRC", "eeeee"}, {"CLMP", "eee"},        {"CLTN", "eeee"},    {"CNST", "w eee eeee b g"},
     {"CONE", "ee"},    {"CRCV", "eeeeeeb"},    {"CRLN", "bb eeeeeeebe eeeeeebe"},
     {"CRNG", "eeeee"}, {"CTVC", "e"},          {"DETH", "ee"},      {"DOTP", "ee"},
     {"DPVC", "ge"},    {"DPVF", "ge"},         {"DPVI", "ge"},      {"DPVV", "ge"},
-    {"EMPL", "eeeeb"}, {"EXPL", "ee"},         {"EXTR", "-"},       {"EXTT", "e -"},
+    {"EMPL", "eeeeb"}, {"EXPL", "ee"},         {"EXTR", "ee -"},       {"EXTT", "e"},
     {"FADE", "eee"},   {"FIAT", "eeee eeeee"}, {"GAPC", "-"},       {"GEMT", "-"},
     {"GRAV", "e"},     {"GTCA", "e"},          {"GTCB", "e"},       {"GTCG", "e"},
-    {"GTCP", "-"},     {"GTCR", "e"},          {"ILPT", "e"},       {"IMPL", "e eeeeb"},
+    {"GTCP", "-"},     {"GTCR", "e"},          {"ILPT", "e"},       {"IMPL", "e eeeee eeeeb"},
     {"IRND", "ee"},    {"ISWT", "ee"},         {"ITRL", "ee"},      {"KESP", "k"},
     {"KEYC", "k"},     {"KEYE", "k"},          {"KEYF", "k"},       {"KEYI", "k"},
     {"KEYP", "k"},     {"KEYV", "k"},          {"KPIN", "e"},       {"LFTW", "ee"},
@@ -76,7 +76,7 @@ constexpr ElementSig kElementSigs[] = {
     {"PVEL", "-"},     {"RADD", "ee"},         {"RAND", "ee"},      {"REUL", "eeeb"},
     {"RLPT", "e"},     {"RTOI", "ee"},         {"RTOV", "e"},       {"SCAL", "e"},
     {"SEMR", "ee"},    {"SETR", "e"},          {"SEVT", "eeee"},    {"SINE", "eee"},
-    {"SMOV", "e"},     {"SPAC", "be"},         {"SPAF", "be"},      {"SPAH", "eee"},
+    {"SMOV", "ee e"},     {"SPAC", "be"},         {"SPAF", "be"},      {"SPAH", "eee"},
     {"SPAI", "be"},    {"SPAV", "be"},         {"SPHE", "eee"},     {"SPOS", "e"},
     {"SUB_", "ee"},    {"SWRL", "eeee"},       {"TPVC", "ge"},      {"TPVF", "ge"},
     {"TPVI", "ge"},    {"TRSS", "eeeeee"},     {"TSCL", "e"},       {"VARC", "g"},
@@ -94,8 +94,9 @@ constexpr ElementSig kElementSigs[] = {
 // slot only takes the elements its type has, with their arguments, so nested
 // values cannot be read across their neighbours (a vector's CNST takes three
 // reals, a real's CNST one word). These are retail's (CParticleDataFactory)
-// with Remastered's additions. An element a type does not list is read
-// untyped, and so is one whose typed reading does not parse.
+// with Remastered's additions (a flag is CNST and a byte, read as `e`). An
+// element a type does not list is read untyped; one it lists is only read
+// typed, so a misread cannot slip in through the untyped table.
 constexpr ElementSig kIntSigs[] = {
     {"CNST", "w"},   {"KEYE", "k"},   {"KEYP", "k"},   {"TSCL", "R"},    {"DETH", "II"},  {"CHAN", "III"},
     {"ADD_", "II"},  {"MULT", "II"},  {"MODU", "II"},  {"RAND", "II"},   {"IMPL", "I"},   {"ILPT", "I"},
@@ -117,20 +118,22 @@ constexpr ElementSig kVectorSigs[] = {
     {"NONE", "-"},   {"CNST", "RRR"},   {"KEYE", "k"},    {"KEYP", "k"},   {"ANGC", "RRRRR"}, {"CONE", "VR"},
     {"CIRC", "VVRRR"}, {"CCLU", "VVIR"}, {"ADD_", "VV"},  {"MULT", "VV"},  {"CHAN", "VVI"},   {"PULS", "IIVV"},
     {"RTOV", "R"},   {"PLOC", "-"},     {"PLCO", "-"},    {"PVEL", "-"},   {"PSOF", "-"},     {"PSOU", "-"},
-    {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V eR"},  {"MPAC", "RRRR"},
+    {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V VR"},  {"MPAC", "RRRR"},
     {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"RNDV", "R"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
 };
 constexpr ElementSig kModVectorSigs[] = {
     {"NONE", "-"},     {"CNST", "RRR"},   {"GRAV", "V"},     {"WIND", "VR"},   {"EXPL", "RR"},
-    {"CHAN", "MMI"},   {"PULS", "IIMM"},  {"IMPL", "VRRRb"}, {"LMPL", "VRRRb"}, {"EMPL", "VRRRb"},
-    {"SWRL", "VVRR"},  {"BNCE", "VVRRb"}, {"SPOS", "V"},
+    {"CHAN", "MMI"},   {"PULS", "IIMM"},  {"IMPL", "VRRRe VRRRb"}, {"LMPL", "VRRRe VRRRb"}, {"EMPL", "VRRRe VRRRb"},
+    {"SWRL", "VVRR"},  {"BNCE", "VVRRe VVRRb"}, {"SPOS", "V"},
 };
 constexpr ElementSig kColorSigs[] = {
     {"CNST", "RRRR RRR"}, {"KEYE", "k"},   {"KEYP", "k"},  {"FADE", "CCR"}, {"CFDE", "CCRR"}, {"CHAN", "CCI"},
     {"PULS", "IICC"},     {"PCOL", "-"},   {"NONE", "-"},  {"TPVC", "gC"},  {"DPVC", "gC"},   {"SPAC", "bC"},
+    {"MDAO", "CR"},       {"SLCT", "Re"},
 };
 constexpr ElementSig kEmitterSigs[] = {
     {"NONE", "-"}, {"SEMR", "VV"}, {"SPHE", "VRR"}, {"ASPH", "VRRRRRR"}, {"ASPR", "VeRRRR"},
+    {"PLNE", "VVVRRR"}, {"ELPS", "VVVRe"}, {"PLNV", "VVRRRRRRRRb"},
 };
 
 constexpr char kTypeLetters[] = "IRVMCE";
@@ -178,7 +181,7 @@ constexpr const char* kProperties =
 
 // Property values whose shape is not the default list below.
 constexpr ElementSig kPropertySigs[] = {
-    {"TEXR", "ee e"}, {"SMVR", "eeee"}, {"SORT", "w"}, {"FRMD", "w"},
+    {"TEXR", "ee e"}, {"SMVR", "e eeee"}, {"SORT", "w"}, {"FRMD", "w"},
     {"PSPS", "gw"},   {"MTIN", "bg"},   {"SNRD", "w"}, {"SNRA", "w"},
 };
 // Any other property: one element, a flag byte, a byte and an id, an id, or a
@@ -339,6 +342,15 @@ public:
     return fourcc != 0 && m_grammar.elementNames.count(fourcc) != 0;
   }
 
+  bool HoldsElement(size_t at) const {
+    for (size_t i = 0; i < 16; i += 4) {
+      if (StartsWithElement(at + i)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   std::optional<uint32_t> U32(size_t at) const {
     if (at + 4 > m_size) {
       return std::nullopt;
@@ -370,8 +382,7 @@ public:
     return m_elements.emplace(at, std::move(ends)).first->second;
   }
 
-  // Where the typed reading of an element of type `type` at `at` can end;
-  // empty when the type has no such element or it does not parse that way.
+  // Where the typed reading of an element of type `type` at `at` can end.
   const Ends& TypedOnly(size_t at, int type) {
     const uint64_t key = uint64_t(at) << 3 | uint64_t(type);
     auto found = m_typed.find(key);
@@ -387,11 +398,13 @@ public:
     return m_typed.emplace(key, std::move(ends)).first->second;
   }
 
-  // Where an element of type `type` at `at` can end: its typed reading, or
-  // the untyped one when there is none.
+  // Where an element of type `type` at `at` can end: typed when the type
+  // lists the element, else untyped.
   Ends Typed(size_t at, int type) {
-    const Ends typed = TypedOnly(at, type);
-    return typed.empty() ? Element(at) : typed;
+    if (m_grammar.TypedSigs(type, FourCCAt(at)) == nullptr) {
+      return Element(at);
+    }
+    return TypedOnly(at, type);
   }
 
   // Where `count` consecutive elements starting at `at` can end.
@@ -431,9 +444,10 @@ public:
           }
           break;
         case 'g':
-          // An id that starts with an element's FourCC is two nested elements
-          // (CNST(CNST(0), ...)) read as an id: the shorter reading would win.
-          if (pos + 16 <= m_size && !StartsWithElement(pos)) {
+          // An id holding an element's FourCC is nested elements read as an
+          // id (CNST(CNST(0), ...), or a word and then RLPT, NONE...): the
+          // shorter reading would win. A real id holds one by chance only.
+          if (pos + 16 <= m_size && !HoldsElement(pos)) {
             AddEnd(next, pos + 16);
           }
           break;
@@ -823,7 +837,7 @@ private:
   }
 
   bool BuildTyped(size_t at, size_t end, int type, EffectValue& value) {
-    if (TypedOnly(at, type).empty()) {
+    if (m_grammar.TypedSigs(type, FourCCAt(at)) == nullptr) {
       return BuildElement(at, end, value);
     }
     value.kind = EffectValue::Kind::Element;

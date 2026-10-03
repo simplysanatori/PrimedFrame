@@ -166,6 +166,14 @@ void PutVector(std::vector<uint8_t>& out, float x, float y, float z) {
   PutConstant(out, z);
 }
 
+void PutColor(std::vector<uint8_t>& out, float r, float g, float b, float a) {
+  PutFourCC(out, "CNST");
+  PutConstant(out, r);
+  PutConstant(out, g);
+  PutConstant(out, b);
+  PutConstant(out, a);
+}
+
 // Values are read as the type their property holds, so a vector's nested
 // constants are three reals (not an id, and not four constants swallowing the
 // next argument), and Remastered's wrappers keep their arguments.
@@ -203,6 +211,19 @@ void TestTypedNesting() {
   PutVector(out, 0.0f, 0.0f, 0.0f);
   PutFourCC(out, "RNDV");
   PutConstant(out, 0.1f);
+  // A colour fade over two fades, ending in a real that only parses typed:
+  // read untyped, the last colour took four reals and RLPT went into an id.
+  PutProperty(out, "LCLR", 3);
+  PutFourCC(out, "FADE");
+  for (int i = 0; i < 2; ++i) {
+    PutFourCC(out, "FADE");
+    PutColor(out, 1.0f, 1.0f, 0.0f, 0.2f);
+    PutColor(out, 1.0f, 0.0f, 0.0f, 0.0f);
+    PutFourCC(out, "RLPT");
+    PutConstant(out, 100.0f);
+  }
+  PutFourCC(out, "RLPT");
+  PutConstant(out, 100.0f);
   PutProperty(out, "_END", 4);
   EffectNode effect;
   std::string error;
@@ -214,7 +235,10 @@ void TestTypedNesting() {
       "  VEL2 03 WIND(CNST(CNST(0), CNST(0), CNST(0)), CNST(0.1f))\n"
       "  GRTE 01 MULT(DFCS(CNST(6f), CNST(4f)), CNST(0.25f))\n"
       "  COLR 03 CNST(CNST(1f), CNST(0.5f), CNST(0.25f), CNST(1f))\n"
-      "  EMTR 03 SEMR(CNST(CNST(0), CNST(0), CNST(0)), RNDV(CNST(0.1f)))\n";
+      "  EMTR 03 SEMR(CNST(CNST(0), CNST(0), CNST(0)), RNDV(CNST(0.1f)))\n"
+      "  LCLR 03 FADE(FADE(CNST(CNST(1f), CNST(1f), CNST(0), CNST(0.2f)), CNST(CNST(1f), CNST(0), CNST(0), CNST(0)), "
+      "RLPT(CNST(100f))), FADE(CNST(CNST(1f), CNST(1f), CNST(0), CNST(0.2f)), CNST(CNST(1f), CNST(0), CNST(0), "
+      "CNST(0)), RLPT(CNST(100f))), RLPT(CNST(100f)))\n";
   Check(dump == want, "nested values read as their types");
   if (dump != want) {
     std::fprintf(stderr, "%s", dump.c_str());

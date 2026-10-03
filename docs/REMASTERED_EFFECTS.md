@@ -69,9 +69,15 @@ per-type tables (`kIntSigs` and the rest: retail's elements and arguments plus
 Remastered's MPCB, MPAC, ANCR, ASPR, RNDV, DFCP/DFCS, MPRD and the parameter
 reads). Inside a typed value every argument is typed in turn, so a vector's
 `CNST` is exactly three reals and a real's `CNST` one word. An element the type
-does not list, or a typed reading that does not parse, falls back to the
-untyped table, and the whole property falls back to the untyped defaults, so
-the typed reading only ever chooses between readings that already parsed.
+does not list is read from the untyped table; one it lists is only read typed.
+The whole property falls back to the untyped defaults when the typed reading
+does not parse, so typing only ever chooses between readings that already
+parsed. Remastered's flags are a `CNST` and a byte (IMPL/LMPL/EMPL/BNCE's
+last argument, ELPS, ATEX). Emitter shapes pinned from the shipped bytes:
+`PLNE(v, v, v, r, r, r)`, `ELPS(v, v, v, r, flag)`,
+`PLNV(v, v, r x8, byte)`; colour `MDAO(c, r)` and `SLCT(r, ARRY)`;
+`SMOV(EXTT(v), EXTR(NONE, NONE))`. A 16-byte id holding an element FourCC
+is not read as an id.
 Unknown elements try their larger arities first when building the tree.
 
 New elements, with arities known:
