@@ -205,6 +205,26 @@ struct Level {
   uint32_t height = 0;
 };
 
+struct BindGroupKey {
+  WGPUTextureView source;
+  WGPUTextureView bloomSource;
+  WGPUTextureView lutA;
+  WGPUTextureView lutB;
+  uint32_t slot;
+
+  bool operator==(const BindGroupKey&) const = default;
+};
+struct BindGroupKeyHash {
+  size_t operator()(const BindGroupKey& key) const noexcept {
+    size_t hash = std::hash<const void*>{}(key.source);
+    for (const void* view : {static_cast<const void*>(key.bloomSource), static_cast<const void*>(key.lutA),
+                             static_cast<const void*>(key.lutB)}) {
+      hash = hash * 31 + std::hash<const void*>{}(view);
+    }
+    return hash * 31 + key.slot;
+  }
+};
+
 struct State {
   EncoderTaskId task = InvalidEncoderTask;
   wgpu::ShaderModule module;
@@ -232,6 +252,9 @@ struct State {
   wgpu::RenderPipeline average;
   wgpu::Texture averageTexture;
   wgpu::TextureView averageView;
+  // The passes' bind groups, which only change with the targets, the frame or a LUT. A group
+  // holds its views, so no view in a key can be freed and its handle reused while cached.
+  std::unordered_map<BindGroupKey, wgpu::BindGroup, BindGroupKeyHash> groups;
 };
 State g_state;
 
@@ -305,6 +328,9 @@ void upload_pending(const wgpu::Queue& queue) {
   }
   for (const auto& [id, data] : pending) {
     g_state.luts[id] = make_lut(GradeLutSize, data.data(), queue);
+  }
+  if (!pending.empty()) {
+    g_state.groups.clear();
   }
   if (!g_state.noLut) {
     const uint8_t white[4]{255, 255, 255, 255};
@@ -440,6 +466,7 @@ void ensure_targets(uint32_t width, uint32_t height, wgpu::TextureFormat format)
   g_state.width = width;
   g_state.height = height;
   g_state.frameFormat = format;
+  g_state.groups.clear();
   const wgpu::TextureDescriptor frameDescriptor{
       .label = "Bloom Frame Copy",
       .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
@@ -470,20 +497,32 @@ void draw(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline,
           const wgpu::TextureView& source, const wgpu::TextureView& bloomSource, const wgpu::TextureView& target,
           bool load, const wgpu::TextureView& resolve = {}, const wgpu::TextureView& lutA = {},
           const wgpu::TextureView& lutB = {}) {
-  const std::array entries{
-      wgpu::BindGroupEntry{.binding = 0, .sampler = g_state.sampler},
-      wgpu::BindGroupEntry{.binding = 1, .textureView = source},
-      wgpu::BindGroupEntry{.binding = 2, .buffer = g_state.uniforms, .offset = slot * SlotSize, .size = sizeof(Uniform)},
-      wgpu::BindGroupEntry{.binding = 3, .textureView = bloomSource},
-      wgpu::BindGroupEntry{.binding = 4, .textureView = lutA ? lutA : g_state.noLut},
-      wgpu::BindGroupEntry{.binding = 5, .textureView = lutB ? lutB : g_state.noLut},
-  };
-  const wgpu::BindGroupDescriptor groupDescriptor{
-      .layout = g_state.layout,
-      .entryCount = entries.size(),
-      .entries = entries.data(),
-  };
-  const auto group = g_device.CreateBindGroup(&groupDescriptor);
+  const wgpu::TextureView& viewA = lutA ? lutA : g_state.noLut;
+  const wgpu::TextureView& viewB = lutB ? lutB : g_state.noLut;
+  const BindGroupKey key{source.Get(), bloomSource.Get(), viewA.Get(), viewB.Get(), slot};
+  wgpu::BindGroup& group = g_state.groups[key];
+  if (!group) {
+    // A frame that keeps changing (a source remade every frame) cannot grow this for ever.
+    if (g_state.groups.size() > 64) {
+      g_state.groups.clear();
+      return draw(cmd, pipeline, slot, source, bloomSource, target, load, resolve, lutA, lutB);
+    }
+    const std::array entries{
+        wgpu::BindGroupEntry{.binding = 0, .sampler = g_state.sampler},
+        wgpu::BindGroupEntry{.binding = 1, .textureView = source},
+        wgpu::BindGroupEntry{
+            .binding = 2, .buffer = g_state.uniforms, .offset = slot * SlotSize, .size = sizeof(Uniform)},
+        wgpu::BindGroupEntry{.binding = 3, .textureView = bloomSource},
+        wgpu::BindGroupEntry{.binding = 4, .textureView = viewA},
+        wgpu::BindGroupEntry{.binding = 5, .textureView = viewB},
+    };
+    const wgpu::BindGroupDescriptor groupDescriptor{
+        .layout = g_state.layout,
+        .entryCount = entries.size(),
+        .entries = entries.data(),
+    };
+    group = g_device.CreateBindGroup(&groupDescriptor);
+  }
   const wgpu::RenderPassColorAttachment attachment{
       .view = target,
       .resolveTarget = resolve,
@@ -504,7 +543,7 @@ void draw(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline,
 }
 
 // The frame copy's average into a free readback slot; none free skips this frame.
-void encode_average(const wgpu::CommandEncoder& cmd, float exposure) {
+void encode_average(const wgpu::CommandEncoder& cmd, float exposure, const wgpu::TextureView& frame) {
   wgpu::Buffer buffer;
   {
     std::lock_guard lock(g_readMutex);
@@ -531,7 +570,7 @@ void encode_average(const wgpu::CommandEncoder& cmd, float exposure) {
   if (!buffer) {
     return;
   }
-  draw(cmd, g_state.average, 0, g_state.frameView, g_state.frameView, g_state.averageView, false);
+  draw(cmd, g_state.average, 0, frame, frame, g_state.averageView, false);
   const wgpu::TexelCopyTextureInfo source{.texture = g_state.averageTexture};
   const wgpu::TexelCopyBufferInfo target{
       .layout = {.bytesPerRow = AverageRowBytes, .rowsPerImage = AverageSize},
@@ -607,16 +646,19 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   put(slot++, 0.f, 0.f, nullptr);
   ctx.queue.WriteBuffer(g_state.uniforms, 0, slots.data(), sizeof(slots));
 
+  if (!post) {
+    // Measuring only: nothing draws into the frame here, so it is read where it is. The copy
+    // exists for the composite, which writes the frame it reads.
+    encode_average(cmd, exposure, source.view);
+    return;
+  }
   const wgpu::TexelCopyTextureInfo copySource{.texture = source.texture};
   const wgpu::TexelCopyTextureInfo copyTarget{.texture = g_state.frame};
   const wgpu::Extent3D copySize{width, height, 1};
   cmd.CopyTextureToTexture(&copySource, &copyTarget, &copySize);
 
   if (measure) {
-    encode_average(cmd, exposure);
-  }
-  if (!post) {
-    return;
+    encode_average(cmd, exposure, g_state.frameView);
   }
   slot = 0;
   auto& levels = g_state.levels;
