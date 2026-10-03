@@ -51,11 +51,21 @@ struct TextRegistry {
   std::mutex mutex;
   std::map<uint64_t, uint32_t> ids;
   std::vector<std::u16string> texts;
+  // Bumped whenever pair n's text changes, so Find rebuilds it.
+  std::vector<uint32_t> revisions;
 };
 
 TextRegistry& Texts() {
   static TextRegistry registry;
   return registry;
+}
+
+// 0 while the pair is unregistered.
+uint32_t TextRevision(uint32_t id) {
+  const uint32_t index = (id - kTextBase) / 2;
+  TextRegistry& registry = Texts();
+  std::lock_guard<std::mutex> lock(registry.mutex);
+  return index < registry.revisions.size() ? registry.revisions[index] : 0;
 }
 
 bool BuildText(uint32_t id, Resource& out) {
@@ -315,12 +325,21 @@ bool SetAncsModel(std::vector<uint8_t>& ancs, uint32_t expectedModel, uint32_t m
 const Resource* Find(uint32_t id, const DiscReader& read) {
   if (!IsCustomId(id))
     return nullptr;
+  // Scan text keeps its id when its text changes (a check's scan once it is
+  // scouted), so a text pair is rebuilt when its revision moves on. The old
+  // copy is retired rather than freed: a loader may still hold its pointer.
+  struct Built {
+    std::unique_ptr<Resource> resource;
+    uint32_t revision = 0;
+  };
   static std::mutex sMutex;
-  static std::map<uint32_t, std::unique_ptr<Resource>> sBuilt;
+  static std::map<uint32_t, Built> sBuilt;
+  static std::vector<std::unique_ptr<Resource>> sRetired;
   std::lock_guard<std::mutex> lock(sMutex);
+  const uint32_t revision = id >= kTextBase ? TextRevision(id) : 0;
   const auto found = sBuilt.find(id);
-  if (found != sBuilt.end())
-    return found->second.get();
+  if (found != sBuilt.end() && found->second.revision == revision)
+    return found->second.resource.get();
   std::unique_ptr<Resource> resource(new Resource);
   if (!Build(id, read, *resource)) {
     // Unknown ids fail quietly (a randomprime disc's other custom assets are
@@ -329,7 +348,12 @@ const Resource* Find(uint32_t id, const DiscReader& read) {
       PortLog::Write("custom resource %08X: disc source missing or unexpected\n", id);
     resource.reset();
   }
-  return (sBuilt[id] = std::move(resource)).get();
+  Built& built = sBuilt[id];
+  if (built.resource)
+    sRetired.push_back(std::move(built.resource));
+  built.resource = std::move(resource);
+  built.revision = revision;
+  return built.resource.get();
 }
 
 uint32_t TextScan(uint64_t key, const std::string& text) {
@@ -337,13 +361,19 @@ uint32_t TextScan(uint64_t key, const std::string& text) {
   std::lock_guard<std::mutex> lock(registry.mutex);
   const auto found = registry.ids.find(key);
   if (found != registry.ids.end()) {
-    registry.texts[(found->second - kTextBase) / 2] = Utf16(text);
+    const uint32_t index = (found->second - kTextBase) / 2;
+    std::u16string utf16 = Utf16(text);
+    if (registry.texts[index] != utf16) {
+      registry.texts[index] = std::move(utf16);
+      ++registry.revisions[index];
+    }
     return found->second;
   }
   const uint32_t index = uint32_t(registry.texts.size());
   if (!IsCustomId(kTextBase + index * 2 + 1))
     return 0;
   registry.texts.push_back(Utf16(text));
+  registry.revisions.push_back(1);
   return registry.ids[key] = kTextBase + index * 2;
 }
 
