@@ -6,6 +6,60 @@
 #include <cstring>
 #include <vector>
 
+namespace {
+// Port: a PBR draw sets all of its probe, cube, ambient, volume, tone and material state
+// per surface, and neighbouring surfaces almost always repeat it. The processor already
+// ignores a repeat, so a repeat is not written at all; that saves a few hundred FIFO bytes
+// per surface. These are only ever written from the game thread, and never recorded into a
+// display list (which a skipped write would leave out).
+template <typename T>
+struct LastPBRWrite {
+  T value{};
+  bool valid = false;
+
+  // True when `now` is what was written last; otherwise remembers it.
+  bool repeats(const T& now) {
+    if (valid && std::memcmp(&value, &now, sizeof(T)) == 0) {
+      return true;
+    }
+    std::memcpy(&value, &now, sizeof(T));
+    valid = true;
+    return false;
+  }
+};
+
+struct PBRProbeWrite {
+  f32 rows[3][3];
+  f32 weight;
+};
+struct PBRCubeWrite {
+  u32 id;
+  f32 params[4];
+};
+struct PBRAmbientWrite {
+  f32 rows[6][3];
+  f32 mode;
+  u32 present;
+};
+struct PBRVolumeWrite {
+  u32 id;
+  f32 rows[6][4];
+};
+struct PBRToneWrite {
+  f32 rows[3][4];
+};
+struct PBRMaterialWrite {
+  f32 emissive[3];
+  f32 backlight[3];
+  f32 heightBlend;
+  f32 mode;
+  f32 layer[5];
+  f32 kind[6];
+  f32 up[3];
+  u32 debugView;
+};
+} // namespace
+
 extern "C" {
 GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
                          u32 gradeB, f32 gradeWeight, f32 exposure) {
@@ -100,6 +154,13 @@ void GXCopyProbeFace(u32 face) {
 }
 
 void GXSetPBRProbe(const f32 viewToProbe[3][3], f32 weight) {
+  static LastPBRWrite<PBRProbeWrite> sLast;
+  PBRProbeWrite now{};
+  std::memcpy(now.rows, viewToProbe, sizeof(now.rows));
+  now.weight = weight;
+  if (sLast.repeats(now)) {
+    return;
+  }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_PROBE);
   for (int col = 0; col < 3; ++col) {
     GX_WRITE_F32(viewToProbe[0][col]);
@@ -115,6 +176,19 @@ void GXSetPBRDebugView(u32 view) { sPBRDebugView = view; }
 
 void GXSetPBRMaterial(const f32 emissive[3], const f32 backlight[3], f32 heightBlend, f32 mode, const f32 layer[5],
                       const f32 kind[6], const f32 up[3]) {
+  static LastPBRWrite<PBRMaterialWrite> sLast;
+  PBRMaterialWrite now{};
+  std::memcpy(now.emissive, emissive, sizeof(now.emissive));
+  std::memcpy(now.backlight, backlight, sizeof(now.backlight));
+  now.heightBlend = heightBlend;
+  now.mode = mode;
+  std::memcpy(now.layer, layer, sizeof(now.layer));
+  std::memcpy(now.kind, kind, sizeof(now.kind));
+  std::memcpy(now.up, up, sizeof(now.up));
+  now.debugView = sPBRDebugView;
+  if (sLast.repeats(now)) {
+    return;
+  }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_MATERIAL);
   GX_WRITE_F32(emissive[0]);
   GX_WRITE_F32(emissive[1]);
@@ -156,6 +230,13 @@ void GXDestroyPBRCube(u32 id) {
 }
 
 void GXSetPBRCube(u32 id, const f32 params[4]) {
+  static LastPBRWrite<PBRCubeWrite> sLast;
+  PBRCubeWrite now{};
+  now.id = id;
+  std::memcpy(now.params, params, sizeof(now.params));
+  if (sLast.repeats(now)) {
+    return;
+  }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_CUBE);
   GX_WRITE_U32(id);
   for (int i = 0; i < 4; ++i) {
@@ -164,6 +245,16 @@ void GXSetPBRCube(u32 id, const f32 params[4]) {
 }
 
 void GXSetPBRAmbient(const f32 rows[6][3], f32 mode) {
+  static LastPBRWrite<PBRAmbientWrite> sLast;
+  PBRAmbientWrite now{};
+  if (rows != nullptr) {
+    std::memcpy(now.rows, rows, sizeof(now.rows));
+    now.mode = mode;
+    now.present = 1;
+  }
+  if (sLast.repeats(now)) {
+    return;
+  }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_AMBIENT);
   for (int row = 0; row < 6; ++row) {
     for (int i = 0; i < 3; ++i) {
@@ -190,6 +281,15 @@ void GXDestroyPBRVolume(u32 id) {
 }
 
 void GXSetPBRVolume(u32 id, const f32 rows[6][4]) {
+  static LastPBRWrite<PBRVolumeWrite> sLast;
+  PBRVolumeWrite now{};
+  if (rows != nullptr) {
+    now.id = id;
+    std::memcpy(now.rows, rows, sizeof(now.rows));
+  }
+  if (sLast.repeats(now)) {
+    return;
+  }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_VOLUME);
   GX_WRITE_U32(rows != nullptr ? id : 0);
   for (int row = 0; row < 6; ++row) {
@@ -200,6 +300,14 @@ void GXSetPBRVolume(u32 id, const f32 rows[6][4]) {
 }
 
 void GXSetPBRTone(const f32 rows[3][4]) {
+  static LastPBRWrite<PBRToneWrite> sLast;
+  PBRToneWrite now{};
+  if (rows != nullptr) {
+    std::memcpy(now.rows, rows, sizeof(now.rows));
+  }
+  if (sLast.repeats(now)) {
+    return;
+  }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_TONE);
   for (int row = 0; row < 3; ++row) {
     for (int i = 0; i < 4; ++i) {
@@ -209,6 +317,10 @@ void GXSetPBRTone(const f32 rows[3][4]) {
 }
 
 void GXSetPBRLightSkip(u32 mask) {
+  static LastPBRWrite<u32> sLast;
+  if (sLast.repeats(mask)) {
+    return;
+  }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_LIGHT_SKIP);
   GX_WRITE_U32(mask);
 }
