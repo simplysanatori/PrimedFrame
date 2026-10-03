@@ -204,6 +204,13 @@ extern "C" {
 //   u32 mask (bit n: GX_LIGHTn)
 #define GX_AURORA_SET_PBR_LIGHT_SKIP 0x0051
 
+// Port extension: Remastered's bloom, colour grade and frame average over the EFB as drawn so
+// far (see GXPortPostProcess). Queued, so the game thread does not wait for the FIFO to be
+// processed before it can record it.
+// Payload:
+//   32 u32: aurora::gfx::bloom::Params, word for word
+#define GX_AURORA_PORT_POST_PROCESS 0x0052
+
 #define GX2_SET_POLYGON_OFFSET 0x1000
 
 

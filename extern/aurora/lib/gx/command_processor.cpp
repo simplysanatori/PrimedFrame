@@ -1,5 +1,6 @@
 #include "command_processor.hpp"
 
+#include "../gfx/bloom.hpp"
 #include "../gfx/depth_peek.hpp"
 #include "../gfx/probe.hpp"
 #include "../gfx/recording.hpp"
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <span>
 #include <memory>
 #include <vector>
@@ -918,6 +920,15 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.pbrTone = rows;
       g_gxState.dirty |= DirtyUniform;
     }
+  } else if (subCmd == GX_AURORA_PORT_POST_PROCESS) {
+    u32 words[32];
+    for (u32& word : words) {
+      word = reader.read<u32>();
+    }
+    gfx::bloom::Params params;
+    static_assert(sizeof(params) == sizeof(words));
+    std::memcpy(&params, words, sizeof(params));
+    gfx::bloom::record(params);
   } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_SKIP) {
     const Vec4<float> value{static_cast<f32>(reader.read<u32>() & 0xFF), 0.f, 0.f, 0.f};
     if (g_gxState.pbrLightSkip != value) {

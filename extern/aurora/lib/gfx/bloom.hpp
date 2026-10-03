@@ -18,8 +18,16 @@ struct Params {
 };
 static_assert(sizeof(Params) <= 128);
 
+static_assert(sizeof(Params) % 4 == 0);
+
 // Records the bloom at this point of the frame. False when it could not be recorded.
+// Waits for the FIFO to be processed first; GXPortPostProcess queues it instead.
 bool push(const Params& params);
+// Registers the bloom's encoder task (game thread); false if it could not be.
+bool ensure_task();
+// Records the bloom from the FIFO processor (GX_AURORA_PORT_POST_PROCESS), once ensure_task
+// has returned true.
+void record(const Params& params);
 // Stores a 33^3 RGBA8 LUT (red fastest) under id (non-zero), uploaded before its next use.
 void set_grade_lut(uint32_t id, const uint8_t* rgba);
 // Maps the readbacks of the frame average that the last submit carried.

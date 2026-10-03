@@ -2,6 +2,7 @@
 
 #include "../logging.hpp"
 #include "../webgpu/gpu.hpp"
+#include "recording.hpp"
 
 #include <aurora/gfx.hpp>
 
@@ -678,7 +679,7 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
 }
 } // namespace
 
-bool push(const Params& params) {
+bool ensure_task() {
   if (g_state.task == InvalidEncoderTask) {
     g_state.task = register_encoder_task_type(EncoderTaskDescriptor{.label = "Bloom", .callback = encode});
     if (g_state.task == InvalidEncoderTask) {
@@ -686,7 +687,20 @@ bool push(const Params& params) {
       return false;
     }
   }
+  return true;
+}
+
+bool push(const Params& params) {
+  if (!ensure_task()) {
+    return false;
+  }
   return push_encoder_task(g_state.task, &params, sizeof(params));
+}
+
+void record(const Params& params) {
+  if (g_state.task != InvalidEncoderTask) {
+    record_encoder_task(g_state.task, &params, sizeof(params));
+  }
 }
 
 void set_grade_lut(uint32_t id, const uint8_t* rgba) {

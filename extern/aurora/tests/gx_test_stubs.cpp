@@ -248,6 +248,8 @@ bool is_offscreen() noexcept { return false; }
 
 namespace aurora::gfx::bloom {
 bool push(const Params& params) { return false; }
+bool ensure_task() { return false; }
+void record(const Params& params) {}
 void set_grade_lut(uint32_t id, const uint8_t* rgba) {}
 void after_submit() noexcept {}
 bool frame_radiance(float out[3], uint32_t& serial) { return false; }

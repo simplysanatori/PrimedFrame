@@ -80,7 +80,19 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
   if (!params.bloom && gradeA == 0 && gradeB == 0 && params.tone[0][3] == 0.f) {
     return true;
   }
-  return aurora::gfx::bloom::push(params);
+  if (!aurora::gfx::bloom::ensure_task()) {
+    return false;
+  }
+  // Through the FIFO: recording it directly would first wait for the FIFO thread to finish
+  // everything the frame has drawn so far.
+  static_assert(sizeof(params) == 32 * sizeof(u32));
+  u32 words[32];
+  std::memcpy(words, &params, sizeof(words));
+  GX_WRITE_AURORA(GX_AURORA_PORT_POST_PROCESS);
+  for (const u32 word : words) {
+    GX_WRITE_U32(word);
+  }
+  return true;
 }
 
 void GXPortColorGradeLut(u32 id, const u8* rgba) { aurora::gfx::bloom::set_grade_lut(id, rgba); }

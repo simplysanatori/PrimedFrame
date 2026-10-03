@@ -1035,7 +1035,10 @@ bool push_encoder_task(EncoderTaskId type, const void* payload, size_t payloadSi
   }
 
   gx::fifo::drain();
+  return record_encoder_task(type, payload, payloadSize);
+}
 
+bool record_encoder_task(EncoderTaskId type, const void* payload, size_t payloadSize) {
   if (!g_recorder.active() || g_recorder.currentRenderPass == UINT32_MAX) {
     Log.warn("push_encoder_task: called outside an active render pass");
     return false;
