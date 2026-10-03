@@ -3,6 +3,7 @@
 // These allow the test binary to link without pulling in WebGPU runtime.
 
 #include "gx/gx.hpp"
+#include "gfx/bloom.hpp"
 #include "gfx/clear.hpp"
 #include "gfx/resources.hpp"
 #include "gfx/depth_peek.hpp"
@@ -244,6 +245,14 @@ void begin_offscreen(uint32_t width, uint32_t height) {
 void end_offscreen() { testing::endOffscreenCount.fetch_add(1, std::memory_order_release); }
 bool is_offscreen() noexcept { return false; }
 } // namespace aurora::gfx
+
+namespace aurora::gfx::bloom {
+bool push(const Params& params) { return false; }
+void set_grade_lut(uint32_t id, const uint8_t* rgba) {}
+void after_submit() noexcept {}
+bool frame_radiance(float out[3], uint32_t& serial) { return false; }
+void shutdown() {}
+} // namespace aurora::gfx::bloom
 
 namespace aurora::gfx::depth_peek {
 namespace {
