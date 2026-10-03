@@ -4,6 +4,7 @@
 #include "port_remastered_image.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -204,10 +205,19 @@ private:
 
 }  // namespace
 
+namespace {
+std::atomic<bool> sEffects{false};
+}  // namespace
+
 bool WantsRemasteredEffects() {
   const char* env = std::getenv("MP_REMASTERED_EFFECTS");
-  return env != nullptr && std::strcmp(env, "1") == 0;
+  if (env == nullptr || env[0] == '\0') {
+    return sEffects.load();
+  }
+  return std::strcmp(env, "1") == 0;
 }
+
+void SetImportEffects(bool on) { sEffects = on; }
 
 EffectImportResult ImportEffects(const EffectImportIO& io) { return Importer(io).Run(); }
 

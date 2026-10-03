@@ -17,6 +17,7 @@
 #include "port_gci.h"
 #include "port_mods.h"
 #include "port_importers.h"
+#include "port_remastered_effect_import.h"
 #include "port_remastered_import.h"
 #include "port_discord.h"
 #include "port_livesplit.h"
@@ -3179,6 +3180,13 @@ void DrawRemasteredImport() {
   }
 #endif
   PortRemastered::SetImportGeometry(sGeometry);
+  static bool sEffects = false;
+  ImGui::Checkbox("Particle effects (experimental)##remastered", &sEffects);
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("Also replaces the disc's particle effects with Remastered's where the two match. Some "
+                      "effects may look wrong. Restart the game afterwards.");
+  }
+  PortRemastered::SetImportEffects(sEffects);
   ImGui::EndDisabled();
   if (state.running) {
     ImGui::ProgressBar(state.total > 0 ? float(state.done) / float(state.total) : 0.f, ImVec2(-1.f, 0.f),

@@ -240,7 +240,8 @@ from what retail's elements compute (`CVEAngleCone`, `CVEAngleSphere`,
 
 ## In the import
 
-`MP_REMASTERED_EFFECTS=1` adds an effect step to the Remastered import
+The import menu's "Particle effects (experimental)" checkbox, or
+`MP_REMASTERED_EFFECTS=1` (which wins when set), adds an effect step to the Remastered import
 (`port_remastered_effect_import.cpp`, called from `port_remastered_import.cpp`
 after the models). Every effect whose id was carried over from retail and is
 on the disc is converted and written as `<ID>.PART`, replacing the disc's.
