@@ -88,11 +88,13 @@ uint32_t sNextSerial = 1;
 // Work kept off the render thread: decoding a cube's BC6H into the RGBA16F that
 // GXCreatePBRCube takes, and filling a grid's empty points in for GXCreatePBRVolume. Load
 // queues every cube and volume of an area as it reads the file; one thread works through
-// them in order, and UpdateFrame hands what is done to the GPU, one a frame. A job reads
-// its area's File, which stays as it is until the job is done: Free cancels the area's
-// jobs, and waits for the one running to stop, before the file goes.
+// them in order, and UpdateFrame hands what is done to the GPU, one a frame. Last comes
+// Keep: a copy of the parts of the file still read once the cubes are made, which takes
+// the file's place, so the cubes' blocks (most of it) are freed. A job reads its area's
+// File, which stays as it is until the job is done: Free cancels the area's jobs, and
+// waits for the one running to stop, before the file goes, and Keep is the area's last.
 // Defined after sAreas so that it is destroyed, and its thread joined, first.
-enum class JobKind { Cube, Volume };
+enum class JobKind { Cube, Volume, Keep };
 
 struct Job {
   JobKind kind = JobKind::Cube;
@@ -108,7 +110,8 @@ struct Result {
   uint32_t serial = 0;
   size_t index = 0;
   std::vector<uint16_t> cube;  // RGBA16F, as GXCreatePBRCube takes it
-  std::vector<uint8_t> volume; // as GXCreatePBRVolume takes it
+  std::vector<uint8_t> volume; // as GXCreatePBRVolume takes it, or Keep's bytes
+  std::vector<size_t> offsets; // Keep: where each grid's points, then each grade's LUT, are
 };
 
 struct Worker {
@@ -119,8 +122,8 @@ struct Worker {
   void Submit(const Job& job);
   // Drops the jobs and results of a load, and waits for its job that is running to stop.
   void Cancel(uint32_t serial);
-  // The oldest result, if there is one.
-  bool Take(Result& out);
+  // The oldest result, if there is one; a cube or volume only when `gpu`.
+  bool Take(Result& out, bool gpu);
 
   void Run();
   // False when cancelled.
@@ -474,12 +477,40 @@ void Load(uint32_t mrea, Area& area) {
       sWorker.Submit({JobKind::Cube, mrea, area.serial, i, &area.file});
     }
   }
+  if (!area.file.cubes.empty()) {
+    sWorker.Submit({JobKind::Keep, mrea, area.serial, 0, &area.file});
+  }
 }
 
 // The frame's exposure, for radiance from `area`: one exposure covers the whole picture
 // (see UpdateFrame), or the area's own before the frame has one.
 float FrameExposure(const Area& area) {
   return sFrame.exposure > 0.f ? sFrame.exposure : area.exposure;
+}
+
+// What an area keeps of its file once its cubes are made: the grids' points, which
+// SampleGrid reads for models every frame, and the grades' LUTs, handed to Aurora when one
+// is first shown; with where each starts in the copy. The cubes' blocks are left behind.
+void KeepData(const File& file, std::vector<uint8_t>& kept, std::vector<size_t>& offsets) {
+  constexpr size_t kPoint = 24;
+  size_t bytes = 0;
+  for (const Grid& grid : file.grids) {
+    bytes += size_t(grid.size[0]) * grid.size[1] * grid.size[2] * kPoint;
+  }
+  bytes += file.grades.size() * kGradeLutBytes;
+  kept.clear();
+  kept.reserve(bytes);
+  offsets.clear();
+  const auto keep = [&](size_t offset, size_t length) {
+    offsets.push_back(kept.size());
+    kept.insert(kept.end(), file.data.begin() + offset, file.data.begin() + offset + length);
+  };
+  for (const Grid& grid : file.grids) {
+    keep(grid.offset, size_t(grid.size[0]) * grid.size[1] * grid.size[2] * kPoint);
+  }
+  for (const Grade& grade : file.grades) {
+    keep(grade.offset, kGradeLutBytes);
+  }
 }
 
 // Decodes a cube into RGBA16Float, every mip of face 0, then face 1 (GXCreatePBRCube); the
@@ -559,9 +590,9 @@ void Worker::Cancel(uint32_t serial) {
   wake.notify_all();
 }
 
-bool Worker::Take(Result& out) {
+bool Worker::Take(Result& out, bool gpu) {
   std::lock_guard<std::mutex> lock(mutex);
-  if (results.empty()) {
+  if (results.empty() || (!gpu && results.front().kind != JobKind::Keep)) {
     return false;
   }
   out = std::move(results.front());
@@ -608,48 +639,65 @@ bool Worker::Do(const Job& job, Result& out) {
     return DecodeCube(*job.file, job.file->cubes[job.index], out.cube, cancel);
   case JobKind::Volume:
     return FillVolume(*job.file, job.file->grids[job.index], out.volume, cancel);
+  case JobKind::Keep:
+    KeepData(*job.file, out.volume, out.offsets);
+    return true;
   }
   return false;
 }
 
 // Hands the worker's decoded cubes and filled volumes to the GPU, one a frame: each is
-// megabytes for Aurora to copy and upload, and an area brings several at once.
+// megabytes for Aurora to copy and upload, and an area brings several at once. While the
+// room environment is off they wait (nothing would use them), and so does the worker.
 void TakeResults() {
-  if (!Enabled()) {
-    return; // nothing would use them; they wait, and so does the worker
-  }
+  bool gpu = Enabled();
   Result result;
-  if (!sWorker.Take(result)) {
-    return;
-  }
-  const auto found = sAreas.find(result.area);
-  if (found == sAreas.end() || found->second.serial != result.serial) {
-    return; // Free drops an area's results, so this does not happen
-  }
-  Area& area = found->second;
-  if (result.kind == JobKind::Cube) {
-    const Cube& cube = area.file.cubes[result.index];
-    GpuCube& gpu = area.cubes[result.index];
-    gpu.id = sNextCube++;
-    if (sNextCube == 0) {
-      sNextCube = 1;
+  while (sWorker.Take(result, gpu)) {
+    const auto found = sAreas.find(result.area);
+    if (found == sAreas.end() || found->second.serial != result.serial) {
+      continue; // Free drops an area's results, so this does not happen
     }
-    gpu.mipCount = cube.mipCount;
-    GXCreatePBRCube(gpu.id, cube.size, cube.mipCount, result.cube.data(), uint32_t(result.cube.size() * 2));
-  } else {
-    const Grid& grid = area.file.grids[result.index];
-    GpuVolume& gpu = area.volumes[result.index];
-    gpu.id = sNextVolume++;
-    if (sNextVolume == 0) {
-      sNextVolume = 1;
+    Area& area = found->second;
+    File& file = area.file;
+    if (result.kind == JobKind::Keep) {
+      // The worker has finished with the old bytes: Keep is the area's last job.
+      file.data.swap(result.volume);
+      for (size_t i = 0; i < file.grids.size(); ++i) {
+        file.grids[i].offset = result.offsets[i];
+      }
+      for (size_t i = 0; i < file.grades.size(); ++i) {
+        file.grades[i].offset = result.offsets[file.grids.size() + i];
+      }
+      for (Cube& cube : file.cubes) {
+        cube.offset = cube.length = 0; // its blocks are gone
+      }
+      continue;
     }
-    GXCreatePBRVolume(gpu.id, grid.size[0], grid.size[1], grid.size[2], result.volume.data(),
-                      uint32_t(result.volume.size()));
-    PortLog::Write("room env: %08X volume %u %ux%ux%u average %g\n", result.area, gpu.id, grid.size[0],
-                   grid.size[1], grid.size[2], grid.average);
+    if (result.kind == JobKind::Cube) {
+      const Cube& cube = file.cubes[result.index];
+      GpuCube& gpuCube = area.cubes[result.index];
+      gpuCube.id = sNextCube++;
+      if (sNextCube == 0) {
+        sNextCube = 1;
+      }
+      gpuCube.mipCount = cube.mipCount;
+      GXCreatePBRCube(gpuCube.id, cube.size, cube.mipCount, result.cube.data(), uint32_t(result.cube.size() * 2));
+    } else {
+      const Grid& grid = file.grids[result.index];
+      GpuVolume& gpuVolume = area.volumes[result.index];
+      gpuVolume.id = sNextVolume++;
+      if (sNextVolume == 0) {
+        sNextVolume = 1;
+      }
+      GXCreatePBRVolume(gpuVolume.id, grid.size[0], grid.size[1], grid.size[2], result.volume.data(),
+                        uint32_t(result.volume.size()));
+      PortLog::Write("room env: %08X volume %u %ux%ux%u average %g\n", result.area, gpuVolume.id, grid.size[0],
+                     grid.size[1], grid.size[2], grid.average);
+    }
+    // What Select finds changes with what is on the GPU.
+    Invalidate();
+    gpu = false;
   }
-  // What Select finds changes with what is on the GPU.
-  Invalidate();
 }
 
 } // namespace

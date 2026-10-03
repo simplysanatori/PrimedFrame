@@ -70,7 +70,9 @@ struct Cube {
   uint32_t size = 0;
   uint32_t mipCount = 0;
   bool isSigned = false;
-  size_t offset = 0; // of the blocks, in File::data
+  // Of the blocks, in File::data. Both 0 once the game has made the cubes and dropped the
+  // blocks from its copy of the file (port_room_env.cpp keeps only grids and grades).
+  size_t offset = 0;
   size_t length = 0;
 };
 
