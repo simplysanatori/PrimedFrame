@@ -246,28 +246,38 @@ public:
       return false;
     }
     const Where& where = found->second;
-    std::vector<uint8_t> raw(where.size);
-    {
-      std::lock_guard<std::mutex> lock(m_mutex);
-      if (ReadAt(m_handles[where.entry], where.offset, raw.data(), raw.size()) != raw.size()) {
-        return false;
-      }
-    }
     if (!where.compressed) {
+      std::vector<uint8_t> raw(where.size);
+      {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (ReadAt(m_handles[where.entry], where.offset, raw.data(), raw.size()) != raw.size()) {
+          return false;
+        }
+      }
       out = std::move(raw);
       return true;
+    }
+    // Read straight into the string the inflater takes, so the blob is not copied into one.
+    std::string raw(where.size, '\0');
+    {
+      std::lock_guard<std::mutex> lock(m_mutex);
+      if (ReadAt(m_handles[where.entry], where.offset, reinterpret_cast<uint8_t*>(raw.data()), raw.size()) !=
+          raw.size()) {
+        return false;
+      }
     }
     // A big-endian length, then a zlib stream: two header bytes, the DEFLATE
     // data, and a checksum the decoder never reaches.
     if (raw.size() < 6) {
       return false;
     }
-    const size_t length = size_t(raw[0]) << 24 | size_t(raw[1]) << 16 | size_t(raw[2]) << 8 | size_t(raw[3]);
+    const auto byte = [&raw](size_t i) { return size_t(static_cast<uint8_t>(raw[i])); };
+    const size_t length = byte(0) << 24 | byte(1) << 16 | byte(2) << 8 | byte(3);
+    raw.erase(0, 6);
     PortWs::Inflater inflater;
     inflater.SetKeepWindow(false);
     std::string inflated;
-    if (!inflater.InflateMessage(std::string(raw.begin() + 6, raw.end()), inflated, length) ||
-        inflated.size() != length) {
+    if (!inflater.InflateMessage(raw, inflated, length) || inflated.size() != length) {
       return false;
     }
     out.assign(inflated.begin(), inflated.end());
