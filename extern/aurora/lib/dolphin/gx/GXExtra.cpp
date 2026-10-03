@@ -51,6 +51,10 @@ struct PBRVolumeWrite {
 struct PBRToneWrite {
   f32 rows[3][4];
 };
+struct PBRLightScaleWrite {
+  f32 diffuse;
+  f32 f0;
+};
 struct PBRMaterialWrite {
   f32 emissive[3];
   f32 backlight[3];
@@ -347,5 +351,16 @@ void GXSetPBRLightSkip(u32 mask) {
   }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_LIGHT_SKIP);
   GX_WRITE_U32(mask);
+}
+
+void GXSetPBRLightScale(f32 diffuse, f32 f0) {
+  static LastPBRWrite<PBRLightScaleWrite> sLast;
+  const PBRLightScaleWrite now{diffuse, f0};
+  if (sLast.repeats(now)) {
+    return;
+  }
+  GX_WRITE_AURORA(GX_AURORA_SET_PBR_LIGHT_SCALE);
+  GX_WRITE_F32(diffuse);
+  GX_WRITE_F32(f0);
 }
 }

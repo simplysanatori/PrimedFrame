@@ -204,6 +204,12 @@ extern "C" {
 //   u32 mask (bit n: GX_LIGHTn)
 #define GX_AURORA_SET_PBR_LIGHT_SKIP 0x0051
 
+// Scales the diffuse colour and the F0 of the following PBR draws (see GXSetPBRLightScale);
+// both 1 is neutral. Stays in effect until changed.
+// Payload:
+//   f32 diffuse, f32 f0
+#define GX_AURORA_SET_PBR_LIGHT_SCALE 0x0053
+
 // Port extension: Remastered's bloom, colour grade and frame average over the EFB as drawn so
 // far (see GXPortPostProcess). Queued, so the game thread does not wait for the FIFO to be
 // processed before it can record it.

@@ -6,6 +6,7 @@
 
 #include "gx_test_common.hpp"
 #include "__gx.h"
+#include <dolphin/gx/GXExtra.h>
 
 #include <algorithm>
 #include <atomic>
@@ -1590,6 +1591,32 @@ TEST_F(GXFifoTest, SetArray_LittleEndianFlag_UpdatesStateAndClearsCachedRange) {
   EXPECT_EQ(gxState().arrays[GX_VA_CLR0].cachedRange.offset, 0u);
   EXPECT_EQ(gxState().arrays[GX_VA_CLR0].cachedRange.size, 0u);
   EXPECT_EQ(gxState().dirty, aurora::gx::DirtyPipeline | aurora::gx::DirtyImmediates);
+}
+
+// The light scale of a PBR draw (GXSetPBRLightScale) reaches the state through the FIFO, repeats
+// are dropped, and neutral (1, 1) is a command of its own: a material without a scale resets
+// whatever the last one set.
+TEST_F(GXFifoTest, PBRLightScale_PropagatesAndResets) {
+  EXPECT_EQ(g_gxState.pbrLightScale.x(), 1.f);
+  EXPECT_EQ(g_gxState.pbrLightScale.y(), 1.f);
+
+  GXSetPBRLightScale(0.25f, 0.f);
+  auto bytes = capture_fifo();
+  EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_PBR_LIGHT_SCALE));
+  reset_gx_state();
+  decode_fifo(bytes);
+  EXPECT_EQ(g_gxState.pbrLightScale.x(), 0.25f);
+  EXPECT_EQ(g_gxState.pbrLightScale.y(), 0.f);
+
+  GXSetPBRLightScale(0.25f, 0.f);
+  EXPECT_FALSE(has_aurora_cmd(capture_fifo(), GX_AURORA_SET_PBR_LIGHT_SCALE));
+
+  GXSetPBRLightScale(1.f, 1.f);
+  bytes = capture_fifo();
+  EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_PBR_LIGHT_SCALE));
+  decode_fifo(bytes);
+  EXPECT_EQ(g_gxState.pbrLightScale.x(), 1.f);
+  EXPECT_EQ(g_gxState.pbrLightScale.y(), 1.f);
 }
 
 TEST_F(GXFifoTest, LoadTexObj_EncodesSdkBpBurstAndAuroraMetadata) {

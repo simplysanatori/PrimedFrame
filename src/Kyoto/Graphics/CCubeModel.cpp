@@ -11,6 +11,7 @@
 #include "dolphin/gx/GXVert.h"
 #ifdef TARGET_PC
 #include <dolphin/gx/GXExtra.h>
+#include "port_pbr_record.h"
 #include "port_room_env.h"
 #include <vector>
 #endif
@@ -169,45 +170,22 @@ CCubeMaterial CCubeModel::GetMaterialByIndex(const int idx) const {
 // then a second layer's edge width and the scale and offset of each layer's height) and
 // 'PBR3', or nineteen (the same, then the kind of a special surface, its strength and four
 // parameters; see GXSetPBRMaterial) and 'PBR4', or those nineteen, then one big-endian word
-// of the maps' wrap modes (see the declaration) and 'PBR5'. A material without one gets the
-// neutral values.
-int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap) const {
-  for (int i = 0; i < 19; ++i) {
-    values[i] = i < 3 ? 1.f : 0.f;
-  }
-  if (wrap != nullptr) {
-    *wrap = 0x55555555; // every axis kCM_Repeat
-  }
+// of the maps' wrap modes (see the declaration) and 'PBR5', or those and two more floats (the
+// diffuse and F0 factors of a back-facing copy, see GXSetPBRLightScale) and 'PBR6'. A material
+// without one gets the neutral values.
+int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap,
+                                    f32 lightScale[2]) const {
   const uchar* table = static_cast< const uchar* >(x0_instance.GetMaterialPointer()) +
                        (x1c_textures->size() + 1) * 4;
   const uint count = CBasics::SwapBytes(*reinterpret_cast< const uint* >(table));
   table += 4;
   const uint begin = idx != 0 ? GetMaterialOffset(table, idx) : 0;
   const uint end = GetMaterialOffset(table, idx + 1);
-  const uchar* materialEnd = table + count * 4 + end;
-  int floats = 0;
-  if (end >= begin + 84 && memcmp(materialEnd - 4, "PBR5", 4) == 0) {
-    if (wrap != nullptr) {
-      memcpy(wrap, materialEnd - 8, 4);
-      *wrap = CBasics::SwapBytes(*wrap);
-    }
-    materialEnd -= 4; // the floats sit before the word, as in 'PBR4'
-    floats = 19;
-  } else if (end >= begin + 80 && memcmp(materialEnd - 4, "PBR4", 4) == 0) {
-    floats = 19;
-  } else if (end >= begin + 56 && memcmp(materialEnd - 4, "PBR3", 4) == 0) {
-    floats = 13;
-  } else if (end >= begin + 36 && memcmp(materialEnd - 4, "PBR2", 4) == 0) {
-    floats = 8;
-  } else if (end >= begin + 28 && memcmp(materialEnd - 4, "PBRM", 4) == 0) {
-    floats = 6;
-  }
-  const uchar* record = materialEnd - 4 - floats * 4;
-  for (int i = 0; i < floats; ++i) {
-    uint bits;
-    memcpy(&bits, record + i * 4, 4);
-    bits = CBasics::SwapBytes(bits);
-    memcpy(&values[i], &bits, 4);
+  uint32_t wrapWord;
+  const int floats = PortPbrRecord::Read(table + count * 4 + end, end - begin, values, &wrapWord,
+                                         lightScale);
+  if (wrap != nullptr) {
+    *wrap = wrapWord;
   }
   return floats;
 }
@@ -248,7 +226,8 @@ void CCubeModel::PortClearPBROverrides() { sPortPBROverrides.clear(); }
 
 f32 CCubeModel::PortSetPBRMaterial(const int idx) const {
   f32 values[19];
-  PortReadPBRMaterial(idx, values);
+  f32 lightScale[2];
+  PortReadPBRMaterial(idx, values, nullptr, lightScale);
   const f32 kind = values[13];
   for (const SPortPBROverride& entry : sPortPBROverrides) {
     if (entry.model == this && entry.material == idx) {
@@ -265,6 +244,8 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx) const {
   const CTransform4f& view = CGraphics::GetViewMatrix();
   const f32 up[3] = {view.Get20(), view.Get22(), -view.Get21()};
   GXSetPBRMaterial(values, values + 3, values[6], values[7], values + 8, values + 13, up);
+  // Every material sets its own, so a back copy's factors don't reach the next one.
+  GXSetPBRLightScale(lightScale[0], lightScale[1]);
   return kind;
 }
 

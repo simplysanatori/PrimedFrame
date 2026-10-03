@@ -110,7 +110,10 @@ public:
   // none; returns how many floats the record holds, 0 without one. wrap, when given, gets
   // the maps' sampler modes: map i's S mode in bits 4i..4i+1, its T mode in 4i+2..4i+3
   // (CTexture::EClampMode); all repeat without a 'PBR5' record.
-  int PortReadPBRMaterial(const int idx, float values[19], uint* wrap = nullptr) const;
+  // lightScale, when given, gets the diffuse and F0 factors of a back-facing copy ('PBR6'):
+  // 1, 1 without one.
+  int PortReadPBRMaterial(const int idx, float values[19], uint* wrap = nullptr,
+                          float lightScale[2] = nullptr) const;
   uint PortMaterialCount() const;
   // Debugging: draws a model's material with values[field] replaced, until cleared. The
   // caller must clear before the model goes.

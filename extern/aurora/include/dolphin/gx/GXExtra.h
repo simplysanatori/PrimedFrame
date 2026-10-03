@@ -115,6 +115,11 @@ void GXSetPBRTone(const f32 rows[3][4]);
 // them (bit n: GX_LIGHTn), such as lights whose light a baked ambient already holds. 0 for
 // none.
 void GXSetPBRLightSkip(u32 mask);
+// Aurora extension: the following PBR draws multiply the diffuse colour (before the lights and
+// the ambient) and F0 (before the direct Fresnel and the environment BRDF) by these; nothing
+// else is scaled. 1, 1 is neutral, and it is what a caller sets for every material that has no
+// scale of its own.
+void GXSetPBRLightScale(f32 diffuse, f32 f0);
 
 // Aurora extension: Remastered's bloom over what the EFB holds now (see lib/gfx/bloom.cpp).
 // The EFB is taken as drawn through the tone curve `tone` (as GXSetPBRTone); light above

@@ -11,6 +11,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <set>
+#include <tuple>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -603,6 +605,12 @@ struct RemMaterial {
   // ColorUnlit's colour: twice the vertex colour linearised, times the base map
   // and CCH0.x x CCH1.x (kept in backlight, which an unlit surface has no use for).
   bool colorUnlit = false;
+  // LITS, the shader's LightBleedScale: what a back-facing pixel's light is scaled by (see
+  // BackLightScale). hasLits is false for a material that carries none.
+  bool hasLits = false;
+  double lits = 1.0;
+  // What the back copy of a LITS material draws with (diffuse, F0); the front's stay 1, 1.
+  double lightScale[2] = {1.0, 1.0};
 };
 
 struct Buffer {
@@ -625,6 +633,7 @@ struct Prim {
   std::vector<uint32_t> I;
   int rmat = 0;
   int omat = 0;
+  bool litsBack = false;  // the back copy of a material with a positive LITS (see BackLightScale)
 };
 
 using WeightKey = std::vector<std::pair<uint32_t, double>>;
@@ -1237,6 +1246,12 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         set(kBase, d.layeredTextures[1], &out.layer[kBase]);
       }
       break;
+    case FourCC('L', 'I', 'T', 'S'):
+      if (d.kind == ModelMaterialData::Kind::Scalar) {
+        out.hasLits = true;
+        out.lits = ShortestDouble(d.scalar);
+      }
+      break;
     case FourCC('B', 'L', 'S', 'M'):
       if (d.kind == ModelMaterialData::Kind::Scalar) {
         out.layerSmooth = ShortestDouble(d.scalar);
@@ -1516,12 +1531,25 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
 // the vertex colour, summed), and 'PBR2'; or, for a layered one, those, the blend's edge width, the scale and offset of
 // each layer's height, and 'PBR3'; or, for a shader of its own, those, the kind, its strength
 // (compressed like the emissive one) and its four parameters, and 'PBR4'; or, where a
-// map clamps or mirrors, all nineteen, the maps' wrap modes (one word) and 'PBR5'.
+// map clamps or mirrors, all nineteen, the maps' wrap modes (one word) and 'PBR5'; or, for the
+// back copy of a material with a LITS, those and the diffuse and F0 factors, and 'PBR6'.
 // Remastered's emissive strengths are HDR values meant for its bloom, and the
 // port's output is 8-bit with none, so the strength is compressed (square
 // root, capped) around 1, where the map is drawn as converted.
 // A ColorUnlit surface drawn by its own rule (mode 8): one whose vertex colour
 // the port keeps and lights nothing with.
+// Remastered's lit PBR shader (60989bc1, USE_TWO_SIDED_MATERIAL) takes s = LITS on a back
+// face and multiplies the normal frame by sign(s), the diffuse light by |s| and F0 by 0 where
+// s > 0. A back copy of a lit material with a positive LITS is therefore its own primitive
+// with the mesh's normals as they are, diffuse |s| and F0 0 (record 'PBR6'). Only the
+// ordinary lit material qualifies: unlit, ColorUnlit and the special shader kinds are other
+// shaders. LITS of -1 (the flipped normal of the older back copy, factors 1 and 1), no LITS
+// and the zero or other negatives the survey did not find keep the older copy.
+bool BackLightScale(const RemMaterial& m) {
+  return m.hasLits && std::isfinite(m.lits) && m.lits > 0.0 && m.kind == 0 && !m.unlit &&
+         !m.colorUnlit;
+}
+
 bool ColorUnlitDraw(const RemMaterial& m) { return m.colorUnlit && m.unlit && m.tinted; }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap) {
@@ -1563,16 +1591,21 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap) {
   }
   // Only a material with a map that does not repeat needs the long form: every
   // field, the ones the short form leaves out at the reader's neutral 0.
-  const bool wraps = wrap != 0x55555555u;
+  const bool scaled = m.lightScale[0] != 1.0 || m.lightScale[1] != 1.0;
+  const bool wraps = wrap != 0x55555555u || scaled;
   if (wraps) {
     f.resize(19, 0.0);
-    tag = "PBR5";
+    tag = scaled ? "PBR6" : "PBR5";
   }
   for (double v : f) {
     PF(b, v);
   }
   if (wraps) {
     P32(b, wrap);
+  }
+  if (scaled) {
+    PF(b, m.lightScale[0]);
+    PF(b, m.lightScale[1]);
   }
   b.insert(b.end(), tag, tag + 4);
 }
@@ -2172,6 +2205,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
     }
     Prim p;
+    Prim backPrim;
     p.buffer = mesh.vertexBuffer;
     p.mat = mesh.material;
     p.I = mesh.indices;
@@ -2191,6 +2225,14 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       // chunk's one-bit map; every material flagged 0x400 plus holograms and glow
       // planes), the game culls back faces, so the back is drawn as a copy: each
       // vertex again with its normal turned round, each triangle wound the other way.
+      // A material with a positive LITS keeps the mesh's normals on its back copy and gets
+      // a primitive of its own (BackLightScale); the others turn the normal round.
+      const bool lits = BackLightScale(mats[mesh.material]);
+      if (mats[mesh.material].hasLits && !lits && mats[mesh.material].lits != -1.0 &&
+          mats[mesh.material].lits != 1.0) {
+        Log("  note: material " + name + " has LITS " + std::to_string(mats[mesh.material].lits) +
+            ", drawn as the older back copy");
+      }
       std::unordered_map<uint32_t, uint32_t> back;
       for (uint32_t i : p.I) {
         if (back.count(i) != 0) {
@@ -2199,7 +2241,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         back[i] = uint32_t(b.n++);
         for (int r = 0; r < 3; ++r) {
           b.P.push_back(b.P[size_t(i) * 3 + r]);
-          b.N.push_back(-b.N[size_t(i) * 3 + r]);
+          b.N.push_back(lits ? b.N[size_t(i) * 3 + r] : -b.N[size_t(i) * 3 + r]);
         }
         for (std::vector<double>& uv : b.uv) {
           if (!uv.empty()) {
@@ -2218,12 +2260,22 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         p.I.push_back(back[p.I[t + 1]]);
         p.I.push_back(back[p.I[t]]);
       }
+      if (lits) {
+        backPrim.buffer = p.buffer;
+        backPrim.mat = p.mat;
+        backPrim.litsBack = true;
+        backPrim.I.assign(p.I.begin() + front, p.I.end());
+        p.I.resize(front);
+      }
     }
     if (!b.used) {
       b.used = true;
       bufOrder.push_back(mesh.vertexBuffer);
     }
     prims.push_back(std::move(p));
+    if (backPrim.litsBack) {
+      prims.push_back(std::move(backPrim));
+    }
   }
   if (prims.empty()) {
     throw Fail{"no primitives left"};
@@ -2382,9 +2434,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
 
   // Output materials: one per (retail material, Remastered material) pair, in
   // every material set.
-  std::vector<std::pair<int, uint32_t>> keys;
+  using Key = std::tuple<int, uint32_t, bool>;  // retail material, Remastered material, LITS back
+  std::vector<Key> keys;
   for (Prim& p : prims) {
-    const std::pair<int, uint32_t> key(p.rmat, p.mat);
+    const Key key(p.rmat, p.mat, p.litsBack);
     auto it = std::find(keys.begin(), keys.end(), key);
     if (it == keys.end()) {
       keys.push_back(key);
@@ -2436,9 +2489,13 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   std::vector<std::vector<uint32_t>> dlAttrs;  // per output material: the uv array of each texcoord attribute
   std::vector<bool> dlColor;                   // and whether a colour index comes before them
   for (const auto& key : keys) {
-    const int rmat = key.first;
+    const int rmat = std::get<0>(key);
     const RetailMaterial& pm = retail.mats[rmat];
-    RemMaterial rem = mats[key.second];
+    RemMaterial rem = mats[std::get<1>(key)];
+    if (std::get<2>(key)) {
+      rem.lightScale[0] = std::abs(rem.lits);
+      rem.lightScale[1] = 0.0;
+    }
     const bool glow = ownGlow(rem, pm) && useColor;
     // Remastered's missile lock-on highlight is a runtime effect: its map is
     // solid red, so baked in it turns grey shards red.
@@ -2568,6 +2625,20 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       continue;
     }
     ++tev;
+    if (std::get<2>(key)) {
+      // The TEV lights by the normal alone, which this copy kept the mesh's: turn it round
+      // as the older back copy does. The copy's vertices belong to this primitive.
+      for (const Prim& p : prims) {
+        if (p.omat == int(&key - keys.data())) {
+          const std::set<uint32_t> once(p.I.begin(), p.I.end());
+          for (uint32_t i : once) {
+            for (int c = 0; c < 3; ++c) {
+              N[size_t(i) * 3 + c] = -N[size_t(i) * 3 + c];
+            }
+          }
+        }
+      }
+    }
     // The TEV path: the retail material with each texture slot refilled from
     // the Remastered map that matches what its stage does.
     const std::vector<SlotRole> roles = SlotRoles(pm);

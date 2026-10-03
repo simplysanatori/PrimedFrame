@@ -510,6 +510,14 @@ skipped. Inside a mod:
   material's own span in the offset table. The multiplier scales the emissive map;
   the backlight adds a rim of the surface's colour on edges turned away from the
   viewer. A material without the record gets 1 and 0.
+  `PBR6` (92 bytes, the 19 floats, the wrap word, then diffuse and F0 factors) carries
+  Remastered's LITS (LightBleedScale) for a two-sided mesh's back copy:
+  `GXSetPBRLightScale` scales only the PBR diffuse and F0 (never emissive, backlight or
+  specular) and resets to 1, 1 on every material. A material with a finite positive LITS
+  gets its back copy as a primitive and material of its own, with the mesh's normals kept,
+  diffuse |LITS| and F0 0 (LITS 1 included). No LITS and -1 keep the older copy (normals
+  turned round, factors 1); 0 and negatives other than -1 are unsurveyed and keep it too.
+  Older records read as factors 1 and 1 (`platform/include/port_pbr_record.h`).
   Two longer forms follow the same six floats: `PBR2` (36 bytes) adds a height-blend
   threshold and a mode (1 unlit: the material's own colour and glow; 2 the base
   map's alpha scales the glow; 4 the vertex colour tints the surface; summed),

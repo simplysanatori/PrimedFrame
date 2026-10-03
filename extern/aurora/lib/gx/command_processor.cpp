@@ -1074,6 +1074,14 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.pbrLightSkip = value;
       g_gxState.dirty |= DirtyUniform;
     }
+  } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_SCALE) {
+    const f32 diffuse = reader.read<f32>();
+    const f32 f0 = reader.read<f32>();
+    const Vec4<float> value{diffuse, f0, 0.f, 0.f};
+    if (g_gxState.pbrLightScale != value) {
+      g_gxState.pbrLightScale = value;
+      g_gxState.dirty |= DirtyUniform;
+    }
   } else if (subCmd == GX_AURORA_SET_PBR_MATERIAL) {
     for (Vec4<float>* v :
          {&g_gxState.pbrEmissive, &g_gxState.pbrBacklight, &g_gxState.pbrLayer, &g_gxState.pbrLayerHeight,

@@ -477,6 +477,7 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
       buf.append(v);
     }
     buf.append(g_gxState.pbrLightSkip);
+    buf.append(g_gxState.pbrLightScale);
   }
   if (info.usesPTTexMtx.any()) {
     for (int i = 0; i < info.usesPTTexMtx.size(); ++i) {

@@ -1264,8 +1264,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_n = pbr_ng;{3}
       let pbr_v = normalize(-in.pbr_pos);
       let pbr_nv = max(dot(pbr_n, pbr_v), 1e-4);
-      let pbr_f0 = mix(vec3f(0.04), pbr_base, pbr_metal);
-      let pbr_diff = pbr_base * (1.0 - pbr_metal){8};
+      let pbr_f0 = mix(vec3f(0.04), pbr_base, pbr_metal) * ubuf.pbr_light_scale.y;
+      let pbr_diff = pbr_base * (1.0 - pbr_metal){8} * ubuf.pbr_light_scale.x;
       let pbr_a2 = pow(pbr_rough, 4.0);
       let pbr_k = pbr_rough * pbr_rough * 0.5;
       // A normal-mapped reflection can point into the surface; lift it back to the horizon
@@ -2180,6 +2180,7 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     uniBufAttrs += "\n    pbr_volume: array<vec4f, 6>,";
     uniBufAttrs += "\n    pbr_tone: array<vec4f, 3>,";
     uniBufAttrs += "\n    pbr_light_skip: vec4f,";
+    uniBufAttrs += "\n    pbr_light_scale: vec4f,";
     const auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx);
     if (!pbr.empty()) {
       fragmentFn += pbr;

@@ -937,9 +937,12 @@ std::string Materials(uint32_t id) {
         const uint flags = cube->GetMaterialByIndex(i).GetFlags();
         float v[19];
         uint wrap = 0;
-        const int floats = cube->PortReadPBRMaterial(i, v, &wrap);
+        float lightScale[2];
+        const int floats = cube->PortReadPBRMaterial(i, v, &wrap, lightScale);
         const bool wraps = wrap != 0x55555555;
-        const char* const tag = wraps           ? "PBR5"
+        const bool scaled = lightScale[0] != 1.f || lightScale[1] != 1.f;
+        const char* const tag = scaled          ? "PBR6"
+                                : wraps         ? "PBR5"
                                 : floats == 19 ? kTags[3]
                                 : floats == 13 ? kTags[2]
                                 : floats == 8  ? kTags[1]

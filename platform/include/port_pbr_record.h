@@ -1,0 +1,72 @@
+#pragma once
+// The port's PBR material record: what a converter appends to a PBR material and
+// CCubeModel::PortReadPBRMaterial reads back from the material's end (the layouts are
+// described there). Kept apart from the game classes so a test can read a record too.
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
+namespace PortPbrRecord {
+
+inline uint32_t Be32(const uint8_t* p) {
+  return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
+}
+
+inline float BeFloat(const uint8_t* p) {
+  const uint32_t bits = Be32(p);
+  float value;
+  std::memcpy(&value, &bits, 4);
+  return value;
+}
+
+// Reads the record that ends at `end` (one past its tag) in a material of `size` bytes.
+// values gets the 19 floats (neutral where the record is short or absent), wrap the maps'
+// wrap word (every axis repeat without one) and lightScale the diffuse and F0 factors of a
+// back-facing copy (1, 1 without 'PBR6'). Returns how many floats the record held.
+inline int Read(const uint8_t* end, size_t size, float values[19], uint32_t* wrap,
+                float lightScale[2]) {
+  for (int i = 0; i < 19; ++i) {
+    values[i] = i < 3 ? 1.f : 0.f;
+  }
+  if (wrap != nullptr) {
+    *wrap = 0x55555555;
+  }
+  if (lightScale != nullptr) {
+    lightScale[0] = lightScale[1] = 1.f;
+  }
+  int floats = 0;
+  const uint8_t* floatsEnd = end - 4; // the tag's start, until a longer record moves it
+  if (size >= 92 && std::memcmp(end - 4, "PBR6", 4) == 0) {
+    if (lightScale != nullptr) {
+      lightScale[0] = BeFloat(end - 12);
+      lightScale[1] = BeFloat(end - 8);
+    }
+    floatsEnd = end - 16;
+    if (wrap != nullptr) {
+      *wrap = Be32(end - 16);
+    }
+    floats = 19;
+  } else if (size >= 84 && std::memcmp(end - 4, "PBR5", 4) == 0) {
+    if (wrap != nullptr) {
+      *wrap = Be32(end - 8);
+    }
+    floatsEnd = end - 8;
+    floats = 19;
+  } else if (size >= 80 && std::memcmp(end - 4, "PBR4", 4) == 0) {
+    floats = 19;
+  } else if (size >= 56 && std::memcmp(end - 4, "PBR3", 4) == 0) {
+    floats = 13;
+  } else if (size >= 36 && std::memcmp(end - 4, "PBR2", 4) == 0) {
+    floats = 8;
+  } else if (size >= 28 && std::memcmp(end - 4, "PBRM", 4) == 0) {
+    floats = 6;
+  }
+  const uint8_t* record = floatsEnd - floats * 4;
+  for (int i = 0; i < floats; ++i) {
+    values[i] = BeFloat(record + i * 4);
+  }
+  return floats;
+}
+
+} // namespace PortPbrRecord
