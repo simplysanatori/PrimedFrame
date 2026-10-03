@@ -766,6 +766,12 @@ void WorkerLoop(Runtime& runtime) {
               if (seedName != nullptr && seedName->IsString())
                 EnterSeed(runtime, seedName->AsString());
             }
+            // Every game's names can be a lot of work, and the game thread
+            // takes the same lock every frame, so they are read in out here.
+            const bool dataPackage = cmd == "DataPackage";
+            Session::DataPackageNames packageNames;
+            if (dataPackage)
+              packageNames = Session::ParseDataPackage(command);
             {
               std::lock_guard<std::mutex> lock(runtime.mutex);
               if (runtime.session == nullptr)
@@ -778,10 +784,15 @@ void WorkerLoop(Runtime& runtime) {
               const bool oldHasLogic = runtime.session->GetState().hasLogic;
               const PortApLogic::Options oldLogic = runtime.session->GetState().logic;
               const bool oldHasWorld = runtime.session->GetState().hasWorld;
-              const PortApWorld::Layout oldWorld = runtime.session->GetState().world;
+              // The layout is the large part of the state, so it is not copied
+              // to be compared: a new revision says it may have changed.
+              const uint64_t oldWorldRevision = runtime.session->WorldRevision();
               const std::string oldError = runtime.session->LastError();
               const std::string oldResetReason = runtime.session->ResetReason();
-              runtime.session->HandlePacket(command, outgoing, newGrants);
+              if (dataPackage)
+                runtime.session->MergeDataPackage(std::move(packageNames));
+              else
+                runtime.session->HandlePacket(command, outgoing, newGrants);
               if (runtime.session->ResetReason() != oldResetReason) {
                 // The recorded checks belonged to another session, so the state
                 // file has just been rewritten empty. Say why, because the
@@ -795,7 +806,8 @@ void WorkerLoop(Runtime& runtime) {
               if (state.nextItemIndex != oldIndex || state.checkedLocations != oldChecks ||
                   state.progressive != oldProgressive || state.seed != oldSeed ||
                   state.hasLogic != oldHasLogic || state.logic != oldLogic ||
-                  state.hasWorld != oldHasWorld || state.world != oldWorld)
+                  state.hasWorld != oldHasWorld ||
+                  runtime.session->WorldRevision() != oldWorldRevision)
                 runtime.MarkStateDirtyLocked();
               runtime.grants.insert(runtime.grants.end(), newGrants.begin(), newGrants.end());
               runtime.lastMessage = runtime.session->LastMessage();
