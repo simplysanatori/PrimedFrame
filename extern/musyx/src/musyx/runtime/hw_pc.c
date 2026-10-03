@@ -937,7 +937,10 @@ static int salAudioThreadFunc(void* data) {
   while (SDL_GetAtomicInt(&salAudioThreadRunning)) {
     const int queuedBytes = salAudioStream != NULL ? SDL_GetAudioStreamQueued(salAudioStream) : 0;
     if (salAudioStream != NULL && queuedBytes >= SAL_BUFFER_BYTES * SAL_MAX_QUEUED_FRAMES) {
-      SDL_Delay(1);
+      /* Full: the device takes a frame (160 samples at 32 kHz, 5 ms) at a time, so wait
+       * most of one rather than waking every millisecond to look. The queue still holds
+       * the other frames' worth, far more than this wait. */
+      SDL_Delay(4);
       continue;
     }
 
