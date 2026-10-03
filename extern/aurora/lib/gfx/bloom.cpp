@@ -2,6 +2,7 @@
 
 #include "../logging.hpp"
 #include "../webgpu/gpu.hpp"
+#include "readback_slots.hpp"
 #include "recording.hpp"
 
 #include <aurora/gfx.hpp>
@@ -260,25 +261,35 @@ struct State {
 State g_state;
 
 // Readbacks of the average. Each slot goes Available -> CopySubmitted (encoded) -> MapPending
-// (after the submit) -> Available (mapped and read), the last under g_readMutex.
-enum class SlotState { Available, CopySubmitted, MapPending };
-struct Readback {
-  wgpu::Buffer buffer;
-  SlotState state = SlotState::Available;
-  float exposure = 0.f; // the frame's, to undo
-};
-std::mutex g_readMutex;
-std::array<Readback, ReadbackCount> g_readbacks;
-size_t g_nextReadback = 0;
+// (after the submit) -> Available (mapped and read); readback_slots.hpp holds the transitions and
+// their lock, since a map callback can arrive on any thread.
+using ReadbackSlots = detail::ReadbackSlots<wgpu::Buffer, ReadbackCount>;
+wgpu::Buffer make_readback() {
+  const wgpu::BufferDescriptor descriptor{
+      .label = "Frame Average Readback",
+      .usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst,
+      .size = AverageBytes,
+  };
+  return g_device.CreateBuffer(&descriptor);
+}
+ReadbackSlots g_readbacks(make_readback);
+// The frame's average, in g_radianceMutex. It is written from a map callback, under the slots'
+// lock, so the two are always taken in that order.
+std::mutex g_radianceMutex;
 float g_radiance[3] = {};
 uint32_t g_radianceSerial = 0;
 
-void complete_readback(size_t index, wgpu::MapAsyncStatus status, wgpu::StringView message) {
-  std::lock_guard lock(g_readMutex);
-  auto& slot = g_readbacks[index];
-  if (status == wgpu::MapAsyncStatus::Success && slot.buffer) {
-    const auto* texels = static_cast<const float*>(slot.buffer.GetConstMappedRange(0, AverageBytes));
-    if (texels != nullptr && slot.exposure > 0.f) {
+void complete_readback(const ReadbackSlots::Key& key, wgpu::MapAsyncStatus status, wgpu::StringView message) {
+  if (status != wgpu::MapAsyncStatus::Success && status != wgpu::MapAsyncStatus::CallbackCancelled &&
+      status != wgpu::MapAsyncStatus::Aborted) {
+    Log.warn("frame average readback failed: {}", message);
+  }
+  g_readbacks.complete(key, [status](const wgpu::Buffer& buffer, float exposure) {
+    if (status != wgpu::MapAsyncStatus::Success) {
+      return;
+    }
+    const auto* texels = static_cast<const float*>(buffer.GetConstMappedRange(0, AverageBytes));
+    if (texels != nullptr && exposure > 0.f) {
       double sum[3] = {};
       for (uint32_t y = 0; y < AverageSize; ++y) {
         const float* row = texels + size_t(y) * AverageRowBytes / sizeof(float);
@@ -288,17 +299,14 @@ void complete_readback(size_t index, wgpu::MapAsyncStatus status, wgpu::StringVi
           }
         }
       }
+      const std::lock_guard lock(g_radianceMutex);
       for (int c = 0; c < 3; ++c) {
-        g_radiance[c] = float(sum[c] / (AverageSize * AverageSize) / slot.exposure);
+        g_radiance[c] = float(sum[c] / (AverageSize * AverageSize) / exposure);
       }
       ++g_radianceSerial;
     }
-    slot.buffer.Unmap();
-  } else if (status != wgpu::MapAsyncStatus::Success && status != wgpu::MapAsyncStatus::CallbackCancelled &&
-             status != wgpu::MapAsyncStatus::Aborted) {
-    Log.warn("frame average readback failed: {}", message);
-  }
-  slot.state = SlotState::Available;
+    buffer.Unmap();
+  });
 }
 
 // LUTs set by the game thread, uploaded by the next encode.
@@ -545,29 +553,7 @@ void draw(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline,
 
 // The frame copy's average into a free readback slot; none free skips this frame.
 void encode_average(const wgpu::CommandEncoder& cmd, float exposure, const wgpu::TextureView& frame) {
-  wgpu::Buffer buffer;
-  {
-    std::lock_guard lock(g_readMutex);
-    for (size_t i = 0; i < g_readbacks.size() && !buffer; ++i) {
-      const size_t index = (g_nextReadback + i) % g_readbacks.size();
-      auto& slot = g_readbacks[index];
-      if (slot.state != SlotState::Available) {
-        continue;
-      }
-      if (!slot.buffer) {
-        const wgpu::BufferDescriptor descriptor{
-            .label = "Frame Average Readback",
-            .usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst,
-            .size = AverageBytes,
-        };
-        slot.buffer = g_device.CreateBuffer(&descriptor);
-      }
-      slot.state = SlotState::CopySubmitted;
-      slot.exposure = exposure;
-      buffer = slot.buffer;
-      g_nextReadback = (index + 1) % g_readbacks.size();
-    }
-  }
+  const wgpu::Buffer buffer = g_readbacks.claim(exposure);
   if (!buffer) {
     return;
   }
@@ -712,28 +698,20 @@ void set_grade_lut(uint32_t id, const uint8_t* rgba) {
 }
 
 void after_submit() noexcept {
-  std::array<wgpu::Buffer, ReadbackCount> maps;
-  {
-    std::lock_guard lock(g_readMutex);
-    for (size_t i = 0; i < g_readbacks.size(); ++i) {
-      if (g_readbacks[i].state == SlotState::CopySubmitted) {
-        g_readbacks[i].state = SlotState::MapPending;
-        maps[i] = g_readbacks[i].buffer;
-      }
-    }
-  }
-  for (size_t i = 0; i < maps.size(); ++i) {
-    if (maps[i]) {
-      maps[i].MapAsync(wgpu::MapMode::Read, 0, AverageBytes, wgpu::CallbackMode::AllowSpontaneous,
-                       [i](wgpu::MapAsyncStatus status, wgpu::StringView message) {
-                         complete_readback(i, status, message);
-                       });
-    }
+  const auto submitted = g_readbacks.submit();
+  for (size_t i = 0; i < submitted.count; ++i) {
+    const auto& mapping = submitted.mappings[i];
+    // The callback carries the key alone: a pending map must not hold the buffer it maps, or that
+    // buffer would outlive its slot. Mapped with no lock held, as the callback takes it again.
+    mapping.buffer.MapAsync(wgpu::MapMode::Read, 0, AverageBytes, wgpu::CallbackMode::AllowSpontaneous,
+                            [key = mapping.key](wgpu::MapAsyncStatus status, wgpu::StringView message) {
+                              complete_readback(key, status, message);
+                            });
   }
 }
 
 bool frame_radiance(float out[3], uint32_t& serial) {
-  std::lock_guard lock(g_readMutex);
+  std::lock_guard lock(g_radianceMutex);
   serial = g_radianceSerial;
   if (g_radianceSerial == 0) {
     return false;
@@ -743,13 +721,14 @@ bool frame_radiance(float out[3], uint32_t& serial) {
 }
 
 void shutdown() {
-  {
-    std::lock_guard lock(g_readMutex);
-    for (auto& slot : g_readbacks) {
-      slot = {};
-    }
+  // The readback buffers come out of the slots under the slots' lock, and are released only once
+  // it is gone: releasing one with a map still in flight runs that map's callback on this thread,
+  // and the callback takes the lock again.
+  auto retired = g_readbacks.retire([] {
+    const std::lock_guard lock(g_radianceMutex);
     g_radianceSerial = 0;
-  }
+  });
+  retired.clear();
   const auto task = g_state.task;
   g_state = {};
   {

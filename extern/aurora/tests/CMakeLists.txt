@@ -192,6 +192,22 @@ if (AURORA_ENABLE_GX)
   gtest_discover_tests(gfx_recording_tests)
 endif () # AURORA_ENABLE_GX
 
+# The bloom readback slots' locking, on the CPU: a header of its own, so no renderer is needed.
+add_executable(bloom_readback_slots_tests
+  bloom_readback_slots_test.cpp
+)
+target_include_directories(bloom_readback_slots_tests PRIVATE
+  ../include
+  ../lib
+)
+target_compile_definitions(bloom_readback_slots_tests PRIVATE AURORA TARGET_PC)
+target_link_libraries(bloom_readback_slots_tests PRIVATE
+  gtest
+  gtest_main
+)
+aurora_copy_runtime_dlls(bloom_readback_slots_tests)
+gtest_discover_tests(bloom_readback_slots_tests)
+
 # DVD API tests
 if (TARGET aurora::dvd)
   add_executable(dvd_tests
