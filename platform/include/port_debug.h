@@ -75,6 +75,13 @@ void SetActorInterpolation(bool enabled);
 // blend of their previous and current tick poses. Off by default.
 bool PoseInterpolation();
 void SetPoseInterpolation(bool enabled);
+// Keeps a room geometry mod's models on the GPU instead of sending them every frame
+// (port_settings.ini room_geo_resident). Off by default. Aurora sizes its buffers for it at
+// startup, so a change applies from the next start: RoomGeoResidentAtStartup reads the
+// settings file before the rest of them are loaded.
+bool RoomGeoResident();
+void SetRoomGeoResident(bool enabled);
+bool RoomGeoResidentAtStartup();
 // Particle smoothing (phase 4): with the frame limiter off, particle systems
 // draw between their previous and current tick frames. Off by default.
 bool ParticleInterpolation();

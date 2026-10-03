@@ -970,6 +970,10 @@ void CmdStats() {
     Out("buffers: %.1f MiB vertices, %.1f indices, %.1f arrays, %.1f uniforms, %.1f texture uploads",
         stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f, stats->lastStorageSize / 1048576.f,
         stats->lastUniformSize / 1048576.f, stats->lastTextureUploadSize / 1048576.f);
+    if (const uint32_t resident = aurora_get_resident_geometry_mib()) {
+      Out("kept on the GPU: %.1f of %u MiB (room geometry)", aurora_get_resident_geometry_used() / 1048576.f,
+          resident);
+    }
   }
   {
     AuroraTextureStats textures{};

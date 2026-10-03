@@ -222,6 +222,7 @@ float sStickAimVelY = 0.f;
 bool sFrameInterpolation = true;
 bool sActorInterpolation = false;
 bool sPoseInterpolation = false;
+bool sRoomGeoResident = false;
 bool sParticleInterpolation = false;
 float sPresentOverride = -1.f;
 unsigned sPresentCycleFrame = 0;
@@ -539,6 +540,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sActorInterpolation = ParseBool(value);
   } else if (key == "pose_interpolation") {
     sPoseInterpolation = ParseBool(value);
+  } else if (key == "room_geo_resident") {
+    sRoomGeoResident = ParseBool(value);
   } else if (key == "particle_interpolation") {
     sParticleInterpolation = ParseBool(value);
   } else if (key == "ai_audio") {
@@ -639,6 +642,7 @@ void SaveSettings() {
   file << "frame_interpolation=" << (sFrameInterpolation ? 1 : 0) << '\n';
   file << "actor_interpolation=" << (sActorInterpolation ? 1 : 0) << '\n';
   file << "pose_interpolation=" << (sPoseInterpolation ? 1 : 0) << '\n';
+  file << "room_geo_resident=" << (sRoomGeoResident ? 1 : 0) << '\n';
   file << "particle_interpolation=" << (sParticleInterpolation ? 1 : 0) << '\n';
   file << "mouse_aim=" << (sMouseAim ? 1 : 0) << '\n';
   file << "twin_stick=" << (sTwinStick ? 1 : 0) << '\n';
@@ -1888,6 +1892,32 @@ void SetPoseInterpolation(bool enabled) {
   EnsureInitialized();
   sPoseInterpolation = enabled;
   MarkDirty();
+}
+
+bool RoomGeoResident() {
+  EnsureInitialized();
+  return sRoomGeoResident;
+}
+
+void SetRoomGeoResident(bool enabled) {
+  EnsureInitialized();
+  sRoomGeoResident = enabled;
+  MarkDirty();
+}
+
+bool RoomGeoResidentAtStartup() {
+  std::ifstream file(SettingsFilePath());
+  std::string line;
+  bool on = false;
+  while (std::getline(file, line)) {
+    const size_t separator = line.find('=');
+    if (separator != std::string::npos && Trim(line.substr(0, separator)) == "room_geo_resident") {
+      std::string value = line.substr(separator + 1);
+      value.erase(std::min(value.find('#'), value.size()));
+      on = ParseBool(Trim(value));
+    }
+  }
+  return on;
 }
 
 bool ParticleInterpolation() {
@@ -4421,6 +4451,16 @@ void DrawRendering() {
   if (ImGui::Checkbox("Room geometry takes the area's lights", &areaLights)) {
     PortRoomGeo::SetAreaLights(areaLights);
   }
+  bool resident = sRoomGeoResident;
+  if (ImGui::Checkbox("Keep room geometry on the GPU (next start)", &resident)) {
+    PortDebug::SetRoomGeoResident(resident);
+  }
+  ImGui::SetItemTooltip(PortRoomGeo::Resident()
+                            ? "On: a room geometry mod's models are uploaded once when they load,\n"
+                              "and a frame's buffers are smaller. Takes effect from the next start."
+                            : "Uploads a room geometry mod's models once when they load instead of\n"
+                              "every frame, so a frame's buffers can be smaller. Experimental; takes\n"
+                              "effect from the next start.");
   bool env = PortRoomEnv::Enabled();
   if (ImGui::Checkbox("Room environments", &env)) {
     PortRoomEnv::SetEnabled(env);
@@ -4490,6 +4530,9 @@ void DrawRendering() {
                   stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f,
                   stats->lastStorageSize / 1048576.f, stats->lastUniformSize / 1048576.f,
                   stats->lastTextureUploadSize / 1048576.f);
+      if (const uint32_t resident = aurora_get_resident_geometry_mib()) {
+        ImGui::Text("kept on the GPU %.1f of %u MiB", aurora_get_resident_geometry_used() / 1048576.f, resident);
+      }
       ImGui::Text("pipelines %u made, %u waiting", stats->createdPipelines, stats->queuedPipelines);
     }
     AuroraTextureStats textures{};

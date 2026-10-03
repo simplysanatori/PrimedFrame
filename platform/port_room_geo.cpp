@@ -28,6 +28,8 @@
 #include "MetroidPrime/TCastTo.hpp"
 #include "MetaRender/CCubeRenderer.hpp"
 
+#include <dolphin/gx/GXExtra.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -42,9 +44,45 @@
 namespace PortRoomGeo {
 namespace {
 
+// What a model keeps on the GPU (GXPortRetainResident): released when the model goes.
+class ResidentKeep {
+public:
+  ResidentKeep() = default;
+  ResidentKeep(const ResidentKeep&) = delete;
+  ResidentKeep& operator=(const ResidentKeep&) = delete;
+  ResidentKeep(ResidentKeep&& other) noexcept : mKept(std::move(other.mKept)) { other.mKept.clear(); }
+  ResidentKeep& operator=(ResidentKeep&& other) noexcept {
+    if (this != &other) {
+      Release();
+      mKept = std::move(other.mKept);
+      other.mKept.clear();
+    }
+    return *this;
+  }
+  ~ResidentKeep() { Release(); }
+
+  void Keep(const void* data, uint size) {
+    if (data != nullptr && size != 0) {
+      GXPortRetainResident(data, size);
+      mKept.push_back(data);
+    }
+  }
+  void Release() {
+    for (const void* data : mKept) {
+      GXPortReleaseResident(data);
+    }
+    mKept.clear();
+  }
+
+private:
+  std::vector< const void* > mKept;
+};
+
 struct Model {
   uint32_t id = 0;
   std::unique_ptr< CModelData > data;
+  // After `data`, so it is released before the model it points into is freed.
+  ResidentKeep resident;
   bool loaded = false;
   bool hidden = false; // by the console, to find which model a surface belongs to
   CAABox bounds = CAABox::MakeMaxInvertedBox();
@@ -120,6 +158,7 @@ std::unordered_map< uint32_t, Area >& Areas() {
 
 int sMode = -1;
 int sAreaLights = -1;
+bool sResident = false;
 // Counts the times areas left Areas(). The sorted pass hands DrawSorted only the item, so
 // it draws while the areas are the ones they were when AddSorted queued it.
 uint32_t sGeneration = 0;
@@ -145,6 +184,26 @@ std::vector< MaterialValue > sMaterialValues;
 
 const CCubeModel* CubeModel(const Model& model) {
   return model.loaded ? (**model.data->PickStaticModel(CModelData::kWM_Normal)).GetCubeModel() : nullptr;
+}
+
+// A loaded model's arrays and its surfaces' display lists, as SetArraysCurrent and
+// CCubeSurface::CallDisplayList hand them to GX.
+void KeepResident(Model& model) {
+  const CCubeModel* const cube = CubeModel(model);
+  if (!sResident || cube == nullptr) {
+    return;
+  }
+  const CCubeModel::ModelInstance& instance = cube->GetModelInstance();
+  model.resident.Keep(instance.GetVertexPointer(), instance.GetVertexSize());
+  model.resident.Keep(instance.GetNormalPointer(), instance.GetNormalSize());
+  model.resident.Keep(instance.GetColorPointer(), instance.GetColorSize());
+  model.resident.Keep(instance.GetTCPointer(), instance.GetTCSize());
+  model.resident.Keep(instance.GetPackedTCPointer(), instance.GetPackedTCSize());
+  for (const CCubeSurface* first : {&cube->GetNormalSurfaces(), &cube->GetAlphaSurfaces()}) {
+    for (CCubeSurface surface = *first; surface.IsValid(); surface = surface.GetNextSurface()) {
+      model.resident.Keep(surface.GetDisplayList(), surface.GetDisplayListSize());
+    }
+  }
 }
 
 void BindMaterialValues() {
@@ -453,6 +512,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
         }
         model.bounds = model.data->GetBounds();
         model.loaded = true;
+        KeepResident(model);
       }
       ++area.loaded;
     }
@@ -968,6 +1028,10 @@ void SetMode(Mode mode) {
 }
 
 void SetBuffersReady(bool ready) { sBuffersReady = ready; }
+
+void SetResident(bool resident) { sResident = resident; }
+
+bool Resident() { return sResident; }
 
 Mode GetMode() {
   if (!sBuffersReady) {

@@ -1118,6 +1118,17 @@ a temporary directory instead of mounting.
   `MP_FRAME_BUFFERS=<1..16>` scales the buffers a frame's vertices, arrays and
   uniforms are streamed through (1 = 5 + 8 + 24 MiB); it is 12 when a mod has
   room geometry. A frame that outgrows them aborts with a buffer overflow.
+- `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_resident`, F1 > Debug >
+  Rendering > Keep room geometry on the GPU; off by default, read at startup):
+  experimental. Each room geometry model's vertex arrays and display lists are
+  uploaded to the GPU once when it loads and drawn from there, instead of being
+  copied into the frame's buffers every frame. The frame buffers then start at 2
+  times the usual size instead of 12 (6 on Android), and 256 MiB (128 on
+  Android) is set aside on the GPU for the models, two fifths each for vertices
+  and arrays and a fifth for indices: `MP_ROOM_GEO_RESIDENT_MB=<16..2048>` sets
+  that. Console `stats` and F1 > Debug > Frame show how much of it is in use. A
+  model that finds no room left is sent every frame as before, which can
+  overflow the smaller frame buffers: raise the room if the log warns of it.
 - `MP_ROOM_LIQUID=0`: ignore the mods' `.roomliquid` files and draw the
   retail fluid planes (console `roomliquid [on|off]`, which also counts what is
   loaded and drawn).

@@ -602,7 +602,27 @@ int main(int argc, char** argv) {
                            e != nullptr ? "MP_MEM1_MB" : "room geometry");
         }
     }
-    uint32_t frameBufferScale = roomGeometry ? kRoomGeoFrameBuffers : 1;
+    // With room_geo_resident (or MP_ROOM_GEO_RESIDENT=1), a room geometry mod's models stay on
+    // the GPU from when they load, in kResidentMiB set aside for them, and a frame only sends
+    // what is not kept: the frame's buffers need kResidentFrameBuffers times their size, a
+    // margin for anything that falls back to being sent. MP_ROOM_GEO_RESIDENT_MB sets the room.
+#if defined(__ANDROID__)
+    const unsigned long kResidentMiB = 128;
+#else
+    const unsigned long kResidentMiB = 256;
+#endif
+    const unsigned long kResidentFrameBuffers = 2;
+    bool resident = roomGeometry && PortDebug::RoomGeoResidentAtStartup();
+    if (const char* e = std::getenv("MP_ROOM_GEO_RESIDENT")) {
+        resident = roomGeometry && e[0] == '1';
+    }
+    uint32_t residentMiB = 0;
+    if (resident) {
+        const char* e = std::getenv("MP_ROOM_GEO_RESIDENT_MB");
+        residentMiB = static_cast<uint32_t>(
+            e != nullptr ? std::clamp(std::strtoul(e, nullptr, 10), 16UL, 2048UL) : kResidentMiB);
+    }
+    uint32_t frameBufferScale = !roomGeometry ? 1 : resident ? kResidentFrameBuffers : kRoomGeoFrameBuffers;
     if (const char* e = std::getenv("MP_FRAME_BUFFERS")) {
         frameBufferScale = static_cast<uint32_t>(std::clamp(std::strtoul(e, nullptr, 10), 1UL, 16UL));
     }
@@ -643,6 +663,7 @@ int main(int argc, char** argv) {
         .mem1Size = mem1Size,
         .mem2Size = ARAM_DEFAULT_SIZE,
         .frameBufferScale = frameBufferScale,
+        .residentGeometryMiB = residentMiB,
     };
 #if !defined(__ANDROID__)
     // The window icon, for a bare binary that no desktop entry describes.
@@ -704,6 +725,11 @@ int main(int argc, char** argv) {
         PortLog::Write("port: frame buffers at %ux, all this device allows\n", aurora_get_frame_buffer_scale());
     }
     PortRoomGeo::SetBuffersReady(aurora_get_frame_buffer_scale() > 1);
+    if (resident) {
+        const uint32_t got = aurora_get_resident_geometry_mib();
+        PortRoomGeo::SetResident(got != 0);
+        PortLog::Write("port: room geometry kept on the GPU in %u MiB\n", got);
+    }
     // Apply the persisted render scale. Vsync is applied on the first drawn
     // frame (once the swapchain surface exists) so it uses real capabilities.
     VISetFrameBufferScale(PortDebug::RenderScale());

@@ -161,6 +161,11 @@ void ResetScriptState();
 // Whether the frame's buffers were sized for room geometry at startup (main.cpp). Until
 // they are, nothing is drawn: a room of it overflows the default ones.
 void SetBuffersReady(bool ready);
+// Whether Aurora set room aside at startup to keep models on the GPU (main.cpp): each model's
+// vertex arrays and display lists are then retained when it loads (GXPortRetainResident)
+// and released before it goes, so its draws no longer copy them into the frame's buffers.
+void SetResident(bool resident);
+bool Resident();
 
 enum class Mode {
   Off,
