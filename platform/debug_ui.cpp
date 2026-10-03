@@ -3624,10 +3624,17 @@ void DrawRenderTab() {
     MarkDirty();
   }
   if (!autoScale) {
-    float scale = sRenderScale;
+    // Applied when the slider is let go: each new scale reallocates the EFB targets, which
+    // a drag would otherwise do every frame.
+    static float sPendingScale = 0.f;
+    float scale = sPendingScale > 0.f ? sPendingScale : sRenderScale;
     if (ImGui::SliderFloat("EFB scale", &scale, 1.f, 2.f, "%.2fx")) {
-      SetRenderScale(scale);
+      sPendingScale = scale;
+    }
+    if (sPendingScale > 0.f && !ImGui::IsItemActive()) {
+      SetRenderScale(sPendingScale);
       MarkDirty();
+      sPendingScale = 0.f;
     }
     ImGui::TextUnformatted("Scales the internal EFB; higher values use more GPU memory.");
   }
@@ -5150,7 +5157,10 @@ void DrawUI() {
     sVisible = false;
   }
 
-  if (sSettingsDirty) {
+  // Not while a control is held: a dragged slider changes a setting every frame, and
+  // rewriting the settings file each time is a flash write per frame on a phone. It is
+  // saved the frame the control is let go.
+  if (sSettingsDirty && !ImGui::IsAnyItemActive()) {
     SaveSettings();
   }
 }
