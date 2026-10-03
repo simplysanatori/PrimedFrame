@@ -78,6 +78,12 @@ last argument, ELPS, ATEX). Emitter shapes pinned from the shipped bytes:
 `PLNV(v, v, r x8, byte)`; colour `MDAO(c, r)` and `SLCT(r, ARRY)`;
 `SMOV(EXTT, v, EXTR, NONE, NONE)` with EXTT/EXTR/EXTS as leaves, `TRST(r x5, word)`. A 16-byte id holding an element FourCC
 is not read as an id.
+
+An embedded GPSM can carry the root flag (header u32 at +21 equal to 1)
+without children: its `_END` is then followed directly by the next sibling's
+id. The reader takes the child list when a count and children parse there,
+and ends the node at its `_END` otherwise (only the effect's own root must
+have the list). Property tags go up to 05 (LRAD).
 Unknown elements try their larger arities first when building the tree.
 
 New elements, with arities known:

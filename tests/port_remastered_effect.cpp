@@ -254,10 +254,36 @@ void TestTypedNesting() {
   }
 }
 
+// An embedded generator can carry the root flag and still end at its _END
+// (no children after it), and a property tag can be 05.
+void TestFlaggedChild() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "_END", 4);
+  Put32(out, 2);
+  for (int i = 0; i < 2; ++i) {
+    const EffectGuid id = Guid(uint8_t(0x40 + i * 0x20));
+    out.insert(out.end(), id.begin(), id.end());
+    PutGenerator(out, i == 0);
+    PutProperty(out, "LRAD", 5);
+    PutConstant(out, 0.5f);
+    PutProperty(out, "_END", 4);
+  }
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "flagged child parses");
+  Check(effect.children.size() == 2 && effect.children[0].root && effect.children[0].children.empty() &&
+            effect.children[1].properties.size() == 1 && effect.children[1].properties[0].tag == 5,
+        "flagged child ends at its _END");
+}
+
 int main() {
   TestParse();
   TestFailure();
   TestTypedNesting();
+  TestFlaggedChild();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

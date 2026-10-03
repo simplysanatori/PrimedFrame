@@ -645,17 +645,33 @@ public:
     return out;
   }
 
+  // Where a node's _END at `at` and the children after it end: a u32 count,
+  // then per child a 16-byte id and the child.
+  std::optional<size_t> Children(size_t at) {
+    const std::optional<uint32_t> count = U32(at + 5);
+    if (!count || *count > 64) {
+      return std::nullopt;
+    }
+    std::optional<size_t> pos = at + 9;
+    for (uint32_t i = 0; i < *count && pos; ++i) {
+      pos = Child(*pos + 16);
+    }
+    return pos;
+  }
+
   // The end of the property list starting at `at` (children included), or
-  // nullopt when no reading of it parses.
-  std::optional<size_t> Properties(size_t at, bool root) {
-    const uint64_t key = uint64_t(at) << 1 | (root ? 1 : 0);
+  // nullopt when no reading of it parses. `root` is the GPSM's root flag: the
+  // effect's own root has children after its _END; an embedded generator
+  // with the flag may have them, or end at its _END like any other.
+  std::optional<size_t> Properties(size_t at, bool root, bool top = false) {
+    const uint64_t key = uint64_t(at) << 2 | (root ? 1 : 0) | (top ? 2 : 0);
     auto found = m_properties.find(key);
     if (found != m_properties.end()) {
       return found->second;
     }
     m_properties[key] = std::nullopt; // a cycle cannot parse
     const uint32_t fourcc = FourCCAt(at);
-    if (fourcc == 0 || at + 5 > m_size || m_data[at + 4] > 4) {
+    if (fourcc == 0 || at + 5 > m_size || m_data[at + 4] > 5) {
       return std::nullopt;
     }
     if (m_grammar.propertyNames.count(fourcc) != 0) {
@@ -665,17 +681,13 @@ public:
     if (fourcc == kEnd && !root) {
       result = at + 5;
     } else if (fourcc == kEnd) {
-      const std::optional<uint32_t> count = U32(at + 5);
-      if (count && *count <= 64) {
-        std::optional<size_t> pos = at + 9;
-        for (uint32_t i = 0; i < *count && pos; ++i) {
-          pos = Child(*pos + 16);
-        }
-        result = pos;
+      result = Children(at);
+      if (!result && !top) {
+        result = at + 5;
       }
     } else if (!m_grammar.ElementOnly(fourcc)) {
       for (size_t valueEnd : ValueEnds(fourcc, at + 5)) {
-        if (std::optional<size_t> end = Properties(valueEnd, root)) {
+        if (std::optional<size_t> end = Properties(valueEnd, root, top)) {
           result = end;
           break;
         }
@@ -685,11 +697,11 @@ public:
     return result;
   }
 
-  std::optional<size_t> Generator(size_t at) {
+  std::optional<size_t> Generator(size_t at, bool top = false) {
     if (FourCCAt(at) != kGpsm || at + 25 > m_size) {
       return std::nullopt;
     }
-    return Properties(at + 25, Le32(m_data + at + 21) == 1);
+    return Properties(at + 25, Le32(m_data + at + 21) == 1, top);
   }
 
   std::optional<size_t> Child(size_t at) {
@@ -707,7 +719,7 @@ public:
   }
 
   // Rebuilds the parse that Generator()/Child() found, as a tree.
-  size_t BuildNode(size_t at, const EffectGuid& id, EffectNode& node) {
+  size_t BuildNode(size_t at, const EffectGuid& id, EffectNode& node, bool top = false) {
     node.form = FourCCAt(at);
     node.id = id;
     if (node.form == kGpsm) {
@@ -721,6 +733,9 @@ public:
     for (;;) {
       const uint32_t fourcc = FourCCAt(at);
       if (fourcc == kEnd && !node.root) {
+        return at + 5;
+      }
+      if (fourcc == kEnd && !Children(at)) {
         return at + 5;
       }
       if (fourcc == kEnd) {
@@ -740,7 +755,7 @@ public:
       property.offset = at;
       size_t valueEnd = 0;
       for (size_t end : ValueEnds(fourcc, at + 5)) {
-        if (Properties(end, node.root)) {
+        if (Properties(end, node.root, top)) {
           valueEnd = end;
           break;
         }
@@ -1006,7 +1021,7 @@ bool ParseEffect(const uint8_t* data, size_t size, EffectNode& out, std::string&
     return false;
   }
   Parser parser(data, size);
-  if (!parser.Generator(kRootAt)) {
+  if (!parser.Generator(kRootAt, true)) {
     char text[64];
     std::snprintf(text, sizeof(text), "no parse past 0x%zx", parser.Furthest());
     error = text;
@@ -1015,7 +1030,7 @@ bool ParseEffect(const uint8_t* data, size_t size, EffectNode& out, std::string&
     }
     return false;
   }
-  parser.BuildNode(kRootAt, EffectGuid{}, out);
+  parser.BuildNode(kRootAt, EffectGuid{}, out, true);
   return true;
 }
 
