@@ -61,6 +61,19 @@ slots, plus Remastered's changes. Properties default to one of `e`, `b`,
 SNRD and SNRA. KSSM (spawn table), PVAR, TMTR, PMTR and SMTR have dedicated
 readers. GRAD, ARRY and KEWS are read as raw blocks.
 
+The untyped table alone lets nested values be read across their neighbours (a
+vector's `CNST` taking four arguments and eating the next one, or three nested
+`CNST`s read as an id). So a property retail knows is read first as the type
+retail reads it as (int, real, vector, mod vector, colour, emitter), from
+per-type tables (`kIntSigs` and the rest: retail's elements and arguments plus
+Remastered's MPCB, MPAC, ANCR, ASPR, RNDV, DFCP/DFCS, MPRD and the parameter
+reads). Inside a typed value every argument is typed in turn, so a vector's
+`CNST` is exactly three reals and a real's `CNST` one word. An element the type
+does not list, or a typed reading that does not parse, falls back to the
+untyped table, and the whole property falls back to the untyped defaults, so
+the typed reading only ever chooses between readings that already parsed.
+Unknown elements try their larger arities first when building the tree.
+
 New elements, with arities known:
 
 - **SEMR** replaces SETR as the emitter.

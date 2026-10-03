@@ -154,9 +154,77 @@ void TestFailure() {
 }
 } // namespace
 
+void PutConstant(std::vector<uint8_t>& out, float value) {
+  PutFourCC(out, "CNST");
+  PutFloat(out, value);
+}
+
+void PutVector(std::vector<uint8_t>& out, float x, float y, float z) {
+  PutFourCC(out, "CNST");
+  PutConstant(out, x);
+  PutConstant(out, y);
+  PutConstant(out, z);
+}
+
+// Values are read as the type their property holds, so a vector's nested
+// constants are three reals (not an id, and not four constants swallowing the
+// next argument), and Remastered's wrappers keep their arguments.
+void TestTypedNesting() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "VEL1", 3);
+  PutFourCC(out, "IMPL");
+  PutFourCC(out, "MPCB");
+  PutVector(out, 0.0f, 0.0f, 10000.0f);
+  PutConstant(out, 0.0f);
+  PutConstant(out, 0.005f);
+  PutConstant(out, 1.0f);
+  out.push_back(0);
+  PutProperty(out, "VEL2", 3);
+  PutFourCC(out, "WIND");
+  PutVector(out, 0.0f, 0.0f, 0.0f);
+  PutConstant(out, 0.1f);
+  PutProperty(out, "GRTE", 1);
+  PutFourCC(out, "MULT");
+  PutFourCC(out, "DFCS");
+  PutConstant(out, 6.0f);
+  PutConstant(out, 4.0f);
+  PutConstant(out, 0.25f);
+  PutProperty(out, "COLR", 3);
+  PutFourCC(out, "CNST");
+  PutConstant(out, 1.0f);
+  PutConstant(out, 0.5f);
+  PutConstant(out, 0.25f);
+  PutConstant(out, 1.0f);
+  PutProperty(out, "EMTR", 3);
+  PutFourCC(out, "SEMR");
+  PutVector(out, 0.0f, 0.0f, 0.0f);
+  PutFourCC(out, "RNDV");
+  PutConstant(out, 0.1f);
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "typed effect parses");
+  const std::string dump = DumpEffect(effect, out.data());
+  const char* want =
+      "GPSM\n"
+      "  VEL1 03 IMPL(MPCB(CNST(CNST(0), CNST(0), CNST(10000f))), CNST(0), CNST(0.005f), CNST(1f), #00)\n"
+      "  VEL2 03 WIND(CNST(CNST(0), CNST(0), CNST(0)), CNST(0.1f))\n"
+      "  GRTE 01 MULT(DFCS(CNST(6f), CNST(4f)), CNST(0.25f))\n"
+      "  COLR 03 CNST(CNST(1f), CNST(0.5f), CNST(0.25f), CNST(1f))\n"
+      "  EMTR 03 SEMR(CNST(CNST(0), CNST(0), CNST(0)), RNDV(CNST(0.1f)))\n";
+  Check(dump == want, "nested values read as their types");
+  if (dump != want) {
+    std::fprintf(stderr, "%s", dump.c_str());
+  }
+}
+
 int main() {
   TestParse();
   TestFailure();
+  TestTypedNesting();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

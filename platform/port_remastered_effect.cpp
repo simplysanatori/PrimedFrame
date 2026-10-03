@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <unordered_map>
@@ -83,9 +84,80 @@ constexpr ElementSig kElementSigs[] = {
     {"VMAG", "e"},     {"VXTR", "e"},          {"VYTR", "e"},       {"VZTR", "e"},
     {"WIND", "ee"},
     // Pinned down against the shipped files: MPCB wraps a vector, or MPAC
-    // angles and a magnitude; MPRD is 2 or 4 elements; DFCP 2 or 3, DFCS 3.
-    {"MPCB", "e ee"},  {"MPAC", "eeee"},       {"MPRD", "ee eeee"}, {"DFCP", "ee eee"},
-    {"DFCS", "eee"},
+    // angles and a magnitude; MPRD is 2 or 4 elements; DFCP and DFCS 1 to 3.
+    {"MPCB", "e ee"},  {"MPAC", "eeee"},       {"MPRD", "ee eeee"}, {"DFCP", "ee eee e"},
+    {"DFCS", "ee eee e"},
+};
+
+// Elements by the type of value they are read as, with typed arguments: I an
+// int, R a real, V a vector, M a mod vector, C a colour, E an emitter. A typed
+// slot only takes the elements its type has, with their arguments, so nested
+// values cannot be read across their neighbours (a vector's CNST takes three
+// reals, a real's CNST one word). These are retail's (CParticleDataFactory)
+// with Remastered's additions. An element a type does not list is read
+// untyped, and so is one whose typed reading does not parse.
+constexpr ElementSig kIntSigs[] = {
+    {"CNST", "w"},   {"KEYE", "k"},   {"KEYP", "k"},   {"TSCL", "R"},    {"DETH", "II"},  {"CHAN", "III"},
+    {"ADD_", "II"},  {"MULT", "II"},  {"MODU", "II"},  {"RAND", "II"},   {"IMPL", "I"},   {"ILPT", "I"},
+    {"SPAH", "III"}, {"IRND", "II"},  {"CLMP", "III"}, {"PULS", "IIII"}, {"NONE", "-"},   {"RTOI", "RR"},
+    {"SUB_", "II"},  {"GTCP", "-"},   {"GAPC", "-"},   {"GEMT", "-"},    {"MPRD", "II eeee"},
+    {"TPVI", "gI"},  {"DPVI", "gI"},  {"SPAI", "bI"},
+};
+constexpr ElementSig kRealSigs[] = {
+    {"CNST", "w"},    {"NONE", "-"},    {"KEYE", "k"},    {"KEYP", "k"},     {"SCAL", "R"},    {"SINE", "RRR"},
+    {"ADD_", "RR"},   {"MULT", "RR"},   {"DOTP", "VV"},   {"RAND", "RR"},    {"IRND", "RR"},   {"CHAN", "RRI"},
+    {"CLMP", "RRR"},  {"PULS", "IIRR"}, {"RLPT", "R"},    {"LFTW", "RR"},    {"PRLW", "-"},    {"PSLL", "-"},
+    {"PAP1", "-"},    {"PAP2", "-"},    {"PAP3", "-"},    {"PAP4", "-"},     {"PAP5", "-"},    {"PAP6", "-"},
+    {"PAP7", "-"},    {"PAP8", "-"},    {"VXTR", "V"},    {"VYTR", "V"},     {"VZTR", "V"},    {"VMAG", "V"},
+    {"ISWT", "RR"},   {"CLTN", "RRRR"}, {"CEQL", "RRRR"}, {"CRNG", "RRRRR"}, {"CEXT", "I"},    {"ITRL", "IR"},
+    {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR RRR R"},
+    {"DFCS", "RR RRR R"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
+};
+constexpr ElementSig kVectorSigs[] = {
+    {"NONE", "-"},   {"CNST", "RRR"},   {"KEYE", "k"},    {"KEYP", "k"},   {"ANGC", "RRRRR"}, {"CONE", "VR"},
+    {"CIRC", "VVRRR"}, {"CCLU", "VVIR"}, {"ADD_", "VV"},  {"MULT", "VV"},  {"CHAN", "VVI"},   {"PULS", "IIVV"},
+    {"RTOV", "R"},   {"PLOC", "-"},     {"PLCO", "-"},    {"PVEL", "-"},   {"PSOF", "-"},     {"PSOU", "-"},
+    {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V eR"},  {"MPAC", "RRRR"},
+    {"ANCR", "eRRR ebeee"}, {"RNDV", "R"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
+};
+constexpr ElementSig kModVectorSigs[] = {
+    {"NONE", "-"},     {"CNST", "RRR"},   {"GRAV", "V"},     {"WIND", "VR"},   {"EXPL", "RR"},
+    {"CHAN", "MMI"},   {"PULS", "IIMM"},  {"IMPL", "VRRRb"}, {"LMPL", "VRRRb"}, {"EMPL", "VRRRb"},
+    {"SWRL", "VVRR"},  {"BNCE", "VVRRb"}, {"SPOS", "V"},
+};
+constexpr ElementSig kColorSigs[] = {
+    {"CNST", "RRRR RRR"}, {"KEYE", "k"},   {"KEYP", "k"},  {"FADE", "CCR"}, {"CFDE", "CCRR"}, {"CHAN", "CCI"},
+    {"PULS", "IICC"},     {"PCOL", "-"},   {"NONE", "-"},  {"TPVC", "gC"},  {"DPVC", "gC"},   {"SPAC", "bC"},
+};
+constexpr ElementSig kEmitterSigs[] = {
+    {"NONE", "-"}, {"SEMR", "VV"}, {"SPHE", "VRR"}, {"ASPH", "VRRRRRR"}, {"ASPR", "VeRRRR"},
+};
+
+constexpr char kTypeLetters[] = "IRVMCE";
+constexpr int kTypeCount = 6;
+
+int TypeIndex(char letter) {
+  for (int i = 0; i < kTypeCount; ++i) {
+    if (kTypeLetters[i] == letter) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The type retail reads each of its properties as (Remastered's LTM2 is LTME).
+// Bool and asset properties are left to the untyped reading.
+struct PropertyType {
+  char type;
+  const char* fourccs;
+};
+constexpr PropertyType kPropertyTypes[] = {
+    {'I', "PSLT PSWT MBSP MAXP LTME LTM2 SEED NCSY CSSD NDSY PISY SISY SSSD SESD LTYP LFOT"},
+    {'R', "PSTS GRTE SIZE ROTA LENG WIDT LINT LFOR LSLA ADV1 ADV2 ADV3 ADV4 ADV5 ADV6 ADV7 ADV8"},
+    {'V', "PSIV PSOV ILOC IVEC POFS PMOP PMRT PMSC SSPO SEPO LOFF LDIR"},
+    {'M', "PSVM VEL1 VEL2 VEL3 VEL4"},
+    {'C', "COLR PMCL LCLR"},
+    {'E', "EMTR"},
 };
 
 // Elements seen in the files whose arity is not pinned down; they parse with
@@ -155,6 +227,7 @@ struct Grammar {
   std::vector<std::string> unknownElement;
   std::unordered_set<uint32_t> elementNames;
   std::unordered_set<uint32_t> propertyNames;
+  std::unordered_map<uint32_t, std::vector<std::string>> typed[kTypeCount];
 
   Grammar() {
     for (const ElementSig& sig : kElementSigs) {
@@ -167,9 +240,43 @@ struct Grammar {
       properties[FourCCOf(sig.fourcc)] = SplitSigs(sig.sigs);
     }
     defaultProperty = SplitSigs(kDefaultPropertySigs);
-    for (int arity = 0; arity <= kMaxUnknownArity; ++arity) {
+    // Most arguments first: when two arities reach the same end, the one with
+    // fewer arguments has an argument that swallowed its neighbour.
+    for (int arity = kMaxUnknownArity; arity >= 0; --arity) {
       unknownElement.push_back(std::string(size_t(arity), 'e'));
     }
+    auto addTyped = [this](char type, const ElementSig* sigs, size_t count) {
+      for (size_t i = 0; i < count; ++i) {
+        typed[TypeIndex(type)][FourCCOf(sigs[i].fourcc)] = SplitSigs(sigs[i].sigs);
+        elementNames.insert(FourCCOf(sigs[i].fourcc));
+      }
+    };
+    addTyped('I', kIntSigs, std::size(kIntSigs));
+    addTyped('R', kRealSigs, std::size(kRealSigs));
+    addTyped('V', kVectorSigs, std::size(kVectorSigs));
+    addTyped('M', kModVectorSigs, std::size(kModVectorSigs));
+    addTyped('C', kColorSigs, std::size(kColorSigs));
+    addTyped('E', kEmitterSigs, std::size(kEmitterSigs));
+    // A typed property is read as its type first, then any way an untyped one
+    // can be (Remastered stores some as a byte).
+    for (const PropertyType& property : kPropertyTypes) {
+      for (const char* c = property.fourccs; *c != 0;) {
+        std::vector<std::string> sigs{std::string(1, property.type)};
+        sigs.insert(sigs.end(), defaultProperty.begin(), defaultProperty.end());
+        properties.emplace(FourCCOf(c), std::move(sigs));
+        c += 4;
+        while (*c == ' ') {
+          ++c;
+        }
+      }
+    }
+  }
+
+  // The typed signatures of `fourcc` as type `type`, or null when the type has
+  // no such element.
+  const std::vector<std::string>* TypedSigs(int type, uint32_t fourcc) const {
+    auto it = typed[type].find(fourcc);
+    return it != typed[type].end() ? &it->second : nullptr;
   }
 
   const std::vector<std::string>& ElementSigs(uint32_t fourcc) const {
@@ -263,6 +370,30 @@ public:
     return m_elements.emplace(at, std::move(ends)).first->second;
   }
 
+  // Where the typed reading of an element of type `type` at `at` can end;
+  // empty when the type has no such element or it does not parse that way.
+  const Ends& TypedOnly(size_t at, int type) {
+    const uint64_t key = uint64_t(at) << 3 | uint64_t(type);
+    auto found = m_typed.find(key);
+    if (found != m_typed.end()) {
+      return found->second;
+    }
+    Ends ends;
+    if (const std::vector<std::string>* sigs = m_grammar.TypedSigs(type, FourCCAt(at))) {
+      for (const std::string& sig : *sigs) {
+        AddEnds(ends, Args(at + 4, sig));
+      }
+    }
+    return m_typed.emplace(key, std::move(ends)).first->second;
+  }
+
+  // Where an element of type `type` at `at` can end: its typed reading, or
+  // the untyped one when there is none.
+  Ends Typed(size_t at, int type) {
+    const Ends typed = TypedOnly(at, type);
+    return typed.empty() ? Element(at) : typed;
+  }
+
   // Where `count` consecutive elements starting at `at` can end.
   const Ends& Sequence(size_t at, uint32_t count) {
     const uint64_t key = uint64_t(at) << 16 | count;
@@ -309,8 +440,11 @@ public:
         case 'k':
           AddEnds(next, Keyframes(pos));
           break;
-        default:
+        case 'e':
           AddEnds(next, Element(pos));
+          break;
+        default:
+          AddEnds(next, Typed(pos, TypeIndex(arg)));
           break;
         }
       }
@@ -637,8 +771,11 @@ private:
     case 'k':
       options = Keyframes(at);
       break;
-    default:
+    case 'e':
       options = Element(at);
+      break;
+    default:
+      options = Typed(at, TypeIndex(sig[index]));
       break;
     }
     for (size_t next : options) {
@@ -664,8 +801,13 @@ private:
       case 'k':
         value.kind = EffectValue::Kind::Keys;
         break;
-      default:
+      case 'e':
         if (!BuildElement(at, next, value)) {
+          continue;
+        }
+        break;
+      default:
+        if (!BuildTyped(at, next, TypeIndex(sig[index]), value)) {
           continue;
         }
         break;
@@ -676,6 +818,23 @@ private:
         return true;
       }
       out.resize(mark);
+    }
+    return false;
+  }
+
+  bool BuildTyped(size_t at, size_t end, int type, EffectValue& value) {
+    if (TypedOnly(at, type).empty()) {
+      return BuildElement(at, end, value);
+    }
+    value.kind = EffectValue::Kind::Element;
+    value.fourcc = FourCCAt(at);
+    value.offset = at;
+    value.size = end - at;
+    for (const std::string& sig : *m_grammar.TypedSigs(type, value.fourcc)) {
+      value.args.clear();
+      if (BuildArgs(at + 4, sig, 0, end, value.args)) {
+        return true;
+      }
     }
     return false;
   }
@@ -706,6 +865,7 @@ private:
   size_t m_size;
   const Grammar& m_grammar;
   std::unordered_map<size_t, Ends> m_elements;
+  std::unordered_map<uint64_t, Ends> m_typed;
   std::unordered_map<uint64_t, Ends> m_sequences;
   std::unordered_map<uint64_t, std::optional<size_t>> m_properties;
   size_t m_furthest = 0;
