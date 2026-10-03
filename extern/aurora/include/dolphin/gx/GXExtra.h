@@ -31,6 +31,9 @@ void GXSetSDF(u8 edge);
 // model's asset id, its index when it has no id, and the material); draws nothing
 // differently. Asset 0 with model 0xFFFFFFFF is no name (the initial state).
 void GXSetDrawTag(u32 asset, u32 model, u32 material);
+// Port extension: goes up with every GXCopyTex, so a caller can tell whether a copy it made
+// is still the latest (nothing has copied into, or cleared through, a texture since).
+u32 GXPortCopySerial(void);
 // Aurora extension: the PBR environment probe (see GX_AURORA_COPY_PROBE_FACE and
 // GX_AURORA_SET_PBR_PROBE).
 void GXCopyProbeFace(u32 face);

@@ -104,7 +104,8 @@ public:
 
   CCubeMaterial GetMaterialByIndex(const int idx) const;
 #ifdef TARGET_PC
-  void PortSetPBRMaterial(const int idx) const;
+  // Sends the material's PBR record; returns the record's surface kind (glass is 8).
+  float PortSetPBRMaterial(const int idx) const;
   // The material's record (see the definition) with the neutral values where it has
   // none; returns how many floats the record holds, 0 without one.
   int PortReadPBRMaterial(const int idx, float values[19]) const;

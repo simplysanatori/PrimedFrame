@@ -235,9 +235,10 @@ void CCubeModel::PortOverridePBR(const CCubeModel* model, const int material, co
 
 void CCubeModel::PortClearPBROverrides() { sPortPBROverrides.clear(); }
 
-void CCubeModel::PortSetPBRMaterial(const int idx) const {
+f32 CCubeModel::PortSetPBRMaterial(const int idx) const {
   f32 values[19];
   PortReadPBRMaterial(idx, values);
+  const f32 kind = values[13];
   for (const SPortPBROverride& entry : sPortPBROverrides) {
     if (entry.model == this && entry.material == idx) {
       values[entry.field] = entry.value;
@@ -253,7 +254,24 @@ void CCubeModel::PortSetPBRMaterial(const int idx) const {
   const CTransform4f& view = CGraphics::GetViewMatrix();
   const f32 up[3] = {view.Get20(), view.Get22(), -view.Get21()};
   GXSetPBRMaterial(values, values + 3, values[6], values[7], values + 8, values + 13, up);
+  return kind;
 }
+
+namespace {
+// The screen copy glass refracts (see DrawSurface). One copy serves the glass drawn after it
+// until something changes what it would show: any other EFB copy (they share the spare
+// buffer, and the probe capture copies too), an opaque model surface, a new frame or another
+// viewport. Glass behind glass is therefore seen through, not refracted twice, as a grab of
+// the opaque scene works in Remastered and most engines. It used to copy the whole viewport
+// before every glass surface, a pass break and a full-screen conversion each time.
+struct SPortGlassCopy {
+  bool valid;
+  u32 serial;
+  int frame;
+  int left, top, width, height;
+};
+SPortGlassCopy sPortGlassCopy = {false, 0, 0, 0, 0, 0, 0};
+} // namespace
 #endif
 
 void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& modelFlags) const {
@@ -279,6 +297,11 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   // paths PortPBRAllowed rejects.
   const bool pbr =
       material.IsFlagSet(kStateFlag_PortPBR) && CCubeMaterial::PortPBRAllowed(drawFlags);
+  const bool sortedDraw =
+      drawFlags.GetTrans() >= CModelFlags::kT_Blend || material.IsFlagSet(kStateFlag_DepthSorting);
+  if (!sortedDraw) {
+    sPortGlassCopy.valid = false;
+  }
 #else
   material.SetCurrent(modelFlags, surface, *this);
 #endif
@@ -364,27 +387,37 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     f32 tone[3][4];
     const bool hasTone = PortRoomEnv::Tone(tone);
     if (hasTone) {
-      const bool sorted = drawFlags.GetTrans() >= CModelFlags::kT_Blend ||
-                          material.IsFlagSet(kStateFlag_DepthSorting);
-      tone[0][3] = sorted ? 1.f : PortRoomEnv::GlowScale();
+      tone[0][3] = sortedDraw ? 1.f : PortRoomEnv::GlowScale();
     }
     GXSetPBRTone(hasTone ? tone : nullptr);
-    PortSetPBRMaterial(surface.GetMaterialIndex());
+    const f32 kind = PortSetPBRMaterial(surface.GetMaterialIndex());
     // Glass (kind 8) sees what is behind it: the screen so far, copied into map 7 as the
     // refracting particles copy it (CElementGen).
-    f32 record[19];
-    PortReadPBRMaterial(surface.GetMaterialIndex(), record);
-    if (record[13] > 7.5f && record[13] < 8.5f && CCubeMaterial::PortScreenCopyUsed()) {
+    if (kind > 7.5f && kind < 8.5f && CCubeMaterial::PortScreenCopyUsed()) {
       int portLeft, portTop, portWidth, portHeight;
       CGraphics::GetViewport(portLeft, portTop, portWidth, portHeight);
-      GXSetTexCopySrc(static_cast< u16 >(portLeft), static_cast< u16 >(portTop), static_cast< u16 >(portWidth),
-                      static_cast< u16 >(portHeight));
-      GXSetTexCopyDst(static_cast< u16 >(portWidth), static_cast< u16 >(portHeight), GX_TF_RGB565, GX_FALSE);
-      const bool useVideoFilter = CGraphics::GetUseVideoFilter();
-      CGraphics::SetUseVideoFilter(false);
-      GXCopyTex(CGraphics::GetDolphinSpareBuffer(), GX_FALSE);
-      CGraphics::SetUseVideoFilter(useVideoFilter);
-      GXPixModeSync();
+      SPortGlassCopy& copy = sPortGlassCopy;
+      const bool current = copy.valid && copy.serial == GXPortCopySerial() &&
+                           copy.frame == CGraphics::GetFrameCounter() && copy.left == portLeft &&
+                           copy.top == portTop && copy.width == portWidth && copy.height == portHeight;
+      if (!current) {
+        GXSetTexCopySrc(static_cast< u16 >(portLeft), static_cast< u16 >(portTop), static_cast< u16 >(portWidth),
+                        static_cast< u16 >(portHeight));
+        GXSetTexCopyDst(static_cast< u16 >(portWidth), static_cast< u16 >(portHeight), GX_TF_RGB565, GX_FALSE);
+        const bool useVideoFilter = CGraphics::GetUseVideoFilter();
+        CGraphics::SetUseVideoFilter(false);
+        GXCopyTex(CGraphics::GetDolphinSpareBuffer(), GX_FALSE);
+        CGraphics::SetUseVideoFilter(useVideoFilter);
+        GXPixModeSync();
+        copy.valid = true;
+        copy.serial = GXPortCopySerial();
+        copy.frame = CGraphics::GetFrameCounter();
+        copy.left = portLeft;
+        copy.top = portTop;
+        copy.width = portWidth;
+        copy.height = portHeight;
+      }
+      // Map 7 is shared, so it is bound again either way.
       CGraphics::LoadDolphinSpareTexture(portWidth, portHeight, GX_TF_RGB565, nullptr,
                                          CGraphics::kSpareBufferTexMapID);
     }

@@ -238,7 +238,13 @@ void GXSetDispCopyGamma(GXGamma gamma) {}
 
 void GXCopyDisp(void* dest, GXBool clear) {}
 
+// Port extension: counts EFB copies made from the game thread (GXPortCopySerial).
+static u32 sCopySerial = 0;
+
+u32 GXPortCopySerial(void) { return sCopySerial; }
+
 void GXCopyTex(void* dest, GXBool clear) {
+  ++sCopySerial;
   GX_WRITE_AURORA(GX_AURORA_LOAD_COPY_DEST);
   GX_WRITE_U64(reinterpret_cast<u64>(dest));
 
