@@ -256,7 +256,9 @@ the disc names them. The step is off by default.
 
 ```
 g++ -std=c++20 -O2 -Iplatform/include tests/port_remastered_effect_tool.cpp \
-    platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp platform/port_remastered_pak.cpp -lzstd -o effect_tool
+    platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp \
+    platform/port_remastered_effect_import.cpp platform/port_remastered_image.cpp \
+    platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp -lzstd -o effect_tool
 ./effect_tool dump <file.GENP>             # one effect as text
 ./effect_tool scan <romfs> [outdir]        # coverage, references, failures;
                                            # outdir gets one dump per effect
@@ -264,6 +266,9 @@ g++ -std=c++20 -O2 -Iplatform/include tests/port_remastered_effect_tool.cpp \
                                            # every effect as retail PART, what
                                            # was left out, and (with a folder of
                                            # the disc's <id>.PART) a comparison
+./effect_tool import <romfs> <retail> <outdir>
+                                           # the import's effect step, with the
+                                           # ids of the files in <retail> as the disc
 ```
 
 

@@ -19,13 +19,21 @@
 // disc's PART property by property, and the totals per property are printed:
 // identical, different, only on the disc, only converted.
 //
+// import runs the import's effect step (port_remastered_effect_import.h) on
+// the paks under <romfs> into <outdir>, as the game's import would with
+// MP_REMASTERED_EFFECTS=1. A retail id counts as on the disc when <retail>
+// holds a file named <8 hex digits>.<type>.
+//
 // Not part of the build:
 //   g++ -std=c++20 -O2 -Iplatform/include tests/port_remastered_effect_tool.cpp
 //       platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp
-//       platform/port_remastered_pak.cpp -lzstd -o effect_tool
+//       platform/port_remastered_effect_import.cpp platform/port_remastered_image.cpp
+//       platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp -lzstd -o effect_tool
 
 #include "port_remastered_effect.h"
 #include "port_remastered_effect_convert.h"
+#include "port_remastered_effect_import.h"
+#include "port_remastered_txtr.h"
 #include "port_remastered_pak.h"
 
 #include <algorithm>
@@ -35,6 +43,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -422,6 +431,109 @@ int Convert(const std::string& romfs, const std::string& retailDir, const std::s
   return 0;
 }
 
+int Import(const std::string& romfs, const std::string& retailDir, const std::string& outDir) {
+  using namespace PortRemastered;
+  std::filesystem::create_directories(outDir);
+  std::set<uint32_t> disc;
+  for (const auto& entry : std::filesystem::directory_iterator(retailDir)) {
+    const std::string name = entry.path().filename().string();
+    if (name.size() > 9 && name[8] == '.') {
+      disc.insert(uint32_t(std::strtoul(name.substr(0, 8).c_str(), nullptr, 16)));
+    }
+  }
+  struct Open {
+    FileReader reader;
+    Pak pak;
+  };
+  std::vector<std::unique_ptr<Open>> paks;
+  std::map<EffectGuid, std::pair<size_t, size_t>> where;  // pak, asset
+  std::map<EffectGuid, uint32_t> types;
+  std::vector<std::filesystem::path> paths;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(romfs)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".pak") {
+      paths.push_back(entry.path());
+    }
+  }
+  std::sort(paths.begin(), paths.end());
+  for (const std::filesystem::path& path : paths) {
+    auto open = std::make_unique<Open>();
+    std::string error;
+    FileReader& reader = open->reader;
+    if (!reader.Open(path.string(), error) ||
+        !open->pak.Open([&reader](uint64_t offset, void* out, size_t size) { return reader.Read(offset, out, size); },
+                        reader.Size(), error)) {
+      std::cerr << path.string() << ": " << error << "\n";
+      return 1;
+    }
+    const std::vector<PakAsset>& assets = open->pak.Assets();
+    for (size_t a = 0; a < assets.size(); ++a) {
+      if (types.emplace(assets[a].id, assets[a].type).second) {
+        where[assets[a].id] = {paks.size(), a};
+      }
+    }
+    paks.push_back(std::move(open));
+  }
+  EffectImportIO io;
+  for (const auto& [id, type] : types) {
+    if (type == kGenp) {
+      io.effects.push_back(id);
+    }
+  }
+  auto read = [&](const EffectGuid& id, std::vector<uint8_t>& out, std::string& error) {
+    const auto found = where.find(id);
+    if (found == where.end()) {
+      error = "not in the image";
+      return false;
+    }
+    const Pak& pak = paks[found->second.first]->pak;
+    return pak.ReadAsset(pak.Assets()[found->second.second], out, error);
+  };
+  io.read = [&](uint32_t type, const EffectGuid& id, std::vector<uint8_t>& out, std::string& error) {
+    const auto found = types.find(id);
+    if (found == types.end() || found->second != type) {
+      error = "not in the image";
+      return false;
+    }
+    return read(id, out, error);
+  };
+  io.typeOf = [&](const EffectGuid& id) -> uint32_t {
+    const auto found = types.find(id);
+    return found == types.end() ? 0 : found->second;
+  };
+  io.retailId = [&](uint32_t id) { return disc.count(id) != 0; };
+  std::set<uint32_t> taken;
+  io.freshId = [&](uint32_t seed) {
+    uint32_t id = seed;
+    while (id == 0 || id == 0xFFFFFFFFu || disc.count(id) != 0 || taken.count(id) != 0) {
+      ++id;
+    }
+    taken.insert(id);
+    return id;
+  };
+  io.texture = [&](const EffectGuid& id, int& width, int& height, std::vector<uint8_t>& rgba, std::string& error) {
+    std::vector<uint8_t> raw;
+    TxtrImage image;
+    if (!read(id, raw, error) || !DecodeTxtr(raw.data(), raw.size(), image, error)) {
+      return false;
+    }
+    width = int(image.width);
+    height = int(image.height);
+    rgba = std::move(image.rgba);
+    return true;
+  };
+  io.write = [&](const std::string& name, const std::vector<uint8_t>& data) {
+    std::ofstream file(std::filesystem::path(outDir) / name, std::ios::binary);
+    file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+    return bool(file);
+  };
+  io.log = [](const std::string& line) { std::cout << "  " << line << "\n"; };
+  const EffectImportResult result = ImportEffects(io);
+  std::cout << result.written << " of " << result.candidates << " effects written, " << result.failed << " failed, "
+            << result.parts << " PARTs, " << result.textures << " textures, " << result.dropped
+            << " retail properties left out\n";
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -435,6 +547,11 @@ int main(int argc, char** argv) {
   if (mode == "convert" && argc == 5) {
     return Convert(argv[2], argv[3], argv[4]);
   }
-  std::cerr << "usage: " << argv[0] << " dump <file.GENP> | scan <romfs> [outdir] | convert <romfs> <retail|-> <outdir>\n";
+  if (mode == "import" && argc == 5) {
+    return Import(argv[2], argv[3], argv[4]);
+  }
+  std::cerr << "usage: " << argv[0]
+            << " dump <file.GENP> | scan <romfs> [outdir] | convert <romfs> <retail|-> <outdir>"
+               " | import <romfs> <retail> <outdir>\n";
   return 2;
 }
