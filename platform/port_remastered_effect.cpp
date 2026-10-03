@@ -43,8 +43,9 @@ constexpr uint32_t kForms[] = {kGpsm,
                                EffectFourCC("SPSM")};
 
 // Element signatures. Each letter is one argument: e an element, w four raw
-// bytes, b a raw byte, g a 16-byte id, k a keyframe block; '-' is no
-// arguments. Alternatives are separated by spaces and tried in order. These are
+// bytes, b a raw byte, g a 16-byte id, k a keyframe block, K one with the
+// 30-byte header only (KEYF's, which is followed by its input element); '-'
+// is no arguments. Alternatives are separated by spaces and tried in order. These are
 // retail's element arities (merged across the int/real/vector/colour/... slots,
 // since the file does not say which slot it is in) with Remastered's changes
 // and additions, learned from the shipped files.
@@ -65,7 +66,7 @@ constexpr ElementSig kElementSigs[] = {
     {"GRAV", "e"},     {"GTCA", "e"},          {"GTCB", "e"},       {"GTCG", "e"},
     {"GTCP", "-"},     {"GTCR", "e"},          {"ILPT", "e"},       {"IMPL", "e eeeee eeeeb"},
     {"IRND", "ee"},    {"ISWT", "ee"},         {"ITRL", "ee"},      {"KESP", "k"},
-    {"KEYC", "k"},     {"KEYE", "k"},          {"KEYF", "k"},       {"KEYI", "k"},
+    {"KEYC", "k"},     {"KEYE", "k"},          {"KEYF", "Ke k"},       {"KEYI", "k"},
     {"KEYP", "k"},     {"KEYV", "k"},          {"KPIN", "e"},       {"LFTW", "ee"},
     {"LMPL", "eeeeb"}, {"MMSI", "eg"},         {"MODU", "ee"},      {"MULT", "ee"},
     {"NONE", "-"},     {"PAP1", "-"},          {"PAP2", "-"},       {"PAP3", "-"},
@@ -122,7 +123,7 @@ constexpr ElementSig kVectorSigs[] = {
     {"CIRC", "VVRRR"}, {"CCLU", "VVIR"}, {"ADD_", "VV"},  {"MULT", "VV"},  {"CHAN", "VVI"},   {"PULS", "IIVV"},
     {"RTOV", "R"},   {"PLOC", "-"},     {"PLCO", "-"},    {"PVEL", "-"},   {"PSOF", "-"},     {"PSOU", "-"},
     {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V VR"},  {"MPAC", "RRRR"},
-    {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"RNDV", "R"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
+    {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
 };
 constexpr ElementSig kModVectorSigs[] = {
     {"NONE", "-"},     {"CNST", "RRR"},   {"GRAV", "V"},     {"WIND", "VR"},   {"EXPL", "RR"},
@@ -136,7 +137,7 @@ constexpr ElementSig kColorSigs[] = {
 };
 constexpr ElementSig kEmitterSigs[] = {
     {"NONE", "-"}, {"SEMR", "VV"}, {"SPHE", "VRR"}, {"ASPH", "VRRRRRR"}, {"ASPR", "VeRRRR"},
-    {"PLNE", "VVVRRR"}, {"ELPS", "VVVRe"}, {"PLNV", "VVRRRRRRRRb"},
+    {"PLNE", "VVVRRR"}, {"ELPS", "VVVRe"}, {"PLNV", "VVRRRRRRRRb"}, {"SPEV", "VRRRRRRb"},
 };
 
 constexpr char kTypeLetters[] = "IRVMCE";
@@ -457,6 +458,9 @@ public:
         case 'k':
           AddEnds(next, Keyframes(pos));
           break;
+        case 'K':
+          AddEnds(next, Keyframes(pos, true));
+          break;
         case 'e':
           AddEnds(next, Element(pos));
           break;
@@ -475,13 +479,16 @@ public:
 
   // A keyframe block: a 22-byte header with the key count at +18, or (KEYF
   // type 02) a 30-byte one with it at +26, then 4, 8, 12 or 16 bytes per key.
-  Ends Keyframes(size_t at) const {
+  Ends Keyframes(size_t at, bool longOnly = false) const {
     Ends ends;
     if (at + 22 > m_size) {
       return ends;
     }
     const std::pair<size_t, size_t> layouts[] = {{at + 18, at + 22}, {at + 26, at + 30}};
     for (const auto& [countAt, start] : layouts) {
+      if (longOnly && start == at + 22) {
+        continue;
+      }
       const std::optional<uint32_t> count = U32(countAt);
       if (!count || *count > 100000) {
         continue;
@@ -803,6 +810,9 @@ private:
     case 'k':
       options = Keyframes(at);
       break;
+    case 'K':
+      options = Keyframes(at, true);
+      break;
     case 'e':
       options = Element(at);
       break;
@@ -831,6 +841,7 @@ private:
         std::memcpy(value.guid.data(), m_data + at, 16);
         break;
       case 'k':
+      case 'K':
         value.kind = EffectValue::Kind::Keys;
         break;
       case 'e':

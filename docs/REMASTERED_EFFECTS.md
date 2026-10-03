@@ -84,6 +84,12 @@ without children: its `_END` is then followed directly by the next sibling's
 id. The reader takes the child list when a count and children parse there,
 and ends the node at its `_END` otherwise (only the effect's own root must
 have the list). Property tags go up to 05 (LRAD).
+
+KEYF with the 30-byte header (first u32 2) is followed by the element that
+drives it (`KEYF(keys, GTCP)`, `KEYF(keys, PSA0)`). SMTR/PMTR entries are an
+element then a `CCHn` tag and two bytes (channel, slot), five count-prefixed
+groups. More emitters: `SPEV(v, r x6, byte)`, and in a vector slot
+`ANCV(REUL, r x7, byte)`.
 Unknown elements try their larger arities first when building the tree.
 
 New elements, with arities known:
