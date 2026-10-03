@@ -54,6 +54,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -100,6 +101,19 @@ unsigned sGeneration = 0;
 bool sStarted = false;
 bool sEnabled = false;
 
+#ifndef _WIN32
+// Replies are sent from the game thread, so a client that stops reading must
+// not stall it: each send is non-blocking, a reply waits at most
+// kSendBudgetMs for room without any of it going out, and a client that still
+// has none is cut off (shut down here; the listen thread sees that and
+// closes it).
+constexpr int kSendBudgetMs = 200;
+// A line longer than this is not a command; the client is cut off.
+constexpr size_t kMaxLine = 64 * 1024;
+// Lines waiting for the game; more are answered with an error and dropped.
+constexpr size_t kMaxQueued = 256;
+#endif
+
 void SendRaw(unsigned generation, const std::string& text) {
 #ifndef _WIN32
   std::lock_guard< std::mutex > lock(sClientMutex);
@@ -107,12 +121,32 @@ void SendRaw(unsigned generation, const std::string& text) {
     return;
   }
   size_t done = 0;
+  int budget = kSendBudgetMs;
   while (done < text.size()) {
-    const ssize_t n = send(sClient, text.data() + done, text.size() - done, MSG_NOSIGNAL);
-    if (n <= 0) {
-      return;
+    const ssize_t n =
+        send(sClient, text.data() + done, text.size() - done, MSG_NOSIGNAL | MSG_DONTWAIT);
+    if (n > 0) {
+      done += static_cast< size_t >(n);
+      budget = kSendBudgetMs; // still reading, just slowly
+      continue;
     }
-    done += static_cast< size_t >(n);
+    if (n < 0 && errno == EINTR) {
+      continue;
+    }
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && budget > 0) {
+      pollfd descriptor{};
+      descriptor.fd = sClient;
+      descriptor.events = POLLOUT;
+      const int wait = std::min(budget, 50);
+      budget -= wait;
+      poll(&descriptor, 1, wait);
+      continue;
+    }
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      std::fprintf(stderr, "[console] client is not reading; disconnecting it\n");
+      shutdown(sClient, SHUT_RDWR);
+    }
+    return;
   }
 #else
   (void)generation;
@@ -126,6 +160,10 @@ void ListenThread(int listener) {
   for (;;) {
     const int client = accept(listener, nullptr, nullptr);
     if (client < 0) {
+      // Out of descriptors and the like do not clear up at once; do not spin.
+      if (errno != EINTR) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
       continue;
     }
     unsigned generation;
@@ -153,8 +191,21 @@ void ListenThread(int listener) {
         if (!line.empty() && line.back() == '\r') {
           line.pop_back();
         }
-        std::lock_guard< std::mutex > lock(sQueueMutex);
-        sQueue.push_back({line, generation});
+        bool queued = false;
+        {
+          std::lock_guard< std::mutex > lock(sQueueMutex);
+          if (sQueue.size() < kMaxQueued) {
+            sQueue.push_back({line, generation});
+            queued = true;
+          }
+        }
+        if (!queued) {
+          SendRaw(generation, "=> err: too many commands waiting\n");
+        }
+      }
+      if (buffer.size() > kMaxLine) {
+        std::fprintf(stderr, "[console] line too long; disconnecting the client\n");
+        break;
       }
     }
     std::lock_guard< std::mutex > lock(sClientMutex);
