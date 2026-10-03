@@ -708,6 +708,10 @@ constexpr uint8_t kRetailPlatform = 0x08;
 constexpr int kStatePlay = 18;  // EScriptObjectState kSS_Play
 constexpr int kRetailDamageableTrigger = 0x1a;
 constexpr int kStateMaxReached = 7;
+constexpr uint8_t kRetailCounter = 0x06;
+// A retail Counter as Remastered remade it; the ones it added match no retail object.
+constexpr uint32_t kCounterMP1 = 0x32aef7dd;
+constexpr uint32_t kEventCounterMP1Max = 0x18977288;
 // Actions a connection asks of its target.
 constexpr uint32_t kActionActivate = 0xa34e100f;
 constexpr uint32_t kActionDeactivate = 0xdd169ff3;
@@ -742,6 +746,14 @@ constexpr uint32_t kActionTriggerDeactivate = 0xb5dd4543;
 // water, and a Counter that counts the camera's water volumes.
 constexpr uint32_t kActionHintOn = 0x25592fa2;   // OnRequest
 constexpr uint32_t kActionHintOff = 0x332214ff;  // OffRequest
+// Also take a hint out (CColorGradeManager::ReallyRemoveHint); CColorGradeHintGOC's
+// AcceptScriptMsg ignores every action but these, QueryHintState and (de)activation.
+constexpr uint32_t kActionHintRemove = 0x3580a822;
+constexpr uint32_t kActionHintDelete = 0x5844454c;  // 'DLEX'
+bool HintTakes(uint32_t action) {
+  return action == kActionHintOn || action == kActionHintOff || action == kActionHintRemove ||
+         action == kActionHintDelete || action == kActionEntityActivate || action == kActionEntityDeactivate;
+}
 constexpr uint32_t kProxyPlayer = 0x5797d3c7;
 constexpr uint32_t kEventPlayerFluidIn = 0xcc17e9b1;
 constexpr uint32_t kEventPlayerFluidOut = 0x42604bc6;
@@ -789,6 +801,18 @@ int RetailState(uint32_t type, uint32_t event) {
   }();
   const auto it = table.find({type, event});
   return it == table.end() ? -1 : it->second;
+}
+
+// What a connection's action does to the geometry or hint it reaches.
+uint8_t LinkAct(uint32_t action) {
+  return action == kActionActivate || action == kActionIncrement || action == kActionEntityActivate ||
+                 action == kActionHintOn
+             ? PortRoomGeo::kShow
+         : action == kActionDeactivate || action == kActionDecrement || action == kActionEntityDeactivate ||
+                 action == kActionHintOff || action == kActionHintRemove || action == kActionHintDelete
+             ? PortRoomGeo::kHide
+         : action == kActionToggleActive ? PortRoomGeo::kToggle
+                                         : 0;
 }
 
 bool IsPass(int retailType) {
@@ -897,6 +921,7 @@ struct SceneryScripts {
   std::map<int, uint8_t> layer;  // by entity: the retail layer it is drawn on
   std::map<int, std::vector<PortRoomGeo::Link>> links;  // by entity
   std::map<int, size_t> unresolved;                      // by entity: connections not traced
+  std::map<int, std::string> unresolvedHow;              // a grade hint's: sender type/event/action
   std::map<int, const ScriptObject*> platform;           // by entity: the platform carrying it
   size_t entities = 0, matched = 0;
   // Remastered's own objects in between (camera volumes, counters, relays) and the
@@ -1171,6 +1196,53 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     state = up ? 0 : 1;
     return PortRoomEnv::kSenderCameraWater;
   };
+  // A counter Remastered added for a grade hint that counts what a retail counter counts (a
+  // fight's deaths, say) is that retail counter: the one every matched sender feeding it also targets.
+  auto RetailCounterFor = [&](int entity) -> const ScriptObject* {
+    const auto in = incoming.find(entity);
+    if (in == incoming.end()) {
+      return nullptr;
+    }
+    std::vector<const ScriptObject*> feeds;
+    for (const Connection* feed : in->second) {
+      const int f = entityOf(int(feed->sender));
+      if (f >= 0 && match[size_t(f)] >= 0) {
+        feeds.push_back(&objects[size_t(match[size_t(f)])]);
+      }
+    }
+    if (feeds.empty()) {
+      return nullptr;
+    }
+    auto targets = [](const ScriptObject& from, const ScriptObject& to) {
+      return std::find_if(from.targets.begin(), from.targets.end(), [&](uint32_t t) {
+               return (t & 0x3ffffff) == (to.id & 0x3ffffff);
+             }) != from.targets.end();
+    };
+    // Fed by every matched sender, and by as many retail objects as the Remastered counter has
+    // feeds; one such counter, or none.
+    const ScriptObject* found = nullptr;
+    for (const ScriptObject& o : objects) {
+      if (o.type != kRetailCounter ||
+          !std::all_of(feeds.begin(), feeds.end(), [&](const ScriptObject* feed) { return targets(*feed, o); })) {
+        continue;
+      }
+      size_t fedBy = 0;
+      for (const ScriptObject& from : objects) {
+        fedBy += targets(from, o) ? 1 : 0;
+      }
+      if (fedBy == in->second.size()) {
+        // Two counting the same senders from the same start to the same maximum reach it
+        // together (a Counter's first properties: initial count, maximum).
+        if (found != nullptr && (!found->hasPos || !o.hasPos || std::memcmp(&found->pos, &o.pos, 8) != 0)) {
+          return nullptr;
+        }
+        if (found == nullptr) {
+          found = &o;
+        }
+      }
+    }
+    return found;
+  };
   // A platform's Play -> Activate connections name the actors it carries
   // (CScriptPlatform::BuildSlaveList).
   for (const Connection& c : conns) {
@@ -1196,6 +1268,27 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     }
     std::vector<PortRoomGeo::Link> links;
     size_t bad = 0;
+    std::string how;
+    // One more connection not traced; a grade hint's are named in the import log.
+    const auto miss = [&](const Component& sender, const Connection& c, uint32_t first, int depth) {
+      ++bad;
+      if (hintEntities.count(e.entity) != 0) {
+        const int s = entityOf(int(c.sender));
+        char text[96];
+        std::snprintf(text, sizeof(text), " %08X/%08X/%08X->%08X@%d%s%s", sender.type, c.event, c.action, first, depth,
+                      s < 0 || match[size_t(s)] < 0 ? " unmatched" : "",
+                      RetailState(sender.type, c.event) < 0 ? " nostate" : "");
+        how += text;
+        const auto feeds = incoming.find(sender.entity);
+        for (size_t f = 0; sender.entity >= 0 && feeds != incoming.end() && f < feeds->second.size(); ++f) {
+          const Connection& fc = *feeds->second[f];
+          const int fs = entityOf(int(fc.sender));
+          std::snprintf(text, sizeof(text), " [%08X/%08X/%08X%s]", comps[fc.sender].type, fc.event, fc.action,
+                        fs < 0 || match[size_t(fs)] < 0 ? " u" : "");
+          how += text;
+        }
+      }
+    };
     std::vector<int> seen{e.entity};
     std::function<void(int, uint32_t, int, int)> walk = [&](int entity, uint32_t action, int depth, int via) {
       const auto in = incoming.find(entity);
@@ -1207,15 +1300,20 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
         int fluidState = 0;
         const uint32_t fluid =
             depth == 0 && hintEntities.count(entity) != 0 ? fluidSender(*c, fluidState) : 0;
+        // Remastered drops what a hint does not take (a Relay's own action, say).
+        if (depth == 0 && hintEntities.count(entity) != 0 && !HintTakes(c->action)) {
+          continue;
+        }
         if (fluid != 0) {
           const uint8_t act = c->action == kActionHintOn || c->action == kActionEntityActivate ? PortRoomGeo::kShow
-                              : c->action == kActionHintOff || c->action == kActionEntityDeactivate
+                              : c->action == kActionHintOff || c->action == kActionHintRemove ||
+                                        c->action == kActionHintDelete || c->action == kActionEntityDeactivate
                                   ? PortRoomGeo::kHide
                                   : 0;
           if (act != 0) {
             links.push_back({fluid, uint8_t(fluidState), act});
           } else {
-            ++bad;
+            miss(sender, *c, c->action, depth);
           }
           continue;
         }
@@ -1233,15 +1331,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
           // sends them, so only a direct one counts.
           const bool follows = depth == 0 && type == kRetailDamageableTrigger && state == kStateMaxReached &&
                                first == kActionActivate;
-          const uint8_t act = follows ? PortRoomGeo::kFollow
-                              : first == kActionActivate || first == kActionIncrement ||
-                                      first == kActionEntityActivate || first == kActionHintOn
-                                  ? PortRoomGeo::kShow
-                              : first == kActionDeactivate || first == kActionDecrement ||
-                                      first == kActionEntityDeactivate || first == kActionHintOff
-                                  ? PortRoomGeo::kHide
-                              : first == kActionToggleActive ? PortRoomGeo::kToggle
-                                                             : 0;
+          const uint8_t act = follows ? PortRoomGeo::kFollow : LinkAct(first);
           if (act != 0 && state < 256) {
             links.push_back({objects[size_t(match[size_t(s)])].id, uint8_t(state), act});
           }
@@ -1250,8 +1340,18 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
           seen.push_back(sender.entity);
           walk(sender.entity, first, depth + 1, type);
           seen.pop_back();
+        } else if (const ScriptObject* counter = hintEntities.count(e.entity) != 0 && sender.type == kCounterMP1 &&
+                                                         c->event == kEventCounterMP1Max
+                                                     ? RetailCounterFor(sender.entity)
+                                                     : nullptr) {
+          const uint8_t act = LinkAct(first);
+          if (act != 0) {
+            links.push_back({counter->id, uint8_t(kStateMaxReached), act});
+          } else {
+            miss(sender, *c, first, depth);
+          }
         } else {
-          ++bad;
+          miss(sender, *c, first, depth);
         }
       }
     };
@@ -1261,6 +1361,9 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     }
     if (bad != 0) {
       result.unresolved[e.entity] = bad;
+      if (!how.empty()) {
+        result.unresolvedHow[e.entity] = how;
+      }
     }
   }
   // Remastered's own objects that show and hide geometry, followed back from the geometry
@@ -1782,8 +1885,11 @@ void Writer::ReadGrades(const RoomData& r, const Area* area, std::vector<GradeDa
     }
     const auto unresolved = scripts.unresolved.find(c->entity);
     if (unresolved != scripts.unresolved.end()) {
-      Log("  " + r.name + ": colour grade hint with " + std::to_string(unresolved->second) +
-          " connection(s) not followed");
+      Log("  " + r.name + ": " + (isGlobal ? "global" : "local") + " colour grade hint with " +
+          std::to_string(unresolved->second) +
+          " connection(s) not followed (sender type/event/action:" +
+          (scripts.unresolvedHow.count(c->entity) != 0 ? scripts.unresolvedHow.at(c->entity) : std::string()) +
+          "), " + std::to_string(links.size()) + " followed");
     }
     if (!isGlobal && links.empty()) {
       continue;

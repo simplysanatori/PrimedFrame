@@ -321,6 +321,8 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
 // A retail script object (`sender`: its editor id without the area bits) of the area `mrea`
 // sent `state`: the grades it drives turn on or off.
 void OnScriptState(uint32_t mrea, uint32_t sender, int state);
+// The console's `roomenv state`: as if `sender` sent `state` in every loaded area.
+void SendScriptState(uint32_t sender, int state);
 // Once a frame: whether the player and the camera are in a fluid. A change drives the
 // grades of the loaded areas linked to kSenderPlayerFluid / kSenderCameraWater.
 void SetFluid(bool player, bool camera);

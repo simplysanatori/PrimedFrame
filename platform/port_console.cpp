@@ -502,6 +502,7 @@ void CmdHelp() {
   Out("                           what PBR surfaces show in place of their shaded result");
   Out("stats                      the last frame's draws and buffers, the heap, room geometry and environments");
   Out("roomenv [on|off|exposure on|off]  the room environments mods supply; exposure: by room, not by cube");
+  Out("roomenv grades | state <id> <state>  the colour grades; as if script object <id> (hex) sent <state>");
   Out("roomenv volume on|off | ambient <scale> | show off|coords|light");
   Out("                           the baked light per pixel; the baked ambient's weight (0: the game's);");
   Out("                           draw the volume's coordinates or its light alone on room geometry");
@@ -1454,6 +1455,11 @@ void RunFrame() {
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomEnv::SetBloomEnabled(Lower(sCmd.args[2]) == "on");
       } else if (arg == "grades") {
+        OutLines(PortRoomEnv::GradeInfo());
+        return Finish();
+      } else if (arg == "state" && sCmd.args.size() > 3) {
+        PortRoomEnv::SendScriptState(uint32_t(std::strtoul(sCmd.args[2].c_str(), nullptr, 16)) & 0x3ffffff,
+                                     std::atoi(sCmd.args[3].c_str()));
         OutLines(PortRoomEnv::GradeInfo());
         return Finish();
       } else if (arg == "grade" && sCmd.args.size() > 2 &&

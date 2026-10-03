@@ -1200,6 +1200,12 @@ void OnScriptState(uint32_t mrea, uint32_t sender, int state) {
   DriveGrades(mrea, found->second, sender, state);
 }
 
+void SendScriptState(uint32_t sender, int state) {
+  for (auto& [mrea, area] : sAreas) {
+    DriveGrades(mrea, area, sender, state);
+  }
+}
+
 void SetFluid(bool player, bool camera) {
   // State 0 as the fluid is entered, 1 as it is left (the writer's convention).
   if (player != sPlayerFluid) {
