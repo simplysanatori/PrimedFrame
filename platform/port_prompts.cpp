@@ -11,6 +11,7 @@
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_gamepad.h>
 #include <SDL3/SDL_scancode.h>
+#include <SDL3/SDL_timer.h>
 
 #include <algorithm>
 #include <atomic>
@@ -707,7 +708,8 @@ namespace PortPrompts {
 // already is the GameCube set, so only a remapped GC pad button gets an icon
 // (GameCubeStemForButton).
 const char* ActiveDevice() {
-  const char* env = std::getenv("MP_TEXTURE_DEVICE");
+  // Read once: it is asked every frame, and nothing sets it while the game runs.
+  static const char* const env = std::getenv("MP_TEXTURE_DEVICE");
   if (env != nullptr && env[0] != '\0') {
     return env;
   }
@@ -745,6 +747,17 @@ void Poll() {
     return;
   }
   const char* device = ActiveDevice();
+  // Resolving every action's binding builds strings and rescans the bindings, so it runs when
+  // the device changes and otherwise a few times a second, which still follows a rebind.
+  static std::string sLastDevice;
+  static uint64_t sLastResolveNs = 0;
+  const uint64_t nowNs = SDL_GetTicksNS();
+  const bool deviceChanged = sLastDevice != device;
+  if (!deviceChanged && sLastResolveNs != 0 && nowNs - sLastResolveNs < 250000000ull) {
+    return;
+  }
+  sLastDevice = device;
+  sLastResolveNs = nowNs != 0 ? nowNs : 1;
   for (const PromptAction& action : kActions) {
     const std::string stem = IconStemForPrompt(action.prompt, device);
     size_t applied = 0;
