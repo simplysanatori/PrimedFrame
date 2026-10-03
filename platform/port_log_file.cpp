@@ -20,6 +20,9 @@
 #include <SDL3/SDL_system.h>
 #elif !defined(_WIN32)
 #include <csignal>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
 #endif
 
 namespace PortLogFile {
@@ -43,9 +46,75 @@ void WriteAll(int fd, const char* data, ssize_t size) {
 #endif
 
 #if !defined(_WIN32) && !defined(__ANDROID__)
+// Writes to the terminal, dropping what it will not take. The terminal copy is
+// opened non-blocking (or is a socket, sent to with MSG_DONTWAIT), so a terminal
+// that stops reading - Ctrl+S, a pager left waiting - loses its copy of the
+// output instead of filling the pipe and stalling every write the game makes. A
+// reader that is only slow gets kTerminalWaitMs to make room; one that has not
+// is skipped without waiting until it takes something again.
+constexpr int kTerminalWaitMs = 100;
+bool sTerminalStalled = false;
+
+void WriteTerminal(int fd, const char* data, ssize_t size, bool socket) {
+  int waits = 0; // without progress, in case "ready" is not followed by room
+  while (size > 0) {
+    const ssize_t n = socket ? send(fd, data, static_cast< size_t >(size), MSG_DONTWAIT)
+                             : write(fd, data, static_cast< size_t >(size));
+    if (n >= 0) {
+      sTerminalStalled = false;
+      waits = 0;
+      data += n;
+      size -= n;
+      continue;
+    }
+    if (errno == EINTR) {
+      continue;
+    }
+    if (errno != EAGAIN && errno != EWOULDBLOCK) {
+      return;
+    }
+    pollfd descriptor{};
+    descriptor.fd = fd;
+    descriptor.events = POLLOUT;
+    if (++waits > 8 || poll(&descriptor, 1, sTerminalStalled ? 0 : kTerminalWaitMs) <= 0) {
+      sTerminalStalled = true;
+      return; // this much never reaches the terminal; the file has it
+    }
+  }
+}
+
+// A descriptor for the terminal copy of the log, of its own so that making it
+// non-blocking leaves the shell's descriptor (which a tty's stdin, stdout and
+// stderr usually all share) alone. `socket` is set when it is a socket, which
+// is written per call without blocking instead. Falls back to a plain,
+// blocking dup when no such descriptor can be had.
+int OpenTerminal(bool& socket) {
+  socket = false;
+  struct stat info {};
+  if (fstat(STDERR_FILENO, &info) == 0) {
+    const char* reopen = nullptr;
+    if (isatty(STDERR_FILENO)) {
+      reopen = ttyname(STDERR_FILENO);
+#if defined(__linux__)
+    } else if (S_ISFIFO(info.st_mode)) {
+      reopen = "/proc/self/fd/2"; // a new open of the same pipe
+#endif
+    } else if (S_ISSOCK(info.st_mode)) {
+      socket = true;
+    }
+    if (reopen != nullptr) {
+      const int fd = open(reopen, O_WRONLY | O_NOCTTY | O_NONBLOCK);
+      if (fd >= 0) {
+        return fd;
+      }
+    }
+  }
+  return dup(STDERR_FILENO);
+}
+
 // The copying process: pipe -> terminal + file until every writer has gone. Only
 // async-signal-safe calls, since the game may already have threads when it forks.
-[[noreturn]] void Copy(int in, int terminal, int file, int maxFd) {
+[[noreturn]] void Copy(int in, int terminal, bool terminalSocket, int file, int maxFd) {
   for (int fd = 3; fd < maxFd; ++fd) {
     if (fd != in && fd != terminal && fd != file) {
       close(fd);
@@ -65,8 +134,8 @@ void WriteAll(int fd, const char* data, ssize_t size) {
     if (n <= 0) {
       break;
     }
-    WriteAll(terminal, buffer, n);
-    WriteAll(file, buffer, n);
+    WriteTerminal(terminal, buffer, n, terminalSocket);
+    WriteAll(file, buffer, n); // the file keeps everything
   }
   _exit(0);
 }
@@ -230,7 +299,8 @@ bool Start() {
   const int headerSize = std::snprintf(header, sizeof(header), "metroid_prime_port log, started %s\n", started);
   WriteAll(out, header, headerSize);
   int fds[2];
-  const int terminal = dup(STDERR_FILENO);
+  bool terminalSocket = false;
+  const int terminal = OpenTerminal(terminalSocket);
   if (terminal < 0 || pipe(fds) != 0) {
     close(out);
     if (terminal >= 0) {
@@ -243,7 +313,7 @@ bool Start() {
   const pid_t child = fork();
   if (child == 0) {
     close(fds[1]);
-    Copy(fds[0], terminal, out, static_cast< int >(maxFd));
+    Copy(fds[0], terminal, terminalSocket, out, static_cast< int >(maxFd));
   }
   close(fds[0]);
   close(out);
