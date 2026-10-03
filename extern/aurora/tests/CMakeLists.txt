@@ -172,6 +172,7 @@ if (AURORA_ENABLE_GX)
 
   add_executable(gfx_recording_tests
     gfx_recording_test.cpp
+    gx_uniform_limit_test.cpp
     render_target_layout_test.cpp
   )
   target_include_directories(gfx_recording_tests PRIVATE
@@ -184,6 +185,8 @@ if (AURORA_ENABLE_GX)
     aurora::vi
     gtest
     gtest_main
+    absl::btree # gx.hpp includes absl headers; aurora_gx only gets them privately
+    absl::flat_hash_map
   )
   aurora_copy_runtime_dlls(gfx_recording_tests)
   gtest_discover_tests(gfx_recording_tests)
