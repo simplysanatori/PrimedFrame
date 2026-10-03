@@ -1395,9 +1395,14 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
     sState.message = "There is no mods folder to write to.";
     return false;
   }
+  // Each worker holds a whole model, its decoded buffers and a few RGBA
+  // textures at once, so the count is bounded by memory as much as by cores.
   if (threads <= 0) {
-    threads = std::max(1, int(std::thread::hardware_concurrency()) - 2);
+    threads = std::clamp(int(std::thread::hardware_concurrency()) - 2, 1, 8);
   }
+#if defined(__ANDROID__)
+  threads = std::min(threads, 3);
+#endif
   sCancel = false;
   sState.running = true;
   sState.message = "Starting";
