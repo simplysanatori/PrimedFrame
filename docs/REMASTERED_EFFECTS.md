@@ -219,6 +219,25 @@ From the second run's samples:
   retail does not use it.
 - GRAD (colour gradients, children only) is not converted yet.
 
+## Shapes retail has no element for
+
+None of the effects paired with the disc uses these, so the mappings follow
+from what retail's elements compute (`CVEAngleCone`, `CVEAngleSphere`,
+`CCEKeyframeEmitter`, `CIELifetimePercent`) and are unconfirmed in game:
+
+- `ANCR(REUL(x, 0, 0), xr, yr, m)` becomes `ANGC(-x, -0, xr, yr, m)`. ANGC's
+  direction is `(-sin y cos x, sin x, cos x cos y)`, so an X bias of 90 points
+  the cone at +Y as `REUL(-90)` turns +Z to +Y. That is exact on the cone's
+  centre line only; rotations about Y or Z are not converted.
+- `ASPR(origin, REUL, xr, yr, a, b)` becomes `ASPH(origin, -x, -0, xr, yr, a,
+  b)`, taking `a` as the radius and `b` as the speed (b is the one that is
+  sometimes random).
+- `RNDV(m)` becomes `ANGC(0, 0, 360, 360, m)`.
+- `GRAD` becomes `KEYP` with 101 colour keys over the particle's life. The
+  element after the stops is what the position runs over: `ILPT(CNST(n))` is
+  n% of the life, `CNST(n)` is n frames (scaled by a constant lifetime). The
+  last byte set makes the gradient repeat.
+
 ## Tools
 
 `tests/port_remastered_effect_tool.cpp` is a dev tool, not built by CMake:

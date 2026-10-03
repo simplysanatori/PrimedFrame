@@ -17,6 +17,9 @@
 // - TEXR's `CNST(id), NONE` becomes retail's `CNST(CNST id)`, and an MTIN
 //   material stands in for a missing TEXR through its texture.
 // - Ids become 32-bit retail ids through ConvertIO.
+// - ASPR becomes ASPH; a cone or sphere turned about X (REUL) becomes an X
+//   bias; RNDV becomes a whole-sphere ANGC; a GRAD gradient becomes 101
+//   percent keyframes (KEYP) over the particle's life.
 // - DFCP/DFCS (scales retail cannot compute) are taken as 1 and listed in
 //   `approximated`.
 // - Keyframe blocks and words are byte-swapped; a colour's half keys are

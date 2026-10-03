@@ -354,6 +354,81 @@ void TestRejects() {
 }
 }  // namespace
 
+void PutReul(std::vector<uint8_t>& out, float x) {
+  PutFourCC(out, "REUL");
+  PutConstant(out, Bits(x));
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  out.push_back(0);
+}
+
+// Remastered's shapes with no retail element of their own: ASPR becomes ASPH
+// and a cone turned about X an X bias, RNDV a whole-sphere ANGC, and a GRAD
+// colour gradient over the life 101 percent keys.
+void TestShapes() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "EMTR", 3);
+  PutFourCC(out, "ASPR");
+  PutFourCC(out, "CNST");
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  PutReul(out, -90.0f);
+  PutConstant(out, Bits(360.0f));
+  PutConstant(out, Bits(180.0f));
+  PutConstant(out, Bits(0.25f));
+  PutConstant(out, Bits(0.1f));
+  PutProperty(out, "PSIV", 3);
+  PutFourCC(out, "RNDV");
+  PutConstant(out, Bits(0.5f));
+  PutProperty(out, "COLR", 3);
+  PutFourCC(out, "GRAD");
+  out.push_back(2);
+  for (uint16_t half : {0x3c00, 0x0000, 0x0000, 0x3c00}) {  // red, opaque, at 0
+    out.push_back(uint8_t(half));
+    out.push_back(uint8_t(half >> 8));
+  }
+  Put32(out, Bits(0.0f));
+  for (uint16_t half : {0x0000, 0x0000, 0x3c00, 0x0000}) {  // blue, clear, at 1
+    out.push_back(uint8_t(half));
+    out.push_back(uint8_t(half >> 8));
+  }
+  Put32(out, Bits(1.0f));
+  PutFourCC(out, "ILPT");
+  PutConstant(out, 100);
+  out.push_back(0);
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "shapes effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Retail want;
+  want.f("GPSM");
+  want.f("EMTR").f("ASPH").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
+  want.f("CNST").w(Bits(90.0f)).f("CNST").w(0x80000000u);
+  want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(180.0f)).f("CNST").w(Bits(0.25f)).f("CNST").w(Bits(0.1f));
+  want.f("PSIV").f("ANGC").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(360.0f));
+  want.f("CNST").w(Bits(0.5f));
+  want.f("COLR").f("KEYP").w(1).w(0).b(0).b(0).w(101).w(0).w(101);
+  for (int percent = 0; percent <= 100; ++percent) {
+    const float t = float(percent) / 100.0f;
+    want.w(Bits(1.0f - t)).w(Bits(0.0f)).w(Bits(t)).w(Bits(1.0f - t));
+  }
+  want.f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "ASPR, RNDV and GRAD map onto retail's");
+  if (parts.size() == 1) {
+    for (const std::string& d : parts[0].dropped) {
+      std::fprintf(stderr, "  dropped %s\n", d.c_str());
+    }
+    std::vector<RetailPartProperty> split;
+    Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), split, error), "shapes PART reads as retail");
+    Check(parts[0].approximated.size() == 2, "rotated cone and RNDV listed as approximated");
+  }
+}
+
 int main() {
   TestRetailId();
   TestConvert();
@@ -361,6 +436,7 @@ int main() {
   TestSingleNode();
   TestMappedElements();
   TestSplitRejects();
+  TestShapes();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

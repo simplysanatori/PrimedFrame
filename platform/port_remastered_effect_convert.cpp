@@ -1,5 +1,8 @@
 #include "port_remastered_effect_convert.h"
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstring>
 #include <unordered_map>
 
@@ -211,21 +214,19 @@ public:
       }
       return Element(value.args[0], type, out, why);
     }
-    // ANCR(REUL(0, 0, 0, #00), x range, y range, magnitude) is retail's ANGC
-    // with no bias (the disc writes the biases as -0). A rotated cone is not
-    // converted: what REUL's angles do to the cone is not pinned down yet.
-    if (value.fourcc == F("ANCR") && type == Type::Vector && value.args.size() == 4 &&
-        IsElement(value.args[0], F("REUL")) && value.args[0].args.size() == 4) {
-      for (size_t i = 0; i < 3; ++i) {
-        const EffectValue& angle = value.args[0].args[i];
-        if (!IsElement(angle, F("CNST")) || angle.args.size() != 1 || (angle.args[0].word & 0x7fffffffu) != 0) {
-          why = "ANCR with a rotated cone";
-          return false;
-        }
+    // ANCR(REUL(x, y, z, #00), x range, y range, magnitude) is retail's ANGC.
+    // Unrotated, the biases are 0 (the disc writes -0). A cone turned about X
+    // only is taken as ANGC's X bias (-x: REUL(-90) points the cone's +Z axis
+    // at +Y, as ANGC's X bias of 90 does); that is exact along the cone's
+    // centre line and approximate across it.
+    if (value.fourcc == F("ANCR") && type == Type::Vector && value.args.size() == 4) {
+      uint32_t xBias;
+      if (!ConeBias(value.args[0], xBias, why)) {
+        return false;
       }
       PutBe32(out, F("ANGC"));
       PutBe32(out, F("CNST"));
-      PutBe32(out, 0x80000000u);
+      PutBe32(out, xBias);
       PutBe32(out, F("CNST"));
       PutBe32(out, 0x80000000u);
       for (size_t i = 1; i < 4; ++i) {
@@ -234,6 +235,43 @@ public:
         }
       }
       return true;
+    }
+    // ASPR(origin, REUL, x range, y range, radius, speed) is retail's ASPH
+    // (origin, x bias, y bias, x range, y range, radius, speed), with the
+    // rotation taken as ANCR's is.
+    if (value.fourcc == F("ASPR") && type == Type::Emitter && value.args.size() == 6) {
+      uint32_t xBias;
+      if (!ConeBias(value.args[1], xBias, why)) {
+        return false;
+      }
+      PutBe32(out, F("ASPH"));
+      if (!Element(value.args[0], Type::Vector, out, why)) {
+        return false;
+      }
+      PutBe32(out, F("CNST"));
+      PutBe32(out, xBias);
+      PutBe32(out, F("CNST"));
+      PutBe32(out, 0x80000000u);
+      for (size_t i = 2; i < 6; ++i) {
+        if (!Element(value.args[i], Type::Real, out, why)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    // RNDV(magnitude): a random direction of that length, as a whole-sphere
+    // ANGC. Its spread is not uniform over the sphere as Remastered's may be.
+    if (value.fourcc == F("RNDV") && type == Type::Vector && value.args.size() == 1) {
+      m_approximated.push_back("RNDV taken as a whole-sphere ANGC");
+      PutBe32(out, F("ANGC"));
+      for (float angle : {0.0f, 0.0f, 360.0f, 360.0f}) {
+        PutBe32(out, F("CNST"));
+        PutBe32(out, FloatBits(angle));
+      }
+      return Element(value.args[0], Type::Real, out, why);
+    }
+    if (value.fourcc == F("GRAD") && type == Type::Color) {
+      return Gradient(value, out, why);
     }
     // MPRD(a, b): a random int between two, as RAND.
     if (value.fourcc == F("MPRD") && value.args.size() == 2 && (type == Type::Int || type == Type::Real)) {
@@ -271,6 +309,118 @@ public:
       const bool ok = sig[i] == 'B' ? Bool(value.args[i], out, why) : Element(value.args[i], TypeOfLetter(sig[i]), out, why);
       if (!ok) {
         return false;
+      }
+    }
+    return true;
+  }
+
+  // REUL(x, y, z, #00) as ANGC's X bias (-x), for a rotation about X only.
+  bool ConeBias(const EffectValue& reul, uint32_t& xBias, std::string& why) const {
+    if (!IsElement(reul, F("REUL")) || reul.args.size() != 4) {
+      why = "a cone rotation that is not REUL";
+      return false;
+    }
+    uint32_t angles[3];
+    for (size_t i = 0; i < 3; ++i) {
+      const EffectValue& angle = reul.args[i];
+      if (!IsElement(angle, F("CNST")) || angle.args.size() != 1 || angle.args[0].kind != EffectValue::Kind::Word) {
+        why = "a cone rotation that is not constant";
+        return false;
+      }
+      angles[i] = angle.args[0].word;
+    }
+    if ((angles[1] & 0x7fffffffu) != 0 || (angles[2] & 0x7fffffffu) != 0) {
+      why = "a cone rotated about Y or Z";
+      return false;
+    }
+    if ((angles[0] & 0x7fffffffu) == 0) {
+      xBias = 0x80000000u;
+    } else {
+      xBias = angles[0] ^ 0x80000000u;
+      m_approximated.push_back("rotated cone taken as an X bias");
+    }
+    return true;
+  }
+
+  // GRAD: u8 stop count, per stop four halves (RGBA) and an f32 position,
+  // then what the position runs over: ILPT(CNST(n)) (n% of the particle's
+  // life) or CNST(n) (n frames), then a byte (1: the gradient repeats).
+  // Written as retail's percent keyframes (KEYP, 101 keys over the life).
+  bool Gradient(const EffectValue& value, std::vector<uint8_t>& out, std::string& why) const {
+    if (value.args.size() != 1 || value.args[0].kind != EffectValue::Kind::Raw) {
+      why = "GRAD without its stops";
+      return false;
+    }
+    const uint8_t* p = m_data + value.args[0].offset;
+    const size_t size = value.args[0].size;
+    const size_t stops = size == 0 ? 0 : p[0];
+    size_t at = 1 + 12 * stops;
+    if (stops == 0 || at > size) {
+      why = "GRAD without its stops";
+      return false;
+    }
+    // How many percent of the life one pass over the gradient takes.
+    float span = 0.0f;
+    if (at + 12 <= size && Le32(p + at) == F("ILPT") && Le32(p + at + 4) == F("CNST")) {
+      span = float(int32_t(Le32(p + at + 8)));
+      at += 12;
+    } else if (at + 8 <= size && Le32(p + at) == F("CNST")) {
+      const float frames = float(int32_t(Le32(p + at + 4)));
+      at += 8;
+      if (m_lifetime > 0) {
+        span = frames * 100.0f / float(m_lifetime);
+      } else {
+        span = 100.0f;
+        m_approximated.push_back("GRAD over frames taken over the life (no constant lifetime)");
+      }
+    } else {
+      why = "GRAD over something other than the life or frames";
+      return false;
+    }
+    if (span <= 0.0f) {
+      why = "GRAD over no time";
+      return false;
+    }
+    const bool repeat = at < size && p[at] != 0;
+    auto colorAt = [p, stops](float t) {
+      std::array<float, 4> color{};
+      auto stop = [p](size_t i, size_t c) { return HalfToFloat(uint16_t(p[1 + 12 * i + 2 * c] | p[2 + 12 * i + 2 * c] << 8)); };
+      auto position = [p](size_t i) {
+        float v;
+        std::memcpy(&v, p + 1 + 12 * i + 8, 4);
+        return v;
+      };
+      size_t next = 0;
+      while (next < stops && position(next) < t) {
+        ++next;
+      }
+      for (size_t c = 0; c < 4; ++c) {
+        if (next == 0) {
+          color[c] = stop(0, c);
+        } else if (next == stops) {
+          color[c] = stop(stops - 1, c);
+        } else {
+          const float a = position(next - 1);
+          const float b = position(next);
+          const float f = b > a ? (t - a) / (b - a) : 1.0f;
+          color[c] = stop(next - 1, c) + (stop(next, c) - stop(next - 1, c)) * f;
+        }
+      }
+      return color;
+    };
+    PutBe32(out, F("KEYP"));
+    PutBe32(out, 1);   // percent of the particle's life
+    PutBe32(out, 0);
+    out.push_back(0);  // no loop
+    out.push_back(0);
+    PutBe32(out, 101);
+    PutBe32(out, 0);
+    PutBe32(out, 101);
+    for (int percent = 0; percent <= 100; ++percent) {
+      float t = float(percent) / span;
+      t = repeat ? t - std::floor(t) : std::min(t, 1.0f);
+      for (float c : colorAt(t)) {
+        PutBe32(out, FloatBits(c));
       }
     }
     return true;
@@ -519,6 +669,15 @@ public:
     std::vector<uint8_t>& out = result.part;
     PutBe32(out, F("GPSM"));
     const auto& retail = RetailProperties();
+    // A constant lifetime, for gradients timed in frames.
+    m_lifetime = 0;
+    for (const EffectProperty& property : node.properties) {
+      if ((property.fourcc == F("LTM2") || property.fourcc == F("LTME")) && property.value.size() == 1 &&
+          IsElement(property.value[0], F("CNST")) && property.value[0].args.size() == 1 &&
+          property.value[0].args[0].kind == EffectValue::Kind::Word) {
+        m_lifetime = int32_t(property.value[0].args[0].word) - (property.fourcc == F("LTM2") ? 1 : 0);
+      }
+    }
     bool texture = false;
     const EffectProperty* material = nullptr;
     for (const EffectProperty& property : node.properties) {
@@ -600,6 +759,7 @@ private:
   const uint8_t* m_data;
   const EffectConvertIO& m_io;
   mutable std::vector<std::string> m_approximated;  // for the generator being written
+  mutable int32_t m_lifetime = 0;                   // its constant lifetime in frames, or 0
 };
 
 
