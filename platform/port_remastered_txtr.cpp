@@ -2803,7 +2803,10 @@ bool DecodeTxtr(const uint8_t* data, size_t size, TxtrImage& out, std::string& e
   }
   const size_t sliceSize = mipWidth * mipHeight * bytesPerPixel;
   std::vector<uint8_t> untiled(sliceSize);
-  DeswizzleMip(mipWidth, mipHeight, mipDepth, mipBlockHeight, mipBlockDepth, bytesPerPixel,
+  // Only layer 0 is decoded: `untiled` holds one slice, and DeswizzleMip writes
+  // every slice it is given to the same place. The size check above covers the
+  // whole depth, and the slice offsets come from the block depth, not this one.
+  DeswizzleMip(mipWidth, mipHeight, 1, mipBlockHeight, mipBlockDepth, bytesPerPixel,
                surface.data(), 0, untiled.data());
 
   out.rgba.assign(size_t(head.width) * head.height * 4, 0);
