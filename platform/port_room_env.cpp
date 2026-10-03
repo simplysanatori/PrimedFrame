@@ -101,11 +101,20 @@ struct GradeFade {
 GradeFade sGradeFade;
 // LUTs handed to Aurora already; they are kept there for the run.
 std::unordered_set<uint32_t> sGradeLuts;
-// Model draws come in runs at one position.
+// Model draws come in runs at one position; the last answer is kept until the frame or a
+// setting moves on.
 bool sLastValid = false;
-float sLastPos[3];
 bool sLastFound = false;
 Selection sLast;
+// Counts the changes to what Select finds for a point (see Invalidate).
+uint32_t sEpoch = 1;
+
+// The areas, their cubes or volumes on the GPU, or a setting that picks among them changed:
+// every point Select has looked from is looked at again.
+void Invalidate() {
+  sLastValid = false;
+  ++sEpoch;
+}
 
 float HalfToFloat(uint16_t h) {
   const int exponent = (h >> 10) & 0x1F;
@@ -719,7 +728,7 @@ bool VolumesEnabled() {
 
 void SetVolumesEnabled(bool on) {
   sVolumes = on ? 1 : 0;
-  sLastValid = false;
+  Invalidate();
 }
 
 float AmbientScale() {
@@ -731,7 +740,7 @@ float AmbientScale() {
 
 void SetAmbientScale(float scale) {
   sAmbientScale = std::max(scale, 0.f);
-  sLastValid = false;
+  Invalidate();
 }
 
 int VolumeView() {
@@ -769,20 +778,16 @@ void SetRoomExposed(bool on) {
 
 void SetEnabled(bool enabled) {
   sEnabled = enabled ? 1 : 0;
-  sLastValid = false;
+  Invalidate();
 }
 
 void SetVolumeHint(uint32_t mrea, const float centre[3]) {
   sHint = true;
   sHintArea = mrea;
   std::memcpy(sHintCentre, centre, sizeof(sHintCentre));
-  sLastValid = false;
 }
 
-void ClearVolumeHint() {
-  sHint = false;
-  sLastValid = false;
-}
+void ClearVolumeHint() { sHint = false; }
 
 bool HasVolume(uint32_t mrea) {
   if (!Enabled() || !VolumesEnabled()) {
@@ -806,7 +811,7 @@ void Reset() {
   }
   sAreas.clear();
   sFrame = {};
-  sLastValid = false;
+  Invalidate();
 }
 
 void SetLoadedAreas(const uint32_t* mreas, size_t count) {
@@ -827,27 +832,61 @@ void SetLoadedAreas(const uint32_t* mreas, size_t count) {
     }
   }
   if (changed) {
-    sLastValid = false;
+    Invalidate();
   }
 }
 
-bool Select(const float origin[3], Selection& out) {
-  if (sLastValid && std::memcmp(origin, sLastPos, sizeof(sLastPos)) == 0) {
-    out = sLast;
-    return sLastFound;
+namespace {
+
+// Where a model's cube, volume and ambient come from, before any exposure: what the point
+// and the hint pick among the loaded areas. It stays good while the areas, their cubes and
+// volumes on the GPU and the settings that pick (see Invalidate) stay as they are.
+struct Located {
+  const Area* cubeArea = nullptr; // the probe's area, when its cube is on the GPU
+  const Probe* probe = nullptr;
+  const GpuCube* cube = nullptr;
+  const Area* volumeArea = nullptr; // the hint's area, when its nearest grid has a volume
+  const Grid* grid = nullptr;
+  uint32_t volume = 0;
+  const Area* ambientArea = nullptr; // whose grid gave `sample`, when one did
+  float average = 0.f;               // that grid's
+  Ambient sample;
+};
+
+// What else a Located depends on: the point Select looks from, and the volume hint.
+struct SelectKey {
+  uint32_t pos[3] = {}; // the point's bits
+  uint32_t hintArea = 0; // 0 without a hint
+  bool hint = false;
+  bool operator==(const SelectKey& other) const {
+    return std::memcmp(pos, other.pos, sizeof(pos)) == 0 && hintArea == other.hintArea && hint == other.hint;
   }
-  std::memcpy(sLastPos, origin, sizeof(sLastPos));
-  const float* const pos = sHint ? sHintCentre : origin;
-  sLastValid = true;
-  sLastFound = false;
-  if (!Enabled()) {
-    return false;
+};
+
+struct SelectKeyHash {
+  size_t operator()(const SelectKey& key) const {
+    uint64_t hash = 1469598103934665603ull;
+    for (const uint32_t value : {key.pos[0], key.pos[1], key.pos[2], key.hintArea, uint32_t(key.hint)}) {
+      hash = (hash ^ value) * 1099511628211ull;
+      hash ^= hash >> 29;
+    }
+    return size_t(hash);
   }
-  static const float gain = EnvFloat("MP_ROOM_ENV_GAIN", 1.f);
-  static const float lod = EnvFloat("MP_ROOM_ENV_LOD", 5.f);
-  const float ambient = AmbientScale();
-  const float grey = 0.18f * gain;
-  sLast = {};
+};
+
+// Every point Select has looked from since the last Invalidate, so a model that stays put
+// (room geometry, most of a room's actors) is found again without a search. When `sLocated`
+// fills it becomes `sLocatedOld`, whose entries move back as they are asked for again.
+constexpr size_t kMaxLocated = 4096;
+std::unordered_map<SelectKey, Located, SelectKeyHash> sLocated;
+std::unordered_map<SelectKey, Located, SelectKeyHash> sLocatedOld;
+uint32_t sLocatedEpoch = 0;
+SelectKey sLastKey;
+
+// The probe, volume and ambient for a point. `freshVolume`: the volume was made just now.
+void Locate(const float pos[3], Located& out, bool& freshVolume) {
+  out = {};
+  freshVolume = false;
   Area* bestArea = nullptr;
   Pick best;
   for (auto& [mrea, area] : sAreas) {
@@ -864,23 +903,12 @@ bool Select(const float origin[3], Selection& out) {
       Upload(bestArea->file, bestArea->file.cubes[probe.cube], gpu);
     }
     if (gpu.id != 0) {
-      // The cube is exposed so that its average direction is middle grey, which is what
-      // Remastered's auto exposure aims for (its Tonemap's key is 0.18 too); the lamps in
-      // it then come out many times brighter than white, as they should.
-      // With the room's exposure the cube keeps its level instead: a probe in a dark
-      // corner reflects a dark corner.
-      const float exposure = RoomExposed() ? FrameExposure(*bestArea) : 0.f;
-      const bool room = exposure > 0.f;
-      sLast.cube = gpu.id;
-      sLast.params[0] = room ? exposure * probe.scale * gain : grey / gpu.average;
-      sLast.params[1] = std::min(lod, float(gpu.mipCount - 1));
-      sLast.params[2] = float(gpu.mipCount > 2 ? gpu.mipCount - 2 : 0);
-      sLast.params[3] = ambient > 0.f ? 1.f / (room ? gpu.average * sLast.params[0] : grey) : 0.f;
-      std::memcpy(sLast.worldToCube, probe.worldToCube, sizeof(sLast.worldToCube));
+      out.cubeArea = bestArea;
+      out.probe = &probe;
+      out.cube = &gpu;
     }
   }
   if (sHint && VolumesEnabled()) {
-    static const float volumeBias = EnvFloat("MP_ROOM_ENV_VOLUME_BIAS", 0.25f);
     const auto found = sAreas.find(sHintArea);
     if (found != sAreas.end()) {
       Area& area = found->second;
@@ -896,78 +924,159 @@ bool Select(const float origin[3], Selection& out) {
       if (pick >= 0) {
         const Grid& grid = area.file.grids[pick];
         GpuVolume& gpu = area.volumes[pick];
-        const bool fresh = gpu.id == 0;
-        if (fresh) {
+        freshVolume = gpu.id == 0;
+        if (freshVolume) {
           UploadVolume(area.file, grid, gpu);
         }
-        const float* m = grid.worldToGrid;
-        const float scale = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
-        sLast.volume = gpu.id;
-        for (int row = 0; row < 3; ++row) {
-          // Point i is the middle of texel i.
-          const float size = float(grid.size[row]);
-          for (int col = 0; col < 4; ++col) {
-            sLast.worldToVolume[row * 4 + col] = (m[row * 4 + col] + (col == 3 ? 0.5f : 0.f)) / size;
-          }
-          for (int col = 0; col < 3; ++col) {
-            sLast.worldToAxes[row * 3 + col] = m[row * 4 + col] / scale;
-          }
-        }
-        // The baked light is the level, at the frame's exposure; without one, the grid's
-        // average comes out at the key. The grid holds irradiance, and a diffuse surface
-        // sends 1/pi of that back.
-        const float exposure = RoomExposed() ? FrameExposure(area) : 0.f;
-        sLast.volumeLevel = (exposure > 0.f ? exposure * gain : 0.18f / grid.average) / 3.14159265f;
-        sLast.volumeBias = volumeBias;
-        sLast.volumeDiagnostic = static_cast<float>(VolumeView());
-        if (fresh) {
-          PortLog::Write("room env: %08X volume %u %ux%ux%u exposure %g average %g level %g\n", sHintArea, gpu.id,
-                         grid.size[0], grid.size[1], grid.size[2], exposure, grid.average, sLast.volumeLevel);
-        }
+        out.volumeArea = &area;
+        out.grid = &grid;
+        out.volume = gpu.id;
       }
     }
   }
-  if (ambient > 0.f) {
+  if (AmbientScale() > 0.f) {
     // A model's origin is often on the floor, where the grid has no point for it, so the
-    // spot a metre up counts too.
+    // spot a metre up counts too. The first grid with light at the first spot is the one.
     const float above[3] = {pos[0], pos[1], pos[2] + 1.f};
-    Ambient sample;
-    float average = 0.f;
-    float roomExposure = 0.f;
     for (const float* spot : {pos, above}) {
       for (auto& [mrea, area] : sAreas) {
         for (const Grid& grid : area.file.grids) {
-          if (!sLast.hasAmbient && grid.average > 0.f && SampleGrid(area.file, grid, spot, sample)) {
-            sLast.hasAmbient = true;
-            average = grid.average;
-            roomExposure = FrameExposure(area);
+          if (grid.average > 0.f && SampleGrid(area.file, grid, spot, out.sample)) {
+            out.ambientArea = &area;
+            out.average = grid.average;
+            return;
           }
         }
       }
     }
-    if (sLast.hasAmbient) {
-      // The grid gives the light's colour and direction; how bright it is stays the game's
-      // ambient, which the shader multiplies in. The baked levels are HDR that Remastered
-      // exposes by what is on screen (one room spans 0.0001 to 100), and the world around
-      // the model is still lit the retail way. Of the level only this is kept: a spot
-      // darker or brighter than its room is, within a factor of two.
-      const float luminance = 0.2126f * sample.mean[0] + 0.7152f * sample.mean[1] + 0.0722f * sample.mean[2];
-      const float level = std::min(std::max(std::sqrt(luminance / average), 0.5f), 2.f);
-      float exposure = luminance > 0.f ? level / luminance * ambient : 0.f;
-      if (RoomExposed() && roomExposure > 0.f) {
-        // Or the baked level itself, at the room's exposure: the game's ambient is left out.
-        exposure = roomExposure * ambient * gain;
-        sLast.ambientAbsolute = true;
+  }
+}
+
+// The Selection for what Locate found, at the frame's exposure and the settings now.
+bool Compose(const Located& located, Selection& out) {
+  static const float gain = EnvFloat("MP_ROOM_ENV_GAIN", 1.f);
+  static const float lod = EnvFloat("MP_ROOM_ENV_LOD", 5.f);
+  static const float volumeBias = EnvFloat("MP_ROOM_ENV_VOLUME_BIAS", 0.25f);
+  const float ambient = AmbientScale();
+  const float grey = 0.18f * gain;
+  out = {};
+  if (located.cube != nullptr) {
+    const Probe& probe = *located.probe;
+    const GpuCube& gpu = *located.cube;
+    // The cube is exposed so that its average direction is middle grey, which is what
+    // Remastered's auto exposure aims for (its Tonemap's key is 0.18 too); the lamps in
+    // it then come out many times brighter than white, as they should.
+    // With the room's exposure the cube keeps its level instead: a probe in a dark
+    // corner reflects a dark corner.
+    const float exposure = RoomExposed() ? FrameExposure(*located.cubeArea) : 0.f;
+    const bool room = exposure > 0.f;
+    out.cube = gpu.id;
+    out.params[0] = room ? exposure * probe.scale * gain : grey / gpu.average;
+    out.params[1] = std::min(lod, float(gpu.mipCount - 1));
+    out.params[2] = float(gpu.mipCount > 2 ? gpu.mipCount - 2 : 0);
+    out.params[3] = ambient > 0.f ? 1.f / (room ? gpu.average * out.params[0] : grey) : 0.f;
+    std::memcpy(out.worldToCube, probe.worldToCube, sizeof(out.worldToCube));
+  }
+  if (located.volume != 0) {
+    const Grid& grid = *located.grid;
+    const float* m = grid.worldToGrid;
+    const float scale = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+    out.volume = located.volume;
+    for (int row = 0; row < 3; ++row) {
+      // Point i is the middle of texel i.
+      const float size = float(grid.size[row]);
+      for (int col = 0; col < 4; ++col) {
+        out.worldToVolume[row * 4 + col] = (m[row * 4 + col] + (col == 3 ? 0.5f : 0.f)) / size;
       }
-      for (int i = 0; i < 3; ++i) {
-        sLast.ambient[0][i] = (sample.mean[i] - sample.lobe[i]) * exposure;
-        sLast.ambient[1][i] = 2.f * sample.lobe[i] * (1.f + sample.sharpness[i]) * exposure;
-        sLast.ambient[2][i] = 1.f + 2.f * sample.sharpness[i];
-        std::memcpy(sLast.ambient[3 + i], sample.direction[i], sizeof(sample.direction[i]));
+      for (int col = 0; col < 3; ++col) {
+        out.worldToAxes[row * 3 + col] = m[row * 4 + col] / scale;
       }
     }
+    // The baked light is the level, at the frame's exposure; without one, the grid's
+    // average comes out at the key. The grid holds irradiance, and a diffuse surface
+    // sends 1/pi of that back.
+    const float exposure = RoomExposed() ? FrameExposure(*located.volumeArea) : 0.f;
+    out.volumeLevel = (exposure > 0.f ? exposure * gain : 0.18f / grid.average) / 3.14159265f;
+    out.volumeBias = volumeBias;
+    out.volumeDiagnostic = static_cast<float>(VolumeView());
   }
-  sLastFound = sLast.cube != 0 || sLast.hasAmbient || sLast.volume != 0;
+  if (located.ambientArea != nullptr) {
+    const Ambient& sample = located.sample;
+    const float average = located.average;
+    const float roomExposure = FrameExposure(*located.ambientArea);
+    out.hasAmbient = true;
+    // The grid gives the light's colour and direction; how bright it is stays the game's
+    // ambient, which the shader multiplies in. The baked levels are HDR that Remastered
+    // exposes by what is on screen (one room spans 0.0001 to 100), and the world around
+    // the model is still lit the retail way. Of the level only this is kept: a spot
+    // darker or brighter than its room is, within a factor of two.
+    const float luminance = 0.2126f * sample.mean[0] + 0.7152f * sample.mean[1] + 0.0722f * sample.mean[2];
+    const float level = std::min(std::max(std::sqrt(luminance / average), 0.5f), 2.f);
+    float exposure = luminance > 0.f ? level / luminance * ambient : 0.f;
+    if (RoomExposed() && roomExposure > 0.f) {
+      // Or the baked level itself, at the room's exposure: the game's ambient is left out.
+      exposure = roomExposure * ambient * gain;
+      out.ambientAbsolute = true;
+    }
+    for (int i = 0; i < 3; ++i) {
+      out.ambient[0][i] = (sample.mean[i] - sample.lobe[i]) * exposure;
+      out.ambient[1][i] = 2.f * sample.lobe[i] * (1.f + sample.sharpness[i]) * exposure;
+      out.ambient[2][i] = 1.f + 2.f * sample.sharpness[i];
+      std::memcpy(out.ambient[3 + i], sample.direction[i], sizeof(sample.direction[i]));
+    }
+  }
+  return out.cube != 0 || out.hasAmbient || out.volume != 0;
+}
+
+} // namespace
+
+bool Select(const float origin[3], Selection& out) {
+  const float* const pos = sHint ? sHintCentre : origin;
+  SelectKey key;
+  std::memcpy(key.pos, pos, sizeof(key.pos));
+  key.hint = sHint;
+  key.hintArea = sHint ? sHintArea : 0;
+  if (sLastValid && key == sLastKey) {
+    out = sLast;
+    return sLastFound;
+  }
+  sLastKey = key;
+  sLastValid = true;
+  sLastFound = false;
+  if (!Enabled()) {
+    return false;
+  }
+  if (sLocatedEpoch != sEpoch) {
+    sLocated.clear();
+    sLocatedOld.clear();
+    sLocatedEpoch = sEpoch;
+  }
+  const Located* located = nullptr;
+  bool freshVolume = false;
+  const auto found = sLocated.find(key);
+  if (found != sLocated.end()) {
+    located = &found->second;
+  } else {
+    if (sLocated.size() >= kMaxLocated) {
+      sLocatedOld.swap(sLocated);
+      sLocated.clear();
+    }
+    const auto old = sLocatedOld.find(key);
+    if (old != sLocatedOld.end()) {
+      located = &sLocated.emplace(key, old->second).first->second;
+    } else {
+      Located fresh;
+      Locate(pos, fresh, freshVolume);
+      located = &sLocated.emplace(key, fresh).first->second;
+    }
+  }
+  sLastFound = Compose(*located, sLast);
+  if (freshVolume) {
+    const Grid& grid = *located->grid;
+    const float exposure = RoomExposed() ? FrameExposure(*located->volumeArea) : 0.f;
+    PortLog::Write("room env: %08X volume %u %ux%ux%u exposure %g average %g level %g\n", sHintArea, sLast.volume,
+                   grid.size[0], grid.size[1], grid.size[2], exposure, grid.average, sLast.volumeLevel);
+  }
   out = sLast;
   return sLastFound;
 }
