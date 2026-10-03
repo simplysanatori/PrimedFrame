@@ -17,6 +17,7 @@
 #include <unordered_map>
 
 #include "port_remastered_pak.h"
+#include "port_remastered_uv.h"
 
 namespace PortRemastered {
 namespace {
@@ -1486,6 +1487,24 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   if (out.kind != 3 && !out.layered) {
     out.kind = 0;
     out.vcolor = false;
+  }
+  // A material with an AUVI names, per UV output channel, which of the model's
+  // texcoord sets feeds it, so a map's texcoord no longer names a set directly.
+  // port_remastered_uv.h holds the rule and what the tests drive.
+  //
+  // Lava pools (kind 6) and waterfalls (kind 7) keep their existing forced UV0.
+  // No surveyed material of either kind has AUVI; combined behavior is unverified.
+  if (out.kind != 6 && out.kind != 7) {
+    MapRef* mapRefs[] = {&out.maps[kBase], &out.maps[kMr], &out.maps[kNormal], &out.maps[kEmissive],
+                         &out.layer[kBase], &out.layer[kMr], &out.layer[kNormal]};
+    uint32_t coords[std::size(mapRefs)];
+    for (size_t i = 0; i < std::size(mapRefs); ++i) {
+      coords[i] = mapRefs[i]->coord;
+    }
+    ApplyAuvi(mat, coords, std::size(coords));
+    for (size_t i = 0; i < std::size(mapRefs); ++i) {
+      mapRefs[i]->coord = coords[i];
+    }
   }
   return out;
 }
