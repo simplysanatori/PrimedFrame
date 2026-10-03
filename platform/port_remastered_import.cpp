@@ -26,6 +26,7 @@
 #include "port_mods.h"
 #include "port_remastered_cmdl.h"
 #include "port_remastered_convert.h"
+#include "port_remastered_effect_import.h"
 #include "port_remastered_font.h"
 #include "port_remastered_hud.h"
 #include "port_remastered_map.h"
@@ -70,6 +71,8 @@ constexpr uint32_t kMAPA = 0x4D415041;
 constexpr uint32_t kMAPW = 0x4D415057;
 constexpr uint32_t kFRME = 0x46524D45;
 constexpr uint32_t kFMV0 = 0x464D5630;
+constexpr uint32_t kGENP = 0x47454E50;  // a particle effect
+constexpr uint32_t kMATI = 0x4D415449;  // a material instance
 
 constexpr const char* kStagingName = ".remastered-models.importing";
 // Written last, so a staging folder without it is an import that was cut short.
@@ -367,6 +370,10 @@ public:
           m_fonts.emplace(assets[a].id, Where{m_paks.size(), a});
         } else if (type == kFMV0) {
           m_movies.emplace(IdToString(assets[a].id), Where{m_paks.size(), a});
+        } else if (type == kGENP) {
+          m_effects.emplace(assets[a].id, Where{m_paks.size(), a});
+        } else if (type == kMATI) {
+          m_materials.emplace(assets[a].id, Where{m_paks.size(), a});
         } else if (type == kGUIF) {
           for (const std::string& name : assets[a].names) {
             m_frames.emplace(FrameKey(name), Where{m_paks.size(), a});
@@ -474,6 +481,22 @@ public:
     return Read(m_texts, id, out, error);
   }
 
+  // The particle effects (GENP) and what they read: material instances and textures.
+  std::vector<ModelUuid> Effects() const {
+    std::vector<ModelUuid> ids;
+    for (const auto& [id, where] : m_effects) {
+      ids.push_back(id);
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+  }
+  bool ReadEffectAsset(uint32_t type, const ModelUuid& id, std::vector<uint8_t>& out, std::string& error) const {
+    return Read(type == kGENP ? m_effects : type == kMATI ? m_materials : m_textures, id, out, error);
+  }
+  uint32_t EffectAssetType(const ModelUuid& id) const {
+    return m_textures.count(id) != 0 ? kTXTR : m_materials.count(id) != 0 ? kMATI : m_effects.count(id) != 0 ? kGENP : 0;
+  }
+
   // The paks of one world directory ("Intro_Master") as the room writer takes
   // them, and every pak of the image for the assets rooms share.
   void World(const std::string& dir, RoomPak& master, std::vector<RoomPak>& rooms) const {
@@ -534,6 +557,8 @@ private:
   Index m_textures;
   Index m_texts;
   Index m_fonts;
+  Index m_effects;
+  Index m_materials;
   std::unordered_map<std::string, Where> m_frames;  // GUIF, by FrameKey
   std::unordered_map<std::string, Where> m_textureNames;  // the named TXTR, by FrameKey
   std::unordered_map<std::string, Where> m_modelNames;    // the named CMDL, by FrameKey
@@ -937,6 +962,44 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   if (converted == 0) {
     fail("No model could be converted.");
     return;
+  }
+
+  // Remastered's particle effects in place of the disc's, when asked for.
+  if (WantsRemasteredEffects()) {
+    SetMessage("Converting effects");
+    EffectImportIO effectIO;
+    effectIO.effects = remastered.Effects();
+    effectIO.read = [&](uint32_t type, const EffectGuid& id, std::vector<uint8_t>& out, std::string& effectError) {
+      return remastered.ReadEffectAsset(type, id, out, effectError);
+    };
+    effectIO.typeOf = [&](const EffectGuid& id) { return remastered.EffectAssetType(id); };
+    effectIO.retailId = [&](uint32_t id) { return retail.HasId(id); };
+    effectIO.freshId = [&](uint32_t seed) {
+      std::lock_guard<std::mutex> lock(takenMutex);
+      uint32_t id = seed;
+      while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
+        ++id;
+      }
+      taken.insert(id);
+      return id;
+    };
+    effectIO.texture = [&](const EffectGuid& id, int& width, int& height, std::vector<uint8_t>& rgba,
+                           std::string& effectError) {
+      Image image;
+      if (!makeIO(0, staging).texture(id, image, effectError)) {
+        return false;
+      }
+      width = image.width;
+      height = image.height;
+      rgba = std::move(image.rgba);
+      return true;
+    };
+    effectIO.write = makeIO(0, staging).write;
+    effectIO.log = [](const std::string& line) { AddLine(line); };
+    const EffectImportResult effects = ImportEffects(effectIO);
+    AddLine("effects: " + std::to_string(effects.written) + " of " + std::to_string(effects.candidates) + " written (" +
+            std::to_string(effects.parts) + " PARTs, " + std::to_string(effects.textures) + " textures, " +
+            std::to_string(effects.dropped) + " properties left out)");
   }
 
   // The rooms' reflection cubes and baked ambient light, a file per area. A

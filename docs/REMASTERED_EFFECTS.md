@@ -238,6 +238,18 @@ from what retail's elements compute (`CVEAngleCone`, `CVEAngleSphere`,
   n% of the life, `CNST(n)` is n frames (scaled by a constant lifetime). The
   last byte set makes the gradient repeat.
 
+## In the import
+
+`MP_REMASTERED_EFFECTS=1` adds an effect step to the Remastered import
+(`port_remastered_effect_import.cpp`, called from `port_remastered_import.cpp`
+after the models). Every effect whose id was carried over from retail and is
+on the disc is converted and written as `<ID>.PART`, replacing the disc's.
+Its embedded children are written under new ids, and a texture it names that
+the disc does not have (its material instance's first TXTR, or a TXTR of
+Remastered's own) is written as an RGBA8 `<ID>.TXTR`, at most 256 on a side.
+Effects with no retail id (most world effects) are not used yet: nothing on
+the disc names them. The step is off by default.
+
 ## Tools
 
 `tests/port_remastered_effect_tool.cpp` is a dev tool, not built by CMake:

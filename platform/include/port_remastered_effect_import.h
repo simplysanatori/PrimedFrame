@@ -1,0 +1,62 @@
+#pragma once
+
+// The Remastered import's effect step: every Remastered particle effect that
+// stands for one of the disc's PARTs is converted (port_remastered_effect_convert.h)
+// and written into the mod as "<ID>.PART", replacing the disc's.
+//
+// An effect stands for a disc PART when its id is one carried over from
+// retail (EffectRetailId) and the disc has that id. Its embedded children are
+// written as PARTs of their own under new ids. Textures it names that are not
+// on the disc (a material instance's, or a TXTR of Remastered's own) are
+// converted and written as "<ID>.TXTR" under new ids.
+//
+// The step is off unless MP_REMASTERED_EFFECTS=1: the conversion leaves out
+// what retail cannot draw, and some of its mappings are not yet confirmed in
+// game (docs/REMASTERED_EFFECTS.md).
+
+#include "port_remastered_effect.h"
+
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <vector>
+
+namespace PortRemastered {
+
+// Ids are in a pak's byte order (what IdToString prints) unless said otherwise.
+struct EffectImportIO {
+  // Every GENP in the image, each once.
+  std::vector<EffectGuid> effects;
+  // A Remastered asset's bytes by type ('GENP', 'MATI', 'TXTR') and id; false
+  // when the image has none.
+  std::function<bool(uint32_t type, const EffectGuid& id, std::vector<uint8_t>& out, std::string& error)> read;
+  // The asset type of an id in the image, or 0.
+  std::function<uint32_t(const EffectGuid& id)> typeOf;
+  // Whether the disc has a resource with this id.
+  std::function<bool(uint32_t id)> retailId;
+  // A new id for a resource of the import, never one the disc or the import
+  // already has; `seed` makes it the same in every import.
+  std::function<uint32_t(uint32_t seed)> freshId;
+  // A Remastered texture's top mip as RGBA8, as ConvertIO::texture.
+  std::function<bool(const EffectGuid& id, int& width, int& height, std::vector<uint8_t>& rgba, std::string& error)>
+      texture;
+  // Stores one output file: "<ID>.PART" or "<ID>.TXTR".
+  std::function<bool(const std::string& name, const std::vector<uint8_t>& data)> write;
+  std::function<void(const std::string& line)> log;  // optional
+};
+
+struct EffectImportResult {
+  int candidates = 0;  // effects standing for a disc PART
+  int written = 0;     // of those, written (root and children)
+  int failed = 0;      // that did not parse or convert
+  int parts = 0;       // PART files written, children included
+  int textures = 0;    // TXTR files written
+  int dropped = 0;     // retail properties left out across the written PARTs
+};
+
+// Off unless MP_REMASTERED_EFFECTS=1.
+bool WantsRemasteredEffects();
+
+EffectImportResult ImportEffects(const EffectImportIO& io);
+
+}  // namespace PortRemastered
