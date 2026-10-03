@@ -936,9 +936,15 @@ std::string Materials(uint32_t id) {
       for (int i = 0; i < count; ++i) {
         const uint flags = cube->GetMaterialByIndex(i).GetFlags();
         float v[19];
-        const int floats = cube->PortReadPBRMaterial(i, v);
-        const char* const tag =
-            floats == 19 ? kTags[3] : floats == 13 ? kTags[2] : floats == 8 ? kTags[1] : floats == 6 ? kTags[0] : "none";
+        uint wrap = 0;
+        const int floats = cube->PortReadPBRMaterial(i, v, &wrap);
+        const bool wraps = wrap != 0x55555555;
+        const char* const tag = wraps           ? "PBR5"
+                                : floats == 19 ? kTags[3]
+                                : floats == 13 ? kTags[2]
+                                : floats == 8  ? kTags[1]
+                                : floats == 6  ? kTags[0]
+                                               : "none";
         // What the console's `roomgeo mat` put in place is what gets drawn, so show that.
         int shown = floats;
         bool overridden = false;
@@ -963,6 +969,14 @@ std::string Materials(uint32_t id) {
         if (shown >= 19 && used < int(sizeof(line))) {
           used += std::snprintf(line + used, sizeof(line) - used, ", kind %g, strength %g, params %g %g %g %g",
                                 v[13], v[14], v[15], v[16], v[17], v[18]);
+        }
+        if (wraps && used < int(sizeof(line))) {
+          // Map i's S and T modes: 0 clamp, 1 repeat, 2 mirror.
+          used += std::snprintf(line + used, sizeof(line) - used, ", wrap");
+          for (int m = 0; m < 8 && used < int(sizeof(line)); ++m) {
+            used += std::snprintf(line + used, sizeof(line) - used, " %u%u", (wrap >> (m * 4)) & 3,
+                                  (wrap >> (m * 4 + 2)) & 3);
+          }
         }
         if (overridden && used < int(sizeof(line))) {
           std::snprintf(line + used, sizeof(line) - used, " (overridden)");

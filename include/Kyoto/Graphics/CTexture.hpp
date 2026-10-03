@@ -142,9 +142,12 @@ private:
   // Port: the asset id, when a mod draws this texture from <id>.dds (port_mods.h).
   uint mPortNativeId;
   mutable bool mPortTexelsChanged; // written in place since the last Load
+  mutable EClampMode mPortClampT;  // mClampMode is the S axis's
 
 public:
   void PortSetNativeId(uint id);
+  // Load with a mode per axis (a Remastered material's sampler).
+  void PortLoad(GXTexMapID texMapId, EClampMode clampS, EClampMode clampT) const;
 #endif
 };
 CHECK_SIZEOF(CTexture, 0x68)

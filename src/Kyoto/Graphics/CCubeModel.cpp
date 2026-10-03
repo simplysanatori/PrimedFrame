@@ -168,11 +168,15 @@ CCubeMaterial CCubeModel::GetMaterialByIndex(const int idx) const {
 // then the height blend threshold and the shading mode) and 'PBR2', or thirteen (the same,
 // then a second layer's edge width and the scale and offset of each layer's height) and
 // 'PBR3', or nineteen (the same, then the kind of a special surface, its strength and four
-// parameters; see GXSetPBRMaterial) and 'PBR4'. A material without one gets the neutral
-// values.
-int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19]) const {
+// parameters; see GXSetPBRMaterial) and 'PBR4', or those nineteen, then one big-endian word
+// of the maps' wrap modes (see the declaration) and 'PBR5'. A material without one gets the
+// neutral values.
+int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap) const {
   for (int i = 0; i < 19; ++i) {
     values[i] = i < 3 ? 1.f : 0.f;
+  }
+  if (wrap != nullptr) {
+    *wrap = 0x55555555; // every axis kCM_Repeat
   }
   const uchar* table = static_cast< const uchar* >(x0_instance.GetMaterialPointer()) +
                        (x1c_textures->size() + 1) * 4;
@@ -182,7 +186,14 @@ int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19]) const {
   const uint end = GetMaterialOffset(table, idx + 1);
   const uchar* materialEnd = table + count * 4 + end;
   int floats = 0;
-  if (end >= begin + 80 && memcmp(materialEnd - 4, "PBR4", 4) == 0) {
+  if (end >= begin + 84 && memcmp(materialEnd - 4, "PBR5", 4) == 0) {
+    if (wrap != nullptr) {
+      memcpy(wrap, materialEnd - 8, 4);
+      *wrap = CBasics::SwapBytes(*wrap);
+    }
+    materialEnd -= 4; // the floats sit before the word, as in 'PBR4'
+    floats = 19;
+  } else if (end >= begin + 80 && memcmp(materialEnd - 4, "PBR4", 4) == 0) {
     floats = 19;
   } else if (end >= begin + 56 && memcmp(materialEnd - 4, "PBR3", 4) == 0) {
     floats = 13;

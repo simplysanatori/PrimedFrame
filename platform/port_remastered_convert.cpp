@@ -566,6 +566,7 @@ struct MapRef {
   bool has = false;
   ModelUuid id{};
   uint32_t coord = 0;
+  int32_t wrap[2] = {1, 1};  // the sampler's U and V modes (0 clamp, 1 repeat, 2 mirror)
   std::string src;  // how the texture is named in a tag
   bool raw = false;  // a shader's own data (a ramp, noise): every texel and channel kept as it is
   bool mean = false;  // drawn as its colour times alpha, averaged: one colour
@@ -1204,6 +1205,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     std::swap(m.id[4], m.id[5]);
     std::swap(m.id[6], m.id[7]);
     m.coord = t.texCoord;
+    m.wrap[0] = t.wrapX;
+    m.wrap[1] = t.wrapY;
     m.src = opt.texturePrefix + IdToString(m.id) + opt.textureSuffix;
   };
   bool bclr = false;
@@ -1492,7 +1495,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
 // threshold, the mode (1 unlit, 2 glow masked by the base alpha, 4 tinted by
 // the vertex colour, summed), and 'PBR2'; or, for a layered one, those, the blend's edge width, the scale and offset of
 // each layer's height, and 'PBR3'; or, for a shader of its own, those, the kind, its strength
-// (compressed like the emissive one) and its four parameters, and 'PBR4'.
+// (compressed like the emissive one) and its four parameters, and 'PBR4'; or, where a
+// map clamps or mirrors, all nineteen, the maps' wrap modes (one word) and 'PBR5'.
 // Remastered's emissive strengths are HDR values meant for its bloom, and the
 // port's output is 8-bit with none, so the strength is compressed (square
 // root, capped) around 1, where the map is drawn as converted.
@@ -1500,45 +1504,57 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
 // the port keeps and lights nothing with.
 bool ColorUnlitDraw(const RemMaterial& m) { return m.colorUnlit && m.unlit && m.tinted; }
 
-void PbrRecord(Blob& b, const RemMaterial& m) {
+void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap) {
   const double e = std::sqrt(std::min(std::max(m.emissive, 0.0), kPbrEmissiveMax));
   // ColorUnlit's backlight is its gain, and no backlight at all where drawn otherwise.
   const double k = ColorUnlitDraw(m) ? std::max(m.backlight, 0.0)
                    : m.colorUnlit    ? 0.0
                                      : std::min(std::max(m.backlight, 0.0), 2.0);
+  std::vector<double> f;
   for (int i = 0; i < 3; ++i) {
     // A liquid has no glow of its own, and its colour goes where the glow's would.
-    PF(b, m.kind == 5 || m.kind == 7 || m.kind == 8 ? m.tint[i] : e);
+    f.push_back(m.kind == 5 || m.kind == 7 || m.kind == 8 ? m.tint[i] : e);
   }
   for (int i = 0; i < 3; ++i) {
-    PF(b, k);
+    f.push_back(k);
   }
+  const char* tag = "PBRM";
   if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind) {
-    PF(b, m.height);
-    PF(b, (m.unlit ? 1.0 : 0.0) + (m.mask ? 2.0 : 0.0) + (m.tinted ? 4.0 : 0.0) +
-              (ColorUnlitDraw(m) ? 8.0 : 0.0));
+    f.push_back(m.height);
+    f.push_back((m.unlit ? 1.0 : 0.0) + (m.mask ? 2.0 : 0.0) + (m.tinted ? 4.0 : 0.0) +
+                (ColorUnlitDraw(m) ? 8.0 : 0.0));
+    tag = "PBR2";
     if (m.layered || m.kind) {
       // Only a blend of two layers has an edge.
-      PF(b, m.kind == 7 || (m.layered && m.kind <= 1) ? m.layerSmooth : 0.0);
+      f.push_back(m.kind == 7 || (m.layered && m.kind <= 1) ? m.layerSmooth : 0.0);
       for (double h : m.layerHeight) {
-        PF(b, h);
+        f.push_back(h);
       }
+      tag = "PBR3";
       if (m.kind) {
-        PF(b, double(m.kind));
-        PF(b, m.kind >= 5 ? m.kindStrength : std::sqrt(std::min(std::max(m.kindStrength, 0.0), kPbrEmissiveMax)));
+        f.push_back(double(m.kind));
+        f.push_back(m.kind >= 5 ? m.kindStrength : std::sqrt(std::min(std::max(m.kindStrength, 0.0), kPbrEmissiveMax)));
         for (double v : m.kindParam) {
-          PF(b, v);
+          f.push_back(v);
         }
-        b.insert(b.end(), {'P', 'B', 'R', '4'});
-        return;
+        tag = "PBR4";
       }
-      b.insert(b.end(), {'P', 'B', 'R', '3'});
-      return;
     }
-    b.insert(b.end(), {'P', 'B', 'R', '2'});
-    return;
   }
-  b.insert(b.end(), {'P', 'B', 'R', 'M'});
+  // Only a material with a map that does not repeat needs the long form: every
+  // field, the ones the short form leaves out at the reader's neutral 0.
+  const bool wraps = wrap != 0x55555555u;
+  if (wraps) {
+    f.resize(19, 0.0);
+    tag = "PBR5";
+  }
+  for (double v : f) {
+    PF(b, v);
+  }
+  if (wraps) {
+    P32(b, wrap);
+  }
+  b.insert(b.end(), tag, tag + 4);
 }
 
 // A retail material rebuilt for the port's PBR path: maps 0-3 are base, MR,
@@ -1548,7 +1564,7 @@ void PbrRecord(Blob& b, const RemMaterial& m) {
 // it samples every map so all are bound. A layered material has three more,
 // maps 4-6: the second layer's base, MR and normal.
 Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx, uint32_t group,
-                 const uint32_t* coords, const RemMaterial& rem) {
+                 const uint32_t* coords, const RemMaterial& rem, uint32_t wrap) {
   const int nmaps = rem.layered ? kLayeredMaps : kMaps;
   Blob b;
   // ColorUnlit's colour, out of linear light, is (2 x gain)^(1/2.2) times the vertex
@@ -1665,7 +1681,7 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
     P32(b, 4);  // no UV animations
     P32(b, 0);
   }
-  PbrRecord(b, rem);
+  PbrRecord(b, rem, wrap);
   return b;
 }
 
@@ -2020,7 +2036,6 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // A liquid's model says nothing of how it looks (its maps are placeholders): the room does.
   // The material is a blended one of the liquid kind, whose second layer is only there
   // because the kinds are drawn by the layered shader.
-  bool liquid = false;
   for (RemMaterial& m : mats) {
     if (opt.water && opt.standalone) {
       m.kind = 5;
@@ -2034,6 +2049,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       m.maps[kNormal].src = opt.texturePrefix + IdToString(opt.waterNormal) + opt.textureSuffix;
       for (MapRef& ref : m.maps) {
         ref.coord = 0;
+        ref.wrap[0] = ref.wrap[1] = 1;  // the room's maps repeat and move
       }
       m.layer[kBase] = m.maps[kBase];
       m.layer[kMr].has = m.layer[kNormal].has = false;
@@ -2046,7 +2062,6 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       m.kindParam[2] = opt.waterTint[3];
       m.kindParam[3] = opt.waterFresnel;
     }
-    liquid = liquid || m.kind >= 5;
   }
   std::vector<Buffer> buffers(model.vertexBuffers.size());
   std::vector<Prim> prims;
@@ -2345,28 +2360,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       for (size_t v = 0; v < n; ++v) {
         u[v * 2] = lo + (hi - lo) * std::clamp((u[v * 2] - u0) / (u1 - u0), 0.0, 1.0);
       }
-    } else if (!liquid) {
-      // A liquid's maps repeat and move, so its coordinates stay as they are.
-      // Remastered UVs are not normalised (U can span -3.9..5.0, or be entirely
-      // negative), so a CLAMP sampler collapses the texture onto one edge
-      // texel. A set whose span is at most two tiles is a single tile that
-      // merely sits outside 0..1 and is remapped onto it (2.0 is measured:
-      // offset single tiles land at up to 1.99). A wider span is a tiled
-      // layout and must keep its range, or every tile is squeezed into one.
-      for (int c = 0; c < 2 && n; ++c) {
-        double lo = u[c], hi = u[c];
-        for (size_t v = 0; v < n; ++v) {
-          lo = std::min(lo, u[v * 2 + c]);
-          hi = std::max(hi, u[v * 2 + c]);
-        }
-        const double span = hi - lo;
-        if (span > 1e-6 && span <= 2.0 && (lo < -0.01 || hi > 1.01)) {
-          for (size_t v = 0; v < n; ++v) {
-            u[v * 2 + c] = (u[v * 2 + c] - lo) / (hi - lo);
-          }
-        }
-      }
     }
+    // Otherwise the coordinates stay as Remastered authored them (U can span
+    // -3.9..5.0, or sit wholly outside 0..1): each map samples them with its own
+    // wrap modes, which the PBR record carries. Remapping a set onto 0..1 stretched
+    // offset or partial tiles (-4.97..-4.77 drew the whole texture).
     uvKeys.push_back(key);
     uvArrays.push_back(std::move(u));
     return uint32_t(uvArrays.size() - 1);
@@ -2491,6 +2489,16 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       for (int k = 0; k < nmaps; ++k) {
         attrs[coords[k]] = uvIndex(coords[k], nullptr);
       }
+      // Each map's sampler, 2 bits an axis (GX: 0 clamp, 1 repeat, 2 mirror); a
+      // map the material lacks, or one without a sampler, repeats.
+      uint32_t wrap = 0x55555555u;
+      for (int k = 0; k < nmaps; ++k) {
+        for (int c = 0; c < 2 && both[k].has; ++c) {
+          const int32_t w = both[k].wrap[c];
+          const uint32_t shift = uint32_t(k * 4 + c * 2);
+          wrap = (wrap & ~(3u << shift)) | (uint32_t(w >= 0 && w <= 2 ? w : 1) << shift);
+        }
+      }
       const uint32_t zero = uvIndex(0, nullptr);
       for (uint32_t& a : attrs) {
         a = a == 0xFFFFFFFFu ? zero : a;
@@ -2502,7 +2510,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         for (int k = 0; k < nmaps; ++k) {
           idx[k] = texIndex(si, tids[k]);
         }
-        setBlobs[si].push_back(PbrMaterial(pm, vtx, idx, group, coords, rem));
+        setBlobs[si].push_back(PbrMaterial(pm, vtx, idx, group, coords, rem, wrap));
       }
       continue;
     }

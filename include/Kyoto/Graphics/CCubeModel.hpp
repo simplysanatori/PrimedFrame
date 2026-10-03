@@ -107,8 +107,10 @@ public:
   // Sends the material's PBR record; returns the record's surface kind (glass is 8).
   float PortSetPBRMaterial(const int idx) const;
   // The material's record (see the definition) with the neutral values where it has
-  // none; returns how many floats the record holds, 0 without one.
-  int PortReadPBRMaterial(const int idx, float values[19]) const;
+  // none; returns how many floats the record holds, 0 without one. wrap, when given, gets
+  // the maps' sampler modes: map i's S mode in bits 4i..4i+1, its T mode in 4i+2..4i+3
+  // (CTexture::EClampMode); all repeat without a 'PBR5' record.
+  int PortReadPBRMaterial(const int idx, float values[19], uint* wrap = nullptr) const;
   uint PortMaterialCount() const;
   // Debugging: draws a model's material with values[field] replaced, until cleared. The
   // caller must clear before the model goes.

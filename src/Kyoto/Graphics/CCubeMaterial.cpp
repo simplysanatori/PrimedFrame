@@ -565,11 +565,27 @@ void CCubeMaterial::SetCurrent(const CModelFlags& flags, const CCubeSurface& sur
   if ((flags.GetOtherFlags() & CModelFlags::kF_NoTextureLock) == 0) {
     const rstl::vector< TCachedToken< CTexture > >& textures = model.GetTextures();
     materialDataCur.words += 2;
+#ifdef TARGET_PC
+    // A converted Remastered material samples each map with its own wrap modes.
+    uint wrap = 0x55555555;
+    if ((matFlags & kStateFlag_PortPBR) != 0) {
+      f32 values[19];
+      model.PortReadPBRMaterial(static_cast< int >(surface.GetMaterialIndex()), values, &wrap);
+    }
+    for (uint i = 0; i < texCount; ++i) {
+      const uint bits = i < 8 ? wrap >> (i * 4) : 0x5;
+      textures[SBig(*materialDataCur.words)].GetObject()->PortLoad(
+          static_cast< GXTexMapID >(i), static_cast< CTexture::EClampMode >(bits & 3),
+          static_cast< CTexture::EClampMode >((bits >> 2) & 3));
+      ++materialDataCur.words;
+    }
+#else
     for (uint i = 0; i < texCount; ++i) {
       textures[SBig(*materialDataCur.words)].GetObject()->Load(static_cast< GXTexMapID >(i),
                                                                CTexture::kCM_Repeat);
       ++materialDataCur.words;
     }
+#endif
   } else {
     materialDataCur.words += texCount + 2;
   }

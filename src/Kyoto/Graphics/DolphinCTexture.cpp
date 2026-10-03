@@ -56,6 +56,7 @@ CTexture::CTexture(ETexelFormat fmt, const short w, const short h, int mips)
 #ifdef TARGET_PC
 , mPortNativeId(0)
 , mPortTexelsChanged(false)
+, mPortClampT(kCM_Repeat)
 #endif
 {
   InitBitmapBuffers(fmt, w, h, mips);
@@ -85,6 +86,7 @@ CTexture::CTexture(CInputStream& in, EAutoMipmap automip, EBlackKey blackKey)
 #ifdef TARGET_PC
 , mPortNativeId(0)
 , mPortTexelsChanged(false)
+, mPortClampT(kCM_Repeat)
 #endif
 {
   mTexelFormat = ETexelFormat(in.Get< uint >());
@@ -160,6 +162,14 @@ void CTexture::InitTextureObjects() {
   }
   bool hasMips = mNumMips > 1;
   GXTexWrapMode wrap = (GXTexWrapMode)mClampMode;
+#ifdef TARGET_PC
+  if (!mIsPowerOfTwo) {
+    mPortClampT = kCM_Clamp;
+  }
+  GXTexWrapMode wrapT = (GXTexWrapMode)mPortClampT;
+#else
+  GXTexWrapMode wrapT = wrap;
+#endif
   short width = mWidth;
   short height = mHeight;
   void* buf = mARAMToken.GetMRAMSafe();
@@ -184,9 +194,9 @@ void CTexture::InitTextureObjects() {
 #endif
 
   if (IsCITextureFormat(mTexelFormat)) {
-    GXInitTexObjCI(&mTexObj, buf, width, height, mNativeCIFormat, wrap, wrap, hasMips, 0);
+    GXInitTexObjCI(&mTexObj, buf, width, height, mNativeCIFormat, wrap, wrapT, hasMips, 0);
   } else {
-    GXInitTexObj(&mTexObj, buf, width, height, mNativeFormat, wrap, wrap, hasMips);
+    GXInitTexObj(&mTexObj, buf, width, height, mNativeFormat, wrap, wrapT, hasMips);
     GXInitTexObjLOD(&mTexObj, mNumMips > 1 ? GX_LIN_MIP_LIN : GX_LINEAR, GX_LINEAR, 0.f,
                     mNumMips - 1.f, 0.f, false, false, mNumMips > 1 ? GX_ANISO_4 : GX_ANISO_1);
   }
@@ -194,8 +204,20 @@ void CTexture::InitTextureObjects() {
   mCanLoadObj = true;
 }
 
+#ifdef TARGET_PC
+void CTexture::Load(GXTexMapID tex, EClampMode clamp) const { PortLoad(tex, clamp, clamp); }
+
+void CTexture::PortLoad(GXTexMapID tex, EClampMode clamp, EClampMode clampT) const {
+  // An NPOT texture always clamps; anything else rebinds when the slot holds this
+  // texture with other modes (retail Load kept the stale ones).
+  const EClampMode wantS = mIsPowerOfTwo ? clamp : kCM_Clamp;
+  const EClampMode wantT = mIsPowerOfTwo ? clampT : kCM_Clamp;
+  if (sLoadedTextures[tex] != this || mCanLoadObj || mClampMode != wantS ||
+      mPortClampT != wantT) {
+#else
 void CTexture::Load(GXTexMapID tex, EClampMode clamp) const {
   if (sLoadedTextures[tex] != this || mCanLoadObj) {
+#endif
     void* ptr = mARAMToken.GetMRAMSafe();
     CountMemory();
 
@@ -206,6 +228,13 @@ void CTexture::Load(GXTexMapID tex, EClampMode clamp) const {
 
     mCanLoadObj = false;
 
+#ifdef TARGET_PC
+    if (mClampMode != wantS || mPortClampT != wantT) {
+      mClampMode = wantS;
+      mPortClampT = wantT;
+      GXInitTexObjWrapMode(&mTexObj, (GXTexWrapMode)wantS, (GXTexWrapMode)wantT);
+    }
+#else
     if (mClampMode != clamp) {
       if (!mIsPowerOfTwo) {
         mClampMode = kCM_Clamp;
@@ -215,6 +244,7 @@ void CTexture::Load(GXTexMapID tex, EClampMode clamp) const {
 
       GXInitTexObjWrapMode(&mTexObj, (GXTexWrapMode)mClampMode, (GXTexWrapMode)mClampMode);
     }
+#endif
 
 #ifdef TARGET_PC
     // Aurora draws its own copy of the texels for as long as the object names the same data,
