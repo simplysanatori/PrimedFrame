@@ -834,6 +834,8 @@ struct MeshDecl {
   uint32_t indexCount = 0;
   uint16_t unkC = 0;
   uint16_t unkE = 0;
+  uint8_t bits2 = 0;  // this mesh's two bits of the first bitmap after the meshes
+  bool twoSided = false;  // its bit of the second: drawn with culling off
 };
 
 bool ParseMesh(Cursor& cursor, std::vector<MeshDecl>& meshes, std::vector<ModelLod>& lods,
@@ -853,9 +855,20 @@ bool ParseMesh(Cursor& cursor, std::vector<MeshDecl>& meshes, std::vector<ModelL
     mesh.unkC = cursor.U16();
     mesh.unkE = cursor.U16();
   }
-  // Two bitmaps follow the meshes, each rounded up to whole bytes.
-  cursor.Skip((meshCount + 3) / 4);
-  cursor.Skip((meshCount + 7) / 8);
+  // Two bitmaps follow the meshes, each rounded up to whole bytes: two bits per
+  // mesh, then one.
+  for (uint32_t i = 0; i < (meshCount + 3) / 4; ++i) {
+    const uint8_t byte = cursor.U8();
+    for (uint32_t j = 0; j < 4 && i * 4 + j < meshCount; ++j) {
+      meshes[i * 4 + j].bits2 = (byte >> (j * 2)) & 3;
+    }
+  }
+  for (uint32_t i = 0; i < (meshCount + 7) / 8; ++i) {
+    const uint8_t byte = cursor.U8();
+    for (uint32_t j = 0; j < 8 && i * 8 + j < meshCount; ++j) {
+      meshes[i * 8 + j].twoSided = (byte >> j) & 1;
+    }
+  }
   const uint32_t listCount = cursor.U32();
   if (!cursor.ok() || listCount > cursor.remaining() / 2) {
     return cursor.Fail("implausible LOD mesh list length");
@@ -1054,6 +1067,8 @@ bool ReadMeshes(const std::vector<MeshDecl>& decls, const std::vector<uint32_t>&
     mesh.indexCount = decl.indexCount;
     mesh.unkC = decl.unkC;
     mesh.unkE = decl.unkE;
+    mesh.bits2 = decl.bits2;
+    mesh.twoSided = decl.twoSided;
     if (decl.indexBuffer >= indexTypes.size() || decl.indexBuffer >= buffers.size()) {
       error = "remastered model: mesh " + std::to_string(i) + " names index buffer " +
               std::to_string(decl.indexBuffer) + " of " + std::to_string(indexTypes.size());

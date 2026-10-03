@@ -578,7 +578,6 @@ struct RemMaterial {
   double emissive = 1.0;   // Remastered's emissive strength
   double backlight = 0.0;  // and its backlight strength
   bool cutout = false;     // the base map's alpha cuts holes: leaves, grates
-  bool twoSided = false;   // seen from behind too; the game culls back faces, so they are doubled
   bool blended = false;    // drawn over what is behind it: glass, decals, ice
   bool tinted = false;     // its vertices carry a colour
   bool unlit = false;      // a screen: its own colour and glow, no lighting
@@ -1109,7 +1108,6 @@ constexpr uint32_t kTransparentFlag = 0x1;   // blended over what is behind it
 constexpr uint32_t kVertexColorFlag = 0x10;  // the vertex colour tints it
 constexpr uint32_t kCutoutFlag = 0x20;       // one-bit alpha: ground leaves, grates, foliage
 constexpr uint32_t kIncanMaskFlag = 0x200;   // the base map's alpha masks the glow
-constexpr uint32_t kTwoSidedFlag = 0x400;    // drawn from both sides: grates, ferns, hologlass
 // The first four bytes of the id of a shader whose alpha is read below.
 constexpr uint32_t kShaderHeightBlend = 0xCA10C453;  // snow and ice over rock
 // Shaders with maps and parameters of their own (TCHn, CCHn), read from their code.
@@ -1155,7 +1153,6 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   RemMaterial out;
   out.name = mat.name;
   out.cutout = (mat.unk1 & kCutoutFlag) != 0;
-  out.twoSided = (mat.unk1 & kTwoSidedFlag) != 0;
   out.blended = (mat.unk1 & kTransparentFlag) != 0 && !out.cutout;
   uint8_t sid[4];
   std::memcpy(sid, &mat.shaderId, 4);
@@ -2170,9 +2167,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         std::swap(p.I[t], p.I[t + 2]);
       }
     }
-    if (mats[mesh.material].twoSided) {
-      // The back: each vertex again with its normal turned round, each triangle
-      // wound the other way.
+    if (mesh.twoSided) {
+      // Seen from behind too: Remastered draws the mesh with culling off (its MESH
+      // chunk's one-bit map; every material flagged 0x400 plus holograms and glow
+      // planes), the game culls back faces, so the back is drawn as a copy: each
+      // vertex again with its normal turned round, each triangle wound the other way.
       std::unordered_map<uint32_t, uint32_t> back;
       for (uint32_t i : p.I) {
         if (back.count(i) != 0) {
