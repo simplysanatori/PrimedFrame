@@ -45,8 +45,11 @@ struct Model {
   CAABox bounds = CAABox::MakeMaxInvertedBox();
 };
 
+struct Area;
+
 struct Placed {
   size_t model;
+  Area* owner = nullptr; // the area it belongs to; areas stay put in Areas() until erased
   CTransform4f xf = CTransform4f::Identity(); // model -> world
   CAABox bounds = CAABox::MakeMaxInvertedBox();
   bool bounded = false;
@@ -87,6 +90,12 @@ std::unordered_map< uint32_t, Area >& Areas() {
 
 int sMode = -1;
 int sAreaLights = -1;
+// Counts the times areas left Areas(). The sorted pass hands DrawSorted only the item, so
+// it draws while the areas are the ones they were when AddSorted queued it.
+uint32_t sGeneration = 0;
+uint32_t sQueuedGeneration = 0;
+bool sQueued = false; // AddSorted has queued items since SetLoadedAreas
+bool sQueueStale = false; // areas went between two AddSorted calls
 bool sBuffersReady = false;
 bool sWarned = false;
 int sDrawn = 0;
@@ -187,6 +196,9 @@ void Load(uint32_t mrea, Area& area) {
       area.triggers.push_back({link.sender & 0x3ffffff, link.state, link.action, area.items.size() - 1});
     }
   }
+  for (Placed& item : area.items) {
+    item.owner = &area;
+  }
   sTriggers = sTriggers || !area.triggers.empty();
   area.instances.clear();
   area.instances.shrink_to_fit();
@@ -211,12 +223,14 @@ void SetLoadedAreas(const uint32_t* mreas, size_t count) {
   if (GetMode() == Mode::Off) {
     CCubeModel::PortClearPBROverrides();
     areas.clear();
+    ++sGeneration;
     return;
   }
   sTriggers = false;
   for (auto it = areas.begin(); it != areas.end();) {
     if (std::find(mreas, mreas + count, it->first) == mreas + count) {
       it = areas.erase(it);
+      ++sGeneration;
     } else {
       sTriggers = sTriggers || !it->second.triggers.empty();
       ++it;
@@ -231,6 +245,8 @@ void SetLoadedAreas(const uint32_t* mreas, size_t count) {
   for (auto& [mrea, area] : areas) {
     area.sorted.clear();
   }
+  sQueued = false;
+  sQueueStale = false;
   sDrawnLast = sDrawn;
   sDrawn = 0;
   if (!sMaterialValues.empty()) {
@@ -335,6 +351,11 @@ void AddSorted(const CGameArea& gameArea) {
   if (found == Areas().end()) {
     return;
   }
+  if (sQueued && sQueuedGeneration != sGeneration) {
+    sQueueStale = true;
+  }
+  sQueued = true;
+  sQueuedGeneration = sGeneration;
   const CVector3f forward = CGraphics::GetViewMatrix().GetForward();
   for (const Placed* item : found->second.sorted) {
     gpRender->AddDrawable(item, item->bounds.ClosestPointAlongVector(forward), item->bounds, kDrawableType,
@@ -343,19 +364,17 @@ void AddSorted(const CGameArea& gameArea) {
 }
 
 void DrawSorted(const void* drawable) {
-  const Placed& item = *static_cast< const Placed* >(drawable);
   // The models of the area it was added for are still there: the list is rebuilt by Draw
-  // every frame, and an area's models only go between frames.
-  Area* owner = nullptr;
-  for (auto& [mrea, area] : Areas()) {
-    if (!area.items.empty() && &item >= area.items.data() && &item < area.items.data() + area.items.size()) {
-      owner = &area;
-    }
-  }
-  if (owner == nullptr) {
+  // every frame, and an area's models only go between frames. Should one go mid-frame
+  // all the same (the console turning room geometry off), the item is not touched.
+  if (sQueueStale || sQueuedGeneration != sGeneration) {
     return;
   }
-  const Model& model = owner->models[item.model];
+  const Placed& item = *static_cast< const Placed* >(drawable);
+  if (item.owner == nullptr) {
+    return;
+  }
+  const Model& model = item.owner->models[item.model];
   if (!model.loaded) {
     return;
   }
@@ -619,6 +638,7 @@ int ClearMaterialValues() {
 void Reset() {
   CCubeModel::PortClearPBROverrides();
   Areas().clear();
+  ++sGeneration;
 }
 
 bool AreaLights() {
