@@ -445,6 +445,7 @@ CStateManager::CStateManager(const rstl::ncrc_ptr< CScriptMailbox >& mailbox,
 
 {
   PortRoomGeo::ResetScriptState();
+  PortRoomEnv::ResetGrades();
   x808_objectLists[0] = rs_new CObjectList(kOL_All);
   x808_objectLists[1] = rs_new CActorList();
   x808_objectLists[2] = rs_new CPhysicsActorList();
@@ -2678,6 +2679,9 @@ void CStateManager::PortCaptureProbeFace() const {
   if (x8cc_nextAreaId != kInvalidAreaId) {
     PortRoomEnv::SetViewArea(x850_world->GetArea(x8cc_nextAreaId)->GetAreaAssetId());
   }
+  // Remastered's grade hints that follow the player in a fluid and the camera under water.
+  PortRoomEnv::SetFluid(x84c_player != nullptr && x84c_player->IsInFluid(),
+                        x870_cameraManager->GetFluidCounter() > 0);
   PortRoomGeo::SetLoadedAreas(mreas, mreaCount);
   PortRoomLiquid::SetLoadedAreas(mreas, mreaCount);
   {

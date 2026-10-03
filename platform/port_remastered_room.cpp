@@ -16,6 +16,7 @@
 #include <set>
 
 #include "port_remastered_txtr.h"
+#include "port_room_env.h"
 #include "port_room_geo.h"
 
 namespace PortRemastered {
@@ -62,6 +63,7 @@ constexpr uint32_t kPropGradeLut = 0x59a7df11;
 constexpr uint32_t kPropHintGlobal = 0x6182fd5e;
 constexpr uint32_t kPropHintFadeIn = 0x5c6f53d8;
 constexpr uint32_t kPropHintFadeOut = 0xa4967532;
+constexpr uint32_t kPropHintPriority[2] = {0xb3d40a89, 0x8ab8fd40};  // default 50
 constexpr uint32_t kGradeLutSize = 33;
 constexpr uint32_t kPropHintMin = 0x682f8a1f;
 constexpr uint32_t kPropHintMax = 0x839d334c;
@@ -735,6 +737,19 @@ constexpr uint32_t kActionCounterDecrement = 0x93c513fb;
 constexpr uint32_t kActionRelayFire = 0xd432447e;
 constexpr uint32_t kActionTriggerActivate = 0x3067f115;
 constexpr uint32_t kActionTriggerDeactivate = 0xb5dd4543;
+// What turns a ColorGradeHint's request on and off, and the senders of it retail has no
+// object for: the player entering and leaving a fluid, the camera entering and leaving
+// water, and a Counter that counts the camera's water volumes.
+constexpr uint32_t kActionHintOn = 0x25592fa2;   // OnRequest
+constexpr uint32_t kActionHintOff = 0x332214ff;  // OffRequest
+constexpr uint32_t kProxyPlayer = 0x5797d3c7;
+constexpr uint32_t kEventPlayerFluidIn = 0xcc17e9b1;
+constexpr uint32_t kEventPlayerFluidOut = 0x42604bc6;
+constexpr uint32_t kCameraWaterProxy = 0x6a7a53b0;
+constexpr uint32_t kEventCameraWaterIn = 0x99655851;
+constexpr uint32_t kEventCameraWaterOut = 0x5b16cc17;
+constexpr uint32_t kEventCounterUp = 0x40e54906;
+constexpr uint32_t kEventCounterDown = 0xc163beb5;
 // Retail types of the Remastered objects a message passes through, and the actions that
 // make each pass it on.
 struct Pass {
@@ -1118,6 +1133,44 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     }
   }
   auto isScriptObject = [&](size_t comp) { return comps[comp].entity >= 0 && scriptObject.count(comps[comp].entity) != 0; };
+  // A grade hint's senders that are no retail object: the sender (PortRoomEnv's
+  // kSenderPlayerFluid/kSenderCameraWater) and state (0: in, 1: out), or sender 0.
+  std::set<int> hintEntities;
+  for (const Component& c : comps) {
+    if (c.type == kColorGradeHint && c.entity >= 0) {
+      hintEntities.insert(c.entity);
+    }
+  }
+  auto fluidSender = [&](const Connection& c, int& state) -> uint32_t {
+    const Component& sender = comps[c.sender];
+    if (sender.type == kProxyPlayer && (c.event == kEventPlayerFluidIn || c.event == kEventPlayerFluidOut)) {
+      state = c.event == kEventPlayerFluidIn ? 0 : 1;
+      return PortRoomEnv::kSenderPlayerFluid;
+    }
+    if (sender.type == kCameraWaterProxy && (c.event == kEventCameraWaterIn || c.event == kEventCameraWaterOut)) {
+      state = c.event == kEventCameraWaterIn ? 0 : 1;
+      return PortRoomEnv::kSenderCameraWater;
+    }
+    // A Counter fed only by camera water proxies is non-zero while the camera is in water.
+    if (sender.type != kCounter || sender.entity < 0) {
+      return 0;
+    }
+    const bool up = c.event == kEventCounterUp || c.event == kEventCounterNonZero;
+    if (!up && c.event != kEventCounterDown && c.event != kEventCounterZero) {
+      return 0;
+    }
+    const auto in = incoming.find(sender.entity);
+    if (in == incoming.end() || in->second.empty()) {
+      return 0;
+    }
+    for (const Connection* feed : in->second) {
+      if (comps[feed->sender].type != kCameraWaterProxy) {
+        return 0;
+      }
+    }
+    state = up ? 0 : 1;
+    return PortRoomEnv::kSenderCameraWater;
+  };
   // A platform's Play -> Activate connections name the actors it carries
   // (CScriptPlatform::BuildSlaveList).
   for (const Connection& c : conns) {
@@ -1151,6 +1204,21 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       }
       for (const Connection* c : in->second) {
         const Component& sender = comps[c->sender];
+        int fluidState = 0;
+        const uint32_t fluid =
+            depth == 0 && hintEntities.count(entity) != 0 ? fluidSender(*c, fluidState) : 0;
+        if (fluid != 0) {
+          const uint8_t act = c->action == kActionHintOn || c->action == kActionEntityActivate ? PortRoomGeo::kShow
+                              : c->action == kActionHintOff || c->action == kActionEntityDeactivate
+                                  ? PortRoomGeo::kHide
+                                  : 0;
+          if (act != 0) {
+            links.push_back({fluid, uint8_t(fluidState), act});
+          } else {
+            ++bad;
+          }
+          continue;
+        }
         // Remastered's own objects are followed by the script (below).
         if (sender.type == kTemplateManager || sender.type == kDebugOptions || isScriptObject(c->sender) ||
             (depth > 0 && !PassFires(via, c->action))) {
@@ -1166,10 +1234,11 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
           const bool follows = depth == 0 && type == kRetailDamageableTrigger && state == kStateMaxReached &&
                                first == kActionActivate;
           const uint8_t act = follows ? PortRoomGeo::kFollow
-                              : first == kActionActivate || first == kActionIncrement || first == kActionEntityActivate
+                              : first == kActionActivate || first == kActionIncrement ||
+                                      first == kActionEntityActivate || first == kActionHintOn
                                   ? PortRoomGeo::kShow
                               : first == kActionDeactivate || first == kActionDecrement ||
-                                      first == kActionEntityDeactivate
+                                      first == kActionEntityDeactivate || first == kActionHintOff
                                   ? PortRoomGeo::kHide
                               : first == kActionToggleActive ? PortRoomGeo::kToggle
                                                              : 0;
@@ -1363,11 +1432,15 @@ struct BloomData {
   std::vector<float> tints; // RGBA
 };
 
-// A global ColorGrade: the retail layer it is on (-1 = always), its hint's fades, the LUT
-// (33^3 RGBA8, red fastest).
+// A ColorGrade: the retail layer it is on (-1 = always), its hint's fades, whether it is
+// requested from the start, its priority, what turns it on and off, the LUT (33^3 RGBA8,
+// red fastest).
 struct GradeData {
   int32_t layer = -1;
   float fadeIn = 0, fadeOut = 0;
+  bool on = true;
+  int32_t priority = 50;
+  std::vector<PortRoomGeo::Link> links;
   std::vector<uint8_t> lut;
 };
 
@@ -1690,8 +1763,29 @@ void Writer::ReadGrades(const RoomData& r, const Area* area, std::vector<GradeDa
     }
     const auto hf = r.room.Flat(*h->second);
     const auto global = hf.find(kPropHintGlobal);
-    // A local hint is a volume the player stands in; only global ones are drawn yet.
-    if (global == hf.end() || global->second.size < 1 || r.room.Bytes(global->second)[0] == 0) {
+    const bool isGlobal = global != hf.end() && global->second.size >= 1 && r.room.Bytes(global->second)[0] != 0;
+    // A local hint is requested only by its connections (OnRequest/OffRequest); one with
+    // none that the port can follow never shows.
+    std::vector<PortRoomGeo::Link> links;
+    const auto linked = scripts.links.find(c->entity);
+    if (linked != scripts.links.end()) {
+      for (PortRoomGeo::Link link : linked->second) {
+        if (link.action != PortRoomGeo::kShow && link.action != PortRoomGeo::kHide &&
+            link.action != PortRoomGeo::kToggle) {
+          continue;
+        }
+        if (link.sender != PortRoomEnv::kSenderPlayerFluid && link.sender != PortRoomEnv::kSenderCameraWater) {
+          link.sender &= 0x3ffffff;  // as CEntity sends it: no layer bits
+        }
+        links.push_back(link);
+      }
+    }
+    const auto unresolved = scripts.unresolved.find(c->entity);
+    if (unresolved != scripts.unresolved.end()) {
+      Log("  " + r.name + ": colour grade hint with " + std::to_string(unresolved->second) +
+          " connection(s) not followed");
+    }
+    if (!isGlobal && links.empty()) {
       continue;
     }
     const auto f = r.room.Flat(*c);
@@ -1710,12 +1804,20 @@ void Writer::ReadGrades(const RoomData& r, const Area* area, std::vector<GradeDa
       Log("  " + r.name + ": colour grade LUT unreadable (" + error + ")");
       continue;
     }
+    // Defaults as CGameHintBase's.
     auto fade = [&](uint32_t prop) {
       const auto it = hf.find(prop);
-      return it != hf.end() && it->second.size >= 4 ? LeFloat(r.room.Bytes(it->second)) : 0.f;
+      return it != hf.end() && it->second.size >= 4 ? LeFloat(r.room.Bytes(it->second)) : 2.f;
     };
     g.fadeIn = fade(kPropHintFadeIn);
     g.fadeOut = fade(kPropHintFadeOut);
+    Span priority;
+    if (r.room.Nested(*h->second, {kPropHintPriority[0], kPropHintPriority[1]}, priority) && priority.size >= 4) {
+      g.priority = int32_t(Le32(r.room.Bytes(priority)));
+    }
+    // A global hint is requested while its entity is active; a local one once told to.
+    g.on = isGlobal && r.room.Active(*h->second);
+    g.links = std::move(links);
     const auto layer = scripts.layer.find(c->entity);
     g.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
     out.push_back(std::move(g));
@@ -2518,7 +2620,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  PutLe32(out, 9);
+  PutLe32(out, 10);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -2555,6 +2657,16 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     PutLe32(out, uint32_t(g.layer));
     PutFloat(out, g.fadeIn);
     PutFloat(out, g.fadeOut);
+    out.push_back(g.on ? 1 : 0);
+    out.insert(out.end(), 3, 0);
+    PutLe32(out, uint32_t(g.priority));
+    PutLe32(out, uint32_t(g.links.size()));
+    for (const PortRoomGeo::Link& link : g.links) {
+      PutLe32(out, link.sender);
+      out.push_back(link.state);
+      out.push_back(link.action);
+      out.insert(out.end(), 2, 0);
+    }
     out.insert(out.end(), g.lut.begin(), g.lut.end());
   }
   PutFloat(out, exposure[3]);

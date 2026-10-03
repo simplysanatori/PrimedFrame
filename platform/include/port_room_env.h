@@ -13,7 +13,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 9), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 10), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -48,6 +48,14 @@
 //          frames at 60 Hz
 //   f32 static lerp, where in the hint's range the exposure value of emissive and unlit
 //          surfaces sits (0 the lowest, 1 the highest)
+// From version 10 on a grade has, between fadeOut and the LUT:
+//   u8 on (the grade is requested from the start), u8 pad[3], s32 priority, u32 links,
+//   then links of u32 sender, u8 state, u8 action (PortRoomGeo::LinkAction: show = on,
+//   hide = off, toggle), u16 0. A sender is a retail script object's id (its state is an
+//   EScriptObjectState), or kSenderPlayerFluid / kSenderCameraWater (state 0 when the
+//   player or the camera goes into a fluid, 1 when it comes out). Of the grades that are on
+//   and whose layer is active, the highest priority is the room's; of equals, the one
+//   turned on last. Before it, every grade is on, with priority 0.
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -97,10 +105,23 @@ struct Grid {
 constexpr uint32_t kGradeLutSize = 33;
 constexpr size_t kGradeLutBytes = size_t(kGradeLutSize) * kGradeLutSize * kGradeLutSize * 4;
 
+// What drives a grade other than a script object: the player or the camera in a fluid.
+constexpr uint32_t kSenderPlayerFluid = 0xfffffff0;
+constexpr uint32_t kSenderCameraWater = 0xfffffff1;
+
+struct GradeLink {
+  uint32_t sender = 0;
+  uint8_t state = 0;
+  uint8_t action = 0;
+};
+
 struct Grade {
   int32_t layer = -1;
   float fadeIn = 0.f;
   float fadeOut = 0.f;
+  bool on = true;  // requested from the start (Remastered's global hints)
+  int32_t priority = 0;
+  std::vector<GradeLink> links;
   size_t offset = 0; // of the LUT, in File::data
   uint32_t id = 0;   // a hash of the LUT, never 0; 0 here means the LUT is the identity
 };
@@ -293,9 +314,20 @@ bool BloomEnabled();
 // The frame's colour grade (Remastered's ColorGrade + ColorGradeHint): the LUTs to blend,
 // for GXPortPostProcess (0: the identity) and how far towards `b` (0 to 1). `layerActive`
 // says whether a layer of the camera's area is active. Moving between grades fades over
-// the new one's fade-in. False when there is nothing to grade, or MP_COLOR_GRADE=0.
+// the new one's fade-in, or the old one's fade-out when it was turned off. False when there
+// is nothing to grade, or MP_COLOR_GRADE=0.
 using LayerActive = bool (*)(int32_t layer, void* context);
 bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b, float& weight);
+// A retail script object (`sender`: its editor id without the area bits) of the area `mrea`
+// sent `state`: the grades it drives turn on or off.
+void OnScriptState(uint32_t mrea, uint32_t sender, int state);
+// Once a frame: whether the player and the camera are in a fluid. A change drives the
+// grades of the loaded areas linked to kSenderPlayerFluid / kSenderCameraWater.
+void SetFluid(bool player, bool camera);
+// A new game: every grade back to how it starts.
+void ResetGrades();
+// The console's `roomenv grades`: the camera area's grades and which are on.
+std::string GradeInfo();
 // MP_COLOR_GRADE, the console's `grade`.
 void SetColorGradeEnabled(bool on);
 bool ColorGradeEnabled();

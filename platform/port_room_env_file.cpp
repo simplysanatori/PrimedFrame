@@ -9,8 +9,9 @@ namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 9;
+constexpr uint32_t kVersion = 10;
 constexpr uint32_t kMaxGrades = 64;
+constexpr uint32_t kMaxGradeLinks = 256;
 constexpr size_t kHeaderSize = 32;
 constexpr size_t kProbeSizeV1 = 100;
 constexpr size_t kProbeSize = 112;
@@ -330,7 +331,35 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
       if (!(grade.fadeOut >= 0.f && grade.fadeOut < 600.f)) {
         grade.fadeOut = 0.f;
       }
-      grade.offset = at + 12;
+      at += 12;
+      if (version >= 10) {
+        if (data.size() - at < 12) {
+          error = "cut short";
+          return false;
+        }
+        const uint8_t* q = data.data() + at;
+        grade.on = q[0] != 0;
+        grade.priority = int32_t(Get32(q + 4));
+        const uint32_t links = Get32(q + 8);
+        at += 12;
+        if (links > kMaxGradeLinks || (data.size() - at) / 8 < links) {
+          error = "cut short";
+          return false;
+        }
+        grade.links.resize(links);
+        for (GradeLink& link : grade.links) {
+          q = data.data() + at;
+          link.sender = Get32(q);
+          link.state = q[4];
+          link.action = q[5];
+          at += 8;
+        }
+      }
+      if (data.size() - at < kGradeLutBytes) {
+        error = "cut short";
+        return false;
+      }
+      grade.offset = at;
       grade.id = GradeLutId(data.data() + grade.offset);
       at = grade.offset + kGradeLutBytes;
     }
