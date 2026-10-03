@@ -703,8 +703,8 @@ off a floor the disc's model is flush with), so `ScriptLoader::LoadActor` reads
 the box from the original disc's CMDL header instead
 (`platform/port_actor_collision_bounds.cpp`): via `aurora_dvd_base_*` only, so
 no overlay or loose mod file is ever consulted, indexed once from the base PAK
-tables and cached per model. The X-ray and thermal models are unioned in, as
-`CModelData::GetBounds` does. Authored extents, `ANCS` actors and non-solid
+tables and cached per model. Only the normal model counts, as in retail, where
+the X-ray and thermal models are attached after the box is taken. Authored extents, `ANCS` actors and non-solid
 actors are unchanged, and a missing or malformed disc model falls back to the
 drawn model's bounds. Rendering is not affected.
 

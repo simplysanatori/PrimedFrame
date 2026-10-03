@@ -846,6 +846,7 @@ int main(int argc, char** argv) {
     AIPortShutdown();
     // An import still running reads the disc.
     PortRemastered::StopImport();
+    PortActorCollisionBounds::Reset();
     aurora_dvd_close();
     aurora_shutdown();
     return result;

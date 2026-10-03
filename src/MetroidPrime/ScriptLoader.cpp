@@ -900,29 +900,12 @@ CEntity* ScriptLoader::LoadActor(CStateManager& mgr, CInputStream& in, int propC
     if (solid && animType != 'ANCS' && staticId != 0) {
       float bounds[6] = {};
       if (PortActorCollisionBounds::ReadOriginalModelBounds(uint32_t(staticId), bounds)) {
+        // The normal model only: the X-ray and thermal models are attached
+        // later, by the CActor constructor, so retail's box never covers them.
         CAABox original(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]);
-        // CModelData::GetBounds unions the X-ray and thermal models in, so the
-        // disc's box has to cover them too. A variant this actor names whose
-        // disc model cannot be read leaves the box alone rather than shrink it
-        // to the normal model alone.
-        bool whole = true;
-        for (const CAssetId variant : { actParms.GetXRay().first, actParms.GetInfra().first }) {
-          float variantBounds[6] = {};
-          if (variant == 0) {
-            continue;
-          }
-          if (!PortActorCollisionBounds::ReadOriginalModelBounds(uint32_t(variant), variantBounds)) {
-            whole = false;
-            break;
-          }
-          original.Include(CAABox(variantBounds[0], variantBounds[1], variantBounds[2], variantBounds[3],
-                                  variantBounds[4], variantBounds[5]));
-        }
-        if (whole) {
-          aabb = original.GetTransformedAABox(
-              xf.GetRotation() * CTransform4f::Scale(head.x40_scale.GetX(), head.x40_scale.GetY(),
-                                                     head.x40_scale.GetZ()));
-        }
+        aabb = original.GetTransformedAABox(
+            xf.GetRotation() * CTransform4f::Scale(head.x40_scale.GetX(), head.x40_scale.GetY(),
+                                                   head.x40_scale.GetZ()));
       }
     }
 #endif
