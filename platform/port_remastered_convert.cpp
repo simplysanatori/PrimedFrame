@@ -17,6 +17,7 @@
 #include <unordered_map>
 
 #include "port_remastered_pak.h"
+#include "port_remastered_uv.h"
 
 namespace PortRemastered {
 namespace {
@@ -578,7 +579,6 @@ struct RemMaterial {
   double emissive = 1.0;   // Remastered's emissive strength
   double backlight = 0.0;  // and its backlight strength
   bool cutout = false;     // the base map's alpha cuts holes: leaves, grates
-  bool twoSided = false;   // seen from behind too; the game culls back faces, so they are doubled
   bool blended = false;    // drawn over what is behind it: glass, decals, ice
   bool tinted = false;     // its vertices carry a colour
   bool unlit = false;      // a screen: its own colour and glow, no lighting
@@ -1109,7 +1109,6 @@ constexpr uint32_t kTransparentFlag = 0x1;   // blended over what is behind it
 constexpr uint32_t kVertexColorFlag = 0x10;  // the vertex colour tints it
 constexpr uint32_t kCutoutFlag = 0x20;       // one-bit alpha: ground leaves, grates, foliage
 constexpr uint32_t kIncanMaskFlag = 0x200;   // the base map's alpha masks the glow
-constexpr uint32_t kTwoSidedFlag = 0x400;    // drawn from both sides: grates, ferns, hologlass
 // The first four bytes of the id of a shader whose alpha is read below.
 constexpr uint32_t kShaderHeightBlend = 0xCA10C453;  // snow and ice over rock
 // Shaders with maps and parameters of their own (TCHn, CCHn), read from their code.
@@ -1155,7 +1154,6 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   RemMaterial out;
   out.name = mat.name;
   out.cutout = (mat.unk1 & kCutoutFlag) != 0;
-  out.twoSided = (mat.unk1 & kTwoSidedFlag) != 0;
   out.blended = (mat.unk1 & kTransparentFlag) != 0 && !out.cutout;
   uint8_t sid[4];
   std::memcpy(sid, &mat.shaderId, 4);
@@ -1489,6 +1487,24 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   if (out.kind != 3 && !out.layered) {
     out.kind = 0;
     out.vcolor = false;
+  }
+  // A material with an AUVI names, per UV output channel, which of the model's
+  // texcoord sets feeds it, so a map's texcoord no longer names a set directly.
+  // port_remastered_uv.h holds the rule and what the tests drive.
+  //
+  // Lava pools (kind 6) and waterfalls (kind 7) keep their existing forced UV0.
+  // No surveyed material of either kind has AUVI; combined behavior is unverified.
+  if (out.kind != 6 && out.kind != 7) {
+    MapRef* mapRefs[] = {&out.maps[kBase], &out.maps[kMr], &out.maps[kNormal], &out.maps[kEmissive],
+                         &out.layer[kBase], &out.layer[kMr], &out.layer[kNormal]};
+    uint32_t coords[std::size(mapRefs)];
+    for (size_t i = 0; i < std::size(mapRefs); ++i) {
+      coords[i] = mapRefs[i]->coord;
+    }
+    ApplyAuvi(mat, coords, std::size(coords));
+    for (size_t i = 0; i < std::size(mapRefs); ++i) {
+      mapRefs[i]->coord = coords[i];
+    }
   }
   return out;
 }
@@ -2170,9 +2186,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         std::swap(p.I[t], p.I[t + 2]);
       }
     }
-    if (mats[mesh.material].twoSided) {
-      // The back: each vertex again with its normal turned round, each triangle
-      // wound the other way.
+    if (mesh.twoSided) {
+      // Seen from behind too: Remastered draws the mesh with culling off (its MESH
+      // chunk's one-bit map; every material flagged 0x400 plus holograms and glow
+      // planes), the game culls back faces, so the back is drawn as a copy: each
+      // vertex again with its normal turned round, each triangle wound the other way.
       std::unordered_map<uint32_t, uint32_t> back;
       for (uint32_t i : p.I) {
         if (back.count(i) != 0) {
