@@ -176,9 +176,9 @@ void TestConvert() {
   Retail root;
   root.f("GPSM");
   root.f("MAXP").f("CNST").w(20);
-  root.f("LTME").f("CNST").w(30);
+  root.f("LTME").f("CNST").w(29);  // LTM2 is one frame longer
   root.f("SIZE").f("MULT").f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(3.0f));
-  root.f("ROTA").f("MULT").f("CNST").w(Bits(5.0f)).f("CNST").w(Bits(-1.0f));
+  root.f("ROTA").f("CNST").w(Bits(-5.0f));
   root.f("ZBUF").f("CNST").b(1);
   root.f("COLR").f("KEYE").w(1).w(0).b(0).b(0).w(9).w(0).w(2);
   for (float c : {1.0f, 0.5f, 0.25f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f}) {
@@ -226,6 +226,42 @@ void TestSplitRejects() {
         "KSSM spawn table reads");
 }
 
+// An effect with no children has its root flag clear but is still the
+// effect's own PART; a colour's keys stored as halves come out as floats; a
+// spawn table counts as a retail property left out.
+void TestSingleNode() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "COLR", 3);
+  PutFourCC(out, "KEYE");
+  Put32(out, 1);
+  Put32(out, 0);
+  out.push_back(0);
+  out.push_back(0);
+  Put32(out, 9);
+  Put32(out, 0);
+  Put32(out, 1);
+  for (uint16_t half : {0x3c00, 0x3800, 0x0000, 0xbc00}) {  // 1, 0.5, 0, -1
+    out.push_back(uint8_t(half));
+    out.push_back(uint8_t(half >> 8));
+  }
+  PutProperty(out, "KSSM", 0);
+  PutFourCC(out, "NONE");
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "single-node effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Check(parts.size() == 1 && parts[0].root, "the only GPSM is the root");
+  Retail want;
+  want.f("GPSM").f("COLR").f("KEYE").w(1).w(0).b(0).b(0).w(9).w(0).w(1);
+  want.w(Bits(1.0f)).w(Bits(0.5f)).w(Bits(0.0f)).w(Bits(-1.0f)).f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "half colour keys widen to floats");
+  Check(parts.size() == 1 && parts[0].dropped.empty(), "an empty KSSM is nothing left out");
+}
+
 // Properties retail reads as something else than Remastered wrote are left out.
 void TestRejects() {
   std::vector<uint8_t> out(0x3c, 0);
@@ -255,6 +291,7 @@ int main() {
   TestRetailId();
   TestConvert();
   TestRejects();
+  TestSingleNode();
   TestSplitRejects();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);

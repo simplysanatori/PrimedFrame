@@ -144,6 +144,26 @@ uint32_t FloatBits(float value) {
   return bits;
 }
 
+float HalfToFloat(uint16_t half) {
+  const uint32_t sign = uint32_t(half >> 15) << 31;
+  const int exponent = (half >> 10) & 0x1f;
+  const uint32_t mantissa = half & 0x3ff;
+  uint32_t bits;
+  if (exponent == 0) {
+    // Zero or subnormal: value = mantissa * 2^-24.
+    float value = float(mantissa) * (1.0f / 16777216.0f);
+    std::memcpy(&bits, &value, 4);
+    bits |= sign;
+  } else if (exponent == 31) {
+    bits = sign | 0x7f800000u | mantissa << 13;
+  } else {
+    bits = sign | uint32_t(exponent - 15 + 127) << 23 | mantissa << 13;
+  }
+  float out;
+  std::memcpy(&out, &bits, 4);
+  return out;
+}
+
 bool IsElement(const EffectValue& value, uint32_t fourcc) {
   return value.kind == EffectValue::Kind::Element && value.fourcc == fourcc;
 }
@@ -185,7 +205,7 @@ public:
       return Literal(value, type, out, why);
     }
     if (sig == "k") {
-      return value.args.size() == 1 && Keyframes(value.args[0], out, why);
+      return value.args.size() == 1 && Keyframes(value.args[0], type, out, why);
     }
     if (value.args.size() != sig.size()) {
       why = EffectFourCCString(value.fourcc) + " with " + std::to_string(value.args.size()) + " arguments, retail reads " +
@@ -236,8 +256,10 @@ public:
   }
 
   // A keyframe block: percent, unknown, loop, unknown (u32 u32 u8 u8), loop
-  // end and start (u32 u32), a count and that many keys of 4-byte components.
-  bool Keyframes(const EffectValue& value, std::vector<uint8_t>& out, std::string& why) const {
+  // end and start (u32 u32), a count and that many keys of the type's size:
+  // 4 bytes for an int or real, 12 for a vector, 16 for a colour. Remastered
+  // may store a colour's key as four halves; those are widened.
+  bool Keyframes(const EffectValue& value, Type type, std::vector<uint8_t>& out, std::string& why) const {
     if (value.kind != EffectValue::Kind::Keys || value.size < 22) {
       why = "not a keyframe block";
       return false;
@@ -245,8 +267,11 @@ public:
     const uint8_t* p = m_data + value.offset;
     const uint32_t count = Le32(p + 18);
     const size_t keys = value.size - 22;
-    if (count == 0 ? keys != 0 : (keys % count != 0 || (keys / count) % 4 != 0 || keys / count > 16)) {
-      why = "a keyframe block retail does not have";
+    const size_t want = type == Type::Color ? 16 : type == Type::Vector ? 12 : 4;
+    const size_t keySize = count == 0 ? want : keys / count;
+    const bool halves = type == Type::Color && keySize == 8;
+    if ((count == 0 && keys != 0) || (count != 0 && keys % count != 0) || (keySize != want && !halves)) {
+      why = "keyframes of " + std::to_string(keySize) + " bytes where retail reads " + std::to_string(want);
       return false;
     }
     PutBe32(out, Le32(p));
@@ -256,6 +281,12 @@ public:
     PutBe32(out, Le32(p + 10));
     PutBe32(out, Le32(p + 14));
     PutBe32(out, count);
+    if (halves) {
+      for (size_t at = 22; at < value.size; at += 2) {
+        PutBe32(out, FloatBits(HalfToFloat(uint16_t(p[at] | p[at + 1] << 8))));
+      }
+      return true;
+    }
     for (size_t at = 22; at < value.size; at += 4) {
       PutBe32(out, Le32(p + at));
     }
@@ -373,8 +404,30 @@ public:
     }
     // ROTA: Remastered turns the other way. MULT(x, -1) is x in retail; anything
     // else is wrapped in MULT(..., CNST -1).
+    // LTM2 is one frame longer than retail's LTME.
+    if (fourcc == F("LTME")) {
+      const EffectValue& v = value[0];
+      if (IsElement(v, F("CNST")) && v.args.size() == 1 &&
+          (v.args[0].kind == EffectValue::Kind::Word || v.args[0].kind == EffectValue::Kind::Byte)) {
+        PutBe32(out, F("CNST"));
+        PutBe32(out, v.args[0].word == 0 ? 0 : v.args[0].word - 1);
+        return true;
+      }
+      PutBe32(out, F("SUB_"));
+      if (!Element(v, Type::Int, out, why)) {
+        return false;
+      }
+      PutBe32(out, F("CNST"));
+      PutBe32(out, 1);
+      return true;
+    }
     if (fourcc == F("ROTA")) {
       const EffectValue& v = value[0];
+      if (IsElement(v, F("CNST")) && v.args.size() == 1 && v.args[0].kind == EffectValue::Kind::Word) {
+        PutBe32(out, F("CNST"));
+        PutBe32(out, v.args[0].word ^ 0x80000000u);
+        return true;
+      }
       if (IsElement(v, F("MULT")) && v.args.size() == 2 && IsElement(v.args[1], F("CNST")) && v.args[1].args.size() == 1 &&
           v.args[1].args[0].kind == EffectValue::Kind::Word && v.args[1].args[0].word == FloatBits(-1.0f)) {
         return Element(v.args[0], Type::Real, out, why);
@@ -403,6 +456,18 @@ public:
       const uint32_t fourcc = property.fourcc == F("LTM2") ? F("LTME") : property.fourcc;
       if (fourcc == F("MTIN")) {
         material = &property;
+        continue;
+      }
+      // Retail reads KSSM, but Remastered's spawn table is laid out differently.
+      if (fourcc == F("KSSM")) {
+        // The reader keeps a spawn table as raw bytes: NONE is the FourCC alone.
+        const EffectValue& table = property.value.empty() ? EffectValue() : property.value[0];
+        const bool none = IsElement(table, F("NONE")) ||
+                          (table.kind == EffectValue::Kind::Raw && table.size == 4 && Le32(m_data + table.offset) == F("NONE"));
+        if (!none) {
+          result.dropped.push_back("KSSM: spawn table not converted yet");
+          ++result.droppedRetail;
+        }
         continue;
       }
       const auto found = retail.find(fourcc);
@@ -448,12 +513,15 @@ public:
     return result;
   }
 
-  void Collect(const EffectNode& node, std::vector<ConvertedPart>& out) const {
+  // The top node is the effect's own PART whatever its root flag says
+  // (Remastered sets it only on effects with embedded children).
+  void Collect(const EffectNode& node, bool top, std::vector<ConvertedPart>& out) const {
     if (node.form == F("GPSM")) {
       out.push_back(Generator(node));
+      out.back().root = top;
     }
     for (const EffectNode& child : node.children) {
-      Collect(child, out);
+      Collect(child, false, out);
     }
   }
 
@@ -661,7 +729,7 @@ std::optional<uint32_t> EffectRetailId(const EffectGuid& id) {
 
 std::vector<ConvertedPart> ConvertEffect(const EffectNode& effect, const uint8_t* data, const EffectConvertIO& io) {
   std::vector<ConvertedPart> out;
-  Writer(data, io).Collect(effect, out);
+  Writer(data, io).Collect(effect, true, out);
   return out;
 }
 

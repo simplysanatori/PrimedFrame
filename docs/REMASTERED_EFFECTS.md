@@ -80,7 +80,8 @@ PART on the disc:
   - 176 property values were byte-identical, 20 kept their shape but changed numbers.
   - TEXR/TIND: retail `CNST(CNST(id))` becomes `CNST(id), NONE`, with the
     same TXTR id.
-  - LTME becomes **LTM2** (same lifetime).
+  - LTME becomes **LTM2**, one frame longer: across the 47 exact pairs that
+    convert, LTM2 is always the disc's LTME + 1.
 - **Approximate**: same meaning, re-encoded.
   - EMTR: SETR becomes SEMR. VEL1-3, PMOP, PMRT and the emitter's vectors
     are wrapped in MPCB; stripping it gives retail's vector.
@@ -123,7 +124,7 @@ those are the grammar gaps to close next.
 PART. It is driven by retail's reader (`CParticleDataFactory`): each property
 retail knows is written as the type retail reads it as, and each element in it
 must be one retail has for that type, with retail's arguments. On the way it
-undoes the re-encodings above: LTM2 is written as LTME, LFOT/LTYP go back down
+undoes the re-encodings above: LTM2 is written as LTME less one, LFOT/LTYP go back down
 by one, MPCB is stripped (cartesian form only), ROTA is negated back (a
 `MULT(x, -1)` becomes `x`, anything else is wrapped in one), TEXR's
 `CNST(id), NONE` becomes `CNST CNST id`, an MTIN stands in for a missing TEXR
@@ -143,10 +144,25 @@ The swoosh, electric, weapon, collision and decal children are not converted
 yet, so SSWH/SELC on a converted effect only survive when their id is a retail
 one.
 
+Keyframe blocks keep retail's layout; a colour's keys may be four halves
+(8 bytes), which are widened to floats. KSSM is retail's too, but its spawn
+table is laid out differently and is not converted yet.
+
 `SplitRetailPart` reads a retail PART back the same way, property by property.
 The tests use it to check every converted PART is one retail's reader takes,
 and `effect_tool convert` uses it to compare converted effects with the disc's.
-Run on the disc's own PARTs it also checks the type tables against real files.
+Run on the disc's own PARTs it also checks the type tables against real files:
+all 3202 PARTs on the US disc split.
+
+First run on the shipped files (before the LTME, ROTA, KSSM and colour-key
+fixes): of 1306 effects, 100 converted with no retail property left out. Most
+of what is left out is Remastered-only. Of what retail reads, the emitter is
+the big loss (EMTR left out of 1520 generators), from elements retail does not
+have there: DFCP (1238 times), MPCB's angle form (485), ASPR (401), GRAD
+(378), ANCR (249) and MPRD (202), and CNST with one argument where retail
+reads a vector (378) or three where it reads a colour (292). Those are the
+next things to map. Some values differ from the disc on purpose: MAXP and
+SIZE were changed in a few effects.
 
 ## Tools
 

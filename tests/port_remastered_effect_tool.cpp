@@ -250,6 +250,16 @@ struct PropertyTally {
   size_t convertedOnly = 0;
 };
 
+// Error text can carry the raw bytes of a FourCC that is not one.
+std::string Printable(std::string text) {
+  for (char& c : text) {
+    if (c < 0x20 || c > 0x7e) {
+      c = '?';
+    }
+  }
+  return text;
+}
+
 std::vector<uint8_t> ReadFile(const std::filesystem::path& path) {
   std::ifstream file(path, std::ios::binary);
   return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
@@ -340,7 +350,7 @@ int Convert(const std::string& romfs, const std::string& retailDir, const std::s
       std::vector<RetailPartProperty> check;
       if (!SplitRetailPart(part.part.data(), part.part.size(), check, error)) {
         ++invalid;
-        log << root << " writes a PART retail does not read: " << error << "\n";
+        log << root << " writes a PART retail does not read: " << Printable(error) << "\n";
         continue;
       }
       const std::string file = part.root ? root : root + "-" + EffectGuidString(part.id);
@@ -349,7 +359,7 @@ int Convert(const std::string& romfs, const std::string& retailDir, const std::s
       ++written;
       allClean = allClean && part.droppedRetail == 0;
       for (const std::string& dropped : part.dropped) {
-        log << file << (names.count(id) ? " " + names[id] : "") << " dropped " << dropped << "\n";
+        log << file << (names.count(id) ? " " + names[id] : "") << " dropped " << Printable(dropped) << "\n";
         dropReasons[dropped.substr(0, 4)] += 1;
       }
     }
@@ -368,7 +378,10 @@ int Convert(const std::string& romfs, const std::string& retailDir, const std::s
       log << rootName << ".PART on the disc does not split: " << error << "\n";
       continue;
     }
-    SplitRetailPart(parts[0].part.data(), parts[0].part.size(), got, error);
+    // A converted root that does not read is counted above, not compared.
+    if (!SplitRetailPart(parts[0].part.data(), parts[0].part.size(), got, error)) {
+      continue;
+    }
     ++compared;
     bool same = want.size() == got.size();
     for (const RetailPartProperty& w : want) {

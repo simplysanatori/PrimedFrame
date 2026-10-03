@@ -9,13 +9,15 @@
 // be one retail has for that type, with retail's arguments. Remastered's
 // re-encodings are undone on the way (docs/REMASTERED_EFFECTS.md):
 //
-// - LTM2 is written as LTME; LFOT and LTYP enum bytes go back down by one.
+// - LTM2 is written as LTME, one frame shorter; LFOT and LTYP enum bytes go
+//   back down by one.
 // - MPCB around a vector is stripped (only its cartesian form).
 // - ROTA is negated back.
 // - TEXR's `CNST(id), NONE` becomes retail's `CNST(CNST id)`, and an MTIN
 //   material stands in for a missing TEXR through its texture.
 // - Ids become 32-bit retail ids through ConvertIO.
-// - Keyframe blocks and words are byte-swapped.
+// - Keyframe blocks and words are byte-swapped; a colour's half keys are
+//   widened to floats.
 //
 // A property that does not convert (a Remastered-only property, an element
 // retail does not have, an id with no retail id) is left out and listed in
@@ -24,7 +26,8 @@
 //
 // Embedded child generators (GPSM children) come out as PARTs of their own,
 // under the ids ConvertIO gives their child ids. The other embedded forms
-// (swoosh, electric, weapon, collision, decal) are not converted yet.
+// (swoosh, electric, weapon, collision, decal) and KSSM spawn tables are not
+// converted yet.
 
 #include "port_remastered_effect.h"
 
@@ -47,7 +50,7 @@ struct EffectConvertIO {
 
 struct ConvertedPart {
   EffectGuid id{};  // the child id it was embedded under; zero for the root
-  bool root = false;
+  bool root = false;  // the effect's own PART, not an embedded child
   std::vector<uint8_t> part;          // the retail PART file
   std::vector<std::string> dropped;   // "FOURCC: why", one per left-out property
   // Properties retail reads that were left out. Remastered-only ones are not
