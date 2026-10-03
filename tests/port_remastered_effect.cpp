@@ -1,0 +1,166 @@
+#include "port_remastered_effect.h"
+
+#include <cstdio>
+#include <cstring>
+#include <string>
+#include <vector>
+
+using namespace PortRemastered;
+
+namespace {
+int sFailures = 0;
+
+void Check(bool condition, const char* what) {
+  if (!condition) {
+    std::fprintf(stderr, "FAIL: %s\n", what);
+    ++sFailures;
+  }
+}
+
+void Put32(std::vector<uint8_t>& out, uint32_t value) {
+  for (int i = 0; i < 4; ++i) {
+    out.push_back(uint8_t(value >> (i * 8)));
+  }
+}
+
+void PutFloat(std::vector<uint8_t>& out, float value) {
+  uint32_t bits;
+  std::memcpy(&bits, &value, 4);
+  Put32(out, bits);
+}
+
+// FourCCs are stored byte-reversed: 'CNST' is written "TSNC".
+void PutFourCC(std::vector<uint8_t>& out, const char* text) {
+  for (int i = 3; i >= 0; --i) {
+    out.push_back(uint8_t(text[i]));
+  }
+}
+
+void PutProperty(std::vector<uint8_t>& out, const char* name, uint8_t tag) {
+  PutFourCC(out, name);
+  out.push_back(tag);
+}
+
+void PutGenerator(std::vector<uint8_t>& out, bool root) {
+  PutFourCC(out, "GPSM");
+  out.resize(out.size() + 17);
+  Put32(out, root ? 1 : 0);
+}
+
+EffectGuid Guid(uint8_t seed) {
+  EffectGuid guid;
+  for (size_t i = 0; i < guid.size(); ++i) {
+    guid[i] = uint8_t(seed + i);
+  }
+  return guid;
+}
+
+// A GENP whose root emits 20 particles of size 2 * 3 textured with
+// Guid(0x10), plus one embedded child generator listed under Guid(0x40).
+std::vector<uint8_t> Effect() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "DVVN", 1);
+  out.push_back(4);
+  PutProperty(out, "MAXP", 1);
+  PutFourCC(out, "CNST");
+  Put32(out, 20);
+  PutProperty(out, "SIZE", 3);
+  PutFourCC(out, "MULT");
+  PutFourCC(out, "CNST");
+  PutFloat(out, 2.0f);
+  PutFourCC(out, "CNST");
+  PutFloat(out, 3.0f);
+  PutProperty(out, "TEXR", 1);
+  PutFourCC(out, "CNST");
+  const EffectGuid texture = Guid(0x10);
+  out.insert(out.end(), texture.begin(), texture.end());
+  PutFourCC(out, "NONE");
+  PutProperty(out, "_END", 4);
+  Put32(out, 1);
+  const EffectGuid child = Guid(0x40);
+  out.insert(out.end(), child.begin(), child.end());
+  PutGenerator(out, false);
+  PutProperty(out, "MAXP", 1);
+  PutFourCC(out, "CNST");
+  Put32(out, 5);
+  PutProperty(out, "_END", 4);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  return out;
+}
+
+void TestParse() {
+  const std::vector<uint8_t> data = Effect();
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(data.data(), data.size(), effect, error), "effect parses");
+  Check(effect.root && effect.form == EffectFourCC("GPSM"), "root is a GPSM");
+  Check(effect.properties.size() == 4, "root has four properties");
+  if (effect.properties.size() == 4) {
+    const EffectProperty& dvvn = effect.properties[0];
+    Check(dvvn.fourcc == EffectFourCC("DVVN") && dvvn.tag == 1, "DVVN per emitter");
+    Check(dvvn.value.size() == 1 && dvvn.value[0].kind == EffectValue::Kind::Byte && dvvn.value[0].word == 4,
+          "DVVN is a byte");
+    const EffectProperty& maxp = effect.properties[1];
+    Check(maxp.value.size() == 1 && maxp.value[0].fourcc == EffectFourCC("CNST") &&
+              maxp.value[0].args.size() == 1 && maxp.value[0].args[0].word == 20,
+          "MAXP is CNST(20)");
+    const EffectProperty& size = effect.properties[2];
+    Check(size.tag == 3 && size.value.size() == 1 && size.value[0].fourcc == EffectFourCC("MULT") &&
+              size.value[0].args.size() == 2,
+          "SIZE is MULT of two elements");
+    const EffectProperty& texr = effect.properties[3];
+    Check(texr.value.size() == 2 && texr.value[0].args.size() == 1 &&
+              texr.value[0].args[0].kind == EffectValue::Kind::Guid && texr.value[0].args[0].guid == Guid(0x10) &&
+              texr.value[1].fourcc == EffectFourCC("NONE"),
+          "TEXR is CNST(guid), NONE");
+  }
+  Check(effect.children.size() == 1, "one child");
+  if (effect.children.size() == 1) {
+    const EffectNode& child = effect.children[0];
+    Check(child.id == Guid(0x40) && !child.root && child.form == EffectFourCC("GPSM"), "child id and form");
+    Check(child.properties.size() == 1 && child.properties[0].fourcc == EffectFourCC("MAXP"), "child MAXP");
+  }
+
+  const std::vector<EffectGuid> references = EffectReferences(effect);
+  // Embedded children are not references; the texture is.
+  Check(references.size() == 1 && references[0] == Guid(0x10), "texture is referenced");
+  Check(EffectGuidString(Guid(0x00)) == "03020100-0504-0706-0809-0a0b0c0d0e0f", "ids print as little-endian UUIDs");
+
+  const std::string dump = DumpEffect(effect, data.data());
+  Check(dump.find("MAXP 01 CNST(20)") != std::string::npos, "dump shows MAXP");
+  Check(dump.find("SIZE 03 MULT(CNST(2f), CNST(3f))") != std::string::npos, "dump shows SIZE");
+}
+
+void TestFailure() {
+  // Root header, DVVN (FourCC, tag, byte), MAXP (FourCC, tag, CNST, word).
+  constexpr size_t kSizeAt = 0x3c + 25 + 6 + 13;
+  std::vector<uint8_t> data = Effect();
+  // Break the MULT's second argument: no reading of SIZE parses any more.
+  const size_t at = kSizeAt + 5 + 4 + 8;
+  std::memcpy(data.data() + at, "????", 4);
+  EffectNode effect;
+  std::string error;
+  size_t failOffset = 0;
+  Check(!ParseEffect(data.data(), data.size(), effect, error, &failOffset), "broken effect fails");
+  Check(!error.empty(), "failure says why");
+  Check(failOffset == kSizeAt, "failure points at SIZE");
+
+  std::vector<uint8_t> notEffect = Effect();
+  std::memcpy(notEffect.data() + 0x14, "PART", 4);
+  Check(!ParseEffect(notEffect.data(), notEffect.size(), effect, error), "non-GENP rejected");
+}
+} // namespace
+
+int main() {
+  TestParse();
+  TestFailure();
+  if (sFailures != 0) {
+    std::fprintf(stderr, "%d failure(s)\n", sFailures);
+    return 1;
+  }
+  std::printf("port_remastered_effect: ok\n");
+  return 0;
+}
