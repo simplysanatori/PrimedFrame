@@ -19,6 +19,16 @@
 #include <sstream>
 #include <utility>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace PortAp {
 namespace Protocol {
 namespace {
@@ -95,14 +105,12 @@ bool WriteFileAtomically(const std::string& path, const std::string& contents) {
     return true;
 #ifdef _WIN32
   // The C rename operation replaces an existing destination on POSIX, but
-  // not on Windows. Retry there after removing the old file.
-  std::error_code filesystemError;
-  if (!std::filesystem::exists(target, filesystemError) || filesystemError)
-    return false;
-  std::filesystem::remove(target, filesystemError);
-  if (filesystemError)
-    return false;
-  return std::rename(temporary.c_str(), path.c_str()) == 0;
+  // not on Windows. MoveFileExW replaces it in one step, so there is never a
+  // moment without the old file or the new one (removing the old file first
+  // lost the state if the game died in between). The paths go through
+  // std::filesystem::path, as the narrow ones above are read by the CRT.
+  return MoveFileExW(std::filesystem::path(temporary).c_str(), target.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
   return false;
 #endif
