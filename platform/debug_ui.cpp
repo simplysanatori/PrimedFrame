@@ -3184,7 +3184,7 @@ void DrawRemasteredImport() {
   ImGui::Checkbox("Particle effects (experimental)##remastered", &sEffects);
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("Also replaces the disc's particle effects with Remastered's where the two match. Some "
-                      "effects may look wrong. Restart the game afterwards.");
+                      "effects may look wrong. Reload the mods afterwards, as for any import.");
   }
   PortRemastered::SetImportEffects(sEffects);
   ImGui::EndDisabled();

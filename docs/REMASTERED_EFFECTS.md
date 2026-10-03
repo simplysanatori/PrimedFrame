@@ -249,7 +249,8 @@ Its embedded children are written under new ids, and a texture it names that
 the disc does not have (its material instance's first TXTR, or a TXTR of
 Remastered's own) is written as an RGBA8 `<ID>.TXTR`, at most 256 on a side.
 Effects with no retail id (most world effects) are not used yet: nothing on
-the disc names them. The step is off by default.
+the disc names them. The step is off by default. Like the rest of the import, the files take effect
+at the next mods reload (`mods reload` or the debug menu), no restart needed.
 
 ## Tools
 
