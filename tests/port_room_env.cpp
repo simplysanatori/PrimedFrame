@@ -1,6 +1,7 @@
 #include "port_room_env.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -345,12 +346,103 @@ void TestPick() {
   Check(!none.Better(pick) && pick.Better(none), "pick: against none");
   Check(PortRoomEnv::PickProbe(PortRoomEnv::File(), inRoom).probe < 0, "pick: no probes");
 }
+
+// PickProbe as it was before the half extents were worked out at parse time: the same pick,
+// bit for bit, is what the stored extents must give.
+PortRoomEnv::Pick PickProbeReference(const PortRoomEnv::File& file, const float pos[3]) {
+  PortRoomEnv::Pick best;
+  for (size_t i = 0; i < file.probes.size(); ++i) {
+    const float* m = file.probes[i].worldToBox;
+    PortRoomEnv::Pick pick;
+    pick.probe = int(i);
+    pick.inside = true;
+    float volume = 8.f;
+    float distance2 = 0.f;
+    for (int row = 0; row < 3; ++row) {
+      const float* r = m + row * 4;
+      const float u = r[0] * pos[0] + r[1] * pos[1] + r[2] * pos[2] + r[3];
+      const float scale = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+      const float half = scale > 1e-12f ? 1.f / scale : 0.f;
+      volume *= half;
+      const float over = std::fabs(u) - 1.f;
+      if (!(over <= 0.f)) {
+        pick.inside = false;
+        distance2 += over * half * over * half;
+      }
+    }
+    pick.score = pick.inside ? volume : std::sqrt(distance2);
+    if (pick.Better(best)) {
+      best = pick;
+    }
+  }
+  return best;
+}
+
+void TestPickExact() {
+  // Turned, stretched and overlapping boxes (and one squashed to nothing along a row), each
+  // written out as a file and parsed, then picked from at points in and around them.
+  uint32_t seed = 12345;
+  const auto random = [&seed](float lo, float hi) {
+    seed = seed * 1664525u + 1013904223u;
+    return lo + (hi - lo) * float(seed >> 8) / float(1u << 24);
+  };
+  constexpr uint32_t kProbes = 24;
+  std::vector<uint8_t> data = {'M', 'P', 'E', 'V'};
+  Put32(data, 1);
+  for (int i = 0; i < 4; ++i) {
+    PutFloat(data, 0.5f);
+  }
+  Put32(data, kProbes);
+  Put32(data, 1);
+  for (uint32_t probe = 0; probe < kProbes; ++probe) {
+    const float angle = random(0.f, 6.2831853f);
+    const float c = std::cos(angle), s = std::sin(angle);
+    const float half[3] = {random(0.3f, 30.f), random(0.3f, 30.f), probe == 5 ? 0.f : random(0.3f, 30.f)};
+    const float centre[3] = {random(-50.f, 50.f), random(-50.f, 50.f), random(-20.f, 20.f)};
+    const float axes[3][3] = {{c, s, 0.f}, {-s, c, 0.f}, {0.f, 0.f, 1.f}};
+    for (int row = 0; row < 3; ++row) {
+      const float inverse = half[row] > 0.f ? 1.f / half[row] : 0.f;
+      float offset = 0.f;
+      for (int col = 0; col < 3; ++col) {
+        PutFloat(data, axes[row][col] * inverse);
+        offset -= axes[row][col] * inverse * centre[col];
+      }
+      PutFloat(data, offset);
+    }
+    for (int i = 0; i < 9; ++i) {
+      PutFloat(data, i % 4 == 0 ? 1.f : 0.f);
+    }
+    Put32(data, 0);
+    Put32(data, 0);
+    PutFloat(data, 1.f);
+    PutFloat(data, 0.05f);
+  }
+  PutCube(data, 4, 3, 0x11);
+  PortRoomEnv::File file;
+  std::string error;
+  Check(PortRoomEnv::Parse(std::move(data), file, error), "pick exact: parse");
+  int mismatches = 0;
+  int inside = 0;
+  for (int i = 0; i < 20000; ++i) {
+    const float pos[3] = {random(-90.f, 90.f), random(-90.f, 90.f), random(-40.f, 40.f)};
+    const PortRoomEnv::Pick a = PortRoomEnv::PickProbe(file, pos);
+    const PortRoomEnv::Pick b = PickProbeReference(file, pos);
+    if (a.probe != b.probe || a.inside != b.inside || std::memcmp(&a.score, &b.score, sizeof(a.score)) != 0) {
+      ++mismatches;
+    }
+    inside += a.inside ? 1 : 0;
+  }
+  Check(mismatches == 0, "pick exact: same picks as before");
+  Check(inside > 100 && inside < 19900, "pick exact: points both in and out of boxes");
+  Check(file.probes[5].half[2] == 0.f && file.probes[5].volume == 0.f, "pick exact: a flat box has no volume");
+}
 } // namespace
 
 int main() {
   TestNames();
   TestParse();
   TestPick();
+  TestPickExact();
   TestGrid();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);

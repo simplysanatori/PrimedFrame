@@ -60,6 +60,10 @@ struct Probe {
   uint32_t cube;
   float scale;
   float blend;
+  // Worked out from worldToBox when the file is parsed (SetExtents): the box's half extent
+  // along each row (0 for a row of length 0), and its volume, 8 times their product.
+  float half[3];
+  float volume;
 };
 
 struct Cube {
@@ -122,8 +126,11 @@ struct Pick {
     return probe >= 0 && (other.probe < 0 || (inside != other.inside ? inside : score < other.score));
   }
 };
-// The probe for a point: the smallest box that holds it, else the nearest one.
+// The probe for a point: the smallest box that holds it, else the nearest one. Reads the
+// probes' half extents and volumes, which Parse fills in.
 Pick PickProbe(const File& file, const float pos[3]);
+// Fills in a probe's half extents and volume from its worldToBox.
+void SetExtents(Probe& probe);
 
 // The baked ambient at a point, as Remastered's shaders evaluate it: per colour channel c
 // and for a surface normal n,

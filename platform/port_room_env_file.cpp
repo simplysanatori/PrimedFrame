@@ -141,6 +141,7 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
     probe.cube = Get32(p + 88);
     probe.scale = GetFloat(p + 92);
     probe.blend = GetFloat(p + 96);
+    SetExtents(probe);
     if (probe.cube >= cubes) {
       error = "a probe names a cube the file does not have";
       return false;
@@ -371,29 +372,38 @@ void Convergence::Step(float target) {
   value = float(next);
 }
 
+void SetExtents(Probe& probe) {
+  float volume = 8.f;
+  for (int row = 0; row < 3; ++row) {
+    const float* r = probe.worldToBox + row * 4;
+    // The row's length is 1 / half extent.
+    const float scale = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+    probe.half[row] = scale > 1e-12f ? 1.f / scale : 0.f;
+    volume *= probe.half[row];
+  }
+  probe.volume = volume;
+}
+
 Pick PickProbe(const File& file, const float pos[3]) {
   Pick best;
   for (size_t i = 0; i < file.probes.size(); ++i) {
-    const float* m = file.probes[i].worldToBox;
+    const Probe& probe = file.probes[i];
+    const float* m = probe.worldToBox;
     Pick pick;
     pick.probe = int(i);
     pick.inside = true;
-    float volume = 8.f;
     float distance2 = 0.f;
     for (int row = 0; row < 3; ++row) {
       const float* r = m + row * 4;
       const float u = r[0] * pos[0] + r[1] * pos[1] + r[2] * pos[2] + r[3];
-      // The row's length is 1 / half extent.
-      const float scale = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
-      const float half = scale > 1e-12f ? 1.f / scale : 0.f;
-      volume *= half;
+      const float half = probe.half[row];
       const float over = std::fabs(u) - 1.f;
       if (!(over <= 0.f)) {
         pick.inside = false;
         distance2 += over * half * over * half;
       }
     }
-    pick.score = pick.inside ? volume : std::sqrt(distance2);
+    pick.score = pick.inside ? probe.volume : std::sqrt(distance2);
     if (pick.Better(best)) {
       best = pick;
     }
