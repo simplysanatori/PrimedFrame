@@ -3886,38 +3886,55 @@ void DrawAudio() {
 }
 
 void DrawVoices() {
-  PortMusyxVoice voices[64];
-  const int count = MusyxPortCopyVoices(voices, 64);
-  if (count == 0) {
-    ImGui::TextUnformatted("No active MusyX voices.");
-    return;
-  }
-
   struct Agg {
     PortMusyxVoice voice;
     int instances;
   };
-  std::vector< Agg > aggs;
-  for (int i = 0; i < count; ++i) {
-    bool found = false;
-    for (Agg& agg : aggs) {
-      if (agg.voice.smpId == voices[i].smpId) {
-        ++agg.instances;
-        if (voices[i].rms > agg.voice.rms) {
-          agg.voice = voices[i];
+
+  // Held between frames so "Freeze list" can keep the last collection on screen.
+  // Ordered by id, not loudness: sorting by rms made rows swap places every
+  // frame as the levels moved, which made the checkboxes hard to hit and hid
+  // which sample a row belonged to.
+  static std::vector< Agg > aggs;
+  static bool freeze = false;
+
+  ImGui::Checkbox("Freeze list", &freeze);
+  ImGui::SameLine();
+  ImGui::TextUnformatted("(hold the current list so its rows stay put)");
+  ImGui::SetItemTooltip("Freezing keeps the samples and levels shown right now, so the rows\n"
+                        "stay readable while you look for one. Mute still applies: the\n"
+                        "checkbox reads and writes the live mute state, so you can silence\n"
+                        "a sample whether or not it is still playing. Untick to follow the\n"
+                        "live voices again. Not saved between runs.");
+
+  if (!freeze) {
+    aggs.clear();
+    PortMusyxVoice voices[64];
+    const int count = MusyxPortCopyVoices(voices, 64);
+    for (int i = 0; i < count; ++i) {
+      bool found = false;
+      for (Agg& agg : aggs) {
+        if (agg.voice.smpId == voices[i].smpId) {
+          ++agg.instances;
+          if (voices[i].rms > agg.voice.rms) {
+            agg.voice = voices[i];
+          }
+          found = true;
+          break;
         }
-        found = true;
-        break;
+      }
+      if (!found) {
+        aggs.push_back(Agg{voices[i], 1});
       }
     }
-    if (!found) {
-      aggs.push_back(Agg{voices[i], 1});
-    }
+    std::sort(aggs.begin(), aggs.end(),
+              [](const Agg& a, const Agg& b) { return a.voice.smpId < b.voice.smpId; });
   }
-  std::sort(aggs.begin(), aggs.end(),
-            [](const Agg& a, const Agg& b) { return a.voice.rms > b.voice.rms; });
 
-  ImGui::TextUnformatted("Active samples, loudest first. Mute one to isolate it.");
+  ImGui::TextUnformatted("Active samples, lowest id first. Mute one to isolate it.");
+  if (aggs.empty()) {
+    ImGui::TextUnformatted(freeze ? "No samples in the frozen list." : "No active MusyX voices.");
+  }
   for (const Agg& agg : aggs) {
     ImGui::PushID(static_cast< int >(agg.voice.smpId));
     bool muted = MusyxPortIsSampleMuted(agg.voice.smpId) != 0;
@@ -3931,6 +3948,8 @@ void DrawVoices() {
                 agg.voice.rms, agg.voice.volL, agg.voice.volR, agg.instances);
     ImGui::PopID();
   }
+  // Deliberately not behind the empty-list case above: with nothing playing
+  // there is still a mute set to clear.
   if (ImGui::Button("Unmute all")) {
     MusyxPortClearSampleMutes();
     MarkDirty();
