@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <set>
 #include <tuple>
 #include <cstdio>
 #include <cstdlib>
@@ -1540,8 +1539,11 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
 // the port keeps and lights nothing with.
 // Remastered's lit PBR shader (60989bc1, USE_TWO_SIDED_MATERIAL) takes s = LITS on a back
 // face and multiplies the normal frame by sign(s), the diffuse light by |s| and F0 by 0 where
-// s > 0. A back copy of a lit material with a positive LITS is therefore its own primitive
-// with the mesh's normals as they are, diffuse |s| and F0 0 (record 'PBR6'). Only the
+// s > 0, the frame being the mesh's own. A back copy of a lit material with a positive LITS
+// is therefore its own primitive and material, diffuse |s| and F0 0 (record 'PBR6'). Its
+// vertices keep the older back copy's turned normals, so the TEV fallback and every other
+// reader light it as before; the F0 factor 0 is the marker by which the PBR shader turns
+// the normal back (and keeps the front's tangent frame, see shader.cpp). Only the
 // ordinary lit material qualifies: unlit, ColorUnlit and the special shader kinds are other
 // shaders. LITS of -1 (the flipped normal of the older back copy, factors 1 and 1), no LITS
 // and the zero or other negatives the survey did not find keep the older copy.
@@ -2225,8 +2227,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       // chunk's one-bit map; every material flagged 0x400 plus holograms and glow
       // planes), the game culls back faces, so the back is drawn as a copy: each
       // vertex again with its normal turned round, each triangle wound the other way.
-      // A material with a positive LITS keeps the mesh's normals on its back copy and gets
-      // a primitive of its own (BackLightScale); the others turn the normal round.
+      // The back copy always has the normal turned round (what the TEV path lights by). A
+      // material with a positive LITS gets it as a primitive of its own (BackLightScale),
+      // whose record's F0 factor 0 tells the PBR shader to turn the normal back.
       const bool lits = BackLightScale(mats[mesh.material]);
       if (mats[mesh.material].hasLits && !lits && mats[mesh.material].lits != -1.0 &&
           mats[mesh.material].lits != 1.0) {
@@ -2241,7 +2244,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         back[i] = uint32_t(b.n++);
         for (int r = 0; r < 3; ++r) {
           b.P.push_back(b.P[size_t(i) * 3 + r]);
-          b.N.push_back(lits ? b.N[size_t(i) * 3 + r] : -b.N[size_t(i) * 3 + r]);
+          b.N.push_back(-b.N[size_t(i) * 3 + r]);
         }
         for (std::vector<double>& uv : b.uv) {
           if (!uv.empty()) {
@@ -2625,20 +2628,6 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       continue;
     }
     ++tev;
-    if (std::get<2>(key)) {
-      // The TEV lights by the normal alone, which this copy kept the mesh's: turn it round
-      // as the older back copy does. The copy's vertices belong to this primitive.
-      for (const Prim& p : prims) {
-        if (p.omat == int(&key - keys.data())) {
-          const std::set<uint32_t> once(p.I.begin(), p.I.end());
-          for (uint32_t i : once) {
-            for (int c = 0; c < 3; ++c) {
-              N[size_t(i) * 3 + c] = -N[size_t(i) * 3 + c];
-            }
-          }
-        }
-      }
-    }
     // The TEV path: the retail material with each texture slot refilled from
     // the Remastered map that matches what its stage does.
     const std::vector<SlotRole> roles = SlotRoles(pm);

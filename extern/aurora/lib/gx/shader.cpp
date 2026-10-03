@@ -953,7 +953,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   std::string base = sampled(0, ""), orm = sampled(1, "vec4f(1.0, 0.6, 0.0, 1.0)");
   std::string normalXy = mapStage[2] == -1 ? std::string() : fmt::format("sampled{}.rg", mapStage[2]);
   std::string layer = fmt::format(R"""(
-      let pbr_ng = normalize(in.pbr_nrm);
+      // The stored normal. A PBR6 back copy (F0 factor 0, LITS) is stored turned round like
+      // every back copy; Remastered keeps the surface's own normal there, and so does this.
+      let pbr_ngs = normalize(in.pbr_nrm);
+      let pbr_ng = select(pbr_ngs, -pbr_ngs, ubuf.pbr_light_scale.y == 0.0);
       let pbr_kind = ubuf.pbr_layer.y;
       let pbr_vraw = {};
       // 8 = Remastered's ColorUnlit: its vertex shader linearises the colour and doubles
@@ -969,14 +972,16 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   if (framed) {
     // Cotangent frame (Schüler): pbr_t and pbr_b are the directions U and V grow in. WebGPU's
     // framebuffer Y runs down, so the Y derivatives are negated to get GL's (view space Y up)
-    // orientation.
+    // orientation. The frame is built on the stored normal: seen from behind, the screen's
+    // handedness flips with the winding, so the turned-round normal of a back copy gives the
+    // front's own T and B (a LITS back, which shades with the turned-back normal, keeps them).
     layer += fmt::format(R"""(
       let pbr_dp1 = dpdx(in.pbr_pos);
       let pbr_dp2 = -dpdy(in.pbr_pos);
       let pbr_duv1 = dpdx(tex{0}_uv);
       let pbr_duv2 = -dpdy(tex{0}_uv);
-      let pbr_dp2perp = cross(pbr_dp2, pbr_ng);
-      let pbr_dp1perp = cross(pbr_ng, pbr_dp1);
+      let pbr_dp2perp = cross(pbr_dp2, pbr_ngs);
+      let pbr_dp1perp = cross(pbr_ngs, pbr_dp1);
       let pbr_t = pbr_dp2perp * pbr_duv1.x + pbr_dp1perp * pbr_duv2.x;
       let pbr_b = pbr_dp2perp * pbr_duv1.y + pbr_dp1perp * pbr_duv2.y;
       let pbr_tlen = max(dot(pbr_t, pbr_t), dot(pbr_b, pbr_b));)""",

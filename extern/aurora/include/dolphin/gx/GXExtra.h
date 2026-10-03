@@ -118,7 +118,8 @@ void GXSetPBRLightSkip(u32 mask);
 // Aurora extension: the following PBR draws multiply the diffuse colour (before the lights and
 // the ambient) and F0 (before the direct Fresnel and the environment BRDF) by these; nothing
 // else is scaled. 1, 1 is neutral, and it is what a caller sets for every material that has no
-// scale of its own.
+// scale of its own. An f0 of exactly 0 also marks a LITS back copy, whose stored normal is
+// turned round (like every back copy's): the shader turns it back before shading.
 void GXSetPBRLightScale(f32 diffuse, f32 f0);
 
 // Aurora extension: Remastered's bloom over what the EFB holds now (see lib/gfx/bloom.cpp).

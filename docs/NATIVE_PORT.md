@@ -514,9 +514,16 @@ skipped. Inside a mod:
   Remastered's LITS (LightBleedScale) for a two-sided mesh's back copy:
   `GXSetPBRLightScale` scales only the PBR diffuse and F0 (never emissive, backlight or
   specular) and resets to 1, 1 on every material. A material with a finite positive LITS
-  gets its back copy as a primitive and material of its own, with the mesh's normals kept,
-  diffuse |LITS| and F0 0 (LITS 1 included). No LITS and -1 keep the older copy (normals
-  turned round, factors 1); 0 and negatives other than -1 are unsurveyed and keep it too.
+  gets its back copy as a primitive and material of its own, diffuse |LITS| and F0 0
+  (LITS 1 included). **Geometry contract:** that copy's vertices keep the older back
+  copy's turned-round normals (so the TEV fallback, thermal and every other reader light
+  it as before), and an F0 factor of exactly 0 is the marker by which the PBR shader
+  turns the normal back to the surface's own, as Remastered keeps N for a positive LITS.
+  The cotangent frame is built on the stored normal: from behind the screen's handedness
+  flips with the winding, so that gives the front's own T and B (the back keeps them,
+  as Remastered does). The converter emits F0 0 only there; every other caller is 1.
+  No LITS and -1 keep the older copy (factors 1, 1); 0 and negatives other than -1 are
+  unsurveyed and keep it too.
   Older records read as factors 1 and 1 (`platform/include/port_pbr_record.h`).
   Two longer forms follow the same six floats: `PBR2` (36 bytes) adds a height-blend
   threshold and a mode (1 unlit: the material's own colour and glow; 2 the base

@@ -257,11 +257,11 @@ void TestConverter() {
       Check(r.materials == 1 && r.scales.empty() && r.turned > 0, "LITS 0 or another negative keeps the older copy");
     }
   }
-  {  // A positive LITS: a back primitive and material of its own, the mesh's normals kept,
-     // diffuse |LITS| and F0 zero.
+  {  // A positive LITS: a back primitive and material of its own, diffuse |LITS| and F0 zero;
+     // its vertices keep the older copy's turned normals (the shader turns them back).
     const Result r = Run(Material(0.4, true), true);
     Check(r.materials == 2, "LITS 0.4: the back copy is its own material");
-    Check(r.turned == 0 && r.towardFront > 0, "LITS 0.4: the back copy keeps the mesh's normals");
+    Check(r.turned > 0 && r.towardFront > 0, "LITS 0.4: the back copy has the turned normals, as legacy");
     Check(r.scales.size() == 1, "LITS 0.4: one PBR6 record, the back's");
     if (r.scales.size() == 1) {
       Check(std::fabs(r.scales[0].first - 0.4f) < 1e-6f && r.scales[0].second == 0.f,
@@ -270,7 +270,7 @@ void TestConverter() {
   }
   {  // 1 is a positive LITS too: diffuse 1, F0 0 on the back.
     const Result r = Run(Material(1.0, true), true);
-    Check(r.materials == 2 && r.scales.size() == 1, "LITS 1: a split with a PBR6 record");
+    Check(r.materials == 2 && r.scales.size() == 1 && r.turned > 0, "LITS 1: a split with a PBR6 record");
     if (!r.scales.empty()) {
       Check(r.scales[0].first == 1.f && r.scales[0].second == 0.f, "LITS 1: factors 1 and 0");
     }
@@ -281,11 +281,56 @@ void TestConverter() {
   }
 }
 
+// The shader's cotangent frame (Schueler), as written in shader.cpp: T and B of a pixel from
+// the screen derivatives of position and UV and the stored normal.
+struct V3 {
+  double x, y, z;
+};
+V3 operator*(V3 a, double s) { return {a.x * s, a.y * s, a.z * s}; }
+V3 operator+(V3 a, V3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+V3 operator-(V3 a) { return {-a.x, -a.y, -a.z}; }
+V3 Cross(V3 a, V3 b) { return {a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x}; }
+double Dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+void Frame(V3 dp1, V3 dp2, double uv1[2], double uv2[2], V3 ngs, V3& t, V3& b) {
+  const V3 dp2perp = Cross(dp2, ngs), dp1perp = Cross(ngs, dp1);
+  t = dp2perp * uv1[0] + dp1perp * uv2[0];
+  b = dp2perp * uv1[1] + dp1perp * uv2[1];
+}
+
+// A front pixel with the surface's normal, and the same surface point seen from behind: the
+// screen's handedness flips (one derivative negated), and a back copy stores the turned
+// normal. The back must get the front's T and B, for any UV orientation. Derived by hand,
+// and shown here with numbers: the shader's `ngs` is the stored normal, `ng` the restored.
+void TestFrame() {
+  const V3 pu = {1.0, 0.2, 0.0}, pv = {-0.1, 0.9, 0.3};
+  for (const double mirror : {1.0, -1.0}) {  // mirrored UVs: V grows against the surface's winding
+    const V3 pvm = pv * mirror;
+    const V3 n = Cross(pu, pv) * (1.0 / std::sqrt(Dot(Cross(pu, pv), Cross(pu, pv))));
+    // Screen derivatives as (du, dv) per pixel step, front viewer.
+    const double a1[2] = {0.7, 0.2}, a2[2] = {-0.3, 0.9};
+    const V3 dp1 = pu * a1[0] + pvm * a1[1], dp2 = pu * a2[0] + pvm * a2[1];
+    V3 tf, bf;
+    Frame(dp1, dp2, const_cast<double*>(a1), const_cast<double*>(a2), n, tf, bf);
+    // From behind: the same surface, the screen's second axis runs the other way round.
+    const double c2[2] = {-a2[0], -a2[1]};
+    const V3 dq2 = pu * c2[0] + pvm * c2[1];
+    V3 tb, bb, tr, br;
+    Frame(dp1, dq2, const_cast<double*>(a1), const_cast<double*>(c2), -n, tb, bb);  // stored: turned round
+    Frame(dp1, dq2, const_cast<double*>(a1), const_cast<double*>(c2), n, tr, br);   // the restored normal
+    auto same = [](V3 a, V3 c) { return std::fabs(a.x - c.x) + std::fabs(a.y - c.y) + std::fabs(a.z - c.z) < 1e-9; };
+    Check(same(tb, tf) && same(bb, bf), "a back copy's frame on the stored normal is the front's T and B");
+    Check(same(tr, -tf) && same(br, -bf), "the restored normal in the frame would mirror T and B (why it is not used)");
+    Check(Dot(tf, n) < 1e-9 && Dot(tb, n) < 1e-9, "T is in the surface's plane");
+  }
+}
+
 } // namespace
 
 int main() {
   TestReader();
   TestConverter();
+  TestFrame();
   if (sFailures == 0) {
     std::printf("port_remastered_lits_tests: ok\n");
   }

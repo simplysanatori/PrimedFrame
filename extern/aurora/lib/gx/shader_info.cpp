@@ -357,7 +357,7 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
   }
   if (config.pbr) {
     info.usesPbr = true;
-    info.uniformSize += sizeof(Mat3x4<float>) + sizeof(Vec4<float>) * 15;
+    info.uniformSize += sizeof(Mat3x4<float>) + sizeof(Vec4<float>) * 24; // 7 single + ambient 6 + volume 6 + tone 3 + light skip + light scale
   }
   if (info.usesPTTexMtx.any()) {
     info.uniformSize += sizeof(Mat3x4<float>) * MaxPTTexMtx;
