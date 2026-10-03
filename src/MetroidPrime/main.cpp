@@ -1107,7 +1107,17 @@ int CMain::RsMain(int argc, const char* const* argv) {
         nextFrameDeadline += framePeriodNs;
         const uint64_t now = SDL_GetTicksNS();
         if (nextFrameDeadline > now) {
-          SDL_DelayPrecise(nextFrameDeadline - now);
+          // SDL_DelayPrecise sleeps in 1 ms slices, about sixteen wake-ups a frame at
+          // 60 Hz. One plain sleep up to 2 ms short of the deadline first leaves it only
+          // the last stretch, which saves the wake-ups (and battery on phones).
+          const uint64_t kCoarseMarginNs = 2000000;
+          if (nextFrameDeadline - now > kCoarseMarginNs) {
+            SDL_DelayNS(nextFrameDeadline - now - kCoarseMarginNs);
+          }
+          const uint64_t afterCoarse = SDL_GetTicksNS();
+          if (nextFrameDeadline > afterCoarse) {
+            SDL_DelayPrecise(nextFrameDeadline - afterCoarse);
+          }
         } else if (now - nextFrameDeadline > framePeriodNs) {
           nextFrameDeadline = now;
         }
