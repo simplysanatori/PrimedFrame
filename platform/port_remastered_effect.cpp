@@ -60,7 +60,7 @@ constexpr ElementSig kElementSigs[] = {
     {"CONE", "ee"},    {"CRCV", "eeeeeeb"},    {"CRLN", "bb eeeeeeebe eeeeeebe"},
     {"CRNG", "eeeee"}, {"CTVC", "e"},          {"DETH", "ee"},      {"DOTP", "ee"},
     {"DPVC", "ge"},    {"DPVF", "ge"},         {"DPVI", "ge"},      {"DPVV", "ge"},
-    {"EMPL", "eeeeb"}, {"EXPL", "ee"},         {"EXTR", "ee -"},       {"EXTT", "e"},
+    {"EMPL", "eeeeb"}, {"EXPL", "ee"},         {"EXTR", "-"},         {"EXTT", "-"},
     {"FADE", "eee"},   {"FIAT", "eeee eeeee"}, {"GAPC", "-"},       {"GEMT", "-"},
     {"GRAV", "e"},     {"GTCA", "e"},          {"GTCB", "e"},       {"GTCG", "e"},
     {"GTCP", "-"},     {"GTCR", "e"},          {"ILPT", "e"},       {"IMPL", "e eeeee eeeeb"},
@@ -76,7 +76,7 @@ constexpr ElementSig kElementSigs[] = {
     {"PVEL", "-"},     {"RADD", "ee"},         {"RAND", "ee"},      {"REUL", "eeeb"},
     {"RLPT", "e"},     {"RTOI", "ee"},         {"RTOV", "e"},       {"SCAL", "e"},
     {"SEMR", "ee"},    {"SETR", "e"},          {"SEVT", "eeee"},    {"SINE", "eee"},
-    {"SMOV", "ee e"},     {"SPAC", "be"},         {"SPAF", "be"},      {"SPAH", "eee"},
+    {"SMOV", "eeeee e"},     {"SPAC", "be"},         {"SPAF", "be"},      {"SPAH", "eee"},
     {"SPAI", "be"},    {"SPAV", "be"},         {"SPHE", "eee"},     {"SPOS", "e"},
     {"SUB_", "ee"},    {"SWRL", "eeee"},       {"TPVC", "ge"},      {"TPVF", "ge"},
     {"TPVI", "ge"},    {"TRSS", "eeeeee"},     {"TSCL", "e"},       {"VARC", "g"},
@@ -87,6 +87,9 @@ constexpr ElementSig kElementSigs[] = {
     // angles and a magnitude; MPRD is 2 or 4 elements; DFCP and DFCS 1 to 3.
     {"MPCB", "e ee"},  {"MPAC", "eeee"},       {"MPRD", "ee eeee"}, {"DFCP", "ee eee e"},
     {"DFCS", "ee eee e"},
+    // EXTT, EXTR and EXTS are leaves; SMOV is (translation, offset, rotation, and
+    // two more, NONE in most files); TRST is five reals and a raw word.
+    {"TRST", "eeeeew"}, {"EXTS", "-"},
 };
 
 // Elements by the type of value they are read as, with typed arguments: I an
@@ -127,7 +130,7 @@ constexpr ElementSig kModVectorSigs[] = {
     {"SWRL", "VVRR"},  {"BNCE", "VVRRe VVRRb"}, {"SPOS", "V"},
 };
 constexpr ElementSig kColorSigs[] = {
-    {"CNST", "RRRR RRR"}, {"KEYE", "k"},   {"KEYP", "k"},  {"FADE", "CCR"}, {"CFDE", "CCRR"}, {"CHAN", "CCI"},
+    {"CNST", "RRRR"},     {"KEYE", "k"},   {"KEYP", "k"},  {"FADE", "CCR"}, {"CFDE", "CCRR"}, {"CHAN", "CCI"},
     {"PULS", "IICC"},     {"PCOL", "-"},   {"NONE", "-"},  {"TPVC", "gC"},  {"DPVC", "gC"},   {"SPAC", "bC"},
     {"MDAO", "CR"},       {"SLCT", "Re"},
 };
@@ -166,7 +169,7 @@ constexpr PropertyType kPropertyTypes[] = {
 // Elements seen in the files whose arity is not pinned down; they parse with
 // whatever arity fits, like any unknown FourCC, but they are never properties.
 constexpr const char* kLooseElements =
-    "ARRY CMPS CODE EMRV EXTS GPUA GRAD KEWS MDAO PAFM PLNE PSA0 PSA1 PSA2 PSA3 RNDV ROTV SLCT";
+    "ARRY CMPS CODE EMRV GPUA GRAD KEWS MDAO PAFM PLNE PSA0 PSA1 PSA2 PSA3 RNDV ROTV SLCT";
 
 // Properties: retail's PART properties and the ones Remastered added. A FourCC
 // that is in neither list may still be a property (the grammar lets unknown

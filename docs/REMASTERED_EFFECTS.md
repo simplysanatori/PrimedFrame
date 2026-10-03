@@ -76,7 +76,7 @@ parsed. Remastered's flags are a `CNST` and a byte (IMPL/LMPL/EMPL/BNCE's
 last argument, ELPS, ATEX). Emitter shapes pinned from the shipped bytes:
 `PLNE(v, v, v, r, r, r)`, `ELPS(v, v, v, r, flag)`,
 `PLNV(v, v, r x8, byte)`; colour `MDAO(c, r)` and `SLCT(r, ARRY)`;
-`SMOV(EXTT(v), EXTR(NONE, NONE))`. A 16-byte id holding an element FourCC
+`SMOV(EXTT, v, EXTR, NONE, NONE)` with EXTT/EXTR/EXTS as leaves, `TRST(r x5, word)`. A 16-byte id holding an element FourCC
 is not read as an id.
 Unknown elements try their larger arities first when building the tree.
 

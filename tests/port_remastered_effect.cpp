@@ -224,6 +224,14 @@ void TestTypedNesting() {
   }
   PutFourCC(out, "RLPT");
   PutConstant(out, 100.0f);
+  // SMOV's external transform reads are leaves.
+  PutProperty(out, "SMVR", 1);
+  PutFourCC(out, "SMOV");
+  PutFourCC(out, "EXTT");
+  PutVector(out, 0.0f, 0.0f, 0.0f);
+  PutFourCC(out, "EXTR");
+  PutFourCC(out, "NONE");
+  PutFourCC(out, "NONE");
   PutProperty(out, "_END", 4);
   EffectNode effect;
   std::string error;
@@ -238,7 +246,8 @@ void TestTypedNesting() {
       "  EMTR 03 SEMR(CNST(CNST(0), CNST(0), CNST(0)), RNDV(CNST(0.1f)))\n"
       "  LCLR 03 FADE(FADE(CNST(CNST(1f), CNST(1f), CNST(0), CNST(0.2f)), CNST(CNST(1f), CNST(0), CNST(0), CNST(0)), "
       "RLPT(CNST(100f))), FADE(CNST(CNST(1f), CNST(1f), CNST(0), CNST(0.2f)), CNST(CNST(1f), CNST(0), CNST(0), "
-      "CNST(0)), RLPT(CNST(100f))), RLPT(CNST(100f)))\n";
+      "CNST(0)), RLPT(CNST(100f))), RLPT(CNST(100f)))\n"
+      "  SMVR 01 SMOV(EXTT, CNST(CNST(0), CNST(0), CNST(0)), EXTR, NONE, NONE)\n";
   Check(dump == want, "nested values read as their types");
   if (dump != want) {
     std::fprintf(stderr, "%s", dump.c_str());
