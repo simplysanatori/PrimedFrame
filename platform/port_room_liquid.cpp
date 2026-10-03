@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -76,6 +77,28 @@ int HexDigit(char c) {
   return -1;
 }
 
+// The whole file, in one read when its size is known. The stream is left as a read
+// through istreambuf_iterator leaves it: failed only when the file did not open.
+std::vector< uint8_t > ReadAll(std::ifstream& in) {
+  std::vector< uint8_t > data;
+  if (!in) {
+    return data;
+  }
+  in.seekg(0, std::ios::end);
+  const std::streamoff size = in.tellg();
+  in.seekg(0, std::ios::beg);
+  if (in && size > 0) {
+    data.resize(size_t(size));
+    in.read(reinterpret_cast< char* >(data.data()), std::streamsize(size));
+    data.resize(size_t(in.gcount()));
+  } else {
+    in.clear();
+    data.assign(std::istreambuf_iterator< char >(in), std::istreambuf_iterator< char >());
+  }
+  in.clear();
+  return data;
+}
+
 uint32_t ReadU32(const uint8_t* p) {
   return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
 }
@@ -87,8 +110,7 @@ void Load(uint32_t mrea, Area& area) {
     return;
   }
   std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
-  const std::vector< uint8_t > data((std::istreambuf_iterator< char >(in)),
-                                    std::istreambuf_iterator< char >());
+  const std::vector< uint8_t > data = ReadAll(in);
   std::vector< Surface > surfaces;
   std::string error;
   if (!in || !Parse(data, surfaces, error)) {
