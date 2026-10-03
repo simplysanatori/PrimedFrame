@@ -185,13 +185,68 @@ public:
       why = "a bare value where retail reads an element";
       return false;
     }
-    // MPCB wraps Remastered's vectors; its cartesian form is the vector itself.
-    if (value.fourcc == F("MPCB") && (type == Type::Vector || type == Type::ModVector)) {
+    // MPCB wraps Remastered's vectors; its cartesian form is the vector itself,
+    // and MPCB(MPAC(x bias, y bias, x range, y range), magnitude) is retail's
+    // ANGC with the same five arguments (checked against the disc's pairs).
+    if (value.fourcc == F("MPCB") && type == Type::Vector) {
+      if (value.args.size() == 1) {
+        return Element(value.args[0], type, out, why);
+      }
+      if (value.args.size() == 2 && IsElement(value.args[0], F("MPAC")) && value.args[0].args.size() == 4) {
+        PutBe32(out, F("ANGC"));
+        for (const EffectValue& arg : value.args[0].args) {
+          if (!Element(arg, Type::Real, out, why)) {
+            return false;
+          }
+        }
+        return Element(value.args[1], Type::Real, out, why);
+      }
+      why = "MPCB in a form retail has no element for";
+      return false;
+    }
+    if (value.fourcc == F("MPCB") && type == Type::ModVector) {
       if (value.args.size() != 1) {
-        why = "MPCB in its angle form";
+        why = "MPCB in its angle form where retail reads a mod vector";
         return false;
       }
       return Element(value.args[0], type, out, why);
+    }
+    // ANCR(REUL(0, 0, 0, #00), x range, y range, magnitude) is retail's ANGC
+    // with no bias (the disc writes the biases as -0). A rotated cone is not
+    // converted: what REUL's angles do to the cone is not pinned down yet.
+    if (value.fourcc == F("ANCR") && type == Type::Vector && value.args.size() == 4 &&
+        IsElement(value.args[0], F("REUL")) && value.args[0].args.size() == 4) {
+      for (size_t i = 0; i < 3; ++i) {
+        const EffectValue& angle = value.args[0].args[i];
+        if (!IsElement(angle, F("CNST")) || angle.args.size() != 1 || (angle.args[0].word & 0x7fffffffu) != 0) {
+          why = "ANCR with a rotated cone";
+          return false;
+        }
+      }
+      PutBe32(out, F("ANGC"));
+      PutBe32(out, F("CNST"));
+      PutBe32(out, 0x80000000u);
+      PutBe32(out, F("CNST"));
+      PutBe32(out, 0x80000000u);
+      for (size_t i = 1; i < 4; ++i) {
+        if (!Element(value.args[i], Type::Real, out, why)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    // MPRD(a, b): a random int between two, as RAND.
+    if (value.fourcc == F("MPRD") && value.args.size() == 2 && (type == Type::Int || type == Type::Real)) {
+      PutBe32(out, F("RAND"));
+      return Element(value.args[0], type, out, why) && Element(value.args[1], type, out, why);
+    }
+    // DFCP and DFCS scale a real by something retail cannot compute (they look
+    // like fades with the camera's distance); they are taken as 1.
+    if ((value.fourcc == F("DFCP") || value.fourcc == F("DFCS")) && type == Type::Real) {
+      m_approximated.push_back(EffectFourCCString(value.fourcc) + " taken as 1");
+      PutBe32(out, F("CNST"));
+      PutBe32(out, FloatBits(1.0f));
+      return true;
     }
     const Signatures& elements = ElementsOf(type);
     const auto found = elements.find(value.fourcc);
@@ -404,13 +459,27 @@ public:
     }
     // ROTA: Remastered turns the other way. MULT(x, -1) is x in retail; anything
     // else is wrapped in MULT(..., CNST -1).
-    // LTM2 is one frame longer than retail's LTME.
+    // LTM2 is one frame longer than retail's LTME: constants, and the bounds
+    // of a random lifetime, come down by one.
     if (fourcc == F("LTME")) {
       const EffectValue& v = value[0];
-      if (IsElement(v, F("CNST")) && v.args.size() == 1 &&
-          (v.args[0].kind == EffectValue::Kind::Word || v.args[0].kind == EffectValue::Kind::Byte)) {
+      auto constant = [](const EffectValue& c) {
+        return IsElement(c, F("CNST")) && c.args.size() == 1 &&
+               (c.args[0].kind == EffectValue::Kind::Word || c.args[0].kind == EffectValue::Kind::Byte);
+      };
+      auto putLess = [&out](const EffectValue& c) {
         PutBe32(out, F("CNST"));
-        PutBe32(out, v.args[0].word == 0 ? 0 : v.args[0].word - 1);
+        PutBe32(out, c.args[0].word == 0 ? 0 : c.args[0].word - 1);
+      };
+      if (constant(v)) {
+        putLess(v);
+        return true;
+      }
+      if ((IsElement(v, F("IRND")) || IsElement(v, F("RAND")) || IsElement(v, F("MPRD"))) && v.args.size() == 2 &&
+          constant(v.args[0]) && constant(v.args[1])) {
+        PutBe32(out, v.fourcc == F("MPRD") ? F("RAND") : v.fourcc);
+        putLess(v.args[0]);
+        putLess(v.args[1]);
         return true;
       }
       PutBe32(out, F("SUB_"));
@@ -510,6 +579,8 @@ public:
       result.dropped.push_back("MTIN: the effect has a TEXR");
     }
     PutBe32(out, F("_END"));
+    result.approximated = std::move(m_approximated);
+    m_approximated.clear();
     return result;
   }
 
@@ -528,6 +599,7 @@ public:
 private:
   const uint8_t* m_data;
   const EffectConvertIO& m_io;
+  mutable std::vector<std::string> m_approximated;  // for the generator being written
 };
 
 

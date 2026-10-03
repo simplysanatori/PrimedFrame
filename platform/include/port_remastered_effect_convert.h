@@ -11,11 +11,14 @@
 //
 // - LTM2 is written as LTME, one frame shorter; LFOT and LTYP enum bytes go
 //   back down by one.
-// - MPCB around a vector is stripped (only its cartesian form).
+// - MPCB around a vector is stripped; its angle form (MPAC) and ANCR with an
+//   unrotated cone become retail's ANGC. MPRD becomes RAND.
 // - ROTA is negated back.
 // - TEXR's `CNST(id), NONE` becomes retail's `CNST(CNST id)`, and an MTIN
 //   material stands in for a missing TEXR through its texture.
 // - Ids become 32-bit retail ids through ConvertIO.
+// - DFCP/DFCS (scales retail cannot compute) are taken as 1 and listed in
+//   `approximated`.
 // - Keyframe blocks and words are byte-swapped; a colour's half keys are
 //   widened to floats.
 //
@@ -56,6 +59,8 @@ struct ConvertedPart {
   // Properties retail reads that were left out. Remastered-only ones are not
   // counted: retail never had them.
   int droppedRetail = 0;
+  // Values written as an approximation of something retail cannot do.
+  std::vector<std::string> approximated;
 };
 
 // The retail id an id carried over from retail holds: Remastered writes those

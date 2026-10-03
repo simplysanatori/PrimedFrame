@@ -164,6 +164,30 @@ reads a vector (378) or three where it reads a colour (292). Those are the
 next things to map. Some values differ from the disc on purpose: MAXP and
 SIZE were changed in a few effects.
 
+From the second run's samples:
+
+- The "CNST with one argument" and "three arguments in a colour" cases were
+  the reader taking two nested constants (`CNST(CNST(0), ...)`) as a 16-byte
+  id, the shorter reading. An id no longer starts with an element's FourCC.
+- `MPCB(MPAC(xb, yb, xr, yr), m)` is retail's `ANGC(xb, yb, xr, yr, m)`
+  (the disc writes the same values under `IVEC(ANGC(...))`). MPCB takes one
+  or two elements, never none: with none allowed it read as a bare MPCB
+  followed by a four-element CNST.
+- `ANCR(REUL(0, 0, 0, #00), xr, yr, m)` is `ANGC(-0, -0, xr, yr, m)` on the
+  disc. ANCR with a rotated cone is not converted yet, nor is ASPR.
+- MPRD (2 or 4 elements) is a random int; its two-element form is RAND. In
+  LTM2, the bounds of RAND/IRND/MPRD come down by one each, as the disc's
+  IRND shows.
+- DFCP (2 or 3 elements) and DFCS (3) scale a size, colour or speed by
+  something retail has no element for; they are written as 1 and listed as
+  approximated.
+- Colour keyframes are four halves per key in Remastered (8 bytes; scalars
+  stay 4-byte floats). Widened, 7 of the 17 compared COLR curves match the
+  disc to half precision; the other 10 were retuned. The disc also sets the
+  header's second flag byte where Remastered leaves it 0 in 8 of them;
+  retail does not use it.
+- GRAD (colour gradients, children only) is not converted yet.
+
 ## Tools
 
 `tests/port_remastered_effect_tool.cpp` is a dev tool, not built by CMake:

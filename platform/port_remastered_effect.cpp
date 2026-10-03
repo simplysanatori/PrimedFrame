@@ -82,12 +82,16 @@ constexpr ElementSig kElementSigs[] = {
     {"VARF", "g"},     {"VARI", "g"},          {"VARV", "g"},       {"VECF", "g"},
     {"VMAG", "e"},     {"VXTR", "e"},          {"VYTR", "e"},       {"VZTR", "e"},
     {"WIND", "ee"},
+    // Pinned down against the shipped files: MPCB wraps a vector, or MPAC
+    // angles and a magnitude; MPRD is 2 or 4 elements; DFCP 2 or 3, DFCS 3.
+    {"MPCB", "e ee"},  {"MPAC", "eeee"},       {"MPRD", "ee eeee"}, {"DFCP", "ee eee"},
+    {"DFCS", "eee"},
 };
 
 // Elements seen in the files whose arity is not pinned down; they parse with
 // whatever arity fits, like any unknown FourCC, but they are never properties.
 constexpr const char* kLooseElements =
-    "ARRY CMPS CODE DFCP EMRV EXTS GPUA GRAD KEWS MDAO MPCB MPRD PAFM PLNE PSA0 PSA1 PSA2 PSA3 RNDV ROTV SLCT";
+    "ARRY CMPS CODE EMRV EXTS GPUA GRAD KEWS MDAO PAFM PLNE PSA0 PSA1 PSA2 PSA3 RNDV ROTV SLCT";
 
 // Properties: retail's PART properties and the ones Remastered added. A FourCC
 // that is in neither list may still be a property (the grammar lets unknown
@@ -223,6 +227,11 @@ public:
     return Le32(m_data + at);
   }
 
+  bool StartsWithElement(size_t at) const {
+    const uint32_t fourcc = FourCCAt(at);
+    return fourcc != 0 && m_grammar.elementNames.count(fourcc) != 0;
+  }
+
   std::optional<uint32_t> U32(size_t at) const {
     if (at + 4 > m_size) {
       return std::nullopt;
@@ -291,7 +300,9 @@ public:
           }
           break;
         case 'g':
-          if (pos + 16 <= m_size) {
+          // An id that starts with an element's FourCC is two nested elements
+          // (CNST(CNST(0), ...)) read as an id: the shorter reading would win.
+          if (pos + 16 <= m_size && !StartsWithElement(pos)) {
             AddEnd(next, pos + 16);
           }
           break;

@@ -262,6 +262,73 @@ void TestSingleNode() {
   Check(parts.size() == 1 && parts[0].dropped.empty(), "an empty KSSM is nothing left out");
 }
 
+// Remastered's new elements that have a retail equivalent: MPCB's angle form
+// and an unrotated ANCR become ANGC, MPRD becomes RAND (and a random LTM2
+// comes down by one at both ends), DFCP is taken as 1; a vector of nested
+// constants is not read as an id.
+void TestMappedElements() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "EMTR", 3);
+  PutFourCC(out, "SEMR");
+  PutFourCC(out, "MPCB");
+  PutFourCC(out, "CNST");
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  PutFourCC(out, "MPCB");
+  PutFourCC(out, "MPAC");
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  PutConstant(out, Bits(720.0f));
+  PutConstant(out, Bits(720.0f));
+  PutConstant(out, Bits(0.1f));
+  PutProperty(out, "LTM2", 3);
+  PutFourCC(out, "MPRD");
+  PutConstant(out, 17);
+  PutConstant(out, 33);
+  PutProperty(out, "SIZE", 3);
+  PutFourCC(out, "MULT");
+  PutConstant(out, Bits(2.0f));
+  PutFourCC(out, "DFCP");
+  PutConstant(out, Bits(2.0f));
+  PutConstant(out, 0);
+  PutProperty(out, "POFS", 0);
+  PutFourCC(out, "ANCR");
+  PutFourCC(out, "REUL");
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  out.push_back(0);
+  PutConstant(out, Bits(360.0f));
+  PutConstant(out, Bits(360.0f));
+  PutConstant(out, Bits(0.5f));
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "mapped-element effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Retail want;
+  want.f("GPSM");
+  want.f("EMTR").f("SEMR").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
+  want.f("ANGC").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(0.1f));
+  want.f("LTME").f("RAND").f("CNST").w(16).f("CNST").w(32);
+  want.f("SIZE").f("MULT").f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(1.0f));
+  want.f("POFS").f("ANGC").f("CNST").w(0x80000000u).f("CNST").w(0x80000000u);
+  want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(0.5f));
+  want.f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "new elements map onto retail's");
+  if (parts.size() == 1 && parts[0].part != want.bytes) {
+    std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
+    for (const std::string& d : parts[0].dropped) {
+      std::fprintf(stderr, "  dropped %s\n", d.c_str());
+    }
+  }
+  Check(parts.size() == 1 && parts[0].approximated.size() == 1, "DFCP is listed as approximated");
+}
+
 // Properties retail reads as something else than Remastered wrote are left out.
 void TestRejects() {
   std::vector<uint8_t> out(0x3c, 0);
@@ -292,6 +359,7 @@ int main() {
   TestConvert();
   TestRejects();
   TestSingleNode();
+  TestMappedElements();
   TestSplitRejects();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
