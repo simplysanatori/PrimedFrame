@@ -11,9 +11,11 @@
 #include <SDL3/SDL_timer.h>
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace {
 // One folder of replacements: the built-in set, or the user's pack over it.
@@ -135,6 +137,78 @@ void Load(Layer& layer, bool force) {
                  layer.group.registrations.size(), layer.label, dir->string().c_str(), sDevice.c_str());
 }
 
+// A pack of thousands of files takes seconds to delete on a phone's storage,
+// so a folder that is done with is renamed out of the way on the main thread
+// and deleted on a thread of its own. One the game quit before deleting is
+// found by DeleteStaleUserPacks at the next start.
+const char* const kAsideTag = ".old-";
+
+// A name beside the pack no earlier run can have used: the clock, and a count
+// for two in the same tick.
+std::filesystem::path AsideName() {
+  static unsigned sCount = 0;
+  const auto now = std::chrono::system_clock::now().time_since_epoch();
+  return std::filesystem::path(sUser.root + kAsideTag +
+                               std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(now).count()) +
+                               std::to_string(sCount++));
+}
+
+void DeleteInBackground(std::filesystem::path dir) {
+  try {
+    std::thread([dir = std::move(dir)] {
+      try {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+      } catch (...) {
+      }
+    }).detach();
+  } catch (...) {
+    // No thread: the folder stays until the next start clears it.
+  }
+}
+
+// Moves `dir` aside and deletes it in the background. False when it could not
+// be moved, with `ec` saying why.
+bool DiscardFolder(const std::filesystem::path& dir, std::error_code& ec) {
+  const std::filesystem::path aside = AsideName();
+  std::filesystem::rename(dir, aside, ec);
+  if (ec) {
+    return false;
+  }
+  DeleteInBackground(aside);
+  return true;
+}
+
+// The folders earlier runs moved aside and did not finish deleting: "<pack>.old"
+// from before they had names of their own, and "<pack>.old-<digits>".
+void DeleteStaleUserPacks() try {
+  if (sUser.root.empty()) {
+    return;
+  }
+  const std::filesystem::path root(sUser.root);
+  const std::string name = root.filename().string();
+  if (name.empty()) {
+    return;
+  }
+  const std::string tagged = name + kAsideTag;
+  std::error_code ec;
+  std::filesystem::directory_iterator it(root.parent_path().empty() ? std::filesystem::path(".") : root.parent_path(),
+                                         ec);
+  for (; !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+    const std::string entry = it->path().filename().string();
+    bool stale = entry == name + ".old";
+    if (!stale && entry.size() > tagged.size() && entry.compare(0, tagged.size(), tagged) == 0) {
+      stale = entry.find_first_not_of("0123456789", tagged.size()) == std::string::npos;
+    }
+    std::error_code dirError;
+    if (stale && it->is_directory(dirError)) {
+      DeleteInBackground(it->path());
+    }
+  }
+} catch (...) {
+  // A name the narrow string cannot hold, say: the folders wait for another start.
+}
+
 // A new pack is copied beside the live one and swapped in here, on the main
 // thread, so the folder never changes under registrations that still point
 // into it. A copy finished after the game last ran is picked up at startup.
@@ -153,8 +227,7 @@ void ApplyPendingUserPack() {
   Unload(sUser);
   // The old pack is moved aside rather than deleted first, so a failed install
   // leaves the user with the pack they had instead of none.
-  const std::filesystem::path old(sUser.root + ".old");
-  std::filesystem::remove_all(old, ec);
+  const std::filesystem::path old = AsideName();
   const bool hadPack = std::filesystem::exists(root, ec);
   if (hadPack) {
     std::filesystem::rename(root, old, ec);
@@ -174,10 +247,12 @@ void ApplyPendingUserPack() {
       }
       return;
     }
-  } else if (swap) {
+  } else if (swap && !DiscardFolder(pending, ec)) {
     std::filesystem::remove_all(pending, ec);
   }
-  std::filesystem::remove_all(old, ec);
+  if (hadPack) {
+    DeleteInBackground(old);
+  }
 }
 } // namespace
 
@@ -186,6 +261,7 @@ void Initialize(const char* root, const char* userRoot) {
   sBuiltIn.root = root != nullptr ? root : "";
   sUser.root = userRoot != nullptr ? userRoot : "";
   sDevice = ResolveDeviceName();
+  DeleteStaleUserPacks();
   ApplyPendingUserPack();
   Load(sBuiltIn, true);
   Load(sUser, true);
