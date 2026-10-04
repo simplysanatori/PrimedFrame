@@ -2689,6 +2689,15 @@ void Toggle() {
   EnsureInitialized();
   sVisible = !sVisible;
   SetMouseCaptured(false);
+  // A press that never got its release (seen on the Android tablet with a mouse
+  // while the pointer was captured) leaves ImGui holding the button, and every
+  // later tap is ignored. Opening the overlay drops held mouse buttons and keys,
+  // as a focus loss would.
+  if (sVisible && ImGui::GetCurrentContext() != nullptr) {
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddFocusEvent(false);
+    io.AddFocusEvent(true);
+  }
 }
 
 namespace {
