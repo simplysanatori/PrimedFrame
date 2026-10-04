@@ -65,6 +65,8 @@
 #include "MetroidPrime/ScriptObjects/CSnakeWeedSwarm.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptSpawnPoint.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptSpecialFunction.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptStreamedMusic.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptTrigger.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptWater.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 #include "MetroidPrime/Tweaks/CTweakGui.hpp"
@@ -218,6 +220,73 @@ CEntity* PortTempleObject(CStateManager& mgr, uint id) {
   CEntity* ent = mgr.ObjectById(found.first->second);
   return ent != nullptr && !ent->IsScriptingBlocked() ? ent : nullptr;
 }
+
+// Port: a debug teleport skips the triggers that start a room's music (the
+// player lands on the spawn point, not in the door triggers), and a world
+// warp's ~CWorld has already stopped every stream. Play the music the area's
+// nearest trigger would have started. Rooms with none (elevator rooms play
+// theirs on the elevator's arrival) get the first looping music any of their
+// objects plays, and with none at all the previous track keeps playing (a
+// world warp keeps it through ~CWorld, as an elevator ride does).
+bool sPortWarpMusicPending = false;
+
+// The active streamed music `ent` plays from `state` (any state when
+// `anyState`), or null.
+CEntity* PortPlayedMusic(CStateManager& mgr, const CEntity& ent, EScriptObjectState state,
+                         bool anyState) {
+  const rstl::vector< SConnection >& conns = ent.GetConnectionList();
+  for (rstl::vector< SConnection >::const_iterator it = conns.begin(); it != conns.end(); ++it) {
+    if (it->x4_msg != kSM_Play || (!anyState && it->x0_state != state))
+      continue;
+    const CStateManager::TIdListResult found = mgr.GetIdListForScript(it->x8_objId);
+    for (AUTO(id, found.first); id != found.second; ++id) {
+      CEntity* const ent = mgr.ObjectById(id->second);
+      CScriptStreamedMusic* const music = dynamic_cast< CScriptStreamedMusic* >(ent);
+      if (music != nullptr && music->GetActive() && music->IsLoopingMusic())
+        return music;
+    }
+  }
+  return nullptr;
+}
+
+void PortStartAreaMusic(CStateManager& mgr) {
+  const CPlayer* player = mgr.GetPlayer();
+  if (player == nullptr)
+    return;
+  const TAreaId area = mgr.GetNextAreaId();
+  const CVector3f pos = player->GetTranslation();
+  CEntity* best = nullptr;
+  CEntity* fallback = nullptr;
+  float bestDist = 0.f;
+  const CObjectList& all = mgr.GetObjectListById(kOL_All);
+  for (int i = all.GetFirstObjectIndex(); i != -1; i = all.GetNextObjectIndex(i)) {
+    const CEntity* const ent = all[i];
+    if (ent == nullptr || !ent->GetActive() || ent->GetCurrentAreaId() != area)
+      continue;
+    const CScriptTrigger* const trigger = TCastToConstPtr< CScriptTrigger >(ent);
+    if (trigger == nullptr) {
+      if (fallback == nullptr)
+        fallback = PortPlayedMusic(mgr, *ent, kSS_Any, true);
+      continue;
+    }
+    const float dist = (trigger->GetTriggerBoundsWR().GetCenterPoint() - pos).Magnitude();
+    if (best != nullptr && dist >= bestDist)
+      continue;
+    if (CEntity* const music = PortPlayedMusic(mgr, *trigger, kSS_Entered, false)) {
+      best = music;
+      bestDist = dist;
+    }
+  }
+  if (best == nullptr)
+    best = fallback;
+  if (best != nullptr)
+    mgr.DeliverScriptMsg(best, kInvalidUniqueId, kSM_Play);
+}
+} // namespace
+
+bool PortWarpKeepsMusic() { return sPortWarpMusicPending; }
+
+namespace {
 
 // Unique ids repeat across state managers (a world restart builds the room
 // again with the same ids), so the constructor clears these too.
@@ -1129,6 +1198,11 @@ void CStateManager::InitializeState(unsigned int mlvlId, TAreaId aid, unsigned i
   x900_random = hadRandom ? &x8fc_random : nullptr;
 
   x880_envFxManager->AsyncLoadResources(*this);
+
+  if (sPortWarpMusicPending) {
+    sPortWarpMusicPending = false;
+    PortStartAreaMusic(*this);
+  }
 }
 
 void CStateManager::FrameBegin(unsigned int frame) {
@@ -1409,6 +1483,7 @@ void CStateManager::Update(float dt) {
       }
       x84c_player->AsyncLoadSuit(*this);
       x870_cameraManager->ResetCameras(*this);
+      PortStartAreaMusic(*this);
     }
   }
 
@@ -1425,6 +1500,7 @@ void CStateManager::Update(float dt) {
       worldState.SetDesiredAreaAssetId(debugWorldArea != 0 ? static_cast< CAssetId >(debugWorldArea)
                                                            : kInvalidAssetId);
       gpMain->SetRestartMode(CMain::kRM_None);
+      sPortWarpMusicPending = true;
       QuitGame();
       // SetCurrentWorldId has retired the outgoing world's PAKs. Do not run
       // its scripts/loads, or overwrite the destination's area with our old id.

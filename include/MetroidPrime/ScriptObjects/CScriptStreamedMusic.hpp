@@ -18,6 +18,10 @@ public:
   void Stop(CStateManager& mgr);
   void Play(CStateManager& mgr);
   static bool IsAudioTrackNameSoftware(const rstl::string& fileName);
+#ifdef TARGET_PC
+  // Port: a room's background track, as opposed to a jingle.
+  bool IsLoopingMusic() const { return x46_loop && x47_music; }
+#endif
 
 private:
   rstl::string x34_fileName;

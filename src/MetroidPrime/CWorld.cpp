@@ -35,6 +35,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+
+bool PortWarpKeepsMusic(); // CStateManager.cpp
 #endif
 
 CGameArea::CConstChainIterator CWorld::skGlobalEnd;
@@ -262,6 +264,12 @@ CWorld::~CWorld() {
   CMemory::Free(x40_loadBuf.release());
   StopSounds();
   CWorldTransManager* transManager = gpGameState->WorldTransitionManager().GetPtr();
+#ifdef TARGET_PC
+  // Port: a debug warp keeps the track playing until the destination's starts.
+  if (PortWarpKeepsMusic() && gpMain->GetRestartMode() == CMain::kRM_None) {
+    CStreamAudioManager::StopOneShot();
+  } else
+#endif
   if (transManager->GetTransType() != CWorldTransManager::kTT_Disabled &&
       gpMain->GetRestartMode() == CMain::kRM_None) {
     CStreamAudioManager::StopOneShot();
