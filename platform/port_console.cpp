@@ -1470,6 +1470,11 @@ void RunFrame() {
       } else if (arg == "arealights" && sCmd.args.size() > 2 &&
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomEnv::SetAreaLights(Lower(sCmd.args[2]) == "on");
+      } else if (arg == "balllight" && sCmd.args.size() > 2 &&
+                 (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
+        PortRemasteredBallLight::SetEnabled(Lower(sCmd.args[2]) == "on");
+      } else if (arg == "balllight" && sCmd.args.size() > 2 && ParseFloat(sCmd.args[2], number)) {
+        PortRemasteredBallLight::SetScale(number);
       } else if (arg == "blend" && sCmd.args.size() > 2 &&
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomEnv::SetProbeBlend(Lower(sCmd.args[2]) == "on");
@@ -1485,11 +1490,6 @@ void RunFrame() {
         OutLines(PortRoomEnv::GradeInfo());
         return Finish();
       } else if (arg == "grade" && sCmd.args.size() > 2 &&
-      } else if (arg == "balllight" && sCmd.args.size() > 2 &&
-                 (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
-        PortRemasteredBallLight::SetEnabled(Lower(sCmd.args[2]) == "on");
-      } else if (arg == "balllight" && sCmd.args.size() > 2 && ParseFloat(sCmd.args[2], number)) {
-        PortRemasteredBallLight::SetScale(number);
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomEnv::SetColorGradeEnabled(Lower(sCmd.args[2]) == "on");
       } else if (arg == "on" || arg == "off") {
