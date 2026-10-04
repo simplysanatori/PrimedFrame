@@ -207,7 +207,7 @@ int sAreaLights = -1;
 float sMinPixels = -1.f; // < 0 until MinPixels reads MP_ROOM_GEO_MIN_PX
 bool sMergedDraws = true;
 bool sFrontToBack = true;
-bool sDepthPrepass = true;
+bool sDepthPrepass = false;
 float sLodDistance = -1.f; // < 0 until LodDistance reads MP_ROOM_GEO_LOD
 bool sResident = false;
 // The mods' level of detail tables, by model id; read when the first area loads after a Reset.

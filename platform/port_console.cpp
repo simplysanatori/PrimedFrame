@@ -493,7 +493,7 @@ void CmdHelp() {
   Out("roomgeo minpx <n>         leave out instances under n pixels (game resolution) on screen; 0 draws all");
   Out("roomgeo lod <scale>       scale the distances where models switch to coarser levels; 0 never switches");
   Out("roomgeo sort on|off       draw opaque room models nearest first (default on)");
-  Out("roomgeo prepass on|off    depth-only pass first for cut-out room models (default on)");
+  Out("roomgeo prepass on|off    depth-only pass first for cut-out room models (default off)");
   Out("roomgeo costtest <n>      PBR shading cost test: 0 off, 1 flat, 2 no lights, 3 no volume, 4 no cube, 5 no normal maps, 6 no ORM/emissive, 7 maps only, 8 no aniso, 9 no aniso or mip blend, 10 no post-processing, 11 no screen copies");
   Out("roomgeo script            Remastered's camera zones, counters and groups in each loaded area, and the camera");
   Out("roomgeo group <n> show|hide   set a group until its script next changes it");

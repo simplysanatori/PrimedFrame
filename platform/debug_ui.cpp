@@ -4902,9 +4902,9 @@ void DrawRendering() {
     if (ImGui::Checkbox("Depth pre-pass for cut-outs", &prepass)) {
       PortRoomGeo::SetDepthPrepass(prepass);
     }
-    ImGui::SetItemTooltip("Recommended: on. Not saved. Needs \"Draw nearest first\".\n"
+    ImGui::SetItemTooltip("Recommended: off. Not saved. Needs \"Draw nearest first\".\n"
                           "Draws grass and leaves once for depth only, then shades just the parts that\n"
-                          "stay in front. Looks the same either way; off is for comparing frame rates.");
+                          "stay in front. Looks the same either way; slower on the phones tried so far.");
     static constexpr const char* kCostTests[] = {"Off", "Flat", "No lights", "No ambient volume",
                                                  "No reflections", "No normal maps", "No ORM/emissive maps",
                                                  "Maps only", "Maps without anisotropy",
