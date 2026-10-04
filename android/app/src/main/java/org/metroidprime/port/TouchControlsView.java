@@ -70,6 +70,12 @@ final class TouchControlsView extends View {
     private static final float STICK_Y = 0.73f;
     private static final float STICK_RADIUS = 0.16f;
     private static final float STICK_DEAD_ZONE = 0.12f;
+    // The GameCube C-stick is smaller than the main stick and sits just below
+    // and left of the face buttons: its centre is this far from the right edge,
+    // in view heights, like the face buttons' anchor.
+    private static final float GC_CSTICK_FROM_RIGHT = 0.60f;
+    private static final float GC_CSTICK_Y = 0.76f;
+    private static final float GC_CSTICK_RADIUS = 0.115f;
 
     // The GameCube pad's colours, as RGB; the fill alpha follows the press state.
     private static final int GC_GREEN = 0x2FA864;
@@ -241,8 +247,8 @@ final class TouchControlsView extends View {
         drawStick(canvas, width * STICK_LEFT_X, height * STICK_Y, height * STICK_RADIUS,
                   leftPointer, 0);
         // The right stick is the C-stick, yellow on the GameCube pad.
-        drawStick(canvas, width * STICK_RIGHT_X, height * STICK_Y, height * STICK_RADIUS,
-                  rightPointer, colored ? GC_YELLOW : 0);
+        drawStick(canvas, rightStickX(width, height), rightStickY(height),
+                  rightStickRadius(height), rightPointer, colored ? GC_YELLOW : 0);
 
         for (PillButton pill : pills) {
             drawPillButton(canvas, pill, width, height);
@@ -482,7 +488,7 @@ final class TouchControlsView extends View {
             leftPointer = pointerId;
             targets.put(pointerId, target);
             updateStick(target, x, y);
-        } else if (x >= width * 0.38f && x < width * 0.72f &&
+        } else if (x >= width * 0.38f && x < rightStickRight(width, height) &&
                    y > height * 0.43f && rightPointer == -1) {
             TouchTarget target = new TouchTarget(RIGHT_STICK, 0);
             rightPointer = pointerId;
@@ -491,13 +497,34 @@ final class TouchControlsView extends View {
         }
     }
 
+    private float rightStickX(float width, float height) {
+        return twinStickMode ? width * STICK_RIGHT_X : width - height * GC_CSTICK_FROM_RIGHT;
+    }
+
+    private float rightStickY(float height) {
+        return height * (twinStickMode ? STICK_Y : GC_CSTICK_Y);
+    }
+
+    private float rightStickRadius(float height) {
+        return height * (twinStickMode ? STICK_RADIUS : GC_CSTICK_RADIUS);
+    }
+
+    // Right edge of the area that grabs the right stick. Face buttons are
+    // hit-tested first, so on the GameCube layout it can reach past the C-stick.
+    private float rightStickRight(float width, float height) {
+        return twinStickMode ? width * 0.72f
+                             : rightStickX(width, height) + rightStickRadius(height) * 1.6f;
+    }
+
     private void updateStick(TouchTarget target, float x, float y) {
         target.x = x;
         target.y = y;
         final boolean left = target.type == LEFT_STICK;
-        float centreX = getWidth() * (left ? STICK_LEFT_X : STICK_RIGHT_X);
-        float centreY = getHeight() * STICK_Y;
-        float radius = getHeight() * STICK_RADIUS;
+        float width = getWidth();
+        float height = getHeight();
+        float centreX = left ? width * STICK_LEFT_X : rightStickX(width, height);
+        float centreY = left ? height * STICK_Y : rightStickY(height);
+        float radius = left ? height * STICK_RADIUS : rightStickRadius(height);
         // SDL's gamepad axes are +X right and +Y *down* (Aurora inverts Y for the
         // GameCube stick, whose +Y is up), so screen coordinates apply as-is.
         float dx = (x - centreX) / radius;
