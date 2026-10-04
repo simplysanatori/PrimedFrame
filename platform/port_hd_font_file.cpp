@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 
 namespace PortHdFont {
 namespace {
@@ -159,6 +160,39 @@ Box GlyphBox(const Glyph& glyph, const Fit& fit, float x, float y, int cellWidth
   box.top = y + float(glyphBaseline) + fit.baseline - (glyph.top - fit.inkBottom) * fit.scale;
   box.bottom = box.top + glyph.height * fit.scale;
   return box;
+}
+
+const std::vector<StandIn>& StandIns() {
+  static const std::vector<StandIn> kStandIns = [] {
+    std::vector<StandIn> out;
+    // Latin-1, from U+00A0; '\0' where no ASCII character comes close.
+    static const char kLatin1[] = " !cLoY|S\"Ca<--R-o+23'uP.,1o>\0\0\0?"
+                                  "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYPs"
+                                  "aaaaaaaceeeeiiiidnooooo/ouuuuypy";
+    for (uint32_t i = 0; i < sizeof(kLatin1) - 1; ++i) {
+      if (kLatin1[i] != '\0') {
+        out.push_back({0xA0 + i, kLatin1[i]});
+      }
+    }
+    static const StandIn kOthers[] = {
+        {0x0152, 'O'},  {0x0153, 'o'},  {0x0178, 'Y'},  {0x1E9E, 'S'},  {0x2013, '-'},  {0x2014, '-'},
+        {0x2018, '\''}, {0x2019, '\''}, {0x201A, ','},  {0x201C, '"'},  {0x201D, '"'},  {0x201E, '"'},
+        {0x2026, '.'},  {0x2039, '<'},  {0x203A, '>'},  {0x202F, ' '},  {0x20AC, 'E'},  {0x2122, 'T'},
+        {0x2212, '-'},
+    };
+    out.insert(out.end(), std::begin(kOthers), std::end(kOthers));
+    return out;
+  }();
+  return kStandIns;
+}
+
+float AdvanceRatio(const Font& font, uint32_t character, uint32_t base) {
+  const Glyph* const glyph = font.Find(character);
+  const Glyph* const reference = font.Find(base);
+  if (glyph == nullptr || reference == nullptr || !(reference->advance > 0.f) || !(glyph->advance > 0.f)) {
+    return 1.f;
+  }
+  return std::clamp(glyph->advance / reference->advance, 0.25f, 4.f);
 }
 
 }  // namespace PortHdFont

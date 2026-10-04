@@ -229,6 +229,30 @@ int Convert(char** argv) {
 }
 }  // namespace
 
+void TestStandIns() {
+  bool e = false;
+  bool euro = false;
+  bool ascii = false;
+  for (const PortHdFont::StandIn& standIn : PortHdFont::StandIns()) {
+    e = e || (standIn.character == 0xE9 && standIn.base == 'e');
+    euro = euro || (standIn.character == 0x20AC && standIn.base == 'E');
+    ascii = ascii || standIn.character < 0x80 || uint8_t(standIn.base) < 0x20 || uint8_t(standIn.base) >= 0x7F;
+  }
+  Check(e && euro, "accented letters and symbols stand on their base letter");
+  Check(!ascii, "stand-ins are for characters outside ASCII, on printable ones");
+
+  PortHdFont::Font font = SmallFont();
+  PortHdFont::Glyph wide = CapitalH();
+  wide.character = 0x152;  // OE
+  wide.advance = 30.f;
+  font.glyphs.insert(font.glyphs.begin() + 1, wide);
+  Check(Close(PortHdFont::AdvanceRatio(font, 0x152, 'H'), 1.5f), "the advance scales by the typeface's ratio");
+  Check(Close(PortHdFont::AdvanceRatio(font, 0xE9, 'H'), 1.f), "a missing glyph keeps the base's advance");
+  wide.advance = 1000.f;
+  font.glyphs[1] = wide;
+  Check(Close(PortHdFont::AdvanceRatio(font, 0x152, 'H'), 4.f), "the ratio is clamped");
+}
+
 int main(int argc, char** argv) {
   if (argc == 6) {
     return Convert(argv);
@@ -236,6 +260,7 @@ int main(int argc, char** argv) {
   TestFile();
   TestFit();
   TestAsset();
+  TestStandIns();
   if (sFailures == 0) {
     std::puts("port_hd_font tests passed");
   }

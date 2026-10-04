@@ -16,6 +16,12 @@
 #include "rstl/string.hpp"
 #include "rstl/vector.hpp"
 
+#ifdef TARGET_PC
+#include "port_hd_font.h"
+
+#include <vector>
+#endif
+
 CRasterFont::CRasterFont(CInputStream& in, IObjectStore* store)
 : x0_initialized(false)
 , x4_monoWidth(16)
@@ -82,6 +88,9 @@ CRasterFont::CRasterFont(CInputStream& in, IObjectStore* store)
                                                       cellWidth, cellHeight, baseline, kernStart)));
       }
       rstl::sort_by_key(xc_glyphs);
+#ifdef TARGET_PC
+      PortAddStandIns();
+#endif
 
       int kerningCount = in.ReadInt32();
       x1c_kerning.reserve(kerningCount);
@@ -97,6 +106,41 @@ CRasterFont::CRasterFont(CInputStream& in, IObjectStore* store)
     }
   }
 }
+
+#ifdef TARGET_PC
+// The characters the port's languages need that the font lacks, each a copy of
+// its ASCII stand-in's cell (PortHdFont::StandIns), widened as the distance
+// field's character is wider. Only the typeface the distance field holds.
+void CRasterFont::PortAddStandIns() {
+  if (!PortHdFont::SameTypeface(*this)) {
+    return;
+  }
+  std::vector< rstl::pair< wchar_t, CGlyph > > added;
+  const std::vector< PortHdFont::StandIn >& standIns = PortHdFont::StandIns();
+  for (size_t i = 0; i < standIns.size(); ++i) {
+    const wchar_t chr = static_cast< wchar_t >(standIns[i].character);
+    const CGlyph* base = GetGlyph(static_cast< wchar_t >(standIns[i].base));
+    if (base == nullptr || HasGlyph(chr)) {
+      continue;
+    }
+    const float widen = PortHdFont::ModAdvanceRatio(standIns[i].character, standIns[i].base);
+    const int b = static_cast< int >(base->GetB() * widen + 0.5f);
+    const int cellWidth = static_cast< int >(base->GetCellWidth() * widen + 0.5f);
+    added.push_back(rstl::pair< wchar_t, CGlyph >(
+        chr, CGlyph(base->GetA(), b, base->GetC(), base->GetStartU(), base->GetStartV(),
+                    base->GetEndU(), base->GetEndV(), cellWidth, base->GetCellHeight(),
+                    base->GetBaseLine(), base->GetKernStart())));
+  }
+  if (added.empty()) {
+    return;
+  }
+  xc_glyphs.reserve(xc_glyphs.size() + static_cast< int >(added.size()));
+  for (size_t i = 0; i < added.size(); ++i) {
+    xc_glyphs.push_back(added[i]);
+  }
+  rstl::sort_by_key(xc_glyphs);
+}
+#endif
 
 EFontMode CRasterFont::GetMode() const { return x2c_mode; }
 

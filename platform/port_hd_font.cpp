@@ -56,11 +56,13 @@ bool Load() {
   if (sTried) {
     return sLoaded;
   }
-  sTried = true;
+  // Not latched until there is a file: a font made before the mods are read asks
+  // again (PortAddStandIns runs while the game's fonts load).
   const std::string path = PortMods::FontPath();
   if (path.empty()) {
     return false;
   }
+  sTried = true;
   std::ifstream file(PortGci::PathFromString(path), std::ios::binary);
   const std::vector<uint8_t> data = ReadAll(file);
   std::string error;
@@ -76,9 +78,6 @@ bool Load() {
   sLoaded = true;
   return true;
 }
-
-// The disc's fonts cut from the typeface the distance field holds.
-bool SameTypeface(const CRasterFont& font) { return std::strstr(font.PortGetName(), "Deface") != nullptr; }
 
 // One of the palette's RGB5A3 entries, which are stored big endian.
 GXColor PaletteColor(const CGraphicsPalette* palette, int index, const GXColor& tint) {
@@ -115,6 +114,13 @@ bool Enabled() {
 }
 
 void SetEnabled(bool enabled) { sEnabled = enabled ? 1 : 0; }
+
+// The disc's fonts cut from the typeface the distance field holds.
+bool SameTypeface(const CRasterFont& font) { return std::strstr(font.PortGetName(), "Deface") != nullptr; }
+
+float ModAdvanceRatio(uint32_t character, uint32_t base) {
+  return Enabled() && Load() ? AdvanceRatio(sFont, character, base) : 1.f;
+}
 
 void Reset() {
   if (sLoaded) {

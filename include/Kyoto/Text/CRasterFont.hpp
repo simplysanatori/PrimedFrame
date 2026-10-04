@@ -156,6 +156,9 @@ private:
 
   static int KernLookup(const rstl::vector< CKernPair >& kerning, int a, const int b);
   const CGlyph* InternalGetGlyph(wchar_t c) const;
+#ifdef TARGET_PC
+  void PortAddStandIns();
+#endif
 };
 CHECK_SIZEOF(CRasterFont, 0x94)
 
