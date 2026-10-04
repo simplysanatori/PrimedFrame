@@ -132,6 +132,16 @@ bool sFullscreen = false;
 #endif
 bool sOverlayWindowed = false; // desktop: the old floating tabbed window
 float sRenderScale = 1.f;
+// Dynamic resolution: draws the EFB between 1x and sRenderScale to hold a frame rate.
+bool sDynamicRes = false;
+int sDynamicResTarget = 0; // fps; 0 = the 60 fps cap, or the display's rate without it
+float sDynScale = 0.f;     // the scale in use; 0 = sRenderScale
+int sDynSlow = 0, sDynSteady = 0, sDynSettle = 0;
+int sDynRaiseAfter = 4;  // steady seconds before trying a step up; doubles when one fails
+int sDynSinceRaise = -1; // seconds since the last step up, while it is on probation
+double sDynFpsBefore = 0.0; // the rate before the last step down
+int sDynHoldLow = 0;        // seconds left without stepping down (a step down gained nothing)
+int sDynHoldFor = 30;       // the next such hold; doubles each time
 PortDebug::EAspectMode sAspectMode = PortDebug::kAspect_4_3;
 bool sHudWide = false;
 int sHudScale = PortDebug::kHudScaleMax;
@@ -372,6 +382,10 @@ void ApplySetting(const std::string& key, const std::string& value) {
     if (std::isfinite(f) && f >= 0.f && f <= 4.f) {
       sRenderScale = f;
     }
+  } else if (key == "dynamic_res") {
+    sDynamicRes = ParseBool(value);
+  } else if (key == "dynamic_res_target") {
+    sDynamicResTarget = std::clamp(std::atoi(value.c_str()), 0, 240);
   } else if (key == "aspect") {
     if (value == "16:9") {
       sAspectMode = PortDebug::kAspect_16_9;
@@ -652,6 +666,8 @@ void SaveSettings() {
   file << "fullscreen=" << (sFullscreen ? 1 : 0) << '\n';
   file << "overlay_windowed=" << (sOverlayWindowed ? 1 : 0) << '\n';
   file << "render_scale=" << sRenderScale << '\n';
+  file << "dynamic_res=" << (sDynamicRes ? 1 : 0) << '\n';
+  file << "dynamic_res_target=" << sDynamicResTarget << '\n';
   file << "frame_limit=" << (sFrameLimitEnabled ? 1 : 0) << '\n';
   file << "sim_rate=" << sSimRate << '\n';
   file << "sim_adaptive=" << (sSimAdaptive ? 1 : 0) << '\n';
@@ -983,6 +999,92 @@ bool FrameLimitEnabled() {
   return sFrameLimitEnabled;
 }
 
+static double DynamicResTargetFps() {
+  double target = sDynamicResTarget;
+  if (target <= 0.0) {
+    const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
+    target = mode != nullptr && mode->refresh_rate > 0.f ? mode->refresh_rate : 60.0;
+  }
+  return sFrameLimitEnabled ? std::min(target, 60.0) : target;
+}
+
+static void ResetDynamicRes() {
+  sDynSlow = sDynSteady = sDynSettle = sDynHoldLow = 0;
+  sDynRaiseAfter = 4;
+  sDynHoldFor = 30;
+  sDynSinceRaise = -1;
+  sDynFpsBefore = 0.0;
+  if (sDynScale > 0.f) {
+    sDynScale = 0.f;
+    VISetFrameBufferScale(sRenderScale);
+  }
+}
+
+// Once a second, from the presented rate. Each step reallocates the EFB and waits for the
+// GPU, so it steps rarely: down after two slow seconds, up after a steady stretch that
+// doubles each time a step up turns out too slow.
+static void UpdateDynamicRes(double fps, unsigned frames) {
+  const float top = sRenderScale;
+  if (!sDynamicRes || top <= 1.f || sTurbo) {
+    ResetDynamicRes();
+    return;
+  }
+  // Paused or loading: nothing to go on.
+  if (frames < 10) {
+    return;
+  }
+  // The second after a step holds its reallocation stall.
+  if (sDynSettle > 0) {
+    --sDynSettle;
+    return;
+  }
+  constexpr float kStep = 0.25f;
+  const float scale = sDynScale > 0.f ? sDynScale : top;
+  const double target = DynamicResTargetFps();
+  if (sDynHoldLow > 0) {
+    --sDynHoldLow;
+  }
+  float next = scale;
+  if (sDynFpsBefore > 0.0) {
+    // The first reading after a step down: no gain means the GPU's pixels were not what
+    // held the frame back, so go back up and stay there for a while.
+    if (fps < sDynFpsBefore * 1.03) {
+      next = scale + kStep;
+      sDynHoldLow = sDynHoldFor;
+      sDynHoldFor = std::min(sDynHoldFor * 2, 240);
+    }
+    sDynFpsBefore = 0.0;
+  } else if (fps < target * 0.93) {
+    sDynSteady = 0;
+    if (sDynSinceRaise >= 0) {
+      next = scale - kStep;
+      sDynRaiseAfter = std::min(sDynRaiseAfter * 2, 64);
+      sDynSinceRaise = -1;
+    } else if (++sDynSlow >= 2 && sDynHoldLow == 0 && scale > 1.f) {
+      next = scale - kStep;
+      sDynFpsBefore = fps;
+    }
+  } else {
+    sDynSlow = 0;
+    if (sDynSinceRaise >= 0 && ++sDynSinceRaise >= 3) {
+      sDynSinceRaise = -1;
+    }
+    if (sDynSinceRaise < 0 && fps >= target * 0.97 && scale < top && ++sDynSteady >= sDynRaiseAfter) {
+      next = scale + kStep;
+      sDynSteady = 0;
+      sDynSinceRaise = 0;
+    }
+  }
+  next = std::clamp(next, 1.f, top);
+  if (next != scale) {
+    sDynSlow = 0;
+    sDynScale = next;
+    sDynSettle = 1;
+    VISetFrameBufferScale(next);
+    PortLog::Write("port: dynamic resolution %.2fx (%.0f fps, target %.0f)\n", next, fps, target);
+  }
+}
+
 void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
   sTimingNs += durationNs;
   sTimingTicks += ticks;
@@ -1017,6 +1119,7 @@ void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
                    "[timing] presented=%.1f FPS throughput=%.1f FPS simulation=%.1f ticks/s cap=%s\n",
                    sActualFps, sThroughputFps, sActualTps, sFrameLimitEnabled ? "60" : "off");
     }
+    UpdateDynamicRes(sActualFps, sTimingFrames);
     sTimingNs = 0;
     sTimingWallNs = 0;
     sTimingFrames = sTimingTicks = 0;
@@ -1071,6 +1174,8 @@ void SetRenderScale(float scale) {
     return;
   }
   sRenderScale = scale;
+  sDynScale = 0.f;
+  ResetDynamicRes();
   VISetFrameBufferScale(scale);
 }
 
@@ -3821,6 +3926,32 @@ void DrawRenderTab() {
       sPendingScale = 0.f;
     }
     ImGui::SetItemTooltip("Scales the internal EFB; higher values use more GPU memory.");
+    if (ImGui::Checkbox("Dynamic resolution", &sDynamicRes)) {
+      ResetDynamicRes();
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Lowers the EFB scale, down to 1x, while the frame rate is below the target,\n"
+                          "and raises it back to the scale above when there is room. Each change\n"
+                          "stutters for a frame, so it changes at most once every couple of seconds.");
+    if (sDynamicRes) {
+      static const int kTargets[] = {0, 30, 60, 90, 120};
+      int target = 0;
+      for (int i = 0; i < 5; ++i) {
+        if (kTargets[i] == sDynamicResTarget) {
+          target = i;
+        }
+      }
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.f);
+      if (ImGui::Combo("Target", &target, "Display\0" "30 fps\0" "60 fps\0" "90 fps\0" "120 fps\0")) {
+        sDynamicResTarget = kTargets[target];
+        ResetDynamicRes();
+        MarkDirty();
+      }
+      ImGui::SetItemTooltip("Display: the screen's refresh rate, or 60 with the 60 FPS cap on.");
+      ImGui::Text("Drawing at %.2fx (target %.0f fps)", sDynScale > 0.f ? sDynScale : sRenderScale,
+                  DynamicResTargetFps());
+    }
   }
   bool font = PortHdFont::Enabled();
   if (ImGui::Checkbox("HD font", &font)) {

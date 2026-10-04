@@ -1111,9 +1111,10 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
   if (!g_surface || !g_device || width == 0 || height == 0 || nativeHeight == 0 || nativeWidth == 0) {
     return;
   }
-  const bool sizeChanged = g_graphicsConfig.surfaceConfiguration.width != nativeWidth ||
-                           g_graphicsConfig.surfaceConfiguration.height != nativeHeight ||
-                           g_frameBuffer.size.width != width || g_frameBuffer.size.height != height;
+  const bool surfaceChanged = g_graphicsConfig.surfaceConfiguration.width != nativeWidth ||
+                              g_graphicsConfig.surfaceConfiguration.height != nativeHeight;
+  const bool sizeChanged =
+      surfaceChanged || g_frameBuffer.size.width != width || g_frameBuffer.size.height != height;
   if (!force && !sizeChanged) {
     return;
   }
@@ -1121,11 +1122,12 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
     gx::trim_copy_texture_cache();
     gfx::clear_caches();
   }
-  g_graphicsConfig.surfaceConfiguration.width = nativeWidth;
-  g_graphicsConfig.surfaceConfiguration.height = nativeHeight;
-  auto surfaceConfiguration = g_graphicsConfig.surfaceConfiguration;
-  surfaceConfiguration.device = g_device;
-  {
+  // A new EFB scale alone (dynamic resolution) keeps the swapchain as it is.
+  if (force || surfaceChanged) {
+    g_graphicsConfig.surfaceConfiguration.width = nativeWidth;
+    g_graphicsConfig.surfaceConfiguration.height = nativeHeight;
+    auto surfaceConfiguration = g_graphicsConfig.surfaceConfiguration;
+    surfaceConfiguration.device = g_device;
     window::SurfaceLock surfaceLock;
     g_surface.Configure(&surfaceConfiguration);
   }
