@@ -492,7 +492,7 @@ void CmdHelp() {
   Out("roomgeo lights on|off     light it with the area's lights even where the room has baked light");
   Out("roomgeo minpx <n>         leave out instances under n pixels (game resolution) on screen; 0 draws all");
   Out("roomgeo lod <scale>       scale the distances where models switch to coarser levels; 0 never switches");
-  Out("roomgeo flat on|off       draw every PBR surface with its base map alone (shading cost check)");
+  Out("roomgeo costtest <n>      PBR shading cost test: 0 off, 1 flat, 2 no lights, 3 no volume, 4 no cube, 5 no normal maps");
   Out("roomgeo script            Remastered's camera zones, counters and groups in each loaded area, and the camera");
   Out("roomgeo group <n> show|hide   set a group until its script next changes it");
   Out("roomgeo pick              the instances the middle of the view looks through, nearest first, and the");
@@ -1519,9 +1519,8 @@ void RunFrame() {
         PortRoomGeo::SetMinPixels(std::strtof(sCmd.args[2].c_str(), nullptr));
       } else if (arg == "lod" && sCmd.args.size() > 2) {
         PortRoomGeo::SetLodDistance(std::strtof(sCmd.args[2].c_str(), nullptr));
-      } else if (arg == "flat" && sCmd.args.size() > 2 &&
-                 (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
-        GXSetPBRFlat(Lower(sCmd.args[2]) == "on");
+      } else if (arg == "costtest" && sCmd.args.size() > 2) {
+        GXSetPBRCostTest(u32(std::atoi(sCmd.args[2].c_str())));
       } else if (arg == "script") {
         const std::string info = PortRoomGeo::ScriptInfo();
         OutLines(info.empty() ? std::string("no area has a script") : info);

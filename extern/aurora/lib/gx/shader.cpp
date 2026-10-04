@@ -941,6 +941,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   if (mapStage[0] == -1) {
     return {};
   }
+  // GXSetPBRCostTest: 1 flat, 2 no lights, 3 no ambient volume, 4 no reflection cube, 5 no
+  // normal maps.
+  const int costTest = config.pbr - 1;
+  if (costTest == 5) {
+    mapStage[2] = -1;
+  }
   // Glass (kind 8) also samples map 7, a copy of what is behind it on screen. The
   // shadow's stage samples map 7 too, so a shadowed surface goes without.
   bool screen = false;
@@ -1006,10 +1012,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                            tintAlpha, discard.expr);
     }
   }
-  if (config.pbr == 2) {
-    // GXSetPBRFlat: the base map, shaded by the facing only, and nothing else.
+  if (costTest == 1) {
+    // The base map, shaded by the facing only, and nothing else.
     return fmt::format(R"""(
-    // PBR, flat (GXSetPBRFlat)
+    // PBR, flat (GXSetPBRCostTest)
     {{{}
       let pbr_flat = 0.4 + 0.6 * max(dot(pbr_ng, normalize(-in.pbr_pos)), 0.0);
       prev = vec4f({}.rgb * pbr_flat, prev.a{});
@@ -1547,11 +1553,22 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                      gfx::probe::MipCount - 1, tint, tintAlpha, layer, baseRgb, layered ? "1.0" : "prev.a", kinds, liquid,
                      shadowed ? "(ubuf.lightState0 | ubuf.lightState1)" : "ubuf.lightState0",
                      shadowed ? " * select(vec3f(1.0), sampled0.rgb, (ubuf.lightState0 & (1u << i)) == 0u)" : "");
-  if (!lit) {
+  if (!lit || costTest == 2) {
     // The uniform block has no lights then.
     const size_t begin = source.find("// pbr-lights-begin");
     const size_t end = source.find("// pbr-lights-end");
     source.erase(begin, end - begin);
+  }
+  const auto cut = [&](std::string_view what, std::string_view with) {
+    const size_t at = source.find(what);
+    assert(at != std::string::npos);
+    source.replace(at, what.size(), with);
+  };
+  if (costTest == 3) {
+    cut("if (ubuf.pbr_volume[3].w > 0.0) {", "if (false) {");
+  } else if (costTest == 4) {
+    cut("textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, pbr_rough * pbr_lod).rgb", "vec3f(0.2)");
+    cut("if (pbr_hdr > 0.0 && ubuf.pbr_cube.w > 0.0) {", "if (false) {");
   }
   return source;
 }
