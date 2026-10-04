@@ -132,7 +132,9 @@ void GXSetPBRLightSkip(u32 mask);
 // else is scaled. 1, 1 is neutral, and it is what a caller sets for every material that has no
 // scale of its own. An f0 of exactly 0 also marks a LITS back copy, whose stored normal is
 // turned round (like every back copy's): the shader turns it back before shading.
-void GXSetPBRLightScale(f32 diffuse, f32 f0);
+// alpha fades the draws: their alpha is multiplied by it, or is it where alphaReplaces is set
+// (an opaque material drawn blended, whose own alpha means nothing). 1 and GX_FALSE are neutral.
+void GXSetPBRLightScale(f32 diffuse, f32 f0, f32 alpha, GXBool alphaReplaces);
 
 // Aurora extension: Remastered's bloom over what the EFB holds now (see lib/gfx/bloom.cpp).
 // The EFB is taken as drawn through the tone curve `tone` (as GXSetPBRTone); light above

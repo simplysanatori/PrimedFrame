@@ -1516,6 +1516,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                           pbr_out < vec3f(ubuf.pbr_tone[1].z));
           pbr_tm = clamp(pbr_tm, vec3f(0.0), vec3f(1.0));
       }}
+      // A model fading (w of the light scale): its alpha in place of an opaque material's, or
+      // times a blended one's.
+      if (ubuf.pbr_light_scale.w > 0.5) {{
+          pbr_alpha = ubuf.pbr_light_scale.w - 1.0;
+      }} else if (ubuf.pbr_light_scale.w < -0.5) {{
+          pbr_alpha *= -ubuf.pbr_light_scale.w - 1.0;
+      }}
       prev = vec4f(pow(clamp(pbr_tm + pbr_pass, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), pbr_alpha);
       // A debug view (GXSetPBRDebugView): one input of the shading in place of the result.
       if (ubuf.pbr_layer.w > 0.5) {{

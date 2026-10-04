@@ -410,7 +410,7 @@ struct GXState {
   std::array<Vec4<float>, 6> pbrVolumeRows{}; // see GXSetPBRVolume
   std::array<Vec4<float>, 3> pbrTone{}; // GX_AURORA_SET_PBR_TONE
   Vec4<float> pbrLightSkip{}; // GX_AURORA_SET_PBR_LIGHT_SKIP: x the mask
-  Vec4<float> pbrLightScale{1.f, 1.f, 0.f, 0.f}; // GX_AURORA_SET_PBR_LIGHT_SCALE: diffuse, f0
+  Vec4<float> pbrLightScale{1.f, 1.f, 0.f, 0.f}; // GX_AURORA_SET_PBR_LIGHT_SCALE: diffuse, f0, -, fade
 
   // GX2 polygon offset state
   f32 frontOffset = 0.0f;

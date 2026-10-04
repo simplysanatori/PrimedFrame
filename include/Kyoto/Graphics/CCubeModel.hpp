@@ -104,8 +104,9 @@ public:
 
   CCubeMaterial GetMaterialByIndex(const int idx) const;
 #ifdef TARGET_PC
-  // Sends the material's PBR record; returns the record's surface kind (glass is 8).
-  float PortSetPBRMaterial(const int idx) const;
+  // Sends the material's PBR record and the draw's fade (see GXSetPBRLightScale); returns
+  // the record's surface kind (glass is 8).
+  float PortSetPBRMaterial(const int idx, const float fade, const bool fadeReplaces) const;
   // The material's record (see the definition) with the neutral values where it has
   // none; returns how many floats the record holds, 0 without one. wrap, when given, gets
   // the maps' sampler modes: map i's S mode in bits 4i..4i+1, its T mode in 4i+2..4i+3

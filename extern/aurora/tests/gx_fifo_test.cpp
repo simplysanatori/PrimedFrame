@@ -1600,7 +1600,7 @@ TEST_F(GXFifoTest, PBRLightScale_PropagatesAndResets) {
   EXPECT_EQ(g_gxState.pbrLightScale.x(), 1.f);
   EXPECT_EQ(g_gxState.pbrLightScale.y(), 1.f);
 
-  GXSetPBRLightScale(0.25f, 0.f);
+  GXSetPBRLightScale(0.25f, 0.f, 1.f, GX_FALSE);
   auto bytes = capture_fifo();
   EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_PBR_LIGHT_SCALE));
   reset_gx_state();
@@ -1608,15 +1608,27 @@ TEST_F(GXFifoTest, PBRLightScale_PropagatesAndResets) {
   EXPECT_EQ(g_gxState.pbrLightScale.x(), 0.25f);
   EXPECT_EQ(g_gxState.pbrLightScale.y(), 0.f);
 
-  GXSetPBRLightScale(0.25f, 0.f);
+  GXSetPBRLightScale(0.25f, 0.f, 1.f, GX_FALSE);
   EXPECT_FALSE(has_aurora_cmd(capture_fifo(), GX_AURORA_SET_PBR_LIGHT_SCALE));
 
-  GXSetPBRLightScale(1.f, 1.f);
+  GXSetPBRLightScale(1.f, 1.f, 1.f, GX_FALSE);
   bytes = capture_fifo();
   EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_PBR_LIGHT_SCALE));
   decode_fifo(bytes);
   EXPECT_EQ(g_gxState.pbrLightScale.x(), 1.f);
   EXPECT_EQ(g_gxState.pbrLightScale.y(), 1.f);
+  EXPECT_EQ(g_gxState.pbrLightScale.w(), 0.f);
+
+  // A fade: in place of the material's alpha (1 + alpha) or times it (-(1 + alpha)).
+  GXSetPBRLightScale(1.f, 1.f, 0.25f, GX_TRUE);
+  decode_fifo(capture_fifo());
+  EXPECT_EQ(g_gxState.pbrLightScale.w(), 1.25f);
+  GXSetPBRLightScale(1.f, 1.f, 0.25f, GX_FALSE);
+  decode_fifo(capture_fifo());
+  EXPECT_EQ(g_gxState.pbrLightScale.w(), -1.25f);
+  GXSetPBRLightScale(1.f, 1.f, 1.f, GX_FALSE);
+  decode_fifo(capture_fifo());
+  EXPECT_EQ(g_gxState.pbrLightScale.w(), 0.f);
 }
 
 // The environment BRDF table (GXSetPBRBrdfLut) is a command of its own: 256 bytes turn it on,

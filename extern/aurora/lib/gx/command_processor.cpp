@@ -1085,7 +1085,12 @@ void handle_aurora(ByteReader& reader) noexcept {
   } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_SCALE) {
     const f32 diffuse = reader.read<f32>();
     const f32 f0 = reader.read<f32>();
-    const Vec4<float> value{diffuse, f0, 0.f, 0.f};
+    const f32 alpha = std::clamp(reader.read<f32>(), 0.f, 1.f);
+    const bool alphaReplaces = reader.read<u32>() != 0;
+    // w is the fade as the shader reads it: 0 none, 1 + alpha in place of the material's
+    // alpha, -(1 + alpha) times it.
+    const f32 fade = alphaReplaces ? 1.f + alpha : alpha < 1.f ? -(1.f + alpha) : 0.f;
+    const Vec4<float> value{diffuse, f0, 0.f, fade};
     if (g_gxState.pbrLightScale != value) {
       g_gxState.pbrLightScale = value;
       g_gxState.dirty |= DirtyUniform;

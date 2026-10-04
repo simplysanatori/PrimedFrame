@@ -212,9 +212,9 @@ extern "C" {
 #define GX_AURORA_SET_PBR_LIGHT_SKIP 0x0051
 
 // Scales the diffuse colour and the F0 of the following PBR draws (see GXSetPBRLightScale);
-// both 1 is neutral. Stays in effect until changed.
+// both 1 is neutral, and their alpha's fade (1, 0 is neutral). Stays in effect until changed.
 // Payload:
-//   f32 diffuse, f32 f0
+//   f32 diffuse, f32 f0, f32 alpha, u32 alphaReplaces
 #define GX_AURORA_SET_PBR_LIGHT_SCALE 0x0053
 
 // Port extension: Remastered's bloom, colour grade and frame average over the EFB as drawn so

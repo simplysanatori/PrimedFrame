@@ -224,7 +224,7 @@ void CCubeModel::PortOverridePBR(const CCubeModel* model, const int material, co
 
 void CCubeModel::PortClearPBROverrides() { sPortPBROverrides.clear(); }
 
-f32 CCubeModel::PortSetPBRMaterial(const int idx) const {
+f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fadeReplaces) const {
   f32 values[19];
   f32 lightScale[2];
   PortReadPBRMaterial(idx, values, nullptr, lightScale);
@@ -245,7 +245,7 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx) const {
   const f32 up[3] = {view.Get20(), view.Get22(), -view.Get21()};
   GXSetPBRMaterial(values, values + 3, values[6], values[7], values + 8, values + 13, up);
   // Every material sets its own, so a back copy's factors don't reach the next one.
-  GXSetPBRLightScale(lightScale[0], lightScale[1]);
+  GXSetPBRLightScale(lightScale[0], lightScale[1], fade, fadeReplaces ? GX_TRUE : GX_FALSE);
   return kind;
 }
 
@@ -273,24 +273,32 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   }
 
 #ifdef TARGET_PC
-  // Port: an alpha blend at full, untinted alpha draws as opaque, so a PBR material takes it
-  // (the arm cannon is always drawn alpha blended for its fade). The PBR shader's alpha is
-  // the base map's, which a blend would show through; TEV materials keep the retail path.
+  // Port: an untinted alpha blend (the arm cannon is always drawn alpha blended for its fade,
+  // and Samus fades in and out of the morph ball) stays on a PBR material. At full alpha it
+  // draws as opaque, since the PBR shader's alpha is the base map's, which a blend would show
+  // through. Below it, it keeps the retail blend and the shader takes the fade, in place of
+  // an opaque material's alpha; dropping to the TEV fallback for the fade swapped the look of
+  // the whole model. TEV materials keep the retail path.
   const CModelFlags opaqueFlags(CModelFlags::kT_Opaque, static_cast< uchar >(modelFlags.GetShaderSet()),
                                 static_cast< CModelFlags::EFlags >(modelFlags.GetOtherFlags()),
                                 modelFlags.GetColorRef());
-  const bool solidBlend = modelFlags.GetTrans() == CModelFlags::kT_Blend &&
-                          modelFlags.GetColorRef() == CColor::White() &&
-                          material.IsFlagSet(kStateFlag_PortPBR) &&
-                          CCubeMaterial::PortPBRAllowed(opaqueFlags);
+  const CColor& tint = modelFlags.GetColorRef();
+  const bool pbrBlend = modelFlags.GetTrans() == CModelFlags::kT_Blend && tint.GetRedu8() == 0xFF &&
+                        tint.GetGreenu8() == 0xFF && tint.GetBlueu8() == 0xFF &&
+                        material.IsFlagSet(kStateFlag_PortPBR) &&
+                        CCubeMaterial::PortPBRAllowed(opaqueFlags);
+  const bool solidBlend = pbrBlend && tint.GetAlphau8() == 0xFF;
+  const bool fadeBlend = pbrBlend && !solidBlend;
   const CModelFlags& drawFlags = solidBlend ? opaqueFlags : modelFlags;
   material.SetCurrent(drawFlags, surface, *this);
   // Port: PBR mod materials. The fallback TEV set above stays valid for the
   // paths PortPBRAllowed rejects.
-  const bool pbr =
-      material.IsFlagSet(kStateFlag_PortPBR) && CCubeMaterial::PortPBRAllowed(drawFlags);
+  const bool pbr = fadeBlend || (material.IsFlagSet(kStateFlag_PortPBR) &&
+                                 CCubeMaterial::PortPBRAllowed(drawFlags));
+  // A fading model is shaded as it is at full alpha.
+  const CModelFlags& lookFlags = fadeBlend ? opaqueFlags : drawFlags;
   const bool sortedDraw =
-      drawFlags.GetTrans() >= CModelFlags::kT_Blend || material.IsFlagSet(kStateFlag_DepthSorting);
+      lookFlags.GetTrans() >= CModelFlags::kT_Blend || material.IsFlagSet(kStateFlag_DepthSorting);
   if (!sortedDraw) {
     sPortGlassCopy.valid = false;
   }
@@ -386,7 +394,9 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       tone[0][3] = sortedDraw ? 1.f : PortRoomEnv::GlowScale();
     }
     GXSetPBRTone(hasTone ? tone : nullptr);
-    const f32 kind = PortSetPBRMaterial(surface.GetMaterialIndex());
+    // An opaque material's own alpha (dst factor zero) means nothing to a blend.
+    const f32 kind = PortSetPBRMaterial(surface.GetMaterialIndex(), fadeBlend ? tint.GetAlpha() : 1.f,
+                                        fadeBlend && (material.GetCompressedBlend() >> 16) == GX_BL_ZERO);
     // Glass (kind 8) sees what is behind it: the screen so far, copied into map 7 as the
     // refracting particles copy it (CElementGen).
     if (kind > 7.5f && kind < 8.5f && CCubeMaterial::PortScreenCopyUsed()) {
