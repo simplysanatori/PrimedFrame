@@ -4,6 +4,8 @@
 
 #include "port_remastered_nsp.h"
 
+#include "port_remastered_nso.h"
+
 #include <algorithm>
 #include <cstring>
 #include <map>
@@ -545,6 +547,31 @@ bool Nsp::Open(const std::string& nspPath, const std::string& keysPath, std::str
   }
   std::sort(m_files.begin(), m_files.end(), [](const RomfsFile& a, const RomfsFile& b) { return a.path < b.path; });
 
+  // --- ExeFS: a PFS0 section, found softly (the import works without it) ----
+  m_hasExefs = false;
+  for (int i = 0; i < 4; ++i) {
+    const uint8_t* e = hdr.data() + 0x240 + i * 0x10;
+    const uint8_t* f = hdr.data() + 0x400 + i * 0x200;
+    if (ReadLE32(e) == 0 || f[2] != 1 || f[3] != 2 || f[4] != 3) {
+      continue;
+    }
+    uint64_t s0 = uint64_t(ReadLE32(e)) * kMediaUnit, s1 = uint64_t(ReadLE32(e + 4)) * kMediaUnit;
+    // HierarchicalSha256: master hash (0x20), block size, layer count, then {offset, size}
+    // regions; the last one is the PFS0 itself.
+    uint32_t layers = ReadLE32(f + 8 + 0x24);
+    if (s1 <= s0 || s1 > nca->size || layers < 2 || layers > 6) {
+      continue;
+    }
+    m_exefs.base = nca->offset + s0;
+    m_exefs.size = s1 - s0;
+    m_exefs.inNca = s0;
+    std::memcpy(m_exefs.ctrHigh, f + 0x140, 8);
+    m_exefsPfs = ReadLE64(f + 8 + 0x28 + (layers - 1) * 16);
+    m_exefsPfsSize = ReadLE64(f + 8 + 0x28 + (layers - 1) * 16 + 8);
+    m_hasExefs = true;
+    break;
+  }
+
   m_open = true;
   return true;
 }
@@ -556,8 +583,17 @@ const RomfsFile* Nsp::Find(const std::string& path) const {
 }
 
 bool Nsp::ReadSection(uint64_t offset, void* out, size_t size, std::string& error) const {
+  Section section;
+  section.base = m_sectionBase;
+  section.size = m_sectionSize;
+  section.inNca = m_sectionInNca;
+  std::memcpy(section.ctrHigh, m_ctrHigh, 8);
+  return ReadFrom(section, offset, out, size, error);
+}
+
+bool Nsp::ReadFrom(const Section& section, uint64_t offset, void* out, size_t size, std::string& error) const {
   uint8_t* dst = static_cast<uint8_t*>(out);
-  if (offset > m_sectionSize || size > m_sectionSize - offset) {
+  if (offset > section.size || size > section.size - offset) {
     error = "read past the end of the section";
     return false;
   }
@@ -575,11 +611,11 @@ bool Nsp::ReadSection(uint64_t offset, void* out, size_t size, std::string& erro
     size_t take = std::min(size, kChunk - head);
     // CTR is a stream cipher, so only the start has to sit on a 16-byte boundary.
     scratch.resize(head + take);
-    if (!m_file.ReadAt(m_sectionBase + aligned, scratch.data(), head + take)) {
+    if (!m_file.ReadAt(section.base + aligned, scratch.data(), head + take)) {
       error = "short read from the .nsp";
       return false;
     }
-    if (!DecryptCtr(ctx.get(), m_contentKey, m_ctrHigh, m_sectionInNca + aligned, scratch.data(), head + take)) {
+    if (!DecryptCtr(ctx.get(), m_contentKey, section.ctrHigh, section.inNca + aligned, scratch.data(), head + take)) {
       error = "decryption failed";
       return false;
     }
@@ -601,6 +637,70 @@ bool Nsp::Read(const RomfsFile& file, uint64_t offset, void* out, size_t size, s
     return false;
   }
   return ReadSection(m_romfsOffset + file.offset + offset, out, size, error);
+}
+
+bool Nsp::ReadExefsFile(const std::string& name, std::vector<uint8_t>& out, std::string& error) const {
+  if (!m_open || !m_hasExefs) {
+    error = "no ExeFS section";
+    return false;
+  }
+  uint8_t head[16];
+  if (!ReadFrom(m_exefs, m_exefsPfs, head, sizeof(head), error)) {
+    return false;
+  }
+  const size_t headerSize = Pfs0HeaderSize(head);
+  if (headerSize == 0 || headerSize > m_exefsPfsSize) {
+    error = "ExeFS has no PFS0 header";
+    return false;
+  }
+  std::vector<uint8_t> header(headerSize);
+  if (!ReadFrom(m_exefs, m_exefsPfs, header.data(), header.size(), error)) {
+    return false;
+  }
+  std::vector<Pfs0Entry> entries;
+  if (!Pfs0Parse(header.data(), header.size(), entries, error)) {
+    return false;
+  }
+  for (const Pfs0Entry& entry : entries) {
+    if (entry.name != name) {
+      continue;
+    }
+    if (entry.offset > m_exefsPfsSize || entry.size > m_exefsPfsSize - entry.offset || entry.size > (512u << 20)) {
+      error = "ExeFS file " + name + " is out of bounds";
+      return false;
+    }
+    out.resize(size_t(entry.size));
+    return ReadFrom(m_exefs, m_exefsPfs + entry.offset, out.data(), out.size(), error);
+  }
+  error = "no " + name + " in the ExeFS";
+  return false;
+}
+
+bool IsKnownBrdfLut(const uint8_t* data, size_t size) {
+  static const uint8_t kWanted[32] = {
+                                      0xdc, 0xe3, 0xde, 0x6e, 0x63, 0xda, 0x0a, 0x09, 0x8b, 0x95, 0x23,
+                                      0xe1, 0xa4, 0xcd, 0xb8, 0xa5, 0x94, 0x32, 0x61, 0xba, 0x70, 0xde,
+                                      0x00, 0x34, 0x18, 0x91, 0xc0, 0x6f, 0xa2, 0x22, 0x73, 0xde};
+  uint8_t digest[32];
+  unsigned int len = 0;
+  return EVP_Digest(data, size, digest, &len, EVP_sha256(), nullptr) == 1 && len == 32 &&
+         std::memcmp(digest, kWanted, 32) == 0;
+}
+
+bool ExtractBrdfLut(const Nsp& nsp, std::vector<uint8_t>& out, std::string& error) {
+  std::vector<uint8_t> nso;
+  if (!nsp.ReadExefsFile("main", nso, error)) {
+    return false;
+  }
+  if (!NsoReadImage(nso, kBrdfLutMemOffset, kBrdfLutSize, out, error)) {
+    return false;
+  }
+  if (!IsKnownBrdfLut(out.data(), out.size())) {
+    out.clear();
+    error = "the executable's BRDF table is not the known one (another version of the game?)";
+    return false;
+  }
+  return true;
 }
 
 #else // !MP_HAVE_OPENSSL
@@ -625,6 +725,23 @@ bool Nsp::ReadSection(uint64_t, void*, size_t, std::string& error) const {
 }
 
 bool Nsp::Read(const RomfsFile&, uint64_t, void*, size_t, std::string& error) const {
+  error = "built without OpenSSL";
+  return false;
+}
+
+bool Nsp::ReadFrom(const Section&, uint64_t, void*, size_t, std::string& error) const {
+  error = "built without OpenSSL";
+  return false;
+}
+
+bool Nsp::ReadExefsFile(const std::string&, std::vector<uint8_t>&, std::string& error) const {
+  error = "built without OpenSSL";
+  return false;
+}
+
+bool IsKnownBrdfLut(const uint8_t*, size_t) { return false; }
+
+bool ExtractBrdfLut(const Nsp&, std::vector<uint8_t>&, std::string& error) {
   error = "built without OpenSSL";
   return false;
 }

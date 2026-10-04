@@ -515,6 +515,16 @@ public:
       }
     }
   }
+  // The environment BRDF table out of the executable. Never throws.
+  bool ExtractBrdf(std::vector<uint8_t>& out, std::string& error) const {
+    try {
+      return ExtractBrdfLut(m_nsp, out, error);
+    } catch (const std::exception& e) {
+      error = e.what();
+      return false;
+    }
+  }
+
   std::vector<RoomPak> AllPaks() const {
     std::vector<RoomPak> all;
     for (size_t i = 0; i < m_paks.size(); ++i) {
@@ -1007,6 +1017,21 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   SetMessage("Writing the room environments");
   const fs::path roomFolder = staging / kRoomFolder;
   fs::create_directories(roomFolder, ec);
+  // Remastered's environment BRDF table, from the user's own executable. Nothing
+  // here may fail the import: without it the port keeps its own fit.
+  {
+    std::vector<uint8_t> brdf;
+    std::string brdfError;
+    if (!remastered.ExtractBrdf(brdf, brdfError)) {
+      AddLine("brdf.lut: left out (" + brdfError + ")");
+    } else {
+      std::ofstream file(roomFolder / "brdf.lut", std::ios::binary);
+      file.write(reinterpret_cast<const char*>(brdf.data()), std::streamsize(brdf.size()));
+      if (!file) {
+        AddLine("brdf.lut: cannot be written");
+      }
+    }
+  }
   fs::create_directories(staging / kGeometryFolder, ec);
   const std::vector<RoomPak> allPaks = remastered.AllPaks();
   const std::vector<RoomWorld>& worlds = RoomWorlds();
