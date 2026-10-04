@@ -530,6 +530,32 @@ bool CElementGen::InternalUpdate(double dt) {
 }
 
 void CElementGen::UpdateLightParameters() {
+#ifdef TARGET_PC
+  // A light whose PART leaves out one of its properties keeps that value's
+  // default instead of calling through a null element (tablet crash: a light
+  // with no LOFF).
+  CGenDescription* desc = x28_loadedGenDesc;
+  if (desc->xf0_LCLR) {
+    desc->xf0_LCLR->GetValue(x74_curFrame, x30c_LCLR);
+  }
+  if (desc->xf4_LINT) {
+    desc->xf4_LINT->GetValue(x74_curFrame, x310_LINT);
+  }
+  if (x308_lightType != kLT_Directional) {
+    if (desc->xf8_LOFF) {
+      desc->xf8_LOFF->GetValue(x74_curFrame, x314_LOFF);
+    }
+    if (desc->x104_LFOR) {
+      desc->x104_LFOR->GetValue(x74_curFrame, x330_LFOR);
+    }
+    if (x308_lightType == kLT_Spot && desc->x108_LSLA) {
+      desc->x108_LSLA->GetValue(x74_curFrame, x334_LSLA);
+    }
+  }
+  if (x308_lightType != kLT_Custom && desc->xfc_LDIR) {
+    desc->xfc_LDIR->GetValue(x74_curFrame, x320_LDIR);
+  }
+#else
   x28_loadedGenDesc->xf0_LCLR->GetValue(x74_curFrame, x30c_LCLR);
   x28_loadedGenDesc->xf4_LINT->GetValue(x74_curFrame, x310_LINT);
   if (x308_lightType != kLT_Directional) {
@@ -542,6 +568,7 @@ void CElementGen::UpdateLightParameters() {
   if (x308_lightType != kLT_Custom) {
     x28_loadedGenDesc->xfc_LDIR->GetValue(x74_curFrame, x320_LDIR);
   }
+#endif
 }
 
 void CElementGen::UpdateAdvanceAccessParameters(int particleFrame, int particleIndex) {
