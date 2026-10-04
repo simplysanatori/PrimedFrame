@@ -15,7 +15,7 @@ class CVector3f;
 // them in place of the area's own world geometry.
 //
 // The file is little endian:
-//   'MPRG', u32 version (1 to 4), u32 instances
+//   'MPRG', u32 version (1 to 5), u32 instances
 //   instance: u32 CMDL id, f32 transform[12] (rows of model -> area)
 //     version 2 adds: u8 layer, u8 active, u16 links,
 //     version 3 (and 4) then: u32 platform, f32 platformStart[3],
@@ -45,6 +45,12 @@ class CVector3f;
 // Remastered colours its door frames' lights with a ColorModulateMP1 in its "incandescence"
 // mode, which stands its colour B (times its intensity) in for the strength of every
 // material's emissive map. `glow` is that colour.
+//
+// Version 5 may then end with Remastered's animated scenery actors (the Intro Elevator's
+// spinning rings, for one):
+//   'ANIM', u32 count, per animated instance:
+//     u32 index, f32 fps, u32 frames (2 or more), then per frame f32 rotation x, y, z, w
+//     (unit quaternion) and f32 translation x, y, z
 namespace PortRoomGeo {
 
 enum : uint8_t { kEveryLayer = 0xff };
@@ -71,6 +77,11 @@ struct Instance {
   uint32_t group = kNoGroup; // the Remastered entity the scripts show and hide it by
   bool glows = false;        // whether `glow` replaces its materials' emissive strength
   float glow[3] = {};
+  // Remastered's animated scenery (ANIM): a rigid pose per frame, in model space, applied
+  // before `transform`, played from the area's load at `animFps` frames a second and looped.
+  // Empty: it stands still.
+  float animFps = 0.f;
+  std::vector<float> animKeys; // 7 per frame: rotation x, y, z, w, translation x, y, z
 };
 
 // Remastered's script objects between what happens in game and a group of instances.
@@ -127,8 +138,9 @@ struct Script {
 bool ParseFileName(const std::string& fileName, uint32_t& id);
 bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::string& error,
            Script* script = nullptr);
-// The file for these instances (version 4), with the script section when there is a script
-// or a group and the glow section when an instance glows.
+// The file for these instances (version 5), with the script section when there is a script
+// or a group, the glow section when an instance glows and the animation section when one is
+// animated.
 std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script* script = nullptr);
 
 // The coarser levels of detail of the models, one table for the whole mod (kLodFileName in
@@ -174,8 +186,8 @@ void Reset();
 void OnScriptState(CStateManager& mgr, uint32_t editorId, int state);
 // Once a frame, where the game's objects think (CStateManager::Update): runs the camera
 // volumes of every loaded area's Script against the current camera, as CScriptTrigger
-// does for its own.
-void Think(CStateManager& mgr);
+// does for its own, and plays the animated instances on by `dt` seconds.
+void Think(CStateManager& mgr, float dt);
 // The console's `roomgeo script`: each loaded area's Script now (camera, nodes, groups).
 std::string ScriptInfo();
 // The console's `roomgeo group <n> show|hide`: sets every loaded area's group n until its

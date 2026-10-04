@@ -1593,7 +1593,7 @@ void CStateManager::Update(float dt) {
 
   if (x904_gameState == kGS_Running || x904_gameState == kGS_SoftPaused) {
     Think(dt);
-    PortRoomGeo::Think(*this);
+    PortRoomGeo::Think(*this, dt);
   }
 
   if (x904_gameState != kGS_SoftPaused) {

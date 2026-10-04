@@ -9,7 +9,7 @@ namespace PortRoomGeo {
 namespace {
 
 constexpr uint32_t kMagic = 0x4752504D; // 'MPRG'
-constexpr uint32_t kVersion = 4;
+constexpr uint32_t kVersion = 5;
 constexpr size_t kHeaderBytes = 12;
 constexpr size_t kInstanceBytes = 4 + 12 * 4; // version 1; version 2 adds 4 + links
 constexpr size_t kPlatformBytes = 4 + 3 * 4;   // version 3's, after version 2's 4
@@ -19,6 +19,9 @@ constexpr size_t kNodeBytes = 8 + 15 * 4;
 constexpr size_t kEdgeBytes = 12;
 constexpr uint32_t kGlowMagic = 0x574F4C47; // 'GLOW'
 constexpr size_t kGlowBytes = 4 + 3 * 4;
+constexpr uint32_t kAnimMagic = 0x4D494E41; // 'ANIM'
+constexpr size_t kAnimHeadBytes = 3 * 4;
+constexpr size_t kAnimKeyBytes = 7 * 4;
 constexpr uint32_t kLodMagic = 0x444F4C52; // 'RLOD'
 constexpr uint32_t kLodVersion = 1;
 
@@ -140,6 +143,57 @@ bool ParseGlow(const std::vector<uint8_t>& data, size_t& at, std::vector<Instanc
       }
     }
     instance.glows = true;
+  }
+  return true;
+}
+
+// The animation section at `at`, which is moved past it.
+bool ParseAnim(const std::vector<uint8_t>& data, size_t& at, std::vector<Instance>& instances, std::string& error) {
+  if (data.size() - at < 8 || ReadU32(data.data() + at + 4) > (data.size() - at - 8) / kAnimHeadBytes) {
+    error = "truncated animation";
+    return false;
+  }
+  const uint32_t count = ReadU32(data.data() + at + 4);
+  at += 8;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (data.size() - at < kAnimHeadBytes) {
+      error = "truncated animation";
+      return false;
+    }
+    const uint32_t index = ReadU32(data.data() + at);
+    const uint32_t frames = ReadU32(data.data() + at + 8);
+    float fps;
+    if (index >= instances.size() || !instances[index].animKeys.empty()) {
+      error = "bad animation instance";
+      return false;
+    }
+    if (!ReadF32(data.data() + at + 4, fps) || fps <= 0.f || frames < 2) {
+      error = "bad animation";
+      return false;
+    }
+    at += kAnimHeadBytes;
+    if (frames > (data.size() - at) / kAnimKeyBytes) {
+      error = "truncated animation";
+      return false;
+    }
+    Instance& instance = instances[index];
+    instance.animFps = fps;
+    instance.animKeys.resize(size_t(frames) * 7);
+    for (size_t f = 0; f < frames; ++f, at += kAnimKeyBytes) {
+      float* const key = instance.animKeys.data() + f * 7;
+      for (int j = 0; j < 7; ++j) {
+        if (!ReadF32(data.data() + at + 4 * j, key[j])) {
+          error = "bad animation";
+          return false;
+        }
+      }
+      const float length =
+          std::sqrt(key[0] * key[0] + key[1] * key[1] + key[2] * key[2] + key[3] * key[3]);
+      if (!(std::fabs(length - 1.f) <= 1e-3f)) {
+        error = "bad animation";
+        return false;
+      }
+    }
   }
   return true;
 }
@@ -278,13 +332,17 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
       at += kLinkBytes;
     }
   }
-  // Version 3 may end with the script section, version 4 then with the glow section.
+  // Version 3 may end with the script section, version 4 then with the glow section and
+  // version 5 then with the animation section.
   bool ok = true;
   if (version >= 3 && data.size() - at >= 4 && ReadU32(data.data() + at) == kScriptMagic) {
     ok = ParseScript(data, at, out, parsed, error);
   }
   if (ok && version >= 4 && data.size() - at >= 4 && ReadU32(data.data() + at) == kGlowMagic) {
     ok = ParseGlow(data, at, out, error);
+  }
+  if (ok && version >= 5 && data.size() - at >= 4 && ReadU32(data.data() + at) == kAnimMagic) {
+    ok = ParseAnim(data, at, out, error);
   }
   if (ok && at != data.size()) {
     error = "unknown data after the instances";
@@ -345,6 +403,23 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
         PutU32(out, uint32_t(i));
         for (float v : instances[i].glow) {
           PutF32(out, v);
+        }
+      }
+    }
+  }
+  const size_t anims = size_t(
+      std::count_if(instances.begin(), instances.end(), [](const Instance& i) { return !i.animKeys.empty(); }));
+  if (anims != 0) {
+    PutU32(out, kAnimMagic);
+    PutU32(out, uint32_t(anims));
+    for (size_t i = 0; i < instances.size(); ++i) {
+      const Instance& instance = instances[i];
+      if (!instance.animKeys.empty()) {
+        PutU32(out, uint32_t(i));
+        PutF32(out, instance.animFps);
+        PutU32(out, uint32_t(instance.animKeys.size() / 7));
+        for (size_t k = 0; k < instance.animKeys.size() / 7 * 7; ++k) {
+          PutF32(out, instance.animKeys[k]);
         }
       }
     }

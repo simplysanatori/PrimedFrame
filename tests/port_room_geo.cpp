@@ -1,5 +1,6 @@
 #include "port_room_geo.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -92,8 +93,68 @@ void TestVersion1() {
   Check(out.size() == 2 && out[1].model == 0xabc00001, "v1 instances");
   Check(out.size() == 2 && out[1].active && out[1].layer == PortRoomGeo::kEveryLayer, "v1 defaults");
 
-  file[4] = 5;
+  file[4] = 6;
   Check(!PortRoomGeo::Parse(file, out, error), "unknown version rejected");
+}
+
+// The animation section, alone and after the script and glow sections.
+void TestAnim() {
+  std::vector<PortRoomGeo::Instance> in;
+  in.push_back(MakeInstance(0x11111111, 1.f));
+  in.push_back(MakeInstance(0x22222222, 2.f));
+  in.push_back(MakeInstance(0x33333333, 3.f));
+  in[1].animFps = 30.f;
+  in[1].animKeys = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0.7071068f, 0.7071068f, 0, 0, 1.5f, 0, 0, 1, 0, 0, 0, 2.f};
+  std::vector<PortRoomGeo::Instance> out;
+  PortRoomGeo::Script back;
+  std::string error;
+  for (int extras = 0; extras < 2; ++extras) {
+    in[0].glows = extras != 0;
+    in[0].glow[1] = 1.f;
+    in[2].group = extras != 0 ? 4 : PortRoomGeo::kNoGroup;
+    const std::vector<uint8_t> file = PortRoomGeo::Write(in);
+    Check(PortRoomGeo::Parse(file, out, error, &back), "anim file parses");
+    Check(out.size() == 3 && out[0].animKeys.empty() && out[2].animKeys.empty() && out[1].animFps == 30.f &&
+              out[1].animKeys == in[1].animKeys,
+          "anim");
+    Check(out.size() == 3 && out[0].glows == in[0].glows && out[2].group == in[2].group, "sections before the anim");
+
+    const size_t plain = file.size() - 8 - 12 - 3 * 28;
+    for (size_t cut = plain + 1; cut < file.size(); ++cut) {
+      const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
+      if (PortRoomGeo::Parse(part, out, error, &back)) {
+        std::fprintf(stderr, "FAIL: anim truncated at %zu parses\n", cut);
+        ++sFailures;
+      }
+    }
+    std::vector<uint8_t> bad = file;
+    bad[plain + 8] = 3; // no such instance
+    Check(!PortRoomGeo::Parse(bad, out, error, &back), "anim of a missing instance rejected");
+    bad = file;
+    bad[4] = 4;
+    Check(!PortRoomGeo::Parse(bad, out, error, &back), "anim in a version 4 file rejected");
+
+    PortRoomGeo::Instance extra = in[1];
+    std::vector<PortRoomGeo::Instance> two = in;
+    two.push_back(extra);
+    std::vector<uint8_t> dup = PortRoomGeo::Write(two);
+    // The second entry's index (2 entries of 12 + 84 bytes after the 8 byte head) becomes 1.
+    const size_t secondAt = dup.size() - (12 + 3 * 28);
+    dup[secondAt] = 1;
+    Check(!PortRoomGeo::Parse(dup, out, error, &back), "duplicate anim instance rejected");
+
+    auto mutated = [&](const char* what, auto change) {
+      std::vector<PortRoomGeo::Instance> t = in;
+      change(t[1]);
+      Check(!PortRoomGeo::Parse(PortRoomGeo::Write(t), out, error, &back), what);
+    };
+    mutated("one frame rejected", [](PortRoomGeo::Instance& i) { i.animKeys.resize(7); });
+    mutated("zero fps rejected", [](PortRoomGeo::Instance& i) { i.animFps = 0.f; });
+    mutated("negative fps rejected", [](PortRoomGeo::Instance& i) { i.animFps = -1.f; });
+    mutated("nan fps rejected", [](PortRoomGeo::Instance& i) { i.animFps = std::nanf(""); });
+    mutated("non-unit quaternion rejected", [](PortRoomGeo::Instance& i) { i.animKeys[10] = 2.f; });
+    mutated("non-finite key rejected", [](PortRoomGeo::Instance& i) { i.animKeys[5] = INFINITY; });
+  }
 }
 
 // The glow section, alone and after the script section.
@@ -264,6 +325,7 @@ int main() {
   TestVersion2();
   TestScript();
   TestGlow();
+  TestAnim();
   TestLods();
   uint32_t id = 0;
   Check(PortRoomGeo::ParseFileName("1a2B3c4D.ROOMGEO", id) && id == 0x1A2B3C4D, "file name");

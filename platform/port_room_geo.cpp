@@ -131,6 +131,11 @@ struct Placed {
   int level = -1;      // this frame's level of detail (Model::levels), -1 for the model itself
   bool glows = false;  // Instance::glow
   float glow[3] = {};
+  // Instance::animFps and animKeys (empty: it stands still), and where it stands before its
+  // pose, which `xf` adds each frame.
+  float animFps = 0.f;
+  std::vector< float > animKeys;
+  CTransform4f base = CTransform4f::Identity();
 };
 
 // Copies of one small model that never move or change, built into one model at their world
@@ -195,6 +200,9 @@ struct Area {
   std::vector< std::vector< size_t > > edgesFrom;
   bool retailEdges = false; // some edge starts at a retail object
   float camera[3] = {};      // where Think last saw the camera, in area space
+  double animTime = 0.;      // seconds its animated instances have played (Think); double, so
+                             // hours in still step evenly
+  bool animated = false;     // some instance is
 };
 
 // Areas in memory; one without a file has no instances. Never destroyed: the models' tokens
@@ -592,7 +600,8 @@ void BuildClusters(Area& area) {
   }
   std::vector< size_t > copies(area.models.size(), 0);
   const auto mergeable = [&](const Placed& item) {
-    return item.layer == kEveryLayer && item.platform == 0 && item.follow == 0 && item.active && !item.glows;
+    return item.layer == kEveryLayer && item.platform == 0 && item.follow == 0 && item.active && !item.glows &&
+           item.animKeys.empty();
   };
   std::vector< bool > linked(area.items.size(), false);
   for (const Trigger& trigger : area.triggers) {
@@ -776,6 +785,32 @@ std::vector< uint8_t > ReadAll(std::ifstream& in) {
   return data;
 }
 
+// An animated item's pose `seconds` in, looped: the frames either side blended, the turn
+// the shorter way round. The last frame is where the loop comes back to the first.
+CTransform4f Pose(const Placed& item, double seconds) {
+  const size_t frames = item.animKeys.size() / 7;
+  const float length = float(frames - 1) / item.animFps;
+  float t = float(std::fmod(seconds, double(length)));
+  t = (t < 0.f ? t + length : t) * item.animFps;
+  const size_t i = std::min(size_t(t), frames - 2);
+  const float w = std::clamp(t - float(i), 0.f, 1.f);
+  const float* const a = item.animKeys.data() + 7 * i;
+  const float* const b = a + 7;
+  const float sign = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0.f ? -1.f : 1.f;
+  float q[4];
+  float n = 0.f;
+  for (int k = 0; k < 4; ++k) {
+    q[k] = a[k] + (sign * b[k] - a[k]) * w;
+    n += q[k] * q[k];
+  }
+  n = n > 0.f ? 1.f / std::sqrt(n) : 0.f;
+  const float x = q[0] * n, y = q[1] * n, z = q[2] * n, s = q[3] * n;
+  return CTransform4f(1.f - 2.f * (y * y + z * z), 2.f * (x * y - s * z), 2.f * (x * z + s * y),
+                      a[4] + (b[4] - a[4]) * w, 2.f * (x * y + s * z), 1.f - 2.f * (x * x + z * z),
+                      2.f * (y * z - s * x), a[5] + (b[5] - a[5]) * w, 2.f * (x * z - s * y),
+                      2.f * (y * z + s * x), 1.f - 2.f * (x * x + y * y), a[6] + (b[6] - a[6]) * w);
+}
+
 // The script objects as the file has them: a counter at 0, the camera in no volume.
 void ResetNodes(Area& area) {
   area.nodes.assign(area.script.nodes.size(), NodeState());
@@ -866,6 +901,11 @@ void Load(uint32_t mrea, Area& area) {
     item.shown = item.active = instance.active;
     item.glows = instance.glows;
     std::copy(instance.glow, instance.glow + 3, item.glow);
+    if (!instance.animKeys.empty()) {
+      item.animFps = instance.animFps;
+      item.animKeys = instance.animKeys;
+      area.animated = true;
+    }
     item.platform = instance.platform;
     item.platformStart =
         CVector3f(instance.platformStart[0], instance.platformStart[1], instance.platformStart[2]);
@@ -1059,6 +1099,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
   if (!area.placed) {
     for (Placed& item : area.items) {
       item.xf = gameArea.GetTM() * item.xf;
+      item.base = item.xf;
     }
     area.placed = true;
   }
@@ -1077,8 +1118,17 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     const CVector3f dragged = platform->GetTranslation() - item.platformStart;
     if (dragged != item.dragged) {
       item.xf.AddTranslation(dragged - item.dragged);
+      item.base.AddTranslation(dragged - item.dragged);
       item.dragged = dragged;
       item.bounded = false;
+    }
+  }
+  if (area.animated) {
+    for (Placed& item : area.items) {
+      if (!item.animKeys.empty()) {
+        item.xf = item.base * Pose(item, area.animTime);
+        item.bounded = false;
+      }
     }
   }
   if (area.loaded != area.models.size()) {
@@ -1459,15 +1509,18 @@ void OnScriptState(CStateManager& mgr, uint32_t editorId, int state) {
   }
 }
 
-void Think(CStateManager& mgr) {
+void Think(CStateManager& mgr, float dt) {
   const CWorld* const world = mgr.GetWorld();
   if (GetMode() == Mode::Off || world == nullptr) {
     return;
   }
   auto& areas = Areas();
   bool any = false;
-  for (const auto& [mrea, area] : areas) {
+  for (auto& [mrea, area] : areas) {
     any = any || !area.script.nodes.empty();
+    if (area.animated) {
+      area.animTime += dt;
+    }
   }
   if (!any) {
     return;
@@ -1560,6 +1613,7 @@ int SetGroupShown(uint32_t group, bool shown) {
 void ResetScriptState() {
   for (auto& [mrea, area] : Areas()) {
     ResetNodes(area);
+    area.animTime = 0.;
     for (Placed& item : area.items) {
       item.shown = item.active;
       item.following = false;
@@ -1574,11 +1628,14 @@ std::string At(const CVector3f& point, float margin) {
   for (const auto& [mrea, area] : Areas()) {
     for (const Placed& item : area.items) {
       const Model& model = area.models[item.model];
-      if (!item.bounded) {
+      // Bounds are worked out as items are drawn: one that is not (hidden, off its layer, or
+      // posed again since) gets them here, once its area is placed and its model loaded.
+      if (!item.bounded && (!area.placed || !model.loaded)) {
         continue;
       }
-      const CVector3f lo = item.bounds.GetMinPoint();
-      const CVector3f hi = item.bounds.GetMaxPoint();
+      const CAABox bounds = item.bounded ? item.bounds : model.bounds.GetTransformedAABox(item.xf);
+      const CVector3f lo = bounds.GetMinPoint();
+      const CVector3f hi = bounds.GetMaxPoint();
       if (point.GetX() < lo.GetX() - margin || point.GetX() > hi.GetX() + margin ||
           point.GetY() < lo.GetY() - margin || point.GetY() > hi.GetY() + margin ||
           point.GetZ() < lo.GetZ() - margin || point.GetZ() > hi.GetZ() + margin) {
