@@ -2553,8 +2553,39 @@ void Toggle() {
   SetMouseCaptured(false);
 }
 
+namespace {
+// What a setting does. A tooltip on the desktop; a tap shows none, so Android
+// prints it, dimmed, under the setting instead.
+#if defined(__ANDROID__)
+constexpr bool kInlineHelp = true;
+#else
+constexpr bool kInlineHelp = false;
+#endif
+
+void ItemHelp(const char* text) {
+  if (kInlineHelp) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("%s", text);
+    ImGui::PopStyleColor();
+  } else if (ImGui::BeginItemTooltip()) {
+    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 32.f);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos();
+    ImGui::EndTooltip();
+  }
+}
+
+// SameLine, except after an ItemHelp that printed its text on Android.
+void SameLineAfterHelp() {
+  if (!kInlineHelp) {
+    ImGui::SameLine();
+  }
+}
+} // namespace
+
 void DrawPerformanceTab() {
-  ImGui::Text("Build: %s", MP_BUILD_REVISION);
+  ImGui::TextDisabled("Build: %s", MP_BUILD_REVISION);
+  ImGui::SeparatorText("Frame rate");
   bool frameLimit = sFrameLimitEnabled;
   if (ImGui::Checkbox("60 FPS cap (target)", &frameLimit)) {
     SetFrameLimitEnabled(frameLimit);
@@ -2564,15 +2595,17 @@ void DrawPerformanceTab() {
   // machine produces once the pacing wait is excluded; presented is what
   // reaches the screen. A player seeing stutter wants the second one, and the
   // gap between them is the headroom.
-  ImGui::Text("Presented: %.1f FPS", sActualFps);
-  ImGui::Text("Throughput: %.1f FPS (headroom at the current frame cost)", sThroughputFps);
+  ImGui::Text("Presented %.1f FPS    Throughput %.1f FPS    Frame %.2f ms", sActualFps, sThroughputFps,
+              static_cast< double >(ImGui::GetIO().DeltaTime) * 1000.0);
+  ImGui::SetItemTooltip("Presented is what reaches the screen. Throughput leaves out the wait for the\n"
+                        "frame cap: the gap between the two is the headroom at the current frame cost.");
   if (sSimAdaptive) {
-    ImGui::Text("Measured simulation: %.1f ticks/s (adaptive)", sActualTps);
+    ImGui::Text("Simulation %.1f ticks/s (adaptive)", sActualTps);
   } else {
-    ImGui::Text("Measured simulation: %.1f ticks/s (target %u)", sActualTps, sSimRate);
+    ImGui::Text("Simulation %.1f ticks/s (target %u)", sActualTps, sSimRate);
   }
-  ImGui::Text("Frame time: %.2f ms", static_cast< double >(ImGui::GetIO().DeltaTime) * 1000.0);
 
+  ImGui::SeparatorText("Uncapped frame rate");
   bool interpolate = sFrameInterpolation;
   if (ImGui::Checkbox("Per-frame look (uncapped)", &interpolate)) {
     PortDebug::SetFrameInterpolation(interpolate);
@@ -2606,28 +2639,21 @@ void DrawPerformanceTab() {
                       "between their last two 60 Hz positions.");
   }
 
-  ImGui::Separator();
-  ImGui::TextUnformatted("Experimental: simulation rate");
+  ImGui::SeparatorText("Simulation rate (experimental)");
   bool adaptive = sSimAdaptive;
   if (ImGui::Checkbox("Adaptive (follow frame rate)", &adaptive)) {
     PortDebug::SetSimAdaptive(adaptive);
   }
+  ItemHelp("One step per frame with dt = the measured frame time (clamped 30-480 Hz), so a "
+           "variable frame rate is matched exactly. Leave the FPS cap off.");
   ImGui::BeginDisabled(adaptive);
   int simRate = static_cast< int >(sSimRate);
   if (ImGui::SliderInt("Sim Hz", &simRate, 30, 480)) {
     PortDebug::SetSimRate(static_cast< unsigned >(simRate));
   }
   ImGui::EndDisabled();
-  if (adaptive) {
-    ImGui::TextWrapped(
-        "One step per frame with dt = the measured frame time (clamped 30-480 Hz), "
-        "so a variable frame rate is matched exactly. Leave the FPS cap off.");
-  } else if (simRate != 60) {
-    ImGui::TextWrapped(
-        "60 Hz is console-accurate. Higher values step the game logic at the display "
-        "rate instead of interpolating the camera; leave the FPS cap off for it to "
-        "matter.");
-  }
+  ItemHelp("60 Hz is console-accurate. Higher values step the game logic at the display rate "
+           "instead of interpolating the camera; leave the FPS cap off for it to matter.");
 }
 
 // Memory card transfer (port_gci.h). The work runs on the main thread; the
@@ -2908,11 +2934,14 @@ void DrawMemoryCard() {
   if (ImGui::Button("Import file...")) {
     OpenCardDialog(kCardPick_Import);
   }
+  ItemHelp("Dolphin .gci saves or a whole card image (.raw). An import replaces the card's saves; "
+           "the old ones move to _replaced in the card folder.");
 #if !defined(__ANDROID__)
   ImGui::SameLine();
   if (ImGui::Button("Import from Dolphin")) {
     sCardStatus = CardImportDolphin();
   }
+  ItemHelp("Dolphin's card is looked for in its user folder (GC/USA/Card A, GC/MemoryCardA.USA.raw).");
 #endif
   ImGui::EndDisabled();
   ImGui::BeginDisabled(busy || saves == 0);
@@ -2921,6 +2950,8 @@ void DrawMemoryCard() {
     sCardExportQueue = PortGci::GameFiles(folder);
     OpenCardDialog(kCardPick_ExportFile);
   }
+  ItemHelp("Saves each file in turn; keep Dolphin's names (01-GM8E-MetroidPrime A.gci) for its GCI "
+           "folder.");
 #else
   if (ImGui::Button("Export to folder...")) {
     OpenCardDialog(kCardPick_ExportFolder);
@@ -2929,6 +2960,7 @@ void DrawMemoryCard() {
   if (ImGui::Button("Export to Dolphin")) {
     sCardStatus = CardExportDolphin();
   }
+  ItemHelp("Close Dolphin first. A raw card is backed up to .raw.bak before it is written.");
 #endif
   ImGui::EndDisabled();
 #if !defined(__ANDROID__)
@@ -2949,17 +2981,6 @@ void DrawMemoryCard() {
   if (!sCardStatus.empty()) {
     ImGui::TextWrapped("%s", sCardStatus.c_str());
   }
-  ImGui::TextWrapped(
-#if defined(__ANDROID__)
-      "Imports Dolphin .gci saves or a whole card image (.raw). Export saves each file "
-      "in turn; keep Dolphin's names (01-GM8E-MetroidPrime A.gci) for its GCI folder. "
-#else
-      "Imports Dolphin .gci saves or a whole card image (.raw). Dolphin's card is looked "
-      "for in its user folder (GC/USA/Card A, GC/MemoryCardA.USA.raw); close Dolphin "
-      "before exporting to it, and a raw card is backed up to .raw.bak first. "
-#endif
-      "An import replaces the card's saves; the old ones move to _replaced in the card "
-      "folder.");
 }
 
 // The Remastered import (port_remastered_import.h): the user's own image and
@@ -3208,10 +3229,12 @@ void DrawRemasteredImport() {
     return;
   }
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
-  ImGui::TextWrapped("Very experimental and currently unsupported: expect wrong or missing models, crashes and "
-                     "heavy memory use. Remove mods/remastered-models to get the retail game back.");
   ImGui::TextWrapped("Converts the models of your own copy of Metroid Prime Remastered into a mod. It needs the "
                      "game's .nsp and your console's key file (prod.keys), and takes a few minutes.");
+  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.75f, 0.3f, 1.f));
+  ImGui::TextWrapped("Very experimental and currently unsupported: expect wrong or missing models, crashes and "
+                     "heavy memory use. Remove mods/remastered-models to get the retail game back.");
+  ImGui::PopStyleColor();
   ImGui::BeginDisabled(state.running);
 #if defined(__ANDROID__)
   // No path to type here: the files are picked, and shown by name.
@@ -3360,6 +3383,8 @@ void DrawImporters() {
   ImGui::BeginDisabled(state.running);
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
   ImGui::InputTextWithHint("Argument", "optional, e.g. the file to import", sArgument, sizeof(sArgument));
+  ItemHelp("An importer is a program in the importers folder beside the mods folder; it builds a mod "
+           "from files of your own. The argument is passed to it.");
   for (const std::string& name : sNames) {
     if (ImGui::Button(("Run " + name).c_str())) {
       PortImporters::Start(name, sArgument);
@@ -3387,8 +3412,6 @@ void DrawImporters() {
       ImGui::TextWrapped("%s", state.lines[i].c_str());
     }
   }
-  ImGui::TextWrapped("An importer is a program in the importers folder beside the mods folder; it builds a "
-                     "mod from files of your own.");
 }
 #endif
 
@@ -3399,6 +3422,9 @@ void DrawMods() {
   if (ImGui::Checkbox("Load mods", &enabled)) {
     SetModsEnabled(enabled);
   }
+  ItemHelp("Each folder in the mods folder is a mod; later names win. A file at a disc path "
+           "(Metroid1.pak, Audio/..., Video/...) replaces that file, and a resource named by id and "
+           "type (1A2B3C4D.TXTR) replaces it in every PAK. Mods load at startup.");
   // What the settings would load next time, against what this launch loaded.
   std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
   bool changed = sModsEnabled != status.active;
@@ -3441,6 +3467,18 @@ void DrawMods() {
   if (ImGui::IsItemHovered()) {
     ImGui::SetTooltip("Reads the mods folder again and reloads the room, as a save state does.");
   }
+#if !defined(__ANDROID__)
+  if (!status.folder.empty()) {
+    ImGui::SameLine();
+    if (ImGui::Button("Open mods folder")) {
+      std::string url = status.folder.front() == '/' ? "file://" : "file:///";
+      for (const char c : status.folder) {
+        url += c == ' ' ? std::string("%20") : std::string(1, c == '\\' ? '/' : c);
+      }
+      SDL_OpenURL(url.c_str());
+    }
+  }
+#endif
   DrawModReloadMessage();
   for (const std::string& message : status.messages) {
     ImGui::TextColored(ImVec4(1.f, 0.5f, 0.3f, 1.f), "%s", message.c_str());
@@ -3448,20 +3486,9 @@ void DrawMods() {
   if (PortMods::NativeTextureCount() > 0) {
     ImGui::TextDisabled("Native textures: %zu, %zu in use", PortMods::NativeTextureCount(), PortMods::NativeTexturesBound());
   }
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
   ImGui::TextWrapped("Folder: %s", status.folder.c_str());
-#if !defined(__ANDROID__)
-  if (!status.folder.empty() && ImGui::Button("Open mods folder")) {
-    std::string url = status.folder.front() == '/' ? "file://" : "file:///";
-    for (const char c : status.folder) {
-      url += c == ' ' ? std::string("%20") : std::string(1, c == '\\' ? '/' : c);
-    }
-    SDL_OpenURL(url.c_str());
-  }
-#endif
-  ImGui::TextWrapped(
-      "Each folder in the mods folder is a mod; later names win. A file at a disc path "
-      "(Metroid1.pak, Audio/..., Video/...) replaces that file, and a resource named "
-      "by id and type (1A2B3C4D.TXTR) replaces it in every PAK. Mods load at startup.");
+  ImGui::PopStyleColor();
   DrawRemasteredImport();
 #if !defined(__ANDROID__)
   DrawImporters();
@@ -3475,20 +3502,20 @@ void DrawExtrasTab() {
   if (ImGui::Checkbox("Skippable cutscenes", &skippable)) {
     SetSkippableCutscenes(skippable);
   }
+  ItemHelp("Every cutscene can be skipped with the usual button, including the ones the game never "
+           "lets you skip (randomprime's room patches). Applies to rooms loaded after the change.");
   if (PortSkipCutscenes::Forced()) {
-    ImGui::SameLine();
+    SameLineAfterHelp();
     ImGui::TextDisabled("(on in randomized games)");
   }
-  ImGui::TextWrapped(
-      "Every cutscene can be skipped with the usual button, including the ones the "
-      "game never lets you skip (randomprime's room patches). Applies to rooms "
-      "loaded after the change.");
 
   ImGui::SeparatorText("Unlocks");
   bool hardMode = sUnlockHardMode;
   if (ImGui::Checkbox("Hard mode", &hardMode)) {
     SetUnlockHardMode(hardMode);
   }
+  ImGui::SetItemTooltip("Offered when starting a file, as after finishing the game.");
+  ImGui::SameLine();
   bool fusionSuit = sUnlockFusionSuit;
   if (ImGui::Checkbox("Fusion Suit", &fusionSuit)) {
     SetUnlockFusionSuit(fusionSuit);
@@ -3501,27 +3528,31 @@ void DrawExtrasTab() {
       gpGameState->PlayerState()->SetIsFusionEnabled(false);
     }
   }
+  ImGui::SetItemTooltip("Under Fusion Bonus; retail needs a GBA link to Metroid Fusion.");
+  ImGui::SameLine();
   bool galleries = sUnlockGalleries;
   if (ImGui::Checkbox("Image galleries", &galleries)) {
     SetUnlockGalleries(galleries);
   }
-  ImGui::TextWrapped(
-      "Offers what finishing the game normally unlocks: hard mode when starting a "
-      "file, the Fusion Suit under Fusion Bonus (retail needs a GBA link to "
-      "Metroid Fusion), and all four image galleries. Nothing is written into the "
-      "save, so turning an option off locks it again. Metroid (NES) stays locked: "
-      "its emulator can't run in the port.");
+  ImGui::SetItemTooltip("All four of them.");
+  ImGui::TextDisabled("What finishing the game unlocks. Not written into the save.");
+  ItemHelp("Turning an option off locks it again. Metroid (NES) stays locked: its emulator can't run "
+           "in the port.");
 
   ImGui::SeparatorText("Speedrun");
   bool timer = sSpeedrunTimer;
   if (ImGui::Checkbox("On-screen in-game time", &timer)) {
     SetSpeedrunTimer(timer);
   }
+  ItemHelp("The play time the save file shows: it stops in cutscenes, menus and loads.");
   bool liveSplit = sLiveSplit;
   if (ImGui::Checkbox("LiveSplit", &liveSplit)) {
     SetLiveSplit(liveSplit);
   }
-  ImGui::SameLine();
+  ItemHelp("In LiveSplit: right-click, Control > Start TCP Server (port 16834), and compare against "
+           "Game Time. A new file resets and starts the timer, the game time follows the in-game "
+           "time, and it splits on the final blow.");
+  SameLineAfterHelp();
   switch (PortLiveSplit::Status()) {
   case PortLiveSplit::kStatus_Off:
     ImGui::TextDisabled("off");
@@ -3548,18 +3579,14 @@ void DrawExtrasTab() {
   if (ImGui::IsItemDeactivatedAfterEdit()) {
     SetLiveSplitAddress(address);
   }
+  ImGui::SameLine();
   bool splitUpgrades = sLiveSplitSplitUpgrades;
   if (ImGui::Checkbox("Split on upgrades", &splitUpgrades)) {
     sLiveSplitSplitUpgrades = splitUpgrades;
     ApplyLiveSplit();
     MarkDirty();
   }
-  ImGui::TextWrapped(
-      "The in-game time is the play time the save file shows: it stops in cutscenes, "
-      "menus and loads. LiveSplit: right-click it, Control > Start TCP Server (port "
-      "16834), and compare against Game Time. A new file resets and starts the timer; "
-      "the game time follows the in-game time; it splits on each new upgrade or "
-      "artifact (not expansions or energy tanks) when enabled, and on the final blow.");
+  ImGui::SetItemTooltip("Also splits on each new upgrade or artifact (not expansions or energy tanks).");
 
   if (PortDiscord::Supported()) {
     ImGui::SeparatorText("Discord");
@@ -3567,6 +3594,8 @@ void DrawExtrasTab() {
     if (ImGui::Checkbox("Rich Presence", &discord)) {
       SetDiscordPresence(discord);
     }
+    ImGui::SetItemTooltip("Shows the world, room and item percentage on your Discord profile while "
+                          "the Discord app runs.");
     ImGui::SameLine();
     switch (PortDiscord::Status()) {
     case PortDiscord::kStatus_Off:
@@ -3593,15 +3622,12 @@ void DrawExtrasTab() {
     if (ImGui::IsItemDeactivatedAfterEdit()) {
       SetDiscordAppId(appId);
     }
+    ItemHelp("Rich Presence needs a Discord application: create one at "
+             "discord.com/developers/applications (its name is what Discord shows as the game), add "
+             "an art asset named \"logo\" under Rich Presence, and paste its Application ID here.");
     if (sDiscord) {
       ImGui::TextDisabled("Showing: %s", PortDiscord::CurrentText().c_str());
     }
-    ImGui::TextWrapped(
-        "Shows the world, room and item percentage on your Discord profile while the "
-        "Discord app runs. It needs a Discord application: create one at "
-        "discord.com/developers/applications (its name is what Discord shows as the "
-        "game), add an art asset named \"logo\" under Rich Presence, and paste its "
-        "Application ID here.");
   }
 
 #if defined(__ANDROID__)
@@ -3817,16 +3843,21 @@ void DrawTexturePack() {
 }
 
 void DrawInputTab() {
+  ImGui::SeparatorText("Aim");
   bool mouseAim = sMouseAim;
   if (ImGui::Checkbox("Mouse aim", &mouseAim)) {
     SetMouseAim(mouseAim);
     MarkDirty();
   }
+  ImGui::SameLine();
   bool twinStick = sTwinStick;
   if (ImGui::Checkbox("Twin stick (right stick aims)", &twinStick)) {
     SetTwinStick(twinStick);
     MarkDirty();
   }
+  ItemHelp("Twin stick uses the right stick as a direct camera aim (the same path as the mouse) and "
+           "consumes it, so it no longer free-looks. Fire stays on whatever is bound to A; remap it "
+           "in the Controls tab.");
   ImGui::BeginDisabled(!sTwinStick);
   float stickRate = sStickAimRate;
   if (ImGui::SliderFloat("Stick aim speed", &stickRate, 100.f, 3000.f, "%.0f px/s",
@@ -3841,34 +3872,67 @@ void DrawInputTab() {
   }
   ImGui::EndDisabled();
   ImGui::EndDisabled();
-  ImGui::TextWrapped(
-      "Twin stick uses the right stick as a direct camera aim (the same path as "
-      "the mouse) and consumes it, so it no longer free-looks. Fire stays on "
-      "whatever is bound to A; remap it in the Controls tab.");
-  ImGui::SeparatorText("Hold or toggle");
+
+  ImGui::SeparatorText("Mouse");
+  if (ImGui::SliderFloat("Sensitivity", &sMouseSensitivity, 0.0005f, 0.02f, "%.4f rad/px",
+                         ImGuiSliderFlags_Logarithmic)) {
+    MarkDirty();
+  }
+  if (ImGui::Checkbox("Invert X", &sMouseInvertX)) {
+    MarkDirty();
+  }
+  ImGui::SameLine();
+  if (ImGui::Checkbox("Invert Y", &sMouseInvertY)) {
+    MarkDirty();
+  }
+  ImGui::SameLine();
+  if (ImGui::Checkbox("Weapon buttons", &sMouseButtons)) {
+    sMouseButtonGate.Reset();
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("Mouse buttons are set in Controls > Keyboard & mouse. Existing "
+                        "keyboard/controller weapon bindings also work.");
+  if (ImGui::Checkbox("Crosshair", &sMouseCrosshair)) {
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("A crosshair at the aim point while mouse aiming.");
+  ImGui::SameLine();
+  int crosshairSize = sCrosshairSize;
+  ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.f);
+  if (ImGui::SliderInt("Size", &crosshairSize, kCrosshairSizeMin, kCrosshairSizeMax, "%d%%")) {
+    SetCrosshairSize(crosshairSize);
+  }
+  ImGui::SetItemTooltip("Applies under mouse aim and twin stick.");
+
+  ImGui::SeparatorText("Buttons");
   bool lockOnToggle = sLockOnToggle;
   if (ImGui::Checkbox("Toggle Lock-On", &lockOnToggle)) {
     SetLockOnToggle(lockOnToggle);
   }
-  ImGui::TextWrapped(
-      "Press L once to lock on, scan, strafe or grapple, and again to let go. "
-      "The lock also lets go by itself when its target is gone.");
+  ItemHelp("Press L once to lock on, scan, strafe or grapple, and again to let go. The lock also "
+           "lets go by itself when its target is gone.");
   bool stickyCharge = sStickyCharge;
   if (ImGui::Checkbox("Sticky Charge", &stickyCharge)) {
     SetStickyCharge(stickyCharge);
   }
-  ImGui::TextWrapped(
-      "Taps fire as usual. Hold fire for a moment and let go, and the beam keeps "
-      "charging; press fire again to shoot. Needs the Charge Beam.");
+  ItemHelp("Taps fire as usual. Hold fire for a moment and let go, and the beam keeps charging; press "
+           "fire again to shoot. Needs the Charge Beam.");
+  bool swapScanXray = sSwapScanXray;
+  if (ImGui::Checkbox("Swap the Scan and X-Ray visor buttons", &swapScanXray)) {
+    SetSwapScanXray(swapScanXray);
+  }
+  ImGui::SetItemTooltip("Each takes the other's D-pad direction, as in Metroid Prime\n"
+                        "Remastered's Dual Sticks layout. The Remastered controller preset\n"
+                        "turns it on and the other presets off.");
+
   ImGui::SeparatorText("Morph ball");
   bool fastMorph = sFastMorph;
   if (ImGui::Checkbox("Fast Morph", &fastMorph)) {
     SetFastMorph(fastMorph);
   }
-  ImGui::TextWrapped(
-      "Morphing and unmorphing take a fraction of a second and keep your "
-      "momentum, as in Metroid Prime 4. Unmorphing on the ground caps speed at "
-      "walking speed; in the air the whole jump arc carries over.");
+  ItemHelp("Morphing and unmorphing take a fraction of a second and keep your momentum, as in "
+           "Metroid Prime 4. Unmorphing on the ground caps speed at walking speed; in the air the "
+           "whole jump arc carries over.");
   const int springRule = PortAp::SpringBallRule();
   ImGui::BeginDisabled(springRule >= 0);
   bool springBall = sSpringBall;
@@ -3876,46 +3940,37 @@ void DrawInputTab() {
     SetSpringBall(springBall);
   }
   ImGui::EndDisabled();
-  bool swapScanXray = sSwapScanXray;
-  if (ImGui::Checkbox("Swap the Scan and X-Ray visor buttons", &swapScanXray)) {
-    SetSwapScanXray(swapScanXray);
-  }
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-    ImGui::SetTooltip("Each takes the other's D-pad direction, as in Metroid Prime\n"
-                      "Remastered's Dual Sticks layout. The Remastered controller preset\n"
-                      "turns it on and the other presets off.");
-  }
   if (springRule >= 0) {
-    ImGui::TextWrapped("Set by the connected Archipelago seed: %s.",
-                       springRule == 0   ? "off"
-                       : springRule == 1 ? "with the Morph Ball Bombs"
-                                         : "unlocked");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(set by the Archipelago seed: %s)", springRule == 0   ? "off"
+                                                             : springRule == 1 ? "with the Bombs"
+                                                                               : "unlocked");
   } else {
-    ImGui::TextWrapped(
-        "A small jump in morph ball, as in Metroid Prime Trilogy, once the Morph "
-        "Ball Bombs are held. Twin stick still passes the right stick up to it, "
-        "and the beam shift (X in the Remastered preset) springs too.");
+    ItemHelp("A small jump in morph ball, as in Metroid Prime Trilogy, once the Morph Ball Bombs are "
+             "held. Twin stick still passes the right stick up to it, and the beam shift (X in the "
+             "Remastered preset) springs too.");
   }
   bool springFlick = sSpringFlick;
   if (ImGui::Checkbox("Spring Ball on gyro flick", &springFlick)) {
     SetSpringBallFlick(springFlick);
   }
+  ItemHelp("Tilt the pad or phone up sharply to spring, like Trilogy's nunchuk flick. Uses the gyro "
+           "source below; gyro aim can stay off. Raise the strength if it springs by accident.");
   ImGui::BeginDisabled(!sSpringFlick);
   float flickRate = sSpringFlickRate;
   if (ImGui::SliderFloat("Flick strength", &flickRate, 2.f, 20.f, "%.1f rad/s")) {
     SetSpringBallFlickRate(flickRate);
   }
   ImGui::EndDisabled();
-  ImGui::TextWrapped(
-      "Tilt the pad or phone up sharply to spring, like Trilogy's nunchuk flick. "
-      "Uses the gyro source below; gyro aim can stay off. Raise the strength if "
-      "it springs by accident.");
+
   ImGui::SeparatorText("Gyro aim");
   const char* gyroModes[] = {"Off", "Hold to aim", "Always aim"};
   int gyroMode = sGyroMode;
   if (ImGui::Combo("Mode", &gyroMode, gyroModes, 3)) {
     SetGyroMode(gyroMode);
   }
+  ItemHelp("Tilt the pad or the phone to aim. Hold to aim uses right stick click or left ctrl. Needs "
+           "mouse aim or twin stick, since the gyro feeds that same aim.");
   ImGui::BeginDisabled(sGyroMode == 0 && !sSpringFlick);
   const char* gyroSources[] = {"Auto", "Controller", "Phone"};
   int gyroSource = sGyroSource;
@@ -3931,37 +3986,7 @@ void DrawInputTab() {
                          ImGuiSliderFlags_Logarithmic)) {
     SetGyroRate(gyroRate);
   }
-  ImGui::TextWrapped(
-      "Tilt the pad or the phone to aim. Hold to aim uses right stick click or "
-      "left ctrl. Needs mouse aim or twin stick, since the gyro feeds that same "
-      "aim.");
   ImGui::EndDisabled();
-
-  if (ImGui::Checkbox("Invert mouse X", &sMouseInvertX)) {
-    MarkDirty();
-  }
-  if (ImGui::Checkbox("Invert mouse Y", &sMouseInvertY)) {
-    MarkDirty();
-  }
-  if (ImGui::Checkbox("Mouse weapon buttons", &sMouseButtons)) {
-    sMouseButtonGate.Reset();
-    MarkDirty();
-  }
-  if (ImGui::Checkbox("Mouse-aim crosshair", &sMouseCrosshair)) {
-    MarkDirty();
-  }
-  int crosshairSize = sCrosshairSize;
-  if (ImGui::SliderInt("Crosshair size", &crosshairSize, kCrosshairSizeMin, kCrosshairSizeMax,
-                       "%d%%")) {
-    SetCrosshairSize(crosshairSize);
-  }
-  ImGui::TextUnformatted("Crosshair size applies under mouse aim and twin stick.");
-  ImGui::TextUnformatted("Mouse buttons are set in Controls > Keyboard & mouse.");
-  ImGui::TextUnformatted("Existing keyboard/controller weapon bindings also work.");
-  if (ImGui::SliderFloat("Sensitivity", &sMouseSensitivity, 0.0005f, 0.02f, "%.4f rad/px",
-                         ImGuiSliderFlags_Logarithmic)) {
-    MarkDirty();
-  }
 }
 
 void DrawAudio() {
@@ -4258,26 +4283,34 @@ void DrawSessionTab() {
     }
     ImGui::EndPopup();
   }
-  ImGui::Separator();
-  ImGui::TextUnformatted("Settings are saved automatically when changed.");
-  const std::string path = SettingsFilePath();
-  ImGui::TextWrapped("File: %s", path.c_str());
+  ImGui::SeparatorText("Settings");
   if (ImGui::Button("Save settings now")) {
     sSettingsDirty = true;
     SaveSettings();
   }
   ImGui::SameLine();
   ImGui::TextUnformatted(sSettingsDirty ? "Unsaved changes" : "Saved");
+  ImGui::SetItemTooltip("Settings are saved automatically when changed.");
+  const std::string path = SettingsFilePath();
+  ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+  ImGui::TextWrapped("File: %s", path.c_str());
+  ImGui::PopStyleColor();
 
   DrawArchipelagoConnect();
   if (PortAp::Enabled()) {
-    ImGui::TextWrapped("Status: %s", PortAp::StatusText());
+    ImGui::SeparatorText("Archipelago status");
+    if (PortAp::Connected()) {
+      ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "connected");
+    } else {
+      ImGui::TextDisabled("not connected");
+    }
+    ImGui::SameLine();
+    ImGui::TextWrapped("%s", PortAp::StatusText());
     const char* seedName = PortAp::SeedName();
     if (seedName != nullptr && seedName[0] != '\0')
       ImGui::TextWrapped("Seed: %s", seedName);
-    ImGui::Text("Items received: %d", PortAp::ItemCount());
-    ImGui::Text("Location checks sent: %d", PortAp::CheckCount());
-    ImGui::Text("Connection: %s", PortAp::Connected() ? "connected" : "not connected");
+    ImGui::Text("Items received: %d    Location checks sent: %d", PortAp::ItemCount(),
+                PortAp::CheckCount());
     const char* lastMessage = PortAp::LastMessage();
     if (lastMessage != nullptr && lastMessage[0] != '\0')
       ImGui::TextWrapped("Last message: %s", lastMessage);
@@ -4846,6 +4879,9 @@ void DrawTrackerLogic() {
   if (ImGui::Checkbox("Colour the map's dots by logic", &colors)) {
     SetMapLogicColors(colors);
   }
+  ItemHelp("Worked out from the items received and the seed's logic options, with the rules of the "
+           "Metroid Prime Archipelago tracker pack. Green is in logic; yellow can be reached with a "
+           "trick the seed doesn't count on; blue can be seen but not collected.");
   static const ImVec4 kColors[] = {
       ImVec4(0.95f, 0.30f, 0.30f, 1.f), // out of logic
       ImVec4(0.35f, 0.60f, 1.00f, 1.f), // inspect
@@ -4873,10 +4909,6 @@ void DrawTrackerLogic() {
   ImGui::TextColored(kColors[0], "%d out of reach", totals[0]);
   ImGui::SameLine();
   ImGui::TextColored(kGrey, "%d checked", checked);
-  ImGui::TextWrapped(
-      "Worked out from the items received and the seed's logic options, with the rules of "
-      "the Metroid Prime Archipelago tracker pack. Green is in logic; yellow can be reached "
-      "with a trick the seed doesn't count on; blue can be seen but not collected.");
 
   // One header per area, holding what can be reached there, best first.
   const char* area = nullptr;
@@ -4928,22 +4960,20 @@ void DrawTrackerTab() {
   if (ImGui::Checkbox("Reveal map", &reveal)) {
     SetRevealMap(reveal);
   }
-  ImGui::TextWrapped(
-      "Shows every world's map as if its map station had been used, and lists every "
-      "world on the star map. Rooms a map station leaves hidden stay hidden, and rooms "
-      "you haven't entered keep the unexplored colour. The save is not changed.");
+  ItemHelp("Shows every world's map as if its map station had been used, and lists every world on "
+           "the star map. Rooms a map station leaves hidden stay hidden, and rooms you haven't "
+           "entered keep the unexplored colour. The save is not changed.");
   bool pickups = sMapPickups;
   if (ImGui::Checkbox("Pickup dots on the map", &pickups)) {
     SetMapPickups(pickups);
   }
+  ItemHelp("A white dot marks each item pickup in the rooms the map shows, until you collect it. "
+           "Every item gets the same dot, so it doesn't give away what a pickup holds. An "
+           "Archipelago game colours them by what its logic lets you reach.");
   if (PortMapPickups::Forced()) {
-    ImGui::SameLine();
+    SameLineAfterHelp();
     ImGui::TextDisabled("(on in randomized games)");
   }
-  ImGui::TextWrapped(
-      "A white dot marks each item pickup in the rooms the map shows, until you collect "
-      "it. Every item gets the same dot, so it doesn't give away what a pickup holds. "
-      "An Archipelago game colours them by what its logic lets you reach.");
 
   DrawTrackerLogic();
 
@@ -5015,12 +5045,11 @@ void DrawTrackerTab() {
 }
 
 void DrawSaveStatesTab() {
-  ImGui::TextWrapped(
-      "Save anywhere and load back to the same spot. A state holds what a memory card save "
-      "holds (items, health, ammo, map, scans, doors and puzzles already solved, in-game time) "
-      "plus where Samus stands and whether she is in morph ball. Loading rebuilds the room as "
-      "a memory card load does, so enemies and moving parts start over. While the game is "
-      "paused, a save or load waits until you unpause.");
+  ImGui::TextDisabled("Save anywhere and load back to the same spot.");
+  ItemHelp("A state holds what a memory card save holds (items, health, ammo, map, scans, doors and "
+           "puzzles already solved, in-game time) plus where Samus stands and whether she is in "
+           "morph ball. Loading rebuilds the room as a memory card load does, so enemies and moving "
+           "parts start over. While the game is paused, a save or load waits until you unpause.");
   bool hotkeys = sSaveStateHotkeys;
   if (ImGui::Checkbox("F5 saves, F9 loads the selected slot", &hotkeys)) {
     sSaveStateHotkeys = hotkeys;
