@@ -67,6 +67,10 @@ public:
   // LoadLight clears a slot it loads). A PBR draw lit by a room's baked light leaves them
   // out, as Remastered lights actors by the bake and runtime lights alone.
   static uint sPortAreaLights;
+  // Port: whether the material draws differently once its model's vertices are moved into
+  // world space and drawn with an identity model matrix (port_room_geo.cpp's merged props):
+  // reflections and UV animation mode 6 place the texture by the model matrix itself.
+  bool PortNeedsModelMatrix() const;
 #endif
   uint GetTextureCount() const {
     return CBasics::SwapBytes(*reinterpret_cast< const uint* >(GetData() + 4));

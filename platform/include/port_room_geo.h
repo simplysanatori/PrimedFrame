@@ -180,6 +180,12 @@ Mode GetMode();
 // (MP_ROOM_GEO_AREA_LIGHTS, the console's `roomgeo lights`).
 void SetAreaLights(bool on);
 bool AreaLights();
+// Instances whose bounds span fewer pixels than this, in the game's own resolution (its
+// 640x480-ish viewport, whatever the render scale), are left out. 0 draws every one.
+// A room is thousands of small props, and on a phone the draws cost more than the
+// triangles do.
+void SetMinPixels(float pixels);
+float MinPixels();
 // Areas with a file, their instances, the distinct models and how many have loaded, and
 // the instances drawn in the last frame.
 void Stats(int& areas, int& instances, int& models, int& loaded, int& drawn);

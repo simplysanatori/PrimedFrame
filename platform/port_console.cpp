@@ -489,6 +489,7 @@ void CmdHelp() {
   Out("collision [off|overlay|only]    draw collision (only: hide the world's surfaces)");
   Out("roomliquid [on|off]       the water, poison and lava surfaces mods supply, in place of the game's");
   Out("roomgeo lights on|off     light it with the area's lights even where the room has baked light");
+  Out("roomgeo minpx <n>         leave out instances under n pixels (game resolution) on screen; 0 draws all");
   Out("roomgeo script            Remastered's camera zones, counters and groups in each loaded area, and the camera");
   Out("roomgeo group <n> show|hide   set a group until its script next changes it");
   Out("roomgeo pick              the instances the middle of the view looks through, nearest first, and the");
@@ -1511,6 +1512,8 @@ void RunFrame() {
       } else if (arg == "lights" && sCmd.args.size() > 2 &&
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomGeo::SetAreaLights(Lower(sCmd.args[2]) == "on");
+      } else if (arg == "minpx" && sCmd.args.size() > 2) {
+        PortRoomGeo::SetMinPixels(std::strtof(sCmd.args[2].c_str(), nullptr));
       } else if (arg == "script") {
         const std::string info = PortRoomGeo::ScriptInfo();
         OutLines(info.empty() ? std::string("no area has a script") : info);

@@ -7,7 +7,10 @@
 #include "port_mods.h"
 #include "port_room_env.h"
 
+#include "Kyoto/Alloc/CMemory.hpp"
 #include "Kyoto/CResFactory.hpp"
+#include "Kyoto/CResLoader.hpp"
+#include "Kyoto/CSimplePool.hpp"
 #include "Kyoto/Graphics/CCubeMaterial.hpp"
 #include "Kyoto/Graphics/CCubeModel.hpp"
 #include "Kyoto/Graphics/CGraphics.hpp"
@@ -112,6 +115,21 @@ struct Placed {
   uint32_t follow = 0;
   bool following = false;
   float alpha = 1.f;
+  size_t cluster = SIZE_MAX; // the Cluster it is drawn in, if any
+};
+
+// Copies of one small model that never move or change, built into one model at their world
+// places: a phone pays for each draw on every screen tile, and a room has hundreds of them.
+struct Cluster {
+  size_t model;
+  std::vector< size_t > members; // items
+  std::unique_ptr< CModel > merged;
+  // After `merged`, so it is released before the model it points into is freed.
+  ResidentKeep resident;
+  CAABox bounds = CAABox::MakeMaxInvertedBox();
+  std::unique_ptr< CActorLights > lights;
+  bool areaLit = false;
+  bool split = false; // this frame: some copy is hidden, so the copies are drawn one by one
 };
 
 // A script node now (see ScriptNode).
@@ -136,6 +154,11 @@ struct Area {
   std::vector< Model > models;
   std::vector< Placed > items;
   std::vector< const Placed* > sorted; // this frame's, with blended surfaces still to draw
+  // The items grouped by model, the order Draw goes in: a model's instances one after another
+  // keep its pipelines and textures bound, which is most of the cost of a draw on a phone.
+  std::vector< size_t > drawOrder;
+  std::vector< Cluster > clusters;
+  bool clustered = false; // BuildClusters has run
   std::vector< Trigger > triggers;
   bool gated = false; // some instance has a layer
   size_t loaded = 0;
@@ -158,6 +181,7 @@ std::unordered_map< uint32_t, Area >& Areas() {
 
 int sMode = -1;
 int sAreaLights = -1;
+float sMinPixels = -1.f; // < 0 until MinPixels reads MP_ROOM_GEO_MIN_PX
 bool sResident = false;
 // Counts the times areas left Areas(). The sorted pass hands DrawSorted only the item, so
 // it draws while the areas are the ones they were when AddSorted queued it.
@@ -188,21 +212,444 @@ const CCubeModel* CubeModel(const Model& model) {
 
 // A loaded model's arrays and its surfaces' display lists, as SetArraysCurrent and
 // CCubeSurface::CallDisplayList hand them to GX.
-void KeepResident(Model& model) {
-  const CCubeModel* const cube = CubeModel(model);
+void KeepResident(ResidentKeep& resident, const CCubeModel* cube) {
   if (!sResident || cube == nullptr) {
     return;
   }
   const CCubeModel::ModelInstance& instance = cube->GetModelInstance();
-  model.resident.Keep(instance.GetVertexPointer(), instance.GetVertexSize());
-  model.resident.Keep(instance.GetNormalPointer(), instance.GetNormalSize());
-  model.resident.Keep(instance.GetColorPointer(), instance.GetColorSize());
-  model.resident.Keep(instance.GetTCPointer(), instance.GetTCSize());
-  model.resident.Keep(instance.GetPackedTCPointer(), instance.GetPackedTCSize());
+  resident.Keep(instance.GetVertexPointer(), instance.GetVertexSize());
+  resident.Keep(instance.GetNormalPointer(), instance.GetNormalSize());
+  resident.Keep(instance.GetColorPointer(), instance.GetColorSize());
+  resident.Keep(instance.GetTCPointer(), instance.GetTCSize());
+  resident.Keep(instance.GetPackedTCPointer(), instance.GetPackedTCSize());
   for (const CCubeSurface* first : {&cube->GetNormalSurfaces(), &cube->GetAlphaSurfaces()}) {
     for (CCubeSurface surface = *first; surface.IsValid(); surface = surface.GetNextSurface()) {
-      model.resident.Keep(surface.GetDisplayList(), surface.GetDisplayListSize());
+      resident.Keep(surface.GetDisplayList(), surface.GetDisplayListSize());
     }
+  }
+}
+
+void KeepResident(Model& model) { KeepResident(model.resident, CubeModel(model)); }
+
+// Clusters (see Cluster). A model is merged once an area places it this many times, while
+// a copy has at most kMergeVertices positions; copies share a cluster within one cell of a
+// kMergeCell grid, and with it one set of lights.
+const size_t kMergeCopies = 4;
+const size_t kMergeVertices = 4096;
+const float kMergeCell = 64.f;
+
+uint32_t ReadBig(const uint8_t* p) {
+  return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | uint32_t(p[3]);
+}
+void WriteBig(uint8_t* p, uint32_t v) {
+  p[0] = uint8_t(v >> 24);
+  p[1] = uint8_t(v >> 16);
+  p[2] = uint8_t(v >> 8);
+  p[3] = uint8_t(v);
+}
+float ReadBigFloat(const uint8_t* p) {
+  const uint32_t v = ReadBig(p);
+  float f;
+  std::memcpy(&f, &v, 4);
+  return f;
+}
+void WriteBigFloat(uint8_t* p, float f) {
+  uint32_t v;
+  std::memcpy(&v, &f, 4);
+  WriteBig(p, v);
+}
+
+// A CMDL's sections, as CModel::CModel reads them.
+struct CmdlSections {
+  uint32_t version = 0;
+  uint32_t flags = 0;
+  size_t matSets = 1;
+  std::vector< std::pair< size_t, size_t > > sections; // offset, size
+  size_t positions = 0; // the index of each array section
+  size_t surfaces = 0;  // of the first surface
+  size_t surfaceCount = 0;
+};
+
+bool ReadCmdl(const std::vector< uint8_t >& data, CmdlSections& out) {
+  if (data.size() < 0x2c || ReadBig(data.data()) != 0xdeadbabe) {
+    return false;
+  }
+  out.version = ReadBig(&data[4]);
+  out.flags = ReadBig(&data[8]);
+  const size_t count = ReadBig(&data[0x24]);
+  const size_t sizesAt = out.version == 1 ? 0x28 : 0x2c;
+  out.matSets = out.version >= 2 ? ReadBig(&data[0x28]) : 1;
+  if (sizesAt + count * 4 > data.size()) {
+    return false;
+  }
+  size_t at = (sizesAt + count * 4 + 31) & ~size_t(31);
+  for (size_t i = 0; i < count; ++i) {
+    const size_t size = ReadBig(&data[sizesAt + i * 4]);
+    if (at + size > data.size()) {
+      return false;
+    }
+    out.sections.emplace_back(at, size);
+    at += size;
+  }
+  out.positions = out.matSets;
+  const size_t info = out.positions + 4 + ((out.flags >> 2) & 1);
+  if (info >= count || out.sections[info].second < 4) {
+    return false;
+  }
+  out.surfaces = info + 1;
+  out.surfaceCount = ReadBig(&data[out.sections[info].first]);
+  return out.surfaces + out.surfaceCount <= count;
+}
+
+// The copies of `cube`'s CMDL `source` at `places`, as one CMDL in world space: the
+// positions and normals once per copy, the other arrays shared, and each surface's display
+// list once per copy with the copy's position and normal indices. Empty when the model has
+// what this does not handle (a list with more than primitives in it, direct attributes).
+std::vector< uint8_t > MergeCmdl(const std::vector< uint8_t >& source, const CCubeModel& cube,
+                                 const std::vector< const CTransform4f* >& places, const CAABox& bounds) {
+  CmdlSections in;
+  if (!ReadCmdl(source, in)) {
+    return {};
+  }
+  const size_t copies = places.size();
+  const auto [positionsAt, positionsSize] = in.sections[in.positions];
+  const auto [normalsAt, normalsSize] = in.sections[in.positions + 1];
+  const size_t positionCount = positionsSize / 12;
+
+  // Each surface's list, read once: the vertex layout from its material, the primitives'
+  // vertex format (which tells the normals' size: VTXFMT0 floats, 1 and 2 shorts).
+  struct Surface {
+    size_t stride = 0;
+    size_t normalAt = 0; // in a vertex; SIZE_MAX without normals
+    uint32_t bases[2] = {}; // PBIX position and normal bases
+  };
+  std::vector< Surface > surfaces(in.surfaceCount);
+  int format = -1;
+  for (size_t s = 0; s < in.surfaceCount; ++s) {
+    const auto [at, size] = in.sections[in.surfaces + s];
+    if (size < 0x40) {
+      return {};
+    }
+    const uint8_t* const header = &source[at];
+    const uint32_t extra = ReadBig(header + 0x1c);
+    if (extra > size) {
+      return {};
+    }
+    const size_t headerSize = (0x4b + size_t(extra)) & ~size_t(31);
+    const size_t listSize = ReadBig(header + 0x10) & 0x7fffffff;
+    if (headerSize + listSize > size) {
+      return {};
+    }
+    const CCubeMaterial material = cube.GetMaterialByIndex(int(ReadBig(header + 0xc)));
+    if (material.PortNeedsModelMatrix()) {
+      return {};
+    }
+    const uint desc = material.GetVertexDesc();
+    Surface& surface = surfaces[s];
+    surface.normalAt = SIZE_MAX;
+    for (int a = 0; a < 11; ++a) {
+      const uint type = (desc >> (a * 2)) & 3;
+      if (type == GX_DIRECT || (a < 2 && type == GX_INDEX8)) {
+        return {};
+      }
+      if (a == 1 && type != GX_NONE) {
+        surface.normalAt = surface.stride;
+      }
+      surface.stride += type == GX_INDEX16 ? 2 : type == GX_INDEX8 ? 1 : 0;
+    }
+    if ((desc & 3) != GX_INDEX16) {
+      return {};
+    }
+    if (extra >= 0x40 && ReadBig(header + 0x44) == 0x50424958) { // 'PBIX'
+      surface.bases[0] = ReadBig(header + 0x48);
+      surface.bases[1] = ReadBig(header + 0x4c);
+    }
+    const uint8_t* const list = header + headerSize;
+    for (size_t i = 0; i < listSize;) {
+      const uint8_t op = list[i];
+      if (op == 0) {
+        ++i;
+        continue;
+      }
+      if ((op & 0x80) == 0 || i + 3 > listSize) {
+        return {};
+      }
+      if (format >= 0 && format != (op & 7)) {
+        return {};
+      }
+      format = op & 7;
+      i += 3 + size_t(list[i + 1] << 8 | list[i + 2]) * surface.stride;
+      if (i > listSize) {
+        return {};
+      }
+    }
+  }
+  const size_t normalSize = format > 0 ? 6 : 12;
+  const size_t normalCount = normalsSize / normalSize;
+  if (std::max(positionCount, normalCount) * copies > 0x10000) {
+    return {};
+  }
+
+  // The new sections' sizes, 32-byte aligned as the converter writes them.
+  const auto aligned = [](size_t n) { return (n + 31) & ~size_t(31); };
+  std::vector< size_t > sizes(in.sections.size());
+  for (size_t i = 0; i < sizes.size(); ++i) {
+    sizes[i] = in.sections[i].second;
+  }
+  sizes[in.positions] = aligned(positionCount * 12 * copies);
+  sizes[in.positions + 1] = aligned(normalCount * normalSize * copies);
+  std::vector< std::vector< uint8_t > > lists(in.surfaceCount);
+  for (size_t s = 0; s < in.surfaceCount; ++s) {
+    const uint8_t* const header = &source[in.sections[in.surfaces + s].first];
+    const size_t headerSize = (0x4b + ReadBig(header + 0x1c)) & ~31u;
+    const size_t listSize = ReadBig(header + 0x10) & 0x7fffffff;
+    const uint8_t* const list = header + headerSize;
+    const Surface& surface = surfaces[s];
+    std::vector< uint8_t >& out = lists[s];
+    for (size_t copy = 0; copy < copies; ++copy) {
+      for (size_t i = 0; i < listSize;) {
+        if (list[i] == 0) {
+          ++i;
+          continue;
+        }
+        const size_t count = size_t(list[i + 1] << 8 | list[i + 2]);
+        out.insert(out.end(), list + i, list + i + 3);
+        i += 3;
+        for (size_t v = 0; v < count; ++v, i += surface.stride) {
+          const size_t start = out.size();
+          out.insert(out.end(), list + i, list + i + surface.stride);
+          const auto move = [&](size_t at, uint32_t base, size_t perCopy) {
+            const uint32_t index = base + (uint32_t(out[start + at]) << 8 | out[start + at + 1]) + uint32_t(copy * perCopy);
+            out[start + at] = uint8_t(index >> 8);
+            out[start + at + 1] = uint8_t(index);
+            return index < 0x10000;
+          };
+          if (!move(0, surface.bases[0], positionCount) ||
+              (surface.normalAt != SIZE_MAX && !move(surface.normalAt, surface.bases[1], normalCount))) {
+            return {};
+          }
+        }
+      }
+    }
+    out.resize(aligned(out.size()), 0);
+    sizes[in.surfaces + s] = headerSize + out.size();
+  }
+
+  const size_t sizesAt = in.version == 1 ? 0x28 : 0x2c;
+  size_t total = aligned(sizesAt + sizes.size() * 4);
+  for (const size_t size : sizes) {
+    total += size;
+  }
+  std::vector< uint8_t > out(total, 0);
+  std::memcpy(out.data(), source.data(), sizesAt);
+  const CVector3f lo = bounds.GetMinPoint();
+  const CVector3f hi = bounds.GetMaxPoint();
+  const float box[6] = {lo.GetX(), lo.GetY(), lo.GetZ(), hi.GetX(), hi.GetY(), hi.GetZ()};
+  for (int i = 0; i < 6; ++i) {
+    WriteBigFloat(&out[0xc + i * 4], box[i]);
+  }
+  size_t at = aligned(sizesAt + sizes.size() * 4);
+  for (size_t i = 0; i < sizes.size(); ++i) {
+    WriteBig(&out[sizesAt + i * 4], uint32_t(sizes[i]));
+    uint8_t* const dst = &out[at];
+    const uint8_t* const src = &source[in.sections[i].first];
+    if (i == in.positions) {
+      for (size_t copy = 0; copy < copies; ++copy) {
+        const CTransform4f& xf = *places[copy];
+        for (size_t v = 0; v < positionCount; ++v) {
+          const uint8_t* const p = src + v * 12;
+          const CVector3f world = xf * CVector3f(ReadBigFloat(p), ReadBigFloat(p + 4), ReadBigFloat(p + 8));
+          uint8_t* const q = dst + (copy * positionCount + v) * 12;
+          WriteBigFloat(q, world.GetX());
+          WriteBigFloat(q + 4, world.GetY());
+          WriteBigFloat(q + 8, world.GetZ());
+        }
+      }
+    } else if (i == in.positions + 1) {
+      for (size_t copy = 0; copy < copies; ++copy) {
+        // Normals go by the inverse transpose, which the cofactors are up to a scale.
+        const CTransform4f& m = *places[copy];
+        const float c[9] = {
+            m.Get11() * m.Get22() - m.Get12() * m.Get21(), m.Get12() * m.Get20() - m.Get10() * m.Get22(),
+            m.Get10() * m.Get21() - m.Get11() * m.Get20(), m.Get02() * m.Get21() - m.Get01() * m.Get22(),
+            m.Get00() * m.Get22() - m.Get02() * m.Get20(), m.Get01() * m.Get20() - m.Get00() * m.Get21(),
+            m.Get01() * m.Get12() - m.Get02() * m.Get11(), m.Get02() * m.Get10() - m.Get00() * m.Get12(),
+            m.Get00() * m.Get11() - m.Get01() * m.Get10()};
+        // The cofactors are the inverse transpose times the determinant: a mirrored copy's
+        // would point its normals inward.
+        const float sign = m.Get00() * c[0] + m.Get01() * c[1] + m.Get02() * c[2] < 0.f ? -1.f : 1.f;
+        for (size_t v = 0; v < normalCount; ++v) {
+          const uint8_t* const p = src + v * normalSize;
+          float n[3];
+          for (int k = 0; k < 3; ++k) {
+            n[k] = format > 0 ? float(int16_t(p[k * 2] << 8 | p[k * 2 + 1])) / 16384.f : ReadBigFloat(p + k * 4);
+          }
+          // Row r of the world matrix's cofactors dotted with the normal.
+          float w[3];
+          for (int r = 0; r < 3; ++r) {
+            w[r] = c[r * 3] * n[0] + c[r * 3 + 1] * n[1] + c[r * 3 + 2] * n[2];
+          }
+          const float length = std::sqrt(w[0] * w[0] + w[1] * w[1] + w[2] * w[2]);
+          uint8_t* const q = dst + (copy * normalCount + v) * normalSize;
+          for (int k = 0; k < 3; ++k) {
+            const float value = length > 0.f ? sign * w[k] / length : 0.f;
+            if (format > 0) {
+              const int16_t s = int16_t(std::clamp(std::lround(value * 16384.f), -32768l, 32767l));
+              q[k * 2] = uint8_t(uint16_t(s) >> 8);
+              q[k * 2 + 1] = uint8_t(s);
+            } else {
+              WriteBigFloat(q + k * 4, value);
+            }
+          }
+        }
+      }
+    } else if (i >= in.surfaces && i < in.surfaces + in.surfaceCount) {
+      const size_t s = i - in.surfaces;
+      const uint32_t extra = ReadBig(src + 0x1c);
+      const size_t headerSize = (0x4b + size_t(extra)) & ~size_t(31);
+      std::memcpy(dst, src, headerSize);
+      const CVector3f centre = bounds.GetCenterPoint();
+      WriteBigFloat(dst, centre.GetX());
+      WriteBigFloat(dst + 4, centre.GetY());
+      WriteBigFloat(dst + 8, centre.GetZ());
+      WriteBig(dst + 0x10, (ReadBig(src + 0x10) & 0x80000000) | uint32_t(lists[s].size()));
+      if (extra != 0) {
+        for (int k = 0; k < 6; ++k) {
+          WriteBigFloat(dst + 0x2c + k * 4, box[k]);
+        }
+      }
+      if (surfaces[s].bases[0] != 0 || surfaces[s].bases[1] != 0) {
+        WriteBig(dst + 0x48, 0); // folded into the indices
+        WriteBig(dst + 0x4c, 0);
+      }
+      std::memcpy(dst + headerSize, lists[s].data(), lists[s].size());
+    } else {
+      std::memcpy(dst, src, in.sections[i].second);
+    }
+    at += sizes[i];
+  }
+  return out;
+}
+
+// The area's clusters, once all its models are in. Only what nothing moves, hides or fades
+// goes in one (see Draw for what can still leave a cluster's copies drawn one by one).
+void BuildClusters(Area& area) {
+  area.clustered = true;
+  if (const char* env = std::getenv("MP_ROOM_GEO_MERGE"); env != nullptr && std::strcmp(env, "0") == 0) {
+    return; // to compare against
+  }
+  std::vector< size_t > copies(area.models.size(), 0);
+  const auto mergeable = [&](const Placed& item) {
+    return item.layer == kEveryLayer && item.platform == 0 && item.follow == 0 && item.active;
+  };
+  std::vector< bool > linked(area.items.size(), false);
+  for (const Trigger& trigger : area.triggers) {
+    linked[trigger.item] = true;
+  }
+  for (const std::vector< size_t >& group : area.groups) {
+    for (const size_t i : group) {
+      linked[i] = true;
+    }
+  }
+  for (size_t i = 0; i < area.items.size(); ++i) {
+    if (!linked[i] && mergeable(area.items[i])) {
+      ++copies[area.items[i].model];
+    }
+  }
+  std::unordered_map< uint64_t, std::vector< size_t > > cells; // by model and cell
+  std::vector< uint64_t > order;
+  for (size_t i = 0; i < area.items.size(); ++i) {
+    const Placed& item = area.items[i];
+    const Model& model = area.models[item.model];
+    if (linked[i] || !mergeable(item) || copies[item.model] < kMergeCopies || !model.loaded) {
+      continue;
+    }
+    const CVector3f at = item.xf.GetTranslation();
+    const auto cell = [](float v) {
+      return uint64_t(uint16_t(int16_t(std::clamp(std::floor(v / kMergeCell), -32768.f, 32767.f))));
+    };
+    const uint64_t key = uint64_t(item.model) << 48 | cell(at.GetX()) << 32 | cell(at.GetY()) << 16 | cell(at.GetZ());
+    std::vector< size_t >& members = cells[key];
+    if (members.empty()) {
+      order.push_back(key);
+    }
+    members.push_back(i);
+  }
+  std::unordered_map< size_t, std::vector< uint8_t > > sources;
+  std::unordered_map< size_t, size_t > perCluster; // copies a cluster of the model holds
+  size_t built = 0;
+  size_t merged = 0;
+  for (const uint64_t key : order) {
+    const std::vector< size_t >& members = cells[key];
+    if (members.size() < 2) {
+      continue;
+    }
+    const size_t index = area.items[members.front()].model;
+    const Model& model = area.models[index];
+    const CModel& cmodel = **model.data->PickStaticModel(CModelData::kWM_Normal);
+    const CCubeModel* const cube = cmodel.GetCubeModel();
+    if (!perCluster.count(index)) {
+      bool ok = cmodel.IsDefinitelyOpaque();
+      const SObjectTag tag('CMDL', static_cast< CAssetId >(model.id));
+      CResLoader& loader = gpResourceFactory->GetResLoader();
+      if (ok && loader.ResourceExists(tag) &&
+          loader.GetResourceCompression(tag) == CResLoader::kCompressionType_Uncompressed) {
+        char* data = nullptr;
+        int length = 0;
+        loader.LoadMemResourceSync(tag, &data, &length);
+        if (data != nullptr && length > 0) {
+          sources[index].assign(reinterpret_cast< uint8_t* >(data), reinterpret_cast< uint8_t* >(data) + length);
+        }
+        delete[] data;
+      }
+      CmdlSections layout;
+      ok = ok && ReadCmdl(sources[index], layout);
+      // As many copies as 16-bit indices reach; normals counted at their smallest, shorts.
+      const size_t vertices = ok ? std::max(layout.sections[layout.positions].second / 12,
+                                            layout.sections[layout.positions + 1].second / 6) : 0;
+      ok = ok && vertices <= kMergeVertices;
+      perCluster[index] = ok ? 0x10000 / std::max< size_t >(vertices, 1) : 0;
+    }
+    if (perCluster[index] < 2) {
+      continue;
+    }
+    for (size_t first = 0; first < members.size(); first += perCluster[index]) {
+      const size_t last = std::min(members.size(), first + perCluster[index]);
+      if (last - first < 2) {
+        break;
+      }
+      Cluster cluster;
+      cluster.model = index;
+      std::vector< const CTransform4f* > places;
+      for (size_t m = first; m < last; ++m) {
+        Placed& item = area.items[members[m]];
+        cluster.members.push_back(members[m]);
+        places.push_back(&item.xf);
+        item.bounds = model.bounds.GetTransformedAABox(item.xf); // for roomgeo at and pick
+        item.bounded = true;
+        cluster.bounds.Include(item.bounds);
+      }
+      std::vector< uint8_t > bytes = MergeCmdl(sources[index], *cube, places, cluster.bounds);
+      if (bytes.empty()) {
+        perCluster[index] = 0;
+        break;
+      }
+      rstl::auto_ptr< uchar[] > data(rs_new uchar[bytes.size()]);
+      std::memcpy(data.get(), bytes.data(), bytes.size());
+      cluster.merged.reset(rs_new CModel(data, int(bytes.size()), *gpSimplePool));
+      const_cast< CCubeModel* >(cluster.merged->GetCubeModel())->PortSetAssetId(model.id);
+      cluster.merged->Touch(0);
+      KeepResident(cluster.resident, cluster.merged->GetCubeModel());
+      for (const size_t i : cluster.members) {
+        area.items[i].cluster = area.clusters.size();
+      }
+      merged += cluster.members.size();
+      ++built;
+      area.clusters.push_back(std::move(cluster));
+    }
+  }
+  if (built != 0) {
+    PortLog::Write("room geo: %zu copies merged into %zu models\n", merged, built);
   }
 }
 
@@ -521,6 +968,9 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       return false;
     }
   }
+  if (!area.clustered && area.loaded == area.models.size()) {
+    BuildClusters(area);
+  }
   // A trigger's linked actors are made active and given its alpha every frame it is active
   // (CScriptDamageableTrigger::Think); when it goes inactive, after its death fade or by a
   // Deactivate at alpha 0, they are not seen again until it is.
@@ -542,9 +992,76 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
   const bool baked = !AreaLights() && PortRoomEnv::HasVolume(gameArea.GetAreaAssetId());
   CScriptLayerManager* const layers =
       area.gated ? const_cast< CStateManager& >(mgr).WorldLayerState().GetPtr() : nullptr;
-  for (Placed& item : area.items) {
+  if (area.drawOrder.size() != area.items.size()) {
+    area.drawOrder.resize(area.items.size());
+    for (size_t i = 0; i < area.drawOrder.size(); ++i) {
+      area.drawOrder[i] = i;
+    }
+    std::stable_sort(area.drawOrder.begin(), area.drawOrder.end(),
+                     [&](size_t a, size_t b) { return area.items[a].model < area.items[b].model; });
+  }
+  // MinPixels: an item is left out while its bounds' diagonal over its distance, roughly
+  // the angle it spans, is under that many pixels' worth of the projection's height.
+  float minSpan = 0.f;
+  const CGraphics::CProjectionState& projection = CGraphics::GetProjectionState();
+  if (MinPixels() > 0.f && projection.IsPerspective() && projection.GetNear() > 0.f &&
+      CGraphics::GetViewportHeight() > 0) {
+    minSpan = MinPixels() * std::fabs(projection.GetTop() - projection.GetBottom()) /
+              (projection.GetNear() * float(CGraphics::GetViewportHeight()));
+  }
+  const CVector3f eye = CGraphics::GetViewPoint();
+  const auto tooSmall = [&](const CAABox& bounds) {
+    if (minSpan <= 0.f) {
+      return false;
+    }
+    const CVector3f& lo = bounds.GetMinPoint();
+    const CVector3f& hi = bounds.GetMaxPoint();
+    // From the eye to the nearest point of the box: 0 inside it, which keeps it.
+    const float dx = std::max(std::max(lo.GetX() - eye.GetX(), eye.GetX() - hi.GetX()), 0.f);
+    const float dy = std::max(std::max(lo.GetY() - eye.GetY(), eye.GetY() - hi.GetY()), 0.f);
+    const float dz = std::max(std::max(lo.GetZ() - eye.GetZ(), eye.GetZ() - hi.GetZ()), 0.f);
+    return (hi - lo).Magnitude() < minSpan * std::sqrt(dx * dx + dy * dy + dz * dz);
+  };
+  const auto light = [&](std::unique_ptr< CActorLights >& lights, bool& areaLit, const CAABox& bounds) {
+    if (lights == nullptr || areaLit == baked) {
+      // The baked ambient already holds the area's lights, so that set has room for none:
+      // one that expects area lights and has none drops its dynamic lights too. Its
+      // ambient is what a material outside PBR is drawn at.
+      lights.reset(new CActorLights(8, CVector3f(0.f, 0.f, 0.f), 4, baked ? 0 : 4));
+      if (baked) {
+        lights->SetAmbientColor(CColor::White());
+      }
+      areaLit = !baked;
+    }
+    if (baked) {
+      const CVector3f centre = bounds.GetCenterPoint();
+      const float at[3] = {centre.GetX(), centre.GetY(), centre.GetZ()};
+      PortRoomEnv::SetVolumeHint(gameArea.GetAreaAssetId(), at);
+    } else {
+      lights->BuildAreaLightList(mgr, gameArea, bounds);
+    }
+    lights->BuildDynamicLightList(mgr, bounds);
+  };
+  for (Cluster& cluster : area.clusters) {
+    cluster.split = false;
+    for (const size_t i : cluster.members) {
+      cluster.split = cluster.split || !area.items[i].shown;
+    }
+    if (cluster.split || area.models[cluster.model].hidden || !frustum.BoxInFrustumPlanes(cluster.bounds) ||
+        tooSmall(cluster.bounds)) {
+      continue;
+    }
+    light(cluster.lights, cluster.areaLit, cluster.bounds);
+    gpRender->SetModelMatrix(CTransform4f::Identity());
+    cluster.lights->ActivateLights();
+    cluster.merged->DrawUnsortedParts(CModelFlags::Normal());
+    sDrawn += int(cluster.members.size());
+  }
+  for (const size_t index : area.drawOrder) {
+    Placed& item = area.items[index];
     const Model& model = area.models[item.model];
-    if (!model.loaded || model.hidden || !item.shown || item.alpha <= 0.f) {
+    if (!model.loaded || model.hidden || !item.shown || item.alpha <= 0.f ||
+        (item.cluster != SIZE_MAX && !area.clusters[item.cluster].split)) {
       continue;
     }
     if (item.layer != kEveryLayer && layers != nullptr &&
@@ -558,24 +1075,10 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     if (!frustum.BoxInFrustumPlanes(item.bounds)) {
       continue;
     }
-    if (item.lights == nullptr || item.areaLit == baked) {
-      // The baked ambient already holds the area's lights, so that set has room for none:
-      // one that expects area lights and has none drops its dynamic lights too. Its
-      // ambient is what a material outside PBR is drawn at.
-      item.lights.reset(new CActorLights(8, CVector3f(0.f, 0.f, 0.f), 4, baked ? 0 : 4));
-      if (baked) {
-        item.lights->SetAmbientColor(CColor::White());
-      }
-      item.areaLit = !baked;
+    if (tooSmall(item.bounds)) {
+      continue;
     }
-    if (baked) {
-      const CVector3f centre = item.bounds.GetCenterPoint();
-      const float at[3] = {centre.GetX(), centre.GetY(), centre.GetZ()};
-      PortRoomEnv::SetVolumeHint(gameArea.GetAreaAssetId(), at);
-    } else {
-      item.lights->BuildAreaLightList(mgr, gameArea, item.bounds);
-    }
-    item.lights->BuildDynamicLightList(mgr, item.bounds);
+    light(item.lights, item.areaLit, item.bounds);
     item.volume = baked ? gameArea.GetAreaAssetId() : 0;
     // Blended surfaces (glass, decals) wait for the sorted pass, where they are drawn
     // back to front among the actors.
@@ -1040,6 +1543,16 @@ bool AreaLights() {
 }
 
 void SetAreaLights(bool on) { sAreaLights = on ? 1 : 0; }
+
+float MinPixels() {
+  if (sMinPixels < 0.f) {
+    const char* const env = std::getenv("MP_ROOM_GEO_MIN_PX");
+    sMinPixels = env != nullptr ? std::max(0.f, float(std::atof(env))) : 0.f;
+  }
+  return sMinPixels;
+}
+
+void SetMinPixels(float pixels) { sMinPixels = std::max(0.f, pixels); }
 
 void SetMode(Mode mode) {
   sMode = int(mode);

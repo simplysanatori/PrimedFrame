@@ -553,6 +553,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sPoseInterpolation = ParseBool(value);
   } else if (key == "room_geo_resident") {
     sRoomGeoResident = ParseBool(value);
+  } else if (key == "room_geo_min_px") {
+    PortRoomGeo::SetMinPixels(std::strtof(value.c_str(), nullptr));
   } else if (key == "particle_interpolation") {
     sParticleInterpolation = ParseBool(value);
   } else if (key == "ai_audio") {
@@ -655,6 +657,7 @@ void SaveSettings() {
   file << "actor_interpolation=" << (sActorInterpolation ? 1 : 0) << '\n';
   file << "pose_interpolation=" << (sPoseInterpolation ? 1 : 0) << '\n';
   file << "room_geo_resident=" << (sRoomGeoResident ? 1 : 0) << '\n';
+  file << "room_geo_min_px=" << PortRoomGeo::MinPixels() << '\n';
   file << "particle_interpolation=" << (sParticleInterpolation ? 1 : 0) << '\n';
   file << "mouse_aim=" << (sMouseAim ? 1 : 0) << '\n';
   file << "twin_stick=" << (sTwinStick ? 1 : 0) << '\n';
@@ -4688,6 +4691,14 @@ void DrawRendering() {
     ImGui::SetItemTooltip("Recommended: off.\n"
                           "Also lights the Remastered rooms with the game's own lights where the room\n"
                           "has baked light. Off matches Remastered.");
+    float minPixels = PortRoomGeo::MinPixels();
+    if (ImGui::SliderFloat("Skip small models", &minPixels, 0.f, 8.f, minPixels > 0.f ? "under %.1f px" : "off")) {
+      PortRoomGeo::SetMinPixels(minPixels);
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Leaves out room models that look smaller than this on screen (in the game's\n"
+                          "own 480-line pixels, whatever the render scale). Raise it if frames are\n"
+                          "slow; 0 draws everything.");
     ImGui::EndDisabled();
     ImGui::SameLine();
     bool resident = sRoomGeoResident;

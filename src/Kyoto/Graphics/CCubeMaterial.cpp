@@ -524,6 +524,51 @@ union scanner_t {
   const uchar* bytes;
 };
 
+#ifdef TARGET_PC
+// Walks the material as SetCurrent does, up to its UV animations.
+bool CCubeMaterial::PortNeedsModelMatrix() const {
+  const uint* words = reinterpret_cast< const uint* >(GetData());
+  const uint matFlags = SBig(words[0]);
+  if ((matFlags & (kStateFlag_Reflection | kStateFlag_ReflectionSurfaceEye)) != 0) {
+    return true;
+  }
+  words += 2 + SBig(words[1]) + 2; // flags, textures, vertex layout and group
+  if ((matFlags & kStateFlag_KonstValues) != 0) {
+    words += SBig(words[0]) + 1;
+  }
+  words += 1; // blend
+  if ((matFlags & kStateFlag_ReflectionIndirectTexture) != 0) {
+    words += 1;
+  }
+  words += SBig(words[0]) + 1; // colour channels
+  const uint tevCount = SBig(*words++);
+  words += tevCount * 6; // the stages and their texture orders
+  words += SBig(words[0]) + 1; // texture coordinate generators
+  const uint animCount = SBig(words[1]);
+  words += 2;
+  for (uint i = 0; i < animCount; ++i) {
+    switch (SBig(*words)) {
+    case 0:
+    case 1:
+    case 7: // the model's rotation and translation reach it through the positions or normals
+      words += SBig(*words) == 7 ? 3 : 1;
+      break;
+    case 2:
+    case 4:
+    case 5:
+      words += 5;
+      break;
+    case 3:
+      words += 3;
+      break;
+    default: // 6 takes the model's translation on its own
+      return true;
+    }
+  }
+  return false;
+}
+#endif
+
 void CCubeMaterial::SetCurrent(const CModelFlags& flags, const CCubeSurface& surface,
                                const CCubeModel& model) const {
   if (x0_data == sLastMaterialCached) {
