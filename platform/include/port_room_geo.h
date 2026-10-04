@@ -208,6 +208,11 @@ float MinPixels();
 // Off draws merged copies one by one again, each with its own lights (an A/B check; not saved).
 void SetMergedDraws(bool on);
 bool MergedDraws();
+// Draws the opaque room models nearest first, the cut-out ones after them, so the GPU skips
+// the shading of what is already covered. Off goes model by model, to keep pipelines bound
+// (an A/B check; not saved).
+void SetFrontToBack(bool on);
+bool FrontToBack();
 // Scales the distances where an instance switches to a coarser level of detail (the
 // import's lods.bin): 1 is Remastered's own, 2 keeps the full model twice as far, 0 never
 // switches (MP_ROOM_GEO_LOD, the console's `roomgeo lod`). Merged copies keep the full one.

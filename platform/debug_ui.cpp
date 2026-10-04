@@ -4865,6 +4865,13 @@ void DrawRendering() {
                           "Draws repeated props (rocks, grass) near each other as one model, lit as\n"
                           "a group. Off draws each copy on its own, with its own lights: slower, but a\n"
                           "way to check whether the merge changes how something looks.");
+    bool frontToBack = PortRoomGeo::FrontToBack();
+    if (ImGui::Checkbox("Draw nearest first", &frontToBack)) {
+      PortRoomGeo::SetFrontToBack(frontToBack);
+    }
+    ImGui::SetItemTooltip("Recommended: on. Not saved.\n"
+                          "Draws the room's solid models nearest first, so the GPU skips shading what\n"
+                          "they hide. Looks the same either way; off is for comparing frame rates.");
     static constexpr const char* kCostTests[] = {"Off", "Flat", "No lights", "No ambient volume",
                                                  "No reflections", "No normal maps"};
     int costTest = int(GXGetPBRCostTest());

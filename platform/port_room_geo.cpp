@@ -97,6 +97,7 @@ struct Model {
   ResidentKeep resident;
   bool loaded = false;
   bool hidden = false; // by the console, to find which model a surface belongs to
+  int cutout = -1;     // some material alpha-tests (1) or none does (0); -1 until Draw looks
   CAABox bounds = CAABox::MakeMaxInvertedBox();
   std::vector< Level > levels; // nearest first
 };
@@ -205,6 +206,7 @@ int sMode = -1;
 int sAreaLights = -1;
 float sMinPixels = -1.f; // < 0 until MinPixels reads MP_ROOM_GEO_MIN_PX
 bool sMergedDraws = true;
+bool sFrontToBack = true;
 float sLodDistance = -1.f; // < 0 until LodDistance reads MP_ROOM_GEO_LOD
 bool sResident = false;
 // The mods' level of detail tables, by model id; read when the first area loads after a Reset.
@@ -1199,14 +1201,39 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       }
       areaLit = !baked;
     }
-    if (baked) {
-      const CVector3f centre = bounds.GetCenterPoint();
-      const float at[3] = {centre.GetX(), centre.GetY(), centre.GetZ()};
-      PortRoomEnv::SetVolumeHint(gameArea.GetAreaAssetId(), at);
-    } else {
+    if (!baked) {
       lights->BuildAreaLightList(mgr, gameArea, bounds);
     }
     lights->BuildDynamicLightList(mgr, bounds);
+  };
+  const auto cutout = [](Model& model) {
+    const CCubeModel* const cube = model.cutout < 0 ? CubeModel(model) : nullptr;
+    if (cube != nullptr) {
+      model.cutout = 0;
+      for (int i = 0, count = int(cube->PortMaterialCount()); i < count; ++i) {
+        if ((cube->GetMaterialByIndex(i).GetFlags() & kStateFlag_AlphaTest) != 0) {
+          model.cutout = 1;
+          break;
+        }
+      }
+    }
+    return model.cutout == 1;
+  };
+  // What is drawn this frame, gathered first so it can go nearest first.
+  struct Visible {
+    bool cutout; // after every opaque one
+    float distanceSq;
+    const CModel* model;
+    const CTransform4f* xf;
+    CActorLights* lights;
+    const CAABox* bounds;
+  };
+  static std::vector< Visible > visible;
+  visible.clear();
+  static const CTransform4f kIdentity = CTransform4f::Identity();
+  const auto add = [&](Model& model, const CModel& drawn, const CTransform4f& xf, CActorLights* lights,
+                       const CAABox& bounds) {
+    visible.push_back({cutout(model), distanceSq(bounds), &drawn, &xf, lights, &bounds});
   };
   for (Cluster& cluster : area.clusters) {
     cluster.split = !sMergedDraws;
@@ -1218,10 +1245,9 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       continue;
     }
     light(cluster.lights, cluster.areaLit, cluster.bounds);
-    gpRender->SetModelMatrix(CTransform4f::Identity());
-    cluster.lights->ActivateLights();
     const int level = pickLevel(area.models[cluster.model], cluster.levels.size(), cluster.bounds, cluster.scaleSq);
-    (level < 0 ? *cluster.merged : *cluster.levels[level].merged).DrawUnsortedParts(CModelFlags::Normal());
+    add(area.models[cluster.model], level < 0 ? *cluster.merged : *cluster.levels[level].merged, kIdentity,
+        cluster.lights.get(), cluster.bounds);
     sDrawn += int(cluster.members.size());
     if (level >= 0) {
       sDrawnCoarse += int(cluster.members.size());
@@ -1229,7 +1255,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
   }
   for (const size_t index : area.drawOrder) {
     Placed& item = area.items[index];
-    const Model& model = area.models[item.model];
+    Model& model = area.models[item.model];
     if (!model.loaded || model.hidden || !item.shown || item.alpha <= 0.f ||
         (item.cluster != SIZE_MAX && !area.clusters[item.cluster].split)) {
       continue;
@@ -1264,13 +1290,28 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       ++sDrawn;
       continue;
     }
-    gpRender->SetModelMatrix(item.xf);
-    item.lights->ActivateLights();
-    cmodel.DrawUnsortedParts(CModelFlags::Normal());
+    add(model, cmodel, item.xf, item.lights.get(), item.bounds);
     if (!cmodel.IsDefinitelyOpaque()) {
       area.sorted.push_back(&item);
     }
     ++sDrawn;
+  }
+  if (sFrontToBack) {
+    // Nearest first, so the GPU's depth test rejects the pixels behind before they are shaded;
+    // cut-outs last, since a shader that can discard keeps the hardware from testing early.
+    std::stable_sort(visible.begin(), visible.end(), [](const Visible& a, const Visible& b) {
+      return a.cutout != b.cutout ? b.cutout : a.distanceSq < b.distanceSq;
+    });
+  }
+  for (const Visible& draw : visible) {
+    if (baked) {
+      const CVector3f centre = draw.bounds->GetCenterPoint();
+      const float at[3] = {centre.GetX(), centre.GetY(), centre.GetZ()};
+      PortRoomEnv::SetVolumeHint(gameArea.GetAreaAssetId(), at);
+    }
+    gpRender->SetModelMatrix(*draw.xf);
+    draw.lights->ActivateLights();
+    draw.model->DrawUnsortedParts(CModelFlags::Normal());
   }
   gpRender->SetAmbientColor(CColor::White());
   CGraphics::DisableAllLights();
@@ -1755,6 +1796,10 @@ void LodStats(int& levels, int& loaded, int& drawnCoarse) {
 void SetMergedDraws(bool on) { sMergedDraws = on; }
 
 bool MergedDraws() { return sMergedDraws; }
+
+void SetFrontToBack(bool on) { sFrontToBack = on; }
+
+bool FrontToBack() { return sFrontToBack; }
 
 void SetMode(Mode mode) {
   sMode = int(mode);
