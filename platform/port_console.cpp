@@ -12,6 +12,7 @@
 #include "port_hd_font.h"
 #include "port_livesplit.h"
 #include "port_remastered_import.h"
+#include "port_remastered_ball_light.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
 #include "port_room_liquid.h"
@@ -1469,6 +1470,11 @@ void RunFrame() {
         OutLines(PortRoomEnv::GradeInfo());
         return Finish();
       } else if (arg == "grade" && sCmd.args.size() > 2 &&
+      } else if (arg == "balllight" && sCmd.args.size() > 2 &&
+                 (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
+        PortRemasteredBallLight::SetEnabled(Lower(sCmd.args[2]) == "on");
+      } else if (arg == "balllight" && sCmd.args.size() > 2 && ParseFloat(sCmd.args[2], number)) {
+        PortRemasteredBallLight::SetScale(number);
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomEnv::SetColorGradeEnabled(Lower(sCmd.args[2]) == "on");
       } else if (arg == "on" || arg == "off") {
@@ -1484,7 +1490,7 @@ void RunFrame() {
         PortRoomEnv::SetVolumeView(Lower(sCmd.args[2]) == "off" ? 0 : Lower(sCmd.args[2]) == "coords" ? 1 : 2);
       } else {
         return Finish("usage: roomenv [on|off|info [<x> <y> <z>]|exposure on|off|auto on|off|static on|off|"
-                      "arealights on|off|blend on|off|bloom on|off|"
+                      "arealights on|off|balllight on|off|<scale>|blend on|off|bloom on|off|"
                       "grade on|off|grades|"
                       "volume on|off|ambient <scale>|"
                       "show off|coords|light]");

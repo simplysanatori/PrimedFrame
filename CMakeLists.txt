@@ -173,6 +173,7 @@ set(MP_PORT_SOURCES
     platform/port_remastered_image.cpp
     platform/port_remastered_table.cpp
     platform/port_remastered_convert.cpp
+    platform/port_remastered_ball_light.cpp
     platform/port_remastered_effect.cpp
     platform/port_remastered_effect_convert.cpp
     platform/port_remastered_effect_import.cpp

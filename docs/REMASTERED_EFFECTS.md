@@ -238,6 +238,55 @@ Effects with no retail id (most world effects) are not used yet: nothing on
 the disc names them. The step is off by default. Like the rest of the import, the files take effect
 at the next mods reload (`mods reload` or the debug menu), no restart needed.
 
+## HDR dynamic lights
+
+The morph ball's inner glow is one of five particle effects in Remastered, one
+per glow index (0 Power, 1 Varia, 2 Varia with Spider Ball, 3 Gravity, 4
+Phazon). Its light is a particle light in scene-linear HDR. The port doesn't
+load these effects. `platform/port_remastered_ball_light.cpp` computes the same
+light from the values the exe binds into them (`CMorphBallMP1::UpdateEffects`)
+and from the effects' light elements:
+
+- **Colour:** retail's `skBallLightModulationColors[glow]`, converted from sRGB
+  to linear.
+- **Intensity (LINT):** `lerp(lerp(dry, 450, b), lerp(wet, 450, b), f)`.
+  - `dry`/`wet` are 30/60, or 30/90 for Phazon.
+  - `b` is the boost: the charge fraction, then `1 - drain/drainTime` while
+    boosting.
+  - `f` is the water factor. Its target is 1 inside a fluid. In normal water
+    it is `0.5 x depth under water / ball radius`. It rises towards the target
+    at 2/s, drops to the target at once, and falls at 4/s out of the water.
+- **Falloff:** quadratic `(1-t)^2` from 0 to 2.3 units around the ball's centre.
+- **Fade:** in over the first half of the morph and out over the unmorph.
+- **When:** the light applies only while the inner glow's light is in use, not
+  during the transition flash.
+
+The intensity is divided by pi because the port's PBR Lambert has no `1/pi`.
+That divide, and approximating Remastered's in-fluid flag with
+`IsInsideFluid()`, are assumptions; nothing was compared with Remastered
+on screen.
+
+The light reaches the shader through `GXSetPBRLightHdr` (Aurora command
+`GX_AURORA_SET_PBR_LIGHT_HDR`). That call gives a GX light slot its own linear
+colour, view position and falloff (none, linear, quadratic, 1 - smoothstep;
+r1 0 = off) in PBR draws, in place of the GX light's colour and attenuation.
+`CLight::SetPortHdr` carries these values, and `CGraphics::LoadLight` sends
+them, or "off", for every light it loads. Retail-material draws keep the
+retail light.
+
+`MP_REMASTERED_BALL_LIGHT=0` keeps retail's light, and
+`MP_REMASTERED_BALL_LIGHT_SCALE=<x>` scales the intensity. The console's
+`roomenv balllight on|off|<scale>` does the same while the game runs.
+
+There is no gun light to port. Remastered's arm cannon has no charge-beam
+dynamic light: the retail gun light (`UpdateGunLight`) colours the gun's own
+particle effect.
+
+The converter writes LTYP and LFOT as Remastered's byte minus one. The exe reads LTYP 1 as retail 2 and LTYP 2 as retail 1, and
+reads LFOT unchanged. The import replaces the root effect's light block with
+the disc's, so this matters only for embedded children's lights. It is not
+fixed yet.
+
 ## Tools
 
 `tests/port_remastered_effect_tool.cpp` is a dev tool, not built by CMake:
@@ -250,6 +299,9 @@ g++ -std=c++20 -O2 -Iplatform/include tests/port_remastered_effect_tool.cpp \
 ./effect_tool dump <file.GENP>             # one effect as text
 ./effect_tool scan <romfs> [outdir]        # coverage, references, failures;
                                            # outdir gets one dump per effect
+./effect_tool extract <romfs> <outdir>     # every unique GENP as raw <id>.GENP,
+                                           # for grepping what dumps show as raw
+                                           # blocks (PVAR, parameter tables)
 ./effect_tool convert <romfs> <retail|-> <outdir>
                                            # every effect as retail PART, what
                                            # was left out, and (with a folder of

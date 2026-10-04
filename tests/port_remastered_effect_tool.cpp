@@ -109,7 +109,7 @@ int Dump(const std::string& path) {
   return 0;
 }
 
-int Scan(const std::string& romfs, const std::string& outDir) {
+int Scan(const std::string& romfs, const std::string& outDir, bool rawOut = false) {
   std::vector<std::filesystem::path> paks;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(romfs)) {
     if (entry.is_regular_file() && entry.path().extension() == ".pak") {
@@ -119,6 +119,33 @@ int Scan(const std::string& romfs, const std::string& outDir) {
   std::sort(paks.begin(), paks.end());
   if (!outDir.empty()) {
     std::filesystem::create_directories(outDir);
+  }
+  if (rawOut) {
+    // Every unique GENP as its raw bytes, <id>.GENP, for grepping ids the
+    // dump prints as raw blocks (PVAR, the parameter tables).
+    std::set<PortRemastered::EffectGuid> written;
+    for (const std::filesystem::path& path : paks) {
+      FileReader reader;
+      std::string error;
+      PortRemastered::Pak pak;
+      if (!reader.Open(path.string(), error) ||
+          !pak.Open([&reader](uint64_t offset, void* out, size_t size) { return reader.Read(offset, out, size); },
+                    reader.Size(), error)) {
+        std::cerr << path.string() << ": " << error << "\n";
+        return 1;
+      }
+      for (const PortRemastered::PakAsset& asset : pak.Assets()) {
+        std::vector<uint8_t> data;
+        if (asset.type != kGenp || !written.insert(asset.id).second || !pak.ReadAsset(asset, data, error)) {
+          continue;
+        }
+        std::ofstream out(std::filesystem::path(outDir) / (PortRemastered::IdToString(asset.id) + ".GENP"),
+                          std::ios::binary);
+        out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+      }
+    }
+    std::cout << written.size() << " GENPs written\n";
+    return 0;
   }
 
   std::map<PortRemastered::EffectGuid, uint32_t> types; // every asset id -> type
@@ -555,6 +582,9 @@ int main(int argc, char** argv) {
   if (mode == "scan" && (argc == 3 || argc == 4)) {
     return Scan(argv[2], argc == 4 ? argv[3] : "");
   }
+  if (mode == "extract" && argc == 4) {
+    return Scan(argv[2], argv[3], true);
+  }
   if (mode == "convert" && argc == 5) {
     return Convert(argv[2], argv[3], argv[4]);
   }
@@ -562,7 +592,8 @@ int main(int argc, char** argv) {
     return Import(argv[2], argv[3], argv[4]);
   }
   std::cerr << "usage: " << argv[0]
-            << " dump <file.GENP> | scan <romfs> [outdir] | convert <romfs> <retail|-> <outdir>"
+            << " dump <file.GENP> | scan <romfs> [outdir] | extract <romfs> <outdir>"
+               " | convert <romfs> <retail|-> <outdir>"
                " | import <romfs> <retail> <outdir>\n";
   return 2;
 }

@@ -524,6 +524,15 @@ void CGraphics::LoadLight(ERglLight light, const CLight& info) {
   mLightTypes[light] = info.GetType();
 #ifdef TARGET_PC
   CCubeMaterial::sPortAreaLights &= ~(1u << light);
+  if (info.HasPortHdr()) {
+    CVector3f hdrPos = info.GetPosition() + info.GetPortHdrOffset();
+    MTXMultVec(mCameraMtx, reinterpret_cast< VecPtr >(&hdrPos), reinterpret_cast< VecPtr >(&hdrPos));
+    const f32 viewPos[3] = {hdrPos.GetX(), hdrPos.GetY(), hdrPos.GetZ()};
+    GXSetPBRLightHdr(lightId, info.GetPortHdrColor(), viewPos, info.GetPortHdrR0(),
+                     info.GetPortHdrR1(), info.GetPortHdrFalloff());
+  } else {
+    GXSetPBRLightHdr(lightId, nullptr, nullptr, 0.f, 0.f, 0);
+  }
 #endif
 }
 
