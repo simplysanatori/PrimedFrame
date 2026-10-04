@@ -1353,7 +1353,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let spec = d * vis * f;
           // GX lights are unnormalised (colour * N.L is full brightness), so Lambert has no
           // 1/pi and the specular lobe is scaled by pi to match.
-          let rad = pow(max(light.color.rgb, vec3f(0.0)), vec3f(2.2)) * attn{16};
+          let rad = ubuf.pbr_light_color[i].rgb * attn{16};
           pbr_lo += (pbr_diff * pbr_ao + spec * pbr_pi) * rad * nl;
           // Stand-in environment: the surroundings as a soft hemisphere lit by this light,
           // seen along the reflection vector.
@@ -2255,6 +2255,7 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     uniBufAttrs += "\n    pbr_tone: array<vec4f, 3>,";
     uniBufAttrs += "\n    pbr_light_skip: vec4f,";
     uniBufAttrs += "\n    pbr_light_scale: vec4f,";
+    uniBufAttrs += fmt::format("\n    pbr_light_color: array<vec4f, {}>,", GX::MaxLights);
     const auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx);
     if (!pbr.empty()) {
       fragmentFn += pbr;

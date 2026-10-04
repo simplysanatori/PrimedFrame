@@ -357,7 +357,8 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
   }
   if (config.pbr) {
     info.usesPbr = true;
-    info.uniformSize += sizeof(Mat3x4<float>) + sizeof(Vec4<float>) * 24; // 7 single + ambient 6 + volume 6 + tone 3 + light skip + light scale
+    // 7 single + ambient 6 + volume 6 + tone 3 + light skip + light scale, then the linear light colours
+    info.uniformSize += sizeof(Mat3x4<float>) + sizeof(Vec4<float>) * (24 + GX::MaxLights);
   }
   if (info.usesPTTexMtx.any()) {
     info.uniformSize += sizeof(Mat3x4<float>) * MaxPTTexMtx;
@@ -481,6 +482,11 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
     Vec4<float> lightScale = g_gxState.pbrLightScale;
     lightScale.z() = g_gxState.pbrBrdfLut ? 1.f : 0.f;
     buf.append(lightScale);
+    // The lights' colours made linear here once, not per light in every pixel.
+    for (const auto& light : g_gxState.lights) {
+      const auto linear = [](float c) { return std::pow(std::max(c, 0.f), 2.2f); };
+      buf.append(Vec4<float>{linear(light.color.x()), linear(light.color.y()), linear(light.color.z()), 0.f});
+    }
   }
   if (info.usesPTTexMtx.any()) {
     for (int i = 0; i < info.usesPTTexMtx.size(); ++i) {
