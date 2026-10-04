@@ -533,6 +533,7 @@ struct ScriptObject {
   std::vector<uint32_t> targets;  // of its connections
   bool hasPos = false;            // the three floats after its name, for any type
   Vec3 pos{};
+  std::vector<uint8_t> props;     // from the end of its name on: what names its model
 };
 
 struct Area {
@@ -682,6 +683,7 @@ bool ReadScly(const std::vector<uint8_t>& m, std::vector<ScriptObject>& objects)
       } else if (type == 3) {
         return false;
       }
+      object.props.assign(m.begin() + std::ptrdiff_t(rest), m.begin() + std::ptrdiff_t(objectEnd));
       objects.push_back(std::move(object));
       p = objectEnd;
     }
@@ -785,6 +787,12 @@ constexpr Pass kPasses[] = {
 };
 constexpr double kMatchTolerance = 0.02;
 constexpr double kMatchNear = 2.0;
+// A model carried over from retail, in a room's byte order (EffectRetailId); the last
+// four bytes are the retail id, big-endian as retail's own properties hold it.
+constexpr uint8_t kRetailIdPrefix[12] = {0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0xf0, 0xf0, 0x00, 0x00, 0x00};
+constexpr uint8_t kRetailActor = 0x00;
+// How far Remastered moved a scenery actor off the retail one it stands for (0.38 at most).
+constexpr double kRetailActorNear = 0.5;
 
 // The retail type of a Remastered component type, -1 for one retail has no object for.
 int RetailType(uint32_t type) {
@@ -2381,7 +2389,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   // carry, names no parent: most actors with it stand still, and the room's script
   // connections are what make one a platform's.
   std::map<Id16, uint32_t> actorModels;  // 0 when the model did not convert
-  size_t actors = 0, riding = 0, glowing = 0;
+  size_t actors = 0, riding = 0, glowing = 0, retailDrawn = 0;
   // By component index: the glow its incandescence modulator gives it. A channel or
   // intensity the modulator leaves out is 1. The door frames' modulators fade in no time
   // and nothing starts them, so the glow holds from the start; one something else starts
@@ -2434,6 +2442,21 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     const Id16 model = SwapUuid(r.room.Bytes(prop->second));
     if (model == Id16{}) {
       continue;
+    }
+    // Some carry a retail model (Remastered's id 10000000-0000-f000-f000-0000XXXXXXXX)
+    // and stand where a retail Actor with that model already does, a little moved at most:
+    // the pipes and fittings of the Frigate's hangar. The retail actor draws it, as the
+    // Remastered model when the import table replaces it, so it is not written again.
+    if (const uint8_t* id = r.room.Bytes(prop->second); std::memcmp(id, kRetailIdPrefix, 12) == 0) {
+      const Vec3 w = Apply(area.xf, MulR2G(pos));
+      const bool standing = std::any_of(area.objects.begin(), area.objects.end(), [&](const ScriptObject& o) {
+        return o.type == kRetailActor && o.hasPos && MaxAbs(o.pos, w) < kRetailActorNear &&
+               std::search(o.props.begin(), o.props.end(), id + 12, id + 16) != o.props.end();
+      });
+      if (standing) {
+        ++retailDrawn;
+        continue;
+      }
     }
     auto known = actorModels.find(model);
     if (known == actorModels.end()) {
@@ -2498,10 +2521,11 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   std::snprintf(line, sizeof line,
                 "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu inactive objects left out; %zu on a layer, "
                 "%zu scripted, %zu in %zu groups of %zu script objects and %zu connections (%zu untraced), %zu on a "
-                "platform, %zu with untraced links, %zu glowing; %zu of %zu entities matched), %zu dropped",
+                "platform, %zu with untraced links, %zu glowing, %zu left to retail actors; %zu of %zu entities "
+                "matched), %zu dropped",
                 r.name.c_str(), mrea, count, modcons, actors, inactive, gated, linked, grouped, scripts.group.size(),
                 scripts.script.nodes.size(), scripts.script.edges.size(), scripts.scriptUnresolved, riding, unresolved,
-                glowing, scripts.matched, scripts.entities, dropped);
+                glowing, retailDrawn, scripts.matched, scripts.entities, dropped);
   Log(line);
 }
 
