@@ -102,13 +102,19 @@ final class TouchControlsView extends View {
         new ControlButton("Y", BTN_NORTH, 0.875f, 0.645f, 0.055f),
     };
 
-    // A square cross: equal spacing both ways, equal sizes.
-    private static final ControlButton[] DPAD = {
-        new ControlButton("\u25B2", BTN_DPAD_UP, 0.115f, 0.245f, 0.042f),
-        new ControlButton("\u25BC", BTN_DPAD_DOWN, 0.115f, 0.395f, 0.042f),
-        new ControlButton("\u25C0", BTN_DPAD_LEFT, 0.040f, 0.320f, 0.042f),
-        new ControlButton("\u25B6", BTN_DPAD_RIGHT, 0.190f, 0.320f, 0.042f),
+    // The D-pad is one cross, as on the GameCube pad: its centre as fractions of
+    // the view, its arms in view heights so it stays square.
+    private static final float DPAD_X = 0.115f;
+    private static final float DPAD_Y = 0.335f;
+    private static final float DPAD_ARM = 0.130f;  // centre to an arm's end
+    private static final float DPAD_HALF = 0.045f; // an arm's half width
+    // Up, down, left, right: ids, labels, and each arm's direction.
+    private static final int[] DPAD_BUTTONS = {
+        BTN_DPAD_UP, BTN_DPAD_DOWN, BTN_DPAD_LEFT, BTN_DPAD_RIGHT,
     };
+    private static final String[] DPAD_LABELS = {"\u25B2", "\u25BC", "\u25C0", "\u25B6"};
+    private static final int[] DPAD_DX = {0, 0, -1, 1};
+    private static final int[] DPAD_DY = {-1, 1, 0, 0};
 
     // Shoulders stack vertically: the trigger above the bumper, both sides.
     // L and R are the pad's analog triggers; Z is its digital shoulder. In Xbox
@@ -147,6 +153,7 @@ final class TouchControlsView extends View {
     private final Set<Integer> forwarded = new HashSet<>();
     private final RectF hideBounds = new RectF();
     private final Path shapePath = new Path();
+    private final Path crossArmPath = new Path();
     private static native boolean nativeDebugOverlayVisible();
     private static native boolean nativeTwinStick();
     private static native void nativeSetTouchDevice(boolean xboxLayout);
@@ -233,9 +240,7 @@ final class TouchControlsView extends View {
         for (ControlButton button : face) {
             drawButton(canvas, button, width, height);
         }
-        for (ControlButton button : DPAD) {
-            drawButton(canvas, button, width, height);
-        }
+        drawDpad(canvas, width, height);
     }
 
     // A mouse is not a finger on the overlay. Its clicks are dispatched as
@@ -455,12 +460,11 @@ final class TouchControlsView extends View {
                 return;
             }
         }
-        for (ControlButton button : DPAD) {
-            if (hitButton(button, x, y, width, height)) {
-                targets.put(pointerId, new TouchTarget(BUTTON, button.button));
-                pressControl(button.button);
-                return;
-            }
+        int dpadButton = dpadButtonAt(x, y, width, height);
+        if (dpadButton != -1) {
+            targets.put(pointerId, new TouchTarget(BUTTON, dpadButton));
+            pressControl(dpadButton);
+            return;
         }
 
         if (x < width * 0.38f && y > height * 0.43f && leftPointer == -1) {
@@ -664,6 +668,61 @@ final class TouchControlsView extends View {
         float py = dy - ring * (float) Math.sin(nearest);
         float half = button.halfWidth * height;
         return px * px + py * py <= half * half;
+    }
+
+    // The D-pad direction under (x, y), or -1. The whole square round the cross
+    // counts, by the dominant axis, so a thumb that slips off an arm's side or
+    // into a corner still presses something; only a small centre is dead.
+    private static int dpadButtonAt(float x, float y, float width, float height) {
+        float dx = x - DPAD_X * width;
+        float dy = y - DPAD_Y * height;
+        float arm = DPAD_ARM * height;
+        float dead = DPAD_HALF * height * 0.4f;
+        if (Math.abs(dx) > arm || Math.abs(dy) > arm || dx * dx + dy * dy < dead * dead) {
+            return -1;
+        }
+        if (Math.abs(dx) > Math.abs(dy)) {
+            return dx < 0 ? BTN_DPAD_LEFT : BTN_DPAD_RIGHT;
+        }
+        return dy < 0 ? BTN_DPAD_UP : BTN_DPAD_DOWN;
+    }
+
+    private void drawDpad(Canvas canvas, float width, float height) {
+        float cx = DPAD_X * width;
+        float cy = DPAD_Y * height;
+        float arm = DPAD_ARM * height;
+        float half = DPAD_HALF * height;
+        float corner = half * 0.35f;
+        shapePath.reset();
+        shapePath.addRoundRect(cx - arm, cy - half, cx + arm, cy + half, corner, corner,
+                               Path.Direction.CW);
+        crossArmPath.reset();
+        crossArmPath.addRoundRect(cx - half, cy - arm, cx + half, cy + arm, corner, corner,
+                                  Path.Direction.CW);
+        shapePath.op(crossArmPath, Path.Op.UNION);
+        fillPaint.setColor(twinStickMode ? 0x77081218 : padFill(GC_GREY, false));
+        canvas.drawPath(shapePath, fillPaint);
+        // A held arm lights from the centre out.
+        for (int i = 0; i < DPAD_BUTTONS.length; ++i) {
+            if (!held.containsKey(DPAD_BUTTONS[i])) {
+                continue;
+            }
+            float endX = cx + DPAD_DX[i] * arm;
+            float endY = cy + DPAD_DY[i] * arm;
+            RectF bounds = new RectF(
+                Math.min(cx, endX) - (DPAD_DX[i] == 0 ? half : 0),
+                Math.min(cy, endY) - (DPAD_DY[i] == 0 ? half : 0),
+                Math.max(cx, endX) + (DPAD_DX[i] == 0 ? half : 0),
+                Math.max(cy, endY) + (DPAD_DY[i] == 0 ? half : 0));
+            fillPaint.setColor(twinStickMode ? 0xCC48C8E8 : padFill(GC_GREY, true));
+            canvas.drawRoundRect(bounds, corner, corner, fillPaint);
+        }
+        strokePaint.setColor(0xBBFFFFFF);
+        canvas.drawPath(shapePath, strokePaint);
+        for (int i = 0; i < DPAD_BUTTONS.length; ++i) {
+            drawCenteredLabel(canvas, DPAD_LABELS[i], cx + DPAD_DX[i] * arm * 0.62f,
+                              cy + DPAD_DY[i] * arm * 0.62f, dp(12));
+        }
     }
 
     // A band round (cx, cy) along the arc, with round ends: GameCube X and Y.
