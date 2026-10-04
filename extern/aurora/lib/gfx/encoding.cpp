@@ -6,6 +6,7 @@
 #include "depth_peek.hpp"
 #include "pipeline_cache.hpp"
 #include "probe.hpp"
+#include "resource_cache.hpp"
 #include "tex_copy_conv.hpp"
 #include "tex_palette_conv.hpp"
 #include "../gx/gx.hpp"
@@ -34,6 +35,7 @@ using webgpu::g_queue;
 namespace {
 constexpr Module Log{"aurora::gfx"};
 PipelineRef g_currentPipeline;
+BindGroupRef g_currentTextureGroup;
 
 void apply_viewport(const wgpu::RenderPassEncoder& pass, const Viewport& vp) {
   const float minDepth = gx::UseReversedZ ? 1.f - vp.zfar : vp.znear;
@@ -120,6 +122,7 @@ void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, Render
   // Bind bind group for the whole pass
   pass.SetBindGroup(0, resources().staticBindGroup);
   pass.SetBindGroup(2, gx::g_emptyTextureBindGroup);
+  g_currentTextureGroup = 0;
 
   for (auto& cmd : passInfo.commands) {
 #ifdef AURORA_GFX_DEBUG_GROUPS
@@ -164,6 +167,7 @@ void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, Render
       g_currentPipeline = UINTPTR_MAX;
       pass.SetBindGroup(0, resources().staticBindGroup);
       pass.SetBindGroup(2, gx::g_emptyTextureBindGroup);
+      g_currentTextureGroup = 0;
       if (hasViewport) {
         apply_viewport(pass, currentViewport);
       }
@@ -430,4 +434,14 @@ bool bind_pipeline(PipelineRef ref, const wgpu::RenderPassEncoder& pass) {
   g_currentPipeline = ref;
   return true;
 }
+
+void bind_texture_group(BindGroupRef ref, const wgpu::RenderPassEncoder& pass) {
+  if (ref == g_currentTextureGroup) {
+    return;
+  }
+  pass.SetBindGroup(2, find_bind_group(ref));
+  g_currentTextureGroup = ref;
+}
+
+void forget_texture_group() { g_currentTextureGroup = 0; }
 } // namespace aurora::gfx
