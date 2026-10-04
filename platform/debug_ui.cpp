@@ -988,12 +988,17 @@ void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
     }
     sTimingWallLastNs = nowNs;
   }
-  if (sTimingNs >= 1000000000ull) {
+  // Also on wall time: a light frame under the cap took several seconds to
+  // gather one second of work, so the readout lagged that far behind.
+  if (sTimingNs >= 1000000000ull || sTimingWallNs >= 1000000000ull) {
     const double seconds = static_cast<double>(sTimingNs) / 1000000000.0;
     const double wallSeconds = static_cast<double>(sTimingWallNs) / 1000000000.0;
     sActualFps = sTimingFrames / (wallSeconds > 0.0 ? wallSeconds : seconds);
     sThroughputFps = sTimingFrames / seconds;
-    sActualTps = sTimingTicks / seconds;
+    // Ticks per wall second: the simulation's rate is what the player sees, not
+    // what it could reach. Over the frame's own time it read above the target
+    // whenever the cap or vsync left the loop idle.
+    sActualTps = sTimingTicks / (wallSeconds > 0.0 ? wallSeconds : seconds);
     if (sTraceTiming) {
       std::fprintf(stderr,
                    "[timing] presented=%.1f FPS throughput=%.1f FPS simulation=%.1f ticks/s cap=%s\n",
