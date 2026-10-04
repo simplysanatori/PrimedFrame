@@ -61,6 +61,8 @@ bool RequestLoad(int slot);
 // the game is rebuilt where Samus stands, as by a save and a load, with every
 // PAK reopened. With no game running, the next one to start does it.
 bool RequestModReload();
+// How many times the mod files were read again, to tell when a request ran.
+int ModReloads();
 // What the last request did, for the overlay and the console.
 std::string LastMessage();
 

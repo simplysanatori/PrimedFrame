@@ -281,6 +281,10 @@ bool ModsEnabled();
 void SetModsEnabled(bool enabled);
 std::string ModsDisabled();
 void SetModsDisabled(const std::string& list);
+// Starts a Remastered import (port_remastered_import.h) with the mods unloaded
+// while it runs; they load again, the new import included, when it ends.
+// False when one is already running or there is no mods folder.
+bool StartRemasteredImport(const std::string& image, const std::string& keys);
 // Memory card transfer to and from Dolphin (port_gci.h), for the overlay and
 // the console. Each returns a message for the user. Imports are refused in
 // game; `path` may be a .gci, a raw card image, a folder of .gci files or an

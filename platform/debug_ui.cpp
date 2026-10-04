@@ -3067,6 +3067,81 @@ void DrawModReloadMessage() {
   }
 }
 
+} // namespace
+
+// An import from the panel unloads the mods while it runs (on a tablet, the
+// game holding a room-geometry mod plus the import ran out of memory) and
+// loads them again when it ends, the new import in place of the old.
+static bool sImportWatched = false;
+static bool sImportUnloadedMods = false;
+// A reload is refused where the game can't save (a cutscene, say), so these
+// are asked again every two seconds until one runs.
+static int sReloadAwaited = -1;
+static double sReloadRetry = 0.0;
+
+static void ReloadUntilDone() {
+  sReloadAwaited = PortSaveState::ModReloads();
+  sReloadRetry = ImGui::GetTime() + 2.0;
+  PortSaveState::RequestModReload();
+}
+
+bool StartRemasteredImport(const std::string& image, const std::string& keys) {
+#if defined(__ANDROID__)
+  // Each worker holds a world's models while it converts them; a phone has
+  // the memory for two of those, not for one per core.
+  const bool started = PortRemastered::StartImport(image, keys, 2);
+#else
+  const bool started = PortRemastered::StartImport(image, keys);
+#endif
+  if (!started) {
+    return false;
+  }
+  sImportWatched = true;
+  const PortMods::Status& status = PortMods::CurrentStatus();
+  if (std::any_of(status.mods.begin(), status.mods.end(), [](const PortMods::ModInfo& mod) { return mod.enabled; })) {
+    PortMods::SetSuspended(true);
+    ReloadUntilDone();
+    sImportUnloadedMods = true;
+  }
+  return true;
+}
+
+// Every frame, so the mods come back with the panel closed too.
+static void FinishRemasteredImport() {
+  if (sReloadAwaited >= 0) {
+    if (PortSaveState::ModReloads() != sReloadAwaited) {
+      sReloadAwaited = -1;
+    } else if (ImGui::GetTime() >= sReloadRetry) {
+      sReloadRetry = ImGui::GetTime() + 2.0;
+      PortSaveState::RequestModReload();
+    }
+  }
+  if (!sImportWatched) {
+    return;
+  }
+  const PortRemastered::ImportState state = PortRemastered::ImportStatus();
+  if (state.running) {
+    return;
+  }
+  sImportWatched = false;
+  if (state.ok) {
+    // A mod just imported is wanted, even if it was switched off to import.
+    std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
+    const auto kept = std::remove(disabled.begin(), disabled.end(), std::string(PortRemastered::kImportModName));
+    if (kept != disabled.end()) {
+      disabled.erase(kept, disabled.end());
+      SetModsDisabled(PortMods::JoinDisabled(disabled));
+    }
+  }
+  if (state.ok || sImportUnloadedMods) {
+    PortMods::SetSuspended(false);
+    ReloadUntilDone();
+  }
+  sImportUnloadedMods = false;
+}
+
+namespace {
+
 void DrawRemasteredImport() {
   static char sImage[1024] = "";
   static char sKeys[1024] = "";
@@ -3172,7 +3247,7 @@ void DrawRemasteredImport() {
   ImGui::Checkbox("Room geometry too##remastered", &sGeometry);
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("Also converts the rooms themselves, not only the models in them. About 6.5 GB in place of "
-                      "1 GB, and twice as long. Restart the game afterwards.");
+                      "1 GB, and twice as long.");
   }
 #if defined(__ANDROID__)
   // A tap shows no tooltip, so the warning is spelled out.
@@ -3195,6 +3270,10 @@ void DrawRemasteredImport() {
   if (state.running) {
     ImGui::ProgressBar(state.total > 0 ? float(state.done) / float(state.total) : 0.f, ImVec2(-1.f, 0.f),
                        state.message.c_str());
+    if (sImportUnloadedMods) {
+      ImGui::TextDisabled("The mods are unloaded until the import ends.");
+      DrawModReloadMessage();
+    }
     if (ImGui::Button("Cancel##remastered")) {
       PortRemastered::CancelImport();
     }
@@ -3211,13 +3290,10 @@ void DrawRemasteredImport() {
 #endif
     if (ImGui::Button("Import##remastered")) {
       rememberTyped();
-#if defined(__ANDROID__)
-      // Each worker holds a world's models while it converts them; a phone has
-      // the memory for two of those, not for one per core.
-      PortRemastered::StartImport(sImage, sKeys, 2);
-#else
-      PortRemastered::StartImport(sImage, sKeys);
-#endif
+      StartRemasteredImport(sImage, sKeys);
+    }
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("The mods are unloaded while it runs, and loaded again with the new import when it ends.");
     }
     ImGui::SameLine();
     if (ImGui::Button("Import movies##remastered")) {
@@ -3236,11 +3312,11 @@ void DrawRemasteredImport() {
       ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 1.f, 0.5f, 1.f));
       ImGui::TextWrapped("%s", state.message.c_str());
       ImGui::PopStyleColor();
-      if (ImGui::Button("Load it now##remastered")) {
+      // It loads on its own when the import ends; this is to load it again
+      // by hand.
+      if (ImGui::Button("Load it again##remastered")) {
         PortSaveState::RequestModReload();
       }
-      ImGui::SameLine();
-      ImGui::TextDisabled("or restart the game");
       DrawModReloadMessage();
     } else if (state.finished && state.cancelled) {
       ImGui::TextDisabled("The import was cancelled.");
@@ -3349,7 +3425,9 @@ void DrawMods() {
     }
     changed = changed || (sModsEnabled && on) != mod.enabled;
   }
-  if (changed) {
+  if (PortMods::Suspended()) {
+    ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Unloaded while the Remastered import runs; they load again when it ends.");
+  } else if (changed) {
     ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Reload the mods to apply.");
   }
   if (ImGui::Button("Reload mods")) {
@@ -5221,6 +5299,7 @@ void DrawUI() {
   // output pipe fills.
   PortImporters::Poll();
 #endif
+  FinishRemasteredImport();
   if (!sVisible) {
     sTouchScroll = TouchScroll{};
     return;

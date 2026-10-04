@@ -169,6 +169,11 @@ void Initialize();
 void BeginReload();
 void FinishReload();
 const Status& CurrentStatus();
+// While suspended no mod loads, whatever the settings say: a Remastered import
+// unloads them so their memory is free while it runs. Takes effect at the next
+// reload or start.
+void SetSuspended(bool suspended);
+bool Suspended();
 // The mods folder, created if missing. Empty if there is no pref folder.
 std::string Folder();
 // Every .pak on the disc (with mods applied), as (entry number, path).

@@ -47,6 +47,7 @@ int sLoadRequest = -1;
 bool sReloadRequest = false;
 // The mods are read again where the next game starts (InstallPending).
 bool sReloadMods = false;
+int sModReloads = 0;
 std::string sMessage;
 // SlotInfo is drawn every overlay frame; files change only through WriteSlot.
 Info sInfoCache[kSlotCount + 1];
@@ -227,6 +228,7 @@ void ReloadModFiles() {
   PortMods::BeginReload();
   PortRemastered::ApplyPendingImport();
   PortMods::FinishReload();
+  ++sModReloads;
 }
 
 bool DoLoad(CStateManager& mgr, int slot) {
@@ -348,6 +350,8 @@ bool RequestLoad(int slot) {
   sLoadRequest = slot;
   return true;
 }
+
+int ModReloads() { return sModReloads; }
 
 bool RequestModReload() {
   if (PortDebug::StateManager() == nullptr) {

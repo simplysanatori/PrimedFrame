@@ -1364,7 +1364,7 @@ void RunFrame() {
     const std::string verb = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "";
     if (verb == "start" && sCmd.args.size() > 2) {
       const std::string keys = sCmd.args.size() > 3 ? sCmd.args[3] : PortRemastered::DefaultKeysPath();
-      if (!PortRemastered::StartImport(sCmd.args[2], keys)) {
+      if (!PortDebug::StartRemasteredImport(sCmd.args[2], keys)) {
         return Finish("an import is already running, or there is no mods folder");
       }
     } else if (verb == "cancel") {

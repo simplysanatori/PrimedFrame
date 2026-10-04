@@ -255,6 +255,14 @@ bool HasRoomGeometry() {
 
 const Status& CurrentStatus() { return sStatus; }
 
+namespace {
+bool sSuspended = false;
+}
+
+void SetSuspended(bool suspended) { sSuspended = suspended; }
+
+bool Suspended() { return sSuspended; }
+
 // Every .pak on the disc, as (entryNum, path).
 std::vector<std::pair<int32_t, std::string>> DiscPaks() {
   std::vector<std::pair<int32_t, std::string>> paks;
@@ -371,7 +379,7 @@ void Initialize() {
   sRoomLiquids.clear();
   sHudBars.clear();
   sStatus.folder = Folder();
-  sStatus.active = PortDebug::ModsEnabled();
+  sStatus.active = PortDebug::ModsEnabled() && !sSuspended;
   if (sStatus.folder.empty()) {
     return;
   }
