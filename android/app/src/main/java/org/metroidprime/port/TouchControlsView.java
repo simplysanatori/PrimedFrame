@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
@@ -69,13 +70,27 @@ final class TouchControlsView extends View {
     private static final float STICK_RADIUS = 0.16f;
     private static final float STICK_DEAD_ZONE = 0.12f;
 
-    // The GameCube pad's face layout, with its larger A, kept while twin-stick is
-    // off so the overlay matches the pad the game was authored for.
+    // The GameCube pad's colours, as RGB; the fill alpha follows the press state.
+    private static final int GC_GREEN = 0x2FA864;
+    private static final int GC_RED = 0xC8343A;
+    private static final int GC_GREY = 0x8A8A94;
+    private static final int GC_YELLOW = 0xE0C020;
+    private static final int GC_PURPLE = 0x6A4FB0;
+
+    // A's centre: from the right edge and from the top, in view heights. The
+    // GameCube cluster is laid out in heights around it, so it keeps the pad's
+    // shape whatever the screen's aspect.
+    private static final float GC_A_FROM_RIGHT = 0.235f;
+    private static final float GC_A_Y = 0.700f;
+
+    // The GameCube pad's face, kept while twin-stick is off so the overlay
+    // matches the pad the game was authored for: a big green A, a small red B
+    // at its lower left, and X and Y as kidneys curving round A's right and top.
     private static final ControlButton[] GAMECUBE_FACE = {
-        new ControlButton("A", BTN_SOUTH, 0.925f, 0.700f, 0.070f),
-        new ControlButton("B", BTN_EAST, 0.850f, 0.775f, 0.058f),
-        new ControlButton("X", BTN_WEST, 0.850f, 0.625f, 0.058f),
-        new ControlButton("Y", BTN_NORTH, 0.775f, 0.700f, 0.058f),
+        ControlButton.round("A", BTN_SOUTH, 0f, 0f, 0.085f, GC_GREEN),
+        ControlButton.round("B", BTN_EAST, -0.123f, 0.103f, 0.050f, GC_RED),
+        ControlButton.kidney("X", BTN_WEST, 0.158f, 0.040f, -50f, 80f, GC_GREY),
+        ControlButton.kidney("Y", BTN_NORTH, 0.158f, 0.040f, -160f, 75f, GC_GREY),
     };
 
     // Twin-stick reads like a modern shooter pad: the Xbox diamond, all four the
@@ -102,7 +117,7 @@ final class TouchControlsView extends View {
     // for. X-Box mode has no Z label because the pad has no Z button.
     private static final PillButton[] GAMECUBE_PILLS = {
         new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.100f),
-        new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.020f, 0.115f, 0.150f, 0.185f),
+        new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.020f, 0.115f, 0.150f, 0.185f, GC_PURPLE),
         new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.100f),
         new PillButton("START", -1, BTN_START, 0.400f, 0.030f, 0.490f, 0.100f),
         new PillButton("MENU", TOGGLE_DEBUG_OVERLAY, -1, 0.510f, 0.030f, 0.600f, 0.100f),
@@ -131,6 +146,7 @@ final class TouchControlsView extends View {
     // Fingers passed on to SDL; see forwardToSdl.
     private final Set<Integer> forwarded = new HashSet<>();
     private final RectF hideBounds = new RectF();
+    private final Path shapePath = new Path();
     private static native boolean nativeDebugOverlayVisible();
     private static native boolean nativeTwinStick();
     private static native void nativeSetTouchDevice(boolean xboxLayout);
@@ -206,9 +222,10 @@ final class TouchControlsView extends View {
             }
         }
         drawStick(canvas, width * STICK_LEFT_X, height * STICK_Y, height * STICK_RADIUS,
-                  leftPointer);
+                  leftPointer, 0);
+        // The right stick is the C-stick, yellow on the GameCube pad.
         drawStick(canvas, width * STICK_RIGHT_X, height * STICK_Y, height * STICK_RADIUS,
-                  rightPointer);
+                  rightPointer, twinStickMode ? 0 : GC_YELLOW);
 
         for (PillButton pill : pills) {
             drawPillButton(canvas, pill, width, height);
@@ -432,14 +449,14 @@ final class TouchControlsView extends View {
             }
         }
         for (ControlButton button : face) {
-            if (hitCircle(button, x, y, width, height)) {
+            if (hitButton(button, x, y, width, height)) {
                 targets.put(pointerId, new TouchTarget(BUTTON, button.button));
                 pressControl(button.button);
                 return;
             }
         }
         for (ControlButton button : DPAD) {
-            if (hitCircle(button, x, y, width, height)) {
+            if (hitButton(button, x, y, width, height)) {
                 targets.put(pointerId, new TouchTarget(BUTTON, button.button));
                 pressControl(button.button);
                 return;
@@ -589,9 +606,15 @@ final class TouchControlsView extends View {
         invalidate();
     }
 
-    private void drawStick(Canvas canvas, float x, float y, float radius, int pointerId) {
+    // color is the base's RGB, or 0 for the overlay's own.
+    private void drawStick(Canvas canvas, float x, float y, float radius, int pointerId,
+                           int color) {
         boolean active = pointerId != -1;
-        fillPaint.setColor(active ? 0x8848C8E8 : 0x66081218);
+        if (color != 0) {
+            fillPaint.setColor((active ? 0x88000000 : 0x55000000) | color);
+        } else {
+            fillPaint.setColor(active ? 0x8848C8E8 : 0x66081218);
+        }
         strokePaint.setColor(active ? 0xFFE1F8FF : 0xAAFFFFFF);
         canvas.drawCircle(x, y, radius, fillPaint);
         canvas.drawCircle(x, y, radius, strokePaint);
@@ -613,11 +636,69 @@ final class TouchControlsView extends View {
         canvas.drawCircle(knobX, knobY, radius * 0.42f, strokePaint);
     }
 
-    private boolean hitCircle(ControlButton button, float x, float y, float width, float height) {
-        float radius = button.radius * height;
-        float dx = x - button.x * width;
-        float dy = y - button.y * height;
-        return dx * dx + dy * dy <= radius * radius;
+    private static float centreX(ControlButton button, float width, float height) {
+        return button.anchored ? width - (GC_A_FROM_RIGHT - button.x) * height
+                               : button.x * width;
+    }
+
+    private static float centreY(ControlButton button, float height) {
+        return (button.anchored ? GC_A_Y + button.y : button.y) * height;
+    }
+
+    private boolean hitButton(ControlButton button, float x, float y, float width, float height) {
+        float dx = x - centreX(button, width, height);
+        float dy = y - centreY(button, height);
+        if (!button.isKidney()) {
+            float radius = button.radius * height;
+            return dx * dx + dy * dy <= radius * radius;
+        }
+        // Distance to the nearest point of the kidney's centre arc.
+        double angle = Math.toDegrees(Math.atan2(dy, dx));
+        double along = ((angle - button.arcStart) % 360 + 360) % 360;
+        if (along > button.arcSweep) {
+            along = along - button.arcSweep < 360 - along ? button.arcSweep : 0;
+        }
+        double nearest = Math.toRadians(button.arcStart + along);
+        float ring = button.radius * height;
+        float px = dx - ring * (float) Math.cos(nearest);
+        float py = dy - ring * (float) Math.sin(nearest);
+        float half = button.halfWidth * height;
+        return px * px + py * py <= half * half;
+    }
+
+    // A band round (cx, cy) along the arc, with round ends: GameCube X and Y.
+    private static void kidneyPath(Path path, float cx, float cy, float ring, float half,
+                                   float start, float sweep) {
+        float end = start + sweep;
+        float endX = cx + ring * (float) Math.cos(Math.toRadians(end));
+        float endY = cy + ring * (float) Math.sin(Math.toRadians(end));
+        float startX = cx + ring * (float) Math.cos(Math.toRadians(start));
+        float startY = cy + ring * (float) Math.sin(Math.toRadians(start));
+        path.reset();
+        path.arcTo(new RectF(cx - ring - half, cy - ring - half, cx + ring + half,
+                             cy + ring + half), start, sweep, true);
+        path.arcTo(new RectF(endX - half, endY - half, endX + half, endY + half),
+                   end, 180f, false);
+        path.arcTo(new RectF(cx - ring + half, cy - ring + half, cx + ring - half,
+                             cy + ring - half), end, -sweep, false);
+        path.arcTo(new RectF(startX - half, startY - half, startX + half, startY + half),
+                   start + 180f, 180f, false);
+        path.close();
+    }
+
+    // A GameCube colour as a fill: translucent at rest, lighter and more solid
+    // while held.
+    private static int padFill(int rgb, boolean active) {
+        if (!active) {
+            return 0x99000000 | rgb;
+        }
+        int r = (rgb >> 16) & 0xFF;
+        int g = (rgb >> 8) & 0xFF;
+        int b = rgb & 0xFF;
+        r += (255 - r) * 2 / 5;
+        g += (255 - g) * 2 / 5;
+        b += (255 - b) * 2 / 5;
+        return 0xDD000000 | (r << 16) | (g << 8) | b;
     }
 
     private void drawPillButton(Canvas canvas, PillButton pill, float width, float height) {
@@ -626,7 +707,11 @@ final class TouchControlsView extends View {
         float right = pill.right * width;
         float bottom = pill.bottom * height;
         boolean active = held.containsKey(pill.id());
-        fillPaint.setColor(active ? 0xCC48C8E8 : 0x99081218);
+        if (pill.color != 0) {
+            fillPaint.setColor(padFill(pill.color, active));
+        } else {
+            fillPaint.setColor(active ? 0xCC48C8E8 : 0x99081218);
+        }
         strokePaint.setColor(active ? 0xFFE1F8FF : 0xCCFFFFFF);
         RectF bounds = new RectF(left, top, right, bottom);
         float radius = Math.min(bounds.width(), bounds.height()) * 0.28f;
@@ -637,14 +722,28 @@ final class TouchControlsView extends View {
     }
 
     private void drawButton(Canvas canvas, ControlButton button, float width, float height) {
-        float x = button.x * width;
-        float y = button.y * height;
+        float x = centreX(button, width, height);
+        float y = centreY(button, height);
         float radius = button.radius * height;
         boolean active = held.containsKey(button.button);
-        fillPaint.setColor(active ? 0xCC48C8E8 : 0x77081218);
+        if (button.color != 0) {
+            fillPaint.setColor(padFill(button.color, active));
+        } else {
+            fillPaint.setColor(active ? 0xCC48C8E8 : 0x77081218);
+        }
         strokePaint.setColor(active ? 0xFFE1F8FF : 0xBBFFFFFF);
-        canvas.drawCircle(x, y, radius, fillPaint);
-        canvas.drawCircle(x, y, radius, strokePaint);
+        if (button.isKidney()) {
+            kidneyPath(shapePath, x, y, radius, button.halfWidth * height, button.arcStart,
+                       button.arcSweep);
+            canvas.drawPath(shapePath, fillPaint);
+            canvas.drawPath(shapePath, strokePaint);
+            double middle = Math.toRadians(button.arcStart + button.arcSweep / 2);
+            x += radius * (float) Math.cos(middle);
+            y += radius * (float) Math.sin(middle);
+        } else {
+            canvas.drawCircle(x, y, radius, fillPaint);
+            canvas.drawCircle(x, y, radius, strokePaint);
+        }
         drawCenteredLabel(canvas, button.label, x, y,
                           button.label.length() > 2 ? dp(10) : dp(15));
     }
@@ -672,16 +771,53 @@ final class TouchControlsView extends View {
     private static final class ControlButton {
         final String label;
         final int button;
+        // A plain button's x is a fraction of the width and its y one of the
+        // height. An anchored one's are offsets from GameCube A, in heights.
+        final boolean anchored;
         final float x;
         final float y;
+        // A kidney's radius is its centre arc's, round its x/y.
         final float radius;
+        // Kidneys only: the band's half width, and its arc in degrees,
+        // clockwise from +x. A zero sweep is a round button.
+        final float halfWidth;
+        final float arcStart;
+        final float arcSweep;
+        // An RGB fill, or 0 for the overlay's own.
+        final int color;
 
         ControlButton(String label, int button, float x, float y, float radius) {
+            this(label, button, false, x, y, radius, 0f, 0f, 0f, 0);
+        }
+
+        private ControlButton(String label, int button, boolean anchored, float x, float y,
+                              float radius, float halfWidth, float arcStart, float arcSweep,
+                              int color) {
             this.label = label;
             this.button = button;
+            this.anchored = anchored;
             this.x = x;
             this.y = y;
             this.radius = radius;
+            this.halfWidth = halfWidth;
+            this.arcStart = arcStart;
+            this.arcSweep = arcSweep;
+            this.color = color;
+        }
+
+        static ControlButton round(String label, int button, float x, float y, float radius,
+                                   int color) {
+            return new ControlButton(label, button, true, x, y, radius, 0f, 0f, 0f, color);
+        }
+
+        static ControlButton kidney(String label, int button, float ring, float halfWidth,
+                                    float arcStart, float arcSweep, int color) {
+            return new ControlButton(label, button, true, 0f, 0f, ring, halfWidth, arcStart,
+                                     arcSweep, color);
+        }
+
+        boolean isKidney() {
+            return arcSweep != 0f;
         }
     }
 
@@ -693,9 +829,17 @@ final class TouchControlsView extends View {
         final float top;
         final float right;
         final float bottom;
+        // An RGB fill, or 0 for the overlay's own.
+        final int color;
 
         PillButton(String label, int axis, int button, float left, float top, float right,
                    float bottom) {
+            this(label, axis, button, left, top, right, bottom, 0);
+        }
+
+        PillButton(String label, int axis, int button, float left, float top, float right,
+                   float bottom, int color) {
+            this.color = color;
             this.label = label;
             this.axis = axis;
             this.button = button;
