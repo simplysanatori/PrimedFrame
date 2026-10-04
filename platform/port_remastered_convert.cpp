@@ -3487,7 +3487,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   Blob out;
   P32(out, 0xDEADBABE);
   P32(out, 2);
-  P32(out, retail.flags & ~uint32_t(0x2));  // float normals
+  // Float normals, and the packed texcoord section is always written (empty): a retail
+  // model without it (the Frigate's B8CB941D) would have the game take that empty
+  // section for the surface table.
+  P32(out, (retail.flags | 0x4) & ~uint32_t(0x2));
   for (double v : lo) {
     PF(out, v);
   }
