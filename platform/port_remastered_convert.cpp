@@ -587,6 +587,7 @@ struct RemMaterial {
   bool tinted = false;     // its vertices carry a colour
   bool unlit = false;      // a screen: its own colour and glow, no lighting
   bool mask = false;       // the base map's alpha masks the glow and is no opacity
+  bool shell = false;      // a matcap shell: keeps a blended retail material's TEV
   double height = 0.0;     // above 0: the threshold of a height-blended alpha
   // A second layer (base, MR, normal) the vertex alpha blends over the first
   // by the two base maps' heights: snow on rock, moss on stone.
@@ -1275,6 +1276,10 @@ constexpr uint32_t kShaderGunGlow[] = {0xA13D6235, 0x62F671E0};
 // keeps the retail frozen-gun particles (CGunWeapon::EnableFrozenEffect), so the
 // shell is not drawn; drawn as a plain surface it froze the gun for good.
 constexpr uint32_t kShaderFrozenShell = 0x2FC554A2;
+// A Metroid's dome: a matcap shell the port does not draw. Its glTF calls it
+// opaque, so the vote put it on an opaque retail material, a solid white blob;
+// it keeps retail's blended dome instead.
+constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
 // The arm cannon's body: lit PBR that reflects its REFL cube (a Tallon forest, LDR) along
 // the reflection vector, at the roughness's mip, instead of a room probe. Drawn with the
 // room's cube the metal took the room's colours and read pale. The default REFL (black)
@@ -1305,6 +1310,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   std::memcpy(sid, &mat.shaderId, 4);
   const uint32_t shader = uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
   out.hidden = shader == kShaderFrozenShell;
+  out.shell = shader == kShaderMatcapShell;
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
     const uint32_t family = d.usage & 0xFFFFFF00u;
@@ -2641,7 +2647,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     if (upm.empty()) {
       throw Fail{"the retail model draws nothing"};
     }
-    const bool fx = IsFxName(mats[p.mat].name) || mats[p.mat].additive;
+    const bool fx = IsFxName(mats[p.mat].name) || mats[p.mat].additive || mats[p.mat].shell;
     std::vector<double> cand;
     std::vector<int> candMat;
     for (int pass = 0; pass < 2 && cand.empty(); ++pass) {
