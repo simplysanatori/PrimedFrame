@@ -19,9 +19,11 @@ struct Params {
 static_assert(sizeof(Params) <= 128);
 // Params::bloom bits for speed tests (GXSetPBRCostTest), which leave out one part of the work and
 // look wrong: no copy of the frame (the composite reads a stale one), and the pass after the bloom
-// clearing depth instead of loading it.
+// clearing depth instead of loading it. CostKeepDepth looks right: it always loads depth after the
+// bloom, as before that pass learned to clear it when the HUD doesn't test against it.
 constexpr uint32_t CostNoFrameCopy = 4;
 constexpr uint32_t CostNoDepthReload = 8;
+constexpr uint32_t CostKeepDepth = 16;
 
 static_assert(sizeof(Params) % 4 == 0);
 

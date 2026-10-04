@@ -19,6 +19,7 @@
 #endif
 #include "../window.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -56,6 +57,19 @@ struct FrameRecorder {
   Viewport cachedViewport;
   ClipRect cachedScissor;
   bool suppressRenderWorker = false;
+  // DepthAfter::IfUnread's sealed pass and task, whose ops aren't handed to the render worker yet,
+  // and whether a draw in the pass after them may have tested against their depth.
+  struct HeldDepth {
+    uint32_t passOp;
+    uint32_t taskOp;
+    uint32_t sealedPass;
+    uint32_t nextPass;
+    bool read = false;
+  };
+  std::optional<HeldDepth> heldDepth;
+  // The nearest GX depth (0 near, 1 far) the EFB may hold: the least viewport near plane of this
+  // frame's depth-writing EFB draws, and its depth clears.
+  float efbDepthNear = 0.f;
 #ifdef AURORA_GFX_DEBUG_GROUPS
   std::vector<std::string> debugGroupStack;
 #endif
@@ -366,6 +380,26 @@ void push_draw_command(DrawCommand data) {
   ++g_recorder.drawCallCount;
 }
 
+float gx_depth(float depth) { return gx::UseReversedZ ? 1.f - depth : depth; }
+
+// Every EFB draw says whether it may test against depth (reads) and write it (writes), for
+// DepthAfter::IfUnread. Its fragments' depths lie within the viewport's depth range.
+void note_draw_depth(bool reads, bool writes) {
+  if (g_recorder.inOffscreen) {
+    return;
+  }
+  const auto& vp = g_recorder.cachedViewport;
+  if (g_recorder.heldDepth) {
+    // A test that only meets depths nearer than the EFB's nearest passes or fails the same against
+    // a cleared depth buffer, whatever the compare function.
+    if (reads && std::max(vp.znear, vp.zfar) >= g_recorder.efbDepthNear) {
+      g_recorder.heldDepth->read = true;
+    }
+  } else if (writes) {
+    g_recorder.efbDepthNear = std::min(g_recorder.efbDepthNear, std::min(vp.znear, vp.zfar));
+  }
+}
+
 OffscreenCacheEntry get_offscreen_textures(uint32_t width, uint32_t height) {
   OffscreenCacheKey key{width, height};
   if (const auto it = g_offscreenCache.find(key); it != g_offscreenCache.end()) {
@@ -417,8 +451,9 @@ OffscreenCacheEntry get_offscreen_textures(uint32_t width, uint32_t height) {
   return insertIt->second;
 }
 
-void enqueue_pass(FramePacket& frame, uint32_t passIndex);
+uint32_t enqueue_pass(FramePacket& frame, uint32_t passIndex, bool dispatch = true);
 void discard_dead_stores(RenderPass& pass, bool colorDead, bool depthDead);
+void release_held_depth(bool keep);
 
 void resume_efb_pass_loading(const RenderPass& prevPass) {
   RenderPass newPass{
@@ -451,6 +486,10 @@ void suspend_efb() {
                 "suspend_efb called outside of an active recording frame");
   AURORA_ASSERT(!g_recorder.inOffscreen, "suspend_efb called while offscreen rendering is active");
   AURORA_ASSERT(!g_recorder.suspendedEfbPass, "suspend_efb called with an EFB pass already suspended");
+  if (g_recorder.heldDepth) {
+    // The held pass's continuation may be moved out of the list below.
+    release_held_depth(true);
+  }
 
   auto& currentPass = current_render_passes()[g_recorder.currentRenderPass];
   if (!currentPass.has_consumer()) {
@@ -536,8 +575,20 @@ void restore_efb() {
   push_command(CommandType::SetScissor, Command::Data{.setScissor = g_recorder.cachedScissor});
 }
 
+void log_pass(const FramePacket& frame, const RenderPass& p);
+
 void enqueue_op(FramePacket& frame, uint32_t opIndex) {
-  if (opIndex >= frame.ops.size() || g_recorder.suppressRenderWorker) {
+  if (g_recorder.heldDepth) {
+    // Whatever comes next may load the depth, so the held ops go first, keeping it.
+    release_held_depth(true);
+  }
+  if (opIndex >= frame.ops.size()) {
+    return;
+  }
+  if (frame.ops[opIndex].renderPass != nullptr) {
+    log_pass(frame, *frame.ops[opIndex].renderPass);
+  }
+  if (g_recorder.suppressRenderWorker) {
     return;
   }
   auto op = frame.ops[opIndex];
@@ -552,15 +603,18 @@ void enqueue_op(FramePacket& frame, uint32_t opIndex) {
 // Lets the GPU skip writing out attachments that nothing reads again, which saves a tile-based
 // (mobile) GPU a full-resolution store. colorDead and depthDead say no later pass loads the
 // contents (the next one clears them, or none follows). Call before the pass is enqueued.
+bool pass_copies_depth(const RenderPass& pass) {
+  return pass.snapshotDepthDst || (pass.resolveTarget && gx::is_depth_format(pass.resolveFormat)) ||
+         (pass.captureDepthSnapshot && depth_peek::enabled());
+}
+
 void discard_dead_stores(RenderPass& pass, bool colorDead, bool depthDead) {
   auto& color = pass.colorAttachments[SceneColorAttachmentIndex];
   // Without a resolve target the attachment itself is what copies and presentation read.
   if (colorDead && pass.colorAttachmentCount > 0 && color.resolveView) {
     color.storeOp = wgpu::StoreOp::Discard;
   }
-  const bool depthRead = pass.snapshotDepthDst || (pass.resolveTarget && gx::is_depth_format(pass.resolveFormat)) ||
-                         (pass.captureDepthSnapshot && depth_peek::enabled());
-  if (depthDead && pass.hasDepth && !depthRead) {
+  if (depthDead && pass.hasDepth && !pass_copies_depth(pass)) {
     pass.depthStoreOp = wgpu::StoreOp::Discard;
   }
 }
@@ -588,15 +642,32 @@ void log_pass(const FramePacket& frame, const RenderPass& p) {
            static_cast<bool>(p.snapshotColorDst), static_cast<bool>(p.snapshotDepthDst), p.discardable);
 }
 
-void enqueue_pass(FramePacket& frame, uint32_t passIndex) {
+// Without dispatch the op is only recorded; enqueue_op hands it to the render worker later.
+uint32_t enqueue_pass(FramePacket& frame, uint32_t passIndex, bool dispatch) {
   if (!frame.renderPasses[passIndex].discardable) {
     ++g_recorder.renderPassCount;
   }
-  log_pass(frame, frame.renderPasses[passIndex]);
   seal_pass(frame, passIndex);
   const auto opIndex = static_cast<uint32_t>(frame.ops.size());
   frame.ops.emplace_back(capture_frame_op(frame, FrameOpType::RenderPass, passIndex));
-  enqueue_op(frame, opIndex);
+  if (dispatch) {
+    enqueue_op(frame, opIndex);
+  }
+  return opIndex;
+}
+
+// keep: the pass after the held ones loads their depth; else it clears it and their store is dropped.
+void release_held_depth(bool keep) {
+  const auto held = *g_recorder.heldDepth;
+  g_recorder.heldDepth.reset();
+  auto& frame = current_frame_packet();
+  if (keep) {
+    frame.renderPasses[held.nextPass].clearDepth = false;
+  } else {
+    discard_dead_stores(frame.renderPasses[held.sealedPass], false, true);
+  }
+  enqueue_op(frame, held.passOp);
+  enqueue_op(frame, held.taskOp);
 }
 } // namespace
 
@@ -618,6 +689,8 @@ void begin_recording(FramePacket& packet, size_t frameSlot) {
   set_efb_targets(pass);
   pass.colorAttachments[SceneColorAttachmentIndex].clearValue = gx::g_gxState.clearColor;
   pass.clearDepthValue = gx::clear_depth_value();
+  g_recorder.heldDepth.reset();
+  g_recorder.efbDepthNear = gx_depth(pass.clearDepthValue);
   g_recorder.currentRenderPass = 0;
   g_recorder.cachedViewport = gx::map_logical_viewport(gx::g_gxState.logicalViewport);
   g_recorder.cachedScissor = gx::map_logical_scissor(gx::g_gxState.logicalScissor);
@@ -630,6 +703,9 @@ RecordedFrame end_recording() {
   AURORA_ASSERT(!g_recorder.inOffscreen, "end_frame called while offscreen rendering is active");
   AURORA_ASSERT(g_recorder.currentRenderPass == UINT32_MAX,
                 "end_frame called before finish finalized the current render pass");
+  if (g_recorder.heldDepth) {
+    release_held_depth(true);
+  }
   auto& frame = g_recorder.frame();
   frame.stats.drawCallCount = g_recorder.drawCallCount;
   frame.stats.mergedDrawCallCount = g_recorder.mergedDrawCallCount;
@@ -666,6 +742,7 @@ void shutdown_recording() {
   g_recorder.offscreenColor = {};
   g_recorder.offscreenDepth = {};
   g_recorder.suspendedEfbPass.reset();
+  g_recorder.heldDepth.reset();
   g_recorder.inOffscreen = false;
   g_recorder.packet = nullptr;
   g_recorder.frameSlot = 0;
@@ -931,6 +1008,9 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
   // The continuation's load op clears whatever the copy clears.
   discard_dead_stores(prevPass, clearColor && clearAlpha, clearDepth);
   enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);
+  if (clearDepth && !g_recorder.inOffscreen) {
+    g_recorder.efbDepthNear = std::min(g_recorder.efbDepthNear, gx_depth(clearDepthValue));
+  }
 
   // Populate new render pass from previous
   const auto msaaSamples = prevPass.msaaSamples;
@@ -1039,6 +1119,7 @@ bool push_custom_draw(DrawTypeId type, const void* payload, size_t payloadSize) 
   if (payloadSize > 0) {
     std::memcpy(draw.payload.data(), payload, payloadSize);
   }
+  note_draw_depth(true, true);
   push_command(CommandType::CustomDraw, Command::Data{.customDraw = draw});
   ++g_recorder.drawCallCount;
   return true;
@@ -1157,7 +1238,7 @@ bool push_encoder_task(EncoderTaskId type, const void* payload, size_t payloadSi
 }
 
 namespace {
-bool record_encoder_task_between(EncoderTaskId type, const void* payload, size_t payloadSize, bool depthDead) {
+bool record_encoder_task_between(EncoderTaskId type, const void* payload, size_t payloadSize, DepthAfter depth) {
   if (!g_recorder.active() || g_recorder.currentRenderPass == UINT32_MAX) {
     Log.warn("push_encoder_task: called outside an active render pass");
     return false;
@@ -1173,8 +1254,10 @@ bool record_encoder_task_between(EncoderTaskId type, const void* payload, size_t
   auto& frame = current_frame_packet();
   auto& prevPass = current_render_passes()[g_recorder.currentRenderPass];
   prevPass.discardable = !prevPass.has_consumer() && !prevPass.has_content();
-  discard_dead_stores(prevPass, false, depthDead);
-  enqueue_pass(frame, g_recorder.currentRenderPass);
+  discard_dead_stores(prevPass, false, depth == DepthAfter::Clear);
+  const bool hold = depth == DepthAfter::IfUnread;
+  const auto sealedPass = g_recorder.currentRenderPass;
+  const auto passOp = enqueue_pass(frame, sealedPass, !hold);
 
   const auto taskIndex = static_cast<uint32_t>(frame.encoderTasks.size());
   auto& task = frame.encoderTasks.emplace_back(EncoderTask{.type = type});
@@ -1184,25 +1267,31 @@ bool record_encoder_task_between(EncoderTaskId type, const void* payload, size_t
   }
   const auto opIndex = static_cast<uint32_t>(frame.ops.size());
   frame.ops.emplace_back(capture_frame_op(frame, FrameOpType::EncoderTask, taskIndex));
-  enqueue_op(frame, opIndex);
+  if (!hold) {
+    enqueue_op(frame, opIndex);
+  }
 
   resume_efb_pass_loading(prevPass);
-  if (depthDead) {
+  if (depth != DepthAfter::Load) {
     auto& pass = current_render_passes()[g_recorder.currentRenderPass];
     pass.clearDepth = true;
     pass.clearDepthValue = gx::UseReversedZ ? 0.f : 1.f;
+  }
+  if (hold) {
+    g_recorder.heldDepth = FrameRecorder::HeldDepth{
+        .passOp = passOp, .taskOp = opIndex, .sealedPass = sealedPass, .nextPass = g_recorder.currentRenderPass};
   }
   return true;
 }
 } // namespace
 
 bool record_encoder_task(EncoderTaskId type, const void* payload, size_t payloadSize) {
-  return record_encoder_task_between(type, payload, payloadSize, false);
+  return record_encoder_task_between(type, payload, payloadSize, DepthAfter::Load);
 }
 
 bool record_encoder_task_overwriting(EncoderTaskId type, const void* payload, size_t payloadSize,
-                                     DrawTypeId drawType, bool clearDepth) {
-  if (!record_encoder_task_between(type, payload, payloadSize, clearDepth)) {
+                                     DrawTypeId drawType, DepthAfter depth) {
+  if (!record_encoder_task_between(type, payload, payloadSize, depth)) {
     return false;
   }
   current_render_passes()[g_recorder.currentRenderPass].colorAttachments[SceneColorAttachmentIndex].clear = true;
@@ -1214,12 +1303,14 @@ bool record_encoder_task_overwriting(EncoderTaskId type, const void* payload, si
 
 template <>
 void push_draw_command(gx::DrawData data) {
+  note_draw_depth(gx::g_gxState.depthCompare, gx::g_gxState.depthCompare && gx::g_gxState.depthUpdate);
   push_draw_command(make_draw_command<gx::render>(data));
 }
 
 #ifdef AURORA_ENABLE_RMLUI
 template <>
 void push_draw_command(rmlui::DrawData data) {
+  note_draw_depth(true, true);
   push_draw_command(make_draw_command<rmlui::render>(data));
 }
 #endif
@@ -1248,7 +1339,13 @@ void finish() {
       frame.uniforms.append_zeroes(gx::MaxUniformSize);
     }
     auto& pass = frame.renderPasses[g_recorder.currentRenderPass];
-    pass.captureDepthSnapshot = true;
+    // Only when a peek waits for it: the snapshot needs the depth stored, which a tile-based GPU
+    // would otherwise skip. A request that comes later is served by the next frame.
+    pass.captureDepthSnapshot = depth_peek::snapshot_wanted();
+    if (g_recorder.heldDepth) {
+      release_held_depth(g_recorder.heldDepth->read || g_recorder.heldDepth->nextPass != g_recorder.currentRenderPass ||
+                         pass_copies_depth(pass));
+    }
     // The next frame starts by clearing the EFB.
     discard_dead_stores(pass, true, true);
     enqueue_pass(frame, g_recorder.currentRenderPass);

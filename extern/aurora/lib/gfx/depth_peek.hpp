@@ -11,6 +11,8 @@ void shutdown();
 
 bool enabled() noexcept;
 void request_snapshot() noexcept;
+// Whether a GXPeekZ is waiting for a snapshot; a frame recorded without one needs no depth stored.
+bool snapshot_wanted() noexcept;
 bool read_latest(uint16_t x, uint16_t y, uint32_t& z) noexcept;
 
 void encode_frame_snapshot(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& depthView,

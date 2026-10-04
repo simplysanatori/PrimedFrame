@@ -333,6 +333,14 @@ void request_snapshot() noexcept {
   g_snapshotRequested = true;
 }
 
+bool snapshot_wanted() noexcept {
+  if (!g_enabled) {
+    return false;
+  }
+  std::lock_guard lock{g_mutex};
+  return g_snapshotRequested;
+}
+
 bool read_latest(uint16_t x, uint16_t y, uint32_t& z) noexcept {
   std::lock_guard lock{g_mutex};
   if (x >= g_latest.width || y >= g_latest.height || g_latest.data.empty()) {

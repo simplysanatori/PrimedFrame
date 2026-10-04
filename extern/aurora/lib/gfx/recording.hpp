@@ -104,9 +104,17 @@ void push_draw_command(DrawData data);
 bool record_encoder_task(uint64_t type, const void* payload, size_t payloadSize); // type: an EncoderTaskId
 // record_encoder_task, with the custom draw drawType (registered, no payload) first in the pass
 // that follows, which clears its colour instead of loading it: the draw must cover every pixel.
-// clearDepth also clears depth there (and drops the sealed pass's depth store).
+// depth says what that pass does with the sealed pass's depth.
+enum class DepthAfter : uint8_t {
+  Load,
+  Clear, // and drops the sealed pass's depth store
+  // Clear if the frame ends in that pass and no draw there may test against the old depth (one
+  // with depth compare whose viewport depth range reaches the nearest depth the EFB was given),
+  // else Load. The sealed pass and the task wait for the render worker until that is known.
+  IfUnread,
+};
 bool record_encoder_task_overwriting(uint64_t type, const void* payload, size_t payloadSize, uint64_t drawType,
-                                     bool clearDepth = false);
+                                     DepthAfter depth = DepthAfter::Load);
 template <typename DrawData>
 DrawData* get_last_draw_command();
 template <typename PipelineConfig>

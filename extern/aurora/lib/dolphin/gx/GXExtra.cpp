@@ -84,13 +84,16 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
     return true;
   }
   aurora::gfx::bloom::Params params{};
-  // Cost tests 12-14 price the bloom, the frame copy and the depth reload after the break.
+  // Cost tests 12-14 price the bloom, the frame copy and the depth reload after the break; 15
+  // always reloads the depth, to price clearing it when the HUD doesn't need it.
   const u32 costTest = GXGetPBRCostTest();
   params.bloom = bloom && costTest != 12 ? 1 : 0;
   if (costTest == 13) {
     params.bloom |= aurora::gfx::bloom::CostNoFrameCopy;
   } else if (costTest == 14) {
     params.bloom |= aurora::gfx::bloom::CostNoDepthReload;
+  } else if (costTest == 15) {
+    params.bloom |= aurora::gfx::bloom::CostKeepDepth;
   }
   params.threshold = threshold;
   if (tints != nullptr) {
@@ -171,7 +174,7 @@ void GXSetArrayBaseIndex(GXAttr attr, u32 base) {
 
 static u32 sPBRCostTest = 0;
 
-void GXSetPBRCostTest(u32 test) { sPBRCostTest = test <= 14 ? test : 0; }
+void GXSetPBRCostTest(u32 test) { sPBRCostTest = test <= 15 ? test : 0; }
 
 u32 GXGetPBRCostTest() { return sPBRCostTest; }
 

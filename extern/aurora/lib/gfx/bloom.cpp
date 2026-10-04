@@ -785,13 +785,16 @@ void record(const Params& params) {
     return;
   }
   Params task = params;
-  task.bloom &= BloomOn | CostNoFrameCopy | CostNoDepthReload;
+  task.bloom &= BloomOn | CostNoFrameCopy | CostNoDepthReload | CostKeepDepth;
   // A frame that is composited draws it as the first thing in the pass that resumes the EFB: on a
-  // tile-based GPU a pass of its own stores the frame only for that pass to load it again.
+  // tile-based GPU a pass of its own stores the frame only for that pass to load it again. That pass
+  // clears depth instead of loading it when nothing after the bloom (the HUD) tests against the world's.
   if (g_state.compositeDraw != InvalidDrawType && ((task.bloom & BloomOn) || task.gradeA != 0 || task.gradeB != 0)) {
     task.bloom |= CompositeInPass;
-    record_encoder_task_overwriting(g_state.task, &task, sizeof(task), g_state.compositeDraw,
-                                    (task.bloom & CostNoDepthReload) != 0);
+    const auto depth = (task.bloom & CostNoDepthReload) ? DepthAfter::Clear
+                       : (task.bloom & CostKeepDepth)   ? DepthAfter::Load
+                                                        : DepthAfter::IfUnread;
+    record_encoder_task_overwriting(g_state.task, &task, sizeof(task), g_state.compositeDraw, depth);
   } else {
     record_encoder_task(g_state.task, &task, sizeof(task));
   }
