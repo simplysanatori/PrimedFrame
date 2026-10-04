@@ -181,6 +181,7 @@ set(MP_PORT_SOURCES
     platform/port_remastered_jpeg.cpp
     platform/port_gallery.cpp
     platform/port_remastered_room.cpp
+    platform/port_remastered_anim.cpp
     platform/port_remastered_text.cpp
     platform/port_custom_res.cpp
     platform/port_hints.cpp
@@ -202,6 +203,14 @@ if(ANDROID)
     target_link_options(metroid_prime_port PRIVATE "-Wl,-u,SDL_main")
 else()
     add_executable(metroid_prime_port ${MP_PORT_SOURCES})
+endif()
+# Developer tool, not a test (it needs game data): dumps a CHPR's animations for
+# diffing against build/mpr/anim/chpr_anim.py.
+if(NOT ANDROID)
+    add_executable(port_remastered_anim_tool
+        tests/port_remastered_anim_tool.cpp platform/port_remastered_anim.cpp)
+    target_include_directories(port_remastered_anim_tool PRIVATE platform/include)
+    set_target_properties(port_remastered_anim_tool PROPERTIES EXCLUDE_FROM_ALL ON)
 endif()
 if(WIN32)
     # shell32/ole32/advapi32: finding Dolphin's folder (port_gci.cpp).

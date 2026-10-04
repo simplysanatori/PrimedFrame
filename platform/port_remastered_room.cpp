@@ -15,6 +15,7 @@
 #include <memory>
 #include <set>
 
+#include "port_remastered_anim.h"
 #include "port_remastered_txtr.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
@@ -75,6 +76,12 @@ constexpr uint32_t kPropModConMcon = 0xa8e2ba93;
 constexpr uint32_t kPropActorModel = 0xcb1c52f6;
 // Unnamed in retrotool's templates; what they mean is read off which actors carry them.
 constexpr uint32_t kPropActorAdded = 0x9a25df3b;
+// The actor's animation: a character (CHPR) and the name of the animation it plays, as an
+// offset and length into the room's string pool. The spinning rings of the Intro Elevator
+// have one and no model; the character's skinned model is what they draw.
+constexpr uint32_t kPropActorAnim = 0x54446d42;
+constexpr uint32_t kPropAnimCharacter = 0xa589d885;
+constexpr uint32_t kPropAnimName = 0x87c03a01;
 // A ColorModulateMP1 in its incandescence mode (blend 5, CColorModulateMP1GOC): what it
 // targets glows in its colour B times its intensity, which takes the place of every
 // material's ICNC. Each door frame has one, with times of 0, so B applies from the start.
@@ -288,6 +295,14 @@ public:
   std::map<uint32_t, Span> Flat(const Component& c) const;
   // A property inside nested groups, named by the groups' ids and then its own.
   bool Nested(const Component& c, std::initializer_list<uint32_t> path, Span& out) const;
+  // The `size` bytes at `offset` in the room's string pool (STRP); false when they lie outside it.
+  bool String(uint32_t offset, uint32_t size, std::string& out) const {
+    if (offset > m_strings.size || size > m_strings.size - offset) {
+      return false;
+    }
+    out.assign(reinterpret_cast<const char*>(Bytes(m_strings)) + offset, size);
+    return true;
+  }
 
 private:
   struct Chunk {
@@ -302,6 +317,7 @@ private:
   const std::vector<uint8_t>* m_d = nullptr;
   std::vector<Component> m_comps;
   std::map<Id16, size_t> m_byGuid;
+  Span m_strings;
 };
 
 bool Room::Chunks(size_t o, size_t end, std::vector<Chunk>& out, std::string& error) const {
@@ -355,6 +371,7 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
   m_d = &data;
   m_comps.clear();
   m_byGuid.clear();
+  m_strings = {};
   const std::vector<uint8_t>& d = data;
   if (d.size() < 32 || std::memcmp(d.data(), "RFRM", 4) != 0) {
     error = "not an RFRM file";
@@ -367,12 +384,17 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
     return false;
   }
   const size_t re = rs + size_t(rsz);
-  std::vector<Span> sden, idta, layers;
+  std::vector<Span> sden, idta, layers, strp;
   const uint32_t pSden[] = {Tag("SDTA"), Tag("SDEN")}, pIdta[] = {Tag("SDTA"), Tag("IDTA")},
-                 pLayr[] = {Tag("LYRS"), Tag("LAYR")};
+                 pLayr[] = {Tag("LYRS"), Tag("LAYR")}, pStrp[] = {Tag("STRP")};
   if (!Find(rs, re, pSden, 2, sden, error) || !Find(rs, re, pIdta, 2, idta, error) ||
-      !Find(rs, re, pLayr, 2, layers, error)) {
+      !Find(rs, re, pLayr, 2, layers, error) || !Find(rs, re, pStrp, 1, strp, error)) {
     return false;
+  }
+  // STRP: u32 16, u32 1, u32 the pool's size, then the pool (NUL-separated names).
+  if (!strp.empty() && strp[0].size >= 12) {
+    const size_t pool = Le32(&d[strp[0].start + 8]);
+    m_strings = {strp[0].start + 12, std::min(pool, strp[0].size - 12)};
   }
   std::map<Id16, size_t>& byGuid = m_byGuid;
   for (size_t li = 0; li < layers.size(); ++li) {
@@ -2389,7 +2411,9 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   // carry, names no parent: most actors with it stand still, and the room's script
   // connections are what make one a platform's.
   std::map<Id16, uint32_t> actorModels;  // 0 when the model did not convert
-  size_t actors = 0, riding = 0, glowing = 0, retailDrawn = 0;
+  size_t actors = 0, riding = 0, glowing = 0, retailDrawn = 0, animated = 0;
+  // Characters read so far, by pak id; null when one did not read.
+  std::map<Id16, std::unique_ptr<PortRemasteredAnim::Character>> characters;
   // By component index: the glow its incandescence modulator gives it. A channel or
   // intensity the modulator leaves out is 1. The door frames' modulators fade in no time
   // and nothing starts them, so the glow holds from the start; one something else starts
@@ -2429,9 +2453,13 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   for (const Component* c : r.room.Of(kActorMP1)) {
     const auto f = r.room.Flat(*c);
     const auto prop = f.find(kPropActorModel);
+    const bool hasModel = prop != f.end() && prop->second.size == 16;
+    Span chprProp, nameProp;
+    const bool hasAnim = !hasModel && r.room.Nested(*c, {kPropActorAnim, kPropAnimCharacter}, chprProp) &&
+                         chprProp.size == 16 && r.room.Nested(*c, {kPropActorAnim, kPropAnimName}, nameProp) &&
+                         nameProp.size == 8;
     Vec3 pos, rot, scale;
-    if (f.find(kPropActorAdded) == f.end() || prop == f.end() || prop->second.size != 16 ||
-        !r.room.Xform(*c, pos, rot, scale)) {
+    if (f.find(kPropActorAdded) == f.end() || (!hasModel && !hasAnim) || !r.room.Xform(*c, pos, rot, scale)) {
       continue;
     }
     const bool active = r.room.Active(*c);
@@ -2439,7 +2467,44 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       ++inactive;
       continue;
     }
-    const Id16 model = SwapUuid(r.room.Bytes(prop->second));
+    // A model-less actor that plays an animation draws its character's skinned model,
+    // posed by the animation's frames. Only characters of one bone are handled (the
+    // Intro Elevator rings, whose bone binds at the model's origin): the pose then moves
+    // the whole model, which is what an instance's transform can do.
+    const PortRemasteredAnim::Anim* anim = nullptr;
+    Id16 model{};
+    if (hasModel) {
+      model = SwapUuid(r.room.Bytes(prop->second));
+    } else {
+      const Id16 key = SwapUuid(r.room.Bytes(chprProp));
+      auto ch = characters.find(key);
+      if (ch == characters.end()) {
+        std::vector<uint8_t> data;
+        std::string error;
+        auto character = std::make_unique<PortRemasteredAnim::Character>();
+        if (!FindResource(r.room.Bytes(chprProp), Tag("CHPR"), home, data, nullptr, nullptr) ||
+            !PortRemasteredAnim::ReadCharacter(data, *character, error)) {
+          Log("  " + r.name + ": a character did not read" + (error.empty() ? "" : ": " + error));
+          character.reset();
+        }
+        ch = characters.emplace(key, std::move(character)).first;
+      }
+      std::string name;
+      if (ch->second != nullptr &&
+          r.room.String(Le32(r.room.Bytes(nameProp)), Le32(r.room.Bytes(nameProp) + 4), name)) {
+        anim = PortRemasteredAnim::Find(*ch->second, name);
+      }
+      if (anim == nullptr || anim->bones.size() != 1 || anim->frames < 2 ||
+          anim->bones[0].size() != anim->frames || !(anim->fps > 0.f)) {
+        ++dropped;
+        continue;
+      }
+      model = SwapUuid(ch->second->skinnedModel.data());
+      if (model == Id16{}) {
+        ++dropped;
+        continue;
+      }
+    }
     if (model == Id16{}) {
       continue;
     }
@@ -2447,7 +2512,8 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     // and stand where a retail Actor with that model already does, a little moved at most:
     // the pipes and fittings of the Frigate's hangar. The retail actor draws it, as the
     // Remastered model when the import table replaces it, so it is not written again.
-    if (const uint8_t* id = r.room.Bytes(prop->second); std::memcmp(id, kRetailIdPrefix, 12) == 0) {
+    if (const uint8_t* id = hasModel ? r.room.Bytes(prop->second) : nullptr;
+        id != nullptr && std::memcmp(id, kRetailIdPrefix, 12) == 0) {
       const Vec3 w = Apply(area.xf, MulR2G(pos));
       const bool standing = std::any_of(area.objects.begin(), area.objects.end(), [&](const ScriptObject& o) {
         return o.type == kRetailActor && o.hasPos && MaxAbs(o.pos, w) < kRetailActorNear &&
@@ -2489,6 +2555,22 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       }
       inst.transform[4 * row + 3] = float(kSign[row] * pos[kAxis[row]]);
     }
+    if (anim != nullptr) {
+      // The bone's pose in GC axes: the axis change is a rotation, so a quaternion's
+      // vector part and a translation change the same way a position does.
+      inst.animFps = anim->fps;
+      inst.animKeys.reserve(size_t(anim->frames) * 7);
+      for (const PortRemasteredAnim::Key& key : anim->bones[0]) {
+        for (int i = 0; i < 3; ++i) {
+          inst.animKeys.push_back(float(kSign[i] * key.rotation[kAxis[i]]));
+        }
+        inst.animKeys.push_back(key.rotation[3]);
+        for (int i = 0; i < 3; ++i) {
+          inst.animKeys.push_back(float(kSign[i] * key.translation[kAxis[i]]));
+        }
+      }
+      ++animated;
+    }
     script(inst, c->entity, active);
     const auto glow = glows.find(size_t(c - comps.data()));
     if (glow != glows.end()) {
@@ -2521,11 +2603,11 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   std::snprintf(line, sizeof line,
                 "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu inactive objects left out; %zu on a layer, "
                 "%zu scripted, %zu in %zu groups of %zu script objects and %zu connections (%zu untraced), %zu on a "
-                "platform, %zu with untraced links, %zu glowing, %zu left to retail actors; %zu of %zu entities "
-                "matched), %zu dropped",
+                "platform, %zu with untraced links, %zu glowing, %zu animated, %zu left to retail actors; %zu of %zu "
+                "entities matched), %zu dropped",
                 r.name.c_str(), mrea, count, modcons, actors, inactive, gated, linked, grouped, scripts.group.size(),
                 scripts.script.nodes.size(), scripts.script.edges.size(), scripts.scriptUnresolved, riding, unresolved,
-                glowing, retailDrawn, scripts.matched, scripts.entities, dropped);
+                glowing, animated, retailDrawn, scripts.matched, scripts.entities, dropped);
   Log(line);
 }
 
