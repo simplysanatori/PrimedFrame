@@ -216,6 +216,14 @@ void CEyeBall::Think(float dt, CStateManager& mgr) {
 
   mPlayerInRange =
       player->GetMorphballTransitionState() == CPlayer::kMS_Morphed && angle > minAngle;
+#ifdef TARGET_PC
+  // The laser comes out of the tracked eye bone, so tracking a morphed Samus swung the
+  // sweep sideways onto her and pinned her in Watery Hall's tunnel. On the GameCube the
+  // laser only sweeps along its animation; keep the eye on it while it may fire.
+  if (mCanAttack || mFiringBeam) {
+    mPlayerInRange = false;
+  }
+#endif
   if (mPlayerInRange) {
     mBoneTracking.SetActive(true);
     mTargetPosition = player->GetTranslation() - (player->GetVelocityWR() * 0.5f);
