@@ -518,6 +518,15 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
       if (g_gxState.pbr && tex.ref->isReplacement && samplerDescriptor.maxAnisotropy > pbrAniso) {
         samplerDescriptor.maxAnisotropy = pbrAniso;
       }
+      // Cost tests 8 and 9 (GXSetPBRCostTest) shade in full with cheaper filtering of the
+      // mod's maps: 8 without anisotropy, 9 also without blending between mips.
+      const u32 costTest = g_gxState.pbr ? g_gxState.pbr - 1u : 0u;
+      if (tex.ref->isReplacement && (costTest == 8 || costTest == 9)) {
+        samplerDescriptor.maxAnisotropy = 1;
+        if (costTest == 9) {
+          samplerDescriptor.mipmapFilter = wgpu::MipmapFilterMode::Nearest;
+        }
+      }
       samplerEntry.sampler = gfx::sampler_ref(samplerDescriptor).Get();
     } else {
       textureEntry.textureView = sEmptyTextureView.Get();

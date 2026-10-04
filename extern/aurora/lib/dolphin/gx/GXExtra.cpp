@@ -153,7 +153,7 @@ void GXSetArrayBaseIndex(GXAttr attr, u32 base) {
 
 static u32 sPBRCostTest = 0;
 
-void GXSetPBRCostTest(u32 test) { sPBRCostTest = test <= 7 ? test : 0; }
+void GXSetPBRCostTest(u32 test) { sPBRCostTest = test <= 9 ? test : 0; }
 
 u32 GXGetPBRCostTest() { return sPBRCostTest; }
 

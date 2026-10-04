@@ -109,7 +109,8 @@ void GXSetPBRDebugView(u32 view);
 // part of their shading, to see what it costs by the frame rate. 0 off, 1 flat (the base
 // map alone; cut-outs still cut), 2 no lights, 3 no ambient volume, 4 no reflection cube,
 // 5 no normal maps, 6 no metal/roughness and emissive maps, 7 flat but with every map
-// still read. Takes effect at the next GXSetPBR(GX_TRUE).
+// still read, 8 full shading with the maps' anisotropy off, 9 as 8 with nearest mips.
+// Takes effect at the next GXSetPBR(GX_TRUE).
 void GXSetPBRCostTest(u32 test);
 u32 GXGetPBRCostTest(void);
 // Aurora extension: a three-piece tone curve over the lit colour x, which is taken as
