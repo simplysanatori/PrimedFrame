@@ -151,7 +151,9 @@ struct ModelMesh {
   uint32_t vertexCount = 0;   // vertices in the buffer this mesh draws
   uint16_t unkC = 0;
   uint16_t unkE = 0;
-  uint8_t bits2 = 0;  // the mesh's entry in the two-bit bitmap after the meshes
+  // The mesh's entry in the two-bit bitmap after the meshes: its class (0 opaque, 1 sorted
+  // alpha, 2 alpha tested, 3 sorted additive). Blending comes from this, not from MTRL flags.
+  uint8_t bits2 = 0;
   bool twoSided = false;  // the one-bit bitmap: Remastered draws it with culling off
   std::vector<uint32_t> indices;
 };
