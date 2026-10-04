@@ -573,6 +573,7 @@ struct MapRef {
   std::string src;  // how the texture is named in a tag
   bool raw = false;  // a shader's own data (a ramp, noise): every texel and channel kept as it is
   bool mean = false;  // drawn as its colour times alpha, averaged: one colour
+  double metalMax = kPbrMetalMax;  // an MR map's metalness ceiling
 };
 
 struct RemMaterial {
@@ -611,6 +612,8 @@ struct RemMaterial {
   double lits = 1.0;
   // What the back copy of a LITS material draws with (diffuse, F0); the front's stay 1, 1.
   double lightScale[2] = {1.0, 1.0};
+  // REFL, the cube the arm cannon's shaders reflect in place of the room's (kShaderGunBody).
+  MapRef refl;
 };
 
 struct Buffer {
@@ -831,6 +834,126 @@ struct Converter::State {
     return img;
   }
 
+  // A material's own reflection cube (RemMaterial::refl), written once as <ID>.envcube:
+  // 'MPCB', u32 edge, u32 mips, then RGBA16F, every mip of face 0 from the largest down,
+  // then face 1 and so on (GXCreatePBRCube's layout), little endian. The faces are
+  // Remastered's, in its world (PortRoomEnv's probes map a direction into it the same way).
+  // The stored colours are sRGB and come out linear, a box filter down to kCubeEdge and on
+  // to 1x1. 0 when the material has none or the import cannot read cubes.
+  static constexpr uint32_t kCubeEdge = 128;
+  uint32_t Cube(const MapRef& refl) {
+    if (!refl.has || !io.cube) {
+      return 0;
+    }
+    const std::string tag = "cube:" + refl.src;
+    const auto known = ids.find(tag);
+    if (known != ids.end()) {
+      return known->second.value_or(0);
+    }
+    uint32_t edge = 0;
+    std::vector<uint8_t> faces;
+    std::string error;
+    if (!io.cube(refl.id, edge, faces, error) || edge == 0 || faces.size() != size_t(edge) * edge * 24) {
+      Log("  note: cube " + IdToString(refl.id) + " not read" + (error.empty() ? "" : ": " + error));
+      ids[tag] = std::nullopt;
+      return 0;
+    }
+    const uint32_t tid = TexId(tag);
+    const auto owned = owner.find(tid);
+    if (owned != owner.end() && owned->second != tag) {
+      throw Fail{"texture id clash on " + Hex8(tid) + ": " + owned->second + " and " + tag};
+    }
+    owner[tid] = tag;
+    ids[tag] = tid;
+    if (io.claim && !io.claim(tid)) {
+      return tid;
+    }
+    float lut[256];
+    for (int i = 0; i < 256; ++i) {
+      const float c = float(i) / 255.0f;
+      lut[i] = c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+    }
+    const uint32_t top = std::min(edge, kCubeEdge);
+    uint32_t mips = 0;
+    while ((top >> mips) != 0) {
+      ++mips;
+    }
+    Blob out;
+    const auto le32 = [&](uint32_t v) {
+      for (int i = 0; i < 4; ++i) {
+        out.push_back(uint8_t(v >> (8 * i)));
+      }
+    };
+    out.insert(out.end(), {'M', 'P', 'C', 'B'});
+    le32(top);
+    le32(mips);
+    for (int face = 0; face < 6; ++face) {
+      const uint8_t* src = faces.data() + size_t(face) * edge * edge * 4;
+      // The top mip: each texel the mean of the block of source texels it covers.
+      const uint32_t step = edge / top;
+      std::vector<float> level(size_t(top) * top * 4);
+      for (uint32_t y = 0; y < top; ++y) {
+        for (uint32_t x = 0; x < top; ++x) {
+          float sum[3] = {0.0f, 0.0f, 0.0f};
+          for (uint32_t sy = 0; sy < step; ++sy) {
+            for (uint32_t sx = 0; sx < step; ++sx) {
+              const uint8_t* p = src + (size_t(y * step + sy) * edge + x * step + sx) * 4;
+              for (int c = 0; c < 3; ++c) {
+                sum[c] += lut[p[c]];
+              }
+            }
+          }
+          float* d = level.data() + (size_t(y) * top + x) * 4;
+          for (int c = 0; c < 3; ++c) {
+            d[c] = sum[c] / float(step * step);
+          }
+          d[3] = 1.0f;
+        }
+      }
+      for (uint32_t mip = 0; mip < mips; ++mip) {
+        const uint32_t e = top >> mip;
+        for (float v : level) {
+          const uint16_t h = HalfBits(v);
+          out.push_back(uint8_t(h));
+          out.push_back(uint8_t(h >> 8));
+        }
+        if (e > 1) {
+          std::vector<float> next(size_t(e / 2) * (e / 2) * 4);
+          for (uint32_t y = 0; y < e / 2; ++y) {
+            for (uint32_t x = 0; x < e / 2; ++x) {
+              for (int c = 0; c < 4; ++c) {
+                const auto at = [&](uint32_t ix, uint32_t iy) { return level[(size_t(iy) * e + ix) * 4 + c]; };
+                next[(size_t(y) * (e / 2) + x) * 4 + c] =
+                    0.25f * (at(2 * x, 2 * y) + at(2 * x + 1, 2 * y) + at(2 * x, 2 * y + 1) + at(2 * x + 1, 2 * y + 1));
+              }
+            }
+          }
+          level.swap(next);
+        }
+      }
+    }
+    Write(Hex8(tid) + ".envcube", out);
+    return tid;
+  }
+
+  // A non-negative float as half bits, rounded to nearest and capped at the largest half.
+  static uint16_t HalfBits(float v) {
+    if (!(v > 0.0f)) {
+      return 0;
+    }
+    if (v >= 65504.0f) {
+      return 0x7BFF;
+    }
+    int e = 0;
+    const float m = std::frexp(v, &e);  // v = m * 2^e, m in [0.5, 1)
+    if (e < -13) {
+      return uint16_t(std::lround(std::ldexp(v, 24)));  // subnormal (rounds up into the normals)
+    }
+    uint32_t bits = uint32_t(e + 14) << 10;
+    const long frac = std::lround((m * 2.0f - 1.0f) * 1024.0f);
+    return uint16_t(std::min<uint32_t>(bits + uint32_t(frac), 0x7BFF));
+  }
+
   struct Bake {
     bool on = false;
     const MapRef* mr = nullptr;
@@ -902,7 +1025,7 @@ struct Converter::State {
           tag += ":escale=" + FormatG(kPbrEmissive);
         }
         if (k == kMr && !src->raw) {
-          tag += ":mmax=" + FormatG(kPbrMetalMax);
+          tag += ":mmax=" + FormatG(src->metalMax);
         }
         // Only a retail model has a retail texture to fall back on.
         if (k == kBase && !opt.standalone) {
@@ -1065,7 +1188,7 @@ struct Converter::State {
       }
     }
     if (k == kMr && !raw) {
-      const uint8_t ceiling = uint8_t(std::nearbyint(float(kPbrMetalMax * 255.0)));
+      const uint8_t ceiling = uint8_t(std::nearbyint(float(src->metalMax * 255.0)));
       for (size_t i = 0; i < count; ++i) {
         img.rgba[i * 4 + 2] = std::min(img.rgba[i * 4 + 2], ceiling);
       }
@@ -1151,6 +1274,12 @@ constexpr uint32_t kShaderGunGlow[] = {0xA13D6235, 0x62F671E0};
 // keeps the retail frozen-gun particles (CGunWeapon::EnableFrozenEffect), so the
 // shell is not drawn; drawn as a plain surface it froze the gun for good.
 constexpr uint32_t kShaderFrozenShell = 0x2FC554A2;
+// The arm cannon's body: lit PBR that reflects its REFL cube (a Tallon forest, LDR) along
+// the reflection vector, at the roughness's mip, instead of a room probe. Drawn with the
+// room's cube the metal took the room's colours and read pale. The default REFL (black)
+// that most materials carry keeps the room's.
+constexpr uint32_t kShaderGunBody[] = {0x547E64E5, 0xD43DE005, 0x917F1415, 0xF495B260};
+constexpr const char* kDefaultRefl = "7b98170f";
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -1246,6 +1375,18 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       if (texture) {
         set(kBase, d.texture);
         bclr = d.texture.hasUsage;
+      }
+      break;
+    case FourCC('R', 'E', 'F', 'L'):
+      if (texture && std::find(std::begin(kShaderGunBody), std::end(kShaderGunBody), shader) != std::end(kShaderGunBody)) {
+        set(kBase, d.texture, &out.refl);
+        if (Lower(IdToString(out.refl.id)).rfind(kDefaultRefl, 0) == 0) {
+          out.refl = MapRef{};
+        } else {
+          // Its own dark cube is what the metal shows, so the metalness keeps its full
+          // range: under the ceiling the pale albedo was lit as diffuse and read washed out.
+          out.maps[kMr].metalMax = 1.0;
+        }
       }
       break;
     case FourCC('B', 'C', 'R', 'L'):
@@ -1540,7 +1681,9 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
 // each layer's height, and 'PBR3'; or, for a shader of its own, those, the kind, its strength
 // (compressed like the emissive one) and its four parameters, and 'PBR4'; or, where a
 // map clamps or mirrors, all nineteen, the maps' wrap modes (one word) and 'PBR5'; or, for the
-// back copy of a material with a LITS, those and the diffuse and F0 factors, and 'PBR6'.
+// back copy of a material with a LITS, those and the diffuse and F0 factors, and 'PBR6'; or,
+// for a material with a reflection cube of its own (State::Cube), all of that, the cube's id
+// and 'PBR7'.
 // Remastered's emissive strengths are HDR values meant for its bloom, and the
 // port's output is 8-bit with none, so the strength is compressed (square
 // root, capped) around 1, where the map is drawn as converted.
@@ -1563,7 +1706,7 @@ bool BackLightScale(const RemMaterial& m) {
 
 bool ColorUnlitDraw(const RemMaterial& m) { return m.colorUnlit && m.unlit && m.tinted; }
 
-void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap) {
+void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
   const double e = std::sqrt(std::min(std::max(m.emissive, 0.0), kPbrEmissiveMax));
   // ColorUnlit's backlight is its gain, and no backlight at all where drawn otherwise.
   const double k = ColorUnlitDraw(m) ? std::max(m.backlight, 0.0)
@@ -1603,10 +1746,10 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap) {
   // Only a material with a map that does not repeat needs the long form: every
   // field, the ones the short form leaves out at the reader's neutral 0.
   const bool scaled = m.lightScale[0] != 1.0 || m.lightScale[1] != 1.0;
-  const bool wraps = wrap != 0x55555555u || scaled;
+  const bool wraps = wrap != 0x55555555u || scaled || cube != 0;
   if (wraps) {
     f.resize(19, 0.0);
-    tag = scaled ? "PBR6" : "PBR5";
+    tag = cube != 0 ? "PBR7" : scaled ? "PBR6" : "PBR5";
   }
   for (double v : f) {
     PF(b, v);
@@ -1614,9 +1757,12 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap) {
   if (wraps) {
     P32(b, wrap);
   }
-  if (scaled) {
+  if (scaled || cube != 0) {
     PF(b, m.lightScale[0]);
     PF(b, m.lightScale[1]);
+  }
+  if (cube != 0) {
+    P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
 }
@@ -1628,7 +1774,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap) {
 // it samples every map so all are bound. A layered material has three more,
 // maps 4-6: the second layer's base, MR and normal.
 Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx, uint32_t group,
-                 const uint32_t* coords, const RemMaterial& rem, uint32_t wrap) {
+                 const uint32_t* coords, const RemMaterial& rem, uint32_t wrap, uint32_t cube) {
   const int nmaps = rem.layered ? kLayeredMaps : kMaps;
   Blob b;
   // ColorUnlit's colour, out of linear light, is (2 x gain)^(1/2.2) times the vertex
@@ -1745,7 +1891,7 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
     P32(b, 4);  // no UV animations
     P32(b, 0);
   }
-  PbrRecord(b, rem, wrap);
+  PbrRecord(b, rem, wrap, cube);
   return b;
 }
 
@@ -2785,12 +2931,13 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
       dlAttrs.push_back(attrs);
       const uint32_t group = 0x40000000u | uint32_t(dlAttrs.size() - 1);
+      const uint32_t cube = Cube(rem.refl);
       for (size_t si = 0; si < retail.nmat; ++si) {
         uint32_t idx[kLayeredMaps];
         for (int k = 0; k < nmaps; ++k) {
           idx[k] = texIndex(si, tids[k]);
         }
-        setBlobs[si].push_back(PbrMaterial(pm, vtx, idx, group, coords, rem, wrap));
+        setBlobs[si].push_back(PbrMaterial(pm, vtx, idx, group, coords, rem, wrap, cube));
       }
       continue;
     }

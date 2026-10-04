@@ -171,11 +171,12 @@ CCubeMaterial CCubeModel::GetMaterialByIndex(const int idx) const {
 // 'PBR3', or nineteen (the same, then the kind of a special surface, its strength and four
 // parameters; see GXSetPBRMaterial) and 'PBR4', or those nineteen, then one big-endian word
 // of the maps' wrap modes (see the declaration) and 'PBR5', or those and two more floats (the
-// diffuse and F0 factors of a back-facing copy, see GXSetPBRLightScale) and 'PBR6'. A material
-// without one gets the neutral values. A converted TEV material may end in the wrap word
-// alone and 'WRAP' (no floats).
+// diffuse and F0 factors of a back-facing copy, see GXSetPBRLightScale) and 'PBR6', or those
+// and one more big-endian word (the file id of the material's own reflection cube) and
+// 'PBR7'. A material without one gets the neutral values. A converted TEV material may end
+// in the wrap word alone and 'WRAP' (no floats).
 int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap,
-                                    f32 lightScale[2]) const {
+                                    f32 lightScale[2], uint* cube) const {
   const uchar* table = static_cast< const uchar* >(x0_instance.GetMaterialPointer()) +
                        (x1c_textures->size() + 1) * 4;
   const uint count = CBasics::SwapBytes(*reinterpret_cast< const uint* >(table));
@@ -183,10 +184,14 @@ int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap,
   const uint begin = idx != 0 ? GetMaterialOffset(table, idx) : 0;
   const uint end = GetMaterialOffset(table, idx + 1);
   uint32_t wrapWord;
+  uint32_t cubeId;
   const int floats = PortPbrRecord::Read(table + count * 4 + end, end - begin, values, &wrapWord,
-                                         lightScale);
+                                         lightScale, &cubeId);
   if (wrap != nullptr) {
     *wrap = wrapWord;
+  }
+  if (cube != nullptr) {
+    *cube = cubeId;
   }
   return floats;
 }
@@ -225,10 +230,11 @@ void CCubeModel::PortOverridePBR(const CCubeModel* model, const int material, co
 
 void CCubeModel::PortClearPBROverrides() { sPortPBROverrides.clear(); }
 
-f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fadeReplaces) const {
+f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fadeReplaces,
+                                   uint* cube) const {
   f32 values[19];
   f32 lightScale[2];
-  PortReadPBRMaterial(idx, values, nullptr, lightScale);
+  PortReadPBRMaterial(idx, values, nullptr, lightScale, cube);
   const f32 kind = values[13];
   for (const SPortPBROverride& entry : sPortPBROverrides) {
     if (entry.model == this && entry.material == idx) {
@@ -396,8 +402,25 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     }
     GXSetPBRTone(hasTone ? tone : nullptr);
     // An opaque material's own alpha (dst factor zero) means nothing to a blend.
+    uint materialCube = 0;
     const f32 kind = PortSetPBRMaterial(surface.GetMaterialIndex(), fadeBlend ? tint.GetAlpha() : 1.f,
-                                        fadeBlend && (material.GetCompressedBlend() >> 16) == GX_BL_ZERO);
+                                        fadeBlend && (material.GetCompressedBlend() >> 16) == GX_BL_ZERO,
+                                        &materialCube);
+    // A material with its own reflection cube (the Remastered arm cannon's) reflects that in
+    // place of the room's, as Remastered draws it; the room still lights it. The cube is in
+    // Remastered's world, which maps from ours as the room probes' cubes do (-x, z, y).
+    f32 materialCubeParams[4];
+    const uint materialCubeId =
+        materialCube != 0 && mode != 0 && !CCubeMaterial::sPortCapturingProbe ? PortRoomEnv::MaterialCube(materialCube, materialCubeParams) : 0u;
+    if (materialCubeId != 0) {
+      f32 viewToCube[3][3] = {
+          {-viewToWorld[0][0], -viewToWorld[0][1], -viewToWorld[0][2]},
+          {viewToWorld[2][0], viewToWorld[2][1], viewToWorld[2][2]},
+          {viewToWorld[1][0], viewToWorld[1][1], viewToWorld[1][2]},
+      };
+      GXSetPBRProbeEx(viewToCube, 1.f, 1.f, 1.f);
+      GXSetPBRCube(materialCubeId, materialCubeParams);
+    }
     // Glass (kind 8) sees what is behind it: the screen so far, copied into map 7 as the
     // refracting particles copy it (CElementGen).
     if (kind > 7.5f && kind < 8.5f && CCubeMaterial::PortScreenCopyUsed()) {

@@ -3040,6 +3040,77 @@ bool DecodeTxtrVolumeRgba8(const uint8_t* data, size_t size, uint32_t& width, ui
   return true;
 }
 
+bool DecodeTxtrCubeRgba8(const uint8_t* data, size_t size, uint32_t& edge, std::vector<uint8_t>& rgba,
+                         std::string& error) {
+  rgba.clear();
+  if (data == nullptr || size == 0) {
+    error = "remastered txtr: no data";
+    return false;
+  }
+  TextureHeader head;
+  if (!ReadHeader(data, size, head, error)) {
+    return false;
+  }
+  if (head.kind != 3 || head.layers != 6 || head.width != head.height || head.width == 0 ||
+      head.width > 4096 || head.mipSizes.empty()) {
+    error = "remastered txtr: not a cube map";
+    return false;
+  }
+  BlockSize block{};
+  size_t bytesPerPixel = 1;
+  if (!FormatBlockSize(head.format, block, bytesPerPixel)) {
+    error = "remastered txtr: cannot decode " + std::string(FormatName(head.format));
+    return false;
+  }
+  Meta meta;
+  if (!ReadMeta(data, size, meta, error)) {
+    return false;
+  }
+  std::vector<uint8_t> surface;
+  if (!BuildSurface(data, size, meta, surface, error)) {
+    return false;
+  }
+  // ReadTxtrCubeBc6h's layout, for any block size: each layer holds its whole mip
+  // chain and starts on a multiple of the block of GOBs the top mip uses. Only the
+  // top mip of each face is decoded.
+  edge = head.width;
+  const uint32_t blockHeightMip0 = BlockHeightMip0(DivRoundUp(size_t(head.height), block.height));
+  const size_t faceBytes = size_t(edge) * edge * 4;
+  rgba.assign(faceBytes * 6, 0);
+  size_t srcOffset = 0;
+  for (uint32_t layer = 0; layer < 6; ++layer) {
+    for (uint32_t mip = 0; mip < head.mipSizes.size(); ++mip) {
+      const uint32_t texels = std::max(head.width >> mip, 1u);
+      const size_t blocksX = DivRoundUp(size_t(texels), block.width);
+      const size_t blocksY = DivRoundUp(size_t(texels), block.height);
+      const uint32_t mipBlockHeight = MipBlockHeight(blocksY, blockHeightMip0);
+      const size_t swizzled = SwizzledMipSize(blocksX, blocksY, 1, mipBlockHeight, bytesPerPixel);
+      if (swizzled > surface.size() || srcOffset > surface.size() - swizzled) {
+        error = "remastered txtr: the cube's surface is short";
+        rgba.clear();
+        return false;
+      }
+      if (mip == 0) {
+        std::vector<uint8_t> untiled(blocksX * blocksY * bytesPerPixel);
+        DeswizzleMip(blocksX, blocksY, 1, mipBlockHeight, 1, bytesPerPixel, surface.data(), srcOffset,
+                     untiled.data());
+        if (!DecodeBlocks(head.format, edge, edge, untiled.data(), rgba.data() + faceBytes * layer, error)) {
+          rgba.clear();
+          return false;
+        }
+      }
+      srcOffset += swizzled;
+    }
+    uint32_t gobHeight = blockHeightMip0;
+    while (head.width <= (gobHeight / 2) * 8 && gobHeight > 1) {
+      gobHeight /= 2;
+    }
+    const size_t unit = size_t(gobHeight) * kGobSizeBytes;
+    srcOffset = DivRoundUp(srcOffset, unit) * unit;
+  }
+  return true;
+}
+
 void DecodeBc6hFace(const uint8_t* blocks, uint32_t texels, bool isSigned, uint16_t* rgba) {
   const size_t perSide = DivRoundUp(size_t(texels), 4);
   for (size_t by = 0; by < perSide; ++by) {

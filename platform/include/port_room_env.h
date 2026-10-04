@@ -295,6 +295,10 @@ float AmbientScale();
 // `roomenv show`).
 void SetVolumeView(int view);
 int VolumeView();
+// The GPU cube of a material's own reflection cube, the mod's <fileId>.envcube (see
+// PortRemasteredConvert's Cube for the format), made the first time it is asked for; 0
+// when the mod has none or it cannot be read. `params` gets what GXSetPBRCube takes with it.
+uint32_t MaterialCube(uint32_t fileId, float params[4]);
 // Forgets everything (the mods folder changed).
 void Reset();
 // 0 off, 1 on; the console's `roomenv`.

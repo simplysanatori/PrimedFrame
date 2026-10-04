@@ -105,16 +105,19 @@ public:
   CCubeMaterial GetMaterialByIndex(const int idx) const;
 #ifdef TARGET_PC
   // Sends the material's PBR record and the draw's fade (see GXSetPBRLightScale); returns
-  // the record's surface kind (glass is 8).
-  float PortSetPBRMaterial(const int idx, const float fade, const bool fadeReplaces) const;
+  // the record's surface kind (glass is 8). cube, when given, gets the file id of the
+  // material's own reflection cube ('PBR7'; see PortRoomEnv::MaterialCube), 0 without one.
+  float PortSetPBRMaterial(const int idx, const float fade, const bool fadeReplaces,
+                           uint* cube = nullptr) const;
   // The material's record (see the definition) with the neutral values where it has
   // none; returns how many floats the record holds, 0 without one. wrap, when given, gets
   // the maps' sampler modes: map i's S mode in bits 4i..4i+1, its T mode in 4i+2..4i+3
   // (CTexture::EClampMode); all repeat without a 'PBR5' record.
   // lightScale, when given, gets the diffuse and F0 factors of a back-facing copy ('PBR6'):
-  // 1, 1 without one.
+  // 1, 1 without one. cube, when given, gets the reflection cube's file id ('PBR7'), 0
+  // without one.
   int PortReadPBRMaterial(const int idx, float values[19], uint* wrap = nullptr,
-                          float lightScale[2] = nullptr) const;
+                          float lightScale[2] = nullptr, uint* cube = nullptr) const;
   uint PortMaterialCount() const;
   // Debugging: draws a model's material with values[field] replaced, until cleared. The
   // caller must clear before the model goes.

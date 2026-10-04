@@ -1407,7 +1407,62 @@ bool HasVolume(uint32_t mrea) {
   return lit;
 }
 
+namespace {
+
+// The material cubes made so far, by file id; 0 for a file that could not be read.
+struct MaterialCubeGpu {
+  uint32_t id = 0;
+  uint32_t mips = 0;
+};
+std::unordered_map<uint32_t, MaterialCubeGpu> sMaterialCubes;
+uint32_t sNextMaterialCube = 0;
+
+} // namespace
+
+uint32_t MaterialCube(uint32_t fileId, float params[4]) {
+  auto [it, added] = sMaterialCubes.try_emplace(fileId);
+  MaterialCubeGpu& gpu = it->second;
+  if (added) {
+    const std::string path = PortMods::MaterialCubePath(fileId);
+    if (path.empty()) {
+      return 0;
+    }
+    std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
+    const std::vector<uint8_t> data = ReadAll(in);
+    const auto le32 = [&](size_t at) {
+      return uint32_t(data[at]) | uint32_t(data[at + 1]) << 8 | uint32_t(data[at + 2]) << 16 |
+             uint32_t(data[at + 3]) << 24;
+    };
+    const uint32_t edge = data.size() >= 12 ? le32(4) : 0;
+    const uint32_t mips = data.size() >= 12 ? le32(8) : 0;
+    size_t texels = 0;
+    for (uint32_t mip = 0; mip < mips && mip < 16; ++mip) {
+      texels += size_t(std::max(edge >> mip, 1u)) * std::max(edge >> mip, 1u);
+    }
+    if (data.size() < 12 || std::memcmp(data.data(), "MPCB", 4) != 0 || edge == 0 || edge > 4096 || mips == 0 || mips > 16 || data.size() != 12 + texels * 6 * 8) {
+      PortLog::Write("room env: %s: not a material cube\n", path.c_str());
+      return 0;
+    }
+    gpu.id = 0x80000000u | (sNextMaterialCube++ & 0x7FFFFFFFu);
+    gpu.mips = mips;
+    GXCreatePBRCube(gpu.id, edge, mips, data.data() + 12, uint32_t(data.size() - 12));
+  }
+  if (gpu.id != 0) {
+    params[0] = 1.f;
+    params[1] = float(gpu.mips - 1);
+    params[2] = 0.f;
+    params[3] = 0.f;
+  }
+  return gpu.id;
+}
+
 void Reset() {
+  for (const auto& [fileId, gpu] : sMaterialCubes) {
+    if (gpu.id != 0) {
+      GXDestroyPBRCube(gpu.id);
+    }
+  }
+  sMaterialCubes.clear();
   for (auto& [mrea, area] : sAreas) {
     Free(area);
   }

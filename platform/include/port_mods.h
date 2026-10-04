@@ -57,6 +57,9 @@ bool ParsePakTable(const uint8_t* data, size_t size, PakTable& table, size_t& ne
 bool ParseLooseName(const std::string& fileName, uint32_t& type, uint32_t& id);
 // "1A2B3C4D.dds" (any case) -> id 0x1A2B3C4D: a native texture.
 bool ParseNativeTextureName(const std::string& fileName, uint32_t& id);
+// "1A2B3C4D.envcube" (any case) -> id 0x1A2B3C4D: a converted material
+// reflection cube (written by the Remastered import, see PbrRecord's 'PBR7').
+bool ParseMaterialCubeName(const std::string& fileName, uint32_t& id);
 std::string FourCCString(uint32_t type);
 
 // --- Virtual files ------------------------------------------------------------
@@ -199,6 +202,9 @@ size_t NativeTexturesBound();
 std::string FontPath();
 // The <MREA id>.roomenv a mod supplies for an area (port_room_env.h); empty when none.
 std::string RoomEnvPath(uint32_t mrea);
+// The <id>.envcube a mod supplies for a material's own reflection cube
+// (PortRoomEnv::MaterialCube); empty when none.
+std::string MaterialCubePath(uint32_t id);
 // The roomenv/brdf.lut a mod supplies (port_room_env.h), the first mod's when several do; empty when none.
 std::string BrdfLutPath();
 // The <FRME id>.hudbars a mod supplies for a HUD frame (port_hud_bars.h); empty when none.

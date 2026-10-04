@@ -71,6 +71,19 @@ void TestReader() {
     Check(v[0] == 1.f && v[18] == 19.f, "PBR6 floats are read before the wrap word");
     Check(wrap == 0x11223344, "PBR6 wrap word");
     Check(s[0] == 0.4f && s[1] == 0.f, "PBR6 diffuse and F0 factors");
+    uint32_t cube = 7;
+    Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s, &cube) == 19 && cube == 0,
+          "PBR6 has no cube");
+  }
+  {  // 'PBR7': 'PBR6' with the cube's id before the tag.
+    std::vector<uint8_t> r = Record(19, true, true, "PBR6", 0.4f, 0.5f);
+    r.resize(r.size() - 4);
+    PutBe(r, 0xCAFEF00D);
+    r.insert(r.end(), {'P', 'B', 'R', '7'});
+    uint32_t cube = 0;
+    Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s, &cube) == 19, "PBR7 holds 19 floats");
+    Check(v[18] == 19.f && wrap == 0x11223344 && s[0] == 0.4f && s[1] == 0.5f, "PBR7 reads as PBR6 before the cube");
+    Check(cube == 0xCAFEF00D, "PBR7 cube id");
   }
   struct Old {
     int floats;

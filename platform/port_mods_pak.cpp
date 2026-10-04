@@ -105,12 +105,14 @@ bool ParsePakTable(const uint8_t* data, size_t size, PakTable& table, size_t& ne
   return true;
 }
 
-bool ParseNativeTextureName(const std::string& fileName, uint32_t& id) {
-  if (fileName.size() != 12 || fileName[8] != '.') {
+// "<8 hex digits>.<ext>", the extension in any case (`ext` is lower case).
+static bool ParseHexIdName(const std::string& fileName, const char* ext, uint32_t& id) {
+  const size_t extLength = std::strlen(ext);
+  if (fileName.size() != 9 + extLength || fileName[8] != '.') {
     return false;
   }
-  for (size_t i = 9; i < 12; ++i) {
-    if ((fileName[i] | 0x20) != "dds"[i - 9]) {
+  for (size_t i = 0; i < extLength; ++i) {
+    if ((fileName[9 + i] | 0x20) != ext[i]) {
       return false;
     }
   }
@@ -123,6 +125,14 @@ bool ParseNativeTextureName(const std::string& fileName, uint32_t& id) {
     id = (id << 4) | uint32_t(digit);
   }
   return true;
+}
+
+bool ParseNativeTextureName(const std::string& fileName, uint32_t& id) {
+  return ParseHexIdName(fileName, "dds", id);
+}
+
+bool ParseMaterialCubeName(const std::string& fileName, uint32_t& id) {
+  return ParseHexIdName(fileName, "envcube", id);
 }
 
 bool ParseLooseName(const std::string& fileName, uint32_t& type, uint32_t& id) {

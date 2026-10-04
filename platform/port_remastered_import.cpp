@@ -818,6 +818,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       out.rgba = std::move(image.rgba);
       return true;
     };
+    io.cube = [&](const ModelUuid& id, uint32_t& edge, std::vector<uint8_t>& rgba, std::string& cubeError) {
+      std::vector<uint8_t> raw;
+      return remastered.ReadTexture(id, raw, cubeError) &&
+             DecodeTxtrCubeRgba8(raw.data(), raw.size(), edge, rgba, cubeError);
+    };
     // Workers can still meet the same texture at once (a TEV slot's, a solid
     // colour); each writes its own temporary file and the rename decides, the
     // content being the same either way.

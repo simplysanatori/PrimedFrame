@@ -112,6 +112,10 @@ bool DecodeVolumeFloat(const uint8_t* compressed, size_t compressedSize, size_t 
 // TXTR file; `rgba` gets width * height * depth * 4 bytes, z slowest, x fastest.
 bool DecodeTxtrVolumeRgba8(const uint8_t* data, size_t size, uint32_t& width, uint32_t& height, uint32_t& depth,
                            std::vector<uint8_t>& rgba, std::string& error);
+// The top mip of every face of an LDR cube map (the materials' REFL cubes) as RGBA8:
+// `rgba` gets 6 faces of edge * edge texels, face slowest, in the file's face order.
+bool DecodeTxtrCubeRgba8(const uint8_t* data, size_t size, uint32_t& edge, std::vector<uint8_t>& rgba,
+                         std::string& error);
 // Decodes one face of BC6H blocks (`texels` on a side) into RGBA half floats, alpha 1.
 void DecodeBc6hFace(const uint8_t* blocks, uint32_t texels, bool isSigned, uint16_t* rgba);
 

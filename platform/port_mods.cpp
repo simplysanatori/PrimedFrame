@@ -44,6 +44,7 @@ std::vector<std::string> sOverlayNames;
 std::unordered_map<uint32_t, std::string> sNativeTextures;
 // <MREA id>.roomenv files, by area.
 std::unordered_map<uint32_t, std::string> sRoomEnvs;
+std::unordered_map<uint32_t, std::string> sMaterialCubes;
 std::string sBrdfLut;
 std::vector<std::string> sRoomLods;
 std::string sFont;
@@ -330,6 +331,11 @@ std::string RoomEnvPath(uint32_t mrea) {
   return found != sRoomEnvs.end() ? found->second : std::string();
 }
 
+std::string MaterialCubePath(uint32_t id) {
+  const auto found = sMaterialCubes.find(id);
+  return found != sMaterialCubes.end() ? found->second : std::string();
+}
+
 std::string BrdfLutPath() { return sBrdfLut; }
 
 std::vector<std::string> RoomLodPaths() { return sRoomLods; }
@@ -382,6 +388,7 @@ void Initialize() {
   sStatus = {};
   sNativeTextures.clear();
   sRoomEnvs.clear();
+  sMaterialCubes.clear();
   sBrdfLut.clear();
   sRoomLods.clear();
   sFont.clear();
@@ -463,6 +470,10 @@ void Initialize() {
       }
       if (PortRoomEnv::ParseFileName(name, id)) {
         sRoomEnvs[id] = PathString(file);
+        continue;
+      }
+      if (ParseMaterialCubeName(name, id)) {
+        sMaterialCubes[id] = PathString(file);
         continue;
       }
       if (PortHudBars::ParseFileName(name, id)) {

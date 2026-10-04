@@ -90,6 +90,9 @@ struct ConvertIO {
   // The top mip of a Remastered texture as RGBA8. The id is in a pak's byte
   // order (what IdToString prints), not the order a model stores it in.
   std::function<bool(const ModelUuid& id, Image& out, std::string& error)> texture;
+  // Optional: the top mip of every face of a Remastered cube map as RGBA8, 6 faces of
+  // edge * edge texels. Without it no material gets a reflection cube of its own.
+  std::function<bool(const ModelUuid& id, uint32_t& edge, std::vector<uint8_t>& rgba, std::string& error)> cube;
   // Optional, for converters that run side by side into one folder: asked once
   // for each PBR map a converter is about to write, by the id it will have;
   // false when another converter has taken it, and this one then only names it.

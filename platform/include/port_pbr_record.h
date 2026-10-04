@@ -23,10 +23,11 @@ inline float BeFloat(const uint8_t* p) {
 // Reads the record that ends at `end` (one past its tag) in a material of `size` bytes.
 // values gets the 19 floats (neutral where the record is short or absent), wrap the maps'
 // wrap word (every axis repeat without one) and lightScale the diffuse and F0 factors of a
-// back-facing copy (1, 1 without 'PBR6'). Returns how many floats the record held. A TEV
-// material may end in a record of its own: the wrap word and 'WRAP', no floats.
+// back-facing copy (1, 1 without 'PBR6'), and cube the id of the material's own reflection
+// cube (0 without 'PBR7'). Returns how many floats the record held. A TEV material may end
+// in a record of its own: the wrap word and 'WRAP', no floats.
 inline int Read(const uint8_t* end, size_t size, float values[19], uint32_t* wrap,
-                float lightScale[2]) {
+                float lightScale[2], uint32_t* cube = nullptr) {
   for (int i = 0; i < 19; ++i) {
     values[i] = i < 3 ? 1.f : 0.f;
   }
@@ -36,9 +37,20 @@ inline int Read(const uint8_t* end, size_t size, float values[19], uint32_t* wra
   if (lightScale != nullptr) {
     lightScale[0] = lightScale[1] = 1.f;
   }
+  if (cube != nullptr) {
+    *cube = 0;
+  }
   int floats = 0;
   const uint8_t* floatsEnd = end - 4; // the tag's start, until a longer record moves it
-  if (size >= 92 && std::memcmp(end - 4, "PBR6", 4) == 0) {
+  // 'PBR7' is 'PBR6' with the cube's id between the factors and the tag.
+  const bool withCube = size >= 96 && std::memcmp(end - 4, "PBR7", 4) == 0;
+  if (withCube) {
+    if (cube != nullptr) {
+      *cube = Be32(end - 8);
+    }
+    end -= 4;
+  }
+  if (withCube || (size >= 92 && std::memcmp(end - 4, "PBR6", 4) == 0)) {
     if (lightScale != nullptr) {
       lightScale[0] = BeFloat(end - 12);
       lightScale[1] = BeFloat(end - 8);
