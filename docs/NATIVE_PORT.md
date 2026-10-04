@@ -761,6 +761,14 @@ unpacks to a temporary directory instead of mounting.
   path and has a **Save settings now** button. Environment variables still
   override the file for that run, and are written back into it if any setting is
   changed during that run.
+- EFB scale (F1 > Quality, persisted as `render_scale`): 1x-4x of the GameCube's
+  640x528 EFB, or the window's own size with "Auto render scale". Above 2x it
+  supersamples (4x at 16:9 is 3755x2112; with MSAA 4 the targets take
+  several hundred MB). "Dynamic
+  resolution" (`dynamic_res`, `dynamic_res_target` in fps, 0 = the display's
+  rate) lowers the scale while the frame rate is below the target, in quarter
+  steps (half steps above 2x), down to "Lowest scale" (`dynamic_res_min`: 0.5,
+  0.75 or 1, default 1). The file also takes a manual `render_scale` under 1.
 - `MP_ASPECT=4:3|16:9|window`; the legacy `MP_WIDESCREEN` selects 16:9.
 - `MP_TWIN_STICK=1` (Input tab, persisted as `twin_stick`): twin-stick aiming. The
   right stick feeds the first-person aim through the same path as the mouse (so

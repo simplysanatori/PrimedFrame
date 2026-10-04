@@ -136,10 +136,11 @@ bool sFullscreen = false;
 #endif
 bool sOverlayWindowed = false; // desktop: the old floating tabbed window
 float sRenderScale = 1.f;
-// Dynamic resolution: draws the EFB between 1x and sRenderScale to hold a frame rate.
+// Dynamic resolution: draws the EFB between sDynamicResMin and sRenderScale to hold a frame rate.
 bool sDynamicRes = false;
-int sDynamicResTarget = 0; // fps; 0 = the 60 fps cap, or the display's rate without it
-float sDynScale = 0.f;     // the scale in use; 0 = sRenderScale
+int sDynamicResTarget = 0;  // fps; 0 = the 60 fps cap, or the display's rate without it
+float sDynamicResMin = 1.f; // the lowest scale it drops to: 0.5, 0.75 or 1
+float sDynScale = 0.f;      // the scale in use; 0 = sRenderScale
 int sDynSlow = 0, sDynSteady = 0, sDynSettle = 0;
 int sDynRaiseAfter = 4;  // steady seconds before trying a step up; doubles when one fails
 int sDynSinceRaise = -1; // seconds since the last step up, while it is on probation
@@ -393,6 +394,11 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sDynamicRes = ParseBool(value);
   } else if (key == "dynamic_res_target") {
     sDynamicResTarget = std::clamp(std::atoi(value.c_str()), 0, 240);
+  } else if (key == "dynamic_res_min") {
+    const float f = static_cast< float >(std::atof(value.c_str()));
+    if (std::isfinite(f)) {
+      sDynamicResMin = std::clamp(f, 0.5f, 1.f);
+    }
   } else if (key == "aspect") {
     if (value == "16:9") {
       sAspectMode = PortDebug::kAspect_16_9;
@@ -680,6 +686,7 @@ void SaveSettings() {
   file << "render_scale=" << sRenderScale << '\n';
   file << "dynamic_res=" << (sDynamicRes ? 1 : 0) << '\n';
   file << "dynamic_res_target=" << sDynamicResTarget << '\n';
+  file << "dynamic_res_min=" << sDynamicResMin << '\n';
   file << "frame_limit=" << (sFrameLimitEnabled ? 1 : 0) << '\n';
   file << "sim_rate=" << sSimRate << '\n';
   file << "sim_adaptive=" << (sSimAdaptive ? 1 : 0) << '\n';
@@ -1041,7 +1048,8 @@ static void ResetDynamicRes() {
 // doubles each time a step up turns out too slow.
 static void UpdateDynamicRes(double fps, unsigned frames) {
   const float top = sRenderScale;
-  if (!sDynamicRes || top <= 1.f || sTurbo) {
+  const float bottom = std::min(sDynamicResMin, top);
+  if (!sDynamicRes || top <= bottom || sTurbo) {
     ResetDynamicRes();
     return;
   }
@@ -1054,8 +1062,10 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
     --sDynSettle;
     return;
   }
-  constexpr float kStep = 0.25f;
   const float scale = sDynScale > 0.f ? sDynScale : top;
+  // Half steps above 2x, where a quarter step changes the pixel count by little.
+  const float stepUp = scale >= 2.f ? 0.5f : 0.25f;
+  const float stepDown = scale > 2.f ? 0.5f : 0.25f;
   const double target = DynamicResTargetFps();
   if (sDynHoldLow > 0) {
     --sDynHoldLow;
@@ -1065,7 +1075,7 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
     // The first reading after a step down: no gain means the GPU's pixels were not what
     // held the frame back, so go back up and stay there for a while.
     if (fps < sDynFpsBefore * 1.03) {
-      next = scale + kStep;
+      next = scale + stepUp;
       sDynHoldLow = sDynHoldFor;
       sDynHoldFor = std::min(sDynHoldFor * 2, 240);
     }
@@ -1073,11 +1083,11 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
   } else if (fps < target * 0.93) {
     sDynSteady = 0;
     if (sDynSinceRaise >= 0) {
-      next = scale - kStep;
+      next = scale - stepDown;
       sDynRaiseAfter = std::min(sDynRaiseAfter * 2, 64);
       sDynSinceRaise = -1;
-    } else if (++sDynSlow >= 2 && sDynHoldLow == 0 && scale > 1.f) {
-      next = scale - kStep;
+    } else if (++sDynSlow >= 2 && sDynHoldLow == 0 && scale > bottom) {
+      next = scale - stepDown;
       sDynFpsBefore = fps;
     }
   } else {
@@ -1086,12 +1096,12 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
       sDynSinceRaise = -1;
     }
     if (sDynSinceRaise < 0 && fps >= target * 0.97 && scale < top && ++sDynSteady >= sDynRaiseAfter) {
-      next = scale + kStep;
+      next = scale + stepUp;
       sDynSteady = 0;
       sDynSinceRaise = 0;
     }
   }
-  next = std::clamp(next, 1.f, top);
+  next = std::clamp(next, bottom, top);
   if (next != scale) {
     sDynSlow = 0;
     sDynScale = next;
@@ -4104,7 +4114,7 @@ void DrawRenderTab() {
     // a drag would otherwise do every frame.
     static float sPendingScale = 0.f;
     float scale = sPendingScale > 0.f ? sPendingScale : sRenderScale;
-    if (ImGui::SliderFloat("EFB scale", &scale, 1.f, 2.f, "%.2fx")) {
+    if (ImGui::SliderFloat("EFB scale", &scale, 1.f, 4.f, "%.2fx")) {
       sPendingScale = scale;
     }
     if (sPendingScale > 0.f && !ImGui::IsItemActive()) {
@@ -4112,14 +4122,16 @@ void DrawRenderTab() {
       MarkDirty();
       sPendingScale = 0.f;
     }
-    ImGui::SetItemTooltip("Scales the internal EFB; higher values use more GPU memory.");
+    ImGui::SetItemTooltip("Scales the internal EFB; higher values use more GPU memory.\n"
+                          "Above 2x it supersamples, and each step costs much more GPU time.");
     if (ImGui::Checkbox("Dynamic resolution", &sDynamicRes)) {
       ResetDynamicRes();
       MarkDirty();
     }
-    ImGui::SetItemTooltip("Lowers the EFB scale, down to 1x, while the frame rate is below the target,\n"
-                          "and raises it back to the scale above when there is room. Each change\n"
-                          "stutters for a frame, so it changes at most once every couple of seconds.");
+    ImGui::SetItemTooltip("Lowers the EFB scale, down to the lowest scale below, while the frame rate\n"
+                          "is below the target, and raises it back to the scale above when there is\n"
+                          "room. Each change stutters for a frame, so it changes at most once every\n"
+                          "couple of seconds.");
     if (sDynamicRes) {
       static const int kTargets[] = {0, 30, 60, 90, 120};
       int target = 0;
@@ -4136,6 +4148,21 @@ void DrawRenderTab() {
         MarkDirty();
       }
       ImGui::SetItemTooltip("Display: the screen's refresh rate, or 60 with the 60 FPS cap on.");
+      static const float kLowest[] = {0.5f, 0.75f, 1.f};
+      int lowest = 2;
+      for (int i = 0; i < 3; ++i) {
+        if (kLowest[i] == sDynamicResMin) {
+          lowest = i;
+        }
+      }
+      ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.f);
+      if (ImGui::Combo("Lowest scale", &lowest, "0.5x\0" "0.75x\0" "1x\0")) {
+        sDynamicResMin = kLowest[lowest];
+        ResetDynamicRes();
+        MarkDirty();
+      }
+      ImGui::SetItemTooltip("Below 1x it draws fewer pixels than the GameCube did and looks softer,\n"
+                            "which lets a phone reach 90 or 120 fps.");
       ImGui::Text("Drawing at %.2fx (target %.0f fps)", sDynScale > 0.f ? sDynScale : sRenderScale,
                   DynamicResTargetFps());
     }
