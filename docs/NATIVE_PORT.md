@@ -619,6 +619,16 @@ Remastered's controls or use one of its icons keep the disc's text, as do
 strings with characters outside ASCII. `MP_REMASTERED_TEXT=0` leaves the text
 out.
 
+Remastered's French, Spanish, German, Italian and Dutch text comes along too
+(about 1,900 strings each), as extra language sections in the same tables,
+named by Remastered's language codes (`EUFR`, `EUSP`, `EUGE`, `EUIT`, `EUDU`).
+A string Remastered doesn't translate, or one whose buttons don't line up with
+the disc's, stays in English. Pick the language in F1 > Extras > Text (ini key
+`text_language`, or `MP_LANGUAGE=EUFR` for one run); it applies on the next
+start, and without the mod the game stays in English. The disc's fonts are
+ASCII only, so each accented letter is drawn as its base letter, unless the
+mod's typeface (`font/deface.sdfont`) is loaded, which draws the real one.
+
 It also writes Remastered's typeface as `font/deface.sdfont` (see above): the
 FONT asset with the most characters, its first face.
 

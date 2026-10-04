@@ -1331,26 +1331,43 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     fs::remove(geometryFolder, ec);
   }
 
-  // The strings Remastered reworded, as the disc's tables with those strings changed.
+  // The strings Remastered reworded, and its European translations, as the
+  // disc's tables with those strings changed and the languages added.
   int textTables = 0;
   int textStrings = 0;
+  int textTranslated = 0;
   if (WantsText()) {
     SetMessage("Writing the text");
-    std::map<uint32_t, std::map<uint32_t, std::u16string>> tables;
+    std::vector<const char*> languages{kRemasteredEnglish};
+    for (size_t k = 0; k < kTextLanguageCount; ++k) {
+      languages.push_back(kTextLanguages[k].code);
+    }
+    std::map<uint32_t, TableText> tables;
     for (const ModelUuid& id : remastered.Texts()) {
       std::vector<uint8_t> raw;
-      std::vector<TextEntry> entries;
       std::string textError;
-      if (!remastered.ReadText(id, raw, textError) ||
-          !ParseMsbt(raw.data(), raw.size(), "USEN", entries, textError)) {
+      if (!remastered.ReadText(id, raw, textError)) {
         AddLine("text " + IdToString(id) + ": " + textError);
         continue;
       }
-      for (TextEntry& entry : entries) {
-        uint32_t strg = 0;
-        uint32_t index = 0;
-        if (SplitTextLabel(entry.label, strg, index)) {
-          tables[strg][index] = std::move(entry.text);
+      for (const char* language : languages) {
+        std::vector<TextEntry> entries;
+        if (!ParseMsbt(raw.data(), raw.size(), language, entries, textError)) {
+          if (language == kRemasteredEnglish) {
+            AddLine("text " + IdToString(id) + ": " + textError);
+            break;
+          }
+          continue;
+        }
+        for (TextEntry& entry : entries) {
+          uint32_t strg = 0;
+          uint32_t index = 0;
+          std::string name;
+          if (SplitTextLabel(entry.label, strg, index)) {
+            tables[strg].byIndex[index][language] = std::move(entry.text);
+          } else if (SplitNamedLabel(entry.label, strg, name)) {
+            tables[strg].byName[name][language] = std::move(entry.text);
+          }
         }
       }
     }
@@ -1359,9 +1376,10 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     for (const auto& [strg, strings] : tables) {
       std::vector<uint8_t> original;
       std::vector<uint8_t> merged;
-      int changed = 0;
+      int reworded = 0;
+      int translated = 0;
       if (!retail.Read(kSTRG, strg, original) ||
-          !MergeStringTable(original.data(), original.size(), strings, merged, changed)) {
+          !MergeStringTable(original.data(), original.size(), strings, merged, reworded, translated)) {
         continue;  // not on this disc, or worded as it was
       }
       char name[16];
@@ -1373,7 +1391,8 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         continue;
       }
       ++textTables;
-      textStrings += changed;
+      textStrings += reworded;
+      textTranslated += translated;
     }
     if (textTables == 0) {
       fs::remove(textFolder, ec);
@@ -1538,6 +1557,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   }
   if (textTables != 0) {
     message += ", " + std::to_string(textStrings) + " strings in " + std::to_string(textTables) + " text tables";
+    if (textTranslated != 0) {
+      message += " (" + std::to_string(textTranslated) + " translated)";
+    }
   }
   if (fontWritten) {
     message += ", the font";
