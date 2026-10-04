@@ -43,6 +43,9 @@ constexpr auto AverageFormat = wgpu::TextureFormat::RGBA32Float;
 constexpr uint32_t AverageRowBytes = AverageSize * 16; // a multiple of 256, as copies need
 constexpr uint64_t AverageBytes = uint64_t(AverageRowBytes) * AverageSize;
 constexpr size_t ReadbackCount = 3;
+// Params::bloom's bits as the task gets them: the bloom, and the composite left to the next pass.
+constexpr uint32_t BloomOn = 1;
+constexpr uint32_t CompositeInPass = 2;
 
 struct Uniform {
   float texel[4];
@@ -240,6 +243,14 @@ struct State {
   wgpu::RenderPipeline composite;
   wgpu::TextureFormat compositeFormat = wgpu::TextureFormat::Undefined;
   uint32_t compositeSamples = 0;
+  // The composite as the first draw of the EFB pass after the task (see record), with the
+  // pipeline for that pass's layout, and what the task left it to draw with.
+  DrawTypeId compositeDraw = InvalidDrawType;
+  wgpu::RenderPipeline passComposite;
+  uint64_t passCompositeKey = 0;
+  bool passCompositeReady = false;
+  wgpu::TextureView passLutA;
+  wgpu::TextureView passLutB;
   // The frame as it was, and the levels; remade when the frame's size or format changes.
   wgpu::Texture frame;
   wgpu::TextureView frameView;
@@ -502,20 +513,17 @@ void ensure_targets(uint32_t width, uint32_t height, wgpu::TextureFormat format)
   }
 }
 
-void draw(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline, uint32_t slot,
-          const wgpu::TextureView& source, const wgpu::TextureView& bloomSource, const wgpu::TextureView& target,
-          bool load, const wgpu::TextureView& resolve = {}, const wgpu::TextureView& lutA = {},
-          const wgpu::TextureView& lutB = {}) {
+wgpu::BindGroup bind_group(uint32_t slot, const wgpu::TextureView& source, const wgpu::TextureView& bloomSource,
+                           const wgpu::TextureView& lutA, const wgpu::TextureView& lutB) {
   const wgpu::TextureView& viewA = lutA ? lutA : g_state.noLut;
   const wgpu::TextureView& viewB = lutB ? lutB : g_state.noLut;
   const BindGroupKey key{source.Get(), bloomSource.Get(), viewA.Get(), viewB.Get(), slot};
+  // A frame that keeps changing (a source remade every frame) cannot grow this for ever.
+  if (g_state.groups.size() > 64 && !g_state.groups.contains(key)) {
+    g_state.groups.clear();
+  }
   wgpu::BindGroup& group = g_state.groups[key];
   if (!group) {
-    // A frame that keeps changing (a source remade every frame) cannot grow this for ever.
-    if (g_state.groups.size() > 64) {
-      g_state.groups.clear();
-      return draw(cmd, pipeline, slot, source, bloomSource, target, load, resolve, lutA, lutB);
-    }
     const std::array entries{
         wgpu::BindGroupEntry{.binding = 0, .sampler = g_state.sampler},
         wgpu::BindGroupEntry{.binding = 1, .textureView = source},
@@ -532,6 +540,14 @@ void draw(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline,
     };
     group = g_device.CreateBindGroup(&groupDescriptor);
   }
+  return group;
+}
+
+void draw(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline, uint32_t slot,
+          const wgpu::TextureView& source, const wgpu::TextureView& bloomSource, const wgpu::TextureView& target,
+          bool load, const wgpu::TextureView& resolve = {}, const wgpu::TextureView& lutA = {},
+          const wgpu::TextureView& lutB = {}) {
+  const wgpu::BindGroup group = bind_group(slot, source, bloomSource, lutA, lutB);
   const wgpu::RenderPassColorAttachment attachment{
       .view = target,
       .resolveTarget = resolve,
@@ -549,6 +565,61 @@ void draw(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline,
   pass.SetBindGroup(0, group);
   pass.Draw(3);
   pass.End();
+}
+
+// The composite's pipeline for the EFB pass it is drawn in: the frame as its first target, the
+// pass's other targets untouched, its depth neither tested nor written.
+wgpu::RenderPipeline make_pass_composite(const RenderTargetLayout& layout) {
+  std::array<wgpu::ColorTargetState, MaxColorAttachments> targets{};
+  for (uint32_t i = 0; i < layout.colorAttachmentCount; ++i) {
+    targets[i] = {
+        .format = layout.colorAttachments[i].format,
+        .writeMask = i == SceneColorAttachmentIndex ? wgpu::ColorWriteMask::All : wgpu::ColorWriteMask::None,
+    };
+  }
+  const wgpu::FragmentState fragment{
+      .module = g_state.module,
+      .entryPoint = "fs_composite",
+      .targetCount = layout.colorAttachmentCount,
+      .targets = targets.data(),
+  };
+  const wgpu::DepthStencilState depth{
+      .format = layout.depthStencilFormat,
+      .depthWriteEnabled = false,
+      .depthCompare = wgpu::CompareFunction::Always,
+  };
+  const wgpu::RenderPipelineDescriptor descriptor{
+      .label = "Bloom Composite (EFB pass)",
+      .layout = g_state.pipelineLayout,
+      .vertex = {.module = g_state.module, .entryPoint = "vs_main"},
+      .primitive = {.topology = wgpu::PrimitiveTopology::TriangleList},
+      .depthStencil = layout.depthStencilFormat != wgpu::TextureFormat::Undefined ? &depth : nullptr,
+      .multisample = {.count = layout.sampleCount, .mask = UINT32_MAX},
+      .fragment = &fragment,
+  };
+  return g_device.CreateRenderPipeline(&descriptor);
+}
+
+// The composite drawn first in the pass after the task, which cleared the frame rather than load
+// it: a full-resolution store and load fewer than a pass of its own (see record).
+void draw_pass_composite(const DrawContext& ctx, const wgpu::RenderPassEncoder& pass, const void*, size_t, void*) {
+  if (!g_state.passCompositeReady) {
+    return;
+  }
+  g_state.passCompositeReady = false;
+  if (!g_state.passComposite || g_state.passCompositeKey != ctx.layout.key) {
+    g_state.passComposite = make_pass_composite(ctx.layout);
+    g_state.passCompositeKey = ctx.layout.key;
+  }
+  const auto& frame = ctx.layout.colorAttachments[SceneColorAttachmentIndex];
+  pass.SetPipeline(g_state.passComposite);
+  pass.SetBindGroup(0, bind_group(PassCount - 1, g_state.frameView, g_state.levels[0].view, g_state.passLutA,
+                                  g_state.passLutB));
+  pass.SetViewport(0.f, 0.f, float(frame.width), float(frame.height), 0.f, 1.f);
+  pass.SetScissorRect(0, 0, frame.width, frame.height);
+  pass.Draw(3);
+  g_state.passLutA = {};
+  g_state.passLutB = {};
 }
 
 // The frame copy's average into a free readback slot; none free skips this frame.
@@ -588,12 +659,15 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   upload_pending(ctx.queue);
   const auto lutA = find_lut(params.gradeA);
   const auto lutB = find_lut(params.gradeB);
-  const bool bloom = params.bloom != 0;
+  const bool bloom = (params.bloom & BloomOn) != 0;
+  const bool inPass = (params.bloom & CompositeInPass) != 0;
   // tone[0][3] carries the exposure to measure at; the curve has no use for it.
   const float exposure = params.tone[0][3];
   params.tone[0][3] = 0.f;
   const bool measure = exposure > 0.f && params.tone[1][0] > 0.f;
-  const bool post = bloom || lutA || lutB;
+  // The pass after an in-pass composite clears the frame, so it must be drawn even before a
+  // LUT has been uploaded.
+  const bool post = bloom || lutA || lutB || inPass;
   if (!post && !measure) {
     return;
   }
@@ -660,6 +734,12 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   } else {
     slot = PassCount - 1;
   }
+  if (inPass) {
+    g_state.passCompositeReady = true;
+    g_state.passLutA = lutA;
+    g_state.passLutB = lutB;
+    return;
+  }
   // The composite writes every pixel without blending, so the frame need not be loaded first
   // (a full-resolution read on a tile-based GPU).
   draw(cmd, g_state.composite, slot++, g_state.frameView, levels[0].view, target.view, false,
@@ -675,6 +755,9 @@ bool ensure_task() {
       return false;
     }
   }
+  if (g_state.compositeDraw == InvalidDrawType) {
+    g_state.compositeDraw = register_draw_type(DrawTypeDescriptor{.label = "Bloom Composite", .draw = draw_pass_composite});
+  }
   return true;
 }
 
@@ -682,12 +765,24 @@ bool push(const Params& params) {
   if (!ensure_task()) {
     return false;
   }
-  return push_encoder_task(g_state.task, &params, sizeof(params));
+  Params task = params;
+  task.bloom = task.bloom != 0 ? BloomOn : 0;
+  return push_encoder_task(g_state.task, &task, sizeof(task));
 }
 
 void record(const Params& params) {
-  if (g_state.task != InvalidEncoderTask) {
-    record_encoder_task(g_state.task, &params, sizeof(params));
+  if (g_state.task == InvalidEncoderTask) {
+    return;
+  }
+  Params task = params;
+  task.bloom = task.bloom != 0 ? BloomOn : 0;
+  // A frame that is composited draws it as the first thing in the pass that resumes the EFB: on a
+  // tile-based GPU a pass of its own stores the frame only for that pass to load it again.
+  if (g_state.compositeDraw != InvalidDrawType && (task.bloom != 0 || task.gradeA != 0 || task.gradeB != 0)) {
+    task.bloom |= CompositeInPass;
+    record_encoder_task_overwriting(g_state.task, &task, sizeof(task), g_state.compositeDraw);
+  } else {
+    record_encoder_task(g_state.task, &task, sizeof(task));
   }
 }
 
@@ -732,6 +827,7 @@ void shutdown() {
   });
   retired.clear();
   const auto task = g_state.task;
+  const auto compositeDraw = g_state.compositeDraw;
   g_state = {};
   {
     std::lock_guard lock(g_pendingMutex);
@@ -739,6 +835,9 @@ void shutdown() {
   }
   if (task != InvalidEncoderTask) {
     unregister_encoder_task_type(task);
+  }
+  if (compositeDraw != InvalidDrawType) {
+    unregister_draw_type(compositeDraw);
   }
 }
 } // namespace aurora::gfx::bloom

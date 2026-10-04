@@ -1169,6 +1169,18 @@ bool record_encoder_task(EncoderTaskId type, const void* payload, size_t payload
   return true;
 }
 
+bool record_encoder_task_overwriting(EncoderTaskId type, const void* payload, size_t payloadSize,
+                                     DrawTypeId drawType) {
+  if (!record_encoder_task(type, payload, payloadSize)) {
+    return false;
+  }
+  current_render_passes()[g_recorder.currentRenderPass].colorAttachments[SceneColorAttachmentIndex].clear = true;
+  CustomDrawCommand draw{};
+  draw.type = drawType;
+  push_command(CommandType::CustomDraw, Command::Data{.customDraw = draw});
+  return true;
+}
+
 template <>
 void push_draw_command(gx::DrawData data) {
   push_draw_command(make_draw_command<gx::render>(data));
