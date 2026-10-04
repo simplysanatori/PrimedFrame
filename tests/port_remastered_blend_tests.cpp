@@ -165,10 +165,28 @@ void TestClasses() {
   Check(got.size() == 3, "each class has factors of its own");
 }
 
+// Lit glass of Remastered's premultiplied families (here 11B30369) adds its own colour:
+// (One, InvSrcAlpha), however its mesh class says to blend.
+void TestPremultipliedGlass() {
+  Model model = BuildModel({{0x1, 1}});
+  model.materials[0].shaderId[0] = 0x11;
+  model.materials[0].shaderId[1] = 0xB3;
+  model.materials[0].shaderId[2] = 0x03;
+  model.materials[0].shaderId[3] = 0x69;
+  std::vector<uint8_t> cmdl;
+  if (!Convert(model, cmdl)) {
+    return;
+  }
+  std::vector<std::pair<uint32_t, uint32_t>> f;
+  Check(Factors(cmdl, f) && f.size() == 1, "the glass's material is readable");
+  Check(f.size() == 1 && f[0] == std::pair<uint32_t, uint32_t>(1, 5), "premultiplied glass blends (One, InvSrcAlpha)");
+}
+
 }  // namespace
 
 int main() {
   TestClasses();
+  TestPremultipliedGlass();
   if (sFailures == 0) {
     std::printf("port_remastered_blend_tests: ok\n");
   }

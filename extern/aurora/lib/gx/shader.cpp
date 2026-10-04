@@ -984,6 +984,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // through first across the edge: this is Remastered's blend.
   const bool layered = mapStage[4] != -1;
   std::string base = sampled(0, ""), orm = sampled(1, "vec4f(1.0, 0.6, 0.0, 1.0)");
+  // Kind 10, lit glass drawn premultiplied (One, InvSrcAlpha): the opacity scales only the
+  // diffuse light, so the reflection and the glow are not dimmed with it.
+  const std::string diffTint =
+      config.pbrKind == 10 ? fmt::format("{} * ({}{})", tint, layered ? "1.0" : "prev.a", tintAlpha) : tint;
   std::string normalXy = mapStage[2] == -1 ? std::string() : fmt::format("sampled{}.rg", mapStage[2]);
   std::string layer = fmt::format(R"""(
       // The stored normal. A PBR6 back copy (F0 factor 0, LITS) is stored turned round like
@@ -1568,7 +1572,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       }}
     }})""",
                      base, orm, sampled(3, "vec4f(0.0)"), normal, GX::MaxLights, attn, amb,
-                     gfx::probe::MipCount - 1, tint, tintAlpha, layer, baseRgb, layered ? "1.0" : "prev.a", kinds, liquid,
+                     gfx::probe::MipCount - 1, diffTint, tintAlpha, layer, baseRgb, layered ? "1.0" : "prev.a", kinds, liquid,
                      shadowed ? "(ubuf.lightState0 | ubuf.lightState1)" : "ubuf.lightState0",
                      shadowed ? " * select(vec3f(1.0), sampled0.rgb, (ubuf.lightState0 & (1u << i)) == 0u)" : "");
   if (!lit || costTest == 2) {

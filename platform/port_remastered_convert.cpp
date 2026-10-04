@@ -1286,6 +1286,10 @@ constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
 // that most materials carry keeps the room's.
 constexpr uint32_t kShaderGunBody[] = {0x547E64E5, 0xD43DE005, 0x917F1415, 0xF495B260};
 constexpr const char* kDefaultRefl = "7b98170f";
+// Lit glass that Remastered draws premultiplied (EBlendMode 5, One and InvSrcAlpha):
+// phazon and plasma glass, soot_translucent. Its opacity scales the diffuse light
+// only; the reflection and the glow show at full strength on the clearest pane.
+constexpr uint32_t kShaderPremulGlass[] = {0x11B30369, 0x941068BF, 0xBCC73459};
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -1605,6 +1609,11 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     // An HDR strength (10-15) meant for Remastered's bloom, compressed like the emissive one.
     out.kindStrength = std::sqrt(std::min(std::max(ShortestDouble(cch[0]->color[2]), 0.0), kPbrEmissiveMax));
   }
+  if (std::find(std::begin(kShaderPremulGlass), std::end(kShaderPremulGlass), shader) !=
+          std::end(kShaderPremulGlass) &&
+      out.blended && !out.cutout) {
+    out.kind = 10;
+  }
   // The texture matrix a scroll loads has no scale, so CCH1.yz (1 on every door
   // shield seen) is not drawn.
   if (shader == kShaderColorUnlit && cch[0]) {
@@ -1654,8 +1663,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
     out.height = 0.0;
   }
-  // All but lava draw with the second layer's maps.
-  if (out.kind != 3 && !out.layered) {
+  // All but lava and premultiplied glass draw with the second layer's maps.
+  if (out.kind != 3 && out.kind != 10 && !out.layered) {
     out.kind = 0;
     out.vcolor = false;
   }
@@ -2634,7 +2643,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (Prim& p : prims) {
     if (opt.standalone) {
       const RemMaterial& m = mats[p.mat];
-      p.rmat = m.kind == 8 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
+      p.rmat = m.kind == 8 || m.kind == 10 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
       continue;
     }
     if (opt.material >= 0) {
