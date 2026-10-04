@@ -517,7 +517,9 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sFastMorph = ParseBool(value);
   } else if (key == "invulnerable") {
     sInvulnerable = ParseBool(value);
-  } else if (key == "log_file") {
+  } else if (key == "logging") {
+    // Not "log_file": builds from before the log was on by default wrote
+    // log_file=0 into every settings file, which kept it off after an update.
     sLogFile = ParseBool(value);
   } else if (key == "lock_on_toggle") {
     sLockOnToggle = ParseBool(value);
@@ -661,7 +663,7 @@ void SaveSettings() {
   file << '\n';
   file << "fast_morph=" << (sFastMorph ? 1 : 0) << '\n';
   file << "invulnerable=" << (sInvulnerable ? 1 : 0) << '\n';
-  file << "log_file=" << (sLogFile ? 1 : 0) << '\n';
+  file << "logging=" << (sLogFile ? 1 : 0) << '\n';
   file << "lock_on_toggle=" << (sLockOnToggle ? 1 : 0) << '\n';
   file << "sticky_charge=" << (sStickyCharge ? 1 : 0) << '\n';
   file << "spring_ball_flick=" << (sSpringFlick ? 1 : 0) << '\n';

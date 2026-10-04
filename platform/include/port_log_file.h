@@ -9,7 +9,7 @@
 // terminal leaves a log to send. The previous run's log is kept as
 // metroid_prime_port.old.log, so restarting after a crash does not lose it.
 //
-// The log is on by default (log_file=0 turns it off). Since it is meant to be
+// The log is on by default (the logging=0 setting turns it off). Since it is meant to be
 // attached to bug reports, the file has the user's home folder and account name
 // taken out of it (port_log_redact.h).
 //

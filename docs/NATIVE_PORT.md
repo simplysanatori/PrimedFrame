@@ -963,7 +963,7 @@ a temporary directory instead of mounting.
   until Show cheats is ticked (`cheats`, off by default). Invulnerable
   (`invulnerable`, off by default) makes Samus take no damage; it stays on
   across runs until unticked, and `MP_GODMODE=<0|1>` overrides it for one run.
-- F1 > Debug > Log, "Write the log to a file" (`log_file`, on by default):
+- F1 > Debug > Log, "Write the log to a file" (`logging`, on by default; the older `log_file` key is ignored):
   everything the game prints to stdout/stderr, including the
   line Aurora prints before it aborts, also goes to `metroid_prime_port.log` in
   the user folder; the previous run's is kept as `metroid_prime_port.old.log`.
@@ -1149,7 +1149,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
 - `MP_GODMODE=<0|1>`: the Invulnerable cheat for this run, whatever the setting
   says. The console's `god [on|off]` changes the setting itself.
 - `MP_LOG_FILE=<0|1>`: the file log (`metroid_prime_port.log` in the user
-  folder) for this run, whatever the `log_file` setting says.
+  folder) for this run, whatever the `logging` setting says.
 - `MP_COLLISION_VIEW=<off|overlay|only>`: draw collision from the start, as the
   console `collision` and F1 > Debug > Rendering > Collision.
 - `MP_ROOM_GEO=<0|1|overlay>`: whether a mod's `.roomgeo` replaces an area's
