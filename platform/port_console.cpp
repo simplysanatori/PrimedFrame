@@ -845,8 +845,23 @@ void CmdMemo() {
     if (i > 1) {
       wide += L' ';
     }
-    for (const char c : sCmd.args[i]) {
-      wide += static_cast< wchar_t >(static_cast< unsigned char >(c));
+    // UTF-8, so text with accents can be tried; a stray byte reads as Latin-1.
+    const std::string& arg = sCmd.args[i];
+    for (size_t at = 0; at < arg.size(); ++at) {
+      const unsigned char c = static_cast< unsigned char >(arg[at]);
+      const size_t extra = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
+      unsigned code = extra == 0 ? c : c & (0x3F >> extra);
+      size_t read = 0;
+      while (read < extra && at + 1 + read < arg.size() && (arg[at + 1 + read] & 0xC0) == 0x80) {
+        code = code << 6 | (arg[at + 1 + read] & 0x3F);
+        ++read;
+      }
+      if (read == extra) {
+        at += extra;
+      } else {
+        code = c;
+      }
+      wide += static_cast< wchar_t >(code);
     }
   }
   if (wide.empty()) {

@@ -196,6 +196,12 @@ void SetApSuitDamage(int mode);
 // (PortSkipCutscenes::Active).
 bool SkippableCutscenes();
 void SetSkippableCutscenes(bool enabled);
+// The language of the game's text: "" for the disc's English, else one of the
+// codes in PortRemastered::kTextLanguages, which a Remastered import adds to the
+// string tables. A table without it shows English. Read once, at the first
+// table, so a change applies on the next start. MP_LANGUAGE overrides it.
+const char* TextLanguage();
+void SetTextLanguage(const char* code);
 // The elevator ride between worlds (CWorldTransManager). Retail holds it at
 // least 5 s whatever the load takes; the port loads in well under that.
 enum EElevatorRide { kElevatorRide_Original, kElevatorRide_Fast, kElevatorRide_Skip };

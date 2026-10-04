@@ -10,6 +10,7 @@
 #ifdef TARGET_PC
 #include "port_apclient.h"
 #include "port_custom_res.h"
+#include "port_debug.h"
 #include "port_hints.h"
 
 #include <string>
@@ -33,8 +34,18 @@ CStringTable::CStringTable(CInputStream& in) : x0_stringCount(0), x4_data(NULL) 
   }
 
   int offset = langOffsets.front().second;
+#ifdef TARGET_PC
+  // The port's language setting, latched so every table shows the same one.
+  static const FourCC language = [] {
+    const char* code = PortDebug::TextLanguage();
+    return code[0] != '\0' ? FourCC(uint(code[0]) << 24 | uint(code[1]) << 16 | uint(code[2]) << 8 | uint(code[3]))
+                            : mCurrentLanguage;
+  }();
+#else
+  const FourCC language = mCurrentLanguage;
+#endif
   for (int i = 0; i < langCount; ++i) {
-    if (langOffsets[i].first == mCurrentLanguage) {
+    if (langOffsets[i].first == language) {
       offset = langOffsets[i].second;
       break;
     }

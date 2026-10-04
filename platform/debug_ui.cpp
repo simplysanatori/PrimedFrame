@@ -19,6 +19,7 @@
 #include "port_importers.h"
 #include "port_remastered_effect_import.h"
 #include "port_remastered_import.h"
+#include "port_remastered_text.h"
 #include "port_discord.h"
 #include "port_livesplit.h"
 #include "port_map_pickups.h"
@@ -153,6 +154,7 @@ bool sMapLogicColors = true;
 int sApSuitDamage = 1;
 bool sCheats = false;
 bool sSkippableCutscenes = false;
+std::string sTextLanguage;
 int sElevatorRide = PortDebug::kElevatorRide_Original;
 bool sSaveStateHotkeys = true;
 bool sMouseAim = false;
@@ -418,6 +420,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sApSuitDamage = mode >= 0 && mode <= 2 ? mode : 1;
   } else if (key == "cheats") {
     sCheats = ParseBool(value);
+  } else if (key == "text_language") {
+    sTextLanguage = value;
   } else if (key == "skippable_cutscenes") {
     sSkippableCutscenes = ParseBool(value);
   } else if (key == "elevator_ride") {
@@ -650,6 +654,7 @@ void SaveSettings() {
   file << "ap_suit_damage=" << sApSuitDamage << '\n';
   file << "cheats=" << (sCheats ? 1 : 0) << '\n';
   file << "skippable_cutscenes=" << (sSkippableCutscenes ? 1 : 0) << '\n';
+  file << "text_language=" << sTextLanguage << '\n';
   file << "elevator_ride=" << sElevatorRide << '\n';
   file << "savestate_hotkeys=" << (sSaveStateHotkeys ? 1 : 0) << '\n';
   file << "fov=" << sFirstPersonFov << '\n';
@@ -820,6 +825,9 @@ void EnsureInitialized() {
   }
   if (std::getenv("MP_FAST_BOOT") != nullptr) {
     sFastBoot = true;
+  }
+  if (const char* language = std::getenv("MP_LANGUAGE")) {
+    sTextLanguage = language;
   }
   if (const char* turbo = std::getenv("MP_TURBO")) {
     sTurbo = true;
@@ -1291,6 +1299,22 @@ bool SkippableCutscenes() {
 void SetSkippableCutscenes(bool enabled) {
   EnsureInitialized();
   sSkippableCutscenes = enabled;
+  MarkDirty();
+}
+
+const char* TextLanguage() {
+  EnsureInitialized();
+  for (size_t i = 0; i < PortRemastered::kTextLanguageCount; ++i) {
+    if (sTextLanguage == PortRemastered::kTextLanguages[i].code) {
+      return PortRemastered::kTextLanguages[i].code;
+    }
+  }
+  return "";
+}
+
+void SetTextLanguage(const char* code) {
+  EnsureInitialized();
+  sTextLanguage = code;
   MarkDirty();
 }
 
@@ -3663,6 +3687,27 @@ void DrawExtrasTab() {
            "far faster; Fast ends it about 2 s in, once the next area is loaded; Skip shows black "
            "until the area is loaded. The cinematic played in the elevator room before the ride is "
            "not affected.");
+
+  ImGui::SeparatorText("Text");
+  {
+    int language = 0;
+    const char* current = TextLanguage();
+    for (size_t i = 0; i < PortRemastered::kTextLanguageCount; ++i) {
+      if (std::strcmp(current, PortRemastered::kTextLanguages[i].code) == 0) {
+        language = static_cast< int >(i) + 1;
+      }
+    }
+    const auto name = [](void*, int index) {
+      return index == 0 ? "English" : PortRemastered::kTextLanguages[index - 1].name;
+    };
+    if (ImGui::Combo("Language", &language, name, nullptr,
+                     static_cast< int >(PortRemastered::kTextLanguageCount) + 1)) {
+      SetTextLanguage(language == 0 ? "" : PortRemastered::kTextLanguages[language - 1].code);
+    }
+    ItemHelp("The language of the game's text. Only English is on the disc: the others come with the "
+             "Remastered import (its text), and any text it lacks stays English. Applies on the next "
+             "start.");
+  }
 
   ImGui::SeparatorText("Unlocks");
   bool hardMode = sUnlockHardMode;
