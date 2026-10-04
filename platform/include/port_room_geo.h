@@ -123,6 +123,25 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
 // or a group.
 std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script* script = nullptr);
 
+// The coarser levels of detail of the models, one table for the whole mod (kLodFileName in
+// the folder of the .roomgeo files), little endian:
+//   'RLOD', u32 version (1), u32 models
+//   model: u32 CMDL id, u32 levels (1 to kLodLevels - 1),
+//     per level, coarsest last: f32 distance squared it starts at, u32 CMDL id
+// The distances are in model space, from the eye to the model's bounds.
+constexpr const char* kLodFileName = "lods.bin";
+constexpr int kLodLevels = 5; // the model itself and up to four coarser ones
+struct LodLevel {
+  float distanceSq = 0.f;
+  uint32_t model = 0;
+};
+struct Lods {
+  uint32_t model = 0;
+  std::vector<LodLevel> levels;
+};
+bool ParseLods(const std::vector<uint8_t>& data, std::vector<Lods>& out, std::string& error);
+std::vector<uint8_t> WriteLods(const std::vector<Lods>& models);
+
 // --- The game side (port_room_geo.cpp) -----------------------------------------
 
 // The areas in memory now. Loads the files of new ones and frees those of areas that left.
@@ -189,6 +208,14 @@ float MinPixels();
 // Off draws merged copies one by one again, each with its own lights (an A/B check; not saved).
 void SetMergedDraws(bool on);
 bool MergedDraws();
+// Scales the distances where an instance switches to a coarser level of detail (the
+// import's lods.bin): 1 is Remastered's own, 2 keeps the full model twice as far, 0 never
+// switches (MP_ROOM_GEO_LOD, the console's `roomgeo lod`). Merged copies keep the full one.
+void SetLodDistance(float scale);
+float LodDistance();
+// Coarser levels in the loaded areas, how many have loaded, and the instances drawn with
+// one in the last frame.
+void LodStats(int& levels, int& loaded, int& drawnCoarse);
 // Areas with a file, their instances, the distinct models and how many have loaded, and
 // the instances drawn in the last frame.
 void Stats(int& areas, int& instances, int& models, int& loaded, int& drawn);

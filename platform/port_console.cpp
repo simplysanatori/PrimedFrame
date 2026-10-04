@@ -490,6 +490,7 @@ void CmdHelp() {
   Out("roomliquid [on|off]       the water, poison and lava surfaces mods supply, in place of the game's");
   Out("roomgeo lights on|off     light it with the area's lights even where the room has baked light");
   Out("roomgeo minpx <n>         leave out instances under n pixels (game resolution) on screen; 0 draws all");
+  Out("roomgeo lod <scale>       scale the distances where models switch to coarser levels; 0 never switches");
   Out("roomgeo script            Remastered's camera zones, counters and groups in each loaded area, and the camera");
   Out("roomgeo group <n> show|hide   set a group until its script next changes it");
   Out("roomgeo pick              the instances the middle of the view looks through, nearest first, and the");
@@ -1514,6 +1515,8 @@ void RunFrame() {
         PortRoomGeo::SetAreaLights(Lower(sCmd.args[2]) == "on");
       } else if (arg == "minpx" && sCmd.args.size() > 2) {
         PortRoomGeo::SetMinPixels(std::strtof(sCmd.args[2].c_str(), nullptr));
+      } else if (arg == "lod" && sCmd.args.size() > 2) {
+        PortRoomGeo::SetLodDistance(std::strtof(sCmd.args[2].c_str(), nullptr));
       } else if (arg == "script") {
         const std::string info = PortRoomGeo::ScriptInfo();
         OutLines(info.empty() ? std::string("no area has a script") : info);
@@ -1593,7 +1596,8 @@ void RunFrame() {
         }
         Out("%d model(s)", PortRoomGeo::SetHidden(id, arg == "hide"));
       } else {
-        return Finish("usage: roomgeo [on|off|overlay | lights on|off | at <x> <y> <z> [margin] | pick | "
+        return Finish("usage: roomgeo [on|off|overlay | lights on|off | minpx <n> | lod <scale> | "
+                      "at <x> <y> <z> [margin] | pick | "
                       "hide <cmdl> | show [cmdl] | mats <cmdl> | mat <cmdl> <material> <field> <value...> | "
                       "mat clear]");
       }
@@ -1608,6 +1612,12 @@ void RunFrame() {
     Out("roomgeo %s: %d area(s), %d instance(s), %d of %d model(s) loaded, %d drawn",
         mode == PortRoomGeo::Mode::Off ? "off" : mode == PortRoomGeo::Mode::Replace ? "on" : "overlay", areas,
         instances, loaded, models, drawn);
+    int levels = 0;
+    int levelsLoaded = 0;
+    int coarse = 0;
+    PortRoomGeo::LodStats(levels, levelsLoaded, coarse);
+    Out("detail: distance x%.2f, %d of %d coarser level(s) loaded, %d drawn coarser", PortRoomGeo::LodDistance(),
+        levelsLoaded, levels, coarse);
     if (const AuroraStats* stats = aurora_get_stats()) {
       Out("frame: %u draws, %.1f MiB vertices, %.1f MiB indices, %.1f MiB arrays, %.1f MiB uniforms, %.0f fps",
           stats->drawCallCount, stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f,

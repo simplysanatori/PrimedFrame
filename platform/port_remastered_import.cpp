@@ -1,6 +1,7 @@
 #include "port_remastered_import.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <cmath>
@@ -37,6 +38,7 @@
 #include "port_remastered_table.h"
 #include "port_remastered_text.h"
 #include "port_remastered_txtr.h"
+#include "port_room_geo.h"
 #include "port_ws.h"
 
 #if defined(_WIN32)
@@ -90,6 +92,51 @@ constexpr const char* kMovieFolder = "Video";
 constexpr int kGeometryTexture = 1024;
 // Texcoords a second a water surface's wave layers move by.
 constexpr double kLiquidDrift = 0.02;
+// A room model's coarser level of detail is written only when it has at most this share of
+// the triangles of the level before it that was: one barely coarser costs a file and a
+// switch for nothing.
+constexpr double kLodShare = 0.75;
+
+// The coarser levels of a room model worth converting, with the distance squared each
+// starts at (Remastered's own rules).
+std::vector<std::pair<int, float>> CoarserLevels(const Model& model) {
+  std::vector<std::pair<int, float>> out;
+  const size_t levels = std::min(model.lods.size() / 5, size_t(PortRoomGeo::kLodLevels));
+  if (levels < 2 || model.lodRules.size() < levels) {
+    return out;
+  }
+  auto triangles = [&](size_t level) {
+    std::vector<bool> seen(model.meshes.size(), false);
+    size_t count = 0;
+    for (size_t r = level * 5; r < level * 5 + 5; ++r) {
+      const ModelLod& range = model.lods[r];
+      for (uint64_t i = range.indexOffset;
+           i < uint64_t(range.indexOffset) + range.indexCount && i < model.lodMeshes.size(); ++i) {
+        const uint16_t mesh = model.lodMeshes[i];
+        if (mesh < seen.size() && !seen[mesh]) {
+          seen[mesh] = true;
+          count += model.meshes[mesh].indices.size() / 3;
+        }
+      }
+    }
+    return count;
+  };
+  double kept = double(triangles(0));
+  float previous = 0.f;
+  for (size_t level = 1; level < levels; ++level) {
+    const float rule = model.lodRules[level];
+    const size_t count = triangles(level);
+    if (!std::isfinite(rule) || rule <= previous || count == 0) {
+      break;
+    }
+    previous = rule;
+    if (double(count) <= kLodShare * kept) {
+      out.emplace_back(int(level), rule);
+      kept = double(count);
+    }
+  }
+  return out;
+}
 
 // The rooms whose geometry is imported, from MP_REMASTERED_GEOMETRY: "all", or
 // room names (any part of one) separated by commas, or "none". Without it,
@@ -1045,6 +1092,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     ModelUuid uuid;
     uint32_t id;
     int liquid = -1;  // index into `liquids` when it is a liquid's surface
+    // Ids set aside for its coarser levels of detail (index 0 unused); a level it
+    // turns out not to have, or that is not worth its file, leaves its id unused.
+    std::array<uint32_t, PortRoomGeo::kLodLevels> lods{};
   };
   std::vector<RoomLiquid> liquids;
   std::vector<GeometryModel> geometry;
@@ -1138,11 +1188,36 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   }
 
   std::atomic<int> geometryDone{0};
+  std::atomic<int> lodsDone{0};
   if (!geometry.empty()) {
+    // Before any texture takes an id, so none takes a level's.
+    for (GeometryModel& g : geometry) {
+      if (g.liquid >= 0) {
+        continue;
+      }
+      for (int level = 1; level < PortRoomGeo::kLodLevels; ++level) {
+        uint32_t id = 0x811C9DC5u ^ uint32_t(level) * 0x9E3779B1u;
+        for (const uint8_t byte : g.uuid) {
+          id = (id ^ byte) * 0x01000193u;
+        }
+        while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
+          ++id;
+        }
+        taken.insert(id);
+        g.lods[size_t(level)] = id;
+      }
+    }
     std::unordered_set<uint32_t> modelIds;
     for (const GeometryModel& g : geometry) {
       modelIds.insert(g.id);
+      for (int level = 1; level < PortRoomGeo::kLodLevels; ++level) {
+        if (g.lods[size_t(level)] != 0) {
+          modelIds.insert(g.lods[size_t(level)]);
+        }
+      }
     }
+    std::mutex lodMutex;
+    std::vector<PortRoomGeo::Lods> lodTable;
     std::atomic<size_t> nextModel{0};
     std::atomic<int> seen{0};
     std::mutex claimMutex;
@@ -1189,6 +1264,27 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
           Model model;
           ok = remastered.ReadModel(geometry[i].uuid, raw, modelError) &&
                ParseModel(raw.data(), raw.size(), model, modelError) && converter.Convert(model, options, modelError);
+          // Its coarser levels, for the distance; a level that fails ends the list there.
+          PortRoomGeo::Lods lods;
+          lods.model = geometry[i].id;
+          for (const auto& [level, distanceSq] : ok && geometry[i].liquid < 0 ? CoarserLevels(model)
+                                                                              : std::vector<std::pair<int, float>>()) {
+            options.lod = level;
+            options.retail = geometry[i].lods[size_t(level)];
+            std::string levelError;
+            if (!converter.Convert(model, options, levelError)) {
+              char name[16];
+              std::snprintf(name, sizeof(name), "%08X", geometry[i].id);
+              AddLine(std::string("room model ") + name + " level " + std::to_string(level) + ": " + levelError);
+              break;
+            }
+            lods.levels.push_back({distanceSq, options.retail});
+          }
+          if (!lods.levels.empty()) {
+            lodsDone += int(lods.levels.size());
+            std::lock_guard<std::mutex> lock(lodMutex);
+            lodTable.push_back(std::move(lods));
+          }
         } catch (const std::exception& e) {
           modelError = e.what();
         }
@@ -1213,6 +1309,16 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     if (sCancel) {
       fail("Cancelled.");
       return;
+    }
+    if (!lodTable.empty()) {
+      std::sort(lodTable.begin(), lodTable.end(),
+                [](const PortRoomGeo::Lods& a, const PortRoomGeo::Lods& b) { return a.model < b.model; });
+      const std::vector<uint8_t> data = PortRoomGeo::WriteLods(lodTable);
+      std::ofstream file(geometryFolder / PortRoomGeo::kLodFileName, std::ios::binary);
+      file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+      if (!file) {
+        AddLine(std::string(PortRoomGeo::kLodFileName) + ": cannot be written");
+      }
     }
   }
   if (geometry.empty()) {
@@ -1421,7 +1527,8 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   }
   message += ", " + std::to_string(roomFiles.load()) + " room environments";
   if (!geometry.empty()) {
-    message += ", " + std::to_string(geometryDone.load()) + " of " + std::to_string(geometry.size()) + " room models";
+    message += ", " + std::to_string(geometryDone.load()) + " of " + std::to_string(geometry.size()) + " room models (" +
+               std::to_string(lodsDone.load()) + " coarser levels)";
   }
   if (textTables != 0) {
     message += ", " + std::to_string(textStrings) + " strings in " + std::to_string(textTables) + " text tables";

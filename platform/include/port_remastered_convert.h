@@ -38,6 +38,7 @@ struct ConvertOptions {
   // Surfaces with no base map are dropped, having no retail material to keep.
   bool standalone = false;
   int nativeMax = 0;  // largest edge of a native .dds, 0 for the converter's own
+  int lod = 0;        // level of detail to convert, 0 the finest (a model with fewer has none)
   // gc = orient * remastered + offset. The default is Remastered's y-up frame
   // onto the GameCube's z-up one.
   double orient[3][3] = {{-1.0, 0.0, 0.0}, {0.0, 0.0, 1.0}, {0.0, 1.0, 0.0}};

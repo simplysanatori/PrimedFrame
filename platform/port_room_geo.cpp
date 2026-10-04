@@ -81,6 +81,15 @@ private:
   std::vector< const void* > mKept;
 };
 
+// A coarser level of detail of a model (kLodFileName), drawn from `distanceSq` on.
+struct Level {
+  uint32_t id = 0;
+  float distanceSq = 0.f;
+  std::unique_ptr< CModelData > data;
+  ResidentKeep resident; // after `data`, as in Model
+  bool loaded = false;
+};
+
 struct Model {
   uint32_t id = 0;
   std::unique_ptr< CModelData > data;
@@ -89,6 +98,7 @@ struct Model {
   bool loaded = false;
   bool hidden = false; // by the console, to find which model a surface belongs to
   CAABox bounds = CAABox::MakeMaxInvertedBox();
+  std::vector< Level > levels; // nearest first
 };
 
 struct Area;
@@ -116,6 +126,8 @@ struct Placed {
   bool following = false;
   float alpha = 1.f;
   size_t cluster = SIZE_MAX; // the Cluster it is drawn in, if any
+  float scaleSq = 1.f; // the largest of its transform's axes, squared: model distances to world ones
+  int level = -1;      // this frame's level of detail (Model::levels), -1 for the model itself
 };
 
 // Copies of one small model that never move or change, built into one model at their world
@@ -130,6 +142,13 @@ struct Cluster {
   std::unique_ptr< CActorLights > lights;
   bool areaLit = false;
   bool split = false; // this frame: some copy is hidden, so the copies are drawn one by one
+  // The model's coarser levels merged the same way, once they are all in (BuildClusterLevels).
+  struct MergedLevel {
+    std::unique_ptr< CModel > merged;
+    ResidentKeep resident; // after `merged`, as above
+  };
+  std::vector< MergedLevel > levels;
+  float scaleSq = 1.f; // the largest of its members' (Placed::scaleSq)
 };
 
 // A script node now (see ScriptNode).
@@ -159,6 +178,9 @@ struct Area {
   std::vector< size_t > drawOrder;
   std::vector< Cluster > clusters;
   bool clustered = false; // BuildClusters has run
+  size_t levels = 0;       // of all its models
+  size_t levelsLoaded = 0;
+  bool clusterLevels = false; // BuildClusterLevels has run
   std::vector< Trigger > triggers;
   bool gated = false; // some instance has a layer
   size_t loaded = 0;
@@ -183,7 +205,13 @@ int sMode = -1;
 int sAreaLights = -1;
 float sMinPixels = -1.f; // < 0 until MinPixels reads MP_ROOM_GEO_MIN_PX
 bool sMergedDraws = true;
+float sLodDistance = -1.f; // < 0 until LodDistance reads MP_ROOM_GEO_LOD
 bool sResident = false;
+// The mods' level of detail tables, by model id; read when the first area loads after a Reset.
+std::unordered_map< uint32_t, std::vector< LodLevel > > sLods;
+bool sLodsRead = false;
+int sDrawnCoarse = 0;
+int sDrawnCoarseLast = 0;
 // Counts the times areas left Areas(). The sorted pass hands DrawSorted only the item, so
 // it draws while the areas are the ones they were when AddSorted queued it.
 uint32_t sGeneration = 0;
@@ -532,6 +560,24 @@ std::vector< uint8_t > MergeCmdl(const std::vector< uint8_t >& source, const CCu
   return out;
 }
 
+// A CMDL's bytes as stored, empty unless it is there uncompressed (as MergeCmdl reads it).
+std::vector< uint8_t > ReadCmdlFile(uint32_t id) {
+  std::vector< uint8_t > bytes;
+  const SObjectTag tag('CMDL', static_cast< CAssetId >(id));
+  CResLoader& loader = gpResourceFactory->GetResLoader();
+  if (loader.ResourceExists(tag) &&
+      loader.GetResourceCompression(tag) == CResLoader::kCompressionType_Uncompressed) {
+    char* data = nullptr;
+    int length = 0;
+    loader.LoadMemResourceSync(tag, &data, &length);
+    if (data != nullptr && length > 0) {
+      bytes.assign(reinterpret_cast< uint8_t* >(data), reinterpret_cast< uint8_t* >(data) + length);
+    }
+    delete[] data;
+  }
+  return bytes;
+}
+
 // The area's clusters, once all its models are in. Only what nothing moves, hides or fades
 // goes in one (see Draw for what can still leave a cluster's copies drawn one by one).
 void BuildClusters(Area& area) {
@@ -591,17 +637,8 @@ void BuildClusters(Area& area) {
     const CCubeModel* const cube = cmodel.GetCubeModel();
     if (!perCluster.count(index)) {
       bool ok = cmodel.IsDefinitelyOpaque();
-      const SObjectTag tag('CMDL', static_cast< CAssetId >(model.id));
-      CResLoader& loader = gpResourceFactory->GetResLoader();
-      if (ok && loader.ResourceExists(tag) &&
-          loader.GetResourceCompression(tag) == CResLoader::kCompressionType_Uncompressed) {
-        char* data = nullptr;
-        int length = 0;
-        loader.LoadMemResourceSync(tag, &data, &length);
-        if (data != nullptr && length > 0) {
-          sources[index].assign(reinterpret_cast< uint8_t* >(data), reinterpret_cast< uint8_t* >(data) + length);
-        }
-        delete[] data;
+      if (ok) {
+        sources[index] = ReadCmdlFile(model.id);
       }
       CmdlSections layout;
       ok = ok && ReadCmdl(sources[index], layout);
@@ -629,6 +666,7 @@ void BuildClusters(Area& area) {
         item.bounds = model.bounds.GetTransformedAABox(item.xf); // for roomgeo at and pick
         item.bounded = true;
         cluster.bounds.Include(item.bounds);
+        cluster.scaleSq = std::max(cluster.scaleSq, item.scaleSq);
       }
       std::vector< uint8_t > bytes = MergeCmdl(sources[index], *cube, places, cluster.bounds);
       if (bytes.empty()) {
@@ -651,6 +689,50 @@ void BuildClusters(Area& area) {
   }
   if (built != 0) {
     PortLog::Write("room geo: %zu copies merged into %zu models\n", merged, built);
+  }
+}
+
+// Each cluster's coarser levels, once the area's are all in: a cluster spans a whole cell,
+// and without them a far one is drawn at full detail. A level that cannot be merged ends
+// the cluster's list there, as the levels must run without gaps.
+void BuildClusterLevels(Area& area) {
+  area.clusterLevels = true;
+  std::unordered_map< uint32_t, std::vector< uint8_t > > sources;
+  size_t built = 0;
+  for (Cluster& cluster : area.clusters) {
+    const Model& model = area.models[cluster.model];
+    std::vector< const CTransform4f* > places;
+    for (const size_t i : cluster.members) {
+      places.push_back(&area.items[i].xf);
+    }
+    for (const Level& level : model.levels) {
+      if (!level.loaded) {
+        break;
+      }
+      const CModel& cmodel = **level.data->PickStaticModel(CModelData::kWM_Normal);
+      if (!cmodel.IsDefinitelyOpaque()) {
+        break;
+      }
+      if (!sources.count(level.id)) {
+        sources[level.id] = ReadCmdlFile(level.id);
+      }
+      std::vector< uint8_t > bytes = MergeCmdl(sources[level.id], *cmodel.GetCubeModel(), places, cluster.bounds);
+      if (bytes.empty()) {
+        break;
+      }
+      rstl::auto_ptr< uchar[] > data(rs_new uchar[bytes.size()]);
+      std::memcpy(data.get(), bytes.data(), bytes.size());
+      Cluster::MergedLevel merged;
+      merged.merged.reset(rs_new CModel(data, int(bytes.size()), *gpSimplePool));
+      const_cast< CCubeModel* >(merged.merged->GetCubeModel())->PortSetAssetId(level.id);
+      merged.merged->Touch(0);
+      KeepResident(merged.resident, merged.merged->GetCubeModel());
+      cluster.levels.push_back(std::move(merged));
+      ++built;
+    }
+  }
+  if (built != 0) {
+    PortLog::Write("room geo: %zu coarser merged models\n", built);
   }
 }
 
@@ -697,10 +779,31 @@ void ResetNodes(Area& area) {
   }
 }
 
+void ReadLods() {
+  sLodsRead = true;
+  sLods.clear();
+  for (const std::string& path : PortMods::RoomLodPaths()) {
+    std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
+    const std::vector< uint8_t > data = ReadAll(in);
+    std::vector< Lods > table;
+    std::string error;
+    if (!in || !ParseLods(data, table, error)) {
+      PortLog::Write("room geo: %s: %s\n", path.c_str(), error.empty() ? "cannot read" : error.c_str());
+      continue;
+    }
+    for (Lods& lods : table) {
+      sLods[lods.model] = std::move(lods.levels);
+    }
+  }
+}
+
 void Load(uint32_t mrea, Area& area) {
   const std::string path = PortMods::RoomGeoPath(mrea);
   if (path.empty() || gpResourceFactory == nullptr) {
     return;
+  }
+  if (!sLodsRead) {
+    ReadLods();
   }
   std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
   const std::vector< uint8_t > data = ReadAll(in);
@@ -724,6 +827,20 @@ void Load(uint32_t mrea, Area& area) {
         model.id = instance.model;
         model.data.reset(new CModelData(
             CStaticRes(static_cast< CAssetId >(instance.model), CVector3f(1.f, 1.f, 1.f))));
+        const auto lods = sLods.find(instance.model);
+        if (lods != sLods.end()) {
+          for (const LodLevel& lod : lods->second) {
+            if (gpResourceFactory->GetResourceTypeById(static_cast< CAssetId >(lod.model)) != 'CMDL') {
+              break; // a coarser one would be drawn where this one should
+            }
+            Level& level = model.levels.emplace_back();
+            level.id = lod.model;
+            level.distanceSq = lod.distanceSq;
+            level.data.reset(
+                new CModelData(CStaticRes(static_cast< CAssetId >(lod.model), CVector3f(1.f, 1.f, 1.f))));
+          }
+          area.levels += model.levels.size();
+        }
       }
       found = index.emplace(instance.model, slot).first;
     }
@@ -735,6 +852,11 @@ void Load(uint32_t mrea, Area& area) {
     item.model = found->second;
     const float* const m = instance.transform;
     item.xf = CTransform4f(m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11]);
+    for (int axis = 0; axis < 3; ++axis) {
+      const float sq = m[axis] * m[axis] + m[4 + axis] * m[4 + axis] + m[8 + axis] * m[8 + axis];
+      item.scaleSq = axis == 0 ? sq : std::max(item.scaleSq, sq);
+    }
+    item.scaleSq = std::max(item.scaleSq, 1e-6f);
     item.layer = instance.layer;
     item.shown = item.active = instance.active;
     item.platform = instance.platform;
@@ -909,6 +1031,8 @@ void SetLoadedAreas(const uint32_t* mreas, size_t count) {
   sQueueStale = false;
   sDrawnLast = sDrawn;
   sDrawn = 0;
+  sDrawnCoarseLast = sDrawnCoarse;
+  sDrawnCoarse = 0;
   if (!sMaterialValues.empty()) {
     BindMaterialValues();
   }
@@ -972,6 +1096,27 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
   if (!area.clustered && area.loaded == area.models.size()) {
     BuildClusters(area);
   }
+  // The coarser levels come in behind the full models and hold nothing up: until one is
+  // in, the level before it is drawn in its place.
+  if (area.loaded == area.models.size() && area.levelsLoaded != area.levels && LodDistance() > 0.f) {
+    area.levelsLoaded = 0;
+    for (Model& model : area.models) {
+      for (Level& level : model.levels) {
+        if (!level.loaded) {
+          if (!level.data->IsLoaded(0)) {
+            level.data->Touch(CModelData::kWM_Normal, 0);
+            continue;
+          }
+          level.loaded = true;
+          KeepResident(level.resident, (**level.data->PickStaticModel(CModelData::kWM_Normal)).GetCubeModel());
+        }
+        ++area.levelsLoaded;
+      }
+    }
+  }
+  if (area.clustered && !area.clusterLevels && area.levelsLoaded == area.levels && LodDistance() > 0.f) {
+    BuildClusterLevels(area);
+  }
   // A trigger's linked actors are made active and given its alpha every frame it is active
   // (CScriptDamageableTrigger::Think); when it goes inactive, after its death fade or by a
   // Deactivate at alpha 0, they are not seen again until it is.
@@ -1011,17 +1156,37 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
               (projection.GetNear() * float(CGraphics::GetViewportHeight()));
   }
   const CVector3f eye = CGraphics::GetViewPoint();
+  // From the eye to the nearest point of the box, squared: 0 inside it.
+  const auto distanceSq = [&](const CAABox& bounds) {
+    const CVector3f& lo = bounds.GetMinPoint();
+    const CVector3f& hi = bounds.GetMaxPoint();
+    const float dx = std::max(std::max(lo.GetX() - eye.GetX(), eye.GetX() - hi.GetX()), 0.f);
+    const float dy = std::max(std::max(lo.GetY() - eye.GetY(), eye.GetY() - hi.GetY()), 0.f);
+    const float dz = std::max(std::max(lo.GetZ() - eye.GetZ(), eye.GetZ() - hi.GetZ()), 0.f);
+    return dx * dx + dy * dy + dz * dz;
+  };
   const auto tooSmall = [&](const CAABox& bounds) {
     if (minSpan <= 0.f) {
       return false;
     }
-    const CVector3f& lo = bounds.GetMinPoint();
-    const CVector3f& hi = bounds.GetMaxPoint();
-    // From the eye to the nearest point of the box: 0 inside it, which keeps it.
-    const float dx = std::max(std::max(lo.GetX() - eye.GetX(), eye.GetX() - hi.GetX()), 0.f);
-    const float dy = std::max(std::max(lo.GetY() - eye.GetY(), eye.GetY() - hi.GetY()), 0.f);
-    const float dz = std::max(std::max(lo.GetZ() - eye.GetZ(), eye.GetZ() - hi.GetZ()), 0.f);
-    return (hi - lo).Magnitude() < minSpan * std::sqrt(dx * dx + dy * dy + dz * dz);
+    return (bounds.GetMaxPoint() - bounds.GetMinPoint()).Magnitude() < minSpan * std::sqrt(distanceSq(bounds));
+  };
+  // Remastered's switch distances are the model's own, so a scaled item's are scaled with it.
+  const float lodScaleSq = LodDistance() * LodDistance();
+  // The last level loaded whose distance the bounds are past, -1 for the full model. `usable`
+  // caps it, for a cluster's merged levels.
+  const auto pickLevel = [&](const Model& model, size_t usable, const CAABox& bounds, float scaleSq) {
+    int picked = -1;
+    if (usable == 0 || lodScaleSq <= 0.f) {
+      return picked;
+    }
+    const float d = distanceSq(bounds) / scaleSq;
+    for (size_t i = 0; i < usable && model.levels[i].distanceSq * lodScaleSq <= d; ++i) {
+      if (model.levels[i].loaded) {
+        picked = int(i);
+      }
+    }
+    return picked;
   };
   const auto light = [&](std::unique_ptr< CActorLights >& lights, bool& areaLit, const CAABox& bounds) {
     if (lights == nullptr || areaLit == baked) {
@@ -1055,8 +1220,12 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     light(cluster.lights, cluster.areaLit, cluster.bounds);
     gpRender->SetModelMatrix(CTransform4f::Identity());
     cluster.lights->ActivateLights();
-    cluster.merged->DrawUnsortedParts(CModelFlags::Normal());
+    const int level = pickLevel(area.models[cluster.model], cluster.levels.size(), cluster.bounds, cluster.scaleSq);
+    (level < 0 ? *cluster.merged : *cluster.levels[level].merged).DrawUnsortedParts(CModelFlags::Normal());
     sDrawn += int(cluster.members.size());
+    if (level >= 0) {
+      sDrawnCoarse += int(cluster.members.size());
+    }
   }
   for (const size_t index : area.drawOrder) {
     Placed& item = area.items[index];
@@ -1084,7 +1253,12 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     // Blended surfaces (glass, decals) wait for the sorted pass, where they are drawn
     // back to front among the actors.
     // A faded one is drawn whole among them, as retail's CActor with blend flags is.
-    const CModel& cmodel = **model.data->PickStaticModel(CModelData::kWM_Normal);
+    item.level = pickLevel(model, model.levels.size(), item.bounds, item.scaleSq);
+    const CModelData& data = item.level < 0 ? *model.data : *model.levels[item.level].data;
+    const CModel& cmodel = **data.PickStaticModel(CModelData::kWM_Normal);
+    if (item.level >= 0) {
+      ++sDrawnCoarse;
+    }
     if (item.alpha < 1.f) {
       area.sorted.push_back(&item);
       ++sDrawn;
@@ -1145,7 +1319,9 @@ void DrawSorted(const void* drawable) {
   }
   gpRender->SetModelMatrix(item.xf);
   item.lights->ActivateLights();
-  const CModel& cmodel = **model.data->PickStaticModel(CModelData::kWM_Normal);
+  const CModelData& data =
+      item.level >= 0 && size_t(item.level) < model.levels.size() ? *model.levels[item.level].data : *model.data;
+  const CModel& cmodel = **data.PickStaticModel(CModelData::kWM_Normal);
   if (item.alpha < 1.f) {
     cmodel.Draw(CModelFlags(CModelFlags::kT_Blend, item.alpha));
   } else {
@@ -1533,6 +1709,8 @@ int ClearMaterialValues() {
 void Reset() {
   CCubeModel::PortClearPBROverrides();
   Areas().clear();
+  sLods.clear();
+  sLodsRead = false;
   ++sGeneration;
 }
 
@@ -1554,6 +1732,25 @@ float MinPixels() {
 }
 
 void SetMinPixels(float pixels) { sMinPixels = std::max(0.f, pixels); }
+
+float LodDistance() {
+  if (sLodDistance < 0.f) {
+    const char* const env = std::getenv("MP_ROOM_GEO_LOD");
+    sLodDistance = env != nullptr ? std::max(0.f, float(std::atof(env))) : 1.f;
+  }
+  return sLodDistance;
+}
+
+void SetLodDistance(float scale) { sLodDistance = std::max(0.f, scale); }
+
+void LodStats(int& levels, int& loaded, int& drawnCoarse) {
+  levels = loaded = 0;
+  for (const auto& [mrea, area] : Areas()) {
+    levels += int(area.levels);
+    loaded += int(area.levelsLoaded);
+  }
+  drawnCoarse = sDrawnCoarseLast;
+}
 
 void SetMergedDraws(bool on) { sMergedDraws = on; }
 

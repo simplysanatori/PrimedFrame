@@ -188,6 +188,36 @@ void TestScript() {
   bad.push_back(1);
   Check(!PortRoomGeo::Parse(bad, out, error, &back), "trailing bytes rejected");
 }
+
+void TestLods() {
+  std::vector<PortRoomGeo::Lods> in(2);
+  in[0].model = 0x11111111;
+  in[0].levels = {{100.f, 0x11111112}, {400.f, 0x11111113}};
+  in[1].model = 0x22222222;
+  in[1].levels = {{2500.f, 0x22222223}};
+  const std::vector<uint8_t> file = PortRoomGeo::WriteLods(in);
+  Check(file.size() == 12 + 2 * 8 + 3 * 8, "lods size");
+  std::vector<PortRoomGeo::Lods> out;
+  std::string error;
+  Check(PortRoomGeo::ParseLods(file, out, error), "lods parse");
+  Check(out.size() == 2 && out[0].model == 0x11111111 && out[0].levels.size() == 2 &&
+            out[0].levels[1].distanceSq == 400.f && out[0].levels[1].model == 0x11111113,
+        "first model's levels");
+  Check(out.size() == 2 && out[1].levels.size() == 1 && out[1].levels[0].model == 0x22222223, "second model");
+  for (size_t cut = 0; cut < file.size(); ++cut) {
+    const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
+    if (PortRoomGeo::ParseLods(part, out, error)) {
+      std::fprintf(stderr, "FAIL: lods truncated at %zu parses\n", cut);
+      ++sFailures;
+    }
+  }
+  std::vector<PortRoomGeo::Lods> bad = in;
+  std::swap(bad[0].levels[0], bad[0].levels[1]);
+  Check(!PortRoomGeo::ParseLods(PortRoomGeo::WriteLods(bad), out, error), "out-of-order distances rejected");
+  bad = in;
+  bad[1].levels.clear();
+  Check(!PortRoomGeo::ParseLods(PortRoomGeo::WriteLods(bad), out, error), "model without levels rejected");
+}
 } // namespace
 
 int main() {
@@ -195,6 +225,7 @@ int main() {
   TestVersion1();
   TestVersion2();
   TestScript();
+  TestLods();
   uint32_t id = 0;
   Check(PortRoomGeo::ParseFileName("1a2B3c4D.ROOMGEO", id) && id == 0x1A2B3C4D, "file name");
   if (sFailures == 0) {

@@ -17,6 +17,8 @@ constexpr size_t kLinkBytes = 8;
 constexpr uint32_t kScriptMagic = 0x50524353; // 'SCRP'
 constexpr size_t kNodeBytes = 8 + 15 * 4;
 constexpr size_t kEdgeBytes = 12;
+constexpr uint32_t kLodMagic = 0x444F4C52; // 'RLOD'
+constexpr uint32_t kLodVersion = 1;
 
 int HexDigit(char c) {
   if (c >= '0' && c <= '9') {
@@ -289,6 +291,61 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
   }
   for (const Instance& instance : instances) {
     PutU32(out, instance.group);
+  }
+  return out;
+}
+
+bool ParseLods(const std::vector<uint8_t>& data, std::vector<Lods>& out, std::string& error) {
+  out.clear();
+  if (data.size() < kHeaderBytes || ReadU32(data.data()) != kLodMagic) {
+    error = "not a level of detail table";
+    return false;
+  }
+  if (ReadU32(data.data() + 4) != kLodVersion) {
+    error = "unknown version " + std::to_string(ReadU32(data.data() + 4));
+    return false;
+  }
+  const uint32_t count = ReadU32(data.data() + 8);
+  size_t at = kHeaderBytes;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (data.size() - at < 8) {
+      error = "cut short";
+      return false;
+    }
+    Lods& lods = out.emplace_back();
+    lods.model = ReadU32(data.data() + at);
+    const uint32_t levels = ReadU32(data.data() + at + 4);
+    at += 8;
+    if (levels == 0 || levels >= uint32_t(kLodLevels) || data.size() - at < size_t(levels) * 8) {
+      error = "a model with " + std::to_string(levels) + " levels";
+      return false;
+    }
+    for (uint32_t l = 0; l < levels; ++l) {
+      LodLevel& level = lods.levels.emplace_back();
+      level.model = ReadU32(data.data() + at + 4);
+      if (!ReadF32(data.data() + at, level.distanceSq) || level.distanceSq <= 0.f ||
+          (l > 0 && level.distanceSq <= lods.levels[l - 1].distanceSq)) {
+        error = "a level's distance is out of order";
+        return false;
+      }
+      at += 8;
+    }
+  }
+  return true;
+}
+
+std::vector<uint8_t> WriteLods(const std::vector<Lods>& models) {
+  std::vector<uint8_t> out;
+  PutU32(out, kLodMagic);
+  PutU32(out, kLodVersion);
+  PutU32(out, uint32_t(models.size()));
+  for (const Lods& lods : models) {
+    PutU32(out, lods.model);
+    PutU32(out, uint32_t(lods.levels.size()));
+    for (const LodLevel& level : lods.levels) {
+      PutF32(out, level.distanceSq);
+      PutU32(out, level.model);
+    }
   }
   return out;
 }

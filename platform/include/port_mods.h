@@ -207,6 +207,9 @@ std::string HudBarsPath(uint32_t frame);
 std::string RoomGeoPath(uint32_t mrea);
 // The same for its liquid surfaces (port_room_liquid.h).
 std::string RoomLiquidPath(uint32_t mrea);
+// Every roomgeo/lods.bin the mods supply (port_room_geo.h), in mod order: a later one's
+// entry for a model stands in for an earlier one's.
+std::vector<std::string> RoomLodPaths();
 // Whether any mod folder holds room geometry. Reads the disk, and needs no Initialize:
 // the frame buffers are sized from it before there is a renderer.
 bool HasRoomGeometry();

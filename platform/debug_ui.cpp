@@ -555,6 +555,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sRoomGeoResident = ParseBool(value);
   } else if (key == "room_geo_min_px") {
     PortRoomGeo::SetMinPixels(std::strtof(value.c_str(), nullptr));
+  } else if (key == "room_geo_lod") {
+    PortRoomGeo::SetLodDistance(std::strtof(value.c_str(), nullptr));
   } else if (key == "particle_interpolation") {
     sParticleInterpolation = ParseBool(value);
   } else if (key == "ai_audio") {
@@ -658,6 +660,7 @@ void SaveSettings() {
   file << "pose_interpolation=" << (sPoseInterpolation ? 1 : 0) << '\n';
   file << "room_geo_resident=" << (sRoomGeoResident ? 1 : 0) << '\n';
   file << "room_geo_min_px=" << PortRoomGeo::MinPixels() << '\n';
+  file << "room_geo_lod=" << PortRoomGeo::LodDistance() << '\n';
   file << "particle_interpolation=" << (sParticleInterpolation ? 1 : 0) << '\n';
   file << "mouse_aim=" << (sMouseAim ? 1 : 0) << '\n';
   file << "twin_stick=" << (sTwinStick ? 1 : 0) << '\n';
@@ -4714,6 +4717,15 @@ void DrawRendering() {
     ImGui::SetItemTooltip("Leaves out room models that look smaller than this on screen (in the game's\n"
                           "own 480-line pixels, whatever the render scale). Raise it if frames are\n"
                           "slow; 0 draws everything.");
+    float lodDistance = PortRoomGeo::LodDistance();
+    if (ImGui::SliderFloat("Detail distance", &lodDistance, 0.f, 4.f, lodDistance > 0.f ? "x%.2f" : "full detail")) {
+      PortRoomGeo::SetLodDistance(lodDistance);
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Where room models switch to Remastered's simpler versions of themselves\n"
+                          "farther away: 1 is Remastered's own distances, higher keeps the full models\n"
+                          "farther out, 0 never switches. Lower it if frames are slow. Needs an import\n"
+                          "made by this version.");
     bool merged = PortRoomGeo::MergedDraws();
     if (ImGui::Checkbox("Draw merged copies", &merged)) {
       PortRoomGeo::SetMergedDraws(merged);

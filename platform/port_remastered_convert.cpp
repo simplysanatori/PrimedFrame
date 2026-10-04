@@ -625,6 +625,7 @@ struct Buffer {
   const ModelVertexBuffer* src = nullptr;
   bool skinned = false;
   std::vector<uint32_t> copyOf;  // vertices past src's: the src vertex each was copied from
+  std::vector<uint32_t> srcOf;   // once compacted: the src vertex each kept one comes from
 };
 
 struct Prim {
@@ -2231,10 +2232,14 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   std::vector<Prim> prims;
   std::vector<uint32_t> bufOrder;  // buffers in the order the primitives reach them
   // Each level of detail is a set of meshes of its own, so drawing every mesh
-  // stacks the coarse copies on the fine one. Keep the finest level's.
+  // stacks the coarse copies on the fine one. Keep the chosen level's.
   std::vector<bool> finest(model.meshes.size(), false);
   bool anyFinest = false;
-  for (size_t r = 0; r < 5 && r < model.lods.size(); ++r) {
+  const size_t lodBase = size_t(std::max(opt.lod, 0)) * 5;
+  if (opt.lod > 0 && lodBase >= model.lods.size()) {
+    throw Fail{"the model has no level of detail " + std::to_string(opt.lod)};
+  }
+  for (size_t r = lodBase; r < lodBase + 5 && r < model.lods.size(); ++r) {
     const ModelLod& range = model.lods[r];
     for (uint64_t i = range.indexOffset; i < uint64_t(range.indexOffset) + range.indexCount; ++i) {
       if (i < model.lodMeshes.size() && model.lodMeshes[i] < finest.size()) {
@@ -2393,6 +2398,53 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     throw Fail{"no primitives left"};
   }
   Log(Hex8(opt.retail) + ": " + std::to_string(prims.size()) + " primitives");
+  // The levels of detail share their vertex buffers, so a buffer carries the other
+  // levels' vertices (and those of skipped meshes) too: keep only what is indexed.
+  for (uint32_t bi : bufOrder) {
+    Buffer& b = buffers[bi];
+    constexpr uint32_t kDropped = UINT32_MAX;
+    std::vector<uint32_t> remap(b.n, kDropped);
+    for (const Prim& p : prims) {
+      if (p.buffer == bi) {
+        for (uint32_t i : p.I) {
+          remap[i] = 0;
+        }
+      }
+    }
+    size_t kept = 0;
+    for (size_t v = 0; v < b.n; ++v) {
+      if (remap[v] == kDropped) {
+        continue;
+      }
+      remap[v] = uint32_t(kept);
+      b.srcOf.push_back(v < b.src->vertexCount ? uint32_t(v) : b.copyOf[v - b.src->vertexCount]);
+      std::copy_n(b.P.begin() + v * 3, 3, b.P.begin() + kept * 3);
+      std::copy_n(b.N.begin() + v * 3, 3, b.N.begin() + kept * 3);
+      std::copy_n(b.C.begin() + v * 4, 4, b.C.begin() + kept * 4);
+      for (std::vector<double>& uv : b.uv) {
+        if (!uv.empty()) {
+          std::copy_n(uv.begin() + v * 2, 2, uv.begin() + kept * 2);
+        }
+      }
+      ++kept;
+    }
+    b.n = kept;
+    b.P.resize(kept * 3);
+    b.N.resize(kept * 3);
+    b.C.resize(kept * 4);
+    for (std::vector<double>& uv : b.uv) {
+      if (!uv.empty()) {
+        uv.resize(kept * 2);
+      }
+    }
+    for (Prim& p : prims) {
+      if (p.buffer == bi) {
+        for (uint32_t& i : p.I) {
+          i = remap[i];
+        }
+      }
+    }
+  }
 
   // Retail material per primitive: forced, or by a vote of the nearest retail
   // vertices among materials of the same kind (blended effect or opaque surface).
@@ -2833,9 +2885,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     if (skinned) {
       for (uint32_t bi : bufOrder) {
         const ModelVertexBuffer& src = *buffers[bi].src;
-        J.insert(J.end(), src.joints.begin(), src.joints.end());
-        W.insert(W.end(), src.weights.begin(), src.weights.end());
-        for (uint32_t v : buffers[bi].copyOf) {
+        for (uint32_t v : buffers[bi].srcOf) {
           J.insert(J.end(), src.joints.begin() + size_t(v) * 4, src.joints.begin() + size_t(v) * 4 + 4);
           W.insert(W.end(), src.weights.begin() + size_t(v) * 4, src.weights.begin() + size_t(v) * 4 + 4);
         }
