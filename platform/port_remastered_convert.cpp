@@ -583,6 +583,7 @@ struct RemMaterial {
   double backlight = 0.0;  // and its backlight strength
   bool cutout = false;     // the base map's alpha cuts holes: leaves, grates
   bool blended = false;    // drawn over what is behind it: glass, decals, ice
+  bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
   bool tinted = false;     // its vertices carry a colour
   bool unlit = false;      // a screen: its own colour and glow, no lighting
   bool mask = false;       // the base map's alpha masks the glow and is no opacity
@@ -2332,6 +2333,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // And glass, whose colour is premultiplied: GX_BL_ONE, GX_BL_INVSRCALPHA.
     lit.blendSrc = 1;
     retail.mats.push_back(lit);
+    // And an additive surface (mesh class 3): GX_BL_SRCALPHA, GX_BL_ONE.
+    lit.blendSrc = 4;
+    lit.blendDst = 1;
+    retail.mats.push_back(lit);
   } else {
     if (!io.retail(FourCC('C', 'M', 'D', 'L'), opt.retail, retail.data)) {
       throw Fail{"retail model " + Hex8(opt.retail) + " is not on the disc"};
@@ -2350,6 +2355,18 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (const ModelMaterial& m : model.materials) {
     mats.push_back(ReadMaterial(m, opt));
   }
+  // How Remastered blends a mesh is its class (the two-bit map after the meshes),
+  // not a material flag: 0 opaque, 2 alpha tested, 1 sorted and blended straight
+  // (SrcA, InvSrcA), 3 sorted and added (SrcA, One). Every model gives all of a
+  // material's meshes the same class, and 1 and 3 only to materials flagged 0x1.
+  // An additive surface's alpha is its opacity unless the base alpha masks the glow.
+  for (const ModelMesh& mesh : model.meshes) {
+    if (mesh.bits2 == 3 && mesh.material < mats.size()) {
+      RemMaterial& m = mats[mesh.material];
+      m.additive = true;
+      m.blended = m.blended || (!m.mask && !m.cutout);
+    }
+  }
   // A liquid's model says nothing of how it looks (its maps are placeholders): the room does.
   // The material is a blended one of the liquid kind, whose second layer is only there
   // because the kinds are drawn by the layered shader.
@@ -2357,7 +2374,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     if (opt.water && opt.standalone) {
       m.kind = 5;
       m.layered = m.blended = true;
-      m.cutout = m.tinted = m.vcolor = m.unlit = m.mask = m.hidden = false;
+      m.cutout = m.tinted = m.vcolor = m.unlit = m.mask = m.hidden = m.additive = false;
       m.height = 0.0;
       m.backlight = 0.0;
       m.maps[kMr].has = m.maps[kEmissive].has = false;
@@ -2610,7 +2627,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   }
   for (Prim& p : prims) {
     if (opt.standalone) {
-      p.rmat = mats[p.mat].kind == 8 ? 3 : mats[p.mat].cutout ? 1 : mats[p.mat].blended ? 2 : 0;
+      const RemMaterial& m = mats[p.mat];
+      p.rmat = m.kind == 8 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
       continue;
     }
     if (opt.material >= 0) {
@@ -2623,7 +2641,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     if (upm.empty()) {
       throw Fail{"the retail model draws nothing"};
     }
-    const bool fx = IsFxName(mats[p.mat].name);
+    const bool fx = IsFxName(mats[p.mat].name) || mats[p.mat].additive;
     std::vector<double> cand;
     std::vector<int> candMat;
     for (int pass = 0; pass < 2 && cand.empty(); ++pass) {
