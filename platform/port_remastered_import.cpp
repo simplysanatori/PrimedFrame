@@ -22,6 +22,7 @@
 
 #include <aurora/dvd.h>
 
+#include "port_gallery.h"
 #include "port_map_icons.h"
 #include "port_model_variant.h"
 #include "port_mods.h"
@@ -88,6 +89,7 @@ constexpr const char* kHudFolder = "hud";
 constexpr const char* kMapFolder = "map";
 // The disc's own folder: a mod's file there is opened in place of the disc's.
 constexpr const char* kMovieFolder = "Video";
+constexpr const char* kGalleryFolder = "gallery";
 // Largest edge of a room geometry texture: there are thousands of them.
 constexpr int kGeometryTexture = 1024;
 // Texcoords a second a water surface's wave layers move by.
@@ -214,6 +216,12 @@ bool WantsText() {
 // MP_REMASTERED_HUD=0 leaves the disc's HUD alone.
 bool WantsHud() {
   const char* env = std::getenv("MP_REMASTERED_HUD");
+  return env == nullptr || std::strcmp(env, "0") != 0;
+}
+
+// MP_REMASTERED_GALLERY=0 leaves the Extras gallery out.
+bool WantsGallery() {
+  const char* env = std::getenv("MP_REMASTERED_GALLERY");
   return env == nullptr || std::strcmp(env, "0") != 0;
 }
 
@@ -483,6 +491,33 @@ public:
     return pak.ReadAsset(pak.Assets()[found->second.asset], out, error);
   }
 
+  // The Extras gallery's pictures, in the pak's order: the textures of UI_FrontEnd at least 1000 texels high (the
+  // concept art; the menu backdrops are 1600x900). `visit` gets each one's position and its TXTR file, and says
+  // whether to go on.
+  template <class Visit>
+  void ForEachGalleryTexture(Visit&& visit) const {
+    size_t position = 0;
+    for (size_t i = 0; i < m_paks.size(); ++i) {
+      const std::string& path = m_paths[i];
+      if (path.substr(path.rfind('/') + 1) != "UI_FrontEnd.pak") {
+        continue;
+      }
+      const Pak& pak = *m_paks[i];
+      for (const PakAsset& asset : pak.Assets()) {
+        std::vector<uint8_t> raw;
+        std::string error;
+        TxtrImage info;
+        if (asset.type != kTXTR || !pak.ReadAsset(asset, raw, error) ||
+            !ReadTxtrInfo(raw.data(), raw.size(), info, error) || info.height < 1000) {
+          continue;
+        }
+        if (!visit(position++, raw)) {
+          return;
+        }
+      }
+    }
+  }
+
   // A model by its asset name ("CMDL_MapCompass"), as ReadFrame finds a frame.
   bool ReadModelNamed(const std::string& name, std::vector<uint8_t>& out, std::string& error) const {
     const auto found = m_modelNames.find(FrameKey(name));
@@ -733,8 +768,55 @@ int ImportMovies(const Remastered& remastered, const fs::path& folder, const Mov
   return written;
 }
 
-// Only the movies, into the mod an earlier import made: for a player who had
-// no ffmpeg at the time.
+// The Extras gallery's concept art as gallery/NNN.jpg in `folder` (port_gallery.h). Returns how many were written.
+int ImportGallery(const Remastered& remastered, const fs::path& folder) {
+  std::error_code ec;
+  fs::remove_all(folder, ec);
+  fs::create_directories(folder, ec);
+  int written = 0;
+  remastered.ForEachGalleryTexture([&](size_t position, const std::vector<uint8_t>& raw) {
+    SetMessage("Gallery picture " + std::to_string(position + 1));
+    char name[16];
+    std::snprintf(name, sizeof(name), "%03d.jpg", int(position));
+    std::string error;
+    TxtrImage image;
+    std::vector<uint8_t> jpeg;
+    bool ok = DecodeTxtr(raw.data(), raw.size(), image, error);
+    ok = ok && PortGallery::EncodeGalleryJpeg(image.rgba.data(), int(image.width), int(image.height), jpeg);
+    if (ok) {
+      const fs::path tmp = folder / "import.tmp.jpg";
+      {
+        std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(jpeg.data()), std::streamsize(jpeg.size()));
+        ok = bool(file);
+      }
+      // Renamed, so a picture cut short never has the name.
+      if (ok) {
+        fs::rename(tmp, folder / name, ec);
+        ok = !ec;
+      }
+      if (!ok) {
+        fs::remove(tmp, ec);
+        error = "cannot write to the mod folder";
+      }
+    } else if (error.empty()) {
+      error = "cannot encode";
+    }
+    if (ok) {
+      ++written;
+    } else if (!sCancel) {
+      AddLine(std::string("gallery/") + name + ": " + error);
+    }
+    return !sCancel;
+  });
+  if (written == 0) {
+    fs::remove_all(folder, ec);
+  }
+  return written;
+}
+
+// Only the movies and the gallery, into the mod an earlier import made: for a player who had
+// no ffmpeg at the time, or imported before the gallery.
 void RunMovies(std::string nspPath, std::string keysPath, fs::path mod) {
   YieldToGame();
   SetMessage("Opening the image");
@@ -748,14 +830,19 @@ void RunMovies(std::string nspPath, std::string keysPath, fs::path mod) {
   WantsMovies(format);
   bool noFfmpeg = false;
   const int movies = ImportMovies(remastered, mod / kMovieFolder, format, noFfmpeg);
+  const int gallery = WantsGallery() && !sCancel ? ImportGallery(remastered, mod / kGalleryFolder) : 0;
   if (sCancel) {
     Finish(false, "Cancelled.");
-  } else if (noFfmpeg) {
+  } else if (noFfmpeg && gallery == 0) {
     Finish(false, "ffmpeg not found. Install it, or put it next to the game.");
-  } else if (movies == 0) {
+  } else if (movies == 0 && gallery == 0) {
     Finish(false, "No movies converted.");
   } else {
-    Finish(true, std::to_string(movies) + " movies converted.");
+    std::string message = std::to_string(movies) + " movies converted";
+    if (gallery != 0) {
+      message += ", " + std::to_string(gallery) + " gallery pictures";
+    }
+    Finish(true, message + (noFfmpeg ? ". Movies skipped: ffmpeg not found." : "."));
   }
 }
 
@@ -1534,6 +1621,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   if (MovieFormat format; WantsMovies(format) && !sCancel) {
     movies = ImportMovies(remastered, staging / kMovieFolder, format, noFfmpeg);
   }
+  // The Extras gallery's concept art.
+  int gallery = 0;
+  if (WantsGallery() && !sCancel) {
+    gallery = ImportGallery(remastered, staging / kGalleryFolder);
+  }
   if (sCancel) {
     fail("Cancelled.");
     return;
@@ -1569,6 +1661,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   }
   if (movies != 0) {
     message += ", " + std::to_string(movies) + " movies";
+  }
+  if (gallery != 0) {
+    message += ", " + std::to_string(gallery) + " gallery pictures";
   }
   Finish(true, message + (noFfmpeg ? ". Movies skipped: ffmpeg not found." : "."));
 }

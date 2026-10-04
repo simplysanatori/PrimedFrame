@@ -207,6 +207,9 @@ std::string RoomEnvPath(uint32_t mrea);
 std::string MaterialCubePath(uint32_t id);
 // The roomenv/brdf.lut a mod supplies (port_room_env.h), the first mod's when several do; empty when none.
 std::string BrdfLutPath();
+// The gallery/NNN.jpg pictures the mods supply (the Extras gallery), in file name order; a later mod's file
+// replaces an earlier one's of the same name.
+std::vector<std::string> GalleryPaths();
 // The <FRME id>.hudbars a mod supplies for a HUD frame (port_hud_bars.h); empty when none.
 std::string HudBarsPath(uint32_t frame);
 // The <MREA id>.roomgeo a mod supplies for an area (port_room_geo.h); empty when none.

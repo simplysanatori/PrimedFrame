@@ -46,6 +46,8 @@ std::unordered_map<uint32_t, std::string> sNativeTextures;
 std::unordered_map<uint32_t, std::string> sRoomEnvs;
 std::unordered_map<uint32_t, std::string> sMaterialCubes;
 std::string sBrdfLut;
+// gallery/NNN.jpg files, by file name, so a later mod's picture replaces an earlier one's.
+std::map<std::string, std::string> sGallery;
 std::vector<std::string> sRoomLods;
 std::string sFont;
 std::unordered_map<uint32_t, std::string> sRoomGeos;
@@ -340,6 +342,15 @@ std::string BrdfLutPath() { return sBrdfLut; }
 
 std::vector<std::string> RoomLodPaths() { return sRoomLods; }
 
+std::vector<std::string> GalleryPaths() {
+  std::vector<std::string> paths;
+  paths.reserve(sGallery.size());
+  for (const auto& [name, path] : sGallery) {
+    paths.push_back(path);
+  }
+  return paths;
+}
+
 std::string HudBarsPath(uint32_t frame) {
   const auto found = sHudBars.find(frame);
   return found != sHudBars.end() ? found->second : std::string();
@@ -390,6 +401,7 @@ void Initialize() {
   sRoomEnvs.clear();
   sMaterialCubes.clear();
   sBrdfLut.clear();
+  sGallery.clear();
   sRoomLods.clear();
   sFont.clear();
   sRoomGeos.clear();
@@ -462,6 +474,11 @@ void Initialize() {
         if (sBrdfLut.empty()) {
           sBrdfLut = PathString(file);
         }
+        continue;
+      }
+      if (name.size() > 4 && name.compare(name.size() - 4, 4, ".jpg") == 0 &&
+          PathString(file.parent_path().filename()) == "gallery") {
+        sGallery[name] = PathString(file);
         continue;
       }
       if (name == PortRoomGeo::kLodFileName && PathString(file.parent_path().filename()) == "roomgeo") {

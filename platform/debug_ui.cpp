@@ -21,6 +21,7 @@
 #include "port_remastered_import.h"
 #include "port_remastered_text.h"
 #include "port_discord.h"
+#include "port_gallery.h"
 #include "port_livesplit.h"
 #include "port_map_pickups.h"
 #include "port_prompts.h"
@@ -50,6 +51,7 @@
 
 #include <aurora/aurora.h>
 #include <aurora/gfx.h>
+#include <aurora/imgui.h>
 #include <dolphin/gx/GXExtra.h>
 #include <dolphin/pad.h>
 #include <dolphin/vi.h>
@@ -89,6 +91,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -3339,6 +3342,115 @@ static void FinishRemasteredImport() {
 
 namespace {
 
+// The Extras gallery (port_gallery.h): the concept art the Remastered import put in the mods, shown one picture at
+// a time in a window of its own. Only the current picture is decoded.
+bool sGalleryOpen = false;
+std::vector<std::string> sGalleryPaths;
+int sGalleryIndex = 0;
+int sGalleryLoaded = -1;      // the picture sGalleryTexture holds
+ImTextureID sGalleryTexture = 0;
+ImVec2 sGallerySize{0.0f, 0.0f};
+bool sGalleryFailed = false;
+// Textures no longer shown, freed once the frames that drew them are done with.
+struct RetiredTexture {
+  ImTextureID texture;
+  int frames;
+};
+std::vector<RetiredTexture> sGalleryRetired;
+
+void ReleaseGalleryTexture() {
+  if (sGalleryTexture != 0) {
+    sGalleryRetired.push_back({sGalleryTexture, 0});
+    sGalleryTexture = 0;
+  }
+  sGalleryLoaded = -1;
+}
+
+void FreeRetiredGalleryTextures(bool all) {
+  for (size_t i = 0; i < sGalleryRetired.size();) {
+    // Two frames: the one that drew it may still be on its way to the GPU.
+    if (all || ++sGalleryRetired[i].frames > 2) {
+      aurora_imgui_remove_texture(sGalleryRetired[i].texture);
+      sGalleryRetired.erase(sGalleryRetired.begin() + i);
+    } else {
+      ++i;
+    }
+  }
+}
+
+void CloseGallery() {
+  sGalleryOpen = false;
+  // Retired, not freed: this frame may already have drawn it. DrawUI frees it a few frames on.
+  ReleaseGalleryTexture();
+  sGalleryPaths.clear();
+}
+
+void LoadGalleryPicture() {
+  ReleaseGalleryTexture();
+  sGalleryFailed = true;
+  sGalleryLoaded = sGalleryIndex;
+  std::ifstream file(PortGci::PathFromString(sGalleryPaths[sGalleryIndex]), std::ios::binary);
+  const std::vector<uint8_t> jpeg((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  int width = 0;
+  int height = 0;
+  std::vector<uint8_t> rgba;
+  if (!PortGallery::DecodeGalleryJpeg(jpeg.data(), jpeg.size(), width, height, rgba)) {
+    return;
+  }
+  sGalleryTexture = aurora_imgui_add_texture(uint32_t(width), uint32_t(height), rgba.data());
+  sGallerySize = ImVec2(float(width), float(height));
+  sGalleryFailed = false;
+}
+
+void DrawGalleryWindow() {
+  FreeRetiredGalleryTextures(false);
+  if (!sGalleryOpen) {
+    return;
+  }
+  const int count = int(sGalleryPaths.size());
+  const ImVec2 display = ImGui::GetMainViewport()->Size;
+  ImGui::SetNextWindowSize(ImVec2(display.x * 0.8f, display.y * 0.8f), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+  bool open = true;
+  if (ImGui::Begin("Gallery##port", &open)) {
+    const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    int step = 0;
+    if (ImGui::Button("Previous") || (focused && ImGui::IsKeyPressed(ImGuiKey_LeftArrow))) {
+      step = -1;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Next") || (focused && ImGui::IsKeyPressed(ImGuiKey_RightArrow))) {
+      step = 1;
+    }
+    ImGui::SameLine();
+    ImGui::Text("%d / %d", sGalleryIndex + 1, count);
+    ImGui::SameLine();
+    if (ImGui::Button("Close")) {
+      open = false;
+    }
+    if (step != 0) {
+      sGalleryIndex = (sGalleryIndex + step + count) % count;
+    }
+    if (sGalleryLoaded != sGalleryIndex) {
+      LoadGalleryPicture();
+    }
+    const ImVec2 avail = ImGui::GetContentRegionAvail();
+    if (sGalleryFailed) {
+      ImGui::TextDisabled("Cannot read this picture.");
+    } else if (avail.x > 1.0f && avail.y > 1.0f) {
+      const float scale = std::min(avail.x / sGallerySize.x, avail.y / sGallerySize.y);
+      const ImVec2 shown(sGallerySize.x * scale, sGallerySize.y * scale);
+      const ImVec2 cursor = ImGui::GetCursorPos();
+      ImGui::SetCursorPos(ImVec2(cursor.x + (avail.x - shown.x) * 0.5f, cursor.y + (avail.y - shown.y) * 0.5f));
+      ImGui::Image(sGalleryTexture, shown);
+    }
+  }
+  ImGui::End();
+  if (!open) {
+    CloseGallery();
+  }
+}
+
 void DrawRemasteredImport() {
   static char sImage[1024] = "";
   static char sKeys[1024] = "";
@@ -3501,9 +3613,9 @@ void DrawRemasteredImport() {
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
 #if defined(__ANDROID__)
-      ImGui::SetTooltip("Only the menu movies, added to the mod already imported.");
+      ImGui::SetTooltip("Only the menu movies and the gallery, added to the mod already imported.");
 #else
-      ImGui::SetTooltip("Only the menu movies, added to the mod already imported. Needs ffmpeg.");
+      ImGui::SetTooltip("Only the menu movies (needs ffmpeg) and the gallery, added to the mod already imported.");
 #endif
     }
     ImGui::EndDisabled();
@@ -3707,6 +3819,19 @@ void DrawExtrasTab() {
     ItemHelp("The language of the game's text. Only English is on the disc: the others come with the "
              "Remastered import (its text), and any text it lacks stays English. Applies on the next "
              "start.");
+  }
+
+  ImGui::SeparatorText("Gallery");
+  {
+    const std::vector<std::string> pictures = PortMods::GalleryPaths();
+    if (pictures.empty()) {
+      ImGui::TextDisabled("Remastered's concept art. It comes with the Remastered import.");
+    } else if (ImGui::Button(("Open gallery (" + std::to_string(pictures.size()) + " pictures)").c_str())) {
+      sGalleryPaths = pictures;
+      sGalleryIndex = std::min(sGalleryIndex, int(pictures.size()) - 1);
+      ReleaseGalleryTexture();
+      sGalleryOpen = true;
+    }
   }
 
   ImGui::SeparatorText("Unlocks");
@@ -5722,12 +5847,17 @@ void DrawUI() {
   FinishRemasteredImport();
   if (!sVisible) {
     sTouchScroll = TouchScroll{};
+    if (sGalleryOpen) {
+      CloseGallery();
+    }
+    FreeRetiredGalleryTextures(false);
     return;
   }
 
   UpdateTouchScroll();
   const bool open = PageLayout() ? DrawPageWindow() : DrawDesktopWindow();
   ClearTouchHover();
+  DrawGalleryWindow();
 
   if (!open) {
     sVisible = false;

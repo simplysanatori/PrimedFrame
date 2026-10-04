@@ -665,6 +665,13 @@ and rate, `MP_REMASTERED_MOVIES=0` leaves them out. A movie of any size is
 fitted to the view with its shape kept, so in 4:3 these have bars above and
 below.
 
+The concept art of the Extras gallery comes too: the 120 full-size pictures in
+`UI_FrontEnd` (taller than 1000 pixels) are written as JPEGs into the mod's
+`gallery` folder (`gallery/NNN.jpg`, fitted within 1920x1080, quality 90; about
+0.3 MB each, 36 MB in all), and F1 > Extras > Gallery opens them in a viewer window. The decoder
+is the one the game uses for THP movies, so no extra library is needed.
+`MP_REMASTERED_GALLERY=0` leaves them out.
+
 The decoding is done by **ffmpeg**, run as a separate program: `MP_FFMPEG` if
 set, else an `ffmpeg` next to the game's executable, else the one on the path.
 The Windows package has one next to the executable; on Linux install it from

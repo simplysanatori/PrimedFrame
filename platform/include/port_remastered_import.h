@@ -42,8 +42,8 @@ std::string DefaultKeysPath();
 // the game. The disc must be open. False (with the reason in the state's
 // message) when one is already running or there is no mods folder.
 bool StartImport(const std::string& nspPath, const std::string& keysPath, int threads = 0);
-// Only the menu movies (port_remastered_movie.h), into the mod an earlier
-// import made: for a player who had no ffmpeg then. Same state and cancelling;
+// Only the menu movies (port_remastered_movie.h) and the Extras gallery, into the mod an earlier
+// import made: for a player who had no ffmpeg then, or imported before the gallery. Same state and cancelling;
 // false when one is running or there is no such mod.
 bool StartMovieImport(const std::string& nspPath, const std::string& keysPath);
 // Whether the next import also converts the rooms themselves (five times the
