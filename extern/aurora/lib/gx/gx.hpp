@@ -392,7 +392,7 @@ struct GXState {
   u8 numIndStages = 0;
   u8 numTevStages = 0;
   u8 numTexGens = 0;
-  bool pbr = false; // GX_AURORA_SET_PBR
+  u8 pbr = 0; // GX_AURORA_SET_PBR: 2 is the flat diagnostic (GXSetPBRFlat)
   u8 sdf = 0; // GX_AURORA_SET_SDF
   std::array<u32, 3> drawTag{0, UINT32_MAX, 0}; // GX_AURORA_SET_DRAW_TAG: asset, model index, material
   Mat3x4<float> pbrProbe; // GX_AURORA_SET_PBR_PROBE

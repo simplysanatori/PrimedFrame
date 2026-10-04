@@ -1006,6 +1006,16 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                            tintAlpha, discard.expr);
     }
   }
+  if (config.pbr == 2) {
+    // GXSetPBRFlat: the base map, shaded by the facing only, and nothing else.
+    return fmt::format(R"""(
+    // PBR, flat (GXSetPBRFlat)
+    {{{}
+      let pbr_flat = 0.4 + 0.6 * max(dot(pbr_ng, normalize(-in.pbr_pos)), 0.0);
+      prev = vec4f({}.rgb * pbr_flat, prev.a{});
+    }})""",
+                       layer, base, tintAlpha);
+  }
   const bool framed = mapStage[2] != -1 || layered;
   if (framed) {
     // Cotangent frame (Schüler): pbr_t and pbr_b are the directions U and V grow in. WebGPU's

@@ -4865,6 +4865,13 @@ void DrawRendering() {
                           "Draws repeated props (rocks, grass) near each other as one model, lit as\n"
                           "a group. Off draws each copy on its own, with its own lights: slower, but a\n"
                           "way to check whether the merge changes how something looks.");
+    bool flat = GXGetPBRFlat();
+    if (ImGui::Checkbox("Flat shading (test)", &flat)) {
+      GXSetPBRFlat(flat);
+    }
+    ImGui::SetItemTooltip("Not saved. A speed test: draws Remastered surfaces with their colour map\n"
+                          "alone, without lighting or reflections. If frames get much faster, shading\n"
+                          "is what costs; if not, it's the resolution itself (memory traffic).");
     ImGui::EndDisabled();
     ImGui::SameLine();
     bool resident = sRoomGeoResident;

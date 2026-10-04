@@ -149,9 +149,15 @@ void GXSetArrayBaseIndex(GXAttr attr, u32 base) {
   GX_WRITE_U32(base);
 }
 
+static bool sPBRFlat = false;
+
+void GXSetPBRFlat(GXBool flat) { sPBRFlat = flat; }
+
+GXBool GXGetPBRFlat() { return sPBRFlat; }
+
 void GXSetPBR(GXBool enable) {
   GX_WRITE_AURORA(GX_AURORA_SET_PBR);
-  GX_WRITE_U8(enable ? 1 : 0);
+  GX_WRITE_U8(enable ? (sPBRFlat ? 2 : 1) : 0);
 }
 
 void GXSetSDF(u8 edge) {
