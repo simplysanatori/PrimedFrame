@@ -19,6 +19,7 @@ using aurora::gx::g_gxState;
 
 namespace aurora::gfx {
 extern uint32_t g_testDrawCount;
+extern bool g_testStorageFull;
 extern std::atomic<uint32_t> g_testProcessedDrawCount;
 namespace testing {
 extern std::atomic<uint32_t> beginOffscreenCount;
@@ -136,6 +137,37 @@ TEST_F(GXFifoTest, AutoSizedDrawPublishesAfterLengthPatch) {
   GXPosition3u8(6, 7, 8);
   GXEnd();
   aurora::gx::fifo::drain();
+  aurora::gx::fifo::end_frame();
+  aurora::gx::fifo::shutdown();
+
+  EXPECT_EQ(aurora::gfx::g_testDrawCount, 1u);
+}
+
+TEST_F(GXFifoTest, DrawIsDroppedWhenStorageIsFull) {
+  static const std::array<u8, 9> positions{0, 1, 2, 3, 4, 5, 6, 7, 8};
+  aurora::gx::fifo::init();
+  aurora::gx::fifo::begin_frame();
+  GXClearVtxDesc();
+  GXSetVtxDesc(GX_VA_POS, GX_INDEX8);
+  GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_U8, 0);
+  GXSetArray(GX_VA_POS, positions.data(), static_cast<u32>(positions.size()), 3, false);
+  aurora::gfx::g_testDrawCount = 0;
+  const auto draw = [] {
+    GXBegin(GX_TRIANGLES, GX_VTXFMT0, 3);
+    GXPosition1x8(0);
+    GXPosition1x8(1);
+    GXPosition1x8(2);
+    GXEnd();
+    aurora::gx::fifo::drain();
+  };
+
+  // The position array doesn't fit: the draw is skipped rather than aborting the game.
+  aurora::gfx::g_testStorageFull = true;
+  draw();
+  EXPECT_EQ(aurora::gfx::g_testDrawCount, 0u);
+  // Once there is room again, the array is pushed and drawn.
+  aurora::gfx::g_testStorageFull = false;
+  draw();
   aurora::gx::fifo::end_frame();
   aurora::gx::fifo::shutdown();
 

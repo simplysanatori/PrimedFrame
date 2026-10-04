@@ -131,7 +131,9 @@ namespace aurora::gfx {
 Range push_verts(const uint8_t* data, size_t length, size_t alignment) { return {}; }
 Range push_indices(const uint8_t* data, size_t length, size_t alignment) { return {}; }
 Range push_uniform(const uint8_t* data, size_t length) { return {}; }
-Range push_storage(const uint8_t* data, size_t length) { return {}; }
+// Tests set it to see draws dropped for want of storage room.
+bool g_testStorageFull = false;
+Range push_storage(const uint8_t* data, size_t length) { return g_testStorageFull ? OverflowRange : Range{}; }
 
 // The resident regions: tests set them, and see the uploads.
 Range g_testResidentRegions[3]{};

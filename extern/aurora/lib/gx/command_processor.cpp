@@ -417,10 +417,34 @@ static void warn_missing_uv_sets(const ShaderConfig& config, const ShaderInfo& i
   }
 }
 
+// A draw whose data the frame's buffers have no room left for (e.g. an oversized replacement
+// model) is dropped instead of aborting the game: true when range overflowed. Warns once per
+// model. Whatever was pushed before the drop is orphaned, so the next draw must not merge.
+static bool drop_overflowed_draw(gfx::Range range, const char* buffer) noexcept {
+  if (!gfx::overflowed(range))
+    LIKELY { return false; }
+  sDrawCache.lastDrawFmt = GX_MAX_VTXFMT;
+  static std::vector<u32> sReported;
+  const auto& tag = g_gxState.drawTag;
+  if (sReported.size() < 64 && std::find(sReported.begin(), sReported.end(), tag[0]) == sReported.end()) {
+    sReported.push_back(tag[0]);
+    if (tag[0] == 0 && tag[1] == UINT32_MAX) {
+      Log.warn("untagged draw dropped: the frame's {} buffer is full", buffer);
+    } else {
+      Log.warn("model {:08X} (index {}) material {}: draw dropped, the frame's {} buffer is full", tag[0],
+               static_cast<s32>(tag[1]), tag[2], buffer);
+    }
+  }
+  return true;
+}
+
 static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Range vertRange, gfx::Range idxRange,
                          u32 numIndices) noexcept {
   auto& state = g_gxState;
   auto& cache = sDrawCache;
+  if (drop_overflowed_draw(vertRange, "vertex") || drop_overflowed_draw(idxRange, "index")) {
+    return;
+  }
 
   DrawImmediateData immediates{.vtxStart = vertRange.offset, .currentPnMtx = state.currentPnMtx};
   for (int i = GX_VA_POS; i <= GX_VA_TEX7; ++i) {
@@ -430,6 +454,10 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     auto& array = state.arrays[i];
     if (array.cachedRange.size == 0 && !resident::array_range(array.data, array.size, array.cachedRange)) {
       array.cachedRange = gfx::push_storage(static_cast<const uint8_t*>(array.data), array.size);
+      if (drop_overflowed_draw(array.cachedRange, "storage")) {
+        array.cachedRange = {};
+        return;
+      }
     }
     immediates.arrayStart[i - GX_VA_POS] = array.cachedRange.offset + array.baseIndex * array.stride;
   }
@@ -472,12 +500,20 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
   const bool uniformValid = (state.dirty & DirtyUniform) == 0 && cache.uniformRange.size != 0;
   if (!uniformValid) {
     cache.uniformRange = build_uniform(cache.shaderInfo);
+    if (drop_overflowed_draw(cache.uniformRange, "uniform")) {
+      cache.uniformRange = {};
+      return;
+    }
     state.dirty &= ~DirtyUniform;
   }
   if (cache.config.shaderConfig.fogRangeEnabled) {
     const auto key = fog_range_lut_key();
     if (!cache.hasFogRange || cache.fogRangeKey != key) {
       cache.fogRange = push_fog_range_lut(key);
+      if (drop_overflowed_draw(cache.fogRange, "storage")) {
+        cache.hasFogRange = false;
+        return;
+      }
       cache.fogRangeKey = key;
       cache.hasFogRange = true;
     }
@@ -545,6 +581,9 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
   // Push raw vertex data to buffer. Merged draws must remain contiguous with the previous range.
   const auto vertexData = reader.take(totalVtxBytes);
   gfx::Range vertRange = gfx::push_verts(vertexData.data(), vertexData.size(), canMerge ? 0 : 4);
+  if (drop_overflowed_draw(vertRange, "vertex")) {
+    return;
+  }
 
   // Try to merge with previous draw call
   if (canMerge) {
@@ -552,6 +591,7 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
     gfx::Range idxRange;
     static ByteBuffer idxBuf;
     const bool hadIndexRange = lastDraw->idxRange.size != 0;
+    const u32 prevIndexCount = lastDraw->indexCount;
     if (lastDraw->indexCount == 0 && prim != GX_TRIANGLES) {
       // Generate triangle index buffer for previous draw
       lastDraw->indexCount = prepare_idx_buffer(idxBuf, GX_TRIANGLES, 0, lastDraw->vtxCount);
@@ -560,6 +600,10 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
       numIndices += prepare_idx_buffer(idxBuf, prim, lastDraw->vtxCount, vtxCount);
       idxRange = gfx::push_indices(idxBuf.data(), idxBuf.size(), hadIndexRange ? 0 : 4);
       idxBuf.clear();
+      if (drop_overflowed_draw(idxRange, "index")) {
+        lastDraw->indexCount = prevIndexCount;
+        return;
+      }
     }
     CHECK(lastDraw->vertRange.offset + lastDraw->vertRange.size == vertRange.offset,
           "Non-consecutive vertex ranges ({} < {})", lastDraw->vertRange.offset + lastDraw->vertRange.size,

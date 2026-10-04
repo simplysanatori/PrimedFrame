@@ -250,7 +250,23 @@ void seal_pass(FramePacket& frame, uint32_t passIndex) {
   pass.sealed = true;
 }
 
+// The frame's buffers wrap mapped staging memory of a fixed size; growing one past it aborts.
+static bool fits(const ByteBuffer& target, size_t length, size_t alignment) {
+  const size_t begin = alignment != 0 ? AURORA_ALIGN(target.size(), alignment) : target.size();
+  if (target.can_append(begin - target.size() + length))
+    LIKELY { return true; }
+  static bool warned = false;
+  if (!warned) {
+    warned = true;
+    Log.warn("frame buffer full at {} bytes: dropping a {}-byte push (warned once)", target.size(), length);
+  }
+  return false;
+}
+
 Range push(ByteBuffer& target, const uint8_t* data, size_t length, size_t alignment) {
+  if (!fits(target, length, alignment)) {
+    return OverflowRange;
+  }
   if (alignment != 0) {
     const size_t begin = target.size();
     const size_t alignedBegin = AURORA_ALIGN(begin, alignment);
@@ -266,6 +282,9 @@ Range push(ByteBuffer& target, const uint8_t* data, size_t length, size_t alignm
 }
 
 Range map(ByteBuffer& target, size_t length, size_t alignment) {
+  if (!fits(target, length, alignment)) {
+    return OverflowRange;
+  }
   if (alignment != 0) {
     const size_t begin = target.size();
     const size_t alignedBegin = AURORA_ALIGN(begin, alignment);
@@ -1213,7 +1232,9 @@ void finish() {
   AURORA_ASSERT(!g_recorder.inOffscreen, "finish called while offscreen rendering is active");
   if (g_recorder.currentRenderPass != UINT32_MAX) {
     auto& frame = current_frame_packet();
-    frame.uniforms.append_zeroes(gx::MaxUniformSize);
+    if (frame.uniforms.can_append(gx::MaxUniformSize)) {
+      frame.uniforms.append_zeroes(gx::MaxUniformSize);
+    }
     auto& pass = frame.renderPasses[g_recorder.currentRenderPass];
     pass.captureDepthSnapshot = true;
     // The next frame starts by clearing the EFB.
@@ -1244,7 +1265,13 @@ Range push_uniform(const uint8_t* data, size_t length) {
   if (!check_recording("push_uniform")) {
     return {};
   }
-  return push(current_frame_packet().uniforms, data, length, resources().limits.minUniformBufferOffsetAlignment);
+  auto& uniforms = current_frame_packet().uniforms;
+  const auto alignment = resources().limits.minUniformBufferOffsetAlignment;
+  // A uniform is bound as a MaxUniformSize window, which must stay inside the buffer.
+  if (!fits(uniforms, length + gx::MaxUniformSize, alignment)) {
+    return OverflowRange;
+  }
+  return push(uniforms, data, length, alignment);
 }
 
 Range push_storage(const uint8_t* data, size_t length) {
@@ -1259,6 +1286,9 @@ Range push_texture_data(const uint8_t* data, u32 bytesPerRow, u32 rowsPerImage) 
   // For CopyBufferToTexture, we need an alignment of 256 per row (see Dawn kTextureBytesPerRowAlignment)
   const auto copyBytesPerRow = AURORA_ALIGN(bytesPerRow, 256);
   const auto range = map(current_frame_packet().textureUpload, copyBytesPerRow * rowsPerImage, 0);
+  if (overflowed(range)) {
+    return range;
+  }
   u8* dst = current_frame_packet().textureUpload.data() + range.offset;
   for (u32 i = 0; i < rowsPerImage; ++i) {
     memcpy(dst, data, bytesPerRow);

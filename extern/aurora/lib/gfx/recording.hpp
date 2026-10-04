@@ -65,6 +65,11 @@ struct ConvRequest;
 }
 void queue_palette_conv(tex_palette_conv::ConvRequest req);
 
+// What the push functions return when the frame's mapped buffer has no room left for the data
+// (a mapped buffer cannot grow). The caller drops whatever needed it.
+inline constexpr Range OverflowRange{UINT32_MAX, 0};
+constexpr bool overflowed(const Range& range) noexcept { return range.offset == OverflowRange.offset; }
+
 Range push_verts(const uint8_t* data, size_t length, size_t alignment);
 template <typename T>
 Range push_verts(ArrayRef<T> data, size_t alignment) {
