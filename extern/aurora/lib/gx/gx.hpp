@@ -526,7 +526,8 @@ struct ShaderConfig {
   u8 pad1 : 5 = 0;
   u8 pbr = 0; // GX_AURORA_SET_PBR
   u8 sdf = 0; // GX_AURORA_SET_SDF
-  std::array<u8, 3> pad2{};
+  u8 pbrKind = 0; // with pbr, the special surface kind (pbrLayer.y), a constant in the shader
+  std::array<u8, 2> pad2{};
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;

@@ -965,7 +965,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // A vertex colour is the surface's tint where the material says so (mode 4), whatever
   // the channel does with it: the game points an unlit channel at its material register,
   // which would lose it. A retail model's colours are not a tint.
-  // A special surface (the kind in pbr_layer.y) reads the colour its own way, tint or not.
+  // A special surface (the kind in pbr_layer.y, built into the shader as ShaderConfig::pbrKind
+  // so the other kinds' code drops out) reads the colour its own way, tint or not.
   std::string tint, tintAlpha, vclr = "vec4f(1.0)";
   if (config.attrs[GX_VA_CLR0].attrType != GX_NONE) {
     vtxOutAttrs += fmt::format("\n    @location({}) pbr_vclr: vec4f,", vtxOutIdx++);
@@ -986,7 +987,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // every back copy; Remastered keeps the surface's own normal there, and so does this.
       let pbr_ngs = normalize(in.pbr_nrm);
       let pbr_ng = select(pbr_ngs, -pbr_ngs, ubuf.pbr_light_scale.y == 0.0);
-      let pbr_kind = ubuf.pbr_layer.y;
+      let pbr_kind = {:.1f};
       let pbr_vraw = {};
       // 8 = Remastered's ColorUnlit: its vertex shader linearises the colour and doubles
       // it, and the pixel shader's gain is in the backlight's place.
@@ -996,7 +997,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       if (pbr_cu) {{
           pbr_vc = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)) * ubuf.pbr_backlight.rgb, pbr_vraw.a);
       }})""",
-                                  vclr);
+                                  float(config.pbrKind), vclr);
   // A cut-out pixel (grass, leaves) that the alpha compare drops is dropped here instead of
   // after the shading. The compare sees prev.a times the vertex alpha unless a height blend,
   // ColorUnlit or a glow mode changes it (pbr_alpha below), and a layered surface's alpha is
