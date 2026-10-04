@@ -341,6 +341,8 @@ void TestRejects() {
   PutConstant(out, Bits(2.0f));
   PutProperty(out, "LFOT", 0);
   out.push_back(3);
+  PutProperty(out, "LTYP", 0);
+  out.push_back(1);
   PutProperty(out, "_END", 4);
   Put32(out, 0);
   EffectNode effect;
@@ -349,8 +351,8 @@ void TestRejects() {
   const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
   Check(parts.size() == 1 && parts[0].droppedRetail == 1, "RADD in SIZE is dropped");
   Retail root;
-  root.f("GPSM").f("LFOT").f("CNST").w(2).f("_END");
-  Check(parts.size() == 1 && parts[0].part == root.bytes, "LFOT byte 3 is retail 2");
+  root.f("GPSM").f("LFOT").f("CNST").w(3).f("LTYP").f("CNST").w(2).f("_END");
+  Check(parts.size() == 1 && parts[0].part == root.bytes, "LFOT byte 3 is retail 3, LTYP byte 1 is retail 2");
 }
 }  // namespace
 

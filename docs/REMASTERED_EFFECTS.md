@@ -117,8 +117,10 @@ PART on the disc:
   - EMTR: SETR becomes SEMR. VEL1-3, PMOP, PMRT and the emitter's vectors
     are wrapped in MPCB; stripping it gives retail's vector.
   - ROTA is negated: `SCAL(5)` becomes `MULT(SCAL(5), -1)`, and 180 becomes -180.
-  - LFOT and LTYP: int CNST becomes an enum byte, shifted by one (LTYP 1 →
-    `#02`, LFOT 2 → `#03`).
+  - LFOT and LTYP: int CNST becomes an enum byte. The exe reads LFOT's byte
+    as retail's value and swaps LTYP's 1 and 2 (retail 1 is `#02`). The pairs
+    seen in the data (LFOT 2 → `#03`) look like a shift by one, but are retuned
+    effects, not the encoding.
   - PSLT loses its inline PSTS, which becomes its own property.
   - Child PART ids (ICTS/IDTS/IITS/KSSM) become embedded children.
 - **Dropped**: properties retail stored at their default. Of the omissions,
@@ -155,8 +157,8 @@ those are the grammar gaps to close next.
 PART. It is driven by retail's reader (`CParticleDataFactory`): each property
 retail knows is written as the type retail reads it as, and each element in it
 must be one retail has for that type, with retail's arguments. On the way it
-undoes the re-encodings above: LTM2 is written as LTME less one, LFOT/LTYP go back down
-by one, MPCB is stripped (cartesian form only), ROTA is negated back (a
+undoes the re-encodings above: LTM2 is written as LTME less one, LTYP's 1 and 2 are swapped
+back (LFOT is kept), MPCB is stripped (cartesian form only), ROTA is negated back (a
 `MULT(x, -1)` becomes `x`, anything else is wrapped in one), TEXR's
 `CNST(id), NONE` becomes `CNST CNST id`, an MTIN stands in for a missing TEXR
 through its material's texture, words and keyframe blocks are byte-swapped,
@@ -282,10 +284,10 @@ There is no gun light to port. Remastered's arm cannon has no charge-beam
 dynamic light: the retail gun light (`UpdateGunLight`) colours the gun's own
 particle effect.
 
-The converter writes LTYP and LFOT as Remastered's byte minus one. The exe reads LTYP 1 as retail 2 and LTYP 2 as retail 1, and
-reads LFOT unchanged. The import replaces the root effect's light block with
-the disc's, so this matters only for embedded children's lights. It is not
-fixed yet.
+The converter maps LTYP and LFOT the way the exe reads them: LTYP 1 is
+retail 2 and LTYP 2 is retail 1, and LFOT is unchanged. The import replaces
+the root effect's light block with the disc's, so this matters only for
+embedded children's lights.
 
 ## Tools
 

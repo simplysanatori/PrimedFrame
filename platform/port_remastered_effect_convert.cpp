@@ -587,19 +587,21 @@ public:
     default:
       break;
     }
-    // LFOT and LTYP: Remastered writes the enum as a byte, one above retail's int.
+    // LFOT and LTYP: Remastered writes the enum as a byte. The exe maps it to retail's
+    // int as LFOT 0-3 unchanged and LTYP 0, 2, 1, 3 (its point and spot are swapped).
     if (fourcc == F("LFOT") || fourcc == F("LTYP")) {
       const EffectValue* byte = value.size() == 1 ? &value[0] : nullptr;
       if (byte != nullptr && IsElement(*byte, F("CNST")) && byte->args.size() == 1) {
         byte = &byte->args[0];
       }
       if (byte != nullptr && byte->kind == EffectValue::Kind::Byte) {
-        if (byte->word == 0) {
-          why = "enum byte 0";
+        if (byte->word > 3) {
+          why = "enum byte " + std::to_string(byte->word);
           return false;
         }
+        static constexpr uint32_t kLightType[4] = {0, 2, 1, 3};
         PutBe32(out, F("CNST"));
-        PutBe32(out, byte->word - 1);
+        PutBe32(out, fourcc == F("LTYP") ? kLightType[byte->word] : byte->word);
         return true;
       }
     }
