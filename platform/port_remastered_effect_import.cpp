@@ -48,6 +48,53 @@ std::string Hex(uint32_t id) {
 
 int RoundUp4(int side) { return std::max(8, (side + 3) / 4 * 4); }
 
+bool IsLight(uint32_t fourcc) {
+  for (uint32_t light : {EffectFourCC("LTYP"), EffectFourCC("LFOT"), EffectFourCC("LCLR"), EffectFourCC("LINT"),
+                         EffectFourCC("LOFF"), EffectFourCC("LDIR"), EffectFourCC("LFOR"), EffectFourCC("LSLA")}) {
+    if (fourcc == light) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool HasLight(const std::vector<RetailPartProperty>& properties) {
+  return std::any_of(properties.begin(), properties.end(),
+                     [](const RetailPartProperty& property) { return property.fourcc == EffectFourCC("LTYP"); });
+}
+
+void PutFourCC(std::vector<uint8_t>& out, uint32_t fourcc) {
+  for (int shift = 24; shift >= 0; shift -= 8) {
+    out.push_back(uint8_t(fourcc >> shift));
+  }
+}
+
+// `converted` with its light replaced by the disc PART's. Remastered leaves
+// out LOFF/LDIR/LFOR/LSLA (it has LIRD/LORD instead, which do not map onto
+// them) and differs from retail in places, so the disc's light is the one
+// retail's lighting was made for.
+std::vector<uint8_t> WithDiscLight(const std::vector<RetailPartProperty>& converted,
+                                   const std::vector<RetailPartProperty>& disc) {
+  std::vector<uint8_t> out;
+  PutFourCC(out, EffectFourCC("GPSM"));
+  auto put = [&](const RetailPartProperty& property) {
+    PutFourCC(out, property.fourcc);
+    out.insert(out.end(), property.value.begin(), property.value.end());
+  };
+  for (const RetailPartProperty& property : converted) {
+    if (!IsLight(property.fourcc)) {
+      put(property);
+    }
+  }
+  for (const RetailPartProperty& property : disc) {
+    if (IsLight(property.fourcc)) {
+      put(property);
+    }
+  }
+  PutFourCC(out, EffectFourCC("_END"));
+  return out;
+}
+
 class Importer {
 public:
   explicit Importer(const EffectImportIO& io) : m_io(io) {}
@@ -180,7 +227,17 @@ public:
       ++m_result.parts;
       m_result.dropped += parts[i].droppedRetail;
     }
-    if (!m_io.write(name, parts[0].part)) {
+    std::vector<uint8_t> root = parts[0].part;
+    std::vector<RetailPartProperty> converted;
+    std::vector<RetailPartProperty> disc;
+    std::vector<uint8_t> discData;
+    if (m_io.retail && SplitRetailPart(root.data(), root.size(), converted, error) && HasLight(converted) &&
+        m_io.retail(kPart, *retail, discData) &&
+        SplitRetailPart(discData.data(), discData.size(), disc, error) && HasLight(disc)) {
+      root = WithDiscLight(converted, disc);
+      Log(name + ": light from the disc");
+    }
+    if (!m_io.write(name, root)) {
       ++m_result.failed;
       Log(name + ": could not write it");
       return;

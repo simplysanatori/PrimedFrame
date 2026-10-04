@@ -1031,6 +1031,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     };
     effectIO.typeOf = [&](const EffectGuid& id) { return remastered.EffectAssetType(id); };
     effectIO.retailId = [&](uint32_t id) { return retail.HasId(id); };
+    effectIO.retail = [&](uint32_t type, uint32_t id, std::vector<uint8_t>& out) { return retail.Read(type, id, out); };
     effectIO.freshId = [&](uint32_t seed) {
       std::lock_guard<std::mutex> lock(takenMutex);
       uint32_t id = seed;

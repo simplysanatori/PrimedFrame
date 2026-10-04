@@ -97,6 +97,10 @@ void TestImport() {
   PutProperty(genp, "MTIN", 1);
   genp.push_back(0);
   PutGuid(genp, material);
+  PutProperty(genp, "LTYP", 0);
+  genp.push_back(2);
+  PutProperty(genp, "LFOT", 0);
+  genp.push_back(2);  // retail 1; the disc's 2 wins
   PutProperty(genp, "_END", 4);
   Put32(genp, 1);
   PutGuid(genp, child);
@@ -130,6 +134,22 @@ void TestImport() {
     return id == Swap(texture) ? kTxtr : id == Swap(material) ? kMati : 0;
   };
   io.retailId = [](uint32_t id) { return id == 0x1234; };
+  // The disc's PART: its light replaces the converted one, the rest is ignored.
+  std::vector<uint8_t> disc;
+  for (uint32_t word : {EffectFourCC("GPSM"), EffectFourCC("MAXP"), EffectFourCC("CNST"), 9u, EffectFourCC("LTYP"),
+                        EffectFourCC("CNST"), 1u, EffectFourCC("LFOT"), EffectFourCC("CNST"), 2u,
+                        EffectFourCC("LFOR"), EffectFourCC("CNST"), 0x40400000u, EffectFourCC("_END")}) {
+    for (int shift = 24; shift >= 0; shift -= 8) {
+      disc.push_back(uint8_t(word >> shift));
+    }
+  }
+  io.retail = [&](uint32_t type, uint32_t id, std::vector<uint8_t>& out) {
+    if (type != EffectFourCC("PART") || id != 0x1234) {
+      return false;
+    }
+    out = disc;
+    return true;
+  };
   uint32_t next = 0x00ABC000;
   io.freshId = [&](uint32_t) { return next++; };
   io.texture = [&](const EffectGuid& id, int& width, int& height, std::vector<uint8_t>& rgba, std::string& error) {
@@ -161,7 +181,16 @@ void TestImport() {
   Check(SplitRetailPart(part.data(), part.size(), root, error), "the root reads as a PART");
   bool spawnsChild = false;
   bool drawsTexture = false;
+  int lights = 0;
+  uint32_t maxp = 0;
+  uint32_t lfot = 0;
+  uint32_t lfor = 0;
   for (const RetailPartProperty& property : root) {
+    const uint32_t word = property.value.size() == 8 ? Be32(property.value.data() + 4) : 0;
+    lights += property.fourcc == EffectFourCC("LTYP");
+    maxp = property.fourcc == EffectFourCC("MAXP") ? word : maxp;
+    lfot = property.fourcc == EffectFourCC("LFOT") ? word : lfot;
+    lfor = property.fourcc == EffectFourCC("LFOR") ? word : lfor;
     if (property.fourcc == EffectFourCC("ICTS")) {
       spawnsChild = property.value.size() == 8 && Be32(property.value.data() + 4) == 0x00ABC000;
     }
@@ -171,6 +200,8 @@ void TestImport() {
   }
   Check(spawnsChild, "the root spawns its child by the child's new id");
   Check(drawsTexture, "the root draws its material's texture by its new id");
+  Check(lights == 1 && lfot == 2 && lfor == 0x40400000u, "the root's light is the disc's");
+  Check(maxp == 5, "the root keeps its other properties");
   const std::vector<uint8_t>& txtr = written["00ABC001.TXTR"];
   Check(txtr.size() > 12 && Be32(txtr.data()) == 9 && (txtr[4] << 8 | txtr[5]) == 256 && (txtr[6] << 8 | txtr[7]) == 256,
         "the texture is an RGBA8 TXTR scaled to 256");

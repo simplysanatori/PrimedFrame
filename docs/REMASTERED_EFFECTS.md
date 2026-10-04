@@ -227,6 +227,13 @@ on the disc is converted and written as `<ID>.PART`, replacing the disc's.
 Its embedded children are written under new ids, and a texture it names that
 the disc does not have (its material instance's first TXTR, or a TXTR of
 Remastered's own) is written as an RGBA8 `<ID>.TXTR`, at most 256 on a side.
+When both the converted root and the disc's PART have a light (LTYP), the
+root's whole light block (LTYP LFOT LCLR LINT LOFF LDIR LFOR LSLA) is replaced
+by the disc's. The reason is that Remastered leaves out LOFF/LDIR/LFOR/LSLA, its
+LIRD/LORD don't map onto them (LORD 1 stands for LFOR 3 in one effect and 5 in
+another), and it differs from the disc in places (LFOT, LINT). Embedded
+children have no disc PART, so they keep their own light, and `CElementGen`
+uses its defaults for whatever they leave out.
 Effects with no retail id (most world effects) are not used yet: nothing on
 the disc names them. The step is off by default. Like the rest of the import, the files take effect
 at the next mods reload (`mods reload` or the debug menu), no restart needed.

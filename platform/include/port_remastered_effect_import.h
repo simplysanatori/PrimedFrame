@@ -34,6 +34,9 @@ struct EffectImportIO {
   std::function<uint32_t(const EffectGuid& id)> typeOf;
   // Whether the disc has a resource with this id.
   std::function<bool(uint32_t id)> retailId;
+  // A disc resource's bytes by type and id; false when the disc has none.
+  // Optional: without it a converted effect keeps its own light.
+  std::function<bool(uint32_t type, uint32_t id, std::vector<uint8_t>& out)> retail;
   // A new id for a resource of the import, never one the disc or the import
   // already has; `seed` makes it the same in every import.
   std::function<uint32_t(uint32_t seed)> freshId;

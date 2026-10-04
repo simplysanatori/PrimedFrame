@@ -501,6 +501,17 @@ int Import(const std::string& romfs, const std::string& retailDir, const std::st
     return found == types.end() ? 0 : found->second;
   };
   io.retailId = [&](uint32_t id) { return disc.count(id) != 0; };
+  io.retail = [&](uint32_t type, uint32_t id, std::vector<uint8_t>& out) {
+    char name[16];
+    std::snprintf(name, sizeof(name), "%08X.%c%c%c%c", id, char(type >> 24), char(type >> 16), char(type >> 8),
+                  char(type));
+    std::ifstream file(std::filesystem::path(retailDir) / name, std::ios::binary);
+    if (!file) {
+      return false;
+    }
+    out.assign(std::istreambuf_iterator<char>(file), {});
+    return !out.empty();
+  };
   std::set<uint32_t> taken;
   io.freshId = [&](uint32_t seed) {
     uint32_t id = seed;
