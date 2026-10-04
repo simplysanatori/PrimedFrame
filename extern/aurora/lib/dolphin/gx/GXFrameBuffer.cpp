@@ -91,8 +91,11 @@ void copy_tex(const void* dest, GXBool clear) noexcept {
   const auto clearColor = clear && g_gxState.colorUpdate;
   const auto clearAlpha = clear && g_gxState.alphaUpdate;
   const auto clearDepth = clear && g_gxState.depthUpdate;
-  gfx::resolve_pass_into(handle.handle, rect, clearColor, clearAlpha, clearDepth, g_gxState.clearColor,
-                         clear_depth_value(), texCopyFmt);
+  // Cost test 11 measures what the copies' pass breaks cost; a copy that clears still has to.
+  if (clear || GXGetPBRCostTest() != 11) {
+    gfx::resolve_pass_into(handle.handle, rect, clearColor, clearAlpha, clearDepth, g_gxState.clearColor,
+                           clear_depth_value(), texCopyFmt);
+  }
   ++handle.revision;
   handle.lastCopy = ++s_copySerial;
   handle.width = g_gxState.texCopyDstWidth;

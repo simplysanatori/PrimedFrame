@@ -4901,7 +4901,8 @@ void DrawRendering() {
     static constexpr const char* kCostTests[] = {"Off", "Flat", "No lights", "No ambient volume",
                                                  "No reflections", "No normal maps", "No ORM/emissive maps",
                                                  "Maps only", "Maps without anisotropy",
-                                                 "Maps without anisotropy or mip blend"};
+                                                 "Maps without anisotropy or mip blend",
+                                                 "No post-processing", "No screen copies"};
     int costTest = int(GXGetPBRCostTest());
     if (ImGui::Combo("Shading cost test", &costTest, kCostTests, IM_ARRAYSIZE(kCostTests))) {
       GXSetPBRCostTest(u32(costTest));
@@ -4909,8 +4910,10 @@ void DrawRendering() {
     ImGui::SetItemTooltip("Not saved. A speed test: leaves out one part of the Remastered surfaces'\n"
                           "shading (Flat leaves out all of it but the colour map), so the frame rate\n"
                           "shows what that part costs. Maps only is Flat with every map still read, to\n"
-                          "tell reading the maps from the maths. Looks wrong on purpose. The last two\n"
-                          "shade in full but filter the maps more cheaply, and look a little softer.");
+                          "tell reading the maps from the maths. Looks wrong on purpose. The two\n"
+                          "without anisotropy shade in full but filter the maps more cheaply, and look a\n"
+                          "little softer. The last two time the frame around the shading: no bloom and\n"
+                          "colour grade, and no copies of the screen for effects such as heat haze.");
     ImGui::EndDisabled();
     ImGui::SameLine();
     bool resident = sRoomGeoResident;

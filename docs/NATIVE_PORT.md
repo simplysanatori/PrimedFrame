@@ -1060,6 +1060,10 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   plain tick state, as the frame limiter does. The console's `present` sets it
   live; see `docs/FRAME_INTERPOLATION.md` (section 7) for the comparison
   recipe.
+- `MP_PASS_LOG=<N>`: logs every render pass of one frame in N (draws, load and
+  store ops, resolve copy), to find what splits the frame into passes. In
+  Landing Site gameplay the world pass is broken by bloom and, on frames with
+  heat haze or rain, by the indirect-particle screen copy.
 - `MP_CONSOLE=<port>` (any build, `1` = 4777, POSIX only): a debug
   command console on 127.0.0.1. Its `press`/`stick` input is read even when
   the window has no keyboard focus. `tools/mpcon.py` is the client: one-shot

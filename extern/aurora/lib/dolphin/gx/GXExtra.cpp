@@ -72,6 +72,9 @@ struct PBRMaterialWrite {
 extern "C" {
 GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
                          u32 gradeB, f32 gradeWeight, f32 exposure) {
+  if (GXGetPBRCostTest() == 10) {
+    return true;
+  }
   aurora::gfx::bloom::Params params{};
   params.bloom = bloom ? 1 : 0;
   params.threshold = threshold;
@@ -153,13 +156,14 @@ void GXSetArrayBaseIndex(GXAttr attr, u32 base) {
 
 static u32 sPBRCostTest = 0;
 
-void GXSetPBRCostTest(u32 test) { sPBRCostTest = test <= 9 ? test : 0; }
+void GXSetPBRCostTest(u32 test) { sPBRCostTest = test <= 11 ? test : 0; }
 
 u32 GXGetPBRCostTest() { return sPBRCostTest; }
 
 void GXSetPBR(GXBool enable) {
   GX_WRITE_AURORA(GX_AURORA_SET_PBR);
-  GX_WRITE_U8(enable ? static_cast<u8>(1 + sPBRCostTest) : 0);
+  // Tests 10 and 11 are outside the shading.
+  GX_WRITE_U8(enable ? static_cast<u8>(1 + (sPBRCostTest <= 9 ? sPBRCostTest : 0)) : 0);
 }
 
 void GXSetSDF(u8 edge) {

@@ -110,7 +110,10 @@ void GXSetPBRDebugView(u32 view);
 // map alone; cut-outs still cut), 2 no lights, 3 no ambient volume, 4 no reflection cube,
 // 5 no normal maps, 6 no metal/roughness and emissive maps, 7 flat but with every map
 // still read, 8 full shading with the maps' anisotropy off, 9 as 8 with nearest mips.
-// Takes effect at the next GXSetPBR(GX_TRUE).
+// Takes effect at the next GXSetPBR(GX_TRUE). Two leave the shading alone and measure the
+// frame around it: 10 no post-processing (GXPortPostProcess does nothing), 11 no screen
+// copies (GXCopyTex without a clear copies nothing, so the frame stays one render pass;
+// what samples the copy sees stale texels).
 void GXSetPBRCostTest(u32 test);
 u32 GXGetPBRCostTest(void);
 // Aurora extension: a three-piece tone curve over the lit colour x, which is taken as

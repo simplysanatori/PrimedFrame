@@ -20,6 +20,7 @@
 #include "../window.hpp"
 
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <new>
 #include <optional>
@@ -545,10 +546,34 @@ void discard_dead_stores(RenderPass& pass, bool colorDead, bool depthDead) {
   }
 }
 
+void log_pass(const FramePacket& frame, const RenderPass& p) {
+  // MP_PASS_LOG=N logs every pass of one frame in N, to find what breaks the frame up.
+  static const int every = [] {
+    const char* env = std::getenv("MP_PASS_LOG");
+    return env != nullptr ? std::atoi(env) : 0;
+  }();
+  if (every <= 0 || frame.frameId % every != 0) {
+    return;
+  }
+  const auto& c = p.colorAttachments[SceneColorAttachmentIndex];
+  size_t draws = 0;
+  for (const auto& cmd : p.commands) {
+    draws += cmd.type == CommandType::Draw || cmd.type == CommandType::CustomDraw;
+  }
+  Log.info("pass f{} '{}' {}x{} msaa{} draws{} cload{} cstore{} dclear{} dstore{} resolve{} {}x{}+{},{} fmt{} probe{} "
+           "snapC{} snapD{} discardable{}",
+           frame.frameId, p.label, c.size.width, c.size.height, p.msaaSamples, draws,
+           c.clear ? "C" : "L", static_cast<int>(c.storeOp), p.clearDepth,
+           static_cast<int>(p.depthStoreOp), static_cast<bool>(p.resolveTarget), p.resolveRect.width,
+           p.resolveRect.height, p.resolveRect.x, p.resolveRect.y, static_cast<int>(p.resolveFormat), p.probeFace,
+           static_cast<bool>(p.snapshotColorDst), static_cast<bool>(p.snapshotDepthDst), p.discardable);
+}
+
 void enqueue_pass(FramePacket& frame, uint32_t passIndex) {
   if (!frame.renderPasses[passIndex].discardable) {
     ++g_recorder.renderPassCount;
   }
+  log_pass(frame, frame.renderPasses[passIndex]);
   seal_pass(frame, passIndex);
   const auto opIndex = static_cast<uint32_t>(frame.ops.size());
   frame.ops.emplace_back(capture_frame_op(frame, FrameOpType::RenderPass, passIndex));
