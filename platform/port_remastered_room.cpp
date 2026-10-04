@@ -747,6 +747,7 @@ constexpr int kStatePlay = 18;  // EScriptObjectState kSS_Play
 constexpr int kRetailDamageableTrigger = 0x1a;
 constexpr int kStateMaxReached = 7;
 constexpr uint8_t kRetailCounter = 0x06;
+constexpr uint8_t kRetailTimer = 0x05;
 // A retail Counter as Remastered remade it; the ones it added match no retail object.
 constexpr uint32_t kCounterMP1 = 0x32aef7dd;
 constexpr uint32_t kEventCounterMP1Max = 0x18977288;
@@ -808,7 +809,7 @@ struct Pass {
 };
 constexpr Pass kPasses[] = {
     {0x15, {0x379d362e, 0x379d362e}},  // Relay
-    {0x05, {0xd63b8f04, 0x55193b90}},  // Timer
+    {kRetailTimer, {0xd63b8f04, 0x55193b90}},  // Timer
     {0x13, {0x326ddb0d, 0x326ddb0d}},  // MemoryRelay
     {0x5e, {0x144d0f29, 0x8ed2a8c7}},  // ColorModulate
 };
@@ -2475,6 +2476,18 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     }
     glows[size_t(target)] = glow;
   }
+  // Entities a Timer hides. One that also starts hidden is shown only while an event plays:
+  // the waterfalls of Ice Shorelines and the Hive Totem pour for 17 and 6.25 s and fade with
+  // their Waterfalls.GRDU driver, and pieces of the Frigate's hangar flash for 0.25 s. A link
+  // keeps no delay, so drawing one would leave it shown for good once its event fires.
+  std::set<int> timedOff;
+  for (const Connection& link : links) {
+    const int target = r.room.ByGuid(link.target);
+    if (target >= 0 && RetailType(comps[link.sender].type) == kRetailTimer &&
+        LinkAct(link.action) == PortRoomGeo::kHide) {
+      timedOff.insert(comps[size_t(target)].entity >= 0 ? comps[size_t(target)].entity : target);
+    }
+  }
   for (const Component* c : r.room.Of(kActorMP1)) {
     const auto f = r.room.Flat(*c);
     const auto prop = f.find(kPropActorModel);
@@ -2488,7 +2501,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       continue;
     }
     const bool active = r.room.Active(*c);
-    if (!active && !canShow(c->entity)) {
+    if (!active && (!canShow(c->entity) || timedOff.count(c->entity) != 0)) {
       ++inactive;
       continue;
     }
