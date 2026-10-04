@@ -155,7 +155,9 @@ bool sInvulnerable = false;
 // MP_GODMODE, for this run only: -1 unset, else 0 or 1. Never saved, and changing the
 // setting ends it.
 int sInvulnerableRun = -1;
-bool sLogFile = false;
+// On by default: a game that closes at launch gives no chance to tick the box
+// first, and a phone or a desktop launcher has no terminal to read.
+bool sLogFile = true;
 bool sLockOnToggle = false;
 bool sStickyCharge = false;
 bool sSpringFlick = false;
@@ -4612,6 +4614,9 @@ void DrawDebugTab() {
   } else {
     ImGui::TextWrapped("Everything the game logs, including the reason for a crash, goes to %s.",
                        logPath.empty() ? "(no user folder)" : logPath.c_str());
+  }
+  if (const std::string shared = PortLogFile::SharedPath(); !shared.empty()) {
+    ImGui::TextWrapped("A copy goes to %s, which the phone's file manager can open.", shared.c_str());
   }
   if (!logPath.empty() && ImGui::Button("Copy log path")) {
     ImGui::SetClipboardText(logPath.c_str());

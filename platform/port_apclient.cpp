@@ -672,8 +672,7 @@ void EnterSeed(Runtime& runtime, const std::string& seed) {
     runtime.queuedChecks.clear();
   }
   if (runtime.resetPending) {
-    PortLog::Write("archipelago: MP_AP_RESET_STATE=1 discarded saved progress for %s\n",
-                   config.slot.c_str());
+    PortLog::Write("archipelago: MP_AP_RESET_STATE=1 discarded saved progress\n");
     state.nextItemIndex = 0;
     state.checkedLocations.clear();
     state.progressive.clear();
@@ -683,8 +682,8 @@ void EnterSeed(Runtime& runtime, const std::string& seed) {
   runtime.statePath = path;
   runtime.recordSynced = false;
   runtime.MarkStateDirtyLocked();
-  PortLog::Write("archipelago: game directory %s\n",
-                 std::filesystem::path(path).parent_path().string().c_str());
+  // The directory's name holds the slot name, which the log leaves out.
+  PortLog::Write("archipelago: game state for seed \"%s\" in archipelago_games\n", seed.c_str());
 }
 
 void WorkerLoop(Runtime& runtime) {
@@ -702,7 +701,7 @@ void WorkerLoop(Runtime& runtime) {
       std::lock_guard<std::mutex> lock(runtime.mutex);
       runtime.connected = false;
       runtime.stateLabel = "connecting";
-      runtime.LogStateLocked("connecting to " + config.server);
+      runtime.LogStateLocked("connecting to the server"); // the log names no server or slot
     }
 
     std::string host;
@@ -821,9 +820,9 @@ void WorkerLoop(Runtime& runtime) {
                 // file has just been rewritten empty. Say why, because the
                 // symptom otherwise is a multiworld that sends nothing.
                 PortLog::Write(
-                             "archipelago: saved progress was %s; starting %s fresh (set "
+                             "archipelago: saved progress was %s; starting this slot fresh (set "
                              "MP_AP_RESET_STATE=1 to discard it deliberately)\n",
-                             runtime.session->ResetReason().c_str(), config.slot.c_str());
+                             runtime.session->ResetReason().c_str());
               }
               const Protocol::State& state = runtime.session->GetState();
               if (state.nextItemIndex != oldIndex || state.checkedLocations != oldChecks ||
@@ -851,7 +850,7 @@ void WorkerLoop(Runtime& runtime) {
                 runtime.connected = true;
                 runtime.stateLabel = "connected";
                 runtime.lastError.clear();
-                runtime.LogStateLocked("connected as " + config.slot);
+                runtime.LogStateLocked("connected");
                 runtime.AppendChatLocked("port", "Connected to " + config.server + " as " + config.slot);
                 initialChecks = state.checkedLocations;
                 for (auto queued = runtime.queuedChecks.begin(); queued != runtime.queuedChecks.end();) {
@@ -1104,8 +1103,7 @@ void StartLocked(Runtime& runtime, bool firstStart) {
       runtime.resetPending = true;
     } else if (state.nextItemIndex != 0 || !state.checkedLocations.empty() ||
                !state.progressive.empty()) {
-      PortLog::Write("archipelago: MP_AP_RESET_STATE=1 discarded saved progress for %s\n",
-                     runtime.config.slot.c_str());
+      PortLog::Write("archipelago: MP_AP_RESET_STATE=1 discarded saved progress\n");
       state = Protocol::State();
       state.seed = seed;
     }

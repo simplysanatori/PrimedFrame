@@ -9,13 +9,19 @@
 // terminal leaves a log to send. The previous run's log is kept as
 // metroid_prime_port.old.log, so restarting after a crash does not lose it.
 //
+// The log is on by default (log_file=0 turns it off). Since it is meant to be
+// attached to bug reports, the file has the user's home folder and account name
+// taken out of it (port_log_redact.h).
+//
 // On Linux a small forked process copies a pipe to both the terminal and the file:
-// it outlives an abort and drains everything already written. On Windows stdout
-// and stderr go to the file only. On Android the logcat writers (PortLog, Aurora's
+// it outlives an abort and drains everything already written. On Windows the same
+// is done by a second copy of the program (RunCopy), to the file only. On Android the logcat writers (PortLog, Aurora's
 // callback, SDL) also call Write, each line straight to the file, and stdout and
 // stderr are copied into logcat and the file; the log goes to the app's external
 // folder (Android/data/org.metroidprime.port/files) unless the data was moved to
-// shared storage.
+// shared storage, and a copy goes to
+// Documents/MetroidPrime/metroid_prime_port.log, which the phone's file manager
+// can open (it cannot browse Android/data since Android 13).
 namespace PortLogFile {
 
 // Starts the file log (once per run); true when it is running.
@@ -26,6 +32,15 @@ bool Active();
 void Write(const char* tag, const char* text);
 // The log's path, empty without a user folder.
 std::string Path();
+// Android: the shared copy's path (Documents/MetroidPrime), empty elsewhere or
+// when the data folder was moved to shared storage. Opening it can still fail
+// (Android 9-10 without the storage permission); the log's first lines say so.
+std::string SharedPath();
+#if defined(_WIN32)
+// The copying process Start launches on Windows (`--log-copy <pipe> <file>`, the
+// handles' values): copies the pipe into the file until the game has gone.
+int RunCopy(const char* pipe, const char* file);
+#endif
 
 } // namespace PortLogFile
 

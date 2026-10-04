@@ -871,10 +871,19 @@ int CMain::RsMain(int argc, const char* const* argv) {
     uint64_t firstFrameNs = 0;
     const uint64_t loopBeganNs = SDL_GetTicksNS();
     unsigned s_frameLog = 0;
+    // The counter line once a second made most of a play session's log. Only the
+    // first one prints (the game reached its loop), unless a test build or
+    // MP_FRAME_LOG=1 asks for all of them; test scripts time runs by them.
+#ifdef MP_ENABLE_SMOKE_DRIVER
+    const bool frameLogAll = true;
+#else
+    const char* frameLogEnv = getenv("MP_FRAME_LOG");
+    const bool frameLogAll = frameLogEnv != nullptr && frameLogEnv[0] != '\0' && frameLogEnv[0] != '0';
+#endif
     while (!x160_24_finished) {
       const uint64_t loopStartNs = SDL_GetTicksNS();
       bool presented = false;
-      if ((s_frameLog++ % 60) == 0) {
+      if ((s_frameLog++ % 60) == 0 && (frameLogAll || s_frameLog == 1)) {
         fprintf(stderr, "MP frame %u\n", s_frameLog);
       }
 #ifdef MP_ENABLE_SMOKE_DRIVER

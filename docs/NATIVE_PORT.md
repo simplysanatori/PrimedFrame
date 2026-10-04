@@ -119,7 +119,7 @@ working directory.
 
 On a GNOME Wayland session the port can pin a core at 100% and never reach its
 first frame. The log stops after `Using surface format BGRA8Unorm`, and no
-`MP frame` line ever appears. The cause is outside the port: SDL3 chooses its
+`MP frame 1` line ever appears. The cause is outside the port: SDL3 chooses its
 Wayland backend when `WAYLAND_DISPLAY` is set, and `SDL_ShowWindow` dispatches
 pending Wayland events, one of which is libdecor's client-side decoration
 configure. libdecor then re-enters GTK layout from inside that dispatch and
@@ -963,7 +963,7 @@ a temporary directory instead of mounting.
   until Show cheats is ticked (`cheats`, off by default). Invulnerable
   (`invulnerable`, off by default) makes Samus take no damage; it stays on
   across runs until unticked, and `MP_GODMODE=<0|1>` overrides it for one run.
-- F1 > Debug > Log, "Write the log to a file" (`log_file`, off by default):
+- F1 > Debug > Log, "Write the log to a file" (`log_file`, on by default):
   everything the game prints to stdout/stderr, including the
   line Aurora prints before it aborts, also goes to `metroid_prime_port.log` in
   the user folder; the previous run's is kept as `metroid_prime_port.old.log`.
@@ -975,6 +975,17 @@ a temporary directory instead of mounting.
   written to the file one line at a time; it lives in
   `Android/data/org.metroidprime.port/files/` (reachable over USB) unless the
   data folder was moved to shared storage, where it sits in that folder.
+  The file is meant to be attached to bug reports, so the home folder becomes
+  `~`, a removable drive's owner (`/run/media/<name>`, `/media/<name>`) becomes
+  `<user>`, and on Windows the profile folder becomes `%USERPROFILE%` (any
+other `X:\Users\<name>`: `X:\Users\<user>`); the
+  Archipelago client leaves out server and slot names. The terminal copy is
+  unchanged. Only `MP frame 1` is printed unless `MP_FRAME_LOG=1` is set.
+  On Android, unless the data folder was moved, a copy is written to `Documents/MetroidPrime/metroid_prime_port.log` (old
+  run: `.old.log`), which the phone's own file manager can open; Android 13+
+  hides `Android/data` from it. That needs no permission on Android 11+; a
+  file left by an earlier install is not writable, so `metroid_prime_port (2).log`
+  and up are tried next.
   `MP_LOG_FILE=<0|1>` overrides the setting for one run.
 - Save states (F1 > States): eight slots in `savestates/` under the pref
   folder (`slot<N>.mpss`). F5 saves to the selected slot and F9 loads it

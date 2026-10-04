@@ -512,6 +512,11 @@ const char* DefaultTexturesPath() {
 } // namespace
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+    if (argc == 4 && std::strcmp(argv[1], "--log-copy") == 0) {
+        return PortLogFile::RunCopy(argv[2], argv[3]);
+    }
+#endif
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
         std::printf("Metroid Prime native port %s\n", MP_BUILD_REVISION);
         return 0;
