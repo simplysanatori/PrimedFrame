@@ -1663,6 +1663,7 @@ std::string Materials(uint32_t id) {
         const bool wraps = wrap != 0x55555555;
         const bool scaled = lightScale[0] != 1.f || lightScale[1] != 1.f;
         const char* const tag = scaled          ? "PBR6"
+                                : wraps && floats == 0 ? "WRAP"
                                 : wraps         ? "PBR5"
                                 : floats == 19 ? kTags[3]
                                 : floats == 13 ? kTags[2]

@@ -611,12 +611,11 @@ void CCubeMaterial::SetCurrent(const CModelFlags& flags, const CCubeSurface& sur
     const rstl::vector< TCachedToken< CTexture > >& textures = model.GetTextures();
     materialDataCur.words += 2;
 #ifdef TARGET_PC
-    // A converted Remastered material samples each map with its own wrap modes.
+    // A converted Remastered material samples each map with its own wrap modes: a PBR one
+    // from its record, a TEV one from its 'WRAP' word; anything else repeats.
     uint wrap = 0x55555555;
-    if ((matFlags & kStateFlag_PortPBR) != 0) {
-      f32 values[19];
-      model.PortReadPBRMaterial(static_cast< int >(surface.GetMaterialIndex()), values, &wrap);
-    }
+    f32 values[19];
+    model.PortReadPBRMaterial(static_cast< int >(surface.GetMaterialIndex()), values, &wrap);
     for (uint i = 0; i < texCount; ++i) {
       const uint bits = i < 8 ? wrap >> (i * 4) : 0x5;
       textures[SBig(*materialDataCur.words)].GetObject()->PortLoad(

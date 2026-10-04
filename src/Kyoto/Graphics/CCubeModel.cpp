@@ -172,7 +172,8 @@ CCubeMaterial CCubeModel::GetMaterialByIndex(const int idx) const {
 // parameters; see GXSetPBRMaterial) and 'PBR4', or those nineteen, then one big-endian word
 // of the maps' wrap modes (see the declaration) and 'PBR5', or those and two more floats (the
 // diffuse and F0 factors of a back-facing copy, see GXSetPBRLightScale) and 'PBR6'. A material
-// without one gets the neutral values.
+// without one gets the neutral values. A converted TEV material may end in the wrap word
+// alone and 'WRAP' (no floats).
 int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap,
                                     f32 lightScale[2]) const {
   const uchar* table = static_cast< const uchar* >(x0_instance.GetMaterialPointer()) +

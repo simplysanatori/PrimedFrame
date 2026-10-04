@@ -95,6 +95,14 @@ void TestReader() {
     Check(PortPbrRecord::Read(none.data() + none.size(), none.size(), v, &wrap, s) == 0, "no record");
     Check(s[0] == 1.f && s[1] == 1.f && v[0] == 1.f && v[3] == 0.f, "no record is neutral");
   }
+  {  // A TEV material's wrap word alone.
+    std::vector<uint8_t> m(40, 0xAA);
+    const uint8_t word[] = {0x11, 0x22, 0x33, 0x44, 'W', 'R', 'A', 'P'};
+    m.insert(m.end(), word, word + 8);
+    s[0] = s[1] = 7.f;
+    Check(PortPbrRecord::Read(m.data() + m.size(), m.size(), v, &wrap, s) == 0, "WRAP holds no floats");
+    Check(wrap == 0x11223344u && v[0] == 1.f && s[0] == 1.f, "WRAP word, the rest neutral");
+  }
   {  // A tag the material is too short to hold is not read.
     const std::vector<uint8_t> r = Record(0, false, false, "PBR6");
     s[0] = s[1] = 7.f;

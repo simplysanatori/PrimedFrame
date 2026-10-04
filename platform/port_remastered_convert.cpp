@@ -2800,6 +2800,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const std::vector<SlotRole> roles = SlotRoles(pm);
     std::vector<uint32_t> attrs(ntexattr, 0xFFFFFFFFu);
     std::map<uint32_t, uint32_t> slotIds;
+    // Each slot's sampler, as the PBR record's wrap word (slot i: S in bits 4i..4i+1, T in
+    // 4i+2..4i+3): a slot refilled from a Remastered map takes that map's modes; a retail
+    // texture, a constant or a slot past 7 repeats, as in retail.
+    uint32_t wrap = 0x55555555u;
     for (const SlotRole& r : roles) {
       Role role = r.role;
       if (r.slot >= pm.tex.size() || pm.tex[r.slot] >= retail.sets[0].tex.size()) {
@@ -2813,6 +2817,13 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         role = Role::Keep;
       }
       const int rk = role == Role::Emissive ? kEmissive : role == Role::Reflect || role == Role::EnvMap ? kMr : kBase;
+      // The maps Get draws from (a constant has no sampler of its own).
+      const bool mapped = (role == Role::Diffuse || role == Role::Emissive || role == Role::Reflect) && rt[rk].has;
+      for (int c = 0; c < 2 && r.slot < 8; ++c) {
+        const int32_t w = mapped ? rt[rk].wrap[c] : 1;
+        const uint32_t shift = r.slot * 4 + uint32_t(c) * 2;
+        wrap = (wrap & ~(3u << shift)) | (uint32_t(w >= 0 && w <= 2 ? w : 1) << shift);
+      }
       const uint32_t uvi = rt[rk].has ? rt[rk].coord : rt[kBase].has ? rt[kBase].coord : 0;
       if (r.uvSrc >= 0 && size_t(r.uvSrc) < ntexattr && attrs[r.uvSrc] == 0xFFFFFFFFu) {
         attrs[r.uvSrc] = uvIndex(std::min<size_t>(uvi, maxuv), RoleName(role));
@@ -2848,6 +2859,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         for (int k = 0; k < 4; ++k) {
           blob[at + k] = uint8_t(vtx >> (24 - 8 * k));
         }
+      }
+      // Read back from the material's end (PortPbrRecord::Read), so nothing retail parses moves.
+      if (wrap != 0x55555555u) {
+        P32(blob, wrap);
+        blob.insert(blob.end(), {'W', 'R', 'A', 'P'});
       }
       setBlobs[si].push_back(std::move(blob));
     }

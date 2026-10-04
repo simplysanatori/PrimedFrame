@@ -23,7 +23,8 @@ inline float BeFloat(const uint8_t* p) {
 // Reads the record that ends at `end` (one past its tag) in a material of `size` bytes.
 // values gets the 19 floats (neutral where the record is short or absent), wrap the maps'
 // wrap word (every axis repeat without one) and lightScale the diffuse and F0 factors of a
-// back-facing copy (1, 1 without 'PBR6'). Returns how many floats the record held.
+// back-facing copy (1, 1 without 'PBR6'). Returns how many floats the record held. A TEV
+// material may end in a record of its own: the wrap word and 'WRAP', no floats.
 inline int Read(const uint8_t* end, size_t size, float values[19], uint32_t* wrap,
                 float lightScale[2]) {
   for (int i = 0; i < 19; ++i) {
@@ -61,6 +62,11 @@ inline int Read(const uint8_t* end, size_t size, float values[19], uint32_t* wra
     floats = 8;
   } else if (size >= 28 && std::memcmp(end - 4, "PBRM", 4) == 0) {
     floats = 6;
+  } else if (size >= 8 && std::memcmp(end - 4, "WRAP", 4) == 0) {
+    // A TEV material's: only the wrap word, its slots' modes, and no floats.
+    if (wrap != nullptr) {
+      *wrap = Be32(end - 8);
+    }
   }
   const uint8_t* record = floatsEnd - floats * 4;
   for (int i = 0; i < floats; ++i) {
