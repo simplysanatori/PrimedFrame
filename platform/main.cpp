@@ -334,26 +334,51 @@ std::string DescribeUnsupportedDisc(const DVDDiskID* id) {
     return DescribeDisc(DiscId6(*id).data(), id->gameVersion);
 }
 
-// Says on screen why the disc was refused: without it a refused disc looked
-// like a crash on start. Skipped when nothing can show it (headless, or the
-// scripted runs that set MP_NO_DISC_DIALOG), as the disc dialog is.
-void ShowDiscError(const std::string& problem, const std::string& path, bool askNext) {
+// Shows a disc message and asks whether to pick a disc image (true) or close
+// the game. With offerPick false the box only has Close. Skipped when nothing
+// can show it (headless, or the scripted runs that set MP_NO_DISC_DIALOG), as
+// the disc dialog is; the answer is then offerPick, which is what happened
+// before the box had a choice.
+bool AskPickDisc(const char* title, const std::string& message, const char* pickLabel, bool offerPick) {
     if (const char* env = std::getenv("MP_NO_DISC_DIALOG"); env != nullptr && env[0] == '1') {
-        return;
+        return offerPick;
     }
     int windowCount = 0;
     SDL_Window** windows = SDL_GetWindows(&windowCount);
     SDL_Window* window = windows != nullptr && windowCount > 0 ? windows[0] : nullptr;
     SDL_free(windows);
     if (window == nullptr) {
-        return;
+        return offerPick;
     }
+    // Escape (and Back on Android) closes: the box is in the way of nothing else,
+    // so leaving it is leaving the game.
+    enum { kClose, kPick };
+    const SDL_MessageBoxButtonData buttons[] = {
+        {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, kPick, pickLabel},
+        {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT | (offerPick ? 0u : SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT), kClose,
+         "Close"},
+    };
+    SDL_MessageBoxData data{};
+    data.flags = SDL_MESSAGEBOX_ERROR;
+    data.window = window;
+    data.title = title;
+    data.message = message.c_str();
+    data.numbuttons = offerPick ? 2 : 1;
+    data.buttons = offerPick ? buttons : buttons + 1;
+    int answer = -1;
+    if (!SDL_ShowMessageBox(&data, &answer)) {
+        PortLog::Write("metroid_prime_port: could not show the disc message: %s\n", SDL_GetError());
+        return offerPick;
+    }
+    return offerPick && answer == kPick;
+}
+
+// Says on screen why the disc was refused (without it a refused disc looked
+// like a crash on start) and asks whether to pick another or close the game.
+bool ShowDiscError(const std::string& problem, const std::string& path, bool askNext) {
     // Short lines: some message boxes do not wrap (SDL's X11 one).
-    const std::string message = problem + "\n\n" + path + "\n\n" + kSupportedDisc +
-                                (askNext ? "\nPick your disc image next." : "");
-    if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Metroid Prime: wrong disc image", message.c_str(), window)) {
-        PortLog::Write("metroid_prime_port: could not show the disc error: %s\n", SDL_GetError());
-    }
+    const std::string message = problem + "\n\n" + path + "\n\n" + kSupportedDisc;
+    return AskPickDisc("Metroid Prime: wrong disc image", message, "Pick another disc", askNext);
 }
 
 // Drops a refused disc so the next launch does not open it again. On Android
@@ -521,15 +546,22 @@ std::string CopyDiscFromContentUri(const std::string& uri) {
 // Asks for the disc image with the platform's file dialog and remembers the
 // choice. SDL delivers the result on another thread, so this pumps events until
 // it arrives; the callback also fires with an empty list if the dialog fails.
-std::string AskForDiscImage() {
+// *cancelled is set when the user closed the dialog without a pick (Back on
+// Android), as against a dialog that failed, timed out or was quit.
+std::string AskForDiscImage(bool* cancelled = nullptr) {
     static std::atomic< bool > answered{false};
+    static std::atomic< bool > dismissed{false};
     static std::string chosen;
+    if (cancelled != nullptr) {
+        *cancelled = false;
+    }
     // Static because the callback cannot capture, but reset on every call: the
     // stale-disc retry asks a second time, and without this it would return the
     // first answer at once without showing a dialog. A first call only returns
     // early (timeout, quit, no window) on the way to exiting, so no callback
     // from it can still be pending here.
     answered.store(false);
+    dismissed.store(false);
     chosen.clear();
     // Static: SDL reads the filters until the dialog closes, which can be after
     // a timed-out wait has returned.
@@ -568,6 +600,8 @@ std::string AskForDiscImage() {
             if (files != nullptr && files[0] != nullptr) {
                 chosen = files[0];
             }
+            // An empty list is a cancel; a null one is SDL's error.
+            dismissed.store(files != nullptr && files[0] == nullptr);
             answered.store(true);
         },
         nullptr, props);
@@ -610,8 +644,30 @@ std::string AskForDiscImage() {
         // overlay's draw path, which never runs if the game cannot frame.
         PortDebug::SaveSettingsNow();
         PortLog::Write( "metroid_prime_port: disc image set to %s\n", chosen.c_str());
+    } else if (dismissed.load()) {
+        PortLog::Write("metroid_prime_port: no disc image picked\n");
+        if (cancelled != nullptr) {
+            *cancelled = true;
+        }
     }
     return chosen;
+}
+
+// Asks for the disc image until one is picked or the user chooses to close.
+// A picker closed without a pick used to end the game at once, which on Android
+// (Back in the picker) looked like a crash.
+std::string PickDisc() {
+    for (;;) {
+        bool cancelled = false;
+        std::string disc = AskForDiscImage(&cancelled);
+        if (!disc.empty() || !cancelled) {
+            return disc;
+        }
+        if (!AskPickDisc("Metroid Prime: no disc image", std::string("No disc image was picked.\n\n") + kSupportedDisc,
+                         "Pick a disc", true)) {
+            return {};
+        }
+    }
 }
 
 // Default texture-replacement folder next to the executable.
@@ -899,7 +955,7 @@ int main(int argc, char** argv) {
     if (const char* resolved = ResolveDiscPath(argc, argv); resolved != nullptr) {
         discImage = resolved;
     } else {
-        discImage = AskForDiscImage();
+        discImage = PickDisc();
     }
     if (discImage.empty()) {
         PortLog::Write(
@@ -931,13 +987,15 @@ int main(int argc, char** argv) {
             break;
         }
         ForgetDisc(discImage);
-        ShowDiscError(problem, discImage, !discFromArgs);
-        if (discFromArgs) {
+        if (!ShowDiscError(problem, discImage, !discFromArgs)) {
+            if (!discFromArgs) {
+                PortLog::Write("metroid_prime_port: closed at the disc message\n");
+            }
             aurora_shutdown();
             return 1;
         }
         PortLog::Write("metroid_prime_port: asking for the disc image again\n");
-        discImage = AskForDiscImage();
+        discImage = PickDisc();
         if (discImage.empty()) {
             PortLog::Write("metroid_prime_port: no disc image given.\n");
             aurora_shutdown();
