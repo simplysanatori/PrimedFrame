@@ -942,10 +942,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     return {};
   }
   // GXSetPBRCostTest: 1 flat, 2 no lights, 3 no ambient volume, 4 no reflection cube, 5 no
-  // normal maps.
+  // normal maps, 6 no metal/roughness and emissive maps, 7 flat with every map read.
   const int costTest = config.pbr - 1;
   if (costTest == 5) {
     mapStage[2] = -1;
+  } else if (costTest == 6) {
+    mapStage[1] = -1;
+    mapStage[3] = -1;
   }
   // Glass (kind 8) also samples map 7, a copy of what is behind it on screen. The
   // shadow's stage samples map 7 too, so a shadowed surface goes without.
@@ -1013,15 +1016,22 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                            tintAlpha, discard.expr);
     }
   }
-  if (costTest == 1) {
-    // The base map, shaded by the facing only, and nothing else.
+  if (costTest == 1 || costTest == 7) {
+    // The base map, shaded by the facing only, and nothing else. Test 7 keeps the other
+    // maps' reads alive with a weight too small to see.
+    std::string maps;
+    for (int map = 1; costTest == 7 && map < 7; ++map) {
+      if (mapStage[map] != -1) {
+        maps += fmt::format(" + sampled{}.rgb * 1e-6", mapStage[map]);
+      }
+    }
     return fmt::format(R"""(
     // PBR, flat (GXSetPBRCostTest)
     {{{}
       let pbr_flat = 0.4 + 0.6 * max(dot(pbr_ng, normalize(-in.pbr_pos)), 0.0);
-      prev = vec4f({}.rgb * pbr_flat, prev.a{});
+      prev = vec4f({}.rgb * pbr_flat{}, prev.a{});
     }})""",
-                       layer, base, tintAlpha);
+                       layer, base, maps, tintAlpha);
   }
   const bool framed = mapStage[2] != -1 || layered;
   if (framed) {

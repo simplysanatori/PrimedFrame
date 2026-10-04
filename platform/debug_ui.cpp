@@ -4873,14 +4873,16 @@ void DrawRendering() {
                           "Draws the room's solid models nearest first, so the GPU skips shading what\n"
                           "they hide. Looks the same either way; off is for comparing frame rates.");
     static constexpr const char* kCostTests[] = {"Off", "Flat", "No lights", "No ambient volume",
-                                                 "No reflections", "No normal maps"};
+                                                 "No reflections", "No normal maps", "No ORM/emissive maps",
+                                                 "Maps only"};
     int costTest = int(GXGetPBRCostTest());
     if (ImGui::Combo("Shading cost test", &costTest, kCostTests, IM_ARRAYSIZE(kCostTests))) {
       GXSetPBRCostTest(u32(costTest));
     }
     ImGui::SetItemTooltip("Not saved. A speed test: leaves out one part of the Remastered surfaces'\n"
                           "shading (Flat leaves out all of it but the colour map), so the frame rate\n"
-                          "shows what that part costs. Looks wrong on purpose.");
+                          "shows what that part costs. Maps only is Flat with every map still read, to\n"
+                          "tell reading the maps from the maths. Looks wrong on purpose.");
     ImGui::EndDisabled();
     ImGui::SameLine();
     bool resident = sRoomGeoResident;
