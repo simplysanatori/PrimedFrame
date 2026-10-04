@@ -47,6 +47,7 @@
 // Port: drives the streamed-audio AI DMA callback (see platform/ai_dma.cpp).
 extern "C" void AIPortPoll(void);
 #include "port_console.h"
+#include "port_speedrun_timer.h"
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
 extern bool PortSmokeFrame(unsigned frame);
@@ -1041,6 +1042,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
         CCameraManager::SetPresentationInterpolation(interpolation);
         archSupport->GetIOWinManager().Draw();
         CCameraManager::SetPresentationInterpolation(-1.f);
+        PortSpeedrunTimer::Draw();
         DrawDebugMetrics(t1, archSupport->GetStopwatch2());
 
         double t2 = archSupport->GetStopwatch2().GetElapsedTime();

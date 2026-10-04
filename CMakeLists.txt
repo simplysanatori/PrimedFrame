@@ -158,6 +158,7 @@ set(MP_PORT_SOURCES
     platform/port_hd_font_file.cpp
     platform/port_hud_bars.cpp
     platform/port_hud_bars_file.cpp
+    platform/port_speedrun_timer.cpp
     platform/port_remastered_font.cpp
     platform/port_remastered_hud.cpp
     platform/port_remastered_map.cpp

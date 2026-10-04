@@ -5411,32 +5411,6 @@ bool DrawDesktopWindow() {
   return open;
 }
 
-// The in-game time in the bottom-right corner while a game runs.
-void DrawSpeedrunTimer() {
-  if (!sSpeedrunTimer || sStateManager == nullptr || gpGameState == nullptr) {
-    return;
-  }
-  const long long cs =
-      static_cast< long long >(std::floor(gpGameState->GetTotalPlayTime() * 100.0));
-  char text[32];
-  if (cs >= 360000) {
-    std::snprintf(text, sizeof(text), "%lld:%02lld:%02lld.%02lld", cs / 360000, cs / 6000 % 60,
-                  cs / 100 % 60, cs % 100);
-  } else {
-    std::snprintf(text, sizeof(text), "%lld:%02lld.%02lld", cs / 6000, cs / 100 % 60, cs % 100);
-  }
-  ImDrawList* draw = ImGui::GetForegroundDrawList();
-  ImFont* font = ImGui::GetFont();
-  const ImVec2 display = ImGui::GetIO().DisplaySize;
-  const float size = std::max(ImGui::GetFontSize() * 1.5f, display.y * 0.035f);
-  const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.f, text);
-  const float margin = size * 0.6f;
-  const ImVec2 pos(display.x - extent.x - margin, display.y - extent.y - margin);
-  const float shadow = std::max(1.f, size / 12.f);
-  draw->AddText(font, size, ImVec2(pos.x + shadow, pos.y + shadow), IM_COL32(0, 0, 0, 200), text);
-  draw->AddText(font, size, pos, IM_COL32(255, 255, 255, 230), text);
-}
-
 void DrawUI() {
   EnsureInitialized();
   if (!sAudioSettingsApplied) {
@@ -5461,7 +5435,6 @@ void DrawUI() {
     MarkDirty();
   }
 #endif
-  DrawSpeedrunTimer();
   ProcessCardPicks();
 #if !defined(__ANDROID__)
   // Every frame, not only with the panel open: an importer stops when its
