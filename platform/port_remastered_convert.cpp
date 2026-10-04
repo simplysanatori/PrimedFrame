@@ -1146,6 +1146,11 @@ constexpr uint32_t kShaderLavaPool[] = {0x3ADE58B7, 0xB9C24545};
 // the vertex colour, plus CCH0.w, pick a colour from TCH1, a ramp whose row is
 // the vertex alpha and whose alpha scales it, times CCH0.z.
 constexpr uint32_t kShaderGunGlow[] = {0xA13D6235, 0x62F671E0};
+// The Ice Beam cannon's frost shell, a dissolve: TCH1's noise less CCH1.y (PEMI,
+// which the game drives) discards it, and at rest it is all but gone. The port
+// keeps the retail frozen-gun particles (CGunWeapon::EnableFrozenEffect), so the
+// shell is not drawn; drawn as a plain surface it froze the gun for good.
+constexpr uint32_t kShaderFrozenShell = 0x2FC554A2;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -1169,6 +1174,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   uint8_t sid[4];
   std::memcpy(sid, &mat.shaderId, 4);
   const uint32_t shader = uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
+  out.hidden = shader == kShaderFrozenShell;
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
     const uint32_t family = d.usage & 0xFFFFFF00u;
