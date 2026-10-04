@@ -171,6 +171,11 @@ void GXSetSDF(u8 edge) {
   GX_WRITE_U8(edge);
 }
 
+void GXPortSetDepthPrepass(u8 pass) {
+  GX_WRITE_AURORA(GX_AURORA_PORT_DEPTH_PREPASS);
+  GX_WRITE_U8(pass);
+}
+
 void GXSetDrawTag(u32 asset, u32 model, u32 material) {
   GX_WRITE_AURORA(GX_AURORA_SET_DRAW_TAG);
   GX_WRITE_U32(asset);

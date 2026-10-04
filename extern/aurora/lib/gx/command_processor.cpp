@@ -953,6 +953,12 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.sdf = sdf;
       g_gxState.dirty |= DirtyPipeline;
     }
+  } else if (subCmd == GX_AURORA_PORT_DEPTH_PREPASS) {
+    const u8 pass = reader.read<u8>();
+    if (g_gxState.depthPrepass != pass) {
+      g_gxState.depthPrepass = pass;
+      g_gxState.dirty |= DirtyPipeline;
+    }
   } else if (subCmd == GX_AURORA_SET_DRAW_TAG) {
     for (u32& value : g_gxState.drawTag) {
       value = reader.read<u32>();

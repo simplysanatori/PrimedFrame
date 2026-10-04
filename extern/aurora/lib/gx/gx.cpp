@@ -461,10 +461,17 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   }
   const auto cullMode = config.shaderConfig.lineMode == 0 ? g_gxState.cullMode : GX_CULL_NONE;
   const auto [polygonOffset, polygonOffsetScale] = polygon_offset_for_cull_mode(cullMode);
+  // GX_AURORA_PORT_DEPTH_PREPASS: pass 1 writes only the depth, pass 2 shades where it is equal.
+  // Both keep the vertex stage and the polygon offset, so their depths match exactly (the
+  // position is @invariant).
+  const bool writesDepth = g_gxState.depthCompare && g_gxState.depthUpdate;
+  const bool depthOnly = g_gxState.depthPrepass == 1;
+  const bool depthEqual = g_gxState.depthPrepass == 2 && writesDepth;
+  config.shaderConfig.depthOnly = depthOnly;
   config = {
       .msaaSamples = gfx::get_sample_count(),
       .shaderConfig = config.shaderConfig,
-      .depthFunc = g_gxState.depthFunc,
+      .depthFunc = depthEqual ? GX_EQUAL : g_gxState.depthFunc,
       .cullMode = cullMode,
       .blendMode = g_gxState.blendMode,
       .blendFacSrc = g_gxState.blendFacSrc,
@@ -475,9 +482,9 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
       .polygonOffsetScaleBits = std::bit_cast<uint32_t>(polygonOffsetScale),
       .polygonOffsetClampBits = std::bit_cast<uint32_t>(g_gxState.clamp),
       .depthCompare = g_gxState.depthCompare,
-      .depthUpdate = g_gxState.depthUpdate,
-      .alphaUpdate = g_gxState.alphaUpdate,
-      .colorUpdate = g_gxState.colorUpdate,
+      .depthUpdate = g_gxState.depthUpdate && !depthEqual,
+      .alphaUpdate = g_gxState.alphaUpdate && !depthOnly,
+      .colorUpdate = g_gxState.colorUpdate && !depthOnly,
   };
 }
 

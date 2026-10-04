@@ -394,6 +394,7 @@ struct GXState {
   u8 numTexGens = 0;
   u8 pbr = 0; // GX_AURORA_SET_PBR: above 1, a cost test (GXSetPBRCostTest)
   u8 sdf = 0; // GX_AURORA_SET_SDF
+  u8 depthPrepass = 0; // GX_AURORA_PORT_DEPTH_PREPASS
   std::array<u32, 3> drawTag{0, UINT32_MAX, 0}; // GX_AURORA_SET_DRAW_TAG: asset, model index, material
   Mat3x4<float> pbrProbe; // GX_AURORA_SET_PBR_PROBE
   Vec4<float> pbrEmissive{1.f, 1.f, 1.f, 0.f}; // GX_AURORA_SET_PBR_MATERIAL
@@ -526,8 +527,9 @@ struct ShaderConfig {
   u8 pad1 : 5 = 0;
   u8 pbr = 0; // GX_AURORA_SET_PBR
   u8 sdf = 0; // GX_AURORA_SET_SDF
+  u8 depthOnly = 0; // pass 1 of GX_AURORA_PORT_DEPTH_PREPASS: the colour is not written
   u8 pbrKind = 0; // with pbr, the special surface kind (pbrLayer.y), a constant in the shader
-  std::array<u8, 2> pad2{};
+  u8 pad2 = 0;
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;

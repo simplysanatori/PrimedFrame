@@ -207,6 +207,7 @@ int sAreaLights = -1;
 float sMinPixels = -1.f; // < 0 until MinPixels reads MP_ROOM_GEO_MIN_PX
 bool sMergedDraws = true;
 bool sFrontToBack = true;
+bool sDepthPrepass = true;
 float sLodDistance = -1.f; // < 0 until LodDistance reads MP_ROOM_GEO_LOD
 bool sResident = false;
 // The mods' level of detail tables, by model id; read when the first area loads after a Reset.
@@ -1303,7 +1304,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       return a.cutout != b.cutout ? b.cutout : a.distanceSq < b.distanceSq;
     });
   }
-  for (const Visible& draw : visible) {
+  const auto drawOne = [&](const Visible& draw) {
     if (baked) {
       const CVector3f centre = draw.bounds->GetCenterPoint();
       const float at[3] = {centre.GetX(), centre.GetY(), centre.GetZ()};
@@ -1312,6 +1313,19 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     gpRender->SetModelMatrix(*draw.xf);
     draw.lights->ActivateLights();
     draw.model->DrawUnsortedParts(CModelFlags::Normal());
+  };
+  // With the sort, the cut-outs come last, after every opaque model: they go twice, depth only
+  // and then shaded where the depth is equal, so the grass hidden behind grass isn't shaded.
+  const auto firstCutout = sFrontToBack && sDepthPrepass
+                               ? std::find_if(visible.begin(), visible.end(), [](const Visible& v) { return v.cutout; })
+                               : visible.end();
+  std::for_each(visible.begin(), firstCutout, drawOne);
+  if (firstCutout != visible.end()) {
+    GXPortSetDepthPrepass(1);
+    std::for_each(firstCutout, visible.end(), drawOne);
+    GXPortSetDepthPrepass(2);
+    std::for_each(firstCutout, visible.end(), drawOne);
+    GXPortSetDepthPrepass(0);
   }
   gpRender->SetAmbientColor(CColor::White());
   CGraphics::DisableAllLights();
@@ -1801,6 +1815,10 @@ bool MergedDraws() { return sMergedDraws; }
 void SetFrontToBack(bool on) { sFrontToBack = on; }
 
 bool FrontToBack() { return sFrontToBack; }
+
+void SetDepthPrepass(bool on) { sDepthPrepass = on; }
+
+bool DepthPrepass() { return sDepthPrepass; }
 
 void SetMode(Mode mode) {
   sMode = int(mode);

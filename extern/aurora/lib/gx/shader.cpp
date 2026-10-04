@@ -2378,6 +2378,11 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
       fragmentFn += fmt::format("\n    if ({}) {{ discard; }}", discard.expr);
     }
   }
+  if (config.depthOnly != 0) {
+    // Depth pre-pass: nothing is written but the depth, so the compiler can drop all the
+    // shading that the alpha compare doesn't read.
+    fragmentFn += "\n    prev = vec4f(0.0);";
+  }
   if constexpr (EnableNormalVisualization) {
     fragmentFn += "\n    prev = vec4f(in.nrm, prev.a);";
   }

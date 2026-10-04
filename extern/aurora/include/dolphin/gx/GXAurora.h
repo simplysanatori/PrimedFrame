@@ -224,6 +224,11 @@ extern "C" {
 //   32 u32: aurora::gfx::bloom::Params, word for word
 #define GX_AURORA_PORT_POST_PROCESS 0x0052
 
+// Port extension: draws the following opaque surfaces in two passes (see GXPortSetDepthPrepass).
+// Payload:
+//   u8 pass (0 = off, 1 = depth only, 2 = shade where the depth is equal)
+#define GX_AURORA_PORT_DEPTH_PREPASS 0x0055
+
 // Port extension: data kept on the GPU across frames (GXPortRetainResident).
 // RETAIN payload: u64 the game's pointer, u64 a heap std::vector<u8> copy the processor takes.
 // RELEASE payload: u64 the pointer.

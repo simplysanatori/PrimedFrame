@@ -213,6 +213,11 @@ bool MergedDraws();
 // (an A/B check; not saved).
 void SetFrontToBack(bool on);
 bool FrontToBack();
+// With FrontToBack, draws the cut-out models (grass, leaves) once for depth only, then shaded
+// where the depth is equal, so what they hide of each other isn't shaded. Looks the same
+// (an A/B check; not saved).
+void SetDepthPrepass(bool on);
+bool DepthPrepass();
 // Scales the distances where an instance switches to a coarser level of detail (the
 // import's lods.bin): 1 is Remastered's own, 2 keeps the full model twice as far, 0 never
 // switches (MP_ROOM_GEO_LOD, the console's `roomgeo lod`). Merged copies keep the full one.

@@ -27,6 +27,13 @@ void GXSetPBR(GXBool enable);
 // Aurora extension: distance-field texturing for the following draws (see
 // GX_AURORA_SET_SDF). 0 turns it off.
 void GXSetSDF(u8 edge);
+// Port extension: a depth pre-pass for surfaces that alpha-test. Pass 1 writes only depth,
+// and its pixel shader keeps nothing but what the alpha compare needs; pass 2 draws the same
+// surfaces again where the depth is equal, without writing it, so each pixel is shaded once
+// and the GPU can still test depth before shading (a discard stops that only while depth is
+// written). The result is what one depth-tested pass gives. Draws that don't write depth
+// are left alone in pass 2 and draw nothing in pass 1. 0 turns it off.
+void GXPortSetDepthPrepass(u8 pass);
 // Aurora extension: names the following draws in Aurora's warnings about them (the
 // model's asset id, its index when it has no id, and the material); draws nothing
 // differently. Asset 0 with model 0xFFFFFFFF is no name (the initial state).
