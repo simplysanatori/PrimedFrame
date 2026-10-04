@@ -37,7 +37,11 @@ final class TouchControlsView extends View {
 
     // Port-only actions, not game inputs.
     private static final int TOGGLE_DEBUG_OVERLAY = -1;
-    private static final int HIDE_KEY = -2;
+    // The hide/show eye in the bottom-right corner, in dp. It stays put while
+    // hidden: the view shrinks to just this box.
+    private static final int EYE_WIDTH_DP = 52;
+    private static final int EYE_HEIGHT_DP = 36;
+    private static final int EYE_MARGIN_DP = 8;
     // Axis-held controls are tracked with ids above this, to share one press map.
     private static final int AXIS_ID_BASE = 100;
 
@@ -136,8 +140,7 @@ final class TouchControlsView extends View {
                        PillButton.TRIGGER_RIGHT),
         new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.140f, 0.960f, 0.200f, GC_PURPLE),
         new PillButton("START", -1, BTN_START, 0.400f, 0.030f, 0.490f, 0.100f),
-        new PillButton("MENU", TOGGLE_DEBUG_OVERLAY, -1, 0.510f, 0.030f, 0.600f, 0.100f),
-        new PillButton("HIDE", HIDE_KEY, -1, 0.620f, 0.030f, 0.710f, 0.100f),
+        new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0.510f, 0.030f, 0.600f, 0.100f),
     };
 
     private static final PillButton[] XBOX_PILLS = {
@@ -146,8 +149,7 @@ final class TouchControlsView extends View {
         new PillButton("RT", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.100f),
         new PillButton("RB", -1, BTN_RIGHT_SHOULDER, 0.850f, 0.115f, 0.980f, 0.185f),
         new PillButton("START", -1, BTN_START, 0.400f, 0.030f, 0.490f, 0.100f),
-        new PillButton("MENU", TOGGLE_DEBUG_OVERLAY, -1, 0.510f, 0.030f, 0.600f, 0.100f),
-        new PillButton("HIDE", HIDE_KEY, -1, 0.620f, 0.030f, 0.710f, 0.100f),
+        new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0.510f, 0.030f, 0.600f, 0.100f),
     };
 
     private ControlButton[] face = GAMECUBE_FACE;
@@ -224,7 +226,7 @@ final class TouchControlsView extends View {
             return;
         }
         if (hidden) {
-            drawPill(canvas, "SHOW", 0, 0, getWidth(), getHeight(), false);
+            drawEye(canvas, new RectF(0, 0, getWidth(), getHeight()), true);
             return;
         }
 
@@ -238,12 +240,9 @@ final class TouchControlsView extends View {
             pills = twinStickMode ? XBOX_PILLS : GAMECUBE_PILLS;
         }
         colored = !twinStickMode && nativeTouchColors();
-        for (PillButton pill : pills) {
-            if (pill.id() == HIDE_KEY) {
-                hideBounds.set(pill.left * width, pill.top * height,
-                               pill.right * width, pill.bottom * height);
-            }
-        }
+        hideBounds.set(width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP),
+                       height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP),
+                       width - dp(EYE_MARGIN_DP), height - dp(EYE_MARGIN_DP));
         drawStick(canvas, width * STICK_LEFT_X, height * STICK_Y, height * STICK_RADIUS,
                   leftPointer, 0);
         // The right stick is the C-stick, yellow on the GameCube pad.
@@ -257,6 +256,7 @@ final class TouchControlsView extends View {
             drawButton(canvas, button, width, height);
         }
         drawDpad(canvas, width, height);
+        drawEye(canvas, hideBounds, false);
     }
 
     // A mouse is not a finger on the overlay. Its clicks are dispatched as
@@ -460,10 +460,6 @@ final class TouchControlsView extends View {
         for (PillButton pill : pills) {
             if (x >= pill.left * width && x <= pill.right * width &&
                 y >= pill.top * height && y <= pill.bottom * height) {
-                if (pill.id() == HIDE_KEY) {
-                    targets.put(pointerId, new TouchTarget(HIDE, 0));
-                    return;
-                }
                 targets.put(pointerId, new TouchTarget(BUTTON, pill.id()));
                 pressControl(pill.id());
                 return;
@@ -634,10 +630,12 @@ final class TouchControlsView extends View {
         hidden = hide;
         RelativeLayout.LayoutParams params;
         if (hidden) {
-            params = new RelativeLayout.LayoutParams(dp(88), dp(44));
-            params.addRule(RelativeLayout.ALIGN_PARENT_TOP);
-            params.addRule(RelativeLayout.ALIGN_PARENT_END);
-            params.setMargins(0, dp(10), dp(10), 0);
+            // Just the eye, where it was, so the tap that brings the
+            // controls back is on the button that hid them.
+            params = new RelativeLayout.LayoutParams(dp(EYE_WIDTH_DP), dp(EYE_HEIGHT_DP));
+            params.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
+            params.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
+            params.setMargins(0, 0, dp(EYE_MARGIN_DP), dp(EYE_MARGIN_DP));
         } else {
             params = new RelativeLayout.LayoutParams(
                 RelativeLayout.LayoutParams.MATCH_PARENT,
@@ -874,15 +872,30 @@ final class TouchControlsView extends View {
                           button.label.length() > 2 ? dp(10) : dp(15));
     }
 
-    private void drawPill(Canvas canvas, String label, float left, float top,
-                          float right, float bottom, boolean active) {
-        fillPaint.setColor(active ? 0xCC48C8E8 : 0x99081218);
+    // The hide/show button: an eye, struck through while the controls are
+    // hidden.
+    private void drawEye(Canvas canvas, RectF bounds, boolean struck) {
+        fillPaint.setColor(0x99081218);
         strokePaint.setColor(0xCCFFFFFF);
-        RectF bounds = new RectF(left, top, right, bottom);
-        float radius = Math.min(bounds.width(), bounds.height()) * 0.25f;
-        canvas.drawRoundRect(bounds, radius, radius, fillPaint);
-        canvas.drawRoundRect(bounds, radius, radius, strokePaint);
-        drawCenteredLabel(canvas, label, bounds.centerX(), bounds.centerY(), dp(11));
+        float corner = Math.min(bounds.width(), bounds.height()) * 0.3f;
+        canvas.drawRoundRect(bounds, corner, corner, fillPaint);
+        float cx = bounds.centerX();
+        float cy = bounds.centerY();
+        float halfW = bounds.height() * 0.48f;
+        float lid = bounds.height() * 0.30f;
+        Path eye = shapePath;
+        eye.reset();
+        eye.moveTo(cx - halfW, cy);
+        eye.quadTo(cx, cy - lid * 2f, cx + halfW, cy);
+        eye.quadTo(cx, cy + lid * 2f, cx - halfW, cy);
+        eye.close();
+        canvas.drawPath(eye, strokePaint);
+        fillPaint.setColor(0xCCFFFFFF);
+        canvas.drawCircle(cx, cy, lid * 0.55f, fillPaint);
+        if (struck) {
+            canvas.drawLine(cx - halfW * 0.8f, cy + lid * 1.3f, cx + halfW * 0.8f,
+                            cy - lid * 1.3f, strokePaint);
+        }
     }
 
     private void drawCenteredLabel(Canvas canvas, String label, float x, float y, float size) {
