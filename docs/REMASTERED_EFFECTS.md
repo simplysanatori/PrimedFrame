@@ -4,9 +4,9 @@ Metroid Prime Remastered stores its particle effects as `GENP` assets (1434
 unique in the romfs). They replace retail's `PART` and fold its separate
 swoosh, electric, weapon, collision and decal assets into the same file. This
 page describes the format as far as `platform/port_remastered_effect.cpp`
-reads it, how it maps onto retail, and what does not parse yet. Nothing in the
-game loads these yet: the converter writes retail PART, but the import does
-not call it yet.
+reads it, how it maps onto retail, and what does not parse yet. The import
+converts effects to retail PART (see "In the import") when its particle-effects
+option is on.
 
 ## Container
 
@@ -185,39 +185,18 @@ and `effect_tool convert` uses it to compare converted effects with the disc's.
 Run on the disc's own PARTs it also checks the type tables against real files:
 all 3202 PARTs on the US disc split.
 
-First run on the shipped files (before the LTME, ROTA, KSSM and colour-key
-fixes): of 1306 effects, 100 converted with no retail property left out. Most
-of what is left out is Remastered-only. Of what retail reads, the emitter is
-the big loss (EMTR left out of 1520 generators), from elements retail does not
-have there: DFCP (1238 times), MPCB's angle form (485), ASPR (401), GRAD
-(378), ANCR (249) and MPRD (202), and CNST with one argument where retail
-reads a vector (378) or three where it reads a colour (292). Those are the
-next things to map. Some values differ from the disc on purpose: MAXP and
-SIZE were changed in a few effects.
+Notes from comparing converted effects with the disc's (`effect_tool convert`):
 
-From the second run's samples:
-
-- The "CNST with one argument" and "three arguments in a colour" cases were
-  the reader taking two nested constants (`CNST(CNST(0), ...)`) as a 16-byte
-  id, the shorter reading. An id no longer starts with an element's FourCC.
-- `MPCB(MPAC(xb, yb, xr, yr), m)` is retail's `ANGC(xb, yb, xr, yr, m)`
-  (the disc writes the same values under `IVEC(ANGC(...))`). MPCB takes one
-  or two elements, never none: with none allowed it read as a bare MPCB
-  followed by a four-element CNST.
-- `ANCR(REUL(0, 0, 0, #00), xr, yr, m)` is `ANGC(-0, -0, xr, yr, m)` on the
-  disc. ANCR with a rotated cone is not converted yet, nor is ASPR.
-- MPRD (2 or 4 elements) is a random int; its two-element form is RAND. In
-  LTM2, the bounds of RAND/IRND/MPRD come down by one each, as the disc's
-  IRND shows.
+- `MPCB(MPAC(xb, yb, xr, yr), m)` is retail's `ANGC(xb, yb, xr, yr, m)`; the
+  disc writes the same values under `IVEC(ANGC(...))`.
+- MPRD with two elements is a random int, written as RAND. In LTM2, the bounds
+  of RAND/IRND/MPRD come down by one each, as the disc's IRND shows.
 - DFCP (2 or 3 elements) and DFCS (3) scale a size, colour or speed by
   something retail has no element for; they are written as 1 and listed as
   approximated.
-- Colour keyframes are four halves per key in Remastered (8 bytes; scalars
-  stay 4-byte floats). Widened, 7 of the 17 compared COLR curves match the
-  disc to half precision; the other 10 were retuned. The disc also sets the
-  header's second flag byte where Remastered leaves it 0 in 8 of them;
-  retail does not use it.
-- GRAD (colour gradients, children only) is not converted yet.
+- MAXP and SIZE differ from the disc on purpose in a few effects, as do some
+  COLR curves. The disc also sets the COLR header's second flag byte where
+  Remastered leaves it 0; retail does not use it.
 
 ## Shapes retail has no element for
 

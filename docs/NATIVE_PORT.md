@@ -118,30 +118,14 @@ working directory.
 ### A Wayland session hangs at startup
 
 On a GNOME Wayland session the port can pin a core at 100% and never reach its
-first frame. The log stops after `Using surface format BGRA8Unorm`, and no
-`MP frame 1` line ever appears. The cause is outside the port: SDL3 chooses its
-Wayland backend when `WAYLAND_DISPLAY` is set, and `SDL_ShowWindow` dispatches
-pending Wayland events, one of which is libdecor's client-side decoration
-configure. libdecor then re-enters GTK layout from inside that dispatch and
-never returns. A backtrace of the hung process shows the loop:
+first frame (the log stops after the `Using surface format` line). The cause is
+outside the port: SDL3 takes its Wayland backend and never returns from
+`SDL_ShowWindow` (libdecor re-enters GTK layout from inside that call).
 
-```
-hypot → cairo_scaled_font_create → pango_context_get_metrics
-      → gtk_widget_get_preferred_height → libdecor_frame_commit
-      → decoration_frame_configure → SDL_waylandwindow.c → Wayland_ShowWindow
-      → SDL_ShowWindow_REAL → aurora::window::show_window
-```
-
-Run with `SDL_VIDEODRIVER=x11` (and `DISPLAY` plus `XAUTHORITY` pointing at the
-session's Xwayland) to use the X11 backend instead, which reaches the main loop
-normally. The port does this for you: when `SDL_VIDEODRIVER` names no driver and
-`DISPLAY` is set, it requests `x11` and says so in the log. Keying off `DISPLAY`
-rather than `WAYLAND_DISPLAY` matters — SDL3 reaches for Wayland even with
-`WAYLAND_DISPLAY` unset, falling back to the default socket in `XDG_RUNTIME_DIR`.
-With no `DISPLAY` there is nothing to fall back to, so the port prints why it is
-about to hang rather than leaving only the frozen frame to go on. Neither backend
-is a workaround for missing functionality — the only difference is which window
-system draws the window.
+Run with `SDL_VIDEODRIVER=x11` to use the X11 backend instead. The port does
+this for you when `SDL_VIDEODRIVER` names no driver and `DISPLAY` is set, and
+says so in the log; with no `DISPLAY` there is nothing to fall back to, so it
+prints why it is about to hang instead.
 
 ### Time to first frame
 
@@ -205,7 +189,7 @@ screens captured on the real session, on the AMD adapter, are in
 | Dolby Surround Pro Logic II | `front-end-dolby.png` |
 | Title with `[ PRESS START ]` | `front-end-press-start.png` |
 
-All three render correctly, so **the reported blank front end does not
+All four render correctly, so **the reported blank front end does not
 reproduce**. Note that `MP_FAST_BOOT=1` never shows any of them: it drives
 `Title -> FileSelect -> TransitionToFive()` into a new game, which is why
 captures taken with it set are pictures of the *game's* opening, not the front
@@ -213,7 +197,7 @@ end.
 
 **Input is discarded when the window is not focused**, which is worth knowing
 before concluding that a screen is unresponsive. `CDolphinController::ReadDevices`
-(`src/Kyoto/Input/CDolphinController.cpp:105`) zeroes the whole pad status when
+(`src/Kyoto/Input/CDolphinController.cpp`) zeroes the whole pad status when
 `SDL_GetKeyboardFocus()` is null and then preserves the error code, so the
 controller still reports *present* while every button is dropped, and the front
 end receives input messages containing no buttons. A scripted press launched into
@@ -304,15 +288,8 @@ A Vulkan allocation that does not fit is fatal:
 ```
 
 and the process stops. The message names an allocation and nothing else, so the
-first reading of it is that the port is holding too much. **It usually is not.**
-The port's own process uses about **118 MiB** of device memory while running, a
-full eight-world tour does not accumulate allocations, and the failure reproduces
-**23 frames into a one-area tour** — immediately after the tour completes and
-never during it, which is the opposite of cumulative exhaustion. What actually
-caused the failure observed here was an LM Studio model holding **15124 of
-16303 MiB**, leaving about 1.1 GB for everything else.
-
-So the first thing to check is what else is on the GPU:
+first reading is that the port is holding too much. **It usually is not:**
+check what else is on the GPU first:
 
 ```sh
 nvidia-smi --query-compute-apps=pid,used_memory --format=csv
@@ -413,15 +390,17 @@ screen quickly to see the result.
 `mods` in the user folder (or wherever `MP_MODS` points; created on first
 start) replaces disc data without touching the disc image. Each folder in it is
 a mod, applied in name order so a later name wins; folders starting with `.` are
-skipped. Inside a mod:
+skipped. The binary layouts below are also in
+`platform/include/port_{mods,room_geo,room_liquid,room_env,hd_font,hud_bars}.h`,
+which are authoritative. Inside a mod:
 
 - a file at a disc path (`Metroid1.pak`, `Audio/frigate.dsp`,
   `Video/attract0.thp`; case does not matter) replaces that file. Only
   existing disc files can be replaced; others are reported and ignored.
 - a file named `<8 hex digits>.<type>` (`1A2B3C4D.TXTR`, `0552A456.STRG`),
   anywhere in the mod, replaces that resource, uncompressed, in every PAK that
-  holds it. The PAK is served as a virtual file: its table is patched to point
-  past the original data, where the loose file is appended (32-byte aligned). A
+  holds it. The PAK is served as a virtual file with the loose file appended
+  past the original data, 32-byte aligned (see `platform/include/port_mods.h`). A
   loose resource also applies inside a PAK another mod replaced whole. An id
   that no PAK holds is added to `NoARAM.pak` (loaded from boot, so any model or
   frame can reference it): the table grows by one entry and the original data
@@ -483,12 +462,13 @@ skipped. Inside a mod:
 - a file named `<MREA id, 8 hex digits>.roomgeo`, anywhere in the mod, is that
   area's static geometry: a list of models, each with the transform that
   places it in the area, drawn in place of the area's own surfaces (its
-  actors, doors and pickups are drawn as before). Little-endian: the tag
-  `MPRG`, a version (1), a count, then per instance a CMDL id and a 3x4
-  matrix, 52 bytes. The models are ordinary CMDLs of the mod and are loaded
+  actors, doors and pickups are drawn as before). The layout (little-endian,
+  versions 1 to 3) is in `platform/include/port_room_geo.h`. The models are
+  ordinary CMDLs of the mod and are loaded
   with the area. The Thermal and X-Ray visors draw the retail area. A game
-  started with such a mod installed takes a 256 MB arena and frame buffers 12
-  times the usual size (see `MP_FRAME_BUFFERS`), since these rooms are many
+  started with such a mod installed takes a 256 MB arena and larger frame
+  buffers (12 times the usual size, 6 on Android, 2 with
+  `MP_ROOM_GEO_RESIDENT=1`; see `MP_FRAME_BUFFERS`), since these rooms are many
   times retail's vertex count; a mod loaded into a running game without them
   is not drawn until the next start.
 - a file named `<MREA id, 8 hex digits>.roomliquid`, anywhere in the mod, holds
@@ -496,9 +476,8 @@ skipped. Inside a mod:
   place of the fluid plane of the area's water object that stands where its
   transform says, at the height the game gives that plane, so a rising or
   draining liquid still moves. The object itself is untouched (fog, splashes,
-  damage). Little-endian: the tag `MPRL`, a version (1), a count, then per
-  surface a type (0 water, 1 poison, 2 lava), a CMDL id and a 3x4 matrix, 56
-  bytes. Their materials carry a `PBR4` record of kind 5 (water, poison: a
+  damage). The layout is in `platform/include/port_room_liquid.h`. Their
+  materials carry a `PBR4` record of kind 5 (water, poison: a
   colour, an opacity and two moving normal maps) or 6 (a lava pool: a pattern
   carried along a flow map, coloured by a ramp).
   The Thermal and X-Ray visors show the surface too: the Thermal visor's passes
@@ -591,9 +570,11 @@ filled in when it exists). The panel remembers both files once they are picked
 or used, as `remastered_nsp` and `remastered_keys` in the settings file (on
 Android, the picked documents). Import converts in the background while the game
 runs, on all but two cores. The result is staged in `mods/.remastered-models.importing`
-and becomes `mods/remastered-models` when you press Load it now (a mod reload,
-above) or at the next start, replacing an older one;
-a cancelled or interrupted import leaves nothing behind. From a terminal,
+and installed as `mods/remastered-models`, replacing an older one, when the
+import ends (a mod reload then loads it; the pending install also applies at
+the next start). A cancelled or interrupted import leaves nothing behind.
+Once it has ended, "Load it again" in the same panel reloads the mods by hand.
+From a terminal,
 `metroid_prime_port --import-remastered <image.nsp> [key file]` does the same
 on every core without starting the game and installs at once (the disc comes
 from `MP_DISC`, the remembered path, or a copy beside the executable).
@@ -611,8 +592,8 @@ baked ambient grid. A grid of more than about a million points is stored at
 half resolution, which keeps every file under 25 MB. A world that can't be
 read is reported and skipped; the models are installed all the same.
 
-With "Room geometry too" ticked in the panel (it is by default; there is no
-such box on Android), or `MP_REMASTERED_GEOMETRY=all` (or a comma-separated
+With "Room geometry too" ticked in the panel (on by default; off by default
+on Android, where ticking it shows a warning), or `MP_REMASTERED_GEOMETRY=all` (or a comma-separated
 list of room names, or `none`) for the command line and the console, the
 import also writes the rooms' static geometry: every model a room places,
 converted as above with textures capped at 1024 px, and a `.roomgeo` per
@@ -658,7 +639,7 @@ door between floors, which the disc draws with one tinted texture, get
 Remastered's own under ids the port looks for (`port_map_icons.h`). So do the
 rooms: Remastered's map of a world (`CMAP`) names no room of the disc, so its
 areas are paired with the disc's by place and size, and the few it reshaped
-(14 over the seven worlds) are written as `<id>.MAPA` with the disc's doors
+are written as `<id>.MAPA` with the disc's doors
 and markers; the rest keep the disc's map. Experimental: the pause and message
 screens are still the disc's, as is the map's compass, which the disc does not
 have.
@@ -731,56 +712,20 @@ than only a configure line saying OpenSSL was found.
 guarded to Linux and takes no part elsewhere. The AppImage and Flatpak packaging
 are Linux-only.
 
-Note that `README.md` is inherited from the upstream decompilation project and
-describes building that, not this port.
-
 ### Distribution
 
 `tools/make_appimage.sh [build-dir] [output-dir]` packages the executable and
-its texture replacements as an AppImage, fetching appimagetool on first use.
-The disc image is deliberately not included, so the port asks for it with the
-platform's file dialog on first launch and remembers the answer as `disc_path`
-in the settings file. A path given as an argument or in `MP_DISC` still wins,
-then the saved path, then a copy beside the executable.
+its texture replacements as an AppImage, and `tools/make_flatpak.sh` builds a
+Flatpak instead. The disc image is deliberately not included, so the port asks
+for it with the platform's file dialog on first launch and remembers the
+answer as `disc_path` in the settings file. A path given as an argument or in
+`MP_DISC` still wins, then the saved path, then a copy beside the executable.
+See `docs/RELEASING.md` for what a release carries, the bundled libraries, the
+glibc floor and the licensing position.
 
-The AppImage bundles the executable (Aurora, WebGPU/Dawn and SDL3 are linked
-statically), the texture replacements, the shared libraries a base desktop may
-lack (freetype, libpng, zlib, bzip2 and brotli), and the third-party notices
-for the vendored and fetched components in
-`usr/share/licenses/metroid-prime-port/`, alongside a
-`BUNDLED_LIBRARIES.txt` naming the host libraries it copied. It relies on the
-system for glibc, libstdc++, a Vulkan driver, X11 or Wayland, and DBus for the
-file dialog.
-
-`docs/RELEASING.md` covers what a release has to carry, what has not been done
-yet, and the licensing position.
-
-glibc is deliberately not bundled, so the build is only as portable as the
-machine it was built on. `platform/glibc_compat.c` lowers that floor: recent
-glibc gives the float math functions and the C23 strtol/scanf family new symbol
-versions, which would otherwise pin the binary to the build host's glibc
-(2.43 here). Defining those names in terms of the long-standing
-double-precision and pre-C23 functions brings the requirement down to
-**glibc 2.39** (Ubuntu 24.04, the current LTS).
-
-What is left above that is `pidfd_spawnp`/`pidfd_getpid`, used by nod - the
-prebuilt Rust library behind Aurora's disc access - which would need either an
-older nod build or a build on an older base to remove.
-
-A Flatpak sidesteps the whole question: `tools/make_flatpak.sh` builds one from
-`flatpak/io.github.odrannnn.metroidprimeport.yml`, and glibc then comes from the
-runtime (24.08) rather than the host, so the floor above does not apply. The GPU
-driver still comes from the host, the disc is not bundled, and the sandbox sees
-the home directory read-only. It needs flatpak and flatpak-builder and compiles
-the whole game, so it is not part of the normal build; change the app id in the
-manifest before publishing. This path has not been built here - flatpak is not
-installed on the machine it was written on.
-
-The AppImage embeds the statically linked type-2 runtime, so libfuse2 is not
-needed on the target system; check it with `--appimage-version`. Where FUSE
-itself is unavailable, such as in a container, run it with
-`APPIMAGE_EXTRACT_AND_RUN=1` (or `--appimage-extract-and-run`), which unpacks to
-a temporary directory instead of mounting.
+Where FUSE itself is unavailable, such as in a container, run the AppImage
+with `APPIMAGE_EXTRACT_AND_RUN=1` (or `--appimage-extract-and-run`), which
+unpacks to a temporary directory instead of mounting.
 
 ### Controls and settings
 
@@ -853,7 +798,7 @@ a temporary directory instead of mounting.
   direction, as in Remastered (D-pad right Scan, left X-Ray).
 - Fast Morph (Input tab and pause Options > Controller, persisted as
   `fast_morph`, off by default): morph ball transitions in the style of Metroid
-  Prime 4. Morphing takes 0.2 s instead of 1 s and unmorphing is instant; both
+  Prime 4. Morphing and unmorphing each take 0.2 s instead of 1 s; both
   keep the player's velocity instead of stopping them. Unmorphing on the ground
   holds the speed at walking speed; unmorphing in the air keeps the whole arc
   until landing. Samus's curl-up animation is not shown: the ball forms inside
@@ -962,7 +907,7 @@ a temporary directory instead of mounting.
   cheats: health, items, ammo, area and world teleport. The cheats stay hidden
   until Show cheats is ticked (`cheats`, off by default). Invulnerable
   (`invulnerable`, off by default) makes Samus take no damage; it stays on
-  across runs until unticked, and `MP_GODMODE=<0|1>` overrides it for one run.
+  across runs until unticked, and `MP_GODMODE=<0|1>` overrides it for one run (see below).
 - F1 > Debug > Log, "Write the log to a file" (`logging`, on by default; the older `log_file` key is ignored):
   everything the game prints to stdout/stderr, including the
   line Aurora prints before it aborts, also goes to `metroid_prime_port.log` in
@@ -986,7 +931,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   hides `Android/data` from it. That needs no permission on Android 11+; a
   file left by an earlier install is not writable, so `metroid_prime_port (2).log`
   and up are tried next.
-  `MP_LOG_FILE=<0|1>` overrides the setting for one run.
+  `MP_LOG_FILE=<0|1>` overrides the setting for one run (see below).
 - Save states (F1 > States): eight slots in `savestates/` under the pref
   folder (`slot<N>.mpss`). F5 saves to the selected slot and F9 loads it
   (`savestate_hotkeys`, on by default). A state holds the whole game save
@@ -1155,9 +1100,10 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
 - `MP_ROOM_GEO=<0|1|overlay>`: whether a mod's `.roomgeo` replaces an area's
   geometry (default 1; `overlay` draws both). Console `roomgeo [on|off|overlay]`,
   which also prints what is loaded and what the last frame streamed.
-  `MP_FRAME_BUFFERS=<1..16>` scales the buffers a frame's vertices, arrays and
-  uniforms are streamed through (1 = 5 + 8 + 24 MiB); it is 12 when a mod has
-  room geometry. A frame that outgrows them aborts with a buffer overflow.
+  `MP_FRAME_BUFFERS=<1..16>` scales the buffers a frame's vertices, indices,
+  arrays and uniforms are streamed through (1 = 5 + 2 + 8 + 24 MiB); it is 12
+  when a mod has room geometry (6 on Android, 2 with `MP_ROOM_GEO_RESIDENT=1`).
+  A frame that outgrows them aborts with a buffer overflow.
 - `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_resident`, F1 > Debug >
   Rendering > Keep room geometry on the GPU; off by default, read at startup):
   experimental. Each room geometry model's vertex arrays and display lists are
@@ -1360,9 +1306,9 @@ Success is reported as `[mouse-smoke] passed` followed by a clean exit.
 The sequence also verifies free strafing on both sides of opening/closing F1.
 
 `MP_SMOKE_AREA_RELOAD=1` exercises three real geometry eviction/ARAM restoration
-cycles. It reproduced the material-flags crash seen when opening a door before
-the one-time native surface-header conversion fix. It can be combined with the
-mouse scenario and reports `[area-smoke] passed`.
+cycles and reports `[area-smoke] passed` (regression test for the material-flags
+crash on door open). It can be combined with the
+mouse scenario.
 
 `MP_SMOKE_WORLD=<hex MLVL id>`, or `MP_SMOKE_WORLD=auto` to pick the first world
 other than the current one, jumps to another world through the same restart path
@@ -1376,18 +1322,13 @@ once gameplay has run for `<ticks>` ticks. It sends the elevator's `Play` and
 `SetToZero` messages, like the ride trigger does, and reports
 `[elevator-smoke] passed: world <id> area <n>` once the destination world is
 playable. Combine it with `MP_SMOKE_WORLD=83F6FF6F` (Chozo Ruins, whose spawn
-area loads the Tallon elevator). It reproduced the elevator crash:
-`CWorldTransManager::WaitForModelsAndTextures` bounced model buffers through ARAM,
-which over-read them and freed host `new[]` memory into the game heap. The port
-now skips that model pass.
+area loads the Tallon elevator). Regression test for the elevator crash (the
+model pass that bounced buffers through ARAM is now skipped).
 
 `MP_SMOKE_VISOR=1` grants and switches to the thermal visor (`MP_SMOKE_VISOR=xray`:
-the X-ray visor) after gameplay starts and reports `[visor-smoke] passed` once it has stayed up. It reproduces
-the FIFO-worker crash where the game binds a texture whose source pointer is an
-unmapped value, which the content hash then dereferences. The thermal cold blend
-was passing a deliberately fake random address as its noise texture (the console
-reads raw memory for noise); the port now fills a real scratch noise buffer.
-Aurora also skips any texture whose source page is not mapped instead of hashing
+the X-ray visor) after gameplay starts and reports `[visor-smoke] passed` once it has stayed up (regression test for the FIFO-worker crash on an
+unmapped texture pointer). The port now fills a real scratch noise buffer, and
+Aurora skips any texture whose source page is not mapped instead of hashing
 it; set `MP_LOG_TEX_INVALID=1` to log each rejected texture's pointer, format,
 size and object id.
 

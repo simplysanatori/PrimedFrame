@@ -81,8 +81,7 @@ self-contained — and it is why `MP_USER_PATH` cannot be used to move saves.
   build host are still named rather than reproduced — see below.
 - **The Flatpak** collects them in the manifest's `post-install`: the two
   vendored snapshots out of the tree, and the four fetched packages by glob,
-  because the fetched ones only exist once `cmake-ninja` has run. It has still
-  never been built here — see below.
+  because the fetched ones only exist once `cmake-ninja` has run.
 - **The shared libraries an AppImage copies are named, not reproduced.** They
   come off the build host rather than out of the tree, so their terms cannot be
   collected automatically; `BUNDLED_LIBRARIES.txt` says which were bundled and a
@@ -127,13 +126,13 @@ The port targets `versionName "0.10.1"` and `versionCode 13`.
 
 | Platform | Builds from | Produces | State |
 |---|---|---|---|
-| Linux | `cmake -S . -B build-gcc` | executable | works; tests green. `cmake --install` also produces a complete tree, verified by running it |
-| Linux | `tools/make_appimage.sh` | AppImage | builds; **notices missing** |
-| Linux | `tools/make_flatpak.sh` | Flatpak | manifest installs a working tree and collects notices; **never built here** — no `flatpak-builder` on the development machine. The app id is a placeholder, and there is no AppStream metainfo |
+| Linux | `cmake -S . -B build/port-gcc` | executable | works; tests green. `cmake --install` also produces a complete tree, verified by running it |
+| Linux | `tools/make_appimage.sh` | AppImage | builds; notices collected (see above) |
+| Linux | `tools/make_flatpak.sh` | Flatpak | manifest installs a working tree and collects notices; builds (`tools/make_flatpak.sh` writes `build/flatpak/MetroidPrimePort.flatpak`). The app id is `io.github.odrannnn.metroidprimeport`, with AppStream metainfo shipped |
 | Windows | `.github/workflows/windows.yml` | zipped `dist/` | manual trigger only for now; green when run, artifact uploaded, packaged startup checked |
-| Android | `tools/android_apk.sh :app:assembleRelease` | APK | builds, signed with this project's own key; **on-device behaviour unverified** |
+| Android | `tools/android_apk.sh :app:assembleRelease` | APK | builds, signed with this project's own key; runs on-device (POCO F8 Ultra, 60 FPS), touch/Continue-load still unverified |
 
-The Linux binary is the only one with a test suite attached: 14 `port`-labelled
+The Linux binary is the only one with a test suite attached: 43 `port`-labelled
 ctest targets, all run by both CI jobs.
 
 ## Runtime dependencies
@@ -174,12 +173,10 @@ under GNOME unless the port's own X11 preference applies — see
 3. **The AppImage only *names* the shared libraries it copies** rather than
    reproducing their terms. Windows, AppImage, APK and the Flatpak manifest all
    collect the rest.
-4. **Android on-device behaviour is unverified** — boot, render, save, play a
-   seed and connect all need a device. Partly narrowed: the arm64 APK installs,
-   launches, brings up WebGPU and opens the SAF picker on the x86_64 emulator
-   under ARM translation (see `docs/ANDROID_BUILD_PROBE.md`), so packaging and
-   lifecycle are checkable without hardware. Performance and touch input are not,
-   and those still need a device.
+4. **Android on-device behaviour is partly verified** — the release build runs on
+   a POCO F8 Ultra at a steady 60 FPS (see `docs/ANDROID_BUILD_PROBE.md`). Still
+   unverified: loading a save from the title screen's Continue, touch ergonomics
+   and tap reliability, and performance on any other device.
 5. **~~`wss://` does not work on Android~~ — resolved.** OpenSSL 3.5.8 is built
    from a pinned, hash-checked source for the NDK and linked statically, so
    `MP_HAVE_OPENSSL` is defined in the APK and a `wss://` server connects. On
@@ -189,14 +186,12 @@ under GNOME unless the port's own X11 preference applies — see
    enumerated by hand from `/apex/com.android.conscrypt/cacerts`, and zero
    certificates is a loud error naming the directories rather than an obscure
    verification failure later. Both halves are proven on the emulator — see
-   `docs/ANDROID_BUILD_PROBE.md`. **Costs 2.17 MB of APK, +20.3%** (11.19 MB ->
-   13.46 MB), which is more than the 0.8-1.2 MB first estimated.
-6. **The Flatpak path has never been built.** Its manifest is correct — the
-   project's own install rules put a runnable tree in `/app`, and the notices
-   are collected — but nothing here has ever run `flatpak-builder`, so the
-   manifest is unproven against a real runtime. That part needs
-   `flatpak-builder`, which is not installed. Two things also remain before it
-   could be published:
+   `docs/ANDROID_BUILD_PROBE.md`. Costs about 2 MB of APK — the measured numbers
+   are in `docs/ANDROID_BUILD_PROBE.md`.
+6. **The Flatpak is not on Flathub.** `tools/make_flatpak.sh` builds a bundle
+   from the committed `port` branch; the project's own install rules put a
+   runnable tree in `/app`, and the notices are collected. Before it could be
+   published:
    - **~~No icon is shipped at all~~ — resolved.** `packaging/varia-bolt.svg` is
      the maintainer's own artwork (it has to be *original*: anything
      recognisably Nintendo's is not ours to redistribute), and every package

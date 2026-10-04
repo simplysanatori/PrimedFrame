@@ -17,8 +17,9 @@ and reports checks back. Nothing here changes behaviour when no seed is present.
 - `CScriptPickup::Touch` calls `PortRandomizer::RecordCheck` when a pickup is
   collected.
 - The port layer is `platform/port_randomizer.cpp` + `platform/include/port_randomizer.h`.
-  It reads `MP_USER_PATH` (else `SDL_GetPrefPath`) for its files, matching the
-  settings file.
+  It reads `PortPaths::UserFolder()` for its files, matching the
+  settings file: `MP_USER_PATH` when set, else the folder next to the
+  executable when writable, else the per-user folder (`SDL_GetPrefPath`).
 
 ### Scans and the Artifact Temple
 
@@ -99,16 +100,8 @@ ANCS assets, with the animation driving the visual.
    playthrough. It takes about twelve minutes and logs `[sweep]` progress. Add
    `MP_RANDO_SWEEP_WORLDS=<hex>[,<hex>...]` to tour only some worlds (the ids
    are the `WORLD:` column of the dump); the tour logs `complete: N worlds, M
-   areas` when it finishes.
-
-   The run needs a display, and on a GNOME Wayland session the port now selects
-   the X11 backend by itself (see `docs/NATIVE_PORT.md` for why, and for
-   `SDL_VIDEODRIVER` to override the choice):
-
-   ```sh
-   DISPLAY=:0 XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.XXXXX \
-   MP_RANDO_DUMP=1 MP_RANDO_SWEEP=1 <game> <disc.iso>
-   ```
+   areas` when it finishes. The run needs a display; see `docs/NATIVE_PORT.md`
+   for the Wayland/X11 notes.
 
    A full tour writes 2542 LOC lines covering 1333 distinct pickup keys in 180
    areas, of which **100 are item locations** — the same count retail Prime has,

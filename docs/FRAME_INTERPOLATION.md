@@ -19,10 +19,11 @@ rendered frame. The alternative, running the simulation itself faster (`sim_rate
   keeps the leftover time; `Interpolation()` = leftover / period, exposed as
   `CGameArchitectureSupport::GetTickInterpolation()`.
 - **Camera.** `CCameraManager::Update` records the camera transform before and
-  after each tick (`sPreviousCameraTransform` / `sCurrentCameraTransform`,
-  `CCameraManager.cpp:44-58, 330-356`). A camera switch, a jump of more than 4
+  after each tick (`sPreviousCameraTransform` / `sCurrentCameraTransform`).
+  A camera switch, a jump of more than 4
   units, or a turn of more than 45° (outside free mouse look) resets the
-  previous snapshot, so cuts don't smear. `main.cpp` (~992) sets the blend
+  previous snapshot, so cuts don't smear. `CMain::RsMain`
+  (`src/MetroidPrime/main.cpp`) sets the blend
   factor around `IOWinManager().Draw()`, only when the frame limiter is off;
   `GetCurrentCameraTransform` then returns the lerped/slerped view.
 - **Mouse aim.** Under free mouse look the view keeps this tick's orientation
@@ -35,9 +36,12 @@ rendered frame. The alternative, running the simulation itself faster (`sim_rate
 - **Render-time animation.** `CGraphics::TickRenderTimings` advances draw-time
   timers (texture scroll, UV animation) by whole ticks, not by frames.
 
-So at 144 Hz today the camera and free look glide, but every actor, animated
-pose, particle and projectile still steps at 60 Hz: moving objects visibly
-judder against a smooth camera.
+So at 144 Hz today the camera and free look glide, and actors, animated
+poses, particles, swooshes, electric effects and beam weapons blend toward
+the next tick when `actor_interpolation`, `pose_interpolation` and
+`particle_interpolation` are on (all off by default). Whatever those settings
+leave out still steps at 60 Hz: bounds, culling, lighting and shadows stay on
+the sim transform, and attachments read the sim pose (sections 1-3).
 
 ## What is needed
 
