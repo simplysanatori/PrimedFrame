@@ -52,6 +52,7 @@
 #include "MetroidPrime/Player/CGameState.hpp"
 #include "MetroidPrime/Player/CPlayer.hpp"
 #include "MetroidPrime/Player/CPlayerGun.hpp"
+#include "MetroidPrime/Weapons/CPowerBomb.hpp"
 #include "MetroidPrime/Player/CPlayerState.hpp"
 #include "MetroidPrime/Player/CMorphBall.hpp"
 #include "MetroidPrime/CScriptLayerManager.hpp"
@@ -2780,6 +2781,13 @@ void CStateManager::PortCaptureProbeFace() const {
     // geometry, which follows it, is on screen.
     int geoAreas, instances, models, loaded, drawn;
     PortRoomGeo::Stats(geoAreas, instances, models, loaded, drawn);
+    // Remastered tints the baked light orange in a power bomb's flash.
+    const CPowerBomb* bomb = NULL;
+    if (x84c_player != nullptr && x84c_player->GetPlayerGun() != nullptr &&
+        x84c_player->GetPlayerGun()->GetPowerBombId() != kInvalidUniqueId) {
+      bomb = static_cast< const CPowerBomb* >(GetObjectById(x84c_player->GetPlayerGun()->GetPowerBombId()));
+    }
+    PortRoomEnv::SetPowerBombTime(bomb != NULL ? bomb->GetCurTime() : -1.f);
     PortRoomEnv::UpdateFrame(PortRoomGeo::GetMode() != PortRoomGeo::Mode::Off && drawn > 0);
   }
   {

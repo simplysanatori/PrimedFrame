@@ -1200,6 +1200,9 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   `MP_REMASTERED_BALL_LIGHT=0` keeps retail's light, and
   `MP_REMASTERED_BALL_LIGHT_SCALE` scales it (console `roomenv balllight
   on|off|<scale>`).
+  A power bomb tints the baked light of PBR surfaces orange, as Remastered's
+  does (up to 35x from 1.75 s to 4 s into the blast, white again by 4.5 s; it
+  also dims the probe occlusion less). `MP_REMASTERED_BOMB_TINT=0` turns it off.
   Reflection probes blend around the camera, as Remastered's do: up to four
   of the loaded areas' probes, each fading out over its padding outside its
   box, higher priority first, are mixed into one cube that every PBR model

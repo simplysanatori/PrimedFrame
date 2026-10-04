@@ -1657,6 +1657,28 @@ TEST_F(GXFifoTest, PBRLightHdr_PropagatesAndTurnsOff) {
   EXPECT_EQ(g_gxState.pbrLightHdr[8].x(), 0.f);
 }
 
+// The baked-light modulation propagates, a repeat is dropped, and null is white.
+TEST_F(GXFifoTest, PBRBakedLightModulation_PropagatesAndResets) {
+  EXPECT_EQ(g_gxState.pbrBakedLightModulation.x(), 1.f);
+  const f32 orange[3] = {35.f, 22.5f, 10.4f};
+  GXSetPBRBakedLightModulation(orange);
+  auto bytes = capture_fifo();
+  EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION));
+  reset_gx_state();
+  decode_fifo(bytes);
+  EXPECT_EQ(g_gxState.pbrBakedLightModulation.x(), 35.f);
+  EXPECT_EQ(g_gxState.pbrBakedLightModulation.y(), 22.5f);
+  EXPECT_EQ(g_gxState.pbrBakedLightModulation.z(), 10.4f);
+
+  GXSetPBRBakedLightModulation(orange);
+  EXPECT_FALSE(has_aurora_cmd(capture_fifo(), GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION));
+
+  GXSetPBRBakedLightModulation(nullptr);
+  decode_fifo(capture_fifo());
+  EXPECT_EQ(g_gxState.pbrBakedLightModulation.x(), 1.f);
+  EXPECT_EQ(g_gxState.pbrBakedLightModulation.z(), 1.f);
+}
+
 // The environment BRDF table (GXSetPBRBrdfLut) is a command of its own: 256 bytes turn it on,
 // any other length (or null) goes back to the analytic fit.
 TEST_F(GXFifoTest, PBRBrdfLut_TurnsOnAndOff) {

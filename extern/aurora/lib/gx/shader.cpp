@@ -1415,7 +1415,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // a roughness of 1 samples. The probe is the display-referred scene, x is 0 then.
       let pbr_hdr = ubuf.pbr_cube.x;
       let pbr_lod = select({7}.0, ubuf.pbr_cube.y, pbr_hdr > 0.0);
-      let pbr_cubed = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, pbr_rough * pbr_lod).rgb;
+      // The LOD takes the roughness unfloored, as Remastered's does (only the BRDF floors it).
+      let pbr_cubed = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, saturate(pbr_orm.g) * pbr_lod).rgb;
       let pbr_cubel = select(pow(max(pbr_cubed, vec3f(0.0)), vec3f(2.2)), pbr_cubed * pbr_hdr, pbr_hdr > 0.0);
       var pbr_envspec = mix(pbr_amb + pbr_env * 0.35, pbr_cubel, min(ubuf.pbr_probe[0].w, 1.0));
       // The room cube also shapes the ambient: its blurriest useful mip (z) along the
@@ -1428,6 +1429,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_irr = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_nd, ubuf.pbr_cube.z).rgb;
           pbr_ambd = pbr_amb * clamp(dot(pbr_irr, vec3f(0.2126, 0.7152, 0.0722)) * pbr_hdr * ubuf.pbr_cube.w, 0.35, 2.5);
       }}
+      // Remastered's baked-lighting modulation (GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION, white
+      // but in a power bomb's flash) multiplies the baked ambient below.
+      let pbr_blcm = ubuf.pbr_light_skip.yzw;
       // Baked ambient (GX_AURORA_SET_PBR_AMBIENT) replaces all of that: a lobe per colour
       // channel around the direction most of that channel's light comes from.
       if (ubuf.pbr_ambient[0].w > 0.0) {{
@@ -1435,7 +1439,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                                    dot(pbr_n, ubuf.pbr_ambient[5].xyz)) * 0.5 + 0.5, vec3f(0.0), vec3f(1.0));
           // w is 1 when the game's ambient sets the level, 2 when the baked light is the level.
           pbr_ambd = select(dot(pbr_amb, vec3f(0.2126, 0.7152, 0.0722)), 1.0, ubuf.pbr_ambient[0].w > 1.5) * max(ubuf.pbr_ambient[0].rgb + ubuf.pbr_ambient[1].rgb * pow(pbr_aq, ubuf.pbr_ambient[2].rgb),
-                         vec3f(0.0));
+                         vec3f(0.0)) * pbr_blcm;
       }}
       // An ambient volume (GX_AURORA_SET_PBR_VOLUME) is the same lobes, read at this pixel
       // from the room's grid, a little off the surface so that a wall is lit by the air in
@@ -1456,7 +1460,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                                    dot(pbr_vn, pbr_vb.xyz * 2.0 - 1.0)) * 0.5 + 0.5, vec3f(0.0), vec3f(1.0));
           let pbr_vs = vec3f(pbr_vr.a, pbr_vg.a, pbr_vb.a);
           pbr_ambd = max(pbr_vmean - pbr_vlobe + 2.0 * pbr_vlobe * (1.0 + pbr_vs) * pow(pbr_vq, 1.0 + 2.0 * pbr_vs),
-                         vec3f(0.0)) * ubuf.pbr_volume[3].w;
+                         vec3f(0.0)) * ubuf.pbr_volume[3].w * pbr_blcm;
           // The same lobes along the reflection stand in for the environment: unlike a cube
           // for the room, they are dark where this spot is.
           let pbr_vrn = vec3f(dot(ubuf.pbr_volume[3].xyz, pbr_refl), dot(ubuf.pbr_volume[4].xyz, pbr_refl),
@@ -1467,9 +1471,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                             vec3f(0.0)) * ubuf.pbr_volume[3].w;
           // With a room cube and Remastered's reflection occlusion (w of probe rows 1 and 2,
           // GXSetPBRProbeEx), the cube is reflected instead, darkened where the baked light
-          // is weak: mix(min, 1, saturate(brightest channel of the mean / max)).
+          // is weak: mix(min, 1, saturate(brightest channel of the mean x the modulation's
+          // luminance / max)).
           if (pbr_hdr > 0.0 && ubuf.pbr_probe[0].w > 0.0 && ubuf.pbr_probe[2].w > 0.0) {{
-              let pbr_vocc = clamp(max(pbr_vmean.r, max(pbr_vmean.g, pbr_vmean.b)) * ubuf.pbr_probe[2].w, 0.0, 1.0);
+              let pbr_vocc = clamp(max(pbr_vmean.r, max(pbr_vmean.g, pbr_vmean.b)) *
+                                   dot(pbr_blcm, vec3f(0.2126, 0.7152, 0.0722)) * ubuf.pbr_probe[2].w, 0.0, 1.0);
               pbr_envspec = pbr_cubel * mix(ubuf.pbr_probe[1].w, 1.0, pbr_vocc);
           }}
           // Diagnostics (w of row 5): 1 the texture coordinates, 2 the light alone, 3 the
@@ -1607,7 +1613,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   if (costTest == 3) {
     cut("if (ubuf.pbr_volume[3].w > 0.0) {", "if (false) {");
   } else if (costTest == 4) {
-    cut("textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, pbr_rough * pbr_lod).rgb", "vec3f(0.2)");
+    cut("textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, saturate(pbr_orm.g) * pbr_lod).rgb", "vec3f(0.2)");
     cut("if (pbr_hdr > 0.0 && ubuf.pbr_cube.w > 0.0) {", "if (false) {");
   }
   return source;

@@ -1089,6 +1089,15 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.pbrLightSkip = value;
       g_gxState.dirty |= DirtyUniform;
     }
+  } else if (subCmd == GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION) {
+    Vec4<float> value{1.f, 1.f, 1.f, 0.f};
+    value.x() = reader.read<f32>();
+    value.y() = reader.read<f32>();
+    value.z() = reader.read<f32>();
+    if (g_gxState.pbrBakedLightModulation != value) {
+      g_gxState.pbrBakedLightModulation = value;
+      g_gxState.dirty |= DirtyUniform;
+    }
   } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_HDR) {
     const u32 bit = reader.read<u32>() & 0xFF;
     f32 v[8];

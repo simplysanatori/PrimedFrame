@@ -233,6 +233,12 @@ extern "C" {
 //   3 1 - smoothstep)
 #define GX_AURORA_SET_PBR_LIGHT_HDR 0x0056
 
+// Multiplies the baked light of the following PBR draws (see GXSetPBRBakedLightModulation).
+// Stays in effect until changed; 1, 1, 1 is neutral.
+// Payload:
+//   f32 r, g, b (linear)
+#define GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION 0x0057
+
 // Port extension: draws the following opaque surfaces in two passes (see GXPortSetDepthPrepass).
 // Payload:
 //   u8 pass (0 = off, 1 = depth only, 2 = shade where the depth is equal)

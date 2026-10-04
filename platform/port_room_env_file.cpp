@@ -639,4 +639,21 @@ bool SampleGrid(const File& file, const Grid& grid, const float pos[3], Ambient&
   return true;
 }
 
+void PowerBombBakedLight(float seconds, float rgb[3]) {
+  float t = 0.f;
+  if (seconds >= 4.5f) {
+    t = 0.f;
+  } else if (seconds >= 4.f) {
+    t = 1.f - 2.f * (seconds - 4.f);
+  } else if (seconds >= 3.5f) {
+    t = 1.f;
+  } else if (seconds >= 1.75f) {
+    t = (seconds - 1.75f) / 1.75f;
+  }
+  constexpr float kFlash[3] = {1.f * 35.f, 0.643f * 35.f, 0.298f * 35.f};
+  for (int c = 0; c < 3; ++c) {
+    rgb[c] = 1.f + (kFlash[c] - 1.f) * t;
+  }
+}
+
 } // namespace PortRoomEnv

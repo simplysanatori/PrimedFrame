@@ -388,6 +388,21 @@ void GXSetPBRLightSkip(u32 mask) {
   GX_WRITE_U32(mask);
 }
 
+void GXSetPBRBakedLightModulation(const f32 rgb[3]) {
+  struct Write {
+    f32 rgb[3];
+  };
+  static LastPBRWrite<Write> sLast;
+  const Write now = rgb != nullptr ? Write{{rgb[0], rgb[1], rgb[2]}} : Write{{1.f, 1.f, 1.f}};
+  if (sLast.repeats(now)) {
+    return;
+  }
+  GX_WRITE_AURORA(GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION);
+  for (f32 v : now.rgb) {
+    GX_WRITE_F32(v);
+  }
+}
+
 void GXSetPBRLightHdr(GXLightID light, const f32 color[3], const f32 viewPos[3], f32 r0, f32 r1, u32 falloff) {
   const u32 bit = static_cast<u32>(light) & 0xFF;
   if (bit == 0) {

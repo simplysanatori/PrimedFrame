@@ -655,10 +655,30 @@ void TestBrdfLut() {
   table.clear();
   Check(!PortRoomEnv::ValidBrdfLut(table, error), "brdf: an empty file is rejected");
 }
+
+void TestPowerBomb() {
+  const auto isColor = [](const float rgb[3], float r, float g, float b) {
+    return std::fabs(rgb[0] - r) < 1e-4f && std::fabs(rgb[1] - g) < 1e-4f && std::fabs(rgb[2] - b) < 1e-4f;
+  };
+  float rgb[3];
+  PortRoomEnv::PowerBombBakedLight(-1.f, rgb);
+  Check(isColor(rgb, 1.f, 1.f, 1.f), "bomb: no bomb is white");
+  PortRoomEnv::PowerBombBakedLight(1.7f, rgb);
+  Check(isColor(rgb, 1.f, 1.f, 1.f), "bomb: white before 1.75 s");
+  PortRoomEnv::PowerBombBakedLight(2.625f, rgb);
+  Check(isColor(rgb, 18.f, 0.5f + 0.643f * 17.5f, 0.5f + 0.298f * 17.5f), "bomb: halfway at 2.625 s");
+  PortRoomEnv::PowerBombBakedLight(3.75f, rgb);
+  Check(isColor(rgb, 35.f, 0.643f * 35.f, 0.298f * 35.f), "bomb: full orange from 3.5 to 4 s");
+  PortRoomEnv::PowerBombBakedLight(4.25f, rgb);
+  Check(isColor(rgb, 18.f, 0.5f + 0.643f * 17.5f, 0.5f + 0.298f * 17.5f), "bomb: half back at 4.25 s");
+  PortRoomEnv::PowerBombBakedLight(4.5f, rgb);
+  Check(isColor(rgb, 1.f, 1.f, 1.f), "bomb: white again from 4.5 s");
+}
 } // namespace
 
 int main() {
   TestBrdfLut();
+  TestPowerBomb();
   TestNames();
   TestParse();
   TestPick();

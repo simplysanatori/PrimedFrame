@@ -157,6 +157,8 @@ Worker sWorker;
 uint32_t sNextCube = 1;
 uint32_t sNextVolume = 1;
 int sVolumes = -1;
+int sBombTint = -1;             // MP_REMASTERED_BOMB_TINT
+float sPowerBombTime = -1.f;    // SetPowerBombTime
 float sAmbientScale = -1.f;
 float sVolumeView = -1.f;
 bool sHint = false;
@@ -946,6 +948,13 @@ void UpdateFrame(bool roomGeoDrawing) {
   if (!sBrdfSent) {
     SendBrdfLut();
   }
+  if (sBombTint < 0) {
+    const char* const env = std::getenv("MP_REMASTERED_BOMB_TINT");
+    sBombTint = env != nullptr && env[0] == '0' ? 0 : 1;
+  }
+  float modulation[3];
+  PowerBombBakedLight(sBombTint != 0 ? sPowerBombTime : -1.f, modulation);
+  GXSetPBRBakedLightModulation(modulation);
   constexpr float kGrey = 0.2158605f; // sRGB 128, linear
   constexpr uint32_t kInFlight = 3;   // readbacks Aurora may have queued
   using Clock = std::chrono::steady_clock;
@@ -1312,6 +1321,8 @@ void SetViewPoint(const float pos[3]) {
   sBlend.hasView = true;
   UpdateProbeBlend();
 }
+
+void SetPowerBombTime(float seconds) { sPowerBombTime = seconds; }
 
 bool VolumesEnabled() {
   if (sVolumes < 0) {

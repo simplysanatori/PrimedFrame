@@ -469,7 +469,12 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
     for (const auto& v : g_gxState.pbrTone) {
       buf.append(v);
     }
-    buf.append(g_gxState.pbrLightSkip);
+    // yzw carry the baked-light modulation.
+    Vec4<float> lightSkip = g_gxState.pbrLightSkip;
+    lightSkip.y() = g_gxState.pbrBakedLightModulation.x();
+    lightSkip.z() = g_gxState.pbrBakedLightModulation.y();
+    lightSkip.w() = g_gxState.pbrBakedLightModulation.z();
+    buf.append(lightSkip);
     // z says whether the environment BRDF table is in use.
     Vec4<float> lightScale = g_gxState.pbrLightScale;
     lightScale.z() = g_gxState.pbrBrdfLut ? 1.f : 0.f;

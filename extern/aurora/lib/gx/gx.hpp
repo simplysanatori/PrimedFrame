@@ -411,6 +411,7 @@ struct GXState {
   std::array<Vec4<float>, 6> pbrVolumeRows{}; // see GXSetPBRVolume
   std::array<Vec4<float>, 3> pbrTone{}; // GX_AURORA_SET_PBR_TONE
   Vec4<float> pbrLightSkip{}; // GX_AURORA_SET_PBR_LIGHT_SKIP: x the mask
+  Vec4<float> pbrBakedLightModulation{1.f, 1.f, 1.f, 0.f}; // GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION
   Vec4<float> pbrLightScale{1.f, 1.f, 0.f, 0.f}; // GX_AURORA_SET_PBR_LIGHT_SCALE: diffuse, f0, -, fade
   // GX_AURORA_SET_PBR_LIGHT_HDR, per light: colour (rgb, falloff + 1; w 0 = off), then
   // (view position, r0), then (r1, -, -, -).

@@ -151,6 +151,11 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error);
 // (scale in red, bias in green). The file must be exactly this long.
 constexpr size_t kBrdfLutSize = 16 * 8 * 2;
 bool ValidBrdfLut(const std::vector<uint8_t>& data, std::string& error);
+// Remastered's baked-lighting modulation in a power bomb's flash
+// (CPowerBombMP1::UpdateBakedLightingColorModulation), `seconds` after the bomb went off:
+// white until 1.75 s, towards (1, 0.643, 0.298) x 35 by 3.5 s, held to 4 s, back to white by
+// 4.5 s. A negative time (no bomb) is white.
+void PowerBombBakedLight(float seconds, float rgb[3]);
 // Bytes of BC6H a cube of this size has.
 size_t CubeBytes(uint32_t size, uint32_t mipCount);
 
@@ -352,6 +357,10 @@ void SetViewArea(uint32_t mrea);
 // jumps when the camera's previous room is gone (a world load or a teleport). Also hands
 // one cube or volume the worker has finished to the GPU.
 void UpdateFrame(bool roomGeoDrawing);
+// How long the player's power bomb has been going off, or a negative value for none; the next
+// UpdateFrame tints the baked light with it (PowerBombBakedLight) unless
+// MP_REMASTERED_BOMB_TINT=0.
+void SetPowerBombTime(float seconds);
 // The exposure to measure the frame at, for GXPortPostProcess; 0 when nothing would use
 // the measurement.
 float MeasureExposure();

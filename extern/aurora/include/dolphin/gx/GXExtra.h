@@ -138,6 +138,11 @@ void GXSetPBRBrdfLut(const void* texels, u32 length);
 // them (bit n: GX_LIGHTn), such as lights whose light a baked ambient already holds. 0 for
 // none.
 void GXSetPBRLightSkip(u32 mask);
+// Aurora extension: Remastered's baked-lighting modulation colour (BakedLightingColorModulate).
+// The following PBR draws multiply their baked ambient (GXSetPBRAmbient, GXSetPBRVolume) by it,
+// and the reflection occlusion's argument (GXSetPBRProbeEx) by its luminance. Linear, not
+// clamped; 1, 1, 1 (or null) is neutral.
+void GXSetPBRBakedLightModulation(const f32 rgb[3]);
 // Aurora extension: the following PBR draws light with this in place of the GX light's colour,
 // position and attenuation: a linear colour (no gamma, not clamped), a view-space position,
 // and a falloff from full at r0 to none at r1 (0 none, 1 linear, 2 quadratic, 3 1 - smoothstep,
