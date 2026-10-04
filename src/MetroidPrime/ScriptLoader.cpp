@@ -961,7 +961,10 @@ CEntity* ScriptLoader::LoadPickup(CStateManager& mgr, CInputStream& in, int prop
       // A model id the resource factory does not know (a seed made for another
       // disc version, or a hand-edited one) would make the check below drop
       // the pickup entirely, and with it the item; the retail look is better.
-      if (PortRandomizer::ModelForItem(randoItem, randomModel) &&
+      // A pickup with no model at all is one a script hands over unseen (the
+      // second Phazon Suit in Elite Quarters); it stays invisible.
+      const bool hidden = originalModel.model == 0xFFFFFFFFu && originalModel.acs == 0xFFFFFFFFu;
+      if (!hidden && PortRandomizer::ModelForItem(randoItem, randomModel) &&
           (gpResourceFactory->GetResourceTypeById(static_cast< CAssetId >(randomModel.model)) != 0 ||
            gpResourceFactory->GetResourceTypeById(static_cast< CAssetId >(randomModel.acs)) != 0)) {
         // Mirror the area data exactly: an animated pickup keeps its static

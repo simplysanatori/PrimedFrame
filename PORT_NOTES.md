@@ -5,28 +5,6 @@ git history. Build, run and test instructions are in `docs/NATIVE_PORT.md`.
 
 ## Open follow-ups
 
-### Layer sweep needs a real area unload (2026-09-26)
-
-`MP_RANDO_SWEEP_LAYERS=1` visits each area once per layer (Chozo Ruins has up to 7
-layers per area). `CGameArea` builds the objects of the layers active *when the
-area is constructed*, so a pickup behind an inactive layer is missing from a
-one-layer dump; the cycling finds those (5 extra keys in the first multi-layered
-area alone).
-
-- `CScriptLayerManager::SetLayerActive` is only a bit flip. Re-entering the same
-  area re-enters an area that is already alive: its load is never scheduled again
-  and the sweep reports `[sweep] waiting on area N: loading`.
-- Worse, every port hook (including the sweep) runs from `CStateManager::Update`,
-  which only runs in the `kSMT_InGame` branch of `CMFGame::Think`. If a layer flip
-  pushes the game into another deferred state (save, message, map screen), the tour
-  receives no ticks at all and no guard in the sweep can notice.
-- Needed: unload the area before changing its layer, with the game back in
-  `kSMT_InGame` while it happens (travel away and come back, not teleport onto the
-  area being changed). Until then, dump every layer with several seeded runs from
-  different save states and merge them, as `docs/RANDOMIZER.md` says.
-- The cycling, wait reasons and 10 s give-up are inert without
-  `MP_RANDO_SWEEP_LAYERS`.
-
 ### Touch overlay: a short tap can be missed
 
 SDL's virtual joystick is state-sampling, not event-queueing: a press and release
