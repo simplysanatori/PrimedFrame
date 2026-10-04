@@ -1135,6 +1135,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   the Landing Site's 4133 instances become 188 merged models and 176 single
   ones. A phone pays for every draw on each screen tile, so this took a POCO F8
   Ultra from 24 to 35 fps there. Needs the mod's CMDLs stored uncompressed.
+  F1 > Rendering > Remastered room models > Draw merged copies (not saved)
+  switches back to single draws at runtime, to compare how they look.
 - `MP_ROOM_LIQUID=0`: ignore the mods' `.roomliquid` files and draw the
   retail fluid planes (console `roomliquid [on|off]`, which also counts what is
   loaded and drawn).

@@ -966,9 +966,9 @@ bool ParseMaterialField(const std::string& s, int& field, int& count) {
 // stats: what the last frame cost, and the game's heap.
 void CmdStats() {
   if (const AuroraStats* stats = aurora_get_stats()) {
-    Out("frame: %.0f fps, %u draws (%u merged), %u PBR, pipelines %u made %u waiting", aurora_get_fps(),
-        stats->drawCallCount, stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->createdPipelines,
-        stats->queuedPipelines);
+    Out("frame: %.0f fps, %u draws (%u merged), %u PBR, %u passes, pipelines %u made %u waiting", aurora_get_fps(),
+        stats->drawCallCount, stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->renderPassCount,
+        stats->createdPipelines, stats->queuedPipelines);
     Out("buffers: %.1f MiB vertices, %.1f indices, %.1f arrays, %.1f uniforms, %.1f texture uploads",
         stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f, stats->lastStorageSize / 1048576.f,
         stats->lastUniformSize / 1048576.f, stats->lastTextureUploadSize / 1048576.f);

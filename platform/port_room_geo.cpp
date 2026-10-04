@@ -182,6 +182,7 @@ std::unordered_map< uint32_t, Area >& Areas() {
 int sMode = -1;
 int sAreaLights = -1;
 float sMinPixels = -1.f; // < 0 until MinPixels reads MP_ROOM_GEO_MIN_PX
+bool sMergedDraws = true;
 bool sResident = false;
 // Counts the times areas left Areas(). The sorted pass hands DrawSorted only the item, so
 // it draws while the areas are the ones they were when AddSorted queued it.
@@ -1043,7 +1044,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     lights->BuildDynamicLightList(mgr, bounds);
   };
   for (Cluster& cluster : area.clusters) {
-    cluster.split = false;
+    cluster.split = !sMergedDraws;
     for (const size_t i : cluster.members) {
       cluster.split = cluster.split || !area.items[i].shown;
     }
@@ -1553,6 +1554,10 @@ float MinPixels() {
 }
 
 void SetMinPixels(float pixels) { sMinPixels = std::max(0.f, pixels); }
+
+void SetMergedDraws(bool on) { sMergedDraws = on; }
+
+bool MergedDraws() { return sMergedDraws; }
 
 void SetMode(Mode mode) {
   sMode = int(mode);

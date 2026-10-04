@@ -4684,6 +4684,21 @@ void DrawRendering() {
     ImGui::SetItemTooltip("Recommended: in place of the room.\n"
                           "Draws a mod's Remastered room models instead of the original rooms, or on\n"
                           "top of them to compare the two. Does nothing without a room geometry mod.");
+#ifdef __ANDROID__
+    // The defaults (MSAA off, 1x) are fine; this catches a phone set up for the original rooms.
+    if (PortRoomGeo::GetMode() != PortRoomGeo::Mode::Off && (sMsaa > 1 || sRenderScale <= 0.f || sRenderScale > 2.f)) {
+      ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Slow on phones with MSAA or native scale.");
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Use 2x, MSAA off")) {
+        SetMsaa(1);
+        SetRenderScale(2.f);
+        MarkDirty();
+      }
+      ImGui::SetItemTooltip("Turns anti-aliasing off and sets the EFB scale to 2x (the Quality settings).\n"
+                            "The Remastered rooms draw many more models, and a phone's GPU pays for\n"
+                            "each one at every pixel it renders.");
+    }
+#endif
     bool areaLights = PortRoomGeo::AreaLights();
     if (ImGui::Checkbox("Take the area's lights", &areaLights)) {
       PortRoomGeo::SetAreaLights(areaLights);
@@ -4699,6 +4714,14 @@ void DrawRendering() {
     ImGui::SetItemTooltip("Leaves out room models that look smaller than this on screen (in the game's\n"
                           "own 480-line pixels, whatever the render scale). Raise it if frames are\n"
                           "slow; 0 draws everything.");
+    bool merged = PortRoomGeo::MergedDraws();
+    if (ImGui::Checkbox("Draw merged copies", &merged)) {
+      PortRoomGeo::SetMergedDraws(merged);
+    }
+    ImGui::SetItemTooltip("Recommended: on. Not saved.\n"
+                          "Draws repeated props (rocks, grass) near each other as one model, lit as\n"
+                          "a group. Off draws each copy on its own, with its own lights: slower, but a\n"
+                          "way to check whether the merge changes how something looks.");
     ImGui::EndDisabled();
     ImGui::SameLine();
     bool resident = sRoomGeoResident;
@@ -4819,8 +4842,8 @@ void DrawRendering() {
 
   if (ImGui::CollapsingHeader("Frame statistics")) {
     if (const AuroraStats* stats = aurora_get_stats()) {
-      ImGui::Text("%.0f fps, %u draws (%u merged), %u PBR", aurora_get_fps(), stats->drawCallCount,
-                  stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws);
+      ImGui::Text("%.0f fps, %u draws (%u merged), %u PBR, %u passes", aurora_get_fps(), stats->drawCallCount,
+                  stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->renderPassCount);
       ImGui::Text("vertices %.1f MiB, indices %.1f, arrays %.1f, uniforms %.1f, texture uploads %.1f",
                   stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f,
                   stats->lastStorageSize / 1048576.f, stats->lastUniformSize / 1048576.f,

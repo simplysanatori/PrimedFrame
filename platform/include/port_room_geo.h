@@ -186,6 +186,9 @@ bool AreaLights();
 // triangles do.
 void SetMinPixels(float pixels);
 float MinPixels();
+// Off draws merged copies one by one again, each with its own lights (an A/B check; not saved).
+void SetMergedDraws(bool on);
+bool MergedDraws();
 // Areas with a file, their instances, the distinct models and how many have loaded, and
 // the instances drawn in the last frame.
 void Stats(int& areas, int& instances, int& models, int& loaded, int& drawn);
