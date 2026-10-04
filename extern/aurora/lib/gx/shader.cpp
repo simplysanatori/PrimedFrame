@@ -1316,7 +1316,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_c1 = vec4f(1.0, 0.0425, 1.04, -0.04);
       let pbr_r = pbr_rough * pbr_c0 + pbr_c1;
       let pbr_a004 = min(pbr_r.x * pbr_r.x, exp2(-9.28 * pbr_nv)) * pbr_r.x + pbr_r.y;
-      let pbr_ab = vec2f(-1.04, 1.04) * pbr_a004 + pbr_r.zw;
+      var pbr_ab = vec2f(-1.04, 1.04) * pbr_a004 + pbr_r.zw;
+      // A mod's table (GX_AURORA_SET_PBR_BRDF_LUT) replaces the fit.
+      if (ubuf.pbr_light_scale.z > 0.0) {{
+          pbr_ab = textureSampleLevel(pbr_brdf_lut, pbr_cube_samp, vec2f(saturate(pbr_nv), pbr_rough), 0.0).rg;
+      }}
       let pbr_amb = pow(max({6}, vec3f(0.0)), vec3f(2.2));
       let pbr_pd = ubuf.pbr_probe[0].xyz * pbr_refl.x + ubuf.pbr_probe[1].xyz * pbr_refl.y +
                    ubuf.pbr_probe[2].xyz * pbr_refl.z;
@@ -2199,6 +2203,7 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
         texBindings += fmt::format("\n@group(2) @binding({})\nvar pbr_vol_{}: texture_3d<f32>;",
                                    MaxTextures * 2 + 2 + i, volumeNames[i]);
       }
+      texBindings += fmt::format("\n@group(2) @binding({})\nvar pbr_brdf_lut: texture_2d<f32>;", kBrdfLutBinding);
     }
   }
   if (info.usesPTTexMtx.any()) {

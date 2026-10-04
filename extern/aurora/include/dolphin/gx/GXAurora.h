@@ -186,6 +186,13 @@ extern "C" {
  */
 #define GX_AURORA_SET_PBR_TONE 0x004E
 
+/**
+ * Port extension: a table for the PBR environment specular's scale and bias in place of
+ * the analytic fit (see GXSetPBRBrdfLut). Payload: u64 a heap std::vector<u8> the command
+ * owns, empty to go back to the fit. Stays in effect until changed.
+ */
+#define GX_AURORA_SET_PBR_BRDF_LUT 0x0054
+
 // Distance-field texturing for the following draws: every texture sample is read as
 // a signed distance (red, edge at 0.5) and becomes coverage, one screen pixel wide:
 // rgb = inside the shape, a = inside the shape grown out to `edge`.

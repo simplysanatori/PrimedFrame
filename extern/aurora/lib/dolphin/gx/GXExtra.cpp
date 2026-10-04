@@ -327,6 +327,16 @@ void GXSetPBRVolume(u32 id, const f32 rows[6][4]) {
   }
 }
 
+void GXSetPBRBrdfLut(const void* texels, u32 length) {
+  // The processor frees the copy.
+  auto* copy = new std::vector<u8>;
+  if (texels != nullptr && length == 256) {
+    copy->assign(static_cast<const u8*>(texels), static_cast<const u8*>(texels) + length);
+  }
+  GX_WRITE_AURORA(GX_AURORA_SET_PBR_BRDF_LUT);
+  GX_WRITE_U64(reinterpret_cast<u64>(copy));
+}
+
 void GXSetPBRTone(const f32 rows[3][4]) {
   static LastPBRWrite<PBRToneWrite> sLast;
   PBRToneWrite now{};

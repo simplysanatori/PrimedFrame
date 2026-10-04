@@ -160,6 +160,7 @@ int sVolumes = -1;
 float sAmbientScale = -1.f;
 float sVolumeView = -1.f;
 bool sHint = false;
+bool sBrdfSent = false; // the mods' brdf.lut, or the lack of one, is with Aurora
 uint32_t sHintArea = 0;
 float sHintCentre[3];
 int sEnabled = -1;
@@ -922,7 +923,29 @@ bool Tone(float rows[3][4]) {
   return true;
 }
 
+// Hands Aurora the first mod's roomenv/brdf.lut, or tells it to use the analytic fit.
+void SendBrdfLut() {
+  sBrdfSent = true;
+  std::vector<uint8_t> data;
+  const std::string path = PortMods::BrdfLutPath();
+  if (!path.empty()) {
+    std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
+    data = ReadAll(in);
+    std::string error;
+    if (!in || !ValidBrdfLut(data, error)) {
+      PortLog::Write("room env: %s: %s\n", path.c_str(), error.empty() ? "cannot read" : error.c_str());
+      data.clear();
+    } else {
+      PortLog::Write("room env: environment BRDF table from %s\n", path.c_str());
+    }
+  }
+  GXSetPBRBrdfLut(data.empty() ? nullptr : data.data(), uint32_t(data.size()));
+}
+
 void UpdateFrame(bool roomGeoDrawing) {
+  if (!sBrdfSent) {
+    SendBrdfLut();
+  }
   constexpr float kGrey = 0.2158605f; // sRGB 128, linear
   constexpr uint32_t kInFlight = 3;   // readbacks Aurora may have queued
   using Clock = std::chrono::steady_clock;
@@ -1391,6 +1414,7 @@ void Reset() {
   sAreas.clear();
   FreeBlend();
   sFrame = {};
+  sBrdfSent = false;
   Invalidate();
   sGradeIndex = -1;
 }

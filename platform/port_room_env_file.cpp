@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
 
 namespace PortRoomEnv {
 namespace {
@@ -107,6 +108,14 @@ size_t CubeBytes(uint32_t size, uint32_t mipCount) {
     bytes += blocks * blocks * 16 * 6;
   }
   return bytes;
+}
+
+bool ValidBrdfLut(const std::vector<uint8_t>& data, std::string& error) {
+  if (data.size() != kBrdfLutSize) {
+    error = "brdf.lut is " + std::to_string(data.size()) + " bytes, expected " + std::to_string(kBrdfLutSize);
+    return false;
+  }
+  return true;
 }
 
 bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {

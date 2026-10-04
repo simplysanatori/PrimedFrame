@@ -245,6 +245,7 @@ bool has_cube(uint32_t id) { return false; }
 bool blend_cubes(uint32_t dst, const uint32_t* src, const float* weights, uint32_t count) { return false; }
 void create_volume(uint32_t id, uint32_t sizeX, uint32_t sizeY, uint32_t sizeZ, const uint8_t* texels, size_t length) {}
 void destroy_volume(uint32_t id) {}
+bool set_brdf_lut(const uint8_t* texels, size_t length) { return length == 256; }
 bool has_volume(uint32_t id) { return false; }
 } // namespace probe
 void begin_offscreen(uint32_t width, uint32_t height) {

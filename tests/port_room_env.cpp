@@ -642,9 +642,23 @@ void TestLod() {
             PortRoomEnvLod::CubeLod(0, none) == 0.f && PortRoomEnvLod::CubeLod(1, -3.f) == 0.f,
         "lod: one mip or none stays at 0");
 }
+
+void TestBrdfLut() {
+  std::string error;
+  std::vector<uint8_t> table(PortRoomEnv::kBrdfLutSize, 0x80);
+  Check(PortRoomEnv::kBrdfLutSize == 256, "brdf: 16x8 RG8 is 256 bytes");
+  Check(PortRoomEnv::ValidBrdfLut(table, error), "brdf: a table of the right size is valid");
+  table.pop_back();
+  Check(!PortRoomEnv::ValidBrdfLut(table, error) && !error.empty(), "brdf: one byte short is rejected with a reason");
+  table.assign(PortRoomEnv::kBrdfLutSize + 1, 0);
+  Check(!PortRoomEnv::ValidBrdfLut(table, error), "brdf: one byte long is rejected");
+  table.clear();
+  Check(!PortRoomEnv::ValidBrdfLut(table, error), "brdf: an empty file is rejected");
+}
 } // namespace
 
 int main() {
+  TestBrdfLut();
   TestNames();
   TestParse();
   TestPick();

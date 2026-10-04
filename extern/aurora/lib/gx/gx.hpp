@@ -51,6 +51,8 @@ constexpr bool UsePerPixelLighting = false;
 constexpr bool UseReversedZ = true;
 
 constexpr u32 MaxTextures = GX_MAX_TEXMAP;
+// Group 2 binding of the PBR environment BRDF table, after the probe, its sampler and the volumes.
+constexpr u32 kBrdfLutBinding = MaxTextures * 2 + 7;
 constexpr u32 MaxTluts = 20;
 constexpr u32 MaxTevStages = GX_MAX_TEVSTAGE;
 constexpr u32 MaxColorChannels = 4;
@@ -403,6 +405,7 @@ struct GXState {
   u32 pbrCube = 0; // GX_AURORA_SET_PBR_CUBE
   Vec4<float> pbrCubeParams{0.f, 0.f, 0.f, 0.f}; // see GXSetPBRCube
   std::array<Vec4<float>, 6> pbrAmbient{}; // GX_AURORA_SET_PBR_AMBIENT
+  bool pbrBrdfLut = false; // GX_AURORA_SET_PBR_BRDF_LUT: a table is bound
   u32 pbrVolume = 0; // GX_AURORA_SET_PBR_VOLUME
   std::array<Vec4<float>, 6> pbrVolumeRows{}; // see GXSetPBRVolume
   std::array<Vec4<float>, 3> pbrTone{}; // GX_AURORA_SET_PBR_TONE

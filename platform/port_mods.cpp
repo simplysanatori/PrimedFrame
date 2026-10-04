@@ -44,6 +44,7 @@ std::vector<std::string> sOverlayNames;
 std::unordered_map<uint32_t, std::string> sNativeTextures;
 // <MREA id>.roomenv files, by area.
 std::unordered_map<uint32_t, std::string> sRoomEnvs;
+std::string sBrdfLut;
 std::string sFont;
 std::unordered_map<uint32_t, std::string> sRoomGeos;
 std::unordered_map<uint32_t, std::string> sRoomLiquids;
@@ -328,6 +329,8 @@ std::string RoomEnvPath(uint32_t mrea) {
   return found != sRoomEnvs.end() ? found->second : std::string();
 }
 
+std::string BrdfLutPath() { return sBrdfLut; }
+
 std::string HudBarsPath(uint32_t frame) {
   const auto found = sHudBars.find(frame);
   return found != sHudBars.end() ? found->second : std::string();
@@ -374,6 +377,7 @@ void Initialize() {
   sStatus = {};
   sNativeTextures.clear();
   sRoomEnvs.clear();
+  sBrdfLut.clear();
   sFont.clear();
   sRoomGeos.clear();
   sRoomLiquids.clear();
@@ -439,6 +443,12 @@ void Initialize() {
       }
       if (PortHdFont::ParseFileName(name)) {
         sFont = PathString(file);
+        continue;
+      }
+      if (name == "brdf.lut" && PathString(file.parent_path().filename()) == "roomenv") {
+        if (sBrdfLut.empty()) {
+          sBrdfLut = PathString(file);
+        }
         continue;
       }
       if (PortRoomEnv::ParseFileName(name, id)) {

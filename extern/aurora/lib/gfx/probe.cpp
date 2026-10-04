@@ -122,6 +122,10 @@ struct Volume {
   std::array<wgpu::TextureView, VolumeTextures> views;
 };
 std::unordered_map<uint32_t, Volume> g_volumes;
+wgpu::Texture g_brdfLut;
+wgpu::TextureView g_brdfLutView;
+wgpu::Texture g_emptyBrdfLut;
+wgpu::TextureView g_emptyBrdfLutView;
 wgpu::Texture g_emptyVolume;
 wgpu::TextureView g_emptyVolumeView;
 
@@ -338,6 +342,10 @@ void shutdown() {
   g_volumes.clear();
   g_emptyVolumeView = {};
   g_emptyVolume = {};
+  g_brdfLut = {};
+  g_brdfLutView = {};
+  g_emptyBrdfLut = {};
+  g_emptyBrdfLutView = {};
   g_sampler = {};
   g_cubeView = {};
   g_texture = {};
@@ -583,6 +591,42 @@ void create_volume(uint32_t id, uint32_t sizeX, uint32_t sizeY, uint32_t sizeZ, 
 void destroy_volume(uint32_t id) { g_volumes.erase(id); }
 
 bool has_volume(uint32_t id) { return g_volumes.find(id) != g_volumes.end(); }
+
+bool set_brdf_lut(const uint8_t* texels, size_t length) {
+  if (length != BrdfLutBytes) {
+    g_brdfLut = {};
+    g_brdfLutView = {};
+    return false;
+  }
+  const wgpu::TextureDescriptor descriptor{
+      .label = "PBR BRDF table",
+      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
+      .size = {16, 8, 1},
+      .format = wgpu::TextureFormat::RG8Unorm,
+  };
+  g_brdfLut = g_device.CreateTexture(&descriptor);
+  const wgpu::TexelCopyTextureInfo dst{.texture = g_brdfLut};
+  queue_texture_upload_data(texels, 16 * 2, 8, dst, wgpu::Extent3D{16, 8, 1});
+  g_brdfLutView = g_brdfLut.CreateView();
+  return true;
+}
+
+const wgpu::TextureView& brdf_lut_view() {
+  if (g_brdfLutView) {
+    return g_brdfLutView;
+  }
+  if (!g_emptyBrdfLut) {
+    constexpr wgpu::TextureDescriptor descriptor{
+        .label = "Empty PBR BRDF table",
+        .usage = wgpu::TextureUsage::TextureBinding,
+        .size = {1, 1, 1},
+        .format = wgpu::TextureFormat::RG8Unorm,
+    };
+    g_emptyBrdfLut = g_device.CreateTexture(&descriptor);
+    g_emptyBrdfLutView = g_emptyBrdfLut.CreateView();
+  }
+  return g_emptyBrdfLutView;
+}
 
 const wgpu::TextureView& volume_view(uint32_t id, uint32_t index) {
   const auto found = g_volumes.find(id);

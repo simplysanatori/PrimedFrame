@@ -147,6 +147,10 @@ struct File {
 // "1A2B3C4D.roomenv" (any case) -> 0x1A2B3C4D.
 bool ParseFileName(const std::string& fileName, uint32_t& id);
 bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error);
+// The roomenv/brdf.lut a mod supplies: a 16x8 RG8 table of Remastered's environment BRDF
+// (scale in red, bias in green). The file must be exactly this long.
+constexpr size_t kBrdfLutSize = 16 * 8 * 2;
+bool ValidBrdfLut(const std::vector<uint8_t>& data, std::string& error);
 // Bytes of BC6H a cube of this size has.
 size_t CubeBytes(uint32_t size, uint32_t mipCount);
 

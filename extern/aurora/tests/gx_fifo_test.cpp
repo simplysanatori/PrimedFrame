@@ -1619,6 +1619,24 @@ TEST_F(GXFifoTest, PBRLightScale_PropagatesAndResets) {
   EXPECT_EQ(g_gxState.pbrLightScale.y(), 1.f);
 }
 
+// The environment BRDF table (GXSetPBRBrdfLut) is a command of its own: 256 bytes turn it on,
+// any other length (or null) goes back to the analytic fit.
+TEST_F(GXFifoTest, PBRBrdfLut_TurnsOnAndOff) {
+  EXPECT_FALSE(g_gxState.pbrBrdfLut);
+  u8 table[256]{};
+  GXSetPBRBrdfLut(table, sizeof(table));
+  auto bytes = capture_fifo();
+  EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_PBR_BRDF_LUT));
+  decode_fifo(bytes);
+  EXPECT_TRUE(g_gxState.pbrBrdfLut);
+
+  GXSetPBRBrdfLut(table, 255);
+  bytes = capture_fifo();
+  EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_PBR_BRDF_LUT));
+  decode_fifo(bytes);
+  EXPECT_FALSE(g_gxState.pbrBrdfLut);
+}
+
 TEST_F(GXFifoTest, LoadTexObj_EncodesSdkBpBurstAndAuroraMetadata) {
   alignas(32) u8 image[64]{};
   GXTexObj obj{};

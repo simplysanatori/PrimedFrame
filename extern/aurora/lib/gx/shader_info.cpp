@@ -477,7 +477,10 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
       buf.append(v);
     }
     buf.append(g_gxState.pbrLightSkip);
-    buf.append(g_gxState.pbrLightScale);
+    // z says whether the environment BRDF table is in use.
+    Vec4<float> lightScale = g_gxState.pbrLightScale;
+    lightScale.z() = g_gxState.pbrBrdfLut ? 1.f : 0.f;
+    buf.append(lightScale);
   }
   if (info.usesPTTexMtx.any()) {
     for (int i = 0; i < info.usesPTTexMtx.size(); ++i) {

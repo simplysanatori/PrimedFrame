@@ -32,6 +32,13 @@ bool has_cube(uint32_t id);
 constexpr uint32_t MaxBlend = 4;
 bool blend_cubes(uint32_t dst, const uint32_t* src, const float* weights, uint32_t count);
 
+// The environment BRDF table (GX_AURORA_SET_PBR_BRDF_LUT): 16x8 RG8, 256 bytes. Returns
+// whether one is now set; any other length clears it.
+constexpr uint32_t BrdfLutBytes = 256;
+bool set_brdf_lut(const uint8_t* texels, size_t length);
+// The table, or a 1x1 dummy while there is none. The sampler is sampler().
+const wgpu::TextureView& brdf_lut_view();
+
 // Ambient volumes (GX_AURORA_CREATE_PBR_VOLUME): a room's baked ambient light as five 3D
 // textures (mean, lobe, and the direction and sharpness of red, green and blue), which a
 // PBR draw samples per pixel. `texels` is laid out as GXCreatePBRVolume says.

@@ -1046,6 +1046,14 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.pbrVolumeRows = rows;
       g_gxState.dirty |= DirtyUniform;
     }
+  } else if (subCmd == GX_AURORA_SET_PBR_BRDF_LUT) {
+    const std::unique_ptr<std::vector<u8>> texels{reinterpret_cast<std::vector<u8>*>(reader.read<u64>())};
+    const bool on = gfx::probe::set_brdf_lut(texels->data(), texels->size());
+    if (g_gxState.pbrBrdfLut != on) {
+      g_gxState.pbrBrdfLut = on;
+      g_gxState.dirty |= DirtyUniform;
+    }
+    g_gxState.dirty |= DirtyTextures;
   } else if (subCmd == GX_AURORA_SET_PBR_TONE) {
     std::array<Vec4<float>, 3> rows;
     for (Vec4<float>& v : rows) {

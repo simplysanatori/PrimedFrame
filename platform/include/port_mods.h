@@ -199,6 +199,8 @@ size_t NativeTexturesBound();
 std::string FontPath();
 // The <MREA id>.roomenv a mod supplies for an area (port_room_env.h); empty when none.
 std::string RoomEnvPath(uint32_t mrea);
+// The roomenv/brdf.lut a mod supplies (port_room_env.h), the first mod's when several do; empty when none.
+std::string BrdfLutPath();
 // The <FRME id>.hudbars a mod supplies for a HUD frame (port_hud_bars.h); empty when none.
 std::string HudBarsPath(uint32_t frame);
 // The <MREA id>.roomgeo a mod supplies for an area (port_room_geo.h); empty when none.
