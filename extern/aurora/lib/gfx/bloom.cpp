@@ -130,11 +130,19 @@ fn exposed(c: vec3f) -> vec3f {
 fn fs_bright(in: VertexOutput) -> @location(0) vec4f {
   let size = vec2i(textureDimensions(src));
   let base = vec2i(floor(in.pos.xy)) * 4;
+  // A texel adds nothing unless its level's luminance passes the threshold, and the luminance is at
+  // most its largest channel: below the threshold's drawn value (with room for untone's error) skip
+  // the inverse, most of the frame on a dark room.
+  let dim = pow(tone(max(p.tint.w, 0.0)), 1.0 / 2.2) * 0.999;
   var sum = vec3f(0.0);
   for (var y = 0; y < 4; y++) {
     for (var x = 0; x < 4; x++) {
       let at = min(base + vec2i(x, y), size - vec2i(1));
-      let c = exposed(textureLoad(src, at, 0).rgb);
+      let drawn = textureLoad(src, at, 0).rgb;
+      if (max(max(drawn.r, drawn.g), drawn.b) < dim) {
+        continue;
+      }
+      let c = exposed(drawn);
       let l = dot(c, vec3f(0.2126, 0.7152, 0.0722));
       sum += c * (min(max(l - p.tint.w, 0.0), 8.0) / max(l, 0.001));
     }
