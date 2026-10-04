@@ -3651,6 +3651,7 @@ void PickTexturePack() {
 void DrawTexturePack();
 
 void DrawRenderTab() {
+  ImGui::SeparatorText("Display");
 #if !defined(__ANDROID__)
   if (ImGui::Checkbox("Overlay as a floating window", &sOverlayWindowed)) {
     MarkDirty();
@@ -3676,14 +3677,14 @@ void DrawRenderTab() {
     MarkDirty();
   }
 
+  ImGui::SeparatorText("HUD and view");
   bool hudWide = sHudWide;
   if (ImGui::Checkbox("Widescreen HUD (spread to edges)", &hudWide)) {
     SetHudWide(hudWide);
     MarkDirty();
   }
-  ImGui::TextWrapped(
-      "Keeps each HUD element's shape but spreads its position so edge elements "
-      "reach the wide corners. Only affects the in-game HUD, not menus.");
+  ImGui::SetItemTooltip("Keeps each HUD element's shape but spreads its position so edge elements\n"
+                        "reach the wide corners. Only affects the in-game HUD, not menus.");
 
   int hudScale = sHudScale;
   if (ImGui::SliderInt("HUD scale", &hudScale, kHudScaleMin, kHudScaleMax, "%d%%")) {
@@ -3698,8 +3699,7 @@ void DrawRenderTab() {
   if (ImGui::Checkbox("Hide visor effects", &hideVisorFx)) {
     SetHideVisorEffects(hideVisorFx);
   }
-  ImGui::TextWrapped(
-      "Visor effects: steam, Samus's reflection, and rain, water and goo on the visor.");
+  ImGui::SetItemTooltip("Steam, Samus's reflection, and rain, water and goo on the visor.");
 
   float fov = sFirstPersonFov;
   if (ImGui::SliderFloat("Field of view", &fov, kFovMin, kFovMax, "%.0f deg")) {
@@ -3715,16 +3715,18 @@ void DrawRenderTab() {
     const float aspect = CCameraManager::GetDefaultAspectRatio();
     const float hfov = 2.f * std::atan(std::tan(sFirstPersonFov * 0.5f * 0.017453292f) * aspect) /
                        0.017453292f;
-    ImGui::TextWrapped(
-        "First-person vertical FOV (retail 55); about %.0f deg horizontal at this aspect. "
-        "The arm cannon stays at the retail FOV. Morph ball and cutscene cameras are unchanged.",
-        hfov);
+    ImGui::SetItemTooltip("Back to the retail 55 deg.");
+    ImGui::TextDisabled("About %.0f deg horizontal at this aspect.", hfov);
+    ImGui::SetItemTooltip("First-person vertical FOV (retail 55). The arm cannon stays at the retail\n"
+                          "FOV; morph ball and cutscene cameras are unchanged.");
   }
 
+  ImGui::SeparatorText("Quality");
   int msaa = sMsaa >= 4 ? 1 : 0;
   if (ImGui::Combo("Anti-aliasing", &msaa, "Off\0" "4x MSAA\0")) {
     SetMsaa(msaa == 1 ? 4 : 1);
   }
+  ImGui::SetItemTooltip("Smooths polygon edges, at about 4x the framebuffer memory.");
   {
     int aniso = 0;
     while ((2 << aniso) <= sAnisotropy && aniso < 4) {
@@ -3733,10 +3735,8 @@ void DrawRenderTab() {
     if (ImGui::Combo("Anisotropic filtering", &aniso, "1x\0" "2x\0" "4x\0" "8x\0" "16x\0")) {
       SetAnisotropy(1 << aniso);
     }
+    ImGui::SetItemTooltip("Keeps textures sharp at grazing angles. Recommended: 16x.");
   }
-  ImGui::TextWrapped(
-      "MSAA smooths polygon edges at about 4x the framebuffer memory; anisotropic "
-      "filtering keeps textures sharp at grazing angles (default 16x).");
 
   bool autoScale = sRenderScale <= 0.f;
   if (ImGui::Checkbox("Auto render scale (native)", &autoScale)) {
@@ -3756,13 +3756,19 @@ void DrawRenderTab() {
       MarkDirty();
       sPendingScale = 0.f;
     }
-    ImGui::TextUnformatted("Scales the internal EFB; higher values use more GPU memory.");
+    ImGui::SetItemTooltip("Scales the internal EFB; higher values use more GPU memory.");
   }
+  bool font = PortHdFont::Enabled();
+  if (ImGui::Checkbox("HD font", &font)) {
+    PortHdFont::SetEnabled(font);
+  }
+  ImGui::SetItemTooltip("Draws the game's text with a sharp, high-resolution font. Recommended: on.\n"
+                        "Not saved: it is on at each start.");
 
+  ImGui::SeparatorText("Textures");
   ImGui::Text("HD texture set: %s", PortTextures::DeviceName());
-  ImGui::TextWrapped(
-      "Follows the input last used (xbox, playstation, switch, gamecube, "
-      "standard, keyboard); set MP_TEXTURE_DEVICE to override.");
+  ImGui::SetItemTooltip("Follows the input last used (xbox, playstation, switch,\n"
+                        "gamecube, standard, keyboard); set MP_TEXTURE_DEVICE to override.");
   DrawTexturePack();
 }
 
@@ -3770,7 +3776,6 @@ void DrawRenderTab() {
 // On Android the folder is picked with the system folder picker and copied into
 // the data folder; on the desktop the player fills the folder themselves.
 void DrawTexturePack() {
-  ImGui::SeparatorText("Texture pack");
   const char* root = PortTextures::UserRoot();
   if (root[0] == '\0') {
     ImGui::TextUnformatted("No user texture folder.");
@@ -4339,14 +4344,14 @@ void DrawCheats() {
     GrantItem(*ps, CPlayerState::kIT_EnergyTanks, 14, 14);
     ps->HealthInfo()->SetHP(ps->CalculateHealth());
   }
+  ImGui::SameLine();
   bool invulnerable = Invulnerable();
   if (ImGui::Checkbox("Invulnerable", &invulnerable)) {
     SetInvulnerable(invulnerable);
   }
-  ImGui::TextWrapped("Samus takes no damage from anything. Stays on until unticked.");
+  ImGui::SetItemTooltip("Samus takes no damage from anything. Stays on until unticked.");
 
-  ImGui::Separator();
-  ImGui::TextUnformatted("Abilities");
+  ImGui::SeparatorText("Abilities");
   struct SItemToggle {
     const char* name;
     CPlayerState::EItemType type;
@@ -4375,16 +4380,27 @@ void DrawCheats() {
       {"Varia Suit", CPlayerState::kIT_VariaSuit},
       {"Phazon Suit", CPlayerState::kIT_PhazonSuit},
   };
+  // As many columns as the widest name allows.
+  float nameWidth = 0.f;
   for (const SItemToggle& item : kItems) {
-    bool owned = ps->HasPowerUp(item.type);
-    if (ImGui::Checkbox(item.name, &owned)) {
-      if (owned) {
-        GrantItem(*ps, item.type, 1, 1);
-      } else {
-        ps->SetPowerUp(item.type, 0);
-        ps->SetPickup(item.type, 0);
+    nameWidth = std::max(nameWidth, ImGui::CalcTextSize(item.name).x);
+  }
+  nameWidth += ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x + ImGui::GetStyle().ItemSpacing.x * 2.f;
+  const int columns = std::clamp(int(ImGui::GetContentRegionAvail().x / nameWidth), 1, 4);
+  if (ImGui::BeginTable("##abilities", columns)) {
+    for (const SItemToggle& item : kItems) {
+      ImGui::TableNextColumn();
+      bool owned = ps->HasPowerUp(item.type);
+      if (ImGui::Checkbox(item.name, &owned)) {
+        if (owned) {
+          GrantItem(*ps, item.type, 1, 1);
+        } else {
+          ps->SetPowerUp(item.type, 0);
+          ps->SetPickup(item.type, 0);
+        }
       }
     }
+    ImGui::EndTable();
   }
 
   int missiles = ps->GetItemAmount(CPlayerState::kIT_Missiles);
@@ -4401,8 +4417,7 @@ void DrawCheats() {
     ps->HealthInfo()->SetHP(ps->CalculateHealth());
   }
 
-  ImGui::Separator();
-  ImGui::TextUnformatted("Teleport");
+  ImGui::SeparatorText("Teleport");
   CWorld* world = mgr->World();
   if (world == nullptr) {
     ImGui::TextUnformatted("No world.");
@@ -4413,28 +4428,65 @@ void DrawCheats() {
   }
   const int areaCount = world->IGetAreaCount();
   const int current = world->GetCurrentAreaId().Value();
-  ImGui::Text("Current area: %d of %d", current, areaCount);
-  for (int i = 0; i < areaCount; ++i) {
-    ImGui::PushID(i);
-    // Only loaded areas (the current one and its neighbours) can be entered
-    // in place; any other area reloads the world straight into it.
-    const bool loaded = world->GetArea(TAreaId(i))->IsPostConstructed();
-    if (ImGui::Button(i == current ? "Reload" : "Go")) {
-      if (loaded || gpGameState == nullptr) {
-        PortDebug::RequestTeleport(i);
-      } else {
-        PortDebug::RequestWorldTeleport(
-            static_cast< uint32_t >(gpGameState->CurrentWorldAssetId()),
-            static_cast< uint32_t >(world->IGetAreaAlways(TAreaId(i))->IGetAreaAssetId()));
-      }
+  const std::vector< std::string >& roomNames = PortTracker::RoomNames(*world);
+  const auto roomLabel = [&](int i) {
+    char label[160];
+    if (i >= 0 && i < int(roomNames.size()) && !roomNames[i].empty()) {
+      std::snprintf(label, sizeof(label), "%d  %s", i, roomNames[i].c_str());
+    } else {
+      std::snprintf(label, sizeof(label), "Area %d", i);
     }
-    ImGui::SameLine();
-    ImGui::Text(loaded ? "Area %d" : "Area %d (reloads world)", i);
-    ImGui::PopID();
+    return std::string(label);
+  };
+  // Only loaded areas (the current one and its neighbours) can be entered in place; any
+  // other area reloads the world straight into it.
+  const auto goToArea = [&](int i) {
+    const bool loaded = world->GetArea(TAreaId(i))->IsPostConstructed();
+    if (loaded || gpGameState == nullptr) {
+      PortDebug::RequestTeleport(i);
+    } else {
+      PortDebug::RequestWorldTeleport(
+          static_cast< uint32_t >(gpGameState->CurrentWorldAssetId()),
+          static_cast< uint32_t >(world->IGetAreaAlways(TAreaId(i))->IGetAreaAssetId()));
+    }
+  };
+  static char sRoomFilter[64] = {};
+  const float goWidth = ImGui::CalcTextSize("Reload").x + ImGui::GetStyle().FramePadding.x * 2.f;
+  ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - goWidth - ImGui::GetStyle().ItemSpacing.x);
+  if (ImGui::BeginCombo("##room", roomLabel(current).c_str(), ImGuiComboFlags_HeightLarge)) {
+#if !defined(__ANDROID__) // it would raise the on-screen keyboard every time
+    if (ImGui::IsWindowAppearing()) {
+      ImGui::SetKeyboardFocusHere();
+    }
+#endif
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputTextWithHint("##filter", "Filter rooms", sRoomFilter, sizeof(sRoomFilter));
+    for (int i = 0; i < areaCount; ++i) {
+      const std::string label = roomLabel(i);
+      if (sRoomFilter[0] != '\0' && SDL_strcasestr(label.c_str(), sRoomFilter) == nullptr) {
+        continue;
+      }
+      const bool loaded = world->GetArea(TAreaId(i))->IsPostConstructed();
+      ImGui::PushID(i);
+      if (!loaded) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      }
+      if (ImGui::Selectable(label.c_str(), i == current)) {
+        goToArea(i);
+      }
+      if (!loaded) {
+        ImGui::PopStyleColor();
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::SetItemTooltip("Pick a room to go there. Greyed rooms aren't loaded: going there reloads the world.");
+  ImGui::SameLine();
+  if (ImGui::Button("Reload")) {
+    goToArea(current);
   }
 
-  ImGui::Separator();
-  ImGui::TextUnformatted("Worlds");
   if (gpMemoryCard == nullptr) {
     ImGui::TextUnformatted("(memory card not ready)");
     return;
@@ -4465,17 +4517,25 @@ void DrawCheats() {
     ImGui::TextUnformatted("(loading worlds...)");
     return;
   }
+  const char* currentWorld = "(another world)";
   for (const std::pair< uint32_t, std::string >& entry : sWorldList) {
-    ImGui::PushID(static_cast< int >(entry.first));
-    const bool isCurrent =
-        gpGameState != nullptr && gpGameState->CurrentWorldAssetId() == entry.first;
-    if (ImGui::Button(isCurrent ? "Here" : "Go")) {
-      PortDebug::RequestWorldTeleport(entry.first, 0u);
+    if (gpGameState != nullptr && gpGameState->CurrentWorldAssetId() == entry.first) {
+      currentWorld = entry.second.c_str();
     }
-    ImGui::SameLine();
-    ImGui::TextUnformatted(entry.second.c_str());
-    ImGui::PopID();
   }
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  if (ImGui::BeginCombo("##world", currentWorld)) {
+    for (const std::pair< uint32_t, std::string >& entry : sWorldList) {
+      ImGui::PushID(static_cast< int >(entry.first));
+      const bool isCurrent = gpGameState != nullptr && gpGameState->CurrentWorldAssetId() == entry.first;
+      if (ImGui::Selectable(entry.second.c_str(), isCurrent)) {
+        PortDebug::RequestWorldTeleport(entry.first, 0u);
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::SetItemTooltip("Pick a world to go to its start.");
 }
 
 // The free camera: the view leaves the player, who stands still meanwhile.
@@ -4524,114 +4584,164 @@ void DrawFreeCam() {
 // The switches and readouts for working on what mods draw: room geometry, room
 // environments, PBR.
 void DrawRendering() {
-  int view = PortDebug::PbrView();
-  if (ImGui::BeginCombo("PBR surfaces show", view == 0 ? "the shaded result" : PortDebug::PbrViewName(view))) {
-    for (int i = 0; i < PortDebug::PbrViewCount(); ++i) {
-      if (ImGui::Selectable(i == 0 ? "the shaded result" : PortDebug::PbrViewName(i), i == view)) {
-        PortDebug::SetPbrView(i);
-      }
-    }
-    ImGui::EndCombo();
-  }
-  static const char* const kProbes[] = {"off", "on", "mirror", "window"};
-  int probe = std::clamp(CCubeMaterial::sPortPBRProbeMode, 0, 3);
-  if (ImGui::Combo("Reflection probe", &probe, kProbes, 4)) {
-    CCubeMaterial::sPortPBRProbeMode = probe;
-  }
-  bool font = PortHdFont::Enabled();
-  if (ImGui::Checkbox("HD font", &font)) {
-    PortHdFont::SetEnabled(font);
-  }
-
+  ImGui::TextDisabled("Hover a setting for what it does and the recommended value. They reset at each start.");
   static const char* const kCollisionModes[] = {"off", "on top of the world", "only (hide the world)"};
   int collision = int(PortCollisionView::GetMode());
   if (ImGui::Combo("Collision", &collision, kCollisionModes, 3)) {
     PortCollisionView::SetMode(PortCollisionView::Mode(collision));
   }
-  ImGui::SetItemTooltip("Draws what Samus collides with: walls grey, floors blue, ceilings red,\n"
+  ImGui::SetItemTooltip("Recommended: off.\n"
+                        "Draws what Samus collides with: walls grey, floors blue, ceilings red,\n"
                         "lava orange, grates yellow, solid objects as orange boxes.");
 
-  static const char* const kModes[] = {"off", "in place of the room", "on top of the room"};
-  int mode = int(PortRoomGeo::GetMode());
-  if (ImGui::Combo("Room geometry", &mode, kModes, 3)) {
-    PortRoomGeo::SetMode(PortRoomGeo::Mode(mode));
-  }
-  bool areaLights = PortRoomGeo::AreaLights();
-  if (ImGui::Checkbox("Room geometry takes the area's lights", &areaLights)) {
-    PortRoomGeo::SetAreaLights(areaLights);
-  }
-  bool resident = sRoomGeoResident;
-  if (ImGui::Checkbox("Keep room geometry on the GPU (next start)", &resident)) {
-    PortDebug::SetRoomGeoResident(resident);
-  }
-  ImGui::SetItemTooltip(PortRoomGeo::Resident()
-                            ? "On: a room geometry mod's models are uploaded once when they load,\n"
-                              "and a frame's buffers are smaller. Takes effect from the next start."
-                            : "Uploads a room geometry mod's models once when they load instead of\n"
-                              "every frame, so a frame's buffers can be smaller. Experimental; takes\n"
-                              "effect from the next start.");
-  bool env = PortRoomEnv::Enabled();
-  if (ImGui::Checkbox("Room environments", &env)) {
-    PortRoomEnv::SetEnabled(env);
-  }
-  ImGui::BeginDisabled(!env);
-  bool exposed = PortRoomEnv::RoomExposed();
-  if (ImGui::Checkbox("Exposure by room", &exposed)) {
-    PortRoomEnv::SetRoomExposed(exposed);
-  }
-  ImGui::SameLine();
-  bool volumes = PortRoomEnv::VolumesEnabled();
-  if (ImGui::Checkbox("Baked light per pixel", &volumes)) {
-    PortRoomEnv::SetVolumesEnabled(volumes);
-  }
-  float ambient = PortRoomEnv::AmbientScale();
-  if (ImGui::SliderFloat("Baked ambient scale", &ambient, 0.f, 4.f, "%.2f")) {
-    PortRoomEnv::SetAmbientScale(ambient);
-  }
-  static const char* const kVolumeViews[] = {"the shaded surface", "volume coordinates", "the baked light"};
-  int volumeView = std::clamp(PortRoomEnv::VolumeView(), 0, 2);
-  if (ImGui::Combo("Baked surfaces show", &volumeView, kVolumeViews, 3)) {
-    PortRoomEnv::SetVolumeView(volumeView);
-  }
-  ImGui::EndDisabled();
-
   // What the middle of the screen looks at.
-  static std::string picked;
-  static uint32_t pickedModel = 0;
-  static std::string materials;
   float origin[3];
   float forward[3];
   const bool inWorld = PortDebug::ViewRay(origin, forward);
-  ImGui::BeginDisabled(!inWorld);
-  if (ImGui::Button("Pick the model ahead")) {
-    picked.clear();
-    pickedModel = PortRoomGeo::Pick(CVector3f(origin[0], origin[1], origin[2]),
-                                    CVector3f(forward[0], forward[1], forward[2]), picked);
-    materials = pickedModel != 0 ? PortRoomGeo::Materials(pickedModel) : std::string();
-    if (picked.empty()) {
-      picked = "No room geometry ahead.";
+
+  if (ImGui::CollapsingHeader("Remastered room models")) {
+    // The frame's buffers are only sized for room geometry when the game started with some.
+    const bool geoReady = PortRoomGeo::BuffersReady();
+    if (!geoReady && PortMods::RoomGeometryLoaded()) {
+      ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Restart the game to see the Remastered rooms.");
+      ImGui::SetItemTooltip("The game started without room geometry installed, so it set no room aside\n"
+                            "for it. Once it starts with some, mods can be changed without a restart.");
     }
-  }
-  ImGui::EndDisabled();
-  if (pickedModel != 0) {
+    ImGui::BeginDisabled(!geoReady);
+    static const char* const kModes[] = {"off", "in place of the room", "on top of the room"};
+    int mode = int(PortRoomGeo::GetMode());
+    if (ImGui::Combo("Room geometry", &mode, kModes, 3)) {
+      PortRoomGeo::SetMode(PortRoomGeo::Mode(mode));
+    }
+    ImGui::SetItemTooltip("Recommended: in place of the room.\n"
+                          "Draws a mod's Remastered room models instead of the original rooms, or on\n"
+                          "top of them to compare the two. Does nothing without a room geometry mod.");
+    bool areaLights = PortRoomGeo::AreaLights();
+    if (ImGui::Checkbox("Take the area's lights", &areaLights)) {
+      PortRoomGeo::SetAreaLights(areaLights);
+    }
+    ImGui::SetItemTooltip("Recommended: off.\n"
+                          "Also lights the Remastered rooms with the game's own lights where the room\n"
+                          "has baked light. Off matches Remastered.");
+    ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Hide it")) {
-      PortRoomGeo::SetHidden(pickedModel, true);
+    bool resident = sRoomGeoResident;
+    if (ImGui::Checkbox("Keep on the GPU (next start)", &resident)) {
+      PortDebug::SetRoomGeoResident(resident);
     }
-  }
-  ImGui::SameLine();
-  if (ImGui::Button("Show all")) {
-    PortRoomGeo::SetHidden(0, false);
-  }
-  if (!picked.empty()) {
-    ImGui::TextUnformatted(picked.c_str());
-  }
-  if (!materials.empty() && ImGui::TreeNode("Materials of the first")) {
-    ImGui::TextUnformatted(materials.c_str());
-    ImGui::TreePop();
+    ImGui::SetItemTooltip(PortRoomGeo::Resident()
+                              ? "On: a room geometry mod's models are uploaded once when they load,\n"
+                                "and a frame's buffers are smaller. Takes effect from the next start.\n"
+                                "Recommended: off unless frames are slow; it is experimental."
+                              : "Uploads a room geometry mod's models once when they load instead of\n"
+                                "every frame, so a frame's buffers can be smaller. Experimental; takes\n"
+                                "effect from the next start. Recommended: off unless frames are slow.");
+
+    static std::string picked;
+    static uint32_t pickedModel = 0;
+    static std::string materials;
+    ImGui::BeginDisabled(!inWorld);
+    if (ImGui::Button("Pick the model ahead")) {
+      picked.clear();
+      pickedModel = PortRoomGeo::Pick(CVector3f(origin[0], origin[1], origin[2]),
+                                      CVector3f(forward[0], forward[1], forward[2]), picked);
+      materials = pickedModel != 0 ? PortRoomGeo::Materials(pickedModel) : std::string();
+      if (picked.empty()) {
+        picked = "No room geometry ahead.";
+      }
+    }
+    ImGui::SetItemTooltip("Names the room model in the middle of the screen and lists its materials.");
+    ImGui::EndDisabled();
+    if (pickedModel != 0) {
+      ImGui::SameLine();
+      if (ImGui::Button("Hide it")) {
+        PortRoomGeo::SetHidden(pickedModel, true);
+      }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Show all")) {
+      PortRoomGeo::SetHidden(0, false);
+    }
+    if (!picked.empty()) {
+      ImGui::TextUnformatted(picked.c_str());
+    }
+    if (!materials.empty() && ImGui::TreeNode("Materials of the first")) {
+      ImGui::TextUnformatted(materials.c_str());
+      ImGui::TreePop();
+    }
   }
 
-  if (ImGui::TreeNode("Frame")) {
+  if (ImGui::CollapsingHeader("Remastered materials and lighting")) {
+    int view = PortDebug::PbrView();
+    if (ImGui::BeginCombo("PBR surfaces show", view == 0 ? "the shaded result" : PortDebug::PbrViewName(view))) {
+      for (int i = 0; i < PortDebug::PbrViewCount(); ++i) {
+        if (ImGui::Selectable(i == 0 ? "the shaded result" : PortDebug::PbrViewName(i), i == view)) {
+          PortDebug::SetPbrView(i);
+        }
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Recommended: the shaded result.\n"
+                          "The other choices show one input of a mod's PBR materials alone: base colour\n"
+                          "(albedo), normals, roughness, metalness, ambient occlusion, ambient light,\n"
+                          "reflection, glow, exposure, or the material kind.");
+    static const char* const kProbes[] = {"off", "on", "mirror", "window"};
+    int probe = std::clamp(CCubeMaterial::sPortPBRProbeMode, 0, 3);
+    if (ImGui::Combo("Reflection probe", &probe, kProbes, 4)) {
+      CCubeMaterial::sPortPBRProbeMode = probe;
+    }
+    ImGui::SetItemTooltip("Recommended: on.\n"
+                          "Where shiny PBR surfaces get their reflections: the room's own cube when\n"
+                          "the mod has one, otherwise a live capture of the world around the camera.\n"
+                          "Mirror and window draw surfaces as perfect mirrors of it, or windows onto it,\n"
+                          "to check what it holds.");
+
+    bool env = PortRoomEnv::Enabled();
+    if (ImGui::Checkbox("Room environments", &env)) {
+      PortRoomEnv::SetEnabled(env);
+    }
+    ImGui::SetItemTooltip("Recommended: on.\n"
+                          "Uses the lighting a mod brings for each room: its reflection cubes, baked\n"
+                          "ambient light, exposure and bloom.");
+    ImGui::BeginDisabled(!env);
+    ImGui::SameLine();
+    bool exposed = PortRoomEnv::RoomExposed();
+    if (ImGui::Checkbox("Exposure by room", &exposed)) {
+      PortRoomEnv::SetRoomExposed(exposed);
+    }
+    ImGui::SetItemTooltip("Recommended: on.\n"
+                          "Sets the brightness as Remastered does, from the room the camera is in and\n"
+                          "its tone curve. Off exposes every reflection cube to a neutral middle grey.");
+    ImGui::SameLine();
+    bool volumes = PortRoomEnv::VolumesEnabled();
+    if (ImGui::Checkbox("Baked light per pixel", &volumes)) {
+      PortRoomEnv::SetVolumesEnabled(volumes);
+    }
+    ImGui::SetItemTooltip("Recommended: on.\n"
+                          "Lights the Remastered rooms from the room's grid of baked light, so the light\n"
+                          "changes across a surface. Off gives each model one ambient colour.");
+    float ambient = PortRoomEnv::AmbientScale();
+    if (ImGui::SliderFloat("Baked ambient scale", &ambient, 0.f, 4.f, "%.2f")) {
+      PortRoomEnv::SetAmbientScale(ambient);
+    }
+    ImGui::SetItemTooltip("Recommended: 1.\n"
+                          "Multiplies the baked ambient light. 0 uses the game's own ambient instead.");
+    static const char* const kVolumeViews[] = {"the shaded surface", "volume coordinates", "the baked light"};
+    int volumeView = std::clamp(PortRoomEnv::VolumeView(), 0, 2);
+    if (ImGui::Combo("Baked surfaces show", &volumeView, kVolumeViews, 3)) {
+      PortRoomEnv::SetVolumeView(volumeView);
+    }
+    ImGui::SetItemTooltip("Recommended: the shaded surface.\n"
+                          "The others show where each pixel samples the baked light grid, or the baked\n"
+                          "light alone, to check it lines up.");
+    ImGui::EndDisabled();
+    if (inWorld && ImGui::TreeNode("Room environment here")) {
+      ImGui::TextUnformatted(PortRoomEnv::Info(origin).c_str());
+      ImGui::TreePop();
+    }
+  }
+
+  if (ImGui::CollapsingHeader("Frame statistics")) {
     if (const AuroraStats* stats = aurora_get_stats()) {
       ImGui::Text("%.0f fps, %u draws (%u merged), %u PBR", aurora_get_fps(), stats->drawCallCount,
                   stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws);
@@ -4656,27 +4766,10 @@ void DrawRendering() {
     PortRoomGeo::Stats(areas, instances, models, loaded, drawn);
     ImGui::Text("room geometry: %d area(s), %d of %d model(s) loaded, %d of %d instance(s) drawn", areas, loaded,
                 models, drawn, instances);
-    ImGui::TreePop();
-  }
-  if (inWorld && ImGui::TreeNode("Room environment here")) {
-    ImGui::TextUnformatted(PortRoomEnv::Info(origin).c_str());
-    ImGui::TreePop();
   }
 }
 
 void DrawDebugTab() {
-  ImGui::SeparatorText("Camera");
-  DrawFreeCam();
-
-  ImGui::SeparatorText("Rendering");
-  DrawRendering();
-
-  ImGui::SeparatorText("Audio");
-  DrawAudio();
-  if (ImGui::CollapsingHeader("Voices")) {
-    DrawVoices();
-  }
-
   ImGui::SeparatorText("Log");
   bool logFile = sLogFile || PortLogFile::Active();
   if (ImGui::Checkbox("Write the log to a file", &logFile)) {
@@ -4686,6 +4779,12 @@ void DrawDebugTab() {
     }
   }
   const std::string logPath = PortLogFile::Path();
+  if (!logPath.empty()) {
+    ImGui::SameLine();
+    if (ImGui::Button("Copy log path")) {
+      ImGui::SetClipboardText(logPath.c_str());
+    }
+  }
   if (PortLogFile::Active()) {
     ImGui::TextWrapped("Writing to %s (last run's: metroid_prime_port.old.log).", logPath.c_str());
     if (!sLogFile) {
@@ -4698,9 +4797,6 @@ void DrawDebugTab() {
   if (const std::string shared = PortLogFile::SharedPath(); !shared.empty()) {
     ImGui::TextWrapped("A copy goes to %s, which the phone's file manager can open.", shared.c_str());
   }
-  if (!logPath.empty() && ImGui::Button("Copy log path")) {
-    ImGui::SetClipboardText(logPath.c_str());
-  }
 
   ImGui::SeparatorText("Cheats");
   bool cheats = sCheats;
@@ -4710,6 +4806,18 @@ void DrawDebugTab() {
   }
   if (sCheats) {
     DrawCheats();
+  }
+
+  ImGui::SeparatorText("Camera");
+  DrawFreeCam();
+
+  ImGui::SeparatorText("Rendering");
+  DrawRendering();
+
+  ImGui::SeparatorText("Audio");
+  DrawAudio();
+  if (ImGui::CollapsingHeader("Sounds playing")) {
+    DrawVoices();
   }
 }
 

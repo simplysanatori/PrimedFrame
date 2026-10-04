@@ -1049,6 +1049,7 @@ void SetMode(Mode mode) {
 }
 
 void SetBuffersReady(bool ready) { sBuffersReady = ready; }
+bool BuffersReady() { return sBuffersReady; }
 
 void SetResident(bool resident) { sResident = resident; }
 

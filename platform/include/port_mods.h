@@ -210,6 +210,8 @@ std::string RoomLiquidPath(uint32_t mrea);
 // Whether any mod folder holds room geometry. Reads the disk, and needs no Initialize:
 // the frame buffers are sized from it before there is a renderer.
 bool HasRoomGeometry();
+// Whether the loaded mods supply room geometry for any area.
+bool RoomGeometryLoaded();
 
 // Folder names the settings disable, '/'-separated (no folder name has one).
 std::vector<std::string> SplitDisabled(const std::string& list);

@@ -341,6 +341,8 @@ std::string RoomGeoPath(uint32_t mrea) {
   return found != sRoomGeos.end() ? found->second : std::string();
 }
 
+bool RoomGeometryLoaded() { return !sRoomGeos.empty(); }
+
 std::string RoomLiquidPath(uint32_t mrea) {
   const auto found = sRoomLiquids.find(mrea);
   return found != sRoomLiquids.end() ? found->second : std::string();
