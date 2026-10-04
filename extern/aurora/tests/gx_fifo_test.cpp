@@ -1631,6 +1631,32 @@ TEST_F(GXFifoTest, PBRLightScale_PropagatesAndResets) {
   EXPECT_EQ(g_gxState.pbrLightScale.w(), 0.f);
 }
 
+// An HDR light lands in its own light's three rows (colour with falloff + 1, position with r0,
+// r1); a repeat is dropped, and off clears the rows.
+TEST_F(GXFifoTest, PBRLightHdr_PropagatesAndTurnsOff) {
+  const f32 color[3] = {9.f, 3.5f, 0.1f};
+  const f32 pos[3] = {1.f, -2.f, -5.f};
+  GXSetPBRLightHdr(GX_LIGHT2, color, pos, 0.f, 2.3f, 2);
+  auto bytes = capture_fifo();
+  EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_PBR_LIGHT_HDR));
+  reset_gx_state();
+  decode_fifo(bytes);
+  EXPECT_EQ(g_gxState.pbrLightHdr[6].x(), 9.f);
+  EXPECT_EQ(g_gxState.pbrLightHdr[6].w(), 3.f);
+  EXPECT_EQ(g_gxState.pbrLightHdr[7].y(), -2.f);
+  EXPECT_EQ(g_gxState.pbrLightHdr[7].w(), 0.f);
+  EXPECT_EQ(g_gxState.pbrLightHdr[8].x(), 2.3f);
+  EXPECT_EQ(g_gxState.pbrLightHdr[0].w(), 0.f);
+
+  GXSetPBRLightHdr(GX_LIGHT2, color, pos, 0.f, 2.3f, 2);
+  EXPECT_FALSE(has_aurora_cmd(capture_fifo(), GX_AURORA_SET_PBR_LIGHT_HDR));
+
+  GXSetPBRLightHdr(GX_LIGHT2, nullptr, nullptr, 0.f, 0.f, 0);
+  decode_fifo(capture_fifo());
+  EXPECT_EQ(g_gxState.pbrLightHdr[6].w(), 0.f);
+  EXPECT_EQ(g_gxState.pbrLightHdr[8].x(), 0.f);
+}
+
 // The environment BRDF table (GXSetPBRBrdfLut) is a command of its own: 256 bytes turn it on,
 // any other length (or null) goes back to the analytic fit.
 TEST_F(GXFifoTest, PBRBrdfLut_TurnsOnAndOff) {

@@ -349,8 +349,8 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
   }
   if (config.pbr) {
     info.usesPbr = true;
-    // 7 single + ambient 6 + volume 6 + tone 3 + light skip + light scale, then the linear light colours
-    info.uniformSize += sizeof(Mat3x4<float>) + sizeof(Vec4<float>) * (24 + GX::MaxLights);
+    // 7 single + ambient 6 + volume 6 + tone 3 + light skip + light scale, then the linear light colours, then 3 HDR rows per light
+    info.uniformSize += sizeof(Mat3x4<float>) + sizeof(Vec4<float>) * (24 + GX::MaxLights * 4);
   }
   if (info.usesPTTexMtx.any()) {
     info.uniformSize += sizeof(Mat3x4<float>) * MaxPTTexMtx;
@@ -478,6 +478,9 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
     for (const auto& light : g_gxState.lights) {
       const auto linear = [](float c) { return std::pow(std::max(c, 0.f), 2.2f); };
       buf.append(Vec4<float>{linear(light.color.x()), linear(light.color.y()), linear(light.color.z()), 0.f});
+    }
+    for (const auto& v : g_gxState.pbrLightHdr) {
+      buf.append(v);
     }
   }
   if (info.usesPTTexMtx.any()) {

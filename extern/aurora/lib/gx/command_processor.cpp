@@ -17,6 +17,7 @@
 #include <tracy/Tracy.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -1087,6 +1088,28 @@ void handle_aurora(ByteReader& reader) noexcept {
     if (g_gxState.pbrLightSkip != value) {
       g_gxState.pbrLightSkip = value;
       g_gxState.dirty |= DirtyUniform;
+    }
+  } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_HDR) {
+    const u32 bit = reader.read<u32>() & 0xFF;
+    f32 v[8];
+    for (f32& f : v) {
+      f = reader.read<f32>();
+    }
+    const u32 falloff = std::min(reader.read<u32>(), 3u);
+    if (bit != 0) {
+      const u32 idx = static_cast<u32>(std::countr_zero(bit));
+      const bool on = v[7] > 0.f;
+      const std::array<Vec4<float>, 3> rows{
+          on ? Vec4<float>{v[0], v[1], v[2], static_cast<f32>(falloff + 1)} : Vec4<float>{},
+          on ? Vec4<float>{v[3], v[4], v[5], v[6]} : Vec4<float>{},
+          on ? Vec4<float>{v[7], 0.f, 0.f, 0.f} : Vec4<float>{},
+      };
+      for (u32 row = 0; row < 3; ++row) {
+        if (g_gxState.pbrLightHdr[idx * 3 + row] != rows[row]) {
+          g_gxState.pbrLightHdr[idx * 3 + row] = rows[row];
+          g_gxState.dirty |= DirtyUniform;
+        }
+      }
     }
   } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_SCALE) {
     const f32 diffuse = reader.read<f32>();

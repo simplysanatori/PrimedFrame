@@ -1353,10 +1353,15 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       for (var i = 0u; i < {4}u; i++) {{
           if (({15} & ~u32(ubuf.pbr_light_skip.x) & (1u << i)) == 0u) {{ continue; }}
           let light = ubuf.lights[i];
-          var ldir = light.pos - in.pbr_pos;
+          // A Remastered HDR light (GXSetPBRLightHdr) brings its own colour, position and
+          // falloff.
+          let hdr_c = ubuf.pbr_light_hdr[i * 3u];
+          let hdr_p = ubuf.pbr_light_hdr[i * 3u + 1u];
+          let hdr_on = hdr_c.w > 0.5;
+          var ldir = select(light.pos, hdr_p.xyz, hdr_on) - in.pbr_pos;
           let dist2 = dot(ldir, ldir);
           let dist = sqrt(dist2);
-          ldir = ldir / dist;{5}
+          ldir = ldir / max(dist, 1e-4);{5}
           let nl = max(dot(pbr_n, ldir), 0.0);
           let h = normalize(ldir + pbr_v);
           let nh = max(dot(pbr_n, h), 0.0);
@@ -1368,7 +1373,20 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let spec = d * vis * f;
           // GX lights are unnormalised (colour * N.L is full brightness), so Lambert has no
           // 1/pi and the specular lobe is scaled by pi to match.
-          let rad = ubuf.pbr_light_color[i].rgb * attn{16};
+          var rad = ubuf.pbr_light_color[i].rgb * attn{16};
+          if (hdr_on) {{
+              let hdr_r1 = ubuf.pbr_light_hdr[i * 3u + 2u].x;
+              let hdr_t = clamp((dist - hdr_p.w) / max(hdr_r1 - hdr_p.w, 1e-4), 0.0, 1.0);
+              var hdr_fa = 1.0;
+              if (hdr_c.w > 3.5) {{
+                  hdr_fa = 1.0 - smoothstep(0.0, 1.0, hdr_t);
+              }} else if (hdr_c.w > 2.5) {{
+                  hdr_fa = (1.0 - hdr_t) * (1.0 - hdr_t);
+              }} else if (hdr_c.w > 1.5) {{
+                  hdr_fa = 1.0 - hdr_t;
+              }}
+              rad = hdr_c.rgb * hdr_fa{16};
+          }}
           pbr_lo += (pbr_diff * pbr_ao + spec * pbr_pi) * rad * nl;
           // Stand-in environment: the surroundings as a soft hemisphere lit by this light,
           // seen along the reflection vector.
@@ -2278,6 +2296,7 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     uniBufAttrs += "\n    pbr_light_skip: vec4f,";
     uniBufAttrs += "\n    pbr_light_scale: vec4f,";
     uniBufAttrs += fmt::format("\n    pbr_light_color: array<vec4f, {}>,", GX::MaxLights);
+    uniBufAttrs += fmt::format("\n    pbr_light_hdr: array<vec4f, {}>,", GX::MaxLights * 3);
     const auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx);
     if (!pbr.empty()) {
       fragmentFn += pbr;

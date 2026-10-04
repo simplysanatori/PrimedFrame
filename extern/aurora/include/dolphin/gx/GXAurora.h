@@ -224,6 +224,15 @@ extern "C" {
 //   32 u32: aurora::gfx::bloom::Params, word for word
 #define GX_AURORA_PORT_POST_PROCESS 0x0052
 
+// Replaces one light's colour, position and attenuation in the following PBR draws with a
+// Remastered HDR light's (see GXSetPBRLightHdr); other draws keep the GX light. Stays in effect
+// until changed.
+// Payload:
+//   u32 light (its GX_LIGHTn bit), f32 r, g, b (linear), f32 view-space x, y, z,
+//   f32 inner radius, f32 outer radius (0 = off), u32 falloff (0 none, 1 linear, 2 quadratic,
+//   3 1 - smoothstep)
+#define GX_AURORA_SET_PBR_LIGHT_HDR 0x0056
+
 // Port extension: draws the following opaque surfaces in two passes (see GXPortSetDepthPrepass).
 // Payload:
 //   u8 pass (0 = off, 1 = depth only, 2 = shade where the depth is equal)

@@ -4,6 +4,7 @@
 #include "../../gfx/bloom.hpp"
 #include "../../gfx/probe.hpp"
 
+#include <bit>
 #include <cstring>
 #include <vector>
 
@@ -56,6 +57,13 @@ struct PBRLightScaleWrite {
   f32 f0;
   f32 alpha;
   u32 alphaReplaces;
+};
+struct PBRLightHdrWrite {
+  f32 color[3];
+  f32 pos[3];
+  f32 r0;
+  f32 r1;
+  u32 falloff;
 };
 struct PBRMaterialWrite {
   f32 emissive[3];
@@ -378,6 +386,33 @@ void GXSetPBRLightSkip(u32 mask) {
   }
   GX_WRITE_AURORA(GX_AURORA_SET_PBR_LIGHT_SKIP);
   GX_WRITE_U32(mask);
+}
+
+void GXSetPBRLightHdr(GXLightID light, const f32 color[3], const f32 viewPos[3], f32 r0, f32 r1, u32 falloff) {
+  const u32 bit = static_cast<u32>(light) & 0xFF;
+  if (bit == 0) {
+    return;
+  }
+  const u32 idx = static_cast<u32>(std::countr_zero(bit));
+  PBRLightHdrWrite now{};
+  if (color != nullptr && viewPos != nullptr && r1 > 0.f) {
+    now = {{color[0], color[1], color[2]}, {viewPos[0], viewPos[1], viewPos[2]}, r0, r1, falloff};
+  }
+  static LastPBRWrite<PBRLightHdrWrite> sLast[8];
+  if (sLast[idx].repeats(now)) {
+    return;
+  }
+  GX_WRITE_AURORA(GX_AURORA_SET_PBR_LIGHT_HDR);
+  GX_WRITE_U32(bit);
+  for (f32 v : now.color) {
+    GX_WRITE_F32(v);
+  }
+  for (f32 v : now.pos) {
+    GX_WRITE_F32(v);
+  }
+  GX_WRITE_F32(now.r0);
+  GX_WRITE_F32(now.r1);
+  GX_WRITE_U32(now.falloff);
 }
 
 void GXSetPBRLightScale(f32 diffuse, f32 f0, f32 alpha, GXBool alphaReplaces) {
