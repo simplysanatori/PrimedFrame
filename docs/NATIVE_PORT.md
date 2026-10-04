@@ -903,6 +903,15 @@ unpacks to a temporary directory instead of mounting.
   finish at once, a Reset ends a beetle's emergence, no skip without a
   cutscene camera). Rooms a mod replaced are left unpatched. Archipelago
   games also skip the Landing Site intro: Samus starts on top of her ship.
+- Elevator ride (F1 > Extras > Cutscenes, pause Options > Visor,
+  `elevator_ride`: 0 Original, 1 Fast, 2 Skip; Original by default) sets the
+  ride shown between worlds. Retail holds it at least 5 s whatever the load
+  takes (`CWorldTransManager`). Fast starts the closing dissolve at 0.5 s and plays it at
+  double speed, about 2 s in all. Skip shows black until the next world is
+  loaded (about 0.7 s on the development machine), and like retail's
+  no-model transition it stops all sound effects at the switch. The elevator
+  room's own cinematic is not affected. `MP_SMOKE_ELEVATOR`'s `passed` line
+  prints the ride's wall time.
 - F1 > Debug holds the audio switches, the MusyX voice list (collapsed) and the
   cheats: health, items, ammo, area and world teleport. The cheats stay hidden
   until Show cheats is ticked (`cheats`, off by default). Invulnerable

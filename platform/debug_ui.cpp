@@ -143,6 +143,7 @@ bool sMapLogicColors = true;
 int sApSuitDamage = 1;
 bool sCheats = false;
 bool sSkippableCutscenes = false;
+int sElevatorRide = PortDebug::kElevatorRide_Original;
 bool sSaveStateHotkeys = true;
 bool sMouseAim = false;
 bool sTwinStick = false;
@@ -403,6 +404,11 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sCheats = ParseBool(value);
   } else if (key == "skippable_cutscenes") {
     sSkippableCutscenes = ParseBool(value);
+  } else if (key == "elevator_ride") {
+    const int mode = std::atoi(value.c_str());
+    sElevatorRide = mode >= PortDebug::kElevatorRide_Original && mode <= PortDebug::kElevatorRide_Skip
+                        ? mode
+                        : PortDebug::kElevatorRide_Original;
   } else if (key == "savestate_hotkeys") {
     sSaveStateHotkeys = ParseBool(value);
   } else if (key == "unlock_hard_mode") {
@@ -622,6 +628,7 @@ void SaveSettings() {
   file << "ap_suit_damage=" << sApSuitDamage << '\n';
   file << "cheats=" << (sCheats ? 1 : 0) << '\n';
   file << "skippable_cutscenes=" << (sSkippableCutscenes ? 1 : 0) << '\n';
+  file << "elevator_ride=" << sElevatorRide << '\n';
   file << "savestate_hotkeys=" << (sSaveStateHotkeys ? 1 : 0) << '\n';
   file << "fov=" << sFirstPersonFov << '\n';
   file << "msaa=" << sMsaa << '\n';
@@ -1168,6 +1175,18 @@ bool SkippableCutscenes() {
 void SetSkippableCutscenes(bool enabled) {
   EnsureInitialized();
   sSkippableCutscenes = enabled;
+  MarkDirty();
+}
+
+EElevatorRide ElevatorRide() {
+  EnsureInitialized();
+  return static_cast< EElevatorRide >(sElevatorRide);
+}
+
+void SetElevatorRide(EElevatorRide mode) {
+  EnsureInitialized();
+  sElevatorRide = mode >= kElevatorRide_Original && mode <= kElevatorRide_Skip ? mode
+                                                                               : kElevatorRide_Original;
   MarkDirty();
 }
 
@@ -3508,6 +3527,14 @@ void DrawExtrasTab() {
     SameLineAfterHelp();
     ImGui::TextDisabled("(on in randomized games)");
   }
+  int elevatorRide = sElevatorRide;
+  if (ImGui::Combo("Elevator ride", &elevatorRide, "Original\0Fast\0Skip\0")) {
+    SetElevatorRide(static_cast< EElevatorRide >(elevatorRide));
+  }
+  ItemHelp("The ride shown between worlds. Original lasts at least 5 s even though the port loads "
+           "far faster; Fast ends it about 2 s in, once the next area is loaded; Skip shows black "
+           "until the area is loaded. The cinematic played in the elevator room before the ride is "
+           "not affected.");
 
   ImGui::SeparatorText("Unlocks");
   bool hardMode = sUnlockHardMode;

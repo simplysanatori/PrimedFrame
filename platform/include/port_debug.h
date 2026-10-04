@@ -196,6 +196,11 @@ void SetApSuitDamage(int mode);
 // (PortSkipCutscenes::Active).
 bool SkippableCutscenes();
 void SetSkippableCutscenes(bool enabled);
+// The elevator ride between worlds (CWorldTransManager). Retail holds it at
+// least 5 s whatever the load takes; the port loads in well under that.
+enum EElevatorRide { kElevatorRide_Original, kElevatorRide_Fast, kElevatorRide_Skip };
+EElevatorRide ElevatorRide();
+void SetElevatorRide(EElevatorRide mode);
 // First-person vertical field of view in degrees (retail 55). The arm cannon is
 // drawn at the retail FOV whatever this is, like a view-model FOV.
 const float kFovRetail = 55.f;

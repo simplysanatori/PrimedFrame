@@ -24,6 +24,7 @@
 #include "MetroidPrime/TCastTo.hpp"
 #include <dolphin/pad.h>
 #include <SDL3/SDL.h>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -247,6 +248,7 @@ void PortSmokeElevator(CStateManager& mgr) {
   static unsigned sTicks = 0;
   static CAssetId sTicksWorld = kInvalidAssetId;
   static CAssetId sDestWorld = kInvalidAssetId;
+  static std::chrono::steady_clock::time_point sRideStart;
   if (delayTicks == 0 || sPhase == kDone || mgr.GetWantsToQuit() || mgr.World() == nullptr) return;
   const CAssetId world = mgr.World()->IGetWorldAssetId();
   if (world != sTicksWorld) {
@@ -274,13 +276,15 @@ void PortSmokeElevator(CStateManager& mgr) {
   case kPlaying:
     if (++sTicks < 2) return;
     std::fputs("[elevator-smoke] sending SetToZero\n", stderr);
+    sRideStart = std::chrono::steady_clock::now();
     sPhase = kRiding;
     mgr.SendScriptMsgAlways(sElevatorUid, kInvalidUniqueId, kSM_SetToZero);
     break;
   case kRiding:
     if (world != sDestWorld || !playing) return;
-    std::fprintf(stderr, "[elevator-smoke] passed: world %08X area %d\n", world,
-                 mgr.World()->GetCurrentAreaId().Value());
+    std::fprintf(stderr, "[elevator-smoke] passed: world %08X area %d after %.2f s\n", world,
+                 mgr.World()->GetCurrentAreaId().Value(),
+                 std::chrono::duration< double >(std::chrono::steady_clock::now() - sRideStart).count());
     sPhase = kDone;
     break;
   }

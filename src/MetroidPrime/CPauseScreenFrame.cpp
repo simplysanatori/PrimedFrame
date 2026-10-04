@@ -201,6 +201,7 @@ enum EPortOption {
   kPO_CrosshairSize,
   kPO_SkippableCutscenes,
   kPO_MapPickups,
+  kPO_ElevatorRide,
 };
 #define PORT_OPTION(opt) static_cast< EGameOption >(opt)
 
@@ -226,6 +227,7 @@ static const SGameOption skPortVisorOptions[] = {
     {PORT_OPTION(kPO_RevealMap), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {PORT_OPTION(kPO_MapPickups), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {PORT_OPTION(kPO_SkippableCutscenes), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(kPO_ElevatorRide), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
 static const SGameOption skPortDisplayOptions[] = {
@@ -255,7 +257,7 @@ static const SGameOption skPortControllerOptions[] = {
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
 static SOptionCategory skPauseOptions[] = {
-    {10, skPortVisorOptions},     {11, skPortDisplayOptions}, {4, skSoundOptions},
+    {11, skPortVisorOptions},     {11, skPortDisplayOptions}, {4, skSoundOptions},
     {10, skPortControllerOptions}, {0, nullptr},
 };
 
@@ -297,6 +299,8 @@ static const wchar_t* PortOptionTitle(EGameOption option) {
     return L"Crosshair Size";
   case kPO_SkippableCutscenes:
     return L"Skippable Cutscenes";
+  case kPO_ElevatorRide:
+    return L"Elevator Ride";
   default:
     return L"";
   }
@@ -338,6 +342,8 @@ static int GetPortOption(EGameOption option) {
   case kPO_SkippableCutscenes:
     // Randomized games force it on; show what is in effect.
     return PortSkipCutscenes::Active() ? 1 : 0;
+  case kPO_ElevatorRide:
+    return PortDebug::ElevatorRide();
   case kPO_CrosshairSize:
     return PortDebug::CrosshairSize();
   default:
@@ -396,6 +402,9 @@ static void SetPortOption(EGameOption option, int value) {
     break;
   case kPO_SkippableCutscenes:
     PortDebug::SetSkippableCutscenes(value > 0);
+    break;
+  case kPO_ElevatorRide:
+    PortDebug::SetElevatorRide(static_cast< PortDebug::EElevatorRide >(value));
     break;
   case kPO_CrosshairSize:
     PortDebug::SetCrosshairSize(value);
@@ -561,6 +570,7 @@ void CGameOptions::TryRestoreDefaults(const CFinalInput& input, int category, in
         PortDebug::SetRevealMap(false);
         PortDebug::SetMapPickups(false);
         PortDebug::SetSkippableCutscenes(false);
+        PortDebug::SetElevatorRide(PortDebug::kElevatorRide_Original);
         break;
       case 1:
         PortDebug::SetAspectMode(PortDebug::kAspect_4_3);
@@ -839,8 +849,11 @@ void COptionsScreen::UpdateOptionView() {
       static const wchar_t* const kAspectLabels[] = {L"4:3", L"16:9", L"Window"};
       CGuiTextPane* label =
           static_cast< CGuiTextPane* >(x194_tablegroup_triple->GetWorkerWidget(i));
+      static const wchar_t* const kElevatorLabels[] = {L"Original", L"Fast", L"Skip"};
       if (opt.option == PORT_OPTION(kPO_AspectRatio)) {
         label->TextSupport().SetText(rstl::wstring_l(kAspectLabels[i]));
+      } else if (opt.option == PORT_OPTION(kPO_ElevatorRide)) {
+        label->TextSupport().SetText(rstl::wstring_l(kElevatorLabels[i]));
       } else {
         label->TextSupport().SetText(rstl::wstring_l(xc_pauseStrg.GetString(96 + i)));
       }
