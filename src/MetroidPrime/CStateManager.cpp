@@ -224,10 +224,11 @@ CEntity* PortTempleObject(CStateManager& mgr, uint id) {
 // Port: a debug teleport skips the triggers that start a room's music (the
 // player lands on the spawn point, not in the door triggers), and a world
 // warp's ~CWorld has already stopped every stream. Play the music the area's
-// nearest trigger would have started. Rooms with none (elevator rooms play
-// theirs on the elevator's arrival) get the first looping music any of their
-// objects plays, and with none at all the previous track keeps playing (a
-// world warp keeps it through ~CWorld, as an elevator ride does).
+// nearest trigger would have started. Rooms with none get the first looping
+// music any of their objects plays, or else the first looping music object
+// they hold (an elevator room's track is started from another room). A world
+// warp keeps the previous track through ~CWorld, as an elevator ride does,
+// and stops it only if the destination room has no music at all.
 bool sPortWarpMusicPending = false;
 
 // The active streamed music `ent` plays from `state` (any state when
@@ -249,10 +250,10 @@ CEntity* PortPlayedMusic(CStateManager& mgr, const CEntity& ent, EScriptObjectSt
   return nullptr;
 }
 
-void PortStartAreaMusic(CStateManager& mgr) {
+bool PortStartAreaMusic(CStateManager& mgr) {
   const CPlayer* player = mgr.GetPlayer();
   if (player == nullptr)
-    return;
+    return false;
   const TAreaId area = mgr.GetNextAreaId();
   const CVector3f pos = player->GetTranslation();
   CEntity* best = nullptr;
@@ -279,8 +280,21 @@ void PortStartAreaMusic(CStateManager& mgr) {
   }
   if (best == nullptr)
     best = fallback;
-  if (best != nullptr)
-    mgr.DeliverScriptMsg(best, kInvalidUniqueId, kSM_Play);
+  if (best == nullptr) {
+    for (int i = all.GetFirstObjectIndex(); i != -1; i = all.GetNextObjectIndex(i)) {
+      CScriptStreamedMusic* const music =
+          dynamic_cast< CScriptStreamedMusic* >(const_cast< CEntity* >(all[i]));
+      if (music != nullptr && music->GetActive() && music->GetCurrentAreaId() == area &&
+          music->IsLoopingMusic()) {
+        best = music;
+        break;
+      }
+    }
+  }
+  if (best == nullptr)
+    return false;
+  mgr.DeliverScriptMsg(best, kInvalidUniqueId, kSM_Play);
+  return true;
 }
 } // namespace
 
@@ -1201,7 +1215,8 @@ void CStateManager::InitializeState(unsigned int mlvlId, TAreaId aid, unsigned i
 
   if (sPortWarpMusicPending) {
     sPortWarpMusicPending = false;
-    PortStartAreaMusic(*this);
+    if (!PortStartAreaMusic(*this))
+      CStreamAudioManager::StopAll();
   }
 }
 

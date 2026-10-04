@@ -19,8 +19,11 @@ public:
   void Play(CStateManager& mgr);
   static bool IsAudioTrackNameSoftware(const rstl::string& fileName);
 #ifdef TARGET_PC
-  // Port: a room's background track, as opposed to a jingle.
-  bool IsLoopingMusic() const { return x46_loop && x47_music; }
+  // Port: a room's background track, as opposed to a jingle or the "SW"
+  // placeholder that only fades the software channel.
+  bool IsLoopingMusic() const {
+    return x46_loop && x47_music && x34_fileName.size() > 2 && x45_fileIsDsp;
+  }
 #endif
 
 private:
