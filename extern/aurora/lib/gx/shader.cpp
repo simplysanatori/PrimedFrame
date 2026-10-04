@@ -542,6 +542,29 @@ AlphaCompareExpr alpha_compare(GXCompare comp, u8 ref) {
   }
 }
 
+// When the alpha compare drops a pixel, in terms of alphaCompare (the alpha as 0-255).
+AlphaCompareExpr alpha_compare_discard(const ShaderConfig& config) {
+  const auto comp0 = alpha_compare(config.alphaCompare.comp0, config.alphaCompare.ref0);
+  const auto comp1 = alpha_compare(config.alphaCompare.comp1, config.alphaCompare.ref1);
+  AlphaCompareExpr pass;
+  switch (config.alphaCompare.op) {
+    DEFAULT_FATAL("invalid alpha compare op {}", underlying(config.alphaCompare.op));
+  case GX_AOP_AND:
+    pass = alpha_compare_and(comp0, comp1);
+    break;
+  case GX_AOP_OR:
+    pass = alpha_compare_or(comp0, comp1);
+    break;
+  case GX_AOP_XOR:
+    pass = alpha_compare_xor(comp0, comp1);
+    break;
+  case GX_AOP_XNOR:
+    pass = alpha_compare_xnor(comp0, comp1);
+    break;
+  }
+  return alpha_compare_not(pass);
+}
+
 std::string_view tev_scale(GXTevScale scale) {
   switch (scale) {
     DEFAULT_FATAL("invalid tev scale {}", underlying(scale));
@@ -968,6 +991,21 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_vc = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)) * ubuf.pbr_backlight.rgb, pbr_vraw.a);
       }})""",
                                   vclr);
+  // A cut-out pixel (grass, leaves) that the alpha compare drops is dropped here instead of
+  // after the shading. The compare sees prev.a times the vertex alpha unless a height blend,
+  // ColorUnlit or a glow mode changes it (pbr_alpha below), and a layered surface's alpha is
+  // its own.
+  if (config.alphaCompare && mapStage[4] == -1) {
+    const auto discard = alpha_compare_discard(config);
+    if (discard.constant == -1) {
+      layer += fmt::format(R"""(
+      if (ubuf.pbr_emissive.w <= 0.0 && !pbr_cu && pbr_flags - select(0.0, 4.0, pbr_flags > 3.5) < 1.5) {{
+          let alphaCompare = u32(round(clamp(prev.a{}, 0.0, 1.0) * 255.0));
+          if ({}) {{ discard; }}
+      }})""",
+                           tintAlpha, discard.expr);
+    }
+  }
   const bool framed = mapStage[2] != -1 || layered;
   if (framed) {
     // Cotangent frame (Schüler): pbr_t and pbr_b are the directions U and V grow in. WebGPU's
@@ -2284,25 +2322,7 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     fragmentFn += "\n    prev.a = tev_overflow_f32(prev.a);";
   }
   if (config.alphaCompare) {
-    const auto comp0 = alpha_compare(config.alphaCompare.comp0, config.alphaCompare.ref0);
-    const auto comp1 = alpha_compare(config.alphaCompare.comp1, config.alphaCompare.ref1);
-    AlphaCompareExpr pass;
-    switch (config.alphaCompare.op) {
-      DEFAULT_FATAL("invalid alpha compare op {}", underlying(config.alphaCompare.op));
-    case GX_AOP_AND:
-      pass = alpha_compare_and(comp0, comp1);
-      break;
-    case GX_AOP_OR:
-      pass = alpha_compare_or(comp0, comp1);
-      break;
-    case GX_AOP_XOR:
-      pass = alpha_compare_xor(comp0, comp1);
-      break;
-    case GX_AOP_XNOR:
-      pass = alpha_compare_xnor(comp0, comp1);
-      break;
-    }
-    const auto discard = alpha_compare_not(pass);
+    const auto discard = alpha_compare_discard(config);
     if (discard.constant == 1) {
       fragmentFn += "\n    // Alpha compare\n    discard;";
     } else if (discard.constant != 0) {
