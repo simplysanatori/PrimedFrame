@@ -104,7 +104,9 @@ void push_draw_command(DrawData data);
 bool record_encoder_task(uint64_t type, const void* payload, size_t payloadSize); // type: an EncoderTaskId
 // record_encoder_task, with the custom draw drawType (registered, no payload) first in the pass
 // that follows, which clears its colour instead of loading it: the draw must cover every pixel.
-bool record_encoder_task_overwriting(uint64_t type, const void* payload, size_t payloadSize, uint64_t drawType);
+// clearDepth also clears depth there (and drops the sealed pass's depth store).
+bool record_encoder_task_overwriting(uint64_t type, const void* payload, size_t payloadSize, uint64_t drawType,
+                                     bool clearDepth = false);
 template <typename DrawData>
 DrawData* get_last_draw_command();
 template <typename PipelineConfig>

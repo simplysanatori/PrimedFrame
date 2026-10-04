@@ -11,12 +11,17 @@ struct Params {
   float threshold;
   float tints[5][3];
   float tone[3][4];   // [0][3]: the exposure to measure the frame at (0: don't)
-  uint32_t bloom;     // 0: grade only
+  uint32_t bloom;     // bit 0: the bloom (else grade only); the Cost bits below
   uint32_t gradeA;    // LUT ids from set_grade_lut; 0 is the identity
   uint32_t gradeB;
   float gradeWeight;  // 0 draws A, 1 draws B
 };
 static_assert(sizeof(Params) <= 128);
+// Params::bloom bits for speed tests (GXSetPBRCostTest), which leave out one part of the work and
+// look wrong: no copy of the frame (the composite reads a stale one), and the pass after the bloom
+// clearing depth instead of loading it.
+constexpr uint32_t CostNoFrameCopy = 4;
+constexpr uint32_t CostNoDepthReload = 8;
 
 static_assert(sizeof(Params) % 4 == 0);
 

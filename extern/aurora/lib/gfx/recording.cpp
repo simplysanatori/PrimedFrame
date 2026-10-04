@@ -1156,7 +1156,8 @@ bool push_encoder_task(EncoderTaskId type, const void* payload, size_t payloadSi
   return record_encoder_task(type, payload, payloadSize);
 }
 
-bool record_encoder_task(EncoderTaskId type, const void* payload, size_t payloadSize) {
+namespace {
+bool record_encoder_task_between(EncoderTaskId type, const void* payload, size_t payloadSize, bool depthDead) {
   if (!g_recorder.active() || g_recorder.currentRenderPass == UINT32_MAX) {
     Log.warn("push_encoder_task: called outside an active render pass");
     return false;
@@ -1172,6 +1173,7 @@ bool record_encoder_task(EncoderTaskId type, const void* payload, size_t payload
   auto& frame = current_frame_packet();
   auto& prevPass = current_render_passes()[g_recorder.currentRenderPass];
   prevPass.discardable = !prevPass.has_consumer() && !prevPass.has_content();
+  discard_dead_stores(prevPass, false, depthDead);
   enqueue_pass(frame, g_recorder.currentRenderPass);
 
   const auto taskIndex = static_cast<uint32_t>(frame.encoderTasks.size());
@@ -1185,12 +1187,22 @@ bool record_encoder_task(EncoderTaskId type, const void* payload, size_t payload
   enqueue_op(frame, opIndex);
 
   resume_efb_pass_loading(prevPass);
+  if (depthDead) {
+    auto& pass = current_render_passes()[g_recorder.currentRenderPass];
+    pass.clearDepth = true;
+    pass.clearDepthValue = gx::UseReversedZ ? 0.f : 1.f;
+  }
   return true;
+}
+} // namespace
+
+bool record_encoder_task(EncoderTaskId type, const void* payload, size_t payloadSize) {
+  return record_encoder_task_between(type, payload, payloadSize, false);
 }
 
 bool record_encoder_task_overwriting(EncoderTaskId type, const void* payload, size_t payloadSize,
-                                     DrawTypeId drawType) {
-  if (!record_encoder_task(type, payload, payloadSize)) {
+                                     DrawTypeId drawType, bool clearDepth) {
+  if (!record_encoder_task_between(type, payload, payloadSize, clearDepth)) {
     return false;
   }
   current_render_passes()[g_recorder.currentRenderPass].colorAttachments[SceneColorAttachmentIndex].clear = true;

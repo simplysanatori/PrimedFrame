@@ -84,7 +84,14 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
     return true;
   }
   aurora::gfx::bloom::Params params{};
-  params.bloom = bloom ? 1 : 0;
+  // Cost tests 12-14 price the bloom, the frame copy and the depth reload after the break.
+  const u32 costTest = GXGetPBRCostTest();
+  params.bloom = bloom && costTest != 12 ? 1 : 0;
+  if (costTest == 13) {
+    params.bloom |= aurora::gfx::bloom::CostNoFrameCopy;
+  } else if (costTest == 14) {
+    params.bloom |= aurora::gfx::bloom::CostNoDepthReload;
+  }
   params.threshold = threshold;
   if (tints != nullptr) {
     std::memcpy(params.tints, tints, sizeof(params.tints));
@@ -164,7 +171,7 @@ void GXSetArrayBaseIndex(GXAttr attr, u32 base) {
 
 static u32 sPBRCostTest = 0;
 
-void GXSetPBRCostTest(u32 test) { sPBRCostTest = test <= 11 ? test : 0; }
+void GXSetPBRCostTest(u32 test) { sPBRCostTest = test <= 14 ? test : 0; }
 
 u32 GXGetPBRCostTest() { return sPBRCostTest; }
 

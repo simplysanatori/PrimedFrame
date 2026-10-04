@@ -5079,7 +5079,9 @@ void DrawRendering() {
                                                  "No reflections", "No normal maps", "No ORM/emissive maps",
                                                  "Maps only", "Maps without anisotropy",
                                                  "Maps without anisotropy or mip blend",
-                                                 "No post-processing", "No screen copies"};
+                                                 "No post-processing", "No screen copies", "No bloom",
+                                                 "Post without the frame copy",
+                                                 "Post without the depth reload"};
     int costTest = int(GXGetPBRCostTest());
     if (ImGui::Combo("Shading cost test", &costTest, kCostTests, IM_ARRAYSIZE(kCostTests))) {
       GXSetPBRCostTest(u32(costTest));
@@ -5089,8 +5091,10 @@ void DrawRendering() {
                           "shows what that part costs. Maps only is Flat with every map still read, to\n"
                           "tell reading the maps from the maths. Looks wrong on purpose. The two\n"
                           "without anisotropy shade in full but filter the maps more cheaply, and look a\n"
-                          "little softer. The last two time the frame around the shading: no bloom and\n"
-                          "colour grade, and no copies of the screen for effects such as heat haze.");
+                          "little softer. The rest time the frame around the shading: no bloom and\n"
+                          "colour grade, no copies of the screen for effects such as heat haze, and\n"
+                          "then one part of the post-processing at a time: the bloom (the grade stays),\n"
+                          "its copy of the frame, and reloading depth for the HUD after it.");
     ImGui::EndDisabled();
     ImGui::SameLine();
     bool resident = sRoomGeoResident;

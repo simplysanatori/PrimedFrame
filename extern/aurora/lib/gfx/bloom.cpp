@@ -724,7 +724,9 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   const wgpu::TexelCopyTextureInfo copySource{.texture = source.texture};
   const wgpu::TexelCopyTextureInfo copyTarget{.texture = g_state.frame};
   const wgpu::Extent3D copySize{width, height, 1};
-  cmd.CopyTextureToTexture(&copySource, &copyTarget, &copySize);
+  if ((params.bloom & CostNoFrameCopy) == 0) {
+    cmd.CopyTextureToTexture(&copySource, &copyTarget, &copySize);
+  }
 
   if (measure) {
     encode_average(cmd, exposure, g_state.frameView);
@@ -783,12 +785,13 @@ void record(const Params& params) {
     return;
   }
   Params task = params;
-  task.bloom = task.bloom != 0 ? BloomOn : 0;
+  task.bloom &= BloomOn | CostNoFrameCopy | CostNoDepthReload;
   // A frame that is composited draws it as the first thing in the pass that resumes the EFB: on a
   // tile-based GPU a pass of its own stores the frame only for that pass to load it again.
-  if (g_state.compositeDraw != InvalidDrawType && (task.bloom != 0 || task.gradeA != 0 || task.gradeB != 0)) {
+  if (g_state.compositeDraw != InvalidDrawType && ((task.bloom & BloomOn) || task.gradeA != 0 || task.gradeB != 0)) {
     task.bloom |= CompositeInPass;
-    record_encoder_task_overwriting(g_state.task, &task, sizeof(task), g_state.compositeDraw);
+    record_encoder_task_overwriting(g_state.task, &task, sizeof(task), g_state.compositeDraw,
+                                    (task.bloom & CostNoDepthReload) != 0);
   } else {
     record_encoder_task(g_state.task, &task, sizeof(task));
   }
