@@ -3,6 +3,7 @@ package org.metroidprime.port;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.CornerPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -89,8 +90,8 @@ final class TouchControlsView extends View {
     private static final ControlButton[] GAMECUBE_FACE = {
         ControlButton.round("A", BTN_SOUTH, 0f, 0f, 0.085f, GC_GREEN),
         ControlButton.round("B", BTN_EAST, -0.123f, 0.103f, 0.050f, GC_RED),
-        ControlButton.kidney("X", BTN_WEST, 0.158f, 0.040f, -50f, 80f, GC_GREY),
-        ControlButton.kidney("Y", BTN_NORTH, 0.158f, 0.040f, -160f, 75f, GC_GREY),
+        ControlButton.kidney("X", BTN_WEST, 0.158f, 0.040f, -37f, 55f, GC_GREY),
+        ControlButton.kidney("Y", BTN_NORTH, 0.158f, 0.040f, -150f, 55f, GC_GREY),
     };
 
     // Twin-stick reads like a modern shooter pad: the Xbox diamond, all four the
@@ -116,15 +117,18 @@ final class TouchControlsView extends View {
     private static final int[] DPAD_DX = {0, 0, -1, 1};
     private static final int[] DPAD_DY = {-1, 1, 0, 0};
 
-    // Shoulders stack vertically: the trigger above the bumper, both sides.
-    // L and R are the pad's analog triggers; Z is its digital shoulder. In Xbox
-    // mode they read LT/RT and LB/RB, and RB carries Z while LB carries the
+    // L and R are the pad's analog triggers; Z is its digital shoulder. On the
+    // GameCube pad L and R are curved triggers and Z sits in front of R, so Z
+    // goes under R here. In Xbox mode the shoulders stack on both sides, the
+    // trigger above the bumper: LT/RT and LB/RB, where RB carries Z and LB the
     // twin-stick beam modifier, which is what the port reads the left shoulder
     // for. X-Box mode has no Z label because the pad has no Z button.
     private static final PillButton[] GAMECUBE_PILLS = {
-        new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.100f),
-        new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.020f, 0.115f, 0.150f, 0.185f, GC_PURPLE),
-        new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.100f),
+        new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.125f, GC_GREY,
+                       PillButton.TRIGGER_LEFT),
+        new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.125f, GC_GREY,
+                       PillButton.TRIGGER_RIGHT),
+        new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.140f, 0.960f, 0.200f, GC_PURPLE),
         new PillButton("START", -1, BTN_START, 0.400f, 0.030f, 0.490f, 0.100f),
         new PillButton("MENU", TOGGLE_DEBUG_OVERLAY, -1, 0.510f, 0.030f, 0.600f, 0.100f),
         new PillButton("HIDE", HIDE_KEY, -1, 0.620f, 0.030f, 0.710f, 0.100f),
@@ -154,6 +158,7 @@ final class TouchControlsView extends View {
     private final RectF hideBounds = new RectF();
     private final Path shapePath = new Path();
     private final Path crossArmPath = new Path();
+    private final CornerPathEffect triggerCorners = new CornerPathEffect(dp(8));
     private static native boolean nativeDebugOverlayVisible();
     private static native boolean nativeTwinStick();
     private static native void nativeSetTouchDevice(boolean xboxLayout);
@@ -773,11 +778,41 @@ final class TouchControlsView extends View {
         }
         strokePaint.setColor(active ? 0xFFE1F8FF : 0xCCFFFFFF);
         RectF bounds = new RectF(left, top, right, bottom);
+        if (pill.trigger != PillButton.FLAT) {
+            drawTrigger(canvas, pill, bounds);
+            return;
+        }
         float radius = Math.min(bounds.width(), bounds.height()) * 0.28f;
         canvas.drawRoundRect(bounds, radius, radius, fillPaint);
         canvas.drawRoundRect(bounds, radius, radius, strokePaint);
         drawCenteredLabel(canvas, pill.label, bounds.centerX(), bounds.centerY(),
                           pill.label.length() > 2 ? dp(11) : dp(13));
+    }
+
+    // A GameCube trigger: a curved band across the top of its bounds whose inner
+    // end (towards the screen's middle) drops, like the pad's shoulder. The
+    // paints are already set; the whole bounds stay the touch area.
+    private void drawTrigger(Canvas canvas, PillButton pill, RectF bounds) {
+        float thick = bounds.height() * 0.60f;
+        float drop = bounds.height() - thick;
+        boolean leftSide = pill.trigger == PillButton.TRIGGER_LEFT;
+        float outer = leftSide ? bounds.left : bounds.right;
+        float inner = leftSide ? bounds.right : bounds.left;
+        float bend = outer + (inner - outer) * 0.35f;
+        shapePath.reset();
+        shapePath.moveTo(outer, bounds.top);
+        shapePath.quadTo(bend, bounds.top, inner, bounds.top + drop);
+        shapePath.lineTo(inner, bounds.bottom);
+        shapePath.quadTo(bend, bounds.top + thick, outer, bounds.top + thick);
+        shapePath.close();
+        fillPaint.setPathEffect(triggerCorners);
+        strokePaint.setPathEffect(triggerCorners);
+        canvas.drawPath(shapePath, fillPaint);
+        canvas.drawPath(shapePath, strokePaint);
+        fillPaint.setPathEffect(null);
+        strokePaint.setPathEffect(null);
+        drawCenteredLabel(canvas, pill.label, bounds.centerX(),
+                          bounds.top + thick / 2 + drop * 0.4f, dp(13));
     }
 
     private void drawButton(Canvas canvas, ControlButton button, float width, float height) {
@@ -890,15 +925,26 @@ final class TouchControlsView extends View {
         final float bottom;
         // An RGB fill, or 0 for the overlay's own.
         final int color;
+        // FLAT is a rounded pill; the others draw a GameCube trigger.
+        static final int FLAT = 0;
+        static final int TRIGGER_LEFT = 1;
+        static final int TRIGGER_RIGHT = 2;
+        final int trigger;
 
         PillButton(String label, int axis, int button, float left, float top, float right,
                    float bottom) {
-            this(label, axis, button, left, top, right, bottom, 0);
+            this(label, axis, button, left, top, right, bottom, 0, FLAT);
         }
 
         PillButton(String label, int axis, int button, float left, float top, float right,
                    float bottom, int color) {
+            this(label, axis, button, left, top, right, bottom, color, FLAT);
+        }
+
+        PillButton(String label, int axis, int button, float left, float top, float right,
+                   float bottom, int color, int trigger) {
             this.color = color;
+            this.trigger = trigger;
             this.label = label;
             this.axis = axis;
             this.button = button;
