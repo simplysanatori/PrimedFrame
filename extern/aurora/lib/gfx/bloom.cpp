@@ -660,7 +660,9 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   } else {
     slot = PassCount - 1;
   }
-  draw(cmd, g_state.composite, slot++, g_state.frameView, levels[0].view, target.view, true,
+  // The composite writes every pixel without blending, so the frame need not be loaded first
+  // (a full-resolution read on a tile-based GPU).
+  draw(cmd, g_state.composite, slot++, g_state.frameView, levels[0].view, target.view, false,
        samples > 1 ? webgpu::g_frameBufferResolved.view : wgpu::TextureView{}, lutA, lutB);
 }
 } // namespace
