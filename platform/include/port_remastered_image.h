@@ -32,11 +32,12 @@ Image Resize(const Image& image, int width, int height);
 // Sides must be multiples of 4.
 std::vector<uint8_t> EncodeTxtrRgba8(const Image& image, int minSize = 8);
 // A mipmapped CMPR TXTR (format 10). Without `alpha` every texel is opaque;
-// with it, texels under alpha 128 are transparent. Sides must be multiples
-// of 8.
+// with it, texels under alpha 128 are transparent, and the smaller levels keep
+// the top level's share of opaque texels. Sides must be multiples of 8.
 std::vector<uint8_t> EncodeTxtrCmpr(const Image& image, bool alpha);
-// A .dds with the whole mip chain down to 1x1.
-std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format);
+// A .dds with the whole mip chain down to 1x1. `punch` (a cut-out alpha) keeps
+// the share of opaque texels in the smaller levels, as EncodeTxtrCmpr does.
+std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format, bool punch = false);
 
 // One 4x4 block, 16 RGBA texels in, 16 bytes out; exposed for the tests.
 void EncodeBc7Block(const uint8_t* rgba, uint8_t* out);

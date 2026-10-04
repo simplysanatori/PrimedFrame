@@ -599,6 +599,115 @@ struct BitWriter {
 // Mode 6 already this close (summed squared error) is not worth a second fit.
 const int kMode1Threshold = 48;
 
+// Fills the colour of a cut-out texture's transparent texels (black in
+// Remastered's grass) from the nearest opaque ones, then their mean. Filtering
+// and the smaller levels mix that colour into the edges, and black there shows
+// as dark specks across distant grass.
+void BleedColour(Image& image) {
+  const int w = image.width, h = image.height;
+  const size_t count = size_t(w) * size_t(h);
+  std::vector<uint8_t> filled(count);
+  double sum[3] = {0, 0, 0};
+  size_t opaque = 0;
+  for (size_t i = 0; i < count; ++i) {
+    if (image.rgba[i * 4 + 3] >= 128) {
+      filled[i] = 1;
+      ++opaque;
+      for (int c = 0; c < 3; ++c) {
+        sum[c] += image.rgba[i * 4 + c];
+      }
+    }
+  }
+  if (opaque == 0 || opaque == count) {
+    return;
+  }
+  // Up to 16 rings outwards, each from the four neighbours (wrapping, as the
+  // textures tile) filled before it.
+  std::vector<uint8_t> next;
+  for (int ring = 0; ring < 16; ++ring) {
+    next = filled;
+    bool grew = false;
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x) {
+        const size_t i = size_t(y) * size_t(w) + size_t(x);
+        if (filled[i]) {
+          continue;
+        }
+        const size_t around[4] = {size_t(y) * size_t(w) + size_t((x + 1) % w),
+                                  size_t(y) * size_t(w) + size_t((x + w - 1) % w),
+                                  size_t((y + 1) % h) * size_t(w) + size_t(x),
+                                  size_t((y + h - 1) % h) * size_t(w) + size_t(x)};
+        int acc[3] = {0, 0, 0}, n = 0;
+        for (const size_t j : around) {
+          if (filled[j]) {
+            ++n;
+            for (int c = 0; c < 3; ++c) {
+              acc[c] += image.rgba[j * 4 + c];
+            }
+          }
+        }
+        if (n > 0) {
+          for (int c = 0; c < 3; ++c) {
+            image.rgba[i * 4 + c] = uint8_t((acc[c] + n / 2) / n);
+          }
+          next[i] = 1;
+          grew = true;
+        }
+      }
+    }
+    if (!grew) {
+      break;
+    }
+    filled.swap(next);
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (!filled[i]) {
+      for (int c = 0; c < 3; ++c) {
+        image.rgba[i * 4 + c] = uint8_t(std::lround(sum[c] / double(opaque)));
+      }
+    }
+  }
+}
+
+// Gives each smaller level of a cut-out (alpha tested at 128) texture a 1-bit
+// alpha with the same share of opaque texels as the top level: opaque where its
+// alpha is in that top share. Halving averages a thin stem's alpha under 128 a
+// few levels down, so a fixed cut thins distant grass and fences to shimmering
+// dashes. Levels are halved from the raw level above, so call this last.
+void KeepCoverage(std::vector<Image>& levels) {
+  const auto& top = levels[0].rgba;
+  size_t opaque = 0;
+  for (size_t i = 3; i < top.size(); i += 4) {
+    opaque += top[i] >= 128;
+  }
+  const size_t texels = top.size() / 4;
+  if (opaque == 0 || opaque == texels) {
+    return;
+  }
+  for (size_t l = 1; l < levels.size(); ++l) {
+    auto& a = levels[l].rgba;
+    size_t histogram[256] = {};
+    for (size_t i = 3; i < a.size(); i += 4) {
+      ++histogram[a[i]];
+    }
+    const double target = double(opaque) / double(texels) * double(a.size() / 4);
+    // The cut whose count of texels at or over it is closest to the target
+    // (many texels can share one value, so none may hit it).
+    int cut = 255;
+    double best = target - double(histogram[255]);
+    for (size_t above = histogram[255], c = 254; c >= 1; --c) {
+      above += histogram[c];
+      if (std::abs(double(above) - target) < std::abs(best)) {
+        best = double(above) - target;
+        cut = int(c);
+      }
+    }
+    for (size_t i = 3; i < a.size(); i += 4) {
+      a[i] = a[i] >= cut ? 255 : 0;
+    }
+  }
+}
+
 }  // namespace
 
 Image Resize(const Image& image, int width, int height) {
@@ -686,9 +795,14 @@ std::vector<uint8_t> EncodeTxtrCmpr(const Image& image, bool alpha) {
     for (size_t i = 3; i < levels[0].rgba.size(); i += 4) {
       levels[0].rgba[i] = 255;
     }
+  } else {
+    BleedColour(levels[0]);
   }
   while (levels.back().width > 8 && levels.back().height > 8) {
     levels.push_back(HalfOf(levels.back()));
+  }
+  if (alpha) {
+    KeepCoverage(levels);
   }
   std::vector<uint8_t> out;
   Put32(out, 10);
@@ -862,10 +976,16 @@ void EncodeBc7Block(const uint8_t* rgba, uint8_t* out) {
   w.Store(out);
 }
 
-std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format) {
+std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format, bool punch) {
   std::vector<Image> levels{image};
+  if (punch) {
+    BleedColour(levels[0]);
+  }
   while (levels.back().width > 1 || levels.back().height > 1) {
     levels.push_back(HalfOf(levels.back()));
+  }
+  if (punch) {
+    KeepCoverage(levels);
   }
   const auto blocks = [](int side) { return size_t(std::max(side, 4) / 4); };
   std::vector<uint8_t> out;
