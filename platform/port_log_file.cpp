@@ -11,8 +11,11 @@
 
 #if defined(_WIN32)
 #include <fcntl.h>
+#include <condition_variable>
 #include <io.h>
+#include <mutex>
 #include <string>
+#include <thread>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -369,25 +372,85 @@ void ToHandle(void* context, const char* data, size_t size) {
     size -= wrote;
   }
 }
+
+HANDLE ParseHandle(const char* text) {
+  return reinterpret_cast< HANDLE >(static_cast< uintptr_t >(std::strtoull(text, nullptr, 10)));
+}
+
+// The terminal copy, written on a thread of its own: a console that stops
+// reading (a selection in QuickEdit mode) blocks its writer, and that must not
+// fill the pipe and stall the game. What does not fit in kTerminalQueue while it
+// is blocked is dropped; the file has it.
+constexpr size_t kTerminalQueue = 1 << 20;
+struct Terminal {
+  HANDLE handle = nullptr;
+  std::mutex mutex;
+  std::condition_variable ready;
+  std::string queued;
+  bool done = false;
+
+  void Push(const char* data, size_t size) {
+    {
+      std::lock_guard< std::mutex > lock(mutex);
+      if (queued.size() + size > kTerminalQueue) {
+        return;
+      }
+      queued.append(data, size);
+    }
+    ready.notify_one();
+  }
+  void Run() {
+    std::string writing;
+    for (;;) {
+      {
+        std::unique_lock< std::mutex > lock(mutex);
+        ready.wait(lock, [this] { return done || !queued.empty(); });
+        if (queued.empty()) {
+          return;
+        }
+        writing.swap(queued);
+      }
+      ToHandle(handle, writing.data(), writing.size());
+      writing.clear();
+    }
+  }
+};
 } // namespace
 
-int RunCopy(const char* pipe, const char* file) {
-  const HANDLE in = reinterpret_cast< HANDLE >(static_cast< uintptr_t >(std::strtoull(pipe, nullptr, 10)));
-  const HANDLE out = reinterpret_cast< HANDLE >(static_cast< uintptr_t >(std::strtoull(file, nullptr, 10)));
+int RunCopy(const char* pipe, const char* file, const char* terminal) {
+  const HANDLE in = ParseHandle(pipe);
+  const HANDLE out = ParseHandle(file);
   static PortLogRedact::Rules rules;
   rules = MakeRules();
   static RedactedLines lines;
   lines.rules = &rules;
   lines.sink = ToHandle;
   lines.context = out;
+  static Terminal console;
+  console.handle = terminal != nullptr ? ParseHandle(terminal) : nullptr;
+  std::thread consoleThread;
+  if (console.handle != nullptr && console.handle != INVALID_HANDLE_VALUE) {
+    consoleThread = std::thread([] { console.Run(); });
+  }
   char buffer[8192];
   DWORD n = 0;
   // Ends when every writer has gone: the game, and anything it started that
   // inherited its output.
   while (ReadFile(in, buffer, sizeof(buffer), &n, nullptr) && n > 0) {
+    if (consoleThread.joinable()) {
+      console.Push(buffer, n); // as it is, like the Linux terminal copy
+    }
     lines.Feed(buffer, n);
   }
   lines.Flush();
+  if (consoleThread.joinable()) {
+    {
+      std::lock_guard< std::mutex > lock(console.mutex);
+      console.done = true;
+    }
+    console.ready.notify_one();
+    consoleThread.join();
+  }
   return 0;
 }
 #endif
@@ -464,11 +527,21 @@ bool Start() {
     return false;
   }
   SetHandleInformation(writeEnd, HANDLE_FLAG_INHERIT, 0); // else the copier never sees the end
+  // Where stderr went before (a console, or a file a script redirected it to),
+  // so the output still shows up there as well as in the log.
+  HANDLE terminal = nullptr;
+  const HANDLE oldError = GetStdHandle(STD_ERROR_HANDLE);
+  if (oldError != nullptr && oldError != INVALID_HANDLE_VALUE &&
+      !DuplicateHandle(GetCurrentProcess(), oldError, GetCurrentProcess(), &terminal, 0, TRUE,
+                       DUPLICATE_SAME_ACCESS)) {
+    terminal = nullptr;
+  }
   wchar_t exe[4096];
   const DWORD exeSize = GetModuleFileNameW(nullptr, exe, 4096);
   std::wstring command = L"\"" + std::wstring(exe, exeSize) + L"\" --log-copy " +
                          std::to_wstring(reinterpret_cast< uintptr_t >(readEnd)) + L" " +
-                         std::to_wstring(reinterpret_cast< uintptr_t >(out));
+                         std::to_wstring(reinterpret_cast< uintptr_t >(out)) + L" " +
+                         std::to_wstring(reinterpret_cast< uintptr_t >(terminal));
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
   PROCESS_INFORMATION process{};
@@ -477,6 +550,9 @@ bool Start() {
                                       DETACHED_PROCESS, nullptr, nullptr, &startup, &process);
   CloseHandle(readEnd);
   CloseHandle(out);
+  if (terminal != nullptr) {
+    CloseHandle(terminal);
+  }
   if (!launched) {
     CloseHandle(writeEnd);
     return false;

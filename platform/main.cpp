@@ -640,8 +640,8 @@ const char* DefaultTexturesPath() {
 
 int main(int argc, char** argv) {
 #if defined(_WIN32)
-    if (argc == 4 && std::strcmp(argv[1], "--log-copy") == 0) {
-        return PortLogFile::RunCopy(argv[2], argv[3]);
+    if ((argc == 4 || argc == 5) && std::strcmp(argv[1], "--log-copy") == 0) {
+        return PortLogFile::RunCopy(argv[2], argv[3], argc == 5 ? argv[4] : nullptr);
     }
 #endif
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {

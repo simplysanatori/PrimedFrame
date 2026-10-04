@@ -15,7 +15,8 @@
 //
 // On Linux a small forked process copies a pipe to both the terminal and the file:
 // it outlives an abort and drains everything already written. On Windows the same
-// is done by a second copy of the program (RunCopy), to the file only. On Android the logcat writers (PortLog, Aurora's
+// is done by a second copy of the program (RunCopy), to the file and to wherever
+// stderr went before (console or redirect). On Android the logcat writers (PortLog, Aurora's
 // callback, SDL) also call Write, each line straight to the file, and stdout and
 // stderr are copied into logcat and the file; the log goes to the app's external
 // folder (Android/data/org.metroidprime.port/files) unless the data was moved to
@@ -37,9 +38,10 @@ std::string Path();
 // (Android 9-10 without the storage permission); the log's first lines say so.
 std::string SharedPath();
 #if defined(_WIN32)
-// The copying process Start launches on Windows (`--log-copy <pipe> <file>`, the
-// handles' values): copies the pipe into the file until the game has gone.
-int RunCopy(const char* pipe, const char* file);
+// The copying process Start launches on Windows (`--log-copy <pipe> <file>
+// [<terminal>]`, the handles' values, 0 for no terminal): copies the pipe into the
+// file, redacted, and into the terminal as it is, until the game has gone.
+int RunCopy(const char* pipe, const char* file, const char* terminal);
 #endif
 
 } // namespace PortLogFile
