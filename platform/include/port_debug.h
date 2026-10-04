@@ -418,6 +418,9 @@ bool OverlayVisible();
 // to choose a controller layout. Like OverlayVisible(), performs no lazy
 // initialization, so it is safe to call from the UI thread.
 bool TwinStickFlag();
+// Same, for whether the Android touch overlay draws the GameCube pad's colours
+// rather than plain translucent buttons.
+bool TouchColorsFlag();
 void Toggle();
 // Asks for the overlay to be toggled on the next frame. Safe to call from any
 // thread, unlike Toggle(), which touches ImGui state.

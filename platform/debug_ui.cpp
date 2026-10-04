@@ -161,6 +161,7 @@ float sTwinStickRightY = 0.f;
 bool sBeamShiftHeld = false;
 bool sSpringBall = false;
 bool sSwapScanXray = false;
+bool sTouchColors = false; // Android touch overlay: the GameCube pad's colours
 bool sFastMorph = false;
 bool sInvulnerable = false;
 // MP_GODMODE, for this run only: -1 unset, else 0 or 1. Never saved, and changing the
@@ -262,6 +263,7 @@ std::atomic< bool > sOverlayVisible{false};
 // Same idea for the twin-stick setting, which the Android touch overlay uses to
 // pick a controller layout.
 std::atomic< bool > sTwinStickFlag{false};
+std::atomic< bool > sTouchColorsFlag{false};
 // Set when a real pad, keyboard or mouse is used; the Android touch overlay takes
 // it to get out of the way.
 std::atomic< bool > sPhysicalInput{false};
@@ -447,6 +449,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sMouseAim = ParseBool(value);
   } else if (key == "twin_stick") {
     sTwinStick = ParseBool(value);
+  } else if (key == "touch_colors") {
+    sTouchColors = ParseBool(value);
   } else if (key == "stick_aim_rate") {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 50.f && f <= 4000.f) {
@@ -680,6 +684,7 @@ void SaveSettings() {
   file << "particle_interpolation=" << (sParticleInterpolation ? 1 : 0) << '\n';
   file << "mouse_aim=" << (sMouseAim ? 1 : 0) << '\n';
   file << "twin_stick=" << (sTwinStick ? 1 : 0) << '\n';
+  file << "touch_colors=" << (sTouchColors ? 1 : 0) << '\n';
   file << "spring_ball=" << (sSpringBall ? 1 : 0) << '\n';
   file << "swap_scan_xray=" << (sSwapScanXray ? 1 : 0) << '\n';
   file << "shift_key=" << sShiftBindings[0] << '\n';
@@ -2493,6 +2498,8 @@ bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); 
 
 bool TwinStickFlag() { return sTwinStickFlag.load(std::memory_order_acquire); }
 
+bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire); }
+
 void SaveSettingsNow() {
   EnsureInitialized();
   SaveSettings();
@@ -2610,6 +2617,7 @@ void UpdateControllerNav() {
   }
   sOverlayVisible.store(sVisible, std::memory_order_release);
   sTwinStickFlag.store(sTwinStick, std::memory_order_release);
+  sTouchColorsFlag.store(sTouchColors, std::memory_order_release);
 
   ImGuiIO& io = ImGui::GetIO();
   io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
@@ -4126,6 +4134,15 @@ void DrawInputTab() {
     SetSpringBallFlickRate(flickRate);
   }
   ImGui::EndDisabled();
+
+#if defined(__ANDROID__)
+  ImGui::SeparatorText("Touch controls");
+  if (ImGui::Checkbox("Coloured buttons", &sTouchColors)) {
+    MarkDirty();
+  }
+  ItemHelp("Draws the on-screen buttons in the GameCube pad's colours: green A, red B, yellow "
+           "C-stick, purple Z. Off, they are plain and see-through.");
+#endif
 
   ImGui::SeparatorText("Gyro aim");
   const char* gyroModes[] = {"Off", "Hold to aim", "Always aim"};
@@ -5764,6 +5781,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeSetTouchDevice(JNIEnv*, jclas
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTwinStick(JNIEnv*, jclass) {
   return PortDebug::TwinStickFlag() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchColors(JNIEnv*, jclass) {
+  return PortDebug::TouchColorsFlag() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

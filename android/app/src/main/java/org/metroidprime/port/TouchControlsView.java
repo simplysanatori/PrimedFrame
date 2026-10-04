@@ -147,6 +147,9 @@ final class TouchControlsView extends View {
     private ControlButton[] face = GAMECUBE_FACE;
     private PillButton[] pills = GAMECUBE_PILLS;
     private boolean twinStickMode;
+    // The GameCube pad's colours, off by default (plain translucent buttons);
+    // an F1 setting, so it's re-read every draw like twin-stick.
+    private boolean colored;
 
     private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -161,6 +164,7 @@ final class TouchControlsView extends View {
     private final CornerPathEffect triggerCorners = new CornerPathEffect(dp(8));
     private static native boolean nativeDebugOverlayVisible();
     private static native boolean nativeTwinStick();
+    private static native boolean nativeTouchColors();
     private static native void nativeSetTouchDevice(boolean xboxLayout);
     private static native void nativeToggleDebugOverlay();
     private static native void nativeVirtualButton(int button, boolean down);
@@ -227,6 +231,7 @@ final class TouchControlsView extends View {
             face = twinStickMode ? XBOX_FACE : GAMECUBE_FACE;
             pills = twinStickMode ? XBOX_PILLS : GAMECUBE_PILLS;
         }
+        colored = !twinStickMode && nativeTouchColors();
         for (PillButton pill : pills) {
             if (pill.id() == HIDE_KEY) {
                 hideBounds.set(pill.left * width, pill.top * height,
@@ -237,7 +242,7 @@ final class TouchControlsView extends View {
                   leftPointer, 0);
         // The right stick is the C-stick, yellow on the GameCube pad.
         drawStick(canvas, width * STICK_RIGHT_X, height * STICK_Y, height * STICK_RADIUS,
-                  rightPointer, twinStickMode ? 0 : GC_YELLOW);
+                  rightPointer, colored ? GC_YELLOW : 0);
 
         for (PillButton pill : pills) {
             drawPillButton(canvas, pill, width, height);
@@ -705,7 +710,7 @@ final class TouchControlsView extends View {
         crossArmPath.addRoundRect(cx - half, cy - arm, cx + half, cy + arm, corner, corner,
                                   Path.Direction.CW);
         shapePath.op(crossArmPath, Path.Op.UNION);
-        fillPaint.setColor(twinStickMode ? 0x77081218 : padFill(GC_GREY, false));
+        fillPaint.setColor(colored ? padFill(GC_GREY, false) : 0x77081218);
         canvas.drawPath(shapePath, fillPaint);
         // A held arm lights from the centre out.
         for (int i = 0; i < DPAD_BUTTONS.length; ++i) {
@@ -719,7 +724,7 @@ final class TouchControlsView extends View {
                 Math.min(cy, endY) - (DPAD_DY[i] == 0 ? half : 0),
                 Math.max(cx, endX) + (DPAD_DX[i] == 0 ? half : 0),
                 Math.max(cy, endY) + (DPAD_DY[i] == 0 ? half : 0));
-            fillPaint.setColor(twinStickMode ? 0xCC48C8E8 : padFill(GC_GREY, true));
+            fillPaint.setColor(colored ? padFill(GC_GREY, true) : 0xCC48C8E8);
             canvas.drawRoundRect(bounds, corner, corner, fillPaint);
         }
         strokePaint.setColor(0xBBFFFFFF);
@@ -771,7 +776,7 @@ final class TouchControlsView extends View {
         float right = pill.right * width;
         float bottom = pill.bottom * height;
         boolean active = held.containsKey(pill.id());
-        if (pill.color != 0) {
+        if (colored && pill.color != 0) {
             fillPaint.setColor(padFill(pill.color, active));
         } else {
             fillPaint.setColor(active ? 0xCC48C8E8 : 0x99081218);
@@ -820,7 +825,7 @@ final class TouchControlsView extends View {
         float y = centreY(button, height);
         float radius = button.radius * height;
         boolean active = held.containsKey(button.button);
-        if (button.color != 0) {
+        if (colored && button.color != 0) {
             fillPaint.setColor(padFill(button.color, active));
         } else {
             fillPaint.setColor(active ? 0xCC48C8E8 : 0x77081218);
