@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <unordered_map>
 
 #include "port_remastered_pak.h"
@@ -1740,6 +1741,61 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   return b;
 }
 
+// The column given to each row of an n x m cost matrix (n <= m, row-major)
+// that minimises the total cost, each column used at most once (Hungarian).
+static std::vector<size_t> AssignRows(const std::vector<double>& cost, size_t n, size_t m) {
+  const double inf = std::numeric_limits<double>::infinity();
+  std::vector<double> u(n + 1, 0.0), v(m + 1, 0.0);
+  std::vector<size_t> p(m + 1, 0), way(m + 1, 0);
+  for (size_t i = 1; i <= n; ++i) {
+    p[0] = i;
+    size_t j0 = 0;
+    std::vector<double> minv(m + 1, inf);
+    std::vector<bool> used(m + 1, false);
+    do {
+      used[j0] = true;
+      const size_t i0 = p[j0];
+      double delta = inf;
+      size_t j1 = 0;
+      for (size_t j = 1; j <= m; ++j) {
+        if (used[j]) {
+          continue;
+        }
+        const double cur = cost[(i0 - 1) * m + (j - 1)] - u[i0] - v[j];
+        if (cur < minv[j]) {
+          minv[j] = cur;
+          way[j] = j0;
+        }
+        if (minv[j] < delta) {
+          delta = minv[j];
+          j1 = j;
+        }
+      }
+      for (size_t j = 0; j <= m; ++j) {
+        if (used[j]) {
+          u[p[j]] += delta;
+          v[j] -= delta;
+        } else {
+          minv[j] -= delta;
+        }
+      }
+      j0 = j1;
+    } while (p[j0] != 0);
+    do {
+      const size_t j1 = way[j0];
+      p[j0] = p[j1];
+      j0 = j1;
+    } while (j0 != 0);
+  }
+  std::vector<size_t> col(n, 0);
+  for (size_t j = 1; j <= m; ++j) {
+    if (p[j] != 0) {
+      col[p[j] - 1] = j - 1;
+    }
+  }
+  return col;
+}
+
 // One weight per vertex and bone, from the Remastered joints or, for a static
 // Remastered model, from the nearest retail vertex.
 //
@@ -1830,10 +1886,18 @@ std::vector<WeightKey> SkinWeights(const std::vector<double>& P, size_t n, const
     // piece split between bones tears, and the vote is no guide, since retail's
     // few vertices on a wide leaf are nearer the next leaf's edge than its own.
     // Such a piece rides the bone whose piece is nearest its own, whole.
+    //
+    // A rig as fine as retail's (the Frigate's big doors: two rings of ten
+    // pieces each side) has the same tear wherever the vote splits a rigid
+    // piece, but nearest alone can send two pieces to one bone and leave
+    // another bone, and what it moves, empty. There every bone takes the piece
+    // that the cheapest one-to-one pairing of centres gives it, and any piece
+    // left over the nearest bone.
     size_t rehomed = 0;
+    bool paired = false;
     const bool rigidRetail = std::all_of(groups.begin(), groups.end(),
                                          [](const SkinGroup& g) { return g.weights.size() == 1; });
-    if (rigidRetail && mapped >= 2 * nb) {
+    if (rigidRetail && mapped >= nb) {
       std::vector<double> bc(nb * 3, 0.0), bn(nb, 0.0), jc(nj * 3, 0.0), jn(nj, 0.0);
       std::vector<bool> loose(nj, false);
       for (size_t v = 0; v < nr; ++v) {
@@ -1858,33 +1922,77 @@ std::vector<WeightKey> SkinWeights(const std::vector<double>& P, size_t n, const
           }
         }
       }
-      for (size_t j = 0; j < nj; ++j) {
-        if (assign[j].empty() || loose[j] || jn[j] == 0.0) {
-          continue;
+      auto dist = [&](size_t j, size_t c) {
+        double d = 0.0;
+        for (int a = 0; a < 3; ++a) {
+          const double e = jc[j * 3 + a] / jn[j] - bc[c * 3 + a] / bn[c];
+          d += e * e;
         }
+        return d;
+      };
+      auto nearest = [&](size_t j) {
         double best = -1.0;
         for (size_t c = 0; c < nb; ++c) {
           if (bn[c] == 0.0) {
             continue;
           }
-          double d = 0.0;
-          for (int a = 0; a < 3; ++a) {
-            const double e = jc[j * 3 + a] / jn[j] - bc[c * 3 + a] / bn[c];
-            d += e * e;
-          }
+          const double d = dist(j, c);
           if (best < 0.0 || d < best) {
             assign[j] = {uint32_t(c)};
             best = d;
           }
         }
-        ++rehomed;
+      };
+      if (mapped >= 2 * nb) {
+        for (size_t j = 0; j < nj; ++j) {
+          if (assign[j].empty() || loose[j] || jn[j] == 0.0) {
+            continue;
+          }
+          nearest(j);
+          ++rehomed;
+        }
+      } else {
+        std::vector<size_t> pieces;
+        bool rigid = true, torn = false;
+        for (size_t j = 0; j < nj; ++j) {
+          if (assign[j].empty()) {
+            continue;
+          }
+          rigid = rigid && !loose[j] && jn[j] > 0.0;
+          torn = torn || assign[j].size() > 1;
+          pieces.push_back(j);
+        }
+        const bool everyBone = std::all_of(bn.begin(), bn.end(), [](double c) { return c > 0.0; });
+        if (rigid && torn && everyBone) {
+          const size_t m = pieces.size();
+          std::vector<double> cost(nb * m);
+          for (size_t c = 0; c < nb; ++c) {
+            for (size_t i = 0; i < m; ++i) {
+              cost[c * m + i] = dist(pieces[i], c);
+            }
+          }
+          const std::vector<size_t> col = AssignRows(cost, nb, m);
+          std::vector<bool> taken(m, false);
+          for (size_t c = 0; c < nb; ++c) {
+            assign[pieces[col[c]]] = {uint32_t(c)};
+            taken[col[c]] = true;
+          }
+          for (size_t i = 0; i < m; ++i) {
+            if (!taken[i]) {
+              nearest(pieces[i]);
+            }
+          }
+          rehomed = m;
+          paired = true;
+        }
       }
     }
     for (size_t j = 0; j < nj; ++j) {
       split += assign[j].size() > 1;
     }
     log("  joints mapped " + std::to_string(mapped) + ", " + std::to_string(split) + " split" +
-        (rehomed ? ", " + std::to_string(rehomed) + " rigid by nearest piece" : std::string()));
+        (rehomed ? ", " + std::to_string(rehomed) + (paired ? " rigid paired by piece" : " rigid by nearest piece")
+                 : std::string()));
     std::vector<double> VW(n * nb, 0.0);
     std::vector<uint32_t> sel, on, near;
     std::vector<double> selP, onP;
