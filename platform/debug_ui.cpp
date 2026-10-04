@@ -3827,8 +3827,8 @@ void DrawExtrasTab() {
       SetTextLanguage(language == 0 ? "" : PortRemastered::kTextLanguages[language - 1].code);
     }
     ItemHelp("The language of the game's text. Only English is on the disc: the others come with the "
-             "Remastered import (its text), and any text it lacks stays English. Applies on the next "
-             "start.");
+             "Remastered import (its text), and any text it lacks stays English. Text already on "
+             "screen changes the next time its menu or screen opens.");
   }
 
   ImGui::SeparatorText("Gallery");

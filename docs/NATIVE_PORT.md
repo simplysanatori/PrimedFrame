@@ -624,8 +624,9 @@ Remastered's French, Spanish, German, Italian and Dutch text comes along too
 named by Remastered's language codes (`EUFR`, `EUSP`, `EUGE`, `EUIT`, `EUDU`).
 A string Remastered doesn't translate, or one whose buttons don't line up with
 the disc's, stays in English. Pick the language in F1 > Extras > Text (ini key
-`text_language`, or `MP_LANGUAGE=EUFR` for one run); it applies on the next
-start, and without the mod the game stays in English. The disc's fonts are
+`text_language`, or `MP_LANGUAGE=EUFR` for one run). It changes while the game
+runs (console: `language EUGE`, `language en`): text already on screen
+switches the next time its menu or screen opens. Without the mod the game stays in English. The disc's fonts are
 ASCII only, so each accented letter is drawn as its base letter, unless the
 mod's typeface (`font/deface.sdfont`) is loaded, which draws the real one.
 

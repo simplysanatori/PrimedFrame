@@ -13,6 +13,7 @@
 #include "port_livesplit.h"
 #include "port_remastered_import.h"
 #include "port_remastered_ball_light.h"
+#include "port_remastered_text.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
 #include "port_room_liquid.h"
@@ -477,6 +478,7 @@ void CmdHelp() {
   Out("god [on|off]               the player takes no damage (no argument: show)");
   Out("memo <text>                show text as a HUD message");
   Out("strg <id> [index]          a string table as the game loads it (mods included)");
+  Out("language [en|EUFR|...]     the text language, changed while the game runs");
   Out("press <a+b+...> [frames]   hold pad buttons (a b x y z l r start up down left right;");
   Out("                           sx:<n> sy:<n> cx:<n> cy:<n> also hold a stick axis;");
   Out("                           frames 0 = keep holding until the next press/stick)");
@@ -871,6 +873,28 @@ void CmdMemo() {
   Finish();
 }
 
+// The text language, switched while the game runs ("en" for the disc's English).
+void CmdLanguage() {
+  if (sCmd.args.size() > 1) {
+    const std::string arg = sCmd.args[1];
+    bool known = Lower(arg) == "en";
+    for (size_t i = 0; i < PortRemastered::kTextLanguageCount; ++i) {
+      known = known || arg == PortRemastered::kTextLanguages[i].code;
+    }
+    if (!known) {
+      std::string usage = "usage: language [en";
+      for (size_t i = 0; i < PortRemastered::kTextLanguageCount; ++i) {
+        usage += std::string("|") + PortRemastered::kTextLanguages[i].code;
+      }
+      return Finish((usage + "]").c_str());
+    }
+    PortDebug::SetTextLanguage(Lower(arg) == "en" ? "" : arg.c_str());
+  }
+  const char* code = PortDebug::TextLanguage();
+  Out("language %s", code[0] != '\0' ? code : "en");
+  Finish();
+}
+
 // Loads the table through the game's own factory, so a mod's replacement is what is printed.
 // A blocking load, released before returning: a token kept across frames
 // outlives the pool when the game quits mid-command.
@@ -1189,7 +1213,7 @@ void CmdFreeCam() {
 
 bool IsTickCommand(const std::string& name) {
   static const char* const names[] = {"status", "areas", "objs", "obj", "send", "give",
-                                      "take", "items", "heal", "god", "memo", "strg", "tp", "face", "look", "warp",
+                                      "take", "items", "heal", "god", "memo", "strg", "language", "tp", "face", "look", "warp",
                                       "tracker", "enter"};
   for (const char* n : names) {
     if (name == n) {
@@ -1226,6 +1250,8 @@ void RunTick(CStateManager& mgr) {
     CmdMemo();
   } else if (name == "strg") {
     CmdStrg();
+  } else if (name == "language") {
+    CmdLanguage();
   } else if (name == "tp") {
     CmdTp(mgr);
   } else if (name == "face") {

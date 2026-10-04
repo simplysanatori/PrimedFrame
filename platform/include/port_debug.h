@@ -198,8 +198,9 @@ bool SkippableCutscenes();
 void SetSkippableCutscenes(bool enabled);
 // The language of the game's text: "" for the disc's English, else one of the
 // codes in PortRemastered::kTextLanguages, which a Remastered import adds to the
-// string tables. A table without it shows English. Read once, at the first
-// table, so a change applies on the next start. MP_LANGUAGE overrides it.
+// string tables. A table without it shows English. Read at every
+// CStringTable::GetString, so a change applies to text fetched afterwards.
+// MP_LANGUAGE sets it for one run.
 const char* TextLanguage();
 void SetTextLanguage(const char* code);
 // The elevator ride between worlds (CWorldTransManager). Retail holds it at
