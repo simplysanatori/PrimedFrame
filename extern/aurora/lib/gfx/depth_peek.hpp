@@ -9,6 +9,7 @@ namespace aurora::gfx::depth_peek {
 void initialize();
 void shutdown();
 
+bool enabled() noexcept;
 void request_snapshot() noexcept;
 bool read_latest(uint16_t x, uint16_t y, uint32_t& z) noexcept;
 

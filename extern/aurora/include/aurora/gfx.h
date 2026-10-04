@@ -21,6 +21,7 @@ typedef struct {
   uint32_t createdPipelines;
   uint32_t drawCallCount;
   uint32_t mergedDrawCallCount;
+  uint32_t renderPassCount; // render passes the frame's EFB recording encoded
   uint32_t lastVertSize;
   uint32_t lastUniformSize;
   uint32_t lastIndexSize;

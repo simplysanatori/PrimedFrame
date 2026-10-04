@@ -744,6 +744,7 @@ void end_frame(EndFrameCallback callback) {
     packet = {};
     g_resources.stats.drawCallCount = stats.drawCallCount;
     g_resources.stats.mergedDrawCallCount = stats.mergedDrawCallCount;
+    g_resources.stats.renderPassCount = stats.renderPassCount;
     g_resources.stats.lastVertSize = stats.lastVertSize;
     g_resources.stats.lastUniformSize = stats.lastUniformSize;
     g_resources.stats.lastIndexSize = stats.lastIndexSize;

@@ -5,6 +5,7 @@
 #include "resource_cache.hpp"
 
 #include "clear.hpp"
+#include "depth_peek.hpp"
 #include "pipeline_cache.hpp"
 #include "render_worker.hpp"
 #include "tex_copy_conv.hpp"
@@ -44,6 +45,7 @@ struct FrameRecorder {
   uint32_t currentRenderPass = UINT32_MAX;
   uint32_t drawCallCount = 0;
   uint32_t mergedDrawCallCount = 0;
+  uint32_t renderPassCount = 0;
   bool inOffscreen = false;
   std::optional<RenderPass> suspendedEfbPass;
   Viewport suspendedEfbViewport;
@@ -396,6 +398,7 @@ OffscreenCacheEntry get_offscreen_textures(uint32_t width, uint32_t height) {
 }
 
 void enqueue_pass(FramePacket& frame, uint32_t passIndex);
+void discard_dead_stores(RenderPass& pass, bool colorDead, bool depthDead);
 
 void resume_efb_pass_loading(const RenderPass& prevPass) {
   RenderPass newPass{
@@ -448,6 +451,7 @@ void finish_current_offscreen() {
 
   auto& offscreenPass = current_render_passes()[g_recorder.currentRenderPass];
   offscreenPass.discardable = !offscreenPass.has_consumer();
+  discard_dead_stores(offscreenPass, true, true);
   enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);
   g_recorder.offscreenColor = {};
   g_recorder.offscreenDepth = {};
@@ -525,7 +529,26 @@ void enqueue_op(FramePacket& frame, uint32_t opIndex) {
   });
 }
 
+// Lets the GPU skip writing out attachments that nothing reads again, which saves a tile-based
+// (mobile) GPU a full-resolution store. colorDead and depthDead say no later pass loads the
+// contents (the next one clears them, or none follows). Call before the pass is enqueued.
+void discard_dead_stores(RenderPass& pass, bool colorDead, bool depthDead) {
+  auto& color = pass.colorAttachments[SceneColorAttachmentIndex];
+  // Without a resolve target the attachment itself is what copies and presentation read.
+  if (colorDead && pass.colorAttachmentCount > 0 && color.resolveView) {
+    color.storeOp = wgpu::StoreOp::Discard;
+  }
+  const bool depthRead = pass.snapshotDepthDst || (pass.resolveTarget && gx::is_depth_format(pass.resolveFormat)) ||
+                         (pass.captureDepthSnapshot && depth_peek::enabled());
+  if (depthDead && pass.hasDepth && !depthRead) {
+    pass.depthStoreOp = wgpu::StoreOp::Discard;
+  }
+}
+
 void enqueue_pass(FramePacket& frame, uint32_t passIndex) {
+  if (!frame.renderPasses[passIndex].discardable) {
+    ++g_recorder.renderPassCount;
+  }
   seal_pass(frame, passIndex);
   const auto opIndex = static_cast<uint32_t>(frame.ops.size());
   frame.ops.emplace_back(capture_frame_op(frame, FrameOpType::RenderPass, passIndex));
@@ -542,6 +565,7 @@ void begin_recording(FramePacket& packet, size_t frameSlot) {
   g_passSnapshotPools[frameSlot].used = 0;
   g_recorder.drawCallCount = 0;
   g_recorder.mergedDrawCallCount = 0;
+  g_recorder.renderPassCount = 0;
   g_recorder.suspendedEfbPass.reset();
 
   current_render_passes().emplace_back();
@@ -565,6 +589,7 @@ RecordedFrame end_recording() {
   auto& frame = g_recorder.frame();
   frame.stats.drawCallCount = g_recorder.drawCallCount;
   frame.stats.mergedDrawCallCount = g_recorder.mergedDrawCallCount;
+  frame.stats.renderPassCount = g_recorder.renderPassCount;
   frame.stats.lastVertSize = frame.verts.size();
   frame.stats.lastUniformSize = frame.uniforms.size();
   frame.stats.lastIndexSize = frame.indices.size();
@@ -859,6 +884,8 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
     prevPass.probeFace = probeFace;
     prevPass.probeUniformRange = push_uniform(std::array{0.f, 0.f, 1.f, 1.f});
   }
+  // The continuation's load op clears whatever the copy clears.
+  discard_dead_stores(prevPass, clearColor && clearAlpha, clearDepth);
   enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);
 
   // Populate new render pass from previous
@@ -883,6 +910,8 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
     auto& color = newPass.colorAttachments[i];
     color.loadOp = wgpu::LoadOp::Undefined;
     color.clear = false;
+    // prevPass may have just discarded its store; this pass decides its own.
+    color.storeOp = wgpu::StoreOp::Store;
   }
   if (fullColorClear) {
     auto& sceneColor = newPass.colorAttachments[SceneColorAttachmentIndex];
@@ -1150,6 +1179,8 @@ void finish() {
     frame.uniforms.append_zeroes(gx::MaxUniformSize);
     auto& pass = frame.renderPasses[g_recorder.currentRenderPass];
     pass.captureDepthSnapshot = true;
+    // The next frame starts by clearing the EFB.
+    discard_dead_stores(pass, true, true);
     enqueue_pass(frame, g_recorder.currentRenderPass);
     g_recorder.currentRenderPass = UINT32_MAX;
   }

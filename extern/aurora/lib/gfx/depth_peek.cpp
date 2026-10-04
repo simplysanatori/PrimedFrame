@@ -323,6 +323,8 @@ void shutdown() {
   }
 }
 
+bool enabled() noexcept { return g_enabled; }
+
 void request_snapshot() noexcept {
   if (!g_enabled) {
     return;

@@ -465,23 +465,8 @@ void end_frame() noexcept {
           pass.SetBindGroup(0, rmlBindGroup, 0, nullptr);
           pass.Draw(3);
         }
-        pass.End();
-      }
-      {
-        const std::array attachments{
-            wgpu::RenderPassColorAttachment{
-                .view = currentView,
-                .loadOp = wgpu::LoadOp::Load,
-                .storeOp = wgpu::StoreOp::Store,
-            },
-        };
-        const wgpu::RenderPassDescriptor renderPassDescriptor{
-            .label = "ImGui render pass",
-            .colorAttachmentCount = attachments.size(),
-            .colorAttachments = attachments.data(),
-            .timestampWrites = webgpu::gpu_prof::pass_writes("ImGui"),
-        };
-        const auto pass = encoder.BeginRenderPass(&renderPassDescriptor);
+        // ImGui draws in the same pass: a second pass would write the whole swapchain image out
+        // and read it back in, which costs a tile-based (mobile) GPU a full-screen round trip.
         pass.SetViewport(0.f, 0.f, static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.width),
                          static_cast<float>(webgpu::g_graphicsConfig.surfaceConfiguration.height), 0.f, 1.f);
         imgui::render(pass, imguiDrawData);
