@@ -9,7 +9,6 @@ import android.graphics.Path;
 import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
-import android.widget.RelativeLayout;
 
 import org.libsdl.app.SDLActivity;
 
@@ -37,8 +36,7 @@ final class TouchControlsView extends View {
 
     // Port-only actions, not game inputs.
     private static final int TOGGLE_DEBUG_OVERLAY = -1;
-    // The hide/show eye in the bottom-right corner, in dp. It stays put while
-    // hidden: the view shrinks to just this box.
+    // The hide eye in the bottom-right corner, in dp.
     private static final int EYE_WIDTH_DP = 52;
     private static final int EYE_HEIGHT_DP = 36;
     private static final int EYE_MARGIN_DP = 8;
@@ -226,7 +224,6 @@ final class TouchControlsView extends View {
             return;
         }
         if (hidden) {
-            drawEye(canvas, new RectF(0, 0, getWidth(), getHeight()), true);
             return;
         }
 
@@ -256,7 +253,7 @@ final class TouchControlsView extends View {
             drawButton(canvas, button, width, height);
         }
         drawDpad(canvas, width, height);
-        drawEye(canvas, hideBounds, false);
+        drawEye(canvas, hideBounds);
     }
 
     // A mouse is not a finger on the overlay. Its clicks are dispatched as
@@ -312,7 +309,8 @@ final class TouchControlsView extends View {
         }
 
         if (hidden) {
-            if (action == MotionEvent.ACTION_UP) {
+            // Any touch brings the controls back, and is not also a press.
+            if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
                 setHidden(false);
                 performClick();
             }
@@ -625,23 +623,11 @@ final class TouchControlsView extends View {
         }
     }
 
+    // Hidden, the view stays full screen but draws nothing, and the next
+    // touch anywhere brings the controls back (as after a physical pad).
     private void setHidden(boolean hide) {
         releaseAll();
         hidden = hide;
-        RelativeLayout.LayoutParams params;
-        if (hidden) {
-            // Just the eye, where it was, so the tap that brings the
-            // controls back is on the button that hid them.
-            params = new RelativeLayout.LayoutParams(dp(EYE_WIDTH_DP), dp(EYE_HEIGHT_DP));
-            params.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
-            params.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
-            params.setMargins(0, 0, dp(EYE_MARGIN_DP), dp(EYE_MARGIN_DP));
-        } else {
-            params = new RelativeLayout.LayoutParams(
-                RelativeLayout.LayoutParams.MATCH_PARENT,
-                RelativeLayout.LayoutParams.MATCH_PARENT);
-        }
-        setLayoutParams(params);
         invalidate();
     }
 
@@ -872,9 +858,8 @@ final class TouchControlsView extends View {
                           button.label.length() > 2 ? dp(10) : dp(15));
     }
 
-    // The hide/show button: an eye, struck through while the controls are
-    // hidden.
-    private void drawEye(Canvas canvas, RectF bounds, boolean struck) {
+    // The hide button: an eye.
+    private void drawEye(Canvas canvas, RectF bounds) {
         fillPaint.setColor(0x99081218);
         strokePaint.setColor(0xCCFFFFFF);
         float corner = Math.min(bounds.width(), bounds.height()) * 0.3f;
@@ -892,10 +877,6 @@ final class TouchControlsView extends View {
         canvas.drawPath(eye, strokePaint);
         fillPaint.setColor(0xCCFFFFFF);
         canvas.drawCircle(cx, cy, lid * 0.55f, fillPaint);
-        if (struck) {
-            canvas.drawLine(cx - halfW * 0.8f, cy + lid * 1.3f, cx + halfW * 0.8f,
-                            cy - lid * 1.3f, strokePaint);
-        }
     }
 
     private void drawCenteredLabel(Canvas canvas, String label, float x, float y, float size) {
