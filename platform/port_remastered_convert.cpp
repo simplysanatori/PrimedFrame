@@ -2269,6 +2269,13 @@ std::vector<WeightKey> SkinWeights(const std::vector<double>& P, size_t n, const
       total += w.second;
     }
     WeightKey q;
+    if (total <= 0.0) {
+      if (!ws.empty()) {
+        q.emplace_back(ws[0].first, 1.0);  // no usable weights: the strongest (first) bone alone
+      }
+      out[v] = std::move(q);
+      continue;
+    }
     for (const auto& w : ws) {
       const double r = std::nearbyint(w.second / total * 64.0);
       if (r != 0.0) {
@@ -2280,8 +2287,10 @@ std::vector<WeightKey> SkinWeights(const std::vector<double>& P, size_t n, const
     for (const auto& w : q) {
       s += w.second;
     }
-    for (auto& w : q) {
-      w.second /= s;
+    if (s > 0.0) {
+      for (auto& w : q) {
+        w.second /= s;
+      }
     }
     out[v] = std::move(q);
   }

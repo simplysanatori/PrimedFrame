@@ -412,8 +412,9 @@ which are authoritative. Inside a mod:
   heap with it, for mods heavier than the retail heap allows; the log says
   `port: MEM1 arena raised to <n> MB`.
 - a file named `<8 hex digits>.dds`, anywhere in the mod, is a native texture:
-  the full-size image of the TXTR with that id, as BC7, BC5 (two-channel, for
-  PBR normal maps), BC3, BC1 or RGBA8, with a full mip chain. The TXTR still
+  the full-size image of the TXTR with that id, with a full mip chain. The
+  importer writes BC7 (BC5, two-channel, for PBR normal maps); the loader also
+  reads BC3, BC1 and RGBA8. The TXTR still
   loads (the mod's own, which can be a few texels across, or the disc's) and
   supplies the wrap and filter state; the `.dds` is what is drawn. Aurora
   streams it on worker threads into GPU memory, so its size never counts
@@ -421,6 +422,9 @@ which are authoritative. Inside a mod:
   later mod's TXTR without a `.dds` drops an earlier mod's `.dds` for that id.
   On a GPU without BC support (most phones) the TXTR is drawn instead. The log
   and the Mods panel count them (`mods: <n> native texture(s)`).
+  `MP_TEXTURE_MAX_DIM=<px>` caps the size a `.dds` is loaded at (0 = no limit;
+  default 0, 1024 on Android) and `MP_TEXTURE_CACHE_MB=<n>` the memory the
+  loaded ones may keep cached (default 4096, 1024 on Android).
 - a file named `<name>.sdfont`, anywhere in the mod, is a distance-field font
   (each texel holds how far it is from the glyph's edge), which stays sharp at
   any resolution. The port draws its glyphs in place of the disc's bitmap ones
@@ -618,6 +622,8 @@ a disc string opens with are carried over. Strings that name a button of
 Remastered's controls or use one of its icons keep the disc's text, as do
 strings with characters outside ASCII. `MP_REMASTERED_TEXT=0` leaves the text
 out.
+`MP_REMASTERED_EFFECTS=1` (or 0; also true/on/yes) turns the experimental particle effect step on or off
+(default off; `docs/REMASTERED_EFFECTS.md`).
 
 Remastered's French, Spanish, German, Italian and Dutch text comes along too
 (about 1,900 strings each), as extra language sections in the same tables,
@@ -633,15 +639,16 @@ mod's typeface (`font/deface.sdfont`) is loaded, which draws the real one.
 It also writes Remastered's typeface as `font/deface.sdfont` (see above): the
 FONT asset with the most characters, its first face.
 
-The in-game HUD is carried over as well, into the mod's `hud` folder: the
-combat, scan, thermal, X-ray, ball and base frames. The disc's frame stays the
+The in-game HUD is carried over as well, into the mod's `hud` folder: fourteen
+frames (combat, scan, thermal, X-ray, ball, base, map, pause, pause
+instructions, generic menu, message, quit, flat scan and helmet). The disc's frame stays the
 skeleton, so every widget the game looks up by name is still there; a widget
 Remastered has under the same name takes its placement, colour and model from
 there, and the models and pictures Remastered added are placed under their
 parents. Each frame is written as `<id>.FRME` with its models (`.CMDL`), its
 pictures (a small `.TXTR` and, above 64 px, a `.dds`) and, for the energy,
 missile and threat bars, a `.hudbars`. `MP_REMASTERED_HUD=0` leaves the HUD
-out. The map screen comes too, with one difference: Remastered lays it out for
+out, and with it the map icons and the `.MAPA` rooms below. The map screen comes too, with one difference: Remastered lays it out for
 a wider view and shows fewer prompts, so its legend, area name and hint are
 set from Remastered on the disc's plane, and the prompts it lacks keep the
 disc's places. The map's icons come as well, into `map/`: the save, missile
@@ -651,9 +658,8 @@ Remastered's own under ids the port looks for (`port_map_icons.h`). So do the
 rooms: Remastered's map of a world (`CMAP`) names no room of the disc, so its
 areas are paired with the disc's by place and size, and the few it reshaped
 are written as `<id>.MAPA` with the disc's doors
-and markers; the rest keep the disc's map. Experimental: the pause and message
-screens are still the disc's, as is the map's compass, which the disc does not
-have.
+and markers; the rest keep the disc's map. Experimental: the map's compass is
+left out, as the disc does not have one.
 
 The menu movies come along too, into the mod's `Video` folder under the disc's
 names: the title, the file select and its transitions, and four of the attract
@@ -1217,7 +1223,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   `MP_REMASTERED_BALL_LIGHT_SCALE` scales it (console `roomenv balllight
   on|off|<scale>`).
   A power bomb tints the baked light of PBR surfaces orange, as Remastered's
-  does (up to 35x from 1.75 s to 4 s into the blast, white again by 4.5 s; it
+  does (the tint rises linearly from 1x (no tint) to 35x between 1.75 s and 3.5 s into the blast, holds to 4 s, and is gone by 4.5 s; it
   also dims the probe occlusion less). `MP_REMASTERED_BOMB_TINT=0` turns it off.
   Reflection probes blend around the camera, as Remastered's do: up to four
   of the loaded areas' probes, each fading out over its padding outside its

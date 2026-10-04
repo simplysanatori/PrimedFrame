@@ -2542,8 +2542,8 @@ bool FormatBlockSize(uint32_t format, BlockSize& size, size_t& bytesPerPixel) {
 }
 
 bool FormatIsSrgb(uint32_t format) {
-  return format == kTxtrFormatRgba8Srgb || (format >= kTxtrFormatBc1Srgb && format <= kTxtrFormatBc3Srgb) ||
-         (format >= kTxtrFormatBc7Unorm && format <= kTxtrFormatBc7UnormSrgb) ||
+  return format == kTxtrFormatRgba8Srgb || format == kTxtrFormatBc1Srgb || format == kTxtrFormatBc2Srgb ||
+         format == kTxtrFormatBc3Srgb || format == kTxtrFormatBc7UnormSrgb ||
          (format >= kTxtrFormatAstc4x4Srgb && format <= kTxtrFormatAstc12x12Srgb);
 }
 

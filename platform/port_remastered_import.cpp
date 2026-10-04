@@ -769,8 +769,11 @@ int ImportMovies(const Remastered& remastered, const fs::path& folder, const Mov
 }
 
 // The Extras gallery's concept art as gallery/NNN.jpg in `folder` (port_gallery.h). Returns how many were written.
-int ImportGallery(const Remastered& remastered, const fs::path& folder) {
+int ImportGallery(const Remastered& remastered, const fs::path& target) {
   std::error_code ec;
+  // Written beside the live folder and swapped in only if a picture came out, so a failed or
+  // cancelled re-run keeps the old gallery.
+  const fs::path folder = target.string() + ".new";
   fs::remove_all(folder, ec);
   fs::create_directories(folder, ec);
   int written = 0;
@@ -788,6 +791,7 @@ int ImportGallery(const Remastered& remastered, const fs::path& folder) {
       {
         std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
         file.write(reinterpret_cast<const char*>(jpeg.data()), std::streamsize(jpeg.size()));
+        file.close();
         ok = bool(file);
       }
       // Renamed, so a picture cut short never has the name.
@@ -811,6 +815,14 @@ int ImportGallery(const Remastered& remastered, const fs::path& folder) {
   });
   if (written == 0) {
     fs::remove_all(folder, ec);
+    return 0;
+  }
+  fs::remove_all(target, ec);
+  fs::rename(folder, target, ec);
+  if (ec) {
+    std::fprintf(stderr, "gallery: cannot move the new folder into place: %s\n", ec.message().c_str());
+    fs::remove_all(folder, ec);
+    return 0;
   }
   return written;
 }
@@ -923,6 +935,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       {
         std::ofstream file(tmp, std::ios::binary);
         file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+        file.close();
         if (!file) {
           return false;
         }
@@ -1167,6 +1180,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     } else {
       std::ofstream file(roomFolder / "brdf.lut", std::ios::binary);
       file.write(reinterpret_cast<const char*>(brdf.data()), std::streamsize(brdf.size()));
+      file.close();
       if (!file) {
         AddLine("brdf.lut: cannot be written");
       }
@@ -1240,6 +1254,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
                                 (name.size() > 11 && name.compare(name.size() - 11, 11, ".roomliquid") == 0);
         std::ofstream file((isGeometry ? geometryFolder : roomFolder) / PathFromString(name), std::ios::binary);
         file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+        file.close();
         return bool(file);
       };
       io.model = geometryId;
@@ -1409,6 +1424,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       const std::vector<uint8_t> data = PortRoomGeo::WriteLods(lodTable);
       std::ofstream file(geometryFolder / PortRoomGeo::kLodFileName, std::ios::binary);
       file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+      file.close();
       if (!file) {
         AddLine(std::string(PortRoomGeo::kLodFileName) + ": cannot be written");
       }
@@ -1473,6 +1489,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       std::snprintf(name, sizeof(name), "%08X.STRG", strg);
       std::ofstream file(textFolder / name, std::ios::binary);
       file.write(reinterpret_cast<const char*>(merged.data()), std::streamsize(merged.size()));
+      file.close();
       if (!file) {
         AddLine(std::string(name) + ": cannot write");
         continue;
@@ -1518,6 +1535,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       fs::create_directories(fontFolder, ec);
       std::ofstream file(fontFolder / kFontName, std::ios::binary);
       file.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
+      file.close();
       fontWritten = bool(file);
       if (!fontWritten) {
         AddLine("font: cannot write");
@@ -1632,6 +1650,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   }
   {
     std::ofstream marker(staging / kMarkerName);
+    marker.close();
     if (!marker) {
       fail("Cannot write to the mod folder.");
       return;
@@ -1779,12 +1798,35 @@ bool ApplyPendingImport() {
     return false;
   }
   const fs::path target = staging.parent_path() / kImportModName;
-  fs::remove_all(target, ec);
+  // The working mod is kept as a backup until the new one is in place. Hidden, so the mod loader
+  // never picks it up as a second mod if a crash leaves it behind.
+  const fs::path backup = staging.parent_path() / (std::string(".") + kImportModName + ".old");
+  const bool hadTarget = fs::exists(target, ec);
+  if (hadTarget) {
+    fs::remove_all(backup, ec);
+    fs::rename(target, backup, ec);
+    if (ec) {
+      std::fprintf(stderr, "metroid_prime_port: could not set aside %s: %s\n", target.string().c_str(),
+                   ec.message().c_str());
+      return false;
+    }
+  }
   fs::rename(staging, target, ec);
   if (ec) {
     std::fprintf(stderr, "metroid_prime_port: could not move the imported mod to %s: %s\n",
                  target.string().c_str(), ec.message().c_str());
+    if (hadTarget) {
+      std::error_code restoreError;
+      fs::rename(backup, target, restoreError);
+      if (restoreError) {
+        std::fprintf(stderr, "metroid_prime_port: could not restore %s: %s\n", target.string().c_str(),
+                     restoreError.message().c_str());
+      }
+    }
     return false;
+  }
+  if (hadTarget) {
+    fs::remove_all(backup, ec);
   }
   fs::remove(target / kMarkerName, ec);
   return true;

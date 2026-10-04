@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -221,8 +222,10 @@ public:
       if (child == children.end() ||
           !SplitRetailPart(parts[i].part.data(), parts[i].part.size(), check, error) ||
           !m_io.write(Hex(child->second) + ".PART", parts[i].part)) {
+        // The root would name a missing child: leave the disc's PART in place.
+        ++m_result.failed;
         Log(name + ": child " + EffectGuidString(parts[i].id) + " not written");
-        continue;
+        return;
       }
       ++m_result.parts;
       m_result.dropped += parts[i].droppedRetail;
@@ -271,7 +274,17 @@ bool WantsRemasteredEffects() {
   if (env == nullptr || env[0] == '\0') {
     return sEffects.load();
   }
-  return std::strcmp(env, "1") == 0;
+  std::string value(env);
+  for (char& c : value) {
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  }
+  if (value == "1" || value == "true" || value == "on" || value == "yes") {
+    return true;
+  }
+  if (value == "0" || value == "false" || value == "off" || value == "no") {
+    return false;
+  }
+  return sEffects.load();
 }
 
 void SetImportEffects(bool on) { sEffects = on; }

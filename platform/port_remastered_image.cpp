@@ -776,8 +776,10 @@ std::vector<uint8_t> EncodeTxtrRgba8(const Image& image, int minSize) {
       for (int bx = 0; bx < lv.width; bx += 4) {
         for (int pass = 0; pass < 2; ++pass) {
           for (int y = 0; y < 4; ++y) {
-            const uint8_t* p = &lv.rgba[(size_t(by + y) * size_t(lv.width) + size_t(bx)) * 4];
-            for (int x = 0; x < 4; ++x, p += 4) {
+            // A level that is not a multiple of 4 repeats its last row and column.
+            const size_t row = size_t(std::min(by + y, lv.height - 1)) * size_t(lv.width);
+            for (int x = 0; x < 4; ++x) {
+              const uint8_t* p = &lv.rgba[(row + size_t(std::min(bx + x, lv.width - 1))) * 4];
               out.push_back(pass == 0 ? p[3] : p[1]);
               out.push_back(pass == 0 ? p[0] : p[2]);
             }
@@ -817,7 +819,10 @@ std::vector<uint8_t> EncodeTxtrCmpr(const Image& image, bool alpha) {
           const int bx = tx + (sub & 1) * 4, by = ty + (sub >> 1) * 4;
           uint8_t px[16][4];
           for (int y = 0; y < 4; ++y) {
-            std::memcpy(px[y * 4], &lv.rgba[(size_t(by + y) * size_t(lv.width) + size_t(bx)) * 4], 16);
+            const size_t row = size_t(std::min(by + y, lv.height - 1)) * size_t(lv.width);
+            for (int x = 0; x < 4; ++x) {
+              std::memcpy(px[y * 4 + x], &lv.rgba[(row + size_t(std::min(bx + x, lv.width - 1))) * 4], 4);
+            }
           }
           uint8_t block[8];
           CmprBlock(px, block);
