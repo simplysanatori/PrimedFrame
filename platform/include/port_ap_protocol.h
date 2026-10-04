@@ -75,7 +75,7 @@ struct Config {
   std::vector< std::string > tags;
   int versionMajor = 0;
   int versionMinor = 6;
-  int versionBuild = 0;
+  int versionBuild = 8;
   std::map< std::string, int64_t > locations; // randomizer key -> AP location id
   std::map< int64_t, ItemEntry > items;       // AP item id -> grant
   // The tables are the built-in Metroid Prime ones (port_ap_metroidprime.h),

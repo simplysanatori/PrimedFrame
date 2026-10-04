@@ -251,7 +251,7 @@ Every key, with hand-written tables (which turn the built-in world rules off):
   "password": "",
   "game": "Metroid Prime",
   "items_handling": 7,
-  "version": { "major": 0, "minor": 6, "build": 0 },
+  "version": { "major": 0, "minor": 6, "build": 8 },
   "tags": [],
   "locations": {
     "39F2DE28:B2701146:0000007E": 123456
@@ -273,7 +273,7 @@ Every key, with hand-written tables (which turn the built-in world rules off):
 | `game` | Default `Metroid Prime`; must match the AP world's game name. |
 | `password` | Room password, default empty. |
 | `items_handling` | Default 7 (other worlds' items, this world's items, starting inventory). |
-| `version` | Protocol version sent in Connect, default 0.6.0. Must be compatible with the server's. |
+| `version` | Protocol version sent in Connect, default 0.6.8. Must be compatible with the server's. |
 | `tags` | Client tags, default empty. |
 | `locations` | Optional. Randomizer key (`WORLD:AREA:ENTITY`, the seed's location key) to AP location id. Replaces the built-in location table. |
 | `items` | Optional. When present, the built-in item table and the world's rules (slot data, ammo capacity, AP pickups, Landing Site start) are off, and this table is all the client knows. AP item id to the grant the port applies: `item` is a randomizer item name, `amount`/`capacity` default 1, and an optional `display` is the name shown in the HUD notification (the item name when unset). An entry may instead carry `progressive`, a non-empty list of grants applied in order as more copies of that item arrive. |
