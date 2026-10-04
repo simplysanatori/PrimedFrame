@@ -36,6 +36,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "port_room_geo.h"
+
 bool PortWarpKeepsMusic(); // CStateManager.cpp
 #endif
 
@@ -758,6 +760,34 @@ void CWorld::PreRender() {
 }
 
 void CWorld::DrawSky(const CTransform4f& xf) const {
+#ifdef TARGET_PC
+  // Remastered gives each room a sky of its own, turned and scaled to suit the room, where
+  // retail has one per world: the camera's area's sky if it has one, else another sky area's.
+  if (x70_27_skyboxVisible) {
+    CTransform4f orient = CTransform4f::Identity();
+    const CModel* sky = nullptr;
+    if (x68_curAreaId != kInvalidAreaId) {
+      const CGameArea* current = GetArea(x68_curAreaId);
+      if (current->IsPostConstructed() && current->DoesAreaNeedSkyNow()) {
+        sky = PortRoomGeo::Sky(*current, orient);
+      }
+    }
+    for (CGameArea::CConstChainIterator it = GetChainHead(kC_Alive); sky == nullptr && it != skGlobalEnd; ++it) {
+      if (it->DoesAreaNeedSkyNow()) {
+        sky = PortRoomGeo::Sky(*it, orient);
+      }
+    }
+    if (sky != nullptr) {
+      CGraphics::DisableAllLights();
+      gpRender->SetModelMatrix(xf * orient);
+      gpRender->SetAmbientColor(CColor::White());
+      CGraphics::SetDepthRange(0.999f, 1.f);
+      sky->Draw(CModelFlags::Normal().DepthCompareUpdate(true, false));
+      CGraphics::SetDepthRange(0.125f, 1.f);
+      return;
+    }
+  }
+#endif
   if ((xa4_skyboxWorldLoaded || xb4_skyboxOverride) && x70_27_skyboxVisible) {
     CGraphics::DisableAllLights();
     gpRender->SetModelMatrix(xf);

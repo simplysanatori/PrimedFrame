@@ -7,7 +7,9 @@
 
 class CFrustumPlanes;
 class CGameArea;
+class CModel;
 class CStateManager;
+class CTransform4f;
 class CVector3f;
 
 // A room's static geometry as a list of models and where each stands. A mod supplies one
@@ -15,7 +17,7 @@ class CVector3f;
 // them in place of the area's own world geometry.
 //
 // The file is little endian:
-//   'MPRG', u32 version (1 to 5), u32 instances
+//   'MPRG', u32 version (1 to 6), u32 instances
 //   instance: u32 CMDL id, f32 transform[12] (rows of model -> area)
 //     version 2 adds: u8 layer, u8 active, u16 links,
 //     version 3 (and 4) then: u32 platform, f32 platformStart[3],
@@ -51,6 +53,12 @@ class CVector3f;
 //   'ANIM', u32 count, per animated instance:
 //     u32 index, f32 fps, u32 frames (2 or more), then per frame f32 rotation x, y, z, w
 //     (unit quaternion) and f32 translation x, y, z
+//
+// Version 6 may then end with the room's skies:
+//   'SKY ', u32 count, per sky: u32 index
+// A sky instance is not drawn with the room: the world's sky is drawn as it, centred on the
+// camera, turned and scaled by its transform (whose translation is left out). Its layer,
+// `active`, links and group show and hide it as they do any instance's.
 namespace PortRoomGeo {
 
 enum : uint8_t { kEveryLayer = 0xff };
@@ -82,6 +90,7 @@ struct Instance {
   // Empty: it stands still.
   float animFps = 0.f;
   std::vector<float> animKeys; // 7 per frame: rotation x, y, z, w, translation x, y, z
+  bool sky = false; // the room's sky (version 6), drawn in place of the world's
 };
 
 // Remastered's script objects between what happens in game and a group of instances.
@@ -138,9 +147,9 @@ struct Script {
 bool ParseFileName(const std::string& fileName, uint32_t& id);
 bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::string& error,
            Script* script = nullptr);
-// The file for these instances (version 5), with the script section when there is a script
-// or a group, the glow section when an instance glows and the animation section when one is
-// animated.
+// The file for these instances (version 6), with the script section when there is a script
+// or a group, the glow section when an instance glows, the animation section when one is
+// animated and the sky section when one is a sky.
 std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script* script = nullptr);
 
 // The coarser levels of detail of the models, one table for the whole mod (kLodFileName in
@@ -178,6 +187,10 @@ void DrawSorted(const void* drawable);
 // Set around the renderer's sorted pass for an area Draw stood in for, so that pass
 // draws the actors and leaves the area's own surfaces out.
 extern bool sReplacingArea;
+// The sky of an alive area, in place of the world's (CWorld::DrawSky): its room's first sky
+// instance that is shown, on a layer that is on, and loaded. Null for none. `orient` is its
+// turn and scale in the world, with no translation.
+const CModel* Sky(const CGameArea& area, CTransform4f& orient);
 // Lets go of every model (the mods folder is about to change).
 void Reset();
 // A script object sent a state (CEntity::SendScriptMsgs): shows or hides the instances

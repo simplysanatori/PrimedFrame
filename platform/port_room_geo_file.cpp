@@ -9,7 +9,7 @@ namespace PortRoomGeo {
 namespace {
 
 constexpr uint32_t kMagic = 0x4752504D; // 'MPRG'
-constexpr uint32_t kVersion = 5;
+constexpr uint32_t kVersion = 6;
 constexpr size_t kHeaderBytes = 12;
 constexpr size_t kInstanceBytes = 4 + 12 * 4; // version 1; version 2 adds 4 + links
 constexpr size_t kPlatformBytes = 4 + 3 * 4;   // version 3's, after version 2's 4
@@ -22,6 +22,7 @@ constexpr size_t kGlowBytes = 4 + 3 * 4;
 constexpr uint32_t kAnimMagic = 0x4D494E41; // 'ANIM'
 constexpr size_t kAnimHeadBytes = 3 * 4;
 constexpr size_t kAnimKeyBytes = 7 * 4;
+constexpr uint32_t kSkyMagic = 0x20594B53; // 'SKY '
 constexpr uint32_t kLodMagic = 0x444F4C52; // 'RLOD'
 constexpr uint32_t kLodVersion = 1;
 
@@ -198,6 +199,25 @@ bool ParseAnim(const std::vector<uint8_t>& data, size_t& at, std::vector<Instanc
   return true;
 }
 
+// The sky section at `at`, which is moved past it.
+bool ParseSky(const std::vector<uint8_t>& data, size_t& at, std::vector<Instance>& instances, std::string& error) {
+  if (data.size() - at < 8 || ReadU32(data.data() + at + 4) > (data.size() - at - 8) / 4) {
+    error = "truncated sky";
+    return false;
+  }
+  const uint32_t count = ReadU32(data.data() + at + 4);
+  at += 8;
+  for (uint32_t i = 0; i < count; ++i, at += 4) {
+    const uint32_t index = ReadU32(data.data() + at);
+    if (index >= instances.size() || instances[index].sky) {
+      error = "bad sky instance";
+      return false;
+    }
+    instances[index].sky = true;
+  }
+  return true;
+}
+
 void WriteScript(std::vector<uint8_t>& out, const std::vector<Instance>& instances, const Script* script) {
   static const Script kNone;
   const Script& s = script != nullptr ? *script : kNone;
@@ -332,8 +352,8 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
       at += kLinkBytes;
     }
   }
-  // Version 3 may end with the script section, version 4 then with the glow section and
-  // version 5 then with the animation section.
+  // Version 3 may end with the script section, version 4 then with the glow section,
+  // version 5 then with the animation section and version 6 then with the sky section.
   bool ok = true;
   if (version >= 3 && data.size() - at >= 4 && ReadU32(data.data() + at) == kScriptMagic) {
     ok = ParseScript(data, at, out, parsed, error);
@@ -343,6 +363,9 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
   }
   if (ok && version >= 5 && data.size() - at >= 4 && ReadU32(data.data() + at) == kAnimMagic) {
     ok = ParseAnim(data, at, out, error);
+  }
+  if (ok && version >= 6 && data.size() - at >= 4 && ReadU32(data.data() + at) == kSkyMagic) {
+    ok = ParseSky(data, at, out, error);
   }
   if (ok && at != data.size()) {
     error = "unknown data after the instances";
@@ -421,6 +444,17 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
         for (size_t k = 0; k < instance.animKeys.size() / 7 * 7; ++k) {
           PutF32(out, instance.animKeys[k]);
         }
+      }
+    }
+  }
+  const size_t skies =
+      size_t(std::count_if(instances.begin(), instances.end(), [](const Instance& i) { return i.sky; }));
+  if (skies != 0) {
+    PutU32(out, kSkyMagic);
+    PutU32(out, uint32_t(skies));
+    for (size_t i = 0; i < instances.size(); ++i) {
+      if (instances[i].sky) {
+        PutU32(out, uint32_t(i));
       }
     }
   }

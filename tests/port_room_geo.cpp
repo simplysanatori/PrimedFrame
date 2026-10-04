@@ -158,6 +158,39 @@ void TestAnim() {
 }
 
 // The glow section, alone and after the script section.
+// The sky section, after the anim section.
+void TestSky() {
+  std::vector<PortRoomGeo::Instance> in;
+  in.push_back(MakeInstance(0x11111111, 1.f));
+  in.push_back(MakeInstance(0x22222222, 2.f));
+  in[1].sky = true;
+  in[0].animFps = 30.f;
+  in[0].animKeys = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0};
+  std::vector<PortRoomGeo::Instance> out;
+  PortRoomGeo::Script back;
+  std::string error;
+  const std::vector<uint8_t> file = PortRoomGeo::Write(in);
+  Check(PortRoomGeo::Parse(file, out, error, &back), "sky file parses");
+  Check(out.size() == 2 && !out[0].sky && out[1].sky && out[0].animKeys == in[0].animKeys, "sky");
+  for (size_t cut = file.size() - 11; cut < file.size(); ++cut) {
+    const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
+    if (PortRoomGeo::Parse(part, out, error, &back)) {
+      std::fprintf(stderr, "FAIL: sky truncated at %zu parses\n", cut);
+      ++sFailures;
+    }
+  }
+  std::vector<uint8_t> bad = file;
+  bad[file.size() - 4] = 2; // no such instance
+  Check(!PortRoomGeo::Parse(bad, out, error, &back), "sky of a missing instance rejected");
+  bad = file;
+  bad[4] = 5;
+  Check(!PortRoomGeo::Parse(bad, out, error, &back), "sky in a version 5 file rejected");
+  bad = file;
+  bad[file.size() - 8] = 2; // count 2
+  Put32(bad, 1);
+  Check(!PortRoomGeo::Parse(bad, out, error, &back), "duplicate sky instance rejected");
+}
+
 void TestGlow() {
   std::vector<PortRoomGeo::Instance> in;
   in.push_back(MakeInstance(0x11111111, 1.f));
@@ -326,6 +359,7 @@ int main() {
   TestScript();
   TestGlow();
   TestAnim();
+  TestSky();
   TestLods();
   uint32_t id = 0;
   Check(PortRoomGeo::ParseFileName("1a2B3c4D.ROOMGEO", id) && id == 0x1A2B3C4D, "file name");

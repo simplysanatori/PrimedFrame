@@ -27,6 +27,7 @@
 #include "MetroidPrime/CScriptLayerManager.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/CWorld.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptDamageableTrigger.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 #include "MetaRender/CCubeRenderer.hpp"
@@ -136,6 +137,7 @@ struct Placed {
   float animFps = 0.f;
   std::vector< float > animKeys;
   CTransform4f base = CTransform4f::Identity();
+  bool sky = false; // Instance::sky: drawn by Sky, not with the room
 };
 
 // Copies of one small model that never move or change, built into one model at their world
@@ -176,6 +178,7 @@ struct Trigger {
 
 struct Area {
   bool hasFile = false;
+  bool skyOnly = false;  // a sky and nothing else: retail still draws the room
   bool placed = false; // the instances have their world transforms
   std::vector< Instance > instances;
   std::vector< Model > models;
@@ -601,7 +604,7 @@ void BuildClusters(Area& area) {
   std::vector< size_t > copies(area.models.size(), 0);
   const auto mergeable = [&](const Placed& item) {
     return item.layer == kEveryLayer && item.platform == 0 && item.follow == 0 && item.active && !item.glows &&
-           item.animKeys.empty();
+           item.animKeys.empty() && !item.sky;
   };
   std::vector< bool > linked(area.items.size(), false);
   for (const Trigger& trigger : area.triggers) {
@@ -900,6 +903,7 @@ void Load(uint32_t mrea, Area& area) {
     item.layer = instance.layer;
     item.shown = item.active = instance.active;
     item.glows = instance.glows;
+    item.sky = instance.sky;
     std::copy(instance.glow, instance.glow + 3, item.glow);
     if (!instance.animKeys.empty()) {
       item.animFps = instance.animFps;
@@ -942,6 +946,7 @@ void Load(uint32_t mrea, Area& area) {
   area.instances.clear();
   area.instances.shrink_to_fit();
   area.hasFile = !area.items.empty();
+  area.skyOnly = std::all_of(area.items.begin(), area.items.end(), [](const Placed& item) { return item.sky; });
   PortLog::Write("room geo: %08X: %zu instance(s) of %zu model(s), %zu without a model, %zu trigger(s), %zu script "
                  "node(s), %zu edge(s), %zu group(s)\n",
                  mrea, area.items.size(), area.models.size(), missing, area.triggers.size(),
@@ -1091,7 +1096,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
   }
   auto& areas = Areas();
   const auto found = areas.find(gameArea.GetAreaAssetId());
-  if (found == areas.end() || !found->second.hasFile) {
+  if (found == areas.end() || !found->second.hasFile || found->second.skyOnly) {
     return false;
   }
   Area& area = found->second;
@@ -1312,7 +1317,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
   for (const size_t index : area.drawOrder) {
     Placed& item = area.items[index];
     Model& model = area.models[item.model];
-    if (!model.loaded || model.hidden || !item.shown || item.alpha <= 0.f ||
+    if (item.sky || !model.loaded || model.hidden || !item.shown || item.alpha <= 0.f ||
         (item.cluster != SIZE_MAX && !area.clusters[item.cluster].split)) {
       continue;
     }
@@ -1457,6 +1462,48 @@ void DrawSorted(const void* drawable) {
 }
 
 bool sReplacingArea = false;
+
+const CModel* Sky(const CGameArea& gameArea, CTransform4f& orient) {
+  if (GetMode() == Mode::Off || gpGameState == nullptr) {
+    return nullptr;
+  }
+  auto& areas = Areas();
+  const auto found = areas.find(gameArea.GetAreaAssetId());
+  if (found == areas.end() || !found->second.hasFile) {
+    return nullptr;
+  }
+  const Area& area = found->second;
+  const CScriptLayerManager* const layers = gpGameState->CurrentWorldState().GetLayerState().GetPtr();
+  for (const Placed& item : area.items) {
+    if (!item.sky || !item.shown ||
+        (item.layer != kEveryLayer && layers != nullptr && !layers->IsLayerActive(gameArea.GetAreaId(), item.layer))) {
+      continue;
+    }
+    const Model& model = area.models[item.model];
+    if (model.hidden) {
+      continue;
+    }
+    if (!model.data->IsLoaded(0)) {
+      // Draw loads the area's models, but only while the area is drawn.
+      model.data->Touch(CModelData::kWM_Normal, 0);
+      return nullptr;
+    }
+    // Until Draw places the area, `xf` is still in area space.
+    orient = area.placed ? item.xf : gameArea.GetTM() * item.xf;
+    orient.SetTranslation(CVector3f::Zero());
+    // Remastered's skies are thousands of units across, past the far plane. Centred on
+    // the camera, a sky looks the same at any size, so it is scaled to fit inside it.
+    const CAABox& box = (**model.data->PickStaticModel(CModelData::kWM_Normal)).GetBoundingBox();
+    const float corner = std::max(box.GetMinPoint().Magnitude(), box.GetMaxPoint().Magnitude()) *
+                         std::max({orient.GetColumn(kDX).Magnitude(), orient.GetColumn(kDY).Magnitude(),
+                                   orient.GetColumn(kDZ).Magnitude()});
+    if (corner > 0.f) {
+      orient = orient * CTransform4f::Scale(0.5f * CGraphics::GetProjectionState().GetFar() / corner);
+    }
+    return &**model.data->PickStaticModel(CModelData::kWM_Normal);
+  }
+  return nullptr;
+}
 
 void OnScriptState(CStateManager& mgr, uint32_t editorId, int state) {
   const TAreaId areaId(int((editorId >> 16) & 0x3ff));

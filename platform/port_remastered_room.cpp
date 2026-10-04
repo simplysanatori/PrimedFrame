@@ -82,6 +82,11 @@ constexpr uint32_t kPropActorAdded = 0x9a25df3b;
 constexpr uint32_t kPropActorAnim = 0x54446d42;
 constexpr uint32_t kPropAnimCharacter = 0xa589d885;
 constexpr uint32_t kPropAnimName = 0x87c03a01;
+// A room's sky: its model, drawn about the camera and turned and scaled by its entity's
+// transform. Also carries an intensity (0x63328a04) and sometimes a colour (0x34184350),
+// which are not used.
+constexpr uint32_t kSkybox = 0x5112a065;
+constexpr uint32_t kPropSkyboxModel = 0x387bb786;
 // A ColorModulateMP1 in its incandescence mode (blend 5, CColorModulateMP1GOC): what it
 // targets glows in its colour B times its intensity, which takes the place of every
 // material's ICNC. Each door frame has one, with times of 0, so B applies from the start.
@@ -2350,6 +2355,26 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       ++unresolved;
     }
   };
+  // An entity's transform in GC axes: Rz * Ry * Rx of its angles, as retail builds an
+  // editor transform, then its scale and position.
+  auto place = [&](PortRoomGeo::Instance& inst, const Vec3& pos, const Vec3& rot, const Vec3& scale) {
+    double s[3], k[3];
+    for (int i = 0; i < 3; ++i) {
+      s[i] = std::sin(rot[i] * (3.14159265358979323846 / 180.0));
+      k[i] = std::cos(rot[i] * (3.14159265358979323846 / 180.0));
+    }
+    const double m[3][3] = {
+        {k[2] * k[1], k[2] * s[1] * s[0] - s[2] * k[0], k[2] * s[1] * k[0] + s[2] * s[0]},
+        {s[2] * k[1], s[2] * s[1] * s[0] + k[2] * k[0], s[2] * s[1] * k[0] - k[2] * s[0]},
+        {-s[1], k[1] * s[0], k[1] * k[0]},
+    };
+    for (int row = 0; row < 3; ++row) {
+      for (int col = 0; col < 3; ++col) {
+        inst.transform[4 * row + col] = float(kSign[row] * kSign[col] * m[kAxis[row]][kAxis[col]] * scale[kAxis[col]]);
+      }
+      inst.transform[4 * row + 3] = float(kSign[row] * pos[kAxis[row]]);
+    }
+  };
   size_t modcons = 0;
   for (const Component* c : r.room.Of(kModCon)) {
     const bool active = r.room.Active(*c);
@@ -2536,25 +2561,9 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       ++dropped;
       continue;
     }
-    // Rz * Ry * Rx of the entity's angles, as retail builds an editor transform.
-    double s[3], k[3];
-    for (int i = 0; i < 3; ++i) {
-      s[i] = std::sin(rot[i] * (3.14159265358979323846 / 180.0));
-      k[i] = std::cos(rot[i] * (3.14159265358979323846 / 180.0));
-    }
-    const double m[3][3] = {
-        {k[2] * k[1], k[2] * s[1] * s[0] - s[2] * k[0], k[2] * s[1] * k[0] + s[2] * s[0]},
-        {s[2] * k[1], s[2] * s[1] * s[0] + k[2] * k[0], s[2] * s[1] * k[0] - k[2] * s[0]},
-        {-s[1], k[1] * s[0], k[1] * k[0]},
-    };
     PortRoomGeo::Instance& inst = instances.emplace_back();
     inst.model = known->second;
-    for (int row = 0; row < 3; ++row) {
-      for (int col = 0; col < 3; ++col) {
-        inst.transform[4 * row + col] = float(kSign[row] * kSign[col] * m[kAxis[row]][kAxis[col]] * scale[kAxis[col]]);
-      }
-      inst.transform[4 * row + 3] = float(kSign[row] * pos[kAxis[row]]);
-    }
+    place(inst, pos, rot, scale);
     if (anim != nullptr) {
       // The bone's pose in GC axes: the axis change is a rotation, so a quaternion's
       // vector part and a translation change the same way a position does.
@@ -2588,6 +2597,38 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     }
     ++actors;
   }
+  // The room's skies, drawn in place of the world's: retail has one per world, Remastered
+  // one per room, each turned and scaled to suit it (and two in the Frigate's hangar, one
+  // on a layer).
+  size_t skies = 0;
+  for (const Component* c : r.room.Of(kSkybox)) {
+    const auto f = r.room.Flat(*c);
+    const auto prop = f.find(kPropSkyboxModel);
+    Vec3 pos, rot, scale;
+    if (prop == f.end() || prop->second.size != 16 || !r.room.Xform(*c, pos, rot, scale)) {
+      continue;
+    }
+    const bool active = r.room.Active(*c);
+    if (!active && !canShow(c->entity)) {
+      ++inactive;
+      continue;
+    }
+    const Id16 model = SwapUuid(r.room.Bytes(prop->second));
+    if (m_io.cancelled && m_io.cancelled()) {
+      return;
+    }
+    uint32_t id = 0;
+    if (model == Id16{} || !m_io.model(model, id)) {
+      ++dropped;
+      continue;
+    }
+    PortRoomGeo::Instance& inst = instances.emplace_back();
+    inst.model = id;
+    inst.sky = true;
+    place(inst, Vec3{}, rot, scale);
+    script(inst, c->entity, active);
+    ++skies;
+  }
   if (instances.empty()) {
     return;
   }
@@ -2601,11 +2642,11 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   }
   char line[512];
   std::snprintf(line, sizeof line,
-                "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu inactive objects left out; %zu on a layer, "
+                "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu skies, %zu inactive objects left out; %zu on a layer, "
                 "%zu scripted, %zu in %zu groups of %zu script objects and %zu connections (%zu untraced), %zu on a "
                 "platform, %zu with untraced links, %zu glowing, %zu animated, %zu left to retail actors; %zu of %zu "
                 "entities matched), %zu dropped",
-                r.name.c_str(), mrea, count, modcons, actors, inactive, gated, linked, grouped, scripts.group.size(),
+                r.name.c_str(), mrea, count, modcons, actors, skies, inactive, gated, linked, grouped, scripts.group.size(),
                 scripts.script.nodes.size(), scripts.script.edges.size(), scripts.scriptUnresolved, riding, unresolved,
                 glowing, animated, retailDrawn, scripts.matched, scripts.entities, dropped);
   Log(line);
