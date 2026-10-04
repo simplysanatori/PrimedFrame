@@ -75,6 +75,15 @@ constexpr uint32_t kPropModConMcon = 0xa8e2ba93;
 constexpr uint32_t kPropActorModel = 0xcb1c52f6;
 // Unnamed in retrotool's templates; what they mean is read off which actors carry them.
 constexpr uint32_t kPropActorAdded = 0x9a25df3b;
+// A ColorModulateMP1 in its incandescence mode (blend 5, CColorModulateMP1GOC): what it
+// targets glows in its colour B times its intensity, which takes the place of every
+// material's ICNC. Each door frame has one, with times of 0, so B applies from the start.
+constexpr uint32_t kColorModulateMP1 = 0xa856f484;
+constexpr uint32_t kPropModulateBlend = 0x3d76c67c;
+constexpr uint32_t kModulateIncandescence = 0x754d6cdc;
+constexpr uint32_t kPropModulateColorB = 0x3f7113d9;
+constexpr uint32_t kPropColorChannel[3] = {0x110889d1, 0x2a5349e9, 0x8a7aff22};  // r, g, b
+constexpr uint32_t kPropModulateIntensity = 0xf936079e;
 // Liquids. A WaterMP1 is the retail water object; the surface drawn for it is a render
 // volume on the same entity.
 constexpr uint32_t kWaterMP1 = 0x12db855d;
@@ -2372,7 +2381,43 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   // carry, names no parent: most actors with it stand still, and the room's script
   // connections are what make one a platform's.
   std::map<Id16, uint32_t> actorModels;  // 0 when the model did not convert
-  size_t actors = 0, riding = 0;
+  size_t actors = 0, riding = 0, glowing = 0;
+  // By component index: the glow its incandescence modulator gives it. A channel or
+  // intensity the modulator leaves out is 1. The door frames' modulators fade in no time
+  // and nothing starts them, so the glow holds from the start; one something else starts
+  // (6 in all) leaves its actor as the material has it.
+  std::map<size_t, std::array<float, 3>> glows;
+  const std::vector<Component>& comps = r.room.Components();
+  const std::vector<Connection> links = ReadConnections(r.room);
+  std::set<int> started;
+  for (const Connection& link : links) {
+    started.insert(r.room.ByGuid(link.target));
+  }
+  for (const Connection& link : links) {
+    const Component& from = comps[link.sender];
+    const int target = r.room.ByGuid(link.target);
+    if (from.type != kColorModulateMP1 || started.count(int(link.sender)) != 0 || target < 0 ||
+        comps[size_t(target)].type != kActorMP1) {
+      continue;
+    }
+    const auto f = r.room.Flat(from);
+    const auto blend = f.find(kPropModulateBlend);
+    if (blend == f.end() || blend->second.size != 4 || Le32(r.room.Bytes(blend->second)) != kModulateIncandescence) {
+      continue;
+    }
+    const auto intensity = f.find(kPropModulateIntensity);
+    const float scale =
+        intensity != f.end() && intensity->second.size == 4 ? LeFloat(r.room.Bytes(intensity->second)) : 1.f;
+    std::array<float, 3> glow;
+    for (int i = 0; i < 3; ++i) {
+      Span s;
+      glow[i] = r.room.Nested(from, {kPropModulateColorB, kPropColorChannel[i]}, s) && s.size == 4
+                    ? LeFloat(r.room.Bytes(s))
+                    : 1.f;
+      glow[i] = std::isfinite(glow[i] * scale) ? std::max(glow[i] * scale, 0.f) : 0.f;
+    }
+    glows[size_t(target)] = glow;
+  }
   for (const Component* c : r.room.Of(kActorMP1)) {
     const auto f = r.room.Flat(*c);
     const auto prop = f.find(kPropActorModel);
@@ -2422,6 +2467,12 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       inst.transform[4 * row + 3] = float(kSign[row] * pos[kAxis[row]]);
     }
     script(inst, c->entity, active);
+    const auto glow = glows.find(size_t(c - comps.data()));
+    if (glow != glows.end()) {
+      inst.glows = true;
+      std::copy(glow->second.begin(), glow->second.end(), inst.glow);
+      ++glowing;
+    }
     const auto platform = scripts.platform.find(c->entity);
     if (platform != scripts.platform.end()) {
       inst.platform = platform->second->id;
@@ -2447,10 +2498,10 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   std::snprintf(line, sizeof line,
                 "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu inactive objects left out; %zu on a layer, "
                 "%zu scripted, %zu in %zu groups of %zu script objects and %zu connections (%zu untraced), %zu on a "
-                "platform, %zu with untraced links; %zu of %zu entities matched), %zu dropped",
+                "platform, %zu with untraced links, %zu glowing; %zu of %zu entities matched), %zu dropped",
                 r.name.c_str(), mrea, count, modcons, actors, inactive, gated, linked, grouped, scripts.group.size(),
                 scripts.script.nodes.size(), scripts.script.edges.size(), scripts.scriptUnresolved, riding, unresolved,
-                scripts.matched, scripts.entities, dropped);
+                glowing, scripts.matched, scripts.entities, dropped);
   Log(line);
 }
 

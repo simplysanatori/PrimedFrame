@@ -123,6 +123,10 @@ public:
   // caller must clear before the model goes.
   static void PortOverridePBR(const CCubeModel* model, int material, int field, float value);
   static void PortClearPBROverrides();
+  // Until called again with null: every PBR material drawn glows in this colour, which stands
+  // in for the emissive strength Remastered gave the material (ICNC), as a ColorModulateMP1
+  // in its incandescence mode does (PortRoomGeo::Instance::glow).
+  static void PortSetGlow(const float* rgb);
   // The CMDL this model was loaded from (0 for an area's models), for diagnostics.
   void PortSetAssetId(uint id) { xPort_assetId = id; }
   uint PortAssetId() const { return xPort_assetId; }

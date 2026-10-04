@@ -92,8 +92,46 @@ void TestVersion1() {
   Check(out.size() == 2 && out[1].model == 0xabc00001, "v1 instances");
   Check(out.size() == 2 && out[1].active && out[1].layer == PortRoomGeo::kEveryLayer, "v1 defaults");
 
-  file[4] = 4;
+  file[4] = 5;
   Check(!PortRoomGeo::Parse(file, out, error), "unknown version rejected");
+}
+
+// The glow section, alone and after the script section.
+void TestGlow() {
+  std::vector<PortRoomGeo::Instance> in;
+  in.push_back(MakeInstance(0x11111111, 1.f));
+  in.push_back(MakeInstance(0x22222222, 2.f));
+  in.push_back(MakeInstance(0x33333333, 3.f));
+  in[1].glows = true;
+  in[1].glow[0] = 0.f;
+  in[1].glow[1] = 2.f;
+  in[1].glow[2] = 1.326f;
+  std::vector<PortRoomGeo::Instance> out;
+  PortRoomGeo::Script back;
+  std::string error;
+  for (int grouped = 0; grouped < 2; ++grouped) {
+    in[2].group = grouped != 0 ? 4 : PortRoomGeo::kNoGroup;
+    const std::vector<uint8_t> file = PortRoomGeo::Write(in);
+    Check(PortRoomGeo::Parse(file, out, error, &back), "glow file parses");
+    Check(out.size() == 3 && !out[0].glows && !out[2].glows && out[1].glows && out[1].glow[0] == 0.f &&
+              out[1].glow[1] == 2.f && out[1].glow[2] == 1.326f,
+          "glow");
+    Check(out.size() == 3 && out[2].group == in[2].group, "groups before the glow");
+    const size_t plain = file.size() - 8 - 16;
+    for (size_t cut = plain + 1; cut < file.size(); ++cut) {
+      const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
+      if (PortRoomGeo::Parse(part, out, error, &back)) {
+        std::fprintf(stderr, "FAIL: glow truncated at %zu parses\n", cut);
+        ++sFailures;
+      }
+    }
+    std::vector<uint8_t> bad = file;
+    bad[plain + 8] = 3; // no such instance
+    Check(!PortRoomGeo::Parse(bad, out, error, &back), "glow of a missing instance rejected");
+    bad = file;
+    bad[4] = 3;
+    Check(!PortRoomGeo::Parse(bad, out, error, &back), "glow in a version 3 file rejected");
+  }
 }
 
 // Version 2: the platform fields are absent, the links follow the fixed part.
@@ -225,6 +263,7 @@ int main() {
   TestVersion1();
   TestVersion2();
   TestScript();
+  TestGlow();
   TestLods();
   uint32_t id = 0;
   Check(PortRoomGeo::ParseFileName("1a2B3c4D.ROOMGEO", id) && id == 0x1A2B3C4D, "file name");

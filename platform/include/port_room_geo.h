@@ -15,11 +15,11 @@ class CVector3f;
 // them in place of the area's own world geometry.
 //
 // The file is little endian:
-//   'MPRG', u32 version (1 to 3), u32 instances
+//   'MPRG', u32 version (1 to 4), u32 instances
 //   instance: u32 CMDL id, f32 transform[12] (rows of model -> area)
 //     version 2 adds: u8 layer, u8 active, u16 links,
-//     version 3 then: u32 platform, f32 platformStart[3],
-//     then (2 and 3) per link: u32 sender, u8 state, u8 action, u16 0
+//     version 3 (and 4) then: u32 platform, f32 platformStart[3],
+//     then (2 to 4) per link: u32 sender, u8 state, u8 action, u16 0
 // An instance whose CMDL does not exist is skipped.
 //
 // Version 2 is for scenery Remastered added as actors, which its scripts show and hide:
@@ -39,6 +39,12 @@ class CVector3f;
 //   node: u8 kind, u8 active, u16 0, u32 counter max, f32 centre[3], half[3], axes[9]
 //   edge: u8 retail, u8 event, u8 action, u8 0, u32 from, u32 to
 //   then u32 group per instance (kNoGroup: none)
+//
+// Version 4 may then end with the instances that glow in a colour of their own:
+//   'GLOW', u32 count, per instance: u32 index, f32 glow[3]
+// Remastered colours its door frames' lights with a ColorModulateMP1 in its "incandescence"
+// mode, which stands its colour B (times its intensity) in for the strength of every
+// material's emissive map. `glow` is that colour.
 namespace PortRoomGeo {
 
 enum : uint8_t { kEveryLayer = 0xff };
@@ -63,6 +69,8 @@ struct Instance {
   uint32_t platform = 0; // retail editor id, layer bits included
   float platformStart[3] = {};
   uint32_t group = kNoGroup; // the Remastered entity the scripts show and hide it by
+  bool glows = false;        // whether `glow` replaces its materials' emissive strength
+  float glow[3] = {};
 };
 
 // Remastered's script objects between what happens in game and a group of instances.
@@ -119,8 +127,8 @@ struct Script {
 bool ParseFileName(const std::string& fileName, uint32_t& id);
 bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::string& error,
            Script* script = nullptr);
-// The file for these instances (version 3), with the script section when there is a script
-// or a group.
+// The file for these instances (version 4), with the script section when there is a script
+// or a group and the glow section when an instance glows.
 std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script* script = nullptr);
 
 // The coarser levels of detail of the models, one table for the whole mod (kLodFileName in

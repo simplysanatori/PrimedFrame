@@ -9,7 +9,7 @@ namespace PortRoomGeo {
 namespace {
 
 constexpr uint32_t kMagic = 0x4752504D; // 'MPRG'
-constexpr uint32_t kVersion = 3;
+constexpr uint32_t kVersion = 4;
 constexpr size_t kHeaderBytes = 12;
 constexpr size_t kInstanceBytes = 4 + 12 * 4; // version 1; version 2 adds 4 + links
 constexpr size_t kPlatformBytes = 4 + 3 * 4;   // version 3's, after version 2's 4
@@ -17,6 +17,8 @@ constexpr size_t kLinkBytes = 8;
 constexpr uint32_t kScriptMagic = 0x50524353; // 'SCRP'
 constexpr size_t kNodeBytes = 8 + 15 * 4;
 constexpr size_t kEdgeBytes = 12;
+constexpr uint32_t kGlowMagic = 0x574F4C47; // 'GLOW'
+constexpr size_t kGlowBytes = 4 + 3 * 4;
 constexpr uint32_t kLodMagic = 0x444F4C52; // 'RLOD'
 constexpr uint32_t kLodVersion = 1;
 
@@ -55,18 +57,18 @@ bool ReadF32(const uint8_t* p, float& out) {
   return std::isfinite(out);
 }
 
-// The script section at `at`, to the end of the file.
-bool ParseScript(const std::vector<uint8_t>& data, size_t at, std::vector<Instance>& instances, Script& script,
+// The script section at `at`, which is moved past it.
+bool ParseScript(const std::vector<uint8_t>& data, size_t& at, std::vector<Instance>& instances, Script& script,
                  std::string& error) {
-  if (data.size() - at < 12 || ReadU32(data.data() + at) != kScriptMagic) {
-    error = "unknown data after the instances";
+  if (data.size() - at < 12) {
+    error = "truncated script";
     return false;
   }
   const uint32_t nodes = ReadU32(data.data() + at + 4), edges = ReadU32(data.data() + at + 8);
   at += 12;
   const size_t left = data.size() - at;
   if (nodes > left / kNodeBytes || edges > (left - nodes * kNodeBytes) / kEdgeBytes ||
-      left != nodes * kNodeBytes + edges * kEdgeBytes + instances.size() * 4) {
+      (left - nodes * kNodeBytes - edges * kEdgeBytes) / 4 < instances.size()) {
     error = "truncated script";
     return false;
   }
@@ -114,6 +116,67 @@ bool ParseScript(const std::vector<uint8_t>& data, size_t at, std::vector<Instan
     at += 4;
   }
   return true;
+}
+
+// The glow section at `at`, which is moved past it.
+bool ParseGlow(const std::vector<uint8_t>& data, size_t& at, std::vector<Instance>& instances, std::string& error) {
+  if (data.size() - at < 8 || ReadU32(data.data() + at + 4) > (data.size() - at - 8) / kGlowBytes) {
+    error = "truncated glow";
+    return false;
+  }
+  const uint32_t count = ReadU32(data.data() + at + 4);
+  at += 8;
+  for (uint32_t i = 0; i < count; ++i, at += kGlowBytes) {
+    const uint32_t index = ReadU32(data.data() + at);
+    if (index >= instances.size() || instances[index].glows) {
+      error = "bad glow instance";
+      return false;
+    }
+    Instance& instance = instances[index];
+    for (int j = 0; j < 3; ++j) {
+      if (!ReadF32(data.data() + at + 4 + 4 * j, instance.glow[j]) || instance.glow[j] < 0.f) {
+        error = "bad glow";
+        return false;
+      }
+    }
+    instance.glows = true;
+  }
+  return true;
+}
+
+void WriteScript(std::vector<uint8_t>& out, const std::vector<Instance>& instances, const Script* script) {
+  static const Script kNone;
+  const Script& s = script != nullptr ? *script : kNone;
+  PutU32(out, kScriptMagic);
+  PutU32(out, uint32_t(s.nodes.size()));
+  PutU32(out, uint32_t(s.edges.size()));
+  for (const ScriptNode& node : s.nodes) {
+    out.push_back(node.kind);
+    out.push_back(node.active ? 1 : 0);
+    out.push_back(0);
+    out.push_back(0);
+    PutU32(out, node.max);
+    for (float v : node.centre) {
+      PutF32(out, v);
+    }
+    for (float v : node.half) {
+      PutF32(out, v);
+    }
+    for (float v : node.axes) {
+      PutF32(out, v);
+    }
+  }
+  for (const ScriptEdge& edge : s.edges) {
+    out.push_back(edge.retail ? 1 : 0);
+    out.push_back(edge.event);
+    out.push_back(edge.action);
+    out.push_back(0);
+    PutU32(out, edge.from);
+    PutU32(out, edge.to);
+  }
+  for (const Instance& instance : instances) {
+    PutU32(out, instance.group);
+  }
 }
 
 } // namespace
@@ -215,7 +278,19 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
       at += kLinkBytes;
     }
   }
-  if (version >= 3 && at != data.size() && !ParseScript(data, at, out, parsed, error)) {
+  // Version 3 may end with the script section, version 4 then with the glow section.
+  bool ok = true;
+  if (version >= 3 && data.size() - at >= 4 && ReadU32(data.data() + at) == kScriptMagic) {
+    ok = ParseScript(data, at, out, parsed, error);
+  }
+  if (ok && version >= 4 && data.size() - at >= 4 && ReadU32(data.data() + at) == kGlowMagic) {
+    ok = ParseGlow(data, at, out, error);
+  }
+  if (ok && at != data.size()) {
+    error = "unknown data after the instances";
+    ok = false;
+  }
+  if (!ok) {
     out.clear();
     parsed = {};
     return false;
@@ -257,40 +332,22 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
   }
   const bool grouped =
       std::any_of(instances.begin(), instances.end(), [](const Instance& i) { return i.group != kNoGroup; });
-  if ((script == nullptr || script->Empty()) && !grouped) {
-    return out;
+  if ((script != nullptr && !script->Empty()) || grouped) {
+    WriteScript(out, instances, script);
   }
-  static const Script kNone;
-  const Script& s = script != nullptr ? *script : kNone;
-  PutU32(out, kScriptMagic);
-  PutU32(out, uint32_t(s.nodes.size()));
-  PutU32(out, uint32_t(s.edges.size()));
-  for (const ScriptNode& node : s.nodes) {
-    out.push_back(node.kind);
-    out.push_back(node.active ? 1 : 0);
-    out.push_back(0);
-    out.push_back(0);
-    PutU32(out, node.max);
-    for (float v : node.centre) {
-      PutF32(out, v);
+  const size_t glows =
+      size_t(std::count_if(instances.begin(), instances.end(), [](const Instance& i) { return i.glows; }));
+  if (glows != 0) {
+    PutU32(out, kGlowMagic);
+    PutU32(out, uint32_t(glows));
+    for (size_t i = 0; i < instances.size(); ++i) {
+      if (instances[i].glows) {
+        PutU32(out, uint32_t(i));
+        for (float v : instances[i].glow) {
+          PutF32(out, v);
+        }
+      }
     }
-    for (float v : node.half) {
-      PutF32(out, v);
-    }
-    for (float v : node.axes) {
-      PutF32(out, v);
-    }
-  }
-  for (const ScriptEdge& edge : s.edges) {
-    out.push_back(edge.retail ? 1 : 0);
-    out.push_back(edge.event);
-    out.push_back(edge.action);
-    out.push_back(0);
-    PutU32(out, edge.from);
-    PutU32(out, edge.to);
-  }
-  for (const Instance& instance : instances) {
-    PutU32(out, instance.group);
   }
   return out;
 }

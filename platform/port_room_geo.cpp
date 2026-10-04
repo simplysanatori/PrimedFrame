@@ -129,6 +129,8 @@ struct Placed {
   size_t cluster = SIZE_MAX; // the Cluster it is drawn in, if any
   float scaleSq = 1.f; // the largest of its transform's axes, squared: model distances to world ones
   int level = -1;      // this frame's level of detail (Model::levels), -1 for the model itself
+  bool glows = false;  // Instance::glow
+  float glow[3] = {};
 };
 
 // Copies of one small model that never move or change, built into one model at their world
@@ -590,7 +592,7 @@ void BuildClusters(Area& area) {
   }
   std::vector< size_t > copies(area.models.size(), 0);
   const auto mergeable = [&](const Placed& item) {
-    return item.layer == kEveryLayer && item.platform == 0 && item.follow == 0 && item.active;
+    return item.layer == kEveryLayer && item.platform == 0 && item.follow == 0 && item.active && !item.glows;
   };
   std::vector< bool > linked(area.items.size(), false);
   for (const Trigger& trigger : area.triggers) {
@@ -862,6 +864,8 @@ void Load(uint32_t mrea, Area& area) {
     item.scaleSq = std::max(item.scaleSq, 1e-6f);
     item.layer = instance.layer;
     item.shown = item.active = instance.active;
+    item.glows = instance.glows;
+    std::copy(instance.glow, instance.glow + 3, item.glow);
     item.platform = instance.platform;
     item.platformStart =
         CVector3f(instance.platformStart[0], instance.platformStart[1], instance.platformStart[2]);
@@ -1228,13 +1232,14 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     const CTransform4f* xf;
     CActorLights* lights;
     const CAABox* bounds;
+    const float* glow; // null for none
   };
   static std::vector< Visible > visible;
   visible.clear();
   static const CTransform4f kIdentity = CTransform4f::Identity();
   const auto add = [&](Model& model, const CModel& drawn, const CTransform4f& xf, CActorLights* lights,
-                       const CAABox& bounds) {
-    visible.push_back({cutout(model), distanceSq(bounds), &drawn, &xf, lights, &bounds});
+                       const CAABox& bounds, const float* glow = nullptr) {
+    visible.push_back({cutout(model), distanceSq(bounds), &drawn, &xf, lights, &bounds, glow});
   };
   for (Cluster& cluster : area.clusters) {
     cluster.split = !sMergedDraws;
@@ -1291,7 +1296,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       ++sDrawn;
       continue;
     }
-    add(model, cmodel, item.xf, item.lights.get(), item.bounds);
+    add(model, cmodel, item.xf, item.lights.get(), item.bounds, item.glows ? item.glow : nullptr);
     if (!cmodel.IsDefinitelyOpaque()) {
       area.sorted.push_back(&item);
     }
@@ -1312,7 +1317,13 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     }
     gpRender->SetModelMatrix(*draw.xf);
     draw.lights->ActivateLights();
+    if (draw.glow != nullptr) {
+      CCubeModel::PortSetGlow(draw.glow);
+    }
     draw.model->DrawUnsortedParts(CModelFlags::Normal());
+    if (draw.glow != nullptr) {
+      CCubeModel::PortSetGlow(nullptr);
+    }
   };
   // With the sort, the cut-outs come last, after every opaque model: they go twice, depth only
   // and then shaded where the depth is equal, so the grass hidden behind grass isn't shaded.
@@ -1377,10 +1388,16 @@ void DrawSorted(const void* drawable) {
   const CModelData& data =
       item.level >= 0 && size_t(item.level) < model.levels.size() ? *model.levels[item.level].data : *model.data;
   const CModel& cmodel = **data.PickStaticModel(CModelData::kWM_Normal);
+  if (item.glows) {
+    CCubeModel::PortSetGlow(item.glow);
+  }
   if (item.alpha < 1.f) {
     cmodel.Draw(CModelFlags(CModelFlags::kT_Blend, item.alpha));
   } else {
     cmodel.DrawSortedParts(CModelFlags::Normal());
+  }
+  if (item.glows) {
+    CCubeModel::PortSetGlow(nullptr);
   }
   gpRender->SetAmbientColor(CColor::White());
   CGraphics::DisableAllLights();
@@ -1649,6 +1666,11 @@ uint32_t Pick(const CVector3f& origin, const CVector3f& direction, std::string& 
                     hit.mrea, hit.key, lo.GetX(), lo.GetY(), lo.GetZ(), hi.GetX(), hi.GetY(), hi.GetZ());
     }
     out += line;
+    if (hit.item->glows) {
+      out.pop_back();
+      std::snprintf(line, sizeof(line), ", glow %g %g %g\n", hit.item->glow[0], hit.item->glow[1], hit.item->glow[2]);
+      out += line;
+    }
   }
   if (hits.size() > kLines) {
     std::snprintf(line, sizeof(line), "and %zu more\n", hits.size() - kLines);

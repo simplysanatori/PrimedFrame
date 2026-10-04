@@ -13,6 +13,8 @@
 #include <dolphin/gx/GXExtra.h>
 #include "port_pbr_record.h"
 #include "port_room_env.h"
+#include <algorithm>
+#include <cmath>
 #include <vector>
 #endif
 
@@ -211,7 +213,23 @@ struct SPortPBROverride {
   f32 value;
 };
 std::vector< SPortPBROverride > sPortPBROverrides;
+bool sPortGlows = false;
+f32 sPortGlow[3];
 } // namespace
+
+void CCubeModel::PortSetGlow(const f32* rgb) {
+  sPortGlows = rgb != nullptr;
+  if (rgb == nullptr) {
+    return;
+  }
+  // As the converter compresses a strength (sqrt, at most 16; see port_remastered_convert.cpp),
+  // on the brightest channel, so the colour keeps its hue.
+  const f32 most = std::max(std::max(rgb[0], rgb[1]), rgb[2]);
+  const f32 scale = most > 0.f ? std::sqrt(std::min(most, 16.f)) / most : 0.f;
+  for (int i = 0; i < 3; ++i) {
+    sPortGlow[i] = rgb[i] * scale;
+  }
+}
 
 void CCubeModel::PortOverridePBR(const CCubeModel* model, const int material, const int field,
                                  const f32 value) {
@@ -236,6 +254,11 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
   f32 lightScale[2];
   PortReadPBRMaterial(idx, values, nullptr, lightScale, cube);
   const f32 kind = values[13];
+  if (sPortGlows) {
+    values[0] = sPortGlow[0];
+    values[1] = sPortGlow[1];
+    values[2] = sPortGlow[2];
+  }
   for (const SPortPBROverride& entry : sPortPBROverrides) {
     if (entry.model == this && entry.material == idx) {
       values[entry.field] = entry.value;
