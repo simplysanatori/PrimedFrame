@@ -33,6 +33,7 @@
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_hints.h>
 #include <SDL3/SDL_iostream.h>
+#include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_timer.h>
 
@@ -41,6 +42,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cctype>
 #include <cstdio>
@@ -276,6 +278,108 @@ void ReportDiscOpenFailure(const char* path) {
                     header[2], header[3], header[4], header[5], header[6], header[7]);
 }
 
+// Whether the disc was named on the command line or by MP_DISC, as opposed to
+// remembered, found or picked: a wrong one there is the caller's to fix.
+bool ResolveDiscFromArgs(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i][0] != '-' && argv[i][0] != '\0') {
+            return true;
+        }
+    }
+    const char* env = std::getenv("MP_DISC");
+    return env != nullptr && env[0] != '\0';
+}
+
+bool IsSupportedId(const char* id6, unsigned diskNumber, unsigned version) {
+    return std::memcmp(id6, "GM8E01", 6) == 0 && diskNumber == 0 && version == 0;
+}
+
+// The disc id's game name and maker as one six-character id.
+std::array<char, 6> DiscId6(const DVDDiskID& id) {
+    std::array<char, 6> id6{};
+    std::memcpy(id6.data(), id.gameName, 4);
+    std::memcpy(id6.data() + 4, id.company, 2);
+    return id6;
+}
+
+bool IsSupportedDisc(const DVDDiskID* id) {
+    return id != nullptr && IsSupportedId(DiscId6(*id).data(), id->diskNumber, id->gameVersion);
+}
+
+constexpr const char* kSupportedDisc = "Only Metroid Prime for the GameCube, USA version 1.00\n(GM8E01, revision 0), is supported.";
+
+// What the user picked instead, in words: the usual mistakes are another
+// region or a later revision of the same game.
+std::string DescribeDisc(const char* id6, unsigned version) {
+    char id[7] = {};
+    for (int i = 0; i < 6; ++i) {
+        const char c = id6[i];
+        id[i] = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ? c : '?';
+    }
+    std::string text;
+    if (std::memcmp(id, "GM8", 3) == 0) {
+        const char* region = id[3] == 'E' ? "USA" : id[3] == 'P' ? "European" : id[3] == 'J' ? "Japanese" : "another";
+        text = std::string("This is the ") + region + " release of Metroid Prime (" + id + ", revision " +
+               std::to_string(version) + ").";
+    } else {
+        text = std::string("This disc image is not Metroid Prime (game id ") + id + ").";
+    }
+    return text;
+}
+
+std::string DescribeUnsupportedDisc(const DVDDiskID* id) {
+    if (id == nullptr) {
+        return "This disc image has no readable game id.";
+    }
+    return DescribeDisc(DiscId6(*id).data(), id->gameVersion);
+}
+
+// Says on screen why the disc was refused: without it a refused disc looked
+// like a crash on start. Skipped when nothing can show it (headless, or the
+// scripted runs that set MP_NO_DISC_DIALOG), as the disc dialog is.
+void ShowDiscError(const std::string& problem, const std::string& path, bool askNext) {
+    if (const char* env = std::getenv("MP_NO_DISC_DIALOG"); env != nullptr && env[0] == '1') {
+        return;
+    }
+    int windowCount = 0;
+    SDL_Window** windows = SDL_GetWindows(&windowCount);
+    SDL_Window* window = windows != nullptr && windowCount > 0 ? windows[0] : nullptr;
+    SDL_free(windows);
+    if (window == nullptr) {
+        return;
+    }
+    // Short lines: some message boxes do not wrap (SDL's X11 one).
+    const std::string message = problem + "\n\n" + path + "\n\n" + kSupportedDisc +
+                                (askNext ? "\nPick your disc image next." : "");
+    if (!SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Metroid Prime: wrong disc image", message.c_str(), window)) {
+        PortLog::Write("metroid_prime_port: could not show the disc error: %s\n", SDL_GetError());
+    }
+}
+
+// Drops a refused disc so the next launch does not open it again. On Android
+// the copy made from a picked file goes too: ResolveDiscPath prefers it over
+// the remembered setting, and it is 1.4 GB of the wrong game.
+void ForgetDisc(const std::string& path) {
+    bool forget = false;
+    if (const char* remembered = PortDebug::DiscPath(); remembered != nullptr && path == remembered) {
+        forget = true;
+    }
+#if defined(__ANDROID__)
+    if (!PortPaths::UserFolder().empty() && path == PortPaths::UserFolder() + "disc.iso") {
+        std::error_code ec;
+        if (std::filesystem::remove(path, ec)) {
+            PortLog::Write("metroid_prime_port: deleted the copy of the refused disc\n");
+        }
+        forget = true;
+    }
+#endif
+    if (forget) {
+        PortDebug::SetDiscPath("");
+        PortDebug::SaveSettingsNow();
+        PortLog::Write("metroid_prime_port: forgot the remembered disc image\n");
+    }
+}
+
 #if defined(__ANDROID__)
 // Android's picker hands back a content:// URI, not a path. Opening one is
 // possible (SDL routes SDL_IOFromFile through ContentResolver) but it depends
@@ -302,6 +406,29 @@ std::string CopyDiscFromContentUri(const std::string& uri) {
         PortLog::Write( "metroid_prime_port: could not read the picked image: %s: %s\n", uri.c_str(),
                         SDL_GetError());
         return {};
+    }
+    // A plain image names its game in the first bytes: refuse a wrong one
+    // before minutes of copying. Containers (RVZ, WBFS, CISO) are checked once
+    // mounted instead; returning nothing leaves the URI for that check.
+    Uint8 header[8] = {};
+    if (SDL_ReadIO(in, header, sizeof(header)) == sizeof(header)) {
+        const bool container = std::memcmp(header, "RVZ", 3) == 0 || std::memcmp(header, "WIA", 3) == 0 ||
+                               std::memcmp(header, "WBFS", 4) == 0 || std::memcmp(header, "CISO", 4) == 0;
+        if (!container && !IsSupportedId(reinterpret_cast<const char*>(header), header[6], header[7])) {
+            PortLog::Write("metroid_prime_port: not copying the picked image: %s Expected GM8E01 revision 0.\n",
+                           DescribeDisc(reinterpret_cast<const char*>(header), header[7]).c_str());
+            SDL_CloseIO(in);
+            return {};
+        }
+    }
+    if (SDL_SeekIO(in, 0, SDL_IO_SEEK_SET) != 0) {
+        // Some providers hand out a pipe, which cannot seek: start over.
+        SDL_CloseIO(in);
+        in = SDL_IOFromFile(uri.c_str(), "rb");
+        if (in == nullptr) {
+            PortLog::Write("metroid_prime_port: could not reopen the picked image: %s\n", SDL_GetError());
+            return {};
+        }
     }
     const Sint64 total = SDL_GetIOSize(in);
     SDL_IOStream* out = SDL_IOFromFile(partial.string().c_str(), "wb");
@@ -784,48 +911,41 @@ int main(int argc, char** argv) {
     }
     const char* discPath = discImage.c_str();
 
-    if (!aurora_dvd_open(discPath)) {
-        ReportDiscOpenFailure(discPath);
-        // A remembered disc goes stale whenever its permission lapses: on Android
-        // the provider can reclaim a persisted URI grant, and on desktop the file
-        // may have been moved or deleted. Retrying once through the picker turns
-        // an unexplained exit into a recoverable prompt.
-        const bool fromArgs = argc > 1 || std::getenv("MP_DISC") != nullptr;
-        // DiscPath() is null when no disc is remembered, and comparing a
-        // std::string with a null pointer is undefined (it calls strlen(NULL)).
-        const char* rememberedDisc = PortDebug::DiscPath();
-        if (rememberedDisc != nullptr && discImage == rememberedDisc && !fromArgs) {
-            PortLog::Write( "metroid_prime_port: asking for the disc image again\n");
-            PortDebug::SetDiscPath("");
-            PortDebug::SaveSettingsNow();
-            discImage = AskForDiscImage();
-            if (discImage.empty()) {
-                PortLog::Write( "metroid_prime_port: no disc image given.\n"
-                                "  usage: %s <path to Metroid Prime (USA) (v1.00).iso>\n",
-                                argv[0]);
-                aurora_shutdown();
-                return 1;
-            }
-            discPath = discImage.c_str();
-            if (!aurora_dvd_open(discPath)) {
-                ReportDiscOpenFailure(discPath);
-                aurora_shutdown();
-                return 1;
-            }
-        } else {
+    // A disc that will not open, or is not the one game this runs, is said on
+    // screen and forgotten, then asked for again. Exiting instead left the
+    // remembered path in place, so every later launch opened the same wrong
+    // image and closed without a word (on Android, with no terminal, the app
+    // just opened and shut).
+    const bool discFromArgs = ResolveDiscFromArgs(argc, argv);
+    for (;;) {
+        std::string problem;
+        if (!aurora_dvd_open(discPath)) {
+            ReportDiscOpenFailure(discPath);
+            problem = "This file could not be read as a GameCube disc image.";
+        } else if (!IsSupportedDisc(DVDGetCurrentDiskID())) {
+            problem = DescribeUnsupportedDisc(DVDGetCurrentDiskID());
+            PortLog::Write("metroid_prime_port: unsupported disc: %s Expected GM8E01 revision 0.\n", problem.c_str());
+            aurora_dvd_close();
+        }
+        if (problem.empty()) {
+            break;
+        }
+        ForgetDisc(discImage);
+        ShowDiscError(problem, discImage, !discFromArgs);
+        if (discFromArgs) {
             aurora_shutdown();
             return 1;
         }
+        PortLog::Write("metroid_prime_port: asking for the disc image again\n");
+        discImage = AskForDiscImage();
+        if (discImage.empty()) {
+            PortLog::Write("metroid_prime_port: no disc image given.\n");
+            aurora_shutdown();
+            return 1;
+        }
+        discPath = discImage.c_str();
     }
     std::printf("metroid_prime_port: disc mounted: %s\n", discPath);
-    const DVDDiskID* discId = DVDGetCurrentDiskID();
-    if (discId == nullptr || std::memcmp(discId->gameName, "GM8E", 4) != 0 ||
-        std::memcmp(discId->company, "01", 2) != 0 || discId->diskNumber != 0 || discId->gameVersion != 0) {
-        PortLog::Write( "metroid_prime_port: unsupported disc; expected GM8E01 USA revision 0.\n");
-        aurora_dvd_close();
-        aurora_shutdown();
-        return 1;
-    }
     // A Remastered import finished in the last session becomes the mod now,
     // before anything has a file of the old one open.
     if (PortRemastered::ApplyPendingImport()) {
