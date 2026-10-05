@@ -48,6 +48,7 @@ constexpr uint32_t kBacklight = 0x190d20d7;
 constexpr uint32_t kVolumetricFogHint = 0x84fb5798;
 constexpr uint32_t kVolumetricFog = 0x1b9cd84f;
 constexpr uint32_t kVolumetricFogRegion = 0xaffe9cf9;
+constexpr uint32_t kVolumetricFogRegionTransition = 0xdf95ac1a;
 constexpr uint32_t kDoorMP1 = 0x564a1641;
 constexpr uint32_t kModCon = 0x451740eb;
 constexpr uint32_t kActorMP1 = 0xb6200be6;
@@ -100,6 +101,21 @@ constexpr uint32_t kPropRegionIntensity = 0x41dcfe38;
 constexpr uint32_t kPropRegionCap = 0x1c44e1d4;
 constexpr uint32_t kPropRegionEdge = 0x46b11b67;
 constexpr uint32_t kPropRegionFluid = 0x5eab5677;
+// SLdrVolumetricFogRegionTransition (0x5e59c8): Options (auto-start, loop), Selections (which
+// targets it moves: distance, transmittance, colour, cap; absent = 0), the phase spline, the
+// target colour (1,1,1,1) scaled by its intensity (1), distance (250), transmittance (0.01)
+// and cap (0). The two Options are only ever set together, so which is which is moot.
+constexpr uint32_t kPropTransitionOptions = 0xfb469204;
+constexpr uint32_t kPropTransitionAutoStart = 0x1e50d67f;
+constexpr uint32_t kPropTransitionLoop = 0xf6ff0b7b;
+constexpr uint32_t kPropTransitionSelect = 0xea16bcb9;
+constexpr uint32_t kPropTransitionSelects[4] = {0x53bc68b9, 0xe744f258, 0x63f8e57f, 0x04ba6886};
+constexpr uint32_t kPropTransitionPhase = 0x342d67cf;
+constexpr uint32_t kPropTransitionColor = 0x1cb90daf;
+constexpr uint32_t kPropTransitionDistance = 0x553bab47;
+constexpr uint32_t kPropTransitionTransmittance = 0xcc1dc65a;
+constexpr uint32_t kPropTransitionIntensity = 0xce534ba6;
+constexpr uint32_t kPropTransitionCap = 0x08e48e96;
 constexpr uint32_t kRegionSubtract = 0x3f843a1a;
 constexpr uint32_t kRegionOverride = 0x97699d49;
 constexpr uint32_t kRegionInsideFluid = 0xb33d20b9;
@@ -882,6 +898,33 @@ bool HintTakes(uint32_t action) {
   return action == kActionHintOn || action == kActionHintOff || action == kActionHintRemove ||
          action == kActionHintDelete || action == kActionEntityActivate || action == kActionEntityDeactivate;
 }
+// What a VolumetricFogRegionTransition takes (its AcceptScriptMsg): Start, ResetAndStart,
+// Stop, DLEX and (de)activation, the entity's and the component's own.
+constexpr uint32_t kActionTransitionStart = 0x6c4d551c;
+constexpr uint32_t kActionTransitionRestart = 0xfb05eadb;
+constexpr uint32_t kActionTransitionStop = 0x4208824e;
+constexpr uint32_t kActionComponentActivate = 0x4143504d;    // 'ACPM'
+constexpr uint32_t kActionComponentDeactivate = 0x49434d50;  // 'ICMP'
+uint8_t TransitionAct(uint32_t action) {
+  switch (action) {
+  case kActionTransitionStart:
+    return PortRoomEnv::kTransitionStart;
+  case kActionTransitionRestart:
+    return PortRoomEnv::kTransitionRestart;
+  case kActionTransitionStop:
+    return PortRoomEnv::kTransitionStop;
+  case kActionHintDelete:
+    return PortRoomEnv::kTransitionDelete;
+  case kActionEntityActivate:
+  case kActionComponentActivate:
+    return PortRoomGeo::kShow;
+  case kActionEntityDeactivate:
+  case kActionComponentDeactivate:
+    return PortRoomGeo::kHide;
+  default:
+    return 0;
+  }
+}
 constexpr uint32_t kProxyPlayer = 0x5797d3c7;
 constexpr uint32_t kEventPlayerFluidIn = 0xcc17e9b1;
 constexpr uint32_t kEventPlayerFluidOut = 0x42604bc6;
@@ -988,33 +1031,31 @@ struct Connection {
   Id16 target;  // a component's guid
 };
 
-// Every component's outgoing connections, from its id data: guid, a block that may be
-// skipped, then the list. A component whose list does not read gives none.
-std::vector<Connection> ReadConnections(const Room& room) {
-  std::vector<Connection> out;
+// Component `i`'s outgoing connections, from its id data: guid, a block that may be
+// skipped, then the list. False when the list does not read; `end` is where it ends.
+bool ReadComponentConnections(const Room& room, size_t i, std::vector<Connection>& mine, size_t& end) {
   const std::vector<Component>& comps = room.Components();
-  for (size_t i = 0; i < comps.size(); ++i) {
+  {
     const uint8_t* const b = room.Bytes(comps[i].idta);
     const size_t n = comps[i].idta.size;
     size_t o = 16;
     auto has = [&](size_t k) { return o <= n && n - o >= k; };
     if (!has(8)) {
-      continue;
+      return false;
     }
     const uint32_t x = Le32(b + o), y = Le32(b + o + 4);
     o += 8;
     if (x == 0xffffffff) {
       if (!has(y)) {
-        continue;
+        return false;
       }
       o += y;
     }
     if (!has(2)) {
-      continue;
+      return false;
     }
     const size_t count = Le16(b + o);
     o += 2;
-    std::vector<Connection> mine;
     bool ok = true;
     // Two optional strings, then a fixed tail.
     auto block = [&]() {
@@ -1053,9 +1094,48 @@ std::vector<Connection> ReadConnections(const Room& room) {
       o += 19;
       mine.push_back(c);
     }
-    if (ok) {
+    end = o;
+    return ok;
+  }
+}
+
+std::vector<Connection> ReadConnections(const Room& room) {
+  std::vector<Connection> out;
+  for (size_t i = 0; i < room.Components().size(); ++i) {
+    std::vector<Connection> mine;
+    size_t end = 0;
+    if (ReadComponentConnections(room, i, mine, end)) {
       out.insert(out.end(), mine.begin(), mine.end());
     }
+  }
+  return out;
+}
+
+// A component's typed links, after its connections in its id data: u16 count, then per link
+// u32 link id, the target entity's guid, u32, u8, u8, and a guid (42 bytes). The linked
+// components (-1 for a guid the room lacks), in order.
+std::vector<int> ReadEntityLinks(const Room& room, size_t i) {
+  std::vector<int> out;
+  std::vector<Connection> conns;
+  size_t o = 0;
+  if (!ReadComponentConnections(room, i, conns, o)) {
+    return out;
+  }
+  const Span& idta = room.Components()[i].idta;
+  const uint8_t* const b = room.Bytes(idta);
+  const size_t n = idta.size;
+  if (o > n || n - o < 2) {
+    return out;
+  }
+  const size_t count = Le16(b + o);
+  o += 2;
+  if ((n - o) / 42 < count) {
+    return out;
+  }
+  for (size_t k = 0; k < count; ++k, o += 42) {
+    Id16 target;
+    std::memcpy(target.data(), b + o + 4, 16);
+    out.push_back(room.ByGuid(target));
   }
   return out;
 }
@@ -1319,6 +1399,13 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       hintEntities.insert(c.entity);
     }
   }
+  std::set<int> transitionEntities;
+  for (const Component& c : comps) {
+    if (c.type == kVolumetricFogRegionTransition && c.entity >= 0) {
+      hintEntities.insert(c.entity);
+      transitionEntities.insert(c.entity);
+    }
+  }
   auto fluidSender = [&](const Connection& c, int& state) -> uint32_t {
     const Component& sender = comps[c.sender];
     if (sender.type == kProxyPlayer && (c.event == kEventPlayerFluidIn || c.event == kEventPlayerFluidOut)) {
@@ -1443,6 +1530,8 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       }
     };
     std::vector<int> seen{e.entity};
+    const bool transition = transitionEntities.count(e.entity) != 0;
+    const auto act = [&](uint32_t action) { return transition ? TransitionAct(action) : LinkAct(action); };
     // `delay`: what the timers passed through so far wait.
     std::function<void(int, uint32_t, int, int, float)> walk = [&](int entity, uint32_t action, int depth, int via,
                                                                    float delay) {
@@ -1456,17 +1545,14 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
         const uint32_t fluid =
             depth == 0 && hintEntities.count(entity) != 0 ? fluidSender(*c, fluidState) : 0;
         // Remastered drops what a hint does not take (a Relay's own action, say).
-        if (depth == 0 && hintEntities.count(entity) != 0 && !HintTakes(c->action)) {
+        if (depth == 0 && hintEntities.count(entity) != 0 &&
+            (transition ? TransitionAct(c->action) == 0 : !HintTakes(c->action))) {
           continue;
         }
         if (fluid != 0) {
-          const uint8_t act = c->action == kActionHintOn || c->action == kActionEntityActivate ? PortRoomGeo::kShow
-                              : c->action == kActionHintOff || c->action == kActionHintRemove ||
-                                        c->action == kActionHintDelete || c->action == kActionEntityDeactivate
-                                  ? PortRoomGeo::kHide
-                                  : 0;
-          if (act != 0) {
-            links.push_back({fluid, uint8_t(fluidState), act});
+          const uint8_t fluidAct = act(c->action);
+          if (fluidAct != 0) {
+            links.push_back({fluid, uint8_t(fluidState), fluidAct});
           } else {
             miss(sender, *c, c->action, depth);
           }
@@ -1487,9 +1573,9 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
           // sends them, so only a direct one counts.
           const bool follows = depth == 0 && type == kRetailDamageableTrigger && state == kStateMaxReached &&
                                first == kActionActivate;
-          const uint8_t act = follows ? PortRoomGeo::kFollow : LinkAct(first);
-          if (act != 0 && state < 256) {
-            links.push_back({objects[size_t(match[size_t(s)])].id, uint8_t(state), act, delay});
+          const uint8_t linkAct = follows ? PortRoomGeo::kFollow : act(first);
+          if (linkAct != 0 && state < 256) {
+            links.push_back({objects[size_t(match[size_t(s)])].id, uint8_t(state), linkAct, delay});
           }
         } else if (IsPass(type) && sender.entity >= 0 && depth < 6 &&
                    std::find(seen.begin(), seen.end(), sender.entity) == seen.end()) {
@@ -1509,9 +1595,9 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
                                                          c->event == kEventCounterMP1Max
                                                      ? RetailCounterFor(sender.entity)
                                                      : nullptr) {
-          const uint8_t act = LinkAct(first);
-          if (act != 0) {
-            links.push_back({counter->id, uint8_t(kStateMaxReached), act, delay});
+          const uint8_t counterAct = act(first);
+          if (counterAct != 0) {
+            links.push_back({counter->id, uint8_t(kStateMaxReached), counterAct, delay});
           } else {
             miss(sender, *c, first, depth);
           }
@@ -1754,6 +1840,20 @@ struct FogRegionData {
   float density = 0;
   float box[6] = {}; // min, max
   std::vector<PortRoomGeo::Link> links;
+  // What a transition starts from (CVolumetricFogRegionGOC::GetTransitionState).
+  float distance = 250, transmittance = 0.01f;
+  bool subtract = false;
+};
+
+// A VolumetricFogRegionTransition (see PortRoomEnv::FogTransition).
+struct FogTransitionData {
+  uint32_t region = 0; // index into the room's FogRegionData
+  int32_t layer = -1;
+  bool on = false, autoStart = false, loop = false;
+  uint8_t select = 0;
+  float distance = 250, transmittance = 0.01f, color[4] = {1, 1, 1, 1}, cap = 0;
+  std::vector<uint8_t> phase; // CMayaSpline bytes
+  std::vector<PortRoomGeo::Link> links;
 };
 
 struct Placement {
@@ -1807,7 +1907,7 @@ private:
   void ReadFogs(const RoomData& r, const Area* area, std::vector<FogData>& out) const;
   // The room's fog regions, placed by the area's transform `xf`.
   void ReadFogRegions(const RoomData& r, const SceneryScripts& scripts, const Mat34& xf,
-                      std::vector<FogRegionData>& out) const;
+                      std::vector<FogRegionData>& out, std::vector<FogTransitionData>& transitions) const;
   bool Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>& check, std::vector<uint8_t>& out,
             std::string& note) const;
   // The room's static geometry (its ModCon components), as "<MREA id>.roomgeo".
@@ -2366,11 +2466,12 @@ void Writer::ReadFogs(const RoomData& r, const Area* area, std::vector<FogData>&
 }
 
 void Writer::ReadFogRegions(const RoomData& r, const SceneryScripts& scripts, const Mat34& xf,
-                            std::vector<FogRegionData>& out) const {
+                            std::vector<FogRegionData>& out, std::vector<FogTransitionData>& transitions) const {
   const std::vector<const Component*> regions = r.room.Of(kVolumetricFogRegion);
   if (regions.empty()) {
     return;
   }
+  std::map<int, uint32_t> regionOf; // the first region written on each entity
   // Retail world -> Remastered world: R2G times the area's inverse.
   double g[3][3], gt[3];
   {
@@ -2523,7 +2624,84 @@ void Writer::ReadFogRegions(const RoomData& r, const SceneryScripts& scripts, co
     d.on = r.room.Active(*c);
     const auto layer = scripts.layer.find(c->entity);
     d.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
+    d.distance = distance;
+    d.transmittance = transmittance;
+    d.subtract = mode == kRegionSubtract;
+    regionOf.emplace(c->entity, uint32_t(out.size()));
     out.push_back(std::move(d));
+  }
+  // Each transition moves the region on the entity it links to (the first region of it,
+  // as Start's GetFirstComponentByComponentType finds it).
+  const std::vector<Component>& comps = r.room.Components();
+  for (const Component* c : r.room.Of(kVolumetricFogRegionTransition)) {
+    std::vector<int> targets = ReadEntityLinks(r.room, size_t(c - comps.data()));
+    const auto target = std::find_if(targets.begin(), targets.end(), [&](int t) {
+      return t >= 0 && regionOf.count(t) != 0;
+    });
+    if (target == targets.end()) {
+      Log("room " + r.name + ": a fog region transition links to no region");
+      continue;
+    }
+    const auto f = r.room.Flat(*c);
+    auto value = [&](uint32_t prop, float fallback) {
+      const auto it = f.find(prop);
+      const float v = it != f.end() && it->second.size >= 4 ? LeFloat(r.room.Bytes(it->second)) : fallback;
+      return std::isfinite(v) ? v : fallback;
+    };
+    auto flag = [&](std::initializer_list<uint32_t> path) {
+      Span s;
+      return r.room.Nested(*c, path, s) && s.size >= 1 && r.room.Bytes(s)[0] != 0;
+    };
+    FogTransitionData t;
+    t.region = regionOf.at(*target);
+    t.autoStart = flag({kPropTransitionOptions, kPropTransitionAutoStart});
+    t.loop = flag({kPropTransitionOptions, kPropTransitionLoop});
+    for (int i = 0; i < 4; ++i) {
+      if (flag({kPropTransitionSelect, kPropTransitionSelects[i]})) {
+        t.select |= uint8_t(1u << i);
+      }
+    }
+    {
+      const auto it = f.find(kPropTransitionPhase);
+      PortMayaSpline check;
+      if (it != f.end() && check.Load(r.room.Bytes(it->second), it->second.size)) {
+        t.phase.assign(r.room.Bytes(it->second), r.room.Bytes(it->second) + it->second.size);
+      }
+    }
+    {
+      const auto it = f.find(kPropTransitionColor);
+      if (it != f.end() && it->second.size >= 16) {
+        for (int i = 0; i < 4; ++i) {
+          const float v = LeFloat(r.room.Bytes(it->second) + 4 * i);
+          t.color[i] = std::isfinite(v) ? v : t.color[i];
+        }
+      }
+    }
+    // The GOC's target colour: CColor4f::ScaleRGB by the intensity.
+    const float intensity = value(kPropTransitionIntensity, 1.f);
+    for (int i = 0; i < 3; ++i) {
+      t.color[i] *= intensity;
+    }
+    t.distance = value(kPropTransitionDistance, 250.f);
+    t.transmittance = value(kPropTransitionTransmittance, 0.01f);
+    t.cap = value(kPropTransitionCap, 0.f);
+    const auto linked = scripts.links.find(c->entity);
+    if (linked != scripts.links.end()) {
+      for (PortRoomGeo::Link link : linked->second) {
+        if (link.action != PortRoomGeo::kShow && link.action != PortRoomGeo::kHide &&
+            (link.action < PortRoomEnv::kTransitionStart || link.action > PortRoomEnv::kTransitionDelete)) {
+          continue;
+        }
+        if (link.sender != PortRoomEnv::kSenderPlayerFluid && link.sender != PortRoomEnv::kSenderCameraWater) {
+          link.sender &= 0x3ffffff;
+        }
+        t.links.push_back(link);
+      }
+    }
+    t.on = r.room.Active(*c);
+    const auto layer = scripts.layer.find(c->entity);
+    t.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
+    transitions.push_back(std::move(t));
   }
 }
 
@@ -3774,7 +3952,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  PutLe32(out, 14);
+  PutLe32(out, 15);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -3890,7 +4068,8 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     }
   }
   std::vector<FogRegionData> regions;
-  ReadFogRegions(r, scripts, m.a, regions);
+  std::vector<FogTransitionData> transitions;
+  ReadFogRegions(r, scripts, m.a, regions, transitions);
   PutLe32(out, uint32_t(regions.size()));
   for (const FogRegionData& g : regions) {
     PutLe32(out, uint32_t(g.layer));
@@ -3925,10 +4104,39 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       out.push_back(link.action);
       out.insert(out.end(), 2, 0);
     }
+    PutFloat(out, g.distance);
+    PutFloat(out, g.transmittance);
+    out.push_back(g.subtract ? 1 : 0);
+    out.insert(out.end(), 3, 0);
+  }
+  PutLe32(out, uint32_t(transitions.size()));
+  for (const FogTransitionData& t : transitions) {
+    PutLe32(out, t.region);
+    PutLe32(out, uint32_t(t.layer));
+    out.push_back(t.on ? 1 : 0);
+    out.push_back(t.autoStart ? 1 : 0);
+    out.push_back(t.loop ? 1 : 0);
+    out.push_back(t.select);
+    PutFloat(out, t.distance);
+    PutFloat(out, t.transmittance);
+    for (float v : t.color) {
+      PutFloat(out, v);
+    }
+    PutFloat(out, t.cap);
+    PutLe32(out, uint32_t(t.phase.size()));
+    out.insert(out.end(), t.phase.begin(), t.phase.end());
+    out.insert(out.end(), (4 - t.phase.size() % 4) % 4, 0);
+    PutLe32(out, uint32_t(t.links.size()));
+    for (const PortRoomGeo::Link& link : t.links) {
+      PutLe32(out, link.sender);
+      out.push_back(link.state);
+      out.push_back(link.action);
+      out.insert(out.end(), 2, 0);
+    }
   }
   if (!fogs.empty() || !regions.empty()) {
     Log("  " + r.name + ": " + std::to_string(fogs.size()) + " fog hint(s), " + std::to_string(regions.size()) +
-        " fog region(s)");
+        " fog region(s), " + std::to_string(transitions.size()) + " transition(s)");
   }
   char file[32];
   std::snprintf(file, sizeof file, "%08X.roomenv", m.mrea);

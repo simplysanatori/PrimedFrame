@@ -445,6 +445,62 @@ void TestGrid() {
       Check(PortRoomEnv::Parse(std::vector<uint8_t>(v13), file, error) && file.regions.empty(),
             "fog region: older versions have none");
     }
+    // Version 15 adds each region's distance, transmittance and mode, then the transitions.
+    {
+      std::vector<uint8_t> v15 = v13;
+      v15[4] = 15;
+      Put32(v15, 1);
+      Put32(v15, uint32_t(-1));
+      v15.insert(v15.end(), {1, 0, 0, 0});
+      for (int i = 0; i < 12 + 3 + 1 + 3 + 1 + 4 + 1 + 6; ++i) {
+        PutFloat(v15, 0.f);
+      }
+      Put32(v15, 0); // links
+      PutFloat(v15, 40.f);
+      PutFloat(v15, 0.5f);
+      v15.insert(v15.end(), {1, 0, 0, 0}); // subtracting
+      Check(!PortRoomEnv::Parse(std::vector<uint8_t>(v15), file, error), "fog transition: count cut short");
+      Put32(v15, 2);
+      const auto putTransition = [&v15, &spline](uint32_t region, bool withSpline) {
+        Put32(v15, region);
+        Put32(v15, 3);
+        v15.insert(v15.end(), {1, 1, 0, 0x1d});
+        PutFloat(v15, 100.f);
+        PutFloat(v15, 0.25f);
+        for (int i = 0; i < 4; ++i) {
+          PutFloat(v15, 0.5f);
+        }
+        PutFloat(v15, 2.f);
+        Put32(v15, withSpline ? uint32_t(spline.size()) : 0);
+        if (withSpline) {
+          v15.insert(v15.end(), spline.begin(), spline.end());
+          v15.resize((v15.size() + 3) & ~size_t(3));
+        }
+        Put32(v15, 1);
+        Put32(v15, 0x00100007);
+        v15.insert(v15.end(), {4, PortRoomEnv::kTransitionRestart, 0, 0});
+      };
+      putTransition(0, true);
+      std::vector<uint8_t> cut = v15;
+      cut.resize(cut.size() - 4);
+      putTransition(5, false);
+      Check(!PortRoomEnv::Parse(std::vector<uint8_t>(cut), file, error), "fog transition: records cut short");
+      Check(PortRoomEnv::Parse(std::vector<uint8_t>(v15), file, error) && file.regions.size() == 1 &&
+                file.transitions.size() == 2,
+            "fog transition: version 15 parses");
+      if (file.regions.size() == 1 && file.transitions.size() == 2) {
+        const PortRoomEnv::FogRegion& r = file.regions[0];
+        Check(r.distance == 40.f && r.transmittance == 0.5f && r.subtract, "fog transition: region tail");
+        const PortRoomEnv::FogTransition& t = file.transitions[0];
+        Check(t.region == 0 && t.layer == 3 && t.on && t.autoStart && !t.loop && t.select == 0xd &&
+                  t.distance == 100.f && t.transmittance == 0.25f && t.color[3] == 0.5f && t.cap == 2.f &&
+                  t.phase.LastTime() > 0.f && t.links.size() == 1 && t.links[0].sender == 0x00100007 &&
+                  t.links[0].state == 4 && t.links[0].action == PortRoomEnv::kTransitionRestart,
+              "fog transition: version 15 record");
+        const PortRoomEnv::FogTransition& bad = file.transitions[1];
+        Check(bad.region == PortRoomEnv::kNoFogRegion && bad.select == 0, "fog transition: no region moves nothing");
+      }
+    }
     v13[v13.size() - 4 - ((spline.size() + 3) & ~size_t(3))] = 0xff; // a key count that runs off the end
     Check(!PortRoomEnv::Parse(std::vector<uint8_t>(v13), file, error), "fog: bad fade spline");
   }
