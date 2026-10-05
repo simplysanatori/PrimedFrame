@@ -10,6 +10,10 @@
 #include "Kyoto/Graphics/CModelFlags.hpp"
 #include "Kyoto/Graphics/CTexture.hpp"
 #include "Kyoto/Math/CMath.hpp"
+
+#ifdef TARGET_PC
+#include <algorithm>
+#endif
 #include "Kyoto/Math/CPlane.hpp"
 #include "Kyoto/Math/CTransform4f.hpp"
 
@@ -109,18 +113,31 @@ static uint PortUvArg(const uint* w, float seconds, float& out) {
   }
   const uint count = SBig(w[3]);
   const float period = PortUvFloat(w[2]);
-  const float x = fmodf(seconds * PortUvFloat(w[1]), period);
   const uint* samples = w + 4;
+  // A curve the converter wrote is well formed; these guard a damaged import from
+  // reading outside its samples.
+  if (count == 0) {
+    out = 0.f;
+    return 4;
+  }
+  float x = 0.f;
+  if (period > 0.f && period < 1e9f) {
+    x = fmodf(seconds * PortUvFloat(w[1]), period);
+    if (x < 0.f) {
+      x += period;
+    }
+  }
+  if (!(x >= 0.f)) {
+    x = 0.f;
+  }
+  const uint last = count - 1;
   if (kind == 2) {
-    out = PortUvFloat(samples[static_cast< uint >(floorf(x + 0.5f))]);
+    out = PortUvFloat(samples[std::min(static_cast< uint >(floorf(x + 0.5f)), last)]);
   } else {
     const float lo = floorf(x);
     const float frac = x - lo;
-    const uint a = static_cast< uint >(lo);
-    uint b = a + 1;
-    if (static_cast< float >(b) - period >= 0.f) {
-      b = static_cast< uint >(period);
-    }
+    const uint a = std::min(static_cast< uint >(lo), last);
+    const uint b = std::min(a + 1, last);
     out = (1.f - frac) * PortUvFloat(samples[a]) + frac * PortUvFloat(samples[b]);
   }
   return 4 + count;

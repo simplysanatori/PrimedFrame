@@ -1,5 +1,6 @@
 #include "port_remastered_anuv.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -382,17 +383,29 @@ float EvalArg(const AnuvArg& a, double seconds) {
   if (a.kind == AnuvArg::Kind::Const) {
     return a.value;
   }
-  const double x = std::fmod(seconds * double(a.samplesPerSecond), double(a.period));
+  if (a.samples.empty()) {
+    return 0.0f;
+  }
+  // The runtime's guards (CCubeMaterial.cpp PortUvArg), so a curve that is
+  // degenerate or read backwards is the same here as in game.
+  double x = 0.0;
+  if (a.period > 0.0f && std::isfinite(a.period)) {
+    x = std::fmod(seconds * double(a.samplesPerSecond), double(a.period));
+    if (x < 0.0) {
+      x += double(a.period);
+    }
+  }
+  if (!(x >= 0.0)) {
+    x = 0.0;
+  }
+  const size_t last = a.samples.size() - 1;
   if (a.kind == AnuvArg::Kind::Nearest) {
-    return a.samples[size_t(std::floor(x + 0.5))];
+    return a.samples[std::min(size_t(std::floor(x + 0.5)), last)];
   }
   const double fl = std::floor(x);
   const float frac = float(x - fl);
-  size_t lo = size_t(fl);
-  size_t hi = lo + 1;
-  if (double(hi) - double(a.period) >= 0.0) {
-    hi = size_t(a.period);
-  }
+  const size_t lo = std::min(size_t(fl), last);
+  const size_t hi = std::min(lo + 1, last);
   return (1.0f - frac) * a.samples[lo] + frac * a.samples[hi];
 }
 

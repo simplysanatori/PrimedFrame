@@ -6,6 +6,7 @@
 // show up as no change at all.
 
 #include "port_remastered_convert.h"
+#include "port_remastered_anuv_gun.h"
 #include "port_remastered_uv.h"
 
 #include <cstdint>
@@ -376,11 +377,44 @@ void TestConverter() {
   }
 }
 
+// Two maps on one source set through different ANUV transforms: the gun model's
+// entry moves transform 1 and leaves 0 still. With AUVI (0,0,0,0) both maps read
+// set 0, and one texgen would carry the base along with the MR map's motion, so the
+// MR map must be given a texcoord of its own.
+void TestSlotSplit() {
+  Fixture f(kAuviFlag, 0, 1);
+  f.material.data.push_back(f.Auvi(0, 0, 0, 0));
+  Model model = BuildModel(f.material, 2);
+  model.anuv.assign(kAnuvGun, kAnuvGun + sizeof(kAnuvGun));
+  std::vector<uint8_t> cmdl;
+  std::string error;
+  Check(Convert(model, cmdl, error), "converted with an ANUV");
+  std::vector<uint32_t> coords;
+  Check(ReadMapCoords(cmdl, coords) && coords.size() >= 2, "a PBR material with an ANUV");
+  if (coords.size() >= 2) {
+    Check(coords[0] != coords[1], "the moving map gets its own texcoord");
+  }
+  // With all eight texcoords already declared there is no slot to give, and the
+  // maps share (the first transform then drives both).
+  model.vertexBuffers[0].uvs.resize(8, model.vertexBuffers[0].uvs[0]);
+  cmdl.clear();
+  coords.clear();
+  Check(Convert(model, cmdl, error) && ReadMapCoords(cmdl, coords) && coords.size() >= 2 && coords[0] == coords[1],
+        "with no texcoord left the maps share");
+  // Without the ANUV the same material shares set 0.
+  model.anuv.clear();
+  cmdl.clear();
+  coords.clear();
+  Check(Convert(model, cmdl, error) && ReadMapCoords(cmdl, coords) && coords.size() >= 2 && coords[0] == coords[1],
+        "without an ANUV the maps share their set");
+}
+
 } // namespace
 
 int main() {
   TestRule();
   TestConverter();
+  TestSlotSplit();
   if (sFailures == 0) {
     std::printf("port_remastered_uv_tests: ok\n");
   }

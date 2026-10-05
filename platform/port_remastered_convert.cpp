@@ -577,6 +577,8 @@ struct AnuvCounts {
   int scrollOverridden = 0;  // animated materials that also had a scroll of their own
   int entryDisagree = 0;     // materials whose meshes name different entries
   int notFlattened = 0;      // materials whose entry did not flatten
+  int slotSplit = 0;         // materials given a texcoord copy so two transforms on one set could differ
+  int outOfSlots = 0;        // materials that needed a copy and had no texcoord left
 };
 
 struct MapRef {
@@ -3121,9 +3123,58 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         const size_t c = std::min<size_t>(both[k].has ? both[k].coord : bset, maxuv);
         coords[k] = uint32_t(c < ntexattr ? c : bset);
       }
-      std::vector<uint32_t> attrs(ntexattr, 0xFFFFFFFFu);
+      uint32_t authored[kLayeredMaps];
       for (int k = 0; k < nmaps; ++k) {
-        attrs[coords[k]] = uvIndex(coords[k], nullptr);
+        authored[k] = both[k].has ? both[k].authored : 0xFFFFFFFFu;
+      }
+      const AnuvEntry* entry = rem.anuv >= 0 ? &anuv.entries[size_t(rem.anuv)] : nullptr;
+      // Two maps on one source set through different transforms cannot share a
+      // texgen, since the texgen's matrix moves every map that reads it. The later
+      // one is given a texcoord attribute of its own, a second copy of the set (the
+      // descriptor then declares one more), as long as one of the eight is free; if
+      // none is, the maps share and the first transform drives both.
+      std::vector<uint32_t> attrs(ntexattr, 0xFFFFFFFFu);
+      if (entry != nullptr) {
+        struct Slot {
+          uint32_t source, transform, slot;
+        };
+        std::vector<Slot> slots;
+        bool split = false, starved = false;
+        for (int k = 0; k < nmaps; ++k) {
+          if (!both[k].has) {
+            continue;
+          }
+          const uint32_t a = authored[k];
+          const uint32_t transform = a < 3 && !entry->xf[a].Identity() ? a : 3;  // 3: no motion
+          const uint32_t source = coords[k];
+          const auto same = std::find_if(slots.begin(), slots.end(), [&](const Slot& o) {
+            return o.source == source && o.transform == transform;
+          });
+          if (same != slots.end()) {
+            coords[k] = same->slot;
+            continue;
+          }
+          const bool taken = std::any_of(slots.begin(), slots.end(), [&](const Slot& o) { return o.source == source; });
+          uint32_t slot = source;
+          if (taken && ntexattr < 8) {
+            slot = uint32_t(ntexattr);
+            vtx |= 3u << (8 + 2 * ntexattr);
+            attrs.push_back(uvIndex(source, nullptr));
+            ++ntexattr;
+            split = true;
+          } else if (taken) {
+            starved = true;
+          }
+          slots.push_back({source, transform, slot});
+          coords[k] = slot;
+        }
+        anuvCounts.slotSplit += split ? 1 : 0;
+        anuvCounts.outOfSlots += starved ? 1 : 0;
+      }
+      for (int k = 0; k < nmaps; ++k) {
+        if (attrs[coords[k]] == 0xFFFFFFFFu) {
+          attrs[coords[k]] = uvIndex(coords[k], nullptr);
+        }
       }
       // Each map's sampler, 2 bits an axis (GX: 0 clamp, 1 repeat, 2 mirror); a
       // map the material lacks, or one without a sampler, repeats.
@@ -3135,11 +3186,6 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           wrap = (wrap & ~(3u << shift)) | (uint32_t(w >= 0 && w <= 2 ? w : 1) << shift);
         }
       }
-      uint32_t authored[kLayeredMaps];
-      for (int k = 0; k < nmaps; ++k) {
-        authored[k] = both[k].has ? both[k].authored : 0xFFFFFFFFu;
-      }
-      const AnuvEntry* entry = rem.anuv >= 0 ? &anuv.entries[size_t(rem.anuv)] : nullptr;
       const uint32_t zero = uvIndex(0, nullptr);
       for (uint32_t& a : attrs) {
         a = a == 0xFFFFFFFFu ? zero : a;
@@ -3696,7 +3742,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     Log("  ANUV: " + std::to_string(anuvCounts.animated) + " materials animated, " +
         std::to_string(anuvCounts.notFlattened) + " not flattened, " + std::to_string(anuvCounts.entryDisagree) +
         " mesh entries disagree, " + std::to_string(anuvCounts.sharedSlots) + " shared slots, " +
-        std::to_string(anuvCounts.scrollOverridden) + " scrolls overridden");
+        std::to_string(anuvCounts.scrollOverridden) + " scrolls overridden, " + std::to_string(anuvCounts.slotSplit) +
+        " texcoord copies, " + std::to_string(anuvCounts.outOfSlots) + " out of texcoords");
   }
   Log("  wrote " + Hex8(outputModel) + ".CMDL: " + std::to_string(n) + " verts, " + std::to_string(tris) + " tris, " +
       std::to_string(keys.size()) + " materials, " + std::to_string(nsurf) + " surfaces");
