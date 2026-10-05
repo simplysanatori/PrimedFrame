@@ -30,6 +30,11 @@
 //   an optional random mirror in its TRST) or ATX2 (an atlas played over the
 //   particle's life) becomes PATL; a PMDL of SLCT(IRND, ARRY
 //   of ids) becomes the first model as PMDL and all of them as PMDV.
+// - Port-only (build/mpr/vfx/DESIGN.md): an MTIN whose MATI shader has a recipe
+//   (RECIPES.md) also writes VMAT (the shader's features, textures and uniform
+//   sources), VTMT (TMTR's UV transforms), VPMT (PMTR) and VSMT (SMTR's CCH0
+//   uniforms), SSZE, VORN (ORNT), ITEN and SCTR (as VMAT's sprite centre). A
+//   shader with no recipe writes none and is listed in `approximated`.
 //
 // A property that does not convert (a Remastered-only property, an element
 // retail does not have, an id with no retail id) is left out and listed in
@@ -72,6 +77,11 @@ struct EffectConvertIO {
   // An array TXTR (TXFB's flipbook) packed into one atlas TXTR, or id 0 when it cannot be.
   // Left empty, a TXFB does not convert.
   std::function<FlipbookAtlas(const EffectGuid& texture)> flipbook;
+  // The MATI file of a material instance (MTIN), or empty. Left empty, no VMAT is written.
+  std::function<std::vector<uint8_t>(const EffectGuid& material)> materialData;
+  // A texture a VMAT slot draws, imported as a TXTR the import writes: a single texture comes
+  // back with cols = rows = frames = 1, an array packed as by `flipbook`. Id 0: it cannot be.
+  std::function<FlipbookAtlas(const EffectGuid& texture)> vfxTexture;
 };
 
 struct ConvertedPart {

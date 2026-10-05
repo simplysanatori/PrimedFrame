@@ -781,6 +781,38 @@ public:
     return 0;
   }
 
+  // A texture a VMAT slot draws, as the id of a TXTR the import writes (the disc's
+  // own when it was carried over), with its atlas layout. An array texture is
+  // packed like a flipbook; any other is a single tile.
+  FlipbookAtlas VfxTexture(const EffectGuid& stored) {
+    const std::optional<uint32_t> retail = EffectRetailId(stored);
+    if (retail && m_io.retailId(*retail)) {
+      return FlipbookAtlas{*retail, 1, 1, 1};
+    }
+    const EffectGuid id = Swap(stored);
+    if (m_io.typeOf(id) != kTxtr) {
+      return {};
+    }
+    int width = 0, height = 0, layers = 0;
+    std::vector<uint8_t> rgba;
+    std::string error;
+    if (m_io.layers && m_io.layers(id, width, height, layers, rgba, error) && layers > 1) {
+      return Flipbook(id);
+    }
+    const uint32_t texture = Texture(id);
+    return texture != 0 ? FlipbookAtlas{texture, 1, 1, 1} : FlipbookAtlas{};
+  }
+
+  // A material instance's MATI file, or empty.
+  std::vector<uint8_t> MaterialData(const EffectGuid& stored) {
+    std::vector<uint8_t> data;
+    std::string error;
+    if (!m_io.read(kMati, Swap(stored), data, error)) {
+      data.clear();
+    }
+    return data;
+  }
+
   // Each embedded child's fresh id, and the retail type it converts to (0 for
   // a form that is not converted, so nothing resolves to it).
   struct Child {
@@ -822,6 +854,8 @@ public:
     };
     io.materialTexture = [&](const EffectGuid& material) { return Material(material); };
     io.flipbook = [&](const EffectGuid& stored) { return Flipbook(Swap(stored)); };
+    io.materialData = [&](const EffectGuid& material) { return MaterialData(material); };
+    io.vfxTexture = [&](const EffectGuid& stored) { return VfxTexture(stored); };
     const std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
     std::vector<RetailPartProperty> check;
     if (parts.empty() || !SplitRetailPart(parts[0].part.data(), parts[0].part.size(), check, error)) {

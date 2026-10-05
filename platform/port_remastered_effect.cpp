@@ -889,7 +889,96 @@ public:
   }
 
 private:
+  // TMTR: the elements, in file order (six per UV set). PMTR/SMTR: one Word
+  // per entry, `fourcc` = its group (0-4); PMTR `word` = b0 | b1 << 8 | b2 << 16
+  // from the 3-byte trailer, SMTR `word` = the parameter id as the file's four
+  // bytes read little-endian ('CCH0' = 0x30484343), with args[1] a Word of
+  // b0 | b1 << 8. args[0] is the entry's element.
+  bool BuildModifiers(uint32_t fourcc, size_t at, size_t end, std::vector<EffectValue>& out) {
+    if (at + 2 > m_size || m_data[at] != 0) {
+      return false;
+    }
+    if (fourcc == kTmtr) {
+      return BuildElements(at + 2, m_data[at + 1], end, out);
+    }
+    return BuildGroups(at + 2, 0, fourcc == kPmtr ? 3 : 6, end, out);
+  }
+
+  bool BuildElements(size_t at, uint32_t count, size_t end, std::vector<EffectValue>& out) {
+    if (count == 0) {
+      return at == end;
+    }
+    for (size_t next : Element(at)) {
+      EffectValue value;
+      if (next > end || !BuildElement(at, next, value)) {
+        continue;
+      }
+      const size_t mark = out.size();
+      out.push_back(std::move(value));
+      if (BuildElements(next, count - 1, end, out)) {
+        return true;
+      }
+      out.resize(mark);
+    }
+    return false;
+  }
+
+  bool BuildGroups(size_t at, int group, size_t trailer, size_t end, std::vector<EffectValue>& out) {
+    if (group == 5) {
+      return at == end;
+    }
+    if (at >= m_size) {
+      return false;
+    }
+    return BuildGroupItems(at + 1, m_data[at], group, trailer, end, out);
+  }
+
+  bool BuildGroupItems(size_t at, uint32_t left, int group, size_t trailer, size_t end,
+                       std::vector<EffectValue>& out) {
+    if (left == 0) {
+      return BuildGroups(at, group + 1, trailer, end, out);
+    }
+    for (size_t next : Element(at)) {
+      if (next + trailer > end) {
+        continue;
+      }
+      EffectValue item;
+      item.kind = EffectValue::Kind::Word;
+      item.fourcc = uint32_t(group);
+      item.offset = at;
+      item.size = next + trailer - at;
+      EffectValue element;
+      if (!BuildElement(at, next, element)) {
+        continue;
+      }
+      item.args.push_back(std::move(element));
+      const uint8_t* t = m_data + next;
+      if (trailer == 3) {
+        item.word = uint32_t(t[0]) | uint32_t(t[1]) << 8 | uint32_t(t[2]) << 16;
+      } else {
+        item.word = Le32(t);
+        EffectValue slot;
+        slot.kind = EffectValue::Kind::Word;
+        slot.word = uint32_t(t[4]) | uint32_t(t[5]) << 8;
+        item.args.push_back(std::move(slot));
+      }
+      const size_t mark = out.size();
+      out.push_back(std::move(item));
+      if (BuildGroupItems(next + trailer, left - 1, group, trailer, end, out)) {
+        return true;
+      }
+      out.resize(mark);
+    }
+    return false;
+  }
+
   void BuildValue(uint32_t fourcc, size_t at, size_t end, std::vector<EffectValue>& out) {
+    if (fourcc == kTmtr || fourcc == kPmtr || fourcc == kSmtr) {
+      if (BuildModifiers(fourcc, at, end, out)) {
+        return;
+      }
+      out.clear();
+    }
     if (fourcc != kKssm && fourcc != kPvar && fourcc != kTmtr && fourcc != kPmtr && fourcc != kSmtr) {
       for (const std::string& sig : m_grammar.PropertySigs(fourcc)) {
         if (Contains(Args(at, sig), end) && BuildArgs(at, sig, 0, end, out)) {
@@ -1068,6 +1157,18 @@ void DumpValue(const EffectValue& value, const uint8_t* data, std::string& out) 
     out += text;
     break;
   case EffectValue::Kind::Word:
+    if (!value.args.empty()) { // a PMTR/SMTR entry
+      std::snprintf(text, sizeof(text), "g%u:%06x(", value.fourcc, value.word);
+      out += text;
+      for (size_t i = 0; i < value.args.size(); ++i) {
+        if (i > 0) {
+          out += ", ";
+        }
+        DumpValue(value.args[i], data, out);
+      }
+      out += ')';
+      break;
+    }
     out += FormatWord(value.word);
     break;
   case EffectValue::Kind::Guid:
