@@ -33,16 +33,16 @@ enum class Blend : uint32_t { Alpha = 0, Premultiplied = 1, Additive = 2, Opaque
 
 struct Vertex {
   float pos[3];      // PNMTX0 space
-  float uv[2][3];    // (u, v, layer) per UV set
+  float uv[3][3];    // (u, v, layer) per UV set
   float color[4];    // rgb is HDR and unclamped
   float extra[4][4]; // PMTR rows 0..3
   float vec[3];      // the vector whose |z|/|v| feeds the fresnel term (view-space quad normal for sprites; the runtime fills it)
 };
-static_assert(sizeof(Vertex) == 128);
+static_assert(sizeof(Vertex) == 140);
 
 struct Texture {
   const GXTexObj* obj = nullptr;
-  uint32_t uvSet = 0;
+  uint32_t uvSet = 0;       // 0..2: which Vertex.uv set
   uint32_t cols = 1, rows = 1, layers = 1; // layers > 1: the texture is a cols x rows atlas
   GXTexWrapMode wrapS = GX_CLAMP, wrapT = GX_CLAMP;
   bool linear = true;

@@ -11,6 +11,7 @@
 #include <aurora/gfx.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -157,6 +158,7 @@ struct VIn {
   @location(6) e2: vec4f,
   @location(7) e3: vec4f,
   @location(8) nrm: vec3f,
+  @location(9) uv2: vec3f,
 }
 struct VOut {
   @builtin(position) pos: vec4f,
@@ -168,6 +170,7 @@ struct VOut {
   @location(5) e2: vec4f,
   @location(6) e3: vec4f,
   @location(7) nrm: vec3f,
+  @location(8) uv2: vec3f,
 }
 
 @vertex
@@ -177,6 +180,7 @@ fn vs_main(in: VIn) -> VOut {
   out.pos = vec4f(mv, 1.0) * u.proj;
   out.uv0 = in.uv0;
   out.uv1 = in.uv1;
+  out.uv2 = in.uv2;
   out.color = in.color;
   out.e0 = in.e0;
   out.e1 = in.e1;
@@ -191,6 +195,7 @@ fn layer(z: f32, n: f32) -> i32 {
   return i32(round(clamp(z, 0.0, max(n - 1.0, 0.0))));
 }
 fn uv_of(in: VOut, set: f32) -> vec3f {
+  if (set > 1.5) { return in.uv2; }
   return select(in.uv0, in.uv1, set > 0.5);
 }
 fn row_of(in: VOut, i: i32) -> vec4f {
@@ -504,16 +509,17 @@ wgpu::RenderPipeline make_pipeline(const DrawContext& ctx, const Payload& p) {
   const wgpu::ShaderModuleDescriptor moduleDescriptor{.nextInChain = &wgsl, .label = "VFX Module"};
   const wgpu::ShaderModule module = ctx.device.CreateShaderModule(&moduleDescriptor);
 
-  static constexpr std::array<wgpu::VertexAttribute, 9> attributes{{
-      {.format = wgpu::VertexFormat::Float32x3, .offset = 0, .shaderLocation = 0},
-      {.format = wgpu::VertexFormat::Float32x3, .offset = 12, .shaderLocation = 1},
-      {.format = wgpu::VertexFormat::Float32x3, .offset = 24, .shaderLocation = 2},
-      {.format = wgpu::VertexFormat::Float32x4, .offset = 36, .shaderLocation = 3},
-      {.format = wgpu::VertexFormat::Float32x4, .offset = 52, .shaderLocation = 4},
-      {.format = wgpu::VertexFormat::Float32x4, .offset = 68, .shaderLocation = 5},
-      {.format = wgpu::VertexFormat::Float32x4, .offset = 84, .shaderLocation = 6},
-      {.format = wgpu::VertexFormat::Float32x4, .offset = 100, .shaderLocation = 7},
-      {.format = wgpu::VertexFormat::Float32x3, .offset = 116, .shaderLocation = 8},
+  static constexpr std::array<wgpu::VertexAttribute, 10> attributes{{
+      {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, pos), .shaderLocation = 0},
+      {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, uv[0]), .shaderLocation = 1},
+      {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, uv[1]), .shaderLocation = 2},
+      {.format = wgpu::VertexFormat::Float32x4, .offset = offsetof(Vertex, color), .shaderLocation = 3},
+      {.format = wgpu::VertexFormat::Float32x4, .offset = offsetof(Vertex, extra[0]), .shaderLocation = 4},
+      {.format = wgpu::VertexFormat::Float32x4, .offset = offsetof(Vertex, extra[1]), .shaderLocation = 5},
+      {.format = wgpu::VertexFormat::Float32x4, .offset = offsetof(Vertex, extra[2]), .shaderLocation = 6},
+      {.format = wgpu::VertexFormat::Float32x4, .offset = offsetof(Vertex, extra[3]), .shaderLocation = 7},
+      {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, vec), .shaderLocation = 8},
+      {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, uv[2]), .shaderLocation = 9},
   }};
   const wgpu::VertexBufferLayout vertexLayout{
       .stepMode = wgpu::VertexStepMode::Vertex,
