@@ -560,9 +560,10 @@ const double kPbrMetalMax = 0.6;
 const double kPbrEmissiveMax = 16.0;
 const double kFlatStd = 3.0;
 const double kJointSplit = 0.05;
-// The game's skin reader keeps three weights a vertex and drops the rest
-// without renormalising, so a fourth would leave the vertex pulled to the origin.
-const size_t kMaxSkinWeights = 3;
+// The PC skin reader (CVirtualBone, SKIN_MAX_WEIGHTS) keeps four weights a vertex
+// and drops the rest without renormalising, so more would leave the vertex pulled
+// towards the origin. Retail data has at most three.
+const size_t kMaxSkinWeights = 4;
 const uint32_t kPbrFlag = 0x4000;  // kStateFlag_PortPBR
 
 struct MapRef {
