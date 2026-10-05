@@ -3926,6 +3926,13 @@ void DrawRemasteredImport() {
                       "effects may look wrong. Reload the mods afterwards, as for any import.");
   }
   PortRemastered::SetImportEffects(sEffects);
+  static bool sReconvert = false;
+  ImGui::Checkbox("Reconvert everything##remastered", &sReconvert);
+  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+    ImGui::SetTooltip("A re-import normally keeps what the last import made where nothing it depends on has "
+                      "changed. This makes everything anew, as the first import did.");
+  }
+  PortRemastered::SetImportReuse(!sReconvert);
   ImGui::EndDisabled();
   if (state.running) {
     ImGui::ProgressBar(state.total > 0 ? float(state.done) / float(state.total) : 0.f, ImVec2(-1.f, 0.f),
