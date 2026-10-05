@@ -1301,6 +1301,9 @@ constexpr uint32_t kShaderFrozenShell = 0x2FC554A2;
 // opaque, so the vote put it on an opaque retail material, a solid white blob;
 // it keeps retail's blended dome instead.
 constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
+// A Metroid's body (Body_MAT): lit PBR plus ICAN x ICNC x INCI, its only glow
+// (build/mpr/mtrl-tr/b6268b63/NOTES.md). The map is authored dim for the full strength.
+constexpr uint32_t kShaderMetroidBody = 0xB6268B63;
 // The arm cannon's body: lit PBR that reflects its REFL cube (a Tallon forest, LDR) along
 // the reflection vector, at the roughness's mip, instead of a room probe. Drawn with the
 // room's cube the metal took the room's colours and read pale. The default REFL (black)
@@ -1520,6 +1523,11 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     // has U 0..0.5, mostly 0, which is the ramp's dark end, so it is moved onto the
     // lit end, and the strength undoes kPbrEmissive, which left them a dim orange.
     out.gunRamp = true;
+    out.emissive = s / kPbrEmissive;
+  } else if (out.maps[kEmissive].has && shader == kShaderMetroidBody) {
+    // ICAN x INCI (10) with no other factor. Remastered's shader scales it by the
+    // inverse exposure (USE_INVERSEEXPOSURE), so on screen it is exactly that, and
+    // the map peaks at 33/255: kPbrEmissive left the body unlit in a dark room.
     out.emissive = s / kPbrEmissive;
   }
   // The shaders of their own. ICNC is 1 in every lava material and the strength
