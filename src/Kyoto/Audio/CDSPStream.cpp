@@ -409,9 +409,9 @@ void CDSPStream::BufferStream() {
   xe0_curBuffer ^= 1;
   if (readLen != 0) {
     if (xec_readsPending == 0) {
-      MP_STREAM_TRACE_LOG("read issue file=%s off=%u len=%u half=%u cur=%u loop=%d",
+      MP_STREAM_TRACE_LOG("read issue file=%s off=%u len=%u half=%u fileCur=%u loop=%d",
                           this->x10_fileName.data(), x18_headerSize + xcc_fileCur, readLen, xe0_curBuffer,
-                          static_cast< int >(x20_loopFlag));
+                          xcc_fileCur, static_cast< int >(x20_loopFlag));
       // Publish the outstanding-read count *before* starting the read. The
       // completion runs on Aurora's DVD worker thread, so starting the read
       // first let it decrement the count before this call assigned it: the
