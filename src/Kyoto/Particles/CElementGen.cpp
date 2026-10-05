@@ -2591,6 +2591,10 @@ void CElementGen::RenderModels() {
   CVector3f trans =
       (x13c_globalScaleTransformInverse * x1a8_localScaleTransformInverse) * xe8_globalTranslation;
 
+#ifdef TARGET_PC
+  CPortVfxMeshBatch vfxMeshes;
+  const bool vfxMesh = !x28_loadedGenDesc->x31_26_PMUS && PortVfxHasMesh(*x28_loadedGenDesc);
+#endif
   CTransform4f rot(CTransform4f::Identity());
   if (pmrtConst) {
     CVector3f pmrtVal(0.f, 0.f, 0.f);
@@ -2696,6 +2700,13 @@ void CElementGen::RenderModels() {
         }
       } else {
 #ifdef TARGET_PC
+        if (vfxMesh) {
+          // Drawn through the VMAT by PortRenderMeshesVfx, below.
+          vfxMeshes.Add(*x28_loadedGenDesc->xPortVfx,
+                        x10c_globalScaleTransform * partTrans * x178_localScaleTransform, particle,
+                        partFrame, x338_moduColor);
+          continue;
+        }
         CModel* model = x28_loadedGenDesc->x48_PMDL->GetObject();
         const std::vector< TCachedToken< CModel > >& variants = x28_loadedGenDesc->xPortPMDV;
         if (!variants.empty()) {
@@ -2719,6 +2730,11 @@ void CElementGen::RenderModels() {
     }
   }
 
+#ifdef TARGET_PC
+  if (vfxMesh) {
+    PortRenderMeshesVfx(vfxMeshes);
+  }
+#endif
   if (x26d_26_modelsUseLights) {
     CGraphics::DisableAllLights();
   }

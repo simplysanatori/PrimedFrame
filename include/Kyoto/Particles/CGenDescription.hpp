@@ -72,6 +72,12 @@ struct CPortVfxData {
   CRealElement* iten = nullptr;
   u32 vorn = 0; // 0 sprite, 1 oriented to the launch direction, 2 to the velocity
   u32 xfmd = kPortXfmdRetail;
+  // VMSH: the PMDL's LOD0 as one mesh in the converted CMDL's model space, 8 floats per vertex
+  // (pos, normal, uv), indices u16 (idx16) when meshVerts <= 65535, else u32 (idx32).
+  u32 meshVerts = 0, meshTris = 0;
+  std::vector< float > meshV;
+  std::vector< u16 > meshIdx16;
+  std::vector< u32 > meshIdx32;
   CPortVfxData() = default;
   CPortVfxData(const CPortVfxData&) = delete;
   CPortVfxData& operator=(const CPortVfxData&) = delete;

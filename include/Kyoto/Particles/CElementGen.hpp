@@ -17,6 +17,10 @@ class CGenDescription;
 class CModVectorElement;
 
 #pragma cpp_extensions on
+#ifdef TARGET_PC
+struct CPortVfxMeshBatch;
+#endif
+
 class CElementGen : public CParticleGen {
 public:
   struct CParticleListItem {
@@ -266,6 +270,7 @@ private:
   uint xPortVsmtMask;
   void PortVfxUpdateSystem();
   void PortRenderParticlesVfx();
+  void PortRenderMeshesVfx(CPortVfxMeshBatch& batch);
 #endif
 
   static double kTickTime;

@@ -133,6 +133,54 @@ void CParticleDataFactory::LoadGPSMTokens(CGenDescription* desc) {
 }
 
 #ifdef TARGET_PC
+// The VMSH blob v1 (build/mpr/vfx/DESIGN.md section 1). Anything unreadable leaves the PART
+// without a mesh, so its model particles draw as retail.
+static bool PortReadVfxMesh(CPortVfxData& vfx, CInputStream& in, u32 nbytes) {
+  u32 consumed = 0;
+  auto skip = [&]() {
+    for (; consumed + 4 <= nbytes; consumed += 4) {
+      in.ReadLong();
+    }
+  };
+  vfx.meshVerts = vfx.meshTris = 0;
+  vfx.meshV.clear();
+  vfx.meshIdx16.clear();
+  vfx.meshIdx32.clear();
+  if (nbytes < 12) {
+    skip();
+    return true;
+  }
+  const u32 version = in.ReadLong();
+  const u32 nv = in.ReadLong();
+  const u32 nt = in.ReadLong();
+  consumed = 12;
+  const bool wide = nv > 65535;
+  const u64 expect = 12 + u64(nv) * 32 + u64(nt) * 3 * (wide ? 4 : 2);
+  if (version != 1 || nv == 0 || nt == 0 || expect != nbytes) {
+    skip();
+    return true;
+  }
+  vfx.meshV.resize(size_t(nv) * 8);
+  for (float& f : vfx.meshV) {
+    f = in.ReadFloat();
+  }
+  consumed += nv * 32;
+  if (wide) {
+    vfx.meshIdx32.resize(size_t(nt) * 3);
+    for (u32& i : vfx.meshIdx32) {
+      i = in.ReadLong();
+    }
+  } else {
+    vfx.meshIdx16.resize(size_t(nt) * 3);
+    for (u16& i : vfx.meshIdx16) {
+      i = in.ReadShort();
+    }
+  }
+  vfx.meshVerts = nv;
+  vfx.meshTris = nt;
+  return true;
+}
+
 static CPortVfxData& PortVfxData(CGenDescription* desc) {
   if (!desc->xPortVfx) {
     desc->xPortVfx.reset(new CPortVfxData);
@@ -347,6 +395,13 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       const u32 nbytes = in.ReadLong();
       if (!PortReadVfxMat(PortVfxData(desc), in, nbytes, pool)) {
+        return false;
+      }
+    } break;
+    case SBIG('VMSH'): {
+      GetClassID(in);
+      const u32 nbytes = in.ReadLong();
+      if (!PortReadVfxMesh(PortVfxData(desc), in, nbytes)) {
         return false;
       }
     } break;
