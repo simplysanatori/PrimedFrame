@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -192,8 +193,15 @@ void SetMessage(const std::string& message) {
   sState.message = message;
 }
 
+// The lines of the stage being made, kept in the manifest so that a re-import that reuses the
+// stage shows them again.
+std::vector<std::string>* sStageLines = nullptr;
+
 void AddLine(const std::string& line) {
   std::lock_guard<std::mutex> lock(sStateMutex);
+  if (sStageLines != nullptr) {
+    sStageLines->push_back(line);
+  }
   sState.lines.push_back(line);
   if (sState.lines.size() > kImportMaxLines) {
     sState.lines.erase(sState.lines.begin(), sState.lines.end() - kImportMaxLines);
@@ -241,6 +249,252 @@ bool WantsMovies(MovieFormat& format) {
     AddLine(std::string("MP_REMASTERED_MOVIES: \"") + env + "\" is not a size and rate like 1280x720@30");
   }
   return true;
+}
+
+// --- Reusing the previous import ----------------------------------------------
+
+// Off with MP_REMASTERED_REUSE=0 or the import panel's "Reconvert everything".
+std::atomic<bool> sReuse{true};
+
+bool WantsReuse() {
+  const char* env = std::getenv("MP_REMASTERED_REUSE");
+  return sReuse.load() && (env == nullptr || std::strcmp(env, "0") != 0);
+}
+
+// What a stage of an import made, written to kManifestName in the mod: a re-import whose stage
+// has the same key (and, for a stage that gives out ids, the same ids taken before it) links
+// these files in, takes the ids and shows the lines again instead of making it anew.
+struct StageRecord {
+  std::string key;
+  std::string before;  // TakenHash() before the stage, empty for a stage that gives out no ids
+  std::map<std::string, long long> counts;
+  std::vector<std::string> lines;
+  std::vector<uint32_t> ids;       // the ids it took
+  std::vector<std::string> files;  // relative to the mod, '/'-separated
+  std::vector<std::string> extra;  // what the stage hands on to the next ones (the rooms' models)
+};
+using Manifest = std::map<std::string, StageRecord>;
+constexpr const char* kManifestName = ".import-manifest";
+constexpr const char* kManifestHeader = "remastered import manifest 1";
+
+uint64_t Hash64(const std::string& text) {
+  uint64_t hash = 0xCBF29CE484222325ull;  // FNV-1a
+  for (const char c : text) {
+    hash = (hash ^ uint8_t(c)) * 0x100000001B3ull;
+  }
+  return hash;
+}
+
+std::string Hex64(uint64_t value) {
+  char text[24];
+  std::snprintf(text, sizeof(text), "%016llX", static_cast<unsigned long long>(value));
+  return text;
+}
+
+std::string UuidText(const ModelUuid& uuid) {
+  std::string text;
+  for (const uint8_t byte : uuid) {
+    char pair[4];
+    std::snprintf(pair, sizeof(pair), "%02X", byte);
+    text += pair;
+  }
+  return text;
+}
+
+// The same for the same set of ids, in any order.
+std::string TakenHash(const std::unordered_set<uint32_t>& taken) {
+  uint64_t sum = 0;
+  uint64_t mixed = 0;
+  for (const uint32_t id : taken) {
+    uint64_t z = id + 0x9E3779B97F4A7C15ull;  // splitmix64
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    z ^= z >> 31;
+    sum += z;
+    mixed ^= z * 0x2545F4914F6CDD1Dull;
+  }
+  return Hex64(sum) + Hex64(mixed) + std::to_string(taken.size());
+}
+
+// Everything in the model table, so that an edit to it re-runs the models without a bump.
+std::string TableKey() {
+  size_t count = 0;
+  const TableEntry* table = Table(count);
+  std::string text;
+  char buffer[160];
+  for (size_t i = 0; i < count; ++i) {
+    const TableEntry& entry = table[i];
+    std::snprintf(buffer, sizeof(buffer), "%08X %08X %d %d %d|", entry.retail, entry.ancs, int(entry.key),
+                  int(entry.pbr), int(entry.options));
+    text += buffer;
+    text.append(reinterpret_cast<const char*>(entry.rem), sizeof(entry.rem));
+    text.append(reinterpret_cast<const char*>(entry.orient), sizeof(entry.orient));
+    for (const double offset : entry.offset) {
+      std::snprintf(buffer, sizeof(buffer), "%a ", offset);
+      text += buffer;
+    }
+    const uint32_t* skins = TableSkins(entry);
+    for (int s = 0; s < entry.skinCount; ++s) {
+      std::snprintf(buffer, sizeof(buffer), "%08X ", skins[s]);
+      text += buffer;
+    }
+    if (const TableOptions* extra = TableExtra(entry)) {
+      std::snprintf(buffer, sizeof(buffer), "%d %d %s %a %a %a %a", extra->material, extra->maxTexture,
+                    extra->squeezeRole != nullptr ? extra->squeezeRole : "-", extra->squeeze[0], extra->squeeze[1],
+                    extra->squeeze[2], extra->squeeze[3]);
+      text += buffer;
+    }
+    text += '\n';
+  }
+  return Hex64(Hash64(text));
+}
+
+bool ReadManifest(const fs::path& path, Manifest& out) {
+  std::ifstream file(path, std::ios::binary);
+  std::string line;
+  if (!std::getline(file, line) || line != kManifestHeader) {
+    return false;
+  }
+  StageRecord* stage = nullptr;
+  while (std::getline(file, line)) {
+    const size_t space = line.find(' ');
+    const std::string tag = line.substr(0, space);
+    const std::string rest = space == std::string::npos ? std::string() : line.substr(space + 1);
+    if (tag == "end") {
+      return true;  // only a manifest written to the end is trusted
+    }
+    if (tag == "stage") {
+      stage = &out[rest];
+      continue;
+    }
+    if (stage == nullptr) {
+      return false;
+    }
+    if (tag == "key") {
+      stage->key = rest;
+    } else if (tag == "before") {
+      stage->before = rest;
+    } else if (tag == "count") {
+      const size_t at = rest.find(' ');
+      stage->counts[rest.substr(0, at)] = at == std::string::npos ? 0 : std::atoll(rest.c_str() + at + 1);
+    } else if (tag == "line") {
+      stage->lines.push_back(rest);
+    } else if (tag == "ids") {
+      for (const char* p = rest.c_str(); *p != '\0';) {
+        char* end = nullptr;
+        const unsigned long id = std::strtoul(p, &end, 16);
+        if (end == p) {
+          break;
+        }
+        stage->ids.push_back(uint32_t(id));
+        p = end;
+      }
+    } else if (tag == "file") {
+      stage->files.push_back(rest);
+    } else if (tag == "extra") {
+      stage->extra.push_back(rest);
+    }
+  }
+  return false;
+}
+
+bool WriteManifest(const fs::path& path, const Manifest& manifest) {
+  std::ofstream file(path, std::ios::binary | std::ios::trunc);
+  file << kManifestHeader << '\n';
+  for (const auto& [name, stage] : manifest) {
+    file << "stage " << name << "\nkey " << stage.key << '\n';
+    if (!stage.before.empty()) {
+      file << "before " << stage.before << '\n';
+    }
+    for (const auto& [counter, value] : stage.counts) {
+      file << "count " << counter << ' ' << value << '\n';
+    }
+    for (const std::string& line : stage.lines) {
+      // A line is one line of the log; a newline in one would end it early.
+      std::string flat = line;
+      std::replace(flat.begin(), flat.end(), '\n', ' ');
+      file << "line " << flat << '\n';
+    }
+    for (size_t i = 0; i < stage.ids.size(); i += 16) {
+      file << "ids";
+      for (size_t j = i; j < std::min(i + 16, stage.ids.size()); ++j) {
+        char id[12];
+        std::snprintf(id, sizeof(id), " %08X", stage.ids[j]);
+        file << id;
+      }
+      file << '\n';
+    }
+    for (const std::string& name : stage.files) {
+      file << "file " << name << '\n';
+    }
+    for (const std::string& line : stage.extra) {
+      file << "extra " << line << '\n';
+    }
+  }
+  file << "end\n";
+  file.close();
+  return bool(file);
+}
+
+// Hard-links (or, where the file system has none, copies) a stage's files from `source` into
+// `target`, leaving any `target` already has. False, with nothing linked, when one is missing,
+// lies outside the folder, or cannot be linked.
+bool LinkFiles(const fs::path& source, const fs::path& target, const std::vector<std::string>& files) {
+  std::error_code ec;
+  for (const std::string& name : files) {
+    const fs::path relative = PathFromString(name).lexically_normal();
+    if (relative.empty() || relative.is_absolute() || relative.has_root_path() || *relative.begin() == "..") {
+      return false;
+    }
+    if (!fs::is_regular_file(source / relative, ec)) {
+      return false;
+    }
+  }
+  std::vector<fs::path> linked;
+  for (const std::string& name : files) {
+    const fs::path from = source / PathFromString(name);
+    const fs::path to = target / PathFromString(name);
+    if (fs::exists(to, ec)) {
+      continue;
+    }
+    fs::create_directories(to.parent_path(), ec);
+    fs::create_hard_link(from, to, ec);
+    if (ec) {
+      fs::copy_file(from, to, ec);
+    }
+    if (ec) {
+      AddLine("cannot reuse " + name + ": " + ec.message());
+      for (const fs::path& path : linked) {
+        fs::remove(path, ec);
+      }
+      return false;
+    }
+    linked.push_back(to);
+  }
+  return true;
+}
+
+// Writes `data` beside `path` and renames it into place: a file may be a hard link into the
+// previous import, which must not change under it.
+bool WriteReplacing(const fs::path& path, const std::vector<uint8_t>& data) {
+  fs::path tmp = path;
+  tmp += ".tmp";
+  {
+    std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
+    file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
+    file.close();
+    if (!file) {
+      std::error_code ec;
+      fs::remove(tmp, ec);
+      return false;
+    }
+  }
+  std::error_code ec;
+  fs::rename(tmp, path, ec);
+  if (ec) {
+    fs::remove(tmp, ec);
+  }
+  return !ec;
 }
 
 // --- The retail disc ----------------------------------------------------------
@@ -309,6 +563,22 @@ public:
       }
     }
     return ids;
+  }
+
+  // Which disc this is, as far as the import reads it: every resource's place and size, in
+  // any order, and the ids of the rest.
+  uint64_t Fingerprint() const {
+    uint64_t sum = m_resources.size() * 0x9E3779B97F4A7C15ull + m_ids.size();
+    for (const auto& [key, where] : m_resources) {
+      const std::string text = std::to_string(key) + " " + std::to_string(where.entry) + " " +
+                               std::to_string(where.offset) + " " + std::to_string(where.size) +
+                               (where.compressed ? " z" : "");
+      sum += Hash64(text);
+    }
+    for (const uint32_t id : m_ids) {
+      sum ^= Hash64(std::to_string(id)) * 3;
+    }
+    return sum;
   }
 
   bool Read(uint32_t type, uint32_t id, std::vector<uint8_t>& out) {
@@ -682,6 +952,9 @@ fs::path StagingFolder() {
   return mods.empty() ? fs::path() : PathFromString(mods) / kStagingName;
 }
 
+// Where a finished import that is not yet in place waits while the next one reuses it.
+fs::path HeldFolder(const fs::path& staging) { return staging.parent_path() / (std::string(kStagingName) + ".held"); }
+
 ConvertOptions OptionsFor(const TableEntry& entry) {
   ConvertOptions options;
   options.retail = entry.retail;
@@ -855,6 +1128,17 @@ void RunMovies(std::string nspPath, std::string keysPath, fs::path mod) {
     Finish(false, sCancel ? std::string("Cancelled.") : error);
     return;
   }
+  // The next import must not reuse a record of movies or pictures this run replaces.
+  if (Manifest manifest; ReadManifest(mod / kManifestName, manifest) &&
+                         (manifest.erase("movies") + manifest.erase("gallery")) != 0) {
+    fs::path tmp = mod / kManifestName;
+    tmp += ".tmp";
+    std::error_code ec;
+    if (!WriteManifest(tmp, manifest) || (fs::rename(tmp, mod / kManifestName, ec), ec)) {
+      fs::remove(tmp, ec);
+      fs::remove(mod / kManifestName, ec);
+    }
+  }
   MovieFormat format;
   WantsMovies(format);
   bool noFfmpeg = false;
@@ -878,16 +1162,43 @@ void RunMovies(std::string nspPath, std::string keysPath, fs::path mod) {
 void Run(std::string nspPath, std::string keysPath, int threads, fs::path staging) {
   YieldToGame();
   std::error_code ec;
+  // The import whose unchanged stages are reused: one finished but not yet moved into place
+  // (held aside while this one is made, and put back if this one fails), else the installed mod.
+  const fs::path held = HeldFolder(staging);
+  if (fs::exists(staging / kMarkerName, ec)) {
+    fs::remove_all(held, ec);
+    fs::rename(staging, held, ec);
+  } else if (!fs::exists(held / kMarkerName, ec)) {
+    fs::remove_all(held, ec);
+  }
+  const bool fromHeld = fs::exists(held / kMarkerName, ec);
+  const fs::path source = fromHeld ? held : staging.parent_path() / kImportModName;
   fs::remove_all(staging, ec);
   fs::create_directories(staging, ec);
   if (ec) {
-    Finish(false, "Cannot create the mod folder: " + ec.message());
+    const std::string why = ec.message();
+    if (fromHeld) {
+      fs::remove_all(staging, ec);
+      fs::rename(held, staging, ec);
+    }
+    Finish(false, "Cannot create the mod folder: " + why);
     return;
   }
   auto fail = [&](const std::string& message) {
+    {
+      std::lock_guard<std::mutex> lock(sStateMutex);
+      sStageLines = nullptr;
+    }
     fs::remove_all(staging, ec);
+    if (fromHeld) {
+      fs::rename(held, staging, ec);
+    }
     Finish(false, sCancel ? std::string("Cancelled.") : message);
   };
+  Manifest previous;
+  if (WantsReuse() && !ReadManifest(source / kManifestName, previous)) {
+    previous.clear();
+  }
 
   SetMessage("Opening the image");
   std::string error;
@@ -918,6 +1229,109 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   // share is converted once rather than once per worker that meets it.
   std::mutex modelClaimMutex;
   std::unordered_set<uint32_t> modelClaimed;
+
+  // The stages, each either made and recorded in `made`, or reused from `previous`.
+  Manifest made;
+  std::vector<std::string> reused;
+  std::string keyCommon;  // what every stage depends on: the image and the disc
+  {
+    const fs::path nsp = PathFromString(nspPath);
+    const uintmax_t size = fs::file_size(nsp, ec);
+    keyCommon = "|nsp " + std::to_string(ec ? 0 : size);
+    const auto time = fs::last_write_time(nsp, ec);
+    keyCommon += " " + std::to_string(ec ? 0 : int64_t(time.time_since_epoch().count()));
+    keyCommon += "|disc " + Hex64(retail.Fingerprint());
+  }
+  const std::string keyConverter = "|converter " + std::to_string(ImportStage::kConverter) + " " + TextureFormatName();
+  std::mutex recordMutex;
+  StageRecord* active = nullptr;  // the stage being made
+  std::unordered_set<uint32_t> takenBefore;
+  auto record = [&](const fs::path& path) {
+    std::lock_guard<std::mutex> lock(recordMutex);
+    if (active != nullptr) {
+      const std::u8string name = path.lexically_relative(staging).generic_u8string();
+      active->files.emplace_back(name.begin(), name.end());
+    }
+  };
+  auto recordFolder = [&](const fs::path& folder) {
+    std::error_code walkError;
+    for (fs::recursive_directory_iterator it(folder, walkError), end; !walkError && it != end; it.increment(walkError)) {
+      if (it->is_regular_file(walkError)) {
+        record(it->path());
+      }
+    }
+  };
+  // Starts stage `name`. True when the previous import's is reused: its files are linked in, its
+  // ids taken and its lines shown, and the caller restores what it hands on from the record.
+  // A stage that gives out ids is reused only if none of them has been taken since (`strict`:
+  // only if the same ids were taken before it), so that ids stay unique.
+  auto beginStage = [&](const std::string& name, const std::string& key, bool strict) {
+    StageRecord fresh;
+    fresh.key = Hex64(Hash64(name + "|" + key + keyCommon));
+    fresh.before = TakenHash(taken);
+    const auto old = previous.find(name);
+    bool reuse = old != previous.end() && old->second.key == fresh.key && (!strict || old->second.before == fresh.before);
+    for (size_t i = 0; reuse && i < old->second.ids.size(); ++i) {
+      reuse = taken.count(old->second.ids[i]) == 0;
+    }
+    if (reuse) {
+      SetMessage("Reusing the previous import's " + name);
+      reuse = LinkFiles(source, staging, old->second.files);
+    }
+    if (reuse) {
+      StageRecord& kept = made[name] = old->second;
+      kept.before = fresh.before;
+      taken.insert(kept.ids.begin(), kept.ids.end());
+      // A file another stage wrote too has its id there; it is this one's as well.
+      for (const std::string& file : kept.files) {
+        const std::string base = file.substr(file.rfind('/') + 1);
+        if (base.size() > 9 && base[8] == '.' &&
+            std::all_of(base.begin(), base.begin() + 8, [](char c) { return std::isxdigit(uint8_t(c)) != 0; })) {
+          taken.insert(uint32_t(std::strtoul(base.substr(0, 8).c_str(), nullptr, 16)));
+        }
+      }
+      for (const std::string& line : kept.lines) {
+        AddLine(line);
+      }
+      reused.push_back(name);
+      return true;
+    }
+    StageRecord& stage = made[name] = std::move(fresh);
+    takenBefore = taken;
+    {
+      std::lock_guard<std::mutex> lock(recordMutex);
+      active = &stage;
+    }
+    std::lock_guard<std::mutex> lock(sStateMutex);
+    sStageLines = &stage.lines;
+    return false;
+  };
+  auto endStage = [&] {
+    std::lock_guard<std::mutex> lock(recordMutex);
+    if (active == nullptr) {
+      return;
+    }
+    for (const uint32_t id : taken) {
+      if (takenBefore.count(id) == 0) {
+        active->ids.push_back(id);
+      }
+    }
+    std::sort(active->ids.begin(), active->ids.end());
+    std::sort(active->files.begin(), active->files.end());
+    active->files.erase(std::unique(active->files.begin(), active->files.end()), active->files.end());
+    active = nullptr;
+    takenBefore.clear();
+    std::lock_guard<std::mutex> stateLock(sStateMutex);
+    sStageLines = nullptr;
+  };
+  auto writeFile = [&](const fs::path& path, const std::vector<uint8_t>& data) {
+    if (!WriteReplacing(path, data)) {
+      return false;
+    }
+    record(path);
+    return true;
+  };
+
   auto makeIO = [&](int worker, const fs::path& folder) {
     ConvertIO io;
     io.retail = [&](uint32_t type, uint32_t id, std::vector<uint8_t>& out) { return retail.Read(type, id, out); };
@@ -959,7 +1373,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
       std::error_code renameError;
       fs::rename(tmp, path, renameError);
-      return !renameError;
+      if (renameError) {
+        return false;
+      }
+      record(path);
+      return true;
     };
     return io;
   };
@@ -1149,6 +1567,8 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     }
   }
   std::vector<uint8_t> modelOk(count, 0);
+  const bool modelsReused =
+      beginStage("models", std::to_string(ImportStage::kModels) + " table " + TableKey() + keyConverter, true);
   auto work = [&](int worker) {
     YieldToGame();
     ConvertIO io = makeIO(worker, staging);
@@ -1194,14 +1614,21 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       sState.message = "Converting models (" + std::to_string(sState.done) + "/" + std::to_string(sState.total) + ")";
     }
   };
-  SetMessage("Converting models");
   std::vector<std::thread> workers;
-  for (int i = 1; i < threads; ++i) {
-    workers.emplace_back(work, i);
-  }
-  work(0);
-  for (std::thread& worker : workers) {
-    worker.join();
+  if (modelsReused) {
+    converted = int(made["models"].counts["converted"]);
+    std::lock_guard<std::mutex> lock(sStateMutex);
+    sState.done = int(count);
+    sState.failed = int(count) - converted;
+  } else {
+    SetMessage("Converting models");
+    for (int i = 1; i < threads; ++i) {
+      workers.emplace_back(work, i);
+    }
+    work(0);
+    for (std::thread& worker : workers) {
+      worker.join();
+    }
   }
 
   if (sCancel) {
@@ -1215,7 +1642,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
 
   // The characters last, so that none names a model that failed. A copy is
   // written only if one of its own looks made it.
-  {
+  if (!modelsReused) {
     const auto write = makeIO(0, staging).write;
     for (auto& [id, character] : characters) {
       std::vector<uint8_t>& data = character.data;
@@ -1247,10 +1674,13 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         AddLine("could not write " + hex(id) + ".ANCS");
       }
     }
+    made["models"].counts["converted"] = converted;
+    endStage();
   }
 
   // Remastered's particle effects in place of the disc's, when asked for.
-  if (WantsRemasteredEffects()) {
+  if (WantsRemasteredEffects() &&
+      !beginStage("effects", std::to_string(ImportStage::kEffects) + keyConverter, false)) {
     SetMessage("Converting effects");
     EffectImportIO effectIO;
     effectIO.effects = remastered.Effects();
@@ -1341,6 +1771,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
             std::to_string(effects.parts) + " PARTs, " + std::to_string(effects.textures) + " textures, " +
             std::to_string(effects.flipbooks) + " flipbooks, " + std::to_string(effects.models) + " models, " +
             std::to_string(effects.dropped) + " properties left out)");
+    endStage();
   }
 
   // The rooms' reflection cubes and baked ambient light, a file per area. A
@@ -1348,20 +1779,26 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   SetMessage("Writing the room environments");
   const fs::path roomFolder = staging / kRoomFolder;
   fs::create_directories(roomFolder, ec);
+  const char* geometryEnv = std::getenv("MP_REMASTERED_GEOMETRY");
+  const bool roomsReused = beginStage("rooms",
+                                      std::to_string(ImportStage::kRooms) + " geometry " +
+                                          (geometryEnv != nullptr && geometryEnv[0] != '\0'
+                                               ? std::string(geometryEnv)
+                                               : std::string(sGeometry ? "on" : "off")) +
+                                          keyConverter,
+                                      false);
   // Remastered's environment BRDF table, from the user's own executable. Nothing
   // here may fail the import: without it the port keeps its own fit.
-  {
+  bool brdfMissing = false;  // then the stage is not kept: the next import tries again
+  if (!roomsReused) {
     std::vector<uint8_t> brdf;
     std::string brdfError;
     if (!remastered.ExtractBrdf(brdf, brdfError)) {
       AddLine("brdf.lut: left out (" + brdfError + ")");
-    } else {
-      std::ofstream file(roomFolder / "brdf.lut", std::ios::binary);
-      file.write(reinterpret_cast<const char*>(brdf.data()), std::streamsize(brdf.size()));
-      file.close();
-      if (!file) {
-        AddLine("brdf.lut: cannot be written");
-      }
+      brdfMissing = true;
+    } else if (!writeFile(roomFolder / "brdf.lut", brdf)) {
+      AddLine("brdf.lut: cannot be written");
+      brdfMissing = true;
     }
   }
   fs::create_directories(staging / kGeometryFolder, ec);
@@ -1607,10 +2044,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       io.write = [&](const std::string& name, const std::vector<uint8_t>& data) {
         const bool isGeometry = (name.size() > 8 && name.compare(name.size() - 8, 8, ".roomgeo") == 0) ||
                                 (name.size() > 11 && name.compare(name.size() - 11, 11, ".roomliquid") == 0);
-        std::ofstream file((isGeometry ? geometryFolder : roomFolder) / PathFromString(name), std::ios::binary);
-        file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
-        file.close();
-        return bool(file);
+        return writeFile((isGeometry ? geometryFolder : roomFolder) / PathFromString(name), data);
       };
       io.model = geometryId;
       io.piece = pieceId;
@@ -1639,22 +2073,100 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       roomFiles += written;
     }
   };
-  workers.clear();
-  for (int i = 1; i < threads; ++i) {
-    workers.emplace_back(roomWork);
-  }
-  roomWork();
-  for (std::thread& worker : workers) {
-    worker.join();
-  }
-  if (sCancel) {
-    fail("Cancelled.");
-    return;
+  // What the room models stage needs from this one, as the record's `extra` lines:
+  // "g <uuid> <id> <joint> <liquid>" a model, "l <lava values>" a lava pool, in order.
+  if (roomsReused) {
+    StageRecord& kept = made["rooms"];
+    roomFiles = int(kept.counts["files"]);
+    for (const std::string& line : kept.extra) {
+      std::istringstream in(line);
+      std::string tag;
+      in >> tag;
+      if (tag == "g") {
+        std::string uuid;
+        GeometryModel g;
+        in >> uuid >> std::hex >> g.id >> std::dec >> g.joint >> g.liquid;
+        for (size_t b = 0; b < g.uuid.size() && b * 2 + 1 < uuid.size(); ++b) {
+          g.uuid[b] = uint8_t(std::strtoul(uuid.substr(b * 2, 2).c_str(), nullptr, 16));
+        }
+        geometry.push_back(g);
+      } else if (tag == "l") {
+        RoomLiquid& liquid = liquids.emplace_back();
+        for (float& value : liquid.lava) {
+          std::string text;
+          in >> text;
+          value = std::strtof(text.c_str(), nullptr);
+        }
+      }
+    }
+  } else {
+    workers.clear();
+    for (int i = 1; i < threads; ++i) {
+      workers.emplace_back(roomWork);
+    }
+    roomWork();
+    for (std::thread& worker : workers) {
+      worker.join();
+    }
+    if (sCancel) {
+      fail("Cancelled.");
+      return;
+    }
+    StageRecord& stage = made["rooms"];
+    stage.counts["files"] = roomFiles.load();
+    for (const GeometryModel& g : geometry) {
+      char line[96];
+      std::snprintf(line, sizeof(line), "g %s %08X %d %d", UuidText(g.uuid).c_str(), g.id, g.joint, g.liquid);
+      stage.extra.push_back(line);
+    }
+    for (const RoomLiquid& liquid : liquids) {
+      std::string line = "l";
+      for (const float value : liquid.lava) {
+        char text[32];
+        std::snprintf(text, sizeof(text), " %a", double(value));
+        line += text;
+      }
+      stage.extra.push_back(line);
+    }
+    endStage();
+    if (brdfMissing) {
+      made.erase("rooms");
+    }
   }
 
   std::atomic<int> geometryDone{0};
   std::atomic<int> lodsDone{0};
+  bool roomModelsReused = false;
   if (!geometry.empty()) {
+    // The models in any order (the room workers add them as they come), each with its lava.
+    std::vector<std::string> lines;
+    for (const GeometryModel& g : geometry) {
+      std::string line = UuidText(g.uuid);
+      char text[48];
+      std::snprintf(text, sizeof(text), " %08X %d", g.id, g.joint);
+      line += text;
+      if (g.liquid >= 0 && size_t(g.liquid) < liquids.size()) {
+        for (const float value : liquids[size_t(g.liquid)].lava) {
+          std::snprintf(text, sizeof(text), " %a", double(value));
+          line += text;
+        }
+      }
+      lines.push_back(std::move(line));
+    }
+    std::sort(lines.begin(), lines.end());
+    std::string list;
+    for (const std::string& line : lines) {
+      list += line + '\n';
+    }
+    roomModelsReused = beginStage("roommodels",
+                                  std::to_string(ImportStage::kRoomModels) + " list " + Hex64(Hash64(list)) + keyConverter,
+                                  false);
+    if (roomModelsReused) {
+      geometryDone = int(made["roommodels"].counts["models"]);
+      lodsDone = int(made["roommodels"].counts["levels"]);
+    }
+  }
+  if (!geometry.empty() && !roomModelsReused) {
     // Before any texture takes an id, so none takes a level's.
     for (GeometryModel& g : geometry) {
       if (g.liquid >= 0 || g.joint >= 0) {
@@ -1769,14 +2281,13 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     if (!lodTable.empty()) {
       std::sort(lodTable.begin(), lodTable.end(),
                 [](const PortRoomGeo::Lods& a, const PortRoomGeo::Lods& b) { return a.model < b.model; });
-      const std::vector<uint8_t> data = PortRoomGeo::WriteLods(lodTable);
-      std::ofstream file(geometryFolder / PortRoomGeo::kLodFileName, std::ios::binary);
-      file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
-      file.close();
-      if (!file) {
+      if (!writeFile(geometryFolder / PortRoomGeo::kLodFileName, PortRoomGeo::WriteLods(lodTable))) {
         AddLine(std::string(PortRoomGeo::kLodFileName) + ": cannot be written");
       }
     }
+    made["roommodels"].counts["models"] = geometryDone.load();
+    made["roommodels"].counts["levels"] = lodsDone.load();
+    endStage();
   }
   if (geometry.empty()) {
     fs::remove(geometryFolder, ec);
@@ -1787,7 +2298,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   int textTables = 0;
   int textStrings = 0;
   int textTranslated = 0;
-  if (WantsText()) {
+  if (WantsText() && beginStage("text", std::to_string(ImportStage::kText), false)) {
+    textTables = int(made["text"].counts["tables"]);
+    textStrings = int(made["text"].counts["strings"]);
+    textTranslated = int(made["text"].counts["translated"]);
+  } else if (WantsText()) {
     SetMessage("Writing the text");
     std::vector<const char*> languages{kRemasteredEnglish};
     for (size_t k = 0; k < kTextLanguageCount; ++k) {
@@ -1835,10 +2350,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
       char name[16];
       std::snprintf(name, sizeof(name), "%08X.STRG", strg);
-      std::ofstream file(textFolder / name, std::ios::binary);
-      file.write(reinterpret_cast<const char*>(merged.data()), std::streamsize(merged.size()));
-      file.close();
-      if (!file) {
+      if (!writeFile(textFolder / name, merged)) {
         AddLine(std::string(name) + ": cannot write");
         continue;
       }
@@ -1849,10 +2361,16 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     if (textTables == 0) {
       fs::remove(textFolder, ec);
     }
+    made["text"].counts["tables"] = textTables;
+    made["text"].counts["strings"] = textStrings;
+    made["text"].counts["translated"] = textTranslated;
+    endStage();
   }
   // Remastered's typeface, which the port draws the disc's text with.
   bool fontWritten = false;
-  {
+  if (beginStage("font", std::to_string(ImportStage::kText) + keyConverter, false)) {
+    fontWritten = made["font"].counts["written"] != 0;
+  } else {
     std::vector<uint8_t> raw;
     std::vector<uint8_t> out;
     ModelUuid atlas{};
@@ -1881,18 +2399,24 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     } else {
       const fs::path fontFolder = staging / kFontFolder;
       fs::create_directories(fontFolder, ec);
-      std::ofstream file(fontFolder / kFontName, std::ios::binary);
-      file.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
-      file.close();
-      fontWritten = bool(file);
+      fontWritten = writeFile(fontFolder / kFontName, out);
       if (!fontWritten) {
         AddLine("font: cannot write");
       }
     }
+    made["font"].counts["written"] = fontWritten ? 1 : 0;
+    endStage();
+    if (!fontWritten) {
+      made.erase("font");
+    }
   }
   // Remastered's HUD: the disc's frames laid out and drawn as its own.
   int hudFrames = 0;
-  if (WantsHud() && !sCancel) {
+  const bool hudReused = WantsHud() && !sCancel && beginStage("hud", std::to_string(ImportStage::kHud) + keyConverter, false);
+  if (hudReused) {
+    hudFrames = int(made["hud"].counts["frames"]);
+  }
+  if (WantsHud() && !sCancel && !hudReused) {
     SetMessage("Converting the HUD");
     const fs::path hudFolder = staging / kHudFolder;
     fs::create_directories(hudFolder, ec);
@@ -1935,7 +2459,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   }
   // Remastered's map icons, where the game looks for the disc's, and the rooms
   // whose map it reshaped.
-  if (WantsHud() && !sCancel) {
+  if (WantsHud() && !sCancel && !hudReused) {
     const fs::path mapFolder = staging / kMapFolder;
     fs::create_directories(mapFolder, ec);
     ConvertIO io = makeIO(0, mapFolder);
@@ -1980,21 +2504,61 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     if (icons == 0) {
       fs::remove_all(mapFolder, ec);
     }
+    made["hud"].counts["frames"] = hudFrames;
+    endStage();
   }
   // Remastered's menu movies.
   int movies = 0;
   bool noFfmpeg = false;
   if (MovieFormat format; WantsMovies(format) && !sCancel) {
-    movies = ImportMovies(remastered, staging / kMovieFolder, format, noFfmpeg);
+    char key[64];
+    std::snprintf(key, sizeof(key), "%d %dx%d %d", ImportStage::kMovies, format.width, format.height, format.fps);
+    if (beginStage("movies", key, false)) {
+      movies = int(made["movies"].counts["movies"]);
+    } else {
+      movies = ImportMovies(remastered, staging / kMovieFolder, format, noFfmpeg);
+      recordFolder(staging / kMovieFolder);
+      made["movies"].counts["movies"] = movies;
+      endStage();
+      // Without ffmpeg, or with a movie missing, there is nothing to keep: the next import tries again.
+      size_t wanted = 0;
+      for (const Movie& movie : Movies()) {
+        wanted += movie.names.size();
+      }
+      if (noFfmpeg || size_t(movies) < wanted || sCancel) {
+        made.erase("movies");
+      }
+    }
   }
   // The Extras gallery's concept art.
   int gallery = 0;
   if (WantsGallery() && !sCancel) {
-    gallery = ImportGallery(remastered, staging / kGalleryFolder);
+    if (beginStage("gallery", std::to_string(ImportStage::kGallery) + keyConverter, false)) {
+      gallery = int(made["gallery"].counts["images"]);
+    } else {
+      gallery = ImportGallery(remastered, staging / kGalleryFolder);
+      recordFolder(staging / kGalleryFolder);
+      made["gallery"].counts["images"] = gallery;
+      endStage();
+      if (gallery == 0) {
+        made.erase("gallery");
+      }
+    }
   }
   if (sCancel) {
     fail("Cancelled.");
     return;
+  }
+  // What each stage made, for the next import to reuse. Without it the next one is a full import.
+  {
+    const fs::path manifest = staging / kManifestName;
+    fs::path tmp = manifest;
+    tmp += ".tmp";
+    std::error_code manifestError;
+    if (!WriteManifest(tmp, made) || (fs::rename(tmp, manifest, manifestError), manifestError)) {
+      fs::remove(tmp, manifestError);
+      AddLine("import manifest: cannot be written, so the next import reconverts everything");
+    }
   }
   {
     // Only a full import stamps: the movies-only run leaves an older mod's stamp as it was.
@@ -2013,6 +2577,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       fail("Cannot write to the mod folder.");
       return;
     }
+  }
+  if (fromHeld) {
+    fs::remove_all(held, ec);
   }
   const int failed = int(count) - converted.load();
   std::string message = std::to_string(converted.load()) + " models converted";
@@ -2041,6 +2608,12 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   }
   if (gallery != 0) {
     message += ", " + std::to_string(gallery) + " gallery pictures";
+  }
+  if (!reused.empty()) {
+    message += ". Unchanged since the last import, so reused:";
+    for (size_t i = 0; i < reused.size(); ++i) {
+      message += (i == 0 ? " " : ", ") + reused[i];
+    }
   }
   Finish(true, message + (noFfmpeg ? ". Movies skipped: ffmpeg not found." : "."));
 }
@@ -2136,6 +2709,8 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
 
 void SetImportGeometry(bool on) { sGeometry = on; }
 
+void SetImportReuse(bool on) { sReuse = on; }
+
 ImportState ImportStatus() {
   std::lock_guard<std::mutex> lock(sStateMutex);
   return sState;
@@ -2154,12 +2729,24 @@ bool ApplyPendingImport() {
   const fs::path staging = StagingFolder();
   std::error_code ec;
   // A running import is still writing there.
-  if (staging.empty() || ImportStatus().running || !fs::is_directory(staging, ec)) {
+  if (staging.empty() || ImportStatus().running) {
     return false;
   }
-  if (!fs::exists(staging / kMarkerName, ec)) {
+  const fs::path held = HeldFolder(staging);
+  if (fs::exists(staging / kMarkerName, ec)) {
+    // An older import the finished one was made from, left if the game quit just after it.
+    fs::remove_all(held, ec);
+  } else {
     fs::remove_all(staging, ec);
-    return false;
+    // A finished import held aside by one that never finished (the game quit during it).
+    if (!fs::exists(held / kMarkerName, ec)) {
+      fs::remove_all(held, ec);
+      return false;
+    }
+    fs::rename(held, staging, ec);
+    if (ec) {
+      return false;
+    }
   }
   const fs::path target = staging.parent_path() / kImportModName;
   // The working mod is kept as a backup until the new one is in place. Hidden, so the mod loader
