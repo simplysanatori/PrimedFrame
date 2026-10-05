@@ -132,7 +132,16 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept { return {}; }
 ShaderInfo build_shader_info(const ShaderConfig& config) noexcept { return {}; }
 gfx::Range build_uniform(const ShaderInfo& info) noexcept { return {.size = 1}; }
 void resolve_sampled_textures(const ShaderInfo& info) noexcept {}
+u32 dump_shaders(const char* dir) noexcept { return 0; }
+void set_shader_override_dir(const char* dir) noexcept {}
+void set_draw_shader_log(bool on) noexcept {}
+void note_draw_shader(u32 serial, const ShaderConfig& config) noexcept {}
+u64 draw_shader_hash(u32 serial) noexcept { return 0; }
+bool shader_overridden(u64 hash) noexcept { return false; }
 } // namespace aurora::gx
+namespace aurora::gfx {
+void drop_pipelines() {}
+} // namespace aurora::gfx
 
 // --- Buffer push stubs ---
 namespace aurora::gfx {

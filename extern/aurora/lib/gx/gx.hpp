@@ -87,7 +87,7 @@ struct DrawImmediateData {
   u32 vtxStart = 0;
   u32 currentPnMtx = 0;
   u32 fogRangeBase = 0;
-  u32 _pad = 0;
+  u32 serial = 0; // the draw's serial, read by shaders built with ShaderConfig::drawId
   std::array<u32, MaxIndexAttr> arrayStart{};
 };
 static_assert(std::has_unique_object_representations_v<DrawImmediateData>);
@@ -400,6 +400,8 @@ struct GXState {
   u8 sdf = 0; // GX_AURORA_SET_SDF
   u8 depthPrepass = 0; // GX_AURORA_PORT_DEPTH_PREPASS
   std::array<u32, 3> drawTag{0, UINT32_MAX, 0}; // GX_AURORA_SET_DRAW_TAG: asset, model index, material
+  u32 drawSerial = 0; // GX_AURORA_PORT_DRAW_SERIAL
+  bool drawIdMode = false; // GX_AURORA_PORT_DRAW_ID_MODE
   Mat3x4<float> pbrProbe; // GX_AURORA_SET_PBR_PROBE
   Vec4<float> pbrEmissive{1.f, 1.f, 1.f, 0.f}; // GX_AURORA_SET_PBR_MATERIAL
   Vec4<float> pbrBacklight{0.f, 0.f, 0.f, 0.f};
@@ -548,7 +550,8 @@ struct ShaderConfig {
   u8 vtxStride = 0;
   u8 lineMode : 2 = 0; // 1 = GX_LINES, 2 = GX_LINESTRIP, 3 = GX_POINTS
   u8 fogRangeEnabled : 1 = false;
-  u8 pad1 : 5 = 0;
+  u8 drawId : 1 = false; // debug view "drawid": the fragment is the draw serial (DrawImmediateData::serial)
+  u8 pad1 : 4 = 0;
   u8 pbr = 0; // GX_AURORA_SET_PBR
   u8 sdf = 0; // GX_AURORA_SET_SDF
   u8 depthOnly = 0; // pass 1 of GX_AURORA_PORT_DEPTH_PREPASS: the colour is not written
@@ -602,6 +605,17 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
                                     wgpu::ShaderModule shader, const char* label) noexcept;
 std::string build_shader_source(const ShaderConfig& config) noexcept;
 wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept;
+// Shader debugging (MP_WGSL_DUMP / MP_WGSL_OVERRIDE, console `shader`). dump_shaders writes every module built so
+// far to dir (and keeps writing new ones) and returns how many files it made; set_shader_override_dir turns the
+// override on (empty = off).
+u32 dump_shaders(const char* dir) noexcept;
+void set_shader_override_dir(const char* dir) noexcept;
+// While on, each draw with a nonzero serial records the hash of its ShaderConfig; draw_shader_hash reads it back (0 =
+// none) and shader_overridden says whether an edited source is in place for a hash.
+void set_draw_shader_log(bool on) noexcept;
+void note_draw_shader(u32 serial, const ShaderConfig& config) noexcept;
+u64 draw_shader_hash(u32 serial) noexcept;
+bool shader_overridden(u64 hash) noexcept;
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept;
 
 u8 comp_type_size(GXAttr attr, GXCompType type) noexcept;

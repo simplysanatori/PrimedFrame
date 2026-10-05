@@ -26,6 +26,7 @@
 #include "Kyoto/CResFactory.hpp"
 #include "Kyoto/CSimplePool.hpp"
 #include "Kyoto/Graphics/CCubeMaterial.hpp"
+#include "Kyoto/Graphics/CCubeModel.hpp"
 #include "Kyoto/TToken.hpp"
 #include "Kyoto/Alloc/CMemorySys.hpp"
 #include "Kyoto/Alloc/IAllocator.hpp"
@@ -278,6 +279,9 @@ struct Command {
   PADStatus pad{};
   std::string shotDir;
   size_t shotCount = 0;
+  int pickX = 0;
+  int pickY = 0;
+  int pickView = 0; // the view `pick` found, to restore
 };
 
 bool sHasCommand = false;
@@ -514,13 +518,21 @@ void CmdHelp() {
   Out("roomgeo group <n> show|hide   set a group until its script next changes it");
   Out("roomgeo pick              the instances the middle of the view looks through, nearest first, and the");
   Out("                           first one's materials");
-  Out("roomgeo mats <cmdl>       a loaded model's materials: flags, PBR or TEV, the PBR record");
+  Out("roomgeo mats <cmdl>       a loaded model's materials: flags, PBR or TEV, the PBR record (any CMDL once it");
+  Out("                           has drawn under `drawlog on` or `view drawid`, not just room geometry)");
   Out("roomgeo mat <cmdl> <material> <field> <value...> | mat clear");
   Out("                           draw a material with a record value replaced: emissive, backlight, height,");
   Out("                           mode, kind, strength, p0..p3, or the value's index (0 to 18)");
   Out("roomenv info [<x> <y> <z>] exposure, tone curve, probe and baked ambient at the view or a point");
-  Out("view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind]");
-  Out("                           what PBR surfaces show in place of their shaded result");
+  Out("view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind|drawid]");
+  Out("                           what PBR surfaces show in place of their shaded result; drawid: every draw's");
+  Out("                           serial as a flat colour (R low byte, G, B), no post-processing");
+  Out("drawlog [on|off|dump <file>]  number and record every model surface drawn; dump the last frame as TSV");
+  Out("pick <x> <y>               the draw at a window pixel (top-left origin): owner, CMDL, material, record,");
+  Out("                           shader hash, and the material's line (switches to `view drawid` for a moment)");
+  Out("shader dump <dir>          write every WGSL module made, as <hash>.wgsl, with index.tsv (also MP_WGSL_DUMP)");
+  Out("shader override <dir>|off  compile <hash>.wgsl files from a dir in place of the generated ones, then reload");
+  Out("shader reload              drop the shader and pipeline caches so edited overrides compile (MP_WGSL_OVERRIDE)");
   Out("stats                      the last frame's draws and buffers, the heap, room geometry and environments");
   Out("roomenv [on|off|exposure on|off]  the room environments mods supply; exposure: by room, not by cube");
   Out("roomenv grades | state <id> <state>  the colour grades; as if script object <id> (hex) sent <state>");
@@ -1209,11 +1221,237 @@ void CmdView() {
       }
     }
     if (view < 0) {
-      return Finish("usage: view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind]");
+      return Finish("usage: view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind|drawid]");
     }
     PortDebug::SetPbrView(view);
   }
   Out("view %s", PortDebug::PbrViewName(PortDebug::PbrView()));
+  Finish();
+}
+
+// ---------------------------------------------------------------------------
+// Draw identification (see CCubeModel::PortDraw) and generated shaders.
+
+int DrawIdView() {
+  for (int i = 0; i < PortDebug::PbrViewCount(); ++i) {
+    if (std::strcmp(PortDebug::PbrViewName(i), "drawid") == 0) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+// The draw's line as the log and `pick` give it. The hash is 0 for a draw whose shader was not
+// noted (the log went on after it, or the ring has moved on).
+std::string DrawFields(const CCubeModel::PortDraw& d) {
+  const std::string owner = PortRoomGeo::Owner(d.model);
+  const uint64_t hash = GXPortDrawShader(d.serial);
+  char line[400];
+  std::snprintf(line, sizeof(line), "%u\t%08X\t%u\t%u\t%s\t%s\t%s\t%u\t%g\t%016llx\t%d", d.serial, d.asset,
+                d.material, d.surface, owner.empty() ? "?" : owner.c_str(),
+                CCubeModel::PortRecordTag(d.floats, d.wrap, d.scaled, d.cube), d.pbr ? "PBR" : "TEV", d.mode,
+                d.kind, static_cast< unsigned long long >(hash),
+                hash != 0 && GXPortShaderOverridden(hash) == GX_TRUE ? 1 : 0);
+  return line;
+}
+
+const char* const kDrawFieldNames =
+    "serial\tcmdl\tmaterial\tsurface\towner\ttag\tpath\tmode\tkind\tshader\toverridden";
+
+// drawlog [on|off|dump <file>]
+void CmdDrawLog() {
+  const std::string arg = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : std::string();
+  if (arg == "on" || arg == "off") {
+    CCubeModel::PortSetDrawLog(arg == "on");
+  } else if (arg == "dump" && sCmd.args.size() > 2) {
+    if (!CCubeModel::PortDrawLogOn()) {
+      return Finish("drawlog is off (drawlog on, wait a frame)");
+    }
+    std::vector< CCubeModel::PortDraw > draws;
+    CCubeModel::PortLastFrameDraws(draws);
+    FILE* const file = std::fopen(sCmd.args[2].c_str(), "w");
+    if (file == nullptr) {
+      return Finish("cannot write that file");
+    }
+    std::fprintf(file, "%s\n", kDrawFieldNames);
+    for (const CCubeModel::PortDraw& d : draws) {
+      std::fprintf(file, "%s\n", DrawFields(d).c_str());
+    }
+    std::fclose(file);
+    Out("%zu draws -> %s", draws.size(), sCmd.args[2].c_str());
+    return Finish();
+  } else if (!arg.empty()) {
+    return Finish("usage: drawlog [on|off|dump <file>]");
+  }
+  Out("drawlog %s", CCubeModel::PortDrawLogOn() ? "on" : "off");
+  Finish();
+}
+
+// One pixel of a saved screenshot (a BMP of 24 or 32 bits, as SDL writes them), at the same
+// fraction of the image as (x, y) is of the window. 1 done, 0 the file isn't all there yet,
+// -1 not readable.
+int ReadBmpPixel(const std::filesystem::path& path, double fx, double fy, uint8_t rgb[3]) {
+  std::error_code ec;
+  const uintmax_t size = std::filesystem::file_size(path, ec);
+  std::FILE* const file = ec ? nullptr : std::fopen(path.string().c_str(), "rb");
+  if (file == nullptr) {
+    return 0;
+  }
+  uint8_t head[70] = {};
+  const size_t got = std::fread(head, 1, sizeof(head), file);
+  const auto u32 = [&head](size_t at) {
+    return uint32_t(head[at]) | uint32_t(head[at + 1]) << 8 | uint32_t(head[at + 2]) << 16 | uint32_t(head[at + 3]) << 24;
+  };
+  int result = -1;
+  if (got == sizeof(head) && head[0] == 'B' && head[1] == 'M') {
+    const uint32_t offset = u32(10);
+    const int width = int32_t(u32(18));
+    const int height = int32_t(u32(22));
+    const int bits = head[28] | head[29] << 8;
+    const int rows = std::abs(height);
+    const size_t stride = (size_t(width) * size_t(bits) / 8 + 3) & ~size_t(3);
+    if (width > 0 && rows > 0 && (bits == 24 || bits == 32)) {
+      if (size < offset + stride * size_t(rows)) {
+        result = 0;
+      } else {
+        uint32_t masks[3] = {0x00FF0000, 0x0000FF00, 0x000000FF}; // BGR(A) when there are no masks
+        if (bits == 32 && u32(30) == 3) {
+          masks[0] = u32(54);
+          masks[1] = u32(58);
+          masks[2] = u32(62);
+        }
+        const int x = std::clamp(int(fx * width), 0, width - 1);
+        const int y = std::clamp(int(fy * rows), 0, rows - 1);
+        const size_t row = height > 0 ? size_t(rows - 1 - y) : size_t(y);
+        uint8_t px[4] = {};
+        std::fseek(file, long(offset + row * stride + size_t(x) * size_t(bits / 8)), SEEK_SET);
+        if (std::fread(px, 1, size_t(bits / 8), file) == size_t(bits / 8)) {
+          const uint32_t value = uint32_t(px[0]) | uint32_t(px[1]) << 8 | uint32_t(px[2]) << 16 | uint32_t(px[3]) << 24;
+          for (int c = 0; c < 3; ++c) {
+            int shift = 0;
+            while (masks[c] != 0 && ((masks[c] >> shift) & 1) == 0) {
+              ++shift;
+            }
+            rgb[c] = uint8_t((value & masks[c]) >> shift);
+          }
+          result = 1;
+        }
+      }
+    }
+  }
+  std::fclose(file);
+  return result;
+}
+
+// pick <x> <y>: the draw at a window pixel, by drawing the frame's draw serials as colours and
+// reading the screenshot back (the view is put back after).
+void CmdPick() {
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path dir = fs::current_path(ec) / "screenshots";
+  const auto count = [&dir] {
+    std::error_code e;
+    size_t n = 0;
+    for (fs::directory_iterator it(dir, e), end; !e && it != end; it.increment(e)) {
+      ++n;
+    }
+    return n;
+  };
+  if (sCmd.phase == 0) {
+    unsigned x = 0;
+    unsigned y = 0;
+    if (sCmd.args.size() != 3 || !ParseUnsigned(sCmd.args[1], x) || !ParseUnsigned(sCmd.args[2], y)) {
+      return Finish("usage: pick <x> <y>  (window pixels, top-left origin)");
+    }
+    sCmd.pickX = int(x);
+    sCmd.pickY = int(y);
+    sCmd.pickView = PortDebug::PbrView();
+    if (sCmd.pickView != DrawIdView()) {
+      PortDebug::SetPbrView(DrawIdView());
+    }
+    sCmd.phase = 1;
+    sCmd.untilFrame = sFrame + 3; // the draws of the new view have to reach the screen
+    return;
+  }
+  if (sCmd.phase == 1) {
+    if (sFrame < sCmd.untilFrame) {
+      return;
+    }
+    sCmd.shotCount = count();
+    aurora::request_screenshot();
+    sCmd.phase = 2;
+    sCmd.untilFrame = sFrame + 180;
+    return;
+  }
+  if (count() <= sCmd.shotCount) {
+    if (sFrame >= sCmd.untilFrame) {
+      PortDebug::SetPbrView(sCmd.pickView);
+      Finish("no screenshot appeared");
+    }
+    return;
+  }
+  fs::path newest;
+  fs::file_time_type newestTime{};
+  for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    const fs::file_time_type t = it->last_write_time(ec);
+    if (newest.empty() || t > newestTime) {
+      newest = it->path();
+      newestTime = t;
+    }
+  }
+  int width = 0;
+  int height = 0;
+  const bool sized = PortDebug::WindowSize(width, height) && width > 0 && height > 0;
+  uint8_t rgb[3] = {};
+  const int read = ReadBmpPixel(newest, sized ? double(sCmd.pickX) / width : 0.5, sized ? double(sCmd.pickY) / height : 0.5, rgb);
+  if (read == 0 && sFrame < sCmd.untilFrame) {
+    return; // still being written
+  }
+  PortDebug::SetPbrView(sCmd.pickView);
+  if (read != 1) {
+    return Finish("cannot read the screenshot");
+  }
+  const uint32_t serial = uint32_t(rgb[0]) | uint32_t(rgb[1]) << 8 | uint32_t(rgb[2]) << 16;
+  Out("pixel %d %d: colour %u %u %u, serial %u (%s)", sCmd.pickX, sCmd.pickY, rgb[0], rgb[1], rgb[2], serial,
+      newest.string().c_str());
+  CCubeModel::PortDraw draw;
+  if (serial == 0) {
+    return Finish("no model surface there (the background, or a draw that is not a model's)");
+  }
+  if (!CCubeModel::PortFindDraw(serial, draw)) {
+    return Finish("no draw has that serial (the pixel is an edge blend, or the frame is gone)");
+  }
+  Out("%s", kDrawFieldNames);
+  Out("%s", DrawFields(draw).c_str());
+  if (draw.model != nullptr) {
+    // The line a `roomgeo mats` of this model gives, for this material.
+    const uint32_t id = draw.asset;
+    Out("model %08X, material %s", id, PortRoomGeo::MaterialLine(draw.model, id, int(draw.material)).c_str());
+    const uint64_t hash = GXPortDrawShader(serial);
+    if (hash != 0) {
+      Out("shader %016llx: `shader dump <dir>` writes it as %016llx.wgsl", static_cast< unsigned long long >(hash),
+          static_cast< unsigned long long >(hash));
+    }
+  }
+  Finish();
+}
+
+// shader dump <dir> | override <dir>|off | reload
+void CmdShader() {
+  const std::string arg = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : std::string();
+  if (arg == "dump" && sCmd.args.size() > 2) {
+    Out("%u module(s) written to %s", GXPortShaderDump(sCmd.args[2].c_str()), sCmd.args[2].c_str());
+  } else if (arg == "override" && sCmd.args.size() > 2) {
+    const bool off = Lower(sCmd.args[2]) == "off";
+    GXPortShaderOverrideDir(off ? nullptr : sCmd.args[2].c_str());
+    GXPortShaderReload();
+    Out("overrides %s", off ? "off" : sCmd.args[2].c_str());
+  } else if (arg == "reload") {
+    GXPortShaderReload();
+    Out("shader and pipeline caches dropped (they rebuild as they are drawn; reload twice if one is stale)");
+  } else {
+    return Finish("usage: shader dump <dir> | override <dir>|off | reload");
+  }
   Finish();
 }
 
@@ -2242,6 +2480,12 @@ void RunFrame() {
       PortDebug::SetParticleInterpolation(on);
     }
     Finish();
+  } else if (name == "drawlog") {
+    CmdDrawLog();
+  } else if (name == "pick") {
+    CmdPick();
+  } else if (name == "shader") {
+    CmdShader();
   } else if (name == "shot") {
     namespace fs = std::filesystem;
     std::error_code ec;

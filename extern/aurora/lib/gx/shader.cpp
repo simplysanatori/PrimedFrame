@@ -10,10 +10,17 @@
 
 #include <dolphin/gx/GXEnum.h>
 
+#include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <atomic>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "tracy/Tracy.hpp"
 
@@ -2587,7 +2594,7 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     fragmentFn += "\n    prev = vec4f(in.nrm, prev.a);";
   }
 
-  const auto shaderSource = fmt::format(R"""(
+  auto shaderSource = fmt::format(R"""(
 fn bswap32(v: u32, le: bool) -> u32 {{
   if (le) {{
     return v;
@@ -2920,7 +2927,7 @@ struct Immediate {{
     vtx_start: u32,
     current_pnmtx: u32,
     fog_range_base: u32,
-    _pad: u32,
+    serial: u32,
     array_start0: vec4u,
     array_start1: vec4u,
     array_start2: vec4u,
@@ -2958,6 +2965,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
 )""",
                                         uniBufAttrs, texBindings, vtxOutAttrs, vtxInAttrs, vtxXfrAttrs, fragmentFn,
                                         fragmentFnPre, vtxXfrAttrsPre, uniformPre);
+  if (config.drawId) {
+    // The draw serial as the colour, 8 bits a channel, whatever the shading came to (it can still discard).
+    constexpr std::string_view tail = "    return prev;\n}";
+    const size_t at = shaderSource.rfind(tail);
+    assert(at != std::string::npos);
+    shaderSource.replace(at, tail.size(),
+                         "    return vec4f(f32(imm.serial & 255u), f32((imm.serial >> 8u) & 255u), "
+                         "f32((imm.serial >> 16u) & 255u), 255.0) / 255.0;\n}");
+  }
   if (EnableDebugPrints) {
     Log.info("Generated shader (hash {:x}): {}", hash, shaderSource);
   }
@@ -2965,13 +2981,209 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
   return shaderSource;
 }
 
+namespace {
+// Shader debugging: a record of every config a module was built from (a few hundred), so a dump started late
+// still has the modules built before it, and the override directory. Touched once per module, never per draw.
+struct ShaderDebug {
+  std::mutex mutex;
+  bool envRead = false;
+  std::string dumpDir;
+  std::string overrideDir;
+  absl::flat_hash_map<u64, ShaderConfig> configs;
+  absl::flat_hash_set<u64> dumped;
+};
+
+ShaderDebug& shader_debug() {
+  static auto* s = new ShaderDebug;
+  return *s;
+}
+
+void read_shader_env(ShaderDebug& dbg) {
+  if (dbg.envRead) {
+    return;
+  }
+  dbg.envRead = true;
+  if (const char* dir = std::getenv("MP_WGSL_DUMP"); dir != nullptr && *dir != '\0') {
+    dbg.dumpDir = dir;
+  }
+  if (const char* dir = std::getenv("MP_WGSL_OVERRIDE"); dir != nullptr && *dir != '\0') {
+    dbg.overrideDir = dir;
+  }
+}
+
+std::string describe_config(u64 hash, const ShaderConfig& c) {
+  std::string out = fmt::format(
+      "// hash {:016x}\n"
+      "// pbr {} ({}) pbrKind {} sdf {} depthOnly {} volFog {} drawId {}\n"
+      "// fogType {} fogRange {} lineMode {} vtxStride {}\n"
+      "// tevStages {} indStages {} alphaCompare {}/{}/{}/{}/{}\n"
+      "// (the PBR debug view is a uniform, not part of the config)\n",
+      hash, c.pbr, c.pbr == 0 ? "off" : c.pbr == 1 ? "full" : "cost test", c.pbrKind, c.sdf, c.depthOnly, c.volFog,
+      static_cast<u32>(c.drawId), c.fogType, static_cast<u32>(c.fogRangeEnabled), static_cast<u32>(c.lineMode),
+      c.vtxStride, c.tevStageCount, c.numIndStages, static_cast<u32>(c.alphaCompare.comp0), c.alphaCompare.ref0,
+      static_cast<u32>(c.alphaCompare.op), static_cast<u32>(c.alphaCompare.comp1), c.alphaCompare.ref1);
+  for (u32 i = 0; i < c.tevStageCount && i < c.tevStages.size(); ++i) {
+    const auto& s = c.tevStages[i];
+    out += fmt::format("// stage {}: texCoord {} texMap {} channel {}\n", i, static_cast<u32>(s.texCoordId),
+                       static_cast<u32>(s.texMapId), static_cast<u32>(s.channelId));
+  }
+  return out;
+}
+
+// Writes <dir>/<hash16>.wgsl once per hash, and a line to <dir>/index.tsv. Caller holds the mutex.
+bool write_shader_dump(ShaderDebug& dbg, u64 hash, const ShaderConfig& config, const std::string& source) {
+  if (dbg.dumpDir.empty() || !dbg.dumped.insert(hash).second) {
+    return false;
+  }
+  std::error_code ec;
+  const std::filesystem::path dir{dbg.dumpDir};
+  std::filesystem::create_directories(dir, ec);
+  const auto name = fmt::format("{:016x}", hash);
+  {
+    std::ofstream file(dir / (name + ".wgsl"), std::ios::binary | std::ios::trunc);
+    if (!file) {
+      Log.warn("wgsl dump: cannot write {}", (dir / (name + ".wgsl")).string());
+      return false;
+    }
+    file << describe_config(hash, config) << "\n" << source;
+  }
+  std::ofstream index(dir / "index.tsv", std::ios::app);
+  const char* kind = config.depthOnly ? "depth" : config.pbr == 0 ? "gx" : config.pbr == 1 ? "pbr" : "pbr-cost";
+  index << name << '\t' << kind << "\tpbrKind=" << static_cast<u32>(config.pbrKind)
+        << " volFog=" << static_cast<u32>(config.volFog) << " tev=" << config.tevStageCount
+        << " drawId=" << static_cast<u32>(config.drawId) << '\n';
+  return true;
+}
+
+// Compiles `source`; null when Dawn rejected it (message in `error`).
+wgpu::ShaderModule create_module_checked(const std::string& source, const char* label, std::string& error) {
+  wgpu::ShaderSourceWGSL wgslDescriptor{};
+  wgslDescriptor.code = source.c_str();
+  const auto descriptor = wgpu::ShaderModuleDescriptor{
+      .nextInChain = &wgslDescriptor,
+      .label = label,
+  };
+  webgpu::g_device.PushErrorScope(wgpu::ErrorFilter::Validation);
+  auto module = webgpu::g_device.CreateShaderModule(&descriptor);
+  bool failed = false;
+  const auto future = webgpu::g_device.PopErrorScope(
+      wgpu::CallbackMode::WaitAnyOnly, [&](wgpu::PopErrorScopeStatus, wgpu::ErrorType type, wgpu::StringView message) {
+        if (type != wgpu::ErrorType::NoError) {
+          failed = true;
+          error = std::string{std::string_view{message}};
+        }
+      });
+  webgpu::g_instance.WaitAny(future, 5000000000);
+  return failed ? wgpu::ShaderModule{} : module;
+}
+} // namespace
+
+u32 dump_shaders(const char* dir) noexcept {
+  auto& dbg = shader_debug();
+  std::scoped_lock guard{dbg.mutex};
+  read_shader_env(dbg);
+  dbg.dumpDir = dir != nullptr ? dir : "";
+  dbg.dumped.clear();
+  if (dbg.dumpDir.empty()) {
+    return 0;
+  }
+  u32 count = 0;
+  for (const auto& [hash, config] : dbg.configs) {
+    // The sources of modules built before the dump are generated again: keeping all of them would cost memory
+    // on every run.
+    if (write_shader_dump(dbg, hash, config, build_shader_source(config))) {
+      ++count;
+    }
+  }
+  return count;
+}
+
+void set_shader_override_dir(const char* dir) noexcept {
+  auto& dbg = shader_debug();
+  std::scoped_lock guard{dbg.mutex};
+  read_shader_env(dbg);
+  dbg.overrideDir = dir != nullptr ? dir : "";
+}
+
+namespace {
+std::atomic_bool g_drawShaderLog{false};
+std::mutex g_drawShaderMutex;
+// Serials are handed out in order, so the last few frames' fit in a ring.
+constexpr u32 kDrawShaderRing = 1u << 16;
+struct DrawShader {
+  u32 serial = 0;
+  u64 hash = 0;
+};
+std::vector<DrawShader> g_drawShaders;
+} // namespace
+
+void set_draw_shader_log(bool on) noexcept { g_drawShaderLog.store(on, std::memory_order_relaxed); }
+
+void note_draw_shader(u32 serial, const ShaderConfig& config) noexcept {
+  if (serial == 0 || !g_drawShaderLog.load(std::memory_order_relaxed)) {
+    return;
+  }
+  const u64 hash = xxh3_hash(config);
+  std::scoped_lock guard{g_drawShaderMutex};
+  if (g_drawShaders.empty()) {
+    g_drawShaders.resize(kDrawShaderRing);
+  }
+  g_drawShaders[serial % kDrawShaderRing] = {serial, hash};
+}
+
+u64 draw_shader_hash(u32 serial) noexcept {
+  std::scoped_lock guard{g_drawShaderMutex};
+  if (g_drawShaders.empty()) {
+    return 0;
+  }
+  const DrawShader& entry = g_drawShaders[serial % kDrawShaderRing];
+  return entry.serial == serial ? entry.hash : 0;
+}
+
+bool shader_overridden(u64 hash) noexcept {
+  auto& dbg = shader_debug();
+  std::string dir;
+  {
+    std::scoped_lock guard{dbg.mutex};
+    read_shader_env(dbg);
+    dir = dbg.overrideDir;
+  }
+  if (dir.empty()) {
+    return false;
+  }
+  std::error_code error;
+  return std::filesystem::exists(std::filesystem::path{dir} / fmt::format("{:016x}.wgsl", hash), error);
+}
+
 wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
   ZoneScoped;
   const auto shaderSource = build_shader_source(config);
   const auto hash = xxh3_hash(config);
+  const auto label = fmt::format("GX Shader {:x}", hash);
+  auto& dbg = shader_debug();
+  std::string overrideDir;
+  {
+    std::scoped_lock guard{dbg.mutex};
+    read_shader_env(dbg);
+    dbg.configs.emplace(hash, config);
+    write_shader_dump(dbg, hash, config, shaderSource);
+    overrideDir = dbg.overrideDir;
+  }
+  if (!overrideDir.empty()) {
+    const auto path = std::filesystem::path{overrideDir} / fmt::format("{:016x}.wgsl", static_cast<u64>(hash));
+    std::ifstream file(path, std::ios::binary);
+    if (file) {
+      const std::string edited{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+      std::string error;
+      if (auto module = create_module_checked(edited, label.c_str(), error)) {
+        Log.info("wgsl override {:016x}", static_cast<u64>(hash));
+        return module;
+      }
+      Log.error("wgsl override {:016x} rejected, using the generated source: {}", static_cast<u64>(hash), error);
+    }
+  }
   wgpu::ShaderSourceWGSL wgslDescriptor{};
   wgslDescriptor.code = shaderSource.c_str();
-  const auto label = fmt::format("GX Shader {:x}", hash);
   const auto shaderDescriptor = wgpu::ShaderModuleDescriptor{
       .nextInChain = &wgslDescriptor,
       .label = label.c_str(),

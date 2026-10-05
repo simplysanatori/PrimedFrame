@@ -775,12 +775,18 @@ void BuildClusterLevels(Area& area) {
 void BindMaterialValues() {
   CCubeModel::PortClearPBROverrides();
   for (const MaterialValue& value : sMaterialValues) {
-    for (const auto& [mrea, area] : Areas()) {
-      for (const Model& model : area.models) {
+    bool area = false;
+    for (const auto& [mrea, a] : Areas()) {
+      for (const Model& model : a.models) {
         if (model.id == value.id) {
           CCubeModel::PortOverridePBR(CubeModel(model), value.material, value.field, value.value);
+          area = true;
         }
       }
+    }
+    if (!area) {
+      // Not room geometry: whichever model of that id has drawn lately (needs the draw log).
+      CCubeModel::PortOverridePBR(CCubeModel::PortFindModel(value.id), value.material, value.field, value.value);
     }
   }
 }
@@ -1978,90 +1984,110 @@ uint32_t Pick(const CVector3f& origin, const CVector3f& direction, std::string& 
   return hits.empty() ? 0 : Areas()[hits[0].mrea].models[hits[0].item->model].id;
 }
 
-std::string Materials(uint32_t id) {
-  static const char* const kTags[] = {"PBRM", "PBR2", "PBR3", "PBR4"};
+std::string MaterialLine(const CCubeModel* cube, uint32_t id, int i) {
+  char line[320];
+  const uint flags = cube->GetMaterialByIndex(i).GetFlags();
+  float v[19];
+  uint wrap = 0;
+  float lightScale[2];
+  uint cubeMap = 0;
+  const int floats = cube->PortReadPBRMaterial(i, v, &wrap, lightScale, &cubeMap);
+  const bool wraps = wrap != 0x55555555;
+  const bool scaled = lightScale[0] != 1.f || lightScale[1] != 1.f;
+  const char* const tag = CCubeModel::PortRecordTag(floats, wrap, scaled, cubeMap);
+  // What the console's `roomgeo mat` put in place is what gets drawn, so show that.
+  int shown = floats;
+  bool overridden = false;
+  for (const MaterialValue& value : sMaterialValues) {
+    if (value.id == id && value.material == i) {
+      v[value.field] = value.value;
+      overridden = true;
+      shown = std::max(shown, value.field < 6 ? 6 : value.field < 8 ? 8 : 19);
+    }
+  }
+  int used = std::snprintf(line, sizeof(line), "%d: flags %08X %s%s%s, record %s", i, flags,
+                           (flags & kStateFlag_PortPBR) != 0 ? "PBR" : "TEV",
+                           (flags & kStateFlag_DepthSorting) != 0 ? " blended" : "",
+                           (flags & kStateFlag_AlphaTest) != 0 ? " cutout" : "", tag);
+  if (shown > 0 && used < int(sizeof(line))) {
+    used += std::snprintf(line + used, sizeof(line) - used, ", emissive %g %g %g, backlight %g %g %g", v[0], v[1],
+                          v[2], v[3], v[4], v[5]);
+  }
+  if (shown >= 8 && used < int(sizeof(line))) {
+    used += std::snprintf(line + used, sizeof(line) - used, ", height %g, mode %g", v[6], v[7]);
+  }
+  if (shown >= 19 && used < int(sizeof(line))) {
+    used += std::snprintf(line + used, sizeof(line) - used, ", kind %g, strength %g, params %g %g %g %g", v[13],
+                          v[14], v[15], v[16], v[17], v[18]);
+  }
+  if (wraps && used < int(sizeof(line))) {
+    // Map i's S and T modes: 0 clamp, 1 repeat, 2 mirror.
+    used += std::snprintf(line + used, sizeof(line) - used, ", wrap");
+    for (int m = 0; m < 8 && used < int(sizeof(line)); ++m) {
+      used += std::snprintf(line + used, sizeof(line) - used, " %u%u", (wrap >> (m * 4)) & 3,
+                            (wrap >> (m * 4 + 2)) & 3);
+    }
+  }
+  if (cubeMap != 0 && used < int(sizeof(line))) {
+    used += std::snprintf(line + used, sizeof(line) - used, ", cube %08X", cubeMap);
+  }
+  if (overridden && used < int(sizeof(line))) {
+    std::snprintf(line + used, sizeof(line) - used, " (overridden)");
+  }
+  return line;
+}
+
+namespace {
+
+// The loaded model with this file id: an area's (room geometry), else one that has drawn
+// since the draw log went on (an actor's, a character's, the viewmodel's).
+const CCubeModel* FindCube(uint32_t id) {
   for (const auto& [mrea, area] : Areas()) {
     for (const Model& model : area.models) {
       const CCubeModel* const cube = model.id == id ? CubeModel(model) : nullptr;
-      if (cube == nullptr) {
-        continue;
+      if (cube != nullptr) {
+        return cube;
       }
-      std::string out;
-      char line[320];
-      const int count = int(cube->PortMaterialCount());
-      for (int i = 0; i < count; ++i) {
-        const uint flags = cube->GetMaterialByIndex(i).GetFlags();
-        float v[19];
-        uint wrap = 0;
-        float lightScale[2];
-        const int floats = cube->PortReadPBRMaterial(i, v, &wrap, lightScale);
-        const bool wraps = wrap != 0x55555555;
-        const bool scaled = lightScale[0] != 1.f || lightScale[1] != 1.f;
-        const char* const tag = scaled          ? "PBR6"
-                                : wraps && floats == 0 ? "WRAP"
-                                : wraps         ? "PBR5"
-                                : floats == 19 ? kTags[3]
-                                : floats == 13 ? kTags[2]
-                                : floats == 8  ? kTags[1]
-                                : floats == 6  ? kTags[0]
-                                               : "none";
-        // What the console's `roomgeo mat` put in place is what gets drawn, so show that.
-        int shown = floats;
-        bool overridden = false;
-        for (const MaterialValue& value : sMaterialValues) {
-          if (value.id == id && value.material == i) {
-            v[value.field] = value.value;
-            overridden = true;
-            shown = std::max(shown, value.field < 6 ? 6 : value.field < 8 ? 8 : 19);
-          }
-        }
-        int used = std::snprintf(line, sizeof(line), "%d: flags %08X %s%s%s, record %s", i, flags,
-                                 (flags & kStateFlag_PortPBR) != 0 ? "PBR" : "TEV",
-                                 (flags & kStateFlag_DepthSorting) != 0 ? " blended" : "",
-                                 (flags & kStateFlag_AlphaTest) != 0 ? " cutout" : "", tag);
-        if (shown > 0 && used < int(sizeof(line))) {
-          used += std::snprintf(line + used, sizeof(line) - used,
-                                ", emissive %g %g %g, backlight %g %g %g", v[0], v[1], v[2], v[3], v[4], v[5]);
-        }
-        if (shown >= 8 && used < int(sizeof(line))) {
-          used += std::snprintf(line + used, sizeof(line) - used, ", height %g, mode %g", v[6], v[7]);
-        }
-        if (shown >= 19 && used < int(sizeof(line))) {
-          used += std::snprintf(line + used, sizeof(line) - used, ", kind %g, strength %g, params %g %g %g %g",
-                                v[13], v[14], v[15], v[16], v[17], v[18]);
-        }
-        if (wraps && used < int(sizeof(line))) {
-          // Map i's S and T modes: 0 clamp, 1 repeat, 2 mirror.
-          used += std::snprintf(line + used, sizeof(line) - used, ", wrap");
-          for (int m = 0; m < 8 && used < int(sizeof(line)); ++m) {
-            used += std::snprintf(line + used, sizeof(line) - used, " %u%u", (wrap >> (m * 4)) & 3,
-                                  (wrap >> (m * 4 + 2)) & 3);
-          }
-        }
-        if (overridden && used < int(sizeof(line))) {
-          std::snprintf(line + used, sizeof(line) - used, " (overridden)");
-        }
-        out += line;
-        out += '\n';
+    }
+  }
+  return CCubeModel::PortFindModel(id);
+}
+
+} // namespace
+
+std::string Owner(const CCubeModel* cube) {
+  for (const auto& [mrea, area] : Areas()) {
+    for (const Model& model : area.models) {
+      if (cube != nullptr && CubeModel(model) == cube) {
+        char text[40];
+        std::snprintf(text, sizeof(text), "roomgeo %08X", mrea);
+        return text;
       }
-      return out;
     }
   }
   return {};
+}
+
+std::string Materials(uint32_t id) {
+  const CCubeModel* const cube = FindCube(id);
+  if (cube == nullptr) {
+    return {};
+  }
+  std::string out;
+  const int count = int(cube->PortMaterialCount());
+  for (int i = 0; i < count; ++i) {
+    out += MaterialLine(cube, id, i);
+    out += '\n';
+  }
+  return out;
 }
 
 bool SetMaterialValue(uint32_t id, int material, int field, float value) {
   if (material < 0 || field < 0 || field >= 19) {
     return false;
   }
-  bool found = false;
-  for (const auto& [mrea, area] : Areas()) {
-    for (const Model& model : area.models) {
-      const CCubeModel* const cube = model.id == id ? CubeModel(model) : nullptr;
-      found = found || (cube != nullptr && uint(material) < cube->PortMaterialCount());
-    }
-  }
-  if (!found) {
+  const CCubeModel* const found = FindCube(id);
+  if (found == nullptr || uint(material) >= found->PortMaterialCount()) {
     return false;
   }
   for (MaterialValue& entry : sMaterialValues) {

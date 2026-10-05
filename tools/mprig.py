@@ -556,6 +556,26 @@ def cmd_shot(a):
     print(bmp_to_png(bmp, a.out, crop))
 
 
+def cmd_pick(a):
+    run = load_run(a.name)
+    ok = run_console(run, [f"pick {a.x} {a.y}"])
+    if a.shot:
+        # A normal frame (pick put the view back) with a crosshair where it looked.
+        from PIL import Image, ImageDraw
+        bmp = take_shot(run, [])
+        img = Image.open(bmp).convert("RGB")
+        bmp.unlink()
+        d = ImageDraw.Draw(img)
+        for c, w in (((0, 0, 0), 3), ((255, 0, 255), 1)):
+            d.line([(a.x - 12, a.y), (a.x + 12, a.y)], fill=c, width=w)
+            d.line([(a.x, a.y - 12), (a.x, a.y + 12)], fill=c, width=w)
+        out = Path(a.shot).resolve()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        img.save(out)
+        print(out)
+    sys.exit(0 if ok else 1)
+
+
 def image_stats(pa, pb):
     import numpy as np
     from PIL import Image
@@ -918,6 +938,11 @@ def build_parser():
     s.add_argument("commands", nargs="*", help="console commands to run first (one per argument)")
     s.add_argument("--crop", help="x,y,w,h")
     s.add_argument("--settle", type=int, default=0, help="frames to wait before the shot")
+    s = add("pick", cmd_pick, "which draw is at a window pixel: owner, CMDL, material, record, shader hash")
+    s.add_argument("name")
+    s.add_argument("x", type=int)
+    s.add_argument("y", type=int)
+    s.add_argument("--shot", metavar="OUT.png", help="also save a frame with a crosshair at x,y")
     s = add("ab", cmd_ab, "A/B two command sets: <prefix>-{a,b,diff,ab}.png + diff stats")
     s.add_argument("name")
     s.add_argument("prefix")

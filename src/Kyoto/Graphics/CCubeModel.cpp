@@ -257,6 +257,135 @@ void CCubeModel::PortOverridePBR(const CCubeModel* model, const int material, co
 
 void CCubeModel::PortClearPBROverrides() { sPortPBROverrides.clear(); }
 
+// Draw identification. Serials count up over the whole run (24 bits, 0 is none), so an entry
+// is found by its serial in the frame being drawn or the last few before it (a screenshot
+// lags the frames by a few).
+namespace {
+constexpr size_t kPortDrawHistory = 8;
+bool sPortDrawLog = false;
+bool sPortDrawIds = false;
+bool sPortDrawNumbering = false; // either of the two: the one flag DrawSurface tests
+uint sPortDrawSerial = 0;
+uint sPortDrawFrame = 0;
+std::vector< CCubeModel::PortDraw > sPortDraws;                      // the frame being drawn
+std::vector< std::vector< CCubeModel::PortDraw > > sPortHistory;     // completed frames, oldest first
+} // namespace
+
+void CCubeModel::PortSetDrawLog(const bool on) {
+  sPortDrawLog = on;
+  sPortDrawNumbering = sPortDrawLog || sPortDrawIds;
+  GXPortDrawLog(on ? GX_TRUE : GX_FALSE);
+  if (!on) {
+    sPortDraws.clear();
+    sPortHistory.clear();
+  }
+}
+
+void CCubeModel::PortSetDrawIds(const bool on) {
+  sPortDrawIds = on;
+  sPortDrawNumbering = sPortDrawLog || sPortDrawIds;
+  // The shader hashes are noted for the serials, so they can be told at the pick.
+  GXPortDrawLog(sPortDrawNumbering ? GX_TRUE : GX_FALSE);
+}
+
+bool CCubeModel::PortDrawLogOn() { return sPortDrawNumbering; }
+
+bool CCubeModel::PortFindDraw(const uint serial, PortDraw& out) {
+  const auto find = [serial, &out](const std::vector< PortDraw >& frame) {
+    const auto it = std::lower_bound(frame.begin(), frame.end(), serial,
+                                     [](const PortDraw& draw, const uint s) { return draw.serial < s; });
+    if (it != frame.end() && it->serial == serial) {
+      out = *it;
+      return true;
+    }
+    return false;
+  };
+  if (find(sPortDraws)) {
+    return true;
+  }
+  for (auto frame = sPortHistory.rbegin(); frame != sPortHistory.rend(); ++frame) {
+    if (find(*frame)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void CCubeModel::PortLastFrameDraws(std::vector< PortDraw >& out) {
+  out = sPortHistory.empty() ? std::vector< PortDraw >() : sPortHistory.back();
+}
+
+const CCubeModel* CCubeModel::PortFindModel(const uint asset) {
+  // Only the last two frames' draws are trusted: a model that stopped drawing may be gone.
+  for (const PortDraw& draw : sPortDraws) {
+    if (draw.asset == asset) {
+      return draw.model;
+    }
+  }
+  if (!sPortHistory.empty()) {
+    for (const PortDraw& draw : sPortHistory.back()) {
+      if (draw.asset == asset) {
+        return draw.model;
+      }
+    }
+  }
+  return nullptr;
+}
+
+const char* CCubeModel::PortRecordTag(const int floats, const uint wrap, const bool scaled, const uint cube) {
+  const bool wraps = wrap != 0x55555555;
+  return cube != 0                ? "PBR7"
+         : scaled                 ? "PBR6"
+         : wraps && floats == 0   ? "WRAP"
+         : wraps                  ? "PBR5"
+         : floats == 19           ? "PBR4"
+         : floats == 13           ? "PBR3"
+         : floats == 8            ? "PBR2"
+         : floats == 6            ? "PBRM"
+                                  : "none";
+}
+
+uint CCubeModel::PortBeginDraw(const CCubeSurface& surface, const bool pbr) const {
+  const uint frame = CGraphics::GetFrameCounter();
+  if (frame != sPortDrawFrame) {
+    sPortDrawFrame = frame;
+    sPortHistory.push_back(std::move(sPortDraws));
+    sPortDraws.clear();
+    if (sPortHistory.size() > kPortDrawHistory) {
+      sPortHistory.erase(sPortHistory.begin());
+    }
+  }
+  sPortDrawSerial = sPortDrawSerial >= 0xFFFFFF ? 1 : sPortDrawSerial + 1;
+  PortDraw draw{};
+  draw.serial = sPortDrawSerial;
+  draw.model = this;
+  draw.asset = PortAssetId();
+  draw.modelIndex = static_cast< uint >(x44_idx);
+  draw.material = surface.GetMaterialIndex();
+  uint place = 0;
+  for (const CCubeSurface* list : {&x38_firstUnsorted, &x3c_firstSorted}) {
+    for (CCubeSurface at = *list; at.IsValid(); at = at.GetNextSurface(), ++place) {
+      if (at.x0_rawdata == surface.x0_rawdata) {
+        draw.surface = place;
+        goto found;
+      }
+    }
+  }
+found:
+  draw.flags = GetMaterialByIndex(draw.material).GetFlags();
+  uint cube = 0;
+  float lightScale[2];
+  draw.floats = PortReadPBRMaterial(static_cast< int >(draw.material), draw.values, &draw.wrap, lightScale, &cube);
+  draw.scaled = lightScale[0] != 1.f || lightScale[1] != 1.f;
+  draw.cube = cube;
+  draw.mode = static_cast< uint >(draw.values[7] + 0.5f);
+  draw.kind = draw.values[13];
+  draw.pbr = pbr;
+  sPortDraws.push_back(draw);
+  GXPortSetDrawSerial(draw.serial);
+  return draw.serial;
+}
+
 f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fadeReplaces,
                                    uint* cube) const {
   f32 values[19];
@@ -538,10 +667,16 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   }
   // Names the draw in Aurora's warnings (a mod model whose texgen reads a missing UV set).
   GXSetDrawTag(PortAssetId(), static_cast< u32 >(x44_idx), surface.GetMaterialIndex());
+  if (sPortDrawNumbering) {
+    PortBeginDraw(surface, pbr);
+  }
 #endif
   surface.CallDisplayList();
 #ifdef TARGET_PC
   GXSetDrawTag(0, 0xFFFFFFFF, 0);
+  if (sPortDrawNumbering) {
+    GXPortSetDrawSerial(0);
+  }
   if (pbr) {
     GXSetPBR(GX_FALSE);
   }

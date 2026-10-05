@@ -499,13 +499,21 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   const bool depthOnly = g_gxState.depthPrepass == 1;
   const bool depthEqual = g_gxState.depthPrepass == 2 && writesDepth;
   config.shaderConfig.depthOnly = depthOnly;
-  config.shaderConfig.volFog = vol_fog_mode(depthOnly);
+  // The "drawid" view: flat colours that must reach the frame as they are, so no fog and no blend (a
+  // depth-only pass stays one).
+  const bool drawId = g_gxState.drawIdMode && !depthOnly;
+  config.shaderConfig.drawId = drawId;
+  if (drawId) {
+    config.shaderConfig.fogType = GX_FOG_NONE;
+    config.shaderConfig.fogRangeEnabled = false;
+  }
+  config.shaderConfig.volFog = drawId ? VolFogNone : vol_fog_mode(depthOnly);
   config = {
       .msaaSamples = gfx::get_sample_count(),
       .shaderConfig = config.shaderConfig,
       .depthFunc = depthEqual ? GX_EQUAL : g_gxState.depthFunc,
       .cullMode = cullMode,
-      .blendMode = g_gxState.blendMode,
+      .blendMode = drawId ? GX_BM_NONE : g_gxState.blendMode,
       .blendFacSrc = g_gxState.blendFacSrc,
       .blendFacDst = g_gxState.blendFacDst,
       .blendOp = g_gxState.blendOp,

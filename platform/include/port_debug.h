@@ -23,6 +23,9 @@ int PbrViewCount();
 const char* PbrViewName(int view);
 int PbrView();
 void SetPbrView(int view);
+// "drawid" is the last view: every draw is its serial in a flat colour (see PortDrawLog). Called by SetPbrView
+// so the model draws know to number themselves.
+void NoteDrawIdMode(bool on);
 // Requests an area change; consumed and executed by the game update so it does
 // not run from the render/UI path.
 void RequestTeleport(int areaId);

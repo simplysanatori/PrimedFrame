@@ -40,6 +40,7 @@ Boot takes about 10 s with `--room`. Use your own run names so sessions stay apa
   `<prefix>-{a,b,diff,ab}.png` and the diff line. Sends `hold 1` first (ticks frozen) so only
   the toggle differs; run `cmd <name> 'hold 0'` afterwards to resume.
 - `diff a.png b.png [--out heat.png] [--fail-above MAD]`: `mad= psnr= changed=% bbox=x,y,w,h luma_a= luma_b=`; exit 3 above the threshold.
+- `pick <name> <x> <y> [--shot out.png]`: which draw is at a window pixel (top-left origin): owner, CMDL, material, record, shader hash. `--shot` writes a normal frame with a crosshair on the pixel.
 - `sheet out.png img... [--cols N] [--labels a,b] [--width 480]`
 - `film <name> <out.png> [--frames 0,4,8,16,32] [--pre "cmd;cmd"] [--cols N] [--width W]`: runs `--pre`, then `hold 1`, steps to each listed tick count and shoots; writes a labelled filmstrip plus `<out>-f<N>.png` and prints the diff of each frame vs the previous one. Spawn the effect in `--pre` (tick commands such as `fx` do not run while held). Resumes with `hold 0`.
 - `fxbisect <name> <root PART> --shot-cmds "cmd;cmd" --bad-region x,y,w,h [--settle N] [--out-dir D]`: runs the shot commands, reads the effect's `fx tree`, then mutes each distinct asset in turn (re-running the shot commands) and ranks them by how much the region changes against the unmuted reference (an unmuted repeat gives the noise floor, subtracted). Writes shots and `sheet.png` under `build/rig/<name>/fxbisect/`.
@@ -74,6 +75,32 @@ the install needs a re-import. Use `--mods DIR` to test a mod build without touc
 
 **Two builds side by side**: start `a --build port-gcc` and `b --build <other>` with the same
 `--room`, then `shot` both with the same commands and `diff` / `sheet` them.
+
+## Shaders
+
+From "this pixel looks wrong" to the material, its PBR record and the generated WGSL:
+
+    $M start s --room <MLVL:MREA> --env MP_WGSL_DUMP=/tmp/wgsl      # or `shader dump <dir>` later
+    $M pick s 640 360 --shot /tmp/pick.png    # draw at that pixel: owner, CMDL, material, record, shader hash
+    $M cmd s 'view drawid' 'drawlog dump /tmp/draws.tsv'            # flat colour per draw; the last frame's draws
+    $M cmd s 'roomgeo mats <cmdl>'            # that model's materials (any CMDL drawn since `drawlog on`)
+
+`view drawid` draws every model surface as a flat 24-bit serial (R low byte, G middle, B high, black =
+untagged); blending, fog and post passes are off in it. `pick` does that for one frame, reads the
+pixel from a screenshot and puts the view back. The hash names `<hash>.wgsl` in the dump dir;
+`index.tsv` lists each module's ShaderConfig (a `drawId=1` module is the drawid variant of a normal one,
+so dump with the view off for the shader that really draws).
+
+To iterate without a rebuild: copy the `.wgsl` to an override dir, edit the body (the bindings and
+the pipeline layout must stay), then
+
+    $M cmd s 'shader override /tmp/ovr' 'shader reload' 'wait 5'; $M shot s /tmp/o.png
+
+(or start with `--env MP_WGSL_OVERRIDE=/tmp/ovr`). The log shows `wgsl override <hash>`; a file that
+does not compile logs the error and the generated source is used. Pipelines rebuild as they are drawn,
+so wait a few frames before the shot (a shot right after `shader reload` can miss draws; reload twice
+if one is stale). Hashes change with the ShaderConfig, so an override dies when a setting that
+changes the module is toggled. Clear it with `shader override off`.
 
 ## Particles
 

@@ -6,6 +6,7 @@
 #include <vector>
 
 class CActor;
+class CCubeModel;
 class CFrustumPlanes;
 class CGameArea;
 class CModel;
@@ -323,7 +324,14 @@ int SetHidden(uint32_t id, bool hidden);
 uint32_t Pick(const CVector3f& origin, const CVector3f& direction, std::string& out);
 // One line per material of a loaded model: flags, whether it is drawn through PBR, and
 // its record (see CCubeModel::PortSetPBRMaterial). Empty when no loaded model has the id.
+// Models other than room geometry (actors, characters, the viewmodel) are found once
+// they have drawn since `drawlog on` or `view drawid`; the values set with SetMaterialValue
+// go to the model instance found then, so they lapse when that model is freed.
 std::string Materials(uint32_t id);
+// One material's line of Materials, for a model that is already in hand (the `pick` command).
+std::string MaterialLine(const CCubeModel* cube, uint32_t id, int material);
+// "roomgeo <MREA>" when the model is one of a room geometry's, else empty.
+std::string Owner(const CCubeModel* cube);
 // Draws a model's material with one value of its record replaced (index 0 to 18), until
 // cleared; kept across room loads. False when no loaded model has that material.
 bool SetMaterialValue(uint32_t id, int material, int field, float value);

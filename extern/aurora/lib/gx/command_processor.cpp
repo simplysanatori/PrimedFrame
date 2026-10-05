@@ -447,7 +447,8 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     return;
   }
 
-  DrawImmediateData immediates{.vtxStart = vertRange.offset, .currentPnMtx = state.currentPnMtx};
+  DrawImmediateData immediates{
+      .vtxStart = vertRange.offset, .currentPnMtx = state.currentPnMtx, .serial = state.drawSerial};
   for (int i = GX_VA_POS; i <= GX_VA_TEX7; ++i) {
     if (state.vtxDesc[i] != GX_INDEX8 && state.vtxDesc[i] != GX_INDEX16) {
       continue;
@@ -485,6 +486,8 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
       cache.bindGeneration = 0;
     }
   }
+
+  note_draw_shader(state.drawSerial, cache.config.shaderConfig);
 
   const bool bindGroupsValid =
       (state.dirty & DirtyTextures) == 0 && cache.bindGeneration == texture::current_bind_generation();
@@ -1005,6 +1008,19 @@ void handle_aurora(ByteReader& reader) noexcept {
     const u8 pass = reader.read<u8>();
     if (g_gxState.depthPrepass != pass) {
       g_gxState.depthPrepass = pass;
+      g_gxState.dirty |= DirtyPipeline;
+    }
+  } else if (subCmd == GX_AURORA_PORT_DRAW_SERIAL) {
+    const u32 serial = reader.read<u32>();
+    if (g_gxState.drawSerial != serial) {
+      g_gxState.drawSerial = serial;
+      // Draws with different serials must not merge.
+      g_gxState.dirty |= DirtyImmediates;
+    }
+  } else if (subCmd == GX_AURORA_PORT_DRAW_ID_MODE) {
+    const bool on = reader.read<u8>() != 0;
+    if (g_gxState.drawIdMode != on) {
+      g_gxState.drawIdMode = on;
       g_gxState.dirty |= DirtyPipeline;
     }
   } else if (subCmd == GX_AURORA_SET_DRAW_TAG) {
