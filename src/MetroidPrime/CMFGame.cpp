@@ -202,7 +202,13 @@ CIOWin::EMessageReturn CMFGame::OnMessage(const CArchitectureMessage& message,
         const CGameCamera& camera =
             mStateManager->GetCameraManager()->GetCurrentCamera(*mStateManager);
         const CCinematicCamera* const cineCam = TCastToConstPtr< CCinematicCamera >(camera);
-        if (input.PStart()) {
+#ifdef TARGET_PC
+        // A skips a skippable cinematic too (it does nothing else while one plays).
+        const bool skipPress = input.PStart() || (cineCam && input.PA());
+#else
+        const bool skipPress = input.PStart();
+#endif
+        if (skipPress) {
           if (cineCam && mStateManager->GetCinematicSkipObject() != kInvalidUniqueId) {
             CMidiManager::StopAll();
             mSkippedCineCam = cineCam->GetUniqueId();

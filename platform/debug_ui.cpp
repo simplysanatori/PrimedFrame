@@ -4154,7 +4154,7 @@ void DrawExtrasTab() {
   if (ImGui::Checkbox("Skippable cutscenes", &skippable)) {
     SetSkippableCutscenes(skippable);
   }
-  ItemHelp("Every cutscene can be skipped with the usual button, including the ones the game never "
+  ItemHelp("Every cutscene can be skipped with Start or A, including the ones the game never "
            "lets you skip (randomprime's room patches). Applies to rooms loaded after the change.");
   if (PortSkipCutscenes::Forced()) {
     SameLineAfterHelp();
