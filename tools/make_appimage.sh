@@ -44,7 +44,7 @@ ln -s metroid-prime.png "$APPDIR/.DirIcon"
 # AppImages, and the port is built against whatever glibc the build host has.
 mkdir -p "$APPDIR/usr/lib"
 for lib in libfreetype.so.6 libpng16.so.16 libz.so.1 libbz2.so.1.0 \
-           libbrotlicommon.so.1 libbrotlidec.so.1; do
+           libbrotlicommon.so.1 libbrotlidec.so.1 libzstd.so.1; do
     src=$(ldd "$BIN" | awk -v want="$lib" '$1 == want { print $3 }')
     if [[ -n "${src:-}" && -f "$src" ]]; then
         cp "$src" "$APPDIR/usr/lib/"
@@ -84,7 +84,7 @@ done
 {
     echo "Shared libraries bundled with this AppImage come from the build host."
     echo "Their licences are those of the distributions they were taken from:"
-    for lib in freetype libpng zlib bzip2 libbrotli; do
+    for lib in freetype libpng libz.so libbz2 libbrotli libzstd; do
         if compgen -G "$APPDIR/usr/lib/*${lib}*" >/dev/null; then
             echo "  - $lib"
         fi
