@@ -1333,6 +1333,22 @@ float SkyGain() {
   return std::isfinite(gain) && gain > 0.f ? gain : 0.f;
 }
 
+float GlowGain(bool frameExposed) {
+  // Before Remastered's exposure was applied the converter folded 0.10 into the glow.
+  constexpr float kFallback = 0.10f;
+  static const bool sOff = [] {
+    const char* const env = std::getenv("MP_REMASTERED_GLOW_EXPOSURE");
+    return env != nullptr && env[0] == '0';
+  }();
+  if (sOff || !sFrame.hasTone || !Enabled() || !RoomExposed()) {
+    return kFallback;
+  }
+  // The shader multiplies the glow by GlowScale, 2^(static EV - EV), where the static
+  // exposure is in use; this is the rest of Remastered's 2^(3 - EV).
+  const float gain = frameExposed || SkyGain() <= 0.f ? sFrame.exposure : SkyGain();
+  return std::isfinite(gain) && gain > 0.f ? gain : kFallback;
+}
+
 void SetStaticExposure(bool on) { sStatic = on ? 1 : 0; }
 
 bool StaticExposure() {

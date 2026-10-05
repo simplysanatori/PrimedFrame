@@ -585,6 +585,12 @@ float GlowScale();
 // after GlowScale, it is exposed at the frame's 2^(3 - EV) as Remastered does. 0 when
 // GlowScale is not in use; the sky is then drawn as before.
 float SkyGain();
+// What an exposed glow (the converter's record mode bit 32: Remastered's bare ICAN x ICNC)
+// is multiplied by, so that with GlowScale it is at the frame's 2^(3 - EV): the opaque pass's
+// is the static 2^(3 - static EV), a draw GlowScale does not scale (frameExposed: the sorted
+// pass) takes the frame's. 0.10 where rooms are not exposed or MP_REMASTERED_GLOW_EXPOSURE=0,
+// the constant the glow used to be baked at.
+float GlowGain(bool frameExposed);
 void SetStaticExposure(bool on);
 bool StaticExposure();
 // Whether a model lit by the baked light (an absolute ambient or a volume) also takes the

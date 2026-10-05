@@ -110,8 +110,9 @@ public:
   // Sends the material's PBR record and the draw's fade (see GXSetPBRLightScale); returns
   // the record's surface kind (glass is 8). cube, when given, gets the file id of the
   // material's own reflection cube ('PBR7'; see PortRoomEnv::MaterialCube), 0 without one.
+  // frameExposed: GlowScale does not scale this draw (see PortRoomEnv::GlowGain).
   float PortSetPBRMaterial(const int idx, const float fade, const bool fadeReplaces,
-                           uint* cube = nullptr) const;
+                           const bool frameExposed, uint* cube = nullptr) const;
   // The material's record (see the definition) with the neutral values where it has
   // none; returns how many floats the record holds, 0 without one. wrap, when given, gets
   // the maps' sampler modes: map i's S mode in bits 4i..4i+1, its T mode in 4i+2..4i+3

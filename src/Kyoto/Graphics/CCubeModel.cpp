@@ -390,7 +390,7 @@ found:
 }
 
 f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fadeReplaces,
-                                   uint* cube) const {
+                                   const bool frameExposed, uint* cube) const {
   f32 values[19];
   f32 lightScale[2];
   PortReadPBRMaterial(idx, values, nullptr, lightScale, cube);
@@ -399,6 +399,16 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
     values[0] = sPortGlow[0];
     values[1] = sPortGlow[1];
     values[2] = sPortGlow[2];
+  }
+  // Mode bit 32: the glow is Remastered's bare product, exposed at run time instead of at
+  // the 0.10 the older imports baked into the map. The shader does not know the bit.
+  const int mode = int(values[7] + 0.5f);
+  if ((mode & 32) != 0) {
+    const f32 gain = PortRoomEnv::GlowGain(frameExposed);
+    for (int i = 0; i < 3; ++i) {
+      values[i] *= gain;
+    }
+    values[7] = f32(mode & ~32);
   }
   if (sPortSky) {
     // Unlit (1) and a sky (16), keeping the material's other flags: the backlight's place
@@ -646,7 +656,7 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     uint materialCube = 0;
     const f32 kind = PortSetPBRMaterial(surface.GetMaterialIndex(), fadeBlend ? tint.GetAlpha() : 1.f,
                                         fadeBlend && (material.GetCompressedBlend() >> 16) == GX_BL_ZERO,
-                                        &materialCube);
+                                        sortedDraw && !sPortSky, &materialCube);
     // A material with its own reflection cube (the Remastered arm cannon's) reflects that in
     // place of the room's, as Remastered draws it; the room still lights it. The cube is in
     // Remastered's world, which maps from ours as the room probes' cubes do (-x, z, y).

@@ -552,12 +552,12 @@ const int kPbrMax[kMaps] = {1024, 256, 256, 256};
 // shows where BC textures are unsupported), so it is a stub.
 const int kPbrNative[kMaps] = {2048, 1024, 1024, 1024};
 const int kPbrStub[kMaps] = {128, 32, 32, 32};
-// Multiplier on the PBR emissive map, applied in linear light (the shader
-// reads the map as sRGB): Remastered authored it for an HDR pipeline, and at
-// 1.0 it washes the albedo to grey. It was 0.35 on the sRGB bytes, which is
-// 0.35^2.2 = 0.10 linear, so this keeps the look the import had. It also stands
-// in for the scene exposure (0.03-0.09 in the rooms seen) that Remastered applies
-// to the glow of every shader but the inverse-exposed ones (kShaderInverseExposure).
+// The PBR emissive map is stored as authored. Remastered's glow is the bare ICAN x ICNC
+// in scene radiance, which the post tonemap then multiplies by 2^(3 - EV) (0.03-0.09 in
+// the rooms seen); the port does the same at run time (record mode bit 32, see
+// PortSetPBRMaterial). kPbrEmissive, 0.10, is what stood in for that exposure before, and
+// is the factor the runtime falls back on outside a Remastered room. Here it only sizes a
+// ramp's mean, which is not an authored map.
 const double kPbrEmissive = 0.10;
 // Ceiling on the metalness channel. A full metal has no diffuse, and Prime's
 // rooms are dim, so the painted shells go near-black above it.
@@ -1049,9 +1049,6 @@ struct Converter::State {
         src = &rt[k];
         tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : src->mean ? ":mean" : "");
         // Named fields, not positional: the size and the alpha follow them.
-        if (k == kEmissive && !src->raw && !src->mean) {
-          tag += ":escale=" + FormatG(kPbrEmissive);
-        }
         if (k == kMr && !src->raw) {
           tag += ":mmax=" + FormatG(src->metalMax);
         }
@@ -1226,15 +1223,6 @@ struct Converter::State {
     }
     if (bake.on) {
       img = Baked(img, bake);
-    }
-    // A ramp's mean is already the glow's level, which an emissive map's texels
-    // (lit spots on a dark map) are not.
-    if (k == kEmissive && !raw && !src->mean) {
-      for (size_t i = 0; i < count; ++i) {
-        for (int c = 0; c < 3; ++c) {
-          img.rgba[i * 4 + c] = ScaleSrgbByte(img.rgba[i * 4 + c], kPbrEmissive);
-        }
-      }
     }
     if (k == kMr && !raw) {
       const uint8_t ceiling = uint8_t(std::nearbyint(float(src->metalMax * 255.0)));
@@ -1647,24 +1635,26 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     // yellow along U; the stripe's soft edges down V) at a texcoord the model's ANUV
     // animates: the set's U plus a 0..0.5 hump, looping every 1.033 s, so the stripes
     // pulse along the ramp (the converter turns the curve into a texture matrix). The
-    // strength undoes kPbrEmissive, which left them a dim orange.
-    out.emissive = s / kPbrEmissive;
+    // strength keeps the old look: the compressed s / 0.10 times the 0.10 that was baked
+    // into the map, written uncompressed so that no exposure is applied.
+    out.glowLinear = true;
+    out.emissive = kPbrEmissive * std::sqrt(std::min(s / kPbrEmissive, kPbrEmissiveMax));
     out.reason += "gun-body list: stripes ramp; ";
   } else if (out.maps[kEmissive].has && shader == kShaderGunPanel) {
     // The beam panels: ICAN x ICNC x base alpha with no exposure factor (only the lit
     // part is exposed), so like the inverse-exposed glows it is kept linear.
     out.glowLinear = true;
-    out.emissive = s / kPbrEmissive;
+    out.emissive = s;
     out.reason += "gun-panel: glow at inverse exposure; ";
   } else if (out.maps[kEmissive].has &&
              std::binary_search(std::begin(kShaderInverseExposure),
                                 std::end(kShaderInverseExposure), shader)) {
     // Inverse-exposed: on screen the glow is ICAN x INCI with no exposure factor, and
-    // the maps are dim (the Metroid body's peaks at 33/255), so kPbrEmissive, the
-    // stand-in for a room's exposure, left them unlit in a dark room. Nor is it
-    // compressed: it is already what the screen shows, not an HDR value for bloom.
+    // the maps are dim (the Metroid body's peaks at 33/255), so a room's exposure would
+    // leave them unlit in a dark room. Nor is it compressed: it is already what the
+    // screen shows, not an HDR value for bloom.
     out.glowLinear = true;
-    out.emissive = s / kPbrEmissive;
+    out.emissive = s;
     out.reason += "inverse-exposure list: glow at inverse exposure; ";
   }
   // The shaders of their own. ICNC is 1 in every lava material and the strength
@@ -2032,9 +2022,21 @@ bool BackLightScale(const RemMaterial& m) {
 bool ColorUnlitDraw(const RemMaterial& m) { return m.colorUnlit && m.unlit && m.tinted; }
 
 // The PBR record's mode word: 1 unlit, 2 glow masked by the base alpha, 4 tinted by the vertex
-// colour, 8 ColorUnlit's draw.
+// colour, 8 ColorUnlit's draw, 32 a glow the runtime exposes (ExposedGlow).
+int PbrMode(const RemMaterial& m);
+
+// Whether the glow is Remastered's bare ICAN x ICNC in scene radiance, which the frame's
+// exposure multiplies: the port's runtime scales it (bit 32). Not the inverse-exposed
+// glows (glowLinear: they are drawn as the screen shows them), a ramp's mean, nor a
+// liquid or glass, whose first three floats are a tint.
+bool ExposedGlow(const RemMaterial& m) {
+  return !m.glowLinear && m.maps[kEmissive].has && !m.maps[kEmissive].mean && m.kind != 7 &&
+         m.kind != 8 && m.kind != 11;
+}
+
 int PbrMode(const RemMaterial& m) {
-  return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0);
+  return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0) +
+         (ExposedGlow(m) ? 32 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
@@ -2059,7 +2061,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     f.push_back(k[i]);
   }
   const char* tag = "PBRM";
-  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind) {
+  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m)) {
     f.push_back(m.height);
     f.push_back(double(PbrMode(m)));
     tag = "PBR2";
