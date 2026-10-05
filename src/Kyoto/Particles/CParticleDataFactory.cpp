@@ -1,5 +1,7 @@
 #include "Kyoto/Particles/CParticleDataFactory.hpp"
 
+#include <algorithm>
+
 #include "Kyoto/CFactoryFnReturn.hpp"
 #include "Kyoto/CRandom16.hpp"
 #include "Kyoto/CSimplePool.hpp"
@@ -133,6 +135,11 @@ void CParticleDataFactory::LoadGPSMTokens(CGenDescription* desc) {
 }
 
 #ifdef TARGET_PC
+// Bounds on the port blocks' counts: a VMAT has three UV transforms, and the real particles carry
+// a handful of VPMT/VSMT rows.
+static constexpr u32 kPortVfxMaxVtmt = 3;
+static constexpr u32 kPortVfxMaxElems = 64;
+
 // The VMSH blob v1 (build/mpr/vfx/DESIGN.md section 1). Anything unreadable leaves the PART
 // without a mesh, so its model particles draw as retail.
 static bool PortReadVfxMesh(CPortVfxData& vfx, CInputStream& in, u32 nbytes) {
@@ -176,6 +183,15 @@ static bool PortReadVfxMesh(CPortVfxData& vfx, CInputStream& in, u32 nbytes) {
       i = in.ReadShort();
     }
   }
+  // The batch indexes its per-particle vertex copy with these, so they must stay inside it.
+  const auto outOfRange = [nv](auto i) { return u32(i) >= nv; };
+  if (std::any_of(vfx.meshIdx32.begin(), vfx.meshIdx32.end(), outOfRange) ||
+      std::any_of(vfx.meshIdx16.begin(), vfx.meshIdx16.end(), outOfRange)) {
+    vfx.meshV.clear();
+    vfx.meshIdx16.clear();
+    vfx.meshIdx32.clear();
+    return true;
+  }
   vfx.meshVerts = nv;
   vfx.meshTris = nt;
   return true;
@@ -193,20 +209,33 @@ static CPortVfxData& PortVfxData(CGenDescription* desc) {
 static bool PortReadVfxMat(CPortVfxData& vfx, CInputStream& in, u32 nbytes, CSimplePool* pool) {
   CPortVfxMat& m = vfx.mat;
   m = CPortVfxMat();
-  const u32 version = in.ReadLong();
-  if (version != 2) {
-    for (u32 i = 4; i + 4 <= nbytes; i += 4) {
+  u32 consumed = 0;
+  const auto skipRest = [&]() {
+    for (; consumed + 4 <= nbytes; consumed += 4) {
       in.ReadLong();
     }
+  };
+  if (nbytes < 16) {
+    skipRest();
+    return true;
+  }
+  const u32 version = in.ReadLong();
+  const u32 features = in.ReadLong();
+  const u32 blend = in.ReadLong();
+  const u32 ntex = in.ReadLong();
+  consumed = 16;
+  // Words after the header: 11 per texture, then 7 slots, 2 ramp rows, the add row, the 11 sources
+  // (3 each) and modulate, depthSoften and spriteCenter. Anything else is not a v2 blob this reader
+  // knows: it is skipped whole, before anything is built, and the PART draws as retail.
+  constexpr u32 kTexWords = 11;
+  constexpr u32 kTailWords = 7 + 2 + 1 + 3 * 11 + 3;
+  if (version != 2 || ntex > 4 || nbytes != (kTexWords * ntex + kTailWords) * 4 + 16) {
+    skipRest();
     return true;
   }
   m.version = version;
-  m.features = in.ReadLong();
-  m.blend = in.ReadLong();
-  const u32 ntex = in.ReadLong();
-  if (ntex > 4) {
-    return false;
-  }
+  m.features = features;
+  m.blend = blend;
   for (u32 i = 0; i < ntex; ++i) {
     const CAssetId id = in.ReadLong();
     TToken< CTexture > tok = id == 0
@@ -408,11 +437,16 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
     case SBIG('VTMT'): {
       CPortVfxData& vfx = PortVfxData(desc);
       GetClassID(in);
-      vfx.vtmtCount = in.ReadLong();
       for (CRealElement* e : vfx.vtmt) {
         delete e;
       }
       vfx.vtmt.clear();
+      vfx.vtmtCount = in.ReadLong();
+      if (vfx.vtmtCount > kPortVfxMaxVtmt) {
+        // The stream can't be resynchronised; drop the port material so the PART draws as retail.
+        desc->xPortVfx.reset();
+        return false;
+      }
       for (u32 i = 0; i < vfx.vtmtCount * 6; ++i) {
         vfx.vtmt.push_back(GetRealElement(in));
       }
@@ -424,6 +458,10 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       std::vector< CPortVfxElem >& list = isVpmt ? PortVfxData(desc).vpmt : PortVfxData(desc).vsmt;
       GetClassID(in);
       const u32 count = in.ReadLong();
+      if (count > kPortVfxMaxElems) {
+        desc->xPortVfx.reset();
+        return false;
+      }
       for (u32 i = 0; i < count; ++i) {
         CPortVfxElem elem;
         if (isVpmt) {
@@ -448,6 +486,7 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
           elem.color = GetColorElement(in);
           break;
         default:
+          desc->xPortVfx.reset(); // frees the elements read so far
           return false;
         }
         list.push_back(elem);
