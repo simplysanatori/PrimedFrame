@@ -216,7 +216,10 @@ fn src(in: VOut, i: i32) -> f32 {
   let s = select(p.xy, p.zw, (i & 1) != 0);
   if (s.x < 0.0) { return s.y; }
   let code = i32(s.x);
-  return comp_of(row_of(in, code / 4), code % 4);
+  let v = comp_of(row_of(in, code / 4), code % 4);
+  // The fresnel and fade angles (4..7) are degrees in the effect; the shader's vertex stage takes their cosine.
+  if (i >= 4 && i <= 7) { return cos(v * 0.0174532942); }
+  return v;
 }
 fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
 fn smooth3(x: f32) -> f32 { return x * x * (3.0 - 2.0 * x); }
@@ -355,8 +358,15 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   }
   let a = x * vc.w;
   if (a <= 0.0) { discard; }
-  let alpha = clamp(a, 0.0, 1.0);
+  var alpha = clamp(a, 0.0, 1.0);
   var col = tone(rgb);
+  // Remastered blends in HDR: a sparse web at intensity 35 and alpha 0.2 still adds 7 and blooms white.
+  // The tone map runs before this blend, so an alpha blend brighter than 1 trades alpha for brightness.
+  let hdr = max(rgb.r, max(rgb.g, rgb.b));
+  if (BLEND == 0u && hdr > 1.0) {
+    alpha = clamp(a * hdr, 0.0, 1.0);
+    col = tone(rgb * (a / alpha));
+  }
   // Fog fades towards the fog colour, but an additive draw adds nothing in the distance and a
   // premultiplied one adds the fog colour weighted by its alpha.
   var fc = u.fogColor.rgb;
