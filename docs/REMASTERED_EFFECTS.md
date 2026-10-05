@@ -250,6 +250,27 @@ those back to retail PARTs (checked 2026-10-05):
   sometimes folds several retail PARTs into one GENP or the reverse, and puts a
   GENP where retail has a WPSC; the count rule skips those stretches. None of
   the 121 CHPR-unpaired GENPs is in a script slot. Scripts: `build/fx-scr/`.
+- Pickup pairs audited (2026-10-05): all hold. `03_over_pickup` and
+  `pickup04` in the table are room names, not effect names (the placement
+  pair agrees in 6 of 7 placements; the slot pair has one). The by-character
+  pickup and beam pairs (IceBeam, WaveBeam, PlasmaBeam, Health, ShieldBase,
+  powerbomb...) are each named by one CHPR whose ANCS has that PART only.
+- Still unpaired (2026-10-05): the CHPR effect sets name 242 fresh GENPs, 131
+  of them unpaired. These rules were tried and fail when a known pair is hidden,
+  so none is used:
+  - Texture ids: only 2 GENP textures are carried-over copies.
+  - LTME/MAXP: the child generators' values differ from retail in 291 of 423.
+  - Tag order against the ANCS/EVNT PART order: about half the pairs are
+    inverted, which is random.
+  - The op-0 u32: it is not a name hash.
+  - Texture image similarity (retail TXTR against the GENP's textures,
+    `build/fx-tex/`): 17 of 77 right. Above a 0.3 margin it gains only 2 pairs
+    over elimination, and a wrong pair sits at 0.289.
+  - Intersecting the PART sets of every CHPR that shares a GENP: 1 right, 3
+    missed. A shared GENP stands in for different PARTs in different
+    characters.
+  What is left is mostly enemy CHPRs with 15 to 28 candidates each and no
+  usable event match.
 
 ## Converting to retail PART
 
