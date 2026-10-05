@@ -750,6 +750,9 @@ int main(int argc, char** argv) {
     }
     PortCrash::Install();
     PortLog::Write( "metroid_prime_port: build %s\n", MP_BUILD_REVISION);
+    for (const std::string& line : PortPaths::MigrationLog()) {
+        PortLog::Write("port: portable data: %s\n", line.c_str());
+    }
     PortRandomizer::EnsureLoaded();
     PortAp::EnsureLoaded();
     // A 16:9 window when widescreen is requested; the game's render mode is
@@ -822,7 +825,7 @@ int main(int argc, char** argv) {
         PortLog::Write("port: frame buffers at %ux (%s)\n", frameBufferScale,
                        std::getenv("MP_FRAME_BUFFERS") != nullptr ? "MP_FRAME_BUFFERS" : "room geometry");
     }
-    // Settings, mods, save states and the shader caches sit next to the
+    // Settings, mods, save states and the shader caches sit in user/ beside the
     // executable when that folder can be written to (port_paths.h).
     const std::string& userFolder = PortPaths::UserFolder();
     const char* cacheEnv = std::getenv("MP_CACHE_PATH");
@@ -838,7 +841,7 @@ int main(int argc, char** argv) {
 #if defined(__ANDROID__)
                    PortPaths::IsPortable() ? " (shared storage)" : "");
 #else
-                   PortPaths::IsPortable() ? " (next to the executable)" : "");
+                   PortPaths::IsPortable() ? " (portable)" : "");
 #endif
     AuroraConfig config = {
         .appName = "Metroid Prime",

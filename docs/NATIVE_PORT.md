@@ -79,13 +79,16 @@ graphics. The same revision appears in the launch log and F1 Performance tab.
 Include it when reporting a copied build from another machine; a `-dirty` suffix
 means the executable was built with uncommitted source changes.
 
-A copied build is self-contained: everything the port writes goes in the folder
-holding the executable (for an AppImage, the folder the `.AppImage` file is in).
-That is `port_settings.ini`, `mods/`, `savestates/`, `importers/`,
-`user_textures/`, the randomizer and Archipelago files, the controller bindings
-and the shader caches (`dawn_cache.db`, `pipeline_cache.db`), next to the memory
-card in `<region>/Card A`. The disc image is auto-detected there too (or one
-level below), and texture replacements are loaded from `textures/` when present;
+A copied build is self-contained: everything the port writes goes in a `user/`
+folder beside the executable (for an AppImage, loose in the folder the
+`.AppImage` file is in, with no `user/`). That is `port_settings.ini`, `mods/`,
+`savestates/`, `importers/`, `user_textures/`, the randomizer and Archipelago
+files, the controller bindings and the shader caches (`dawn_cache.db`,
+`pipeline_cache.db`), with the memory card in `user/<region>/Card A`. Files an
+older build left loose beside the executable are moved into `user/` at startup
+(renamed, never copied or deleted; the launch log lists what moved). The disc
+image is auto-detected beside the executable (or one level below, `user/`
+included), and texture replacements are loaded from `textures/` when present;
 `MP_DISC` and `MP_TEXTURES` override those two. The launch log names the folder
 (`port: user folder ...`).
 
@@ -94,8 +97,8 @@ is used only when:
 
 - the executable's folder cannot be written to (a Flatpak, a system package), or
 - it already holds a `port_settings.ini` from an older build and the
-  executable's folder has none. Move its contents next to the executable to make
-  that install portable.
+  `user/` folder has none. Move its contents into `user/` to make that install
+  portable.
 
 On Android the folder starts in the app's own storage, which other apps and file
 managers cannot reach. F1 > Extras > Data folder moves it to
@@ -306,7 +309,7 @@ every source texture to `<cachePath>/texture_dumps` as DDS, for authoring
 replacements.
 
 A user pack is layered over that built-in set, with the same folder rules. It
-lives in `user_textures` in the user folder (next to the executable; for a read-only install `~/.local/share/Metroid Prime/`
+lives in `user_textures` in the user folder (`user/` beside the executable; for a read-only install `~/.local/share/Metroid Prime/`
 on Linux, `~/.var/app/io.github.odrannnn.metroidprimeport/data/Metroid Prime/`
 in the Flatpak, `%APPDATA%\Metroid Prime\` on Windows), or wherever
 `MP_USER_TEXTURES` points, so updates never touch it; the overlay's Render page
@@ -770,7 +773,7 @@ unpacks to a temporary directory instead of mounting.
   for a moment).
 - Settings changed in the F1 overlay (aspect, vsync, render scale, frame limit,
   mouse aim/inversion/sensitivity, audio mutes) are saved to
-  `port_settings.ini` in the user folder (next to the executable, see above) and restored on the next launch. The Extras tab shows the
+  `port_settings.ini` in the user folder (`user/` beside the executable, see above) and restored on the next launch. The Extras tab shows the
   path and has a **Save settings now** button. Environment variables still
   override the file for that run, and are written back into it if any setting is
   changed during that run.
@@ -1000,7 +1003,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   rides the elevator after loading, like stepping onto it. Console:
   `state list | last | save [n] | load [n] | undo | slot <n>`.
 - Memory card transfer (F1 > Extras > Memory card): moves saves between the
-  port's card (a GCI folder, `USA/Card A` next to the executable, or the current
+  port's card (a GCI folder, `user/USA/Card A` beside the executable, or the current
   Archipelago game's) and Dolphin's. Import takes a Dolphin `.gci`, a whole raw
   card image (`MemoryCardA.USA.raw`, every Metroid Prime file in it) or, from the
   console, a folder of `.gci` files; only GM8E/01 files are taken. The game
