@@ -417,6 +417,18 @@ struct Terminal {
 };
 } // namespace
 
+void AttachParentConsole() {
+  const HANDLE error = GetStdHandle(STD_ERROR_HANDLE);
+  if ((error != nullptr && error != INVALID_HANDLE_VALUE) || !AttachConsole(ATTACH_PARENT_PROCESS)) {
+    return;
+  }
+  FILE* reopened = nullptr;
+  freopen_s(&reopened, "CONOUT$", "w", stdout);
+  freopen_s(&reopened, "CONOUT$", "w", stderr);
+  SetStdHandle(STD_OUTPUT_HANDLE, reinterpret_cast< HANDLE >(_get_osfhandle(_fileno(stdout))));
+  SetStdHandle(STD_ERROR_HANDLE, reinterpret_cast< HANDLE >(_get_osfhandle(_fileno(stderr))));
+}
+
 int RunCopy(const char* pipe, const char* file, const char* terminal) {
   const HANDLE in = ParseHandle(pipe);
   const HANDLE out = ParseHandle(file);

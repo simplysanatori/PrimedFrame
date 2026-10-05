@@ -699,6 +699,7 @@ int main(int argc, char** argv) {
     if ((argc == 4 || argc == 5) && std::strcmp(argv[1], "--log-copy") == 0) {
         return PortLogFile::RunCopy(argv[2], argv[3], argc == 5 ? argv[4] : nullptr);
     }
+    PortLogFile::AttachParentConsole();
 #endif
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
         std::printf("Metroid Prime native port %s\n", MP_BUILD_REVISION);
@@ -864,6 +865,10 @@ int main(int argc, char** argv) {
     config.iconWidth = 64;
     config.iconHeight = 64;
 #endif
+    // Let SDL place the window. The default 0,0 is the client area's corner on
+    // Windows, which puts the title bar above the top of the screen.
+    config.windowPosX = -1;
+    config.windowPosY = -1;
     config.startFullscreen = PortDebug::Fullscreen();
     config.msaa = static_cast<uint32_t>(PortDebug::Msaa());
     config.maxTextureAnisotropy = static_cast<uint16_t>(PortDebug::Anisotropy());

@@ -225,6 +225,10 @@ if(NOT ANDROID)
     set_target_properties(port_remastered_anuv_tool PROPERTIES EXCLUDE_FROM_ALL ON)
 endif()
 if(WIN32)
+    # A GUI program, so Windows opens no console window next to the game
+    # (SDL_main supplies WinMain). PortLogFile::AttachParentConsole prints to
+    # the terminal it was started from, if any.
+    set_target_properties(metroid_prime_port PROPERTIES WIN32_EXECUTABLE ON)
     # shell32/ole32/advapi32: finding Dolphin's folder (port_gci.cpp).
     target_link_libraries(metroid_prime_port PRIVATE ws2_32 shell32 ole32 advapi32)
     # UTF-8 as the ANSI code page, so the UTF-8 paths SDL returns work with the
