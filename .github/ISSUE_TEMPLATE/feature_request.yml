@@ -20,9 +20,3 @@ body:
         - Android
         - Windows
         - Linux
-
-  - type: textarea
-    id: extra
-    attributes:
-      label: Anything else
-      description: How another port or the Remastered release does it, screenshots, links.
