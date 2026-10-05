@@ -701,9 +701,12 @@ public:
   // An array texture's layers packed into one atlas TXTR, row-major from the
   // top: a power-of-two column count, and frames halved only while an edge is
   // over kMaxAtlasSide. Id 0 when it cannot be.
-  FlipbookAtlas Flipbook(const EffectGuid& id) {
-    const auto known = m_flipbooks.find(id);
-    if (known != m_flipbooks.end()) {
+  // `vfx`: as for Texture(), a linear-light copy (under an id of its own) for a VFX material.
+  FlipbookAtlas Flipbook(const EffectGuid& id, bool vfx = false) {
+    vfx = vfx && m_io.textureSrgb && m_io.textureSrgb(id);
+    auto& cache = vfx ? m_vfxFlipbooks : m_flipbooks;
+    const auto known = cache.find(id);
+    if (known != cache.end()) {
       return known->second;
     }
     FlipbookAtlas out;
@@ -746,14 +749,21 @@ public:
                       frame.rgba.data() + size_t(y) * frameW * 4, size_t(frameW) * 4);
         }
       }
-      const uint32_t fresh = m_io.freshId(Hash(id, kTxtr ^ 0xF11Bu));
-      if (WriteTexture(fresh, atlas)) {
+      if (vfx) {
+        for (size_t i = 0; i + 3 < atlas.rgba.size(); i += 4) {
+          for (size_t c = 0; c < 3; ++c) {
+            atlas.rgba[i + c] = SrgbToLinearByte(atlas.rgba[i + c]);
+          }
+        }
+      }
+      const uint32_t fresh = m_io.freshId(Hash(id, kTxtr ^ (vfx ? 0xF11Cu : 0xF11Bu)));
+      if (WriteTexture(fresh, atlas, vfx ? MapKind::Data : MapKind::Colour)) {
         ++m_result.textures;
         ++m_result.flipbooks;
         out = FlipbookAtlas{fresh, cols, rows, layers};
       }
     }
-    m_flipbooks.emplace(id, out);
+    cache.emplace(id, out);
     return out;
   }
 
@@ -831,7 +841,7 @@ public:
     std::vector<uint8_t> rgba;
     std::string error;
     if (m_io.layers && m_io.layers(id, width, height, layers, rgba, error) && layers > 1) {
-      return Flipbook(id);
+      return Flipbook(id, true);
     }
     const uint32_t texture = Texture(id, true);
     return texture != 0 ? FlipbookAtlas{texture, 1, 1, 1} : FlipbookAtlas{};
@@ -958,6 +968,7 @@ private:
   std::map<EffectGuid, uint32_t> m_vfxTextures;  // the same, linear-light copies for VFX materials
   std::map<EffectGuid, uint32_t> m_textures;  // by Remastered id, 0 for one that failed
   std::map<EffectGuid, FlipbookAtlas> m_flipbooks;
+  std::map<EffectGuid, FlipbookAtlas> m_vfxFlipbooks; // linear-light copies for VFX materials
   std::map<EffectGuid, uint32_t> m_models;
   EffectImportResult m_result;
 };
