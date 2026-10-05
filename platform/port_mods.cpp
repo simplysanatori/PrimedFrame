@@ -471,9 +471,7 @@ void Initialize() {
         continue;
       }
       if (name == "brdf.lut" && PathString(file.parent_path().filename()) == "roomenv") {
-        if (sBrdfLut.empty()) {
-          sBrdfLut = PathString(file);
-        }
+        sBrdfLut = PathString(file);
         continue;
       }
       if (name.size() > 4 && name.compare(name.size() - 4, 4, ".jpg") == 0 &&
