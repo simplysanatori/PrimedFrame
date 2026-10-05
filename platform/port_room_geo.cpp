@@ -179,6 +179,13 @@ struct Trigger {
   uint8_t state;
   uint8_t action;
   size_t item;
+  float delay; // Link::delay
+};
+
+// A delayed trigger's action, due at the area's `clock`.
+struct Pending {
+  double due;
+  size_t trigger;
 };
 
 struct Area {
@@ -214,6 +221,8 @@ struct Area {
   double animTime = 0.;      // seconds its animated instances have played (Think); double, so
                              // hours in still step evenly
   bool animated = false;     // some instance is
+  double clock = 0.;         // seconds the area has been thought about (Think), for `pending`
+  std::vector< Pending > pending;
 };
 
 // Areas in memory; one without a file has no instances. Never destroyed: the models' tokens
@@ -949,7 +958,7 @@ void Load(uint32_t mrea, Area& area) {
         item.follow = link.sender;
         continue;
       }
-      area.triggers.push_back({link.sender & 0x3ffffff, link.state, link.action, area.items.size() - 1});
+      area.triggers.push_back({link.sender & 0x3ffffff, link.state, link.action, area.items.size() - 1, link.delay});
     }
   }
   for (Placed& item : area.items) {
@@ -988,6 +997,18 @@ void Load(uint32_t mrea, Area& area) {
 }
 
 void Apply(Area& area, const ScriptEdge& edge, int depth);
+
+void Act(uint32_t mrea, Area& area, const Trigger& trigger) {
+  Placed& item = area.items[trigger.item];
+  const bool shown = trigger.action == kShow ? true : trigger.action == kHide ? false : !item.shown;
+  if (shown != item.shown) {
+    char line[96];
+    std::snprintf(line, sizeof(line), "room geo: %08X: instance %u %s by %08X\n", mrea, unsigned(trigger.item),
+                  shown ? "shown" : "hidden", trigger.sender);
+    PortLog::Write(line);
+  }
+  item.shown = shown;
+}
 
 // Edges one outside event may set off. A loop that fans out would otherwise take
 // exponential time before the depth limit stops it.
@@ -1632,19 +1653,18 @@ void OnScriptState(CStateManager& mgr, uint32_t editorId, int state) {
   }
   Area& area = found->second;
   const uint32_t sender = editorId & 0x3ffffff;
-  for (const Trigger& trigger : area.triggers) {
+  for (size_t i = 0; i < area.triggers.size(); ++i) {
+    const Trigger& trigger = area.triggers[i];
     if (trigger.sender != sender || trigger.state != state) {
       continue;
     }
-    Placed& item = area.items[trigger.item];
-    const bool shown = trigger.action == kShow ? true : trigger.action == kHide ? false : !item.shown;
-    if (shown != item.shown) {
-      char line[96];
-      std::snprintf(line, sizeof(line), "room geo: %08X: instance %u %s by %08X\n", mrea,
-                    unsigned(trigger.item), shown ? "shown" : "hidden", sender);
-      PortLog::Write(line);
+    if (trigger.delay > 0.f) {
+      // As the timer it stands for, sent again before it is up: started over.
+      std::erase_if(area.pending, [&](const Pending& p) { return p.trigger == i; });
+      area.pending.push_back({area.clock + trigger.delay, i});
+      continue;
     }
-    item.shown = shown;
+    Act(mrea, area, trigger);
   }
   if (area.retailEdges) {
     for (const ScriptEdge& edge : area.script.edges) {
@@ -1667,6 +1687,18 @@ void Think(CStateManager& mgr, float dt) {
     any = any || !area.script.nodes.empty();
     if (area.animated) {
       area.animTime += dt;
+    }
+    area.clock += dt;
+    // In the order they fall due, each one's action before the next.
+    while (!area.pending.empty()) {
+      const auto next = std::min_element(area.pending.begin(), area.pending.end(),
+                                         [](const Pending& a, const Pending& b) { return a.due < b.due; });
+      if (next->due > area.clock) {
+        break;
+      }
+      const size_t trigger = next->trigger;
+      area.pending.erase(next);
+      Act(mrea, area, area.triggers[trigger]);
     }
   }
   if (!any) {
@@ -1761,6 +1793,8 @@ void ResetScriptState() {
   for (auto& [mrea, area] : Areas()) {
     ResetNodes(area);
     area.animTime = 0.;
+    area.clock = 0.;
+    area.pending.clear();
     for (Placed& item : area.items) {
       item.shown = item.active;
       item.wasShown = item.shown;

@@ -395,6 +395,7 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
       link.sender = ReadU32(data.data() + at);
       link.state = data[at + 4];
       link.action = data[at + 5];
+      link.delay = float(size_t(data[at + 6]) | size_t(data[at + 7]) << 8) / 100.f;
       at += kLinkBytes;
     }
   }
@@ -473,8 +474,10 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
       PutU32(out, instance.links[j].sender);
       out.push_back(instance.links[j].state);
       out.push_back(instance.links[j].action);
-      out.push_back(0);
-      out.push_back(0);
+      const float delay = std::isfinite(instance.links[j].delay) ? instance.links[j].delay * 100.f : 0.f;
+      const auto centis = uint16_t(std::clamp(std::lround(delay), 0l, 0xffffl));
+      out.push_back(uint8_t(centis));
+      out.push_back(uint8_t(centis >> 8));
     }
   }
   const bool grouped =

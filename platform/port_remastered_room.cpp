@@ -818,6 +818,8 @@ struct Pass {
   uint8_t retailType;
   uint32_t actions[2];
 };
+// A TimerMP1's wait, in seconds.
+constexpr uint32_t kPropTimerDelay = 0xfb2a2cf0;
 constexpr Pass kPasses[] = {
     {0x15, {0x379d362e, 0x379d362e}},  // Relay
     {kRetailTimer, {0xd63b8f04, 0x55193b90}},  // Timer
@@ -1361,7 +1363,9 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       }
     };
     std::vector<int> seen{e.entity};
-    std::function<void(int, uint32_t, int, int)> walk = [&](int entity, uint32_t action, int depth, int via) {
+    // `delay`: what the timers passed through so far wait.
+    std::function<void(int, uint32_t, int, int, float)> walk = [&](int entity, uint32_t action, int depth, int via,
+                                                                   float delay) {
       const auto in = incoming.find(entity);
       if (in == incoming.end()) {
         return;
@@ -1405,12 +1409,21 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
                                first == kActionActivate;
           const uint8_t act = follows ? PortRoomGeo::kFollow : LinkAct(first);
           if (act != 0 && state < 256) {
-            links.push_back({objects[size_t(match[size_t(s)])].id, uint8_t(state), act});
+            links.push_back({objects[size_t(match[size_t(s)])].id, uint8_t(state), act, delay});
           }
         } else if (IsPass(type) && sender.entity >= 0 && depth < 6 &&
                    std::find(seen.begin(), seen.end(), sender.entity) == seen.end()) {
           seen.push_back(sender.entity);
-          walk(sender.entity, first, depth + 1, type);
+          float wait = 0.f;
+          if (type == kRetailTimer) {
+            const auto f = room.Flat(sender);
+            const auto prop = f.find(kPropTimerDelay);
+            if (prop != f.end() && prop->second.size == 4) {
+              wait = LeFloat(room.Bytes(prop->second));
+              wait = std::isfinite(wait) ? std::clamp(wait, 0.f, 600.f) : 0.f;
+            }
+          }
+          walk(sender.entity, first, depth + 1, type, delay + wait);
           seen.pop_back();
         } else if (const ScriptObject* counter = hintEntities.count(e.entity) != 0 && sender.type == kCounterMP1 &&
                                                          c->event == kEventCounterMP1Max
@@ -1418,7 +1431,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
                                                      : nullptr) {
           const uint8_t act = LinkAct(first);
           if (act != 0) {
-            links.push_back({counter->id, uint8_t(kStateMaxReached), act});
+            links.push_back({counter->id, uint8_t(kStateMaxReached), act, delay});
           } else {
             miss(sender, *c, first, depth);
           }
@@ -1427,7 +1440,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
         }
       }
     };
-    walk(e.entity, 0, 0, -1);
+    walk(e.entity, 0, 0, -1, 0.f);
     if (!links.empty()) {
       result.links[e.entity] = std::move(links);
     }
@@ -2509,8 +2522,10 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   }
   // Entities a Timer hides. One that also starts hidden is shown only while an event plays:
   // the waterfalls of Ice Shorelines and the Hive Totem pour for 17 and 6.25 s and fade with
-  // their Waterfalls.GRDU driver, and pieces of the Frigate's hangar flash for 0.25 s. A link
-  // keeps no delay, so drawing one would leave it shown for good once its event fires.
+  // their Waterfalls.GRDU driver, and pieces of the Frigate's hangar flash for 0.25 s. Their
+  // links keep the timers' delays (Link::delay), but not the fades, so they are left out. An
+  // animated actor is drawn: the Mines turbine's explosion, shown 5.5 s after its pickup is
+  // taken and hidden 2.5 s later, partway through its clip.
   std::set<int> timedOff;
   for (const Connection& link : links) {
     const int target = r.room.ByGuid(link.target);
@@ -2751,13 +2766,15 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     }
     std::string names;
     for (const Clip& clip : clips) {
-      names += (names.empty() ? "" : ", ") + clip.anim->name + (clip.loop ? " (loop)" : "");
+      char length[24];
+      std::snprintf(length, sizeof length, " %.2f s", clip.anim->fps > 0 ? clip.anim->frames / clip.anim->fps : 0.f);
+      names += (names.empty() ? "" : ", ") + clip.anim->name + length + (clip.loop ? " (loop)" : "");
     }
     if (const auto links = scripts.links.find(c.entity); links != scripts.links.end()) {
       names += ", linked from";
       for (const PortRoomGeo::Link& l : links->second) {
-        char hex[32];
-        std::snprintf(hex, sizeof hex, " %08X (%u: %u)", l.sender, l.state, l.action);
+        char hex[48];
+        std::snprintf(hex, sizeof hex, " %08X (%u: %u after %.2f s)", l.sender, l.state, l.action, l.delay);
         names += hex;
       }
     }
@@ -2784,7 +2801,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       continue;
     }
     const bool active = r.room.Active(*c);
-    if (!active && (!canShow(c->entity) || timedOff.count(c->entity) != 0)) {
+    if (!active && (!canShow(c->entity) || (timedOff.count(c->entity) != 0 && !hasAnim))) {
       ++inactive;
       continue;
     }

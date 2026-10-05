@@ -21,7 +21,8 @@ class CVector3f;
 //   instance: u32 CMDL id, f32 transform[12] (rows of model -> area)
 //     version 2 adds: u8 layer, u8 active, u16 links,
 //     version 3 (and 4) then: u32 platform, f32 platformStart[3],
-//     then (2 to 4) per link: u32 sender, u8 state, u8 action, u16 0
+//     then (2 to 4) per link: u32 sender, u8 state, u8 action, u16 delay (1/100 s; 0 in
+//     files made before delays, which read as none)
 // An instance whose CMDL does not exist is skipped.
 //
 // Version 2 is for scenery Remastered added as actors, which its scripts show and hide:
@@ -88,6 +89,9 @@ struct Link {
   uint32_t sender; // retail editor id, layer bits included
   uint8_t state;
   uint8_t action; // LinkAction
+  // Seconds from the state to the action: the Remastered timers the link was traced through,
+  // retail having none of them. Sent again before then, the wait starts over. Instances only.
+  float delay = 0.f;
 };
 
 struct Instance {

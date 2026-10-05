@@ -37,7 +37,7 @@ void TestRoundTrip() {
   gated.layer = 3;
   gated.active = false;
   gated.links.push_back({0x0c1a0042, 9, PortRoomGeo::kShow});
-  gated.links.push_back({0x001a0043, 10, PortRoomGeo::kToggle});
+  gated.links.push_back({0x001a0043, 10, PortRoomGeo::kToggle, 5.52f});
   gated.platform = 0x041a0044;
   gated.platformStart[0] = -142.f;
   gated.platformStart[2] = 3.25f;
@@ -61,9 +61,10 @@ void TestRoundTrip() {
   Check(out[1].links.size() == 2, "two links");
   if (out[1].links.size() == 2) {
     Check(out[1].links[0].sender == 0x0c1a0042 && out[1].links[0].state == 9 &&
-              out[1].links[0].action == PortRoomGeo::kShow,
+              out[1].links[0].action == PortRoomGeo::kShow && out[1].links[0].delay == 0.f,
           "first link");
-    Check(out[1].links[1].action == PortRoomGeo::kToggle, "second link");
+    Check(out[1].links[1].action == PortRoomGeo::kToggle && std::fabs(out[1].links[1].delay - 5.52f) < 0.006f,
+          "second link, with its delay");
   }
   Check(out[2].model == 0x33333333, "instance after links");
 
