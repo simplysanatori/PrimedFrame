@@ -3753,7 +3753,8 @@ void DrawGalleryWindow() {
       const ImVec2 shown(sGallerySize.x * scale, sGallerySize.y * scale);
       const ImVec2 cursor = ImGui::GetCursorPos();
       ImGui::SetCursorPos(ImVec2(cursor.x + (avail.x - shown.x) * 0.5f, cursor.y + (avail.y - shown.y) * 0.5f));
-      ImGui::Image(sGalleryTexture, shown);
+      // The import writes the TXTR rows as stored, bottom row first, so draw them flipped.
+      ImGui::Image(sGalleryTexture, shown, ImVec2(0.f, 1.f), ImVec2(1.f, 0.f));
     }
   }
   ImGui::End();
@@ -5368,6 +5369,24 @@ void DrawRendering() {
   }
 }
 void DrawRemasteredTab() {
+  {
+    const ImVec4 bad = ThemeBadColor();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(bad.x * 0.25f, bad.y * 0.25f, bad.z * 0.25f, 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_Border, bad);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 2.f);
+    ImGui::BeginChild("RemasteredWarning", ImVec2(0.f, 0.f),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::SetWindowFontScale(1.6f);
+    ImGui::TextColored(bad, "EXPERIMENTAL - EXPECT BREAKAGE");
+    ImGui::SetWindowFontScale(1.f);
+    ImGui::TextWrapped("Remastered support is unfinished and broken in places. Expect wrong materials, missing or "
+                       "misplaced models and effects, visual glitches, slowdowns and crashes. Re-imports are often "
+                       "needed after updates.");
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+  }
+
   ImGui::SeparatorText("Import");
   DrawRemasteredImport();
 
