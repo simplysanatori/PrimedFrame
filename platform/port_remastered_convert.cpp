@@ -1054,10 +1054,19 @@ struct Converter::State {
         }
         // Only a retail model has a retail texture to fall back on.
         if (k == kBase && !opt.standalone) {
-          surface = rt[kNormal].has && !rt[kNormal].mean && [&] {
-            const Image& n = Open(rt[kNormal]);
-            return n.width > 4 || n.height > 4;
-          }();
+          // A map that is more than a placeholder texel (not a mean, over 4 px).
+          auto real = [&](int m) {
+            if (!rt[m].has || rt[m].mean) {
+              return false;
+            }
+            const Image& o = Open(rt[m]);
+            return o.width > 4 || o.height > 4;
+          };
+          // The normal map is the surface. Failing that, the material's own MR or
+          // glow map still makes Remastered's draw its own (a flat suit light, the
+          // eye's shadow): a solid base under them is what it draws. Nothing but
+          // placeholders (the Eyon's) gives Remastered nothing to draw.
+          surface = real(kNormal) || real(kMr) || (rt[kEmissive].has && real(kEmissive)) || real(kBase);
           tag += surface ? "" : ":bare";
         }
       } else {
