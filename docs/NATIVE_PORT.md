@@ -413,14 +413,20 @@ which are authoritative. Inside a mod:
   `port: MEM1 arena raised to <n> MB`.
 - a file named `<8 hex digits>.dds`, anywhere in the mod, is a native texture:
   the full-size image of the TXTR with that id, with a full mip chain. The
-  importer writes BC7 (BC5, two-channel, for PBR normal maps); the loader also
-  reads BC3, BC1 and RGBA8. The TXTR still
+  importer writes BC7 (BC5, two-channel, for PBR normal maps), or ASTC 4x4
+  (normal maps as RGBA with B=0, A=255) when the GPU has ASTC and no BC; the
+  loader also reads BC3, BC1 and RGBA8. `MP_REMASTERED_TEXTURE_FORMAT=bc|astc`
+  forces the choice (for testing); `--import-remastered` has no GPU and writes BC
+  unless told otherwise. The import logs `remastered: writing <BC7|ASTC 4x4>
+  textures`. The ASTC encoder is ARM's astc-encoder (`extern/astcenc`, FAST
+  preset, about 2 s for a 2048 px map with its mips on one desktop core). The TXTR still
   loads (the mod's own, which can be a few texels across, or the disc's) and
   supplies the wrap and filter state; the `.dds` is what is drawn. Aurora
   streams it on worker threads into GPU memory, so its size never counts
   against the game heap: a mod of 2048 px maps runs at the default arena. A
   later mod's TXTR without a `.dds` drops an earlier mod's `.dds` for that id.
-  On a GPU without BC support (most phones) the TXTR is drawn instead. The log
+  On a GPU with neither BC nor ASTC the TXTR is drawn instead; a BC `.dds` on a
+  phone (an import made on a desktop) is refused the same way. The log
   and the Mods panel count them (`mods: <n> native texture(s)`).
   `MP_TEXTURE_MAX_DIM=<px>` caps the size a `.dds` is loaded at (0 = no limit;
   default 0, 1024 on Android) and `MP_TEXTURE_CACHE_MB=<n>` the memory the

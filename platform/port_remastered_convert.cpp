@@ -1221,7 +1221,7 @@ struct Converter::State {
         }
       }
       if (std::max(w, h) > cap) {  // otherwise the stub already holds every texel
-        const DdsFormat format = k == kNormal ? DdsFormat::BC5 : DdsFormat::BC7;
+        const DdsFormat format = k == kNormal ? NormalDdsFormat() : ColourDdsFormat();
         const bool punch = alpha == "punch";
         if (w == img.width && h == img.height) {
           Write(name + ".dds", EncodeDds(img, format, punch, mapKind));

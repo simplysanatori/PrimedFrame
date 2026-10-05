@@ -216,6 +216,7 @@ tasks.register("syncLicenseNotices", Sync) {
     from("../../NOTICE") { rename { "port-notice.txt" } }
     from("../../extern/aurora/LICENSE") { rename { "aurora.txt" } }
     from("../../extern/musyx/LICENSE") { rename { "musyx.txt" } }
+    from("../../extern/astcenc/LICENSE.txt") { rename { "astcenc.txt" } }
     // The fetched packages live beside the native build output, so they are
     // only present once a native build has run at least once. Each is named
     // after its package: the same notice appears in several build variants, and

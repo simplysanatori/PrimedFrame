@@ -117,6 +117,7 @@ jobs:
           Copy-Item NOTICE dist/licenses/port-notice.txt
           Copy-Item extern/aurora/LICENSE dist/licenses/aurora.txt
           Copy-Item extern/musyx/LICENSE dist/licenses/musyx.txt
+          Copy-Item extern/astcenc/LICENSE.txt dist/licenses/astcenc.txt
           Copy-Item docs/NATIVE_PORT.md dist/README.md
           # ffmpeg is its own program under the LGPL: its licence, and where
           # its source and build line are, go with it.

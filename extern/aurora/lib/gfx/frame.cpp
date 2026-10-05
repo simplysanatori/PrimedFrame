@@ -811,3 +811,7 @@ uint32_t aurora_get_resident_geometry_mib() {
   return static_cast<uint32_t>((sizes.residentVertex + sizes.residentIndex + sizes.residentStorage) >> 20);
 }
 float aurora_get_fps() { return aurora::gfx::calculate_fps(); }
+void aurora_get_texture_support(bool* bc, bool* astc) {
+  *bc = aurora::webgpu::g_bcTexturesSupported;
+  *astc = aurora::webgpu::g_astcTexturesSupported;
+}

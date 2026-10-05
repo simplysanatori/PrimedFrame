@@ -71,6 +71,7 @@ collect_notice "$repo_root/LICENSE" port-license.txt
 collect_notice "$repo_root/NOTICE" port-notice.txt
 collect_notice "$repo_root/extern/aurora/LICENSE" aurora.txt
 collect_notice "$repo_root/extern/musyx/LICENSE" musyx.txt
+collect_notice "$repo_root/extern/astcenc/LICENSE.txt" astcenc.txt
 for dep in sdl-src imgui-src fmt-src zstd-src; do
     for notice in "$build_dir"/_deps/"$dep"/LICENSE* "$build_dir"/_deps/"$dep"/COPYING*; do
         [[ -f "$notice" ]] || continue

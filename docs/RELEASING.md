@@ -19,6 +19,7 @@ the port asks for the image on first launch when it cannot find one.
 |---|---|---|
 | Aurora (windowing, WebGPU/Dawn plumbing) | MIT | `extern/aurora/LICENSE` |
 | MusyX (audio mixer) | MIT | `extern/musyx/LICENSE` |
+| astc-encoder (ASTC texture writer) | Apache-2.0 | `extern/astcenc/LICENSE.txt` |
 | SDL3 | zlib | fetched at configure time, `build/*/_deps/sdl-src/LICENSE.txt` |
 | Dear ImGui | MIT | fetched, `imgui-src/LICENSE` |
 | fmt | MIT | fetched, `fmt-src/LICENSE` |

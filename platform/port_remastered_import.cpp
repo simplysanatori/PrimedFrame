@@ -22,6 +22,7 @@
 #include <utility>
 
 #include <aurora/dvd.h>
+#include <aurora/gfx.h>
 
 #include "port_build_info.h"
 #include "port_gallery.h"
@@ -32,6 +33,7 @@
 #include "port_remastered_convert.h"
 #include "port_remastered_effect_import.h"
 #include "port_remastered_font.h"
+#include "port_remastered_image.h"
 #include "port_remastered_hud.h"
 #include "port_remastered_map.h"
 #include "port_remastered_movie.h"
@@ -1892,6 +1894,12 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
 #if defined(__ANDROID__)
   threads = std::min(threads, 3);
 #endif
+  // The device exists in the game and not on the command line, where this
+  // stays at its default of BC.
+  bool bc = false, astc = false;
+  aurora_get_texture_support(&bc, &astc);
+  SetGpuTextureSupport(bc, astc);
+  std::fprintf(stderr, "remastered: writing %s textures\n", TextureFormatName());
   sCancel = false;
   sState.running = true;
   sState.message = "Starting";

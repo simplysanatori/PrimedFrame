@@ -2,11 +2,18 @@
 
 // Images for the Remastered importer: resizing, and the three files a mod
 // texture is written as: a GameCube TXTR (RGBA8 or CMPR, with mips) and the
-// port's native texture, a DX10 .dds in BC7 or BC5 (port_mods.h).
+// port's native texture, a DX10 .dds in BC7 or BC5 (port_mods.h), or in ASTC
+// 4x4 where the GPU has no BC (most phones; Aurora refuses a BC .dds there).
+// TextureFormat() picks: BC unless SetGpuTextureSupport() says the device has
+// ASTC and not BC; MP_REMASTERED_TEXTURE_FORMAT=bc|astc overrides. An import
+// with no GPU (--import-remastered) never calls it, so it writes BC.
 //
 // The encoders are the importer's own and aim at "fast and good", not at the
 // best a format can do: BC7 uses mode 6 only (one RGBA line a block, 4-bit
 // indices), which is right for the smooth colour and data maps these are.
+// ASTC is ARM's astc-encoder (extern/astcenc) at its FAST preset, LDR, linear
+// UNORM like the BC7. A normal map is stored as RGBA with R=x, G=y, B=0, A=255,
+// since the PBR shader reads `.rg` and ASTC has no two-channel format.
 
 #include <cstdint>
 #include <vector>
@@ -22,6 +29,8 @@ struct Image {
 enum class DdsFormat {
   BC7,  // all four channels
   BC5,  // red and green only: a normal map
+  ASTC4x4,        // all four channels
+  ASTC4x4Normal,  // red and green kept, blue 0, alpha 255: a normal map
 };
 
 // What a map's texels mean, which decides the space they are filtered in:
@@ -34,6 +43,16 @@ enum class MapKind {
   Colour,
   Normal,
 };
+
+// What the importer writes its .dds files as: BC or ASTC (see above).
+enum class TextureFormat { BC, ASTC };
+// Tells the importer what the GPU can sample; call once the device exists.
+void SetGpuTextureSupport(bool bc, bool astc);
+TextureFormat WantedTextureFormat();
+const char* TextureFormatName();  // "BC7" or "ASTC 4x4"
+// The DdsFormat for a colour/data map, or a normal map, under WantedTextureFormat().
+DdsFormat ColourDdsFormat();
+DdsFormat NormalDdsFormat();
 
 // Lanczos-3, each channel on its own (alpha is often a mask here, not
 // opacity, so nothing is premultiplied). The arithmetic follows Pillow's.

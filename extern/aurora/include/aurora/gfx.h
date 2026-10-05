@@ -43,6 +43,8 @@ uint32_t aurora_get_resident_geometry_mib();
 // The bytes of it in use, as of the last frame processed.
 uint64_t aurora_get_resident_geometry_used();
 float aurora_get_fps();
+// Whether the device samples BC and ASTC 4x4 compressed textures (false until it exists).
+void aurora_get_texture_support(bool* bc, bool* astc);
 
 void aurora_enable_vsync(bool enabled);
 

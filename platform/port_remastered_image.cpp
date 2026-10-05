@@ -4,8 +4,13 @@
 #include "port_remastered_image.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <memory>
+
+#include "astcenc.h"
 
 namespace PortRemastered {
 namespace {
@@ -1110,6 +1115,95 @@ void EncodeBc7Block(const uint8_t* rgba, uint8_t* out) {
   w.Store(out);
 }
 
+namespace {
+
+// --- ASTC -----------------------------------------------------------------------
+
+struct AstcContext {
+  astcenc_context* ctx = nullptr;
+  astcenc_swizzle swizzle{ASTCENC_SWZ_R, ASTCENC_SWZ_G, ASTCENC_SWZ_B, ASTCENC_SWZ_A};
+  AstcContext() {
+    astcenc_config cfg;
+    if (astcenc_config_init(ASTCENC_PRF_LDR, 4, 4, 1, ASTCENC_PRE_FAST, ASTCENC_FLG_USE_DECODE_UNORM8, &cfg) !=
+        ASTCENC_SUCCESS) {
+      return;
+    }
+    if (astcenc_context_alloc(&cfg, 1, &ctx, nullptr) != ASTCENC_SUCCESS) {
+      ctx = nullptr;
+    }
+  }
+  ~AstcContext() { astcenc_context_free(ctx); }
+  AstcContext(const AstcContext&) = delete;
+  AstcContext& operator=(const AstcContext&) = delete;
+};
+
+// One level as ASTC 4x4 blocks, appended to `out`. A side under 4 texels is
+// stretched to one block, as for BC. The context is made once a thread (it is
+// not cheap to build) and reset between levels.
+void EncodeAstcLevel(const Image& lv, bool normal, std::vector<uint8_t>& out) {
+  thread_local AstcContext astc;
+  const int bw = std::max(lv.width, 4), bh = std::max(lv.height, 4);
+  std::vector<uint8_t> px(size_t(bw) * size_t(bh) * 4);
+  for (int y = 0; y < bh; ++y) {
+    const int sy = y * lv.height / bh;
+    for (int x = 0; x < bw; ++x) {
+      const int sx = x * lv.width / bw;
+      std::memcpy(&px[(size_t(y) * size_t(bw) + size_t(x)) * 4],
+                  &lv.rgba[(size_t(sy) * size_t(lv.width) + size_t(sx)) * 4], 4);
+    }
+  }
+  if (normal) {
+    for (size_t i = 0; i < size_t(bw) * size_t(bh); ++i) {
+      px[i * 4 + 2] = 0;
+      px[i * 4 + 3] = 255;
+    }
+  }
+  const size_t start = out.size();
+  out.resize(start + size_t(bw / 4) * size_t(bh / 4) * 16);
+  if (astc.ctx != nullptr) {
+    void* slice = px.data();
+    astcenc_image img{unsigned(bw), unsigned(bh), 1, ASTCENC_TYPE_U8, &slice};
+    if (astcenc_compress_image(astc.ctx, &img, &astc.swizzle, &out[start], out.size() - start, 0) == ASTCENC_SUCCESS) {
+      astcenc_compress_reset(astc.ctx);
+      return;
+    }
+    astcenc_compress_reset(astc.ctx);
+  }
+  // Void-extent error blocks of magenta would hide a failure; black is quiet,
+  // but the encoder only fails on a bad argument, which these are not.
+  std::memset(&out[start], 0, out.size() - start);
+}
+
+// --- Format choice ----------------------------------------------------------------
+
+std::atomic<int> sGpuFormat{0};  // 0 unknown, 1 BC, 2 ASTC
+
+}  // namespace
+
+void SetGpuTextureSupport(bool bc, bool astc) { sGpuFormat = bc ? 1 : astc ? 2 : 0; }
+
+TextureFormat WantedTextureFormat() {
+  if (const char* env = std::getenv("MP_REMASTERED_TEXTURE_FORMAT")) {
+    if (std::strcmp(env, "astc") == 0) {
+      return TextureFormat::ASTC;
+    }
+    if (std::strcmp(env, "bc") == 0) {
+      return TextureFormat::BC;
+    }
+  }
+  return sGpuFormat.load() == 2 ? TextureFormat::ASTC : TextureFormat::BC;
+}
+
+const char* TextureFormatName() { return WantedTextureFormat() == TextureFormat::ASTC ? "ASTC 4x4" : "BC7"; }
+
+DdsFormat ColourDdsFormat() {
+  return WantedTextureFormat() == TextureFormat::ASTC ? DdsFormat::ASTC4x4 : DdsFormat::BC7;
+}
+
+DdsFormat NormalDdsFormat() {
+  return WantedTextureFormat() == TextureFormat::ASTC ? DdsFormat::ASTC4x4Normal : DdsFormat::BC5;
+}
+
 std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format, bool punch, MapKind kind) {
   std::vector<Image> levels{image};
   if (punch) {
@@ -1141,12 +1235,18 @@ std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format, bool punch,
   out.resize(out.size() + 20);
   Put32LE(out, 0x00401008);
   out.resize(out.size() + 16);
-  Put32LE(out, format == DdsFormat::BC7 ? 98 : 83);  // DXGI format
-  Put32LE(out, 3);                                   // TEXTURE2D
+  const bool astc = format == DdsFormat::ASTC4x4 || format == DdsFormat::ASTC4x4Normal;
+  // DXGI format: BC7_UNORM, BC5_UNORM, ASTC_4X4_UNORM.
+  Put32LE(out, astc ? 134 : format == DdsFormat::BC7 ? 98 : 83);
+  Put32LE(out, 3);  // TEXTURE2D
   Put32LE(out, 0);
   Put32LE(out, 1);  // array size
   Put32LE(out, 0);
   for (const Image& lv : levels) {
+    if (astc) {
+      EncodeAstcLevel(lv, format == DdsFormat::ASTC4x4Normal, out);
+      continue;
+    }
     // A level under 4 texels a side is stretched to one block, which is what
     // its block holds anyway.
     const int bw = std::max(lv.width, 4), bh = std::max(lv.height, 4);
