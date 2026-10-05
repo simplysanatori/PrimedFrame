@@ -180,11 +180,30 @@ constexpr uint32_t kPropWaterFluid[3] = {0xce78300b, 0x18706e5c, 0x6e9e14b9};  /
 constexpr uint32_t kPropWaterModel = 0x736e5890;
 constexpr uint32_t kPropLavaModel = 0xcaf8e8c3;
 constexpr uint32_t kPropWaterLook = 0xd1e9d29d;
-constexpr uint32_t kPropWaterTint = 0xe8969fad;
-constexpr uint32_t kPropWaterNormal[2] = {0x03e33f4b, 0x90a143ef};
-constexpr uint32_t kPropWaterNormalScale[2] = {0x03e33f4b, 0xd4483c7e};
+constexpr uint32_t kPropWaterFeatures = 0x54f39685;
+constexpr uint32_t kPropWaterFeature[11] = {0x8b294d2e, 0x68999d0e, 0xd7f0419b, 0xbf2c11db, 0xf2d5d4be, 0xfcfce6e6,
+                                            0x54ad680d, 0x1878894a, 0xf0965f0d, 0x8c79533e, 0x802d7816};
 constexpr uint32_t kPropWaterWaves[2] = {0x30fbb790, 0x0951bf3e};
-constexpr uint32_t kPropWaveAngle = 0xd1edd7b5;
+constexpr uint32_t kPropWave[5] = {0xd1edd7b5, 0xabe1bacd, 0xf6266364, 0x4574de4f, 0x921415eb};
+constexpr uint32_t kPropWaterTint = 0xe8969fad;
+constexpr uint32_t kPropWaterNormalMap = 0x03e33f4b;
+constexpr uint32_t kPropWaterNormalTexture = 0x90a143ef;
+constexpr uint32_t kPropWaterNormalDir = 0x138db2f0;
+constexpr uint32_t kPropWaterNormalDirXY[2] = {0xb9303984, 0x51f42492};
+constexpr uint32_t kPropWaterNormalSpeed = 0x522abd8a;
+constexpr uint32_t kPropWaterNormalScale = 0xd4483c7e;
+constexpr uint32_t kPropWaterFog = 0x7982e07b;
+constexpr uint32_t kPropWaterFogColor = 0x6f7355a3;
+constexpr uint32_t kPropWaterFogDistance = 0x3b29e512;
+constexpr uint32_t kPropWaterRain = 0x1a6aac69;
+constexpr uint32_t kPropWaterRainNoise = 0xa61e08d3;
+constexpr uint32_t kPropWaterRainValue[10] = {0xe4732770, 0x5e94c719, 0xe89f4385, 0xc5dad5ec, 0xbc212b78,
+                                              0x7b56b6dd, 0x3bda1181, 0x6e5a8b34, 0x851d5509, 0x53160e29};
+constexpr uint32_t kPropWaterFlow = 0xa57ab877;
+constexpr uint32_t kPropWaterFlowMap = 0xb541d215;
+constexpr uint32_t kPropWaterFlowValue[10] = {0xf60b04b8, 0x50cab2c8, 0x41dd7b3f, 0x86e7335b, 0xd3a38db6,
+                                              0x7ec506d9, 0x2aebbce6, 0xfe1e05a7, 0x74ee7d86, 0xf7a95b7e};
+constexpr uint32_t kPropWaterMaterial[5] = {0x9201a855, 0x00c267c0, 0x50c8ac86, 0xd8afdce6, 0x513d8344};
 
 constexpr size_t kMaxChunks = 1u << 20;
 constexpr size_t kMaxVolumeFloats = size_t(1) << 28;
@@ -3717,33 +3736,55 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
       liquid.type = lava ? RoomLiquid::kLava : fluid != fluids.end() ? fluid->second : RoomLiquid::kWater;
       if (!lava) {
         Span s;
-        if (r.room.Nested(*c, {kPropWaterLook, kPropWaterTint}, s) && s.size >= 16) {
-          for (int i = 0; i < 4; ++i) {
-            liquid.tint[i] = LeFloat(r.room.Bytes(s) + 4 * i);
+        // Each field is the room's, else the loader's default (RoomLiquid's).
+        auto value = [&](std::initializer_list<uint32_t> path, float* out, int n) {
+          if (r.room.Nested(*c, path, s) && s.size >= size_t(4 * n)) {
+            for (int i = 0; i < n; ++i) {
+              out[i] = LeFloat(r.room.Bytes(s) + 4 * i);
+            }
+          }
+        };
+        auto texture = [&](std::initializer_list<uint32_t> path, Id16& out) {
+          if (r.room.Nested(*c, path, s) && s.size == 16) {
+            out = SwapUuid(r.room.Bytes(s));
+          }
+        };
+        for (int i = 0; i < 11; ++i) {
+          if (r.room.Nested(*c, {kPropWaterFeatures, kPropWaterFeature[i]}, s) && s.size >= 1) {
+            liquid.features[i] = r.room.Bytes(s)[0] != 0 ? 1 : 0;
           }
         }
-        if (r.room.Nested(*c, {kPropWaterLook, kPropWaterNormal[0], kPropWaterNormal[1]}, s) && s.size == 16) {
-          liquid.normal = SwapUuid(r.room.Bytes(s));
-          liquid.hasNormal = liquid.normal != Id16{};
+        for (int w = 0; w < 2; ++w) {
+          for (int i = 0; i < 5; ++i) {
+            value({kPropWaterWaves[w], kPropWave[i]}, &liquid.waves[w][i], 1);
+          }
         }
-        float perUnit = 0.08f;
-        if (r.room.Nested(*c, {kPropWaterLook, kPropWaterNormalScale[0], kPropWaterNormalScale[1]}, s) &&
-            s.size >= 4) {
-          perUnit = LeFloat(r.room.Bytes(s));
-        }
-        liquid.normalScale[0] = perUnit;
-        liquid.normalScale[1] = perUnit;
+        value({kPropWaterLook, kPropWaterTint}, liquid.tint, 4);
+        texture({kPropWaterLook, kPropWaterNormalMap, kPropWaterNormalTexture}, liquid.normalMap);
         for (int i = 0; i < 2; ++i) {
-          if (r.room.Nested(*c, {kPropWaterWaves[i], kPropWaveAngle}, s) && s.size >= 4) {
-            liquid.waveAngle[i] = LeFloat(r.room.Bytes(s));
-          }
+          value({kPropWaterLook, kPropWaterNormalMap, kPropWaterNormalDir, kPropWaterNormalDirXY[i]},
+                &liquid.normalDir[i], 1);
+        }
+        value({kPropWaterLook, kPropWaterNormalMap, kPropWaterNormalSpeed}, &liquid.normalSpeed, 1);
+        value({kPropWaterLook, kPropWaterNormalMap, kPropWaterNormalScale}, &liquid.normalScale, 1);
+        value({kPropWaterLook, kPropWaterFog, kPropWaterFogColor}, liquid.fogColor, 4);
+        value({kPropWaterLook, kPropWaterFog, kPropWaterFogDistance}, &liquid.fogDistance, 1);
+        texture({kPropWaterLook, kPropWaterRain, kPropWaterRainNoise}, liquid.rainNoise);
+        for (int i = 0; i < 10; ++i) {
+          value({kPropWaterLook, kPropWaterRain, kPropWaterRainValue[i]}, &liquid.rain[i], 1);
+          value({kPropWaterLook, kPropWaterFlow, kPropWaterFlowValue[i]}, &liquid.flow[i], 1);
+        }
+        texture({kPropWaterLook, kPropWaterFlow, kPropWaterFlowMap}, liquid.flowMap);
+        for (int i = 0; i < 5; ++i) {
+          value({kPropWaterLook, kPropWaterMaterial[i]}, &liquid.material[i], 1);
         }
       }
       if (m_io.cancelled && m_io.cancelled()) {
         return;
       }
       uint32_t id = 0;
-      if (!m_io.liquid(liquid, id)) {
+      RoomWaterAssets assets;
+      if (lava ? !m_io.liquid(liquid, id) : !m_io.water || !m_io.water(liquid, assets)) {
         ++dropped;
         continue;
       }
@@ -3760,11 +3801,66 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
       PutLe32(body, uint32_t(liquid.type));
       PutLe32(body, id);
       for (int row = 0; row < 3; ++row) {
-        for (int col = 0; col < 3; ++col) {
+        // A lava pool is converted into the area's axes. A water mesh is not: it stays in
+        // Remastered's model space and the transform takes it there, (x, y, z) -> (-x, z, y).
+        double col[3];
+        for (int c = 0; c < 3; ++c) {
+          col[c] = kSign[row] * kSign[c] * m[kAxis[row]][kAxis[c]];
+        }
+        if (!lava) {
+          const double old[3] = {col[0], col[1], col[2]};
+          col[0] = -old[0];
+          col[1] = old[2];
+          col[2] = old[1];
+        }
+        for (int c = 0; c < 3; ++c) {
           // The entity's scale is the size of the volume; the model is in units already.
-          PutFloat(body, kSign[row] * kSign[col] * m[kAxis[row]][kAxis[col]]);
+          PutFloat(body, col[c]);
         }
         PutFloat(body, kSign[row] * pos[kAxis[row]]);
+      }
+      if (!lava) {
+        PutLe32(body, uint32_t(assets.vertices.size()));
+        PutLe32(body, uint32_t(assets.indices.size()));
+        for (const float v : assets.boundsMin) {
+          PutFloat(body, v);
+        }
+        for (const float v : assets.boundsMax) {
+          PutFloat(body, v);
+        }
+        for (const uint8_t v : liquid.features) {
+          body.push_back(v);
+        }
+        body.push_back(0);
+        auto floats = [&](const float* v, int n) {
+          for (int i = 0; i < n; ++i) {
+            PutFloat(body, v[i]);
+          }
+        };
+        floats(liquid.waves[0], 5);
+        floats(liquid.waves[1], 5);
+        floats(liquid.tint, 4);
+        floats(liquid.normalDir, 2);
+        floats(&liquid.normalSpeed, 1);
+        floats(&liquid.normalScale, 1);
+        floats(liquid.fogColor, 4);
+        floats(&liquid.fogDistance, 1);
+        floats(liquid.material, 5);
+        floats(liquid.rain, 10);
+        floats(liquid.flow, 10);
+        PutLe32(body, assets.normalMap);
+        PutLe32(body, assets.flowMap);
+        PutLe32(body, assets.rainNoise);
+        PutLe32(body, assets.rainNoiseWidth);
+        PutLe32(body, assets.rainNoiseHeight);
+        for (const RoomWaterAssets::Vertex& v : assets.vertices) {
+          floats(v.pos, 3);
+          floats(v.uv, 4);
+          body.insert(body.end(), v.color, v.color + 4);
+        }
+        for (const uint32_t i : assets.indices) {
+          PutLe32(body, i);
+        }
       }
       ++count;
     }
@@ -3774,7 +3870,7 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
   }
   std::vector<uint8_t> out;
   PutLe32(out, 0x4C52504D);  // 'MPRL'
-  PutLe32(out, 1);
+  PutLe32(out, 2);
   PutLe32(out, count);
   out.insert(out.end(), body.begin(), body.end());
   char file[32];

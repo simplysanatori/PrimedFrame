@@ -96,8 +96,6 @@ constexpr const char* kMovieFolder = "Video";
 constexpr const char* kGalleryFolder = "gallery";
 // Largest edge of a room geometry texture: there are thousands of them.
 constexpr int kGeometryTexture = 1024;
-// Texcoords a second a water surface's wave layers move by.
-constexpr double kLiquidDrift = 0.02;
 // A room model's coarser level of detail is written only when it has at most this share of
 // the triangles of the level before it that was: one barely coarser costs a file and a
 // switch for nothing.
@@ -1378,7 +1376,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   struct GeometryModel {
     ModelUuid uuid;
     uint32_t id;
-    int liquid = -1;  // index into `liquids` when it is a liquid's surface
+    int liquid = -1;  // index into `liquids` when it is a lava pool
     int joint = -1;   // the joint whose rigid piece of a skinned model it is (ConvertOptions::joint)
     // Ids set aside for its coarser levels of detail (index 0 unused); a level it
     // turns out not to have, or that is not worth its file, leaves its id unused.
@@ -1429,8 +1427,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     g.joint = joint;
     return true;
   };
-  // A liquid's surface is converted with what its room says of it, so it is a model of its
-  // own even where two rooms share the sheet.
+  // A lava pool is converted as a model of its own, even where two rooms share it.
   auto liquidId = [&](const RoomLiquid& liquid, uint32_t& id) {
     std::lock_guard<std::mutex> lock(takenMutex);
     id = 0x811C9DC5u ^ uint32_t(liquids.size() + 1) * 0x9E3779B1u;
@@ -1443,6 +1440,160 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     taken.insert(id);
     geometry.push_back({liquid.model, id, int(liquids.size())});
     liquids.push_back(liquid);
+    return true;
+  };
+  // A water or poison surface is Remastered's own mesh and maps (the room's fields go in the
+  // .roomliquid itself). Its maps are written as linear data under ids given out here, once
+  // per texture across rooms.
+  struct WaterTexture {
+    uint32_t id = 0;
+    int width = 0, height = 0;
+  };
+  std::mutex waterMutex;
+  std::map<ModelUuid, WaterTexture> waterTextures;
+  auto waterTexture = [&](const ModelUuid& uuid, WaterTexture& out) {
+    out = WaterTexture{};
+    if (uuid == ModelUuid{}) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(waterMutex);
+    const auto known = waterTextures.find(uuid);
+    if (known != waterTextures.end()) {
+      out = known->second;
+      return;
+    }
+    WaterTexture made;
+    Image image;
+    std::string textureError;
+    if (!makeIO(0, geometryFolder).texture(uuid, image, textureError)) {
+      AddLine("water texture: " + textureError);
+    } else {
+      uint32_t id = 0x811C9DC5u ^ 0x57A7E5u;
+      for (const uint8_t byte : uuid) {
+        id = (id ^ byte) * 0x01000193u;
+      }
+      {
+        std::lock_guard<std::mutex> takenLock(takenMutex);
+        while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
+          ++id;
+        }
+        taken.insert(id);
+      }
+      // As the effect import: small ones are the TXTR alone; over the stub's side the .dds is
+      // the texture and a small TXTR stands in for it on the game's heap.
+      constexpr int kStub = 64;
+      const auto roundUp4 = [](int v) { return std::max(8, (v + 3) / 4 * 4); };
+      const int edge = std::max(image.width, image.height);
+      const auto write = makeIO(9999, geometryFolder).write;
+      const std::string name = hex(id);
+      bool wrote;
+      if (edge <= kStub) {
+        wrote = write(name + ".TXTR", EncodeTxtrRgba8(image));
+      } else {
+        const Image stub = Resize(image, roundUp4(image.width * kStub / edge), roundUp4(image.height * kStub / edge),
+                                  MapKind::Data);
+        wrote = write(name + ".dds", EncodeDds(image, ColourDdsFormat(), false, MapKind::Data)) &&
+                write(name + ".TXTR", EncodeTxtrRgba8(stub));
+      }
+      if (wrote) {
+        made = {id, image.width, image.height};
+      } else {
+        AddLine("water texture " + name + ": cannot be written");
+      }
+    }
+    waterTextures.emplace(uuid, made);
+    out = made;
+  };
+  auto waterSurface = [&](const RoomLiquid& liquid, RoomWaterAssets& assets) {
+    std::string meshError;
+    try {
+      std::vector<uint8_t> raw;
+      Model model;
+      if (!remastered.ReadModel(liquid.model, raw, meshError) || !ParseModel(raw.data(), raw.size(), model, meshError)) {
+        AddLine("water mesh: " + meshError);
+        return false;
+      }
+      // The finest level's meshes only, as the converter keeps them.
+      std::vector<bool> finest(model.meshes.size(), false);
+      bool anyFinest = false;
+      for (size_t r = 0; r < 5 && r < model.lods.size(); ++r) {
+        const ModelLod& range = model.lods[r];
+        for (uint64_t i = range.indexOffset; i < uint64_t(range.indexOffset) + range.indexCount; ++i) {
+          if (i < model.lodMeshes.size() && model.lodMeshes[i] < finest.size()) {
+            finest[model.lodMeshes[i]] = true;
+            anyFinest = true;
+          }
+        }
+      }
+      std::map<uint32_t, uint32_t> base;  // vertex buffer -> its first vertex in the merge
+      bool any = false;
+      for (size_t m = 0; m < model.meshes.size(); ++m) {
+        const ModelMesh& mesh = model.meshes[m];
+        if ((anyFinest && !finest[m]) || mesh.vertexBuffer >= model.vertexBuffers.size()) {
+          continue;
+        }
+        const ModelVertexBuffer& vb = model.vertexBuffers[mesh.vertexBuffer];
+        const size_t n = vb.vertexCount;
+        if (vb.positions.size() != n * 3) {
+          meshError = "a vertex buffer has no positions";
+          break;
+        }
+        auto at = base.find(mesh.vertexBuffer);
+        if (at == base.end()) {
+          at = base.emplace(mesh.vertexBuffer, uint32_t(assets.vertices.size())).first;
+          const std::vector<float>* uv = !vb.uvs.empty() && vb.uvs[0].size() == n * 2 ? &vb.uvs[0] : nullptr;
+          const std::vector<float>* zw = !vb.uvsZw.empty() && vb.uvsZw[0].size() == n * 2 ? &vb.uvsZw[0] : nullptr;
+          const bool colours = vb.colors.size() == n * 4;
+          for (size_t v = 0; v < n; ++v) {
+            RoomWaterAssets::Vertex out{};
+            for (int c = 0; c < 3; ++c) {
+              out.pos[c] = vb.positions[v * 3 + c];
+              if (!any) {
+                assets.boundsMin[c] = assets.boundsMax[c] = out.pos[c];
+              }
+              assets.boundsMin[c] = std::min(assets.boundsMin[c], out.pos[c]);
+              assets.boundsMax[c] = std::max(assets.boundsMax[c], out.pos[c]);
+            }
+            any = true;
+            for (int c = 0; c < 2; ++c) {
+              out.uv[c] = uv ? (*uv)[v * 2 + c] : 0.0f;
+              out.uv[2 + c] = zw ? (*zw)[v * 2 + c] : 0.0f;
+            }
+            for (int c = 0; c < 4; ++c) {
+              out.color[c] = colours ? uint8_t(std::clamp(vb.colors[v * 4 + c], 0.0f, 1.0f) * 255.0f + 0.5f) : 255;
+            }
+            assets.vertices.push_back(out);
+          }
+        }
+        const size_t count = mesh.indices.size() / 3 * 3;
+        for (size_t i = 0; i < count; ++i) {
+          if (mesh.indices[i] >= n) {
+            meshError = "a mesh indexes past its vertex buffer";
+            break;
+          }
+          assets.indices.push_back(at->second + mesh.indices[i]);
+        }
+        if (!meshError.empty()) {
+          break;
+        }
+      }
+      if (!meshError.empty() || assets.indices.empty()) {
+        AddLine("water mesh: " + (meshError.empty() ? std::string("no triangles") : meshError));
+        return false;
+      }
+    } catch (const std::exception& e) {
+      AddLine(std::string("water mesh: ") + e.what());
+      return false;
+    }
+    WaterTexture normal, flow, noise;
+    waterTexture(liquid.normalMap, normal);
+    waterTexture(liquid.flowMap, flow);
+    waterTexture(liquid.rainNoise, noise);
+    assets.normalMap = normal.id;
+    assets.flowMap = flow.id;
+    assets.rainNoise = noise.id;
+    assets.rainNoiseWidth = uint32_t(noise.width);
+    assets.rainNoiseHeight = uint32_t(noise.height);
     return true;
   };
   auto roomWork = [&] {
@@ -1464,6 +1615,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       io.model = geometryId;
       io.piece = pieceId;
       io.liquid = liquidId;
+      io.water = waterSurface;
       io.wantsGeometry = WantsGeometry;
       io.cancelled = [] { return sCancel.load(); };
       // One line a room (what was left out and why): too many for the panel, so the log.
@@ -1554,22 +1706,6 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         options.skip.clear();
         options.nativeMax = kGeometryTexture;
         options.joint = geometry[i].joint;
-        if (geometry[i].liquid >= 0 && liquids[size_t(geometry[i].liquid)].type != RoomLiquid::kLava) {
-          const RoomLiquid& liquid = liquids[size_t(geometry[i].liquid)];
-          options.water = true;
-          options.waterHasNormal = liquid.hasNormal;
-          options.waterNormal = liquid.normal;
-          for (int k = 0; k < 4; ++k) {
-            options.waterTint[k] = liquid.tint[k];
-          }
-          // Each wave layer drifts the way it faces; Remastered's speeds are not read.
-          for (int k = 0; k < 2; ++k) {
-            const double angle = double(liquid.waveAngle[k]) * (3.14159265358979323846 / 180.0);
-            options.waterScale[k] = liquid.normalScale[k];
-            options.waterFlow[k * 2] = kLiquidDrift * std::cos(angle);
-            options.waterFlow[k * 2 + 1] = kLiquidDrift * std::sin(angle);
-          }
-        }
         std::string modelError;
         bool ok = false;
         // As for the models: an exception here would terminate the game.
