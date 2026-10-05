@@ -130,6 +130,14 @@ typedef struct {
    * limits may allow less.
    */
   uint32_t residentGeometryMiB;
+
+  /*
+   * An initial pipeline cache database held in memory (must stay valid for the whole run). When set
+   * it is used instead of <resourcesPath>/initial_pipeline_cache.db, so a stale file left beside the
+   * application cannot override it.
+   */
+  const uint8_t* pipelineCacheSeedData;
+  size_t pipelineCacheSeedSize;
 } AuroraConfig;
 
 typedef struct {
