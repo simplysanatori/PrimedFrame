@@ -52,6 +52,9 @@ struct EffectImportIO {
   // standalone CMDL written under `retailId`, with the textures it needs.
   // Optional: without it such a model does not convert.
   std::function<bool(const EffectGuid& id, uint32_t retailId, std::string& error)> model;
+  // Optional: the VMSH blob of a model `model` converted under `retailId` (empty for any
+  // other id), so a model particle with a VMAT carries its mesh.
+  std::function<std::vector<uint8_t>(uint32_t retailId)> modelMesh;
   // Stores one output file: "<ID>.PART", "<ID>.TXTR" or "<ID>.CMDL".
   std::function<bool(const std::string& name, const std::vector<uint8_t>& data)> write;
   std::function<void(const std::string& line)> log;  // optional

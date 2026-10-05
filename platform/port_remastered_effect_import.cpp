@@ -878,6 +878,9 @@ public:
     io.flipbook = [&](const EffectGuid& stored) { return Flipbook(Swap(stored)); };
     io.materialData = [&](const EffectGuid& material) { return MaterialData(material); };
     io.vfxTexture = [&](const EffectGuid& stored) { return VfxTexture(stored); };
+    if (m_io.modelMesh) {
+      io.modelMesh = [&](uint32_t model) { return m_io.modelMesh(model); };
+    }
     const std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
     std::vector<RetailPartProperty> check;
     if (parts.empty() || !SplitRetailPart(parts[0].part.data(), parts[0].part.size(), check, error)) {

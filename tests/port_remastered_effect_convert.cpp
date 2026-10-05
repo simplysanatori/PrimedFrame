@@ -1057,7 +1057,7 @@ std::vector<uint8_t> Mati(uint32_t shader, const std::vector<std::pair<const cha
 }
 
 // A root generator whose material is `Fresh(7)`, with a blend mode and sprite centre.
-std::vector<uint8_t> VmatEffect() {
+std::vector<uint8_t> VmatEffect(bool model = false) {
   std::vector<uint8_t> out(0x3c, 0);
   std::memcpy(out.data(), "RFRM", 4);
   std::memcpy(out.data() + 0x14, "GENP", 4);
@@ -1069,10 +1069,61 @@ std::vector<uint8_t> VmatEffect() {
   PutProperty(out, "MTIN", 0);
   out.push_back(1);
   PutGuid(out, Fresh(7));
+  if (model) {
+    PutProperty(out, "PMDL", 0);
+    PutGuid(out, Legacy(0x1234ABCD));
+  }
   PutProperty(out, "_END", 4);
   Put32(out, 0);
   out.insert(out.end(), {'F', 'O', 'O', 'T'});
   return out;
+}
+
+// A model particle with a VMAT carries its converted model as VMSH, when the import has the mesh.
+void TestVmsh() {
+  const std::vector<uint8_t> data = VmatEffect(true);
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(data.data(), data.size(), effect, error), "vmsh effect parses");
+  EffectConvertIO io;
+  io.materialTexture = [](const EffectGuid& material) { return material == Fresh(7) ? 0x5EED0007u : 0u; };
+  io.materialData = [](const EffectGuid&) { return Mati(0x461071b8, {{"TCH0", Fresh(8)}}); };
+  io.vfxTexture = [](const EffectGuid&) {
+    FlipbookAtlas atlas;
+    atlas.id = 0x5EED0008;
+    return atlas;
+  };
+  const std::vector<uint8_t> blob = {0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 1, 1, 2, 3, 4};  // not parsed here
+  io.modelMesh = [&blob](uint32_t model) { return model == 0x1234ABCD ? blob : std::vector<uint8_t>(); };
+  std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
+  Check(parts.size() == 1, "one part with a model");
+  if (parts.size() != 1) {
+    return;
+  }
+  std::vector<RetailPartProperty> properties;
+  Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error), "vmsh part reads as retail");
+  const RetailPartProperty* vmsh = nullptr;
+  for (const RetailPartProperty& property : properties) {
+    if (property.fourcc == EffectFourCC("VMSH")) {
+      vmsh = &property;
+    }
+  }
+  Check(vmsh != nullptr, "a model particle with a VMAT writes VMSH");
+  if (vmsh != nullptr) {
+    const std::vector<uint8_t>& v = vmsh->value;
+    Check(v.size() == 8 + blob.size() && std::memcmp(v.data(), "CNST", 4) == 0 && v[7] == blob.size() &&
+              std::equal(blob.begin(), blob.end(), v.begin() + 8),
+          "VMSH is CNST, the length and the blob");
+  }
+  // A model the import has no mesh for (a disc model) gets no VMSH.
+  io.modelMesh = [](uint32_t) { return std::vector<uint8_t>(); };
+  parts = ConvertEffect(effect, data.data(), io);
+  properties.clear();
+  if (parts.size() == 1 && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error)) {
+    for (const RetailPartProperty& property : properties) {
+      Check(property.fourcc != EffectFourCC("VMSH"), "no VMSH for a model without a mesh");
+    }
+  }
 }
 
 // A recipe shader's MATI becomes a VMAT, and the port-only properties survive a retail split.
@@ -1157,6 +1208,7 @@ void TestVmat() {
 
 int main() {
   TestVmat();
+  TestVmsh();
   TestAtlasTexture();
   TestModelChoice();
   TestRetailId();

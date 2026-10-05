@@ -1301,6 +1301,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     // was given. One converter serves them all: the effects run on one thread.
     std::unique_ptr<Converter> effectModels;
     std::unordered_set<uint32_t> effectClaimed;
+    std::unordered_map<uint32_t, std::vector<uint8_t>> effectMeshes;  // VMSH blob by converted CMDL id
+    effectIO.modelMesh = [&](uint32_t model) {
+      const auto found = effectMeshes.find(model);
+      return found != effectMeshes.end() ? found->second : std::vector<uint8_t>();
+    };
     effectIO.model = [&](const EffectGuid& id, uint32_t retailId, std::string& effectError) {
       if (!effectModels) {
         ConvertIO io = makeIO(0, staging);
@@ -1313,6 +1318,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       options.standalone = true;
       options.skip.clear();
       options.nativeMax = kGeometryTexture;
+      options.vmsh = &effectMeshes[retailId];
       try {
         std::vector<uint8_t> raw;
         Model model;

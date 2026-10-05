@@ -2614,6 +2614,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // stacks the coarse copies on the fine one. Keep the chosen level's.
   std::vector<bool> finest(model.meshes.size(), false);
   bool anyFinest = false;
+  std::unordered_map<uint64_t, uint32_t> vmshIndex;  // (buffer, vertex) -> its place in vmshV
+  std::vector<float> vmshV;                          // pos, nrm, uv per vertex
+  std::vector<uint32_t> vmshI;
   const size_t lodBase = size_t(std::max(opt.lod, 0)) * 5;
   if (opt.lod > 0 && lodBase >= model.lods.size()) {
     throw Fail{"the model has no level of detail " + std::to_string(opt.lod)};
@@ -2728,6 +2731,24 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         std::swap(p.I[t], p.I[t + 2]);
       }
     }
+    if (opt.vmsh != nullptr && !b.uv.empty() && b.uv[0].size() >= b.n * 2) {
+      // The front faces only, before the back copy below adds vertices.
+      for (uint32_t i : p.I) {
+        const uint64_t key = uint64_t(mesh.vertexBuffer) << 32 | i;
+        auto [at, fresh] = vmshIndex.try_emplace(key, uint32_t(vmshV.size() / 8));
+        if (fresh) {
+          for (int r = 0; r < 3; ++r) {
+            vmshV.push_back(float(b.P[size_t(i) * 3 + r]));
+          }
+          for (int r = 0; r < 3; ++r) {
+            vmshV.push_back(float(b.N[size_t(i) * 3 + r]));
+          }
+          vmshV.push_back(float(b.uv[0][size_t(i) * 2]));
+          vmshV.push_back(float(b.uv[0][size_t(i) * 2 + 1]));
+        }
+        vmshI.push_back(at->second);
+      }
+    }
     if (mesh.twoSided) {
       // Seen from behind too: Remastered draws the mesh with culling off (its MESH
       // chunk's one-bit map; every material flagged 0x400 plus holograms and glow
@@ -2788,6 +2809,29 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   }
   if (prims.empty()) {
     throw Fail{"no primitives left"};
+  }
+  if (opt.vmsh != nullptr) {
+    opt.vmsh->clear();
+    if (!vmshI.empty()) {
+      const uint32_t nv = uint32_t(vmshV.size() / 8);
+      const bool wide = nv > 65535;
+      auto put = [&](uint32_t v, int bytes) {
+        for (int k = bytes - 1; k >= 0; --k) {
+          opt.vmsh->push_back(uint8_t(v >> (8 * k)));
+        }
+      };
+      put(1, 4);
+      put(nv, 4);
+      put(uint32_t(vmshI.size() / 3), 4);
+      for (float f : vmshV) {
+        uint32_t bits;
+        std::memcpy(&bits, &f, 4);
+        put(bits, 4);
+      }
+      for (uint32_t i : vmshI) {
+        put(i, wide ? 4 : 2);
+      }
+    }
   }
   Log(Hex8(opt.retail) + ": " + std::to_string(prims.size()) + " primitives");
   // The levels of detail share their vertex buffers, so a buffer carries the other

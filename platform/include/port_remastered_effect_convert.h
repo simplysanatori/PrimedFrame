@@ -82,6 +82,9 @@ struct EffectConvertIO {
   // A texture a VMAT slot draws, imported as a TXTR the import writes: a single texture comes
   // back with cols = rows = frames = 1, an array packed as by `flipbook`. Id 0: it cannot be.
   std::function<FlipbookAtlas(const EffectGuid& texture)> vfxTexture;
+  // The VMSH blob of a converted model (one the import wrote under this retail CMDL id), or
+  // empty for one that is not (a disc model). Left empty, no VMSH is written.
+  std::function<std::vector<uint8_t>(uint32_t model)> modelMesh;
 };
 
 struct ConvertedPart {

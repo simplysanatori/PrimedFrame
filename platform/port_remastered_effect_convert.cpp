@@ -1214,9 +1214,9 @@ public:
   // The port-only properties of a generator whose material instance has a
   // recipe: VMAT and the per-particle data it reads (build/mpr/vfx/DESIGN.md).
   // Writes nothing where the MATI is unavailable or its shader has no recipe.
-  void Material(const EffectProperty& material, const EffectNode& node, ConvertedPart& result) const {
+  bool Material(const EffectProperty& material, const EffectNode& node, ConvertedPart& result) const {
     if (!m_io.materialData || !m_io.vfxTexture) {
-      return;
+      return false;
     }
     const EffectValue* guid = nullptr;
     for (const EffectValue& value : material.value) {
@@ -1225,20 +1225,20 @@ public:
       }
     }
     if (guid == nullptr) {
-      return;
+      return false;
     }
     const std::vector<uint8_t> data = m_io.materialData(guid->guid);
     Mati mati;
     if (!ParseMati(data, mati)) {
       result.dropped.push_back("VMAT: no MATI for its material");
-      return;
+      return false;
     }
     char shaderText[16];
     std::snprintf(shaderText, sizeof(shaderText), "%08x", mati.shader);
     const Recipe* recipe = RecipeOf(mati.shader);
     if (recipe == nullptr) {
       m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " has no recipe");
-      return;
+      return false;
     }
 
     // The node's properties by fourcc.
@@ -1263,12 +1263,12 @@ public:
       const auto found = mati.textures.find(spec.tag);
       if (found == mati.textures.end()) {
         m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " has no " + spec.tag + " texture");
-        return;
+        return false;
       }
       const FlipbookAtlas atlas = m_io.vfxTexture(found->second.guid);
       if (atlas.id == 0) {
         m_approximated.push_back(std::string("VMAT: ") + spec.tag + " texture did not import");
-        return;
+        return false;
       }
       slots.push_back({atlas, found->second, &spec});
     }
@@ -1498,6 +1498,7 @@ public:
     PutBe32(result.part, F("VORN"));
     PutBe32(result.part, F("CNST"));
     PutBe32(result.part, orient);
+    return true;
   }
 
   // One generator, swoosh or electric description, as the retail asset `type`.
@@ -1527,6 +1528,8 @@ public:
       }
     }
     bool texture = false;
+    uint32_t pmdl = 0;          // the PMDL's id, when it is one constant
+    bool pmdlVariants = false;  // a PMDV was written (a mesh would cover only one model)
     std::vector<Started> started;  // by the spawn table
     std::set<uint32_t> written;    // retail properties
     const EffectProperty* material = nullptr;
@@ -1614,6 +1617,7 @@ public:
           ++result.droppedRetail;
           continue;
         }
+        pmdlVariants = true;
         PutBe32(out, F("PMDL"));
         PutBe32(out, F("CNST"));
         PutBe32(out, ids[0]);
@@ -1633,6 +1637,9 @@ public:
       }
       if (fourcc == F("TEXR")) {
         texture = true;
+      }
+      if (fourcc == F("PMDL") && bytes.size() == 8) {
+        pmdl = uint32_t(bytes[4]) << 24 | uint32_t(bytes[5]) << 16 | uint32_t(bytes[6]) << 8 | bytes[7];
       }
       written.insert(fourcc);
       PutBe32(out, fourcc);
@@ -1664,8 +1671,16 @@ public:
     } else if (material != nullptr) {
       result.dropped.push_back("MTIN: the effect has a TEXR");
     }
-    if (part && material != nullptr) {
-      Material(*material, node, result);
+    if (part && material != nullptr && Material(*material, node, result) && pmdl != 0 && !pmdlVariants &&
+        m_io.modelMesh) {
+      // VMSH: the converted PMDL as one mesh, so the model particle draws through the VMAT.
+      const std::vector<uint8_t> mesh = m_io.modelMesh(pmdl);
+      if (!mesh.empty()) {
+        PutBe32(out, F("VMSH"));
+        PutBe32(out, F("CNST"));
+        PutBe32(out, uint32_t(mesh.size()));
+        out.insert(out.end(), mesh.begin(), mesh.end());
+      }
     }
     // The first swoosh and electric child the spawn table starts, where the
     // generator has none of its own.
@@ -1976,7 +1991,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.SpawnTable();
     } else if (part && fourcc == F("PMDV")) {
       ok = reader.ModelVariants();
-    } else if (part && fourcc == F("VMAT")) {
+    } else if (part && (fourcc == F("VMAT") || fourcc == F("VMSH"))) {
       ok = reader.Material();
     } else if (part && fourcc == F("VTMT")) {
       ok = reader.TextureTransforms();
@@ -1986,7 +2001,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.Element(Type::Real);
     } else if (part && fourcc == F("VORN")) {
       ok = reader.Orientation();
-    } else if (part && fourcc == F("VMAT")) {
+    } else if (part && (fourcc == F("VMAT") || fourcc == F("VMSH"))) {
       ok = reader.Material();
     } else if (part && fourcc == F("VTMT")) {
       ok = reader.TextureTransforms();
