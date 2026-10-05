@@ -1323,6 +1323,11 @@ constexpr uint32_t kShaderGunGlow[] = {0xA13D6235, 0x62F671E0};
 // keeps the retail frozen-gun particles (CGunWeapon::EnableFrozenEffect), so the
 // shell is not drawn; drawn as a plain surface it froze the gun for good.
 constexpr uint32_t kShaderFrozenShell = 0x2FC554A2;
+// Ice (Model_IceSpreader: the Ice charge's shards, frozen nozzles): lit PBR that
+// reflects its own REFL cube (x CCH5.x, tinted CCH2) and adds TCH0 unlit, a frost
+// layer seen a little below the surface (parallax CCH0.w), times CCH1.x and the base
+// alpha squared, plus a CCH3 rim. Drawn as plain PBR the pale albedo alone read white.
+constexpr uint32_t kShaderIceSpreader = 0x088E025E;
 // A Metroid's dome: a matcap shell the port does not draw. Its glTF calls it
 // opaque, so the vote put it on an opaque retail material, a solid white blob;
 // it keeps retail's blended dome instead.
@@ -1400,6 +1405,7 @@ std::string ShaderRole(uint32_t shader) {
   add(in(kShaderLavaPool), "lava-pool");
   add(in(kShaderGunGlow), "gun-glow");
   add(shader == kShaderFrozenShell, "frozen-shell");
+  add(shader == kShaderIceSpreader, "ice");
   add(shader == kShaderMatcapShell, "matcap-shell");
   add(in(kShaderInverseExposure), "inverse-exposure");
   add(in(kShaderIncanMaskSquared), "incan-mask-squared");
@@ -1516,7 +1522,12 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       }
       break;
     case FourCC('R', 'E', 'F', 'L'):
-      if (texture && std::find(std::begin(kShaderGunBody), std::end(kShaderGunBody), shader) != std::end(kShaderGunBody)) {
+      if (texture && shader == kShaderIceSpreader) {
+        set(kBase, d.texture, &out.refl);
+        if (Lower(IdToString(out.refl.id)).rfind(kDefaultRefl, 0) == 0) {
+          out.refl = MapRef{};
+        }
+      } else if (texture && std::find(std::begin(kShaderGunBody), std::end(kShaderGunBody), shader) != std::end(kShaderGunBody)) {
         set(kBase, d.texture, &out.refl);
         if (Lower(IdToString(out.refl.id)).rfind(kDefaultRefl, 0) == 0) {
           out.refl = MapRef{};
@@ -1779,6 +1790,14 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
           std::end(kShaderPremulGlass) &&
       out.blended && !out.cutout) {
     out.kind = 10;
+  }
+  if (shader == kShaderIceSpreader && tch[0] && !out.maps[kEmissive].has) {
+    // The frost layer is the glow, masked by the base alpha squared (the parallax and
+    // the rim are not drawn).
+    set(kEmissive, tch[0]->texture);
+    out.emissive = cch[1] ? ShortestDouble(cch[1]->color[0]) : 1.0;
+    out.mask = out.maskSquared = true;
+    out.reason += "ice: TCH0 frost as glow, own cube; ";
   }
   // The texture matrix a scroll loads has no scale, so CCH1.yz (1 on every door
   // shield seen) is not drawn.
