@@ -165,7 +165,7 @@ identity or the `KPIN(CREL(LTHN(RAND(0,1)), .5, 1, -1))` mirror). **PMDV**
 (`CNST n`, n model ids) follows PMDL (the first id) for a
 `SLCT(IRND(0, n-1), ARRY)` of Remastered-only CMDLs, which the import converts
 standalone under fresh ids. **ATX2** (id, columns, rows, a cycle, loop; only one effect, C6B5B5A9, uses it) is retail's ATEX as a grid; its cycle `ILPT(100)` is retail's CIELifetimePercent, the whole life in frames, so it becomes a life PATL over every tile. Anything else of those shapes is left out.
-With 323 matched fresh effects (below), 385 of 398 effects import (1264 PARTs, 152 textures of which 1 flipbook, 80 models). PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6), 06B3F06E and C6CBF848 keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
+With 437 matched fresh effects (below), 489 of 512 effects import (1736 PARTs, 176 textures of which 1 flipbook, 94 models). PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6), 06B3F06E and C6CBF848 keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
 
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.
@@ -188,7 +188,7 @@ those back to retail PARTs (checked 2026-10-05):
   the importer doesn't read pak names).
 - By reference: 20 GENPs are named by another GENP, 19 of them fresh, and every
   one of those 19 is named only by fresh effects. No effect with a retail id
-  leads to a fresh one. Room scripts and actor events were not paired.
+  leads to a fresh one.
 - By property values (2026-10-05): each converted root against every disc
   PART, scored by the share of its non-asset (fourcc, value) pairs the disc's
   has. On the 78 retail-id effects the top match is right 49 times; on the 58
@@ -237,6 +237,19 @@ those back to retail PARTs (checked 2026-10-05):
   alone re-derives 46 to 67 of 83, none wrong; 38 more pairs. 121 of the 232
   fresh GENPs in CHPRs are still unpaired, among them 4B55EA17's two claimants
   (Ridley's and FA049A5D's). Scripts: `build/fx-evt/` (`NOTES.md`).
+- By script slot (2026-10-05): Remastered keeps retail's property order
+  (dropping null fields, adding some of its own), so a ROOM object and the
+  retail SCLY object it stands for (same type, same spot) name their assets in
+  the same order. Assets both sides share (retail-id assets, effects already
+  paired) are anchors; between two neighbouring anchors, a stretch with as many
+  fresh GENPs as PARTs pairs in order. A GENP is kept if every placement agrees
+  and no other effect claims the PART. Hiding a known pair, it re-derives 169 of
+  193 (11 of 17 on enemies), none wrong. 114 pairs are kept: 64 Effect objects
+  (11 more dropped where the placement rule picked another PART at a stacked
+  spot) and 50 enemy slots (Burrower, Thardus, OmegaPirate...). Remastered
+  sometimes folds several retail PARTs into one GENP or the reverse, and puts a
+  GENP where retail has a WPSC; the count rule skips those stretches. None of
+  the 121 CHPR-unpaired GENPs is in a script slot. Scripts: `build/fx-scr/`.
 
 ## Converting to retail PART
 
