@@ -1864,17 +1864,27 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     g.joint = joint;
     return true;
   };
-  // A lava pool is converted as a model of its own, even where two rooms share it.
+  // A lava pool is converted as a model of its own, with its pool's values baked in: one per
+  // model and values, whatever room asks first (the rooms run in parallel, so the id must not
+  // depend on the order they come in).
+  std::map<std::string, uint32_t> liquidIds;
   auto liquidId = [&](const RoomLiquid& liquid, uint32_t& id) {
     std::lock_guard<std::mutex> lock(takenMutex);
-    id = 0x811C9DC5u ^ uint32_t(liquids.size() + 1) * 0x9E3779B1u;
-    for (const uint8_t byte : liquid.model) {
-      id = (id ^ byte) * 0x01000193u;
+    std::string key(reinterpret_cast<const char*>(liquid.model.data()), liquid.model.size());
+    key.append(reinterpret_cast<const char*>(liquid.lava), sizeof(liquid.lava));
+    if (const auto known = liquidIds.find(key); known != liquidIds.end()) {
+      id = known->second;
+      return true;
+    }
+    id = 0x811C9DC5u ^ 0x9E3779B1u;
+    for (const char byte : key) {
+      id = (id ^ uint8_t(byte)) * 0x01000193u;
     }
     while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
       ++id;
     }
     taken.insert(id);
+    liquidIds.emplace(std::move(key), id);
     geometry.push_back({liquid.model, id, int(liquids.size())});
     liquids.push_back(liquid);
     return true;
