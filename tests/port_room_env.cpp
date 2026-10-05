@@ -391,6 +391,60 @@ void TestGrid() {
               file.fogs[0].fadeInSpline.LastTime() == 2.f && file.fogs[0].fadeInSpline.Eval(1.f) == 0.5f &&
               file.fogs[0].fadeInSpline.Eval(3.f) == 1.f && file.fogs[0].links.size() == 1,
           "fog: version 13 fade splines");
+
+    // Version 14 adds the fog regions after the fogs.
+    {
+      std::vector<uint8_t> v14 = v13;
+      v14[4] = 14;
+      Check(!PortRoomEnv::Parse(std::vector<uint8_t>(v14), file, error), "fog region: count cut short");
+      Put32(v14, 2);
+      const auto putRegion = [&v14](float density, uint8_t fluid) {
+        Put32(v14, uint32_t(-1));
+        v14.insert(v14.end(), {1, fluid, 1, 0});
+        for (int i = 0; i < 12; ++i) {
+          PutFloat(v14, float(i));
+        }
+        for (int i = 0; i < 3; ++i) {
+          PutFloat(v14, -2.f);
+        }
+        PutFloat(v14, 0.f); // mult: override
+        for (int i = 0; i < 3; ++i) {
+          PutFloat(v14, 3.f);
+        }
+        PutFloat(v14, 7.f); // cap
+        for (int i = 0; i < 4; ++i) {
+          PutFloat(v14, 0.25f * float(i + 1));
+        }
+        PutFloat(v14, density);
+        for (int i = 0; i < 6; ++i) {
+          PutFloat(v14, i < 3 ? -1.f : 1.f);
+        }
+      };
+      putRegion(0.5f, 1);
+      Put32(v14, 1);
+      Put32(v14, 0x00100005);
+      v14.insert(v14.end(), {9, 2, 0, 0});
+      std::vector<uint8_t> cut = v14;
+      putRegion(std::numeric_limits<float>::quiet_NaN(), 3);
+      Put32(v14, 0);
+      Check(!PortRoomEnv::Parse(std::vector<uint8_t>(cut), file, error), "fog region: records cut short");
+      Check(PortRoomEnv::Parse(std::vector<uint8_t>(v14), file, error) && file.regions.size() == 2,
+            "fog region: version 14 parses");
+      if (file.regions.size() == 2) {
+        const PortRoomEnv::FogRegion& r = file.regions[0];
+        Check(r.layer == -1 && r.on && r.fluid == 1 && r.hasColor && !r.hasCap && r.m[11] == 11.f &&
+                  r.edgeScale[2] == -2.f && r.mult == 0.f && r.edgeBias[0] == 3.f && r.cap == 7.f &&
+                  r.color[3] == 1.f && r.density == 0.5f && r.box[0] == -1.f && r.box[5] == 1.f &&
+                  r.links.size() == 1 && r.links[0].sender == 0x00100005 && r.links[0].state == 9 &&
+                  r.links[0].action == 2,
+              "fog region: version 14 record");
+        const PortRoomEnv::FogRegion& bad = file.regions[1];
+        Check(bad.fluid == 0 && bad.density == 0.f && bad.box[0] > bad.box[3] && bad.links.empty(),
+              "fog region: a NaN region never shows");
+      }
+      Check(PortRoomEnv::Parse(std::vector<uint8_t>(v13), file, error) && file.regions.empty(),
+            "fog region: older versions have none");
+    }
     v13[v13.size() - 4 - ((spline.size() + 3) & ~size_t(3))] = 0xff; // a key count that runs off the end
     Check(!PortRoomEnv::Parse(std::vector<uint8_t>(v13), file, error), "fog: bad fade spline");
   }

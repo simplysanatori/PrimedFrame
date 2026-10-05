@@ -15,7 +15,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 12), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 14), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -79,6 +79,13 @@
 //   u32 size, then that many bytes of a CMayaSpline (port_maya_spline.h) from elapsed
 //   seconds to blend phase, padded to 4. Size 0: none, the fog changes at once. fadeIn and
 //   fadeOut are then the splines' last key times (for display).
+// Version 14 goes on (after the fogs):
+//   u32 regions
+//   region: s32 layer, u8 on, u8 fluid (0 always, 1 while the camera is in a fluid, 2 while
+//          it is not), u8 hasColor, u8 hasCap, f32 m[3][4], f32 edgeScale[3], f32 mult,
+//          f32 edgeBias[3], f32 cap, f32 color[4], f32 density, f32 box[6] (retail world
+//          min, max), u32 links, then links as a grade's. A Remastered VolumetricFogRegion
+//          as CVolumetricFogRegionGOC makes it (see FogRegion).
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -196,6 +203,31 @@ struct FogHint {
   std::vector<GradeLink> links;
 };
 
+// A VolumetricFogRegion (CVolumetricFogRegionGOC::AddRegion, RebuildPositionalData). The
+// rows of m take a retail world point to 0..1 over the region's box; with l = 2 * that - 1,
+// its mask is clamp(min over the axes of |l| * edgeScale + edgeBias, 0, 1), and with
+// k = 1 + mask * (mult - 1) the fog's scattering colour becomes max(0, mask * color + c * k),
+// its density max(0, d * k + mask * density) and its light cap max(0, cap' * k + mask * cap).
+// A subtracting region has negative values, an overriding one mult 0. Without hasColor the
+// colour is (0, 0, 0, 1) when mult is not 0, else the fog's; without hasCap the cap is 0 when
+// mult is not 0, else the fog's.
+struct FogRegion {
+  int32_t layer = -1;
+  bool on = false;
+  uint8_t fluid = 0;
+  bool hasColor = false;
+  bool hasCap = false;
+  float m[12] = {};
+  float edgeScale[3] = {};
+  float mult = 1.f;
+  float edgeBias[3] = {};
+  float cap = 0.f;
+  float color[4] = {};
+  float density = 0.f;
+  float box[6] = {};
+  std::vector<GradeLink> links;
+};
+
 struct File {
   float tonemap[4] = {};
   float exposure[2] = {}; // EV range; both 0 when the room has no auto exposure
@@ -208,6 +240,7 @@ struct File {
   std::vector<Grade> grades;
   std::vector<BacklightHint> backlights;
   std::vector<FogHint> fogs;
+  std::vector<FogRegion> regions;
   std::vector<Probe> probes;
   std::vector<Cube> cubes;
   std::vector<Grid> grids;
@@ -434,9 +467,16 @@ void UpdateFog(LayerActive layerActive, void* context, float dt);
 // The fog to draw; false when there is none (no hint and the fade done, density about 0,
 // MP_VOLFOG=0, or the environment is off).
 bool VolumetricFog(Fog& out);
+// The fog regions that are on now (CVolumetricFogRegionGOC's active state: requested on, on an
+// active script layer of their area, and their fluid gate open for the camera), across the
+// loaded areas in the order they loaded, each area's in file order. The fog pass takes the
+// first 8 whose box is in view. Empty when the environment or MP_VOLFOG is off.
+void FogRegions(std::vector<const FogRegion*>& out);
 // MP_VOLFOG (default on), the console's `roomenv volfog`.
 void SetVolFogEnabled(bool on);
 bool VolFogEnabled();
+// Debug: leave the fog regions out (console `roomenv fogregions on|off`).
+void SetFogRegionsEnabled(bool on);
 // The console's `roomenv fog`: the fog now, and each fog hint of the camera area.
 std::string FogInfo();
 // A retail script object (`sender`: its editor id without the area bits) of the area `mrea`

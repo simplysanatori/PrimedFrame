@@ -10,10 +10,13 @@ namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 13;
+constexpr uint32_t kVersion = 14;
 constexpr uint32_t kMaxGrades = 64;
 // A fog record up to its link count (inclusive).
 constexpr size_t kFogBytes = 368;
+// A fog region record up to its link count (inclusive).
+constexpr size_t kFogRegionBytes = 136;
+constexpr uint32_t kMaxFogRegions = 1024;
 constexpr uint32_t kMaxGradeLinks = 256;
 constexpr size_t kHeaderSize = 32;
 constexpr size_t kProbeSizeV1 = 100;
@@ -560,6 +563,79 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
           }
           at += padded;
         }
+      }
+    }
+  }
+  if (version >= 14) {
+    if (data.size() - at < 4) {
+      error = "cut short";
+      return false;
+    }
+    const uint32_t regions = Get32(data.data() + at);
+    at += 4;
+    if (regions > kMaxFogRegions) {
+      error = "too many fog regions";
+      return false;
+    }
+    out.regions.resize(regions);
+    for (FogRegion& region : out.regions) {
+      if (data.size() - at < kFogRegionBytes) {
+        error = "cut short";
+        return false;
+      }
+      const uint8_t* p = data.data() + at;
+      region.layer = int32_t(Get32(p));
+      region.on = p[4] != 0;
+      region.fluid = p[5] <= 2 ? p[5] : 0;
+      region.hasColor = p[6] != 0;
+      region.hasCap = p[7] != 0;
+      for (int i = 0; i < 12; ++i) {
+        region.m[i] = GetFloat(p + 8 + 4 * i);
+      }
+      for (int i = 0; i < 3; ++i) {
+        region.edgeScale[i] = GetFloat(p + 56 + 4 * i);
+        region.edgeBias[i] = GetFloat(p + 72 + 4 * i);
+      }
+      region.mult = GetFloat(p + 68);
+      region.cap = GetFloat(p + 84);
+      for (int i = 0; i < 4; ++i) {
+        region.color[i] = GetFloat(p + 88 + 4 * i);
+      }
+      region.density = GetFloat(p + 104);
+      for (int i = 0; i < 6; ++i) {
+        region.box[i] = GetFloat(p + 108 + 4 * i);
+      }
+      const uint32_t links = Get32(p + 132);
+      at += kFogRegionBytes;
+      // A region with anything that is not a number never shows.
+      bool finite = std::isfinite(region.mult) && std::isfinite(region.cap) && std::isfinite(region.density);
+      for (const float v : region.m) {
+        finite = finite && std::isfinite(v);
+      }
+      for (int i = 0; i < 3; ++i) {
+        finite = finite && std::isfinite(region.edgeScale[i]) && std::isfinite(region.edgeBias[i]);
+      }
+      for (const float v : region.color) {
+        finite = finite && std::isfinite(v);
+      }
+      for (const float v : region.box) {
+        finite = finite && std::isfinite(v);
+      }
+      if (!finite) {
+        region = FogRegion{};
+        region.box[0] = region.box[1] = region.box[2] = 1.f; // an empty box: never in view
+      }
+      if (links > kMaxGradeLinks || (data.size() - at) / 8 < links) {
+        error = "cut short";
+        return false;
+      }
+      region.links.resize(links);
+      for (GradeLink& link : region.links) {
+        const uint8_t* q = data.data() + at;
+        link.sender = Get32(q);
+        link.state = q[4];
+        link.action = q[5];
+        at += 8;
       }
     }
   }

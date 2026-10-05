@@ -6,6 +6,7 @@
 // EFB between two passes (see GXPortVolumetricFog).
 namespace aurora::gfx::volfog {
 constexpr uint32_t LutSize = 64;
+constexpr uint32_t MaxRegions = 8;
 
 // The task's uniform, word for word. View space is GX's: x right, y up, z towards the camera.
 struct Params {
@@ -20,11 +21,16 @@ struct Params {
   float colorA[4];           // the light added; w: the exposure the EFB was drawn at
   float tone[3][4];          // the tone curve the EFB was drawn through (as GXSetPBRTone)
   float lut[LutSize];        // density over distance: entry i at (i / 63)^2 * range
+  // The fog regions (SFogDensityRegionParams), MaxRegions of 7 rows: world -> 0..1 over the
+  // box (3), edge scale + mult, edge bias + cap, colour, density (x).
+  float regions[MaxRegions * 7][4];
+  uint32_t regionCount;
+  uint32_t pad[3];
   uint32_t volume;           // the ambient volume (probe::create_volume id), 0 for none
   uint32_t flags;
   uint32_t grid[2];          // set by the task: the froxel grid's width and height
 };
-static_assert(sizeof(Params) == 132 * 4);
+static_assert(sizeof(Params) == (132 + MaxRegions * 28 + 4) * 4);
 
 // Registers the fog's encoder task (game thread); false if it could not be.
 bool ensure_task();

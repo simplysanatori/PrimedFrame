@@ -61,6 +61,7 @@ struct Area {
   std::vector<GradeRequest> grades;
   std::vector<GradeRequest> backlights; // likewise
   std::vector<GradeRequest> fogs;       // likewise
+  std::vector<GradeRequest> regions;    // the fog regions' activation (only `on` matters)
 };
 
 // The frame's exposure and tone curve, as CPostFXManager::UpdateTonemapping moves them.
@@ -238,7 +239,10 @@ struct FogFade {
 };
 FogFade sFog;
 uint64_t sFogOrder = 0;
+uint64_t sRegionOrder = 0;
 int sVolFog = -1;
+// Console `roomenv fogregions on|off`: drop the fog regions to see what they add.
+bool sFogRegions = true;
 bool sPlayerFluid = false;
 bool sCameraWater = false;
 // LUTs handed to Aurora already; they are kept there for the run.
@@ -552,6 +556,7 @@ void DriveGrades(uint32_t mrea, Area& area, uint32_t sender, int state) {
   DriveHints(mrea, "grade", area.file.grades, area.grades, sGradeOrder, sender, state);
   DriveHints(mrea, "backlight", area.file.backlights, area.backlights, sBacklightOrder, sender, state);
   DriveHints(mrea, "fog", area.file.fogs, area.fogs, sFogOrder, sender, state);
+  DriveHints(mrea, "fog region", area.file.regions, area.regions, sRegionOrder, sender, state);
 }
 
 // Every grade and backlight as it starts, then the fluids the player and camera are in already.
@@ -571,6 +576,10 @@ void StartGrades(uint32_t mrea, Area& area) {
   for (size_t i = 0; i < area.fogs.size(); ++i) {
     area.fogs[i].on = area.file.fogs[i].on;
     area.fogs[i].order = i;
+  }
+  area.regions.assign(area.file.regions.size(), {});
+  for (size_t i = 0; i < area.regions.size(); ++i) {
+    area.regions[i].on = area.file.regions[i].on;
   }
   if (sPlayerFluid) {
     DriveGrades(mrea, area, kSenderPlayerFluid, 0);
@@ -1470,6 +1479,8 @@ bool VolFogEnabled() {
 
 void SetVolFogEnabled(bool on) { sVolFog = on ? 1 : 0; }
 
+void SetFogRegionsEnabled(bool on) { sFogRegions = on; }
+
 void UpdateFog(LayerActive layerActive, void* context, float dt) {
   FogFade& f = sFog;
   if (!Enabled()) {
@@ -1556,14 +1567,49 @@ void UpdateFog(LayerActive layerActive, void* context, float dt) {
   ++f.frames;
 }
 
+void FogRegions(std::vector<const FogRegion*>& out) {
+  out.clear();
+  if (!Enabled() || !VolFogEnabled() || !sFogRegions) {
+    return;
+  }
+  // The proxies' add order: the areas in the order they loaded, each in file order.
+  std::vector<const Area*> areas;
+  for (const auto& [mrea, area] : sAreas) {
+    if (area.hasFile && !area.file.regions.empty()) {
+      areas.push_back(&area);
+    }
+  }
+  std::sort(areas.begin(), areas.end(), [](const Area* a, const Area* b) { return a->serial < b->serial; });
+  for (const Area* area : areas) {
+    for (size_t i = 0; i < area->file.regions.size(); ++i) {
+      const FogRegion& region = area->file.regions[i];
+      const bool on = i < area->regions.size() ? area->regions[i].on : region.on;
+      const bool layer = region.layer < 0 || region.layer >= 64 || (area->layers >> region.layer & 1) != 0;
+      // UpdateRenderState's fluid gate.
+      const bool fluid = region.fluid == 1 ? sCameraWater : region.fluid == 2 ? !sCameraWater : true;
+      if (on && layer && fluid) {
+        out.push_back(&region);
+      }
+    }
+  }
+}
+
 bool VolumetricFog(Fog& out) {
   if (!Enabled() || !VolFogEnabled() || !sFog.active) {
     return false;
   }
-  // With no density the pass would leave the frame as it is.
+  // With no density anywhere the pass would leave the frame as it is.
   const FogCore& c = sFog.out;
   if (!(c.decay > 1e-9f)) {
-    return false;
+    static std::vector<const FogRegion*> regions;
+    FogRegions(regions);
+    bool adds = false;
+    for (const FogRegion* region : regions) {
+      adds = adds || region->density > 0.f;
+    }
+    if (!adds) {
+      return false;
+    }
   }
   out.range = c.range;
   out.scatter = c.scatter;
@@ -1616,6 +1662,21 @@ std::string FogInfo() {
                   hint.decay, hint.links.size(), shown ? " (shown)" : "");
     out += line;
   }
+  std::vector<const FogRegion*> on;
+  FogRegions(on);
+  for (size_t i = 0; i < area.file.regions.size(); ++i) {
+    const FogRegion& r = area.file.regions[i];
+    const bool shown = std::find(on.begin(), on.end(), &r) != on.end();
+    std::snprintf(line, sizeof(line),
+                  "%08X region %zu: %s layer %d fluid %d mult %g density %g colour %s%g %g %g cap %s%g box %g %g %g .. "
+                  "%g %g %g links %zu\n",
+                  sViewArea, i, shown ? "on " : "off", int(r.layer), int(r.fluid), r.mult, r.density,
+                  r.hasColor ? "" : "(none) ", r.color[0], r.color[1], r.color[2], r.hasCap ? "" : "(none) ", r.cap,
+                  r.box[0], r.box[1], r.box[2], r.box[3], r.box[4], r.box[5], r.links.size());
+    out += line;
+  }
+  std::snprintf(line, sizeof(line), "regions on in loaded areas: %zu\n", on.size());
+  out += line;
   return out;
 }
 

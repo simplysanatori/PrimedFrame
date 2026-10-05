@@ -51,6 +51,8 @@ struct Params {
   colorA: vec4f,
   tone: array<vec4f, 3>,
   lut: array<vec4f, 16>,
+  regions: array<vec4f, 56>,
+  regionInfo: vec4u,
   misc: vec4u,
 };
 )";
@@ -92,10 +94,24 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
     let z = near + t0 * t0 * (range - near);
     let v = vec4f(ray * z, -z, 1.0);
     let world = vec3f(dot(p.viewToWorld[0], v), dot(p.viewToWorld[1], v), dot(p.viewToWorld[2], v));
-    let height = clamp(world.z * p.shape.x + p.shape.y, 0.0, 1.0) * p.fog.w;
+    var height = clamp(world.z * p.shape.x + p.shape.y, 0.0, 1.0) * p.fog.w;
+    // The regions, chained in order (their density map is the default one-texel white volume).
+    var added = p.colorA.rgb;
+    var cap = p.noise.w;
+    let wv = vec4f(world, 1.0);
+    for (var r = 0u; r < min(p.regionInfo.x, 8u); r++) {
+      let b = r * 7u;
+      let uvw = vec3f(dot(p.regions[b], wv), dot(p.regions[b + 1u], wv), dot(p.regions[b + 2u], wv));
+      let e = abs(uvw * 2.0 - 1.0) * p.regions[b + 3u].xyz + p.regions[b + 4u].xyz;
+      let mask = clamp(min(min(e.x, e.y), e.z), 0.0, 1.0);
+      let k = 1.0 + mask * (p.regions[b + 3u].w - 1.0);
+      added = max(vec3f(0.0), mask * p.regions[b + 5u].rgb + added * k);
+      height = max(0.0, height * k + mask * p.regions[b + 6u].x);
+      cap = max(0.0, cap * k + mask * p.regions[b + 4u].w);
+    }
     let n = textureSampleLevel(noiseTex, repeatSamp, (world + p.noise.xyz) * p.shape.z, 0.0).r;
     let density = (1.0 - p.shape.w + p.shape.w * n) * height * lut_at(min(t0, 1.0));
-    var light = p.colorA.rgb;
+    var light = added;
     if (p.misc.x != 0u) {
       let wv = vec4f(world, 1.0);
       let uvw = vec3f(dot(p.worldToVolume[0], wv), dot(p.worldToVolume[1], wv), dot(p.worldToVolume[2], wv));
@@ -104,8 +120,8 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
       light += vec3f(p.colorB.w); // Remastered's default volume: one white texel
     }
     let top = max(max(light.r, light.g), light.b);
-    if (top > p.noise.w) {
-      light *= p.noise.w / top;
+    if (top > cap) {
+      light *= cap / top;
     }
     light *= p.colorB.rgb;
     inscatter += exp(-optical) * thickness * density * p.fog.y * light;

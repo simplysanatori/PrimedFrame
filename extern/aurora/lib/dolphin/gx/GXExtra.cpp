@@ -128,7 +128,15 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
 }
 
 GXBool GXPortVolumetricFog(const GXPortFogParams* fog) {
-  if (fog == nullptr || GXGetPBRCostTest() == 10 || fog->fog[0] <= 0.f || fog->fog[3] <= 0.f) {
+  if (fog == nullptr || GXGetPBRCostTest() == 10 || fog->fog[0] <= 0.f) {
+    return true;
+  }
+  // No density anywhere: the fog or a region must add some.
+  bool dense = fog->fog[3] > 0.f;
+  for (u32 i = 0; i < fog->regionCount && i < 8; ++i) {
+    dense = dense || fog->regions[i][6][0] > 0.f;
+  }
+  if (!dense) {
     return true;
   }
   if (!aurora::gfx::volfog::ensure_task()) {

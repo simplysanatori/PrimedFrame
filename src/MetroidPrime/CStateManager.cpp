@@ -2750,7 +2750,10 @@ CGameArea::CConstChainIterator CWorld::GetAliveAreasEnd() { return skGlobalEnd; 
 // The console's `probe` changes the mode live (CCubeMaterial::sPortPBRProbeMode).
 // Over the world as drawn so far, before the screen filters, bloom and HUD; the arm cannon,
 // drawn nearer than the world's depth range, is left clear, as Remastered leaves it.
-static void PortDrawVolumetricFog(const CStateManager& mgr, const CTransform4f& view) {
+static std::vector<const PortRoomEnv::FogRegion*> sPortFogRegions;
+
+static void PortDrawVolumetricFog(const CStateManager& mgr, const CTransform4f& view,
+                                  const CFrustumPlanes& frustum) {
   const CPlayerState::EPlayerVisor visor = mgr.GetPlayerState()->GetActiveVisor(mgr);
   if (!sPortVolFog || visor == CPlayerState::kPV_Thermal || visor == CPlayerState::kPV_XRay) {
     return;
@@ -2817,6 +2820,30 @@ static void PortDrawVolumetricFog(const CStateManager& mgr, const CTransform4f& 
       p.colorB[3] = env.volumeLevel / exposure;
     }
     PortRoomEnv::ClearVolumeHint();
+  }
+  // CVolumetricFogRegionGOC::AddRegion: the first eight active regions whose box is in
+  // the frustum, in the order the areas loaded them. A region without its own colour or
+  // cap keeps the running value (multiply) or resets it to the global one (override).
+  sPortFogRegions.clear();
+  PortRoomEnv::FogRegions(sPortFogRegions);
+  for (size_t i = 0; i < sPortFogRegions.size() && p.regionCount < 8; ++i) {
+    const PortRoomEnv::FogRegion& r = *sPortFogRegions[i];
+    const CAABox box(CVector3f(r.box[0], r.box[1], r.box[2]), CVector3f(r.box[3], r.box[4], r.box[5]));
+    if (!frustum.BoxInFrustumPlanes(box)) {
+      continue;
+    }
+    float (*row)[4] = p.regions[p.regionCount++];
+    memcpy(row, r.m, sizeof(r.m));
+    const bool multiply = r.mult != 0.f;
+    for (int k = 0; k < 3; ++k) {
+      row[3][k] = r.edgeScale[k];
+      row[4][k] = r.edgeBias[k];
+      row[5][k] = r.hasColor ? r.color[k] : multiply ? 0.f : fog.colorA[k];
+    }
+    row[3][3] = r.mult;
+    row[4][3] = r.hasCap ? r.cap : multiply ? 0.f : fog.lightCap;
+    row[5][3] = r.hasColor ? r.color[3] : 1.f;
+    row[6][0] = r.density;
   }
   GXPortVolumetricFog(&p);
 }
@@ -3335,7 +3362,7 @@ void CStateManager::DrawWorld() const {
   }
 
 #ifdef TARGET_PC
-  PortDrawVolumetricFog(*this, backupViewMatrix);
+  PortDrawVolumetricFog(*this, backupViewMatrix, frustum);
 #endif
   DrawDebugStuff();
   RenderCamerasAndAreaLights();

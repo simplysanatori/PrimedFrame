@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <set>
@@ -46,6 +47,7 @@ constexpr uint32_t kColorGradeHint = 0xa36cd908;
 constexpr uint32_t kBacklight = 0x190d20d7;
 constexpr uint32_t kVolumetricFogHint = 0x84fb5798;
 constexpr uint32_t kVolumetricFog = 0x1b9cd84f;
+constexpr uint32_t kVolumetricFogRegion = 0xaffe9cf9;
 constexpr uint32_t kDoorMP1 = 0x564a1641;
 constexpr uint32_t kModCon = 0x451740eb;
 constexpr uint32_t kActorMP1 = 0xb6200be6;
@@ -89,6 +91,19 @@ constexpr uint32_t kPropFogFadeIn = 0x1666a3dc;
 constexpr uint32_t kPropFogFadeOut = 0x7528254e;
 constexpr uint32_t kPropFogSpline = 0x1eb6e23f;
 constexpr uint32_t kPropFogRange = 0xf259966e;
+// SLdrVolumetricFogRegion's properties and enums (build/mpr/volfog/E-regions-exact.md).
+constexpr uint32_t kPropRegionColor = 0xc35e3f33;
+constexpr uint32_t kPropRegionMode = 0xd4aa2ccb;
+constexpr uint32_t kPropRegionDistance = 0xbaf7ac02;
+constexpr uint32_t kPropRegionTransmittance = 0xd1fc0ce8;
+constexpr uint32_t kPropRegionIntensity = 0x41dcfe38;
+constexpr uint32_t kPropRegionCap = 0x1c44e1d4;
+constexpr uint32_t kPropRegionEdge = 0x46b11b67;
+constexpr uint32_t kPropRegionFluid = 0x5eab5677;
+constexpr uint32_t kRegionSubtract = 0x3f843a1a;
+constexpr uint32_t kRegionOverride = 0x97699d49;
+constexpr uint32_t kRegionInsideFluid = 0xb33d20b9;
+constexpr uint32_t kRegionOutsideFluid = 0x4ccba47b;
 constexpr uint32_t kPropFogResidual = 0x33cd9d58;
 constexpr uint32_t kPropFogNoiseScale = 0x9c1e9f8f;
 constexpr uint32_t kPropFogNoiseStrength = 0xbf9b3481;
@@ -255,6 +270,28 @@ Vec3 MulR2G(const Vec3& v) {
 double Distance(const Vec3& a, const Vec3& b) {
   const double x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2];
   return std::sqrt(x * x + y * y + z * z);
+}
+
+// `out` = the inverse of `m`; false when it is singular.
+bool Invert3(const double m[3][3], double out[3][3]) {
+  const double c00 = m[1][1] * m[2][2] - m[1][2] * m[2][1];
+  const double c01 = m[1][2] * m[2][0] - m[1][0] * m[2][2];
+  const double c02 = m[1][0] * m[2][1] - m[1][1] * m[2][0];
+  const double det = m[0][0] * c00 + m[0][1] * c01 + m[0][2] * c02;
+  if (!std::isfinite(det) || std::fabs(det) < 1e-12) {
+    return false;
+  }
+  const double k = 1.0 / det;
+  out[0][0] = c00 * k;
+  out[1][0] = c01 * k;
+  out[2][0] = c02 * k;
+  out[0][1] = (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * k;
+  out[1][1] = (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * k;
+  out[2][1] = (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * k;
+  out[0][2] = (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * k;
+  out[1][2] = (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * k;
+  out[2][2] = (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * k;
+  return true;
 }
 
 Vec3 Apply(const Mat34& a, const Vec3& d) {
@@ -1276,7 +1313,9 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
   // kSenderPlayerFluid/kSenderCameraWater) and state (0: in, 1: out), or sender 0.
   std::set<int> hintEntities;
   for (const Component& c : comps) {
-    if ((c.type == kColorGradeHint || c.type == kBacklight || c.type == kVolumetricFogHint) && c.entity >= 0) {
+    if ((c.type == kColorGradeHint || c.type == kBacklight || c.type == kVolumetricFogHint ||
+         c.type == kVolumetricFogRegion) &&
+        c.entity >= 0) {
       hintEntities.insert(c.entity);
     }
   }
@@ -1702,6 +1741,21 @@ struct FogData {
   std::vector<PortRoomGeo::Link> links;
 };
 
+// A VolumetricFogRegion as CVolumetricFogRegionGOC::AddRegion and RebuildPositionalData make
+// its state, over retail world space (see PortRoomEnv::FogRegion).
+struct FogRegionData {
+  int32_t layer = -1;
+  bool on = false;
+  uint8_t fluid = 0; // 0 always, 1 while the camera is in a fluid, 2 while it is not
+  bool hasColor = false, hasCap = false;
+  float m[3][4] = {};
+  float edgeScale[3] = {}, mult = 1, edgeBias[3] = {}, cap = 0;
+  float color[4] = {};
+  float density = 0;
+  float box[6] = {}; // min, max
+  std::vector<PortRoomGeo::Link> links;
+};
+
 struct Placement {
   Vec3 pos{};  // GameCube world coordinates, once the world shift is added
 };
@@ -1751,6 +1805,9 @@ private:
   void ReadBacklights(const RoomData& r, const Area* area, std::vector<BacklightData>& out) const;
   // The room's fog hints, heights in Remastered axes (the writer applies the room's shift).
   void ReadFogs(const RoomData& r, const Area* area, std::vector<FogData>& out) const;
+  // The room's fog regions, placed by the area's transform `xf`.
+  void ReadFogRegions(const RoomData& r, const SceneryScripts& scripts, const Mat34& xf,
+                      std::vector<FogRegionData>& out) const;
   bool Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>& check, std::vector<uint8_t>& out,
             std::string& note) const;
   // The room's static geometry (its ModCon components), as "<MREA id>.roomgeo".
@@ -2305,6 +2362,168 @@ void Writer::ReadFogs(const RoomData& r, const Area* area, std::vector<FogData>&
     const auto layer = scripts.layer.find(h->entity);
     g.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
     out.push_back(std::move(g));
+  }
+}
+
+void Writer::ReadFogRegions(const RoomData& r, const SceneryScripts& scripts, const Mat34& xf,
+                            std::vector<FogRegionData>& out) const {
+  const std::vector<const Component*> regions = r.room.Of(kVolumetricFogRegion);
+  if (regions.empty()) {
+    return;
+  }
+  // Retail world -> Remastered world: R2G times the area's inverse.
+  double g[3][3], gt[3];
+  {
+    double a[3][3], inv[3][3];
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        a[i][j] = xf[size_t(i)][size_t(j)];
+      }
+    }
+    if (!Invert3(a, inv)) {
+      return;
+    }
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        g[i][j] = kR2G[i][0] * inv[0][j] + kR2G[i][1] * inv[1][j] + kR2G[i][2] * inv[2][j];
+      }
+    }
+    for (int i = 0; i < 3; ++i) {
+      gt[i] = -(g[i][0] * xf[0][3] + g[i][1] * xf[1][3] + g[i][2] * xf[2][3]);
+    }
+  }
+  for (const Component* c : regions) {
+    Vec3 pos, euler, scale;
+    if (!r.room.Xform(*c, pos, euler, scale)) {
+      continue;
+    }
+    const auto f = r.room.Flat(*c);
+    auto value = [&](uint32_t prop, float fallback) {
+      const auto it = f.find(prop);
+      return it != f.end() && it->second.size >= 4 ? LeFloat(r.room.Bytes(it->second)) : fallback;
+    };
+    auto word = [&](uint32_t prop) {
+      const auto it = f.find(prop);
+      return it != f.end() && it->second.size >= 4 ? Le32(r.room.Bytes(it->second)) : 0u;
+    };
+    float color[4] = {1, 1, 1, 1};
+    {
+      const auto it = f.find(kPropRegionColor);
+      if (it != f.end() && it->second.size >= 16) {
+        for (int i = 0; i < 4; ++i) {
+          color[i] = LeFloat(r.room.Bytes(it->second) + 4 * i);
+        }
+      }
+    }
+    const uint32_t mode = word(kPropRegionMode);
+    const uint32_t fluid = word(kPropRegionFluid);
+    const float distance = value(kPropRegionDistance, 250.f);
+    const float transmittance = value(kPropRegionTransmittance, 0.01f);
+    const float intensity = value(kPropRegionIntensity, -1.f);
+    const float cap = value(kPropRegionCap, -1.f);
+    const float edge = value(kPropRegionEdge, 2.f);
+    // CVolumetricFogRegionGOC::AddRegion: a subtracting region's density, colour and cap are
+    // negative; an overriding one scales what is there by 0 at its core.
+    FogRegionData d;
+    const float sign = mode == kRegionSubtract ? -1.f : 1.f;
+    d.mult = mode == kRegionOverride ? 0.f : 1.f;
+    d.density = sign * (-std::log(transmittance) / distance);
+    if (intensity >= 0) {
+      d.hasColor = true;
+      for (int i = 0; i < 3; ++i) {
+        d.color[i] = color[i] * sign * intensity;
+      }
+      d.color[3] = color[3];
+    }
+    if (cap >= 0) {
+      d.hasCap = true;
+      d.cap = sign * cap;
+    }
+    d.fluid = fluid == kRegionInsideFluid ? 1 : fluid == kRegionOutsideFluid ? 2 : 0;
+    // RebuildPositionalData: the entity's transform (CTransform4f::RotateZYXTranslate of its
+    // euler degrees) with its columns scaled, over the unit box around the origin.
+    double m[3][3];
+    {
+      const double k = 3.14159265358979323846 / 180.0;
+      const double cx = std::cos(euler[0] * k), sx = std::sin(euler[0] * k);
+      const double cy = std::cos(euler[1] * k), sy = std::sin(euler[1] * k);
+      const double cz = std::cos(euler[2] * k), sz = std::sin(euler[2] * k);
+      const double rot[3][3] = {{cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz},
+                                {cy * sz, cx * cz + sx * sy * sz, cx * sy * sz - sx * cz},
+                                {-sy, sx * cy, cx * cy}};
+      for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+          m[i][j] = rot[i][j] * scale[size_t(j)];
+        }
+      }
+    }
+    double minv[3][3];
+    if (!Invert3(m, minv)) {
+      continue;
+    }
+    // world (retail) -> 0..1 over the box: minv (g p + gt - pos) + 0.5.
+    for (int i = 0; i < 3; ++i) {
+      double t = 0.5;
+      for (int j = 0; j < 3; ++j) {
+        d.m[i][j] = float(minv[i][0] * g[0][j] + minv[i][1] * g[1][j] + minv[i][2] * g[2][j]);
+        t += minv[i][j] * (gt[j] - pos[size_t(j)]);
+      }
+      d.m[i][3] = float(t);
+    }
+    // The edge ramps come from Remastered's world box (its axes, not the region's), as the
+    // game makes them; the cull box is the same box in retail world space.
+    const float width = std::max(edge, 0.001f);
+    for (int i = 0; i < 3; ++i) {
+      const double size = std::fabs(m[i][0]) + std::fabs(m[i][1]) + std::fabs(m[i][2]);
+      const float h = std::max(float(0.5 * size), 0.001f);
+      const float frac = std::min(h, width) / h;
+      const float rest = std::max(1.f - frac, 0.001f);
+      d.edgeScale[i] = -1.f / frac;
+      d.edgeBias[i] = 1.f + rest / frac;
+    }
+    for (int i = 0; i < 3; ++i) {
+      d.box[i] = std::numeric_limits<float>::max();
+      d.box[3 + i] = -std::numeric_limits<float>::max();
+    }
+    for (int corner = 0; corner < 8; ++corner) {
+      Vec3 rem;
+      for (int i = 0; i < 3; ++i) {
+        rem[size_t(i)] = pos[size_t(i)];
+        for (int j = 0; j < 3; ++j) {
+          rem[size_t(i)] += m[i][j] * ((corner >> j & 1) != 0 ? 0.5 : -0.5);
+        }
+      }
+      const Vec3 w = Apply(xf, MulR2G(rem));
+      for (int i = 0; i < 3; ++i) {
+        d.box[i] = std::min(d.box[i], float(w[size_t(i)]));
+        d.box[3 + i] = std::max(d.box[3 + i], float(w[size_t(i)]));
+      }
+    }
+    bool finite = std::isfinite(d.density);
+    for (const float v : d.m[0]) finite = finite && std::isfinite(v);
+    for (const float v : d.m[1]) finite = finite && std::isfinite(v);
+    for (const float v : d.m[2]) finite = finite && std::isfinite(v);
+    for (const float v : d.box) finite = finite && std::isfinite(v);
+    if (!finite) {
+      continue;
+    }
+    const auto linked = scripts.links.find(c->entity);
+    if (linked != scripts.links.end()) {
+      for (PortRoomGeo::Link link : linked->second) {
+        if (link.action != PortRoomGeo::kShow && link.action != PortRoomGeo::kHide &&
+            link.action != PortRoomGeo::kToggle) {
+          continue;
+        }
+        if (link.sender != PortRoomEnv::kSenderPlayerFluid && link.sender != PortRoomEnv::kSenderCameraWater) {
+          link.sender &= 0x3ffffff;
+        }
+        d.links.push_back(link);
+      }
+    }
+    d.on = r.room.Active(*c);
+    const auto layer = scripts.layer.find(c->entity);
+    d.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
+    out.push_back(std::move(d));
   }
 }
 
@@ -3555,7 +3774,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  PutLe32(out, 13);
+  PutLe32(out, 14);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -3670,8 +3889,46 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       out.insert(out.end(), (4 - fade->size() % 4) % 4, 0);
     }
   }
-  if (!fogs.empty()) {
-    Log("  " + r.name + ": " + std::to_string(fogs.size()) + " fog hint(s)");
+  std::vector<FogRegionData> regions;
+  ReadFogRegions(r, scripts, m.a, regions);
+  PutLe32(out, uint32_t(regions.size()));
+  for (const FogRegionData& g : regions) {
+    PutLe32(out, uint32_t(g.layer));
+    out.push_back(g.on ? 1 : 0);
+    out.push_back(g.fluid);
+    out.push_back(g.hasColor ? 1 : 0);
+    out.push_back(g.hasCap ? 1 : 0);
+    for (const auto& row : g.m) {
+      for (float v : row) {
+        PutFloat(out, v);
+      }
+    }
+    for (float v : g.edgeScale) {
+      PutFloat(out, v);
+    }
+    PutFloat(out, g.mult);
+    for (float v : g.edgeBias) {
+      PutFloat(out, v);
+    }
+    PutFloat(out, g.cap);
+    for (float v : g.color) {
+      PutFloat(out, v);
+    }
+    PutFloat(out, g.density);
+    for (float v : g.box) {
+      PutFloat(out, v);
+    }
+    PutLe32(out, uint32_t(g.links.size()));
+    for (const PortRoomGeo::Link& link : g.links) {
+      PutLe32(out, link.sender);
+      out.push_back(link.state);
+      out.push_back(link.action);
+      out.insert(out.end(), 2, 0);
+    }
+  }
+  if (!fogs.empty() || !regions.empty()) {
+    Log("  " + r.name + ": " + std::to_string(fogs.size()) + " fog hint(s), " + std::to_string(regions.size()) +
+        " fog region(s)");
   }
   char file[32];
   std::snprintf(file, sizeof file, "%08X.roomenv", m.mrea);

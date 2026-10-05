@@ -213,6 +213,14 @@ typedef struct {
   f32 colorA[4];           // the light added; w: the exposure the EFB was drawn at
   f32 tone[3][4];          // the tone curve the EFB was drawn through (as GXSetPBRTone)
   f32 lut[64];             // density over distance: entry i at (i / 63)^2 * range
+  // Remastered's fog regions in the order they chain, each 7 rows: world -> 0..1 over its box
+  // (3 rows), (edge scale xyz, mult), (edge bias xyz, light cap), colour, (density, 0, 0, 0).
+  // With l = 2 uvw - 1, mask = clamp(min(|l| scale + bias), 0, 1) and k = 1 + mask (mult - 1),
+  // the light added becomes max(0, mask colour + it k), the height-shaped density
+  // max(0, it k + mask density) and the cap max(0, it k + mask cap).
+  f32 regions[8][7][4];
+  u32 regionCount;         // up to 8
+  u32 pad[3];
   u32 volume;              // the ambient volume (GXPBRVolume id), 0 for none
 } GXPortFogParams;
 GXBool GXPortVolumetricFog(const GXPortFogParams* params);
