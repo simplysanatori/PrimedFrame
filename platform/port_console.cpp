@@ -72,6 +72,7 @@
 #include <string>
 #include <thread>
 #include <typeinfo>
+#include "port_fx_debug.h"
 #include <vector>
 #if defined(__GNUC__)
 #include <cxxabi.h>
@@ -471,7 +472,12 @@ void CmdHelp() {
   Out("enter <area>               make a loaded area current, as crossing its dock does");
   Out("room <area>                teleport to a loaded area's spawn point (the F1 room list)");
   Out("tp <x> <y> <z>             move the player");
-  Out("fx <PART id>|off [dist] [scale]  play one particle effect in front of the camera");
+  Out("fx <PART id>|off [dist] [scale] [loop]  play one particle effect in front of the camera; prints its #id");
+  Out("fx list [filter]           live root generators: kind, asset, position, particles, flags, native VFX props");
+  Out("fx tree <#id>              one generator and its children, recursively");
+  Out("fx stats                   live generators, vfx quads/triangles and CPU ms (update, render) last frame");
+  Out("fx mute <asset>|clear|list  hide a PART/SWHC/ELSC asset (it still updates); fx solo <asset|#id> hides the rest");
+  Out("fx timescale <s>           particle time scale (0 freezes particles only; 1 = off)");
   Out("face <yaw deg> | look <id> turn the player (yaw 0 = +y, 90 = -x)");
   Out("objs [filter]              objects whose class or name contains filter");
   Out("obj <id>                   one object: state, health, animation, connections");
@@ -818,39 +824,129 @@ void CmdRoom() {
   Finish();
 }
 
-// fx <PART id> [distance] [scale]: plays one particle effect, upright, in front of the camera,
-// replacing the last one. For comparing effects; "fx off" removes it.
+// fx <PART id> [distance] [scale] [loop]: plays one particle effect, upright, in front of the
+// camera, replacing the last one. For comparing effects; "fx off" removes it. With "loop" it is
+// respawned (same place) whenever it has finished.
 TUniqueId sFxId = kInvalidUniqueId;
+struct FxLoop {
+  bool on = false;
+  uint32_t part = 0;
+  CVector3f pos;
+  float scale = 1.f;
+} sFxLoop;
 
-void CmdFx(CStateManager& mgr) {
-  if (sFxId != kInvalidUniqueId && mgr.ObjectById(sFxId) != nullptr) {
-    mgr.DeleteObjectRequest(sFxId);
-  }
-  sFxId = kInvalidUniqueId;
-  uint32_t id;
-  float dist = 6.f, scale = 1.f;
-  if (sCmd.args.size() > 1 && Lower(sCmd.args[1]) == "off") {
-    return Finish();
-  }
-  if (sCmd.args.size() < 2 || !ParseHex(sCmd.args[1], id) ||
-      (sCmd.args.size() > 2 && !ParseFloat(sCmd.args[2], dist)) ||
-      (sCmd.args.size() > 3 && !ParseFloat(sCmd.args[3], scale))) {
-    return Finish("usage: fx <PART id>|off [distance] [scale]");
-  }
-  const SObjectTag tag('PART', id);
-  if (!gpSimplePool->HasObject(tag)) {
-    return Finish("no such PART");
-  }
-  const CTransform4f cam = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
-  const CVector3f pos = cam.GetTranslation() + cam.GetForward() * dist;
-  const TLockedToken< CGenDescription > desc(gpSimplePool->GetObj(tag));
+void SpawnFx(CStateManager& mgr, uint32_t id, const CVector3f& pos, float scale) {
+  const TLockedToken< CGenDescription > desc(gpSimplePool->GetObj(SObjectTag('PART', id)));
   CExplosion* fx = rs_new CExplosion(desc, mgr.AllocateUniqueId(), true,
                                      CEntityInfo(mgr.Player()->GetCurrentAreaId(), CEntity::NullConnectionList),
                                      rstl::string_l("Console Fx"), CTransform4f::Translate(pos), 0,
                                      CVector3f(scale, scale, scale), CColor::White());
   sFxId = fx->GetUniqueId();
   mgr.AddObject(fx);
-  Out("fx %08X at %.2f %.2f %.2f", id, pos.GetX(), pos.GetY(), pos.GetZ());
+}
+
+void CmdFx(CStateManager& mgr) {
+  if (sFxId != kInvalidUniqueId && mgr.ObjectById(sFxId) != nullptr) {
+    mgr.DeleteObjectRequest(sFxId);
+  }
+  sFxId = kInvalidUniqueId;
+  sFxLoop.on = false;
+  std::vector< std::string > args(sCmd.args.begin(), sCmd.args.end());
+  bool loop = false;
+  if (args.size() > 2 && Lower(args.back()) == "loop") {
+    loop = true;
+    args.pop_back();
+  }
+  uint32_t id;
+  float dist = 6.f, scale = 1.f;
+  if (args.size() > 1 && Lower(args[1]) == "off") {
+    return Finish();
+  }
+  if (args.size() < 2 || !ParseHex(args[1], id) || (args.size() > 2 && !ParseFloat(args[2], dist)) ||
+      (args.size() > 3 && !ParseFloat(args[3], scale))) {
+    return Finish("usage: fx <PART id>|off [distance] [scale] [loop]");
+  }
+  if (!gpSimplePool->HasObject(SObjectTag('PART', id))) {
+    return Finish("no such PART");
+  }
+  const CTransform4f cam = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
+  const CVector3f pos = cam.GetTranslation() + cam.GetForward() * dist;
+  SpawnFx(mgr, id, pos, scale);
+  const uint32_t gid = PortFx::IdOf(PortFx::Newest());
+  Out("fx %08X at %.2f %.2f %.2f, generator #%u%s", id, pos.GetX(), pos.GetY(), pos.GetZ(), gid,
+      loop ? ", looping" : "");
+  sFxLoop = FxLoop{loop, id, pos, scale};
+  Finish();
+}
+
+// Per tick: respawns a looping `fx` once the CExplosion is gone.
+void TickFxLoop(CStateManager& mgr) {
+  if (sFxLoop.on && (sFxId == kInvalidUniqueId || mgr.ObjectById(sFxId) == nullptr)) {
+    SpawnFx(mgr, sFxLoop.part, sFxLoop.pos, sFxLoop.scale);
+  }
+}
+
+bool ParseFxAsset(const std::string& tok, std::vector< uint32_t >& out) {
+  if (!tok.empty() && tok[0] == '#') {
+    uint32_t gid = uint32_t(strtoul(tok.c_str() + 1, nullptr, 10));
+    out = PortFx::TreeAssets(gid);
+    return !out.empty();
+  }
+  uint32_t a;
+  if (!ParseHex(tok, a)) {
+    return false;
+  }
+  out.assign(1, a);
+  return true;
+}
+
+// The `fx` queries and switches that need no game tick (they work while paused).
+void CmdFxQuery() {
+  const std::string sub = Lower(sCmd.args[1]);
+  const auto emit = [](const std::string& line) { Out("%s", line.c_str()); };
+  if (sub == "list") {
+    PortFx::List(sCmd.args.size() > 2 ? sCmd.args[2] : "", emit);
+  } else if (sub == "tree") {
+    if (sCmd.args.size() < 3) {
+      return Finish("usage: fx tree <#id>");
+    }
+    const std::string& t = sCmd.args[2];
+    if (!PortFx::Tree(uint32_t(strtoul(t.c_str() + (t[0] == '#' ? 1 : 0), nullptr, 10)), emit)) {
+      return Finish("no live generator with that id (see fx list)");
+    }
+  } else if (sub == "stats") {
+    PortFx::Stats(emit);
+  } else if (sub == "mute" || sub == "solo") {
+    const std::string arg = sCmd.args.size() > 2 ? Lower(sCmd.args[2]) : "";
+    if (arg == "clear" || (sub == "mute" && arg.empty())) {
+      PortFx::MuteClear();
+    } else if (arg == "list") {
+      PortFx::MuteList(emit);
+      return Finish();
+    } else {
+      std::vector< uint32_t > assets;
+      if (!ParseFxAsset(arg, assets)) {
+        return Finish("usage: fx mute|solo <asset hex|#id> | fx mute clear|list");
+      }
+      if (sub == "solo") {
+        PortFx::SoloSet(assets);
+      } else {
+        for (uint32_t a : assets) {
+          PortFx::MuteAdd(a);
+        }
+      }
+    }
+    PortFx::MuteList(emit);
+  } else if (sub == "timescale") {
+    float v;
+    if (sCmd.args.size() < 3 || !ParseFloat(sCmd.args[2], v) || v < 0.f) {
+      return Finish("usage: fx timescale <seconds multiplier >= 0>");
+    }
+    PortFx::gTimeScale = v;
+    Out("particle time scale %g (the world keeps its own time)", v);
+  } else {
+    return Finish("usage: fx <PART id>|off|list|tree|stats|mute|solo|timescale");
+  }
   Finish();
 }
 
@@ -1265,6 +1361,14 @@ void CmdFreeCam() {
 }
 
 bool IsTickCommand(const std::string& name) {
+  if (name == "fx" && sCmd.args.size() > 1) {
+    static const char* const queries[] = {"list", "tree", "stats", "mute", "solo", "timescale"};
+    for (const char* q : queries) {
+      if (Lower(sCmd.args[1]) == q) {
+        return false;
+      }
+    }
+  }
   static const char* const names[] = {"status", "areas", "objs", "obj", "send", "give",
                                       "take", "items", "heal", "god", "memo", "strg", "language", "tp", "room", "fx", "face", "look", "warp",
                                       "tracker", "enter"};
@@ -1374,6 +1478,8 @@ void RunFrame() {
     }
     CmdWorlds();
     Finish();
+  } else if (name == "fx") {
+    CmdFxQuery();
   } else if (name == "quit") {
     Finish();
     sQuit = true;
@@ -2210,6 +2316,7 @@ bool PortConsoleFrame(unsigned frame) {
     return false;
   }
   sFrame = frame;
+  PortFx::FrameBoundary();
   while (!sHasCommand) {
     Incoming next;
     {
@@ -2245,6 +2352,9 @@ bool PortConsoleFrame(unsigned frame) {
 }
 
 void PortConsoleTick(CStateManager& mgr) {
+  if (sEnabled && sFxLoop.on) {
+    TickFxLoop(mgr);
+  }
   if (!sEnabled || !sHasCommand || !IsTickCommand(sCmd.args[0])) {
     return;
   }

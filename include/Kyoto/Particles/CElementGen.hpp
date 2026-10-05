@@ -122,6 +122,10 @@ public:
   virtual CLight GetLight() const override;
   virtual void DestroyParticles() override;
   virtual uint Get4CharId() const override;
+#ifdef TARGET_PC
+  uint PortFxAsset() const override;
+  void PortFxDescribe(PortFxInfo& out) const override;
+#endif
   int GetMaxParticles() const { return x90_MAXP; }
   void SetZTest(bool enabled) { x26c_28_zTest = enabled; }
   rstl::vector< CParticle >& Particles() { return x30_particles; }
