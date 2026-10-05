@@ -180,6 +180,7 @@ struct Trigger {
 struct Area {
   bool hasFile = false;
   bool skyOnly = false;  // a sky and nothing else: retail still draws the room
+  std::vector< size_t > skyModels; // loaded with the area, not when first drawn (Sky)
   bool placed = false; // the instances have their world transforms
   std::vector< Instance > instances;
   std::vector< Model > models;
@@ -949,6 +950,11 @@ void Load(uint32_t mrea, Area& area) {
   area.instances.shrink_to_fit();
   area.hasFile = !area.items.empty();
   area.skyOnly = std::all_of(area.items.begin(), area.items.end(), [](const Placed& item) { return item.sky; });
+  for (const Placed& item : area.items) {
+    if (item.sky && std::find(area.skyModels.begin(), area.skyModels.end(), item.model) == area.skyModels.end()) {
+      area.skyModels.push_back(item.model);
+    }
+  }
   PortLog::Write("room geo: %08X: %zu instance(s) of %zu model(s), %zu without a model, %zu trigger(s), %zu script "
                  "node(s), %zu edge(s), %zu group(s)\n",
                  mrea, area.items.size(), area.models.size(), missing, area.triggers.size(),
@@ -1075,6 +1081,16 @@ void SetLoadedAreas(const uint32_t* mreas, size_t count) {
   for (size_t i = 0; i < count; ++i) {
     if (areas.find(mreas[i]) == areas.end()) {
       Load(mreas[i], areas[mreas[i]]);
+    }
+  }
+  // A sky waits for the area to be the one drawing it otherwise, and retail's world sky
+  // shows meanwhile: the Frigate's planet changed under the player a moment after entering.
+  for (auto& [mrea, area] : areas) {
+    for (const size_t index : area.skyModels) {
+      const Model& model = area.models[index];
+      if (!model.hidden && !model.data->IsLoaded(0)) {
+        model.data->Touch(CModelData::kWM_Normal, 0);
+      }
     }
   }
   // A frame Draw sits out (the thermal and X-ray visors) must not queue the last one's.
