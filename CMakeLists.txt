@@ -184,6 +184,7 @@ set(MP_PORT_SOURCES
     platform/port_fx_debug.cpp
     platform/port_remastered_effect_convert.cpp
     platform/port_remastered_effect_import.cpp
+    platform/port_remastered_report.cpp
     platform/port_remastered_import.cpp
     platform/port_remastered_jpeg.cpp
     platform/port_gallery.cpp
@@ -218,6 +219,19 @@ if(NOT ANDROID)
         tests/port_remastered_anim_tool.cpp platform/port_remastered_anim.cpp)
     target_include_directories(port_remastered_anim_tool PRIVATE platform/include)
     set_target_properties(port_remastered_anim_tool PROPERTIES EXCLUDE_FROM_ALL ON)
+endif()
+if(NOT ANDROID)
+    # Developer tool: the Remastered effect reader/converter/importer on real paks, plus
+    # pdump/pdiff/explain/mat (docs/DEBUGGING.md "Converter reports"). Needs libzstd.
+    add_executable(remastered_effect_tool
+        tests/port_remastered_effect_tool.cpp platform/port_remastered_effect.cpp
+        platform/port_remastered_effect_convert.cpp platform/port_remastered_effect_import.cpp
+        platform/port_remastered_image.cpp platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp
+        platform/port_remastered_convert.cpp platform/port_remastered_cmdl.cpp platform/port_remastered_anuv.cpp
+        platform/port_remastered_report.cpp)
+    target_include_directories(remastered_effect_tool PRIVATE platform/include)
+    target_link_libraries(remastered_effect_tool PRIVATE astcenc ${CMAKE_THREAD_LIBS_INIT})
+    set_target_properties(remastered_effect_tool PROPERTIES EXCLUDE_FROM_ALL ON)
 endif()
 if(NOT ANDROID)
     # Developer tool too: flattens real models' ANUV programs (tools/anuv_check.py).
@@ -484,6 +498,8 @@ if(MP_BUILD_TESTS)
     add_executable(port_remastered_uv_tests tests/port_remastered_uv_tests.cpp platform/port_remastered_convert.cpp platform/port_remastered_anuv.cpp platform/port_remastered_image.cpp platform/port_remastered_pak.cpp)
     target_include_directories(port_remastered_uv_tests PRIVATE platform/include)
     target_link_libraries(port_remastered_uv_tests PRIVATE astcenc)
+    add_executable(port_remastered_report_tests tests/port_remastered_report_tests.cpp platform/port_remastered_report.cpp)
+    target_include_directories(port_remastered_report_tests PRIVATE platform/include)
     add_executable(port_remastered_anuv_tests tests/port_remastered_anuv_tests.cpp platform/port_remastered_anuv.cpp)
     target_include_directories(port_remastered_anuv_tests PRIVATE platform/include)
     add_executable(port_remastered_lits_tests tests/port_remastered_lits_tests.cpp platform/port_remastered_convert.cpp platform/port_remastered_anuv.cpp platform/port_remastered_image.cpp platform/port_remastered_pak.cpp)
@@ -547,7 +563,7 @@ if(MP_BUILD_TESTS)
     add_test(NAME port_gci_tests COMMAND port_gci_tests)
     set_tests_properties(port_gci_tests PROPERTIES TIMEOUT 15 LABELS port)
     aurora_copy_runtime_dlls(port_gci_tests)
-    foreach(test IN ITEMS port_buffer_tests port_ai_tests port_randomizer_tests port_apclient_tests port_ap_logic_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_mouse_tests port_touch_pad_tests port_json_tests port_ws_tests port_mods_tests port_actor_collision_bounds_tests port_room_env_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_astc_tests port_remastered_hud_tests port_remastered_movie_tests port_gallery_tests port_remastered_nso_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_anuv_tests port_remastered_lits_tests port_remastered_blend_tests port_remastered_image_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_remastered_effect_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_tick_pair_tests port_livesplit_tests port_discord_tests port_savestate_tests port_timing_tests port_audio_math_tests)
+    foreach(test IN ITEMS port_remastered_report_tests port_buffer_tests port_ai_tests port_randomizer_tests port_apclient_tests port_ap_logic_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_mouse_tests port_touch_pad_tests port_json_tests port_ws_tests port_mods_tests port_actor_collision_bounds_tests port_room_env_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_astc_tests port_remastered_hud_tests port_remastered_movie_tests port_gallery_tests port_remastered_nso_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_anuv_tests port_remastered_lits_tests port_remastered_blend_tests port_remastered_image_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_remastered_effect_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_tick_pair_tests port_livesplit_tests port_discord_tests port_savestate_tests port_timing_tests port_audio_math_tests)
         add_test(NAME ${test} COMMAND ${test})
         set_tests_properties(${test} PROPERTIES TIMEOUT 15 LABELS port)
         aurora_copy_runtime_dlls(${test})
