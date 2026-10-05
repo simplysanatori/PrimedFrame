@@ -2121,8 +2121,13 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // colour times the base map, both as stored: a stage multiplies by half that
   // (konst 0) and doubles. Exact bar the tone curve, which TEV has none of.
   const bool colorUnlit = ColorUnlitDraw(rem);
+  // The emissive map is stored as authored (the PBR path scales it at run time), but the
+  // fallback adds it as it is: it took the 0.10 the converter used to bake in, as a konst
+  // (in the gamma domain TEV works in, that is 0.10^(1/2.2) of the byte).
+  const bool emissiveKonst = rem.maps[kEmissive].has && !rem.maps[kEmissive].mean && !rem.maps[kEmissive].raw;
+  const uint32_t emissiveSel = colorUnlit ? 0x0Du : 0x0Cu;  // GX_TEV_KCSEL_K1 / K0
   const uint32_t flags = (pm.flags & 0xFFFF & ~uint32_t(0x8 | 0x40 | 0x100 | 0x400 | 0x800 | 0x2000)) |
-                         0xF0000 | kPbrFlag | (colorUnlit ? 0x8u : 0u);
+                         0xF0000 | kPbrFlag | (colorUnlit || emissiveKonst ? 0x8u : 0u);
   P32(b, flags);
   P32(b, uint32_t(nmaps));
   for (int i = 0; i < nmaps; ++i) {
@@ -2134,11 +2139,17 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The material's cache id: CCubeMaterial::SetCurrent skips the vertex layout
   // and TEV when it matches the previous draw's, so it must differ from retail's.
   P32(b, group);
-  if (colorUnlit) {
-    const double half = 0.5 * std::pow(2.0 * std::max(rem.backlight, 0.0), 1.0 / 2.2);
-    const uint32_t k = uint32_t(std::lround(std::clamp(half, 0.0, 1.0) * 255.0));
-    P32(b, 1);
-    P32(b, k << 24 | k << 16 | k << 8 | 0xFF);
+  if (colorUnlit || emissiveKonst) {
+    P32(b, (colorUnlit ? 1u : 0u) + (emissiveKonst ? 1u : 0u));
+    if (colorUnlit) {
+      const double half = 0.5 * std::pow(2.0 * std::max(rem.backlight, 0.0), 1.0 / 2.2);
+      const uint32_t k = uint32_t(std::lround(std::clamp(half, 0.0, 1.0) * 255.0));
+      P32(b, k << 24 | k << 16 | k << 8 | 0xFF);
+    }
+    if (emissiveKonst) {
+      const uint32_t k = uint32_t(std::lround(std::pow(kPbrEmissive, 1.0 / 2.2) * 255.0));
+      P32(b, k << 24 | k << 16 | k << 8 | 0xFF);
+    }
   }
   P16(b, pm.blendDst);
   P16(b, pm.blendSrc);
@@ -2171,13 +2182,14 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   for (int i = 0; i < nstages; ++i) {
     const uint32_t* t = tev[std::min(i, kLayeredMaps - 1)];
     const bool gain = colorUnlit && i == 1;
-    P32(b, gain ? 0x7B80Fu : t[0]);  // ZERO, CPREV, KONST, ZERO, then x2
+    const bool emissiveStage = emissiveKonst && i == kEmissive;
+    P32(b, gain ? 0x7B80Fu : emissiveStage ? 0x390Fu : t[0]);  // gain: ZERO, CPREV, KONST, ZERO, then x2; emissive: ZERO, TEXC, KONST, CPREV
     P32(b, i == 0 && vertexGlow ? 0x39487u : t[1]);  // ZERO, TEXA, RASA, ZERO: base x vertex alpha
     P32(b, gain ? 0x140u : 0x100u);
     P32(b, 0x100);
     P8(b, 0);
     P8(b, 0);
-    P8(b, gain ? 0x0C : 0);  // GX_TEV_KCSEL_K0
+    P8(b, gain ? 0x0C : emissiveStage ? emissiveSel : 0);  // GX_TEV_KCSEL_K0 (K1)
     P8(b, uint8_t(t[2]));
   }
   for (int i = 0; i < nstages; ++i) {
