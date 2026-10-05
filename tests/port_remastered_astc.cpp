@@ -111,6 +111,23 @@ double Psnr(const Image& a, const std::vector<uint8_t>& b, bool normal) {
   return sum == 0 ? 99.0 : 10.0 * std::log10(255.0 * 255.0 / (sum / double(n)));
 }
 
+// Windows has no setenv/unsetenv; an empty _putenv_s removes the variable.
+void SetEnv(const char* name, const char* value) {
+#ifdef _WIN32
+  _putenv_s(name, value);
+#else
+  setenv(name, value, 1);
+#endif
+}
+
+void UnsetEnv(const char* name) {
+#ifdef _WIN32
+  _putenv_s(name, "");
+#else
+  unsetenv(name);
+#endif
+}
+
 }  // namespace
 
 int main() {
@@ -164,15 +181,15 @@ int main() {
   Check(zb, "normal map blue 0 and alpha 255");
 
   // Format choice: BC with no GPU, ASTC when only ASTC is there, the env wins.
-  unsetenv("MP_REMASTERED_TEXTURE_FORMAT");
+  UnsetEnv("MP_REMASTERED_TEXTURE_FORMAT");
   Check(ColourDdsFormat() == DdsFormat::BC7 && NormalDdsFormat() == DdsFormat::BC5, "default is BC");
   SetGpuTextureSupport(false, true);
   Check(ColourDdsFormat() == DdsFormat::ASTC4x4 && NormalDdsFormat() == DdsFormat::ASTC4x4Normal, "ASTC-only GPU");
   SetGpuTextureSupport(true, true);
   Check(ColourDdsFormat() == DdsFormat::BC7, "BC wins when both");
-  setenv("MP_REMASTERED_TEXTURE_FORMAT", "astc", 1);
+  SetEnv("MP_REMASTERED_TEXTURE_FORMAT", "astc");
   Check(ColourDdsFormat() == DdsFormat::ASTC4x4, "env astc");
-  setenv("MP_REMASTERED_TEXTURE_FORMAT", "bc", 1);
+  SetEnv("MP_REMASTERED_TEXTURE_FORMAT", "bc");
   SetGpuTextureSupport(false, true);
   Check(ColourDdsFormat() == DdsFormat::BC7, "env bc");
 
