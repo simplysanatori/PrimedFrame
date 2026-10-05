@@ -160,8 +160,12 @@ static bool PortReadVfxMat(CPortVfxData& vfx, CInputStream& in, u32 nbytes, CSim
     return false;
   }
   for (u32 i = 0; i < ntex; ++i) {
-    CPortVfxMat::Tex t;
     const CAssetId id = in.ReadLong();
+    TToken< CTexture > tok = id == 0
+                                 ? TToken< CTexture >(CreateTexture(-1))
+                                 : TToken< CTexture >(pool->GetObj(SObjectTag(SBIG('TXTR'), id)));
+    // Built from the token: assigning into a default (null) token would release a null reference.
+    CPortVfxMat::Tex t{TCachedToken< CTexture >(tok)};
     t.uvSet = in.ReadLong();
     t.wrapS = in.ReadLong();
     t.wrapT = in.ReadLong();
@@ -172,10 +176,6 @@ static bool PortReadVfxMat(CPortVfxData& vfx, CInputStream& in, u32 nbytes, CSim
     t.warped = in.ReadLong();
     t.warpScale[0] = in.ReadFloat();
     t.warpScale[1] = in.ReadFloat();
-    TToken< CTexture > tok = id == 0
-                                 ? TToken< CTexture >(CreateTexture(-1))
-                                 : TToken< CTexture >(pool->GetObj(SObjectTag(SBIG('TXTR'), id)));
-    t.token = TCachedToken< CTexture >(tok);
     m.tex.push_back(t);
   }
   m.colorSlot = in.ReadInt32();
