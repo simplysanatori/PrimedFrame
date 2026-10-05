@@ -116,6 +116,10 @@ bool DecodeTxtrVolumeRgba8(const uint8_t* data, size_t size, uint32_t& width, ui
 // `rgba` gets 6 faces of edge * edge texels, face slowest, in the file's face order.
 bool DecodeTxtrCubeRgba8(const uint8_t* data, size_t size, uint32_t& edge, std::vector<uint8_t>& rgba,
                          std::string& error);
+// The top mip of every layer of an array texture (kind 5) as RGBA8: `rgba` gets `layers`
+// images of width * height texels, layer slowest.
+bool DecodeTxtrLayersRgba8(const uint8_t* data, size_t size, uint32_t& width, uint32_t& height,
+                           uint32_t& layers, std::vector<uint8_t>& rgba, std::string& error);
 // Decodes one face of BC6H blocks (`texels` on a side) into RGBA half floats, alpha 1.
 void DecodeBc6hFace(const uint8_t* blocks, uint32_t texels, bool isSigned, uint16_t* rgba);
 

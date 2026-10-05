@@ -661,7 +661,204 @@ void TestSpawnTable() {
         "converted spawn table reads as retail");
 }
 
+// A one-generator effect whose body (properties) `body` writes.
+template <typename Body>
+std::vector<uint8_t> OneGenerator(Body body) {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  body(out);
+  PutProperty(out, "_END", 4);
+  Put32(out, 0);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  return out;
+}
+
+void PutTxfb(std::vector<uint8_t>& out, bool trst, float scale, bool mirror, float lifeHigh = 1.0f) {
+  PutProperty(out, "TEXR", 0);
+  PutFourCC(out, "TXFB");
+  PutGuid(out, Fresh(5));
+  PutFourCC(out, "LFTW");
+  PutConstant(out, 0);
+  PutConstant(out, Bits(lifeHigh));
+  if (!trst) {
+    return;
+  }
+  PutFourCC(out, "TRST");
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  if (mirror) {
+    PutFourCC(out, "KPIN");
+    PutFourCC(out, "CREL");
+    PutFourCC(out, "LTHN");
+    PutFourCC(out, "RAND");
+    PutConstant(out, 0);
+    PutConstant(out, Bits(1.0f));
+    PutConstant(out, Bits(0.5f));
+    PutConstant(out, Bits(1.0f));
+    PutConstant(out, Bits(scale));
+  } else {
+    PutConstant(out, Bits(scale));
+  }
+  PutConstant(out, Bits(1.0f));
+  PutConstant(out, 0);
+  Put32(out, 0xFFFFFFFFu);
+}
+
+void PutTxp2(std::vector<uint8_t>& out, uint32_t cols, uint32_t rows, uint32_t high) {
+  PutProperty(out, "TEXR", 0);
+  PutFourCC(out, "TXP2");
+  PutGuid(out, Fresh(6));
+  PutConstant(out, cols);
+  PutConstant(out, rows);
+  PutFourCC(out, "IRND");
+  PutConstant(out, 0);
+  PutConstant(out, high);
+}
+
+void PutModels(std::vector<uint8_t>& out, uint32_t count, uint32_t high) {
+  PutProperty(out, "PMDL", 0);
+  PutFourCC(out, "SLCT");
+  PutFourCC(out, "IRND");
+  PutConstant(out, 0);
+  PutConstant(out, high);
+  PutFourCC(out, "ARRY");
+  Put32(out, count);
+  for (uint32_t i = 0; i < count; ++i) {
+    PutFourCC(out, "CNST");
+    PutGuid(out, Fresh(uint8_t(10 + i)));
+  }
+}
+
+EffectConvertIO AtlasIO() {
+  EffectConvertIO io;
+  io.assetId = [](const EffectGuid& id, uint32_t type) -> uint32_t {
+    for (uint8_t i = 0; i < 16; ++i) {
+      if (id == Fresh(i)) {
+        return (type == EffectFourCC("CMDL") ? 0xC0DE0000u : 0x7E570000u) + i;
+      }
+    }
+    return 0;
+  };
+  io.flipbook = [](const EffectGuid& texture) {
+    FlipbookAtlas atlas;
+    if (texture == Fresh(5)) {
+      atlas.id = 0xF11B0001u;
+      atlas.cols = 8;
+      atlas.rows = 4;
+      atlas.frames = 32;
+    }
+    return atlas;
+  };
+  return io;
+}
+
+std::vector<ConvertedPart> ConvertOne(const std::vector<uint8_t>& data, const EffectConvertIO& io) {
+  EffectNode effect;
+  std::string error;
+  if (!ParseEffect(data.data(), data.size(), effect, error)) {
+    std::fprintf(stderr, "FAIL: effect does not parse: %s\n", error.c_str());
+    ++sFailures;
+    return {};
+  }
+  return ConvertEffect(effect, data.data(), io);
+}
+
+Retail Patl(uint32_t id, int cols, int rows, int count, int mode, int flip) {
+  Retail want;
+  want.f("GPSM").f("TEXR").f("PATL").f("CNST").w(id);
+  for (const int v : {cols, rows, count, mode, flip}) {
+    want.f("CNST").w(uint32_t(v));
+  }
+  want.f("_END");
+  return want;
+}
+
+// TXP2's atlas of a random tile and TXFB's flipbook become the port's PATL; any
+// other form of either is left out of the PART.
+void TestAtlasTexture() {
+  const EffectConvertIO io = AtlasIO();
+  std::string error;
+  std::vector<RetailPartProperty> properties;
+
+  // The tile range is a real over the whole atlas (1f), so 4 x 4 is 16 tiles.
+  auto parts = ConvertOne(OneGenerator([](auto& o) { PutTxp2(o, 4, 4, Bits(1.0f)); }), io);
+  Check(parts.size() == 1 && parts[0].part == Patl(0x7E570006u, 4, 4, 16, 0, 0).bytes, "TXP2 becomes a random-tile PATL");
+  Check(!parts.empty() && parts[0].droppedRetail == 0, "TXP2 drops nothing");
+  Check(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
+            properties.size() == 1,
+        "a PATL reads as retail");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxp2(o, 4, 2, 5); }), io);
+  Check(parts.size() == 1 && parts[0].part == Patl(0x7E570006u, 4, 2, 6, 0, 0).bytes, "an int range is the last tile");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxp2(o, 4, 4, 99); }), io);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "a tile range past the atlas is refused");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxp2(o, 0, 4, Bits(1.0f)); }), io);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "an atlas of no columns is refused");
+
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxfb(o, true, -1.0f, true); }), io);
+  Check(parts.size() == 1 && parts[0].part == Patl(0xF11B0001u, 8, 4, 32, 1, 1).bytes,
+        "TXFB with a random mirror is a flipped flipbook");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxfb(o, true, 1.0f, false); }), io);
+  Check(parts.size() == 1 && parts[0].part == Patl(0xF11B0001u, 8, 4, 32, 1, 0).bytes,
+        "TXFB with an identity TRST is not flipped");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxfb(o, false, 1.0f, false); }), io);
+  Check(parts.size() == 1 && parts[0].part == Patl(0xF11B0001u, 8, 4, 32, 1, 0).bytes, "TXFB with no TRST");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxfb(o, true, 0.5f, false); }), io);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "a TRST scaling x is refused");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxfb(o, true, -2.0f, true); }), io);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "a mirror to another scale is refused");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxfb(o, false, 1.0f, false, 0.5f); }), io);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "a flipbook over half the life is refused");
+  EffectConvertIO bare = io;
+  bare.flipbook = nullptr;
+  parts = ConvertOne(OneGenerator([](auto& o) { PutTxfb(o, false, 1.0f, false); }), bare);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "no atlas, no flipbook");
+
+  Retail badCount;
+  badCount.f("GPSM").f("TEXR").f("PATL").f("CNST").w(1).f("CNST").w(4).f("CNST").w(4).f("_END");
+  Check(!SplitRetailPart(badCount.bytes.data(), badCount.bytes.size(), properties, error), "a short PATL is refused");
+}
+
+// PMDL's random choice of four models becomes the first as PMDL and all as PMDV.
+void TestModelChoice() {
+  const EffectConvertIO io = AtlasIO();
+  std::string error;
+  std::vector<RetailPartProperty> properties;
+  auto parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 4, 3); }), io);
+  Retail want;
+  want.f("GPSM").f("PMDL").f("CNST").w(0xC0DE000A).f("PMDV").f("CNST").w(4);
+  for (uint32_t i = 0; i < 4; ++i) {
+    want.f("CNST").w(0xC0DE000A + i);
+  }
+  want.f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "SLCT of four models is PMDL and PMDV");
+  Check(!parts.empty() && parts[0].droppedRetail == 0, "the model choice drops nothing");
+  Check(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
+            properties.size() == 2,
+        "PMDL and PMDV read as retail");
+
+  parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 4, 2); }), io);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "a range short of the array is refused");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 0, 0); }), io);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "an empty array is refused");
+  EffectConvertIO none;
+  parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 4, 3); }), none);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "models with no ids are refused");
+
+  Retail one;
+  one.f("GPSM").f("PMDL").f("CNST").w(1).f("PMDV").f("CNST").w(2).f("CNST").w(1).f("_END");
+  Check(!SplitRetailPart(one.bytes.data(), one.bytes.size(), properties, error), "a PMDV short of its count is refused");
+  Retail alone;
+  alone.f("GPSM").f("PMDV").f("CNST").w(1).f("CNST").w(1).f("_END");
+  Check(!SplitRetailPart(alone.bytes.data(), alone.bytes.size(), properties, error) ||
+            properties.size() == 1,
+        "a PMDV parses on its own or is refused");
+}
+
 int main() {
+  TestAtlasTexture();
+  TestModelChoice();
   TestRetailId();
   TestSwooshElectric();
   TestConvert();

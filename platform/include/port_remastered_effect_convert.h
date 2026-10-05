@@ -25,6 +25,10 @@
 //   `approximated`.
 // - Keyframe blocks and words are byte-swapped; a colour's half keys are
 //   widened to floats.
+// - Port-only (build/fx-port-contract.md): a TEXR or TIND of TXP2 (an atlas with a
+//   random tile) or TXFB (an array texture played over the particle's life, with
+//   an optional random mirror in its TRST) becomes PATL; a PMDL of SLCT(IRND, ARRY
+//   of ids) becomes the first model as PMDL and all of them as PMDV.
 //
 // A property that does not convert (a Remastered-only property, an element
 // retail does not have, an id with no retail id) is left out and listed in
@@ -49,6 +53,14 @@
 
 namespace PortRemastered {
 
+// An atlas of `cols` x `rows` tiles holding `frames` frames, row-major from the top.
+struct FlipbookAtlas {
+  uint32_t id = 0;  // the retail TXTR, or 0
+  int32_t cols = 0;
+  int32_t rows = 0;
+  int32_t frames = 0;
+};
+
 struct EffectConvertIO {
   // The retail id an asset id stands for, as the type it is read as ('TXTR',
   // 'CMDL', 'PART', 'SWHC', 'ELSC'), or 0 when it has none. Left empty, only
@@ -56,6 +68,9 @@ struct EffectConvertIO {
   std::function<uint32_t(const EffectGuid& id, uint32_t type)> assetId;
   // The retail TXTR id of a material instance's texture (MTIN), or 0.
   std::function<uint32_t(const EffectGuid& material)> materialTexture;
+  // An array TXTR (TXFB's flipbook) packed into one atlas TXTR, or id 0 when it cannot be.
+  // Left empty, a TXFB does not convert.
+  std::function<FlipbookAtlas(const EffectGuid& texture)> flipbook;
 };
 
 struct ConvertedPart {

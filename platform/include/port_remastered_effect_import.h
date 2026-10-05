@@ -43,7 +43,16 @@ struct EffectImportIO {
   // A Remastered texture's top mip as RGBA8, as ConvertIO::texture.
   std::function<bool(const EffectGuid& id, int& width, int& height, std::vector<uint8_t>& rgba, std::string& error)>
       texture;
-  // Stores one output file: "<ID>.PART" or "<ID>.TXTR".
+  // Every layer of a Remastered array texture as RGBA8, layer slowest (a TXFB's
+  // frames). Optional: without it a flipbook does not convert.
+  std::function<bool(const EffectGuid& id, int& width, int& height, int& layers, std::vector<uint8_t>& rgba,
+                     std::string& error)>
+      layers;
+  // Converts a Remastered-only model (a CMDL the disc has no id for) as a
+  // standalone CMDL written under `retailId`, with the textures it needs.
+  // Optional: without it such a model does not convert.
+  std::function<bool(const EffectGuid& id, uint32_t retailId, std::string& error)> model;
+  // Stores one output file: "<ID>.PART", "<ID>.TXTR" or "<ID>.CMDL".
   std::function<bool(const std::string& name, const std::vector<uint8_t>& data)> write;
   std::function<void(const std::string& line)> log;  // optional
 };
@@ -53,7 +62,9 @@ struct EffectImportResult {
   int written = 0;     // of those, written (root and children)
   int failed = 0;      // that did not parse or convert
   int parts = 0;       // PART files written, children included
-  int textures = 0;    // TXTR files written
+  int textures = 0;    // TXTR files written, flipbook atlases included
+  int flipbooks = 0;   // of those, atlases of an array texture's layers
+  int models = 0;      // Remastered-only models converted for the effects
   int dropped = 0;     // retail properties left out across the written PARTs
 };
 

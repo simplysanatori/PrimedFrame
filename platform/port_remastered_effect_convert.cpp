@@ -233,6 +233,49 @@ bool IsElement(const EffectValue& value, uint32_t fourcc) {
   return value.kind == EffectValue::Kind::Element && value.fourcc == fourcc;
 }
 
+// CNST holding one word (an int, or a real's bits).
+bool ConstWord(const EffectValue& value, uint32_t& word) {
+  if (!IsElement(value, F("CNST")) || value.args.size() != 1 || value.args[0].kind != EffectValue::Kind::Word) {
+    return false;
+  }
+  word = value.args[0].word;
+  return true;
+}
+
+bool ConstIs(const EffectValue& value, uint32_t word) {
+  uint32_t have;
+  return ConstWord(value, have) && have == word;
+}
+
+// RAND or IRND of CNST 0 and CNST `high` (a real's bits or an int).
+bool RangeFromZero(const EffectValue& value, uint32_t fourcc, uint32_t& high) {
+  return IsElement(value, fourcc) && value.args.size() == 2 && ConstIs(value.args[0], 0) &&
+         ConstWord(value.args[1], high);
+}
+
+// TRST's x scale of a particle that is mirrored half the time: KPIN(CREL(LTHN(RAND(0, 1)), 0.5, 1, -1)).
+bool RandomMirror(const EffectValue& value) {
+  uint32_t high;
+  if (!IsElement(value, F("KPIN")) || value.args.size() != 1 || !IsElement(value.args[0], F("CREL"))) {
+    return false;
+  }
+  const EffectValue& rel = value.args[0];
+  return rel.args.size() == 4 && IsElement(rel.args[0], F("LTHN")) && rel.args[0].args.size() == 1 &&
+         RangeFromZero(rel.args[0].args[0], F("RAND"), high) && high == FloatBits(1.0f) &&
+         ConstIs(rel.args[1], FloatBits(0.5f)) && ConstIs(rel.args[2], FloatBits(1.0f)) &&
+         ConstIs(rel.args[3], FloatBits(-1.0f));
+}
+
+// TXFB's transform: TRST(0, 0, x scale, 1, 0, raw) with the scale 1 or a random mirror.
+bool FlipbookTransform(const EffectValue& value, bool& flip) {
+  if (!IsElement(value, F("TRST")) || value.args.size() != 6 || !ConstIs(value.args[0], 0) ||
+      !ConstIs(value.args[1], 0) || !ConstIs(value.args[3], FloatBits(1.0f)) || !ConstIs(value.args[4], 0)) {
+    return false;
+  }
+  flip = RandomMirror(value.args[2]);
+  return flip || ConstIs(value.args[2], FloatBits(1.0f));
+}
+
 class Writer {
 public:
   Writer(const uint8_t* data, const EffectConvertIO& io) : m_data(data), m_io(io) {}
@@ -594,6 +637,105 @@ public:
     return true;
   }
 
+  // PATL: TXP2 (an atlas, a random tile) or TXFB (an array texture over the
+  // particle's life, with TRST's optional random mirror). Only those patterns.
+  bool Atlas(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
+    const EffectValue& head = value[0];
+    const std::string name = EffectFourCCString(head.fourcc);
+    if (head.args.empty() || head.args[0].kind != EffectValue::Kind::Guid) {
+      why = name + " without a texture";
+      return false;
+    }
+    uint32_t id = 0;
+    int32_t cols = 0, rows = 0, count = 0, mode = 0, flip = 0;
+    if (head.fourcc == F("TXP2")) {
+      uint32_t c, r, high;
+      if (value.size() != 1 || head.args.size() != 4 || !ConstWord(head.args[1], c) || !ConstWord(head.args[2], r) ||
+          c == 0 || r == 0 || c > 64 || r > 64 || !RangeFromZero(head.args[3], F("IRND"), high)) {
+        why = "TXP2 that is not an atlas with a random tile";
+        return false;
+      }
+      cols = int32_t(c);
+      rows = int32_t(r);
+      // The range is a real over the whole atlas, or an int tile index.
+      if (high == FloatBits(1.0f)) {
+        count = cols * rows;
+      } else if (high < uint32_t(cols * rows)) {
+        count = int32_t(high) + 1;
+      } else {
+        why = "TXP2 tile range " + std::to_string(high) + " is not the atlas";
+        return false;
+      }
+      id = AssetId(head.args[0].guid, F("TXTR"));
+      if (id == 0) {
+        why = "TXTR " + EffectGuidString(head.args[0].guid) + " has no retail id";
+        return false;
+      }
+    } else {
+      uint32_t high;
+      bool mirror = false;
+      if (value.size() > 2 || head.args.size() != 2 || !IsElement(head.args[1], F("LFTW")) ||
+          !RangeFromZero(head.args[1], F("LFTW"), high) || high != FloatBits(1.0f) ||
+          (value.size() == 2 && !FlipbookTransform(value[1], mirror))) {
+        why = "TXFB that is not a flipbook over the particle's life";
+        return false;
+      }
+      const FlipbookAtlas atlas = m_io.flipbook ? m_io.flipbook(head.args[0].guid) : FlipbookAtlas{};
+      if (atlas.id == 0) {
+        why = "TXTR " + EffectGuidString(head.args[0].guid) + " has no flipbook atlas";
+        return false;
+      }
+      id = atlas.id;
+      cols = atlas.cols;
+      rows = atlas.rows;
+      count = atlas.frames;
+      mode = 1;
+      flip = mirror ? 1 : 0;
+    }
+    PutBe32(out, F("PATL"));
+    PutBe32(out, F("CNST"));
+    PutBe32(out, id);
+    for (const int32_t v : {cols, rows, count, mode, flip}) {
+      PutBe32(out, F("CNST"));
+      PutBe32(out, uint32_t(v));
+    }
+    return true;
+  }
+
+  // PMDL's SLCT(IRND(0, n - 1), ARRY of n CNST ids), as the model ids.
+  bool Variants(const std::vector<EffectValue>& value, std::vector<uint32_t>& ids, std::string& why) const {
+    uint32_t high;
+    if (value.size() != 1 || !IsElement(value[0], F("SLCT")) || value[0].args.size() != 2 ||
+        !RangeFromZero(value[0].args[0], F("IRND"), high) || !IsElement(value[0].args[1], F("ARRY")) ||
+        value[0].args[1].args.size() != 1 || value[0].args[1].args[0].kind != EffectValue::Kind::Raw) {
+      why = "a model choice that is not SLCT(IRND(0, n - 1), ARRY)";
+      return false;
+    }
+    const EffectValue& array = value[0].args[1].args[0];
+    const uint8_t* p = m_data + array.offset;
+    const uint32_t count = array.size >= 4 ? Le32(p) : 0;
+    if (count == 0 || count != high + 1 || array.size != 4 + size_t(count) * 20) {
+      why = "SLCT over " + std::to_string(count) + " models with a range of " + std::to_string(high);
+      return false;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+      const uint8_t* entry = p + 4 + size_t(i) * 20;
+      EffectGuid guid;
+      std::memcpy(guid.data(), entry + 4, 16);
+      if (Le32(entry) != F("CNST")) {
+        why = "SLCT model that is not a constant";
+        return false;
+      }
+      const uint32_t id = AssetId(guid, F("CMDL"));
+      if (id == 0) {
+        why = "CMDL " + EffectGuidString(guid) + " has no retail id";
+        return false;
+      }
+      ids.push_back(id);
+    }
+    return true;
+  }
+
   // TEXR/TIND: Remastered's `CNST(id), NONE` or `ATEX(id, ...)`, retail's
   // `CNST CNST id` and `ATEX CNST id ...`.
   bool Texture(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
@@ -605,6 +747,9 @@ public:
     if (head.fourcc == F("NONE")) {
       PutBe32(out, F("NONE"));
       return true;
+    }
+    if (head.fourcc == F("TXP2") || head.fourcc == F("TXFB")) {
+      return Atlas(value, out, why);
     }
     const bool animated = head.fourcc == F("ATEX");
     if ((head.fourcc != F("CNST") && !animated) || head.args.empty() || head.args[0].kind != EffectValue::Kind::Guid) {
@@ -883,6 +1028,26 @@ public:
       }
       std::vector<uint8_t> bytes;
       std::string why;
+      // A model chosen per particle: the first as PMDL, all of them as PMDV.
+      if (part && fourcc == F("PMDL") && property.value.size() == 1 && IsElement(property.value[0], F("SLCT"))) {
+        std::vector<uint32_t> ids;
+        if (!Variants(property.value, ids, why)) {
+          result.dropped.push_back("PMDL: " + why);
+          ++result.droppedRetail;
+          continue;
+        }
+        PutBe32(out, F("PMDL"));
+        PutBe32(out, F("CNST"));
+        PutBe32(out, ids[0]);
+        PutBe32(out, F("PMDV"));
+        PutBe32(out, F("CNST"));
+        PutBe32(out, uint32_t(ids.size()));
+        for (const uint32_t id : ids) {
+          PutBe32(out, F("CNST"));
+          PutBe32(out, id);
+        }
+        continue;
+      }
       if (!Property(fourcc, found->second, property.value, bytes, why)) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": " + why);
         ++result.droppedRetail;
@@ -1054,6 +1219,19 @@ public:
     if (fourcc == F("NONE")) {
       return true;
     }
+    // PATL: CNST id, then cols, rows, count, mode and flipX as CNST ints.
+    if (fourcc == F("PATL")) {
+      uint32_t sub;
+      if (!Word(sub) || sub != F("CNST") || !Skip(4)) {
+        return false;
+      }
+      for (int i = 0; i < 5; ++i) {
+        if (!Word(sub) || sub != F("CNST") || !Skip(4)) {
+          return false;
+        }
+      }
+      return true;
+    }
     uint32_t sub;
     if ((fourcc != F("CNST") && fourcc != F("ATEX")) || !Word(sub) || (sub != F("NONE") && !Skip(4))) {
       return false;
@@ -1072,6 +1250,20 @@ public:
   bool Asset() {
     uint32_t fourcc;
     return Word(fourcc) && (fourcc == F("NONE") || Skip(4));
+  }
+
+  // PMDV: CNST n, then n CNST ids.
+  bool ModelVariants() {
+    uint32_t fourcc, count;
+    if (!Word(fourcc) || fourcc != F("CNST") || !Word(count) || count > 64) {
+      return false;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+      if (!Word(fourcc) || fourcc != F("CNST") || !Skip(4)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   // KSSM: NONE, or CNST, four ints and a frame table (frame, count, 16 bytes each).
@@ -1147,6 +1339,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     bool ok;
     if (part && fourcc == F("KSSM")) {
       ok = reader.SpawnTable();
+    } else if (part && fourcc == F("PMDV")) {
+      ok = reader.ModelVariants();
     } else if (const auto found = retail.find(fourcc); found == retail.end()) {
       error = "property " + EffectFourCCString(fourcc) + " retail does not read";
       return false;

@@ -28,12 +28,20 @@
 // MP_REMASTERED_EFFECTS=1. A retail id counts as on the disc when <retail>
 // holds a file named <8 hex digits>.<type>.
 //
+// import also writes every texture the step makes (a flipbook's or a TXP2's atlas
+// among them) as a PNG in /tmp/fx-atlas, and logs the meshes and triangles of each
+// Remastered-only model it converts.
+//
 // Not part of the build:
-//   g++ -std=c++20 -O2 -Iplatform/include tests/port_remastered_effect_tool.cpp
+//   g++ -std=c++20 -O2 -Iplatform/include -Iextern/astcenc/Source tests/port_remastered_effect_tool.cpp
 //       platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp
 //       platform/port_remastered_effect_import.cpp platform/port_remastered_image.cpp
-//       platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp -lzstd -o effect_tool
+//       platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp
+//       platform/port_remastered_convert.cpp platform/port_remastered_cmdl.cpp
+//       <astcenc: build/<dir>/extern/astcenc/libastcenc.a> -lzstd -lpthread -o effect_tool
 
+#include "port_remastered_cmdl.h"
+#include "port_remastered_convert.h"
 #include "port_remastered_effect.h"
 #include "port_remastered_effect_convert.h"
 #include "port_remastered_effect_import.h"
@@ -558,6 +566,76 @@ int Convert(const std::string& romfs, const std::string& retailDir, const std::s
   return 0;
 }
 
+// A PNG with stored (uncompressed) deflate blocks: enough to look at an atlas.
+bool WritePng(const std::string& path, int width, int height, const std::vector<uint8_t>& rgba) {
+  auto be32 = [](std::vector<uint8_t>& out, uint32_t v) {
+    for (int s = 24; s >= 0; s -= 8) {
+      out.push_back(uint8_t(v >> s));
+    }
+  };
+  static uint32_t table[256];
+  if (table[1] == 0) {
+    for (uint32_t n = 0; n < 256; ++n) {
+      uint32_t c = n;
+      for (int k = 0; k < 8; ++k) {
+        c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+      }
+      table[n] = c;
+    }
+  }
+  auto crc = [&](const uint8_t* p, size_t n) {
+    uint32_t c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; ++i) {
+      c = table[(c ^ p[i]) & 0xFF] ^ (c >> 8);
+    }
+    return c ^ 0xFFFFFFFFu;
+  };
+  std::vector<uint8_t> raw;
+  for (int y = 0; y < height; ++y) {
+    raw.push_back(0);
+    raw.insert(raw.end(), rgba.begin() + size_t(y) * size_t(width) * 4, rgba.begin() + size_t(y + 1) * size_t(width) * 4);
+  }
+  std::vector<uint8_t> z = {0x78, 0x01};
+  for (size_t at = 0; at < raw.size() || at == 0;) {
+    const size_t n = std::min<size_t>(65535, raw.size() - at);
+    z.push_back(at + n >= raw.size() ? 1 : 0);
+    z.push_back(uint8_t(n));
+    z.push_back(uint8_t(n >> 8));
+    z.push_back(uint8_t(~n));
+    z.push_back(uint8_t(~n >> 8));
+    z.insert(z.end(), raw.begin() + at, raw.begin() + at + n);
+    at += n;
+    if (n == 0) {
+      break;
+    }
+  }
+  uint32_t a = 1;
+  uint32_t b = 0;
+  for (uint8_t v : raw) {
+    a = (a + v) % 65521;
+    b = (b + a) % 65521;
+  }
+  be32(z, b << 16 | a);
+  std::vector<uint8_t> png = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  auto chunk = [&](const char* type, const std::vector<uint8_t>& body) {
+    be32(png, uint32_t(body.size()));
+    std::vector<uint8_t> typed(type, type + 4);
+    typed.insert(typed.end(), body.begin(), body.end());
+    png.insert(png.end(), typed.begin(), typed.end());
+    be32(png, crc(typed.data(), typed.size()));
+  };
+  std::vector<uint8_t> head;
+  be32(head, uint32_t(width));
+  be32(head, uint32_t(height));
+  head.insert(head.end(), {8, 6, 0, 0, 0});
+  chunk("IHDR", head);
+  chunk("IDAT", z);
+  chunk("IEND", {});
+  std::ofstream file(path, std::ios::binary);
+  file.write(reinterpret_cast<const char*>(png.data()), std::streamsize(png.size()));
+  return bool(file);
+}
+
 int Import(const std::string& romfs, const std::string& retailDir, const std::string& outDir) {
   using namespace PortRemastered;
   std::filesystem::create_directories(outDir);
@@ -659,16 +737,96 @@ int Import(const std::string& romfs, const std::string& retailDir, const std::st
     rgba = std::move(image.rgba);
     return true;
   };
-  io.write = [&](const std::string& name, const std::vector<uint8_t>& data) {
+  io.layers = [&](const EffectGuid& id, int& width, int& height, int& layers, std::vector<uint8_t>& rgba,
+                  std::string& error) {
+    std::vector<uint8_t> raw;
+    uint32_t w = 0;
+    uint32_t h = 0;
+    uint32_t n = 0;
+    if (!read(id, raw, error) || !DecodeTxtrLayersRgba8(raw.data(), raw.size(), w, h, n, rgba, error)) {
+      return false;
+    }
+    width = int(w);
+    height = int(h);
+    layers = int(n);
+    return true;
+  };
+  auto store = [&](const std::string& name, const std::vector<uint8_t>& data) {
     std::ofstream file(std::filesystem::path(outDir) / name, std::ios::binary);
     file.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
     return bool(file);
   };
+  // Models as the game's import converts them: standalone, one converter for all.
+  std::set<uint32_t> claimed;
+  std::unique_ptr<Converter> converter;
+  io.model = [&](const EffectGuid& id, uint32_t retailId, std::string& error) {
+    if (!converter) {
+      ConvertIO cio;
+      cio.retailId = [&](uint32_t other) { return disc.count(other) != 0; };
+      cio.claim = [&](uint32_t other) { return claimed.insert(other).second; };
+      cio.texture = [&](const ModelUuid& tex, Image& out, std::string& textureError) {
+        return io.texture(tex, out.width, out.height, out.rgba, textureError);
+      };
+      cio.write = store;
+      converter = std::make_unique<Converter>(std::move(cio));
+    }
+    ConvertOptions options;
+    options.retail = retailId;
+    options.standalone = true;
+    options.skip.clear();
+    options.nativeMax = 1024;
+    std::vector<uint8_t> raw;
+    Model model;
+    if (!read(id, raw, error) || !ParseModel(raw.data(), raw.size(), model, error) ||
+        !converter->Convert(model, options, error)) {
+      return false;
+    }
+    size_t triangles = 0;
+    for (const auto& mesh : model.meshes) {
+      triangles += mesh.indexCount / 3;
+    }
+    std::cout << "  model " << EffectGuidString(id) << " -> " << std::hex << retailId << std::dec << ": "
+              << model.meshes.size() << " meshes, " << triangles << " triangles, " << converter->PbrMaterials()
+              << " PBR / " << converter->TevMaterials() << " TEV materials so far\n";
+    return true;
+  };
+  std::filesystem::create_directories("/tmp/fx-atlas");
+  io.write = [&](const std::string& name, const std::vector<uint8_t>& data) {
+    if (name.size() > 5 && name.substr(name.size() - 5) == ".TXTR") {
+      // The retail RGBA8 (format 9) the step writes: level 0 is 4x4 blocks of
+      // (alpha, red) pairs then (green, blue) pairs.
+      auto be = [&](size_t at, int bytes) {
+        uint32_t v = 0;
+        for (int i = 0; i < bytes; ++i) {
+          v = v << 8 | data[at + i];
+        }
+        return v;
+      };
+      if (data.size() > 12 && be(0, 4) == 9) {
+        const int w = int(be(4, 2)), h = int(be(6, 2));
+        std::vector<uint8_t> rgba(size_t(w) * size_t(h) * 4);
+        size_t at = 12;
+        for (int by = 0; by < h && at + 64 <= data.size(); by += 4) {
+          for (int bx = 0; bx < w; bx += 4, at += 64) {
+            for (int i = 0; i < 16; ++i) {
+              uint8_t* p = &rgba[(size_t(by + i / 4) * size_t(w) + size_t(bx + i % 4)) * 4];
+              p[3] = data[at + i * 2];
+              p[0] = data[at + i * 2 + 1];
+              p[1] = data[at + 32 + i * 2];
+              p[2] = data[at + 32 + i * 2 + 1];
+            }
+          }
+        }
+        WritePng("/tmp/fx-atlas/" + name.substr(0, name.size() - 5) + ".png", w, h, rgba);
+      }
+    }
+    return store(name, data);
+  };
   io.log = [](const std::string& line) { std::cout << "  " << line << "\n"; };
   const EffectImportResult result = ImportEffects(io);
   std::cout << result.written << " of " << result.candidates << " effects written, " << result.failed << " failed, "
-            << result.parts << " PARTs, " << result.textures << " textures, " << result.dropped
-            << " retail properties left out\n";
+            << result.parts << " PARTs, " << result.textures << " textures (" << result.flipbooks << " flipbooks), "
+            << result.models << " models, " << result.dropped << " retail properties left out\n";
   return 0;
 }
 

@@ -18,9 +18,12 @@ constexpr uint32_t kGenp = EffectFourCC("GENP");
 constexpr uint32_t kMati = EffectFourCC("MATI");
 constexpr uint32_t kPart = EffectFourCC("PART");
 constexpr uint32_t kTxtr = EffectFourCC("TXTR");
+constexpr uint32_t kCmdl = EffectFourCC("CMDL");
 
 // Effect textures are drawn small; larger ones are scaled down to this side.
 constexpr int kMaxTextureSide = 256;
+// A flipbook atlas keeps its frames' size up to this edge.
+constexpr int kMaxAtlasSide = 2048;
 
 // Between a pak's byte order and the order an effect stores an id in: the
 // first three groups byte-swapped (the same swap both ways).
@@ -169,8 +172,89 @@ public:
     return out;
   }
 
+  // An array texture's layers packed into one atlas TXTR, row-major from the
+  // top: a power-of-two column count, and frames halved only while an edge is
+  // over kMaxAtlasSide. Id 0 when it cannot be.
+  FlipbookAtlas Flipbook(const EffectGuid& id) {
+    const auto known = m_flipbooks.find(id);
+    if (known != m_flipbooks.end()) {
+      return known->second;
+    }
+    FlipbookAtlas out;
+    int width = 0, height = 0, layers = 0;
+    std::vector<uint8_t> rgba;
+    std::string error;
+    if (!m_io.layers || !m_io.layers(id, width, height, layers, rgba, error)) {
+      Log("effect flipbook " + EffectGuidString(Swap(id)) + ": " + (m_io.layers ? error : "no layer reader"));
+    } else if (layers < 1 || width < 1 || height < 1 || rgba.size() != size_t(width) * height * layers * 4) {
+      Log("effect flipbook " + EffectGuidString(Swap(id)) + ": no layers");
+    } else {
+      int cols = 1;
+      while (cols * cols < layers) {
+        cols *= 2;
+      }
+      const int rows = (layers + cols - 1) / cols;
+      int frameW = width;
+      int frameH = height;
+      while (cols * frameW > kMaxAtlasSide || rows * frameH > kMaxAtlasSide) {
+        frameW = RoundUp4(frameW / 2);
+        frameH = RoundUp4(frameH / 2);
+      }
+      Image atlas;
+      atlas.width = cols * frameW;
+      atlas.height = rows * frameH;
+      atlas.rgba.assign(size_t(atlas.width) * atlas.height * 4, 0);
+      for (int k = 0; k < layers; ++k) {
+        Image frame;
+        frame.width = width;
+        frame.height = height;
+        const uint8_t* src = rgba.data() + size_t(k) * width * height * 4;
+        frame.rgba.assign(src, src + size_t(width) * height * 4);
+        if (frameW != width || frameH != height) {
+          frame = Resize(frame, frameW, frameH);
+        }
+        const int x0 = (k % cols) * frameW;
+        const int y0 = (k / cols) * frameH;
+        for (int y = 0; y < frameH; ++y) {
+          std::memcpy(atlas.rgba.data() + (size_t(y0 + y) * atlas.width + x0) * 4,
+                      frame.rgba.data() + size_t(y) * frameW * 4, size_t(frameW) * 4);
+        }
+      }
+      const uint32_t fresh = m_io.freshId(Hash(id, kTxtr ^ 0xF11Bu));
+      if (m_io.write(Hex(fresh) + ".TXTR", EncodeTxtrRgba8(atlas))) {
+        ++m_result.textures;
+        ++m_result.flipbooks;
+        out = FlipbookAtlas{fresh, cols, rows, layers};
+      }
+    }
+    m_flipbooks.emplace(id, out);
+    return out;
+  }
+
+  // The id a Remastered-only model (pak order) is written under, converting
+  // it the first time; 0 when it cannot be.
+  uint32_t Model(const EffectGuid& id) {
+    const auto known = m_models.find(id);
+    if (known != m_models.end()) {
+      return known->second;
+    }
+    uint32_t out = 0;
+    std::string error;
+    if (m_io.model) {
+      out = m_io.freshId(Hash(id, kCmdl));
+      if (m_io.model(id, out, error)) {
+        ++m_result.models;
+      } else {
+        Log("effect model " + EffectGuidString(Swap(id)) + ": " + error);
+        out = 0;
+      }
+    }
+    m_models.emplace(id, out);
+    return out;
+  }
+
   // The retail id for an id as an effect stores it: the disc's own when it
-  // was carried over from retail, else a converted texture's.
+  // was carried over from retail, else a converted texture's or model's.
   uint32_t Stored(const EffectGuid& stored, uint32_t type) {
     const std::optional<uint32_t> retail = EffectRetailId(stored);
     if (retail && m_io.retailId(*retail)) {
@@ -179,6 +263,9 @@ public:
     const EffectGuid id = Swap(stored);
     if (type == kTxtr && m_io.typeOf(id) == kTxtr) {
       return Texture(id);
+    }
+    if (type == kCmdl && m_io.typeOf(id) == kCmdl) {
+      return Model(id);
     }
     return 0;
   }
@@ -242,6 +329,7 @@ public:
       return Stored(stored, type);
     };
     io.materialTexture = [&](const EffectGuid& material) { return Material(material); };
+    io.flipbook = [&](const EffectGuid& stored) { return Flipbook(Swap(stored)); };
     const std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
     std::vector<RetailPartProperty> check;
     if (parts.empty() || !SplitRetailPart(parts[0].part.data(), parts[0].part.size(), check, error)) {
@@ -305,6 +393,8 @@ public:
 private:
   const EffectImportIO& m_io;
   std::map<EffectGuid, uint32_t> m_textures;  // by Remastered id, 0 for one that failed
+  std::map<EffectGuid, FlipbookAtlas> m_flipbooks;
+  std::map<EffectGuid, uint32_t> m_models;
   EffectImportResult m_result;
 };
 

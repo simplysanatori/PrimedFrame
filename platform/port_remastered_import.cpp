@@ -1278,11 +1278,53 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       rgba = std::move(image.rgba);
       return true;
     };
+    effectIO.layers = [&](const EffectGuid& id, int& width, int& height, int& layers, std::vector<uint8_t>& rgba,
+                          std::string& effectError) {
+      std::vector<uint8_t> raw;
+      uint32_t w = 0;
+      uint32_t h = 0;
+      uint32_t n = 0;
+      if (!remastered.ReadTexture(id, raw, effectError) ||
+          !DecodeTxtrLayersRgba8(raw.data(), raw.size(), w, h, n, rgba, effectError)) {
+        return false;
+      }
+      width = int(w);
+      height = int(h);
+      layers = int(n);
+      return true;
+    };
+    // A model of Remastered's own, as a standalone CMDL under the id the effect
+    // was given. One converter serves them all: the effects run on one thread.
+    std::unique_ptr<Converter> effectModels;
+    std::unordered_set<uint32_t> effectClaimed;
+    effectIO.model = [&](const EffectGuid& id, uint32_t retailId, std::string& effectError) {
+      if (!effectModels) {
+        ConvertIO io = makeIO(0, staging);
+        io.retailId = [&](uint32_t other) { return retail.HasId(other); };
+        io.claim = [&](uint32_t other) { return effectClaimed.insert(other).second; };
+        effectModels = std::make_unique<Converter>(std::move(io));
+      }
+      ConvertOptions options;
+      options.retail = retailId;
+      options.standalone = true;
+      options.skip.clear();
+      options.nativeMax = kGeometryTexture;
+      try {
+        std::vector<uint8_t> raw;
+        Model model;
+        return remastered.ReadModel(id, raw, effectError) && ParseModel(raw.data(), raw.size(), model, effectError) &&
+               effectModels->Convert(model, options, effectError);
+      } catch (const std::exception& e) {
+        effectError = e.what();
+        return false;
+      }
+    };
     effectIO.write = makeIO(0, staging).write;
     effectIO.log = [](const std::string& line) { AddLine(line); };
     const EffectImportResult effects = ImportEffects(effectIO);
     AddLine("effects: " + std::to_string(effects.written) + " of " + std::to_string(effects.candidates) + " written (" +
             std::to_string(effects.parts) + " PARTs, " + std::to_string(effects.textures) + " textures, " +
+            std::to_string(effects.flipbooks) + " flipbooks, " + std::to_string(effects.models) + " models, " +
             std::to_string(effects.dropped) + " properties left out)");
   }
 

@@ -155,6 +155,18 @@ keyframe blocks, a real), and TIND takes the same `CNST(id), NONE` pair as
 TEXR. The 4 failures stop at an EMTR (92278041, C05C4D6B, C64A1F1A) and a
 TEXR (FAEE17B6).
 
+Port-only properties (the runtime reads them; contract in the effect lane's
+notes): **PATL** (`CNST id` + five ints cols, rows, count, mode, flipX: an atlas
+TXTR, tile k at column `k % cols`, row `k / cols` from the top; mode 0 random
+tile, 1 life flipbook, flipX a random mirror) replaces a TEXR/TIND of TXP2
+(`IRND(0, 1f)` is a real over the whole atlas: 4x4 is 16 tiles) or TXFB
+(an array TXTR packed into one atlas, at most 2048 a side; TRST must be the
+identity or the `KPIN(CREL(LTHN(RAND(0,1)), .5, 1, -1))` mirror). **PMDV**
+(`CNST n`, n model ids) follows PMDL (the first id) for a
+`SLCT(IRND(0, n-1), ARRY)` of Remastered-only CMDLs, which the import converts
+standalone under fresh ids. Anything else of those shapes is left out. With them
+77 of 78 effects import (191 PARTs, 12 textures of which 1 flipbook, 9 models); 9557D0C2 keeps the disc's PART, since its child C6B5B5A9 uses an ATX2 texture, which does not convert yet.
+
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.
 
@@ -343,7 +355,8 @@ g++ -std=c++20 -O2 -Iplatform/include -Iextern/astcenc/Source \
     platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp \
     platform/port_remastered_effect_import.cpp platform/port_remastered_image.cpp \
     platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp \
-    build/port-gcc/extern/astcenc/libastcenc.a -lzstd -o effect_tool
+    platform/port_remastered_convert.cpp platform/port_remastered_cmdl.cpp \
+    build/port-gcc/extern/astcenc/libastcenc.a -lzstd -lpthread -o effect_tool
 ./effect_tool dump <file.GENP>             # one effect as text
 ./effect_tool scan <romfs> [outdir]        # coverage, references, failures;
                                            # outdir gets one dump per effect
