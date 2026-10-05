@@ -1134,6 +1134,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   new world runs), `tp x y z`, `enter <area>` (makes an area of the current
   world the current one, as walking into it would; `tp` alone does not),
   `room <area>` (the F1 room list's teleport, to the area's spawn point),
+  `fx <PART id> [dist] [scale]` (plays one particle effect `dist` units in
+  front of the camera, replacing the last one; `fx off` removes it),
   `face <yaw>`, `look <id>`, `objs [filter]`,
   `obj <id>` (AI state, health, body state and animation, connections, whether
   it is frustum-culled),

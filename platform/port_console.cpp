@@ -32,6 +32,8 @@
 #include "Kyoto/Text/CStringTable.hpp"
 #include "Kyoto/Animation/CSkinnedModel.hpp"
 #include "MetroidPrime/CActor.hpp"
+#include "MetroidPrime/CExplosion.hpp"
+#include "Kyoto/Particles/CGenDescription.hpp"
 #include "MetroidPrime/CAnimData.hpp"
 #include "MetroidPrime/CModelData.hpp"
 #include "MetroidPrime/CGameArea.hpp"
@@ -469,6 +471,7 @@ void CmdHelp() {
   Out("enter <area>               make a loaded area current, as crossing its dock does");
   Out("room <area>                teleport to a loaded area's spawn point (the F1 room list)");
   Out("tp <x> <y> <z>             move the player");
+  Out("fx <PART id>|off [dist] [scale]  play one particle effect in front of the camera");
   Out("face <yaw deg> | look <id> turn the player (yaw 0 = +y, 90 = -x)");
   Out("objs [filter]              objects whose class or name contains filter");
   Out("obj <id>                   one object: state, health, animation, connections");
@@ -812,6 +815,42 @@ void CmdRoom() {
     return Finish("usage: room <area index>");
   }
   PortDebug::RequestTeleport(int(area));
+  Finish();
+}
+
+// fx <PART id> [distance] [scale]: plays one particle effect, upright, in front of the camera,
+// replacing the last one. For comparing effects; "fx off" removes it.
+TUniqueId sFxId = kInvalidUniqueId;
+
+void CmdFx(CStateManager& mgr) {
+  if (sFxId != kInvalidUniqueId && mgr.ObjectById(sFxId) != nullptr) {
+    mgr.DeleteObjectRequest(sFxId);
+  }
+  sFxId = kInvalidUniqueId;
+  uint32_t id;
+  float dist = 6.f, scale = 1.f;
+  if (sCmd.args.size() > 1 && Lower(sCmd.args[1]) == "off") {
+    return Finish();
+  }
+  if (sCmd.args.size() < 2 || !ParseHex(sCmd.args[1], id) ||
+      (sCmd.args.size() > 2 && !ParseFloat(sCmd.args[2], dist)) ||
+      (sCmd.args.size() > 3 && !ParseFloat(sCmd.args[3], scale))) {
+    return Finish("usage: fx <PART id>|off [distance] [scale]");
+  }
+  const SObjectTag tag('PART', id);
+  if (!gpSimplePool->HasObject(tag)) {
+    return Finish("no such PART");
+  }
+  const CTransform4f cam = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
+  const CVector3f pos = cam.GetTranslation() + cam.GetForward() * dist;
+  const TLockedToken< CGenDescription > desc(gpSimplePool->GetObj(tag));
+  CExplosion* fx = rs_new CExplosion(desc, mgr.AllocateUniqueId(), true,
+                                     CEntityInfo(mgr.Player()->GetCurrentAreaId(), CEntity::NullConnectionList),
+                                     rstl::string_l("Console Fx"), CTransform4f::Translate(pos), 0,
+                                     CVector3f(scale, scale, scale), CColor::White());
+  sFxId = fx->GetUniqueId();
+  mgr.AddObject(fx);
+  Out("fx %08X at %.2f %.2f %.2f", id, pos.GetX(), pos.GetY(), pos.GetZ());
   Finish();
 }
 
@@ -1227,7 +1266,7 @@ void CmdFreeCam() {
 
 bool IsTickCommand(const std::string& name) {
   static const char* const names[] = {"status", "areas", "objs", "obj", "send", "give",
-                                      "take", "items", "heal", "god", "memo", "strg", "language", "tp", "room", "face", "look", "warp",
+                                      "take", "items", "heal", "god", "memo", "strg", "language", "tp", "room", "fx", "face", "look", "warp",
                                       "tracker", "enter"};
   for (const char* n : names) {
     if (name == n) {
@@ -1270,6 +1309,8 @@ void RunTick(CStateManager& mgr) {
     CmdTp(mgr);
   } else if (name == "room") {
     CmdRoom();
+  } else if (name == "fx") {
+    CmdFx(mgr);
   } else if (name == "face") {
     CmdFace(mgr);
   } else if (name == "look") {
