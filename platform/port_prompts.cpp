@@ -2,6 +2,7 @@
 
 #include "port_prompts.h"
 
+#include "port_embedded.h"
 #include "port_textures.h"
 
 #include <dolphin/gx.h>
@@ -23,6 +24,7 @@
 #include <fstream>
 #include <iterator>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -392,23 +394,53 @@ bool SDLCALL active_input_watch(void*, SDL_Event* event) {
   return true;
 }
 
-// The width and height a DDS header declares, or false if the file is too short
-// to hold one. A DDS opens with the "DDS " magic then a 124-byte header, of
-// which the height and width are the two little-endian uint32 at offset 12.
-bool IconDimensions(const std::string& path, uint32_t& width, uint32_t& height) {
+// True when the icons are served from the executable (PortEmbedded) rather than
+// <textures>/bindings; sBindingsDir is then the embedded folder prefix.
+bool sEmbedded = false;
+
+// The whole file at `path`: an embedded entry, else a file on disk.
+bool ReadIconFile(const std::string& path, std::vector<uint8_t>& out) {
+  if (sEmbedded) {
+    const std::span<const uint8_t> bytes = PortEmbedded::Find(path);
+    out.assign(bytes.begin(), bytes.end());
+    return !out.empty();
+  }
   std::ifstream in(path, std::ios::binary);
   if (!in) {
     return false;
   }
-  char magic[4] = {};
-  if (!in.read(magic, 4) || std::strncmp(magic, "DDS ", 4) != 0) {
+  in.seekg(0, std::ios::end);
+  const std::streamoff size = in.tellg();
+  if (size <= 0) {
     return false;
   }
-  in.seekg(12, std::ios::beg);
+  in.seekg(0, std::ios::beg);
+  out.resize(static_cast<size_t>(size));
+  in.read(reinterpret_cast<char*>(out.data()), size);
+  return !in.fail();
+}
+
+// The file `name` in the bindings folder, or an empty string when it is not there.
+std::string FindIconFile(const std::string& name) {
+  if (sEmbedded) {
+    std::string path = sBindingsDir + "/" + name;
+    return PortEmbedded::Find(path).empty() ? std::string() : path;
+  }
+  const std::filesystem::path path = std::filesystem::path(sBindingsDir) / name;
+  std::error_code ec;
+  return std::filesystem::is_regular_file(path, ec) ? path.string() : std::string();
+}
+
+// The width and height a DDS header declares, or false if the file is too short
+// to hold one. A DDS opens with the "DDS " magic then a 124-byte header, of
+// which the height and width are the two little-endian uint32 at offset 12.
+bool IconDimensions(const std::string& path, uint32_t& width, uint32_t& height) {
+  std::vector<uint8_t> bytes;
+  if (!ReadIconFile(path, bytes) || bytes.size() < 20 || std::memcmp(bytes.data(), "DDS ", 4) != 0) {
+    return false;
+  }
   uint32_t both[2] = {};
-  if (!in.read(reinterpret_cast<char*>(both), sizeof(both))) {
-    return false;
-  }
+  std::memcpy(both, bytes.data() + 12, sizeof(both));
   height = both[0];
   width = both[1];
   return true;
@@ -431,20 +463,7 @@ bool ReadIconBytes(void* userData, const char* path, std::vector<uint8_t>& out) 
   if (path != nullptr && std::strstr(path, "_mip") != nullptr) {
     return false;
   }
-  const auto* filePath = static_cast<const std::string*>(userData);
-  std::ifstream in(*filePath, std::ios::binary);
-  if (!in) {
-    return false;
-  }
-  in.seekg(0, std::ios::end);
-  const std::streamoff size = in.tellg();
-  if (size <= 0) {
-    return false;
-  }
-  in.seekg(0, std::ios::beg);
-  out.resize(static_cast<size_t>(size));
-  in.read(reinterpret_cast<char*>(out.data()), size);
-  return !in.fail();
+  return ReadIconFile(*static_cast<const std::string*>(userData), out);
 }
 
 const char* StemForScancode(int scancode) {
@@ -660,13 +679,11 @@ void Apply(size_t index, const std::string& stem) {
   // variants for exactly this reason.
   char sized[160];
   std::snprintf(sized, sizeof(sized), "%s_%ux%u.dds", stem.c_str(), key.width, key.height);
-  const std::filesystem::path base(sBindingsDir);
-  std::error_code existsError;
-  if (std::filesystem::is_regular_file(base / sized, existsError)) {
-    reg.iconPath = (base / sized).string();
-  } else if (std::filesystem::is_regular_file(base / (stem + ".dds"), existsError)) {
-    reg.iconPath = (base / (stem + ".dds")).string();
-  } else {
+  reg.iconPath = FindIconFile(sized);
+  if (reg.iconPath.empty()) {
+    reg.iconPath = FindIconFile(stem + ".dds");
+  }
+  if (reg.iconPath.empty()) {
     // Nothing generated for this action, so nothing is registered. Note that
     // what stays on screen is not necessarily "the game's own art": the static
     // per-device set in <textures>/<device>/ is registered separately, by
@@ -727,17 +744,23 @@ const char* ActiveDevice() {
 }
 
 void Initialize(const char* textureRoot) {
-  if (textureRoot == nullptr || textureRoot[0] == '\0') {
+  const bool embedded = textureRoot == nullptr && !PortEmbedded::Under("textures/bindings/").empty();
+  if (!embedded && (textureRoot == nullptr || textureRoot[0] == '\0')) {
     return;
   }
   // Tracked even without generated icons, since the static set follows it too.
   SDL_AddEventWatch(active_input_watch, nullptr);
-  const std::filesystem::path bindingsDir = std::filesystem::path(textureRoot) / "bindings";
-  std::error_code ec;
-  if (!std::filesystem::is_directory(bindingsDir, ec)) {
-    return;
+  if (embedded) {
+    sBindingsDir = "textures/bindings";
+    sEmbedded = true;
+  } else {
+    const std::filesystem::path bindingsDir = std::filesystem::path(textureRoot) / "bindings";
+    std::error_code ec;
+    if (!std::filesystem::is_directory(bindingsDir, ec)) {
+      return;
+    }
+    sBindingsDir = bindingsDir.string();
   }
-  sBindingsDir = bindingsDir.string();
   sEnabled = true;
   Poll();
 }

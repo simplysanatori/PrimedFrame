@@ -37,6 +37,12 @@ endif()
 
 include(CTest)
 option(MP_BUILD_TESTS "Build native-port regression tests" ON)
+if(ANDROID)
+    set(_mp_embed_default OFF)
+else()
+    set(_mp_embed_default ON)
+endif()
+option(MP_EMBED_RESOURCES "Build the controller glyph textures and the pipeline cache seed into the executable (desktop)" ${_mp_embed_default})
 option(MP_ENABLE_SMOKE_DRIVER "Enable the opt-in real-disc lifecycle test driver" OFF)
 option(MP_ANDROID_NOD_STUB "Use a non-functional nod stub for Android build probes" OFF)
 
@@ -134,6 +140,7 @@ set(MP_PORT_SOURCES
     platform/disc.cpp
     platform/shims.cpp
     platform/sdk_stubs.cpp
+    platform/port_embedded.cpp
     platform/port_textures.cpp
     platform/port_prompts.cpp
     platform/port_controls.cpp
@@ -310,20 +317,45 @@ add_custom_target(port_build_info
     VERBATIM)
 add_dependencies(metroid_prime_port port_build_info)
 target_include_directories(metroid_prime_port PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-# Keep the HD texture replacements next to the executable, which is where the
-# port looks for them by default, so a built binary picks them up without a
-# manual copy. Regenerate them with tools/make_prompt_glyphs.py. The generated
-# sets are cleared first: copy_directory only adds, and an icon the generator
-# no longer writes would otherwise keep replacing a texture it no longer claims
-# (two retired legend hashes kept drawing L/R over the map's [M] and [S] icons).
-set(PORT_TEXTURE_SETS bindings keyboard playstation switch xbox)
-list(TRANSFORM PORT_TEXTURE_SETS PREPEND "$<TARGET_FILE_DIR:metroid_prime_port>/textures/")
-add_custom_command(TARGET metroid_prime_port POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E rm -rf ${PORT_TEXTURE_SETS}
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/textures"
-        "$<TARGET_FILE_DIR:metroid_prime_port>/textures"
-    COMMENT "Copying texture replacements next to the executable")
+if(MP_EMBED_RESOURCES)
+    # The glyph textures and the pipeline cache seed live inside the executable, so
+    # a packaged folder needs no loose copies, and a new executable dropped into an
+    # old install ignores the stale files left there. Regenerate the textures with
+    # tools/make_prompt_glyphs.py.
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    file(GLOB_RECURSE MP_EMBED_INPUTS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/textures/*")
+    set(MP_EMBED_SEED "${CMAKE_CURRENT_SOURCE_DIR}/assets/initial_pipeline_cache.db")
+    set(MP_EMBED_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/port_embedded_data.cpp")
+    add_custom_command(
+        OUTPUT "${MP_EMBED_SOURCE}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_resources.py"
+            "${MP_EMBED_SOURCE}"
+            --dir "${CMAKE_CURRENT_SOURCE_DIR}/textures" textures
+            --file "${MP_EMBED_SEED}" initial_pipeline_cache.db
+        DEPENDS ${MP_EMBED_INPUTS} "${MP_EMBED_SEED}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/embed_resources.py"
+        COMMENT "Embedding textures and the pipeline cache seed"
+        VERBATIM)
+    target_sources(metroid_prime_port PRIVATE "${MP_EMBED_SOURCE}")
+    target_compile_definitions(metroid_prime_port PRIVATE MP_EMBED_RESOURCES)
+else()
+    # Keep the HD texture replacements next to the executable, which is where the
+    # port looks for them by default, so a built binary picks them up without a
+    # manual copy. Regenerate them with tools/make_prompt_glyphs.py. The generated
+    # sets are cleared first: copy_directory only adds, and an icon the generator
+    # no longer writes would otherwise keep replacing a texture it no longer claims
+    # (two retired legend hashes kept drawing L/R over the map's [M] and [S] icons).
+    set(PORT_TEXTURE_SETS bindings keyboard playstation switch xbox)
+    list(TRANSFORM PORT_TEXTURE_SETS PREPEND "$<TARGET_FILE_DIR:metroid_prime_port>/textures/")
+    add_custom_command(TARGET metroid_prime_port POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${PORT_TEXTURE_SETS}
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_SOURCE_DIR}/textures"
+            "$<TARGET_FILE_DIR:metroid_prime_port>/textures"
+        COMMENT "Copying texture replacements next to the executable")
+endif()
 if(MP_ENABLE_SMOKE_DRIVER)
     target_sources(metroid_prime_port PRIVATE platform/smoke.cpp)
     target_compile_definitions(mp_game PRIVATE MP_ENABLE_SMOKE_DRIVER)
@@ -349,10 +381,13 @@ aurora_copy_runtime_dlls(metroid_prime_port)
 
 # Aurora imports this machine-independent pipeline description cache and
 # compiles its entries in the background before first use.
-add_custom_command(TARGET metroid_prime_port POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CMAKE_CURRENT_SOURCE_DIR}/assets/initial_pipeline_cache.db
-        $<TARGET_FILE_DIR:metroid_prime_port>/initial_pipeline_cache.db)
+# Embedded builds carry it inside the executable instead.
+if(NOT MP_EMBED_RESOURCES)
+    add_custom_command(TARGET metroid_prime_port POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_CURRENT_SOURCE_DIR}/assets/initial_pipeline_cache.db
+            $<TARGET_FILE_DIR:metroid_prime_port>/initial_pipeline_cache.db)
+endif()
 
 # Install rules. Without these a `cmake --install` installs nothing at all, which
 # is not a cosmetic problem: flatpak-builder's only install step is the build
@@ -360,15 +395,17 @@ add_custom_command(TARGET metroid_prime_port POST_BUILD
 # in it, and a package manager installing this project would get an empty tree.
 #
 # The data files go next to the executable because that is where the port looks
-# for them: DefaultTexturesPath() in platform/main.cpp resolves
+# for them (unless MP_EMBED_RESOURCES builds them in): DefaultTexturesPath() in platform/main.cpp resolves
 # <SDL_GetBasePath()> + "textures", and Aurora's pipeline cache is opened by name
 # beside the binary. They are installed to bin/ for that reason, not by accident.
 include(GNUInstallDirs)
 install(TARGETS metroid_prime_port RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/textures/
-    DESTINATION ${CMAKE_INSTALL_BINDIR}/textures)
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/assets/initial_pipeline_cache.db
-    DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(NOT MP_EMBED_RESOURCES)
+    install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/textures/
+        DESTINATION ${CMAKE_INSTALL_BINDIR}/textures)
+    install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/assets/initial_pipeline_cache.db
+        DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/io.github.odrannnn.metroidprimeport.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 # The application icon. The desktop entry names it, and AppStream needs one too:

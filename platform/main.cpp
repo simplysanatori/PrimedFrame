@@ -13,6 +13,7 @@
 #include <dolphin/vi.h>
 #include <dolphin/dvd.h>
 
+#include "port_embedded.h"
 #include "port_crash.h"
 #include "port_debug.h"
 #include "port_paths.h"
@@ -51,6 +52,7 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -843,6 +845,7 @@ int main(int argc, char** argv) {
 #else
                    PortPaths::IsPortable() ? " (portable)" : "");
 #endif
+    const std::span<const uint8_t> embeddedSeed = PortEmbedded::Find("initial_pipeline_cache.db");
     AuroraConfig config = {
         .appName = "Metroid Prime",
         .userPath = userFolder.empty() ? nullptr : userFolder.c_str(),
@@ -859,6 +862,9 @@ int main(int argc, char** argv) {
         .mem2Size = ARAM_DEFAULT_SIZE,
         .frameBufferScale = frameBufferScale,
         .residentGeometryMiB = residentMiB,
+        // An embedded seed wins over a stale initial_pipeline_cache.db beside the executable.
+        .pipelineCacheSeedData = embeddedSeed.data(),
+        .pipelineCacheSeedSize = embeddedSeed.size(),
     };
 #if !defined(__ANDROID__)
     // The window icon, for a bare binary that no desktop entry describes.
@@ -941,9 +947,13 @@ int main(int argc, char** argv) {
     // (tex1_<w>x<h>_<texhash>[_<tluthash>]_<format>.dds/.png); a per-device
     // subfolder is selected from the connected controller. Aurora also accepts
     // Dolphin format names such as CMPR and RGBA8.
+    // MP_TEXTURES wins. Otherwise a build that carries the set (MP_EMBED_RESOURCES)
+    // passes no folder, so PortTextures/PortPrompts use the built-in copy and a stale
+    // `textures` folder left in an old install is ignored; any other build reads the
+    // folder next to the executable.
     const char* textures = std::getenv("MP_TEXTURES");
     if (textures == nullptr || textures[0] == '\0') {
-        textures = DefaultTexturesPath();
+        textures = PortEmbedded::Under("textures/").empty() ? DefaultTexturesPath() : nullptr;
     }
     // The user's own pack, over the built-in set. Kept in the user folder, under
     // a name updates never replace (the built-in set is read-only in an AppImage or

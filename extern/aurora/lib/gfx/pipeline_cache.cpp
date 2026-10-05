@@ -32,6 +32,8 @@ static Module Log("aurora::gfx::pipeline_cache");
 
 constexpr int PipelineCacheSchema = 1;
 constexpr const char* InitialPipelineCacheName = "initial_pipeline_cache.db";
+// The name the seed VFS maps to AuroraConfig::pipelineCacheSeedData instead of a file.
+constexpr const char* EmbeddedSeedName = ":embedded-initial-pipeline-cache:";
 constexpr const char* SdlVfsName = "aurora_pipeline_cache_sdl_vfs";
 
 struct CachedPipeline {
@@ -208,7 +210,13 @@ static int sdl_vfs_open(sqlite3_vfs*, sqlite3_filename name, sqlite3_file* file,
     return SQLITE_CANTOPEN;
   }
 
-  vfsFile->io = SDL_IOFromFile(name, "rb");
+  if (std::strcmp(name, EmbeddedSeedName) == 0) {
+    vfsFile->io = g_config.pipelineCacheSeedData != nullptr
+                      ? SDL_IOFromConstMem(g_config.pipelineCacheSeedData, g_config.pipelineCacheSeedSize)
+                      : nullptr;
+  } else {
+    vfsFile->io = SDL_IOFromFile(name, "rb");
+  }
   if (vfsFile->io == nullptr) {
     return SQLITE_CANTOPEN;
   }
@@ -608,6 +616,9 @@ static void pipeline_cache_abort() {
 static bool write_pipeline_cache_record(const PipelineCacheWrite& write);
 
 static std::string pipeline_cache_seed_path() {
+  if (g_config.pipelineCacheSeedData != nullptr && g_config.pipelineCacheSeedSize != 0) {
+    return EmbeddedSeedName;
+  }
   if (g_config.resourcesPath == nullptr || g_config.resourcesPath[0] == '\0') {
     return InitialPipelineCacheName;
   }
