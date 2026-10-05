@@ -68,12 +68,43 @@ uint8_t ToByte(float v) {
   return uint8_t(std::clamp(int(std::lround(v)), 0, 255));
 }
 
+// sRGB <-> linear. The decode is a 256-entry table; the encode is a table over
+// the linear range fine enough (16384 steps, finer than the darkest sRGB step)
+// that a nearest lookup rounds to the same byte as the exact formula.
+constexpr int kInverseSteps = 16384;
+
+struct SrgbTables {
+  float toLinear[256];
+  uint8_t toByte[kInverseSteps + 1];
+  SrgbTables() {
+    for (int i = 0; i < 256; ++i) {
+      const double c = i / 255.0;
+      toLinear[i] = float(c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4));
+    }
+    for (int i = 0; i <= kInverseSteps; ++i) {
+      const double l = double(i) / double(kInverseSteps);
+      const double c = l <= 0.0031308 ? l * 12.92 : 1.055 * std::pow(l, 1.0 / 2.4) - 0.055;
+      toByte[i] = uint8_t(std::clamp(int(std::lround(c * 255.0)), 0, 255));
+    }
+  }
+};
+
+const SrgbTables& Tables() {
+  static const SrgbTables tables;
+  return tables;
+}
+
+// Linear light (0..1) to an sRGB byte.
+uint8_t LinearToSrgbByte(float l) {
+  return Tables().toByte[std::clamp(int(std::lround(l * float(kInverseSteps))), 0, kInverseSteps)];
+}
+
 // --- Mips ---------------------------------------------------------------------
 
 // Each level is made from the one above, not from the top: a 2:1 Lanczos step
 // costs a fraction of a reduction from full size and looks the same.
-Image HalfOf(const Image& image) {
-  return Resize(image, std::max(image.width / 2, 1), std::max(image.height / 2, 1));
+Image HalfOf(const Image& image, MapKind kind) {
+  return Resize(image, std::max(image.width / 2, 1), std::max(image.height / 2, 1), kind);
 }
 
 void Put16(std::vector<uint8_t>& out, uint32_t v) {
@@ -710,13 +741,107 @@ void KeepCoverage(std::vector<Image>& levels) {
 
 }  // namespace
 
-Image Resize(const Image& image, int width, int height) {
+namespace {
+
+// Colour and normal maps are filtered as floats in the space their meaning is
+// linear in: a colour map's RGB in linear light, a normal map's xyz as a
+// vector (renormalised afterwards). Data maps (and every alpha) are filtered as
+// the bytes they are, in Resize's byte path below.
+Image ResizeWide(const Image& image, int width, int height, MapKind kind) {
+  const SrgbTables& tab = Tables();
+  // A normal map with a B channel stores z there; one without (the two-channel
+  // maps, written with B at 0) has it rebuilt from x and y.
+  bool hasZ = false;
+  if (kind == MapKind::Normal) {
+    for (size_t i = 2; i < image.rgba.size() && !hasZ; i += 4) {
+      hasZ = image.rgba[i] != 0;
+    }
+  }
+  const auto toRow = [&](int y, float* row) {
+    const uint8_t* s = &image.rgba[size_t(y) * size_t(image.width) * 4];
+    for (int x = 0; x < image.width; ++x, s += 4, row += 4) {
+      if (kind == MapKind::Colour) {
+        row[0] = tab.toLinear[s[0]];
+        row[1] = tab.toLinear[s[1]];
+        row[2] = tab.toLinear[s[2]];
+      } else {
+        const float nx = s[0] / 255.0f * 2.0f - 1.0f, ny = s[1] / 255.0f * 2.0f - 1.0f;
+        row[0] = nx;
+        row[1] = ny;
+        row[2] = hasZ ? s[2] / 255.0f * 2.0f - 1.0f : std::sqrt(std::max(0.0f, 1.0f - nx * nx - ny * ny));
+      }
+      row[3] = float(s[3]) / 255.0f;
+    }
+  };
+  const Taps tx = MakeTaps(image.width, width);
+  std::vector<float> mid(size_t(width) * size_t(image.height) * 4);
+  std::vector<float> in(size_t(image.width) * 4);
+  for (int y = 0; y < image.height; ++y) {
+    toRow(y, in.data());
+    float* dst = &mid[size_t(y) * size_t(width) * 4];
+    for (int x = 0; x < width; ++x) {
+      const float* w = &tx.weights[size_t(x) * size_t(tx.width)];
+      const float* s = in.data() + size_t(tx.first[size_t(x)]) * 4;
+      float acc[4] = {0, 0, 0, 0};
+      for (int i = 0, n = tx.count[size_t(x)]; i < n; ++i, s += 4) {
+        acc[0] += w[i] * s[0];
+        acc[1] += w[i] * s[1];
+        acc[2] += w[i] * s[2];
+        acc[3] += w[i] * s[3];
+      }
+      std::memcpy(dst + x * 4, acc, sizeof(acc));
+    }
+  }
+  const Taps ty = MakeTaps(image.height, height);
+  Image out;
+  out.width = width;
+  out.height = height;
+  out.rgba.resize(size_t(width) * size_t(height) * 4);
+  std::vector<float> row(size_t(width) * 4);
+  for (int y = 0; y < height; ++y) {
+    std::fill(row.begin(), row.end(), 0.0f);
+    const float* w = &ty.weights[size_t(y) * size_t(ty.width)];
+    for (int i = 0, n = ty.count[size_t(y)]; i < n; ++i) {
+      const float* s = &mid[size_t(ty.first[size_t(y)] + i) * size_t(width) * 4];
+      const float wi = w[i];
+      for (size_t k = 0; k < row.size(); ++k) {
+        row[k] += wi * s[k];
+      }
+    }
+    uint8_t* dst = &out.rgba[size_t(y) * size_t(width) * 4];
+    for (int x = 0; x < width; ++x) {
+      const float* r = &row[size_t(x) * 4];
+      if (kind == MapKind::Colour) {
+        dst[x * 4] = LinearToSrgbByte(r[0]);
+        dst[x * 4 + 1] = LinearToSrgbByte(r[1]);
+        dst[x * 4 + 2] = LinearToSrgbByte(r[2]);
+      } else {
+        // Averaged vectors are shorter than unit; stand them back up.
+        const float len = std::sqrt(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+        const float inv = len > 1e-6f ? 1.0f / len : 0.0f;
+        const float n[3] = {r[0] * inv, r[1] * inv, len > 1e-6f ? r[2] * inv : 1.0f};
+        dst[x * 4] = ToByte((n[0] * 0.5f + 0.5f) * 255.0f);
+        dst[x * 4 + 1] = ToByte((n[1] * 0.5f + 0.5f) * 255.0f);
+        dst[x * 4 + 2] = hasZ ? ToByte((n[2] * 0.5f + 0.5f) * 255.0f) : 0;
+      }
+      dst[x * 4 + 3] = ToByte(r[3] * 255.0f);
+    }
+  }
+  return out;
+}
+
+}  // namespace
+
+Image Resize(const Image& image, int width, int height, MapKind kind) {
   Image out;
   out.width = width;
   out.height = height;
   if (image.width == width && image.height == height) {
     out.rgba = image.rgba;
     return out;
+  }
+  if (kind != MapKind::Data) {
+    return ResizeWide(image, width, height, kind);
   }
   // Across first, then down; the intermediate is 8-bit, as Pillow's is.
   const Taps tx = MakeTaps(image.width, width);
@@ -760,10 +885,14 @@ Image Resize(const Image& image, int width, int height) {
   return out;
 }
 
-std::vector<uint8_t> EncodeTxtrRgba8(const Image& image, int minSize) {
+uint8_t ScaleSrgbByte(uint8_t value, double scale) {
+  return LinearToSrgbByte(Tables().toLinear[value] * float(scale));
+}
+
+std::vector<uint8_t> EncodeTxtrRgba8(const Image& image, int minSize, MapKind kind) {
   std::vector<Image> levels{image};
   while (levels.back().width > minSize && levels.back().height > minSize) {
-    levels.push_back(HalfOf(levels.back()));
+    levels.push_back(HalfOf(levels.back(), kind));
   }
   std::vector<uint8_t> out;
   Put32(out, 9);
@@ -791,7 +920,7 @@ std::vector<uint8_t> EncodeTxtrRgba8(const Image& image, int minSize) {
   return out;
 }
 
-std::vector<uint8_t> EncodeTxtrCmpr(const Image& image, bool alpha) {
+std::vector<uint8_t> EncodeTxtrCmpr(const Image& image, bool alpha, MapKind kind) {
   std::vector<Image> levels{image};
   if (!alpha) {
     for (size_t i = 3; i < levels[0].rgba.size(); i += 4) {
@@ -801,7 +930,7 @@ std::vector<uint8_t> EncodeTxtrCmpr(const Image& image, bool alpha) {
     BleedColour(levels[0]);
   }
   while (levels.back().width > 8 && levels.back().height > 8) {
-    levels.push_back(HalfOf(levels.back()));
+    levels.push_back(HalfOf(levels.back(), kind));
   }
   if (alpha) {
     KeepCoverage(levels);
@@ -981,13 +1110,13 @@ void EncodeBc7Block(const uint8_t* rgba, uint8_t* out) {
   w.Store(out);
 }
 
-std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format, bool punch) {
+std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format, bool punch, MapKind kind) {
   std::vector<Image> levels{image};
   if (punch) {
     BleedColour(levels[0]);
   }
   while (levels.back().width > 1 || levels.back().height > 1) {
-    levels.push_back(HalfOf(levels.back()));
+    levels.push_back(HalfOf(levels.back(), kind));
   }
   if (punch) {
     KeepCoverage(levels);

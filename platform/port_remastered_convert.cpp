@@ -551,9 +551,11 @@ const int kPbrMax[kMaps] = {1024, 256, 256, 256};
 // shows where BC textures are unsupported), so it is a stub.
 const int kPbrNative[kMaps] = {2048, 1024, 1024, 1024};
 const int kPbrStub[kMaps] = {128, 32, 32, 32};
-// Multiplier on the PBR emissive map: Remastered authored it for an HDR
-// pipeline, and at 1.0 it washes the albedo to grey.
-const double kPbrEmissive = 0.35;
+// Multiplier on the PBR emissive map, applied in linear light (the shader
+// reads the map as sRGB): Remastered authored it for an HDR pipeline, and at
+// 1.0 it washes the albedo to grey. It was 0.35 on the sRGB bytes, which is
+// 0.35^2.2 = 0.10 linear, so this keeps the look the import had.
+const double kPbrEmissive = 0.10;
 // Ceiling on the metalness channel. A full metal has no diffuse, and Prime's
 // rooms are dim, so the painted shells go near-black above it.
 const double kPbrMetalMax = 0.6;
@@ -970,12 +972,12 @@ struct Converter::State {
   Image Baked(const Image& base, const Bake& bake) {
     const size_t count = size_t(base.width) * size_t(base.height);
     std::vector<float> shade(count, 1.0f), lift(count, 0.0f);
-    auto load = [&](const MapRef& map) {
+    auto load = [&](const MapRef& map, MapKind kind) {
       const Image& img = Open(map);
-      return img.width == base.width && img.height == base.height ? img : Resize(img, base.width, base.height);
+      return img.width == base.width && img.height == base.height ? img : Resize(img, base.width, base.height, kind);
     };
     if (bake.mr) {
-      const Image t = load(*bake.mr);
+      const Image t = load(*bake.mr, MapKind::Data);
       for (size_t i = 0; i < count; ++i) {
         const float r = t.rgba[i * 4] / 255.0f, g = t.rgba[i * 4 + 1] / 255.0f, b = t.rgba[i * 4 + 2] / 255.0f;
         shade[i] *= 1.0f - float(bake.ao) * (1.0f - r);
@@ -983,7 +985,7 @@ struct Converter::State {
       }
     }
     if (bake.normal) {
-      const Image t = load(*bake.normal);
+      const Image t = load(*bake.normal, MapKind::Normal);
       for (size_t i = 0; i < count; ++i) {
         const float nx = t.rgba[i * 4] / 255.0f * 2.0f - 1.0f, ny = t.rgba[i * 4 + 1] / 255.0f * 2.0f - 1.0f;
         const float nz = std::sqrt(std::clamp(1.0f - nx * nx - ny * ny, 0.0f, 1.0f));
@@ -1134,6 +1136,12 @@ struct Converter::State {
     }
     const size_t count = img.rgba.size() / 4;
     const bool isBase = k == kBase || role == "diffuse";
+    // How the image is filtered when it is resized and mipped: base, emissive
+    // and the TEV colour slots are sRGB colour, the normal map a direction,
+    // and the MR and reflect maps are plain data.
+    const MapKind mapKind = k == kNormal                  ? MapKind::Normal
+                            : (k == kMr || role == "reflect") ? MapKind::Data
+                                                              : MapKind::Colour;
     if (k == kNormal) {
       // Two-channel normal maps leave B at 0; the shader rebuilds z. Keep A opaque.
       for (size_t i = 0; i < count; ++i) {
@@ -1183,10 +1191,9 @@ struct Converter::State {
     // A ramp's mean is already the glow's level, which an emissive map's texels
     // (lit spots on a dark map) are not.
     if (k == kEmissive && !raw && !src->mean) {
-      const float scale = float(kPbrEmissive);
       for (size_t i = 0; i < count; ++i) {
         for (int c = 0; c < 3; ++c) {
-          img.rgba[i * 4 + c] = uint8_t(std::clamp(float(img.rgba[i * 4 + c]) * scale, 0.0f, 255.0f));
+          img.rgba[i * 4 + c] = ScaleSrgbByte(img.rgba[i * 4 + c], kPbrEmissive);
         }
       }
     }
@@ -1217,21 +1224,21 @@ struct Converter::State {
         const DdsFormat format = k == kNormal ? DdsFormat::BC5 : DdsFormat::BC7;
         const bool punch = alpha == "punch";
         if (w == img.width && h == img.height) {
-          Write(name + ".dds", EncodeDds(img, format, punch));
+          Write(name + ".dds", EncodeDds(img, format, punch, mapKind));
         } else {
-          Write(name + ".dds", EncodeDds(Resize(img, w, h), format, punch));
+          Write(name + ".dds", EncodeDds(Resize(img, w, h, mapKind), format, punch, mapKind));
         }
       }
     }
     const int w = std::max(8, std::min(cap, NextPow2(img.width)));
     const int h = std::max(8, std::min(cap, NextPow2(img.height)));
     if (w != img.width || h != img.height) {
-      img = Resize(img, w, h);
+      img = Resize(img, w, h, mapKind);
     }
     if (alpha == "none" || alpha == "punch") {
-      Write(name + ".TXTR", EncodeTxtrCmpr(img, alpha == "punch"));
+      Write(name + ".TXTR", EncodeTxtrCmpr(img, alpha == "punch", mapKind));
     } else {
-      Write(name + ".TXTR", EncodeTxtrRgba8(img, role == "emissive" ? 4 : 8));
+      Write(name + ".TXTR", EncodeTxtrRgba8(img, role == "emissive" ? 4 : 8, mapKind));
     }
     return tid;
   }

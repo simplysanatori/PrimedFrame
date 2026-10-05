@@ -24,20 +24,34 @@ enum class DdsFormat {
   BC5,  // red and green only: a normal map
 };
 
+// What a map's texels mean, which decides the space they are filtered in:
+//   Data    the bytes as they are (metal/roughness, AO, masks);
+//   Colour  RGB is sRGB, filtered in linear light (alpha stays linear);
+//   Normal  RG (and B, when the map has it) is a tangent-space direction in
+//           [0,255] -> [-1,1], filtered as a vector and renormalised.
+enum class MapKind {
+  Data,
+  Colour,
+  Normal,
+};
+
 // Lanczos-3, each channel on its own (alpha is often a mask here, not
 // opacity, so nothing is premultiplied). The arithmetic follows Pillow's.
-Image Resize(const Image& image, int width, int height);
+Image Resize(const Image& image, int width, int height, MapKind kind = MapKind::Data);
+
+// An sRGB byte times `scale` in linear light, back to an sRGB byte.
+uint8_t ScaleSrgbByte(uint8_t value, double scale);
 
 // A mipmapped RGBA8 TXTR (format 9); mips stop once a side reaches minSize.
 // Sides must be multiples of 4.
-std::vector<uint8_t> EncodeTxtrRgba8(const Image& image, int minSize = 8);
+std::vector<uint8_t> EncodeTxtrRgba8(const Image& image, int minSize = 8, MapKind kind = MapKind::Data);
 // A mipmapped CMPR TXTR (format 10). Without `alpha` every texel is opaque;
 // with it, texels under alpha 128 are transparent, and the smaller levels keep
 // the top level's share of opaque texels. Sides must be multiples of 8.
-std::vector<uint8_t> EncodeTxtrCmpr(const Image& image, bool alpha);
+std::vector<uint8_t> EncodeTxtrCmpr(const Image& image, bool alpha, MapKind kind = MapKind::Data);
 // A .dds with the whole mip chain down to 1x1. `punch` (a cut-out alpha) keeps
 // the share of opaque texels in the smaller levels, as EncodeTxtrCmpr does.
-std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format, bool punch = false);
+std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format, bool punch = false, MapKind kind = MapKind::Data);
 
 // One 4x4 block, 16 RGBA texels in, 16 bytes out; exposed for the tests.
 void EncodeBc7Block(const uint8_t* rgba, uint8_t* out);

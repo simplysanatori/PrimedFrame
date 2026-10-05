@@ -921,14 +921,14 @@ std::optional<uint32_t> HudConverter::Texture(const ModelUuid& id, HudCounts& co
   const int w = std::clamp(NextPow2(image.width), 8, kNativeSize);
   const int h = std::clamp(NextPow2(image.height), 8, kNativeSize);
   if (w != image.width || h != image.height) {
-    image = Resize(image, w, h);
+    image = Resize(image, w, h, MapKind::Colour);
   }
   const int edge = std::max(w, h);
   const int sw = edge <= kStubSize ? w : std::max(8, w * kStubSize / edge);
   const int sh = edge <= kStubSize ? h : std::max(8, h * kStubSize / edge);
   const uint32_t tid = NewId(m_nextTexture);
-  if ((edge > kStubSize && !m_io.write(Hex8(tid) + ".dds", EncodeDds(image, DdsFormat::BC7))) ||
-      !m_io.write(Hex8(tid) + ".TXTR", EncodeTxtrRgba8(edge > kStubSize ? Resize(image, sw, sh) : image, 8))) {
+  if ((edge > kStubSize && !m_io.write(Hex8(tid) + ".dds", EncodeDds(image, DdsFormat::BC7, false, MapKind::Colour))) ||
+      !m_io.write(Hex8(tid) + ".TXTR", EncodeTxtrRgba8(edge > kStubSize ? Resize(image, sw, sh, MapKind::Colour) : image, 8, MapKind::Colour))) {
     if (m_io.log) {
       m_io.log(owner + ": texture " + IdToString(id) + ": cannot write");
     }
