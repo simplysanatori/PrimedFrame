@@ -99,6 +99,21 @@ void CMemory::Free(const void* ptr) {
   OSRestoreInterrupts(enabled);
 }
 
+#ifdef TARGET_PC
+// Port: MP_HEAP_CHECK hooks for CFrameDelayedKiller (see CGameAllocator::CheckHeap).
+bool PortHeapCheckEnabled() { return CGameAllocator::HeapCheckEnabled(); }
+
+void PortHeapCheckAll() {
+  std::lock_guard< std::recursive_mutex > heapLock(HeapMutex());
+  gGameAllocator.CheckHeap();
+}
+
+bool PortHeapPeekBlock(const void* ptr, const char** fileAndLine, size_t* len) {
+  std::lock_guard< std::recursive_mutex > heapLock(HeapMutex());
+  return gGameAllocator.PeekLiveBlock(ptr, fileAndLine, len);
+}
+#endif
+
 void CMemory::SetOutOfMemoryCallback(IAllocator::FOutOfMemoryCb cb, const void* context) {
   mpAllocator->SetOutOfMemoryCallback(cb, context);
 }
