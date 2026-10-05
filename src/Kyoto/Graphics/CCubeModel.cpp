@@ -386,6 +386,29 @@ found:
   return draw.serial;
 }
 
+void CCubeModel::PortSetFallbackGlow(const CCubeMaterial& material, const int idx,
+                                     const bool frameExposed) const {
+  f32 values[19];
+  PortReadPBRMaterial(idx, values);
+  const int mode = int(values[7] + 0.5f);
+  // Only an exposed glow (bit 32) follows the room; the embedded TEV's emissive konst is K0,
+  // or K1 when ColorUnlit (bit 8) takes K0 (see PbrMaterial in the converter).
+  const uint want = (mode & 8) != 0 ? 2 : 1;
+  if ((mode & 32) == 0 || material.PortKonstCount() != want) {
+    return;
+  }
+  // The konst holds the emissive in gamma 2.2 and cannot exceed 1.0, so a glow brighter
+  // than that (s * gain > 1) is clamped to it.
+  const f32 gain = PortRoomEnv::GlowGain(frameExposed);
+  GXColor color{0, 0, 0, 255};
+  u8* channels[3] = {&color.r, &color.g, &color.b};
+  for (int i = 0; i < 3; ++i) {
+    const f32 linear = std::clamp(values[i] * gain, 0.f, 1.f);
+    *channels[i] = static_cast< u8 >(std::pow(linear, 1.f / 2.2f) * 255.f + 0.5f);
+  }
+  CGX::SetTevKColor(static_cast< GXTevKColorID >(want - 1), color);
+}
+
 f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fadeReplaces,
                                    const bool frameExposed, uint* cube) const {
   f32 values[19];
@@ -523,6 +546,10 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   const CModelFlags& lookFlags = fadeBlend ? opaqueFlags : drawFlags;
   const bool sortedDraw =
       lookFlags.GetTrans() >= CModelFlags::kT_Blend || material.IsFlagSet(kStateFlag_DepthSorting);
+  if (!pbr && material.IsFlagSet(kStateFlag_PortPBR)) {
+    PortSetFallbackGlow(material, static_cast< int >(surface.GetMaterialIndex()),
+                        sortedDraw && !sPortSky);
+  }
   if (!sortedDraw) {
     sPortGlassCopy.valid = false;
   }

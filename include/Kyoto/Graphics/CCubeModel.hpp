@@ -123,6 +123,9 @@ public:
   int PortReadPBRMaterial(const int idx, float values[19], uint* wrap = nullptr,
                           float lightScale[2] = nullptr, uint* cube = nullptr) const;
   uint PortMaterialCount() const;
+  // For a PBR material drawn by its embedded TEV: its emissive konst follows the room's
+  // exposure as the PBR path's glow does (the converter bakes a fixed 0.10 there).
+  void PortSetFallbackGlow(const CCubeMaterial& material, int idx, bool frameExposed) const;
   // Debugging: draws a model's material with values[field] replaced, until cleared. The
   // caller must clear before the model goes.
   static void PortOverridePBR(const CCubeModel* model, int material, int field, float value);
