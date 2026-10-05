@@ -22,9 +22,11 @@ constexpr uint32_t kTxtr = EffectFourCC("TXTR");
 constexpr uint32_t kCmdl = EffectFourCC("CMDL");
 
 // Effect textures are drawn small; larger ones are scaled down to this side.
-constexpr int kMaxTextureSide = 256;
+constexpr int kMaxTextureSide = 512;
 // A flipbook atlas keeps its frames' size up to this edge.
 constexpr int kMaxAtlasSide = 2048;
+// A larger texture goes to a native .dds; its TXTR is scaled down to this edge.
+constexpr int kStubSide = 64;
 
 // Between a pak's byte order and the order an effect stores an id in: the
 // first three groups byte-swapped (the same swap both ways).
@@ -636,6 +638,21 @@ public:
 
   // The id a Remastered texture (pak order) is written under, converting it
   // the first time; 0 when it cannot be.
+  // Writes a texture under id. One over kStubSide is written as a native .dds,
+  // with a small TXTR standing in for it on the game's heap (as the HUD import
+  // does): a 2048 atlas is 22 MB as an RGBA8 TXTR, and the gun loads every
+  // beam's effects at once.
+  bool WriteTexture(uint32_t id, const Image& image) {
+    const int edge = std::max(image.width, image.height);
+    if (edge <= kStubSide) {
+      return m_io.write(Hex(id) + ".TXTR", EncodeTxtrRgba8(image));
+    }
+    const Image stub = Resize(image, std::max(8, RoundUp4(image.width * kStubSide / edge)),
+                              std::max(8, RoundUp4(image.height * kStubSide / edge)), MapKind::Colour);
+    return m_io.write(Hex(id) + ".dds", EncodeDds(image, ColourDdsFormat(), false, MapKind::Colour)) &&
+           m_io.write(Hex(id) + ".TXTR", EncodeTxtrRgba8(stub));
+  }
+
   uint32_t Texture(const EffectGuid& id) {
     const auto known = m_textures.find(id);
     if (known != m_textures.end()) {
@@ -659,7 +676,7 @@ public:
         image = Resize(image, width, height);
       }
       out = m_io.freshId(Hash(id, kTxtr));
-      if (m_io.write(Hex(out) + ".TXTR", EncodeTxtrRgba8(image))) {
+      if (WriteTexture(out, image)) {
         ++m_result.textures;
       } else {
         out = 0;
@@ -718,7 +735,7 @@ public:
         }
       }
       const uint32_t fresh = m_io.freshId(Hash(id, kTxtr ^ 0xF11Bu));
-      if (m_io.write(Hex(fresh) + ".TXTR", EncodeTxtrRgba8(atlas))) {
+      if (WriteTexture(fresh, atlas)) {
         ++m_result.textures;
         ++m_result.flipbooks;
         out = FlipbookAtlas{fresh, cols, rows, layers};
