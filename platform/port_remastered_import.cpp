@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -297,6 +298,17 @@ public:
   }
 
   bool HasId(uint32_t id) const { return m_ids.count(id) != 0; }
+
+  // The ids of every resource of `type` it reads, in no particular order.
+  std::vector<uint32_t> Ids(uint32_t type) const {
+    std::vector<uint32_t> ids;
+    for (const auto& [key, where] : m_resources) {
+      if (uint32_t(key >> 32) == type) {
+        ids.push_back(uint32_t(key));
+      }
+    }
+    return ids;
+  }
 
   bool Read(uint32_t type, uint32_t id, std::vector<uint8_t>& out) {
     const auto found = m_resources.find(Key(type, id));
@@ -955,15 +967,39 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     uint32_t model = 0;  // the CMDL's id, 0 for the retail one
     std::vector<uint32_t> skins;  // the CSKRs' ids, empty for the retail ones
     uint32_t ancs = 0;            // the ANCS copy's id, 0 for none
-    std::vector<uint8_t> ancsData;
   };
   std::vector<Look> looks(count);
+  // The characters written once the models are in: retail ANCS with some of
+  // their (model, skin[, skeleton]) ids, big-endian and side by side, swapped
+  // for new ones. A swap is made only if its model and skin were written.
+  struct Rebind {
+    size_t entry;
+    std::vector<uint8_t> from, to;
+    uint32_t skin;  // the CSKR `to` names
+  };
+  struct Character {
+    uint32_t source = 0;  // the retail ANCS it is a copy of
+    std::vector<uint8_t> data;
+    std::vector<Rebind> rebinds;  // its own looks'
+  };
+  std::map<uint32_t, Character> characters;
+  std::vector<Rebind> everywhere;  // swapped in every character that binds them
+  auto bytesOf = [](std::initializer_list<uint32_t> ids) {
+    std::vector<uint8_t> out;
+    for (uint32_t id : ids) {
+      for (int b = 0; b < 4; ++b) {
+        out.push_back(uint8_t(id >> (24 - b * 8)));
+      }
+    }
+    return out;
+  };
+  auto readU32 = [](const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; };
+  auto hex = [](uint32_t id) {
+    char name[16];
+    std::snprintf(name, sizeof(name), "%08X", id);
+    return std::string(name);
+  };
   {
-    auto hex = [](uint32_t id) {
-      char name[16];
-      std::snprintf(name, sizeof(name), "%08X", id);
-      return std::string(name);
-    };
     auto variant = [&](Look& look, uint32_t id, int key) {
       const uint32_t out = PortModelVariant::Id(id, key);
       if (retail.HasId(out) || taken.count(out) != 0) {
@@ -976,7 +1012,12 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     for (size_t i = 0; i < count; ++i) {
       const TableEntry& entry = table[i];
       Look& look = looks[i];
-      if (entry.ancs == 0 && entry.key >= 0) {
+      if (entry.ancs == kEveryCharacter) {
+        if (entry.key >= 0) {
+          look.ok = false;
+          look.error = "a model bound in every character has no second look";
+        }
+      } else if (entry.ancs == 0 && entry.key >= 0) {
         look.model = variant(look, entry.retail, entry.key);
       } else if (entry.ancs != 0) {
         look.ancs = entry.key >= 0 ? variant(look, entry.ancs, entry.key) : entry.ancs;
@@ -1016,26 +1057,22 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     for (size_t i = 0; i < count; ++i) {
       const TableEntry& entry = table[i];
       Look& look = looks[i];
-      if (entry.ancs == 0 || !look.ok) {
+      if (look.ancs == 0 || !look.ok) {
         continue;
       }
-      // The copy binds the new pair where the retail one binds the old: one
-      // character's model and skin ids, big-endian and side by side.
-      const uint32_t skin = TableSkins(entry)[0];
-      if (!retail.Read(kANCS, entry.ancs, look.ancsData)) {
+      // The copy binds the new pair where the retail one binds the old.
+      Character& character = characters[look.ancs];
+      character.source = entry.ancs;
+      if (character.data.empty() && !retail.Read(kANCS, entry.ancs, character.data)) {
         look.ok = false;
         look.error = "character " + hex(entry.ancs) + " is not on the disc";
         continue;
       }
-      const uint8_t pair[8] = {uint8_t(entry.retail >> 24), uint8_t(entry.retail >> 16), uint8_t(entry.retail >> 8),
-                               uint8_t(entry.retail),       uint8_t(skin >> 24),         uint8_t(skin >> 16),
-                               uint8_t(skin >> 8),          uint8_t(skin)};
-      std::vector<uint8_t>& data = look.ancsData;
-      size_t at = data.size();
+      const std::vector<uint8_t> pair = bytesOf({entry.retail, TableSkins(entry)[0]});
+      const std::vector<uint8_t>& data = character.data;
       int found = 0;
-      for (auto it = std::search(data.begin(), data.end(), pair, pair + 8); it != data.end();
-           it = std::search(it + 1, data.end(), pair, pair + 8)) {
-        at = size_t(it - data.begin());
+      for (auto it = std::search(data.begin(), data.end(), pair.begin(), pair.end()); it != data.end();
+           it = std::search(it + 1, data.end(), pair.begin(), pair.end())) {
         ++found;
       }
       if (found != 1) {
@@ -1047,12 +1084,66 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       const uint32_t seed = entry.ancs * 0x9E3779B1u ^ entry.retail ^ uint32_t(entry.key + 1) * 0x85EBCA6Bu;
       look.model = fresh(seed);
       look.skins = {fresh(seed ^ 0x534B494Eu)};
-      for (int b = 0; b < 4; ++b) {
-        data[at + b] = uint8_t(look.model >> (24 - b * 8));
-        data[at + 4 + b] = uint8_t(look.skins[0] >> (24 - b * 8));
+      character.rebinds.push_back({i, pair, bytesOf({look.model, look.skins[0]}), look.skins[0]});
+    }
+    // A body whose skin another model shares keeps its id but takes skins of
+    // its own, and every character that binds it is rebound to them. Its
+    // first skin's CSKR serves every skin it is bound with on the same
+    // skeleton: the weights name the skeleton's bones.
+    std::vector<size_t> bodies;
+    for (size_t i = 0; i < count; ++i) {
+      const TableEntry& entry = table[i];
+      Look& look = looks[i];
+      if (entry.ancs != kEveryCharacter || !look.ok) {
+        continue;
+      }
+      bodies.push_back(i);
+      const uint32_t* skins = TableSkins(entry);
+      for (int s = 0; s < entry.skinCount; ++s) {
+        look.skins.push_back(fresh(entry.retail * 0x85EBCA6Bu ^ skins[s]));
+      }
+    }
+    if (!bodies.empty()) {
+      // The skeletons each (body, skin) is bound with.
+      std::map<std::pair<size_t, int>, std::set<uint32_t>> skeletons;
+      for (uint32_t id : retail.Ids(kANCS)) {
+        const auto known = characters.find(id);
+        std::vector<uint8_t> read;
+        if (known == characters.end() && !retail.Read(kANCS, id, read)) {
+          continue;
+        }
+        const std::vector<uint8_t>& data = known != characters.end() ? known->second.data : read;
+        bool binds = false;
+        for (size_t i : bodies) {
+          const TableEntry& entry = table[i];
+          for (int s = 0; s < entry.skinCount; ++s) {
+            const std::vector<uint8_t> pair = bytesOf({entry.retail, TableSkins(entry)[s]});
+            for (auto it = std::search(data.begin(), data.end(), pair.begin(), pair.end()); data.end() - it >= 12;
+                 it = std::search(it + 1, data.end(), pair.begin(), pair.end())) {
+              skeletons[{i, s}].insert(readU32(&*(it + 8)));
+              binds = true;
+            }
+          }
+        }
+        if (binds && known == characters.end()) {
+          characters[id] = Character{id, std::move(read), {}};
+        }
+      }
+      for (const auto& [key, bound] : skeletons) {
+        const auto [i, s] = key;
+        const TableEntry& entry = table[i];
+        const Look& look = looks[i];
+        const auto first = skeletons.find({i, 0});
+        for (uint32_t skeleton : bound) {
+          const bool shared = first != skeletons.end() && first->second.count(skeleton) != 0;
+          const uint32_t skin = shared ? look.skins[0] : look.skins[s];
+          everywhere.push_back({i, bytesOf({entry.retail, TableSkins(entry)[s], skeleton}),
+                                bytesOf({entry.retail, skin, skeleton}), skin});
+        }
       }
     }
   }
+  std::vector<uint8_t> modelOk(count, 0);
   auto work = [&](int worker) {
     YieldToGame();
     ConvertIO io = makeIO(worker, staging);
@@ -1060,7 +1151,6 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       std::lock_guard<std::mutex> lock(modelClaimMutex);
       return modelClaimed.insert(id).second;
     };
-    const auto write = io.write;
     Converter converter(std::move(io));
     for (size_t i = next++; i < count && !sCancel; i = next++) {
       const TableEntry& entry = table[i];
@@ -1079,20 +1169,12 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         options.outputSkins = look.skins;
         ok = look.ok && remastered.ReadModel(id, raw, modelError) &&
              ParseModel(raw.data(), raw.size(), model, modelError) && converter.Convert(model, options, modelError);
-        // The character copy last, so that it never names a model that failed.
-        if (ok && look.ancs != 0) {
-          char name[16];
-          std::snprintf(name, sizeof(name), "%08X", look.ancs);
-          ok = write(std::string(name) + ".ANCS", look.ancsData);
-          if (!ok) {
-            modelError = "could not write " + std::string(name) + ".ANCS";
-          }
-        }
       } catch (const std::exception& e) {
         ok = false;
         modelError = e.what();
       }
       if (ok) {
+        modelOk[i] = 1;
         ++converted;
       } else {
         char name[16];
@@ -1124,6 +1206,42 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   if (converted == 0) {
     fail("No model could be converted.");
     return;
+  }
+
+  // The characters last, so that none names a model that failed. A copy is
+  // written only if one of its own looks made it.
+  {
+    const auto write = makeIO(0, staging).write;
+    for (auto& [id, character] : characters) {
+      std::vector<uint8_t>& data = character.data;
+      bool own = false;
+      bool changed = false;
+      auto apply = [&](const Rebind& rebind) {
+        bool swapped = false;
+        std::error_code skinError;
+        if (modelOk[rebind.entry] != 0 && fs::exists(staging / (hex(rebind.skin) + ".CSKR"), skinError)) {
+          for (auto it = std::search(data.begin(), data.end(), rebind.from.begin(), rebind.from.end());
+                it != data.end();
+               it = std::search(it + rebind.from.size(), data.end(), rebind.from.begin(), rebind.from.end())) {
+            std::copy(rebind.to.begin(), rebind.to.end(), it);
+            swapped = true;
+          }
+        }
+        return swapped;
+      };
+      for (const Rebind& rebind : character.rebinds) {
+        own = apply(rebind) || own;
+      }
+      for (const Rebind& rebind : everywhere) {
+        changed = apply(rebind) || changed;
+      }
+      if (!(own || (changed && id == character.source))) {
+        continue;
+      }
+      if (!write(hex(id) + ".ANCS", data)) {
+        AddLine("could not write " + hex(id) + ".ANCS");
+      }
+    }
   }
 
   // Remastered's particle effects in place of the disc's, when asked for.
