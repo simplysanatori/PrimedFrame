@@ -3504,6 +3504,32 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
         " retail objects hidden");
     return made != 0;
   };
+  // Whether a static model's bounds hold its origin, give or take half a metre.
+  auto aroundOrigin = [&](const uint8_t* id) {
+    std::vector<uint8_t> data;
+    PortRemastered::Model cmdl;
+    std::string error;
+    if (!FindResource(id, Tag("CMDL"), home, data, nullptr, nullptr) ||
+        !PortRemastered::ParseModel(data.data(), data.size(), cmdl, error)) {
+      return false;
+    }
+    Vec3 lo{HUGE_VAL, HUGE_VAL, HUGE_VAL}, hi{-HUGE_VAL, -HUGE_VAL, -HUGE_VAL};
+    for (const PortRemastered::ModelVertexBuffer& vb : cmdl.vertexBuffers) {
+      for (size_t v = 0; v + 2 < vb.positions.size(); v += 3) {
+        for (size_t k = 0; k < 3; ++k) {
+          lo[k] = std::min(lo[k], double(vb.positions[v + k]));
+          hi[k] = std::max(hi[k], double(vb.positions[v + k]));
+        }
+      }
+    }
+    for (size_t k = 0; k < 3; ++k) {
+      if (!(lo[k] <= 0.5 && hi[k] >= -0.5)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  size_t posed = 0;
   for (const Component* c : r.room.Of(kActorMP1)) {
     const auto f = r.room.Flat(*c);
     const auto prop = f.find(kPropActorModel);
@@ -3571,6 +3597,15 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       }
     }
     if (model == Id16{}) {
+      continue;
+    }
+    // A static one that starts hidden at the room's origin, its model built around its own
+    // origin, is posed by a cinematic, which the port does not play: the gunships of the
+    // Frigate hangar's landing cutscene, shown by retail's links, would stand whole on the
+    // dock. One whose model lies off its origin is room geometry placed at the origin (the
+    // Frigate reactor's fallen pieces), and stays.
+    if (hasModel && !active && MaxAbs(pos, Vec3{}) < 0.01 && aroundOrigin(r.room.Bytes(prop->second))) {
+      ++posed;
       continue;
     }
     // Some carry a retail model (Remastered's id 10000000-0000-f000-f000-0000XXXXXXXX)
@@ -3700,11 +3735,11 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   std::snprintf(line, sizeof line,
                 "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu skies, %zu inactive objects left out; %zu on a layer, "
                 "%zu scripted, %zu in %zu groups of %zu script objects and %zu connections (%zu untraced), %zu on a "
-                "platform, %zu with untraced links, %zu glowing, %zu animated, %zu left to retail actors; %zu of %zu "
-                "entities matched), %zu dropped",
+                "platform, %zu with untraced links, %zu glowing, %zu animated, %zu left to retail actors, %zu left to "
+                "cinematics; %zu of %zu entities matched), %zu dropped",
                 r.name.c_str(), mrea, count, modcons, actors, skies, inactive, gated, linked, grouped, scripts.group.size(),
                 scripts.script.nodes.size(), scripts.script.edges.size(), scripts.scriptUnresolved, riding, unresolved,
-                glowing, animated, retailDrawn, scripts.matched, scripts.entities, dropped);
+                glowing, animated, retailDrawn, posed, scripts.matched, scripts.entities, dropped);
   Log(line);
 }
 
