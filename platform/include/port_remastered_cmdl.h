@@ -29,6 +29,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace PortRemastered {
@@ -137,6 +138,42 @@ struct ModelVertexBuffer {
   // attributes, so this finds the rest ("TANGENT_1", "BAKED_LIGHTING_COORD", ...).
   const ModelAttribute* Find(const std::string& name) const;
 };
+
+// The joint a triangle goes with when a skinned model is cut into rigid pieces, one per
+// joint: the one with the most weight over its three corners (the lowest on a tie), -1
+// for a buffer with no skin. Inline, so the converter links without the parser.
+inline int TriangleJoint(const ModelVertexBuffer& vb, const uint32_t corner[3]) {
+  const size_t n = vb.vertexCount;
+  if (vb.joints.size() != n * 4 || vb.weights.size() != n * 4) {
+    return -1;
+  }
+  std::pair<uint16_t, float> sum[12];
+  size_t used = 0;
+  for (int c = 0; c < 3; ++c) {
+    if (corner[c] >= n) {
+      continue;
+    }
+    for (size_t i = size_t(corner[c]) * 4; i < size_t(corner[c]) * 4 + 4; ++i) {
+      size_t k = 0;
+      while (k < used && sum[k].first != vb.joints[i]) {
+        ++k;
+      }
+      if (k == used) {
+        sum[used++] = {vb.joints[i], 0.0f};
+      }
+      sum[k].second += vb.weights[i];
+    }
+  }
+  int best = -1;
+  float most = 0.0f;
+  for (size_t k = 0; k < used; ++k) {
+    if (sum[k].second > most || (sum[k].second == most && best >= 0 && sum[k].first < best)) {
+      best = sum[k].first;
+      most = sum[k].second;
+    }
+  }
+  return best;
+}
 
 // One drawable mesh. Its vertex data is not here, it is in Model::vertexBuffers at
 // `vertexBuffer`; the indices are widened to 32 bit so that a 16 and a 32 bit

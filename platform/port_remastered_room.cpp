@@ -16,6 +16,7 @@
 #include <set>
 
 #include "port_remastered_anim.h"
+#include "port_remastered_cmdl.h"
 #include "port_remastered_txtr.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
@@ -559,6 +560,7 @@ struct ScriptObject {
   uint32_t id = 0;  // editor id, layer bits included
   uint8_t type = 0;
   int layer = 0;    // the SCLY layer it is in
+  uint32_t propCount = 0;
   std::vector<uint32_t> targets;  // of its connections
   bool hasPos = false;            // the three floats after its name, for any type
   Vec3 pos{};
@@ -701,6 +703,7 @@ bool ReadScly(const std::vector<uint8_t>& m, std::vector<ScriptObject>& objects)
       if (q > objectEnd) {
         return false;
       }
+      object.propCount = Be32(&m[q - 4]);
       const uint8_t* zero = static_cast<const uint8_t*>(std::memchr(&m[q], 0, objectEnd - q));
       if (zero == nullptr) {
         return false;
@@ -782,6 +785,12 @@ constexpr uint32_t kActionCounterDecrement = 0x93c513fb;
 constexpr uint32_t kActionRelayFire = 0xd432447e;
 constexpr uint32_t kActionTriggerActivate = 0x3067f115;
 constexpr uint32_t kActionTriggerDeactivate = 0xb5dd4543;
+// An ActorKeyframe's Play (retail kSS_Play) tells its actor to play the keyframe's
+// animation (property kPropKeyframeAnim, a name in STRP; kPropKeyframeLoop: it loops).
+constexpr uint32_t kActorKeyframeMP1 = 0x3ce6630a;
+constexpr uint32_t kActionPlayAnim = 0x7ae20cd8;
+constexpr uint32_t kPropKeyframeAnim = 0x589ff022;
+constexpr uint32_t kPropKeyframeLoop = 0x3c3ec403;
 // What turns a ColorGradeHint's request on and off, and the senders of it retail has no
 // object for: the player entering and leaving a fluid, the camera entering and leaving
 // water, and a Counter that counts the camera's water volumes.
@@ -823,6 +832,18 @@ constexpr uint8_t kRetailIdPrefix[12] = {0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x0
 constexpr uint8_t kRetailActor = 0x00;
 // How far Remastered moved a scenery actor off the retail one it stands for (0.38 at most).
 constexpr double kRetailActorNear = 0.5;
+// Retail's debris: what a scenery actor that breaks apart is made of, shown when it does.
+constexpr uint8_t kRetailDebris = 0x1B;
+constexpr uint8_t kRetailDebrisExtended = 0x45;
+// A retail Actor of 24 properties keeps its Active flag 13 bytes before its end (after it:
+// the shader index, the x-ray alpha and four flags).
+constexpr uint32_t kRetailActorProps = 24;
+constexpr size_t kRetailActorActiveFromEnd = 13;
+// How far past a piece's bounds a retail object it stands for may start: an Actor, or
+// debris (and the Actor it breaks off), whose origin can sit a metre off its mesh (the
+// Frigate hangar's, 1.09 at most).
+constexpr double kPieceNear = 0.25;
+constexpr double kPieceDebrisNear = 1.25;
 
 // The retail type of a Remastered component type, -1 for one retail has no object for.
 int RetailType(uint32_t type) {
@@ -976,6 +997,9 @@ struct SceneryScripts {
   PortRoomGeo::Script script;
   std::map<int, uint32_t> group;  // by entity
   std::set<int> scriptShows;      // entities a script edge can show
+  // By entity: the ActorKeyframeMP1 components that start their next clip (kGroupNextClip),
+  // in component order, which is the order the clips are written in.
+  std::map<int, std::vector<size_t>> keyframes;
   size_t scriptUnresolved = 0;    // connections into the script not traced
 };
 
@@ -1364,8 +1388,9 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
           }
           continue;
         }
-        // Remastered's own objects are followed by the script (below).
+        // Remastered's own objects, and keyframes, are followed by the script (below).
         if (sender.type == kTemplateManager || sender.type == kDebugOptions || isScriptObject(c->sender) ||
+            (sender.type == kActorKeyframeMP1 && c->action == kActionPlayAnim) ||
             (depth > 0 && !PassFires(via, c->action))) {
           continue;
         }
@@ -1520,10 +1545,12 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     for (const Connection* c : in->second) {
       const Component& sender = comps[c->sender];
       const bool fromScript = isScriptObject(c->sender);
-      if (sender.type == kTemplateManager || sender.type == kDebugOptions || (group && !fromScript)) {
+      // A matched ActorKeyframe's Play moves an animated actor on to its next clip.
+      const bool keyframe = group && sender.type == kActorKeyframeMP1 && c->action == kActionPlayAnim;
+      if (sender.type == kTemplateManager || sender.type == kDebugOptions || (group && !fromScript && !keyframe)) {
         continue;
       }
-      const uint8_t action = scriptAction(kind, c->action);
+      const uint8_t action = keyframe ? PortRoomGeo::kGroupNextClip : scriptAction(kind, c->action);
       int event = -1;
       if (fromScript) {
         event = nodeEvent(scriptObject.at(sender.entity).first, c->event);
@@ -1543,7 +1570,9 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       if (group) {
         const uint32_t next = uint32_t(result.group.size());
         edge.to = result.group.emplace(target, next).first->second;
-        if (action != PortRoomGeo::kGroupHide) {
+        if (keyframe) {
+          result.keyframes[target].push_back(c->sender);
+        } else if (action != PortRoomGeo::kGroupHide) {
           result.scriptShows.insert(target);
         }
       } else {
@@ -2322,7 +2351,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   const RoomPak home{r.name, r.pak};
   std::vector<PortRoomGeo::Instance> instances;
   size_t dropped = 0;
-  const SceneryScripts scripts = MatchScripts(r.room, area);
+  SceneryScripts scripts = MatchScripts(r.room, area);  // `pieces` adds the objects hidden
   // Whether an entity that starts inactive can be shown: by a retail object (links) or by
   // Remastered's own script. One that cannot is never seen: the ships of the landing
   // cutscene sit in the sky and on the pad, where retail's own ship already is.
@@ -2490,6 +2519,258 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       timedOff.insert(comps[size_t(target)].entity >= 0 ? comps[size_t(target)].entity : target);
     }
   }
+  // An animated actor whose character has more than one bone: the hangar's floating debris,
+  // the Mines spinner's and Omega's tank's explosions, the Omega Pirate's death in the phazon
+  // pool. Their joints move rigid pieces (each triangle is on the joint that weighs most in
+  // it, TriangleJoint), so each joint's triangles are a model of their own (RoomIO::piece),
+  // posed by the joint's skin matrix. Its clips: the actor's own animation, looped when it
+  // starts shown and else played once from each time it is shown, then the animation of each
+  // ActorKeyframe that plays it (SceneryScripts::keyframes), started by the keyframe's Play.
+  std::map<std::pair<Id16, int>, uint32_t> pieceModels;  // 0 when the piece did not convert
+  auto pieces = [&](const Component& c, const PortRemasteredAnim::Character& ch, const PortRemasteredAnim::Anim& own,
+                    const Id16& model, const Vec3& pos, const Vec3& rot, const Vec3& scale, bool active) {
+    std::vector<uint8_t> data;
+    PortRemastered::Model smdl;
+    std::string error;
+    if (!m_io.piece || !FindResource(ch.skinnedModel.data(), Tag("SMDL"), home, data, nullptr, nullptr) ||
+        !PortRemastered::ParseModel(data.data(), data.size(), smdl, error)) {
+      Log("  " + r.name + ": an animated actor's skinned model did not read" + (error.empty() ? "" : ": " + error));
+      return false;
+    }
+    std::set<int> joints;
+    for (const PortRemastered::ModelMesh& mesh : smdl.meshes) {
+      if (mesh.vertexBuffer >= smdl.vertexBuffers.size()) {
+        continue;
+      }
+      for (size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
+        joints.insert(PortRemastered::TriangleJoint(smdl.vertexBuffers[mesh.vertexBuffer], &mesh.indices[t]));
+      }
+    }
+    if (joints.empty() || *joints.begin() < 0 || size_t(*joints.rbegin()) >= ch.inverseBind.size()) {
+      Log("  " + r.name + ": an animated actor's model is not skinned to its character");
+      return false;
+    }
+    struct Clip {
+      const PortRemasteredAnim::Anim* anim;
+      bool loop;
+    };
+    std::vector<Clip> clips{{&own, active}};
+    auto order = scripts.keyframes.find(c.entity);
+    if (order != scripts.keyframes.end()) {
+      std::vector<size_t> senders = order->second;
+      std::sort(senders.begin(), senders.end());
+      senders.erase(std::unique(senders.begin(), senders.end()), senders.end());
+      for (const size_t k : senders) {
+        const auto f = r.room.Flat(comps[k]);
+        const auto name = f.find(kPropKeyframeAnim);
+        const auto loop = f.find(kPropKeyframeLoop);
+        std::string text;
+        const PortRemasteredAnim::Anim* anim =
+            name != f.end() && name->second.size == 8 &&
+                    r.room.String(Le32(r.room.Bytes(name->second)), Le32(r.room.Bytes(name->second) + 4), text)
+                ? PortRemasteredAnim::Find(ch, text)
+                : nullptr;
+        if (anim == nullptr || anim->frames < 2 || !(anim->fps > 0.f)) {
+          Log("  " + r.name + ": a keyframe's animation \"" + text + "\" is not in its character");
+          continue;
+        }
+        clips.push_back({anim, loop != f.end() && loop->second.size == 1 && r.room.Bytes(loop->second)[0] != 0});
+      }
+    }
+    // Per clip, per frame, the joints' skin matrices in GC axes (R' = A R A^T, t' = A t for the
+    // axis change A), as rotation quaternions and translations. A matrix that is not a
+    // rotation (a joint that scales or shears) cannot be a rigid piece's pose.
+    std::vector<std::map<int, std::vector<float>>> keys(clips.size());
+    std::vector<std::array<float, 12>> skin;
+    for (size_t i = 0; i < clips.size(); ++i) {
+      for (uint32_t frame = 0; frame < clips[i].anim->frames; ++frame) {
+        if (!PortRemasteredAnim::SkinPose(ch, *clips[i].anim, frame, skin)) {
+          Log("  " + r.name + ": an animated actor's skeleton did not pose");
+          return false;
+        }
+        for (const int j : joints) {
+          const std::array<float, 12>& s = skin[size_t(j)];
+          double m[3][3], t[3];
+          for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) {
+              m[row][col] = kSign[row] * kSign[col] * double(s[4 * kAxis[row] + kAxis[col]]);
+            }
+            t[row] = kSign[row] * double(s[4 * kAxis[row] + 3]);
+          }
+          double worst = 0;
+          for (int a = 0; a < 3; ++a) {
+            for (int b = 0; b < 3; ++b) {
+              const double dot = m[0][a] * m[0][b] + m[1][a] * m[1][b] + m[2][a] * m[2][b];
+              worst = std::max(worst, std::fabs(dot - (a == b ? 1.0 : 0.0)));
+            }
+          }
+          const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+                             m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                             m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+          if (!(worst < 0.02) || !(det > 0)) {
+            Log("  " + r.name + ": animation \"" + clips[i].anim->name + "\" scales joint " + std::to_string(j));
+            return false;
+          }
+          // The quaternion of m, from its largest component.
+          double q[4];
+          const double trace = m[0][0] + m[1][1] + m[2][2];
+          if (trace > 0) {
+            const double w = std::sqrt(1 + trace) * 2;
+            q[3] = w / 4;
+            q[0] = (m[2][1] - m[1][2]) / w;
+            q[1] = (m[0][2] - m[2][0]) / w;
+            q[2] = (m[1][0] - m[0][1]) / w;
+          } else {
+            int a = 0;
+            if (m[1][1] > m[a][a]) {
+              a = 1;
+            }
+            if (m[2][2] > m[a][a]) {
+              a = 2;
+            }
+            const int b = (a + 1) % 3, d = (a + 2) % 3;
+            const double w = std::sqrt(1 + m[a][a] - m[b][b] - m[d][d]) * 2;
+            q[a] = w / 4;
+            q[b] = (m[b][a] + m[a][b]) / w;
+            q[d] = (m[d][a] + m[a][d]) / w;
+            q[3] = (m[d][b] - m[b][d]) / w;
+          }
+          const double len = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+          std::vector<float>& out = keys[i][j];
+          for (int k = 0; k < 4; ++k) {
+            out.push_back(float(q[k] / len));
+          }
+          for (int k = 0; k < 3; ++k) {
+            out.push_back(float(t[k]));
+          }
+        }
+      }
+    }
+    // Each piece's bounds as its first clip starts, in world space, and the retail objects in
+    // them it stands for (Script::hidden): debris, and Actors in the same Active state - the
+    // hangar's floating debris, but not Omega's whole tank, which our explosion replaces only
+    // once it is shown.
+    if (!PortRemasteredAnim::SkinPose(ch, *clips[0].anim, 0, skin)) {
+      return false;
+    }
+    PortRoomGeo::Instance placed;
+    place(placed, pos, rot, scale);
+    std::map<int, std::pair<Vec3, Vec3>> bounds;
+    for (const PortRemastered::ModelMesh& mesh : smdl.meshes) {
+      if (mesh.vertexBuffer >= smdl.vertexBuffers.size()) {
+        continue;
+      }
+      const PortRemastered::ModelVertexBuffer& vb = smdl.vertexBuffers[mesh.vertexBuffer];
+      for (size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
+        const int j = PortRemastered::TriangleJoint(vb, &mesh.indices[t]);
+        const std::array<float, 12>& s = skin[size_t(j)];
+        auto box = bounds.try_emplace(j, Vec3{HUGE_VAL, HUGE_VAL, HUGE_VAL}, Vec3{-HUGE_VAL, -HUGE_VAL, -HUGE_VAL}).first;
+        for (size_t k = 0; k < 3; ++k) {
+          const size_t v = mesh.indices[t + k];
+          if (3 * v + 2 >= vb.positions.size()) {
+            continue;
+          }
+          const float* p = &vb.positions[3 * v];
+          Vec3 posed, gc, local;
+          for (int row = 0; row < 3; ++row) {
+            posed[size_t(row)] = s[4 * row] * p[0] + s[4 * row + 1] * p[1] + s[4 * row + 2] * p[2] + s[4 * row + 3];
+          }
+          for (int row = 0; row < 3; ++row) {
+            gc[size_t(row)] = kSign[row] * posed[size_t(kAxis[row])];
+          }
+          for (int row = 0; row < 3; ++row) {
+            local[size_t(row)] = placed.transform[4 * row] * gc[0] + placed.transform[4 * row + 1] * gc[1] +
+                                 placed.transform[4 * row + 2] * gc[2] + placed.transform[4 * row + 3];
+          }
+          const Vec3 w = Apply(area.xf, local);
+          for (size_t a = 0; a < 3; ++a) {
+            box->second.first[a] = std::min(box->second.first[a], w[a]);
+            box->second.second[a] = std::max(box->second.second[a], w[a]);
+          }
+        }
+      }
+    }
+    // How far a retail object's origin is outside the nearest piece (0 inside).
+    auto outside = [&](const Vec3& at) {
+      double best = HUGE_VAL;
+      for (const auto& box : bounds) {
+        double d = 0;
+        for (size_t a = 0; a < 3; ++a) {
+          d = std::max({d, box.second.first[a] - at[a], at[a] - box.second.second[a]});
+        }
+        best = std::min(best, d);
+      }
+      return best;
+    };
+    auto isDebris = [](const ScriptObject& o) { return o.type == kRetailDebris || o.type == kRetailDebrisExtended; };
+    std::vector<uint32_t> hidden;
+    for (const ScriptObject& o : area.objects) {
+      if (!o.hasPos) {
+        continue;
+      }
+      bool hide = isDebris(o) && outside(o.pos) <= kPieceDebrisNear;
+      if (o.type == kRetailActor && o.propCount == kRetailActorProps && o.props.size() >= kRetailActorActiveFromEnd &&
+          (o.props[o.props.size() - kRetailActorActiveFromEnd] != 0) == active) {
+        // An Actor whose debris starts where it stands is that debris's intact form.
+        const bool twin = std::any_of(area.objects.begin(), area.objects.end(), [&](const ScriptObject& d) {
+          return isDebris(d) && d.hasPos && MaxAbs(d.pos, o.pos) < 0.01;
+        });
+        hide = outside(o.pos) <= (twin ? kPieceDebrisNear : kPieceNear);
+      }
+      if (hide) {
+        hidden.push_back(o.id & 0x3FFFFFFu);  // as TEditorId::Value, without the layer
+      }
+    }
+    size_t made = 0;
+    const size_t first = instances.size();  // the first piece, whose shown state hides them
+    std::string models;
+    for (const int j : joints) {
+      auto known = pieceModels.find({model, j});
+      if (known == pieceModels.end()) {
+        uint32_t id = 0;
+        known = pieceModels.emplace(std::make_pair(model, j), m_io.piece(model, j, id) ? id : 0).first;
+      }
+      if (known->second == 0) {
+        continue;
+      }
+      PortRoomGeo::Instance& inst = instances.emplace_back();
+      inst.model = known->second;
+      place(inst, pos, rot, scale);
+      inst.animOnShow = !active;
+      for (size_t i = 0; i < clips.size(); ++i) {
+        PortRoomGeo::Instance::AnimClip& clip = inst.anim.emplace_back();
+        clip.fps = clips[i].anim->fps;
+        clip.loop = clips[i].loop;
+        clip.keys = std::move(keys[i][j]);
+      }
+      script(inst, c.entity, active);
+      ++made;
+      char hex[10];
+      std::snprintf(hex, sizeof hex, " %08X", known->second);
+      models += hex;
+    }
+    std::string names;
+    for (const Clip& clip : clips) {
+      names += (names.empty() ? "" : ", ") + clip.anim->name + (clip.loop ? " (loop)" : "");
+    }
+    if (const auto links = scripts.links.find(c.entity); links != scripts.links.end()) {
+      names += ", linked from";
+      for (const PortRoomGeo::Link& l : links->second) {
+        char hex[32];
+        std::snprintf(hex, sizeof hex, " %08X (%u: %u)", l.sender, l.state, l.action);
+        names += hex;
+      }
+    }
+    if (made != 0) {
+      for (const uint32_t id : hidden) {
+        scripts.script.hidden.push_back({id, uint32_t(first)});
+      }
+    }
+    Log("  " + r.name + ": an actor's " + names + " in " + std::to_string(made) + " of " +
+        std::to_string(joints.size()) + " pieces:" + models + "; " + std::to_string(made != 0 ? hidden.size() : 0) +
+        " retail objects hidden");
+    return made != 0;
+  };
   for (const Component* c : r.room.Of(kActorMP1)) {
     const auto f = r.room.Flat(*c);
     const auto prop = f.find(kPropActorModel);
@@ -2508,9 +2789,9 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       continue;
     }
     // A model-less actor that plays an animation draws its character's skinned model,
-    // posed by the animation's frames. Only characters of one bone are handled (the
-    // Intro Elevator rings, whose bone binds at the model's origin): the pose then moves
-    // the whole model, which is what an instance's transform can do.
+    // posed by the animation's frames. A character of one bone (the Intro Elevator rings,
+    // whose bone binds at the model's origin) is drawn whole, the pose moving the whole
+    // model; one of more is cut into rigid pieces (`pieces`).
     const PortRemasteredAnim::Anim* anim = nullptr;
     Id16 model{};
     if (hasModel) {
@@ -2534,14 +2815,25 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
           r.room.String(Le32(r.room.Bytes(nameProp)), Le32(r.room.Bytes(nameProp) + 4), name)) {
         anim = PortRemasteredAnim::Find(*ch->second, name);
       }
-      if (anim == nullptr || anim->bones.size() != 1 || anim->frames < 2 ||
-          anim->bones[0].size() != anim->frames || !(anim->fps > 0.f)) {
+      if (anim == nullptr || anim->frames < 2 || !(anim->fps > 0.f)) {
         ++dropped;
         continue;
       }
       model = SwapUuid(ch->second->skinnedModel.data());
       if (model == Id16{}) {
         ++dropped;
+        continue;
+      }
+      if (anim->bones.size() != 1 || anim->bones[0].size() != anim->frames) {
+        if (m_io.cancelled && m_io.cancelled()) {
+          return;
+        }
+        if (!pieces(*c, *ch->second, *anim, model, pos, rot, scale, active)) {
+          ++dropped;
+          continue;
+        }
+        ++animated;
+        ++actors;
         continue;
       }
     }
@@ -2661,6 +2953,9 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     return;
   }
   const uint32_t count = uint32_t(instances.size());
+  std::vector<PortRoomGeo::Script::Hidden>& hidden = scripts.script.hidden;
+  std::sort(hidden.begin(), hidden.end());
+  hidden.erase(std::unique(hidden.begin(), hidden.end()), hidden.end());
   const std::vector<uint8_t> out = PortRoomGeo::Write(instances, &scripts.script);
   char file[32];
   std::snprintf(file, sizeof file, "%08X.roomgeo", mrea);

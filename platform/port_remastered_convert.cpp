@@ -2532,6 +2532,19 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         throw Fail{"a Remastered mesh indexes past its vertex buffer"};
       }
     }
+    if (opt.joint >= 0) {
+      size_t kept = 0;
+      for (size_t t = 0; t + 2 < p.I.size(); t += 3) {
+        if (TriangleJoint(*b.src, &p.I[t]) == opt.joint) {
+          std::copy_n(p.I.begin() + t, 3, p.I.begin() + kept);
+          kept += 3;
+        }
+      }
+      p.I.resize(kept);
+      if (p.I.empty()) {
+        continue;
+      }
+    }
     if (det < 0) {
       for (size_t t = 0; t + 2 < p.I.size(); t += 3) {
         std::swap(p.I[t], p.I[t + 2]);

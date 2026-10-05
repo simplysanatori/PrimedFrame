@@ -174,7 +174,7 @@ void TestClips() {
   std::vector<PortRoomGeo::Instance> out;
   std::string error;
   const std::vector<uint8_t> file = PortRoomGeo::Write(in);
-  Check(file.size() > 8 && file[4] == 8, "version 8 written");
+  Check(file.size() > 8 && file[4] == 9, "version 9 written");
   Check(PortRoomGeo::Parse(file, out, error), "clips file parses");
   Check(out.size() == 2 && out[0].anim.empty() && !out[0].animOnShow && out[1].animOnShow &&
             out[1].anim.size() == 2 && out[1].anim[0].fps == 24.f && !out[1].anim[0].loop &&
@@ -227,6 +227,39 @@ void TestClips() {
               !out[1].animOnShow && out[1].anim[0].keys.size() == 14 && out[1].anim[0].keys[13] == 1.f,
           "old anim entry is one looping clip");
   }
+}
+
+// The hidden objects, after the sky section.
+void TestHide() {
+  std::vector<PortRoomGeo::Instance> in;
+  in.push_back(MakeInstance(0x11111111, 1.f));
+  in[0].sky = true;
+  PortRoomGeo::Script script;
+  script.hidden = {{0x0001000C, 0}, {0x0001005F, 0}};
+  std::vector<PortRoomGeo::Instance> out;
+  PortRoomGeo::Script back;
+  std::string error;
+  const std::vector<uint8_t> file = PortRoomGeo::Write(in, &script);
+  Check(PortRoomGeo::Parse(file, out, error, &back) && out.size() == 1 && out[0].sky && back.hidden == script.hidden,
+        "hidden objects round-trip");
+  Check(PortRoomGeo::Write(in).size() == file.size() - 24, "no hidden section without hidden objects");
+  for (size_t cut = file.size() - 23; cut < file.size(); ++cut) {
+    const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
+    if (PortRoomGeo::Parse(part, out, error, &back)) {
+      std::fprintf(stderr, "FAIL: hidden objects truncated at %zu parse\n", cut);
+      ++sFailures;
+    }
+  }
+  std::vector<uint8_t> bad = file;
+  bad[file.size() - 20] = 0; // count 0
+  bad.resize(file.size() - 16);
+  Check(!PortRoomGeo::Parse(bad, out, error, &back), "empty hidden section rejected");
+  bad = file;
+  bad[file.size() - 4] = 1; // instance 1 of 1
+  Check(!PortRoomGeo::Parse(bad, out, error, &back), "hidden object of a missing instance rejected");
+  bad = file;
+  bad[4] = 8;
+  Check(!PortRoomGeo::Parse(bad, out, error, &back), "hidden section in a version 8 file rejected");
 }
 
 // The glow section, alone and after the script section.
@@ -464,6 +497,7 @@ int main() {
   TestAnim();
   TestClips();
   TestSky();
+  TestHide();
   TestLods();
   uint32_t id = 0;
   Check(PortRoomGeo::ParseFileName("1a2B3c4D.ROOMGEO", id) && id == 0x1A2B3C4D, "file name");

@@ -17,7 +17,7 @@ class CVector3f;
 // them in place of the area's own world geometry.
 //
 // The file is little endian:
-//   'MPRG', u32 version (1 to 8), u32 instances
+//   'MPRG', u32 version (1 to 9), u32 instances
 //   instance: u32 CMDL id, f32 transform[12] (rows of model -> area)
 //     version 2 adds: u8 layer, u8 active, u16 links,
 //     version 3 (and 4) then: u32 platform, f32 platformStart[3],
@@ -68,6 +68,13 @@ class CVector3f;
 // gives, in Remastered's HDR units; 0 (version 6) for not known. A sky instance is not
 // drawn with the room: the world's sky is drawn as it, centred on the camera, turned and scaled by its transform (whose translation is left out). Its layer,
 // `active`, links and group show and hide it as they do any instance's.
+//
+// Version 9 may then end with the retail objects the instances stand in for:
+//   'HIDE', u32 count (1 or more), per object: u32 editor id (its low 26 bits, as
+//   TEditorId::Value), u32 instance
+// Such an object is not drawn while the room geometry stands in for its area and that
+// instance is shown (Hides): the Frigate hangar's floating debris, which Remastered draws as
+// one animated actor, or Omega's tank while Remastered's own explosion plays.
 namespace PortRoomGeo {
 
 enum : uint8_t { kEveryLayer = 0xff };
@@ -156,6 +163,15 @@ struct ScriptEdge {
 struct Script {
   std::vector<ScriptNode> nodes;
   std::vector<ScriptEdge> edges;
+  struct Hidden {
+    uint32_t editorId;
+    uint32_t instance;
+    bool operator==(const Hidden& o) const { return editorId == o.editorId && instance == o.instance; }
+    bool operator<(const Hidden& o) const {
+      return editorId != o.editorId ? editorId < o.editorId : instance < o.instance;
+    }
+  };
+  std::vector<Hidden> hidden; // version 9, their own section
   bool Empty() const { return nodes.empty() && edges.empty(); }
 };
 
@@ -165,9 +181,9 @@ struct Script {
 bool ParseFileName(const std::string& fileName, uint32_t& id);
 bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::string& error,
            Script* script = nullptr);
-// The file for these instances (version 6), with the script section when there is a script
+// The file for these instances (version 9), with the script section when there is a script
 // or a group, the glow section when an instance glows, the animation section when one is
-// animated and the sky section when one is a sky.
+// animated, the sky section when one is a sky and the hidden objects when there are any.
 std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script* script = nullptr);
 
 // The coarser levels of detail of the models, one table for the whole mod (kLodFileName in
@@ -210,6 +226,10 @@ extern bool sReplacingArea;
 // turn and scale in the world, with no translation, and `radiance` its Instance::skyRadiance
 // (0 for not known).
 const CModel* Sky(const CGameArea& area, CTransform4f& orient, float radiance[3]);
+// Whether the retail object `editorId` of the area is one its room geometry stands in for
+// right now (Script::hidden, its instance shown). The caller asks only while that geometry
+// is drawn in its place.
+bool Hides(const CGameArea& area, uint32_t editorId);
 // Lets go of every model (the mods folder is about to change).
 void Reset();
 // A script object sent a state (CEntity::SendScriptMsgs): shows or hides the instances

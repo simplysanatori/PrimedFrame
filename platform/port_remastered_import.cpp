@@ -1362,6 +1362,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     ModelUuid uuid;
     uint32_t id;
     int liquid = -1;  // index into `liquids` when it is a liquid's surface
+    int joint = -1;   // the joint whose rigid piece of a skinned model it is (ConvertOptions::joint)
     // Ids set aside for its coarser levels of detail (index 0 unused); a level it
     // turns out not to have, or that is not worth its file, leaves its id unused.
     std::array<uint32_t, PortRoomGeo::kLodLevels> lods{};
@@ -1386,6 +1387,29 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     taken.insert(id);
     geometryIds.emplace(uuid, id);
     geometry.push_back({uuid, id});
+    return true;
+  };
+  std::map<std::pair<ModelUuid, int>, uint32_t> pieceIds;
+  auto pieceId = [&](const ModelUuid& uuid, int joint, uint32_t& id) {
+    std::lock_guard<std::mutex> lock(takenMutex);
+    const auto known = pieceIds.find({uuid, joint});
+    if (known != pieceIds.end()) {
+      id = known->second;
+      return true;
+    }
+    id = 0x811C9DC5u ^ uint32_t(joint + 1) * 0x85EBCA77u;
+    for (const uint8_t byte : uuid) {
+      id = (id ^ byte) * 0x01000193u;
+    }
+    while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
+      ++id;
+    }
+    taken.insert(id);
+    pieceIds.emplace(std::make_pair(uuid, joint), id);
+    GeometryModel& g = geometry.emplace_back();
+    g.uuid = uuid;
+    g.id = id;
+    g.joint = joint;
     return true;
   };
   // A liquid's surface is converted with what its room says of it, so it is a model of its
@@ -1421,6 +1445,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         return bool(file);
       };
       io.model = geometryId;
+      io.piece = pieceId;
       io.liquid = liquidId;
       io.wantsGeometry = WantsGeometry;
       io.cancelled = [] { return sCancel.load(); };
@@ -1463,7 +1488,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   if (!geometry.empty()) {
     // Before any texture takes an id, so none takes a level's.
     for (GeometryModel& g : geometry) {
-      if (g.liquid >= 0) {
+      if (g.liquid >= 0 || g.joint >= 0) {
         continue;
       }
       for (int level = 1; level < PortRoomGeo::kLodLevels; ++level) {
@@ -1511,6 +1536,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         // stone is named "simple".
         options.skip.clear();
         options.nativeMax = kGeometryTexture;
+        options.joint = geometry[i].joint;
         if (geometry[i].liquid >= 0 && liquids[size_t(geometry[i].liquid)].type != RoomLiquid::kLava) {
           const RoomLiquid& liquid = liquids[size_t(geometry[i].liquid)];
           options.water = true;
@@ -1538,7 +1564,8 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
           // Its coarser levels, for the distance; a level that fails ends the list there.
           PortRoomGeo::Lods lods;
           lods.model = geometry[i].id;
-          for (const auto& [level, distanceSq] : ok && geometry[i].liquid < 0 ? CoarserLevels(model)
+          for (const auto& [level, distanceSq] : ok && geometry[i].liquid < 0 && geometry[i].joint < 0
+                                                     ? CoarserLevels(model)
                                                                               : std::vector<std::pair<int, float>>()) {
             options.lod = level;
             options.retail = geometry[i].lods[size_t(level)];

@@ -207,6 +207,8 @@ struct Area {
   std::vector< NodeState > nodes;
   std::vector< std::vector< size_t > > groups;
   std::vector< std::vector< size_t > > edgesFrom;
+  // Script::hidden, with the item of each instance (one whose model did not load is left out).
+  std::vector< std::pair< uint32_t, size_t > > hides;
   bool retailEdges = false; // some edge starts at a retail object
   float camera[3] = {};      // where Think last saw the camera, in area space
   double animTime = 0.;      // seconds its animated instances have played (Think); double, so
@@ -877,6 +879,7 @@ void Load(uint32_t mrea, Area& area) {
   // A model the import could not convert leaves its instances behind.
   std::unordered_map< uint32_t, size_t > index;
   size_t missing = 0;
+  std::vector< size_t > itemOf(area.instances.size(), size_t(-1));
   for (const Instance& instance : area.instances) {
     auto found = index.find(instance.model);
     if (found == index.end()) {
@@ -908,6 +911,7 @@ void Load(uint32_t mrea, Area& area) {
       ++missing;
       continue;
     }
+    itemOf[size_t(&instance - area.instances.data())] = area.items.size();
     Placed& item = area.items.emplace_back();
     item.model = found->second;
     const float* const m = instance.transform;
@@ -950,6 +954,12 @@ void Load(uint32_t mrea, Area& area) {
   }
   for (Placed& item : area.items) {
     item.owner = &area;
+  }
+  area.hides.clear();
+  for (const Script::Hidden& hidden : area.script.hidden) {
+    if (itemOf[hidden.instance] != size_t(-1)) {
+      area.hides.emplace_back(hidden.editorId, itemOf[hidden.instance]);
+    }
   }
   area.edgesFrom.assign(area.script.nodes.size(), {});
   for (size_t i = 0; i < area.script.edges.size(); ++i) {
@@ -1529,6 +1539,28 @@ void DrawSorted(const void* drawable) {
 }
 
 bool sReplacingArea = false;
+
+bool Hides(const CGameArea& gameArea, uint32_t editorId) {
+  if (GetMode() == Mode::Off) {
+    return false;
+  }
+  auto& areas = Areas();
+  const auto found = areas.find(gameArea.GetAreaAssetId());
+  if (found == areas.end() || !found->second.hasFile || found->second.hides.empty()) {
+    return false;
+  }
+  const CScriptLayerManager* const layers =
+      gpGameState != nullptr ? gpGameState->CurrentWorldState().GetLayerState().GetPtr() : nullptr;
+  for (const auto& [id, at] : found->second.hides) {
+    const Placed& item = found->second.items[at];
+    if (id == editorId && item.shown &&
+        (item.layer == kEveryLayer || layers == nullptr ||
+         layers->IsLayerActive(gameArea.GetAreaId(), item.layer))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 const CModel* Sky(const CGameArea& gameArea, CTransform4f& orient, float radiance[3]) {
   if (GetMode() == Mode::Off || gpGameState == nullptr) {

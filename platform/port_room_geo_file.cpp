@@ -9,7 +9,7 @@ namespace PortRoomGeo {
 namespace {
 
 constexpr uint32_t kMagic = 0x4752504D; // 'MPRG'
-constexpr uint32_t kVersion = 8;
+constexpr uint32_t kVersion = 9;
 constexpr size_t kHeaderBytes = 12;
 constexpr size_t kInstanceBytes = 4 + 12 * 4; // version 1; version 2 adds 4 + links
 constexpr size_t kPlatformBytes = 4 + 3 * 4;   // version 3's, after version 2's 4
@@ -23,6 +23,7 @@ constexpr uint32_t kAnimMagic = 0x4D494E41; // 'ANIM'
 constexpr size_t kAnimHeadBytes = 3 * 4;
 constexpr size_t kAnimKeyBytes = 7 * 4;
 constexpr uint32_t kSkyMagic = 0x20594B53; // 'SKY '
+constexpr uint32_t kHideMagic = 0x45444948; // 'HIDE'
 constexpr uint32_t kLodMagic = 0x444F4C52; // 'RLOD'
 constexpr uint32_t kLodVersion = 1;
 
@@ -398,8 +399,8 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
     }
   }
   // Version 3 may end with the script section, version 4 then with the glow section,
-  // version 5 then with the animation section and version 6 then with the sky section
-  // (with radiances from version 7).
+  // version 5 then with the animation section, version 6 then with the sky section
+  // (with radiances from version 7) and version 9 then with the hidden objects.
   bool ok = true;
   if (version >= 3 && data.size() - at >= 4 && ReadU32(data.data() + at) == kScriptMagic) {
     ok = ParseScript(data, at, out, parsed, error);
@@ -412,6 +413,25 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
   }
   if (ok && version >= 6 && data.size() - at >= 4 && ReadU32(data.data() + at) == kSkyMagic) {
     ok = ParseSky(data, at, version, out, error);
+  }
+  if (ok && version >= 9 && data.size() - at >= 4 && ReadU32(data.data() + at) == kHideMagic) {
+    const uint32_t count = data.size() - at >= 8 ? ReadU32(data.data() + at + 4) : 0;
+    if (count == 0 || count > (data.size() - at - 8) / 8) {
+      error = "truncated hidden objects";
+      ok = false;
+    } else {
+      for (uint32_t i = 0; i < count && ok; ++i) {
+        const Script::Hidden h{ReadU32(data.data() + at + 8 + 8 * size_t(i)),
+                               ReadU32(data.data() + at + 12 + 8 * size_t(i))};
+        if (h.instance >= out.size()) {
+          error = "hidden object of a missing instance";
+          ok = false;
+        } else {
+          parsed.hidden.push_back(h);
+        }
+      }
+      at += 8 + 8 * size_t(count);
+    }
   }
   if (ok && at != data.size()) {
     error = "unknown data after the instances";
@@ -515,6 +535,14 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
           PutF32(out, v);
         }
       }
+    }
+  }
+  if (script != nullptr && !script->hidden.empty()) {
+    PutU32(out, kHideMagic);
+    PutU32(out, uint32_t(script->hidden.size()));
+    for (const Script::Hidden& h : script->hidden) {
+      PutU32(out, h.editorId);
+      PutU32(out, h.instance);
     }
   }
   return out;

@@ -53,6 +53,9 @@ struct RoomIO {
   // so the caller remembers what it has converted. These files are not counted
   // in `written`.
   std::function<bool(const std::array<uint8_t, 16>& model, uint32_t& cmdl)> model;
+  // Optional, as `model` for one rigid piece of a skinned model: the triangles on `joint`
+  // (TriangleJoint). Without it, animated actors of more than one bone are left out.
+  std::function<bool(const std::array<uint8_t, 16>& model, int joint, uint32_t& cmdl)> piece;
   // Optional; with it each room's liquid surfaces are written too, as
   // "<MREA id>.roomliquid" (read by port_room_liquid.h). Converts one surface's model
   // and gives the CMDL's id, as `model` does; it is asked once per surface.

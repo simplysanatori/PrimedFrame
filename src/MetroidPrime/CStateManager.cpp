@@ -3042,6 +3042,10 @@ void CStateManager::DrawWorld() const {
           if (portCollisionOnly) {
             continue;
           }
+          // An object the room geometry draws its own way (an animated Remastered actor).
+          if (portRoomGeo[i] && PortRoomGeo::Hides(area, actor->GetEditorId().Value())) {
+            continue;
+          }
 #endif
           if (!thermal || (actor->GetThermalFlags() & 1) != 0) {
 #ifdef TARGET_PC
