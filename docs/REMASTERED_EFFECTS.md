@@ -189,6 +189,13 @@ those back to retail PARTs (checked 2026-10-05):
 - By reference: 20 GENPs are named by another GENP, 19 of them fresh, and every
   one of those 19 is named only by fresh effects. No effect with a retail id
   leads to a fresh one. Room scripts and actor events were not paired.
+- By property values (2026-10-05): each converted root against every disc
+  PART, scored by the share of its non-asset (fourcc, value) pairs the disc's
+  has. On the 78 retail-id effects the top match is right 49 times; on the 58
+  name-matched fresh ones only 5 times, so Remastered re-authored the fresh
+  effects and their values don't identify them. Only 23 of the fresh ones
+  clear a rule that is exact on the known pairs, and that rule is calibrated
+  on retail-id effects. Not used.
 
 ## Converting to retail PART
 
