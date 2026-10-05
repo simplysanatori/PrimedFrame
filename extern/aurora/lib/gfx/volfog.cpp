@@ -206,7 +206,10 @@ fn fs_apply(in: VertexOutput) -> @location(0) vec4f {
   let near = p.depth.x;
   let far = p.depth.y;
   let zlin = near * far / (far - d * (far - near));
-  let w = sqrt(clamp((zlin - near) / max(p.fog.x - near, 1e-4), 0.0, 1.0));
+  // As 0029257: a NaN-safe clamp of (z - near) / (range - near), so a range at or short of the
+  // near plane reads the first slice, or the last past the near plane when they're equal.
+  let span = p.fog.x - near;
+  let w = sqrt(clamp(select((zlin - near) / span, select(0.0, 1.0, zlin > near), span == 0.0), 0.0, 1.0));
   let fog = textureSampleLevel(froxels, samp, vec3f(in.uv, w), 0.0);
   let light = max(fog.rgb, vec3f(0.0)) * p.colorA.w;
   if (fog.a > 0.9995 && max(max(light.r, light.g), light.b) < 1e-4) {

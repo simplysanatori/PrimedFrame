@@ -2374,7 +2374,8 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     uniformPre += R"""(
 fn vf_at(clip: vec4f, viewz: f32) -> vec4f {
     let ndc = clip.xy / clip.w;
-    let slice = sqrt(clamp((viewz - ubuf.volfog.x) / max(ubuf.volfog.y - ubuf.volfog.x, 1e-4), 0.0, 1.0));
+    let span = ubuf.volfog.y - ubuf.volfog.x; // as the fog pass: 0029257's NaN-safe clamp
+    let slice = sqrt(clamp(select((viewz - ubuf.volfog.x) / span, select(0.0, 1.0, viewz > ubuf.volfog.x), span == 0.0), 0.0, 1.0));
     return textureSampleLevel(vf_froxels, vf_samp, vec3f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, slice), 0.0);
 }
 
