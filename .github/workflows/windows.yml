@@ -39,6 +39,10 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DAURORA_ENABLE_TESTS=ON
           -DMP_BUILD_TESTS=ON
+          -DBUILD_SHARED_LIBS=OFF
+          -DAURORA_SDL3_LINKAGE=static
+          -DAURORA_NOD_LINKAGE=static
+          -DOPENSSL_USE_STATIC_LIBS=TRUE
 
       - name: Build
         run: cmake --build build-win -j
@@ -93,19 +97,11 @@ jobs:
           Copy-Item build-win/initial_pipeline_cache.db dist/
           Get-ChildItem build-win/*.dll | Copy-Item -Destination dist/
           if (Test-Path build-win/metroid_prime_port.pdb) { Copy-Item build-win/metroid_prime_port.pdb dist/ }
-          # find_package(OpenSSL) links the runner's own OpenSSL through import
-          # libraries, so its DLLs are not in build-win and have to be taken
-          # from that install. Without them the zip fails to start on any
-          # machine that has no OpenSSL of its own.
+          # SDL3, zlib, libpng, nod and the runner's OpenSSL are linked into the
+          # exe (see Configure); only Dawn's DLLs, which it loads itself, ship.
           $include = (Select-String -Path build-win/CMakeCache.txt -Pattern '^OPENSSL_INCLUDE_DIR:[A-Z]+=(.+)$').Matches[0].Groups[1].Value
-          if ($include -and -not $include.EndsWith('-NOTFOUND')) {
-            $root = Split-Path $include
-            foreach ($name in 'libcrypto-3-x64.dll', 'libssl-3-x64.dll') {
-              $dll = @("$root/bin/$name", "$root/$name") | Where-Object { Test-Path $_ } | Select-Object -First 1
-              if (-not $dll) { throw "$name not found under $root" }
-              Copy-Item $dll dist/
-            }
-          }
+          if (-not $include -or $include.EndsWith('-NOTFOUND')) { throw 'OpenSSL not found: wss:// would be disabled' }
+          $root = Split-Path $include
           # The HD texture and button-prompt sets live next to the executable
           # (DefaultTexturesPath); without them the zip shows GameCube prompts
           # only. The post-build step puts them in build-win/textures.
@@ -132,11 +128,18 @@ jobs:
               New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
               Copy-Item $_.FullName $destination
             }
-          if (Test-Path dist/libcrypto-3-x64.dll) {
-            $license = @("$root/license.txt", "$root/LICENSE.txt") | Where-Object { Test-Path $_ } | Select-Object -First 1
-            if ($license) { Copy-Item $license dist/licenses/openssl.txt }
-            else { Invoke-WebRequest https://raw.githubusercontent.com/openssl/openssl/openssl-3.5/LICENSE.txt -OutFile dist/licenses/openssl.txt }
-          }
+          $license = @("$root/license.txt", "$root/LICENSE.txt") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($license) { Copy-Item $license dist/licenses/openssl.txt }
+          else { Invoke-WebRequest https://raw.githubusercontent.com/openssl/openssl/openssl-3.5/LICENSE.txt -OutFile dist/licenses/openssl.txt }
+
+      # Fail if a library that should be static is imported as a DLL again.
+      - name: Check the executable's imports
+        shell: pwsh
+        run: |
+          $imports = & dumpbin /dependents dist/metroid_prime_port.exe
+          $imports
+          $bad = $imports | Select-String -Pattern '^\s*(SDL3|zlib1|zlib-ng\d*|libpng\d*|nod|libssl-3-x64|libcrypto-3-x64)\.dll' -AllMatches
+          if ($bad) { throw "Executable imports DLLs that should be static: $bad" }
 
       # The runner has OpenSSL and other runtimes on PATH, which hid a DLL
       # missing from the package. Start it with the system directories only, as
