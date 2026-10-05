@@ -71,6 +71,8 @@ public:
     return true;
   }
   size_t Size() const { return m_k.size(); }
+  // GetMinTime / GetMaxTime: the first and last key's time, 0 without keys.
+  float FirstTime() const { return m_k.empty() ? 0.f : m_k.front().t; }
   float LastTime() const { return m_k.empty() ? 0.f : m_k.back().t; }
   float Eval(float t) const { return Clamp(Unclamped(t)); }
 

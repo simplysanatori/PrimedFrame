@@ -155,6 +155,8 @@ GXBool GXPortVolumetricFog(const GXPortFogParams* fog) {
   return true;
 }
 
+void GXPortVolumetricFogEnd() { GX_WRITE_AURORA(GX_AURORA_PORT_VOLUMETRIC_FOG_END); }
+
 void GXPortColorGradeLut(u32 id, const u8* rgba) { aurora::gfx::bloom::set_grade_lut(id, rgba); }
 
 GXBool GXPortFrameRadiance(f32 out[3], u32* serial) {

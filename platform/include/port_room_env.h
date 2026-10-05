@@ -15,7 +15,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 14), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 15), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -86,6 +86,15 @@
 //          f32 edgeBias[3], f32 cap, f32 color[4], f32 density, f32 box[6] (retail world
 //          min, max), u32 links, then links as a grade's. A Remastered VolumetricFogRegion
 //          as CVolumetricFogRegionGOC makes it (see FogRegion).
+// Version 15 adds, after each region's links, f32 distance, f32 transmittance, u8 subtract,
+//   u8 pad[3], and goes on (after the regions):
+//   u32 transitions
+//   transition: u32 region (index in this file), s32 layer, u8 on, u8 autoStart, u8 loop,
+//          u8 select (bit 0 distance, 1 transmittance, 2 colour, 3 cap), f32 distance,
+//          f32 transmittance, f32 color[4] (rgb already times the intensity), f32 cap, u32 size
+//          and that many bytes of the phase's CMayaSpline padded to 4, u32 links, then links
+//          as a grade's with the FogTransition actions. A Remastered
+//          VolumetricFogRegionTransition (see FogTransition).
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -226,9 +235,44 @@ struct FogRegion {
   float density = 0.f;
   float box[6] = {};
   std::vector<GradeLink> links;
+  // Version 15: what the density is made of (-ln transmittance / distance, negated when
+  // subtracting), which a transition starts from and sets.
+  float distance = 250.f;
+  float transmittance = 0.01f;
+  bool subtract = false;
+};
+
+// A VolumetricFogRegionTransition (CVolumetricFogRegionTransitionGOC): a playback of `phase`
+// over its keys' times (CTimePlaybackManager, in steps of 1/60000 s; `loop` wraps it) that
+// moves its region from the state it had at Start towards the selected targets. Each frame it
+// plays: p = clamp(phase(time), 0, 1); a field both have lerps by p, one only the start or the
+// target has is that one; the region then takes distance and transmittance (its density
+// recomputed), colour and cap, negated when it subtracts. The state stays when it stops.
+// Links: kShow / kHide set it active (it plays only while active and its layer is), Start
+// starts it, Restart rewinds and starts it, Stop pauses it (each only while active), Delete
+// stops it for good. It starts with the area when autoStart.
+constexpr uint8_t kTransitionStart = 16;
+constexpr uint8_t kTransitionRestart = 17;
+constexpr uint8_t kTransitionStop = 18;
+constexpr uint8_t kTransitionDelete = 19;
+constexpr uint32_t kNoFogRegion = ~uint32_t(0); // a transition that moves nothing
+struct FogTransition {
+  uint32_t region = kNoFogRegion; // an index into File::regions
+  int32_t layer = -1;
+  bool on = true;
+  bool autoStart = false;
+  bool loop = false;
+  uint8_t select = 0; // bit 0 distance, 1 transmittance, 2 colour, 3 cap
+  float distance = 250.f;
+  float transmittance = 0.01f;
+  float color[4] = {1.f, 1.f, 1.f, 1.f};
+  float cap = 0.f;
+  PortMayaSpline phase;
+  std::vector<GradeLink> links;
 };
 
 struct File {
+  uint32_t version = 0;
   float tonemap[4] = {};
   float exposure[2] = {}; // EV range; both 0 when the room has no auto exposure
   float exposureBias = 0.f;
@@ -241,6 +285,7 @@ struct File {
   std::vector<BacklightHint> backlights;
   std::vector<FogHint> fogs;
   std::vector<FogRegion> regions;
+  std::vector<FogTransition> transitions;
   std::vector<Probe> probes;
   std::vector<Cube> cubes;
   std::vector<Grid> grids;
@@ -475,6 +520,12 @@ void FogRegions(std::vector<const FogRegion*>& out);
 // MP_VOLFOG (default on), the console's `roomenv volfog`.
 void SetVolFogEnabled(bool on);
 bool VolFogEnabled();
+// Whether Remastered's fog stands for the camera's room: the environment and MP_VOLFOG are on
+// and the room's file has the fog hints (version 12 on), hinted or not. Remastered has no
+// distance fog, only the volumetric one, and none in a room without a hint: there's no area
+// fog, CScriptDistanceFogMP1 only sets the thermal and world-light fades, and the fog volume
+// special function draws nothing (no Render or AddToRenderer of its own).
+bool FogOwnsRoom();
 // Debug: leave the fog regions out (console `roomenv fogregions on|off`).
 void SetFogRegionsEnabled(bool on);
 // The console's `roomenv fog`: the fog now, and each fog hint of the camera area.

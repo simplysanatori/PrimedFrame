@@ -62,6 +62,23 @@ struct Area {
   std::vector<GradeRequest> backlights; // likewise
   std::vector<GradeRequest> fogs;       // likewise
   std::vector<GradeRequest> regions;    // the fog regions' activation (only `on` matters)
+  std::vector<FogRegion> live;          // the fog regions as their transitions leave them
+  // A fog region transition's playback (CVolumetricFogRegionTransitionGOC), and the region's
+  // state when it last started.
+  struct Transition {
+    bool active = false;
+    bool playing = false;
+    bool dead = false;
+    double time = 0.;
+    bool hasColor = false;
+    bool hasCap = false;
+    bool hasRegion = false;
+    float distance = 0.f;
+    float transmittance = 0.f;
+    float color[4] = {};
+    float cap = 0.f;
+  };
+  std::vector<Transition> transitions;
 };
 
 // The frame's exposure and tone curve, as CPostFXManager::UpdateTonemapping moves them.
@@ -551,12 +568,146 @@ void DriveHints(uint32_t mrea, const char* what, const std::vector<Hint>& hints,
   }
 }
 
+// OnAction_Start: plays on from where it is, from the region's state now (GetTransitionState:
+// distance and transmittance always, colour and cap unsigned and only when the region has them).
+void StartTransition(Area& area, size_t i) {
+  Area::Transition& t = area.transitions[i];
+  const FogTransition& file = area.file.transitions[i];
+  t.playing = true;
+  t.hasRegion = file.region < area.live.size();
+  t.hasColor = false;
+  t.hasCap = false;
+  if (!t.hasRegion) {
+    return;
+  }
+  const FogRegion& region = area.live[file.region];
+  t.distance = region.distance;
+  t.transmittance = region.transmittance;
+  t.hasColor = region.hasColor;
+  for (int c = 0; c < 4; ++c) {
+    t.color[c] = std::fabs(region.color[c]);
+  }
+  t.hasCap = region.hasCap;
+  t.cap = std::fabs(region.cap);
+}
+
+// The transitions `sender` drives on `state` (AcceptScriptMsg).
+void DriveTransitions(uint32_t mrea, Area& area, uint32_t sender, int state) {
+  for (size_t i = 0; i < area.transitions.size() && i < area.file.transitions.size(); ++i) {
+    Area::Transition& t = area.transitions[i];
+    for (const GradeLink& link : area.file.transitions[i].links) {
+      if (link.sender != sender || link.state != state || t.dead) {
+        continue;
+      }
+      switch (link.action) {
+      case PortRoomGeo::kShow:
+      case PortRoomGeo::kHide:
+        t.active = link.action == PortRoomGeo::kShow;
+        break;
+      case kTransitionStart:
+        if (t.active) {
+          StartTransition(area, i);
+        }
+        break;
+      case kTransitionRestart:
+        if (t.active) {
+          t.time = 0.;
+          StartTransition(area, i);
+        }
+        break;
+      case kTransitionStop:
+        if (t.active) {
+          t.playing = false;
+        }
+        break;
+      case kTransitionDelete:
+        t.dead = true;
+        t.playing = false;
+        break;
+      default:
+        continue;
+      }
+      PortLog::Write("room env: %08X fog transition %zu action %d by %08X state %d\n", mrea, i, int(link.action),
+                     sender, state);
+    }
+  }
+}
+
+// CTimePlaybackManager's time step: to 1/60000 s.
+double QuantiseTime(double t) { return std::floor(t * 60000. + 0.5) / 60000.; }
+
+// Think: one frame of every playing transition, which leaves its region in the new state.
+void StepTransitions(Area& area, float dt) {
+  for (size_t i = 0; i < area.transitions.size() && i < area.file.transitions.size(); ++i) {
+    Area::Transition& t = area.transitions[i];
+    const FogTransition& file = area.file.transitions[i];
+    if (!t.playing || !t.active || t.dead || file.region >= area.live.size()) {
+      continue;
+    }
+    FogRegion& region = area.live[file.region];
+    if (region.layer >= 0 && region.layer < 64 && (area.layers >> region.layer & 1) == 0) {
+      continue;
+    }
+    const double first = file.phase.FirstTime();
+    const double last = file.phase.LastTime();
+    if (file.loop) {
+      t.time += dt;
+      if (t.time > last) {
+        t.time -= last - first;
+      }
+      t.time = QuantiseTime(t.time);
+    } else {
+      t.time = QuantiseTime(t.time + dt);
+      if (t.time >= last) {
+        t.time = last;
+        t.playing = false;
+      }
+    }
+    const float p = std::clamp(file.phase.Eval(float(t.time)), 0.f, 1.f);
+    const auto lerp = [p](float a, float b) { return a + (b - a) * p; };
+    // A field the start and the target both have blends; one only either has is that one.
+    const bool targetD = (file.select & 1) != 0;
+    const bool targetT = (file.select & 2) != 0;
+    const bool targetColor = (file.select & 4) != 0;
+    const bool targetCap = (file.select & 8) != 0;
+    const bool hasD = t.hasRegion || targetD;
+    const bool hasT = t.hasRegion || targetT;
+    const float d = t.hasRegion && targetD ? lerp(t.distance, file.distance) : targetD ? file.distance : t.distance;
+    const float tr = t.hasRegion && targetT ? lerp(t.transmittance, file.transmittance)
+                     : targetT                 ? file.transmittance
+                                               : t.transmittance;
+    // SetTransitionState: the signs come back from the region's mode.
+    const float s = region.subtract ? -1.f : 1.f;
+    // (A transmittance of 0 or a distance of 0 would make it infinite: kept as it was.)
+    if (hasD && hasT && std::isfinite(-std::log(tr) / d)) {
+      region.distance = d;
+      region.transmittance = tr;
+      region.density = s * (-std::log(tr) / d);
+    }
+    if (t.hasColor || targetColor) {
+      for (int c = 0; c < 4; ++c) {
+        const float v = t.hasColor && targetColor ? lerp(t.color[c], file.color[c])
+                        : targetColor             ? file.color[c]
+                                                  : t.color[c];
+        region.color[c] = c < 3 ? v * s : v;
+      }
+      region.hasColor = true;
+    }
+    if (t.hasCap || targetCap) {
+      const float cap = t.hasCap && targetCap ? lerp(t.cap, file.cap) : targetCap ? file.cap : t.cap;
+      region.cap = s * cap;
+      region.hasCap = true;
+    }
+  }
+}
+
 // The grades and backlights `sender` drives on `state`.
 void DriveGrades(uint32_t mrea, Area& area, uint32_t sender, int state) {
   DriveHints(mrea, "grade", area.file.grades, area.grades, sGradeOrder, sender, state);
   DriveHints(mrea, "backlight", area.file.backlights, area.backlights, sBacklightOrder, sender, state);
   DriveHints(mrea, "fog", area.file.fogs, area.fogs, sFogOrder, sender, state);
   DriveHints(mrea, "fog region", area.file.regions, area.regions, sRegionOrder, sender, state);
+  DriveTransitions(mrea, area, sender, state);
 }
 
 // Every grade and backlight as it starts, then the fluids the player and camera are in already.
@@ -580,6 +731,14 @@ void StartGrades(uint32_t mrea, Area& area) {
   area.regions.assign(area.file.regions.size(), {});
   for (size_t i = 0; i < area.regions.size(); ++i) {
     area.regions[i].on = area.file.regions[i].on;
+  }
+  area.live = area.file.regions;
+  area.transitions.assign(area.file.transitions.size(), {});
+  for (size_t i = 0; i < area.transitions.size(); ++i) {
+    area.transitions[i].active = area.file.transitions[i].on;
+    if (area.file.transitions[i].autoStart) {
+      StartTransition(area, i);
+    }
   }
   if (sPlayerFluid) {
     DriveGrades(mrea, area, kSenderPlayerFluid, 0);
@@ -1479,6 +1638,14 @@ bool VolFogEnabled() {
 
 void SetVolFogEnabled(bool on) { sVolFog = on ? 1 : 0; }
 
+bool FogOwnsRoom() {
+  if (!Enabled() || !VolFogEnabled()) {
+    return false;
+  }
+  const auto view = sAreas.find(sViewArea);
+  return view != sAreas.end() && view->second.hasFile && view->second.file.version >= 12;
+}
+
 void SetFogRegionsEnabled(bool on) { sFogRegions = on; }
 
 void UpdateFog(LayerActive layerActive, void* context, float dt) {
@@ -1488,6 +1655,9 @@ void UpdateFog(LayerActive layerActive, void* context, float dt) {
     return;
   }
   dt = std::isfinite(dt) ? std::clamp(dt, 0.f, 1.f) : 0.f;
+  for (auto& [mrea, area] : sAreas) {
+    StepTransitions(area, dt);
+  }
   // As the backlight picks: of the requested hints whose layer is active, the highest
   // priority, then the one turned on last. A room without a file has no hints.
   const FogHint* pick = nullptr;
@@ -1575,14 +1745,14 @@ void FogRegions(std::vector<const FogRegion*>& out) {
   // The proxies' add order: the areas in the order they loaded, each in file order.
   std::vector<const Area*> areas;
   for (const auto& [mrea, area] : sAreas) {
-    if (area.hasFile && !area.file.regions.empty()) {
+    if (area.hasFile && !area.live.empty()) {
       areas.push_back(&area);
     }
   }
   std::sort(areas.begin(), areas.end(), [](const Area* a, const Area* b) { return a->serial < b->serial; });
   for (const Area* area : areas) {
-    for (size_t i = 0; i < area->file.regions.size(); ++i) {
-      const FogRegion& region = area->file.regions[i];
+    for (size_t i = 0; i < area->live.size(); ++i) {
+      const FogRegion& region = area->live[i];
       const bool on = i < area->regions.size() ? area->regions[i].on : region.on;
       const bool layer = region.layer < 0 || region.layer >= 64 || (area->layers >> region.layer & 1) != 0;
       // UpdateRenderState's fluid gate.
@@ -1647,6 +1817,8 @@ std::string FogInfo() {
     std::snprintf(line, sizeof(line), "fog none%s\n", VolFogEnabled() ? "" : " (MP_VOLFOG=0)");
   }
   out += line;
+  out += FogOwnsRoom() ? "retail distance fog off (Remastered's fog owns the room)\n"
+                       : "retail distance fog on\n";
   const auto view = sAreas.find(sViewArea);
   if (view == sAreas.end()) {
     return out;
@@ -1664,8 +1836,8 @@ std::string FogInfo() {
   }
   std::vector<const FogRegion*> on;
   FogRegions(on);
-  for (size_t i = 0; i < area.file.regions.size(); ++i) {
-    const FogRegion& r = area.file.regions[i];
+  for (size_t i = 0; i < area.live.size(); ++i) {
+    const FogRegion& r = area.live[i];
     const bool shown = std::find(on.begin(), on.end(), &r) != on.end();
     std::snprintf(line, sizeof(line),
                   "%08X region %zu: %s layer %d fluid %d mult %g density %g colour %s%g %g %g cap %s%g box %g %g %g .. "
@@ -1673,6 +1845,18 @@ std::string FogInfo() {
                   sViewArea, i, shown ? "on " : "off", int(r.layer), int(r.fluid), r.mult, r.density,
                   r.hasColor ? "" : "(none) ", r.color[0], r.color[1], r.color[2], r.hasCap ? "" : "(none) ", r.cap,
                   r.box[0], r.box[1], r.box[2], r.box[3], r.box[4], r.box[5], r.links.size());
+    out += line;
+  }
+  for (size_t i = 0; i < area.file.transitions.size() && i < area.transitions.size(); ++i) {
+    const FogTransition& f = area.file.transitions[i];
+    const Area::Transition& t = area.transitions[i];
+    std::snprintf(line, sizeof(line),
+                  "%08X transition %zu: region %u %s%s%s time %g of %g..%g%s select %x distance %g transmittance %g "
+                  "colour %g %g %g %g cap %g links %zu\n",
+                  sViewArea, i, f.region, t.active ? "active" : "inactive", t.playing ? " playing" : "",
+                  t.dead ? " deleted" : "", t.time, f.phase.FirstTime(), f.phase.LastTime(), f.loop ? " loop" : "",
+                  unsigned(f.select), f.distance, f.transmittance, f.color[0], f.color[1], f.color[2], f.color[3], f.cap,
+                  f.links.size());
     out += line;
   }
   std::snprintf(line, sizeof(line), "regions on in loaded areas: %zu\n", on.size());

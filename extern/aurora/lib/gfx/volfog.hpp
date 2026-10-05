@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+#include <webgpu/webgpu_cpp.h>
+
 // Port extension: Remastered's volumetric fog (CRenderPass_VolumetricFog), run on the finished
 // EFB between two passes (see GXPortVolumetricFog).
 namespace aurora::gfx::volfog {
@@ -35,7 +37,11 @@ static_assert(sizeof(Params) == (132 + MaxRegions * 28 + 4) * 4);
 // Registers the fog's encoder task (game thread); false if it could not be.
 bool ensure_task();
 // Records the fog from the FIFO processor (GX_AURORA_PORT_VOLUMETRIC_FOG), once ensure_task has
-// returned true.
-void record(const Params& params);
+// returned true. False if nothing was recorded.
+bool record(const Params& params);
+// The froxels the last recorded fog fills (a placeholder before the first), and their sampler.
+// The draws after the fog read them to fog themselves (GXState::volFog).
+const wgpu::TextureView& froxel_view();
+const wgpu::Sampler& sampler();
 void shutdown();
 } // namespace aurora::gfx::volfog

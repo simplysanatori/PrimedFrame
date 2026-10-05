@@ -224,6 +224,10 @@ typedef struct {
   u32 volume;              // the ambient volume (GXPBRVolume id), 0 for none
 } GXPortFogParams;
 GXBool GXPortVolumetricFog(const GXPortFogParams* params);
+// The draws after GXPortVolumetricFog fog themselves as Remastered's transparents do, until this:
+// opaque ones per pixel as the full-screen pass, blended and additive ones per vertex (blended:
+// colour T + in-scatter, additive: colour T). Harmless when no fog was drawn.
+void GXPortVolumetricFogEnd(void);
 // Stores a 33x33x33 RGBA8 colour grade LUT (red fastest) under a non-zero id.
 void GXPortColorGradeLut(u32 id, const u8* rgba);
 // The average radiance (linear rgb) of the latest frame measured by GXPortPostProcess, and a

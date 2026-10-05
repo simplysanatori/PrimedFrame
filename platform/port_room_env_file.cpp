@@ -10,13 +10,15 @@ namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 14;
+constexpr uint32_t kVersion = 15;
 constexpr uint32_t kMaxGrades = 64;
 // A fog record up to its link count (inclusive).
 constexpr size_t kFogBytes = 368;
 // A fog region record up to its link count (inclusive).
 constexpr size_t kFogRegionBytes = 136;
 constexpr uint32_t kMaxFogRegions = 1024;
+// A fog transition record up to its spline's size (inclusive).
+constexpr size_t kFogTransitionBytes = 44;
 constexpr uint32_t kMaxGradeLinks = 256;
 constexpr size_t kHeaderSize = 32;
 constexpr size_t kProbeSizeV1 = 100;
@@ -134,6 +136,7 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
     error = "unknown version " + std::to_string(Get32(data.data() + 4));
     return false;
   }
+  out.version = version;
   for (int i = 0; i < 4; ++i) {
     out.tonemap[i] = GetFloat(data.data() + 8 + i * 4);
   }
@@ -636,6 +639,95 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
         link.state = q[4];
         link.action = q[5];
         at += 8;
+      }
+      if (version >= 15) {
+        if (data.size() - at < 12) {
+          error = "cut short";
+          return false;
+        }
+        const float distance = GetFloat(data.data() + at);
+        const float transmittance = GetFloat(data.data() + at + 4);
+        region.subtract = data[at + 8] != 0;
+        at += 12;
+        if (std::isfinite(distance) && std::isfinite(transmittance)) {
+          region.distance = distance;
+          region.transmittance = transmittance;
+        }
+      }
+    }
+  }
+  if (version >= 15) {
+    if (data.size() - at < 4) {
+      error = "cut short";
+      return false;
+    }
+    const uint32_t transitions = Get32(data.data() + at);
+    at += 4;
+    if (transitions > kMaxFogRegions) {
+      error = "too many fog transitions";
+      return false;
+    }
+    out.transitions.resize(transitions);
+    for (FogTransition& t : out.transitions) {
+      if (data.size() - at < kFogTransitionBytes) {
+        error = "cut short";
+        return false;
+      }
+      const uint8_t* p = data.data() + at;
+      t.region = Get32(p);
+      t.layer = int32_t(Get32(p + 4));
+      t.on = p[8] != 0;
+      t.autoStart = p[9] != 0;
+      t.loop = p[10] != 0;
+      t.select = p[11] & 0xf;
+      t.distance = GetFloat(p + 12);
+      t.transmittance = GetFloat(p + 16);
+      for (int i = 0; i < 4; ++i) {
+        t.color[i] = GetFloat(p + 20 + 4 * i);
+      }
+      t.cap = GetFloat(p + 36);
+      const uint32_t size = Get32(p + 40);
+      at += kFogTransitionBytes;
+      bool finite = std::isfinite(t.distance) && std::isfinite(t.transmittance) && std::isfinite(t.cap);
+      for (const float v : t.color) {
+        finite = finite && std::isfinite(v);
+      }
+      // One that would poison its region, or names none, changes nothing.
+      if (!finite || t.region >= out.regions.size()) {
+        t.select = 0;
+        t.region = kNoFogRegion;
+      }
+      const size_t padded = (size_t(size) + 3) & ~size_t(3);
+      if (data.size() - at < padded) {
+        error = "cut short";
+        return false;
+      }
+      if (size != 0 && !t.phase.Load(data.data() + at, size)) {
+        error = "bad fog transition spline";
+        return false;
+      }
+      at += padded;
+      if (data.size() - at < 4) {
+        error = "cut short";
+        return false;
+      }
+      const uint32_t links = Get32(data.data() + at);
+      at += 4;
+      if (links > kMaxGradeLinks || (data.size() - at) / 8 < links) {
+        error = "cut short";
+        return false;
+      }
+      t.links.resize(links);
+      for (GradeLink& link : t.links) {
+        const uint8_t* q = data.data() + at;
+        link.sender = Get32(q);
+        link.state = q[4];
+        link.action = q[5];
+        at += 8;
+      }
+      if (out.regions.empty()) {
+        t.links.clear();
+        t.autoStart = false;
       }
     }
   }

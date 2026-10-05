@@ -252,6 +252,11 @@ extern "C" {
 //   132 u32: aurora::gfx::volfog::Params, word for word
 #define GX_AURORA_PORT_VOLUMETRIC_FOG 0x0059
 
+// Port extension: the draws after GX_AURORA_PORT_VOLUMETRIC_FOG fog themselves through its
+// froxels until this (see GXPortVolumetricFogEnd).
+// Payload: none
+#define GX_AURORA_PORT_VOLUMETRIC_FOG_END 0x005A
+
 // Port extension: draws the following opaque surfaces in two passes (see GXPortSetDepthPrepass).
 // Payload:
 //   u8 pass (0 = off, 1 = depth only, 2 = shade where the depth is equal)

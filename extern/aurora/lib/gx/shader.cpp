@@ -2337,6 +2337,100 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
                                    i, float(config.sdf) / 255.f);
     }
   }
+  // Remastered's volumetric fog on the draws after its full-screen pass (between
+  // GX_AURORA_PORT_VOLUMETRIC_FOG and its END): blended and additive draws are fogged per vertex,
+  // as Remastered's transparent shaders do, and opaque ones per pixel, as the full-screen pass
+  // does. A froxel texel is the in-scatter before the exposure (rgb) and the transmittance (a), at
+  // slice sqrt((z - near) / (range - near)). Blended draws (and premultiplied ones, by their alpha)
+  // take on the in-scatter; additive ones are only dimmed.
+  bool pbrVolFog = false;
+  std::string volFogSample;
+  const auto volFogWeight = [&](std::string_view alpha) -> std::string {
+    switch (config.volFog) {
+    case VolFogAdditive:
+      return "0.0";
+    case VolFogPremultiplied:
+      return std::string{alpha};
+    default:
+      return "1.0";
+    }
+  };
+  if (info.usesVolFog) {
+    const std::string_view fragDepth = UseReversedZ ? "(1.0 - in.pos.z)" : "in.pos.z";
+    vtxOutAttrs += fmt::format("\n    @location({}) vf: vec4f,", vtxOutIdx++);
+    if (config.volFog == VolFogOpaque) {
+      vtxXfrAttrs += "\n    out.vf = vec4f(out.pos.xy, out.pos.w, -mv_pos.z);";
+      volFogSample = fmt::format("vf_visible(vf_at(vec4f(in.vf.xy, 0.0, in.vf.z), in.vf.w), {})", fragDepth);
+    } else {
+      vtxXfrAttrs += "\n    out.vf = vf_at(out.pos, -mv_pos.z);";
+      volFogSample = fmt::format("vf_visible(in.vf, {})", fragDepth);
+    }
+    texBindings += fmt::format("\n@group(2) @binding({})\n"
+                               "var vf_froxels: texture_3d<f32>;\n"
+                               "@group(2) @binding({})\n"
+                               "var vf_samp: sampler;",
+                               kVolFogFroxelBinding, kVolFogSamplerBinding);
+    // The tone curve, its inverse and the exposure, as volfog.cpp's full-screen pass has them.
+    uniformPre += R"""(
+fn vf_at(clip: vec4f, viewz: f32) -> vec4f {
+    let ndc = clip.xy / clip.w;
+    let span = ubuf.volfog.y - ubuf.volfog.x; // as the fog pass: 0029257's NaN-safe clamp
+    let slice = sqrt(clamp(select((viewz - ubuf.volfog.x) / span, select(0.0, 1.0, viewz > ubuf.volfog.x), span == 0.0), 0.0, 1.0));
+    return textureSampleLevel(vf_froxels, vf_samp, vec3f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, slice), 0.0);
+}
+
+// Nearer than the world's depth range is the viewmodel, which is not fogged.
+fn vf_visible(fog: vec4f, z: f32) -> vec4f {
+    return select(fog, vec4f(0.0, 0.0, 0.0, 1.0), z < ubuf.volfog.w);
+}
+
+fn vf_tone(x: f32) -> f32 {
+    if (x < ubuf.volfog_tone[1].z) {
+        return ((ubuf.volfog_tone[0].x * x + ubuf.volfog_tone[0].y) * x + ubuf.volfog_tone[0].z) * x;
+    }
+    if (x < ubuf.volfog_tone[1].w) {
+        return ubuf.volfog_tone[1].x * x + ubuf.volfog_tone[1].y;
+    }
+    let st = max(ubuf.volfog_tone[2].y * x + ubuf.volfog_tone[2].z, 0.0);
+    return ubuf.volfog_tone[2].x * st / (1.0 + st) + ubuf.volfog_tone[2].w;
+}
+
+fn vf_untone(y: f32) -> f32 {
+    let mid = ubuf.volfog_tone[1].z;
+    let lineStart = ubuf.volfog_tone[1].x * mid + ubuf.volfog_tone[1].y;
+    if (y < lineStart) {
+        var x = y / max(lineStart, 1e-4) * mid;
+        for (var n = 0; n < 4; n++) {
+            let slope = (3.0 * ubuf.volfog_tone[0].x * x + 2.0 * ubuf.volfog_tone[0].y) * x + ubuf.volfog_tone[0].z;
+            x = clamp(x - (vf_tone(x) - y) / max(slope, 1e-4), 0.0, mid);
+        }
+        return x;
+    }
+    let top = ubuf.volfog_tone[2].w;
+    if (y < top || ubuf.volfog_tone[2].y <= 0.0) {
+        return (y - ubuf.volfog_tone[1].y) / ubuf.volfog_tone[1].x;
+    }
+    let u = min((y - top) / max(ubuf.volfog_tone[2].x, 1e-4), 0.999);
+    return u / (1.0 - u) / ubuf.volfog_tone[2].y + ubuf.volfog_tone[1].w;
+}
+
+fn vf_exposed(c: vec3f) -> vec3f {
+    let y = pow(clamp(c, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
+    return min(vec3f(vf_untone(y.r), vf_untone(y.g), vf_untone(y.b)), vec3f(4.0));
+}
+
+// A display-referred colour fogged in the light: back through the tone curve, times the
+// transmittance plus w of the in-scatter, and on through the curve again.
+fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
+    let light = max(fog.rgb, vec3f(0.0)) * ubuf.volfog.z * w;
+    if (fog.a > 0.9995 && max(max(light.r, light.g), light.b) < 1e-4) {
+        return c;
+    }
+    let x = vf_exposed(c.rgb) * fog.a + light;
+    let drawn = vec3f(vf_tone(x.r), vf_tone(x.g), vf_tone(x.b));
+    return vec4f(pow(clamp(drawn, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), c.a);
+})""";
+  }
   if (config.pbr) {
     uniBufAttrs += "\n    pbr_probe: mat3x4f,";
     uniBufAttrs += "\n    pbr_emissive: vec4f,";
@@ -2354,7 +2448,21 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     uniBufAttrs += "\n    pbr_light_scale: vec4f,";
     uniBufAttrs += fmt::format("\n    pbr_light_color: array<vec4f, {}>,", GX::MaxLights);
     uniBufAttrs += fmt::format("\n    pbr_light_hdr: array<vec4f, {}>,", GX::MaxLights * 3);
-    const auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx);
+    auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx);
+    if (!pbr.empty() && info.usesVolFog) {
+      // The volumetric fog in the light before the tone curve, as Remastered's shaders fog it.
+      // The pass-through light is already display-referred, so it is only dimmed.
+      const std::string_view what = "let pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));";
+      const size_t at = pbr.find(what);
+      assert(at != std::string::npos);
+      pbr.replace(at, what.size(),
+                  fmt::format("var pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));"
+                              "\n      let pbr_vf = {};"
+                              "\n      pbr_out = pbr_out * pbr_vf.a + max(pbr_vf.rgb, vec3f(0.0)) * ubuf.volfog.z * {};"
+                              "\n      pbr_pass *= pbr_vf.a;",
+                              volFogSample, volFogWeight("pbr_alpha")));
+      pbrVolFog = true;
+    }
     if (!pbr.empty()) {
       fragmentFn += pbr;
       texBindings += fmt::format("\n@group(2) @binding({})\n"
@@ -2424,6 +2532,10 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     }
     fragmentFn += "\n    prev = vec4f(mix(prev.rgb, ubuf.fog.color.rgb, clamp(fogZ, 0.0, 1.0)), prev.a);";
   }
+  if (info.usesVolFog) {
+    uniBufAttrs += "\n    volfog: vec4f,";
+    uniBufAttrs += "\n    volfog_tone: array<vec4f, 3>,";
+  }
   uniBufAttrs += fmt::format("\n    texcoord_scale: array<vec4f, {}>,", MaxTexCoord);
   if (info.usedIndTexMtxs.any()) {
     uniBufAttrs += fmt::format("\n    ind_mtx: array<mat2x4f, {}>,", MaxIndTexMtxs);
@@ -2446,6 +2558,10 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     fragmentFn += "\n    prev = vec4f(tev_overflow_vec3f(prev.rgb), prev.a);";
   } else if (!prevAlphaNormalized) {
     fragmentFn += "\n    prev.a = tev_overflow_f32(prev.a);";
+  }
+  if (info.usesVolFog && !pbrVolFog) {
+    fragmentFn += fmt::format("\n    // Volumetric fog\n    prev = vf_apply(prev, {}, {});", volFogSample,
+                              volFogWeight("clamp(prev.a, 0.0, 1.0)"));
   }
   if (config.alphaCompare) {
     const auto discard = alpha_compare_discard(config);
