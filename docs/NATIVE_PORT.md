@@ -495,10 +495,13 @@ which are authoritative. Inside a mod:
   visor draws it unchanged. `MP_ROOM_LIQUID=0` or the
   console's `roomliquid off` draws the retail planes instead.
 - a PBR material (flag bit 14) may end in a 28-byte record: six big-endian floats
-  (emissive multiplier rgb, backlight weight rgb) and the tag `PBRM`, inside the
-  material's own span in the offset table. The multiplier scales the emissive map;
-  the backlight adds a rim of the surface's colour on edges turned away from the
-  viewer. A material without the record gets 1 and 0.
+  (emissive multiplier rgb, backlight) and the tag `PBRM`, inside the
+  material's own span in the offset table. The multiplier scales the emissive map.
+  The backlight triple of a lit material is Remastered's CharacterBacklight: the
+  strength of the light from behind, of the light from above, and the power of its
+  fade up the model's height plus 1 (0 = no fade); `MP_REMASTERED_BACKLIGHT=0`
+  turns it off. On a ColorUnlit material it is the gain, three times. A material
+  without the record gets 1 and 0.
   `PBR6` (92 bytes, the 19 floats, the wrap word, then diffuse and F0 factors) carries
   Remastered's LITS (LightBleedScale) for a two-sided mesh's back copy:
   `GXSetPBRLightScale` scales only the PBR diffuse and F0 (never emissive, backlight or

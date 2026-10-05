@@ -158,6 +158,16 @@ void GXSetPBRLightSkip(u32 mask);
 // and the reflection occlusion's argument (GXSetPBRProbeEx) by its luminance. Linear, not
 // clamped; 1, 1, 1 (or null) is neutral.
 void GXSetPBRBakedLightModulation(const f32 rgb[3]);
+// Aurora extension: Remastered's CharacterBacklight for the following lit PBR draws whose
+// material has a backlight (GXSetPBRMaterial's `backlight`: back strength, top strength,
+// falloff power + 1). Two lights with no position: one from world up (`up`), coloured like the
+// baked ambient along the camera's up, and one from behind the model, fixed in view space at
+// (1, 1, -1) / sqrt(3), coloured like the baked ambient along `backDir` (a view-space
+// direction). Each colour is brought up to a luminance of 1. Both fade with
+// pow(saturate(dot(plane, (view position, 1))), power): `plane` gives 0 at the low end of the
+// model's bounds along its own y and 1 at the high end (power 1: no fade). `back` and `top` scale the materials'
+// strengths (4 and 2 in Remastered). Null plane turns it off.
+void GXSetPBRBacklight(const f32 plane[4], const f32 backDir[3], f32 back, f32 top);
 // Aurora extension: the following PBR draws light with this in place of the GX light's colour,
 // position and attenuation: a linear colour (no gamma, not clamped), a view-space position,
 // and a falloff from full at r0 to none at r1 (0 none, 1 linear, 2 quadratic, 3 1 - smoothstep,

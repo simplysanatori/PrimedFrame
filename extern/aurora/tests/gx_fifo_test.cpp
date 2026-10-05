@@ -1711,6 +1711,32 @@ TEST_F(GXFifoTest, PBRBakedLightModulation_PropagatesAndResets) {
   EXPECT_EQ(g_gxState.pbrBakedLightModulation.z(), 1.f);
 }
 
+// The character backlight's plane, back direction and strengths propagate, a repeat is
+// dropped, and null turns it off (zero strengths).
+TEST_F(GXFifoTest, PBRBacklight_PropagatesAndTurnsOff) {
+  EXPECT_EQ(g_gxState.pbrBacklightLights[1].w(), 0.f);
+  const f32 plane[4] = {0.f, 0.5f, 0.f, 0.25f};
+  const f32 backDir[3] = {0.57735f, 0.57735f, -0.57735f};
+  GXSetPBRBacklight(plane, backDir, 4.f, 2.f);
+  auto bytes = capture_fifo();
+  EXPECT_TRUE(has_aurora_cmd(bytes, GX_AURORA_SET_PBR_BACKLIGHT));
+  reset_gx_state();
+  decode_fifo(bytes);
+  EXPECT_EQ(g_gxState.pbrBacklightLights[0].y(), 0.5f);
+  EXPECT_EQ(g_gxState.pbrBacklightLights[0].w(), 0.25f);
+  EXPECT_EQ(g_gxState.pbrBacklightLights[1].z(), -0.57735f);
+  EXPECT_EQ(g_gxState.pbrBacklightLights[1].w(), 4.f);
+  EXPECT_EQ(g_gxState.pbrBacklightLights[2].x(), 2.f);
+
+  GXSetPBRBacklight(plane, backDir, 4.f, 2.f);
+  EXPECT_FALSE(has_aurora_cmd(capture_fifo(), GX_AURORA_SET_PBR_BACKLIGHT));
+
+  GXSetPBRBacklight(nullptr, nullptr, 0.f, 0.f);
+  decode_fifo(capture_fifo());
+  EXPECT_EQ(g_gxState.pbrBacklightLights[1].w(), 0.f);
+  EXPECT_EQ(g_gxState.pbrBacklightLights[2].x(), 0.f);
+}
+
 // The environment BRDF table (GXSetPBRBrdfLut) is a command of its own: 256 bytes turn it on,
 // any other length (or null) goes back to the analytic fit.
 TEST_F(GXFifoTest, PBRBrdfLut_TurnsOnAndOff) {

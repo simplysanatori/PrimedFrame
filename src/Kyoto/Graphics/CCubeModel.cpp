@@ -442,6 +442,38 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       tone[0][3] = sortedDraw && !sPortSky ? 1.f : PortRoomEnv::GlowScale();
     }
     GXSetPBRTone(hasTone ? tone : nullptr);
+    // Remastered's CharacterBacklight fades over the model's bounds along its own y (not
+    // z, its height), 0 at the low end and 1 at the high end (CGraphicsModelLoadUtil::LoadMaterialCache), here taken from the
+    // view position through the world. The back light is coloured like the ambient along world
+    // (1, 1, -1) / sqrt(3). Its strengths are NRenderDebugDefaults' 4 (back) and 2 (top), times
+    // the area's backlight hints, which are not ported (1). MP_REMASTERED_BACKLIGHT=0 turns it off.
+    static const bool sBacklightOff = [] {
+      const char* env = getenv("MP_REMASTERED_BACKLIGHT");
+      return env != nullptr && env[0] == '0';
+    }();
+    if (sBacklightOff) {
+      GXSetPBRBacklight(nullptr, nullptr, 0.f, 0.f);
+    } else {
+      const CAABox& box = GetBoundingBox();
+      const f32 bottom = box.GetMinPoint().GetY();
+      const f32 extent = box.GetMaxPoint().GetY() - bottom;
+      const f32 scale = extent > 1.1920929e-7f ? 1.f / extent : 1.f;
+      const CTransform4f toModel = CGraphics::GetModelMatrix().GetInverse();
+      const CVector3f eye = view.GetTranslation();
+      const f32 k = 0.57735f;
+      f32 plane[4];
+      f32 backDir[3];
+      for (int col = 0; col < 3; ++col) {
+        plane[col] = (toModel.Get10() * viewToWorld[0][col] + toModel.Get11() * viewToWorld[1][col] +
+                      toModel.Get12() * viewToWorld[2][col]) *
+                     scale;
+        backDir[col] = k * (viewToWorld[0][col] + viewToWorld[1][col] - viewToWorld[2][col]);
+      }
+      plane[3] = (toModel.Get10() * eye.GetX() + toModel.Get11() * eye.GetY() + toModel.Get12() * eye.GetZ() +
+                  toModel.Get13() - bottom) *
+                 scale;
+      GXSetPBRBacklight(plane, backDir, 4.f, 2.f);
+    }
     // An opaque material's own alpha (dst factor zero) means nothing to a blend.
     uint materialCube = 0;
     const f32 kind = PortSetPBRMaterial(surface.GetMaterialIndex(), fadeBlend ? tint.GetAlpha() : 1.f,

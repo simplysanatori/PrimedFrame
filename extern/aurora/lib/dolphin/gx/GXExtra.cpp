@@ -414,6 +414,24 @@ void GXSetPBRBakedLightModulation(const f32 rgb[3]) {
   }
 }
 
+void GXSetPBRBacklight(const f32 plane[4], const f32 backDir[3], f32 back, f32 top) {
+  struct Write {
+    f32 values[9];
+  };
+  static LastPBRWrite<Write> sLast;
+  Write now{};
+  if (plane != nullptr && backDir != nullptr) {
+    now = Write{{plane[0], plane[1], plane[2], plane[3], backDir[0], backDir[1], backDir[2], back, top}};
+  }
+  if (sLast.repeats(now)) {
+    return;
+  }
+  GX_WRITE_AURORA(GX_AURORA_SET_PBR_BACKLIGHT);
+  for (f32 v : now.values) {
+    GX_WRITE_F32(v);
+  }
+}
+
 void GXSetPBRLightHdr(GXLightID light, const f32 color[3], const f32 viewPos[3], f32 r0, f32 r1, u32 falloff) {
   const u32 bit = static_cast<u32>(light) & 0xFF;
   if (bit == 0) {

@@ -597,7 +597,9 @@ struct RemMaterial {
   std::string name;
   MapRef maps[kMaps];
   double emissive = 1.0;   // Remastered's emissive strength
-  double backlight = 0.0;  // and its backlight strength
+  double backlight = 0.0;  // and its backlight strength (from behind; see BacklightRecord)
+  double backlightTop = 0.0;    // the backlight's strength from above
+  double backlightFalloff = 0.0;  // the power of its fade along the model's y, plus 1 (1 no fade, 0 no backlight)
   bool cutout = false;     // the base map's alpha cuts holes: leaves, grates
   bool blended = false;    // drawn over what is behind it: glass, decals, ice
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
@@ -1327,15 +1329,16 @@ constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
 // (b6268b63). The glow shows at that strength whatever the room's exposure, and the
 // maps are authored dim for it (build/mpr/mtrl-tr/{b6268b63,ae819893}/NOTES.md). Read
 // from the code (`re.sh fgrep`, build/mpr/invexp/), not from the pack's strings: 15
-// more packs carry the define and never compile it in. Sorted for binary_search.
+// more packs carry the define and never compile it in. 3392509e, dd387a18 and e1979471
+// (Jellyzap, Flaahgra's lower body) match too but use c4[0] as their TransmissionColor and
+// draw no glow, so they are left out. Sorted for binary_search.
 constexpr uint32_t kShaderInverseExposure[] = {
     0x0A714D54, 0x17DD0A37, 0x1E462D99, 0x2835AB3B, 0x2E7A70CC, 0x2F540B27, 0x31E53C70,
-    0x3392509E, 0x46CB52A7, 0x47908924, 0x50DB912E, 0x5104B751, 0x53AD3B78, 0x7A8C93DB,
-    0x7DFCA4A1, 0x86B48EF1, 0x8A2049D9, 0x8C121639, 0x94DC56A5, 0x99370071, 0x9C023C70,
-    0x9DB310D1, 0x9FD5E413, 0xA6D80F61, 0xAB87F3D5, 0xAE819893, 0xB6268B63, 0xBEDB1948,
-    0xC371A140, 0xC72CA0EC, 0xC80BC2C1, 0xCB9736B8, 0xCE685F8A, 0xD2D3ACCA, 0xD6E5D629,
-    0xDD387A18, 0xE1979471, 0xE5CA8683, 0xEC024BAA, 0xEE64B773, 0xEFF78D93, 0xF0302441,
-    0xF55B835A, 0xFB2DE3A0,
+    0x46CB52A7, 0x47908924, 0x50DB912E, 0x5104B751, 0x53AD3B78, 0x7A8C93DB, 0x7DFCA4A1,
+    0x86B48EF1, 0x8A2049D9, 0x8C121639, 0x94DC56A5, 0x99370071, 0x9C023C70, 0x9DB310D1,
+    0x9FD5E413, 0xA6D80F61, 0xAB87F3D5, 0xAE819893, 0xB6268B63, 0xBEDB1948, 0xC371A140,
+    0xC72CA0EC, 0xC80BC2C1, 0xCB9736B8, 0xCE685F8A, 0xD2D3ACCA, 0xD6E5D629, 0xE5CA8683,
+    0xEC024BAA, 0xEE64B773, 0xEFF78D93, 0xF0302441, 0xF55B835A, 0xFB2DE3A0,
 };
 // Of those, the ones compiled with USE_DIFFUSE_AS_INCAN_MASK: the glow is masked by the
 // base map's alpha squared (the pirate trooper's limbs, bedb1948), whatever the
@@ -1437,6 +1440,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   bool bclr = false;
   const ModelMaterialData* icnc = nullptr;
   const ModelMaterialData* bklt = nullptr;
+  const ModelMaterialData* bkla = nullptr;
   for (const ModelMaterialData& d : mat.data) {
     const bool texture = d.kind == ModelMaterialData::Kind::Texture;
     const bool layered = d.kind == ModelMaterialData::Kind::LayeredTexture;
@@ -1525,6 +1529,11 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     case FourCC('B', 'K', 'L', 'T'):
       if (d.kind == ModelMaterialData::Kind::Color) {
         bklt = &d;
+      }
+      break;
+    case FourCC('B', 'K', 'L', 'A'):
+      if (d.kind == ModelMaterialData::Kind::Color) {
+        bkla = &d;
       }
       break;
     default:
@@ -1704,9 +1713,23 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.scroll[0] = ShortestDouble(cch[0]->color[1]);
     out.scroll[1] = -ShortestDouble(cch[0]->color[2]);
   }
-  // BKLT is a parameter vector like CCHn, not a colour: x is the strength (0 to
-  // 2), what y means is not known and it is not used.
+  // CharacterBacklight (shader ae819893, build/mpr/mtrl-tr/ae819893/NOTES.md): BKLT is a
+  // parameter vector, x the strength of the light from behind and y of the one from above.
+  // BKLA is the cubic of the fade along the model's y (t 0 to 1 over its bounds), x t^3 + y t^2 + z t + w; every
+  // material seen has a single term of 1 (t^3 in 358 of 375), so its power is kept and the
+  // largest term picks it otherwise. No BKLA is t^3, the common case.
   out.backlight = bklt ? ShortestDouble(bklt->color[0]) : 0.0;
+  out.backlightTop = bklt ? ShortestDouble(bklt->color[1]) : 0.0;
+  out.backlightFalloff = bklt ? 4.0 : 0.0;
+  if (bklt && bkla) {
+    int term = -1;
+    for (int i = 0; i < 4; ++i) {
+      if (std::abs(bkla->color[i]) > 1e-6f && (term < 0 || std::abs(bkla->color[i]) > std::abs(bkla->color[term]))) {
+        term = i;
+      }
+    }
+    out.backlightFalloff = term < 0 ? 0.0 : 4.0 - term;
+  }
   if (shader == kShaderColorUnlit) {
     out.colorUnlit = true;
     out.backlight = (cch[0] ? ShortestDouble(cch[0]->color[0]) : 1.0) * (cch[1] ? ShortestDouble(cch[1]->color[0]) : 1.0);
@@ -1729,7 +1752,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.cutout = out.tinted = out.mask = false;
     out.height = 0.0;
     out.emissive = 1.0;
-    out.backlight = 0.0;
+    out.backlight = out.backlightTop = 0.0;
   }
   if (out.kind == 8) {
     // Lit, but only by its reflection: what shows through is the frame behind it.
@@ -1737,7 +1760,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.cutout = out.tinted = out.mask = out.unlit = false;
     out.height = 0.0;
     out.emissive = 1.0;
-    out.backlight = 0.0;
+    out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kEmissive].has = false;
   }
   if (out.kind == 9) {
@@ -1811,17 +1834,23 @@ bool ColorUnlitDraw(const RemMaterial& m) { return m.colorUnlit && m.unlit && m.
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
   const double e = m.glowLinear ? std::max(m.emissive, 0.0)
                                 : std::sqrt(std::min(std::max(m.emissive, 0.0), kPbrEmissiveMax));
-  // ColorUnlit's backlight is its gain, and no backlight at all where drawn otherwise.
-  const double k = ColorUnlitDraw(m) ? std::max(m.backlight, 0.0)
-                   : m.colorUnlit    ? 0.0
-                                     : std::min(std::max(m.backlight, 0.0), 2.0);
+  // ColorUnlit's backlight is its gain, and no backlight at all where drawn otherwise. A lit
+  // surface's is the strength from behind, from above, and the fade's power plus 1.
+  double k[3] = {0.0, 0.0, 0.0};
+  if (ColorUnlitDraw(m)) {
+    k[0] = k[1] = k[2] = std::max(m.backlight, 0.0);
+  } else if (!m.colorUnlit && !m.unlit && (m.backlight > 0.0 || m.backlightTop > 0.0)) {
+    k[0] = std::max(m.backlight, 0.0);
+    k[1] = std::max(m.backlightTop, 0.0);
+    k[2] = m.backlightFalloff;
+  }
   std::vector<double> f;
   for (int i = 0; i < 3; ++i) {
     // A liquid has no glow of its own, and its colour goes where the glow's would.
     f.push_back(m.kind == 5 || m.kind == 7 || m.kind == 8 ? m.tint[i] : e);
   }
   for (int i = 0; i < 3; ++i) {
-    f.push_back(k);
+    f.push_back(k[i]);
   }
   const char* tag = "PBRM";
   if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind) {
@@ -2557,7 +2586,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       m.layered = m.blended = true;
       m.cutout = m.tinted = m.vcolor = m.unlit = m.mask = m.hidden = m.additive = false;
       m.height = 0.0;
-      m.backlight = 0.0;
+      m.backlight = m.backlightTop = 0.0;
       m.maps[kMr].has = m.maps[kEmissive].has = false;
       m.maps[kNormal].has = opt.waterHasNormal;
       m.maps[kNormal].id = opt.waterNormal;

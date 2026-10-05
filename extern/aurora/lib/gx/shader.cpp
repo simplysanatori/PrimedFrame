@@ -1489,13 +1489,57 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           }}
       }}
       pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * (pbr_f0 * pbr_ab.x + pbr_ab.y)) * pbr_ao;
-      // Backlight (GX_AURORA_SET_PBR_MATERIAL): a rim on the edges turned away from the
-      // viewer, the surface's own colour times the backlight weight. It is scaled by the
-      // light that reaches the surface from any side, so it stays a lighting term and goes
-      // dark with the room.
-      let pbr_rim = 1.0 - pbr_nv;
-      pbr_lo += max(ubuf.pbr_backlight.rgb, vec3f(0.0)) * pbr_base * min(pbr_amb + pbr_lsum, vec3f(1.0)) *
-                (pbr_rim * pbr_rim * pbr_ao);
+      // Remastered's CharacterBacklight (GX_AURORA_SET_PBR_BACKLIGHT; the material's
+      // strengths and falloff in the backlight's place): a light from world up and one from
+      // behind, each coloured like the baked ambient on its side brought up to a luminance of
+      // 1, so that it does not go dark with the room. Both fade towards the bottom of the
+      // model's bounds; ambient occlusion counts twice, as it does there.
+      let pbr_bkl = ubuf.pbr_backlight.xyz;
+      if (!pbr_cu && !pbr_sky && pbr_bkl.z > 0.5 && ubuf.pbr_bklight[2].x + ubuf.pbr_bklight[1].w > 0.0) {{
+          let pbr_bt = clamp(dot(ubuf.pbr_bklight[0], vec4f(in.pbr_pos, 1.0)), 0.0, 1.0);
+          let pbr_bf = select(pow(pbr_bt, pbr_bkl.z - 1.0), 1.0, pbr_bkl.z < 1.5);
+          var pbr_btc = pbr_amb;
+          var pbr_bbc = pbr_amb;
+          if (ubuf.pbr_ambient[0].w > 0.0) {{
+              let pbr_blv = select(dot(pbr_amb, vec3f(0.2126, 0.7152, 0.0722)), 1.0, ubuf.pbr_ambient[0].w > 1.5);
+              let pbr_bdir = ubuf.pbr_bklight[1].xyz;
+              let pbr_btq = clamp(vec3f(ubuf.pbr_ambient[3].y, ubuf.pbr_ambient[4].y, ubuf.pbr_ambient[5].y) * 0.5 + 0.5,
+                                  vec3f(0.0), vec3f(1.0));
+              let pbr_bbq = clamp(vec3f(dot(pbr_bdir, ubuf.pbr_ambient[3].xyz), dot(pbr_bdir, ubuf.pbr_ambient[4].xyz),
+                                        dot(pbr_bdir, ubuf.pbr_ambient[5].xyz)) * 0.5 + 0.5, vec3f(0.0), vec3f(1.0));
+              pbr_btc = pbr_blv * max(ubuf.pbr_ambient[0].rgb + ubuf.pbr_ambient[1].rgb * pow(pbr_btq, ubuf.pbr_ambient[2].rgb),
+                                      vec3f(0.0)) * pbr_blcm;
+              pbr_bbc = pbr_blv * max(ubuf.pbr_ambient[0].rgb + ubuf.pbr_ambient[1].rgb * pow(pbr_bbq, ubuf.pbr_ambient[2].rgb),
+                                      vec3f(0.0)) * pbr_blcm;
+          }}
+          let pbr_btl = dot(pbr_btc, vec3f(0.2126, 0.7152, 0.0722));
+          let pbr_bbl = dot(pbr_bbc, vec3f(0.2126, 0.7152, 0.0722));
+          pbr_btc = select(vec3f(1.0), pbr_btc * max(1.0 / pbr_btl, 1.0), pbr_btl > 0.05);
+          pbr_bbc = select(vec3f(1.0), pbr_bbc * max(1.0 / pbr_bbl, 1.0), pbr_bbl > 0.05);
+          let pbr_bla = normalize(ubuf.pbr_up.xyz);
+          let pbr_blb = vec3f(0.57735, 0.57735, -0.57735);
+          let pbr_bnla = clamp(dot(pbr_n, pbr_bla), 0.0, 1.0);
+          let pbr_bnlb = clamp(dot(pbr_n, pbr_blb), 0.0, 1.0);
+          let pbr_bra = pbr_btc * (pbr_bnla * pbr_ao * pbr_bf * max(pbr_bkl.y, 0.0) * ubuf.pbr_bklight[2].x);
+          let pbr_brb = pbr_bbc * (pbr_bnlb * pbr_ao * pbr_bf * max(pbr_bkl.x, 0.0) * ubuf.pbr_bklight[1].w);
+          // GGX with each light's own remap of the roughness. The back light's half vector and
+          // fresnel are fixed: Remastered takes the view along -z there.
+          let pbr_bqa = pbr_rough * 0.88 + 0.12;
+          let pbr_bqb = pbr_rough * 0.3 + 0.7;
+          let pbr_ba2 = vec2f(pow(pbr_bqa, 4.0), pow(pbr_bqb, 4.0));
+          let pbr_bk = vec2f(pbr_bqa * pbr_bqa, pbr_bqb * pbr_bqb) * 0.5;
+          let pbr_bha = (pbr_bla + pbr_v) / max(length(pbr_bla + pbr_v), 1e-6);
+          let pbr_bnh = vec2f(clamp(dot(pbr_n, pbr_bha), 0.0, 1.0),
+                              clamp(dot(pbr_n, vec3f(0.627963, 0.627963, 0.4597009)), 0.0, 1.0));
+          let pbr_bdt = pbr_bnh * pbr_bnh * (pbr_ba2 - 1.0) + 1.0;
+          let pbr_bd = pbr_ba2 / (pbr_pi * pbr_bdt * pbr_bdt);
+          let pbr_bvis = 1.0 / max((pbr_nv * (1.0 - pbr_bk) + pbr_bk) *
+                                   (vec2f(pbr_bnla, pbr_bnlb) * (1.0 - pbr_bk) + pbr_bk), vec2f(1e-6));
+          let pbr_bfa = pbr_f0 + (1.0 - pbr_f0) * pow(1.0 - clamp(dot(pbr_bha, pbr_bla), 0.0, 1.0), 5.0);
+          let pbr_bfb = pbr_f0 * 0.9539562 + 0.0460438505;
+          pbr_lo += pbr_ao * pbr_diff * (pbr_bra + pbr_brb) / pbr_pi +
+                    (pbr_bfa * pbr_bra * (pbr_bd.x * pbr_bvis.x) + pbr_bfb * pbr_brb * (pbr_bd.y * pbr_bvis.y)) * 0.25;
+      }}
       // The material's alpha and shading modes (w of the GX_AURORA_SET_PBR_MATERIAL rows).
       // Kind 3 (lava, embers): the vertex alpha is how much of the glow shows.
       var pbr_glow = pbr_emissive * select(1.0, pbr_vraw.a, pbr_kind > 2.5 && pbr_kind < 3.5) + pbr_kglow;
@@ -2305,6 +2349,7 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     uniBufAttrs += "\n    pbr_ambient: array<vec4f, 6>,";
     uniBufAttrs += "\n    pbr_volume: array<vec4f, 6>,";
     uniBufAttrs += "\n    pbr_tone: array<vec4f, 3>,";
+    uniBufAttrs += "\n    pbr_bklight: array<vec4f, 3>,";
     uniBufAttrs += "\n    pbr_light_skip: vec4f,";
     uniBufAttrs += "\n    pbr_light_scale: vec4f,";
     uniBufAttrs += fmt::format("\n    pbr_light_color: array<vec4f, {}>,", GX::MaxLights);

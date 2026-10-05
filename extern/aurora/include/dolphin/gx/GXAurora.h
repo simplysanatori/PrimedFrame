@@ -239,6 +239,13 @@ extern "C" {
 //   f32 r, g, b (linear)
 #define GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION 0x0057
 
+// Remastered's character backlight of the following PBR draws (see GXSetPBRBacklight).
+// Stays in effect until changed.
+// Payload:
+//   f32 height plane x, y, z, w (view space), f32 back colour direction x, y, z (view space),
+//   f32 back strength, f32 top strength
+#define GX_AURORA_SET_PBR_BACKLIGHT 0x0058
+
 // Port extension: draws the following opaque surfaces in two passes (see GXPortSetDepthPrepass).
 // Payload:
 //   u8 pass (0 = off, 1 = depth only, 2 = shade where the depth is equal)

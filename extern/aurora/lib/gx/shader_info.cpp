@@ -349,8 +349,9 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
   }
   if (config.pbr) {
     info.usesPbr = true;
-    // 7 single + ambient 6 + volume 6 + tone 3 + light skip + light scale, then the linear light colours, then 3 HDR rows per light
-    info.uniformSize += sizeof(Mat3x4<float>) + sizeof(Vec4<float>) * (24 + GX::MaxLights * 4);
+    // 7 single + ambient 6 + volume 6 + tone 3 + backlight 3 + light skip + light scale, then the linear light
+    // colours, then 3 HDR rows per light
+    info.uniformSize += sizeof(Mat3x4<float>) + sizeof(Vec4<float>) * (27 + GX::MaxLights * 4);
   }
   if (info.usesPTTexMtx.any()) {
     info.uniformSize += sizeof(Mat3x4<float>) * MaxPTTexMtx;
@@ -467,6 +468,9 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
       buf.append(v);
     }
     for (const auto& v : g_gxState.pbrTone) {
+      buf.append(v);
+    }
+    for (const auto& v : g_gxState.pbrBacklightLights) {
       buf.append(v);
     }
     // yzw carry the baked-light modulation.
