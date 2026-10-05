@@ -92,10 +92,12 @@ body:
       description: |
         Drag `metroid_prime_port.log` into this box (after a crash, the next start renames it to
         `metroid_prime_port.old.log`, so send that one if you restarted the game). Paths and user names are already removed from it.
-        - **Android:** `Documents/MetroidPrime/` (or `Android/data/org.metroidprime.port/files/` over USB)
-        - **Windows:** `%APPDATA%\Metroid Prime\`
-        - **Linux:** `~/.local/share/Metroid Prime/`
+        - **Windows zip, Linux tarball:** next to `metroid_prime_port(.exe)`; if it isn't there, `%APPDATA%\Metroid Prime\` or `~/.local/share/Metroid Prime/`
+        - **AppImage:** `~/.local/share/Metroid Prime/`
         - **Flatpak:** `~/.var/app/io.github.odrannnn.metroidprimeport/data/Metroid Prime/`
+        - **Android:** `Documents/MetroidPrime/` (or `Android/data/org.metroidprime.port/files/` over USB); if you moved the data folder, it's in that folder
+
+        On desktop it's always in the same folder as `port_settings.ini`.
 
         If there's no log, check that F1 > Debug > Log > "Write the log to a file" is ticked (it is by default).
     validations:
