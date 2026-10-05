@@ -1357,6 +1357,10 @@ constexpr uint32_t kShaderIncanMaskSquared[] = {
 // room's cube the metal took the room's colours and read pale. The default REFL (black)
 // that most materials carry keeps the room's.
 constexpr uint32_t kShaderGunBody[] = {0x547E64E5, 0xD43DE005, 0x917F1415, 0xF495B260};
+// The beam panels inside the Wave, Plasma and Phazon guns (lightning, magma, phazon): a
+// black base whose alpha masks an ICAN glow of ICNC 4-7. Only those three use the shader.
+// Under kPbrEmissive the magma read as faint dark red.
+constexpr uint32_t kShaderGunPanel = 0x9A4515CE;
 constexpr const char* kDefaultRefl = "7b98170f";
 // Lit glass that Remastered draws premultiplied (EBlendMode 5, One and InvSrcAlpha):
 // phazon and plasma glass, soot_translucent. Its opacity scales the diffuse light
@@ -1400,6 +1404,7 @@ std::string ShaderRole(uint32_t shader) {
   add(in(kShaderInverseExposure), "inverse-exposure");
   add(in(kShaderIncanMaskSquared), "incan-mask-squared");
   add(in(kShaderGunBody), "gun-body");
+  add(shader == kShaderGunPanel, "gun-panel");
   add(in(kShaderPremulGlass), "premul-glass");
   add(shader == kShaderColorUnlit, "color-unlit");
   add(in(kShaderTints), "tinted");
@@ -1627,6 +1632,12 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     // strength undoes kPbrEmissive, which left them a dim orange.
     out.emissive = s / kPbrEmissive;
     out.reason += "gun-body list: stripes ramp; ";
+  } else if (out.maps[kEmissive].has && shader == kShaderGunPanel) {
+    // The beam panels: ICAN x ICNC x base alpha with no exposure factor (only the lit
+    // part is exposed), so like the inverse-exposed glows it is kept linear.
+    out.glowLinear = true;
+    out.emissive = s / kPbrEmissive;
+    out.reason += "gun-panel: glow at inverse exposure; ";
   } else if (out.maps[kEmissive].has &&
              std::binary_search(std::begin(kShaderInverseExposure),
                                 std::end(kShaderInverseExposure), shader)) {
