@@ -589,6 +589,7 @@ struct RemMaterial {
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
   bool tinted = false;     // its vertices carry a colour
   bool unlit = false;      // a screen: its own colour and glow, no lighting
+  bool gunRamp = false;    // the arm cannon's stripes: its ICAN ramp is read at the lit end
   bool mask = false;       // the base map's alpha masks the glow and is no opacity
   bool shell = false;      // a matcap shell: keeps a blended retail material's TEV
   double height = 0.0;     // above 0: the threshold of a height-blended alpha
@@ -1413,11 +1414,11 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         set(kBase, d.texture, &out.refl);
         if (Lower(IdToString(out.refl.id)).rfind(kDefaultRefl, 0) == 0) {
           out.refl = MapRef{};
-        } else {
-          // Its own dark cube is what the metal shows, so the metalness keeps its full
-          // range: under the ceiling the pale albedo was lit as diffuse and read washed out.
-          out.maps[kMr].metalMax = 1.0;
         }
+        // The metalness keeps its full range, whether the metal shows its own cube or
+        // the room's: under the ceiling the pale albedo was lit as diffuse by the bright
+        // ambient around the gun and read washed-out teal, where Remastered's is charcoal.
+        out.maps[kMr].metalMax = 1.0;
       }
       break;
     case FourCC('B', 'C', 'R', 'L'):
@@ -1511,6 +1512,16 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     }
   }
   out.emissive = s;
+  if (out.maps[kEmissive].has &&
+      std::find(std::begin(kShaderGunBody), std::end(kShaderGunBody), shader) != std::end(kShaderGunBody)) {
+    // The arm cannon's lit stripes. Remastered reads the ramp (dark, red, orange,
+    // yellow along U; the stripe's soft edges down V) at a texcoord its vertex shader
+    // moves with a runtime matrix, and at rest the stripes are yellow. The set itself
+    // has U 0..0.5, mostly 0, which is the ramp's dark end, so it is moved onto the
+    // lit end, and the strength undoes kPbrEmissive, which left them a dim orange.
+    out.gunRamp = true;
+    out.emissive = s / kPbrEmissive;
+  }
   // The shaders of their own. ICNC is 1 in every lava material and the strength
   // is CCH0.x instead.
   const ModelMaterialData* tch[3] = {nullptr, nullptr, nullptr};
@@ -2840,10 +2851,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // The texcoord arrays the output carries, each n long. A display list
   // attribute names one by its place in this list.
   std::vector<std::vector<double>> uvArrays;
-  std::vector<std::pair<size_t, bool>> uvKeys;
-  auto uvIndex = [&](size_t uvi, const char* role) -> uint32_t {
-    const bool squeezed = role && opt.squeeze && opt.squeezeRole == role;
-    const std::pair<size_t, bool> key(uvi, squeezed);
+  std::vector<std::tuple<size_t, bool, bool>> uvKeys;
+  auto uvIndex = [&](size_t uvi, const char* role, bool ramp = false) -> uint32_t {
+    const bool squeezed = !ramp && role && opt.squeeze && opt.squeezeRole == role;
+    const std::tuple<size_t, bool, bool> key(uvi, squeezed, ramp);
     const auto it = std::find(uvKeys.begin(), uvKeys.end(), key);
     if (it != uvKeys.end()) {
       return uint32_t(it - uvKeys.begin());
@@ -2856,6 +2867,12 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       const double lo = opt.squeezeTo[0], hi = opt.squeezeTo[1];
       for (size_t v = 0; v < n; ++v) {
         u[v * 2] = lo + (hi - lo) * std::clamp((u[v * 2] - u0) / (u1 - u0), 0.0, 1.0);
+      }
+    }
+    if (ramp) {
+      // RemMaterial::gunRamp: U 0..0.5 onto the ramp's yellow 0.8..1.
+      for (size_t v = 0; v < n; ++v) {
+        u[v * 2] = std::clamp(0.8 + 0.4 * u[v * 2], 0.0, 1.0);
       }
     }
     // Otherwise the coordinates stay as Remastered authored them (U can span
@@ -2987,8 +3004,13 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         coords[k] = uint32_t(c < ntexattr ? c : bset);
       }
       std::vector<uint32_t> attrs(ntexattr, 0xFFFFFFFFu);
+      // A gun ramp gets its own copy of the set, unless another map shares it.
+      bool ramp = rem.gunRamp && rt[kEmissive].has;
       for (int k = 0; k < nmaps; ++k) {
-        attrs[coords[k]] = uvIndex(coords[k], nullptr);
+        ramp = ramp && (k == kEmissive || coords[k] != coords[kEmissive]);
+      }
+      for (int k = 0; k < nmaps; ++k) {
+        attrs[coords[k]] = uvIndex(coords[k], nullptr, ramp && k == kEmissive);
       }
       // Each map's sampler, 2 bits an axis (GX: 0 clamp, 1 repeat, 2 mirror); a
       // map the material lacks, or one without a sampler, repeats.
@@ -3048,7 +3070,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
       const uint32_t uvi = rt[rk].has ? rt[rk].coord : rt[kBase].has ? rt[kBase].coord : 0;
       if (r.uvSrc >= 0 && size_t(r.uvSrc) < ntexattr && attrs[r.uvSrc] == 0xFFFFFFFFu) {
-        attrs[r.uvSrc] = uvIndex(std::min<size_t>(uvi, maxuv), RoleName(role));
+        attrs[r.uvSrc] = uvIndex(std::min<size_t>(uvi, maxuv), RoleName(role), role == Role::Emissive && rem.gunRamp);
       }
     }
     for (uint32_t& a : attrs) {
