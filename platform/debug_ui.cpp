@@ -48,6 +48,8 @@
 #include "MetroidPrime/Player/CGameState.hpp"
 #include "MetroidPrime/Player/CPlayerState.hpp"
 #include "Kyoto/CResFactory.hpp"
+#include "Kyoto/Audio/CSfxManager.hpp"
+#include "MetroidPrime/SFX/UI.h"
 
 #include <aurora/aurora.h>
 #include <aurora/gfx.h>
@@ -135,6 +137,11 @@ bool sFullscreen = true;
 bool sFullscreen = false;
 #endif
 bool sOverlayWindowed = false; // desktop: the old floating tabbed window
+// F1 overlay look: 0 auto (Remastered with the Remastered import loaded, else Prime), 1 Prime,
+// 2 Remastered, 3 Plain (stock Dear ImGui dark). Menu sounds are the game's own UI effects.
+int sUiTheme = 0;
+bool sUiSounds = true;
+bool sMainLoopRan = false; // the game loop has run, so CSfxManager is being updated
 float sRenderScale = 1.f;
 // Dynamic resolution: draws the EFB between sDynamicResMin and sRenderScale to hold a frame rate.
 bool sDynamicRes = false;
@@ -379,6 +386,13 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sFullscreen = ParseBool(value);
   } else if (key == "overlay_windowed") {
     sOverlayWindowed = ParseBool(value);
+  } else if (key == "ui_theme") {
+    sUiTheme = SDL_strcasecmp(value.c_str(), "prime") == 0        ? 1
+               : SDL_strcasecmp(value.c_str(), "remastered") == 0 ? 2
+               : SDL_strcasecmp(value.c_str(), "plain") == 0      ? 3
+                                                                  : 0;
+  } else if (key == "ui_sounds") {
+    sUiSounds = ParseBool(value);
   } else if (key == "disc_path") {
     sDiscPath = value;
   } else if (key == "remastered_nsp") {
@@ -683,6 +697,9 @@ void SaveSettings() {
   file << "vsync=" << (sVsyncEnabled ? 1 : 0) << '\n';
   file << "fullscreen=" << (sFullscreen ? 1 : 0) << '\n';
   file << "overlay_windowed=" << (sOverlayWindowed ? 1 : 0) << '\n';
+  file << "ui_theme=" << (sUiTheme == 1 ? "prime" : sUiTheme == 2 ? "remastered" : sUiTheme == 3 ? "plain" : "auto")
+       << '\n';
+  file << "ui_sounds=" << (sUiSounds ? 1 : 0) << '\n';
   file << "render_scale=" << sRenderScale << '\n';
   file << "dynamic_res=" << (sDynamicRes ? 1 : 0) << '\n';
   file << "dynamic_res_target=" << sDynamicResTarget << '\n';
@@ -1112,6 +1129,7 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
 }
 
 void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
+  sMainLoopRan = true;
   sTimingNs += durationNs;
   sTimingTicks += ticks;
   if (presented) ++sTimingFrames;
@@ -2595,6 +2613,289 @@ void ApplyTouchStyle(ImGuiStyle& style) {
   style.TabRounding = 5.f;
 }
 
+// --- F1 overlay themes ---------------------------------------------------------------------------
+
+enum UiThemeId { kThemeAuto = 0, kThemePrime = 1, kThemeRemastered = 2, kThemePlain = 3 };
+
+// The scale UpdateUiScale has applied to the style so far. Border sizes and rounding are set
+// here in unscaled units times this, so they stay consistent with the sizes ScaleAllSizes made.
+float sUiAppliedScale = 1.f;
+int sThemeApplied = -1;        // the resolved theme the style holds, -1 = none yet
+float sThemeAppliedScale = 0.f;
+int sThemeResolved = kThemePrime; // what Auto resolves to now; read by the colour helpers
+
+// Whether the Remastered import is loaded: the mods are on, and a mod made by the import is
+// enabled. CurrentStatus is in memory (rescanned only on a reload), so this is cheap per frame.
+bool RemasteredImportLoaded() {
+  const PortMods::Status& status = PortMods::CurrentStatus();
+  if (!status.active || PortMods::Suspended()) {
+    return false;
+  }
+  for (const PortMods::ModInfo& mod : status.mods) {
+    if (mod.import && mod.enabled) {
+      return true;
+    }
+  }
+  return false;
+}
+
+int ResolveTheme() {
+  if (sUiTheme != kThemeAuto) {
+    return sUiTheme;
+  }
+  return RemasteredImportLoaded() ? kThemeRemastered : kThemePrime;
+}
+
+// Colours for one theme. Every ImGuiCol_ is derived from these so none is left at the stock value.
+struct ThemeRgb {
+  float x, y, z;
+  ThemeRgb() : x(0.f), y(0.f), z(0.f) {}
+  ThemeRgb(float x_, float y_, float z_) : x(x_), y(y_), z(z_) {}
+};
+
+struct ThemePalette {
+  ThemeRgb bg;     // window background (alpha below)
+  float bgAlpha;
+  ThemeRgb deep;   // child / title / menu background
+  ThemeRgb frame;  // frames, buttons, tabs
+  ThemeRgb frameHi; // hovered frames
+  ThemeRgb accent;
+  ThemeRgb text;
+  ThemeRgb textDim;
+};
+
+ImVec4 Rgba(const ThemeRgb& c, float a) { return ImVec4(c.x, c.y, c.z, a); }
+
+void FillThemeColors(ImGuiStyle& style, const ThemePalette& p) {
+  ImVec4* c = style.Colors;
+  const ThemeRgb a = p.accent;
+  c[ImGuiCol_Text] = Rgba(p.text, 1.f);
+  c[ImGuiCol_TextDisabled] = Rgba(p.textDim, 1.f);
+  c[ImGuiCol_WindowBg] = Rgba(p.bg, p.bgAlpha);
+  c[ImGuiCol_ChildBg] = Rgba(p.deep, 0.55f);
+  c[ImGuiCol_PopupBg] = Rgba(p.bg, 0.97f);
+  c[ImGuiCol_Border] = Rgba(a, 0.55f);
+  c[ImGuiCol_BorderShadow] = ImVec4(0.f, 0.f, 0.f, 0.f);
+  c[ImGuiCol_FrameBg] = Rgba(p.frame, 0.90f);
+  c[ImGuiCol_FrameBgHovered] = Rgba(p.frameHi, 0.95f);
+  c[ImGuiCol_FrameBgActive] = Rgba(a, 0.35f);
+  c[ImGuiCol_TitleBg] = Rgba(p.deep, 1.f);
+  c[ImGuiCol_TitleBgActive] = Rgba(p.frame, 1.f);
+  c[ImGuiCol_TitleBgCollapsed] = Rgba(p.deep, 0.75f);
+  c[ImGuiCol_MenuBarBg] = Rgba(p.deep, 1.f);
+  c[ImGuiCol_ScrollbarBg] = ImVec4(0.f, 0.f, 0.f, 0.30f);
+  c[ImGuiCol_ScrollbarGrab] = Rgba(p.frameHi, 1.f);
+  c[ImGuiCol_ScrollbarGrabHovered] = Rgba(a, 0.60f);
+  c[ImGuiCol_ScrollbarGrabActive] = Rgba(a, 0.90f);
+  c[ImGuiCol_CheckMark] = Rgba(a, 1.f);
+  c[ImGuiCol_SliderGrab] = Rgba(a, 0.85f);
+  c[ImGuiCol_SliderGrabActive] = Rgba(a, 1.f);
+  c[ImGuiCol_Button] = Rgba(p.frame, 0.90f);
+  c[ImGuiCol_ButtonHovered] = Rgba(p.frameHi, 1.f);
+  c[ImGuiCol_ButtonActive] = Rgba(a, 0.55f);
+  c[ImGuiCol_Header] = Rgba(p.frame, 0.80f);
+  c[ImGuiCol_HeaderHovered] = Rgba(a, 0.35f);
+  c[ImGuiCol_HeaderActive] = Rgba(a, 0.55f);
+  c[ImGuiCol_Separator] = Rgba(a, 0.35f);
+  c[ImGuiCol_SeparatorHovered] = Rgba(a, 0.70f);
+  c[ImGuiCol_SeparatorActive] = Rgba(a, 1.f);
+  c[ImGuiCol_ResizeGrip] = Rgba(a, 0.30f);
+  c[ImGuiCol_ResizeGripHovered] = Rgba(a, 0.65f);
+  c[ImGuiCol_ResizeGripActive] = Rgba(a, 0.90f);
+  c[ImGuiCol_TabHovered] = Rgba(a, 0.50f);
+  c[ImGuiCol_Tab] = Rgba(p.frame, 0.85f);
+  c[ImGuiCol_TabSelected] = Rgba(a, 0.40f);
+  c[ImGuiCol_TabSelectedOverline] = Rgba(a, 1.f);
+  c[ImGuiCol_TabDimmed] = Rgba(p.deep, 0.90f);
+  c[ImGuiCol_TabDimmedSelected] = Rgba(a, 0.25f);
+#ifdef IMGUI_HAS_DOCK
+  c[ImGuiCol_TabDimmedSelectedOverline] = Rgba(a, 0.55f);
+  c[ImGuiCol_DockingPreview] = Rgba(a, 0.45f);
+  c[ImGuiCol_DockingEmptyBg] = Rgba(p.deep, 1.f);
+#endif
+  c[ImGuiCol_PlotLines] = Rgba(a, 0.90f);
+  c[ImGuiCol_PlotLinesHovered] = Rgba(p.text, 1.f);
+  c[ImGuiCol_PlotHistogram] = Rgba(a, 0.80f);
+  c[ImGuiCol_PlotHistogramHovered] = Rgba(p.text, 1.f);
+  c[ImGuiCol_TableHeaderBg] = Rgba(p.frame, 1.f);
+  c[ImGuiCol_TableBorderStrong] = Rgba(a, 0.50f);
+  c[ImGuiCol_TableBorderLight] = Rgba(a, 0.20f);
+  c[ImGuiCol_TableRowBg] = ImVec4(0.f, 0.f, 0.f, 0.f);
+  c[ImGuiCol_TableRowBgAlt] = ImVec4(1.f, 1.f, 1.f, 0.035f);
+  c[ImGuiCol_TextLink] = Rgba(a, 1.f);
+  c[ImGuiCol_TextSelectedBg] = Rgba(a, 0.35f);
+  c[ImGuiCol_DragDropTarget] = Rgba(a, 0.90f);
+  c[ImGuiCol_NavCursor] = Rgba(a, 1.f);
+  c[ImGuiCol_NavWindowingHighlight] = ImVec4(1.f, 1.f, 1.f, 0.70f);
+  c[ImGuiCol_NavWindowingDimBg] = Rgba(p.bg, 0.55f);
+  c[ImGuiCol_ModalWindowDimBg] = Rgba(p.bg, 0.60f);
+}
+
+// Only colours, borders and rounding; paddings and sizes stay ApplyTouchStyle's. Border and
+// rounding values are unscaled units times the scale applied so far (ScaleAllSizes never runs here).
+void ApplyPrimeTheme(ImGuiStyle& style, int theme) {
+  const float scale = sUiAppliedScale;
+  if (theme == kThemePlain) {
+    ImGui::StyleColorsDark(&style);
+    style.WindowBorderSize = style.ChildBorderSize = style.PopupBorderSize = std::round(scale);
+    style.FrameBorderSize = 0.f;
+    style.TabBorderSize = 0.f;
+    style.WindowRounding = style.ChildRounding = style.PopupRounding = 0.f;
+    // ApplyTouchStyle's values, which a switch from another theme must restore.
+    style.FrameRounding = style.GrabRounding = style.TabRounding = 5.f * scale;
+    style.ScrollbarRounding = 9.f * scale;
+    return;
+  }
+  ThemePalette p;
+  if (theme == kThemeRemastered) {
+    // Cooler glass HUD: dark navy, ice-blue accent.
+    p.bg = ThemeRgb(0.035f, 0.055f, 0.105f);
+    p.bgAlpha = 0.88f;
+    p.deep = ThemeRgb(0.045f, 0.075f, 0.140f);
+    p.frame = ThemeRgb(0.075f, 0.140f, 0.240f);
+    p.frameHi = ThemeRgb(0.110f, 0.210f, 0.340f);
+    p.accent = ThemeRgb(0.373f, 0.847f, 1.000f); // #5FD8FF
+    p.text = ThemeRgb(0.97f, 0.99f, 1.00f);
+    p.textDim = ThemeRgb(0.50f, 0.60f, 0.72f);
+  } else {
+    // Retail pause / scan visor: near-black blue, teal frames, amber accent.
+    p.bg = ThemeRgb(0.020f, 0.063f, 0.102f); // #05101A
+    p.bgAlpha = 0.92f;
+    p.deep = ThemeRgb(0.030f, 0.090f, 0.140f);
+    p.frame = ThemeRgb(0.045f, 0.170f, 0.230f);
+    p.frameHi = ThemeRgb(0.070f, 0.260f, 0.340f);
+    p.accent = ThemeRgb(1.000f, 0.604f, 0.180f); // #FF9A2E
+    p.text = ThemeRgb(0.95f, 0.91f, 0.82f);
+    p.textDim = ThemeRgb(0.45f, 0.55f, 0.65f);
+  }
+  FillThemeColors(style, p);
+  const float round = theme == kThemeRemastered ? 8.f : 2.f;
+  style.WindowBorderSize = style.ChildBorderSize = style.PopupBorderSize = style.FrameBorderSize =
+      std::max(1.f, std::round(scale));
+  style.TabBorderSize = 0.f;
+  style.WindowRounding = style.ChildRounding = style.PopupRounding = round * scale;
+  style.FrameRounding = style.GrabRounding = style.TabRounding = (theme == kThemeRemastered ? 7.f : 2.f) * scale;
+  style.ScrollbarRounding = (theme == kThemeRemastered ? 9.f : 2.f) * scale;
+}
+
+// Called every frame: restyles only when the resolved theme or the UI scale changed.
+void ApplyThemeIfChanged() {
+  if (ImGui::GetCurrentContext() == nullptr) {
+    return;
+  }
+  sThemeResolved = ResolveTheme();
+  if (sThemeResolved == sThemeApplied && sUiAppliedScale == sThemeAppliedScale) {
+    return;
+  }
+  sThemeApplied = sThemeResolved;
+  sThemeAppliedScale = sUiAppliedScale;
+  ApplyPrimeTheme(ImGui::GetStyle(), sThemeResolved);
+}
+
+// Status colours that stay legible on the current theme. Plain returns `plain`, the old values.
+ImVec4 ThemeWarnColor(const ImVec4& plain = ImVec4(1.f, 0.8f, 0.3f, 1.f)) {
+  switch (sThemeResolved) {
+  case kThemePrime: return ImVec4(1.f, 0.88f, 0.32f, 1.f); // yellow, apart from the amber accent
+  case kThemeRemastered: return ImVec4(1.f, 0.82f, 0.38f, 1.f);
+  default: return plain;
+  }
+}
+
+ImVec4 ThemeGoodColor(const ImVec4& plain = ImVec4(0.4f, 1.f, 0.4f, 1.f)) {
+  switch (sThemeResolved) {
+  case kThemePrime: return ImVec4(0.45f, 0.95f, 0.55f, 1.f);
+  case kThemeRemastered: return ImVec4(0.45f, 1.f, 0.80f, 1.f);
+  default: return plain;
+  }
+}
+
+ImVec4 ThemeBadColor(const ImVec4& plain = ImVec4(1.f, 0.5f, 0.3f, 1.f)) {
+  switch (sThemeResolved) {
+  case kThemePrime: return ImVec4(1.f, 0.42f, 0.35f, 1.f);
+  case kThemeRemastered: return ImVec4(1.f, 0.45f, 0.52f, 1.f);
+  default: return plain;
+  }
+}
+
+// --- F1 overlay sounds ---------------------------------------------------------------------------
+//
+// The game's own UI effects (group UI_AGSC 40, preloaded at boot, so loaded at the title screen and
+// in game), started through CSfxManager like the pause screen does. Chosen by name and by what
+// CPauseScreenBlur does:
+//   open  -> SFXui_x_pause_00   (the map/pause screen opening)
+//   close -> SFXui_x_pause_01   (the same screen closing)
+//   click / activate (button, checkbox, combo, tab, selectable) -> SFXui_x_invchoos_00 (choose)
+//   keyboard/pad focus move  -> SFXui_x_invscrol_00 (scroll between inventory items)
+//   back (Esc, pad B)        -> SFXui_x_invback_00
+// CSfxManager::Update runs in the main loop even while the overlay is open (the overlay holds the
+// simulation, not the audio), so these play with F1 up. They queue into the current channel.
+enum MenuSound { kMenuOpen, kMenuClose, kMenuChoose, kMenuMove, kMenuBack };
+
+// `always` skips the rate limit: opening and closing are rare and must not be swallowed by the
+// press that caused them.
+void PlayMenuSound(MenuSound sound, bool always = false) {
+  if (!sUiSounds || sThemeResolved == kThemePlain || !sMainLoopRan) {
+    return;
+  }
+  static uint64_t sLastMs = 0;
+  const uint64_t now = SDL_GetTicks();
+  if (!always && sLastMs != 0 && now - sLastMs < 50) {
+    return;
+  }
+  sLastMs = now;
+  ushort id = 0;
+  switch (sound) {
+  case kMenuOpen: id = SFXui_x_pause_00; break;
+  case kMenuClose: id = SFXui_x_pause_01; break;
+  case kMenuChoose: id = SFXui_x_invchoos_00; break;
+  case kMenuMove: id = SFXui_x_invscrol_00; break;
+  case kMenuBack: id = SFXui_x_invback_00; break;
+  }
+  CSfxManager::SfxStart(id, 127, 64, false, CSfxManager::kMedPriority);
+}
+
+// Derives sounds from ImGui's own state once a frame instead of hooking widgets: a new active item
+// is a press (a held slider is one press, not one per frame), and a nav focus change with the nav
+// cursor showing is a keyboard or pad move (mouse hover never moves nav focus or shows the cursor).
+// `visible` is whether the overlay is open this frame; call it at the end of DrawUI.
+void UpdateMenuSounds(bool visible) {
+  static bool sWasVisible = false;
+  static ImGuiID sPrevActive = 0;
+  static ImGuiID sPrevNav = 0;
+  if (visible != sWasVisible) {
+    sWasVisible = visible;
+    sPrevActive = sPrevNav = 0;
+    // A back press that closes the overlay is the close, not a second sound: this branch returns
+    // before the back check below, and the close ignores the rate limit.
+    PlayMenuSound(visible ? kMenuOpen : kMenuClose, true);
+    return;
+  }
+  if (!visible || ImGui::GetCurrentContext() == nullptr) {
+    return;
+  }
+  ImGuiContext& g = *ImGui::GetCurrentContext();
+  const ImGuiID active = g.ActiveId;
+  const ImGuiID nav = g.NavId;
+  bool pressed = active != 0 && active != sPrevActive;
+  if (pressed && g.ActiveIdWindow != nullptr) {
+    // Dragging a window by its title, or a scrollbar, is not a choice.
+    ImGuiWindow* window = g.ActiveIdWindow;
+    pressed = active != window->MoveId && active != ImGui::GetWindowScrollbarID(window, ImGuiAxis_X) &&
+              active != ImGui::GetWindowScrollbarID(window, ImGuiAxis_Y);
+  }
+  const bool moved = nav != 0 && nav != sPrevNav && g.NavCursorVisible && active == 0;
+  const bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
+  sPrevActive = active;
+  sPrevNav = nav;
+  if (back) {
+    PlayMenuSound(kMenuBack);
+  } else if (pressed) {
+    PlayMenuSound(kMenuChoose);
+  } else if (moved) {
+    PlayMenuSound(kMenuMove);
+  }
+}
+
 // Phones report a density of roughly 3, which leaves ImGui's default 13px font
 // unreadably small, so scale the overlay to match the display. The scale is not
 // known on the first frame, so keep watching for it instead of latching once.
@@ -2603,7 +2904,6 @@ void UpdateUiScale() {
     return;
   }
   static bool sInitialized = false;
-  static float sAppliedScale = 1.f;
   if (!sInitialized) {
     sInitialized = true;
     // The overlay has to size itself to the scaled font, so do not restore a
@@ -2619,11 +2919,11 @@ void UpdateUiScale() {
   }
   const float displayScale = SDL_GetWindowDisplayScale(window);
   const float uiScale = std::clamp(displayScale, 1.f, 4.f);
-  if (uiScale == sAppliedScale) {
+  if (uiScale == sUiAppliedScale) {
     return;
   }
-  const float ratio = uiScale / sAppliedScale;
-  sAppliedScale = uiScale;
+  const float ratio = uiScale / sUiAppliedScale;
+  sUiAppliedScale = uiScale;
   ImGui::GetStyle().ScaleAllSizes(ratio);
   ImGui::GetIO().FontGlobalScale *= ratio;
 }
@@ -2641,6 +2941,7 @@ void UpdateControllerNav() {
     SDL_AddEventWatch(debug_event_watch, nullptr);
   }
   UpdateUiScale();
+  ApplyThemeIfChanged();
   if (sToggleRequested.exchange(false, std::memory_order_acq_rel)) {
     Toggle();
   }
@@ -3160,7 +3461,7 @@ void DrawMemoryCard() {
   }
 #endif
   if (inGame) {
-    ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Return to the title screen to import.");
+    ImGui::TextColored(ThemeWarnColor(), "Return to the title screen to import.");
   }
   if (!sCardStatus.empty()) {
     ImGui::TextWrapped("%s", sCardStatus.c_str());
@@ -3452,7 +3753,8 @@ void DrawGalleryWindow() {
       const ImVec2 shown(sGallerySize.x * scale, sGallerySize.y * scale);
       const ImVec2 cursor = ImGui::GetCursorPos();
       ImGui::SetCursorPos(ImVec2(cursor.x + (avail.x - shown.x) * 0.5f, cursor.y + (avail.y - shown.y) * 0.5f));
-      ImGui::Image(sGalleryTexture, shown);
+      // The import writes the TXTR rows as stored, bottom row first, so draw them flipped.
+      ImGui::Image(sGalleryTexture, shown, ImVec2(0.f, 1.f), ImVec2(1.f, 0.f));
     }
   }
   ImGui::End();
@@ -3488,7 +3790,7 @@ void DrawStaleImportToast() {
   if (ImGui::Begin("##stale-import-toast", nullptr,
                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
-    ImGui::TextWrapped("%s was imported by an older version. Re-import Remastered (F1 > Mods) to get the latest fixes.",
+    ImGui::TextWrapped("%s was imported by an older version. Re-import Remastered (F1 > Remastered) to get the latest fixes.",
                        name);
   }
   ImGui::End();
@@ -3558,10 +3860,10 @@ void DrawRemasteredImport() {
   ImGui::TextWrapped("Converts the models of your own copy of Metroid Prime Remastered into a mod. It needs the "
                      "game's .nsp and your console's key file (prod.keys), and takes a few minutes.");
   if (PortMods::StaleRemasteredImport() != nullptr) {
-    ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f),
+    ImGui::TextColored(ThemeWarnColor(),
                        "Re-import needed: the installed models were made by an older version.");
   }
-  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.75f, 0.3f, 1.f));
+  ImGui::PushStyleColor(ImGuiCol_Text, ThemeWarnColor(ImVec4(1.f, 0.75f, 0.3f, 1.f)));
   ImGui::TextWrapped("Very experimental and currently unsupported: expect wrong or missing models, crashes and "
                      "heavy memory use. Remove mods/remastered-models to get the retail game back.");
   ImGui::PopStyleColor();
@@ -3610,7 +3912,7 @@ void DrawRemasteredImport() {
 #if defined(__ANDROID__)
   // A tap shows no tooltip, so the warning is spelled out.
   if (sGeometry) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.75f, 0.3f, 1.f));
+    ImGui::PushStyleColor(ImGuiCol_Text, ThemeWarnColor(ImVec4(1.f, 0.75f, 0.3f, 1.f)));
     ImGui::TextWrapped("Untested on phones: needs about 6.5 GB free and lots of RAM, and the game may run slowly "
                        "or be closed by Android. Remove mods/remastered-models to go back.");
     ImGui::PopStyleColor();
@@ -3667,7 +3969,7 @@ void DrawRemasteredImport() {
     }
     ImGui::EndDisabled();
     if (state.finished && state.ok) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 1.f, 0.5f, 1.f));
+      ImGui::PushStyleColor(ImGuiCol_Text, ThemeGoodColor(ImVec4(0.5f, 1.f, 0.5f, 1.f)));
       ImGui::TextWrapped("%s", state.message.c_str());
       ImGui::PopStyleColor();
       // It loads on its own when the import ends; this is to load it again
@@ -3679,7 +3981,7 @@ void DrawRemasteredImport() {
     } else if (state.finished && state.cancelled) {
       ImGui::TextDisabled("The import was cancelled.");
     } else if (state.finished) {
-      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.5f, 0.3f, 1.f));
+      ImGui::PushStyleColor(ImGuiCol_Text, ThemeBadColor());
       ImGui::TextWrapped("The import failed: %s", state.message.c_str());
       ImGui::PopStyleColor();
     }
@@ -3722,18 +4024,18 @@ void DrawImporters() {
   }
   ImGui::EndDisabled();
   if (state.running) {
-    ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "%s is running...", state.name.c_str());
+    ImGui::TextColored(ThemeWarnColor(), "%s is running...", state.name.c_str());
     ImGui::SameLine();
     if (ImGui::Button("Cancel")) {
       PortImporters::Cancel();
     }
   } else if (state.finished && state.exitCode == 0) {
-    ImGui::TextColored(ImVec4(0.5f, 1.f, 0.5f, 1.f), "%s finished. Reload the mods to load it.",
+    ImGui::TextColored(ThemeGoodColor(ImVec4(0.5f, 1.f, 0.5f, 1.f)), "%s finished. Reload the mods to load it.",
                        state.name.c_str());
   } else if (state.finished && state.cancelled) {
     ImGui::TextDisabled("%s was cancelled.", state.name.c_str());
   } else if (state.finished) {
-    ImGui::TextColored(ImVec4(1.f, 0.5f, 0.3f, 1.f), "%s failed (exit code %d).", state.name.c_str(), state.exitCode);
+    ImGui::TextColored(ThemeBadColor(), "%s failed (exit code %d).", state.name.c_str(), state.exitCode);
   }
   if (!state.lines.empty()) {
     // The tail of the output; a failure shows more of it.
@@ -3786,14 +4088,14 @@ void DrawMods() {
     }
     if (mod.importStale) {
       ImGui::SameLine();
-      ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "re-import needed");
+      ImGui::TextColored(ThemeWarnColor(), "re-import needed");
     }
     changed = changed || (sModsEnabled && on) != mod.enabled;
   }
   if (PortMods::Suspended()) {
-    ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Unloaded while the Remastered import runs; they load again when it ends.");
+    ImGui::TextColored(ThemeWarnColor(), "Unloaded while the Remastered import runs; they load again when it ends.");
   } else if (changed) {
-    ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Reload the mods to apply.");
+    ImGui::TextColored(ThemeWarnColor(), "Reload the mods to apply.");
   }
   if (ImGui::Button("Reload mods")) {
     PortSaveState::RequestModReload();
@@ -3815,7 +4117,7 @@ void DrawMods() {
 #endif
   DrawModReloadMessage();
   for (const std::string& message : status.messages) {
-    ImGui::TextColored(ImVec4(1.f, 0.5f, 0.3f, 1.f), "%s", message.c_str());
+    ImGui::TextColored(ThemeBadColor(), "%s", message.c_str());
   }
   if (PortMods::NativeTextureCount() > 0) {
     ImGui::TextDisabled("Native textures: %zu, %zu in use", PortMods::NativeTextureCount(), PortMods::NativeTexturesBound());
@@ -3823,7 +4125,6 @@ void DrawMods() {
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
   ImGui::TextWrapped("Folder: %s", status.folder.c_str());
   ImGui::PopStyleColor();
-  DrawRemasteredImport();
 #if !defined(__ANDROID__)
   DrawImporters();
 #endif
@@ -3850,40 +4151,6 @@ void DrawExtrasTab() {
            "far faster; Fast ends it about 2 s in, once the next area is loaded; Skip shows black "
            "until the area is loaded. The cinematic played in the elevator room before the ride is "
            "not affected.");
-
-  ImGui::SeparatorText("Text");
-  {
-    int language = 0;
-    const char* current = TextLanguage();
-    for (size_t i = 0; i < PortRemastered::kTextLanguageCount; ++i) {
-      if (std::strcmp(current, PortRemastered::kTextLanguages[i].code) == 0) {
-        language = static_cast< int >(i) + 1;
-      }
-    }
-    const auto name = [](void*, int index) {
-      return index == 0 ? "English" : PortRemastered::kTextLanguages[index - 1].name;
-    };
-    if (ImGui::Combo("Language", &language, name, nullptr,
-                     static_cast< int >(PortRemastered::kTextLanguageCount) + 1)) {
-      SetTextLanguage(language == 0 ? "" : PortRemastered::kTextLanguages[language - 1].code);
-    }
-    ItemHelp("The language of the game's text. Only English is on the disc: the others come with the "
-             "Remastered import (its text), and any text it lacks stays English. Text already on "
-             "screen changes the next time its menu or screen opens.");
-  }
-
-  ImGui::SeparatorText("Gallery");
-  {
-    const std::vector<std::string> pictures = PortMods::GalleryPaths();
-    if (pictures.empty()) {
-      ImGui::TextDisabled("Remastered's concept art. It comes with the Remastered import.");
-    } else if (ImGui::Button(("Open gallery (" + std::to_string(pictures.size()) + " pictures)").c_str())) {
-      sGalleryPaths = pictures;
-      sGalleryIndex = std::min(sGalleryIndex, int(pictures.size()) - 1);
-      ReleaseGalleryTexture();
-      sGalleryOpen = true;
-    }
-  }
 
   ImGui::SeparatorText("Unlocks");
   bool hardMode = sUnlockHardMode;
@@ -3937,10 +4204,10 @@ void DrawExtrasTab() {
     ImGui::TextUnformatted("connecting...");
     break;
   case PortLiveSplit::kStatus_Connected:
-    ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "connected");
+    ImGui::TextColored(ThemeGoodColor(), "connected");
     break;
   case PortLiveSplit::kStatus_Failed:
-    ImGui::TextColored(ImVec4(1.f, 0.5f, 0.3f, 1.f), "%s", PortLiveSplit::LastError().c_str());
+    ImGui::TextColored(ThemeBadColor(), "%s", PortLiveSplit::LastError().c_str());
     break;
   }
   // Applied when the field loses focus; until then the text is left alone.
@@ -3981,10 +4248,10 @@ void DrawExtrasTab() {
       ImGui::TextUnformatted("connecting...");
       break;
     case PortDiscord::kStatus_Connected:
-      ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "connected");
+      ImGui::TextColored(ThemeGoodColor(), "connected");
       break;
     case PortDiscord::kStatus_Failed:
-      ImGui::TextColored(ImVec4(1.f, 0.5f, 0.3f, 1.f), "%s", PortDiscord::LastError().c_str());
+      ImGui::TextColored(ThemeBadColor(), "%s", PortDiscord::LastError().c_str());
       break;
     }
     static char appId[64];
@@ -4064,6 +4331,20 @@ void DrawRenderTab() {
     MarkDirty();
   }
 #endif
+  {
+    int theme = sUiTheme;
+    if (ImGui::Combo("Menu theme", &theme, "Auto\0Metroid Prime\0Remastered\0Plain\0")) {
+      sUiTheme = theme;
+      MarkDirty();
+    }
+    ItemHelp("The look of this overlay. Auto uses the Remastered style while the Remastered import is "
+             "loaded and the Metroid Prime pause-screen style otherwise; Plain is stock Dear ImGui.");
+    if (ImGui::Checkbox("Menu sounds", &sUiSounds)) {
+      MarkDirty();
+    }
+    ItemHelp("The game's own menu sounds for opening, choosing and moving through the overlay. Off "
+             "with the Plain theme.");
+  }
   bool fullscreen = sFullscreen;
 #if defined(__ANDROID__)
   if (ImGui::Checkbox("Fullscreen (hide the status and navigation bars)", &fullscreen)) {
@@ -4549,7 +4830,7 @@ void DrawArchipelagoConnect() {
     }
   }
   if (!sResult.empty())
-    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.4f, 1.0f), "%s", sResult.c_str());
+    ImGui::TextColored(ThemeBadColor(ImVec4(1.f, 0.45f, 0.4f, 1.f)), "%s", sResult.c_str());
   ImGui::TextDisabled("Start a new game after connecting to a new seed.");
 
   // Games played before, each with its own save card. The list is re-read now
@@ -4609,9 +4890,9 @@ ImVec4 ChatLineColor(const std::string& type) {
   if (type == "ServerChat" || type == "CommandResult" || type == "AdminCommandResult")
     return ImVec4(0.55f, 0.85f, 1.0f, 1.0f);
   if (type == "Hint")
-    return ImVec4(1.0f, 0.85f, 0.4f, 1.0f);
+    return ThemeWarnColor(ImVec4(1.0f, 0.85f, 0.4f, 1.0f));
   if (type == "ItemSend" || type == "ItemCheat")
-    return ImVec4(0.6f, 0.95f, 0.6f, 1.0f);
+    return ThemeGoodColor(ImVec4(0.6f, 0.95f, 0.6f, 1.0f));
   if (type == "Goal" || type == "Release" || type == "Collect" || type == "Countdown")
     return ImVec4(1.0f, 0.6f, 1.0f, 1.0f);
   if (type == "port")
@@ -4675,7 +4956,7 @@ void DrawChatTab() {
       sInput[0] = '\0';
   }
   if (!sError.empty())
-    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "%s", sError.c_str());
+    ImGui::TextColored(ThemeBadColor(ImVec4(1.f, 0.5f, 0.5f, 1.f)), "%s", sError.c_str());
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
   ImGui::TextWrapped("Commands: !hint <item>, !hint_location <location>, !remaining, !release, "
                      "!collect, !help");
@@ -4728,7 +5009,7 @@ void DrawSessionTab() {
   if (PortAp::Enabled()) {
     ImGui::SeparatorText("Archipelago status");
     if (PortAp::Connected()) {
-      ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "connected");
+      ImGui::TextColored(ThemeGoodColor(), "connected");
     } else {
       ImGui::TextDisabled("not connected");
     }
@@ -5060,6 +5341,90 @@ void DrawRendering() {
                         "Draws what Samus collides with: walls grey, floors blue, ceilings red,\n"
                         "lava orange, grates yellow, solid objects as orange boxes.");
 
+  if (ImGui::CollapsingHeader("Frame statistics")) {
+    if (const AuroraStats* stats = aurora_get_stats()) {
+      ImGui::Text("%.0f fps, %u draws (%u merged), %u PBR, %u passes", aurora_get_fps(), stats->drawCallCount,
+                  stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->renderPassCount);
+      ImGui::Text("vertices %.1f MiB, indices %.1f, arrays %.1f, uniforms %.1f, texture uploads %.1f",
+                  stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f,
+                  stats->lastStorageSize / 1048576.f, stats->lastUniformSize / 1048576.f,
+                  stats->lastTextureUploadSize / 1048576.f);
+      if (const uint32_t resident = aurora_get_resident_geometry_mib()) {
+        ImGui::Text("kept on the GPU %.1f of %u MiB", aurora_get_resident_geometry_used() / 1048576.f, resident);
+      }
+      ImGui::Text("pipelines %u made, %u waiting", stats->createdPipelines, stats->queuedPipelines);
+    }
+    AuroraTextureStats textures{};
+    aurora_get_texture_stats(&textures);
+    ImGui::Text("textures %u, %.0f MiB; render targets %u, %.0f MiB", textures.count[0],
+                textures.bytes[0] / 1048576.f, textures.count[1], textures.bytes[1] / 1048576.f);
+    int areas = 0;
+    int instances = 0;
+    int models = 0;
+    int loaded = 0;
+    int drawn = 0;
+    PortRoomGeo::Stats(areas, instances, models, loaded, drawn);
+    ImGui::Text("room geometry: %d area(s), %d of %d model(s) loaded, %d of %d instance(s) drawn", areas, loaded,
+                models, drawn, instances);
+  }
+}
+void DrawRemasteredTab() {
+  {
+    const ImVec4 bad = ThemeBadColor();
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(bad.x * 0.25f, bad.y * 0.25f, bad.z * 0.25f, 0.6f));
+    ImGui::PushStyleColor(ImGuiCol_Border, bad);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildBorderSize, 2.f);
+    ImGui::BeginChild("RemasteredWarning", ImVec2(0.f, 0.f),
+                      ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::SetWindowFontScale(1.6f);
+    ImGui::TextColored(bad, "EXPERIMENTAL - EXPECT BREAKAGE");
+    ImGui::SetWindowFontScale(1.f);
+    ImGui::TextWrapped("Remastered support is unfinished and broken in places. Expect wrong materials, missing or "
+                       "misplaced models and effects, visual glitches, slowdowns and crashes. Re-imports are often "
+                       "needed after updates.");
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+  }
+
+  ImGui::SeparatorText("Import");
+  DrawRemasteredImport();
+
+  ImGui::SeparatorText("Text");
+  {
+    int language = 0;
+    const char* current = TextLanguage();
+    for (size_t i = 0; i < PortRemastered::kTextLanguageCount; ++i) {
+      if (std::strcmp(current, PortRemastered::kTextLanguages[i].code) == 0) {
+        language = static_cast< int >(i) + 1;
+      }
+    }
+    const auto name = [](void*, int index) {
+      return index == 0 ? "English" : PortRemastered::kTextLanguages[index - 1].name;
+    };
+    if (ImGui::Combo("Language", &language, name, nullptr,
+                     static_cast< int >(PortRemastered::kTextLanguageCount) + 1)) {
+      SetTextLanguage(language == 0 ? "" : PortRemastered::kTextLanguages[language - 1].code);
+    }
+    ItemHelp("The language of the game's text. Only English is on the disc: the others come with the "
+             "Remastered import (its text), and any text it lacks stays English. Text already on "
+             "screen changes the next time its menu or screen opens.");
+  }
+
+  ImGui::SeparatorText("Gallery");
+  {
+    const std::vector<std::string> pictures = PortMods::GalleryPaths();
+    if (pictures.empty()) {
+      ImGui::TextDisabled("Remastered's concept art. It comes with the Remastered import.");
+    } else if (ImGui::Button(("Open gallery (" + std::to_string(pictures.size()) + " pictures)").c_str())) {
+      sGalleryPaths = pictures;
+      sGalleryIndex = std::min(sGalleryIndex, int(pictures.size()) - 1);
+      ReleaseGalleryTexture();
+      sGalleryOpen = true;
+    }
+  }
+
+  ImGui::SeparatorText("Rendering");
   // What the middle of the screen looks at.
   float origin[3];
   float forward[3];
@@ -5069,7 +5434,7 @@ void DrawRendering() {
     // The frame's buffers are only sized for room geometry when the game started with some.
     const bool geoReady = PortRoomGeo::BuffersReady();
     if (!geoReady && PortMods::RoomGeometryLoaded()) {
-      ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Restart the game to see the Remastered rooms.");
+      ImGui::TextColored(ThemeWarnColor(), "Restart the game to see the Remastered rooms.");
       ImGui::SetItemTooltip("The game started without room geometry installed, so it set no room aside\n"
                             "for it. Once it starts with some, mods can be changed without a restart.");
     }
@@ -5085,7 +5450,7 @@ void DrawRendering() {
 #ifdef __ANDROID__
     // The defaults (MSAA off, 1x) are fine; this catches a phone set up for the original rooms.
     if (PortRoomGeo::GetMode() != PortRoomGeo::Mode::Off && (sMsaa > 1 || sRenderScale <= 0.f || sRenderScale > 2.f)) {
-      ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "Slow on phones with MSAA or native scale.");
+      ImGui::TextColored(ThemeWarnColor(), "Slow on phones with MSAA or native scale.");
       ImGui::SameLine();
       if (ImGui::SmallButton("Use 2x, MSAA off")) {
         SetMsaa(1);
@@ -5317,33 +5682,6 @@ void DrawRendering() {
       ImGui::TreePop();
     }
   }
-
-  if (ImGui::CollapsingHeader("Frame statistics")) {
-    if (const AuroraStats* stats = aurora_get_stats()) {
-      ImGui::Text("%.0f fps, %u draws (%u merged), %u PBR, %u passes", aurora_get_fps(), stats->drawCallCount,
-                  stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->renderPassCount);
-      ImGui::Text("vertices %.1f MiB, indices %.1f, arrays %.1f, uniforms %.1f, texture uploads %.1f",
-                  stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f,
-                  stats->lastStorageSize / 1048576.f, stats->lastUniformSize / 1048576.f,
-                  stats->lastTextureUploadSize / 1048576.f);
-      if (const uint32_t resident = aurora_get_resident_geometry_mib()) {
-        ImGui::Text("kept on the GPU %.1f of %u MiB", aurora_get_resident_geometry_used() / 1048576.f, resident);
-      }
-      ImGui::Text("pipelines %u made, %u waiting", stats->createdPipelines, stats->queuedPipelines);
-    }
-    AuroraTextureStats textures{};
-    aurora_get_texture_stats(&textures);
-    ImGui::Text("textures %u, %.0f MiB; render targets %u, %.0f MiB", textures.count[0],
-                textures.bytes[0] / 1048576.f, textures.count[1], textures.bytes[1] / 1048576.f);
-    int areas = 0;
-    int instances = 0;
-    int models = 0;
-    int loaded = 0;
-    int drawn = 0;
-    PortRoomGeo::Stats(areas, instances, models, loaded, drawn);
-    ImGui::Text("room geometry: %d area(s), %d of %d model(s) loaded, %d of %d instance(s) drawn", areas, loaded,
-                models, drawn, instances);
-  }
 }
 
 void DrawDebugTab() {
@@ -5401,7 +5739,7 @@ void DrawDebugTab() {
 void DrawTrackerCount(const char* label, const PortTracker::Count& count) {
   const bool done = count.total > 0 && count.have >= count.total;
   if (done) {
-    ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "%s %d/%d", label, count.have, count.total);
+    ImGui::TextColored(ThemeGoodColor(), "%s %d/%d", label, count.have, count.total);
   } else {
     ImGui::Text("%s %d/%d", label, count.have, count.total);
   }
@@ -5673,9 +6011,10 @@ struct DebugPage {
 const DebugPage kDebugPages[] = {
     {"Input", DrawInputTab},     {"Controls", PortControls::DrawTab},
     {"Render", DrawRenderTab},   {"Performance", DrawPerformanceTab},
-    {"Extras", DrawExtrasTab},   {"Tracker", DrawTrackerTab},
-    {"States", DrawSaveStatesTab}, {"Session", DrawSessionTab},
-    {"Chat", DrawChatTab},       {"Debug", DrawDebugTab},
+    {"Extras", DrawExtrasTab},   {"Remastered", DrawRemasteredTab},
+    {"Tracker", DrawTrackerTab}, {"States", DrawSaveStatesTab},
+    {"Session", DrawSessionTab}, {"Chat", DrawChatTab},
+    {"Debug", DrawDebugTab},
 };
 
 // The innermost window under the finger that can actually scroll vertically,
@@ -5956,6 +6295,7 @@ void DrawUI() {
   FinishRemasteredImport();
   DrawStaleImportToast();
   if (!sVisible) {
+    UpdateMenuSounds(false);
     sTouchScroll = TouchScroll{};
     if (sGalleryOpen) {
       CloseGallery();
@@ -5972,6 +6312,7 @@ void DrawUI() {
   if (!open) {
     sVisible = false;
   }
+  UpdateMenuSounds(sVisible);
 
   // Not while a control is held: a dragged slider changes a setting every frame, and
   // rewriting the settings file each time is a flash write per frame on a phone. It is

@@ -848,10 +848,10 @@ int main(int argc, char** argv) {
         .desiredBackend = BACKEND_AUTO,
         .vsync = false,
         .allowTextureDumps = dumpTextures,
-        // Keep the internal framebuffer at the game's logical size so its two
-        // framebuffer allocations fit in MEM1; Aurora upscales to the window.
-        .windowWidth = static_cast<uint32_t>(widescreen ? 854 : 640),
-        .windowHeight = 480,
+        // 720p by default (the F1 overlay's sidebar needs the height); Aurora
+        // shrinks it to fit a smaller desktop.
+        .windowWidth = static_cast<uint32_t>(widescreen ? 1280 : 960),
+        .windowHeight = 720,
         .mem1Size = mem1Size,
         .mem2Size = ARAM_DEFAULT_SIZE,
         .frameBufferScale = frameBufferScale,
