@@ -1258,9 +1258,11 @@ std::vector<uint8_t> EncodeDds(const Image& image, DdsFormat format, bool punch,
       for (int bx = 0; bx < bw; bx += 4) {
         uint8_t px[64];
         for (int y = 0; y < 4; ++y) {
-          const int sy = (by + y) * lv.height / bh;
+          // A side that is not a multiple of 4 leaves the last block partly
+          // outside the level: repeat the edge pixel there.
+          const int sy = std::min((by + y) * lv.height / bh, lv.height - 1);
           for (int x = 0; x < 4; ++x) {
-            const int sx = (bx + x) * lv.width / bw;
+            const int sx = std::min((bx + x) * lv.width / bw, lv.width - 1);
             std::memcpy(px + (y * 4 + x) * 4, &lv.rgba[(size_t(sy) * size_t(lv.width) + size_t(sx)) * 4], 4);
           }
         }
