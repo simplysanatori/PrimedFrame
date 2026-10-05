@@ -90,7 +90,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item build-win/metroid_prime_port.exe dist/
-          Copy-Item build-win/initial_pipeline_cache.db dist/
           Get-ChildItem build-win/*.dll | Copy-Item -Destination dist/
           if (Test-Path build-win/metroid_prime_port.pdb) { Copy-Item build-win/metroid_prime_port.pdb dist/ }
           # find_package(OpenSSL) links the runner's own OpenSSL through import
@@ -106,11 +105,8 @@ jobs:
               Copy-Item $dll dist/
             }
           }
-          # The HD texture and button-prompt sets live next to the executable
-          # (DefaultTexturesPath); without them the zip shows GameCube prompts
-          # only. The post-build step puts them in build-win/textures.
-          if (-not (Test-Path build-win/textures/keyboard)) { throw 'build-win/textures missing' }
-          Copy-Item -Recurse build-win/textures dist/textures
+          # The button-prompt textures and the pipeline cache seed are built into
+          # the executable (MP_EMBED_RESOURCES), so the zip carries no copies.
           New-Item -ItemType Directory -Force -Path dist/licenses | Out-Null
           # The port's own grant and notice travel with the package too.
           Copy-Item LICENSE dist/licenses/port-license.txt

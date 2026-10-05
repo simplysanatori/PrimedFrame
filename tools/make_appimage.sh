@@ -23,7 +23,10 @@ if [[ ! -x "$BIN" ]]; then
     echo "no executable at $BIN - build first" >&2
     exit 1
 fi
-if [[ ! -d "$TEXTURES" ]]; then
+# A build with MP_EMBED_RESOURCES carries the textures inside the executable.
+EMBEDDED=0
+grep -q '^MP_EMBED_RESOURCES:BOOL=ON' "$BUILD/CMakeCache.txt" 2>/dev/null && EMBEDDED=1
+if [[ $EMBEDDED = 0 && ! -d "$TEXTURES" ]]; then
     echo "no texture replacements at $TEXTURES" >&2
     exit 1
 fi
@@ -33,8 +36,10 @@ rm -rf "$APPDIR"
 mkdir -p "$APPDIR/usr/bin"
 
 install -m755 "$BIN" "$APPDIR/usr/bin/metroid_prime_port"
-# The port looks for replacements next to the executable.
-cp -r "$TEXTURES" "$APPDIR/usr/bin/textures"
+# Otherwise the port looks for replacements next to the executable.
+if [[ $EMBEDDED = 0 ]]; then
+    cp -r "$TEXTURES" "$APPDIR/usr/bin/textures"
+fi
 install -m644 "$ICON" "$APPDIR/metroid-prime.png"
 # File managers and AppImage launchers read the icon from here.
 ln -s metroid-prime.png "$APPDIR/.DirIcon"

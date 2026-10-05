@@ -90,7 +90,6 @@ jobs:
           d=build/release/metroid-prime-port-linux-x86_64
           mkdir -p "$d/share/licenses/metroid-prime-port"
           cp build/port-gcc/metroid_prime_port "$d/"
-          cp -r build/port-gcc/textures "$d/"
           cp LICENSE NOTICE "$d/share/licenses/metroid-prime-port/"
           tar -C build/release -czf build/release/metroid-prime-port-linux-x86_64.tar.gz \
             metroid-prime-port-linux-x86_64
