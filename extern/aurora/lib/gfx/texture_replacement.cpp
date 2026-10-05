@@ -1036,7 +1036,7 @@ gfx::TextureHandle create_converted_texture_handle(const EntryLoadSnapshot& entr
   };
   const wgpu::TextureDescriptor textureDescriptor{
       .label = label.c_str(),
-      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
+      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::CopySrc,
       .dimension = wgpu::TextureDimension::e2D,
       .size = size,
       .format = replacement.format,
