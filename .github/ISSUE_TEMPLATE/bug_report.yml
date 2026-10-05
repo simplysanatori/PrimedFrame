@@ -92,8 +92,7 @@ body:
       description: |
         Drag `metroid_prime_port.log` into this box (after a crash, the next start renames it to
         `metroid_prime_port.old.log`, so send that one if you restarted the game). Paths and user names are already removed from it.
-        - **Windows zip, Linux tarball:** next to `metroid_prime_port(.exe)`; if it isn't there, `%APPDATA%\Metroid Prime\` or `~/.local/share/Metroid Prime/`
-        - **AppImage:** `~/.local/share/Metroid Prime/`
+        - **Windows zip, Linux tarball, AppImage:** next to `metroid_prime_port(.exe)` or the `.AppImage` file; if it isn't there, `%APPDATA%\Metroid Prime\` or `~/.local/share/Metroid Prime/`
         - **Flatpak:** `~/.var/app/io.github.odrannnn.metroidprimeport/data/Metroid Prime/`
         - **Android:** `Documents/MetroidPrime/` (or `Android/data/org.metroidprime.port/files/` over USB); if you moved the data folder, it's in that folder
 
