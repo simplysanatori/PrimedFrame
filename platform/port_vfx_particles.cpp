@@ -290,6 +290,7 @@ void CElementGen::PortRenderParticlesVfx() {
     // Retail's UV evaluation context.
     const int partFrame = x74_curFrame - p.x28_startFrame - 1;
     CParticleGlobals::mCurrentParticle = &p;
+    CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &p : nullptr;
     CParticleGlobals::SetParticleLifetime(p.x0_endFrame - p.x28_startFrame);
     CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
 
@@ -394,6 +395,7 @@ void CElementGen::PortRenderParticlesVfx() {
   }
   flush();
 
+  CParticleGlobals::xPortIrndParticle = nullptr;
   CParticleGlobals::mCurrentParticle = savedParticle;
   CGraphics::SetCullMode(kCM_Front);
   CGraphics::SetAlphaCompare(kAF_Always, 0, kAO_And, kAF_Always, 0);

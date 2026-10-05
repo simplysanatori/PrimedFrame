@@ -125,6 +125,17 @@ CREInitialRandom::~CREInitialRandom() {
 }
 
 bool CREInitialRandom::GetValue(int frame, float& valOut) const {
+#ifdef TARGET_PC
+  if (const CElementGen::CParticle* particle = CParticleGlobals::xPortIrndParticle) {
+    // Remastered effects nest IRND inside other elements, where retail's frame-0-only write
+    // would leave the operand unset: a value fixed per particle and element, at every frame.
+    float min, max;
+    x4_min->GetValue(frame, min);
+    x8_max->GetValue(frame, max);
+    valOut = (max - min) * CParticleGlobals::PortIrndUnit(particle, this) + min;
+    return false;
+  }
+#endif
   if (frame == 0) {
     float min, max;
     x4_min->GetValue(frame, min);

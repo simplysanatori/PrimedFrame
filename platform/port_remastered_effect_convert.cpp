@@ -1777,6 +1777,13 @@ public:
         }
       }
     }
+    if (part) {
+      // Port-only: nested IRND elements are evaluated once per particle and element, not at frame 0
+      // only (xPortIrnd). Marks every converted PART; retail's own PARTs do not have it.
+      PutBe32(out, F("PIRN"));
+      PutBe32(out, F("CNST"));
+      PutBe32(out, 1);
+    }
     PutBe32(out, F("_END"));
     result.approximated = std::move(m_approximated);
     m_approximated.clear();
@@ -2001,7 +2008,7 @@ public:
     return true;
   }
 
-  // A port-only `CNST <word>` property (VORN, XFMD).
+  // A port-only `CNST <word>` property (VORN, XFMD, PIRN).
   bool PortWord() {
     uint32_t fourcc;
     return Word(fourcc) && fourcc == F("CNST") && Skip(4);
@@ -2068,7 +2075,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PerParticle(fourcc == F("VSMT"));
     } else if (part && (fourcc == F("SSZE") || fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
-    } else if (part && (fourcc == F("VORN") || fourcc == F("XFMD"))) {
+    } else if (part && (fourcc == F("VORN") || fourcc == F("XFMD") || fourcc == F("PIRN"))) {
       ok = reader.PortWord();
     } else if (const auto found = retail.find(fourcc); found == retail.end()) {
       error = "property " + EffectFourCCString(fourcc) + " retail does not read";

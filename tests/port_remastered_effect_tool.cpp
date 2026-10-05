@@ -1031,7 +1031,7 @@ int VmatSummary(const std::string& genpPath, const std::string& matiDir) {
         }
       } else if (name == "VTMT") {
         std::cout << "  VTMT " << be32(b + 4) << " UV sets\n";
-      } else if (name == "VORN" || name == "XFMD") {
+      } else if (name == "VORN" || name == "XFMD" || name == "PIRN") {
         std::cout << "  " << name << " " << be32(b + 4) << "\n";
       } else if (name == "SSZE" || name == "ITEN") {
         std::cout << "  " << name << " " << property.value.size() << " bytes\n";

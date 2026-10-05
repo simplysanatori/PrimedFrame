@@ -359,7 +359,15 @@ Notes from comparing converted effects with the disc's (`effect_tool convert`):
   `CNST(x, y, z)`: `CERotationEuler::QuatGeneric` order 0 is Rz·Ry·Rx in
   degrees, as `CElementGen` builds PMRT. All PMRQ REULs on the disc use order
   0. An angle with IRND is dropped: retail evaluates a varying PMRT each frame
-  and IRND gives 0 after frame 0.
+  and IRND gives 0 after frame 0. With PIRN (below) a per-particle PMRT keeps
+  its IRND, so the angle could be kept; that hasn't been tried.
+- Remastered's IRND is per particle and holds for its whole life. Retail's
+  (`CREInitialRandom`, `CIEInitialRandom`) writes only at frame 0, so nested
+  inside MULT or ADD it gives 0 afterwards and the particle vanishes or freezes.
+  Every converted PART therefore ends in a port-only `PIRN CNST 1`
+  (`CGenDescription::xPortIrnd`). With it, IRND during a particle's evaluation
+  returns a splitmix64 hash of the particle's seed and the element's address,
+  the same value every frame. Retail PARTs never carry PIRN and are unchanged.
 - PBDM: 0 alpha, 1 premultiplied, 2 additive, 3 opaque. Retail has only alpha
   and AAPH, so 2 is AAPH, and 1 and 3 are taken as alpha blending (listed as
   approximated).

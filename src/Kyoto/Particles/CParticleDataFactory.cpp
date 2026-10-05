@@ -427,6 +427,11 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
                             ? static_cast< u8 >(mode)
                             : static_cast< u8 >(kPortXfmdRetail);
     } break;
+    // Port-only marker of a converted Remastered PART (xPortIrnd).
+    case SBIG('PIRN'):
+      GetClassID(in);
+      desc->xPortIrnd = in.ReadLong() != 0;
+      break;
     // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
     case SBIG('VMAT'): {
       GetClassID(in);

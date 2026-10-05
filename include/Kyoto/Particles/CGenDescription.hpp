@@ -133,6 +133,8 @@ public:
   std::unique_ptr< CPortVfxData > xPortVfx;
   // port-only XFMD (EPortXfmd); kept outside xPortVfx, which a bad VMAT block drops
   u8 xPortXfmd = kPortXfmdRetail;
+  // port-only PIRN: a converted Remastered effect, whose nested IRND elements are stable per particle
+  bool xPortIrnd = false;
 #endif
   CVectorElement* x58_PMOP;
   CVectorElement* x5c_PMRT;

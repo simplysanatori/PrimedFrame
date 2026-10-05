@@ -87,6 +87,8 @@ struct Retail {
     bytes.insert(bytes.end(), text, text + 4);
     return *this;
   }
+  // The end of a converted PART: the port-only PIRN marker, then _END.
+  Retail& end() { return f("PIRN").f("CNST").w(1).f("_END"); }
   Retail& w(uint32_t value) {
     for (int i = 3; i >= 0; --i) {
       bytes.push_back(uint8_t(value >> (i * 8)));
@@ -195,7 +197,7 @@ void TestConvert() {
   root.f("VEL1").f("CNST").f("CNST").w(Bits(0.0f)).f("CNST").w(Bits(1.0f)).f("CNST").w(Bits(0.0f));
   root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
   root.f("ICTS").f("CNST").w(0x0BADF00D);
-  root.f("_END");
+  root.end();
   Check(parts[0].root && parts[0].part == root.bytes, "root converts to retail's bytes");
   Check(parts[0].droppedRetail == 1, "PMDL with no retail id is the one retail property dropped");
   Check(parts[0].dropped.size() == 2, "DVVN and PMDL dropped");
@@ -204,7 +206,7 @@ void TestConvert() {
   child.f("GPSM");
   child.f("MAXP").f("CNST").w(5);
   child.f("TEXR").f("CNST").f("CNST").w(0x5EED0001);
-  child.f("_END");
+  child.end();
   Check(!parts[1].root && parts[1].id == Legacy(0x0BADF00D), "child keeps its id");
   Check(parts[1].part == child.bytes, "MTIN becomes the child's TEXR");
   Check(parts[1].droppedRetail == 0, "child drops nothing");
@@ -215,7 +217,7 @@ void TestConvert() {
     Check(SplitRetailPart(part.part.data(), part.part.size(), properties, error), "converted PART reads as retail");
   }
   std::vector<RetailPartProperty> properties;
-  Check(SplitRetailPart(root.bytes.data(), root.bytes.size(), properties, error) && properties.size() == 9 &&
+  Check(SplitRetailPart(root.bytes.data(), root.bytes.size(), properties, error) && properties.size() == 10 &&
             properties[5].fourcc == EffectFourCC("COLR") && properties[5].value.size() == 4 + 22 + 32,
         "retail PART splits into its properties");
 }
@@ -267,7 +269,7 @@ void TestSingleNode() {
   Retail want;
   want.f("GPSM").f("COLR").f("KEYE").w(1).w(0).b(0).b(0).w(9).w(0).w(1);
   want.w(Bits(1.0f)).w(Bits(0.5f)).w(Bits(0.0f)).w(Bits(-1.0f));
-  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "half colour keys widen to floats");
   Check(parts.size() == 1 && parts[0].dropped.empty(), "an empty KSSM is nothing left out");
 }
@@ -329,7 +331,7 @@ void TestMappedElements() {
   want.f("SIZE").f("MULT").f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(1.0f));
   want.f("POFS").f("ANGC").f("CNST").w(0x80000000u).f("CNST").w(0x80000000u);
   want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(0.5f));
-  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "new elements map onto retail's");
   if (parts.size() == 1 && parts[0].part != want.bytes) {
     std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
@@ -364,7 +366,7 @@ void TestRejects() {
   Check(parts.size() == 1 && parts[0].droppedRetail == 1, "RADD in SIZE is dropped");
   Retail root;
   root.f("GPSM").f("LFOT").f("CNST").w(3).f("LTYP").f("CNST").w(2);
-  root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == root.bytes, "LFOT byte 3 is retail 3, LTYP byte 1 is retail 2");
 }
 }  // namespace
@@ -433,7 +435,7 @@ void TestShapes() {
     const float t = float(percent) / 100.0f;
     want.w(Bits(1.0f - t)).w(Bits(0.0f)).w(Bits(t)).w(Bits(1.0f - t));
   }
-  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "ASPR, RNDV and GRAD map onto retail's");
   if (parts.size() == 1) {
     for (const std::string& d : parts[0].dropped) {
@@ -481,7 +483,7 @@ void TestGradientFrames() {
       want.w(Bits(1.0f - t));
     }
   }
-  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "a gradient over the life in frames ends with it");
 }
 
@@ -546,7 +548,7 @@ void TestSwooshElectric() {
 
   Retail root;
   root.f("GPSM").f("MAXP").f("CNST").w(3).f("SSWH").f("CNST").w(0x0000AAAA);
-  root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts[0].type == EffectFourCC("PART") && parts[0].part == root.bytes, "root references the swoosh by id");
 
   Retail swoosh;
@@ -663,7 +665,7 @@ void TestSpawnTable() {
   root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
   root.f("SSWH").f("CNST").w(0x0000B002).f("SSSD").f("CNST").w(3);
   root.f("SELC").f("CNST").w(0x0000B003).f("SESD").f("CNST").w(3);
-  root.f("_END");
+  root.end();
   Check(parts[0].part == root.bytes, "tables merge into retail's KSSM, SSWH and SELC");
   Check(parts[0].dropped.size() == 1 && parts[0].droppedRetail == 1, "the second swoosh is left out");
   bool merged = false;
@@ -676,7 +678,7 @@ void TestSpawnTable() {
   }
   Check(merged && selected && conditional, "merge, selector and condition noted");
   std::vector<RetailPartProperty> properties;
-  Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 6,
+  Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 7,
         "converted spawn table reads as retail");
 }
 
@@ -801,7 +803,7 @@ Retail Patl(uint32_t id, int cols, int rows, int count, int mode, int flip) {
   for (const int v : {cols, rows, count, mode, flip}) {
     want.f("CNST").w(uint32_t(v));
   }
-  want.f("_END");
+  want.end();
   return want;
 }
 
@@ -817,7 +819,7 @@ void TestAtlasTexture() {
   Check(parts.size() == 1 && parts[0].part == Patl(0x7E570006u, 4, 4, 16, 0, 0).bytes, "TXP2 becomes a random-tile PATL");
   Check(!parts.empty() && parts[0].droppedRetail == 0, "TXP2 drops nothing");
   Check(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
-            properties.size() == 1,
+            properties.size() == 2,
         "a PATL reads as retail");
   parts = ConvertOne(OneGenerator([](auto& o) { PutTxp2(o, 4, 2, 5); }), io);
   Check(parts.size() == 1 && parts[0].part == Patl(0x7E570006u, 4, 2, 6, 0, 0).bytes, "an int range is the last tile");
@@ -867,11 +869,11 @@ void TestModelChoice() {
   for (uint32_t i = 0; i < 4; ++i) {
     want.f("CNST").w(0xC0DE000A + i);
   }
-  want.f("_END");
+  want.end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "SLCT of four models is PMDL and PMDV");
   Check(!parts.empty() && parts[0].droppedRetail == 0, "the model choice drops nothing");
   Check(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
-            properties.size() == 2,
+            properties.size() == 3,
         "PMDL and PMDV read as retail");
 
   parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 4, 2); }), io);
@@ -904,7 +906,7 @@ void TestDrawsNothing() {
                }),
                {});
   Retail want;
-  want.f("GPSM").f("MAXP").f("CNST").w(4).f("SIZE").f("CNST").w(Bits(0.0f)).f("_END");
+  want.f("GPSM").f("MAXP").f("CNST").w(4).f("SIZE").f("CNST").w(Bits(0.0f)).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "a generator with no texture gets SIZE 0");
   Check(!parts.empty() && parts[0].dropped.size() == 1 &&
             parts[0].dropped[0] == "SIZE: the generator draws nothing",
@@ -921,7 +923,7 @@ void TestDrawsNothing() {
                {});
   Retail textured;
   textured.f("GPSM").f("MAXP").f("CNST").w(4).f("SIZE").f("CNST").w(Bits(2.0f));
-  textured.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  textured.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == textured.bytes, "a generator with a TEXR keeps its SIZE");
   Check(!parts.empty() && parts[0].dropped.empty(), "nothing dropped with a TEXR");
 }
@@ -937,7 +939,7 @@ void TestBlendMode() {
                {});
   Retail want;
   want.f("GPSM").f("AAPH").f("CNST").b(1);
-  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "PBDM 2 becomes AAPH");
   Check(!parts.empty() && parts[0].approximated.empty(), "PBDM 2 is exact");
   Check(!parts.empty() && parts[0].droppedRetail == 0, "PBDM 2 drops nothing");
@@ -949,7 +951,7 @@ void TestBlendMode() {
                }),
                {});
   Retail alpha;
-  alpha.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  alpha.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == alpha.bytes, "PBDM 1 writes nothing");
   Check(!parts.empty() && parts[0].approximated.size() == 1 &&
             parts[0].approximated[0] == "PBDM 1 taken as alpha blending",
@@ -967,7 +969,7 @@ void TestGpuAvailability() {
                {});
   Retail want;
   want.f("GPSM").f("SIZE").f("CNST").w(Bits(1.0f));
-  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "GPUA becomes CNST 1");
   Check(!parts.empty() && parts[0].approximated.size() == 1 && parts[0].approximated[0] == "GPUA taken as 1",
         "GPUA is listed as approximated");
@@ -986,7 +988,7 @@ void TestParameterDefault() {
                {});
   Retail want;
   want.f("GPSM").f("SIZE").f("CNST").w(Bits(2.5f));
-  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "SPAF becomes its default");
   Check(!parts.empty() && parts[0].approximated.size() == 1 &&
             parts[0].approximated[0] == "SPAF taken as its default",
@@ -1010,7 +1012,7 @@ void TestModelRotation() {
   Retail want;
   want.f("GPSM").f("PMRT").f("CNST").f("CNST").w(Bits(-90.0f)).f("CNST").w(Bits(0.0f));
   want.f("SCAL").f("CNST").w(Bits(-0.05f));
-  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "PMRQ REUL becomes PMRT");
   Check(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(), "PMRQ REUL is exact");
 
@@ -1027,7 +1029,7 @@ void TestModelRotation() {
                }),
                {});
   Retail plain;
-  plain.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  plain.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == plain.bytes, "PMRQ with IRND writes nothing");
   Check(!parts.empty() && parts[0].dropped.size() == 1 && parts[0].dropped[0] == "PMRQ: an angle with IRND",
         "PMRQ with IRND is listed as dropped");
@@ -1157,14 +1159,17 @@ void TestVmat() {
   Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error), "vmat part reads as retail");
   const RetailPartProperty* vmat = nullptr;
   bool vorn = false;
+  bool pirn = false;
   for (const RetailPartProperty& property : properties) {
     if (property.fourcc == EffectFourCC("VMAT")) {
       vmat = &property;
     }
     vorn = vorn || property.fourcc == EffectFourCC("VORN");
+    pirn = pirn || property.fourcc == EffectFourCC("PIRN");
   }
   Check(vmat != nullptr, "a 461071b8 material writes VMAT");
   Check(vorn, "VORN is always written");
+  Check(pirn, "PIRN marks every converted PART");
   if (vmat != nullptr) {
     // CNST + u32 size, then the blob: version 2, features (Ramp = 8), blend 2, one texture.
     const std::vector<uint8_t>& v = vmat->value;

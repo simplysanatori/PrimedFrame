@@ -770,6 +770,9 @@ void CElementGen::UpdateExistingParticles() {
     p->x4_pos += p->x1c_vel;
     int particleFrame = x74_curFrame - p->x28_startFrame;
     CParticleGlobals::mCurrentParticle = &*p;
+#ifdef TARGET_PC
+    CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &*p : nullptr;
+#endif
     CParticleGlobals::SetParticleLifetime(p->x0_endFrame - p->x28_startFrame);
     CParticleGlobals::UpdateParticleLifetimeTweenValues(particleFrame);
     if (x26d_28_enableADV) {
@@ -814,6 +817,9 @@ void CElementGen::UpdateExistingParticles() {
     AccumulateBounds(p->x4_pos, p->x2c_lineLengthOrSize);
     ++p;
   }
+#ifdef TARGET_PC
+  CParticleGlobals::xPortIrndParticle = nullptr;
+#endif
 
   if (x30_particles.size() > 0) {
     rstl::list< CWarp* >::iterator it = x4_modifiersList.begin();
@@ -888,6 +894,9 @@ void CElementGen::CreateNewParticles(int count) {
     CParticleGlobals::SetParticleLifetime(particle.x0_endFrame);
     CParticleGlobals::UpdateParticleLifetimeTweenValues(0);
     CParticleGlobals::mCurrentParticle = &particle;
+#ifdef TARGET_PC
+    CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &particle : nullptr;
+#endif
 
     if (x26d_28_enableADV) {
       UpdateAdvanceAccessParameters(particleIndex, 0);
@@ -962,6 +971,9 @@ void CElementGen::CreateNewParticles(int count) {
 #endif
     AccumulateBounds(particle.x4_pos, particle.x2c_lineLengthOrSize);
   }
+#ifdef TARGET_PC
+  CParticleGlobals::xPortIrndParticle = nullptr;
+#endif
 }
 
 void CElementGen::UpdatePSTranslationAndOrientation() {
@@ -2717,6 +2729,9 @@ void CElementGen::RenderModels() {
       CParticleGlobals::SetParticleLifetime(lifetime);
       CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
       CParticleGlobals::mCurrentParticle = &particle;
+#ifdef TARGET_PC
+      CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &particle : nullptr;
+#endif
 
       if (x26d_28_enableADV) {
         CParticleGlobals::mParticleAccessParameters = x60_advValues[i].values;
@@ -2835,6 +2850,7 @@ void CElementGen::RenderModels() {
   }
 
 #ifdef TARGET_PC
+  CParticleGlobals::xPortIrndParticle = nullptr;
   if (vfxMesh) {
     PortRenderMeshesVfx(vfxMeshes);
   }
