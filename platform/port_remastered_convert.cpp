@@ -1808,17 +1808,19 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.kindParam[0] = 0.0;
     out.kindParam[1] = (ShortestDouble(cch[1]->color[2]) + 2.0) * difc;
     out.kindParam[2] = difc;
-    out.kindParam[3] = 0.0;
+    // The rim: F0 x AO x (1 - n.v)^CCH0.z on faces turned up, times CCH0.y x LINT
+    // (CCH0.x, which nothing in the exe sets at run time), at inverse exposure.
+    out.kindParam[3] = ShortestDouble(cch[0]->color[1]) * ShortestDouble(cch[0]->color[0]);
     out.kindStrength = ShortestDouble(cch[1]->color[0]);
     for (int i = 0; i < 3; ++i) {
       out.layerHeight[i] = ShortestDouble(cch[2]->color[i]);
     }
-    out.layerHeight[3] = 0.0;
-    // ICAN x CCH0.w, drawn linear: IINT drives CCH0.w at run time, and the stored 10 as
-    // the screen's strength is what turns the charged gun frost-white, as Remastered
-    // shows it; exposed like other glows (kPbrEmissive) the shell stayed dark teal.
-    out.glowLinear = true;
-    out.emissive = s * ShortestDouble(cch[0]->color[3]) / kPbrEmissive;
+    out.layerHeight[3] = ShortestDouble(cch[0]->color[2]);
+    // ICAN x CCH0.w (IINT), exposed like other glows: drawn linear, the stored 10 turned
+    // the shell a saturated cyan, where Remastered's white is the white base under the
+    // probe light and the rim. CIceBeamMP1::PreRenderGunFx sets IINT to 3 + 14 v, v
+    // going 0..0.5..0 once a second; the runtime pulses the stored peak to match.
+    out.emissive = s * ShortestDouble(cch[0]->color[3]);
   }
   if (std::find(std::begin(kShaderGunGlow), std::end(kShaderGunGlow), shader) != std::end(kShaderGunGlow) &&
       out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] && cch[2]) {

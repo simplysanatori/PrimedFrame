@@ -410,6 +410,14 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
   }
   if (kind > 11.5f && kind < 12.5f) {
     values[15] = sPortChargeShell;
+    // The glow's IINT pulses 3..10 and back once a second (CIceBeamMP1::PreRenderGunFx:
+    // 3 + 14 v, v 0..0.5..0); the record holds the peak, compressed by a square root.
+    const f32 phase = CGraphics::GetSecondsMod900();
+    const f32 v = 0.5f - std::fabs(phase - std::floor(phase) - 0.5f);
+    const f32 pulse = std::sqrt((3.f + 14.f * v) / 10.f);
+    values[0] *= pulse;
+    values[1] *= pulse;
+    values[2] *= pulse;
   }
   for (const SPortPBROverride& entry : sPortPBROverrides) {
     if (entry.model == this && entry.material == idx) {

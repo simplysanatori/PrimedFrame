@@ -1627,6 +1627,15 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
               pbr_lo *= max(ubuf.pbr_backlight.rgb, vec3f(0.0));
           }}
       }}
+      // Kind 12's rim, at inverse exposure like its edge: F0 x AO x (1 - n'.v) to the power
+      // pbr_layer_height.w (n' the normal nudged by (0.1, -0.1, 0) in view space), times
+      // pbr_param.w, on faces turned to world up.
+      if (pbr_kind > 11.5 && pbr_kind < 12.5) {{
+          let pbr_rn = normalize(pbr_n + vec3f(0.1, -0.1, 0.0));
+          let pbr_rim = clamp(pow(abs(1.0 - dot(pbr_rn, pbr_v)), max(ubuf.pbr_layer_height.w, 1e-3)), 0.0, 1.0) *
+                        clamp(dot(pbr_n, normalize(ubuf.pbr_up.xyz)), 0.0, 1.0) * ubuf.pbr_param.w;
+          pbr_glow += pbr_f0 * (pbr_rim * pbr_ao);
+      }}
       // Emitted light is at the room's static exposure, not the frame's (w of tone row 0).
       if (ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0) {{
           pbr_glow *= ubuf.pbr_tone[0].w;
