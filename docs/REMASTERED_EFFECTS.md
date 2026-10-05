@@ -470,38 +470,44 @@ embedded children's lights.
 
 ## Tools
 
-`tests/port_remastered_effect_tool.cpp` is a dev tool, not built by CMake:
+`tests/port_remastered_effect_tool.cpp` is a dev tool, the CMake target
+`remastered_effect_tool` (not in `all`; desktop only):
 
 ```
-g++ -std=c++20 -O2 -Iplatform/include -Iextern/astcenc/Source \
-    tests/port_remastered_effect_tool.cpp \
-    platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp \
-    platform/port_remastered_effect_import.cpp platform/port_remastered_image.cpp \
-    platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp \
-    platform/port_remastered_convert.cpp platform/port_remastered_cmdl.cpp \
-    platform/port_remastered_anuv.cpp \
-    build/port-gcc/extern/astcenc/libastcenc.a -lzstd -lpthread -o effect_tool
-./effect_tool dump <file.GENP>             # one effect as text
-./effect_tool mtin <file.GENP>...          # one TSV line per generator with a
+cmake --build build/port-gcc --target remastered_effect_tool
+effect_tool=build/port-gcc/remastered_effect_tool
+$effect_tool dump <file.GENP>             # one effect as text
+$effect_tool mtin <file.GENP>...          # one TSV line per generator with a
                                            # material instance: file, form, MATI
                                            # (pak order), TEXR, PBDM, PMTR items
                                            # (group/slot=value), SMTR item count
-./effect_tool scan <romfs> [outdir]        # coverage, references, failures;
+$effect_tool scan <romfs> [outdir]        # coverage, references, failures;
                                            # outdir gets one dump per effect
-./effect_tool extract <romfs> <outdir>     # every unique GENP as raw <id>.GENP,
+$effect_tool extract <romfs> <outdir>     # every unique GENP as raw <id>.GENP,
                                            # for grepping what dumps show as raw
                                            # blocks (PVAR, parameter tables)
-./effect_tool convert <romfs> <retail|-> <outdir>
+$effect_tool convert <romfs> <retail|-> <outdir>
                                            # every effect and child as retail
                                            # PART/SWHC/ELSC, what was left out by
                                            # type, children by form, and (with a
                                            # folder of the disc's <id>.<type>) a
                                            # comparison of every retail-id file
                                            # plus a split of every disc file
-./effect_tool import <romfs> <retail> <outdir>
+$effect_tool import <romfs> <retail> <outdir>
                                            # the import's effect step, with the
-                                           # ids of the files in <retail> as the disc
+                                           # ids of the files in <retail> as the disc;
+                                           # also writes <outdir>/effects.tsv
+$effect_tool pdump <file.PART|SWHC|ELSC>   # a retail effect's properties as text
+$effect_tool pdiff <a> <b>                 # only the properties that differ
+$effect_tool explain <romfs> <retail> <GENP id>
+                                           # the import step on one effect: pairing,
+                                           # result, dropped/approximated with reasons
+$effect_tool mat <romfs> <model id|name> [material index]
+                                           # one model's material decisions
 ```
+
+The reports the import writes into the mod, and how to read them, are in
+`docs/DEBUGGING.md` "Converter reports".
 
 
 `tests/port_remastered_effect.cpp` (`port_remastered_effect_tests`) checks

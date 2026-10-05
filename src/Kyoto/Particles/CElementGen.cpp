@@ -37,6 +37,7 @@
 #include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "port_debug.h"
+#include "port_fx_debug.h"
 #include "port_vfx_particles.h"
 #endif
 
@@ -526,6 +527,13 @@ void CElementGen::SetGlobalOrientAndTrans(const CTransform4f& xf) {
 }
 
 const bool CElementGen::Update(double dt) {
+#ifdef TARGET_PC
+  PortFx::UpdateScope fxScope(dt);
+  if (fxScope.skip) {
+    return false;
+  }
+  dt = fxScope.dt;
+#endif
   CParticleGlobals::SParticleSystem thisSystem('PART', this);
 
   if (x28_loadedGenDesc->x4_PSWT && !x26d_25_warmedUp) {
@@ -1171,6 +1179,9 @@ bool CElementGen::IsSystemDeletable() const {
 
 void CElementGen::Render() {
   CStopwatch timer;
+#ifdef TARGET_PC
+  PortFx::RenderScope fxScope;
+#endif
 
   x274_backupLightActive = CGraphics::GetLightMask();
   CGraphics::DisableAllLights();
@@ -1178,6 +1189,13 @@ void CElementGen::Render() {
   for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
     (*it)->Render();
   }
+
+#ifdef TARGET_PC
+  if (PortFx::gMuteActive && PortFx::IsMuted(*this)) {
+    CGraphics::SetLightState(x274_backupLightActive);
+    return; // `fx mute`: still updates and lives, just not drawn
+  }
+#endif
 
   CParticleGlobals::SParticleSystem sys('PART', this);
 
@@ -3031,3 +3049,66 @@ bool CElementGen::GetParticleEmission() const { return x88_particleEmission; }
 const CTransform4f& CElementGen::GetGlobalOrientation() const { return x22c_globalOrientation; }
 
 const CVector3f& CElementGen::GetGlobalTranslation() const { return xe8_globalTranslation; }
+
+#ifdef TARGET_PC
+uint CElementGen::PortFxAsset() const { return CToken(x1c_genDesc).GetTag().GetId(); }
+
+void CElementGen::PortFxDescribe(PortFxInfo& out) const {
+  out.kind = 'PART';
+  out.asset = PortFxAsset();
+  out.particles = static_cast< int >(x30_particles.size());
+  out.maxParticles = x90_MAXP;
+  out.frame = x74_curFrame;
+  out.lifetime = x268_PSLT;
+  out.emitting = x88_particleEmission;
+  out.deletable = IsSystemDeletable();
+  out.pos[0] = xe8_globalTranslation.GetX();
+  out.pos[1] = xe8_globalTranslation.GetY();
+  out.pos[2] = xe8_globalTranslation.GetZ();
+  for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
+    out.children.push_back(*it);
+  }
+  const CGenDescription& desc = *x28_loadedGenDesc;
+  char buf[64];
+  if (const CPortVfxData* vfx = desc.xPortVfx.get()) {
+    out.vfx = vfx->mat.version == 2 ? "VMAT" : "VMAT(unsupported)";
+    if (vfx->vtmtCount != 0) {
+      std::snprintf(buf, sizeof(buf), " VTMT*%u", vfx->vtmtCount);
+      out.vfx += buf;
+    }
+    if (!vfx->vpmt.empty()) {
+      std::snprintf(buf, sizeof(buf), " VPMT*%zu", vfx->vpmt.size());
+      out.vfx += buf;
+    }
+    if (!vfx->vsmt.empty()) {
+      std::snprintf(buf, sizeof(buf), " VSMT*%zu", vfx->vsmt.size());
+      out.vfx += buf;
+    }
+    if (vfx->ssze != nullptr) {
+      out.vfx += " SSZE";
+    }
+    if (vfx->iten != nullptr) {
+      out.vfx += " ITEN";
+    }
+    if (vfx->vorn != 0) {
+      std::snprintf(buf, sizeof(buf), " VORN%u", vfx->vorn);
+      out.vfx += buf;
+    }
+    if (vfx->meshTris != 0) {
+      std::snprintf(buf, sizeof(buf), " VMSH(%u tris)", vfx->meshTris);
+      out.vfx += buf;
+    }
+  }
+  if (desc.xPortXfmd != kPortXfmdRetail) {
+    std::snprintf(buf, sizeof(buf), "%sXFMD%u", out.vfx.empty() ? "" : " ", unsigned(desc.xPortXfmd));
+    out.vfx += buf;
+  }
+  if (desc.xPortIrnd) {
+    out.vfx += out.vfx.empty() ? "IRND" : " IRND";
+  }
+  if (!desc.xPortPMDV.empty()) {
+    std::snprintf(buf, sizeof(buf), "%sPMDV*%zu", out.vfx.empty() ? "" : " ", desc.xPortPMDV.size());
+    out.vfx += buf;
+  }
+}
+#endif

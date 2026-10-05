@@ -674,6 +674,102 @@ def cmd_ab(a):
     print(f"{pre}-a.png {pre}-b.png {pre}-diff.png {pre}-ab.png")
 
 
+def split_cmds(s):
+    return [c.strip() for c in s.split(";") if c.strip()]
+
+
+def cmd_film(a):
+    """Run --pre, hold the simulation, step to each listed frame and shoot: a labelled filmstrip."""
+    run = load_run(a.name)
+    frames = sorted({int(x) for x in a.frames.split(",") if x.strip()})
+    if not frames or frames[0] < 0:
+        die("--frames wants non-negative integers, e.g. 0,4,8,16,32")
+    out = Path(a.out).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    stem = out.with_suffix("")
+    if a.pre:
+        if not run_console(run, split_cmds(a.pre), echo=False):
+            die("a --pre command failed")
+    pngs, at = [], 0
+    for i, f in enumerate(frames):
+        cmds = ["hold 1"] if i == 0 else []
+        if f > at:
+            cmds.append(f"step {f - at}")
+            at = f
+        pngs.append(bmp_to_png(take_shot(run, cmds, 2), f"{stem}-f{f}.png"))
+    labels = [f"frame {f}" for f in frames]
+    cols = a.cols or min(len(frames), 3)
+    captioned(pngs, labels, cols, a.width).save(out)
+    print(out)
+    for f, prev, cur, pf in zip(frames[1:], pngs, pngs[1:], frames):
+        print(f"frame {pf} -> {f}: {image_stats(prev, cur)[1]}")
+    run_console(run, ["hold 0"], echo=False)
+
+
+def region_mad(pa, pb, region):
+    import numpy as np
+    from PIL import Image
+    x, y, w, h = region
+    A = np.asarray(Image.open(pa).convert("RGB")).astype(np.int16)[y:y + h, x:x + w]
+    B = np.asarray(Image.open(pb).convert("RGB")).astype(np.int16)[y:y + h, x:x + w]
+    if A.size == 0:
+        die(f"--bad-region {region} is outside the image")
+    return float(np.abs(A - B).mean())
+
+
+def cmd_fxbisect(a):
+    """Mute each asset in an effect's tree in turn; the culprit changes the bad region most."""
+    run = load_run(a.name)
+    region = parse_crop(a.bad_region)
+    shot_cmds = split_cmds(a.shot_cmds)
+    root = a.root.lower().lstrip("#")
+    if not game_alive(run):
+        die(f"run '{a.name}' is not running", 2)
+    pre = Path(a.out_dir).resolve() if a.out_dir else Path(run["dir"]) / "fxbisect"
+    pre.mkdir(parents=True, exist_ok=True)
+
+    def shot(label, muted):
+        cmds = ["hold 0", "fx mute clear"] + ([f"fx mute {muted}"] if muted else []) + shot_cmds
+        return Path(bmp_to_png(take_shot(run, cmds, a.settle), str(pre / f"{label}.png")))
+
+    ref = shot("ref", None)
+    floor = region_mad(ref, shot("ref2", None), region)  # the same shot again: camera sway, timing
+    res = console(run["port"], ["fx list PART"])[0][2]
+    gid = None
+    for line in res:
+        m = re.match(r"#(\d+) PART (\w{8})", line)
+        if m and m.group(2).lower() == root:
+            gid = int(m.group(1))  # the newest matching root wins
+    if gid is None:
+        die(f"no live PART {root} after --shot-cmds (fx list PART printed: {' | '.join(res)[:200]})")
+    tree = console(run["port"], [f"fx tree #{gid}"])[0][2]
+    assets = []
+    for line in tree:
+        m = re.match(r"\s*#\d+ (\w{4}) (\w{8}) ", line)
+        if m and m.group(2) not in [x[1] for x in assets]:
+            assets.append((m.group(1), m.group(2)))
+    print(f"tree of #{gid} ({len(assets)} distinct assets):")
+    print("\n".join(tree))
+    scores = []
+    for kind, asset in assets:
+        img = shot(f"mute-{asset}", asset)
+        scores.append((region_mad(ref, img, region), kind, asset, img))
+    run_console(run, ["fx mute clear", "hold 0"], echo=False)
+    scores = [(max(0.0, m - floor), k, x, i) for m, k, x, i in scores]
+    scores.sort(reverse=True)
+    total = sum(sc[0] for sc in scores) or 1.0
+    print(f"\nregion {a.bad_region}: difference vs the reference when the asset is muted "
+          f"(noise floor {floor:.3f} from an unmuted repeat, already subtracted)")
+    for mad, kind, asset, img in scores:
+        print(f"  {kind} {asset}  mad={mad:7.3f}  {100 * mad / total:5.1f}%  {img}")
+    print(f"culprit: {scores[0][1]} {scores[0][2]}" if scores and scores[0][0] > 0.25
+          else "no asset's muting changes the region (is it the shot commands, or the root's own draw?)")
+    sheet = pre / "sheet.png"
+    top = scores[:5]
+    captioned([ref] + [t[3] for t in top], ["reference"] + [f"mute {t[2]}" for t in top], 3, 480).save(sheet)
+    print(sheet)
+
+
 def fmt_age(s):
     s = int(s)
     return f"{s // 3600}h{s % 3600 // 60:02d}m" if s >= 3600 else f"{s // 60}m{s % 60:02d}s"
@@ -865,6 +961,20 @@ def build_parser():
     s.add_argument("--cols", type=int)
     s.add_argument("--labels", help="comma-separated captions (default: file names)")
     s.add_argument("--width", type=int, default=480, help="thumbnail width")
+    s = add("film", cmd_film, "step a held simulation and shoot at the listed frames: labelled filmstrip + per-frame diffs")
+    s.add_argument("name")
+    s.add_argument("out")
+    s.add_argument("--frames", default="0,4,8,16,32", help="comma-separated tick counts after the pre commands")
+    s.add_argument("--pre", help="';'-separated console commands to run first (e.g. 'fx 12345678 5')")
+    s.add_argument("--cols", type=int)
+    s.add_argument("--width", type=int, default=480)
+    s = add("fxbisect", cmd_fxbisect, "mute each asset of an effect's tree and rank which one changes a region")
+    s.add_argument("name")
+    s.add_argument("root", help="root PART asset id (hex) as spawned by --shot-cmds")
+    s.add_argument("--shot-cmds", required=True, help="';'-separated commands that spawn the effect (and step/hold)")
+    s.add_argument("--bad-region", required=True, help="x,y,w,h of the wrong-looking area")
+    s.add_argument("--settle", type=int, default=2, help="frames to wait before each shot")
+    s.add_argument("--out-dir", help="where the shots go (default: build/rig/<name>/fxbisect)")
     s = add("stop", cmd_stop, "quit the game, then kill only the recorded processes")
     s.add_argument("name", nargs="?")
     s.add_argument("--all", action="store_true")

@@ -42,6 +42,8 @@ Boot takes about 10 s with `--room`. Use your own run names so sessions stay apa
 - `diff a.png b.png [--out heat.png] [--fail-above MAD]`: `mad= psnr= changed=% bbox=x,y,w,h luma_a= luma_b=`; exit 3 above the threshold.
 - `pick <name> <x> <y> [--shot out.png]`: which draw is at a window pixel (top-left origin): owner, CMDL, material, record, shader hash. `--shot` writes a normal frame with a crosshair on the pixel.
 - `sheet out.png img... [--cols N] [--labels a,b] [--width 480]`
+- `film <name> <out.png> [--frames 0,4,8,16,32] [--pre "cmd;cmd"] [--cols N] [--width W]`: runs `--pre`, then `hold 1`, steps to each listed tick count and shoots; writes a labelled filmstrip plus `<out>-f<N>.png` and prints the diff of each frame vs the previous one. Spawn the effect in `--pre` (tick commands such as `fx` do not run while held). Resumes with `hold 0`.
+- `fxbisect <name> <root PART> --shot-cmds "cmd;cmd" --bad-region x,y,w,h [--settle N] [--out-dir D]`: runs the shot commands, reads the effect's `fx tree`, then mutes each distinct asset in turn (re-running the shot commands) and ranks them by how much the region changes against the unmuted reference (an unmuted repeat gives the noise floor, subtracted). Writes shots and `sheet.png` under `build/rig/<name>/fxbisect/`.
 - `log <name> [-n 40] [--grep RE] [--raw]`: tail of `game.log`, dropping `MP frame|prompt |mpstream` lines (constant `NOISE`).
 - `crash [<name>|<logfile>] [--binary PATH]`: symbolizes the last `port: crashed:` block with one `addr2line` call (`#N func file:line`); warns if the log's `port: build` differs from `<binary> --version`. For Android pass the matching `libmain.so` with `--binary`.
 - `ls` (alive/dead, display, port, build, room, uptime; reaps Xvfb of dead runs), `stop <name>|--all` (sends `quit`, then SIGTERM/SIGKILL on the recorded pids only; reports a crash found in the log), `clean [--keep 5]` (deletes dead run dirs under `build/rig/` only).
@@ -100,6 +102,84 @@ so wait a few frames before the shot (a shot right after `shader reload` can mis
 if one is stale). Hashes change with the ShaderConfig, so an override dies when a setting that
 changes the module is toggled. Clear it with `shader override off`.
 
+## Particles
+
+Console `fx` (also in `docs/NATIVE_PORT.md`) shows the live generators of the particle engine
+(PART, SWHC, ELSC; each registers itself, always compiled in, no cost while unused):
+
+    fx list [filter]       root generators: #id, kind, asset, pos, live/max particles, frame/life,
+                           emitting|idle, finished, children, vfx[...] = native VFX props
+                           (VMAT VTMT*n VPMT*n VSMT*n SSZE ITEN VORNn VMSH XFMDn IRND PMDV), or retail-draw
+    fx tree <#id>          that generator and its children, recursively
+    fx stats               live gens by kind, vfx quads/triangles/draws and CPU ms (update, render) last frame;
+                           the first call starts the timers, so ms show from the next frame
+    fx mute <asset>|clear|list, fx solo <asset|#id>   muted assets still update and live, but do not draw
+                           (the mute is by asset, so every instance; `#id` expands to the whole tree)
+    fx timescale <s>       particle time x s (0 freezes particles only; children are not scaled twice)
+    fx <PART> [dist] [scale] [loop]   spawn in front of the game camera, prints `generator #id`
+
+`fx list/tree/stats/mute/solo/timescale` run even while `hold 1`; spawning does not (a tick command).
+
+**Spawn and filmstrip an effect**
+
+    $M start r --room 83F6FF6F:D5CDB809 --env MP_SKIP_CUTSCENES=1 --mods <dir with the import>
+    $M cmd r 'wait 300'                       # the first capture after boot shows the intro cutscene
+    $M film r /tmp/fx.png --pre 'fx C0E95E90 5' --frames 0,4,8,16,32,60
+
+The whole view moves a little (gun sway), so read the strip, not just the diffs. `fx ... loop` keeps a
+short effect in view across a `step`-less run.
+
+**Find which child draws the white quad**
+
+    $M cmd r 'fx C0E95E90 5 loop' 'wait 4' 'fx list C0E95E90'     # -> #id
+    $M cmd r 'fx tree #163'                                          # assets of the children
+    $M cmd r 'fx mute 5B9BD0F4' 'shot'                               # one at a time, or let fxbisect do it
+    $M fxbisect r C0E95E90 --shot-cmds 'fx C0E95E90 5;hold 1;step 8' --bad-region 560,330,160,160
+
+`fxbisect` prints the ranking and `sheet.png` (reference + the five biggest). Use a tight region around the
+quad: the shots are not pixel-stable (the noise floor is printed), so a culprit is only credible when it
+clearly beats the floor and its mute shot shows the quad gone.
+
+**Solo an effect in a room**
+
+    $M cmd r 'fx list' 'fx solo #137' 'fx mute list'    # only that generator's assets draw
+    $M shot r /tmp/solo.png ; $M cmd r 'fx mute clear'
+
+## Converter reports
+
+Every Remastered import writes `<mod>/reports/` (next to `.import-version`): sorted, tab-separated,
+deterministic (no timestamps), so two imports diff cleanly.
+
+- `materials.tsv`: one row per converted output material. Columns: `cmdl` (output model id),
+  `mat` (its material index), `source` (Remastered model uuid), `srcmat`, `shader` (id8),
+  `role` (the shader's lists, e.g. `inverse-exposure+gun-body`), `flags` (hex), `tag`
+  (PBR4..7 / WRAP / TEV), `kind` (PBR shader class, 0 standard), `mode` (1 unlit, 2 glow mask,
+  4 vertex tint, 8 colour-unlit), `path` (`pbr`|`tev`), `pathReason`, `kindReason`, `emissive`,
+  `backlight`, `strength`, `p0`..`p3`, `cube` (reflection cube id).
+- `effects.tsv`: one row per Remastered effect considered (a GENP standing for several PARTs has
+  a row each). Columns: `genp`, `retail` (the PART it stands for, `-` if none), `result`
+  (`imported`|`failed`|`unpaired`|`no-disc-part`), `method` (`carried-over`, the pairing section
+  of `kMatchedEffects`: `name`, `room-placement`, `chpr-set`, `chpr-event`, `loose-events`,
+  `script-slot`, `event-bones-per-character`, `event-frames-per-character`, `by-hand`; `none`
+  when unpaired), `reason` (for a failure), `kinds` (files written), `dropped` (retail properties
+  left out), `droppedList` (`FOURCC: why;...`), `approximatedList`.
+- `summary.txt`: counts per tag, kind, path, reason and role, and per result, method and failure.
+- `reports/parts/` holds each stage's own rows (models, roommodels, effects). They are what a
+  reused stage links in, so a no-change re-import keeps the reports complete.
+
+**Why is this material kind X?** `grep -P '^<cmdl>\t' reports/materials.tsv`, read `role`,
+`kindReason`, `pathReason`. For one model offline: `remastered_effect_tool mat <romfs> <uuid|name>
+[index]` (standalone conversion, so no TEV-path rows).
+
+**Why is this effect unpaired / missing?** `grep <genp> reports/effects.tsv`: `unpaired`/`none`
+means no `kMatchedEffects` row and no carried-over id; `failed` has the reason (`parse:`, `no
+texture:`...). `remastered_effect_tool explain <romfs> <retailDir> <GENP id>` runs just that
+effect and prints the pairing, dropped and approximated lists. `pdump` shows a retail PART's
+properties, `pdiff a b` only those that differ (e.g. the disc's against the converted one).
+
+**What changed between two imports?** `diff -u old/reports/materials.tsv new/reports/materials.tsv`
+(likewise `effects.tsv`, `summary.txt`).
+
 ## Limits
 
 - Boot is `MP_BOOT_WORLD` only (works on any build); `MP_SMOKE_*` needs `build/smoke-gcc`
@@ -114,3 +194,6 @@ changes the module is toggled. Clear it with `shader override off`.
 `tools/mpcon.py` (the plain console client, also usable against a real game),
 `docs/NATIVE_PORT.md` (full console command list, env variables),
 `build/mpr/re.sh` + `build/mpr/TOOLS.md` (local Remastered reverse-engineering toolkit).
+- `fx` mute hides draws only; muted generators keep emitting and updating (so their children still count in
+  `fx stats` particles). Owner objects are not shown, and CRSC (crossfade/swoosh descriptions that are not
+  generators) are not listed. Roots are the generators nobody else lists as a child.

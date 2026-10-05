@@ -595,6 +595,10 @@ struct MapRef {
 
 struct RemMaterial {
   std::string name;
+  uint32_t shader = 0;      // the Remastered shader id (big-endian first word), for the report
+  uint32_t flags = 0;       // the material's feature flags (unk1)
+  std::string role;         // the shader lists it is in
+  std::string reason;       // which rule chose the kind, for the report
   MapRef maps[kMaps];
   double emissive = 1.0;   // Remastered's emissive strength
   double backlight = 0.0;  // and its backlight strength (from behind; see BacklightRecord)
@@ -1373,14 +1377,62 @@ constexpr uint32_t kShaderTints[] = {0x9EFE0D2E, 0xCA10C453, 0x17E458CD, 0xE9DF2
 
 // Which of a Remastered material's parameters feed the four maps, and its two
 // strengths. Later parameters replace earlier ones, as in the reference.
+// The names of the shader constants and lists a shader is in ("-" for none), for the materials report.
+std::string ShaderRole(uint32_t shader) {
+  std::string out;
+  auto add = [&](bool in, const char* name) {
+    if (in) {
+      out += (out.empty() ? "" : "+") + std::string(name);
+    }
+  };
+  auto in = [&](const auto& list) { return std::find(std::begin(list), std::end(list), shader) != std::end(list); };
+  add(shader == kShaderHeightBlend, "height-blend");
+  add(shader == kShaderUpLayer, "up-layer");
+  add(shader == kShaderDetail, "detail");
+  add(shader == kShaderLava, "lava");
+  add(shader == kShaderWaterfall, "waterfall");
+  add(shader == kShaderParallax, "parallax");
+  add(shader == kShaderGlass, "glass");
+  add(in(kShaderLavaPool), "lava-pool");
+  add(in(kShaderGunGlow), "gun-glow");
+  add(shader == kShaderFrozenShell, "frozen-shell");
+  add(shader == kShaderMatcapShell, "matcap-shell");
+  add(in(kShaderInverseExposure), "inverse-exposure");
+  add(in(kShaderIncanMaskSquared), "incan-mask-squared");
+  add(in(kShaderGunBody), "gun-body");
+  add(in(kShaderPremulGlass), "premul-glass");
+  add(shader == kShaderColorUnlit, "color-unlit");
+  add(in(kShaderTints), "tinted");
+  return out.empty() ? "-" : out;
+}
+
+const char* KindName(int kind) {
+  switch (kind) {
+  case 0: return "standard";
+  case 1: return "up-layer";
+  case 2: return "detail";
+  case 3: return "lava";
+  case 4: return "parallax";
+  case 6: return "lava-pool";
+  case 7: return "waterfall";
+  case 8: return "glass";
+  case 9: return "gun-glow";
+  case 10: return "premul-glass";
+  default: return "kind?";
+  }
+}
+
 RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   RemMaterial out;
   out.name = mat.name;
+  out.flags = mat.unk1;
   out.cutout = (mat.unk1 & kCutoutFlag) != 0;
   out.blended = (mat.unk1 & kTransparentFlag) != 0 && !out.cutout;
   uint8_t sid[4];
   std::memcpy(sid, &mat.shaderId, 4);
   const uint32_t shader = uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
+  out.shader = shader;
+  out.role = ShaderRole(shader);
   out.hidden = shader == kShaderFrozenShell;
   out.shell = shader == kShaderMatcapShell;
   bool custom = false;
@@ -1574,6 +1626,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     // pulse along the ramp (the converter turns the curve into a texture matrix). The
     // strength undoes kPbrEmissive, which left them a dim orange.
     out.emissive = s / kPbrEmissive;
+    out.reason += "gun-body list: stripes ramp; ";
   } else if (out.maps[kEmissive].has &&
              std::binary_search(std::begin(kShaderInverseExposure),
                                 std::end(kShaderInverseExposure), shader)) {
@@ -1583,6 +1636,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     // compressed: it is already what the screen shows, not an HDR value for bloom.
     out.glowLinear = true;
     out.emissive = s / kPbrEmissive;
+    out.reason += "inverse-exposure list: glow at inverse exposure; ";
   }
   // The shaders of their own. ICNC is 1 in every lava material and the strength
   // is CCH0.x instead.
@@ -1776,10 +1830,42 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
     out.height = 0.0;
   }
+  // The kind the shader asked for: a role that names a kind but left it 0 lacked its maps or colours.
+  if (out.kind == 0) {
+    static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
+                                             "glass",    "lava-pool", "gun-glow", "premul-glass"};
+    for (const char* name : kKindRoles) {
+      if (out.role.find(name) != std::string::npos) {
+        out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
+      }
+    }
+  } else {
+    out.reason += std::string("kind ") + KindName(out.kind) + " from the shader (" + out.role + "); ";
+  }
   // All but lava and premultiplied glass draw with the second layer's maps.
   if (out.kind != 3 && out.kind != 10 && !out.layered) {
+    if (out.kind != 0) {
+      out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
+    }
     out.kind = 0;
     out.vcolor = false;
+  }
+  if (out.hidden) {
+    out.reason += "frozen-shell: hidden; ";
+  }
+  if (out.shell) {
+    out.reason += "matcap-shell; ";
+  }
+  if (out.maskSquared) {
+    out.reason += "incan-mask-squared: glow masked by base alpha squared; ";
+  } else if (out.mask) {
+    out.reason += "incan-mask flag: glow masked by base alpha; ";
+  }
+  if (out.colorUnlit) {
+    out.reason += "color-unlit shader; ";
+  }
+  if (out.kind == 10) {
+    out.reason += "premul-glass list: lit premultiplied; ";
   }
   // A material with an AUVI names, per UV output channel, which of the model's
   // texcoord sets feeds it, so a map's texcoord no longer names a set directly.
@@ -1837,6 +1923,12 @@ bool BackLightScale(const RemMaterial& m) {
 
 bool ColorUnlitDraw(const RemMaterial& m) { return m.colorUnlit && m.unlit && m.tinted; }
 
+// The PBR record's mode word: 1 unlit, 2 glow masked by the base alpha, 4 tinted by the vertex
+// colour, 8 ColorUnlit's draw.
+int PbrMode(const RemMaterial& m) {
+  return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0);
+}
+
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
   const double e = m.glowLinear ? std::max(m.emissive, 0.0)
                                 : std::sqrt(std::min(std::max(m.emissive, 0.0), kPbrEmissiveMax));
@@ -1861,8 +1953,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
   const char* tag = "PBRM";
   if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind) {
     f.push_back(m.height);
-    f.push_back((m.unlit ? 1.0 : 0.0) + (m.mask ? 2.0 : 0.0) + (m.tinted ? 4.0 : 0.0) +
-                (ColorUnlitDraw(m) ? 8.0 : 0.0));
+    f.push_back(double(PbrMode(m)));
     tag = "PBR2";
     if (m.layered || m.kind) {
       // Only a blend of two layers has an edge.
@@ -3054,7 +3145,37 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   };
   std::vector<std::vector<uint32_t>> dlAttrs;  // per output material: the uv array of each texcoord attribute
   std::vector<bool> dlColor;                   // and whether a colour index comes before them
+  // The materials report: one row per output material, as it is pushed.
+  auto decide = [&](const RemMaterial& rem, uint32_t sourceIndex, const char* path, const std::string& pathReason,
+                    const std::string& notes, const std::string& tag, uint32_t cube) {
+    if (!io.decision) {
+      return;
+    }
+    MaterialDecision d;
+    d.cmdl = Hex8(opt.outputModel != 0 ? opt.outputModel : opt.retail);
+    d.index = int(dlAttrs.size()) - 1;
+    d.source = opt.source;
+    d.sourceIndex = int(sourceIndex);
+    d.shader = Hex8(rem.shader);
+    d.role = rem.role;
+    d.flags = rem.flags;
+    d.tag = tag;
+    d.kind = rem.kind;
+    d.mode = PbrMode(rem);
+    d.path = path;
+    d.pathReason = pathReason;
+    d.kindReason = notes + rem.reason;
+    d.emissive = rem.emissive;
+    d.backlight = rem.backlight;
+    d.strength = rem.kindStrength;
+    for (int i = 0; i < 4; ++i) {
+      d.p[i] = rem.kindParam[i];
+    }
+    d.cube = cube != 0 ? Hex8(cube) : "-";
+    io.decision(d);
+  };
   for (const auto& key : keys) {
+    std::string loopNotes;  // what this loop changed on the material, for the report
     const int rmat = std::get<0>(key);
     const RetailMaterial& pm = retail.mats[rmat];
     RemMaterial rem = mats[std::get<1>(key)];
@@ -3066,6 +3187,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // Remastered's missile lock-on highlight is a runtime effect: its map is
     // solid red, so baked in it turns grey shards red.
     if (Lower(rem.name).find("missilelock") != std::string::npos) {
+      loopNotes += "missilelock: emissive map dropped; ";
       rem.maps[kEmissive].has = false;
     }
     // A retail material's vertices have no layer weight.
@@ -3083,11 +3205,15 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         rem.maps[kEmissive].coord = 0;  // one colour: any texcoord does
         rem.emissive = rem.kindStrength * rem.kindStrength;
       }
+      loopNotes += "gun-glow without vertex colours: drawn as the ramp's mean; ";
       rem.kind = 0;
       rem.vcolor = false;
       rem.layered = false;
     }
     if (!opt.standalone && !gunGlow) {
+      if (rem.kind != 0) {
+        loopNotes += std::string("kind ") + KindName(rem.kind) + " dropped: a retail model, not standalone; ";
+      }
       rem.kind = 0;
       rem.vcolor = false;
     }
@@ -3140,6 +3266,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
                         Get("pbr:base", rt, baseAlpha, opt).has_value();
     if (usePbr) {
       ++pbr;
+      std::string recordTag;
       // A layered material's base alphas are the two heights the blend compares.
       const int nmaps = rem.layered ? kLayeredMaps : kMaps;
       MapRef both[kLayeredMaps + 1];
@@ -3239,10 +3366,19 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         AnuvCounts scratch;  // counted once, not once per material set
         setBlobs[si].push_back(PbrMaterial(pm, vtx, idx, group, coords, rem, wrap, cube, authored, entry,
                                            si == 0 ? anuvCounts : scratch));
+        if (si == 0) {
+          recordTag.assign(setBlobs[si].back().end() - 4, setBlobs[si].back().end());
+        }
       }
+      decide(rem, std::get<1>(key), "pbr", "ok", loopNotes, recordTag, cube);
       continue;
     }
     ++tev;
+    const std::string tevReason =
+        !opt.pbr ? "pbr off"
+        : !rt[kBase].has ? "no base map"
+        : !(opt.standalone || glow || !IsFx(pm)) ? "retail fx material keeps its TEV"
+                                                   : "the base map did not resolve";
     // The TEV path: the retail material with each texture slot refilled from
     // the Remastered map that matches what its stage does.
     const std::vector<SlotRole> roles = SlotRoles(pm);
@@ -3283,6 +3419,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
     }
     dlAttrs.push_back(attrs);
+    decide(rem, std::get<1>(key), "tev", tevReason, loopNotes, wrap != 0x55555555u ? "WRAP" : "TEV", 0);
     for (size_t si = 0; si < retail.nmat; ++si) {
       const MaterialSet& set = retail.sets[si];
       if (size_t(rmat) >= set.mats.size()) {

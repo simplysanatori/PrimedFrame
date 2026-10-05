@@ -15,6 +15,7 @@
 // its mappings are not yet confirmed in game (docs/REMASTERED_EFFECTS.md).
 
 #include "port_remastered_effect.h"
+#include "port_remastered_report.h"
 
 #include <cstdint>
 #include <functional>
@@ -61,6 +62,8 @@ struct EffectImportIO {
   // Stores one output file: "<ID>.PART", "<ID>.TXTR" or "<ID>.CMDL".
   std::function<bool(const std::string& name, const std::vector<uint8_t>& data)> write;
   std::function<void(const std::string& line)> log;  // optional
+  // Optional: called once per effect considered, in `effects` order.
+  std::function<void(const EffectReportRow& row)> report;
 };
 
 struct EffectImportResult {
@@ -82,3 +85,4 @@ void SetImportEffects(bool on);
 EffectImportResult ImportEffects(const EffectImportIO& io);
 
 }  // namespace PortRemastered
+

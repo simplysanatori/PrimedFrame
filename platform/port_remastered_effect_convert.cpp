@@ -290,9 +290,10 @@ bool FlipbookTransform(const EffectValue& value, bool& flip) {
 
 // aurora::gfx::vfx::Feature.
 constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kIndirect = 16, kDepthSoften = 32,
-                   kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256;
+                   kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256, kColorIndexing = 512, kAddColor = 1024,
+                   kOpacityFade = 2048;
 
-enum class Role { Color, Opacity, Ramp, Ramp2, Threshold, Indirect };
+enum class Role { Color, Opacity, Ramp, Ramp2, Threshold, Indirect, Palette };
 
 // A MATI texture parameter (`tag`) in the role it plays, and which CCH0
 // components scale the indirect warp of its u and v (-1: not warped).
@@ -304,7 +305,20 @@ struct TexSpec {
 };
 
 // Order of the VMAT blob's Src records.
-enum SrcIndex { kSrcErosion, kSrcThrX, kSrcThrY, kSrcThrW, kSrcFresnelX, kSrcFresnelY, kSrcCount = 11 };
+enum SrcIndex {
+  kSrcErosion,
+  kSrcThrX,
+  kSrcThrY,
+  kSrcThrW,
+  kSrcFresnelX,
+  kSrcFresnelY,
+  kSrcFadeX,
+  kSrcFadeY,
+  kSrcIndexScale,
+  kSrcIndexOffset,
+  kSrcIndexRow,
+  kSrcCount
+};
 
 // Where a uniform comes from: row >= 0 is component `comp` of PMTR row `row`;
 // row < 0 with comp >= 0 is the MATI's CCH0[comp], a constant unless an SMTR
@@ -320,42 +334,291 @@ struct Recipe {
   uint32_t features;
   std::vector<TexSpec> textures;
   std::vector<SrcSpec> sources;
+  int addRow = -1;         // PMTR row of the AddColor (rgb, scale); -1: none
+  bool unitCch0 = false;   // the shader also reads CCH0.z/.w (fade gain/bias): only the identity (1, 0) is expressible
 };
 
-// RECIPES.md "(b) Per shader".
+// RECIPES.md "(b) Per shader" and RECIPES-all.md. Derived from each shader's
+// own code; a Lit shader uses its perm-0 (000_0) maths, which is the unlit
+// maths.
 const Recipe* RecipeOf(uint32_t shader) {
   static const std::vector<Recipe> table = {
-      {0x461071b8, kRamp, {{"TCH0", Role::Ramp, -1, -1}}, {}},
-      {0x642dd72b, kColorTex, {{"BCLR", Role::Color, -1, -1}}, {}},
-      {0x84e0fe6c, kOpacityTex, {{"TCH0", Role::Opacity, -1, -1}}, {}},
-      {0x8e6bfa33,
-       kRamp | kIndirect | kThresholding,
-       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
-       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
-      {0x93df8f48,
-       kRamp | kIndirect | kThresholding,
-       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
-       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
-      {0x3fc4b661, kRamp | kErosion, {{"TCH0", Role::Ramp, -1, -1}}, {{kSrcErosion, 2, 0}}},
-      {0x9abe8368,
-       kColorTex | kIndirect | kThresholding,
-       {{"BCLR", Role::Color, 1, 2}, {"TCH0", Role::Threshold, -1, -1}, {"TCH1", Role::Indirect, -1, -1}},
-       {{kSrcThrX, 0, 0}, {kSrcThrY, 0, 1}, {kSrcThrW, -1, 0}}},
-      {0x9ea86831, kRamp | kDualMod, {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}}, {}},
-      {0x71dc2465,
-       kRamp | kDualMod | kIndirect | kDepthSoften,
-       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Ramp2, 2, 3}, {"TCH2", Role::Indirect, -1, -1}},
+      {0x84e0fe6c, kOpacityTex,
+       {{"TCH0", Role::Opacity, -1, -1}},
        {}},
-      {0x440fbd96,
-       kColorTex | kOpacityTex | kOpacityFresnel | kErosion,
+      {0x642dd72b, kColorTex,
+       {{"BCLR", Role::Color, -1, -1}},
+       {}},
+      {0x73118d89, kColorTex | kErosion,
+       {{"BCLR", Role::Color, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0x5bbdb68a, kColorTex | kOpacityTex,
        {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
-       {{kSrcFresnelX, 0, 0}, {kSrcFresnelY, 0, 1}, {kSrcErosion, 0, 2}}},
-      {0x5bbdb68a, kColorTex | kOpacityTex, {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}}, {}},
-      {0xc5cd782b, kRamp | kOpacityTex, {{"TCH0", Role::Ramp, -1, -1}, {"TCH2", Role::Opacity, -1, -1}}, {}},
-      {0xeba92100,
-       kRamp | kIndirect | kErosion | kDepthSoften,
+       {}},
+      {0x461071b8, kRamp,
+       {{"TCH0", Role::Ramp, -1, -1}},
+       {}},
+      {0x75cdfb9a, kColorTex | kDepthSoften,
+       {{"BCLR", Role::Color, -1, -1}},
+       {}},
+      {0x3c4deeae, kOpacityTex | kErosion,
+       {{"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0xe1a93093, kColorTex | kIndirect,
+       {{"BCLR", Role::Color, 0, 1}, {"TCH0", Role::Indirect, -1, -1}},
+       {}},
+      {0x12c96e89, kColorTex | kOpacityTex | kErosion,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0x8e6bfa33, kRamp | kIndirect | kThresholding,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x6c165efd, kOpacityTex | kRamp,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0x034cb0d3, kOpacityTex | kDepthSoften,
+       {{"TCH0", Role::Opacity, -1, -1}},
+       {}},
+      {0x2eaed6b8, kColorTex | kOpacityTex | kErosion,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0x17713aeb, kColorTex | kIndirect | kDepthSoften,
+       {{"BCLR", Role::Color, 0, 1}, {"TCH0", Role::Indirect, -1, -1}},
+       {}},
+      {0x493fe0ff, kColorTex | kOpacityTex | kDepthSoften,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {}},
+      {0x3fc4b661, kErosion | kRamp,
+       {{"TCH0", Role::Ramp, -1, -1}},
+       {{kSrcErosion, 2, 0}}},
+      {0xe27969fe, kRamp | kDepthSoften,
+       {{"TCH0", Role::Ramp, -1, -1}},
+       {}},
+      {0xccff18d9, kRamp | kIndirect | kThresholding | kOpacityFresnel,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcFresnelX, 2, 2}, {kSrcFresnelY, 2, 3}, {kSrcThrW, -1, 0}}},
+      {0x7a29ff64, kOpacityTex | kAddColor,
+       {{"TCH0", Role::Opacity, -1, -1}},
+       {}, 0},  // [I] perm 001_0 (no 000_0)
+      {0x08757dae, kColorTex | kErosion,
+       {{"BCLR", Role::Color, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0x42d8bf93, kOpacityTex | kRamp | kIndirect,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0x20e149b2, kColorTex | kOpacityTex | kDepthSoften,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {}},
+      {0xfef02d58, kColorTex,
+       {{"BCLR", Role::Color, -1, -1}},
+       {}},
+      {0x58d7fb7b, kColorTex | kErosion | kDepthSoften,
+       {{"BCLR", Role::Color, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0xfa49ff3c, kRamp | kIndirect,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {}},
+      {0x8177c4e0, kOpacityTex | kRamp | kDepthSoften,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0xb658b55f, kErosion | kRamp | kIndirect,
        {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
        {{kSrcErosion, 2, 0}}},
+      {0x158f4374, kOpacityTex | kRamp | kIndirect | kThresholding,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Indirect, -1, -1}, {"TCH2", Role::Opacity, -1, -1}, {"TCH3", Role::Threshold, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0xccdf1984, kColorTex | kDepthSoften,
+       {{"BCLR", Role::Color, -1, -1}},
+       {}},
+      {0xeba92100, kErosion | kRamp | kIndirect | kDepthSoften,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcErosion, 2, 0}}},
+      {0x63c470ce, kColorTex | kIndirect,
+       {{"BCLR", Role::Color, 0, 1}, {"TCH0", Role::Indirect, -1, -1}},
+       {}},
+      {0x4dfde16d, kOpacityTex | kErosion,
+       {{"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0x55584bd3, kColorTex | kOpacityTex,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {}},
+      {0x8e97872f, kRamp | kIndirect | kDepthSoften | kThresholding,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x28bf8533, kOpacityTex | kColorIndexing,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Palette, -1, -1}, {"TCH1", Role::Opacity, -1, -1}},
+       {{kSrcIndexScale, 0, 0}, {kSrcIndexOffset, 0, 1}, {kSrcIndexRow, 0, 2}}},
+      {0x9adb322c, kOpacityTex | kErosion | kDepthSoften,
+       {{"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0xb8eed42e, kOpacityTex | kRamp | kIndirect,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0x38fbea2d, kOpacityTex | kRamp | kIndirect | kDepthSoften,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0x7116d51a, kColorTex | kErosion | kDepthSoften,
+       {{"BCLR", Role::Color, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0x7d52bd6b, kRamp | kIndirect | kOpacityFade,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}, -1, true},
+      {0xb1e9a0e4, kRamp | kIndirect | kDepthSoften | kThresholding | kOpacityFresnel,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcFresnelX, 2, 2}, {kSrcFresnelY, 2, 3}, {kSrcThrW, -1, 0}}},
+      {0x72cc98d8, kColorTex | kOpacityTex | kErosion | kDepthSoften,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0x2d3ee3e3, kColorTex | kThresholding,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Threshold, -1, -1}},
+       {{kSrcThrX, 0, 0}, {kSrcThrY, 0, 1}, {kSrcThrW, -1, 0}}},
+      {0xa327502c, kOpacityTex | kRamp | kIndirect | kDepthSoften,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0x0cc45d52, kColorTex | kIndirect | kDepthSoften,
+       {{"BCLR", Role::Color, 0, 1}, {"TCH0", Role::Indirect, -1, -1}},
+       {}},
+      {0xa617da1d, kColorTex | kOpacityTex | kErosion | kDepthSoften,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0xbdf7eb7f, kRamp | kIndirect | kThresholding | kOpacityFresnel,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcFresnelX, 2, 2}, {kSrcFresnelY, 2, 3}, {kSrcThrW, -1, 0}}},
+      {0x54844806, kOpacityTex | kDepthSoften,
+       {{"TCH0", Role::Opacity, -1, -1}},
+       {}},
+      {0x1a9ef0d8, kOpacityTex | kAddColor,
+       {{"TCH0", Role::Opacity, -1, -1}},
+       {}, 0},
+      {0x2da497da, kErosion | kDepthSoften | kColorIndexing,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Palette, -1, -1}},
+       {{kSrcIndexScale, 0, 0}, {kSrcIndexOffset, 0, 1}, {kSrcIndexRow, 0, 2}, {kSrcErosion, 0, 3}}},
+      {0xe4d4c263, kColorTex | kOpacityTex | kErosion | kDepthSoften | kOpacityFade,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcFadeX, 0, 0}, {kSrcFadeY, 0, 1}, {kSrcErosion, 0, 2}}},
+      {0x605484a4, kOpacityTex | kRamp | kDualMod,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0xb9ccfc57, kColorTex | kIndirect | kDepthSoften,
+       {{"BCLR", Role::Color, 0, 1}, {"TCH0", Role::Indirect, -1, -1}},
+       {}},
+      {0xe899b1df, kRamp | kIndirect | kDepthSoften | kOpacityFade,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}, -1, true},
+      {0x3a867837, kRamp | kIndirect,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {}},
+      {0xf1c52f0d, kColorTex | kErosion | kOpacityFade,
+       {{"BCLR", Role::Color, -1, -1}},
+       {{kSrcFadeX, 0, 0}, {kSrcFadeY, 0, 1}, {kSrcErosion, 0, 2}}},
+      {0xde9a121b, kOpacityTex | kErosion | kDepthSoften,
+       {{"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcErosion, 0, 0}}},
+      {0xdbe138ec, kOpacityTex | kErosion | kColorIndexing,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Palette, -1, -1}, {"TCH1", Role::Opacity, -1, -1}},
+       {{kSrcIndexScale, 0, 0}, {kSrcIndexOffset, 0, 1}, {kSrcIndexRow, 0, 2}, {kSrcErosion, 0, 3}}},
+      {0x49a43a10, kRamp,
+       {{"TCH0", Role::Ramp, -1, -1}},
+       {}},
+      {0x9abe8368, kColorTex | kIndirect | kThresholding,
+       {{"BCLR", Role::Color, 1, 2}, {"TCH0", Role::Threshold, -1, -1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 0, 0}, {kSrcThrY, 0, 1}, {kSrcThrW, -1, 0}}},
+      {0xfbfffd6f, kRamp | kThresholding,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Threshold, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0xd471baa6, kOpacityTex | kRamp | kIndirect | kThresholding,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Indirect, -1, -1}, {"TCH2", Role::Opacity, -1, -1}, {"TCH3", Role::Threshold, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x0fb73e1b, kColorTex | kIndirect,
+       {{"BCLR", Role::Color, 0, 1}, {"TCH0", Role::Indirect, -1, -1}},
+       {}},
+      {0x96e205db, kRamp | kIndirect | kDualMod | kOpacityFade,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Ramp2, 2, 3}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}},
+      {0xb995317d, kRamp | kIndirect | kDualMod | kOpacityFade,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Ramp2, 2, 3}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}},
+      {0x93df8f48, kRamp | kIndirect | kThresholding,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x641fc76e, kColorTex | kDepthSoften | kThresholding,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Threshold, -1, -1}},
+       {{kSrcThrX, 0, 0}, {kSrcThrY, 0, 1}, {kSrcThrW, -1, 0}}},
+      {0x5f2a0715, kErosion | kRamp | kIndirect,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcErosion, 2, 0}}},
+      {0x0cbeb3de, kOpacityTex | kRamp | kDualMod,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0x5283e927, kErosion | kRamp,
+       {{"TCH0", Role::Ramp, -1, -1}},
+       {{kSrcErosion, 2, 0}}},
+      {0x10dbd66e, kOpacityTex | kRamp | kDepthSoften | kThresholding,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Opacity, -1, -1}, {"TCH2", Role::Threshold, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x71dc2465, kRamp | kIndirect | kDepthSoften | kDualMod,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Ramp2, 2, 3}, {"TCH2", Role::Indirect, -1, -1}},
+       {}},
+      {0xec6b1bb2, kOpacityTex | kRamp | kThresholding,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Opacity, -1, -1}, {"TCH2", Role::Threshold, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x83549ed0, kOpacityTex | kDepthSoften | kColorIndexing,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Palette, -1, -1}, {"TCH1", Role::Opacity, -1, -1}},
+       {{kSrcIndexScale, 0, 0}, {kSrcIndexOffset, 0, 1}, {kSrcIndexRow, 0, 2}}},
+      {0xcc9405ea, kRamp | kDualMod,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}},
+       {}},
+      {0x9ea86831, kRamp | kDualMod,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}},
+       {}},
+      {0x33ba3497, kDepthSoften | kColorIndexing,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Palette, -1, -1}},
+       {{kSrcIndexScale, 0, 0}, {kSrcIndexOffset, 0, 1}, {kSrcIndexRow, 0, 2}}},
+      {0xeeb36096, kOpacityTex | kRamp | kDepthSoften | kDualMod,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0x1ad75997, kRamp | kIndirect | kOpacityFade,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}, -1, true},
+      {0x574c1724, kColorTex | kIndirect | kDepthSoften | kThresholding,
+       {{"BCLR", Role::Color, 1, 2}, {"TCH0", Role::Threshold, -1, -1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 0, 0}, {kSrcThrY, 0, 1}, {kSrcThrW, -1, 0}}},
+      {0x4e386476, kRamp | kIndirect | kDepthSoften,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {}},
+      {0x68bf7bc6, kRamp | kDepthSoften | kDualMod,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}},
+       {}},
+      {0x3fd46bb7, kOpacityTex | kRamp | kDualMod | kOpacityFade,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}},
+      {0x207abf3f, kRamp | kThresholding,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Threshold, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x33b751f2, kRamp | kIndirect | kDualMod,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Ramp2, 2, 3}, {"TCH2", Role::Indirect, -1, -1}},
+       {}},
+      {0x8d9c7aa7, kOpacityTex | kRamp | kDepthSoften,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0x440fbd96, kColorTex | kOpacityTex | kErosion | kOpacityFade,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcFadeX, 0, 0}, {kSrcFadeY, 0, 1}, {kSrcErosion, 0, 2}}},
+      {0xc5cd782b, kOpacityTex | kRamp,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
+       {}},
+      {0xfb91aaad, kErosion | kRamp | kDepthSoften,
+       {{"TCH0", Role::Ramp, -1, -1}},
+       {{kSrcErosion, 2, 0}}},
+      {0x555e40fa, kRamp | kDepthSoften | kThresholding,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Threshold, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x80a47126, kColorTex | kIndirect | kThresholding,
+       {{"BCLR", Role::Color, 1, 2}, {"TCH0", Role::Threshold, -1, -1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 0, 0}, {kSrcThrY, 0, 1}, {kSrcThrW, -1, 0}}},
+      {0xb32b6148, kRamp | kIndirect | kDepthSoften | kDualMod,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Ramp2, 2, 3}, {"TCH2", Role::Indirect, -1, -1}},
+       {}},
   };
   for (const Recipe& recipe : table) {
     if (recipe.shader == shader) {
@@ -1291,6 +1554,10 @@ public:
       return nullptr;
     };
     const auto cch0 = mati.vectors.count("CCH0") ? mati.vectors.at("CCH0") : std::array<float, 4>{};
+    if (recipe->unitCch0 && (cch0[2] != 1.0f || cch0[3] != 0.0f)) {
+      m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " has a fade gain/bias the renderer lacks");
+      return false;
+    }
 
     // Textures, in the recipe's slot order.
     struct Slot {
@@ -1338,7 +1605,7 @@ public:
     PutBe32(blob, recipe->features);
     PutBe32(blob, blend);
     PutBe32(blob, uint32_t(slots.size()));
-    int32_t slotOf[6] = {-1, -1, -1, -1, -1, -1};
+    int32_t slotOf[7] = {-1, -1, -1, -1, -1, -1, -1};
     for (size_t i = 0; i < slots.size(); ++i) {
       const Slot& slot = slots[i];
       slotOf[size_t(slot.spec->role)] = int32_t(i);
@@ -1355,19 +1622,19 @@ public:
       PutBe32(blob, FloatBits(warped ? cch0[size_t(slot.spec->warpU)] : 0.0f));
       PutBe32(blob, FloatBits(warped ? cch0[size_t(slot.spec->warpV)] : 0.0f));
     }
-    for (const Role role : {Role::Color, Role::Opacity, Role::Ramp, Role::Ramp2, Role::Threshold, Role::Indirect}) {
+    for (const Role role : {Role::Color, Role::Opacity, Role::Ramp, Role::Ramp2, Role::Threshold, Role::Indirect,
+                            Role::Palette}) {
       PutBe32(blob, uint32_t(slotOf[size_t(role)]));
     }
-    PutBe32(blob, uint32_t(-1));  // paletteSlot
     PutBe32(blob, 0);             // rampRow[2]
     PutBe32(blob, 1);
-    PutBe32(blob, uint32_t(-1));  // addRow
+    PutBe32(blob, uint32_t(recipe->addRow));
     int32_t srcRow[kSrcCount], srcComp[kSrcCount];
     float srcValue[kSrcCount];
     for (int i = 0; i < kSrcCount; ++i) {
       srcRow[i] = -1;
       srcComp[i] = 0;
-      srcValue[i] = i == 8 ? 1.0f : 0.0f;  // indexScale
+      srcValue[i] = i == kSrcIndexScale ? 1.0f : 0.0f;
     }
     for (const SrcSpec& src : recipe->sources) {
       srcRow[src.index] = src.row;

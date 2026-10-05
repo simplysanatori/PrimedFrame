@@ -34,13 +34,24 @@
 // among them) as a PNG in /tmp/fx-atlas, and logs the meshes and triangles of each
 // Remastered-only model it converts.
 //
-// Not part of the build:
-//   g++ -std=c++20 -O2 -Iplatform/include -Iextern/astcenc/Source tests/port_remastered_effect_tool.cpp
-//       platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp
-//       platform/port_remastered_effect_import.cpp platform/port_remastered_image.cpp
-//       platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp
-//       platform/port_remastered_convert.cpp platform/port_remastered_cmdl.cpp
-//       <astcenc: build/<dir>/extern/astcenc/libastcenc.a> -lzstd -lpthread -o effect_tool
+// Built by the CMake target remastered_effect_tool (not part of `all`; Linux/desktop):
+//   cmake --build build/<dir> --target remastered_effect_tool
+//   build/<dir>/remastered_effect_tool <mode> ...
+//
+//   tool pdump <file.PART|.SWHC|.ELSC>
+//                                    a retail effect's properties, one per line: FourCC, then the
+//                                    value decoded as a tree when it reads as one, else hex
+//   tool pdiff <a> <b>               the properties that differ between two retail effect files
+//   tool explain <romfs> <retail> <GENP id>
+//                                    the import's effect step on one effect, with every decision:
+//                                    pairing, result, dropped and approximated properties, and
+//                                    the models it converts. <id> is the id in the effects
+//                                    report's genp column (either byte order)
+//   tool mat <romfs> <model id|name> [material index]
+//                                    converts one Remastered model standalone and prints each
+//                                    output material's decision (the materials report's columns)
+//
+// import also writes <outdir>/effects.tsv, the effects report of docs/DEBUGGING.md.
 
 #include "port_remastered_cmdl.h"
 #include "port_remastered_convert.h"
@@ -49,6 +60,7 @@
 #include "port_remastered_effect_import.h"
 #include "port_remastered_txtr.h"
 #include "port_remastered_pak.h"
+#include "port_remastered_report.h"
 
 #include <algorithm>
 #include <cstring>
@@ -740,7 +752,7 @@ bool WritePng(const std::string& path, int width, int height, const std::vector<
   return bool(file);
 }
 
-int Import(const std::string& romfs, const std::string& retailDir, const std::string& outDir) {
+int Import(const std::string& romfs, const std::string& retailDir, const std::string& outDir, const std::string& only = "") {
   using namespace PortRemastered;
   std::filesystem::create_directories(outDir);
   std::set<uint32_t> disc;
@@ -783,10 +795,20 @@ int Import(const std::string& romfs, const std::string& retailDir, const std::st
     paks.push_back(std::move(open));
   }
   EffectImportIO io;
+  auto lower = [](std::string text) {
+    for (char& c : text) {
+      c = char(std::tolower(uint8_t(c)));
+    }
+    return text;
+  };
   for (const auto& [id, type] : types) {
-    if (type == kGenp) {
+    if (type == kGenp && (only.empty() || lower(IdToString(id)) == lower(only) || lower(EffectGuidString(id)) == lower(only))) {
       io.effects.push_back(id);
     }
+  }
+  if (!only.empty() && io.effects.empty()) {
+    std::cerr << only << ": no such GENP in the image\n";
+    return 1;
   }
   auto read = [&](const EffectGuid& id, std::vector<uint8_t>& out, std::string& error) {
     const auto found = where.find(id);
@@ -927,7 +949,26 @@ int Import(const std::string& romfs, const std::string& retailDir, const std::st
     return store(name, data);
   };
   io.log = [](const std::string& line) { std::cout << "  " << line << "\n"; };
+  std::vector<std::string> reportRows;
+  io.report = [&](const EffectReportRow& row) {
+    reportRows.push_back(FormatEffectRow(row));
+    if (!only.empty()) {
+      std::cout << "genp " << row.genp << " -> retail " << std::hex << row.retail << std::dec << ": " << row.result
+                << " via " << row.method << (row.reason.empty() ? "" : " (" + row.reason + ")") << ", wrote "
+                << row.kinds << ", " << row.dropped << " retail properties left out\n";
+      for (const std::string& line : row.droppedList) {
+        std::cout << "    dropped: " << Printable(line) << "\n";
+      }
+      for (const std::string& line : row.approximatedList) {
+        std::cout << "    approximated: " << Printable(line) << "\n";
+      }
+    }
+  };
   const EffectImportResult result = ImportEffects(io);
+  {
+    std::ofstream report(std::filesystem::path(outDir) / "effects.tsv", std::ios::binary);
+    report << JoinReport(EffectReportHeader(), reportRows);
+  }
   std::cout << result.written << " of " << result.candidates << " effects written, " << result.failed << " failed, "
             << result.parts << " PARTs, " << result.textures << " textures (" << result.flipbooks << " flipbooks), "
             << result.models << " models, " << result.dropped << " retail properties left out\n";
@@ -1049,6 +1090,261 @@ int VmatSummary(const std::string& genpPath, const std::string& matiDir) {
   return 0;
 }
 
+// ---- retail effect files as text -------------------------------------------------------------
+
+std::vector<uint8_t> ReadFile(const std::string& path) {
+  std::ifstream file(path, std::ios::binary);
+  return std::vector<uint8_t>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+}
+
+uint32_t TypeOfFile(const std::string& path) {
+  const std::string ext = std::filesystem::path(path).extension().string();
+  return ext.size() == 5 ? FourCCOf(ext.substr(1)) : kPartType;
+}
+
+std::string FourCCText(uint32_t f) {
+  std::string out;
+  for (int shift = 24; shift >= 0; shift -= 8) {
+    out += char(f >> shift & 0xFF);
+  }
+  return out;
+}
+
+std::string HexText(const std::vector<uint8_t>& bytes, size_t at = 0) {
+  static const char digits[] = "0123456789abcdef";
+  std::string out;
+  for (size_t i = at; i < bytes.size(); ++i) {
+    out += digits[bytes[i] >> 4];
+    out += digits[bytes[i] & 15];
+  }
+  return out;
+}
+
+// Best effort: element trees read as CParticleDataFactory does, for the operators whose
+// operands are known (a constant is a float, or an int when `ints`). The caller falls back
+// to hex when the value does not consume exactly.
+bool ElementText(const std::vector<uint8_t>& v, size_t& at, bool ints, std::string& out, int depth = 0) {
+  if (at + 4 > v.size() || depth > 16) {
+    return false;
+  }
+  const std::string type = FourCCText(uint32_t(v[at]) << 24 | uint32_t(v[at + 1]) << 16 | uint32_t(v[at + 2]) << 8 | v[at + 3]);
+  at += 4;
+  if (type == "CNST") {
+    if (at + 4 > v.size()) {
+      return false;
+    }
+    uint32_t bits = uint32_t(v[at]) << 24 | uint32_t(v[at + 1]) << 16 | uint32_t(v[at + 2]) << 8 | v[at + 3];
+    at += 4;
+    char text[32];
+    if (ints) {
+      std::snprintf(text, sizeof(text), "%d", int32_t(bits));
+    } else {
+      float f;
+      std::memcpy(&f, &bits, 4);
+      std::snprintf(text, sizeof(text), "%g", double(f));
+    }
+    out += text;
+    return true;
+  }
+  int operands = 0;
+  if (type == "ADD_" || type == "MULT" || type == "RAND" || type == "LFTW" || type == "SUB_") {
+    operands = 2;
+  } else if (type == "CLMP") {
+    operands = 3;
+  } else if (type == "RLPT") {
+    operands = 1;
+  } else {
+    return false;
+  }
+  out += type + "(";
+  for (int i = 0; i < operands; ++i) {
+    out += i != 0 ? ", " : "";
+    if (!ElementText(v, at, ints, out, depth + 1)) {
+      return false;
+    }
+  }
+  out += ")";
+  return true;
+}
+
+std::string ValueText(const std::vector<uint8_t>& value) {
+  for (const bool ints : {false, true}) {
+    size_t at = 0;
+    std::string text;
+    if (ElementText(value, at, ints, text) && at == value.size()) {
+      return text;
+    }
+  }
+  return "hex " + HexText(value);
+}
+
+bool Split(const std::string& path, std::vector<PortRemastered::RetailPartProperty>& props) {
+  const std::vector<uint8_t> data = ReadFile(path);
+  std::string error;
+  if (data.empty() || !PortRemastered::SplitRetailEffect(TypeOfFile(path), data.data(), data.size(), props, error)) {
+    std::cerr << path << ": " << (data.empty() ? "cannot be read" : error) << "\n";
+    return false;
+  }
+  return true;
+}
+
+int PDump(const std::string& path) {
+  std::vector<PortRemastered::RetailPartProperty> props;
+  if (!Split(path, props)) {
+    return 1;
+  }
+  for (const auto& p : props) {
+    std::cout << FourCCText(p.fourcc) << "\t" << ValueText(p.value) << "\n";
+  }
+  return 0;
+}
+
+int PDiff(const std::string& a, const std::string& b) {
+  std::vector<PortRemastered::RetailPartProperty> pa, pb;
+  if (!Split(a, pa) || !Split(b, pb)) {
+    return 1;
+  }
+  std::map<std::string, std::vector<std::string>> ma, mb;
+  for (const auto& p : pa) {
+    ma[FourCCText(p.fourcc)].push_back(ValueText(p.value));
+  }
+  for (const auto& p : pb) {
+    mb[FourCCText(p.fourcc)].push_back(ValueText(p.value));
+  }
+  std::set<std::string> keys;
+  for (const auto& [k, v] : ma) keys.insert(k);
+  for (const auto& [k, v] : mb) keys.insert(k);
+  int differing = 0;
+  for (const std::string& key : keys) {
+    const auto x = ma.find(key);
+    const auto y = mb.find(key);
+    const std::vector<std::string> none;
+    const auto& xs = x == ma.end() ? none : x->second;
+    const auto& ys = y == mb.end() ? none : y->second;
+    if (xs == ys) {
+      continue;
+    }
+    ++differing;
+    for (const std::string& v : xs) std::cout << "- " << key << "\t" << v << "\n";
+    for (const std::string& v : ys) std::cout << "+ " << key << "\t" << v << "\n";
+  }
+  std::cout << differing << " of " << keys.size() << " properties differ\n";
+  return differing == 0 ? 0 : 1;
+}
+
+// One Remastered model, converted standalone with every texture its materials name, printing
+// each output material's decision. `index` < 0: all of them.
+int Mat(const std::string& romfs, const std::string& which, int index) {
+  using namespace PortRemastered;
+  struct Open {
+    FileReader reader;
+    Pak pak;
+  };
+  std::vector<std::unique_ptr<Open>> paks;
+  std::map<EffectGuid, std::pair<size_t, size_t>> where;
+  std::vector<std::filesystem::path> paths;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(romfs)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".pak") {
+      paths.push_back(entry.path());
+    }
+  }
+  std::sort(paths.begin(), paths.end());
+  std::string wanted;
+  for (char c : which) {
+    if (c != '-') wanted += char(std::tolower(uint8_t(c)));
+  }
+  const EffectGuid* found = nullptr;
+  std::map<EffectGuid, std::string> labels;
+  for (const std::filesystem::path& path : paths) {
+    auto open = std::make_unique<Open>();
+    std::string error;
+    FileReader& reader = open->reader;
+    if (!reader.Open(path.string(), error) ||
+        !open->pak.Open([&reader](uint64_t offset, void* out, size_t size) { return reader.Read(offset, out, size); },
+                        reader.Size(), error)) {
+      std::cerr << path.string() << ": " << error << "\n";
+      return 1;
+    }
+    const std::vector<PakAsset>& assets = open->pak.Assets();
+    for (size_t a = 0; a < assets.size(); ++a) {
+      if (where.emplace(assets[a].id, std::make_pair(paks.size(), a)).second) {
+        std::string idText = IdToString(assets[a].id);
+        std::string plain;
+        for (char c : idText) {
+          if (c != '-') plain += char(std::tolower(uint8_t(c)));
+        }
+        bool match = plain == wanted;
+        for (const std::string& name : assets[a].names) {
+          std::string n;
+          for (char c : name) n += char(std::tolower(uint8_t(c)));
+          if (n.find(wanted) != std::string::npos && assets[a].type == FourCCOf("CMDL")) match = true;
+        }
+        if (match && assets[a].type == FourCCOf("CMDL")) {
+          labels[assets[a].id] = idText;
+        }
+      }
+    }
+    paks.push_back(std::move(open));
+  }
+  if (labels.empty()) {
+    std::cerr << which << ": no such model\n";
+    return 1;
+  }
+  auto read = [&](const EffectGuid& id, std::vector<uint8_t>& out, std::string& error) {
+    const auto at = where.find(id);
+    if (at == where.end()) {
+      error = "not in the image";
+      return false;
+    }
+    const Pak& pak = paks[at->second.first]->pak;
+    return pak.ReadAsset(pak.Assets()[at->second.second], out, error);
+  };
+  (void)found;
+  for (const auto& [id, label] : labels) {
+    ConvertIO cio;
+    cio.retailId = [](uint32_t) { return false; };
+    cio.texture = [&](const ModelUuid& tex, Image& out, std::string& error) {
+      std::vector<uint8_t> raw;
+      TxtrImage image;
+      if (!read(tex, raw, error) || !DecodeTxtr(raw.data(), raw.size(), image, error)) {
+        return false;
+      }
+      out.width = int(image.width);
+      out.height = int(image.height);
+      out.rgba = std::move(image.rgba);
+      return true;
+    };
+    cio.write = [](const std::string&, const std::vector<uint8_t>&) { return true; };
+    std::vector<MaterialDecision> decisions;
+    cio.decision = [&](const MaterialDecision& d) { decisions.push_back(d); };
+    Converter converter(std::move(cio));
+    ConvertOptions options;
+    options.retail = 0x7F000001;
+    options.source = label;
+    options.standalone = true;
+    options.skip.clear();
+    options.nativeMax = 256;
+    std::vector<uint8_t> raw;
+    Model model;
+    std::string error;
+    if (!read(id, raw, error) || !ParseModel(raw.data(), raw.size(), model, error) ||
+        !converter.Convert(model, options, error)) {
+      std::cout << label << ": " << error << "\n";
+      continue;
+    }
+    std::cout << label << ": " << model.meshes.size() << " meshes, " << decisions.size() << " output materials\n";
+    std::cout << MaterialReportHeader() << "\n";
+    for (const MaterialDecision& d : decisions) {
+      if (index < 0 || d.sourceIndex == index) {
+        std::cout << FormatMaterialRow(d) << "\n";
+      }
+    }
+    std::cout << "(standalone: every surface is one PBR material; a retail-model conversion needs the disc, so "
+                 "its TEV path and `retail model` reasons are not shown)\n";
+  }
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1074,10 +1370,24 @@ int main(int argc, char** argv) {
   if (mode == "import" && argc == 5) {
     return Import(argv[2], argv[3], argv[4]);
   }
+  if (mode == "pdump" && argc == 3) {
+    return PDump(argv[2]);
+  }
+  if (mode == "pdiff" && argc == 4) {
+    return PDiff(argv[2], argv[3]);
+  }
+  if (mode == "explain" && argc == 5) {
+    const std::string out = (std::filesystem::temp_directory_path() / "effect-tool-explain").string();
+    return Import(argv[2], argv[3], out, argv[4]);
+  }
+  if (mode == "mat" && (argc == 4 || argc == 5)) {
+    return Mat(argv[2], argv[3], argc == 5 ? std::atoi(argv[4]) : -1);
+  }
   std::cerr << "usage: " << argv[0]
             << " dump <file.GENP> | mtin <file.GENP>... | vmat <file.GENP> <dir of <uuid>.MATI files>"
                " | scan <romfs> [outdir] | extract <romfs> <outdir>"
                " | convert <romfs> <retail|-> <outdir>"
-               " | import <romfs> <retail> <outdir>\n";
+               " | import <romfs> <retail> <outdir> | pdump <file> | pdiff <a> <b>"
+               " | explain <romfs> <retail> <GENP id> | mat <romfs> <model id|name> [material index]\n";
   return 2;
 }
