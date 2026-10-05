@@ -1730,7 +1730,9 @@ bool Compose(const Located& located, Selection& out) {
     float exposure = luminance > 0.f ? level / luminance * ambient : 0.f;
     if (RoomExposed() && roomExposure > 0.f) {
       // Or the baked level itself, at the room's exposure: the game's ambient is left out.
-      exposure = roomExposure * ambient * gain;
+      // The grid holds irradiance, of which a diffuse surface sends 1/pi back, as the
+      // volume's level has it.
+      exposure = roomExposure * ambient * gain / 3.14159265f;
       out.ambientAbsolute = true;
     }
     for (int i = 0; i < 3; ++i) {
@@ -1914,8 +1916,10 @@ std::string Info(const float pos[3]) {
       int used = std::snprintf(line, sizeof(line), "  grid %zu: %u x %u x %u, average %g, ", i, grid.size[0],
                                grid.size[1], grid.size[2], grid.average);
       if (lit) {
-        std::snprintf(line + used, sizeof(line) - used, "here mean %g %g %g, lobe %g %g %g\n", ambient.mean[0],
-                      ambient.mean[1], ambient.mean[2], ambient.lobe[0], ambient.lobe[1], ambient.lobe[2]);
+        std::snprintf(line + used, sizeof(line) - used, "here mean %g %g %g, lobe %g %g %g, sharpness %g %g %g, up %g %g %g\n",
+                      ambient.mean[0], ambient.mean[1], ambient.mean[2], ambient.lobe[0], ambient.lobe[1],
+                      ambient.lobe[2], ambient.sharpness[0], ambient.sharpness[1], ambient.sharpness[2],
+                      ambient.direction[1][0], ambient.direction[1][1], ambient.direction[1][2]);
       } else if (distance == 0.f) {
         std::snprintf(line + used, sizeof(line) - used, "no lit point here\n");
       } else {
