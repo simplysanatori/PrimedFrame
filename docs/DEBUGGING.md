@@ -27,19 +27,37 @@ vs the current `kImportVersion`, `/tmp` space, stale runs).
 
 `start --room` returns in about 7-8 s, once the player is in control: cutscenes are skipped
 (even unseen ones) and the fade-in after them has run. Pass `--cutscenes` to see them. Use your own run names so sessions stay apart.
+`--room` takes a room name too (`--room "landing site"`; `rooms [filter]` lists them).
+
+**Settled** = `status --json` says first person, no cinematic and `fade` false (the in-game fade-in
+filter, `CInGameGuiManager::StartFadeIn`, is done), on two polls at least 12 frames apart. `start --room`,
+a `warp` sent through `cmd`/`shot`, and `shot` wait for it (not on `--cutscenes` runs).
 
 ## Subcommands
 
-- `start <name> [--build B] [--room MLVL[:MREA]] [--env K=V]... [--mods DIR|none] [--settings FILE|none] [--saves] [--size WxH] [--wait S] [--cutscenes] [--gdb] [--replace]`:
+- `start <name> [--build B] [--room MLVL[:MREA]|NAME] [--at VIEW] [--env K=V]... [--mods DIR|none] [--settings FILE|none] [--saves] [--size WxH] [--wait S] [--cutscenes] [--gdb] [--replace]`:
   `--build` is a dir under `build/` or a path (default `port-gcc`). The user dir is fresh: only
   `port_settings.ini` and `imgui.ini` are copied (`--saves` adds `USA/`, `savestates/`). Mods
   default to the real user's (read-only); `--mods none` is an empty folder. On a startup crash
   it prints the log tail and the symbolized crash, and leaves nothing running. By default it
   sets `MP_SKIP_CUTSCENES=1` and `skippable_cutscenes=1` in the run's settings (that also applies
   randomprime's room patches, as the F1 setting does), and with `--room` it waits for
-  `first person 1, cinematic 0` plus 90 frames. `--cutscenes` turns all of that off.
+  settled (see above; a build without `status --json` falls back to `first person 1, cinematic 0`
+  plus `wait 90`). `--cutscenes` turns all of that off.
 - `cmd <name> <cmd>... | -f script.txt`: replies printed, exit 1 if any command failed, 2 if the game is gone.
-- `shot <name> <out.png> [cmd...] [--crop x,y,w,h] [--settle FRAMES]`
+- `shot <name> <out.png> [cmd...] [--crop x,y,w,h] [--settle FRAMES] [--force] [--at VIEW]`: waits up to 20 s
+  for settled first (`--force` captures at once; if it never settles it captures and warns on stderr).
+  `cmd`/`shot` command lists wait for settled after each `warp` (up to 60 s). A held game (`hold 1`) cannot
+  answer `status`, so the check is skipped there.
+- `shots <name> <outdir> <room|MLVL:MREA|@view>... [--cmds "c1;c2"] [--at VIEW] [start options]`: one game,
+  many rooms. Boots into the first, then per room `warp`, wait settled, run `--cmds`, capture
+  `<outdir>/<NN>-<slug>.png`, and print the wall time; stops the run at the end, also on an error.
+  `--at VIEW` (or `@view`) shoots a saved viewpoint (warping to its room, restoring its pose).
+- `rooms [filter]`: room name and MLVL:MREA, read at runtime from `kRooms[]` in `platform/port_ap_world_data.inc`.
+  Names match case-insensitively: exact, then unique prefix, then unique substring; an ambiguous one lists candidates.
+- `view save <run> <name> | ls | rm <name>`: viewpoints in `build/rig-views.json`: room, player pos and yaw, and the
+  freecam pose when freecam is on. `--at <name>` on `start`/`shot`/`shots` warps if the room differs, restores
+  the pose (`tp`, `face`, `freecam pos|look`) and waits settled. Pitch of the player's view is not saved.
 - `ab <name> <prefix> --a "cmd;cmd" --b "cmd;cmd" [--settle 30] [--no-hold]`: writes
   `<prefix>-{a,b,diff,ab}.png` and the diff line. Sends `hold 1` first (ticks frozen) so only
   the toggle differs; run `cmd <name> 'hold 0'` afterwards to resume.
@@ -76,6 +94,12 @@ Symbols only resolve against the binary that crashed: check the build warning.
 `$M cmd r roomgeo 'roomenv info'` and `$M shot r /tmp/n.png 'view normal'` (also `albedo`, `rough`,
 `metal`, `ao`, `glow`; `view off` resets). `doctor` first: a stale `.import-version` means
 the install needs a re-import. Use `--mods DIR` to test a mod build without touching the real one.
+
+**Many rooms in one game**
+
+    $M shots r /tmp/rooms "landing site" gully "main plaza" --cmds 'roomenv bloom off'
+    $M sheet /tmp/rooms.png /tmp/rooms/*.png --cols 3
+    $M view save r mine; $M shot r /tmp/m.png --at mine   # a saved viewpoint, in any run
 
 **Two builds side by side**: start `a --build port-gcc` and `b --build <other>` with the same
 `--room`, then `shot` both with the same commands and `diff` / `sheet` them.
@@ -190,7 +214,10 @@ properties, `pdiff a b` only those that differ (e.g. the disc's against the conv
   (`--build smoke-gcc --env MP_SMOKE_WORLD=...`).
 - `ab` freezes ticks, so animated effects stay put; use `--no-hold` to compare live frames
   (expect motion noise in `diff`).
-- After a `warp`, nothing waits for the room to load: add `cmd r 'wait 120'`.
+- `warp` through `cmd`/`shot`/`shots` waits for settled, but a room's streamed models and textures can still be
+  arriving; add `wait N` for those. `warp` to another area of the same world works (`shots` does it).
+  Measured (2026-10-05, Xvfb): start in Landing Site ~7-8 s; per `shots` room ~2 s same world or a cached world, ~10 s for a Frigate room.
+- `fade` covers only the in-game fade-in filter. The water multiply filter and script fades are not counted.
 
 ## See also
 

@@ -213,14 +213,36 @@ def console(port, commands, wait=0.0, timeout=600.0):
     return out
 
 
-def run_console(run, commands, echo=True, timeout=600.0):
-    """Print replies; return True when every command succeeded. Exits 2 if unreachable."""
+def console_seq(run, commands, echo=True, timeout=600.0):
+    """Send commands, waiting for a settled screen after each `warp` (not on --cutscenes runs).
+    Returns [(cmd, ok, lines)]; exits 2 if the game is unreachable."""
     if not game_alive(run):
         die(f"run '{run['name']}' is not running (see: mprig.py log {run['name']}; crash {run['name']})", 2)
-    try:
-        res = console(run["port"], commands, timeout=timeout)
-    except (OSError, ConnectionError) as e:
-        die(f"console of '{run['name']}' unreachable on port {run['port']}: {e}", 2)
+    segments, cur = [], []
+    for c in commands:
+        cur.append(c)
+        if c.split()[:1] == ["warp"]:
+            segments.append(cur)
+            cur = []
+    if cur:
+        segments.append(cur)
+    res = []
+    for seg in segments:
+        try:
+            part = console(run["port"], seg, timeout=timeout)
+        except (OSError, ConnectionError) as e:
+            die(f"console of '{run['name']}' unreachable on port {run['port']}: {e}", 2)
+        res += part
+        if len(part) < len(seg) or not all(g for _, g, _ in part):
+            break
+        if seg[-1].split()[:1] == ["warp"] and not run.get("cutscenes") and not wait_settled(run, 60):
+            print(f"mprig: WARN: not settled 60s after '{seg[-1]}'", file=sys.stderr)
+    return res
+
+
+def run_console(run, commands, echo=True, timeout=600.0):
+    """Print replies; return True when every command succeeded. Exits 2 if unreachable."""
+    res = console_seq(run, commands, timeout=timeout)
     ok = True
     for c, good, lines in res:
         if echo:
@@ -244,15 +266,19 @@ def read_cmds(args):
     return cmds
 
 
-def take_shot(run, cmds, settle=0):
-    """Run cmds, optionally wait frames, `shot`; return the BMP path."""
+def take_shot(run, cmds, settle=0, force=True):
+    """Run cmds, optionally wait frames, `shot`; return the BMP path. Unless force, first wait (up to
+    20 s) for a settled screen and warn on stderr if it never is (not on --cutscenes runs)."""
     seq = list(cmds) + ([f"wait {settle}"] if settle else []) + ["shot"]
     if not game_alive(run):
         die(f"run '{run['name']}' is not running", 2)
-    try:
-        res = console(run["port"], seq)
-    except (OSError, ConnectionError) as e:
-        die(f"console of '{run['name']}' unreachable: {e}", 2)
+    if not force and not run.get("cutscenes"):
+        st = status_json(run, timeout=5)
+        # st is None for a frozen game (hold 1) or no world: nothing to wait for
+        if st and not is_settled(st) and not wait_settled(run, 20):
+            print("mprig: WARN: capturing before the screen settled "
+                  "(cinematic or fade-in still running; --force skips the wait)", file=sys.stderr)
+    res = console_seq(run, seq)
     for c, good, lines in res:
         if not good:
             die(f"command '{c}' failed: {lines[-1]}")
@@ -369,7 +395,176 @@ def crash_report(text, binary, extra=None):
 
 # ---------------------------------------------------------------- subcommands
 
+
+ROOMS_INC = ROOT / "platform" / "port_ap_world_data.inc"
+VIEWS = ROOT / "build" / "rig-views.json"
+ROOM_RE = re.compile(r'\{\s*\d+,\s*0x([0-9A-Fa-f]+),\s*0x([0-9A-Fa-f]+),\s*0x[0-9A-Fa-f]+,\s*"([^"]*)"\s*\}')
+HEX_ROOM = re.compile(r"[0-9A-Fa-f]{1,8}(:[0-9A-Fa-f]{1,8})?")
+
+
+def room_table():
+    """[(name, 'MLVL', 'MREA')] parsed from kRooms[] of the AP world data (no copy of the table)."""
+    if not ROOMS_INC.is_file():
+        die(f"room table not found: {ROOMS_INC}")
+    return [(m.group(3), f"{int(m.group(1), 16):08X}", f"{int(m.group(2), 16):08X}")
+            for m in ROOM_RE.finditer(ROOMS_INC.read_text())]
+
+
+def room_name(mlvl, mrea):
+    for n, w, r in room_table():
+        if w == mlvl.upper() and r == mrea.upper():
+            return n
+    return None
+
+
+def resolve_room(text):
+    """'MLVL[:MREA]' hex, or a room name (exact, then unique prefix, then unique substring) -> 'MLVL[:MREA]'."""
+    if HEX_ROOM.fullmatch(text) and (":" in text or len(text) == 8):
+        return text.upper()
+    want = text.lower()
+    rooms = room_table()
+    for pick in (lambda n: n.lower() == want, lambda n: n.lower().startswith(want), lambda n: want in n.lower()):
+        hit = [r for r in rooms if pick(r[0])]
+        if len(hit) == 1:
+            return f"{hit[0][1]}:{hit[0][2]}"
+        if hit:
+            if len({(h[1], h[2]) for h in hit}) == 1:
+                return f"{hit[0][1]}:{hit[0][2]}"
+            die(f"room '{text}' is ambiguous: " + "; ".join(f"{n} ({w}:{r})" for n, w, r in hit[:12]))
+    die(f"no room named '{text}' (see: mprig.py rooms)")
+
+
+def cmd_rooms(a):
+    want = (a.filter or "").lower()
+    for n, w, r in room_table():
+        if want in n.lower() or want in f"{w}:{r}".lower():
+            print(f"{n}\t{w}:{r}")
+
+
+def slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "room"
+
+
+def status_json(run, timeout=10):
+    """The parsed `status --json` of a run, or None (not up yet, not in a world, old build, frozen)."""
+    try:
+        res = console(run["port"], ["status --json"], timeout=timeout)
+    except (OSError, ConnectionError, socket.timeout):
+        return None
+    if not res or not res[0][1]:
+        return None
+    for line in res[0][2]:
+        if line.startswith("{"):
+            try:
+                return json.loads(line)
+            except ValueError:
+                return None
+    return None
+
+
+def is_settled(st):
+    """Gameplay is on screen: first person, no cinematic, the fade-in filter done."""
+    return bool(st) and st["first_person"] and not st["cinematic"] and not st["fade"]
+
+
+class Settled:
+    """Settled means two polls >= 12 frames apart are both settled: the first frames of a world
+    read first-person with no cinematic and no fade just before the cinematic camera starts."""
+    def __init__(self):
+        self.first = None
+
+    def feed(self, st):
+        if not is_settled(st):
+            self.first = None
+            return False
+        if self.first is None:
+            self.first = st["frame"]
+            return False
+        return st["frame"] - self.first >= 12
+
+
+def wait_settled(run, timeout, interval=0.2):
+    """Poll `status --json` until settled; True on success, False on timeout (or a game that is gone)."""
+    end = time.monotonic() + timeout
+    sett = Settled()
+    while True:
+        if not game_alive(run):
+            return False
+        if sett.feed(status_json(run, timeout=5)):
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(interval)
+
+
+def load_views():
+    return json.loads(VIEWS.read_text()) if VIEWS.is_file() else {}
+
+
+def get_view(name):
+    views = load_views()
+    if name not in views:
+        die(f"no saved view '{name}' (have: {', '.join(sorted(views)) or 'none'})")
+    return views[name]
+
+
+def apply_view(run, view):
+    """Warp to the view's room if it is not the current one, restore the pose, wait settled."""
+    st = status_json(run)
+    mlvl, mrea = view["room"].split(":")
+    if not st or st["mrea"] != mrea or st["world"] != mlvl:
+        console_seq(run, [f"warp {mlvl} {mrea}"], echo=False)
+    x, y, z = view["pos"]
+    cmds = [f"tp {x} {y} {z}", f"face {view['yaw']}"]
+    fc = view.get("freecam")
+    if fc and fc.get("on"):
+        cmds += ["freecam on", f"freecam pos {fc['pos'][0]} {fc['pos'][1]} {fc['pos'][2]}",
+                 f"freecam look {fc['yaw']} {fc['pitch']}"]
+    else:
+        cmds.append("freecam off")
+    for c, good, lines in console(run["port"], cmds, timeout=60):
+        if not good:
+            die(f"restoring view: '{c}' failed: {lines[-1]}")
+    if not run.get("cutscenes") and not wait_settled(run, 20):
+        print("mprig: WARN: not settled after restoring the view", file=sys.stderr)
+
+
+def cmd_view(a):
+    views = load_views()
+    if a.action == "ls":
+        for n, v in sorted(views.items()):
+            nm = room_name(*v["room"].split(":")) or "?"
+            fc = " freecam" if v.get("freecam", {}).get("on") else ""
+            print(f"{n}\t{v['room']}\t{nm}\tpos={v['pos']} yaw={v['yaw']}{fc}")
+    elif a.action == "rm":
+        if not a.args or a.args[0] not in views:
+            die("no such view")
+        del views[a.args[0]]
+        VIEWS.write_text(json.dumps(views, indent=1) + "\n")
+    elif a.action == "save":
+        if len(a.args) != 2:
+            die("usage: view save <run> <viewname>")
+        run = load_run(a.args[0])
+        st = status_json(run)
+        if not st:
+            die("no `status --json` from the run (not in a world, or a build without it)")
+        v = {"room": f"{st['world']}:{st['mrea']}", "pos": st["pos"], "yaw": st["yaw"]}
+        if st["freecam"]["on"]:
+            v["freecam"] = st["freecam"]
+        views[a.args[1]] = v
+        VIEWS.parent.mkdir(parents=True, exist_ok=True)
+        VIEWS.write_text(json.dumps(views, indent=1) + "\n")
+        print(f"{a.args[1]}\t{v['room']}\tpos={v['pos']} yaw={v['yaw']}")
+    else:
+        die("usage: view save <run> <name> | ls | rm <name>")
+
+
 def cmd_start(a):
+    run = start_run(a)
+    print(f"{run['name']} :{run['display']} {run['port']} {run['log']}")
+
+
+def start_run(a):
     cfg = config()
     name = a.name
     d = run_dir(name)
@@ -387,8 +582,11 @@ def cmd_start(a):
     m = re.fullmatch(r"(\d+)x(\d+)", a.size)
     if not m:
         die(f"bad --size '{a.size}' (want WxH)")
-    if a.room and not re.fullmatch(r"[0-9A-Fa-f]{1,8}(:[0-9A-Fa-f]{1,8})?", a.room):
-        die(f"bad --room '{a.room}' (want MLVL[:MREA] in hex)")
+    view = get_view(a.at) if getattr(a, "at", None) else None
+    if a.room:
+        a.room = resolve_room(a.room)
+    elif view:
+        a.room = view["room"]
 
     with Lock("alloc.lock"):
         old = d / "run.json"
@@ -407,7 +605,7 @@ def cmd_start(a):
         run = {"name": name, "dir": str(d), "display": display, "port": port, "binary": str(binary),
                "build": binary.parent.name, "room": a.room, "disc": disc, "user": str(d / "user"),
                "log": str(d / "game.log"), "started": time.time(), "state": "starting",
-               "xvfb": None, "game": None, "env": a.env, "owner": os.getpid()}
+               "xvfb": None, "game": None, "env": a.env, "owner": os.getpid(), "cutscenes": bool(a.cutscenes)}
         save_run(run)
 
     ok = False
@@ -493,20 +691,30 @@ def cmd_start(a):
     ready = False
     # with --room, wait for gameplay: an ok status alone comes back during the intro cinematic
     want_play = a.room and not a.cutscenes
+    sett = Settled()
+    legacy = False  # a build without `status --json`: text status, then a fixed wait
     while time.monotonic() < end:
         if game.poll() is not None:
             break
         try:
-            res = console(port, ["status"], timeout=10)
-            if res and res[0][1] and (not want_play or "first person 1, cinematic 0" in "\n".join(res[0][2])):
-                ready = True
-                break
-        except (OSError, ConnectionError):
+            if not legacy:
+                res = console(port, ["status --json"], timeout=10)
+                if res and not res[0][1] and "unknown" in res[0][2][-1].lower():
+                    legacy = True
+            if legacy:
+                res = console(port, ["status"], timeout=10)
+                if res and res[0][1] and (not want_play or "first person 1, cinematic 0" in "\n".join(res[0][2])):
+                    ready = True
+                    console(port, ["wait 90"], timeout=60)  # a skipped cinematic fades in: ~70 frames
+                    break
+            elif res and res[0][1]:
+                st = json.loads(next(l for l in res[0][2] if l.startswith("{")))
+                if not want_play or sett.feed(st):
+                    ready = True
+                    break
+        except (OSError, ConnectionError, ValueError, StopIteration):
             pass
         time.sleep(0.2)
-    if ready and want_play:
-        # a skipped cinematic fades back in (black, then the HUD): ~70 frames on Landing Site
-        console(port, ["wait 90"], timeout=60)
     if not ready:
         text = (d / "game.log").read_text(errors="replace")
         died = game.poll() is not None
@@ -516,8 +724,10 @@ def cmd_start(a):
             print("\n".join(rep), file=sys.stderr)
         die(f"'{name}' " + (f"died during startup (exit {game.returncode})" if died
                              else f"console not ready after {a.wait:.0f}s"))
+    if view:
+        apply_view(run, view)
     ok = True
-    print(f"{name} :{display} {port} {d / 'game.log'}")
+    return run
 
 
 def stop_run(run, quiet=False):
@@ -566,8 +776,49 @@ def cmd_cmd(a):
 def cmd_shot(a):
     run = load_run(a.name)
     crop = parse_crop(a.crop) if a.crop else None
-    bmp = take_shot(run, a.commands, a.settle)
+    if a.at:
+        apply_view(run, get_view(a.at))
+    bmp = take_shot(run, a.commands, a.settle, force=a.force)
     print(bmp_to_png(bmp, a.out, crop))
+
+
+def cmd_shots(a):
+    outdir = Path(a.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    targets = ([("@" + a.at)] if a.at else []) + list(a.rooms)
+    if not targets:
+        die("give at least one room (name, MLVL[:MREA] or @view)")
+    plan = []  # (label, room 'MLVL:MREA', view or None)
+    for t in targets:
+        if t.startswith("@"):
+            v = get_view(t[1:])
+            plan.append((t[1:], v["room"], v))
+        else:
+            r = resolve_room(t)
+            plan.append((room_name(*r.split(":")) if ":" in r and room_name(*r.split(":")) else r.replace(":", "-"), r, None))
+    if ":" not in plan[0][1]:
+        die("shots needs MLVL:MREA (or a room name) for the first room")
+    a.room, a.at = plan[0][1], None
+    t0 = time.monotonic()
+    run = start_run(a)
+    print(f"started {run['name']} in {time.monotonic() - t0:.1f}s")
+    try:
+        for i, (label, room, view) in enumerate(plan):
+            t1 = time.monotonic()
+            if view:
+                apply_view(run, view)
+            elif i:
+                mlvl, mrea = room.split(":") if ":" in room else (room, None)
+                res = console_seq(run, [f"warp {mlvl} {mrea}" if mrea else f"warp {mlvl}"])
+                if not res or not res[0][1]:
+                    die(f"warp {room} failed: {res[0][2][-1] if res else 'no reply'}")
+            cmds = split_cmds(a.cmds) if a.cmds else []
+            bmp = take_shot(run, cmds, 0, force=False)
+            out = outdir / f"{i + 1:02d}-{slug(label)}.png"
+            bmp_to_png(bmp, str(out))
+            print(f"{out}\t{room}\t{time.monotonic() - t1:.1f}s")
+    finally:
+        stop_run(run, quiet=True)
 
 
 def cmd_pick(a):
@@ -929,22 +1180,38 @@ def build_parser():
         sp = sub.add_parser(name, help=help_, description=help_)
         sp.set_defaults(fn=fn)
         return sp
+    def start_args(s, room_help):
+        s.add_argument("--build", help="build dir name under build/ or a path (default: rig.ini build)")
+        s.add_argument("--disc")
+        s.add_argument("--env", action="append", default=[], metavar="K=V")
+        s.add_argument("--mods", help="mods dir, or 'none' for an empty one (default: the real user's)")
+        s.add_argument("--settings", help="port_settings.ini to use, or 'none' (default: the real user's)")
+        s.add_argument("--cutscenes", action="store_true",
+                       help="keep cutscenes (default: MP_SKIP_CUTSCENES=1 + skippable_cutscenes=1, which also "
+                            "applies randomprime's room patches; with --room, start waits for gameplay)")
+        s.add_argument("--saves", action="store_true", help="copy USA/ and savestates/ from the real user dir")
+        s.add_argument("--size", default="1280x720", help="Xvfb screen size WxH")
+        s.add_argument("--wait", type=float, default=120, help="seconds to wait for the console")
+        s.add_argument("--gdb", action="store_true", help="run under gdb so a crash leaves a backtrace in game.log")
+        s.add_argument("--replace", action="store_true", help="stop a running run of this name first")
+
     s = add("start", cmd_start, "start Xvfb + game with a console; prints 'name display port log'")
     s.add_argument("name")
-    s.add_argument("--build", help="build dir name under build/ or a path (default: rig.ini build)")
-    s.add_argument("--disc")
-    s.add_argument("--room", help="MLVL[:MREA] hex: boot straight into a room")
-    s.add_argument("--env", action="append", default=[], metavar="K=V")
-    s.add_argument("--mods", help="mods dir, or 'none' for an empty one (default: the real user's)")
-    s.add_argument("--settings", help="port_settings.ini to use, or 'none' (default: the real user's)")
-    s.add_argument("--cutscenes", action="store_true",
-                   help="keep cutscenes (default: MP_SKIP_CUTSCENES=1 + skippable_cutscenes=1, which also "
-                        "applies randomprime's room patches; with --room, start waits for gameplay)")
-    s.add_argument("--saves", action="store_true", help="copy USA/ and savestates/ from the real user dir")
-    s.add_argument("--size", default="1280x720", help="Xvfb screen size WxH")
-    s.add_argument("--wait", type=float, default=120, help="seconds to wait for the console")
-    s.add_argument("--gdb", action="store_true", help="run under gdb so a crash leaves a backtrace in game.log")
-    s.add_argument("--replace", action="store_true", help="stop a running run of this name first")
+    s.add_argument("--room", help="MLVL[:MREA] hex or a room name (see `rooms`): boot straight into a room")
+    s.add_argument("--at", metavar="VIEW", help="a saved view (`view save`): boot into its room and restore its pose")
+    start_args(s, "")
+    s = add("shots", cmd_shots, "one game, many rooms: warp to each, wait settled, capture <outdir>/<NN>-<room>.png")
+    s.add_argument("name")
+    s.add_argument("outdir")
+    s.add_argument("rooms", nargs="*", help="room names, MLVL:MREA, or @view; the first one is booted into")
+    s.add_argument("--cmds", help="';'-separated console commands to run before each capture")
+    s.add_argument("--at", metavar="VIEW", help="a saved view, shot first (same as a leading @VIEW)")
+    start_args(s, "")
+    s = add("rooms", cmd_rooms, "list room names with MLVL:MREA (from platform/port_ap_world_data.inc)")
+    s.add_argument("filter", nargs="?")
+    s = add("view", cmd_view, "saved camera viewpoints in build/rig-views.json: save <run> <name> | ls | rm <name>")
+    s.add_argument("action", choices=["save", "ls", "rm"])
+    s.add_argument("args", nargs="*")
     s = add("cmd", cmd_cmd, "send console commands (one per argument, or -f FILE); exit 1 if one fails")
     s.add_argument("name")
     s.add_argument("-f", "--file")
@@ -955,6 +1222,8 @@ def build_parser():
     s.add_argument("commands", nargs="*", help="console commands to run first (one per argument)")
     s.add_argument("--crop", help="x,y,w,h")
     s.add_argument("--settle", type=int, default=0, help="frames to wait before the shot")
+    s.add_argument("--force", action="store_true", help="capture at once, without waiting for a settled screen")
+    s.add_argument("--at", metavar="VIEW", help="restore a saved view first (warps if the room differs)")
     s = add("pick", cmd_pick, "which draw is at a window pixel: owner, CMDL, material, record, shader hash")
     s.add_argument("name")
     s.add_argument("x", type=int)
