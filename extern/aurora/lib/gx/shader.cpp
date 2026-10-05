@@ -1139,6 +1139,23 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_kglow = ubuf.pbr_layer_height.xyz * (pbr_dt * ubuf.pbr_layer.z);
       }})""",
                          base, mapStage[4]);
+    // Kind 13, a Metroid's dome (Remastered's c83e6fcd, a matcap shell): map 4 is the matcap,
+    // read where the normal map's tilt (pbr_param.z, CCH1.x, scaling the map's xy, which are
+    // rescaled by 255/128 as in the shader) turns the view-space normal, at 0.5 + 0.5 xy with
+    // no flip. Its colour times pbr_layer.z (CCH0.z) times pbr_emissive (DIFC) is the albedo,
+    // and the lighting is the standard PBR one on map 1 (a METL map: AO, roughness, metal).
+    if (mapStage[2] != -1) {
+      kinds += fmt::format(R"""(
+      if (pbr_kind > 12.5 && pbr_kind < 13.5 && pbr_tlen > 1e-24) {{
+          let pbr_mt = (sampled{0}.rg * 1.9921875 - 1.0) * ubuf.pbr_param.z;
+          let pbr_ms = inverseSqrt(pbr_tlen);
+          let pbr_mm = normalize(pbr_t * (pbr_ms * pbr_mt.x) - pbr_b * (pbr_ms * pbr_mt.y) +
+                                 pbr_ng * sqrt(max(0.0, 1.0 - dot(pbr_mt, pbr_mt))));
+          let pbr_mc = textureSampleLevel(tex{1}, tex{1}_samp, 0.5 + 0.5 * pbr_mm.xy, 0.0).rgb;
+          pbr_base = pow(max(pbr_mc, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_layer.z * max(ubuf.pbr_emissive.rgb, vec3f(0.0));
+      }})""",
+                           mapStage[2], underlying(inner.texMapId));
+    }
     // Kind 7, falling water: map 4's three channels are sheets that scroll at speeds of
     // their own (pbr_layer_height the first two, pbr_layer.x and pbr_param.y the third,
     // pbr_param.x the time). The vertex colour says how much of each there is, and their
@@ -1370,6 +1387,15 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_glow = vec3f(0.0);{1}
       }})""",
                           base, holo);
+    // Kind 13's opacity is the vertex alpha times DIFC.a (pbr_layer_height.y), blended. Its
+    // rim, 1 - |n.z|^pbr_param.x - pbr_param.w (CCH0.x, CCH1.y), times the vertex colour and
+    // pbr_param.y (CCH0.y), is added after the room's exposure (it is at inverse exposure).
+    liquid += R"""(
+      if (pbr_kind > 12.5 && pbr_kind < 13.5) {
+          pbr_alpha = clamp(pbr_vraw.a * ubuf.pbr_layer_height.y, 0.0, 1.0);
+          let pbr_mrim = clamp(1.0 - pow(abs(pbr_n.z), max(ubuf.pbr_param.x, 1e-3)) - ubuf.pbr_param.w, 0.0, 1.0);
+          pbr_glow += pbr_mrim * pbr_vraw.rgb * ubuf.pbr_param.y;
+      })""";
   }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
@@ -1543,7 +1569,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
               pbr_vdiag = pbr_n * 0.5 + 0.5;
           }}
       }}
-      pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * (pbr_f0 * pbr_ab.x + pbr_ab.y)) * pbr_ao;
+      // Kind 13 scales the probe's reflection by pbr_layer_height.z (CCH1.z).
+      pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5) *
+                                           (pbr_f0 * pbr_ab.x + pbr_ab.y)) * pbr_ao;
       // Remastered's CharacterBacklight (GX_AURORA_SET_PBR_BACKLIGHT; the material's
       // strengths and falloff in the backlight's place): a light from world up and one from
       // behind, each coloured like the baked ambient on its side brought up to a luminance of

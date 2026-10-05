@@ -615,7 +615,7 @@ struct RemMaterial {
   int anuv = -1;  // the model's ANUV entry its meshes use, when it flattens
   bool mask = false;       // the base map's alpha masks the glow and is no opacity
   bool maskSquared = false; // ... squared (USE_DIFFUSE_AS_INCAN_MASK): kept squared in the map
-  bool shell = false;      // a matcap shell: keeps a blended retail material's TEV
+  bool shell = false;      // a matcap shell: drawn as PBR kind 13 over the retail blended slot
   double height = 0.0;     // above 0: the threshold of a height-blended alpha
   // A second layer (base, MR, normal) the vertex alpha blends over the first
   // by the two base maps' heights: snow on rock, moss on stone.
@@ -1328,7 +1328,7 @@ constexpr uint32_t kShaderFrozenShell = 0x2FC554A2;
 // layer seen a little below the surface (parallax CCH0.w), times CCH1.x and the base
 // alpha squared, plus a CCH3 rim. Drawn as plain PBR the pale albedo alone read white.
 constexpr uint32_t kShaderIceSpreader = 0x088E025E;
-// A Metroid's dome: a matcap shell the port does not draw. Its glTF calls it
+// A Metroid's dome: a matcap shell (PBR kind 13). Its glTF calls it
 // opaque, so the vote put it on an opaque retail material, a solid white blob;
 // it keeps retail's blended dome instead.
 constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
@@ -1436,6 +1436,7 @@ const char* KindName(int kind) {
   case 10: return "premul-glass";
   case 11: return "holo-glass";
   case 12: return "frozen-shell";
+  case 13: return "matcap-shell";
   default: return "kind?";
   }
 }
@@ -1822,6 +1823,33 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     // probe light and the rim. CIceBeamMP1::PreRenderGunFx sets IINT to 3 + 14 v, v
     // going 0..0.5..0 once a second; the runtime pulses the stored peak to match.
     out.emissive = s * ShortestDouble(cch[0]->color[3]);
+  } else if (shader == kShaderMatcapShell && out.maps[kNormal].has && tch[0] && cch[0] && cch[1]) {
+    out.kind = 13;
+    out.vcolor = true;
+    // The matcap is bound as the second layer's base (colour: the shader decodes it, then
+    // scales it by CCH0.z). CCH0 is rim power, rim gain, albedo scale, lit-normal tilt;
+    // CCH1 the matcap normal's tilt, the rim's bias and the probe reflection's scale. DIFC
+    // tints the albedo and its alpha scales the vertex alpha.
+    set(kBase, tch[0]->texture, &out.layer[kBase]);
+    out.layer[kBase].coord = 0;
+    out.kindParam[0] = ShortestDouble(cch[0]->color[0]);
+    out.kindParam[1] = ShortestDouble(cch[0]->color[1]);
+    out.kindParam[2] = ShortestDouble(cch[1]->color[0]);
+    out.kindParam[3] = ShortestDouble(cch[1]->color[1]);
+    out.kindStrength = std::max(ShortestDouble(cch[0]->color[2]), 0.0);
+    out.layerHeight[2] = ShortestDouble(cch[1]->color[2]);
+    out.layerHeight[1] = 1.0;
+    for (int i = 0; i < 3; ++i) {
+      out.tint[i] = 1.0;
+    }
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind == ModelMaterialData::Kind::Color && d.usage == FourCC('D', 'I', 'F', 'C')) {
+        for (int i = 0; i < 3; ++i) {
+          out.tint[i] = ShortestDouble(d.color[i]);
+        }
+        out.layerHeight[1] = ShortestDouble(d.color[3]);
+      }
+    }
   }
   if (std::find(std::begin(kShaderGunGlow), std::end(kShaderGunGlow), shader) != std::end(kShaderGunGlow) &&
       out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] && cch[2]) {
@@ -1923,6 +1951,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
   }
+  if (out.kind == 13) {
+    // Lit by the standard path and alpha blended; the shader makes its own albedo and rim.
+    out.layered = out.blended = true;
+    out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 0.0;
+    out.backlight = out.backlightTop = 0.0;
+    out.maps[kEmissive].has = false;
+  }
   if (out.kind == 12) {
     // Opaque and lit; the shader discards what the dissolve leaves out.
     out.layered = true;
@@ -1940,7 +1977,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   if (out.kind == 0) {
     static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
-                                             "frozen-shell"};
+                                             "frozen-shell", "matcap-shell"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -2070,7 +2107,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
   std::vector<double> f;
   for (int i = 0; i < 3; ++i) {
     // A liquid has no glow of its own, and its colour goes where the glow's would.
-    f.push_back(m.kind == 7 || m.kind == 8 || m.kind == 11 ? m.tint[i] : e);
+    f.push_back(m.kind == 7 || m.kind == 8 || m.kind == 11 || m.kind == 13 ? m.tint[i] : e);
   }
   for (int i = 0; i < 3; ++i) {
     f.push_back(k[i]);
@@ -3202,7 +3239,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   bool useColor = false;
   for (const Prim& p : prims) {
     const bool reads = opt.standalone ? mats[p.mat].tinted || mats[p.mat].vcolor
-                                      : ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 9;
+                                      : ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 9 || mats[p.mat].kind == 13;
     useColor = useColor || (reads && buffers[p.buffer].colored);
   }
   if (useColor) {
@@ -3213,7 +3250,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     std::vector<bool> keepAlpha(n, false);
     for (const Prim& p : prims) {
       if (((mats[p.mat].blended || mats[p.mat].layered) && mats[p.mat].tinted) || mats[p.mat].vcolor ||
-          ownGlow(mats[p.mat], retail.mats[p.rmat])) {
+          ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 13) {
         for (uint32_t i : p.I) {
           keepAlpha[i] = true;
         }
@@ -3351,14 +3388,17 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // So is the Ice Beam cannon's frost shell, which needs no vertex colours: drawn as a
     // plain surface it would freeze the gun for good.
     const bool frostShell = rem.kind == 12;
-    if (!opt.standalone && !gunGlow && !frostShell) {
+    // The Metroid dome's matcap shell (kind 13) is a retail model's blended surface drawn by
+    // the shader: its alpha, rim and colours are all the Remastered material's.
+    const bool matcapShell = rem.kind == 13;
+    if (!opt.standalone && !gunGlow && !frostShell && !matcapShell) {
       if (rem.kind != 0) {
         loopNotes += std::string("kind ") + KindName(rem.kind) + " dropped: a retail model, not standalone; ";
       }
       rem.kind = 0;
       rem.vcolor = false;
     }
-    rem.layered = rem.layered && (gunGlow || frostShell || (opt.standalone && (rem.kind != 0 || (useColor && rem.tinted))));
+    rem.layered = rem.layered && (gunGlow || frostShell || matcapShell || (opt.standalone && (rem.kind != 0 || (useColor && rem.tinted))));
     // Nor do the alpha and shading modes belong on one: what they say is about the
     // Remastered surface, and a retail model keeps the retail material's
     // (bar a glow of its own, whose colour and fade are all in it).
@@ -3402,7 +3442,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
     }
     // Bits 4 and 5 are colour 0. Only a material that reads it declares it.
-    const bool colored = useColor && (opt.standalone ? rem.tinted || rem.vcolor : glow || gunGlow);
+    const bool colored = useColor && (opt.standalone ? rem.tinted || rem.vcolor : glow || gunGlow || matcapShell);
     rem.tinted = colored && rem.tinted;
     if (colored) {
       vtx |= 3u << 4;
@@ -3414,7 +3454,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // test says nothing about what the Remastered map's alpha holds.
     const char* const baseAlpha =
         glow ? "blend" : !opt.standalone ? (frostShell || rem.mask ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? "punch" : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
-    const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || !IsFx(pm)) &&
+    const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || !IsFx(pm)) &&
                         Get("pbr:base", rt, baseAlpha, opt).has_value();
     if (usePbr) {
       ++pbr;
@@ -3529,7 +3569,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const std::string tevReason =
         !opt.pbr ? "pbr off"
         : !rt[kBase].has ? "no base map"
-        : !(opt.standalone || glow || !IsFx(pm)) ? "retail fx material keeps its TEV"
+        : !(opt.standalone || glow || matcapShell || !IsFx(pm)) ? "retail fx material keeps its TEV"
                                                    : "the base map did not resolve";
     // The TEV path: the retail material with each texture slot refilled from
     // the Remastered map that matches what its stage does.
