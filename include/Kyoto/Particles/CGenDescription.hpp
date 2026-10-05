@@ -11,6 +11,10 @@
 #include "rstl/optional_object.hpp"
 #include "rstl/single_ptr.hpp"
 
+#ifdef TARGET_PC
+#include <vector>
+#endif
+
 class CElectricDescription;
 class CModel;
 class CSwooshDescription;
@@ -56,6 +60,10 @@ public:
   CUVElement* x40_TEXR;
   CUVElement* x44_TIND;
   rstl::optional_object< TCachedToken< CModel > > x48_PMDL;
+#ifdef TARGET_PC
+  // port-only PMDV: model variants, a particle uses xPortSeed % size(); empty = just PMDL
+  std::vector< TCachedToken< CModel > > xPortPMDV;
+#endif
   CVectorElement* x58_PMOP;
   CVectorElement* x5c_PMRT;
   CVectorElement* x60_PMSC;

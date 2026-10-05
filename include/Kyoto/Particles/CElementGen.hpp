@@ -60,12 +60,19 @@ public:
     float x2c_lineLengthOrSize;
     float x30_lineWidthOrRota;
     CColor x34_color;
+#ifdef TARGET_PC
+    uint xPortSeed; // port-only: fixed per particle, mixes at spawn
+#endif
 
     CParticle()
     : x4_pos(CVector3f::Zero())
     , x10_prevPos(x4_pos)
     , x1c_vel(x10_prevPos)
-    , x34_color(static_cast< u8 >(0xFF), 0x00, 0xFF, 0xFF) {}
+    , x34_color(static_cast< u8 >(0xFF), 0x00, 0xFF, 0xFF)
+#ifdef TARGET_PC
+    , xPortSeed(0)
+#endif
+    {}
   };
   struct CAdvancedValues {
     float values[8];

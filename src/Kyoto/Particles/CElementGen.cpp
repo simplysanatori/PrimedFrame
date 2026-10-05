@@ -39,6 +39,29 @@
 #include "port_debug.h"
 #endif
 
+#ifdef TARGET_PC
+// Evaluates a TEXR/TIND element for one particle. The particle is only visible to the element
+// during the call, so it never dangles.
+static void PortGetValueUV(const CUVElement* elem, int frame, CElementGen::CParticle* particle,
+                           SUVElementSet& uvs) {
+  CParticleGlobals::xPortUVParticle = particle;
+  elem->GetValueUV(frame, uvs);
+  CParticleGlobals::xPortUVParticle = nullptr;
+}
+
+// A well-mixed per-particle seed (counter x golden ratio, then a murmur3 finaliser).
+static uint PortNextParticleSeed() {
+  static uint counter = 0;
+  uint h = ++counter * 0x9E3779B9u;
+  h ^= h >> 16;
+  h *= 0x85EBCA6Bu;
+  h ^= h >> 13;
+  h *= 0xC2B2AE35u;
+  h ^= h >> 16;
+  return h;
+}
+#endif
+
 #pragma inline_max_size(250)
 #pragma inline_max_total_size(20000) // for RenderParticles vector inlining
 
@@ -751,6 +774,9 @@ void CElementGen::CreateNewParticles(int count) {
 
     CParticle& particle = x30_particles[particleIndex];
     particle.x28_startFrame = x74_curFrame;
+#ifdef TARGET_PC
+    particle.xPortSeed = PortNextParticleSeed();
+#endif
 
     if (CIntElement* ltme = x28_loadedGenDesc->x28_LTME) {
       ltme->GetValue(0, particle.x0_endFrame);
@@ -1287,7 +1313,12 @@ void CElementGen::RenderParticles() {
       CGraphics::SetTevOp(kTS_Stage1, CGraphics::kEnvPassthru);
     }
 
+#ifdef TARGET_PC
+    PortGetValueUV(x28_loadedGenDesc->x40_TEXR, x74_curFrame - x30_particles[0].x28_startFrame,
+                    &x30_particles[0], uvs);
+#else
     x28_loadedGenDesc->x40_TEXR->GetValueUV(x74_curFrame - x30_particles[0].x28_startFrame, uvs);
+#endif
     constUVs = x28_loadedGenDesc->x40_TEXR->HasConstantUV();
   } else {
     CGraphics::SetTevOp(kTS_Stage0, CGraphics::kEnvPassthru);
@@ -1412,7 +1443,11 @@ void CElementGen::RenderParticles() {
           int partFrame = x74_curFrame - particle.x28_startFrame - 1;
           CParticleGlobals::SetParticleLifetime(particle.x0_endFrame - particle.x28_startFrame);
           CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
+#ifdef TARGET_PC
+          PortGetValueUV(x28_loadedGenDesc->x40_TEXR, partFrame, &particle, uvs);
+#else
           x28_loadedGenDesc->x40_TEXR->GetValueUV(partFrame, uvs);
+#endif
 
           if (noRota) {
             float x = (particle.x2c_lineLengthOrSize * 0.5f) + viewPoint.GetX();
@@ -1587,7 +1622,11 @@ void CElementGen::RenderParticles() {
           int partFrame = x74_curFrame - particle->x28_startFrame - 1;
           CParticleGlobals::SetParticleLifetime(particle->x0_endFrame - particle->x28_startFrame);
           CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
+#ifdef TARGET_PC
+          PortGetValueUV(x28_loadedGenDesc->x40_TEXR, partFrame, particle, uvs);
+#else
           x28_loadedGenDesc->x40_TEXR->GetValueUV(partFrame, uvs);
+#endif
 
           CVector3f p = pos + right * 0.5f + fore * 0.5f;
           GXPositionVector3f(p);
@@ -1657,7 +1696,11 @@ void CElementGen::RenderParticles() {
         int partFrame = x74_curFrame - particle->x28_startFrame - 1;
         CParticleGlobals::SetParticleLifetime(particle->x0_endFrame - particle->x28_startFrame);
         CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
+#ifdef TARGET_PC
+        PortGetValueUV(x28_loadedGenDesc->x40_TEXR, partFrame, particle, uvs);
+#else
         x28_loadedGenDesc->x40_TEXR->GetValueUV(partFrame, uvs);
+#endif
 
         if (noRota) {
           for (int j = 0; j < mbspVal; ++j) {
@@ -1911,7 +1954,11 @@ void CElementGen::RenderParticlesFlameThrower(CElementGen* const* gens, int coun
     CParticleGlobals::SetParticleLifetime(particle.x0_endFrame - particle.x28_startFrame);
     CParticleGlobals::UpdateParticleLifetimeTweenValues(elapsed);
 
+#ifdef TARGET_PC
+    PortGetValueUV(genDesc->x40_TEXR, elapsed, &particle, uvs);
+#else
     genDesc->x40_TEXR->GetValueUV(elapsed, uvs);
+#endif
 
     CGX::Begin(GX_QUADS, GX_VTXFMT6, 4);
 
@@ -1993,7 +2040,12 @@ void CElementGen::RenderParticlesIndirectTexture() {
   CTexture* cachedTex = *texToken;
 
   bool constTexr = x28_loadedGenDesc->x40_TEXR->HasConstantTexture();
+#ifdef TARGET_PC
+  PortGetValueUV(x28_loadedGenDesc->x40_TEXR, x74_curFrame - x30_particles[0].x28_startFrame,
+                  &x30_particles[0], uvs);
+#else
   x28_loadedGenDesc->x40_TEXR->GetValueUV(x74_curFrame - x30_particles[0].x28_startFrame, uvs);
+#endif
   bool constUVs = x28_loadedGenDesc->x40_TEXR->HasConstantUV();
 
   TToken< CTexture > indTexToken =
@@ -2003,7 +2055,12 @@ void CElementGen::RenderParticlesIndirectTexture() {
 
   bool constIndTexr = x28_loadedGenDesc->x44_TIND->HasConstantTexture();
   bool constIndUVs = x28_loadedGenDesc->x44_TIND->HasConstantUV();
+#ifdef TARGET_PC
+  PortGetValueUV(x28_loadedGenDesc->x44_TIND, x74_curFrame - x30_particles[0].x28_startFrame,
+                  &x30_particles[0], uvsInd);
+#else
   x28_loadedGenDesc->x44_TIND->GetValueUV(x74_curFrame - x30_particles[0].x28_startFrame, uvsInd);
+#endif
 
   CGX::SetNumTexGens(3);
   CGX::SetTexCoordGen(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY, false, GX_PTIDENTITY);
@@ -2113,12 +2170,22 @@ void CElementGen::RenderParticlesIndirectTexture() {
     }
 
     if (!constUVs) {
+#ifdef TARGET_PC
+      PortGetValueUV(x28_loadedGenDesc->x40_TEXR, x74_curFrame - x30_particles[i].x28_startFrame,
+                      &x30_particles[i], uvs);
+#else
       x28_loadedGenDesc->x40_TEXR->GetValueUV(x74_curFrame - x30_particles[i].x28_startFrame, uvs);
+#endif
     }
 
     if (!constIndUVs) {
+#ifdef TARGET_PC
+      PortGetValueUV(x28_loadedGenDesc->x44_TIND, x74_curFrame - x30_particles[i].x28_startFrame,
+                      &x30_particles[i], uvsInd);
+#else
       x28_loadedGenDesc->x44_TIND->GetValueUV(x74_curFrame - x30_particles[i].x28_startFrame,
                                               uvsInd);
+#endif
     }
 
     float size = particle->x2c_lineLengthOrSize * 0.5f;
@@ -2273,7 +2340,12 @@ void CElementGen::RenderLines() {
       CGraphics::SetTevOp(kTS_Stage1, CGraphics::kEnvPassthru);
     }
 
+#ifdef TARGET_PC
+    PortGetValueUV(x28_loadedGenDesc->x40_TEXR, x74_curFrame - x30_particles[0].x28_startFrame,
+                    &x30_particles[0], uvs);
+#else
     x28_loadedGenDesc->x40_TEXR->GetValueUV(x74_curFrame - x30_particles[0].x28_startFrame, uvs);
+#endif
     constUVs = x28_loadedGenDesc->x40_TEXR->HasConstantUV();
   } else {
     CGraphics::SetTevOp(kTS_Stage0, CGraphics::kEnvPassthru);
@@ -2320,7 +2392,12 @@ void CElementGen::RenderLines() {
     CParticle& particle = x30_particles[i];
 
     if (!constUVs) {
+#ifdef TARGET_PC
+      PortGetValueUV(x28_loadedGenDesc->x40_TEXR, x74_curFrame - particle.x28_startFrame,
+                      &particle, uvs);
+#else
       x28_loadedGenDesc->x40_TEXR->GetValueUV(x74_curFrame - particle.x28_startFrame, uvs);
+#endif
     }
 
     CVector3f dVec = particle.x4_pos - particle.x10_prevPos;
@@ -2453,7 +2530,12 @@ void CElementGen::RenderModels() {
         CGraphics::SetTevOp(kTS_Stage1, CGraphics::kEnvPassthru);
       }
 
+#ifdef TARGET_PC
+      PortGetValueUV(x28_loadedGenDesc->x40_TEXR, x74_curFrame - x30_particles[0].x28_startFrame,
+                      &x30_particles[0], uvs);
+#else
       x28_loadedGenDesc->x40_TEXR->GetValueUV(x74_curFrame - x30_particles[0].x28_startFrame, uvs);
+#endif
       x28_loadedGenDesc->x40_TEXR->HasConstantUV();
     } else {
       CGraphics::SetTevOp(kTS_Stage0, CGraphics::kEnvPassthru);
@@ -2546,6 +2628,11 @@ void CElementGen::RenderModels() {
       CGraphics::SetModelMatrix(x10c_globalScaleTransform * partTrans * x178_localScaleTransform);
 
       if (x28_loadedGenDesc->x31_26_PMUS) {
+#ifdef TARGET_PC
+        if (!x28_loadedGenDesc->x40_TEXR->HasConstantUV()) {
+          PortGetValueUV(x28_loadedGenDesc->x40_TEXR, partFrame, &particle, uvs);
+        }
+#endif
         if (moveRedToAlphaBuffer) {
           CGX::Begin(GX_QUADS, GX_VTXFMT0, 4);
           GXPosition3f32(0.5f, 0.f, 0.5f);
@@ -2576,7 +2663,17 @@ void CElementGen::RenderModels() {
           CGraphics::StreamEnd();
         }
       } else {
+#ifdef TARGET_PC
         CModel* model = x28_loadedGenDesc->x48_PMDL->GetObject();
+        const std::vector< TCachedToken< CModel > >& variants = x28_loadedGenDesc->xPortPMDV;
+        if (!variants.empty()) {
+          if (CModel* variant = variants[particle.xPortSeed % variants.size()].GetObject()) {
+            model = variant;
+          }
+        }
+#else
+        CModel* model = x28_loadedGenDesc->x48_PMDL->GetObject();
+#endif
         if (sSubtractBlend) {
           model->Draw(CModelFlags::AlphaBlended(0.5f).DepthCompareUpdate(true, false));
         } else if (x28_loadedGenDesc->x31_25_PMAB) {

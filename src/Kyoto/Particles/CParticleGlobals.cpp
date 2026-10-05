@@ -10,6 +10,9 @@ float CParticleGlobals::mParticleLifetimePercentageRemainder = 0.f;
 CElementGen::CParticle* CParticleGlobals::mCurrentParticle = nullptr;
 float* CParticleGlobals::mParticleAccessParameters = nullptr;
 CParticleGlobals::SParticleSystem* CParticleGlobals::mCurrentParticleSystem = nullptr;
+#ifdef TARGET_PC
+CElementGen::CParticle* CParticleGlobals::xPortUVParticle = nullptr;
+#endif
 
 void CParticleGlobals::SetParticleLifetime(int lifetime) {
   mParticleLifetime = lifetime;

@@ -51,6 +51,10 @@ public:
   static CElementGen::CParticle* mCurrentParticle;
   static float* mParticleAccessParameters;
   static SParticleSystem* mCurrentParticleSystem;
+#ifdef TARGET_PC
+  // port-only: the particle a per-particle GetValueUV call is for (null = none)
+  static CElementGen::CParticle* xPortUVParticle;
+#endif
 };
 
 #endif // _CPARTICLEGLOBALS

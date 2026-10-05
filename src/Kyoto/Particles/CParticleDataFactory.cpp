@@ -108,6 +108,11 @@ void CParticleDataFactory::LoadGPSMTokens(CGenDescription* desc) {
   if (desc->x48_PMDL) {
     desc->x48_PMDL->ForceCache();
   }
+#ifdef TARGET_PC
+  for (TCachedToken< CModel >& variant : desc->xPortPMDV) {
+    variant.ForceCache();
+  }
+#endif
   if (desc->x78_ICTS) {
     desc->x78_ICTS->ForceCache();
   }
@@ -249,6 +254,22 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
         desc->x48_PMDL = rstl::optional_object_null();
       }
     } break;
+#ifdef TARGET_PC
+    case SBIG('PMDV'): {
+      // 'CNST' <s32 n>, then n x 'CNST' <CMDL id>
+      desc->xPortPMDV.clear();
+      GetClassID(in);
+      const int count = in.ReadLong();
+      for (int i = 0; i < count; ++i) {
+        GetClassID(in);
+        const CAssetId id = in.ReadLong();
+        if (id != 0) {
+          desc->xPortPMDV.push_back(
+              TCachedToken< CModel >(pool->GetObj(SObjectTag(SBIG('CMDL'), id))));
+        }
+      }
+    } break;
+#endif
     case SBIG('PMOP'):
       desc->x58_PMOP = GetVectorElement(in);
       break;
@@ -1166,6 +1187,25 @@ CUVElement* CParticleDataFactory::GetTextureElement(CInputStream& in, CSimplePoo
     }
     break;
   }
+#ifdef TARGET_PC
+  case SBIG('PATL'): {
+    // 'CNST' <TXTR id>, then cols, rows, count, mode, flipX as int elements
+    CAssetId id = 0;
+    FourCC subId = GetClassID(in);
+    if (subId != SBIG('NONE')) {
+      id = in.ReadLong();
+    }
+    CIntElement* cols = GetIntElement(in);
+    CIntElement* rows = GetIntElement(in);
+    CIntElement* count = GetIntElement(in);
+    CIntElement* mode = GetIntElement(in);
+    CIntElement* flipX = GetIntElement(in);
+    TToken< CTexture > tex = id == 0 ? TToken< CTexture >(CreateTexture(-1))
+                                     : TToken< CTexture >(resPool->GetObj(SObjectTag(SBIG('TXTR'), id)));
+    ret = rs_new CUVEAtlasTexture(tex, cols, rows, count, mode, flipX);
+    break;
+  }
+#endif
   default:
     return nullptr;
   }
