@@ -562,7 +562,9 @@ const double kPbrEmissive = 0.10;
 // Ceiling on the metalness channel. Remastered applies none (the MR map is read as is);
 // it was 0.6 before the BRDF LUT and the room probe cubes, when full metals went near-black.
 const double kPbrMetalMax = 1.0;
-const double kPbrEmissiveMax = 16.0;
+// The arm cannon's stripes only: the ceiling of the old compressed look they keep (see the
+// gun-body list). Stored glow strengths are otherwise linear and uncapped.
+const double kPbrGunStripeMax = 16.0;
 const double kFlatStd = 3.0;
 const double kJointSplit = 0.05;
 // The PC skin reader (CVirtualBone, SKIN_MAX_WEIGHTS) keeps four weights a vertex
@@ -1638,7 +1640,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     // strength keeps the old look: the compressed s / 0.10 times the 0.10 that was baked
     // into the map, written uncompressed so that no exposure is applied.
     out.glowLinear = true;
-    out.emissive = kPbrEmissive * std::sqrt(std::min(s / kPbrEmissive, kPbrEmissiveMax));
+    out.emissive = kPbrEmissive * std::sqrt(std::min(s / kPbrEmissive, kPbrGunStripeMax));
     out.reason += "gun-body list: stripes ramp; ";
   } else if (out.maps[kEmissive].has && shader == kShaderGunPanel) {
     // The beam panels: ICAN x ICNC x base alpha with no exposure factor (only the lit
@@ -1993,15 +1995,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
 // threshold, the mode (1 unlit, 2 glow masked by the base alpha, 4 tinted by
 // the vertex colour, summed), and 'PBR2'; or, for a layered one, those, the blend's edge width, the scale and offset of
 // each layer's height, and 'PBR3'; or, for a shader of its own, those, the kind, its strength
-// (compressed like the emissive one) and its four parameters, and 'PBR4'; or, where a
+// (linear like the emissive one) and its four parameters, and 'PBR4'; or, where a
 // map clamps or mirrors, all nineteen, the maps' wrap modes (one word) and 'PBR5'; or, for the
 // back copy of a material with a LITS, those and the diffuse and F0 factors, and 'PBR6'; or,
 // for a material with a reflection cube of its own (State::Cube), all of that, the cube's id
 // and 'PBR7'.
-// Remastered's emissive strengths are HDR values meant for its bloom, and the
-// port's output is 8-bit with none, so the strength is compressed (square
-// root, capped) around 1, where the map is drawn as converted. An inverse-exposed
-// glow (RemMaterial::glowLinear) is not: its strength is what Remastered's screen shows.
+// Glow strengths are stored as Remastered has them, linear and uncapped (they were a capped
+// square root while the port had no exposure or bloom to take HDR values). The runtime
+// applies the room's exposure to the ones flagged in the mode word (32, 64); an
+// inverse-exposed glow (RemMaterial::glowLinear) is what Remastered's screen shows.
 // A ColorUnlit surface drawn by its own rule (mode 8): one whose vertex colour
 // the port keeps and lights nothing with.
 // Remastered's lit PBR shader (60989bc1, USE_TWO_SIDED_MATERIAL) takes s = LITS on a back
@@ -2022,7 +2024,8 @@ bool BackLightScale(const RemMaterial& m) {
 bool ColorUnlitDraw(const RemMaterial& m) { return m.colorUnlit && m.unlit && m.tinted; }
 
 // The PBR record's mode word: 1 unlit, 2 glow masked by the base alpha, 4 tinted by the vertex
-// colour, 8 ColorUnlit's draw, 32 a glow the runtime exposes (ExposedGlow).
+// colour, 8 ColorUnlit's draw, 32 a glow the runtime exposes (ExposedGlow), 64 a kind's
+// glow strength it exposes (ExposedStrength).
 int PbrMode(const RemMaterial& m);
 
 // Whether the glow is Remastered's bare ICAN x ICNC in scene radiance, which the frame's
@@ -2034,14 +2037,17 @@ bool ExposedGlow(const RemMaterial& m) {
          m.kind != 8 && m.kind != 11;
 }
 
+// A glow strength of a kind below 5 (the parallax's inside), exposed at run time like the
+// emissive map's (mode bit 64).
+bool ExposedStrength(const RemMaterial& m) { return m.kind > 0 && m.kind < 5 && m.kindStrength > 0.0; }
+
 int PbrMode(const RemMaterial& m) {
   return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0) +
-         (ExposedGlow(m) ? 32 : 0);
+         (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
-  const double e = m.glowLinear ? std::max(m.emissive, 0.0)
-                                : std::sqrt(std::min(std::max(m.emissive, 0.0), kPbrEmissiveMax));
+  const double e = std::max(m.emissive, 0.0);
   // ColorUnlit's backlight is its gain, and no backlight at all where drawn otherwise. A lit
   // surface's is the strength from behind, from above, and the fade's power plus 1.
   double k[3] = {0.0, 0.0, 0.0};
@@ -2074,7 +2080,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
       tag = "PBR3";
       if (m.kind) {
         f.push_back(double(m.kind));
-        f.push_back(m.kind >= 5 ? m.kindStrength : std::sqrt(std::min(std::max(m.kindStrength, 0.0), kPbrEmissiveMax)));
+        f.push_back(m.kind >= 5 ? m.kindStrength : std::max(m.kindStrength, 0.0));
         for (double v : m.kindParam) {
           f.push_back(v);
         }
