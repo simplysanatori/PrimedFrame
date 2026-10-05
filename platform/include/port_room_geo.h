@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+class CActor;
 class CFrustumPlanes;
 class CGameArea;
 class CModel;
@@ -225,11 +226,14 @@ void DrawSorted(const void* drawable);
 // Set around the renderer's sorted pass for an area Draw stood in for, so that pass
 // draws the actors and leaves the area's own surfaces out.
 extern bool sReplacingArea;
-// The sky of an alive area, in place of the world's (CWorld::DrawSky): its room's first sky
-// instance that is shown, on a layer that is on, and loaded. Null for none. `orient` is its
-// turn and scale in the world, with no translation, and `radiance` its Instance::skyRadiance
-// (0 for not known).
-const CModel* Sky(const CGameArea& area, CTransform4f& orient, float radiance[3]);
+// The skies themselves (Skies) are in port_room_sky.h.
+// Whether the area has a sky of its own, shown and on a layer that is on.
+bool HasSky(const CGameArea& area);
+// The area DrawSky drew the skies of this frame (its MREA id, 0 for none). Set by DrawSky.
+extern uint32_t sSkyDrawnFor;
+// Whether `actor` of the area is one of retail's sky domes (Tallon's "cloud layer" actors,
+// hundreds of units across), which the room's own skies stand in for while one is drawn.
+bool HidesSky(const CGameArea& area, const CActor& actor);
 // Whether the retail object `editorId` of the area is one its room geometry stands in for
 // right now (Script::hidden, its instance shown). The caller asks only while that geometry
 // is drawn in its place.

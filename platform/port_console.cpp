@@ -612,7 +612,7 @@ void CmdStatus(CStateManager& mgr) {
   Out("first person %d, cinematic %d", mgr.GetCameraManager()->IsInFPCamera() ? 1 : 0,
       mgr.GetCameraManager()->IsInCinematicCamera() ? 1 : 0);
   if (world != nullptr) {
-    char sky[256];
+    char sky[512];
     world->PortDescribeSky(sky, sizeof(sky));
     Out("sky %s", sky);
   }

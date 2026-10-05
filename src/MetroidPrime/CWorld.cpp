@@ -39,6 +39,7 @@
 #include "Kyoto/Graphics/CCubeModel.hpp"
 #include "port_room_env.h"
 #include "port_room_geo.h"
+#include "port_room_sky.h"
 
 bool PortWarpKeepsMusic(); // CStateManager.cpp
 #endif
@@ -761,42 +762,62 @@ void CWorld::PreRender() {
   }
 }
 
+#ifdef TARGET_PC
+// The room skies DrawSky last drew, for PortDescribeSky.
+static f32 sPortSkyGain = 0.f;
+static int sPortSkyCount = 0;
+static f32 sPortSkyRadiance[PortRoomGeo::kMaxSkyLayers][3];
+#endif
+
 void CWorld::DrawSky(const CTransform4f& xf) const {
 #ifdef TARGET_PC
   // Remastered gives each room a sky of its own, turned and scaled to suit the room, where
-  // retail has one per world: the camera's area's sky if it has one, else another sky area's.
-  if (x70_27_skyboxVisible) {
-    CTransform4f orient = CTransform4f::Identity();
-    f32 radiance[3] = {};
-    const CModel* sky = nullptr;
-    if (x68_curAreaId != kInvalidAreaId) {
-      const CGameArea* current = GetArea(x68_curAreaId);
-      if (current->IsPostConstructed() && current->DoesAreaNeedSkyNow()) {
-        sky = PortRoomGeo::Sky(*current, orient, radiance);
+  // retail has one per world, and outdoors in Tallon dome actors in the room (which
+  // PortRoomGeo::HidesSky leaves out while these are drawn): the camera's area's skies if it
+  // has any, else those of another area that needs the world sky or shows skies of its own.
+  PortRoomGeo::sSkyDrawnFor = 0;
+  PortRoomGeo::SkyLayer layers[PortRoomGeo::kMaxSkyLayers];
+  int count = 0;
+  const CGameArea* skyArea = nullptr;
+  if (x68_curAreaId != kInvalidAreaId) {
+    const CGameArea* current = GetArea(x68_curAreaId);
+    if (current->IsPostConstructed() && (count = PortRoomGeo::Skies(*current, layers)) != 0) {
+      skyArea = current;
+    }
+  }
+  for (CGameArea::CConstChainIterator it = GetChainHead(kC_Alive); count == 0 && it != skGlobalEnd; ++it) {
+    if ((x70_27_skyboxVisible && it->DoesAreaNeedSkyNow()) ||
+        (it->GetOcclusionState() == CGameArea::kOS_Visible && PortRoomGeo::HasSky(*it))) {
+      if ((count = PortRoomGeo::Skies(*it, layers)) != 0) {
+        skyArea = &*it;
       }
     }
-    for (CGameArea::CConstChainIterator it = GetChainHead(kC_Alive); sky == nullptr && it != skGlobalEnd; ++it) {
-      if (it->DoesAreaNeedSkyNow()) {
-        sky = PortRoomGeo::Sky(*it, orient, radiance);
-      }
+  }
+  if (count != 0) {
+    PortRoomGeo::sSkyDrawnFor = skyArea->GetAreaAssetId();
+    // Remastered draws a sky unlit, its base map times the Skybox's colour and intensity in
+    // HDR, exposed as the frame is. Without that colour or the room's exposure, the sky is
+    // drawn as any unlit surface.
+    const f32 gain = PortRoomEnv::SkyGain();
+    sPortSkyGain = gain;
+    sPortSkyCount = count;
+    for (int i = 0; i < count; ++i) {
+      std::copy(layers[i].radiance, layers[i].radiance + 3, sPortSkyRadiance[i]);
     }
-    if (sky != nullptr) {
-      // Remastered draws a sky unlit, its base map times the Skybox's colour and intensity
-      // in HDR, exposed as the frame is. Without that colour or the room's exposure, the sky
-      // is drawn as any unlit surface.
-      const f32 gain = PortRoomEnv::SkyGain();
+    CGraphics::DisableAllLights();
+    gpRender->SetAmbientColor(CColor::White());
+    CGraphics::SetDepthRange(0.999f, 1.f);
+    for (int i = 0; i < count; ++i) {
+      const f32* radiance = layers[i].radiance;
       const bool lit = gain > 0.f && (radiance[0] > 0.f || radiance[1] > 0.f || radiance[2] > 0.f);
       const f32 skyGain[3] = {radiance[0] * gain, radiance[1] * gain, radiance[2] * gain};
-      CGraphics::DisableAllLights();
-      gpRender->SetModelMatrix(xf * orient);
-      gpRender->SetAmbientColor(CColor::White());
-      CGraphics::SetDepthRange(0.999f, 1.f);
+      gpRender->SetModelMatrix(xf * layers[i].orient);
       CCubeModel::PortSetSky(lit ? skyGain : nullptr);
-      sky->Draw(CModelFlags::Normal().DepthCompareUpdate(true, false));
-      CCubeModel::PortSetSky(nullptr);
-      CGraphics::SetDepthRange(0.125f, 1.f);
-      return;
+      layers[i].model->Draw(CModelFlags::Normal().DepthCompareUpdate(true, false));
     }
+    CCubeModel::PortSetSky(nullptr);
+    CGraphics::SetDepthRange(0.125f, 1.f);
+    return;
   }
 #endif
   if ((xa4_skyboxWorldLoaded || xb4_skyboxOverride) && x70_27_skyboxVisible) {
@@ -834,10 +855,17 @@ void CWorld::PortDescribeSky(char* out, int size) const {
     // Cached once the model is built; its textures may still be loading.
     model = x94_skyboxWorld->GetObject();
   }
-  int len = std::snprintf(out, size, "active=%d visible=%d world=%s override=%s",
-                          x70_26_skyboxActive ? 1 : 0, x70_27_skyboxVisible ? 1 : 0,
+  int len = std::snprintf(out, size, "room=%08X active=%d visible=%d world=%s override=%s",
+                          PortRoomGeo::sSkyDrawnFor, x70_26_skyboxActive ? 1 : 0, x70_27_skyboxVisible ? 1 : 0,
                           !x94_skyboxWorld ? "none" : xa4_skyboxWorldLoaded ? "loaded" : "pending",
                           xb4_skyboxOverride ? "yes" : "no");
+  if (PortRoomGeo::sSkyDrawnFor != 0 && len < size) {
+    len += std::snprintf(out + len, size - len, " gain %g glow %g layers", sPortSkyGain, PortRoomEnv::GlowScale());
+    for (int i = 0; i < sPortSkyCount && len < size; ++i) {
+      len += std::snprintf(out + len, size - len, " %g/%g/%g", sPortSkyRadiance[i][0], sPortSkyRadiance[i][1],
+                           sPortSkyRadiance[i][2]);
+    }
+  }
   // A pending world sky: is the model itself still loading?
   if (x94_skyboxWorld && !xa4_skyboxWorldLoaded && !xb4_skyboxOverride && len < size) {
     const CObjectReference* ref = x94_skyboxWorld->GetRef();

@@ -1,6 +1,7 @@
 // Room geometry at run time: which areas have a file, their models, and the draw. See
 // port_room_geo.h.
 #include "port_room_geo.h"
+#include "port_room_sky.h"
 
 #include "port_gci.h"
 #include "port_log.h"
@@ -28,6 +29,7 @@
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/CWorld.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptActor.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptDamageableTrigger.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 #include "MetaRender/CCubeRenderer.hpp"
@@ -1583,47 +1585,103 @@ bool Hides(const CGameArea& gameArea, uint32_t editorId) {
   return false;
 }
 
-const CModel* Sky(const CGameArea& gameArea, CTransform4f& orient, float radiance[3]) {
+// The room's sky instances that are shown and on a layer that is on.
+template < typename Fn >
+void ForEachSky(const CGameArea& gameArea, Fn&& fn) {
   if (GetMode() == Mode::Off || gpGameState == nullptr) {
-    return nullptr;
+    return;
   }
   auto& areas = Areas();
   const auto found = areas.find(gameArea.GetAreaAssetId());
   if (found == areas.end() || !found->second.hasFile) {
-    return nullptr;
+    return;
   }
   const Area& area = found->second;
   const CScriptLayerManager* const layers = gpGameState->CurrentWorldState().GetLayerState().GetPtr();
   for (const Placed& item : area.items) {
-    if (!item.sky || !item.shown ||
+    if (!item.sky || !item.shown || area.models[item.model].hidden ||
         (item.layer != kEveryLayer && layers != nullptr && !layers->IsLayerActive(gameArea.GetAreaId(), item.layer))) {
       continue;
     }
-    const Model& model = area.models[item.model];
-    if (model.hidden) {
-      continue;
+    if (!fn(area, item)) {
+      return;
     }
+  }
+}
+
+int Skies(const CGameArea& gameArea, SkyLayer (&out)[kMaxSkyLayers]) {
+  int count = 0;
+  bool loading = false;
+  float corners[kMaxSkyLayers];
+  float largest = 0.f;
+  ForEachSky(gameArea, [&](const Area& area, const Placed& item) {
+    const Model& model = area.models[item.model];
     if (!model.data->IsLoaded(0)) {
       // Draw loads the area's models, but only while the area is drawn.
       model.data->Touch(CModelData::kWM_Normal, 0);
-      return nullptr;
+      loading = true;
+      return true;
     }
+    if (count == kMaxSkyLayers) {
+      return false;
+    }
+    SkyLayer& layer = out[count];
+    layer.model = &**model.data->PickStaticModel(CModelData::kWM_Normal);
     // Until Draw places the area, `xf` is still in area space.
-    orient = area.placed ? item.xf : gameArea.GetTM() * item.xf;
-    orient.SetTranslation(CVector3f::Zero());
-    // Remastered's skies are thousands of units across, past the far plane. Centred on
-    // the camera, a sky looks the same at any size, so it is scaled to fit inside it.
-    const CAABox& box = (**model.data->PickStaticModel(CModelData::kWM_Normal)).GetBoundingBox();
-    const float corner = std::max(box.GetMinPoint().Magnitude(), box.GetMaxPoint().Magnitude()) *
-                         std::max({orient.GetColumn(kDX).Magnitude(), orient.GetColumn(kDY).Magnitude(),
-                                   orient.GetColumn(kDZ).Magnitude()});
-    if (corner > 0.f) {
-      orient = orient * CTransform4f::Scale(0.5f * CGraphics::GetProjectionState().GetFar() / corner);
-    }
-    std::copy(item.skyRadiance, item.skyRadiance + 3, radiance);
-    return &**model.data->PickStaticModel(CModelData::kWM_Normal);
+    layer.orient = area.placed ? item.xf : gameArea.GetTM() * item.xf;
+    layer.orient.SetTranslation(CVector3f::Zero());
+    std::copy(item.skyRadiance, item.skyRadiance + 3, layer.radiance);
+    const CAABox& box = layer.model->GetBoundingBox();
+    corners[count] = std::max(box.GetMinPoint().Magnitude(), box.GetMaxPoint().Magnitude()) *
+                     std::max({layer.orient.GetColumn(kDX).Magnitude(), layer.orient.GetColumn(kDY).Magnitude(),
+                               layer.orient.GetColumn(kDZ).Magnitude()});
+    largest = std::max(largest, corners[count]);
+    ++count;
+    return true;
+  });
+  if (loading) {
+    return 0;
   }
-  return nullptr;
+  // Remastered's skies are thousands of units across, past the far plane. Centred on the
+  // camera, a sky looks the same at any size, so all of them are scaled alike to fit inside it,
+  // and drawn outermost first: Landing Site's cloud layers sit one inside the other.
+  for (int i = 0; i < count; ++i) {
+    for (int j = i; j > 0 && corners[j] > corners[j - 1]; --j) {
+      std::swap(corners[j], corners[j - 1]);
+      std::swap(out[j], out[j - 1]);
+    }
+  }
+  if (largest > 0.f) {
+    const CTransform4f fit = CTransform4f::Scale(0.5f * CGraphics::GetProjectionState().GetFar() / largest);
+    for (int i = 0; i < count; ++i) {
+      out[i].orient = out[i].orient * fit;
+    }
+  }
+  return count;
+}
+
+bool HasSky(const CGameArea& gameArea) {
+  bool has = false;
+  ForEachSky(gameArea, [&](const Area&, const Placed&) {
+    has = true;
+    return false;
+  });
+  return has;
+}
+
+uint32_t sSkyDrawnFor = 0;
+
+bool HidesSky(const CGameArea& gameArea, const CActor& actor) {
+  // Retail's sky domes are 314 to 1867 units across (scaled); the next largest actor in a room
+  // with a sky of its own is 139 (Artifact Temple's bird eyes).
+  constexpr float kDomeSize = 250.f;
+  if (sSkyDrawnFor == 0 || TCastToConstPtr< CScriptActor >(&actor) == nullptr || !actor.HasModelData()) {
+    return false;
+  }
+  const CAABox box = actor.GetModelData()->GetBounds();
+  const CVector3f size = box.GetMaxPoint() - box.GetMinPoint();
+  return std::max({std::fabs(size.GetX()), std::fabs(size.GetY()), std::fabs(size.GetZ())}) > kDomeSize &&
+         HasSky(gameArea);
 }
 
 void OnScriptState(CStateManager& mgr, uint32_t editorId, int state) {

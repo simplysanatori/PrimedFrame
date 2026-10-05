@@ -3198,6 +3198,10 @@ void CStateManager::DrawWorld() const {
           if (portRoomGeo[i] && PortRoomGeo::Hides(area, actor->GetEditorId().Value())) {
             continue;
           }
+          // A retail sky dome, while DrawSky has drawn the room's own skies.
+          if (PortRoomGeo::HidesSky(area, *actor)) {
+            continue;
+          }
 #endif
           if (!thermal || (actor->GetThermalFlags() & 1) != 0) {
 #ifdef TARGET_PC
