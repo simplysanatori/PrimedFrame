@@ -2973,7 +2973,9 @@ void CMorphBall::TakeDamage(float damage) {
 }
 
 void CMorphBall::SelectMorphBallSounds(const CMaterialList& materials) {
-  short rollSfx;
+  // ushort, not short: a short 0xffff is -1 and never equals 0xffff, so a
+  // surface with no roll sound would stop the current one (Metaforce: u16).
+  ushort rollSfx;
   if (x0_player.x9c5_30_selectFluidBallSound) {
     if (x0_player.x82c_inLava) {
       rollSfx = SFXsam_b_rollllava_lp_00;
