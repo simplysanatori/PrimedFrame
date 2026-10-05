@@ -43,6 +43,9 @@ struct EffectImportIO {
   // A Remastered texture's top mip as RGBA8, as ConvertIO::texture.
   std::function<bool(const EffectGuid& id, int& width, int& height, std::vector<uint8_t>& rgba, std::string& error)>
       texture;
+  // Whether the texture's bytes are sRGB, which Remastered's VFX shaders see decoded to
+  // linear. Optional: without it every texture is taken as data.
+  std::function<bool(const EffectGuid& id)> textureSrgb;
   // Every layer of a Remastered array texture as RGBA8, layer slowest (a TXFB's
   // frames). Optional: without it a flipbook does not convert.
   std::function<bool(const EffectGuid& id, int& width, int& height, int& layers, std::vector<uint8_t>& rgba,

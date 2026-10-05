@@ -642,20 +642,25 @@ public:
   // with a small TXTR standing in for it on the game's heap (as the HUD import
   // does): a 2048 atlas is 22 MB as an RGBA8 TXTR, and the gun loads every
   // beam's effects at once.
-  bool WriteTexture(uint32_t id, const Image& image) {
+  bool WriteTexture(uint32_t id, const Image& image, MapKind kind = MapKind::Colour) {
     const int edge = std::max(image.width, image.height);
     if (edge <= kStubSide) {
       return m_io.write(Hex(id) + ".TXTR", EncodeTxtrRgba8(image));
     }
     const Image stub = Resize(image, std::max(8, RoundUp4(image.width * kStubSide / edge)),
-                              std::max(8, RoundUp4(image.height * kStubSide / edge)), MapKind::Colour);
-    return m_io.write(Hex(id) + ".dds", EncodeDds(image, ColourDdsFormat(), false, MapKind::Colour)) &&
+                              std::max(8, RoundUp4(image.height * kStubSide / edge)), kind);
+    return m_io.write(Hex(id) + ".dds", EncodeDds(image, ColourDdsFormat(), false, kind)) &&
            m_io.write(Hex(id) + ".TXTR", EncodeTxtrRgba8(stub));
   }
 
-  uint32_t Texture(const EffectGuid& id) {
-    const auto known = m_textures.find(id);
-    if (known != m_textures.end()) {
+  // `vfx`: the texture is sampled by a VFX material, whose shader reads it raw. Remastered's
+  // sRGB textures reach its shaders decoded, so those are written as linear values (under an
+  // id of their own, the legacy path wants the sRGB bytes) and filtered as data.
+  uint32_t Texture(const EffectGuid& id, bool vfx = false) {
+    vfx = vfx && m_io.textureSrgb && m_io.textureSrgb(id);
+    auto& cache = vfx ? m_vfxTextures : m_textures;
+    const auto known = cache.find(id);
+    if (known != cache.end()) {
       return known->second;
     }
     uint32_t out = 0;
@@ -675,14 +680,21 @@ public:
       if (width != image.width || height != image.height) {
         image = Resize(image, width, height);
       }
-      out = m_io.freshId(Hash(id, kTxtr));
-      if (WriteTexture(out, image)) {
+      if (vfx) {
+        for (size_t i = 0; i + 3 < image.rgba.size(); i += 4) {
+          for (size_t c = 0; c < 3; ++c) {
+            image.rgba[i + c] = SrgbToLinearByte(image.rgba[i + c]);
+          }
+        }
+      }
+      out = m_io.freshId(Hash(id, vfx ? kTxtr ^ 0x5F1Du : kTxtr));
+      if (WriteTexture(out, image, vfx ? MapKind::Data : MapKind::Colour)) {
         ++m_result.textures;
       } else {
         out = 0;
       }
     }
-    m_textures.emplace(id, out);
+    cache.emplace(id, out);
     return out;
   }
 
@@ -821,7 +833,7 @@ public:
     if (m_io.layers && m_io.layers(id, width, height, layers, rgba, error) && layers > 1) {
       return Flipbook(id);
     }
-    const uint32_t texture = Texture(id);
+    const uint32_t texture = Texture(id, true);
     return texture != 0 ? FlipbookAtlas{texture, 1, 1, 1} : FlipbookAtlas{};
   }
 
@@ -943,6 +955,7 @@ public:
 
 private:
   const EffectImportIO& m_io;
+  std::map<EffectGuid, uint32_t> m_vfxTextures;  // the same, linear-light copies for VFX materials
   std::map<EffectGuid, uint32_t> m_textures;  // by Remastered id, 0 for one that failed
   std::map<EffectGuid, FlipbookAtlas> m_flipbooks;
   std::map<EffectGuid, uint32_t> m_models;

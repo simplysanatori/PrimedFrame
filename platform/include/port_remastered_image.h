@@ -58,6 +58,9 @@ DdsFormat NormalDdsFormat();
 // opacity, so nothing is premultiplied). The arithmetic follows Pillow's.
 Image Resize(const Image& image, int width, int height, MapKind kind = MapKind::Data);
 
+// An sRGB byte as the linear value it encodes, rounded to a byte.
+uint8_t SrgbToLinearByte(uint8_t value);
+
 // An sRGB byte times `scale` in linear light, back to an sRGB byte.
 uint8_t ScaleSrgbByte(uint8_t value, double scale);
 

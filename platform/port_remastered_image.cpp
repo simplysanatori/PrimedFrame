@@ -890,6 +890,10 @@ Image Resize(const Image& image, int width, int height, MapKind kind) {
   return out;
 }
 
+uint8_t SrgbToLinearByte(uint8_t value) {
+  return uint8_t(std::clamp(int(std::lround(Tables().toLinear[value] * 255.f)), 0, 255));
+}
+
 uint8_t ScaleSrgbByte(uint8_t value, double scale) {
   return LinearToSrgbByte(Tables().toLinear[value] * float(scale));
 }
