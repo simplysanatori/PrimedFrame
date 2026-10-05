@@ -1638,6 +1638,14 @@ bool VolFogEnabled() {
 
 void SetVolFogEnabled(bool on) { sVolFog = on ? 1 : 0; }
 
+bool FogOwnsRoom() {
+  if (!Enabled() || !VolFogEnabled()) {
+    return false;
+  }
+  const auto view = sAreas.find(sViewArea);
+  return view != sAreas.end() && view->second.hasFile && view->second.file.version >= 12;
+}
+
 void SetFogRegionsEnabled(bool on) { sFogRegions = on; }
 
 void UpdateFog(LayerActive layerActive, void* context, float dt) {
@@ -1809,6 +1817,8 @@ std::string FogInfo() {
     std::snprintf(line, sizeof(line), "fog none%s\n", VolFogEnabled() ? "" : " (MP_VOLFOG=0)");
   }
   out += line;
+  out += FogOwnsRoom() ? "retail distance fog off (Remastered's fog owns the room)\n"
+                       : "retail distance fog on\n";
   const auto view = sAreas.find(sViewArea);
   if (view == sAreas.end()) {
     return out;

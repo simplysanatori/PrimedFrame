@@ -2641,9 +2641,11 @@ CFrustumPlanes CStateManager::SetupViewForDraw(const CViewport& viewport) const 
 
 #ifdef TARGET_PC
 // Port: Remastered's volumetric fog of the camera's room (PortRoomEnv::VolumetricFog), moved on
-// once a frame by PortCaptureProbeFace and drawn over the world by PortDrawVolumetricFog. While
-// there is one, retail's distance fog is off (SetupFogForDraw): Remastered draws the fog instead.
+// once a frame by PortCaptureProbeFace and drawn over the world by PortDrawVolumetricFog.
+// sPortRemasteredFog: Remastered's fog stands for the camera's room (PortRoomEnv::FogOwnsRoom),
+// so retail's distance fog is off there, fog or not (SetupFogForDraw).
 static bool sPortVolFog = false;
+static bool sPortRemasteredFog = false;
 static PortRoomEnv::Fog sPortFog;
 #endif
 
@@ -2658,14 +2660,16 @@ bool CStateManager::SetupFogForDraw() const {
     return false;
   case CPlayerState::kPV_Combat:
   case CPlayerState::kPV_Scan: {
-#ifdef TARGET_PC
-    if (sPortVolFog) {
-      gpRender->SetWorldFog(kRFM_None, 0.f, 1.f, CColor::Black());
-      return true;
-    }
-#endif
     const CGameArea::CAreaFog* fog = &x870_cameraManager->GetFog();
     if (fog->IsFogDisabled()) {
+#ifdef TARGET_PC
+      // Remastered has no area distance fog. The camera manager's fog (underwater) still wins:
+      // it stands in for Remastered's water fog, which the port doesn't have.
+      if (sPortRemasteredFog) {
+        gpRender->SetWorldFog(kRFM_None, 0.f, 1.f, CColor::Black());
+        return true;
+      }
+#endif
       return false;
     }
     fog->SetCurrent();
@@ -2932,6 +2936,7 @@ void CStateManager::PortCaptureProbeFace() const {
         },
         &layers, dt);
     sPortVolFog = PortRoomEnv::VolumetricFog(sPortFog);
+    sPortRemasteredFog = PortRoomEnv::FogOwnsRoom();
   }
   static uint lastDraws = 0;
   static int face = 0;

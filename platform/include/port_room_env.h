@@ -272,6 +272,7 @@ struct FogTransition {
 };
 
 struct File {
+  uint32_t version = 0;
   float tonemap[4] = {};
   float exposure[2] = {}; // EV range; both 0 when the room has no auto exposure
   float exposureBias = 0.f;
@@ -519,6 +520,12 @@ void FogRegions(std::vector<const FogRegion*>& out);
 // MP_VOLFOG (default on), the console's `roomenv volfog`.
 void SetVolFogEnabled(bool on);
 bool VolFogEnabled();
+// Whether Remastered's fog stands for the camera's room: the environment and MP_VOLFOG are on
+// and the room's file has the fog hints (version 12 on), hinted or not. Remastered has no
+// distance fog, only the volumetric one, and none in a room without a hint: there's no area
+// fog, CScriptDistanceFogMP1 only sets the thermal and world-light fades, and the fog volume
+// special function draws nothing (no Render or AddToRenderer of its own).
+bool FogOwnsRoom();
 // Debug: leave the fog regions out (console `roomenv fogregions on|off`).
 void SetFogRegionsEnabled(bool on);
 // The console's `roomenv fog`: the fog now, and each fog hint of the camera area.

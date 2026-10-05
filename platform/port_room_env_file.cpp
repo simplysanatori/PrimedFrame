@@ -136,6 +136,7 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
     error = "unknown version " + std::to_string(Get32(data.data() + 4));
     return false;
   }
+  out.version = version;
   for (int i = 0; i < 4; ++i) {
     out.tonemap[i] = GetFloat(data.data() + 8 + i * 4);
   }
