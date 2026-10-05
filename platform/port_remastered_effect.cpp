@@ -55,7 +55,7 @@ struct ElementSig {
 };
 constexpr ElementSig kElementSigs[] = {
     {"ADD_", "ee"},    {"ANCR", "eeee ebeee"}, {"ANGC", "eeeee"},   {"ASPH", "eeeeeee"},
-    {"ASPR", "eeeeee"}, {"ATEX", "geeeeee geeeeeb"},    {"BNCE", "eeeeb"},   {"CCLU", "eeee"},
+    {"ASPR", "eeeeee"}, {"ATEX", "geeeeee geeeeeb"}, {"ATX2", "geeee"}, {"BNCE", "eeeeb"}, {"CCLU", "eeee"},
     {"CEQL", "eeee"},  {"CEXT", "e"},          {"CFDE", "eeee"},    {"CHAN", "eee"},
     {"CIRC", "eeeee"}, {"CLMP", "eee"},        {"CLTN", "eeee"},    {"CNST", "w eee eeee b g"},
     {"CONE", "ee"},    {"CRCV", "eeeeeeb"},    {"CRLN", "bb eeeeeeebe eeeeeebe"},
@@ -63,7 +63,7 @@ constexpr ElementSig kElementSigs[] = {
     {"DPVC", "ge"},    {"DPVF", "ge"},         {"DPVI", "ge"},      {"DPVV", "ge"},
     {"EMPL", "eeeeb"}, {"EXPL", "ee"},         {"EXTR", "-"},         {"EXTT", "-"},
     {"FADE", "eee"},   {"FIAT", "eeee eeeee"}, {"GAPC", "-"},       {"GEMT", "-"},
-    {"GRAV", "e"},     {"GTCA", "e"},          {"GTCB", "e"},       {"GTCG", "e"},
+    {"GRAV", "e ebe"},  {"GTCA", "e"},          {"GTCB", "e"},       {"GTCG", "e"},
     {"GTCP", "-"},     {"GTCR", "e"},          {"ILPT", "e"},       {"IMPL", "e eeeee eeeeb"},
     {"IRND", "ee"},    {"ISWT", "ee"},         {"ITRL", "ee"},      {"KESP", "k"},
     {"KEYC", "k"},     {"KEYE", "k"},          {"KEYF", "Ke k"},       {"KEYI", "k"},
@@ -607,9 +607,11 @@ public:
     return current;
   }
 
-  // KSSM: NONE, or CNST with four u32 (the last the event count), the SEVT
-  // events, 8 bytes, one element, then a frame table: u32 frame count, each
-  // frame 4 bytes and a u32 spawn count, each spawn 24 bytes and an element.
+  // KSSM: NONE, or CNST with four u32 (retail's three header words and the
+  // end frame, then the SEVT event count), the events, a u32 table count and
+  // that many tables. A table is a u32, a selector element and its frames: a
+  // u32 frame count, each frame a u32 frame and a u32 spawn count, each spawn
+  // a 16-byte child id, its form's FourCC, a u32 and an element.
   std::vector<size_t> SpawnTable(size_t at) {
     const uint32_t fourcc = FourCCAt(at);
     if (fourcc == kNone) {
@@ -622,39 +624,146 @@ public:
     if (!events || *events > 1000) {
       return {};
     }
-    Ends ends = Sequence(at + 20, *events);
     Ends out;
-    for (size_t pos : ends) {
-      const Ends afterElement = Element(pos + 8);
-      for (size_t tableAt : afterElement) {
-        const std::optional<uint32_t> frames = U32(tableAt);
-        if (!frames || *frames > 1000) {
-          continue;
-        }
-        Ends current{tableAt + 4};
-        for (uint32_t frame = 0; frame < *frames; ++frame) {
-          Ends next;
-          for (size_t framePos : current) {
-            const std::optional<uint32_t> spawns = U32(framePos + 4);
-            if (!spawns || *spawns > 100) {
-              continue;
-            }
-            Ends spawnEnds{framePos + 8};
-            for (uint32_t spawn = 0; spawn < *spawns; ++spawn) {
-              Ends after;
-              for (size_t spawnPos : spawnEnds) {
-                AddEnds(after, Element(spawnPos + 24));
-              }
-              spawnEnds = std::move(after);
-            }
-            AddEnds(next, spawnEnds);
-          }
-          current = std::move(next);
-        }
-        AddEnds(out, current);
+    for (size_t pos : Sequence(at + 20, *events)) {
+      const std::optional<uint32_t> tables = U32(pos);
+      if (tables && *tables <= 16) {
+        AddEnds(out, SpawnTables(pos + 4, *tables));
       }
     }
     return out;
+  }
+
+  Ends SpawnTables(size_t at, uint32_t count) {
+    if (count == 0) {
+      return {at};
+    }
+    Ends out;
+    for (size_t selectorEnd : Element(at + 4)) {
+      const std::optional<uint32_t> frames = U32(selectorEnd);
+      if (!frames || *frames > 1000) {
+        continue;
+      }
+      for (size_t tableEnd : SpawnFrames(selectorEnd + 4, *frames)) {
+        AddEnds(out, SpawnTables(tableEnd, count - 1));
+      }
+    }
+    return out;
+  }
+
+  Ends SpawnFrames(size_t at, uint32_t count) {
+    if (count == 0) {
+      return {at};
+    }
+    const std::optional<uint32_t> spawns = U32(at + 4);
+    if (!spawns || *spawns > 100) {
+      return {};
+    }
+    Ends out;
+    for (size_t frameEnd : Spawns(at + 8, *spawns)) {
+      AddEnds(out, SpawnFrames(frameEnd, count - 1));
+    }
+    return out;
+  }
+
+  Ends Spawns(size_t at, uint32_t count) {
+    if (count == 0) {
+      return {at};
+    }
+    Ends out;
+    for (size_t spawnEnd : Element(at + 24)) {
+      AddEnds(out, Spawns(spawnEnd, count - 1));
+    }
+    return out;
+  }
+
+  // Rebuilds the reading of the spawn table at [at, end) that SpawnTable()
+  // found. Only the parts retail has are kept: the header and the spawns.
+  bool BuildSpawnTable(size_t at, size_t end, EffectSpawnTable& out) {
+    out = EffectSpawnTable();
+    if (FourCCAt(at) == kNone) {
+      return at + 4 == end;
+    }
+    if (FourCCAt(at) != kCnst || at + 20 > m_size) {
+      return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+      out.header[i] = Le32(m_data + at + 4 + 4 * i);
+    }
+    out.events = Le32(m_data + at + 16);
+    for (size_t pos : Sequence(at + 20, out.events)) {
+      const std::optional<uint32_t> tables = U32(pos);
+      if (tables && *tables <= 16 && BuildSpawnTables(pos + 4, *tables, end, out.tables)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool BuildSpawnTables(size_t at, uint32_t count, size_t end, std::vector<EffectSpawnTable::Table>& out) {
+    if (count == 0) {
+      return at == end;
+    }
+    for (size_t selectorEnd : Element(at + 4)) {
+      const std::optional<uint32_t> frames = U32(selectorEnd);
+      if (!frames || *frames > 1000) {
+        continue;
+      }
+      EffectSpawnTable::Table table;
+      table.word = Le32(m_data + at);
+      if (!BuildElement(at + 4, selectorEnd, table.selector)) {
+        continue;
+      }
+      out.push_back(std::move(table));
+      if (BuildSpawnFrames(selectorEnd + 4, *frames, count, end, out)) {
+        return true;
+      }
+      out.pop_back();
+    }
+    return false;
+  }
+
+  // The frames of out.back(), then the tables after it.
+  bool BuildSpawnFrames(size_t at, uint32_t frames, uint32_t tables, size_t end,
+                        std::vector<EffectSpawnTable::Table>& out) {
+    if (frames == 0) {
+      return BuildSpawnTables(at, tables - 1, end, out);
+    }
+    const std::optional<uint32_t> spawns = U32(at + 4);
+    if (!spawns || *spawns > 100) {
+      return false;
+    }
+    EffectSpawnTable::Frame frame;
+    frame.frame = Le32(m_data + at);
+    out.back().frames.push_back(std::move(frame));
+    if (BuildSpawns(at + 8, *spawns, frames, tables, end, out)) {
+      return true;
+    }
+    out.back().frames.pop_back();
+    return false;
+  }
+
+  bool BuildSpawns(size_t at, uint32_t spawns, uint32_t frames, uint32_t tables, size_t end,
+                   std::vector<EffectSpawnTable::Table>& out) {
+    if (spawns == 0) {
+      return BuildSpawnFrames(at, frames - 1, tables, end, out);
+    }
+    if (at + 24 > m_size) {
+      return false;
+    }
+    EffectSpawnTable::Spawn spawn;
+    std::memcpy(spawn.id.data(), m_data + at, 16);
+    spawn.form = FourCCAt(at + 16);
+    spawn.conditional = FourCCAt(at + 24) != kNone;
+    out.back().frames.back().spawns.push_back(spawn);
+    for (size_t spawnEnd : Element(at + 24)) {
+      if (BuildSpawns(spawnEnd, spawns - 1, frames, tables, end, out)) {
+        return true;
+      }
+    }
+    // Deeper calls pushed and popped their own entries: back() is ours again.
+    out.back().frames.back().spawns.pop_back();
+    return false;
   }
 
   // Where a node's _END at `at` and the children after it end: a u32 count,
@@ -713,7 +822,7 @@ public:
     if (FourCCAt(at) != kGpsm || at + 25 > m_size) {
       return std::nullopt;
     }
-    return Properties(at + 25, Le32(m_data + at + 21) == 1, top);
+    return Properties(at + 25, Le32(m_data + at + 21) != 0, top);
   }
 
   std::optional<size_t> Child(size_t at) {
@@ -735,7 +844,7 @@ public:
     node.form = FourCCAt(at);
     node.id = id;
     if (node.form == kGpsm) {
-      node.root = Le32(m_data + at + 21) == 1;
+      node.root = Le32(m_data + at + 21) != 0;
       at += 25;
     } else if (Properties(at + 4, false)) {
       at += 4;
@@ -1048,6 +1157,14 @@ bool ParseEffect(const uint8_t* data, size_t size, EffectNode& out, std::string&
   }
   parser.BuildNode(kRootAt, EffectGuid{}, out, true);
   return true;
+}
+
+bool ParseSpawnTable(const uint8_t* data, size_t size, const EffectProperty& kssm, EffectSpawnTable& out) {
+  if (kssm.size < 5 || kssm.offset + kssm.size > size) {
+    return false;
+  }
+  Parser parser(data, size);
+  return parser.BuildSpawnTable(kssm.offset + 5, kssm.offset + kssm.size, out);
 }
 
 std::string DumpEffect(const EffectNode& effect, const uint8_t* data) {

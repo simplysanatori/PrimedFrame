@@ -565,6 +565,102 @@ void TestSwooshElectric() {
         "retail ELSC splits into its properties");
 }
 
+// Remastered's spawn tables merge into retail's one KSSM: generators by frame
+// with the 16-byte entries retail reads, the first swoosh and electric child
+// as SSWH/SSSD and SELC/SESD; a second swoosh is left out.
+void TestSpawnTable() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "KSSM", 0);
+  PutFourCC(out, "CNST");
+  for (uint32_t word : {1u, 1u, 40u, 0u}) {  // header, end frame, no events
+    Put32(out, word);
+  }
+  Put32(out, 2);  // tables
+  const auto spawn = [&](uint32_t retail, const char* form, bool condition) {
+    PutGuid(out, Legacy(retail));
+    PutFourCC(out, form);
+    Put32(out, 0);
+    if (condition) {
+      PutConstant(out, Bits(0.5f));
+    } else {
+      PutFourCC(out, "NONE");
+    }
+  };
+  Put32(out, 0);  // table word
+  PutConstant(out, 0);  // selector
+  Put32(out, 2);  // frames
+  Put32(out, 3);
+  Put32(out, 2);
+  spawn(0x0000B001, "GENP", false);
+  spawn(0x0000B002, "SWSH", false);
+  Put32(out, 7);
+  Put32(out, 1);
+  spawn(0x0000B004, "SWSH", false);
+  Put32(out, 0);
+  PutConstant(out, 1);  // another selector
+  Put32(out, 1);
+  Put32(out, 3);
+  Put32(out, 2);
+  spawn(0x0000B001, "GENP", true);
+  spawn(0x0000B003, "ELSM", false);
+  PutProperty(out, "_END", 4);
+  Put32(out, 4);
+  PutGuid(out, Legacy(0x0000B001));
+  PutGenerator(out, false);
+  PutProperty(out, "MAXP", 1);
+  PutConstant(out, 2);
+  PutProperty(out, "_END", 4);
+  for (uint32_t retail : {0x0000B002u, 0x0000B004u}) {
+    PutGuid(out, Legacy(retail));
+    PutFourCC(out, "SWSH");
+    PutProperty(out, "LENG", 1);
+    PutConstant(out, 8);
+    PutProperty(out, "_END", 4);
+  }
+  PutGuid(out, Legacy(0x0000B003));
+  PutFourCC(out, "ELSM");
+  PutProperty(out, "LWD1", 3);
+  PutConstant(out, Bits(2.0f));
+  PutProperty(out, "_END", 4);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "spawn table effect parses");
+  if (!error.empty()) {
+    std::fprintf(stderr, "  %s\n", error.c_str());
+  }
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Check(parts.size() == 5, "root and four children");
+  if (parts.size() != 5) {
+    std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
+    return;
+  }
+  Retail root;
+  root.f("GPSM").f("KSSM").f("CNST").w(0).w(1).w(40).w(0).w(1);
+  root.w(3).w(2).w(0x0000B001).w(0).w(0).w(0).w(0x0000B001).w(0).w(0).w(0);
+  root.f("SSWH").f("CNST").w(0x0000B002).f("SSSD").f("CNST").w(3);
+  root.f("SELC").f("CNST").w(0x0000B003).f("SESD").f("CNST").w(3);
+  root.f("_END");
+  Check(parts[0].part == root.bytes, "tables merge into retail's KSSM, SSWH and SELC");
+  Check(parts[0].dropped.size() == 1 && parts[0].droppedRetail == 1, "the second swoosh is left out");
+  bool merged = false;
+  bool selected = false;
+  bool conditional = false;
+  for (const std::string& note : parts[0].approximated) {
+    merged = merged || note == "KSSM: 2 tables merged";
+    selected = selected || note == "KSSM: table selector ignored";
+    conditional = conditional || note.find("conditions ignored") != std::string::npos;
+  }
+  Check(merged && selected && conditional, "merge, selector and condition noted");
+  std::vector<RetailPartProperty> properties;
+  Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 5,
+        "converted spawn table reads as retail");
+}
+
 int main() {
   TestRetailId();
   TestSwooshElectric();
@@ -575,6 +671,7 @@ int main() {
   TestSplitRejects();
   TestShapes();
   TestGradientFrames();
+  TestSpawnTable();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

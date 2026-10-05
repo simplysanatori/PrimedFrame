@@ -81,6 +81,31 @@ struct EffectNode {
 bool ParseEffect(const uint8_t* data, size_t size, EffectNode& out, std::string& error,
                  size_t* failOffset = nullptr);
 
+// A KSSM spawn table: the child systems to start on given frames. Retail has
+// one table; Remastered may hold several, each behind a selector element.
+struct EffectSpawnTable {
+  struct Spawn {
+    EffectGuid id{};           // an embedded child's id
+    uint32_t form = 0;         // its form's type ('GENP' or 'SWSH')
+    bool conditional = false;  // an element (a chance, it seems) instead of NONE
+  };
+  struct Frame {
+    uint32_t frame = 0;
+    std::vector<Spawn> spawns;
+  };
+  struct Table {
+    uint32_t word = 0;
+    EffectValue selector;  // CNST(0), or a parameter (TPVI) with a default
+    std::vector<Frame> frames;
+  };
+  uint32_t header[3]{};  // retail's first three words; the third is the end frame
+  uint32_t events = 0;   // SEVT events (Remastered only, not kept)
+  std::vector<Table> tables;  // empty for NONE
+};
+
+// Breaks down a KSSM property of an effect parsed from `data`.
+bool ParseSpawnTable(const uint8_t* data, size_t size, const EffectProperty& kssm, EffectSpawnTable& out);
+
 // Indented text dump of a parsed effect, one property per line, for diffing
 // against retail PART dumps.
 std::string DumpEffect(const EffectNode& effect, const uint8_t* data);

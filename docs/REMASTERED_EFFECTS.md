@@ -76,14 +76,25 @@ parsed. Remastered's flags are a `CNST` and a byte (IMPL/LMPL/EMPL/BNCE's
 last argument, ELPS, ATEX). Emitter shapes pinned from the shipped bytes:
 `PLNE(v, v, v, r, r, r)`, `ELPS(v, v, v, r, flag)`,
 `PLNV(v, v, r x8, byte)`; colour `MDAO(c, r)` and `SLCT(r, ARRY)`;
-`SMOV(EXTT, v, EXTR, NONE, NONE)` with EXTT/EXTR/EXTS as leaves, `TRST(r x5, word)`. A 16-byte id holding an element FourCC
-is not read as an id.
+`SMOV(EXTT, v, EXTR, NONE, NONE)` with EXTT/EXTR/EXTS as leaves, `TRST(r x5, word)`,
+`GRAV(v, byte, NONE)` (in SMOV's slot), `ATX2(id, e x4)` in TEXR. A 16-byte id
+holding an element FourCC is not read as an id.
 
-An embedded GPSM can carry the root flag (header u32 at +21 equal to 1)
-without children: its `_END` is then followed directly by the next sibling's
-id. The reader takes the child list when a count and children parse there,
-and ends the node at its `_END` otherwise (only the effect's own root must
-have the list). Property tags go up to 05 (LRAD).
+KSSM is `NONE`, or `CNST`, u32 1, 1, the end frame and an SEVT event count,
+the events (`SEVT(SMOV(...))`), then a u32 table count and that many tables.
+A table is a u32, a selector element and a u32 frame count; each frame is a
+u32 frame and a u32 spawn count, each spawn a 16-byte child id, the child's
+form (GENP, SWSH, ELC2 or ELSM), a u32 and an element (`NONE`, or what looks
+like a chance). The ids are embedded children of the same effect, at any
+depth. `ParseSpawnTable` reads one back for the converter.
+
+The GPSM header u32 at +21 is a flag word, not a boolean: the top-level
+GPSMs carry 1 (1113 files), 2 (250), 4 (47), 5 (18), 3 (5) and 6 (1), and any
+non-zero value may have a child list after `_END`. A flagged embedded GPSM can
+also have none: its `_END` is then followed directly by the next sibling's id.
+The reader takes the child list when a count and children parse there, and
+ends the node at its `_END` otherwise (only the effect's own root must have
+the list). Property tags go up to 05 (LRAD).
 
 KEYF with the 30-byte header (first u32 2) is followed by the element that
 drives it (`KEYF(keys, GTCP)`, `KEYF(keys, PSA0)`). SMTR/PMTR entries are an
@@ -137,16 +148,17 @@ PART on the disc:
 
 ## Coverage
 
-1423 of 1434 unique GENPs parse (99.2%); 1426 of 1437 counting duplicate
+1430 of 1434 unique GENPs parse (99.7%); 1433 of 1437 counting duplicate
 copies (2026-10-05). A texture value can hold TXP2 (id, three elements), TXFB
-(id, one to four) and a property ANTH (an ANTH element: id, TRST, two keyframe
-blocks, a real), and TIND takes the same `CNST(id), NONE` pair as TEXR. Of the
-11 failures, 7 stop at a KSSM, 3 at an EMTR and 1 at a TEXR.
+(id, one to four), ATX2 and a property ANTH (an ANTH element: id, TRST, two
+keyframe blocks, a real), and TIND takes the same `CNST(id), NONE` pair as
+TEXR. The 4 failures stop at an EMTR (92278041, C05C4D6B, C64A1F1A) and a
+TEXR (FAEE17B6).
 
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.
 
-The parsed effects embed 3365 GPSM, 85 SWSH, 23 ELC2 and 8 ELSM children; all
+The parsed effects embed 3571 GPSM, 95 SWSH, 23 ELC2 and 8 ELSM children; all
 of them convert (below). The other child forms (weapon, collision, decal) do
 not occur embedded.
 
@@ -180,8 +192,7 @@ over from retail resolve).
 
 What does not convert is left out and listed: Remastered-only properties, an
 element retail does not have in that slot (RADD, REUL, MPRD, the parameter
-reads...), MPCB's angle form, an id with no retail id, and KSSM (Remastered's
-spawn table is a different layout). Retail then uses its default for the
+reads...), MPCB's angle form and an id with no retail id. Retail then uses its default for the
 property. `droppedRetail` counts the left-out properties retail does read, so
 a caller can skip effects that lose something that matters.
 
@@ -199,11 +210,19 @@ keys) and LENG (`ADD(12, 1)` against the disc's 12, which is authored, not an
 offset).
 
 Keyframe blocks keep retail's layout; a colour's keys may be four halves
-(8 bytes), which are widened to floats. KSSM is not converted. Retail's is
-`CNST` plus four ints (start/end frame, inc, rand) and a frame table where
-each frame has a count and 16-byte entries (id, three ints). Remastered's
-reader takes it as a raw block (240 bytes in the effects seen) with a
-different layout.
+(8 bytes), which are widened to floats.
+
+KSSM: retail's is `CNST`, four ints (0, 1, the end frame, 0) and a frame table
+where each frame has a count and 16-byte entries (a PART id, three zeros);
+retail spawns only generators, and only while the frame is below the end frame
+and PSLT. Remastered's tables (above) are merged into that one table: its
+GENP spawns go to their frames, the first SWSH spawn becomes the generator's
+SSWH started at SSSD, and the first ELC2/ELSM its SELC at SESD (unless the
+generator has its own). Noted as approximated: the SEVT events (moves) are
+dropped, tables are merged, a selector other than `CNST(0)` is ignored, and
+spawn conditions are ignored (every spawn starts). Extra swooshes or electric
+children are left out (29 spawns in 27 effects). All 1211 KSSMs in the parsed
+effects convert.
 
 `SplitRetailEffect` (`SplitRetailPart` for PART) reads a retail PART, SWHC or
 ELSC back the same way, property by property. The tests use it to check that
@@ -319,10 +338,12 @@ embedded children's lights.
 `tests/port_remastered_effect_tool.cpp` is a dev tool, not built by CMake:
 
 ```
-g++ -std=c++20 -O2 -Iplatform/include tests/port_remastered_effect_tool.cpp \
+g++ -std=c++20 -O2 -Iplatform/include -Iextern/astcenc/Source \
+    tests/port_remastered_effect_tool.cpp \
     platform/port_remastered_effect.cpp platform/port_remastered_effect_convert.cpp \
     platform/port_remastered_effect_import.cpp platform/port_remastered_image.cpp \
-    platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp -lzstd -o effect_tool
+    platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp \
+    build/port-gcc/extern/astcenc/libastcenc.a -lzstd -o effect_tool
 ./effect_tool dump <file.GENP>             # one effect as text
 ./effect_tool scan <romfs> [outdir]        # coverage, references, failures;
                                            # outdir gets one dump per effect

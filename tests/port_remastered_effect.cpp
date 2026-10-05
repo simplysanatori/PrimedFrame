@@ -324,12 +324,56 @@ void TestTextureElements() {
         "ANTH takes five arguments");
 }
 
+// The GPSM flag word is not a boolean: a root with flag 2 (and a child with
+// flag 4) has children after its _END. TEXR can hold an ATX2 (an id and four
+// elements).
+void TestGeneratorFlags() {
+  const auto generator = [](std::vector<uint8_t>& out, uint32_t flag) {
+    PutFourCC(out, "GPSM");
+    out.resize(out.size() + 17);
+    Put32(out, flag);
+  };
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  generator(out, 2);
+  PutProperty(out, "_END", 4);
+  Put32(out, 1);
+  EffectGuid id = Guid(0x40);
+  out.insert(out.end(), id.begin(), id.end());
+  generator(out, 4);
+  const EffectGuid texture = Guid(0x10);
+  PutProperty(out, "TEXR", 1);
+  PutFourCC(out, "ATX2");
+  out.insert(out.end(), texture.begin(), texture.end());
+  for (int i = 0; i < 4; ++i) {
+    PutConstant(out, float(i));
+  }
+  PutProperty(out, "_END", 4);
+  Put32(out, 1);
+  id = Guid(0x60);
+  out.insert(out.end(), id.begin(), id.end());
+  generator(out, 0);
+  PutProperty(out, "_END", 4);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "flag 2 root parses");
+  Check(effect.root && effect.children.size() == 1 && effect.children[0].children.size() == 1,
+        "flags 2 and 4 have children");
+  Check(effect.children.size() == 1 && effect.children[0].properties.size() == 1 &&
+            effect.children[0].properties[0].value.size() == 1 &&
+            effect.children[0].properties[0].value[0].args.size() == 5,
+        "ATX2 takes an id and four elements");
+}
+
 int main() {
   TestParse();
   TestFailure();
   TestTypedNesting();
   TestFlaggedChild();
   TestTextureElements();
+  TestGeneratorFlags();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

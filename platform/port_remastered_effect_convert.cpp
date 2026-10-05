@@ -4,6 +4,10 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <map>
+#include <set>
+#include <string>
+#include <tuple>
 #include <unordered_map>
 
 namespace PortRemastered {
@@ -727,6 +731,96 @@ public:
     return Element(value[0], type.type, out, why);
   }
 
+  // A swoosh or electric child a spawn table starts: retail has one of each
+  // per generator (SSWH at frame SSSD, SELC at frame SESD), not in KSSM.
+  struct Started {
+    uint32_t type;  // SWHC or ELSC
+    uint32_t id;
+    uint32_t frame;
+  };
+
+  // Retail's KSSM after its FourCC, from Remastered's: CNST, four ints (the
+  // third is the end frame) and per frame its PART ids. Empty when nothing
+  // but swooshes and electric children are spawned (they go to `started`).
+  // Remastered's tables are merged and its SEVT events (moves) dropped; what
+  // a table's selector chooses is not known.
+  bool SpawnTable(const EffectProperty& property, std::vector<uint8_t>& out, std::vector<Started>& started,
+                  std::string& why) const {
+    EffectSpawnTable table;
+    if (!ParseSpawnTable(m_data, property.offset + property.size, property, table)) {
+      why = "spawn table does not parse";
+      return false;
+    }
+    if (table.tables.empty()) {
+      return true;
+    }
+    std::map<uint32_t, std::vector<uint32_t>> frames;
+    size_t unresolved = 0;
+    bool conditional = false;
+    bool selected = false;
+    for (const EffectSpawnTable::Table& each : table.tables) {
+      selected = selected || !IsElement(each.selector, F("CNST")) || each.selector.args.size() != 1 ||
+                 each.selector.args[0].kind != EffectValue::Kind::Word || each.selector.args[0].word != 0;
+      for (const EffectSpawnTable::Frame& frame : each.frames) {
+        for (const EffectSpawnTable::Spawn& spawn : frame.spawns) {
+          const uint32_t type = spawn.form == F("GENP")   ? F("PART")
+                                : spawn.form == F("SWSH") ? F("SWHC")
+                                : spawn.form == F("ELC2") || spawn.form == F("ELSM") ? F("ELSC")
+                                                                                     : 0;
+          const uint32_t id = type != 0 ? AssetId(spawn.id, type) : 0;
+          if (id == 0) {
+            ++unresolved;
+            continue;
+          }
+          conditional = conditional || spawn.conditional;
+          if (type == F("PART")) {
+            frames[frame.frame].push_back(id);
+          } else {
+            started.push_back({type, id, frame.frame});
+          }
+        }
+      }
+    }
+    if (frames.empty() && started.empty()) {
+      why = "no spawned child resolves";
+      return false;
+    }
+    if (table.events != 0) {
+      m_approximated.push_back("KSSM: " + std::to_string(table.events) + " SEVT events dropped");
+    }
+    if (table.tables.size() > 1) {
+      m_approximated.push_back("KSSM: " + std::to_string(table.tables.size()) + " tables merged");
+    }
+    if (selected) {
+      m_approximated.push_back("KSSM: table selector ignored");
+    }
+    if (conditional) {
+      m_approximated.push_back("KSSM: spawn conditions ignored, every spawn always starts");
+    }
+    if (unresolved != 0) {
+      m_approximated.push_back("KSSM: " + std::to_string(unresolved) + " spawns unresolved");
+    }
+    if (frames.empty()) {
+      return true;
+    }
+    PutBe32(out, F("CNST"));
+    for (uint32_t word : {0u, 1u, table.header[2], 0u}) {
+      PutBe32(out, word);
+    }
+    PutBe32(out, uint32_t(frames.size()));
+    for (const auto& [frame, ids] : frames) {
+      PutBe32(out, frame);
+      PutBe32(out, uint32_t(ids.size()));
+      for (uint32_t id : ids) {
+        PutBe32(out, id);
+        for (int i = 0; i < 3; ++i) {
+          PutBe32(out, 0);
+        }
+      }
+    }
+    return true;
+  }
+
   // One generator, swoosh or electric description, as the retail asset `type`.
   ConvertedPart Generator(const EffectNode& node, uint32_t type) const {
     ConvertedPart result;
@@ -754,6 +848,8 @@ public:
       }
     }
     bool texture = false;
+    std::vector<Started> started;  // by the spawn table
+    std::set<uint32_t> written;    // retail properties
     const EffectProperty* material = nullptr;
     const bool textured = retail.count(F("TEXR")) != 0;
     for (const EffectProperty& property : node.properties) {
@@ -769,13 +865,14 @@ public:
       }
       // Retail reads KSSM, but Remastered's spawn table is laid out differently.
       if (part && fourcc == F("KSSM")) {
-        // The reader keeps a spawn table as raw bytes: NONE is the FourCC alone.
-        const EffectValue& table = property.value.empty() ? EffectValue() : property.value[0];
-        const bool none = IsElement(table, F("NONE")) ||
-                          (table.kind == EffectValue::Kind::Raw && table.size == 4 && Le32(m_data + table.offset) == F("NONE"));
-        if (!none) {
-          result.dropped.push_back("KSSM: spawn table not converted yet");
+        std::vector<uint8_t> bytes;
+        std::string why;
+        if (!SpawnTable(property, bytes, started, why)) {
+          result.dropped.push_back("KSSM: " + why);
           ++result.droppedRetail;
+        } else if (!bytes.empty()) {
+          PutBe32(out, fourcc);
+          out.insert(out.end(), bytes.begin(), bytes.end());
         }
         continue;
       }
@@ -794,6 +891,7 @@ public:
       if (fourcc == F("TEXR")) {
         texture = true;
       }
+      written.insert(fourcc);
       PutBe32(out, fourcc);
       out.insert(out.end(), bytes.begin(), bytes.end());
     }
@@ -817,6 +915,33 @@ public:
       }
     } else if (material != nullptr) {
       result.dropped.push_back("MTIN: the effect has a TEXR");
+    }
+    // The first swoosh and electric child the spawn table starts, where the
+    // generator has none of its own.
+    for (const auto [type, child, frame] : {std::tuple(F("SWHC"), F("SSWH"), F("SSSD")),
+                                             std::tuple(F("ELSC"), F("SELC"), F("SESD"))}) {
+      size_t count = 0;
+      for (const Started& each : started) {
+        if (each.type != type) {
+          continue;
+        }
+        if (count++ == 0 && written.count(child) == 0) {
+          PutBe32(out, child);
+          PutBe32(out, F("CNST"));
+          PutBe32(out, each.id);
+          if (written.count(frame) == 0) {
+            PutBe32(out, frame);
+            PutBe32(out, F("CNST"));
+            PutBe32(out, each.frame);
+          } else if (each.frame != 0) {
+            m_approximated.push_back("KSSM: " + EffectFourCCString(child) + " frame kept from " +
+                                     EffectFourCCString(frame));
+          }
+        } else {
+          result.dropped.push_back("KSSM: a spawned " + EffectFourCCString(type) + " beyond retail's one");
+          ++result.droppedRetail;
+        }
+      }
     }
     PutBe32(out, F("_END"));
     result.approximated = std::move(m_approximated);

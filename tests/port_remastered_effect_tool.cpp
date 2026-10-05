@@ -106,6 +106,14 @@ void CountForms(const PortRemastered::EffectNode& node, std::map<uint32_t, size_
   }
 }
 
+// The ids of an effect's embedded children, at any depth.
+void CollectChildren(const PortRemastered::EffectNode& node, std::set<PortRemastered::EffectGuid>& out) {
+  for (const PortRemastered::EffectNode& child : node.children) {
+    out.insert(child.id);
+    CollectChildren(child, out);
+  }
+}
+
 // Ids inside an effect are stored as little-endian UUIDs; the pak reader keeps
 // asset ids in printed order. Swap the first three groups to look one up.
 PortRemastered::EffectGuid PakId(const PortRemastered::EffectGuid& guid) {
@@ -404,6 +412,20 @@ int Convert(const std::string& romfs, const std::string& retailDir, const std::s
     std::snprintf(rootName, sizeof(rootName), "%08X", retailId.value_or(0));
     const std::string root = retailId ? std::string(rootName) : IdToString(id);
     CountForms(effect, found);
+    // Embedded children get stand-in ids (the importer's are fresh ones), so a
+    // spawn table naming them converts.
+    std::set<EffectGuid> children;
+    CollectChildren(effect, children);
+    io.assetId = [&](const EffectGuid& guid, uint32_t type) -> uint32_t {
+      if (children.count(guid) != 0) {
+        uint32_t hash = 0x80000000u;
+        for (uint8_t byte : guid) {
+          hash = (hash * 31 + byte) | 0x80000000u;
+        }
+        return hash;
+      }
+      return EffectRetailId(guid).value_or(0);
+    };
     const std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
     bool allClean = true;
     for (const ConvertedPart& part : parts) {
