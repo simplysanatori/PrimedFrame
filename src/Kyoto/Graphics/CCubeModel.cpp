@@ -446,7 +446,8 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     // z, its height), 0 at the low end and 1 at the high end (CGraphicsModelLoadUtil::LoadMaterialCache), here taken from the
     // view position through the world. The back light is coloured like the ambient along world
     // (1, 1, -1) / sqrt(3). Its strengths are NRenderDebugDefaults' 4 (back) and 2 (top), times
-    // the area's backlight hints, which are not ported (1). MP_REMASTERED_BACKLIGHT=0 turns it off.
+    // the area's backlight hints (PortRoomEnv::Backlight, which gives these as the default).
+    // MP_REMASTERED_BACKLIGHT=0 turns it off.
     static const bool sBacklightOff = [] {
       const char* env = getenv("MP_REMASTERED_BACKLIGHT");
       return env != nullptr && env[0] == '0';
@@ -472,7 +473,10 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       plane[3] = (toModel.Get10() * eye.GetX() + toModel.Get11() * eye.GetY() + toModel.Get12() * eye.GetZ() +
                   toModel.Get13() - bottom) *
                  scale;
-      GXSetPBRBacklight(plane, backDir, 4.f, 2.f);
+      float top = 2.f;
+      float back = 4.f;
+      PortRoomEnv::Backlight(top, back);
+      GXSetPBRBacklight(plane, backDir, back, top);
     }
     // An opaque material's own alpha (dst factor zero) means nothing to a blend.
     uint materialCube = 0;

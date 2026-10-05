@@ -10,7 +10,7 @@ namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 10;
+constexpr uint32_t kVersion = 11;
 constexpr uint32_t kMaxGrades = 64;
 constexpr uint32_t kMaxGradeLinks = 256;
 constexpr size_t kHeaderSize = 32;
@@ -387,6 +387,59 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
       out.staticLerp = 0.5f;
     }
     at += 8;
+  }
+  if (version >= 11) {
+    if (data.size() - at < 4) {
+      error = "cut short";
+      return false;
+    }
+    const uint32_t lights = Get32(data.data() + at);
+    at += 4;
+    if (lights > kMaxGrades) {
+      error = "too many backlights";
+      return false;
+    }
+    out.backlights.resize(lights);
+    for (BacklightHint& light : out.backlights) {
+      if (data.size() - at < 32) {
+        error = "cut short";
+        return false;
+      }
+      const uint8_t* p = data.data() + at;
+      light.layer = int32_t(Get32(p));
+      light.fadeIn = GetFloat(p + 4);
+      light.fadeOut = GetFloat(p + 8);
+      light.on = p[12] != 0;
+      light.priority = int32_t(Get32(p + 16));
+      light.top = GetFloat(p + 20);
+      light.back = GetFloat(p + 24);
+      const uint32_t links = Get32(p + 28);
+      at += 32;
+      if (!(light.fadeIn >= 0.f && light.fadeIn < 600.f)) {
+        light.fadeIn = 0.f;
+      }
+      if (!(light.fadeOut >= 0.f && light.fadeOut < 600.f)) {
+        light.fadeOut = 0.f;
+      }
+      if (!std::isfinite(light.top)) {
+        light.top = 1.f;
+      }
+      if (!std::isfinite(light.back)) {
+        light.back = 1.f;
+      }
+      if (links > kMaxGradeLinks || (data.size() - at) / 8 < links) {
+        error = "cut short";
+        return false;
+      }
+      light.links.resize(links);
+      for (GradeLink& link : light.links) {
+        const uint8_t* q = data.data() + at;
+        link.sender = Get32(q);
+        link.state = q[4];
+        link.action = q[5];
+        at += 8;
+      }
+    }
   }
   out.data = std::move(data);
   return true;

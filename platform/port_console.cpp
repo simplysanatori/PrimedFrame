@@ -1543,17 +1543,21 @@ void RunFrame() {
     int cubes = 0;
     int grids = 0;
     PortRoomEnv::Stats(areas, probes, cubes, grids);
+    float backlightTop = 0.f;
+    float backlightBack = 0.f;
+    PortRoomEnv::Backlight(backlightTop, backlightBack);
     static const char* const kViews[] = {"off", "coords", "light"};
     Out("roomenv %s: %d area(s), %d probe(s), %d cube(s) loaded, %d ambient grid(s), exposure by %s, "
         "auto %s, static %s (glow x%g), area lights %s, probe blend %s, bloom %s, grade %s, volume %s, "
-        "ambient %g, show %s",
+        "ambient %g, show %s, backlight top %g back %g",
         PortRoomEnv::Enabled() ? "on" : "off", areas, probes, cubes, grids,
         PortRoomEnv::RoomExposed() ? "room" : "cube", PortRoomEnv::AutoExposure() ? "on" : "off",
         PortRoomEnv::StaticExposure() ? "on" : "off", PortRoomEnv::GlowScale(),
         PortRoomEnv::AreaLights() ? "on" : "off", PortRoomEnv::ProbeBlend() ? "on" : "off",
         PortRoomEnv::BloomEnabled() ? "on" : "off",
         PortRoomEnv::ColorGradeEnabled() ? "on" : "off", PortRoomEnv::VolumesEnabled() ? "on" : "off",
-        PortRoomEnv::AmbientScale(), kViews[std::clamp(PortRoomEnv::VolumeView(), 0, 2)]);
+        PortRoomEnv::AmbientScale(), kViews[std::clamp(PortRoomEnv::VolumeView(), 0, 2)],
+        backlightTop, backlightBack);
     Finish();
   } else if (name == "gputimes") {
     const std::string arg = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "show";

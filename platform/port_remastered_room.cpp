@@ -42,6 +42,7 @@ constexpr uint32_t kAutoExposureHint = 0x98694074;
 constexpr uint32_t kBloomEffect = 0x7dcaf170;
 constexpr uint32_t kColorGrade = 0x6b091e44;
 constexpr uint32_t kColorGradeHint = 0xa36cd908;
+constexpr uint32_t kBacklight = 0x190d20d7;
 constexpr uint32_t kDoorMP1 = 0x564a1641;
 constexpr uint32_t kModCon = 0x451740eb;
 constexpr uint32_t kActorMP1 = 0xb6200be6;
@@ -67,6 +68,14 @@ constexpr uint32_t kPropHintFadeIn = 0x5c6f53d8;
 constexpr uint32_t kPropHintFadeOut = 0xa4967532;
 constexpr uint32_t kPropHintPriority[2] = {0xb3d40a89, 0x8ab8fd40};  // default 50
 constexpr uint32_t kGradeLutSize = 33;
+// A Backlight is its own hint (CBacklightManager): the character backlight's top and back
+// coefficients (1 when absent), fades (1 s), global flag and priority (the base struct's, 50).
+constexpr uint32_t kPropBacklightTop = 0x059e985d;
+constexpr uint32_t kPropBacklightBack = 0xaa1a5fd9;
+constexpr uint32_t kPropBacklightFadeIn = 0x15245fd2;
+constexpr uint32_t kPropBacklightFadeOut = 0x4c97e999;
+constexpr uint32_t kPropBacklightGlobal = 0xea3e22c0;
+constexpr uint32_t kPropBacklightPriority[2] = {0x2833c9d2, 0x8ab8fd40};
 constexpr uint32_t kPropHintMin = 0x682f8a1f;
 constexpr uint32_t kPropHintMax = 0x839d334c;
 constexpr uint32_t kPropHintMode = 0x590d6843;
@@ -1235,7 +1244,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
   // kSenderPlayerFluid/kSenderCameraWater) and state (0: in, 1: out), or sender 0.
   std::set<int> hintEntities;
   for (const Component& c : comps) {
-    if (c.type == kColorGradeHint && c.entity >= 0) {
+    if ((c.type == kColorGradeHint || c.type == kBacklight) && c.entity >= 0) {
       hintEntities.insert(c.entity);
     }
   }
@@ -1636,6 +1645,16 @@ struct GradeData {
   std::vector<uint8_t> lut;
 };
 
+// A Backlight: as a GradeData, with the coefficients in place of the LUT.
+struct BacklightData {
+  int32_t layer = -1;
+  float fadeIn = 1, fadeOut = 1;
+  bool on = false;
+  int32_t priority = 50;
+  float top = 1, back = 1;
+  std::vector<PortRoomGeo::Link> links;
+};
+
 struct Placement {
   Vec3 pos{};  // GameCube world coordinates, once the world shift is added
 };
@@ -1681,6 +1700,8 @@ private:
   void ReadBloom(const RoomData& r, BloomData& out) const;
   // The room's global ColorGrades in component order; `area` gives their retail layers.
   void ReadGrades(const RoomData& r, const Area* area, std::vector<GradeData>& out) const;
+  // The room's Backlight hints, likewise.
+  void ReadBacklights(const RoomData& r, const Area* area, std::vector<BacklightData>& out) const;
   bool Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>& check, std::vector<uint8_t>& out,
             std::string& note) const;
   // The room's static geometry (its ModCon components), as "<MREA id>.roomgeo".
@@ -1689,7 +1710,7 @@ private:
   void WriteLiquids(const RoomData& r, uint32_t mrea);
   std::string WriteRoom(const RoomData& r, const std::map<std::string, Placement>& placed, const Vec3& shift,
                         const float tonemap[5], const BloomData& bloom, const std::vector<GradeData>& worldGrades,
-                        int& written, std::string& matched);
+                        const std::vector<BacklightData>& worldBacklights, int& written, std::string& matched);
 
   const RoomPak& m_master;
   const std::vector<RoomPak>& m_rooms;
@@ -2016,6 +2037,68 @@ void Writer::ReadGrades(const RoomData& r, const Area* area, std::vector<GradeDa
     const auto layer = scripts.layer.find(c->entity);
     g.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
     out.push_back(std::move(g));
+  }
+}
+
+void Writer::ReadBacklights(const RoomData& r, const Area* area, std::vector<BacklightData>& out) const {
+  const std::vector<const Component*> lights = r.room.Of(kBacklight);
+  if (lights.empty()) {
+    return;
+  }
+  SceneryScripts scripts;
+  if (area != nullptr) {
+    scripts = MatchScripts(r.room, *area);
+  }
+  for (const Component* c : lights) {
+    if (c->entity < 0) {
+      continue;
+    }
+    const auto f = r.room.Flat(*c);
+    const auto global = f.find(kPropBacklightGlobal);
+    const bool isGlobal = global != f.end() && global->second.size >= 1 && r.room.Bytes(global->second)[0] != 0;
+    std::vector<PortRoomGeo::Link> links;
+    const auto linked = scripts.links.find(c->entity);
+    if (linked != scripts.links.end()) {
+      for (PortRoomGeo::Link link : linked->second) {
+        if (link.action != PortRoomGeo::kShow && link.action != PortRoomGeo::kHide &&
+            link.action != PortRoomGeo::kToggle) {
+          continue;
+        }
+        if (link.sender != PortRoomEnv::kSenderPlayerFluid && link.sender != PortRoomEnv::kSenderCameraWater) {
+          link.sender &= 0x3ffffff;  // as CEntity sends it: no layer bits
+        }
+        links.push_back(link);
+      }
+    }
+    const auto unresolved = scripts.unresolved.find(c->entity);
+    if (unresolved != scripts.unresolved.end()) {
+      Log("  " + r.name + ": " + (isGlobal ? "global" : "local") + " backlight hint with " +
+          std::to_string(unresolved->second) + " connection(s) not followed (sender type/event/action:" +
+          (scripts.unresolvedHow.count(c->entity) != 0 ? scripts.unresolvedHow.at(c->entity) : std::string()) + "), " +
+          std::to_string(links.size()) + " followed");
+    }
+    if (!isGlobal && links.empty()) {
+      continue;
+    }
+    BacklightData b;
+    auto value = [&](uint32_t prop, float fallback) {
+      const auto it = f.find(prop);
+      const float v = it != f.end() && it->second.size >= 4 ? LeFloat(r.room.Bytes(it->second)) : fallback;
+      return std::isfinite(v) ? v : fallback;
+    };
+    b.top = value(kPropBacklightTop, 1.f);
+    b.back = value(kPropBacklightBack, 1.f);
+    b.fadeIn = value(kPropBacklightFadeIn, 1.f);
+    b.fadeOut = value(kPropBacklightFadeOut, 1.f);
+    Span priority;
+    if (r.room.Nested(*c, {kPropBacklightPriority[0], kPropBacklightPriority[1]}, priority) && priority.size >= 4) {
+      b.priority = int32_t(Le32(r.room.Bytes(priority)));
+    }
+    b.on = isGlobal && r.room.Active(*c);
+    b.links = std::move(links);
+    const auto layer = scripts.layer.find(c->entity);
+    b.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
+    out.push_back(std::move(b));
   }
 }
 
@@ -3104,7 +3187,8 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
 
 std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Placement>& placed, const Vec3& shift,
                               const float tonemap[5], const BloomData& worldBloom,
-                              const std::vector<GradeData>& worldGrades, int& written, std::string& matched) {
+                              const std::vector<GradeData>& worldGrades,
+                              const std::vector<BacklightData>& worldBacklights, int& written, std::string& matched) {
   matched.clear();
   Match m;
   if (!MatchRoom(r, placed, m)) {
@@ -3264,7 +3348,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  PutLe32(out, 10);
+  PutLe32(out, 11);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -3315,6 +3399,26 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
   PutFloat(out, exposure[3]);
   PutFloat(out, exposure[4]);
+  std::vector<BacklightData> backlights = worldBacklights;
+  ReadBacklights(r, m.area, backlights);
+  PutLe32(out, uint32_t(backlights.size()));
+  for (const BacklightData& b : backlights) {
+    PutLe32(out, uint32_t(b.layer));
+    PutFloat(out, b.fadeIn);
+    PutFloat(out, b.fadeOut);
+    out.push_back(b.on ? 1 : 0);
+    out.insert(out.end(), 3, 0);
+    PutLe32(out, uint32_t(b.priority));
+    PutFloat(out, b.top);
+    PutFloat(out, b.back);
+    PutLe32(out, uint32_t(b.links.size()));
+    for (const PortRoomGeo::Link& link : b.links) {
+      PutLe32(out, link.sender);
+      out.push_back(link.state);
+      out.push_back(link.action);
+      out.insert(out.end(), 2, 0);
+    }
+  }
   char file[32];
   std::snprintf(file, sizeof file, "%08X.roomenv", m.mrea);
   if (!m_io.write || !m_io.write(file, out)) {
@@ -3435,6 +3539,8 @@ bool Writer::Run(uint32_t mlvl, int& written, std::string& error) {
   // The world's global grade sits under the room's own (the last active one is drawn).
   std::vector<GradeData> grades;
   ReadGrades(master, nullptr, grades);
+  std::vector<BacklightData> backlights;
+  ReadBacklights(master, nullptr, backlights);
   std::map<std::string, std::string> seen;
   for (const auto& r : rooms) {
     if (m_io.cancelled && m_io.cancelled()) {
@@ -3442,7 +3548,7 @@ bool Writer::Run(uint32_t mlvl, int& written, std::string& error) {
       return false;
     }
     std::string matched;
-    const std::string line = WriteRoom(*r, placed, shift, tonemap, bloom, grades, written, matched);
+    const std::string line = WriteRoom(*r, placed, shift, tonemap, bloom, grades, backlights, written, matched);
     Log(line);
     if (!matched.empty()) {
       const auto s = seen.find(matched);

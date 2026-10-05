@@ -59,6 +59,7 @@ struct Area {
     uint64_t order = 0;
   };
   std::vector<GradeRequest> grades;
+  std::vector<GradeRequest> backlights; // likewise
 };
 
 // The frame's exposure and tone curve, as CPostFXManager::UpdateTonemapping moves them.
@@ -184,6 +185,23 @@ GradeFade sGradeFade;
 uint32_t sGradeArea = 0;
 int sGradeIndex = -1;
 uint64_t sGradeOrder = 0;
+// The character backlight's strengths (NRenderDebugDefaults::skBacklightTop and Back when no
+// hint is picked), moving linearly from `from` to `to` over `seconds`.
+constexpr float kBacklightTop = 2.f;
+constexpr float kBacklightBack = 4.f;
+struct BacklightFade {
+  bool started = false;
+  bool hinted = false; // a hint is picked
+  uint32_t area = 0;   // of the hint, and its index
+  int index = -1;
+  float fadeOut = 0.f; // of the hint
+  float from[2] = {kBacklightTop, kBacklightBack};
+  float to[2] = {kBacklightTop, kBacklightBack};
+  float seconds = 0.f;
+  std::chrono::steady_clock::time_point start;
+};
+BacklightFade sBacklight;
+uint64_t sBacklightOrder = 0;
 bool sPlayerFluid = false;
 bool sCameraWater = false;
 // LUTs handed to Aurora already; they are kept there for the run.
@@ -466,37 +484,50 @@ std::vector<uint8_t> ReadAll(std::ifstream& in) {
   return data;
 }
 
-// The grades `sender` drives on `state`.
-void DriveGrades(uint32_t mrea, Area& area, uint32_t sender, int state) {
-  for (size_t i = 0; i < area.grades.size() && i < area.file.grades.size(); ++i) {
-    for (const GradeLink& link : area.file.grades[i].links) {
+// What `sender` drives on `state` among a kind of hints (grades or backlights).
+template <class Hint>
+void DriveHints(uint32_t mrea, const char* what, const std::vector<Hint>& hints,
+                std::vector<Area::GradeRequest>& requests, uint64_t& orderCounter, uint32_t sender, int state) {
+  for (size_t i = 0; i < requests.size() && i < hints.size(); ++i) {
+    for (const GradeLink& link : hints[i].links) {
       if (link.sender != sender || link.state != state) {
         continue;
       }
-      Area::GradeRequest& request = area.grades[i];
+      Area::GradeRequest& request = requests[i];
       const bool on = link.action == PortRoomGeo::kShow ? true
                       : link.action == PortRoomGeo::kHide ? false
                       : link.action == PortRoomGeo::kToggle ? !request.on
                                                              : request.on;
       if (on && !request.on) {
         // Above every file-order start (StartGrades).
-        request.order = (uint64_t(1) << 32) + ++sGradeOrder;
+        request.order = (uint64_t(1) << 32) + ++orderCounter;
       }
       if (on != request.on) {
-        PortLog::Write("room env: %08X grade %zu %s by %08X state %d\n", mrea, i, on ? "on" : "off", sender, state);
+        PortLog::Write("room env: %08X %s %zu %s by %08X state %d\n", mrea, what, i, on ? "on" : "off", sender, state);
       }
       request.on = on;
     }
   }
 }
 
-// Every grade as it starts, then the fluids the player and camera are in already.
+// The grades and backlights `sender` drives on `state`.
+void DriveGrades(uint32_t mrea, Area& area, uint32_t sender, int state) {
+  DriveHints(mrea, "grade", area.file.grades, area.grades, sGradeOrder, sender, state);
+  DriveHints(mrea, "backlight", area.file.backlights, area.backlights, sBacklightOrder, sender, state);
+}
+
+// Every grade and backlight as it starts, then the fluids the player and camera are in already.
 void StartGrades(uint32_t mrea, Area& area) {
   area.grades.assign(area.file.grades.size(), {});
   for (size_t i = 0; i < area.grades.size(); ++i) {
     area.grades[i].on = area.file.grades[i].on;
     // In file order, below anything turned on later: the last of equals wins, as before.
     area.grades[i].order = i;
+  }
+  area.backlights.assign(area.file.backlights.size(), {});
+  for (size_t i = 0; i < area.backlights.size(); ++i) {
+    area.backlights[i].on = area.file.backlights[i].on;
+    area.backlights[i].order = i;
   }
   if (sPlayerFluid) {
     DriveGrades(mrea, area, kSenderPlayerFluid, 0);
@@ -1232,6 +1263,93 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
   return a != 0 || b != 0;
 }
 
+namespace {
+
+// The backlight's strengths now: top, then back.
+void BacklightNow(float out[2]) {
+  const BacklightFade& f = sBacklight;
+  float t = 1.f;
+  if (f.seconds > 0.f) {
+    t = std::clamp(std::chrono::duration<float>(std::chrono::steady_clock::now() - f.start).count() / f.seconds, 0.f, 1.f);
+  }
+  for (int i = 0; i < 2; ++i) {
+    out[i] = f.from[i] + (f.to[i] - f.from[i]) * t;
+  }
+}
+
+} // namespace
+
+void UpdateBacklight(LayerActive layerActive, void* context) {
+  BacklightFade& f = sBacklight;
+  if (!Enabled()) {
+    f = {};
+    return;
+  }
+  // A room without a file keeps whatever the frame had, as the grade does.
+  const auto view = sAreas.find(sViewArea);
+  if (view == sAreas.end() || !view->second.hasFile) {
+    return;
+  }
+  const Area& area = view->second;
+  const File& file = area.file;
+  // As CAreaPrioritizedGameHintManager picks (see ColorGrade): of the requested hints whose
+  // layer is active, the highest priority, then the one turned on last.
+  const BacklightHint* pick = nullptr;
+  int pickIndex = -1;
+  uint64_t pickOrder = 0;
+  for (size_t i = 0; i < file.backlights.size(); ++i) {
+    const BacklightHint& hint = file.backlights[i];
+    const bool on = i < area.backlights.size() ? area.backlights[i].on : hint.on;
+    const uint64_t order = i < area.backlights.size() ? area.backlights[i].order : i;
+    if (!on || (hint.layer >= 0 && layerActive != nullptr && !layerActive(hint.layer, context))) {
+      continue;
+    }
+    if (pick == nullptr || hint.priority > pick->priority || (hint.priority == pick->priority && order >= pickOrder)) {
+      pick = &hint;
+      pickIndex = int(i);
+      pickOrder = order;
+    }
+  }
+  const float target[2] = {pick != nullptr ? pick->top : kBacklightTop, pick != nullptr ? pick->back : kBacklightBack};
+  float now[2];
+  BacklightNow(now);
+  const bool hinted = pick != nullptr;
+  if (!f.started) {
+    f.started = true;
+    f.seconds = 0.f;
+    f.from[0] = f.to[0] = target[0];
+    f.from[1] = f.to[1] = target[1];
+  } else if (hinted != f.hinted || (hinted && (f.area != sViewArea || f.index != pickIndex))) {
+    // No hint before: the first one is set at once. Hint to hint: over the new one's fade-in;
+    // hint to none: over the old one's fade-out, back to the defaults.
+    f.seconds = !hinted ? f.fadeOut : f.hinted ? pick->fadeIn : 0.f;
+    for (int i = 0; i < 2; ++i) {
+      f.from[i] = now[i];
+      f.to[i] = target[i];
+    }
+    f.start = std::chrono::steady_clock::now();
+  }
+  f.hinted = hinted;
+  f.area = sViewArea;
+  f.index = pickIndex;
+  if (hinted) {
+    f.fadeOut = pick->fadeOut;
+  }
+}
+
+bool Backlight(float& top, float& back) {
+  top = kBacklightTop;
+  back = kBacklightBack;
+  if (!Enabled() || !sBacklight.started) {
+    return false;
+  }
+  float now[2];
+  BacklightNow(now);
+  top = now[0];
+  back = now[1];
+  return true;
+}
+
 void OnScriptState(uint32_t mrea, uint32_t sender, int state) {
   auto found = sAreas.find(mrea);
   if (found == sAreas.end()) {
@@ -1269,6 +1387,7 @@ void ResetGrades() {
   sPlayerFluid = false;
   sCameraWater = false;
   sGradeIndex = -1;
+  sBacklight = {};
   for (auto& [mrea, area] : sAreas) {
     StartGrades(mrea, area);
   }
@@ -1276,11 +1395,24 @@ void ResetGrades() {
 
 std::string GradeInfo() {
   std::string out;
-  char line[160];
+  char line[256];
   std::snprintf(line, sizeof(line), "player in fluid %d, camera in water %d\n", int(sPlayerFluid), int(sCameraWater));
+  out += line;
+  float top, back;
+  const bool hasBacklight = Backlight(top, back);
+  std::snprintf(line, sizeof(line), "backlight top %g back %g%s\n", top, back, hasBacklight ? "" : " (defaults)");
   out += line;
   for (const auto& [mrea, area] : sAreas) {
     const File& file = area.file;
+    for (size_t i = 0; i < file.backlights.size(); ++i) {
+      const BacklightHint& hint = file.backlights[i];
+      const bool on = i < area.backlights.size() ? area.backlights[i].on : hint.on;
+      const bool shown = sBacklight.hinted && mrea == sBacklight.area && int(i) == sBacklight.index;
+      std::snprintf(line, sizeof(line), "%08X backlight %zu: %s priority %d layer %d fade %g/%g top %g back %g links %zu%s\n",
+                    mrea, i, on ? "on " : "off", int(hint.priority), int(hint.layer), hint.fadeIn, hint.fadeOut,
+                    hint.top, hint.back, hint.links.size(), shown ? " (shown)" : "");
+      out += line;
+    }
     if (file.grades.empty()) {
       continue;
     }
@@ -1493,6 +1625,7 @@ void Reset() {
   sBrdfSent = false;
   Invalidate();
   sGradeIndex = -1;
+  sBacklight = {};
 }
 
 void SetLoadedAreas(const uint32_t* mreas, size_t count) {

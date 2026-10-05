@@ -295,6 +295,37 @@ void TestGrid() {
     std::vector<uint8_t> bad = v10;
     bad[first + 12 + record + 12 + 9] = 2;  // grade 1's link count, now 514
     Check(!PortRoomEnv::Parse(std::vector<uint8_t>(bad), file, error), "grade: too many links");
+
+    // Version 11 adds the backlight hints after the exposure floats.
+    std::vector<uint8_t> v11 = v10;
+    v11[4] = 11;
+    Check(!PortRoomEnv::Parse(std::vector<uint8_t>(v11), file, error), "backlight: cut short");
+    Put32(v11, 2);
+    for (int i = 0; i < 2; ++i) {
+      Put32(v11, i == 0 ? uint32_t(-1) : 3u);
+      PutFloat(v11, i == 0 ? 1.f : 0.f);
+      PutFloat(v11, 0.5f);
+      v11.insert(v11.end(), {uint8_t(i == 0 ? 1 : 0), 0, 0, 0});
+      Put32(v11, i == 0 ? 50 : 70);
+      PutFloat(v11, i == 0 ? 1.f : 3.f);
+      PutFloat(v11, i == 0 ? 1.f : 0.25f);
+      Put32(v11, i == 0 ? 0 : 1);
+      if (i == 1) {
+        Put32(v11, PortRoomEnv::kSenderPlayerFluid);
+        v11.insert(v11.end(), {9, 1, 0, 0});
+      }
+    }
+    Check(PortRoomEnv::Parse(std::vector<uint8_t>(v11), file, error) && file.backlights.size() == 2 &&
+              file.backlights[0].layer == -1 && file.backlights[0].on && file.backlights[0].priority == 50 &&
+              file.backlights[0].links.empty() && file.backlights[1].layer == 3 && !file.backlights[1].on &&
+              file.backlights[1].fadeIn == 0.f && file.backlights[1].fadeOut == 0.5f &&
+              file.backlights[1].top == 3.f && file.backlights[1].back == 0.25f &&
+              file.backlights[1].links.size() == 1 &&
+              file.backlights[1].links[0].sender == PortRoomEnv::kSenderPlayerFluid &&
+              file.grades.size() == 2 && file.exposureSigma == 32.f,
+          "backlight: version 11 record");
+    Check(PortRoomEnv::Parse(std::vector<uint8_t>(v10), file, error) && file.backlights.empty(),
+          "backlight: older versions have none");
   }
 
   {

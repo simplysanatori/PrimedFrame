@@ -500,7 +500,9 @@ which are authoritative. Inside a mod:
   The backlight triple of a lit material is Remastered's CharacterBacklight: the
   strength of the light from behind, of the light from above, and the power of its
   fade up the model's height plus 1 (0 = no fade); `MP_REMASTERED_BACKLIGHT=0`
-  turns it off. On a ColorUnlit material it is the gain, three times. A material
+  turns it off. The two strengths follow the room's Backlight hints (roomenv v11,
+  picked and faded like the colour grade hints; none = top 2, back 4; console
+  `roomenv grades`). On a ColorUnlit material it is the gain, three times. A material
   without the record gets 1 and 0.
   `PBR6` (92 bytes, the 19 floats, the wrap word, then diffuse and F0 factors) carries
   Remastered's LITS (LightBleedScale) for a two-sided mesh's back copy:

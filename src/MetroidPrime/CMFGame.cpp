@@ -245,6 +245,22 @@ void CMFGame::Draw() const {
   if (mGuiManager->GetIsGameDraw()) {
     gpMain->SetGameFrameDrawn(true);
     mStateManager->PreRender();
+#ifdef TARGET_PC
+    {
+      // Remastered's character backlight hint of the camera's room, before the models draw.
+      struct Layers {
+        CScriptLayerManager* layers;
+        TAreaId area;
+      } layers{mStateManager->WorldLayerState().GetPtr(), mStateManager->GetNextAreaId()};
+      PortRoomEnv::UpdateBacklight(
+          [](int32_t layer, void* context) {
+            const Layers& l = *static_cast< const Layers* >(context);
+            return l.layers == nullptr || l.area == kInvalidAreaId ||
+                   l.layers->IsLayerActive(l.area, TLayerId(layer));
+          },
+          &layers);
+    }
+#endif
     mStateManager->DrawWorld();
     (void)mStateManager->GetPlayer()->IsPlayerDeadEnough();
 #ifdef TARGET_PC

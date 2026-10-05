@@ -13,7 +13,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 10), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 11), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -56,6 +56,11 @@
 //   player or the camera goes into a fluid, 1 when it comes out). Of the grades that are on
 //   and whose layer is active, the highest priority is the room's; of equals, the one
 //   turned on last. Before it, every grade is on, with priority 0.
+// Version 11 goes on (after the version 7 floats):
+//   u32 backlights
+//   backlight: s32 layer, f32 fadeIn, f32 fadeOut, u8 on, u8 pad[3], s32 priority, f32 top,
+//          f32 back, u32 links, then links as a grade's. Picked as a grade is. The top and
+//          back strengths scale the character backlight; with none picked they are 2 and 4.
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -126,6 +131,19 @@ struct Grade {
   uint32_t id = 0;   // a hash of the LUT, never 0; 0 here means the LUT is the identity
 };
 
+// A Backlight hint: the grade's fields, with the character backlight's top and back
+// strengths in place of the LUT.
+struct BacklightHint {
+  int32_t layer = -1;
+  float fadeIn = 1.f;
+  float fadeOut = 1.f;
+  bool on = false;
+  int32_t priority = 50;
+  float top = 1.f;
+  float back = 1.f;
+  std::vector<GradeLink> links;
+};
+
 struct File {
   float tonemap[4] = {};
   float exposure[2] = {}; // EV range; both 0 when the room has no auto exposure
@@ -136,6 +154,7 @@ struct File {
   float bloomThreshold = 0.9f;
   std::vector<float> bloomTints; // RGBA; empty: the room has no bloom
   std::vector<Grade> grades;
+  std::vector<BacklightHint> backlights;
   std::vector<Probe> probes;
   std::vector<Cube> cubes;
   std::vector<Grid> grids;
@@ -331,6 +350,14 @@ bool BloomEnabled();
 // is nothing to grade, or MP_COLOR_GRADE=0.
 using LayerActive = bool (*)(int32_t layer, void* context);
 bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b, float& weight);
+// Remastered's character backlight hints (CBacklightManager), picked as the colour grade's
+// are. UpdateBacklight runs once a frame before the world is drawn: the camera area's pick
+// moves the strengths, a linear fade of both over the new hint's fade-in (set at once when
+// there was no hint), or over the old hint's fade-out back to the defaults. Backlight reads
+// the strengths now (the defaults 2 and 4 when there is no hint, no file, or MP_ROOM_ENV is
+// off). It returns false when the strengths are the defaults for lack of any hint file.
+void UpdateBacklight(LayerActive layerActive, void* context);
+bool Backlight(float& top, float& back);
 // A retail script object (`sender`: its editor id without the area bits) of the area `mrea`
 // sent `state`: the grades it drives turn on or off.
 void OnScriptState(uint32_t mrea, uint32_t sender, int state);
