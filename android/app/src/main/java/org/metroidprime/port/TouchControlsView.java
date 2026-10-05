@@ -182,6 +182,7 @@ final class TouchControlsView extends View {
     // Hidden because a real pad, keyboard or mouse was used. Unlike HIDE, which
     // leaves a SHOW button, nothing is drawn and any touch brings them back.
     private boolean autoHidden;
+    private boolean lastOverlayVisible;
 
     private static final long PHYSICAL_INPUT_POLL_MS = 250;
     private final Runnable physicalInputPoll = new Runnable() {
@@ -192,6 +193,14 @@ final class TouchControlsView extends View {
             if (nativeTakePhysicalInput() && !hidden && !autoHidden) {
                 autoHidden = true;
                 releaseAll();
+            }
+            // The overlay can open without this view hearing of it (a pad, or
+            // MENU while the first frames are slow enough that a one-off
+            // redraw ran before the toggle landed), so redraw on any change.
+            final boolean overlayVisible = nativeDebugOverlayVisible();
+            if (overlayVisible != lastOverlayVisible) {
+                lastOverlayVisible = overlayVisible;
+                invalidate();
             }
             postDelayed(this, PHYSICAL_INPUT_POLL_MS);
         }
