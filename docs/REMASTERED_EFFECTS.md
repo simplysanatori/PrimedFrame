@@ -137,13 +137,11 @@ PART on the disc:
 
 ## Coverage
 
-1306 of 1434 unique GENPs parse (91.1%); 1309 of 1437 counting duplicate
-copies. On the 904-file reference set, the C++ reader and the Python prototype it
-was ported from agree on every one of the 842 both parse. The 128 failures, by the property where the parse stops:
-
-| SMVR | EMTR | TEXR | ZBUF | SMTR | KSSM | VEL2/3 | SIZE/COLR | other |
-|---|---|---|---|---|---|---|---|---|
-| 39 | 35 | 10 | 7 | 7 | 7 | 6 | 6 | 11 |
+1423 of 1434 unique GENPs parse (99.2%); 1426 of 1437 counting duplicate
+copies (2026-10-05). A texture value can hold TXP2 (id, three elements), TXFB
+(id, one to four) and a property ANTH (an ANTH element: id, TRST, two keyframe
+blocks, a real), and TIND takes the same `CNST(id), NONE` pair as TEXR. Of the
+11 failures, 7 stop at a KSSM, 3 at an EMTR and 1 at a TEXR.
 
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.

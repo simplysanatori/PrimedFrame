@@ -279,11 +279,57 @@ void TestFlaggedChild() {
         "flagged child ends at its _END");
 }
 
+// TEXR can hold a TXP2 (an id and three elements) or a TXFB (an id and an
+// element), TIND takes the CNST(id), NONE pair, and ANTH is a property with an
+// element of its own name that takes five arguments.
+void TestTextureElements() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  const EffectGuid id = Guid(0x10);
+  PutProperty(out, "TEXR", 1);
+  PutFourCC(out, "TXP2");
+  out.insert(out.end(), id.begin(), id.end());
+  for (int i = 0; i < 3; ++i) {
+    PutConstant(out, 4.0f);
+  }
+  PutProperty(out, "TIND", 1);
+  PutFourCC(out, "CNST");
+  out.insert(out.end(), id.begin(), id.end());
+  PutFourCC(out, "NONE");
+  PutProperty(out, "TEXR", 1);
+  PutFourCC(out, "TXFB");
+  out.insert(out.end(), id.begin(), id.end());
+  PutFourCC(out, "LFTW");
+  PutConstant(out, 0.0f);
+  PutConstant(out, 1.0f);
+  PutProperty(out, "ANTH", 3);
+  PutFourCC(out, "ANTH");
+  PutFourCC(out, "CNST");
+  out.insert(out.end(), id.begin(), id.end());
+  for (int i = 0; i < 4; ++i) {
+    PutConstant(out, float(i));
+  }
+  PutProperty(out, "ITEN", 3);
+  PutConstant(out, 1.0f);
+  PutProperty(out, "_END", 4);
+  Put32(out, 0);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "texture elements parse");
+  Check(effect.properties.size() == 5 && effect.properties[3].fourcc == EffectFourCC("ANTH") &&
+            effect.properties[3].value.size() == 1 && effect.properties[3].value[0].args.size() == 5,
+        "ANTH takes five arguments");
+}
+
 int main() {
   TestParse();
   TestFailure();
   TestTypedNesting();
   TestFlaggedChild();
+  TestTextureElements();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

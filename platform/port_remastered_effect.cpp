@@ -91,6 +91,11 @@ constexpr ElementSig kElementSigs[] = {
     // EXTT, EXTR and EXTS are leaves; SMOV is (translation, offset, rotation, and
     // two more, NONE in most files); TRST is five reals and a raw word.
     {"TRST", "eeeeew"}, {"EXTS", "-"},
+    // TEXR's texture elements besides ATEX: an id and three elements (TXP2),
+    // or an id and one to four (TXFB, whose first is an LFTW).
+    // ANTH is a property whose value is an ANTH element: an id, TRST, two keyframe
+    // blocks and a real.
+    {"ANTH", "eeeee"},  {"TXP2", "geee"},   {"TXFB", "ge gee geee geeee"},
 };
 
 // Elements by the type of value they are read as, with typed arguments: I an
@@ -176,7 +181,7 @@ constexpr const char* kLooseElements =
 // that is in neither list may still be a property (the grammar lets unknown
 // FourCCs be both), but one that is only an element never is.
 constexpr const char* kProperties =
-    "AAPH ADV1 ADV2 ADV3 ADV4 ADV5 ADV6 ADV7 ADV8 BLIT CIND COLR CSSD DBIS DFOG DVVN EMTR FRMD FXBM FXBR FXLL GRTE "
+    "AAPH ANTH ADV1 ADV2 ADV3 ADV4 ADV5 ADV6 ADV7 ADV8 BLIT CIND COLR CSSD DBIS DFOG DVVN EMTR FRMD FXBM FXBR FXLL GRTE "
     "ICTS IDTS IEXP IITS ILOC INTS ISVF ITEN IVEC KPAL KSSM LCLR LDIR LENG LFOR LFOT LINE LINT LIT_ LIXP LOFF LSLA "
     "LTM2 LTME LTYP MAXP MBLR MBSP MTIN NCSY NDSY OPTS ORNT OSDM PBDM PISY PMAB PMCL PMDL PMOO PMOP PMRT PMSC PMTR "
     "PMUS POFS PSIV PSLT PSOV PSPS PSTS PSVM PSWT PVAR ROTA RSOP SCTR SEED SELC SEPO SESD SFTD SHTM SISY SIZE SMTR "
@@ -185,7 +190,7 @@ constexpr const char* kProperties =
 
 // Property values whose shape is not the default list below.
 constexpr ElementSig kPropertySigs[] = {
-    {"TEXR", "ee e"}, {"SMVR", "e eeee"}, {"SORT", "w"}, {"FRMD", "w"},
+    {"TEXR", "ee e"}, {"TIND", "ee e"}, {"SMVR", "e eeee"}, {"SORT", "w"}, {"FRMD", "w"},
     {"PSPS", "gw"},   {"MTIN", "bg"},   {"SNRD", "w"}, {"SNRA", "w"},
 };
 // Any other property: one element, a flag byte, a byte and an id, an id, or a
