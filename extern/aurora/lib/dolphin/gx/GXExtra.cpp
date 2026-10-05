@@ -2,6 +2,7 @@
 #include "__gx.h"
 #include "dolphin/gx/GXAurora.h"
 #include "../../gfx/bloom.hpp"
+#include "../../gfx/pipeline_cache.hpp"
 #include "../../gfx/probe.hpp"
 #include "../../gfx/volfog.hpp"
 #include "../../webgpu/gpu_prof.hpp"
@@ -11,6 +12,10 @@
 #include <vector>
 
 namespace {
+// GXPortSetDrawIdMode: the frame must reach the screen as the draws made it, so the post-processing and
+// the volumetric fog are left out.
+bool sDrawIdMode = false;
+
 // Port: a PBR draw sets all of its probe, cube, ambient, volume, tone and material state
 // per surface, and neighbouring surfaces almost always repeat it. The processor already
 // ignores a repeat, so a repeat is not written at all; that saves a few hundred FIFO bytes
@@ -82,7 +87,7 @@ struct PBRMaterialWrite {
 extern "C" {
 GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
                          u32 gradeB, f32 gradeWeight, f32 exposure) {
-  if (GXGetPBRCostTest() == 10) {
+  if (GXGetPBRCostTest() == 10 || sDrawIdMode) {
     return true;
   }
   aurora::gfx::bloom::Params params{};
@@ -128,7 +133,7 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
 }
 
 GXBool GXPortVolumetricFog(const GXPortFogParams* fog) {
-  if (fog == nullptr || GXGetPBRCostTest() == 10 || fog->fog[0] <= 0.f) {
+  if (fog == nullptr || GXGetPBRCostTest() == 10 || sDrawIdMode || fog->fog[0] <= 0.f) {
     return true;
   }
   // No density anywhere: the fog or a region must add some.
@@ -232,6 +237,29 @@ void GXSetDrawTag(u32 asset, u32 model, u32 material) {
   GX_WRITE_U32(model);
   GX_WRITE_U32(material);
 }
+
+void GXPortSetDrawSerial(u32 serial) {
+  GX_WRITE_AURORA(GX_AURORA_PORT_DRAW_SERIAL);
+  GX_WRITE_U32(serial);
+}
+
+void GXPortSetDrawIdMode(GXBool on) {
+  sDrawIdMode = on != 0;
+  GX_WRITE_AURORA(GX_AURORA_PORT_DRAW_ID_MODE);
+  GX_WRITE_U8(on ? 1 : 0);
+}
+
+u32 GXPortShaderDump(const char* dir) { return aurora::gx::dump_shaders(dir); }
+
+void GXPortShaderOverrideDir(const char* dir) { aurora::gx::set_shader_override_dir(dir); }
+
+void GXPortShaderReload(void) { aurora::gfx::drop_pipelines(); }
+
+void GXPortDrawLog(GXBool on) { aurora::gx::set_draw_shader_log(on != GX_FALSE); }
+
+u64 GXPortDrawShader(u32 serial) { return aurora::gx::draw_shader_hash(serial); }
+
+GXBool GXPortShaderOverridden(u64 hash) { return aurora::gx::shader_overridden(hash) ? GX_TRUE : GX_FALSE; }
 
 void GXCopyProbeFace(u32 face) {
   GX_WRITE_AURORA(GX_AURORA_COPY_PROBE_FACE);

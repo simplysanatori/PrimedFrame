@@ -428,6 +428,18 @@ static void notify_pipeline_ready(bool queued) {
 }
 
 static PipelineRef g_lastPipelineRef = std::numeric_limits<PipelineRef>::max();
+static std::atomic_bool g_dropPipelines = false;
+
+// drop_pipelines() only raises a flag; the next lookup (on the thread that builds draws) does the
+// work, so no draw loses its pipeline in the middle of one.
+static void apply_pipeline_drop() {
+  std::scoped_lock guard{g_pipelineMutex};
+  g_pipelines.clear();
+  g_pipelineQueue.clear();
+  g_backgroundPipelineQueue.clear();
+  g_pendingPipelines.clear();
+  g_lastPipelineRef = std::numeric_limits<PipelineRef>::max();
+}
 
 template <typename PipelineConfig>
 static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& config, NewPipelineCallback&& cb,
@@ -435,6 +447,9 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
                                       std::optional<uint32_t> firstFrameUsedOverride = std::nullopt) {
   ZoneScoped;
 
+  if (g_dropPipelines.exchange(false, std::memory_order_acq_rel)) {
+    apply_pipeline_drop();
+  }
   const PipelineRef hash = xxh3_hash(config, static_cast<HashType>(type));
   const bool blocking = priority == PipelinePriority::Blocking;
   if (!blocking && hash == g_lastPipelineRef) {
@@ -1161,6 +1176,8 @@ void shutdown_pipeline_cache() {
   queuedPipelines = 0;
   createdPipelines = 0;
 }
+
+void drop_pipelines() { g_dropPipelines.store(true, std::memory_order_release); }
 
 void begin_pipeline_frame() {
   if (!g_hasPipelineThread) {

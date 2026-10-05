@@ -6,6 +6,9 @@
 #include "Kyoto/Math/CAABox.hpp"
 #include "Kyoto/TToken.hpp"
 #include <rstl/vector.hpp>
+#ifdef TARGET_PC
+#include <vector>
+#endif
 
 class IObjectStore;
 class CTexture;
@@ -133,6 +136,41 @@ public:
   // The CMDL this model was loaded from (0 for an area's models), for diagnostics.
   void PortSetAssetId(uint id) { xPort_assetId = id; }
   uint PortAssetId() const { return xPort_assetId; }
+
+  // Draw identification (console `drawlog`, `pick`, `view drawid`). While the log or the draw id
+  // view is on, every surface drawn gets a serial (1.., 24 bits), which Aurora can draw as a
+  // colour and note the shader of, and a PortDraw entry for the frame. Off, a draw pays one
+  // branch on a flag.
+  struct PortDraw {
+    uint serial;
+    const CCubeModel* model;
+    uint asset;       // the CMDL's file id, 0 for an area's model
+    uint modelIndex;  // index in its area (area models)
+    uint material;
+    uint surface;     // place in the model's surface chains, unsorted first
+    uint flags;       // the material's flags
+    int floats;       // how many floats its record holds
+    uint wrap;
+    bool scaled;      // 'PBR6'
+    uint cube;        // 'PBR7'
+    float values[19]; // as drawn (neutral where the record has none)
+    uint mode;        // values[7]
+    float kind;       // values[13]
+    bool pbr;         // drawn through the PBR path
+  };
+  static void PortSetDrawLog(bool on);
+  static void PortSetDrawIds(bool on);
+  static bool PortDrawLogOn();
+  // The entry of a serial in the frame being drawn or the last 8 before it.
+  static bool PortFindDraw(uint serial, PortDraw& out);
+  // The last completed frame's entries, in draw order.
+  static void PortLastFrameDraws(std::vector< PortDraw >& out);
+  // A model that has drawn since the log went on, by CMDL file id (null when none has).
+  static const CCubeModel* PortFindModel(uint asset);
+  // The record's name: 'PBRM' (six floats) to 'PBR7', 'WRAP', or 'none'.
+  static const char* PortRecordTag(int floats, uint wrap, bool scaled, uint cube);
+  // Names the draws of `surface` (when numbering) and sets Aurora's serial; the caller resets it.
+  uint PortBeginDraw(const CCubeSurface& surface, bool pbr) const;
 #endif
   void SetStaticArraysCurrent() const;
   void SetArraysCurrent() const;

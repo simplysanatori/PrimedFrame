@@ -262,6 +262,18 @@ extern "C" {
 //   u8 pass (0 = off, 1 = depth only, 2 = shade where the depth is equal)
 #define GX_AURORA_PORT_DEPTH_PREPASS 0x0055
 
+// Port extension: the serial of the following draws (see GXPortSetDrawSerial). Stays in effect until
+// changed; 0 is none. Shown as a colour by the "drawid" mode.
+// Payload:
+//   u32 serial (24 bits)
+#define GX_AURORA_PORT_DRAW_SERIAL 0x005B
+
+// Port extension: the "drawid" debug view (see GXPortSetDrawIdMode): every draw is its serial as a flat
+// colour, with no blend, fog or post-processing.
+// Payload:
+//   u8 on
+#define GX_AURORA_PORT_DRAW_ID_MODE 0x005C
+
 // Port extension: data kept on the GPU across frames (GXPortRetainResident).
 // RETAIN payload: u64 the game's pointer, u64 a heap std::vector<u8> copy the processor takes.
 // RELEASE payload: u64 the pointer.

@@ -38,6 +38,7 @@
 
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "Kyoto/Graphics/CCubeMaterial.hpp"
+#include "Kyoto/Graphics/CCubeModel.hpp"
 #include "MetroidPrime/CHealthInfo.hpp"
 #include "MetroidPrime/CGameArea.hpp"
 #include "MetroidPrime/CMapWorld.hpp"
@@ -2252,15 +2253,21 @@ bool ViewRay(float origin[3], float forward[3]) {
 
 namespace {
 const char* const kPbrViews[] = {"off",     "albedo",     "normal", "rough",    "metal", "ao",
-                                 "ambient", "reflection", "glow",   "exposure", "kind"};
+                                 "ambient", "reflection", "glow",   "exposure", "kind",
+                                 "drawid"};
+// The last entry is not a shader view but Aurora's draw id mode (GXPortSetDrawIdMode).
+constexpr int kDrawIdView = 11;
 int sPbrView = 0;
 } // namespace
+void NoteDrawIdMode(bool on) { CCubeModel::PortSetDrawIds(on); }
 int PbrViewCount() { return int(sizeof(kPbrViews) / sizeof(kPbrViews[0])); }
 const char* PbrViewName(int view) { return view >= 0 && view < PbrViewCount() ? kPbrViews[view] : "?"; }
 int PbrView() { return sPbrView; }
 void SetPbrView(int view) {
   sPbrView = view >= 0 && view < PbrViewCount() ? view : 0;
-  GXSetPBRDebugView(u32(sPbrView));
+  GXSetPBRDebugView(sPbrView == kDrawIdView ? 0u : u32(sPbrView));
+  GXPortSetDrawIdMode(sPbrView == kDrawIdView ? GX_TRUE : GX_FALSE);
+  PortDebug::NoteDrawIdMode(sPbrView == kDrawIdView);
 }
 void RequestTeleport(int areaId) { sPendingTeleport = areaId; }
 bool ConsumeTeleportRequest(int& areaId) {

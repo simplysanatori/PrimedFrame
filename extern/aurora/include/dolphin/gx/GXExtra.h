@@ -38,6 +38,24 @@ void GXPortSetDepthPrepass(u8 pass);
 // model's asset id, its index when it has no id, and the material); draws nothing
 // differently. Asset 0 with model 0xFFFFFFFF is no name (the initial state).
 void GXSetDrawTag(u32 asset, u32 model, u32 material);
+// Port extension, for finding what drew a pixel: the serial (24 bits, 0 = none) of the following draws, and
+// the "drawid" mode, which draws every draw as its serial in a flat colour (R, G, B = its bytes, low first),
+// with no blend, fog, bloom or grade, so the bytes reach the frame as they are.
+void GXPortSetDrawSerial(u32 serial);
+void GXPortSetDrawIdMode(GXBool on);
+// Port extension, shader debugging. Dump writes every WGSL module built so far, and from now on, as
+// <dir>/<hash16>.wgsl (with a header listing its config) and a line in <dir>/index.tsv; returns how many it
+// wrote now (null or empty: stop). OverrideDir sets where an edited <hash16>.wgsl replaces a generated module
+// (null or empty: off); Reload drops the pipeline cache so the modules are built again at the next draw.
+// MP_WGSL_DUMP and MP_WGSL_OVERRIDE set the directories at startup.
+u32 GXPortShaderDump(const char* dir);
+void GXPortShaderOverrideDir(const char* dir);
+void GXPortShaderReload(void);
+// DrawLog(on) makes the draws record the shader hash they ran; DrawShader(serial) reads it (0 = unknown or
+// too old), and ShaderOverridden says whether an edited source for the hash is in the override directory.
+void GXPortDrawLog(GXBool on);
+u64 GXPortDrawShader(u32 serial);
+GXBool GXPortShaderOverridden(u64 hash);
 // Port extension: goes up with every GXCopyTex, so a caller can tell whether a copy it made
 // is still the latest (nothing has copied into, or cleared through, a texture since).
 u32 GXPortCopySerial(void);
