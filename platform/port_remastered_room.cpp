@@ -2582,15 +2582,16 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     if (anim != nullptr) {
       // The bone's pose in GC axes: the axis change is a rotation, so a quaternion's
       // vector part and a translation change the same way a position does.
-      inst.animFps = anim->fps;
-      inst.animKeys.reserve(size_t(anim->frames) * 7);
+      PortRoomGeo::Instance::AnimClip& clip = inst.anim.emplace_back();
+      clip.fps = anim->fps;
+      clip.keys.reserve(size_t(anim->frames) * 7);
       for (const PortRemasteredAnim::Key& key : anim->bones[0]) {
         for (int i = 0; i < 3; ++i) {
-          inst.animKeys.push_back(float(kSign[i] * key.rotation[kAxis[i]]));
+          clip.keys.push_back(float(kSign[i] * key.rotation[kAxis[i]]));
         }
-        inst.animKeys.push_back(key.rotation[3]);
+        clip.keys.push_back(key.rotation[3]);
         for (int i = 0; i < 3; ++i) {
-          inst.animKeys.push_back(float(kSign[i] * key.translation[kAxis[i]]));
+          clip.keys.push_back(float(kSign[i] * key.translation[kAxis[i]]));
         }
       }
       ++animated;

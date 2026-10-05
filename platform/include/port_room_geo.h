@@ -17,7 +17,7 @@ class CVector3f;
 // them in place of the area's own world geometry.
 //
 // The file is little endian:
-//   'MPRG', u32 version (1 to 6), u32 instances
+//   'MPRG', u32 version (1 to 8), u32 instances
 //   instance: u32 CMDL id, f32 transform[12] (rows of model -> area)
 //     version 2 adds: u8 layer, u8 active, u16 links,
 //     version 3 (and 4) then: u32 platform, f32 platformStart[3],
@@ -54,6 +54,13 @@ class CVector3f;
 //     u32 index, f32 fps, u32 frames (2 or more), then per frame f32 rotation x, y, z, w
 //     (unit quaternion) and f32 translation x, y, z
 //
+// Version 8 gives an animated instance a list of clips instead of one looping clip. Its entry
+// is: u32 index, u8 flags (bit 0: start on show), u8 clips (1 or more), u16 0, then per clip
+// f32 fps, u32 frames (2 or more), u8 loop (0 or 1), u8[3] 0, then the frames as above. A
+// clip that does not loop holds its last pose, and the instance moves on to the next clip
+// when it ends (or when a kGroupNextClip edge says so). Entries of versions 5 to 7 are one
+// looping clip that starts at the area's load.
+//
 // Version 6 may then end with the room's skies:
 //   'SKY ', u32 count, per sky: u32 index, and from version 7 f32 radiance r, g, b
 // The radiance is Remastered's Skybox colour times its intensity, which takes the place of
@@ -88,10 +95,15 @@ struct Instance {
   bool glows = false;        // whether `glow` replaces its materials' emissive strength
   float glow[3] = {};
   // Remastered's animated scenery (ANIM): a rigid pose per frame, in model space, applied
-  // before `transform`, played from the area's load at `animFps` frames a second and looped.
-  // Empty: it stands still.
-  float animFps = 0.f;
-  std::vector<float> animKeys; // 7 per frame: rotation x, y, z, w, translation x, y, z
+  // before `transform`, played clip by clip from the area's load (or, with `animOnShow`, from
+  // each time the instance goes from hidden to shown). Empty: it stands still.
+  struct AnimClip {
+    float fps = 0.f;
+    bool loop = true;
+    std::vector<float> keys; // 7 per frame: rotation x, y, z, w, translation x, y, z
+  };
+  std::vector<AnimClip> anim;
+  bool animOnShow = false;
   bool sky = false; // the room's sky (version 6), drawn in place of the world's
   float skyRadiance[3] = {}; // version 7; 0: not known
 };
@@ -117,6 +129,9 @@ enum ScriptAction : uint8_t {
   kGroupToggle = 6,
   kNodeActivate = 7, // `to` is a node; an inactive node takes no action and sends nothing
   kNodeDeactivate = 8,
+  // `to` is a group: each animated instance of it starts its next clip now (on its last clip,
+  // it restarts that one).
+  kGroupNextClip = 9,
 };
 
 struct ScriptNode {

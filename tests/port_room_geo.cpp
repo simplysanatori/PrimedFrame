@@ -103,8 +103,9 @@ void TestAnim() {
   in.push_back(MakeInstance(0x11111111, 1.f));
   in.push_back(MakeInstance(0x22222222, 2.f));
   in.push_back(MakeInstance(0x33333333, 3.f));
-  in[1].animFps = 30.f;
-  in[1].animKeys = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0.7071068f, 0.7071068f, 0, 0, 1.5f, 0, 0, 1, 0, 0, 0, 2.f};
+  in[1].anim.emplace_back();
+  in[1].anim[0].fps = 30.f;
+  in[1].anim[0].keys = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0.7071068f, 0.7071068f, 0, 0, 1.5f, 0, 0, 1, 0, 0, 0, 2.f};
   std::vector<PortRoomGeo::Instance> out;
   PortRoomGeo::Script back;
   std::string error;
@@ -114,12 +115,13 @@ void TestAnim() {
     in[2].group = extras != 0 ? 4 : PortRoomGeo::kNoGroup;
     const std::vector<uint8_t> file = PortRoomGeo::Write(in);
     Check(PortRoomGeo::Parse(file, out, error, &back), "anim file parses");
-    Check(out.size() == 3 && out[0].animKeys.empty() && out[2].animKeys.empty() && out[1].animFps == 30.f &&
-              out[1].animKeys == in[1].animKeys,
+    Check(out.size() == 3 && out[0].anim.empty() && out[2].anim.empty() && out[1].anim.size() == 1 &&
+              out[1].anim[0].fps == 30.f && out[1].anim[0].loop && !out[1].animOnShow &&
+              out[1].anim[0].keys == in[1].anim[0].keys,
           "anim");
     Check(out.size() == 3 && out[0].glows == in[0].glows && out[2].group == in[2].group, "sections before the anim");
 
-    const size_t plain = file.size() - 8 - 12 - 3 * 28;
+    const size_t plain = file.size() - 8 - 8 - 12 - 3 * 28;
     for (size_t cut = plain + 1; cut < file.size(); ++cut) {
       const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
       if (PortRoomGeo::Parse(part, out, error, &back)) {
@@ -138,8 +140,8 @@ void TestAnim() {
     std::vector<PortRoomGeo::Instance> two = in;
     two.push_back(extra);
     std::vector<uint8_t> dup = PortRoomGeo::Write(two);
-    // The second entry's index (2 entries of 12 + 84 bytes after the 8 byte head) becomes 1.
-    const size_t secondAt = dup.size() - (12 + 3 * 28);
+    // The second entry's index (entries of 8 + 12 + 84 bytes after the 8 byte head) becomes 1.
+    const size_t secondAt = dup.size() - (8 + 12 + 3 * 28);
     dup[secondAt] = 1;
     Check(!PortRoomGeo::Parse(dup, out, error, &back), "duplicate anim instance rejected");
 
@@ -148,12 +150,82 @@ void TestAnim() {
       change(t[1]);
       Check(!PortRoomGeo::Parse(PortRoomGeo::Write(t), out, error, &back), what);
     };
-    mutated("one frame rejected", [](PortRoomGeo::Instance& i) { i.animKeys.resize(7); });
-    mutated("zero fps rejected", [](PortRoomGeo::Instance& i) { i.animFps = 0.f; });
-    mutated("negative fps rejected", [](PortRoomGeo::Instance& i) { i.animFps = -1.f; });
-    mutated("nan fps rejected", [](PortRoomGeo::Instance& i) { i.animFps = std::nanf(""); });
-    mutated("non-unit quaternion rejected", [](PortRoomGeo::Instance& i) { i.animKeys[10] = 2.f; });
-    mutated("non-finite key rejected", [](PortRoomGeo::Instance& i) { i.animKeys[5] = INFINITY; });
+    mutated("one frame rejected", [](PortRoomGeo::Instance& i) { i.anim[0].keys.resize(7); });
+    mutated("zero fps rejected", [](PortRoomGeo::Instance& i) { i.anim[0].fps = 0.f; });
+    mutated("negative fps rejected", [](PortRoomGeo::Instance& i) { i.anim[0].fps = -1.f; });
+    mutated("nan fps rejected", [](PortRoomGeo::Instance& i) { i.anim[0].fps = std::nanf(""); });
+    mutated("non-unit quaternion rejected", [](PortRoomGeo::Instance& i) { i.anim[0].keys[10] = 2.f; });
+    mutated("non-finite key rejected", [](PortRoomGeo::Instance& i) { i.anim[0].keys[5] = INFINITY; });
+  }
+}
+
+// Version 8's clip list: two clips, a flag, and the old layouts.
+void TestClips() {
+  std::vector<PortRoomGeo::Instance> in;
+  in.push_back(MakeInstance(0x11111111, 1.f));
+  in.push_back(MakeInstance(0x22222222, 2.f));
+  in[1].animOnShow = true;
+  in[1].anim.resize(2);
+  in[1].anim[0].fps = 24.f;
+  in[1].anim[0].loop = false;
+  in[1].anim[0].keys = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0.7071068f, 0.7071068f, 0, 0, 1.5f, 0, 0, 1, 0, 0, 0, 2.f};
+  in[1].anim[1].fps = 12.f;
+  in[1].anim[1].keys = {0, 0, 0, 1, 1, 2, 3, 0, 0, 0, 1, 4, 5, 6};
+  std::vector<PortRoomGeo::Instance> out;
+  std::string error;
+  const std::vector<uint8_t> file = PortRoomGeo::Write(in);
+  Check(file.size() > 8 && file[4] == 8, "version 8 written");
+  Check(PortRoomGeo::Parse(file, out, error), "clips file parses");
+  Check(out.size() == 2 && out[0].anim.empty() && !out[0].animOnShow && out[1].animOnShow &&
+            out[1].anim.size() == 2 && out[1].anim[0].fps == 24.f && !out[1].anim[0].loop &&
+            out[1].anim[0].keys == in[1].anim[0].keys && out[1].anim[1].fps == 12.f && out[1].anim[1].loop &&
+            out[1].anim[1].keys == in[1].anim[1].keys,
+        "clips round trip");
+
+  // The ANIM entry starts after the 8 byte head, 8 + (12 + 84) + (12 + 56) bytes from the end.
+  const size_t entry = 8 + 12 + 3 * 28 + 12 + 2 * 28;
+  const size_t at = file.size() - entry;
+  std::vector<uint8_t> bad = file;
+  bad[at + 4] = 2; // unknown flag
+  Check(!PortRoomGeo::Parse(bad, out, error), "unknown anim flag rejected");
+  bad = file;
+  bad[at + 5] = 0;
+  Check(!PortRoomGeo::Parse(bad, out, error), "zero clips rejected");
+  bad = file;
+  bad[at + 5] = 3; // a third clip that is not there
+  Check(!PortRoomGeo::Parse(bad, out, error), "missing clip rejected");
+  bad = file;
+  bad[at + 8 + 8] = 2; // loop flag
+  Check(!PortRoomGeo::Parse(bad, out, error), "bad loop flag rejected");
+  for (size_t cut = at - 8 + 1; cut < file.size(); ++cut) {
+    const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
+    if (PortRoomGeo::Parse(part, out, error)) {
+      std::fprintf(stderr, "FAIL: clips truncated at %zu parses\n", cut);
+      ++sFailures;
+    }
+  }
+
+  // An entry of version 5 to 7 is one looping clip that starts at the load.
+  for (uint8_t version = 5; version <= 7; ++version) {
+    std::vector<uint8_t> old(file.begin(), file.begin() + (at - 8));
+    old[4] = version;
+    Put32(old, 0x4D494E41);
+    Put32(old, 1);
+    Put32(old, 1);
+    float fps = 30.f;
+    uint32_t bits;
+    std::memcpy(&bits, &fps, 4);
+    Put32(old, bits);
+    Put32(old, 2);
+    const float keys[14] = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1};
+    for (float key : keys) {
+      std::memcpy(&bits, &key, 4);
+      Put32(old, bits);
+    }
+    Check(PortRoomGeo::Parse(old, out, error), "old anim entry parses");
+    Check(out.size() == 2 && out[1].anim.size() == 1 && out[1].anim[0].fps == 30.f && out[1].anim[0].loop &&
+              !out[1].animOnShow && out[1].anim[0].keys.size() == 14 && out[1].anim[0].keys[13] == 1.f,
+          "old anim entry is one looping clip");
   }
 }
 
@@ -167,19 +239,26 @@ void TestSky() {
   in[1].skyRadiance[0] = 0.5f;
   in[1].skyRadiance[1] = 2.f;
   in[1].skyRadiance[2] = 0.f;
-  in[0].animFps = 30.f;
-  in[0].animKeys = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0};
+  in[0].anim.emplace_back();
+  in[0].anim[0].fps = 30.f;
+  in[0].anim[0].keys = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0};
   std::vector<PortRoomGeo::Instance> out;
   PortRoomGeo::Script back;
   std::string error;
   const std::vector<uint8_t> file = PortRoomGeo::Write(in);
   Check(PortRoomGeo::Parse(file, out, error, &back), "sky file parses");
-  Check(out.size() == 2 && !out[0].sky && out[1].sky && out[0].animKeys == in[0].animKeys, "sky");
+  Check(out.size() == 2 && !out[0].sky && out[1].sky && out[0].anim.size() == 1 && out[0].anim[0].keys == in[0].anim[0].keys, "sky");
   Check(out.size() == 2 && out[1].skyRadiance[0] == 0.5f && out[1].skyRadiance[1] == 2.f &&
             out[1].skyRadiance[2] == 0.f,
         "sky radiance");
   // Version 6: the index alone, and no radiance.
-  std::vector<uint8_t> old(file.begin(), file.end() - 12);
+  // Its animation entry is the version 5 one: no flags or loop, a single clip.
+  const size_t animAt = file.size() - 24 - 84; // the sky section is 8 + 16 bytes, the animation's 8 + 76
+  std::vector<uint8_t> old(file.begin(), file.begin() + animAt + 8);
+  old.insert(old.end(), file.begin() + animAt + 8, file.begin() + animAt + 12);
+  old.insert(old.end(), file.begin() + animAt + 16, file.begin() + animAt + 24);
+  old.insert(old.end(), file.begin() + animAt + 28, file.begin() + animAt + 84);
+  old.insert(old.end(), file.end() - 24, file.end() - 12);
   old[4] = 6;
   Check(PortRoomGeo::Parse(old, out, error, &back) && out.size() == 2 && out[1].sky &&
             out[1].skyRadiance[0] == 0.f && out[1].skyRadiance[1] == 0.f,
@@ -383,6 +462,7 @@ int main() {
   TestScript();
   TestGlow();
   TestAnim();
+  TestClips();
   TestSky();
   TestLods();
   uint32_t id = 0;

@@ -132,10 +132,14 @@ struct Placed {
   int level = -1;      // this frame's level of detail (Model::levels), -1 for the model itself
   bool glows = false;  // Instance::glow
   float glow[3] = {};
-  // Instance::animFps and animKeys (empty: it stands still), and where it stands before its
-  // pose, which `xf` adds each frame.
-  float animFps = 0.f;
-  std::vector< float > animKeys;
+  // Instance::anim (empty: it stands still), the clip it is on and the area's animTime it
+  // began at, Instance::animOnShow, whether it was shown at the last Think, and where it
+  // stands before its pose, which `xf` adds each frame.
+  std::vector< Instance::AnimClip > anim;
+  size_t clip = 0;
+  double clipStart = 0.;
+  bool animOnShow = false;
+  bool wasShown = false;
   CTransform4f base = CTransform4f::Identity();
   bool sky = false; // Instance::sky: drawn by Sky, not with the room
   float skyRadiance[3] = {};
@@ -606,7 +610,7 @@ void BuildClusters(Area& area) {
   std::vector< size_t > copies(area.models.size(), 0);
   const auto mergeable = [&](const Placed& item) {
     return item.layer == kEveryLayer && item.platform == 0 && item.follow == 0 && item.active && !item.glows &&
-           item.animKeys.empty() && !item.sky;
+           item.anim.empty() && !item.sky;
   };
   std::vector< bool > linked(area.items.size(), false);
   for (const Trigger& trigger : area.triggers) {
@@ -790,16 +794,27 @@ std::vector< uint8_t > ReadAll(std::ifstream& in) {
   return data;
 }
 
-// An animated item's pose `seconds` in, looped: the frames either side blended, the turn
-// the shorter way round. The last frame is where the loop comes back to the first.
-CTransform4f Pose(const Placed& item, double seconds) {
-  const size_t frames = item.animKeys.size() / 7;
-  const float length = float(frames - 1) / item.animFps;
-  float t = float(std::fmod(seconds, double(length)));
-  t = (t < 0.f ? t + length : t) * item.animFps;
+// The seconds a clip takes to play once, first frame to last.
+float ClipLength(const Instance::AnimClip& clip) {
+  return float(clip.keys.size() / 7 - 1) / clip.fps;
+}
+
+// A clip's pose `seconds` in: the frames either side blended, the turn the shorter way
+// round. A looping clip comes back from the last frame to the first; any other holds the
+// last.
+CTransform4f Pose(const Instance::AnimClip& clip, double seconds) {
+  const size_t frames = clip.keys.size() / 7;
+  const float length = ClipLength(clip);
+  float t;
+  if (clip.loop) {
+    t = float(std::fmod(seconds, double(length)));
+    t = (t < 0.f ? t + length : t) * clip.fps;
+  } else {
+    t = float(std::clamp(seconds, 0., double(length))) * clip.fps;
+  }
   const size_t i = std::min(size_t(t), frames - 2);
   const float w = std::clamp(t - float(i), 0.f, 1.f);
-  const float* const a = item.animKeys.data() + 7 * i;
+  const float* const a = clip.keys.data() + 7 * i;
   const float* const b = a + 7;
   const float sign = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3] < 0.f ? -1.f : 1.f;
   float q[4];
@@ -908,9 +923,10 @@ void Load(uint32_t mrea, Area& area) {
     item.sky = instance.sky;
     std::copy(instance.skyRadiance, instance.skyRadiance + 3, item.skyRadiance);
     std::copy(instance.glow, instance.glow + 3, item.glow);
-    if (!instance.animKeys.empty()) {
-      item.animFps = instance.animFps;
-      item.animKeys = instance.animKeys;
+    item.wasShown = item.shown;
+    if (!instance.anim.empty()) {
+      item.anim = instance.anim;
+      item.animOnShow = instance.animOnShow;
       area.animated = true;
     }
     item.platform = instance.platform;
@@ -994,6 +1010,24 @@ void Send(Area& area, uint32_t node, uint8_t event, int depth) {
 
 void Apply(Area& area, const ScriptEdge& edge, int depth) {
   --sApplyBudget;
+  if (edge.action == kGroupNextClip) {
+    if (edge.to >= area.groups.size()) {
+      return;
+    }
+    size_t moved = 0;
+    for (const size_t i : area.groups[edge.to]) {
+      Placed& item = area.items[i];
+      if (!item.anim.empty()) {
+        item.clip = std::min(item.clip + 1, item.anim.size() - 1);
+        item.clipStart = area.animTime;
+        ++moved;
+      }
+    }
+    if (moved != 0) {
+      PortLog::Write("room geo: group %u: %zu instance(s) on their next clip\n", unsigned(edge.to), moved);
+    }
+    return;
+  }
   if (edge.action == kGroupShow || edge.action == kGroupHide || edge.action == kGroupToggle) {
     if (edge.to >= area.groups.size()) {
       return;
@@ -1148,10 +1182,25 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
   }
   if (area.animated) {
     for (Placed& item : area.items) {
-      if (!item.animKeys.empty()) {
-        item.xf = item.base * Pose(item, area.animTime);
-        item.bounded = false;
+      if (item.anim.empty()) {
+        continue;
       }
+      if (item.shown && !item.wasShown && item.animOnShow) {
+        item.clip = 0;
+        item.clipStart = area.animTime;
+      }
+      item.wasShown = item.shown;
+      if (!item.shown) {
+        continue;
+      }
+      // A clip that has run out hands over to the next, from where it ended.
+      while (item.clip + 1 < item.anim.size() && !item.anim[item.clip].loop &&
+             area.animTime - item.clipStart >= double(ClipLength(item.anim[item.clip]))) {
+        item.clipStart += double(ClipLength(item.anim[item.clip]));
+        ++item.clip;
+      }
+      item.xf = item.base * Pose(item.anim[item.clip], area.animTime - item.clipStart);
+      item.bounded = false;
     }
   }
   if (area.loaded != area.models.size()) {
@@ -1682,6 +1731,9 @@ void ResetScriptState() {
     area.animTime = 0.;
     for (Placed& item : area.items) {
       item.shown = item.active;
+      item.wasShown = item.shown;
+      item.clip = 0;
+      item.clipStart = 0.;
       item.following = false;
       item.alpha = 1.f;
     }
