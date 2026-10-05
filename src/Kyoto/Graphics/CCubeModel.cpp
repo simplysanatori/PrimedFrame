@@ -234,12 +234,9 @@ void CCubeModel::PortSetGlow(const f32* rgb) {
   if (rgb == nullptr) {
     return;
   }
-  // As the converter compresses a strength (sqrt, at most 16; see port_remastered_convert.cpp),
-  // on the brightest channel, so the colour keeps its hue.
-  const f32 most = std::max(std::max(rgb[0], rgb[1]), rgb[2]);
-  const f32 scale = most > 0.f ? std::sqrt(std::min(most, 16.f)) / most : 0.f;
+  // Linear, as the converter stores a strength; mode bit 32 exposes it like the record's.
   for (int i = 0; i < 3; ++i) {
-    sPortGlow[i] = rgb[i] * scale;
+    sPortGlow[i] = rgb[i];
   }
 }
 
@@ -401,14 +398,20 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
     values[2] = sPortGlow[2];
   }
   // Mode bit 32: the glow is Remastered's bare product, exposed at run time instead of at
-  // the 0.10 the older imports baked into the map. The shader does not know the bit.
+  // the 0.10 the older imports baked into the map. Bit 64: the same for a kind's glow
+  // strength (values[14]). The shader knows neither bit.
   const int mode = int(values[7] + 0.5f);
-  if ((mode & 32) != 0) {
+  if ((mode & (32 | 64)) != 0) {
     const f32 gain = PortRoomEnv::GlowGain(frameExposed);
-    for (int i = 0; i < 3; ++i) {
-      values[i] *= gain;
+    if ((mode & 32) != 0) {
+      for (int i = 0; i < 3; ++i) {
+        values[i] *= gain;
+      }
     }
-    values[7] = f32(mode & ~32);
+    if ((mode & 64) != 0) {
+      values[14] *= gain;
+    }
+    values[7] = f32(mode & ~(32 | 64));
   }
   if (sPortSky) {
     // Unlit (1) and a sky (16), keeping the material's other flags: the backlight's place
@@ -421,10 +424,10 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
   if (kind > 11.5f && kind < 12.5f) {
     values[15] = sPortChargeShell;
     // The glow's IINT pulses 3..10 and back once a second (CIceBeamMP1::PreRenderGunFx:
-    // 3 + 14 v, v 0..0.5..0); the record holds the peak, compressed by a square root.
+    // 3 + 14 v, v 0..0.5..0); the record holds the peak, 10.
     const f32 phase = CGraphics::GetSecondsMod900();
     const f32 v = 0.5f - std::fabs(phase - std::floor(phase) - 0.5f);
-    const f32 pulse = std::sqrt((3.f + 14.f * v) / 10.f);
+    const f32 pulse = (3.f + 14.f * v) / 10.f;
     values[0] *= pulse;
     values[1] *= pulse;
     values[2] *= pulse;
