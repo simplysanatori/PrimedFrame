@@ -36,6 +36,7 @@
 
 #include "port_apclient.h"
 #include "port_debug.h"
+#include "port_savestate.h"
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
 #endif
@@ -82,6 +83,9 @@ bool FusionLinked() {
   return gpGameState->SystemState().GetFusionLinked();
 }
 } // namespace
+
+#include <dolphin/ar.h>
+#include <dolphin/os.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1673,6 +1677,11 @@ CIOWin::EMessageReturn CFrontEndUI::OnMessage(const CArchitectureMessage& messag
                                               CArchitectureQueue& queue) {
   switch (message.GetType()) {
   case kAM_TimerTick: {
+#ifdef TARGET_PC
+    if (PortSaveState::TakeFrontEndReload()) {
+      PortReloadMods();
+    }
+#endif
     float dt = MakeMsg::GetParmTimerTick(message).GetReal();
     return Update(dt, queue);
   }
@@ -2478,6 +2487,42 @@ const char* CFrontEndUI::GetNextAttractMovieFileName() {
 const char* CFrontEndUI::GetAttractMovieFileName(int idx) {
   return CBasics::Stringize("Video/attract%d.thp", idx);
 }
+
+#ifdef TARGET_PC
+// Port: a mod reload in the front end rebuilds the disc-file overlays, which
+// breaks the reads of open files, and the movies stream from the mod's Video/
+// while they play. They are closed first and opened again from the new files.
+void CFrontEndUI::PortReloadMods() {
+  const EMenuMovie curMovie = xb8_curMovie;
+  const bool attract = !xc4_attractMovie.null();
+  xc4_attractMovie = rstl::auto_ptr< CMoviePlayer >();
+  xcc_curMoviePtr = nullptr;
+  xb8_curMovie = kMM_Stopped;
+  for (int i = 0; i < 9; ++i) {
+    x6c_menuMovies[i].x0_movie = rstl::auto_ptr< CMoviePlayer >();
+  }
+  const bool moviesWereLoaded = xd1_moviesLoaded;
+  xd1_moviesLoaded = false;
+
+  PortSaveState::ReloadModsNow();
+
+  if (!moviesWereLoaded) {
+    return; // kP_LoadMovies opens them
+  }
+  while (!PumpMovieLoad()) {
+    ARQPoll();
+    OSYieldThread();
+  }
+  if (attract) {
+    const int idx = (xbc_nextAttract + xc0_attractCount - 1) % xc0_attractCount;
+    xc4_attractMovie = rstl::auto_ptr< CMoviePlayer >(
+        rs_new CMoviePlayer(GetAttractMovieFileName(idx), 0.f, false, false));
+    xcc_curMoviePtr = xc4_attractMovie.get();
+  } else {
+    SetCurrentMovie(curMovie);
+  }
+}
+#endif
 
 void CFrontEndUI::SetFadeBlackTimer(float seconds) {
   x58_fadeBlackTimer = seconds;
