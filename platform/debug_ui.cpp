@@ -2831,13 +2831,15 @@ ImVec4 ThemeBadColor(const ImVec4& plain = ImVec4(1.f, 0.5f, 0.3f, 1.f)) {
 // simulation, not the audio), so these play with F1 up. They queue into the current channel.
 enum MenuSound { kMenuOpen, kMenuClose, kMenuChoose, kMenuMove, kMenuBack };
 
-void PlayMenuSound(MenuSound sound) {
+// `always` skips the rate limit: opening and closing are rare and must not be swallowed by the
+// press that caused them.
+void PlayMenuSound(MenuSound sound, bool always = false) {
   if (!sUiSounds || sThemeResolved == kThemePlain || !sMainLoopRan) {
     return;
   }
   static uint64_t sLastMs = 0;
   const uint64_t now = SDL_GetTicks();
-  if (sLastMs != 0 && now - sLastMs < 50) {
+  if (!always && sLastMs != 0 && now - sLastMs < 50) {
     return;
   }
   sLastMs = now;
@@ -2863,7 +2865,9 @@ void UpdateMenuSounds(bool visible) {
   if (visible != sWasVisible) {
     sWasVisible = visible;
     sPrevActive = sPrevNav = 0;
-    PlayMenuSound(visible ? kMenuOpen : kMenuClose);
+    // A back press that closes the overlay is the close, not a second sound: this branch returns
+    // before the back check below, and the close ignores the rate limit.
+    PlayMenuSound(visible ? kMenuOpen : kMenuClose, true);
     return;
   }
   if (!visible || ImGui::GetCurrentContext() == nullptr) {
@@ -2879,7 +2883,7 @@ void UpdateMenuSounds(bool visible) {
     pressed = active != window->MoveId && active != ImGui::GetWindowScrollbarID(window, ImGuiAxis_X) &&
               active != ImGui::GetWindowScrollbarID(window, ImGuiAxis_Y);
   }
-  const bool moved = nav != 0 && sPrevNav != 0 && nav != sPrevNav && g.NavCursorVisible && active == 0;
+  const bool moved = nav != 0 && nav != sPrevNav && g.NavCursorVisible && active == 0;
   const bool back = ImGui::IsKeyPressed(ImGuiKey_Escape, false) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false);
   sPrevActive = active;
   sPrevNav = nav;
