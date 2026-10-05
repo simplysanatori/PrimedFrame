@@ -194,9 +194,9 @@ fn layer(z: f32, n: f32) -> i32 {
   // round() is round-half-to-even
   return i32(round(clamp(z, 0.0, max(n - 1.0, 0.0))));
 }
-fn uv_of(in: VOut, set: f32) -> vec3f {
-  if (set > 1.5) { return in.uv2; }
-  return select(in.uv0, in.uv1, set > 0.5);
+fn uv_of(in: VOut, uvSet: f32) -> vec3f {
+  if (uvSet > 1.5) { return in.uv2; }
+  return select(in.uv0, in.uv1, uvSet > 0.5);
 }
 fn row_of(in: VOut, i: i32) -> vec4f {
   if (i <= 0) { return in.e0; }
