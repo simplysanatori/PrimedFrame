@@ -2203,8 +2203,10 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
       P32(b, k << 24 | k << 16 | k << 8 | 0xFF);
     }
   }
-  P16(b, pm.blendDst);
-  P16(b, pm.blendSrc);
+  // The matcap shell (kind 13) is drawn premultiplied, GX_BL_ONE and GX_BL_INVSRCALPHA: its
+  // shader scales the diffuse by the opacity, and the rim and reflection are added unscaled.
+  P16(b, rem.kind == 13 ? 5 : pm.blendDst);
+  P16(b, rem.kind == 13 ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
   // fallback too, which is what draws it whenever the model is not opaque: channel
   // 0 unlit with the vertex colour as its material colour (bit 2), and the alpha
