@@ -39,19 +39,13 @@ install -m644 "$ICON" "$APPDIR/metroid-prime.png"
 # File managers and AppImage launchers read the icon from here.
 ln -s metroid-prime.png "$APPDIR/.DirIcon"
 
-# Bundle the shared libraries a base desktop may not have. glibc, libstdc++ and
-# libgcc are deliberately left to the system: shipping them is what breaks
-# AppImages, and the port is built against whatever glibc the build host has.
-mkdir -p "$APPDIR/usr/lib"
-for lib in libfreetype.so.6 libpng16.so.16 libz.so.1 libbz2.so.1.0 \
-           libbrotlicommon.so.1 libbrotlidec.so.1 libzstd.so.1; do
-    src=$(ldd "$BIN" | awk -v want="$lib" '$1 == want { print $3 }')
-    if [[ -n "${src:-}" && -f "$src" ]]; then
-        cp "$src" "$APPDIR/usr/lib/"
-    else
-        echo "note: $lib not found on this host; not bundled" >&2
-    fi
-done
+# No shared libraries are bundled. The release binary is built on an old base
+# (.github/workflows/linux-release.yml), so the system's own freetype, libpng,
+# zstd and OpenSSL are at least as new as the ones it was linked against, while
+# a bundled copy drags in its build host's sonames (AlmaLinux's freetype wants
+# libbz2.so.1 and harfbuzz, which Debian doesn't provide under those names).
+# An AppImage made from a desktop build only runs on distributions at least as
+# new as that desktop.
 
 # Third-party notices have to travel with anything that is handed out. The
 # vendored components are in the tree; the fetched ones are in the build
@@ -79,23 +73,10 @@ for dep in sdl-src imgui-src fmt-src zstd-src; do
         break
     done
 done
-# The shared libraries bundled above carry their own terms; record which ones
-# went in so a reader can find the corresponding notice.
-{
-    echo "Shared libraries bundled with this AppImage come from the build host."
-    echo "Their licences are those of the distributions they were taken from:"
-    for lib in freetype libpng libz.so libbz2 libbrotli libzstd; do
-        if compgen -G "$APPDIR/usr/lib/*${lib}*" >/dev/null; then
-            echo "  - $lib"
-        fi
-    done
-} > "$APPDIR/usr/share/licenses/metroid-prime-port/BUNDLED_LIBRARIES.txt"
 
 cat > "$APPDIR/AppRun" <<'EOF'
 #!/bin/sh
 HERE=$(dirname "$(readlink -f "$0")")
-# Bundled libraries first, then whatever the system provides.
-export LD_LIBRARY_PATH="$HERE/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec "$HERE/usr/bin/metroid_prime_port" "$@"
 EOF
 chmod 755 "$APPDIR/AppRun"
