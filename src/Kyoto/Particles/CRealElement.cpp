@@ -326,6 +326,13 @@ bool CREParticleSizeOrLineLength::GetValue(int, float& valOut) const {
   return false;
 }
 
+#ifdef TARGET_PC
+bool CREParticleSecondarySize::GetValue(int, float& valOut) const {
+  valOut = CParticleGlobals::GetCurrentParticle()->xPortSsze;
+  return false;
+}
+#endif
+
 bool CREParticleRotationOrLineWidth::GetValue(int, float& valOut) const {
   valOut = CParticleGlobals::GetCurrentParticle()->x30_lineWidthOrRota;
   return false;

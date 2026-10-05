@@ -148,6 +148,9 @@ public:
   void PortSetNativeId(uint id);
   // Load with a mode per axis (a Remastered material's sampler).
   void PortLoad(GXTexMapID texMapId, EClampMode clampS, EClampMode clampT) const;
+  // The GX object PortLoad just bound (valid until the texture is freed); the
+  // VFX particle draw hands it to aurora::gfx::vfx.
+  const GXTexObj* PortTexObj() const { return &mTexObj; }
 #endif
 };
 CHECK_SIZEOF(CTexture, 0x68)

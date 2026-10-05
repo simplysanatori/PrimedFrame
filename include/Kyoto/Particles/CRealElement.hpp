@@ -210,6 +210,15 @@ public:
   bool GetValue(int frame, float& valOut) const override;
 };
 
+#ifdef TARGET_PC
+// Port-only PSSZ: the current particle's secondary size (SSZE), as PSLL is its size.
+class CREParticleSecondarySize : public CRealElement {
+public:
+  ~CREParticleSecondarySize() override {}
+  bool GetValue(int frame, float& valOut) const override;
+};
+#endif
+
 class CREParticleRotationOrLineWidth : public CRealElement {
 public:
   ~CREParticleRotationOrLineWidth() override {}
