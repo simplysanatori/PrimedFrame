@@ -164,8 +164,8 @@ tile, 1 life flipbook, flipX a random mirror) replaces a TEXR/TIND of TXP2
 identity or the `KPIN(CREL(LTHN(RAND(0,1)), .5, 1, -1))` mirror). **PMDV**
 (`CNST n`, n model ids) follows PMDL (the first id) for a
 `SLCT(IRND(0, n-1), ARRY)` of Remastered-only CMDLs, which the import converts
-standalone under fresh ids. Anything else of those shapes is left out.
-With the 218 matched fresh effects (below), 284 of 296 effects import (1007 PARTs, 142 textures of which 1 flipbook, 70 models). 9557D0C2 keeps the disc's PART, since its child C6B5B5A9 uses an ATX2 texture, which does not convert yet. PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6), 06B3F06E and C6CBF848 keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
+standalone under fresh ids. **ATX2** (id, columns, rows, a cycle, loop; only one effect, C6B5B5A9, uses it) is retail's ATEX as a grid; its cycle `ILPT(100)` is retail's CIELifetimePercent, the whole life in frames, so it becomes a life PATL over every tile. Anything else of those shapes is left out.
+With the 218 matched fresh effects (below), 285 of 296 effects import (1012 PARTs, 142 textures of which 1 flipbook, 70 models). PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6), 06B3F06E and C6CBF848 keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
 
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.

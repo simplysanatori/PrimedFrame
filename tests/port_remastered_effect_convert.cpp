@@ -717,6 +717,17 @@ void PutTxp2(std::vector<uint8_t>& out, uint32_t cols, uint32_t rows, uint32_t h
   PutConstant(out, high);
 }
 
+void PutAtx2(std::vector<uint8_t>& out, uint32_t cols, uint32_t percent) {
+  PutProperty(out, "TEXR", 0);
+  PutFourCC(out, "ATX2");
+  PutGuid(out, Fresh(6));
+  PutConstant(out, cols);
+  PutConstant(out, 4);
+  PutFourCC(out, "ILPT");
+  PutConstant(out, percent);
+  PutConstant(out, 1);
+}
+
 void PutModels(std::vector<uint8_t>& out, uint32_t count, uint32_t high) {
   PutProperty(out, "PMDL", 0);
   PutFourCC(out, "SLCT");
@@ -795,6 +806,12 @@ void TestAtlasTexture() {
   Check(parts.size() == 1 && parts[0].droppedRetail == 1, "a tile range past the atlas is refused");
   parts = ConvertOne(OneGenerator([](auto& o) { PutTxp2(o, 0, 4, Bits(1.0f)); }), io);
   Check(parts.size() == 1 && parts[0].droppedRetail == 1, "an atlas of no columns is refused");
+
+  // ATX2's cycle ILPT(100) is the particle's whole life.
+  parts = ConvertOne(OneGenerator([](auto& o) { PutAtx2(o, 2, 100); }), io);
+  Check(parts.size() == 1 && parts[0].part == Patl(0x7E570006u, 2, 4, 8, 1, 0).bytes, "ATX2 becomes a life PATL");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutAtx2(o, 2, 50); }), io);
+  Check(parts.size() == 1 && parts[0].droppedRetail == 1, "an ATX2 over half the life is refused");
 
   parts = ConvertOne(OneGenerator([](auto& o) { PutTxfb(o, true, -1.0f, true); }), io);
   Check(parts.size() == 1 && parts[0].part == Patl(0xF11B0001u, 8, 4, 32, 1, 1).bytes,

@@ -637,8 +637,9 @@ public:
     return true;
   }
 
-  // PATL: TXP2 (an atlas, a random tile) or TXFB (an array texture over the
-  // particle's life, with TRST's optional random mirror). Only those patterns.
+  // PATL: TXP2 (an atlas, a random tile), TXFB (an array texture over the
+  // particle's life, with TRST's optional random mirror) or ATX2 (an atlas over
+  // the particle's life). Only those patterns.
   bool Atlas(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
     const EffectValue& head = value[0];
     const std::string name = EffectFourCCString(head.fourcc);
@@ -671,6 +672,26 @@ public:
         why = "TXTR " + EffectGuidString(head.args[0].guid) + " has no retail id";
         return false;
       }
+    } else if (head.fourcc == F("ATX2")) {
+      // ATX2(id, cols, rows, cycle frames, loop): with the cycle ILPT(100),
+      // retail's whole lifetime in frames, the atlas plays once over the life.
+      uint32_t c, r;
+      const EffectValue& cycle = head.args.size() == 5 ? head.args[3] : head;
+      if (value.size() != 1 || head.args.size() != 5 || !ConstWord(head.args[1], c) ||
+          !ConstWord(head.args[2], r) || c == 0 || r == 0 || c > 64 || r > 64 || !IsElement(cycle, F("ILPT")) ||
+          cycle.args.size() != 1 || !ConstIs(cycle.args[0], 100)) {
+        why = "ATX2 that is not an atlas over the particle's life";
+        return false;
+      }
+      id = AssetId(head.args[0].guid, F("TXTR"));
+      if (id == 0) {
+        why = "TXTR " + EffectGuidString(head.args[0].guid) + " has no retail id";
+        return false;
+      }
+      cols = int32_t(c);
+      rows = int32_t(r);
+      count = cols * rows;
+      mode = 1;
     } else {
       uint32_t high;
       bool mirror = false;
@@ -748,7 +769,7 @@ public:
       PutBe32(out, F("NONE"));
       return true;
     }
-    if (head.fourcc == F("TXP2") || head.fourcc == F("TXFB")) {
+    if (head.fourcc == F("TXP2") || head.fourcc == F("TXFB") || head.fourcc == F("ATX2")) {
       return Atlas(value, out, why);
     }
     const bool animated = head.fourcc == F("ATEX");

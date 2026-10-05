@@ -27,7 +27,8 @@
 //   widened to floats.
 // - Port-only (build/fx-port-contract.md): a TEXR or TIND of TXP2 (an atlas with a
 //   random tile) or TXFB (an array texture played over the particle's life, with
-//   an optional random mirror in its TRST) becomes PATL; a PMDL of SLCT(IRND, ARRY
+//   an optional random mirror in its TRST) or ATX2 (an atlas played over the
+//   particle's life) becomes PATL; a PMDL of SLCT(IRND, ARRY
 //   of ids) becomes the first model as PMDL and all of them as PMDV.
 //
 // A property that does not convert (a Remastered-only property, an element
