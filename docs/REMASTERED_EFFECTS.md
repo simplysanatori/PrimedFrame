@@ -164,8 +164,8 @@ tile, 1 life flipbook, flipX a random mirror) replaces a TEXR/TIND of TXP2
 identity or the `KPIN(CREL(LTHN(RAND(0,1)), .5, 1, -1))` mirror). **PMDV**
 (`CNST n`, n model ids) follows PMDL (the first id) for a
 `SLCT(IRND(0, n-1), ARRY)` of Remastered-only CMDLs, which the import converts
-standalone under fresh ids. Anything else of those shapes is left out. With them
-With the 208 matched fresh effects (below), 275 of 286 effects import (973 PARTs, 137 textures of which 1 flipbook, 69 models). 9557D0C2 keeps the disc's PART, since its child C6B5B5A9 uses an ATX2 texture, which does not convert yet. PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6) and 06B3F06E keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
+standalone under fresh ids. Anything else of those shapes is left out.
+With the 218 matched fresh effects (below), 284 of 296 effects import (1007 PARTs, 142 textures of which 1 flipbook, 70 models). 9557D0C2 keeps the disc's PART, since its child C6B5B5A9 uses an ATX2 texture, which does not convert yet. PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6), 06B3F06E and C6CBF848 keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
 
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.
@@ -206,6 +206,16 @@ those back to retail PARTs (checked 2026-10-05):
   effect also claims (51), one that a retail-id effect already carries (9),
   and one that a name match carries (1). Enemies name several PARTs, so they
   don't pair this way. Script: `build/fx-room/effpair.py`.
+- By character (2026-10-05): a CHPR's id is its retail ANCS's id (retail-id
+  form), and a dependency list near its end (`01`, a u32 count, then fourcc +
+  guid; `PNEG` = GENP) names its effects. The list's order isn't the ANCS's,
+  and its particle events (no names, no float times) aren't decoded, so the
+  pairing is by set: in a CHPR with one unpaired fresh GENP, whose ANCS plus
+  EVNTs has one PART not paired yet, the two pair. Hiding a known pair, the rule
+  re-derives 9 of 9; one GENP named by 13 more CHPRs that lack the PART is
+  dropped. 10 pairs are kept. Unit propagation finds a few more but can't be
+  checked, and most CHPRs leave 6 or more candidates, so enemies stay unpaired
+  until the CHPR event format is known. Scripts: `build/fx-chpr/`.
 
 ## Converting to retail PART
 

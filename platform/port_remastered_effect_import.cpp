@@ -351,6 +351,21 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"fc6996fc-6d6a-4f84-bb98-ec28e9909c1b", 0x807437B3},  // 07_Over_Stonehenge
     {"fdaff8f6-b669-4506-8838-286e7298f7cb", 0x5CF7E943},  // 0p_connect_tunnel
     {"fec1dea9-b8c3-4911-8579-1a38413c537a", 0x877E8A36},  // 15_energycore
+    // By character: a CHPR's id is its retail ANCS's, and its dependency list
+    // names its effects. Where only one of those is still unpaired, and the
+    // ANCS (with its EVNTs) has only one PART not paired yet, they pair, if no
+    // other CHPR naming the effect lacks that PART. Hiding a known pair, the
+    // rule re-derives 9 of 9. The comment is the ANCS.
+    {"217b7ae7-4536-4476-9a36-bbceae9ca9f8", 0x09884086},  // 52A3B1A4
+    {"30f5e9c1-71ac-48db-8ae2-93afcafed315", 0x28630E4B},  // 3F21A526
+    {"65528b78-0039-4001-8e66-d27ab86bec9e", 0xF02F1B9A},  // DEEE73AB
+    {"76259eb8-f02b-4373-b489-f46b97d99817", 0x33000DC9},  // 09881302
+    {"7a8fd475-8378-41f4-aa1b-0bd0fd57a9da", 0xE584FD20},  // 6397CC1B
+    {"840ecc38-3260-44bb-997a-20b899b74d63", 0xFFB8ED2F},  // 23C00D8A
+    {"85ab9b03-e4e1-4e8a-9f70-2e272414fb9b", 0xBD08A010},  // 8DC8052E
+    {"cb9eb31d-2732-4ac2-970f-24e03a0adbff", 0xC6CBF848},  // 3C1C8CC1
+    {"d33dbc9b-dede-45a5-b0c0-28120cb26266", 0xCE057D76},  // CBD06AA1
+    {"f23d06b0-03de-46a1-8305-af2bebd69e7d", 0x9805E2E8},  // F19131AD
 };
 
 // The retail PART an effect replaces: the id it carried over, else its match's.
