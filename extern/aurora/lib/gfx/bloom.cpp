@@ -41,6 +41,7 @@ constexpr uint64_t SlotSize = 256;
 constexpr auto LevelFormat = wgpu::TextureFormat::RGBA16Float;
 constexpr uint32_t AverageSize = 16;
 constexpr auto AverageFormat = wgpu::TextureFormat::RGBA32Float;
+constexpr uint32_t AverageSamples = AverageSize * 8; // the samples' grid, 8x8 to a tile
 constexpr uint32_t AverageRowBytes = AverageSize * 16; // a multiple of 256, as copies need
 constexpr uint64_t AverageBytes = uint64_t(AverageRowBytes) * AverageSize;
 constexpr size_t ReadbackCount = 3;
@@ -153,16 +154,26 @@ fn fs_bright(in: VertexOutput) -> @location(0) vec4f {
 
 const AverageSize = 16.0;
 
+// The average in two passes: one exposed sample per fragment on an 8x8 grid in each of the 16x16
+// tiles, then each tile's 64 summed. A fragment that ran all 64 inverses in turn left the GPU idle.
+@fragment
+fn fs_average_samples(in: VertexOutput) -> @location(0) vec4f {
+  let size = vec2i(textureDimensions(src));
+  let cell = vec2i(floor(in.pos.xy));
+  let tile = vec2f(cell / 8);
+  let sub = vec2f(cell % 8);
+  let uv = (tile + (sub + 0.5) / 8.0) / AverageSize;
+  let at = min(vec2i(uv * vec2f(size)), size - vec2i(1));
+  return vec4f(exposed(textureLoad(src, at, 0).rgb), 1.0);
+}
+
 @fragment
 fn fs_average(in: VertexOutput) -> @location(0) vec4f {
-  let size = vec2i(textureDimensions(src));
-  let tile = floor(in.pos.xy);
+  let base = vec2i(floor(in.pos.xy)) * 8;
   var sum = vec3f(0.0);
   for (var y = 0; y < 8; y++) {
     for (var x = 0; x < 8; x++) {
-      let uv = (tile + (vec2f(f32(x), f32(y)) + 0.5) / 8.0) / AverageSize;
-      let at = min(vec2i(uv * vec2f(size)), size - vec2i(1));
-      sum += exposed(textureLoad(src, at, 0).rgb);
+      sum += textureLoad(src, base + vec2i(x, y), 0).rgb;
     }
   }
   return vec4f(sum / 64.0, 1.0);
@@ -270,7 +281,13 @@ struct State {
   // Grade LUTs by id, and a 1^3 stand-in bound where a pass draws none.
   std::unordered_map<uint32_t, wgpu::TextureView> luts;
   wgpu::TextureView noLut;
-  // The frame's average, rendered here and copied into a readback buffer.
+  // The frame's average, rendered here and copied into a readback buffer, from its samples (which
+  // are unfilterable, so they bind on a layout of their own).
+  wgpu::RenderPipeline averageSamples;
+  wgpu::Texture averageSamplesTexture;
+  wgpu::TextureView averageSamplesView;
+  wgpu::BindGroupLayout averageLayout;
+  wgpu::BindGroup averageGroup;
   wgpu::RenderPipeline average;
   wgpu::Texture averageTexture;
   wgpu::TextureView averageView;
@@ -377,7 +394,8 @@ wgpu::TextureView find_lut(uint32_t id) {
 }
 
 wgpu::RenderPipeline make_pipeline(const char* label, const char* entry, wgpu::TextureFormat format,
-                                   uint32_t samples, const wgpu::BlendState* blend) {
+                                   uint32_t samples, const wgpu::BlendState* blend,
+                                   const wgpu::PipelineLayout& layout = {}) {
   const wgpu::ColorTargetState target{
       .format = format,
       .blend = blend,
@@ -391,7 +409,7 @@ wgpu::RenderPipeline make_pipeline(const char* label, const char* entry, wgpu::T
   };
   const wgpu::RenderPipelineDescriptor descriptor{
       .label = label,
-      .layout = g_state.pipelineLayout,
+      .layout = layout ? layout : g_state.pipelineLayout,
       .vertex = {.module = g_state.module, .entryPoint = "vs_main"},
       .primitive = {.topology = wgpu::PrimitiveTopology::TriangleList},
       .multisample = {.count = samples, .mask = UINT32_MAX},
@@ -477,7 +495,42 @@ void ensure_pipelines() {
                 .dstFactor = wgpu::BlendFactor::One},
   };
   g_state.up = make_pipeline("Bloom Upsample", "fs_up", LevelFormat, 1, &add);
-  g_state.average = make_pipeline("Frame Average", "fs_average", AverageFormat, 1, nullptr);
+  g_state.averageSamples = make_pipeline("Frame Average Samples", "fs_average_samples", AverageFormat, 1, nullptr);
+  const wgpu::TextureDescriptor samplesDescriptor{
+      .label = "Frame Average Samples",
+      .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding,
+      .size = {AverageSamples, AverageSamples, 1},
+      .format = AverageFormat,
+  };
+  g_state.averageSamplesTexture = g_device.CreateTexture(&samplesDescriptor);
+  g_state.averageSamplesView = g_state.averageSamplesTexture.CreateView();
+  const wgpu::BindGroupLayoutEntry samplesEntry{
+      .binding = 1,
+      .visibility = wgpu::ShaderStage::Fragment,
+      .texture = {.sampleType = wgpu::TextureSampleType::UnfilterableFloat,
+                  .viewDimension = wgpu::TextureViewDimension::e2D},
+  };
+  const wgpu::BindGroupLayoutDescriptor averageLayoutDescriptor{
+      .label = "Frame Average Bind Group Layout",
+      .entryCount = 1,
+      .entries = &samplesEntry,
+  };
+  g_state.averageLayout = g_device.CreateBindGroupLayout(&averageLayoutDescriptor);
+  const wgpu::PipelineLayoutDescriptor averagePipelineLayoutDescriptor{
+      .label = "Frame Average Pipeline Layout",
+      .bindGroupLayoutCount = 1,
+      .bindGroupLayouts = &g_state.averageLayout,
+  };
+  const wgpu::PipelineLayout averagePipelineLayout = g_device.CreatePipelineLayout(&averagePipelineLayoutDescriptor);
+  g_state.average = make_pipeline("Frame Average", "fs_average", AverageFormat, 1, nullptr, averagePipelineLayout);
+  const wgpu::BindGroupEntry samplesBinding{.binding = 1, .textureView = g_state.averageSamplesView};
+  const wgpu::BindGroupDescriptor averageGroupDescriptor{
+      .label = "Frame Average Bind Group",
+      .layout = g_state.averageLayout,
+      .entryCount = 1,
+      .entries = &samplesBinding,
+  };
+  g_state.averageGroup = g_device.CreateBindGroup(&averageGroupDescriptor);
   const wgpu::TextureDescriptor averageDescriptor{
       .label = "Frame Average",
       .usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::CopySrc,
@@ -552,11 +605,9 @@ wgpu::BindGroup bind_group(uint32_t slot, const wgpu::TextureView& source, const
   return group;
 }
 
-void draw(const wgpu::CommandEncoder& cmd, const char* name, const wgpu::RenderPipeline& pipeline, uint32_t slot,
-          const wgpu::TextureView& source, const wgpu::TextureView& bloomSource, const wgpu::TextureView& target,
-          bool load, const wgpu::TextureView& resolve = {}, const wgpu::TextureView& lutA = {},
-          const wgpu::TextureView& lutB = {}) {
-  const wgpu::BindGroup group = bind_group(slot, source, bloomSource, lutA, lutB);
+void draw(const wgpu::CommandEncoder& cmd, const char* name, const wgpu::RenderPipeline& pipeline,
+          const wgpu::BindGroup& group, const wgpu::TextureView& target, bool load,
+          const wgpu::TextureView& resolve = {}) {
   const wgpu::RenderPassColorAttachment attachment{
       .view = target,
       .resolveTarget = resolve,
@@ -575,6 +626,13 @@ void draw(const wgpu::CommandEncoder& cmd, const char* name, const wgpu::RenderP
   pass.SetBindGroup(0, group);
   pass.Draw(3);
   pass.End();
+}
+
+void draw(const wgpu::CommandEncoder& cmd, const char* name, const wgpu::RenderPipeline& pipeline, uint32_t slot,
+          const wgpu::TextureView& source, const wgpu::TextureView& bloomSource, const wgpu::TextureView& target,
+          bool load, const wgpu::TextureView& resolve = {}, const wgpu::TextureView& lutA = {},
+          const wgpu::TextureView& lutB = {}) {
+  draw(cmd, name, pipeline, bind_group(slot, source, bloomSource, lutA, lutB), target, load, resolve);
 }
 
 // The composite's pipeline for the EFB pass it is drawn in: the frame as its first target, the
@@ -638,7 +696,8 @@ void encode_average(const wgpu::CommandEncoder& cmd, float exposure, const wgpu:
   if (!buffer) {
     return;
   }
-  draw(cmd, "Bloom average", g_state.average, 0, frame, frame, g_state.averageView, false);
+  draw(cmd, "Bloom average samples", g_state.averageSamples, 0, frame, frame, g_state.averageSamplesView, false);
+  draw(cmd, "Bloom average", g_state.average, g_state.averageGroup, g_state.averageView, false);
   const wgpu::TexelCopyTextureInfo source{.texture = g_state.averageTexture};
   const wgpu::TexelCopyBufferInfo target{
       .layout = {.bytesPerRow = AverageRowBytes, .rowsPerImage = AverageSize},
