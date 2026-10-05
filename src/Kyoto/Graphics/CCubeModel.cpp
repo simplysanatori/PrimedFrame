@@ -411,9 +411,10 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
     }
   }
   // A liquid's surface (kinds 5 and 6) moves: its first parameter is a rate, and the
-  // shader gets the phase. So do falling water (kind 7) and the beam glow (9); glass (8)
-  // does not move.
-  if ((values[13] > 4.5f && values[13] < 7.5f) || (values[13] > 8.5f && values[13] < 9.5f)) {
+  // shader gets the phase. So do falling water (kind 7), the beam glow (9) and the
+  // Waste Disposal tank's distortion (11); glass (8) does not move.
+  if ((values[13] > 4.5f && values[13] < 7.5f) || (values[13] > 8.5f && values[13] < 9.5f) ||
+      (values[13] > 10.5f && values[13] < 11.5f)) {
     values[15] *= CGraphics::GetSecondsMod900();
   }
   // World up as the shader sees it: view space is right, up, -forward.
@@ -627,9 +628,10 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       GXSetPBRProbeEx(viewToCube, 1.f, 1.f, 1.f);
       GXSetPBRCube(materialCubeId, materialCubeParams);
     }
-    // Glass (kind 8) sees what is behind it: the screen so far, copied into map 7 as the
-    // refracting particles copy it (CElementGen).
-    if (kind > 7.5f && kind < 8.5f && CCubeMaterial::PortScreenCopyUsed()) {
+    // Glass (kinds 8 and 11) sees what is behind it: the screen so far, copied into map 7
+    // as the refracting particles copy it (CElementGen).
+    if (((kind > 7.5f && kind < 8.5f) || (kind > 10.5f && kind < 11.5f)) &&
+        CCubeMaterial::PortScreenCopyUsed()) {
       int portLeft, portTop, portWidth, portHeight;
       CGraphics::GetViewport(portLeft, portTop, portWidth, portHeight);
       SPortGlassCopy& copy = sPortGlassCopy;

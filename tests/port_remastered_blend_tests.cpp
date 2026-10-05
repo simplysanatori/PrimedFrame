@@ -182,11 +182,41 @@ void TestPremultipliedGlass() {
   Check(f.size() == 1 && f[0] == std::pair<uint32_t, uint32_t>(1, 5), "premultiplied glass blends (One, InvSrcAlpha)");
 }
 
+// Glass_DX11 (03407341, the Waste Disposal tank) with its distortion map and colours is
+// drawn over the screen copy, premultiplied, whatever its mesh class says.
+void TestHoloGlass() {
+  Model model = BuildModel({{0x100053, 1}});
+  ModelMaterial& m = model.materials[0];
+  m.shaderId[0] = 0x03;
+  m.shaderId[1] = 0x40;
+  m.shaderId[2] = 0x73;
+  m.shaderId[3] = 0x41;
+  ModelMaterialData tch2 = m.data[0];
+  tch2.usage = tch2.texture.usage = FourCC('T', 'C', 'H', '2');
+  tch2.texture.id[3] = 0x22;
+  m.data.push_back(tch2);
+  for (int i = 0; i < 4; ++i) {
+    ModelMaterialData c;
+    c.usage = FourCC('C', 'C', 'H', char('0' + i));
+    c.kind = ModelMaterialData::Kind::Color;
+    c.color[0] = c.color[1] = c.color[2] = c.color[3] = 0.5f;
+    m.data.push_back(c);
+  }
+  std::vector<uint8_t> cmdl;
+  if (!Convert(model, cmdl)) {
+    return;
+  }
+  std::vector<std::pair<uint32_t, uint32_t>> f;
+  Check(Factors(cmdl, f) && f.size() == 1, "the tank glass's material is readable");
+  Check(f.size() == 1 && f[0] == std::pair<uint32_t, uint32_t>(1, 5), "the tank glass blends (One, InvSrcAlpha)");
+}
+
 }  // namespace
 
 int main() {
   TestClasses();
   TestPremultipliedGlass();
+  TestHoloGlass();
   if (sFailures == 0) {
     std::printf("port_remastered_blend_tests: ok\n");
   }

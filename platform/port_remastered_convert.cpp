@@ -1371,6 +1371,10 @@ constexpr const char* kDefaultRefl = "7b98170f";
 // phazon and plasma glass, soot_translucent. Its opacity scales the diffuse light
 // only; the reflection and the glow show at full strength on the clearest pane.
 constexpr uint32_t kShaderPremulGlass[] = {0x11B30369, 0x941068BF, 0xBCC73459};
+// Glass_DX11 (HoloGlass; only the Waste Disposal tank): the scene behind it, bent by TCH2
+// and tinted, plus the reflection, BCLR and the vertex colour, blended with a second
+// colour output (build/mpr/glass/NOTES.md). The port draws it from the screen copy.
+constexpr uint32_t kShaderHoloGlass = 0x03407341;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -1412,6 +1416,7 @@ std::string ShaderRole(uint32_t shader) {
   add(in(kShaderGunBody), "gun-body");
   add(shader == kShaderGunPanel, "gun-panel");
   add(in(kShaderPremulGlass), "premul-glass");
+  add(shader == kShaderHoloGlass, "holo-glass");
   add(shader == kShaderColorUnlit, "color-unlit");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
@@ -1429,6 +1434,7 @@ const char* KindName(int kind) {
   case 8: return "glass";
   case 9: return "gun-glow";
   case 10: return "premul-glass";
+  case 11: return "holo-glass";
   default: return "kind?";
   }
 }
@@ -1763,6 +1769,26 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 3; ++i) {
       out.kindParam[i] = ShortestDouble(cch[0]->color[i]);
     }
+  } else if (shader == kShaderHoloGlass && out.maps[kBase].has && tch[2] && cch[0] && cch[1] && cch[2] && cch[3]) {
+    out.kind = 11;
+    out.vcolor = true;
+    // The distortion map is bound as the second layer's base; it scrolls CCH3.y a second
+    // down and a quarter of that across. The scene is tinted by CCH1 (where the second
+    // output lets the room through), and BCLR, the vertex colour and the reflection's
+    // fresnel per vertex alpha are weighted by CCH0.w, CCH2.y and CCH0.y.
+    set(kBase, tch[2]->texture, &out.layer[kBase]);
+    out.layer[kBase].raw = true;
+    out.kindParam[0] = 1.0;  // the game multiplies it by the time
+    out.kindParam[1] = ShortestDouble(cch[3]->color[1]);
+    out.kindParam[2] = ShortestDouble(cch[3]->color[0]);
+    out.kindParam[3] = ShortestDouble(cch[3]->color[2]);
+    for (int i = 0; i < 3; ++i) {
+      out.tint[i] = ShortestDouble(cch[1]->color[i]);
+    }
+    out.layerHeight[0] = ShortestDouble(cch[0]->color[3]);
+    out.layerHeight[1] = ShortestDouble(cch[2]->color[1]);
+    out.layerHeight[2] = ShortestDouble(cch[0]->color[1]);
+    out.layerHeight[3] = 0.0;
   }
   if (std::find(std::begin(kShaderGunGlow), std::end(kShaderGunGlow), shader) != std::end(kShaderGunGlow) &&
       out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] && cch[2]) {
@@ -1855,6 +1881,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kEmissive].has = false;
   }
+  if (out.kind == 11) {
+    // All of it is the shader's, and it covers what is behind it with the screen copy.
+    out.layered = out.blended = true;
+    out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 1.0;
+    out.backlight = out.backlightTop = 0.0;
+    out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
+  }
   if (out.kind == 9) {
     // The glow is all the shader's; the vertex alpha picks the ramp's row and is no
     // opacity, and there is no edge between layers.
@@ -1865,7 +1900,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   // The kind the shader asked for: a role that names a kind but left it 0 lacked its maps or colours.
   if (out.kind == 0) {
     static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
-                                             "glass",    "lava-pool", "gun-glow", "premul-glass"};
+                                             "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -1977,7 +2012,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
   std::vector<double> f;
   for (int i = 0; i < 3; ++i) {
     // A liquid has no glow of its own, and its colour goes where the glow's would.
-    f.push_back(m.kind == 7 || m.kind == 8 ? m.tint[i] : e);
+    f.push_back(m.kind == 7 || m.kind == 8 || m.kind == 11 ? m.tint[i] : e);
   }
   for (int i = 0; i < 3; ++i) {
     f.push_back(k[i]);
@@ -2088,7 +2123,7 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   };
   // Glass samples the frame behind it, which the game copies into map 7 (the
   // spare buffer's) before it draws one: a stage of its own binds it.
-  const int nstages = rem.kind == 8 ? nmaps + 1 : nmaps;
+  const int nstages = rem.kind == 8 || rem.kind == 11 ? nmaps + 1 : nmaps;
   P32(b, uint32_t(nstages));
   for (int i = 0; i < nstages; ++i) {
     const uint32_t* t = tev[std::min(i, kLayeredMaps - 1)];
@@ -2983,7 +3018,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (Prim& p : prims) {
     if (opt.standalone) {
       const RemMaterial& m = mats[p.mat];
-      p.rmat = m.kind == 8 || m.kind == 10 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
+      p.rmat = m.kind == 8 || m.kind == 10 || m.kind == 11 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
       continue;
     }
     if (opt.material >= 0) {

@@ -1192,6 +1192,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // Glass keeps its roughness in map 4's blue: map 5 is its distortion noise.
     orm = fmt::format("select({}, vec4f(1.0, sampled{}.b, 0.0, 1.0), pbr_kind > 7.5 && pbr_kind < 8.5)", orm,
                       mapStage[4]);
+    // Glass_DX11 reads its cube at level 1 of a smooth surface.
+    orm = fmt::format("select({}, vec4f(1.0, 0.1, 0.0, 1.0), pbr_kind > 10.5 && pbr_kind < 11.5)", orm);
     if (mapStage[6] != -1 && mapStage[2] != -1) {
       normalXy = fmt::format("mix({}, sampled{}.rg, pbr_ls)", normalXy, mapStage[6]);
     }
@@ -1305,6 +1307,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // (pbr_emissive). pbr_param.z is how fast the clear part loses its opacity, y the
     // reflection's weight, pbr_layer_height the glow's colour and in w the reflection's
     // level. It is drawn premultiplied, so what shows through is added after the tone curve.
+    const auto& inner4 = config.tevStages[mapStage[4]];
     std::string through;
     if (screen) {
       vtxOutAttrs += fmt::format("\n    @location({}) pbr_scr: vec4f,", vtxOutIdx++);
@@ -1326,6 +1329,33 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_glow = vec3f(0.0);{1}
       }})""",
                           mapStage[4], through);
+    // Kind 11, Remastered's Glass_DX11 (the Waste Disposal tank): the room behind it (map 7)
+    // bent by map 4's two channels, which scroll at pbr_param.y (x the time), by pbr_param.z
+    // over the distance, and tinted by pbr_emissive where the vertex alpha and pbr_param.w
+    // say. Over it the reflection (its fresnel scaled by the vertex alpha and
+    // pbr_layer_height.z), map 0 (weight x) and the linearised, doubled vertex colour
+    // (weight y). Drawn premultiplied and opaque: the room comes through pbr_pass.
+    std::string holo;
+    if (screen) {
+      holo = fmt::format(R"""(
+          let pbr_hs = fract(vec2f(0.25, 1.0) * (ubuf.pbr_param.y * ubuf.pbr_param.x)) * vec2f(1.0, -1.0);
+          let pbr_hn = textureSampleGrad(tex{0}, tex{0}_samp, tex{1}_uv + pbr_hs, pbr_fuv1, pbr_fuv2).rg - 0.5;
+          let pbr_hd = pbr_hn * (ubuf.pbr_param.z * min(1.0 / max(length(in.pbr_pos), 1e-3), 1.0)) * vec2f(1.0, -1.0);
+          let pbr_huv = in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5 + pbr_hd;
+          let pbr_hg = textureSampleLevel(tex7, tex7_samp, clamp(pbr_huv, vec2f(0.0), vec2f(1.0)), 0.0).rgb;
+          pbr_pass = pow(max(pbr_hg, vec3f(0.0)), vec3f(2.2)) *
+                     max(vec3f(1.0) + ubuf.pbr_emissive.rgb * (ubuf.pbr_param.w - 1.0 + pbr_vraw.a), vec3f(0.0));)""",
+                         underlying(inner4.texMapId), underlying(inner4.texCoordId));
+    }
+    liquid += fmt::format(R"""(
+      if (pbr_kind > 10.5 && pbr_kind < 11.5) {{
+          pbr_alpha = 1.0;
+          pbr_lo = pbr_envspec * (pbr_ab.x * pbr_vraw.a * ubuf.pbr_layer_height.z + pbr_ab.y) +
+                   pow(max({0}.rgb, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_layer_height.x +
+                   2.0 * pow(max(pbr_vraw.rgb, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_layer_height.y;
+          pbr_glow = vec3f(0.0);{1}
+      }})""",
+                          base, holo);
   }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
