@@ -3,6 +3,7 @@
 #include "dolphin/gx/GXAurora.h"
 #include "../../gfx/bloom.hpp"
 #include "../../gfx/probe.hpp"
+#include "../../gfx/volfog.hpp"
 #include "../../webgpu/gpu_prof.hpp"
 
 #include <bit>
@@ -120,6 +121,26 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
   u32 words[32];
   std::memcpy(words, &params, sizeof(words));
   GX_WRITE_AURORA(GX_AURORA_PORT_POST_PROCESS);
+  for (const u32 word : words) {
+    GX_WRITE_U32(word);
+  }
+  return true;
+}
+
+GXBool GXPortVolumetricFog(const GXPortFogParams* fog) {
+  if (fog == nullptr || GXGetPBRCostTest() == 10 || fog->fog[0] <= 0.f || fog->fog[3] <= 0.f) {
+    return true;
+  }
+  if (!aurora::gfx::volfog::ensure_task()) {
+    return false;
+  }
+  aurora::gfx::volfog::Params params{};
+  static_assert(offsetof(aurora::gfx::volfog::Params, flags) == sizeof(GXPortFogParams));
+  std::memcpy(&params, fog, sizeof(*fog));
+  static_assert(sizeof(params) % sizeof(u32) == 0);
+  u32 words[sizeof(params) / sizeof(u32)];
+  std::memcpy(words, &params, sizeof(words));
+  GX_WRITE_AURORA(GX_AURORA_PORT_VOLUMETRIC_FOG);
   for (const u32 word : words) {
     GX_WRITE_U32(word);
   }

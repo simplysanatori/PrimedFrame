@@ -4,6 +4,7 @@
 
 #include "gx/gx.hpp"
 #include "gfx/bloom.hpp"
+#include "gfx/volfog.hpp"
 #include "gfx/clear.hpp"
 #include "gfx/resources.hpp"
 #include "gfx/depth_peek.hpp"
@@ -275,6 +276,12 @@ void after_submit() noexcept {}
 bool frame_radiance(float out[3], uint32_t& serial) { return false; }
 void shutdown() {}
 } // namespace aurora::gfx::bloom
+
+namespace aurora::gfx::volfog {
+bool ensure_task() { return false; }
+void record(const Params& params) {}
+void shutdown() {}
+} // namespace aurora::gfx::volfog
 
 namespace aurora::gfx::depth_peek {
 namespace {

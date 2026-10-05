@@ -15,6 +15,7 @@
 #include <memory>
 #include <set>
 
+#include "port_maya_spline.h"
 #include "port_remastered_anim.h"
 #include "port_remastered_cmdl.h"
 #include "port_remastered_txtr.h"
@@ -43,6 +44,8 @@ constexpr uint32_t kBloomEffect = 0x7dcaf170;
 constexpr uint32_t kColorGrade = 0x6b091e44;
 constexpr uint32_t kColorGradeHint = 0xa36cd908;
 constexpr uint32_t kBacklight = 0x190d20d7;
+constexpr uint32_t kVolumetricFogHint = 0x84fb5798;
+constexpr uint32_t kVolumetricFog = 0x1b9cd84f;
 constexpr uint32_t kDoorMP1 = 0x564a1641;
 constexpr uint32_t kModCon = 0x451740eb;
 constexpr uint32_t kActorMP1 = 0xb6200be6;
@@ -76,6 +79,35 @@ constexpr uint32_t kPropBacklightFadeIn = 0x15245fd2;
 constexpr uint32_t kPropBacklightFadeOut = 0x4c97e999;
 constexpr uint32_t kPropBacklightGlobal = 0xea3e22c0;
 constexpr uint32_t kPropBacklightPriority[2] = {0x2833c9d2, 0x8ab8fd40};
+// A VolumetricFogHint and the VolumetricFog on its entity (CVolumetricFog; defaults from
+// build/mpr/volfog/A-properties.md). The hint: auto-request flag (1), priority, the fade
+// interpolations (a Time interpolation holding the CMayaSpline from elapsed time to phase;
+// none: the fog changes at once).
+constexpr uint32_t kPropFogAuto = 0x2928fabd;
+constexpr uint32_t kPropFogPriority[2] = {0xf49eb82a, 0x8ab8fd40};
+constexpr uint32_t kPropFogFadeIn = 0x1666a3dc;
+constexpr uint32_t kPropFogFadeOut = 0x7528254e;
+constexpr uint32_t kPropFogSpline = 0x1eb6e23f;
+constexpr uint32_t kPropFogRange = 0xf259966e;
+constexpr uint32_t kPropFogResidual = 0x33cd9d58;
+constexpr uint32_t kPropFogNoiseScale = 0x9c1e9f8f;
+constexpr uint32_t kPropFogNoiseStrength = 0xbf9b3481;
+constexpr uint32_t kPropFogColorA = 0xdac710d4;
+constexpr uint32_t kPropFogIntensity = 0xe020e7c4;
+constexpr uint32_t kPropFogLightCap = 0x2074d13d;
+constexpr uint32_t kPropFogScatter = 0x22096751;
+constexpr uint32_t kPropFogAbsorb = 0x95e259b4;
+constexpr uint32_t kPropFogM1z = 0xdd36a237;
+constexpr uint32_t kPropFogNoProbe = 0xe3b56cab;
+constexpr uint32_t kPropFogColorB = 0x3029e6aa;
+constexpr uint32_t kPropFogLut = 0x7bc5ef27;
+constexpr uint32_t kPropFogAtten = 0xac68c5ae;  // a, b (height range), enable
+constexpr uint32_t kPropFogAttenA = 0x95a9aa57;
+constexpr uint32_t kPropFogAttenB = 0x719bec17;
+constexpr uint32_t kPropFogAttenOn = 0x12a756f5;
+constexpr uint32_t kPropFogWind = 0x8efd902b;  // vector, "use this vector" flag
+constexpr uint32_t kPropFogWindVec = 0x0ad3c808;
+constexpr uint32_t kPropFogWindOn = 0x33c69fd5;
 constexpr uint32_t kPropHintMin = 0x682f8a1f;
 constexpr uint32_t kPropHintMax = 0x839d334c;
 constexpr uint32_t kPropHintMode = 0x590d6843;
@@ -1244,7 +1276,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
   // kSenderPlayerFluid/kSenderCameraWater) and state (0: in, 1: out), or sender 0.
   std::set<int> hintEntities;
   for (const Component& c : comps) {
-    if ((c.type == kColorGradeHint || c.type == kBacklight) && c.entity >= 0) {
+    if ((c.type == kColorGradeHint || c.type == kBacklight || c.type == kVolumetricFogHint) && c.entity >= 0) {
       hintEntities.insert(c.entity);
     }
   }
@@ -1655,6 +1687,21 @@ struct BacklightData {
   std::vector<PortRoomGeo::Link> links;
 };
 
+// A VolumetricFogHint with its fog, in retail axes (see PortRoomEnv::FogHint).
+struct FogData {
+  int32_t layer = -1;
+  // The raw fade splines; empty: no interpolation, the fog changes at once.
+  std::vector<uint8_t> fadeIn, fadeOut;
+  bool on = false;
+  int32_t priority = 50;
+  float s[10] = {};  // range, scatter, absorb, m1z, decay, attenSlope, attenBias, noiseFreq, noiseStrength, lightCap
+  float wind[3] = {};
+  bool useScriptWind = false, noProbe = false;
+  float colorB[4] = {1, 1, 1, 1}, colorA[4] = {0, 0, 0, 1};
+  float lut[64] = {};
+  std::vector<PortRoomGeo::Link> links;
+};
+
 struct Placement {
   Vec3 pos{};  // GameCube world coordinates, once the world shift is added
 };
@@ -1702,6 +1749,8 @@ private:
   void ReadGrades(const RoomData& r, const Area* area, std::vector<GradeData>& out) const;
   // The room's Backlight hints, likewise.
   void ReadBacklights(const RoomData& r, const Area* area, std::vector<BacklightData>& out) const;
+  // The room's fog hints, heights in Remastered axes (the writer applies the room's shift).
+  void ReadFogs(const RoomData& r, const Area* area, std::vector<FogData>& out) const;
   bool Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>& check, std::vector<uint8_t>& out,
             std::string& note) const;
   // The room's static geometry (its ModCon components), as "<MREA id>.roomgeo".
@@ -1710,7 +1759,8 @@ private:
   void WriteLiquids(const RoomData& r, uint32_t mrea);
   std::string WriteRoom(const RoomData& r, const std::map<std::string, Placement>& placed, const Vec3& shift,
                         const float tonemap[5], const BloomData& bloom, const std::vector<GradeData>& worldGrades,
-                        const std::vector<BacklightData>& worldBacklights, int& written, std::string& matched);
+                        const std::vector<BacklightData>& worldBacklights, const std::vector<FogData>& worldFogs,
+                        int& written, std::string& matched);
 
   const RoomPak& m_master;
   const std::vector<RoomPak>& m_rooms;
@@ -2099,6 +2149,162 @@ void Writer::ReadBacklights(const RoomData& r, const Area* area, std::vector<Bac
     const auto layer = scripts.layer.find(c->entity);
     b.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
     out.push_back(std::move(b));
+  }
+}
+
+void Writer::ReadFogs(const RoomData& r, const Area* area, std::vector<FogData>& out) const {
+  const std::vector<const Component*> hints = r.room.Of(kVolumetricFogHint);
+  if (hints.empty()) {
+    return;
+  }
+  std::map<int32_t, const Component*> fogOf;
+  for (const Component* c : r.room.Of(kVolumetricFog)) {
+    fogOf[c->entity] = c;
+  }
+  SceneryScripts scripts;
+  if (area != nullptr) {
+    scripts = MatchScripts(r.room, *area);
+  }
+  for (const Component* h : hints) {
+    const auto fogIt = fogOf.find(h->entity);
+    if (h->entity < 0 || fogIt == fogOf.end()) {
+      continue;
+    }
+    const Component& fog = *fogIt->second;
+    const auto hf = r.room.Flat(*h);
+    const auto autoReq = hf.find(kPropFogAuto);
+    const bool isGlobal = autoReq == hf.end() || autoReq->second.size < 1 || r.room.Bytes(autoReq->second)[0] != 0;
+    std::vector<PortRoomGeo::Link> links;
+    const auto linked = scripts.links.find(h->entity);
+    if (linked != scripts.links.end()) {
+      for (PortRoomGeo::Link link : linked->second) {
+        if (link.action != PortRoomGeo::kShow && link.action != PortRoomGeo::kHide &&
+            link.action != PortRoomGeo::kToggle) {
+          continue;
+        }
+        if (link.sender != PortRoomEnv::kSenderPlayerFluid && link.sender != PortRoomEnv::kSenderCameraWater) {
+          link.sender &= 0x3ffffff;
+        }
+        links.push_back(link);
+      }
+    }
+    if (!isGlobal && links.empty()) {
+      continue;
+    }
+    FogData g;
+    const auto ff = r.room.Flat(fog);
+    auto value = [&](uint32_t prop, float fallback) {
+      const auto it = ff.find(prop);
+      const float v = it != ff.end() && it->second.size >= 4 ? LeFloat(r.room.Bytes(it->second)) : fallback;
+      return std::isfinite(v) ? v : fallback;
+    };
+    auto vec4 = [&](uint32_t prop, float* dst) {
+      const auto it = ff.find(prop);
+      if (it != ff.end() && it->second.size >= 16) {
+        for (int i = 0; i < 4; ++i) {
+          const float v = LeFloat(r.room.Bytes(it->second) + 4 * i);
+          dst[i] = std::isfinite(v) ? v : dst[i];
+        }
+      }
+    };
+    auto flag = [&](uint32_t prop, bool fallback) {
+      const auto it = ff.find(prop);
+      return it != ff.end() && it->second.size >= 1 ? r.room.Bytes(it->second)[0] != 0 : fallback;
+    };
+    const float range = value(kPropFogRange, 250.f);
+    g.s[0] = range > 0 ? range : 250.f;
+    g.s[1] = value(kPropFogScatter, 1.f);
+    g.s[2] = value(kPropFogAbsorb, 1.f);
+    g.s[3] = value(kPropFogM1z, 0.95f);
+    const float residual = value(kPropFogResidual, 0.01f);
+    g.s[4] = residual > 0 && residual < 1 ? -std::log(residual) / g.s[0] : 0.f;
+    // Attenuation by height: factor = slope * y + bias, between heights a and b (Remastered y;
+    // retail's z is that plus the room's shift, which the writer folds into the bias).
+    Span at;
+    float a = 0, b = 0, slope = 0, bias = 1;
+    auto atten = [&](uint32_t id, float& dst) {
+      Span sp;
+      if (r.room.Nested(fog, {kPropFogAtten, id}, sp) && sp.size >= 4) {
+        const float v = LeFloat(r.room.Bytes(sp));
+        dst = std::isfinite(v) ? v : dst;
+      }
+    };
+    atten(kPropFogAttenA, a);
+    atten(kPropFogAttenB, b);
+    if (r.room.Nested(fog, {kPropFogAtten, kPropFogAttenOn}, at) && at.size >= 1 && r.room.Bytes(at)[0] != 0) {
+      float diff = b - a;
+      if (std::fabs(diff) < 1e-5f) {
+        diff = 0.001f;
+      }
+      slope = -1.f / diff;
+      bias = 1.f + a / diff;
+    }
+    g.s[5] = slope;
+    g.s[6] = bias;
+    const float scale = value(kPropFogNoiseScale, 20.f);
+    g.s[7] = std::fabs(scale) < 1e-5f ? 1.f : 1.f / scale;
+    g.s[8] = value(kPropFogNoiseStrength, 1.f);
+    g.s[9] = value(kPropFogLightCap, 3e37f);
+    vec4(kPropFogColorA, g.colorA);
+    const float intensity = value(kPropFogIntensity, 1.f);
+    for (int i = 0; i < 3; ++i) {
+      g.colorA[i] *= intensity;
+    }
+    vec4(kPropFogColorB, g.colorB);
+    g.noProbe = flag(kPropFogNoProbe, false);
+    Span ws;
+    if (r.room.Nested(fog, {kPropFogWind, kPropFogWindOn}, ws) && ws.size >= 1) {
+      g.useScriptWind = r.room.Bytes(ws)[0] != 0;
+    }
+    if (r.room.Nested(fog, {kPropFogWind, kPropFogWindVec}, ws) && ws.size >= 12) {
+      const Vec3 v = MulR2G({LeFloat(r.room.Bytes(ws)), LeFloat(r.room.Bytes(ws) + 4), LeFloat(r.room.Bytes(ws) + 8)});
+      for (size_t i = 0; i < 3; ++i) {
+        g.wind[i] = std::isfinite(v[i]) ? float(v[i]) : 0.f;
+      }
+    }
+    // The density spline, sampled at (i/63)^2 * range. Without one it is the loader's empty
+    // spline, which evaluates to 0: no fog.
+    PortMayaSpline lut;
+    Span ls;
+    if (!r.room.Nested(fog, {kPropFogLut}, ls) || !lut.Load(r.room.Bytes(ls), ls.size)) {
+      lut = PortMayaSpline();
+    }
+    for (int i = 0; i < 64; ++i) {
+      const float u = float(i) / 63.f;
+      g.lut[i] = lut.Eval(u * u * g.s[0]);
+    }
+    // The fade interpolations: a wrapper property, then a property list holding the
+    // interpolation's type and its spline.
+    auto fade = [&](uint32_t prop) {
+      Span sp;
+      if (r.room.Nested(*h, {prop}, sp) && sp.size > 6) {
+        std::vector<Prop> props;
+        if (PropList(r.room.Bytes(sp) + 6, sp.size - 6, &props)) {
+          for (const Prop& p : props) {
+            const uint8_t* const d = r.room.Bytes(sp) + 6 + p.data.start;
+            PortMayaSpline sline;
+            if (p.id == kPropFogSpline && sline.Load(d, p.data.size)) {
+              return std::vector<uint8_t>(d, d + p.data.size);
+            }
+          }
+          // A Time interpolation without its spline is an empty one (done at once).
+          static const uint8_t kEmpty[15] = {};
+          return std::vector<uint8_t>(kEmpty, kEmpty + sizeof(kEmpty));
+        }
+      }
+      return std::vector<uint8_t>();
+    };
+    g.fadeIn = fade(kPropFogFadeIn);
+    g.fadeOut = fade(kPropFogFadeOut);
+    Span priority;
+    if (r.room.Nested(*h, {kPropFogPriority[0], kPropFogPriority[1]}, priority) && priority.size >= 4) {
+      g.priority = int32_t(Le32(r.room.Bytes(priority)));
+    }
+    g.on = isGlobal && r.room.Active(*h);
+    g.links = std::move(links);
+    const auto layer = scripts.layer.find(h->entity);
+    g.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
+    out.push_back(std::move(g));
   }
 }
 
@@ -3188,7 +3394,8 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
 std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Placement>& placed, const Vec3& shift,
                               const float tonemap[5], const BloomData& worldBloom,
                               const std::vector<GradeData>& worldGrades,
-                              const std::vector<BacklightData>& worldBacklights, int& written, std::string& matched) {
+                              const std::vector<BacklightData>& worldBacklights, const std::vector<FogData>& worldFogs,
+                              int& written, std::string& matched) {
   matched.clear();
   Match m;
   if (!MatchRoom(r, placed, m)) {
@@ -3348,7 +3555,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  PutLe32(out, 11);
+  PutLe32(out, 13);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -3418,6 +3625,53 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       out.push_back(link.action);
       out.insert(out.end(), 2, 0);
     }
+  }
+  std::vector<FogData> fogs = worldFogs;
+  ReadFogs(r, m.area, fogs);
+  PutLe32(out, uint32_t(fogs.size()));
+  for (const FogData& g : fogs) {
+    PutLe32(out, uint32_t(g.layer));
+    for (const std::vector<uint8_t>* fade : {&g.fadeIn, &g.fadeOut}) {
+      PortMayaSpline sline;
+      PutFloat(out, sline.Load(fade->data(), fade->size()) ? std::max(0.f, sline.LastTime()) : 0.f);
+    }
+    out.push_back(g.on ? 1 : 0);
+    out.insert(out.end(), 3, 0);
+    PutLe32(out, uint32_t(g.priority));
+    for (size_t i = 0; i < 10; ++i) {
+      // The height term over retail z: the room's shift moves the heights.
+      PutFloat(out, i == 6 ? g.s[6] - g.s[5] * float(shift[2]) : g.s[i]);
+    }
+    for (float v : g.wind) {
+      PutFloat(out, v);
+    }
+    out.push_back(g.useScriptWind ? 1 : 0);
+    out.push_back(g.noProbe ? 1 : 0);
+    out.insert(out.end(), 2, 0);
+    for (float v : g.colorB) {
+      PutFloat(out, v);
+    }
+    for (float v : g.colorA) {
+      PutFloat(out, v);
+    }
+    for (float v : g.lut) {
+      PutFloat(out, v);
+    }
+    PutLe32(out, uint32_t(g.links.size()));
+    for (const PortRoomGeo::Link& link : g.links) {
+      PutLe32(out, link.sender);
+      out.push_back(link.state);
+      out.push_back(link.action);
+      out.insert(out.end(), 2, 0);
+    }
+    for (const std::vector<uint8_t>* fade : {&g.fadeIn, &g.fadeOut}) {
+      PutLe32(out, uint32_t(fade->size()));
+      out.insert(out.end(), fade->begin(), fade->end());
+      out.insert(out.end(), (4 - fade->size() % 4) % 4, 0);
+    }
+  }
+  if (!fogs.empty()) {
+    Log("  " + r.name + ": " + std::to_string(fogs.size()) + " fog hint(s)");
   }
   char file[32];
   std::snprintf(file, sizeof file, "%08X.roomenv", m.mrea);
@@ -3541,6 +3795,8 @@ bool Writer::Run(uint32_t mlvl, int& written, std::string& error) {
   ReadGrades(master, nullptr, grades);
   std::vector<BacklightData> backlights;
   ReadBacklights(master, nullptr, backlights);
+  std::vector<FogData> fogs;
+  ReadFogs(master, nullptr, fogs);
   std::map<std::string, std::string> seen;
   for (const auto& r : rooms) {
     if (m_io.cancelled && m_io.cancelled()) {
@@ -3548,7 +3804,7 @@ bool Writer::Run(uint32_t mlvl, int& written, std::string& error) {
       return false;
     }
     std::string matched;
-    const std::string line = WriteRoom(*r, placed, shift, tonemap, bloom, grades, backlights, written, matched);
+    const std::string line = WriteRoom(*r, placed, shift, tonemap, bloom, grades, backlights, fogs, written, matched);
     Log(line);
     if (!matched.empty()) {
       const auto s = seen.find(matched);

@@ -246,6 +246,12 @@ extern "C" {
 //   f32 back strength, f32 top strength
 #define GX_AURORA_SET_PBR_BACKLIGHT 0x0058
 
+// Port extension: Remastered's volumetric fog over the EFB as drawn so far (see
+// GXPortVolumetricFog). Queued like GX_AURORA_PORT_POST_PROCESS.
+// Payload:
+//   132 u32: aurora::gfx::volfog::Params, word for word
+#define GX_AURORA_PORT_VOLUMETRIC_FOG 0x0059
+
 // Port extension: draws the following opaque surfaces in two passes (see GXPortSetDepthPrepass).
 // Payload:
 //   u8 pass (0 = off, 1 = depth only, 2 = shade where the depth is equal)

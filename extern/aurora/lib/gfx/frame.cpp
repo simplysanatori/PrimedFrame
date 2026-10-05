@@ -3,6 +3,7 @@
 #include "depth_peek.hpp"
 #include "pipeline_cache.hpp"
 #include "bloom.hpp"
+#include "volfog.hpp"
 #include "probe.hpp"
 #include "recording.hpp"
 #include "render_worker.hpp"
@@ -596,6 +597,7 @@ void shutdown() {
   tex_copy_conv::shutdown();
   probe::shutdown();
   bloom::shutdown();
+  volfog::shutdown();
   tex_palette_conv::shutdown();
   texture_replacement::shutdown();
   gx::shutdown();

@@ -10,8 +10,10 @@ namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 11;
+constexpr uint32_t kVersion = 13;
 constexpr uint32_t kMaxGrades = 64;
+// A fog record up to its link count (inclusive).
+constexpr size_t kFogBytes = 368;
 constexpr uint32_t kMaxGradeLinks = 256;
 constexpr size_t kHeaderSize = 32;
 constexpr size_t kProbeSizeV1 = 100;
@@ -438,6 +440,126 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
         link.state = q[4];
         link.action = q[5];
         at += 8;
+      }
+    }
+  }
+  if (version >= 12) {
+    if (data.size() - at < 4) {
+      error = "cut short";
+      return false;
+    }
+    const uint32_t fogs = Get32(data.data() + at);
+    at += 4;
+    if (fogs > kMaxGrades) {
+      error = "too many fogs";
+      return false;
+    }
+    out.fogs.resize(fogs);
+    for (FogHint& fog : out.fogs) {
+      if (data.size() - at < kFogBytes) {
+        error = "cut short";
+        return false;
+      }
+      const uint8_t* p = data.data() + at;
+      fog.layer = int32_t(Get32(p));
+      fog.fadeIn = GetFloat(p + 4);
+      fog.fadeOut = GetFloat(p + 8);
+      fog.on = p[12] != 0;
+      fog.priority = int32_t(Get32(p + 16));
+      float* scalars[10] = {&fog.range,    &fog.scatter,    &fog.absorb,       &fog.m1z,         &fog.decay,
+                            &fog.attenSlope, &fog.attenBias, &fog.noiseFreq, &fog.noiseStrength, &fog.lightCap};
+      for (int i = 0; i < 10; ++i) {
+        *scalars[i] = GetFloat(p + 20 + 4 * i);
+      }
+      for (int i = 0; i < 3; ++i) {
+        fog.wind[i] = GetFloat(p + 60 + 4 * i);
+      }
+      fog.useScriptWind = p[72] != 0;
+      fog.noProbe = p[73] != 0;
+      for (int i = 0; i < 4; ++i) {
+        fog.colorB[i] = GetFloat(p + 76 + 4 * i);
+        fog.colorA[i] = GetFloat(p + 92 + 4 * i);
+      }
+      for (int i = 0; i < 64; ++i) {
+        fog.lut[i] = GetFloat(p + 108 + 4 * i);
+      }
+      const uint32_t links = Get32(p + 364);
+      at += kFogBytes;
+      if (!(fog.fadeIn >= 0.f && fog.fadeIn < 600.f)) {
+        fog.fadeIn = 0.f;
+      }
+      if (!(fog.fadeOut >= 0.f && fog.fadeOut < 600.f)) {
+        fog.fadeOut = 0.f;
+      }
+      // Anything that is not a number would poison the blend; the fog then has no density.
+      bool finite = true;
+      for (const float* v : scalars) {
+        finite = finite && std::isfinite(*v);
+      }
+      for (int i = 0; i < 3; ++i) {
+        finite = finite && std::isfinite(fog.wind[i]);
+      }
+      for (int i = 0; i < 4; ++i) {
+        finite = finite && std::isfinite(fog.colorA[i]) && std::isfinite(fog.colorB[i]);
+      }
+      for (int i = 0; i < 64; ++i) {
+        finite = finite && std::isfinite(fog.lut[i]);
+      }
+      if (!finite || !(fog.range > 0.f)) {
+        fog.decay = 0.f;
+        fog.range = std::isfinite(fog.range) && fog.range > 0.f ? fog.range : 250.f;
+        for (int i = 0; i < 3; ++i) {
+          fog.wind[i] = std::isfinite(fog.wind[i]) ? fog.wind[i] : 0.f;
+        }
+        if (!finite) {
+          for (float* v : scalars) {
+            *v = std::isfinite(*v) ? *v : 0.f;
+          }
+          for (int i = 0; i < 4; ++i) {
+            fog.colorA[i] = std::isfinite(fog.colorA[i]) ? fog.colorA[i] : 0.f;
+            fog.colorB[i] = std::isfinite(fog.colorB[i]) ? fog.colorB[i] : 0.f;
+          }
+          for (float& v : fog.lut) {
+            v = std::isfinite(v) ? v : 0.f;
+          }
+        }
+      }
+      if (links > kMaxGradeLinks || (data.size() - at) / 8 < links) {
+        error = "cut short";
+        return false;
+      }
+      fog.links.resize(links);
+      for (GradeLink& link : fog.links) {
+        const uint8_t* q = data.data() + at;
+        link.sender = Get32(q);
+        link.state = q[4];
+        link.action = q[5];
+        at += 8;
+      }
+      fog.linearFade = version < 13;
+      if (version >= 13) {
+        for (int k = 0; k < 2; ++k) {
+          if (data.size() - at < 4) {
+            error = "cut short";
+            return false;
+          }
+          const uint32_t size = Get32(data.data() + at);
+          at += 4;
+          const size_t padded = (size_t(size) + 3) & ~size_t(3);
+          if (data.size() - at < padded) {
+            error = "cut short";
+            return false;
+          }
+          if (size != 0) {
+            PortMayaSpline& spline = k == 0 ? fog.fadeInSpline : fog.fadeOutSpline;
+            if (!spline.Load(data.data() + at, size)) {
+              error = "bad fog fade spline";
+              return false;
+            }
+            (k == 0 ? fog.hasFadeInSpline : fog.hasFadeOutSpline) = true;
+          }
+          at += padded;
+        }
       }
     }
   }

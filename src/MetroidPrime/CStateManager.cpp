@@ -2639,6 +2639,14 @@ CFrustumPlanes CStateManager::SetupViewForDraw(const CViewport& viewport) const 
   return frustum;
 }
 
+#ifdef TARGET_PC
+// Port: Remastered's volumetric fog of the camera's room (PortRoomEnv::VolumetricFog), moved on
+// once a frame by PortCaptureProbeFace and drawn over the world by PortDrawVolumetricFog. While
+// there is one, retail's distance fog is off (SetupFogForDraw): Remastered draws the fog instead.
+static bool sPortVolFog = false;
+static PortRoomEnv::Fog sPortFog;
+#endif
+
 bool CStateManager::SetupFogForDraw() const {
   switch (x8b8_playerState->GetActiveVisor(*this)) {
   case CPlayerState::kPV_Thermal:
@@ -2650,6 +2658,12 @@ bool CStateManager::SetupFogForDraw() const {
     return false;
   case CPlayerState::kPV_Combat:
   case CPlayerState::kPV_Scan: {
+#ifdef TARGET_PC
+    if (sPortVolFog) {
+      gpRender->SetWorldFog(kRFM_None, 0.f, 1.f, CColor::Black());
+      return true;
+    }
+#endif
     const CGameArea::CAreaFog* fog = &x870_cameraManager->GetFog();
     if (fog->IsFogDisabled()) {
       return false;
@@ -2734,6 +2748,79 @@ CGameArea::CConstChainIterator CWorld::GetAliveAreasEnd() { return skGlobalEnd; 
 // worst. World geometry and sky only. MP_PBR_PROBE=0 turns it off, and MP_PBR_PROBE=mirror
 // or =window draws PBR surfaces as mirrors of it or windows onto it, to check the faces.
 // The console's `probe` changes the mode live (CCubeMaterial::sPortPBRProbeMode).
+// Over the world as drawn so far, before the screen filters, bloom and HUD; the arm cannon,
+// drawn nearer than the world's depth range, is left clear, as Remastered leaves it.
+static void PortDrawVolumetricFog(const CStateManager& mgr, const CTransform4f& view) {
+  const CPlayerState::EPlayerVisor visor = mgr.GetPlayerState()->GetActiveVisor(mgr);
+  if (!sPortVolFog || visor == CPlayerState::kPV_Thermal || visor == CPlayerState::kPV_XRay) {
+    return;
+  }
+  const float exposure = PortRoomEnv::FrameExposure();
+  GXPortFogParams p;
+  memset(&p, 0, sizeof(p));
+  if (!(exposure > 0.f) || !PortRoomEnv::Tone(p.tone)) {
+    return;
+  }
+  const PortRoomEnv::Fog& fog = sPortFog;
+  // View space is GX's: right, up, towards the camera.
+  const CVector3f eye = view.GetTranslation();
+  const float rows[3][4] = {
+      {view.Get00(), view.Get02(), -view.Get01(), eye.GetX()},
+      {view.Get10(), view.Get12(), -view.Get11(), eye.GetY()},
+      {view.Get20(), view.Get22(), -view.Get21(), eye.GetZ()},
+  };
+  memcpy(p.viewToWorld, rows, sizeof(rows));
+  const CGraphics::CProjectionState& proj = CGraphics::GetProjectionState();
+  const float zNear = proj.GetNear();
+  p.frustum[0] = proj.GetLeft() / zNear;
+  p.frustum[1] = proj.GetRight() / zNear;
+  p.frustum[2] = proj.GetBottom() / zNear;
+  p.frustum[3] = proj.GetTop() / zNear;
+  p.depth[0] = zNear;
+  p.depth[1] = proj.GetFar();
+  // SetupViewForDraw's depth range.
+  p.depth[2] = 0.125f;
+  p.depth[3] = 1.f;
+  p.fog[0] = fog.range;
+  p.fog[1] = fog.scatter;
+  p.fog[2] = fog.absorb;
+  p.fog[3] = fog.density;
+  p.shape[0] = fog.attenSlope;
+  p.shape[1] = fog.attenBias;
+  p.shape[2] = fog.noiseFreq;
+  p.shape[3] = fog.noiseStrength;
+  for (int i = 0; i < 3; ++i) {
+    // Remastered offsets the noise by minus the wind's travel: it drifts with the wind.
+    p.noise[i] = -fog.noiseOffset[i];
+    p.colorB[i] = fog.colorB[i];
+    p.colorA[i] = fog.colorA[i];
+  }
+  p.noise[3] = fog.lightCap;
+  // Colour B's alpha is unused: Remastered adds the volume's light unscaled. A white
+  // texel reads 1.
+  p.colorB[3] = 1.f;
+  p.colorA[3] = exposure;
+  memcpy(p.lut, fog.lut, sizeof(p.lut));
+  // Without the probes (or with no volume for the room), Remastered reads its default
+  // volume: one white texel.
+  if (!fog.noProbe) {
+    // The baked light at the camera's room, as its room geometry reads it; the selection's
+    // level carries the frame's exposure, which the fog's light must not have yet.
+    const float at[3] = {eye.GetX(), eye.GetY(), eye.GetZ()};
+    PortRoomEnv::Selection env;
+    if (mgr.GetNextAreaId() != kInvalidAreaId) {
+      PortRoomEnv::SetVolumeHint(mgr.GetWorld()->GetAreaAlways(mgr.GetNextAreaId()).GetAreaAssetId(), at);
+    }
+    if (PortRoomEnv::Select(at, env) && env.volume != 0) {
+      p.volume = env.volume;
+      memcpy(p.worldToVolume, env.worldToVolume, sizeof(p.worldToVolume));
+      p.colorB[3] = env.volumeLevel / exposure;
+    }
+    PortRoomEnv::ClearVolumeHint();
+  }
+  GXPortVolumetricFog(&p);
+}
+
 void CStateManager::PortCaptureProbeFace() const {
   if (CCubeMaterial::sPortPBRProbeMode < 0) {
     const char* const env = getenv("MP_PBR_PROBE");
@@ -2796,6 +2883,28 @@ void CStateManager::PortCaptureProbeFace() const {
         PortFreeCam::View(x870_cameraManager->GetCurrentCameraTransform(*this)).GetTranslation();
     const float at[3] = {eye.GetX(), eye.GetY(), eye.GetZ()};
     PortRoomEnv::SetViewPoint(at);
+  }
+  {
+    // The fog's fades and wind run on game time, so they hold while paused.
+    static float lastTime = -1.f;
+    float dt = lastTime < 0.f ? 0.f : xf14_curTimeMod900 - lastTime;
+    if (dt < 0.f) {
+      dt += 900.f;
+    }
+    lastTime = xf14_curTimeMod900;
+    struct Layers {
+      const CScriptLayerManager* layers;
+      TAreaId area;
+    } layers{x8c8_worldLayerState.GetPtr(), x8cc_nextAreaId};
+    PortRoomEnv::UpdateFog(
+        [](int32_t layer, void* context) {
+          const Layers& l = *static_cast< const Layers* >(context);
+          return l.layers == nullptr || l.area == kInvalidAreaId ||
+                 layer >= l.layers->GetAreaLayerCount(l.area) ||
+                 l.layers->IsLayerActive(l.area, TLayerId(layer));
+        },
+        &layers, dt);
+    sPortVolFog = PortRoomEnv::VolumetricFog(sPortFog);
   }
   static uint lastDraws = 0;
   static int face = 0;
@@ -3225,6 +3334,9 @@ void CStateManager::DrawWorld() const {
     xf34_thermalFlag = kTD_Bypass;
   }
 
+#ifdef TARGET_PC
+  PortDrawVolumetricFog(*this, backupViewMatrix);
+#endif
   DrawDebugStuff();
   RenderCamerasAndAreaLights();
   ResetViewAfterDraw(backupViewport, backupViewMatrix);

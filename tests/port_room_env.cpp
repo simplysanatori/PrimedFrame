@@ -326,6 +326,73 @@ void TestGrid() {
           "backlight: version 11 record");
     Check(PortRoomEnv::Parse(std::vector<uint8_t>(v10), file, error) && file.backlights.empty(),
           "backlight: older versions have none");
+
+    // Version 12 adds the volumetric fog hints (368 bytes and the links each).
+    std::vector<uint8_t> v12 = v11;
+    v12[4] = 12;
+    Check(!PortRoomEnv::Parse(std::vector<uint8_t>(v12), file, error), "fog: cut short");
+    Put32(v12, 1);
+    Put32(v12, 5);
+    PutFloat(v12, 2.f);
+    PutFloat(v12, 3.f);
+    v12.insert(v12.end(), {1, 0, 0, 0});
+    Put32(v12, 60);
+    for (int i = 0; i < 10; ++i) {
+      PutFloat(v12, float(i + 1));  // range 1 .. lightCap 10
+    }
+    for (float w : {0.5f, 0.f, -0.5f}) {
+      PutFloat(v12, w);
+    }
+    v12.insert(v12.end(), {1, 1, 0, 0});
+    for (int i = 0; i < 8; ++i) {
+      PutFloat(v12, 0.1f * float(i));
+    }
+    for (int i = 0; i < 64; ++i) {
+      PutFloat(v12, float(i));
+    }
+    Put32(v12, 1);
+    Put32(v12, 0x04100022);
+    v12.insert(v12.end(), {9, 1, 0, 0});
+    Check(PortRoomEnv::Parse(std::vector<uint8_t>(v12), file, error) && file.fogs.size() == 1 &&
+              file.fogs[0].layer == 5 && file.fogs[0].fadeIn == 2.f && file.fogs[0].fadeOut == 3.f &&
+              file.fogs[0].on && file.fogs[0].priority == 60 && file.fogs[0].range == 1.f &&
+              file.fogs[0].decay == 5.f && file.fogs[0].lightCap == 10.f && file.fogs[0].wind[2] == -0.5f &&
+              file.fogs[0].useScriptWind && file.fogs[0].noProbe && file.fogs[0].colorB[3] == 0.1f * 3 &&
+              file.fogs[0].colorA[0] == 0.1f * 4 && file.fogs[0].lut[63] == 63.f &&
+              file.fogs[0].links.size() == 1 && file.fogs[0].links[0].sender == 0x04100022 &&
+              file.fogs[0].links[0].state == 9 && file.backlights.size() == 2,
+          "fog: version 12 record");
+    Check(PortRoomEnv::Parse(std::vector<uint8_t>(v11), file, error) && file.fogs.empty(),
+          "fog: older versions have none");
+    Check(file.fogs.empty() && PortRoomEnv::Parse(std::vector<uint8_t>(v12), file, error) &&
+              file.fogs[0].linearFade && !file.fogs[0].hasFadeInSpline,
+          "fog: version 12 fades linearly");
+
+    // Version 13 adds each fog's fade splines after its links.
+    std::vector<uint8_t> v13 = v12;
+    v13[4] = 13;
+    Check(!PortRoomEnv::Parse(std::vector<uint8_t>(v13), file, error), "fog: fades cut short");
+    std::vector<uint8_t> spline;
+    Put32(spline, 2);
+    for (float t : {0.f, 2.f}) {
+      PutFloat(spline, t);
+      PutFloat(spline, t * 0.5f);
+      spline.insert(spline.end(), {0, 0}); // linear tangents
+    }
+    PutFloat(spline, 0.f);
+    PutFloat(spline, 1.f);
+    spline.insert(spline.end(), {0, 0, 0}); // constant before and after, no clamp
+    Put32(v13, uint32_t(spline.size()));
+    v13.insert(v13.end(), spline.begin(), spline.end());
+    v13.resize((v13.size() + 3) & ~size_t(3));
+    Put32(v13, 0);
+    Check(PortRoomEnv::Parse(std::vector<uint8_t>(v13), file, error) && file.fogs.size() == 1 &&
+              !file.fogs[0].linearFade && file.fogs[0].hasFadeInSpline && !file.fogs[0].hasFadeOutSpline &&
+              file.fogs[0].fadeInSpline.LastTime() == 2.f && file.fogs[0].fadeInSpline.Eval(1.f) == 0.5f &&
+              file.fogs[0].fadeInSpline.Eval(3.f) == 1.f && file.fogs[0].links.size() == 1,
+          "fog: version 13 fade splines");
+    v13[v13.size() - 4 - ((spline.size() + 3) & ~size_t(3))] = 0xff; // a key count that runs off the end
+    Check(!PortRoomEnv::Parse(std::vector<uint8_t>(v13), file, error), "fog: bad fade spline");
   }
 
   {

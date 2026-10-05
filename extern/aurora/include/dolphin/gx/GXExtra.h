@@ -195,6 +195,27 @@ void GXSetPBRLightScale(f32 diffuse, f32 f0, f32 alpha, GXBool alphaReplaces);
 // back through GXPortFrameRadiance a few frames later.
 GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
                          u32 gradeB, f32 gradeWeight, f32 exposure);
+// Port extension: Remastered's volumetric fog over the EFB as drawn so far: a froxel grid
+// (16x16 pixels by 64 slices out to `fog[0]`) of height and noise shaped density, lit by the
+// ambient volume's mean light, integrated front to back and applied to every pixel at the
+// world's depth (the viewmodel, drawn nearer than depth[2], is left alone). The EFB is undone
+// through the tone curve and exposure the frame was drawn with, fogged, and drawn through them
+// again. Call it before GXPortPostProcess. View space is GX's (x right, y up, z towards the camera).
+typedef struct {
+  f32 viewToWorld[3][4];   // rows: world = row . (view, 1)
+  f32 worldToVolume[3][4]; // rows: world -> the ambient volume's texture coordinates
+  f32 frustum[4];          // left, right, bottom, top at a view depth of 1
+  f32 depth[4];            // near, far, and the GX z range the world draws in (min, max)
+  f32 fog[4];              // range, scatter, absorb, density
+  f32 shape[4];            // height slope, height bias (over world z), noise frequency, noise strength
+  f32 noise[4];            // xyz: the noise's offset, w: the light's largest channel
+  f32 colorB[4];           // the light's multiplier; w: the volume's level
+  f32 colorA[4];           // the light added; w: the exposure the EFB was drawn at
+  f32 tone[3][4];          // the tone curve the EFB was drawn through (as GXSetPBRTone)
+  f32 lut[64];             // density over distance: entry i at (i / 63)^2 * range
+  u32 volume;              // the ambient volume (GXPBRVolume id), 0 for none
+} GXPortFogParams;
+GXBool GXPortVolumetricFog(const GXPortFogParams* params);
 // Stores a 33x33x33 RGBA8 colour grade LUT (red fastest) under a non-zero id.
 void GXPortColorGradeLut(u32 id, const u8* rgba);
 // The average radiance (linear rgb) of the latest frame measured by GXPortPostProcess, and a

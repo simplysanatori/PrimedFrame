@@ -60,6 +60,7 @@ struct Area {
   };
   std::vector<GradeRequest> grades;
   std::vector<GradeRequest> backlights; // likewise
+  std::vector<GradeRequest> fogs;       // likewise
 };
 
 // The frame's exposure and tone curve, as CPostFXManager::UpdateTonemapping moves them.
@@ -202,6 +203,42 @@ struct BacklightFade {
 };
 BacklightFade sBacklight;
 uint64_t sBacklightOrder = 0;
+// The volumetric fog (Remastered's CVolumetricFogManager::UpdateSceneNode). The node shows
+// `out`; a hint change starts an interpolation from it to the target, whose phase is the
+// fade's spline at the seconds since the change (SVolumetricFogDynamicData::
+// interpolate_by_phase). The defaults are SVolumetricFogDynamicData's constructor's.
+struct FogCore {
+  float range = 0.f, scatter = 0.f, absorb = 0.f, m1z = 0.f, decay = 0.f;
+  float attenSlope = 0.f, attenBias = 1.f;
+  float noiseFreq = 0.f, noiseStrength = 0.f, lightCap = 65535.f;
+  float wind[3] = {};
+  float colorB[4] = {1.f, 1.f, 1.f, 1.f}, colorA[3] = {1.f, 1.f, 1.f};
+  bool noProbe = false;
+  float lut[64] = {};
+};
+struct FogFade {
+  bool hinted = false; // a hint is picked
+  uint32_t area = 0;   // of the hint, and its index
+  int index = -1;
+  // The picked hint's fade-out, kept for when it goes away.
+  bool hasFadeOut = false;
+  bool linearFadeOut = false;
+  float fadeOutSeconds = 0.f;
+  PortMayaSpline fadeOut;
+  // The running interpolation, if any: a spline, or (older files) linear over `seconds`.
+  bool fading = false;
+  bool linear = false;
+  float seconds = 0.f;
+  PortMayaSpline spline;
+  float elapsed = 0.f;
+  FogCore from, out;
+  bool active = false; // a hint is picked or an interpolation runs
+  float time = 0.f;    // since the node was made; the noise moves by wind * time
+  uint32_t frames = 0; // updates since the state manager was made
+};
+FogFade sFog;
+uint64_t sFogOrder = 0;
+int sVolFog = -1;
 bool sPlayerFluid = false;
 bool sCameraWater = false;
 // LUTs handed to Aurora already; they are kept there for the run.
@@ -514,6 +551,7 @@ void DriveHints(uint32_t mrea, const char* what, const std::vector<Hint>& hints,
 void DriveGrades(uint32_t mrea, Area& area, uint32_t sender, int state) {
   DriveHints(mrea, "grade", area.file.grades, area.grades, sGradeOrder, sender, state);
   DriveHints(mrea, "backlight", area.file.backlights, area.backlights, sBacklightOrder, sender, state);
+  DriveHints(mrea, "fog", area.file.fogs, area.fogs, sFogOrder, sender, state);
 }
 
 // Every grade and backlight as it starts, then the fluids the player and camera are in already.
@@ -528,6 +566,11 @@ void StartGrades(uint32_t mrea, Area& area) {
   for (size_t i = 0; i < area.backlights.size(); ++i) {
     area.backlights[i].on = area.file.backlights[i].on;
     area.backlights[i].order = i;
+  }
+  area.fogs.assign(area.file.fogs.size(), {});
+  for (size_t i = 0; i < area.fogs.size(); ++i) {
+    area.fogs[i].on = area.file.fogs[i].on;
+    area.fogs[i].order = i;
   }
   if (sPlayerFluid) {
     DriveGrades(mrea, area, kSenderPlayerFluid, 0);
@@ -1096,6 +1139,8 @@ void UpdateFrame(bool roomGeoDrawing) {
 
 float MeasureExposure() { return sFrame.measuring ? sFrame.exposure : 0.f; }
 
+float FrameExposure() { return sFrame.exposure; }
+
 float GlowScale() {
   if (sStatic < 0) {
     const char* const env = std::getenv("MP_ROOM_ENV_STATIC_EXPOSURE");
@@ -1350,6 +1395,230 @@ bool Backlight(float& top, float& back) {
   return true;
 }
 
+namespace {
+
+FogCore FogOf(const FogHint& h) {
+  FogCore c;
+  c.range = h.range;
+  c.scatter = h.scatter;
+  c.absorb = h.absorb;
+  c.m1z = h.m1z;
+  c.decay = h.decay;
+  c.attenSlope = h.attenSlope;
+  c.attenBias = h.attenBias;
+  c.noiseFreq = h.noiseFreq;
+  c.noiseStrength = h.noiseStrength;
+  c.lightCap = h.lightCap;
+  for (int i = 0; i < 3; ++i) {
+    c.wind[i] = h.useScriptWind ? h.wind[i] : 0.f;
+    c.colorB[i] = h.colorB[i];
+    c.colorA[i] = h.colorA[i];
+  }
+  c.colorB[3] = h.colorB[3];
+  c.noProbe = h.noProbe;
+  std::copy(h.lut, h.lut + 64, c.lut);
+  return c;
+}
+
+// A fog's LUT at distance `d`: entry i is at (i/63)^2 * range, so the index is sqrt(d / range) * 63.
+float SampleFogLut(const FogCore& c, float d) {
+  if (!(c.range > 1.2e-7f)) {
+    return c.lut[0];
+  }
+  const float x = std::clamp(std::sqrt(std::max(d, 0.f) / c.range) * 63.f, 0.f, 63.f);
+  const int i = std::min(int(x), 62);
+  return c.lut[i] + (c.lut[i + 1] - c.lut[i]) * (x - float(i));
+}
+
+FogCore BlendFog(const FogCore& a, const FogCore& b, float t) {
+  const auto mix = [t](float x, float y) { return x + (y - x) * t; };
+  FogCore o;
+  o.range = mix(a.range, b.range);
+  o.scatter = mix(a.scatter, b.scatter);
+  o.absorb = mix(a.absorb, b.absorb);
+  o.m1z = mix(a.m1z, b.m1z);
+  o.decay = mix(a.decay, b.decay);
+  o.attenSlope = mix(a.attenSlope, b.attenSlope);
+  o.attenBias = mix(a.attenBias, b.attenBias);
+  o.noiseFreq = mix(a.noiseFreq, b.noiseFreq);
+  o.noiseStrength = mix(a.noiseStrength, b.noiseStrength);
+  o.lightCap = mix(a.lightCap, b.lightCap);
+  for (int i = 0; i < 3; ++i) {
+    o.wind[i] = b.wind[i]; // snaps
+    o.colorB[i] = mix(a.colorB[i], b.colorB[i]);
+    o.colorA[i] = mix(a.colorA[i], b.colorA[i]);
+  }
+  o.colorB[3] = mix(a.colorB[3], b.colorB[3]);
+  o.noProbe = t > 0.5f ? b.noProbe : a.noProbe;
+  for (int i = 0; i < 64; ++i) {
+    const float x = float(i) / 63.f;
+    const float d = x * x * o.range;
+    o.lut[i] = mix(SampleFogLut(a, d), SampleFogLut(b, d));
+  }
+  return o;
+}
+
+} // namespace
+
+bool VolFogEnabled() {
+  if (sVolFog < 0) {
+    const char* const env = std::getenv("MP_VOLFOG");
+    sVolFog = env != nullptr && env[0] == '0' ? 0 : 1;
+  }
+  return sVolFog != 0;
+}
+
+void SetVolFogEnabled(bool on) { sVolFog = on ? 1 : 0; }
+
+void UpdateFog(LayerActive layerActive, void* context, float dt) {
+  FogFade& f = sFog;
+  if (!Enabled()) {
+    f = {};
+    return;
+  }
+  dt = std::isfinite(dt) ? std::clamp(dt, 0.f, 1.f) : 0.f;
+  // As the backlight picks: of the requested hints whose layer is active, the highest
+  // priority, then the one turned on last. A room without a file has no hints.
+  const FogHint* pick = nullptr;
+  int pickIndex = -1;
+  const auto view = sAreas.find(sViewArea);
+  if (view != sAreas.end() && view->second.hasFile) {
+    const Area& area = view->second;
+    const File& file = area.file;
+    uint64_t pickOrder = 0;
+    for (size_t i = 0; i < file.fogs.size(); ++i) {
+      const FogHint& hint = file.fogs[i];
+      const bool on = i < area.fogs.size() ? area.fogs[i].on : hint.on;
+      const uint64_t order = i < area.fogs.size() ? area.fogs[i].order : i;
+      if (!on || (hint.layer >= 0 && layerActive != nullptr && !layerActive(hint.layer, context))) {
+        continue;
+      }
+      if (pick == nullptr || hint.priority > pick->priority || (hint.priority == pick->priority && order >= pickOrder)) {
+        pick = &hint;
+        pickIndex = int(i);
+        pickOrder = order;
+      }
+    }
+  }
+  const bool hinted = pick != nullptr;
+  if (hinted != f.hinted || (hinted && (f.area != sViewArea || f.index != pickIndex))) {
+    // OnHintChangedCallback: from what is on screen, with the new hint's fade-in, or the old
+    // one's fade-out when none is left.
+    f.from = f.out;
+    f.elapsed = 0.f;
+    if (hinted) {
+      f.fading = pick->hasFadeInSpline || (pick->linearFade && pick->fadeIn > 0.f);
+      f.linear = pick->linearFade;
+      f.seconds = pick->fadeIn;
+      f.spline = pick->fadeInSpline;
+    } else {
+      f.fading = f.hasFadeOut || (f.linearFadeOut && f.fadeOutSeconds > 0.f);
+      f.linear = f.linearFadeOut;
+      f.seconds = f.fadeOutSeconds;
+      f.spline = f.fadeOut;
+    }
+    // A change before the state manager's first EndFrame (its update count is 0: the world
+    // has just loaded) snaps, with nothing on screen yet to fade from.
+    if (f.frames == 0) {
+      f.fading = false;
+    }
+  }
+  f.hinted = hinted;
+  f.area = sViewArea;
+  f.index = pickIndex;
+  if (hinted) {
+    f.hasFadeOut = pick->hasFadeOutSpline;
+    f.linearFadeOut = pick->linearFade;
+    f.fadeOutSeconds = pick->fadeOut;
+    f.fadeOut = pick->fadeOutSpline;
+  }
+  // The target: the hint's fog, or with none what is shown without density.
+  FogCore target = f.out;
+  if (hinted) {
+    target = FogOf(*pick);
+  } else {
+    target.decay = 0.f;
+  }
+  f.active = hinted || f.fading;
+  if (f.fading) {
+    // Time interpolation: the phase is not clamped, and the frame that reaches the last key
+    // still shows the blend.
+    f.elapsed += dt;
+    const float phase = f.linear ? f.elapsed / f.seconds : f.spline.Eval(f.elapsed);
+    f.out = BlendFog(f.from, target, phase);
+    if (f.elapsed >= (f.linear ? f.seconds : f.spline.LastTime())) {
+      f.fading = false;
+    }
+  } else {
+    f.out = target;
+  }
+  f.time += dt;
+  ++f.frames;
+}
+
+bool VolumetricFog(Fog& out) {
+  if (!Enabled() || !VolFogEnabled() || !sFog.active) {
+    return false;
+  }
+  // With no density the pass would leave the frame as it is.
+  const FogCore& c = sFog.out;
+  if (!(c.decay > 1e-9f)) {
+    return false;
+  }
+  out.range = c.range;
+  out.scatter = c.scatter;
+  out.absorb = c.absorb;
+  out.density = c.decay;
+  out.attenSlope = c.attenSlope;
+  out.attenBias = c.attenBias;
+  out.noiseFreq = c.noiseFreq;
+  out.noiseStrength = c.noiseStrength;
+  out.lightCap = c.lightCap;
+  for (int i = 0; i < 3; ++i) {
+    out.noiseOffset[i] = c.wind[i] * sFog.time;
+    out.colorB[i] = c.colorB[i];
+    out.colorA[i] = c.colorA[i];
+  }
+  out.colorB[3] = c.colorB[3];
+  out.noProbe = c.noProbe;
+  std::copy(c.lut, c.lut + 64, out.lut);
+  return true;
+}
+
+std::string FogInfo() {
+  std::string out;
+  char line[512];
+  Fog fog;
+  if (VolumetricFog(fog)) {
+    std::snprintf(line, sizeof(line),
+                  "fog range %g density %g scatter %g absorb %g atten %g/%g noise %g x%g cap %g offset %g %g %g noprobe %d "
+                  "A %g %g %g B %g %g %g %g lut %g %g %g\n",
+                  fog.range, fog.density, fog.scatter, fog.absorb, fog.attenSlope, fog.attenBias, fog.noiseFreq,
+                  fog.noiseStrength, fog.lightCap, fog.noiseOffset[0], fog.noiseOffset[1], fog.noiseOffset[2],
+                  int(fog.noProbe), fog.colorA[0], fog.colorA[1], fog.colorA[2], fog.colorB[0], fog.colorB[1],
+                  fog.colorB[2], fog.colorB[3], fog.lut[0], fog.lut[32], fog.lut[63]);
+  } else {
+    std::snprintf(line, sizeof(line), "fog none%s\n", VolFogEnabled() ? "" : " (MP_VOLFOG=0)");
+  }
+  out += line;
+  const auto view = sAreas.find(sViewArea);
+  if (view == sAreas.end()) {
+    return out;
+  }
+  const Area& area = view->second;
+  for (size_t i = 0; i < area.file.fogs.size(); ++i) {
+    const FogHint& hint = area.file.fogs[i];
+    const bool on = i < area.fogs.size() ? area.fogs[i].on : hint.on;
+    const bool shown = sFog.hinted && sViewArea == sFog.area && int(i) == sFog.index;
+    std::snprintf(line, sizeof(line),
+                  "%08X fog %zu: %s priority %d layer %d fade %g/%g range %g decay %g links %zu%s\n", sViewArea, i,
+                  on ? "on " : "off", int(hint.priority), int(hint.layer), hint.fadeIn, hint.fadeOut, hint.range,
+                  hint.decay, hint.links.size(), shown ? " (shown)" : "");
+    out += line;
+  }
+  return out;
+}
+
 void OnScriptState(uint32_t mrea, uint32_t sender, int state) {
   auto found = sAreas.find(mrea);
   if (found == sAreas.end()) {
@@ -1388,6 +1657,7 @@ void ResetGrades() {
   sCameraWater = false;
   sGradeIndex = -1;
   sBacklight = {};
+  sFog = {};
   for (auto& [mrea, area] : sAreas) {
     StartGrades(mrea, area);
   }
@@ -1626,6 +1896,7 @@ void Reset() {
   Invalidate();
   sGradeIndex = -1;
   sBacklight = {};
+  sFog = {};
 }
 
 void SetLoadedAreas(const uint32_t* mreas, size_t count) {

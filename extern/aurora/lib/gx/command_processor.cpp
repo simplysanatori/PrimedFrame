@@ -1,6 +1,7 @@
 #include "command_processor.hpp"
 
 #include "../gfx/bloom.hpp"
+#include "../gfx/volfog.hpp"
 #include "../gfx/depth_peek.hpp"
 #include "../gfx/probe.hpp"
 #include "../gfx/recording.hpp"
@@ -1127,6 +1128,14 @@ void handle_aurora(ByteReader& reader) noexcept {
     static_assert(sizeof(params) == sizeof(words));
     std::memcpy(&params, words, sizeof(params));
     gfx::bloom::record(params);
+  } else if (subCmd == GX_AURORA_PORT_VOLUMETRIC_FOG) {
+    gfx::volfog::Params params;
+    u32 words[sizeof(params) / sizeof(u32)];
+    for (u32& word : words) {
+      word = reader.read<u32>();
+    }
+    std::memcpy(&params, words, sizeof(params));
+    gfx::volfog::record(params);
   } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_SKIP) {
     const Vec4<float> value{static_cast<f32>(reader.read<u32>() & 0xFF), 0.f, 0.f, 0.f};
     if (g_gxState.pbrLightSkip != value) {

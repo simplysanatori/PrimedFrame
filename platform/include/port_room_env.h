@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "port_maya_spline.h"
+
 // A room's lighting environment for PBR models: reflection probes, each a box of the world
 // and a prefiltered HDR cube map of what surrounds it. A mod supplies one per area as
 // <MREA id>.roomenv; the port reflects the cube of the probe a model stands in, in place
@@ -13,7 +15,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 11), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 12), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -61,6 +63,22 @@
 //   backlight: s32 layer, f32 fadeIn, f32 fadeOut, u8 on, u8 pad[3], s32 priority, f32 top,
 //          f32 back, u32 links, then links as a grade's. Picked as a grade is. The top and
 //          back strengths scale the character backlight; with none picked they are 2 and 4.
+// Version 12 goes on (after the backlights):
+//   u32 fogs
+//   fog: s32 layer, f32 fadeIn, f32 fadeOut, u8 on, u8 pad[3], s32 priority, then f32 range,
+//          scatter, absorb, m1z, decay, attenSlope, attenBias, noiseFreq, noiseStrength,
+//          lightCap, f32 wind[3], u8 useScriptWind, u8 noProbe, u8 pad[2], f32 colorB[4],
+//          f32 colorA[4] (already times the intensity), f32 lut[64], u32 links, then links as
+//          a grade's. A Remastered VolumetricFogHint plus the VolumetricFog on its entity,
+//          picked as a grade is. decay is -ln(residual transmittance at range) / range, the
+//          LUT the density profile at distance (i/63)^2 * range, and the height term is
+//          clamp(z * attenSlope + attenBias, 0, 1) over retail world z. The wind is in
+//          retail world axes, metres a second; it applies when useScriptWind (the property's bool: the script's
+//          vector rather than the world's wind, which the port has no source for, so none).
+// Version 13 adds, after each fog's links, its fade-in and fade-out interpolations: each a
+//   u32 size, then that many bytes of a CMayaSpline (port_maya_spline.h) from elapsed
+//   seconds to blend phase, padded to 4. Size 0: none, the fog changes at once. fadeIn and
+//   fadeOut are then the splines' last key times (for display).
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -144,6 +162,40 @@ struct BacklightHint {
   std::vector<GradeLink> links;
 };
 
+// A VolumetricFogHint with the fog it picks (SVolumetricFogDynamicData's fields).
+// The defaults are SVolumetricFogDynamicData's constructor's.
+struct FogHint {
+  int32_t layer = -1;
+  float fadeIn = 0.f;
+  float fadeOut = 0.f;
+  // Version 13: the interpolations (has* false: none). Older files fade linearly over
+  // fadeIn/fadeOut seconds.
+  bool hasFadeInSpline = false;
+  bool hasFadeOutSpline = false;
+  bool linearFade = false;
+  PortMayaSpline fadeInSpline;
+  PortMayaSpline fadeOutSpline;
+  bool on = false;
+  int32_t priority = 50;
+  float range = 0.f;
+  float scatter = 0.f;
+  float absorb = 0.f;
+  float m1z = 0.f;
+  float decay = 0.f;
+  float attenSlope = 0.f;
+  float attenBias = 1.f;
+  float noiseFreq = 0.f;
+  float noiseStrength = 0.f;
+  float lightCap = 65535.f;
+  float wind[3] = {};
+  bool useScriptWind = false;
+  bool noProbe = false;
+  float colorB[4] = {1.f, 1.f, 1.f, 1.f};
+  float colorA[4] = {};
+  float lut[64] = {};
+  std::vector<GradeLink> links;
+};
+
 struct File {
   float tonemap[4] = {};
   float exposure[2] = {}; // EV range; both 0 when the room has no auto exposure
@@ -155,6 +207,7 @@ struct File {
   std::vector<float> bloomTints; // RGBA; empty: the room has no bloom
   std::vector<Grade> grades;
   std::vector<BacklightHint> backlights;
+  std::vector<FogHint> fogs;
   std::vector<Probe> probes;
   std::vector<Cube> cubes;
   std::vector<Grid> grids;
@@ -358,6 +411,34 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
 // off). It returns false when the strengths are the defaults for lack of any hint file.
 void UpdateBacklight(LayerActive layerActive, void* context);
 bool Backlight(float& top, float& back);
+// Remastered's volumetric fog hints (CVolumetricFogManager), picked as the grade's are.
+// UpdateFog runs once a frame, `dt` seconds long, before the world is drawn. A change of the
+// camera area's pick starts an interpolation from the fog on screen (SVolumetricFogDynamicData's
+// defaults before any) with the new hint's fade-in, or the old hint's fade-out when none is
+// left (towards the same fog with no density). Its phase is the fade's spline at the seconds
+// since the change, unclamped: scalars and colours lerp, the wind snaps, `noProbe` snaps
+// halfway and the LUT lerps in distance space. A hint without a fade, or a change on the first
+// update after ResetGrades (a fresh state manager, update count 0), changes at once. The
+// fog draws while a hint is picked or an interpolation runs. noiseOffset is the shown wind
+// times the seconds since the start; a hint that uses the world's wind has none here.
+struct Fog {
+  float range, scatter, absorb, density; // density: the decay (0: no fog)
+  float attenSlope, attenBias;           // height term over retail world z
+  float noiseFreq, noiseStrength, lightCap;
+  float noiseOffset[3]; // wind times elapsed time (world units)
+  bool noProbe;               // lit by Remastered's default white volume, not the probes
+  float colorB[4], colorA[3]; // colorB.a scales the volume's light; colorA already times the intensity
+  float lut[64];
+};
+void UpdateFog(LayerActive layerActive, void* context, float dt);
+// The fog to draw; false when there is none (no hint and the fade done, density about 0,
+// MP_VOLFOG=0, or the environment is off).
+bool VolumetricFog(Fog& out);
+// MP_VOLFOG (default on), the console's `roomenv volfog`.
+void SetVolFogEnabled(bool on);
+bool VolFogEnabled();
+// The console's `roomenv fog`: the fog now, and each fog hint of the camera area.
+std::string FogInfo();
 // A retail script object (`sender`: its editor id without the area bits) of the area `mrea`
 // sent `state`: the grades it drives turn on or off.
 void OnScriptState(uint32_t mrea, uint32_t sender, int state);
@@ -391,6 +472,8 @@ void SetPowerBombTime(float seconds);
 // The exposure to measure the frame at, for GXPortPostProcess; 0 when nothing would use
 // the measurement.
 float MeasureExposure();
+// The frame's exposure (2^(3 - EV)); 0 before it has one.
+float FrameExposure();
 // Whether the exposure follows the frame (MP_ROOM_ENV_AUTO_EXPOSURE, the console's
 // `roomenv auto`); otherwise it follows the room's probes.
 void SetAutoExposure(bool on);
