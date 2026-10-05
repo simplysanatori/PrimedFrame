@@ -283,6 +283,10 @@ those back to retail PARTs (checked 2026-10-05):
   - Intersecting the PART sets of every CHPR that shares a GENP: 1 right, 3
     missed. A shared GENP stands in for different PARTs in different
     characters.
+  - Converted properties against retail's, only among one character's PARTs
+    (`build/fx-hand/props.py`, `pdump`): 28 of 96 right among PARTs on the
+    GENP's bones, 31 of 139 in the whole character. Exact bytes, numeric
+    closeness and FourCC sets all stay under 45%, at any margin.
   What is left is mostly enemy CHPRs (MainNode's 15 L_Ball_SDK effects against
   16 PARTs, Sheegoth's 18 against 19) whose Remastered events carry no frames,
   on one bone, with look-alike textures; or groups with no free PART at all.
