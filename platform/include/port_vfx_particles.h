@@ -31,6 +31,13 @@ void PortVfxSetLaunchDir(CElementGen::CParticle& particle);
 struct CPortVfxMeshBatch {
   std::vector< aurora::gfx::vfx::Vertex > verts;
 
+  // True when adding `vfx`'s mesh would take the batch past one aurora draw (the size
+  // draw_triangles splits at); the caller draws and clears it first, so it stays bounded.
+  bool WouldOverflow(const CPortVfxData& vfx) const {
+    return !verts.empty() &&
+           verts.size() + size_t(vfx.meshTris) * 3 > size_t(aurora::gfx::vfx::MaxTrianglesPerDraw) * 3;
+  }
+
   // `model` is the particle's full model matrix; the particle's UV context must be set.
   void Add(const CPortVfxData& vfx, const CTransform4f& model, const CElementGen::CParticle& particle,
            int partFrame, const CColor& modulate);

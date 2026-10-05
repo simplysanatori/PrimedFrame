@@ -80,7 +80,9 @@ struct DrawDesc {
 // FIFO to be processed first. The first use of a texture layout builds its array texture in an
 // encoder task, and draws that need one that isn't built yet are skipped until it is.
 void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount);
-// The same for triangles: 3 vertices each, drawn in order (no index sharing). Large batches are split.
+// The same for triangles: 3 vertices each, drawn in order (no index sharing). Large batches are split
+// into draws of MaxTrianglesPerDraw (a draw holds at most 65536 vertices; this is a multiple of 3).
+constexpr uint32_t MaxTrianglesPerDraw = (1u << 14) * 4 / 3;
 void draw_triangles(const DrawDesc& desc, const Vertex* verts, uint32_t triCount);
 void shutdown();
 } // namespace aurora::gfx::vfx

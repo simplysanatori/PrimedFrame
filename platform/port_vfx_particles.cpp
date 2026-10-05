@@ -423,8 +423,10 @@ void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
                           p.x34_color.GetBlue() * p.xPortIten * modulate.GetBlue(),
                           p.x34_color.GetAlpha() * modulate.GetAlpha()};
 
-  // The vertices once, in world space; the triangles index them.
-  std::vector< aurora::gfx::vfx::Vertex > world(nv);
+  // The vertices once, in world space; the triangles index them. One scratch buffer serves every
+  // particle (the render thread is the only caller), so a frame allocates nothing per particle.
+  static std::vector< aurora::gfx::vfx::Vertex > world;
+  world.resize(nv);
   for (u32 i = 0; i < nv; ++i) {
     const float* m = &vfx.meshV[size_t(i) * 8];
     const CVector3f pos = model * CVector3f(m[0], m[1], m[2]);
@@ -454,7 +456,6 @@ void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
     v.vec[2] = nv3.GetY();
   }
   const size_t count = size_t(vfx.meshTris) * 3;
-  verts.reserve(verts.size() + count);
   for (size_t k = 0; k < count; ++k) {
     verts.push_back(world[wide ? vfx.meshIdx32[k] : vfx.meshIdx16[k]]);
   }

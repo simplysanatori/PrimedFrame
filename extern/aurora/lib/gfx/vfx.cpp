@@ -791,6 +791,10 @@ bool resolve_slot(const Texture& tex, uint32_t& id) {
   return entry->state.load(std::memory_order_acquire) == State::Ready;
 }
 
+// Game thread, at the start of every draw. An entry a draw queued this frame can't go: resolve_slot
+// stamps lastUse when the draw is queued, and an entry goes only after EvictAfter without one. A
+// draw whose entry is gone anyway (the render thread stalled for longer than that) is skipped by
+// entry_view, not drawn with a stale view.
 void evict_idle() {
   const auto now = std::chrono::steady_clock::now();
   const std::lock_guard lock{g_state.mutex};
@@ -935,7 +939,7 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
 
 void draw_triangles(const DrawDesc& desc, const Vertex* verts, uint32_t triCount) {
   // Split so no draw exceeds the vertex budget (a multiple of 3).
-  constexpr uint32_t MaxTris = MaxQuads * 4 / 3;
+  constexpr uint32_t MaxTris = MaxTrianglesPerDraw;
   for (uint32_t done = 0; done < triCount;) {
     const uint32_t n = std::min(triCount - done, MaxTris);
     draw_prims(desc, verts + size_t(done) * 3, n * 3, false);

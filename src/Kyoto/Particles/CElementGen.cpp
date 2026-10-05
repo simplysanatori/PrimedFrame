@@ -2705,7 +2705,10 @@ void CElementGen::RenderModels() {
       } else {
 #ifdef TARGET_PC
         if (vfxMesh) {
-          // Drawn through the VMAT by PortRenderMeshesVfx, below.
+          // Drawn through the VMAT by PortRenderMeshesVfx, below (and whenever a draw's worth is queued).
+          if (vfxMeshes.WouldOverflow(*x28_loadedGenDesc->xPortVfx)) {
+            PortRenderMeshesVfx(vfxMeshes);
+          }
           vfxMeshes.Add(*x28_loadedGenDesc->xPortVfx,
                         x10c_globalScaleTransform * partTrans * x178_localScaleTransform, particle,
                         partFrame, x338_moduColor);
