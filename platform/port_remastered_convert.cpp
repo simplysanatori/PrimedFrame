@@ -559,9 +559,9 @@ const int kPbrStub[kMaps] = {128, 32, 32, 32};
 // is the factor the runtime falls back on outside a Remastered room. Here it only sizes a
 // ramp's mean, which is not an authored map.
 const double kPbrEmissive = 0.10;
-// Ceiling on the metalness channel. A full metal has no diffuse, and Prime's
-// rooms are dim, so the painted shells go near-black above it.
-const double kPbrMetalMax = 0.6;
+// Ceiling on the metalness channel. Remastered applies none (the MR map is read as is);
+// it was 0.6 before the BRDF LUT and the room probe cubes, when full metals went near-black.
+const double kPbrMetalMax = 1.0;
 const double kPbrEmissiveMax = 16.0;
 const double kFlatStd = 3.0;
 const double kJointSplit = 0.05;
