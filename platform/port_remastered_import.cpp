@@ -591,7 +591,11 @@ public:
     return Read(type == kGENP ? m_effects : type == kMATI ? m_materials : m_textures, id, out, error);
   }
   uint32_t EffectAssetType(const ModelUuid& id) const {
-    return m_textures.count(id) != 0 ? kTXTR : m_materials.count(id) != 0 ? kMATI : m_effects.count(id) != 0 ? kGENP : 0;
+    return m_textures.count(id) != 0    ? kTXTR
+           : m_materials.count(id) != 0 ? kMATI
+           : m_effects.count(id) != 0   ? kGENP
+           : m_models.count(id) != 0    ? kCMDL
+                                        : 0;
   }
 
   // The paks of one world directory ("Intro_Master") as the room writer takes

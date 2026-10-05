@@ -499,7 +499,13 @@ bool CElementGen::InternalUpdate(double dt) {
 
     if (x74_curFrame < x268_PSLT && x88_particleEmission) {
       float grte = 0.0f;
+#ifdef TARGET_PC
+      // Retail data always has a GRTE; a mod's PART may not (no particles then).
+      if (x28_loadedGenDesc->x20_GRTE != nullptr &&
+          x28_loadedGenDesc->x20_GRTE->GetValue(x74_curFrame, grte)) {
+#else
       if (x28_loadedGenDesc->x20_GRTE->GetValue(x74_curFrame, grte)) {
+#endif
         x30_particles.clear();
         return true;
       }

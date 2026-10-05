@@ -996,6 +996,52 @@ private:
     return false;
   }
 
+public:
+  // Walks a PMTR/SMTR payload (see ModifierGroups), keeping the one split of
+  // its items that ends exactly at `end`.
+  bool BuildMaterialTrack(size_t at, size_t end, size_t trailer, EffectMaterialTrack& out) {
+    if (at + 2 > end || m_data[at] != 0) {
+      return false;
+    }
+    out.items.clear();
+    return BuildMaterialGroup(at + 2, end, trailer, 0, out);
+  }
+
+private:
+
+  bool BuildMaterialGroup(size_t at, size_t end, size_t trailer, int group, EffectMaterialTrack& out) {
+    if (group == 5) {
+      return at == end;
+    }
+    if (at >= end) {
+      return false;
+    }
+    return BuildMaterialItems(at + 1, end, trailer, group, m_data[at], out);
+  }
+
+  bool BuildMaterialItems(size_t at, size_t end, size_t trailer, int group, int left, EffectMaterialTrack& out) {
+    if (left == 0) {
+      return BuildMaterialGroup(at, end, trailer, group + 1, out);
+    }
+    for (size_t elementEnd : Element(at)) {
+      if (elementEnd + trailer > end) {
+        continue;
+      }
+      EffectMaterialTrack::Item item;
+      item.group = group;
+      std::copy_n(m_data + elementEnd, trailer, item.trailer.begin());
+      if (!BuildElement(at, elementEnd, item.value)) {
+        continue;
+      }
+      out.items.push_back(std::move(item));
+      if (BuildMaterialItems(elementEnd + trailer, end, trailer, group, left - 1, out)) {
+        return true;
+      }
+      out.items.pop_back();
+    }
+    return false;
+  }
+
   bool BuildElement(size_t at, size_t end, EffectValue& value) {
     value.kind = EffectValue::Kind::Element;
     value.fourcc = FourCCAt(at);
@@ -1165,6 +1211,24 @@ bool ParseSpawnTable(const uint8_t* data, size_t size, const EffectProperty& kss
   }
   Parser parser(data, size);
   return parser.BuildSpawnTable(kssm.offset + 5, kssm.offset + kssm.size, out);
+}
+
+bool ParseMaterialTrack(const uint8_t* data, size_t size, const EffectProperty& property, EffectMaterialTrack& out) {
+  if (property.size < 5 || property.offset + property.size > size) {
+    return false;
+  }
+  Parser parser(data, size);
+  const size_t trailer = property.fourcc == kPmtr ? 3 : 6;
+  return parser.BuildMaterialTrack(property.offset + 5, property.offset + property.size, trailer, out);
+}
+
+uint32_t EffectMaterialShader(const uint8_t* mati, size_t size) {
+  constexpr size_t kShaderAt = 0x48;  // the MTRL guid, checked in all 2061 MATIs
+  if (size < kShaderAt + 4) {
+    return 0;
+  }
+  const uint8_t* p = mati + kShaderAt;
+  return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
 }
 
 std::string DumpEffect(const EffectNode& effect, const uint8_t* data) {

@@ -72,6 +72,14 @@ EffectGuid Fresh(uint8_t seed) {
   return guid;
 }
 
+// A texture carried over from retail, so the generator draws something.
+void PutTexr(std::vector<uint8_t>& out, uint32_t retail) {
+  PutProperty(out, "TEXR", 0);
+  PutFourCC(out, "CNST");
+  PutGuid(out, Legacy(retail));
+  PutFourCC(out, "NONE");
+}
+
 // Retail side: big-endian.
 struct Retail {
   std::vector<uint8_t> bytes;
@@ -249,6 +257,7 @@ void TestSingleNode() {
   }
   PutProperty(out, "KSSM", 0);
   PutFourCC(out, "NONE");
+  PutTexr(out, 0x1234ABCD);
   PutProperty(out, "_END", 4);
   EffectNode effect;
   std::string error;
@@ -257,7 +266,8 @@ void TestSingleNode() {
   Check(parts.size() == 1 && parts[0].root, "the only GPSM is the root");
   Retail want;
   want.f("GPSM").f("COLR").f("KEYE").w(1).w(0).b(0).b(0).w(9).w(0).w(1);
-  want.w(Bits(1.0f)).w(Bits(0.5f)).w(Bits(0.0f)).w(Bits(-1.0f)).f("_END");
+  want.w(Bits(1.0f)).w(Bits(0.5f)).w(Bits(0.0f)).w(Bits(-1.0f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
   Check(parts.size() == 1 && parts[0].part == want.bytes, "half colour keys widen to floats");
   Check(parts.size() == 1 && parts[0].dropped.empty(), "an empty KSSM is nothing left out");
 }
@@ -305,6 +315,7 @@ void TestMappedElements() {
   PutConstant(out, Bits(360.0f));
   PutConstant(out, Bits(360.0f));
   PutConstant(out, Bits(0.5f));
+  PutTexr(out, 0x1234ABCD);
   PutProperty(out, "_END", 4);
   EffectNode effect;
   std::string error;
@@ -318,7 +329,7 @@ void TestMappedElements() {
   want.f("SIZE").f("MULT").f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(1.0f));
   want.f("POFS").f("ANGC").f("CNST").w(0x80000000u).f("CNST").w(0x80000000u);
   want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(0.5f));
-  want.f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
   Check(parts.size() == 1 && parts[0].part == want.bytes, "new elements map onto retail's");
   if (parts.size() == 1 && parts[0].part != want.bytes) {
     std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
@@ -343,6 +354,7 @@ void TestRejects() {
   out.push_back(3);
   PutProperty(out, "LTYP", 0);
   out.push_back(1);
+  PutTexr(out, 0x1234ABCD);
   PutProperty(out, "_END", 4);
   Put32(out, 0);
   EffectNode effect;
@@ -351,7 +363,8 @@ void TestRejects() {
   const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
   Check(parts.size() == 1 && parts[0].droppedRetail == 1, "RADD in SIZE is dropped");
   Retail root;
-  root.f("GPSM").f("LFOT").f("CNST").w(3).f("LTYP").f("CNST").w(2).f("_END");
+  root.f("GPSM").f("LFOT").f("CNST").w(3).f("LTYP").f("CNST").w(2);
+  root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
   Check(parts.size() == 1 && parts[0].part == root.bytes, "LFOT byte 3 is retail 3, LTYP byte 1 is retail 2");
 }
 }  // namespace
@@ -402,6 +415,7 @@ void TestShapes() {
   PutFourCC(out, "ILPT");
   PutConstant(out, 100);
   out.push_back(0);
+  PutTexr(out, 0x1234ABCD);
   PutProperty(out, "_END", 4);
   EffectNode effect;
   std::string error;
@@ -419,7 +433,7 @@ void TestShapes() {
     const float t = float(percent) / 100.0f;
     want.w(Bits(1.0f - t)).w(Bits(0.0f)).w(Bits(t)).w(Bits(1.0f - t));
   }
-  want.f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
   Check(parts.size() == 1 && parts[0].part == want.bytes, "ASPR, RNDV and GRAD map onto retail's");
   if (parts.size() == 1) {
     for (const std::string& d : parts[0].dropped) {
@@ -453,6 +467,7 @@ void TestGradientFrames() {
   }
   PutConstant(out, 20);
   out.push_back(0);
+  PutTexr(out, 0x1234ABCD);
   PutProperty(out, "_END", 4);
   EffectNode effect;
   std::string error;
@@ -466,7 +481,7 @@ void TestGradientFrames() {
       want.w(Bits(1.0f - t));
     }
   }
-  want.f("_END");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
   Check(parts.size() == 1 && parts[0].part == want.bytes, "a gradient over the life in frames ends with it");
 }
 
@@ -482,6 +497,7 @@ void TestSwooshElectric() {
   PutConstant(out, 3);
   PutProperty(out, "SSWH", 0);
   PutGuid(out, Legacy(0x0000AAAA));
+  PutTexr(out, 0x1234ABCD);
   PutProperty(out, "_END", 4);
   Put32(out, 3);
   PutGuid(out, Legacy(0x0000AAAA));
@@ -529,7 +545,8 @@ void TestSwooshElectric() {
   }
 
   Retail root;
-  root.f("GPSM").f("MAXP").f("CNST").w(3).f("SSWH").f("CNST").w(0x0000AAAA).f("_END");
+  root.f("GPSM").f("MAXP").f("CNST").w(3).f("SSWH").f("CNST").w(0x0000AAAA);
+  root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
   Check(parts[0].type == EffectFourCC("PART") && parts[0].part == root.bytes, "root references the swoosh by id");
 
   Retail swoosh;
@@ -606,6 +623,7 @@ void TestSpawnTable() {
   Put32(out, 2);
   spawn(0x0000B001, "GENP", true);
   spawn(0x0000B003, "ELSM", false);
+  PutTexr(out, 0x1234ABCD);
   PutProperty(out, "_END", 4);
   Put32(out, 4);
   PutGuid(out, Legacy(0x0000B001));
@@ -642,6 +660,7 @@ void TestSpawnTable() {
   Retail root;
   root.f("GPSM").f("KSSM").f("CNST").w(0).w(1).w(40).w(0).w(1);
   root.w(3).w(2).w(0x0000B001).w(0).w(0).w(0).w(0x0000B001).w(0).w(0).w(0);
+  root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
   root.f("SSWH").f("CNST").w(0x0000B002).f("SSSD").f("CNST").w(3);
   root.f("SELC").f("CNST").w(0x0000B003).f("SESD").f("CNST").w(3);
   root.f("_END");
@@ -657,7 +676,7 @@ void TestSpawnTable() {
   }
   Check(merged && selected && conditional, "merge, selector and condition noted");
   std::vector<RetailPartProperty> properties;
-  Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 5,
+  Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 6,
         "converted spawn table reads as retail");
 }
 
@@ -873,6 +892,147 @@ void TestModelChoice() {
         "a PMDV parses on its own or is refused");
 }
 
+// A generator with no texture, material or model draws nothing: its SIZE is
+// left out and a SIZE of 0 written before _END instead. One with a TEXR keeps
+// its SIZE.
+void TestDrawsNothing() {
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "MAXP", 1);
+                 PutConstant(o, 4);
+                 PutProperty(o, "SIZE", 3);
+                 PutConstant(o, Bits(2.0f));
+               }),
+               {});
+  Retail want;
+  want.f("GPSM").f("MAXP").f("CNST").w(4).f("SIZE").f("CNST").w(Bits(0.0f)).f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "a generator with no texture gets SIZE 0");
+  Check(!parts.empty() && parts[0].dropped.size() == 1 &&
+            parts[0].dropped[0] == "SIZE: the generator draws nothing",
+        "its SIZE is dropped as drawing nothing");
+  Check(!parts.empty() && parts[0].droppedRetail == 0, "drawing nothing drops no retail property");
+
+  parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "MAXP", 1);
+                 PutConstant(o, 4);
+                 PutProperty(o, "SIZE", 3);
+                 PutConstant(o, Bits(2.0f));
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail textured;
+  textured.f("GPSM").f("MAXP").f("CNST").w(4).f("SIZE").f("CNST").w(Bits(2.0f));
+  textured.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  Check(parts.size() == 1 && parts[0].part == textured.bytes, "a generator with a TEXR keeps its SIZE");
+  Check(!parts.empty() && parts[0].dropped.empty(), "nothing dropped with a TEXR");
+}
+
+// PBDM is Remastered's blend mode: 2 is retail's additive AAPH, anything else
+// alpha (1 and 3 noted as approximated).
+void TestBlendMode() {
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "PBDM", 0);
+                 o.push_back(2);
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail want;
+  want.f("GPSM").f("AAPH").f("CNST").b(1);
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "PBDM 2 becomes AAPH");
+  Check(!parts.empty() && parts[0].approximated.empty(), "PBDM 2 is exact");
+  Check(!parts.empty() && parts[0].droppedRetail == 0, "PBDM 2 drops nothing");
+
+  parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "PBDM", 0);
+                 o.push_back(1);
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail alpha;
+  alpha.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  Check(parts.size() == 1 && parts[0].part == alpha.bytes, "PBDM 1 writes nothing");
+  Check(!parts.empty() && parts[0].approximated.size() == 1 &&
+            parts[0].approximated[0] == "PBDM 1 taken as alpha blending",
+        "PBDM 1 is listed as approximated");
+  Check(!parts.empty() && parts[0].droppedRetail == 0, "PBDM 1 drops nothing");
+}
+
+// GPUA (how much GPU time is free) is taken as 1.
+void TestGpuAvailability() {
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "SIZE", 3);
+                 PutFourCC(o, "GPUA");
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail want;
+  want.f("GPSM").f("SIZE").f("CNST").w(Bits(1.0f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "GPUA becomes CNST 1");
+  Check(!parts.empty() && parts[0].approximated.size() == 1 && parts[0].approximated[0] == "GPUA taken as 1",
+        "GPUA is listed as approximated");
+}
+
+// SPAF(index, default) reads an effect parameter the game passes in; retail
+// passes none, so it is its default.
+void TestParameterDefault() {
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "SIZE", 3);
+                 PutFourCC(o, "SPAF");
+                 o.push_back(5);
+                 PutConstant(o, Bits(2.5f));
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail want;
+  want.f("GPSM").f("SIZE").f("CNST").w(Bits(2.5f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "SPAF becomes its default");
+  Check(!parts.empty() && parts[0].approximated.size() == 1 &&
+            parts[0].approximated[0] == "SPAF taken as its default",
+        "SPAF is listed as approximated");
+}
+
+// PMRQ REUL(x, y, z, #00) is retail's PMRT (both Rz * Ry * Rx in degrees);
+// an angle with IRND is dropped (retail would give 0 after frame 0).
+void TestModelRotation() {
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "PMRQ", 3);
+                 PutFourCC(o, "REUL");
+                 PutConstant(o, Bits(-90.0f));
+                 PutConstant(o, Bits(0.0f));
+                 PutFourCC(o, "SCAL");
+                 PutConstant(o, Bits(-0.05f));
+                 o.push_back(0);
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail want;
+  want.f("GPSM").f("PMRT").f("CNST").f("CNST").w(Bits(-90.0f)).f("CNST").w(Bits(0.0f));
+  want.f("SCAL").f("CNST").w(Bits(-0.05f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "PMRQ REUL becomes PMRT");
+  Check(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(), "PMRQ REUL is exact");
+
+  parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "PMRQ", 3);
+                 PutFourCC(o, "REUL");
+                 PutConstant(o, Bits(90.0f));
+                 PutFourCC(o, "IRND");
+                 PutConstant(o, Bits(0.0f));
+                 PutConstant(o, Bits(360.0f));
+                 PutConstant(o, Bits(0.0f));
+                 o.push_back(0);
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail plain;
+  plain.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("_END");
+  Check(parts.size() == 1 && parts[0].part == plain.bytes, "PMRQ with IRND writes nothing");
+  Check(!parts.empty() && parts[0].dropped.size() == 1 && parts[0].dropped[0] == "PMRQ: an angle with IRND",
+        "PMRQ with IRND is listed as dropped");
+}
+
 int main() {
   TestAtlasTexture();
   TestModelChoice();
@@ -886,6 +1046,11 @@ int main() {
   TestShapes();
   TestGradientFrames();
   TestSpawnTable();
+  TestDrawsNothing();
+  TestBlendMode();
+  TestGpuAvailability();
+  TestParameterDefault();
+  TestModelRotation();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;
