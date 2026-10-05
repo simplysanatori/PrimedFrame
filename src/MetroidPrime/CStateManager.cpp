@@ -3143,6 +3143,11 @@ void CStateManager::DrawWorld() const {
     }
   }
 
+#ifdef TARGET_PC
+  // Remastered fogs the opaque world and sky full-screen, then the actors and transparents as
+  // they draw (up to GXPortVolumetricFogEnd).
+  PortDrawVolumetricFog(*this, backupViewMatrix, frustum);
+#endif
   bool morphingPlayerVisible = false;
   rstl::reserved_vector< const CActor*, 1024 > thermalActors;
   for (int i = 0; i < areas.size(); ++i) {
@@ -3244,6 +3249,9 @@ void CStateManager::DrawWorld() const {
 #endif
     x84c_player->Render(*this);
   }
+#ifdef TARGET_PC
+  GXPortVolumetricFogEnd();
+#endif
   gpRender->PostRenderFogs();
 
   if (thermal) {
@@ -3361,9 +3369,6 @@ void CStateManager::DrawWorld() const {
     xf34_thermalFlag = kTD_Bypass;
   }
 
-#ifdef TARGET_PC
-  PortDrawVolumetricFog(*this, backupViewMatrix, frustum);
-#endif
   DrawDebugStuff();
   RenderCamerasAndAreaLights();
   ResetViewAfterDraw(backupViewport, backupViewMatrix);

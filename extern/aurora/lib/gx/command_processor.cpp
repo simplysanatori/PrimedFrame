@@ -470,6 +470,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     const bool hadPipeline = cache.hasPipeline;
     const auto prevSampledTextures = cache.shaderInfo.sampledTextures;
     const auto prevSampledIndTextures = cache.shaderInfo.sampledIndTextures;
+    const bool prevUsesVolFog = cache.shaderInfo.usesVolFog;
     populate_pipeline_config(cache.config, prim, fmt);
     cache.shaderInfo = build_shader_info(cache.config.shaderConfig);
     warn_missing_uv_sets(cache.config.shaderConfig, cache.shaderInfo);
@@ -479,7 +480,8 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     cache.hasPipeline = true;
     state.dirty = (state.dirty & ~DirtyPipeline) | DirtyUniform;
     if (!hadPipeline || prevSampledTextures != cache.shaderInfo.sampledTextures ||
-        prevSampledIndTextures != cache.shaderInfo.sampledIndTextures) {
+        prevSampledIndTextures != cache.shaderInfo.sampledIndTextures ||
+        prevUsesVolFog != cache.shaderInfo.usesVolFog) {
       cache.bindGeneration = 0;
     }
   }
@@ -1135,7 +1137,31 @@ void handle_aurora(ByteReader& reader) noexcept {
       word = reader.read<u32>();
     }
     std::memcpy(&params, words, sizeof(params));
-    gfx::volfog::record(params);
+    if (gfx::volfog::record(params)) {
+      // The draws after it fog themselves through the froxels it fills.
+      // w: where the world's depth range starts; nearer is the viewmodel, which isn't fogged.
+      const Vec4<float> fogParams{params.depth[0], params.fog[0], params.colorA[3], params.depth[2]};
+      std::array<Vec4<float>, 3> tone;
+      for (size_t i = 0; i < tone.size(); ++i) {
+        tone[i] = {params.tone[i][0], params.tone[i][1], params.tone[i][2], params.tone[i][3]};
+      }
+      if (!g_gxState.volFog) {
+        g_gxState.volFog = true;
+        g_gxState.dirty |= DirtyPipeline;
+      }
+      if (g_gxState.volFogParams != fogParams || g_gxState.volFogTone != tone) {
+        g_gxState.volFogParams = fogParams;
+        g_gxState.volFogTone = tone;
+        g_gxState.dirty |= DirtyUniform;
+      }
+      // A new froxel texture when the frame's size changed.
+      g_gxState.dirty |= DirtyTextures;
+    }
+  } else if (subCmd == GX_AURORA_PORT_VOLUMETRIC_FOG_END) {
+    if (g_gxState.volFog) {
+      g_gxState.volFog = false;
+      g_gxState.dirty |= DirtyPipeline;
+    }
   } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_SKIP) {
     const Vec4<float> value{static_cast<f32>(reader.read<u32>() & 0xFF), 0.f, 0.f, 0.f};
     if (g_gxState.pbrLightSkip != value) {

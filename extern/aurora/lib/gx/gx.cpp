@@ -10,6 +10,7 @@
 #include "../gfx/probe.hpp"
 #include "../gfx/recording.hpp"
 #include "../gfx/resource_cache.hpp"
+#include "../gfx/volfog.hpp"
 #include "../gfx/texture.hpp"
 #include "gx_fmt.hpp"
 
@@ -370,6 +371,36 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
   return g_device.CreateRenderPipeline(&descriptor);
 }
 
+// How a draw after the volumetric fog fogs itself. Remastered fogs its transparents per vertex,
+// over a frame the full-screen pass has already fogged: an alpha-blended surface as colour T +
+// in-scatter, an additive one as colour T, so it adds no in-scatter of its own. Blends that
+// multiply or subtract the frame are left alone: fogging them would fog what is behind twice.
+static u8 vol_fog_mode(bool depthOnly) noexcept {
+  if (!g_gxState.volFog || depthOnly || !g_gxState.colorUpdate) {
+    return VolFogNone;
+  }
+  const auto src = g_gxState.blendFacSrc;
+  const auto dst = g_gxState.blendFacDst;
+  if (g_gxState.blendMode == GX_BM_NONE ||
+      (g_gxState.blendMode == GX_BM_BLEND && src == GX_BL_ONE && dst == GX_BL_ZERO)) {
+    return VolFogOpaque;
+  }
+  if (g_gxState.blendMode != GX_BM_BLEND) {
+    return VolFogNone;
+  }
+  const bool srcScales = src == GX_BL_ONE || src == GX_BL_SRCALPHA || src == GX_BL_INVSRCALPHA;
+  if (srcScales && dst == GX_BL_ONE) {
+    return VolFogAdditive;
+  }
+  if (src == GX_BL_SRCALPHA && dst == GX_BL_INVSRCALPHA) {
+    return VolFogBlended;
+  }
+  if (src == GX_BL_ONE && dst == GX_BL_INVSRCALPHA) {
+    return VolFogPremultiplied;
+  }
+  return VolFogNone;
+}
+
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept {
   ZoneScoped;
 
@@ -468,6 +499,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   const bool depthOnly = g_gxState.depthPrepass == 1;
   const bool depthEqual = g_gxState.depthPrepass == 2 && writesDepth;
   config.shaderConfig.depthOnly = depthOnly;
+  config.shaderConfig.volFog = vol_fog_mode(depthOnly);
   config = {
       .msaaSamples = gfx::get_sample_count(),
       .shaderConfig = config.shaderConfig,
@@ -491,13 +523,13 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
   ZoneScoped;
 
-  if (!info.sampledTextures.any() && !info.sampledIndTextures.any()) {
+  if (!info.sampledTextures.any() && !info.sampledIndTextures.any() && !info.usesVolFog) {
     // Don't bother re-binding anything
     return {};
   }
 
   // Using C WGPU types instead of C++ wrappers to avoid destructor overhead
-  std::array<WGPUBindGroupEntry, MaxTextures * 2 + 3 + gfx::probe::VolumeTextures> textureEntries{};
+  std::array<WGPUBindGroupEntry, kTextureBindings> textureEntries{};
   textureEntries[MaxTextures * 2].binding = MaxTextures * 2;
   textureEntries[MaxTextures * 2].textureView = gfx::probe::cube_view(g_gxState.pbrCube).Get();
   textureEntries[MaxTextures * 2 + 1].binding = MaxTextures * 2 + 1;
@@ -508,6 +540,10 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
   }
   textureEntries[kBrdfLutBinding].binding = kBrdfLutBinding;
   textureEntries[kBrdfLutBinding].textureView = gfx::probe::brdf_lut_view().Get();
+  textureEntries[kVolFogFroxelBinding].binding = kVolFogFroxelBinding;
+  textureEntries[kVolFogFroxelBinding].textureView = gfx::volfog::froxel_view().Get();
+  textureEntries[kVolFogSamplerBinding].binding = kVolFogSamplerBinding;
+  textureEntries[kVolFogSamplerBinding].sampler = gfx::volfog::sampler().Get();
   for (u32 i = 0; i < MaxTextures; ++i) {
     const auto& tex = g_gxState.textures[i];
     WGPUBindGroupEntry& textureEntry = textureEntries[i * 2];
@@ -553,7 +589,7 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
 
 void initialize() noexcept {
   {
-    std::array<wgpu::BindGroupLayoutEntry, MaxTextures * 2 + 3 + gfx::probe::VolumeTextures> textureEntries;
+    std::array<wgpu::BindGroupLayoutEntry, kTextureBindings> textureEntries;
     // The PBR environment probe (GX_AURORA_COPY_PROBE_FACE)
     textureEntries[MaxTextures * 2] = {
         .binding = MaxTextures * 2,
@@ -590,6 +626,21 @@ void initialize() noexcept {
                 .sampleType = wgpu::TextureSampleType::Float,
                 .viewDimension = wgpu::TextureViewDimension::e2D,
             },
+    };
+    // The volumetric fog's froxels (GX_AURORA_PORT_VOLUMETRIC_FOG), read per vertex or per pixel
+    textureEntries[kVolFogFroxelBinding] = {
+        .binding = kVolFogFroxelBinding,
+        .visibility = wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment,
+        .texture =
+            {
+                .sampleType = wgpu::TextureSampleType::Float,
+                .viewDimension = wgpu::TextureViewDimension::e3D,
+            },
+    };
+    textureEntries[kVolFogSamplerBinding] = {
+        .binding = kVolFogSamplerBinding,
+        .visibility = wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment,
+        .sampler = {.type = wgpu::SamplerBindingType::Filtering},
     };
     for (u32 i = 0; i < MaxTextures; ++i) {
       textureEntries[i * 2] = {
@@ -629,7 +680,7 @@ void initialize() noexcept {
     sEmptyTextureView = sEmptyTexture.CreateView();
   }
   {
-    std::array<wgpu::BindGroupEntry, MaxTextures * 2 + 3 + gfx::probe::VolumeTextures> entries;
+    std::array<wgpu::BindGroupEntry, kTextureBindings> entries;
     entries[MaxTextures * 2] = {
         .binding = MaxTextures * 2,
         .textureView = gfx::probe::cube_view(),
@@ -647,6 +698,14 @@ void initialize() noexcept {
     entries[kBrdfLutBinding] = {
         .binding = kBrdfLutBinding,
         .textureView = gfx::probe::brdf_lut_view(),
+    };
+    entries[kVolFogFroxelBinding] = {
+        .binding = kVolFogFroxelBinding,
+        .textureView = gfx::volfog::froxel_view(),
+    };
+    entries[kVolFogSamplerBinding] = {
+        .binding = kVolFogSamplerBinding,
+        .sampler = gfx::volfog::sampler(),
     };
     for (u32 i = 0; i < MaxTextures; ++i) {
       entries[i * 2] = {

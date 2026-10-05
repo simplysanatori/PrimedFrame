@@ -231,11 +231,14 @@ struct State {
   wgpu::BindGroupLayout applyLayout;
   wgpu::TextureFormat applyFormat = wgpu::TextureFormat::Undefined;
   uint32_t applySamples = 0;
-  // The froxels and the frame as it was; remade when the frame's size or format changes.
+  // The froxels, made when the fog is recorded so that the draws after it can bind them (see
+  // froxel_view); remade when the frame's size changes. The placeholder is bound until then.
   wgpu::Texture froxels;
   wgpu::TextureView froxelView;
+  wgpu::TextureView placeholder;
   uint32_t gridWidth = 0;
   uint32_t gridHeight = 0;
+  // The frame as it was; remade when the frame's size or format changes.
   wgpu::Texture frame;
   wgpu::TextureView frameView;
   wgpu::TextureFormat frameFormat = wgpu::TextureFormat::Undefined;
@@ -247,6 +250,8 @@ State g_state;
 // Params are larger than an encoder task's inline payload (InlineDrawPayloadSize), so the task
 // carries a slot in this ring; frames are encoded well within its length of being recorded.
 std::array<Params, 8> g_recorded;
+// The froxels each slot fills, as they were when it was recorded.
+std::array<wgpu::TextureView, 8> g_recordedFroxels;
 uint32_t g_nextSlot = 0;
 
 // Perlin's gradient noise, repeating every `period` units (CMath::Noise3d(x, y, z, 4)).
@@ -336,6 +341,21 @@ wgpu::ShaderModule make_module(const char* label, const std::string& code) {
   return g_device.CreateShaderModule(&descriptor);
 }
 
+void ensure_clamp_sampler() {
+  if (g_state.clampSampler) {
+    return;
+  }
+  const wgpu::SamplerDescriptor clampDescriptor{
+      .label = "Volumetric Fog Sampler",
+      .addressModeU = wgpu::AddressMode::ClampToEdge,
+      .addressModeV = wgpu::AddressMode::ClampToEdge,
+      .addressModeW = wgpu::AddressMode::ClampToEdge,
+      .magFilter = wgpu::FilterMode::Linear,
+      .minFilter = wgpu::FilterMode::Linear,
+  };
+  g_state.clampSampler = g_device.CreateSampler(&clampDescriptor);
+}
+
 void ensure_compute(const wgpu::Queue& queue) {
   if (g_state.compute) {
     return;
@@ -399,6 +419,7 @@ void ensure_compute(const wgpu::Queue& queue) {
       .size = sizeof(Params),
   };
   g_state.uniforms = g_device.CreateBuffer(&bufferDescriptor);
+  ensure_clamp_sampler();
   const wgpu::SamplerDescriptor repeatDescriptor{
       .label = "Volumetric Fog Noise Sampler",
       .addressModeU = wgpu::AddressMode::Repeat,
@@ -408,15 +429,6 @@ void ensure_compute(const wgpu::Queue& queue) {
       .minFilter = wgpu::FilterMode::Linear,
   };
   g_state.repeatSampler = g_device.CreateSampler(&repeatDescriptor);
-  const wgpu::SamplerDescriptor clampDescriptor{
-      .label = "Volumetric Fog Sampler",
-      .addressModeU = wgpu::AddressMode::ClampToEdge,
-      .addressModeV = wgpu::AddressMode::ClampToEdge,
-      .addressModeW = wgpu::AddressMode::ClampToEdge,
-      .magFilter = wgpu::FilterMode::Linear,
-      .minFilter = wgpu::FilterMode::Linear,
-  };
-  g_state.clampSampler = g_device.CreateSampler(&clampDescriptor);
   g_state.noise = make_noise(queue);
 }
 
@@ -505,14 +517,22 @@ void ensure_targets(uint32_t width, uint32_t height, wgpu::TextureFormat format)
   };
   g_state.frame = g_device.CreateTexture(&frameDescriptor);
   g_state.frameView = g_state.frame.CreateView();
+}
+
+void ensure_froxels(uint32_t width, uint32_t height) {
   // CRenderPass_VolumetricFog::Initialize: 16 pixels to a froxel, the width a multiple of 4.
-  g_state.gridWidth = std::max(((width + 15) >> 4) & ~3u, 4u);
-  g_state.gridHeight = std::max((height + 15) >> 4, 2u);
+  const uint32_t gridWidth = std::max(((width + 15) >> 4) & ~3u, 4u);
+  const uint32_t gridHeight = std::max((height + 15) >> 4, 2u);
+  if (g_state.froxels && g_state.gridWidth == gridWidth && g_state.gridHeight == gridHeight) {
+    return;
+  }
+  g_state.gridWidth = gridWidth;
+  g_state.gridHeight = gridHeight;
   const wgpu::TextureDescriptor froxelDescriptor{
       .label = "Volumetric Fog Froxels",
       .usage = wgpu::TextureUsage::StorageBinding | wgpu::TextureUsage::TextureBinding,
       .dimension = wgpu::TextureDimension::e3D,
-      .size = {g_state.gridWidth, g_state.gridHeight, Slices},
+      .size = {gridWidth, gridHeight, Slices},
       .format = FroxelFormat,
   };
   g_state.froxels = g_device.CreateTexture(&froxelDescriptor);
@@ -527,6 +547,7 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   }
   std::memcpy(&slot, payload, sizeof(slot));
   Params params = g_recorded[slot % g_recorded.size()];
+  const wgpu::TextureView froxelView = g_recordedFroxels[slot % g_recordedFroxels.size()];
   const auto& source = webgpu::present_source();
   const auto& target = webgpu::g_frameBuffer;
   const auto& depth = webgpu::g_depthBuffer;
@@ -534,14 +555,12 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   const auto format = webgpu::g_graphicsConfig.surfaceConfiguration.format;
   const uint32_t width = source.size.width;
   const uint32_t height = source.size.height;
-  if (width == 0 || height == 0 || !source.texture || !target.view || !depth.view) {
+  if (width == 0 || height == 0 || !source.texture || !target.view || !depth.view || !froxelView) {
     return;
   }
   ensure_compute(ctx.queue);
   ensure_apply(format, samples);
   ensure_targets(width, height, format);
-  params.grid[0] = g_state.gridWidth;
-  params.grid[1] = g_state.gridHeight;
   const bool volume = params.volume != 0 && probe::has_volume(params.volume);
   // misc.x: the volume's light is read, else a white texel's; the bindings always hold a texture.
   params.volume = volume ? 1 : 0;
@@ -553,7 +572,7 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
       wgpu::BindGroupEntry{.binding = 2, .textureView = g_state.noise},
       wgpu::BindGroupEntry{.binding = 3, .sampler = g_state.clampSampler},
       wgpu::BindGroupEntry{.binding = 4, .textureView = probe::volume_view(volume ? params.volume : 0, 0)},
-      wgpu::BindGroupEntry{.binding = 5, .textureView = g_state.froxelView},
+      wgpu::BindGroupEntry{.binding = 5, .textureView = froxelView},
   };
   const wgpu::BindGroupDescriptor computeGroupDescriptor{
       .label = "Volumetric Fog Froxels",
@@ -567,7 +586,7 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
     const auto pass = cmd.BeginComputePass(&passDescriptor);
     pass.SetPipeline(g_state.compute);
     pass.SetBindGroup(0, computeGroup);
-    pass.DispatchWorkgroups((g_state.gridWidth + 7) / 8, (g_state.gridHeight + 7) / 8, 1);
+    pass.DispatchWorkgroups((params.grid[0] + 7) / 8, (params.grid[1] + 7) / 8, 1);
     pass.End();
   }
 
@@ -580,7 +599,7 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
       wgpu::BindGroupEntry{.binding = 0, .buffer = g_state.uniforms, .size = sizeof(Params)},
       wgpu::BindGroupEntry{.binding = 1, .textureView = g_state.frameView},
       wgpu::BindGroupEntry{.binding = 2, .textureView = depth.view},
-      wgpu::BindGroupEntry{.binding = 3, .textureView = g_state.froxelView},
+      wgpu::BindGroupEntry{.binding = 3, .textureView = froxelView},
       wgpu::BindGroupEntry{.binding = 4, .sampler = g_state.clampSampler},
   };
   const wgpu::BindGroupDescriptor applyGroupDescriptor{
@@ -623,18 +642,50 @@ bool ensure_task() {
   return true;
 }
 
-void record(const Params& params) {
+bool record(const Params& params) {
   if (g_state.task == InvalidEncoderTask) {
-    return;
+    return false;
   }
+  const auto& size = webgpu::present_source().size;
+  if (size.width == 0 || size.height == 0) {
+    return false;
+  }
+  ensure_froxels(size.width, size.height);
   const uint32_t slot = g_nextSlot++ % g_recorded.size();
   g_recorded[slot] = params;
+  g_recorded[slot].grid[0] = g_state.gridWidth;
+  g_recorded[slot].grid[1] = g_state.gridHeight;
+  g_recordedFroxels[slot] = g_state.froxelView;
   record_encoder_task(g_state.task, &slot, sizeof(slot));
+  return true;
+}
+
+const wgpu::TextureView& froxel_view() {
+  if (g_state.froxelView) {
+    return g_state.froxelView;
+  }
+  if (!g_state.placeholder) {
+    const wgpu::TextureDescriptor descriptor{
+        .label = "Volumetric Fog Froxels Placeholder",
+        .usage = wgpu::TextureUsage::TextureBinding,
+        .dimension = wgpu::TextureDimension::e3D,
+        .size = {1, 1, 1},
+        .format = FroxelFormat,
+    };
+    g_state.placeholder = g_device.CreateTexture(&descriptor).CreateView();
+  }
+  return g_state.placeholder;
+}
+
+const wgpu::Sampler& sampler() {
+  ensure_clamp_sampler();
+  return g_state.clampSampler;
 }
 
 void shutdown() {
   const auto task = g_state.task;
   g_state = {};
+  g_recordedFroxels = {};
   if (task != InvalidEncoderTask) {
     unregister_encoder_task_type(task);
   }

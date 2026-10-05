@@ -360,6 +360,11 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
     info.usesFog = true;
     info.uniformSize += sizeof(Fog);
   }
+  if (config.volFog != VolFogNone) {
+    info.usesVolFog = true;
+    // near, range, exposure; the tone curve
+    info.uniformSize += sizeof(Vec4<float>) * 4;
+  }
   info.uniformSize += MaxTexCoord * sizeof(Vec4<float>);
   if (info.usedIndTexMtxs.any()) {
     info.uniformSize += MaxIndTexMtxs * sizeof(Mat2x4<float>);
@@ -516,6 +521,12 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
     fog.rangeK[2][2] = fog.rangeK[2][1];
     fog.rangeK[2][3] = fog.rangeK[2][1];
     buf.append(fog);
+  }
+  if (info.usesVolFog) {
+    buf.append(g_gxState.volFogParams);
+    for (const auto& v : g_gxState.volFogTone) {
+      buf.append(v);
+    }
   }
   for (const auto& scale : g_gxState.texCoordScales) {
     buf.append(Vec4{static_cast<f32>(scale.scaleS) + 1.0f, static_cast<f32>(scale.scaleT) + 1.0f, 0.0f, 0.0f});

@@ -53,6 +53,10 @@ constexpr bool UseReversedZ = true;
 constexpr u32 MaxTextures = GX_MAX_TEXMAP;
 // Group 2 binding of the PBR environment BRDF table, after the probe, its sampler and the volumes.
 constexpr u32 kBrdfLutBinding = MaxTextures * 2 + 7;
+// Group 2 bindings of the volumetric fog's froxels and their sampler (ShaderConfig::volFog).
+constexpr u32 kVolFogFroxelBinding = MaxTextures * 2 + 8;
+constexpr u32 kVolFogSamplerBinding = MaxTextures * 2 + 9;
+constexpr u32 kTextureBindings = MaxTextures * 2 + 10;
 constexpr u32 MaxTluts = 20;
 constexpr u32 MaxTevStages = GX_MAX_TEVSTAGE;
 constexpr u32 MaxColorChannels = 4;
@@ -419,6 +423,11 @@ struct GXState {
   // GX_AURORA_SET_PBR_LIGHT_HDR, per light: colour (rgb, falloff + 1; w 0 = off), then
   // (view position, r0), then (r1, -, -, -).
   std::array<Vec4<float>, GX::MaxLights * 3> pbrLightHdr{};
+  // GX_AURORA_PORT_VOLUMETRIC_FOG up to its _END: the draws fog themselves (ShaderConfig::volFog)
+  // with the recorded fog's near, range, exposure and the start of the world's depth range (nearer is the viewmodel) and its tone curve.
+  bool volFog = false;
+  Vec4<float> volFogParams{};
+  std::array<Vec4<float>, 3> volFogTone{};
 
   // GX2 polygon offset state
   f32 frontOffset = 0.0f;
@@ -526,6 +535,14 @@ struct AttrConfig {
   bool le = true;
   bool nbt3 = false; // GX_NRM_NBT3
 };
+// ShaderConfig::volFog, as Remastered's shaders fog each kind of draw after the full-screen fog.
+enum : u8 {
+  VolFogNone = 0,       // no fog: multiplying or subtracting blends, depth-only passes
+  VolFogBlended = 1,    // alpha blended, per vertex: colour T + in-scatter
+  VolFogAdditive = 2,   // added to the frame, per vertex: colour T
+  VolFogOpaque = 3,     // not blended, per pixel: as the full-screen pass
+  VolFogPremultiplied = 4, // ONE, INVSRCALPHA, per vertex: colour T + in-scatter alpha
+};
 struct ShaderConfig {
   u8 fogType = GX_FOG_NONE;
   u8 vtxStride = 0;
@@ -536,7 +553,8 @@ struct ShaderConfig {
   u8 sdf = 0; // GX_AURORA_SET_SDF
   u8 depthOnly = 0; // pass 1 of GX_AURORA_PORT_DEPTH_PREPASS: the colour is not written
   u8 pbrKind = 0; // with pbr, the special surface kind (pbrLayer.y), a constant in the shader
-  u8 pad2 = 0;
+  // GXState::volFog: how the draw fogs itself (VolFog*), chosen from its blend.
+  u8 volFog = 0;
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;
@@ -574,6 +592,7 @@ struct ShaderInfo {
   bool lightingEnabled : 1 = false;
   u8 lineMode : 2 = 0;
   bool usesPbr : 1 = false;
+  bool usesVolFog : 1 = false;
 };
 struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};
