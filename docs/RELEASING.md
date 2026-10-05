@@ -61,7 +61,11 @@ self-contained — and it is why `MP_USER_PATH` cannot be used to move saves.
   packages into `dist/licenses/`, preserving the dependency path, and puts
   `docs/NATIVE_PORT.md` in as the `README`. It also packages `textures/` (the
   HD and button-prompt sets), so the artefact zips as-is with no copy from a
-  Linux build.
+  Linux build. SDL3 (built from source), zlib, libpng, nod and OpenSSL are
+  linked statically into the exe, so their licences (including `openssl.txt`
+  and `nod-*.txt`) are the only trace; only `webgpu_dawn.dll`, `dxil.dll` and
+  `dxcompiler.dll` ship as DLLs (Dawn's prebuilt package has no static lib).
+  The workflow fails if the exe imports SDL3/zlib/libpng/nod/OpenSSL DLLs.
 - **Windows also carries `ffmpeg.exe`**, which the Remastered import runs to
   decode that game's movies (Windows has no ffmpeg of its own, and the port
   links no decoder). It is a separate program under the LGPL 2.1, built in the
