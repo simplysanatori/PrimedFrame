@@ -115,7 +115,7 @@ not the debug key's `CN=Android Debug` (`edd22fdb…`), the arm64 `.so` is 29 MB
 all six third-party notices are in `assets/`, and no `.iso`, `.pak` or `.strg`
 is in the package.
 
-The port targets `versionName "0.13.0"` and `versionCode 16`.
+The port targets `versionName "0.14.0"` and `versionCode 17`.
 
 ## Per-platform packaging
 
