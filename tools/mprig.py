@@ -433,6 +433,13 @@ def cmd_start(a):
             die(f"--settings file not found: {src}")
         if src.is_file():
             shutil.copy(src, user / "port_settings.ini")
+    if not a.cutscenes:
+        # Cutscenes become skippable on first sight (and get randomprime's room patches, as
+        # with the F1 setting), so MP_SKIP_CUTSCENES skips them instead of fast-forwarding x8.
+        ini = user / "port_settings.ini"
+        lines = [l for l in (ini.read_text().splitlines() if ini.is_file() else [])
+                 if not l.startswith("skippable_cutscenes=")]
+        ini.write_text("\n".join(lines + ["skippable_cutscenes=1"]) + "\n")
     if (real / "imgui.ini").is_file():
         shutil.copy(real / "imgui.ini", user / "imgui.ini")
     if a.saves:
@@ -467,6 +474,8 @@ def cmd_start(a):
     })
     if a.room:
         env["MP_BOOT_WORLD"] = a.room
+    if not a.cutscenes:
+        env["MP_SKIP_CUTSCENES"] = "1"
     for kv in a.env:
         k, v = kv.split("=", 1)
         env[k] = v
@@ -482,17 +491,22 @@ def cmd_start(a):
 
     end = time.monotonic() + a.wait
     ready = False
+    # with --room, wait for gameplay: an ok status alone comes back during the intro cinematic
+    want_play = a.room and not a.cutscenes
     while time.monotonic() < end:
         if game.poll() is not None:
             break
         try:
             res = console(port, ["status"], timeout=10)
-            if res and res[0][1]:
+            if res and res[0][1] and (not want_play or "first person 1, cinematic 0" in "\n".join(res[0][2])):
                 ready = True
                 break
         except (OSError, ConnectionError):
             pass
-        time.sleep(1)
+        time.sleep(0.2)
+    if ready and want_play:
+        # a skipped cinematic fades back in (black, then the HUD): ~70 frames on Landing Site
+        console(port, ["wait 90"], timeout=60)
     if not ready:
         text = (d / "game.log").read_text(errors="replace")
         died = game.poll() is not None
@@ -923,6 +937,9 @@ def build_parser():
     s.add_argument("--env", action="append", default=[], metavar="K=V")
     s.add_argument("--mods", help="mods dir, or 'none' for an empty one (default: the real user's)")
     s.add_argument("--settings", help="port_settings.ini to use, or 'none' (default: the real user's)")
+    s.add_argument("--cutscenes", action="store_true",
+                   help="keep cutscenes (default: MP_SKIP_CUTSCENES=1 + skippable_cutscenes=1, which also "
+                        "applies randomprime's room patches; with --room, start waits for gameplay)")
     s.add_argument("--saves", action="store_true", help="copy USA/ and savestates/ from the real user dir")
     s.add_argument("--size", default="1280x720", help="Xvfb screen size WxH")
     s.add_argument("--wait", type=float, default=120, help="seconds to wait for the console")

@@ -25,15 +25,19 @@ vs the current `kImportVersion`, `/tmp` space, stale runs).
     $M shot t1 /tmp/a.png 'view albedo'      # run commands, screenshot -> PNG
     $M stop --all                            # always finish with this
 
-Boot takes about 10 s with `--room`. Use your own run names so sessions stay apart.
+`start --room` returns in about 7-8 s, once the player is in control: cutscenes are skipped
+(even unseen ones) and the fade-in after them has run. Pass `--cutscenes` to see them. Use your own run names so sessions stay apart.
 
 ## Subcommands
 
-- `start <name> [--build B] [--room MLVL[:MREA]] [--env K=V]... [--mods DIR|none] [--settings FILE|none] [--saves] [--size WxH] [--wait S] [--gdb] [--replace]`:
+- `start <name> [--build B] [--room MLVL[:MREA]] [--env K=V]... [--mods DIR|none] [--settings FILE|none] [--saves] [--size WxH] [--wait S] [--cutscenes] [--gdb] [--replace]`:
   `--build` is a dir under `build/` or a path (default `port-gcc`). The user dir is fresh: only
   `port_settings.ini` and `imgui.ini` are copied (`--saves` adds `USA/`, `savestates/`). Mods
   default to the real user's (read-only); `--mods none` is an empty folder. On a startup crash
-  it prints the log tail and the symbolized crash, and leaves nothing running.
+  it prints the log tail and the symbolized crash, and leaves nothing running. By default it
+  sets `MP_SKIP_CUTSCENES=1` and `skippable_cutscenes=1` in the run's settings (that also applies
+  randomprime's room patches, as the F1 setting does), and with `--room` it waits for
+  `first person 1, cinematic 0` plus 90 frames. `--cutscenes` turns all of that off.
 - `cmd <name> <cmd>... | -f script.txt`: replies printed, exit 1 if any command failed, 2 if the game is gone.
 - `shot <name> <out.png> [cmd...] [--crop x,y,w,h] [--settle FRAMES]`
 - `ab <name> <prefix> --a "cmd;cmd" --b "cmd;cmd" [--settle 30] [--no-hold]`: writes
@@ -122,7 +126,7 @@ Console `fx` (also in `docs/NATIVE_PORT.md`) shows the live generators of the pa
 
 **Spawn and filmstrip an effect**
 
-    $M start r --room 83F6FF6F:D5CDB809 --env MP_SKIP_CUTSCENES=1 --mods <dir with the import>
+    $M start r --room 83F6FF6F:D5CDB809 --mods <dir with the import>
     $M cmd r 'wait 300'                       # the first capture after boot shows the intro cutscene
     $M film r /tmp/fx.png --pre 'fx C0E95E90 5' --frames 0,4,8,16,32,60
 
@@ -186,8 +190,7 @@ properties, `pdiff a b` only those that differ (e.g. the disc's against the conv
   (`--build smoke-gcc --env MP_SMOKE_WORLD=...`).
 - `ab` freezes ticks, so animated effects stay put; use `--no-hold` to compare live frames
   (expect motion noise in `diff`).
-- No built-in way to wait for "room loaded": use `--room` (which waits for the console) plus
-  `cmd r 'wait 120'`.
+- After a `warp`, nothing waits for the room to load: add `cmd r 'wait 120'`.
 
 ## See also
 
