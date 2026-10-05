@@ -165,7 +165,7 @@ identity or the `KPIN(CREL(LTHN(RAND(0,1)), .5, 1, -1))` mirror). **PMDV**
 (`CNST n`, n model ids) follows PMDL (the first id) for a
 `SLCT(IRND(0, n-1), ARRY)` of Remastered-only CMDLs, which the import converts
 standalone under fresh ids. Anything else of those shapes is left out. With them
-With the 58 name matches (below), 132 of 136 effects import (389 PARTs, 79 textures of which 1 flipbook, 41 models). 9557D0C2 keeps the disc's PART, since its child C6B5B5A9 uses an ATX2 texture, which does not convert yet. PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6) keep theirs too, since their root's material texture doesn't resolve.
+With the 208 matched fresh effects (below), 275 of 286 effects import (973 PARTs, 137 textures of which 1 flipbook, 69 models). 9557D0C2 keeps the disc's PART, since its child C6B5B5A9 uses an ATX2 texture, which does not convert yet. PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6) and 06B3F06E keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
 
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.
@@ -183,7 +183,7 @@ those back to retail PARTs (checked 2026-10-05):
   58 have exactly one retail PART of the same name (the beam muzzles, charges,
   Xfers, wakes, grapple, bombs...); 32 are new or renamed (`BallInnerGlow_*`,
   `*ChargeMuzzleFlash`, `pwrBase_placeholder`...). The other 1264 fresh GENPs
-  have no name. The import takes the 58 as candidates through `kNamedEffects`
+  have no name. The import takes the 58 as candidates through `kMatchedEffects`
   (`port_remastered_effect_import.cpp`, a table of id and retail PART, since
   the importer doesn't read pak names).
 - By reference: 20 GENPs are named by another GENP, 19 of them fresh, and every
@@ -196,6 +196,16 @@ those back to retail PARTs (checked 2026-10-05):
   effects and their values don't identify them. Only 23 of the fresh ones
   clear a rule that is exact on the known pairs, and that rule is calibrated
   on retail-id effects. Not used.
+- By placement (2026-10-05): every fresh GENP is named by some asset (ROOM
+  1233, CHPR 472, and others; `build/fx-refs/`). A ROOM `EffectMP1` that names
+  one effect, at the spot (under 0.1 m, through the room-to-area transform) of
+  a retail object that names one PART, pairs all 97 such placements of the
+  retail-id effects correctly. On the fresh ones, 211 pair the same way in
+  every placement, and 37 pair with different PARTs in different rooms. 150
+  are kept in `kMatchedEffects`: the 211, minus those whose PART another fresh
+  effect also claims (51), one that a retail-id effect already carries (9),
+  and one that a name match carries (1). Enemies name several PARTs, so they
+  don't pair this way. Script: `build/fx-room/effpair.py`.
 
 ## Converting to retail PART
 

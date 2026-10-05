@@ -128,14 +128,15 @@ std::vector<uint8_t> WithDiscLight(const std::vector<RetailPartProperty>& conver
   return out;
 }
 
-// Effects Remastered gave a fresh id, matched to the retail PART by the name
-// both paks give it (the player's and global paks'). Only names that one
-// retail PART has; the 8 effects that kept a retail id all match their names.
-struct NamedEffect {
+// Effects Remastered gave a fresh id, matched to the retail PART they replace.
+struct MatchedEffect {
   const char* id;  // as IdToString prints it (EffectGuidString of the stored id)
   uint32_t retail;
 };
-constexpr NamedEffect kNamedEffects[] = {
+constexpr MatchedEffect kMatchedEffects[] = {
+    // By the name both paks give it (the player's and global paks'). Only names
+    // that one retail PART has; the 8 effects that kept a retail id all match
+    // their names.
     {"fb4d5181-cd7e-4c5e-8b11-afe35d30e231", 0x1EF973EA},  // BombExplo
     {"bbbb849a-d896-489f-83da-ef76c010888d", 0xC0E95E90},  // BombSet
     {"ca6fc8a1-30a2-441f-bf7a-12b6acd4e938", 0x39F0F5C6},  // BoostBallGlow
@@ -194,17 +195,173 @@ constexpr NamedEffect kNamedEffects[] = {
     {"50b67be4-15f3-4230-9147-deb8d6a47248", 0x7E520CBC},  // WaveAuxMuzzle
     {"a0d802cb-6516-4a42-9c1d-7614e6122ca9", 0x2BC80C63},  // WaveCharge
     {"59dba49a-777f-42eb-ab47-c5dd91a28d3e", 0x0237C838},  // WaveXfer
+    // By where the room scripts place it: a ROOM's EffectMP1 naming only this
+    // effect, at the spot (under 0.1 m) of a retail object naming only this
+    // PART, in every such placement, with no other fresh effect or carried-over
+    // one claiming the PART. The same rule pairs all 97 such placements of the
+    // carried-over effects with their own id. The comment is the first room
+    // (+ how many more).
+    {"0040cf36-fd79-4264-8ad9-4bbdd7b5f18e", 0xABEA897E},  // 20_reflecting_pool
+    {"02707a2b-9131-4f9c-917e-fb3f9f05db1c", 0x424FFEF7},  // 08a_IntroUnderwater_ventshaft +1
+    {"02d03932-c135-4244-b1c1-50f34488ad25", 0x371A7EEE},  // 00a_over_hall +7
+    {"02db3cbc-dbfc-4131-821d-6f96b4a9b506", 0xD81CFC9E},  // 00F_intro_begin
+    {"034bd14d-2bc9-481f-a619-f79a584e6f92", 0x7A95281E},  // 03a_crater
+    {"06ee7e7c-663b-43be-80e5-520e15ee2976", 0x77B8A73B},  // 0p_connect_tunnel
+    {"0a450035-0b32-4ff9-a376-bd7e0345aa1b", 0xCD494C73},  // 18_Ice_Gravity_Chamber
+    {"0a6f8735-0847-455f-8365-4fa6fadddf7d", 0xA11929CF},  // 11_Ice_Observatory
+    {"0b66c940-0645-410c-b505-c168ac2ede27", 0x9271FCB8},  // 02_Intro_Elevator
+    {"0b97f917-0308-4d9c-87c0-429c7e2f2b2f", 0x02787FD6},  // 05_Zoo
+    {"0dae37f3-9223-4187-b932-fdd74d92cf46", 0xFDB2830E},  // 14_tl_base01
+    {"0e2e3afe-eab2-4739-a82b-636678e996ee", 0xD108687B},  // 12_Mines_eliteboss
+    {"0edb2029-b9df-4522-a94c-8c5701d4ae5c", 0xCEE7ADCA},  // 00F_intro_begin
+    {"0ff6151e-7272-42b4-8c5e-c5018cc6e44c", 0x89F18B4D},  // 11_Ice_Observatory
+    {"115bd210-face-4399-a19a-476dd5ce4d43", 0x82396733},  // 05_IntroUnderwaterZoo
+    {"13a0b617-347d-42c3-8009-8bcb6767bf83", 0x40B4B8AC},  // 07_Over_Stonehenge
+    {"16dc475c-d50c-42c5-8a4b-20e636a4e980", 0xDBF12204},  // 11_Ice_Observatory
+    {"17dd34bd-3af8-4e5d-be0b-7fae6f94c4d6", 0x8804A9BF},  // 05_Mines_forcefields
+    {"1afc0d7c-babe-4bdb-b4cd-2052ccc4fb14", 0xA7C92DE0},  // 07_Over_Stonehenge
+    {"2077f968-bffe-432c-bcca-6e877fdaf021", 0x50DD1328},  // 22_flaahgraChamber
+    {"20cf1159-28b8-4221-8cf7-408a5a8d992f", 0xD89F3CEB},  // 13_mines_vertical_ascent
+    {"2254aba7-3bfc-4b48-ae1e-e81e97c6492c", 0x6FC6B324},  // 00b_mines_connect +9
+    {"22b3f678-35be-4214-9dd0-ab3d5dff147b", 0x4DDF468C},  // 06_Ice_Temple
+    {"23c2978d-1961-498c-bfa5-63c8efaffb99", 0x0FBD4196},  // 07_Over_Stonehenge
+    {"25a15301-1cd7-4660-bd07-327810cf6135", 0x13F23AB1},  // 00a_over_hall +7
+    {"2710c664-4fbc-4358-bd8a-41824297f55c", 0xA8B1CCA8},  // 00f_ice_connect +1
+    {"27ba22cf-87c7-4904-bab7-dae70760ff44", 0x5D664CA2},  // 11_Ice_Observatory
+    {"291f812e-7a38-41e7-a277-eea20be5a5c3", 0xA369D3DB},  // 07_Over_Stonehenge
+    {"29a7c944-95c8-4137-b63f-c3955d77c27e", 0x1D985C2C},  // 22_flaahgraChamber
+    {"2c5365a6-7dc4-40b2-9729-2f7742998a81", 0x930DD780},  // 22_flaahgraChamber
+    {"2ef9a569-58d8-422a-b8b1-37e184de3f50", 0x371C563C},  // 00i_Mines_connect
+    {"309a173d-f865-4487-b421-c9e64edec577", 0xB4A658C3},  // 08_Mines
+    {"309fc565-2f71-414a-83c6-98833253b563", 0x07F04ED5},  // 00l_over_hall
+    {"335247ff-2780-4bf0-ad60-2bdc0f609c62", 0x5A5E6C8F},  // 12_Mines_eliteboss
+    {"3537fd56-c4d4-4f23-ac77-3d642c52f836", 0x757EDCE9},  // 05_Over_xrayroom +2
+    {"39f50802-ef90-4f7a-a9c5-adf3be6bb791", 0x06B3F06E},  // 01_intro_hanger_connect
+    {"39f5c872-0e93-4a66-a847-f8465f8af571", 0x4693F099},  // 02_Intro_Elevator
+    {"3a33588c-6b7f-453b-8e4a-82bca75f6de0", 0x251B04F4},  // 0v_connect_tunnel +4
+    {"3bece9e5-c319-4e01-a28e-a38fee7777b8", 0xB0599D9B},  // 11_Ice_Observatory
+    {"3c93322a-845d-49b5-bb15-650bbbaa2e04", 0x450DADFF},  // 00_Mines_Mapstation +2
+    {"3f7ae5bd-d9d1-4c01-bca6-4d31b3937538", 0x70043FD4},  // 3_monkey_lower
+    {"4044ff75-0097-4368-b240-8a3feb2f5af0", 0xE4CA5AE7},  // 00k_ice_connect +7
+    {"41344111-1037-4af3-8c4e-1e137949029a", 0x1ECD34A2},  // 00i_ice_connect +10
+    {"4365ca0c-3dd9-4267-99ca-321dc8ee6a3b", 0x2CD29D26},  // 00_Mines_Savestation_D
+    {"445c8f18-92d2-449e-86c4-758dfba2b8fe", 0x409749DB},  // 17_ChozoBowling
+    {"457769f5-1ac1-4cbe-b111-a4df50009f72", 0xFDBD7828},  // 17_Ice_Cave_B
+    {"4abea211-408f-4fc3-b1fa-2984f60aecdb", 0x30F46D12},  // 03b_Crater
+    {"4b2dc620-b765-4430-88ea-af0386f0e43b", 0xCEFB49E0},  // 07_Over_Stonehenge
+    {"4c1a5053-e91b-4e03-b4ab-1c5b093ebf6c", 0x186971C3},  // 22_flaahgraChamber
+    {"4ded839b-6e75-48e8-9218-91af6c230a64", 0x387E2199},  // 03f_Crater
+    {"52394d38-35a2-44a5-97ad-995f1b27358b", 0x28016E5F},  // 07_Over_Stonehenge
+    {"54da4609-8d65-4132-84e5-0b7fea7f0b30", 0xD16D45BB},  // 12_Mines_eliteboss
+    {"56335892-39fe-4573-a81a-9241e7d087ab", 0xC8A42628},  // 00g_ice_connect +8
+    {"57893869-e39b-43c8-b86d-e2e419030fba", 0x930B6C5F},  // 5_bathhall
+    {"57bc7e0d-b2cf-43df-8fa2-b69c98d07b8c", 0xDED6D5A4},  // 00g_over_hall
+    {"5811ed93-8a30-4769-ad84-0eaf8e496361", 0xA28210DF},  // 14_tl_base01
+    {"59bb837a-7790-4ff1-9aeb-bd39f60abd2e", 0xDF5B7160},  // 0p_connect_tunnel
+    {"5a61ec58-6e8f-48b3-b3e1-7ca6c0e951b6", 0x621D84AC},  // 12_Mines_eliteboss
+    {"5b985124-2eff-4ef5-9f11-d5999646f0ae", 0x2230069F},  // 00c_lava_connect
+    {"5cdf8300-04fe-4648-9a81-d64a373e8671", 0xE5DDD684},  // 16_furnaces
+    {"5fb0da50-c693-41eb-8b33-00ef4ec8638b", 0xB2C0B71F},  // 19_Ice_Thardus
+    {"600d7a0c-0719-4de5-99c8-59f8d28605e2", 0x37524FE9},  // 04_Ice_Boost_canyon +3
+    {"60985973-2d34-42f2-8c43-2d57460e818a", 0xBD3DC521},  // 01_Over_mainplaza
+    {"60dcd6c3-adf1-42c8-8ea4-7fd3934ffcc4", 0x185DD7C5},  // 00b_IntroUnderwater_connect
+    {"628b3331-04f8-4da9-a533-3715c6282a70", 0x7909612F},  // 00f_over_hall +10
+    {"65e71f3a-0327-4bb2-85b6-ed993f742791", 0x597475AD},  // 0p_connect_tunnel
+    {"6916272d-4272-4ec4-a0b2-a4f9b3160ef6", 0x3A617BEB},  // 00b_Lava_Connect +3
+    {"69c55769-8353-4afa-adfb-d5b9f9566e1b", 0x1CD31D99},  // 00F_intro_begin
+    {"6a264e33-992c-46b7-94e2-112a1696a817", 0x1D93BC95},  // 10_Over_1Alavaarea
+    {"6c7d0204-4456-42ce-a50a-1da0b06876d4", 0xA2D977BF},  // 07_Over_Stonehenge
+    {"6ed2e1b1-03ba-48a5-9345-06636cea35a6", 0x4E63C759},  // 0p_connect_tunnel
+    {"73c163b7-2cbf-4053-8a31-7e36655eda47", 0x898E04A0},  // 22_flaahgraChamber
+    {"74065695-c63d-4021-baf3-123ea35b815c", 0x50A5876B},  // 19_hivetotem
+    {"77224f08-a7be-42df-b1f6-38425aeeabe5", 0xB58775FC},  // 07_Over_Stonehenge
+    {"7790bc6d-7532-42a3-be5e-9711f34a1f99", 0x76B916D1},  // 00e_IntroUnderwater_connect
+    {"7a85a79f-a832-4a4d-80e4-051545fa7624", 0xBC84152B},  // 1a_morphball_shrine
+    {"7b5059bc-5b2f-4d3c-bb2c-c44a07eaf97e", 0x47E5939E},  // 07_Over_Stonehenge
+    {"7d6e4416-66fd-40ad-ba7c-9649cf725503", 0x4619C3F1},  // 07_Over_Stonehenge
+    {"7f6c0fc0-adf5-4f37-b6ca-5ffa6731ed42", 0xD74B6FD2},  // 11_Ice_Observatory
+    {"7fefddd7-fc42-49cb-b6a8-bc9243e45ae9", 0xDE1E2414},  // 03_over_pickup
+    {"7ff707bd-0170-4d03-b140-7cc87321ffe8", 0x1B888B61},  // 18_halfpipe
+    {"83e2824b-b4cc-4f42-a435-a601d828a3e5", 0x3DF9F7BE},  // 08_Ice_Ridley
+    {"8c43cd20-3484-435d-82be-f1efc0fc7d42", 0xB4BE74A6},  // 00d_Intro_connect
+    {"8c5a52c5-0317-44c5-96e3-b2ab015faf2a", 0x3AE271F4},  // 03f_Crater
+    {"8d4865f1-bb83-4520-a7d8-da09dee766b1", 0x6A582E2B},  // 13_Over_burningeffigy
+    {"8ff1284e-723b-4c98-90ec-6220a713ddc9", 0x205B13E3},  // 02_Intro_Elevator
+    {"9251aa29-ab9b-466a-9a3f-03726d09c038", 0x9602A23A},  // 07_Mines_electric
+    {"9317cb5b-a425-4b2a-b6eb-6f1a5891a4dd", 0xCCABC2EC},  // 3_monkey_lower
+    {"95964af3-68cc-4c95-adc8-4728a3a018ee", 0x53861B29},  // 07_Over_Stonehenge
+    {"96a7a567-0eb5-43da-b63a-cb007b5d0af2", 0xBD5CF12E},  // 05_Mines_forcefields
+    {"97a7ee62-75ea-4791-b0b1-110227d04092", 0xC0C82ED0},  // 07_Over_Stonehenge
+    {"98f103c6-926c-42c3-a766-9ebc65bf79c2", 0x4DD133C8},  // 07_Over_Stonehenge
+    {"99bcbed9-5c9b-4317-9623-33eee5d5a683", 0x549475DE},  // 12_Mines_eliteboss
+    {"9a15707d-25ba-424b-a6b1-04a52616986e", 0xE93B85DC},  // 07_Over_Stonehenge
+    {"9b0876c3-317b-480d-8672-998785401aa0", 0x338F4B8A},  // 04_Intro_Specimen_Chamber
+    {"9dd83fc0-8563-42a0-97cf-e5790fce54d1", 0x042EADAC},  // 11_Ice_Observatory
+    {"9f3c5719-2e4d-4aa4-bf0b-ca51fd77d50f", 0x83A1450F},  // 00d_Intro_connect
+    {"a178f834-68b9-4285-8fb2-73cb172319f0", 0x85DBF2BC},  // 0p_connect_tunnel
+    {"a1a0b5e0-f612-459d-bb64-5144c869ab25", 0x6E238E65},  // 03a_crater
+    {"a54ddf94-8f35-48c1-bafa-87ca737636c9", 0x00FB9A4D},  // 07_Over_Stonehenge
+    {"a5b20f7a-8fa5-40c1-aa41-3ec2a4b688a9", 0x934BAFB8},  // 04_Intro_Specimen_Chamber
+    {"a8475a7e-1e0b-4800-9d2c-91731c855dd4", 0xB15B2B5E},  // 07_Over_Stonehenge
+    {"a8857d04-09f1-4532-9eeb-5e957355f31d", 0xFA41CC07},  // 05_Mines_forcefields
+    {"a926c501-3277-4f76-b0a6-11d4264aa0d5", 0x59BA29DB},  // 07_Mines_electric
+    {"ab2037b6-c0ac-4dfb-8bea-98c8b6910a07", 0x87817423},  // 5_bathhall
+    {"ab210e1b-9617-4fd6-9c8c-98efb66568c1", 0xABAB33BA},  // 07_Over_Stonehenge
+    {"aca74c4a-dd5e-4fe3-89c1-7de257330ee0", 0x277CABEC},  // 12_Mines_eliteboss
+    {"af780373-de26-4349-8c27-dc49df6a9f10", 0xDE06865F},  // 05_Zoo
+    {"b2b70ba4-0585-4cc9-a2f4-b737cb81b02a", 0xCB271679},  // 00b_Intro_Connect
+    {"b3c9de27-f456-4de9-806f-3bf74a99eca7", 0x715DBDF0},  // 02_Intro_Epodroom
+    {"b570f388-7be8-4baa-bac4-88771b2ba7f9", 0xA4F230FD},  // 00o_over_hall
+    {"b8c3841e-b81b-427a-9b57-f7f970b48c2d", 0xD2967C1D},  // 09_Ice_Lobby
+    {"b8cc7d68-1a15-472b-8942-ef68e2a392ef", 0x73483913},  // 07_Intro_Reactor
+    {"b9ae3073-22db-4b17-aabe-a660ba6a311b", 0x8214BFCD},  // 04_Intro_Specimen_Chamber
+    {"b9c4fbdb-d7b4-4dd9-a3db-13aaa2401c91", 0x8964D1BA},  // 12_Mines_eliteboss
+    {"bb850e5d-5d64-4069-ba73-cdd0631054a4", 0x96993798},  // 07_Over_Stonehenge
+    {"bb8d240b-e688-48ac-a17c-cc4b4b87240d", 0x4F5FC020},  // 02_Intro_Elevator
+    {"be62630f-0d27-49d8-b9a0-3abce40b7f6c", 0x9CE89362},  // 11_Ice_Observatory
+    {"c457accd-60a1-4d34-9304-e905b3ca10ef", 0x6097F60F},  // 11_Ice_Observatory
+    {"c618ce1f-9579-486c-9f5f-73d9d00d7406", 0x531390D6},  // 0q_connect_tunnel
+    {"c65d8956-5d6b-4064-9e62-656d43c5c767", 0x3FEEF398},  // 12_Mines_eliteboss
+    {"ca64283e-7b49-47d6-892d-49fcabee3085", 0x46B0CE60},  // 00g_over_hall
+    {"cce706c7-4299-4791-974e-4bdc3ed2539f", 0x0C0B11AC},  // 12_Mines_eliteboss
+    {"cd873798-b325-4394-a574-caee0bdaeadd", 0x9C1920EF},  // 08_Ice_Ridley
+    {"cebbb395-8928-48c4-aeca-c5e9fea5abc5", 0x2509A992},  // 04_Intro_Specimen_Chamber +2
+    {"cef0b80d-20b2-4208-877b-03cdf5153b64", 0xA5ED941C},  // 1a_morphball_shrine
+    {"cf619c68-33fb-4a55-aafc-4e5fda58b40c", 0xB372929B},  // 05_Over_xrayroom
+    {"d1d6d9d2-cf72-4b28-82c4-22c2945789da", 0x2784DC47},  // 22_flaahgraChamber
+    {"d2a93799-1173-44fe-a879-2d9895102097", 0x9644A054},  // 00d_Intro_connect
+    {"d46bcc2c-6a03-4dd7-8222-f1f1f28c1fc5", 0x5AECC3E3},  // 05_Zoo
+    {"d493f9f8-71be-4828-8b56-04a1c81cc22e", 0xA8439D72},  // 12_Ice_Research_B
+    {"d5f23771-8d84-4aa3-ba0c-7467d3bd7436", 0xAF33BBB6},  // 3_monkey_upper
+    {"d7a66600-615d-4b12-afbc-6e2f460249dd", 0x980D6664},  // 08_Mines
+    {"d8b8986c-b46f-4ab9-9fed-9ebdb54c1f98", 0x9EE17789},  // 14_tl_base01
+    {"d906ed85-4164-4e35-a8bb-069b806b15a9", 0xC88122F7},  // 07_Over_Stonehenge +5
+    {"e2cee018-55b4-4d63-a593-4530a82be1cc", 0x70DB5FE4},  // 04_Ice_Boost_canyon +1
+    {"e2da9a12-f6d7-40b6-9fd0-9a456545cd2e", 0x168D4892},  // 07_Mines_electric
+    {"e4a7db3e-1eb5-4a32-bbcd-d71b9b3bab6a", 0x5E4647AB},  // 00k_ice_connect +7
+    {"ea4d62a3-bbc5-425f-8996-c0eb9ad220e0", 0x61F0823E},  // 0c_connect_tunnel +8
+    {"ea839ff8-3cac-418e-bf54-198792e7d250", 0x701B0D4E},  // 15_energycore
+    {"eb806cff-4a11-4f21-88b2-ea96888c144f", 0xCD322DD4},  // 00g_ice_connect +8
+    {"ecaa1a14-aa8f-49b1-afac-476a58d5390c", 0x0A7DFE25},  // 22_flaahgraChamber
+    {"ecc9240a-da0d-409a-8d47-d39bf0d8a283", 0xACC3441A},  // 00F_intro_begin
+    {"eea313db-233d-4305-9462-b9c7745debf4", 0xD9B81D49},  // 22_flaahgraChamber
+    {"eea883f6-056c-41f9-8615-a3bffc8269a9", 0xD9BA0365},  // 5_bathhall
+    {"f2ca3a48-8ddd-498f-bb2a-46cc08da54e7", 0xFA6EC61A},  // 12_Mines_eliteboss
+    {"f66294d5-6b7d-40a8-aee4-74c24ce6884f", 0xA35E94DA},  // 12_Mines_eliteboss
+    {"fc6996fc-6d6a-4f84-bb98-ec28e9909c1b", 0x807437B3},  // 07_Over_Stonehenge
+    {"fdaff8f6-b669-4506-8838-286e7298f7cb", 0x5CF7E943},  // 0p_connect_tunnel
+    {"fec1dea9-b8c3-4911-8579-1a38413c537a", 0x877E8A36},  // 15_energycore
 };
 
-// The retail PART an effect replaces: the id it carried over, else its name's.
+// The retail PART an effect replaces: the id it carried over, else its match's.
 std::optional<uint32_t> RetailEffect(const EffectGuid& id) {
   if (const std::optional<uint32_t> retail = EffectRetailId(Swap(id))) {
     return retail;
   }
   const std::string text = EffectGuidString(Swap(id));
-  for (const NamedEffect& named : kNamedEffects) {
-    if (text == named.id) {
-      return named.retail;
+  for (const MatchedEffect& matched : kMatchedEffects) {
+    if (text == matched.id) {
+      return matched.retail;
     }
   }
   return std::nullopt;
