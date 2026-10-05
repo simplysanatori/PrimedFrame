@@ -19,7 +19,7 @@ class CVector3f;
 // aurora's water shader (aurora/water.hpp). Lava is a CMDL whose material is PBR kind 6.
 //
 // The file is little endian:
-//   'MPRL', u32 version (3), u32 surfaces
+//   'MPRL', u32 version (4), u32 surfaces
 //   surface: u32 type (0 water, 1 poison, 2 lava), u32 CMDL id (lava; 0 otherwise),
 //            f32 transform[12] (rows of mesh -> area; a water mesh is in Remastered's
 //            model space, so this includes the (x, y, z) -> (-x, z, y) axis change)
@@ -29,7 +29,8 @@ class CVector3f;
 //     f32 waves[2][5] (SLdrWaterWaveParams: angle in degrees, +4, +8, +0xC, +0x10)
 //     f32 tint[4], normalDir[2], normalSpeed (522ABD8A), normalScale (D4483C7E),
 //         fogColor[4], fogDistance, material[5] (SLdrWaterMaterialData +0xF0..+0x100),
-//         rain[10] (RainDropRipple +0x10..+0x34), flow[10] (Flow +0x38..+0x5C)
+//         rain[10] (RainDropRipple +0x10..+0x34), flow[10] (Flow +0x38..+0x5C),
+//         xrayOpacity (its WaterMP1's 13264102, CScriptWaterMP1+0x548; H-opacity.md)
 //     u32 normalMap, flowMap, rainNoise (TXTR ids, 0 for none; linear data),
 //         u32 rainNoiseWidth, rainNoiseHeight (the source texture's, not the TXTR's)
 //     vertex[vertices]: f32 pos[3], f32 uv[4] (TEXCOORD_0), u8 color[4] (COLOR, RGBA)
@@ -60,6 +61,7 @@ struct Water {
   float material[5];
   float rain[10];
   float flow[10];
+  float xrayOpacity;
   uint32_t normalMap, flowMap, rainNoise;
   uint32_t rainNoiseWidth, rainNoiseHeight;
   std::vector<Vertex> vertices;

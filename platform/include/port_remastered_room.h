@@ -44,6 +44,7 @@ struct RoomLiquid {
   float material[5] = {5.0f, 0.1f, 0.25f, 1.0f, 0.25f};
   float rain[10] = {0.75f, 1.0f, 0.5f, 0.8f, 0.1f, 1.0f, 0.75f, 1.5f, 0.5f, 1.0f};
   float flow[10] = {0.25f, 10.0f, 0.2f, 5.0f, 1.0f, 0.5f, 60.0f, -1.0f, -1.0f, -1.0f};
+  float xrayOpacity = 1.0f;  // the entity's WaterMP1 (13264102), not the render volume's
   std::array<uint8_t, 16> normalMap{}, flowMap{}, rainNoise{};  // TXTRs, all zero for none
 };
 

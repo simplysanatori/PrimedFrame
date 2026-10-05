@@ -182,6 +182,9 @@ constexpr uint32_t kPropWaterFluid[3] = {0xce78300b, 0x18706e5c, 0x6e9e14b9};  /
 // SLdrWaterMP1+0x50: the camera filter colour (CScriptWaterMP1+0x520) that
 // CCameraManagerMP1::UpdateFilters multiplies the screen by while the camera is inside.
 constexpr uint32_t kPropWaterFilterColor = 0xcc1af173;
+// SLdrWaterMP1+0x18C (CScriptWaterMP1+0x548): the surface's tint alpha is multiplied by it in
+// the X-Ray visor (build/mpr/water/H-opacity.md).
+constexpr uint32_t kPropWaterXrayOpacity = 0x13264102;
 constexpr uint32_t kPropWaterModel = 0x736e5890;
 constexpr uint32_t kPropLavaModel = 0xcaf8e8c3;
 constexpr uint32_t kPropWaterLook = 0xd1e9d29d;
@@ -3713,6 +3716,7 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
   // What each entity's retail water object is filled with, and every water object's camera
   // filter colour (CScriptWaterMP1+0x520, build/mpr/water/E-under.md Q1) where it stands.
   std::map<int, int> fluids;
+  std::map<int, float> xrayOpacity;
   std::vector<uint8_t> filters;
   uint32_t filterCount = 0;
   for (const Component* c : r.room.Of(kWaterMP1)) {
@@ -3723,6 +3727,9 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
       type = fluid == 10 ? RoomLiquid::kPoison : fluid == 11 ? RoomLiquid::kLava : RoomLiquid::kWater;
     }
     fluids[c->entity] = type;
+    if (r.room.Nested(*c, {kPropWaterXrayOpacity}, s) && s.size >= 4) {
+      xrayOpacity[c->entity] = LeFloat(r.room.Bytes(s));
+    }
     Vec3 pos, rot, scale;
     if (r.room.Xform(*c, pos, rot, scale)) {
       for (int row = 0; row < 3; ++row) {
@@ -3798,6 +3805,9 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
           value({kPropWaterLook, kPropWaterFlow, kPropWaterFlowValue[i]}, &liquid.flow[i], 1);
         }
         texture({kPropWaterLook, kPropWaterFlow, kPropWaterFlowMap}, liquid.flowMap);
+        if (const auto x = xrayOpacity.find(c->entity); x != xrayOpacity.end()) {
+          liquid.xrayOpacity = x->second;
+        }
         for (int i = 0; i < 5; ++i) {
           value({kPropWaterLook, kPropWaterMaterial[i]}, &liquid.material[i], 1);
         }
@@ -3871,6 +3881,7 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
         floats(liquid.material, 5);
         floats(liquid.rain, 10);
         floats(liquid.flow, 10);
+        floats(&liquid.xrayOpacity, 1);
         PutLe32(body, assets.normalMap);
         PutLe32(body, assets.flowMap);
         PutLe32(body, assets.rainNoise);
@@ -3893,7 +3904,7 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
   }
   std::vector<uint8_t> out;
   PutLe32(out, 0x4C52504D);  // 'MPRL'
-  PutLe32(out, 3);
+  PutLe32(out, 4);
   PutLe32(out, count);
   out.insert(out.end(), body.begin(), body.end());
   PutLe32(out, filterCount);

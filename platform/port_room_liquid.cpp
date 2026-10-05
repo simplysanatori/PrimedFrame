@@ -20,6 +20,7 @@
 #include "MetroidPrime/CActorLights.hpp"
 #include "MetroidPrime/CGameArea.hpp"
 #include "MetroidPrime/CModelData.hpp"
+#include "MetroidPrime/Player/CPlayerState.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetaRender/CCubeRenderer.hpp"
 
@@ -39,12 +40,12 @@ namespace PortRoomLiquid {
 namespace {
 
 constexpr uint32_t kMagic = 0x4C52504D; // 'MPRL'
-constexpr uint32_t kVersion = 3;
+constexpr uint32_t kVersion = 4;
 constexpr size_t kHeaderBytes = 12;
 constexpr size_t kSurfaceBytes = 8 + 12 * 4;
 // The Water block before its vertices: 2 counts, the bounds, the feature bytes, then
-// 48 floats and 5 ids.
-constexpr size_t kWaterBytes = 8 + 24 + 12 + 48 * 4 + 5 * 4;
+// 49 floats and 5 ids.
+constexpr size_t kWaterBytes = 8 + 24 + 12 + 49 * 4 + 5 * 4;
 constexpr size_t kVertexBytes = 32;
 constexpr size_t kFilterBytes = 7 * 4;
 // How far a surface may be from the water object it is drawn for.
@@ -240,7 +241,7 @@ const GXTexObj* Texture(const std::unique_ptr< TCachedToken< CTexture > >& token
 // A WaterRenderVolume (CWaterSceneNode): its uniforms as water::SetupSurfaceParamsData and
 // SetupWaveSim fill them, its cull and pixel shader as PreRender picks them, and the room's
 // light as CCubeModel gives it to a PBR model (build/mpr/water/B-cpu.md, G-rainflags.md).
-bool DrawWater(Placed& item, uint32_t mrea, const CTransform4f& xf) {
+bool DrawWater(Placed& item, const CStateManager& mgr, uint32_t mrea, const CTransform4f& xf) {
   const Water& w = item.water;
   const uint8_t* const b = w.features;
   // CWaterSceneNode's flags from the loader's feature bytes; the node is made only with a
@@ -285,6 +286,11 @@ bool DrawWater(Placed& item, uint32_t mrea, const CTransform4f& xf) {
   S[1][2] = w.normalSpeed;
   S[1][3] = 1.f - mat[1];
   std::memcpy(S[2], w.tint, sizeof(S[2]));
+  // CScriptWaterMP1::Render (0xd19404) sets the opacity multiplier in the X-Ray visor and resets
+  // it to 1 otherwise; PushTransferData (0x3998b8) multiplies the tint's alpha by it.
+  if (mgr.GetPlayerState()->GetActiveVisor(mgr) == CPlayerState::kPV_XRay) {
+    S[2][3] *= w.xrayOpacity;
+  }
   S[3][0] = mat[0];
   S[3][1] = mat[3];
   S[3][2] = 1.f; // the dynamics simulation's, off
@@ -522,7 +528,7 @@ bool Parse(const std::vector< uint8_t >& data, std::vector< Surface >& out, std:
     finite = finite && ReadFloats(p, &w.waves[0][0], 10) && ReadFloats(p, w.tint, 4) &&
              ReadFloats(p, w.normalDir, 2) && ReadFloats(p, &w.normalSpeed, 1) && ReadFloats(p, &w.normalScale, 1) &&
              ReadFloats(p, w.fogColor, 4) && ReadFloats(p, &w.fogDistance, 1) && ReadFloats(p, w.material, 5) &&
-             ReadFloats(p, w.rain, 10) && ReadFloats(p, w.flow, 10);
+             ReadFloats(p, w.rain, 10) && ReadFloats(p, w.flow, 10) && ReadFloats(p, &w.xrayOpacity, 1);
     if (!finite) {
       return fail("a water value is not finite");
     }
@@ -638,7 +644,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, uint32_t uid, con
   CTransform4f xf(item.xf);
   const float top = item.type == 2 ? xf.Get23() : (xf * CVector3f(0.f, item.water.boundsMax[1], 0.f)).GetZ();
   xf.AddTranslationZ(surfaceZ - top);
-  if (item.type == 2 ? !DrawLava(item, mgr, gameArea, mrea, xf) : !DrawWater(item, mrea, xf)) {
+  if (item.type == 2 ? !DrawLava(item, mgr, gameArea, mrea, xf) : !DrawWater(item, mgr, mrea, xf)) {
     return false;
   }
   ++sDrawn;
