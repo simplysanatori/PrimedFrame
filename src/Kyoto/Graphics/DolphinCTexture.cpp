@@ -203,8 +203,12 @@ bool CTexture::PortGrowHeight(int extraRows) {
   CFrameDelayedKiller::ScheduleDeletion(CFrameDelayedKiller::kWhichFrame_NextFrame, old);
   mARAMToken.PostConstruct(buf, newSize, 1);
   mHeight = newHeight;
+  const bool wasCounted = mCounted;
   UncountMemory();
   mMemoryAllocated = newSize;
+  if (wasCounted) {
+    CountMemory();
+  }
   InitTextureObjects();
   mPortTexelsChanged = true;
   DCFlushRange(buf, OSRoundUp32B(newSize));
