@@ -838,6 +838,10 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
       used[v] = true;
     }
   }
+  // Before the slots resolve: the texture cache and the recorder belong to the FIFO thread, and a
+  // texture created while it is between sealing a pass and starting the next one aborts the frame.
+  // The GX state the draw sees is also the one after everything recorded so far.
+  gx::fifo::drain();
   const Texture none{};
   uint32_t ids[SlotCount];
   bool ready = true;
@@ -849,8 +853,6 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   }
   const auto tex = [&](uint32_t i) -> const Texture& { return used[i] ? desc.tex[i] : none; };
 
-  // The GX state the draw sees is the one after everything recorded so far.
-  gx::fifo::drain();
   const auto& gx = gx::g_gxState;
   Uniform u{};
   Mat4x4<float> proj = gx.proj;

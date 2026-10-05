@@ -697,6 +697,10 @@ void draw(const DrawDesc& desc, const Vertex* verts, uint32_t vertexCount, const
     return;
   }
   evict_idle();
+  // Before the textures resolve: the texture cache and the recorder belong to the FIFO thread (see
+  // vfx.cpp draw_prims). The GX state the draw sees, and the scene it snapshots, are also those
+  // after everything recorded so far.
+  gx::fifo::drain();
   bool ok = true;
   const uint32_t normalId = register_texture(desc.normalMap, ok);
   const uint32_t sourceFlowId = register_texture(desc.sourceFlow, ok);
@@ -705,9 +709,6 @@ void draw(const DrawDesc& desc, const Vertex* verts, uint32_t vertexCount, const
   if (!ok) {
     return;
   }
-  // The GX state the draw sees, and the scene it snapshots, are those after everything
-  // recorded so far.
-  gx::fifo::drain();
   // The scene so far, to blend against and to read the depth behind the surface from.
   ResolvedTargets targets;
   if (!resolve_pass(ResolveDesc{.color = true, .depth = true}, targets) || !targets.color) {
