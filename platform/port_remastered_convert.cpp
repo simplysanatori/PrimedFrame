@@ -592,7 +592,9 @@ struct RemMaterial {
   bool tinted = false;     // its vertices carry a colour
   bool unlit = false;      // a screen: its own colour and glow, no lighting
   bool gunRamp = false;    // the arm cannon's stripes: its ICAN ramp is read at the lit end
+  bool glowLinear = false; // inverse-exposed: the emissive strength is drawn as is, uncompressed
   bool mask = false;       // the base map's alpha masks the glow and is no opacity
+  bool maskSquared = false; // ... squared (USE_DIFFUSE_AS_INCAN_MASK): kept squared in the map
   bool shell = false;      // a matcap shell: keeps a blended retail material's TEV
   double height = 0.0;     // above 0: the threshold of a height-blended alpha
   // A second layer (base, MR, normal) the vertex alpha blends over the first
@@ -1102,7 +1104,9 @@ struct Converter::State {
       // blotch and the normals would tilt, so the normal map stays RGBA8.
       // A cutout's base is the exception: its alpha is the shape.
       // A blended surface's base keeps its whole alpha, which is its opacity.
-      alpha = k == kNormal || raw ? "rgba" : k == kBase && (alpha == "punch" || alpha == "blend" || alpha == "mask") ? alpha : "none";
+      alpha = k == kNormal || raw ? "rgba"
+              : k == kBase && (alpha == "punch" || alpha == "blend" || alpha == "mask" || alpha == "mask2") ? alpha
+                                                                                                             : "none";
       cap = kPbrMax[k];
       if (src) {
         ncap = opt.nativeMax > 0 ? std::min(kPbrNative[k], opt.nativeMax) : kPbrNative[k];
@@ -1163,14 +1167,16 @@ struct Converter::State {
         img.rgba[i * 4 + 3] = 255;
       }
     }
-    if (alpha == "blend") {
-      // Remastered's shader squares the base map's alpha into the opacity.
+    if (alpha == "blend" || alpha == "mask2") {
+      // Remastered's shader squares the base map's alpha into the opacity, or
+      // into the glow mask ("mask2", the port's mask being the alpha as is).
       for (size_t i = 0; i < count; ++i) {
         const unsigned a = img.rgba[i * 4 + 3];
         img.rgba[i * 4 + 3] = uint8_t((a * a + 127) / 255);
       }
     }
-    if (isBase && !raw && alpha != "punch" && alpha != "blend" && alpha != "mask" && FlatBase(img)) {
+    const bool keepAlpha = alpha == "punch" || alpha == "blend" || alpha == "mask" || alpha == "mask2";
+    if (isBase && !raw && !keepAlpha && FlatBase(img)) {
       // On the TEV path the retail texture is kept, which beats writing a flat
       // grey over a textured model. On the PBR path a flat albedo is fine: the
       // normal and MR maps carry the surface, so the material gets a solid base.
@@ -1230,7 +1236,7 @@ struct Converter::State {
     if (ncap) {
       const int w = std::max(8, std::min(ncap, NextPow2(img.width)));
       const int h = std::max(8, std::min(ncap, NextPow2(img.height)));
-      if (k == kBase && !raw && alpha != "punch" && alpha != "blend" && alpha != "mask") {
+      if (k == kBase && !raw && !keepAlpha) {
         for (size_t i = 0; i < count; ++i) {
           img.rgba[i * 4 + 3] = 255;  // alpha "none", as the stub's CMPR
         }
@@ -1303,22 +1309,29 @@ constexpr uint32_t kShaderFrozenShell = 0x2FC554A2;
 // opaque, so the vote put it on an opaque retail material, a solid white blob;
 // it keeps retail's blended dome instead.
 constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
-// The shaders compiled with USE_INVERSEEXPOSURE (MFC4; the MTRL's flag entry carries the
-// define, no material sets the bit): heads, eyes, suits, pirates, creatures, the
-// Metroid's body (b6268b63). They multiply ICAN x ICNC x INCI by the global system
-// values' inverse tonemap exposure, so the glow shows at that strength whatever the
-// room's exposure, and the maps are authored dim for it (build/mpr/mtrl-tr/
-// {b6268b63,ae819893}/NOTES.md). Sorted for binary_search.
+// The shaders whose fragment code multiplies ICAN x ICNC x INCI by the global system
+// values' inverse tonemap exposure (c4[0].z; USE_INVERSEEXPOSURE, MFC4, which no
+// material sets as a bit): heads, eyes, suits, pirates, creatures, the Metroid's body
+// (b6268b63). The glow shows at that strength whatever the room's exposure, and the
+// maps are authored dim for it (build/mpr/mtrl-tr/{b6268b63,ae819893}/NOTES.md). Read
+// from the code (`re.sh fgrep`, build/mpr/invexp/), not from the pack's strings: 15
+// more packs carry the define and never compile it in. Sorted for binary_search.
 constexpr uint32_t kShaderInverseExposure[] = {
-    0x0A714D54, 0x17DD0A37, 0x1E462D99, 0x2171B894, 0x2835AB3B, 0x2E7A70CC, 0x2F540B27,
-    0x31E53C70, 0x3392509E, 0x36575B1B, 0x3B2CABE4, 0x46CB52A7, 0x47908924, 0x50DB912E,
-    0x5104B751, 0x53AD3B78, 0x5DD900E5, 0x7A8C93DB, 0x7AF0940B, 0x7CF91C66, 0x7D252B40,
-    0x7DFCA4A1, 0x7F4E8756, 0x8393FF04, 0x864B330C, 0x86B48EF1, 0x8A2049D9, 0x8C121639,
-    0x94DC56A5, 0x99370071, 0x9C023C70, 0x9DB310D1, 0x9FD5E413, 0xA6D80F61, 0xAB87F3D5,
-    0xAE819893, 0xB19471C7, 0xB1995727, 0xB6268B63, 0xBA1F6DFE, 0xBEDB1948, 0xC371A140,
-    0xC72CA0EC, 0xC80BC2C1, 0xCB9736B8, 0xCE685F8A, 0xD060EC2C, 0xD2D3ACCA, 0xD6E5D629,
+    0x0A714D54, 0x17DD0A37, 0x1E462D99, 0x2835AB3B, 0x2E7A70CC, 0x2F540B27, 0x31E53C70,
+    0x3392509E, 0x46CB52A7, 0x47908924, 0x50DB912E, 0x5104B751, 0x53AD3B78, 0x7A8C93DB,
+    0x7DFCA4A1, 0x86B48EF1, 0x8A2049D9, 0x8C121639, 0x94DC56A5, 0x99370071, 0x9C023C70,
+    0x9DB310D1, 0x9FD5E413, 0xA6D80F61, 0xAB87F3D5, 0xAE819893, 0xB6268B63, 0xBEDB1948,
+    0xC371A140, 0xC72CA0EC, 0xC80BC2C1, 0xCB9736B8, 0xCE685F8A, 0xD2D3ACCA, 0xD6E5D629,
     0xDD387A18, 0xE1979471, 0xE5CA8683, 0xEC024BAA, 0xEE64B773, 0xEFF78D93, 0xF0302441,
-    0xF4BF626C, 0xF55B835A, 0xFB2DE3A0,
+    0xF55B835A, 0xFB2DE3A0,
+};
+// Of those, the ones compiled with USE_DIFFUSE_AS_INCAN_MASK: the glow is masked by the
+// base map's alpha squared (the pirate trooper's limbs, bedb1948), whatever the
+// material's own 0x200 flag says, and the base alpha is no opacity. Sorted.
+constexpr uint32_t kShaderIncanMaskSquared[] = {
+    0x0A714D54, 0x31E53C70, 0x46CB52A7, 0x53AD3B78, 0x86B48EF1, 0x8A2049D9, 0x99370071,
+    0x9DB310D1, 0xA6D80F61, 0xBEDB1948, 0xC80BC2C1, 0xD6E5D629, 0xE5CA8683, 0xF0302441,
+    0xF55B835A,
 };
 // The arm cannon's body: lit PBR that reflects its REFL cube (a Tallon forest, LDR) along
 // the reflection vector, at the roughness's mip, instead of a room probe. Drawn with the
@@ -1370,7 +1383,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   // is its own colour and glow, a framebuffer one (ice, glass) writes alpha 1
   // and refracts what is behind it (the port does that for glass, kind 8), and
   // the snow shader cuts its edge by height.
-  out.mask = (mat.unk1 & kIncanMaskFlag) != 0;
+  out.maskSquared = std::binary_search(std::begin(kShaderIncanMaskSquared), std::end(kShaderIncanMaskSquared), shader);
+  out.mask = (mat.unk1 & kIncanMaskFlag) != 0 || out.maskSquared;
   out.unlit = mat.types.empty();
   bool lit = false, framebuffer = false;
   for (uint32_t type : mat.types) {
@@ -1545,7 +1559,9 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
                                 std::end(kShaderInverseExposure), shader)) {
     // Inverse-exposed: on screen the glow is ICAN x INCI with no exposure factor, and
     // the maps are dim (the Metroid body's peaks at 33/255), so kPbrEmissive, the
-    // stand-in for a room's exposure, left them unlit in a dark room.
+    // stand-in for a room's exposure, left them unlit in a dark room. Nor is it
+    // compressed: it is already what the screen shows, not an HDR value for bloom.
+    out.glowLinear = true;
     out.emissive = s / kPbrEmissive;
   }
   // The shaders of their own. ICNC is 1 in every lava material and the strength
@@ -1759,7 +1775,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
 // and 'PBR7'.
 // Remastered's emissive strengths are HDR values meant for its bloom, and the
 // port's output is 8-bit with none, so the strength is compressed (square
-// root, capped) around 1, where the map is drawn as converted.
+// root, capped) around 1, where the map is drawn as converted. An inverse-exposed
+// glow (RemMaterial::glowLinear) is not: its strength is what Remastered's screen shows.
 // A ColorUnlit surface drawn by its own rule (mode 8): one whose vertex colour
 // the port keeps and lights nothing with.
 // Remastered's lit PBR shader (60989bc1, USE_TWO_SIDED_MATERIAL) takes s = LITS on a back
@@ -1780,7 +1797,8 @@ bool BackLightScale(const RemMaterial& m) {
 bool ColorUnlitDraw(const RemMaterial& m) { return m.colorUnlit && m.unlit && m.tinted; }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
-  const double e = std::sqrt(std::min(std::max(m.emissive, 0.0), kPbrEmissiveMax));
+  const double e = m.glowLinear ? std::max(m.emissive, 0.0)
+                                : std::sqrt(std::min(std::max(m.emissive, 0.0), kPbrEmissiveMax));
   // ColorUnlit's backlight is its gain, and no backlight at all where drawn otherwise.
   const double k = ColorUnlitDraw(m) ? std::max(m.backlight, 0.0)
                    : m.colorUnlit    ? 0.0
@@ -3003,7 +3021,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // Only a room's own material asks for a cutout: a retail material's alpha
     // test says nothing about what the Remastered map's alpha holds.
     const char* const baseAlpha =
-        glow ? "blend" : !opt.standalone ? (rem.mask ? "mask" : "") : rem.cutout ? "punch" : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
+        glow ? "blend" : !opt.standalone ? (rem.mask ? (rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? "punch" : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
     const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || !IsFx(pm)) &&
                         Get("pbr:base", rt, baseAlpha, opt).has_value();
     if (usePbr) {
