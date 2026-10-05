@@ -6,7 +6,6 @@ body:
     attributes:
       value: |
         Thanks for reporting. The log file is the most useful thing you can attach: please don't skip it.
-        You can write in any language.
 
   - type: dropdown
     id: platform
