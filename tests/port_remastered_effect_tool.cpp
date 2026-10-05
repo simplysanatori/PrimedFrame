@@ -3,7 +3,7 @@
 //   tool dump <file.GENP>            print the parsed effect
 //   tool scan <romfs> [outdir]       parse every GENP in every pak under <romfs>
 //   tool convert <romfs> <retail> <outdir>
-//                                    convert every GENP to retail PART
+//                                    convert every GENP to retail PART/SWHC/ELSC
 //
 // scan reports parse coverage (unique ids and every copy), lists the files that
 // do not parse with the offset and FourCC the parse stopped at, and resolves the
@@ -13,11 +13,15 @@
 //
 // convert writes <outdir>/<id>.PART for every effect that converts (the
 // root under its retail id when it kept one, else under its own id; children
-// as <root>-<child>.PART), and a line per effect of what was left out. With
-// <retail> a folder of the disc's PART files named <8 hex digits>.PART ("-"
-// for none), each converted root that kept its retail id is compared with the
-// disc's PART property by property, and the totals per property are printed:
-// identical, different, only on the disc, only converted.
+// as <root>-<child>.PART, .SWHC or .ELSC), and a line per effect of what was
+// left out. It prints the embedded children found by form and the files
+// written by type. With <retail> a folder of the disc's files named
+// <8 hex digits>.PART, .SWHC and .ELSC ("-" for none), the splitters are run
+// on each of them, and each converted file whose id is a retail one (the root,
+// or a child that kept its retail id) is compared with the disc's file
+// property by property; the totals per property are printed (prefixed with the
+// type for SWHC and ELSC): identical, different, only on the disc, only
+// converted.
 //
 // import runs the import's effect step (port_remastered_effect_import.h) on
 // the paks under <romfs> into <outdir>, as the game's import would with
@@ -84,6 +88,23 @@ private:
 constexpr uint32_t kGenp = PortRemastered::EffectFourCC("GENP");
 constexpr uint32_t kMati = PortRemastered::EffectFourCC("MATI");
 constexpr uint32_t kTxtr = PortRemastered::EffectFourCC("TXTR");
+constexpr uint32_t kPartType = PortRemastered::EffectFourCC("PART");
+
+uint32_t FourCCOf(const std::string& text) {
+  uint32_t fourcc = 0;
+  for (size_t i = 0; i < 4; ++i) {
+    fourcc = fourcc << 8 | uint8_t(i < text.size() ? text[i] : ' ');
+  }
+  return fourcc;
+}
+
+// How many embedded children of each form an effect has, at any depth.
+void CountForms(const PortRemastered::EffectNode& node, std::map<uint32_t, size_t>& out) {
+  for (const PortRemastered::EffectNode& child : node.children) {
+    ++out[child.form];
+    CountForms(child, out);
+  }
+}
 
 // Ids inside an effect are stored as little-endian UUIDs; the pak reader keeps
 // asset ids in printed order. Swap the first three groups to look one up.
@@ -365,6 +386,8 @@ int Convert(const std::string& romfs, const std::string& retailDir, const std::s
 
   std::map<std::string, PropertyTally> tally;
   std::map<std::string, size_t> dropReasons;
+  std::map<uint32_t, size_t> found;  // embedded children by form
+  std::map<std::string, size_t> writtenByType, droppedByType;
   size_t parsed = 0, written = 0, clean = 0, compared = 0, identical = 0, invalid = 0;
   std::ofstream log(std::filesystem::path(outDir) / "convert.txt");
   for (const auto& [id, data] : effects) {
@@ -380,69 +403,124 @@ int Convert(const std::string& romfs, const std::string& retailDir, const std::s
     char rootName[16];
     std::snprintf(rootName, sizeof(rootName), "%08X", retailId.value_or(0));
     const std::string root = retailId ? std::string(rootName) : IdToString(id);
+    CountForms(effect, found);
     const std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
     bool allClean = true;
     for (const ConvertedPart& part : parts) {
+      const std::string type = EffectFourCCString(part.type);
       std::vector<RetailPartProperty> check;
-      if (!SplitRetailPart(part.part.data(), part.part.size(), check, error)) {
+      if (!SplitRetailEffect(part.type, part.part.data(), part.part.size(), check, error)) {
         ++invalid;
-        log << root << " writes a PART retail does not read: " << Printable(error) << "\n";
+        log << root << " writes a " << type << " retail does not read: " << Printable(error) << "\n";
         continue;
       }
       const std::string file = part.root ? root : root + "-" + EffectGuidString(part.id);
-      std::ofstream(std::filesystem::path(outDir) / (file + ".PART"), std::ios::binary)
+      std::ofstream(std::filesystem::path(outDir) / (file + "." + type), std::ios::binary)
           .write(reinterpret_cast<const char*>(part.part.data()), std::streamsize(part.part.size()));
       ++written;
+      ++writtenByType[type];
+      droppedByType[type] += size_t(part.droppedRetail);
       allClean = allClean && part.droppedRetail == 0;
       for (const std::string& dropped : part.dropped) {
         log << file << (names.count(id) ? " " + names[id] : "") << " dropped " << Printable(dropped) << "\n";
-        dropReasons[dropped.substr(0, 4)] += 1;
+        dropReasons[(part.type == kPartType ? "" : type + " ") + dropped.substr(0, 4)] += 1;
       }
     }
     clean += allClean ? 1 : 0;
 
-    if (!retailId || retailDir == "-" || parts.empty()) {
+    if (retailDir == "-") {
       continue;
     }
-    const std::filesystem::path disc = std::filesystem::path(retailDir) / (std::string(rootName) + ".PART");
-    if (!std::filesystem::exists(disc)) {
-      continue;
-    }
-    const std::vector<uint8_t> retail = ReadFile(disc);
-    std::vector<RetailPartProperty> want, got;
-    if (!SplitRetailPart(retail.data(), retail.size(), want, error)) {
-      log << rootName << ".PART on the disc does not split: " << error << "\n";
-      continue;
-    }
-    // A converted root that does not read is counted above, not compared.
-    if (!SplitRetailPart(parts[0].part.data(), parts[0].part.size(), got, error)) {
-      continue;
-    }
-    ++compared;
-    bool same = want.size() == got.size();
-    for (const RetailPartProperty& w : want) {
-      const std::string name = EffectFourCCString(w.fourcc);
-      auto g = std::find_if(got.begin(), got.end(), [&](const RetailPartProperty& p) { return p.fourcc == w.fourcc; });
-      if (g == got.end()) {
-        tally[name].discOnly += 1;
-        same = false;
-      } else if (g->value == w.value) {
-        tally[name].same += 1;
-      } else {
-        tally[name].different += 1;
-        same = false;
+    // Each converted file whose id is a retail one, against the disc's file of
+    // that id: the effect's own PART, and children that kept their retail id.
+    for (const ConvertedPart& part : parts) {
+      const std::optional<uint32_t> discId = part.root ? retailId : EffectRetailId(part.id);
+      if (!discId) {
+        continue;
       }
-    }
-    for (const RetailPartProperty& g : got) {
-      if (std::none_of(want.begin(), want.end(), [&](const RetailPartProperty& p) { return p.fourcc == g.fourcc; })) {
-        tally[EffectFourCCString(g.fourcc)].convertedOnly += 1;
+      const std::string type = EffectFourCCString(part.type);
+      char discName[24];
+      std::snprintf(discName, sizeof(discName), "%08X.%s", *discId, type.c_str());
+      const std::filesystem::path disc = std::filesystem::path(retailDir) / discName;
+      if (!std::filesystem::exists(disc)) {
+        continue;
       }
+      const std::vector<uint8_t> retail = ReadFile(disc);
+      std::vector<RetailPartProperty> want, got;
+      if (!SplitRetailEffect(part.type, retail.data(), retail.size(), want, error)) {
+        log << discName << " on the disc does not split: " << error << "\n";
+        continue;
+      }
+      // A converted file that does not read is counted above, not compared.
+      if (!SplitRetailEffect(part.type, part.part.data(), part.part.size(), got, error)) {
+        continue;
+      }
+      if (!part.root) {
+        log << discName << " compared with the child of " << root << "\n";
+      }
+      ++compared;
+      const std::string prefix = part.type == kPartType ? "" : type + " ";
+      bool same = want.size() == got.size();
+      for (const RetailPartProperty& w : want) {
+        const std::string name = prefix + EffectFourCCString(w.fourcc);
+        auto g = std::find_if(got.begin(), got.end(), [&](const RetailPartProperty& p) { return p.fourcc == w.fourcc; });
+        if (g == got.end()) {
+          tally[name].discOnly += 1;
+          same = false;
+        } else if (g->value == w.value) {
+          tally[name].same += 1;
+        } else {
+          tally[name].different += 1;
+          same = false;
+        }
+      }
+      for (const RetailPartProperty& g : got) {
+        if (std::none_of(want.begin(), want.end(), [&](const RetailPartProperty& p) { return p.fourcc == g.fourcc; })) {
+          tally[prefix + EffectFourCCString(g.fourcc)].convertedOnly += 1;
+        }
+      }
+      identical += same ? 1 : 0;
     }
-    identical += same ? 1 : 0;
   }
 
-  std::cout << parsed << " effects parse, " << written << " PARTs written, " << clean
-            << " effects with no retail property left out, " << invalid << " PARTs retail would not read\n";
+  std::cout << parsed << " effects parse, " << written << " files written, " << clean
+            << " effects with no retail property left out, " << invalid << " files retail would not read\n";
+  std::cout << "embedded children, by form (found / written as):\n";
+  for (const auto& [form, count] : found) {
+    const uint32_t type = EffectRetailType(form);
+    std::cout << "  " << EffectFourCCString(form) << " " << count;
+    if (type != 0) {
+      std::cout << " / " << EffectFourCCString(type);
+    }
+    std::cout << "\n";
+  }
+  std::cout << "written, by type (files / retail properties left out):\n";
+  for (const auto& [type, count] : writtenByType) {
+    std::cout << "  " << type << " " << count << " / " << droppedByType[type] << "\n";
+  }
+  if (retailDir != "-") {
+    // The splitters against every file of their types on the disc.
+    std::map<std::string, std::pair<size_t, size_t>> splits;
+    for (const auto& entry : std::filesystem::directory_iterator(retailDir)) {
+      const std::string ext = entry.path().extension().string();
+      if (ext != ".PART" && ext != ".SWHC" && ext != ".ELSC") {
+        continue;
+      }
+      const std::vector<uint8_t> file = ReadFile(entry.path());
+      std::vector<RetailPartProperty> split;
+      std::string error;
+      auto& [all, ok] = splits[ext.substr(1)];
+      ++all;
+      if (SplitRetailEffect(FourCCOf(ext.substr(1)), file.data(), file.size(), split, error)) {
+        ++ok;
+      } else {
+        log << entry.path().filename().string() << " on the disc does not split: " << error << "\n";
+      }
+    }
+    for (const auto& [type, counts] : splits) {
+      std::cout << counts.second << " of the disc's " << counts.first << " " << type << " split\n";
+    }
+  }
   std::cout << "left out, by property:\n";
   for (const auto& [name, count] : dropReasons) {
     std::cout << "  " << name << " " << count << "\n";

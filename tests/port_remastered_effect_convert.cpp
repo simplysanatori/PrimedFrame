@@ -470,8 +470,104 @@ void TestGradientFrames() {
   Check(parts.size() == 1 && parts[0].part == want.bytes, "a gradient over the life in frames ends with it");
 }
 
+// Swoosh and electric children come out as retail SWHC and ELSC under their
+// own ids: SBDM becomes the swoosh's AALP, MTIN its TEXR, a zero id NONE. An
+// ELC2 has no texture, so its MTIN is left out.
+void TestSwooshElectric() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "MAXP", 1);
+  PutConstant(out, 3);
+  PutProperty(out, "SSWH", 0);
+  PutGuid(out, Legacy(0x0000AAAA));
+  PutProperty(out, "_END", 4);
+  Put32(out, 3);
+  PutGuid(out, Legacy(0x0000AAAA));
+  PutFourCC(out, "SWSH");
+  PutProperty(out, "LENG", 1);
+  PutConstant(out, 8);
+  PutProperty(out, "SBDM", 1);
+  PutConstant(out, 1);
+  PutProperty(out, "MTIN", 0);
+  out.push_back(1);
+  PutGuid(out, Fresh(2));
+  PutProperty(out, "_END", 4);
+  PutGuid(out, Fresh(3));
+  PutFourCC(out, "ELSM");
+  PutProperty(out, "LWD1", 3);
+  PutConstant(out, Bits(2.0f));
+  PutProperty(out, "SSWH", 0);
+  PutGuid(out, Legacy(0x0000AAAA));
+  PutProperty(out, "GPSM", 0);
+  PutGuid(out, EffectGuid{});
+  PutProperty(out, "_END", 4);
+  PutGuid(out, Fresh(4));
+  PutFourCC(out, "ELC2");
+  PutProperty(out, "SCNT", 1);
+  PutConstant(out, 4);
+  PutProperty(out, "MTIN", 0);
+  out.push_back(1);
+  PutGuid(out, Fresh(2));
+  PutProperty(out, "_END", 4);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(out.data(), out.size(), effect, error), "swoosh and electric effect parses");
+  if (!error.empty()) {
+    std::fprintf(stderr, "  %s\n", error.c_str());
+  }
+  EffectConvertIO io;
+  io.materialTexture = [](const EffectGuid& material) { return material == Fresh(2) ? 0x5EED0002u : 0u; };
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), io);
+  Check(parts.size() == 4, "root and three children");
+  if (parts.size() != 4) {
+    std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
+    return;
+  }
+
+  Retail root;
+  root.f("GPSM").f("MAXP").f("CNST").w(3).f("SSWH").f("CNST").w(0x0000AAAA).f("_END");
+  Check(parts[0].type == EffectFourCC("PART") && parts[0].part == root.bytes, "root references the swoosh by id");
+
+  Retail swoosh;
+  swoosh.f("SWSH").f("LENG").f("CNST").w(8).f("AALP").f("CNST").b(1);
+  swoosh.f("TEXR").f("CNST").f("CNST").w(0x5EED0002).f("_END");
+  Check(parts[1].type == EffectFourCC("SWHC") && parts[1].id == Legacy(0x0000AAAA), "swoosh child is an SWHC");
+  Check(parts[1].part == swoosh.bytes, "SBDM becomes AALP and MTIN the swoosh's TEXR");
+  Check(parts[1].droppedRetail == 0, "swoosh drops nothing");
+
+  Retail electric;
+  electric.f("ELSM").f("LWD1").f("CNST").w(Bits(2.0f)).f("SSWH").f("CNST").w(0x0000AAAA).f("GPSM").f("NONE").f("_END");
+  Check(parts[2].type == EffectFourCC("ELSC") && parts[2].part == electric.bytes, "ELSM child is an ELSC");
+
+  Retail elc2;
+  elc2.f("ELSM").f("SCNT").f("CNST").w(4).f("_END");
+  Check(parts[3].type == EffectFourCC("ELSC") && parts[3].part == elc2.bytes, "ELC2 child is an ELSC");
+  Check(parts[3].dropped.size() == 1 && parts[3].droppedRetail == 0, "ELC2's MTIN is Remastered only");
+
+  for (const ConvertedPart& part : parts) {
+    std::vector<RetailPartProperty> properties;
+    Check(SplitRetailEffect(part.type, part.part.data(), part.part.size(), properties, error),
+          "converted child reads as retail");
+  }
+  std::vector<RetailPartProperty> properties;
+  Check(!SplitRetailEffect(EffectFourCC("SWHC"), root.bytes.data(), root.bytes.size(), properties, error),
+        "a PART is not an SWHC");
+  Retail wrong;
+  wrong.f("SWSH").f("MAXP").f("CNST").w(3).f("_END");
+  Check(!SplitRetailEffect(EffectFourCC("SWHC"), wrong.bytes.data(), wrong.bytes.size(), properties, error),
+        "a PART property in a swoosh refused");
+  Check(SplitRetailEffect(EffectFourCC("ELSC"), electric.bytes.data(), electric.bytes.size(), properties, error) &&
+            properties.size() == 3,
+        "retail ELSC splits into its properties");
+}
+
 int main() {
   TestRetailId();
+  TestSwooshElectric();
   TestConvert();
   TestRejects();
   TestSingleNode();

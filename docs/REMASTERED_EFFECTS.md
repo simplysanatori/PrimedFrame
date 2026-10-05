@@ -146,8 +146,23 @@ blocks, a real), and TIND takes the same `CNST(id), NONE` pair as TEXR. Of the
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.
 
-11 of the failures are exact pairs. The gun effects parse except `IceCharge`,
-`PlasmaCharge`, `Plasma2nd_1` and `PowerBombExplo`.
+The parsed effects embed 3365 GPSM, 85 SWSH, 23 ELC2 and 8 ELSM children; all
+of them convert (below). The other child forms (weapon, collision, decal) do
+not occur embedded.
+
+Only 80 of the 1434 effects keep a retail id; 1354 have fresh UUIDs. Mapping
+those back to retail PARTs (checked 2026-10-05):
+
+- By name: 98 GENPs have a pak name (`# name` in `scan`'s dumps), all player
+  and global effects. The 8 with a retail id all match the retail pak's name
+  for that id, so a name is reliable where there is one. Of the 90 fresh ones,
+  58 have exactly one retail PART of the same name (the beam muzzles, charges,
+  Xfers, wakes, grapple, bombs...); 32 are new or renamed (`BallInnerGlow_*`,
+  `*ChargeMuzzleFlash`, `pwrBase_placeholder`...). The other 1264 fresh GENPs
+  have no name.
+- By reference: 20 GENPs are named by another GENP, 19 of them fresh, and every
+  one of those 19 is named only by fresh effects. No effect with a retail id
+  leads to a fresh one. Room scripts and actor events were not paired.
 
 ## Converting to retail PART
 
@@ -170,20 +185,32 @@ spawn table is a different layout). Retail then uses its default for the
 property. `droppedRetail` counts the left-out properties retail does read, so
 a caller can skip effects that lose something that matters.
 
-Embedded GPSM children come out as PARTs of their own under their child ids.
-The swoosh, electric, weapon, collision and decal children are not converted
-yet, so SSWH/SELC on a converted effect only survive when their id is a retail
-one.
+Embedded children come out as files of their own under their child ids, typed
+by their form: GPSM as PART, SWSH as retail SWHC (`CSwooshDescription`), ELC2
+and ELSM as retail ELSC (`CElectricDescription`). So SSWH/SELC/GPSM references
+between children resolve. Each child type has its own property table from
+retail's reader. In a swoosh, SBDM (0/1) is written as AALP, and MTIN stands in
+for TEXR. A swoosh's PROT is left out: retail's IROT/ROTM are not the same
+property. ELC2 is Remastered's electric form with no LWD/LCL, so as ELSC it
+draws only the generators and swoosh it names. A zero id is written as NONE.
+On the US disc's one exact child pair, ELSC 624A7606 (in FF5DC7A2) converts
+byte for byte. SWHC 88D02992 (in 1A14AD75) matches except COLR (re-authored
+keys) and LENG (`ADD(12, 1)` against the disc's 12, which is authored, not an
+offset).
 
 Keyframe blocks keep retail's layout; a colour's keys may be four halves
-(8 bytes), which are widened to floats. KSSM is retail's too, but its spawn
-table is laid out differently and is not converted yet.
+(8 bytes), which are widened to floats. KSSM is not converted. Retail's is
+`CNST` plus four ints (start/end frame, inc, rand) and a frame table where
+each frame has a count and 16-byte entries (id, three ints). Remastered's
+reader takes it as a raw block (240 bytes in the effects seen) with a
+different layout.
 
-`SplitRetailPart` reads a retail PART back the same way, property by property.
-The tests use it to check every converted PART is one retail's reader takes,
-and `effect_tool convert` uses it to compare converted effects with the disc's.
-Run on the disc's own PARTs it also checks the type tables against real files:
-all 3202 PARTs on the US disc split.
+`SplitRetailEffect` (`SplitRetailPart` for PART) reads a retail PART, SWHC or
+ELSC back the same way, property by property. The tests use it to check that
+retail's reader takes every converted file, and `effect_tool convert` uses it
+to compare converted effects with the disc's. Run on the disc's own files, it
+also checks the type tables against real files: all 3202 PARTs, 78 SWHCs and
+60 ELSCs on the US disc split.
 
 Notes from comparing converted effects with the disc's (`effect_tool convert`):
 
@@ -303,9 +330,12 @@ g++ -std=c++20 -O2 -Iplatform/include tests/port_remastered_effect_tool.cpp \
                                            # for grepping what dumps show as raw
                                            # blocks (PVAR, parameter tables)
 ./effect_tool convert <romfs> <retail|-> <outdir>
-                                           # every effect as retail PART, what
-                                           # was left out, and (with a folder of
-                                           # the disc's <id>.PART) a comparison
+                                           # every effect and child as retail
+                                           # PART/SWHC/ELSC, what was left out by
+                                           # type, children by form, and (with a
+                                           # folder of the disc's <id>.<type>) a
+                                           # comparison of every retail-id file
+                                           # plus a split of every disc file
 ./effect_tool import <romfs> <retail> <outdir>
                                            # the import's effect step, with the
                                            # ids of the files in <retail> as the disc

@@ -21,20 +21,57 @@ struct PropertyType {
   uint32_t asset = 0;
 };
 
-const std::unordered_map<uint32_t, PropertyType>& RetailProperties() {
-  static const std::unordered_map<uint32_t, PropertyType> table = [] {
-    std::unordered_map<uint32_t, PropertyType> t;
-    auto add = [&t](const char* names, Type type, uint32_t asset = 0) {
-      for (const char* c = names; *c != 0;) {
-        const uint32_t fourcc = uint32_t(uint8_t(c[0])) << 24 | uint32_t(uint8_t(c[1])) << 16 |
-                                uint32_t(uint8_t(c[2])) << 8 | uint32_t(uint8_t(c[3]));
-        t[fourcc] = {type, asset};
-        c += 4;
-        while (*c == ' ') {
-          ++c;
-        }
-      }
-    };
+using PropertyTable = std::unordered_map<uint32_t, PropertyType>;
+
+void AddProperties(PropertyTable& t, const char* names, Type type, uint32_t asset = 0) {
+  for (const char* c = names; *c != 0;) {
+    const uint32_t fourcc = uint32_t(uint8_t(c[0])) << 24 | uint32_t(uint8_t(c[1])) << 16 |
+                            uint32_t(uint8_t(c[2])) << 8 | uint32_t(uint8_t(c[3]));
+    t[fourcc] = {type, asset};
+    c += 4;
+    while (*c == ' ') {
+      ++c;
+    }
+  }
+}
+
+// Retail's swoosh properties (CParticleSwooshDataFactory::CreateWPSM).
+const PropertyTable& SwooshProperties() {
+  static const PropertyTable table = [] {
+    PropertyTable t;
+    AddProperties(t, "PSLT LENG SIDE SPLN TSPN", Type::Int);
+    AddProperties(t, "TIME LRAD RRAD IROT ROTM", Type::Real);
+    AddProperties(t, "POFS IVEL NPOS", Type::Vector);
+    AddProperties(t, "VELM VLM2", Type::ModVector);
+    AddProperties(t, "COLR", Type::Color);
+    AddProperties(t, "TEXR", Type::Texture);
+    AddProperties(t, "LLRD CROS SROT VLS1 VLS2 WIRE AALP ZBUF ORNT TEXW CRND", Type::Bool);
+    return t;
+  }();
+  return table;
+}
+
+// Retail's electric properties (CParticleElectricDataFactory::CreateELSM).
+// GPSM and EPSM name child PARTs, read as ICTS is.
+const PropertyTable& ElectricProperties() {
+  static const PropertyTable table = [] {
+    PropertyTable t;
+    AddProperties(t, "LIFE SLIF SCNT SSEG", Type::Int);
+    AddProperties(t, "GRAT AMPL AMPD LWD1 LWD2 LWD3", Type::Real);
+    AddProperties(t, "COLR LCL1 LCL2 LCL3", Type::Color);
+    AddProperties(t, "IEMT FEMT", Type::Emitter);
+    AddProperties(t, "ZERY", Type::Bool);
+    AddProperties(t, "GPSM EPSM", Type::Asset, F("PART"));
+    AddProperties(t, "SSWH", Type::Asset, F("SWHC"));
+    return t;
+  }();
+  return table;
+}
+
+const PropertyTable& RetailProperties() {
+  static const PropertyTable table = [] {
+    PropertyTable t;
+    auto add = [&t](const char* names, Type type, uint32_t asset = 0) { AddProperties(t, names, type, asset); };
     add("PSLT PSWT MBSP MAXP LTME SEED NCSY CSSD NDSY PISY SISY SSSD SESD LTYP LFOT", Type::Int);
     add("PSTS GRTE SIZE ROTA LENG WIDT LINT LFOR LSLA ADV1 ADV2 ADV3 ADV4 ADV5 ADV6 ADV7 ADV8", Type::Real);
     add("PSIV PSOV ILOC IVEC POFS PMOP PMRT PMSC SSPO SEPO LOFF LDIR", Type::Vector);
@@ -50,6 +87,27 @@ const std::unordered_map<uint32_t, PropertyType>& RetailProperties() {
     return t;
   }();
   return table;
+}
+
+// The properties of a retail asset type, and the FourCC its file starts with.
+const PropertyTable& PropertiesOf(uint32_t type) {
+  if (type == F("SWHC")) {
+    return SwooshProperties();
+  }
+  if (type == F("ELSC")) {
+    return ElectricProperties();
+  }
+  return RetailProperties();
+}
+
+uint32_t HeaderOf(uint32_t type) {
+  if (type == F("SWHC")) {
+    return F("SWSH");
+  }
+  if (type == F("ELSC")) {
+    return F("ELSM");
+  }
+  return F("GPSM");
 }
 
 // Each retail element per type, and its arguments: i int, r real, v vector,
@@ -504,6 +562,11 @@ public:
       PutBe32(out, F("NONE"));
       return true;
     }
+    // A zero id names nothing, as NONE does.
+    if (value.size() == 1 && value[0].kind == EffectValue::Kind::Guid && value[0].guid == EffectGuid{}) {
+      PutBe32(out, F("NONE"));
+      return true;
+    }
     const EffectValue* guid = nullptr;
     if (value.size() == 1 && value[0].kind == EffectValue::Kind::Guid) {
       guid = &value[0];
@@ -664,13 +727,22 @@ public:
     return Element(value[0], type.type, out, why);
   }
 
-  ConvertedPart Generator(const EffectNode& node) const {
+  // One generator, swoosh or electric description, as the retail asset `type`.
+  ConvertedPart Generator(const EffectNode& node, uint32_t type) const {
     ConvertedPart result;
     result.id = node.id;
+    result.type = type;
     result.root = node.root;
     std::vector<uint8_t>& out = result.part;
-    PutBe32(out, F("GPSM"));
-    const auto& retail = RetailProperties();
+    PutBe32(out, HeaderOf(type));
+    const auto& retail = PropertiesOf(type);
+    const bool part = type == F("PART");
+    // Swooshes: SBDM is Remastered's blend mode, 0 or 1, which retail has as
+    // AALP (additive). Taken only where there's no AALP of its own.
+    bool additive = false;
+    for (const EffectProperty& property : node.properties) {
+      additive = additive || property.fourcc == F("AALP");
+    }
     // A constant lifetime, for gradients timed in frames. Both count in
     // Remastered's frames, so LTM2 is taken as it is (one above retail's).
     m_lifetime = 0;
@@ -683,14 +755,20 @@ public:
     }
     bool texture = false;
     const EffectProperty* material = nullptr;
+    const bool textured = retail.count(F("TEXR")) != 0;
     for (const EffectProperty& property : node.properties) {
-      const uint32_t fourcc = property.fourcc == F("LTM2") ? F("LTME") : property.fourcc;
-      if (fourcc == F("MTIN")) {
+      uint32_t fourcc = property.fourcc;
+      if (part && fourcc == F("LTM2")) {
+        fourcc = F("LTME");
+      } else if (type == F("SWHC") && fourcc == F("SBDM") && !additive) {
+        fourcc = F("AALP");
+      }
+      if (fourcc == F("MTIN") && textured) {
         material = &property;
         continue;
       }
       // Retail reads KSSM, but Remastered's spawn table is laid out differently.
-      if (fourcc == F("KSSM")) {
+      if (part && fourcc == F("KSSM")) {
         // The reader keeps a spawn table as raw bytes: NONE is the FourCC alone.
         const EffectValue& table = property.value.empty() ? EffectValue() : property.value[0];
         const bool none = IsElement(table, F("NONE")) ||
@@ -749,8 +827,8 @@ public:
   // The top node is the effect's own PART whatever its root flag says
   // (Remastered sets it only on effects with embedded children).
   void Collect(const EffectNode& node, bool top, std::vector<ConvertedPart>& out) const {
-    if (node.form == F("GPSM")) {
-      out.push_back(Generator(node));
+    if (const uint32_t type = EffectRetailType(node.form); type != 0) {
+      out.push_back(Generator(node, type));
       out.back().root = top;
     }
     for (const EffectNode& child : node.children) {
@@ -904,15 +982,34 @@ private:
 
 }  // namespace
 
+uint32_t EffectRetailType(uint32_t form) {
+  if (form == F("GPSM")) {
+    return F("PART");
+  }
+  if (form == F("SWSH")) {
+    return F("SWHC");
+  }
+  if (form == F("ELC2") || form == F("ELSM")) {
+    return F("ELSC");
+  }
+  return 0;
+}
+
 bool SplitRetailPart(const uint8_t* data, size_t size, std::vector<RetailPartProperty>& out, std::string& error) {
+  return SplitRetailEffect(F("PART"), data, size, out, error);
+}
+
+bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vector<RetailPartProperty>& out,
+                       std::string& error) {
   out.clear();
   RetailReader reader(data, size);
   uint32_t fourcc;
-  if (!reader.Word(fourcc) || fourcc != F("GPSM")) {
-    error = "not a GPSM";
+  if (!reader.Word(fourcc) || fourcc != HeaderOf(type)) {
+    error = "not a " + EffectFourCCString(HeaderOf(type));
     return false;
   }
-  const auto& retail = RetailProperties();
+  const auto& retail = PropertiesOf(type);
+  const bool part = type == F("PART");
   for (;;) {
     const size_t start = reader.At();
     if (!reader.Word(fourcc)) {
@@ -923,7 +1020,7 @@ bool SplitRetailPart(const uint8_t* data, size_t size, std::vector<RetailPartPro
       return true;
     }
     bool ok;
-    if (fourcc == F("KSSM")) {
+    if (part && fourcc == F("KSSM")) {
       ok = reader.SpawnTable();
     } else if (const auto found = retail.find(fourcc); found == retail.end()) {
       error = "property " + EffectFourCCString(fourcc) + " retail does not read";

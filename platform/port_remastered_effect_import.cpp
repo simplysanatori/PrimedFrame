@@ -202,9 +202,16 @@ public:
     return 0;
   }
 
-  void Children(const EffectNode& node, uint32_t root, std::map<EffectGuid, uint32_t>& out) {
+  // Each embedded child's fresh id, and the retail type it converts to (0 for
+  // a form that is not converted, so nothing resolves to it).
+  struct Child {
+    uint32_t id;
+    uint32_t type;
+  };
+
+  void Children(const EffectNode& node, uint32_t root, std::map<EffectGuid, Child>& out) {
     for (const EffectNode& child : node.children) {
-      out.emplace(child.id, m_io.freshId(Hash(child.id, root)));
+      out.emplace(child.id, Child{m_io.freshId(Hash(child.id, root)), EffectRetailType(child.form)});
       Children(child, root, out);
     }
   }
@@ -224,15 +231,13 @@ public:
       Log(name + ": " + error);
       return;
     }
-    std::map<EffectGuid, uint32_t> children;
+    std::map<EffectGuid, Child> children;
     Children(effect, *retail, children);
     EffectConvertIO io;
     io.assetId = [&](const EffectGuid& stored, uint32_t type) -> uint32_t {
-      if (type == kPart) {
-        const auto child = children.find(stored);
-        if (child != children.end()) {
-          return child->second;
-        }
+      const auto child = children.find(stored);
+      if (child != children.end() && child->second.type == type) {
+        return child->second.id;
       }
       return Stored(stored, type);
     };
@@ -260,8 +265,8 @@ public:
     for (size_t i = 1; i < parts.size(); ++i) {
       const auto child = children.find(parts[i].id);
       if (child == children.end() ||
-          !SplitRetailPart(parts[i].part.data(), parts[i].part.size(), check, error) ||
-          !m_io.write(Hex(child->second) + ".PART", parts[i].part)) {
+          !SplitRetailEffect(parts[i].type, parts[i].part.data(), parts[i].part.size(), check, error) ||
+          !m_io.write(Hex(child->second.id) + "." + EffectFourCCString(parts[i].type), parts[i].part)) {
         // The root would name a missing child: leave the disc's PART in place.
         ++m_result.failed;
         Log(name + ": child " + EffectGuidString(parts[i].id) + " not written");

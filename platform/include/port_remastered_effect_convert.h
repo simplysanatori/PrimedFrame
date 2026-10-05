@@ -1,7 +1,8 @@
 #pragma once
 
 // Writes a Remastered particle effect (a parsed GENP, port_remastered_effect.h)
-// as retail PART: the big-endian GPSM stream CParticleDataFactory reads.
+// as retail PART: the big-endian GPSM stream CParticleDataFactory reads (and
+// its swoosh and electric children as SWHC and ELSC).
 //
 // The conversion is driven by retail's own reader: each property retail knows
 // is read as the type retail reads it as (int, real, vector, mod vector,
@@ -30,10 +31,13 @@
 // `dropped`, so the caller can decide whether the effect is still worth
 // writing. Retail fills a left-out property with its default.
 //
-// Embedded child generators (GPSM children) come out as PARTs of their own,
-// under the ids ConvertIO gives their child ids. The other embedded forms
-// (swoosh, electric, weapon, collision, decal) and KSSM spawn tables are not
-// converted yet.
+// Embedded children come out as files of their own, under the ids ConvertIO
+// gives their child ids: generators (GPSM) as PART, swooshes (SWSH) as SWHC
+// (CParticleSwooshDataFactory's SWSH stream, Remastered's SBDM blend mode as
+// AALP) and electric effects (ELC2, ELSM) as ELSC (CParticleElectricDataFactory's
+// ELSM stream). ELC2 has no line widths or colours (LWD1-3, LCL1-3), so one
+// draws only its child generators and swoosh. The other embedded forms (weapon,
+// collision, decal) and KSSM spawn tables are not converted yet.
 
 #include "port_remastered_effect.h"
 
@@ -56,8 +60,9 @@ struct EffectConvertIO {
 
 struct ConvertedPart {
   EffectGuid id{};  // the child id it was embedded under; zero for the root
+  uint32_t type = 0;  // the retail asset type: 'PART', 'SWHC' or 'ELSC'
   bool root = false;  // the effect's own PART, not an embedded child
-  std::vector<uint8_t> part;          // the retail PART file
+  std::vector<uint8_t> part;          // the retail file, of that type
   std::vector<std::string> dropped;   // "FOURCC: why", one per left-out property
   // Properties retail reads that were left out. Remastered-only ones are not
   // counted: retail never had them.
@@ -70,8 +75,12 @@ struct ConvertedPart {
 // as 10000000-0000-f000-f000-0000XXXXXXXX (in pak order).
 std::optional<uint32_t> EffectRetailId(const EffectGuid& id);
 
-// The root and every embedded GPSM child, root first. `data` is the GENP the
-// effect was parsed from (keyframe blocks are copied out of it).
+// The retail asset type an embedded form converts to ('PART' for GPSM, 'SWHC'
+// for SWSH, 'ELSC' for ELC2 and ELSM), or 0 for one that is not converted.
+uint32_t EffectRetailType(uint32_t form);
+
+// The root and every embedded child that converts, root first. `data` is the
+// GENP the effect was parsed from (keyframe blocks are copied out of it).
 std::vector<ConvertedPart> ConvertEffect(const EffectNode& effect, const uint8_t* data, const EffectConvertIO& io);
 
 // One property of a retail PART: its FourCC and its value's bytes.
@@ -85,5 +94,10 @@ struct RetailPartProperty {
 // retail's reader would not take. Checks the converter's output, and lets
 // a converted effect be compared property by property with the disc's.
 bool SplitRetailPart(const uint8_t* data, size_t size, std::vector<RetailPartProperty>& out, std::string& error);
+
+// The same for any type EffectRetailType gives: a PART, or a SWHC or ELSC read
+// as CParticleSwooshDataFactory and CParticleElectricDataFactory do.
+bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vector<RetailPartProperty>& out,
+                       std::string& error);
 
 }  // namespace PortRemastered
