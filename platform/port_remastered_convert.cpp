@@ -1068,6 +1068,18 @@ struct Converter::State {
     } else if (role == "reflect" && rt[kMr].has) {
       src = &rt[kMr];
       tag = "refl:" + src->src + ":0.6";
+      // A stage writing C2 is not always a reflectivity mask: the Metroid's
+      // dome multiplies its colour by it. A map with no metal anywhere would
+      // turn black and blank the stage, so the retail texture stays.
+      const Image& mr = Open(*src);
+      bool any = false;
+      for (size_t i = 0; i + 3 < mr.rgba.size() && !any; i += 4) {
+        const float g = mr.rgba[i + 1] / 255.0f, b = mr.rgba[i + 2] / 255.0f;
+        any = uint8_t(std::clamp(b * (1.0f - 0.7f * g) * 0.6f, 0.0f, 1.0f) * 255.0f) != 0;
+      }
+      if (!any) {
+        return std::nullopt;
+      }
     } else if (role == "envmap") {
       // A sphere-mapped reflection: its texture is a gradient, not surface
       // detail, so there is nothing to convert from Remastered.
