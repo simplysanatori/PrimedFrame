@@ -177,6 +177,7 @@ set(MP_PORT_SOURCES
     platform/port_remastered_txtr.cpp
     platform/port_hd_font.cpp
     platform/port_hd_font_file.cpp
+    platform/port_font_accent_file.cpp
     platform/port_hud_bars.cpp
     platform/port_hud_bars_file.cpp
     platform/port_speedrun_timer.cpp
@@ -519,7 +520,7 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_room_env_tests PRIVATE platform/include)
     add_executable(port_room_geo_tests tests/port_room_geo.cpp platform/port_room_geo_file.cpp)
     target_include_directories(port_room_geo_tests PRIVATE platform/include)
-    add_executable(port_hd_font_tests tests/port_hd_font.cpp platform/port_hd_font_file.cpp platform/port_remastered_font.cpp)
+    add_executable(port_hd_font_tests tests/port_hd_font.cpp platform/port_hd_font_file.cpp platform/port_remastered_font.cpp platform/port_font_accent_file.cpp)
     target_include_directories(port_hd_font_tests PRIVATE platform/include)
     add_executable(port_remastered_nso_tests tests/port_remastered_nso.cpp platform/port_remastered_nso.cpp)
     target_include_directories(port_remastered_nso_tests PRIVATE platform/include)

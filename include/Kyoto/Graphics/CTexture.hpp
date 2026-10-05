@@ -146,6 +146,10 @@ private:
 
 public:
   void PortSetNativeId(uint id);
+  // Blank rows for new glyph cells at the bottom (the height grows), keeping
+  // mip 0's texels. Only single-mip 4/8-bit textures; false otherwise and when
+  // a mod replaces the texels. Existing UVs must be rescaled by old/new height.
+  bool PortGrowHeight(int extraRows);
   // Load with a mode per axis (a Remastered material's sampler).
   void PortLoad(GXTexMapID texMapId, EClampMode clampS, EClampMode clampT) const;
   // The GX object PortLoad just bound (valid until the texture is freed); the
