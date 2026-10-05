@@ -1888,9 +1888,15 @@ CEntity* ScriptLoader::LoadSpacePirate(CStateManager& mgr, CInputStream& in, int
     pInfo.GetAnimationParameters().SetCharacter(2);
   }
 
+#ifdef TARGET_PC
+  const CAssetId acsFile =
+      CSpacePirate::PortTrooperLook(pInfo.GetAnimationParameters().GetACSFile(), pInfo, in);
+#else
+  const CAssetId acsFile = pInfo.GetAnimationParameters().GetACSFile();
+#endif
   return rs_new CSpacePirate(
       mgr.AllocateUniqueId(), head.x0_actorHead.x0_name, info, head.x0_actorHead.x10_transform,
-      CModelData(CAnimRes(pInfo.GetAnimationParameters().GetACSFile(),
+      CModelData(CAnimRes(acsFile,
                           pInfo.GetAnimationParameters().GetCharacter(), head.x40_scale,
                           pInfo.GetAnimationParameters().GetInitialAnimation(), true)),
       actParms, pInfo, in, propCount);
