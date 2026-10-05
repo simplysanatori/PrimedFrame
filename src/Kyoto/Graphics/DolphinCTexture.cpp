@@ -22,6 +22,7 @@
 #ifdef TARGET_PC
 #include <dolphin/gx/GXExtra.h>
 
+#include "Kyoto/CFrameDelayedKiller.hpp"
 #include "port_mods.h"
 #endif
 
@@ -150,6 +151,64 @@ CTexture::~CTexture() {
 // data: the texel buffer moves when the texture is swapped out to ARAM and back, this does not.
 void CTexture::PortSetNativeId(uint id) {
   mPortNativeId = PortMods::BindTexture(this, id) ? id : 0;
+}
+
+// Blank rows at the bottom for new glyph cells (the bitmap font's accents).
+// The width stays, so the tiled block rows just continue: the old rows are
+// copied whole and the new ones are zeroed (palette index 0, transparent).
+bool CTexture::PortGrowHeight(int extraRows) {
+  if (mPortNativeId != 0 || mNumMips != 1 || extraRows <= 0) {
+    return false;
+  }
+  int blockW, blockH, bitsPerPixel;
+  switch (mTexelFormat) {
+  case kTF_I4:
+  case kTF_C4:
+    blockW = 8;
+    blockH = 8;
+    bitsPerPixel = 4;
+    break;
+  case kTF_I8:
+  case kTF_IA4:
+  case kTF_C8:
+    blockW = 8;
+    blockH = 4;
+    bitsPerPixel = 8;
+    break;
+  case kTF_IA8:
+  case kTF_RGB565:
+  case kTF_RGB5A3:
+    blockW = 4;
+    blockH = 4;
+    bitsPerPixel = 16;
+    break;
+  default:
+    return false;
+  }
+  const GXTexFmt native = HasPalette() ? GXTexFmt(mNativeCIFormat) : mNativeFormat;
+  const int newHeight = mHeight + extraRows;
+  const uint newSize = GXGetTexBufferSize(mWidth, newHeight, native, false, 0);
+  const int blocksPerRow = (mWidth + blockW - 1) / blockW;
+  const int bytesPerBlock = blockW * blockH * bitsPerPixel / 8;
+  const size_t copySize =
+      size_t(blocksPerRow) * size_t((mHeight + blockH - 1) / blockH) * size_t(bytesPerBlock);
+  if (copySize > mMemoryAllocated || newSize <= mMemoryAllocated) {
+    return false;
+  }
+  void* const old = mARAMToken.GetMRAMSafe();
+  void* const buf = CMemory::Alloc(newSize, IAllocator::kHI_RoundUpLen);
+  memcpy(buf, old, copySize);
+  memset(static_cast< char* >(buf) + copySize, 0, newSize - copySize);
+  // The FIFO worker may still name the old buffer; the killer frees it later.
+  CFrameDelayedKiller::ScheduleDeletion(CFrameDelayedKiller::kWhichFrame_NextFrame, old);
+  mARAMToken.PostConstruct(buf, newSize, 1);
+  mHeight = newHeight;
+  UncountMemory();
+  mMemoryAllocated = newSize;
+  InitTextureObjects();
+  mPortTexelsChanged = true;
+  DCFlushRange(buf, OSRoundUp32B(newSize));
+  return true;
 }
 #endif
 
