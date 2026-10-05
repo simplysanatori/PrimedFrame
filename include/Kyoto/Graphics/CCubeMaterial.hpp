@@ -71,6 +71,8 @@ public:
   // world space and drawn with an identity model matrix (port_room_geo.cpp's merged props):
   // reflections and UV animation mode 6 place the texture by the model matrix itself.
   bool PortNeedsModelMatrix() const;
+  // Port: how many TEV konst colours the material loads (0 without kStateFlag_KonstValues).
+  uint PortKonstCount() const;
 #endif
   uint GetTextureCount() const {
     return CBasics::SwapBytes(*reinterpret_cast< const uint* >(GetData() + 4));

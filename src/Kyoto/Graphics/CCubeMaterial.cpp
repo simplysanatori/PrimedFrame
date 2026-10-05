@@ -615,6 +615,15 @@ union scanner_t {
 };
 
 #ifdef TARGET_PC
+uint CCubeMaterial::PortKonstCount() const {
+  const uint* words = reinterpret_cast< const uint* >(GetData());
+  if ((SBig(words[0]) & kStateFlag_KonstValues) == 0) {
+    return 0;
+  }
+  words += 2 + SBig(words[1]) + 2; // flags, textures, vertex layout and group
+  return SBig(words[0]);
+}
+
 // Walks the material as SetCurrent does, up to its UV animations.
 bool CCubeMaterial::PortNeedsModelMatrix() const {
   const uint* words = reinterpret_cast< const uint* >(GetData());
