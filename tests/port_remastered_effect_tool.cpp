@@ -934,7 +934,8 @@ int Import(const std::string& romfs, const std::string& retailDir, const std::st
   return 0;
 }
 
-// A generator's port-only material as text: `vmat <file.GENP> <dir of <uuid>.MATI files>`.
+// A generator's port-only properties (VMAT and its data, XFMD) as text:
+// `vmat <file.GENP> <dir of <uuid>.MATI files>`.
 int VmatSummary(const std::string& genpPath, const std::string& matiDir) {
   using namespace PortRemastered;
   const std::vector<uint8_t> data = ReadFile(genpPath);
@@ -1030,8 +1031,8 @@ int VmatSummary(const std::string& genpPath, const std::string& matiDir) {
         }
       } else if (name == "VTMT") {
         std::cout << "  VTMT " << be32(b + 4) << " UV sets\n";
-      } else if (name == "VORN") {
-        std::cout << "  VORN " << be32(b + 4) << "\n";
+      } else if (name == "VORN" || name == "XFMD") {
+        std::cout << "  " << name << " " << be32(b + 4) << "\n";
       } else if (name == "SSZE" || name == "ITEN") {
         std::cout << "  " << name << " " << property.value.size() << " bytes\n";
       }
@@ -1074,7 +1075,8 @@ int main(int argc, char** argv) {
     return Import(argv[2], argv[3], argv[4]);
   }
   std::cerr << "usage: " << argv[0]
-            << " dump <file.GENP> | mtin <file.GENP>... | scan <romfs> [outdir] | extract <romfs> <outdir>"
+            << " dump <file.GENP> | mtin <file.GENP>... | vmat <file.GENP> <dir of <uuid>.MATI files>"
+               " | scan <romfs> [outdir] | extract <romfs> <outdir>"
                " | convert <romfs> <retail|-> <outdir>"
                " | import <romfs> <retail> <outdir>\n";
   return 2;

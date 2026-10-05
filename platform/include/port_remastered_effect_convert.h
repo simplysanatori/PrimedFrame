@@ -35,6 +35,9 @@
 //   sources), VTMT (TMTR's UV transforms), VPMT (PMTR) and VSMT (SMTR's CCH0
 //   uniforms), SSZE, VORN (ORNT), ITEN and SCTR (as VMAT's sprite centre). A
 //   shader with no recipe writes none and is listed in `approximated`.
+// - Port-only (build/mpr/vfx/RESOLVED-xfmd.md): XFMD 3 and 4 (particles that
+//   follow the emitter) are written as they are; SMVR is read only as XFMD 4's
+//   mover.
 //
 // A property that does not convert (a Remastered-only property, an element
 // retail does not have, an id with no retail id) is left out and listed in

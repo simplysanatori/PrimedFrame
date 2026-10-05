@@ -58,9 +58,10 @@ struct CPortVfxMat {
   u32 spriteCenter = 0; // 0..8, a row of the sprite pivot table
 };
 
-// XFMD: how the particle's transform is applied. Retail behaviour (2) bakes it at spawn.
-// Modes 3..6 are not implemented; the draw path ignores the field.
-enum EPortVfxXfmd : u32 { kPortXfmdRetail = 2 };
+// XFMD (build/mpr/vfx/RESOLVED-xfmd.md): how the emitter's transform reaches the particles.
+// 2 = retail (orientation and local translation baked at spawn); 3 = the particles stay in the
+// emitter's space and follow its later moves; 4 = as 3 with unit scale (an identity SMVR mover).
+enum EPortXfmd : u8 { kPortXfmdRetail = 2, kPortXfmdFollow = 3, kPortXfmdFollowUnscaled = 4 };
 
 struct CPortVfxData {
   CPortVfxMat mat;
@@ -71,7 +72,6 @@ struct CPortVfxData {
   CRealElement* ssze = nullptr;
   CRealElement* iten = nullptr;
   u32 vorn = 0; // 0 sprite, 1 oriented to the launch direction, 2 to the velocity
-  u32 xfmd = kPortXfmdRetail;
   // VMSH: the PMDL's LOD0 as one mesh in the converted CMDL's model space, 8 floats per vertex
   // (pos, normal, uv), indices u16 (idx16) when meshVerts <= 65535, else u32 (idx32).
   u32 meshVerts = 0, meshTris = 0;
@@ -131,6 +131,8 @@ public:
   std::vector< TCachedToken< CModel > > xPortPMDV;
   // port-only VMAT material; null = retail draw
   std::unique_ptr< CPortVfxData > xPortVfx;
+  // port-only XFMD (EPortXfmd); kept outside xPortVfx, which a bad VMAT block drops
+  u8 xPortXfmd = kPortXfmdRetail;
 #endif
   CVectorElement* x58_PMOP;
   CVectorElement* x5c_PMRT;

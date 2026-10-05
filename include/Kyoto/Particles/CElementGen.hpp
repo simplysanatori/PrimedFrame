@@ -269,6 +269,11 @@ private:
   float xPortVsmt[19];
   uint xPortVsmtMask;
   void PortVfxUpdateSystem();
+  // XFMD 3/4: the spawn-baked part of the emitter's transform, and moving the live particles from
+  // one such frame to the next.
+  bool PortFollowsEmitter() const;
+  CTransform4f PortEmitterFrame() const;
+  void PortFollowEmitter(const CTransform4f& before);
   void PortRenderParticlesVfx();
   void PortRenderMeshesVfx(CPortVfxMeshBatch& batch);
 #endif

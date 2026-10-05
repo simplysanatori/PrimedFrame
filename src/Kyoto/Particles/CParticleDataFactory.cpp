@@ -419,6 +419,14 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
         }
       }
     } break;
+    // Port-only Remastered transform mode (EPortXfmd); unknown modes draw as retail.
+    case SBIG('XFMD'): {
+      GetClassID(in);
+      const u32 mode = in.ReadLong();
+      desc->xPortXfmd = mode == kPortXfmdFollow || mode == kPortXfmdFollowUnscaled
+                            ? static_cast< u8 >(mode)
+                            : static_cast< u8 >(kPortXfmdRetail);
+    } break;
     // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
     case SBIG('VMAT'): {
       GetClassID(in);

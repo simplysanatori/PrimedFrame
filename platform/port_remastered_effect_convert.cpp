@@ -1203,6 +1203,46 @@ public:
     return true;
   }
 
+  // SMVR as `SMOV(EXTT, CNST(0, 0, 0), EXTR, NONE, NONE)`: the emitter's own
+  // translation and rotation with no offset (1114 of 1233 SMVR forms).
+  static bool IdentityMover(const EffectProperty& mover) {
+    if (mover.value.size() != 1 || !IsElement(mover.value[0], F("SMOV")) || mover.value[0].args.size() != 5) {
+      return false;
+    }
+    const std::vector<EffectValue>& args = mover.value[0].args;
+    const EffectValue& offset = args[1];
+    if (!IsElement(args[0], F("EXTT")) || !IsElement(args[2], F("EXTR")) || !IsElement(args[3], F("NONE")) ||
+        !IsElement(args[4], F("NONE")) || !IsElement(offset, F("CNST")) || offset.args.size() != 3) {
+      return false;
+    }
+    uint32_t bits;
+    return std::all_of(offset.args.begin(), offset.args.end(), [&bits](const EffectValue& each) {
+      return ConstWord(each, bits) && (bits & 0x7fffffffu) == 0;
+    });
+  }
+
+  // XFMD, Remastered's transform mode (build/mpr/vfx/RESOLVED-xfmd.md): 3 keeps
+  // the particles in emitter space, 4 does too at unit scale with SMVR as the
+  // mover. Written only for those two; 1, 2 and 5 draw as retail does.
+  void Transform(const EffectProperty& xfmd, const EffectProperty* mover, std::vector<uint8_t>& out) const {
+    uint32_t mode = 2;
+    if (!SmallConst(xfmd, mode)) {
+      m_approximated.push_back("XFMD: not a constant, drawn as retail");
+      return;
+    }
+    if (mode == 3 || mode == 4) {
+      PutBe32(out, F("XFMD"));
+      PutBe32(out, F("CNST"));
+      PutBe32(out, mode);
+    } else if (mode != 1 && mode != 2 && mode != 5) {
+      m_approximated.push_back("XFMD " + std::to_string(mode) + " drawn as retail");
+    }
+    if (mode == 4 && (mover == nullptr || !IdentityMover(*mover))) {
+      m_approximated.push_back(mover == nullptr ? "XFMD 4 with no SMVR taken as the emitter's transform"
+                                                : "SMVR taken as the emitter's transform");
+    }
+  }
+
   // The count-prefixed list `CNST n, items` of a port-only property.
   static void PutList(std::vector<uint8_t>& out, uint32_t fourcc, uint32_t count, const std::vector<uint8_t>& items) {
     PutBe32(out, fourcc);
@@ -1533,6 +1573,9 @@ public:
     std::vector<Started> started;  // by the spawn table
     std::set<uint32_t> written;    // retail properties
     const EffectProperty* material = nullptr;
+    const EffectProperty* xfmd = nullptr;
+    const EffectProperty* mover = nullptr;
+    std::vector<uint32_t> portOnly;  // material data, written only with a VMAT
     const bool textured = retail.count(F("TEXR")) != 0;
     // Remastered draws nothing for a generator with no texture, material or
     // model (it only carries spawns and lights); retail would draw its
@@ -1600,6 +1643,21 @@ public:
           PutBe32(out, F("PMRT"));
           out.insert(out.end(), bytes.begin(), bytes.end());
         }
+        continue;
+      }
+      // Port-only: XFMD and its mover are written after the loop, and the
+      // material data is written by Material() alongside the VMAT.
+      if (part && fourcc == F("XFMD")) {
+        xfmd = &property;
+        continue;
+      }
+      if (part && fourcc == F("SMVR")) {
+        mover = &property;
+        continue;
+      }
+      if (part && (fourcc == F("TMTR") || fourcc == F("PMTR") || fourcc == F("SMTR") || fourcc == F("SSZE") ||
+                   fourcc == F("ITEN") || fourcc == F("SCTR"))) {
+        portOnly.push_back(fourcc);
         continue;
       }
       const auto found = retail.find(fourcc);
@@ -1671,8 +1729,18 @@ public:
     } else if (material != nullptr) {
       result.dropped.push_back("MTIN: the effect has a TEXR");
     }
-    if (part && material != nullptr && Material(*material, node, result) && pmdl != 0 && !pmdlVariants &&
-        m_io.modelMesh) {
+    const bool vmat = part && material != nullptr && Material(*material, node, result);
+    if (!vmat) {
+      for (const uint32_t fourcc : portOnly) {
+        result.dropped.push_back(EffectFourCCString(fourcc) + ": no VMAT");
+      }
+    }
+    if (xfmd != nullptr) {
+      Transform(*xfmd, mover, out);
+    } else if (mover != nullptr) {
+      result.dropped.push_back("SMVR: no XFMD");
+    }
+    if (vmat && pmdl != 0 && !pmdlVariants && m_io.modelMesh) {
       // VMSH: the converted PMDL as one mesh, so the model particle draws through the VMAT.
       const std::vector<uint8_t> mesh = m_io.modelMesh(pmdl);
       if (!mesh.empty()) {
@@ -1933,7 +2001,8 @@ public:
     return true;
   }
 
-  bool Orientation() {
+  // A port-only `CNST <word>` property (VORN, XFMD).
+  bool PortWord() {
     uint32_t fourcc;
     return Word(fourcc) && fourcc == F("CNST") && Skip(4);
   }
@@ -1999,18 +2068,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PerParticle(fourcc == F("VSMT"));
     } else if (part && (fourcc == F("SSZE") || fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
-    } else if (part && fourcc == F("VORN")) {
-      ok = reader.Orientation();
-    } else if (part && (fourcc == F("VMAT") || fourcc == F("VMSH"))) {
-      ok = reader.Material();
-    } else if (part && fourcc == F("VTMT")) {
-      ok = reader.TextureTransforms();
-    } else if (part && (fourcc == F("VPMT") || fourcc == F("VSMT"))) {
-      ok = reader.PerParticle(fourcc == F("VSMT"));
-    } else if (part && (fourcc == F("SSZE") || fourcc == F("ITEN"))) {
-      ok = reader.Element(Type::Real);
-    } else if (part && fourcc == F("VORN")) {
-      ok = reader.Orientation();
+    } else if (part && (fourcc == F("VORN") || fourcc == F("XFMD"))) {
+      ok = reader.PortWord();
     } else if (const auto found = retail.find(fourcc); found == retail.end()) {
       error = "property " + EffectFourCCString(fourcc) + " retail does not read";
       return false;
