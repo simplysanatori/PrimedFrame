@@ -36,7 +36,15 @@ public:
     return mParticleLifetimePercentageRemainder;
   }
   static CElementGen::CParticle* GetCurrentParticle() { return mCurrentParticle; }
+#ifdef TARGET_PC
+  // GC reads address 0 harmlessly when no ADV values are bound; read zeros instead.
+  static float* GetParticleAccessParameters() {
+    static float sZeros[8] = {};
+    return mParticleAccessParameters != nullptr ? mParticleAccessParameters : sZeros;
+  }
+#else
   static float* GetParticleAccessParameters() { return mParticleAccessParameters; }
+#endif
   static SParticleSystem* GetCurrentParticleSystem() { return mCurrentParticleSystem; }
   static void SetCurrentParticleSystem(SParticleSystem* system) { mCurrentParticleSystem = system; }
 

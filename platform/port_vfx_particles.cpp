@@ -296,6 +296,10 @@ void CElementGen::PortRenderParticlesVfx() {
     CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &p : nullptr;
     CParticleGlobals::SetParticleLifetime(p.x0_endFrame - p.x28_startFrame);
     CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
+    // As RenderModels: PAP1..8 read this particle's ADV values (NULL outside the update loop).
+    if (x26d_28_enableADV) {
+      CParticleGlobals::mParticleAccessParameters = x60_advValues[item.x0_partIdx].values;
+    }
 
     // VTMT, one 6-element row per UV set: uv = (A, B) + 0.5 + R(E) diag(C, D) (q - 0.5), layer F.
     Tm tm[3];
@@ -400,6 +404,7 @@ void CElementGen::PortRenderParticlesVfx() {
 
   CParticleGlobals::xPortIrndParticle = nullptr;
   CParticleGlobals::mCurrentParticle = savedParticle;
+  CParticleGlobals::mParticleAccessParameters = nullptr;
   CGraphics::SetCullMode(kCM_Front);
   CGraphics::SetAlphaCompare(kAF_Always, 0, kAO_And, kAF_Always, 0);
 }
