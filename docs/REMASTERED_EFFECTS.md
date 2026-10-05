@@ -165,7 +165,7 @@ identity or the `KPIN(CREL(LTHN(RAND(0,1)), .5, 1, -1))` mirror). **PMDV**
 (`CNST n`, n model ids) follows PMDL (the first id) for a
 `SLCT(IRND(0, n-1), ARRY)` of Remastered-only CMDLs, which the import converts
 standalone under fresh ids. **ATX2** (id, columns, rows, a cycle, loop; only one effect, C6B5B5A9, uses it) is retail's ATEX as a grid; its cycle `ILPT(100)` is retail's CIELifetimePercent, the whole life in frames, so it becomes a life PATL over every tile. Anything else of those shapes is left out.
-With 218 matched fresh effects (below; `3d0a74cd` adds 67, not re-counted), 285 of 296 effects import (1012 PARTs, 142 textures of which 1 flipbook, 70 models). PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6), 06B3F06E and C6CBF848 keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
+With 323 matched fresh effects (below), 385 of 398 effects import (1264 PARTs, 152 textures of which 1 flipbook, 80 models). PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6), 06B3F06E and C6CBF848 keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
 
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.
@@ -230,10 +230,13 @@ those back to retail PARTs (checked 2026-10-05):
   unique, every CHPR naming it agrees, and no other effect claims the PART.
   Hiding a known pair, it re-derives 7 of 7, none wrong (9 give no match: the
   rig lacks retail's locator, retail has no such event, or the times differ).
-  67 pairs are kept (`3d0a74cd`); 2 inconsistent GENPs and 2 PARTs claimed twice
-  (4B55EA17 by Ridley's and FA049A5D's, 0B9E48EB) are left out, and 153 fresh
-  GENPs in CHPRs still have no unique match. Scripts: `build/fx-evt/`
-  (`NOTES.md`).
+  67 pairs are kept (`3d0a74cd`). Then (`4441d0cb`), with paired PARTs taken
+  out and repeated until nothing changes, looser rules: the same bones and at
+  least half the frames (within one), the same frames on other bones, or shared
+  bones and half the frames. Hiding a pair from both event blocks, each rule
+  alone re-derives 46 to 67 of 83, none wrong; 38 more pairs. 121 of the 232
+  fresh GENPs in CHPRs are still unpaired, among them 4B55EA17's two claimants
+  (Ridley's and FA049A5D's). Scripts: `build/fx-evt/` (`NOTES.md`).
 
 ## Converting to retail PART
 
