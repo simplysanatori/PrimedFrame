@@ -233,6 +233,15 @@ bool IsElement(const EffectValue& value, uint32_t fourcc) {
   return value.kind == EffectValue::Kind::Element && value.fourcc == fourcc;
 }
 
+bool IsParameterRead(uint32_t fourcc) {
+  for (uint32_t read : {F("SPAF"), F("SPAC"), F("SPAV"), F("TPVF"), F("TPVC"), F("TPVV"), F("DPVF"), F("DPVC"), F("DPVV")}) {
+    if (fourcc == read) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // CNST holding one word (an int, or a real's bits).
 bool ConstWord(const EffectValue& value, uint32_t& word) {
   if (!IsElement(value, F("CNST")) || value.args.size() != 1 || value.args[0].kind != EffectValue::Kind::Word) {
@@ -391,6 +400,21 @@ public:
       PutBe32(out, FloatBits(1.0f));
       return true;
     }
+    // GPUA is CREGPUAvailabilty, how much GPU time is free (to thin effects
+    // out under load): taken as 1, all of it.
+    if (value.fourcc == F("GPUA") && value.args.empty() && type == Type::Real) {
+      m_approximated.push_back("GPUA taken as 1");
+      PutBe32(out, F("CNST"));
+      PutBe32(out, FloatBits(1.0f));
+      return true;
+    }
+    // SPAF/SPAC/SPAV(#n, default) read an effect parameter the game passes in,
+    // TPVF/TPVC/TPVV and DPVF/DPVC/DPVV(guid, default) a named one; retail
+    // passes none, so they are taken as their default.
+    if (value.args.size() == 2 && IsParameterRead(value.fourcc)) {
+      m_approximated.push_back(EffectFourCCString(value.fourcc) + " taken as its default");
+      return Element(value.args[1], type, out, why);
+    }
     const Signatures& elements = ElementsOf(type);
     const auto found = elements.find(value.fourcc);
     if (found == elements.end()) {
@@ -443,6 +467,42 @@ public:
     } else {
       xBias = angles[0] ^ 0x80000000u;
       m_approximated.push_back("rotated cone taken as an X bias");
+    }
+    return true;
+  }
+
+  static bool UsesElement(const EffectValue& value, uint32_t fourcc) {
+    if (value.kind == EffectValue::Kind::Element && value.fourcc == fourcc) {
+      return true;
+    }
+    return std::any_of(value.args.begin(), value.args.end(),
+                       [fourcc](const EffectValue& arg) { return UsesElement(arg, fourcc); });
+  }
+
+  // PMRQ (a model particle's rotation) REUL(x, y, z, #00) as retail's PMRT
+  // CNST(x, y, z). CERotationEuler::QuatGeneric's order 0 is Rz * Ry * Rx in
+  // degrees, as CElementGen builds PMRT. IRND is left out: retail evaluates a
+  // varying PMRT afresh each frame, where IRND gives 0 after frame 0.
+  bool ModelRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
+    const EffectValue* reul = value.size() == 1 ? &value[0] : nullptr;
+    if (reul == nullptr || !IsElement(*reul, F("REUL")) || reul->args.size() != 4) {
+      why = "a rotation that is not REUL";
+      return false;
+    }
+    const EffectValue& order = reul->args[3];
+    if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
+      why = "a rotation order other than 0 (XYZ)";
+      return false;
+    }
+    PutBe32(out, F("CNST"));
+    for (size_t i = 0; i < 3; ++i) {
+      if (UsesElement(reul->args[i], F("IRND"))) {
+        why = "an angle with IRND";
+        return false;
+      }
+      if (!Element(reul->args[i], Type::Real, out, why)) {
+        return false;
+      }
     }
     return true;
   }
@@ -1018,8 +1078,40 @@ public:
     std::set<uint32_t> written;    // retail properties
     const EffectProperty* material = nullptr;
     const bool textured = retail.count(F("TEXR")) != 0;
+    // Remastered draws nothing for a generator with no texture, material or
+    // model (it only carries spawns and lights); retail would draw its
+    // particles as untextured quads (0.1 wide and white without SIZE/COLR).
+    // Such a generator is written with a size of 0.
+    const bool drawsNothing =
+        part && std::none_of(node.properties.begin(), node.properties.end(), [](const EffectProperty& property) {
+          return property.fourcc == F("TEXR") || property.fourcc == F("MTIN") || property.fourcc == F("PMDL");
+        });
     for (const EffectProperty& property : node.properties) {
       uint32_t fourcc = property.fourcc;
+      if (drawsNothing && fourcc == F("SIZE")) {
+        result.dropped.push_back("SIZE: the generator draws nothing");
+        continue;
+      }
+      // PBDM is Remastered's blend mode, from the table CParticleStaticRenderState
+      // reads: 0 alpha (src alpha, 1 - src alpha), 1 premultiplied (1, 1 - src
+      // alpha), 2 additive (src alpha, 1) and 3 opaque (1, 0). Retail has only
+      // alpha and AAPH (additive), so 2 is AAPH and the rest are alpha.
+      if (part && fourcc == F("PBDM")) {
+        const EffectValue* mode = property.value.size() == 1 ? &property.value[0] : nullptr;
+        if (mode != nullptr && IsElement(*mode, F("CNST")) && mode->args.size() == 1) {
+          mode = &mode->args[0];
+        }
+        if (mode == nullptr || (mode->kind != EffectValue::Kind::Byte && mode->kind != EffectValue::Kind::Word)) {
+          result.dropped.push_back("PBDM: not a constant");
+        } else if (mode->word == 2) {
+          PutBe32(out, F("AAPH"));
+          PutBe32(out, F("CNST"));
+          out.push_back(1);
+        } else if (mode->word != 0) {
+          m_approximated.push_back("PBDM " + std::to_string(mode->word) + " taken as alpha blending");
+        }
+        continue;
+      }
       if (part && fourcc == F("LTM2")) {
         fourcc = F("LTME");
       } else if (type == F("SWHC") && fourcc == F("SBDM") && !additive) {
@@ -1038,6 +1130,18 @@ public:
           ++result.droppedRetail;
         } else if (!bytes.empty()) {
           PutBe32(out, fourcc);
+          out.insert(out.end(), bytes.begin(), bytes.end());
+        }
+        continue;
+      }
+      if (part && fourcc == F("PMRQ")) {
+        std::vector<uint8_t> bytes;
+        std::string why;
+        if (!ModelRotation(property.value, bytes, why)) {
+          result.dropped.push_back("PMRQ: " + why);
+        } else {
+          written.insert(F("PMRT"));
+          PutBe32(out, F("PMRT"));
           out.insert(out.end(), bytes.begin(), bytes.end());
         }
         continue;
@@ -1080,6 +1184,11 @@ public:
       written.insert(fourcc);
       PutBe32(out, fourcc);
       out.insert(out.end(), bytes.begin(), bytes.end());
+    }
+    if (drawsNothing) {
+      PutBe32(out, F("SIZE"));
+      PutBe32(out, F("CNST"));
+      PutBe32(out, FloatBits(0.0f));
     }
     // A material instance draws with its texture where there is no TEXR.
     if (material != nullptr && !texture) {

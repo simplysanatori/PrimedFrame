@@ -315,6 +315,18 @@ Notes from comparing converted effects with the disc's (`effect_tool convert`):
 - DFCP (2 or 3 elements) and DFCS (3) scale a size, colour or speed by
   something retail has no element for; they are written as 1 and listed as
   approximated.
+- PMRQ (a model particle's rotation) `REUL(x, y, z, #00)` is retail's PMRT
+  `CNST(x, y, z)`: `CERotationEuler::QuatGeneric` order 0 is Rz·Ry·Rx in
+  degrees, as `CElementGen` builds PMRT. All PMRQ REULs on the disc use order
+  0. An angle with IRND is dropped: retail evaluates a varying PMRT each frame
+  and IRND gives 0 after frame 0.
+- PBDM: 0 alpha, 1 premultiplied, 2 additive, 3 opaque. Retail has only alpha
+  and AAPH, so 2 is AAPH, and 1 and 3 are taken as alpha blending (listed as
+  approximated).
+- GPUA (free GPU time) is written as 1, and SPAx parameter reads as their
+  default (retail passes no parameters); both listed as approximated.
+- A generator with no TEXR, MTIN or PMDL draws nothing in Remastered; it gets
+  `SIZE CNST 0` so retail doesn't draw an untextured quad.
 - MAXP and SIZE differ from the disc on purpose in a few effects, as do some
   COLR curves. The disc also sets the COLR header's second flag byte where
   Remastered leaves it 0; retail does not use it.
@@ -419,8 +431,13 @@ g++ -std=c++20 -O2 -Iplatform/include -Iextern/astcenc/Source \
     platform/port_remastered_effect_import.cpp platform/port_remastered_image.cpp \
     platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp \
     platform/port_remastered_convert.cpp platform/port_remastered_cmdl.cpp \
+    platform/port_remastered_anuv.cpp \
     build/port-gcc/extern/astcenc/libastcenc.a -lzstd -lpthread -o effect_tool
 ./effect_tool dump <file.GENP>             # one effect as text
+./effect_tool mtin <file.GENP>...          # one TSV line per generator with a
+                                           # material instance: file, form, MATI
+                                           # (pak order), TEXR, PBDM, PMTR items
+                                           # (group/slot=value), SMTR item count
 ./effect_tool scan <romfs> [outdir]        # coverage, references, failures;
                                            # outdir gets one dump per effect
 ./effect_tool extract <romfs> <outdir>     # every unique GENP as raw <id>.GENP,

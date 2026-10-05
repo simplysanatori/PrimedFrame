@@ -86,14 +86,19 @@ bool HasProperty(const EffectNode& node, uint32_t fourcc) {
 }
 
 // A generator that drew a texture or a model whose converted PART draws
-// neither: the conversion lost its look.
+// neither, or drew a model and now draws only its material's texture as a
+// sprite (at the sprite's default size, a screen-filling quad): the
+// conversion lost its look.
 bool LostLook(const EffectNode& node, const std::vector<RetailPartProperty>& part) {
-  const bool had = HasProperty(node, EffectFourCC("TEXR")) || HasProperty(node, EffectFourCC("MTIN")) ||
-                    HasProperty(node, EffectFourCC("PMDL"));
-  const bool has = std::any_of(part.begin(), part.end(), [](const RetailPartProperty& property) {
-    return property.fourcc == EffectFourCC("TEXR") || property.fourcc == EffectFourCC("PMDL");
-  });
-  return had && !has;
+  const auto has = [&](uint32_t fourcc) {
+    return std::any_of(part.begin(), part.end(),
+                       [&](const RetailPartProperty& property) { return property.fourcc == fourcc; });
+  };
+  if (HasProperty(node, EffectFourCC("PMDL"))) {
+    return !has(EffectFourCC("PMDL"));
+  }
+  const bool hadTexture = HasProperty(node, EffectFourCC("TEXR")) || HasProperty(node, EffectFourCC("MTIN"));
+  return hadTexture && !has(EffectFourCC("TEXR"));
 }
 
 void PutFourCC(std::vector<uint8_t>& out, uint32_t fourcc) {

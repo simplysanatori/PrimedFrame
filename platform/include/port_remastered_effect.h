@@ -106,6 +106,25 @@ struct EffectSpawnTable {
 // Breaks down a KSSM property of an effect parsed from `data`.
 bool ParseSpawnTable(const uint8_t* data, size_t size, const EffectProperty& kssm, EffectSpawnTable& out);
 
+// A PMTR or SMTR: values a generator hands its material instance, in five
+// groups. Each item is an element and a trailer of 3 bytes in PMTR (the slot,
+// 0, then 4 for the vec4s of group 4) or 6 in SMTR.
+struct EffectMaterialTrack {
+  struct Item {
+    int group = 0;
+    std::array<uint8_t, 6> trailer{};
+    EffectValue value;
+  };
+  std::vector<Item> items;
+};
+
+// Breaks down a PMTR or SMTR property of an effect parsed from `data`.
+bool ParseMaterialTrack(const uint8_t* data, size_t size, const EffectProperty& property, EffectMaterialTrack& out);
+
+// The shader a MATI draws with: its MTRL guid's first four bytes as stored,
+// read big-endian (the id8 `re.sh shader` takes), or 0 for a short file.
+uint32_t EffectMaterialShader(const uint8_t* mati, size_t size);
+
 // Indented text dump of a parsed effect, one property per line, for diffing
 // against retail PART dumps.
 std::string DumpEffect(const EffectNode& effect, const uint8_t* data);

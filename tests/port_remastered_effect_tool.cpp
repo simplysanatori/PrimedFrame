@@ -1,6 +1,8 @@
 // Dev tool for the Remastered particle reader (port_remastered_effect).
 //
 //   tool dump <file.GENP>            print the parsed effect
+//   tool mtin <file.GENP>...         one line per generator with a material
+//                                    instance: its MATI and PMTR values
 //   tool scan <romfs> [outdir]       parse every GENP in every pak under <romfs>
 //   tool convert <romfs> <retail> <outdir>
 //                                    convert every GENP to retail PART/SWHC/ELSC
@@ -51,12 +53,14 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -143,6 +147,85 @@ int Dump(const std::string& path) {
     return 1;
   }
   std::cout << PortRemastered::DumpEffect(effect, data.data());
+  return 0;
+}
+
+// One line per generator with a material instance: file, form, the MTIN's
+// MATI (pak order), whether it has a TEXR, PBDM, then PMTR's items as
+// group/slot=value (a constant vec4 as its four reals, else the element's
+// FourCC) and SMTR's item count. For joining with `re.sh mtrls`.
+void MaterialLines(const std::string& file, const PortRemastered::EffectNode& node, const uint8_t* data,
+                   size_t size) {
+  using namespace PortRemastered;
+  std::string mati, pbdm = "-", pmtr, smtr = "-";
+  bool texr = false;
+  for (const EffectProperty& property : node.properties) {
+    if (property.fourcc == EffectFourCC("MTIN")) {
+      for (const EffectValue& value : property.value) {
+        if (value.kind == EffectValue::Kind::Guid) {
+          mati = EffectGuidString(value.guid);
+        }
+      }
+    } else if (property.fourcc == EffectFourCC("TEXR")) {
+      texr = true;
+    } else if (property.fourcc == EffectFourCC("PBDM") && property.value.size() == 1) {
+      const EffectValue& v = property.value[0];
+      const EffectValue& mode = v.args.size() == 1 ? v.args[0] : v;
+      pbdm = std::to_string(mode.word);
+    } else if (property.fourcc == EffectFourCC("PMTR") || property.fourcc == EffectFourCC("SMTR")) {
+      EffectMaterialTrack track;
+      if (!ParseMaterialTrack(data, size, property, track)) {
+        (property.fourcc == EffectFourCC("PMTR") ? pmtr : smtr) = "unparsed";
+        continue;
+      }
+      if (property.fourcc == EffectFourCC("SMTR")) {
+        smtr = std::to_string(track.items.size());
+        continue;
+      }
+      for (const EffectMaterialTrack::Item& item : track.items) {
+        std::ostringstream text;
+        text << item.group << "/" << (item.trailer[0] | item.trailer[1] << 8) << "=";
+        const EffectValue& v = item.value;
+        bool constant = v.fourcc == EffectFourCC("CNST") && !v.args.empty();
+        for (const EffectValue& c : v.args) {
+          constant = constant && c.kind == EffectValue::Kind::Element && c.fourcc == EffectFourCC("CNST") && c.args.size() == 1 &&
+                     c.args[0].kind == EffectValue::Kind::Word;
+        }
+        if (constant) {
+          for (size_t i = 0; i < v.args.size(); ++i) {
+            float real;
+            std::memcpy(&real, &v.args[i].args[0].word, 4);
+            text << (i ? "," : "") << real;
+          }
+        } else {
+          text << EffectFourCCString(v.fourcc);
+        }
+        pmtr += (pmtr.empty() ? "" : " ") + text.str();
+      }
+    }
+  }
+  if (!mati.empty()) {
+    std::cout << file << "\t" << EffectFourCCString(node.form) << "\t" << mati << "\t" << (texr ? "TEXR" : "-") << "\t"
+              << pbdm << "\t" << (pmtr.empty() ? "-" : pmtr) << "\t" << smtr << "\n";
+  }
+  for (const PortRemastered::EffectNode& child : node.children) {
+    MaterialLines(file, child, data, size);
+  }
+}
+
+int Materials(int count, char** paths) {
+  for (int i = 0; i < count; ++i) {
+    std::ifstream file(paths[i], std::ios::binary);
+    const std::vector<uint8_t> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    PortRemastered::EffectNode effect;
+    std::string error;
+    if (!PortRemastered::ParseEffect(data.data(), data.size(), effect, error)) {
+      std::cerr << paths[i] << ": " << error << "\n";
+      continue;
+    }
+    const std::string path = paths[i];
+    MaterialLines(path.substr(path.find_last_of('/') + 1), effect, data.data(), data.size());
+  }
   return 0;
 }
 
@@ -837,6 +920,9 @@ int main(int argc, char** argv) {
   if (mode == "dump" && argc == 3) {
     return Dump(argv[2]);
   }
+  if (mode == "mtin" && argc >= 3) {
+    return Materials(argc - 2, argv + 2);
+  }
   if (mode == "scan" && (argc == 3 || argc == 4)) {
     return Scan(argv[2], argc == 4 ? argv[3] : "");
   }
@@ -850,7 +936,7 @@ int main(int argc, char** argv) {
     return Import(argv[2], argv[3], argv[4]);
   }
   std::cerr << "usage: " << argv[0]
-            << " dump <file.GENP> | scan <romfs> [outdir] | extract <romfs> <outdir>"
+            << " dump <file.GENP> | mtin <file.GENP>... | scan <romfs> [outdir] | extract <romfs> <outdir>"
                " | convert <romfs> <retail|-> <outdir>"
                " | import <romfs> <retail> <outdir>\n";
   return 2;
