@@ -252,8 +252,12 @@ DWORD WINAPI WriteReport(void* argument) {
     if (file != INVALID_HANDLE_VALUE) {
       MINIDUMP_EXCEPTION_INFORMATION exception{report.threadId, report.pointers, FALSE};
       const bool wrote = MiniDumpWriteDump(process, GetCurrentProcessId(), file,
+                                           // Indirectly referenced memory: the bytes around each pointer on
+                                           // the stacks, so a heap block being freed (and its header) is in
+                                           // the dump without taking the whole heap.
                                            static_cast< MINIDUMP_TYPE >(MiniDumpNormal | MiniDumpWithThreadInfo |
-                                                                        MiniDumpWithUnloadedModules),
+                                                                        MiniDumpWithUnloadedModules |
+                                                                        MiniDumpWithIndirectlyReferencedMemory),
                                            &exception, nullptr, nullptr) != FALSE;
       CloseHandle(file);
       Line line;
