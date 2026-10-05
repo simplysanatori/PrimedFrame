@@ -55,9 +55,11 @@ class CVector3f;
 //     (unit quaternion) and f32 translation x, y, z
 //
 // Version 6 may then end with the room's skies:
-//   'SKY ', u32 count, per sky: u32 index
-// A sky instance is not drawn with the room: the world's sky is drawn as it, centred on the
-// camera, turned and scaled by its transform (whose translation is left out). Its layer,
+//   'SKY ', u32 count, per sky: u32 index, and from version 7 f32 radiance r, g, b
+// The radiance is Remastered's Skybox colour times its intensity, which takes the place of
+// the sky materials' diffuse colour (DIFC): the base map times it is the light the sky
+// gives, in Remastered's HDR units; 0 (version 6) for not known. A sky instance is not
+// drawn with the room: the world's sky is drawn as it, centred on the camera, turned and scaled by its transform (whose translation is left out). Its layer,
 // `active`, links and group show and hide it as they do any instance's.
 namespace PortRoomGeo {
 
@@ -91,6 +93,7 @@ struct Instance {
   float animFps = 0.f;
   std::vector<float> animKeys; // 7 per frame: rotation x, y, z, w, translation x, y, z
   bool sky = false; // the room's sky (version 6), drawn in place of the world's
+  float skyRadiance[3] = {}; // version 7; 0: not known
 };
 
 // Remastered's script objects between what happens in game and a group of instances.
@@ -189,8 +192,9 @@ void DrawSorted(const void* drawable);
 extern bool sReplacingArea;
 // The sky of an alive area, in place of the world's (CWorld::DrawSky): its room's first sky
 // instance that is shown, on a layer that is on, and loaded. Null for none. `orient` is its
-// turn and scale in the world, with no translation.
-const CModel* Sky(const CGameArea& area, CTransform4f& orient);
+// turn and scale in the world, with no translation, and `radiance` its Instance::skyRadiance
+// (0 for not known).
+const CModel* Sky(const CGameArea& area, CTransform4f& orient, float radiance[3]);
 // Lets go of every model (the mods folder is about to change).
 void Reset();
 // A script object sent a state (CEntity::SendScriptMsgs): shows or hides the instances

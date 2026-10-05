@@ -36,6 +36,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "Kyoto/Graphics/CCubeModel.hpp"
+#include "port_room_env.h"
 #include "port_room_geo.h"
 
 bool PortWarpKeepsMusic(); // CStateManager.cpp
@@ -765,24 +767,33 @@ void CWorld::DrawSky(const CTransform4f& xf) const {
   // retail has one per world: the camera's area's sky if it has one, else another sky area's.
   if (x70_27_skyboxVisible) {
     CTransform4f orient = CTransform4f::Identity();
+    f32 radiance[3] = {};
     const CModel* sky = nullptr;
     if (x68_curAreaId != kInvalidAreaId) {
       const CGameArea* current = GetArea(x68_curAreaId);
       if (current->IsPostConstructed() && current->DoesAreaNeedSkyNow()) {
-        sky = PortRoomGeo::Sky(*current, orient);
+        sky = PortRoomGeo::Sky(*current, orient, radiance);
       }
     }
     for (CGameArea::CConstChainIterator it = GetChainHead(kC_Alive); sky == nullptr && it != skGlobalEnd; ++it) {
       if (it->DoesAreaNeedSkyNow()) {
-        sky = PortRoomGeo::Sky(*it, orient);
+        sky = PortRoomGeo::Sky(*it, orient, radiance);
       }
     }
     if (sky != nullptr) {
+      // Remastered draws a sky unlit, its base map times the Skybox's colour and intensity
+      // in HDR, exposed as the frame is. Without that colour or the room's exposure, the sky
+      // is drawn as any unlit surface.
+      const f32 gain = PortRoomEnv::SkyGain();
+      const bool lit = gain > 0.f && (radiance[0] > 0.f || radiance[1] > 0.f || radiance[2] > 0.f);
+      const f32 skyGain[3] = {radiance[0] * gain, radiance[1] * gain, radiance[2] * gain};
       CGraphics::DisableAllLights();
       gpRender->SetModelMatrix(xf * orient);
       gpRender->SetAmbientColor(CColor::White());
       CGraphics::SetDepthRange(0.999f, 1.f);
+      CCubeModel::PortSetSky(lit ? skyGain : nullptr);
       sky->Draw(CModelFlags::Normal().DepthCompareUpdate(true, false));
+      CCubeModel::PortSetSky(nullptr);
       CGraphics::SetDepthRange(0.125f, 1.f);
       return;
     }

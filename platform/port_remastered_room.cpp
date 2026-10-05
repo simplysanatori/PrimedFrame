@@ -83,10 +83,12 @@ constexpr uint32_t kPropActorAnim = 0x54446d42;
 constexpr uint32_t kPropAnimCharacter = 0xa589d885;
 constexpr uint32_t kPropAnimName = 0x87c03a01;
 // A room's sky: its model, drawn about the camera and turned and scaled by its entity's
-// transform. Also carries an intensity (0x63328a04) and sometimes a colour (0x34184350),
-// which are not used.
+// transform, and lit by its colour times its intensity (SLdrSkybox: 1, 1, 1, 1 and 1 when
+// left out), which CSkyboxSceneNode puts in place of the materials' DIFC.
 constexpr uint32_t kSkybox = 0x5112a065;
 constexpr uint32_t kPropSkyboxModel = 0x387bb786;
+constexpr uint32_t kPropSkyboxIntensity = 0x63328a04;
+constexpr uint32_t kPropSkyboxColor = 0x34184350;
 // A ColorModulateMP1 in its incandescence mode (blend 5, CColorModulateMP1GOC): what it
 // targets glows in its colour B times its intensity, which takes the place of every
 // material's ICNC. Each door frame has one, with times of 0, so B applies from the start.
@@ -2638,6 +2640,18 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     PortRoomGeo::Instance& inst = instances.emplace_back();
     inst.model = id;
     inst.sky = true;
+    const auto intensity = f.find(kPropSkyboxIntensity);
+    const float level =
+        intensity != f.end() && intensity->second.size == 4 ? LeFloat(r.room.Bytes(intensity->second)) : 1.f;
+    const auto colour = f.find(kPropSkyboxColor);
+    for (int i = 0; i < 3; ++i) {
+      Span s;
+      const float channel = colour != f.end() && colour->second.size >= 12 ? LeFloat(r.room.Bytes(colour->second) + 4 * i)
+                            : r.room.Nested(*c, {kPropSkyboxColor, kPropColorChannel[i]}, s) && s.size == 4
+                                ? LeFloat(r.room.Bytes(s))
+                                : 1.f;
+      inst.skyRadiance[i] = std::isfinite(channel * level) ? std::max(channel * level, 0.f) : 0.f;
+    }
     place(inst, Vec3{}, rot, scale);
     script(inst, c->entity, active);
     ++skies;

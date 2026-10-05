@@ -127,6 +127,9 @@ public:
   // in for the emissive strength Remastered gave the material (ICNC), as a ColorModulateMP1
   // in its incandescence mode does (PortRoomGeo::Instance::glow).
   static void PortSetGlow(const float* rgb);
+  // Until called again with null: every PBR material drawn is a sky's, unlit and its colour
+  // multiplied by this (a Remastered Skybox's colour and intensity, exposed; CWorld::DrawSky).
+  static void PortSetSky(const float* rgb);
   // The CMDL this model was loaded from (0 for an area's models), for diagnostics.
   void PortSetAssetId(uint id) { xPort_assetId = id; }
   uint PortAssetId() const { return xPort_assetId; }

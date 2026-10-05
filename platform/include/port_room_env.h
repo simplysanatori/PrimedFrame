@@ -375,6 +375,10 @@ bool AutoExposure();
 // 1 when rooms are not exposed or MP_ROOM_ENV_STATIC_EXPOSURE=0 (the console's `roomenv
 // static`).
 float GlowScale();
+// What a sky's HDR colour (a Skybox's colour times its intensity) is multiplied by so that,
+// after GlowScale, it is exposed at the frame's 2^(3 - EV) as Remastered does. 0 when
+// GlowScale is not in use; the sky is then drawn as before.
+float SkyGain();
 void SetStaticExposure(bool on);
 bool StaticExposure();
 // Whether a model lit by the baked light (an absolute ambient or a volume) also takes the

@@ -1079,6 +1079,16 @@ float GlowScale() {
   return std::isfinite(scale) && scale > 0.f ? scale : 1.f;
 }
 
+float SkyGain() {
+  if (GlowScale() <= 0.f || sStatic == 0 || !sFrame.hasTone || !Enabled() || !RoomExposed()) {
+    return 0.f;
+  }
+  // The shader multiplies an unlit surface by GlowScale, 2^(static EV - EV); this makes the
+  // product Remastered's 2^(3 - EV) on a sky's HDR colour.
+  const float gain = std::exp2(3.f - sFrame.shown[5]);
+  return std::isfinite(gain) && gain > 0.f ? gain : 0.f;
+}
+
 void SetStaticExposure(bool on) { sStatic = on ? 1 : 0; }
 
 bool StaticExposure() {

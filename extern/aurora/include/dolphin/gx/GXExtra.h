@@ -60,7 +60,8 @@ void GXSetPBRProbeEx(const f32 viewToProbe[3][3], f32 weight, f32 occlusionMin, 
 // draws (see GX_AURORA_SET_PBR_MATERIAL). `heightBlend` above 0 is the threshold of a
 // height-blended alpha (0: the base map's alpha is the opacity), and `mode` 1 draws the
 // surface's own colour with no lighting, 2 has the base map's alpha mask the glow instead
-// of being the opacity, 4 has the vertex colour tint the surface; the sum of those. `layer` is the blend of a second layer (texture maps 4-6:
+// of being the opacity, 4 has the vertex colour tint the surface, 8 is Remastered's
+// ColorUnlit and 16 a sky, whose unlit colour `backlight` multiplies; the sum of those. `layer` is the blend of a second layer (texture maps 4-6:
 // base, MR, normal) over the first by the vertex alpha and the two base maps' alphas: the
 // width of its edge, then the scale and offset of the first layer's height and of the
 // second's. A width of 0 is no second layer. `kind` is one of Remastered's special

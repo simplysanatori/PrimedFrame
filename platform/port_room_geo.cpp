@@ -138,6 +138,7 @@ struct Placed {
   std::vector< float > animKeys;
   CTransform4f base = CTransform4f::Identity();
   bool sky = false; // Instance::sky: drawn by Sky, not with the room
+  float skyRadiance[3] = {};
 };
 
 // Copies of one small model that never move or change, built into one model at their world
@@ -904,6 +905,7 @@ void Load(uint32_t mrea, Area& area) {
     item.shown = item.active = instance.active;
     item.glows = instance.glows;
     item.sky = instance.sky;
+    std::copy(instance.skyRadiance, instance.skyRadiance + 3, item.skyRadiance);
     std::copy(instance.glow, instance.glow + 3, item.glow);
     if (!instance.animKeys.empty()) {
       item.animFps = instance.animFps;
@@ -1463,7 +1465,7 @@ void DrawSorted(const void* drawable) {
 
 bool sReplacingArea = false;
 
-const CModel* Sky(const CGameArea& gameArea, CTransform4f& orient) {
+const CModel* Sky(const CGameArea& gameArea, CTransform4f& orient, float radiance[3]) {
   if (GetMode() == Mode::Off || gpGameState == nullptr) {
     return nullptr;
   }
@@ -1500,6 +1502,7 @@ const CModel* Sky(const CGameArea& gameArea, CTransform4f& orient) {
     if (corner > 0.f) {
       orient = orient * CTransform4f::Scale(0.5f * CGraphics::GetProjectionState().GetFar() / corner);
     }
+    std::copy(item.skyRadiance, item.skyRadiance + 3, radiance);
     return &**model.data->PickStaticModel(CModelData::kWM_Normal);
   }
   return nullptr;

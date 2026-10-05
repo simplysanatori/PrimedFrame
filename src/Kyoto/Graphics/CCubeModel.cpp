@@ -215,7 +215,16 @@ struct SPortPBROverride {
 std::vector< SPortPBROverride > sPortPBROverrides;
 bool sPortGlows = false;
 f32 sPortGlow[3];
+bool sPortSky = false;
+f32 sPortSkyGain[3];
 } // namespace
+
+void CCubeModel::PortSetSky(const f32* rgb) {
+  sPortSky = rgb != nullptr;
+  if (rgb != nullptr) {
+    std::copy(rgb, rgb + 3, sPortSkyGain);
+  }
+}
 
 void CCubeModel::PortSetGlow(const f32* rgb) {
   sPortGlows = rgb != nullptr;
@@ -258,6 +267,14 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
     values[0] = sPortGlow[0];
     values[1] = sPortGlow[1];
     values[2] = sPortGlow[2];
+  }
+  if (sPortSky) {
+    // Unlit (1) and a sky (16), keeping the material's other flags: the backlight's place
+    // holds the gain (see GXSetPBRMaterial).
+    values[3] = sPortSkyGain[0];
+    values[4] = sPortSkyGain[1];
+    values[5] = sPortSkyGain[2];
+    values[7] = f32((int(values[7] + 0.5f) & 15) | 17);
   }
   for (const SPortPBROverride& entry : sPortPBROverrides) {
     if (entry.model == this && entry.material == idx) {
@@ -421,7 +438,8 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     f32 tone[3][4];
     const bool hasTone = PortRoomEnv::Tone(tone);
     if (hasTone) {
-      tone[0][3] = sortedDraw ? 1.f : PortRoomEnv::GlowScale();
+      // A sky's gain (PortSetSky) assumes GlowScale, blended or not.
+      tone[0][3] = sortedDraw && !sPortSky ? 1.f : PortRoomEnv::GlowScale();
     }
     GXSetPBRTone(hasTone ? tone : nullptr);
     // An opaque material's own alpha (dst factor zero) means nothing to a blend.

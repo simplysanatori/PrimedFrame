@@ -998,8 +998,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_vraw = {};
       // 8 = Remastered's ColorUnlit: its vertex shader linearises the colour and doubles
       // it, and the pixel shader's gain is in the backlight's place.
-      let pbr_cu = ubuf.pbr_backlight.w > 7.5;
-      let pbr_flags = ubuf.pbr_backlight.w - select(0.0, 8.0, pbr_cu);
+      // 16 = a sky (with 1, unlit): the backlight's place holds the gain on its colour.
+      let pbr_sky = ubuf.pbr_backlight.w > 15.5;
+      let pbr_mw = ubuf.pbr_backlight.w - select(0.0, 16.0, pbr_sky);
+      let pbr_cu = pbr_mw > 7.5;
+      let pbr_flags = pbr_mw - select(0.0, 8.0, pbr_cu);
       var pbr_vc = select(vec4f(1.0), pbr_vraw, pbr_flags > 3.5);
       if (pbr_cu) {{
           pbr_vc = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)) * ubuf.pbr_backlight.rgb, pbr_vraw.a);
@@ -1510,7 +1513,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_alpha = {0}.a * pbr_vraw.a;
       }}
       // 1 = unlit, 2 = the base map's alpha masks the glow, 4 = tinted by the vertex colour
-      // (pbr_vc), 8 = ColorUnlit (above); the sum of those.
+      // (pbr_vc), 8 = ColorUnlit, 16 = sky (above); the sum of those.
       let pbr_mode = pbr_flags - select(0.0, 4.0, pbr_flags > 3.5);
       if (pbr_mode > 1.5) {{
           // The base map's alpha is how much of the glow shows, and no opacity: the
@@ -1521,6 +1524,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       if ((pbr_mode > 0.5 && pbr_mode < 1.5) || pbr_mode > 2.5) {{
           // Unlit (screens, holograms): the surface's own colour and its glow.
           pbr_lo = pbr_diff * pbr_ao;
+          if (pbr_sky) {{
+              pbr_lo *= max(ubuf.pbr_backlight.rgb, vec3f(0.0));
+          }}
       }}
       // Emitted light is at the room's static exposure, not the frame's (w of tone row 0).
       if (ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0) {{

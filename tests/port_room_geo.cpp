@@ -164,6 +164,9 @@ void TestSky() {
   in.push_back(MakeInstance(0x11111111, 1.f));
   in.push_back(MakeInstance(0x22222222, 2.f));
   in[1].sky = true;
+  in[1].skyRadiance[0] = 0.5f;
+  in[1].skyRadiance[1] = 2.f;
+  in[1].skyRadiance[2] = 0.f;
   in[0].animFps = 30.f;
   in[0].animKeys = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0};
   std::vector<PortRoomGeo::Instance> out;
@@ -172,7 +175,25 @@ void TestSky() {
   const std::vector<uint8_t> file = PortRoomGeo::Write(in);
   Check(PortRoomGeo::Parse(file, out, error, &back), "sky file parses");
   Check(out.size() == 2 && !out[0].sky && out[1].sky && out[0].animKeys == in[0].animKeys, "sky");
-  for (size_t cut = file.size() - 11; cut < file.size(); ++cut) {
+  Check(out.size() == 2 && out[1].skyRadiance[0] == 0.5f && out[1].skyRadiance[1] == 2.f &&
+            out[1].skyRadiance[2] == 0.f,
+        "sky radiance");
+  // Version 6: the index alone, and no radiance.
+  std::vector<uint8_t> old(file.begin(), file.end() - 12);
+  old[4] = 6;
+  Check(PortRoomGeo::Parse(old, out, error, &back) && out.size() == 2 && out[1].sky &&
+            out[1].skyRadiance[0] == 0.f && out[1].skyRadiance[1] == 0.f,
+        "version 6 sky parses");
+  // A negative or non-finite radiance reads as not known.
+  std::vector<uint8_t> odd = file;
+  const float nan = std::nanf("");
+  const float negative = -1.f;
+  std::memcpy(odd.data() + file.size() - 12, &negative, 4);
+  std::memcpy(odd.data() + file.size() - 8, &nan, 4);
+  Check(PortRoomGeo::Parse(odd, out, error, &back) && out.size() == 2 && out[1].skyRadiance[0] == 0.f &&
+            out[1].skyRadiance[1] == 0.f,
+        "odd sky radiance reads as 0");
+  for (size_t cut = file.size() - 23; cut < file.size(); ++cut) {
     const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
     if (PortRoomGeo::Parse(part, out, error, &back)) {
       std::fprintf(stderr, "FAIL: sky truncated at %zu parses\n", cut);
@@ -180,14 +201,17 @@ void TestSky() {
     }
   }
   std::vector<uint8_t> bad = file;
-  bad[file.size() - 4] = 2; // no such instance
+  bad[file.size() - 16] = 2; // no such instance
   Check(!PortRoomGeo::Parse(bad, out, error, &back), "sky of a missing instance rejected");
   bad = file;
   bad[4] = 5;
   Check(!PortRoomGeo::Parse(bad, out, error, &back), "sky in a version 5 file rejected");
   bad = file;
-  bad[file.size() - 8] = 2; // count 2
+  bad[file.size() - 20] = 2; // count 2
   Put32(bad, 1);
+  for (int i = 0; i < 3; ++i) {
+    Put32(bad, 0);
+  }
   Check(!PortRoomGeo::Parse(bad, out, error, &back), "duplicate sky instance rejected");
 }
 
