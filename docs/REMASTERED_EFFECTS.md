@@ -165,7 +165,7 @@ identity or the `KPIN(CREL(LTHN(RAND(0,1)), .5, 1, -1))` mirror). **PMDV**
 (`CNST n`, n model ids) follows PMDL (the first id) for a
 `SLCT(IRND(0, n-1), ARRY)` of Remastered-only CMDLs, which the import converts
 standalone under fresh ids. **ATX2** (id, columns, rows, a cycle, loop; only one effect, C6B5B5A9, uses it) is retail's ATEX as a grid; its cycle `ILPT(100)` is retail's CIELifetimePercent, the whole life in frames, so it becomes a life PATL over every tile. Anything else of those shapes is left out.
-With the 218 matched fresh effects (below), 285 of 296 effects import (1012 PARTs, 142 textures of which 1 flipbook, 70 models). PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6), 06B3F06E and C6CBF848 keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
+With 218 matched fresh effects (below; `3d0a74cd` adds 67, not re-counted), 285 of 296 effects import (1012 PARTs, 142 textures of which 1 flipbook, 70 models). PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6), 06B3F06E and C6CBF848 keep theirs, since their root's material texture doesn't resolve. 6 more keep theirs for the same reason in a child.
 
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.
@@ -214,8 +214,26 @@ those back to retail PARTs (checked 2026-10-05):
   EVNTs has one PART not paired yet, the two pair. Hiding a known pair, the rule
   re-derives 9 of 9; one GENP named by 13 more CHPRs that lack the PART is
   dropped. 10 pairs are kept. Unit propagation finds a few more but can't be
-  checked, and most CHPRs leave 6 or more candidates, so enemies stay unpaired
-  until the CHPR event format is known. Scripts: `build/fx-chpr/`.
+  checked, and most CHPRs leave 6 or more candidates. Scripts: `build/fx-chpr/`.
+- By event (2026-10-05, from the Switch exe's CCharInfo reader): after the
+  skeleton and animations a CHPR has four optional blocks, each behind a bool:
+  the effect set (the dependency list above: i16 effects, i16 param sets, 20-byte
+  tags of reversed fourcc + guid), CActionData (i32 streams, i16 n8, i32 ints,
+  i32 names, i32 name bytes, 4 bools; then per stream an i16 size, a u8 op and
+  bytecode; per stream an (i16 start, i16 count) into the i32 effect-set
+  indices; n8 x 8 bytes; names), STransData, and the event streams (i16 key,
+  u16 size, then words `count<<24 | time`, each followed by count u32 ids, ended
+  by a zero count). Op 0 spawns a particle; its bytecode holds the bone as a u16
+  of bone index x 192 (`[05|06] u16 [08-0a]? 0b`). Event ids `0xD0000000 | n`
+  fire action n; times are 1/480 s, retail EVNT's own. An unpaired fresh GENP
+  pairs with the ANCS's PART event at the same bone and frame when that match is
+  unique, every CHPR naming it agrees, and no other effect claims the PART.
+  Hiding a known pair, it re-derives 7 of 7, none wrong (9 give no match: the
+  rig lacks retail's locator, retail has no such event, or the times differ).
+  67 pairs are kept (`3d0a74cd`); 2 inconsistent GENPs and 2 PARTs claimed twice
+  (4B55EA17 by Ridley's and FA049A5D's, 0B9E48EB) are left out, and 153 fresh
+  GENPs in CHPRs still have no unique match. Scripts: `build/fx-evt/`
+  (`NOTES.md`).
 
 ## Converting to retail PART
 
