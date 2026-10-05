@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <set>
@@ -135,7 +136,7 @@ const Signatures& ElementsOf(Type type) {
       {F("PAP3"), ""},    {F("PAP4"), ""},    {F("PAP5"), ""},     {F("PAP6"), ""},    {F("PAP7"), ""},
       {F("PAP8"), ""},    {F("VXTR"), "v"},   {F("VYTR"), "v"},    {F("VZTR"), "v"},   {F("VMAG"), "v"},
       {F("ISWT"), "rr"},  {F("CLTN"), "rrrr"}, {F("CEQL"), "rrrr"}, {F("CRNG"), "rrrrr"}, {F("CEXT"), "i"},
-      {F("ITRL"), "ir"},  {F("SUB_"), "rr"},  {F("GTCR"), "c"},    {F("GTCG"), "c"},   {F("GTCB"), "c"},
+      {F("ITRL"), "ir"},  {F("PSSZ"), ""},    {F("SUB_"), "rr"},  {F("GTCR"), "c"},    {F("GTCG"), "c"},   {F("GTCB"), "c"},
       {F("GTCA"), "c"},
   };
   static const Signatures vectorElements = {
@@ -284,6 +285,148 @@ bool FlipbookTransform(const EffectValue& value, bool& flip) {
   flip = RandomMirror(value.args[2]);
   return flip || ConstIs(value.args[2], FloatBits(1.0f));
 }
+
+// ---- The port-only material (VMAT), from a MATI and its shader ----
+
+// aurora::gfx::vfx::Feature.
+constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kIndirect = 16, kDepthSoften = 32,
+                   kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256;
+
+enum class Role { Color, Opacity, Ramp, Ramp2, Threshold, Indirect };
+
+// A MATI texture parameter (`tag`) in the role it plays, and which CCH0
+// components scale the indirect warp of its u and v (-1: not warped).
+struct TexSpec {
+  const char* tag;
+  Role role;
+  int warpU;
+  int warpV;
+};
+
+// Order of the VMAT blob's Src records.
+enum SrcIndex { kSrcErosion, kSrcThrX, kSrcThrY, kSrcThrW, kSrcFresnelX, kSrcFresnelY, kSrcCount = 11 };
+
+// Where a uniform comes from: row >= 0 is component `comp` of PMTR row `row`;
+// row < 0 with comp >= 0 is the MATI's CCH0[comp], a constant unless an SMTR
+// overrides it.
+struct SrcSpec {
+  SrcIndex index;
+  int row;
+  int comp;
+};
+
+struct Recipe {
+  uint32_t shader;
+  uint32_t features;
+  std::vector<TexSpec> textures;
+  std::vector<SrcSpec> sources;
+};
+
+// RECIPES.md "(b) Per shader".
+const Recipe* RecipeOf(uint32_t shader) {
+  static const std::vector<Recipe> table = {
+      {0x461071b8, kRamp, {{"TCH0", Role::Ramp, -1, -1}}, {}},
+      {0x642dd72b, kColorTex, {{"BCLR", Role::Color, -1, -1}}, {}},
+      {0x84e0fe6c, kOpacityTex, {{"TCH0", Role::Opacity, -1, -1}}, {}},
+      {0x8e6bfa33,
+       kRamp | kIndirect | kThresholding,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x93df8f48,
+       kRamp | kIndirect | kThresholding,
+       {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      {0x3fc4b661, kRamp | kErosion, {{"TCH0", Role::Ramp, -1, -1}}, {{kSrcErosion, 2, 0}}},
+      {0x9abe8368,
+       kColorTex | kIndirect | kThresholding,
+       {{"BCLR", Role::Color, 1, 2}, {"TCH0", Role::Threshold, -1, -1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcThrX, 0, 0}, {kSrcThrY, 0, 1}, {kSrcThrW, -1, 0}}},
+      {0x9ea86831, kRamp | kDualMod, {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}}, {}},
+      {0x71dc2465,
+       kRamp | kDualMod | kIndirect | kDepthSoften,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Ramp2, 2, 3}, {"TCH2", Role::Indirect, -1, -1}},
+       {}},
+      {0x440fbd96,
+       kColorTex | kOpacityTex | kOpacityFresnel | kErosion,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}},
+       {{kSrcFresnelX, 0, 0}, {kSrcFresnelY, 0, 1}, {kSrcErosion, 0, 2}}},
+      {0x5bbdb68a, kColorTex | kOpacityTex, {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Opacity, -1, -1}}, {}},
+      {0xc5cd782b, kRamp | kOpacityTex, {{"TCH0", Role::Ramp, -1, -1}, {"TCH2", Role::Opacity, -1, -1}}, {}},
+      {0xeba92100,
+       kRamp | kIndirect | kErosion | kDepthSoften,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {{kSrcErosion, 2, 0}}},
+  };
+  for (const Recipe& recipe : table) {
+    if (recipe.shader == shader) {
+      return &recipe;
+    }
+  }
+  return nullptr;
+}
+
+struct MatiTexture {
+  EffectGuid guid{};
+  uint32_t texCoord = 0;
+  int32_t filter = -1;
+  int32_t wrapX = -1;
+  int32_t wrapY = -1;
+};
+
+struct Mati {
+  uint32_t shader = 0;  // the four bytes at 0x48, big-endian
+  std::map<std::string, MatiTexture> textures;
+  std::map<std::string, std::array<float, 4>> vectors;
+};
+
+float Le32Float(const uint8_t* p) {
+  const uint32_t bits = Le32(p);
+  float value;
+  std::memcpy(&value, &bits, 4);
+  return value;
+}
+
+// The header's shader and the parameter entries (u8 type + four tag bytes +
+// payload): 6 texture (guid, texCoord, filter, wrap x/y/z; 36 bytes), 3 vec4,
+// 1 float, 0 int. An unknown type ends the list.
+bool ParseMati(const std::vector<uint8_t>& d, Mati& out) {
+  if (d.size() < 0x6d) {
+    return false;
+  }
+  out.shader = uint32_t(d[0x48]) << 24 | uint32_t(d[0x49]) << 16 | uint32_t(d[0x4a]) << 8 | d[0x4b];
+  const uint32_t count = Le32(d.data() + 0x69);
+  size_t at = 0x6d;
+  for (uint32_t i = 0; i < count && at + 5 <= d.size(); ++i) {
+    const uint8_t type = d[at];
+    const std::string tag(reinterpret_cast<const char*>(d.data() + at + 1), 4);
+    at += 5;
+    const size_t size = type == 6 ? 36 : type == 3 ? 16 : type == 1 || type == 0 ? 4 : 0;
+    if (size == 0 || at + size > d.size()) {
+      break;
+    }
+    if (type == 6) {
+      MatiTexture texture;
+      std::memcpy(texture.guid.data(), d.data() + at, 16);
+      texture.texCoord = Le32(d.data() + at + 16);
+      texture.filter = int32_t(Le32(d.data() + at + 20));
+      texture.wrapX = int32_t(Le32(d.data() + at + 24));
+      texture.wrapY = int32_t(Le32(d.data() + at + 28));
+      out.textures[tag] = texture;
+    } else if (type == 3) {
+      std::array<float, 4> value;
+      for (int c = 0; c < 4; ++c) {
+        value[size_t(c)] = Le32Float(d.data() + at + 4 * size_t(c));
+      }
+      out.vectors[tag] = value;
+    }
+    at += size;
+  }
+  return true;
+}
+
+// Remastered's wrap enum (-1 default, 0 clamp, 1 repeat, 2 mirror) as GXTexWrapMode.
+// [I] the default taken as repeat.
+uint32_t WrapOf(int32_t wrap) { return wrap == 0 ? 0 : wrap == 2 ? 2 : 1; }
 
 class Writer {
 public:
@@ -1047,6 +1190,316 @@ public:
     return true;
   }
 
+  // A one-byte or one-word CNST property (PBDM, ORNT, SCTR).
+  static bool SmallConst(const EffectProperty& property, uint32_t& word) {
+    if (property.value.size() != 1 || !IsElement(property.value[0], F("CNST")) || property.value[0].args.size() != 1) {
+      return false;
+    }
+    const EffectValue& arg = property.value[0].args[0];
+    if (arg.kind != EffectValue::Kind::Word && arg.kind != EffectValue::Kind::Byte) {
+      return false;
+    }
+    word = arg.word;
+    return true;
+  }
+
+  // The count-prefixed list `CNST n, items` of a port-only property.
+  static void PutList(std::vector<uint8_t>& out, uint32_t fourcc, uint32_t count, const std::vector<uint8_t>& items) {
+    PutBe32(out, fourcc);
+    PutBe32(out, F("CNST"));
+    PutBe32(out, count);
+    out.insert(out.end(), items.begin(), items.end());
+  }
+
+  // The port-only properties of a generator whose material instance has a
+  // recipe: VMAT and the per-particle data it reads (build/mpr/vfx/DESIGN.md).
+  // Writes nothing where the MATI is unavailable or its shader has no recipe.
+  void Material(const EffectProperty& material, const EffectNode& node, ConvertedPart& result) const {
+    if (!m_io.materialData || !m_io.vfxTexture) {
+      return;
+    }
+    const EffectValue* guid = nullptr;
+    for (const EffectValue& value : material.value) {
+      if (value.kind == EffectValue::Kind::Guid) {
+        guid = &value;
+      }
+    }
+    if (guid == nullptr) {
+      return;
+    }
+    const std::vector<uint8_t> data = m_io.materialData(guid->guid);
+    Mati mati;
+    if (!ParseMati(data, mati)) {
+      result.dropped.push_back("VMAT: no MATI for its material");
+      return;
+    }
+    char shaderText[16];
+    std::snprintf(shaderText, sizeof(shaderText), "%08x", mati.shader);
+    const Recipe* recipe = RecipeOf(mati.shader);
+    if (recipe == nullptr) {
+      m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " has no recipe");
+      return;
+    }
+
+    // The node's properties by fourcc.
+    auto find = [&node](uint32_t fourcc) -> const EffectProperty* {
+      for (const EffectProperty& property : node.properties) {
+        if (property.fourcc == fourcc) {
+          return &property;
+        }
+      }
+      return nullptr;
+    };
+    const auto cch0 = mati.vectors.count("CCH0") ? mati.vectors.at("CCH0") : std::array<float, 4>{};
+
+    // Textures, in the recipe's slot order.
+    struct Slot {
+      FlipbookAtlas atlas;
+      MatiTexture texture;
+      const TexSpec* spec;
+    };
+    std::vector<Slot> slots;
+    for (const TexSpec& spec : recipe->textures) {
+      const auto found = mati.textures.find(spec.tag);
+      if (found == mati.textures.end()) {
+        m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " has no " + spec.tag + " texture");
+        return;
+      }
+      const FlipbookAtlas atlas = m_io.vfxTexture(found->second.guid);
+      if (atlas.id == 0) {
+        m_approximated.push_back(std::string("VMAT: ") + spec.tag + " texture did not import");
+        return;
+      }
+      slots.push_back({atlas, found->second, &spec});
+    }
+
+    uint32_t blend = 0;
+    if (const EffectProperty* pbdm = find(F("PBDM"))) {
+      uint32_t word = 0;
+      if (SmallConst(*pbdm, word) && word <= 3) {
+        blend = word;
+      } else {
+        m_approximated.push_back("VMAT: PBDM taken as alpha blend");
+      }
+    }
+    uint32_t spriteCenter = 0;
+    if (const EffectProperty* sctr = find(F("SCTR"))) {
+      uint32_t word = 0;
+      if (SmallConst(*sctr, word) && word <= 8) {
+        spriteCenter = word;
+      } else {
+        m_approximated.push_back("VMAT: SCTR taken as 0");
+      }
+    }
+
+    // The blob.
+    std::vector<uint8_t> blob;
+    PutBe32(blob, 2);
+    PutBe32(blob, recipe->features);
+    PutBe32(blob, blend);
+    PutBe32(blob, uint32_t(slots.size()));
+    int32_t slotOf[6] = {-1, -1, -1, -1, -1, -1};
+    for (size_t i = 0; i < slots.size(); ++i) {
+      const Slot& slot = slots[i];
+      slotOf[size_t(slot.spec->role)] = int32_t(i);
+      PutBe32(blob, slot.atlas.id);
+      PutBe32(blob, slot.texture.texCoord);
+      PutBe32(blob, WrapOf(slot.texture.wrapX));
+      PutBe32(blob, WrapOf(slot.texture.wrapY));
+      PutBe32(blob, slot.texture.filter != 0 ? 1 : 0);
+      PutBe32(blob, uint32_t(std::max(slot.atlas.cols, 1)));
+      PutBe32(blob, uint32_t(std::max(slot.atlas.rows, 1)));
+      PutBe32(blob, uint32_t(std::max(slot.atlas.frames, 1)));
+      const bool warped = slot.spec->warpU >= 0;
+      PutBe32(blob, warped ? 1 : 0);
+      PutBe32(blob, FloatBits(warped ? cch0[size_t(slot.spec->warpU)] : 0.0f));
+      PutBe32(blob, FloatBits(warped ? cch0[size_t(slot.spec->warpV)] : 0.0f));
+    }
+    for (const Role role : {Role::Color, Role::Opacity, Role::Ramp, Role::Ramp2, Role::Threshold, Role::Indirect}) {
+      PutBe32(blob, uint32_t(slotOf[size_t(role)]));
+    }
+    PutBe32(blob, uint32_t(-1));  // paletteSlot
+    PutBe32(blob, 0);             // rampRow[2]
+    PutBe32(blob, 1);
+    PutBe32(blob, uint32_t(-1));  // addRow
+    int32_t srcRow[kSrcCount], srcComp[kSrcCount];
+    float srcValue[kSrcCount];
+    for (int i = 0; i < kSrcCount; ++i) {
+      srcRow[i] = -1;
+      srcComp[i] = 0;
+      srcValue[i] = i == 8 ? 1.0f : 0.0f;  // indexScale
+    }
+    for (const SrcSpec& src : recipe->sources) {
+      srcRow[src.index] = src.row;
+      srcComp[src.index] = src.comp < 0 ? 0 : src.comp;
+      if (src.row < 0) {
+        srcValue[src.index] = cch0[size_t(src.comp)];
+      }
+    }
+    for (int i = 0; i < kSrcCount; ++i) {
+      PutBe32(blob, uint32_t(srcRow[i]));
+      PutBe32(blob, uint32_t(srcComp[i]));
+      PutBe32(blob, FloatBits(srcValue[i]));
+    }
+    PutBe32(blob, FloatBits(1.0f));  // modulate
+    PutBe32(blob, FloatBits(0.0f));  // depthSoften
+    PutBe32(blob, spriteCenter);
+
+    PutBe32(result.part, F("VMAT"));
+    PutBe32(result.part, F("CNST"));
+    PutBe32(result.part, uint32_t(blob.size()));
+    result.part.insert(result.part.end(), blob.begin(), blob.end());
+
+    // VTMT: one TRSS per UV set (A-F), up to three.
+    if (const EffectProperty* tmtr = find(F("TMTR"))) {
+      std::vector<uint8_t> items;
+      uint32_t count = 0;
+      std::string why;
+      bool ok = true;
+      for (const EffectValue& transform : tmtr->value) {
+        if (!IsElement(transform, F("TRSS")) || transform.args.size() != 6) {
+          ok = false;
+          why = "not a six-argument TRSS";
+          break;
+        }
+        if (count == 3) {
+          ok = false;
+          why = "more than three UV sets";
+          break;
+        }
+        for (const EffectValue& arg : transform.args) {
+          if (!Element(arg, Type::Real, items, why)) {
+            ok = false;
+            break;
+          }
+        }
+        if (!ok) {
+          break;
+        }
+        ++count;
+      }
+      if (ok && count != 0) {
+        PutList(result.part, F("VTMT"), count, items);
+      } else if (!ok) {
+        result.dropped.push_back("TMTR: " + why);
+      }
+    }
+
+    // VPMT: each PMTR item to a row and component of the per-particle extras.
+    if (const EffectProperty* pmtr = find(F("PMTR"))) {
+      std::vector<uint8_t> items;
+      uint32_t count = 0;
+      for (const EffectValue& item : pmtr->value) {
+        const uint32_t row = item.word & 0xff, comp = item.word >> 8 & 0xff, width = item.word >> 16 & 0xff;
+        // Group 0 an int, 1 a real, 2 a vector, 4 a colour.
+        uint32_t kind = 0;
+        Type type = Type::Real;
+        uint32_t expect = 1;
+        switch (item.fourcc) {
+        case 0: kind = 2; type = Type::Int; break;
+        case 1: break;
+        case 2: kind = 1; type = Type::Vector; expect = 3; break;
+        case 4: kind = 3; type = Type::Color; expect = 4; break;
+        default: expect = 0; break;
+        }
+        if (item.args.size() != 1 || expect == 0 || width != expect || row >= 4 || comp + expect > 4) {
+          result.dropped.push_back("PMTR: an entry of group " + std::to_string(item.fourcc) + " that VPMT cannot hold");
+          continue;
+        }
+        std::vector<uint8_t> element;
+        std::string why;
+        if (!Element(item.args[0], type, element, why)) {
+          result.dropped.push_back("PMTR: " + why);
+          continue;
+        }
+        PutBe32(items, kind);
+        PutBe32(items, row);
+        PutBe32(items, comp);
+        items.insert(items.end(), element.begin(), element.end());
+        ++count;
+      }
+      if (count != 0) {
+        PutList(result.part, F("VPMT"), count, items);
+      }
+    }
+
+    // VSMT: the CCH0 overrides, each to the uniform and warp scales that read the component.
+    if (const EffectProperty* smtr = find(F("SMTR"))) {
+      std::vector<uint8_t> items;
+      uint32_t count = 0;
+      for (const EffectValue& item : smtr->value) {
+        // The id's four bytes read little-endian: 'CCH0'.
+        constexpr uint32_t kCch0 = 0x30484343;
+        if (item.word != kCch0 || item.args.size() != 2) {
+          result.dropped.push_back("SMTR: " + std::string(item.word == kCch0 ? "an entry" : "a parameter") +
+                                   " VSMT cannot take");
+          continue;
+        }
+        const int comp = int(item.args[1].word >> 8 & 0xff);
+        std::vector<uint32_t> targets;
+        for (const SrcSpec& src : recipe->sources) {
+          if (src.row < 0 && src.comp == comp) {
+            targets.push_back(uint32_t(src.index));
+          }
+        }
+        for (size_t i = 0; i < slots.size(); ++i) {
+          if (slots[i].spec->warpU == comp) {
+            targets.push_back(uint32_t(11 + 2 * i));
+          }
+          if (slots[i].spec->warpV == comp) {
+            targets.push_back(uint32_t(11 + 2 * i + 1));
+          }
+        }
+        if (targets.empty()) {
+          result.dropped.push_back("SMTR: CCH0 component " + std::to_string(comp) + " is unused by the shader");
+          continue;
+        }
+        std::vector<uint8_t> element;
+        std::string why;
+        if (!Element(item.args[0], Type::Real, element, why)) {
+          result.dropped.push_back("SMTR: " + why);
+          continue;
+        }
+        for (const uint32_t target : targets) {
+          PutBe32(items, target);
+          PutBe32(items, 0);
+          items.insert(items.end(), element.begin(), element.end());
+          ++count;
+        }
+      }
+      if (count != 0) {
+        PutList(result.part, F("VSMT"), count, items);
+      }
+    }
+
+    // SSZE and ITEN are real elements as they are; VORN is ORNT's byte.
+    for (const uint32_t fourcc : {F("SSZE"), F("ITEN")}) {
+      const std::string name = EffectFourCCString(fourcc);
+      const EffectProperty* property = find(fourcc);
+      if (property == nullptr) {
+        continue;
+      }
+      std::vector<uint8_t> bytes;
+      std::string why;
+      if (property->value.size() == 1 && Element(property->value[0], Type::Real, bytes, why)) {
+        PutBe32(result.part, fourcc);
+        result.part.insert(result.part.end(), bytes.begin(), bytes.end());
+      } else {
+        result.dropped.push_back(name + ": " + (why.empty() ? "not one element" : why));
+      }
+    }
+    uint32_t orient = 0;
+    if (const EffectProperty* ornt = find(F("ORNT"))) {
+      if (!SmallConst(*ornt, orient) || orient > 2) {
+        m_approximated.push_back("VORN: ORNT taken as 0");
+        orient = 0;
+      }
+    }
+    PutBe32(result.part, F("VORN"));
+    PutBe32(result.part, F("CNST"));
+    PutBe32(result.part, orient);
+  }
+
   // One generator, swoosh or electric description, as the retail asset `type`.
   ConvertedPart Generator(const EffectNode& node, uint32_t type) const {
     ConvertedPart result;
@@ -1210,6 +1663,9 @@ public:
       }
     } else if (material != nullptr) {
       result.dropped.push_back("MTIN: the effect has a TEXR");
+    }
+    if (part && material != nullptr) {
+      Material(*material, node, result);
     }
     // The first swoosh and electric child the spawn table starts, where the
     // generator has none of its own.
@@ -1418,6 +1874,55 @@ public:
     return true;
   }
 
+  // The port-only properties (DESIGN.md): `CNST n` and then n records.
+  bool CountedList(uint32_t& count) {
+    uint32_t fourcc;
+    return Word(fourcc) && fourcc == F("CNST") && Word(count);
+  }
+
+  // VMAT: CNST, the blob's length, the blob.
+  bool Material() {
+    uint32_t bytes;
+    return CountedList(bytes) && Skip(bytes);
+  }
+
+  bool TextureTransforms() {
+    uint32_t count;
+    if (!CountedList(count) || count > 3) {
+      return false;
+    }
+    for (uint32_t i = 0; i < count * 6; ++i) {
+      if (!Element(Type::Real)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // VPMT: {kind, row, comp, element}; VSMT: {target, kind, element} (reals).
+  bool PerParticle(bool shader) {
+    uint32_t count;
+    if (!CountedList(count)) {
+      return false;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+      uint32_t kind = 0;
+      if (shader ? !Skip(4) || !Word(kind) : !Word(kind) || !Skip(8)) {
+        return false;
+      }
+      static constexpr Type kTypes[4] = {Type::Real, Type::Vector, Type::Int, Type::Color};
+      if (kind > 3 || !Element(shader ? Type::Real : kTypes[kind])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool Orientation() {
+    uint32_t fourcc;
+    return Word(fourcc) && fourcc == F("CNST") && Skip(4);
+  }
+
   const std::string& Error() const { return m_error; }
 
 private:
@@ -1471,6 +1976,26 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.SpawnTable();
     } else if (part && fourcc == F("PMDV")) {
       ok = reader.ModelVariants();
+    } else if (part && fourcc == F("VMAT")) {
+      ok = reader.Material();
+    } else if (part && fourcc == F("VTMT")) {
+      ok = reader.TextureTransforms();
+    } else if (part && (fourcc == F("VPMT") || fourcc == F("VSMT"))) {
+      ok = reader.PerParticle(fourcc == F("VSMT"));
+    } else if (part && (fourcc == F("SSZE") || fourcc == F("ITEN"))) {
+      ok = reader.Element(Type::Real);
+    } else if (part && fourcc == F("VORN")) {
+      ok = reader.Orientation();
+    } else if (part && fourcc == F("VMAT")) {
+      ok = reader.Material();
+    } else if (part && fourcc == F("VTMT")) {
+      ok = reader.TextureTransforms();
+    } else if (part && (fourcc == F("VPMT") || fourcc == F("VSMT"))) {
+      ok = reader.PerParticle(fourcc == F("VSMT"));
+    } else if (part && (fourcc == F("SSZE") || fourcc == F("ITEN"))) {
+      ok = reader.Element(Type::Real);
+    } else if (part && fourcc == F("VORN")) {
+      ok = reader.Orientation();
     } else if (const auto found = retail.find(fourcc); found == retail.end()) {
       error = "property " + EffectFourCCString(fourcc) + " retail does not read";
       return false;

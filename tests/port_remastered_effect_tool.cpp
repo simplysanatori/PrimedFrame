@@ -51,6 +51,7 @@
 #include "port_remastered_pak.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -483,6 +484,26 @@ int Convert(const std::string& romfs, const std::string& retailDir, const std::s
     return 0;
   };
 
+  // The MATI of a material instance, and its textures as stand-in ids (the importer writes fresh ones).
+  io.materialData = [&](const EffectGuid& material) -> std::vector<uint8_t> {
+    auto it = materials.find(PakId(material));
+    return it == materials.end() ? std::vector<uint8_t>() : it->second;
+  };
+  io.vfxTexture = [&](const EffectGuid& texture) -> FlipbookAtlas {
+    auto type = types.find(PakId(texture));
+    if (type == types.end() || type->second != kTxtr) {
+      return {};
+    }
+    if (const std::optional<uint32_t> retail = EffectRetailId(texture)) {
+      return FlipbookAtlas{*retail, 1, 1, 1};
+    }
+    uint32_t hash = 0x80000000u;
+    for (uint8_t byte : texture) {
+      hash = (hash * 31 + byte) | 0x80000000u;
+    }
+    return FlipbookAtlas{hash, 1, 1, 1};
+  };
+
   std::map<std::string, PropertyTally> tally;
   std::map<std::string, size_t> dropReasons;
   std::map<uint32_t, size_t> found;  // embedded children by form
@@ -913,10 +934,127 @@ int Import(const std::string& romfs, const std::string& retailDir, const std::st
   return 0;
 }
 
+// A generator's port-only material as text: `vmat <file.GENP> <dir of <uuid>.MATI files>`.
+int VmatSummary(const std::string& genpPath, const std::string& matiDir) {
+  using namespace PortRemastered;
+  const std::vector<uint8_t> data = ReadFile(genpPath);
+  EffectNode effect;
+  std::string error;
+  if (data.empty() || !ParseEffect(data.data(), data.size(), effect, error)) {
+    std::cerr << genpPath << ": " << error << "\n";
+    return 1;
+  }
+  EffectConvertIO io;
+  io.assetId = [](const EffectGuid& guid, uint32_t) -> uint32_t { return EffectRetailId(guid).value_or(0); };
+  io.materialData = [&](const EffectGuid& material) {
+    return ReadFile(std::filesystem::path(matiDir) / (IdToString(PakId(material)) + ".MATI"));
+  };
+  io.vfxTexture = [](const EffectGuid& texture) {
+    uint32_t hash = 0x80000000u;
+    for (uint8_t byte : texture) {
+      hash = (hash * 31 + byte) | 0x80000000u;
+    }
+    return FlipbookAtlas{hash, 1, 1, 1};
+  };
+  auto be32 = [](const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; };
+  auto real = [&](const uint8_t* p) {
+    const uint32_t bits = be32(p);
+    float value;
+    std::memcpy(&value, &bits, 4);
+    return value;
+  };
+  // The generators in the order they convert, to list each one's PMTR rows beside its VPMT.
+  std::vector<const EffectNode*> nodes;
+  std::function<void(const EffectNode&)> collect = [&](const EffectNode& node) {
+    if (EffectRetailType(node.form) != 0) {
+      nodes.push_back(&node);
+    }
+    for (const EffectNode& child : node.children) {
+      collect(child);
+    }
+  };
+  collect(effect);
+  size_t index = 0, with = 0, without = 0;
+  for (const ConvertedPart& part : ConvertEffect(effect, data.data(), io)) {
+    ++index;
+    std::vector<RetailPartProperty> properties;
+    std::cout << "generator " << index << (part.root ? " (root)" : "") << " " << EffectFourCCString(part.type) << "\n";
+    if (!SplitRetailEffect(part.type, part.part.data(), part.part.size(), properties, error)) {
+      std::cout << "  does not read: " << error << "\n";
+      continue;
+    }
+    bool has = false;
+    for (const RetailPartProperty& property : properties) {
+      const uint8_t* b = property.value.data();
+      const std::string name = EffectFourCCString(property.fourcc);
+      if (name == "VMAT") {
+        has = true;
+        b += 8;  // CNST, length
+        std::cout << "  VMAT v" << be32(b) << " features 0x" << std::hex << be32(b + 4) << std::dec << " blend "
+                  << be32(b + 8) << "\n";
+        const uint32_t textures = be32(b + 12);
+        b += 16;
+        for (uint32_t i = 0; i < textures; ++i, b += 44) {
+          std::cout << "    tex" << i << " id " << std::hex << be32(b) << std::dec << " uv " << be32(b + 4) << " wrap "
+                    << be32(b + 8) << "," << be32(b + 12) << " linear " << be32(b + 16) << " grid " << be32(b + 20) << "x"
+                    << be32(b + 24) << "x" << be32(b + 28) << " warped " << be32(b + 32) << " scale " << real(b + 36)
+                    << "," << real(b + 40) << "\n";
+        }
+        static const char* slots[] = {"color", "opacity", "ramp", "ramp2", "threshold", "indirect", "palette"};
+        std::cout << "    slots";
+        for (const char* slot : slots) {
+          std::cout << " " << slot << "=" << int32_t(be32(b));
+          b += 4;
+        }
+        b += 12;  // rampRow[2], addRow
+        static const char* srcs[] = {"erosion", "thrX", "thrY", "thrW", "fresnelX", "fresnelY", "fadeX", "fadeY",
+                                     "indexScale", "indexOffset", "indexRow"};
+        std::cout << "\n    src";
+        for (const char* src : srcs) {
+          std::cout << " " << src << "=" << (int32_t(be32(b)) >= 0 ? "extra[" + std::to_string(int32_t(be32(b))) + "][" +
+                                                                         std::to_string(be32(b + 4)) + "]"
+                                                                   : std::to_string(real(b + 8)));
+          b += 12;
+        }
+        std::cout << "\n    modulate " << real(b) << " depthSoften " << real(b + 4) << " spriteCenter " << be32(b + 8) << "\n";
+      } else if (name == "VPMT" || name == "VSMT") {
+        std::cout << "  " << name << " " << be32(b + 4) << " entries\n";
+        if (name == "VPMT" && index <= nodes.size()) {
+          for (const EffectProperty& pmtr : nodes[index - 1]->properties) {
+            for (const EffectValue& item : pmtr.fourcc == EffectFourCC("PMTR") ? pmtr.value : std::vector<EffectValue>()) {
+              std::cout << "    PMTR group " << item.fourcc << " row " << (item.word & 0xff) << " comp "
+                        << (item.word >> 8 & 0xff) << " count " << (item.word >> 16 & 0xff) << " "
+                        << (item.args.empty() ? "?" : EffectFourCCString(item.args[0].fourcc)) << "\n";
+            }
+          }
+        }
+      } else if (name == "VTMT") {
+        std::cout << "  VTMT " << be32(b + 4) << " UV sets\n";
+      } else if (name == "VORN") {
+        std::cout << "  VORN " << be32(b + 4) << "\n";
+      } else if (name == "SSZE" || name == "ITEN") {
+        std::cout << "  " << name << " " << property.value.size() << " bytes\n";
+      }
+    }
+    (has ? with : without) += 1;
+    for (const std::string& line : part.approximated) {
+      std::cout << "  approximated: " << Printable(line) << "\n";
+    }
+    for (const std::string& line : part.dropped) {
+      std::cout << "  dropped: " << Printable(line) << "\n";
+    }
+  }
+  std::cout << with << " with VMAT, " << without << " without\n";
+  return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
   const std::string mode = argc > 1 ? argv[1] : "";
+  if (mode == "vmat" && argc == 4) {
+    return VmatSummary(argv[2], argv[3]);
+  }
   if (mode == "dump" && argc == 3) {
     return Dump(argv[2]);
   }

@@ -1033,7 +1033,130 @@ void TestModelRotation() {
         "PMRQ with IRND is listed as dropped");
 }
 
+// A MATI with one shader and its texture parameters, as ParseMati reads it.
+std::vector<uint8_t> Mati(uint32_t shader, const std::vector<std::pair<const char*, EffectGuid>>& textures) {
+  std::vector<uint8_t> out(0x6d, 0);
+  for (int i = 0; i < 4; ++i) {
+    out[0x48 + size_t(i)] = uint8_t(shader >> (24 - 8 * i));
+  }
+  const uint32_t count = uint32_t(textures.size());
+  for (int i = 0; i < 4; ++i) {
+    out[0x69 + size_t(i)] = uint8_t(count >> (8 * i));
+  }
+  for (const auto& texture : textures) {
+    out.push_back(6);
+    out.insert(out.end(), texture.first, texture.first + 4);
+    PutGuid(out, texture.second);
+    Put32(out, 0);                // texCoord
+    Put32(out, 1);                // filter
+    Put32(out, 1);                // wrapX
+    Put32(out, 1);                // wrapY
+    Put32(out, 0xffffffffu);      // wrapZ
+  }
+  return out;
+}
+
+// A root generator whose material is `Fresh(7)`, with a blend mode and sprite centre.
+std::vector<uint8_t> VmatEffect() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "MAXP", 1);
+  PutConstant(out, 4);
+  PutProperty(out, "PBDM", 1);
+  PutConstant(out, 2);
+  PutProperty(out, "MTIN", 0);
+  out.push_back(1);
+  PutGuid(out, Fresh(7));
+  PutProperty(out, "_END", 4);
+  Put32(out, 0);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  return out;
+}
+
+// A recipe shader's MATI becomes a VMAT, and the port-only properties survive a retail split.
+void TestVmat() {
+  const std::vector<uint8_t> data = VmatEffect();
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(data.data(), data.size(), effect, error), "vmat effect parses");
+
+  int imports = 0;
+  EffectConvertIO io;
+  io.materialTexture = [](const EffectGuid& material) { return material == Fresh(7) ? 0x5EED0007u : 0u; };
+  io.materialData = [](const EffectGuid& material) {
+    return material == Fresh(7) ? Mati(0x461071b8, {{"TCH0", Fresh(8)}}) : std::vector<uint8_t>();
+  };
+  io.vfxTexture = [&imports](const EffectGuid& texture) {
+    FlipbookAtlas atlas;
+    if (texture == Fresh(8)) {
+      ++imports;
+      atlas.id = 0x5EED0008;
+    }
+    return atlas;
+  };
+  std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
+  Check(parts.size() == 1, "one part");
+  if (parts.size() != 1) {
+    return;
+  }
+  Check(imports == 1, "the ramp texture is imported once");
+  std::vector<RetailPartProperty> properties;
+  Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error), "vmat part reads as retail");
+  const RetailPartProperty* vmat = nullptr;
+  bool vorn = false;
+  for (const RetailPartProperty& property : properties) {
+    if (property.fourcc == EffectFourCC("VMAT")) {
+      vmat = &property;
+    }
+    vorn = vorn || property.fourcc == EffectFourCC("VORN");
+  }
+  Check(vmat != nullptr, "a 461071b8 material writes VMAT");
+  Check(vorn, "VORN is always written");
+  if (vmat != nullptr) {
+    // CNST + u32 size, then the blob: version 2, features (Ramp = 8), blend 2, one texture.
+    const std::vector<uint8_t>& v = vmat->value;
+    auto be32 = [&v](size_t at) { return at + 4 <= v.size() ? uint32_t(v[at]) << 24 | v[at + 1] << 16 | v[at + 2] << 8 | v[at + 3] : ~0u; };
+    Check(v.size() > 24 && std::memcmp(v.data(), "CNST", 4) == 0, "VMAT is a constant blob");
+    Check(be32(8) == 2 && be32(12) == 8 && be32(16) == 2 && be32(20) == 1, "VMAT v2, Ramp, blend 2, one texture");
+    Check(be32(24) == 0x5EED0008, "the texture is the imported id");
+  }
+  Check(parts[0].approximated.empty(), "a recipe material approximates nothing");
+
+  // A shader with no recipe: no VMAT, and a note.
+  io.materialData = [](const EffectGuid&) { return Mati(0x12345678, {}); };
+  parts = ConvertEffect(effect, data.data(), io);
+  Check(parts.size() == 1, "one part without a recipe");
+  if (parts.size() == 1) {
+    bool note = false;
+    for (const std::string& line : parts[0].approximated) {
+      note = note || line == "VMAT: shader 12345678 has no recipe";
+    }
+    Check(note, "an unknown shader is noted as having no recipe");
+    properties.clear();
+    Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error), "fallback part reads");
+    for (const RetailPartProperty& property : properties) {
+      Check(property.fourcc != EffectFourCC("VMAT"), "no VMAT without a recipe");
+    }
+  }
+
+  // A texture the import cannot write: no VMAT either.
+  io.materialData = [](const EffectGuid&) { return Mati(0x461071b8, {{"TCH0", Fresh(9)}}); };
+  parts = ConvertEffect(effect, data.data(), io);
+  Check(parts.size() == 1, "one part when the texture fails");
+  if (parts.size() == 1) {
+    properties.clear();
+    Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error), "failed-texture part reads");
+    for (const RetailPartProperty& property : properties) {
+      Check(property.fourcc != EffectFourCC("VMAT"), "no VMAT when a slot texture is not written");
+    }
+    Check(!parts[0].approximated.empty(), "the missing texture is noted");
+  }
+}
+
 int main() {
+  TestVmat();
   TestAtlasTexture();
   TestModelChoice();
   TestRetailId();
