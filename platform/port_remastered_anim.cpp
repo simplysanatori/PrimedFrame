@@ -6,10 +6,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <cstring>
 
 namespace PortRemasteredAnim {
 namespace {
+
+constexpr float kFramesPerRate = 30.0f;  // Anim::fps
 
 // A problem with the file or a layout the decoder does not know. Thrown inside this
 // file only and turned into the error string at the API boundary.
@@ -120,9 +123,10 @@ Quat RotLerp2(const Quat& a, Quat b, double t) {
   return Normalize(r);
 }
 
-// One rotation value of a track: how to dequantize it and the two keyframes it is
-// currently interpolating between.
+// One value of a track (a rotation, or for the vec3 track types a translation or scale):
+// how to dequantize it and the two keyframes it is currently interpolating between.
 struct Value {
+  bool vec = false;  // a vec3 value: no flag7 or sign bits, one to three components
   int W = 0;  // bits per component
   int q = 0;  // fixed-point shift
   int isSigned = 0;
@@ -190,7 +194,7 @@ StreamInfo ParseBlob(const Bytes& d, size_t base) {
     if (type == 3) {
       bs.Read(6);
     }
-    if (type != 0) {
+    if (type > 2) {
       Fail("track type " + std::to_string(type) + " is not supported");
     }
     Track t;
@@ -216,16 +220,22 @@ void InitDequant(StreamInfo& info) {
       bs.Read(4);
     } else if (op == 1) {
       break;
-    } else if (op == 2) {
+    } else if (op == 2 || op == 3) {  // 2 = rotation values, 3 = vec3 values; same layout
       const uint32_t index = bs.Read(4);
       if (index >= info.tracks.size()) {
         Fail("init-dequant names a track that does not exist");
       }
-      for (Value& val : info.tracks[index].values) {
+      Track& track = info.tracks[index];
+      for (Value& val : track.values) {
         val.W = int(bs.Read(5));
         val.q = int(bs.Read(5));
         val.isSigned = int(bs.Read(1));
         val.mask = int(bs.Read(3));
+        val.vec = track.type != 0;
+        // The game's do-while loads one component even for mask 0 (into x).
+        if (val.vec && val.mask == 0) {
+          val.mask = 1;
+        }
       }
     } else {
       Fail("init-dequant op " + std::to_string(op) + " is not supported");
@@ -307,8 +317,10 @@ private:
         val->cur[i] = 0;
       }
       val->sgnPrev = val->sgnCur;
-      val->flag7 = int(m_bs.Read(1));
-      val->sgnCur = int(m_bs.Read(1));
+      if (!val->vec) {
+        val->flag7 = int(m_bs.Read(1));
+        val->sgnCur = int(m_bs.Read(1));
+      }
       for (int c = 0; c < 3; ++c) {
         if (val->mask & (1 << c)) {
           int64_t x = m_bs.Read(val->W);
@@ -351,6 +363,22 @@ Quat TweenRot(const Value& val, int64_t t) {
   return Normalize(Lerp(prev, cur, frac));
 }
 
+// A vec3 value at frame time t: linear between the two keyframes.
+std::array<double, 3> TweenVec3(const Value& val, int64_t t) {
+  const double scale = std::ldexp(1.0, -val.q);
+  std::array<double, 3> prev, cur;
+  for (size_t i = 0; i < 3; ++i) {
+    prev[i] = F32(double(val.prev[i]) * scale);
+    cur[i] = F32(double(val.cur[i]) * scale);
+  }
+  if (t == val.curFrame) {
+    return prev;
+  }
+  const double frac = double(t - val.curFrame) * val.inv;
+  return {prev[0] + (cur[0] - prev[0]) * frac, prev[1] + (cur[1] - prev[1]) * frac,
+          prev[2] + (cur[2] - prev[2]) * frac};
+}
+
 // One entry of the op stream: which bone, and where its rotation, scale and
 // translation come from (a track value, or an index into the constant pool).
 struct Op {
@@ -366,14 +394,15 @@ std::vector<Op> ParseOps(const StreamInfo& info) {
     b.Need(at, 1, "op stream");
     return b.data[at];
   };
-  for (;;) {
-    const uint8_t op = byteAt(p++);
+  // The list may end at the end of the blob without a terminator.
+  while (p < b.size) {
+    const uint8_t op = b.data[p++];
     if (op != 1) {
       break;  // 0 ends the list; the static animation ends in padding instead
     }
     p += 2;
-    for (;;) {
-      const uint8_t sub = byteAt(p++);
+    while (p < b.size) {
+      const uint8_t sub = b.data[p++];
       if (sub == 0) {
         break;
       }
@@ -454,19 +483,41 @@ std::vector<Record> FindRecords(const Bytes& d) {
       }
     }
   }
+  if (!best.empty()) {
+    return best;
+  }
+  // A file with one animation has no chain: look for `01 id 00 00 00 <size> 18 00 28 00`,
+  // the record marker followed by the blob header.
+  for (size_t o = 0; d.Has(o, 13); ++o) {
+    if (d.data[o] == 1 && d.data[o + 2] == 0 && d.data[o + 3] == 0 && d.data[o + 4] == 0 &&
+        ReadLE16(d.data + o + 9) == 0x18 && ReadLE16(d.data + o + 11) == 0x28) {
+      const uint32_t len = ReadLE32(d.data + o + 5);
+      if (len != 0 && d.Has(o, size_t(12) + len)) {
+        best.push_back({o, d.data[o + 1], o + 12 + len});
+        o += 12 + len - 1;  // the regex scan does not overlap matches
+      }
+    }
+  }
   return best;
 }
 
-// The constant pool: u16 a, u16 n, n floats, ending shortly before the first record.
+// The constant pool: u16 0, u16 n, n floats starting 1 0 0 0, then under 128 bytes of
+// other data and the first record. The candidate that ends closest to the record wins.
 std::vector<double> FindPool(const Bytes& d, size_t first) {
   bool found = false;
   size_t bestEnd = 0;
-  std::vector<double> pool;
-  const size_t from = first >= 0x40 ? first - 0x40 : 0;
-  for (size_t o = from; o + 6 < first; ++o) {
+  size_t bestOffset = 0;
+  uint32_t bestCount = 0;
+  const size_t from = first >= 0x20000 ? first - 0x20000 : 0;
+  for (size_t o = from; o + 20 < first; ++o) {
     const uint32_t a = ReadLE16(d.data + o);
     const uint32_t n = ReadLE16(d.data + o + 2);
-    if (n == 0 || n > 64 || o + 4 + 4 * size_t(n) > first || a >= 16) {
+    const size_t end = o + 4 + 4 * size_t(n);
+    if (a >= 16 || n < 4 || end > first || first - end >= 128 || (found && end <= bestEnd)) {
+      continue;
+    }
+    if (ReadLEFloat(d.data + o + 4) != 1.0f || ReadLEFloat(d.data + o + 8) != 0.0f ||
+        ReadLEFloat(d.data + o + 12) != 0.0f || ReadLEFloat(d.data + o + 16) != 0.0f) {
       continue;
     }
     bool ok = true;
@@ -476,20 +527,19 @@ std::vector<double> FindPool(const Bytes& d, size_t first) {
         break;
       }
     }
-    const size_t end = o + 4 + 4 * size_t(n);
-    if (ok && (!found || end > bestEnd)) {
-      if (n >= 4 && ReadLEFloat(d.data + o + 4) == 1.0f) {
-        found = true;
-        bestEnd = end;
-        pool.clear();
-        for (uint32_t i = 0; i < n; ++i) {
-          pool.push_back(double(ReadLEFloat(d.data + o + 4 + 4 * size_t(i))));
-        }
-      }
+    if (ok) {
+      found = true;
+      bestEnd = end;
+      bestOffset = o;
+      bestCount = n;
     }
   }
+  std::vector<double> pool;
   if (!found) {
-    pool = {1.0, 0.0, 0.0, 0.0};
+    return {1.0, 0.0, 0.0, 0.0};
+  }
+  for (uint32_t i = 0; i < bestCount; ++i) {
+    pool.push_back(double(ReadLEFloat(d.data + bestOffset + 4 + 4 * size_t(i))));
   }
   return pool;
 }
@@ -515,11 +565,24 @@ void Evaluate(const StreamInfo& info, const std::vector<Op>& ops, const std::vec
       const double* p = poolAt(op.rot & 0x3fff, 4);
       q = {p[0], p[1], p[2], p[3]};
     }
-    if (op.scale & 0x8000) {
-      Fail("scale tracks are not supported");
-    }
+    auto vecTrack = [&](uint16_t ref) -> std::array<double, 3> {
+      const size_t track = (ref >> 10) & 0xf;
+      const size_t index = ref & 0x3ff;
+      if (track >= info.tracks.size() || index >= info.tracks[track].values.size()) {
+        Fail("a vec3 reference names a track value that does not exist");
+      }
+      return TweenVec3(info.tracks[track].values[index], t);
+    };
     double sc[3];
-    if (op.scale & 0x4000) {
+    if (op.scale & 0x8000) {
+      if (op.scale & 0x4000) {
+        Fail("single-real scale tracks are not supported");
+      }
+      const std::array<double, 3> v = vecTrack(op.scale);
+      sc[0] = v[0];
+      sc[1] = v[1];
+      sc[2] = v[2];
+    } else if (op.scale & 0x4000) {
       sc[0] = sc[1] = sc[2] = *poolAt(op.scale & 0x3fff, 1);
     } else {
       const double* p = poolAt(op.scale & 0x3fff, 3);
@@ -527,10 +590,13 @@ void Evaluate(const StreamInfo& info, const std::vector<Op>& ops, const std::vec
       sc[1] = p[1];
       sc[2] = p[2];
     }
+    std::array<double, 3> tr;
     if (op.trans & 0x8000) {
-      Fail("translation tracks are not supported");
+      tr = vecTrack(op.trans);
+    } else {
+      const double* p = poolAt(op.trans & 0x3fff, 3);
+      tr = {p[0], p[1], p[2]};
     }
-    const double* tr = poolAt(op.trans & 0x3fff, 3);
     Key key;
     key.rotation[0] = float(q[1]);
     key.rotation[1] = float(q[2]);
@@ -538,7 +604,7 @@ void Evaluate(const StreamInfo& info, const std::vector<Op>& ops, const std::vec
     key.rotation[3] = float(q[0]);
     for (int i = 0; i < 3; ++i) {
       key.scale[i] = float(F32(sc[i] + 1.0));  // stored as a delta from one
-      key.translation[i] = float(tr[i]);
+      key.translation[i] = float(tr[size_t(i)]);
     }
     frameKeys[op.bone] = key;
     has[op.bone] = true;
@@ -553,15 +619,24 @@ Anim DecodeAnim(const Bytes& d, const Record& rec, const std::vector<double>& po
   stream.InitFrames();
 
   Anim anim;
-  anim.fps = info.headerFloat;
+  anim.id = rec.id;
+  anim.fps = kFramesPerRate * info.headerFloat;
   anim.frames = info.frames;
   uint32_t boneCount = 0;
   for (const Op& op : ops) {
     boneCount = std::max(boneCount, op.bone + 1);
   }
+  // A damaged header can claim 65535 frames of 2000 bones; real files have well under this.
+  if (uint64_t(boneCount) * info.frames > (uint64_t(1) << 23)) {
+    Fail("animation is implausibly large");
+  }
   anim.bones.assign(boneCount, std::vector<Key>());
   for (std::vector<Key>& keys : anim.bones) {
     keys.reserve(info.frames);
+  }
+  anim.tracked.assign(boneCount, false);
+  for (const Op& op : ops) {
+    anim.tracked[op.bone] = true;
   }
   std::vector<Key> frameKeys(boneCount);
   std::vector<bool> has(boneCount);
@@ -581,6 +656,284 @@ Anim DecodeAnim(const Bytes& d, const Record& rec, const std::vector<double>& po
 
 bool StartsWith(const std::string& s, const char* prefix) { return s.rfind(prefix, 0) == 0; }
 
+bool ContainsNoCase(const std::string& s, const char* needle) {
+  std::string lower = s;
+  for (char& c : lower) {
+    c = char(std::tolower(static_cast<unsigned char>(c)));
+  }
+  return lower.find(needle) != std::string::npos;
+}
+
+// 3x4 affine matrices, row-major with the translation in column 3 (Remastered's layout).
+using Mat = std::array<double, 12>;
+
+Mat MatMul(const Mat& a, const Mat& b) {
+  Mat r;
+  for (size_t i = 0; i < 3; ++i) {
+    for (size_t j = 0; j < 4; ++j) {
+      double v = 0.0;
+      for (size_t k = 0; k < 3; ++k) {
+        v += a[i * 4 + k] * b[k * 4 + j];
+      }
+      if (j == 3) {
+        v += a[i * 4 + 3];
+      }
+      r[i * 4 + j] = v;
+    }
+  }
+  return r;
+}
+
+// Inverse of an affine matrix; false when the linear part is singular.
+bool MatInverse(const Mat& m, Mat& out) {
+  const double a[3][3] = {{m[0], m[1], m[2]}, {m[4], m[5], m[6]}, {m[8], m[9], m[10]}};
+  const double det = a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) -
+                     a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) +
+                     a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0]);
+  if (std::fabs(det) < 1e-12) {
+    return false;
+  }
+  double inv[3][3];
+  for (size_t i = 0; i < 3; ++i) {
+    for (size_t j = 0; j < 3; ++j) {
+      const size_t r0 = i == 0 ? 1 : 0, r1 = i == 2 ? 1 : 2;
+      const size_t q0 = j == 0 ? 1 : 0, q1 = j == 2 ? 1 : 2;
+      const double cof = (a[r0][q0] * a[r1][q1] - a[r0][q1] * a[r1][q0]) * (((i + j) & 1) ? -1.0 : 1.0);
+      inv[j][i] = cof / det;
+    }
+  }
+  const double t[3] = {m[3], m[7], m[11]};
+  for (size_t i = 0; i < 3; ++i) {
+    out[i * 4 + 0] = inv[i][0];
+    out[i * 4 + 1] = inv[i][1];
+    out[i * 4 + 2] = inv[i][2];
+    out[i * 4 + 3] = -(inv[i][0] * t[0] + inv[i][1] * t[1] + inv[i][2] * t[2]);
+  }
+  return true;
+}
+
+// A Key as a matrix: rotation times scale (columns scaled), then translation.
+Mat KeyMatrix(const Key& k) {
+  const double x = k.rotation[0], y = k.rotation[1], z = k.rotation[2], w = k.rotation[3];
+  const double r[3][3] = {{1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)},
+                          {2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)},
+                          {2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)}};
+  Mat m;
+  for (size_t i = 0; i < 3; ++i) {
+    for (size_t j = 0; j < 3; ++j) {
+      m[i * 4 + j] = r[i][j] * double(k.scale[j]);
+    }
+    m[i * 4 + 3] = double(k.translation[i]);
+  }
+  return m;
+}
+
+// The rotation (x y z w), scale (column lengths) and translation of an affine matrix.
+Key MatrixKey(const Mat& m) {
+  Key key;
+  double col[3];
+  for (size_t j = 0; j < 3; ++j) {
+    col[j] = std::sqrt(m[j] * m[j] + m[4 + j] * m[4 + j] + m[8 + j] * m[8 + j]);
+    key.scale[j] = float(col[j]);
+    if (col[j] == 0.0) {
+      col[j] = 1.0;
+    }
+  }
+  double r[3][3];
+  for (size_t i = 0; i < 3; ++i) {
+    for (size_t j = 0; j < 3; ++j) {
+      r[i][j] = m[i * 4 + j] / col[j];
+    }
+  }
+  double q[4];  // x y z w
+  const double tr = r[0][0] + r[1][1] + r[2][2];
+  if (tr > 0) {
+    const double s = std::sqrt(tr + 1) * 2;
+    q[0] = (r[2][1] - r[1][2]) / s;
+    q[1] = (r[0][2] - r[2][0]) / s;
+    q[2] = (r[1][0] - r[0][1]) / s;
+    q[3] = s / 4;
+  } else {
+    size_t i = 0;
+    for (size_t k = 1; k < 3; ++k) {
+      if (r[k][k] > r[i][i]) {
+        i = k;
+      }
+    }
+    const size_t j = (i + 1) % 3, k = (i + 2) % 3;
+    const double s = std::sqrt(std::max(0.0, 1 + r[i][i] - r[j][j] - r[k][k])) * 2;
+    q[i] = s / 4;
+    q[j] = (r[j][i] + r[i][j]) / s;
+    q[k] = (r[k][i] + r[i][k]) / s;
+    q[3] = (r[k][j] - r[j][k]) / s;
+  }
+  for (size_t i = 0; i < 4; ++i) {
+    key.rotation[i] = float(q[i]);
+  }
+  key.translation[0] = float(m[3]);
+  key.translation[1] = float(m[7]);
+  key.translation[2] = float(m[11]);
+  return key;
+}
+
+// The skeleton and skin palette (NOTES-skel.md): the CCharInfo stream read sequentially.
+// All offsets are checked, so a short or damaged file fails with a message.
+void ReadSkeleton(const Bytes& d, Character& out) {
+  size_t p = 0x29;
+  auto u8 = [&](size_t at) -> uint32_t {
+    d.Need(at, 1, "skeleton");
+    return d.data[at];
+  };
+  auto u16 = [&](size_t at) -> uint32_t {
+    d.Need(at, 2, "skeleton");
+    return ReadLE16(d.data + at);
+  };
+  auto u32 = [&](size_t at) -> uint32_t {
+    d.Need(at, 4, "skeleton");
+    return ReadLE32(d.data + at);
+  };
+
+  // The string pool, keeping empty strings: refs index it.
+  d.Need(0x25, 4, "name pool");
+  const int32_t poolSize = int32_t(ReadLE32(d.data + 0x25));
+  if (poolSize < 0 || !d.Has(0x29, size_t(poolSize))) {
+    Fail("name pool runs past the end of the file");
+  }
+  std::vector<std::string> strs(1);
+  for (int32_t i = 0; i < poolSize; ++i) {
+    const char c = char(d.data[0x29 + size_t(i)]);
+    if (c == 0) {
+      strs.emplace_back();
+    } else {
+      strs.back().push_back(c);
+    }
+  }
+  if (strs.back().empty()) {
+    strs.pop_back();
+  }
+  p = 0x29 + size_t(poolSize);
+
+  const size_t tables = u16(p), sets = u16(p + 2);
+  p += 4 + 4 * tables + 4 * sets;
+  p += 4 * tables;
+  std::vector<std::vector<uint32_t>> nameRefs;  // per name set, the refs
+  for (size_t i = 0; i < sets; ++i) {
+    const size_t count = u32(p);
+    if (count > d.size) {
+      Fail("name set runs past the end of the file");
+    }
+    d.Need(p + 4, 8 * count, "name set");
+    std::vector<uint32_t> refs(count);
+    for (size_t k = 0; k < count; ++k) {
+      refs[k] = ReadLE32(d.data + p + 4 + 4 * count + 4 * k);
+    }
+    nameRefs.push_back(std::move(refs));
+    p += 4 + 8 * count;
+  }
+  p += 2 + u8(p) * 2;
+
+  // SAnimContext
+  {
+    const size_t a = u8(p), b = u8(p + 1), c = u16(p + 2), dd = u16(p + 4), e = u16(p + 6);
+    p += 8 + 6 * a + c + 2 * b + (dd > 8 * b ? dd - 8 * b : 0) + 2 * a + (e > 8 * a ? e - 8 * a : 0);
+  }
+  const size_t animCount = u16(p), animSet = u16(p + 2);
+  p += 4 + 4 * animCount;
+
+  // SAbsContext
+  const size_t absA = u8(p), absB = u16(p + 1), absC = u16(p + 3), absD = u16(p + 5), absE = u16(p + 7);
+  p += 9 + 6 * absA;
+  d.Need(p, absC, "skeleton parents");
+  const size_t cblob = p;
+  p += absC + absD + absE;
+  const size_t boneCount = u16(p), absSet = u16(p + 2);
+  p += 4 + 4 * boneCount + 4 * absB + 1;
+
+  // SRenderContext
+  const size_t ra = u16(p), rb = u16(p + 2), rc = u16(p + 4), rd = u16(p + 6);
+  p += 12;
+  std::vector<uint32_t> arr0(ra);
+  d.Need(p, 2 * (ra + rb + rc + rd), "render context");
+  for (size_t k = 0; k < ra; ++k) {
+    arr0[k] = ReadLE16(d.data + p + 2 * k);
+  }
+  p += 2 * (ra + rb + rc + rd);
+  d.Need(p, 48 * (ra + 1 + rd), "inverse binds");
+  auto matAt = [&](size_t index) {
+    Mat m;
+    for (size_t i = 0; i < 12; ++i) {
+      m[i] = double(ReadLEFloat(d.data + p + 48 * index + 4 * i));
+    }
+    return m;
+  };
+
+  if (absSet >= nameRefs.size() || animSet >= nameRefs.size() || nameRefs[absSet].size() < boneCount) {
+    Fail("skeleton names are missing");
+  }
+  auto name = [&](uint32_t ref) { return (ref & 0x0fffffff) < strs.size() ? strs[ref & 0x0fffffff] : std::string(); };
+
+  std::vector<int> parent(boneCount, -1);
+  for (size_t o = 0; o + 6 < absC;) {
+    const uint8_t* r = d.data + cblob + o;
+    if ((r[0] == 4 || r[0] == 5) && o + 7 <= absC) {
+      const uint32_t self = ReadLE16(r + 1), par = ReadLE16(r + 3);
+      if (self % 6 == 0 && par % 6 == 0 && self / 6 < boneCount && par / 6 < boneCount) {
+        parent[self / 6] = int(par / 6);
+        o += 7;
+        continue;
+      }
+    }
+    ++o;
+  }
+
+  std::vector<bool> hasWorld(boneCount, false);
+  std::vector<Mat> world(boneCount);
+  for (size_t i = 0; i < boneCount && i < rd; ++i) {
+    hasWorld[i] = MatInverse(matAt(ra + 1 + i), world[i]);
+  }
+  out.bones.clear();
+  std::vector<std::string> boneNames;
+  for (size_t i = 0; i < boneCount; ++i) {
+    Bone bone;
+    bone.name = name(nameRefs[absSet][i]);
+    bone.parent = parent[i];
+    if (hasWorld[i]) {
+      Mat loc = world[i];
+      Mat parentInv;
+      if (parent[i] >= 0 && hasWorld[size_t(parent[i])] && MatInverse(world[size_t(parent[i])], parentInv)) {
+        loc = MatMul(parentInv, world[i]);
+      }
+      bone.bind = MatrixKey(loc);
+    }
+    boneNames.push_back(bone.name);
+    out.bones.push_back(std::move(bone));
+  }
+  // Duplicate names: the last bone with the name wins, as in the Python.
+  out.animBone.clear();
+  for (uint32_t ref : nameRefs[animSet]) {
+    int found = -1;
+    const std::string n = name(ref);
+    for (size_t i = 0; i < boneCount; ++i) {
+      if (boneNames[i] == n) {
+        found = int(i);
+      }
+    }
+    out.animBone.push_back(found);
+  }
+  out.jointBone.clear();
+  out.inverseBind.clear();
+  for (size_t k = 0; k < ra; ++k) {
+    const uint32_t bone = arr0[k] / 192;
+    out.jointBone.push_back(bone < boneCount ? int(bone) : -1);
+    std::array<float, 12> inv;
+    const Mat m = matAt(k);
+    for (size_t i = 0; i < 12; ++i) {
+      inv[i] = float(m[i]);
+    }
+    out.inverseBind.push_back(inv);
+  }
+}
+
 }  // namespace
 
 bool ReadCharacter(const std::vector<uint8_t>& chpr, Character& out, std::string& error) {
@@ -590,18 +943,33 @@ bool ReadCharacter(const std::vector<uint8_t>& chpr, Character& out, std::string
     if (!d.Has(0, 0x29) || std::memcmp(d.data, "RFRM", 4) != 0 || std::memcmp(d.data + 0x14, "CHPR", 4) != 0) {
       Fail("not a CHPR file");
     }
-    // Animation names are the pool strings with the usual prefixes, in record order. Unless
-    // there is one per record, which is which is not known: the animations go unnamed, so
-    // Find matches none of them.
+    // Animation names, in record order: the pool names after the last "Primary" minus the
+    // "meta" ones (a meta animation has no record), else the names with the usual
+    // prefixes. Unless there is one per record, which is which is not known: the
+    // animations go unnamed, so Find matches none of them.
+    const std::vector<std::string> allNames = ReadNames(d);
     std::vector<std::string> animNames;
-    for (const std::string& n : ReadNames(d)) {
+    for (const std::string& n : allNames) {
       if (StartsWith(n, "spin_") || StartsWith(n, "static") || StartsWith(n, "idle") || StartsWith(n, "anim")) {
         animNames.push_back(n);
+      }
+    }
+    std::vector<std::string> afterPrimary;
+    bool primary = false;
+    for (const std::string& n : allNames) {
+      if (n == "Primary") {
+        primary = true;
+        afterPrimary.clear();
+      } else if (primary && !ContainsNoCase(n, "meta")) {
+        afterPrimary.push_back(n);
       }
     }
     const std::vector<Record> recs = FindRecords(d);
     if (recs.empty()) {
       Fail("no animation records found");
+    }
+    if (primary && afterPrimary.size() == recs.size()) {
+      animNames = afterPrimary;
     }
     const std::vector<double> pool = FindPool(d, recs[0].offset);
     for (size_t i = 0; i < recs.size(); ++i) {
@@ -614,6 +982,16 @@ bool ReadCharacter(const std::vector<uint8_t>& chpr, Character& out, std::string
     const size_t smdl = recs.back().end + 0x22;
     if (d.Has(smdl, 16)) {
       std::copy(d.data + smdl, d.data + smdl + 16, out.skinnedModel.begin());
+    }
+    // The skeleton is optional: the animations are usable without it.
+    try {
+      ReadSkeleton(d, out);
+    } catch (const Failure& failure) {
+      out.bones.clear();
+      out.animBone.clear();
+      out.jointBone.clear();
+      out.inverseBind.clear();
+      out.skeletonError = failure.message;
     }
   } catch (const Failure& failure) {
     error = failure.message;
@@ -630,6 +1008,69 @@ const Anim* Find(const Character& c, std::string_view name) {
     }
   }
   return nullptr;
+}
+
+bool SkinPose(const Character& c, const Anim& anim, uint32_t frame, std::vector<std::array<float, 12>>& out) {
+  out.clear();
+  const size_t boneCount = c.bones.size();
+  if (boneCount == 0 || frame >= anim.frames || c.jointBone.size() != c.inverseBind.size()) {
+    return false;
+  }
+  // The anim track (op bone id) that drives each skeleton bone.
+  std::vector<int> track(boneCount, -1);
+  for (size_t j = c.animBone.size(); j-- > 0;) {
+    const int b = c.animBone[j];
+    if (b >= 0 && size_t(b) < boneCount && j < anim.bones.size() && j < anim.tracked.size() && anim.tracked[j] &&
+        frame < anim.bones[j].size()) {
+      track[size_t(b)] = int(j);
+    }
+  }
+  std::vector<Mat> world(boneCount);
+  std::vector<uint8_t> state(boneCount, 0);  // 0 not done, 1 in progress, 2 done
+  // Parents can have a larger index than their children, so resolve by walking up.
+  std::vector<size_t> chain;
+  for (size_t start = 0; start < boneCount; ++start) {
+    chain.clear();
+    for (int b = int(start); b >= 0 && state[size_t(b)] == 0; b = c.bones[size_t(b)].parent) {
+      state[size_t(b)] = 1;
+      chain.push_back(size_t(b));
+    }
+    for (size_t i = chain.size(); i-- > 0;) {
+      const size_t b = chain[i];
+      // The keys are relative to the bind pose: a track's frame-0 key is the identity
+      // where the animation starts from the bind pose (checked on the debris and the
+      // Omega Pirate cinematic, whose joints then land on their bind places exactly).
+      const Mat bind = KeyMatrix(c.bones[b].bind);
+      const Mat local = track[b] >= 0 ? MatMul(bind, KeyMatrix(anim.bones[size_t(track[b])][frame])) : bind;
+      const int par = c.bones[b].parent;
+      if (par >= 0 && state[size_t(par)] == 2) {
+        world[b] = MatMul(world[size_t(par)], local);
+      } else if (par >= 0) {
+        return false;  // a cycle
+      } else {
+        world[b] = local;
+      }
+      state[b] = 2;
+    }
+  }
+  for (size_t k = 0; k < c.jointBone.size(); ++k) {
+    const int b = c.jointBone[k];
+    if (b < 0 || size_t(b) >= boneCount) {
+      out.clear();
+      return false;
+    }
+    Mat inv;
+    for (size_t i = 0; i < 12; ++i) {
+      inv[i] = double(c.inverseBind[k][i]);
+    }
+    const Mat m = MatMul(world[size_t(b)], inv);
+    std::array<float, 12> row;
+    for (size_t i = 0; i < 12; ++i) {
+      row[i] = float(m[i]);
+    }
+    out.push_back(row);
+  }
+  return true;
 }
 
 }  // namespace PortRemasteredAnim
