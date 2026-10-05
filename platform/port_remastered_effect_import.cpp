@@ -610,20 +610,42 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"98eee214-a6f1-43f3-82a9-6b9e4859fd79", 0x69B9387A},  // Water
     {"afa4cef5-24e4-4133-b62b-5e3e52068b25", 0x147A85EF},  // Water
     {"d911be03-8d3a-4a07-bcd6-9158fd9fad40", 0xE981C0AD},  // Water
+    // By event bones, one character at a time: Remastered reuses an effect for
+    // different retail PARTs in different characters, so an effect may pair
+    // more than once. In a CHPR, an unpaired effect and an unpaired PART of its
+    // ANCS pair when their event bone sets are the same and no other effect or
+    // PART there has that set (or, among several, their frames match within one
+    // and only each other), any frames on both sides meet within one, and every
+    // ANCS using the PART pairs it the same way (repeated until nothing changes).
+    // Hiding a known pair, the rule re-derives 62 of 111 and gets none wrong.
+    // The comment is the ANCS and the bones.
+    {"17ea72c7-6430-4895-a668-ebf5b8886ae5", 0x65FA796C},  // 28EACD5F L_eye_LCTR_SDK
+    {"1cc665ba-8b5d-4fb5-9b53-a96b1fe1317a", 0x939E8643},  // 569523DF Head_1
+    {"3ec1f3bd-e45d-4fac-99ed-488537af39c3", 0x07C89D11},  // BE756DF9 loc*_special_LCTR
+    {"3ec1f3bd-e45d-4fac-99ed-488537af39c3", 0x0E8A8E7B},  // 61F99B76 Rock_01_*
+    {"3ec1f3bd-e45d-4fac-99ed-488537af39c3", 0x8E9224AB},  // 32FD91B0 Jaw_1
+    {"3ec1f3bd-e45d-4fac-99ed-488537af39c3", 0xC3C364E6},  // 591F073D Head_LCTR (+1)
+    {"3ec1f3bd-e45d-4fac-99ed-488537af39c3", 0xF05FA09E},  // FAC657CC L/R_wingBone2_2
+    {"969b554a-81f2-41fb-98ac-351f5bab1cd8", 0xD8EFB226},  // 7814DC79 lockon_target_LCTR
+    {"a56432d1-e257-444b-ab2b-abba3c2f9ebd", 0x045912BB},  // EAD9FE87 GillR_LCTR
+    {"a6dfc131-b63c-4c62-909c-6485d73315cc", 0xA33FDBCB},  // 1E14B003 Skeleton_Root
+    {"a9c3b54e-3fa6-4b90-ae65-ddad3a0c4409", 0x4CCE514A},  // 7E4ABB02 Glow_LCTR
 };
 
-// The retail PART an effect replaces: the id it carried over, else its match's.
-std::optional<uint32_t> RetailEffect(const EffectGuid& id) {
+// The retail PARTs an effect replaces: the id it carried over, else its
+// matches' (one effect can stand for several PARTs).
+std::vector<uint32_t> RetailEffects(const EffectGuid& id) {
   if (const std::optional<uint32_t> retail = EffectRetailId(Swap(id))) {
-    return retail;
+    return {*retail};
   }
   const std::string text = EffectGuidString(Swap(id));
+  std::vector<uint32_t> out;
   for (const MatchedEffect& matched : kMatchedEffects) {
     if (text == matched.id) {
-      return matched.retail;
+      out.push_back(matched.retail);
     }
   }
-  return std::nullopt;
+  return out;
 }
 
 class Importer {
@@ -871,13 +893,12 @@ public:
     }
   }
 
-  void Effect(const EffectGuid& id) {
-    const std::optional<uint32_t> retail = RetailEffect(id);
-    if (!retail || !m_io.retailId(*retail)) {
+  void Effect(const EffectGuid& id, uint32_t retail) {
+    if (!m_io.retailId(retail)) {
       return;
     }
     ++m_result.candidates;
-    const std::string name = Hex(*retail) + ".PART";
+    const std::string name = Hex(retail) + ".PART";
     std::vector<uint8_t> data;
     std::string error;
     EffectNode effect;
@@ -887,7 +908,7 @@ public:
       return;
     }
     std::map<EffectGuid, Child> children;
-    Children(effect, *retail, children);
+    Children(effect, retail, children);
     EffectConvertIO io;
     io.assetId = [&](const EffectGuid& stored, uint32_t type) -> uint32_t {
       const auto child = children.find(stored);
@@ -941,7 +962,7 @@ public:
     std::vector<RetailPartProperty> disc;
     std::vector<uint8_t> discData;
     if (m_io.retail && SplitRetailPart(root.data(), root.size(), converted, error) && HasLight(converted) &&
-        m_io.retail(kPart, *retail, discData) &&
+        m_io.retail(kPart, retail, discData) &&
         SplitRetailPart(discData.data(), discData.size(), disc, error) && HasLight(disc)) {
       root = WithDiscLight(converted, disc);
       Log(name + ": light from the disc");
@@ -958,7 +979,9 @@ public:
 
   EffectImportResult Run() {
     for (const EffectGuid& id : m_io.effects) {
-      Effect(id);
+      for (const uint32_t retail : RetailEffects(id)) {
+        Effect(id, retail);
+      }
     }
     return m_result;
   }
