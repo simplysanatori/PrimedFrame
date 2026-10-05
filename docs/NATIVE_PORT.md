@@ -579,7 +579,7 @@ are not handled for now; remove `mods/remastered-models` to get the retail
 game back.
 
 The port can build a model mod from your own copy of Metroid Prime Remastered;
-nothing of it ships. F1 > Extras > Mods > "Metroid Prime Remastered models"
+nothing of it ships. F1 > Remastered > Import > "Metroid Prime Remastered models"
 takes the game's `.nsp` and your console's key file (`~/.switch/prod.keys` is
 filled in when it exists). The panel remembers both files once they are picked
 or used, as `remastered_nsp` and `remastered_keys` in the settings file (on
@@ -647,7 +647,7 @@ Remastered's French, Spanish, German, Italian and Dutch text comes along too
 (about 1,900 strings each), as extra language sections in the same tables,
 named by Remastered's language codes (`EUFR`, `EUSP`, `EUGE`, `EUIT`, `EUDU`).
 A string Remastered doesn't translate, or one whose buttons don't line up with
-the disc's, stays in English. Pick the language in F1 > Extras > Text (ini key
+the disc's, stays in English. Pick the language in F1 > Remastered > Text (ini key
 `text_language`, or `MP_LANGUAGE=EUFR` for one run). It changes while the game
 runs (console: `language EUGE`, `language en`): text already on screen
 switches the next time its menu or screen opens. Without the mod the game stays in English. The disc's fonts are
@@ -693,7 +693,7 @@ below.
 The concept art of the Extras gallery comes too: the 120 full-size pictures in
 `UI_FrontEnd` (taller than 1000 pixels) are written as JPEGs into the mod's
 `gallery` folder (`gallery/NNN.jpg`, fitted within 1920x1080, quality 90; about
-0.3 MB each, 36 MB in all), and F1 > Extras > Gallery opens them in a viewer window. The decoder
+0.3 MB each, 36 MB in all), and F1 > Remastered > Gallery opens them in a viewer window. The decoder
 is the one the game uses for THP movies, so no extra library is needed.
 `MP_REMASTERED_GALLERY=0` leaves them out.
 
@@ -1135,7 +1135,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   gyro rates in rad/s), `shot` (prints the bmp path), `present
   <0..1|cycle|tick|off>`, `hold <0|1>` (stop ticking), `step [ticks]` (run
   that many ticks while held), `interp [actor|pose|particle|all <0|1>]`,
-  `aspect <4:3|16:9|window>`, `fov <45..90>`, `msaa <1|4>`, `aniso <1..16>`, `hudscale <50..100>`, `helmet <0|1>`, `visorfx <0|1>`, `crosshair <25..100>`, `reveal <0|1>`, `pickups <0|1>`, `tracker`, `state list | last | save [n] | load [n] | undo | slot <n>`, `viewmodel <cmdl> [dist] [yaw] [pitch] | off | status | light <0|1>` (draws any model, retail or a mod's, in front of the camera with the arm cannon hidden; dist 0 fits its bounds; `light 1` swaps the flat white ambient for a key light, which PBR mod materials need to shade), `probe [off|on|mirror|window]` (the PBR reflection probe, live: `mirror` and `window` show the probe itself on PBR materials, as a reflection and looked straight through; no argument prints the mode), `remastered [start <image.nsp> [key file] | cancel]` (the Remastered model import and its progress), `mods [reload]` (what is loaded; `reload` reads the mods folder again), `roomgeo [on|off|overlay | at <x> <y> <z> [margin] | hide <cmdl> | show [cmdl]]` (a mod's room geometry: in place of the retail area, off, or drawn over it; `at` lists the instances whose box holds a point and `hide` stops drawing a model, for finding which one a surface belongs to; no argument prints what is loaded and drawn), `roomgeo lights on|off` (light room geometry with the area's lights even where the room has baked light), `roomgeo script` (Remastered's own visibility scripts in each loaded area: the camera in area space, each camera zone, counter and relay, and how much of each geometry group is shown), `roomgeo group <n> show|hide` (sets that group in every loaded area until its script next changes it), `roomgeo minpx <n>` (skip room geometry instances smaller than n pixels; see `MP_ROOM_GEO_MIN_PX`), `roomgeo lod <scale>` (see `MP_ROOM_GEO_LOD`), `roomgeo pick` (the instances the middle of the view looks through, nearest first, with each model's materials), `roomgeo mats <cmdl>` (a loaded model's materials: flags, PBR or TEV, the PBR record), `roomgeo mat <cmdl> <material> <field> <value...> | mat clear` (changes a value of a material's PBR record as drawn, until cleared or the next start; fields `emissive`, `backlight`, `height`, `mode`, `kind`, `strength`, `p0`-`p3`, or an index 0 to 18; emissive multiplies the emissive map, so it shows only on a material that has one), `roomliquid [on|off]` (a mod's liquid surfaces in place of the retail fluid planes; no argument prints what is loaded and drawn), `collision [off|overlay|only]` (draws what Samus collides with: the areas' static collision shaded by facing, walls grey, floors blue, ceilings red, lava orange, phazon cyan, grates yellow, with each triangle's edges, and active solid actors such as gates and platforms as orange boxes; `only` hides the world but Samus, so walls with no surface on them show), `colldump <x0> <y0> <z0> <x1> <y1> <z1> <file.obj>` (the current area's collision triangles touching a box, as an OBJ with each face's material bits in a comment), `roomenv [on|off|exposure on|off|bloom on|off|grade on|off|volume on|off|ambient <scale>|show off|coords|light|info [<x> <y> <z>]|balllight on|off|<scale>]` (room environments: `volume` is the baked light per pixel, `ambient` scales the baked ambient, `show` draws the grid's coordinates or light in place of the surface, `info` prints exposure, tone curve, probe and baked ambient at the view or a point), `view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind]` (what PBR surfaces show: one input of the shading in place of the result), `gputimes on|off|show` (per-render-pass GPU times from timestamp queries, 60-frame averages: ms and passes per frame for each pass name, plus the total and first-begin-to-last-end span; also F1 > Extras "GPU pass times"; free while off), `stats` (the last frame's draws and buffers, the heap, room geometry and environments), `hdfont [on|off]`, `touchpad [attach|detach|stick <x> <y>]` (a virtual gamepad of the kind Android's touch overlay uses, to test controller hotplug against it on any platform), `freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]` (see below), `timer <0|1>`, `igt <seconds>`, `livesplit <0|1> | addr <host:port> | send <command> | status`, `discord <0|1> | id <application id> | status`, `gci list | import <path> | export <dir or .raw> | dolphin import|export`, `ap [connect <server> <slot> [password] | disconnect | recent | resume <n> | say <text> | chat]`, `wait <frames>`, `quit`; `help` lists them. Ids are hex editor ids, `u<n>`
+  `aspect <4:3|16:9|window>`, `fov <45..90>`, `msaa <1|4>`, `aniso <1..16>`, `hudscale <50..100>`, `helmet <0|1>`, `visorfx <0|1>`, `crosshair <25..100>`, `reveal <0|1>`, `pickups <0|1>`, `tracker`, `state list | last | save [n] | load [n] | undo | slot <n>`, `viewmodel <cmdl> [dist] [yaw] [pitch] | off | status | light <0|1>` (draws any model, retail or a mod's, in front of the camera with the arm cannon hidden; dist 0 fits its bounds; `light 1` swaps the flat white ambient for a key light, which PBR mod materials need to shade), `probe [off|on|mirror|window]` (the PBR reflection probe, live: `mirror` and `window` show the probe itself on PBR materials, as a reflection and looked straight through; no argument prints the mode), `remastered [start <image.nsp> [key file] | cancel]` (the Remastered model import and its progress), `mods [reload]` (what is loaded; `reload` reads the mods folder again), `roomgeo [on|off|overlay | at <x> <y> <z> [margin] | hide <cmdl> | show [cmdl]]` (a mod's room geometry: in place of the retail area, off, or drawn over it; `at` lists the instances whose box holds a point and `hide` stops drawing a model, for finding which one a surface belongs to; no argument prints what is loaded and drawn), `roomgeo lights on|off` (light room geometry with the area's lights even where the room has baked light), `roomgeo script` (Remastered's own visibility scripts in each loaded area: the camera in area space, each camera zone, counter and relay, and how much of each geometry group is shown), `roomgeo group <n> show|hide` (sets that group in every loaded area until its script next changes it), `roomgeo minpx <n>` (skip room geometry instances smaller than n pixels; see `MP_ROOM_GEO_MIN_PX`), `roomgeo lod <scale>` (see `MP_ROOM_GEO_LOD`), `roomgeo pick` (the instances the middle of the view looks through, nearest first, with each model's materials), `roomgeo mats <cmdl>` (a loaded model's materials: flags, PBR or TEV, the PBR record), `roomgeo mat <cmdl> <material> <field> <value...> | mat clear` (changes a value of a material's PBR record as drawn, until cleared or the next start; fields `emissive`, `backlight`, `height`, `mode`, `kind`, `strength`, `p0`-`p3`, or an index 0 to 18; emissive multiplies the emissive map, so it shows only on a material that has one), `roomliquid [on|off]` (a mod's liquid surfaces in place of the retail fluid planes; no argument prints what is loaded and drawn), `collision [off|overlay|only]` (draws what Samus collides with: the areas' static collision shaded by facing, walls grey, floors blue, ceilings red, lava orange, phazon cyan, grates yellow, with each triangle's edges, and active solid actors such as gates and platforms as orange boxes; `only` hides the world but Samus, so walls with no surface on them show), `colldump <x0> <y0> <z0> <x1> <y1> <z1> <file.obj>` (the current area's collision triangles touching a box, as an OBJ with each face's material bits in a comment), `roomenv [on|off|exposure on|off|bloom on|off|grade on|off|volume on|off|ambient <scale>|show off|coords|light|info [<x> <y> <z>]|balllight on|off|<scale>]` (room environments: `volume` is the baked light per pixel, `ambient` scales the baked ambient, `show` draws the grid's coordinates or light in place of the surface, `info` prints exposure, tone curve, probe and baked ambient at the view or a point), `view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind]` (what PBR surfaces show: one input of the shading in place of the result), `gputimes on|off|show` (per-render-pass GPU times from timestamp queries, 60-frame averages: ms and passes per frame for each pass name, plus the total and first-begin-to-last-end span; also F1 > Remastered > Rendering "GPU pass times"; free while off), `stats` (the last frame's draws and buffers, the heap, room geometry and environments), `hdfont [on|off]`, `touchpad [attach|detach|stick <x> <y>]` (a virtual gamepad of the kind Android's touch overlay uses, to test controller hotplug against it on any platform), `freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]` (see below), `timer <0|1>`, `igt <seconds>`, `livesplit <0|1> | addr <host:port> | send <command> | status`, `discord <0|1> | id <application id> | status`, `gci list | import <path> | export <dir or .raw> | dolphin import|export`, `ap [connect <server> <slot> [password] | disconnect | recent | resume <n> | say <text> | chat]`, `wait <frames>`, `quit`; `help` lists them. Ids are hex editor ids, `u<n>`
   unique ids or exact debug names. Every reply ends with `=> ok` or
   `=> err: <why>`, and the client exits 1 if any command failed. Game commands
   run inside the state manager tick, so they fail with "not ticking" on the
@@ -1167,8 +1167,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   arrays and uniforms are streamed through (1 = 5 + 2 + 8 + 24 MiB); it is 12
   when a mod has room geometry (6 on Android, 2 with `MP_ROOM_GEO_RESIDENT=1`).
   A frame that outgrows them aborts with a buffer overflow.
-- `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_resident`, F1 > Debug >
-  Rendering > Keep room geometry on the GPU; off by default, read at startup):
+- `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_resident`, F1 > Remastered >
+  Rendering > Keep on the GPU; off by default, read at startup):
   experimental. Each room geometry model's vertex arrays and display lists are
   uploaded to the GPU once when it loads and drawn from there, instead of being
   copied into the frame's buffers every frame. The frame buffers then start at 2
@@ -1178,12 +1178,12 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   that. Console `stats` and F1 > Debug > Frame show how much of it is in use. A
   model that finds no room left is sent every frame as before, which can
   overflow the smaller frame buffers: raise the room if the log warns of it.
-- `MP_ROOM_GEO_MIN_PX=<n>` (setting `room_geo_min_px`, F1 > Rendering >
-  Remastered room models > Skip small models, console `roomgeo minpx <n>`; default 0): leaves out room
+- `MP_ROOM_GEO_MIN_PX=<n>` (setting `room_geo_min_px`, F1 > Remastered >
+  Rendering > Skip small models, console `roomgeo minpx <n>`; default 0): leaves out room
   geometry instances that span fewer than n pixels of the game's 480-line
   screen.
-- `MP_ROOM_GEO_LOD=<scale>` (setting `room_geo_lod`, F1 > Rendering >
-  Remastered room models > Detail distance, console `roomgeo lod <scale>`;
+- `MP_ROOM_GEO_LOD=<scale>` (setting `room_geo_lod`, F1 > Remastered >
+  Rendering > Detail distance, console `roomgeo lod <scale>`;
   default 1): the import also converts each room model's coarser Remastered
   levels of detail (a level is kept only when it has at most 3/4 of the
   triangles of the one before) and lists them in `roomgeo/lods.bin`. An
@@ -1201,7 +1201,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   the Landing Site's 4133 instances become 188 merged models and 176 single
   ones. A phone pays for every draw on each screen tile, so this took a POCO F8
   Ultra from 24 to 35 fps there. Needs the mod's CMDLs stored uncompressed.
-  F1 > Rendering > Remastered room models > Draw merged copies (not saved)
+  F1 > Remastered > Rendering > Draw merged copies (not saved)
   switches back to single draws at runtime, to compare how they look.
 - `MP_ROOM_LIQUID=0`: ignore the mods' `.roomliquid` files and draw the
   retail fluid planes (console `roomliquid [on|off]`, which also counts what is

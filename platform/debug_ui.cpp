@@ -3789,7 +3789,7 @@ void DrawStaleImportToast() {
   if (ImGui::Begin("##stale-import-toast", nullptr,
                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
                        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
-    ImGui::TextWrapped("%s was imported by an older version. Re-import Remastered (F1 > Mods) to get the latest fixes.",
+    ImGui::TextWrapped("%s was imported by an older version. Re-import Remastered (F1 > Remastered) to get the latest fixes.",
                        name);
   }
   ImGui::End();
@@ -4124,7 +4124,6 @@ void DrawMods() {
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
   ImGui::TextWrapped("Folder: %s", status.folder.c_str());
   ImGui::PopStyleColor();
-  DrawRemasteredImport();
 #if !defined(__ANDROID__)
   DrawImporters();
 #endif
@@ -4151,40 +4150,6 @@ void DrawExtrasTab() {
            "far faster; Fast ends it about 2 s in, once the next area is loaded; Skip shows black "
            "until the area is loaded. The cinematic played in the elevator room before the ride is "
            "not affected.");
-
-  ImGui::SeparatorText("Text");
-  {
-    int language = 0;
-    const char* current = TextLanguage();
-    for (size_t i = 0; i < PortRemastered::kTextLanguageCount; ++i) {
-      if (std::strcmp(current, PortRemastered::kTextLanguages[i].code) == 0) {
-        language = static_cast< int >(i) + 1;
-      }
-    }
-    const auto name = [](void*, int index) {
-      return index == 0 ? "English" : PortRemastered::kTextLanguages[index - 1].name;
-    };
-    if (ImGui::Combo("Language", &language, name, nullptr,
-                     static_cast< int >(PortRemastered::kTextLanguageCount) + 1)) {
-      SetTextLanguage(language == 0 ? "" : PortRemastered::kTextLanguages[language - 1].code);
-    }
-    ItemHelp("The language of the game's text. Only English is on the disc: the others come with the "
-             "Remastered import (its text), and any text it lacks stays English. Text already on "
-             "screen changes the next time its menu or screen opens.");
-  }
-
-  ImGui::SeparatorText("Gallery");
-  {
-    const std::vector<std::string> pictures = PortMods::GalleryPaths();
-    if (pictures.empty()) {
-      ImGui::TextDisabled("Remastered's concept art. It comes with the Remastered import.");
-    } else if (ImGui::Button(("Open gallery (" + std::to_string(pictures.size()) + " pictures)").c_str())) {
-      sGalleryPaths = pictures;
-      sGalleryIndex = std::min(sGalleryIndex, int(pictures.size()) - 1);
-      ReleaseGalleryTexture();
-      sGalleryOpen = true;
-    }
-  }
 
   ImGui::SeparatorText("Unlocks");
   bool hardMode = sUnlockHardMode;
@@ -5375,6 +5340,72 @@ void DrawRendering() {
                         "Draws what Samus collides with: walls grey, floors blue, ceilings red,\n"
                         "lava orange, grates yellow, solid objects as orange boxes.");
 
+  if (ImGui::CollapsingHeader("Frame statistics")) {
+    if (const AuroraStats* stats = aurora_get_stats()) {
+      ImGui::Text("%.0f fps, %u draws (%u merged), %u PBR, %u passes", aurora_get_fps(), stats->drawCallCount,
+                  stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->renderPassCount);
+      ImGui::Text("vertices %.1f MiB, indices %.1f, arrays %.1f, uniforms %.1f, texture uploads %.1f",
+                  stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f,
+                  stats->lastStorageSize / 1048576.f, stats->lastUniformSize / 1048576.f,
+                  stats->lastTextureUploadSize / 1048576.f);
+      if (const uint32_t resident = aurora_get_resident_geometry_mib()) {
+        ImGui::Text("kept on the GPU %.1f of %u MiB", aurora_get_resident_geometry_used() / 1048576.f, resident);
+      }
+      ImGui::Text("pipelines %u made, %u waiting", stats->createdPipelines, stats->queuedPipelines);
+    }
+    AuroraTextureStats textures{};
+    aurora_get_texture_stats(&textures);
+    ImGui::Text("textures %u, %.0f MiB; render targets %u, %.0f MiB", textures.count[0],
+                textures.bytes[0] / 1048576.f, textures.count[1], textures.bytes[1] / 1048576.f);
+    int areas = 0;
+    int instances = 0;
+    int models = 0;
+    int loaded = 0;
+    int drawn = 0;
+    PortRoomGeo::Stats(areas, instances, models, loaded, drawn);
+    ImGui::Text("room geometry: %d area(s), %d of %d model(s) loaded, %d of %d instance(s) drawn", areas, loaded,
+                models, drawn, instances);
+  }
+}
+void DrawRemasteredTab() {
+  ImGui::SeparatorText("Import");
+  DrawRemasteredImport();
+
+  ImGui::SeparatorText("Text");
+  {
+    int language = 0;
+    const char* current = TextLanguage();
+    for (size_t i = 0; i < PortRemastered::kTextLanguageCount; ++i) {
+      if (std::strcmp(current, PortRemastered::kTextLanguages[i].code) == 0) {
+        language = static_cast< int >(i) + 1;
+      }
+    }
+    const auto name = [](void*, int index) {
+      return index == 0 ? "English" : PortRemastered::kTextLanguages[index - 1].name;
+    };
+    if (ImGui::Combo("Language", &language, name, nullptr,
+                     static_cast< int >(PortRemastered::kTextLanguageCount) + 1)) {
+      SetTextLanguage(language == 0 ? "" : PortRemastered::kTextLanguages[language - 1].code);
+    }
+    ItemHelp("The language of the game's text. Only English is on the disc: the others come with the "
+             "Remastered import (its text), and any text it lacks stays English. Text already on "
+             "screen changes the next time its menu or screen opens.");
+  }
+
+  ImGui::SeparatorText("Gallery");
+  {
+    const std::vector<std::string> pictures = PortMods::GalleryPaths();
+    if (pictures.empty()) {
+      ImGui::TextDisabled("Remastered's concept art. It comes with the Remastered import.");
+    } else if (ImGui::Button(("Open gallery (" + std::to_string(pictures.size()) + " pictures)").c_str())) {
+      sGalleryPaths = pictures;
+      sGalleryIndex = std::min(sGalleryIndex, int(pictures.size()) - 1);
+      ReleaseGalleryTexture();
+      sGalleryOpen = true;
+    }
+  }
+
+  ImGui::SeparatorText("Rendering");
   // What the middle of the screen looks at.
   float origin[3];
   float forward[3];
@@ -5631,33 +5662,6 @@ void DrawRendering() {
       ImGui::TextUnformatted(PortRoomEnv::Info(origin).c_str());
       ImGui::TreePop();
     }
-  }
-
-  if (ImGui::CollapsingHeader("Frame statistics")) {
-    if (const AuroraStats* stats = aurora_get_stats()) {
-      ImGui::Text("%.0f fps, %u draws (%u merged), %u PBR, %u passes", aurora_get_fps(), stats->drawCallCount,
-                  stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->renderPassCount);
-      ImGui::Text("vertices %.1f MiB, indices %.1f, arrays %.1f, uniforms %.1f, texture uploads %.1f",
-                  stats->lastVertSize / 1048576.f, stats->lastIndexSize / 1048576.f,
-                  stats->lastStorageSize / 1048576.f, stats->lastUniformSize / 1048576.f,
-                  stats->lastTextureUploadSize / 1048576.f);
-      if (const uint32_t resident = aurora_get_resident_geometry_mib()) {
-        ImGui::Text("kept on the GPU %.1f of %u MiB", aurora_get_resident_geometry_used() / 1048576.f, resident);
-      }
-      ImGui::Text("pipelines %u made, %u waiting", stats->createdPipelines, stats->queuedPipelines);
-    }
-    AuroraTextureStats textures{};
-    aurora_get_texture_stats(&textures);
-    ImGui::Text("textures %u, %.0f MiB; render targets %u, %.0f MiB", textures.count[0],
-                textures.bytes[0] / 1048576.f, textures.count[1], textures.bytes[1] / 1048576.f);
-    int areas = 0;
-    int instances = 0;
-    int models = 0;
-    int loaded = 0;
-    int drawn = 0;
-    PortRoomGeo::Stats(areas, instances, models, loaded, drawn);
-    ImGui::Text("room geometry: %d area(s), %d of %d model(s) loaded, %d of %d instance(s) drawn", areas, loaded,
-                models, drawn, instances);
   }
 }
 
@@ -5988,9 +5992,10 @@ struct DebugPage {
 const DebugPage kDebugPages[] = {
     {"Input", DrawInputTab},     {"Controls", PortControls::DrawTab},
     {"Render", DrawRenderTab},   {"Performance", DrawPerformanceTab},
-    {"Extras", DrawExtrasTab},   {"Tracker", DrawTrackerTab},
-    {"States", DrawSaveStatesTab}, {"Session", DrawSessionTab},
-    {"Chat", DrawChatTab},       {"Debug", DrawDebugTab},
+    {"Extras", DrawExtrasTab},   {"Remastered", DrawRemasteredTab},
+    {"Tracker", DrawTrackerTab}, {"States", DrawSaveStatesTab},
+    {"Session", DrawSessionTab}, {"Chat", DrawChatTab},
+    {"Debug", DrawDebugTab},
 };
 
 // The innermost window under the finger that can actually scroll vertically,
