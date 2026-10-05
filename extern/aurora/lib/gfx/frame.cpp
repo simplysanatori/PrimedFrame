@@ -5,6 +5,7 @@
 #include "bloom.hpp"
 #include "volfog.hpp"
 #include <aurora/vfx.hpp>
+#include <aurora/water.hpp>
 #include "probe.hpp"
 #include "recording.hpp"
 #include "render_worker.hpp"
@@ -600,6 +601,7 @@ void shutdown() {
   bloom::shutdown();
   volfog::shutdown();
   vfx::shutdown();
+  water::shutdown();
   tex_palette_conv::shutdown();
   texture_replacement::shutdown();
   gx::shutdown();

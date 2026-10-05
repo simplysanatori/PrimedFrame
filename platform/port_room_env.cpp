@@ -179,6 +179,7 @@ uint32_t sNextVolume = 1;
 int sVolumes = -1;
 int sBombTint = -1;             // MP_REMASTERED_BOMB_TINT
 float sPowerBombTime = -1.f;    // SetPowerBombTime
+float sBakedLight[3] = {1.f, 1.f, 1.f}; // BakedLightModulation
 float sAmbientScale = -1.f;
 float sVolumeView = -1.f;
 bool sHint = false;
@@ -1194,9 +1195,8 @@ void UpdateFrame(bool roomGeoDrawing) {
     const char* const env = std::getenv("MP_REMASTERED_BOMB_TINT");
     sBombTint = env != nullptr && env[0] == '0' ? 0 : 1;
   }
-  float modulation[3];
-  PowerBombBakedLight(sBombTint != 0 ? sPowerBombTime : -1.f, modulation);
-  GXSetPBRBakedLightModulation(modulation);
+  PowerBombBakedLight(sBombTint != 0 ? sPowerBombTime : -1.f, sBakedLight);
+  GXSetPBRBakedLightModulation(sBakedLight);
   constexpr float kGrey = 0.2158605f; // sRGB 128, linear
   constexpr uint32_t kInFlight = 3;   // readbacks Aurora may have queued
   using Clock = std::chrono::steady_clock;
@@ -1981,6 +1981,12 @@ void SetViewPoint(const float pos[3]) {
 
 void SetPowerBombTime(float seconds) { sPowerBombTime = seconds; }
 
+void BakedLightModulation(float rgb[3]) {
+  for (int i = 0; i < 3; ++i) {
+    rgb[i] = sBakedLight[i];
+  }
+}
+
 bool VolumesEnabled() {
   if (sVolumes < 0) {
     const char* const env = std::getenv("MP_ROOM_ENV_VOLUME");
@@ -2325,6 +2331,7 @@ bool Compose(const Located& located, Selection& out) {
     const float exposure = RoomExposed() ? FrameExposure(*heaviest->area) : 0.f;
     const bool room = exposure > 0.f;
     out.params[0] = room ? exposure * blend.intensity * share * gain : grey / average;
+    out.cubeIntensity = room ? blend.intensity * share : 1.f;
     out.params[1] = PortRoomEnvLod::CubeLod(mips, lod);
     out.params[2] = float(mips > 2 ? mips - 2 : 0);
     out.params[3] = ambient > 0.f ? 1.f / (room ? average * out.params[0] : grey) : 0.f;
@@ -2346,6 +2353,7 @@ bool Compose(const Located& located, Selection& out) {
     const bool room = exposure > 0.f;
     out.cube = gpu.id;
     out.params[0] = room ? exposure * probe.scale * gain : grey / gpu.average;
+    out.cubeIntensity = room ? probe.scale : 1.f;
     out.params[1] = PortRoomEnvLod::CubeLod(gpu.mipCount, lod);
     out.params[2] = float(gpu.mipCount > 2 ? gpu.mipCount - 2 : 0);
     out.params[3] = ambient > 0.f ? 1.f / (room ? gpu.average * out.params[0] : grey) : 0.f;

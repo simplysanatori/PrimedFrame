@@ -2,6 +2,7 @@ add_library(aurora_gx STATIC
         lib/gfx/bloom.cpp
         lib/gfx/volfog.cpp
         lib/gfx/vfx.cpp
+        lib/gfx/water.cpp
         lib/gfx/clear.cpp
         lib/gfx/depth_peek.cpp
         lib/gfx/encoding.cpp

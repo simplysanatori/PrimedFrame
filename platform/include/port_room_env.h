@@ -406,6 +406,9 @@ struct Selection {
   uint32_t cube = 0;       // for GXSetPBRCube; 0 when the room has none
   float params[4] = {};    // for GXSetPBRCube
   float worldToCube[9] = {};
+  // The probe's own intensity inside params[0] (the blended one, or the lone probe's
+  // scale; 1 without the room's exposure). Remastered's water takes the cube without it.
+  float cubeIntensity = 1.f;
   // For GXSetPBRProbeEx, Remastered's ambient occlusion of the reflection: where the baked
   // light is dark the cube drops to `occlusionMin` of its level, reaching all of it at
   // 1 / `occlusionInvMax` of radiance (0: no occlusion).
@@ -560,6 +563,8 @@ void UpdateFrame(bool roomGeoDrawing);
 // UpdateFrame tints the baked light with it (PowerBombBakedLight) unless
 // MP_REMASTERED_BOMB_TINT=0.
 void SetPowerBombTime(float seconds);
+// The baked light's modulation the last UpdateFrame set (GXSetPBRBakedLightModulation).
+void BakedLightModulation(float rgb[3]);
 // The exposure to measure the frame at, for GXPortPostProcess; 0 when nothing would use
 // the measurement.
 float MeasureExposure();

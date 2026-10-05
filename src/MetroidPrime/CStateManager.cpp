@@ -2940,6 +2940,7 @@ void CStateManager::PortCaptureProbeFace() const {
                  l.layers->IsLayerActive(l.area, TLayerId(layer));
         },
         &layers, dt);
+    PortRoomLiquid::Advance(dt);
     sPortVolFog = PortRoomEnv::VolumetricFog(sPortFog);
     sPortRemasteredFog = PortRoomEnv::FogOwnsRoom();
   }

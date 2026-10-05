@@ -49,6 +49,7 @@
 #include "MetroidPrime/Player/CPlayer.hpp"
 #include "MetroidPrime/Player/CPlayerGun.hpp"
 #include "MetroidPrime/Player/CPlayerState.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptWater.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 #include "WorldFormat/CAreaOctTree.hpp"
 #include <aurora/gfx.h>
@@ -1752,6 +1753,25 @@ void RunFrame() {
     PortRoomLiquid::Stats(areas, surfaces, drawn);
     Out("roomliquid %s: %d area(s), %d surface(s), %d drawn", PortRoomLiquid::Enabled() ? "on" : "off", areas,
         surfaces, drawn);
+    // The water the camera is in: retail's underwater fog colour against Remastered's filter.
+    const CStateManager* const mgr = PortDebug::StateManager();
+    const CCameraManager* const cameras = mgr != nullptr ? mgr->GetCameraManager() : nullptr;
+    if (cameras != nullptr && cameras->GetFluidCounter() != 0) {
+      if (const CScriptWater* water = TCastToConstPtr< CScriptWater >(mgr->GetObjectById(cameras->GetFluidId()))) {
+        const CColor& retail = water->GetUnderwaterFogColor();
+        float filter[4];
+        const bool remastered =
+            water->GetCurrentAreaId() != kInvalidAreaId &&
+            PortRoomLiquid::CameraFilter(mgr->GetWorld()->GetAreaAlways(water->GetCurrentAreaId()),
+                                         water->GetUniqueId().value, water->GetTranslation(), filter);
+        Out("camera in water u%u: retail fog/filter %.3f %.3f %.3f %.3f, Remastered filter %s", water->GetUniqueId().value,
+            retail.GetRed(), retail.GetGreen(), retail.GetBlue(), retail.GetAlpha(),
+            remastered ? "found" : "none");
+        if (remastered) {
+          Out("  Remastered filter %.3f %.3f %.3f %.3f", filter[0], filter[1], filter[2], filter[3]);
+        }
+      }
+    }
     Finish();
   } else if (name == "viewmodel") {
     const std::string arg = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "status";

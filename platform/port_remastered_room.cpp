@@ -169,7 +169,9 @@ constexpr uint32_t kColorModulateMP1 = 0xa856f484;
 constexpr uint32_t kPropModulateBlend = 0x3d76c67c;
 constexpr uint32_t kModulateIncandescence = 0x754d6cdc;
 constexpr uint32_t kPropModulateColorB = 0x3f7113d9;
-constexpr uint32_t kPropColorChannel[3] = {0x110889d1, 0x2a5349e9, 0x8a7aff22};  // r, g, b
+// SLdrColor_MP1Typedef sub-properties in struct order (r, g, b, a; Load at 0xd1e3ec).
+constexpr uint32_t kPropColorRGBA[4] = {0x110889d1, 0x8a7aff22, 0x2a5349e9, 0xe364c93a};
+constexpr uint32_t kPropColorChannel[3] = {kPropColorRGBA[0], kPropColorRGBA[1], kPropColorRGBA[2]};
 constexpr uint32_t kPropModulateIntensity = 0xf936079e;
 // Liquids. A WaterMP1 is the retail water object; the surface drawn for it is a render
 // volume on the same entity.
@@ -177,6 +179,9 @@ constexpr uint32_t kWaterMP1 = 0x12db855d;
 constexpr uint32_t kWaterRenderVolume = 0x23c5dff4;
 constexpr uint32_t kLavaRenderVolume = 0xa7ee9c33;
 constexpr uint32_t kPropWaterFluid[3] = {0xce78300b, 0x18706e5c, 0x6e9e14b9};  // 0 water, 10 poison, 11 lava
+// SLdrWaterMP1+0x50: the camera filter colour (CScriptWaterMP1+0x520) that
+// CCameraManagerMP1::UpdateFilters multiplies the screen by while the camera is inside.
+constexpr uint32_t kPropWaterFilterColor = 0xcc1af173;
 constexpr uint32_t kPropWaterModel = 0x736e5890;
 constexpr uint32_t kPropLavaModel = 0xcaf8e8c3;
 constexpr uint32_t kPropWaterLook = 0xd1e9d29d;
@@ -3705,8 +3710,11 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
   }
   static const int kAxis[3] = {0, 2, 1};
   static const double kSign[3] = {-1, 1, 1};
-  // What each entity's retail water object is filled with.
+  // What each entity's retail water object is filled with, and every water object's camera
+  // filter colour (CScriptWaterMP1+0x520, build/mpr/water/E-under.md Q1) where it stands.
   std::map<int, int> fluids;
+  std::vector<uint8_t> filters;
+  uint32_t filterCount = 0;
   for (const Component* c : r.room.Of(kWaterMP1)) {
     Span s;
     int type = RoomLiquid::kWater;
@@ -3715,6 +3723,21 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
       type = fluid == 10 ? RoomLiquid::kPoison : fluid == 11 ? RoomLiquid::kLava : RoomLiquid::kWater;
     }
     fluids[c->entity] = type;
+    Vec3 pos, rot, scale;
+    if (r.room.Xform(*c, pos, rot, scale)) {
+      for (int row = 0; row < 3; ++row) {
+        PutFloat(filters, kSign[row] * pos[kAxis[row]]);
+      }
+      for (const uint32_t channel : kPropColorRGBA) {
+        // SLdrColor_MP1Typedef's default is (1, 1, 1, 1).
+        float value = 1.f;
+        if (r.room.Nested(*c, {kPropWaterFilterColor, channel}, s) && s.size >= 4) {
+          value = LeFloat(r.room.Bytes(s));
+        }
+        PutFloat(filters, value);
+      }
+      ++filterCount;
+    }
   }
   std::vector<uint8_t> body;
   uint32_t count = 0;
@@ -3865,14 +3888,16 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
       ++count;
     }
   }
-  if (count == 0) {
+  if (count == 0 && filterCount == 0) {
     return;
   }
   std::vector<uint8_t> out;
   PutLe32(out, 0x4C52504D);  // 'MPRL'
-  PutLe32(out, 2);
+  PutLe32(out, 3);
   PutLe32(out, count);
   out.insert(out.end(), body.begin(), body.end());
+  PutLe32(out, filterCount);
+  out.insert(out.end(), filters.begin(), filters.end());
   char file[32];
   std::snprintf(file, sizeof file, "%08X.roomliquid", mrea);
   if (!m_io.write || !m_io.write(file, out)) {
@@ -3880,7 +3905,8 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
     return;
   }
   char line[160];
-  std::snprintf(line, sizeof line, "  %s: %u liquid surfaces, %zu dropped", r.name.c_str(), count, dropped);
+  std::snprintf(line, sizeof line, "  %s: %u liquid surfaces, %zu dropped, %u water filters", r.name.c_str(),
+                count, dropped, filterCount);
   Log(line);
 }
 

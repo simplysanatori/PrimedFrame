@@ -1,6 +1,7 @@
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 
 #include "port_debug.h"
+#include "port_room_liquid.h"
 
 #include "Kyoto/Math/CQuaternion.hpp"
 #include "Kyoto/Math/CRelAngle.hpp"
@@ -8,6 +9,7 @@
 #include "MetroidPrime/CExplosion.hpp"
 #include "MetroidPrime/CFluidPlaneCPU.hpp"
 #include "MetroidPrime/CRumbleManager.hpp"
+#include "MetroidPrime/CWorld.hpp"
 #include "MetroidPrime/Cameras/CBallCamera.hpp"
 #include "MetroidPrime/Cameras/CCinematicCamera.hpp"
 #include "MetroidPrime/Cameras/CFirstPersonCamera.hpp"
@@ -284,7 +286,24 @@ void CCameraManager::UpdateFilters(float dt, CStateManager& mgr) {
   if (x74_fluidCounter) {
     const CScriptWater* const water = TCastToConstPtr< CScriptWater >(mgr.GetObjectById(GetFluidId()));
     const CGameCamera& camera = GetCurrentCamera(mgr);
-    if (water) {
+    float remastered[4];
+    if (water && water->GetCurrentAreaId() != kInvalidAreaId &&
+        mgr.GetWorld()->GetAreaAlways(water->GetCurrentAreaId()).IsPostConstructed() &&
+        PortRoomLiquid::CameraFilter(mgr.GetWorld()->GetAreaAlways(water->GetCurrentAreaId()),
+                                     water->GetUniqueId().value, water->GetTranslation(), remastered)) {
+      // Remastered's CCameraManagerMP1::UpdateFilters (0xc8d7ec): no fog, only the water's
+      // own filter colour multiplied in, and none in the X-Ray and Thermal visors.
+      if (!x3c_fog.IsFogDisabled()) {
+        x3c_fog.DisableFog();
+      }
+      const CPlayerState::EPlayerVisor visor = mgr.GetPlayerState()->GetActiveVisor(mgr);
+      if (visor == CPlayerState::kPV_XRay || visor == CPlayerState::kPV_Thermal) {
+        pass.DisableFilter(0.f);
+      } else {
+        pass.SetFilter(CCameraFilterPass::kFT_Multiply, CCameraFilterPass::kFS_Fullscreen, 0.f,
+                       CColor(remastered[0], remastered[1], remastered[2], remastered[3]), kInvalidAssetId);
+      }
+    } else if (water) {
       const float near = camera.GetNearClipDistance();
       const float far = GetWaterFarDistance(mgr, water);
       const CColor& color = water->GetUnderwaterFogColor();
