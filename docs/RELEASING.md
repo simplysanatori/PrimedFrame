@@ -73,20 +73,14 @@ self-contained — and it is why `MP_USER_PATH` cannot be used to move saves.
   together with the executable in every Windows package. The Linux packages
   ship no ffmpeg and use the system's.
 - **The AppImage and the APK**: `tools/make_appimage.sh` collects them into
-  `usr/share/licenses/metroid-prime-port/` and records which shared libraries it
-  bundled in `BUNDLED_LIBRARIES.txt`, so a reader can tell what came from where.
+  `usr/share/licenses/metroid-prime-port/`. It bundles no shared libraries.
   The APK's `syncLicenseNotices` task gathers the same set into `assets/`,
   verified present in a built package: `port-license.txt`, `port-notice.txt`,
   `aurora.txt`, `musyx.txt`, `sdl-src.txt`, `imgui-src.txt`, `fmt-src.txt` and
-  `zstd-src.txt`. The notices for the libraries an AppImage copies from the
-  build host are still named rather than reproduced — see below.
+  `zstd-src.txt`.
 - **The Flatpak** collects them in the manifest's `post-install`: the two
   vendored snapshots out of the tree, and the four fetched packages by glob,
   because the fetched ones only exist once `cmake-ninja` has run.
-- **The shared libraries an AppImage copies are named, not reproduced.** They
-  come off the build host rather than out of the tree, so their terms cannot be
-  collected automatically; `BUNDLED_LIBRARIES.txt` says which were bundled and a
-  real release should ship their licence texts too.
 
 ## Signing identity
 
@@ -128,7 +122,7 @@ The port targets `versionName "0.12.0"` and `versionCode 15`.
 | Platform | Builds from | Produces | State |
 |---|---|---|---|
 | Linux | `cmake -S . -B build/port-gcc` | executable | works; tests green. `cmake --install` also produces a complete tree, verified by running it |
-| Linux | `tools/make_appimage.sh` | AppImage | builds; notices collected (see above) |
+| Linux | `.github/workflows/linux-release.yml` | AppImage + tarball | manual trigger; builds on AlmaLinux 9 and runs `tools/make_appimage.sh`. Use these for releases, not a desktop build |
 | Linux | `tools/make_flatpak.sh` | Flatpak | manifest installs a working tree and collects notices; builds (`tools/make_flatpak.sh` writes `build/flatpak/MetroidPrimePort.flatpak`). The app id is `io.github.odrannnn.metroidprimeport`, with AppStream metainfo shipped |
 | Windows | `.github/workflows/windows.yml` | zipped `dist/` | manual trigger only for now; green when run, artifact uploaded, packaged startup checked |
 | Android | `tools/android_apk.sh :app:assembleRelease` | APK | builds, signed with this project's own key; runs on-device (POCO F8 Ultra, 60 FPS), touch/Continue-load still unverified |
@@ -138,11 +132,16 @@ ctest targets, all run by both CI jobs.
 
 ## Runtime dependencies
 
-The AppImage deliberately does **not** bundle glibc, so the build is only as
-portable as its build host. `platform/glibc_compat.c` lowers that floor to
-**glibc 2.39** (Ubuntu 24.04, the current LTS) by defining the newer symbol
-versions in terms of the older ones. Above that, `pidfd_spawnp`/`pidfd_getpid`
-used by nod would need an older nod build or an older base.
+A Linux binary only runs where glibc and libstdc++ are at least as new as the
+ones it was linked against, so a desktop build is only as portable as the
+desktop. The 0.12.0 AppImage needed glibc 2.43 and GLIBCXX_3.4.34 and would not
+start on LMDE (issue #3). The release artefacts therefore come from
+`.github/workflows/linux-release.yml`, which builds in `almalinux:9` with
+gcc-toolset-14 and fails unless the binary needs at most **glibc 2.34** and
+**GLIBCXX_3.4.29** (Debian 12, Ubuntu 22.04, RHEL 9 and newer). The AppImage
+bundles nothing, so freetype, libpng, zstd and OpenSSL 3 come from the system.
+`gh workflow run linux-release.yml --ref port -R Odrannnn/MetroidPrimePort`, then
+`gh run download <id> -n metroid_prime_port-linux`.
 
 A Vulkan driver, X11 or Wayland, and DBus for the file dialog come from the
 host. A session that reaches `show_window` over SDL's Wayland backend will hang
@@ -171,9 +170,8 @@ under GNOME unless the port's own X11 preference applies — see
    (`LICENSE`, scoped) and `NOTICE` says so, but what may be done with a working
    copy of decompiled game code is a question for the copyright holder, and no
    part of this tree answers it.
-3. **The AppImage only *names* the shared libraries it copies** rather than
-   reproducing their terms. Windows, AppImage, APK and the Flatpak manifest all
-   collect the rest.
+3. ~~**The AppImage only names the shared libraries it copies.**~~ It no longer
+   copies any.
 4. **Android on-device behaviour is partly verified** — the release build runs on
    a POCO F8 Ultra at a steady 60 FPS (see `docs/ANDROID_BUILD_PROBE.md`). Still
    unverified: loading a save from the title screen's Continue, touch ergonomics
