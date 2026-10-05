@@ -81,6 +81,8 @@ static sqlite3* g_pipelineCacheDb = nullptr;
 static sqlite3_stmt* g_pipelineCacheLoadStmt = nullptr;
 static sqlite3_stmt* g_pipelineCacheUpsertStmt = nullptr;
 static bool g_pipelineCacheBroken = false;
+// A failed operation found the file damaged; pipeline_cache_abort() deletes it.
+static std::atomic_bool g_pipelineCacheCorrupt = false;
 static std::thread g_pipelineCacheWriterThread;
 static std::condition_variable g_pipelineCacheWriterCv;
 static std::mutex g_pipelineCacheWriterMutex;
@@ -570,8 +572,21 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
   return hash;
 }
 
+static std::string pipeline_cache_path() {
+  return io::fs_path_to_string(io::fs_path_from_string(g_config.cachePath) / "pipeline_cache.db");
+}
+
+static void note_pipeline_cache_corrupt() {
+  if (g_pipelineCacheDb != nullptr && sqlite::is_corrupt(g_pipelineCacheDb)) {
+    g_pipelineCacheCorrupt = true;
+  }
+}
+
+// Stops using the cache for this session. A damaged database is deleted so the
+// next start rebuilds it.
 static void pipeline_cache_abort() {
   g_pipelineCacheBroken = true;
+  note_pipeline_cache_corrupt();
   if (g_pipelineCacheLoadStmt != nullptr) {
     sqlite3_finalize(g_pipelineCacheLoadStmt);
     g_pipelineCacheLoadStmt = nullptr;
@@ -583,6 +598,10 @@ static void pipeline_cache_abort() {
   if (g_pipelineCacheDb != nullptr) {
     sqlite3_close(g_pipelineCacheDb);
     g_pipelineCacheDb = nullptr;
+  }
+  if (g_pipelineCacheCorrupt.exchange(false)) {
+    Log.warn("Pipeline cache is damaged; deleting it");
+    sqlite::delete_db_files(pipeline_cache_path(), Log);
   }
 }
 
@@ -742,10 +761,10 @@ static bool prepare_pipeline_cache_db() {
     return true;
   }
 
-  const auto path = io::fs_path_to_string(io::fs_path_from_string(g_config.cachePath) / "pipeline_cache.db");
-  auto ret = sqlite3_open(path.c_str(), &g_pipelineCacheDb);
+  const auto path = pipeline_cache_path();
+  auto ret = sqlite::open_cache_db(path, &g_pipelineCacheDb, Log);
   if (ret != SQLITE_OK) {
-    Log.error("Failed to open pipeline cache database: {}", sqlite3_errmsg(g_pipelineCacheDb));
+    Log.error("Failed to open pipeline cache database {}", path);
     pipeline_cache_abort();
     return false;
   }
@@ -887,6 +906,7 @@ static void prune_old_pipeline_cache_versions() {
 
 static bool write_pipeline_cache_record(const PipelineCacheWrite& write) {
   const auto fail = [&]() {
+    note_pipeline_cache_corrupt();
     sqlite3_reset(g_pipelineCacheUpsertStmt);
     sqlite3_clear_bindings(g_pipelineCacheUpsertStmt);
     return false;
