@@ -62,6 +62,11 @@ public:
     CColor x34_color;
 #ifdef TARGET_PC
     uint xPortSeed; // port-only: fixed per particle, mixes at spawn
+    // port-only VMAT material (CPortVfxData), evaluated where SIZE/COLR are
+    float xPortSsze;       // SSZE: secondary size (= SIZE when the PART has none)
+    float xPortIten;       // ITEN: colour intensity
+    float xPortVpmt[4][4]; // VPMT rows
+    CVector3f xPortLaunchDir; // unit launch velocity (zero if it launched at rest), for VORN 1
 #endif
 
     CParticle()
@@ -71,6 +76,10 @@ public:
     , x34_color(static_cast< u8 >(0xFF), 0x00, 0xFF, 0xFF)
 #ifdef TARGET_PC
     , xPortSeed(0)
+    , xPortSsze(0.f)
+    , xPortIten(1.f)
+    , xPortVpmt{}
+    , xPortLaunchDir(CVector3f::Zero())
 #endif
     {}
   };
@@ -251,6 +260,12 @@ private:
   CVector3f xPortPrevGlobalTranslation;
   bool xPortPresenting;
   bool PortBeginPresent(CVector3f& savedGlobal);
+  // VMAT material: VSMT results for this frame (port_vfx_particles.cpp). Bit n of the
+  // mask = slot n was written; slots 0..10 are the Src values, 11+2*tex+k the warp scales.
+  float xPortVsmt[19];
+  uint xPortVsmtMask;
+  void PortVfxUpdateSystem();
+  void PortRenderParticlesVfx();
 #endif
 
   static double kTickTime;

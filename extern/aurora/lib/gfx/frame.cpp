@@ -4,6 +4,7 @@
 #include "pipeline_cache.hpp"
 #include "bloom.hpp"
 #include "volfog.hpp"
+#include <aurora/vfx.hpp>
 #include "probe.hpp"
 #include "recording.hpp"
 #include "render_worker.hpp"
@@ -598,6 +599,7 @@ void shutdown() {
   probe::shutdown();
   bloom::shutdown();
   volfog::shutdown();
+  vfx::shutdown();
   tex_palette_conv::shutdown();
   texture_replacement::shutdown();
   gx::shutdown();

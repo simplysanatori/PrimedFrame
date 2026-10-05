@@ -112,6 +112,11 @@ void CParticleDataFactory::LoadGPSMTokens(CGenDescription* desc) {
   for (TCachedToken< CModel >& variant : desc->xPortPMDV) {
     variant.ForceCache();
   }
+  if (desc->xPortVfx) {
+    for (CPortVfxMat::Tex& t : desc->xPortVfx->mat.tex) {
+      t.token.ForceCache();
+    }
+  }
 #endif
   if (desc->x78_ICTS) {
     desc->x78_ICTS->ForceCache();
@@ -126,6 +131,74 @@ void CParticleDataFactory::LoadGPSMTokens(CGenDescription* desc) {
     desc->xc0_SSWH->ForceCache();
   }
 }
+
+#ifdef TARGET_PC
+static CPortVfxData& PortVfxData(CGenDescription* desc) {
+  if (!desc->xPortVfx) {
+    desc->xPortVfx.reset(new CPortVfxData);
+  }
+  return *desc->xPortVfx;
+}
+
+// The VMAT blob v2 (build/mpr/vfx/DESIGN.md section 1). An unknown version is skipped
+// (the material stays absent, so the PART draws as retail).
+static bool PortReadVfxMat(CPortVfxData& vfx, CInputStream& in, u32 nbytes, CSimplePool* pool) {
+  CPortVfxMat& m = vfx.mat;
+  m = CPortVfxMat();
+  const u32 version = in.ReadLong();
+  if (version != 2) {
+    for (u32 i = 4; i + 4 <= nbytes; i += 4) {
+      in.ReadLong();
+    }
+    return true;
+  }
+  m.version = version;
+  m.features = in.ReadLong();
+  m.blend = in.ReadLong();
+  const u32 ntex = in.ReadLong();
+  if (ntex > 4) {
+    return false;
+  }
+  for (u32 i = 0; i < ntex; ++i) {
+    CPortVfxMat::Tex t;
+    const CAssetId id = in.ReadLong();
+    t.uvSet = in.ReadLong();
+    t.wrapS = in.ReadLong();
+    t.wrapT = in.ReadLong();
+    t.linear = in.ReadLong();
+    t.cols = in.ReadLong();
+    t.rows = in.ReadLong();
+    t.layers = in.ReadLong();
+    t.warped = in.ReadLong();
+    t.warpScale[0] = in.ReadFloat();
+    t.warpScale[1] = in.ReadFloat();
+    TToken< CTexture > tok = id == 0
+                                 ? TToken< CTexture >(CreateTexture(-1))
+                                 : TToken< CTexture >(pool->GetObj(SObjectTag(SBIG('TXTR'), id)));
+    t.token = TCachedToken< CTexture >(tok);
+    m.tex.push_back(t);
+  }
+  m.colorSlot = in.ReadInt32();
+  m.opacitySlot = in.ReadInt32();
+  m.rampSlot = in.ReadInt32();
+  m.ramp2Slot = in.ReadInt32();
+  m.thresholdSlot = in.ReadInt32();
+  m.indirectSlot = in.ReadInt32();
+  m.paletteSlot = in.ReadInt32();
+  m.rampRow[0] = in.ReadInt32();
+  m.rampRow[1] = in.ReadInt32();
+  m.addRow = in.ReadInt32();
+  for (CPortVfxMat::Src& s : m.src) {
+    s.row = in.ReadInt32();
+    s.comp = in.ReadInt32();
+    s.value = in.ReadFloat();
+  }
+  m.modulate = in.ReadFloat();
+  m.depthSoften = in.ReadFloat();
+  m.spriteCenter = in.ReadLong();
+  return true;
+}
+#endif
 
 bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
                                       rstl::vector< CAssetId >& resources, CSimplePool* pool) {
@@ -269,6 +342,76 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
         }
       }
     } break;
+    // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
+    case SBIG('VMAT'): {
+      GetClassID(in);
+      const u32 nbytes = in.ReadLong();
+      if (!PortReadVfxMat(PortVfxData(desc), in, nbytes, pool)) {
+        return false;
+      }
+    } break;
+    case SBIG('VTMT'): {
+      CPortVfxData& vfx = PortVfxData(desc);
+      GetClassID(in);
+      vfx.vtmtCount = in.ReadLong();
+      for (CRealElement* e : vfx.vtmt) {
+        delete e;
+      }
+      vfx.vtmt.clear();
+      for (u32 i = 0; i < vfx.vtmtCount * 6; ++i) {
+        vfx.vtmt.push_back(GetRealElement(in));
+      }
+    } break;
+    case SBIG('VPMT'):
+    case SBIG('VSMT'): {
+      // VPMT: {kind row comp element}; VSMT: {target kind element}
+      const bool isVpmt = clsId == SBIG('VPMT');
+      std::vector< CPortVfxElem >& list = isVpmt ? PortVfxData(desc).vpmt : PortVfxData(desc).vsmt;
+      GetClassID(in);
+      const u32 count = in.ReadLong();
+      for (u32 i = 0; i < count; ++i) {
+        CPortVfxElem elem;
+        if (isVpmt) {
+          elem.kind = in.ReadLong();
+          elem.a = in.ReadLong();
+          elem.b = in.ReadLong();
+        } else {
+          elem.a = in.ReadLong();
+          elem.kind = in.ReadLong();
+        }
+        switch (elem.kind) {
+        case CPortVfxElem::kReal:
+          elem.real = GetRealElement(in);
+          break;
+        case CPortVfxElem::kVector:
+          elem.vec = GetVectorElement(in);
+          break;
+        case CPortVfxElem::kInt:
+          elem.integer = GetIntElement(in);
+          break;
+        case CPortVfxElem::kColor:
+          elem.color = GetColorElement(in);
+          break;
+        default:
+          return false;
+        }
+        list.push_back(elem);
+      }
+    } break;
+    case SBIG('SSZE'): {
+      CPortVfxData& vfx = PortVfxData(desc);
+      delete vfx.ssze;
+      vfx.ssze = GetRealElement(in);
+    } break;
+    case SBIG('ITEN'): {
+      CPortVfxData& vfx = PortVfxData(desc);
+      delete vfx.iten;
+      vfx.iten = GetRealElement(in);
+    } break;
+    case SBIG('VORN'):
+      GetClassID(in);
+      PortVfxData(desc).vorn = in.ReadLong();
+      break;
 #endif
     case SBIG('PMOP'):
       desc->x58_PMOP = GetVectorElement(in);
@@ -636,6 +779,11 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
   case SBIG('PSLL'): {
     return rs_new CREParticleSizeOrLineLength();
   }
+#ifdef TARGET_PC
+  case SBIG('PSSZ'): {
+    return rs_new CREParticleSecondarySize();
+  }
+#endif
   case SBIG('PAP1'): {
     return rs_new CREParticleAccessParameter1();
   }

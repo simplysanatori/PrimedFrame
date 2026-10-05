@@ -37,6 +37,7 @@
 #include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "port_debug.h"
+#include "port_vfx_particles.h"
 #endif
 
 #ifdef TARGET_PC
@@ -172,6 +173,8 @@ CElementGen::CElementGen(TToken< CGenDescription > gen, EModelOrientationType or
 , xPortGlobalGeneration(0)
 , xPortPrevGlobalTranslation(CVector3f::Zero())
 , xPortPresenting(false)
+, xPortVsmt{}
+, xPortVsmtMask(0)
 #endif
 {
   CGlobalRandom gr(x27c_randState);
@@ -537,6 +540,9 @@ bool CElementGen::InternalUpdate(double dt) {
   }
 
 #ifdef TARGET_PC
+  if (frameUpdateCount > 0 && x28_loadedGenDesc->xPortVfx) {
+    PortVfxUpdateSystem();
+  }
   // Only a system that stepped exactly one frame this tick can be drawn
   // between its last two frames; anything else keeps the retail draw.
   if (frameUpdateCount == 1 && x80_timeDeltaScale == 1.0f) {
@@ -708,6 +714,11 @@ void CElementGen::UpdateExistingParticles() {
     if (CColorElement* colr = x28_loadedGenDesc->x24_COLR) {
       colr->GetValue(particleFrame, p->x34_color);
     }
+#ifdef TARGET_PC
+    if (x28_loadedGenDesc->xPortVfx) {
+      PortVfxEvalParticle(*x28_loadedGenDesc, *p, particleFrame);
+    }
+#endif
     AccumulateBounds(p->x4_pos, p->x2c_lineLengthOrSize);
     ++p;
   }
@@ -813,6 +824,9 @@ void CElementGen::CreateNewParticles(int count) {
     }
 
     particle.x10_prevPos = particle.x4_pos;
+#ifdef TARGET_PC
+    PortVfxSetLaunchDir(particle);
+#endif
 
     if (x26c_31_LINE) {
       if (CRealElement* leng = x28_loadedGenDesc->x14_LENG) {
@@ -838,6 +852,11 @@ void CElementGen::CreateNewParticles(int count) {
       }
     }
 
+#ifdef TARGET_PC
+    if (x28_loadedGenDesc->xPortVfx) {
+      PortVfxEvalParticle(*x28_loadedGenDesc, particle, 0);
+    }
+#endif
     AccumulateBounds(particle.x4_pos, particle.x2c_lineLengthOrSize);
   }
 }
@@ -1243,6 +1262,13 @@ void CElementGen::RenderParticles() {
     RenderParticlesIndirectTexture();
     return;
   }
+
+#ifdef TARGET_PC
+  if (PortVfxActive(*x28_loadedGenDesc)) {
+    PortRenderParticlesVfx();
+    return;
+  }
+#endif
 
   if (x28_loadedGenDesc->x38_SIZE != nullptr && x28_loadedGenDesc->x38_SIZE->IsConstant()) {
     float sizeVal = 1.f;
