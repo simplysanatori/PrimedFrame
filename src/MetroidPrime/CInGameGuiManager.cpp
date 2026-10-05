@@ -99,6 +99,8 @@ CInGameGuiManager::TPauseScreenDGRPs CInGameGuiManager::LockPauseScreenDependenc
   return ret;
 }
 
+const CInGameGuiManager* CInGameGuiManager::sPortCurrent = nullptr;
+
 CInGameGuiManager::CInGameGuiManager(const CStateManager& mgr, CArchitectureQueue& queue)
 : x0_iggmPreLoad(gpSimplePool->GetObj("PreLoadIGGM_DGRP"))
 , x18_loadPhase(kLP_LoadDepsGroup)
@@ -147,9 +149,14 @@ CInGameGuiManager::CInGameGuiManager(const CStateManager& mgr, CArchitectureQueu
     token.Lock();
     xc8_inGameGuiDGRPs.push_back(token);
   }
+  sPortCurrent = this;
 }
 
-CInGameGuiManager::~CInGameGuiManager() {}
+CInGameGuiManager::~CInGameGuiManager() {
+  if (sPortCurrent == this) {
+    sPortCurrent = nullptr;
+  }
+}
 
 void CInGameGuiManager::InitializeDumpableARAMTextures() {
   int count = 0;

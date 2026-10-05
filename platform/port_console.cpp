@@ -38,6 +38,7 @@
 #include "MetroidPrime/CAnimData.hpp"
 #include "MetroidPrime/CModelData.hpp"
 #include "MetroidPrime/CGameArea.hpp"
+#include "MetroidPrime/CInGameGuiManager.hpp"
 #include "MetroidPrime/CMemoryCard.hpp"
 #include "MetroidPrime/CObjectList.hpp"
 #include "MetroidPrime/CPhysicsActor.hpp"
@@ -469,7 +470,7 @@ std::string Describe(CStateManager& mgr, CEntity& ent) {
 // Commands
 
 void CmdHelp() {
-  Out("status                     world, area, player position, health, visor, beam");
+  Out("status [--json]            world, area, player position, health, visor, beam; --json: one line, with fade state");
   Out("worlds                     world ids and names");
   Out("areas                      areas of the current world (index, MREA)");
   Out("warp <world> [mrea]        load a world (hex MLVL id or name prefix), optionally an area");
@@ -582,7 +583,50 @@ const char* ProbeModeName() {
   return mode >= 0 && mode < 4 ? names[mode] : "unset";
 }
 
+// `status --json`: one line for scripts (tools/mprig.py). `fade` is true while the in-game fade
+// filter that follows a cinematic skip or a world load (CInGameGuiManager::StartFadeIn: black
+// multiply, lifting over 0.5 s) is still applied, i.e. the screen is not fully visible yet.
+void CmdStatusJson(CStateManager& mgr) {
+  const CWorld* world = mgr.GetWorld();
+  const CPlayer& player = *mgr.GetPlayer();
+  CPlayerState& ps = *mgr.GetPlayerState();
+  static const char* const morph[] = {"unmorphed", "morphed", "morphing", "unmorphing"};
+  static const char* const visors[] = {"combat", "xray", "scan", "thermal"};
+  static const char* const beams[] = {"power", "ice", "wave", "plasma", "phazon"};
+  const int m = static_cast< int >(player.GetMorphballTransitionState());
+  const int v = static_cast< int >(ps.GetCurrentVisor());
+  const int b = static_cast< int >(ps.GetCurrentBeam());
+  uint32_t mlvl = 0;
+  uint32_t mrea = 0;
+  int areaIdx = -1;
+  if (world != nullptr) {
+    const TAreaId area = world->GetCurrentAreaId();
+    areaIdx = area.Value();
+    mlvl = static_cast< uint32_t >(world->IGetWorldAssetId());
+    mrea = static_cast< uint32_t >(world->GetAreaAlways(area).GetAreaAssetId());
+  }
+  const CVector3f pos = player.GetTranslation();
+  const CVector3f fwd = player.GetTransform().GetForward();
+  const float yaw = std::atan2(-fwd.GetX(), fwd.GetY()) * 57.29578f;
+  const CInGameGuiManager* gui = CInGameGuiManager::PortCurrent();
+  const bool fade = gui != nullptr && gui->PortIsFading();
+  const PortFreeCam::Pose pose = PortFreeCam::GetPose();
+  Out("{\"frame\":%u,\"game_state\":%d,\"world\":\"%08X\",\"area\":%d,\"mrea\":\"%08X\","
+      "\"pos\":[%.3f,%.3f,%.3f],\"yaw\":%.2f,\"hp\":%.1f,\"hp_max\":%.1f,\"morph\":\"%s\","
+      "\"visor\":\"%s\",\"beam\":\"%s\",\"first_person\":%s,\"cinematic\":%s,\"fade\":%s,"
+      "\"freecam\":{\"on\":%s,\"pos\":[%.3f,%.3f,%.3f],\"yaw\":%.2f,\"pitch\":%.2f}}",
+      sFrame, static_cast< int >(mgr.GetGameState()), mlvl, areaIdx, mrea, pos.GetX(), pos.GetY(),
+      pos.GetZ(), yaw, ps.GetHealthInfo().GetHP(), ps.CalculateHealth(),
+      m >= 0 && m < 4 ? morph[m] : "?", v >= 0 && v < 4 ? visors[v] : "?",
+      b >= 0 && b < 5 ? beams[b] : "?", mgr.GetCameraManager()->IsInFPCamera() ? "true" : "false",
+      mgr.GetCameraManager()->IsInCinematicCamera() ? "true" : "false", fade ? "true" : "false",
+      PortFreeCam::Active() ? "true" : "false", pose.x, pose.y, pose.z, pose.yaw, pose.pitch);
+}
+
 void CmdStatus(CStateManager& mgr) {
+  if (sCmd.args.size() > 1 && sCmd.args[1] == "--json") {
+    return CmdStatusJson(mgr);
+  }
   const CWorld* world = mgr.GetWorld();
   const CPlayer& player = *mgr.GetPlayer();
   CPlayerState& ps = *mgr.GetPlayerState();

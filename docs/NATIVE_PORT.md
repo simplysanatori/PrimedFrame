@@ -1127,9 +1127,13 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   command console on 127.0.0.1. Its `press`/`stick` input is read even when
   the window has no keyboard focus. `tools/mpcon.py` is the client: one-shot
   (`tools/mpcon.py 'warp chozo 492CBF4A' 'objs eyeball' shot`), a script
-  (`-f file`) or an interactive prompt with no arguments. Commands: `status`
+  (`-f file`) or an interactive prompt with no arguments. Commands: `status [--json]`
   (world, area, position, whether the camera is first person or a cinematic
-  has it, the sky, and the probe mode, weight and PBR draw count),
+  has it, the sky, and the probe mode, weight and PBR draw count; `--json` is one
+  line for scripts: frame, game_state, world, area, mrea, pos, yaw, hp, hp_max,
+  morph, visor, beam, first_person, cinematic, freecam, and `fade`, true while the
+  in-game fade-in filter after a cinematic skip or world load is still black or
+  lifting, i.e. the screen is not fully visible; `tools/mprig.py` waits on it),
   `worlds`, `areas`, `warp <world id or name prefix> [mrea]` (replies once the
   new world runs), `tp x y z`, `enter <area>` (makes an area of the current
   world the current one, as walking into it would; `tp` alone does not),

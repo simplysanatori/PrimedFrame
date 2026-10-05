@@ -65,9 +65,13 @@ public:
   bool IsInStateNotTransitioning(EInGameGuiState state) const {
     return x1bc_prevState == state && x1c0_nextState == state;
   }
+  // Port: the fade-in filter (StartFadeIn) is still black or lifting; for the debug console.
+  bool PortIsFading() const { return xf8_camFilter.PortIsActive(); }
+  static const CInGameGuiManager* PortCurrent() { return sPortCurrent; }
   bool IsInSaveUI() const { return x1f8_27_inSaveUI; }
 
 private:
+  static const CInGameGuiManager* sPortCurrent;
   enum ELoadPhase { kLP_LoadDepsGroup, kLP_PreLoadDeps, kLP_LoadDeps, kLP_Done };
   typedef rstl::reserved_vector< TToken< CDependencyGroup >, 13 > TPauseScreenDGRPs;
   typedef rstl::pair< CAssetId, TToken< CTexture > > TDumpedTexture;
