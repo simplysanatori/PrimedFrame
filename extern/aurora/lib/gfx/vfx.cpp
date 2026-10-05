@@ -20,6 +20,7 @@
 #include <mutex>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -31,20 +32,40 @@ namespace {
 Module Log("aurora::gfx::vfx");
 
 constexpr uint32_t MaxQuads = 1u << 14; // 65536 vertices
-constexpr uint32_t UniformSize = 256;
+constexpr uint32_t UniformSize = 512;
+constexpr uint32_t SlotCount = 4;
 constexpr auto EvictAfter = std::chrono::seconds(10);
+
+// The scalar sources, in the order the shader indexes them (Uniform::srcs).
+enum SrcIndex : uint32_t {
+  SrcErosion,
+  SrcThrX,
+  SrcThrY,
+  SrcThrW,
+  SrcFresnelX,
+  SrcFresnelY,
+  SrcFadeX,
+  SrcFadeY,
+  SrcIndexScale,
+  SrcIndexOffset,
+  SrcIndexRow,
+  SrcCount
+};
 
 // ---- Uniforms (all vec4-sized members, so the layout is the same everywhere) ----
 struct Uniform {
   float proj[16];
   float pn[12];
-  float params0[4];
   float tone[3][4];
   float fogColor[4];
-  float fog[4];   // type, a, b, c
-  float misc[4];  // modulate, erosion row, erosion component, reversed Z
-  float ramp[4];  // ramp rows 0 and 1, blend
-  float slots[4]; // uv set 0, uv set 1, layers 0, layers 1
+  float fog[4];     // type, a, b, c
+  float misc[4];    // modulate, reversed Z, ramp row 0, ramp row 1
+  float misc2[4];   // add row
+  float srcs[6][4]; // Src i = (code, value) at [i / 2][2 * (i % 2)]; code = -1 or row * 4 + comp
+  float uvSets[4];  // per slot
+  float layers[4];  // per slot
+  float warp[2][4]; // per slot (x, y): slots 0, 1 in warp[0], slots 2, 3 in warp[1]
+  float pad[32];
 };
 static_assert(sizeof(Uniform) == UniformSize);
 
@@ -75,8 +96,8 @@ struct State_ {
   // Render thread only
   wgpu::BindGroupLayout bindLayout;
   wgpu::PipelineLayout pipelineLayout;
-  std::map<std::array<uint64_t, 6>, wgpu::RenderPipeline> pipelines;
-  std::map<std::array<const void*, 5>, wgpu::BindGroup> groups;
+  std::map<std::array<uint64_t, 7>, wgpu::RenderPipeline> pipelines;
+  std::map<std::array<const void*, 1 + 2 * SlotCount>, wgpu::BindGroup> groups;
   wgpu::Texture dummyTexture;
   wgpu::TextureView dummyView;
 };
@@ -84,6 +105,7 @@ State_ g_state;
 
 struct Payload {
   uint32_t features;
+  uint32_t slotKey; // 3 bits per feature slot (7 = none), see slot_key()
   uint32_t blend;
   uint32_t compare; // wgpu::CompareFunction
   uint32_t depthWrite;
@@ -91,10 +113,10 @@ struct Payload {
   Range verts;
   Range indices;
   Range uniform;
-  uint32_t arrayId[2]; // 0: the dummy
-  uint8_t wrapS[2];
-  uint8_t wrapT[2];
-  uint8_t linear[2];
+  uint32_t arrayId[SlotCount]; // 0: the dummy
+  uint8_t wrapS[SlotCount];
+  uint8_t wrapT[SlotCount];
+  uint8_t linear[SlotCount];
 };
 static_assert(sizeof(Payload) <= InlineDrawPayloadSize);
 
@@ -102,21 +124,28 @@ const char* ShaderSource = R"(
 struct U {
   proj: mat4x4f,
   pn: mat3x4f,
-  params0: vec4f,
   tone0: vec4f,
   tone1: vec4f,
   tone2: vec4f,
   fogColor: vec4f,
   fog: vec4f,
   misc: vec4f,
-  ramp: vec4f,
-  slots: vec4f,
+  misc2: vec4f,
+  srcs: array<vec4f, 6>,
+  uvSets: vec4f,
+  layers: vec4f,
+  warp01: vec4f,
+  warp23: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var t0: texture_2d_array<f32>;
 @group(0) @binding(2) var t1: texture_2d_array<f32>;
-@group(0) @binding(3) var s0: sampler;
-@group(0) @binding(4) var s1: sampler;
+@group(0) @binding(3) var t2: texture_2d_array<f32>;
+@group(0) @binding(4) var t3: texture_2d_array<f32>;
+@group(0) @binding(5) var s0: sampler;
+@group(0) @binding(6) var s1: sampler;
+@group(0) @binding(7) var s2: sampler;
+@group(0) @binding(8) var s3: sampler;
 
 struct VIn {
   @location(0) pos: vec3f,
@@ -126,6 +155,8 @@ struct VIn {
   @location(4) e0: vec4f,
   @location(5) e1: vec4f,
   @location(6) e2: vec4f,
+  @location(7) e3: vec4f,
+  @location(8) nrm: vec3f,
 }
 struct VOut {
   @builtin(position) pos: vec4f,
@@ -135,6 +166,8 @@ struct VOut {
   @location(3) e0: vec4f,
   @location(4) e1: vec4f,
   @location(5) e2: vec4f,
+  @location(6) e3: vec4f,
+  @location(7) nrm: vec3f,
 }
 
 @vertex
@@ -148,6 +181,8 @@ fn vs_main(in: VIn) -> VOut {
   out.e0 = in.e0;
   out.e1 = in.e1;
   out.e2 = in.e2;
+  out.e3 = in.e3;
+  out.nrm = in.nrm;
   return out;
 }
 
@@ -161,7 +196,52 @@ fn uv_of(in: VOut, set: f32) -> vec3f {
 fn row_of(in: VOut, i: i32) -> vec4f {
   if (i <= 0) { return in.e0; }
   if (i == 1) { return in.e1; }
-  return in.e2;
+  if (i == 2) { return in.e2; }
+  return in.e3;
+}
+fn comp_of(v: vec4f, c: i32) -> f32 {
+  if (c <= 0) { return v.x; }
+  if (c == 1) { return v.y; }
+  if (c == 2) { return v.z; }
+  return v.w;
+}
+// Scalar source i: a per-particle component, or a constant when its code is negative.
+fn src(in: VOut, i: i32) -> f32 {
+  let p = u.srcs[i / 2];
+  let s = select(p.xy, p.zw, (i & 1) != 0);
+  if (s.x < 0.0) { return s.y; }
+  let code = i32(s.x);
+  return comp_of(row_of(in, code / 4), code % 4);
+}
+fn sat(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
+fn smooth3(x: f32) -> f32 { return x * x * (3.0 - 2.0 * x); }
+fn warp_of(i: i32) -> vec2f {
+  if (i == 0) { return u.warp01.xy; }
+  if (i == 1) { return u.warp01.zw; }
+  if (i == 2) { return u.warp23.xy; }
+  return u.warp23.zw;
+}
+fn sample_raw(i: i32, uv: vec2f, l: i32) -> vec4f {
+  switch (i) {
+    case 0: { return textureSample(t0, s0, uv, l); }
+    case 1: { return textureSample(t1, s1, uv, l); }
+    case 2: { return textureSample(t2, s2, uv, l); }
+    case 3: { return textureSample(t3, s3, uv, l); }
+    default: { return vec4f(1.0); }
+  }
+}
+// Slot i at its own uv set, shifted by the indirect warp w (scaled per slot, zero if not warped).
+fn sample_slot(in: VOut, i: i32, w: vec2f) -> vec4f {
+  if (i < 0 || i > 3) { return vec4f(1.0); }
+  var uv = uv_of(in, u.uvSets[i]);
+  uv = vec3f(uv.xy + w * warp_of(i), uv.z);
+  return sample_raw(i, uv.xy, layer(uv.z, u.layers[i]));
+}
+// Threshold edge: S(sat((t - lo) / (hi - lo))), a step when the band has no width.
+fn band(t: f32, lo: f32, hi: f32) -> f32 {
+  let d = hi - lo;
+  if (d <= 0.0) { return select(0.0, 1.0, t >= lo); }
+  return smooth3(sat((t - lo) / d));
 }
 
 fn tone(c: vec3f) -> vec3f {
@@ -202,41 +282,71 @@ fn fog_factor(fz: f32) -> f32 {
 fn fs_main(in: VOut) -> @location(0) vec4f {
   let vc = in.color;
   let M = u.misc.x;
-  let uvA = uv_of(in, u.slots.x);
-  let uvB = uv_of(in, u.slots.y);
+  // Indirect: the map is read at its own uv, and warps the slots flagged `warped`.
+  var w = vec2f(0.0);
+  if ((FEAT & 16u) != 0u) {
+    let d = sample_slot(in, S_INDIRECT, vec2f(0.0)).xy;
+    w = d * 0.99609375 - vec2f(0.5);
+  }
   var rgb = vc.rgb * M;
   var x = 1.0;
   if ((FEAT & 8u) != 0u) {
-    // ramp
-    let r = textureSample(t0, s0, uvA.xy, layer(uvA.z, u.slots.z));
-    let t3 = r.x * r.x * r.x;
-    let c0 = row_of(in, i32(u.ramp.x));
-    let c1 = row_of(in, i32(u.ramp.y));
-    rgb = mix(c0.rgb, c1.rgb, t3) * vc.rgb * M;
-    x = r.y * mix(c0.w, c1.w, t3);
-    if ((FEAT & 2u) != 0u) {
-      x = x * textureSample(t1, s1, uvB.xy, layer(uvB.z, u.slots.w)).x;
+    // ramp (DualMod: the product of two ramp maps picks the colour)
+    let r = sample_slot(in, S_RAMP, w);
+    var k = r.x;
+    var ra = r.y;
+    if ((FEAT & 128u) != 0u) {
+      let r2 = sample_slot(in, S_RAMP2, w);
+      k = k * r2.x;
+      ra = ra * r2.y;
     }
-  } else if ((FEAT & 16u) != 0u) {
-    // indirect warp: slot 1 offsets the lookup in slot 0
-    let d = textureSample(t1, s1, uvB.xy, layer(uvB.z, u.slots.w)).xy;
-    let uv = uvA.xy + (d * 0.99609375 - vec2f(0.5)) * u.params0.xy;
-    let t = textureSample(t0, s0, uv, layer(uvA.z, u.slots.z));
-    rgb = t.rgb * vc.rgb * M;
-    x = t.w;
+    let k3 = k * k * k;
+    let c0 = row_of(in, i32(u.misc.z));
+    let c1 = row_of(in, i32(u.misc.w));
+    rgb = mix(c0.rgb, c1.rgb, k3) * vc.rgb * M;
+    x = ra * mix(c0.w, c1.w, k3);
+  } else if ((FEAT & 512u) != 0u) {
+    // colour indexing: the lookup map gives (index, alpha), the palette is read at (index * s + o, z)
+    let i = sample_slot(in, S_COLOR, w).xy;
+    let pc = vec2f(i.x * src(in, 8) + src(in, 9), src(in, 10));
+    let g = sample_raw(S_PALETTE, pc, 0);
+    rgb = g.rgb * vc.rgb * M;
+    x = i.y * g.w;
   } else if ((FEAT & 1u) != 0u) {
-    let c = textureSample(t0, s0, uvA.xy, layer(uvA.z, u.slots.z));
+    let c = sample_slot(in, S_COLOR, w);
     rgb = c.rgb * vc.rgb * M;
     x = c.w;
-    if ((FEAT & 2u) != 0u) {
-      x = x * textureSample(t1, s1, uvB.xy, layer(uvB.z, u.slots.w)).x;
-    }
-  } else if ((FEAT & 2u) != 0u) {
-    x = textureSample(t0, s0, uvA.xy, layer(uvA.z, u.slots.z)).x;
+  }
+  if ((FEAT & 1024u) != 0u) {
+    let add = row_of(in, i32(u.misc2.x));
+    rgb = rgb * add.w + add.xyz;
+  }
+  if ((FEAT & 2u) != 0u) {
+    x = x * sample_slot(in, S_OPACITY, w).x;
+  }
+  if ((FEAT & 64u) != 0u) {
+    // thresholding: the map's y and x channels against two soft edges
+    let T = sample_slot(in, S_THRESHOLD, w);
+    let px = src(in, 1);
+    let py = src(in, 2);
+    let sw = src(in, 3);
+    x = x * band(T.y, sat(py - sw), sat(py + sw)) * band(T.x, sat(1.0 - px - sw), sat(1.0 - px + sw));
+  }
+  if ((FEAT & 256u) != 0u) {
+    let d = abs(in.nrm.z) / max(length(in.nrm), 1e-8);
+    let fx = src(in, 4);
+    let fy = src(in, 5);
+    let q = fy - fx;
+    x = x * smooth3(select(select(0.0, 1.0, d >= fx), sat((d - fx) / q), q != 0.0));
+  }
+  if ((FEAT & 2048u) != 0u) {
+    let fx = src(in, 6);
+    let fy = src(in, 7);
+    let q = fy - fx;
+    x = x * smooth3(select(select(0.0, 1.0, fx <= 0.0), sat(-fx / q), q != 0.0));
   }
   if ((FEAT & 4u) != 0u) {
-    let e = row_of(in, i32(u.misc.y))[i32(u.misc.z)];
-    x = max(0.0, x - e);
+    x = max(0.0, x - src(in, 0));
   }
   let a = x * vc.w;
   if (a <= 0.0) { discard; }
@@ -310,54 +420,63 @@ uint32_t block_size(wgpu::TextureFormat format) {
   }
 }
 
+// The PBDM factors (RESOLVED-state.md Q1): alpha (SrcAlpha, 1-SrcAlpha | One, 1-SrcAlpha), premultiplied
+// (One, 1-SrcAlpha | Zero, One), additive (SrcAlpha, One | Zero, One), opaque (One, Zero for both).
 wgpu::BlendState blend_state(Blend blend) {
   wgpu::BlendComponent c{.operation = wgpu::BlendOperation::Add};
+  wgpu::BlendComponent a{.operation = wgpu::BlendOperation::Add};
   switch (blend) {
   case Blend::Alpha:
     c.srcFactor = wgpu::BlendFactor::SrcAlpha;
     c.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
+    a.srcFactor = wgpu::BlendFactor::One;
+    a.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
     break;
   case Blend::Premultiplied:
     c.srcFactor = wgpu::BlendFactor::One;
     c.dstFactor = wgpu::BlendFactor::OneMinusSrcAlpha;
+    a.srcFactor = wgpu::BlendFactor::Zero;
+    a.dstFactor = wgpu::BlendFactor::One;
     break;
   case Blend::Additive:
     c.srcFactor = wgpu::BlendFactor::SrcAlpha;
     c.dstFactor = wgpu::BlendFactor::One;
+    a.srcFactor = wgpu::BlendFactor::Zero;
+    a.dstFactor = wgpu::BlendFactor::One;
     break;
   case Blend::Opaque:
-    c.srcFactor = wgpu::BlendFactor::One;
-    c.dstFactor = wgpu::BlendFactor::Zero;
+    c.srcFactor = a.srcFactor = wgpu::BlendFactor::One;
+    c.dstFactor = a.dstFactor = wgpu::BlendFactor::Zero;
     break;
   }
-  return {.color = c, .alpha = c};
+  return {.color = c, .alpha = a};
 }
 
 void ensure_static(const wgpu::Device& device) {
   if (g_state.pipelineLayout) {
     return;
   }
-  wgpu::BindGroupLayoutEntry entries[5]{};
+  wgpu::BindGroupLayoutEntry entries[1 + 2 * SlotCount]{};
   entries[0] = {
       .binding = 0,
       .visibility = wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment,
       .buffer = {.type = wgpu::BufferBindingType::Uniform, .hasDynamicOffset = true, .minBindingSize = UniformSize},
   };
-  for (uint32_t i = 0; i < 2; ++i) {
+  for (uint32_t i = 0; i < SlotCount; ++i) {
     entries[1 + i] = {
         .binding = 1 + i,
         .visibility = wgpu::ShaderStage::Fragment,
         .texture = {.sampleType = wgpu::TextureSampleType::Float, .viewDimension = wgpu::TextureViewDimension::e2DArray},
     };
-    entries[3 + i] = {
-        .binding = 3 + i,
+    entries[1 + SlotCount + i] = {
+        .binding = 1 + SlotCount + i,
         .visibility = wgpu::ShaderStage::Fragment,
         .sampler = {.type = wgpu::SamplerBindingType::Filtering},
     };
   }
   const wgpu::BindGroupLayoutDescriptor layoutDescriptor{
       .label = "VFX Bind Group Layout",
-      .entryCount = 5,
+      .entryCount = 1 + 2 * SlotCount,
       .entries = entries,
   };
   g_state.bindLayout = device.CreateBindGroupLayout(&layoutDescriptor);
@@ -370,14 +489,22 @@ void ensure_static(const wgpu::Device& device) {
 }
 
 wgpu::RenderPipeline make_pipeline(const DrawContext& ctx, const Payload& p) {
-  const std::string source = "const FEAT: u32 = " + std::to_string(p.features) + "u;\nconst BLEND: u32 = " +
-                             std::to_string(p.blend) + "u;\n" + ShaderSource;
+  // The slot a feature reads is a pipeline constant (3 bits each, 7 = none).
+  static constexpr const char* SlotNames[] = {"S_COLOR",  "S_OPACITY",   "S_RAMP",   "S_RAMP2",
+                                              "S_THRESHOLD", "S_INDIRECT", "S_PALETTE"};
+  std::string source = "const FEAT: u32 = " + std::to_string(p.features) + "u;\nconst BLEND: u32 = " +
+                       std::to_string(p.blend) + "u;\n";
+  for (uint32_t i = 0; i < std::size(SlotNames); ++i) {
+    const uint32_t v = (p.slotKey >> (3 * i)) & 7;
+    source += std::string("const ") + SlotNames[i] + ": i32 = " + (v == 7 ? "-1" : std::to_string(v)) + ";\n";
+  }
+  source += ShaderSource;
   wgpu::ShaderSourceWGSL wgsl{};
   wgsl.code = source.c_str();
   const wgpu::ShaderModuleDescriptor moduleDescriptor{.nextInChain = &wgsl, .label = "VFX Module"};
   const wgpu::ShaderModule module = ctx.device.CreateShaderModule(&moduleDescriptor);
 
-  static constexpr std::array<wgpu::VertexAttribute, 7> attributes{{
+  static constexpr std::array<wgpu::VertexAttribute, 9> attributes{{
       {.format = wgpu::VertexFormat::Float32x3, .offset = 0, .shaderLocation = 0},
       {.format = wgpu::VertexFormat::Float32x3, .offset = 12, .shaderLocation = 1},
       {.format = wgpu::VertexFormat::Float32x3, .offset = 24, .shaderLocation = 2},
@@ -385,6 +512,8 @@ wgpu::RenderPipeline make_pipeline(const DrawContext& ctx, const Payload& p) {
       {.format = wgpu::VertexFormat::Float32x4, .offset = 52, .shaderLocation = 4},
       {.format = wgpu::VertexFormat::Float32x4, .offset = 68, .shaderLocation = 5},
       {.format = wgpu::VertexFormat::Float32x4, .offset = 84, .shaderLocation = 6},
+      {.format = wgpu::VertexFormat::Float32x4, .offset = 100, .shaderLocation = 7},
+      {.format = wgpu::VertexFormat::Float32x3, .offset = 116, .shaderLocation = 8},
   }};
   const wgpu::VertexBufferLayout vertexLayout{
       .stepMode = wgpu::VertexStepMode::Vertex,
@@ -540,12 +669,15 @@ bool ensure_registered() {
           std::memcpy(&p, data, sizeof(p));
           ensure_static(ctx.device);
           ensure_dummy(ctx);
-          const wgpu::TextureView views[2] = {entry_view(p.arrayId[0]), entry_view(p.arrayId[1])};
-          if (!views[0] || !views[1]) {
-            return;
+          wgpu::TextureView views[SlotCount];
+          for (uint32_t i = 0; i < SlotCount; ++i) {
+            views[i] = entry_view(p.arrayId[i]);
+            if (!views[i]) {
+              return;
+            }
           }
-          wgpu::Sampler samplers[2];
-          for (int i = 0; i < 2; ++i) {
+          wgpu::Sampler samplers[SlotCount];
+          for (uint32_t i = 0; i < SlotCount; ++i) {
             const auto filter = p.linear[i] ? wgpu::FilterMode::Linear : wgpu::FilterMode::Nearest;
             samplers[i] = sampler_ref(wgpu::SamplerDescriptor{
                 .addressModeU = to_address(p.wrapS[i]),
@@ -556,7 +688,8 @@ bool ensure_registered() {
                 .maxAnisotropy = 1,
             });
           }
-          const std::array<uint64_t, 6> pipelineKey{p.features & ~uint32_t(DepthSoften),
+          const std::array<uint64_t, 7> pipelineKey{p.features & ~uint32_t(DepthSoften),
+                                                    p.slotKey,
                                                     p.blend,
                                                     p.compare,
                                                     p.depthWrite,
@@ -568,20 +701,23 @@ bool ensure_registered() {
             keyed.features = p.features & ~uint32_t(DepthSoften);
             pipeline = g_state.pipelines.emplace(pipelineKey, make_pipeline(ctx, keyed)).first;
           }
-          const std::array<const void*, 5> groupKey{views[0].Get(), views[1].Get(), samplers[0].Get(),
-                                                    samplers[1].Get(), ctx.uniformBuffer.Get()};
+          std::array<const void*, 1 + 2 * SlotCount> groupKey{};
+          for (uint32_t i = 0; i < SlotCount; ++i) {
+            groupKey[i] = views[i].Get();
+            groupKey[SlotCount + i] = samplers[i].Get();
+          }
+          groupKey[2 * SlotCount] = ctx.uniformBuffer.Get();
           auto group = g_state.groups.find(groupKey);
           if (group == g_state.groups.end()) {
             if (g_state.groups.size() > 512) {
               g_state.groups.clear();
             }
-            const std::array<wgpu::BindGroupEntry, 5> entries{{
-                {.binding = 0, .buffer = ctx.uniformBuffer, .offset = 0, .size = UniformSize},
-                {.binding = 1, .textureView = views[0]},
-                {.binding = 2, .textureView = views[1]},
-                {.binding = 3, .sampler = samplers[0]},
-                {.binding = 4, .sampler = samplers[1]},
-            }};
+            std::array<wgpu::BindGroupEntry, 1 + 2 * SlotCount> entries{};
+            entries[0] = {.binding = 0, .buffer = ctx.uniformBuffer, .offset = 0, .size = UniformSize};
+            for (uint32_t i = 0; i < SlotCount; ++i) {
+              entries[1 + i] = {.binding = 1 + i, .textureView = views[i]};
+              entries[1 + SlotCount + i] = {.binding = 1 + SlotCount + i, .sampler = samplers[i]};
+            }
             const wgpu::BindGroupDescriptor descriptor{
                 .label = "VFX Bind Group",
                 .layout = g_state.bindLayout,
@@ -669,17 +805,38 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
   }
   evict_idle();
   const uint32_t features = desc.features & ~uint32_t(DepthSoften);
-  Texture slots[2] = {desc.tex[0], desc.tex[1]};
-  // An opacity map alone may be given as either slot; the shader reads it from slot 0.
-  if ((features & (ColorTex | Ramp | Indirect)) == 0 && (features & OpacityTex) != 0 && slots[0].obj == nullptr) {
-    std::swap(slots[0], slots[1]);
+  // The slots each enabled feature reads; a slot nothing reads is left unbound (the dummy).
+  const std::pair<uint32_t, int8_t> reads[] = {
+      {ColorTex | ColorIndexing, desc.colorSlot},
+      {OpacityTex, desc.opacitySlot},
+      {Ramp, desc.rampSlot},
+      {Ramp | DualMod, desc.ramp2Slot},
+      {Thresholding, desc.thresholdSlot},
+      {Indirect, desc.indirectSlot},
+      {ColorIndexing, desc.paletteSlot},
+  };
+  uint32_t slotKey = 0;
+  bool used[SlotCount]{};
+  for (uint32_t i = 0; i < std::size(reads); ++i) {
+    const auto [mask, slot] = reads[i];
+    // DualMod's second ramp needs both bits; every other row needs any of its bits.
+    const bool on = i == 3 ? (features & Ramp) != 0 && (features & DualMod) != 0 : (features & mask) != 0;
+    const uint32_t v = on && slot >= 0 && slot < int(SlotCount) ? uint32_t(slot) : 7u;
+    slotKey |= v << (3 * i);
+    if (v != 7) {
+      used[v] = true;
+    }
   }
-  uint32_t ids[2];
-  const bool ready0 = resolve_slot(slots[0], ids[0]);
-  const bool ready1 = resolve_slot(slots[1], ids[1]);
-  if (!ready0 || !ready1) {
+  const Texture none{};
+  uint32_t ids[SlotCount];
+  bool ready = true;
+  for (uint32_t i = 0; i < SlotCount; ++i) {
+    ready = resolve_slot(used[i] ? desc.tex[i] : none, ids[i]) && ready;
+  }
+  if (!ready) {
     return;
   }
+  const auto tex = [&](uint32_t i) -> const Texture& { return used[i] ? desc.tex[i] : none; };
 
   // The GX state the draw sees is the one after everything recorded so far.
   gx::fifo::drain();
@@ -695,7 +852,6 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
   std::memcpy(u.proj, &proj, sizeof(u.proj));
   static_assert(sizeof(gx.pnMtx[0].pos) == sizeof(u.pn));
   std::memcpy(u.pn, &gx.pnMtx[gx.currentPnMtx].pos, sizeof(u.pn));
-  std::memcpy(u.params0, desc.params0, sizeof(u.params0));
   static_assert(sizeof(gx.pbrTone) == sizeof(u.tone));
   std::memcpy(u.tone, &gx.pbrTone, sizeof(u.tone));
   std::memcpy(u.fogColor, &gx.fog.color, sizeof(u.fogColor));
@@ -704,16 +860,25 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
   u.fog[2] = gx.fog.b;
   u.fog[3] = gx.fog.c;
   u.misc[0] = desc.modulate;
-  u.misc[1] = float(desc.erosionRow);
-  u.misc[2] = float(desc.erosionComp);
-  u.misc[3] = gx::UseReversedZ ? 1.f : 0.f;
-  u.ramp[0] = float(desc.rampRow[0]);
-  u.ramp[1] = float(desc.rampRow[1]);
-  u.ramp[2] = float(uint32_t(desc.blend));
-  u.slots[0] = float(slots[0].uvSet);
-  u.slots[1] = float(slots[1].uvSet);
-  u.slots[2] = float(std::max(slots[0].layers, 1u));
-  u.slots[3] = float(std::max(slots[1].layers, 1u));
+  u.misc[1] = gx::UseReversedZ ? 1.f : 0.f;
+  u.misc[2] = float(desc.rampRow[0]);
+  u.misc[3] = float(desc.rampRow[1]);
+  u.misc2[0] = float(desc.addRow);
+  const Src* srcs[SrcCount] = {&desc.erosion,   &desc.thrX,      &desc.thrY,        &desc.thrW,
+                               &desc.fresnelX,  &desc.fresnelY,  &desc.fadeX,       &desc.fadeY,
+                               &desc.indexScale, &desc.indexOffset, &desc.indexRow};
+  for (uint32_t i = 0; i < SrcCount; ++i) {
+    const Src& s = *srcs[i];
+    u.srcs[i / 2][2 * (i % 2)] = s.row < 0 ? -1.f : float(s.row * 4 + std::clamp<int>(s.comp, 0, 3));
+    u.srcs[i / 2][2 * (i % 2) + 1] = s.value;
+  }
+  for (uint32_t i = 0; i < SlotCount; ++i) {
+    const Texture& t = tex(i);
+    u.uvSets[i] = float(t.uvSet);
+    u.layers[i] = float(std::max(t.layers, 1u));
+    u.warp[i / 2][2 * (i % 2)] = t.warped ? t.warpScale[0] : 0.f;
+    u.warp[i / 2][2 * (i % 2) + 1] = t.warped ? t.warpScale[1] : 0.f;
+  }
 
   const uint32_t vertexCount = quadCount * 4;
   std::vector<uint32_t> indices(size_t(quadCount) * 6);
@@ -724,6 +889,7 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
   }
   Payload p{};
   p.features = features;
+  p.slotKey = slotKey;
   p.blend = uint32_t(desc.blend);
   p.compare = uint32_t(gx.depthCompare ? to_compare(gx.depthFunc) : wgpu::CompareFunction::Always);
   p.depthWrite = gx.depthCompare && gx.depthUpdate ? 1 : 0;
@@ -735,11 +901,12 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
       p.indices.size == 0 || p.uniform.size == 0) {
     return;
   }
-  for (int i = 0; i < 2; ++i) {
+  for (uint32_t i = 0; i < SlotCount; ++i) {
+    const Texture& t = tex(i);
     p.arrayId[i] = ids[i];
-    p.wrapS[i] = uint8_t(slots[i].wrapS);
-    p.wrapT[i] = uint8_t(slots[i].wrapT);
-    p.linear[i] = slots[i].linear ? 1 : 0;
+    p.wrapS[i] = uint8_t(t.wrapS);
+    p.wrapT[i] = uint8_t(t.wrapT);
+    p.linear[i] = t.linear ? 1 : 0;
   }
   push_custom_draw(g_state.drawType, &p, sizeof(p));
 }
