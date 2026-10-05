@@ -112,6 +112,30 @@ void PrintSkin(const Character& chr, uint32_t frame) {
     }
     std::printf("%s frame %u: %zu joints, max |skin - I| = %.6g (rot/scale %.6g, trans %.6g) at joint %zu\n",
                 AnimName(a).c_str(), frame, pose.size(), worst, worstRot, worstTrans, worstJoint);
+    // The scale the skin matrices carry over the whole animation (column lengths).
+    double lo = 1.0, hi = 1.0;
+    std::vector<std::array<double, 2>> joint(pose.size(), {1e9, -1e9});
+    for (uint32_t f = 0; f < a.frames; ++f) {
+      if (!SkinPose(chr, a, f, pose)) {
+        continue;
+      }
+      for (size_t k = 0; k < pose.size(); ++k) {
+        const auto& m = pose[k];
+        for (int c = 0; c < 3; ++c) {
+          const double len = std::sqrt(double(m[c]) * m[c] + double(m[4 + c]) * m[4 + c] + double(m[8 + c]) * m[8 + c]);
+          lo = std::min(lo, len);
+          hi = std::max(hi, len);
+          joint[k][0] = std::min(joint[k][0], len);
+          joint[k][1] = std::max(joint[k][1], len);
+        }
+      }
+    }
+    std::printf("  scale over %u frames: %.4g..%.4g\n", a.frames, lo, hi);
+    for (size_t k = 0; k < joint.size(); ++k) {
+      if (std::fabs(joint[k][0] - 1.0) > 1e-3 || std::fabs(joint[k][1] - 1.0) > 1e-3) {
+        std::printf("    joint %zu: %.4g..%.4g\n", k, joint[k][0], joint[k][1]);
+      }
+    }
   }
 }
 

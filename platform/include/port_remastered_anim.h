@@ -85,8 +85,9 @@ const Anim* Find(const Character& c, std::string_view name);
 
 // The skin matrix of every joint at integer `frame` of `anim`: world(bone of joint) *
 // inverseBind. World matrices compose parent * local from the roots down, where a bone's
-// local is its bind pose times the animation's key for it (translation, rotation, scale)
-// if the animation has a track for it, else its bind pose. Each matrix is 3x4 row-major. Returns false (out is
+// local is its bind pose times the animation's key for it if the animation has a track for
+// it, else its bind pose. A key's scale is the bone's own, so the bind's scale is left out
+// under a key (its rotation and translation are not). Each matrix is 3x4 row-major. Returns false (out is
 // empty) without a skeleton, for a frame out of range or a damaged parent chain.
 bool SkinPose(const Character& c, const Anim& anim, uint32_t frame, std::vector<std::array<float, 12>>& out);
 

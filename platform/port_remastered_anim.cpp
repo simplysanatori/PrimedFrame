@@ -1039,8 +1039,14 @@ bool SkinPose(const Character& c, const Anim& anim, uint32_t frame, std::vector<
       const size_t b = chain[i];
       // The keys are relative to the bind pose: a track's frame-0 key is the identity
       // where the animation starts from the bind pose (checked on the debris and the
-      // Omega Pirate cinematic, whose joints then land on their bind places exactly).
-      const Mat bind = KeyMatrix(c.bones[b].bind);
+      // Omega Pirate cinematic, whose joints then land on their bind places exactly). The
+      // scale is not: a key's is the bone's own (the debris pieces bound at 0.5 and 0.75
+      // keep that in their keys), so the bind's is left out under a key.
+      Key unscaled = c.bones[b].bind;
+      if (track[b] >= 0) {
+        std::fill(std::begin(unscaled.scale), std::end(unscaled.scale), 1.0f);
+      }
+      const Mat bind = KeyMatrix(unscaled);
       const Mat local = track[b] >= 0 ? MatMul(bind, KeyMatrix(anim.bones[size_t(track[b])][frame])) : bind;
       const int par = c.bones[b].parent;
       if (par >= 0 && state[size_t(par)] == 2) {
