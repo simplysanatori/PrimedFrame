@@ -991,6 +991,15 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   file left by an earlier install is not writable, so `metroid_prime_port (2).log`
   and up are tried next.
   `MP_LOG_FILE=<0|1>` overrides the setting for one run (see below).
+- Crash report (`platform/port_crash.cpp`): a crash (bad memory access, abort,
+  illegal instruction, ...) writes `port: crashed: ...` lines to the log with
+  the cause, the faulting `module+0xoffset`, the build and the stack, then hands
+  the crash on to the system (core dump, Windows Error Reporting, Android
+  tombstone). Linux and Android offsets go to `addr2line -f -C -e <module>`
+  of the same build. On Windows the stack has function names and lines when
+  `metroid_prime_port.pdb` is beside the exe, and a minidump is written to
+  `metroid_prime_port.dmp` in the user folder (open it in WinDbg or Visual
+  Studio). `MP_CRASH_TEST=segv|abort` crashes on purpose at startup to check it.
 - Save states (F1 > States): eight slots in `savestates/` under the pref
   folder (`slot<N>.mpss`). F5 saves to the selected slot and F9 loads it
   (`savestate_hotkeys`, on by default). A state holds the whole game save

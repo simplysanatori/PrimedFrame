@@ -31,6 +31,11 @@ bool Active();
 // Android: appends "<tag>: <text>" as one line while the log runs. Elsewhere a
 // no-op, since stdout and stderr already reach the file.
 void Write(const char* tag, const char* text);
+#if !defined(_WIN32)
+// Async-signal-safe, for the crash report (port_crash.h): appends the bytes to the
+// log as they are. On Android straight to the files, elsewhere to stderr.
+void WriteRaw(const char* data, size_t size);
+#endif
 // The log's path, empty without a user folder.
 std::string Path();
 // Android: the shared copy's path (Documents/MetroidPrime), empty elsewhere or

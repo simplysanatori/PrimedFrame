@@ -13,6 +13,7 @@
 #include <dolphin/vi.h>
 #include <dolphin/dvd.h>
 
+#include "port_crash.h"
 #include "port_debug.h"
 #include "port_paths.h"
 #include "port_actor_collision_bounds.h"
@@ -747,6 +748,7 @@ int main(int argc, char** argv) {
             PortLog::Write("port: cannot write the log to %s\n", PortLogFile::Path().c_str());
         }
     }
+    PortCrash::Install();
     PortLog::Write( "metroid_prime_port: build %s\n", MP_BUILD_REVISION);
     PortRandomizer::EnsureLoaded();
     PortAp::EnsureLoaded();

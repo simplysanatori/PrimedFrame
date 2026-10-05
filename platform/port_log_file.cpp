@@ -493,6 +493,22 @@ void Write(const char* tag, const char* text) {
 #endif
 }
 
+#if !defined(_WIN32)
+void WriteRaw(const char* data, size_t size) {
+#if defined(__ANDROID__)
+  // stderr only reaches the file through a thread, which a crash stops.
+  if (sFile >= 0) {
+    WriteAll(sFile, data, static_cast< ssize_t >(size));
+    if (sShared >= 0) {
+      WriteAll(sShared, data, static_cast< ssize_t >(size));
+    }
+    return;
+  }
+#endif
+  WriteAll(STDERR_FILENO, data, static_cast< ssize_t >(size));
+}
+#endif
+
 bool Start() {
   if (sActive) {
     return true;

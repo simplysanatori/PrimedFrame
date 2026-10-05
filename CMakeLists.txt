@@ -142,6 +142,7 @@ set(MP_PORT_SOURCES
     platform/port_freecam.cpp
     platform/port_console.cpp
     platform/port_log_file.cpp
+    platform/port_crash.cpp
     platform/port_savestate.cpp
     platform/port_savestate_format.cpp
     platform/port_skip_cutscenes.cpp
@@ -230,7 +231,8 @@ if(WIN32)
     # the terminal it was started from, if any.
     set_target_properties(metroid_prime_port PROPERTIES WIN32_EXECUTABLE ON)
     # shell32/ole32/advapi32: finding Dolphin's folder (port_gci.cpp).
-    target_link_libraries(metroid_prime_port PRIVATE ws2_32 shell32 ole32 advapi32)
+    # dbghelp: the crash report's stack and dump (port_crash.cpp).
+    target_link_libraries(metroid_prime_port PRIVATE ws2_32 shell32 ole32 advapi32 dbghelp)
     # UTF-8 as the ANSI code page, so the UTF-8 paths SDL returns work with the
     # narrow file APIs; see the manifest. CMake merges it into the linker's own.
     target_sources(metroid_prime_port PRIVATE packaging/metroid_prime_port.manifest)
