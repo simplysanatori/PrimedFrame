@@ -1318,10 +1318,11 @@ constexpr uint32_t kShaderLavaPool[] = {0x3ADE58B7, 0xB9C24545};
 // the vertex colour, plus CCH0.w, pick a colour from TCH1, a ramp whose row is
 // the vertex alpha and whose alpha scales it, times CCH0.z.
 constexpr uint32_t kShaderGunGlow[] = {0xA13D6235, 0x62F671E0};
-// The Ice Beam cannon's frost shell, a dissolve: TCH1's noise less CCH1.y (PEMI,
-// which the game drives) discards it, and at rest it is all but gone. The port
-// keeps the retail frozen-gun particles (CGunWeapon::EnableFrozenEffect), so the
-// shell is not drawn; drawn as a plain surface it froze the gun for good.
+// The Ice Beam cannon's frost shell (kind 12), a dissolve: CCH1.y (PEMI) is the
+// charge (CGunWeaponMP1::UpdateChargeEffects drives it from 0 to 1 and shows the
+// shell only while it is above 0), TCH1's noise against it decides what is drawn,
+// and the edge glows CCH1.x x CCH2. Without its maps it is not drawn: as a plain
+// surface it froze the gun for good.
 constexpr uint32_t kShaderFrozenShell = 0x2FC554A2;
 // Ice (Model_IceSpreader: the Ice charge's shards, frozen nozzles): lit PBR that
 // reflects its own REFL cube (x CCH5.x, tinted CCH2) and adds TCH0 unlit, a frost
@@ -1435,6 +1436,7 @@ const char* KindName(int kind) {
   case 9: return "gun-glow";
   case 10: return "premul-glass";
   case 11: return "holo-glass";
+  case 12: return "frozen-shell";
   default: return "kind?";
   }
 }
@@ -1450,7 +1452,6 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   const uint32_t shader = uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
   out.shader = shader;
   out.role = ShaderRole(shader);
-  out.hidden = shader == kShaderFrozenShell;
   out.shell = shader == kShaderMatcapShell;
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
@@ -1789,6 +1790,35 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.layerHeight[1] = ShortestDouble(cch[2]->color[1]);
     out.layerHeight[2] = ShortestDouble(cch[0]->color[1]);
     out.layerHeight[3] = 0.0;
+  } else if (shader == kShaderFrozenShell && out.maps[kBase].has && tch[1] && cch[0] && cch[1] && cch[2]) {
+    out.kind = 12;
+    // The dissolve noise is bound as the second layer's base. The edge is
+    // clamp(TCH1 - charge (CCH1.z + 2) DIFC.w + 1); the shell shows where it is under
+    // about 0.9 (or where the base alpha squared times DIFC.w lets it), and the edge
+    // glows CCH1.x x CCH2 at inverse exposure, so linear. The runtime puts the charge
+    // in the first parameter. The incandescence is CCH0.w (IINT), not INCI.
+    set(kBase, tch[1]->texture, &out.layer[kBase]);
+    out.layer[kBase].raw = true;
+    double difc = 1.0;
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind == ModelMaterialData::Kind::Color && d.usage == FourCC('D', 'I', 'F', 'C')) {
+        difc = ShortestDouble(d.color[3]);
+      }
+    }
+    out.kindParam[0] = 0.0;
+    out.kindParam[1] = (ShortestDouble(cch[1]->color[2]) + 2.0) * difc;
+    out.kindParam[2] = difc;
+    out.kindParam[3] = 0.0;
+    out.kindStrength = ShortestDouble(cch[1]->color[0]);
+    for (int i = 0; i < 3; ++i) {
+      out.layerHeight[i] = ShortestDouble(cch[2]->color[i]);
+    }
+    out.layerHeight[3] = 0.0;
+    // ICAN x CCH0.w, drawn linear: IINT drives CCH0.w at run time, and the stored 10 as
+    // the screen's strength is what turns the charged gun frost-white, as Remastered
+    // shows it; exposed like other glows (kPbrEmissive) the shell stayed dark teal.
+    out.glowLinear = true;
+    out.emissive = s * ShortestDouble(cch[0]->color[3]) / kPbrEmissive;
   }
   if (std::find(std::begin(kShaderGunGlow), std::end(kShaderGunGlow), shader) != std::end(kShaderGunGlow) &&
       out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] && cch[2]) {
@@ -1890,6 +1920,12 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
   }
+  if (out.kind == 12) {
+    // Opaque and lit; the shader discards what the dissolve leaves out.
+    out.layered = true;
+    out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+  }
   if (out.kind == 9) {
     // The glow is all the shader's; the vertex alpha picks the ramp's row and is no
     // opacity, and there is no edge between layers.
@@ -1900,7 +1936,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   // The kind the shader asked for: a role that names a kind but left it 0 lacked its maps or colours.
   if (out.kind == 0) {
     static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
-                                             "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass"};
+                                             "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
+                                             "frozen-shell"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -1917,6 +1954,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.kind = 0;
     out.vcolor = false;
   }
+  // A frost shell without its dissolve would cover the gun for good.
+  out.hidden = shader == kShaderFrozenShell && out.kind != 12;
   if (out.hidden) {
     out.reason += "frozen-shell: hidden; ";
   }
@@ -3278,14 +3317,17 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       rem.vcolor = false;
       rem.layered = false;
     }
-    if (!opt.standalone && !gunGlow) {
+    // So is the Ice Beam cannon's frost shell, which needs no vertex colours: drawn as a
+    // plain surface it would freeze the gun for good.
+    const bool frostShell = rem.kind == 12;
+    if (!opt.standalone && !gunGlow && !frostShell) {
       if (rem.kind != 0) {
         loopNotes += std::string("kind ") + KindName(rem.kind) + " dropped: a retail model, not standalone; ";
       }
       rem.kind = 0;
       rem.vcolor = false;
     }
-    rem.layered = rem.layered && (gunGlow || (opt.standalone && (rem.kind != 0 || (useColor && rem.tinted))));
+    rem.layered = rem.layered && (gunGlow || frostShell || (opt.standalone && (rem.kind != 0 || (useColor && rem.tinted))));
     // Nor do the alpha and shading modes belong on one: what they say is about the
     // Remastered surface, and a retail model keeps the retail material's
     // (bar a glow of its own, whose colour and fade are all in it).
@@ -3317,6 +3359,17 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         vtx |= 3u << (8 + 2 * ntexattr);
       }
     }
+    // The frost shell's glow map (ICAN) is on texcoord 1.
+    if (frostShell) {
+      size_t coord = rem.layer[kBase].coord;
+      for (int k = 0; k < kMaps; ++k) {
+        coord = std::max<size_t>(coord, rem.maps[k].has ? rem.maps[k].coord : 0);
+      }
+      const size_t want = std::min<size_t>(std::min<size_t>(coord, maxuv) + 1, 8);
+      for (; ntexattr < want; ++ntexattr) {
+        vtx |= 3u << (8 + 2 * ntexattr);
+      }
+    }
     // Bits 4 and 5 are colour 0. Only a material that reads it declares it.
     const bool colored = useColor && (opt.standalone ? rem.tinted || rem.vcolor : glow || gunGlow);
     rem.tinted = colored && rem.tinted;
@@ -3329,7 +3382,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // Only a room's own material asks for a cutout: a retail material's alpha
     // test says nothing about what the Remastered map's alpha holds.
     const char* const baseAlpha =
-        glow ? "blend" : !opt.standalone ? (rem.mask ? (rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? "punch" : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
+        glow ? "blend" : !opt.standalone ? (frostShell || rem.mask ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? "punch" : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
     const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || !IsFx(pm)) &&
                         Get("pbr:base", rt, baseAlpha, opt).has_value();
     if (usePbr) {

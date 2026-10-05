@@ -49,6 +49,7 @@
 #include "Kyoto/Audio/CAudioSys.hpp"
 #include "Kyoto/Audio/CSfxManager.hpp"
 #include "Kyoto/Basics/CCast.hpp"
+#include "Kyoto/Graphics/CCubeModel.hpp"
 #include "Kyoto/Graphics/CGX.hpp"
 #include "Kyoto/Graphics/CModelFlags.hpp"
 #include "Kyoto/Math/CAbsAngle.hpp"
@@ -957,6 +958,11 @@ void CPlayerGun::Update(float grappleSwingT, float cameraBobT, float dt, CStateM
       x340_chargeBeamFactor = 0.f;
     }
   }
+#ifdef TARGET_PC
+  // Port: the Remastered Ice Beam cannon's frost shell dissolves in with the charge, as
+  // CGunWeaponMP1::UpdateChargeEffects drives it.
+  CCubeModel::PortSetChargeShell(x340_chargeBeamFactor);
+#endif
 
   UpdateAuxWeapons(advDt, beamTargetXf, mgr);
   DoUserAnimEvents(advDt, mgr);

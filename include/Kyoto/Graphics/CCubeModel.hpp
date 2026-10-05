@@ -133,6 +133,9 @@ public:
   // Until called again with null: every PBR material drawn is a sky's, unlit and its colour
   // multiplied by this (a Remastered Skybox's colour and intensity, exposed; CWorld::DrawSky).
   static void PortSetSky(const float* rgb);
+  // The beam's charge, 0 to 1, which the Ice Beam cannon's frost shell (kind 12) dissolves
+  // with: Remastered's DisintegrationAmount. At 0 the shell is not drawn.
+  static void PortSetChargeShell(float amount);
   // The CMDL this model was loaded from (0 for an area's models), for diagnostics.
   void PortSetAssetId(uint id) { xPort_assetId = id; }
   uint PortAssetId() const { return xPort_assetId; }

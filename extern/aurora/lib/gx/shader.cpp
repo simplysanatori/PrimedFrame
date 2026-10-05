@@ -1125,6 +1125,20 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_kglow = pbr_ki * (pbr_ka * ubuf.pbr_layer.z);
       }})""",
                          base, mapStage[4]);
+    // Kind 12, the Ice Beam cannon's frost shell, a dissolve: map 4 is noise that the
+    // charge (pbr_param.x, times pbr_param.y) eats into. What it leaves, unless the base
+    // map's alpha squared times pbr_param.z keeps it, is discarded, and the edge glows
+    // pbr_layer_height times pbr_layer.z.
+    kinds += fmt::format(R"""(
+      if (pbr_kind > 11.5 && pbr_kind < 12.5) {{
+          let pbr_dt = clamp(sampled{1}.r - ubuf.pbr_param.x * ubuf.pbr_param.y + 1.0, 0.0, 1.0);
+          let pbr_de = clamp(9.99999809 * (1.0 - pbr_dt), 0.0, 1.0);
+          if (pbr_de * pbr_de * (3.0 - 2.0 * pbr_de) * ({0}.a * {0}.a * ubuf.pbr_param.z + pbr_dt) < 0.25) {{
+              discard;
+          }}
+          pbr_kglow = ubuf.pbr_layer_height.xyz * (pbr_dt * ubuf.pbr_layer.z);
+      }})""",
+                         base, mapStage[4]);
     // Kind 7, falling water: map 4's three channels are sheets that scroll at speeds of
     // their own (pbr_layer_height the first two, pbr_layer.x and pbr_param.y the third,
     // pbr_param.x the time). The vertex colour says how much of each there is, and their

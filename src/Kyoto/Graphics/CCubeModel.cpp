@@ -217,7 +217,10 @@ bool sPortGlows = false;
 f32 sPortGlow[3];
 bool sPortSky = false;
 f32 sPortSkyGain[3];
+f32 sPortChargeShell = 0.f;
 } // namespace
+
+void CCubeModel::PortSetChargeShell(const f32 amount) { sPortChargeShell = amount; }
 
 void CCubeModel::PortSetSky(const f32* rgb) {
   sPortSky = rgb != nullptr;
@@ -405,6 +408,9 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
     values[5] = sPortSkyGain[2];
     values[7] = f32((int(values[7] + 0.5f) & 15) | 17);
   }
+  if (kind > 11.5f && kind < 12.5f) {
+    values[15] = sPortChargeShell;
+  }
   for (const SPortPBROverride& entry : sPortPBROverrides) {
     if (entry.model == this && entry.material == idx) {
       values[entry.field] = entry.value;
@@ -467,6 +473,26 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   const bool solidBlend = pbrBlend && tint.GetAlphau8() == 0xFF;
   const bool fadeBlend = pbrBlend && !solidBlend;
   const CModelFlags& drawFlags = solidBlend ? opaqueFlags : modelFlags;
+  // The Ice Beam cannon's frost shell (kind 12) shows only while the beam charges
+  // (PortSetChargeShell, or a console override of its first parameter), and only as PBR:
+  // the TEV fallback has no dissolve and would freeze the gun for good.
+  if (material.IsFlagSet(kStateFlag_PortPBR)) {
+    const int idx = static_cast< int >(surface.GetMaterialIndex());
+    f32 values[19];
+    f32 lightScale[2];
+    PortReadPBRMaterial(idx, values, nullptr, lightScale, nullptr);
+    if (values[13] > 11.5f && values[13] < 12.5f) {
+      f32 amount = sPortChargeShell;
+      for (const SPortPBROverride& entry : sPortPBROverrides) {
+        if (entry.model == this && entry.material == idx && entry.field == 15) {
+          amount = entry.value;
+        }
+      }
+      if (amount <= 0.f || !(fadeBlend || CCubeMaterial::PortPBRAllowed(drawFlags))) {
+        return;
+      }
+    }
+  }
   material.SetCurrent(drawFlags, surface, *this);
   // Port: PBR mod materials. The fallback TEV set above stays valid for the
   // paths PortPBRAllowed rejects.
