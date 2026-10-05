@@ -279,7 +279,7 @@ void shutdown() {}
 
 namespace aurora::gfx::volfog {
 bool ensure_task() { return false; }
-void record(const Params& params) {}
+bool record(const Params& params) { return false; }
 void shutdown() {}
 } // namespace aurora::gfx::volfog
 
