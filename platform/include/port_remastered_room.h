@@ -28,7 +28,7 @@ namespace PortRemastered {
 
 // A liquid's surface as its room describes it. The ids are in a pak's byte order. Water and
 // poison carry every field of Remastered's WaterRenderVolume (build/mpr/water/B-cpu.md section
-// 1), the room's or the loader's default; lava is only its model.
+// 1), the room's or the loader's default; lava its model and its LavaRenderVolume's values.
 struct RoomLiquid {
   enum Type { kWater = 0, kPoison = 1, kLava = 2 };
   int type = kWater;
@@ -46,6 +46,9 @@ struct RoomLiquid {
   float flow[10] = {0.25f, 10.0f, 0.2f, 5.0f, 1.0f, 0.5f, 60.0f, -1.0f, -1.0f, -1.0f};
   float xrayOpacity = 1.0f;  // the entity's WaterMP1 (13264102), not the render volume's
   std::array<uint8_t, 16> normalMap{}, flowMap{}, rainNoise{};  // TXTRs, all zero for none
+  // Lava (build/mpr/water/I-lava-cpu.md Q6): the flow's reach, its period in seconds, the
+  // brightness, the flow map's tiling in u, the pattern's scale and the tiling in v.
+  float lava[6] = {0.1f, 8.0f, 10.0f, 2.0f, 0.65f, 2.0f};
 };
 
 // What the importer makes of a water surface: its mesh (in Remastered's model space) and the

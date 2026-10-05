@@ -1204,8 +1204,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // Kind 6, a lava pool: map 4 is a pattern carried along map 6's flow in two phases half
     // a period apart, each fading out as it wraps, and map 5's noise offsets the phase so
     // that the pool does not pulse as one. The pattern's two channels and the heat (the
-    // vertex alpha and the flow's speed) pick the colour from map 0, a ramp. pbr_param is
-    // the phase, the flow's reach and the pattern's scale, pbr_layer_height.x the noise's.
+    // vertex alpha, the flow's speed and a slight shimmer) pick the colour from map 0, a ramp
+    // (Remastered's ps b9c24545 004_0). pbr_param is the phase, the flow's reach and the
+    // pattern's scale; pbr_layer_height the noise's scale, the heat's gain and the period.
     kinds += fmt::format(R"""(
       if (pbr_kind > 5.5 && pbr_kind < 6.5) {{
           let pbr_qs = vec2f(ubuf.pbr_param.z, ubuf.pbr_param.w);
@@ -1221,8 +1222,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                                          pbr_quv1 * pbr_qs, pbr_quv2 * pbr_qs).rg;
           let pbr_qb = textureSampleGrad(tex{1}, tex{1}_samp, pbr_quv - pbr_qflow * (ubuf.pbr_param.y * pbr_qp1) + 0.5,
                                          pbr_quv1 * pbr_qs, pbr_quv2 * pbr_qs).rg;
-          let pbr_qxy = mix(pbr_qa, pbr_qb, abs(pbr_qp0 - 0.5) * 2.0);
-          let pbr_qheat = clamp(pbr_vraw.a * 2.0 + min(length(pbr_qflow), 1.0) - 1.0, 0.0, 1.0);
+          let pbr_qw = abs(pbr_qp0 - 0.5) * 2.0;
+          let pbr_qxy = mix(pbr_qa, pbr_qb, pbr_qw);
+          let pbr_qsec = ubuf.pbr_param.x * ubuf.pbr_layer_height.z;
+          let pbr_qheat = clamp(sin(pbr_qw + pbr_qsec) * 0.03 + pbr_vraw.a * 2.0 + min(length(pbr_qflow), 1.0) - 1.0,
+                                0.0, 1.0);
           let pbr_qd = pbr_qxy.y - pbr_qxy.x;
           let pbr_qt = clamp((pbr_qheat * ubuf.pbr_layer_height.y + pbr_qd) * 2.5 - 2.5, 0.0, 1.0);
           let pbr_qramp = textureSampleLevel(tex{0}, tex{0}_samp,

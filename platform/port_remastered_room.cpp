@@ -187,6 +187,9 @@ constexpr uint32_t kPropWaterFilterColor = 0xcc1af173;
 constexpr uint32_t kPropWaterXrayOpacity = 0x13264102;
 constexpr uint32_t kPropWaterModel = 0x736e5890;
 constexpr uint32_t kPropLavaModel = 0xcaf8e8c3;
+// RoomLiquid::lava's fields, in order (build/mpr/water/I-lava-cpu.md Q6; the ids were read off
+// SLdrLavaRenderVolume::Load's stores). 4b27a58d and 8dce5669 only go to the fluid sim.
+constexpr uint32_t kPropLava[6] = {0x82330004, 0x30a47f17, 0x4ec7028f, 0x36062e0f, 0xe7993ff7, 0xfb6e9dc6};
 constexpr uint32_t kPropWaterLook = 0xd1e9d29d;
 constexpr uint32_t kPropWaterFeatures = 0x54f39685;
 constexpr uint32_t kPropWaterFeature[11] = {0x8b294d2e, 0x68999d0e, 0xd7f0419b, 0xbf2c11db, 0xf2d5d4be, 0xfcfce6e6,
@@ -3764,6 +3767,11 @@ void Writer::WriteLiquids(const RoomData& r, uint32_t mrea) {
       }
       const auto fluid = fluids.find(c->entity);
       liquid.type = lava ? RoomLiquid::kLava : fluid != fluids.end() ? fluid->second : RoomLiquid::kWater;
+      for (int i = 0; lava && i < 6; ++i) {
+        if (const auto v = f.find(kPropLava[i]); v != f.end() && v->second.size == 4) {
+          liquid.lava[i] = LeFloat(r.room.Bytes(v->second));
+        }
+      }
       if (!lava) {
         Span s;
         // Each field is the room's, else the loader's default (RoomLiquid's).

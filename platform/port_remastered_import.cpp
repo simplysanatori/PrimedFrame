@@ -1706,6 +1706,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         options.skip.clear();
         options.nativeMax = kGeometryTexture;
         options.joint = geometry[i].joint;
+        options.hasLava = geometry[i].liquid >= 0;
+        if (options.hasLava) {
+          std::copy(std::begin(liquids[size_t(geometry[i].liquid)].lava),
+                    std::end(liquids[size_t(geometry[i].liquid)].lava), options.lava);
+        }
         std::string modelError;
         bool ok = false;
         // As for the models: an exception here would terminate the game.

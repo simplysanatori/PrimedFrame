@@ -1635,14 +1635,20 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.layer[slot[i]].coord = 0;
     }
     out.maps[kBase].coord = 0;
-    const double period = ShortestDouble(cch[0]->color[1]);
+    // The pool's LavaRenderVolume overrides CCH0 and CCH1 (x, y, z of each).
+    double c[6];
+    for (int i = 0; i < 6; ++i) {
+      c[i] = opt.hasLava ? ShortestDouble(opt.lava[i]) : ShortestDouble(cch[i / 3]->color[i % 3]);
+    }
+    const double period = c[1];
     out.kindParam[0] = period > 1e-3 ? 1.0 / period : 0.0;  // the game multiplies it by the time
-    out.kindParam[1] = ShortestDouble(cch[0]->color[0]);
-    out.kindParam[2] = ShortestDouble(cch[1]->color[0]);
-    out.kindParam[3] = ShortestDouble(cch[1]->color[2]);
-    out.layerHeight[0] = ShortestDouble(cch[1]->color[1]);  // the noise map's scale
-    out.layerHeight[1] = 1.0;
-    out.kindStrength = ShortestDouble(cch[0]->color[2]);
+    out.kindParam[1] = c[0];
+    out.kindParam[2] = c[3];
+    out.kindParam[3] = c[5];
+    out.layerHeight[0] = c[4];  // the noise map's scale
+    out.layerHeight[1] = 2.4;   // the heat's gain, a literal of the shader
+    out.layerHeight[2] = period;  // takes the phase back to seconds for the shimmer
+    out.kindStrength = c[2];
   } else if (shader == kShaderWaterfall && tch[0] && tch[1] && cch[0] && cch[1] && cch[2]) {
     out.kind = 7;
     out.vcolor = true;

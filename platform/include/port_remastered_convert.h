@@ -42,6 +42,10 @@ struct ConvertOptions {
   // 0 or more: keep only the triangles TriangleJoint puts on this joint, one rigid piece of
   // a skinned model that the room's animation moves (standalone only).
   int joint = -1;
+  // A lava pool's LavaRenderVolume values (RoomLiquid::lava), which the game puts in the
+  // pool material's CCH0 and CCH1 (x, y, z of each) in place of the material's own.
+  bool hasLava = false;
+  float lava[6] = {};
   // gc = orient * remastered + offset. The default is Remastered's y-up frame
   // onto the GameCube's z-up one.
   double orient[3][3] = {{-1.0, 0.0, 0.0}, {0.0, 0.0, 1.0}, {0.0, 1.0, 0.0}};

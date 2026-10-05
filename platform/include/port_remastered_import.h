@@ -38,7 +38,7 @@ inline constexpr const char* kImportModName = "remastered-models";
 // Bump whenever a change to the importer or the converter needs a re-import to take effect. A full
 // import writes it to kImportStampName in the mod; the mod scan (port_mods.h) tells the player when
 // an import carries a lower number, or none.
-inline constexpr int kImportVersion = 37;
+inline constexpr int kImportVersion = 38;
 inline constexpr const char* kImportStampName = ".import-version";
 
 // ~/.switch/prod.keys if it is there, else empty.
