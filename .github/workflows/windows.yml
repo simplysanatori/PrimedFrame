@@ -129,6 +129,9 @@ jobs:
               New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
               Copy-Item $_.FullName $destination
             }
+          # nod is now linked in: ship its licence (dual MIT / Apache-2.0).
+          Invoke-WebRequest https://raw.githubusercontent.com/encounter/nod/v2.0.0-alpha.12/LICENSE-MIT -OutFile dist/licenses/nod-MIT.txt
+          Invoke-WebRequest https://raw.githubusercontent.com/encounter/nod/v2.0.0-alpha.12/LICENSE-APACHE -OutFile dist/licenses/nod-Apache-2.0.txt
           $license = @("$root/license.txt", "$root/LICENSE.txt") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if ($license) { Copy-Item $license dist/licenses/openssl.txt }
           else { Invoke-WebRequest https://raw.githubusercontent.com/openssl/openssl/openssl-3.5/LICENSE.txt -OutFile dist/licenses/openssl.txt }
