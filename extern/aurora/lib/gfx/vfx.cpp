@@ -110,7 +110,7 @@ struct Payload {
   uint32_t blend;
   uint32_t compare; // wgpu::CompareFunction
   uint32_t depthWrite;
-  uint32_t quadCount;
+  uint32_t indexCount;
   Range verts;
   Range indices;
   Range uniform;
@@ -736,7 +736,7 @@ bool ensure_registered() {
           pass.SetBindGroup(0, group->second, 1, &p.uniform.offset);
           pass.SetVertexBuffer(0, ctx.vertexBuffer, p.verts.offset, p.verts.size);
           pass.SetIndexBuffer(ctx.indexBuffer, wgpu::IndexFormat::Uint32, p.indices.offset, p.indices.size);
-          pass.DrawIndexed(p.quadCount * 6);
+          pass.DrawIndexed(p.indexCount);
         }});
   }
   return g_state.task != InvalidEncoderTask && g_state.drawType != InvalidDrawType;
@@ -805,8 +805,9 @@ void evict_idle() {
 }
 } // namespace
 
-void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
-  if (verts == nullptr || quadCount == 0 || quadCount > MaxQuads || !ensure_registered()) {
+// Quads (4 vertices, 6 indices) or triangles (3 vertices, drawn in order).
+static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t vertexCount, bool quads) {
+  if (verts == nullptr || vertexCount == 0 || vertexCount > MaxQuads * 4 || !ensure_registered()) {
     return;
   }
   evict_idle();
@@ -886,12 +887,20 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
     u.warp[i / 2][2 * (i % 2) + 1] = t.warped ? t.warpScale[1] : 0.f;
   }
 
-  const uint32_t vertexCount = quadCount * 4;
-  std::vector<uint32_t> indices(size_t(quadCount) * 6);
-  for (uint32_t q = 0; q < quadCount; ++q) {
-    const uint32_t b = q * 4;
-    const uint32_t i[6] = {b, b + 1, b + 2, b, b + 2, b + 3};
-    std::memcpy(&indices[size_t(q) * 6], i, sizeof(i));
+  std::vector<uint32_t> indices;
+  if (quads) {
+    const uint32_t quadCount = vertexCount / 4;
+    indices.resize(size_t(quadCount) * 6);
+    for (uint32_t q = 0; q < quadCount; ++q) {
+      const uint32_t b = q * 4;
+      const uint32_t i[6] = {b, b + 1, b + 2, b, b + 2, b + 3};
+      std::memcpy(&indices[size_t(q) * 6], i, sizeof(i));
+    }
+  } else {
+    indices.resize(vertexCount);
+    for (uint32_t i = 0; i < vertexCount; ++i) {
+      indices[i] = i;
+    }
   }
   Payload p{};
   p.features = features;
@@ -899,7 +908,7 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
   p.blend = uint32_t(desc.blend);
   p.compare = uint32_t(gx.depthCompare ? to_compare(gx.depthFunc) : wgpu::CompareFunction::Always);
   p.depthWrite = gx.depthCompare && gx.depthUpdate ? 1 : 0;
-  p.quadCount = quadCount;
+  p.indexCount = uint32_t(indices.size());
   p.verts = push_verts(reinterpret_cast<const uint8_t*>(verts), size_t(vertexCount) * sizeof(Vertex), 4);
   p.indices = push_indices(reinterpret_cast<const uint8_t*>(indices.data()), indices.size() * sizeof(uint32_t), 4);
   p.uniform = push_uniform(reinterpret_cast<const uint8_t*>(&u), sizeof(u));
@@ -915,6 +924,23 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
     p.linear[i] = t.linear ? 1 : 0;
   }
   push_custom_draw(g_state.drawType, &p, sizeof(p));
+}
+
+void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount) {
+  if (quadCount > MaxQuads) {
+    return;
+  }
+  draw_prims(desc, verts, quadCount * 4, true);
+}
+
+void draw_triangles(const DrawDesc& desc, const Vertex* verts, uint32_t triCount) {
+  // Split so no draw exceeds the vertex budget (a multiple of 3).
+  constexpr uint32_t MaxTris = MaxQuads * 4 / 3;
+  for (uint32_t done = 0; done < triCount;) {
+    const uint32_t n = std::min(triCount - done, MaxTris);
+    draw_prims(desc, verts + size_t(done) * 3, n * 3, false);
+    done += n;
+  }
 }
 
 void shutdown() {
