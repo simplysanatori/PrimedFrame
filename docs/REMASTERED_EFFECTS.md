@@ -255,9 +255,23 @@ those back to retail PARTs (checked 2026-10-05):
   pair agrees in 6 of 7 placements; the slot pair has one). The by-character
   pickup and beam pairs (IceBeam, WaveBeam, PlasmaBeam, Health, ShieldBase,
   powerbomb...) are each named by one CHPR whose ANCS has that PART only.
-- Still unpaired (2026-10-05): the CHPR effect sets name 242 fresh GENPs, 131
-  of them unpaired. These rules were tried and fail when a known pair is hidden,
-  so none is used:
+- By event, one character at a time (2026-10-05): Remastered reuses one GENP
+  for different retail PARTs in different characters (3ec1f3bd stands for five)
+  and sometimes for two PARTs in one, so the table may list an effect more than
+  once and the importer writes it under each PART. Within one CHPR, an unpaired
+  GENP and an unpaired PART of its ANCS pair when their event bone sets are the
+  same and unique there (or, among several, their frames match only each other),
+  any frames meet within one, and every ANCS using the PART agrees: 75 of 135
+  re-derived, none wrong. Then frames alone, any bones (at least two frames meet
+  on each side, covering half of either, the only such partner on both sides):
+  33 of 135, none wrong. 18 pairs from the rules plus 6 by hand (frames, and
+  textures for Thardus's arcs); 4B55EA17 goes to Ridley's 500b48b1, which three
+  ANCS agree on. Import: 513 of 536. Scripts: `build/fx-hand/` (`bones2.py`,
+  `frames.py`, `view.py` lists what is left per character, `sheet.py` draws
+  texture contact sheets).
+- Still unpaired (2026-10-05): the CHPR effect sets name 242 fresh GENPs, 113
+  of them unpaired (103 of the 232 in a retail ANCS). These rules were tried and
+  fail when a known pair is hidden, so none is used:
   - Texture ids: only 2 GENP textures are carried-over copies.
   - LTME/MAXP: the child generators' values differ from retail in 291 of 423.
   - Tag order against the ANCS/EVNT PART order: about half the pairs are
@@ -269,8 +283,9 @@ those back to retail PARTs (checked 2026-10-05):
   - Intersecting the PART sets of every CHPR that shares a GENP: 1 right, 3
     missed. A shared GENP stands in for different PARTs in different
     characters.
-  What is left is mostly enemy CHPRs with 15 to 28 candidates each and no
-  usable event match.
+  What is left is mostly enemy CHPRs (MainNode's 15 L_Ball_SDK effects against
+  16 PARTs, Sheegoth's 18 against 19) whose Remastered events carry no frames,
+  on one bone, with look-alike textures; or groups with no free PART at all.
 
 ## Converting to retail PART
 

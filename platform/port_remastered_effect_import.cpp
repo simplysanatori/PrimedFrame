@@ -617,7 +617,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     // PART there has that set (or, among several, their frames match within one
     // and only each other), any frames on both sides meet within one, and every
     // ANCS using the PART pairs it the same way (repeated until nothing changes).
-    // Hiding a known pair, the rule re-derives 62 of 111 and gets none wrong.
+    // Hiding a known pair, the rule re-derives 75 of 135 and gets none wrong.
     // The comment is the ANCS and the bones.
     {"17ea72c7-6430-4895-a668-ebf5b8886ae5", 0x65FA796C},  // 28EACD5F L_eye_LCTR_SDK
     {"1cc665ba-8b5d-4fb5-9b53-a96b1fe1317a", 0x939E8643},  // 569523DF Head_1
@@ -630,6 +630,35 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"a56432d1-e257-444b-ab2b-abba3c2f9ebd", 0x045912BB},  // EAD9FE87 GillR_LCTR
     {"a6dfc131-b63c-4c62-909c-6485d73315cc", 0xA33FDBCB},  // 1E14B003 Skeleton_Root
     {"a9c3b54e-3fa6-4b90-ae65-ddad3a0c4409", 0x4CCE514A},  // 7E4ABB02 Glow_LCTR
+    // By event frames alone, whatever the bones, one character at a time: an
+    // effect and a PART whose frames meet (within one) at least twice on both
+    // sides, covering half of either, pair if neither has another such partner
+    // there and every ANCS naming both agrees (repeated until nothing changes).
+    // Hiding a known pair, the rule re-derives 33 of 135 and gets none wrong.
+    // The comment is the ANCS and the effect's frames.
+    {"1b169291-8359-43bb-ab36-e88341344f7a", 0xEE013D1B},  // 020B6226 10 12 43 75
+    {"4c8ffbcd-ec17-4438-9210-317fbb8afa3a", 0x15856C7B},  // 76C35773 1 24 246 626
+    {"6bd19865-335b-4d8d-baaf-70522d2e17e7", 0x879D77F9},  // 76C35773 68 96 ... 258
+    {"6dfd9cba-a857-4f6d-ac49-13a16ec3decb", 0x26379D78},  // 591F073D 4 6 7 ... (+1)
+    {"7f32b829-f973-453a-8391-9d4a5c40d38d", 0x1362BBA1},  // 76C35773 60 234 380
+    {"c6b710b7-641a-48b6-8e2d-6a64b375c0e1", 0x66916F48},  // 0E49E5F0 14 19 28 39
+    {"ffda5e7f-1a9f-4acb-a5b8-dbe83791dd2e", 0x898E2B24},  // FD49BDDE 18 23 976 981
+    // By hand, from the events (build/fx-hand/view.py) and textures (sheet.py).
+    // Ridley's jaw effect: the same frames as 4B55EA17 in 07BEED38 (26 42),
+    // 32FD91B0 (22) and 17C86CF2; FA049A5D's 4c971de3 also matches it (169
+    // 240), but a PART takes one effect, and three ANCS agree on this one.
+    {"500b48b1-0aff-4c0d-a1da-0fa8697f45d1", 0x4B55EA17},  // 07BEED38 Jaw_1 (+2)
+    // 0C6B791C's ankle effect fires at 40, 77, 214, 252: both footstep PARTs
+    // (root, at 40 and at 77).
+    {"180da4fe-b8f9-46ab-baf7-ac2cf4b0ff2e", 0x1E9EC128},  // 0C6B791C 40
+    {"180da4fe-b8f9-46ab-baf7-ac2cf4b0ff2e", 0x2FC54239},  // 0C6B791C 77
+    // The gunships' Smoke1-4 effect: the only one left on those bones whose
+    // frames fit, in both ships.
+    {"6a356076-36ce-4954-bd69-2d752a33a8ee", 0xF7DCC380},  // 0E49E5F0 Smoke1-4 (+1)
+    // Thardus: an electric-arc effect at 135, 450, 712, 904; the two arc PARTs
+    // fire at 135 450 and 712 904 (the third PART at 134 450 is dust).
+    {"948965e4-288a-4aec-a1ff-be3349f813e6", 0x0BBA6CF8},  // 76C35773 135 450
+    {"948965e4-288a-4aec-a1ff-be3349f813e6", 0x2281797B},  // 76C35773 712 904
 };
 
 // The retail PARTs an effect replaces: the id it carried over, else its
