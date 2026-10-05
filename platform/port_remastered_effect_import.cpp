@@ -366,6 +366,79 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"cb9eb31d-2732-4ac2-970f-24e03a0adbff", 0xC6CBF848},  // 3C1C8CC1
     {"d33dbc9b-dede-45a5-b0c0-28120cb26266", 0xCE057D76},  // CBD06AA1
     {"f23d06b0-03de-46a1-8305-af2bebd69e7d", 0x9805E2E8},  // F19131AD
+    // By event: a CHPR's action streams name the bone each effect spawns at,
+    // and its event streams when (1/480 s ticks; build/fx-evt/NOTES.md). An
+    // effect pairs with the one ANCS PART event at the same bone and frame, if
+    // every CHPR naming it agrees and no other effect claims that PART. Hiding
+    // a known pair, the rule re-derives 7 of 7 and gets none wrong. The comment
+    // is the ANCS and the bone.
+    {"098e846d-f9b3-45d9-b2f3-eac32c5e15dd", 0x977F7DE1},  // 76C35773 Skeleton_Root
+    {"126ebc84-ac55-4919-8968-7b91a6ca8546", 0x140C923D},  // 76C35773 root
+    {"1912ff84-5673-400f-98f3-5487e8667524", 0x0980B37E},  // 1E14B003 Head
+    {"1b693d6f-1bcb-4fe6-b03a-0af9a2ab6683", 0xD6F1A5BD},  // 53171F8F L_leg_LCTR
+    {"2113e818-e42a-4e9d-9988-b0051db4c4f5", 0xCD86BE35},  // 07BEED38 breastPlate_LCTR
+    {"216d00f6-a404-4a75-8f0d-1f0861a3df1b", 0x162A9D46},  // BF5F05CD L_CLAW_LCTR
+    {"24181da3-e82f-419b-8f9c-a246cc02406e", 0xB04B566B},  // EAD9FE87 Jaw_1
+    {"2bdf9369-7313-43af-9ace-75b4fa2bcdb7", 0x56A8E002},  // 17C86CF2 breastPlate_LCTR
+    {"2e89cfb5-b4a2-440d-938b-200191f9ce09", 0x359A520D},  // 17C86CF2 Jaw_1
+    {"3357da26-0e84-41d2-a0c3-6f1f8d84239c", 0xC39164D8},  // 16DBF2CC Skeleton_Root
+    {"34a51e8e-3dbd-4952-a8d1-aa9da87c3e7d", 0xC7F493C2},  // C98C5E5F LCTR_WARTAIL
+    {"35530792-2e08-4a16-bef0-aa8e4fd61325", 0xB987E471},  // 7E4ABB02 Glow_LCTR
+    {"392a5151-bf6b-45f3-afa8-ab7042a2d44a", 0xAF6EB124},  // BF5F05CD Head_1
+    {"39be7331-230d-473f-ad43-23edc44b65b8", 0x6FD3877B},  // C98C5E5F Head_1
+    {"3e472d60-cb07-4570-bd9e-5f84bcce5271", 0x02F2CABC},  // 16DBF2CC Skeleton_Root
+    {"40a27ec3-4f81-4554-bef6-5392084e573b", 0x9727BC73},  // BF5F05CD Head_Box1_LCTR
+    {"40ce2d7f-bfc6-4cdc-9435-c099f2cd2aae", 0x8AEF0FF3},  // 0FA35B51 L_ball
+    {"44a0b713-5244-4662-b951-9794fac1300b", 0xD4147D06},  // 53171F8F Jaw_1
+    {"4548980b-8000-4491-8383-fb8a0d2c5d97", 0x6911E609},  // 53171F8F F_R_leg_LCTR
+    {"458582ad-255c-4eee-b47a-e4b0550f5edd", 0x3E1BEF77},  // 569523DF Front_Phazon_LCTR
+    {"45a78f13-f8e7-4e8a-b9cf-ab6f88b41c0d", 0xE5AB0B1F},  // BF5F05CD R_Flap_LCTR
+    {"4726a054-06bd-43d1-bf64-991b4a35523c", 0x1A4C9FAC},  // 020B6226 root
+    {"4afe5c19-6f44-4fa1-90e8-15b0d4833fd7", 0x216E6BE3},  // 32FD91B0 breastPlate_LCTR
+    {"4bd02360-01f1-4a41-991b-6ff3ba12b23a", 0x6580D0A3},  // 07BEED38 breastPlate_LCTR
+    {"569ba50a-e0cb-4b86-9281-e2987ec68dd4", 0x5B69D65F},  // 17C86CF2 L_wingShoulder
+    {"58488d63-ed74-4355-abb0-d453c7a787af", 0xFD58521A},  // 72E3722E root
+    {"5f47c5e2-b993-4b3d-b798-afe88f6fb5a9", 0xB160F280},  // 3CB05DFE root
+    {"60b7ece2-115c-4aa3-abe2-253c21ba657a", 0x68DEDED7},  // 16DBF2CC Skeleton_Root
+    {"62e7afba-a1aa-4a49-a080-8174cb1f83d3", 0x01E9F7BA},  // 53171F8F L_eye_3
+    {"63391b1e-2431-4c86-94cc-5598671d03ad", 0xAA56E290},  // 17C86CF2 L_wingElbow
+    {"633c258f-d975-4af7-894f-209092e89795", 0x573E0000},  // 72E3722E rock_SDK
+    {"6c322b7e-6078-44fa-8589-ef2017041511", 0x361CF076},  // 0FA35B51 Skeleton_Root
+    {"6e3b0832-ab90-4a43-9520-3c382dd4c52e", 0x2ED5AF10},  // BF5F05CD Head_1
+    {"6e839072-c8a4-4bd6-abc9-0db7f7280e49", 0xF69E5EF0},  // 72E3722E rock_SDK
+    {"7433b396-8dc1-4c1c-916b-8325f65632c0", 0xDBF151EE},  // 76C35773 Skeleton_Root
+    {"7f753ff7-8540-4f51-87c6-973a29380995", 0xEC3089F9},  // 3AD6D2ED Skeleton_Root
+    {"85e42530-9710-45e8-aa91-86a67a3ad5fa", 0x44C87F1E},  // 3CB05DFE L_Bottom_Arm_09
+    {"8945a196-7078-4342-80b4-1a48b1baffcd", 0x2633DD2A},  // 17C86CF2 L_wingShoulder
+    {"896c4450-c3f7-4597-9f7b-02bd937fa898", 0xAE5D913C},  // 76C35773 root
+    {"918facc0-4777-4ff3-a495-e148e8ef4d0a", 0x10D72CAE},  // 3CB05DFE root
+    {"91e9ed9f-c0ef-4ace-ba77-44e197cfd548", 0xD724DD5A},  // 76C35773 root
+    {"95126b13-84df-4b05-aa7d-6c058ce1d057", 0xC9437FAC},  // 7CB9D0AA Head_1
+    {"9718be90-ce20-495e-98bf-432976b400f5", 0xE606E080},  // 06B034E2 L_shoulder
+    {"99636462-3886-4adb-8f13-547fde3072c9", 0xC735ACF6},  // 3CB05DFE root
+    {"9a109eb0-d801-4a2f-850d-7198d1eab2ff", 0xB870F59E},  // 76C35773 L_Hand_Collision_LCTR
+    {"a1a4b921-c191-4107-b71f-e1677bb932e3", 0x31D17F5E},  // FAC657CC R_wingBone2_2
+    {"a499159b-e326-4265-aaf9-f6d3a209a328", 0xA320529F},  // 16DBF2CC Skeleton_Root
+    {"abb0fdb6-5171-4843-8053-f8fa21156247", 0xBBC7F86C},  // BF5F05CD L_Flap_LCTR
+    {"ae27f67c-7095-4084-8cbc-c4ac1c426da2", 0x29247705},  // 3CB05DFE L_Bottom_Arm_09
+    {"b0cf6c66-892a-43b9-88d7-e86a93a85b38", 0x950979BD},  // 17C86CF2 L_wingFlesh1_2
+    {"bb71674f-9d98-4147-b55c-0c711bdc0045", 0x21A5ABB9},  // E3CBC3F3 Skeleton_Root
+    {"bdffbab9-8dad-4d0b-83e2-f290f9f98619", 0xD4BD794E},  // 3CB05DFE Head
+    {"bf0ea930-1f0a-41ec-a49c-ebfa86146974", 0xB0DF0A7F},  // 17C86CF2 L_wingFlesh2_2
+    {"c78576e0-3e6e-49f2-a5c3-16cbbd6f9b41", 0xDEC9BD3D},  // 17C86CF2 breastPlate_LCTR
+    {"caec1b20-9db4-439e-8fef-290c636538bc", 0xD95A367F},  // BF5F05CD root
+    {"cbc5c158-4491-41e4-9132-d32c6e205f67", 0xCFB53F07},  // 28EACD5F Head
+    {"cf1b8b42-e84e-491d-9cd8-72a992ad3801", 0xA6776019},  // 17C86CF2 breastPlate_LCTR
+    {"d02728d2-7f66-4737-9f4d-086e550bb576", 0x372FA0B3},  // 76C35773 root
+    {"d7513480-f790-41d5-9b99-a40d827c7f13", 0x564B1A1F},  // 16DBF2CC Skeleton_Root
+    {"e20a8faf-b54b-4101-8499-d0d6447288ee", 0x71966562},  // 17C86CF2 Jaw_1
+    {"e3aa9295-61af-415e-961d-53d4def7a294", 0xFE92DE4D},  // 17C86CF2 breastPlate_LCTR
+    {"f1e2ad10-ea95-4afb-a70f-d3296ba9ab1b", 0x4E9DD9E4},  // 3AD6D2ED Skeleton_Root
+    {"f2da15ca-65ba-492e-8d2f-511d3c909272", 0xAF8F6D95},  // 3CB05DFE L_Bottom_Arm_09
+    {"f5be78e2-4ad1-4f8f-8c15-770935e35511", 0x5029FF1E},  // 020B6226 root
+    {"fbfee463-1dec-4d67-bc51-c528a125043d", 0xD7FFF8D6},  // 020B6226 LCTR_MAGMOUTH
+    {"fc6a3e0d-eb0d-4b81-99a9-e208ec1b80e4", 0x599B4D00},  // 76C35773 Collar
+    {"fe324176-fcbe-480b-8437-fd19c3369f9e", 0x88460B49},  // 76C35773 root
 };
 
 // The retail PART an effect replaces: the id it carried over, else its match's.
