@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-24.04
     container: almalinux:9
     env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
       MAX_GLIBC: "2.34"
       MAX_GLIBCXX: "3.4.29"
     steps:
@@ -30,21 +32,36 @@ jobs:
             libXScrnSaver-devel libXtst-devel wayland-devel wayland-protocols-devel \
             libxkbcommon-devel mesa-libEGL-devel mesa-libGL-devel \
             freetype-devel libpng-devel zlib-devel bzip2-devel brotli-devel \
-            libzstd-devel openssl-devel
+            libzstd-devel openssl-devel ccache
       - uses: actions/checkout@v4
         with:
           # The version string is `git describe`; it needs the tags.
           fetch-depth: 0
+      # ccache keeps the objects between runs, and the unpacked dependency
+      # sources skip the downloads in Configure, as in windows.yml.
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
+      - uses: actions/cache@v4
+        with:
+          path: |
+            build/port-gcc/_deps/*-src
+            build/port-gcc/_deps/*-subbuild
+          key: deps-linux-${{ hashFiles('CMakeLists.txt', 'extern/aurora/**/CMakeLists.txt', 'extern/aurora/**/*.cmake') }}
       - name: Configure
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           source /opt/rh/gcc-toolset-14/enable
           cmake -S . -B build/port-gcc -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DAURORA_ENABLE_TESTS=OFF -DMP_BUILD_TESTS=ON
       - name: Build
         run: |
           source /opt/rh/gcc-toolset-14/enable
           cmake --build build/port-gcc -j 4
+          ccache -s
       - name: Test
         run: ctest --test-dir build/port-gcc -L port --output-on-failure
       - name: Check the glibc and libstdc++ floor
