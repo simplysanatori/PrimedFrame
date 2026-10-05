@@ -20,6 +20,7 @@
 #include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "port_debug.h"
+#include "port_fx_debug.h"
 #endif
 
 uint CParticleSwoosh::mSwooshAliveCount = 0;
@@ -137,6 +138,13 @@ CParticleSwoosh::~CParticleSwoosh() { --mSwooshAliveCount; }
 bool CParticleSwoosh::IsLargeEnough() const { return x1b4_LENG >= 2 && x1b8_SIDE >= 2; }
 
 const bool CParticleSwoosh::Update(double dt) {
+#ifdef TARGET_PC
+  PortFx::UpdateScope fxScope(dt);
+  if (fxScope.skip) {
+    return false;
+  }
+  dt = fxScope.dt;
+#endif
   if (!IsLargeEnough()) {
     return false;
   }
@@ -322,6 +330,10 @@ bool CParticleSwoosh::IsSystemDeletable() const {
 
 void CParticleSwoosh::Render() {
 #ifdef TARGET_PC
+  PortFx::RenderScope fxScope;
+  if (PortFx::gMuteActive && PortFx::IsMuted(*this)) {
+    return;
+  }
   const CVector3f portGlobalTranslation = xa4_globalTranslation;
   const CTransform4f portGlobalOrientation = xb0_globalOrientation;
   const bool portPresenting = PortBeginPresent();
@@ -1280,3 +1292,21 @@ const CVector3f& CParticleSwoosh::GetGlobalScale() const { return xe0_globalScal
 const CTransform4f& CParticleSwoosh::GetGlobalOrientation() const { return xb0_globalOrientation; }
 const CVector3f& CParticleSwoosh::GetGlobalTranslation() const { return xa4_globalTranslation; }
 const CVector3f& CParticleSwoosh::GetTranslation() const { return x38_translation; }
+
+#ifdef TARGET_PC
+uint CParticleSwoosh::PortFxAsset() const { return CToken(x1c_desc).GetTag().GetId(); }
+
+void CParticleSwoosh::PortFxDescribe(PortFxInfo& out) const {
+  out.kind = 'SWHC';
+  out.asset = PortFxAsset();
+  out.particles = x1ac_particleCount;
+  out.maxParticles = x1b4_LENG;
+  out.frame = x28_curFrame;
+  out.lifetime = x2c_PSLT;
+  out.emitting = x1d0_24_emitting;
+  out.deletable = IsSystemDeletable();
+  out.pos[0] = xa4_globalTranslation.GetX();
+  out.pos[1] = xa4_globalTranslation.GetY();
+  out.pos[2] = xa4_globalTranslation.GetZ();
+}
+#endif

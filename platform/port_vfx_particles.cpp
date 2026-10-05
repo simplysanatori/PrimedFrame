@@ -1,3 +1,4 @@
+#include "port_fx_debug.h"
 #include "port_vfx_particles.h"
 
 #include <algorithm>
@@ -278,6 +279,8 @@ void CElementGen::PortRenderParticlesVfx() {
   verts.reserve(static_cast< size_t >(std::min< uint >(particleCount, kMaxQuadsPerDraw)) * 4);
   auto flush = [&]() {
     if (!verts.empty()) {
+      PortFx::gQuads += static_cast< uint32_t >(verts.size() / 4);
+      ++PortFx::gDraws;
       aurora::gfx::vfx::draw_quads(desc, verts.data(), static_cast< uint32_t >(verts.size() / 4));
       verts.clear();
     }
@@ -476,6 +479,8 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
   CGraphics::SetModelMatrix(CTransform4f::Identity());
   CGraphics::SetCullMode(kCM_None);
   CGraphics::SetDepthWriteMode(x26c_28_zTest, kE_LEqual, x26c_26_AAPH ? false : x26c_27_ZBUF);
+  PortFx::gTriangles += static_cast< uint32_t >(batch.verts.size() / 3);
+  ++PortFx::gDraws;
   aurora::gfx::vfx::draw_triangles(desc, batch.verts.data(), static_cast< uint32_t >(batch.verts.size() / 3));
   batch.verts.clear();
 }
