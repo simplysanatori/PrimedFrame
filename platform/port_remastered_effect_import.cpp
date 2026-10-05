@@ -141,6 +141,7 @@ struct MatchedEffect {
   uint32_t retail;
 };
 constexpr MatchedEffect kMatchedEffects[] = {
+    {"#name", 0},  // method of the entries below
     // By the name both paks give it (the player's and global paks'). Only names
     // that one retail PART has; the 8 effects that kept a retail id all match
     // their names.
@@ -202,6 +203,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"50b67be4-15f3-4230-9147-deb8d6a47248", 0x7E520CBC},  // WaveAuxMuzzle
     {"a0d802cb-6516-4a42-9c1d-7614e6122ca9", 0x2BC80C63},  // WaveCharge
     {"59dba49a-777f-42eb-ab47-c5dd91a28d3e", 0x0237C838},  // WaveXfer
+    {"#room-placement", 0},  // method of the entries below
     // By where the room scripts place it: a ROOM's EffectMP1 naming only this
     // effect, at the spot (under 0.1 m) of a retail object naming only this
     // PART, in every such placement, with no other fresh effect or carried-over
@@ -358,6 +360,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"fc6996fc-6d6a-4f84-bb98-ec28e9909c1b", 0x807437B3},  // 07_Over_Stonehenge
     {"fdaff8f6-b669-4506-8838-286e7298f7cb", 0x5CF7E943},  // 0p_connect_tunnel
     {"fec1dea9-b8c3-4911-8579-1a38413c537a", 0x877E8A36},  // 15_energycore
+    {"#chpr-set", 0},  // method of the entries below
     // By character: a CHPR's id is its retail ANCS's, and its dependency list
     // names its effects. Where only one of those is still unpaired, and the
     // ANCS (with its EVNTs) has only one PART not paired yet, they pair, if no
@@ -373,6 +376,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"cb9eb31d-2732-4ac2-970f-24e03a0adbff", 0xC6CBF848},  // 3C1C8CC1
     {"d33dbc9b-dede-45a5-b0c0-28120cb26266", 0xCE057D76},  // CBD06AA1
     {"f23d06b0-03de-46a1-8305-af2bebd69e7d", 0x9805E2E8},  // F19131AD
+    {"#chpr-event", 0},  // method of the entries below
     // By event: a CHPR's action streams name the bone each effect spawns at,
     // and its event streams when (1/480 s ticks; build/fx-evt/NOTES.md). An
     // effect pairs with the one ANCS PART event at the same bone and frame, if
@@ -425,6 +429,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"99636462-3886-4adb-8f13-547fde3072c9", 0xC735ACF6},  // 3CB05DFE root
     {"9a109eb0-d801-4a2f-850d-7198d1eab2ff", 0xB870F59E},  // 76C35773 L_Hand_Collision_LCTR
     {"a1a4b921-c191-4107-b71f-e1677bb932e3", 0x31D17F5E},  // FAC657CC R_wingBone2_2
+    {"#loose-events", 0},  // method of the entries below
     // Looser, with PARTs already paired taken out (repeated until nothing
     // changes): the same bones and at least half the frames (within one), or the
     // same frames on other bones, or shared bones and half the frames. Hiding a
@@ -489,6 +494,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"fbfee463-1dec-4d67-bc51-c528a125043d", 0xD7FFF8D6},  // 020B6226 LCTR_MAGMOUTH
     {"fc6a3e0d-eb0d-4b81-99a9-e208ec1b80e4", 0x599B4D00},  // 76C35773 Collar
     {"fe324176-fcbe-480b-8437-fd19c3369f9e", 0x88460B49},  // 76C35773 root
+    {"#script-slot", 0},  // method of the entries below
     // By script slot: Remastered keeps retail's property order, so a ROOM
     // object and the retail object it stands for name their assets in the same
     // order. Assets both sides share (retail ids, effects already paired) split
@@ -610,6 +616,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"98eee214-a6f1-43f3-82a9-6b9e4859fd79", 0x69B9387A},  // Water
     {"afa4cef5-24e4-4133-b62b-5e3e52068b25", 0x147A85EF},  // Water
     {"d911be03-8d3a-4a07-bcd6-9158fd9fad40", 0xE981C0AD},  // Water
+    {"#event-bones-per-character", 0},  // method of the entries below
     // By event bones, one character at a time: Remastered reuses an effect for
     // different retail PARTs in different characters, so an effect may pair
     // more than once. In a CHPR, an unpaired effect and an unpaired PART of its
@@ -630,6 +637,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"a56432d1-e257-444b-ab2b-abba3c2f9ebd", 0x045912BB},  // EAD9FE87 GillR_LCTR
     {"a6dfc131-b63c-4c62-909c-6485d73315cc", 0xA33FDBCB},  // 1E14B003 Skeleton_Root
     {"a9c3b54e-3fa6-4b90-ae65-ddad3a0c4409", 0x4CCE514A},  // 7E4ABB02 Glow_LCTR
+    {"#event-frames-per-character", 0},  // method of the entries below
     // By event frames alone, whatever the bones, one character at a time: an
     // effect and a PART whose frames meet (within one) at least twice on both
     // sides, covering half of either, pair if neither has another such partner
@@ -643,6 +651,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"7f32b829-f973-453a-8391-9d4a5c40d38d", 0x1362BBA1},  // 76C35773 60 234 380
     {"c6b710b7-641a-48b6-8e2d-6a64b375c0e1", 0x66916F48},  // 0E49E5F0 14 19 28 39
     {"ffda5e7f-1a9f-4acb-a5b8-dbe83791dd2e", 0x898E2B24},  // FD49BDDE 18 23 976 981
+    {"#by-hand", 0},  // method of the entries below
     // By hand, from the events (build/fx-hand/view.py) and textures (sheet.py).
     // Ridley's jaw effect: the same frames as 4B55EA17 in 07BEED38 (26 42),
     // 32FD91B0 (22) and 17C86CF2; FA049A5D's 4c971de3 also matches it (169
@@ -661,17 +670,26 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"948965e4-288a-4aec-a1ff-be3349f813e6", 0x2281797B},  // 76C35773 712 904
 };
 
+// A retail PART an effect replaces, and the rule that paired them.
+struct Pairing {
+  uint32_t retail;
+  std::string method;
+};
+
 // The retail PARTs an effect replaces: the id it carried over, else its
 // matches' (one effect can stand for several PARTs).
-std::vector<uint32_t> RetailEffects(const EffectGuid& id) {
+std::vector<Pairing> RetailEffects(const EffectGuid& id) {
   if (const std::optional<uint32_t> retail = EffectRetailId(Swap(id))) {
-    return {*retail};
+    return {{*retail, "carried-over"}};
   }
   const std::string text = EffectGuidString(Swap(id));
-  std::vector<uint32_t> out;
+  std::vector<Pairing> out;
+  std::string method;
   for (const MatchedEffect& matched : kMatchedEffects) {
-    if (text == matched.id) {
-      out.push_back(matched.retail);
+    if (matched.id[0] == '#') {
+      method = matched.id + 1;
+    } else if (text == matched.id) {
+      out.push_back({matched.retail, method});
     }
   }
   return out;
@@ -922,8 +940,23 @@ public:
     }
   }
 
-  void Effect(const EffectGuid& id, uint32_t retail) {
+  // Hands one finished row to the report callback.
+  void Report(EffectReportRow& row, const char* result, const std::string& reason = {}) {
+    row.result = result;
+    row.reason = reason;
+    if (m_io.report) {
+      m_io.report(row);
+    }
+  }
+
+  void Effect(const EffectGuid& id, const Pairing& pairing) {
+    const uint32_t retail = pairing.retail;
+    EffectReportRow row;
+    row.genp = EffectGuidString(Swap(id));
+    row.retail = retail;
+    row.method = pairing.method;
     if (!m_io.retailId(retail)) {
+      Report(row, "no-disc-part");
       return;
     }
     ++m_result.candidates;
@@ -934,6 +967,7 @@ public:
     if (!m_io.read(kGenp, id, data, error) || !ParseEffect(data.data(), data.size(), effect, error)) {
       ++m_result.failed;
       Log(name + ": " + error);
+      Report(row, "failed", "parse: " + error);
       return;
     }
     std::map<EffectGuid, Child> children;
@@ -958,7 +992,27 @@ public:
     if (parts.empty() || !SplitRetailPart(parts[0].part.data(), parts[0].part.size(), check, error)) {
       ++m_result.failed;
       Log(name + ": the converted effect does not read as a PART");
+      Report(row, "failed", "the converted effect does not read as a PART");
       return;
+    }
+    for (const ConvertedPart& part : parts) {
+      const std::string kind = EffectFourCCString(part.type);
+      for (const std::string& line : part.dropped) {
+        row.droppedList.push_back(line);
+      }
+      for (const std::string& line : part.approximated) {
+        row.approximatedList.push_back(line);
+      }
+      row.dropped += part.droppedRetail;
+      const size_t at = row.kinds.find(kind + ":");
+      if (at == std::string::npos) {
+        row.kinds += (row.kinds.empty() ? "" : ",") + kind + ":1";
+      } else {
+        const size_t end = row.kinds.find(',', at);
+        const int count = std::atoi(row.kinds.c_str() + at + 5);
+        row.kinds.replace(at + 5, (end == std::string::npos ? row.kinds.size() : end) - (at + 5),
+                          std::to_string(count + 1));
+      }
     }
     // A part that lost its texture or model would replace the disc's textured
     // effect with an invisible one: keep the disc's, before anything is written.
@@ -969,6 +1023,7 @@ public:
         ++m_result.failed;
         Log(name + ": " + (part.root ? std::string("the root") : "child " + EffectGuidString(part.id)) +
             " has no texture, the disc's is kept");
+        Report(row, "failed", "no texture: " + std::string(part.root ? "root" : "child " + EffectGuidString(part.id)));
         return;
       }
     }
@@ -981,6 +1036,7 @@ public:
         // The root would name a missing child: leave the disc's PART in place.
         ++m_result.failed;
         Log(name + ": child " + EffectGuidString(parts[i].id) + " not written");
+        Report(row, "failed", "child " + EffectGuidString(parts[i].id) + " not written");
         return;
       }
       ++m_result.parts;
@@ -999,17 +1055,26 @@ public:
     if (!m_io.write(name, root)) {
       ++m_result.failed;
       Log(name + ": could not write it");
+      Report(row, "failed", "could not write it");
       return;
     }
     ++m_result.parts;
     ++m_result.written;
     m_result.dropped += parts[0].droppedRetail;
+    Report(row, "imported");
   }
 
   EffectImportResult Run() {
     for (const EffectGuid& id : m_io.effects) {
-      for (const uint32_t retail : RetailEffects(id)) {
-        Effect(id, retail);
+      const std::vector<Pairing> pairings = RetailEffects(id);
+      if (pairings.empty() && m_io.report) {
+        EffectReportRow row;
+        row.genp = EffectGuidString(Swap(id));
+        row.method = "none";
+        Report(row, "unpaired");
+      }
+      for (const Pairing& pairing : pairings) {
+        Effect(id, pairing);
       }
     }
     return m_result;

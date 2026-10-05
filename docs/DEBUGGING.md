@@ -73,6 +73,41 @@ the install needs a re-import. Use `--mods DIR` to test a mod build without touc
 **Two builds side by side**: start `a --build port-gcc` and `b --build <other>` with the same
 `--room`, then `shot` both with the same commands and `diff` / `sheet` them.
 
+## Converter reports
+
+Every Remastered import writes `<mod>/reports/` (next to `.import-version`): sorted, tab-separated,
+deterministic (no timestamps), so two imports diff cleanly.
+
+- `materials.tsv`: one row per converted output material. Columns: `cmdl` (output model id),
+  `mat` (its material index), `source` (Remastered model uuid), `srcmat`, `shader` (id8),
+  `role` (the shader's lists, e.g. `inverse-exposure+gun-body`), `flags` (hex), `tag`
+  (PBR4..7 / WRAP / TEV), `kind` (PBR shader class, 0 standard), `mode` (1 unlit, 2 glow mask,
+  4 vertex tint, 8 colour-unlit), `path` (`pbr`|`tev`), `pathReason`, `kindReason`, `emissive`,
+  `backlight`, `strength`, `p0`..`p3`, `cube` (reflection cube id).
+- `effects.tsv`: one row per Remastered effect considered (a GENP standing for several PARTs has
+  a row each). Columns: `genp`, `retail` (the PART it stands for, `-` if none), `result`
+  (`imported`|`failed`|`unpaired`|`no-disc-part`), `method` (`carried-over`, the pairing section
+  of `kMatchedEffects`: `name`, `room-placement`, `chpr-set`, `chpr-event`, `loose-events`,
+  `script-slot`, `event-bones-per-character`, `event-frames-per-character`, `by-hand`; `none`
+  when unpaired), `reason` (for a failure), `kinds` (files written), `dropped` (retail properties
+  left out), `droppedList` (`FOURCC: why;...`), `approximatedList`.
+- `summary.txt`: counts per tag, kind, path, reason and role, and per result, method and failure.
+- `reports/parts/` holds each stage's own rows (models, roommodels, effects). They are what a
+  reused stage links in, so a no-change re-import keeps the reports complete.
+
+**Why is this material kind X?** `grep -P '^<cmdl>\t' reports/materials.tsv`, read `role`,
+`kindReason`, `pathReason`. For one model offline: `remastered_effect_tool mat <romfs> <uuid|name>
+[index]` (standalone conversion, so no TEV-path rows).
+
+**Why is this effect unpaired / missing?** `grep <genp> reports/effects.tsv`: `unpaired`/`none`
+means no `kMatchedEffects` row and no carried-over id; `failed` has the reason (`parse:`, `no
+texture:`...). `remastered_effect_tool explain <romfs> <retailDir> <GENP id>` runs just that
+effect and prints the pairing, dropped and approximated lists. `pdump` shows a retail PART's
+properties, `pdiff a b` only those that differ (e.g. the disc's against the converted one).
+
+**What changed between two imports?** `diff -u old/reports/materials.tsv new/reports/materials.tsv`
+(likewise `effects.tsv`, `summary.txt`).
+
 ## Limits
 
 - Boot is `MP_BOOT_WORLD` only (works on any build); `MP_SMOKE_*` needs `build/smoke-gcc`

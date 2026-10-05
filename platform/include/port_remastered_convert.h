@@ -28,11 +28,13 @@
 
 #include "port_remastered_cmdl.h"
 #include "port_remastered_image.h"
+#include "port_remastered_report.h"
 
 namespace PortRemastered {
 
 struct ConvertOptions {
   uint32_t retail = 0;  // CMDL id the model replaces
+  std::string source;   // a label for the Remastered model, for the materials report
   // The model replaces nothing (a piece of room geometry): `retail` is only the
   // id it is written under, and every surface gets one opaque lit PBR material.
   // Surfaces with no base map are dropped, having no retail material to keep.
@@ -101,6 +103,8 @@ struct ConvertIO {
   // Stores one output file: "<ID>.CMDL", "<ID>.CSKR", "<ID>.TXTR", "<ID>.dds".
   std::function<bool(const std::string& name, const std::vector<uint8_t>& data)> write;
   std::function<void(const std::string& line)> log;  // optional
+  // Optional: called once per output material, in output order (the materials report).
+  std::function<void(const MaterialDecision& decision)> decision;
 };
 
 // Holds what is shared between the models of one import: the textures already
