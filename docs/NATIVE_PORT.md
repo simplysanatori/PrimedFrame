@@ -583,6 +583,13 @@ From a terminal,
 on every core without starting the game and installs at once (the disc comes
 from `MP_DISC`, the remembered path, or a copy beside the executable).
 
+A full import writes `.import-version` (the importer's `kImportVersion`, then the build's commit) into
+the mod. At each mod scan, `remastered-models` or any mod with that file counts as an import; one whose
+stamp is missing or lower than the build's `kImportVersion` is stale, so the log says so, a toast shows
+once per launch, and the Mods and import panels say "re-import needed". Bump `kImportVersion` in
+`port_remastered_import.h` whenever a change needs a re-import to take effect. The movies-only import
+leaves the stamp alone.
+
 The port reads the image itself (`platform/port_remastered_nsp.cpp`, `_pak`,
 `_txtr`, `_cmdl`), and `_convert` writes a CMDL (plus CSKR for skinned models)
 over each retail model listed in `_table`, with its PBR maps as native `.dds`

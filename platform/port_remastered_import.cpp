@@ -23,6 +23,7 @@
 
 #include <aurora/dvd.h>
 
+#include "port_build_info.h"
 #include "port_gallery.h"
 #include "port_map_icons.h"
 #include "port_model_variant.h"
@@ -1765,6 +1766,16 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   if (sCancel) {
     fail("Cancelled.");
     return;
+  }
+  {
+    // Only a full import stamps: the movies-only run leaves an older mod's stamp as it was.
+    std::ofstream stamp(staging / kImportStampName);
+    stamp << kImportVersion << '\n' << MP_BUILD_REVISION << '\n';
+    stamp.close();
+    if (!stamp) {
+      fail("Cannot write to the mod folder.");
+      return;
+    }
   }
   {
     std::ofstream marker(staging / kMarkerName);

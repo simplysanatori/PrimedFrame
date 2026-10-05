@@ -135,6 +135,22 @@ bool ParseMaterialCubeName(const std::string& fileName, uint32_t& id) {
   return ParseHexIdName(fileName, "envcube", id);
 }
 
+bool ImportStampStale(const std::string& stampText, int current) {
+  size_t i = 0;
+  while (i < stampText.size() && (stampText[i] == ' ' || stampText[i] == '\t')) {
+    ++i;
+  }
+  long value = 0;
+  size_t digits = 0;
+  for (; i < stampText.size() && stampText[i] >= '0' && stampText[i] <= '9'; ++i, ++digits) {
+    value = value * 10 + (stampText[i] - '0');
+    if (value > 1000000) {
+      break;
+    }
+  }
+  return digits == 0 || value < current;
+}
+
 bool ParseLooseName(const std::string& fileName, uint32_t& type, uint32_t& id) {
   if (fileName.size() != 13 || fileName[8] != '.') {
     return false;

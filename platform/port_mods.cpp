@@ -9,6 +9,7 @@
 #include "port_hd_font.h"
 #include "port_hud_bars.h"
 #include "port_log.h"
+#include "port_remastered_import.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
 #include "port_room_liquid.h"
@@ -25,6 +26,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <set>
 #include <unordered_map>
@@ -260,6 +263,8 @@ bool HasRoomGeometry() {
 
 const Status& CurrentStatus() { return sStatus; }
 
+const char* StaleRemasteredImport() { return sStatus.staleImport.empty() ? nullptr : sStatus.staleImport.c_str(); }
+
 namespace {
 bool sSuspended = false;
 }
@@ -432,6 +437,21 @@ void Initialize() {
     ModInfo& info = sStatus.mods.emplace_back();
     info.name = PathString(modDir.filename());
     info.enabled = sStatus.active && std::find(disabled.begin(), disabled.end(), info.name) == disabled.end();
+    // An import is told by its stamp, or by the folder name an import without one (before the
+    // stamp existed) was installed under. Checked even when disabled: it is still out of date.
+    {
+      std::ifstream stamp(modDir / PortRemastered::kImportStampName);
+      const bool stamped = stamp.is_open();
+      info.import = stamped || info.name == PortRemastered::kImportModName;
+      if (info.import) {
+        const std::string text((std::istreambuf_iterator<char>(stamp)), std::istreambuf_iterator<char>());
+        info.importStale = ImportStampStale(text, PortRemastered::kImportVersion);
+      }
+      if (info.importStale && sStatus.staleImport.empty()) {
+        sStatus.staleImport = info.name;
+        Message(info.name + " was imported by an older version; re-import Remastered to get the latest fixes");
+      }
+    }
     if (!info.enabled) {
       continue;
     }

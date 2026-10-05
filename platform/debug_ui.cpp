@@ -3461,6 +3461,39 @@ void DrawGalleryWindow() {
   }
 }
 
+// Once per launch, a few seconds, no input taken: a Remastered import from an older importer.
+void DrawStaleImportToast() {
+  static double sShownAt = -1.0;
+  static bool sDone = false;
+  if (sDone) {
+    return;
+  }
+  const char* name = PortMods::StaleRemasteredImport();
+  if (name == nullptr) {
+    return;
+  }
+  const double now = ImGui::GetTime();
+  if (sShownAt < 0.0) {
+    sShownAt = now;
+  }
+  if (now - sShownAt > 12.0) {
+    sDone = true;
+    return;
+  }
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + viewport->Size.y - 24.f),
+                          ImGuiCond_Always, ImVec2(0.5f, 1.f));
+  ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, 560.f), 0.f));
+  ImGui::SetNextWindowBgAlpha(0.8f);
+  if (ImGui::Begin("##stale-import-toast", nullptr,
+                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::TextWrapped("%s was imported by an older version. Re-import Remastered (F1 > Mods) to get the latest fixes.",
+                       name);
+  }
+  ImGui::End();
+}
+
 void DrawRemasteredImport() {
   static char sImage[1024] = "";
   static char sKeys[1024] = "";
@@ -3524,6 +3557,10 @@ void DrawRemasteredImport() {
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
   ImGui::TextWrapped("Converts the models of your own copy of Metroid Prime Remastered into a mod. It needs the "
                      "game's .nsp and your console's key file (prod.keys), and takes a few minutes.");
+  if (PortMods::StaleRemasteredImport() != nullptr) {
+    ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f),
+                       "Re-import needed: the installed models were made by an older version.");
+  }
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.75f, 0.3f, 1.f));
   ImGui::TextWrapped("Very experimental and currently unsupported: expect wrong or missing models, crashes and "
                      "heavy memory use. Remove mods/remastered-models to get the retail game back.");
@@ -3746,6 +3783,10 @@ void DrawMods() {
       }
     } else {
       ImGui::TextDisabled("not loaded");
+    }
+    if (mod.importStale) {
+      ImGui::SameLine();
+      ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "re-import needed");
     }
     changed = changed || (sModsEnabled && on) != mod.enabled;
   }
@@ -5913,6 +5954,7 @@ void DrawUI() {
   PortImporters::Poll();
 #endif
   FinishRemasteredImport();
+  DrawStaleImportToast();
   if (!sVisible) {
     sTouchScroll = TouchScroll{};
     if (sGalleryOpen) {

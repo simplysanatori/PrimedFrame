@@ -152,6 +152,8 @@ struct ModInfo {
   int files = 0;     // disc files replaced
   int resources = 0; // loose resources used
   int textures = 0;  // <id>.dds images
+  bool import = false;       // made by the Remastered import (stamp present, or its folder name)
+  bool importStale = false;  // ... and by an older importer than this build's
 };
 
 struct Status {
@@ -160,7 +162,15 @@ struct Status {
   std::vector<ModInfo> mods;
   int overlays = 0; // disc files served from mods
   std::vector<std::string> messages;
+  std::string staleImport; // name of the Remastered import that needs redoing; empty if none
 };
+
+// Whether a Remastered import's stamp file (its whole text; empty when the file is missing) is older
+// than `current`: missing, unreadable and lower numbers are stale, equal and higher are not. The
+// stamp's first line is the number, and anything after it (the build's commit) is ignored.
+bool ImportStampStale(const std::string& stampText, int current);
+// The name of the mod that is a stale Remastered import, or null. Set at each scan.
+const char* StaleRemasteredImport();
 
 // Scans the mods folder and registers the overlays. Call once, after the disc
 // is open and before the game starts.
