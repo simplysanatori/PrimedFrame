@@ -206,10 +206,56 @@ void TestImport() {
   Check(txtr.size() > 12 && Be32(txtr.data()) == 9 && (txtr[4] << 8 | txtr[5]) == 256 && (txtr[6] << 8 | txtr[7]) == 256,
         "the texture is an RGBA8 TXTR scaled to 256");
 }
+// A generator whose material has no texture that converts would lose its
+// TEXR: the import keeps the disc's PART and writes nothing.
+void TestLostTexture() {
+  const EffectGuid material = Fresh(0x10);
+  std::vector<uint8_t> genp(0x3c, 0);
+  std::memcpy(genp.data(), "RFRM", 4);
+  std::memcpy(genp.data() + 0x14, "GENP", 4);
+  PutGenerator(genp, true);
+  PutProperty(genp, "MAXP", 1);
+  PutFourCC(genp, "CNST");
+  Put32(genp, 5);
+  PutProperty(genp, "MTIN", 1);
+  genp.push_back(0);
+  PutGuid(genp, material);
+  PutProperty(genp, "_END", 4);
+  Put32(genp, 0);
+
+  const EffectGuid effectId = Swap(Legacy(0x1234));
+  std::map<std::string, std::vector<uint8_t>> written;
+  std::vector<std::string> log;
+  EffectImportIO io;
+  io.effects = {effectId};
+  io.read = [&](uint32_t type, const EffectGuid& id, std::vector<uint8_t>& out, std::string& error) {
+    if (type == kGenp && id == effectId) {
+      out = genp;
+      return true;
+    }
+    error = "not in the image";
+    return false;
+  };
+  io.typeOf = [](const EffectGuid&) -> uint32_t { return 0; };
+  io.retailId = [](uint32_t id) { return id == 0x1234; };
+  uint32_t next = 0x00ABC000;
+  io.freshId = [&](uint32_t) { return next++; };
+  io.write = [&](const std::string& name, const std::vector<uint8_t>& data) {
+    written[name] = data;
+    return true;
+  };
+  io.log = [&](const std::string& line) { log.push_back(line); };
+  const EffectImportResult result = ImportEffects(io);
+  Check(result.candidates == 1 && result.written == 0 && result.failed == 1, "an effect that lost its texture fails");
+  Check(written.empty(), "nothing is written for it");
+  Check(log.size() == 1 && log[0] == "00001234.PART: the root has no texture, the disc's is kept",
+        "the log says the disc's PART is kept");
+}
 } // namespace
 
 int main() {
   TestImport();
+  TestLostTexture();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

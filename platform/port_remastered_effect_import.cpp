@@ -64,6 +64,34 @@ bool HasLight(const std::vector<RetailPartProperty>& properties) {
                      [](const RetailPartProperty& property) { return property.fourcc == EffectFourCC("LTYP"); });
 }
 
+const EffectNode* FindNode(const EffectNode& node, const EffectGuid& id) {
+  for (const EffectNode& child : node.children) {
+    if (child.id == id) {
+      return &child;
+    }
+    if (const EffectNode* found = FindNode(child, id)) {
+      return found;
+    }
+  }
+  return nullptr;
+}
+
+bool HasProperty(const EffectNode& node, uint32_t fourcc) {
+  return std::any_of(node.properties.begin(), node.properties.end(),
+                     [&](const EffectProperty& property) { return property.fourcc == fourcc; });
+}
+
+// A generator that drew a texture or a model whose converted PART draws
+// neither: the conversion lost its look.
+bool LostLook(const EffectNode& node, const std::vector<RetailPartProperty>& part) {
+  const bool had = HasProperty(node, EffectFourCC("TEXR")) || HasProperty(node, EffectFourCC("MTIN")) ||
+                    HasProperty(node, EffectFourCC("PMDL"));
+  const bool has = std::any_of(part.begin(), part.end(), [](const RetailPartProperty& property) {
+    return property.fourcc == EffectFourCC("TEXR") || property.fourcc == EffectFourCC("PMDL");
+  });
+  return had && !has;
+}
+
 void PutFourCC(std::vector<uint8_t>& out, uint32_t fourcc) {
   for (int shift = 24; shift >= 0; shift -= 8) {
     out.push_back(uint8_t(fourcc >> shift));
@@ -215,6 +243,18 @@ public:
       ++m_result.failed;
       Log(name + ": the converted effect does not read as a PART");
       return;
+    }
+    // A part that lost its texture or model would replace the disc's textured
+    // effect with an invisible one: keep the disc's, before anything is written.
+    for (const ConvertedPart& part : parts) {
+      const EffectNode* node = part.root ? &effect : FindNode(effect, part.id);
+      if (node != nullptr && SplitRetailPart(part.part.data(), part.part.size(), check, error) &&
+          LostLook(*node, check)) {
+        ++m_result.failed;
+        Log(name + ": " + (part.root ? std::string("the root") : "child " + EffectGuidString(part.id)) +
+            " has no texture, the disc's is kept");
+        return;
+      }
     }
     // Children first, so the root never names a child that was not written.
     for (size_t i = 1; i < parts.size(); ++i) {
