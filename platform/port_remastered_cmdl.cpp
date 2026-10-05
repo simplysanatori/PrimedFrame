@@ -1224,6 +1224,16 @@ bool ParseModel(const uint8_t* data, size_t size, Model& out, std::string& error
                         if (magic == kChunkSkhd) {
                           out.skinned = true;
                         }
+                        if (magic == kChunkHead && content.ok()) {
+                          const size_t left = content.remaining();
+                          const uint8_t* rest = content.Peek(left);
+                          for (size_t i = 0; rest != nullptr && i + 4 < left; ++i) {
+                            if (std::memcmp(rest + i, "ANUV", 4) == 0) {
+                              out.anuv.assign(rest + i + 4, rest + left);
+                              break;
+                            }
+                          }
+                        }
                         sawHeader = true;
                         return content.ok();
                       case kChunkMtrl:

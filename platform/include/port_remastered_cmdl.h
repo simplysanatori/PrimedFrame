@@ -222,6 +222,9 @@ struct Model {
   std::vector<uint16_t> lodMeshes;
   std::vector<ModelLod> lods;      // five ranges per LOD entry, in file order
   std::vector<float> lodRules;     // distance thresholds, when the file has them
+  // The HEAD chunk's ANUV sub-chunk after its tag, up to the chunk's end (parsed by
+  // port_remastered_anuv.h); empty when the model animates no UVs.
+  std::vector<uint8_t> anuv;
 };
 
 // Parses one extracted model resource. `size` is the length of `data`, which has to

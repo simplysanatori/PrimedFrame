@@ -7,6 +7,7 @@
 // the order of an addition, that is why.
 
 #include "port_remastered_convert.h"
+#include "port_remastered_anuv.h"
 
 #include <algorithm>
 #include <array>
@@ -570,10 +571,19 @@ const double kJointSplit = 0.05;
 const size_t kMaxSkinWeights = 4;
 const uint32_t kPbrFlag = 0x4000;  // kStateFlag_PortPBR
 
+struct AnuvCounts {
+  int animated = 0;          // materials given a texture matrix from an ANUV entry
+  int sharedSlots = 0;       // transforms dropped because a slot already had one
+  int scrollOverridden = 0;  // animated materials that also had a scroll of their own
+  int entryDisagree = 0;     // materials whose meshes name different entries
+  int notFlattened = 0;      // materials whose entry did not flatten
+};
+
 struct MapRef {
   bool has = false;
   ModelUuid id{};
   uint32_t coord = 0;
+  uint32_t authored = 0;  // the texcoord index the material named, before the AUVI chose its set
   int32_t wrap[2] = {1, 1};  // the sampler's U and V modes (0 clamp, 1 repeat, 2 mirror)
   std::string src;  // how the texture is named in a tag
   bool raw = false;  // a shader's own data (a ramp, noise): every texel and channel kept as it is
@@ -591,8 +601,8 @@ struct RemMaterial {
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
   bool tinted = false;     // its vertices carry a colour
   bool unlit = false;      // a screen: its own colour and glow, no lighting
-  bool gunRamp = false;    // the arm cannon's stripes: its ICAN ramp is read at the lit end
   bool glowLinear = false; // inverse-exposed: the emissive strength is drawn as is, uncompressed
+  int anuv = -1;  // the model's ANUV entry its meshes use, when it flattens
   bool mask = false;       // the base map's alpha masks the glow and is no opacity
   bool maskSquared = false; // ... squared (USE_DIFFUSE_AS_INCAN_MASK): kept squared in the map
   bool shell = false;      // a matcap shell: keeps a blended retail material's TEV
@@ -1548,11 +1558,10 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   if (out.maps[kEmissive].has &&
       std::find(std::begin(kShaderGunBody), std::end(kShaderGunBody), shader) != std::end(kShaderGunBody)) {
     // The arm cannon's lit stripes. Remastered reads the ramp (dark, red, orange,
-    // yellow along U; the stripe's soft edges down V) at a texcoord its vertex shader
-    // moves with a runtime matrix, and at rest the stripes are yellow. The set itself
-    // has U 0..0.5, mostly 0, which is the ramp's dark end, so it is moved onto the
-    // lit end, and the strength undoes kPbrEmissive, which left them a dim orange.
-    out.gunRamp = true;
+    // yellow along U; the stripe's soft edges down V) at a texcoord the model's ANUV
+    // animates: the set's U plus a 0..0.5 hump, looping every 1.033 s, so the stripes
+    // pulse along the ramp (the converter turns the curve into a texture matrix). The
+    // strength undoes kPbrEmissive, which left them a dim orange.
     out.emissive = s / kPbrEmissive;
   } else if (out.maps[kEmissive].has &&
              std::binary_search(std::begin(kShaderInverseExposure),
@@ -1753,6 +1762,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     uint32_t coords[std::size(mapRefs)];
     for (size_t i = 0; i < std::size(mapRefs); ++i) {
       coords[i] = mapRefs[i]->coord;
+      mapRefs[i]->authored = coords[i];
     }
     ApplyAuvi(mat, coords, std::size(coords));
     for (size_t i = 0; i < std::size(mapRefs); ++i) {
@@ -1865,7 +1875,8 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
 // it samples every map so all are bound. A layered material has three more,
 // maps 4-6: the second layer's base, MR and normal.
 Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx, uint32_t group,
-                 const uint32_t* coords, const RemMaterial& rem, uint32_t wrap, uint32_t cube) {
+                 const uint32_t* coords, const RemMaterial& rem, uint32_t wrap, uint32_t cube,
+                 const uint32_t* authored, const AnuvEntry* anim, AnuvCounts& counts) {
   const int nmaps = rem.layered ? kLayeredMaps : kMaps;
   Blob b;
   // ColorUnlit's colour, out of linear light, is (2 x gain)^(1/2.2) times the vertex
@@ -1952,9 +1963,31 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // A scroll of Remastered's own replaces retail's animations: the base map's
   // texcoord goes through GX_TEXMTX0, which a UV scroll (mode 2: offset, then
   // speed per second) loads.
-  const bool scroll = rem.scroll[0] != 0.0 || rem.scroll[1] != 0.0;
+  // The model's own ANUV animations win over both: each texcoord slot a map reads
+  // through a transform that moves goes through a matrix of its own (GX_TEXMTXn, n
+  // the animation's place in the list, as SetCurrent loads them), from the set the
+  // AUVI picked. `authored` is the texcoord index the material named, which is what
+  // picks the entry's transform.
+  std::vector<const AnuvTransform*> moving;
+  std::vector<int> matrixOf(n, -1);
+  for (int i = 0; anim != nullptr && i < nmaps; ++i) {
+    const uint32_t a = authored[i];
+    if (a >= 3 || anim->xf[a].Identity()) {
+      continue;
+    }
+    if (matrixOf[coords[i]] < 0) {
+      matrixOf[coords[i]] = int(moving.size());
+      moving.push_back(&anim->xf[a]);
+    } else if (moving[size_t(matrixOf[coords[i]])] != &anim->xf[a]) {
+      ++counts.sharedSlots;  // two transforms on one slot: the first drives both
+    }
+  }
+  const bool animated = !moving.empty();
+  counts.animated += animated ? 1 : 0;
+  const bool scroll = !animated && (rem.scroll[0] != 0.0 || rem.scroll[1] != 0.0);
+  counts.scrollOverridden += animated && (rem.scroll[0] != 0.0 || rem.scroll[1] != 0.0) ? 1 : 0;
   bool retailGens = false;
-  for (int i = 0; i < nmaps && !scroll; ++i) {
+  for (int i = 0; i < nmaps && !scroll && !animated; ++i) {
     const uint32_t c = coords[i];
     if (c < pm.texgen.size() && ((pm.texgen[c] >> 4) & 31) == 4 + c) {
       gens[c] = pm.texgen[c];
@@ -1964,11 +1997,27 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   if (scroll) {
     gens[coords[kBase]] = 0x1E8000 | ((4 + coords[kBase]) << 4);  // GX_TG_MTX3x4, TEXc, GX_TEXMTX0, GX_PTIDENTITY
   }
+  for (uint32_t c = 0; c < n; ++c) {
+    if (matrixOf[c] >= 0) {
+      gens[c] = 0x1E8000 | (uint32_t(3 * matrixOf[c]) << 9) | ((4 + c) << 4);  // TEXMTX0 + 3 per matrix
+    }
+  }
   P32(b, n);
   for (uint32_t g : gens) {
     P32(b, g);
   }
-  if (scroll) {
+  if (animated) {
+    std::vector<uint32_t> words;
+    for (const AnuvTransform* xf : moving) {
+      const std::vector<uint32_t> w = AnuvAnimWords(*xf);
+      words.insert(words.end(), w.begin(), w.end());
+    }
+    P32(b, uint32_t(2 + words.size()) * 4);  // the section's size, the count, then the animations
+    P32(b, uint32_t(moving.size()));
+    for (uint32_t w : words) {
+      P32(b, w);
+    }
+  } else if (scroll) {
     P32(b, 24);  // the count and one animation of five words
     P32(b, 1);
     P32(b, 2);
@@ -2466,6 +2515,37 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       m.blended = m.blended || (!m.mask && !m.cutout);
     }
   }
+  // The model's animated UVs: the map names, per mesh, the entry whose transforms move
+  // the material's texcoords. Meshes sharing a material are expected to agree; if they
+  // don't, the first one's entry is used.
+  Anuv anuv;
+  AnuvCounts anuvCounts;
+  if (!model.anuv.empty()) {
+    std::string anuvError;
+    if (!ParseAnuv(model.anuv.data(), model.anuv.size(), anuv, anuvError)) {
+      Log("  note: ANUV not read: " + anuvError);
+    }
+    std::vector<int> entryOf(mats.size(), -2);
+    for (size_t mi = 0; mi < model.meshes.size() && mi < anuv.matmap.size(); ++mi) {
+      const uint32_t mat = model.meshes[mi].material;
+      const int entry = anuv.matmap[mi] == 0xff || anuv.matmap[mi] >= anuv.entries.size() ? -1 : anuv.matmap[mi];
+      if (mat >= mats.size()) {
+        continue;
+      }
+      if (entryOf[mat] == -2) {
+        entryOf[mat] = entry;
+      } else if (entryOf[mat] != entry) {
+        ++anuvCounts.entryDisagree;
+      }
+    }
+    for (size_t i = 0; i < mats.size(); ++i) {
+      if (entryOf[i] >= 0 && anuv.entries[size_t(entryOf[i])].skip == AnuvSkip::None) {
+        mats[i].anuv = entryOf[i];
+      } else if (entryOf[i] >= 0) {
+        ++anuvCounts.notFlattened;
+      }
+    }
+  }
   // A liquid's model says nothing of how it looks (its maps are placeholders): the room does.
   // The material is a blended one of the liquid kind, whose second layer is only there
   // because the kinds are drawn by the layered shader.
@@ -2895,10 +2975,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // The texcoord arrays the output carries, each n long. A display list
   // attribute names one by its place in this list.
   std::vector<std::vector<double>> uvArrays;
-  std::vector<std::tuple<size_t, bool, bool>> uvKeys;
-  auto uvIndex = [&](size_t uvi, const char* role, bool ramp = false) -> uint32_t {
-    const bool squeezed = !ramp && role && opt.squeeze && opt.squeezeRole == role;
-    const std::tuple<size_t, bool, bool> key(uvi, squeezed, ramp);
+  std::vector<std::tuple<size_t, bool>> uvKeys;
+  auto uvIndex = [&](size_t uvi, const char* role) -> uint32_t {
+    const bool squeezed = role && opt.squeeze && opt.squeezeRole == role;
+    const std::tuple<size_t, bool> key(uvi, squeezed);
     const auto it = std::find(uvKeys.begin(), uvKeys.end(), key);
     if (it != uvKeys.end()) {
       return uint32_t(it - uvKeys.begin());
@@ -2911,12 +2991,6 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       const double lo = opt.squeezeTo[0], hi = opt.squeezeTo[1];
       for (size_t v = 0; v < n; ++v) {
         u[v * 2] = lo + (hi - lo) * std::clamp((u[v * 2] - u0) / (u1 - u0), 0.0, 1.0);
-      }
-    }
-    if (ramp) {
-      // RemMaterial::gunRamp: U 0..0.5 onto the ramp's yellow 0.8..1.
-      for (size_t v = 0; v < n; ++v) {
-        u[v * 2] = std::clamp(0.8 + 0.4 * u[v * 2], 0.0, 1.0);
       }
     }
     // Otherwise the coordinates stay as Remastered authored them (U can span
@@ -3048,13 +3122,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         coords[k] = uint32_t(c < ntexattr ? c : bset);
       }
       std::vector<uint32_t> attrs(ntexattr, 0xFFFFFFFFu);
-      // A gun ramp gets its own copy of the set, unless another map shares it.
-      bool ramp = rem.gunRamp && rt[kEmissive].has;
       for (int k = 0; k < nmaps; ++k) {
-        ramp = ramp && (k == kEmissive || coords[k] != coords[kEmissive]);
-      }
-      for (int k = 0; k < nmaps; ++k) {
-        attrs[coords[k]] = uvIndex(coords[k], nullptr, ramp && k == kEmissive);
+        attrs[coords[k]] = uvIndex(coords[k], nullptr);
       }
       // Each map's sampler, 2 bits an axis (GX: 0 clamp, 1 repeat, 2 mirror); a
       // map the material lacks, or one without a sampler, repeats.
@@ -3066,6 +3135,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           wrap = (wrap & ~(3u << shift)) | (uint32_t(w >= 0 && w <= 2 ? w : 1) << shift);
         }
       }
+      uint32_t authored[kLayeredMaps];
+      for (int k = 0; k < nmaps; ++k) {
+        authored[k] = both[k].has ? both[k].authored : 0xFFFFFFFFu;
+      }
+      const AnuvEntry* entry = rem.anuv >= 0 ? &anuv.entries[size_t(rem.anuv)] : nullptr;
       const uint32_t zero = uvIndex(0, nullptr);
       for (uint32_t& a : attrs) {
         a = a == 0xFFFFFFFFu ? zero : a;
@@ -3078,7 +3152,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         for (int k = 0; k < nmaps; ++k) {
           idx[k] = texIndex(si, tids[k]);
         }
-        setBlobs[si].push_back(PbrMaterial(pm, vtx, idx, group, coords, rem, wrap, cube));
+        AnuvCounts scratch;  // counted once, not once per material set
+        setBlobs[si].push_back(PbrMaterial(pm, vtx, idx, group, coords, rem, wrap, cube, authored, entry,
+                                           si == 0 ? anuvCounts : scratch));
       }
       continue;
     }
@@ -3114,7 +3190,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
       const uint32_t uvi = rt[rk].has ? rt[rk].coord : rt[kBase].has ? rt[kBase].coord : 0;
       if (r.uvSrc >= 0 && size_t(r.uvSrc) < ntexattr && attrs[r.uvSrc] == 0xFFFFFFFFu) {
-        attrs[r.uvSrc] = uvIndex(std::min<size_t>(uvi, maxuv), RoleName(role), role == Role::Emissive && rem.gunRamp);
+        attrs[r.uvSrc] = uvIndex(std::min<size_t>(uvi, maxuv), RoleName(role));
       }
     }
     for (uint32_t& a : attrs) {
@@ -3616,6 +3692,12 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   }
   const uint32_t outputModel = opt.outputModel != 0 ? opt.outputModel : opt.retail;
   Write(Hex8(outputModel) + ".CMDL", out);
+  if (!model.anuv.empty()) {
+    Log("  ANUV: " + std::to_string(anuvCounts.animated) + " materials animated, " +
+        std::to_string(anuvCounts.notFlattened) + " not flattened, " + std::to_string(anuvCounts.entryDisagree) +
+        " mesh entries disagree, " + std::to_string(anuvCounts.sharedSlots) + " shared slots, " +
+        std::to_string(anuvCounts.scrollOverridden) + " scrolls overridden");
+  }
   Log("  wrote " + Hex8(outputModel) + ".CMDL: " + std::to_string(n) + " verts, " + std::to_string(tris) + " tris, " +
       std::to_string(keys.size()) + " materials, " + std::to_string(nsurf) + " surfaces");
 }

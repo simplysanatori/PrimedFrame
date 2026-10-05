@@ -91,6 +91,51 @@ static void HandleTev(int tevCur, const uint* materialDataCur, const uint* texMa
   CGX::SetTevKAlphaSel(stage, static_cast< GXTevKAlphaSel >(matFlags >> 0x10 & 0xFF));
 }
 
+#ifdef TARGET_PC
+static float PortUvFloat(uint word) {
+  const uint host = SBig(word);
+  float f;
+  memcpy(&f, &host, sizeof(f));
+  return f;
+}
+
+// One argument of the port-only UV animation: a constant, or a looping curve of
+// samples read on the seconds clock. Returns the words it takes.
+static uint PortUvArg(const uint* w, float seconds, float& out) {
+  const uint kind = SBig(w[0]);
+  if (kind == 0) {
+    out = PortUvFloat(w[1]);
+    return 2;
+  }
+  const uint count = SBig(w[3]);
+  const float period = PortUvFloat(w[2]);
+  const float x = fmodf(seconds * PortUvFloat(w[1]), period);
+  const uint* samples = w + 4;
+  if (kind == 2) {
+    out = PortUvFloat(samples[static_cast< uint >(floorf(x + 0.5f))]);
+  } else {
+    const float lo = floorf(x);
+    const float frac = x - lo;
+    const uint a = static_cast< uint >(lo);
+    uint b = a + 1;
+    if (static_cast< float >(b) - period >= 0.f) {
+      b = static_cast< uint >(period);
+    }
+    out = (1.f - frac) * PortUvFloat(samples[a]) + frac * PortUvFloat(samples[b]);
+  }
+  return 4 + count;
+}
+
+// Words of the port-only UV animation starting at `w` (its type word included).
+static uint PortUvAnimSize(const uint* w) {
+  uint size = 1;
+  for (int i = 0; i < 5; ++i) {
+    size += SBig(w[size]) == 0 ? 2 : 4 + SBig(w[size + 3]);
+  }
+  return size;
+}
+#endif
+
 static uint HandleAnimatedUV(const uint* uvAnim, GXTexMtx texMtx, GXPTTexMtx ptTexMtx) {
   static const Mtx postMtx = {
       {0.5f, 0.0f, 0.0f, 0.5f},
@@ -221,6 +266,34 @@ static uint HandleAnimatedUV(const uint* uvAnim, GXTexMtx texMtx, GXPTTexMtx ptT
     CGX::LoadTexMtxImm(tmpPtMtx, ptTexMtx, GX_MTX3x4);
     return 3;
   }
+#ifdef TARGET_PC
+  case 0x50: {
+    // Port-only: the five TextureTransform2x4 arguments of a Remastered model's ANUV
+    // animation (port_remastered_anuv.h), each a constant or a looping curve.
+    const float seconds = CGraphics::GetSecondsMod900();
+    float v[5];
+    uint size = 1;
+    for (int i = 0; i < 5; ++i) {
+      size += PortUvArg(uvAnim + size, seconds, v[i]);
+    }
+    const float s = sinf(v[4]);
+    const float c = cosf(v[4]);
+    texMtx1[0][0] = c * v[2];
+    texMtx1[0][1] = -s * v[3];
+    texMtx1[0][2] = 0.f;
+    texMtx1[0][3] = (v[0] - 0.5f) * c - (v[1] - 0.5f) * s + 0.5f;
+    texMtx1[1][0] = s * v[2];
+    texMtx1[1][1] = c * v[3];
+    texMtx1[1][2] = 0.f;
+    texMtx1[1][3] = (v[0] - 0.5f) * s + (v[1] - 0.5f) * c + 0.5f;
+    texMtx1[2][0] = 0.f;
+    texMtx1[2][1] = 0.f;
+    texMtx1[2][2] = 1.f;
+    texMtx1[2][3] = 0.f;
+    CGX::LoadTexMtxImm(texMtx1, texMtx, GX_MTX3x4);
+    return size;
+  }
+#endif
   default:
     return 0;
   }
@@ -560,6 +633,9 @@ bool CCubeMaterial::PortNeedsModelMatrix() const {
       break;
     case 3:
       words += 3;
+      break;
+    case 0x50: // the port's UV animation takes no model matrix
+      words += PortUvAnimSize(words);
       break;
     default: // 6 takes the model's translation on its own
       return true;
