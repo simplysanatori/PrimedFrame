@@ -466,6 +466,7 @@ void CmdHelp() {
   Out("areas                      areas of the current world (index, MREA)");
   Out("warp <world> [mrea]        load a world (hex MLVL id or name prefix), optionally an area");
   Out("enter <area>               make a loaded area current, as crossing its dock does");
+  Out("room <area>                teleport to a loaded area's spawn point (the F1 room list)");
   Out("tp <x> <y> <z>             move the player");
   Out("face <yaw deg> | look <id> turn the player (yaw 0 = +y, 90 = -x)");
   Out("objs [filter]              objects whose class or name contains filter");
@@ -799,6 +800,17 @@ void CmdTp(CStateManager& mgr) {
     return Finish("usage: tp <x> <y> <z>");
   }
   TeleportPlayer(mgr, CVector3f(x, y, z), mgr.GetPlayer()->GetTransform().GetForward());
+  Finish();
+}
+
+// room <area>: the F1 debug panel's room teleport (to a loaded area's spawn point).
+void CmdRoom() {
+  char* end = nullptr;
+  const long area = sCmd.args.size() >= 2 ? std::strtol(sCmd.args[1].c_str(), &end, 10) : -1;
+  if (area < 0 || end == nullptr || *end != '\0') {
+    return Finish("usage: room <area index>");
+  }
+  PortDebug::RequestTeleport(int(area));
   Finish();
 }
 
@@ -1214,7 +1226,7 @@ void CmdFreeCam() {
 
 bool IsTickCommand(const std::string& name) {
   static const char* const names[] = {"status", "areas", "objs", "obj", "send", "give",
-                                      "take", "items", "heal", "god", "memo", "strg", "language", "tp", "face", "look", "warp",
+                                      "take", "items", "heal", "god", "memo", "strg", "language", "tp", "room", "face", "look", "warp",
                                       "tracker", "enter"};
   for (const char* n : names) {
     if (name == n) {
@@ -1255,6 +1267,8 @@ void RunTick(CStateManager& mgr) {
     CmdLanguage();
   } else if (name == "tp") {
     CmdTp(mgr);
+  } else if (name == "room") {
+    CmdRoom();
   } else if (name == "face") {
     CmdFace(mgr);
   } else if (name == "look") {

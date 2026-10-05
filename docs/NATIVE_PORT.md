@@ -1124,6 +1124,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   `worlds`, `areas`, `warp <world id or name prefix> [mrea]` (replies once the
   new world runs), `tp x y z`, `enter <area>` (makes an area of the current
   world the current one, as walking into it would; `tp` alone does not),
+  `room <area>` (the F1 room list's teleport, to the area's spawn point),
   `face <yaw>`, `look <id>`, `objs [filter]`,
   `obj <id>` (AI state, health, body state and animation, connections, whether
   it is frustum-culled),

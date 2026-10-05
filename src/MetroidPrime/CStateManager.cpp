@@ -1480,6 +1480,11 @@ void CStateManager::Update(float dt) {
     if (x850_world.get() != nullptr && x850_world->DoesAreaExist(aid) &&
         x850_world->GetArea(aid)->IsPostConstructed()) {
       GXDrawDone();
+      // A cinematic camera's id stays on the camera manager's stack when its area
+      // unloads (deletion never pops it), leaving the current camera dangling.
+      if (x870_cameraManager->IsInCinematicCamera()) {
+        x870_cameraManager->StopCinematics(*this);
+      }
       SetCurrentAreaId(aid);
       gpGameState->CurrentWorldState().SetAreaId(aid);
       x850_world->TravelToArea(aid, *this, CWorld::kATT_SkipAdjacent);
