@@ -242,7 +242,7 @@ vendored MusyX, not in the port, so measuring it there means instrumenting a
 vendored snapshot, and a report taken from the port's AI DMA path would describe a
 path that is idle in a normal run.
 
-### Choosing a GPU, and why the headless runs all use the NVIDIA one
+### Choosing a GPU
 
 The loader picks a GPU on its own, which is fine on a desktop and a problem on a
 machine with more than one. To pin it, restrict the ICD — no code change is
@@ -250,33 +250,25 @@ involved:
 
 ```sh
 VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json   # AMD (RADV)
-VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json   # NVIDIA
 ```
 
 Worth knowing on a multi-GPU machine: pinning a vendor is not the same as pinning
 a device. `MESA_VK_DEVICE_SELECT` did not move the choice off the Radeon RX 7900
 XTX onto the adjacent Raphael iGPU, so the selector matched a name the loader was
-not using. It does not matter for VRAM purposes — either AMD adapter has its own
-memory — but "use the integrated GPU" is not reliably expressible through the
+not using. "Use the integrated GPU" is not reliably expressible through the
 environment.
 
-**Headless runs on Xvfb only present with the NVIDIA driver.** Xvfb exposes no
-DRI3 extension, and Mesa's Vulkan WSI requires it:
+**Headless runs on Xvfb need Mesa's software WSI.** Xvfb exposes no DRI3
+extension, and Mesa's Vulkan WSI requires it:
 
 ```
 MESA: info: vulkan: No DRI3 support detected - required for presentation
 ```
 
-With the AMD ICD the run selects an adapter, reports its limits, creates the
-device, and then dies at surface creation with **0 frames** — so it never gets far
-enough to need the textures it was out of memory for. The same Xvfb works with
-the NVIDIA driver, which is why every automated run so far has used the discrete
-NVIDIA card. Software Vulkan (lavapipe) fails the same way, more abruptly,
-segfaulting inside Dawn's surface setup rather than logging.
-
-So on a headless box the GPU is not the thing to change; the display server is.
-Free VRAM on the card you are already presenting through, or run against a real X
-session or Wayland, where DRI3 exists.
+Without it the run creates the device and then dies at surface creation with
+**0 frames**. Set `MESA_VK_WSI_DEBUG=sw SDL_VIDEODRIVER=x11` (`tools/mprig.py`
+does). Software Vulkan (lavapipe) fails differently, segfaulting inside Dawn's
+surface setup rather than logging.
 
 ### Running out of device memory
 
@@ -289,11 +281,7 @@ A Vulkan allocation that does not fit is fatal:
 
 and the process stops. The message names an allocation and nothing else, so the
 first reading is that the port is holding too much. **It usually is not:**
-check what else is on the GPU first:
-
-```sh
-nvidia-smi --query-compute-apps=pid,used_memory --format=csv
-```
+check what else is on the GPU first.
 
 Not fixed: the port aborts on a fatal allocation with a message that does not say
 what was short, which a player on a busy GPU would see as an unexplained crash.
