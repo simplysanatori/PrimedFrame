@@ -59,7 +59,7 @@ body:
         2. Switch to the Wave Beam
         3. The game closes
     validations:
-      required: true
+      required: false
 
   - type: dropdown
     id: when
