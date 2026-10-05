@@ -1770,8 +1770,10 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.kindParam[1] = ShortestDouble(cch[2]->color[0]);
     out.kindParam[2] = ShortestDouble(cch[2]->color[1]);
     out.kindParam[3] = ShortestDouble(cch[0]->color[3]);
-    // An HDR strength (10-15) meant for Remastered's bloom, compressed like the emissive one.
-    out.kindStrength = std::sqrt(std::min(std::max(ShortestDouble(cch[0]->color[2]), 0.0), kPbrEmissiveMax));
+    // The ramp times CCH0.z (10-15) at inverse exposure (c4[0].z in both shaders), so like
+    // the inverse-exposed glows it is kept linear. The square root left the Wave gun's
+    // lines a dull violet.
+    out.kindStrength = std::max(ShortestDouble(cch[0]->color[2]), 0.0);
   }
   if (std::find(std::begin(kShaderPremulGlass), std::end(kShaderPremulGlass), shader) !=
           std::end(kShaderPremulGlass) &&
@@ -3214,7 +3216,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         rem.maps[kEmissive].raw = false;
         rem.maps[kEmissive].mean = true;
         rem.maps[kEmissive].coord = 0;  // one colour: any texcoord does
-        rem.emissive = rem.kindStrength * rem.kindStrength;
+        rem.emissive = rem.kindStrength / kPbrEmissive;
+        rem.glowLinear = true;
       }
       loopNotes += "gun-glow without vertex colours: drawn as the ramp's mean; ";
       rem.kind = 0;
