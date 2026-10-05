@@ -1271,7 +1271,11 @@ void CElementGen::RenderParticles() {
 
 #ifdef TARGET_PC
   if (PortVfxActive(*x28_loadedGenDesc)) {
-    PortRenderParticlesVfx();
+    // Render() runs RenderModels() first. A model PART's TEXR is its VMAT's ramp texture, not a
+    // sprite: drawing it as a card too put a 1x1 slab beside the mesh.
+    if (x28_loadedGenDesc->x31_26_PMUS || !PortVfxHasMesh(*x28_loadedGenDesc)) {
+      PortRenderParticlesVfx();
+    }
     return;
   }
 #endif
