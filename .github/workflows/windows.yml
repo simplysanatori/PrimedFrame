@@ -40,6 +40,7 @@ jobs:
           -DAURORA_ENABLE_TESTS=ON
           -DMP_BUILD_TESTS=ON
           -DBUILD_SHARED_LIBS=OFF
+          -DAURORA_SDL3_PROVIDER=vendor
           -DAURORA_SDL3_LINKAGE=static
           -DAURORA_NOD_LINKAGE=static
           -DOPENSSL_USE_STATIC_LIBS=TRUE
