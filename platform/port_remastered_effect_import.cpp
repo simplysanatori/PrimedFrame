@@ -418,6 +418,49 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"99636462-3886-4adb-8f13-547fde3072c9", 0xC735ACF6},  // 3CB05DFE root
     {"9a109eb0-d801-4a2f-850d-7198d1eab2ff", 0xB870F59E},  // 76C35773 L_Hand_Collision_LCTR
     {"a1a4b921-c191-4107-b71f-e1677bb932e3", 0x31D17F5E},  // FAC657CC R_wingBone2_2
+    // Looser, with PARTs already paired taken out (repeated until nothing
+    // changes): the same bones and at least half the frames (within one), or the
+    // same frames on other bones, or shared bones and half the frames. Hiding a
+    // pair from the two blocks above, each rule alone re-derives 46 to 67 of 83
+    // and gets none wrong.
+    {"0711875a-b194-4954-be1a-f9b4a6e04548", 0x1748E6C9},  // 53171F8F F_L_leg_LCTR
+    {"163efe59-8886-4ea0-a538-c39315572139", 0xEDFC9872},  // BF5F05CD Jaw_1
+    {"177ebe66-a31f-41c2-91f8-f71b52c773c2", 0xED5915A7},  // 17C86CF2 Jaw_1
+    {"20a4bb26-32c4-4f77-8350-bf19667da9f3", 0x56A963B3},  // BF5F05CD Head_1
+    {"2a1ec1c4-dc2f-4670-b4c7-2541a535d9e5", 0xF4148DCD},  // FAC657CC Jaw_1
+    {"34f97b0c-bcdb-4728-85c9-635dbe22b53c", 0xC08B2FB1},  // A7C039CB L_Index_2
+    {"3b01a3bf-b592-43b1-ba31-133ef2bd0760", 0x5196A2FC},  // 17C86CF2 root
+    {"3b74644c-62df-4608-bdd1-c547f6b33b8a", 0x2BD6F224},  // 020B6226 head
+    {"4d110001-1e20-49f6-8574-0d9f806c65e6", 0x54679833},  // 2D38C74A L_top_aft_engine_LCTR
+    {"4d82e203-8d12-489a-85a7-bdbb68d7036f", 0xF3CF5B37},  // 32FD91B0 Head_1
+    {"4ed39df9-6e90-46b4-9825-5242b9f4cd60", 0x0FCC468E},  // 76C35773 L_Foot_Collision_LCTR
+    {"57bcbbde-e59d-408e-affc-3661111d6411", 0xD3CF9BEF},  // 3AD6D2ED Skeleton_Root
+    {"5d048cd6-12d8-4765-95f9-b251b10d8a71", 0xDA8B9CA3},  // 76C35773 L_Hand_Collision_LCTR
+    {"6e01119f-c953-4cf3-971a-7c336ddf1826", 0x208E6EAE},  // 0C6B791C root
+    {"6edf8ea2-4c6c-4a72-8ec6-0f1771ec4901", 0xB696B078},  // 7E4ABB02 Light_LCTR
+    {"731e1664-082c-458a-9012-5a5ece6bf247", 0x808F6894},  // 17C86CF2 L_index_1
+    {"76ef45c3-9176-4e94-90a5-12f29a843cab", 0x89884F8F},  // EAD9FE87 Jaw_1
+    {"7dd0805c-a6ec-4e87-af25-4aa6bae7aad5", 0x8AA772D7},  // BF5F05CD Jaw_1
+    {"7e86ba34-f901-463a-895c-a50fe7ed06f2", 0x844AC944},  // FD49BDDE root
+    {"86e1c8df-8609-407f-82f8-a19080cfa612", 0x0D8B6D9E},  // 76C35773 Collar
+    {"92838da2-77c1-4588-af6e-2d9e288d85a1", 0xD7D47189},  // 76C35773 R_ankle
+    {"955fde05-805b-45ed-aa02-521667e14bb8", 0xDC30BC0E},  // 06B034E2 Skeleton_Root
+    {"97da18f8-a03d-4a45-baaa-8ce4d3195129", 0x50761EF5},  // 76C35773 L_wrist
+    {"9d5bc064-4635-4410-bb8d-68953850c96f", 0x13273A3D},  // 0C6B791C root
+    {"a486e31d-35bd-4e59-ac2e-c2cab060cbe0", 0x18D4E9BF},  // BF5F05CD Collar
+    {"b3d39690-fe32-4cd5-b28b-6e5b25f8fb60", 0x2E1D99A6},  // 020B6226 LCTR_MAGMOUTH
+    {"bbbfd5db-46e1-45d2-80a3-13b5cfbb1465", 0x24CAA0EC},  // 3AD6D2ED Skeleton_Root
+    {"be0d651a-7b1e-4549-8a20-334e6b5bf2c4", 0x693740BA},  // 3AD6D2ED Skeleton_Root
+    {"be10e48b-0395-4c71-bfdb-b61d9a09f008", 0x183E047C},  // 0E49E5F0 L_top_aft_engine_LCTR
+    {"c737177a-5871-45e0-b643-866ea8ad623b", 0x4183C102},  // 17C86CF2 L_index_2
+    {"cab0dc81-1a71-4e4c-94be-d5d3e3e3d069", 0x783C4BC6},  // A7C039CB root
+    {"daa2f6aa-a874-4cbe-bed9-9054b158dd8d", 0xBF706DC5},  // 17C86CF2 L_wingBone1_1
+    {"db9668b3-7ec5-45b8-93d0-ad9ff3781d87", 0x07EC5669},  // 3CB05DFE Skeleton_Root
+    {"e44b68bf-456f-48fd-a684-ee82250f2c0d", 0x96C4A451},  // 3CB05DFE L_Bottom_Arm_01
+    {"eaee1ff7-09b4-474f-880a-9fcb98dca3f9", 0xD73ECA76},  // 4082E602 root
+    {"f2f77041-f8d9-4a52-bfea-876f681127df", 0xB7A03C19},  // 06B034E2 blendspace
+    {"f4abd869-8dc7-409e-9758-3a1e1ea9eb85", 0x828D2134},  // 591F073D root
+    {"faf8ecdd-5a7f-4be2-b561-bd8b771dfe7f", 0x583E2851},  // FD49BDDE Head_1
     {"a499159b-e326-4265-aaf9-f6d3a209a328", 0xA320529F},  // 16DBF2CC Skeleton_Root
     {"abb0fdb6-5171-4843-8053-f8fa21156247", 0xBBC7F86C},  // BF5F05CD L_Flap_LCTR
     {"ae27f67c-7095-4084-8cbc-c4ac1c426da2", 0x29247705},  // 3CB05DFE L_Bottom_Arm_09
