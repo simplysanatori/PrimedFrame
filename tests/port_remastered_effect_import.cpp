@@ -157,7 +157,7 @@ void TestImport() {
       error = "no such texture";
       return false;
     }
-    width = 512;  // scaled down to 256
+    width = 512;  // written as a .dds, with a 64-texel TXTR stub
     height = 512;
     rgba.assign(size_t(width) * height * 4, 0xff);
     return true;
@@ -169,8 +169,8 @@ void TestImport() {
   const EffectImportResult result = ImportEffects(io);
   Check(result.candidates == 1 && result.written == 1 && result.failed == 0, "the carried-over effect is written");
   Check(result.parts == 2 && result.textures == 1, "its child and texture are written");
-  Check(written.size() == 3 && written.count("00001234.PART") == 1 && written.count("00ABC000.PART") == 1 &&
-            written.count("00ABC001.TXTR") == 1,
+  Check(written.size() == 4 && written.count("00001234.PART") == 1 && written.count("00ABC000.PART") == 1 &&
+            written.count("00ABC001.TXTR") == 1 && written.count("00ABC001.dds") == 1,
         "files are named by their retail and new ids");
   if (written.count("00001234.PART") == 0) {
     return;
@@ -203,8 +203,8 @@ void TestImport() {
   Check(lights == 1 && lfot == 2 && lfor == 0x40400000u, "the root's light is the disc's");
   Check(maxp == 5, "the root keeps its other properties");
   const std::vector<uint8_t>& txtr = written["00ABC001.TXTR"];
-  Check(txtr.size() > 12 && Be32(txtr.data()) == 9 && (txtr[4] << 8 | txtr[5]) == 256 && (txtr[6] << 8 | txtr[7]) == 256,
-        "the texture is an RGBA8 TXTR scaled to 256");
+  Check(txtr.size() > 12 && Be32(txtr.data()) == 9 && (txtr[4] << 8 | txtr[5]) == 64 && (txtr[6] << 8 | txtr[7]) == 64,
+        "the texture's TXTR is an RGBA8 stub of 64");
 }
 // A generator whose material has no texture that converts would lose its
 // TEXR: the import keeps the disc's PART and writes nothing.
