@@ -53,6 +53,13 @@ namespace aurora::webgpu {
 GraphicsConfig g_graphicsConfig{};
 } // namespace aurora::webgpu
 
+#include "webgpu/gpu_prof.hpp"
+namespace aurora::webgpu::gpu_prof {
+void set_enabled(bool) {}
+bool supported() { return false; }
+Result results() { return {}; }
+} // namespace aurora::webgpu::gpu_prof
+
 // --- GXState ---
 namespace aurora::gx {
 GXState g_gxState{};

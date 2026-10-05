@@ -5110,6 +5110,41 @@ void DrawRendering() {
                                                  "Post without the frame copy",
                                                  "Post without the depth reload",
                                                  "Post always reloading the depth"};
+    static bool gpuTimes = false;
+    if (ImGui::Checkbox("GPU pass times", &gpuTimes)) {
+      GXPortSetGpuTimes(gpuTimes ? GX_TRUE : GX_FALSE);
+    }
+    ImGui::SetItemTooltip("Not saved. Times each render pass on the GPU (timestamp queries), averaged\n"
+                          "over 60 frames. Total is the sum of the passes; span is first start to last end.");
+    if (gpuTimes) {
+      if (!GXPortGpuTimesSupported()) {
+        ImGui::TextUnformatted("timestamps unsupported");
+      } else {
+        GXPortGpuTime times[32];
+        float total = 0.f;
+        float span = 0.f;
+        const u32 count = GXPortGetGpuTimes(times, 32, &total, &span);
+        if (count == 0) {
+          ImGui::TextUnformatted("collecting...");
+        } else if (ImGui::BeginTable("gputimes", 3, ImGuiTableFlags_SizingFixedFit)) {
+          ImGui::TableSetupColumn("Pass");
+          ImGui::TableSetupColumn("ms");
+          ImGui::TableSetupColumn("x");
+          ImGui::TableHeadersRow();
+          for (u32 i = 0; i < count; ++i) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(times[i].name);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.3f", times[i].msPerFrame);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.2f", times[i].passesPerFrame);
+          }
+          ImGui::EndTable();
+          ImGui::Text("Total %.3f ms, span %.3f ms", total, span);
+        }
+      }
+    }
     int costTest = int(GXGetPBRCostTest());
     if (ImGui::Combo("Shading cost test", &costTest, kCostTests, IM_ARRAYSIZE(kCostTests))) {
       GXSetPBRCostTest(u32(costTest));

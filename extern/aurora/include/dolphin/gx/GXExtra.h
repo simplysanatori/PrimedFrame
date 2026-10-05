@@ -122,6 +122,20 @@ void GXSetPBRDebugView(u32 view);
 // copies (GXCopyTex without a clear copies nothing, so the frame stays one render pass;
 // what samples the copy sees stale texels).
 void GXSetPBRCostTest(u32 test);
+// Port extension: per-render-pass GPU times from timestamp queries, for seeing what each pass
+// (bloom levels, EFB passes, ...) costs on a GPU where no profiler can be attached. Off by default
+// and free while off. Averages over 60-frame windows, so nothing is published for the first
+// second after it is switched on.
+typedef struct {
+  const char* name; // static lifetime
+  float msPerFrame;
+  float passesPerFrame;
+} GXPortGpuTime;
+void GXPortSetGpuTimes(GXBool on);
+// 0 if the device has no timestamp queries. Writes up to `max` entries, slowest first, and
+// returns how many there are; the totals are the sum of all passes and first begin to last end.
+GXBool GXPortGpuTimesSupported(void);
+u32 GXPortGetGpuTimes(GXPortGpuTime* out, u32 max, float* totalMs, float* spanMs);
 u32 GXGetPBRCostTest(void);
 // Aurora extension: a three-piece tone curve over the lit colour x, which is taken as
 // already exposed (see GX_AURORA_SET_PBR_TONE). Row 0 is the toe, (a x + b) x^2 + c x below

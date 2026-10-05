@@ -2,6 +2,7 @@
 
 #include "../logging.hpp"
 #include "../webgpu/gpu.hpp"
+#include "../webgpu/gpu_prof.hpp"
 #include "readback_slots.hpp"
 #include "recording.hpp"
 
@@ -551,7 +552,7 @@ wgpu::BindGroup bind_group(uint32_t slot, const wgpu::TextureView& source, const
   return group;
 }
 
-void draw(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline, uint32_t slot,
+void draw(const wgpu::CommandEncoder& cmd, const char* name, const wgpu::RenderPipeline& pipeline, uint32_t slot,
           const wgpu::TextureView& source, const wgpu::TextureView& bloomSource, const wgpu::TextureView& target,
           bool load, const wgpu::TextureView& resolve = {}, const wgpu::TextureView& lutA = {},
           const wgpu::TextureView& lutB = {}) {
@@ -567,6 +568,7 @@ void draw(const wgpu::CommandEncoder& cmd, const wgpu::RenderPipeline& pipeline,
       .label = "Bloom Pass",
       .colorAttachmentCount = 1,
       .colorAttachments = &attachment,
+      .timestampWrites = webgpu::gpu_prof::pass_writes(name),
   };
   const auto pass = cmd.BeginRenderPass(&passDescriptor);
   pass.SetPipeline(pipeline);
@@ -636,7 +638,7 @@ void encode_average(const wgpu::CommandEncoder& cmd, float exposure, const wgpu:
   if (!buffer) {
     return;
   }
-  draw(cmd, g_state.average, 0, frame, frame, g_state.averageView, false);
+  draw(cmd, "Bloom average", g_state.average, 0, frame, frame, g_state.averageView, false);
   const wgpu::TexelCopyTextureInfo source{.texture = g_state.averageTexture};
   const wgpu::TexelCopyBufferInfo target{
       .layout = {.bytesPerRow = AverageRowBytes, .rowsPerImage = AverageSize},
@@ -734,12 +736,12 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   slot = 0;
   auto& levels = g_state.levels;
   if (bloom) {
-    draw(cmd, g_state.bright, slot++, g_state.frameView, g_state.frameView, levels[0].view, false);
+    draw(cmd, "Bloom bright", g_state.bright, slot++, g_state.frameView, g_state.frameView, levels[0].view, false);
     for (uint32_t i = 1; i < Levels; ++i) {
-      draw(cmd, g_state.down, slot++, levels[i - 1].view, levels[i - 1].view, levels[i].view, false);
+      draw(cmd, "Bloom down", g_state.down, slot++, levels[i - 1].view, levels[i - 1].view, levels[i].view, false);
     }
     for (uint32_t i = Levels - 1; i-- > 0;) {
-      draw(cmd, g_state.up, slot++, levels[i + 1].view, levels[i + 1].view, levels[i].view, true);
+      draw(cmd, "Bloom up", g_state.up, slot++, levels[i + 1].view, levels[i + 1].view, levels[i].view, true);
     }
   } else {
     slot = PassCount - 1;
@@ -752,7 +754,7 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   }
   // The composite writes every pixel without blending, so the frame need not be loaded first
   // (a full-resolution read on a tile-based GPU).
-  draw(cmd, g_state.composite, slot++, g_state.frameView, levels[0].view, target.view, false,
+  draw(cmd, "Bloom composite", g_state.composite, slot++, g_state.frameView, levels[0].view, target.view, false,
        samples > 1 ? webgpu::g_frameBufferResolved.view : wgpu::TextureView{}, lutA, lutB);
 }
 } // namespace

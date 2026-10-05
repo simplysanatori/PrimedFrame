@@ -936,11 +936,10 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
         }
         requiredFeatures.push_back(feature);
       }
-#ifdef TRACY_ENABLE
+      // Per-pass GPU times (gpu_prof); Dawn's quantization of them is off in disableToggles.
       if (feature == wgpu::FeatureName::TimestampQuery) {
         requiredFeatures.push_back(feature);
       }
-#endif
     }
     std::string featureList;
     for (auto featureName : requiredFeatures) {

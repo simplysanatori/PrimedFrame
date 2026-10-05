@@ -3,6 +3,7 @@
 #include "dolphin/gx/GXAurora.h"
 #include "../../gfx/bloom.hpp"
 #include "../../gfx/probe.hpp"
+#include "../../webgpu/gpu_prof.hpp"
 
 #include <bit>
 #include <cstring>
@@ -452,4 +453,26 @@ void GXSetPBRLightScale(f32 diffuse, f32 f0, f32 alpha, GXBool alphaReplaces) {
   GX_WRITE_F32(alpha);
   GX_WRITE_U32(now.alphaReplaces);
 }
+}
+
+void GXPortSetGpuTimes(GXBool on) { aurora::webgpu::gpu_prof::set_enabled(on != GX_FALSE); }
+
+GXBool GXPortGpuTimesSupported(void) { return aurora::webgpu::gpu_prof::supported() ? GX_TRUE : GX_FALSE; }
+
+u32 GXPortGetGpuTimes(GXPortGpuTime* out, u32 max, float* totalMs, float* spanMs) {
+  const auto result = aurora::webgpu::gpu_prof::results();
+  if (totalMs != nullptr) {
+    *totalMs = result.totalMs;
+  }
+  if (spanMs != nullptr) {
+    *spanMs = result.spanMs;
+  }
+  u32 count = 0;
+  for (const auto& entry : result.entries) {
+    if (out == nullptr || count >= max) {
+      break;
+    }
+    out[count++] = {entry.name, entry.msPerFrame, entry.passesPerFrame};
+  }
+  return out == nullptr ? u32(result.entries.size()) : count;
 }

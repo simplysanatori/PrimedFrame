@@ -498,6 +498,7 @@ void CmdHelp() {
   Out("roomgeo sort on|off       draw opaque room models nearest first (default on)");
   Out("roomgeo prepass on|off    depth-only pass first for cut-out room models (default off)");
   Out("roomgeo costtest <n>      PBR shading cost test: 0 off, 1 flat, 2 no lights, 3 no volume, 4 no cube, 5 no normal maps, 6 no ORM/emissive, 7 maps only, 8 no aniso, 9 no aniso or mip blend, 10 no post-processing, 11 no screen copies");
+  Out("gputimes on|off|show      per-pass GPU times (timestamp queries; 60-frame averages; needs a GPU that has them)");
   Out("roomgeo script            Remastered's camera zones, counters and groups in each loaded area, and the camera");
   Out("roomgeo group <n> show|hide   set a group until its script next changes it");
   Out("roomgeo pick              the instances the middle of the view looks through, nearest first, and the");
@@ -1553,6 +1554,33 @@ void RunFrame() {
         PortRoomEnv::BloomEnabled() ? "on" : "off",
         PortRoomEnv::ColorGradeEnabled() ? "on" : "off", PortRoomEnv::VolumesEnabled() ? "on" : "off",
         PortRoomEnv::AmbientScale(), kViews[std::clamp(PortRoomEnv::VolumeView(), 0, 2)]);
+    Finish();
+  } else if (name == "gputimes") {
+    const std::string arg = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "show";
+    if (arg == "on" || arg == "off") {
+      GXPortSetGpuTimes(arg == "on" ? GX_TRUE : GX_FALSE);
+      Out("gputimes %s", arg.c_str());
+    } else if (arg == "show") {
+      if (!GXPortGpuTimesSupported()) {
+        Out("timestamps unsupported");
+      } else {
+        GXPortGpuTime times[32];
+        float total = 0.f;
+        float span = 0.f;
+        const u32 count = GXPortGetGpuTimes(times, 32, &total, &span);
+        if (count == 0) {
+          Out("no data yet (gputimes on, then wait 60+ frames)");
+        }
+        for (u32 i = 0; i < count; ++i) {
+          Out("%-24s %7.3f ms  x%.2f", times[i].name, times[i].msPerFrame, times[i].passesPerFrame);
+        }
+        if (count != 0) {
+          Out("total %.3f ms, span %.3f ms (per frame)", total, span);
+        }
+      }
+    } else {
+      Out("gputimes on|off|show");
+    }
     Finish();
   } else if (name == "roomgeo") {
     if (sCmd.args.size() > 1) {
