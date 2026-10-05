@@ -251,11 +251,51 @@ void TestLostTexture() {
   Check(log.size() == 1 && log[0] == "00001234.PART: the root has no texture, the disc's is kept",
         "the log says the disc's PART is kept");
 }
+
+// An effect Remastered gave a fresh id replaces the retail PART of the same
+// pak name (BombExplo, 1EF973EA).
+void TestNamedEffect() {
+  std::vector<uint8_t> genp(0x3c, 0);
+  std::memcpy(genp.data(), "RFRM", 4);
+  std::memcpy(genp.data() + 0x14, "GENP", 4);
+  PutGenerator(genp, true);
+  PutProperty(genp, "MAXP", 1);
+  PutFourCC(genp, "CNST");
+  Put32(genp, 5);
+  PutProperty(genp, "_END", 4);
+  Put32(genp, 0);
+
+  // fb4d5181-cd7e-4c5e-8b11-afe35d30e231, in pak order.
+  const EffectGuid effectId = {0xfb, 0x4d, 0x51, 0x81, 0xcd, 0x7e, 0x4c, 0x5e,
+                               0x8b, 0x11, 0xaf, 0xe3, 0x5d, 0x30, 0xe2, 0x31};
+  std::map<std::string, std::vector<uint8_t>> written;
+  EffectImportIO io;
+  io.effects = {effectId, Fresh(0x60)};
+  io.read = [&](uint32_t type, const EffectGuid& id, std::vector<uint8_t>& out, std::string& error) {
+    if (type == kGenp && id == effectId) {
+      out = genp;
+      return true;
+    }
+    error = "not in the image";
+    return false;
+  };
+  io.typeOf = [](const EffectGuid&) -> uint32_t { return 0; };
+  io.retailId = [](uint32_t id) { return id == 0x1EF973EA; };
+  io.freshId = [](uint32_t) { return 0x00ABC000u; };
+  io.write = [&](const std::string& name, const std::vector<uint8_t>& data) {
+    written[name] = data;
+    return true;
+  };
+  const EffectImportResult result = ImportEffects(io);
+  Check(result.candidates == 1 && result.written == 1, "the named effect is a candidate and written");
+  Check(written.size() == 1 && written.count("1EF973EA.PART") == 1, "it replaces the PART of its name");
+}
 } // namespace
 
 int main() {
   TestImport();
   TestLostTexture();
+  TestNamedEffect();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

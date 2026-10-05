@@ -165,7 +165,7 @@ identity or the `KPIN(CREL(LTHN(RAND(0,1)), .5, 1, -1))` mirror). **PMDV**
 (`CNST n`, n model ids) follows PMDL (the first id) for a
 `SLCT(IRND(0, n-1), ARRY)` of Remastered-only CMDLs, which the import converts
 standalone under fresh ids. Anything else of those shapes is left out. With them
-77 of 78 effects import (191 PARTs, 12 textures of which 1 flipbook, 9 models); 9557D0C2 keeps the disc's PART, since its child C6B5B5A9 uses an ATX2 texture, which does not convert yet.
+With the 58 name matches (below), 132 of 136 effects import (389 PARTs, 79 textures of which 1 flipbook, 41 models). 9557D0C2 keeps the disc's PART, since its child C6B5B5A9 uses an ATX2 texture, which does not convert yet. PlasmaCharge, PlasmaMuzzle and PlasmaAuxMuzzle (D3053354, 8D7BBFB2, B0F9DBE6) keep theirs too, since their root's material texture doesn't resolve.
 
 The `scan` command prints each failure with its offset and the bytes there;
 those are the grammar gaps to close next.
@@ -183,7 +183,9 @@ those back to retail PARTs (checked 2026-10-05):
   58 have exactly one retail PART of the same name (the beam muzzles, charges,
   Xfers, wakes, grapple, bombs...); 32 are new or renamed (`BallInnerGlow_*`,
   `*ChargeMuzzleFlash`, `pwrBase_placeholder`...). The other 1264 fresh GENPs
-  have no name.
+  have no name. The import takes the 58 as candidates through `kNamedEffects`
+  (`port_remastered_effect_import.cpp`, a table of id and retail PART, since
+  the importer doesn't read pak names).
 - By reference: 20 GENPs are named by another GENP, 19 of them fresh, and every
   one of those 19 is named only by fresh effects. No effect with a retail id
   leads to a fresh one. Room scripts and actor events were not paired.

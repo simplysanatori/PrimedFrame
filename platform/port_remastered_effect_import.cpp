@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <optional>
 
 namespace PortRemastered {
 namespace {
@@ -125,6 +126,88 @@ std::vector<uint8_t> WithDiscLight(const std::vector<RetailPartProperty>& conver
   }
   PutFourCC(out, EffectFourCC("_END"));
   return out;
+}
+
+// Effects Remastered gave a fresh id, matched to the retail PART by the name
+// both paks give it (the player's and global paks'). Only names that one
+// retail PART has; the 8 effects that kept a retail id all match their names.
+struct NamedEffect {
+  const char* id;  // as IdToString prints it (EffectGuidString of the stored id)
+  uint32_t retail;
+};
+constexpr NamedEffect kNamedEffects[] = {
+    {"fb4d5181-cd7e-4c5e-8b11-afe35d30e231", 0x1EF973EA},  // BombExplo
+    {"bbbb849a-d896-489f-83da-ef76c010888d", 0xC0E95E90},  // BombSet
+    {"ca6fc8a1-30a2-441f-bf7a-12b6acd4e938", 0x39F0F5C6},  // BoostBallGlow
+    {"ceaee14a-a690-44cc-a90b-0bd34935ae6c", 0x523048E0},  // BusterLight
+    {"9c215d05-e582-4897-b958-85eb83c9f4f3", 0x9B564161},  // BusterMuzzle
+    {"c1f18af2-c6e5-486b-86e0-0609316733f2", 0x04E29C5B},  // BusterSparks
+    {"9499e42a-54bc-4402-8557-aa300f3db8de", 0xD8DB86CA},  // DirtWake
+    {"97280bbe-5eef-42b6-b5bd-096b8c089c76", 0xF0C02F49},  // Effect_Ash
+    {"70108314-fb42-4090-9ab4-b1c8c6570ee2", 0xA6B67F45},  // Effect_FirePop
+    {"4dd6affe-ffd8-40ed-a056-1a77b9dcb9d6", 0xE6FC0230},  // Effect_IceBreak
+    {"7bb7ac6f-16a2-45f0-a103-f634fe027768", 0x017DFFD5},  // Effect_IcePop
+    {"103f6797-5ea0-4c2b-9c9b-eafdce3e48f4", 0xABE56164},  // Effect_MorphBallIceBreak
+    {"9c56f6df-a9ae-403b-8da3-6a6ec6405971", 0x2D65511C},  // Effect_OnFire
+    {"7cbb6382-2788-4225-b3a2-3430ba5558b7", 0xF42646D4},  // FlameMuzzle
+    {"416c81e0-e3ab-4f72-b3f5-3aab7b851ba6", 0xD5A18910},  // grappleClaw
+    {"9905ed28-e8ac-4231-9b05-ca49e338eb2d", 0xCFC222B0},  // grappleHit
+    {"3727f6c9-0f4f-4369-ba8f-b22e71bfdd1d", 0x2CC7F7F5},  // grappleMuzzle
+    {"14e59c07-ea96-4f88-ae84-a8762b7beab8", 0x87C0BDB2},  // grappleSegment
+    {"f8502f32-276d-4db5-998c-f57c7a2cb00b", 0x7072A62D},  // holoTransition
+    {"7114b32f-78b8-45fd-adc0-ab905c7671eb", 0x1BBFC5A6},  // Ice2nd_1
+    {"c8aa99d2-f7a9-4bc0-bff1-1fb1b42c1990", 0xF97661F1},  // Ice2nd_2
+    {"a6c1a9fb-e480-4b50-8e16-49ab849c86b7", 0x21F4D9AB},  // IceAuxMuzzle
+    {"0649036e-0b4f-450f-b33d-01e9045a29c9", 0x6ECDC394},  // IceCharge
+    {"91b571dc-1b15-4053-8e1a-8744abd2f2e1", 0x9ADE39C3},  // IceMuzzle
+    {"b589f70b-1853-490e-bba8-a4f120563ddd", 0xC82F2028},  // IceSmoke
+    {"42f41dcd-0da3-40e2-b4ec-d1c6096eda5b", 0xDE1A1140},  // IceSpread1
+    {"b28d85f4-67a3-4664-981f-6fa9bf044f93", 0x045DDB2F},  // IceXfer
+    {"ec64d113-7337-4ce0-bda7-0f885bfd0f50", 0x43A81EEC},  // MorphBallTransitionFlash
+    {"56844d59-1a0f-4313-a6a8-533292dfd75c", 0x8B8CD2F6},  // MudWake
+    {"2593f90a-21cf-4249-a3f2-64ef7fabe99b", 0xF639D24E},  // NFTMainFire
+    {"369cc052-6d7b-44d0-8a33-e18f6fc67f85", 0xD67EE2D9},  // NFTMainSmoke
+    {"d0766ccc-22d9-444f-8529-a8a6ada6cbdd", 0x1F4FD93A},  // NFTSecondaryFire
+    {"bfe5b4c5-421f-41d1-9554-6d3e00f72066", 0xAD51661F},  // NFTSecondarySmoke
+    {"93004165-738e-404b-ac29-1f1a059719ae", 0x7DA3DEE5},  // NFTSecondarySparks
+    {"58175f6a-d712-4852-b350-13321240dc65", 0x7754967A},  // Phazon2nd_1
+    {"c8536e8f-2e70-41b2-82b9-1c8410ac9c6f", 0x1C56F6B1},  // PhazonMuzzle
+    {"4474842f-b051-45be-b72b-b7d03128d755", 0x18CB74EF},  // PhazonWake
+    {"3210e9de-2f83-48f3-9168-d8a3587be355", 0x6C35D8FE},  // PhazonWakeOrange
+    {"541f775f-c171-4b2e-a182-6ada992a21dc", 0xC0A88A87},  // Plasma2nd_1
+    {"f494900e-6c34-41bb-a372-9f6f1fe6468a", 0xB0F9DBE6},  // PlasmaAuxMuzzle
+    {"b2f2c408-d488-43ab-8562-e85bca2b654f", 0xD3053354},  // PlasmaCharge
+    {"d682fa42-228c-445a-856f-18581ed7866d", 0x8D7BBFB2},  // PlasmaMuzzle
+    {"6a83fb12-e81e-499a-9014-15a539f53ec9", 0x5721EE48},  // PlasmaXfer
+    {"51d96194-91b7-416e-8c37-13031270163e", 0x3183F0A0},  // Power2nd_1
+    {"4bc8b7ca-ce44-4e88-9e8f-a764138a9601", 0x7E8ADCBA},  // PowerBombExplo
+    {"835d9ae7-2f75-48ab-ac9f-b9827b8740ad", 0x4CE91ECB},  // PowerCharge
+    {"597c6fe6-6fe7-439b-956b-87728a5a067f", 0x0F21403B},  // PowerMuzzle
+    {"411dae2f-d4be-4324-9433-7822f188928c", 0x3DD09610},  // PowerXfer
+    {"d3abe44e-d8a8-473b-a60e-c2289eb6a74d", 0x8185DEB3},  // RainWake
+    {"c82dd5d6-f6d9-4908-9794-f3fd62627c32", 0xF421ED31},  // SandWake
+    {"5c2798a0-12e5-4153-b187-0594d7f8fa5d", 0x60817832},  // ShotSmoke
+    {"81cb1d8a-4cb4-4469-8127-d6c761752e7c", 0xC9D4BA43},  // SnowWake
+    {"026c1c9a-df22-4230-937b-29e785637252", 0x22B005A1},  // SpiderBallMagnetEffect
+    {"7e1ca0b3-d242-4724-b1dc-ecb96e43bc73", 0xE1341D07},  // WallSpark
+    {"1b44823d-c587-4b51-9c1d-65144c5fcac5", 0x629C848F},  // Wave2nd_3
+    {"50b67be4-15f3-4230-9147-deb8d6a47248", 0x7E520CBC},  // WaveAuxMuzzle
+    {"a0d802cb-6516-4a42-9c1d-7614e6122ca9", 0x2BC80C63},  // WaveCharge
+    {"59dba49a-777f-42eb-ab47-c5dd91a28d3e", 0x0237C838},  // WaveXfer
+};
+
+// The retail PART an effect replaces: the id it carried over, else its name's.
+std::optional<uint32_t> RetailEffect(const EffectGuid& id) {
+  if (const std::optional<uint32_t> retail = EffectRetailId(Swap(id))) {
+    return retail;
+  }
+  const std::string text = EffectGuidString(Swap(id));
+  for (const NamedEffect& named : kNamedEffects) {
+    if (text == named.id) {
+      return named.retail;
+    }
+  }
+  return std::nullopt;
 }
 
 class Importer {
@@ -304,7 +387,7 @@ public:
   }
 
   void Effect(const EffectGuid& id) {
-    const std::optional<uint32_t> retail = EffectRetailId(Swap(id));
+    const std::optional<uint32_t> retail = RetailEffect(id);
     if (!retail || !m_io.retailId(*retail)) {
       return;
     }
