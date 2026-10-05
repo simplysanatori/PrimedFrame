@@ -325,7 +325,10 @@ void CElementGen::PortRenderParticlesVfx() {
 
     const float sx = p.x2c_lineLengthOrSize;
     const float sy = p.xPortSsze;
-    const float theta = hasRota ? p.x30_lineWidthOrRota * (3.14159265358979f / 180.f) : 0.f;
+    // Oriented quads keep their direction: a spin would turn velocity streaks into random lines
+    // (Plasma2nd_1's sparks have ROTA -360..360), and retail's ORNT path never rotates either.
+    const float theta =
+        hasRota && vfx.vorn == 0 ? p.x30_lineWidthOrRota * (3.14159265358979f / 180.f) : 0.f;
     const float cosT = std::cos(theta);
     const float sinT = std::sin(theta);
 

@@ -229,7 +229,7 @@ static bool PortReadVfxMat(CPortVfxData& vfx, CInputStream& in, u32 nbytes, CSim
   // knows: it is skipped whole, before anything is built, and the PART draws as retail.
   constexpr u32 kTexWords = 11;
   constexpr u32 kTailWords = 7 + 2 + 1 + 3 * 11 + 3;
-  if (version != 2 || ntex > 4 || nbytes != (kTexWords * ntex + kTailWords) * 4 + 16) {
+  if (version != 2 || ntex > 4 || blend > 4 || nbytes != (kTexWords * ntex + kTailWords) * 4 + 16) {
     skipRest();
     return true;
   }
@@ -431,6 +431,11 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
     case SBIG('PIRN'):
       GetClassID(in);
       desc->xPortIrnd = in.ReadLong() != 0;
+      break;
+    // Port-only: converted Remastered model particles that face the camera (xPortFaceCamera).
+    case SBIG('PFCM'):
+      GetClassID(in);
+      desc->xPortFaceCamera = in.ReadLong() != 0;
       break;
     // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
     case SBIG('VMAT'): {

@@ -1399,8 +1399,9 @@ void CElementGen::RenderParticles() {
 #ifdef TARGET_PC
   if (PortVfxActive(*x28_loadedGenDesc)) {
     // Render() runs RenderModels() first. A model PART's TEXR is its VMAT's ramp texture, not a
-    // sprite: drawing it as a card too put a 1x1 slab beside the mesh.
-    if (x28_loadedGenDesc->x31_26_PMUS || !PortVfxHasMesh(*x28_loadedGenDesc)) {
+    // sprite: drawing it as a card too put a 1x1 slab beside the mesh, or round each of the
+    // PMDV variants RenderModels draws as retail models.
+    if (x28_loadedGenDesc->x31_26_PMUS || !x28_loadedGenDesc->x48_PMDL) {
       PortRenderParticlesVfx();
     }
     return;
@@ -2734,6 +2735,15 @@ void CElementGen::RenderModels() {
     rot.RotateLocalY(CRelAngle::FromDegrees(pmrtVal.GetY()));
     rot.RotateLocalX(CRelAngle::FromDegrees(pmrtVal.GetX()));
   }
+#ifdef TARGET_PC
+  // Port-only PFCM (converted Remastered effects): each particle's Y points away from the camera,
+  // then PMRT applies, in place of the emitter's orientation. The camera is taken into partTrans's
+  // space (the model matrix is x10c_globalScaleTransform * partTrans * x178_localScaleTransform).
+  const bool faceCamera = x28_loadedGenDesc->xPortFaceCamera;
+  const CTransform4f pmrtRot = rot;
+  const CVector3f cameraPos =
+      x13c_globalScaleTransformInverse * CGraphics::GetViewMatrix().GetTranslation();
+#endif
   rot = orient * rot;
 
   CParticleGlobals::SetEmitterTime(x74_curFrame);
@@ -2771,6 +2781,21 @@ void CElementGen::RenderModels() {
         partTrans.AddTranslation(orient * pmopVec);
       }
 
+#ifdef TARGET_PC
+      if (faceCamera) {
+        CTransform4f look = CTransform4f::LookAt(cameraPos, partTrans.GetTranslation());
+        look.SetTranslation(CVector3f::Zero());
+        CTransform4f partPmrt = pmrtRot;
+        if (!pmrtConst && x28_loadedGenDesc->x5c_PMRT != NULL) {
+          CVector3f pmrtVal(0.f, 0.f, 0.f);
+          x28_loadedGenDesc->x5c_PMRT->GetValue(partFrame, pmrtVal);
+          partPmrt = CTransform4f::RotateZ(CRelAngle::FromDegrees(pmrtVal.GetZ()));
+          partPmrt.RotateLocalY(CRelAngle::FromDegrees(pmrtVal.GetY()));
+          partPmrt.RotateLocalX(CRelAngle::FromDegrees(pmrtVal.GetX()));
+        }
+        partTrans *= look * partPmrt;
+      } else
+#endif
       if (pmrtConst) {
         partTrans *= rot;
       } else if (x28_loadedGenDesc->x5c_PMRT != NULL) {

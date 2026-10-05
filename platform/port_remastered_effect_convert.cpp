@@ -291,7 +291,9 @@ bool FlipbookTransform(const EffectValue& value, bool& flip) {
 // aurora::gfx::vfx::Feature.
 constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kIndirect = 16, kDepthSoften = 32,
                    kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256, kColorIndexing = 512, kAddColor = 1024,
-                   kOpacityFade = 2048;
+                   kOpacityFade = 2048, kColorRgbOnly = 4096;
+// aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders.
+constexpr uint32_t kBlendMultiply = 4;
 
 enum class Role { Color, Opacity, Ramp, Ramp2, Threshold, Indirect, Palette };
 
@@ -336,6 +338,7 @@ struct Recipe {
   std::vector<SrcSpec> sources;
   int addRow = -1;         // PMTR row of the AddColor (rgb, scale); -1: none
   bool unitCch0 = false;   // the shader also reads CCH0.z/.w (fade gain/bias): only the identity (1, 0) is expressible
+  bool frameBuffer = false; // a FrameBuffer_* shader (scene x vc.rgb, warped by CCH0.xy): drawn as a multiply
 };
 
 // RECIPES.md "(b) Per shader" and RECIPES-all.md. Derived from each shader's
@@ -343,6 +346,17 @@ struct Recipe {
 // maths.
 const Recipe* RecipeOf(uint32_t shader) {
   static const std::vector<Recipe> table = {
+      // FrameBuffer_Indirect(_Opacity)_Unlit: the scene behind at the fragment, offset by TCH0's
+      // (resp. TCH1's) warp x CCH0.xy, times vc.rgb; alpha vc.a (resp. x TCH0.x). The warp is dropped.
+      {0x3db95827, 0, {}, {}, -1, false, true},
+      {0xd955396d, kOpacityTex,
+       {{"TCH0", Role::Opacity, -1, -1}},
+       {}, -1, false, true},
+      // VFX_IceChargeBeam (Lit): the PMTR colour pair blended by BCLR.x x NMAP.x, plus BCLR.rgb lit
+      // through NMAP, x vc.rgb; alpha is vc.a alone. Approximated as BCLR.rgb x vc.rgb.
+      {0x9e0605cd, kColorTex | kColorRgbOnly,
+       {{"BCLR", Role::Color, -1, -1}},
+       {}},
       {0x84e0fe6c, kOpacityTex,
        {{"TCH0", Role::Opacity, -1, -1}},
        {}},
@@ -873,6 +887,73 @@ public:
     } else {
       xBias = angles[0] ^ 0x80000000u;
       m_approximated.push_back("rotated cone taken as an X bias");
+    }
+    return true;
+  }
+
+  // Remastered's camera-facing model rotation,
+  // RADD(RAZY, SUB_(CPSS(PLOC, CNST(0, 1, 0), REUL(0, 0, 0, #00)), REUL(x, y, z, #00))): the model
+  // turned to face the camera, then by the inverse of REUL. Written as PMRT CNST(-x, -y, -z), which
+  // is that inverse when at most one angle is nonzero, plus the port-only PFCM flag (CElementGen
+  // turns each particle to the camera). An IRND angle (a random spin) is taken as 0.
+  bool FacingRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out) const {
+    if (value.size() != 1 || !IsElement(value[0], F("RADD")) || value[0].args.size() != 2 ||
+        !IsElement(value[0].args[0], F("RAZY"))) {
+      return false;
+    }
+    const EffectValue& sub = value[0].args[1];
+    if (!IsElement(sub, F("SUB_")) || sub.args.size() != 2) {
+      return false;
+    }
+    const EffectValue& look = sub.args[0];
+    if (!IsElement(look, F("CPSS")) || look.args.size() != 3 || !IsElement(look.args[0], F("PLOC"))) {
+      return false;
+    }
+    const EffectValue& up = look.args[1];
+    if (!IsElement(up, F("CNST")) || up.args.size() != 3 || !ConstIs(up.args[0], 0) ||
+        !ConstIs(up.args[1], 0x3f800000u) || !ConstIs(up.args[2], 0)) {
+      return false;
+    }
+    uint32_t angles[3];
+    if (!ReulAngles(look.args[2], angles, nullptr) || ((angles[0] | angles[1] | angles[2]) & 0x7fffffffu) != 0) {
+      return false;
+    }
+    bool spin = false;
+    if (!ReulAngles(sub.args[1], angles, &spin)) {
+      return false;
+    }
+    int nonzero = 0;
+    for (uint32_t angle : angles) {
+      nonzero += (angle & 0x7fffffffu) != 0;
+    }
+    if (nonzero > 1) {
+      return false;
+    }
+    if (spin) {
+      m_approximated.push_back("PMRQ: a camera-facing model's random spin left out");
+    }
+    PutBe32(out, F("CNST"));
+    for (uint32_t angle : angles) {
+      PutBe32(out, F("CNST"));
+      PutBe32(out, (angle & 0x7fffffffu) != 0 ? angle ^ 0x80000000u : 0);
+    }
+    return true;
+  }
+
+  // REUL(CNST x, CNST y, CNST z, #00)'s angle bits. With `irnd`, an angle using IRND reads as 0.
+  static bool ReulAngles(const EffectValue& reul, uint32_t (&angles)[3], bool* irnd) {
+    if (!IsElement(reul, F("REUL")) || reul.args.size() != 4 ||
+        (reul.args[3].kind != EffectValue::Kind::Byte && reul.args[3].kind != EffectValue::Kind::Word) ||
+        reul.args[3].word != 0) {
+      return false;
+    }
+    for (size_t i = 0; i < 3; ++i) {
+      if (irnd != nullptr && UsesElement(reul.args[i], F("IRND"))) {
+        angles[i] = 0;
+        *irnd = true;
+      } else if (!ConstWord(reul.args[i], angles[i])) {
+        return false;
+      }
     }
     return true;
   }
@@ -1589,6 +1670,12 @@ public:
         m_approximated.push_back("VMAT: PBDM taken as alpha blend");
       }
     }
+    if (recipe->frameBuffer) {
+      if (cch0[0] != 0.0f || cch0[1] != 0.0f) {
+        m_approximated.push_back(std::string("VMAT: shader ") + shaderText + "'s scene warp dropped (drawn as a multiply)");
+      }
+      blend = kBlendMultiply;
+    }
     uint32_t spriteCenter = 0;
     if (const EffectProperty* sctr = find(F("SCTR"))) {
       uint32_t word = 0;
@@ -1841,21 +1928,25 @@ public:
     std::set<uint32_t> written;    // retail properties
     const EffectProperty* material = nullptr;
     const EffectProperty* xfmd = nullptr;
+    bool faceCamera = false;
     const EffectProperty* mover = nullptr;
     std::vector<uint32_t> portOnly;  // material data, written only with a VMAT
     const bool textured = retail.count(F("TEXR")) != 0;
     // Remastered draws nothing for a generator with no texture, material or
     // model (it only carries spawns and lights); retail would draw its
     // particles as untextured quads (0.1 wide and white without SIZE/COLR).
-    // Such a generator is written with a size of 0.
-    const bool drawsNothing =
-        part && std::none_of(node.properties.begin(), node.properties.end(), [](const EffectProperty& property) {
-          return property.fourcc == F("TEXR") || property.fourcc == F("MTIN") || property.fourcc == F("PMDL");
-        });
+    // Such a generator is written with a size of 0, and so is one that draws only
+    // models (retail drew a white quad round each of the Ice charge's shards).
+    const auto has = [&](uint32_t fourcc) {
+      return std::any_of(node.properties.begin(), node.properties.end(),
+                         [&](const EffectProperty& property) { return property.fourcc == fourcc; });
+    };
+    const bool drawsNothing = part && !has(F("TEXR")) && !has(F("MTIN")) && !has(F("PMDL"));
+    const bool modelsOnly = part && !has(F("TEXR")) && !has(F("MTIN")) && has(F("PMDL"));
     for (const EffectProperty& property : node.properties) {
       uint32_t fourcc = property.fourcc;
-      if (drawsNothing && fourcc == F("SIZE")) {
-        result.dropped.push_back("SIZE: the generator draws nothing");
+      if ((drawsNothing || modelsOnly) && fourcc == F("SIZE")) {
+        result.dropped.push_back(drawsNothing ? "SIZE: the generator draws nothing" : "SIZE: the generator draws models only");
         continue;
       }
       // PBDM is Remastered's blend mode, from the table CParticleStaticRenderState
@@ -1903,7 +1994,12 @@ public:
       if (part && fourcc == F("PMRQ")) {
         std::vector<uint8_t> bytes;
         std::string why;
-        if (!ModelRotation(property.value, bytes, why)) {
+        if (FacingRotation(property.value, bytes)) {
+          faceCamera = true;
+          written.insert(F("PMRT"));
+          PutBe32(out, F("PMRT"));
+          out.insert(out.end(), bytes.begin(), bytes.end());
+        } else if (!ModelRotation(property.value, bytes, why)) {
           result.dropped.push_back("PMRQ: " + why);
         } else {
           written.insert(F("PMRT"));
@@ -1970,7 +2066,7 @@ public:
       PutBe32(out, fourcc);
       out.insert(out.end(), bytes.begin(), bytes.end());
     }
-    if (drawsNothing) {
+    if (drawsNothing || modelsOnly) {
       PutBe32(out, F("SIZE"));
       PutBe32(out, F("CNST"));
       PutBe32(out, FloatBits(0.0f));
@@ -2043,6 +2139,12 @@ public:
           ++result.droppedRetail;
         }
       }
+    }
+    if (faceCamera) {
+      // Port-only: the model particles face the camera (xPortFaceCamera; see FacingRotation).
+      PutBe32(out, F("PFCM"));
+      PutBe32(out, F("CNST"));
+      PutBe32(out, 1);
     }
     if (part) {
       // Port-only: nested IRND elements are evaluated once per particle and element, not at frame 0
@@ -2275,7 +2377,7 @@ public:
     return true;
   }
 
-  // A port-only `CNST <word>` property (VORN, XFMD, PIRN).
+  // A port-only `CNST <word>` property (VORN, XFMD, PIRN, PFCM).
   bool PortWord() {
     uint32_t fourcc;
     return Word(fourcc) && fourcc == F("CNST") && Skip(4);
@@ -2342,7 +2444,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PerParticle(fourcc == F("VSMT"));
     } else if (part && (fourcc == F("SSZE") || fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
-    } else if (part && (fourcc == F("VORN") || fourcc == F("XFMD") || fourcc == F("PIRN"))) {
+    } else if (part && (fourcc == F("VORN") || fourcc == F("XFMD") || fourcc == F("PIRN") ||
+                        fourcc == F("PFCM"))) {
       ok = reader.PortWord();
     } else if (const auto found = retail.find(fourcc); found == retail.end()) {
       error = "property " + EffectFourCCString(fourcc) + " retail does not read";

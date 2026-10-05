@@ -869,12 +869,14 @@ void TestModelChoice() {
   for (uint32_t i = 0; i < 4; ++i) {
     want.f("CNST").w(0xC0DE000A + i);
   }
+  // A models-only generator draws no quads: SIZE 0 is written for it.
+  want.f("SIZE").f("CNST").w(Bits(0.0f));
   want.end();
   Check(parts.size() == 1 && parts[0].part == want.bytes, "SLCT of four models is PMDL and PMDV");
   Check(!parts.empty() && parts[0].droppedRetail == 0, "the model choice drops nothing");
   Check(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
-            properties.size() == 3,
-        "PMDL and PMDV read as retail");
+            properties.size() == 4,
+        "PMDL, PMDV and SIZE read as retail");
 
   parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 4, 2); }), io);
   Check(parts.size() == 1 && parts[0].droppedRetail == 1, "a range short of the array is refused");
@@ -1211,6 +1213,222 @@ void TestVmat() {
   }
 }
 
+// A MATI with a CCH0 vector (type 3) after its textures.
+std::vector<uint8_t> MatiCch0(uint32_t shader, const std::vector<std::pair<const char*, EffectGuid>>& textures,
+                               float x, float y, float z, float w) {
+  std::vector<uint8_t> out = Mati(shader, textures);
+  out[0x69] += 1;  // one more entry: the CCH0 vector (the counts here are small)
+  out.push_back(3);
+  out.insert(out.end(), {'C', 'C', 'H', '0'});
+  Put32(out, Bits(x));
+  Put32(out, Bits(y));
+  Put32(out, Bits(z));
+  Put32(out, Bits(w));
+  return out;
+}
+
+// Converts VmatEffect with `mati` as its material, returning the parts and the
+// VMAT value (empty when no VMAT was written).
+std::pair<std::vector<ConvertedPart>, std::vector<uint8_t>> ConvertVmat(const std::vector<uint8_t>& mati) {
+  const std::vector<uint8_t> data = VmatEffect();
+  EffectNode effect;
+  std::string error;
+  if (!ParseEffect(data.data(), data.size(), effect, error)) {
+    std::fprintf(stderr, "FAIL: vmat effect does not parse: %s\n", error.c_str());
+    ++sFailures;
+    return {};
+  }
+  EffectConvertIO io;
+  io.materialTexture = [](const EffectGuid& material) { return material == Fresh(7) ? 0x5EED0007u : 0u; };
+  io.materialData = [&mati](const EffectGuid&) { return mati; };
+  io.vfxTexture = [](const EffectGuid& texture) {
+    FlipbookAtlas atlas;
+    if (texture == Fresh(8)) {
+      atlas.id = 0x5EED0008;
+    }
+    return atlas;
+  };
+  std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
+  std::vector<uint8_t> blob;
+  if (parts.size() == 1) {
+    std::vector<RetailPartProperty> properties;
+    if (SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error)) {
+      for (const RetailPartProperty& property : properties) {
+        if (property.fourcc == EffectFourCC("VMAT")) {
+          blob = property.value;
+        }
+      }
+    }
+  }
+  return {parts, blob};
+}
+
+uint32_t VmatWord(const std::vector<uint8_t>& v, size_t at) {
+  return at + 4 <= v.size() ? uint32_t(v[at]) << 24 | v[at + 1] << 16 | v[at + 2] << 8 | v[at + 3] : ~0u;
+}
+
+// The new recipes: the FrameBuffer shaders draw as a multiply (blend 4), and
+// the ice charge beam reads its colour from BCLR alone.
+void TestVmatNewRecipes() {
+  // FrameBuffer_Indirect_Unlit with no warp: features 0, blend Multiply, no textures.
+  auto [parts, blob] = ConvertVmat(Mati(0x3db95827, {}));
+  Check(parts.size() == 1 && !blob.empty(), "a 3db95827 material writes VMAT");
+  if (!blob.empty()) {
+    Check(VmatWord(blob, 8) == 2 && VmatWord(blob, 12) == 0 && VmatWord(blob, 16) == 4 && VmatWord(blob, 20) == 0,
+          "3db95827 VMAT v2, no features, blend 4, no textures");
+  }
+  Check(parts.size() == 1 && parts[0].approximated.empty(), "3db95827 with no warp approximates nothing");
+
+  // The same shader with a warp: the warp is dropped (drawn as a multiply).
+  auto warped = ConvertVmat(MatiCch0(0x3db95827, {}, 0.5f, 0.0f, 0.0f, 0.0f));
+  Check(warped.first.size() == 1 && !warped.second.empty(), "a warped 3db95827 material still writes VMAT");
+  if (!warped.second.empty()) {
+    Check(VmatWord(warped.second, 16) == 4, "a warped 3db95827 VMAT still blends as a multiply");
+  }
+  Check(warped.first.size() == 1 && warped.first[0].approximated.size() == 1 &&
+            warped.first[0].approximated[0] ==
+                "VMAT: shader 3db95827's scene warp dropped (drawn as a multiply)",
+        "a warped 3db95827 notes its scene warp dropped");
+
+  // FrameBuffer_Opacity_Unlit: the opacity texture, still a multiply.
+  auto opacity = ConvertVmat(Mati(0xd955396d, {{"TCH0", Fresh(8)}}));
+  Check(opacity.first.size() == 1 && !opacity.second.empty(), "a d955396d material writes VMAT");
+  if (!opacity.second.empty()) {
+    Check(VmatWord(opacity.second, 8) == 2 && VmatWord(opacity.second, 12) == 2 &&
+              VmatWord(opacity.second, 16) == 4 && VmatWord(opacity.second, 20) == 1,
+          "d955396d VMAT v2, OpacityTex, blend 4, one texture");
+    Check(VmatWord(opacity.second, 24) == 0x5EED0008, "d955396d reads the TCH0 texture");
+  }
+  Check(opacity.first.size() == 1 && opacity.first[0].approximated.empty(), "d955396d approximates nothing");
+
+  // VFX_IceChargeBeam: BCLR as the colour texture, rgb only.
+  auto ice = ConvertVmat(Mati(0x9e0605cd, {{"BCLR", Fresh(8)}}));
+  Check(ice.first.size() == 1 && !ice.second.empty(), "a 9e0605cd material writes VMAT");
+  if (!ice.second.empty()) {
+    Check(VmatWord(ice.second, 8) == 2 && VmatWord(ice.second, 12) == (1 | 4096) &&
+              VmatWord(ice.second, 16) == 2 && VmatWord(ice.second, 20) == 1,
+          "9e0605cd VMAT v2, ColorTex|ColorRgbOnly, blend 2, one texture");
+    Check(VmatWord(ice.second, 24) == 0x5EED0008, "9e0605cd reads the BCLR texture");
+  }
+  Check(ice.first.size() == 1 && ice.first[0].approximated.empty(), "9e0605cd approximates nothing");
+}
+
+// A generator with a PMDL but no TEXR or MTIN draws only models: its SIZE is
+// left out and a SIZE of 0 written instead, as with one that draws nothing.
+void TestModelsOnly() {
+  const EffectConvertIO io = AtlasIO();
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutModels(o, 4, 3);
+                 PutProperty(o, "SIZE", 3);
+                 PutConstant(o, Bits(2.0f));
+               }),
+               io);
+  Retail want;
+  want.f("GPSM").f("PMDL").f("CNST").w(0xC0DE000A).f("PMDV").f("CNST").w(4);
+  for (uint32_t i = 0; i < 4; ++i) {
+    want.f("CNST").w(0xC0DE000A + i);
+  }
+  want.f("SIZE").f("CNST").w(Bits(0.0f)).end();
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "a models-only generator gets SIZE 0");
+  Check(!parts.empty() && parts[0].dropped.size() == 1 &&
+            parts[0].dropped[0] == "SIZE: the generator draws models only",
+        "its SIZE is dropped as models only");
+  Check(!parts.empty() && parts[0].droppedRetail == 0, "models only drops no retail property");
+}
+
+// PMRQ's camera-facing form: RADD(RAZY, SUB_(CPSS(PLOC, up, REUL(0, 0, 0)),
+// REUL(x, y, z))). `angles` writes the second REUL's three angle arguments.
+template <typename Angles>
+void PutFacingPmrq(std::vector<uint8_t>& out, Angles angles) {
+  PutProperty(out, "PMRQ", 3);
+  PutFourCC(out, "RADD");
+  PutFourCC(out, "RAZY");
+  PutFourCC(out, "SUB_");
+  PutFourCC(out, "CPSS");
+  PutFourCC(out, "PLOC");
+  PutFourCC(out, "CNST");
+  PutConstant(out, 0);
+  PutConstant(out, Bits(1.0f));
+  PutConstant(out, 0);
+  PutFourCC(out, "REUL");
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  out.push_back(0);
+  PutFourCC(out, "REUL");
+  angles(out);
+  out.push_back(0);
+}
+
+void TestFacingRotation() {
+  // One nonzero angle: PMRT is the negated angles, and PFCM faces the camera.
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutFacingPmrq(o, [](auto& o) {
+                   PutConstant(o, 0);
+                   PutConstant(o, 0);
+                   PutConstant(o, Bits(90.0f));
+                 });
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail want;
+  want.f("GPSM").f("PMRT").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(-90.0f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
+  want.f("PFCM").f("CNST").w(1).end();
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "a facing PMRQ becomes a negated PMRT with PFCM");
+  Check(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(),
+        "a facing PMRQ is exact");
+
+  // An IRND angle is a random spin: taken as 0, and noted.
+  parts = ConvertOne(OneGenerator([](auto& o) {
+              PutFacingPmrq(o, [](auto& o) {
+                PutFourCC(o, "IRND");
+                PutConstant(o, Bits(0.0f));
+                PutConstant(o, Bits(360.0f));
+                PutConstant(o, 0);
+                PutConstant(o, 0);
+              });
+              PutTexr(o, 0x1234ABCD);
+            }),
+            {});
+  Retail still;
+  still.f("GPSM").f("PMRT").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
+  still.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
+  still.f("PFCM").f("CNST").w(1).end();
+  Check(parts.size() == 1 && parts[0].part == still.bytes, "a facing PMRQ with IRND spins nothing");
+  Check(!parts.empty() && parts[0].approximated.size() == 1 &&
+            parts[0].approximated[0] == "PMRQ: a camera-facing model's random spin left out",
+        "a facing PMRQ with IRND is listed as approximated");
+
+  // Two nonzero angles are not a single negation: the PMRQ is dropped as before.
+  parts = ConvertOne(OneGenerator([](auto& o) {
+              PutFacingPmrq(o, [](auto& o) {
+                PutConstant(o, Bits(45.0f));
+                PutConstant(o, Bits(30.0f));
+                PutConstant(o, 0);
+              });
+              PutTexr(o, 0x1234ABCD);
+            }),
+            {});
+  Retail plain;
+  plain.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  Check(parts.size() == 1 && parts[0].part == plain.bytes, "a facing PMRQ with two angles writes nothing");
+  Check(!parts.empty() && parts[0].dropped.size() == 1 &&
+            parts[0].dropped[0] == "PMRQ: a rotation that is not REUL",
+        "a facing PMRQ with two angles is dropped as before");
+  if (!parts.empty()) {
+    std::string error;
+    std::vector<RetailPartProperty> properties;
+    bool pfcm = false;
+    if (SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error)) {
+      for (const RetailPartProperty& property : properties) {
+        pfcm = pfcm || property.fourcc == EffectFourCC("PFCM");
+      }
+    }
+    Check(!pfcm, "no PFCM when the facing rotation is refused");
+  }
+}
+
 int main() {
   TestVmat();
   TestVmsh();
@@ -1231,6 +1449,9 @@ int main() {
   TestGpuAvailability();
   TestParameterDefault();
   TestModelRotation();
+  TestVmatNewRecipes();
+  TestModelsOnly();
+  TestFacingRotation();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

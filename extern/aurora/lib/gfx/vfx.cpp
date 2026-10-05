@@ -323,7 +323,7 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   } else if ((FEAT & 1u) != 0u) {
     let c = sample_slot(in, S_COLOR, w);
     rgb = c.rgb * vc.rgb * M;
-    x = c.w;
+    if ((FEAT & 4096u) == 0u) { x = c.w; }
   }
   if ((FEAT & 1024u) != 0u) {
     let add = row_of(in, i32(u.misc2.x));
@@ -359,6 +359,11 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   let a = x * vc.w;
   if (a <= 0.0) { discard; }
   var alpha = clamp(a, 0.0, 1.0);
+  if (BLEND == 4u) {
+    // Multiply: the target times rgb where alpha covers it; fog fades the factor to 1.
+    let k = mix(vec3f(1.0), max(rgb, vec3f(0.0)), alpha);
+    return vec4f(mix(k, vec3f(1.0), fog_factor(in.pos.z)), alpha);
+  }
   var col = tone(rgb);
   // Remastered blends in HDR: a sparse web at intensity 35 and alpha 0.2 still adds 7 and blooms white.
   // The tone map runs before this blend, so an alpha blend brighter than 1 trades alpha for brightness.
@@ -462,6 +467,12 @@ wgpu::BlendState blend_state(Blend blend) {
   case Blend::Opaque:
     c.srcFactor = a.srcFactor = wgpu::BlendFactor::One;
     c.dstFactor = a.dstFactor = wgpu::BlendFactor::Zero;
+    break;
+  case Blend::Multiply:
+    c.srcFactor = wgpu::BlendFactor::Dst;
+    c.dstFactor = wgpu::BlendFactor::Zero;
+    a.srcFactor = wgpu::BlendFactor::Zero;
+    a.dstFactor = wgpu::BlendFactor::One;
     break;
   }
   return {.color = c, .alpha = a};

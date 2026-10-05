@@ -27,9 +27,13 @@ enum Feature : uint32_t {
   OpacityFresnel = 256, // a *= S(sat((|vec.z|/|vec| - F.x) / (F.y - F.x)))
   ColorIndexing = 512,  // colorSlot = lookup (x index, y alpha), paletteSlot read at (i.x*s + o, z), layer 0
   AddColor = 1024,      // extra[addRow] = (add.rgb, scale): rgb = rgb * scale + add
-  OpacityFade = 2048    // a *= S(sat(-p.x / (p.y - p.x))), p = fadeX/fadeY
+  OpacityFade = 2048,   // a *= S(sat(-p.x / (p.y - p.x))), p = fadeX/fadeY
+  ColorRgbOnly = 4096   // with ColorTex: the map's alpha is not opacity (a stays 1)
 };
-enum class Blend : uint32_t { Alpha = 0, Premultiplied = 1, Additive = 2, Opaque = 3 };
+// Multiply is port-only: the FrameBuffer_* shaders draw the scene behind them x rgb, warped by an
+// indirect map. The pass can't sample its own target, so the warp is dropped and the target is
+// multiplied by mix(1, rgb, a) instead (exact where the warp scale is 0).
+enum class Blend : uint32_t { Alpha = 0, Premultiplied = 1, Additive = 2, Opaque = 3, Multiply = 4 };
 
 struct Vertex {
   float pos[3];      // PNMTX0 space

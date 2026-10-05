@@ -135,6 +135,8 @@ public:
   u8 xPortXfmd = kPortXfmdRetail;
   // port-only PIRN: a converted Remastered effect, whose nested IRND elements are stable per particle
   bool xPortIrnd = false;
+  // port-only PFCM: each model particle is turned to face the camera before PMRT
+  bool xPortFaceCamera = false;
 #endif
   CVectorElement* x58_PMOP;
   CVectorElement* x5c_PMRT;
