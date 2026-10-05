@@ -544,7 +544,7 @@ void CmdHelp() {
   Out("livesplit <0|1> | addr <host:port> | send <command> | status   LiveSplit Server client");
   Out("discord <0|1> | id <application id> | status   Discord Rich Presence");
   Out("gci list | import <path> | export <dir or .raw> | dolphin import|export   memory card transfer");
-  Out("ap [connect <server> <slot> [password] | disconnect | recent | resume <n> | say <text> | chat]   Archipelago, as the F1 Session tab does");
+  Out("ap [connect <server> <slot> [password] | disconnect | recent | resume <n> | say <text> | chat]   Archipelago, as the F1 Archipelago tab does");
   Out("quit                       exit the game");
   Out("ids: hex editor id (002900A1), u<index> unique id, or an exact debug name");
 }

@@ -4131,7 +4131,10 @@ void DrawMods() {
 }
 } // namespace
 
+void DrawGameSection();
+
 void DrawExtrasTab() {
+  DrawGameSection();
   ImGui::SeparatorText("Cutscenes");
   bool skippable = sSkippableCutscenes;
   if (ImGui::Checkbox("Skippable cutscenes", &skippable)) {
@@ -4799,7 +4802,7 @@ void DrawArchipelagoConnect() {
     SDL_strlcpy(sPassword, saved.password.c_str(), sizeof(sPassword));
   }
 
-  ImGui::SeparatorText("Archipelago");
+  ImGui::SeparatorText("Connect");
   // The server doesn't send this option, so it is set here to match the seed.
   int suitDamage = sApSuitDamage;
   if (ImGui::Combo("Staggered suit damage", &suitDamage, "Default\0Progressive\0Additive\0")) {
@@ -4908,7 +4911,7 @@ void DrawChatTab() {
   static uint64_t sSeenSerial = ~uint64_t{0};
 
   if (!PortAp::Enabled()) {
-    ImGui::TextWrapped("Connect to an Archipelago room in the Session tab to chat.");
+    ImGui::TextWrapped("Connect to an Archipelago room on the Connection page to chat.");
     return;
   }
   uint64_t serial = 0;
@@ -4963,7 +4966,9 @@ void DrawChatTab() {
   ImGui::PopStyleColor();
 }
 
-void DrawSessionTab() {
+// Restart, screenshot and exit, plus the settings file; the top of the Extras tab.
+void DrawGameSection() {
+  ImGui::SeparatorText("Game");
   if (ImGui::Button("Restart to menu")) {
     RequestReset();
   }
@@ -5004,7 +5009,11 @@ void DrawSessionTab() {
   ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
   ImGui::TextWrapped("File: %s", path.c_str());
   ImGui::PopStyleColor();
+}
 
+// The connection page of the Archipelago tab: the Connect form, recent games,
+// the session's status and the items received.
+void DrawArchipelagoSession() {
   DrawArchipelagoConnect();
   if (PortAp::Enabled()) {
     ImGui::SeparatorText("Archipelago status");
@@ -5058,6 +5067,25 @@ void DrawSessionTab() {
       }
     }
   }
+}
+
+// Everything Archipelago in one tab: the connection and the multiworld's chat.
+void DrawArchipelagoTab() {
+  if (!ImGui::BeginTabBar("apPages")) {
+    return;
+  }
+  static const char* sStartPage = std::getenv("MP_DEBUG_TAB");
+  const bool chatFirst = sStartPage != nullptr && SDL_strcasecmp(sStartPage, "Chat") == 0;
+  if (ImGui::BeginTabItem("Connection")) {
+    DrawArchipelagoSession();
+    ImGui::EndTabItem();
+  }
+  if (ImGui::BeginTabItem("Chat", nullptr, chatFirst ? ImGuiTabItemFlags_SetSelected : 0)) {
+    sStartPage = nullptr;
+    DrawChatTab();
+    ImGui::EndTabItem();
+  }
+  ImGui::EndTabBar();
 }
 
 void GrantItem(CPlayerState& ps, CPlayerState::EItemType type, int amount, int capacity) {
@@ -6013,9 +6041,18 @@ const DebugPage kDebugPages[] = {
     {"Render", DrawRenderTab},   {"Performance", DrawPerformanceTab},
     {"Extras", DrawExtrasTab},   {"Remastered", DrawRemasteredTab},
     {"Tracker", DrawTrackerTab}, {"States", DrawSaveStatesTab},
-    {"Session", DrawSessionTab}, {"Chat", DrawChatTab},
-    {"Debug", DrawDebugTab},
+    {"Archipelago", DrawArchipelagoTab}, {"Debug", DrawDebugTab},
 };
+
+// MP_DEBUG_TAB, with the old Session and Chat tabs sent to the Archipelago tab
+// that replaced them.
+const char* StartPageName() {
+  const char* name = std::getenv("MP_DEBUG_TAB");
+  if (name != nullptr &&
+      (SDL_strcasecmp(name, "Session") == 0 || SDL_strcasecmp(name, "Chat") == 0))
+    return "Archipelago";
+  return name;
+}
 
 // The innermost window under the finger that can actually scroll vertically,
 // climbing out of child windows (a table, the page list) that cannot.
@@ -6194,7 +6231,7 @@ bool DrawPageWindow() {
 
     static int sPage = 0;
     // MP_DEBUG_TAB=<name> opens on that page, for captures of the overlay.
-    static const char* sStartPage = std::getenv("MP_DEBUG_TAB");
+    static const char* sStartPage = StartPageName();
     if (sStartPage != nullptr) {
       for (int i = 0; i < static_cast< int >(ARRAY_SIZE(kDebugPages)); ++i) {
         if (SDL_strcasecmp(sStartPage, kDebugPages[i].name) == 0) {
@@ -6245,7 +6282,7 @@ bool DrawDesktopWindow() {
 
     if (ImGui::BeginTabBar("##debug_tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
       // MP_DEBUG_TAB=<name> opens on that tab, for captures of the overlay.
-      static const char* sStartTab = std::getenv("MP_DEBUG_TAB");
+      static const char* sStartTab = StartPageName();
       for (const DebugPage& page : kDebugPages) {
         const bool start = sStartTab != nullptr && SDL_strcasecmp(sStartTab, page.name) == 0;
         if (ImGui::BeginTabItem(page.name, nullptr, start ? ImGuiTabItemFlags_SetSelected : 0)) {

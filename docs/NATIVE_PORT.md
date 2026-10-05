@@ -782,7 +782,7 @@ unpacks to a temporary directory instead of mounting.
   for a moment).
 - Settings changed in the F1 overlay (aspect, vsync, render scale, frame limit,
   mouse aim/inversion/sensitivity, audio mutes) are saved to
-  `port_settings.ini` in the user folder (next to the executable, see above) and restored on the next launch. The Session tab shows the
+  `port_settings.ini` in the user folder (next to the executable, see above) and restored on the next launch. The Extras tab shows the
   path and has a **Save settings now** button. Environment variables still
   override the file for that run, and are written back into it if any setting is
   changed during that run.
@@ -1095,7 +1095,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   being set; unset them to disable them. Cutscene speed is restricted to 1–32.
   Cutscene skipping is only available this way, for tests: it is not a player
   setting, since skipping every cinematic at once broke script state.
-  `MP_DEBUG_TAB=<name>` (e.g. `Session`) opens the desktop overlay on that tab,
+  `MP_DEBUG_TAB=<name>` (e.g. `Archipelago`; `Chat` opens its chat page) opens the desktop overlay on that tab,
   enlarged, for captures. The console's `shot` leaves the overlay out; grab the
   X display instead (PIL `ImageGrab.grab(xdisplay=':99')` under Xvfb).
 - `MP_BOOT_WORLD=<MLVL hex>[:<MREA hex>]`: tests only. Skips the splash screens and
