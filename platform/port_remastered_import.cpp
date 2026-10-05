@@ -6,12 +6,17 @@
 #include <cctype>
 #include <cmath>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <future>
+#include <list>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -1058,17 +1063,26 @@ int ImportMovies(const Remastered& remastered, const fs::path& folder, const Mov
   return written;
 }
 
+// Each worker holds a whole model, its decoded buffers and a few RGBA
+// textures at once, so the count is bounded by memory as much as by cores.
+int DefaultThreads() {
+#if defined(__ANDROID__)
+  return std::clamp(int(std::thread::hardware_concurrency()) - 2, 1, 3);
+#else
+  return std::clamp(int(std::thread::hardware_concurrency()) - 2, 1, 8);
+#endif
+}
+
 // The Extras gallery's concept art as gallery/NNN.jpg in `folder` (port_gallery.h). Returns how many were written.
-int ImportGallery(const Remastered& remastered, const fs::path& target) {
+int ImportGallery(const Remastered& remastered, const fs::path& target, int threads) {
   std::error_code ec;
   // Written beside the live folder and swapped in only if a picture came out, so a failed or
   // cancelled re-run keeps the old gallery.
   const fs::path folder = target.string() + ".new";
   fs::remove_all(folder, ec);
   fs::create_directories(folder, ec);
-  int written = 0;
-  remastered.ForEachGalleryTexture([&](size_t position, const std::vector<uint8_t>& raw) {
-    SetMessage("Gallery picture " + std::to_string(position + 1));
+  std::atomic<int> written{0};
+  const auto convert = [&](size_t position, const std::vector<uint8_t>& raw) {
     char name[16];
     std::snprintf(name, sizeof(name), "%03d.jpg", int(position));
     std::string error;
@@ -1077,7 +1091,8 @@ int ImportGallery(const Remastered& remastered, const fs::path& target) {
     bool ok = DecodeTxtr(raw.data(), raw.size(), image, error);
     ok = ok && PortGallery::EncodeGalleryJpeg(image.rgba.data(), int(image.width), int(image.height), jpeg);
     if (ok) {
-      const fs::path tmp = folder / "import.tmp.jpg";
+      std::error_code fileError;
+      const fs::path tmp = folder / (std::string(name) + ".tmp");
       {
         std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
         file.write(reinterpret_cast<const char*>(jpeg.data()), std::streamsize(jpeg.size()));
@@ -1086,11 +1101,11 @@ int ImportGallery(const Remastered& remastered, const fs::path& target) {
       }
       // Renamed, so a picture cut short never has the name.
       if (ok) {
-        fs::rename(tmp, folder / name, ec);
-        ok = !ec;
+        fs::rename(tmp, folder / name, fileError);
+        ok = !fileError;
       }
       if (!ok) {
-        fs::remove(tmp, ec);
+        fs::remove(tmp, fileError);
         error = "cannot write to the mod folder";
       }
     } else if (error.empty()) {
@@ -1101,8 +1116,49 @@ int ImportGallery(const Remastered& remastered, const fs::path& target) {
     } else if (!sCancel) {
       AddLine(std::string("gallery/") + name + ": " + error);
     }
+  };
+  // The pak is read here and the pictures decoded and encoded on `threads` workers; the
+  // queue holds a few TXTRs at most, so memory stays bounded by the worker count.
+  std::mutex mutex;
+  std::condition_variable changed;
+  std::deque<std::pair<size_t, std::vector<uint8_t>>> queue;
+  bool done = false;
+  std::vector<std::thread> workers;
+  for (int i = 0; i < std::max(threads, 1); ++i) {
+    workers.emplace_back([&] {
+      for (;;) {
+        std::unique_lock<std::mutex> lock(mutex);
+        changed.wait(lock, [&] { return done || !queue.empty(); });
+        if (queue.empty()) {
+          return;
+        }
+        auto [position, raw] = std::move(queue.front());
+        queue.pop_front();
+        lock.unlock();
+        changed.notify_all();
+        if (!sCancel) {
+          convert(position, raw);
+        }
+      }
+    });
+  }
+  remastered.ForEachGalleryTexture([&](size_t position, const std::vector<uint8_t>& raw) {
+    SetMessage("Gallery picture " + std::to_string(position + 1));
+    std::unique_lock<std::mutex> lock(mutex);
+    changed.wait(lock, [&] { return queue.size() < workers.size(); });
+    queue.emplace_back(position, raw);
+    lock.unlock();
+    changed.notify_all();
     return !sCancel;
   });
+  {
+    std::lock_guard<std::mutex> lock(mutex);
+    done = true;
+  }
+  changed.notify_all();
+  for (std::thread& worker : workers) {
+    worker.join();
+  }
   if (written == 0) {
     fs::remove_all(folder, ec);
     return 0;
@@ -1143,7 +1199,7 @@ void RunMovies(std::string nspPath, std::string keysPath, fs::path mod) {
   WantsMovies(format);
   bool noFfmpeg = false;
   const int movies = ImportMovies(remastered, mod / kMovieFolder, format, noFfmpeg);
-  const int gallery = WantsGallery() && !sCancel ? ImportGallery(remastered, mod / kGalleryFolder) : 0;
+  const int gallery = WantsGallery() && !sCancel ? ImportGallery(remastered, mod / kGalleryFolder, DefaultThreads()) : 0;
   if (sCancel) {
     Finish(false, "Cancelled.");
   } else if (noFfmpeg && gallery == 0) {
@@ -1158,6 +1214,109 @@ void RunMovies(std::string nspPath, std::string keysPath, fs::path mod) {
     Finish(true, message + (noFfmpeg ? ". Movies skipped: ffmpeg not found." : "."));
   }
 }
+
+// Decoded Remastered textures, shared by the workers. The room models share a
+// few thousand textures, and each model's converter used to decode its own
+// copy. The least recently used go past the byte budget; one decode per id runs
+// at a time, and the other workers asking for it wait.
+class TextureCache {
+public:
+  explicit TextureCache(size_t budget) : m_budget(budget) {}
+
+  bool Get(const ModelUuid& id, Image& out, std::string& error,
+           const std::function<bool(Image&, std::string&)>& decode) {
+    std::promise<Decoded> made;
+    std::shared_future<Decoded> pending;
+    bool mine = false;
+    {
+      std::lock_guard<std::mutex> lock(m_mutex);
+      const auto it = m_entries.find(id);
+      if (it != m_entries.end()) {
+        m_order.splice(m_order.end(), m_order, it->second.place);
+        pending = it->second.image;
+        ++m_hits;
+      } else {
+        mine = true;
+        pending = made.get_future().share();
+        m_order.push_back(id);
+        m_entries.emplace(id, Entry{pending, std::prev(m_order.end()), 0});
+        ++m_misses;
+      }
+    }
+    if (!mine) {
+      if (const Decoded image = pending.get()) {
+        out = *image;
+        return true;
+      }
+      return decode(out, error);  // failed for the first asker: fail with a message of its own
+    }
+    Image image;
+    Decoded decoded;
+    try {
+      if (decode(image, error)) {
+        decoded = std::make_shared<const Image>(std::move(image));
+      }
+    } catch (...) {
+      // The waiters decode on their own; the entry goes, so the next asker retries.
+      made.set_value(nullptr);
+      std::lock_guard<std::mutex> lock(m_mutex);
+      Settle(id, nullptr);
+      throw;
+    }
+    made.set_value(decoded);
+    {
+      std::lock_guard<std::mutex> lock(m_mutex);
+      Settle(id, decoded);
+    }
+    if (!decoded) {
+      return false;
+    }
+    out = *decoded;  // outside the lock: a big map is a 16 MB copy
+    return true;
+  }
+
+  std::string Summary() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return std::to_string(m_misses) + " texture decodes, " + std::to_string(m_hits) + " reused";
+  }
+
+private:
+  using Decoded = std::shared_ptr<const Image>;
+
+  // Records the finished decode of `id` (dropping it if it failed) and evicts past the budget.
+  void Settle(const ModelUuid& id, const Decoded& decoded) {
+    const auto it = m_entries.find(id);
+    if (!decoded) {
+      m_order.erase(it->second.place);
+      m_entries.erase(it);
+      return;
+    }
+    it->second.bytes = decoded->rgba.size();
+    m_bytes += it->second.bytes;
+    // Entries still being decoded (0 bytes) stay, as does the one just made.
+    for (auto old = m_order.begin(); m_bytes > m_budget && old != m_order.end();) {
+      const auto entry = m_entries.find(*old);
+      if (entry->second.bytes == 0 || *old == id) {
+        ++old;
+        continue;
+      }
+      m_bytes -= entry->second.bytes;
+      m_entries.erase(entry);
+      old = m_order.erase(old);
+    }
+  }
+
+  struct Entry {
+    std::shared_future<Decoded> image;
+    std::list<ModelUuid>::iterator place;
+    size_t bytes;
+  };
+  mutable std::mutex m_mutex;
+  std::map<ModelUuid, Entry> m_entries;
+  std::list<ModelUuid> m_order;  // least recently used first
+  size_t m_budget, m_bytes = 0;
+  uint64_t m_hits = 0, m_misses = 0;
+};
 
 void Run(std::string nspPath, std::string keysPath, int threads, fs::path staging) {
   YieldToGame();
@@ -1332,21 +1491,26 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     return true;
   };
 
+  // 32 MB a worker (a 2048x2048 map is 16 MB), 512 MB at most: 16 workers reuse 57% of
+  // the decodes at this size (1 GB: 64%, for ~0.9 GB more peak RSS).
+  TextureCache textures(std::min(size_t(std::max(threads, 1)) * (size_t(32) << 20), size_t(512) << 20));
   auto makeIO = [&](int worker, const fs::path& folder) {
     ConvertIO io;
     io.retail = [&](uint32_t type, uint32_t id, std::vector<uint8_t>& out) { return retail.Read(type, id, out); };
     io.retailId = [&](uint32_t id) { return retail.HasId(id); };
     io.texture = [&](const ModelUuid& id, Image& out, std::string& textureError) {
-      std::vector<uint8_t> raw;
-      TxtrImage image;
-      if (!remastered.ReadTexture(id, raw, textureError) ||
-          !DecodeTxtr(raw.data(), raw.size(), image, textureError)) {
-        return false;
-      }
-      out.width = int(image.width);
-      out.height = int(image.height);
-      out.rgba = std::move(image.rgba);
-      return true;
+      return textures.Get(id, out, textureError, [&](Image& decoded, std::string& decodeError) {
+        std::vector<uint8_t> raw;
+        TxtrImage image;
+        if (!remastered.ReadTexture(id, raw, decodeError) ||
+            !DecodeTxtr(raw.data(), raw.size(), image, decodeError)) {
+          return false;
+        }
+        decoded.width = int(image.width);
+        decoded.height = int(image.height);
+        decoded.rgba = std::move(image.rgba);
+        return true;
+      });
     };
     io.cube = [&](const ModelUuid& id, uint32_t& edge, std::vector<uint8_t>& rgba, std::string& cubeError) {
       std::vector<uint8_t> raw;
@@ -2546,7 +2710,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     if (beginStage("gallery", std::to_string(ImportStage::kGallery) + keyConverter, false)) {
       gallery = int(made["gallery"].counts["images"]);
     } else {
-      gallery = ImportGallery(remastered, staging / kGalleryFolder);
+      gallery = ImportGallery(remastered, staging / kGalleryFolder, threads);
       recordFolder(staging / kGalleryFolder);
       made["gallery"].counts["images"] = gallery;
       endStage();
@@ -2592,6 +2756,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     fs::remove_all(held, ec);
   }
   const int failed = int(count) - converted.load();
+  std::printf("remastered import: %s\n", textures.Summary().c_str());
   std::string message = std::to_string(converted.load()) + " models converted";
   if (failed != 0) {
     message += ", " + std::to_string(failed) + " failed";
@@ -2696,10 +2861,8 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
     sState.message = "There is no mods folder to write to.";
     return false;
   }
-  // Each worker holds a whole model, its decoded buffers and a few RGBA
-  // textures at once, so the count is bounded by memory as much as by cores.
   if (threads <= 0) {
-    threads = std::clamp(int(std::thread::hardware_concurrency()) - 2, 1, 8);
+    threads = DefaultThreads();
   }
 #if defined(__ANDROID__)
   threads = std::min(threads, 3);
