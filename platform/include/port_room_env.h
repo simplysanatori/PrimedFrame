@@ -99,6 +99,8 @@
 //   u32 suns
 //   sun: s32 layer, u8 on, u8 pad[3], f32 toSun[3] (retail world, unit), f32 color[3] (linear,
 //        times the intensity). A Remastered directional LightDynamic (see Sun).
+// Version 17 adds to each sun: u32 group (PortRoomGeo::kNoGroup: none), the area's .roomgeo
+//   script group that shows and hides it; until that script has, `on` holds.
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -280,6 +282,7 @@ struct SunLight {
   bool on = true;
   float toSun[3] = {};
   float color[3] = {};
+  uint32_t group = 0xffffffff;  // PortRoomGeo::kNoGroup
 };
 
 struct File {
@@ -504,9 +507,12 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
 // off). It returns false when the strengths are the defaults for lack of any hint file.
 void UpdateBacklight(LayerActive layerActive, void* context);
 bool Backlight(float& top, float& back);
-// The camera area's sun for real-time shadows: of its directional lights that are on, on an
-// active layer and shining down, the strongest. False when there is none, no file, or MP_ROOM_ENV is off.
-bool Sun(LayerActive layerActive, void* context, float toSun[3], float color[3]);
+// The camera area's sun for real-time shadows: of its directional lights that are on (as its
+// room geometry's script last set them, else as they start), on an active layer and shining
+// down, the strongest. A sun on a story layer (the hangar intro's) only lights its cinematic. `color` is as the PBR shader's lights take it:
+// the light's at the frame's exposure, over pi. False when there is none, no file, the rooms
+// aren't exposed (RoomExposed), or MP_ROOM_ENV is off.
+bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3], float color[3]);
 // Remastered's volumetric fog hints (CVolumetricFogManager), picked as the grade's are.
 // UpdateFog runs once a frame, `dt` seconds long, before the world is drawn. A change of the
 // camera area's pick starts an interpolation from the fog on screen (SVolumetricFogDynamicData's

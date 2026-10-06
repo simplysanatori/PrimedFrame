@@ -216,6 +216,9 @@ struct Area {
   Script script;
   std::vector< NodeState > nodes;
   std::vector< std::vector< size_t > > groups;
+  // What the script last made of each group (1 shown, 0 hidden; -1 or past the end: nothing
+  // yet), which also covers a group with no instances, such as a sun's (GroupShown).
+  std::vector< int8_t > groupShown;
   std::vector< std::vector< size_t > > edgesFrom;
   // Script::hidden, with the item of each instance (one whose model did not load is left out).
   std::vector< std::pair< uint32_t, size_t > > hides;
@@ -854,6 +857,7 @@ CTransform4f Pose(const Instance::AnimClip& clip, double seconds) {
 // The script objects as the file has them: a counter at 0, the camera in no volume.
 void ResetNodes(Area& area) {
   area.nodes.assign(area.script.nodes.size(), NodeState());
+  area.groupShown.clear();
   for (size_t i = 0; i < area.nodes.size(); ++i) {
     area.nodes[i].active = area.script.nodes[i].active;
   }
@@ -1069,6 +1073,11 @@ void Apply(Area& area, const ScriptEdge& edge, int depth) {
     return;
   }
   if (edge.action == kGroupShow || edge.action == kGroupHide || edge.action == kGroupToggle) {
+    if (edge.to >= area.groupShown.size()) {
+      area.groupShown.resize(size_t(edge.to) + 1, -1);
+    }
+    int8_t& group = area.groupShown[edge.to];
+    group = edge.action == kGroupShow ? 1 : edge.action == kGroupHide ? 0 : group == 1 ? 0 : 1;
     if (edge.to >= area.groups.size()) {
       return;
     }
@@ -1829,12 +1838,22 @@ std::string ScriptInfo() {
       }
       out += line;
     }
-    for (size_t g = 0; g < area.groups.size(); ++g) {
-      size_t shown = 0;
-      for (const size_t i : area.groups[g]) {
-        shown += area.items[i].shown;
+    for (const ScriptEdge& edge : area.script.edges) {
+      std::snprintf(line, sizeof(line), "  edge %s%u event %u -> %s %u action %u\n", edge.retail ? "retail " : "",
+                    edge.from, edge.event, (edge.action >= kGroupShow && edge.action <= kGroupToggle) || edge.action == kGroupNextClip ? "group" : "node", edge.to, edge.action);
+      out += line;
+    }
+    for (size_t g = 0; g < std::max(area.groups.size(), area.groupShown.size()); ++g) {
+      size_t shown = 0, size = 0;
+      if (g < area.groups.size()) {
+        for (const size_t i : area.groups[g]) {
+          shown += area.items[i].shown;
+        }
+        size = area.groups[g].size();
       }
-      std::snprintf(line, sizeof(line), "  group %zu: %zu of %zu shown\n", g, shown, area.groups[g].size());
+      const int set = g < area.groupShown.size() ? area.groupShown[g] : -1;
+      std::snprintf(line, sizeof(line), "  group %zu: %zu of %zu shown%s\n", g, shown, size,
+                    set < 0 ? "" : set ? " (script: show)" : " (script: hide)");
       out += line;
     }
   }
@@ -1844,6 +1863,9 @@ std::string ScriptInfo() {
 int SetGroupShown(uint32_t group, bool shown) {
   int count = 0;
   for (auto& [mrea, area] : Areas()) {
+    if (group < area.groupShown.size()) {
+      area.groupShown[group] = shown ? 1 : 0;
+    }
     if (group < area.groups.size()) {
       for (const size_t i : area.groups[group]) {
         area.items[i].shown = shown;
@@ -1852,6 +1874,11 @@ int SetGroupShown(uint32_t group, bool shown) {
     }
   }
   return count;
+}
+
+int GroupShown(uint32_t mrea, uint32_t group) {
+  const auto area = Areas().find(mrea);
+  return area == Areas().end() || group >= area->second.groupShown.size() ? -1 : area->second.groupShown[group];
 }
 
 void ResetScriptState() {

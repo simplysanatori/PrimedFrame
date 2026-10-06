@@ -2774,7 +2774,8 @@ static std::vector<const PortRoomEnv::FogRegion*> sPortFogRegions;
 // MP_SHADOW_DIR ("x,y,z", the way the light travels) and MP_SHADOW_COLOR ("r,g,b") override the
 // room's sun.
 // The room's Remastered sun (port_room_env.h), when its import has one.
-static bool PortRoomSun(const CGameArea& area, CScriptLayerManager* layers, float dir[3], float color[3]) {
+static bool PortRoomSun(const CGameArea& area, CScriptLayerManager* layers, bool cinematic, float dir[3],
+                        float color[3]) {
   struct Layers {
     CScriptLayerManager* layers;
     TAreaId area;
@@ -2784,16 +2785,13 @@ static bool PortRoomSun(const CGameArea& area, CScriptLayerManager* layers, floa
         const Layers& l = *static_cast< const Layers* >(context);
         return l.layers == nullptr || l.layers->IsLayerActive(l.area, TLayerId(layer));
       },
-      &l, dir, color);
+      &l, cinematic, dir, color);
 }
 
 static bool PortSetupShadow(const CTransform4f& view, const CGameArea* area, CScriptLayerManager* layers,
-                            bool enabled) {
+                            bool cinematic, bool enabled) {
   static const bool sOn = port::EnvFlag("MP_SHADOWS", true);
   static const float sRadius = port::EnvFloat("MP_SHADOW_RADIUS", 40.f);
-  // Remastered's light intensity to the shader's colour. Its units are tied to its exposure, which the
-  // port doesn't have, so this is matched by eye: the hangar's key light (12) comes out at 1.5.
-  static const float sSunScale = port::EnvFloat("MP_SHADOW_SUN_SCALE", 0.125f);
   float dir[3] = {0.f, 0.f, 0.f};
   float color[3] = {0.f, 0.f, 0.f};
   float radius = 0.f;
@@ -2803,10 +2801,9 @@ static bool PortSetupShadow(const CTransform4f& view, const CGameArea* area, CSc
     float envDir[3];
     if (sDirEnv != nullptr && sscanf(sDirEnv, "%f,%f,%f", &envDir[0], &envDir[1], &envDir[2]) == 3) {
       dir[0] = envDir[0], dir[1] = envDir[1], dir[2] = envDir[2];
-    } else if (area != nullptr && PortRoomSun(*area, layers, dir, color)) {
+    } else if (area != nullptr && PortRoomSun(*area, layers, cinematic, dir, color)) {
       for (int i = 0; i < 3; ++i) {
         dir[i] = -dir[i]; // the way the light travels, as a CLight's direction
-        color[i] *= sSunScale;
       }
     } else if (area != nullptr && area->IsPostConstructed()) {
       const rstl::vector< CWorldLight >& lights = area->GetLightsA();
@@ -3202,7 +3199,7 @@ void CStateManager::DrawWorld() const {
   // The opaque world casts (and receives) from here to GXPortRenderShadowMap, but for the sky.
   const bool portShadow =
       PortSetupShadow(backupViewMatrix, portVisArea, x8c8_worldLayerState.GetPtr(),
-                      !thermal && visor != CPlayerState::kPV_XRay && !portCollisionOnly);
+                      x870_cameraManager->IsInCinematicCamera(), !thermal && visor != CPlayerState::kPV_XRay && !portCollisionOnly);
   GXPortSetShadowCaster(portShadow);
 #endif
   for (int i = areas.size() - 1; i >= 0; --i) {

@@ -788,6 +788,12 @@ float FrameExposure(const Area& area) {
   return sFrame.exposure > 0.f ? sFrame.exposure : area.exposure;
 }
 
+// MP_ROOM_ENV_GAIN: scales the room's baked and sun light alike.
+float LightGain() {
+  static const float gain = port::EnvFloat("MP_ROOM_ENV_GAIN", 1.f);
+  return gain;
+}
+
 // What an area keeps of its file once its cubes are made: the grids' points, which
 // SampleGrid reads for models every frame, and the grades' LUTs, handed to Aurora when one
 // is first shown; with where each starts in the copy. The cubes' blocks are left behind.
@@ -1537,7 +1543,7 @@ void UpdateBacklight(LayerActive layerActive, void* context) {
   }
 }
 
-bool Sun(LayerActive layerActive, void* context, float toSun[3], float color[3]) {
+bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3], float color[3]) {
   if (!Enabled()) {
     return false;
   }
@@ -1545,12 +1551,21 @@ bool Sun(LayerActive layerActive, void* context, float toSun[3], float color[3])
   if (view == sAreas.end() || !view->second.hasFile) {
     return false;
   }
+  // Remastered's light units only mean something at its exposure.
+  const float exposure = RoomExposed() ? FrameExposure(view->second) : 0.f;
+  if (exposure <= 0.f) {
+    return false;
+  }
   const SunLight* pick = nullptr;
   float pickStrength = 0.f;
   for (const SunLight& s : view->second.file.suns) {
+    // The room geometry's script switches the hangar's suns as it does its geometry.
+    const int shown = s.group != PortRoomGeo::kNoGroup ? PortRoomGeo::GroupShown(sViewArea, s.group) : -1;
     // A light from below the floor is a bounce fill (the hangar has warm ones), not a sun.
-    if (!s.on || s.toSun[2] <= 0.f ||
-        (s.layer >= 0 && layerActive != nullptr && !layerActive(s.layer, context))) {
+    // The intro's suns are its shots' lighting: the next shot hides them, but a skipped intro
+    // (randomprime's patches) never plays it, and they'd light the hangar from overhead.
+    if (!(shown >= 0 ? shown == 1 : s.on) || s.toSun[2] <= 0.f ||
+        (s.layer >= 0 && (!cinematic || (layerActive != nullptr && !layerActive(s.layer, context))))) {
       continue;
     }
     const float strength = s.color[0] + s.color[1] + s.color[2];
@@ -1562,9 +1577,13 @@ bool Sun(LayerActive layerActive, void* context, float toSun[3], float color[3])
   if (pick == nullptr) {
     return false;
   }
+  // Remastered builds the light from colour times intensity alone (NLightLoaders::build_light)
+  // and its Lambert term has the 1/pi, which the PBR shader's lights leave out; the exposure,
+  // applied in Remastered's tonemap pass, is in the port's light colours, as the baked light's.
+  const float scale = exposure * LightGain() / 3.14159265f;
   for (int i = 0; i < 3; ++i) {
     toSun[i] = pick->toSun[i];
-    color[i] = pick->color[i];
+    color[i] = pick->color[i] * scale;
   }
   return true;
 }
@@ -1937,6 +1956,14 @@ std::string GradeInfo() {
   out += line;
   for (const auto& [mrea, area] : sAreas) {
     const File& file = area.file;
+    for (size_t i = 0; i < file.suns.size(); ++i) {
+      const SunLight& s = file.suns[i];
+      const int shown = s.group != PortRoomGeo::kNoGroup ? PortRoomGeo::GroupShown(mrea, s.group) : -1;
+      std::snprintf(line, sizeof(line), "%08X sun %zu: to (%g %g %g) colour (%g %g %g) layer %d group %d %s\n", mrea, i,
+                    s.toSun[0], s.toSun[1], s.toSun[2], s.color[0], s.color[1], s.color[2], s.layer, int(s.group),
+                    shown >= 0 ? (shown ? "shown" : "hidden") : (s.on ? "on" : "off"));
+      out += line;
+    }
     for (size_t i = 0; i < file.backlights.size(); ++i) {
       const BacklightHint& hint = file.backlights[i];
       const bool on = i < area.backlights.size() ? area.backlights[i].on : hint.on;
@@ -2306,7 +2333,7 @@ void Locate(const float pos[3], Located& out) {
 
 // The Selection for what Locate found, at the frame's exposure and the settings now.
 bool Compose(const Located& located, Selection& out) {
-  static const float gain = port::EnvFloat("MP_ROOM_ENV_GAIN", 1.f);
+  const float gain = LightGain();
   // The mip a reflection is read from is the cube's own top one, as Remastered's is; the
   // variable only lowers it (PortRoomEnvLod::CubeLod).
   static const float lod = port::EnvFloat("MP_ROOM_ENV_LOD", PortRoomEnvLod::kNoCap);

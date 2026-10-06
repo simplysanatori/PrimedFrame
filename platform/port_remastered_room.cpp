@@ -1668,10 +1668,17 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
   // Remastered's own objects that show and hide geometry, followed back from the geometry
   // through whatever drives them: the camera volumes that count which side of a wall the
   // camera is on, the counters they count with and the relays in between.
-  std::set<int> geometry;  // entities with a ModCon or an added actor
+  // The same objects switch the suns (the hangar's intro shots and its escape's camera).
+  std::set<int> geometry;  // entities with a ModCon, an added actor or a directional light
   for (const Component& c : comps) {
     if (c.entity >= 0 && (c.type == kModCon || (c.type == kActorMP1 && room.Flat(c).count(kPropActorAdded) != 0))) {
       geometry.insert(c.entity);
+    } else if (c.entity >= 0 && c.type == kLightDynamic) {
+      const auto f = room.Flat(c);
+      const auto type = f.find(kPropLightType);
+      if (type != f.end() && type->second.size >= 4 && ReadLE32(room.Bytes(type->second)) == kLightDirectional) {
+        geometry.insert(c.entity);
+      }
     }
   }
   PortRoomGeo::Script& script = result.script;
@@ -1911,6 +1918,7 @@ struct SunData {
   bool on = false;
   float toSun[3] = {}; // retail world, unit length
   float color[3] = {}; // linear colour times intensity
+  uint32_t group = PortRoomGeo::kNoGroup; // the script group that shows and hides it
 };
 
 struct Placement {
@@ -2570,13 +2578,21 @@ void Writer::ReadSuns(const RoomData& r, const SceneryScripts& scripts, const Ma
       s.toSun[i] = float(-d[size_t(i)] / len);
       s.color[i] = std::isfinite(color[i] * intensity) ? std::max(0.f, color[i] * intensity) : 0.f;
     }
-    s.on = r.room.Active(*c);
     const auto layer = scripts.layer.find(c->entity);
     s.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
+    // A sun on no story layer is the room's own and starts on even if its entity doesn't: the
+    // hangar's key sun is only switched on by the escape's camera, yet Remastered casts its
+    // shadows from the first visit. Story-layer suns (the intro's) follow their script.
+    s.on = r.room.Active(*c) || s.layer < 0;
+    const auto group = scripts.group.find(c->entity);
+    if (group != scripts.group.end()) {
+      s.group = group->second;
+    }
     char line[200];
-    std::snprintf(line, sizeof line, "  %s: sun (%.3f, %.3f, %.3f) colour (%.2f, %.2f, %.2f) layer %d%s",
+    std::snprintf(line, sizeof line, "  %s: sun (%.3f, %.3f, %.3f) colour (%.2f, %.2f, %.2f) layer %d%s%s",
                   r.name.c_str(), s.toSun[0], s.toSun[1], s.toSun[2], s.color[0], s.color[1], s.color[2],
-                  int(s.layer), s.on ? "" : " (off)");
+                  int(s.layer), s.on ? "" : " (off)",
+                  s.group != PortRoomGeo::kNoGroup ? (" group " + std::to_string(s.group)).c_str() : "");
     Log(line);
     out.push_back(s);
   }
@@ -4363,7 +4379,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  AppendLE32(out, 16);
+  AppendLE32(out, 17);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -4558,6 +4574,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     for (float v : s.color) {
       AppendLEFloat(out, v);
     }
+    AppendLE32(out, s.group);
   }
   if (!fogs.empty() || !regions.empty()) {
     Log("  " + r.name + ": " + std::to_string(fogs.size()) + " fog hint(s), " + std::to_string(regions.size()) +

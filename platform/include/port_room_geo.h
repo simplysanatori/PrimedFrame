@@ -254,6 +254,9 @@ std::string ScriptInfo();
 // The console's `roomgeo group <n> show|hide`: sets every loaded area's group n until its
 // script next changes it; how many instances it set.
 int SetGroupShown(uint32_t group, bool shown);
+// What the area's script last did to group `group`: 1 shown, 0 hidden, -1 nothing yet (or no
+// such area or group; a toggle of a group it has not set shows it).
+int GroupShown(uint32_t mrea, uint32_t group);
 // A new game, a death or a save state builds a new CStateManager: every instance goes back
 // to how the file starts it, since the scripts will not resend what already happened.
 void ResetScriptState();
