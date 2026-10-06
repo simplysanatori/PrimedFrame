@@ -100,6 +100,12 @@ void TestReader() {
     // Kind 15 (PickUp) keeps CCH0..3 in rows 0-3, the view-to-world rows in 4-5 and DIFC in row 7.
     Check(shield[12] == 112.f && shield[16] == 116.f && shield[23] == 123.f && shield[28] == 128.f,
           "PBR8 pickup rows (CCH3, world x/y, DIFC)");
+    // Kinds 16 and 17 (the holograms) keep ICNC + ICMC and the cube gain in row 6, DIFC in row 7;
+    // kind 18 keeps CCH0..3 in rows 0-3, world x/y in 4-5, ICMC in row 6 and DIFC in row 7.
+    Check(shield[24] == 124.f && shield[26] == 126.f && shield[27] == 127.f && shield[28] == 128.f && shield[31] == 131.f,
+          "PBR8 hologram rows (ICNC+ICMC, cube gain, DIFC)");
+    Check(shield[8] == 108.f && shield[15] == 115.f && shield[16] == 116.f,
+          "PBR8 hologram CCH0..3 rows");
     Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s) == 19, "PBR8 reads without a shield out");
     const std::vector<uint8_t> plain = Record(19, true, true, "PBR6", 0.4f, 0.5f);
     shield[5] = 9.f;

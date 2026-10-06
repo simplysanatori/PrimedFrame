@@ -1512,6 +1512,68 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       }})""",
                           mapStage[2], underlying(config.tevStages[mapStage[4]].texMapId), base);
     }
+    // Kinds 16 and 17, Remastered's unlit holograms 86CD1703 and 6344950D (permutation 002_0,
+    // additive): rgb = DIFT x DIFC + ICNC + ICMC (+ the material's own REFL cube at the reflection
+    // vector for 17), alpha = DIFT.a^2 x DIFC.a. No exposure factor in either, so none here (this
+    // block runs after the generic scaling). Constants: row 6 = ICNC + ICMC (rgb) and, for 17, the
+    // cube's gain in w (0 when the material's cube is the black default); row 7 = DIFC.
+    if (mapStage[0] != -1) {
+      liquid += fmt::format(R"""(
+      if (pbr_kind > 15.5 && pbr_kind < 17.5) {{
+          let pbr_yi = ubuf.pbr_shield[6];
+          let pbr_yd = ubuf.pbr_shield[7];
+          var pbr_yc = pow(max({0}.rgb, vec3f(0.0)), vec3f(2.2)) * pbr_yd.rgb + pbr_yi.rgb;
+          if (pbr_kind > 16.5 && pbr_yi.w > 0.0) {{
+              let pbr_yq = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, 0.0).rgb;
+              pbr_yc += select(pow(max(pbr_yq, vec3f(0.0)), vec3f(2.2)), pbr_yq * pbr_hdr, pbr_hdr > 0.0) * pbr_yi.w;
+          }}
+          pbr_alpha = clamp({0}.a * {0}.a * pbr_yd.w, 0.0, 1.0);
+          pbr_lo = vec3f(0.0);
+          pbr_glow = pbr_yc;
+          pbr_pass = vec3f(0.0);
+      }})""",
+                          base);
+      // Kind 18, Remastered's Hologram (4CA0017C, permutation 000_0): BCLR scrolled up through
+      // world space with a sawtooth warp, a flicker, and a fresnel-like fade by the normal.
+      // Constants: rows 0-3 CCH0..CCH3, rows 4 and 5 world x and y (filled by the game, as the
+      // pickup's), row 6 ICMC, row 7 DIFC. The vertex colour is linearised 2 pow(|c|, 2.2): red
+      // scales the glow, green is a mask. Only the glow term is at the room's exposure. The
+      // fade and the vertex shader's collapse are not drawn (fade 1).
+      liquid += fmt::format(R"""(
+      if (pbr_kind > 17.5 && pbr_kind < 18.5) {{
+          let pbr_yc0 = ubuf.pbr_shield[0];
+          let pbr_yc1 = ubuf.pbr_shield[1];
+          let pbr_yc2 = ubuf.pbr_shield[2];
+          let pbr_yc3 = ubuf.pbr_shield[3];
+          let pbr_yd = ubuf.pbr_shield[7];
+          let pbr_yt = ubuf.pbr_param.x;
+          let pbr_yw = vec2f(dot(ubuf.pbr_shield[4].xyz, in.pbr_pos) + ubuf.pbr_shield[4].w,
+                             dot(ubuf.pbr_shield[5].xyz, in.pbr_pos) + ubuf.pbr_shield[5].w);
+          let pbr_yv = 2.0 * pow(abs(pbr_vraw.rg), vec2f(2.2));
+          let pbr_yper = max(pbr_yc1.z, 1e-4);
+          let pbr_ys = pbr_yt - pbr_yper * floor(pbr_yt / pbr_yper);
+          let pbr_yk = pbr_yc1.y + pbr_ys * (1.0 - pbr_yc1.y);
+          let pbr_ysc = select(1e-4, pbr_yc0.x, abs(pbr_yc0.x) > 1e-4);
+          let pbr_yuv = vec2f(pbr_yw.x / pbr_ysc, pbr_yk * (pbr_yw.y * pbr_yc0.x + pbr_yt * pbr_yc0.y - pbr_yc1.w));
+          let pbr_yb = textureSampleGrad(tex{1}, tex{1}_samp, pbr_yuv, dpdx(pbr_yuv), dpdy(pbr_yuv));
+          let pbr_yj = 0.01 * pbr_yc0.z * pbr_yc0.w * sin(6.2831853 * pbr_yt * pbr_yc1.x);
+          let pbr_ya = pbr_yb.a * select(0.75, 1.0, pbr_yj > 0.0);
+          let pbr_ym = pbr_yv.y > 0.01;
+          let pbr_yri = pow(max(pbr_yb.rgb, vec3f(0.0)), vec3f(2.2)) * pbr_yd.rgb;
+          let pbr_yg = pbr_yri * select(pbr_yv.x, 1.0, pbr_ym) * pbr_yc0.z + vec3f(pbr_yj);
+          let pbr_yp = pow(max(abs(pbr_ng.z), 1e-6), pbr_yc3.z);
+          let pbr_yrm = pbr_yc3.w + (1.0 - pbr_yc3.w) * (1.0 - pbr_yp * (1.0 - pbr_yv.y));
+          var pbr_yx = 1.0;
+          if (ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0) {{
+              pbr_yx = ubuf.pbr_tone[0].w;
+          }}
+          pbr_alpha = clamp(pbr_yrm * select(pbr_ya, pbr_yv.y * pbr_ya * pbr_yc2.w, pbr_ym), 0.0, 1.0);
+          pbr_lo = vec3f(0.0);
+          pbr_glow = pbr_yri + pbr_yx * pbr_yg * (1.0 + pbr_yrm * pbr_yc3.y) + ubuf.pbr_shield[6].rgb;
+          pbr_pass = vec3f(0.0);
+      }})""",
+                          base, underlying(config.tevStages[mapStage[0]].texMapId));
+    }
   }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {

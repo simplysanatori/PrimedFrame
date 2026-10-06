@@ -1386,6 +1386,15 @@ constexpr uint32_t kShaderBoundaryShield = 0x6C1A4768;
 // fresnel pair over a gradient that scrolls through world space. PBR kind 15, constants in the
 // same PBR8 trailer (rows 0-3 CCH0..CCH3, row 7 DIFC, rows 4-5 filled at run time).
 constexpr uint32_t kShaderPickUp = 0x3E95A9FE;
+// Retail fx shaders of the Metroid test models and holograms (build/mpr/holo86, holo63, hologram
+// NOTES.md): 86CD1703 = unlit DIFT x DIFC + ICNC + ICMC, alpha DIFT.a^2 x DIFC.a, additive (kind 16);
+// 6344950D = the same plus the material's own REFL cube (kind 17); 4CA0017C = the scrolling
+// hologram (kind 18, CCH0..3, DIFC, ICMC in the PBR8 trailer). 4BC890C1 is a plain lit Lambert
+// with no kind: it only leaves the retail-fx gate.
+constexpr uint32_t kShaderHolo = 0x86CD1703;
+constexpr uint32_t kShaderHoloRefl = 0x6344950D;
+constexpr uint32_t kShaderHologram = 0x4CA0017C;
+constexpr uint32_t kShaderLambertFx = 0x4BC890C1;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -1430,6 +1439,10 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderHoloGlass, "holo-glass");
   add(shader == kShaderBoundaryShield, "boundary-shield");
   add(shader == kShaderPickUp, "pickup");
+  add(shader == kShaderHolo, "holo");
+  add(shader == kShaderHoloRefl, "holo-refl");
+  add(shader == kShaderHologram, "hologram");
+  add(shader == kShaderLambertFx, "lambert-fx");
   add(shader == kShaderColorUnlit, "color-unlit");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
@@ -1452,6 +1465,9 @@ const char* KindName(int kind) {
   case 13: return "matcap-shell";
   case 14: return "boundary-shield";
   case 15: return "pickup";
+  case 16: return "holo";
+  case 17: return "holo-refl";
+  case 18: return "hologram";
   default: return "kind?";
   }
 }
@@ -1468,7 +1484,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   out.shader = shader;
   out.role = ShaderRole(shader);
   out.shell = shader == kShaderMatcapShell;
-  out.shield = shader == kShaderBoundaryShield || shader == kShaderPickUp;
+  out.shield = shader == kShaderBoundaryShield || shader == kShaderPickUp || shader == kShaderHolo ||
+               shader == kShaderHoloRefl || shader == kShaderHologram;
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
     const uint32_t family = d.usage & 0xFFFFFF00u;
@@ -1545,7 +1562,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       }
       break;
     case FourCC('R', 'E', 'F', 'L'):
-      if (texture && shader == kShaderIceSpreader) {
+      if (texture && (shader == kShaderIceSpreader || shader == kShaderHoloRefl)) {
         set(kBase, d.texture, &out.refl);
         if (Lower(IdToString(out.refl.id)).rfind(kDefaultRefl, 0) == 0) {
           out.refl = MapRef{};
@@ -1922,6 +1939,47 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 4; ++i) {
       out.shieldRows[28 + i] = difc[i];
     }
+  } else if ((shader == kShaderHolo || shader == kShaderHoloRefl || shader == kShaderHologram) &&
+             out.maps[kBase].has && (shader != kShaderHologram || (cch[0] && cch[1] && cch[2] && cch[3]))) {
+    out.kind = shader == kShaderHolo ? 16 : shader == kShaderHoloRefl ? 17 : 18;
+    out.vcolor = out.kind == 18;
+    // DIFT (or BCLR for the hologram) is the base map. The constants go to the runtime in the PBR8
+    // trailer: row 7 DIFC; row 6 the incandescence ICNC + ICMC (summed, rgb) for 16 and 17, with w
+    // the gain of the material's own cube (17); ICMC alone for 18, whose rows 0-3 are CCH0..CCH3 and
+    // rows 4-5 are filled at run time (world x and y).
+    out.kindParam[0] = 1.0;  // the game multiplies it by the time
+    out.tint[0] = out.tint[1] = out.tint[2] = 0.0;
+    double difc[4] = {1.0, 1.0, 1.0, 1.0};
+    double incan[3] = {0.0, 0.0, 0.0};
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind != ModelMaterialData::Kind::Color) {
+        continue;
+      }
+      if (d.usage == FourCC('D', 'I', 'F', 'C')) {
+        for (int i = 0; i < 4; ++i) {
+          difc[i] = ShortestDouble(d.color[i]);
+        }
+      } else if (d.usage == FourCC('I', 'C', 'M', 'C') || (d.usage == FourCC('I', 'C', 'N', 'C') && out.kind != 18)) {
+        for (int i = 0; i < 3; ++i) {
+          incan[i] += ShortestDouble(d.color[i]);
+        }
+      }
+    }
+    if (out.kind == 18) {
+      for (int r = 0; r < 4; ++r) {
+        for (int i = 0; i < 4; ++i) {
+          out.shieldRows[r * 4 + i] = ShortestDouble(cch[r]->color[i]);
+        }
+      }
+    }
+    for (int i = 0; i < 3; ++i) {
+      out.shieldRows[24 + i] = incan[i];
+    }
+    // The cube gain: only a cube of the material's own (not the black default) adds anything.
+    out.shieldRows[27] = out.kind == 17 && out.refl.has ? 1.0 : 0.0;
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = difc[i];
+    }
   }
   if (std::find(std::begin(kShaderGunGlow), std::end(kShaderGunGlow), shader) != std::end(kShaderGunGlow) &&
       out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] && cch[2]) {
@@ -2041,6 +2099,17 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kEmissive].has = false;
   }
+  if (out.kind >= 16 && out.kind <= 18) {
+    // Unlit and additive; every colour is the shader's, and the base map's alpha is its own.
+    // No second layer: the one map is the base.
+    out.blended = true;
+    out.layered = false;
+    out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 0.0;
+    out.backlight = out.backlightTop = 0.0;
+    out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
+  }
   if (out.kind == 13) {
     // Lit by the standard path and alpha blended; the shader makes its own albedo and rim.
     out.layered = out.blended = true;
@@ -2067,7 +2136,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   if (out.kind == 0) {
     static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
-                                             "frozen-shell", "matcap-shell", "boundary-shield", "pickup"};
+                                             "frozen-shell", "matcap-shell", "boundary-shield", "pickup",
+                                             "holo",         "holo-refl",    "hologram"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -2247,7 +2317,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if (m.kind == 14 || m.kind == 15) {
+  if (m.kind >= 14 && m.kind <= 18) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     for (double v : m.shieldRows) {
       PF(b, v);
@@ -2305,8 +2375,10 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // shader scales the diffuse by the opacity, and the rim and reflection are added unscaled.
   // The boundary shield (kind 14) is plainly alpha blended, GX_BL_SRCALPHA and GX_BL_INVSRCALPHA.
   // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
-  P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : rem.kind == 15 ? (rem.additive ? 1 : 5) : pm.blendDst);
-  P16(b, rem.kind == 14 || rem.kind == 15 ? 4 : rem.kind == 13 ? 1 : pm.blendSrc);
+  // 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
+  const bool lambertFx = rem.shader == kShaderLambertFx;
+  P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : rem.kind >= 15 ? (rem.additive ? 1 : 5) : lambertFx ? 0 : pm.blendDst);
+  P16(b, rem.kind == 14 || rem.kind >= 15 ? 4 : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
   // fallback too, which is what draws it whenever the model is not opaque: channel
   // 0 unlit with the vertex colour as its material colour (bit 2), and the alpha
@@ -3341,7 +3413,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   bool useColor = false;
   for (const Prim& p : prims) {
     const bool reads = opt.standalone ? mats[p.mat].tinted || mats[p.mat].vcolor
-                                      : ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 9 || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 15;
+                                      : ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 9 || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 15 || mats[p.mat].kind == 18;
     useColor = useColor || (reads && buffers[p.buffer].colored);
   }
   if (useColor) {
@@ -3352,7 +3424,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     std::vector<bool> keepAlpha(n, false);
     for (const Prim& p : prims) {
       if (((mats[p.mat].blended || mats[p.mat].layered) && mats[p.mat].tinted) || mats[p.mat].vcolor ||
-          ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 15) {
+          ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 15 || mats[p.mat].kind == 18) {
         for (uint32_t i : p.I) {
           keepAlpha[i] = true;
         }
@@ -3497,7 +3569,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // the shader: its alpha, rim and colours are all the Remastered material's.
     const bool matcapShell = rem.kind == 13;
     // And the Frigate's force fields (kind 14), a retail model's fx surface drawn by the shader.
-    const bool shield = rem.kind == 14 || rem.kind == 15;
+    const bool shield = rem.kind >= 14 && rem.kind <= 18;
+    // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
+    // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
+    const bool lambertFx = rem.shader == kShaderLambertFx;
     if (!opt.standalone && !gunGlow && !frostShell && !matcapShell && !shield) {
       if (rem.kind != 0) {
         loopNotes += std::string("kind ") + KindName(rem.kind) + " dropped: a retail model, not standalone; ";
@@ -3560,8 +3635,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // Only a room's own material asks for a cutout: a retail material's alpha
     // test says nothing about what the Remastered map's alpha holds.
     const char* const baseAlpha =
-        glow ? "blend" : !opt.standalone ? (frostShell || rem.mask ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? "punch" : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
-    const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || !IsFx(pm)) &&
+        glow ? "blend" : !opt.standalone ? (frostShell || rem.mask || rem.kind >= 16 ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? "punch" : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
+    const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || lambertFx || !IsFx(pm)) &&
                         Get("pbr:base", rt, baseAlpha, opt).has_value();
     if (usePbr) {
       ++pbr;
@@ -3676,7 +3751,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const std::string tevReason =
         !opt.pbr ? "pbr off"
         : !rt[kBase].has ? "no base map"
-        : !(opt.standalone || glow || matcapShell || shield || !IsFx(pm)) ? "retail fx material keeps its TEV"
+        : !(opt.standalone || glow || matcapShell || shield || lambertFx || !IsFx(pm)) ? "retail fx material keeps its TEV"
                                                    : "the base map did not resolve";
     // The TEV path: the retail material with each texture slot refilled from
     // the Remastered map that matches what its stage does.
