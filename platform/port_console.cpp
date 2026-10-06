@@ -557,20 +557,20 @@ void CmdHelp() {
   Out("hudscale <50..100>         HUD scale in percent, as the Options row does");
   Out("crosshair <25..100>        mouse/twin-stick crosshair size in percent");
   Out("helmet <0|1>, visorfx <0|1> show (1) or hide (0) the helmet and visor effects");
-  Out("interp [actor|pose|particle|all <0|1>]   frame interpolation settings (F1 Performance)");
+  Out("interp [actor|pose|particle|all <0|1>]   frame interpolation settings (F1 Video > Frame rate)");
   Out("present <0..1|cycle|tick|off> force the presentation factor (also MP_PRESENT_T);");
   Out("                           tick draws the plain tick state");
   Out("hold <0|1>, step [ticks]   stop the simulation; step runs ticks one per frame");
   Out("reveal <0|1>               reveal every world's map, as the Options row does");
   Out("pickups <0|1>              white dots on the map for uncollected pickups");
-  Out("tracker                    items, scans and rooms visited (the F1 Tracker tab)");
+  Out("tracker                    items, scans and rooms visited (the F1 Tracker page)");
   Out("viewmodel <cmdl> [dist] [yaw] [pitch] | off | status | light <0|1>   draw a model in front of the camera");
-  Out("state list | last | save [n] | load [n] | undo | slot <n>   save states (F1 States tab)");
+  Out("state list | last | save [n] | load [n] | undo | slot <n>   save states (F1 Save states page)");
   Out("timer <0|1>                on-screen in-game time; igt <seconds> sets the play time");
   Out("livesplit <0|1> | addr <host:port> | send <command> | status   LiveSplit Server client");
   Out("discord <0|1> | id <application id> | status   Discord Rich Presence");
   Out("gci list | import <path> | export <dir or .raw> | dolphin import|export   memory card transfer");
-  Out("ap [connect <server> <slot> [password] | disconnect | recent | resume <n> | say <text> | chat]   Archipelago, as the F1 Archipelago tab does");
+  Out("ap [connect <server> <slot> [password] | disconnect | recent | resume <n> | say <text> | chat]   Archipelago, as the F1 Archipelago page does");
   Out("quit                       exit the game");
   Out("ids: hex editor id (002900A1), u<index> unique id, or an exact debug name");
 }

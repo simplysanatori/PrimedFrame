@@ -321,7 +321,7 @@ std::string CardImport(const std::string& path);
 std::string CardExport(const std::string& dest);
 std::string CardImportDolphin();
 std::string CardExportDolphin();
-// Cheat: the player takes no damage (F1 > Debug > cheats, MP_GODMODE, console `god`).
+// Cheat: the player takes no damage (F1 > Debug > Cheats, MP_GODMODE, console `god`).
 bool Invulnerable();
 void SetInvulnerable(bool enabled);
 // Write the log to <user folder>/metroid_prime_port.log (port_log_file.h). MP_LOG_FILE=1
