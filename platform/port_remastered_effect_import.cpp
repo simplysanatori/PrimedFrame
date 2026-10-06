@@ -895,13 +895,37 @@ public:
         }
       }
     }
+    // One whose colour texture is nil draws Remastered's black texture (VfxTexture()).
+    static constexpr uint8_t kNilColour[20] = {'B', 'C', 'L', 'R'};
+    if (std::search(data.begin(), data.end(), std::begin(kNilColour), std::end(kNilColour)) != data.end()) {
+      return VfxTexture(EffectGuid{}).id;
+    }
     return 0;
   }
 
   // A texture a VMAT slot draws, as the id of a TXTR the import writes (the disc's
   // own when it was carried over), with its atlas layout. An array texture is
   // packed like a flipbook; any other is a single tile.
+  // A nil id is Remastered's black texture: its MATI loader binds
+  // CGraphicsUtilCache::GetBlackTexture(), opaque black (0, 0, 0, 1), for a nil
+  // texture (VFX_Color_Unlit's BCLR in 64 MATIs, PlasmaCharge's among them).
   FlipbookAtlas VfxTexture(const EffectGuid& stored) {
+    if (stored == EffectGuid{}) {
+      if (m_black == 0) {
+        Image black;
+        black.width = black.height = 4;
+        black.rgba.assign(4 * 4 * 4, 0);
+        for (size_t i = 3; i < black.rgba.size(); i += 4) {
+          black.rgba[i] = 0xFF;
+        }
+        const uint32_t fresh = m_io.freshId(Hash(stored, kTxtr ^ 0xB1ACu));
+        if (WriteTexture(fresh, black, MapKind::Data)) {
+          ++m_result.textures;
+          m_black = fresh;
+        }
+      }
+      return m_black != 0 ? FlipbookAtlas{m_black, 1, 1, 1} : FlipbookAtlas{};
+    }
     const std::optional<uint32_t> retail = EffectRetailId(stored);
     if (retail && m_io.retailId(*retail)) {
       return FlipbookAtlas{*retail, 1, 1, 1};
@@ -1028,7 +1052,7 @@ public:
     // effect with an invisible one: keep the disc's, before anything is written.
     for (const ConvertedPart& part : parts) {
       const EffectNode* node = part.root ? &effect : FindNode(effect, part.id);
-      if (node != nullptr &&
+      if (node != nullptr && !part.placeholder &&
           SplitRetailEffect(part.root ? rootType : kPart, part.part.data(), part.part.size(), check, error) &&
           LostLook(*node, check)) {
         ++m_result.failed;
@@ -1037,6 +1061,15 @@ public:
         Report(row, "failed", "no texture: " + std::string(part.root ? "root" : "child " + EffectGuidString(part.id)));
         return;
       }
+    }
+    // An effect drawn only by placeholder materials would replace the disc's with
+    // an invisible one (PlasmaMuzzle, PlasmaAuxMuzzle): keep the disc's.
+    if (std::any_of(parts.begin(), parts.end(), [](const ConvertedPart& part) { return part.placeholder; }) &&
+        std::all_of(parts.begin(), parts.end(), [](const ConvertedPart& part) { return part.drawsNothing; })) {
+      ++m_result.failed;
+      Log(name + ": only placeholder materials draw, the disc's is kept");
+      Report(row, "failed", "draws nothing: its materials are placeholders");
+      return;
     }
     // Children first, so the root never names a child that was not written.
     for (size_t i = 1; i < parts.size(); ++i) {
@@ -1097,6 +1130,7 @@ private:
   std::map<EffectGuid, uint32_t> m_textures;  // by Remastered id, 0 for one that failed
   std::map<EffectGuid, FlipbookAtlas> m_flipbooks;
   std::map<EffectGuid, FlipbookAtlas> m_vfxFlipbooks; // linear-light copies for VFX materials
+  uint32_t m_black = 0;                                // VfxTexture()'s black texture, once written
   std::map<EffectGuid, uint32_t> m_models;
   EffectImportResult m_result;
 };

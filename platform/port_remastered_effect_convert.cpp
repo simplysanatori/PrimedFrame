@@ -1974,10 +1974,39 @@ public:
       return std::any_of(node.properties.begin(), node.properties.end(),
                          [&](const EffectProperty& property) { return property.fourcc == fourcc; });
     };
-    const bool drawsNothing = part && !has(F("TEXR")) && !has(F("MTIN")) && !has(F("PMDL"));
+    // A material whose colour texture (BCLR) is nil binds Remastered's black
+    // texture. These are placeholder MATIs on generators that carry spawns and
+    // lights (PlasmaCharge's root among them), so their quads are taken as
+    // drawing nothing too; model generators keep the black material.
+    const auto nilColour = [&](const EffectProperty& property) {
+      if (!m_io.materialData) {
+        return false;
+      }
+      for (const EffectValue& value : property.value) {
+        if (value.kind != EffectValue::Kind::Guid) {
+          continue;
+        }
+        static constexpr uint8_t kTag[4] = {'B', 'C', 'L', 'R'};
+        const std::vector<uint8_t> data = m_io.materialData(value.guid);
+        const auto tag = std::search(data.begin(), data.end(), std::begin(kTag), std::end(kTag));
+        return tag != data.end() && data.end() - tag >= 20 && std::all_of(tag + 4, tag + 20, [](uint8_t b) { return b == 0; });
+      }
+      return false;
+    };
+    const bool placeholder = part && !has(F("TEXR")) && !has(F("PMDL")) &&
+                             std::any_of(node.properties.begin(), node.properties.end(), [&](const EffectProperty& property) {
+                               return property.fourcc == F("MTIN") && nilColour(property);
+                             });
+    result.placeholder = placeholder;
+    const bool drawsNothing = part && !has(F("TEXR")) && (!has(F("MTIN")) || placeholder) && !has(F("PMDL"));
+    result.drawsNothing = drawsNothing;
     const bool modelsOnly = part && !has(F("TEXR")) && !has(F("MTIN")) && has(F("PMDL"));
     for (const EffectProperty& property : node.properties) {
       uint32_t fourcc = property.fourcc;
+      if (placeholder && fourcc == F("MTIN")) {
+        result.dropped.push_back("MTIN: its colour texture is nil (the generator draws nothing)");
+        continue;
+      }
       if ((drawsNothing || modelsOnly) && fourcc == F("SIZE")) {
         result.dropped.push_back(drawsNothing ? "SIZE: the generator draws nothing" : "SIZE: the generator draws models only");
         continue;
