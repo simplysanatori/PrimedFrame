@@ -616,7 +616,7 @@ struct RemMaterial {
   bool mask = false;       // the base map's alpha masks the glow and is no opacity
   bool maskSquared = false; // ... squared (USE_DIFFUSE_AS_INCAN_MASK): kept squared in the map
   bool shell = false;      // a matcap shell: drawn as PBR kind 13 over the retail blended slot
-  bool shield = false;     // a boundary shield: PBR kind 14 over the retail fx slot
+  bool shield = false;     // a boundary shield or a pickup: PBR kind 14 or 15 over the retail fx slot
   // Kind 14's shader constants: CCH0..CCH6 then DIFC, four each (the PBR8 trailer).
   double shieldRows[32] = {};
   double height = 0.0;     // above 0: the threshold of a height-blended alpha
@@ -1382,6 +1382,10 @@ constexpr uint32_t kShaderHoloGlass = 0x03407341;
 // animated noise through two maps, the screen copy bent by it. PBR kind 14, with its CCH0..6 and DIFC
 // carried in the record's PBR8 trailer.
 constexpr uint32_t kShaderBoundaryShield = 0x6C1A4768;
+// PickUp (PickUp_Blue_Mat / PickUp_Orange_Mat, build/mpr/artifact/NOTES.md): unlit, a normal-map
+// fresnel pair over a gradient that scrolls through world space. PBR kind 15, constants in the
+// same PBR8 trailer (rows 0-3 CCH0..CCH3, row 7 DIFC, rows 4-5 filled at run time).
+constexpr uint32_t kShaderPickUp = 0x3E95A9FE;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -1425,6 +1429,7 @@ std::string ShaderRole(uint32_t shader) {
   add(in(kShaderPremulGlass), "premul-glass");
   add(shader == kShaderHoloGlass, "holo-glass");
   add(shader == kShaderBoundaryShield, "boundary-shield");
+  add(shader == kShaderPickUp, "pickup");
   add(shader == kShaderColorUnlit, "color-unlit");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
@@ -1446,6 +1451,7 @@ const char* KindName(int kind) {
   case 12: return "frozen-shell";
   case 13: return "matcap-shell";
   case 14: return "boundary-shield";
+  case 15: return "pickup";
   default: return "kind?";
   }
 }
@@ -1462,7 +1468,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   out.shader = shader;
   out.role = ShaderRole(shader);
   out.shell = shader == kShaderMatcapShell;
-  out.shield = shader == kShaderBoundaryShield;
+  out.shield = shader == kShaderBoundaryShield || shader == kShaderPickUp;
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
     const uint32_t family = d.usage & 0xFFFFFF00u;
@@ -1889,6 +1895,33 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 4; ++i) {
       out.shieldRows[28 + i] = difc[i];
     }
+  } else if (shader == kShaderPickUp && out.maps[kBase].has && out.maps[kNormal].has && tch[0] && cch[0] &&
+             cch[1] && cch[2] && cch[3]) {
+    out.kind = 15;
+    out.vcolor = true;
+    // BCLR (the base map) is a three-channel mask and NMAP (the normal map) bends the rim's
+    // normal. TCH0, the gradient, is bound as the second layer's base; it is read at the world
+    // position, so its texcoord is unused. The constants go to the runtime whole.
+    set(kBase, tch[0]->texture, &out.layer[kBase]);
+    out.layer[kBase].coord = 0;
+    out.kindParam[0] = 1.0;  // the game multiplies it by the time
+    out.tint[0] = out.tint[1] = out.tint[2] = 0.0;
+    double difc[4] = {1.0, 1.0, 1.0, 1.0};
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind == ModelMaterialData::Kind::Color && d.usage == FourCC('D', 'I', 'F', 'C')) {
+        for (int i = 0; i < 4; ++i) {
+          difc[i] = ShortestDouble(d.color[i]);
+        }
+      }
+    }
+    for (int r = 0; r < 4; ++r) {
+      for (int i = 0; i < 4; ++i) {
+        out.shieldRows[r * 4 + i] = ShortestDouble(cch[r]->color[i]);
+      }
+    }
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = difc[i];
+    }
   }
   if (std::find(std::begin(kShaderGunGlow), std::end(kShaderGunGlow), shader) != std::end(kShaderGunGlow) &&
       out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] && cch[2]) {
@@ -1999,6 +2032,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
   }
+  if (out.kind == 15) {
+    // Unlit and blended; every colour is the shader's, and the normal map is kept (it bends the rim).
+    out.layered = out.blended = true;
+    out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 0.0;
+    out.backlight = out.backlightTop = 0.0;
+    out.maps[kMr].has = out.maps[kEmissive].has = false;
+  }
   if (out.kind == 13) {
     // Lit by the standard path and alpha blended; the shader makes its own albedo and rim.
     out.layered = out.blended = true;
@@ -2025,7 +2067,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   if (out.kind == 0) {
     static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
-                                             "frozen-shell", "matcap-shell", "boundary-shield"};
+                                             "frozen-shell", "matcap-shell", "boundary-shield", "pickup"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -2205,8 +2247,8 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if (m.kind == 14) {
-    // The boundary shield's constants follow the record, as a trailer the reader strips first.
+  if (m.kind == 14 || m.kind == 15) {
+    // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     for (double v : m.shieldRows) {
       PF(b, v);
     }
@@ -2262,8 +2304,9 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The matcap shell (kind 13) is drawn premultiplied, GX_BL_ONE and GX_BL_INVSRCALPHA: its
   // shader scales the diffuse by the opacity, and the rim and reflection are added unscaled.
   // The boundary shield (kind 14) is plainly alpha blended, GX_BL_SRCALPHA and GX_BL_INVSRCALPHA.
-  P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : pm.blendDst);
-  P16(b, rem.kind == 14 ? 4 : rem.kind == 13 ? 1 : pm.blendSrc);
+  // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
+  P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : rem.kind == 15 ? (rem.additive ? 1 : 5) : pm.blendDst);
+  P16(b, rem.kind == 14 || rem.kind == 15 ? 4 : rem.kind == 13 ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
   // fallback too, which is what draws it whenever the model is not opaque: channel
   // 0 unlit with the vertex colour as its material colour (bit 2), and the alpha
@@ -3454,7 +3497,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // the shader: its alpha, rim and colours are all the Remastered material's.
     const bool matcapShell = rem.kind == 13;
     // And the Frigate's force fields (kind 14), a retail model's fx surface drawn by the shader.
-    const bool shield = rem.kind == 14;
+    const bool shield = rem.kind == 14 || rem.kind == 15;
     if (!opt.standalone && !gunGlow && !frostShell && !matcapShell && !shield) {
       if (rem.kind != 0) {
         loopNotes += std::string("kind ") + KindName(rem.kind) + " dropped: a retail model, not standalone; ";

@@ -467,13 +467,25 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
   // Waste Disposal tank's distortion (11) and the Frigate's force fields (14); glass (8) does not
   // move.
   if ((values[13] > 4.5f && values[13] < 7.5f) || (values[13] > 8.5f && values[13] < 9.5f) ||
-      (values[13] > 10.5f && values[13] < 11.5f) || (values[13] > 13.5f && values[13] < 14.5f)) {
+      (values[13] > 10.5f && values[13] < 11.5f) || (values[13] > 13.5f && values[13] < 15.5f)) {
     values[15] *= CGraphics::GetSecondsMod900();
   }
-  // Only the boundary shield has constants; every other material clears the last one's.
-  GXSetPBRShield(kind > 13.5f && kind < 14.5f ? reinterpret_cast< const f32(*)[4] >(shield) : nullptr);
-  // World up as the shader sees it: view space is right, up, -forward.
   const CTransform4f& view = CGraphics::GetViewMatrix();
+  // The pickup (kind 15) reads its gradient at the world position: rows 4 and 5 of its constants
+  // are world x and y as the dot of the view-space position (right, up, -forward) with xyz, plus w.
+  if (kind > 14.5f && kind < 15.5f) {
+    shield[16] = view.Get00();
+    shield[17] = view.Get02();
+    shield[18] = -view.Get01();
+    shield[19] = view.Get03();
+    shield[20] = view.Get10();
+    shield[21] = view.Get12();
+    shield[22] = -view.Get11();
+    shield[23] = view.Get13();
+  }
+  // Only the boundary shield and the pickup have constants; every other material clears the last one's.
+  GXSetPBRShield(kind > 13.5f && kind < 15.5f ? reinterpret_cast< const f32(*)[4] >(shield) : nullptr);
+  // World up as the shader sees it: view space is right, up, -forward.
   const f32 up[3] = {view.Get20(), view.Get22(), -view.Get21()};
   GXSetPBRMaterial(values, values + 3, values[6], values[7], values + 8, values + 13, up);
   // Every material sets its own, so a back copy's factors don't reach the next one.

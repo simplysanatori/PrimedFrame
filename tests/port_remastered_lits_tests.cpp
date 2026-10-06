@@ -97,6 +97,9 @@ void TestReader() {
     Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s, &cube, shield) == 19, "PBR8 holds 19 floats");
     Check(v[18] == 19.f && wrap == 0x11223344 && s[0] == 0.4f && s[1] == 0.5f, "PBR8 reads the record before it");
     Check(shield[0] == 100.f && shield[31] == 131.f, "PBR8 shield floats");
+    // Kind 15 (PickUp) keeps CCH0..3 in rows 0-3, the view-to-world rows in 4-5 and DIFC in row 7.
+    Check(shield[12] == 112.f && shield[16] == 116.f && shield[23] == 123.f && shield[28] == 128.f,
+          "PBR8 pickup rows (CCH3, world x/y, DIFC)");
     Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s) == 19, "PBR8 reads without a shield out");
     const std::vector<uint8_t> plain = Record(19, true, true, "PBR6", 0.4f, 0.5f);
     shield[5] = 9.f;

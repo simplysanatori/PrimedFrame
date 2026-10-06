@@ -1470,6 +1470,50 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                             underlying(config.tevStages[mapStage[5]].texMapId),
                             underlying(config.tevStages[mapStage[5]].texCoordId), base);
     }
+    // Kind 15, Remastered's PickUp (3E95A9FE, the item pickups' rings and beams), permutation 000_0.
+    // Its constants are GXSetPBRShield's rows: CCH0..CCH3, rows 4 and 5 (world x and y as a dot
+    // of the view-space position with xyz, plus w; the game fills them) and DIFC in row 7. Map 0
+    // is BCLR, a three-channel mask, map 2 the normal map and map 4 TCH0, a gradient read at the
+    // world position and scrolled along V by CCH0.z a second. Unlit and alpha blended: all of it
+    // is glow, the room's exposure on all but the gradient's own term (Cg), which is added at the
+    // exposure's inverse. The vertex shader's travelling sine bump is not drawn.
+    if (mapStage[2] != -1 && mapStage[4] != -1) {
+      liquid += fmt::format(R"""(
+      if (pbr_kind > 14.5 && pbr_kind < 15.5) {{
+          let pbr_c0 = ubuf.pbr_shield[0];
+          let pbr_c1 = ubuf.pbr_shield[1];
+          let pbr_c2 = ubuf.pbr_shield[2];
+          let pbr_c3 = ubuf.pbr_shield[3];
+          let pbr_df = ubuf.pbr_shield[7];
+          let pbr_pn = sampled{0}.rg * (pbr_c0.w * 1.9921875) - 1.0;
+          let pbr_pnz = sqrt(1.0 - clamp(dot(pbr_pn, pbr_pn), 0.0, 1.0));
+          var pbr_pc = abs(pbr_ng.z);
+          if (pbr_tlen > 1e-24) {{
+              let pbr_ps = inverseSqrt(pbr_tlen);
+              pbr_pc = abs(normalize(pbr_t * (pbr_ps * pbr_pn.x) - pbr_b * (pbr_ps * pbr_pn.y) + pbr_ng * pbr_pnz).z);
+          }}
+          let pbr_pcl = max(pbr_pc, 1e-6);
+          let pbr_pf1 = max(pow(clamp(1.0 - pow(pbr_pcl, pbr_c0.y), 0.0, 1.0), 2.0), pbr_c1.z);
+          let pbr_pfb = pow(clamp(1.0 - pow(pbr_pcl, pbr_c0.x), 0.0, 1.0), 2.0);
+          let pbr_pw = vec2f(dot(ubuf.pbr_shield[4].xyz, in.pbr_pos) + ubuf.pbr_shield[4].w,
+                             dot(ubuf.pbr_shield[5].xyz, in.pbr_pos) + ubuf.pbr_shield[5].w);
+          let pbr_puv = vec2f(pbr_pw.x * pbr_c1.x, pbr_pw.y * pbr_c1.x - ubuf.pbr_param.x * pbr_c0.z);
+          let pbr_pg = pow(max(textureSampleGrad(tex{1}, tex{1}_samp, pbr_puv, dpdx(pbr_puv), dpdy(pbr_puv)).rgb,
+                               vec3f(0.0)), vec3f(2.2));
+          let pbr_pcg = pbr_pf1 * pbr_pg * pbr_c1.w;
+          let pbr_ph = {2}.rgb;
+          let pbr_pgl = (pbr_ph.x * pbr_vraw.rgb * pbr_c1.y + pbr_ph.y * pbr_pcg.x * pbr_c2.rgb * pbr_c2.w) * pbr_pfb;
+          var pbr_px = 1.0;
+          if (ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0) {{
+              pbr_px = ubuf.pbr_tone[0].w;
+          }}
+          pbr_alpha = clamp(pbr_df.w * pbr_c3.w, 0.0, 1.0);
+          pbr_lo = vec3f(0.0);
+          pbr_glow = (pbr_pcg + pbr_pgl + pbr_ph.z * pbr_vraw.rgb) * pbr_df.rgb * pbr_px + pbr_pcg;
+          pbr_pass = vec3f(0.0);
+      }})""",
+                          mapStage[2], underlying(config.tevStages[mapStage[4]].texMapId), base);
+    }
   }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
