@@ -247,6 +247,9 @@ struct WheelIcon {
 std::mutex sWheelIconMutex;
 WheelIcon sWheelIcons[2][4];
 std::atomic<uint64_t> sWheelStampNs{0};
+// Whether the pause menu (inventory, logbook) is up; the touch overlay shows R there.
+std::atomic<bool> sPauseScreenOpen{false};
+std::atomic<uint64_t> sPauseScreenStampNs{0};
 std::atomic<int> sVisorRequest{-1};
 std::atomic<uint64_t> sVisorRequestUntilNs{0};
 std::atomic<int> sBeamRequest{-1};
@@ -2265,6 +2268,17 @@ void SetWheelState(uint32_t mask) {
 uint32_t WheelState() {
   const uint64_t now = SDL_GetTicksNS();
   return now - sWheelStampNs.load() < 500'000'000 ? sWheelMask.load() : 0;
+}
+
+// Game thread, once per frame from CInGameGuiManager::Update.
+void SetPauseScreenOpen(bool open) {
+  sPauseScreenOpen.store(open);
+  sPauseScreenStampNs.store(SDL_GetTicksNS());
+}
+
+// Not refreshed for a while (left the game) counts as closed.
+bool PauseScreenOpen() {
+  return sPauseScreenOpen.load() && SDL_GetTicksNS() - sPauseScreenStampNs.load() < 300'000'000;
 }
 
 void RequestVisor(int visor) {
@@ -7399,6 +7413,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeMapZoom(JNIEnv*, jclass, jflo
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeMapScreenOpen(JNIEnv*, jclass) {
   return PortDebug::MapScreenOpen() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativePauseScreenOpen(JNIEnv*, jclass) {
+  return PortDebug::PauseScreenOpen() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

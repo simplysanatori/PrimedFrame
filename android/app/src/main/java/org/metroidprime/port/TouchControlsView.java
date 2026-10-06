@@ -159,6 +159,8 @@ final class TouchControlsView extends View {
     private static final int[] BEAM_ICON_COLORS = {0xFFFFFF00, 0xFFFFFFFF, 0xFF8033FF, 0xFFCC1A1A};
     // The bit of nativeWheelOwned() that is set once there is a player.
     private static final int WHEEL_VALID_BIT = 1 << 12;
+    // Set while Samus is morphed or morphing.
+    private static final int WHEEL_MORPHED_BIT = 1 << 13;
     private static final float WHEEL_BUTTON_RADIUS = 0.072f;
     private static final float WHEEL_BUTTON_GAP_DP = 8f; // wheel to edge / other button
     private static final float WHEEL_BUTTON_ANCHOR_DP = 16f; // gap to the stick / face buttons
@@ -216,13 +218,16 @@ final class TouchControlsView extends View {
     private final RectF mapButtonRect = new RectF();
     private boolean mapButtonShown;
     private boolean wheelButtonsShown;
+    // rHidden() as of the last draw; touches go by what is drawn.
+    private boolean rHiddenNow;
     private final Runnable mapButtonPoll = new Runnable() {
         @Override
         public void run() {
             if ((mapTap && mapButtonState(getWidth(), getHeight()) != mapButtonShown) ||
-                (wheels && ((nativeWheelOwned() & WHEEL_VALID_BIT) != 0) != wheelButtonsShown)) {
+                (wheels && ((nativeWheelOwned() & WHEEL_VALID_BIT) != 0) != wheelButtonsShown) ||
+                rHidden() != rHiddenNow) {
                 invalidate();
-            } else if (mapTap || wheels) {
+            } else if (mapTap || wheels || aim) {
                 postDelayed(this, MAP_BUTTON_POLL_MS);
             }
         }
@@ -267,6 +272,8 @@ final class TouchControlsView extends View {
     private static native void nativeMapPan(float dxDp, float dyDp, float viewHeightDp);
     // True while the map screen is open and can be panned.
     private static native boolean nativeMapScreenOpen();
+    // True while the pause menu (inventory, logbook) is up.
+    private static native boolean nativePauseScreenOpen();
     // A pinch: ratio of the finger spread now to before; above 1 zooms in.
     private static native void nativeMapZoom(float ratio);
     // A twist, in radians; positive turns the map as the stick's right does.
@@ -378,8 +385,9 @@ final class TouchControlsView extends View {
                       rightStickRadius(height), rightPointer, colored ? GC_YELLOW : 0);
         }
 
+        rHiddenNow = rHidden();
         for (PillButton pill : pills) {
-            if (!pillHidden(pill)) {
+            if (pillShown(pill)) {
                 drawPillButton(canvas, pill, width, height);
             }
         }
@@ -397,7 +405,7 @@ final class TouchControlsView extends View {
             drawMapButton(canvas);
         }
         removeCallbacks(mapButtonPoll);
-        if (mapTap || wheels) {
+        if (mapTap || wheels || aim) {
             postDelayed(mapButtonPoll, MAP_BUTTON_POLL_MS);
         }
         if (wheels && wheelPointer != -1) {
@@ -691,7 +699,7 @@ final class TouchControlsView extends View {
         float width = getWidth();
         float height = getHeight();
         for (PillButton pill : pills) {
-            if (pillHidden(pill)) {
+            if (!pillShown(pill)) {
                 continue;
             }
             pillRect(pill, width, height, pillHit);
@@ -1270,6 +1278,19 @@ final class TouchControlsView extends View {
     // The GameCube layout's Z pill only opens the map, which a minimap tap does.
     private boolean pillHidden(PillButton pill) {
         return mapTap && pill.axis < 0 && pill.button == BTN_RIGHT_SHOULDER;
+    }
+
+    // With drag-to-aim, R's hold-still free look is redundant, so R only shows
+    // where it does something else: morphed (Spider Ball), in the pause menu,
+    // and on the map screen. Not part of pillHidden, so the pills' layout
+    // doesn't jump as R comes and goes.
+    private boolean rHidden() {
+        return aim && (nativeWheelOwned() & WHEEL_MORPHED_BIT) == 0 && !nativePauseScreenOpen() &&
+               !nativeMapScreenOpen();
+    }
+
+    private boolean pillShown(PillButton pill) {
+        return !pillHidden(pill) && !(pill.axis == AXIS_TRIGGER_R && rHiddenNow);
     }
 
     private final Path facePath = new Path();

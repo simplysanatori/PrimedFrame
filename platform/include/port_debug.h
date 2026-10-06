@@ -441,7 +441,8 @@ bool TakeTouchLook(float& dyaw, float& dpitch);
 // Hold-and-slide beam and visor wheels on the Android overlay. The player
 // publishes WheelState each frame (bits 0-3 visors owned in EPlayerVisor order
 // Combat/X-Ray/Scan/Thermal, 4-7 beams owned in EBeamId order Power/Ice/Wave/
-// Plasma, 8-9 current visor, 10-11 current beam, 12 valid; 0 when stale). A
+// Plasma, 8-9 current visor, 10-11 current beam, 12 valid, 13 morphed or
+// morphing; 0 when stale). A
 // request is read by ControlMapper for ~120 ms as a press of that command.
 bool TouchWheels();
 void SetTouchWheels(bool on);
@@ -449,6 +450,9 @@ bool TouchVisorTapScan();
 void SetTouchVisorTapScan(bool on);
 void SetWheelState(uint32_t mask);
 uint32_t WheelState();
+// CInGameGuiManager publishes each frame whether the pause menu is up (stale = closed).
+void SetPauseScreenOpen(bool open);
+bool PauseScreenOpen();
 void RequestVisor(int visor);
 void RequestBeam(int beam);
 // The HUD's beam/visor menu icons for the touch wheels (Android), decoded to RGBA8 when the HUD

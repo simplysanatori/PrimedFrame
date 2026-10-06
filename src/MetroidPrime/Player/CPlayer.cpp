@@ -838,6 +838,10 @@ static void PublishWheelState(const CPlayer& player, CStateManager& mgr) {
       CPlayerState::kIT_PowerBeam, CPlayerState::kIT_IceBeam, CPlayerState::kIT_WaveBeam,
       CPlayerState::kIT_PlasmaBeam};
   uint mask = usable ? 1u << 12 : 0u;
+  // The overlay shows its R button while morphed, for the Spider Ball.
+  if (player.GetMorphballTransitionState() != CPlayer::kMS_Unmorphed) {
+    mask |= 1u << 13;
+  }
   for (int i = 0; i < 4; ++i) {
     if (ps->HasPowerUp(visorItems[i])) {
       mask |= 1u << i;

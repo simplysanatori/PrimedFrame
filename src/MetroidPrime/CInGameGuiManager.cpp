@@ -530,6 +530,9 @@ void CInGameGuiManager::PreDraw(CStateManager& mgr, bool isCameraActive) {
 void CInGameGuiManager::Update(const CStateManager& mgr, float dt, CArchitectureQueue& queue,
                                bool cameraActive) {
   EnsureStates(mgr);
+  // Port: the touch overlay shows R in the pause menu, where it changes screens.
+  PortDebug::SetPauseScreenOpen(x1c0_nextState == kIGGS_PauseGame ||
+                                x1c0_nextState == kIGGS_PauseLogBook);
   if (x1d8_onScreenTexAlpha == 0.f) {
     x1dc_onScreenTexTok = nullptr;
   }
