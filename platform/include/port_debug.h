@@ -507,10 +507,11 @@ bool OverlayVisible();
 // rather than plain translucent buttons. Like OverlayVisible(), performs no lazy
 // initialization, so it is safe to call from the UI thread.
 bool TouchColorsFlag();
-// The touch overlay's side margin and extra left-stick inset, in dp. Also safe
-// to call from the UI thread.
+// The touch overlay's side margin, the left stick's extra inset and the face
+// buttons' extra inset, in dp. Also safe to call from the UI thread.
 float TouchSideMarginDp();
 float TouchStickInsetDp();
+float TouchButtonInsetDp();
 void Toggle();
 // Asks for the overlay to be toggled on the next frame. Safe to call from any
 // thread, unlike Toggle(), which touches ImGui state.

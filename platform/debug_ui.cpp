@@ -365,6 +365,9 @@ constexpr float kTouchSideMarginDefault = 16.f;
 constexpr float kTouchStickInsetDefault = 32.f;
 std::atomic< float > sTouchSideMargin{kTouchSideMarginDefault};
 std::atomic< float > sTouchStickInset{kTouchStickInsetDefault};
+// The face buttons' and C-stick's extra gap to the right edge, in dp.
+constexpr float kTouchButtonInsetDefault = 0.f;
+std::atomic< float > sTouchButtonInset{kTouchButtonInsetDefault};
 // Set when a real pad, keyboard or mouse is used; the Android touch overlay takes
 // it to get out of the way.
 std::atomic< bool > sPhysicalInput{false};
@@ -608,10 +611,14 @@ void ApplySetting(const std::string& key, const std::string& value) {
     if (std::isfinite(f) && f >= 0.25f && f <= 10.f) {
       sTouchAimSpeed = f;
     }
-  } else if (key == "touch_side_margin" || key == "touch_stick_inset") {
+  } else if (key == "touch_side_margin" || key == "touch_stick_inset" ||
+             key == "touch_button_inset") {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 0.f && f <= kTouchMarginMaxDp) {
-      (key == "touch_side_margin" ? sTouchSideMargin : sTouchStickInset).store(f);
+      (key == "touch_side_margin"   ? sTouchSideMargin
+       : key == "touch_stick_inset" ? sTouchStickInset
+                                    : sTouchButtonInset)
+          .store(f);
     }
   } else if (key == "mouse_invert_x") {
     sMouseInvertX = ParseBool(value);
@@ -857,6 +864,7 @@ void SaveSettings() {
   file << "touch_aim_speed=" << sTouchAimSpeed << '\n';
   file << "touch_side_margin=" << sTouchSideMargin.load() << '\n';
   file << "touch_stick_inset=" << sTouchStickInset.load() << '\n';
+  file << "touch_button_inset=" << sTouchButtonInset.load() << '\n';
   file << "touch_map_tap=" << (sTouchMapTap ? 1 : 0) << '\n';
   file << "touch_classic_gc=" << (sTouchClassic ? 1 : 0) << '\n';
   file << "touch_wheels=" << (sTouchWheels ? 1 : 0) << '\n';
@@ -3080,6 +3088,7 @@ bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); 
 bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire); }
 float TouchSideMarginDp() { return sTouchSideMargin.load(); }
 float TouchStickInsetDp() { return sTouchStickInset.load(); }
+float TouchButtonInsetDp() { return sTouchButtonInset.load(); }
 
 void SaveSettingsNow() {
   EnsureInitialized();
@@ -5270,9 +5279,17 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("Extra room between the left stick and the screen's left edge, on top of the side "
            "margin.");
+  float buttonInset = sTouchButtonInset.load();
+  if (ImGui::SliderFloat("Button inset", &buttonInset, 0.f, kTouchMarginMaxDp, "%.0f dp")) {
+    sTouchButtonInset.store(buttonInset);
+    MarkDirty();
+  }
+  ItemHelp("Extra room between the face buttons (and the classic C-stick) and the screen's right "
+           "edge, on top of the side margin.");
   if (ImGui::Button("Reset margins")) {
     sTouchSideMargin.store(kTouchSideMarginDefault);
     sTouchStickInset.store(kTouchStickInsetDefault);
+    sTouchButtonInset.store(kTouchButtonInsetDefault);
     MarkDirty();
   }
 #endif
@@ -7416,6 +7433,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchSideMarginDp(JNIEnv*, jc
 extern "C" JNIEXPORT jfloat JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchStickInsetDp(JNIEnv*, jclass) {
   return PortDebug::TouchStickInsetDp();
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchButtonInsetDp(JNIEnv*, jclass) {
+  return PortDebug::TouchButtonInsetDp();
 }
 
 extern "C" JNIEXPORT void JNICALL
