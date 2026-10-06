@@ -427,6 +427,18 @@ public:
     out.assign(reinterpret_cast<const char*>(Bytes(m_strings)) + offset, size);
     return true;
   }
+  // Where each resource id in the load units' lists (HEAD/LUNT/LRES) sits, in property byte order.
+  const std::vector<size_t>& Listed() const { return m_listed; }
+  // Whether these 16 bytes occur anywhere in the room besides `at`.
+  bool NamedElsewhere(size_t at) const {
+    const uint8_t* id = m_d->data() + at;
+    for (auto it = m_d->begin(); (it = std::search(it, m_d->end(), id, id + 16)) != m_d->end(); ++it) {
+      if (size_t(it - m_d->begin()) != at) {
+        return true;
+      }
+    }
+    return false;
+  }
 
 private:
   struct Chunk {
@@ -442,6 +454,7 @@ private:
   std::vector<Component> m_comps;
   std::map<Id16, size_t> m_byGuid;
   Span m_strings;
+  std::vector<size_t> m_listed;
 };
 
 bool Room::Chunks(size_t o, size_t end, std::vector<Chunk>& out, std::string& error) const {
@@ -496,6 +509,7 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
   m_comps.clear();
   m_byGuid.clear();
   m_strings = {};
+  m_listed.clear();
   const std::vector<uint8_t>& d = data;
   if (d.size() < 32 || std::memcmp(d.data(), "RFRM", 4) != 0) {
     error = "not an RFRM file";
@@ -519,6 +533,18 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
   if (!strp.empty() && strp[0].size >= 12) {
     const size_t pool = ReadLE32(&d[strp[0].start + 8]);
     m_strings = {strp[0].start + 12, std::min(pool, strp[0].size - 12)};
+  }
+  // LRES: u32 count, then that many 16-byte ids.
+  std::vector<Span> lres;
+  const uint32_t pLres[] = {Tag("HEAD"), Tag("LUNT"), Tag("LRES")};
+  if (!Find(rs, re, pLres, 3, lres, error)) {
+    return false;
+  }
+  for (const Span& s : lres) {
+    const size_t n = s.size >= 4 ? std::min<size_t>(ReadLE32(&d[s.start]), (s.size - 4) / 16) : 0;
+    for (size_t i = 0; i < n; ++i) {
+      m_listed.push_back(s.start + 4 + 16 * i);
+    }
   }
   std::map<Id16, size_t>& byGuid = m_byGuid;
   for (size_t li = 0; li < layers.size(); ++li) {
@@ -3371,6 +3397,32 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       script(inst, c->entity, active);
       ++modcons;
     }
+  }
+  // A world model (WMDL) that the room only lists among its resources, which no component
+  // places: a piece of the room's own geometry in room space, such as the grating floor of
+  // Elite Quarters Access (00o) that no MCON has. A WMDL a component names is a liquid's.
+  for (const size_t at : r.room.Listed()) {
+    std::vector<uint8_t> data;
+    uint32_t id = 0;
+    if (r.room.NamedElsewhere(at) ||
+        !FindResource(r.room.Bytes({at, 16}), Tag("WMDL"), home, data, nullptr, nullptr)) {
+      continue;
+    }
+    if (m_io.cancelled && m_io.cancelled()) {
+      return;
+    }
+    if (!m_io.model(SwapUuid(r.room.Bytes({at, 16})), id)) {
+      ++dropped;
+      continue;
+    }
+    PortRoomGeo::Instance& inst = instances.emplace_back();
+    inst.model = id;
+    for (int i = 0; i < 3; ++i) {
+      inst.transform[5 * i] = 1.0f;
+    }
+    char line[96];
+    std::snprintf(line, sizeof line, "  %s: world model %08X", r.name.c_str(), id);
+    Log(line);
   }
   // Scenery Remastered added as actors rather than as room geometry: the frame around each
   // door, and pieces of the room itself that sit on its "RS" layer. They carry kPropActorAdded,
