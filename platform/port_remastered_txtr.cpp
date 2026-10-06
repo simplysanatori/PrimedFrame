@@ -3174,6 +3174,91 @@ bool DecodeTxtrLayersRgba8(const uint8_t* data, size_t size, uint32_t& width, ui
   return true;
 }
 
+bool ReadTxtrLayersBc6h(const uint8_t* data, size_t size, TxtrLayersBc6h& out, std::string& error) {
+  out = TxtrLayersBc6h{};
+  if (data == nullptr || size == 0) {
+    error = "remastered txtr: no data";
+    return false;
+  }
+  TextureHeader head;
+  if (!ReadHeader(data, size, head, error)) {
+    return false;
+  }
+  if (head.kind != 5 || head.layers == 0 || head.layers > 256 || head.width == 0 || head.height == 0 ||
+      head.width > 8192 || head.height > 8192 || head.mipSizes.empty()) {
+    error = "remastered txtr: not an array texture";
+    return false;
+  }
+  if (head.format != kTxtrFormatBc6hUfloat && head.format != kTxtrFormatBc6hSfloat) {
+    error = "remastered txtr: the array is " + std::string(FormatName(head.format)) + ", not BC6H";
+    return false;
+  }
+  Meta meta;
+  if (!ReadMeta(data, size, meta, error)) {
+    return false;
+  }
+  std::vector<uint8_t> surface;
+  if (!BuildSurface(data, size, meta, surface, error)) {
+    return false;
+  }
+  // DecodeTxtrLayersRgba8's layout: each layer holds its whole mip chain and starts on a
+  // multiple of the block of GOBs the top mip uses. Only mip 0 of each layer is kept.
+  const size_t bytesPerBlock = 16;
+  const uint32_t width = head.width, height = head.height;
+  const uint32_t blockHeightMip0 = BlockHeightMip0(DivRoundUp(size_t(height), 4));
+  out.width = width;
+  out.height = height;
+  out.isSigned = head.format == kTxtrFormatBc6hSfloat;
+  out.layers.resize(head.layers);
+  size_t srcOffset = 0;
+  for (uint32_t layer = 0; layer < head.layers; ++layer) {
+    for (uint32_t mip = 0; mip < head.mipSizes.size(); ++mip) {
+      const size_t blocksX = DivRoundUp(size_t(std::max(width >> mip, 1u)), 4);
+      const size_t blocksY = DivRoundUp(size_t(std::max(height >> mip, 1u)), 4);
+      const uint32_t mipBlockHeight = MipBlockHeight(blocksY, blockHeightMip0);
+      const size_t swizzled = SwizzledMipSize(blocksX, blocksY, 1, mipBlockHeight, bytesPerBlock);
+      if (swizzled > surface.size() || srcOffset > surface.size() - swizzled) {
+        error = "remastered txtr: the array's surface is short";
+        out = TxtrLayersBc6h{};
+        return false;
+      }
+      if (mip == 0) {
+        std::vector<uint8_t>& untiled = out.layers[layer];
+        untiled.assign(blocksX * blocksY * bytesPerBlock, 0);
+        DeswizzleMip(blocksX, blocksY, 1, mipBlockHeight, 1, bytesPerBlock, surface.data(), srcOffset,
+                     untiled.data());
+      }
+      srcOffset += swizzled;
+    }
+    uint32_t gobHeight = blockHeightMip0;
+    while (height <= (gobHeight / 2) * 8 && gobHeight > 1) {
+      gobHeight /= 2;
+    }
+    const size_t unit = size_t(gobHeight) * kGobSizeBytes;
+    srcOffset = DivRoundUp(srcOffset, unit) * unit;
+  }
+  return true;
+}
+
+void DecodeBc6hImage(const uint8_t* blocks, uint32_t width, uint32_t height, bool isSigned, uint16_t* rgba) {
+  const size_t perRow = DivRoundUp(size_t(width), 4), rows = DivRoundUp(size_t(height), 4);
+  for (size_t by = 0; by < rows; ++by) {
+    for (size_t bx = 0; bx < perRow; ++bx) {
+      uint16_t half[4 * 4 * 3] = {};
+      DecodeBc6h(blocks + (by * perRow + bx) * 16, half, isSigned);
+      for (size_t y = 0; y < 4 && by * 4 + y < height; ++y) {
+        for (size_t x = 0; x < 4 && bx * 4 + x < width; ++x) {
+          uint16_t* p = rgba + ((by * 4 + y) * width + bx * 4 + x) * 4;
+          p[0] = half[(y * 4 + x) * 3 + 0];
+          p[1] = half[(y * 4 + x) * 3 + 1];
+          p[2] = half[(y * 4 + x) * 3 + 2];
+          p[3] = 0x3C00;
+        }
+      }
+    }
+  }
+}
+
 void DecodeBc6hFace(const uint8_t* blocks, uint32_t texels, bool isSigned, uint16_t* rgba) {
   const size_t perSide = DivRoundUp(size_t(texels), 4);
   for (size_t by = 0; by < perSide; ++by) {

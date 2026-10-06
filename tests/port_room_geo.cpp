@@ -175,7 +175,7 @@ void TestClips() {
   std::vector<PortRoomGeo::Instance> out;
   std::string error;
   const std::vector<uint8_t> file = PortRoomGeo::Write(in);
-  Check(file.size() > 8 && file[4] == 9, "version 9 written");
+  Check(file.size() > 8 && file[4] == 10, "version 10 written");
   Check(PortRoomGeo::Parse(file, out, error), "clips file parses");
   Check(out.size() == 2 && out[0].anim.empty() && !out[0].animOnShow && out[1].animOnShow &&
             out[1].anim.size() == 2 && out[1].anim[0].fps == 24.f && !out[1].anim[0].loop &&
@@ -261,6 +261,34 @@ void TestHide() {
   bad = file;
   bad[4] = 8;
   Check(!PortRoomGeo::Parse(bad, out, error, &back), "hidden section in a version 8 file rejected");
+}
+
+// The lightmap lookup section, after the hide section.
+void TestLightmap() {
+  std::vector<PortRoomGeo::Instance> in;
+  in.push_back(MakeInstance(0x11111111, 1.f));
+  in.push_back(MakeInstance(0x22222222, 2.f));
+  const size_t plain = PortRoomGeo::Write(in).size();
+  in[1].lightmap[0] = 0.25f;
+  in[1].lightmap[1] = 0.5f;
+  in[1].lightmap[2] = 0.125f;
+  const std::vector<uint8_t> file = PortRoomGeo::Write(in);
+  Check(file.size() == plain + 8 + 24, "lightmap: section written only with a scale");
+  std::vector<PortRoomGeo::Instance> out;
+  std::string error;
+  Check(PortRoomGeo::Parse(file, out, error) && out.size() == 2 && out[0].lightmap[2] == 0.f &&
+            out[1].lightmap[0] == 0.25f && out[1].lightmap[1] == 0.5f && out[1].lightmap[2] == 0.125f,
+        "lightmap: round trip");
+  for (size_t cut = plain + 1; cut < file.size(); ++cut) {
+    const std::vector<uint8_t> part(file.begin(), file.begin() + cut);
+    if (PortRoomGeo::Parse(part, out, error)) {
+      std::fprintf(stderr, "FAIL: lightmap truncated at %zu parses\n", cut);
+      ++sFailures;
+    }
+  }
+  std::vector<uint8_t> bad = file;
+  bad[4] = 9;
+  Check(!PortRoomGeo::Parse(bad, out, error), "lightmap: section in a version 9 file rejected");
 }
 
 // The glow section, alone and after the script section.
@@ -499,6 +527,7 @@ int main() {
   TestClips();
   TestSky();
   TestHide();
+  TestLightmap();
   TestLods();
   uint32_t id = 0;
   Check(PortRoomGeo::ParseFileName("1a2B3c4D.ROOMGEO", id) && id == 0x1A2B3C4D, "file name");

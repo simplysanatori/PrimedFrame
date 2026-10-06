@@ -488,6 +488,32 @@ void TestGrid() {
       Check(PortRoomEnv::Parse(std::vector<uint8_t>(v15), file, error) && file.regions.size() == 1 &&
                 file.transitions.size() == 2,
             "fog transition: version 15 parses");
+      // Version 18 adds the lightmap after the suns: width 0 = none, else BC6H blocks.
+      {
+        std::vector<uint8_t> v18 = v15;
+        v18[4] = 18;
+        Put32(v18, 0); // suns
+        std::vector<uint8_t> none = v18;
+        Put32(none, 0);
+        Check(PortRoomEnv::Parse(std::vector<uint8_t>(none), file, error) && file.lightmap.width == 0,
+              "lightmap: none");
+        std::vector<uint8_t> lit = v18;
+        Put32(lit, 8);  // width
+        Put32(lit, 4);  // height
+        Put32(lit, 4);  // layers
+        Put32(lit, 0);  // signed
+        Put32(lit, 4 * 2 * 16);
+        lit.insert(lit.end(), 4 * 2 * 16, 0x5a);
+        Check(PortRoomEnv::Parse(std::vector<uint8_t>(lit), file, error) && file.lightmap.width == 8 &&
+                  file.lightmap.height == 4 && file.lightmap.layers == 4 && !file.lightmap.isSigned &&
+                  file.lightmap.length == 128 && file.lightmap.offset + file.lightmap.length == file.data.size(),
+              "lightmap: record parses");
+        std::vector<uint8_t> cutLm(lit.begin(), lit.end() - 1);
+        Check(!PortRoomEnv::Parse(std::move(cutLm), file, error), "lightmap: cut short");
+        std::vector<uint8_t> badLen = lit;
+        badLen[badLen.size() - 128 - 4] = 64;
+        Check(!PortRoomEnv::Parse(std::move(badLen), file, error), "lightmap: wrong length");
+      }
       if (file.regions.size() == 1 && file.transitions.size() == 2) {
         const PortRoomEnv::FogRegion& r = file.regions[0];
         Check(r.distance == 40.f && r.transmittance == 0.5f && r.subtract, "fog transition: region tail");
