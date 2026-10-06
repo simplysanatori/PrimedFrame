@@ -1239,7 +1239,7 @@ void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
   // throughput, which is what the process can *produce*; dividing by wall time
   // reports what reaches the screen. The two agree while the 60 Hz cap is
   // waiting more than the frame costs, and part company exactly when a frame
-  // overruns its budget - which is the case someone opens the Performance tab
+  // overruns its budget - which is the case someone opens the Video > Frame rate page
   // to diagnose. One of the two numbers without the other is misleading there.
   {
     const uint64_t nowNs = SDL_GetTicksNS();
@@ -3046,7 +3046,7 @@ void SaveSettingsNow() {
 
 // The overlay is a full-screen panel with a page list instead of tabs, which
 // fits a touchscreen and reads better on the desktop too. The desktop can go
-// back to the old floating tabbed window (Render > Overlay as a floating
+// back to the old floating tabbed window (System > Overlay as a floating
 // window); MP_TOUCH_UI forces the page layout regardless.
 bool PageLayout() {
 #if defined(__ANDROID__)
@@ -3552,7 +3552,6 @@ void SameLineAfterHelp() {
 } // namespace
 
 void DrawPerformanceTab() {
-  ImGui::TextDisabled("Build: %s", MP_BUILD_REVISION);
   ImGui::SeparatorText("Frame rate");
   bool frameLimit = sFrameLimitEnabled;
   if (ImGui::Checkbox("60 FPS cap (target)", &frameLimit)) {
@@ -4136,7 +4135,7 @@ static void FinishRemasteredImport() {
 
 namespace {
 
-// The Extras gallery (port_gallery.h): the concept art the Remastered import put in the mods, shown one picture at
+// The Remastered gallery (port_gallery.h): the concept art the Remastered import put in the mods, shown one picture at
 // a time in a window of its own. Only the current picture is decoded.
 bool sGalleryOpen = false;
 std::vector<std::string> sGalleryPaths;
@@ -4619,8 +4618,7 @@ void DrawMods() {
 
 void DrawGameSection();
 
-void DrawExtrasTab() {
-  DrawGameSection();
+void DrawCutscenesSection() {
   ImGui::SeparatorText("Cutscenes");
   bool skippable = sSkippableCutscenes;
   if (ImGui::Checkbox("Skippable cutscenes", &skippable)) {
@@ -4641,6 +4639,9 @@ void DrawExtrasTab() {
            "until the area is loaded. The cinematic played in the elevator room before the ride is "
            "not affected.");
 
+}
+
+void DrawUnlocksSection() {
   ImGui::SeparatorText("Unlocks");
   bool hardMode = sUnlockHardMode;
   if (ImGui::Checkbox("Hard mode", &hardMode)) {
@@ -4671,6 +4672,9 @@ void DrawExtrasTab() {
   ItemHelp("Turning an option off locks it again. Metroid (NES) stays locked: its emulator can't run "
            "in the port.");
 
+}
+
+void DrawSpeedrunSection() {
   ImGui::SeparatorText("Speedrun");
   bool timer = sSpeedrunTimer;
   if (ImGui::Checkbox("On-screen in-game time", &timer)) {
@@ -4720,6 +4724,9 @@ void DrawExtrasTab() {
   }
   ImGui::SetItemTooltip("Also splits on each new upgrade or artifact (not expansions or energy tanks).");
 
+}
+
+void DrawDiscordSection() {
   if (PortDiscord::Supported()) {
     ImGui::SeparatorText("Discord");
     bool discord = sDiscord;
@@ -4762,11 +4769,6 @@ void DrawExtrasTab() {
     }
   }
 
-#if defined(__ANDROID__)
-  PortDataFolder::DrawPanel();
-#endif
-  DrawMemoryCard();
-  DrawMods();
 }
 
 #if defined(__ANDROID__)
@@ -4813,8 +4815,9 @@ void PickTexturePack() {
 
 void DrawTexturePack();
 
-void DrawRenderTab() {
-  ImGui::SeparatorText("Display");
+// The look of this overlay: the floating window, the theme and the menu sounds.
+void DrawOverlaySection() {
+  ImGui::SeparatorText("Overlay");
 #if !defined(__ANDROID__)
   if (ImGui::Checkbox("Overlay as a floating window", &sOverlayWindowed)) {
     MarkDirty();
@@ -4834,6 +4837,10 @@ void DrawRenderTab() {
     ItemHelp("The game's own menu sounds for opening, choosing and moving through the overlay. Off "
              "with the Plain theme.");
   }
+}
+
+void DrawVideoDisplay() {
+  ImGui::SeparatorText("Display");
   bool fullscreen = sFullscreen;
 #if defined(__ANDROID__)
   if (ImGui::Checkbox("Fullscreen (hide the status and navigation bars)", &fullscreen)) {
@@ -4898,6 +4905,9 @@ void DrawRenderTab() {
                           "FOV; morph ball and cutscene cameras are unchanged.");
   }
 
+}
+
+void DrawVideoQuality() {
   ImGui::SeparatorText("Quality");
   int msaa = sMsaa >= 4 ? 1 : 0;
   if (ImGui::Combo("Anti-aliasing", &msaa, "Off\0" "4x MSAA\0")) {
@@ -4985,6 +4995,10 @@ void DrawRenderTab() {
   ImGui::SetItemTooltip("Draws the game's text with a sharp, high-resolution font. Recommended: on.\n"
                         "Not saved: it is on at each start.");
 
+}
+
+// The HD texture set and the user's texture pack: the Mods page.
+void DrawTexturesSection() {
   ImGui::SeparatorText("Textures");
   ImGui::Text("HD texture set: %s", PortTextures::DeviceName());
   ImGui::SetItemTooltip("Follows the input last used (xbox, playstation, switch,\n"
@@ -5031,68 +5045,7 @@ void DrawTexturePack() {
 #endif
 }
 
-void DrawInputTab() {
-  ImGui::SeparatorText("Aim");
-  bool mouseAim = sMouseAim;
-  if (ImGui::Checkbox("Mouse aim", &mouseAim)) {
-    SetMouseAim(mouseAim);
-    MarkDirty();
-  }
-  ImGui::SameLine();
-  bool twinStick = sTwinStick;
-  if (ImGui::Checkbox("Twin stick (right stick aims)", &twinStick)) {
-    SetTwinStick(twinStick);
-    MarkDirty();
-  }
-  ItemHelp("Twin stick uses the right stick as a direct camera aim (the same path as the mouse) and "
-           "consumes it, so it no longer free-looks. Fire stays on whatever is bound to A; remap it "
-           "in the Controls tab.");
-  ImGui::BeginDisabled(!sTwinStick);
-  float stickRate = sStickAimRate;
-  if (ImGui::SliderFloat("Stick aim speed", &stickRate, 100.f, 3000.f, "%.0f px/s",
-                         ImGuiSliderFlags_Logarithmic)) {
-    SetStickAimRate(stickRate);
-  }
-  // The game's own option, saved with its settings; free look uses it too.
-  ImGui::BeginDisabled(gpGameState == nullptr);
-  bool invertY = gpGameState != nullptr && gpGameState->GameOptions().GetInvertYAxis();
-  if (ImGui::Checkbox("Invert stick aim Y (the game's Reverse Y Axis)", &invertY)) {
-    gpGameState->GameOptions().SetInvertYAxis(invertY);
-  }
-  ImGui::EndDisabled();
-  ImGui::EndDisabled();
-
-  ImGui::SeparatorText("Mouse");
-  if (ImGui::SliderFloat("Sensitivity", &sMouseSensitivity, 0.0005f, 0.02f, "%.4f rad/px",
-                         ImGuiSliderFlags_Logarithmic)) {
-    MarkDirty();
-  }
-  if (ImGui::Checkbox("Invert X", &sMouseInvertX)) {
-    MarkDirty();
-  }
-  ImGui::SameLine();
-  if (ImGui::Checkbox("Invert Y", &sMouseInvertY)) {
-    MarkDirty();
-  }
-  ImGui::SameLine();
-  if (ImGui::Checkbox("Weapon buttons", &sMouseButtons)) {
-    sMouseButtonGate.Reset();
-    MarkDirty();
-  }
-  ImGui::SetItemTooltip("Mouse buttons are set in Controls > Keyboard & mouse. Existing "
-                        "keyboard/controller weapon bindings also work.");
-  if (ImGui::Checkbox("Crosshair", &sMouseCrosshair)) {
-    MarkDirty();
-  }
-  ImGui::SetItemTooltip("A crosshair at the aim point while mouse aiming.");
-  ImGui::SameLine();
-  int crosshairSize = sCrosshairSize;
-  ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.f);
-  if (ImGui::SliderInt("Size", &crosshairSize, kCrosshairSizeMin, kCrosshairSizeMax, "%d%%")) {
-    SetCrosshairSize(crosshairSize);
-  }
-  ImGui::SetItemTooltip("Applies under mouse aim and twin stick.");
-
+void DrawControlsOptions() {
   ImGui::SeparatorText("Buttons");
   bool lockOnToggle = sLockOnToggle;
   if (ImGui::Checkbox("Toggle Lock-On", &lockOnToggle)) {
@@ -5139,19 +5092,76 @@ void DrawInputTab() {
              "held. Twin stick still passes the right stick up to it, and the beam shift (X in the "
              "Remastered preset) springs too.");
   }
-  bool springFlick = sSpringFlick;
-  if (ImGui::Checkbox("Spring Ball on gyro flick", &springFlick)) {
-    SetSpringBallFlick(springFlick);
+}
+
+void DrawControlsKeyboardMouse() {
+  ImGui::SeparatorText("Mouse aim");
+  bool mouseAim = sMouseAim;
+  if (ImGui::Checkbox("Mouse aim", &mouseAim)) {
+    SetMouseAim(mouseAim);
+    MarkDirty();
   }
-  ItemHelp("Tilt the pad or phone up sharply to spring, like Trilogy's nunchuk flick. Uses the gyro "
-           "source below; gyro aim can stay off. Raise the strength if it springs by accident.");
-  ImGui::BeginDisabled(!sSpringFlick);
-  float flickRate = sSpringFlickRate;
-  if (ImGui::SliderFloat("Flick strength", &flickRate, 2.f, 20.f, "%.1f rad/s")) {
-    SetSpringBallFlickRate(flickRate);
+  if (ImGui::SliderFloat("Sensitivity", &sMouseSensitivity, 0.0005f, 0.02f, "%.4f rad/px",
+                         ImGuiSliderFlags_Logarithmic)) {
+    MarkDirty();
+  }
+  if (ImGui::Checkbox("Invert X", &sMouseInvertX)) {
+    MarkDirty();
+  }
+  ImGui::SameLine();
+  if (ImGui::Checkbox("Invert Y", &sMouseInvertY)) {
+    MarkDirty();
+  }
+  ImGui::SameLine();
+  if (ImGui::Checkbox("Weapon buttons", &sMouseButtons)) {
+    sMouseButtonGate.Reset();
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("Mouse buttons are set in Controls > Keyboard & mouse. Existing "
+                        "keyboard/controller weapon bindings also work.");
+  if (ImGui::Checkbox("Crosshair", &sMouseCrosshair)) {
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("A crosshair at the aim point while mouse aiming.");
+  ImGui::SameLine();
+  int crosshairSize = sCrosshairSize;
+  ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.f);
+  if (ImGui::SliderInt("Size", &crosshairSize, kCrosshairSizeMin, kCrosshairSizeMax, "%d%%")) {
+    SetCrosshairSize(crosshairSize);
+  }
+  ImGui::SetItemTooltip("Applies under mouse aim and twin stick.");
+
+  PortControls::DrawKeyboardMouse();
+}
+
+void DrawControlsController() {
+  ImGui::SeparatorText("Stick aim");
+  bool twinStick = sTwinStick;
+  if (ImGui::Checkbox("Twin stick (right stick aims)", &twinStick)) {
+    SetTwinStick(twinStick);
+    MarkDirty();
+  }
+  ItemHelp("Twin stick uses the right stick as a direct camera aim (the same path as the mouse) and "
+           "consumes it, so it no longer free-looks. Fire stays on whatever is bound to A; remap it "
+           "in Controls > Controller.");
+  ImGui::BeginDisabled(!sTwinStick);
+  float stickRate = sStickAimRate;
+  if (ImGui::SliderFloat("Stick aim speed", &stickRate, 100.f, 3000.f, "%.0f px/s",
+                         ImGuiSliderFlags_Logarithmic)) {
+    SetStickAimRate(stickRate);
+  }
+  // The game's own option, saved with its settings; free look uses it too.
+  ImGui::BeginDisabled(gpGameState == nullptr);
+  bool invertY = gpGameState != nullptr && gpGameState->GameOptions().GetInvertYAxis();
+  if (ImGui::Checkbox("Invert stick aim Y (the game's Reverse Y Axis)", &invertY)) {
+    gpGameState->GameOptions().SetInvertYAxis(invertY);
   }
   ImGui::EndDisabled();
+  ImGui::EndDisabled();
+  PortControls::DrawController();
+}
 
+void DrawControlsTouchGyro() {
 #if defined(__ANDROID__)
   ImGui::SeparatorText("Touch controls");
   if (ImGui::Checkbox("Coloured buttons", &sTouchColors)) {
@@ -5230,6 +5240,19 @@ void DrawInputTab() {
   if (ImGui::SliderFloat("Sensitivity##gyro", &gyroRate, 50.f, 3000.f, "%.0f px/s per rad/s",
                          ImGuiSliderFlags_Logarithmic)) {
     SetGyroRate(gyroRate);
+  }
+  ImGui::EndDisabled();
+
+  bool springFlick = sSpringFlick;
+  if (ImGui::Checkbox("Spring Ball on gyro flick", &springFlick)) {
+    SetSpringBallFlick(springFlick);
+  }
+  ItemHelp("Tilt the pad or phone up sharply to spring, like Trilogy's nunchuk flick. Uses the gyro "
+           "source below; gyro aim can stay off. Raise the strength if it springs by accident.");
+  ImGui::BeginDisabled(!sSpringFlick);
+  float flickRate = sSpringFlickRate;
+  if (ImGui::SliderFloat("Flick strength", &flickRate, 2.f, 20.f, "%.1f rad/s")) {
+    SetSpringBallFlickRate(flickRate);
   }
   ImGui::EndDisabled();
 }
@@ -5499,7 +5522,7 @@ void DrawChatTab() {
   ImGui::PopStyleColor();
 }
 
-// Restart, screenshot and exit, plus the settings file; the top of the Extras tab.
+// Restart, screenshot and exit, plus the settings file; the top of the Game page (settings are on System).
 void DrawGameSection() {
   ImGui::SeparatorText("Game");
   if (ImGui::Button("Restart to menu")) {
@@ -5530,6 +5553,9 @@ void DrawGameSection() {
     }
     ImGui::EndPopup();
   }
+}
+
+void DrawSettingsSection() {
   ImGui::SeparatorText("Settings");
   if (ImGui::Button("Save settings now")) {
     sSettingsDirty = true;
@@ -5603,18 +5629,17 @@ void DrawArchipelagoSession() {
 }
 
 // Everything Archipelago in one tab: the connection and the multiworld's chat.
+bool SubTab(const char* page, const char* name);
+
 void DrawArchipelagoTab() {
   if (!ImGui::BeginTabBar("apPages")) {
     return;
   }
-  static const char* sStartPage = std::getenv("MP_DEBUG_TAB");
-  const bool chatFirst = sStartPage != nullptr && SDL_strcasecmp(sStartPage, "Chat") == 0;
-  if (ImGui::BeginTabItem("Connection")) {
+  if (SubTab("Archipelago", "Connection")) {
     DrawArchipelagoSession();
     ImGui::EndTabItem();
   }
-  if (ImGui::BeginTabItem("Chat", nullptr, chatFirst ? ImGuiTabItemFlags_SetSelected : 0)) {
-    sStartPage = nullptr;
+  if (SubTab("Archipelago", "Chat")) {
     DrawChatTab();
     ImGui::EndTabItem();
   }
@@ -5929,7 +5954,7 @@ void DrawRendering() {
                 models, drawn, instances);
   }
 }
-void DrawRemasteredTab() {
+void DrawRemasteredWarning() {
   {
     const ImVec4 bad = ThemeBadColor();
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(bad.x * 0.25f, bad.y * 0.25f, bad.z * 0.25f, 0.6f));
@@ -5948,10 +5973,10 @@ void DrawRemasteredTab() {
     ImGui::PopStyleColor(2);
   }
 
-  ImGui::SeparatorText("Import");
-  DrawRemasteredImport();
+}
 
-  ImGui::SeparatorText("Text");
+void DrawLanguageSection() {
+  ImGui::SeparatorText("Language");
   {
     int language = 0;
     const char* current = TextLanguage();
@@ -5972,6 +5997,86 @@ void DrawRemasteredTab() {
              "screen changes the next time its menu or screen opens.");
   }
 
+}
+
+// What a player sets for Remastered's rooms; the rest is under Debug.
+void DrawRemasteredRoomModels() {
+  ImGui::SeparatorText("Room models");
+  // The frame's buffers are only sized for room geometry when the game started with some.
+  const bool geoReady = PortRoomGeo::BuffersReady();
+  if (!geoReady && PortMods::RoomGeometryLoaded()) {
+    ImGui::TextColored(ThemeWarnColor(), "Restart the game to see the Remastered rooms.");
+    ImGui::SetItemTooltip("The game started without room geometry installed, so it set no room aside\n"
+                          "for it. Once it starts with some, mods can be changed without a restart.");
+  }
+  ImGui::BeginDisabled(!geoReady);
+  static const char* const kModes[] = {"off", "in place of the room", "on top of the room"};
+  int mode = int(PortRoomGeo::GetMode());
+  if (ImGui::Combo("Room geometry", &mode, kModes, 3)) {
+    PortRoomGeo::SetMode(PortRoomGeo::Mode(mode));
+  }
+  ImGui::SetItemTooltip("Recommended: in place of the room.\n"
+                        "Draws a mod's Remastered room models instead of the original rooms, or on\n"
+                        "top of them to compare the two. Does nothing without a room geometry mod.");
+#ifdef __ANDROID__
+  // The defaults (MSAA off, 1x) are fine; this catches a phone set up for the original rooms.
+  if (PortRoomGeo::GetMode() != PortRoomGeo::Mode::Off && (sMsaa > 1 || sRenderScale <= 0.f || sRenderScale > 2.f)) {
+    ImGui::TextColored(ThemeWarnColor(), "Slow on phones with MSAA or native scale.");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Use 2x, MSAA off")) {
+      SetMsaa(1);
+      SetRenderScale(2.f);
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Turns anti-aliasing off and sets the EFB scale to 2x (the Quality settings).\n"
+                          "The Remastered rooms draw many more models, and a phone's GPU pays for\n"
+                          "each one at every pixel it renders.");
+  }
+#endif
+  bool areaLights = PortRoomGeo::AreaLights();
+  if (ImGui::Checkbox("Take the area's lights", &areaLights)) {
+    PortRoomGeo::SetAreaLights(areaLights);
+  }
+  ImGui::SetItemTooltip("Recommended: off.\n"
+                        "Also lights the Remastered rooms with the game's own lights where the room\n"
+                        "has baked light. Off matches Remastered.");
+  float minPixels = PortRoomGeo::MinPixels();
+  if (ImGui::SliderFloat("Skip small models", &minPixels, 0.f, 8.f, minPixels > 0.f ? "under %.1f px" : "off")) {
+    PortRoomGeo::SetMinPixels(minPixels);
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("Leaves out room models that look smaller than this on screen (in the game's\n"
+                        "own 480-line pixels, whatever the render scale). Raise it if frames are\n"
+                        "slow; 0 draws everything.");
+  float lodDistance = PortRoomGeo::LodDistance();
+  if (ImGui::SliderFloat("Detail distance", &lodDistance, 0.f, 4.f, lodDistance > 0.f ? "x%.2f" : "full detail")) {
+    PortRoomGeo::SetLodDistance(lodDistance);
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("Where room models switch to Remastered's simpler versions of themselves\n"
+                        "farther away: 1 is Remastered's own distances, higher keeps the full models\n"
+                        "farther out, 0 never switches. Lower it if frames are slow. Needs an import\n"
+                        "made by this version.");
+  ImGui::EndDisabled();
+  bool resident = sRoomGeoResident;
+  if (ImGui::Checkbox("Keep on the GPU (next start)", &resident)) {
+    PortDebug::SetRoomGeoResident(resident);
+  }
+  ImGui::SetItemTooltip(PortRoomGeo::Resident()
+                            ? "On: a room geometry mod's models are uploaded once when they load,\n"
+                              "and a frame's buffers are smaller. Takes effect from the next start.\n"
+                              "Recommended: off unless frames are slow; it is experimental."
+                            : "Uploads a room geometry mod's models once when they load instead of\n"
+                              "every frame, so a frame's buffers can be smaller. Experimental; takes\n"
+                              "effect from the next start. Recommended: off unless frames are slow.");
+
+}
+
+void DrawRemasteredTab() {
+  DrawRemasteredWarning();
+  ImGui::SeparatorText("Import");
+  DrawRemasteredImport();
+
   ImGui::SeparatorText("Gallery");
   {
     const std::vector<std::string> pictures = PortMods::GalleryPaths();
@@ -5985,7 +6090,12 @@ void DrawRemasteredTab() {
     }
   }
 
-  ImGui::SeparatorText("Rendering");
+  DrawRemasteredRoomModels();
+}
+
+// The Remastered pass tests and inspectors, for the Debug page.
+void DrawRemasteredDebug() {
+  ImGui::SeparatorText("Remastered");
   // What the middle of the screen looks at.
   float origin[3];
   float forward[3];
@@ -6000,53 +6110,6 @@ void DrawRemasteredTab() {
                             "for it. Once it starts with some, mods can be changed without a restart.");
     }
     ImGui::BeginDisabled(!geoReady);
-    static const char* const kModes[] = {"off", "in place of the room", "on top of the room"};
-    int mode = int(PortRoomGeo::GetMode());
-    if (ImGui::Combo("Room geometry", &mode, kModes, 3)) {
-      PortRoomGeo::SetMode(PortRoomGeo::Mode(mode));
-    }
-    ImGui::SetItemTooltip("Recommended: in place of the room.\n"
-                          "Draws a mod's Remastered room models instead of the original rooms, or on\n"
-                          "top of them to compare the two. Does nothing without a room geometry mod.");
-#ifdef __ANDROID__
-    // The defaults (MSAA off, 1x) are fine; this catches a phone set up for the original rooms.
-    if (PortRoomGeo::GetMode() != PortRoomGeo::Mode::Off && (sMsaa > 1 || sRenderScale <= 0.f || sRenderScale > 2.f)) {
-      ImGui::TextColored(ThemeWarnColor(), "Slow on phones with MSAA or native scale.");
-      ImGui::SameLine();
-      if (ImGui::SmallButton("Use 2x, MSAA off")) {
-        SetMsaa(1);
-        SetRenderScale(2.f);
-        MarkDirty();
-      }
-      ImGui::SetItemTooltip("Turns anti-aliasing off and sets the EFB scale to 2x (the Quality settings).\n"
-                            "The Remastered rooms draw many more models, and a phone's GPU pays for\n"
-                            "each one at every pixel it renders.");
-    }
-#endif
-    bool areaLights = PortRoomGeo::AreaLights();
-    if (ImGui::Checkbox("Take the area's lights", &areaLights)) {
-      PortRoomGeo::SetAreaLights(areaLights);
-    }
-    ImGui::SetItemTooltip("Recommended: off.\n"
-                          "Also lights the Remastered rooms with the game's own lights where the room\n"
-                          "has baked light. Off matches Remastered.");
-    float minPixels = PortRoomGeo::MinPixels();
-    if (ImGui::SliderFloat("Skip small models", &minPixels, 0.f, 8.f, minPixels > 0.f ? "under %.1f px" : "off")) {
-      PortRoomGeo::SetMinPixels(minPixels);
-      MarkDirty();
-    }
-    ImGui::SetItemTooltip("Leaves out room models that look smaller than this on screen (in the game's\n"
-                          "own 480-line pixels, whatever the render scale). Raise it if frames are\n"
-                          "slow; 0 draws everything.");
-    float lodDistance = PortRoomGeo::LodDistance();
-    if (ImGui::SliderFloat("Detail distance", &lodDistance, 0.f, 4.f, lodDistance > 0.f ? "x%.2f" : "full detail")) {
-      PortRoomGeo::SetLodDistance(lodDistance);
-      MarkDirty();
-    }
-    ImGui::SetItemTooltip("Where room models switch to Remastered's simpler versions of themselves\n"
-                          "farther away: 1 is Remastered's own distances, higher keeps the full models\n"
-                          "farther out, 0 never switches. Lower it if frames are slow. Needs an import\n"
-                          "made by this version.");
     bool merged = PortRoomGeo::MergedDraws();
     if (ImGui::Checkbox("Draw merged copies", &merged)) {
       PortRoomGeo::SetMergedDraws(merged);
@@ -6127,18 +6190,6 @@ void DrawRemasteredTab() {
                           "its copy of the frame, and reloading depth for the HUD after it. The last\n"
                           "looks right: it reloads the depth even when the HUD doesn't need it.");
     ImGui::EndDisabled();
-    ImGui::SameLine();
-    bool resident = sRoomGeoResident;
-    if (ImGui::Checkbox("Keep on the GPU (next start)", &resident)) {
-      PortDebug::SetRoomGeoResident(resident);
-    }
-    ImGui::SetItemTooltip(PortRoomGeo::Resident()
-                              ? "On: a room geometry mod's models are uploaded once when they load,\n"
-                                "and a frame's buffers are smaller. Takes effect from the next start.\n"
-                                "Recommended: off unless frames are slow; it is experimental."
-                              : "Uploads a room geometry mod's models once when they load instead of\n"
-                                "every frame, so a frame's buffers can be smaller. Experimental; takes\n"
-                                "effect from the next start. Recommended: off unless frames are slow.");
 
     static std::string picked;
     static uint32_t pickedModel = 0;
@@ -6245,7 +6296,7 @@ void DrawRemasteredTab() {
   }
 }
 
-void DrawDebugTab() {
+void DrawLogSection() {
   ImGui::SeparatorText("Log");
   bool logFile = sLogFile || PortLogFile::Active();
   if (ImGui::Checkbox("Write the log to a file", &logFile)) {
@@ -6274,6 +6325,9 @@ void DrawDebugTab() {
     ImGui::TextWrapped("A copy goes to %s, which the phone's file manager can open.", shared.c_str());
   }
 
+}
+
+void DrawDebugTab() {
   ImGui::SeparatorText("Cheats");
   bool cheats = sCheats;
   if (ImGui::Checkbox("Show cheats (items, health, teleport)", &cheats)) {
@@ -6290,7 +6344,7 @@ void DrawDebugTab() {
   ImGui::SeparatorText("Rendering");
   DrawRendering();
 
-  ImGui::SeparatorText("Audio");
+  ImGui::SeparatorText("Audio backends");
   DrawAudio();
   if (ImGui::CollapsingHeader("Sounds playing")) {
     DrawVoices();
@@ -6391,6 +6445,8 @@ void DrawTrackerLogic() {
       }
     }
   }
+
+  DrawRemasteredDebug();
 }
 
 void DrawTrackerTab() {
@@ -6564,27 +6620,169 @@ void DrawSaveStatesTab() {
   ImGui::TextDisabled("Folder: %s", PortSaveState::Folder().c_str());
 }
 
+// The game's own volumes, the same as the pause menu's two sliders.
+void DrawGameAudio() {
+  ImGui::SeparatorText("Audio");
+  ImGui::BeginDisabled(gpGameState == nullptr);
+  int music = gpGameState != nullptr ? gpGameState->GameOptions().GetMusicVolume() : 0;
+  int musicPct = (music * 100 + 63) / 127;
+  if (ImGui::SliderInt("Music volume", &musicPct, 0, 100, "%d%%") && gpGameState != nullptr) {
+    gpGameState->GameOptions().SetMusicVolume((musicPct * 127 + 50) / 100, true);
+  }
+  int sfx = gpGameState != nullptr ? gpGameState->GameOptions().GetSfxVolume() : 0;
+  int sfxPct = (sfx * 100 + 63) / 127;
+  if (ImGui::SliderInt("Sound effects volume", &sfxPct, 0, 100, "%d%%") && gpGameState != nullptr) {
+    gpGameState->GameOptions().SetSfxVolume((sfxPct * 127 + 50) / 100, true);
+  }
+  ImGui::EndDisabled();
+  ImGui::SetItemTooltip("The same two settings as the pause menu's volume sliders. They are kept in the\n"
+                        "game's own options (saved with the game, not in port_settings.ini), so they\n"
+                        "persist once the game saves its options, e.g. on a save.");
+}
+
+void DrawGameTab() {
+  DrawGameSection();
+  DrawCutscenesSection();
+  DrawUnlocksSection();
+  DrawGameAudio();
+  DrawLanguageSection();
+  DrawSpeedrunSection();
+}
+
+void DrawControlsTab() {
+  if (!ImGui::BeginTabBar("controlsPages")) {
+    return;
+  }
+  if (SubTab("Controls", "Options")) {
+    DrawControlsOptions();
+    ImGui::EndTabItem();
+  }
+  if (SubTab("Controls", "Keyboard & mouse")) {
+    DrawControlsKeyboardMouse();
+    ImGui::EndTabItem();
+  }
+  if (SubTab("Controls", "Controller")) {
+    DrawControlsController();
+    ImGui::EndTabItem();
+  }
+  if (SubTab("Controls", "Touch & gyro")) {
+    DrawControlsTouchGyro();
+    ImGui::EndTabItem();
+  }
+  ImGui::EndTabBar();
+}
+
+void DrawVideoTab() {
+  if (!ImGui::BeginTabBar("videoPages")) {
+    return;
+  }
+  if (SubTab("Video", "Display")) {
+    DrawVideoDisplay();
+    ImGui::EndTabItem();
+  }
+  if (SubTab("Video", "Quality")) {
+    DrawVideoQuality();
+    ImGui::EndTabItem();
+  }
+  if (SubTab("Video", "Frame rate")) {
+    DrawPerformanceTab();
+    ImGui::EndTabItem();
+  }
+  ImGui::EndTabBar();
+}
+
+void DrawModsTab() {
+  DrawMods();
+  DrawTexturesSection();
+}
+
+void DrawSystemTab() {
+  DrawOverlaySection();
+  DrawSettingsSection();
+  DrawMemoryCard();
+#if defined(__ANDROID__)
+  PortDataFolder::DrawPanel();
+#endif
+  DrawLogSection();
+  DrawDiscordSection();
+  ImGui::SeparatorText("About");
+  ImGui::TextDisabled("Build: %s", MP_BUILD_REVISION);
+}
+
 struct DebugPage {
   const char* name;
   void (*draw)();
 };
 
 const DebugPage kDebugPages[] = {
-    {"Input", DrawInputTab},     {"Controls", PortControls::DrawTab},
-    {"Render", DrawRenderTab},   {"Performance", DrawPerformanceTab},
-    {"Extras", DrawExtrasTab},   {"Remastered", DrawRemasteredTab},
-    {"Tracker", DrawTrackerTab}, {"States", DrawSaveStatesTab},
-    {"Archipelago", DrawArchipelagoTab}, {"Debug", DrawDebugTab},
+    {"Game", DrawGameTab},
+    {"Controls", DrawControlsTab},
+    {"Video", DrawVideoTab},
+    {"Remastered", DrawRemasteredTab},
+    {"Mods", DrawModsTab},
+    {"Archipelago", DrawArchipelagoTab},
+    {"Tracker", DrawTrackerTab},
+    {"Save states", DrawSaveStatesTab},
+    {"System", DrawSystemTab},
+    {"Debug", DrawDebugTab},
 };
 
-// MP_DEBUG_TAB, with the old Session and Chat tabs sent to the Archipelago tab
-// that replaced them.
-const char* StartPageName() {
-  const char* name = std::getenv("MP_DEBUG_TAB");
-  if (name != nullptr &&
-      (SDL_strcasecmp(name, "Session") == 0 || SDL_strcasecmp(name, "Chat") == 0))
-    return "Archipelago";
-  return name;
+// MP_DEBUG_TAB=<page>[/<sub-tab>], case-insensitive. The old page names are
+// kept: Input, Render, Performance, Extras, States, Session and Chat.
+struct StartTarget {
+  std::string page;
+  std::string sub;
+};
+
+const StartTarget& GetStartTarget() {
+  static const StartTarget target = [] {
+    StartTarget t;
+    const char* env = std::getenv("MP_DEBUG_TAB");
+    if (env == nullptr || *env == '\0') {
+      return t;
+    }
+    std::string raw = env;
+    if (const size_t slash = raw.find('/'); slash != std::string::npos) {
+      t.sub = raw.substr(slash + 1);
+      raw.resize(slash);
+    }
+    struct Alias {
+      const char* from;
+      const char* page;
+      const char* sub;
+    };
+    static const Alias kAliases[] = {
+        {"Input", "Controls", ""},         {"Render", "Video", ""},
+        {"Performance", "Video", "Frame rate"}, {"Extras", "Game", ""},
+        {"States", "Save states", ""},     {"Session", "Archipelago", "Connection"},
+        {"Chat", "Archipelago", "Chat"},
+    };
+    t.page = raw;
+    for (const Alias& alias : kAliases) {
+      if (SDL_strcasecmp(raw.c_str(), alias.from) == 0) {
+        t.page = alias.page;
+        if (t.sub.empty()) {
+          t.sub = alias.sub;
+        }
+      }
+    }
+    return t;
+  }();
+  return target;
+}
+
+// A page's inner tab, opened first when MP_DEBUG_TAB names it. The caller ends
+// the item with EndTabItem when this returns true.
+bool SubTab(const char* page, const char* name) {
+  static bool pending = !GetStartTarget().sub.empty();
+  const StartTarget& target = GetStartTarget();
+  const bool start = pending && SDL_strcasecmp(target.page.c_str(), page) == 0 &&
+                     SDL_strcasecmp(target.sub.c_str(), name) == 0;
+  const bool shown = ImGui::BeginTabItem(name, nullptr, start ? ImGuiTabItemFlags_SetSelected : 0);
+  if (start) {
+    pending = false;
+  }
+  return shown;
 }
 
 // The innermost window under the finger that can actually scroll vertically,
@@ -6745,12 +6943,21 @@ bool DrawPageWindow() {
     const char* const kTitle = "Metroid Prime Port";
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(kTitle);
+    const char* const kBuild = MP_BUILD_REVISION;
+    const float buildWidth = ImGui::CalcTextSize(kBuild).x;
+    const bool buildFits = ImGui::GetContentRegionAvail().x >
+                           ImGui::CalcTextSize(kTitle).x + buildWidth + closeWidth +
+                               style.ItemSpacing.x * 5.f;
+    if (buildFits) {
+      ImGui::SameLine(0.f, style.ItemSpacing.x * 2.f);
+      ImGui::TextDisabled("%s", kBuild);
+    }
 #if !defined(__ANDROID__)
-    // Only when it fits beside the title and the Close button.
+    // Only when it fits beside the title, the build and the Close button.
     const char* const kKeys = "F1: hide   F10: frame limit   F12: screenshot";
-    if (ImGui::GetContentRegionAvail().x > ImGui::CalcTextSize(kTitle).x +
+    if (ImGui::GetContentRegionAvail().x > ImGui::CalcTextSize(kTitle).x + buildWidth +
                                                ImGui::CalcTextSize(kKeys).x + closeWidth +
-                                               style.ItemSpacing.x * 5.f) {
+                                               style.ItemSpacing.x * 8.f) {
       ImGui::SameLine(0.f, style.ItemSpacing.x * 3.f);
       ImGui::TextDisabled("%s", kKeys);
     }
@@ -6764,14 +6971,14 @@ bool DrawPageWindow() {
 
     static int sPage = 0;
     // MP_DEBUG_TAB=<name> opens on that page, for captures of the overlay.
-    static const char* sStartPage = StartPageName();
-    if (sStartPage != nullptr) {
+    static bool sStartPending = true;
+    if (sStartPending) {
       for (int i = 0; i < static_cast< int >(ARRAY_SIZE(kDebugPages)); ++i) {
-        if (SDL_strcasecmp(sStartPage, kDebugPages[i].name) == 0) {
+        if (SDL_strcasecmp(GetStartTarget().page.c_str(), kDebugPages[i].name) == 0) {
           sPage = i;
         }
       }
-      sStartPage = nullptr;
+      sStartPending = false;
     }
     float listWidth = 0.f;
     for (const DebugPage& page : kDebugPages) {
@@ -6809,18 +7016,27 @@ bool DrawDesktopWindow() {
   bool open = true;
   if (ImGui::Begin("Metroid Prime Port", &open, ImGuiWindowFlags_MenuBar)) {
     if (ImGui::BeginMenuBar()) {
-      ImGui::TextUnformatted("F1: hide   F10: frame limit   F12: screenshot");
+      const char* const kKeys = "F1: hide   F10: frame limit   F12: screenshot";
+      ImGui::TextUnformatted(kKeys);
+      // Only when it fits beside the hotkey hint.
+      const ImGuiStyle& style = ImGui::GetStyle();
+      if (ImGui::GetContentRegionAvail().x >
+          ImGui::CalcTextSize(MP_BUILD_REVISION).x + style.ItemSpacing.x * 3.f) {
+        ImGui::SameLine(0.f, style.ItemSpacing.x * 3.f);
+        ImGui::TextDisabled("%s", MP_BUILD_REVISION);
+      }
       ImGui::EndMenuBar();
     }
 
     if (ImGui::BeginTabBar("##debug_tabs", ImGuiTabBarFlags_FittingPolicyScroll)) {
       // MP_DEBUG_TAB=<name> opens on that tab, for captures of the overlay.
-      static const char* sStartTab = StartPageName();
+      static bool sStartPending = true;
       for (const DebugPage& page : kDebugPages) {
-        const bool start = sStartTab != nullptr && SDL_strcasecmp(sStartTab, page.name) == 0;
+        const bool start =
+            sStartPending && SDL_strcasecmp(GetStartTarget().page.c_str(), page.name) == 0;
         if (ImGui::BeginTabItem(page.name, nullptr, start ? ImGuiTabItemFlags_SetSelected : 0)) {
           if (start)
-            sStartTab = nullptr;
+            sStartPending = false;
           page.draw();
           ImGui::EndTabItem();
         }
