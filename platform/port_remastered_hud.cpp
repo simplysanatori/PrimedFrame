@@ -882,6 +882,73 @@ bool HudFrameModel(const uint8_t* guif, size_t size, ModelUuid& model) {
   return true;
 }
 
+// TweakGuiColorsMP1 is an RFRM/LDTA file: a list of (hash, size, body)
+// properties, a colour being a list of (component hash, 4, float). A component
+// it leaves out stays at the type's default of 1. Remastered's beam menu clamps
+// each beam icon's colour and multiplies it by that beam's colour here
+// (CHudVisorBeamMenuMP1::Update, Color Assist off); the visor menu, lozenges
+// and ghost are left alone.
+bool HudBeamIconTints(const uint8_t* ldta, size_t size, std::map<std::string, std::array<float, 4>>& out,
+                      std::string& error) {
+  auto u16 = [&](size_t at) { return uint32_t(ldta[at]) | uint32_t(ldta[at + 1]) << 8; };
+  auto u32 = [&](size_t at) { return u16(at) | u16(at + 2) << 16; };
+  constexpr size_t kRoot = 0x38;
+  if (size < kRoot + 2 || std::memcmp(ldta, "RFRM", 4) != 0 || std::memcmp(ldta + 0x14, "LDTA", 4) != 0 ||
+      std::memcmp(ldta + 0x20, "LDCH", 4) != 0) {
+    error = "not a tweak file";
+    return false;
+  }
+  // Widget i of the menu is beam 3 - i (CHudVisorBeamMenu's "3210").
+  static const std::pair<uint32_t, const char*> kBeams[] = {
+      {0x2584A7DF, "model_beamicon3"},  // Power
+      {0xE8DF071A, "model_beamicon2"},  // Ice
+      {0x735A17B9, "model_beamicon1"},  // Wave
+      {0xB7B9CFBC, "model_beamicon0"},  // Plasma
+  };
+  static const uint32_t kComponents[4] = {0x110889D1, 0x8A7AFF22, 0x2A5349E9, 0xE364C93A};  // R G B A
+  const uint32_t count = u16(kRoot);
+  size_t at = kRoot + 2;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (at + 6 > size) {
+      break;
+    }
+    const uint32_t hash = u32(at);
+    const size_t length = u16(at + 4);
+    at += 6;
+    if (at + length > size) {
+      break;
+    }
+    const auto beam = std::find_if(std::begin(kBeams), std::end(kBeams), [&](const auto& b) { return b.first == hash; });
+    if (beam != std::end(kBeams) && length >= 2) {
+      std::array<float, 4> tint{1.f, 1.f, 1.f, 1.f};
+      const size_t end = at + length;
+      size_t c = at + 2;
+      for (uint32_t k = u16(at); k > 0 && c + 6 <= end; --k) {
+        const uint32_t component = u32(c);
+        const size_t clen = u16(c + 4);
+        c += 6;
+        if (clen == 4 && c + 4 <= end) {
+          const auto slot = std::find(std::begin(kComponents), std::end(kComponents), component);
+          if (slot != std::end(kComponents)) {
+            float v;
+            const uint32_t bits = u32(c);
+            std::memcpy(&v, &bits, 4);
+            tint[size_t(slot - std::begin(kComponents))] = std::isfinite(v) ? std::clamp(v, 0.f, 1.f) : 1.f;
+          }
+        }
+        c += clen;
+      }
+      out[beam->second] = tint;
+    }
+    at += length;
+  }
+  if (out.empty()) {
+    error = "no beam colours";
+    return false;
+  }
+  return true;
+}
+
 HudConverter::HudConverter(ConvertIO io)
 : m_io(std::move(io)), m_nextModel(kModelIds), m_nextTexture(kTextureIds) {}
 
@@ -904,12 +971,14 @@ bool HudConverter::LoadMaterial(std::string& error) {
   return true;
 }
 
-std::optional<uint32_t> HudConverter::Texture(const ModelUuid& id, HudCounts& counts, const std::string& owner) {
-  const auto known = m_textures.find(id);
+std::optional<uint32_t> HudConverter::Texture(const ModelUuid& id, HudCounts& counts, const std::string& owner,
+                                              const Tint& tint) {
+  const std::pair<ModelUuid, Tint> key{id, tint};
+  const auto known = m_textures.find(key);
   if (known != m_textures.end()) {
     return known->second == 0 ? std::nullopt : std::optional<uint32_t>(known->second);
   }
-  m_textures[id] = 0;
+  m_textures[key] = 0;
   Image image;
   std::string textureError;
   if (!m_io.texture || !m_io.texture(id, image, textureError) || image.width <= 0 || image.height <= 0) {
@@ -917,6 +986,11 @@ std::optional<uint32_t> HudConverter::Texture(const ModelUuid& id, HudCounts& co
       m_io.log(owner + ": texture " + IdToString(id) + ": " + textureError);
     }
     return std::nullopt;
+  }
+  if (tint != Tint{1.f, 1.f, 1.f, 1.f}) {
+    for (size_t i = 0; i < image.rgba.size(); ++i) {
+      image.rgba[i] = uint8_t(std::lround(image.rgba[i] * std::clamp(tint[i % 4], 0.f, 1.f)));
+    }
   }
   const int w = std::clamp(NextPow2(image.width), 8, kNativeSize);
   const int h = std::clamp(NextPow2(image.height), 8, kNativeSize);
@@ -934,7 +1008,7 @@ std::optional<uint32_t> HudConverter::Texture(const ModelUuid& id, HudCounts& co
     }
     return std::nullopt;
   }
-  m_textures[id] = tid;
+  m_textures[key] = tid;
   ++counts.textures;
   return tid;
 }
@@ -1440,12 +1514,14 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
   }
 
   // Models, pictures, text boxes and bars.
-  auto texture = [&](const Part& part) -> std::optional<uint32_t> {
+  auto texture = [&](const Part& part, const std::string& widget) -> std::optional<uint32_t> {
     ModelUuid id;
     if (!MaterialTexture(*part.material, id)) {
       return std::nullopt;
     }
-    return Texture(id, counts, Hex8(retailFrame));
+    const auto tint = m_tints.find(Lower(widget));
+    return tint == m_tints.end() ? Texture(id, counts, Hex8(retailFrame))
+                                 : Texture(id, counts, Hex8(retailFrame), tint->second);
   };
   PortHudBars::Bars bars;
   for (Widget& w : out) {
@@ -1466,7 +1542,7 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
           log(g.name + ": mesh " + std::to_string(mesh) + " is not usable");
           continue;
         }
-        const std::optional<uint32_t> tid = texture(part);
+        const std::optional<uint32_t> tid = texture(part, w.name);
         if (!tid) {
           log(g.name + ": no picture for " + part.material->name);
           continue;
@@ -1567,7 +1643,7 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
         log(w.name + ": no mesh for the bar");
         continue;
       }
-      const std::optional<uint32_t> tid = texture(part);
+      const std::optional<uint32_t> tid = texture(part, w.name);
       PortHudBars::Bar bar;
       bar.name = w.name;
       if (!tid || !Stations(part, bar)) {

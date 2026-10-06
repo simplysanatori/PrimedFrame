@@ -80,6 +80,7 @@ constexpr uint32_t kSTRG = 0x53545247;
 constexpr uint32_t kMSBT = 0x4D534254;
 constexpr uint32_t kFONT = 0x464F4E54;
 constexpr uint32_t kGUIF = 0x47554946;
+constexpr uint32_t kLDTA = 0x4C445441;
 constexpr uint32_t kCMAP = 0x434D4150;
 constexpr uint32_t kMAPA = 0x4D415041;
 constexpr uint32_t kMAPW = 0x4D415057;
@@ -726,6 +727,10 @@ public:
           for (const std::string& name : assets[a].names) {
             m_maps.emplace(FrameKey(name), Where{m_paks.size(), a});
           }
+        } else if (type == kLDTA) {
+          for (const std::string& name : assets[a].names) {
+            m_tweaks.emplace(FrameKey(name), Where{m_paks.size(), a});
+          }
         }
       }
       m_paks.push_back(std::move(pak));
@@ -762,6 +767,17 @@ public:
   bool ReadFrame(const std::string& name, std::vector<uint8_t>& out, std::string& error) const {
     const auto found = m_frames.find(FrameKey(name));
     if (found == m_frames.end()) {
+      error = "not in the image";
+      return false;
+    }
+    const Pak& pak = *m_paks[found->second.pak];
+    return pak.ReadAsset(pak.Assets()[found->second.asset], out, error);
+  }
+
+  // A tweak file by its asset name ("TweakGuiColorsMP1"), as ReadFrame finds a frame.
+  bool ReadTweak(const std::string& name, std::vector<uint8_t>& out, std::string& error) const {
+    const auto found = m_tweaks.find(FrameKey(name));
+    if (found == m_tweaks.end()) {
       error = "not in the image";
       return false;
     }
@@ -945,6 +961,7 @@ private:
   Index m_effects;
   Index m_materials;
   std::unordered_map<std::string, Where> m_frames;  // GUIF, by FrameKey
+  std::unordered_map<std::string, Where> m_tweaks;  // LDTA, by FrameKey
   std::unordered_map<std::string, Where> m_textureNames;  // the named TXTR, by FrameKey
   std::unordered_map<std::string, Where> m_modelNames;    // the named CMDL, by FrameKey
   std::unordered_map<std::string, Where> m_maps;  // CMAP, by FrameKey
@@ -2645,6 +2662,18 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     fs::create_directories(hudFolder, ec);
     HudConverter converter(makeIO(0, hudFolder));
     HudCounts counts;
+    {
+      // Remastered colours each beam's icon in the beam menu.
+      std::vector<uint8_t> tweak;
+      std::map<std::string, HudConverter::Tint> tints;
+      std::string tweakError;
+      if (remastered.ReadTweak("TweakGuiColorsMP1", tweak, tweakError) &&
+          HudBeamIconTints(tweak.data(), tweak.size(), tints, tweakError)) {
+        converter.SetTints(std::move(tints));
+      } else {
+        AddLine("TweakGuiColorsMP1: " + tweakError + "; the beam icons are left white");
+      }
+    }
     for (const HudFrame& frame : HudFrames()) {
       std::vector<uint8_t> raw;
       std::vector<uint8_t> rawModel;
