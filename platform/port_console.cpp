@@ -56,6 +56,7 @@
 #include "MetroidPrime/ScriptObjects/CScriptWater.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 #include "WorldFormat/CAreaOctTree.hpp"
+#include <aurora/aurora.h>
 #include <aurora/gfx.h>
 #include <dolphin/gx/GXExtra.h>
 #include <dolphin/pad.h>
@@ -515,6 +516,7 @@ void CmdHelp() {
   Out("roomgeo sort on|off       draw opaque room models nearest first (default on)");
   Out("roomgeo prepass on|off    depth-only pass first for cut-out room models (default off)");
   Out("roomgeo costtest <n>      PBR shading cost test: 0 off, 1 flat, 2 no lights, 3 no volume, 4 no cube, 5 no normal maps, 6 no ORM/emissive, 7 maps only, 8 no aniso, 9 no aniso or mip blend, 10 no post-processing, 11 no screen copies");
+  Out("gpuselftest               render known patterns offscreen, compare the readback, log PASS/FAIL per case");
   Out("gputimes on|off|show      per-pass GPU times (timestamp queries; 60-frame averages; needs a GPU that has them)");
   Out("roomgeo script            Remastered's camera zones, counters and groups in each loaded area, and the camera");
   Out("roomgeo group <n> show|hide   set a group until its script next changes it");
@@ -2162,6 +2164,13 @@ void RunFrame() {
     } else {
       Out("gputimes on|off|show");
     }
+    Finish();
+  } else if (name == "gpuselftest") {
+    char summary[160];
+    aurora_gpu_selftest_summary(summary, sizeof(summary));
+    PortDebug::RequestGpuSelfTest();
+    Out("gpu self-test queued for the next frame; results in the log as `gpu selftest: <case>: PASS|FAIL` (previous run: %s)",
+        summary[0] != '\0' ? summary : "none");
     Finish();
   } else if (name == "roomgeo") {
     if (sCmd.args.size() > 1) {

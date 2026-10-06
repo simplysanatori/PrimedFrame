@@ -12,6 +12,7 @@ add_library(aurora_gx STATIC
         lib/gfx/probe.cpp
         lib/gfx/recording.cpp
         lib/gfx/render_worker.cpp
+        lib/gfx/selftest.cpp
         lib/gfx/resource_cache.cpp
         lib/gfx/dds_io.cpp
         lib/gfx/tex_copy_conv.cpp

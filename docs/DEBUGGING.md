@@ -224,6 +224,26 @@ properties, `pdiff a b` only those that differ (e.g. the disc's against the conv
 **What changed between two imports?** `diff -u old/reports/materials.tsv new/reports/materials.tsv`
 (likewise `effects.tsv`, `summary.txt`).
 
+## GPU self-test
+
+For "the world is black on this GPU" reports (issues #7, #8): renders 10 known patterns into 32x32 offscreen
+targets through the same GX -> generated WGSL -> pipeline -> bind-group path the game uses, reads them back and
+compares them (RGB, +-2 per channel). Cases: direct, 8-bit and 16-bit indexed vertices, konst/register TEV
+colour, a 3-stage TEV combine, RGBA8 / IA8 / I8 / CMPR textures, alpha blend and alpha-compare, depth in both
+draw orders, EFB copy sampled back.
+A silent warm-up pass runs first so the async pipeline compiles finish, then the logged pass (a few frames later).
+
+    F1 > Video > Quality > "GPU self-test"      # or: console `gpuselftest`, or MP_GPU_SELFTEST=1 (once, ~120 frames in)
+    grep 'gpu selftest' game.log
+
+    gpu selftest: backend Vulkan, adapter "...", clamped storage loads active|off
+    gpu selftest: tev-3-stage: PASS (0.2 ms)
+    gpu selftest: indexed16-pos: FAIL (pixel 4,4 got 000000FF want 00FF00FF, 144/1024 pixels wrong) (0.3 ms)
+    gpu selftest: 9/10 passed (35 ms)
+
+A FAIL names the feature. Results land a frame or two after the request. Game rendering is unaffected: the
+run uses its own targets and the game's GX state is reset afterwards. Code: `extern/aurora/lib/gfx/selftest.cpp`.
+
 ## Limits
 
 - Boot is `MP_BOOT_WORLD` only (works on any build); `MP_SMOKE_*` needs `build/smoke-gcc`

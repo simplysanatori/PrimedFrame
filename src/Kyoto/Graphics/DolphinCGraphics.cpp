@@ -790,6 +790,7 @@ bool CGraphics::BeginScene() {
     return false;
   }
   ClearBackAndDepthBuffers();
+  PortDebug::RunGpuSelfTestIfRequested();
   return true;
 }
 
