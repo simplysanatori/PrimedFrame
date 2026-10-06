@@ -32,6 +32,19 @@ using namespace std::string_view_literals;
 namespace {
 constexpr Module Log{"aurora::gfx::gx"};
 
+// Adreno 730 (Vulkan, driver V@0615.98) drops every GX draw whose fragment shader reads a
+// varying when load_word branches on arrayLength, so the world renders black (issue #7).
+// A clamp works there; elsewhere the upstream branch stays until the clamp is tested on
+// the Adreno drivers that guard was written for.
+bool clamp_storage_loads() noexcept {
+  static const bool clamp = [] {
+    const std::string_view device{webgpu::g_adapterInfo.device};
+    return webgpu::g_backendType == wgpu::BackendType::Vulkan && device.find("Adreno") != std::string_view::npos &&
+           device.find("730") != std::string_view::npos;
+  }();
+  return clamp;
+}
+
 std::string_view chan_comp(GXTevColorChan chan) noexcept {
   switch (chan) {
   case GX_CH_RED:
@@ -2911,11 +2924,11 @@ fn load_word(p: ptr<storage, array<u32>>, word_idx: u32) -> u32 {{
   // This guard is not expected to handle routine out-of-bounds accesses.
   // It appears to discourage some Adreno drivers/optimizers from storage buffer
   // optimizations that can cause visual artifacts, including vertex explosions
-  // in Dusklight.
-  // A clamp, not `if (word_idx < arrayLength(p))`: Adreno 730 (Vulkan) drops every
-  // GX draw whose fragment shader reads a varying when the vertex shader compares
-  // against arrayLength, so the world renders black there (issue #7).
-  return p[min(word_idx, arrayLength(p) - 1u)];
+  // in Dusklight. (Swapped for a clamp on Adreno 730 below.)
+  if (word_idx < arrayLength(p)) {{
+    return p[word_idx];
+  }}
+  return 0u;
 }}
 
 fn load_u8(p: ptr<storage, array<u32>>, byte_off: u32) -> u32 {{
@@ -3263,6 +3276,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
 )""",
                                         uniBufAttrs, texBindings, vtxOutAttrs, vtxInAttrs, vtxXfrAttrs, fragmentFn,
                                         fragmentFnPre, vtxXfrAttrsPre, uniformPre);
+  if (clamp_storage_loads()) {
+    constexpr std::string_view guard =
+        "  if (word_idx < arrayLength(p)) {\n    return p[word_idx];\n  }\n  return 0u;\n";
+    const size_t at = shaderSource.find(guard);
+    assert(at != std::string::npos);
+    shaderSource.replace(at, guard.size(), "  return p[min(word_idx, arrayLength(p) - 1u)];\n");
+  }
   if (config.drawId) {
     // The draw serial as the colour, 8 bits a channel, whatever the shading came to (it can still discard).
     constexpr std::string_view tail = "    return prev;\n}";
