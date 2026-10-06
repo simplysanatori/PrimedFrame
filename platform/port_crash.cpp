@@ -10,6 +10,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <cerrno>
+#include <exception>
+#include <string>
+#include <typeinfo>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -24,6 +27,7 @@
 
 #include <string>
 #else
+#include <cxxabi.h>
 #include <dlfcn.h>
 #include <sys/syscall.h>
 #include <ucontext.h>
@@ -511,4 +515,53 @@ bool RequestStack(long threadId) {
 #endif
 }
 
+void AbortOnException(const char* where) {
+  std::string what = "not a std::exception";
+  try {
+    throw;
+  } catch (const std::exception& e) {
+    what = e.what();
+  } catch (...) {
+  }
+  const char* type = "unknown type";
+#if !defined(_WIN32)
+  char* demangled = nullptr;
+  if (const std::type_info* info = abi::__cxa_current_exception_type(); info != nullptr) {
+    int status = 0;
+    demangled = abi::__cxa_demangle(info->name(), nullptr, nullptr, &status);
+    type = demangled != nullptr ? demangled : info->name();
+  }
+#endif
+  Line line;
+  line.Add("port: uncaught C++ exception in ").Add(where).Add(": ").Add(type).Add(": ").Add(what.c_str());
+  Emit(line);
+  std::abort();
+}
+
 } // namespace PortCrash
+
+#if defined(MP_WRAP_CXA_THROW)
+// Linked with -Wl,--wrap=__cxa_throw: every throw passes through here first, so the
+// log says what was thrown and from where, which nothing can tell once it is caught
+// (or has unwound into a hang, as in issue #8).
+extern "C" {
+[[noreturn]] void __real___cxa_throw(void* object, void* type, void (*destructor)(void*));
+
+[[noreturn]] void __wrap___cxa_throw(void* object, void* type, void (*destructor)(void*)) {
+  constexpr int kThrowsLogged = 8;
+  static std::atomic< int > sLogged{0};
+  if (sLogged.fetch_add(1, std::memory_order_relaxed) < kThrowsLogged) {
+    const char* name = static_cast< const std::type_info* >(type)->name();
+    int status = 0;
+    char* demangled = abi::__cxa_demangle(name, nullptr, nullptr, &status);
+    PortCrash::Line line;
+    line.Add("port: C++ exception thrown: ").Add(demangled != nullptr ? demangled : name);
+    PortCrash::Emit(line);
+    std::free(demangled);
+    PortCrash::Walk walk{"port:   #", 0};
+    _Unwind_Backtrace(PortCrash::OnFrame, &walk);
+  }
+  __real___cxa_throw(object, type, destructor);
+}
+}
+#endif

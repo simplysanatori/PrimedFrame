@@ -16,6 +16,7 @@
 #include "port_mods.h"
 #include "port_textures.h"
 #include "port_prompts.h"
+#include "port_crash.h"
 #include "port_watchdog.h"
 
 #include "stdint.h"
@@ -889,6 +890,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
     const char* frameLogEnv = getenv("MP_FRAME_LOG");
     const bool frameLogAll = frameLogEnv != nullptr && frameLogEnv[0] != '\0' && frameLogEnv[0] != '0';
 #endif
+    try {
     while (!x160_24_finished) {
       const uint64_t loopStartNs = SDL_GetTicksNS();
       bool presented = false;
@@ -1213,6 +1215,12 @@ int CMain::RsMain(int argc, const char* const* argv) {
       }
       if (firstFrameNs == 0 && presented)
         firstFrameNs = SDL_GetTicksNS();
+    }
+    } catch (...) {
+      // Port: an exception out of the loop would unwind into ~CResLoader, which
+      // waits for paks that no longer load and hangs on the logo (issue #8).
+      // Report it and crash instead.
+      PortCrash::AbortOnException("the main loop");
     }
   // What the run cost. The frame log is only a counter, so nothing could report
   // this before; a run that never reached the loop has nothing to say.

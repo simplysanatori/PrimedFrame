@@ -9,7 +9,8 @@
 // says when frames resume. Time while the app is backgrounded does not count.
 //
 // MP_WATCHDOG=0 turns it off. MP_WATCHDOG_TEST_STALL=<frame> sleeps the main thread
-// for 8 s at that frame, to check the report.
+// for 8 s at that frame, to check the report. MP_WATCHDOG_TEST_THROW=<frame> throws
+// out of the main loop at that frame, to check the uncaught-exception report.
 namespace PortWatchdog {
 
 // Once per main-loop iteration, on the main thread. The first call starts the watchdog,

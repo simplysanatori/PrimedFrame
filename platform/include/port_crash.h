@@ -19,6 +19,10 @@ void Install();
 // False when the request could not be sent, and always on Windows.
 bool RequestStack(long threadId);
 
+// Call from a catch block: logs the exception's type and what(), then aborts, so the
+// crash report follows.
+[[noreturn]] void AbortOnException(const char* where);
+
 } // namespace PortCrash
 
 #endif // METROID_PRIME_PORT_PORT_CRASH_H

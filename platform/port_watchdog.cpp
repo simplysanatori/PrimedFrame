@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -128,6 +129,10 @@ void Heartbeat(unsigned frame) {
   if (sTestStall > 0 && frame == static_cast< unsigned >(sTestStall)) {
     aurora::phase::set(aurora::phase::Main, "test stall (MP_WATCHDOG_TEST_STALL)");
     SDL_Delay(8000);
+  }
+  static const int sTestThrow = port::EnvInt("MP_WATCHDOG_TEST_THROW", 0);
+  if (sTestThrow > 0 && frame == static_cast< unsigned >(sTestThrow)) {
+    throw std::runtime_error("test exception (MP_WATCHDOG_TEST_THROW)");
   }
 }
 

@@ -243,6 +243,11 @@ if(ANDROID)
 else()
     add_executable(metroid_prime_port ${MP_PORT_SOURCES})
 endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID)
+    # port_crash.cpp logs each C++ throw's type and stack.
+    target_link_options(metroid_prime_port PRIVATE "-Wl,--wrap=__cxa_throw")
+    target_compile_definitions(metroid_prime_port PRIVATE MP_WRAP_CXA_THROW)
+endif()
 # Developer tool, not a test (it needs game data): dumps a CHPR's animations for
 # diffing against build/mpr/anim/chpr_anim.py.
 if(NOT ANDROID)
