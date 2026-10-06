@@ -4,7 +4,6 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.CornerPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Rect;
@@ -165,8 +164,7 @@ final class TouchControlsView extends View {
     private static final int[] DPAD_DY = {-1, 1, 0, 0};
 
     // L and R are the pad's analog triggers; Z is its digital shoulder. On the
-    // GameCube pad L and R are curved triggers and Z sits in front of R, so Z
-    // goes under R here. L and R
+    // Z sits in front of R on the GameCube pad, so Z goes under R here. L and R
     // are tall so a quick lock-on is hard to miss; L stops just above the D-pad.
     private static final PillButton[] GAMECUBE_PILLS = {
         new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY,
@@ -202,10 +200,11 @@ final class TouchControlsView extends View {
     private boolean mapTap;
     // x0, y0, x1, y1 (fractions of the view), then 1 when the minimap is drawn there.
     private final float[] minimapRect = new float[5];
-    // Where the map opens but the minimap isn't drawn (the visors other than
-    // Combat), a map button stands in its place. The HUD changes without a
-    // touch, so a poll redraws when the button comes or goes. The same poll
-    // shows and hides the wheel buttons (only drawn while the wheels work).
+    // Wherever the map can open, a map button sits left of the eye (the minimap
+    // is not always drawn: the visors other than Combat hide it). The HUD
+    // changes without a touch, so a poll redraws when the button comes or goes.
+    // The same poll shows and hides the wheel buttons (only drawn while the
+    // wheels work).
     private final RectF mapButtonRect = new RectF();
     private boolean mapButtonShown;
     private boolean wheelButtonsShown;
@@ -231,7 +230,6 @@ final class TouchControlsView extends View {
     private final RectF hideBounds = new RectF();
     private final Path shapePath = new Path();
     private final Path crossArmPath = new Path();
-    private final CornerPathEffect triggerCorners = new CornerPathEffect(dp(8));
     private static native boolean nativeDebugOverlayVisible();
     private static native boolean nativeTouchClassic();
     private static native boolean nativeTouchColors();
@@ -395,12 +393,13 @@ final class TouchControlsView extends View {
 
     // True, with mapButtonRect set, when the map button should show.
     private boolean mapButtonState(float width, float height) {
-        if (!mapTap || width <= 0f || height <= 0f || !nativeMinimapRect(minimapRect) ||
-            minimapRect[4] != 0f) {
+        if (!mapTap || width <= 0f || height <= 0f || !nativeMinimapRect(minimapRect)) {
             return false;
         }
-        mapButtonRect.set(minimapRect[0] * width, minimapRect[1] * height,
-                          minimapRect[2] * width, minimapRect[3] * height);
+        final float radius = dp(MAP_BUTTON_RADIUS_DP);
+        final float right = width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP + EYE_MARGIN_DP);
+        final float cy = height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP / 2f);
+        mapButtonRect.set(right - 2f * radius, cy - radius, right, cy + radius);
         return true;
     }
 
@@ -506,6 +505,15 @@ final class TouchControlsView extends View {
             float y = event.getY(actionIndex);
             if (hideBounds.contains(x, y)) {
                 targets.put(pointerId, new TouchTarget(HIDE, 0));
+                return true;
+            }
+            if (mapButtonShown && mapButtonRect.contains(x, y)) {
+                TouchTarget target = new TouchTarget(MAP_TAP, 0);
+                target.x = x;
+                target.y = y;
+                target.startX = x;
+                target.startY = y;
+                targets.put(pointerId, target);
                 return true;
             }
             assignPointer(pointerId, x, y);
@@ -702,7 +710,7 @@ final class TouchControlsView extends View {
         }
 
         if (mapTap && width > 0f && height > 0f && nativeMinimapRect(minimapRect) &&
-            x >= minimapRect[0] * width && x <= minimapRect[2] * width &&
+            minimapRect[4] != 0f && x >= minimapRect[0] * width && x <= minimapRect[2] * width &&
             y >= minimapRect[1] * height && y <= minimapRect[3] * height) {
             TouchTarget target = new TouchTarget(MAP_TAP, 0);
             target.x = x;
@@ -1317,41 +1325,11 @@ final class TouchControlsView extends View {
         }
         strokePaint.setColor(active ? 0xFFE1F8FF : 0xCCFFFFFF);
         RectF bounds = new RectF(left, top, right, bottom);
-        if (pill.trigger != PillButton.FLAT) {
-            drawTrigger(canvas, pill, bounds);
-            return;
-        }
         float radius = Math.min(bounds.width(), bounds.height()) * 0.28f;
         canvas.drawRoundRect(bounds, radius, radius, fillPaint);
         canvas.drawRoundRect(bounds, radius, radius, strokePaint);
         drawCenteredLabel(canvas, pill.label, bounds.centerX(), bounds.centerY(),
                           pill.label.length() > 2 ? dp(11) : dp(13));
-    }
-
-    // A GameCube trigger: a curved band across the top of its bounds whose inner
-    // end (towards the screen's middle) drops, like the pad's shoulder. The
-    // paints are already set; the whole bounds stay the touch area.
-    private void drawTrigger(Canvas canvas, PillButton pill, RectF bounds) {
-        float thick = bounds.height() * 0.60f;
-        float drop = bounds.height() - thick;
-        boolean leftSide = pill.trigger == PillButton.TRIGGER_LEFT;
-        float outer = leftSide ? bounds.left : bounds.right;
-        float inner = leftSide ? bounds.right : bounds.left;
-        float bend = outer + (inner - outer) * 0.35f;
-        shapePath.reset();
-        shapePath.moveTo(outer, bounds.top);
-        shapePath.quadTo(bend, bounds.top, inner, bounds.top + drop);
-        shapePath.lineTo(inner, bounds.bottom);
-        shapePath.quadTo(bend, bounds.top + thick, outer, bounds.top + thick);
-        shapePath.close();
-        fillPaint.setPathEffect(triggerCorners);
-        strokePaint.setPathEffect(triggerCorners);
-        canvas.drawPath(shapePath, fillPaint);
-        canvas.drawPath(shapePath, strokePaint);
-        fillPaint.setPathEffect(null);
-        strokePaint.setPathEffect(null);
-        drawCenteredLabel(canvas, pill.label, bounds.centerX(),
-                          bounds.top + thick / 2 + drop * 0.4f, dp(13));
     }
 
     private void drawButton(Canvas canvas, ControlButton button, float width, float height) {
@@ -1703,7 +1681,7 @@ final class TouchControlsView extends View {
         final float bottom;
         // An RGB fill, or 0 for the overlay's own.
         final int color;
-        // FLAT is a rounded pill; the others draw a GameCube trigger.
+        // L and R mark themselves so START and MENU can sit beside them.
         static final int FLAT = 0;
         static final int TRIGGER_LEFT = 1;
         static final int TRIGGER_RIGHT = 2;
