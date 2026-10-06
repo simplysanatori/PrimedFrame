@@ -506,6 +506,9 @@ bool Visible();
 // Writes the settings file now instead of waiting for the next overlay frame,
 // so a disc chosen during startup is remembered even if no frame is drawn yet.
 void SaveSettingsNow();
+// The last session ended because a read of the disc image failed: the overlay
+// shows a red alert for a while once the game runs.
+void NoteDiscReadFailedLastSession();
 // Thread-safe snapshot of the overlay's visibility, for the Android touch
 // controls. Unlike Visible() it performs no lazy initialization, so it is safe
 // to call from the UI thread.

@@ -479,7 +479,8 @@ void NoteDiscReadFailure() {
     }
 }
 
-// Whether the last session failed to read this image. Clears the note.
+// Whether the last session failed to read this image. Clears the note, and
+// has the overlay say why the last session ended whichever image it was.
 bool DiscReadFailedLastTime(const std::string& path) {
     const std::string marker = DiscReadFailedMarker();
     if (marker.empty()) {
@@ -493,6 +494,7 @@ bool DiscReadFailedLastTime(const std::string& path) {
     in.close();
     std::error_code ec;
     std::filesystem::remove(marker, ec);
+    PortDebug::NoteDiscReadFailedLastSession();
     return failed == path;
 }
 

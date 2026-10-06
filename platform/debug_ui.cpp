@@ -3107,6 +3107,11 @@ void SaveSettingsNow() {
   SaveSettings();
 }
 
+// Set while the disc is mounted, before the first frame.
+bool sDiscReadFailedLastSession = false;
+
+void NoteDiscReadFailedLastSession() { sDiscReadFailedLastSession = true; }
+
 // The overlay is a full-screen panel with a page list instead of tabs, which
 // fits a touchscreen and reads better on the desktop too. The desktop can go
 // back to the old floating tabbed window (System > Overlay as a floating
@@ -4361,6 +4366,43 @@ void DrawStaleImportToast() {
                        name);
   }
   ImGui::End();
+}
+
+// Once per launch, for longer and in red: the last session ended on a failed disc read.
+void DrawDiscReadFailedAlert() {
+  static double sShownAt = -1.0;
+  if (!sDiscReadFailedLastSession) {
+    return;
+  }
+  const double now = ImGui::GetTime();
+  if (sShownAt < 0.0) {
+    sShownAt = now;
+  }
+  if (now - sShownAt > 20.0) {
+    sDiscReadFailedLastSession = false;
+    return;
+  }
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + 24.f), ImGuiCond_Always,
+                          ImVec2(0.5f, 0.f));
+  ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, 640.f), 0.f));
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.6f, 0.05f, 0.05f, 0.92f));
+  ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.f, 0.35f, 0.35f, 1.f));
+  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 1.f, 1.f, 1.f));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.f, 10.f));
+  if (ImGui::Begin("##disc-read-failed-alert", nullptr,
+                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::SetWindowFontScale(1.4f);
+    ImGui::TextWrapped("The last session crashed: the disc image is damaged.");
+    ImGui::SetWindowFontScale(1.f);
+    ImGui::TextWrapped("Part of it couldn't be read. If the game stops again, copy the image again or check it in "
+                       "Dolphin (Properties > Verify).");
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(2);
+  ImGui::PopStyleColor(3);
 }
 
 void DrawRemasteredImport() {
@@ -7228,6 +7270,7 @@ void DrawUI() {
 #endif
   FinishRemasteredImport();
   DrawStaleImportToast();
+  DrawDiscReadFailedAlert();
   if (!sVisible) {
     UpdateMenuSounds(false);
     sTouchScroll = TouchScroll{};
