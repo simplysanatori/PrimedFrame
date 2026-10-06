@@ -196,15 +196,18 @@ final class TouchControlsView extends View {
     private final float[] minimapRect = new float[5];
     // Where the map opens but the minimap isn't drawn (the visors other than
     // Combat), a map button stands in its place. The HUD changes without a
-    // touch, so a poll redraws when the button comes or goes.
+    // touch, so a poll redraws when the button comes or goes. The same poll
+    // shows and hides the wheel buttons (only drawn while the wheels work).
     private final RectF mapButtonRect = new RectF();
     private boolean mapButtonShown;
+    private boolean wheelButtonsShown;
     private final Runnable mapButtonPoll = new Runnable() {
         @Override
         public void run() {
-            if (mapButtonState(getWidth(), getHeight()) != mapButtonShown) {
+            if ((mapTap && mapButtonState(getWidth(), getHeight()) != mapButtonShown) ||
+                (wheels && ((nativeWheelOwned() & WHEEL_VALID_BIT) != 0) != wheelButtonsShown)) {
                 invalidate();
-            } else if (mapTap) {
+            } else if (mapTap || wheels) {
                 postDelayed(this, MAP_BUTTON_POLL_MS);
             }
         }
@@ -374,7 +377,7 @@ final class TouchControlsView extends View {
             drawMapButton(canvas);
         }
         removeCallbacks(mapButtonPoll);
-        if (mapTap) {
+        if (mapTap || wheels) {
             postDelayed(mapButtonPoll, MAP_BUTTON_POLL_MS);
         }
         if (wheels && wheelPointer != -1) {
@@ -663,12 +666,12 @@ final class TouchControlsView extends View {
                 return;
             }
         }
-        if (wheels) {
+        // Hidden wheel buttons (wheels unusable) let the touch through.
+        if (wheels && (nativeWheelOwned() & WHEEL_VALID_BIT) != 0) {
             final int wheel = wheelButtonAt(x, y, width, height);
             if (wheel != -1) {
                 // Not while the map is open (the overlay is handled before this).
-                if (wheelPointer == -1 && !nativeMapScreenOpen() &&
-                    (nativeWheelOwned() & WHEEL_VALID_BIT) != 0) {
+                if (wheelPointer == -1 && !nativeMapScreenOpen()) {
                     TouchTarget target = new TouchTarget(WHEEL, wheel);
                     target.x = x;
                     target.y = y;
@@ -1350,7 +1353,10 @@ final class TouchControlsView extends View {
 
     private void drawWheelButtons(Canvas canvas, float width, float height) {
         final int mask = nativeWheelOwned();
-        final boolean enabled = (mask & WHEEL_VALID_BIT) != 0;
+        wheelButtonsShown = (mask & WHEEL_VALID_BIT) != 0;
+        if (!wheelButtonsShown) {
+            return;
+        }
         refreshWheelIcons();
         for (int wheel = 0; wheel < 2; ++wheel) {
             final float cx = wheelButtonX(wheel, width, height);
@@ -1358,15 +1364,13 @@ final class TouchControlsView extends View {
             final float radius = WHEEL_BUTTON_RADIUS * height;
             final boolean active = wheelPointer != -1 && wheelTarget() != null &&
                                    wheelTarget().id == wheel;
-            fillPaint.setColor(active ? 0xCC48C8E8 : enabled ? 0x77081218 : 0x44081218);
-            strokePaint.setColor(active ? 0xFFE1F8FF : enabled ? 0xBBFFFFFF : 0x66FFFFFF);
+            fillPaint.setColor(active ? 0xCC48C8E8 : 0x77081218);
+            strokePaint.setColor(active ? 0xFFE1F8FF : 0xBBFFFFFF);
             canvas.drawCircle(cx, cy, radius, fillPaint);
             canvas.drawCircle(cx, cy, radius, strokePaint);
             final int current = wheel == 0 ? (mask >> 8) & 3 : (mask >> 10) & 3;
-            if (!drawWheelIcon(canvas, wheel, current, cx, cy, radius * 1.4f, enabled ? 255 : 110)) {
-                textPaint.setAlpha(enabled ? 255 : 110);
+            if (!drawWheelIcon(canvas, wheel, current, cx, cy, radius * 1.4f, 255)) {
                 drawCenteredLabel(canvas, WHEEL_BUTTON_LABELS[wheel], cx, cy, dp(13));
-                textPaint.setAlpha(255);
             }
         }
     }

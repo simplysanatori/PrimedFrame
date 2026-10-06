@@ -822,18 +822,22 @@ void CPlayer::UpdateMouseAim(CStateManager& mgr) {
 
 // port: what the touch overlay's beam and visor wheels read (see
 // PortDebug::SetWheelState for the bit layout).
-static void PublishWheelState(CStateManager& mgr) {
+static void PublishWheelState(const CPlayer& player, CStateManager& mgr) {
   const CPlayerState* ps = mgr.GetPlayerState();
   if (ps == nullptr) {
     return;
   }
+  // Visors and beams only switch in first person, unmorphed; elsewhere the
+  // overlay hides its wheel buttons.
+  const bool usable = player.GetMorphballTransitionState() == CPlayer::kMS_Unmorphed &&
+                      player.GetCameraState() == CPlayer::kCS_FirstPerson;
   static const CPlayerState::EItemType visorItems[4] = {
       CPlayerState::kIT_CombatVisor, CPlayerState::kIT_XRayVisor, CPlayerState::kIT_ScanVisor,
       CPlayerState::kIT_ThermalVisor};
   static const CPlayerState::EItemType beamItems[4] = {
       CPlayerState::kIT_PowerBeam, CPlayerState::kIT_IceBeam, CPlayerState::kIT_WaveBeam,
       CPlayerState::kIT_PlasmaBeam};
-  uint mask = 1u << 12;
+  uint mask = usable ? 1u << 12 : 0u;
   for (int i = 0; i < 4; ++i) {
     if (ps->HasPowerUp(visorItems[i])) {
       mask |= 1u << i;
@@ -1742,7 +1746,7 @@ void CPlayer::Think(float dt, CStateManager& mgr) {
   AdjustEyeOffset(mgr);
   UpdateEnvironmentDamageCameraShake(dt, mgr);
   UpdatePhazonDamage(dt, mgr);
-  PublishWheelState(mgr);
+  PublishWheelState(*this, mgr);
   if (!MouseControlsAllowed(mgr)) {
     UpdateTouchLook(dt, mgr);
     UpdateFreeLook(dt);
