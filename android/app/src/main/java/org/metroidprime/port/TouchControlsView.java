@@ -51,8 +51,13 @@ final class TouchControlsView extends View {
     // Tells the game a finger is still down on the map, so it doesn't drift back.
     private static final long MAP_PAN_KEEPALIVE_MS = 100;
     private static final float MAP_TAP_SLOP_DP = 12f;
-    private static final float MAP_BUTTON_RADIUS_DP = 26f;
-    private static final float CORNER_BUTTON_RADIUS_DP = 21f; // START/MENU, clear of the stick ring
+    // The round buttons along the bottom: START and MENU on the left, the map
+    // and the eye on the right. Inset from the sides and bottom so rounded
+    // display corners don't cut them off.
+    private static final float BOTTOM_BUTTON_RADIUS_DP = 22f;
+    private static final float BOTTOM_BUTTON_SIDE_DP = 28f;
+    private static final float BOTTOM_BUTTON_BOTTOM_DP = 12f;
+    private static final float BOTTOM_BUTTON_GAP_DP = 8f;
     private static final long MAP_BUTTON_POLL_MS = 200;
     // Hold-and-slide wheels that replace the D-pad: id 0 = Visor, 1 = Beam.
     private static final int WHEEL = 9;
@@ -79,9 +84,6 @@ final class TouchControlsView extends View {
     // Port-only actions, not game inputs.
     private static final int TOGGLE_DEBUG_OVERLAY = -1;
     // The hide eye in the bottom-right corner, in dp.
-    private static final int EYE_WIDTH_DP = 52;
-    private static final int EYE_HEIGHT_DP = 36;
-    private static final int EYE_MARGIN_DP = 8;
     // Axis-held controls are tracked with ids above this, to share one press map.
     private static final int AXIS_ID_BASE = 100;
 
@@ -349,9 +351,7 @@ final class TouchControlsView extends View {
         wheels = !classic || nativeTouchWheelsEnabled();
         visorTapScan = nativeTouchVisorTapScan();
         mapTap = nativeTouchMapTapEnabled();
-        hideBounds.set(width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP),
-                       height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP),
-                       width - dp(EYE_MARGIN_DP), height - dp(EYE_MARGIN_DP));
+        bottomButtonRect(0, true, width, height, hideBounds);
         drawStick(canvas, leftStickX(width, height), leftStickY(width, height),
                   layoutU(height) * STICK_RADIUS, leftPointer, 0);
         // The right stick is the C-stick, yellow on the GameCube pad. Only the
@@ -395,19 +395,26 @@ final class TouchControlsView extends View {
             (!nativeMinimapRect(minimapRect) && !nativeMapScreenOpen())) {
             return false;
         }
-        final float radius = dp(MAP_BUTTON_RADIUS_DP);
-        final float right = width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP + EYE_MARGIN_DP);
-        final float cy = height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP / 2f);
-        mapButtonRect.set(right - 2f * radius, cy - radius, right, cy + radius);
+        bottomButtonRect(1, true, width, height, mapButtonRect);
         return true;
+    }
+
+    // The square around bottom button `slot`, counted from the side edge: on the
+    // right, 0 is the eye and 1 the map; on the left, 0 is START and 1 MENU.
+    private void bottomButtonRect(int slot, boolean right, float width, float height,
+                                  RectF out) {
+        final float d = 2f * dp(BOTTOM_BUTTON_RADIUS_DP);
+        final float fromSide = dp(BOTTOM_BUTTON_SIDE_DP) + slot * (d + dp(BOTTOM_BUTTON_GAP_DP));
+        final float left = right ? width - fromSide - d : fromSide;
+        final float bottom = height - dp(BOTTOM_BUTTON_BOTTOM_DP);
+        out.set(left, bottom - d, left + d, bottom);
     }
 
     // A round button with a folded map: three panels, the middle one raised.
     private void drawMapButton(Canvas canvas) {
         final float cx = mapButtonRect.centerX();
         final float cy = mapButtonRect.centerY();
-        final float radius = Math.min(dp(MAP_BUTTON_RADIUS_DP),
-                                      Math.min(mapButtonRect.width(), mapButtonRect.height()) * 0.5f);
+        final float radius = mapButtonRect.width() * 0.5f;
         fillPaint.setColor(0x99081218);
         strokePaint.setColor(0xBBFFFFFF);
         canvas.drawCircle(cx, cy, radius, fillPaint);
@@ -1325,10 +1332,7 @@ final class TouchControlsView extends View {
     private void pillRect(PillButton pill, float width, float height, RectF out) {
         final int slot = cornerSlot(pill);
         if (slot >= 0) {
-            final float radius = dp(CORNER_BUTTON_RADIUS_DP);
-            final float left = dp(EYE_MARGIN_DP) + slot * (2f * radius + dp(EYE_MARGIN_DP));
-            final float cy = height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP / 2f);
-            out.set(left, cy - radius, left + 2f * radius, cy + radius);
+            bottomButtonRect(slot, false, width, height, out);
             return;
         }
         final float shift = pillShift(width, height);
@@ -1441,12 +1445,13 @@ final class TouchControlsView extends View {
     private void drawEye(Canvas canvas, RectF bounds) {
         fillPaint.setColor(0x99081218);
         strokePaint.setColor(0xCCFFFFFF);
-        float corner = Math.min(bounds.width(), bounds.height()) * 0.3f;
-        canvas.drawRoundRect(bounds, corner, corner, fillPaint);
         float cx = bounds.centerX();
         float cy = bounds.centerY();
-        float halfW = bounds.height() * 0.48f;
-        float lid = bounds.height() * 0.30f;
+        float r = bounds.width() * 0.5f;
+        canvas.drawCircle(cx, cy, r, fillPaint);
+        canvas.drawCircle(cx, cy, r, strokePaint);
+        float halfW = r * 0.62f;
+        float lid = r * 0.36f;
         Path eye = shapePath;
         eye.reset();
         eye.moveTo(cx - halfW, cy);
