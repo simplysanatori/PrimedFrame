@@ -2002,12 +2002,19 @@ void CElementGen::RenderParticles() {
 
 void CElementGen::RenderParticlesFlameThrower(CElementGen* const* gens, int count) {
 #ifdef TARGET_PC
-  // A Remastered effect converted to PART can have no TEXR: its root only
-  // spawns, and the fire is drawn by its children (NFTMainFire's three fire
-  // layers). The batch below draws neither, so draw such a generator, and so
-  // its children, the usual way; the batch then skips it.
+  // The batch below draws each generator's own particles as plain textured
+  // cards. A Remastered effect converted to PART can need more: a root with no
+  // TEXR only spawns and its children draw (NFTMainFire's three fire layers),
+  // and a VMAT material or a model (NFTSecondaryFire's PMDL) needs Render()'s
+  // model and material paths. Draw those generators the usual way; the batch
+  // then skips them. Retail effects never match, so they keep the batch.
+  const auto drawnAlone = [](const CElementGen* gen) {
+    const CGenDescription& desc = *gen->x28_loadedGenDesc;
+    return desc.x40_TEXR == nullptr || desc.x48_PMDL || desc.x31_26_PMUS ||
+           PortVfxActive(desc);
+  };
   for (int i = 0; i < count; ++i) {
-    if (gens[i]->x28_loadedGenDesc->x40_TEXR == nullptr) {
+    if (drawnAlone(gens[i])) {
       gens[i]->Render();
     }
   }
@@ -2031,7 +2038,7 @@ void CElementGen::RenderParticlesFlameThrower(CElementGen* const* gens, int coun
   for (GXTexMapID mapId = GX_TEXMAP0; mapId < count;
        ++genPtr, mapId = static_cast< GXTexMapID >(mapId + 1)) {
 #ifdef TARGET_PC
-    if ((*genPtr)->x28_loadedGenDesc->x40_TEXR == nullptr)
+    if (drawnAlone(*genPtr))
       continue;
 #endif
     const TLockedToken< CTexture >& tex =
@@ -2076,7 +2083,7 @@ void CElementGen::RenderParticlesFlameThrower(CElementGen* const* gens, int coun
   for (int i = 0; i < count; ++i) {
     CElementGen* gen = gens[i];
 #ifdef TARGET_PC
-    if (gen->x28_loadedGenDesc->x40_TEXR == nullptr)
+    if (drawnAlone(gen))
       continue;
 #endif
     int numParts = gen->GetParticleCount();
