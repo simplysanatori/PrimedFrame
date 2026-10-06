@@ -427,6 +427,7 @@ void PortPresenceTick(const CStateManager& mgr) {
   PortDiscord::GameInfo info;
   info.world = names.worldName;
   info.area = names.areaName;
+  info.worldId = static_cast<uint32_t>(world->IGetWorldAssetId());
   info.percent = state.CalculateItemCollectionPercentage();
   info.hard = gpGameState->GetHardMode();
   // Rounded up, so a sliver of energy doesn't read as 0.

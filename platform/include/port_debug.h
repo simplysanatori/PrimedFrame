@@ -316,6 +316,8 @@ bool DiscordPresence();
 void SetDiscordPresence(bool enabled);
 std::string DiscordAppId();
 void SetDiscordAppId(const std::string& id);
+bool DiscordWorldImages();
+void SetDiscordWorldImages(bool enabled);
 // Mods folder (port_mods.h): all mods on or off, and the folder names turned
 // off, '/'-separated. Both take effect on the next launch.
 bool ModsEnabled();

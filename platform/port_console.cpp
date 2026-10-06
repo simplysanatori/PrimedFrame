@@ -2429,12 +2429,16 @@ void RunFrame() {
       PortDebug::SetDiscordPresence(action == "1");
     } else if (action == "id" && sCmd.args.size() == 3) {
       PortDebug::SetDiscordAppId(sCmd.args[2]);
+    } else if (action == "images" && sCmd.args.size() == 3 &&
+               (sCmd.args[2] == "0" || sCmd.args[2] == "1")) {
+      PortDebug::SetDiscordWorldImages(sCmd.args[2] == "1");
     } else if (action != "status") {
-      return Finish("usage: discord <0|1> | id <application id> | status");
+      return Finish("usage: discord <0|1> | id <application id> | images <0|1> | status");
     }
     static const char* const kStatusNames[] = {"off", "connecting", "connected", "failed"};
-    Out("discord %s id=%s %s", PortDebug::DiscordPresence() ? "on" : "off",
-        PortDebug::DiscordAppId().c_str(), kStatusNames[PortDiscord::Status()]);
+    Out("discord %s id=%s images=%s %s", PortDebug::DiscordPresence() ? "on" : "off",
+        PortDebug::DiscordAppId().c_str(), PortDebug::DiscordWorldImages() ? "on" : "off",
+        kStatusNames[PortDiscord::Status()]);
     Out("showing: %s", PortDiscord::CurrentText().c_str());
     const std::string error = PortDiscord::LastError();
     if (!error.empty()) {

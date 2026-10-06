@@ -100,6 +100,23 @@ int main() {
     CHECK(activity->Find("timestamps")->Find("start")->AsInt() == 1700000000);
     CHECK(activity->Find("assets")->StringOr("large_image") == "logo");
     CHECK(activity->Find("assets")->StringOr("large_text") == game.hover);
+    CHECK(game.image.empty() && activity->Find("assets")->Find("small_image") == nullptr);
+
+    // World pictures: the world's asset takes the large image, the logo the
+    // small one. A world without one (the end cinema) keeps the logo.
+    info.worldId = 0x83F6FF6Fu;
+    info.worldImages = true;
+    const Presence pictured = GamePresence(info, 0);
+    CHECK(pictured.image == "world_chozo");
+    CHECK(ParseOk(ActivityPayload(42, pictured, "9"), value));
+    const PortJson::Value* assets = value.Find("args")->Find("activity")->Find("assets");
+    CHECK(assets->StringOr("large_image") == "world_chozo");
+    CHECK(assets->StringOr("small_image") == "logo");
+    CHECK(pictured != game);
+    info.worldId = 0x13D79165u;
+    CHECK(GamePresence(info, 0).image.empty());
+    CHECK(std::strcmp(WorldImage(0x158EFE17u), "world_frigate") == 0);
+    CHECK(std::strcmp(WorldImage(0xC13B09D1u), "world_crater") == 0);
 
     // Names still loading: the world alone, then a generic line. Without a
     // launcher there's no missile count; without a world, the default tooltip.
