@@ -2296,9 +2296,13 @@ void CaptureWheelIcons(int wheel, CGuiModel* const* icons) {
     icon.w = static_cast<int>(w);
     icon.h = static_cast<int>(h);
     icon.argb.resize(size_t(w) * h);
-    for (size_t p = 0; p < icon.argb.size(); ++p) {
-      const uint8_t* c = &rgba[p * 4];
-      icon.argb[p] = uint32_t(c[3]) << 24 | uint32_t(c[0]) << 16 | uint32_t(c[1]) << 8 | c[2];
+    // The HUD models map these textures bottom row first; flip to upright.
+    for (uint32_t y = 0; y < h; ++y) {
+      for (uint32_t x = 0; x < w; ++x) {
+        const uint8_t* c = &rgba[(size_t(h - 1 - y) * w + x) * 4];
+        icon.argb[size_t(y) * w + x] =
+            uint32_t(c[3]) << 24 | uint32_t(c[0]) << 16 | uint32_t(c[1]) << 8 | c[2];
+      }
     }
     PortLog::Write("port: touch wheel icon %d/%d: %ux%u fmt %d id %08X\n", wheel, i, w, h,
                   int(tex->GetTexelFormat()), texId);
