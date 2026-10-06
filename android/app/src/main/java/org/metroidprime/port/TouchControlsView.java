@@ -35,6 +35,10 @@ final class TouchControlsView extends View {
     private static final int HIDE = 4;
     // A drag on the free screen area that turns the view by its travel.
     private static final int AIM = 5;
+    // A tap on the HUD minimap, which opens the map.
+    private static final int MAP_TAP = 6;
+    // Travel, in dp, past which a minimap touch is a drag and not a tap.
+    private static final float MAP_TAP_SLOP_DP = 12f;
 
     // Port-only actions, not game inputs.
     private static final int TOGGLE_DEBUG_OVERLAY = -1;
@@ -162,6 +166,10 @@ final class TouchControlsView extends View {
     // Twin stick with drag-to-aim: no right stick, a drag turns the view. An F1
     // setting, re-read every draw.
     private boolean touchAim;
+    // Tap the minimap to open the map; replaces the GameCube layout's Z pill. An
+    // F1 setting, re-read every draw.
+    private boolean mapTap;
+    private final float[] minimapRect = new float[4];
 
     private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -179,6 +187,10 @@ final class TouchControlsView extends View {
     private static native boolean nativeTouchColors();
     private static native boolean nativeTouchAimEnabled();
     private static native void nativeTouchAim(float dxDp, float dyDp);
+    private static native boolean nativeTouchMapTapEnabled();
+    // The minimap's screen rect as fractions of the view; false when not shown.
+    private static native boolean nativeMinimapRect(float[] out4);
+    private static native void nativeMapTap();
     private static native void nativeSetTouchDevice(boolean xboxLayout);
     private static native void nativeToggleDebugOverlay();
     private static native void nativeVirtualButton(int button, boolean down);
@@ -256,6 +268,7 @@ final class TouchControlsView extends View {
         }
         colored = !twinStickMode && nativeTouchColors();
         touchAim = twinStickMode && nativeTouchAimEnabled();
+        mapTap = nativeTouchMapTapEnabled();
         hideBounds.set(width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP),
                        height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP),
                        width - dp(EYE_MARGIN_DP), height - dp(EYE_MARGIN_DP));
@@ -269,7 +282,9 @@ final class TouchControlsView extends View {
         }
 
         for (PillButton pill : pills) {
-            drawPillButton(canvas, pill, width, height);
+            if (!pillHidden(pill)) {
+                drawPillButton(canvas, pill, width, height);
+            }
         }
         for (ControlButton button : face) {
             drawButton(canvas, button, width, height);
@@ -361,6 +376,9 @@ final class TouchControlsView extends View {
                     updateStick(target, event.getX(i), event.getY(i));
                 } else if (target.type == AIM) {
                     updateAim(target, event, i);
+                } else if (target.type == MAP_TAP) {
+                    target.x = event.getX(i);
+                    target.y = event.getY(i);
                 }
             }
         } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
@@ -483,6 +501,9 @@ final class TouchControlsView extends View {
         float width = getWidth();
         float height = getHeight();
         for (PillButton pill : pills) {
+            if (pillHidden(pill)) {
+                continue;
+            }
             if (x >= pill.left * width && x <= pill.right * width &&
                 y >= pill.top * height && y <= pill.bottom * height) {
                 targets.put(pointerId, new TouchTarget(BUTTON, pill.id()));
@@ -504,6 +525,17 @@ final class TouchControlsView extends View {
             return;
         }
 
+        if (mapTap && width > 0f && height > 0f && nativeMinimapRect(minimapRect) &&
+            x >= minimapRect[0] * width && x <= minimapRect[2] * width &&
+            y >= minimapRect[1] * height && y <= minimapRect[3] * height) {
+            TouchTarget target = new TouchTarget(MAP_TAP, 0);
+            target.x = x;
+            target.y = y;
+            target.startX = x;
+            target.startY = y;
+            targets.put(pointerId, target);
+            return;
+        }
         if (x < width * 0.38f && y > height * 0.43f && leftPointer == -1) {
             TouchTarget target = new TouchTarget(LEFT_STICK, 0);
             leftPointer = pointerId;
@@ -601,6 +633,14 @@ final class TouchControlsView extends View {
             performClick();
             return;
         }
+        if (target.type == MAP_TAP) {
+            // A tap, not a drag that began on the minimap.
+            final float slop = dp(MAP_TAP_SLOP_DP);
+            if (Math.hypot(target.x - target.startX, target.y - target.startY) < slop) {
+                nativeMapTap();
+            }
+            return;
+        }
         releaseTarget(target);
         if (pointerId == leftPointer) {
             leftPointer = -1;
@@ -614,8 +654,9 @@ final class TouchControlsView extends View {
     }
 
     private void releaseTarget(TouchTarget target) {
-        // Nothing to zero for a hide tap or an aim drag: aim is a distance.
-        if (target.type == HIDE || target.type == AIM) {
+        // Nothing to zero for a hide tap, an aim drag (a distance) or a map tap
+        // (fired on release only; a cancelled touch is no tap).
+        if (target.type == HIDE || target.type == AIM || target.type == MAP_TAP) {
             return;
         }
         if (target.type == BUTTON) {
@@ -839,6 +880,11 @@ final class TouchControlsView extends View {
         return 0xDD000000 | (r << 16) | (g << 8) | b;
     }
 
+    // The GameCube layout's Z pill only opens the map, which a minimap tap does.
+    private boolean pillHidden(PillButton pill) {
+        return mapTap && !twinStickMode && pill.axis < 0 && pill.button == BTN_RIGHT_SHOULDER;
+    }
+
     private void drawPillButton(Canvas canvas, PillButton pill, float width, float height) {
         float left = pill.left * width;
         float top = pill.top * height;
@@ -1050,6 +1096,8 @@ final class TouchControlsView extends View {
         final int id;
         float x;
         float y;
+        float startX;
+        float startY;
 
         TouchTarget(int type, int id) {
             this.type = type;

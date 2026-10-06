@@ -542,6 +542,8 @@ void CmdHelp() {
   Out("                           draw the volume's coordinates or its light alone on room geometry");
   Out("hdfont [on|off]            the distance-field font mods supply, in place of the disc's glyphs");
   Out("touchpad [attach|detach|stick <x> <y>]  a virtual gamepad like Android's touch overlay");
+  Out("minimap  the HUD minimap's screen rect (x0 y0 x1 y1, 0..1), or invalid");
+  Out("maptap   a touch-overlay minimap tap: one Z press, opens the map");
   Out("freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]");
   Out("                           fly the view away from the player (HUD hidden; freeze holds the game still)");
   Out("aspect <4:3|16:9|window>   switch the rendering aspect, as the Options row does");
@@ -1918,6 +1920,18 @@ void RunFrame() {
     CmdStats();
   } else if (name == "touchpad") {
     CmdTouchPad();
+  } else if (name == "minimap") {
+    float rect[4] = {};
+    if (PortDebug::MinimapRect(rect)) {
+      Out("minimap valid %.4f %.4f %.4f %.4f", rect[0], rect[1], rect[2], rect[3]);
+    } else {
+      Out("minimap invalid");
+    }
+    Finish();
+  } else if (name == "maptap") {
+    PortDebug::RequestMapTap();
+    Out("maptap queued");
+    Finish();
   } else if (name == "hdfont") {
     if (sCmd.args.size() > 1) {
       const std::string arg = Lower(sCmd.args[1]);

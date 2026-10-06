@@ -87,6 +87,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -214,6 +215,15 @@ float sGyroRate = 600.f;
 // 400 dp drag at the default mouse sensitivity (pi / 0.0035 / 400).
 bool sTouchAim = true;
 float sTouchAimSpeed = 2.25f;
+// Tap the minimap to open the map (Android): the HUD publishes the minimap's
+// screen rect, the touch overlay hit-tests it and injects a Z press per tap.
+bool sTouchMapTap = true;
+std::mutex sMinimapMutex;
+bool sMinimapValid = false;
+float sMinimapRect[4] = {};
+std::chrono::steady_clock::time_point sMinimapStamp;
+std::atomic< int > sMapTapPending{0};
+bool sMapTapHeld = false;
 std::mutex sTouchAimMutex;
 float sTouchAimPendingX = 0.f;
 float sTouchAimPendingY = 0.f;
@@ -518,6 +528,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     }
   } else if (key == "touch_aim") {
     sTouchAim = ParseBool(value);
+  } else if (key == "touch_map_tap") {
+    sTouchMapTap = ParseBool(value);
   } else if (key == "touch_aim_speed") {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 0.25f && f <= 10.f) {
@@ -771,6 +783,7 @@ void SaveSettings() {
   file << "gyro_rate=" << sGyroRate << '\n';
   file << "touch_aim=" << (sTouchAim ? 1 : 0) << '\n';
   file << "touch_aim_speed=" << sTouchAimSpeed << '\n';
+  file << "touch_map_tap=" << (sTouchMapTap ? 1 : 0) << '\n';
   file << "mouse_invert_x=" << (sMouseInvertX ? 1 : 0) << '\n';
   file << "mouse_invert_y=" << (sMouseInvertY ? 1 : 0) << '\n';
   file << "mouse_buttons=" << (sMouseButtons ? 1 : 0) << '\n';
@@ -2073,6 +2086,62 @@ void SetTouchAim(bool on) {
   EnsureInitialized();
   sTouchAim = on;
   MarkDirty();
+}
+
+bool TouchMapTap() {
+  EnsureInitialized();
+  return sTouchMapTap;
+}
+
+void SetTouchMapTap(bool on) {
+  EnsureInitialized();
+  sTouchMapTap = on;
+  MarkDirty();
+}
+
+// Game thread, once per HUD draw (valid=false when the minimap isn't shown).
+void SetMinimapRect(bool valid, float x0, float y0, float x1, float y1) {
+  std::lock_guard lock(sMinimapMutex);
+  sMinimapValid = valid && std::isfinite(x0) && std::isfinite(y0) && std::isfinite(x1) &&
+                  std::isfinite(y1);
+  sMinimapRect[0] = x0;
+  sMinimapRect[1] = y0;
+  sMinimapRect[2] = x1;
+  sMinimapRect[3] = y1;
+  sMinimapStamp = std::chrono::steady_clock::now();
+}
+
+// A rect not refreshed for a while (HUD not drawn at all) counts as gone.
+bool MinimapRect(float* out4) {
+  std::lock_guard lock(sMinimapMutex);
+  if (!sMinimapValid ||
+      std::chrono::steady_clock::now() - sMinimapStamp > std::chrono::milliseconds(300)) {
+    return false;
+  }
+  if (out4 != nullptr) {
+    std::copy(sMinimapRect, sMinimapRect + 4, out4);
+  }
+  return true;
+}
+
+void RequestMapTap() {
+  sMapTapPending.fetch_add(1);
+}
+
+// Game thread, once per pad poll. Returns true for the poll that should read Z
+// held: a tap presses for one poll and releases on the next, so each tap is
+// one press edge.
+bool ConsumeMapTapZ() {
+  if (sMapTapHeld) {
+    sMapTapHeld = false;
+    return false;
+  }
+  if (sMapTapPending.load() > 0) {
+    sMapTapPending.fetch_sub(1);
+    sMapTapHeld = true;
+    return true;
+  }
+  return false;
 }
 
 float TouchAimSpeed() {
@@ -4774,6 +4843,11 @@ void DrawInputTab() {
   }
   ItemHelp("Twin stick layout: drag a finger on the free screen area to turn the view by the "
            "distance dragged, like a mouse. Off, the right stick is drawn and sets a turn rate.");
+  bool touchMapTap = sTouchMapTap;
+  if (ImGui::Checkbox("Tap minimap for map", &touchMapTap)) {
+    SetTouchMapTap(touchMapTap);
+  }
+  ItemHelp("Tapping the minimap opens the map; hides the GameCube layout's Z button.");
   ImGui::BeginDisabled(!sTouchAim);
   float touchAimSpeed = sTouchAimSpeed;
   if (ImGui::SliderFloat("Touch aim speed", &touchAimSpeed, 0.5f, 6.f, "%.2f px/dp",
@@ -6570,6 +6644,30 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchAim(JNIEnv*, jclass, jfl
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchAimEnabled(JNIEnv*, jclass) {
   return PortDebug::TouchAim() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchMapTapEnabled(JNIEnv*, jclass) {
+  return PortDebug::TouchMapTap() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMinimapRect(JNIEnv* env, jclass,
+                                                              jfloatArray out) {
+  float rect[4];
+  if (!PortDebug::TouchMapTap() || !PortDebug::MinimapRect(rect) || out == nullptr ||
+      env->GetArrayLength(out) < 4) {
+    return JNI_FALSE;
+  }
+  env->SetFloatArrayRegion(out, 0, 4, rect);
+  return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapTap(JNIEnv*, jclass) {
+  if (PortDebug::TouchMapTap()) {
+    PortDebug::RequestMapTap();
+  }
 }
 #endif
 

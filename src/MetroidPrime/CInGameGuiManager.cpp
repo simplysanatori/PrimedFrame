@@ -41,6 +41,8 @@
 
 #include "port_debug.h"
 
+#include <algorithm>
+
 // Profiling labels retained in the retail string pool.
 static const char* const skGuiElementNames[] = {
     "FaceplateDecoration", "     FaceReflection", "        PlayerVisor", "                Hud",
@@ -271,10 +273,48 @@ void CInGameGuiManager::StartFadeIn() {
   xf8_camFilter.DisableFilter(0.5f);
 }
 
+// Port: the screen rect of the minimap's depth-mask model, for the Android
+// touch overlay's tap-to-open-map. Called right after the minimap is drawn, so
+// the HUD camera's view and projection are still current.
+void CInGameGuiManager::PublishMinimapRect(bool shown) const {
+  const auto& token = x148_model_automapper->GetModel();
+  CModel* model = token ? token->GetObject() : nullptr;
+  const CViewport& vp = CGraphics::GetViewport();
+  if (!shown || model == nullptr || vp.mWidth <= 0 || vp.mHeight <= 0) {
+    return;
+  }
+  const CTransform4f toView =
+      CGraphics::GetViewMatrix().GetInverse() * x148_model_automapper->GetWorldTransform();
+  const CMatrix4f proj = CGraphics::GetPerspectiveProjectionMatrix();
+  const CAABox& box = model->GetBoundingBox();
+  float x0 = FLT_MAX, y0 = FLT_MAX, x1 = -FLT_MAX, y1 = -FLT_MAX;
+  for (int i = 0; i < 8; ++i) {
+    const CVector3f eye = toView * box.GetPoint(i);
+    if (eye.GetY() <= 0.f) {
+      return; // behind the camera
+    }
+    const CVector3f ndc = proj.MultiplyOneOverW(eye);
+    const float x = (static_cast< float >(vp.mLeft) + (ndc.GetX() * 0.5f + 0.5f) * vp.mWidth) /
+                    static_cast< float >(CGraphics::GetRenderMode().fbWidth);
+    const float y = (static_cast< float >(vp.mTop) + (0.5f - ndc.GetY() * 0.5f) * vp.mHeight) /
+                    static_cast< float >(CGraphics::GetRenderMode().efbHeight);
+    x0 = std::min(x0, x);
+    x1 = std::max(x1, x);
+    y0 = std::min(y0, y);
+    y1 = std::max(y1, y);
+  }
+  // A little padding for fat fingers.
+  const float padX = 0.15f * (x1 - x0);
+  const float padY = 0.15f * (y1 - y0);
+  PortDebug::SetMinimapRect(true, x0 - padX, y0 - padY, x1 + padX, y1 + padY);
+}
+
 void CInGameGuiManager::Draw(const CStateManager& mgr) const {
   if (!GetIsGameDraw()) {
     gpRender->SetRequestRGBA6(true);
   }
+  // Re-published below if the minimap is drawn this frame.
+  PortDebug::SetMinimapRect(false, 0.f, 0.f, 0.f, 0.f);
   if (x1d8_onScreenTexAlpha > 0.f && x1dc_onScreenTexTok->GetObject() != nullptr) {
     const CTexture& tex = *x1dc_onScreenTexTok->GetObject();
     gpRender->SetDepthReadWrite(false, false);
@@ -387,6 +427,9 @@ void CInGameGuiManager::Draw(const CStateManager& mgr) const {
                          mapAlpha * (x1f4_visorStaticAlpha * t));
     CGraphics::SetDepthWriteMode(true, kE_LEqual, true);
     x148_model_automapper->SetIsVisible(false);
+    PublishMinimapRect(drawVisor && x38_autoMapper->IsFullyInMiniMapState() && mapAlpha > 0.f &&
+                       t > 0.f && x3c_pauseScreenBlur->IsGameDraw() &&
+                       x1ec_hudVisMode != CTweakGui::kHud_Zero);
   }
   if (!preDrawBlur) {
     x3c_pauseScreenBlur->Draw(mgr);

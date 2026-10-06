@@ -403,6 +403,16 @@ void SetTouchAim(bool on);
 float TouchAimSpeed();
 void SetTouchAimSpeed(float pixelsPerDp);
 void AddTouchAim(float dxDp, float dyDp);
+// Tap the minimap to open the map (Android touch overlay). The HUD publishes the
+// minimap's screen rect (0..1 of the window, origin top-left) each frame it is
+// drawn; MinimapRect fills x0,y0,x1,y1 and returns false when it isn't shown.
+bool TouchMapTap();
+void SetTouchMapTap(bool on);
+void SetMinimapRect(bool valid, float x0, float y0, float x1, float y1);
+bool MinimapRect(float* out4);
+void RequestMapTap();
+// Pad poll hook: true for the one poll where a requested tap reads Z held.
+bool ConsumeMapTapZ();
 void GetFrameMouseDelta(float& dx, float& dy);
 // The yaw/pitch change (radians) the next tick's look input will apply, as seen
 // a fraction of a tick after the last one. False when there is none to show.
