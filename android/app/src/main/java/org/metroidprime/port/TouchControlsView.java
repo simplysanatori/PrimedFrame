@@ -1390,7 +1390,7 @@ final class TouchControlsView extends View {
     }
 
     // The hide button: an eye.
-    // START as a play/pause glyph, MENU as three lines, in a circle like the
+    // START as a pause glyph, MENU (the F1 overlay) as a cog, in a circle like the
     // map button's. The paints are already set for the held state.
     private void drawCornerButton(Canvas canvas, int slot, RectF bounds) {
         final float cx = bounds.centerX();
@@ -1400,21 +1400,41 @@ final class TouchControlsView extends View {
         canvas.drawCircle(cx, cy, radius, strokePaint);
         final float s = radius * 0.36f;
         if (slot == 0) {
-            shapePath.reset();
-            shapePath.moveTo(cx - s * 1.25f, cy - s);
-            shapePath.lineTo(cx + s * 0.15f, cy);
-            shapePath.lineTo(cx - s * 1.25f, cy + s);
-            shapePath.close();
-            shapePath.moveTo(cx + s * 0.6f, cy - s);
-            shapePath.lineTo(cx + s * 0.6f, cy + s);
-            shapePath.moveTo(cx + s * 1.15f, cy - s);
-            shapePath.lineTo(cx + s * 1.15f, cy + s);
-            canvas.drawPath(shapePath, strokePaint);
+            final int fill = fillPaint.getColor();
+            fillPaint.setColor(strokePaint.getColor());
+            final float barW = s * 0.55f;
+            final float corner = barW * 0.3f;
+            canvas.drawRoundRect(cx - s * 0.75f - barW / 2f, cy - s, cx - s * 0.75f + barW / 2f,
+                                 cy + s, corner, corner, fillPaint);
+            canvas.drawRoundRect(cx + s * 0.75f - barW / 2f, cy - s, cx + s * 0.75f + barW / 2f,
+                                 cy + s, corner, corner, fillPaint);
+            fillPaint.setColor(fill);
         } else {
-            for (int i = -1; i <= 1; i++) {
-                canvas.drawLine(cx - s * 1.1f, cy + i * s * 0.75f, cx + s * 1.1f,
-                                cy + i * s * 0.75f, strokePaint);
+            // A cog: eight square teeth around a ring, with a hole.
+            final int teeth = 8;
+            final float outer = s * 1.3f;
+            final float inner = s * 0.98f;
+            final double step = 2.0 * Math.PI / teeth;
+            final double half = step * 0.22;
+            shapePath.reset();
+            for (int i = 0; i < teeth; i++) {
+                final double a = i * step;
+                final double[] angles = {a - step / 2 + half, a - half, a - half * 0.8,
+                                         a + half * 0.8, a + half, a + step / 2 - half};
+                final float[] radii = {inner, inner, outer, outer, inner, inner};
+                for (int k = 0; k < angles.length; k++) {
+                    final float px = cx + radii[k] * (float) Math.cos(angles[k]);
+                    final float py = cy + radii[k] * (float) Math.sin(angles[k]);
+                    if (i == 0 && k == 0) {
+                        shapePath.moveTo(px, py);
+                    } else {
+                        shapePath.lineTo(px, py);
+                    }
+                }
             }
+            shapePath.close();
+            canvas.drawPath(shapePath, strokePaint);
+            canvas.drawCircle(cx, cy, s * 0.42f, strokePaint);
         }
     }
 
