@@ -1504,12 +1504,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_ph = {2}.rgb;
           let pbr_pgl = (pbr_ph.x * pbr_vraw.rgb * pbr_c1.y + pbr_ph.y * pbr_pcg.x * pbr_c2.rgb * pbr_c2.w) * pbr_pfb;
           // Room exposure is applied once, by the generic scaling after this block. The
-          // BCLR.z * vertex colour base term of the disassembly is left out: with the
-          // converter's white vertex colour it washed the glyph to pale white, while
-          // the gradient + fresnel terms alone match the Remastered capture.
+          // vertex colour is the model's own cyan tint (R~0.1, G~0.65, B~0.93).
           pbr_alpha = clamp(pbr_df.w * pbr_c3.w, 0.0, 1.0);
           pbr_lo = vec3f(0.0);
-          pbr_glow = (pbr_pcg + pbr_pgl) * pbr_df.rgb + pbr_pcg;
+          pbr_glow = (pbr_pcg + pbr_pgl + pbr_ph.z * pbr_vraw.rgb) * pbr_df.rgb + pbr_pcg;
           pbr_pass = vec3f(0.0);
       }})""",
                           mapStage[2], underlying(config.tevStages[mapStage[4]].texMapId), base);
