@@ -998,6 +998,14 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     tintAlpha = " * pbr_vc.a";
     vclr = "in.pbr_vclr";
   }
+  // The baked lightmap's UVs (GXSetPBRLightmapAttr), which populate_pipeline_config sets only when the vertices
+  // carry them.
+  const auto lightmapAttr = static_cast<GXAttr>(config.pbrLightmapAttr);
+  const bool lightmapUsed = lightmapAttr != GX_VA_NULL && config.attrs[lightmapAttr].attrType != GX_NONE;
+  if (lightmapUsed) {
+    vtxOutAttrs += fmt::format("\n    @location({}) pbr_lmuv: vec2f,", vtxOutIdx++);
+    vtxXfrAttrs += fmt::format("\n    out.pbr_lmuv = {};", vtx_attr(config, lightmapAttr));
+  }
 
   // A second layer (maps 4-6: base, MR, normal) over the first. The vertex alpha says
   // where, and the two base maps' alphas are heights that decide which layer shows
@@ -1792,6 +1800,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
               pbr_vdiag = pbr_n * 0.5 + 0.5;
           }}
       }}
+      // pbr-lightmap
       // Kind 13 scales the probe's reflection by pbr_layer_height.z (CCH1.z).
       pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5) *
                                            (pbr_f0 * pbr_ab.x + pbr_ab.y)) * pbr_ao;
@@ -1984,6 +1993,21 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     assert(at != std::string::npos);
     source.replace(at, what.size(), with);
   };
+  // A baked lightmap (GX_AURORA_SET_PBR_LIGHTMAP) replaces the diffuse ambient: its level L0 in layer 0 and the
+  // direction's x, y, z in layers 1-3, each relative to L0, along the three axes in pbr_lmap_axes. The volume's
+  // reflection stays. Cost test 3 (no ambient volume) goes without it too.
+  cut("// pbr-lightmap", lightmapUsed && costTest != 3 ? R"""(if (ubuf.pbr_lmap_rect.z != 0.0) {
+          let pbr_luv = ubuf.pbr_lmap_rect.xy + in.pbr_lmuv * ubuf.pbr_lmap_rect.z;
+          let pbr_l0 = textureSampleLevel(pbr_lmap, pbr_cube_samp, pbr_luv, 0, 0.0).rgb;
+          let pbr_l1x = textureSampleLevel(pbr_lmap, pbr_cube_samp, pbr_luv, 1, 0.0).rgb;
+          let pbr_l1y = textureSampleLevel(pbr_lmap, pbr_cube_samp, pbr_luv, 2, 0.0).rgb;
+          let pbr_l1z = textureSampleLevel(pbr_lmap, pbr_cube_samp, pbr_luv, 3, 0.0).rgb;
+          let pbr_ln = vec3f(dot(ubuf.pbr_lmap_axes[0].xyz, pbr_n), dot(ubuf.pbr_lmap_axes[1].xyz, pbr_n),
+                             dot(ubuf.pbr_lmap_axes[2].xyz, pbr_n));
+          pbr_ambd = max(pbr_l0 * (1.0 + pbr_l1x * pbr_ln.x + pbr_l1y * pbr_ln.y + pbr_l1z * pbr_ln.z),
+                         vec3f(0.0)) * ubuf.pbr_lmap_rect.w * pbr_blcm;
+          pbr_vdiag = pbr_ambd;
+      })""" : "");
   if (costTest == 3) {
     cut("if (ubuf.pbr_volume[3].w > 0.0) {", "if (false) {");
   } else if (costTest == 4) {
@@ -2789,6 +2813,8 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     uniBufAttrs += fmt::format("\n    pbr_light_color: array<vec4f, {}>,", GX::MaxLights);
     uniBufAttrs += fmt::format("\n    pbr_light_hdr: array<vec4f, {}>,", GX::MaxLights * 3);
     uniBufAttrs += "\n    pbr_shield: array<vec4f, 8>,";
+    uniBufAttrs += "\n    pbr_lmap_rect: vec4f,";
+    uniBufAttrs += "\n    pbr_lmap_axes: array<vec4f, 3>,";
     auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx);
     // An unlit surface (baked room light: pbr_func drops its light loop) has no room light to
     // shadow, but takes the sun's own colour.
@@ -2873,6 +2899,10 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
                                    MaxTextures * 2 + 2 + i, volumeNames[i]);
       }
       texBindings += fmt::format("\n@group(2) @binding({})\nvar pbr_brdf_lut: texture_2d<f32>;", kBrdfLutBinding);
+      if (config.pbrLightmapAttr != GX_VA_NULL) {
+        texBindings +=
+            fmt::format("\n@group(2) @binding({})\nvar pbr_lmap: texture_2d_array<f32>;", kLightmapBinding);
+      }
     }
   }
   if (info.usesPTTexMtx.any()) {

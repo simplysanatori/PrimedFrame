@@ -441,6 +441,12 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   config.shaderConfig.pbr = g_gxState.pbr;
   if (g_gxState.pbr != 0) {
     config.shaderConfig.pbrKind = static_cast<u8>(std::clamp(std::lround(g_gxState.pbrLayer.y()), 0L, 255L));
+    // The lightmap's UV attribute, when the bound vertex format has it (and the device a slot for the lightmap).
+    const u8 lightmapAttr = g_gxState.pbrLightmapAttr;
+    if (webgpu::g_lightmapBinding && lightmapAttr >= GX_VA_TEX0 && lightmapAttr <= GX_VA_TEX7 &&
+        g_gxState.vtxDesc[lightmapAttr] != GX_NONE) {
+      config.shaderConfig.pbrLightmapAttr = lightmapAttr;
+    }
   }
   config.shaderConfig.sdf = g_gxState.sdf;
   u8 vtxOffset = 0;
@@ -559,10 +565,14 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   };
 }
 
+// The lightmap's slot is the last binding, left out of group 2 when the device has no room for it.
+static size_t texture_binding_count() noexcept { return kTextureBindings - (webgpu::g_lightmapBinding ? 0 : 1); }
+
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
   ZoneScoped;
 
-  if (!info.sampledTextures.any() && !info.sampledIndTextures.any() && !info.usesVolFog && !info.shadowReceive) {
+  if (!info.sampledTextures.any() && !info.sampledIndTextures.any() && !info.usesVolFog && !info.shadowReceive &&
+      !info.usesLightmap) {
     // Don't bother re-binding anything
     return {};
   }
@@ -577,6 +587,8 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
     textureEntries[MaxTextures * 2 + 2 + i].binding = MaxTextures * 2 + 2 + i;
     textureEntries[MaxTextures * 2 + 2 + i].textureView = gfx::probe::volume_view(g_gxState.pbrVolume, i).Get();
   }
+  textureEntries[kLightmapBinding].binding = kLightmapBinding;
+  textureEntries[kLightmapBinding].textureView = gfx::probe::lightmap_view(g_gxState.pbrLightmap).Get();
   textureEntries[kBrdfLutBinding].binding = kBrdfLutBinding;
   textureEntries[kBrdfLutBinding].textureView = gfx::probe::brdf_lut_view().Get();
   textureEntries[kVolFogFroxelBinding].binding = kVolFogFroxelBinding;
@@ -622,7 +634,7 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
   const WGPUBindGroupDescriptor textureBindGroupDescriptor{
       .label = {"GX Texture Bind Group", WGPU_STRLEN},
       .layout = info.shadowReceive ? sShadowTextureBindGroupLayout.Get() : sTextureBindGroupLayout.Get(),
-      .entryCount = textureEntries.size(),
+      .entryCount = texture_binding_count(),
       .entries = textureEntries.data(),
   };
   return {
@@ -660,6 +672,16 @@ void initialize() noexcept {
               },
       };
     }
+    // The baked lightmap (GX_AURORA_SET_PBR_LIGHTMAP), the 17th sampled texture: only on a device that has it
+    textureEntries[kLightmapBinding] = {
+        .binding = kLightmapBinding,
+        .visibility = wgpu::ShaderStage::Fragment,
+        .texture =
+            {
+                .sampleType = wgpu::TextureSampleType::Float,
+                .viewDimension = wgpu::TextureViewDimension::e2DArray,
+            },
+    };
     // The PBR environment BRDF table (GX_AURORA_SET_PBR_BRDF_LUT), also read with the probe's sampler
     textureEntries[kBrdfLutBinding] = {
         .binding = kBrdfLutBinding,
@@ -703,7 +725,7 @@ void initialize() noexcept {
     }
     const wgpu::BindGroupLayoutDescriptor descriptor{
         .label = "GX Texture Bind Group Layout",
-        .entryCount = textureEntries.size(),
+        .entryCount = texture_binding_count(),
         .entries = textureEntries.data(),
     };
     sTextureBindGroupLayout = g_device.CreateBindGroupLayout(&descriptor);
@@ -724,7 +746,7 @@ void initialize() noexcept {
     };
     const wgpu::BindGroupLayoutDescriptor shadowDescriptor{
         .label = "GX Shadow Receiver Texture Bind Group Layout",
-        .entryCount = textureEntries.size(),
+        .entryCount = texture_binding_count(),
         .entries = textureEntries.data(),
     };
     sShadowTextureBindGroupLayout = g_device.CreateBindGroupLayout(&shadowDescriptor);
@@ -759,6 +781,10 @@ void initialize() noexcept {
           .textureView = gfx::probe::volume_view(0, i),
       };
     }
+    entries[kLightmapBinding] = {
+        .binding = kLightmapBinding,
+        .textureView = gfx::probe::lightmap_view(0),
+    };
     entries[kBrdfLutBinding] = {
         .binding = kBrdfLutBinding,
         .textureView = gfx::probe::brdf_lut_view(),
@@ -784,7 +810,7 @@ void initialize() noexcept {
     const wgpu::BindGroupDescriptor desc{
         .label = "GX Empty Texture Bind Group",
         .layout = sTextureBindGroupLayout,
-        .entryCount = entries.size(),
+        .entryCount = texture_binding_count(),
         .entries = entries.data(),
     };
     g_emptyTextureBindGroup = g_device.CreateBindGroup(&desc);
