@@ -221,6 +221,7 @@ struct RetailMaterial {
   uint32_t vtx = 0;
   uint32_t group = 0;
   uint16_t blendSrc = 0, blendDst = 0;
+  double konstAlpha = 1.0;  // the first konst colour's alpha (1 with none)
   std::vector<uint32_t> chans;
   struct Tev {
     uint32_t color, alpha, colorOp, alphaOp;
@@ -247,6 +248,9 @@ RetailMaterial ParseMaterial(Span m) {
   o += 4;
   if (out.flags & 0x8) {
     const uint32_t nk = R32(m, o);
+    if (nk != 0) {
+      out.konstAlpha = double(R8(m, o + 4 + 3)) / 255.0;
+    }
     o += 4 + size_t(nk) * 4;
   }
   out.blendDst = R16(m, o);
@@ -438,6 +442,11 @@ struct Retail {
     }
   }
 };
+
+// A gun-fx particle model (kind 19): retail blends it (4,5) with its konst alpha, where
+// Remastered's mesh is opaque. A retail material with an indirect texture (flag 0x400, the
+// Metroid3 ice platforms) is drawn opaque as Remastered does.
+bool GunFxParticle(const RetailMaterial& m) { return m.blendSrc == 4 && m.blendDst == 5 && !(m.flags & 0x400); }
 
 bool IsFx(const RetailMaterial& m) { return !(m.blendSrc == 1 && m.blendDst == 0); }
 
@@ -2430,8 +2439,8 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
   // 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
   const bool lambertFx = rem.shader == kShaderLambertFx;
-  P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : rem.kind >= 15 && rem.kind <= 18 ? (rem.additive ? 1 : 5) : lambertFx || rem.kind == 19 ? 0 : pm.blendDst);
-  P16(b, rem.kind == 14 || (rem.kind >= 15 && rem.kind <= 18) ? 4 : rem.kind == 13 || lambertFx || rem.kind == 19 ? 1 : pm.blendSrc);
+  P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : rem.kind >= 15 && rem.kind <= 18 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
+  P16(b, rem.kind == 14 || (rem.kind >= 15 && rem.kind <= 18) ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
   // fallback too, which is what draws it whenever the model is not opaque: channel
   // 0 unlit with the vertex colour as its material colour (bit 2), and the alpha
@@ -3626,6 +3635,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
     const bool lambertFx = rem.shader == kShaderLambertFx;
+    if (rem.kind == 19) {
+      // Row 6 w (unused by this kind otherwise): the retail konst alpha, a factor of the alpha of a particle model.
+      rem.shieldRows[27] = GunFxParticle(pm) ? pm.konstAlpha : 1.0;
+    }
     if (!opt.standalone && !gunGlow && !frostShell && !matcapShell && !shield) {
       if (rem.kind != 0) {
         loopNotes += std::string("kind ") + KindName(rem.kind) + " dropped: a retail model, not standalone; ";

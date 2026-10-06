@@ -1578,7 +1578,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // Kind 19, Remastered's lit sphere-map shader 98F0556D (permutation 002_0): L is the ambient
   // plus the lights' N.L; rgb = REFV x REFS(0.5 + 0.5 n.xy) x luminance(L) + DIFT x DIFC x L / pi
   // + ICNC + ICMC (the base map's albedo is DIFT; row 7 = DIFC; no 1/pi, as for the other lit kinds). Map 4 is REFS, map 5 REFV.
-  // Row 6 = ICNC + ICMC (at the room's exposure). Opaque, so a fade alone sets the alpha.
+  // Row 6 = ICNC + ICMC (at the room's exposure), w = the retail konst alpha of a particle model (1 otherwise).
+  // Alpha = DIFT.a^2 x DIFC.a x that; it only counts where the converter gave the material retail's blend (4,5).
   if (mapStage[4] != -1 && mapStage[5] != -1) {
     liquid += fmt::format(R"""(
     if (pbr_kind > 18.5 && pbr_kind < 19.5) {{
@@ -1588,9 +1589,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         let pbr_zx = select(1.0, ubuf.pbr_tone[0].w, ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0);
         pbr_lo = pbr_zv * pbr_zs * dot(pbr_zl, vec3f(0.2126, 0.7152, 0.0722)) + pbr_base * pbr_zl * ubuf.pbr_shield[7].rgb;
         pbr_glow = ubuf.pbr_shield[6].rgb * pbr_zx;
+        pbr_alpha = clamp({2}.a * {2}.a * ubuf.pbr_shield[7].w * ubuf.pbr_shield[6].w, 0.0, 1.0);
         pbr_pass = vec3f(0.0);
     }})""",
-                        underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5]);
+                        underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base);
   }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
