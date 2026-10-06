@@ -107,6 +107,10 @@ final class TouchControlsView extends View {
     private static final int AXIS_TRIGGER_R = 5;
 
     // Sticks are drawn and read through these, so the two cannot disagree.
+    // The layout's fractions of the view height stop growing at this many dp
+    // (a 500 dp phone is unchanged), so a tablet gets phone-sized controls
+    // that keep their distance to the nearest edge.
+    private static final float MAX_LAYOUT_DP = 520f;
     private static final float STICK_LEFT_X = 0.18f;
     private static final float STICK_Y = 0.73f;
     private static final float STICK_RADIUS = 0.16f;
@@ -349,8 +353,8 @@ final class TouchControlsView extends View {
         hideBounds.set(width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP),
                        height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP),
                        width - dp(EYE_MARGIN_DP), height - dp(EYE_MARGIN_DP));
-        drawStick(canvas, width * STICK_LEFT_X, height * STICK_Y, height * STICK_RADIUS,
-                  leftPointer, 0);
+        drawStick(canvas, leftStickX(width, height), leftStickY(height),
+                  layoutU(height) * STICK_RADIUS, leftPointer, 0);
         // The right stick is the C-stick, yellow on the GameCube pad. Only the
         // classic layout has one; otherwise a drag anywhere free aims.
         if (cStick) {
@@ -652,8 +656,8 @@ final class TouchControlsView extends View {
             if (pillHidden(pill)) {
                 continue;
             }
-            if (x >= pill.left * width && x <= pill.right * width &&
-                y >= pill.top * height && y <= pill.bottom * height) {
+            pillRect(pill, width, height, pillHit);
+            if (pillHit.contains(x, y)) {
                 targets.put(pointerId, new TouchTarget(BUTTON, pill.id()));
                 pressControl(pill.id());
                 return;
@@ -726,8 +730,9 @@ final class TouchControlsView extends View {
                 pan2Pointer = pointerId;
                 targets.put(pointerId, target);
             }
-        } else if (cStick && x >= width * 0.38f && x < rightStickRight(width, height) &&
-                   y > height * 0.43f) {
+        } else if (cStick && x >= rightStickGrabLeft(width, height) &&
+                   x < rightStickRight(width, height) &&
+                   y > layoutYFromBottom(0.43f, height)) {
             if (rightPointer == -1) {
                 TouchTarget target = new TouchTarget(RIGHT_STICK, 0);
                 rightPointer = pointerId;
@@ -746,29 +751,78 @@ final class TouchControlsView extends View {
     }
 
     // A press within half a stick radius outside the left stick's ring grabs it.
-    private static boolean onLeftStick(float x, float y, float width, float height) {
-        final float dx = x - width * STICK_LEFT_X;
-        final float dy = y - height * STICK_Y;
-        final float reach = height * STICK_RADIUS * LEFT_STICK_REACH;
+    private boolean onLeftStick(float x, float y, float width, float height) {
+        final float dx = x - leftStickX(width, height);
+        final float dy = y - leftStickY(height);
+        final float reach = layoutU(height) * STICK_RADIUS * LEFT_STICK_REACH;
         return dx * dx + dy * dy <= reach * reach;
     }
 
+    // The layout height: the view's, capped at a phone's. Fractions of the
+    // height are sizes and offsets from it; positions go through the layout
+    // helpers below, which keep a fraction's distance to the nearest edge,
+    // scaled by u / height.
+    private float layoutU(float height) {
+        return Math.min(height, dp(MAX_LAYOUT_DP));
+    }
+
+    private float layoutScale(float height) {
+        return height > 0f ? layoutU(height) / height : 1f;
+    }
+
+    // A horizontal fraction of the width, from the nearest side edge.
+    private float layoutX(float fraction, float width, float height) {
+        final float s = layoutScale(height);
+        return fraction < 0.5f ? fraction * width * s
+                               : fraction * width + (1f - fraction) * width * (1f - s);
+    }
+
+    // A horizontal fraction of the width round the screen's centre line.
+    private float layoutXCentred(float fraction, float width, float height) {
+        return fraction * width + (0.5f - fraction) * width * (1f - layoutScale(height));
+    }
+
+    // A vertical fraction of the height, from the nearest top or bottom edge.
+    private float layoutY(float fraction, float height) {
+        return fraction < 0.5f ? fraction * layoutU(height)
+                               : layoutYFromBottom(fraction, height);
+    }
+
+    private float layoutYFromBottom(float fraction, float height) {
+        return fraction * height + (1f - fraction) * (height - layoutU(height));
+    }
+
+    private float leftStickX(float width, float height) {
+        return layoutX(STICK_LEFT_X, width, height);
+    }
+
+    private float leftStickY(float height) {
+        return layoutY(STICK_Y, height);
+    }
+
     private float rightStickX(float width, float height) {
-        return width - height * GC_CSTICK_FROM_RIGHT;
+        return width - layoutU(height) * GC_CSTICK_FROM_RIGHT;
     }
 
     private float rightStickY(float height) {
-        return height * GC_CSTICK_Y;
+        return layoutY(GC_CSTICK_Y, height);
     }
 
     private float rightStickRadius(float height) {
-        return height * GC_CSTICK_RADIUS;
+        return layoutU(height) * GC_CSTICK_RADIUS;
     }
 
     // Right edge of the area that grabs the right stick. Face buttons are
     // hit-tested first, so it can reach past the C-stick.
     private float rightStickRight(float width, float height) {
         return rightStickX(width, height) + rightStickRadius(height) * 1.6f;
+    }
+
+    // Its left edge: a phone's 0.38 of the width, with the area's reach to the
+    // stick scaled down on a big screen.
+    private float rightStickGrabLeft(float width, float height) {
+        final float right = rightStickRight(width, height);
+        return right - (right - width * 0.38f) * layoutScale(height);
     }
 
     // Sends the finger's travel since the last event, in dp, through every
@@ -854,9 +908,9 @@ final class TouchControlsView extends View {
         final boolean left = target.type == LEFT_STICK;
         float width = getWidth();
         float height = getHeight();
-        float centreX = left ? width * STICK_LEFT_X : rightStickX(width, height);
-        float centreY = left ? height * STICK_Y : rightStickY(height);
-        float radius = left ? height * STICK_RADIUS : rightStickRadius(height);
+        float centreX = left ? leftStickX(width, height) : rightStickX(width, height);
+        float centreY = left ? leftStickY(height) : rightStickY(height);
+        float radius = left ? layoutU(height) * STICK_RADIUS : rightStickRadius(height);
         // SDL's gamepad axes are +X right and +Y *down* (Aurora inverts Y for the
         // GameCube stick, whose +Y is up), so screen coordinates apply as-is.
         float dx = (x - centreX) / radius;
@@ -1045,20 +1099,20 @@ final class TouchControlsView extends View {
         canvas.drawCircle(knobX, knobY, radius * 0.42f, strokePaint);
     }
 
-    private static float centreX(ControlButton button, float width, float height) {
-        return button.anchored ? width - (GC_A_FROM_RIGHT - button.x) * height
-                               : button.x * width;
+    private float centreX(ControlButton button, float width, float height) {
+        return button.anchored ? width - (GC_A_FROM_RIGHT - button.x) * layoutU(height)
+                               : layoutX(button.x, width, height);
     }
 
-    private static float centreY(ControlButton button, float height) {
-        return (button.anchored ? GC_A_Y + button.y : button.y) * height;
+    private float centreY(ControlButton button, float height) {
+        return layoutY(button.anchored ? GC_A_Y + button.y : button.y, height);
     }
 
     private boolean hitButton(ControlButton button, float x, float y, float width, float height) {
         float dx = x - centreX(button, width, height);
         float dy = y - centreY(button, height);
         if (!button.isKidney()) {
-            float radius = button.radius * height;
+            float radius = button.radius * layoutU(height);
             return dx * dx + dy * dy <= radius * radius;
         }
         // Distance to the nearest point of the kidney's centre arc.
@@ -1068,21 +1122,21 @@ final class TouchControlsView extends View {
             along = along - button.arcSweep < 360 - along ? button.arcSweep : 0;
         }
         double nearest = Math.toRadians(button.arcStart + along);
-        float ring = button.radius * height;
+        float ring = button.radius * layoutU(height);
         float px = dx - ring * (float) Math.cos(nearest);
         float py = dy - ring * (float) Math.sin(nearest);
-        float half = button.halfWidth * height;
+        float half = button.halfWidth * layoutU(height);
         return px * px + py * py <= half * half;
     }
 
     // The D-pad direction under (x, y), or -1. The whole square round the cross
     // counts, by the dominant axis, so a thumb that slips off an arm's side or
     // into a corner still presses something; only a small centre is dead.
-    private static int dpadButtonAt(float x, float y, float width, float height) {
-        float dx = x - DPAD_X * width;
-        float dy = y - DPAD_Y * height;
-        float arm = DPAD_ARM * height;
-        float dead = DPAD_HALF * height * 0.4f;
+    private int dpadButtonAt(float x, float y, float width, float height) {
+        float dx = x - layoutX(DPAD_X, width, height);
+        float dy = y - layoutY(DPAD_Y, height);
+        float arm = DPAD_ARM * layoutU(height);
+        float dead = DPAD_HALF * layoutU(height) * 0.4f;
         if (Math.abs(dx) > arm || Math.abs(dy) > arm || dx * dx + dy * dy < dead * dead) {
             return -1;
         }
@@ -1093,10 +1147,10 @@ final class TouchControlsView extends View {
     }
 
     private void drawDpad(Canvas canvas, float width, float height) {
-        float cx = DPAD_X * width;
-        float cy = DPAD_Y * height;
-        float arm = DPAD_ARM * height;
-        float half = DPAD_HALF * height;
+        float cx = layoutX(DPAD_X, width, height);
+        float cy = layoutY(DPAD_Y, height);
+        float arm = DPAD_ARM * layoutU(height);
+        float half = DPAD_HALF * layoutU(height);
         float corner = half * 0.35f;
         shapePath.reset();
         shapePath.addRoundRect(cx - arm, cy - half, cx + arm, cy + half, corner, corner,
@@ -1170,11 +1224,24 @@ final class TouchControlsView extends View {
         return mapTap && pill.axis < 0 && pill.button == BTN_RIGHT_SHOULDER;
     }
 
+    // A pill's rect: the middle ones round the centre line, the others from
+    // their side edge, all from the top.
+    private void pillRect(PillButton pill, float width, float height, RectF out) {
+        final boolean middle = Math.abs((pill.left + pill.right) * 0.5f - 0.5f) < 0.15f;
+        final float left = middle ? layoutXCentred(pill.left, width, height)
+                                  : layoutX(pill.left, width, height);
+        final float right = middle ? layoutXCentred(pill.right, width, height)
+                                   : layoutX(pill.right, width, height);
+        final float u = layoutU(height);
+        out.set(left, pill.top * u, right, pill.bottom * u);
+    }
+
     private void drawPillButton(Canvas canvas, PillButton pill, float width, float height) {
-        float left = pill.left * width;
-        float top = pill.top * height;
-        float right = pill.right * width;
-        float bottom = pill.bottom * height;
+        pillRect(pill, width, height, pillHit);
+        float left = pillHit.left;
+        float top = pillHit.top;
+        float right = pillHit.right;
+        float bottom = pillHit.bottom;
         boolean active = held.containsKey(pill.id());
         if (colored && pill.color != 0) {
             fillPaint.setColor(padFill(pill.color, active));
@@ -1223,7 +1290,7 @@ final class TouchControlsView extends View {
     private void drawButton(Canvas canvas, ControlButton button, float width, float height) {
         float x = centreX(button, width, height);
         float y = centreY(button, height);
-        float radius = button.radius * height;
+        float radius = button.radius * layoutU(height);
         boolean active = held.containsKey(button.button);
         if (colored && button.color != 0) {
             fillPaint.setColor(padFill(button.color, active));
@@ -1232,7 +1299,7 @@ final class TouchControlsView extends View {
         }
         strokePaint.setColor(active ? 0xFFE1F8FF : 0xBBFFFFFF);
         if (button.isKidney()) {
-            kidneyPath(shapePath, x, y, radius, button.halfWidth * height, button.arcStart,
+            kidneyPath(shapePath, x, y, radius, button.halfWidth * layoutU(height), button.arcStart,
                        button.arcSweep);
             canvas.drawPath(shapePath, fillPaint);
             canvas.drawPath(shapePath, strokePaint);
@@ -1276,12 +1343,12 @@ final class TouchControlsView extends View {
     private float wheelButtonX(int wheel, float width, float height) {
         float centre = width * 0.5f;
         if (cStick) {
-            final float left = STICK_LEFT_X * width + STICK_RADIUS * height;
+            final float left = leftStickX(width, height) + STICK_RADIUS * layoutU(height);
             final float right = rightStickX(width, height) - rightStickRadius(height);
             centre = (left + right) * 0.5f;
         }
         final float offset =
-            (dp(WHEEL_RADIUS_DP) + WHEEL_BUTTON_RADIUS * height + dp(WHEEL_BUTTON_GAP_DP)) * 0.5f;
+            (dp(WHEEL_RADIUS_DP) + WHEEL_BUTTON_RADIUS * layoutU(height) + dp(WHEEL_BUTTON_GAP_DP)) * 0.5f;
         return centre + (wheel == 0 ? -offset : offset);
     }
 
@@ -1290,7 +1357,7 @@ final class TouchControlsView extends View {
     }
 
     private int wheelButtonAt(float x, float y, float width, float height) {
-        final float radius = WHEEL_BUTTON_RADIUS * height * 1.1f;
+        final float radius = WHEEL_BUTTON_RADIUS * layoutU(height) * 1.1f;
         for (int wheel = 0; wheel < 2; ++wheel) {
             final double dx = x - wheelButtonX(wheel, width, height);
             final double dy = y - wheelButtonY(height);
@@ -1361,7 +1428,7 @@ final class TouchControlsView extends View {
         for (int wheel = 0; wheel < 2; ++wheel) {
             final float cx = wheelButtonX(wheel, width, height);
             final float cy = wheelButtonY(height);
-            final float radius = WHEEL_BUTTON_RADIUS * height;
+            final float radius = WHEEL_BUTTON_RADIUS * layoutU(height);
             final boolean active = wheelPointer != -1 && wheelTarget() != null &&
                                    wheelTarget().id == wheel;
             fillPaint.setColor(active ? 0xCC48C8E8 : 0x77081218);
@@ -1471,6 +1538,8 @@ final class TouchControlsView extends View {
         textPaint.setTextSize(size);
         canvas.drawText(label, x, y - (textPaint.ascent() + textPaint.descent()) / 2, textPaint);
     }
+
+    private final RectF pillHit = new RectF();
 
     private int dp(float value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
