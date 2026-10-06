@@ -360,9 +360,11 @@ std::atomic< bool > sOverlayVisible{false};
 std::atomic< bool > sTouchColorsFlag{false};
 // The Android touch overlay's gap to the side edges for every control, and the
 // left stick's extra gap on top of it, in dp. Read from the UI thread.
-constexpr float kTouchMarginMaxDp = 120.f;
-std::atomic< float > sTouchSideMargin{16.f};
-std::atomic< float > sTouchStickInset{32.f};
+constexpr float kTouchMarginMaxDp = 300.f;
+constexpr float kTouchSideMarginDefault = 16.f;
+constexpr float kTouchStickInsetDefault = 32.f;
+std::atomic< float > sTouchSideMargin{kTouchSideMarginDefault};
+std::atomic< float > sTouchStickInset{kTouchStickInsetDefault};
 // Set when a real pad, keyboard or mouse is used; the Android touch overlay takes
 // it to get out of the way.
 std::atomic< bool > sPhysicalInput{false};
@@ -5268,6 +5270,11 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("Extra room between the left stick and the screen's left edge, on top of the side "
            "margin.");
+  if (ImGui::Button("Reset margins")) {
+    sTouchSideMargin.store(kTouchSideMarginDefault);
+    sTouchStickInset.store(kTouchStickInsetDefault);
+    MarkDirty();
+  }
 #endif
 
   ImGui::SeparatorText("Gyro aim");
