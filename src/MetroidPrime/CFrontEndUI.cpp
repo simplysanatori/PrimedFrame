@@ -639,9 +639,10 @@ bool CFrontEndUI::SFrontEndFrame::PumpLoad() {
     CGuiFrame* frme = x8_frme.GetObject();
     if (frme->GetIsFinishedLoading()) {
       x14_loadedFrme = frme;
-      // Port: keep the front end's proportions in widescreen.
+      // Port: keep the front end's proportions in widescreen, pillarboxed: the
+      // HUD's spread would pull its text away from the panels behind it.
       if (CGuiCamera* cam = frme->GetFrameCamera()) {
-        cam->SetAspectMatch(true);
+        cam->SetAspectMatch(true, false);
       }
       FinishedLoading();
       return true;
@@ -816,9 +817,10 @@ bool CFrontEndUI::SNewFileSelectFrame::PumpLoad() {
     CGuiFrame* frme = x10_frme.GetObject();
     if (frme->GetIsFinishedLoading()) {
       x1c_loadedFrame = frme;
-      // Port: keep the file select's proportions in widescreen.
+      // Port: keep the file select's proportions in widescreen, pillarboxed (see
+      // SFrontEndFrame::PumpLoad).
       if (CGuiCamera* cam = frme->GetFrameCamera()) {
-        cam->SetAspectMatch(true);
+        cam->SetAspectMatch(true, false);
       }
       FinishedLoading();
       return true;
@@ -1465,7 +1467,7 @@ bool CFrontEndUI::SFusionBonusFrame::PumpLoad() {
           x24_loadedFrame = frme;
           // Port: keep the GBA screen's proportions in widescreen.
           if (CGuiCamera* cam = frme->GetFrameCamera()) {
-            cam->SetAspectMatch(true);
+            cam->SetAspectMatch(true, false);
           }
           FinishedLoading();
           return true;

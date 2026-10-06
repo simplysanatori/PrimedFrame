@@ -101,7 +101,7 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
     // Widening a fixed FOV keeps the projection uniform; the HUD elements stay
     // correctly shaped but are pulled toward the centre, so spread their
     // positions to reach the true corners.
-    if (renderAspect > 0.f && authored > 0.f && PortDebug::HudWide()) {
+    if (renderAspect > 0.f && authored > 0.f && mSpreadable && PortDebug::HudWide()) {
       mSpread = renderAspect / authored;
       mSpreadAboutEye = true;
     }
@@ -130,7 +130,7 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
       left = center - halfWidth;
       right = center + halfWidth;
       const float authoredWidth = mCameraParms.orthographic.right - mCameraParms.orthographic.left;
-      if (authoredWidth > 0.f && top > bottom && PortDebug::HudWide()) {
+      if (authoredWidth > 0.f && top > bottom && mSpreadable && PortDebug::HudWide()) {
         mSpread = renderAspect / (authoredWidth / (top - bottom));
         mSpreadCenterX = center;
       }

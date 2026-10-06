@@ -38,8 +38,12 @@ public:
   void SetParms(UCameraParms parms) { mCameraParms = parms; }
   // GUI cameras opt in so their projection tracks the widescreen render aspect
   // instead of stretching. Set for the in-game HUD, the pause/map screens and
-  // the front end; anything left unset keeps its authored aspect.
-  void SetAspectMatch(bool match) { xb9_aspectMatch = match; }
+  // the front end; anything left unset keeps its authored aspect. spread = false
+  // opts out of the Widescreen HUD spread, so the frame is pillarboxed instead.
+  void SetAspectMatch(bool match, bool spread = true) {
+    xb9_aspectMatch = match;
+    mSpreadable = spread;
+  }
   // Widescreen HUD spread for this frame's widgets: 1.0 when inactive.
   float GetAspectSpread() const { return mSpread; }
   float GetAspectSpreadCenterX() const { return mSpreadCenterX; }
@@ -70,6 +74,7 @@ public:
   // Port: horizontal spread applied to this frame's top-level widgets so the
   // HUD reaches the wide viewport edges without distorting element shapes.
   // Computed in the const Draw() and read immediately by CGuiFrame::Draw.
+  bool mSpreadable = true;
   mutable float mSpread = 1.f;
   mutable float mSpreadCenterX = 0.f;
   mutable bool mSpreadAboutEye = false;
