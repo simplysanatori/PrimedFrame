@@ -2137,7 +2137,13 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
     };
     effectIO.write = makeIO(0, staging).write;
-    effectIO.log = [](const std::string& line) { AddLine(line); };
+    // One line an effect the disc keeps (and why), plus the models: too many for the panel, so
+    // the log. The panel gets the count, the reasons are also in the effects report.
+    effectIO.log = [](const std::string& line) {
+      static std::mutex logMutex;
+      std::lock_guard<std::mutex> lock(logMutex);
+      std::printf("remastered import: %s\n", line.c_str());
+    };
     effectIO.report = [&](const EffectReportRow& row) {
       const std::string text = FormatEffectRow(row);
       std::lock_guard<std::mutex> lock(reportMutex);
@@ -2148,6 +2154,10 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
             std::to_string(effects.parts) + " PARTs, " + std::to_string(effects.textures) + " textures, " +
             std::to_string(effects.flipbooks) + " flipbooks, " + std::to_string(effects.models) + " models, " +
             std::to_string(effects.dropped) + " properties left out)");
+    if (effects.failed > 0) {
+      AddLine("effects: " + std::to_string(effects.failed) +
+              " keep the disc's version (why: the log, reports/parts/effects.effects.tsv)");
+    }
     writeReportPart("effects", true);
     endStage();
   }
