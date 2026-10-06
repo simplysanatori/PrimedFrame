@@ -571,9 +571,6 @@ const double kPbrEmissive = 0.10;
 // Ceiling on the metalness channel. Remastered applies none (the MR map is read as is);
 // it was 0.6 before the BRDF LUT and the room probe cubes, when full metals went near-black.
 const double kPbrMetalMax = 1.0;
-// The arm cannon's stripes only: the ceiling of the old compressed look they keep (see the
-// gun-body list). Stored glow strengths are otherwise linear and uncapped.
-const double kPbrGunStripeMax = 16.0;
 const double kFlatStd = 3.0;
 const double kJointSplit = 0.05;
 // The PC skin reader (CVirtualBone, SKIN_MAX_WEIGHTS) keeps four weights a vertex
@@ -1702,12 +1699,14 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     // The arm cannon's lit stripes. Remastered reads the ramp (dark, red, orange,
     // yellow along U; the stripe's soft edges down V) at a texcoord the model's ANUV
     // animates: the set's U plus a 0..0.5 hump, looping every 1.033 s, so the stripes
-    // pulse along the ramp (the converter turns the curve into a texture matrix). The
-    // strength keeps the old look: the compressed s / 0.10 times the 0.10 that was baked
-    // into the map, written uncompressed so that no exposure is applied.
+    // pulse along the ramp (the converter turns the curve into a texture matrix). Both
+    // stripe shaders (917f1415, f495b260) multiply that glow by c4[0].z in every perm,
+    // so it is inverse-exposed: ICAN x INCI (2) on screen, whatever the room. The old
+    // compressed strength (0.1 x sqrt(s / 0.1), 0.45) left them dim orange-brown where
+    // Remastered shows them bright yellow.
     out.glowLinear = true;
-    out.emissive = kPbrEmissive * std::sqrt(std::min(s / kPbrEmissive, kPbrGunStripeMax));
-    out.reason += "gun-body list: stripes ramp; ";
+    out.emissive = s;
+    out.reason += "gun-body list: stripes ramp at inverse exposure; ";
   } else if (out.maps[kEmissive].has && shader == kShaderGunPanel) {
     // The beam panels: ICAN x ICNC x base alpha with no exposure factor (only the lit
     // part is exposed), so like the inverse-exposed glows it is kept linear.
