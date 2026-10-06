@@ -1352,14 +1352,16 @@ final class TouchControlsView extends View {
             canvas.drawPath(shapePath, fillPaint);
             strokePaint.setColor(item == currentIndex ? 0xFFE0C020 : 0xBBFFFFFF);
             canvas.drawPath(shapePath, strokePaint);
+            // An item not found yet leaves its sector empty.
+            if (!owned) {
+                continue;
+            }
             final double mid = Math.toRadians(start + 45f);
             final float labelR = (outer + inner) / 2f;
             final float lx = wheelCx + labelR * (float) Math.cos(mid);
             final float ly = wheelCy + labelR * (float) Math.sin(mid);
-            if (!drawWheelIcon(canvas, target.id, item, lx, ly, dp(WHEEL_ICON_DP), owned ? 255 : 110)) {
-                textPaint.setAlpha(owned ? 255 : 110);
+            if (!drawWheelIcon(canvas, target.id, item, lx, ly, dp(WHEEL_ICON_DP), 255)) {
                 drawCenteredLabel(canvas, WHEEL_LABELS[target.id][i], lx, ly, dp(12));
-                textPaint.setAlpha(255);
             }
         }
     }

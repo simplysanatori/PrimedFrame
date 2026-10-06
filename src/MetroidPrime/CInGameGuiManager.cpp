@@ -423,8 +423,10 @@ void CInGameGuiManager::Draw(const CStateManager& mgr) const {
     x148_model_automapper->DrawWithWorldTransform(
         CGuiWidgetDrawParms(1.f, CVector3f::Zero()),
         mapSpread * x148_model_automapper->GetWorldTransform());
+    // Not gated on `t`: the minimap only shows in the Combat visor, but the
+    // other visors hide Z too, so the tap spot stays where the minimap sits.
     PublishMinimapRect(drawVisor && x38_autoMapper->IsFullyInMiniMapState() && mapAlpha > 0.f &&
-                           t > 0.f && x3c_pauseScreenBlur->IsGameDraw() &&
+                           x3c_pauseScreenBlur->IsGameDraw() &&
                            x1ec_hudVisMode != CTweakGui::kHud_Zero,
                        mapSpread * x148_model_automapper->GetWorldTransform());
     CGraphics::SetDepthWriteMode(true, kE_GEqual, false);
