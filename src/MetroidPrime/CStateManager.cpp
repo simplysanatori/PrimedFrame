@@ -402,7 +402,7 @@ void PortPresenceTick(const CStateManager& mgr) {
     sPortPresence = new SPortPresenceNames;
   }
   SPortPresenceNames& names = *sPortPresence;
-  // Names and percentages change rarely; twice a second is plenty.
+  // Twice a second is plenty: Discord takes an update every few seconds at most.
   if (names.wait-- > 0) {
     return;
   }
@@ -424,8 +424,21 @@ void PortPresenceTick(const CStateManager& mgr) {
   }
   names.loading = 0;
   const CPlayerState& state = *mgr.GetPlayerState();
-  PortDiscord::SetGame(names.worldName, names.areaName, state.CalculateItemCollectionPercentage(),
-                       gpGameState->GetHardMode());
+  PortDiscord::GameInfo info;
+  info.world = names.worldName;
+  info.area = names.areaName;
+  info.percent = state.CalculateItemCollectionPercentage();
+  info.hard = gpGameState->GetHardMode();
+  // Rounded up, so a sliver of energy doesn't read as 0.
+  const float hp = state.GetHealthInfo().GetHP();
+  info.energy = static_cast<int>(hp);
+  if (static_cast<float>(info.energy) < hp) {
+    ++info.energy;
+  }
+  if (state.GetItemCapacity(CPlayerState::kIT_Missiles) > 0) {
+    info.missiles = state.GetItemAmount(CPlayerState::kIT_Missiles);
+  }
+  PortDiscord::SetGame(info);
 }
 } // namespace
 

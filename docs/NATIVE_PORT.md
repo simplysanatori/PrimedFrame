@@ -950,8 +950,9 @@ unpacks to a temporary directory instead of mounting.
   covered by `port_livesplit_tests`). Console: `timer <0|1>`, `igt <seconds>`,
   `livesplit <0|1> | addr <host:port> | send <command> | status`.
 - Discord Rich Presence (F1 > System > Discord; desktop only, off by default).
-  Shows the current room as the activity, with the world, the item percentage
-  and Hard mode below it, and time elapsed since the game was loaded; the menus
+  Shows the current room as the activity, with energy, missiles (once the
+  launcher is found) and the item percentage below it, the world and Hard mode
+  in the logo's tooltip, and time elapsed since the game was loaded; the menus
   show "In the menus". It talks to the local Discord client's IPC socket
   (`$XDG_RUNTIME_DIR/discord-ipc-N`, also the Flatpak and Snap Discord paths;
   `\\?\pipe\discord-ipc-N` on Windows), retries every 5 s and sends at most one
