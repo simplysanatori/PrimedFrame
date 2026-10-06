@@ -1493,8 +1493,12 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     custom = custom || family == (FourCC('T', 'C', 'H', '0') & 0xFFFFFF00u) ||
              family == (FourCC('C', 'C', 'H', '0') & 0xFFFFFF00u);
   }
+  // Premultiplied glass multiplies its albedo by the vertex colour and its alpha by the
+  // vertex alpha, which is all the opacity a pane has (its base map is a flat grey, alpha 1).
+  const bool premulGlass =
+      std::find(std::begin(kShaderPremulGlass), std::end(kShaderPremulGlass), shader) != std::end(kShaderPremulGlass);
   out.tinted = (mat.unk1 & kVertexColorFlag) != 0 &&
-               (!custom || std::find(std::begin(kShaderTints), std::end(kShaderTints), shader) != std::end(kShaderTints));
+               (!custom || premulGlass || std::find(std::begin(kShaderTints), std::end(kShaderTints), shader) != std::end(kShaderTints));
   // What the alpha a shader writes is made of is only in its code. Every one
   // read writes the base map's alpha squared, times the vertex alpha, bar these:
   // with the mask flag the base alpha scales the glow instead and the vertex
