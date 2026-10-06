@@ -238,6 +238,12 @@ std::chrono::steady_clock::time_point sMapPanHeldUntil;
 std::mutex sTouchAimMutex;
 float sTouchAimPendingX = 0.f;
 float sTouchAimPendingY = 0.f;
+// GameCube scheme: this tick's touch travel, and whether a touch-aim finger is down
+// (JNI, or the console's hold timer).
+float sTouchLookFrameX = 0.f;
+float sTouchLookFrameY = 0.f;
+std::atomic<bool> sTouchAimDown{false};
+std::atomic<uint64_t> sTouchAimHoldUntilNs{0};
 bool sMouseCaptured = false;
 bool sMouseGameplayActive = false;
 bool sMouseInvertX = false;
@@ -2014,6 +2020,7 @@ void ResetMouseAim() {
   sMouseGameplayActive = false;
   sMouseButtonGate.Reset();
   sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
+  sTouchLookFrameX = sTouchLookFrameY = 0.f;
   sGyroPendingX = sGyroPendingY = sStickAimVelX = sStickAimVelY = 0.f;
   std::lock_guard lock(sTouchAimMutex);
   sTouchAimPendingX = sTouchAimPendingY = 0.f;
@@ -2245,7 +2252,7 @@ void SetTouchAimSpeed(float pixelsPerDp) {
 // Called from the Android UI thread; the game thread drains it in
 // BeginFrameMouse.
 void AddTouchAim(float dxDp, float dyDp) {
-  if (!sTouchAim || !(sMouseAim || sTwinStick) || Visible() || !std::isfinite(dxDp) ||
+  if (!sTouchAim || Visible() || !std::isfinite(dxDp) ||
       !std::isfinite(dyDp)) {
     return;
   }
@@ -2263,13 +2270,39 @@ void BeginFrameMouse() {
     touchY = sTouchAimPendingY;
     sTouchAimPendingX = sTouchAimPendingY = 0.f;
   }
-  sMouseFrameX = sMousePendingX + sGyroPendingX + touchX;
-  sMouseFrameY = sMousePendingY + sGyroPendingY + touchY;
+  // With mouse aim or twin stick the touch travel joins the mouse's; in the GameCube
+  // scheme CPlayer::UpdateTouchLook takes it instead (TakeTouchLook).
+  const bool directAim = sMouseAim || sTwinStick;
+  sTouchLookFrameX = directAim ? 0.f : touchX;
+  sTouchLookFrameY = directAim ? 0.f : touchY;
+  sMouseFrameX = sMousePendingX + sGyroPendingX + (directAim ? touchX : 0.f);
+  sMouseFrameY = sMousePendingY + sGyroPendingY + (directAim ? touchY : 0.f);
   sMousePendingX = sMousePendingY = 0.f;
   sGyroPendingX = sGyroPendingY = 0.f;
   // AddStickAim sets it again during this tick's input update.
   sStickAimVelX = sStickAimVelY = 0.f;
   sAimAppliedLastTick = false;
+}
+
+void SetTouchAimDown(bool down) { sTouchAimDown = down; }
+
+void HoldTouchAim(float seconds) {
+  sTouchAimHoldUntilNs = SDL_GetTicksNS() + static_cast<uint64_t>(std::max(seconds, 0.f) * 1e9);
+}
+
+bool TouchAimDown() {
+  return sTouchAimDown || SDL_GetTicksNS() < sTouchAimHoldUntilNs;
+}
+
+bool TakeTouchLook(float& dyaw, float& dpitch) {
+  dyaw = dpitch = 0.f;
+  const float x = sTouchLookFrameX;
+  const float y = sTouchLookFrameY;
+  sTouchLookFrameX = sTouchLookFrameY = 0.f;
+  // Same signs and scale as the mouse aim: right/down travel in, world yaw/pitch out.
+  dyaw = x * MouseSensitivity() * (MouseInvertX() ? 1.f : -1.f);
+  dpitch = y * MouseSensitivity() * (MouseInvertY() ? 1.f : -1.f);
+  return sTouchAim && !Visible();
 }
 
 bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
@@ -4926,8 +4959,10 @@ void DrawInputTab() {
   if (ImGui::Checkbox("Touch aim", &touchAim)) {
     SetTouchAim(touchAim);
   }
-  ItemHelp("Twin stick layout: drag a finger on the free screen area to turn the view by the "
-           "distance dragged, like a mouse. Off, the right stick is drawn and sets a turn rate.");
+  ItemHelp("Drag a finger on the free screen area. Twin stick layout: the view turns by the "
+           "distance dragged, like a mouse (off, the right stick is drawn and sets a turn rate). "
+           "GameCube layout: dragging sideways turns Samus, dragging up or down looks up or down "
+           "like R free look and levels out when you let go. Not while locked on or in the ball.");
   bool touchMapTap = sTouchMapTap;
   if (ImGui::Checkbox("Tap minimap for map", &touchMapTap)) {
     SetTouchMapTap(touchMapTap);
@@ -6724,6 +6759,11 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchAim(JNIEnv*, jclass, jfloat dxDp,
                                                             jfloat dyDp) {
   PortDebug::AddTouchAim(dxDp, dyDp);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchAimDown(JNIEnv*, jclass, jboolean down) {
+  PortDebug::SetTouchAimDown(down == JNI_TRUE);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

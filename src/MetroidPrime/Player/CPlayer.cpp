@@ -820,6 +820,65 @@ void CPlayer::UpdateMouseAim(CStateManager& mgr) {
   }
 }
 
+// GameCube scheme only (neither mouse aim nor twin stick): a dragged finger
+// turns Samus by the distance and, while it is down, holds a free-look pitch
+// that eases back to level once it lifts.
+void CPlayer::UpdateTouchLook(float dt, CStateManager& mgr) {
+  float dyaw = 0.f;
+  float dpitch = 0.f;
+  const bool usable = PortDebug::TakeTouchLook(dyaw, dpitch);
+  const CCameraManager* cameras = mgr.GetCameraManager();
+  const bool allowed =
+      usable && !PortDebug::MouseAim() && !PortDebug::TwinStick() &&
+      mgr.GetGameState() == CStateManager::kGS_Running && !GetDisableInput() &&
+      !x760_controlsFrozen && !GetFrozenState() && mgr.GetPlayerState()->IsAlive() &&
+      x2f8_morphBallState == kMS_Unmorphed && !IsMorphBallTransitioning() &&
+      x2f4_cameraState == kCS_FirstPerson && x304_orbitState == kOS_NoOrbit &&
+      (x3b8_grappleState == kGS_None || x3b8_grappleState == kGS_Firing) && cameras != nullptr &&
+      cameras->IsInFPCamera() && !cameras->IsInCinematicCamera() &&
+      !cameras->GetCurrentCamera(mgr).DisablesInput();
+  if (!allowed) {
+    mTouchLookPitch = 0.f;
+    mTouchLookActive = false;
+    return;
+  }
+  if (dyaw != 0.f) {
+    const CVector3f forward = GetTransform().GetForward();
+    const float yaw = atan2f(-forward.GetX(), forward.GetY()) + dyaw;
+    SetTransform(CQuaternion::ZRotation(CRelAngle(yaw)).BuildTransform4f(GetTransform().GetTranslation()));
+  }
+  if (x3dd_lookButtonHeld) {
+    // R free look owns the pitch.
+    mTouchLookPitch = 0.f;
+    mTouchLookActive = false;
+    return;
+  }
+  const float limit = gpTweakPlayer->GetVerticalFreeLookAngleVel();
+  if (PortDebug::TouchAimDown()) {
+    if (!mTouchLookActive) {
+      // Start from the angle free look already holds, so the view doesn't jump.
+      mTouchLookPitch = x3ec_freeLookPitchAngle;
+      mTouchLookActive = true;
+    }
+    mTouchLookPitch = CMath::Clamp(-limit, mTouchLookPitch + dpitch, limit);
+    x3f0_vertFreeLookAngleVel = mTouchLookPitch;
+    x3de_lookAnalogHeld = true;
+    x3dc_inFreeLook = true;
+    x3e0_curFreeLookCenteredTime = 0.f;
+  } else if (mTouchLookActive) {
+    // Released: level out at the snap speed, as when R is let go.
+    mTouchLookPitch = 0.f;
+    x3f0_vertFreeLookAngleVel = 0.f;
+    x3de_lookAnalogHeld = false;
+    if (fabsf(x3ec_freeLookPitchAngle) < gpTweakPlayer->mFreeLookCenteredThresholdAngle) {
+      mTouchLookActive = false;
+    } else {
+      x3dc_inFreeLook = true;
+      x3e0_curFreeLookCenteredTime = 0.f;
+    }
+  }
+}
+
 void CPlayer::Update(float dt, CStateManager& mgr) {
   UpdateMouseAim(mgr);
   SetCoefficientOfRestitutionModifier(0.f);
@@ -1656,6 +1715,7 @@ void CPlayer::Think(float dt, CStateManager& mgr) {
   UpdateEnvironmentDamageCameraShake(dt, mgr);
   UpdatePhazonDamage(dt, mgr);
   if (!MouseControlsAllowed(mgr)) {
+    UpdateTouchLook(dt, mgr);
     UpdateFreeLook(dt);
   }
   UpdatePlayerHints(mgr);

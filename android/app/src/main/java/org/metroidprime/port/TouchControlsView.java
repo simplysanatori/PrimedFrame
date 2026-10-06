@@ -176,6 +176,8 @@ final class TouchControlsView extends View {
     // Twin stick with drag-to-aim: no right stick, a drag turns the view. An F1
     // setting, re-read every draw.
     private boolean touchAim;
+    // GameCube layout: a drag on free area nudges the turn and looks up/down.
+    private boolean gcLook;
     // Tap the minimap to open the map; replaces the GameCube layout's Z pill. An
     // F1 setting, re-read every draw.
     private boolean mapTap;
@@ -197,6 +199,7 @@ final class TouchControlsView extends View {
     private static native boolean nativeTouchColors();
     private static native boolean nativeTouchAimEnabled();
     private static native void nativeTouchAim(float dxDp, float dyDp);
+    private static native void nativeTouchAimDown(boolean down);
     private static native boolean nativeTouchMapTapEnabled();
     // The minimap's screen rect as fractions of the view; false when not shown.
     private static native boolean nativeMinimapRect(float[] out4);
@@ -296,7 +299,9 @@ final class TouchControlsView extends View {
             pills = twinStickMode ? XBOX_PILLS : GAMECUBE_PILLS;
         }
         colored = !twinStickMode && nativeTouchColors();
-        touchAim = twinStickMode && nativeTouchAimEnabled();
+        final boolean aimOn = nativeTouchAimEnabled();
+        touchAim = twinStickMode && aimOn;
+        gcLook = !twinStickMode && aimOn;
         mapTap = nativeTouchMapTapEnabled();
         hideBounds.set(width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP),
                        height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP),
@@ -604,13 +609,24 @@ final class TouchControlsView extends View {
                 target.y = y;
                 aimPointer = pointerId;
                 targets.put(pointerId, target);
+                nativeTouchAimDown(true);
             }
         } else if (x >= width * 0.38f && x < rightStickRight(width, height) &&
-                   y > height * 0.43f && rightPointer == -1) {
-            TouchTarget target = new TouchTarget(RIGHT_STICK, 0);
-            rightPointer = pointerId;
+                   y > height * 0.43f) {
+            if (rightPointer == -1) {
+                TouchTarget target = new TouchTarget(RIGHT_STICK, 0);
+                rightPointer = pointerId;
+                targets.put(pointerId, target);
+                updateStick(target, x, y);
+            }
+        } else if (gcLook && aimPointer == -1) {
+            // GameCube layout: a drag on the free area turns and looks up/down.
+            TouchTarget target = new TouchTarget(AIM, 0);
+            target.x = x;
+            target.y = y;
+            aimPointer = pointerId;
             targets.put(pointerId, target);
-            updateStick(target, x, y);
+            nativeTouchAimDown(true);
         }
     }
 
@@ -789,7 +805,11 @@ final class TouchControlsView extends View {
     private void releaseTarget(TouchTarget target) {
         // Nothing to zero for a hide tap, an aim drag (a distance) or a map tap
         // (fired on release only; a cancelled touch is no tap).
-        if (target.type == HIDE || target.type == AIM || target.type == MAP_TAP ||
+        if (target.type == AIM) {
+            nativeTouchAimDown(false);
+            return;
+        }
+        if (target.type == HIDE || target.type == MAP_TAP ||
             target.type == MAP_PAN || target.type == MAP_PAN2) {
             return;
         }

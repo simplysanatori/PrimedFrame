@@ -403,6 +403,15 @@ void SetTouchAim(bool on);
 float TouchAimSpeed();
 void SetTouchAimSpeed(float pixelsPerDp);
 void AddTouchAim(float dxDp, float dyDp);
+// GameCube scheme (neither mouse aim nor twin stick): CPlayer turns by the touch
+// travel and holds a free-look pitch while a touch-aim finger is down.
+// TakeTouchLook returns this tick's world yaw/pitch change in radians (once per
+// tick) and whether touch aim is usable. The finger state comes from the Android
+// overlay, or HoldTouchAim (console) for that many seconds.
+void SetTouchAimDown(bool down);
+void HoldTouchAim(float seconds);
+bool TouchAimDown();
+bool TakeTouchLook(float& dyaw, float& dpitch);
 // Tap the minimap to open the map (Android touch overlay). The HUD publishes the
 // minimap's screen rect (0..1 of the window, origin top-left) each frame it is
 // drawn; MinimapRect fills x0,y0,x1,y1 and returns false when it isn't shown.

@@ -814,7 +814,14 @@ unpacks to a temporary directory instead of mounting.
   2.25 aim px per dp): with twin stick on, the right stick is gone and a finger
   dragged on the free screen area turns the view by the distance dragged, like a
   mouse (`AddTouchAim`, drained in `BeginFrameMouse`). Off, the right stick sets
-  a turn rate as before.
+  a turn rate as before. In the GameCube layout (neither mouse aim nor twin
+  stick) a drag on the free area outside the pills, D-pad, C-stick and left
+  stick also works: sideways turns Samus by the distance dragged
+  (`CPlayer::UpdateTouchLook`, direct yaw, movement stays tank), up/down looks
+  like R + stick free look while the finger is down (clamped to the free-look
+  limit) and eases back level after release. Not while locked on, in the morph
+  ball, or when the game blocks turning. Console: `touchaim <dx> <dy> [hold s]`
+  (hold keeps the finger "down" that long).
   **Tap minimap for map** (Android, `touch_map_tap`, on by default): a tap on the
   HUD minimap (its screen rect, padded 15%, published each frame by
   `CInGameGuiManager`) presses Z for one poll, which opens the map; the GameCube

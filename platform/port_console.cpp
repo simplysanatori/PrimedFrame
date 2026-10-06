@@ -544,6 +544,7 @@ void CmdHelp() {
   Out("touchpad [attach|detach|stick <x> <y>]  a virtual gamepad like Android's touch overlay");
   Out("minimap  the HUD minimap's screen rect (x0 y0 x1 y1, 0..1), or invalid");
   Out("maptap   a touch-overlay minimap tap: one Z press, opens the map");
+  Out("touchaim <dx> <dy> [hold s]   touch aim travel in dp (right/down +), the finger counts as down for hold seconds");
   Out("maprotate <degrees>   twist the open map screen's yaw, as two fingers do; positive turns it as the stick's right does");
   Out("mapzoom <ratio>   pinch the open map screen: 2 zooms in to twice the size, 0.5 out");
   Out("mappan <dx> <dy> [hold s]   drag the open map screen by dx,dy dp (view height 400 dp); finger down for hold s (0.25)");
@@ -1958,6 +1959,20 @@ void RunFrame() {
       PortDebug::AddMapZoom(ratio);
       Out("mapzoom queued");
     }
+    Finish();
+  } else if (name == "touchaim") {
+    float dx = 0.f;
+    float dy = 0.f;
+    float holdS = 0.f;
+    if (sCmd.args.size() < 3 || !ParseFloat(sCmd.args[1], dx) || !ParseFloat(sCmd.args[2], dy) ||
+        (sCmd.args.size() > 3 && !ParseFloat(sCmd.args[3], holdS))) {
+      return Finish("usage: touchaim <dx> <dy> [hold seconds]");
+    }
+    // Finger travel in dp (right/down positive); the hold keeps the finger "down",
+    // which holds the GameCube scheme's free-look pitch.
+    if (holdS > 0.f) PortDebug::HoldTouchAim(holdS);
+    PortDebug::AddTouchAim(dx, dy);
+    Out("touchaim queued");
     Finish();
   } else if (name == "mappan") {
     float dx = 0.f;
