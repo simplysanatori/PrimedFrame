@@ -502,6 +502,11 @@ bool RequestStack(long threadId) {
   (void)threadId;
   return false;
 #else
+  // A library loaded later (a GPU driver) may have taken the signal; don't run its handler.
+  struct sigaction current {};
+  if (threadId == 0 || sigaction(kStackSignal, nullptr, &current) != 0 || current.sa_sigaction != OnStackSignal) {
+    return false;
+  }
   return syscall(SYS_tgkill, getpid(), static_cast< pid_t >(threadId), kStackSignal) == 0;
 #endif
 }

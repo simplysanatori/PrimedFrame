@@ -51,7 +51,9 @@ void ReportStall(int level, int64_t stalledNs, unsigned frame) {
                  ms(render));
   // The stack once at the start and once again at 30 s, to show whether it moved.
   if (level == 0 || level == 2) {
-    PortCrash::RequestStack(sMainThread.load(std::memory_order_relaxed));
+    if (!PortCrash::RequestStack(sMainThread.load(std::memory_order_relaxed))) {
+      PortLog::Write("watchdog: no main thread stack on this platform\n");
+    }
   }
   if (level == 0) {
     PortWatchdog::LogcatDump("first stall report", false);
