@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <chrono>
+#include <cstdint>
 #include <deque>
 #include <filesystem>
 #include <limits>
@@ -428,6 +430,40 @@ static std::optional<PendingPipeline> take_pending_pipeline(PipelineRef hash) {
   return std::nullopt;
 }
 
+// Slow-pipeline diagnostics (issue #8 hangs in pipeline creation): every GX
+// render pipeline creation is timed here, slow ones are named, and a summary
+// lands in the log as the count crosses 100, 500 and 1000.
+static std::atomic<uint64_t> g_compileCount = 0;
+static std::atomic<uint64_t> g_compileTotalMs = 0;
+static std::atomic<uint64_t> g_compileSlowestMs = 0;
+static std::atomic<uint64_t> g_compileFailures = 0;
+constexpr int64_t kSlowPipelineMs = 200;
+
+static wgpu::RenderPipeline create_pipeline_timed(PipelineRef hash, NewPipelineCallback&& create) {
+  const auto start = std::chrono::steady_clock::now();
+  wgpu::RenderPipeline pipeline = create();
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+  const uint64_t count = g_compileCount.fetch_add(1, std::memory_order_relaxed) + 1;
+  g_compileTotalMs.fetch_add(static_cast<uint64_t>(ms.count()), std::memory_order_relaxed);
+  uint64_t slowest = g_compileSlowestMs.load(std::memory_order_relaxed);
+  while (static_cast<uint64_t>(ms.count()) > slowest &&
+         !g_compileSlowestMs.compare_exchange_weak(slowest, static_cast<uint64_t>(ms.count()),
+                                                   std::memory_order_relaxed)) {
+  }
+  if (!pipeline) {
+    g_compileFailures.fetch_add(1, std::memory_order_relaxed);
+    Log.error("pipeline: creation failed (hash {:016x})", hash);
+  } else if (ms.count() > kSlowPipelineMs) {
+    Log.warn("pipeline: compile took {} ms (hash {:016x})", ms.count(), hash);
+  }
+  if (count == 100 || count == 500 || count == 1000) {
+    Log.info("pipelines: {} compiled, total {} ms, slowest {} ms, {} failed", count,
+             g_compileTotalMs.load(std::memory_order_relaxed), g_compileSlowestMs.load(std::memory_order_relaxed),
+             g_compileFailures.load(std::memory_order_relaxed));
+  }
+  return pipeline;
+}
+
 static void notify_pipeline_ready(bool queued) {
   ++createdPipelines;
   if (queued && --queuedPipelines == 0 && g_gpuCachePrunePending.exchange(false, std::memory_order_acq_rel)) {
@@ -493,7 +529,7 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
             }
           }
           g_pipelines.try_emplace(hash, CachedPipeline{
-                                            .pipeline = pending->create(),
+                                            .pipeline = create_pipeline_timed(hash, std::move(pending->create)),
                                             .firstFrameUsed = pending->firstFrameUsed,
                                         });
           pipelineReady = true;
@@ -515,7 +551,7 @@ static PipelineRef find_pipeline_impl(ShaderType type, const PipelineConfig& con
       }
     } else if (!g_hasPipelineThread && (blocking || g_pipelinesPerFrame < BuildPipelinesPerFrame)) {
       g_pipelines.try_emplace(hash, CachedPipeline{
-                                        .pipeline = cb(),
+                                        .pipeline = create_pipeline_timed(hash, std::move(cb)),
                                         .firstFrameUsed = firstFrameUsed,
                                     });
       pipelineReady = true;
@@ -1035,7 +1071,7 @@ static void pipeline_worker() {
       pending = std::move(source.front());
       source.pop_front();
     }
-    auto result = pending.create();
+    auto result = create_pipeline_timed(pending.hash, std::move(pending.create));
     {
       std::lock_guard lock{g_pipelineMutex};
       g_pipelines.try_emplace(pending.hash, CachedPipeline{
@@ -1164,6 +1200,10 @@ PipelineRef find_pipeline(ShaderType type, const rmlui::PipelineConfig& config, 
 
 void initialize_pipeline_cache() {
   g_pipelineCacheBroken = false;
+  g_compileCount.store(0, std::memory_order_relaxed);
+  g_compileTotalMs.store(0, std::memory_order_relaxed);
+  g_compileSlowestMs.store(0, std::memory_order_relaxed);
+  g_compileFailures.store(0, std::memory_order_relaxed);
   g_pipelineCacheWriterStop = false;
   g_pipelineThreadEnd = false;
   g_gpuCachePrunePending = false;

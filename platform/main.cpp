@@ -44,6 +44,9 @@
 #include <android/log.h>
 #include <sys/system_properties.h>
 #endif
+#if defined(__linux__) && !defined(__ANDROID__)
+#include <sys/utsname.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -863,6 +866,33 @@ int main(int argc, char** argv) {
 #else
                    PortPaths::IsPortable() ? " (portable)" : "");
 #endif
+#if defined(__ANDROID__)
+    // Device identifiers for GPU-driver triage (issues #7, #8): the log alone
+    // should say which SoC and driver build drew the world.
+    {
+        std::string deviceInfo;
+        for (const char* prop : {"ro.product.manufacturer", "ro.product.model", "ro.product.device",
+                                 "ro.soc.manufacturer", "ro.soc.model", "ro.board.platform", "ro.hardware",
+                                 "ro.build.version.release", "ro.build.version.sdk", "ro.build.fingerprint",
+                                 "ro.hardware.vulkan", "ro.hardware.egl", "ro.gfx.driver.0"}) {
+            char value[PROP_VALUE_MAX] = {};
+            if (__system_property_get(prop, value) > 0 && value[0] != '\0') {
+                deviceInfo += "\n  ";
+                deviceInfo += prop;
+                deviceInfo += ": ";
+                deviceInfo += value;
+            }
+        }
+        PortLog::Write("port: device:%s\n", deviceInfo.empty() ? " (no properties)" : deviceInfo.c_str());
+    }
+#elif defined(__linux__)
+    {
+        struct utsname uts = {};
+        if (uname(&uts) == 0) {
+            PortLog::Write("port: host %s %s %s\n", uts.sysname, uts.release, uts.machine);
+        }
+    }
+#endif
     const std::span<const uint8_t> embeddedSeed = PortEmbedded::Find("initial_pipeline_cache.db");
 #if !defined(__ANDROID__)
     // The window icon, for a bare binary that no desktop entry describes.
@@ -1082,6 +1112,38 @@ int main(int argc, char** argv) {
         PortLog::Write("metroid_prime_port: installed the imported Remastered models\n");
     }
     PortMods::Initialize();
+    // Video-relevant settings in one line, so GPU-driver triage (issues #7,
+    // #8) needs nothing but the log.
+    {
+        bool remastered = false;
+        const PortMods::Status& status = PortMods::CurrentStatus();
+        if (status.active) {
+            for (const PortMods::ModInfo& mod : status.mods) {
+                if (mod.enabled && mod.import) {
+                    remastered = true;
+                    break;
+                }
+            }
+        }
+        char dynamicRes[64];
+        if (PortDebug::DynamicRes()) {
+            std::snprintf(dynamicRes, sizeof(dynamicRes), "on (target %d, min %.2f)", PortDebug::DynamicResTarget(),
+                          static_cast<double>(PortDebug::DynamicResMin()));
+        } else {
+            std::snprintf(dynamicRes, sizeof(dynamicRes), "off");
+        }
+        char scale[16] = "auto";
+        if (PortDebug::RenderScale() > 0.f) {
+            std::snprintf(scale, sizeof(scale), "%.2fx", static_cast<double>(PortDebug::RenderScale()));
+        }
+        PortLog::Write("port: settings: backend %s, msaa %d, anisotropy %d, scale %s, dynamic-res %s, "
+                       "smoothing %s (interp %s), vsync %s, frame-cap %s, remastered-models %s\n",
+                       config.desiredBackend == BACKEND_OPENGLES ? "opengles" : "auto", PortDebug::Msaa(),
+                       PortDebug::Anisotropy(), scale, dynamicRes,
+                       PortDebug::SmoothFrames() ? "on" : "off", PortDebug::FrameInterpolation() ? "on" : "off",
+                       PortDebug::VsyncEnabled() ? "on" : "off", PortDebug::FrameLimitEnabled() ? "60" : "off",
+                       remastered ? "on" : "off");
+    }
     // The index that gives solid actors their disc model's collision box reads
     // the base disc, so it belongs to the disc's lifecycle rather than to a
     // mods reload: drop anything an earlier disc left open.

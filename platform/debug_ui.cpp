@@ -1356,6 +1356,21 @@ void SetRenderScale(float scale) {
   VISetFrameBufferScale(scale);
 }
 
+bool DynamicRes() {
+  EnsureInitialized();
+  return sDynamicRes;
+}
+
+int DynamicResTarget() {
+  EnsureInitialized();
+  return sDynamicResTarget;
+}
+
+float DynamicResMin() {
+  EnsureInitialized();
+  return sDynamicResMin;
+}
+
 EAspectMode AspectMode() {
   EnsureInitialized();
   return sAspectMode;
