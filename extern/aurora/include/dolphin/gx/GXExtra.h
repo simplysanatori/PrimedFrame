@@ -255,6 +255,14 @@ void GXPortColorGradeLut(u32 id, const u8* rgba);
 // The average radiance (linear rgb) of the latest frame measured by GXPortPostProcess, and a
 // count that goes up with each new one. False before the first.
 GXBool GXPortFrameRadiance(f32 out[3], u32* serial);
+// The sun's shadow. Each frame, GXPortSetShadowFrame gives the view (world -> view rows), the sun's
+// direction (world, the way its light travels), the radius around the camera its map covers (<= 0:
+// none) and an extra light's colour (0 for none: the sun then only shadows the room's directional
+// light along that direction). Lit PBR draws made with GXPortSetShadowCaster on cast into the map
+// and receive the previous frame's; GXPortRenderShadowMap draws the map after the frame's casters.
+void GXPortSetShadowCaster(GXBool on);
+void GXPortSetShadowFrame(const f32 worldToView[3][4], const f32 sunDir[3], f32 radius, const f32 color[3]);
+GXBool GXPortRenderShadowMap(void);
 
 void GXColor4f32(float r, float g, float b, float a);
 

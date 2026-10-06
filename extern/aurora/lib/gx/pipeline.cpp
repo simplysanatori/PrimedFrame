@@ -30,8 +30,16 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
   pass.SetImmediates(0, &data.immediateData, sizeof(data.immediateData));
   const std::array offsets{data.uniformRange.offset};
   pass.SetBindGroup(1, resources.uniformBindGroup, offsets.size(), offsets.data());
+  // A shadow receiver's group 2 has its own layout, so a draw without a group of its own can't
+  // inherit it. A stale flag (a pass starts with the empty group bound) only costs a rebind.
+  static bool sShadowGroupBound = false;
   if (data.bindGroups.textureBindGroup) {
     gfx::bind_texture_group(data.bindGroups.textureBindGroup, pass);
+    sShadowGroupBound = data.shadowGroup;
+  } else if (sShadowGroupBound) {
+    pass.SetBindGroup(2, g_emptyTextureBindGroup);
+    gfx::forget_texture_group();
+    sShadowGroupBound = false;
   }
   pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, data.idxRange.offset, data.idxRange.size);
   if (data.dstAlpha != UINT32_MAX) {

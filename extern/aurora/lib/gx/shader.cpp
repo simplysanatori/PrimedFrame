@@ -1646,6 +1646,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_env = vec3f(0.0);
       var pbr_lsum = vec3f(0.0);
       var pbr_lnl = vec3f(0.0);
+      // pbr-sun-vis
       // pbr-lights-begin
       for (var i = 0u; i < {4}u; i++) {{
           if (({15} & ~u32(ubuf.pbr_light_skip.x) & (1u << i)) == 0u) {{ continue; }}
@@ -1684,6 +1685,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
               }}
               rad = hdr_c.rgb * hdr_fa{16};
           }}
+          // pbr-sun-light
           pbr_lo += (pbr_diff * pbr_ao + spec * pbr_pi) * rad * nl;
           // Stand-in environment: the surroundings as a soft hemisphere lit by this light,
           // seen along the reflection vector.
@@ -1693,6 +1695,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_lnl += rad * nl;
       }}
       // pbr-lights-end
+      // pbr-sun
       // Ambient: diffuse plus the split-sum environment BRDF (Karis' analytic fit) applied
       // to the reflection probe, a cube map whose mips are picked by roughness. The
       // probe's weight is 0 until the game has filled it; the ambient and the stand-in
@@ -2146,6 +2149,22 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
                                   attr_load_nbt_slice(config, NbtSlice::T, vidxAttr));
   }
 
+  // ShaderConfig::shadow: vs_shadow places the vertex in the sun's shadow map (gfx/shadow.cpp's caster pass).
+  std::string shadowVs;
+  if (config.shadow && config.lineMode == 0) {
+    shadowVs = "\n\n@vertex\nfn vs_shadow(@builtin(vertex_index) vidx: u32) -> @builtin(position) vec4f {";
+    if (config.attrs[GX_VA_PNMTXIDX].attrType == GX_NONE) {
+      shadowVs += "\n    let in_pnmtxidx = imm.current_pnmtx;";
+    } else {
+      shadowVs += fmt::format("\n    let {} = {};", vtx_attr(config, GX_VA_PNMTXIDX),
+                              attr_load(config, GX_VA_PNMTXIDX, vidxAttr));
+    }
+    shadowVs += fmt::format("\n    let {} = {};"
+                            "\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
+                            "\n    return vec4f(mv_pos, 1.0) * ubuf.shadow_caster;\n}}",
+                            vtx_attr(config, GX_VA_POS), attr_load(config, GX_VA_POS, vidxAttr),
+                            vtx_attr(config, GX_VA_POS));
+  }
   if (config.lineMode == 0) {
     vtxXfrAttrsPre += fmt::format(
         "\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
@@ -2771,6 +2790,62 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     uniBufAttrs += fmt::format("\n    pbr_light_hdr: array<vec4f, {}>,", GX::MaxLights * 3);
     uniBufAttrs += "\n    pbr_shield: array<vec4f, 8>,";
     auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx);
+    // An unlit surface (baked room light: pbr_func drops its light loop) has no room light to
+    // shadow, but takes the sun's own colour.
+    if (!pbr.empty() && info.shadowReceive) {
+      // The sun (GXPortSetShadowFrame) through its shadow map: the point pushed out along the normal,
+      // then 3x3 PCF; outside the map, or before one is drawn, it is lit. It shadows the room's own
+      // directional light along its direction (CGraphics::LoadLight puts one at -dir * 2^20 in view
+      // space) and adds its own colour, if any, as one more light.
+      const auto put = [&](std::string_view what, std::string_view with) {
+        const size_t at = pbr.find(what);
+        if (at == std::string::npos) {
+          Log.fatal("shadow: pbr_func has no '{}'", what);
+        }
+        pbr.replace(at, what.size(), with);
+      };
+      put("// pbr-sun-vis", R"""(var sun_vis = 1.0;
+      {
+          let sp = vec4f(in.pbr_pos + pbr_ng * ubuf.shadow_dir.w, 1.0) * ubuf.shadow_recv;
+          let suv = vec2f(sp.x * 0.5 + 0.5, 0.5 - sp.y * 0.5);
+          let st = ubuf.shadow_color.w;
+          var sum = 0.0;
+          for (var sy = -1; sy <= 1; sy++) {
+              for (var sx = -1; sx <= 1; sx++) {
+                  sum += textureSampleCompareLevel(shadow_map, shadow_samp, suv + vec2f(f32(sx), f32(sy)) * st, sp.z);
+              }
+          }
+          let edge = max(max(abs(sp.x), abs(sp.y)), select(0.0, 1.0, sp.z >= 1.0));
+          sun_vis = mix(sum / 9.0, 1.0, smoothstep(0.9, 1.0, edge));
+      })""");
+      if (pbr.find("// pbr-sun-light") != std::string::npos) {
+        put("// pbr-sun-light", R"""(if (dist > 1e5 && dot(ldir, ubuf.shadow_dir.xyz) > 0.995) {
+              rad *= sun_vis;
+          })""");
+      }
+      put("// pbr-sun", R"""(if (any(ubuf.shadow_color.rgb > vec3f(0.0))) {
+          let ldir = ubuf.shadow_dir.xyz;
+          let nl = max(dot(pbr_n, ldir), 0.0);
+          let h = normalize(ldir + pbr_v);
+          let nh = max(dot(pbr_n, h), 0.0);
+          let vh = max(dot(pbr_v, h), 0.0);
+          let dd = nh * nh * (pbr_a2 - 1.0) + 1.0;
+          let d = pbr_a2 / max(pbr_pi * dd * dd, 1e-6 * pbr_a2);
+          let vis = 0.25 / (max(pbr_nv * (1.0 - pbr_k) + pbr_k, 1e-4) * max(nl * (1.0 - pbr_k) + pbr_k, 1e-4));
+          let f = pbr_f0 + (1.0 - pbr_f0) * pow(1.0 - vh, 5.0);
+          let rad = ubuf.shadow_color.rgb;
+          pbr_lo += (pbr_diff * pbr_ao + d * vis * f * pbr_pi) * rad * (nl * sun_vis);
+          let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
+          pbr_env += rad * (env_w * env_w);
+          pbr_lsum += rad;
+          pbr_lnl += rad * (nl * sun_vis);
+      })""");
+      texBindings += fmt::format("\n@group(2) @binding({})\n"
+                                 "var shadow_map: texture_depth_2d;\n"
+                                 "@group(2) @binding({})\n"
+                                 "var shadow_samp: sampler_comparison;",
+                                 kShadowMapBinding, kShadowSamplerBinding);
+    }
     if (!pbr.empty() && info.usesVolFog) {
       // The volumetric fog in the light before the tone curve, as Remastered's shaders fog it.
       // The pass-through light is already display-referred, so it is only dimmed.
@@ -2873,6 +2948,15 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
         "@group(2) @binding({2})\n"
         "var tex{0}_samp: sampler;",
         i, i * 2, i * 2 + 1);
+  }
+  if (info.usesShadow) {
+    // GXState::shadowUniform: view space to the sun's map for this frame's casters and for the map the
+    // receivers read (the previous frame's), the sun's view-space direction (w: the normal offset) and
+    // its colour (w: one texel of the map in uv).
+    uniBufAttrs += "\n    shadow_caster: mat4x4f,";
+    uniBufAttrs += "\n    shadow_recv: mat4x4f,";
+    uniBufAttrs += "\n    shadow_dir: vec4f,";
+    uniBufAttrs += "\n    shadow_color: vec4f,";
   }
   if (!prevColorNormalized && !prevAlphaNormalized) {
     fragmentFn += "\n    prev = tev_overflow_vec4f(prev);";
@@ -3272,10 +3356,10 @@ fn vs_main(
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
     return prev;
-}}
+}}{9}
 )""",
                                         uniBufAttrs, texBindings, vtxOutAttrs, vtxInAttrs, vtxXfrAttrs, fragmentFn,
-                                        fragmentFnPre, vtxXfrAttrsPre, uniformPre);
+                                        fragmentFnPre, vtxXfrAttrsPre, uniformPre, shadowVs);
   if (clamp_storage_loads()) {
     constexpr std::string_view guard =
         "  if (word_idx < arrayLength(p)) {\n    return p[word_idx];\n  }\n  return 0u;\n";

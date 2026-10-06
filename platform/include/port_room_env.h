@@ -15,7 +15,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 15), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 16), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -95,6 +95,10 @@
 //          and that many bytes of the phase's CMayaSpline padded to 4, u32 links, then links
 //          as a grade's with the FogTransition actions. A Remastered
 //          VolumetricFogRegionTransition (see FogTransition).
+// Version 16 adds, after the transitions:
+//   u32 suns
+//   sun: s32 layer, u8 on, u8 pad[3], f32 toSun[3] (retail world, unit), f32 color[3] (linear,
+//        times the intensity). A Remastered directional LightDynamic (see Sun).
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -271,6 +275,13 @@ struct FogTransition {
   std::vector<GradeLink> links;
 };
 
+struct SunLight {
+  int32_t layer = -1;
+  bool on = true;
+  float toSun[3] = {};
+  float color[3] = {};
+};
+
 struct File {
   uint32_t version = 0;
   float tonemap[4] = {};
@@ -286,6 +297,7 @@ struct File {
   std::vector<FogHint> fogs;
   std::vector<FogRegion> regions;
   std::vector<FogTransition> transitions;
+  std::vector<SunLight> suns;
   std::vector<Probe> probes;
   std::vector<Cube> cubes;
   std::vector<Grid> grids;
@@ -492,6 +504,9 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
 // off). It returns false when the strengths are the defaults for lack of any hint file.
 void UpdateBacklight(LayerActive layerActive, void* context);
 bool Backlight(float& top, float& back);
+// The camera area's sun for real-time shadows: of its directional lights that are on, on an
+// active layer and shining down, the strongest. False when there is none, no file, or MP_ROOM_ENV is off.
+bool Sun(LayerActive layerActive, void* context, float toSun[3], float color[3]);
 // Remastered's volumetric fog hints (CVolumetricFogManager), picked as the grade's are.
 // UpdateFog runs once a frame, `dt` seconds long, before the world is drawn. A change of the
 // camera area's pick starts an interpolation from the fog on screen (SVolumetricFogDynamicData's

@@ -10,6 +10,7 @@
 #include "../gfx/probe.hpp"
 #include "../gfx/recording.hpp"
 #include "../gfx/resource_cache.hpp"
+#include "../gfx/shadow.hpp"
 #include "../gfx/volfog.hpp"
 #include "../gfx/texture.hpp"
 #include "gx_fmt.hpp"
@@ -45,6 +46,11 @@ absl::flat_hash_map<u32, std::pair<wgpu::BindGroupLayout, wgpu::BindGroupLayout>
 wgpu::BindGroupLayout sTextureBindGroupLayout;
 wgpu::BindGroupLayout sSamplerBindGroupLayout;
 wgpu::PipelineLayout sPipelineLayout;
+// A shadow receiver's group 2 (the shadow map in the froxel's slots) and its pipeline layout, and the
+// shadow map pass's layout, which has no group 2.
+wgpu::BindGroupLayout sShadowTextureBindGroupLayout;
+wgpu::PipelineLayout sShadowRecvPipelineLayout;
+wgpu::PipelineLayout sShadowPipelineLayout;
 
 std::atomic<int> sPendingViewportPolicy{-1};
 // Last GXSetDrawSync token whose FIFO command has been processed.
@@ -326,6 +332,30 @@ const gfx::TextureBind& get_texture(GXTexMapID id) noexcept { return g_gxState.t
 wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu::VertexBufferLayout> vtxBuffers,
                                     wgpu::ShaderModule shader, const char* label) noexcept {
   ZoneScoped;
+  if (config.shadowPass != 0) {
+    // The sun's shadow map: depth only, both faces, with a slope bias against acne.
+    const wgpu::DepthStencilState depthStencil{
+        .format = gfx::shadow::MapFormat,
+        .depthWriteEnabled = true,
+        .depthCompare = wgpu::CompareFunction::Less,
+        .depthBias = 2,
+        .depthBiasSlopeScale = 2.0f,
+    };
+    const wgpu::RenderPipelineDescriptor descriptor{
+        .label = label,
+        .layout = sShadowPipelineLayout,
+        .vertex =
+            {
+                .module = shader,
+                .entryPoint = "vs_shadow",
+                .bufferCount = static_cast<uint32_t>(vtxBuffers.size()),
+                .buffers = vtxBuffers.data(),
+            },
+        .primitive = to_primitive_state(GX_CULL_NONE),
+        .depthStencil = &depthStencil,
+    };
+    return g_device.CreateRenderPipeline(&descriptor);
+  }
   const float depthBias = (UseReversedZ ? -1.0f : 1.0f) * std::bit_cast<float>(config.polygonOffsetBits);
   const float depthBiasSlopeScale = (UseReversedZ ? -1.0f : 1.0f) * std::bit_cast<float>(config.polygonOffsetScaleBits);
   const float depthBiasClamp = webgpu::g_hasCoreFeatures ? std::bit_cast<float>(config.polygonOffsetClampBits) : 0.0f;
@@ -352,7 +382,7 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
   };
   const wgpu::RenderPipelineDescriptor descriptor{
       .label = label,
-      .layout = sPipelineLayout,
+      .layout = shadow_receives(config.shaderConfig) ? sShadowRecvPipelineLayout : sPipelineLayout,
       .vertex =
           {
               .module = shader,
@@ -508,6 +538,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
     config.shaderConfig.fogRangeEnabled = false;
   }
   config.shaderConfig.volFog = drawId ? VolFogNone : vol_fog_mode(depthOnly);
+  config.shaderConfig.shadow = g_gxState.shadowCaster && g_gxState.shadowActive && config.shaderConfig.lineMode == 0;
   config = {
       .msaaSamples = gfx::get_sample_count(),
       .shaderConfig = config.shaderConfig,
@@ -531,7 +562,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
   ZoneScoped;
 
-  if (!info.sampledTextures.any() && !info.sampledIndTextures.any() && !info.usesVolFog) {
+  if (!info.sampledTextures.any() && !info.sampledIndTextures.any() && !info.usesVolFog && !info.shadowReceive) {
     // Don't bother re-binding anything
     return {};
   }
@@ -552,6 +583,10 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
   textureEntries[kVolFogFroxelBinding].textureView = gfx::volfog::froxel_view().Get();
   textureEntries[kVolFogSamplerBinding].binding = kVolFogSamplerBinding;
   textureEntries[kVolFogSamplerBinding].sampler = gfx::volfog::sampler().Get();
+  if (info.shadowReceive) {
+    textureEntries[kShadowMapBinding].textureView = gfx::shadow::map_view().Get();
+    textureEntries[kShadowSamplerBinding].sampler = gfx::shadow::sampler().Get();
+  }
   for (u32 i = 0; i < MaxTextures; ++i) {
     const auto& tex = g_gxState.textures[i];
     WGPUBindGroupEntry& textureEntry = textureEntries[i * 2];
@@ -586,7 +621,7 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
   }
   const WGPUBindGroupDescriptor textureBindGroupDescriptor{
       .label = {"GX Texture Bind Group", WGPU_STRLEN},
-      .layout = sTextureBindGroupLayout.Get(),
+      .layout = info.shadowReceive ? sShadowTextureBindGroupLayout.Get() : sTextureBindGroupLayout.Get(),
       .entryCount = textureEntries.size(),
       .entries = textureEntries.data(),
   };
@@ -672,6 +707,27 @@ void initialize() noexcept {
         .entries = textureEntries.data(),
     };
     sTextureBindGroupLayout = g_device.CreateBindGroupLayout(&descriptor);
+    // A shadow receiver's: the sun's shadow map and its comparison sampler in the froxel's slots
+    textureEntries[kShadowMapBinding] = {
+        .binding = kShadowMapBinding,
+        .visibility = wgpu::ShaderStage::Fragment,
+        .texture =
+            {
+                .sampleType = wgpu::TextureSampleType::Depth,
+                .viewDimension = wgpu::TextureViewDimension::e2D,
+            },
+    };
+    textureEntries[kShadowSamplerBinding] = {
+        .binding = kShadowSamplerBinding,
+        .visibility = wgpu::ShaderStage::Fragment,
+        .sampler = {.type = wgpu::SamplerBindingType::Comparison},
+    };
+    const wgpu::BindGroupLayoutDescriptor shadowDescriptor{
+        .label = "GX Shadow Receiver Texture Bind Group Layout",
+        .entryCount = textureEntries.size(),
+        .entries = textureEntries.data(),
+    };
+    sShadowTextureBindGroupLayout = g_device.CreateBindGroupLayout(&shadowDescriptor);
   }
   {
     constexpr wgpu::SamplerDescriptor descriptor{.label = "Empty sampler"};
@@ -747,12 +803,42 @@ void initialize() noexcept {
     };
     sPipelineLayout = g_device.CreatePipelineLayout(&desc);
   }
+  {
+    const std::array layouts{
+        gfx::detail::resources().staticBindGroupLayout,
+        gfx::detail::resources().uniformBindGroupLayout,
+        sShadowTextureBindGroupLayout,
+    };
+    const wgpu::PipelineLayoutDescriptor desc{
+        .label = "GX Shadow Receiver Pipeline Layout",
+        .bindGroupLayoutCount = layouts.size(),
+        .bindGroupLayouts = layouts.data(),
+        .immediateSize = sizeof(DrawImmediateData),
+    };
+    sShadowRecvPipelineLayout = g_device.CreatePipelineLayout(&desc);
+  }
+  {
+    const std::array layouts{
+        gfx::detail::resources().staticBindGroupLayout,
+        gfx::detail::resources().uniformBindGroupLayout,
+    };
+    const wgpu::PipelineLayoutDescriptor desc{
+        .label = "GX Shadow Map Pipeline Layout",
+        .bindGroupLayoutCount = layouts.size(),
+        .bindGroupLayouts = layouts.data(),
+        .immediateSize = sizeof(DrawImmediateData),
+    };
+    sShadowPipelineLayout = g_device.CreatePipelineLayout(&desc);
+  }
 }
 
 void shutdown() noexcept {
   // TODO we should probably store this all in g_state.gx instead
   sSamplerBindGroupLayout = {};
   sTextureBindGroupLayout = {};
+  sShadowTextureBindGroupLayout = {};
+  sShadowRecvPipelineLayout = {};
+  sShadowPipelineLayout = {};
   {
     std::lock_guard lock{sBindGroupLayoutMutex};
     sUniformBindGroupLayouts.clear();

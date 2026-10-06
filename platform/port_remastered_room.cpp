@@ -54,6 +54,7 @@ constexpr uint32_t kVolumetricFogRegionTransition = 0xdf95ac1a;
 constexpr uint32_t kDoorMP1 = 0x564a1641;
 constexpr uint32_t kModCon = 0x451740eb;
 constexpr uint32_t kActorMP1 = 0xb6200be6;
+constexpr uint32_t kLightDynamic = 0x9ee5541d;
 
 // Property ids.
 constexpr uint32_t kPropRoomId = 0x30a4d63d;
@@ -96,6 +97,11 @@ constexpr uint32_t kPropFogSpline = 0x1eb6e23f;
 constexpr uint32_t kPropFogRange = 0xf259966e;
 // SLdrVolumetricFogRegion's properties and enums (build/mpr/volfog/E-regions-exact.md).
 constexpr uint32_t kPropRegionColor = 0xc35e3f33;
+// LightDynamic's (build/mpr/ldyn/ldyn.py).
+constexpr uint32_t kPropLightType = 0x932dd7d8;
+constexpr uint32_t kPropLightColor[2] = {0xb73ed9c3, 0x8f421907};
+constexpr uint32_t kPropLightIntensity[2] = {0xc3eabcbf, 0xbdfc8a9e};
+constexpr uint32_t kLightDirectional = 1;
 constexpr uint32_t kPropRegionMode = 0xd4aa2ccb;
 constexpr uint32_t kPropRegionDistance = 0xbaf7ac02;
 constexpr uint32_t kPropRegionTransmittance = 0xd1fc0ce8;
@@ -1873,6 +1879,14 @@ struct FogTransitionData {
   std::vector<PortRoomGeo::Link> links;
 };
 
+// A directional LightDynamic (see PortRoomEnv::Sun).
+struct SunData {
+  int32_t layer = -1;
+  bool on = false;
+  float toSun[3] = {}; // retail world, unit length
+  float color[3] = {}; // linear colour times intensity
+};
+
 struct Placement {
   Vec3 pos{};  // GameCube world coordinates, once the world shift is added
 };
@@ -1925,6 +1939,7 @@ private:
   // The room's fog regions, placed by the area's transform `xf`.
   void ReadFogRegions(const RoomData& r, const SceneryScripts& scripts, const Mat34& xf,
                       std::vector<FogRegionData>& out, std::vector<FogTransitionData>& transitions) const;
+  void ReadSuns(const RoomData& r, const SceneryScripts& scripts, const Mat34& xf, std::vector<SunData>& out) const;
   bool Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>& check, std::vector<uint8_t>& out,
             std::string& note) const;
   // The room's static geometry (its ModCon components), as "<MREA id>.roomgeo".
@@ -2483,6 +2498,60 @@ void Writer::ReadFogs(const RoomData& r, const Area* area, std::vector<FogData>&
     const auto layer = scripts.layer.find(h->entity);
     g.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
     out.push_back(std::move(g));
+  }
+}
+
+void Writer::ReadSuns(const RoomData& r, const SceneryScripts& scripts, const Mat34& xf,
+                      std::vector<SunData>& out) const {
+  for (const Component* c : r.room.Of(kLightDynamic)) {
+    const auto f = r.room.Flat(*c);
+    const auto type = f.find(kPropLightType);
+    if (type == f.end() || type->second.size < 4 || ReadLE32(r.room.Bytes(type->second)) != kLightDirectional) {
+      continue;
+    }
+    Vec3 pos, euler, scale;
+    if (!r.room.Xform(*c, pos, euler, scale)) {
+      continue;
+    }
+    // The light shines along its local +Y (rotated by Rz*Ry*Rx), so -Y points at the sun. Checked
+    // against Remastered's hangar, where the white key light casts the beam's shadow toward the door.
+    const double x = euler[0] * M_PI / 180, y = euler[1] * M_PI / 180, z = euler[2] * M_PI / 180;
+    const double cx = std::cos(x), sx = std::sin(x), cy = std::cos(y), sy = std::sin(y), cz = std::cos(z),
+                 sz = std::sin(z);
+    const Vec3 up = MulR2G({cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx});
+    Vec3 d{};
+    for (size_t i = 0; i < 3; ++i) {
+      d[i] = xf[i][0] * up[0] + xf[i][1] * up[1] + xf[i][2] * up[2];
+    }
+    const double len = std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (!(len > 1e-6)) {
+      continue;
+    }
+    SunData s;
+    float color[4] = {1, 1, 1, 1};
+    Span sp;
+    if (r.room.Nested(*c, {kPropLightColor[0], kPropLightColor[1]}, sp) && sp.size >= 12) {
+      for (int i = 0; i < 3; ++i) {
+        color[i] = ReadLEFloat(r.room.Bytes(sp) + 4 * i);
+      }
+    }
+    float intensity = 1.f;
+    if (r.room.Nested(*c, {kPropLightIntensity[0], kPropLightIntensity[1]}, sp) && sp.size >= 4) {
+      intensity = ReadLEFloat(r.room.Bytes(sp));
+    }
+    for (int i = 0; i < 3; ++i) {
+      s.toSun[i] = float(-d[size_t(i)] / len);
+      s.color[i] = std::isfinite(color[i] * intensity) ? std::max(0.f, color[i] * intensity) : 0.f;
+    }
+    s.on = r.room.Active(*c);
+    const auto layer = scripts.layer.find(c->entity);
+    s.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
+    char line[200];
+    std::snprintf(line, sizeof line, "  %s: sun (%.3f, %.3f, %.3f) colour (%.2f, %.2f, %.2f) layer %d%s",
+                  r.name.c_str(), s.toSun[0], s.toSun[1], s.toSun[2], s.color[0], s.color[1], s.color[2],
+                  int(s.layer), s.on ? "" : " (off)");
+    Log(line);
+    out.push_back(s);
   }
 }
 
@@ -4241,7 +4310,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  AppendLE32(out, 15);
+  AppendLE32(out, 16);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -4421,6 +4490,20 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       out.push_back(link.state);
       out.push_back(link.action);
       out.insert(out.end(), 2, 0);
+    }
+  }
+  std::vector<SunData> suns;
+  ReadSuns(r, scripts, m.a, suns);
+  AppendLE32(out, uint32_t(suns.size()));
+  for (const SunData& s : suns) {
+    AppendLE32(out, uint32_t(s.layer));
+    out.push_back(s.on ? 1 : 0);
+    out.insert(out.end(), 3, 0);
+    for (float v : s.toSun) {
+      AppendLEFloat(out, v);
+    }
+    for (float v : s.color) {
+      AppendLEFloat(out, v);
     }
   }
   if (!fogs.empty() || !regions.empty()) {

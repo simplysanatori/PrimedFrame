@@ -370,6 +370,12 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
     info.uniformSize += MaxIndTexMtxs * sizeof(Mat2x4<float>);
   }
   info.uniformSize += info.sampledTextures.count() * sizeof(Vec4<float>);
+  if (config.shadow) {
+    info.usesShadow = true;
+    info.shadowReceive = shadow_receives(config);
+    // The caster and receiver matrices, the sun's direction and colour (GXState::shadowUniform)
+    info.uniformSize += sizeof(g_gxState.shadowUniform);
+  }
   info.uniformSize = gfx::align_uniform(info.uniformSize);
   if (info.uniformSize > MaxUniformSize) {
     Log.fatal("Uniform size exceeds maximum: {} > {}", info.uniformSize, MaxUniformSize);
@@ -546,6 +552,11 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
       continue;
     }
     buf.append(texture_size_bias(get_texture(static_cast<GXTexMapID>(i))));
+  }
+  if (info.usesShadow) {
+    for (const auto& v : g_gxState.shadowUniform) {
+      buf.append(v);
+    }
   }
 }
 

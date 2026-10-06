@@ -3,6 +3,7 @@
 #include "depth_peek.hpp"
 #include "pipeline_cache.hpp"
 #include "bloom.hpp"
+#include "shadow.hpp"
 #include "volfog.hpp"
 #include <aurora/vfx.hpp>
 #include <aurora/water.hpp>
@@ -600,6 +601,7 @@ void shutdown() {
   probe::shutdown();
   bloom::shutdown();
   volfog::shutdown();
+  shadow::shutdown();
   vfx::shutdown();
   water::shutdown();
   tex_palette_conv::shutdown();

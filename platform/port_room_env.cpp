@@ -1537,6 +1537,38 @@ void UpdateBacklight(LayerActive layerActive, void* context) {
   }
 }
 
+bool Sun(LayerActive layerActive, void* context, float toSun[3], float color[3]) {
+  if (!Enabled()) {
+    return false;
+  }
+  const auto view = sAreas.find(sViewArea);
+  if (view == sAreas.end() || !view->second.hasFile) {
+    return false;
+  }
+  const SunLight* pick = nullptr;
+  float pickStrength = 0.f;
+  for (const SunLight& s : view->second.file.suns) {
+    // A light from below the floor is a bounce fill (the hangar has warm ones), not a sun.
+    if (!s.on || s.toSun[2] <= 0.f ||
+        (s.layer >= 0 && layerActive != nullptr && !layerActive(s.layer, context))) {
+      continue;
+    }
+    const float strength = s.color[0] + s.color[1] + s.color[2];
+    if (std::isfinite(strength) && strength > pickStrength) {
+      pick = &s;
+      pickStrength = strength;
+    }
+  }
+  if (pick == nullptr) {
+    return false;
+  }
+  for (int i = 0; i < 3; ++i) {
+    toSun[i] = pick->toSun[i];
+    color[i] = pick->color[i];
+  }
+  return true;
+}
+
 bool Backlight(float& top, float& back) {
   top = kBacklightTop;
   back = kBacklightBack;

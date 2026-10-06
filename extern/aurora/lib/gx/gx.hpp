@@ -56,6 +56,10 @@ constexpr u32 kBrdfLutBinding = MaxTextures * 2 + 7;
 // Group 2 bindings of the volumetric fog's froxels and their sampler (ShaderConfig::volFog).
 constexpr u32 kVolFogFroxelBinding = MaxTextures * 2 + 8;
 constexpr u32 kVolFogSamplerBinding = MaxTextures * 2 + 9;
+// A shadow receiver (shadow_receives) never fogs per pixel, so its group 2 layout puts the sun's shadow map and
+// comparison sampler in the froxel's slots: group 2 already holds WebGPU's default 16 sampled textures.
+constexpr u32 kShadowMapBinding = kVolFogFroxelBinding;
+constexpr u32 kShadowSamplerBinding = kVolFogSamplerBinding;
 constexpr u32 kTextureBindings = MaxTextures * 2 + 10;
 constexpr u32 MaxTluts = 20;
 constexpr u32 MaxTevStages = GX_MAX_TEVSTAGE;
@@ -431,6 +435,11 @@ struct GXState {
   bool volFog = false;
   Vec4<float> volFogParams{};
   std::array<Vec4<float>, 3> volFogTone{};
+  // GX_AURORA_PORT_SHADOW_*: the following draws are the world's (they cast and receive the sun's
+  // shadow), and this frame's sun (shadowActive) with its uniform (gfx/shadow.hpp's Uniform).
+  bool shadowCaster = false;
+  bool shadowActive = false;
+  std::array<Vec4<float>, 10> shadowUniform{};
 
   // GX2 polygon offset state
   f32 frontOffset = 0.0f;
@@ -552,7 +561,10 @@ struct ShaderConfig {
   u8 lineMode : 2 = 0; // 1 = GX_LINES, 2 = GX_LINESTRIP, 3 = GX_POINTS
   u8 fogRangeEnabled : 1 = false;
   u8 drawId : 1 = false; // debug view "drawid": the fragment is the draw serial (DrawImmediateData::serial)
-  u8 pad1 : 4 = 0;
+  // GX_AURORA_PORT_SHADOW_CASTER while a shadow frame is set: the draw casts into the sun's shadow
+  // map (an extra vs_shadow entry) and, when PBR, receives the sun through it.
+  u8 shadow : 1 = false;
+  u8 pad1 : 3 = 0;
   u8 pbr = 0; // GX_AURORA_SET_PBR
   u8 sdf = 0; // GX_AURORA_SET_SDF
   u8 depthOnly = 0; // pass 1 of GX_AURORA_PORT_DEPTH_PREPASS: the colour is not written
@@ -572,6 +584,10 @@ struct ShaderConfig {
   bool operator==(const ShaderConfig& rhs) const { return memcmp(this, &rhs, sizeof(*this)) == 0; }
 };
 static_assert(std::has_unique_object_representations_v<ShaderConfig>);
+// Whether a draw samples the sun's shadow map: a lit PBR surface drawn in colour without per-pixel fog.
+inline bool shadow_receives(const ShaderConfig& sc) noexcept {
+  return sc.shadow && sc.pbr != 0 && sc.volFog == VolFogNone && sc.depthOnly == 0 && sc.lineMode == 0 && !sc.drawId;
+}
 
 struct PipelineConfig;
 
@@ -597,6 +613,8 @@ struct ShaderInfo {
   u8 lineMode : 2 = 0;
   bool usesPbr : 1 = false;
   bool usesVolFog : 1 = false;
+  bool usesShadow : 1 = false;    // ShaderConfig::shadow: the shadow uniforms and vs_shadow
+  bool shadowReceive : 1 = false; // shadow_receives: group 2 uses the shadow layout
 };
 struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};

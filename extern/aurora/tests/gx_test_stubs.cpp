@@ -5,6 +5,7 @@
 #include "gx/gx.hpp"
 #include "gfx/bloom.hpp"
 #include "gfx/volfog.hpp"
+#include "gfx/shadow.hpp"
 #include "gfx/clear.hpp"
 #include "gfx/resources.hpp"
 #include "gfx/depth_peek.hpp"
@@ -291,6 +292,25 @@ bool ensure_task() { return false; }
 bool record(const Params& params) { return false; }
 void shutdown() {}
 } // namespace aurora::gfx::volfog
+
+namespace aurora::gfx::shadow {
+bool ensure_task() { return false; }
+bool set_frame(const float worldToView[3][4], const float sunDir[3], float radius, const float color[3],
+               Uniform& out) {
+  return false;
+}
+void add_caster(const gx::DrawData& draw) {}
+bool record() { return false; }
+const wgpu::TextureView& map_view() {
+  static const wgpu::TextureView view;
+  return view;
+}
+const wgpu::Sampler& sampler() {
+  static const wgpu::Sampler sampler;
+  return sampler;
+}
+void shutdown() {}
+} // namespace aurora::gfx::shadow
 
 namespace aurora::gfx::depth_peek {
 namespace {

@@ -4,6 +4,7 @@
 #include "../../gfx/bloom.hpp"
 #include "../../gfx/pipeline_cache.hpp"
 #include "../../gfx/probe.hpp"
+#include "../../gfx/shadow.hpp"
 #include "../../gfx/volfog.hpp"
 #include "../../webgpu/gpu_prof.hpp"
 
@@ -161,6 +162,35 @@ GXBool GXPortVolumetricFog(const GXPortFogParams* fog) {
 }
 
 void GXPortVolumetricFogEnd() { GX_WRITE_AURORA(GX_AURORA_PORT_VOLUMETRIC_FOG_END); }
+
+void GXPortSetShadowCaster(GXBool on) {
+  GX_WRITE_AURORA(GX_AURORA_PORT_SHADOW_CASTER);
+  GX_WRITE_U8(on ? 1 : 0);
+}
+
+void GXPortSetShadowFrame(const f32 worldToView[3][4], const f32 sunDir[3], f32 radius, const f32 color[3]) {
+  GX_WRITE_AURORA(GX_AURORA_PORT_SHADOW_FRAME);
+  for (u32 i = 0; i < 3; ++i) {
+    for (u32 j = 0; j < 4; ++j) {
+      GX_WRITE_F32(worldToView[i][j]);
+    }
+  }
+  for (u32 i = 0; i < 3; ++i) {
+    GX_WRITE_F32(sunDir[i]);
+  }
+  GX_WRITE_F32(radius);
+  for (u32 i = 0; i < 3; ++i) {
+    GX_WRITE_F32(color[i]);
+  }
+}
+
+GXBool GXPortRenderShadowMap() {
+  if (sDrawIdMode || !aurora::gfx::shadow::ensure_task()) {
+    return false;
+  }
+  GX_WRITE_AURORA(GX_AURORA_PORT_SHADOW_RENDER);
+  return true;
+}
 
 void GXPortColorGradeLut(u32 id, const u8* rgba) { aurora::gfx::bloom::set_grade_lut(id, rgba); }
 

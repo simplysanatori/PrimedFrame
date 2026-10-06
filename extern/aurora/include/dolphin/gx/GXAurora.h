@@ -289,6 +289,16 @@ extern "C" {
 #define GX_AURORA_RESIDENT_RELEASE 0x0061
 #define GX_AURORA_RESIDENT_CALL_DL 0x0062
 
+// Port extension: the sun's shadow (see GXPortSetShadowCaster, GXPortSetShadowFrame and
+// GXPortRenderShadowMap).
+// CASTER payload: u8 on. Stays in effect until changed.
+// FRAME payload: 19 f32: world -> view (3 rows of 4), the sun's direction (world, the way its light
+// travels), the radius around the camera the map covers (<= 0: no sun), its colour (rgb).
+// RENDER payload: none.
+#define GX_AURORA_PORT_SHADOW_CASTER 0x005E
+#define GX_AURORA_PORT_SHADOW_FRAME 0x005F
+#define GX_AURORA_PORT_SHADOW_RENDER 0x0063
+
 #define GX2_SET_POLYGON_OFFSET 0x1000
 
 

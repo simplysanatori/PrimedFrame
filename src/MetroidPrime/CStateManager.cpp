@@ -3,6 +3,7 @@
 #include "port_apclient.h"
 #include "port_collision_view.h"
 #include "port_debug.h"
+#include "port_env.h"
 #include "port_freecam.h"
 #include "port_discord.h"
 #include "port_hold_toggle.h"
@@ -2767,6 +2768,86 @@ CGameArea::CConstChainIterator CWorld::GetAliveAreasEnd() { return skGlobalEnd; 
 // drawn nearer than the world's depth range, is left clear, as Remastered leaves it.
 static std::vector<const PortRoomEnv::FogRegion*> sPortFogRegions;
 
+// Remastered's sun shadow (aurora's gfx/shadow): an orthographic depth map around the camera
+// along the room's directional light, cast and received by the opaque world. MP_SHADOWS=0 turns
+// it off; MP_SHADOW_RADIUS sets the map's half extent, MP_SHADOW_SIZE its resolution. For testing,
+// MP_SHADOW_DIR ("x,y,z", the way the light travels) and MP_SHADOW_COLOR ("r,g,b") override the
+// room's sun.
+// The room's Remastered sun (port_room_env.h), when its import has one.
+static bool PortRoomSun(const CGameArea& area, CScriptLayerManager* layers, float dir[3], float color[3]) {
+  struct Layers {
+    CScriptLayerManager* layers;
+    TAreaId area;
+  } l{layers, area.GetId()};
+  return PortRoomEnv::Sun(
+      [](int32_t layer, void* context) {
+        const Layers& l = *static_cast< const Layers* >(context);
+        return l.layers == nullptr || l.layers->IsLayerActive(l.area, TLayerId(layer));
+      },
+      &l, dir, color);
+}
+
+static bool PortSetupShadow(const CTransform4f& view, const CGameArea* area, CScriptLayerManager* layers,
+                            bool enabled) {
+  static const bool sOn = port::EnvFlag("MP_SHADOWS", true);
+  static const float sRadius = port::EnvFloat("MP_SHADOW_RADIUS", 40.f);
+  // Remastered's light intensity to the shader's colour. Its units are tied to its exposure, which the
+  // port doesn't have, so this is matched by eye: the hangar's key light (12) comes out at 1.5.
+  static const float sSunScale = port::EnvFloat("MP_SHADOW_SUN_SCALE", 0.125f);
+  float dir[3] = {0.f, 0.f, 0.f};
+  float color[3] = {0.f, 0.f, 0.f};
+  float radius = 0.f;
+  if (sOn && enabled) {
+    static const char* sDirEnv = getenv("MP_SHADOW_DIR");
+    static const char* sColorEnv = getenv("MP_SHADOW_COLOR");
+    float envDir[3];
+    if (sDirEnv != nullptr && sscanf(sDirEnv, "%f,%f,%f", &envDir[0], &envDir[1], &envDir[2]) == 3) {
+      dir[0] = envDir[0], dir[1] = envDir[1], dir[2] = envDir[2];
+    } else if (area != nullptr && PortRoomSun(*area, layers, dir, color)) {
+      for (int i = 0; i < 3; ++i) {
+        dir[i] = -dir[i]; // the way the light travels, as a CLight's direction
+        color[i] *= sSunScale;
+      }
+    } else if (area != nullptr && area->IsPostConstructed()) {
+      const rstl::vector< CWorldLight >& lights = area->GetLightsA();
+      for (int i = 0; i < lights.size(); ++i) {
+        const CLight light = lights[i].GetAsCGraphicsLight();
+        if (light.GetType() == kLT_Directional) {
+          dir[0] = light.GetDirection().GetX();
+          dir[1] = light.GetDirection().GetY();
+          dir[2] = light.GetDirection().GetZ();
+          break;
+        }
+      }
+    }
+    if (sColorEnv != nullptr) {
+      float c[3];
+      if (sscanf(sColorEnv, "%f,%f,%f", &c[0], &c[1], &c[2]) == 3) {
+        color[0] = c[0], color[1] = c[1], color[2] = c[2];
+      }
+    }
+    if (dir[0] != 0.f || dir[1] != 0.f || dir[2] != 0.f) {
+      radius = sRadius;
+    }
+  }
+  // GX's view matrix: the camera's rows (right, up, towards the camera) and their eye offset.
+  const CVector3f eye = view.GetTranslation();
+  const float axes[3][3] = {
+      {view.Get00(), view.Get10(), view.Get20()},
+      {view.Get02(), view.Get12(), view.Get22()},
+      {-view.Get01(), -view.Get11(), -view.Get21()},
+  };
+  float worldToView[3][4];
+  for (int r = 0; r < 3; ++r) {
+    worldToView[r][0] = axes[r][0];
+    worldToView[r][1] = axes[r][1];
+    worldToView[r][2] = axes[r][2];
+    worldToView[r][3] = -(axes[r][0] * eye.GetX() + axes[r][1] * eye.GetY() + axes[r][2] * eye.GetZ());
+  }
+  GXPortSetShadowFrame(worldToView, dir, radius, color);
+  return radius > 0.f;
+}
+
 static void PortDrawVolumetricFog(const CStateManager& mgr, const CTransform4f& view,
                                   const CFrustumPlanes& frustum) {
   const CPlayerState::EPlayerVisor visor = mgr.GetPlayerState()->GetActiveVisor(mgr);
@@ -3112,6 +3193,17 @@ void CStateManager::DrawWorld() const {
   bool portRoomGeo[10] = {};
   // Collision view "only": the world draws nothing but Samus (port_collision_view.h).
   const bool portCollisionOnly = !thermal && PortCollisionView::Only();
+  const CGameArea* portVisArea = nullptr;
+  for (int i = 0; i < areas.size(); ++i) {
+    if (areas[i]->GetId() == visAreaId) {
+      portVisArea = areas[i];
+    }
+  }
+  // The opaque world casts (and receives) from here to GXPortRenderShadowMap, but for the sky.
+  const bool portShadow =
+      PortSetupShadow(backupViewMatrix, portVisArea, x8c8_worldLayerState.GetPtr(),
+                      !thermal && visor != CPlayerState::kPV_XRay && !portCollisionOnly);
+  GXPortSetShadowCaster(portShadow);
 #endif
   for (int i = areas.size() - 1; i >= 0; --i) {
     const CGameArea& area = *areas[i];
@@ -3137,9 +3229,13 @@ void CStateManager::DrawWorld() const {
     gpRender->SetWorldFog(kRFM_None, 0.f, 1.f, CColor::Black());
   }
 #ifdef TARGET_PC
+  GXPortSetShadowCaster(false);
   if (!portCollisionOnly)
 #endif
     x850_world->DrawSky(CTransform4f::Translate(backupViewMatrix.GetTranslation()));
+#ifdef TARGET_PC
+  GXPortSetShadowCaster(portShadow);
+#endif
   if (!areas.empty()) {
     SetupFogForArea(*areas.back());
   }
@@ -3258,6 +3354,10 @@ void CStateManager::DrawWorld() const {
   }
 
 #ifdef TARGET_PC
+  if (portShadow) {
+    GXPortSetShadowCaster(false);
+    GXPortRenderShadowMap();
+  }
   if (!thermal) {
     PortCollisionView::Draw(*this, areas.begin(), areas.size());
   }
