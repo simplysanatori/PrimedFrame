@@ -571,7 +571,7 @@ void CmdHelp() {
   Out("state list | last | save [n] | load [n] | undo | slot <n>   save states (F1 Save states page)");
   Out("timer <0|1>                on-screen in-game time; igt <seconds> sets the play time");
   Out("livesplit <0|1> | addr <host:port> | send <command> | status   LiveSplit Server client");
-  Out("discord <0|1> | id <application id> | status   Discord Rich Presence");
+  Out("discord <0|1> | status   Discord Rich Presence");
   Out("gci list | import <path> | export <dir or .raw> | dolphin import|export   memory card transfer");
   Out("ap [connect <server> <slot> [password] | disconnect | recent | resume <n> | say <text> | chat]   Archipelago, as the F1 Archipelago page does");
   Out("quit                       exit the game");
@@ -2453,14 +2453,11 @@ void RunFrame() {
     const std::string action = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "status";
     if (action == "0" || action == "1") {
       PortDebug::SetDiscordPresence(action == "1");
-    } else if (action == "id" && sCmd.args.size() == 3) {
-      PortDebug::SetDiscordAppId(sCmd.args[2]);
     } else if (action != "status") {
-      return Finish("usage: discord <0|1> | id <application id> | status");
+      return Finish("usage: discord <0|1> | status");
     }
     static const char* const kStatusNames[] = {"off", "connecting", "connected", "failed"};
-    Out("discord %s id=%s %s", PortDebug::DiscordPresence() ? "on" : "off",
-        PortDebug::DiscordAppId().empty() ? "default" : PortDebug::DiscordAppId().c_str(), kStatusNames[PortDiscord::Status()]);
+    Out("discord %s %s", PortDebug::DiscordPresence() ? "on" : "off", kStatusNames[PortDiscord::Status()]);
     Out("showing: %s", PortDiscord::CurrentText().c_str());
     const std::string error = PortDiscord::LastError();
     if (!error.empty()) {

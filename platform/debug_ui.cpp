@@ -213,7 +213,6 @@ bool sLiveSplit = false;
 std::string sLiveSplitAddress = "127.0.0.1:16834";
 bool sLiveSplitSplitUpgrades = true;
 bool sDiscord = true;
-std::string sDiscordAppId; // empty = PortDiscord::kDefaultAppId
 // Mods folder (port_mods.h): read at startup only.
 bool sModsEnabled = true;
 std::string sModsDisabled;
@@ -462,19 +461,8 @@ void ApplyLiveSplit() {
   PortLiveSplit::Configure(sLiveSplit, sLiveSplitAddress, sLiveSplitSplitUpgrades);
 }
 
-// Discord application ids are decimal snowflakes; a pasted id may carry spaces.
-std::string DigitsOnly(const std::string& text) {
-  std::string out;
-  for (const char c : text) {
-    if (c >= '0' && c <= '9') {
-      out += c;
-    }
-  }
-  return out;
-}
-
 void ApplyDiscord() {
-  PortDiscord::Configure(sDiscord, sDiscordAppId.empty() ? PortDiscord::kDefaultAppId : sDiscordAppId);
+  PortDiscord::Configure(sDiscord, PortDiscord::kDefaultAppId);
 }
 
 void ApplySetting(const std::string& key, const std::string& value) {
@@ -688,8 +676,6 @@ void ApplySetting(const std::string& key, const std::string& value) {
   } else if (key == "discord_presence") {
     // Not "discord": 0.16.0 saved discord=0 for everyone while it was opt-in.
     sDiscord = ParseBool(value);
-  } else if (key == "discord_app_id") {
-    sDiscordAppId = DigitsOnly(value);
   } else if (key == "mods") {
     sModsEnabled = ParseBool(value);
   } else if (key == "mods_disabled") {
@@ -822,7 +808,6 @@ void SaveSettings() {
   file << "livesplit_address=" << sLiveSplitAddress << '\n';
   file << "livesplit_split_upgrades=" << (sLiveSplitSplitUpgrades ? 1 : 0) << '\n';
   file << "discord_presence=" << (sDiscord ? 1 : 0) << '\n';
-  file << "discord_app_id=" << sDiscordAppId << '\n';
   file << "mods=" << (sModsEnabled ? 1 : 0) << '\n';
   file << "mods_disabled=" << sModsDisabled << '\n';
   file << "vsync=" << (sVsyncEnabled ? 1 : 0) << '\n';
@@ -1752,18 +1737,6 @@ bool DiscordPresence() {
 void SetDiscordPresence(bool enabled) {
   EnsureInitialized();
   sDiscord = enabled;
-  ApplyDiscord();
-  MarkDirty();
-}
-
-std::string DiscordAppId() {
-  EnsureInitialized();
-  return sDiscordAppId;
-}
-
-void SetDiscordAppId(const std::string& id) {
-  EnsureInitialized();
-  sDiscordAppId = DigitsOnly(id);
   ApplyDiscord();
   MarkDirty();
 }
@@ -4857,22 +4830,6 @@ void DrawDiscordSection() {
       ImGui::TextColored(ThemeBadColor(), "%s", PortDiscord::LastError().c_str());
       break;
     }
-    static char appId[64];
-    static bool editingAppId = false;
-    if (!editingAppId) {
-      std::snprintf(appId, sizeof(appId), "%s", sDiscordAppId.c_str());
-    }
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.f);
-    ImGui::InputTextWithHint("Application id", "default", appId, sizeof(appId));
-    editingAppId = ImGui::IsItemActive();
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-      SetDiscordAppId(appId);
-    }
-    ItemHelp("Leave empty to use the port's own Discord application. To use your own, create "
-             "one at discord.com/developers/applications (its name is what Discord shows as the "
-             "game), add art assets named \"logo\", world_frigate, world_tallon, world_chozo, "
-             "world_magmoor, world_phendrana, world_mines and world_crater under Rich Presence, "
-             "and paste its Application ID here.");
     if (sDiscord) {
       ImGui::TextDisabled("Showing: %s", PortDiscord::CurrentText().c_str());
     }

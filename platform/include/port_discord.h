@@ -286,7 +286,7 @@ EStatus Status();
 // The last error (no Discord running, bad application id), or empty.
 std::string LastError();
 // The port's own Discord application ("Metroid Prime"), which has the logo and
-// world_* art assets; the player can set another.
+// world_* art assets.
 inline constexpr const char* kDefaultAppId = "1557127540030701690";
 // Connects while enabled and an application id is set, reconnecting every few
 // seconds; clears the presence and disconnects when not.
