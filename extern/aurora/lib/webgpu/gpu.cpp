@@ -868,8 +868,30 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
   }
   g_backendType = g_adapterInfo.backendType;
   const auto backendName = magic_enum::enum_name(g_backendType);
-  Log.info("Graphics adapter information\n  API: {}\n  Device: {} ({})\n  Driver: {}", backendName, adapterName,
-           magic_enum::enum_name(g_adapterInfo.adapterType), description);
+  auto vendorName = g_adapterInfo.vendor;
+  if (vendorName.IsUndefined()) {
+    vendorName = wgpu::StringView("Unknown");
+  }
+  auto architectureName = g_adapterInfo.architecture;
+  if (architectureName.IsUndefined()) {
+    architectureName = wgpu::StringView("Unknown");
+  }
+  wgpu::SupportedFeatures supportedFeatures;
+  g_adapter.GetFeatures(&supportedFeatures);
+  std::string allFeatures;
+  for (size_t i = 0; i < supportedFeatures.featureCount; ++i) {
+    const std::string_view name = magic_enum::enum_name(supportedFeatures.features[i]);
+    if (name.empty()) {
+      continue;
+    }
+    allFeatures += allFeatures.empty() ? "\n  " : ", ";
+    allFeatures += name;
+  }
+  Log.info("Graphics adapter information\n  API: {}\n  Device: {} ({})\n  Driver: {}"
+           "\n  Vendor: {} ({:#06x}), device {:#06x}\n  Architecture: {}\n  Adapter features:{}",
+           backendName, adapterName, magic_enum::enum_name(g_adapterInfo.adapterType), description, vendorName,
+           g_adapterInfo.vendorID, g_adapterInfo.deviceID, architectureName,
+           allFeatures.empty() ? "\n  (none)" : allFeatures);
 
   {
     wgpu::Limits supportedLimits{};
@@ -910,18 +932,61 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
         "\n  maxStorageBuffersPerShaderStage: {}"
         "\n  minUniformBufferOffsetAlignment: {}"
         "\n  minStorageBufferOffsetAlignment: {}"
-        "\n  maxImmediateSize: {}",
+        "\n  maxImmediateSize: {}"
+        "\n  maxBindGroups: {}"
+        "\n  maxStorageBufferBindingSize: {}"
+        "\n  maxUniformBufferBindingSize: {}"
+        "\n  maxBufferSize: {}"
+        "\n  maxVertexBuffers: {}"
+        "\n  maxVertexAttributes: {}"
+        "\n  maxColorAttachments: {}"
+        "\n  maxComputeWorkgroupStorageSize: {}"
+        "\n  maxStorageBuffersInVertexStage: {}"
+        "\n  maxStorageBuffersInFragmentStage: {}",
         requiredLimits.maxTextureDimension1D, requiredLimits.maxTextureDimension2D,
         requiredLimits.maxTextureDimension3D, requiredLimits.maxTextureArrayLayers,
         requiredLimits.maxStorageBuffersPerShaderStage, requiredLimits.minUniformBufferOffsetAlignment,
-        requiredLimits.minStorageBufferOffsetAlignment, requiredLimits.maxImmediateSize);
+        requiredLimits.minStorageBufferOffsetAlignment, requiredLimits.maxImmediateSize,
+        supportedLimits.maxBindGroups, supportedLimits.maxStorageBufferBindingSize,
+        supportedLimits.maxUniformBufferBindingSize, supportedLimits.maxBufferSize,
+        supportedLimits.maxVertexBuffers, supportedLimits.maxVertexAttributes, supportedLimits.maxColorAttachments,
+        supportedLimits.maxComputeWorkgroupStorageSize, compatibilityModeLimits.maxStorageBuffersInVertexStage,
+        compatibilityModeLimits.maxStorageBuffersInFragmentStage);
+    // The requests above override the adapter defaults; say what was changed so
+    // a driver bug (issue #7) can be told apart from a bad request.
+    std::string limitNotes;
+    const auto noteLimit = [&](const char* name, uint64_t requested, uint64_t supported) {
+      if (requested != supported) {
+        limitNotes += limitNotes.empty() ? "\n  " : ", ";
+        limitNotes += name;
+        limitNotes += " requested " + std::to_string(requested) + ", adapter " + std::to_string(supported);
+      }
+    };
+    noteLimit("maxTextureDimension1D", requiredLimits.maxTextureDimension1D,
+              supportedLimits.maxTextureDimension1D);
+    noteLimit("maxTextureDimension2D", requiredLimits.maxTextureDimension2D,
+              supportedLimits.maxTextureDimension2D);
+    noteLimit("maxTextureDimension3D", requiredLimits.maxTextureDimension3D,
+              supportedLimits.maxTextureDimension3D);
+    noteLimit("maxTextureArrayLayers", requiredLimits.maxTextureArrayLayers,
+              supportedLimits.maxTextureArrayLayers);
+    noteLimit("maxStorageBuffersPerShaderStage", requiredLimits.maxStorageBuffersPerShaderStage,
+              supportedLimits.maxStorageBuffersPerShaderStage);
+    noteLimit("maxStorageBufferBindingSize", requiredLimits.maxStorageBufferBindingSize,
+              supportedLimits.maxStorageBufferBindingSize);
+    noteLimit("maxBufferSize", requiredLimits.maxBufferSize, supportedLimits.maxBufferSize);
+    noteLimit("minUniformBufferOffsetAlignment", requiredLimits.minUniformBufferOffsetAlignment,
+              supportedLimits.minUniformBufferOffsetAlignment);
+    noteLimit("minStorageBufferOffsetAlignment", requiredLimits.minStorageBufferOffsetAlignment,
+              supportedLimits.minStorageBufferOffsetAlignment);
+    if (!limitNotes.empty()) {
+      Log.info("Limits overridden from the adapter defaults:{}", limitNotes);
+    }
     std::vector<wgpu::FeatureName> requiredFeatures;
     g_hasCoreFeatures = false;
     g_bcTexturesSupported = false;
     g_astcTexturesSupported = false;
     g_textureComponentSwizzleSupported = false;
-    wgpu::SupportedFeatures supportedFeatures;
-    g_adapter.GetFeatures(&supportedFeatures);
     for (size_t i = 0; i < supportedFeatures.featureCount; ++i) {
       const auto feature = supportedFeatures.features[i];
       if (feature == wgpu::FeatureName::CoreFeaturesAndLimits || feature == wgpu::FeatureName::TextureCompressionBC ||
@@ -1011,6 +1076,16 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
         .disabledToggleCount = disableToggles.size(),
         .disabledToggles = disableToggles.data(),
     });
+    std::string enabledToggles, disabledToggles;
+    for (const char* toggle : enableToggles) {
+      enabledToggles += enabledToggles.empty() ? "\n  " : ", ";
+      enabledToggles += toggle;
+    }
+    for (const char* toggle : disableToggles) {
+      disabledToggles += disabledToggles.empty() ? "\n  " : ", ";
+      disabledToggles += toggle;
+    }
+    Log.info("Dawn toggles\n  Enabled:{}\n  Disabled:{}", enabledToggles, disabledToggles);
 #endif
     wgpu::DeviceDescriptor deviceDescriptor({
 #ifdef WEBGPU_DAWN
@@ -1074,6 +1149,16 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
   auto surfaceFormat = best_surface_format();
   g_vsyncEnabled.store(g_config.vsync, std::memory_order_release);
   auto presentMode = select_present_mode(g_surfaceCapabilities);
+  std::string surfaceFormats, surfacePresentModes;
+  for (size_t i = 0; i < g_surfaceCapabilities.formatCount; ++i) {
+    surfaceFormats += "\n  ";
+    surfaceFormats += magic_enum::enum_name(g_surfaceCapabilities.formats[i]);
+  }
+  for (size_t i = 0; i < g_surfaceCapabilities.presentModeCount; ++i) {
+    surfacePresentModes += "\n  ";
+    surfacePresentModes += magic_enum::enum_name(g_surfaceCapabilities.presentModes[i]);
+  }
+  Log.info("Surface capabilities\n  Formats:{}\n  Present modes:{}", surfaceFormats, surfacePresentModes);
   Log.info("Using surface format {}, present mode {}", magic_enum::enum_name(surfaceFormat),
            magic_enum::enum_name(presentMode));
   const auto size = window::get_window_size();

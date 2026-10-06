@@ -144,6 +144,11 @@ void SetFullscreen(bool enabled);
 // 0 = auto (native, driven by the display scale), otherwise a fixed multiplier.
 float RenderScale();
 void SetRenderScale(float scale);
+// Dynamic resolution: draws the EFB between DynamicResMin and RenderScale to
+// hold DynamicResTarget fps (0 = the frame cap). False when off.
+bool DynamicRes();
+int DynamicResTarget();
+float DynamicResMin();
 // Rendering aspect ratio. kAspect_4_3 is the game's original 640x480.
 // kAspect_16_9 widens to 16:9; kAspect_Window follows the window and updates
 // live as it is resized.
