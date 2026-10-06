@@ -73,6 +73,7 @@ static const void* g_surfaceWindow = nullptr;
 static wgpu::SurfaceCapabilities g_surfaceCapabilities;
 bool g_hasCoreFeatures = false;
 bool g_bcTexturesSupported = false;
+bool g_lightmapBinding = false;
 bool g_astcTexturesSupported = false;
 bool g_textureComponentSwizzleSupported = false;
 static std::atomic_bool g_initialized = false;
@@ -911,6 +912,9 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
                                                                             : supportedLimits.maxTextureDimension3D,
         .maxTextureArrayLayers = supportedLimits.maxTextureArrayLayers == 0 ? WGPU_LIMIT_U32_UNDEFINED
                                                                             : supportedLimits.maxTextureArrayLayers,
+        .maxSampledTexturesPerShaderStage = supportedLimits.maxSampledTexturesPerShaderStage >= 17
+                                                ? 17
+                                                : WGPU_LIMIT_U32_UNDEFINED,
         .maxStorageBuffersPerShaderStage = 2,
         .maxStorageBufferBindingSize = supportedLimits.maxStorageBufferBindingSize == 0
                                            ? WGPU_LIMIT_U64_UNDEFINED
@@ -970,6 +974,12 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
               supportedLimits.maxTextureDimension3D);
     noteLimit("maxTextureArrayLayers", requiredLimits.maxTextureArrayLayers,
               supportedLimits.maxTextureArrayLayers);
+    g_lightmapBinding = requiredLimits.maxSampledTexturesPerShaderStage == 17;
+    if (g_lightmapBinding) {
+      limitNotes += limitNotes.empty() ? "\n  " : ", ";
+      limitNotes += "maxSampledTexturesPerShaderStage requested 17, adapter " +
+                    std::to_string(supportedLimits.maxSampledTexturesPerShaderStage);
+    }
     noteLimit("maxStorageBuffersPerShaderStage", requiredLimits.maxStorageBuffersPerShaderStage,
               supportedLimits.maxStorageBuffersPerShaderStage);
     noteLimit("maxStorageBufferBindingSize", requiredLimits.maxStorageBufferBindingSize,

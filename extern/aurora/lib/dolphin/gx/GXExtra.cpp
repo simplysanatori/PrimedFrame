@@ -8,6 +8,7 @@
 #include "../../gfx/volfog.hpp"
 #include "../../webgpu/gpu_prof.hpp"
 
+#include <atomic>
 #include <bit>
 #include <cstring>
 #include <vector>
@@ -56,6 +57,11 @@ struct PBRAmbientWrite {
 struct PBRVolumeWrite {
   u32 id;
   f32 rows[6][4];
+};
+struct PBRLightmapWrite {
+  u32 id;
+  f32 rect[4];
+  f32 axes[3][3];
 };
 struct PBRToneWrite {
   f32 rows[3][4];
@@ -450,6 +456,75 @@ void GXSetPBRVolume(u32 id, const f32 rows[6][4]) {
       GX_WRITE_F32(rows != nullptr ? rows[row][i] : 0.f);
     }
   }
+}
+
+GXBool GXPBRLightmapBC6HSupported(void) { return aurora::gfx::probe::lightmap_bc_supported(); }
+
+u32 GXCreatePBRLightmap(u32 width, u32 height, u32 layers, GXPBRLightmapFormat format, const void* data, u32 size) {
+  if (data == nullptr || !aurora::gfx::probe::lightmap_available()) {
+    return 0;
+  }
+  const bool bc = format == GX_PBR_LIGHTMAP_BC6H_SFLOAT || format == GX_PBR_LIGHTMAP_BC6H_UFLOAT;
+  if (!bc && format != GX_PBR_LIGHTMAP_RGBA16F) {
+    return 0;
+  }
+  if (bc && (!aurora::gfx::probe::lightmap_bc_supported() || width % 4 != 0 || height % 4 != 0)) {
+    return 0;
+  }
+  const u64 bytes = bc ? u64(width / 4) * (height / 4) * 16 * layers : u64(width) * height * 8 * layers;
+  if (width == 0 || height == 0 || layers == 0 || bytes > size) {
+    return 0;
+  }
+  static std::atomic<u32> sNextLightmap{1};
+  const u32 id = sNextLightmap.fetch_add(1);
+  // The processor frees the copy.
+  auto* copy = new std::vector<u8>(static_cast<const u8*>(data), static_cast<const u8*>(data) + bytes);
+  GX_WRITE_AURORA(GX_AURORA_CREATE_PBR_LIGHTMAP);
+  GX_WRITE_U32(id);
+  GX_WRITE_U32(width);
+  GX_WRITE_U32(height);
+  GX_WRITE_U32(layers);
+  GX_WRITE_U32(format);
+  GX_WRITE_U64(reinterpret_cast<u64>(copy));
+  return id;
+}
+
+void GXDestroyPBRLightmap(u32 id) {
+  GX_WRITE_AURORA(GX_AURORA_DESTROY_PBR_LIGHTMAP);
+  GX_WRITE_U32(id);
+}
+
+void GXSetPBRLightmap(u32 id, const f32 rect[4], const f32 axes[3][3]) {
+  static LastPBRWrite<PBRLightmapWrite> sLast;
+  PBRLightmapWrite now{};
+  if (id != 0 && rect != nullptr && axes != nullptr) {
+    now.id = id;
+    std::memcpy(now.rect, rect, sizeof(now.rect));
+    std::memcpy(now.axes, axes, sizeof(now.axes));
+  }
+  if (sLast.repeats(now)) {
+    return;
+  }
+  GX_WRITE_AURORA(GX_AURORA_SET_PBR_LIGHTMAP);
+  GX_WRITE_U32(now.id);
+  for (int i = 0; i < 4; ++i) {
+    GX_WRITE_F32(now.rect[i]);
+  }
+  for (int row = 0; row < 3; ++row) {
+    for (int i = 0; i < 3; ++i) {
+      GX_WRITE_F32(now.axes[row][i]);
+    }
+  }
+}
+
+void GXSetPBRLightmapAttr(GXAttr attr) {
+  static LastPBRWrite<u8> sLast;
+  const u8 now = attr >= GX_VA_TEX0 && attr <= GX_VA_TEX7 ? static_cast<u8>(attr) : static_cast<u8>(GX_VA_NULL);
+  if (sLast.repeats(now)) {
+    return;
+  }
+  GX_WRITE_AURORA(GX_AURORA_SET_PBR_LIGHTMAP_ATTR);
+  GX_WRITE_U8(now);
 }
 
 void GXSetPBRBrdfLut(const void* texels, u32 length) {

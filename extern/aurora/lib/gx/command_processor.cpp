@@ -477,6 +477,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     const auto prevSampledIndTextures = cache.shaderInfo.sampledIndTextures;
     const bool prevUsesVolFog = cache.shaderInfo.usesVolFog;
     const bool prevShadowReceive = cache.shaderInfo.shadowReceive;
+    const bool prevUsesLightmap = cache.shaderInfo.usesLightmap;
     populate_pipeline_config(cache.config, prim, fmt);
     cache.shaderInfo = build_shader_info(cache.config.shaderConfig);
     warn_missing_uv_sets(cache.config.shaderConfig, cache.shaderInfo);
@@ -501,7 +502,8 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     state.dirty = (state.dirty & ~DirtyPipeline) | DirtyUniform;
     if (!hadPipeline || prevSampledTextures != cache.shaderInfo.sampledTextures ||
         prevSampledIndTextures != cache.shaderInfo.sampledIndTextures ||
-        prevUsesVolFog != cache.shaderInfo.usesVolFog || prevShadowReceive != cache.shaderInfo.shadowReceive) {
+        prevUsesVolFog != cache.shaderInfo.usesVolFog || prevUsesLightmap != cache.shaderInfo.usesLightmap ||
+        prevShadowReceive != cache.shaderInfo.shadowReceive) {
       cache.bindGeneration = 0;
     }
   }
@@ -1142,6 +1144,55 @@ void handle_aurora(ByteReader& reader) noexcept {
     if (g_gxState.pbrVolumeRows != rows) {
       g_gxState.pbrVolumeRows = rows;
       g_gxState.dirty |= DirtyUniform;
+    }
+  } else if (subCmd == GX_AURORA_CREATE_PBR_LIGHTMAP) {
+    const u32 id = reader.read<u32>();
+    const u32 width = reader.read<u32>();
+    const u32 height = reader.read<u32>();
+    const u32 layers = reader.read<u32>();
+    const u32 format = reader.read<u32>();
+    const std::unique_ptr<std::vector<u8>> texels{reinterpret_cast<std::vector<u8>*>(reader.read<u64>())};
+    gfx::probe::create_lightmap(id, width, height, layers, format, texels->data(), texels->size());
+    g_gxState.dirty |= DirtyTextures;
+  } else if (subCmd == GX_AURORA_DESTROY_PBR_LIGHTMAP) {
+    gfx::probe::destroy_lightmap(reader.read<u32>());
+    g_gxState.dirty |= DirtyTextures;
+  } else if (subCmd == GX_AURORA_SET_PBR_LIGHTMAP) {
+    u32 id = reader.read<u32>();
+    Vec4<float> rect;
+    {
+      const f32 x = reader.read<f32>();
+      const f32 y = reader.read<f32>();
+      const f32 z = reader.read<f32>();
+      const f32 w = reader.read<f32>();
+      rect = {x, y, z, w};
+    }
+    std::array<Vec4<float>, 3> axes;
+    for (Vec4<float>& v : axes) {
+      const f32 x = reader.read<f32>();
+      const f32 y = reader.read<f32>();
+      const f32 z = reader.read<f32>();
+      v = {x, y, z, 0.f};
+    }
+    if (id == 0 || !gfx::probe::has_lightmap(id)) {
+      id = 0;
+      rect = {};
+      axes = {};
+    }
+    if (g_gxState.pbrLightmap != id) {
+      g_gxState.pbrLightmap = id;
+      g_gxState.dirty |= DirtyTextures;
+    }
+    if (g_gxState.pbrLightmapRect != rect || g_gxState.pbrLightmapAxes != axes) {
+      g_gxState.pbrLightmapRect = rect;
+      g_gxState.pbrLightmapAxes = axes;
+      g_gxState.dirty |= DirtyUniform;
+    }
+  } else if (subCmd == GX_AURORA_SET_PBR_LIGHTMAP_ATTR) {
+    const u8 attr = reader.read<u8>();
+    if (g_gxState.pbrLightmapAttr != attr) {
+      g_gxState.pbrLightmapAttr = attr;
+      g_gxState.dirty |= DirtyPipeline;
     }
   } else if (subCmd == GX_AURORA_SET_PBR_BRDF_LUT) {
     const std::unique_ptr<std::vector<u8>> texels{reinterpret_cast<std::vector<u8>*>(reader.read<u64>())};

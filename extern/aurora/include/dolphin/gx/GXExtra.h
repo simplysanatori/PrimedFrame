@@ -125,6 +125,29 @@ void GXDestroyPBRVolume(u32 id);
 // coordinates, rows 3 to 5 a view-space normal to the volume's axes. w of row 3 scales the
 // light (0: no volume), w of row 4 is how far along the normal the sample is taken.
 void GXSetPBRVolume(u32 id, const f32 rows[6][4]);
+// Aurora extension: baked lightmaps (see GX_AURORA_CREATE_PBR_LIGHTMAP), a 2D-array texture
+// of `layers` (4): layer 0 the irradiance colour L0, layers 1 to 3 the first-order terms L1
+// x, y and z (RGB, each divided by L0, signed). The lit ambient of a pixel is
+// L0 * (1 + L1x * n.x + L1y * n.y + L1z * n.z), n the normal in the lightmap's axes.
+typedef enum {
+  GX_PBR_LIGHTMAP_BC6H_SFLOAT = 0,
+  GX_PBR_LIGHTMAP_BC6H_UFLOAT = 1,
+  GX_PBR_LIGHTMAP_RGBA16F = 2,
+} GXPBRLightmapFormat;
+// Whether BC texture compression is available on this device (BC6H lightmaps).
+GXBool GXPBRLightmapBC6HSupported(void);
+// `data` is every layer's mip-0 texels, layer-major (BC6H: 16-byte blocks, rows top to bottom;
+// RGBA16F: 8 bytes a texel). Returns an id above 0, or 0 on failure (an unsupported format,
+// a size that doesn't fit `size`, or a device without the extra texture binding).
+u32 GXCreatePBRLightmap(u32 width, u32 height, u32 layers, GXPBRLightmapFormat format, const void* data, u32 size);
+void GXDestroyPBRLightmap(u32 id);
+// For the draws that follow; id 0 turns it off. rect: offU, offV, scale, level: the atlas UV is
+// rect.xy + uv * rect.z, and level multiplies the light. axes: rows taking the shader's
+// view-space normal to the lightmap's axes.
+void GXSetPBRLightmap(u32 id, const f32 rect[4], const f32 axes[3][3]);
+// Per material: the vertex attribute (GX_VA_TEX0 to GX_VA_TEX7) that holds the lightmap UV, or
+// GX_VA_NULL for none. Part of the shader config (it adds a varying).
+void GXSetPBRLightmapAttr(GXAttr attr);
 // Aurora extension: what PBR surfaces drawn from now on show, for debugging: 0 the shaded
 // result, 1 base colour, 2 normal (view space), 3 roughness, 4 metalness, 5 occlusion,
 // 6 the diffuse ambient, 7 the reflection, 8 the glow, 9 the lit level in stops around

@@ -180,6 +180,19 @@ extern "C" {
 #define GX_AURORA_SET_PBR_VOLUME 0x004D
 
 /**
+ * Port extension: baked lightmaps, a 2D-array texture (L0 and L1 x/y/z) which PBR draws read
+ * through a vertex attribute's UV (see GXCreatePBRLightmap). CREATE takes the id, the width,
+ * height, layer count, the format and a pointer to a heap block the command owns; DESTROY
+ * takes the id. SET selects the lightmap of the following PBR draws: the id, four floats
+ * (the rect) and nine (the axes, row by row); id 0 turns it off. Stays in effect until changed.
+ */
+#define GX_AURORA_CREATE_PBR_LIGHTMAP 0x0064
+#define GX_AURORA_DESTROY_PBR_LIGHTMAP 0x0065
+#define GX_AURORA_SET_PBR_LIGHTMAP 0x0066
+// The vertex attribute holding the lightmap UV (see GXSetPBRLightmapAttr). Payload: u8 GXAttr.
+#define GX_AURORA_SET_PBR_LIGHTMAP_ATTR 0x0067
+
+/**
  * Port extension: the tone curve of the following PBR draws, as three vec4f (see
  * GXSetPBRTone). A slope of 0 (x of the second) goes back to the built-in highlight
  * roll-off. Stays in effect until changed.

@@ -122,6 +122,13 @@ struct Volume {
   std::array<wgpu::TextureView, VolumeTextures> views;
 };
 std::unordered_map<uint32_t, Volume> g_volumes;
+struct Lightmap {
+  wgpu::Texture texture;
+  wgpu::TextureView view;
+};
+std::unordered_map<uint32_t, Lightmap> g_lightmaps;
+wgpu::Texture g_emptyLightmap;
+wgpu::TextureView g_emptyLightmapView;
 wgpu::Texture g_brdfLut;
 wgpu::TextureView g_brdfLutView;
 wgpu::Texture g_emptyBrdfLut;
@@ -340,6 +347,9 @@ void shutdown() {
   std::lock_guard lock(g_cubeMutex);
   g_roomCubes.clear();
   g_volumes.clear();
+  g_lightmaps.clear();
+  g_emptyLightmapView = {};
+  g_emptyLightmap = {};
   g_emptyVolumeView = {};
   g_emptyVolume = {};
   g_brdfLut = {};
@@ -591,6 +601,89 @@ void create_volume(uint32_t id, uint32_t sizeX, uint32_t sizeY, uint32_t sizeZ, 
 void destroy_volume(uint32_t id) { g_volumes.erase(id); }
 
 bool has_volume(uint32_t id) { return g_volumes.find(id) != g_volumes.end(); }
+
+bool lightmap_available() { return webgpu::g_lightmapBinding; }
+
+bool lightmap_bc_supported() { return webgpu::g_bcTexturesSupported; }
+
+void create_lightmap(uint32_t id, uint32_t width, uint32_t height, uint32_t layers, uint32_t format,
+                     const uint8_t* texels, size_t length) {
+  // GXPBRLightmapFormat: 0 BC6H signed float, 1 BC6H unsigned float, 2 RGBA16Float.
+  const bool bc = format == 0 || format == 1;
+  if (id == 0 || width == 0 || height == 0 || layers == 0 || format > 2 || !webgpu::g_lightmapBinding ||
+      (bc && (!webgpu::g_bcTexturesSupported || width % 4 != 0 || height % 4 != 0))) {
+    return;
+  }
+  const uint32_t rows = bc ? height / 4 : height;
+  const uint32_t bytesPerRow = bc ? width / 4 * 16 : width * 8;
+  const size_t layerBytes = size_t(bytesPerRow) * rows;
+  if (length < layerBytes * layers) {
+    return;
+  }
+  const wgpu::TextureDescriptor textureDescriptor{
+      .label = "PBR baked lightmap",
+      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
+      .dimension = wgpu::TextureDimension::e2D,
+      .size = {width, height, layers},
+      .format = !bc                ? wgpu::TextureFormat::RGBA16Float
+                : format == 0      ? wgpu::TextureFormat::BC6HRGBFloat
+                                   : wgpu::TextureFormat::BC6HRGBUfloat,
+      .mipLevelCount = 1,
+      .sampleCount = 1,
+  };
+  Lightmap lightmap;
+  lightmap.texture = g_device.CreateTexture(&textureDescriptor);
+  // A layer at a time, through the frame's uploads (see create_volume).
+  for (uint32_t layer = 0; layer < layers; ++layer) {
+    const wgpu::TexelCopyTextureInfo dst{
+        .texture = lightmap.texture,
+        .mipLevel = 0,
+        .origin = {0, 0, layer},
+    };
+    queue_texture_upload_data(texels + layerBytes * layer, bytesPerRow, rows, dst, wgpu::Extent3D{width, height, 1});
+  }
+  const wgpu::TextureViewDescriptor viewDescriptor{
+      .label = "PBR baked lightmap view",
+      .format = textureDescriptor.format,
+      .dimension = wgpu::TextureViewDimension::e2DArray,
+      .baseMipLevel = 0,
+      .mipLevelCount = 1,
+      .baseArrayLayer = 0,
+      .arrayLayerCount = layers,
+  };
+  lightmap.view = lightmap.texture.CreateView(&viewDescriptor);
+  g_lightmaps[id] = std::move(lightmap);
+}
+
+void destroy_lightmap(uint32_t id) { g_lightmaps.erase(id); }
+
+bool has_lightmap(uint32_t id) { return g_lightmaps.find(id) != g_lightmaps.end(); }
+
+const wgpu::TextureView& lightmap_view(uint32_t id) {
+  const auto found = g_lightmaps.find(id);
+  if (found != g_lightmaps.end()) {
+    return found->second.view;
+  }
+  if (!g_emptyLightmap) {
+    constexpr wgpu::TextureDescriptor descriptor{
+        .label = "Empty PBR baked lightmap",
+        .usage = wgpu::TextureUsage::TextureBinding,
+        .dimension = wgpu::TextureDimension::e2D,
+        .size = {1, 1, 4},
+        .format = wgpu::TextureFormat::RGBA16Float,
+    };
+    g_emptyLightmap = g_device.CreateTexture(&descriptor);
+    const wgpu::TextureViewDescriptor viewDescriptor{
+        .label = "Empty PBR baked lightmap view",
+        .format = wgpu::TextureFormat::RGBA16Float,
+        .dimension = wgpu::TextureViewDimension::e2DArray,
+        .mipLevelCount = 1,
+        .arrayLayerCount = 4,
+    };
+    g_emptyLightmapView = g_emptyLightmap.CreateView(&viewDescriptor);
+  }
+  return g_emptyLightmapView;
+}
 
 bool set_brdf_lut(const uint8_t* texels, size_t length) {
   if (length != BrdfLutBytes) {

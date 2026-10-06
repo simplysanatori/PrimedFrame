@@ -60,7 +60,11 @@ constexpr u32 kVolFogSamplerBinding = MaxTextures * 2 + 9;
 // comparison sampler in the froxel's slots: group 2 already holds WebGPU's default 16 sampled textures.
 constexpr u32 kShadowMapBinding = kVolFogFroxelBinding;
 constexpr u32 kShadowSamplerBinding = kVolFogSamplerBinding;
-constexpr u32 kTextureBindings = MaxTextures * 2 + 10;
+// A baked lightmap's 2D array (GX_AURORA_SET_PBR_LIGHTMAP), read with the probe's sampler. It is the 17th
+// sampled texture of group 2, one past WebGPU's default limit, so the layout has it only when the device was
+// given more (webgpu::g_lightmapBinding); kTextureBindings counts it.
+constexpr u32 kLightmapBinding = MaxTextures * 2 + 10;
+constexpr u32 kTextureBindings = MaxTextures * 2 + 11;
 constexpr u32 MaxTluts = 20;
 constexpr u32 MaxTevStages = GX_MAX_TEVSTAGE;
 constexpr u32 MaxColorChannels = 4;
@@ -419,6 +423,10 @@ struct GXState {
   bool pbrBrdfLut = false; // GX_AURORA_SET_PBR_BRDF_LUT: a table is bound
   u32 pbrVolume = 0; // GX_AURORA_SET_PBR_VOLUME
   std::array<Vec4<float>, 6> pbrVolumeRows{}; // see GXSetPBRVolume
+  u32 pbrLightmap = 0; // GX_AURORA_SET_PBR_LIGHTMAP
+  Vec4<float> pbrLightmapRect{};                  // offU, offV, scale (0: off), level
+  std::array<Vec4<float>, 3> pbrLightmapAxes{};   // xyz: a row taking a view-space normal to the lightmap's axes
+  u8 pbrLightmapAttr = GX_VA_NULL; // GX_AURORA_SET_PBR_LIGHTMAP_ATTR
   std::array<Vec4<float>, 3> pbrTone{}; // GX_AURORA_SET_PBR_TONE
   Vec4<float> pbrLightSkip{}; // GX_AURORA_SET_PBR_LIGHT_SKIP: x the mask
   Vec4<float> pbrBakedLightModulation{1.f, 1.f, 1.f, 0.f}; // GX_AURORA_SET_PBR_BAKED_LIGHT_MODULATION
@@ -573,6 +581,9 @@ struct ShaderConfig {
   u8 pbrKind = 0; // with pbr, the special surface kind (pbrLayer.y), a constant in the shader
   // GXState::volFog: how the draw fogs itself (VolFog*), chosen from its blend.
   u8 volFog = 0;
+  // With pbr, the vertex attribute holding the baked lightmap's UV (GX_VA_TEX0..7), or GX_VA_NULL: a varying in the shader.
+  u8 pbrLightmapAttr = GX_VA_NULL;
+  u8 pad2[3]{}; // keeps the struct free of padding (memcmp and hash)
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;
@@ -614,6 +625,7 @@ struct ShaderInfo {
   bool lightingEnabled : 1 = false;
   u8 lineMode : 2 = 0;
   bool usesPbr : 1 = false;
+  bool usesLightmap : 1 = false; // ShaderConfig::pbrLightmapAttr is set
   bool usesVolFog : 1 = false;
   bool usesShadow : 1 = false;    // ShaderConfig::shadow: the shadow uniforms and vs_shadow
   bool shadowReceive : 1 = false; // shadow_receives: group 2 uses the shadow layout

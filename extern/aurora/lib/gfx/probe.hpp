@@ -48,4 +48,16 @@ void destroy_volume(uint32_t id);
 bool has_volume(uint32_t id);
 // One texture of a volume, or of an empty one when there is no such volume.
 const wgpu::TextureView& volume_view(uint32_t id, uint32_t index);
+
+// Baked lightmaps (GX_AURORA_CREATE_PBR_LIGHTMAP): a 2D array of layers, laid out as
+// GXCreatePBRLightmap says (`format` is its GXPBRLightmapFormat). Not created when the
+// layout has no slot for it (lightmap_available) or the data is short.
+bool lightmap_available();
+bool lightmap_bc_supported();
+void create_lightmap(uint32_t id, uint32_t width, uint32_t height, uint32_t layers, uint32_t format,
+                     const uint8_t* texels, size_t length);
+void destroy_lightmap(uint32_t id);
+bool has_lightmap(uint32_t id);
+// The lightmap's array view, or a 1x1x4 dummy when there is no such lightmap.
+const wgpu::TextureView& lightmap_view(uint32_t id);
 } // namespace aurora::gfx::probe

@@ -267,6 +267,12 @@ void create_volume(uint32_t id, uint32_t sizeX, uint32_t sizeY, uint32_t sizeZ, 
 void destroy_volume(uint32_t id) {}
 bool set_brdf_lut(const uint8_t* texels, size_t length) { return length == 256; }
 bool has_volume(uint32_t id) { return false; }
+bool lightmap_available() { return false; }
+bool lightmap_bc_supported() { return false; }
+void create_lightmap(uint32_t id, uint32_t width, uint32_t height, uint32_t layers, uint32_t format,
+                     const uint8_t* texels, size_t length) {}
+void destroy_lightmap(uint32_t id) {}
+bool has_lightmap(uint32_t id) { return false; }
 } // namespace probe
 void begin_offscreen(uint32_t width, uint32_t height) {
   testing::offscreenWidth.store(width, std::memory_order_relaxed);
