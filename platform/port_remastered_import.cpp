@@ -1552,6 +1552,13 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     };
     io.retail = [&](uint32_t type, uint32_t id, std::vector<uint8_t>& out) { return retail.Read(type, id, out); };
     io.retailId = [&](uint32_t id) { return retail.HasId(id); };
+    // MP_REMASTERED_JOINTS=1: the models' skin log (joint to bone) on stderr.
+    if (const char* env = std::getenv("MP_REMASTERED_JOINTS"); env != nullptr && env[0] == '1') {
+      io.log = [&](const std::string& line) {
+        std::lock_guard<std::mutex> lock(reportMutex);
+        std::fprintf(stderr, "%s\n", line.c_str());
+      };
+    }
     io.texture = [&](const ModelUuid& id, Image& out, std::string& textureError) {
       return textures.Get(id, out, textureError, [&](Image& decoded, std::string& decodeError) {
         std::vector<uint8_t> raw;

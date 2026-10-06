@@ -718,6 +718,7 @@ struct Converter::State {
   // straight after, and a bake reads its neighbours.
   std::vector<std::pair<std::string, Image>> opened;
   int pbr = 0, tev = 0;
+  uint32_t model = 0;  // the retail id being converted, for the joint log
 
   void Log(const std::string& line) const {
     if (io.log) {
@@ -2729,7 +2730,7 @@ std::vector<WeightKey> SkinWeights(const std::vector<double>& P, size_t n, const
     bool paired = false;
     const bool rigidRetail = std::all_of(groups.begin(), groups.end(),
                                          [](const SkinGroup& g) { return g.weights.size() == 1; });
-    if (rigidRetail && mapped >= nb) {
+    if (rigidRetail && mapped * 10 >= nb * 9) {
       std::vector<double> bc(nb * 3, 0.0), bn(nb, 0.0), jc(nj * 3, 0.0), jn(nj, 0.0);
       std::vector<bool> loose(nj, false);
       for (size_t v = 0; v < nr; ++v) {
@@ -2795,8 +2796,8 @@ std::vector<WeightKey> SkinWeights(const std::vector<double>& P, size_t n, const
           pieces.push_back(j);
         }
         const bool everyBone = std::all_of(bn.begin(), bn.end(), [](double c) { return c > 0.0; });
-        if (rigid && torn && everyBone) {
-          const size_t m = pieces.size();
+        const size_t m = pieces.size();
+        if (rigid && torn && everyBone && m >= nb) {
           std::vector<double> cost(nb * m);
           for (size_t c = 0; c < nb; ++c) {
             for (size_t i = 0; i < m; ++i) {
@@ -2816,11 +2817,99 @@ std::vector<WeightKey> SkinWeights(const std::vector<double>& P, size_t n, const
           }
           rehomed = m;
           paired = true;
+        } else if (torn && everyBone && m <= nb &&
+                   std::all_of(pieces.begin(), pieces.end(), [&](size_t j) { return jn[j] > 0.0; })) {
+          // A rig as fine as retail's or a piece short, not quite rigid (the
+          // arm cannon: 34 or 35 joints on 35 bones, the four muzzle petals
+          // among them, split between each other by the vote, so the open
+          // petals tore into a box). Each joint takes its own bone, and the
+          // few vertices blended between joints stay blended, between their
+          // bones. The pairing maximises the vote, not closeness: the gun's
+          // stack of three rings has a bone between them, and by centres
+          // alone every ring slid a step onto its neighbour's bone.
+          std::vector<double> cost(m * nb);
+          for (size_t i = 0; i < m; ++i) {
+            const double* row = &V[pieces[i] * nb];
+            const double total = RowSum(row, nb);
+            for (size_t c = 0; c < nb; ++c) {
+              cost[i * nb + c] = 1.0 - row[c] / total;
+            }
+          }
+          const std::vector<size_t> col = AssignRows(cost, m, nb);
+          for (size_t i = 0; i < m; ++i) {
+            assign[pieces[i]] = {uint32_t(col[i])};
+          }
+          rehomed = m;
+          paired = true;
         }
       }
     }
     for (size_t j = 0; j < nj; ++j) {
       split += assign[j].size() > 1;
+    }
+    // MP_REMASTERED_JOINTS=1: each joint's vote and the bones it got, with the
+    // centres of its vertices and of each retail bone's.
+    if (const char* env = std::getenv("MP_REMASTERED_JOINTS"); env != nullptr && env[0] == '1') {
+      char buf[256];
+      std::vector<double> bc(nb * 3, 0.0), bn(nb, 0.0), jc(nj * 3, 0.0), jn(nj, 0.0);
+      for (size_t v = 0; v < nr; ++v) {
+        const double* row = RW(v);
+        const size_t c = size_t(std::max_element(row, row + nb) - row);
+        for (int a = 0; a < 3; ++a) {
+          bc[c * 3 + a] += rp[v * 3 + a];
+        }
+        bn[c] += 1.0;
+      }
+      for (size_t v = 0; v < n; ++v) {
+        const size_t k = size_t(std::max_element(W->begin() + v * 4, W->begin() + v * 4 + 4) - (W->begin() + v * 4));
+        const size_t j = (*J)[v * 4 + k];
+        for (int a = 0; a < 3; ++a) {
+          jc[j * 3 + a] += P[v * 3 + a];
+        }
+        jn[j] += 1.0;
+      }
+      size_t looseVerts = 0, multiGroups = 0;
+      for (size_t v = 0; v < n * 4; ++v) {
+        looseVerts += (*W)[v] >= 1e-3 && (*W)[v] < 0.999;
+      }
+      for (const SkinGroup& g : groups) {
+        multiGroups += g.weights.size() > 1;
+      }
+      log("  rigid retail " + std::to_string(rigidRetail) + " (" + std::to_string(multiGroups) + " of " +
+          std::to_string(groups.size()) + " groups blended), " + std::to_string(looseVerts) + " partial weights of " +
+          std::to_string(n));
+      for (size_t c = 0; c < nb; ++c) {
+        const double d = std::max(bn[c], 1.0);
+        std::snprintf(buf, sizeof(buf), "  bone %u: %d verts at (%.3f %.3f %.3f)", bones[c], int(bn[c]),
+                      bc[c * 3] / d, bc[c * 3 + 1] / d, bc[c * 3 + 2] / d);
+        log(buf);
+      }
+      for (size_t j = 0; j < nj; ++j) {
+        const double total = RowSum(&V[j * nb], nb);
+        if (!(total > 0.0)) {
+          continue;
+        }
+        const double d = std::max(jn[j], 1.0);
+        std::string line;
+        std::snprintf(buf, sizeof(buf), "  joint %zu: %d verts at (%.3f %.3f %.3f) ->", j, int(jn[j]), jc[j * 3] / d,
+                      jc[j * 3 + 1] / d, jc[j * 3 + 2] / d);
+        line = buf;
+        for (uint32_t c : assign[j]) {
+          std::snprintf(buf, sizeof(buf), " %u(%.2f)", bones[c], V[j * nb + c] / total);
+          line += buf;
+        }
+        line += ", vote";
+        std::vector<uint32_t> order(nb);
+        for (size_t c = 0; c < nb; ++c) {
+          order[c] = uint32_t(c);
+        }
+        std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return V[j * nb + a] > V[j * nb + b]; });
+        for (size_t i = 0; i < std::min<size_t>(3, nb) && V[j * nb + order[i]] > 0.0; ++i) {
+          std::snprintf(buf, sizeof(buf), " %u(%.2f)", bones[order[i]], V[j * nb + order[i]] / total);
+          line += buf;
+        }
+        log(line);
+      }
     }
     log("  joints mapped " + std::to_string(mapped) + ", " + std::to_string(split) + " split" +
         (rehomed ? ", " + std::to_string(rehomed) + (paired ? " rigid paired by piece" : " rigid by nearest piece")
@@ -3940,7 +4029,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     }
     const std::vector<WeightKey> perVertex =
         SkinWeights(P, n, skinned ? &J : nullptr, skinned ? &W : nullptr, retail, refSpan,
-                    [this](const std::string& line) { Log(line); });
+                    [this](const std::string& line) { Log(Hex8(this->model) + line); });
     std::map<WeightKey, int> intern;
     weights.resize(n);
     for (size_t v = 0; v < n; ++v) {
@@ -4374,6 +4463,7 @@ bool Converter::Convert(const Model& model, const ConvertOptions& options, std::
     return false;
   }
   try {
+    m_state->model = options.retail;
     m_state->Convert(model, options);
   } catch (const Fail& f) {
     error = Hex8(options.retail) + ": " + f.what;
