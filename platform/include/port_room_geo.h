@@ -305,6 +305,11 @@ bool MergedDraws();
 // (an A/B check; not saved).
 void SetFrontToBack(bool on);
 bool FrontToBack();
+// Out-of-view room models in the sun's shadow map still cast into it (an A/B check; not saved).
+void SetOffscreenCasters(bool on);
+bool OffscreenCasters();
+// How many out-of-view models the last whole frame drew caster-only.
+uint32_t OffscreenCasterCount();
 // With FrontToBack, draws the cut-out models (grass, leaves) once for depth only, then shaded
 // where the depth is equal, so what they hide of each other isn't shaded. Looks the same
 // (an A/B check; not saved).

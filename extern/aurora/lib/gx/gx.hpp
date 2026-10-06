@@ -446,6 +446,7 @@ struct GXState {
   // GX_AURORA_PORT_SHADOW_*: the following draws are the world's (they cast and receive the sun's
   // shadow), and this frame's sun (shadowActive) with its uniform (gfx/shadow.hpp's Uniform).
   bool shadowCaster = false;
+  bool shadowCasterOnly = false; // they cast but aren't drawn (GXPortSetShadowCasterOnly)
   bool shadowActive = false;
   std::array<Vec4<float>, 10> shadowUniform{};
 

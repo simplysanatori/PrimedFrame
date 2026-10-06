@@ -305,6 +305,12 @@ bool set_frame(const float worldToView[3][4], const float sunDir[3], float radiu
                Uniform& out) {
   return false;
 }
+bool box_casts(const float worldToView[3][4], const float sunDir[3], float radius, const float min[3],
+               const float max[3]) {
+  return false;
+}
+void box_center(const float worldToView[3][4], float radius, float center[3]) {}
+uint32_t last_caster_count() { return 0; }
 void add_caster(const gx::DrawData& draw) {}
 bool record() { return false; }
 const wgpu::TextureView& map_view() {

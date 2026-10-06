@@ -571,7 +571,9 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
       .dstAlpha = state.dstAlpha,
       .shadowGroup = cache.shaderInfo.shadowReceive,
   };
-  gfx::push_draw_command(draw);
+  if (!state.shadowCasterOnly) {
+    gfx::push_draw_command(draw);
+  }
   if (cache.shadowCaster) {
     DrawData caster = draw;
     caster.pipeline = cache.shadowPipelineRef;
@@ -1257,7 +1259,9 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.dirty |= DirtyPipeline;
     }
   } else if (subCmd == GX_AURORA_PORT_SHADOW_CASTER) {
-    const bool on = reader.read<u8>() != 0;
+    const u8 mode = reader.read<u8>();
+    const bool on = mode != 0;
+    g_gxState.shadowCasterOnly = mode == 2;
     if (g_gxState.shadowCaster != on) {
       g_gxState.shadowCaster = on;
       g_gxState.dirty |= DirtyPipeline;

@@ -33,6 +33,14 @@ bool ensure_task();
 // when there is no sun; out is filled otherwise.
 bool set_frame(const float worldToView[3][4], const float sunDir[3], float radius, const float color[3],
                Uniform& out);
+// Whether a world box [min, max] reaches into the map set_frame would make of the same arguments
+// (any thread).
+bool box_casts(const float worldToView[3][4], const float sunDir[3], float radius, const float min[3],
+               const float max[3]);
+// The map's centre in world space for the same arguments (any thread).
+void box_center(const float worldToView[3][4], float radius, float center[3]);
+// How many draws the last recorded map had (any thread).
+uint32_t last_caster_count();
 // A draw that casts into this frame's map (FIFO processor).
 void add_caster(const gx::DrawData& draw);
 // Records the map's pass over the casters added since the last (FIFO processor).

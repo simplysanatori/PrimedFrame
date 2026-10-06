@@ -174,7 +174,36 @@ void GXPortSetShadowCaster(GXBool on) {
   GX_WRITE_U8(on ? 1 : 0);
 }
 
+void GXPortSetShadowCasterOnly(GXBool on) {
+  GX_WRITE_AURORA(GX_AURORA_PORT_SHADOW_CASTER);
+  GX_WRITE_U8(on ? 2 : 1);
+}
+
+// The last shadow frame, for GXPortShadowBoxCasts and GXPortGetShadowInfo on the game thread.
+static struct {
+  f32 worldToView[3][4];
+  f32 sunDir[3];
+  f32 color[3];
+  f32 radius = 0.f;
+} sShadowFrame;
+
+GXBool GXPortShadowBoxCasts(const f32 min[3], const f32 max[3]) {
+  return aurora::gfx::shadow::box_casts(sShadowFrame.worldToView, sShadowFrame.sunDir, sShadowFrame.radius, min, max);
+}
+
+void GXPortGetShadowInfo(f32 sunDir[3], f32 color[3], f32* radius, f32 center[3], u32* casters) {
+  std::memcpy(sunDir, sShadowFrame.sunDir, sizeof(sShadowFrame.sunDir));
+  std::memcpy(color, sShadowFrame.color, sizeof(sShadowFrame.color));
+  *radius = sShadowFrame.radius;
+  aurora::gfx::shadow::box_center(sShadowFrame.worldToView, sShadowFrame.radius, center);
+  *casters = aurora::gfx::shadow::last_caster_count();
+}
+
 void GXPortSetShadowFrame(const f32 worldToView[3][4], const f32 sunDir[3], f32 radius, const f32 color[3]) {
+  std::memcpy(sShadowFrame.worldToView, worldToView, sizeof(sShadowFrame.worldToView));
+  std::memcpy(sShadowFrame.sunDir, sunDir, sizeof(sShadowFrame.sunDir));
+  std::memcpy(sShadowFrame.color, color, sizeof(sShadowFrame.color));
+  sShadowFrame.radius = radius;
   GX_WRITE_AURORA(GX_AURORA_PORT_SHADOW_FRAME);
   for (u32 i = 0; i < 3; ++i) {
     for (u32 j = 0; j < 4; ++j) {

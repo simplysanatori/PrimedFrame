@@ -12,9 +12,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 // The sun's shadow map. set_frame fits an orthographic box around the camera, its texels snapped
@@ -48,6 +50,8 @@ State g_state;
 std::vector<gx::DrawData> g_casters;
 std::array<std::vector<gx::DrawData>, 8> g_recorded;
 uint32_t g_nextSlot = 0;
+// Read by the console from the main thread.
+std::atomic<uint32_t> g_lastCasterCount{0};
 
 uint32_t map_size() {
   static const uint32_t size = [] {
@@ -102,6 +106,50 @@ void cross(const float a[3], const float b[3], float out[3]) {
   out[1] = a[2] * b[0] - a[0] * b[2];
   out[2] = a[0] * b[1] - a[1] * b[0];
 }
+
+// The map's box: its axes (right, up, and d the way the light travels) and its centre on them.
+struct Box {
+  float right[3];
+  float up[3];
+  float d[3];
+  float cx, cy, cz;
+};
+
+} // namespace
+
+// The box is centred half its radius ahead of the camera (GX looks down -z): the eye is -R^T t,
+// and the view's z row points back at it.
+void box_center(const float worldToView[3][4], float radius, float center[3]) {
+  for (int i = 0; i < 3; ++i) {
+    const float eye = -(worldToView[0][i] * worldToView[0][3] + worldToView[1][i] * worldToView[1][3] +
+                        worldToView[2][i] * worldToView[2][3]);
+    center[i] = eye - worldToView[2][i] * radius * 0.5f;
+  }
+}
+
+namespace {
+
+bool light_box(const float worldToView[3][4], const float sunDir[3], float radius, Box& box) {
+  float* d = box.d;
+  d[0] = sunDir[0], d[1] = sunDir[1], d[2] = sunDir[2];
+  normalize(d);
+  if (!(radius > 0.f) || (d[0] == 0.f && d[1] == 0.f && d[2] == 0.f)) {
+    return false;
+  }
+  float center[3];
+  box_center(worldToView, radius, center);
+  const float upRef[3] = {std::fabs(d[2]) < 0.9f ? 0.f : 1.f, 0.f, std::fabs(d[2]) < 0.9f ? 1.f : 0.f};
+  cross(upRef, d, box.right);
+  normalize(box.right);
+  cross(d, box.right, box.up);
+  box.cx = box.right[0] * center[0] + box.right[1] * center[1] + box.right[2] * center[2];
+  box.cy = box.up[0] * center[0] + box.up[1] * center[1] + box.up[2] * center[2];
+  box.cz = d[0] * center[0] + d[1] * center[1] + d[2] * center[2];
+  return true;
+}
+
+// Casters up to four radii toward the sun still shadow the box.
+constexpr float BackRadii = 4.f;
 
 void encode(const EncoderTaskContext&, const wgpu::CommandEncoder& cmd, const void* payload, size_t payloadSize,
             void*) {
@@ -159,14 +207,14 @@ bool set_frame(const float worldToView[3][4], const float sunDir[3], float radiu
                Uniform& out) {
   // A frame's casters are the draws since its set_frame; a frame that drew no map drops them.
   g_casters.clear();
-  float d[3] = {sunDir[0], sunDir[1], sunDir[2]};
-  normalize(d);
-  if (!(radius > 0.f) || (d[0] == 0.f && d[1] == 0.f && d[2] == 0.f)) {
+  Box box;
+  if (!light_box(worldToView, sunDir, radius, box)) {
     g_state.pendingActive = false;
     g_state.mapValid = false;
     return false;
   }
   ensure_map();
+  const float* d = box.d;
 
   // view -> world: the rotation's transpose, and -R^T t.
   Matrix viewToWorld{};
@@ -180,26 +228,13 @@ bool set_frame(const float worldToView[3][4], const float sunDir[3], float radiu
   }
   viewToWorld.m[3][3] = 1.f;
 
-  // The box is centred half its radius ahead of the camera (GX looks down -z).
-  float center[3];
-  for (int i = 0; i < 3; ++i) {
-    center[i] = viewToWorld.m[i][3] - viewToWorld.m[i][2] * radius * 0.5f;
-  }
-  const float upRef[3] = {std::fabs(d[2]) < 0.9f ? 0.f : 1.f, 0.f, std::fabs(d[2]) < 0.9f ? 1.f : 0.f};
-  float right[3];
-  cross(upRef, d, right);
-  normalize(right);
-  float up[3];
-  cross(d, right, up);
-
+  const float* right = box.right;
+  const float* up = box.up;
   const float texel = 2.f * radius / static_cast<float>(g_state.size);
-  float cx = right[0] * center[0] + right[1] * center[1] + right[2] * center[2];
-  float cy = up[0] * center[0] + up[1] * center[1] + up[2] * center[2];
-  const float cz = d[0] * center[0] + d[1] * center[1] + d[2] * center[2];
-  cx = std::floor(cx / texel) * texel;
-  cy = std::floor(cy / texel) * texel;
-  // Casters up to four radii toward the sun still shadow the box.
-  const float back = 4.f * radius;
+  const float cx = std::floor(box.cx / texel) * texel;
+  const float cy = std::floor(box.cy / texel) * texel;
+  const float cz = box.cz;
+  const float back = BackRadii * radius;
   const float depthScale = 1.f / (back + radius);
   Matrix lightClip{};
   for (int i = 0; i < 3; ++i) {
@@ -238,11 +273,35 @@ bool set_frame(const float worldToView[3][4], const float sunDir[3], float radiu
   return true;
 }
 
+bool box_casts(const float worldToView[3][4], const float sunDir[3], float radius, const float min[3],
+               const float max[3]) {
+  Box box;
+  if (!light_box(worldToView, sunDir, radius, box)) {
+    return false;
+  }
+  // The world box against the map's on each of the map's axes, with a texel to spare for the snap.
+  const auto overlaps = [&](const float axis[3], float lo, float hi) {
+    float mid = 0.f;
+    float half = 0.f;
+    for (int i = 0; i < 3; ++i) {
+      mid += axis[i] * (min[i] + max[i]) * 0.5f;
+      half += std::fabs(axis[i]) * (max[i] - min[i]) * 0.5f;
+    }
+    return mid + half >= lo && mid - half <= hi;
+  };
+  // Any distance toward the sun casts: vs_shadow pancakes it onto the map's near plane.
+  const float margin = radius * (1.f + 2.f / static_cast<float>(map_size()));
+  return overlaps(box.right, box.cx - margin, box.cx + margin) && overlaps(box.up, box.cy - margin, box.cy + margin) &&
+         overlaps(box.d, -std::numeric_limits<float>::infinity(), box.cz + radius);
+}
+
 void add_caster(const gx::DrawData& draw) {
   if (g_state.pendingActive) {
     g_casters.push_back(draw);
   }
 }
+
+uint32_t last_caster_count() { return g_lastCasterCount.load(std::memory_order_relaxed); }
 
 bool record() {
   if (g_state.task == InvalidEncoderTask || !g_state.pendingActive || !g_state.mapView) {
@@ -259,6 +318,7 @@ bool record() {
     return false;
   }
   ++g_nextSlot;
+  g_lastCasterCount.store(static_cast<uint32_t>(g_recorded[slot].size()), std::memory_order_relaxed);
   g_state.mapClip = g_state.pendingClip;
   g_state.mapValid = true;
   return true;

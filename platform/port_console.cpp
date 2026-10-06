@@ -515,6 +515,8 @@ void CmdHelp() {
   Out("roomgeo lod <scale>       scale the distances where models switch to coarser levels; 0 never switches");
   Out("roomgeo sort on|off       draw opaque room models nearest first (default on)");
   Out("roomgeo prepass on|off    depth-only pass first for cut-out room models (default off)");
+  Out("roomgeo casters on|off    out-of-view room models cast the sun's shadow (default on)");
+  Out("shadow [casters on|off]   the sun's shadow map last frame: direction, colour, box, casters, and the room's suns");
   Out("roomgeo costtest <n>      PBR shading cost test: 0 off, 1 flat, 2 no lights, 3 no volume, 4 no cube, 5 no normal maps, 6 no ORM/emissive, 7 maps only, 8 no aniso, 9 no aniso or mip blend, 10 no post-processing, 11 no screen copies");
   Out("gpuselftest               render known patterns offscreen, compare the readback, log PASS/FAIL per case");
   Out("gputimes on|off|show      per-pass GPU times (timestamp queries; 60-frame averages; needs a GPU that has them)");
@@ -528,7 +530,7 @@ void CmdHelp() {
   Out("                           draw a material with a record value replaced: emissive, backlight, height,");
   Out("                           mode, kind, strength, p0..p3, or the value's index (0 to 18)");
   Out("roomenv info [<x> <y> <z>] exposure, tone curve, probe and baked ambient at the view or a point");
-  Out("view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind|drawid]");
+  Out("view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind|sun|drawid]");
   Out("                           what PBR surfaces show in place of their shaded result; drawid: every draw's");
   Out("                           serial as a flat colour (R low byte, G, B), no post-processing");
   Out("drawlog [on|off|dump <file>]  number and record every model surface drawn; dump the last frame as TSV");
@@ -1321,7 +1323,7 @@ void CmdView() {
       }
     }
     if (view < 0) {
-      return Finish("usage: view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind|drawid]");
+      return Finish("usage: view [off|albedo|normal|rough|metal|ao|ambient|reflection|glow|exposure|kind|sun|drawid]");
     }
     PortDebug::SetPbrView(view);
   }
@@ -1978,6 +1980,24 @@ void RunFrame() {
     CmdCollDump();
   } else if (name == "collision") {
     CmdCollision();
+  } else if (name == "shadow") {
+    if (sCmd.args.size() > 2 && Lower(sCmd.args[1]) == "casters" &&
+        (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
+      PortRoomGeo::SetOffscreenCasters(Lower(sCmd.args[2]) == "on");
+    }
+    f32 dir[3], color[3], center[3], radius = 0.f;
+    u32 casters = 0;
+    GXPortGetShadowInfo(dir, color, &radius, center, &casters);
+    if (radius <= 0.f) {
+      Out("shadow map off (no sun, MP_SHADOWS=0, or a scene without shadows)");
+    } else {
+      Out("light travels %.3f %.3f %.3f colour %.3f %.3f %.3f", dir[0], dir[1], dir[2], color[0], color[1], color[2]);
+      Out("map radius %.1f centre %.2f %.2f %.2f, %u caster draw(s), %u of them out-of-view room models (casters %s)",
+          radius, center[0], center[1], center[2], casters, PortRoomGeo::OffscreenCasterCount(),
+          PortRoomGeo::OffscreenCasters() ? "on" : "off");
+    }
+    OutLines(PortRoomEnv::SunInfo());
+    Finish();
   } else if (name == "view") {
     CmdView();
   } else if (name == "stats") {
@@ -2215,6 +2235,9 @@ void RunFrame() {
       } else if (arg == "sort" && sCmd.args.size() > 2 &&
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomGeo::SetFrontToBack(Lower(sCmd.args[2]) == "on");
+      } else if (arg == "casters" && sCmd.args.size() > 2 &&
+                 (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
+        PortRoomGeo::SetOffscreenCasters(Lower(sCmd.args[2]) == "on");
       } else if (arg == "prepass" && sCmd.args.size() > 2 &&
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomGeo::SetDepthPrepass(Lower(sCmd.args[2]) == "on");

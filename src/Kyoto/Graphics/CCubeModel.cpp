@@ -201,6 +201,16 @@ int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap,
   return floats;
 }
 
+int CCubeModel::PortLightmapSlot(const int idx) const {
+  const uchar* table = static_cast< const uchar* >(x0_instance.GetMaterialPointer()) +
+                       (x1c_textures->size() + 1) * 4;
+  const uint count = CBasics::SwapBytes(*reinterpret_cast< const uint* >(table));
+  table += 4;
+  const uint begin = idx != 0 ? GetMaterialOffset(table, idx) : 0;
+  const uint end = GetMaterialOffset(table, idx + 1);
+  return PortPbrRecord::LightmapSlot(table + count * 4 + end, end - begin);
+}
+
 uint CCubeModel::PortMaterialCount() const {
   const uchar* table = static_cast< const uchar* >(x0_instance.GetMaterialPointer()) +
                        (x1c_textures->size() + 1) * 4;
@@ -654,8 +664,27 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     } else {
       GXSetPBRVolume(0, nullptr);
     }
+    // Room geometry with a lookup into its room's lightmap is lit by that, per texel, in
+    // place of the volume; the material says which texcoord holds the lightmap UV.
+    const int lightmapSlot =
+        found && env.lightmap != 0 ? PortLightmapSlot(static_cast< int >(surface.GetMaterialIndex())) : -1;
+    if (lightmapSlot >= 0) {
+      f32 axes[3][3];
+      for (int row = 0; row < 3; ++row) {
+        const f32* a = env.worldToLightmap + row * 3;
+        for (int col = 0; col < 3; ++col) {
+          axes[row][col] = a[0] * viewToWorld[0][col] + a[1] * viewToWorld[1][col] + a[2] * viewToWorld[2][col];
+        }
+      }
+      GXSetPBRLightmapAttr(static_cast< GXAttr >(GX_VA_TEX0 + lightmapSlot));
+      GXSetPBRLightmap(env.lightmap, env.lightmapRect, axes);
+    } else {
+      GXSetPBRLightmapAttr(GX_VA_NULL);
+      GXSetPBRLightmap(0, nullptr, nullptr);
+    }
     // Lit by the bake, which holds the area's light, a model keeps only the runtime lights.
-    const bool baked = found && ((env.hasAmbient && env.ambientAbsolute) || env.volume != 0);
+    const bool baked =
+        found && ((env.hasAmbient && env.ambientAbsolute) || env.volume != 0 || lightmapSlot >= 0);
     GXSetPBRLightSkip(baked && !PortRoomEnv::AreaLights() ? CCubeMaterial::sPortAreaLights : 0u);
     // The frame's tone curve, when rooms are exposed as Remastered exposes them. Remastered
     // draws the opaque pass's emitted light at the room's static exposure and the sorted

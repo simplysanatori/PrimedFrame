@@ -146,6 +146,7 @@ struct Placed {
   CTransform4f base = CTransform4f::Identity();
   bool sky = false; // Instance::sky: drawn by Sky, not with the room
   float skyRadiance[3] = {};
+  float lightmap[3] = {}; // Instance::lightmap
 };
 
 // Copies of one small model that never move or change, built into one model at their world
@@ -244,6 +245,12 @@ float sMinPixels = -1.f; // < 0 until MinPixels reads MP_ROOM_GEO_MIN_PX
 bool sMergedDraws = true;
 bool sFrontToBack = true;
 bool sDepthPrepass = false;
+bool sOffscreenCasters = true;
+// Out-of-view models drawn caster-only, summed over the frame's areas (the last whole frame's in
+// sLastCasterCount), for the console.
+int sCasterFrame = -1;
+uint32_t sCasterCount = 0;
+uint32_t sLastCasterCount = 0;
 float sLodDistance = -1.f; // < 0 until LodDistance reads MP_ROOM_GEO_LOD
 bool sResident = false;
 // The mods' level of detail tables, by model id; read when the first area loads after a Reset.
@@ -949,6 +956,7 @@ void Load(uint32_t mrea, Area& area) {
     item.sky = instance.sky;
     std::copy(instance.skyRadiance, instance.skyRadiance + 3, item.skyRadiance);
     std::copy(instance.glow, instance.glow + 3, item.glow);
+    std::copy(instance.lightmap, instance.lightmap + 3, item.lightmap);
     item.wasShown = item.shown;
     if (!instance.anim.empty()) {
       item.anim = instance.anim;
@@ -1404,27 +1412,49 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     CActorLights* lights;
     const CAABox* bounds;
     const float* glow; // null for none
+    // Placed::lightmap; null for a cluster, whose members each have their own (it takes the
+    // volume instead)
+    const float* lightmap;
   };
   static std::vector< Visible > visible;
   visible.clear();
+  // Out of view but in the sun's shadow map: these only cast (a roof over the floor in view).
+  static std::vector< Visible > casters;
+  casters.clear();
   static const CTransform4f kIdentity = CTransform4f::Identity();
   const auto add = [&](Model& model, const CModel& drawn, const CTransform4f& xf, CActorLights* lights,
-                       const CAABox& bounds, const float* glow = nullptr) {
-    visible.push_back({cutout(model), distanceSq(bounds), &drawn, &xf, lights, &bounds, glow});
+                       const CAABox& bounds, const float* glow = nullptr, const float* lightmap = nullptr,
+                       bool inView = true) {
+    (inView ? visible : casters)
+        .push_back({cutout(model), distanceSq(bounds), &drawn, &xf, lights, &bounds, glow, lightmap});
+  };
+  // In view, or else whether it can cast into view: an opaque model in the shadow map's box.
+  const auto inView = [&](Model& model, const CAABox& bounds, bool& casts) {
+    if (frustum.BoxInFrustumPlanes(bounds)) {
+      return true;
+    }
+    const float lo[3] = {bounds.GetMinPoint().GetX(), bounds.GetMinPoint().GetY(), bounds.GetMinPoint().GetZ()};
+    const float hi[3] = {bounds.GetMaxPoint().GetX(), bounds.GetMaxPoint().GetY(), bounds.GetMaxPoint().GetZ()};
+    casts = sOffscreenCasters && !cutout(model) && GXPortShadowBoxCasts(lo, hi);
+    return false;
   };
   for (Cluster& cluster : area.clusters) {
     cluster.split = !sMergedDraws;
     for (const size_t i : cluster.members) {
       cluster.split = cluster.split || !area.items[i].shown;
     }
-    if (cluster.split || area.models[cluster.model].hidden || !frustum.BoxInFrustumPlanes(cluster.bounds) ||
-        tooSmall(cluster.bounds)) {
+    bool casts = false;
+    if (cluster.split || area.models[cluster.model].hidden || tooSmall(cluster.bounds) ||
+        (!inView(area.models[cluster.model], cluster.bounds, casts) && !casts)) {
       continue;
     }
     light(cluster.lights, cluster.areaLit, cluster.bounds);
     const int level = pickLevel(area.models[cluster.model], cluster.levels.size(), cluster.bounds, cluster.scaleSq);
     add(area.models[cluster.model], level < 0 ? *cluster.merged : *cluster.levels[level].merged, kIdentity,
-        cluster.lights.get(), cluster.bounds);
+        cluster.lights.get(), cluster.bounds, nullptr, nullptr, !casts);
+    if (casts) {
+      continue;
+    }
     sDrawn += int(cluster.members.size());
     if (level >= 0) {
       sDrawnCoarse += int(cluster.members.size());
@@ -1445,10 +1475,8 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       item.bounds = model.bounds.GetTransformedAABox(item.xf);
       item.bounded = true;
     }
-    if (!frustum.BoxInFrustumPlanes(item.bounds)) {
-      continue;
-    }
-    if (tooSmall(item.bounds)) {
+    bool casts = false;
+    if (tooSmall(item.bounds) || (!inView(model, item.bounds, casts) && (!casts || item.alpha < 1.f))) {
       continue;
     }
     light(item.lights, item.areaLit, item.bounds);
@@ -1459,6 +1487,10 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     item.level = pickLevel(model, model.levels.size(), item.bounds, item.scaleSq);
     const CModelData& data = item.level < 0 ? *model.data : *model.levels[item.level].data;
     const CModel& cmodel = **data.PickStaticModel(CModelData::kWM_Normal);
+    if (casts) {
+      add(model, cmodel, item.xf, item.lights.get(), item.bounds, nullptr, nullptr, false);
+      continue;
+    }
     if (item.level >= 0) {
       ++sDrawnCoarse;
     }
@@ -1467,7 +1499,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       ++sDrawn;
       continue;
     }
-    add(model, cmodel, item.xf, item.lights.get(), item.bounds, item.glows ? item.glow : nullptr);
+    add(model, cmodel, item.xf, item.lights.get(), item.bounds, item.glows ? item.glow : nullptr, item.lightmap);
     if (!cmodel.IsDefinitelyOpaque()) {
       area.sorted.push_back(&item);
     }
@@ -1485,6 +1517,8 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       const CVector3f centre = draw.bounds->GetCenterPoint();
       const float at[3] = {centre.GetX(), centre.GetY(), centre.GetZ()};
       PortRoomEnv::SetVolumeHint(gameArea.GetAreaAssetId(), at);
+      static const float kNone[3] = {};
+      PortRoomEnv::SetLightmapHint(draw.lightmap != nullptr ? draw.lightmap : kNone);
     }
     gpRender->SetModelMatrix(*draw.xf);
     draw.lights->ActivateLights();
@@ -1508,6 +1542,17 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     GXPortSetDepthPrepass(2);
     std::for_each(firstCutout, visible.end(), drawOne);
     GXPortSetDepthPrepass(0);
+  }
+  if (sCasterFrame != CGraphics::GetFrameCounter()) {
+    sCasterFrame = CGraphics::GetFrameCounter();
+    sLastCasterCount = sCasterCount;
+    sCasterCount = 0;
+  }
+  sCasterCount += static_cast< uint32_t >(casters.size());
+  if (!casters.empty()) {
+    GXPortSetShadowCasterOnly(GX_TRUE);
+    std::for_each(casters.begin(), casters.end(), drawOne);
+    GXPortSetShadowCasterOnly(GX_FALSE);
   }
   gpRender->SetAmbientColor(CColor::White());
   CGraphics::DisableAllLights();
@@ -1553,6 +1598,7 @@ void DrawSorted(const void* drawable) {
     const CVector3f centre = item.bounds.GetCenterPoint();
     const float at[3] = {centre.GetX(), centre.GetY(), centre.GetZ()};
     PortRoomEnv::SetVolumeHint(item.volume, at);
+    PortRoomEnv::SetLightmapHint(item.lightmap);
   }
   gpRender->SetModelMatrix(item.xf);
   item.lights->ActivateLights();
@@ -2186,6 +2232,9 @@ void SetMergedDraws(bool on) { sMergedDraws = on; }
 bool MergedDraws() { return sMergedDraws; }
 
 void SetFrontToBack(bool on) { sFrontToBack = on; }
+void SetOffscreenCasters(bool on) { sOffscreenCasters = on; }
+bool OffscreenCasters() { return sOffscreenCasters; }
+uint32_t OffscreenCasterCount() { return sLastCasterCount; }
 
 bool FrontToBack() { return sFrontToBack; }
 

@@ -2795,9 +2795,9 @@ bool ViewRay(float origin[3], float forward[3]) {
 namespace {
 const char* const kPbrViews[] = {"off",     "albedo",     "normal", "rough",    "metal", "ao",
                                  "ambient", "reflection", "glow",   "exposure", "kind",
-                                 "drawid"};
+                                 "sun",     "drawid"};
 // The last entry is not a shader view but Aurora's draw id mode (GXPortSetDrawIdMode).
-constexpr int kDrawIdView = 11;
+constexpr int kDrawIdView = 12;
 int sPbrView = 0;
 } // namespace
 void NoteDrawIdMode(bool on) { CCubeModel::PortSetDrawIds(on); }

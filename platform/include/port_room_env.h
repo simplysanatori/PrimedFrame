@@ -459,6 +459,11 @@ struct Selection {
   float volumeLevel = 0.f;      // what the baked light is multiplied by
   float volumeBias = 0.f;       // metres off the surface the sample is taken
   float volumeDiagnostic = 0.f; // MP_ROOM_ENV_VOLUME_SHOW: 1 texture coordinates, 2 the light
+  // For GXSetPBRLightmap, when the model was announced with SetLightmapHint: the area's baked
+  // lightmap, which then lights it in place of the volume (0: none).
+  uint32_t lightmap = 0;
+  float lightmapRect[4] = {};    // offU, offV, scale, level
+  float worldToLightmap[9] = {}; // rows of world direction -> the lightmap's axes
 };
 // The room cube and baked ambient for a model at `pos`; false when no loaded area has
 // either (or MP_ROOM_ENV=0).
@@ -468,6 +473,10 @@ bool Select(const float pos[3], Selection& out);
 // grid as a volume (and picks the cube by that point, not the model's origin); Clear
 // when it is done. MP_ROOM_ENV_VOLUME=0 turns volumes off.
 void SetVolumeHint(uint32_t mrea, const float centre[3]);
+// After SetVolumeHint: the instance's lookup into its area's lightmap (offU, offV, scale; see
+// PortRoomGeo's LMAP), until ClearVolumeHint. A scale of 0 is none. MP_ROOM_ENV_LIGHTMAP=0
+// turns lightmaps off; MP_ROOM_ENV_LIGHTMAP_SCALE multiplies their light.
+void SetLightmapHint(const float lookup[3]);
 void ClearVolumeHint();
 // Whether a model announced for this area would get a volume: false until all of the
 // area's volumes are on the GPU.
@@ -529,6 +538,8 @@ bool Backlight(float& top, float& back);
 // the light's at the frame's exposure, over pi. False when there is none, no file, the rooms
 // aren't exposed (RoomExposed), or MP_ROOM_ENV is off.
 bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3], float color[3]);
+// The camera area's suns, one line each, and what the last Sun call made of them (console).
+std::string SunInfo();
 // Remastered's volumetric fog hints (CVolumetricFogManager), picked as the grade's are.
 // UpdateFog runs once a frame, `dt` seconds long, before the world is drawn. A change of the
 // camera area's pick starts an interpolation from the fog on screen (SVolumetricFogDynamicData's

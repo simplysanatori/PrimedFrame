@@ -1951,6 +1951,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                              0.5 * f32((pbr_dk >> 1) & 1) + 0.25 * f32(pbr_dk == 0),
                              0.5 * f32((pbr_dk >> 2) & 1) + 0.25 * f32(pbr_dk == 0)) * 1.6;
           }}
+          if (pbr_dv > 10.5) {{
+              // How much of the sun's shadow map lets through (white lit, black shadowed); magenta
+              // where the surface doesn't take the sun's shadow.
+              pbr_dc = vec3f(1.0, 0.0, 1.0);
+              // pbr-sun-view
+          }}
           prev = vec4f(clamp(pbr_dc, vec3f(0.0), vec3f(1.0)), prev.a);
       }}
       if (ubuf.pbr_volume[5].w > 0.5) {{
@@ -1995,7 +2001,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   };
   // A baked lightmap (GX_AURORA_SET_PBR_LIGHTMAP) replaces the diffuse ambient: its level L0 in layer 0 and the
   // direction's x, y, z in layers 1-3, each relative to L0, along the three axes in pbr_lmap_axes. The volume's
-  // reflection stays. Cost test 3 (no ambient volume) goes without it too.
+  // reflection stays, dimmed where the lightmap is dark. Cost test 3 (no ambient volume) goes without it too.
   cut("// pbr-lightmap", lightmapUsed && costTest != 3 ? R"""(if (ubuf.pbr_lmap_rect.z != 0.0) {
           let pbr_luv = ubuf.pbr_lmap_rect.xy + in.pbr_lmuv * ubuf.pbr_lmap_rect.z;
           let pbr_l0 = textureSampleLevel(pbr_lmap, pbr_cube_samp, pbr_luv, 0, 0.0).rgb;
@@ -2006,7 +2012,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                              dot(ubuf.pbr_lmap_axes[2].xyz, pbr_n));
           pbr_ambd = max(pbr_l0 * (1.0 + pbr_l1x * pbr_ln.x + pbr_l1y * pbr_ln.y + pbr_l1z * pbr_ln.z),
                          vec3f(0.0)) * ubuf.pbr_lmap_rect.w * pbr_blcm;
-          pbr_vdiag = pbr_ambd;
+          // Remastered occludes the probe's reflection by the raw level: none where L0 is 0, all
+          // from 1 up (its shader's mix(0, probe intensity, saturate(max(L0)))).
+          pbr_envspec *= clamp(max(pbr_l0.r, max(pbr_l0.g, pbr_l0.b)), 0.0, 1.0);
+          if (ubuf.pbr_volume[5].w > 1.5 && ubuf.pbr_volume[5].w < 2.5) {
+              pbr_vdiag = pbr_ambd;
+          }
       })""" : "");
   if (costTest == 3) {
     cut("if (ubuf.pbr_volume[3].w > 0.0) {", "if (false) {");
@@ -2185,7 +2196,12 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     }
     shadowVs += fmt::format("\n    let {} = {};"
                             "\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
-                            "\n    return vec4f(mv_pos, 1.0) * ubuf.shadow_caster;\n}}",
+                            "\n    var pos = vec4f(mv_pos, 1.0) * ubuf.shadow_caster;"
+                            // Pancaked: a caster further toward the sun than the map reaches (a roof high
+                            // over the floor) sits on its near plane rather than being clipped. The map is
+                            // orthographic, so that moves nothing across it.
+                            "\n    pos.z = max(pos.z, 0.0);"
+                            "\n    return pos;\n}}",
                             vtx_attr(config, GX_VA_POS), attr_load(config, GX_VA_POS, vidxAttr),
                             vtx_attr(config, GX_VA_POS));
   }
@@ -2844,6 +2860,9 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
           let edge = max(max(abs(sp.x), abs(sp.y)), select(0.0, 1.0, sp.z >= 1.0));
           sun_vis = mix(sum / 9.0, 1.0, smoothstep(0.9, 1.0, edge));
       })""");
+      if (pbr.find("// pbr-sun-view") != std::string::npos) {
+        put("// pbr-sun-view", "pbr_dc = vec3f(sun_vis);");
+      }
       if (pbr.find("// pbr-sun-light") != std::string::npos) {
         put("// pbr-sun-light", R"""(if (dist > 1e5 && dot(ldir, ubuf.shadow_dir.xyz) > 0.995) {
               rad *= sun_vis;

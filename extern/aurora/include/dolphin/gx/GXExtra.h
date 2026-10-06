@@ -283,8 +283,16 @@ GXBool GXPortFrameRadiance(f32 out[3], u32* serial);
 // none) and an extra light's colour (0 for none: the sun then only shadows the room's directional
 // light along that direction). Lit PBR draws made with GXPortSetShadowCaster on cast into the map
 // and receive the previous frame's; GXPortRenderShadowMap draws the map after the frame's casters.
+// GXPortSetShadowCasterOnly makes the following draws (with the caster on) cast but not draw, for
+// what is outside the view; GXPortShadowBoxCasts says whether a world box reaches into the map of
+// the last GXPortSetShadowFrame (the FIFO's, so a frame behind the game thread).
 void GXPortSetShadowCaster(GXBool on);
+void GXPortSetShadowCasterOnly(GXBool on);
 void GXPortSetShadowFrame(const f32 worldToView[3][4], const f32 sunDir[3], f32 radius, const f32 color[3]);
+GXBool GXPortShadowBoxCasts(const f32 min[3], const f32 max[3]);
+// For the console: the last frame's sun direction, colour, radius (0: no map) and the map's centre
+// in world space, and how many draws the last map drawn had.
+void GXPortGetShadowInfo(f32 sunDir[3], f32 color[3], f32* radius, f32 center[3], u32* casters);
 GXBool GXPortRenderShadowMap(void);
 
 void GXColor4f32(float r, float g, float b, float a);

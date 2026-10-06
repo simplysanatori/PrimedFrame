@@ -50,6 +50,7 @@ struct Area {
   uint32_t serial = 0;  // of this load, which the worker's jobs for it carry
   std::vector<GpuCube> cubes;
   std::vector<GpuVolume> volumes; // one a grid
+  uint32_t lightmap = 0; // GXCreatePBRLightmap's id; 0 until the worker has made it, or none
   float exposure = 0.f; // what takes the room's radiance to the display's range; 0: unknown
   float tone[3][4] = {}; // its tone curve
   bool hasGeo = false;   // the mod replaces its geometry
@@ -127,7 +128,7 @@ uint32_t sNextSerial = 1;
 // File, which stays as it is until the job is done: Free cancels the area's jobs, and
 // waits for the one running to stop, before the file goes, and Keep is the area's last.
 // Defined after sAreas so that it is destroyed, and its thread joined, first.
-enum class JobKind { Cube, Volume, Keep };
+enum class JobKind { Cube, Volume, Lightmap, Keep };
 
 struct Job {
   JobKind kind = JobKind::Cube;
@@ -135,6 +136,7 @@ struct Job {
   uint32_t serial = 0; // Area::serial
   size_t index = 0;    // of the cube or grid in the file
   const File* file = nullptr;
+  bool raw = false; // Lightmap: the device takes its BC6H blocks as they are
 };
 
 struct Result {
@@ -145,6 +147,10 @@ struct Result {
   std::vector<uint16_t> cube;  // RGBA16F, as GXCreatePBRCube takes it
   std::vector<uint8_t> volume; // as GXCreatePBRVolume takes it, or Keep's bytes
   std::vector<size_t> offsets; // Keep: where each grid's points, then each grade's LUT, are
+  // Lightmap: its size, and whether `volume` holds its BC6H blocks or `cube` its RGBA16F.
+  uint32_t width = 0;
+  uint32_t height = 0;
+  bool raw = false;
 };
 
 struct Worker {
@@ -188,6 +194,7 @@ bool sHint = false;
 bool sBrdfSent = false; // the mods' brdf.lut, or the lack of one, is with Aurora
 uint32_t sHintArea = 0;
 float sHintCentre[3];
+float sHintLightmap[3] = {}; // SetLightmapHint; scale 0: none
 int sEnabled = -1;
 int sExposure = -1;
 int sBloom = -1;
@@ -327,6 +334,10 @@ void Free(Area& area) {
     }
   }
   area.volumes.clear();
+  if (area.lightmap != 0) {
+    GXDestroyPBRLightmap(area.lightmap);
+    area.lightmap = 0;
+  }
 }
 
 uint16_t FloatToHalf(float value) {
@@ -342,6 +353,13 @@ uint16_t FloatToHalf(float value) {
     return uint16_t(sign | 0x7BFF); // the largest half, for anything past it
   }
   return uint16_t(sign | (exponent << 10) | (mantissa >> 13));
+}
+
+// MP_ROOM_ENV_LIGHTMAP: the rooms' baked lightmaps, which light room geometry in place of
+// the coarser volume.
+bool Lightmaps() {
+  static const bool on = port::EnvFlag("MP_ROOM_ENV_LIGHTMAP", true);
+  return on;
 }
 
 
@@ -777,7 +795,17 @@ void Load(uint32_t mrea, Area& area) {
       sWorker.Submit({JobKind::Cube, mrea, area.serial, i, &area.file});
     }
   }
-  if (!area.file.cubes.empty()) {
+  const Lightmap& lightmap = area.file.lightmap;
+  const bool lightmapFits = lightmap.width != 0 && lightmap.height != 0 && lightmap.layers >= 4 &&
+                            lightmap.offset <= area.file.data.size() &&
+                            lightmap.length <= area.file.data.size() - lightmap.offset;
+  if (lightmapFits && Lightmaps()) {
+    // BC6H wants whole blocks; a device without it gets the colours.
+    const bool raw = GXPBRLightmapBC6HSupported() && lightmap.width % 4 == 0 && lightmap.height % 4 == 0;
+    sWorker.Submit({JobKind::Lightmap, mrea, area.serial, 0, &area.file, raw});
+  }
+  // Drops the cubes' and lightmap's blocks once they are made.
+  if (!area.file.cubes.empty() || lightmapFits) {
     sWorker.Submit({JobKind::Keep, mrea, area.serial, 0, &area.file});
   }
 }
@@ -794,9 +822,9 @@ float LightGain() {
   return gain;
 }
 
-// What an area keeps of its file once its cubes are made: the grids' points, which
+// What an area keeps of its file once its cubes and lightmap are made: the grids' points, which
 // SampleGrid reads for models every frame, and the grades' LUTs, handed to Aurora when one
-// is first shown; with where each starts in the copy. The cubes' blocks are left behind.
+// is first shown; with where each starts in the copy. The cubes' and lightmap's blocks are left behind.
 void KeepData(const File& file, std::vector<uint8_t>& kept, std::vector<size_t>& offsets) {
   constexpr size_t kPoint = 24;
   size_t bytes = 0;
@@ -841,6 +869,67 @@ bool DecodeCube(const File& file, const Cube& cube, std::vector<uint16_t>& texel
       uint16_t* out = texels.data() + (perFace * face + mipOffset[mip]) / 2;
       PortRemastered::DecodeBc6hFace(blocks, edge, cube.isSigned, out);
       blocks += blockBytes;
+    }
+  }
+  return true;
+}
+
+// A room's lightmap as GXCreatePBRLightmap takes it: its blocks as they are when `raw`, else
+// decoded to RGBA16F and halved until a layer has at most kMaxLightmapTexels (a 2888 square
+// of four layers is 267 MB at full size). On the worker; false when cancelled.
+constexpr size_t kMaxLightmapTexels = size_t(1) << 21;
+
+bool MakeLightmap(const File& file, bool raw, Result& out, const std::atomic<bool>& cancel) {
+  const Lightmap& map = file.lightmap;
+  const uint8_t* const blocks = file.data.data() + map.offset;
+  out.raw = raw;
+  out.width = map.width;
+  out.height = map.height;
+  if (raw) {
+    out.volume.assign(blocks, blocks + map.length);
+    return true;
+  }
+  uint32_t shift = 0;
+  while (size_t(std::max(map.width >> shift, 1u)) * std::max(map.height >> shift, 1u) > kMaxLightmapTexels) {
+    ++shift;
+  }
+  // Rounded up, so the edge texels count too (the box loop clamps).
+  const uint32_t width = std::max((map.width + (1u << shift) - 1) >> shift, 1u);
+  const uint32_t height = std::max((map.height + (1u << shift) - 1) >> shift, 1u);
+  const size_t layerBytes = map.length / map.layers;
+  std::vector<uint16_t> full(size_t(map.width) * map.height * 4);
+  out.width = width;
+  out.height = height;
+  out.cube.assign(size_t(width) * height * 4 * map.layers, 0);
+  for (uint32_t layer = 0; layer < map.layers; ++layer) {
+    if (cancel.load(std::memory_order_relaxed)) {
+      return false;
+    }
+    PortRemastered::DecodeBc6hImage(blocks + layerBytes * layer, map.width, map.height, map.isSigned, full.data());
+    uint16_t* const dst = out.cube.data() + size_t(width) * height * 4 * layer;
+    if (shift == 0) {
+      std::copy(full.begin(), full.end(), dst);
+      continue;
+    }
+    // Each texel the average of those under it at full size.
+    const uint32_t step = 1u << shift;
+    for (uint32_t y = 0; y < height; ++y) {
+      for (uint32_t x = 0; x < width; ++x) {
+        float sum[4] = {};
+        uint32_t count = 0;
+        for (uint32_t sy = y * step; sy < std::min((y + 1) * step, map.height); ++sy) {
+          for (uint32_t sx = x * step; sx < std::min((x + 1) * step, map.width); ++sx) {
+            const uint16_t* t = full.data() + (size_t(sy) * map.width + sx) * 4;
+            for (int c = 0; c < 4; ++c) {
+              sum[c] += HalfToFloat(t[c]);
+            }
+            ++count;
+          }
+        }
+        for (int c = 0; c < 4; ++c) {
+          dst[(size_t(y) * width + x) * 4 + c] = FloatToHalf(sum[c] / float(count));
+        }
+      }
     }
   }
   return true;
@@ -945,6 +1034,8 @@ bool Worker::Do(const Job& job, Result& out) {
     return DecodeCube(*job.file, job.file->cubes[job.index], out.cube, cancel);
   case JobKind::Volume:
     return FillVolume(*job.file, job.file->grids[job.index], out.volume, cancel);
+  case JobKind::Lightmap:
+    return MakeLightmap(*job.file, job.raw, out, cancel);
   case JobKind::Keep:
     KeepData(*job.file, out.volume, out.offsets);
     return true;
@@ -977,6 +1068,23 @@ void TakeResults() {
       for (Cube& cube : file.cubes) {
         cube.offset = cube.length = 0; // its blocks are gone
       }
+      continue;
+    }
+    if (result.kind == JobKind::Lightmap) {
+      const Lightmap& lightmap = file.lightmap;
+      const GXPBRLightmapFormat format = !result.raw         ? GX_PBR_LIGHTMAP_RGBA16F
+                                         : lightmap.isSigned ? GX_PBR_LIGHTMAP_BC6H_SFLOAT
+                                                             : GX_PBR_LIGHTMAP_BC6H_UFLOAT;
+      const void* data = result.raw ? static_cast<const void*>(result.volume.data()) : result.cube.data();
+      const size_t bytes = result.raw ? result.volume.size() : result.cube.size() * 2;
+      if (area.lightmap != 0) {
+        GXDestroyPBRLightmap(area.lightmap);
+      }
+      area.lightmap = GXCreatePBRLightmap(result.width, result.height, lightmap.layers, format, data, uint32_t(bytes));
+      PortLog::Write("room env: %08X lightmap %u %ux%u x %u layers%s\n", result.area, area.lightmap, result.width,
+                     result.height, lightmap.layers, result.raw ? " (BC6H)" : " (RGBA16F)");
+      Invalidate();
+      gpu = false;
       continue;
     }
     if (result.kind == JobKind::Cube) {
@@ -1543,7 +1651,14 @@ void UpdateBacklight(LayerActive layerActive, void* context) {
   }
 }
 
+namespace {
+// What the last Sun call made of each of the camera area's suns, for SunInfo.
+enum class SunWhy : char { Picked, Weaker, Off, Below, Layer };
+std::vector< SunWhy > sSunWhy;
+}
+
 bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3], float color[3]) {
+  sSunWhy.clear();
   if (!Enabled()) {
     return false;
   }
@@ -1556,16 +1671,27 @@ bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3],
   if (exposure <= 0.f) {
     return false;
   }
+  const std::vector< SunLight >& suns = view->second.file.suns;
+  sSunWhy.assign(suns.size(), SunWhy::Weaker);
   const SunLight* pick = nullptr;
   float pickStrength = 0.f;
-  for (const SunLight& s : view->second.file.suns) {
+  for (size_t i = 0; i < suns.size(); ++i) {
+    const SunLight& s = suns[i];
     // The room geometry's script switches the hangar's suns as it does its geometry.
     const int shown = s.group != PortRoomGeo::kNoGroup ? PortRoomGeo::GroupShown(sViewArea, s.group) : -1;
     // A light from below the floor is a bounce fill (the hangar has warm ones), not a sun.
     // The intro's suns are its shots' lighting: the next shot hides them, but a skipped intro
     // (randomprime's patches) never plays it, and they'd light the hangar from overhead.
-    if (!(shown >= 0 ? shown == 1 : s.on) || s.toSun[2] <= 0.f ||
-        (s.layer >= 0 && (!cinematic || (layerActive != nullptr && !layerActive(s.layer, context))))) {
+    if (!(shown >= 0 ? shown == 1 : s.on)) {
+      sSunWhy[i] = SunWhy::Off;
+      continue;
+    }
+    if (s.toSun[2] <= 0.f) {
+      sSunWhy[i] = SunWhy::Below;
+      continue;
+    }
+    if (s.layer >= 0 && (!cinematic || (layerActive != nullptr && !layerActive(s.layer, context)))) {
+      sSunWhy[i] = SunWhy::Layer;
       continue;
     }
     const float strength = s.color[0] + s.color[1] + s.color[2];
@@ -1577,6 +1703,7 @@ bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3],
   if (pick == nullptr) {
     return false;
   }
+  sSunWhy[size_t(pick - suns.data())] = SunWhy::Picked;
   // Remastered builds the light from colour times intensity alone (NLightLoaders::build_light)
   // and its Lambert term has the 1/pi, which the PBR shader's lights leave out; the exposure,
   // applied in Remastered's tonemap pass, is in the port's light colours, as the baked light's.
@@ -1586,6 +1713,30 @@ bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3],
     color[i] = pick->color[i] * scale;
   }
   return true;
+}
+
+std::string SunInfo() {
+  const auto view = sAreas.find(sViewArea);
+  if (view == sAreas.end() || !view->second.hasFile) {
+    return "no room file for the camera area";
+  }
+  const std::vector< SunLight >& suns = view->second.file.suns;
+  if (suns.empty()) {
+    return "the camera area's room file has no suns";
+  }
+  static const char* const kWhy[] = {"PICKED", "weaker", "off", "from below", "story layer"};
+  std::string out;
+  for (size_t i = 0; i < suns.size(); ++i) {
+    const SunLight& s = suns[i];
+    char line[256];
+    std::snprintf(line, sizeof(line), "sun %zu: to sun %.3f %.3f %.3f colour %.3f %.3f %.3f layer %d group %s%s: %s\n",
+                  i, s.toSun[0], s.toSun[1], s.toSun[2], s.color[0], s.color[1], s.color[2], int(s.layer),
+                  s.group != PortRoomGeo::kNoGroup ? std::to_string(s.group).c_str() : "-", s.on ? "" : " (starts off)",
+                  i < sSunWhy.size() ? kWhy[int(sSunWhy[i])] : "not looked at");
+    out += line;
+  }
+  out.pop_back();
+  return out;
 }
 
 bool Backlight(float& top, float& back) {
@@ -2097,7 +2248,12 @@ void SetVolumeHint(uint32_t mrea, const float centre[3]) {
   std::memcpy(sHintCentre, centre, sizeof(sHintCentre));
 }
 
-void ClearVolumeHint() { sHint = false; }
+void SetLightmapHint(const float lookup[3]) { std::memcpy(sHintLightmap, lookup, sizeof(sHintLightmap)); }
+
+void ClearVolumeHint() {
+  sHint = false;
+  sHintLightmap[2] = 0.f;
+}
 
 bool HasVolume(uint32_t mrea) {
   if (!Enabled() || !VolumesEnabled()) {
@@ -2465,6 +2621,41 @@ bool Compose(const Located& located, Selection& out) {
   return out.cube != 0 || out.hasAmbient || out.volume != 0;
 }
 
+// The hinted instance's lookup into its area's lightmap, once that is on the GPU; outside the
+// cache, which is by position, since instances that share a middle need not share a lookup.
+bool AddLightmap(Selection& out) {
+  out.lightmap = 0;
+  if (!sHint || !(sHintLightmap[2] > 0.f) || !Enabled() || !VolumesEnabled()) {
+    return false;
+  }
+  const auto found = sAreas.find(sHintArea);
+  if (found == sAreas.end() || found->second.lightmap == 0) {
+    return false;
+  }
+  const Area& area = found->second;
+  // Like the volume's level (see Compose): the lightmap holds irradiance as the grid does.
+  // Without the room's exposure, the grid's average comes out at the key.
+  float level;
+  const float exposure = RoomExposed() ? FrameExposure(area) : 0.f;
+  if (exposure > 0.f) {
+    level = exposure * LightGain();
+  } else if (!area.file.grids.empty() && area.file.grids[0].average > 0.f) {
+    level = 0.18f / area.file.grids[0].average;
+  } else {
+    return false;
+  }
+  static const float scale = port::EnvFloat("MP_ROOM_ENV_LIGHTMAP_SCALE", 1.f);
+  out.lightmap = area.lightmap;
+  out.lightmapRect[0] = sHintLightmap[0];
+  out.lightmapRect[1] = sHintLightmap[1];
+  out.lightmapRect[2] = sHintLightmap[2];
+  out.lightmapRect[3] = level * scale / 3.14159265f;
+  // Remastered's axes, as the room's grid has them: world (x, y, z) -> (-x, z, y).
+  static const float kAxes[9] = {-1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f, 0.f};
+  std::memcpy(out.worldToLightmap, kAxes, sizeof(kAxes));
+  return true;
+}
+
 } // namespace
 
 bool Select(const float origin[3], Selection& out) {
@@ -2475,7 +2666,7 @@ bool Select(const float origin[3], Selection& out) {
   key.hintArea = sHint ? sHintArea : 0;
   if (sLastValid && key == sLastKey) {
     out = sLast;
-    return sLastFound;
+    return AddLightmap(out) || sLastFound;
   }
   sLastKey = key;
   sLastValid = true;
@@ -2508,7 +2699,7 @@ bool Select(const float origin[3], Selection& out) {
   }
   sLastFound = Compose(*located, sLast);
   out = sLast;
-  return sLastFound;
+  return AddLightmap(out) || sLastFound;
 }
 
 void Stats(int& areas, int& probes, int& cubes, int& grids) {

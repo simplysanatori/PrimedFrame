@@ -124,6 +124,8 @@ public:
   int PortReadPBRMaterial(const int idx, float values[19], uint* wrap = nullptr,
                           float lightScale[2] = nullptr, uint* cube = nullptr, float* shield = nullptr) const;
   uint PortMaterialCount() const;
+  // The vertex texcoord slot of the material's lightmap UV (its 'LMUV' trailer), or -1.
+  int PortLightmapSlot(const int idx) const;
   // For a PBR material drawn by its embedded TEV: its emissive konst follows the room's
   // exposure as the PBR path's glow does (the converter bakes a fixed 0.10 there).
   void PortSetFallbackGlow(const CCubeMaterial& material, int idx, bool frameExposed) const;
