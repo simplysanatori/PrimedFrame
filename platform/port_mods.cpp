@@ -466,6 +466,11 @@ void Initialize() {
         }
         continue;
       }
+      // The Remastered import's diagnostics (reports/*.tsv), not game files.
+      if (it.depth() == 0 && name == "reports" && it->is_directory(ec)) {
+        it.disable_recursion_pending();
+        continue;
+      }
       if (it->is_regular_file(ec)) {
         files.push_back(it->path());
       }
