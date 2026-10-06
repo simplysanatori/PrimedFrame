@@ -2,9 +2,11 @@
 
 #include "port_log_redact.h"
 #include "port_paths.h"
+#include "port_watchdog.h"
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <system_error>
@@ -472,6 +474,9 @@ void Write(const char* tag, const char* text) {
   if (sFile < 0 || text == nullptr) {
     return;
   }
+  // A lost device is fatal and the line before the abort; the drivers' last words are
+  // in logcat. The dump writes through here under its own tag, which is not "aurora".
+  const bool deviceLost = std::strcmp(tag, "aurora") == 0 && std::strstr(text, "Device lost") != nullptr;
   char line[2304];
   size_t size = static_cast< size_t >(std::snprintf(line, sizeof(line), "%s: %s", tag, text));
   if (size >= sizeof(line)) {
@@ -486,6 +491,9 @@ void Write(const char* tag, const char* text) {
   WriteAll(sFile, line, static_cast< ssize_t >(size));
   if (sShared >= 0) {
     WriteAll(sShared, line, static_cast< ssize_t >(size));
+  }
+  if (deviceLost) {
+    PortWatchdog::LogcatDump("device lost", false);
   }
 #else
   (void)tag;

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <cerrno>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -24,6 +25,7 @@
 #include <string>
 #else
 #include <dlfcn.h>
+#include <sys/syscall.h>
 #include <ucontext.h>
 #include <unistd.h>
 #include <unwind.h>
@@ -319,6 +321,8 @@ void OnInvalidParameter(const wchar_t*, const wchar_t*, const wchar_t*, unsigned
 // one (a core dump), or on Android the one that writes the tombstone.
 constexpr int kSignals[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT, SIGTRAP};
 constexpr int kSignalCount = sizeof(kSignals) / sizeof(kSignals[0]);
+// What RequestStack sends; not a crash, so it has no previous handler to chain to.
+constexpr int kStackSignal = SIGUSR2;
 struct sigaction sPrevious[kSignalCount];
 
 void Emit(Line& line) {
@@ -372,17 +376,33 @@ uintptr_t FaultAddress(void* context) {
 #endif
 }
 
+struct Walk {
+  const char* prefix;
+  int frame;
+};
+
 _Unwind_Reason_Code OnFrame(_Unwind_Context* context, void* argument) {
-  int& frame = *static_cast< int* >(argument);
+  Walk& walk = *static_cast< Walk* >(argument);
   const uintptr_t pc = _Unwind_GetIP(context);
   if (pc == 0) {
     return _URC_END_OF_STACK;
   }
   Line line;
-  line.Add("port:   #").Dec(static_cast< unsigned long >(frame)).Add(" ");
+  line.Add(walk.prefix).Dec(static_cast< unsigned long >(walk.frame)).Add(" ");
   Describe(line, pc);
   Emit(line);
-  return ++frame < kMaxFrames ? _URC_NO_REASON : _URC_END_OF_STACK;
+  return ++walk.frame < kMaxFrames ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+
+// The watchdog's request (RequestStack): runs on the thread that was asked, writes its
+// stack and returns, so the game goes on. Same rules as the crash report's handler.
+void OnStackSignal(int, siginfo_t*, void*) {
+  const int savedErrno = errno;
+  Line title;
+  Emit(title.Add("watchdog: main thread stack:"));
+  Walk walk{"watchdog:   #", 0};
+  _Unwind_Backtrace(OnFrame, &walk);
+  errno = savedErrno;
 }
 
 void OnSignal(int signal, siginfo_t* info, void* context) {
@@ -404,8 +424,8 @@ void OnSignal(int signal, siginfo_t* info, void* context) {
     // Starts in this handler; the frames after the signal frame are the crashed code.
     Line title;
     Emit(title.Add("port: stack:"));
-    int frame = 0;
-    _Unwind_Backtrace(OnFrame, &frame);
+    Walk walk{"port:   #", 0};
+    _Unwind_Backtrace(OnFrame, &walk);
   }
   for (int i = 0; i < kSignalCount; ++i) {
     if (kSignals[i] == signal) {
@@ -461,6 +481,11 @@ void Install() {
   _Unwind_Backtrace(CountFrame, &frames);
   Dl_info info{};
   dladdr(reinterpret_cast< void* >(&Install), &info);
+  struct sigaction stackAction {};
+  stackAction.sa_sigaction = OnStackSignal;
+  stackAction.sa_flags = SA_SIGINFO | SA_RESTART;
+  sigemptyset(&stackAction.sa_mask);
+  sigaction(kStackSignal, &stackAction, nullptr);
   struct sigaction action {};
   action.sa_sigaction = OnSignal;
   action.sa_flags = SA_SIGINFO | SA_ONSTACK;
@@ -470,6 +495,20 @@ void Install() {
   }
 #endif
   CrashTest();
+}
+
+bool RequestStack(long threadId) {
+#if defined(_WIN32)
+  (void)threadId;
+  return false;
+#else
+  // A library loaded later (a GPU driver) may have taken the signal; don't run its handler.
+  struct sigaction current {};
+  if (threadId == 0 || sigaction(kStackSignal, nullptr, &current) != 0 || current.sa_sigaction != OnStackSignal) {
+    return false;
+  }
+  return syscall(SYS_tgkill, getpid(), static_cast< pid_t >(threadId), kStackSignal) == 0;
+#endif
 }
 
 } // namespace PortCrash

@@ -158,6 +158,9 @@ void aurora_end_frame();
 // Android's surfaceDestroyed waits for this, and a swapchain left on a destroyed
 // window can lose the device. Cheap when nothing changed.
 void aurora_release_lost_surface();
+// True while the app is backgrounded or has no surface (Android pause): the main loop
+// may legitimately not run then. Atomics only, so any thread can ask.
+bool aurora_is_suspended();
 
 void aurora_set_log_level(AuroraLogLevel level);
 void aurora_set_pause_on_focus_lost(bool value);
