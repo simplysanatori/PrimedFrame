@@ -355,6 +355,11 @@ std::atomic< int > sWindowFullscreen{-1};
 std::atomic< bool > sOverlayVisible{false};
 // Same idea for whether the Android touch overlay draws the GameCube pad's colours.
 std::atomic< bool > sTouchColorsFlag{false};
+// The Android touch overlay's gap to the side edges for every control, and the
+// left stick's extra gap on top of it, in dp. Read from the UI thread.
+constexpr float kTouchMarginMaxDp = 120.f;
+std::atomic< float > sTouchSideMargin{16.f};
+std::atomic< float > sTouchStickInset{32.f};
 // Set when a real pad, keyboard or mouse is used; the Android touch overlay takes
 // it to get out of the way.
 std::atomic< bool > sPhysicalInput{false};
@@ -594,6 +599,11 @@ void ApplySetting(const std::string& key, const std::string& value) {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 0.25f && f <= 10.f) {
       sTouchAimSpeed = f;
+    }
+  } else if (key == "touch_side_margin" || key == "touch_stick_inset") {
+    const float f = static_cast< float >(std::atof(value.c_str()));
+    if (std::isfinite(f) && f >= 0.f && f <= kTouchMarginMaxDp) {
+      (key == "touch_side_margin" ? sTouchSideMargin : sTouchStickInset).store(f);
     }
   } else if (key == "mouse_invert_x") {
     sMouseInvertX = ParseBool(value);
@@ -836,6 +846,8 @@ void SaveSettings() {
   file << "gyro_rate=" << sGyroRate << '\n';
   file << "touch_aim=" << (sTouchAim ? 1 : 0) << '\n';
   file << "touch_aim_speed=" << sTouchAimSpeed << '\n';
+  file << "touch_side_margin=" << sTouchSideMargin.load() << '\n';
+  file << "touch_stick_inset=" << sTouchStickInset.load() << '\n';
   file << "touch_map_tap=" << (sTouchMapTap ? 1 : 0) << '\n';
   file << "touch_classic_gc=" << (sTouchClassic ? 1 : 0) << '\n';
   file << "touch_wheels=" << (sTouchWheels ? 1 : 0) << '\n';
@@ -3044,6 +3056,8 @@ bool Visible() {
 bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); }
 
 bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire); }
+float TouchSideMarginDp() { return sTouchSideMargin.load(); }
+float TouchStickInsetDp() { return sTouchStickInset.load(); }
 
 void SaveSettingsNow() {
   EnsureInitialized();
@@ -5200,6 +5214,20 @@ void DrawControlsTouchGyro() {
   ItemHelp("How far the view turns per dp of finger travel. The default turns about 180 degrees "
            "over a 400 dp drag at the default mouse sensitivity.");
   ImGui::EndDisabled();
+  float sideMargin = sTouchSideMargin.load();
+  if (ImGui::SliderFloat("Side margin", &sideMargin, 0.f, kTouchMarginMaxDp, "%.0f dp")) {
+    sTouchSideMargin.store(sideMargin);
+    MarkDirty();
+  }
+  ItemHelp("Moves every on-screen control in from the left and right edges, for curved screen "
+           "edges or a case.");
+  float stickInset = sTouchStickInset.load();
+  if (ImGui::SliderFloat("Stick inset", &stickInset, 0.f, kTouchMarginMaxDp, "%.0f dp")) {
+    sTouchStickInset.store(stickInset);
+    MarkDirty();
+  }
+  ItemHelp("Extra room between the left stick and the screen's left edge, on top of the side "
+           "margin.");
 #endif
 
   ImGui::SeparatorText("Gyro aim");
@@ -7331,6 +7359,16 @@ Java_org_metroidprime_port_TouchControlsView_nativeSetTouchDevice(JNIEnv*, jclas
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchColors(JNIEnv*, jclass) {
   return PortDebug::TouchColorsFlag() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchSideMarginDp(JNIEnv*, jclass) {
+  return PortDebug::TouchSideMarginDp();
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchStickInsetDp(JNIEnv*, jclass) {
+  return PortDebug::TouchStickInsetDp();
 }
 
 extern "C" JNIEXPORT void JNICALL

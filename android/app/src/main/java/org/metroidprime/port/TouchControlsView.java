@@ -77,7 +77,6 @@ final class TouchControlsView extends View {
     // that keep their distance to the nearest edge.
     private static final float MAX_LAYOUT_DP = 520f;
     // Sticks are drawn and read through these, so the two cannot disagree.
-    private static final float STICK_EXTRA_INSET_DP = 16f;
     private static final float STICK_RADIUS = 0.16f;
     private static final float LEFT_STICK_REACH = 1.5f; // grab area, in stick radii
     private static final float STICK_DEAD_ZONE = 0.12f;
@@ -185,6 +184,10 @@ final class TouchControlsView extends View {
     // The GameCube pad's colours, off by default (plain translucent buttons);
     // an F1 setting, so it's re-read every draw.
     private boolean colored;
+    // F1 settings too, in px: every control's gap to the side edges, and the
+    // left stick's on top of it.
+    private float sideMargin;
+    private float stickInset;
     // Classic GameCube layout (F1 setting, re-read every draw): the C-stick is
     // drawn and grabs presses in its zone.
     private boolean cStick;
@@ -237,6 +240,9 @@ final class TouchControlsView extends View {
     private static native boolean nativeDebugOverlayVisible();
     private static native boolean nativeTouchClassic();
     private static native boolean nativeTouchColors();
+    // F1's side margin (every control) and the left stick's extra inset, in dp.
+    private static native float nativeTouchSideMarginDp();
+    private static native float nativeTouchStickInsetDp();
     private static native boolean nativeTouchAimEnabled();
     private static native void nativeTouchAim(float dxDp, float dyDp);
     private static native void nativeTouchAimDown(boolean down);
@@ -351,6 +357,8 @@ final class TouchControlsView extends View {
         // Off, aim and the wheels are always on.
         final boolean classic = nativeTouchClassic();
         colored = nativeTouchColors();
+        sideMargin = dp(nativeTouchSideMarginDp());
+        stickInset = dp(nativeTouchStickInsetDp());
         cStick = classic;
         aim = !classic || nativeTouchAimEnabled();
         wheels = !classic || nativeTouchWheelsEnabled();
@@ -409,7 +417,7 @@ final class TouchControlsView extends View {
     private void bottomButtonRect(int slot, boolean right, float width, float height,
                                   RectF out) {
         final float d = 2f * dp(BOTTOM_BUTTON_RADIUS_DP);
-        final float fromSide = dp(BOTTOM_BUTTON_SIDE_DP) + slot * (d + dp(BOTTOM_BUTTON_GAP_DP));
+        final float fromSide = sideMargin + dp(BOTTOM_BUTTON_SIDE_DP) + slot * (d + dp(BOTTOM_BUTTON_GAP_DP));
         final float left = right ? width - fromSide - d : fromSide;
         final float bottom = height - dp(BOTTOM_BUTTON_BOTTOM_DP);
         out.set(left, bottom - d, left + d, bottom);
@@ -778,11 +786,12 @@ final class TouchControlsView extends View {
         return height > 0f ? layoutU(height) / height : 1f;
     }
 
-    // A horizontal fraction of the width, from the nearest side edge.
+    // A horizontal fraction of the width, from the nearest side edge, plus the
+    // side margin.
     private float layoutX(float fraction, float width, float height) {
         final float s = layoutScale(height);
-        return fraction < 0.5f ? fraction * width * s
-                               : fraction * width + (1f - fraction) * width * (1f - s);
+        return fraction < 0.5f ? sideMargin + fraction * width * s
+                               : fraction * width + (1f - fraction) * width * (1f - s) - sideMargin;
     }
 
     // A vertical fraction of the height. The layout sits in a phone-height band
@@ -798,11 +807,11 @@ final class TouchControlsView extends View {
 
     private final RectF stickFaceRect = new RectF();
 
-    // Mirrors the face cluster's gap to the right edge, plus a little, so the
-    // two thumbs' controls look balanced.
+    // Mirrors the face cluster's gap to the right edge (side margin included),
+    // plus the stick inset, so the two thumbs' controls look balanced.
     private float leftStickX(float width, float height) {
         faceBounds(width, height, stickFaceRect);
-        return (width - stickFaceRect.right) + dp(STICK_EXTRA_INSET_DP) +
+        return (width - stickFaceRect.right) + stickInset +
                STICK_RADIUS * layoutU(height);
     }
 
@@ -813,7 +822,7 @@ final class TouchControlsView extends View {
     }
 
     private float rightStickX(float width, float height) {
-        return width - layoutU(height) * GC_CSTICK_FROM_RIGHT;
+        return width - sideMargin - layoutU(height) * GC_CSTICK_FROM_RIGHT;
     }
 
     private float rightStickY(float height) {
@@ -1129,7 +1138,7 @@ final class TouchControlsView extends View {
     }
 
     private float centreX(ControlButton button, float width, float height) {
-        return button.anchored ? width - (GC_A_FROM_RIGHT - button.x) * layoutU(height)
+        return button.anchored ? width - sideMargin - (GC_A_FROM_RIGHT - button.x) * layoutU(height)
                                : layoutX(button.x, width, height);
     }
 
