@@ -1944,7 +1944,16 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                               pbr_hdr > 0.0), prev.a);
       }}
     }})""",
-                     base, orm, sampled(3, "vec4f(0.0)"), normal, GX::MaxLights, attn, amb,
+                     base, orm,
+                     // A sky's ICAN is its base map (the converter writes a black emissive map where
+                     // it copies the base), and its glow ICAN x ICNC is most of what it shows. The
+                     // map's last mip, its mean, tells that black map from one with dark texels.
+                     mapStage[3] == -1
+                         ? "vec4f(0.0)"s
+                         : fmt::format("select({0}, {1}, pbr_sky && dot(textureSampleLevel(tex3, tex3_samp, "
+                                       "vec2f(0.5), 16.0).rgb, vec3f(1.0)) < 0.004)",
+                                       sampled(3, "vec4f(0.0)"), base),
+                     normal, GX::MaxLights, attn, amb,
                      gfx::probe::MipCount - 1, diffTint, tintAlpha, layer, baseRgb, layered ? "1.0" : "prev.a", kinds, liquid,
                      shadowed ? "(ubuf.lightState0 | ubuf.lightState1)" : "ubuf.lightState0",
                      shadowed ? " * select(vec3f(1.0), sampled0.rgb, (ubuf.lightState0 & (1u << i)) == 0u)" : "");
