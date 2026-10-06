@@ -2375,7 +2375,8 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     for (double v : m.shieldRows) {
       PF(b, v);
     }
-    b.insert(b.end(), "PBR8", "PBR8" + 4);
+    static constexpr char kPbr8[] = "PBR8";
+    b.insert(b.end(), kPbr8, kPbr8 + 4);
   }
 }
 

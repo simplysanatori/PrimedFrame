@@ -2105,8 +2105,8 @@ public:
     }
     // The first swoosh and electric child the spawn table starts, where the
     // generator has none of its own.
-    for (const auto [type, child, frame] : {std::tuple(F("SWHC"), F("SSWH"), F("SSSD")),
-                                             std::tuple(F("ELSC"), F("SELC"), F("SESD"))}) {
+    for (const auto& [type, child, frame] : {std::tuple(F("SWHC"), F("SSWH"), F("SSSD")),
+                                              std::tuple(F("ELSC"), F("SELC"), F("SESD"))}) {
       size_t count = 0;
       for (const Started& each : started) {
         if (each.type != type) {
