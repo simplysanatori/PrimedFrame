@@ -982,8 +982,13 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
         // Upstream aurora bded88e9: https://github.com/TwilitRealm/dusklight/issues/2563
         "use_spirv_reconvergence_mode",
     };
+    // GL is only the fallback for drivers that draw wrong on Vulkan, so it runs without
+    // Dawn's blob cache: cached program binaries crashed Mesa in glProgramBinary.
     wgpu::DawnTogglesDescriptor togglesDescriptor(wgpu::DawnTogglesDescriptor::Init{
-        .nextInChain = &cacheDescriptor,
+        .nextInChain = g_backendType == wgpu::BackendType::OpenGLES ||
+                               g_backendType == wgpu::BackendType::OpenGL
+                           ? nullptr
+                           : &cacheDescriptor,
         .enabledToggleCount = enableToggles.size(),
         .enabledToggles = enableToggles.data(),
         .disabledToggleCount = disableToggles.size(),

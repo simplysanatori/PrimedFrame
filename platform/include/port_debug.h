@@ -230,6 +230,11 @@ int Msaa();
 void SetMsaa(int samples);
 int Anisotropy();
 void SetAnisotropy(int level);
+// Setting `opengles`: start on Dawn's OpenGL ES backend instead of Vulkan, for
+// drivers that draw wrong on Vulkan (Adreno 7xx, issue #7). Read at window
+// creation, so it takes a restart; aurora falls back to Vulkan if it fails.
+bool OpenGles();
+void SetOpenGles(bool enabled);
 // Extras normally earned by finishing the game (or, for the Fusion Suit, by a
 // GBA link to Metroid Fusion). They only change what the title screen offers;
 // nothing is written into the save's persistent flags.

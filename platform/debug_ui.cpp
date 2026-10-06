@@ -200,6 +200,9 @@ float sStickAimRate = 900.f;
 float sFirstPersonFov = PortDebug::kFovRetail;
 int sMsaa = 1;
 int sAnisotropy = 16;
+// Setting `opengles`; sOpenGlesAtStart is what this run was started with.
+bool sOpenGles = false;
+bool sOpenGlesAtStart = false;
 bool sUnlockHardMode = false;
 bool sUnlockFusionSuit = false;
 bool sUnlockGalleries = false;
@@ -549,6 +552,9 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sUnlockGalleries = ParseBool(value);
   } else if (key == "msaa") {
     sMsaa = std::atoi(value.c_str()) >= 4 ? 4 : 1;
+  } else if (key == "opengles") {
+    sOpenGles = ParseBool(value);
+    sOpenGlesAtStart = sOpenGles;
   } else if (key == "anisotropy") {
     const int a = std::atoi(value.c_str());
     if (a >= 1 && a <= 16) {
@@ -789,6 +795,7 @@ void SaveSettings() {
   file << "savestate_hotkeys=" << (sSaveStateHotkeys ? 1 : 0) << '\n';
   file << "fov=" << sFirstPersonFov << '\n';
   file << "msaa=" << sMsaa << '\n';
+  file << "opengles=" << (sOpenGles ? 1 : 0) << '\n';
   file << "anisotropy=" << sAnisotropy << '\n';
   file << "unlock_hard_mode=" << (sUnlockHardMode ? 1 : 0) << '\n';
   file << "unlock_fusion_suit=" << (sUnlockFusionSuit ? 1 : 0) << '\n';
@@ -1498,6 +1505,19 @@ void SetMsaa(int samples) {
   if (sMsaa != samples) {
     sMsaa = samples;
     aurora_set_graphics_quality(static_cast< uint32_t >(sMsaa), static_cast< uint16_t >(sAnisotropy));
+    MarkDirty();
+  }
+}
+
+bool OpenGles() {
+  EnsureInitialized();
+  return sOpenGles;
+}
+
+void SetOpenGles(bool enabled) {
+  EnsureInitialized();
+  if (sOpenGles != enabled) {
+    sOpenGles = enabled;
     MarkDirty();
   }
 }
@@ -4913,6 +4933,26 @@ void DrawVideoQuality() {
     SetMsaa(msaa == 1 ? 4 : 1);
   }
   ImGui::SetItemTooltip("Smooths polygon edges, at about 4x the framebuffer memory.");
+  size_t backendCount = 0;
+  const AuroraBackend* backends = aurora_get_available_backends(&backendCount);
+  if (std::find(backends, backends + backendCount, BACKEND_OPENGLES) != backends + backendCount) {
+    bool gles = sOpenGles;
+    if (ImGui::Checkbox("Use OpenGL ES", &gles)) {
+      SetOpenGles(gles);
+    }
+    ImGui::SetItemTooltip("Renders through OpenGL ES instead of Vulkan. Try it if the world draws black\n"
+                          "or untextured (some Adreno drivers). Takes effect after a restart; if the\n"
+                          "driver crashes starting it, the next start goes back to Vulkan.");
+    const AuroraBackend live = aurora_get_backend();
+    if (sOpenGles != sOpenGlesAtStart) {
+      ImGui::SameLine();
+      ImGui::TextColored(ThemeWarnColor(), "Restart to apply");
+    } else if (sOpenGles && live != BACKEND_OPENGLES) {
+      ImGui::SameLine();
+      ImGui::TextColored(ThemeWarnColor(), "OpenGL ES failed to start; using %s",
+                         live == BACKEND_VULKAN ? "Vulkan" : "another API");
+    }
+  }
   {
     int aniso = 0;
     while ((2 << aniso) <= sAnisotropy && aniso < 4) {

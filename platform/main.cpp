@@ -53,6 +53,7 @@
 #include <cstring>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <span>
 #include <string>
 #include <vector>
@@ -856,7 +857,7 @@ int main(int argc, char** argv) {
         .userPath = userFolder.empty() ? nullptr : userFolder.c_str(),
         .cachePath = cacheFolder.empty() ? nullptr : cacheFolder.c_str(),
         .resourcesPath = resourcesPath.empty() ? nullptr : resourcesPath.c_str(),
-        .desiredBackend = BACKEND_AUTO,
+        .desiredBackend = PortDebug::OpenGles() ? BACKEND_OPENGLES : BACKEND_AUTO,
         .msaa = static_cast<uint32_t>(PortDebug::Msaa()),
         .maxTextureAnisotropy = static_cast<uint16_t>(PortDebug::Anisotropy()),
         .vsync = false,
@@ -935,7 +936,27 @@ int main(int argc, char** argv) {
         }
     }
 #endif
+    // A driver can crash outright while Dawn starts on OpenGL ES (Mesa does), and the
+    // setting would then crash every launch with no way back to the F1 menu. The marker
+    // outlives such a crash, so the next start turns the setting off and uses Vulkan.
+    const std::filesystem::path glesMarker =
+        std::filesystem::path(userFolder.empty() ? "." : userFolder) / "opengles_starting";
+    if (config.desiredBackend == BACKEND_OPENGLES) {
+        std::error_code ec;
+        if (std::filesystem::exists(glesMarker, ec)) {
+            PortLog::Write("port: the last start on OpenGL ES did not finish; turning it off\n");
+            PortDebug::SetOpenGles(false);
+            config.desiredBackend = BACKEND_AUTO;
+            std::filesystem::remove(glesMarker, ec);
+        } else {
+            std::ofstream(glesMarker) << "1\n";
+        }
+    }
     aurora_initialize(argc, argv, &config);
+    if (config.desiredBackend == BACKEND_OPENGLES) {
+        std::error_code ec;
+        std::filesystem::remove(glesMarker, ec);
+    }
     // From what the device gave, which can be less than was asked for.
     if (aurora_get_frame_buffer_scale() != frameBufferScale) {
         PortLog::Write("port: frame buffers at %ux, all this device allows\n", aurora_get_frame_buffer_scale());
