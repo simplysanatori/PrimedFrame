@@ -58,6 +58,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -314,6 +315,47 @@ std::array<char, 6> DiscId6(const DVDDiskID& id) {
 
 bool IsSupportedDisc(const DVDDiskID* id) {
     return id != nullptr && IsSupportedId(DiscId6(*id).data(), id->diskNumber, id->gameVersion);
+}
+
+// A compressed image (RVZ, WIA, GCZ) cut short by an interrupted download or
+// copy still opens, since the header is at the front, and the game only finds
+// out a few frames in, when a read fails (issue #8). Containers store the disc
+// in order, so a cut loses the files that end last first: reading the last
+// byte of those catches it at the disc check. (Reading every file's last byte
+// took 4 s for an LZMA RVZ on a desktop.)
+// Returns the first file that can't be read, or an empty string.
+std::string FindUnreadableDiscFile() {
+    constexpr size_t kFilesToCheck = 8;
+    const Uint64 start = SDL_GetTicks();
+    const s32 count = aurora_dvd_base_entry_count();
+    std::vector<std::pair<int64_t, s32>> ends; // (end offset, entry), the last ones first
+    for (s32 entry = 1; entry < count; ++entry) {
+        const int64_t offset = aurora_dvd_base_offset(entry);
+        if (offset < 0) {
+            continue; // a directory
+        }
+        void* file = aurora_dvd_base_open(entry);
+        const int64_t size = file != nullptr ? aurora_dvd_base_seek(file, 0, SEEK_END) : -1;
+        aurora_dvd_base_close(file);
+        ends.emplace_back(offset + std::max<int64_t>(size, 0), entry);
+    }
+    std::sort(ends.begin(), ends.end(), std::greater<>());
+    ends.resize(std::min(ends.size(), kFilesToCheck));
+    for (const auto& [end, entry] : ends) {
+        void* file = aurora_dvd_base_open(entry);
+        const int64_t size = file != nullptr ? aurora_dvd_base_seek(file, 0, SEEK_END) : -1;
+        uint8_t last = 0;
+        const bool ok = size == 0 || (size > 0 && aurora_dvd_base_seek(file, size - 1, SEEK_SET) == size - 1 &&
+                                      aurora_dvd_base_read(file, &last, 1) == 1);
+        aurora_dvd_base_close(file);
+        if (!ok) {
+            char path[256] = {};
+            return DVDConvertEntrynumToPath(entry, path, sizeof(path)) ? std::string(path) : "entry " + std::to_string(entry);
+        }
+    }
+    PortLog::Write("metroid_prime_port: disc image is complete (its last %zu files read in %llu ms)\n", ends.size(),
+                   static_cast<unsigned long long>(SDL_GetTicks() - start));
+    return {};
 }
 
 constexpr const char* kSupportedDisc = "Only Metroid Prime for the GameCube, USA version 1.00\n(GM8E01, revision 0), is supported.";
@@ -1083,6 +1125,11 @@ int main(int argc, char** argv) {
         } else if (!IsSupportedDisc(DVDGetCurrentDiskID())) {
             problem = DescribeUnsupportedDisc(DVDGetCurrentDiskID());
             PortLog::Write("metroid_prime_port: unsupported disc: %s Expected GM8E01 revision 0.\n", problem.c_str());
+            aurora_dvd_close();
+        } else if (const std::string unreadable = FindUnreadableDiscFile(); !unreadable.empty()) {
+            PortLog::Write("metroid_prime_port: disc image is incomplete: %s can't be read\n", unreadable.c_str());
+            problem = "This disc image is incomplete or damaged: part of it (" + unreadable +
+                      ") can't be read.\nIt's probably an interrupted download or copy. Copy the file again.";
             aurora_dvd_close();
         }
         if (problem.empty()) {

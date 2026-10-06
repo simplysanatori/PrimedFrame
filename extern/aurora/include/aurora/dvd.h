@@ -140,6 +140,9 @@ int64_t aurora_dvd_base_seek(void* handle, int64_t offset, int32_t whence);
 /** \brief Closes a handle from aurora_dvd_base_open. */
 void aurora_dvd_base_close(void* handle);
 
+/** \brief Disc offset of a base file's data, or -1 for directories and invalid EntryNums. */
+int64_t aurora_dvd_base_offset(s32 entrynum);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1125,6 +1125,23 @@ int64_t aurora_dvd_base_seek(void* handle, int64_t offset, int32_t whence) {
 
 void aurora_dvd_base_close(void* handle) { delete static_cast<CommandDataNod*>(handle); }
 
+// Port: from the raw fst.bin, whose 12-byte entries hold a file's offset at +4
+// (big-endian; Wii stores it divided by 4).
+int64_t aurora_dvd_base_offset(s32 entrynum) {
+  NodPartitionMeta meta{};
+  if (s_partition == nullptr || entrynum <= 0 || entrynum >= s_baseEntryCount ||
+      nod_partition_meta(s_partition, &meta) != NOD_RESULT_OK || meta.raw_fst.data == nullptr ||
+      meta.raw_fst.size < (static_cast<size_t>(entrynum) + 1) * 12) {
+    return -1;
+  }
+  const u8* entry = meta.raw_fst.data + static_cast<size_t>(entrynum) * 12;
+  if (entry[0] != 0) {
+    return -1; // a directory
+  }
+  const int64_t offset = (int64_t{entry[4]} << 24) | (entry[5] << 16) | (entry[6] << 8) | entry[7];
+  return nod_partition_is_wii(s_partition) ? offset * 4 : offset;
+}
+
 BOOL DVDOpen(const char* fileName, DVDFileInfo* fileInfo) {
   s32 entrynum = DVDConvertPathToEntrynum(fileName);
   if (entrynum < 0) {
