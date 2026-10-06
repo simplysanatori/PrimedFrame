@@ -1546,11 +1546,21 @@ bool TouchDirectAim() {
 #endif
 }
 
+bool TouchActive() {
+#if defined(__ANDROID__)
+  return sTouchActive.load(std::memory_order_acquire) && !Visible();
+#else
+  return false;
+#endif
+}
+
 bool DirectAim() { return MouseAim() || TwinStick() || TouchDirectAim(); }
 
+// The pad-preset getters below read as the GameCube preset (off / unbound) while touch is in use: the
+// touch overlay always does what its buttons say. The F1 menu (Visible) sees the stored values.
 bool TwinStick() {
   EnsureInitialized();
-  return sTwinStick;
+  return sTwinStick && !TouchActive();
 }
 
 void SetTwinStick(bool enabled) {
@@ -1580,7 +1590,7 @@ void SetSpringBall(bool enabled) {
 
 bool SwapScanXray() {
   EnsureInitialized();
-  return sSwapScanXray;
+  return sSwapScanXray && !TouchActive();
 }
 
 void SetSwapScanXray(bool enabled) {
@@ -1591,6 +1601,9 @@ void SetSwapScanXray(bool enabled) {
 
 int ShiftBinding(int slot) {
   EnsureInitialized();
+  if (slot == 2 && TouchActive()) {
+    return -1;
+  }
   return slot >= 0 && slot < 3 ? sShiftBindings[slot] : -1;
 }
 
@@ -1604,7 +1617,7 @@ void SetShiftBinding(int slot, int code) {
 
 int PadAltButton(int bit) {
   EnsureInitialized();
-  return bit >= 0 && bit < kPadAltCount ? sPadAltButtons[bit] : -1;
+  return bit >= 0 && bit < kPadAltCount && !TouchActive() ? sPadAltButtons[bit] : -1;
 }
 
 void SetPadAltButton(int bit, int code) {

@@ -242,7 +242,11 @@ void SetMouseAim(bool enabled);
 // Twin-stick: the right stick aims the first-person camera directly (through the
 // same aim state as the mouse) and is consumed, so it no longer drives the
 // game's free-look. Works with or without mouse aim.
+// Reads false while touch is in use (TouchActive), as do SwapScanXray, ShiftBinding(2) (-1)
+// and PadAltButton (-1): the touch overlay always does its GameCube-labelled actions.
 bool TwinStick();
+// Android: touch was the last input and the F1 menu is closed. False on desktop.
+bool TouchActive();
 // True on Android when the modern (non-classic) touch layout is the active device: drag aims like a mouse.
 bool TouchDirectAim();
 // The direct aim path is active: mouse aim, twin stick or the modern touch layout.
