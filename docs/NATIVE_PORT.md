@@ -971,8 +971,9 @@ unpacks to a temporary directory instead of mounting.
   minimap for every pickup not yet collected, in rooms the map shows. The dots
   never tell what the item is; an Archipelago game colours them by its logic
   (`map_logic_colors`, see `ARCHIPELAGO.md`). The positions come from
-  `tools/gen_map_pickups.py` (`platform/port_map_pickups.inc`). The Tracker
-  page shows item percentage, energy tanks, missile
+  `tools/gen_map_pickups.py` (`platform/port_map_pickups.inc`). With Show
+  progress on (`tracker_progress`, off by default so it spoils nothing), the
+  Tracker page shows item percentage, energy tanks, missile
   capacity (in packs of 5, launcher included), power bombs, artifacts, missing
   upgrades, logbook scans per category (artifacts count at the game's 50%),
   rooms visited per world and the current world's unvisited rooms (their names
@@ -1359,7 +1360,12 @@ simulation camera, then restore the world view before world-space effects. This
 keeps the viewmodel stable instead of mixing an interpolated view with a cached
 60 Hz gun transform. Weapon animation and projectile simulation remain 60 Hz.
 
-Per-frame look (`frame_interpolation`, "Per-frame look (uncapped)" on F1 > Video > Frame rate, on by default) turns the presented view every rendered frame by the
+"Smooth uncapped frames" (`smooth_frames`, F1 > Video > Frame rate, on by default)
+turns on the four parts below together; they only apply with the frame limiter
+off. The console's `interp actor|pose|particle|all <0|1>` sets a part on its own
+for testing, which isn't saved.
+
+Per-frame look turns the presented view every rendered frame by the
 look input the next tick will consume: pending mouse and gyro deltas, plus
 twin-stick velocity times the time since the tick. The tick still applies the
 whole amount, so aim and shots are unchanged; the free-aim crosshair is rotated
@@ -1367,22 +1373,19 @@ with the view so it stays centred. It only applies with the frame limiter off,
 under free mouse look (mouse aim, gyro aim or twin stick). The game's own stick
 look is not previewed.
 
-Smooth actor motion (`actor_interpolation`, F1 > Video > Frame rate, off by default,
-experimental) draws each moving actor, Samus and the morph ball included,
+Smooth actor motion draws each moving actor, Samus and the morph ball included,
 between its last two tick transforms when the frame limiter is off. Moves of
 more than 4 units or 45° in a tick snap. The arm cannon's bob and sway blend
 too. Queued particles, shadows and the HUD sway still step at 60 Hz. `docs/FRAME_INTERPOLATION.md` has the design and scopes the rest
 (particles, projectiles).
 
-Smooth animation (`pose_interpolation`, F1 > Video > Frame rate, off by default,
-experimental) skins animated models with a per-bone blend of the poses built on
+Smooth animation skins animated models with a per-bone blend of the poses built on
 the last two ticks when the frame limiter is off. The animation tree is not
 touched, so events, sounds and particles are unchanged; attachments on locators
 and swarms stay on the tick pose. A bone that turns more than 45° or moves more
 than 4 units in a tick snaps the whole pose.
 
-Smooth particles (`particle_interpolation`, F1 > Video > Frame rate, off by default,
-experimental) draws particle effects, projectile effects included, between
+Smooth particles draws particle effects, projectile effects included, between
 their last two 60 Hz positions when the frame limiter is off, using the game's
 own sub-frame particle path. Beam trails (swooshes), electric effects and
 the flamethrower still step at 60 Hz.

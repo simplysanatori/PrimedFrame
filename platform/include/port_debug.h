@@ -67,16 +67,21 @@ float SimPeriod();
 // tick-for-tick. Experimental.
 bool SimAdaptive();
 void SetSimAdaptive(bool enabled);
+// Smooth uncapped frames (port_settings.ini smooth_frames, on by default): sets
+// the four parts below together. Setting a part on its own (console `interp`)
+// is for testing and isn't saved.
+bool SmoothFrames();
+void SetSmoothFrames(bool enabled);
 // Per-frame look (docs/FRAME_INTERPOLATION.md, phase 1): with the frame limiter
 // off, frames between ticks show the look input the next tick will apply.
 bool FrameInterpolation();
 void SetFrameInterpolation(bool enabled);
 // Actor transform smoothing (phase 2): with the frame limiter off, actors draw
-// at a blend of their previous and current tick transforms. Off by default.
+// at a blend of their previous and current tick transforms.
 bool ActorInterpolation();
 void SetActorInterpolation(bool enabled);
 // Pose smoothing (phase 3): with the frame limiter off, skinned models draw a
-// blend of their previous and current tick poses. Off by default.
+// blend of their previous and current tick poses.
 bool PoseInterpolation();
 void SetPoseInterpolation(bool enabled);
 // Keeps a room geometry mod's models on the GPU instead of sending them every frame
@@ -87,7 +92,7 @@ bool RoomGeoResident();
 void SetRoomGeoResident(bool enabled);
 bool RoomGeoResidentAtStartup();
 // Particle smoothing (phase 4): with the frame limiter off, particle systems
-// draw between their previous and current tick frames. Off by default.
+// draw between their previous and current tick frames.
 bool ParticleInterpolation();
 void SetParticleInterpolation(bool enabled);
 // Frame interpolation tests (phase 5). MP_PRESENT_T=<0..1> or "cycle" (console

@@ -1,17 +1,19 @@
 # Frame interpolation: scope
 
 Status: phase 1 (look input per frame) is done; phase 2 (actor transforms),
-phase 3 (skinned poses) and phase 4 (`CElementGen` particles) are done behind
-`actor_interpolation`, `pose_interpolation` and `particle_interpolation` (off
-by default); phase 5 (the sweep, section 7) found and fixed the arm cannon's
-bob; phase 6 (swooshes, electric effects and beam weapons, section 3) is done
-behind `particle_interpolation`. The HUD sway is scope only.
+phase 3 (skinned poses) and phase 4 (`CElementGen` particles) are done; phase 5
+(the sweep, section 7) found and fixed the arm cannon's bob; phase 6 (swooshes,
+electric effects and beam weapons, section 3) is done. One setting,
+`smooth_frames` ("Smooth uncapped frames", on by default), turns all of them on
+or off; the parts are still separate flags in code (`PortDebug::ActorInterpolation`
+etc., console `interp`), and the per-part names used below are those flags. The
+HUD sway is scope only.
 
 Goal: smooth motion above 60 FPS while the game logic stays at its console rate
 (60 Hz fixed step). Rendered frames between two ticks draw the world at a blend
 of the last two simulation states, and first-person look input is applied every
 rendered frame. The alternative, running the simulation itself faster (`sim_rate` /
-`sim_adaptive`), stays an experimental option; see "Why not `sim_rate`" below.
+`sim_adaptive`), stays a very experimental option, for testing only; see "Why not `sim_rate`" below.
 
 ## What exists
 

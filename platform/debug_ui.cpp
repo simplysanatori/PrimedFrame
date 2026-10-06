@@ -168,6 +168,9 @@ bool sHideVisorEffects = false;
 bool sRevealMap = false;
 bool sMapPickups = false;
 bool sMapLogicColors = true;
+// The Tracker tab's item, scan and room counts. Off so the tab doesn't spoil
+// what is left to find until asked.
+bool sTrackerProgress = false;
 int sApSuitDamage = 1;
 bool sCheats = false;
 bool sSkippableCutscenes = false;
@@ -311,12 +314,15 @@ float sGyroPendingY = 0.f;
 float sStickAimVelX = 0.f;
 float sStickAimVelY = 0.f;
 // Frame interpolation (docs/FRAME_INTERPOLATION.md): uncapped frames show look
-// input before the tick that applies it.
+// input before the tick that applies it. One setting, smooth_frames, turns all
+// four parts on or off; the console's interp command flips them one at a time
+// for testing, which isn't saved.
+bool sSmoothFrames = true;
 bool sFrameInterpolation = true;
-bool sActorInterpolation = false;
-bool sPoseInterpolation = false;
+bool sActorInterpolation = true;
+bool sPoseInterpolation = true;
 bool sRoomGeoResident = false;
-bool sParticleInterpolation = false;
+bool sParticleInterpolation = true;
 // The Remastered import's choices. Off on a phone: the rooms have never run on
 // one, and need storage and memory many phones lack (a 256 MB game arena and
 // 12x frame buffers).
@@ -510,6 +516,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sRevealMap = ParseBool(value);
   } else if (key == "map_pickups") {
     sMapPickups = ParseBool(value);
+  } else if (key == "tracker_progress") {
+    sTrackerProgress = ParseBool(value);
   } else if (key == "map_logic_colors") {
     sMapLogicColors = ParseBool(value);
   } else if (key == "ap_suit_damage") {
@@ -679,20 +687,15 @@ void ApplySetting(const std::string& key, const std::string& value) {
     }
   } else if (key == "sim_adaptive") {
     sSimAdaptive = ParseBool(value);
-  } else if (key == "frame_interpolation") {
-    sFrameInterpolation = ParseBool(value);
-  } else if (key == "actor_interpolation") {
-    sActorInterpolation = ParseBool(value);
-  } else if (key == "pose_interpolation") {
-    sPoseInterpolation = ParseBool(value);
+  } else if (key == "smooth_frames") {
+    sSmoothFrames = ParseBool(value);
+    sFrameInterpolation = sActorInterpolation = sPoseInterpolation = sParticleInterpolation = sSmoothFrames;
   } else if (key == "room_geo_resident") {
     sRoomGeoResident = ParseBool(value);
   } else if (key == "room_geo_min_px") {
     PortRoomGeo::SetMinPixels(std::strtof(value.c_str(), nullptr));
   } else if (key == "room_geo_lod") {
     PortRoomGeo::SetLodDistance(std::strtof(value.c_str(), nullptr));
-  } else if (key == "particle_interpolation") {
-    sParticleInterpolation = ParseBool(value);
   } else if (key == "remastered_import_geometry") {
     sImportGeometry = ParseBool(value);
   } else if (key == "remastered_import_effects") {
@@ -766,6 +769,7 @@ void SaveSettings() {
   file << "hide_visor_effects=" << (sHideVisorEffects ? 1 : 0) << '\n';
   file << "reveal_map=" << (sRevealMap ? 1 : 0) << '\n';
   file << "map_pickups=" << (sMapPickups ? 1 : 0) << '\n';
+  file << "tracker_progress=" << (sTrackerProgress ? 1 : 0) << '\n';
   file << "map_logic_colors=" << (sMapLogicColors ? 1 : 0) << '\n';
   file << "ap_suit_damage=" << sApSuitDamage << '\n';
   file << "cheats=" << (sCheats ? 1 : 0) << '\n';
@@ -800,13 +804,10 @@ void SaveSettings() {
   file << "frame_limit=" << (sFrameLimitEnabled ? 1 : 0) << '\n';
   file << "sim_rate=" << sSimRate << '\n';
   file << "sim_adaptive=" << (sSimAdaptive ? 1 : 0) << '\n';
-  file << "frame_interpolation=" << (sFrameInterpolation ? 1 : 0) << '\n';
-  file << "actor_interpolation=" << (sActorInterpolation ? 1 : 0) << '\n';
-  file << "pose_interpolation=" << (sPoseInterpolation ? 1 : 0) << '\n';
+  file << "smooth_frames=" << (sSmoothFrames ? 1 : 0) << '\n';
   file << "room_geo_resident=" << (sRoomGeoResident ? 1 : 0) << '\n';
   file << "room_geo_min_px=" << PortRoomGeo::MinPixels() << '\n';
   file << "room_geo_lod=" << PortRoomGeo::LodDistance() << '\n';
-  file << "particle_interpolation=" << (sParticleInterpolation ? 1 : 0) << '\n';
   file << "remastered_import_geometry=" << (sImportGeometry ? 1 : 0) << '\n';
   file << "remastered_import_effects=" << (sImportEffects ? 1 : 0) << '\n';
   file << "mouse_aim=" << (sMouseAim ? 1 : 0) << '\n';
@@ -2548,6 +2549,17 @@ bool FrameInterpolation() {
 void SetFrameInterpolation(bool enabled) {
   EnsureInitialized();
   sFrameInterpolation = enabled;
+}
+
+bool SmoothFrames() {
+  EnsureInitialized();
+  return sSmoothFrames;
+}
+
+void SetSmoothFrames(bool enabled) {
+  EnsureInitialized();
+  sSmoothFrames = enabled;
+  sFrameInterpolation = sActorInterpolation = sPoseInterpolation = sParticleInterpolation = enabled;
   MarkDirty();
 }
 
@@ -2559,7 +2571,6 @@ bool ActorInterpolation() {
 void SetActorInterpolation(bool enabled) {
   EnsureInitialized();
   sActorInterpolation = enabled;
-  MarkDirty();
 }
 
 bool PoseInterpolation() {
@@ -2570,7 +2581,6 @@ bool PoseInterpolation() {
 void SetPoseInterpolation(bool enabled) {
   EnsureInitialized();
   sPoseInterpolation = enabled;
-  MarkDirty();
 }
 
 bool RoomGeoResident() {
@@ -2607,7 +2617,6 @@ bool ParticleInterpolation() {
 void SetParticleInterpolation(bool enabled) {
   EnsureInitialized();
   sParticleInterpolation = enabled;
-  MarkDirty();
 }
 
 bool PresentOverride(float& t) {
@@ -3569,41 +3578,18 @@ void DrawPerformanceTab() {
     ImGui::Text("Simulation %.1f ticks/s (target %u)", sActualTps, sSimRate);
   }
 
-  ImGui::SeparatorText("Uncapped frame rate");
-  bool interpolate = sFrameInterpolation;
-  if (ImGui::Checkbox("Per-frame look (uncapped)", &interpolate)) {
-    PortDebug::SetFrameInterpolation(interpolate);
+  bool smooth = sSmoothFrames;
+  if (ImGui::Checkbox("Smooth uncapped frames", &smooth)) {
+    PortDebug::SetSmoothFrames(smooth);
   }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("With the FPS cap off, mouse, gyro and twin-stick look turn the view "
-                      "on every frame instead of every 60 Hz tick. Aim and shots are unchanged.");
-  }
-  bool smoothActors = sActorInterpolation;
-  if (ImGui::Checkbox("Smooth actor motion (uncapped, experimental)", &smoothActors)) {
-    PortDebug::SetActorInterpolation(smoothActors);
-  }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("With the FPS cap off, moving objects, enemies and Samus are drawn between "
-                      "their last two 60 Hz positions.");
-  }
-  bool smoothPoses = sPoseInterpolation;
-  if (ImGui::Checkbox("Smooth animation (uncapped, experimental)", &smoothPoses)) {
-    PortDebug::SetPoseInterpolation(smoothPoses);
-  }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("With the FPS cap off, animated models (Samus, enemies, the arm cannon) are "
-                      "posed between their last two 60 Hz poses.");
-  }
-  bool smoothParticles = sParticleInterpolation;
-  if (ImGui::Checkbox("Smooth particles (uncapped, experimental)", &smoothParticles)) {
-    PortDebug::SetParticleInterpolation(smoothParticles);
-  }
-  if (ImGui::IsItemHovered()) {
-    ImGui::SetTooltip("With the FPS cap off, particle effects and projectile trails are drawn "
-                      "between their last two 60 Hz positions.");
-  }
+  ItemHelp("With the FPS cap off, frames between the game's 60 Hz ticks turn the view with "
+           "mouse, gyro and twin-stick look, and draw moving objects, animation and particles "
+           "between their last two ticks. The game itself still runs at 60 Hz, so aim and "
+           "shots are unchanged.");
 
-  ImGui::SeparatorText("Simulation rate (experimental)");
+  ImGui::SeparatorText("Simulation rate (very experimental)");
+  ImGui::TextColored(ThemeWarnColor(), "For testing only. The game was written for 60 Hz: other rates can\n"
+                                       "break physics, enemy behaviour, cutscenes and scripted events.");
   bool adaptive = sSimAdaptive;
   if (ImGui::Checkbox("Adaptive (follow frame rate)", &adaptive)) {
     PortDebug::SetSimAdaptive(adaptive);
@@ -3616,8 +3602,10 @@ void DrawPerformanceTab() {
     PortDebug::SetSimRate(static_cast< unsigned >(simRate));
   }
   ImGui::EndDisabled();
-  ItemHelp("60 Hz is console-accurate. Higher values step the game logic at the display rate "
-           "instead of interpolating the camera; leave the FPS cap off for it to matter.");
+  ItemHelp("60 Hz is console-accurate and the only rate that's supported. Other values step the "
+           "game logic at that rate instead of smoothing frames between 60 Hz ticks; leave the "
+           "FPS cap off for it to matter. For smooth high frame rates, use Smooth uncapped "
+           "frames instead.");
 }
 
 // Memory card transfer (port_gci.h). The work runs on the main thread; the
@@ -6467,6 +6455,18 @@ void DrawTrackerTab() {
   }
 
   DrawTrackerLogic();
+
+  ImGui::SeparatorText("Progress");
+  bool progress = sTrackerProgress;
+  if (ImGui::Checkbox("Show progress", &progress)) {
+    sTrackerProgress = progress;
+    MarkDirty();
+  }
+  ItemHelp("Item collection, scans and rooms visited, with what is still missing. Off by default, "
+           "since the counts and lists show how much is left to find.");
+  if (!sTrackerProgress) {
+    return;
+  }
 
   CStateManager* mgr = sStateManager;
   if (mgr == nullptr || mgr->GetPlayerState() == nullptr) {
