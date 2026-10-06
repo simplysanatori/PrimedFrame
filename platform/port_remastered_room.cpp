@@ -1954,6 +1954,10 @@ private:
   const std::vector<RoomPak>& m_others;
   const RoomIO& m_io;
   std::vector<Area> m_areas;
+  // Per LTPB block (layer, x, y, z), the world's room whose copy has the most lit points.
+  using GridKey = std::array<int32_t, 4>;
+  mutable std::map<GridKey, const RoomPak*> m_gridOwners;
+  mutable bool m_gridOwnersReady = false;
 };
 
 double Spread(const std::vector<Vec3>& a, const std::vector<Vec3>& b) {
@@ -2742,39 +2746,11 @@ struct GridTexture {
   std::vector<float> rgba;
 };
 
-bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>& check, std::vector<uint8_t>& out,
-                  std::string& note) const {
-  out.clear();
-  const PakAsset* asset = FirstOfType(*rp.pak, Tag("LTPB"));
-  if (asset == nullptr) {
-    note = "no grid";
-    return false;
-  }
-  std::vector<uint8_t> d;
+// The textures of an LTPB: the TXTR forms inside it, each preceded by a 77 byte record.
+// Only those `want` accepts (it sees the record fields, not the data) are decoded.
+bool ReadGridTextures(const std::vector<uint8_t>& d, const std::function<bool(const GridTexture&)>& want,
+                      std::vector<GridTexture>& textures, std::string& note) {
   std::string error;
-  if (!rp.pak->ReadAsset(*asset, d, error)) {
-    note = "grid not decoded";
-    return false;
-  }
-  size_t phdr = std::string::npos;
-  for (size_t i = 0; i + 4 <= d.size(); ++i) {
-    if (std::memcmp(&d[i], "PHDR", 4) == 0) {
-      phdr = i;
-      break;
-    }
-  }
-  if (phdr == std::string::npos || phdr + 24 + 26 + 6 > d.size()) {
-    note = "no grid";
-    return false;
-  }
-  int lo[3], hi[3];
-  for (size_t i = 0; i < 3; ++i) {
-    lo[i] = int16_t(Le16(&d[phdr + 44 + 2 * i]));
-    hi[i] = int16_t(Le16(&d[phdr + 50 + 2 * i]));
-  }
-
-  // The textures are the TXTR forms inside the LTPB, each preceded by a 77 byte record.
-  std::vector<GridTexture> textures;
   for (size_t o = 77; o + 32 < d.size(); ++o) {
     if (std::memcmp(&d[o], "RFRM", 4) != 0 || std::memcmp(&d[o + 20], "TXTR", 4) != 0) {
       continue;
@@ -2805,6 +2781,9 @@ bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>&
              " index " + std::to_string(t.index);
       return false;
     }
+    if (!want(t)) {
+      continue;
+    }
     if (textures.size() >= 4096 ||
         !DecodeVolumeFloat(&d[o + bufOff], bufSize, decomp, t.format, t.w, t.h, t.depth, t.rgba, error)) {
       note = "grid not decoded";
@@ -2812,9 +2791,132 @@ bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>&
     }
     textures.push_back(std::move(t));
   }
+  return true;
+}
+
+bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>& check, std::vector<uint8_t>& out,
+                  std::string& note) const {
+  out.clear();
+  const auto ltpb = [](const RoomPak& r, std::vector<uint8_t>& d) {
+    const PakAsset* asset = r.pak != nullptr ? FirstOfType(*r.pak, Tag("LTPB")) : nullptr;
+    std::string error;
+    return asset != nullptr && r.pak->ReadAsset(*asset, d, error);
+  };
+  std::vector<uint8_t> d;
+  if (FirstOfType(*rp.pak, Tag("LTPB")) == nullptr) {
+    note = "no grid";
+    return false;
+  }
+  if (!ltpb(rp, d)) {
+    note = "grid not decoded";
+    return false;
+  }
+  size_t phdr = std::string::npos;
+  for (size_t i = 0; i + 4 <= d.size(); ++i) {
+    if (std::memcmp(&d[i], "PHDR", 4) == 0) {
+      phdr = i;
+      break;
+    }
+  }
+  if (phdr == std::string::npos || phdr + 24 + 26 + 6 > d.size()) {
+    note = "no grid";
+    return false;
+  }
+  int lo[3], hi[3];
+  for (size_t i = 0; i < 3; ++i) {
+    lo[i] = int16_t(Le16(&d[phdr + 44 + 2 * i]));
+    hi[i] = int16_t(Le16(&d[phdr + 50 + 2 * i]));
+  }
+
+  std::vector<GridTexture> textures;
+  if (!ReadGridTextures(d, [](const GridTexture&) { return true; }, textures, note)) {
+    return false;
+  }
   if (textures.empty()) {
     note = "no grid";
     return false;
+  }
+
+  // Blocks of the room's PHDR box that its own LTPB lacks read 0 in the room alone, but
+  // Remastered's probe texture is world-wide: a loaded neighbour area keeps its tiles mapped
+  // (EnsureGroupIdTilesActive), so far scenery outside the room's bake is lit by theirs. Each
+  // missing block comes from the world's room whose copy has the most lit points.
+  // MP_REMASTERED_GRID_NEIGHBOURS=0 turns this off.
+  int borrowed = 0;
+  if (const char* env = std::getenv("MP_REMASTERED_GRID_NEIGHBOURS"); env == nullptr || env[0] != '0') {
+    const auto key = [](const GridTexture& t) { return GridKey{int32_t(t.index), t.bx, t.by, t.bz}; };
+    if (!m_gridOwnersReady) {
+      m_gridOwnersReady = true;
+      std::map<GridKey, size_t> lit;
+      for (const RoomPak& other : m_rooms) {
+        std::vector<uint8_t> od;
+        std::vector<GridTexture> found;
+        std::string ignored;
+        if (other.pak == nullptr || !ltpb(other, od) ||
+            !ReadGridTextures(od, [](const GridTexture& t) { return t.index == 0; }, found, ignored)) {
+          continue;
+        }
+        for (const GridTexture& t : found) {
+          size_t n = 0;
+          for (size_t i = 0; i + 3 < t.rgba.size(); i += 4) {
+            n += (t.rgba[i] + t.rgba[i + 1]) + t.rgba[i + 2] > 0 ? 1 : 0;
+          }
+          size_t& best = lit[key(t)];
+          const RoomPak*& owner = m_gridOwners[key(t)];
+          // Ties go to the lower name, so the output doesn't hang on the room order.
+          if (owner == nullptr || n > best || (n == best && other.name < owner->name)) {
+            best = n;
+            m_gridOwners[key(t)] = &other;
+          }
+        }
+      }
+    }
+    std::set<GridKey> own;
+    for (const GridTexture& t : textures) {
+      own.insert(key(t));
+    }
+    const auto floorDiv = [](int64_t a, int64_t b) { return int32_t(a >= 0 ? a / b : -((-a + b - 1) / b)); };
+    // Per lending room, the layer-0 blocks it fills.
+    std::map<const RoomPak*, std::vector<GridKey>> lenders;
+    for (int32_t z = floorDiv(lo[2], 16); z <= floorDiv(hi[2], 16); ++z) {
+      for (int32_t y = floorDiv(lo[1], 64); y <= floorDiv(hi[1], 64); ++y) {
+        for (int32_t x = floorDiv(lo[0], 64); x <= floorDiv(hi[0], 64); ++x) {
+          const GridKey hole{0, x, y, z};
+          const auto owner = m_gridOwners.find(hole);
+          if (own.count(hole) == 0 && owner != m_gridOwners.end() && owner->second->name != rp.name) {
+            lenders[owner->second].push_back(hole);
+          }
+        }
+      }
+    }
+    // Each layer of the lender's block, where the room lacks that layer's block (layers 2..5
+    // are 128 wide, so their block holds two of layer 0's).
+    std::set<GridKey> taken;
+    for (const auto& [lender, holes] : lenders) {
+      std::vector<uint8_t> od;
+      if (!ltpb(*lender, od)) {
+        continue;
+      }
+      std::vector<GridTexture> found;
+      std::string ignored;
+      ReadGridTextures(od, [&](const GridTexture& t) {
+        const GridKey k = key(t);
+        if (own.count(k) != 0 || taken.count(k) != 0) {
+          return false;
+        }
+        for (const GridKey& hole : holes) {
+          if (t.by == hole[2] && t.bz == hole[3] && (t.w == 64 ? t.bx == hole[1] : t.bx == floorDiv(hole[1], 2))) {
+            taken.insert(k);
+            return true;
+          }
+        }
+        return false;
+      }, found, ignored);
+      for (GridTexture& t : found) {
+        textures.push_back(std::move(t));
+        ++borrowed;
+      }
+    }
   }
 
   // Where each texture starts, in points. A block is 64 x 64 x 16 points, and a texture
@@ -2822,23 +2924,40 @@ bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>&
   const auto start = [](const GridTexture& t, int axis) -> int64_t {
     return axis == 0 ? int64_t(t.bx) * int64_t(t.w) : axis == 1 ? int64_t(t.by) * 64 : int64_t(t.bz) * 16;
   };
-  const auto extent = [](const GridTexture& t, int axis) -> int64_t {
-    return axis == 0 ? int64_t(t.w) : axis == 1 ? 64 : 16;
-  };
-  int64_t base[3] = {INT64_MAX, INT64_MAX, INT64_MAX}, top[3] = {INT64_MIN, INT64_MIN, INT64_MIN};
+  int64_t base[3] = {INT64_MAX, INT64_MAX, INT64_MAX};
   for (const GridTexture& t : textures) {
     for (int i = 0; i < 3; ++i) {
       base[i] = std::min(base[i], start(t, i));
-      top[i] = std::max(top[i], start(t, i) + extent(t, i));
     }
   }
-  int64_t c0[3], c1[3];
-  for (int i = 0; i < 3; ++i) {
-    c0[i] = std::max<int64_t>(lo[i] - 1 - base[i], 0);
-    c1[i] = std::min<int64_t>(hi[i] + 2 - base[i], top[i] - base[i]);
+  // The blocks are whole tiles of the world's bake, lit well past the room's PHDR box
+  // (Main Plaza has 23k lit points outside it), and Remastered samples all of them, with
+  // unmapped tiles reading zero. So the kept part is the lit points' bounds and one empty
+  // point around them: the texture's clamped reads past it are zero too.
+  int64_t c0[3] = {INT64_MAX, INT64_MAX, INT64_MAX}, c1[3] = {INT64_MIN, INT64_MIN, INT64_MIN};
+  for (const GridTexture& t : textures) {
+    if (t.index != 0) {
+      continue;
+    }
+    const int64_t x0 = start(t, 0) - base[0], y0 = start(t, 1) - base[1], z0 = start(t, 2) - base[2];
+    for (int64_t z = 0; z < 16; ++z) {
+      for (int64_t y = 0; y < 64; ++y) {
+        for (int64_t x = 0; x < int64_t(t.w); ++x) {
+          const float* p = &t.rgba[((size_t(z) * 64 + size_t(y)) * t.w + size_t(x)) * 4];
+          if (!((p[0] + p[1]) + p[2] > 0)) {
+            continue;
+          }
+          const int64_t q[3] = {x0 + x, y0 + y, z0 + z};
+          for (int i = 0; i < 3; ++i) {
+            c0[i] = std::min(c0[i], q[i] - 1);
+            c1[i] = std::max(c1[i], q[i] + 2);
+          }
+        }
+      }
+    }
   }
   if (c1[0] <= c0[0] || c1[1] <= c0[1] || c1[2] <= c0[2]) {
-    note = "grid box outside its blocks";
+    note = "grid empty";
     return false;
   }
   int64_t size[3] = {c1[0] - c0[0], c1[1] - c0[1], c1[2] - c0[2]};
@@ -2866,13 +2985,17 @@ bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>&
       }
     }
   }
+  // Point k sits at 2k metres in Remastered's axes, not in the middle of a 2 m cell:
+  // CBakedLightingProbeTexture::Initialize (0x1c8cbc) rounds the box to points
+  // (floor(x * 0.5 + 0.5)) and maps to texels by Scale(1 / size) * Translate(0.5 - lo) *
+  // Scale(0.5), so texel k's middle is point lo + k.
   double m[3][4];
   const Vec3 shifted = MulR2G(shift);  // R2G is its own transpose
   for (int i = 0; i < 3; ++i) {
     for (int j = 0; j < 3; ++j) {
       m[i][j] = kR2G[j][i] / 2;
     }
-    m[i][3] = -shifted[size_t(i)] / 2 - 0.5 - double(origin[i]);
+    m[i][3] = -shifted[size_t(i)] / 2 - double(origin[i]);
   }
   // The game reads a room's file in one go when the area loads, and the largest
   // rooms have millions of points; ambient light varies slowly, so those are
@@ -2990,6 +3113,9 @@ bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>&
   std::snprintf(buf, sizeof buf, "grid %lldx%lldx%lld %.0f%% lit", (long long)size[0], (long long)size[1],
                 (long long)size[2], 100.0 * double(litCount) / double(points));
   note = buf;
+  if (borrowed > 0) {
+    note += ", " + std::to_string(borrowed) + " borrowed blocks";
+  }
   if (!check.empty()) {
     int ok = 0;
     for (const Vec3& c : check) {
