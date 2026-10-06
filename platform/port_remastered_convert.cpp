@@ -776,12 +776,11 @@ struct Converter::State {
   }
 
   Mean MeanOf(const MapRef& map) {
-    const auto it = means.find(map.src);
-    if (it != means.end()) {
-      return it->second;
-    }
+    // Through Fact even when Open already measured it, so the next import has it too.
     const std::string text = Fact("mean:" + map.src, [&] {
-      Open(map);
+      if (means.find(map.src) == means.end()) {
+        Open(map);
+      }
       return MeanText(means[map.src]);
     });
     Mean m{{0.0f, 0.0f, 0.0f}, 0};
