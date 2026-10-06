@@ -1034,6 +1034,23 @@ void CmdHeal(CStateManager& mgr) {
   Finish();
 }
 
+void CmdVisor(CStateManager& mgr) {
+  static const char* const kVisors[] = {"combat", "xray", "scan", "thermal"};
+  CPlayerState& ps = *mgr.PlayerState();
+  if (sCmd.args.size() < 2) {
+    Out("visor %s", kVisors[ps.GetCurrentVisor()]);
+    return Finish();
+  }
+  const std::string arg = Lower(sCmd.args[1]);
+  for (int i = 0; i < 4; ++i) {
+    if (arg == kVisors[i]) {
+      ps.StartTransitionToVisor(static_cast< CPlayerState::EPlayerVisor >(i));
+      return Finish();
+    }
+  }
+  Finish("usage: visor [combat|scan|thermal|xray]");
+}
+
 void CmdGod() {
   if (sCmd.args.size() > 1) {
     const std::string arg = Lower(sCmd.args[1]);
@@ -1653,7 +1670,7 @@ bool IsTickCommand(const std::string& name) {
   }
   static const char* const names[] = {"status", "areas", "objs", "obj", "send", "give",
                                       "take", "items", "heal", "god", "memo", "strg", "language", "tp", "room", "fx", "face", "look", "warp",
-                                      "tracker", "enter"};
+                                      "tracker", "enter", "visor"};
   for (const char* n : names) {
     if (name == n) {
       return true;
@@ -1685,6 +1702,8 @@ void RunTick(CStateManager& mgr) {
     CmdHeal(mgr);
   } else if (name == "god") {
     CmdGod();
+  } else if (name == "visor") {
+    CmdVisor(mgr);
   } else if (name == "memo") {
     CmdMemo();
   } else if (name == "strg") {
