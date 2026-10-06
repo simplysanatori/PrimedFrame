@@ -1229,13 +1229,60 @@ final class TouchControlsView extends View {
         return mapTap && pill.axis < 0 && pill.button == BTN_RIGHT_SHOULDER;
     }
 
+    private final Path facePath = new Path();
+    private final RectF faceRect = new RectF();
+    private final RectF faceTmp = new RectF();
+
+    // The face buttons' real bounds, kidney arcs included.
+    private void faceBounds(float width, float height, RectF out) {
+        final float u = layoutU(height);
+        boolean first = true;
+        for (ControlButton button : face) {
+            final float x = centreX(button, width, height);
+            final float y = centreY(button, height);
+            final float r = button.radius * u;
+            if (button.isKidney()) {
+                kidneyPath(facePath, x, y, r, button.halfWidth * u, button.arcStart,
+                           button.arcSweep);
+                facePath.computeBounds(faceTmp, true);
+            } else {
+                faceTmp.set(x - r, y - r, x + r, y + r);
+            }
+            if (first) {
+                out.set(faceTmp);
+                first = false;
+            } else {
+                out.union(faceTmp);
+            }
+        }
+    }
+
+    // Past the cap, with no D-pad under them, the top pills drop together until
+    // the lowest shown pill (the triggers, or Z) is dp(12) above the stick ring
+    // or face cluster.
+    private float pillShift(float width, float height) {
+        if (layoutU(height) >= height || !wheels) {
+            return 0f;
+        }
+        float bottom = 0f;
+        for (PillButton pill : pills) {
+            if (!pillHidden(pill)) {
+                bottom = Math.max(bottom, layoutY(pill.bottom, height));
+            }
+        }
+        faceBounds(width, height, faceRect);
+        final float stickTop = leftStickY(height) - STICK_RADIUS * layoutU(height);
+        return Math.max(0f, Math.min(stickTop, faceRect.top) - dp(12) - bottom);
+    }
+
     // A pill's rect: the middle ones round the centre line, the others from
     // their side edge, all from the top of the layout band. On a screen taller
     // than the cap the middle ones sit beside the triggers instead.
     private void pillRect(PillButton pill, float width, float height, RectF out) {
         final boolean middle = Math.abs((pill.left + pill.right) * 0.5f - 0.5f) < 0.15f;
-        final float top = layoutY(pill.top, height);
-        final float bottom = layoutY(pill.bottom, height);
+        final float shift = pillShift(width, height);
+        final float top = layoutY(pill.top, height) + shift;
+        final float bottom = layoutY(pill.bottom, height) + shift;
         if (middle && layoutU(height) < height) {
             final boolean leftSide = pill.left < 0.5f;
             final int trigger = leftSide ? PillButton.TRIGGER_LEFT : PillButton.TRIGGER_RIGHT;
@@ -1362,7 +1409,9 @@ final class TouchControlsView extends View {
     // C-stick is shown (classic layout). On a wide screen they move in towards
     // the thumbs: Visor at most WHEEL_ANCHOR_K layout heights right of the left
     // stick, Beam the mirror of that (or, in classic, that far left of the
-    // C-stick). A phone's centred spot is always the nearer one.
+    // C-stick). A phone's centred spot is always the nearer one. Past the cap
+    // (u < height) they sit dp(16) outside the left stick ring, and outside the
+    // face cluster (or, in classic, the C-stick ring).
     private float wheelButtonX(int wheel, float width, float height) {
         final float u = layoutU(height);
         float centre = width * 0.5f;
@@ -1374,7 +1423,18 @@ final class TouchControlsView extends View {
         final float offset =
             (dp(WHEEL_RADIUS_DP) + WHEEL_BUTTON_RADIUS * u + dp(WHEEL_BUTTON_GAP_DP)) * 0.5f;
         float x;
-        if (wheel == 0) {
+        if (u < height) {
+            // A big screen: each button hugs the control beside it.
+            final float edge = dp(16) + WHEEL_BUTTON_RADIUS * u;
+            if (wheel == 0) {
+                x = leftStickX(width, height) + STICK_RADIUS * u + edge;
+            } else if (cStick) {
+                x = rightStickX(width, height) - rightStickRadius(height) - edge;
+            } else {
+                faceBounds(width, height, faceRect);
+                x = faceRect.left - edge;
+            }
+        } else if (wheel == 0) {
             x = Math.min(centre - offset, leftStickX(width, height) + WHEEL_ANCHOR_K * u);
         } else if (cStick) {
             x = Math.max(centre + offset, rightStickX(width, height) -
