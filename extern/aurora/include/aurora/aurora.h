@@ -172,6 +172,19 @@ AuroraBackend aurora_get_backend();
 const AuroraBackend* aurora_get_available_backends(size_t* count);
 float aurora_get_timescale();
 
+/**
+ * GPU self-test: renders known patterns offscreen through the game's GX path, reads them back and logs
+ * "gpu selftest: <case>: PASS/FAIL" lines. Call inside a frame (after aurora_begin_frame, before the frame's
+ * own draws); it changes GX state, so the caller must reset its cached state afterwards. Returns false if a
+ * run is already pending or the test could not start. Results arrive a frame or two later. Pipelines compile
+ * asynchronously and skip draws until ready, so call once with warmup (nothing logged), wait for
+ * queuedPipelines to drain, then call again for the real run.
+ */
+bool aurora_gpu_selftest_run(bool warmup);
+bool aurora_gpu_selftest_pending();
+/** Copies the last run's one-line summary ("X/Y passed ...", empty before the first run); returns its length. */
+size_t aurora_gpu_selftest_summary(char* buf, size_t size);
+
 #ifdef __cplusplus
 }
 #endif

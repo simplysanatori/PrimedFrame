@@ -216,7 +216,8 @@ TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, 
   };
   const wgpu::TextureDescriptor textureDescriptor{
       .label = label,
-      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::RenderAttachment,
+      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::RenderAttachment |
+               wgpu::TextureUsage::CopySrc,
       .dimension = wgpu::TextureDimension::e2D,
       .size = size,
       .format = wgpuFormat,

@@ -3592,4 +3592,6 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
   };
   return webgpu::g_device.CreateShaderModule(&shaderDescriptor);
 }
+
+bool storage_load_clamp_active() noexcept { return clamp_storage_loads(); }
 } // namespace aurora::gx

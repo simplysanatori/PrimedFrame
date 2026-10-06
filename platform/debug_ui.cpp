@@ -39,6 +39,8 @@
 
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "Kyoto/Graphics/CCubeMaterial.hpp"
+#include "Kyoto/Graphics/CGX.hpp"
+#include "Kyoto/Graphics/CGraphics.hpp"
 #include "Kyoto/Graphics/CCubeModel.hpp"
 #include "Kyoto/Graphics/CModel.hpp"
 #include "Kyoto/Graphics/CTexture.hpp"
@@ -3465,6 +3467,49 @@ void UpdateUiScale() {
 
 void RequestToggle() { sToggleRequested.store(true, std::memory_order_release); }
 
+static std::atomic<bool> sGpuSelfTestRequested{false};
+
+void RequestGpuSelfTest() { sGpuSelfTestRequested.store(true, std::memory_order_release); }
+
+void RunGpuSelfTestIfRequested() {
+  // Pipelines compile asynchronously and a draw is skipped until its pipeline is ready, so a request first
+  // runs a silent warm-up pass, waits for the compile queue to drain, then runs the logged pass.
+  enum class Stage { Idle, WarmingUp };
+  static Stage stage = Stage::Idle;
+  static unsigned waited = 0;
+  static unsigned frames = 0;
+  static const bool envRun = port::EnvFlag("MP_GPU_SELFTEST");
+  if (envRun && ++frames == 120) {
+    RequestGpuSelfTest();
+  }
+  bool runReal = false;
+  if (stage == Stage::WarmingUp) {
+    if (aurora_gpu_selftest_pending()) {
+      return;
+    }
+    // Let the pipelines the warm-up queued finish (a few frames at least, and not forever).
+    const bool drained = aurora_get_stats()->queuedPipelines == 0;
+    if (++waited < 3 || (!drained && waited < 1800)) {
+      return;
+    }
+    stage = Stage::Idle;
+    runReal = true;
+  } else if (sGpuSelfTestRequested.exchange(false, std::memory_order_acq_rel)) {
+    if (aurora_gpu_selftest_run(true)) {
+      stage = Stage::WarmingUp;
+      waited = 0;
+      CGX::ResetGXStatesFull();
+      CGraphics::SetViewMatrix();
+    }
+    return;
+  }
+  if (runReal && aurora_gpu_selftest_run(false)) {
+    // The test left its own GX state behind: drop the game's cached copy of it.
+    CGX::ResetGXStatesFull();
+    CGraphics::SetViewMatrix();
+  }
+}
+
 void UpdateControllerNav() {
   EnsureInitialized();
   // Registered here rather than in EnsureInitialized so the event system is only
@@ -4962,6 +5007,25 @@ void DrawVideoQuality() {
       ImGui::SameLine();
       ImGui::TextColored(ThemeWarnColor(), "OpenGL ES failed to start; using %s",
                          live == BACKEND_VULKAN ? "Vulkan" : "another API");
+    }
+  }
+  {
+    const bool pending = aurora_gpu_selftest_pending();
+    ImGui::BeginDisabled(pending);
+    if (ImGui::Button("GPU self-test")) {
+      RequestGpuSelfTest();
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Renders known patterns offscreen through the game's own GX path, reads them back\n"
+                          "and logs one PASS or FAIL line per feature (indexed vertices, TEV, textures, blend,\n"
+                          "depth, EFB copy). For GPU driver bugs such as a black world; attach the log to a report.");
+    char summary[160];
+    if (pending) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("running...");
+    } else if (aurora_gpu_selftest_summary(summary, sizeof(summary)) != 0) {
+      ImGui::SameLine();
+      ImGui::TextUnformatted(summary);
     }
   }
   {

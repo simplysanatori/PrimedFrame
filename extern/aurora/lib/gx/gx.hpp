@@ -510,6 +510,8 @@ void set_draw_sync_token(u16 token) noexcept;
 u16 draw_sync_token() noexcept;
 void copy_tex(const void* dest, GXBool clear) noexcept;
 void copy_probe_face(u32 face) noexcept;
+// Whether load_word is generated with the clamped storage read (Adreno 730 on Vulkan; see shader.cpp).
+bool storage_load_clamp_active() noexcept;
 const gfx::TextureBind& get_texture(GXTexMapID id) noexcept;
 void resolve_sampled_textures(const ShaderInfo& info) noexcept;
 
