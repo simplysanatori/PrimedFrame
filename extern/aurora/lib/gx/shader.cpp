@@ -2912,10 +2912,10 @@ fn load_word(p: ptr<storage, array<u32>>, word_idx: u32) -> u32 {{
   // It appears to discourage some Adreno drivers/optimizers from storage buffer
   // optimizations that can cause visual artifacts, including vertex explosions
   // in Dusklight.
-  if (word_idx < arrayLength(p)) {{
-    return p[word_idx];
-  }}
-  return 0u;
+  // A clamp, not `if (word_idx < arrayLength(p))`: Adreno 730 (Vulkan) drops every
+  // GX draw whose fragment shader reads a varying when the vertex shader compares
+  // against arrayLength, so the world renders black there (issue #7).
+  return p[min(word_idx, arrayLength(p) - 1u)];
 }}
 
 fn load_u8(p: ptr<storage, array<u32>>, byte_off: u32) -> u32 {{
