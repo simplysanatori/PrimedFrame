@@ -1198,7 +1198,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   the C stick (or a captured mouse) turns, R is four times as fast, L and Z
   (or the d-pad's down and up) go down and up. `freeze` stops the game's simulation while it flies,
   which also makes two screenshots of one view comparable. Samus's body is
-  drawn where the player stands (`player off` or "Show Samus" hides it). The Debug page's Remastered sub-tab has the console's `view`, `probe`, `hdfont`, `roomgeo` and
+  drawn where the player stands (`player off` or "Show Samus" hides it). The Debug page's Remastered section has the console's `view`, `probe`, `hdfont`, `roomgeo` and
   `roomenv` switches.
 - `MP_PBR_PROBE=<off|on|mirror|window>` (or 0-3): the reflection probe PBR mod
   materials reflect, on by default. The console's `probe` changes it live.
@@ -1523,7 +1523,7 @@ For stuck or unexpected sounds, `MP_LOG_VOICES=1` logs the active MusyX voices
 listener heading) about three times a second, and `MP_MUTE_SMP=65535,93` silences
 voices by sample id so a persistent one can be identified by ear. Streamed
 voices report sample id 65535. `MP_LOG_3D=1` logs any 3D emitter whose Doppler
-factor is not 1. The overlay's **Voices** tab lists the live voices (loudest
+factor is not 1. The overlay's Debug > Audio > **Sounds playing** list shows the live voices (loudest
 first) with a per-sample mute checkbox and an "Unmute all" button; the muted ids
 are saved to `voices_muted` in the settings file.
 
