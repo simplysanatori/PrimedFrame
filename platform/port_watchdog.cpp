@@ -17,6 +17,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -135,9 +136,12 @@ namespace {
 std::atomic< bool > sDumping{false};
 
 // Lines our own writers already put in the log (PortLog, stdout/stderr, Aurora's
-// callback, SDL), in `logcat -v brief` form: "I/tag( pid): message".
-bool IsOurs(const std::string& line) {
-  static const char* const kTags[] = {"stdout", "aurora", "metroidprime", "SDL", "touchpad", "MetroidPrime"};
+// callback, SDL), and Android UI chatter that repeats on every launch, in
+// `logcat -v brief` form: "I/tag( pid): message".
+bool IsSkipped(const std::string& line) {
+  static const char* const kTags[] = {"stdout",       "aurora",        "metroidprime",
+                                      "SDL",          "touchpad",      "MetroidPrime",
+                                      "InsetsSource", "InteractionJankMonitor"};
   if (line.size() < 3 || line[1] != '/') {
     return false;
   }
@@ -161,7 +165,10 @@ void LogcatDump(const char* why, bool warningsOnly) {
     command += " *:W";
   }
   command += " 2>&1";
+  // Repeats of a line (same tag and message) are counted on its first copy.
   std::vector< std::string > kept;
+  std::vector< int > repeats;
+  std::unordered_map< std::string, size_t > seen;
   if (FILE* pipe = popen(command.c_str(), "r")) {
     char buffer[2048];
     while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) {
@@ -169,19 +176,32 @@ void LogcatDump(const char* why, bool warningsOnly) {
       while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
         line.pop_back();
       }
-      if (line.empty() || line[0] == '-' || IsOurs(line)) {
+      if (line.empty() || line[0] == '-' || IsSkipped(line)) {
+        continue;
+      }
+      std::string key = line;
+      if (const size_t open = key.find('('), close = key.find("): "); open != std::string::npos &&
+                                                                       close != std::string::npos && open < close) {
+        key.erase(open, close + 1 - open);
+      }
+      if (const auto [it, added] = seen.try_emplace(std::move(key), kept.size()); !added) {
+        ++repeats[it->second];
         continue;
       }
       kept.push_back(std::move(line));
+      repeats.push_back(1);
     }
     pclose(pipe);
   }
   constexpr size_t kMaxLines = 150;
   const size_t first = kept.size() > kMaxLines ? kept.size() - kMaxLines : 0;
   PortLogFile::Write("logcat", (std::string("--- ") + why + ": " + std::to_string(kept.size() - first) +
-                                (warningsOnly ? " warning lines" : " lines from other tags") + " ---")
+                                (warningsOnly ? " distinct warning lines" : " distinct lines from other tags") + " ---")
                                    .c_str());
   for (size_t i = first; i < kept.size(); ++i) {
+    if (repeats[i] > 1) {
+      kept[i] += " (x" + std::to_string(repeats[i]) + ")";
+    }
     PortLogFile::Write("logcat", kept[i].c_str());
   }
   sDumping.store(false);
