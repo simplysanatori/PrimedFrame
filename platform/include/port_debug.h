@@ -522,6 +522,12 @@ bool TouchColorsFlag();
 float TouchSideMarginDp();
 float TouchStickInsetDp();
 float TouchButtonInsetDp();
+// Per-control offset and size, an opaque `<id>:<dx>,<dy>,<scale>;...` string the
+// Android touch view owns. Setting it saves the config on the next frame.
+std::string TouchLayout();
+void SetTouchLayout(const std::string& layout);
+// True once after F1's "Edit layout" was pressed.
+bool TakeTouchEditRequested();
 void Toggle();
 // Asks for the overlay to be toggled on the next frame. Safe to call from any
 // thread, unlike Toggle(), which touches ImGui state.

@@ -372,6 +372,17 @@ std::atomic< float > sTouchStickInset{kTouchStickInsetDefault};
 // The face buttons' and C-stick's extra gap to the right edge, in dp.
 constexpr float kTouchButtonInsetDefault = 0.f;
 std::atomic< float > sTouchButtonInset{kTouchButtonInsetDefault};
+// Each touch control's own offset and size, as an opaque string the touch view
+// parses (`<id>:<dx>,<dy>,<scale>;...`). Java reads and writes it on the UI thread
+// and the settings file on the game thread, hence the mutex.
+std::mutex sTouchLayoutMutex;
+std::string sTouchLayout;
+constexpr size_t kTouchLayoutMaxLen = 4096;
+// Java's layout change is saved by the game thread's next frame: ImGui's settings
+// path isn't safe from the UI thread.
+std::atomic< bool > sTouchLayoutSavePending{false};
+// The F1 "Edit layout" button; the touch view takes it and opens its editor.
+std::atomic< bool > sTouchEditRequested{false};
 // Set when a real pad, keyboard or mouse is used; the Android touch overlay takes
 // it to get out of the way.
 std::atomic< bool > sPhysicalInput{false};
@@ -614,6 +625,11 @@ void ApplySetting(const std::string& key, const std::string& value) {
        : key == "touch_stick_inset" ? sTouchStickInset
                                     : sTouchButtonInset)
           .store(f);
+    }
+  } else if (key == "touch_layout") {
+    if (value.size() <= kTouchLayoutMaxLen) {
+      std::lock_guard< std::mutex > lock(sTouchLayoutMutex);
+      sTouchLayout = value;
     }
   } else if (key == "mouse_invert_x") {
     sMouseInvertX = ParseBool(value);
@@ -858,6 +874,10 @@ void SaveSettings() {
   file << "touch_side_margin=" << sTouchSideMargin.load() << '\n';
   file << "touch_stick_inset=" << sTouchStickInset.load() << '\n';
   file << "touch_button_inset=" << sTouchButtonInset.load() << '\n';
+  {
+    std::lock_guard< std::mutex > lock(sTouchLayoutMutex);
+    file << "touch_layout=" << sTouchLayout << '\n';
+  }
   file << "touch_map_tap=" << (sTouchMapTap ? 1 : 0) << '\n';
   file << "touch_classic_gc=" << (sTouchClassic ? 1 : 0) << '\n';
   file << "touch_wheels=" << (sTouchWheels ? 1 : 0) << '\n';
@@ -3101,6 +3121,24 @@ bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire)
 float TouchSideMarginDp() { return sTouchSideMargin.load(); }
 float TouchStickInsetDp() { return sTouchStickInset.load(); }
 float TouchButtonInsetDp() { return sTouchButtonInset.load(); }
+
+std::string TouchLayout() {
+  std::lock_guard< std::mutex > lock(sTouchLayoutMutex);
+  return sTouchLayout;
+}
+
+void SetTouchLayout(const std::string& layout) {
+  if (layout.size() > kTouchLayoutMaxLen) {
+    return;
+  }
+  {
+    std::lock_guard< std::mutex > lock(sTouchLayoutMutex);
+    sTouchLayout = layout;
+  }
+  sTouchLayoutSavePending.store(true, std::memory_order_release);
+}
+
+bool TakeTouchEditRequested() { return sTouchEditRequested.exchange(false, std::memory_order_acq_rel); }
 
 void SaveSettingsNow() {
   EnsureInitialized();
@@ -5394,6 +5432,13 @@ void DrawControlsTouchGyro() {
     sTouchButtonInset.store(kTouchButtonInsetDefault);
     MarkDirty();
   }
+  if (ImGui::Button("Edit layout")) {
+    // The touch view takes the request and opens its editor over the game.
+    sTouchEditRequested.store(true, std::memory_order_release);
+    RequestToggle();
+  }
+  ItemHelp("Closes this menu and lets you drag each on-screen control to where you want it and "
+           "pinch it to resize. Done saves; Reset all puts everything back.");
 #endif
 
   ImGui::SeparatorText("Gyro aim");
@@ -7271,6 +7316,10 @@ void DrawUI() {
   FinishRemasteredImport();
   DrawStaleImportToast();
   DrawDiscReadFailedAlert();
+  if (sTouchLayoutSavePending.exchange(false, std::memory_order_acq_rel)) {
+    MarkDirty();
+    SaveSettings();
+  }
   if (!sVisible) {
     UpdateMenuSounds(false);
     sTouchScroll = TouchScroll{};
@@ -7546,6 +7595,29 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchStickInsetDp(JNIEnv*, jc
 extern "C" JNIEXPORT jfloat JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchButtonInsetDp(JNIEnv*, jclass) {
   return PortDebug::TouchButtonInsetDp();
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchLayout(JNIEnv* env, jclass) {
+  return env->NewStringUTF(PortDebug::TouchLayout().c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeSetTouchLayout(JNIEnv* env, jclass,
+                                                                  jstring layout) {
+  if (layout == nullptr) {
+    return;
+  }
+  const char* chars = env->GetStringUTFChars(layout, nullptr);
+  if (chars != nullptr) {
+    PortDebug::SetTouchLayout(chars);
+    env->ReleaseStringUTFChars(layout, chars);
+  }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchEditRequested(JNIEnv*, jclass) {
+  return PortDebug::TakeTouchEditRequested() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
