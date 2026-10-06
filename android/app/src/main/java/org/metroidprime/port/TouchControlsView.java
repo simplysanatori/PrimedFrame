@@ -200,7 +200,7 @@ final class TouchControlsView extends View {
     private boolean mapTap;
     // x0, y0, x1, y1 (fractions of the view), then 1 when the minimap is drawn there.
     private final float[] minimapRect = new float[5];
-    // Wherever the map can open, a map button sits left of the eye (the minimap
+    // Wherever the map can open or close, a map button sits left of the eye (the minimap
     // is not always drawn: the visors other than Combat hide it). The HUD
     // changes without a touch, so a poll redraws when the button comes or goes.
     // The same poll shows and hides the wheel buttons (only drawn while the
@@ -393,7 +393,9 @@ final class TouchControlsView extends View {
 
     // True, with mapButtonRect set, when the map button should show.
     private boolean mapButtonState(float width, float height) {
-        if (!mapTap || width <= 0f || height <= 0f || !nativeMinimapRect(minimapRect)) {
+        // Shown in the open map too: a tap is a Z press, which closes it.
+        if (!mapTap || width <= 0f || height <= 0f ||
+            (!nativeMinimapRect(minimapRect) && !nativeMapScreenOpen())) {
             return false;
         }
         final float radius = dp(MAP_BUTTON_RADIUS_DP);
