@@ -62,8 +62,7 @@ final class TouchControlsView extends View {
     };
     private static final int[][] WHEEL_ITEMS = {{0, 1, 3, 2}, {0, 2, 1, 3}};
     private static final int WHEEL_VALID_BIT = 1 << 12;
-    private static final float WHEEL_BUTTON_Y = 0.90f; // in heights
-    private static final float WHEEL_BUTTON_GAP = 0.024f; // between the two, in heights
+    private static final float WHEEL_BUTTON_GAP_DP = 8f; // wheel to edge / other button
     private static final float WHEEL_BUTTON_RADIUS = 0.072f;
     private static final float WHEEL_RADIUS_DP = 112f;
     private static final float WHEEL_DEAD_DP = 30f;
@@ -106,6 +105,7 @@ final class TouchControlsView extends View {
     private static final float STICK_RIGHT_X = 0.58f;
     private static final float STICK_Y = 0.73f;
     private static final float STICK_RADIUS = 0.16f;
+    private static final float LEFT_STICK_REACH = 1.5f; // grab area, in stick radii
     private static final float STICK_DEAD_ZONE = 0.12f;
     // The GameCube C-stick is smaller than the main stick and sits just below
     // and left of the face buttons: its centre is this far from the right edge,
@@ -626,9 +626,8 @@ final class TouchControlsView extends View {
                     target.startX = x;
                     target.startY = y;
                     target.startMs = SystemClock.uptimeMillis();
-                    final float r = dp(WHEEL_RADIUS_DP);
-                    wheelCx = Math.max(r, Math.min(width - r, x));
-                    wheelCy = Math.max(r, Math.min(height - r, y));
+                    wheelCx = wheelButtonX(wheel, width, height);
+                    wheelCy = wheelButtonY(height);
                     wheelPointer = pointerId;
                     targets.put(pointerId, target);
                 }
@@ -653,7 +652,7 @@ final class TouchControlsView extends View {
             targets.put(pointerId, target);
             return;
         }
-        if (x < width * 0.38f && y > height * 0.43f && leftPointer == -1) {
+        if (onLeftStick(x, y, width, height) && leftPointer == -1) {
             TouchTarget target = new TouchTarget(LEFT_STICK, 0);
             leftPointer = pointerId;
             targets.put(pointerId, target);
@@ -702,6 +701,14 @@ final class TouchControlsView extends View {
             targets.put(pointerId, target);
             nativeTouchAimDown(true);
         }
+    }
+
+    // A press within half a stick radius outside the left stick's ring grabs it.
+    private static boolean onLeftStick(float x, float y, float width, float height) {
+        final float dx = x - width * STICK_LEFT_X;
+        final float dy = y - height * STICK_Y;
+        final float reach = height * STICK_RADIUS * LEFT_STICK_REACH;
+        return dx * dx + dy * dy <= reach * reach;
     }
 
     private float rightStickX(float width, float height) {
@@ -1220,17 +1227,25 @@ final class TouchControlsView extends View {
         canvas.drawCircle(cx, cy, lid * 0.55f, fillPaint);
     }
 
-    // The Visor (left) and Beam (right) buttons sit side by side at the bottom,
-    // centred in the gap between the left stick and the right stick or C-stick.
+    // The Visor (left) and Beam (right) buttons sit side by side near the bottom.
+    // Each wheel opens centred on its button, so the buttons sit a wheel radius
+    // up from the edge and far enough apart that a wheel never covers the other.
+    // They are centred on screen, or in the gap between the sticks when the
+    // right stick is shown.
     private float wheelButtonX(int wheel, float width, float height) {
-        final float left = STICK_LEFT_X * width + STICK_RADIUS * height;
-        final float right = rightStickX(width, height) - rightStickRadius(height);
-        final float offset = (WHEEL_BUTTON_RADIUS + WHEEL_BUTTON_GAP * 0.5f) * height;
-        return (left + right) * 0.5f + (wheel == 0 ? -offset : offset);
+        float centre = width * 0.5f;
+        if (!touchAim) {
+            final float left = STICK_LEFT_X * width + STICK_RADIUS * height;
+            final float right = rightStickX(width, height) - rightStickRadius(height);
+            centre = (left + right) * 0.5f;
+        }
+        final float offset =
+            (dp(WHEEL_RADIUS_DP) + WHEEL_BUTTON_RADIUS * height + dp(WHEEL_BUTTON_GAP_DP)) * 0.5f;
+        return centre + (wheel == 0 ? -offset : offset);
     }
 
-    private static float wheelButtonY(float height) {
-        return WHEEL_BUTTON_Y * height;
+    private float wheelButtonY(float height) {
+        return height - dp(WHEEL_RADIUS_DP) - dp(WHEEL_BUTTON_GAP_DP);
     }
 
     private int wheelButtonAt(float x, float y, float width, float height) {
