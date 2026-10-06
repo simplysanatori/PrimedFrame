@@ -334,6 +334,25 @@ void TestConverter() {
   }
 }
 
+// A holo shader (86CD1703, kind 16) through the whole converter: the kind must survive the
+// "not layered" demotion, which leaves it a PBR8 trailer behind (a kind 0 record has none).
+void TestHoloKind() {
+  ModelMaterial material = Material(0, false);
+  material.shaderId[0] = 0x86;
+  material.shaderId[1] = 0xCD;
+  material.shaderId[2] = 0x17;
+  material.shaderId[3] = 0x03;
+  std::vector<uint8_t> cmdl;
+  if (!Convert(BuildModel(material, false), cmdl)) {
+    return;
+  }
+  bool trailer = false;
+  for (size_t o = 0; o + 4 <= cmdl.size(); ++o) {
+    trailer = trailer || std::memcmp(&cmdl[o], "PBR8", 4) == 0;
+  }
+  Check(trailer, "a holo shader keeps kind 16 (PBR8 trailer) through the converter");
+}
+
 // The shader's cotangent frame (Schueler), as written in shader.cpp: T and B of a pixel from
 // the screen derivatives of position and UV and the stored normal.
 struct V3 {
@@ -383,6 +402,7 @@ void TestFrame() {
 int main() {
   TestReader();
   TestConverter();
+  TestHoloKind();
   TestFrame();
   if (sFailures == 0) {
     std::printf("port_remastered_lits_tests: ok\n");

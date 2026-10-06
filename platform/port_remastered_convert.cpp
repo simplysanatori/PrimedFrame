@@ -2198,8 +2198,9 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   } else {
     out.reason += std::string("kind ") + KindName(out.kind) + " from the shader (" + out.role + "); ";
   }
-  // All but lava and premultiplied glass draw with the second layer's maps.
-  if (out.kind != 3 && out.kind != 10 && !out.layered) {
+  // All but lava, premultiplied glass and the holograms (kinds 16-18, one map) draw with the second
+  // layer's maps.
+  if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && !out.layered) {
     if (out.kind != 0) {
       out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
     }
