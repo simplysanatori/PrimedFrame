@@ -46,7 +46,7 @@ public:
 
   void PreDraw(CStateManager& mgr, bool isCameraActive);
   void Draw(const CStateManager& mgr) const;
-  void PublishMinimapRect(bool shown) const; // port
+  void PublishMinimapRect(bool shown, const CTransform4f& world) const; // port
   void PauseGame(const CStateManager& mgr, EInGameGuiState state);
   void ShowPauseGameHudMessage(const CStateManager& mgr, CAssetId message, float time);
   void StartFadeIn();

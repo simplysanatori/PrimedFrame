@@ -274,9 +274,10 @@ void CInGameGuiManager::StartFadeIn() {
 }
 
 // Port: the screen rect of the minimap's depth-mask model, for the Android
-// touch overlay's tap-to-open-map. Called right after the minimap is drawn, so
-// the HUD camera's view and projection are still current.
-void CInGameGuiManager::PublishMinimapRect(bool shown) const {
+// touch overlay's tap-to-open-map. Called right after the mask is drawn, so the
+// HUD camera's view and projection are still current; `world` is the mask's
+// drawn transform (with the widescreen HUD spread).
+void CInGameGuiManager::PublishMinimapRect(bool shown, const CTransform4f& world) const {
   const auto& token = x148_model_automapper->GetModel();
   CModel* model = token ? token->GetObject() : nullptr;
   const CViewport& vp = CGraphics::GetViewport();
@@ -284,7 +285,7 @@ void CInGameGuiManager::PublishMinimapRect(bool shown) const {
     return;
   }
   const CTransform4f toView =
-      CGraphics::GetViewMatrix().GetInverse() * x148_model_automapper->GetWorldTransform();
+      CGraphics::GetViewMatrix().GetInverse() * world;
   const CMatrix4f proj = CGraphics::GetPerspectiveProjectionMatrix();
   const CAABox& box = model->GetBoundingBox();
   float x0 = FLT_MAX, y0 = FLT_MAX, x1 = -FLT_MAX, y1 = -FLT_MAX;
@@ -422,14 +423,15 @@ void CInGameGuiManager::Draw(const CStateManager& mgr) const {
     x148_model_automapper->DrawWithWorldTransform(
         CGuiWidgetDrawParms(1.f, CVector3f::Zero()),
         mapSpread * x148_model_automapper->GetWorldTransform());
+    PublishMinimapRect(drawVisor && x38_autoMapper->IsFullyInMiniMapState() && mapAlpha > 0.f &&
+                           t > 0.f && x3c_pauseScreenBlur->IsGameDraw() &&
+                           x1ec_hudVisMode != CTweakGui::kHud_Zero,
+                       mapSpread * x148_model_automapper->GetWorldTransform());
     CGraphics::SetDepthWriteMode(true, kE_GEqual, false);
     x38_autoMapper->Draw(mgr, mapSpread * CTransform4f::Translate(0.f, 0.02f, 0.f) * x18c_mapCamXf,
                          mapAlpha * (x1f4_visorStaticAlpha * t));
     CGraphics::SetDepthWriteMode(true, kE_LEqual, true);
     x148_model_automapper->SetIsVisible(false);
-    PublishMinimapRect(drawVisor && x38_autoMapper->IsFullyInMiniMapState() && mapAlpha > 0.f &&
-                       t > 0.f && x3c_pauseScreenBlur->IsGameDraw() &&
-                       x1ec_hudVisMode != CTweakGui::kHud_Zero);
   }
   if (!preDrawBlur) {
     x3c_pauseScreenBlur->Draw(mgr);
