@@ -2019,11 +2019,13 @@ void PollGyro() {
   if (sSpringFlickLatch > 0.f) {
     sSpringFlickLatch -= dt;
   }
-  // Gyro feeds the same aim state the mouse and twin stick use, so aiming only
-  // has an effect where that is driving the camera. Flicks need no aim.
-  const bool aim = sGyroMode != 0 && (sMouseAim || sTwinStick);
+  // Gyro feeds the same aim state the mouse, twin stick and the touch layout's
+  // drag aim use, so aiming only has an effect where that is driving the
+  // camera. Flicks need no aim. The raw sTwinStick: TwinStick() reads false
+  // while touch is in use, yet touch keeps the direct aim path.
+  const bool aim = sGyroMode != 0 && (sMouseAim || sTwinStick || TouchDirectAim());
   if (!aim && !sSpringFlick) {
-    sGyroStatus = sGyroMode == 0 ? "off" : "needs mouse aim or twin stick";
+    sGyroStatus = sGyroMode == 0 ? "off" : "needs mouse aim, twin stick or touch controls";
     return;
   }
 
@@ -2048,7 +2050,7 @@ void PollGyro() {
   }
   if (!aim) {
     if (sGyroMode != 0) {
-      sGyroStatus = "flicks only (aim needs mouse aim or twin stick)";
+      sGyroStatus = "flicks only (aim needs mouse aim, twin stick or touch controls)";
     }
     return;
   }
@@ -5217,7 +5219,8 @@ void DrawInputTab() {
     SetGyroMode(gyroMode);
   }
   ItemHelp("Tilt the pad or the phone to aim. Hold to aim uses right stick click or left ctrl. Needs "
-           "mouse aim or twin stick, since the gyro feeds that same aim.");
+           "mouse aim, twin stick or the touch controls (not the classic layout), since the gyro "
+           "feeds that same aim.");
   ImGui::BeginDisabled(sGyroMode == 0 && !sSpringFlick);
   const char* gyroSources[] = {"Auto", "Controller", "Phone"};
   int gyroSource = sGyroSource;
