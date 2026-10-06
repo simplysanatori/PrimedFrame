@@ -1566,7 +1566,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         let pbr_yrm = pbr_yc3.w + (1.0 - pbr_yc3.w) * (1.0 - pbr_yp * (1.0 - pbr_yv.y));
         var pbr_yx = 1.0;
         if (ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0) {{
-            pbr_yx = ubuf.pbr_tone[0].w;
+            // c3[0].z is the inverse tonemap exposure; the glow is scaled by the exposure below.
+            pbr_yx = 1.0 / ubuf.pbr_tone[0].w;
         }}
         pbr_alpha = clamp(pbr_yrm * select(pbr_ya, pbr_yv.y * pbr_ya * pbr_yc2.w, pbr_ym), 0.0, 1.0);
         pbr_lo = vec3f(0.0);
