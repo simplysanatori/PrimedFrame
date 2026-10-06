@@ -258,7 +258,8 @@ bool WantsMovies(MovieFormat& format) {
 
 // --- Reusing the previous import ----------------------------------------------
 
-// Off with MP_REMASTERED_REUSE=0 or the import panel's "Reconvert everything".
+// Off with MP_REMASTERED_REUSE=0 or the import panel's "Reconvert everything". With
+// MP_REMASTERED_REUSE=textures only the converted textures are reused (TextureMemory).
 std::atomic<bool> sReuse{true};
 
 bool WantsReuse() {
@@ -477,6 +478,75 @@ bool LinkFiles(const fs::path& source, const fs::path& target, const std::vector
   }
   return true;
 }
+
+// What the converters remember across imports (ConvertIO::recall): each converted texture's id
+// and files, and facts about Remastered textures. Kept in the manifest as stage kTextureStage,
+// one "extra" line an entry: key, value and files, tab-separated. The key starts with the folder
+// the converter writes to, relative to the mod; the files are relative to the mod.
+constexpr const char* kTextureStage = "textures";
+
+class TextureMemory {
+public:
+  struct Entry {
+    std::string value;
+    std::vector<std::string> files;
+  };
+
+  void Load(const StageRecord& record) {
+    for (const std::string& line : record.extra) {
+      std::vector<std::string> fields;
+      for (size_t at = 0;;) {
+        const size_t tab = line.find('\t', at);
+        fields.push_back(line.substr(at, tab - at));
+        if (tab == std::string::npos) {
+          break;
+        }
+        at = tab + 1;
+      }
+      if (fields.size() >= 2) {
+        Entry& entry = entries_[fields[0]];
+        entry.value = fields[1];
+        entry.files.assign(fields.begin() + 2, fields.end());
+      }
+    }
+  }
+
+  bool Find(const std::string& key, Entry& out) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = entries_.find(key);
+    if (it == entries_.end()) {
+      return false;
+    }
+    out = it->second;
+    return true;
+  }
+
+  void Put(const std::string& key, Entry entry) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    entries_[key] = std::move(entry);
+  }
+
+  // The entries whose files are all in `mod`, for the next import.
+  void Save(const fs::path& mod, StageRecord& record) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::error_code ec;
+    for (const auto& [key, entry] : entries_) {
+      std::string line = key + '\t' + entry.value;
+      bool there = true;
+      for (const std::string& file : entry.files) {
+        there = there && fs::is_regular_file(mod / PathFromString(file), ec);
+        line += '\t' + file;
+      }
+      if (there) {
+        record.extra.push_back(std::move(line));
+      }
+    }
+  }
+
+private:
+  mutable std::mutex mutex_;
+  std::map<std::string, Entry> entries_;
+};
 
 // Writes `data` beside `path` and renames it into place: a file may be a hard link into the
 // previous import, which must not change under it.
@@ -1373,6 +1443,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   if (WantsReuse() && !ReadManifest(source / kManifestName, previous)) {
     previous.clear();
   }
+  // MP_REMASTERED_REUSE=textures: every stage made again, from the textures already converted.
+  const char* reuseEnv = port::EnvString("MP_REMASTERED_REUSE");
+  const bool texturesOnly = reuseEnv != nullptr && std::strcmp(reuseEnv, "textures") == 0;
 
   SetMessage("Opening the image");
   std::string error;
@@ -1416,7 +1489,18 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     keyCommon += " " + std::to_string(ec ? 0 : int64_t(time.time_since_epoch().count()));
     keyCommon += "|disc " + Hex64(retail.Fingerprint());
   }
-  const std::string keyConverter = "|converter " + std::to_string(ImportStage::kConverter) + " " + TextureFormatName();
+  const std::string keyTextures = "|textures " + std::to_string(ImportStage::kTextures) + " " + TextureFormatName();
+  const std::string keyConverter = "|converter " + std::to_string(ImportStage::kConverter) + keyTextures;
+  // The converted textures of the previous import, while the textures are written the same way.
+  TextureMemory textureMemory;
+  const std::string keptKey = Hex64(Hash64(kTextureStage + keyTextures + keyCommon));
+  if (const auto old = previous.find(kTextureStage); old != previous.end() && old->second.key == keptKey) {
+    textureMemory.Load(old->second);
+  }
+  previous.erase(kTextureStage);
+  if (texturesOnly) {
+    previous.clear();
+  }
   std::mutex recordMutex;
   StageRecord* active = nullptr;  // the stage being made
   std::unordered_set<uint32_t> takenBefore;
@@ -1600,6 +1684,68 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
       record(path);
       return true;
+    };
+    const std::u8string scope = folder.lexically_relative(staging).generic_u8string();
+    const std::string prefix = std::string(scope.begin(), scope.end()) + "|";
+    io.recall = [&, prefix](const std::string& key, std::string& value) {
+      TextureMemory::Entry entry;
+      if (!textureMemory.Find(prefix + key, entry)) {
+        return false;
+      }
+      value = std::move(entry.value);
+      return true;
+    };
+    // A file is linked from the previous import, unless a converter of this one has put it
+    // there already; under a temporary name first, as io.write does.
+    io.relink = [&, worker, prefix](const std::string& key) {
+      TextureMemory::Entry entry;
+      if (!textureMemory.Find(prefix + key, entry)) {
+        return false;
+      }
+      std::error_code linkError;
+      for (const std::string& file : entry.files) {
+        const fs::path relative = PathFromString(file).lexically_normal();
+        if (relative.empty() || relative.has_root_path() || *relative.begin() == ".." ||
+            (!fs::is_regular_file(staging / relative, linkError) && !fs::is_regular_file(source / relative, linkError))) {
+          return false;
+        }
+      }
+      for (const std::string& file : entry.files) {
+        const fs::path path = staging / PathFromString(file);
+        if (!fs::is_regular_file(path, linkError)) {
+          const fs::path from = source / PathFromString(file);
+          fs::path tmp = path;
+          tmp += ".tmp" + std::to_string(worker);
+          fs::remove(tmp, linkError);
+          fs::create_hard_link(from, tmp, linkError);
+          if (linkError) {
+            fs::copy_file(from, tmp, linkError);
+          }
+          if (!linkError) {
+            fs::rename(tmp, path, linkError);
+          }
+          if (linkError) {
+            fs::remove(tmp, linkError);
+            return false;
+          }
+        }
+        const std::string base = path.filename().string();
+        {
+          std::lock_guard<std::mutex> lock(takenMutex);
+          taken.insert(uint32_t(std::strtoul(base.substr(0, 8).c_str(), nullptr, 16)));
+        }
+        record(path);
+      }
+      return true;
+    };
+    io.remember = [&, folder, prefix](const std::string& key, const std::string& value,
+                                      const std::vector<std::string>& files) {
+      TextureMemory::Entry entry{value, {}};
+      for (const std::string& name : files) {
+        const std::u8string relative = (folder / PathFromString(name)).lexically_relative(staging).generic_u8string();
+        entry.files.emplace_back(relative.begin(), relative.end());
+      }
+      textureMemory.Put(prefix + key, std::move(entry));
     };
     return io;
   };
@@ -2842,6 +2988,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     fs::path tmp = manifest;
     tmp += ".tmp";
     std::error_code manifestError;
+    StageRecord& textures = made[kTextureStage];
+    textures.key = keptKey;
+    textureMemory.Save(staging, textures);
     if (!WriteManifest(tmp, made) || (fs::rename(tmp, manifest, manifestError), manifestError)) {
       fs::remove(tmp, manifestError);
       AddLine("import manifest: cannot be written, so the next import reconverts everything");

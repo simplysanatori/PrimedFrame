@@ -106,6 +106,15 @@ struct ConvertIO {
   // Stores one output file: "<ID>.CMDL", "<ID>.CSKR", "<ID>.TXTR", "<ID>.dds".
   std::function<bool(const std::string& name, const std::vector<uint8_t>& data)> write;
   std::function<void(const std::string& line)> log;  // optional
+  // Optional, what an earlier import converted (a texture's tag stays the same as long as its
+  // output does): `recall` gives the value stored under a key, `relink` puts the files stored
+  // with it in the folder (false when it cannot), and `remember` stores a value with the files
+  // just written for it. Keys are "tex:<tag>" (the value is the texture's id as 8 hex digits,
+  // or "-" for none) and facts about a Remastered texture ("size:", "mean:", "metal:" + map).
+  std::function<bool(const std::string& key, std::string& value)> recall;
+  std::function<bool(const std::string& key)> relink;
+  std::function<void(const std::string& key, const std::string& value, const std::vector<std::string>& files)>
+      remember;
   // Optional: called once per output material, in output order (the materials report).
   std::function<void(const MaterialDecision& decision)> decision;
 };

@@ -751,13 +751,62 @@ struct Converter::State {
     return opened.back().second;
   }
 
-  Mean MeanOf(const MapRef& map) {
-    auto it = means.find(map.src);
-    if (it == means.end()) {
-      Open(map);
-      it = means.find(map.src);
+  // What an earlier import measured of a texture (ConvertIO::recall), else measure() now: a
+  // texture whose outputs are reused is then not decoded just to name them.
+  template <class F>
+  std::string Fact(const std::string& key, F&& measure) {
+    std::string value;
+    if (io.recall && io.recall(key, value)) {
+      return value;
     }
-    return it->second;
+    value = measure();
+    if (io.remember) {
+      io.remember(key, value, {});
+    }
+    return value;
+  }
+
+  // The bits of the floats, so that a recalled mean is the one measured.
+  static std::string MeanText(const Mean& m) {
+    char text[48];
+    uint32_t bits[3];
+    std::memcpy(bits, m.rgb, sizeof(bits));
+    std::snprintf(text, sizeof(text), "%08X %08X %08X %d", bits[0], bits[1], bits[2], m.peak);
+    return text;
+  }
+
+  Mean MeanOf(const MapRef& map) {
+    const auto it = means.find(map.src);
+    if (it != means.end()) {
+      return it->second;
+    }
+    const std::string text = Fact("mean:" + map.src, [&] {
+      Open(map);
+      return MeanText(means[map.src]);
+    });
+    Mean m{{0.0f, 0.0f, 0.0f}, 0};
+    uint32_t bits[3] = {0, 0, 0};
+    if (std::sscanf(text.c_str(), "%X %X %X %d", &bits[0], &bits[1], &bits[2], &m.peak) != 4) {
+      Open(map);
+      return means[map.src];
+    }
+    std::memcpy(m.rgb, bits, sizeof(bits));
+    return means[map.src] = m;
+  }
+
+  // Whether a map is more than a placeholder texel (over 4 px either way).
+  bool Real(const MapRef& map) {
+    int w = 0, h = 0;
+    const std::string text = Fact("size:" + map.src, [&] {
+      const Image& img = Open(map);
+      return std::to_string(img.width) + " " + std::to_string(img.height);
+    });
+    if (std::sscanf(text.c_str(), "%d %d", &w, &h) != 2) {
+      const Image& img = Open(map);
+      w = img.width;
+      h = img.height;
+    }
+    return w > 4 || h > 4;
   }
 
   // Whether the emissive map adds anything on the PBR path, which sums it over
@@ -850,6 +899,32 @@ struct Converter::State {
     if (!io.write(name, data)) {
       throw Fail{"could not write " + name};
     }
+    if (written != nullptr) {
+      written->push_back(name);
+    }
+  }
+
+  // The files a texture's conversion writes, for ConvertIO::remember.
+  std::vector<std::string>* written = nullptr;
+  struct Writing {
+    State& c;
+    std::vector<std::string> files;
+    explicit Writing(State& owner) : c(owner) { c.written = &files; }
+    ~Writing() { c.written = nullptr; }
+    Writing(const Writing&) = delete;
+    Writing& operator=(const Writing&) = delete;
+  };
+
+  // Puts the files an earlier import wrote for `key` in the folder, if its value is `value`.
+  bool Reuse(const std::string& key, const std::string& value) {
+    std::string was;
+    return io.recall && io.relink && io.recall(key, was) && was == value && io.relink(key);
+  }
+
+  void Remember(const std::string& key, const std::string& value, const std::vector<std::string>& files) {
+    if (io.remember) {
+      io.remember(key, value, files);
+    }
   }
 
   static Image Solid(uint8_t r, uint8_t g, uint8_t b) {
@@ -881,15 +956,24 @@ struct Converter::State {
     if (known != ids.end()) {
       return known->second.value_or(0);
     }
+    const uint32_t tid = TexId(tag);
+    const std::string key = "tex:" + tag;
+    std::string was;
+    const bool kept = io.recall && io.recall(key, was) && was == Hex8(tid);
     uint32_t edge = 0;
     std::vector<uint8_t> faces;
-    std::string error;
-    if (!io.cube(refl.id, edge, faces, error) || edge == 0 || faces.size() != size_t(edge) * edge * 24) {
-      Log("  note: cube " + IdToString(refl.id) + " not read" + (error.empty() ? "" : ": " + error));
-      ids[tag] = std::nullopt;
+    const auto read = [&] {
+      std::string error;
+      if (!io.cube(refl.id, edge, faces, error) || edge == 0 || faces.size() != size_t(edge) * edge * 24) {
+        Log("  note: cube " + IdToString(refl.id) + " not read" + (error.empty() ? "" : ": " + error));
+        ids[tag] = std::nullopt;
+        return false;
+      }
+      return true;
+    };
+    if (!kept && !read()) {
       return 0;
     }
-    const uint32_t tid = TexId(tag);
     const auto owned = owner.find(tid);
     if (owned != owner.end() && owned->second != tag) {
       throw Fail{"texture id clash on " + Hex8(tid) + ": " + owned->second + " and " + tag};
@@ -899,6 +983,10 @@ struct Converter::State {
     if (io.claim && !io.claim(tid)) {
       return tid;
     }
+    if (kept && (Reuse(key, Hex8(tid)) || !read())) {
+      return ids[tag].value_or(0);
+    }
+    Writing writing(*this);
     float lut[256];
     for (int i = 0; i < 256; ++i) {
       const float c = float(i) / 255.0f;
@@ -964,6 +1052,7 @@ struct Converter::State {
       }
     }
     Write(Hex8(tid) + ".envcube", out);
+    Remember(key, Hex8(tid), writing.files);
     return tid;
   }
 
@@ -1058,13 +1147,7 @@ struct Converter::State {
         // Only a retail model has a retail texture to fall back on.
         if (k == kBase && !opt.standalone) {
           // A map that is more than a placeholder texel (not a mean, over 4 px).
-          auto real = [&](int m) {
-            if (!rt[m].has || rt[m].mean) {
-              return false;
-            }
-            const Image& o = Open(rt[m]);
-            return o.width > 4 || o.height > 4;
-          };
+          auto real = [&](int m) { return rt[m].has && !rt[m].mean && Real(rt[m]); };
           // The normal map is the surface. Failing that, the material's own MR or
           // glow map still makes Remastered's draw its own (a flat suit light, the
           // eye's shadow): a solid base under them is what it draws. Nothing but
@@ -1103,13 +1186,17 @@ struct Converter::State {
       // A stage writing C2 is not always a reflectivity mask: the Metroid's
       // dome multiplies its colour by it. A map with no metal anywhere would
       // turn black and blank the stage, so the retail texture stays.
-      const Image& mr = Open(*src);
-      bool any = false;
-      for (size_t i = 0; i + 3 < mr.rgba.size() && !any; i += 4) {
-        const float g = mr.rgba[i + 1] / 255.0f, b = mr.rgba[i + 2] / 255.0f;
-        any = uint8_t(std::clamp(b * (1.0f - 0.7f * g) * 0.6f, 0.0f, 1.0f) * 255.0f) != 0;
-      }
-      if (!any) {
+      const std::string any = Fact("metal:" + src->src, [&] {
+        const Image& mr = Open(*src);
+        for (size_t i = 0; i + 3 < mr.rgba.size(); i += 4) {
+          const float g = mr.rgba[i + 1] / 255.0f, b = mr.rgba[i + 2] / 255.0f;
+          if (uint8_t(std::clamp(b * (1.0f - 0.7f * g) * 0.6f, 0.0f, 1.0f) * 255.0f) != 0) {
+            return std::string("1");
+          }
+        }
+        return std::string("0");
+      });
+      if (any != "1") {
         return std::nullopt;
       }
     } else if (role == "envmap") {
@@ -1168,6 +1255,25 @@ struct Converter::State {
       Write(name + ".TXTR", EncodeTxtrRgba8(Solid(uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb)), 8));
       return tid;
     }
+    // Converted by an earlier import: neither decoded nor encoded again.
+    const std::string key = "tex:" + tag;
+    bool claimed = false;
+    if (std::string was; io.recall && io.recall(key, was)) {
+      if (was == "-") {
+        ids[tag] = std::nullopt;
+        return std::nullopt;
+      }
+      if (was == name) {
+        if (k >= 0 && io.claim && !io.claim(tid)) {
+          return tid;
+        }
+        claimed = k >= 0;
+        if (Reuse(key, name)) {
+          return tid;
+        }
+      }
+    }
+    Writing writing(*this);
     Image img = Open(*src);
     if (src->mean) {
       double sum[3] = {0.0, 0.0, 0.0};
@@ -1211,6 +1317,7 @@ struct Converter::State {
       // every map 1x1): then Remastered gives nothing, and it drew a grey ball.
       if (k != kBase || !surface) {
         ids[tag] = std::nullopt;
+        Remember(key, "-", {});
         return std::nullopt;
       }
       uint64_t sum[3] = {0, 0, 0};
@@ -1224,13 +1331,14 @@ struct Converter::State {
         col[c] = uint8_t(std::nearbyint(double(sum[c]) / double(count)));
       }
       Write(name + ".TXTR", EncodeTxtrRgba8(Solid(col[0], col[1], col[2]), 8));
+      Remember(key, name, writing.files);
       return tid;
     }
     // A PBR map's id is its tag's alone, so whoever wrote it wrote the same file.
     // Asked only now: up to here the tag alone decides whether there is a
     // texture at all (none, a solid, or a failed decode), so every converter
     // that gets this far would write one, and the costly part below runs once.
-    if (k >= 0 && io.claim && !io.claim(tid)) {
+    if (k >= 0 && !claimed && io.claim && !io.claim(tid)) {
       return tid;
     }
     if (bake.on) {
@@ -1279,6 +1387,7 @@ struct Converter::State {
     } else {
       Write(name + ".TXTR", EncodeTxtrRgba8(img, role == "emissive" ? 4 : 8, mapKind));
     }
+    Remember(key, name, writing.files);
     return tid;
   }
 
