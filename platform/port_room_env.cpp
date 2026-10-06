@@ -1,6 +1,7 @@
 // Room environments at run time: which areas have one, their cubes on the GPU, and the
 // cube and ambient for a model. See port_room_env.h.
 #include "port_room_env.h"
+#include "port_strings.h"
 
 #include "port_gci.h"
 #include "port_log.h"
@@ -524,25 +525,7 @@ float RoomExposure(const Area& area) {
 
 // The whole file, in one read when its size is known. The stream is left as a read
 // through istreambuf_iterator leaves it: failed only when the file did not open.
-std::vector<uint8_t> ReadAll(std::ifstream& in) {
-  std::vector<uint8_t> data;
-  if (!in) {
-    return data;
-  }
-  in.seekg(0, std::ios::end);
-  const std::streamoff size = in.tellg();
-  in.seekg(0, std::ios::beg);
-  if (in && size > 0) {
-    data.resize(size_t(size));
-    in.read(reinterpret_cast<char*>(data.data()), std::streamsize(size));
-    data.resize(size_t(in.gcount()));
-  } else {
-    in.clear();
-    data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-  }
-  in.clear();
-  return data;
-}
+using port::ReadAll;
 
 // What `sender` drives on `state` among a kind of hints (grades or backlights).
 template <class Hint>

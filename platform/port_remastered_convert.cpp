@@ -7,6 +7,7 @@
 // the order of an addition, that is why.
 
 #include "port_remastered_convert.h"
+#include "port_strings.h"
 #include "port_remastered_anuv.h"
 
 #include <algorithm>
@@ -106,11 +107,7 @@ void Append(Blob& b, const Blob& o) { b.insert(b.end(), o.begin(), o.end()); }
 
 size_t Align(size_t n, size_t a = 32) { return (n + a - 1) & ~(a - 1); }
 
-std::string Hex8(uint32_t v) {
-  char buf[16];
-  std::snprintf(buf, sizeof(buf), "%08X", v);
-  return buf;
-}
+using port::Hex8;
 
 std::string FormatG(double v) {
   char buf[40];
@@ -118,14 +115,7 @@ std::string FormatG(double v) {
   return buf;
 }
 
-std::string Lower(std::string s) {
-  for (char& c : s) {
-    if (c >= 'A' && c <= 'Z') {
-      c = char(c - 'A' + 'a');
-    }
-  }
-  return s;
-}
+using port::Lower;
 
 uint32_t Crc32(const std::string& s) {
   static uint32_t table[256];
