@@ -1,12 +1,10 @@
 package org.metroidprime.port;
 
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
-import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.SystemClock;
 import android.view.MotionEvent;
@@ -1480,12 +1478,12 @@ final class TouchControlsView extends View {
         return -1;
     }
 
-    // The game's own icons, decoded by the native side once the HUD has loaded them. Until one
-    // arrives (or when it never does) the text label is drawn.
-    private final Bitmap[][] wheelIcons = new Bitmap[2][4];
-    private final Paint iconPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
-    private final Rect iconSrc = new Rect();
-    private final RectF iconDst = new RectF();
+    // The game's own icons, decoded by the native side once the HUD has loaded them and
+    // traced into outlines (they are 32x32, too coarse to scale up). Until one arrives (or
+    // when it never does) the text label is drawn.
+    private final Path[][] wheelIcons = new Path[2][4];
+    private final int[][][] wheelIconSize = new int[2][4][2];
+    private final Paint iconPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private long wheelIconTryMs = -WHEEL_ICON_RETRY_MS;
 
     private void refreshWheelIcons() {
@@ -1508,7 +1506,9 @@ final class TouchControlsView extends View {
                 if (w <= 0 || h <= 0 || raw.length != 2 + w * h) {
                     continue;
                 }
-                wheelIcons[wheel][item] = Bitmap.createBitmap(raw, 2, w, w, h, Bitmap.Config.ARGB_8888);
+                wheelIcons[wheel][item] = IconTracer.trace(raw, 2, w, h);
+                wheelIconSize[wheel][item][0] = w;
+                wheelIconSize[wheel][item][1] = h;
             }
         }
     }
@@ -1516,17 +1516,20 @@ final class TouchControlsView extends View {
     // Draws the icon fitted into a size x size box at (cx, cy); false when it has none yet.
     private boolean drawWheelIcon(Canvas canvas, int wheel, int item, float cx, float cy, float size,
                                   int alpha) {
-        final Bitmap icon = wheelIcons[wheel][item];
+        final Path icon = wheelIcons[wheel][item];
         if (icon == null) {
             return false;
         }
-        final float scale = Math.min(size / icon.getWidth(), size / icon.getHeight());
-        final float w = icon.getWidth() * scale;
-        final float h = icon.getHeight() * scale;
-        iconSrc.set(0, 0, icon.getWidth(), icon.getHeight());
-        iconDst.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
+        final int w = wheelIconSize[wheel][item][0];
+        final int h = wheelIconSize[wheel][item][1];
+        final float scale = size / Math.max(w, h);
+        canvas.save();
+        canvas.translate(cx - w * scale / 2f, cy - h * scale / 2f);
+        canvas.scale(scale, scale);
+        iconPaint.setColor(Color.WHITE);
         iconPaint.setAlpha(alpha);
-        canvas.drawBitmap(icon, iconSrc, iconDst, iconPaint);
+        canvas.drawPath(icon, iconPaint);
+        canvas.restore();
         return true;
     }
 
