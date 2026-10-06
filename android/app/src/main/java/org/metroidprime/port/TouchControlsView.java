@@ -38,6 +38,10 @@ final class TouchControlsView extends View {
     // A tap on the HUD minimap, which opens the map.
     private static final int MAP_TAP = 6;
     // Travel, in dp, past which a minimap touch is a drag and not a tap.
+    // A one-finger drag on the open map screen pans it.
+    private static final int MAP_PAN = 7;
+    // Tells the game a finger is still down on the map, so it doesn't drift back.
+    private static final long MAP_PAN_KEEPALIVE_MS = 100;
     private static final float MAP_TAP_SLOP_DP = 12f;
 
     // Port-only actions, not game inputs.
@@ -191,6 +195,10 @@ final class TouchControlsView extends View {
     // The minimap's screen rect as fractions of the view; false when not shown.
     private static native boolean nativeMinimapRect(float[] out4);
     private static native void nativeMapTap();
+    // A map-screen drag in dp (zero deltas = finger still down); the view height in dp.
+    private static native void nativeMapPan(float dxDp, float dyDp, float viewHeightDp);
+    // True while the map screen is open and can be panned.
+    private static native boolean nativeMapScreenOpen();
     private static native void nativeSetTouchDevice(boolean xboxLayout);
     private static native void nativeToggleDebugOverlay();
     private static native void nativeVirtualButton(int button, boolean down);
@@ -199,6 +207,16 @@ final class TouchControlsView extends View {
     private int leftPointer = -1;
     private int rightPointer = -1;
     private int aimPointer = -1;
+    private int panPointer = -1;
+    private final Runnable panKeepAlive = new Runnable() {
+        @Override
+        public void run() {
+            if (panPointer != -1) {
+                nativeMapPan(0f, 0f, panViewDp());
+                postDelayed(this, MAP_PAN_KEEPALIVE_MS);
+            }
+        }
+    };
     private boolean hidden;
     // Hidden because a real pad, keyboard or mouse was used. Unlike HIDE, which
     // leaves a SHOW button, nothing is drawn and any touch brings them back.
@@ -376,6 +394,8 @@ final class TouchControlsView extends View {
                     updateStick(target, event.getX(i), event.getY(i));
                 } else if (target.type == AIM) {
                     updateAim(target, event, i);
+                } else if (target.type == MAP_PAN) {
+                    updateMapPan(target, event, i);
                 } else if (target.type == MAP_TAP) {
                     target.x = event.getX(i);
                     target.y = event.getY(i);
@@ -419,6 +439,7 @@ final class TouchControlsView extends View {
         leftPointer = -1;
         rightPointer = -1;
         aimPointer = -1;
+        panPointer = -1;
         invalidate();
     }
 
@@ -541,6 +562,17 @@ final class TouchControlsView extends View {
             leftPointer = pointerId;
             targets.put(pointerId, target);
             updateStick(target, x, y);
+        } else if (nativeMapScreenOpen()) {
+            // Everything else that is free pans the open map, one finger at a time.
+            if (panPointer == -1) {
+                TouchTarget target = new TouchTarget(MAP_PAN, 0);
+                target.x = x;
+                target.y = y;
+                panPointer = pointerId;
+                targets.put(pointerId, target);
+                nativeMapPan(0f, 0f, panViewDp());
+                postDelayed(panKeepAlive, MAP_PAN_KEEPALIVE_MS);
+            }
         } else if (touchAim) {
             // Everything else that is free: one finger at a time aims.
             if (aimPointer == -1) {
@@ -589,6 +621,28 @@ final class TouchControlsView extends View {
             final float x = h < history ? event.getHistoricalX(index, h) : event.getX(index);
             final float y = h < history ? event.getHistoricalY(index, h) : event.getY(index);
             nativeTouchAim((x - lastX) / density, (y - lastY) / density);
+            lastX = x;
+            lastY = y;
+        }
+        target.x = lastX;
+        target.y = lastY;
+    }
+
+    private float panViewDp() {
+        return getHeight() / getResources().getDisplayMetrics().density;
+    }
+
+    // Like updateAim, but the deltas pan the map screen.
+    private void updateMapPan(TouchTarget target, MotionEvent event, int index) {
+        final float density = getResources().getDisplayMetrics().density;
+        final float viewDp = panViewDp();
+        float lastX = target.x;
+        float lastY = target.y;
+        final int history = event.getHistorySize();
+        for (int h = 0; h <= history; ++h) {
+            final float x = h < history ? event.getHistoricalX(index, h) : event.getX(index);
+            final float y = h < history ? event.getHistoricalY(index, h) : event.getY(index);
+            nativeMapPan((x - lastX) / density, (y - lastY) / density, viewDp);
             lastX = x;
             lastY = y;
         }
@@ -651,12 +705,17 @@ final class TouchControlsView extends View {
         if (pointerId == aimPointer) {
             aimPointer = -1;
         }
+        if (pointerId == panPointer) {
+            panPointer = -1;
+            removeCallbacks(panKeepAlive);
+        }
     }
 
     private void releaseTarget(TouchTarget target) {
         // Nothing to zero for a hide tap, an aim drag (a distance) or a map tap
         // (fired on release only; a cancelled touch is no tap).
-        if (target.type == HIDE || target.type == AIM || target.type == MAP_TAP) {
+        if (target.type == HIDE || target.type == AIM || target.type == MAP_TAP ||
+            target.type == MAP_PAN) {
             return;
         }
         if (target.type == BUTTON) {

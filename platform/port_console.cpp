@@ -544,6 +544,7 @@ void CmdHelp() {
   Out("touchpad [attach|detach|stick <x> <y>]  a virtual gamepad like Android's touch overlay");
   Out("minimap  the HUD minimap's screen rect (x0 y0 x1 y1, 0..1), or invalid");
   Out("maptap   a touch-overlay minimap tap: one Z press, opens the map");
+  Out("mappan <dx> <dy> [hold s]   drag the open map screen by dx,dy dp (view height 400 dp); finger down for hold s (0.25)");
   Out("freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]");
   Out("                           fly the view away from the player (HUD hidden; freeze holds the game still)");
   Out("aspect <4:3|16:9|window>   switch the rendering aspect, as the Options row does");
@@ -1931,6 +1932,21 @@ void RunFrame() {
   } else if (name == "maptap") {
     PortDebug::RequestMapTap();
     Out("maptap queued");
+    Finish();
+  } else if (name == "mappan") {
+    float dx = 0.f;
+    float dy = 0.f;
+    float holdS = 0.25f;
+    if (sCmd.args.size() < 3 || !ParseFloat(sCmd.args[1], dx) || !ParseFloat(sCmd.args[2], dy) ||
+        (sCmd.args.size() > 3 && !ParseFloat(sCmd.args[3], holdS))) {
+      return Finish("usage: mappan <dx> <dy> [hold seconds]");
+    }
+    if (!PortDebug::MapScreenOpen()) {
+      Out("mappan ignored: the map screen is not open");
+    } else {
+      PortDebug::AddMapPan(dx, dy, 400.f, static_cast< int >(holdS * 1000.f));
+      Out("mappan queued");
+    }
     Finish();
   } else if (name == "hdfont") {
     if (sCmd.args.size() > 1) {

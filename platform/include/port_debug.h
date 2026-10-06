@@ -413,6 +413,13 @@ bool MinimapRect(float* out4);
 void RequestMapTap();
 // Pad poll hook: true for the one poll where a requested tap reads Z held.
 bool ConsumeMapTapZ();
+// Drag to pan the map screen: CAutoMapper publishes SetMapScreenOpen each frame,
+// the overlay (or the console's mappan) adds dp deltas with the view height in
+// dp, and CAutoMapper drains them with TakeMapPan (true while a finger is on it).
+void SetMapScreenOpen(bool open);
+bool MapScreenOpen();
+void AddMapPan(float dxDp, float dyDp, float viewHeightDp, int holdMs = 250);
+bool TakeMapPan(float* dxDp, float* dyDp, float* viewHeightDp);
 void GetFrameMouseDelta(float& dx, float& dy);
 // The yaw/pitch change (radians) the next tick's look input will apply, as seen
 // a fraction of a tick after the last one. False when there is none to show.

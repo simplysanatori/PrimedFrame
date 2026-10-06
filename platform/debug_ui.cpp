@@ -224,6 +224,15 @@ float sMinimapRect[4] = {};
 std::chrono::steady_clock::time_point sMinimapStamp;
 std::atomic< int > sMapTapPending{0};
 bool sMapTapHeld = false;
+// Drag to pan the map screen (Android): the overlay sends dp deltas and the view
+// height, CAutoMapper drains them; it publishes whether panning applies.
+std::mutex sMapPanMutex;
+bool sMapScreenOpen = false;
+std::chrono::steady_clock::time_point sMapScreenStamp;
+float sMapPanX = 0.f;
+float sMapPanY = 0.f;
+float sMapPanViewDp = 400.f;
+std::chrono::steady_clock::time_point sMapPanHeldUntil;
 std::mutex sTouchAimMutex;
 float sTouchAimPendingX = 0.f;
 float sTouchAimPendingY = 0.f;
@@ -2126,6 +2135,45 @@ bool MinimapRect(float* out4) {
 
 void RequestMapTap() {
   sMapTapPending.fetch_add(1);
+}
+
+// Game thread, once per frame from CAutoMapper::Update.
+void SetMapScreenOpen(bool open) {
+  std::lock_guard lock(sMapPanMutex);
+  sMapScreenOpen = open;
+  sMapScreenStamp = std::chrono::steady_clock::now();
+}
+
+// Not refreshed for a while (paused, left the game) counts as closed.
+bool MapScreenOpen() {
+  std::lock_guard lock(sMapPanMutex);
+  return sMapScreenOpen &&
+         std::chrono::steady_clock::now() - sMapScreenStamp < std::chrono::milliseconds(300);
+}
+
+// UI thread. A call with zero deltas still marks the finger as down, for holdMs.
+void AddMapPan(float dxDp, float dyDp, float viewHeightDp, int holdMs) {
+  if (!std::isfinite(dxDp) || !std::isfinite(dyDp) || !(viewHeightDp > 0.f) ||
+      !MapScreenOpen()) {
+    return;
+  }
+  std::lock_guard lock(sMapPanMutex);
+  sMapPanX += dxDp;
+  sMapPanY += dyDp;
+  sMapPanViewDp = viewHeightDp;
+  sMapPanHeldUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(holdMs);
+}
+
+// Game thread. Drains the pending pan; true while a finger is on the map (a pan
+// within the last 250 ms), so the map doesn't drift back to its area meanwhile.
+bool TakeMapPan(float* dxDp, float* dyDp, float* viewHeightDp) {
+  std::lock_guard lock(sMapPanMutex);
+  *dxDp = sMapPanX;
+  *dyDp = sMapPanY;
+  *viewHeightDp = sMapPanViewDp;
+  sMapPanX = 0.f;
+  sMapPanY = 0.f;
+  return std::chrono::steady_clock::now() < sMapPanHeldUntil;
 }
 
 // Game thread, once per pad poll. Returns true for the poll that should read Z
@@ -6661,6 +6709,17 @@ Java_org_metroidprime_port_TouchControlsView_nativeMinimapRect(JNIEnv* env, jcla
   }
   env->SetFloatArrayRegion(out, 0, 4, rect);
   return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapPan(JNIEnv*, jclass, jfloat dxDp,
+                                                         jfloat dyDp, jfloat viewHeightDp) {
+  PortDebug::AddMapPan(dxDp, dyDp, viewHeightDp, 250);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapScreenOpen(JNIEnv*, jclass) {
+  return PortDebug::MapScreenOpen() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL
