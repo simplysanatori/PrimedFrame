@@ -415,6 +415,12 @@ LIRD/LORD don't map onto them (LORD 1 stands for LFOR 3 in one effect and 5 in
 another), and it differs from the disc in places (LFOT, LINT). Embedded
 children have no disc PART, so they keep their own light, and `CElementGen`
 uses its defaults for whatever they leave out.
+A material texture with a nil id is Remastered's opaque black texture, and is
+written as one. A quad generator whose material's colour texture (BCLR) is nil
+is taken as a placeholder that draws nothing: these generators only carry
+spawns and lights (PlasmaCharge's root), and drawing them black would cover
+their children. Model generators keep the black material. An effect in which
+only placeholders would draw (PlasmaMuzzle, PlasmaAuxMuzzle) keeps the disc's.
 Effects with no retail id (most world effects) are not used yet: nothing on
 the disc names them. The step is off by default. Like the rest of the import, the files take effect
 at the next mods reload (`mods reload` or the debug menu), no restart needed.
