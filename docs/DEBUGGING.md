@@ -130,6 +130,22 @@ so wait a few frames before the shot (a shot right after `shader reload` can mis
 if one is stale). Hashes change with the ShaderConfig, so an override dies when a setting that
 changes the module is toggled. Clear it with `shader override off`.
 
+### On an Android device
+
+The rig doesn't run there, but the console does. The app reads the system properties
+`debug.mport.env` and `debug.mport.env2` at startup as space-separated `K=V` pairs, so env
+vars can be set without a rebuild:
+
+    adb shell setprop debug.mport.env "'MP_CONSOLE=4777 MP_OPENGLES=0 MP_BOOT_WORLD=<MLVL>:<MREA>'"
+    adb shell am force-stop org.metroidprime.port; adb shell monkey -p org.metroidprime.port 1
+    adb forward tcp:4777 tcp:4777; python3 tools/mpcon.py --port 4777 'shader dump <dir>' ...
+
+Paths for `shader dump` / `shader override` / `drawlog dump` go under
+`/sdcard/Android/data/org.metroidprime.port/files`. `pick` doesn't work (it looks for a local
+screenshot): use `drawlog` plus `adb exec-out screencap -p`. `MP_OPENGLES=0/1` forces the backend
+for one run. `MP_DAWN_ENABLE` / `MP_DAWN_DISABLE` take comma-separated Dawn toggle names. Clear the
+properties (`setprop debug.mport.env ''`) when you're done.
+
 ## Particles
 
 Console `fx` (also in `docs/NATIVE_PORT.md`) shows the live generators of the particle engine

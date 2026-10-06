@@ -42,6 +42,7 @@
 
 #if defined(__ANDROID__)
 #include <android/log.h>
+#include <sys/system_properties.h>
 #endif
 
 #include <algorithm>
@@ -56,6 +57,7 @@
 #include <fstream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 extern "C" int metroid_main(int argc, char** argv);
@@ -710,7 +712,24 @@ int main(int argc, char** argv) {
         std::printf("Metroid Prime native port %s\n", MP_BUILD_REVISION);
         return 0;
     }
-#if !defined(__ANDROID__)
+#if defined(__ANDROID__)
+    // An app gets no environment of its own, so debug runs pass MP_* variables as
+    // `adb shell setprop debug.mport.env 'K=V K=V'` (and .env2: a value holds 91 bytes).
+    for (const char* prop : {"debug.mport.env", "debug.mport.env2"}) {
+        char value[PROP_VALUE_MAX] = {};
+        __system_property_get(prop, value);
+        std::string_view rest = value;
+        while (!rest.empty()) {
+            const size_t space = rest.find(' ');
+            const std::string pair(rest.substr(0, space));
+            rest = space == std::string_view::npos ? std::string_view{} : rest.substr(space + 1);
+            if (const size_t eq = pair.find('='); eq != std::string::npos && eq != 0) {
+                setenv(pair.substr(0, eq).c_str(), pair.c_str() + eq + 1, 1);
+                __android_log_print(ANDROID_LOG_INFO, "MetroidPrime", "%s: %s", prop, pair.c_str());
+            }
+        }
+    }
+#else
     // --import [name [argument]]: run a mod importer (port_importers.h) from
     // the terminal, without starting the game.
     if (argc >= 2 && std::strcmp(argv[1], "--import") == 0) {
@@ -857,7 +876,8 @@ int main(int argc, char** argv) {
         .userPath = userFolder.empty() ? nullptr : userFolder.c_str(),
         .cachePath = cacheFolder.empty() ? nullptr : cacheFolder.c_str(),
         .resourcesPath = resourcesPath.empty() ? nullptr : resourcesPath.c_str(),
-        .desiredBackend = PortDebug::OpenGles() ? BACKEND_OPENGLES : BACKEND_AUTO,
+        // MP_OPENGLES=0/1 overrides the setting for one run.
+        .desiredBackend = port::EnvFlag("MP_OPENGLES", PortDebug::OpenGles()) ? BACKEND_OPENGLES : BACKEND_AUTO,
         .msaa = static_cast<uint32_t>(PortDebug::Msaa()),
         .maxTextureAnisotropy = static_cast<uint16_t>(PortDebug::Anisotropy()),
         .vsync = false,

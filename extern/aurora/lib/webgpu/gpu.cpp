@@ -5,6 +5,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <deque>
 #include <span>
 #include <string>
 #include <string_view>
@@ -958,7 +960,7 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
           store_to_cache(key.data(), key.size(), value.data(), value.size(), nullptr);
         });
 
-    constexpr std::array enableToggles{
+    std::vector<const char*> enableToggles{
 #if _WIN32
         "use_dxc",
 #ifndef NDEBUG
@@ -976,12 +978,27 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
         "enable_immediate_error_handling",
         "gl_allow_context_on_multi_threads",
     };
-    constexpr std::array disableToggles{
+    std::vector<const char*> disableToggles{
         "timestamp_quantization",
         // Adreno 740 (Galaxy S23, Odin 2) crashes in vkCreateGraphicsPipelines with it on.
         // Upstream aurora bded88e9: https://github.com/TwilitRealm/dusklight/issues/2563
         "use_spirv_reconvergence_mode",
     };
+    // Extra toggles for driver debugging: MP_DAWN_ENABLE / MP_DAWN_DISABLE, comma-separated.
+    static std::deque<std::string> envToggles;
+    envToggles.clear();
+    for (const auto& [name, list] : {std::pair{"MP_DAWN_ENABLE", &enableToggles},
+                                     std::pair{"MP_DAWN_DISABLE", &disableToggles}}) {
+      const char* value = std::getenv(name);
+      for (std::string_view rest = value != nullptr ? value : ""; !rest.empty();) {
+        const size_t comma = rest.find(',');
+        if (comma != 0) {
+          list->push_back(envToggles.emplace_back(rest.substr(0, comma)).c_str());
+          Log.info("{}: {}", name, envToggles.back());
+        }
+        rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+      }
+    }
     // GL is only the fallback for drivers that draw wrong on Vulkan, so it runs without
     // Dawn's blob cache: cached program binaries crashed Mesa in glProgramBinary.
     wgpu::DawnTogglesDescriptor togglesDescriptor(wgpu::DawnTogglesDescriptor::Init{
