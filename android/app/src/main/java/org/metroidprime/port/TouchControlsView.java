@@ -52,6 +52,7 @@ final class TouchControlsView extends View {
     private static final long MAP_PAN_KEEPALIVE_MS = 100;
     private static final float MAP_TAP_SLOP_DP = 12f;
     private static final float MAP_BUTTON_RADIUS_DP = 26f;
+    private static final float CORNER_BUTTON_RADIUS_DP = 21f; // START/MENU, clear of the stick ring
     private static final long MAP_BUTTON_POLL_MS = 200;
     // Hold-and-slide wheels that replace the D-pad: id 0 = Visor, 1 = Beam.
     private static final int WHEEL = 9;
@@ -69,10 +70,8 @@ final class TouchControlsView extends View {
     private static final long WHEEL_ICON_RETRY_MS = 1000;
     private static final float WHEEL_BUTTON_GAP_DP = 8f; // wheel to edge / other button
     private static final float WHEEL_BUTTON_RADIUS = 0.072f;
-    // A wheel button's reach from the stick it anchors to, in layout heights. The
-    // reference phone's centred spots are farther out, so they win there.
-    private static final float WHEEL_ANCHOR_K = 0.55f;
-    private static final float WHEEL_ANCHOR_K_CSTICK = 0.35f;
+    private static final float WHEEL_BUTTON_ANCHOR_DP = 16f; // gap to the stick / face buttons
+    // START and MENU sit in the bottom-left corner, mirroring the map button and eye.
     private static final float WHEEL_RADIUS_DP = 112f;
     private static final float WHEEL_DEAD_DP = 30f;
     private static final long WHEEL_TAP_MS = 250;
@@ -114,8 +113,7 @@ final class TouchControlsView extends View {
     // (a 500 dp phone is unchanged), so a tablet gets phone-sized controls
     // that keep their distance to the nearest edge.
     private static final float MAX_LAYOUT_DP = 520f;
-    private static final float STICK_LEFT_X = 0.18f;
-    private static final float STICK_Y = 0.73f;
+    private static final float STICK_EXTRA_INSET_DP = 16f;
     private static final float STICK_RADIUS = 0.16f;
     private static final float LEFT_STICK_REACH = 1.5f; // grab area, in stick radii
     private static final float STICK_DEAD_ZONE = 0.12f;
@@ -163,17 +161,16 @@ final class TouchControlsView extends View {
     private static final int[] DPAD_DX = {0, 0, -1, 1};
     private static final int[] DPAD_DY = {-1, 1, 0, 0};
 
-    // L and R are the pad's analog triggers; Z is its digital shoulder. On the
-    // Z sits in front of R on the GameCube pad, so Z goes under R here. L and R
-    // are tall so a quick lock-on is hard to miss; L stops just above the D-pad.
+    // L and R are the pad's analog triggers; Z is its digital shoulder. Z sits in
+    // front of R on the GameCube pad, so Z goes under R here. L and R are tall so
+    // a quick lock-on is hard to miss; L stops just above the D-pad. START and
+    // MENU ignore their rects: see cornerSlot.
     private static final PillButton[] GAMECUBE_PILLS = {
-        new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY,
-                       PillButton.TRIGGER_LEFT),
-        new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.190f, GC_GREY,
-                       PillButton.TRIGGER_RIGHT),
+        new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY),
+        new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.190f, GC_GREY),
         new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.205f, 0.960f, 0.265f, GC_PURPLE),
-        new PillButton("START", -1, BTN_START, 0.400f, 0.030f, 0.490f, 0.100f),
-        new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0.510f, 0.030f, 0.600f, 0.100f),
+        new PillButton("START", -1, BTN_START, 0f, 0f, 0f, 0f),
+        new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0f, 0f, 0f, 0f),
     };
 
     private ControlButton[] face = GAMECUBE_FACE;
@@ -355,7 +352,7 @@ final class TouchControlsView extends View {
         hideBounds.set(width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP),
                        height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP),
                        width - dp(EYE_MARGIN_DP), height - dp(EYE_MARGIN_DP));
-        drawStick(canvas, leftStickX(width, height), leftStickY(height),
+        drawStick(canvas, leftStickX(width, height), leftStickY(width, height),
                   layoutU(height) * STICK_RADIUS, leftPointer, 0);
         // The right stick is the C-stick, yellow on the GameCube pad. Only the
         // classic layout has one; otherwise a drag anywhere free aims.
@@ -775,7 +772,7 @@ final class TouchControlsView extends View {
     // A press within half a stick radius outside the left stick's ring grabs it.
     private boolean onLeftStick(float x, float y, float width, float height) {
         final float dx = x - leftStickX(width, height);
-        final float dy = y - leftStickY(height);
+        final float dy = y - leftStickY(width, height);
         final float reach = layoutU(height) * STICK_RADIUS * LEFT_STICK_REACH;
         return dx * dx + dy * dy <= reach * reach;
     }
@@ -799,11 +796,6 @@ final class TouchControlsView extends View {
                                : fraction * width + (1f - fraction) * width * (1f - s);
     }
 
-    // A horizontal fraction of the width round the screen's centre line.
-    private float layoutXCentred(float fraction, float width, float height) {
-        return fraction * width + (0.5f - fraction) * width * (1f - layoutScale(height));
-    }
-
     // A vertical fraction of the height. The layout sits in a phone-height band
     // at the bottom of the screen, so the top half is still in reach.
     private float layoutY(float fraction, float height) {
@@ -815,12 +807,20 @@ final class TouchControlsView extends View {
         return fraction * height + (1f - fraction) * (height - layoutU(height));
     }
 
+    private final RectF stickFaceRect = new RectF();
+
+    // Mirrors the face cluster's gap to the right edge, plus a little, so the
+    // two thumbs' controls look balanced.
     private float leftStickX(float width, float height) {
-        return layoutX(STICK_LEFT_X, width, height);
+        faceBounds(width, height, stickFaceRect);
+        return (width - stickFaceRect.right) + dp(STICK_EXTRA_INSET_DP) +
+               STICK_RADIUS * layoutU(height);
     }
 
-    private float leftStickY(float height) {
-        return layoutY(STICK_Y, height);
+    // Level with the face cluster's middle.
+    private float leftStickY(float width, float height) {
+        faceBounds(width, height, stickFaceRect);
+        return stickFaceRect.centerY();
     }
 
     private float rightStickX(float width, float height) {
@@ -946,7 +946,7 @@ final class TouchControlsView extends View {
         float width = getWidth();
         float height = getHeight();
         float centreX = left ? leftStickX(width, height) : rightStickX(width, height);
-        float centreY = left ? leftStickY(height) : rightStickY(height);
+        float centreY = left ? leftStickY(width, height) : rightStickY(height);
         float radius = left ? layoutU(height) * STICK_RADIUS : rightStickRadius(height);
         // SDL's gamepad axes are +X right and +Y *down* (Aurora inverts Y for the
         // GameCube stick, whose +Y is up), so screen coordinates apply as-is.
@@ -1301,41 +1301,39 @@ final class TouchControlsView extends View {
         }
         float bottom = 0f;
         for (PillButton pill : pills) {
-            if (!pillHidden(pill)) {
+            if (!pillHidden(pill) && cornerSlot(pill) < 0) {
                 bottom = Math.max(bottom, layoutY(pill.bottom, height));
             }
         }
         faceBounds(width, height, faceRect);
-        final float stickTop = leftStickY(height) - STICK_RADIUS * layoutU(height);
+        final float stickTop = leftStickY(width, height) - STICK_RADIUS * layoutU(height);
         return Math.max(0f, Math.min(stickTop, faceRect.top) - dp(12) - bottom);
     }
 
-    // A pill's rect: the middle ones round the centre line, the others from
-    // their side edge, all from the top of the layout band. On a screen taller
-    // than the cap the middle ones sit beside the triggers instead.
-    private void pillRect(PillButton pill, float width, float height, RectF out) {
-        final boolean middle = Math.abs((pill.left + pill.right) * 0.5f - 0.5f) < 0.15f;
-        final float shift = pillShift(width, height);
-        final float top = layoutY(pill.top, height) + shift;
-        final float bottom = layoutY(pill.bottom, height) + shift;
-        if (middle && layoutU(height) < height) {
-            final boolean leftSide = pill.left < 0.5f;
-            final int trigger = leftSide ? PillButton.TRIGGER_LEFT : PillButton.TRIGGER_RIGHT;
-            for (PillButton other : pills) {
-                if (other.trigger == trigger) {
-                    pillRect(other, width, height, out);
-                    final float w = (pill.right - pill.left) * width * layoutScale(height);
-                    final float left = leftSide ? out.right + dp(8) : out.left - dp(8) - w;
-                    out.set(left, top, left + w, bottom);
-                    return;
-                }
-            }
+    // START (slot 0) and MENU (slot 1) sit side by side in the bottom-left
+    // corner; -1 for the pills placed from their rects. The triggers are axes
+    // with button -1, which is also TOGGLE_DEBUG_OVERLAY, hence the axis check.
+    private static int cornerSlot(PillButton pill) {
+        if (pill.axis >= 0) {
+            return -1;
         }
-        final float left = middle ? layoutXCentred(pill.left, width, height)
-                                  : layoutX(pill.left, width, height);
-        final float right = middle ? layoutXCentred(pill.right, width, height)
-                                   : layoutX(pill.right, width, height);
-        out.set(left, top, right, bottom);
+        return pill.button == BTN_START ? 0 : pill.button == TOGGLE_DEBUG_OVERLAY ? 1 : -1;
+    }
+
+    // A pill's rect, from its side edge and the top of the layout band, or its
+    // corner slot: round buttons mirroring the map button by the eye.
+    private void pillRect(PillButton pill, float width, float height, RectF out) {
+        final int slot = cornerSlot(pill);
+        if (slot >= 0) {
+            final float radius = dp(CORNER_BUTTON_RADIUS_DP);
+            final float left = dp(EYE_MARGIN_DP) + slot * (2f * radius + dp(EYE_MARGIN_DP));
+            final float cy = height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP / 2f);
+            out.set(left, cy - radius, left + 2f * radius, cy + radius);
+            return;
+        }
+        final float shift = pillShift(width, height);
+        out.set(layoutX(pill.left, width, height), layoutY(pill.top, height) + shift,
+                layoutX(pill.right, width, height), layoutY(pill.bottom, height) + shift);
     }
 
     private void drawPillButton(Canvas canvas, PillButton pill, float width, float height) {
@@ -1351,6 +1349,11 @@ final class TouchControlsView extends View {
             fillPaint.setColor(active ? 0xCC48C8E8 : 0x99081218);
         }
         strokePaint.setColor(active ? 0xFFE1F8FF : 0xCCFFFFFF);
+        final int slot = cornerSlot(pill);
+        if (slot >= 0) {
+            drawCornerButton(canvas, slot, pillHit);
+            return;
+        }
         RectF bounds = new RectF(left, top, right, bottom);
         float radius = Math.min(bounds.width(), bounds.height()) * 0.28f;
         canvas.drawRoundRect(bounds, radius, radius, fillPaint);
@@ -1387,6 +1390,34 @@ final class TouchControlsView extends View {
     }
 
     // The hide button: an eye.
+    // START as a play/pause glyph, MENU as three lines, in a circle like the
+    // map button's. The paints are already set for the held state.
+    private void drawCornerButton(Canvas canvas, int slot, RectF bounds) {
+        final float cx = bounds.centerX();
+        final float cy = bounds.centerY();
+        final float radius = bounds.width() * 0.5f;
+        canvas.drawCircle(cx, cy, radius, fillPaint);
+        canvas.drawCircle(cx, cy, radius, strokePaint);
+        final float s = radius * 0.36f;
+        if (slot == 0) {
+            shapePath.reset();
+            shapePath.moveTo(cx - s * 1.25f, cy - s);
+            shapePath.lineTo(cx + s * 0.15f, cy);
+            shapePath.lineTo(cx - s * 1.25f, cy + s);
+            shapePath.close();
+            shapePath.moveTo(cx + s * 0.6f, cy - s);
+            shapePath.lineTo(cx + s * 0.6f, cy + s);
+            shapePath.moveTo(cx + s * 1.15f, cy - s);
+            shapePath.lineTo(cx + s * 1.15f, cy + s);
+            canvas.drawPath(shapePath, strokePaint);
+        } else {
+            for (int i = -1; i <= 1; i++) {
+                canvas.drawLine(cx - s * 1.1f, cy + i * s * 0.75f, cx + s * 1.1f,
+                                cy + i * s * 0.75f, strokePaint);
+            }
+        }
+    }
+
     private void drawEye(Canvas canvas, RectF bounds) {
         fillPaint.setColor(0x99081218);
         strokePaint.setColor(0xCCFFFFFF);
@@ -1407,45 +1438,20 @@ final class TouchControlsView extends View {
         canvas.drawCircle(cx, cy, lid * 0.55f, fillPaint);
     }
 
-    // The Visor (left) and Beam (right) buttons sit side by side near the bottom.
-    // Each wheel opens centred on its button, so the buttons sit a wheel radius
-    // up from the edge and far enough apart that a wheel never covers the other.
-    // They are centred on screen, or in the gap between the sticks when the
-    // C-stick is shown (classic layout). On a wide screen they move in towards
-    // the thumbs: Visor at most WHEEL_ANCHOR_K layout heights right of the left
-    // stick, Beam the mirror of that (or, in classic, that far left of the
-    // C-stick). A phone's centred spot is always the nearer one. Past the cap
-    // (u < height) they sit dp(16) outside the left stick ring, and outside the
-    // face cluster (or, in classic, the C-stick ring).
+    // The Visor (left) and Beam (right) buttons sit near the bottom, each a wheel
+    // radius up from the edge so its wheel opens on screen. Visor sits just
+    // outside the left stick ring, Beam just outside the face cluster (or, in
+    // classic, the C-stick ring), where the thumbs already are.
     private float wheelButtonX(int wheel, float width, float height) {
-        final float u = layoutU(height);
-        float centre = width * 0.5f;
-        if (cStick) {
-            final float left = leftStickX(width, height) + STICK_RADIUS * u;
-            final float right = rightStickX(width, height) - rightStickRadius(height);
-            centre = (left + right) * 0.5f;
-        }
-        final float offset =
-            (dp(WHEEL_RADIUS_DP) + WHEEL_BUTTON_RADIUS * u + dp(WHEEL_BUTTON_GAP_DP)) * 0.5f;
+        final float edge = dp(WHEEL_BUTTON_ANCHOR_DP) + WHEEL_BUTTON_RADIUS * layoutU(height);
         float x;
-        if (u < height) {
-            // A big screen: each button hugs the control beside it.
-            final float edge = dp(16) + WHEEL_BUTTON_RADIUS * u;
-            if (wheel == 0) {
-                x = leftStickX(width, height) + STICK_RADIUS * u + edge;
-            } else if (cStick) {
-                x = rightStickX(width, height) - rightStickRadius(height) - edge;
-            } else {
-                faceBounds(width, height, faceRect);
-                x = faceRect.left - edge;
-            }
-        } else if (wheel == 0) {
-            x = Math.min(centre - offset, leftStickX(width, height) + WHEEL_ANCHOR_K * u);
+        if (wheel == 0) {
+            x = leftStickX(width, height) + STICK_RADIUS * layoutU(height) + edge;
         } else if (cStick) {
-            x = Math.max(centre + offset, rightStickX(width, height) -
-                         rightStickRadius(height) - WHEEL_ANCHOR_K_CSTICK * u);
+            x = rightStickX(width, height) - rightStickRadius(height) - edge;
         } else {
-            x = Math.max(centre + offset, width - (leftStickX(width, height) + WHEEL_ANCHOR_K * u));
+            faceBounds(width, height, faceRect);
+            x = faceRect.left - edge;
         }
         // The open wheel must stay on screen.
         final float reach = dp(WHEEL_RADIUS_DP);
@@ -1708,26 +1714,14 @@ final class TouchControlsView extends View {
         final float bottom;
         // An RGB fill, or 0 for the overlay's own.
         final int color;
-        // L and R mark themselves so START and MENU can sit beside them.
-        static final int FLAT = 0;
-        static final int TRIGGER_LEFT = 1;
-        static final int TRIGGER_RIGHT = 2;
-        final int trigger;
-
         PillButton(String label, int axis, int button, float left, float top, float right,
                    float bottom) {
-            this(label, axis, button, left, top, right, bottom, 0, FLAT);
+            this(label, axis, button, left, top, right, bottom, 0);
         }
 
         PillButton(String label, int axis, int button, float left, float top, float right,
                    float bottom, int color) {
-            this(label, axis, button, left, top, right, bottom, color, FLAT);
-        }
-
-        PillButton(String label, int axis, int button, float left, float top, float right,
-                   float bottom, int color, int trigger) {
             this.color = color;
-            this.trigger = trigger;
             this.label = label;
             this.axis = axis;
             this.button = button;
