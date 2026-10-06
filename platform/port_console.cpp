@@ -555,6 +555,7 @@ void CmdHelp() {
   Out("                           fly the view away from the player (HUD hidden; freeze holds the game still)");
   Out("aspect <4:3|16:9|window>   switch the rendering aspect, as the Options row does");
   Out("fov <45..90>               first-person vertical FOV, as the Options row does");
+  Out("window [<w> <h>]           resize the window (leaves fullscreen); prints the size");
   Out("msaa <1|4>, aniso <1..16>  anti-aliasing and anisotropic filtering, applied next frame");
   Out("hudscale <50..100>         HUD scale in percent, as the Options row does");
   Out("crosshair <25..100>        mouse/twin-stick crosshair size in percent");
@@ -1843,6 +1844,31 @@ void RunFrame() {
       return Finish("usage: fov <45..90>   first-person vertical FOV (retail 55)");
     }
     PortDebug::SetFirstPersonFov(fov);
+    Finish();
+  } else if (name == "window") {
+    int count = 0;
+    SDL_Window** windows = SDL_GetWindows(&count);
+    SDL_Window* window = windows != nullptr && count > 0 ? windows[0] : nullptr;
+    SDL_free(windows);
+    if (window == nullptr) {
+      return Finish("no window");
+    }
+    if (sCmd.args.size() > 2) {
+      const int w = std::atoi(sCmd.args[1].c_str());
+      const int h = std::atoi(sCmd.args[2].c_str());
+      if (w < 64 || h < 64) {
+        return Finish("usage: window [<width> <height>]");
+      }
+      SDL_SetWindowFullscreen(window, false);
+      SDL_SetWindowSize(window, w, h);
+      SDL_SyncWindow(window);
+    }
+    int w = 0;
+    int h = 0;
+    SDL_GetWindowSizeInPixels(window, &w, &h);
+    char line[48];
+    std::snprintf(line, sizeof(line), "window %dx%d", w, h);
+    Out(line);
     Finish();
   } else if (name == "msaa" || name == "aniso") {
     const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : 0;
