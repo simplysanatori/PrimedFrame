@@ -3,6 +3,7 @@
 // result with Aurora's DVD overlays.
 
 #include "port_mods.h"
+#include "port_strings.h"
 #include "port_paths.h"
 
 #include "port_debug.h"
@@ -75,19 +76,8 @@ std::string PathString(const fs::path& path) {
 
 fs::path PathFromString(const std::string& text) { return fs::path(std::u8string(text.begin(), text.end())); }
 
-std::string Lower(std::string text) {
-  for (char& c : text) {
-    if (c >= 'A' && c <= 'Z') {
-      c = char(c - 'A' + 'a');
-    }
-  }
-  return text;
-}
-
-bool EndsWith(const std::string& text, const char* suffix) {
-  const size_t length = std::strlen(suffix);
-  return text.size() >= length && text.compare(text.size() - length, length, suffix) == 0;
-}
+using port::EndsWith;
+using port::Lower;
 
 // --- Base disc access -------------------------------------------------------
 

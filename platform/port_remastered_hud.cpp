@@ -1,6 +1,8 @@
 // Remastered's HUD frames as frames the original loads (port_remastered_hud.h).
 
 #include "port_remastered_hud.h"
+#include "port_strings.h"
+#include "port_bytes.h"
 
 #include "port_hud_bars.h"
 #include "port_remastered_pak.h"
@@ -82,25 +84,9 @@ const char* const kMapDiscOnly[] = {"textpane_instructions", "textpane_right", "
 // The box around those prompts. Remastered has none, having no such row.
 const char* const kMapPromptBox = "model_framemap";
 
-std::string Lower(std::string s) {
-  for (char& c : s) {
-    if (c >= 'A' && c <= 'Z') {
-      c = char(c - 'A' + 'a');
-    }
-  }
-  return s;
-}
-
-bool EndsWith(const std::string& s, const char* tail) {
-  const size_t n = std::strlen(tail);
-  return s.size() >= n && s.compare(s.size() - n, n, tail) == 0;
-}
-
-std::string Hex8(uint32_t v) {
-  char text[16];
-  std::snprintf(text, sizeof(text), "%08X", v);
-  return text;
-}
+using port::EndsWith;
+using port::Hex8;
+using port::Lower;
 
 int NextPow2(int v) {
   int p = 1;
@@ -246,47 +232,13 @@ struct Reader {
 
 using Blob = std::vector<uint8_t>;
 
-void Put32(Blob& out, uint32_t v) {
-  out.push_back(uint8_t(v >> 24));
-  out.push_back(uint8_t(v >> 16));
-  out.push_back(uint8_t(v >> 8));
-  out.push_back(uint8_t(v));
-}
-
-void Put16(Blob& out, uint16_t v) {
-  out.push_back(uint8_t(v >> 8));
-  out.push_back(uint8_t(v));
-}
-
-void PutFloat(Blob& out, float v) {
-  uint32_t bits;
-  std::memcpy(&bits, &v, sizeof(bits));
-  Put32(out, bits);
-}
-
-void Set32(Blob& out, size_t at, uint32_t v) {
-  out[at] = uint8_t(v >> 24);
-  out[at + 1] = uint8_t(v >> 16);
-  out[at + 2] = uint8_t(v >> 8);
-  out[at + 3] = uint8_t(v);
-}
-
-void SetFloat(Blob& out, size_t at, float v) {
-  uint32_t bits;
-  std::memcpy(&bits, &v, sizeof(bits));
-  Set32(out, at, bits);
-}
-
-uint32_t Get32(const Blob& in, size_t at) {
-  return uint32_t(in[at]) << 24 | uint32_t(in[at + 1]) << 16 | uint32_t(in[at + 2]) << 8 | uint32_t(in[at + 3]);
-}
-
-float GetFloat(const Blob& in, size_t at) {
-  const uint32_t bits = Get32(in, at);
-  float v;
-  std::memcpy(&v, &bits, sizeof(v));
-  return v;
-}
+using port::AppendBE16;
+using port::AppendBE32;
+using port::AppendBEFloat;
+using port::GetBE32;
+using port::GetBEFloat;
+using port::SetBE32;
+using port::SetBEFloat;
 
 void Pad32(Blob& out) { out.resize((out.size() + 31) & ~size_t(31)); }
 
@@ -720,19 +672,19 @@ bool BuildModel(const std::vector<Part>& parts, const std::vector<uint32_t>& tex
   }
   std::vector<Blob> sections;
   Blob set;
-  Put32(set, uint32_t(textures.size()));
+  AppendBE32(set, uint32_t(textures.size()));
   for (uint32_t id : textures) {
-    Put32(set, id);
+    AppendBE32(set, id);
   }
-  Put32(set, uint32_t(parts.size()));
+  AppendBE32(set, uint32_t(parts.size()));
   for (size_t i = 0; i < parts.size(); ++i) {
-    Put32(set, uint32_t((i + 1) * material.size()));
+    AppendBE32(set, uint32_t((i + 1) * material.size()));
   }
   for (const Part& part : parts) {
     const size_t at = set.size();
     set.insert(set.end(), material.begin(), material.end());
-    Set32(set, at + 8, part.slot);
-    Set32(set, at + 0x1c, 0x3000);  // both colour channels unlit
+    SetBE32(set, at + 8, part.slot);
+    SetBE32(set, at + 0x1c, 0x3000);  // both colour channels unlit
   }
   sections.push_back(std::move(set));
 
@@ -743,20 +695,20 @@ bool BuildModel(const std::vector<Part>& parts, const std::vector<uint32_t>& tex
     for (size_t i = 0; i < part.positions.size(); ++i) {
       for (int c = 0; c < 3; ++c) {
         const float v = part.positions[i][c];
-        PutFloat(positions, v);
+        AppendBEFloat(positions, v);
         lo[c] = first ? v : std::min(lo[c], v);
         hi[c] = first ? v : std::max(hi[c], v);
       }
       first = false;
-      PutFloat(uvs, part.uvs[i][0]);
-      PutFloat(uvs, part.uvs[i][1]);
+      AppendBEFloat(uvs, part.uvs[i][0]);
+      AppendBEFloat(uvs, part.uvs[i][1]);
     }
   }
   sections.push_back(std::move(positions));
   Blob normals;  // one, facing the camera; nothing is lit by it
-  Put16(normals, 0);
-  Put16(normals, uint16_t(-0x4000));
-  Put16(normals, 0);
+  AppendBE16(normals, 0);
+  AppendBE16(normals, uint16_t(-0x4000));
+  AppendBE16(normals, 0);
   sections.push_back(std::move(normals));
   sections.push_back(Blob(32, 0));  // colours
   sections.push_back(std::move(uvs));
@@ -768,11 +720,11 @@ bool BuildModel(const std::vector<Part>& parts, const std::vector<uint32_t>& tex
     const Part& part = parts[k];
     Blob list;
     list.push_back(0x91);  // triangles, 16-bit position / normal / texture coordinate indices
-    Put16(list, uint16_t(part.indices.size()));
+    AppendBE16(list, uint16_t(part.indices.size()));
     for (uint32_t index : part.indices) {
-      Put16(list, uint16_t(base + index));
-      Put16(list, 0);
-      Put16(list, uint16_t(base + index));
+      AppendBE16(list, uint16_t(base + index));
+      AppendBE16(list, 0);
+      AppendBE16(list, uint16_t(base + index));
     }
     Pad32(list);
     base += uint32_t(part.positions.size());
@@ -784,26 +736,26 @@ bool BuildModel(const std::vector<Part>& parts, const std::vector<uint32_t>& tex
     }
     Blob surface;
     for (double c : centre) {
-      PutFloat(surface, float(c));
+      AppendBEFloat(surface, float(c));
     }
-    Put32(surface, uint32_t(k));
-    Put32(surface, uint32_t(list.size()) | 0x80000000u);
-    Put32(surface, 0);
-    Put32(surface, 0);
-    Put32(surface, 0);
-    PutFloat(surface, 0.0f);
-    PutFloat(surface, -1.0f);
-    PutFloat(surface, 0.0f);
+    AppendBE32(surface, uint32_t(k));
+    AppendBE32(surface, uint32_t(list.size()) | 0x80000000u);
+    AppendBE32(surface, 0);
+    AppendBE32(surface, 0);
+    AppendBE32(surface, 0);
+    AppendBEFloat(surface, 0.0f);
+    AppendBEFloat(surface, -1.0f);
+    AppendBEFloat(surface, 0.0f);
     Pad32(surface);
     surface.insert(surface.end(), list.begin(), list.end());
     surfaces.push_back(std::move(surface));
   }
   Blob ends;
-  Put32(ends, uint32_t(surfaces.size()));
+  AppendBE32(ends, uint32_t(surfaces.size()));
   uint32_t end = 0;
   for (const Blob& surface : surfaces) {
     end += uint32_t(surface.size());
-    Put32(ends, end);
+    AppendBE32(ends, end);
   }
   sections.push_back(std::move(ends));
   for (Blob& surface : surfaces) {
@@ -811,20 +763,20 @@ bool BuildModel(const std::vector<Part>& parts, const std::vector<uint32_t>& tex
   }
 
   out.clear();
-  Put32(out, 0xDEADBABE);
-  Put32(out, 2);
-  Put32(out, 6);  // 16-bit normals, 16-bit texture coordinates off
+  AppendBE32(out, 0xDEADBABE);
+  AppendBE32(out, 2);
+  AppendBE32(out, 6);  // 16-bit normals, 16-bit texture coordinates off
   for (float v : lo) {
-    PutFloat(out, v);
+    AppendBEFloat(out, v);
   }
   for (float v : hi) {
-    PutFloat(out, v);
+    AppendBEFloat(out, v);
   }
-  Put32(out, uint32_t(sections.size()));
-  Put32(out, 1);
+  AppendBE32(out, uint32_t(sections.size()));
+  AppendBE32(out, 1);
   for (Blob& section : sections) {
     Pad32(section);
-    Put32(out, uint32_t(section.size()));
+    AppendBE32(out, uint32_t(section.size()));
   }
   Pad32(out);
   for (const Blob& section : sections) {
@@ -1155,9 +1107,9 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
     const Mat eye = remWorld(size_t(camera));
     const RemWidget& g = rem[size_t(camera)];
     for (const Widget& w : disc) {
-      if (w.type == Tag('C', 'A', 'M', 'R') && w.typeData.size() >= 8 && Get32(w.typeData, 0) == 0 &&
+      if (w.type == Tag('C', 'A', 'M', 'R') && w.typeData.size() >= 8 && GetBE32(w.typeData, 0) == 0 &&
           g.projection == 0) {
-        const double was = -w.world.m[1][3] * std::tan(double(GetFloat(w.typeData, 4)) * kPi / 360.0);
+        const double was = -w.world.m[1][3] * std::tan(double(GetBEFloat(w.typeData, 4)) * kPi / 360.0);
         const double now = -eye.m[1][3] * std::tan(double(g.camera[0]) * kPi / 360.0);
         if (was > 1e-6 && now > 1e-6) {
           keep = now / was;
@@ -1185,10 +1137,10 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
       return 0.0;
     }
     const Widget& c = original[size_t(discCamera)];
-    if (Get32(c.typeData, 0) == 0) {
-      return viewHeight(c.world, GetFloat(c.typeData, 4), at);
+    if (GetBE32(c.typeData, 0) == 0) {
+      return viewHeight(c.world, GetBEFloat(c.typeData, 4), at);
     }
-    return std::abs(double(GetFloat(c.typeData, 12)) - GetFloat(c.typeData, 16));
+    return std::abs(double(GetBEFloat(c.typeData, 12)) - GetBEFloat(c.typeData, 16));
   };
   auto remView = [&](const Mat& m) {
     if (camera < 0) {
@@ -1268,14 +1220,14 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
       const Mat there = place(found->second);
       double lo[3], hi[3];
       if (meshBox(found->second, lo, hi)) {
-        const double half = 0.5 * double(GetFloat(w.typeData, 0)) * AxisLength(w.world, 0);
+        const double half = 0.5 * double(GetBEFloat(w.typeData, 0)) * AxisLength(w.world, 0);
         const double halfThere = 0.5 * (hi[0] - lo[0]) * AxisLength(there, 0);
         double from[3], to[3];
         for (int c = 0; c < 3; ++c) {
           from[c] = w.world.m[c][3];
           to[c] = there.m[c][3];
           for (int k = 0; k < 3; ++k) {
-            from[c] += w.world.m[c][k] * double(GetFloat(w.typeData, 8 + size_t(k) * 4));
+            from[c] += w.world.m[c][k] * double(GetBEFloat(w.typeData, 8 + size_t(k) * 4));
             to[c] += there.m[c][k] * 0.5 * (lo[k] + hi[k]);
           }
         }
@@ -1296,11 +1248,11 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
         promptLeft = left;
         // From the left, where the disc centres the line on its box and lets
         // it run over both edges; the box grows to the right to hold it.
-        Set32(w.typeData, kTextPaneJustify, 0);
-        const float wide = GetFloat(w.typeData, 0);
-        SetFloat(w.typeData, 0, wide * 1.5f);
-        SetFloat(w.typeData, 8, GetFloat(w.typeData, 8) + wide * 0.25f);
-        SetFloat(w.typeData, kTextPaneExtent, std::nearbyint(GetFloat(w.typeData, kTextPaneExtent) * 1.5f));
+        SetBE32(w.typeData, kTextPaneJustify, 0);
+        const float wide = GetBEFloat(w.typeData, 0);
+        SetBEFloat(w.typeData, 0, wide * 1.5f);
+        SetBEFloat(w.typeData, 8, GetBEFloat(w.typeData, 8) + wide * 0.25f);
+        SetBEFloat(w.typeData, kTextPaneExtent, std::nearbyint(GetBEFloat(w.typeData, kTextPaneExtent) * 1.5f));
         w.world.m[1][3] += to[1] - from[1];
         w.world.m[2][3] += to[2] - from[2];
       }
@@ -1336,7 +1288,7 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
       double lo[3], hi[3];
       if (found != remByName.end() || name != stand[0] || pane == remByName.end() ||
           w.type != Tag('M', 'O', 'D', 'L') || w.typeData.size() < 4 ||
-          !m_io.retail(Tag('C', 'M', 'D', 'L'), Get32(w.typeData, 0), cmdl) || cmdl.size() < 36 ||
+          !m_io.retail(Tag('C', 'M', 'D', 'L'), GetBE32(w.typeData, 0), cmdl) || cmdl.size() < 36 ||
           !meshBox(pane->second, lo, hi)) {
         continue;
       }
@@ -1346,7 +1298,7 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
       const Mat there = remWorld(pane->second);
       double mid[3], from[3], to[3];
       for (int c = 0; c < 3; ++c) {
-        mid[c] = 0.5 * (double(GetFloat(cmdl, 12 + size_t(c) * 4)) + GetFloat(cmdl, 24 + size_t(c) * 4));
+        mid[c] = 0.5 * (double(GetBEFloat(cmdl, 12 + size_t(c) * 4)) + GetBEFloat(cmdl, 24 + size_t(c) * 4));
       }
       for (int c = 0; c < 3; ++c) {
         from[c] = w.world.m[c][3];
@@ -1378,23 +1330,23 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
     if (w.type == Tag('C', 'A', 'M', 'R') && camera >= 0 && w.typeData.size() >= 20) {
       // The layout is made for Remastered's camera, a 16:9 one. The clip planes stay the disc's.
       const RemWidget& g = rem[size_t(camera)];
-      const float zNear = GetFloat(w.typeData, w.typeData.size() - 8);
-      const float zFar = GetFloat(w.typeData, w.typeData.size() - 4);
+      const float zNear = GetBEFloat(w.typeData, w.typeData.size() - 8);
+      const float zFar = GetBEFloat(w.typeData, w.typeData.size() - 4);
       w.world = remWorld(size_t(camera));
       newName[Lower(g.name)] = w.name;
       w.typeData.clear();
-      Put32(w.typeData, g.projection == 0 ? 0 : 1);
+      AppendBE32(w.typeData, g.projection == 0 ? 0 : 1);
       if (g.projection == 0) {
-        PutFloat(w.typeData, g.camera[0]);
-        PutFloat(w.typeData, g.camera[1]);
+        AppendBEFloat(w.typeData, g.camera[0]);
+        AppendBEFloat(w.typeData, g.camera[1]);
       } else {
-        PutFloat(w.typeData, std::min(g.camera[0], g.camera[1]));
-        PutFloat(w.typeData, std::max(g.camera[0], g.camera[1]));
-        PutFloat(w.typeData, std::max(g.camera[2], g.camera[3]));
-        PutFloat(w.typeData, std::min(g.camera[2], g.camera[3]));
+        AppendBEFloat(w.typeData, std::min(g.camera[0], g.camera[1]));
+        AppendBEFloat(w.typeData, std::max(g.camera[0], g.camera[1]));
+        AppendBEFloat(w.typeData, std::max(g.camera[2], g.camera[3]));
+        AppendBEFloat(w.typeData, std::min(g.camera[2], g.camera[3]));
       }
-      PutFloat(w.typeData, zNear);
-      PutFloat(w.typeData, zFar);
+      AppendBEFloat(w.typeData, zNear);
+      AppendBEFloat(w.typeData, zFar);
     }
     for (const auto& anchor : kAnchor) {
       const auto at = remByName.find(anchor[1]);
@@ -1412,7 +1364,7 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
   if (map && promptLeft) {
     for (const Widget& w : out) {
       Blob cmdl;
-      if (!w.kept || w.typeData.size() < 4 || !m_io.retail(Tag('C', 'M', 'D', 'L'), Get32(w.typeData, 0), cmdl) ||
+      if (!w.kept || w.typeData.size() < 4 || !m_io.retail(Tag('C', 'M', 'D', 'L'), GetBE32(w.typeData, 0), cmdl) ||
           cmdl.size() < 36) {
         continue;
       }
@@ -1421,7 +1373,7 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
       for (int corner = 0; corner < 8; ++corner) {
         double x = w.world.m[0][3];
         for (int k = 0; k < 3; ++k) {
-          x += w.world.m[0][k] * double(GetFloat(cmdl, 12 + size_t(k) * 4 + ((corner >> k) & 1 ? 12 : 0)));
+          x += w.world.m[0][k] * double(GetBEFloat(cmdl, 12 + size_t(k) * 4 + ((corner >> k) & 1 ? 12 : 0)));
         }
         right = std::max(right, x);
       }
@@ -1530,7 +1482,7 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
         continue;
       }
       if (w.guif < 0) {
-        Set32(w.typeData, 0, kNoModel);  // the disc's art has no place in this layout
+        SetBE32(w.typeData, 0, kNoModel);  // the disc's art has no place in this layout
         continue;
       }
       const RemWidget& g = rem[size_t(w.guif)];
@@ -1566,8 +1518,8 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
         }
         ++counts.models;
       }
-      Set32(w.typeData, 0, id);
-      Set32(w.typeData, 4, 0);
+      SetBE32(w.typeData, 0, id);
+      SetBE32(w.typeData, 4, 0);
       std::memcpy(w.color, g.color, sizeof(w.color));
       w.draw = g.draw;
     } else if (w.type == Tag('T', 'X', 'P', 'N') && w.guif >= 0 && w.typeData.size() >= kTextPaneSize) {
@@ -1592,9 +1544,9 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
       }
       const double dim[2] = {hi[0] - lo[0], hi[2] - lo[2]};
       const Mat& old = original[discByName[w.name]].world;
-      const double extent[2] = {GetFloat(w.typeData, kTextPaneExtent), GetFloat(w.typeData, kTextPaneExtent + 4)};
-      const double px = double(GetFloat(w.typeData, 0)) * AxisLength(old, 0) / extent[0];
-      const double pz = double(GetFloat(w.typeData, 4)) * AxisLength(old, 2) / extent[1];
+      const double extent[2] = {GetBEFloat(w.typeData, kTextPaneExtent), GetBEFloat(w.typeData, kTextPaneExtent + 4)};
+      const double px = double(GetBEFloat(w.typeData, 0)) * AxisLength(old, 0) / extent[0];
+      const double pz = double(GetBEFloat(w.typeData, 4)) * AxisLength(old, 2) / extent[1];
       const double pz2 = dim[1] * AxisLength(w.world, 2) / extent[1];
       const double unit = pz2 * px / pz;
       if (std::min({std::abs(pz2), std::abs(px), std::abs(pz), dim[0], dim[1]}) < 1e-9 || !std::isfinite(unit)) {
@@ -1612,7 +1564,7 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
       for (int c = 0; c < 3; ++c) {
         from[c] = old.m[c][3];
         for (int k = 0; k < 3; ++k) {
-          from[c] += old.m[c][k] * double(GetFloat(w.typeData, 8 + size_t(k) * 4));
+          from[c] += old.m[c][k] * double(GetBEFloat(w.typeData, 8 + size_t(k) * 4));
         }
       }
       const double was = discView(from);
@@ -1623,19 +1575,19 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
         scale = (pz / was) / (pz2 / now);
         log(w.name + ": text at the disc's size, " + std::to_string(int(std::lround(100.0 / scale))) + "% of the box");
         if (g.textJustify[0] <= 2 && g.textJustify[1] <= 2) {
-          Set32(w.typeData, kTextPaneJustify, g.textJustify[0]);
-          Set32(w.typeData, kTextPaneJustify + 4, g.textJustify[1]);
+          SetBE32(w.typeData, kTextPaneJustify, g.textJustify[0]);
+          SetBE32(w.typeData, kTextPaneJustify + 4, g.textJustify[1]);
         }
       }
       w.world = placed;
-      SetFloat(w.typeData, 0, float(dim[0]));
-      SetFloat(w.typeData, 4, float(dim[1]));
+      SetBEFloat(w.typeData, 0, float(dim[0]));
+      SetBEFloat(w.typeData, 4, float(dim[1]));
       for (size_t at = 8; at < 20; at += 4) {
-        SetFloat(w.typeData, at, 0.0f);
+        SetBEFloat(w.typeData, at, 0.0f);
       }
-      SetFloat(w.typeData, kTextPaneExtent,
+      SetBEFloat(w.typeData, kTextPaneExtent,
                float(std::max(1.0, std::nearbyint(dim[0] * AxisLength(w.world, 0) / (unit * scale)))));
-      SetFloat(w.typeData, kTextPaneExtent + 4, float(std::max(1.0, std::nearbyint(extent[1] / scale))));
+      SetBEFloat(w.typeData, kTextPaneExtent + 4, float(std::max(1.0, std::nearbyint(extent[1] / scale))));
     } else if (w.type == Tag('E', 'N', 'R', 'G') && w.guif >= 0 && w.typeData.size() >= 4) {
       const RemWidget& g = rem[size_t(w.guif)];
       Part part;
@@ -1650,7 +1602,7 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
         log(w.name + ": the bar's mesh is not a strip");
         continue;
       }
-      Set32(w.typeData, 0, *tid);
+      SetBE32(w.typeData, 0, *tid);
       w.draw = g.draw;
       bars.push_back(std::move(bar));
     }
@@ -1663,9 +1615,9 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
   }
   Blob file;
   for (uint32_t v : header) {
-    Put32(file, v);
+    AppendBE32(file, v);
   }
-  Put32(file, uint32_t(out.size()));
+  AppendBE32(file, uint32_t(out.size()));
   for (const Widget& w : out) {
     Mat local = w.world;
     const auto parent = byName.find(w.parent);
@@ -1673,27 +1625,27 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
     if (parent != byName.end() && Inverse(parent->second->world, inverse)) {
       local = Mul(inverse, w.world);
     }
-    Put32(file, w.type);
+    AppendBE32(file, w.type);
     file.insert(file.end(), w.name.begin(), w.name.end());
     file.push_back(0);
     file.insert(file.end(), w.parent.begin(), w.parent.end());
     file.push_back(0);
     file.insert(file.end(), w.flags, w.flags + 4);
     for (float c : w.color) {
-      PutFloat(file, c);
+      AppendBEFloat(file, c);
     }
-    Put32(file, w.draw);
+    AppendBE32(file, w.draw);
     file.insert(file.end(), w.typeData.begin(), w.typeData.end());
     file.push_back(w.hasWorker ? 1 : 0);
     if (w.hasWorker) {
-      Put16(file, w.worker);
+      AppendBE16(file, w.worker);
     }
     for (int i = 0; i < 3; ++i) {
-      PutFloat(file, float(local.m[i][3]));
+      AppendBEFloat(file, float(local.m[i][3]));
     }
     for (int i = 0; i < 3; ++i) {
       for (int j = 0; j < 3; ++j) {
-        PutFloat(file, float(local.m[i][j]));
+        AppendBEFloat(file, float(local.m[i][j]));
       }
     }
     file.insert(file.end(), w.tail, w.tail + sizeof(w.tail));

@@ -1,4 +1,5 @@
 #include "port_remastered_report.h"
+#include "port_strings.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -24,11 +25,7 @@ std::string Num(double v) {
   return buf;
 }
 
-std::string Hex8(uint32_t v) {
-  char buf[16];
-  std::snprintf(buf, sizeof(buf), "%08X", v);
-  return buf;
-}
+using port::Hex8;
 
 std::string Join(const std::vector<std::string>& items) {
   std::string out;

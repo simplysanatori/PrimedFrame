@@ -2,6 +2,7 @@
 
 #include "port_env.h"
 #include "port_hd_font.h"
+#include "port_strings.h"
 
 #include "port_gci.h"
 #include "port_log.h"
@@ -33,25 +34,7 @@ Fit sFit;
 
 // The whole file, in one read when its size is known. The stream is left as a read
 // through istreambuf_iterator leaves it: failed only when the file did not open.
-std::vector<uint8_t> ReadAll(std::ifstream& in) {
-  std::vector<uint8_t> data;
-  if (!in) {
-    return data;
-  }
-  in.seekg(0, std::ios::end);
-  const std::streamoff size = in.tellg();
-  in.seekg(0, std::ios::beg);
-  if (in && size > 0) {
-    data.resize(size_t(size));
-    in.read(reinterpret_cast<char*>(data.data()), std::streamsize(size));
-    data.resize(size_t(in.gcount()));
-  } else {
-    in.clear();
-    data.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-  }
-  in.clear();
-  return data;
-}
+using port::ReadAll;
 
 bool Load() {
   if (sTried) {
