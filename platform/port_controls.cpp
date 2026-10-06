@@ -1283,6 +1283,11 @@ void DrawTab() {
     u32 padButtonCount = 0;
     if (PADGetButtonMappings(kControlPort, &padButtonCount) == nullptr) {
       ImGui::TextDisabled("No controller on pad 1.");
+    } else if (SDL_Gamepad* pad = PADGetSDLGamepadForIndex(kControlPort);
+               pad != nullptr && SDL_IsJoystickVirtual(SDL_GetGamepadID(pad))) {
+      // Aurora ignores mappings on the virtual touch pad, so there is nothing to edit.
+      ImGui::TextWrapped("The touch controls always use the GameCube layout; presets and remaps apply to "
+                         "real controllers only.");
     } else {
       const auto presetButton = [](const char* label, EPadPreset preset, const char* tooltip) {
         if (ImGui::Button(label)) {

@@ -39,6 +39,9 @@
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "Kyoto/Graphics/CCubeMaterial.hpp"
 #include "Kyoto/Graphics/CCubeModel.hpp"
+#include "Kyoto/Graphics/CModel.hpp"
+#include "Kyoto/Graphics/CTexture.hpp"
+#include "GuiSys/CGuiModel.hpp"
 #include "MetroidPrime/CHealthInfo.hpp"
 #include "MetroidPrime/CGameArea.hpp"
 #include "MetroidPrime/CMapWorld.hpp"
@@ -87,6 +90,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -209,6 +213,65 @@ std::string sModsDisabled;
 int sGyroMode = 0;
 int sGyroSource = 0;
 float sGyroRate = 600.f;
+// Touch aim (Android): dragging on the free screen area turns the view by the
+// finger's travel. Speed is aim pixels per dp; 2.25 turns ~180 degrees over a
+// 400 dp drag at the default mouse sensitivity (pi / 0.0035 / 400).
+bool sTouchAim = true;
+float sTouchAimSpeed = 2.25f;
+// Tap the minimap to open the map (Android): the HUD publishes the minimap's
+// screen rect, the touch overlay hit-tests it and injects a Z press per tap.
+bool sTouchMapTap = true;
+// Hold-and-slide beam and visor wheels (Android overlay): the player's state is
+// published each frame, the overlay's pick comes back as a request that
+// ControlMapper reads for a few polls as if the command's button were pressed.
+bool sTouchWheels = true;
+// Classic GameCube layout (Android overlay): C-stick, D-pad and the per-option
+// toggles. Off, the overlay has no C-stick and dragging aims like a mouse.
+bool sTouchClassic = false;
+bool sTouchVisorTapScan = false;
+std::atomic<uint32_t> sWheelMask{0};
+// The touch wheels' icons: ARGB pixels per [wheel][item], filled by the game thread, copied out by
+// the Android UI thread.
+struct WheelIcon {
+  int w = 0;
+  int h = 0;
+  std::vector<uint32_t> argb;
+};
+std::mutex sWheelIconMutex;
+WheelIcon sWheelIcons[2][4];
+std::atomic<uint64_t> sWheelStampNs{0};
+std::atomic<int> sVisorRequest{-1};
+std::atomic<uint64_t> sVisorRequestUntilNs{0};
+std::atomic<int> sBeamRequest{-1};
+std::atomic<uint64_t> sBeamRequestUntilNs{0};
+constexpr uint64_t kWheelRequestNs = 120'000'000;
+std::mutex sMinimapMutex;
+bool sMinimapValid = false;
+bool sMinimapDrawn = false;
+float sMinimapRect[4] = {};
+std::chrono::steady_clock::time_point sMinimapStamp;
+std::atomic< int > sMapTapPending{0};
+bool sMapTapHeld = false;
+// Drag to pan the map screen (Android): the overlay sends dp deltas and the view
+// height, CAutoMapper drains them; it publishes whether panning applies.
+std::mutex sMapPanMutex;
+bool sMapScreenOpen = false;
+std::chrono::steady_clock::time_point sMapScreenStamp;
+float sMapPanX = 0.f;
+float sMapPanY = 0.f;
+float sMapPanViewDp = 400.f;
+float sMapZoomPending = 1.f;
+float sMapRotatePending = 0.f;
+std::chrono::steady_clock::time_point sMapPanHeldUntil;
+std::mutex sTouchAimMutex;
+float sTouchAimPendingX = 0.f;
+float sTouchAimPendingY = 0.f;
+// GameCube scheme: this tick's touch travel, and whether a touch-aim finger is down
+// (JNI, or the console's hold timer).
+float sTouchLookFrameX = 0.f;
+float sTouchLookFrameY = 0.f;
+std::atomic<bool> sTouchAimDown{false};
+std::atomic<uint64_t> sTouchAimHoldUntilNs{0};
 bool sMouseCaptured = false;
 bool sMouseGameplayActive = false;
 bool sMouseInvertX = false;
@@ -283,13 +346,13 @@ std::atomic< int > sWindowFullscreen{-1};
 // Mirrors sVisible for readers on other threads, so they never touch the lazy
 // initialization or the ImGui state owned by the game thread.
 std::atomic< bool > sOverlayVisible{false};
-// Same idea for the twin-stick setting, which the Android touch overlay uses to
-// pick a controller layout.
-std::atomic< bool > sTwinStickFlag{false};
+// Same idea for whether the Android touch overlay draws the GameCube pad's colours.
 std::atomic< bool > sTouchColorsFlag{false};
 // Set when a real pad, keyboard or mouse is used; the Android touch overlay takes
 // it to get out of the way.
 std::atomic< bool > sPhysicalInput{false};
+// Set while the touch overlay is the active device (cleared by physical input).
+std::atomic< bool > sTouchActive{false};
 // Gyro state: the phone's sensor is looked up once, so the sensor list is not
 // walked on every tick.
 bool sPhoneGyroSearched = false;
@@ -507,6 +570,21 @@ void ApplySetting(const std::string& key, const std::string& value) {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 20.f && f <= 5000.f) {
       sGyroRate = f;
+    }
+  } else if (key == "touch_aim") {
+    sTouchAim = ParseBool(value);
+  } else if (key == "touch_map_tap") {
+    sTouchMapTap = ParseBool(value);
+  } else if (key == "touch_classic_gc") {
+    sTouchClassic = ParseBool(value);
+  } else if (key == "touch_wheels") {
+    sTouchWheels = ParseBool(value);
+  } else if (key == "touch_visor_tap_scan") {
+    sTouchVisorTapScan = ParseBool(value);
+  } else if (key == "touch_aim_speed") {
+    const float f = static_cast< float >(std::atof(value.c_str()));
+    if (std::isfinite(f) && f >= 0.25f && f <= 10.f) {
+      sTouchAimSpeed = f;
     }
   } else if (key == "mouse_invert_x") {
     sMouseInvertX = ParseBool(value);
@@ -754,6 +832,12 @@ void SaveSettings() {
   file << "gyro_mode=" << sGyroMode << '\n';
   file << "gyro_source=" << sGyroSource << '\n';
   file << "gyro_rate=" << sGyroRate << '\n';
+  file << "touch_aim=" << (sTouchAim ? 1 : 0) << '\n';
+  file << "touch_aim_speed=" << sTouchAimSpeed << '\n';
+  file << "touch_map_tap=" << (sTouchMapTap ? 1 : 0) << '\n';
+  file << "touch_classic_gc=" << (sTouchClassic ? 1 : 0) << '\n';
+  file << "touch_wheels=" << (sTouchWheels ? 1 : 0) << '\n';
+  file << "touch_visor_tap_scan=" << (sTouchVisorTapScan ? 1 : 0) << '\n';
   file << "mouse_invert_x=" << (sMouseInvertX ? 1 : 0) << '\n';
   file << "mouse_invert_y=" << (sMouseInvertY ? 1 : 0) << '\n';
   file << "mouse_buttons=" << (sMouseButtons ? 1 : 0) << '\n';
@@ -851,6 +935,7 @@ bool SDLCALL debug_event_watch(void*, SDL_Event* event) {
   }
   if (IsPhysicalInput(*event)) {
     sPhysicalInput.store(true, std::memory_order_release);
+    sTouchActive.store(false, std::memory_order_release);
   }
   return true;
 }
@@ -1464,9 +1549,29 @@ void SetMouseAim(bool enabled) {
   ResetMouseAim();
 }
 
+bool TouchDirectAim() {
+#if defined(__ANDROID__)
+  return !sTouchClassic && sTouchActive.load(std::memory_order_acquire) && !Visible();
+#else
+  return false;
+#endif
+}
+
+bool TouchActive() {
+#if defined(__ANDROID__)
+  return sTouchActive.load(std::memory_order_acquire) && !Visible();
+#else
+  return false;
+#endif
+}
+
+bool DirectAim() { return MouseAim() || TwinStick() || TouchDirectAim(); }
+
+// The pad-preset getters below read as the GameCube preset (off / unbound) while touch is in use: the
+// touch overlay always does what its buttons say. The F1 menu (Visible) sees the stored values.
 bool TwinStick() {
   EnsureInitialized();
-  return sTwinStick;
+  return sTwinStick && !TouchActive();
 }
 
 void SetTwinStick(bool enabled) {
@@ -1496,7 +1601,7 @@ void SetSpringBall(bool enabled) {
 
 bool SwapScanXray() {
   EnsureInitialized();
-  return sSwapScanXray;
+  return sSwapScanXray && !TouchActive();
 }
 
 void SetSwapScanXray(bool enabled) {
@@ -1507,6 +1612,9 @@ void SetSwapScanXray(bool enabled) {
 
 int ShiftBinding(int slot) {
   EnsureInitialized();
+  if (slot == 2 && TouchActive()) {
+    return -1;
+  }
   return slot >= 0 && slot < 3 ? sShiftBindings[slot] : -1;
 }
 
@@ -1520,7 +1628,7 @@ void SetShiftBinding(int slot, int code) {
 
 int PadAltButton(int bit) {
   EnsureInitialized();
-  return bit >= 0 && bit < kPadAltCount ? sPadAltButtons[bit] : -1;
+  return bit >= 0 && bit < kPadAltCount && !TouchActive() ? sPadAltButtons[bit] : -1;
 }
 
 void SetPadAltButton(int bit, int code) {
@@ -1909,11 +2017,13 @@ void PollGyro() {
   if (sSpringFlickLatch > 0.f) {
     sSpringFlickLatch -= dt;
   }
-  // Gyro feeds the same aim state the mouse and twin stick use, so aiming only
-  // has an effect where that is driving the camera. Flicks need no aim.
-  const bool aim = sGyroMode != 0 && (sMouseAim || sTwinStick);
+  // Gyro feeds the same aim state the mouse, twin stick and the touch layout's
+  // drag aim use, so aiming only has an effect where that is driving the
+  // camera. Flicks need no aim. The raw sTwinStick: TwinStick() reads false
+  // while touch is in use, yet touch keeps the direct aim path.
+  const bool aim = sGyroMode != 0 && (sMouseAim || sTwinStick || TouchDirectAim());
   if (!aim && !sSpringFlick) {
-    sGyroStatus = sGyroMode == 0 ? "off" : "needs mouse aim or twin stick";
+    sGyroStatus = sGyroMode == 0 ? "off" : "needs mouse aim, twin stick or touch controls";
     return;
   }
 
@@ -1938,7 +2048,7 @@ void PollGyro() {
   }
   if (!aim) {
     if (sGyroMode != 0) {
-      sGyroStatus = "flicks only (aim needs mouse aim or twin stick)";
+      sGyroStatus = "flicks only (aim needs mouse aim, twin stick or touch controls)";
     }
     return;
   }
@@ -1973,7 +2083,10 @@ void ResetMouseAim() {
   sMouseGameplayActive = false;
   sMouseButtonGate.Reset();
   sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
+  sTouchLookFrameX = sTouchLookFrameY = 0.f;
   sGyroPendingX = sGyroPendingY = sStickAimVelX = sStickAimVelY = 0.f;
+  std::lock_guard lock(sTouchAimMutex);
+  sTouchAimPendingX = sTouchAimPendingY = 0.f;
 }
 
 void SetMouseCaptured(bool captured) {
@@ -2045,14 +2158,358 @@ void AddMouseDelta(float dx, float dy) {
   sMousePendingY += dy;
 }
 
+bool TouchAim() {
+  EnsureInitialized();
+  return sTouchAim;
+}
+
+void SetTouchAim(bool on) {
+  EnsureInitialized();
+  sTouchAim = on;
+  MarkDirty();
+}
+
+bool TouchMapTap() {
+  EnsureInitialized();
+  return sTouchMapTap;
+}
+
+void SetTouchMapTap(bool on) {
+  EnsureInitialized();
+  sTouchMapTap = on;
+  MarkDirty();
+}
+
+bool TouchClassic() {
+  EnsureInitialized();
+  return sTouchClassic;
+}
+
+void SetTouchClassic(bool on) {
+  EnsureInitialized();
+  sTouchClassic = on;
+  MarkDirty();
+}
+
+bool TouchWheels() {
+  EnsureInitialized();
+  return sTouchWheels;
+}
+
+void SetTouchWheels(bool on) {
+  EnsureInitialized();
+  sTouchWheels = on;
+  MarkDirty();
+}
+
+bool TouchVisorTapScan() {
+  EnsureInitialized();
+  return sTouchVisorTapScan;
+}
+
+void SetTouchVisorTapScan(bool on) {
+  EnsureInitialized();
+  sTouchVisorTapScan = on;
+  MarkDirty();
+}
+
+// Game thread, once per frame from CPlayer::Think.
+void SetWheelState(uint32_t mask) {
+  sWheelMask.store(mask);
+  sWheelStampNs.store(SDL_GetTicksNS());
+}
+
+// Not refreshed for a while (no player, paused) reads as 0: wheels disabled.
+uint32_t WheelState() {
+  const uint64_t now = SDL_GetTicksNS();
+  return now - sWheelStampNs.load() < 500'000'000 ? sWheelMask.load() : 0;
+}
+
+void RequestVisor(int visor) {
+  if (visor < 0 || visor > 3) {
+    return;
+  }
+  sVisorRequest.store(visor);
+  sVisorRequestUntilNs.store(SDL_GetTicksNS() + kWheelRequestNs);
+}
+
+void RequestBeam(int beam) {
+  if (beam < 0 || beam > 3) {
+    return;
+  }
+  sBeamRequest.store(beam);
+  sBeamRequestUntilNs.store(SDL_GetTicksNS() + kWheelRequestNs);
+}
+
+void CaptureWheelIcons(int wheel, CGuiModel* const* icons) {
+  if (wheel < 0 || wheel > 1) {
+    return;
+  }
+  for (int i = 0; i < 4; ++i) {
+    {
+      std::lock_guard<std::mutex> lock(sWheelIconMutex);
+      if (!sWheelIcons[wheel][i].argb.empty()) {
+        continue;
+      }
+    }
+    if (icons[i] == nullptr || !icons[i]->GetModel().valid()) {
+      continue;
+    }
+    // The model is locked at construction and caches on its first draw; an icon the player
+    // doesn't own yet isn't drawn, so take it here once it has loaded.
+    TCachedToken<CModel>& modelToken = const_cast<TCachedToken<CModel>&>(*icons[i]->GetModel());
+    modelToken.TryCache();
+    CModel* model = modelToken.GetObject();
+    uint texId = 0;
+    const CTexture* tex = model != nullptr ? model->PortFirstTexture(&texId) : nullptr;
+    // A mod's picture replaces the texels the game holds; those are a stub. Load the retail
+    // icon from the disc by id instead (the ids the retail models use).
+    static const uint kRetailIcons[2][4] = {
+        {0x2DDA38B8, 0x04503F39, 0xD518730E, 0x2EA5AE14},
+        {0x8865D14F, 0x5C595218, 0x07183B57, 0xC156B36E},
+    };
+    static TCachedToken<CTexture>* retailTokens[2][4] = {};
+    if (tex != nullptr && tex->PortNativeId() != 0 && gpSimplePool != nullptr) {
+      if (retailTokens[wheel][i] == nullptr) {
+        // Kept for the run: the icon texture stays loaded.
+        retailTokens[wheel][i] = new TCachedToken<CTexture>(
+            gpSimplePool->GetObj(SObjectTag('TXTR', kRetailIcons[wheel][i])));
+        retailTokens[wheel][i]->Lock();
+      }
+      TCachedToken<CTexture>& tok = *retailTokens[wheel][i];
+      if (!tok.TryCache()) {
+        tok.ForceCache();
+      }
+      tex = tok.GetObject();
+      texId = kRetailIcons[wheel][i];
+    }
+    if (tex == nullptr || tex->PortNativeId() != 0) {
+      continue;
+    }
+    uint32_t w = 0;
+    uint32_t h = 0;
+    std::vector<uint8_t> rgba(256 * 256 * 4);
+    if (!aurora_gx_texobj_rgba8(tex->PortTexObj(), &w, &h, rgba.data(), rgba.size())) {
+      continue;
+    }
+    WheelIcon icon;
+    icon.w = static_cast<int>(w);
+    icon.h = static_cast<int>(h);
+    icon.argb.resize(size_t(w) * h);
+    // The HUD models map these textures bottom row first; flip to upright.
+    for (uint32_t y = 0; y < h; ++y) {
+      for (uint32_t x = 0; x < w; ++x) {
+        const uint8_t* c = &rgba[(size_t(h - 1 - y) * w + x) * 4];
+        icon.argb[size_t(y) * w + x] =
+            uint32_t(c[3]) << 24 | uint32_t(c[0]) << 16 | uint32_t(c[1]) << 8 | c[2];
+      }
+    }
+    PortLog::Write("port: touch wheel icon %d/%d: %ux%u fmt %d id %08X\n", wheel, i, w, h,
+                  int(tex->GetTexelFormat()), texId);
+    std::lock_guard<std::mutex> lock(sWheelIconMutex);
+    sWheelIcons[wheel][i] = std::move(icon);
+  }
+}
+
+bool VisorRequested(int visor) {
+  return sVisorRequest.load() == visor && SDL_GetTicksNS() < sVisorRequestUntilNs.load();
+}
+
+bool BeamRequested(int beam) {
+  return sBeamRequest.load() == beam && SDL_GetTicksNS() < sBeamRequestUntilNs.load();
+}
+
+// Game thread, once per HUD draw (valid=false when the minimap isn't shown).
+void SetMinimapRect(bool valid, bool drawn, float x0, float y0, float x1, float y1) {
+  std::lock_guard lock(sMinimapMutex);
+  sMinimapDrawn = drawn;
+  sMinimapValid = valid && std::isfinite(x0) && std::isfinite(y0) && std::isfinite(x1) &&
+                  std::isfinite(y1);
+  sMinimapRect[0] = x0;
+  sMinimapRect[1] = y0;
+  sMinimapRect[2] = x1;
+  sMinimapRect[3] = y1;
+  sMinimapStamp = std::chrono::steady_clock::now();
+}
+
+// A rect not refreshed for a while (HUD not drawn at all) counts as gone.
+bool MinimapRect(float* out4, bool* drawn) {
+  std::lock_guard lock(sMinimapMutex);
+  if (!sMinimapValid ||
+      std::chrono::steady_clock::now() - sMinimapStamp > std::chrono::milliseconds(300)) {
+    return false;
+  }
+  if (out4 != nullptr) {
+    std::copy(sMinimapRect, sMinimapRect + 4, out4);
+  }
+  if (drawn != nullptr) {
+    *drawn = sMinimapDrawn;
+  }
+  return true;
+}
+
+void RequestMapTap() {
+  sMapTapPending.fetch_add(1);
+}
+
+// Game thread, once per frame from CAutoMapper::Update.
+void SetMapScreenOpen(bool open) {
+  std::lock_guard lock(sMapPanMutex);
+  sMapScreenOpen = open;
+  sMapScreenStamp = std::chrono::steady_clock::now();
+}
+
+// Not refreshed for a while (paused, left the game) counts as closed.
+bool MapScreenOpen() {
+  std::lock_guard lock(sMapPanMutex);
+  return sMapScreenOpen &&
+         std::chrono::steady_clock::now() - sMapScreenStamp < std::chrono::milliseconds(300);
+}
+
+// UI thread. A call with zero deltas still marks the finger as down, for holdMs.
+void AddMapPan(float dxDp, float dyDp, float viewHeightDp, int holdMs) {
+  if (!std::isfinite(dxDp) || !std::isfinite(dyDp) || !(viewHeightDp > 0.f) ||
+      !MapScreenOpen()) {
+    return;
+  }
+  std::lock_guard lock(sMapPanMutex);
+  sMapPanX += dxDp;
+  sMapPanY += dyDp;
+  sMapPanViewDp = viewHeightDp;
+  sMapPanHeldUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(holdMs);
+}
+
+// UI thread: a pinch's finger-distance ratio (>1 zooms in); factors multiply.
+void AddMapZoom(float ratio) {
+  if (!std::isfinite(ratio) || !(ratio > 0.f) || !MapScreenOpen()) {
+    return;
+  }
+  std::lock_guard lock(sMapPanMutex);
+  sMapZoomPending = std::clamp(sMapZoomPending * std::clamp(ratio, 0.1f, 10.f), 0.01f, 100.f);
+}
+
+// UI thread: a twist's angle in radians; positive turns the map as the stick's
+// right does. Angles add.
+void AddMapRotate(float radians) {
+  if (!std::isfinite(radians) || radians == 0.f || !MapScreenOpen()) {
+    return;
+  }
+  std::lock_guard lock(sMapPanMutex);
+  sMapRotatePending = std::clamp(sMapRotatePending + radians, -6.3f, 6.3f);
+}
+
+// Game thread: the pending twist (0 = none), cleared.
+float TakeMapRotate() {
+  std::lock_guard lock(sMapPanMutex);
+  const float radians = sMapRotatePending;
+  sMapRotatePending = 0.f;
+  return radians;
+}
+
+// Game thread: the pending zoom factor (1 = none), cleared.
+float TakeMapZoom() {
+  std::lock_guard lock(sMapPanMutex);
+  const float ratio = sMapZoomPending;
+  sMapZoomPending = 1.f;
+  return ratio;
+}
+
+// Game thread. Drains the pending pan; true while a finger is on the map (a pan
+// within the last 250 ms), so the map doesn't drift back to its area meanwhile.
+bool TakeMapPan(float* dxDp, float* dyDp, float* viewHeightDp) {
+  std::lock_guard lock(sMapPanMutex);
+  *dxDp = sMapPanX;
+  *dyDp = sMapPanY;
+  *viewHeightDp = sMapPanViewDp;
+  sMapPanX = 0.f;
+  sMapPanY = 0.f;
+  return std::chrono::steady_clock::now() < sMapPanHeldUntil;
+}
+
+// Game thread, once per pad poll. Returns true for the poll that should read Z
+// held: a tap presses for one poll and releases on the next, so each tap is
+// one press edge.
+bool ConsumeMapTapZ() {
+  if (sMapTapHeld) {
+    sMapTapHeld = false;
+    return false;
+  }
+  if (sMapTapPending.load() > 0) {
+    sMapTapPending.fetch_sub(1);
+    sMapTapHeld = true;
+    return true;
+  }
+  return false;
+}
+
+float TouchAimSpeed() {
+  EnsureInitialized();
+  return sTouchAimSpeed;
+}
+
+void SetTouchAimSpeed(float pixelsPerDp) {
+  EnsureInitialized();
+  if (std::isfinite(pixelsPerDp)) {
+    sTouchAimSpeed = std::clamp(pixelsPerDp, 0.25f, 10.f);
+    MarkDirty();
+  }
+}
+
+// Called from the Android UI thread; the game thread drains it in
+// BeginFrameMouse.
+void AddTouchAim(float dxDp, float dyDp) {
+  if ((!sTouchAim && sTouchClassic) || Visible() || !std::isfinite(dxDp) ||
+      !std::isfinite(dyDp)) {
+    return;
+  }
+  std::lock_guard lock(sTouchAimMutex);
+  sTouchAimPendingX += dxDp * sTouchAimSpeed;
+  sTouchAimPendingY += dyDp * sTouchAimSpeed;
+}
+
 void BeginFrameMouse() {
-  sMouseFrameX = sMousePendingX + sGyroPendingX;
-  sMouseFrameY = sMousePendingY + sGyroPendingY;
+  float touchX = 0.f;
+  float touchY = 0.f;
+  {
+    std::lock_guard lock(sTouchAimMutex);
+    touchX = sTouchAimPendingX;
+    touchY = sTouchAimPendingY;
+    sTouchAimPendingX = sTouchAimPendingY = 0.f;
+  }
+  // On the direct aim path (mouse aim, twin stick, or the modern touch layout) the
+  // touch travel joins the mouse's; in the classic GameCube scheme
+  // CPlayer::UpdateTouchLook takes it instead (TakeTouchLook).
+  const bool directAim = DirectAim();
+  sTouchLookFrameX = directAim ? 0.f : touchX;
+  sTouchLookFrameY = directAim ? 0.f : touchY;
+  sMouseFrameX = sMousePendingX + sGyroPendingX + (directAim ? touchX : 0.f);
+  sMouseFrameY = sMousePendingY + sGyroPendingY + (directAim ? touchY : 0.f);
   sMousePendingX = sMousePendingY = 0.f;
   sGyroPendingX = sGyroPendingY = 0.f;
   // AddStickAim sets it again during this tick's input update.
   sStickAimVelX = sStickAimVelY = 0.f;
   sAimAppliedLastTick = false;
+}
+
+void SetTouchAimDown(bool down) { sTouchAimDown = down; }
+
+void HoldTouchAim(float seconds) {
+  sTouchAimHoldUntilNs = SDL_GetTicksNS() + static_cast<uint64_t>(std::max(seconds, 0.f) * 1e9);
+}
+
+bool TouchAimDown() {
+  return sTouchAimDown || SDL_GetTicksNS() < sTouchAimHoldUntilNs;
+}
+
+bool TakeTouchLook(float& dyaw, float& dpitch) {
+  dyaw = dpitch = 0.f;
+  const float x = sTouchLookFrameX;
+  const float y = sTouchLookFrameY;
+  sTouchLookFrameX = sTouchLookFrameY = 0.f;
+  // Same signs and scale as the mouse aim: right/down travel in, world yaw/pitch out.
+  dyaw = x * MouseSensitivity() * (MouseInvertX() ? 1.f : -1.f);
+  dpitch = y * MouseSensitivity() * (MouseInvertY() ? 1.f : -1.f);
+  return sTouchAim && !Visible();
 }
 
 bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
@@ -2064,8 +2521,15 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
   // What the next tick will consume: the mouse and gyro travel so far, plus the
   // stick's travel over the part of the tick already shown.
   const float ahead = std::min(fraction, 1.f) * TickPeriod();
-  const float dx = sMousePendingX + sGyroPendingX + sStickAimVelX * ahead;
-  const float dy = sMousePendingY + sGyroPendingY + sStickAimVelY * ahead;
+  float touchX = 0.f;
+  float touchY = 0.f;
+  {
+    std::lock_guard lock(sTouchAimMutex);
+    touchX = sTouchAimPendingX;
+    touchY = sTouchAimPendingY;
+  }
+  const float dx = sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * ahead;
+  const float dy = sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * ahead;
   float yaw = 0.f;
   float pitch = 0.f;
   if (!sMouseAimState.Preview(dx, dy, MouseSensitivity(), MouseInvertX(), MouseInvertY(), yaw,
@@ -2573,8 +3037,6 @@ bool Visible() {
 
 bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); }
 
-bool TwinStickFlag() { return sTwinStickFlag.load(std::memory_order_acquire); }
-
 bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire); }
 
 void SaveSettingsNow() {
@@ -2976,7 +3438,6 @@ void UpdateControllerNav() {
     }
   }
   sOverlayVisible.store(sVisible, std::memory_order_release);
-  sTwinStickFlag.store(sTwinStick, std::memory_order_release);
   sTouchColorsFlag.store(sTouchColors, std::memory_order_release);
 
   ImGuiIO& io = ImGui::GetIO();
@@ -4698,6 +5159,52 @@ void DrawInputTab() {
   }
   ItemHelp("Draws the on-screen buttons in the GameCube pad's colours: green A, red B, yellow "
            "C-stick, purple Z. Off, they are plain and see-through.");
+  bool touchClassic = sTouchClassic;
+  if (ImGui::Checkbox("Classic GameCube layout", &touchClassic)) {
+    SetTouchClassic(touchClassic);
+  }
+  ItemHelp("Brings back the C-stick and the D-pad. Off: no C-stick; drag the free screen area to "
+           "aim like a mouse (the left stick strafes), and beams and visors come from the Visor "
+           "and Beam wheels.");
+  ImGui::BeginDisabled(!sTouchClassic);
+  bool touchAim = sTouchAim;
+  if (ImGui::Checkbox("Touch aim", &touchAim)) {
+    SetTouchAim(touchAim);
+  }
+  ItemHelp("Drag a finger on the free screen area. Classic layout with twin stick off: dragging "
+           "sideways turns Samus, dragging up or down looks up or down like R free look and "
+           "levels out when you let go. Otherwise the view aims like a mouse, by the distance "
+           "dragged. Not while locked on or in the ball.");
+  ImGui::EndDisabled();
+  bool touchMapTap = sTouchMapTap;
+  if (ImGui::Checkbox("Tap minimap for map", &touchMapTap)) {
+    SetTouchMapTap(touchMapTap);
+  }
+  ItemHelp("Tapping the minimap opens the map; hides the GameCube layout's Z button.");
+  ImGui::BeginDisabled(!sTouchClassic);
+  bool touchWheels = sTouchWheels;
+  if (ImGui::Checkbox("Beam and visor wheels", &touchWheels)) {
+    SetTouchWheels(touchWheels);
+  }
+  ItemHelp("Replaces the D-pad with a Visor and a Beam button. Hold one, slide to a sector, "
+           "let go to pick. Letting go in the middle cancels. Off, the D-pad is back.");
+  ImGui::EndDisabled();
+  ImGui::BeginDisabled(!(!sTouchClassic || sTouchWheels));
+  bool touchVisorTapScan = sTouchVisorTapScan;
+  if (ImGui::Checkbox("Tap Visor for Scan Visor", &touchVisorTapScan)) {
+    SetTouchVisorTapScan(touchVisorTapScan);
+  }
+  ItemHelp("A quick tap on the Visor button (no slide) selects the Scan Visor.");
+  ImGui::EndDisabled();
+  ImGui::BeginDisabled(!(!sTouchClassic || sTouchAim));
+  float touchAimSpeed = sTouchAimSpeed;
+  if (ImGui::SliderFloat("Touch aim speed", &touchAimSpeed, 0.5f, 6.f, "%.2f px/dp",
+                         ImGuiSliderFlags_Logarithmic)) {
+    SetTouchAimSpeed(touchAimSpeed);
+  }
+  ItemHelp("How far the view turns per dp of finger travel. The default turns about 180 degrees "
+           "over a 400 dp drag at the default mouse sensitivity.");
+  ImGui::EndDisabled();
 #endif
 
   ImGui::SeparatorText("Gyro aim");
@@ -4707,7 +5214,8 @@ void DrawInputTab() {
     SetGyroMode(gyroMode);
   }
   ItemHelp("Tilt the pad or the phone to aim. Hold to aim uses right stick click or left ctrl. Needs "
-           "mouse aim or twin stick, since the gyro feeds that same aim.");
+           "mouse aim, twin stick or the touch controls (not the classic layout), since the gyro "
+           "feeds that same aim.");
   ImGui::BeginDisabled(sGyroMode == 0 && !sSpringFlick);
   const char* gyroSources[] = {"Auto", "Controller", "Phone"};
   int gyroSource = sGyroSource;
@@ -6475,6 +6983,126 @@ Java_org_metroidprime_port_TouchControlsView_nativeVirtualAxis(JNIEnv*, jclass, 
     SDL_SetJoystickVirtualAxis(pad, static_cast< int >(axis), PortTouchPad::AxisValue(value));
   }
 }
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchAim(JNIEnv*, jclass, jfloat dxDp,
+                                                            jfloat dyDp) {
+  PortDebug::AddTouchAim(dxDp, dyDp);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchAimDown(JNIEnv*, jclass, jboolean down) {
+  PortDebug::SetTouchAimDown(down == JNI_TRUE);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchAimEnabled(JNIEnv*, jclass) {
+  return PortDebug::TouchAim() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchClassic(JNIEnv*, jclass) {
+  return PortDebug::TouchClassic() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchWheelsEnabled(JNIEnv*, jclass) {
+  return PortDebug::TouchWheels() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchVisorTapScan(JNIEnv*, jclass) {
+  return PortDebug::TouchVisorTapScan() ? JNI_TRUE : JNI_FALSE;
+}
+
+// Bits 0-3: visors owned (Combat, X-Ray, Scan, Thermal); 4-7: beams owned
+// (Power, Ice, Wave, Plasma); 8-9 current visor; 10-11 current beam; 12: valid.
+extern "C" JNIEXPORT jint JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeWheelOwned(JNIEnv*, jclass) {
+  return static_cast< jint >(PortDebug::WheelState());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeRequestVisor(JNIEnv*, jclass, jint visor) {
+  PortDebug::RequestVisor(visor);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeRequestBeam(JNIEnv*, jclass, jint beam) {
+  PortDebug::RequestBeam(beam);
+}
+
+// {width, height, ARGB pixels...} of a wheel icon (wheel 0 visor, 1 beam; item in the same order as
+// nativeRequestVisor/nativeRequestBeam), or null until the HUD has loaded it.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeWheelIcon(JNIEnv* env, jclass, jint wheel,
+                                                             jint item) {
+  if (wheel < 0 || wheel > 1 || item < 0 || item > 3) {
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> lock(sWheelIconMutex);
+  const WheelIcon& icon = sWheelIcons[wheel][item];
+  if (icon.argb.empty()) {
+    return nullptr;
+  }
+  const jsize count = static_cast<jsize>(icon.argb.size());
+  jintArray out = env->NewIntArray(2 + count);
+  if (out == nullptr) {
+    return nullptr;
+  }
+  const jint dims[2] = {icon.w, icon.h};
+  env->SetIntArrayRegion(out, 0, 2, dims);
+  env->SetIntArrayRegion(out, 2, count, reinterpret_cast<const jint*>(icon.argb.data()));
+  return out;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchMapTapEnabled(JNIEnv*, jclass) {
+  return PortDebug::TouchMapTap() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMinimapRect(JNIEnv* env, jclass,
+                                                              jfloatArray out) {
+  // x0, y0, x1, y1, then 1 when the minimap is drawn there (0: draw a map button).
+  float rect[5];
+  bool drawn = true;
+  if (!PortDebug::TouchMapTap() || !PortDebug::MinimapRect(rect, &drawn) || out == nullptr ||
+      env->GetArrayLength(out) < 5) {
+    return JNI_FALSE;
+  }
+  rect[4] = drawn ? 1.f : 0.f;
+  env->SetFloatArrayRegion(out, 0, 5, rect);
+  return JNI_TRUE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapPan(JNIEnv*, jclass, jfloat dxDp,
+                                                         jfloat dyDp, jfloat viewHeightDp) {
+  PortDebug::AddMapPan(dxDp, dyDp, viewHeightDp, 250);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapRotate(JNIEnv*, jclass, jfloat radians) {
+  PortDebug::AddMapRotate(radians);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapZoom(JNIEnv*, jclass, jfloat ratio) {
+  PortDebug::AddMapZoom(ratio);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapScreenOpen(JNIEnv*, jclass) {
+  return PortDebug::MapScreenOpen() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapTap(JNIEnv*, jclass) {
+  if (PortDebug::TouchMapTap()) {
+    PortDebug::RequestMapTap();
+  }
+}
 #endif
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -6484,12 +7112,8 @@ Java_org_metroidprime_port_TouchControlsView_nativeDebugOverlayVisible(JNIEnv*, 
 
 extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeSetTouchDevice(JNIEnv*, jclass, jboolean xbox) {
+  sTouchActive.store(true, std::memory_order_release);
   PortPrompts::NoteTouchInput(xbox == JNI_TRUE);
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_org_metroidprime_port_TouchControlsView_nativeTwinStick(JNIEnv*, jclass) {
-  return PortDebug::TwinStickFlag() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

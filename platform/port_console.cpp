@@ -490,6 +490,7 @@ void CmdHelp() {
   Out("give <item> [n]            add an item (name or number, see `items`)");
   Out("take <item> [n]            remove item capacity (drops a suit)");
   Out("items                      the player's inventory");
+  Out("visor <combat|xray|scan|thermal|0-3>, beam <power|ice|wave|plasma|0-3>  switch like the touch wheels");
   Out("heal                       refill health");
   Out("god [on|off]               the player takes no damage (no argument: show)");
   Out("memo <text>                show text as a HUD message");
@@ -542,6 +543,12 @@ void CmdHelp() {
   Out("                           draw the volume's coordinates or its light alone on room geometry");
   Out("hdfont [on|off]            the distance-field font mods supply, in place of the disc's glyphs");
   Out("touchpad [attach|detach|stick <x> <y>]  a virtual gamepad like Android's touch overlay");
+  Out("minimap  the HUD minimap's screen rect (x0 y0 x1 y1, 0..1), or invalid");
+  Out("maptap   a touch-overlay minimap tap: one Z press, opens the map");
+  Out("touchaim <dx> <dy> [hold s]   touch aim travel in dp (right/down +), the finger counts as down for hold seconds");
+  Out("maprotate <degrees>   twist the open map screen's yaw, as two fingers do; positive turns it as the stick's right does");
+  Out("mapzoom <ratio>   pinch the open map screen: 2 zooms in to twice the size, 0.5 out");
+  Out("mappan <dx> <dy> [hold s]   drag the open map screen by dx,dy dp (view height 400 dp); finger down for hold s (0.25)");
   Out("freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]");
   Out("                           fly the view away from the player (HUD hidden; freeze holds the game still)");
   Out("aspect <4:3|16:9|window>   switch the rendering aspect, as the Options row does");
@@ -1034,6 +1041,19 @@ void CmdHeal(CStateManager& mgr) {
   Finish();
 }
 
+// Picks go through PortDebug::RequestVisor/RequestBeam, the touch wheels' path:
+// ControlMapper reads them as the command's press, so the stock rules apply
+// (owned items only, not in the ball, ...). Names or numbers (EPlayerVisor /
+// EBeamId order).
+int ParseChoice(const char* const* names, const std::string& arg) {
+  for (int i = 0; i < 4; ++i) {
+    if (arg == names[i] || arg == std::to_string(i)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 void CmdVisor(CStateManager& mgr) {
   static const char* const kVisors[] = {"combat", "xray", "scan", "thermal"};
   CPlayerState& ps = *mgr.PlayerState();
@@ -1041,14 +1061,30 @@ void CmdVisor(CStateManager& mgr) {
     Out("visor %s", kVisors[ps.GetCurrentVisor()]);
     return Finish();
   }
-  const std::string arg = Lower(sCmd.args[1]);
-  for (int i = 0; i < 4; ++i) {
-    if (arg == kVisors[i]) {
-      ps.StartTransitionToVisor(static_cast< CPlayerState::EPlayerVisor >(i));
-      return Finish();
-    }
+  const int visor = ParseChoice(kVisors, Lower(sCmd.args[1]));
+  if (visor < 0) {
+    return Finish("usage: visor [combat|xray|scan|thermal|0-3]");
   }
-  Finish("usage: visor [combat|scan|thermal|xray]");
+  PortDebug::RequestVisor(visor);
+  Out("visor %s requested", kVisors[visor]);
+  Finish();
+}
+
+void CmdBeam(CStateManager& mgr) {
+  static const char* const kBeams[] = {"power", "ice", "wave", "plasma"};
+  CPlayerState& ps = *mgr.PlayerState();
+  if (sCmd.args.size() < 2) {
+    const int beam = ps.GetCurrentBeam();
+    Out("beam %s", beam >= 0 && beam < 4 ? kBeams[beam] : "?");
+    return Finish();
+  }
+  const int beam = ParseChoice(kBeams, Lower(sCmd.args[1]));
+  if (beam < 0) {
+    return Finish("usage: beam [power|ice|wave|plasma|0-3]");
+  }
+  PortDebug::RequestBeam(beam);
+  Out("beam %s requested", kBeams[beam]);
+  Finish();
 }
 
 void CmdGod() {
@@ -1670,7 +1706,7 @@ bool IsTickCommand(const std::string& name) {
   }
   static const char* const names[] = {"status", "areas", "objs", "obj", "send", "give",
                                       "take", "items", "heal", "god", "memo", "strg", "language", "tp", "room", "fx", "face", "look", "warp",
-                                      "tracker", "enter", "visor"};
+                                      "tracker", "enter", "visor", "beam"};
   for (const char* n : names) {
     if (name == n) {
       return true;
@@ -1704,6 +1740,8 @@ void RunTick(CStateManager& mgr) {
     CmdGod();
   } else if (name == "visor") {
     CmdVisor(mgr);
+  } else if (name == "beam") {
+    CmdBeam(mgr);
   } else if (name == "memo") {
     CmdMemo();
   } else if (name == "strg") {
@@ -1918,6 +1956,73 @@ void RunFrame() {
     CmdStats();
   } else if (name == "touchpad") {
     CmdTouchPad();
+  } else if (name == "minimap") {
+    float rect[4] = {};
+    bool drawn = false;
+    if (PortDebug::MinimapRect(rect, &drawn)) {
+      Out("minimap valid %.4f %.4f %.4f %.4f %s", rect[0], rect[1], rect[2], rect[3],
+          drawn ? "drawn" : "button");
+    } else {
+      Out("minimap invalid");
+    }
+    Finish();
+  } else if (name == "maptap") {
+    PortDebug::RequestMapTap();
+    Out("maptap queued");
+    Finish();
+  } else if (name == "maprotate") {
+    float deg = 0.f;
+    if (sCmd.args.size() < 2 || !ParseFloat(sCmd.args[1], deg)) {
+      return Finish("usage: maprotate <degrees>");
+    }
+    if (!PortDebug::MapScreenOpen()) {
+      Out("maprotate ignored: the map screen is not open");
+    } else {
+      PortDebug::AddMapRotate(deg * (3.14159265f / 180.f));
+      Out("maprotate queued");
+    }
+    Finish();
+  } else if (name == "mapzoom") {
+    float ratio = 1.f;
+    if (sCmd.args.size() < 2 || !ParseFloat(sCmd.args[1], ratio) || !(ratio > 0.f)) {
+      return Finish("usage: mapzoom <ratio>");
+    }
+    if (!PortDebug::MapScreenOpen()) {
+      Out("mapzoom ignored: the map screen is not open");
+    } else {
+      PortDebug::AddMapZoom(ratio);
+      Out("mapzoom queued");
+    }
+    Finish();
+  } else if (name == "touchaim") {
+    float dx = 0.f;
+    float dy = 0.f;
+    float holdS = 0.f;
+    if (sCmd.args.size() < 3 || !ParseFloat(sCmd.args[1], dx) || !ParseFloat(sCmd.args[2], dy) ||
+        (sCmd.args.size() > 3 && !ParseFloat(sCmd.args[3], holdS))) {
+      return Finish("usage: touchaim <dx> <dy> [hold seconds]");
+    }
+    // Finger travel in dp (right/down positive); the hold keeps the finger "down",
+    // which holds the GameCube scheme's free-look pitch.
+    if (holdS > 0.f) PortDebug::HoldTouchAim(holdS);
+    PortDebug::AddTouchAim(dx, dy);
+    Out("touchaim queued");
+    Finish();
+  } else if (name == "mappan") {
+    float dx = 0.f;
+    float dy = 0.f;
+    float holdS = 0.25f;
+    if (sCmd.args.size() < 3 || !ParseFloat(sCmd.args[1], dx) || !ParseFloat(sCmd.args[2], dy) ||
+        (sCmd.args.size() > 3 && !ParseFloat(sCmd.args[3], holdS))) {
+      return Finish("usage: mappan <dx> <dy> [hold seconds]");
+    }
+    if (!PortDebug::MapScreenOpen()) {
+      Out("mappan ignored: the map screen is not open");
+    } else {
+      PortDebug::AddMapPan(dx, dy, 400.f, static_cast< int >(holdS * 1000.f));
+      Out("mappan queued");
+    }
+    Finish();
   } else if (name == "hdfont") {
     if (sCmd.args.size() > 1) {
       const std::string arg = Lower(sCmd.args[1]);

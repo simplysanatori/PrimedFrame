@@ -997,7 +997,7 @@ void PortSmokeDash(CStateManager& mgr) {
     } else {
       // A slow turn, so the camera keeps up and the orbit zone sees each yaw.
       sYaw += 1.5f * M_PIF / 180.f;
-      if (PortDebug::MouseAim() || PortDebug::TwinStick()) {
+      if (PortDebug::DirectAim()) {
         PortDebug::SynchronizeMouseAim(-std::sin(sYaw), std::cos(sYaw), 0.f);
       } else {
         player->SetTransform(CQuaternion::ZRotation(CRelAngle(sYaw))
