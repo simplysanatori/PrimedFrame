@@ -1132,10 +1132,14 @@ int main(int argc, char** argv) {
         } else {
             std::snprintf(dynamicRes, sizeof(dynamicRes), "off");
         }
-        PortLog::Write("port: settings: backend %s, msaa %d, anisotropy %d, scale %.2f, dynamic-res %s, "
+        char scale[16] = "auto";
+        if (PortDebug::RenderScale() > 0.f) {
+            std::snprintf(scale, sizeof(scale), "%.2fx", static_cast<double>(PortDebug::RenderScale()));
+        }
+        PortLog::Write("port: settings: backend %s, msaa %d, anisotropy %d, scale %s, dynamic-res %s, "
                        "smoothing %s (interp %s), vsync %s, frame-cap %s, remastered-models %s\n",
                        config.desiredBackend == BACKEND_OPENGLES ? "opengles" : "auto", PortDebug::Msaa(),
-                       PortDebug::Anisotropy(), static_cast<double>(PortDebug::RenderScale()), dynamicRes,
+                       PortDebug::Anisotropy(), scale, dynamicRes,
                        PortDebug::SmoothFrames() ? "on" : "off", PortDebug::FrameInterpolation() ? "on" : "off",
                        PortDebug::VsyncEnabled() ? "on" : "off", PortDebug::FrameLimitEnabled() ? "60" : "off",
                        remastered ? "on" : "off");
