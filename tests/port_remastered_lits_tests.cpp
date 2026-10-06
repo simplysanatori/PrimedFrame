@@ -117,6 +117,26 @@ void TestReader() {
               shield[5] == 0.f,
           "a record with no PBR8 clears the shield floats");
   }
+  {  // 'LMUV': slot word and tag after everything; the record before it reads as before.
+    std::vector<uint8_t> r = Record(19, true, true, "PBR6", 0.4f, 0.5f);
+    for (int i = 0; i < 32; ++i) {
+      PutBe(r, std::bit_cast<uint32_t>(100.f + float(i)));
+    }
+    r.insert(r.end(), {'P', 'B', 'R', '8'});
+    Check(PortPbrRecord::LightmapSlot(r.data() + r.size(), r.size()) == -1, "no LMUV gives no slot");
+    PutBe(r, 5);
+    r.insert(r.end(), {'L', 'M', 'U', 'V'});
+    float shield[32] = {};
+    uint32_t cube = 7;
+    Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s, &cube, shield) == 19, "LMUV holds 19 floats");
+    Check(v[18] == 19.f && wrap == 0x11223344 && s[0] == 0.4f && s[1] == 0.5f && cube == 0, "LMUV reads the record before it");
+    Check(shield[0] == 100.f && shield[31] == 131.f, "LMUV keeps the PBR8 shield floats");
+    Check(PortPbrRecord::LightmapSlot(r.data() + r.size(), r.size()) == 5, "LMUV slot");
+    std::vector<uint8_t> bad = Record(19, true, true, "PBR6");
+    PutBe(bad, 9);
+    bad.insert(bad.end(), {'L', 'M', 'U', 'V'});
+    Check(PortPbrRecord::LightmapSlot(bad.data() + bad.size(), bad.size()) == -1, "LMUV slot past 7 is none");
+  }
   struct Old {
     int floats;
     bool wrap;

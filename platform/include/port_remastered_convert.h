@@ -39,6 +39,9 @@ struct ConvertOptions {
   // id it is written under, and every surface gets one opaque lit PBR material.
   // Surfaces with no base map are dropped, having no retail material to keep.
   bool standalone = false;
+  // Standalone PBR materials also carry the model's lightmap UV (UV0.zw) as an extra texcoord
+  // attribute, named by an 'LMUV' record trailer.
+  bool lightmapUv = false;
   int nativeMax = 0;  // largest edge of a native .dds, 0 for the converter's own
   int lod = 0;        // level of detail to convert, 0 the finest (a model with fewer has none)
   // 0 or more: keep only the triangles TriangleJoint puts on this joint, one rigid piece of

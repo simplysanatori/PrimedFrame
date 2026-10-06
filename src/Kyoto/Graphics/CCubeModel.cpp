@@ -177,7 +177,9 @@ CCubeMaterial CCubeModel::GetMaterialByIndex(const int idx) const {
 // and one more big-endian word (the file id of the material's own reflection cube) and
 // 'PBR7'. A material without one gets the neutral values. A converted TEV material may end
 // in the wrap word alone and 'WRAP' (no floats). A kind 14 record carries a trailer after
-// any of these: 32 floats (the boundary shield's CCH0..CCH6 and DIFC) and 'PBR8'.
+// any of these: 32 floats (the boundary shield's CCH0..CCH6 and DIFC) and 'PBR8'. A room
+// geometry material may end in one more trailer after everything: a big-endian word (the
+// vertex texcoord slot of the model's lightmap UV) and 'LMUV'; PortPbrRecord::Read skips it.
 int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap,
                                     f32 lightScale[2], uint* cube, f32* shield) const {
   const uchar* table = static_cast< const uchar* >(x0_instance.GetMaterialPointer()) +

@@ -2456,6 +2456,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         options.retail = geometry[i].id;
         options.source = UuidText(geometry[i].uuid);
         options.standalone = true;
+        options.lightmapUv = true;  // (the LOD levels below reuse these options)
         // The list drops a character's simplified meshes by name; a room has none, and its
         // stone is named "simple".
         options.skip.clear();
