@@ -62,7 +62,8 @@ final class TouchControlsView extends View {
     };
     private static final int[][] WHEEL_ITEMS = {{0, 1, 3, 2}, {0, 2, 1, 3}};
     private static final int WHEEL_VALID_BIT = 1 << 12;
-    private static final float WHEEL_BUTTON_DY = 0.085f; // from the D-pad centre, in heights
+    private static final float WHEEL_BUTTON_Y = 0.90f; // in heights
+    private static final float WHEEL_BUTTON_GAP = 0.024f; // between the two, in heights
     private static final float WHEEL_BUTTON_RADIUS = 0.072f;
     private static final float WHEEL_RADIUS_DP = 112f;
     private static final float WHEEL_DEAD_DP = 30f;
@@ -1219,16 +1220,24 @@ final class TouchControlsView extends View {
         canvas.drawCircle(cx, cy, lid * 0.55f, fillPaint);
     }
 
-    // The Visor button's centre; the Beam button sits as far below the D-pad's.
-    private static float wheelButtonY(int wheel, float height) {
-        return (DPAD_Y + (wheel == 0 ? -WHEEL_BUTTON_DY : WHEEL_BUTTON_DY)) * height;
+    // The Visor (left) and Beam (right) buttons sit side by side at the bottom,
+    // centred in the gap between the left stick and the right stick or C-stick.
+    private float wheelButtonX(int wheel, float width, float height) {
+        final float left = STICK_LEFT_X * width + STICK_RADIUS * height;
+        final float right = rightStickX(width, height) - rightStickRadius(height);
+        final float offset = (WHEEL_BUTTON_RADIUS + WHEEL_BUTTON_GAP * 0.5f) * height;
+        return (left + right) * 0.5f + (wheel == 0 ? -offset : offset);
     }
 
-    private static int wheelButtonAt(float x, float y, float width, float height) {
+    private static float wheelButtonY(float height) {
+        return WHEEL_BUTTON_Y * height;
+    }
+
+    private int wheelButtonAt(float x, float y, float width, float height) {
         final float radius = WHEEL_BUTTON_RADIUS * height * 1.1f;
         for (int wheel = 0; wheel < 2; ++wheel) {
-            final double dx = x - DPAD_X * width;
-            final double dy = y - wheelButtonY(wheel, height);
+            final double dx = x - wheelButtonX(wheel, width, height);
+            final double dy = y - wheelButtonY(height);
             if (dx * dx + dy * dy <= radius * radius) {
                 return wheel;
             }
@@ -1239,8 +1248,8 @@ final class TouchControlsView extends View {
     private void drawWheelButtons(Canvas canvas, float width, float height) {
         final boolean enabled = (nativeWheelOwned() & WHEEL_VALID_BIT) != 0;
         for (int wheel = 0; wheel < 2; ++wheel) {
-            final float cx = DPAD_X * width;
-            final float cy = wheelButtonY(wheel, height);
+            final float cx = wheelButtonX(wheel, width, height);
+            final float cy = wheelButtonY(height);
             final float radius = WHEEL_BUTTON_RADIUS * height;
             final boolean active = wheelPointer != -1 && wheelTarget() != null &&
                                    wheelTarget().id == wheel;
