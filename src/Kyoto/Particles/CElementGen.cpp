@@ -2001,6 +2001,17 @@ void CElementGen::RenderParticles() {
 }
 
 void CElementGen::RenderParticlesFlameThrower(CElementGen* const* gens, int count) {
+#ifdef TARGET_PC
+  // A Remastered effect converted to PART can have no TEXR: its root only
+  // spawns, and the fire is drawn by its children (NFTMainFire's three fire
+  // layers). The batch below draws neither, so draw such a generator, and so
+  // its children, the usual way; the batch then skips it.
+  for (int i = 0; i < count; ++i) {
+    if (gens[i]->x28_loadedGenDesc->x40_TEXR == nullptr) {
+      gens[i]->Render();
+    }
+  }
+#endif
   CTransform4f viewCopy(CGraphics::GetViewMatrix());
   CTransform4f systemModelMatrix(viewCopy);
   systemModelMatrix.SetTranslation(CVector3f::Zero());
@@ -2019,6 +2030,10 @@ void CElementGen::RenderParticlesFlameThrower(CElementGen* const* gens, int coun
   CElementGen* const* genPtr = gens;
   for (GXTexMapID mapId = GX_TEXMAP0; mapId < count;
        ++genPtr, mapId = static_cast< GXTexMapID >(mapId + 1)) {
+#ifdef TARGET_PC
+    if ((*genPtr)->x28_loadedGenDesc->x40_TEXR == nullptr)
+      continue;
+#endif
     const TLockedToken< CTexture >& tex =
         (*genPtr)->x28_loadedGenDesc->x40_TEXR->GetValueTexture(0);
     (*tex)->Load(mapId, CTexture::kCM_Repeat);
@@ -2060,6 +2075,10 @@ void CElementGen::RenderParticlesFlameThrower(CElementGen* const* gens, int coun
   int activeCount = 0;
   for (int i = 0; i < count; ++i) {
     CElementGen* gen = gens[i];
+#ifdef TARGET_PC
+    if (gen->x28_loadedGenDesc->x40_TEXR == nullptr)
+      continue;
+#endif
     int numParts = gen->GetParticleCount();
     float timeDelta = gen->x80_timeDeltaScale;
 
