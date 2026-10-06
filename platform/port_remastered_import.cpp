@@ -2016,7 +2016,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
                                       std::to_string(ImportStage::kRooms) + " geometry " +
                                           (geometryEnv != nullptr && geometryEnv[0] != '\0'
                                                ? std::string(geometryEnv)
-                                               : std::string(sGeometry ? "on" : "off")) +
+                                               : std::string(sGeometry ? "all" : "none")) +  // as the env says it
                                           keyConverter,
                                       false);
   // Remastered's environment BRDF table, from the user's own executable. Nothing
