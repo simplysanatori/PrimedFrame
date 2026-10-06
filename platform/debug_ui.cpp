@@ -6635,9 +6635,8 @@ void DrawGameAudio() {
     gpGameState->GameOptions().SetSfxVolume((sfxPct * 127 + 50) / 100, true);
   }
   ImGui::EndDisabled();
-  ImGui::SetItemTooltip("The same two settings as the pause menu's volume sliders. They are kept in the\n"
-                        "game's own options (saved with the game, not in port_settings.ini), so they\n"
-                        "persist once the game saves its options, e.g. on a save.");
+  ImGui::SetItemTooltip("The pause menu's volume options. Like them, they are stored in the save\n"
+                        "file the next time you save, and loading a save restores its volumes.");
 }
 
 void DrawGameTab() {
