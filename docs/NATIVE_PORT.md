@@ -1142,7 +1142,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   `face <yaw>`, `look <id>`, `objs [filter]`,
   `obj <id>` (AI state, health, body state and animation, connections, whether
   it is frustum-culled),
-  `send <id> <msg>`, `give <item> [n]`, `take <item> [n]`, `items`, `heal`, `god [on|off]`, `press <a+b> [frames]`
+  `send <id> <msg>`, `give <item> [n]`, `take <item> [n]`, `items`, `heal`, `god [on|off]`,
+  `visor [combat|scan|thermal|xray]` (starts the visor transition; it doesn't check that the visor is owned), `press <a+b> [frames]`
   (`sx:<n>`, `sy:<n>`, `cx:<n>`, `cy:<n>` tokens hold stick axes along with
   the buttons, e.g. `press x+sy:127 30`),
   `stick`/`cstick <x> <y> [frames]` (frames `0` on `press`/`stick`/`cstick`
