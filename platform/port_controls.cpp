@@ -1215,11 +1215,9 @@ void DrawKeyboardMouse() {
   BeginTab(layout);
   const float bindWidth = layout.bindWidth;
   const float labelWidth = layout.labelWidth;
-  const float clearWidth = layout.clearWidth;
   const float* slotX = layout.slotX;
   const std::string* buttonLabels = layout.buttonLabels;
   const std::string* axisLabels = layout.axisLabels;
-  const ImGuiStyle& style = ImGui::GetStyle();
   const auto keyPresetButton = [](const char* label, EKeyPreset preset, const char* tooltip) {
     if (ImGui::Button(label)) {
       ApplyKeyPreset(preset);
@@ -1306,7 +1304,6 @@ void DrawController() {
   SBindLayout layout;
   BeginTab(layout);
   const float bindWidth = layout.bindWidth;
-  const float labelWidth = layout.labelWidth;
   const float clearWidth = layout.clearWidth;
   const float* slotX = layout.slotX;
   const std::string* buttonLabels = layout.buttonLabels;

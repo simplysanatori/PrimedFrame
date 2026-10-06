@@ -564,10 +564,10 @@ void Initialize() {
       int32_t entry;
       std::string path;
       std::string hostPath;
-      std::vector<uint8_t> header;
+      std::vector<uint8_t> header{};
       uint64_t size = 0;
-      PakTable table;
-      std::vector<const LooseResource*> take;
+      PakTable table{};
+      std::vector<const LooseResource*> take{};
     };
     std::vector<Pending> pending;
     std::set<uint32_t> knownIds;

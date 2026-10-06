@@ -844,18 +844,48 @@ int main(int argc, char** argv) {
                    PortPaths::IsPortable() ? " (portable)" : "");
 #endif
     const std::span<const uint8_t> embeddedSeed = PortEmbedded::Find("initial_pipeline_cache.db");
+#if !defined(__ANDROID__)
+    // The window icon, for a bare binary that no desktop entry describes.
+    // Android takes its icon from the APK.
+    static uint8_t windowIcon[] = {
+#include "port_window_icon.inc"
+    };
+#endif
     AuroraConfig config = {
         .appName = "Metroid Prime",
         .userPath = userFolder.empty() ? nullptr : userFolder.c_str(),
         .cachePath = cacheFolder.empty() ? nullptr : cacheFolder.c_str(),
         .resourcesPath = resourcesPath.empty() ? nullptr : resourcesPath.c_str(),
         .desiredBackend = BACKEND_AUTO,
+        .msaa = static_cast<uint32_t>(PortDebug::Msaa()),
+        .maxTextureAnisotropy = static_cast<uint16_t>(PortDebug::Anisotropy()),
         .vsync = false,
+        .startFullscreen = PortDebug::Fullscreen(),
+        .allowJoystickBackgroundEvents = false,
+        .pauseOnFocusLost = false,
         .allowTextureDumps = dumpTextures,
+        .allowCpuAdapter = false,
+        // Let SDL place the window. The default 0,0 is the client area's corner on
+        // Windows, which puts the title bar above the top of the screen.
+        .windowPosX = -1,
+        .windowPosY = -1,
         // 720p by default (the F1 overlay's sidebar needs the height); Aurora
         // shrinks it to fit a smaller desktop.
         .windowWidth = static_cast<uint32_t>(widescreen ? 1280 : 960),
         .windowHeight = 720,
+#if !defined(__ANDROID__)
+        .iconRGBA8 = windowIcon,
+        .iconWidth = 64,
+        .iconHeight = 64,
+#else
+        .iconRGBA8 = nullptr,
+        .iconWidth = 0,
+        .iconHeight = 0,
+#endif
+        // Android sets its log callback below.
+        .logCallback = nullptr,
+        .logLevel = LOG_DEBUG,
+        .imGuiInitCallback = nullptr,
         .mem1Size = mem1Size,
         .mem2Size = ARAM_DEFAULT_SIZE,
         .frameBufferScale = frameBufferScale,
@@ -864,23 +894,6 @@ int main(int argc, char** argv) {
         .pipelineCacheSeedData = embeddedSeed.data(),
         .pipelineCacheSeedSize = embeddedSeed.size(),
     };
-#if !defined(__ANDROID__)
-    // The window icon, for a bare binary that no desktop entry describes.
-    // Android takes its icon from the APK.
-    static uint8_t windowIcon[] = {
-#include "port_window_icon.inc"
-    };
-    config.iconRGBA8 = windowIcon;
-    config.iconWidth = 64;
-    config.iconHeight = 64;
-#endif
-    // Let SDL place the window. The default 0,0 is the client area's corner on
-    // Windows, which puts the title bar above the top of the screen.
-    config.windowPosX = -1;
-    config.windowPosY = -1;
-    config.startFullscreen = PortDebug::Fullscreen();
-    config.msaa = static_cast<uint32_t>(PortDebug::Msaa());
-    config.maxTextureAnisotropy = static_cast<uint16_t>(PortDebug::Anisotropy());
 
 #if defined(__ANDROID__)
     // SDL3 drops touch-derived mouse events by default, and ImGui's SDL3

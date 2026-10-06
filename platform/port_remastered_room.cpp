@@ -1589,7 +1589,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
           // sends them, so only a direct one counts.
           const bool follows = depth == 0 && type == kRetailDamageableTrigger && state == kStateMaxReached &&
                                first == kActionActivate;
-          const uint8_t linkAct = follows ? PortRoomGeo::kFollow : act(first);
+          const uint8_t linkAct = follows ? static_cast<uint8_t>(PortRoomGeo::kFollow) : act(first);
           if (linkAct != 0 && state < 256) {
             links.push_back({objects[size_t(match[size_t(s)])].id, uint8_t(state), linkAct, delay});
           }
@@ -1745,7 +1745,8 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       if (sender.type == kTemplateManager || sender.type == kDebugOptions || (group && !fromScript && !keyframe)) {
         continue;
       }
-      const uint8_t action = keyframe ? PortRoomGeo::kGroupNextClip : scriptAction(kind, c->action);
+      const uint8_t action =
+          keyframe ? static_cast<uint8_t>(PortRoomGeo::kGroupNextClip) : scriptAction(kind, c->action);
       int event = -1;
       if (fromScript) {
         event = nodeEvent(scriptObject.at(sender.entity).first, c->event);
