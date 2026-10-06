@@ -247,6 +247,7 @@ std::atomic<uint64_t> sBeamRequestUntilNs{0};
 constexpr uint64_t kWheelRequestNs = 120'000'000;
 std::mutex sMinimapMutex;
 bool sMinimapValid = false;
+bool sMinimapDrawn = false;
 float sMinimapRect[4] = {};
 std::chrono::steady_clock::time_point sMinimapStamp;
 std::atomic< int > sMapTapPending{0};
@@ -2315,8 +2316,9 @@ bool BeamRequested(int beam) {
 }
 
 // Game thread, once per HUD draw (valid=false when the minimap isn't shown).
-void SetMinimapRect(bool valid, float x0, float y0, float x1, float y1) {
+void SetMinimapRect(bool valid, bool drawn, float x0, float y0, float x1, float y1) {
   std::lock_guard lock(sMinimapMutex);
+  sMinimapDrawn = drawn;
   sMinimapValid = valid && std::isfinite(x0) && std::isfinite(y0) && std::isfinite(x1) &&
                   std::isfinite(y1);
   sMinimapRect[0] = x0;
@@ -2327,7 +2329,7 @@ void SetMinimapRect(bool valid, float x0, float y0, float x1, float y1) {
 }
 
 // A rect not refreshed for a while (HUD not drawn at all) counts as gone.
-bool MinimapRect(float* out4) {
+bool MinimapRect(float* out4, bool* drawn) {
   std::lock_guard lock(sMinimapMutex);
   if (!sMinimapValid ||
       std::chrono::steady_clock::now() - sMinimapStamp > std::chrono::milliseconds(300)) {
@@ -2335,6 +2337,9 @@ bool MinimapRect(float* out4) {
   }
   if (out4 != nullptr) {
     std::copy(sMinimapRect, sMinimapRect + 4, out4);
+  }
+  if (drawn != nullptr) {
+    *drawn = sMinimapDrawn;
   }
   return true;
 }
@@ -7057,12 +7062,15 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchMapTapEnabled(JNIEnv*, j
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeMinimapRect(JNIEnv* env, jclass,
                                                               jfloatArray out) {
-  float rect[4];
-  if (!PortDebug::TouchMapTap() || !PortDebug::MinimapRect(rect) || out == nullptr ||
-      env->GetArrayLength(out) < 4) {
+  // x0, y0, x1, y1, then 1 when the minimap is drawn there (0: draw a map button).
+  float rect[5];
+  bool drawn = true;
+  if (!PortDebug::TouchMapTap() || !PortDebug::MinimapRect(rect, &drawn) || out == nullptr ||
+      env->GetArrayLength(out) < 5) {
     return JNI_FALSE;
   }
-  env->SetFloatArrayRegion(out, 0, 4, rect);
+  rect[4] = drawn ? 1.f : 0.f;
+  env->SetFloatArrayRegion(out, 0, 5, rect);
   return JNI_TRUE;
 }
 

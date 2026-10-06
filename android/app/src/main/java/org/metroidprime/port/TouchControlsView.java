@@ -52,6 +52,8 @@ final class TouchControlsView extends View {
     // Tells the game a finger is still down on the map, so it doesn't drift back.
     private static final long MAP_PAN_KEEPALIVE_MS = 100;
     private static final float MAP_TAP_SLOP_DP = 12f;
+    private static final float MAP_BUTTON_RADIUS_DP = 26f;
+    private static final long MAP_BUTTON_POLL_MS = 200;
     // Hold-and-slide wheels that replace the D-pad: id 0 = Visor, 1 = Beam.
     private static final int WHEEL = 9;
     private static final String[] WHEEL_BUTTON_LABELS = {"Visor", "Beam"};
@@ -190,7 +192,23 @@ final class TouchControlsView extends View {
     // Tap the minimap to open the map; replaces the GameCube layout's Z pill. An
     // F1 setting, re-read every draw.
     private boolean mapTap;
-    private final float[] minimapRect = new float[4];
+    // x0, y0, x1, y1 (fractions of the view), then 1 when the minimap is drawn there.
+    private final float[] minimapRect = new float[5];
+    // Where the map opens but the minimap isn't drawn (the visors other than
+    // Combat), a map button stands in its place. The HUD changes without a
+    // touch, so a poll redraws when the button comes or goes.
+    private final RectF mapButtonRect = new RectF();
+    private boolean mapButtonShown;
+    private final Runnable mapButtonPoll = new Runnable() {
+        @Override
+        public void run() {
+            if (mapButtonState(getWidth(), getHeight()) != mapButtonShown) {
+                invalidate();
+            } else if (mapTap) {
+                postDelayed(this, MAP_BUTTON_POLL_MS);
+            }
+        }
+    };
 
     private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -220,7 +238,7 @@ final class TouchControlsView extends View {
     private static native void nativeRequestBeam(int beam);
     private static native boolean nativeTouchMapTapEnabled();
     // The minimap's screen rect as fractions of the view; false when not shown.
-    private static native boolean nativeMinimapRect(float[] out4);
+    private static native boolean nativeMinimapRect(float[] out5);
     private static native void nativeMapTap();
     // A map-screen drag in dp (zero deltas = finger still down); the view height in dp.
     private static native void nativeMapPan(float dxDp, float dyDp, float viewHeightDp);
@@ -351,9 +369,60 @@ final class TouchControlsView extends View {
             drawDpad(canvas, width, height);
         }
         drawEye(canvas, hideBounds);
+        mapButtonShown = mapButtonState(width, height);
+        if (mapButtonShown) {
+            drawMapButton(canvas);
+        }
+        removeCallbacks(mapButtonPoll);
+        if (mapTap) {
+            postDelayed(mapButtonPoll, MAP_BUTTON_POLL_MS);
+        }
         if (wheels && wheelPointer != -1) {
             drawWheel(canvas);
         }
+    }
+
+    // True, with mapButtonRect set, when the map button should show.
+    private boolean mapButtonState(float width, float height) {
+        if (!mapTap || width <= 0f || height <= 0f || !nativeMinimapRect(minimapRect) ||
+            minimapRect[4] != 0f) {
+            return false;
+        }
+        mapButtonRect.set(minimapRect[0] * width, minimapRect[1] * height,
+                          minimapRect[2] * width, minimapRect[3] * height);
+        return true;
+    }
+
+    // A round button with a folded map: three panels, the middle one raised.
+    private void drawMapButton(Canvas canvas) {
+        final float cx = mapButtonRect.centerX();
+        final float cy = mapButtonRect.centerY();
+        final float radius = Math.min(dp(MAP_BUTTON_RADIUS_DP),
+                                      Math.min(mapButtonRect.width(), mapButtonRect.height()) * 0.5f);
+        fillPaint.setColor(0x99081218);
+        strokePaint.setColor(0xBBFFFFFF);
+        canvas.drawCircle(cx, cy, radius, fillPaint);
+        canvas.drawCircle(cx, cy, radius, strokePaint);
+        final float w = radius * 1.1f;
+        final float h = radius * 0.8f;
+        final float l = cx - w / 2f;
+        final float t = cy - h / 2f;
+        final float tilt = h * 0.12f;
+        shapePath.reset();
+        shapePath.moveTo(l, t + tilt);
+        shapePath.lineTo(l + w / 3f, t);
+        shapePath.lineTo(l + 2f * w / 3f, t + tilt);
+        shapePath.lineTo(l + w, t);
+        shapePath.lineTo(l + w, t + h - tilt);
+        shapePath.lineTo(l + 2f * w / 3f, t + h);
+        shapePath.lineTo(l + w / 3f, t + h - tilt);
+        shapePath.lineTo(l, t + h);
+        shapePath.close();
+        shapePath.moveTo(l + w / 3f, t);
+        shapePath.lineTo(l + w / 3f, t + h - tilt);
+        shapePath.moveTo(l + 2f * w / 3f, t + tilt);
+        shapePath.lineTo(l + 2f * w / 3f, t + h);
+        canvas.drawPath(shapePath, strokePaint);
     }
 
     // A mouse is not a finger on the overlay. Its clicks are dispatched as
@@ -472,6 +541,7 @@ final class TouchControlsView extends View {
     @Override
     protected void onDetachedFromWindow() {
         removeCallbacks(physicalInputPoll);
+        removeCallbacks(mapButtonPoll);
         // No more touch events will arrive to release what is held.
         releaseAll();
         super.onDetachedFromWindow();

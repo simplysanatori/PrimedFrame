@@ -276,8 +276,10 @@ void CInGameGuiManager::StartFadeIn() {
 // Port: the screen rect of the minimap's depth-mask model, for the Android
 // touch overlay's tap-to-open-map. Called right after the mask is drawn, so the
 // HUD camera's view and projection are still current; `world` is the mask's
-// drawn transform (with the widescreen HUD spread).
-void CInGameGuiManager::PublishMinimapRect(bool shown, const CTransform4f& world) const {
+// drawn transform (with the widescreen HUD spread). `drawn` is false where the
+// map can open but the minimap isn't drawn (the other visors), and the overlay
+// puts a map button there.
+void CInGameGuiManager::PublishMinimapRect(bool shown, bool drawn, const CTransform4f& world) const {
   const auto& token = x148_model_automapper->GetModel();
   CModel* model = token ? token->GetObject() : nullptr;
   const CViewport& vp = CGraphics::GetViewport();
@@ -307,7 +309,7 @@ void CInGameGuiManager::PublishMinimapRect(bool shown, const CTransform4f& world
   // A little padding for fat fingers.
   const float padX = 0.15f * (x1 - x0);
   const float padY = 0.15f * (y1 - y0);
-  PortDebug::SetMinimapRect(true, x0 - padX, y0 - padY, x1 + padX, y1 + padY);
+  PortDebug::SetMinimapRect(true, drawn, x0 - padX, y0 - padY, x1 + padX, y1 + padY);
 }
 
 void CInGameGuiManager::Draw(const CStateManager& mgr) const {
@@ -315,7 +317,7 @@ void CInGameGuiManager::Draw(const CStateManager& mgr) const {
     gpRender->SetRequestRGBA6(true);
   }
   // Re-published below if the minimap is drawn this frame.
-  PortDebug::SetMinimapRect(false, 0.f, 0.f, 0.f, 0.f);
+  PortDebug::SetMinimapRect(false, false, 0.f, 0.f, 0.f, 0.f);
   if (x1d8_onScreenTexAlpha > 0.f && x1dc_onScreenTexTok->GetObject() != nullptr) {
     const CTexture& tex = *x1dc_onScreenTexTok->GetObject();
     gpRender->SetDepthReadWrite(false, false);
@@ -423,11 +425,10 @@ void CInGameGuiManager::Draw(const CStateManager& mgr) const {
     x148_model_automapper->DrawWithWorldTransform(
         CGuiWidgetDrawParms(1.f, CVector3f::Zero()),
         mapSpread * x148_model_automapper->GetWorldTransform());
-    // Not gated on `t`: the minimap only shows in the Combat visor, but the
-    // other visors hide Z too, so the tap spot stays where the minimap sits.
-    PublishMinimapRect(drawVisor && x38_autoMapper->IsFullyInMiniMapState() && mapAlpha > 0.f &&
+    PublishMinimapRect(drawVisor && x38_autoMapper->IsFullyInMiniMapState() &&
                            x3c_pauseScreenBlur->IsGameDraw() &&
                            x1ec_hudVisMode != CTweakGui::kHud_Zero,
+                       mapAlpha > 0.f && t > 0.f,
                        mapSpread * x148_model_automapper->GetWorldTransform());
     CGraphics::SetDepthWriteMode(true, kE_GEqual, false);
     x38_autoMapper->Draw(mgr, mapSpread * CTransform4f::Translate(0.f, 0.02f, 0.f) * x18c_mapCamXf,

@@ -1958,8 +1958,10 @@ void RunFrame() {
     CmdTouchPad();
   } else if (name == "minimap") {
     float rect[4] = {};
-    if (PortDebug::MinimapRect(rect)) {
-      Out("minimap valid %.4f %.4f %.4f %.4f", rect[0], rect[1], rect[2], rect[3]);
+    bool drawn = false;
+    if (PortDebug::MinimapRect(rect, &drawn)) {
+      Out("minimap valid %.4f %.4f %.4f %.4f %s", rect[0], rect[1], rect[2], rect[3],
+          drawn ? "drawn" : "button");
     } else {
       Out("minimap invalid");
     }
