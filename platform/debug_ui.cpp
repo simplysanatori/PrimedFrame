@@ -39,6 +39,9 @@
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "Kyoto/Graphics/CCubeMaterial.hpp"
 #include "Kyoto/Graphics/CCubeModel.hpp"
+#include "Kyoto/Graphics/CModel.hpp"
+#include "Kyoto/Graphics/CTexture.hpp"
+#include "GuiSys/CGuiModel.hpp"
 #include "MetroidPrime/CHealthInfo.hpp"
 #include "MetroidPrime/CGameArea.hpp"
 #include "MetroidPrime/CMapWorld.hpp"
@@ -227,6 +230,15 @@ bool sTouchWheels = true;
 bool sTouchClassic = false;
 bool sTouchVisorTapScan = false;
 std::atomic<uint32_t> sWheelMask{0};
+// The touch wheels' icons: ARGB pixels per [wheel][item], filled by the game thread, copied out by
+// the Android UI thread.
+struct WheelIcon {
+  int w = 0;
+  int h = 0;
+  std::vector<uint32_t> argb;
+};
+std::mutex sWheelIconMutex;
+WheelIcon sWheelIcons[2][4];
 std::atomic<uint64_t> sWheelStampNs{0};
 std::atomic<int> sVisorRequest{-1};
 std::atomic<uint64_t> sVisorRequestUntilNs{0};
@@ -2226,6 +2238,72 @@ void RequestBeam(int beam) {
   }
   sBeamRequest.store(beam);
   sBeamRequestUntilNs.store(SDL_GetTicksNS() + kWheelRequestNs);
+}
+
+void CaptureWheelIcons(int wheel, CGuiModel* const* icons) {
+  if (wheel < 0 || wheel > 1) {
+    return;
+  }
+  for (int i = 0; i < 4; ++i) {
+    {
+      std::lock_guard<std::mutex> lock(sWheelIconMutex);
+      if (!sWheelIcons[wheel][i].argb.empty()) {
+        continue;
+      }
+    }
+    if (icons[i] == nullptr || !icons[i]->GetModel().valid()) {
+      continue;
+    }
+    // The model is locked at construction and caches on its first draw; an icon the player
+    // doesn't own yet isn't drawn, so take it here once it has loaded.
+    TCachedToken<CModel>& modelToken = const_cast<TCachedToken<CModel>&>(*icons[i]->GetModel());
+    modelToken.TryCache();
+    CModel* model = modelToken.GetObject();
+    uint texId = 0;
+    const CTexture* tex = model != nullptr ? model->PortFirstTexture(&texId) : nullptr;
+    // A mod's picture replaces the texels the game holds; those are a stub. Load the retail
+    // icon from the disc by id instead (the ids the retail models use).
+    static const uint kRetailIcons[2][4] = {
+        {0x2DDA38B8, 0x04503F39, 0xD518730E, 0x2EA5AE14},
+        {0x8865D14F, 0x5C595218, 0x07183B57, 0xC156B36E},
+    };
+    static TCachedToken<CTexture>* retailTokens[2][4] = {};
+    if (tex != nullptr && tex->PortNativeId() != 0 && gpSimplePool != nullptr) {
+      if (retailTokens[wheel][i] == nullptr) {
+        // Kept for the run: the icon texture stays loaded.
+        retailTokens[wheel][i] = new TCachedToken<CTexture>(
+            gpSimplePool->GetObj(SObjectTag('TXTR', kRetailIcons[wheel][i])));
+        retailTokens[wheel][i]->Lock();
+      }
+      TCachedToken<CTexture>& tok = *retailTokens[wheel][i];
+      if (!tok.TryCache()) {
+        tok.ForceCache();
+      }
+      tex = tok.GetObject();
+      texId = kRetailIcons[wheel][i];
+    }
+    if (tex == nullptr || tex->PortNativeId() != 0) {
+      continue;
+    }
+    uint32_t w = 0;
+    uint32_t h = 0;
+    std::vector<uint8_t> rgba(256 * 256 * 4);
+    if (!aurora_gx_texobj_rgba8(tex->PortTexObj(), &w, &h, rgba.data(), rgba.size())) {
+      continue;
+    }
+    WheelIcon icon;
+    icon.w = static_cast<int>(w);
+    icon.h = static_cast<int>(h);
+    icon.argb.resize(size_t(w) * h);
+    for (size_t p = 0; p < icon.argb.size(); ++p) {
+      const uint8_t* c = &rgba[p * 4];
+      icon.argb[p] = uint32_t(c[3]) << 24 | uint32_t(c[0]) << 16 | uint32_t(c[1]) << 8 | c[2];
+    }
+    PortLog::Write("port: touch wheel icon %d/%d: %ux%u fmt %d id %08X\n", wheel, i, w, h,
+                  int(tex->GetTexelFormat()), texId);
+    std::lock_guard<std::mutex> lock(sWheelIconMutex);
+    sWheelIcons[wheel][i] = std::move(icon);
+  }
 }
 
 bool VisorRequested(int visor) {
@@ -6945,6 +7023,30 @@ Java_org_metroidprime_port_TouchControlsView_nativeRequestVisor(JNIEnv*, jclass,
 extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeRequestBeam(JNIEnv*, jclass, jint beam) {
   PortDebug::RequestBeam(beam);
+}
+
+// {width, height, ARGB pixels...} of a wheel icon (wheel 0 visor, 1 beam; item in the same order as
+// nativeRequestVisor/nativeRequestBeam), or null until the HUD has loaded it.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeWheelIcon(JNIEnv* env, jclass, jint wheel,
+                                                             jint item) {
+  if (wheel < 0 || wheel > 1 || item < 0 || item > 3) {
+    return nullptr;
+  }
+  std::lock_guard<std::mutex> lock(sWheelIconMutex);
+  const WheelIcon& icon = sWheelIcons[wheel][item];
+  if (icon.argb.empty()) {
+    return nullptr;
+  }
+  const jsize count = static_cast<jsize>(icon.argb.size());
+  jintArray out = env->NewIntArray(2 + count);
+  if (out == nullptr) {
+    return nullptr;
+  }
+  const jint dims[2] = {icon.w, icon.h};
+  env->SetIntArrayRegion(out, 0, 2, dims);
+  env->SetIntArrayRegion(out, 2, count, reinterpret_cast<const jint*>(icon.argb.data()));
+  return out;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

@@ -8,6 +8,7 @@
 // and the in-game debug window can toggle them live.
 
 class CStateManager;
+class CGuiModel;
 
 namespace PortDebug {
 
@@ -438,6 +439,10 @@ void SetWheelState(uint32_t mask);
 uint32_t WheelState();
 void RequestVisor(int visor);
 void RequestBeam(int beam);
+// The HUD's beam/visor menu icons for the touch wheels (Android), decoded to RGBA8 when the HUD
+// frame is up. wheel 0 = visor, 1 = beam; icons[i] is the menu item i's icon widget (EPlayerVisor
+// / EBeamId order). Game thread, each frame until all four are taken.
+void CaptureWheelIcons(int wheel, CGuiModel* const* icons);
 bool VisorRequested(int visor);
 bool BeamRequested(int beam);
 bool TouchMapTap();

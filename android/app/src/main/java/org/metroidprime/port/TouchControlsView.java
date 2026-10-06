@@ -1,11 +1,13 @@
 package org.metroidprime.port;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.CornerPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.os.SystemClock;
 import android.view.MotionEvent;
@@ -62,6 +64,8 @@ final class TouchControlsView extends View {
     };
     private static final int[][] WHEEL_ITEMS = {{0, 1, 3, 2}, {0, 2, 1, 3}};
     private static final int WHEEL_VALID_BIT = 1 << 12;
+    private static final float WHEEL_ICON_DP = 44f;
+    private static final long WHEEL_ICON_RETRY_MS = 1000;
     private static final float WHEEL_BUTTON_GAP_DP = 8f; // wheel to edge / other button
     private static final float WHEEL_BUTTON_RADIUS = 0.072f;
     private static final float WHEEL_RADIUS_DP = 112f;
@@ -210,6 +214,8 @@ final class TouchControlsView extends View {
     // Bits 0-3 visors owned, 4-7 beams owned, 8-9 current visor, 10-11 current
     // beam, 12 valid (0 = no player: wheels disabled).
     private static native int nativeWheelOwned();
+    // {width, height, ARGB pixels...} of the game's beam/visor icon, or null until the HUD has it.
+    private static native int[] nativeWheelIcon(int wheel, int item);
     private static native void nativeRequestVisor(int visor);
     private static native void nativeRequestBeam(int beam);
     private static native boolean nativeTouchMapTapEnabled();
@@ -1222,8 +1228,60 @@ final class TouchControlsView extends View {
         return -1;
     }
 
+    // The game's own icons, decoded by the native side once the HUD has loaded them. Until one
+    // arrives (or when it never does) the text label is drawn.
+    private final Bitmap[][] wheelIcons = new Bitmap[2][4];
+    private final Paint iconPaint = new Paint(Paint.FILTER_BITMAP_FLAG);
+    private final Rect iconSrc = new Rect();
+    private final RectF iconDst = new RectF();
+    private long wheelIconTryMs = -WHEEL_ICON_RETRY_MS;
+
+    private void refreshWheelIcons() {
+        final long now = SystemClock.uptimeMillis();
+        if (now - wheelIconTryMs < WHEEL_ICON_RETRY_MS) {
+            return;
+        }
+        wheelIconTryMs = now;
+        for (int wheel = 0; wheel < 2; ++wheel) {
+            for (int item = 0; item < 4; ++item) {
+                if (wheelIcons[wheel][item] != null) {
+                    continue;
+                }
+                final int[] raw = nativeWheelIcon(wheel, item);
+                if (raw == null || raw.length < 3) {
+                    continue;
+                }
+                final int w = raw[0];
+                final int h = raw[1];
+                if (w <= 0 || h <= 0 || raw.length != 2 + w * h) {
+                    continue;
+                }
+                wheelIcons[wheel][item] = Bitmap.createBitmap(raw, 2, w, w, h, Bitmap.Config.ARGB_8888);
+            }
+        }
+    }
+
+    // Draws the icon fitted into a size x size box at (cx, cy); false when it has none yet.
+    private boolean drawWheelIcon(Canvas canvas, int wheel, int item, float cx, float cy, float size,
+                                  int alpha) {
+        final Bitmap icon = wheelIcons[wheel][item];
+        if (icon == null) {
+            return false;
+        }
+        final float scale = Math.min(size / icon.getWidth(), size / icon.getHeight());
+        final float w = icon.getWidth() * scale;
+        final float h = icon.getHeight() * scale;
+        iconSrc.set(0, 0, icon.getWidth(), icon.getHeight());
+        iconDst.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
+        iconPaint.setAlpha(alpha);
+        canvas.drawBitmap(icon, iconSrc, iconDst, iconPaint);
+        return true;
+    }
+
     private void drawWheelButtons(Canvas canvas, float width, float height) {
-        final boolean enabled = (nativeWheelOwned() & WHEEL_VALID_BIT) != 0;
+        final int mask = nativeWheelOwned();
+        final boolean enabled = (mask & WHEEL_VALID_BIT) != 0;
+        refreshWheelIcons();
         for (int wheel = 0; wheel < 2; ++wheel) {
             final float cx = wheelButtonX(wheel, width, height);
             final float cy = wheelButtonY(height);
@@ -1234,9 +1292,12 @@ final class TouchControlsView extends View {
             strokePaint.setColor(active ? 0xFFE1F8FF : enabled ? 0xBBFFFFFF : 0x66FFFFFF);
             canvas.drawCircle(cx, cy, radius, fillPaint);
             canvas.drawCircle(cx, cy, radius, strokePaint);
-            textPaint.setAlpha(enabled ? 255 : 110);
-            drawCenteredLabel(canvas, WHEEL_BUTTON_LABELS[wheel], cx, cy, dp(13));
-            textPaint.setAlpha(255);
+            final int current = wheel == 0 ? (mask >> 8) & 3 : (mask >> 10) & 3;
+            if (!drawWheelIcon(canvas, wheel, current, cx, cy, radius * 1.4f, enabled ? 255 : 110)) {
+                textPaint.setAlpha(enabled ? 255 : 110);
+                drawCenteredLabel(canvas, WHEEL_BUTTON_LABELS[wheel], cx, cy, dp(13));
+                textPaint.setAlpha(255);
+            }
         }
     }
 
@@ -1293,11 +1354,13 @@ final class TouchControlsView extends View {
             canvas.drawPath(shapePath, strokePaint);
             final double mid = Math.toRadians(start + 45f);
             final float labelR = (outer + inner) / 2f;
-            textPaint.setAlpha(owned ? 255 : 110);
-            drawCenteredLabel(canvas, WHEEL_LABELS[target.id][i],
-                              wheelCx + labelR * (float) Math.cos(mid),
-                              wheelCy + labelR * (float) Math.sin(mid), dp(12));
-            textPaint.setAlpha(255);
+            final float lx = wheelCx + labelR * (float) Math.cos(mid);
+            final float ly = wheelCy + labelR * (float) Math.sin(mid);
+            if (!drawWheelIcon(canvas, target.id, item, lx, ly, dp(WHEEL_ICON_DP), owned ? 255 : 110)) {
+                textPaint.setAlpha(owned ? 255 : 110);
+                drawCenteredLabel(canvas, WHEEL_LABELS[target.id][i], lx, ly, dp(12));
+                textPaint.setAlpha(255);
+            }
         }
     }
 
