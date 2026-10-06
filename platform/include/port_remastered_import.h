@@ -41,8 +41,8 @@ inline constexpr const char* kImportModName = "remastered-models";
 namespace ImportStage {
 // port_remastered_convert/cmdl/image/txtr/dds/astc: everything that writes models or textures
 // (models, effects, rooms, room models, HUD).
-inline constexpr int kConverter = 18;
-inline constexpr int kModels = 3;      // the table's models, their looks and the ANCS copies
+inline constexpr int kConverter = 19;
+inline constexpr int kModels = 4;      // the table's models, their looks and the ANCS copies
 inline constexpr int kEffects = 3;     // port_remastered_effect_import and the particle converters
 inline constexpr int kRooms = 2;       // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 0;  // the rooms' own models and their levels of detail

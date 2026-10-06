@@ -1380,6 +1380,10 @@ constexpr uint32_t kShaderHoloGlass = 0x03407341;
 // animated noise through two maps, the screen copy bent by it. PBR kind 14, with its CCH0..6 and DIFC
 // carried in the record's PBR8 trailer.
 constexpr uint32_t kShaderBoundaryShield = 0x6C1A4768;
+// ForceField (6F53C775: the cyan Exterior Docking Hangar barrier 982D9D75, the Mines' orange fields):
+// the same pixel and vertex code as 6C1A4768 (perms 002_0/002_1/004_0 fold identically), only a
+// different shader id, so it takes the same kind.
+constexpr uint32_t kShaderForceField = 0x6F53C775;
 // PickUp (PickUp_Blue_Mat / PickUp_Orange_Mat, build/mpr/artifact/NOTES.md): unlit, a normal-map
 // fresnel pair over a gradient that scrolls through world space. PBR kind 15, constants in the
 // same PBR8 trailer (rows 0-3 CCH0..CCH3, row 7 DIFC, rows 4-5 filled at run time).
@@ -1436,7 +1440,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderGunPanel, "gun-panel");
   add(in(kShaderPremulGlass), "premul-glass");
   add(shader == kShaderHoloGlass, "holo-glass");
-  add(shader == kShaderBoundaryShield, "boundary-shield");
+  add(shader == kShaderBoundaryShield || shader == kShaderForceField, "boundary-shield");
   add(shader == kShaderPickUp, "pickup");
   add(shader == kShaderHolo, "holo");
   add(shader == kShaderHoloRefl, "holo-refl");
@@ -1485,7 +1489,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   out.shader = shader;
   out.role = ShaderRole(shader);
   out.shell = shader == kShaderMatcapShell;
-  out.shield = shader == kShaderBoundaryShield || shader == kShaderPickUp || shader == kShaderHolo ||
+  out.shield = shader == kShaderBoundaryShield || shader == kShaderForceField || shader == kShaderPickUp || shader == kShaderHolo ||
                shader == kShaderHoloRefl || shader == kShaderHologram || shader == kShaderGunFx;
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
@@ -1900,7 +1904,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         out.layerHeight[1] = ShortestDouble(d.color[3]);
       }
     }
-  } else if (shader == kShaderBoundaryShield && out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] &&
+  } else if ((shader == kShaderBoundaryShield || shader == kShaderForceField) && out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] &&
              cch[2] && cch[3] && cch[4] && cch[5] && cch[6]) {
     out.kind = 14;
     out.vcolor = true;
