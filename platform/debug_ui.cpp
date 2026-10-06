@@ -2,6 +2,7 @@
 // is already initialized and rendered every presented frame, so this only has
 // to build the windows between aurora_begin_frame and aurora_end_frame.
 
+#include "port_env.h"
 #include "port_collision_view.h"
 #include "port_debug.h"
 #include "port_freecam.h"
@@ -948,18 +949,18 @@ void EnsureInitialized() {
   LoadSettings();
 
   // Environment variables are explicit per-run overrides and win over the file.
-  if (std::getenv("MP_TRACE_TIMING") != nullptr) {
+  if (port::EnvFlag("MP_TRACE_TIMING")) {
     sTraceTiming = true;
   }
-  if (std::getenv("MP_FAST_BOOT") != nullptr) {
+  if (port::EnvFlag("MP_FAST_BOOT")) {
     sFastBoot = true;
   }
   if (const char* language = std::getenv("MP_LANGUAGE")) {
     sTextLanguage = language;
   }
-  if (const char* turbo = std::getenv("MP_TURBO")) {
+  if (port::EnvFlag("MP_TURBO")) {
     sTurbo = true;
-    const long ticks = std::strtol(turbo, nullptr, 10);
+    const int ticks = port::EnvInt("MP_TURBO", 0);
     if (ticks >= 1 && ticks <= 16) {
       sTurboTicks = static_cast< unsigned >(ticks);
     }
@@ -977,13 +978,13 @@ void EnsureInitialized() {
   // Cutscene skipping is a test aid only: skipping on the first frame of each
   // cinematic left script state unbalanced (stuck visor filters, missing
   // music), so it is no longer a player setting.
-  if (std::getenv("MP_SKIP_CUTSCENES") != nullptr) {
+  if (port::EnvFlag("MP_SKIP_CUTSCENES")) {
     sSkipCutscenes = true;
   }
   if (const char* god = std::getenv("MP_GODMODE")) {
     sInvulnerableRun = ParseBool(god) ? 1 : 0;
   }
-  if (std::getenv("MP_SHOW_DEBUG_UI") != nullptr) {
+  if (port::EnvFlag("MP_SHOW_DEBUG_UI")) {
     sVisible = true;
   }
   if (const char* aspect = std::getenv("MP_ASPECT")) {
@@ -994,52 +995,50 @@ void EnsureInitialized() {
     } else if (std::strcmp(aspect, "4:3") == 0) {
       sAspectMode = PortDebug::kAspect_4_3;
     }
-  } else if (std::getenv("MP_WIDESCREEN") != nullptr) {
+  } else if (port::EnvFlag("MP_WIDESCREEN")) {
     sAspectMode = PortDebug::kAspect_16_9;
   }
-  if (std::getenv("MP_HUD_WIDE") != nullptr) {
+  if (port::EnvFlag("MP_HUD_WIDE")) {
     sHudWide = true;
   }
-  if (std::getenv("MP_MOUSE_AIM") != nullptr) {
+  if (port::EnvFlag("MP_MOUSE_AIM")) {
     sMouseAim = true;
   }
-  if (std::getenv("MP_TWIN_STICK") != nullptr) {
+  if (port::EnvFlag("MP_TWIN_STICK")) {
     sTwinStick = true;
   }
-  if (std::getenv("MP_MOUSE_INVERT_X") != nullptr) {
+  if (port::EnvFlag("MP_MOUSE_INVERT_X")) {
     sMouseInvertX = true;
   }
-  if (std::getenv("MP_MOUSE_INVERT_Y") != nullptr) {
+  if (port::EnvFlag("MP_MOUSE_INVERT_Y")) {
     sMouseInvertY = true;
   }
-  if (std::getenv("MP_DISABLE_MOUSE_BUTTONS") != nullptr) {
+  if (port::EnvFlag("MP_DISABLE_MOUSE_BUTTONS")) {
     sMouseButtons = false;
   }
-  if (std::getenv("MP_DISABLE_MOUSE_CROSSHAIR") != nullptr) {
+  if (port::EnvFlag("MP_DISABLE_MOUSE_CROSSHAIR")) {
     sMouseCrosshair = false;
   }
-  if (const char* sens = std::getenv("MP_MOUSE_SENS")) {
-    const float value = static_cast< float >(std::atof(sens));
+  {
+    const float value = port::EnvFloat("MP_MOUSE_SENS", 0.f);
     if (std::isfinite(value) && value > 0.f) {
       sMouseSensitivity = value;
     }
   }
-  if (std::getenv("MP_DISABLE_AI_AUDIO") != nullptr) {
+  if (port::EnvFlag("MP_DISABLE_AI_AUDIO")) {
     sAiAudioEnabled = false;
   }
-  if (const char* speed = std::getenv("MP_CUTSCENE_SPEED")) {
-    const float value = static_cast< float >(std::atof(speed));
+  {
+    const float value = port::EnvFloat("MP_CUTSCENE_SPEED", 0.f);
     if (std::isfinite(value) && value >= 1.f && value <= 32.f) {
       sCutsceneSpeed = value;
     }
-  }
-  if (const char* rate = std::getenv("MP_SIM_RATE")) {
-    const long value = std::strtol(rate, nullptr, 10);
-    if (value >= 30 && value <= 480) {
-      sSimRate = static_cast< unsigned >(value);
+    const int rate = port::EnvInt("MP_SIM_RATE", 0);
+    if (rate >= 30 && rate <= 480) {
+      sSimRate = static_cast< unsigned >(rate);
     }
   }
-  if (std::getenv("MP_SIM_ADAPTIVE") != nullptr) {
+  if (port::EnvFlag("MP_SIM_ADAPTIVE")) {
     sSimAdaptive = true;
   }
 
@@ -2793,15 +2792,13 @@ void SetSweepLayer(CStateManager& mgr, CWorld* world, TAreaId area, int layer) {
 }
 
 bool SweepLayersEnabled() {
-  const char* value = std::getenv("MP_RANDO_SWEEP_LAYERS");
-  return value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0;
+  return port::EnvFlag("MP_RANDO_SWEEP_LAYERS");
 }
 
 bool ConsumeWorldSweepRequest(CStateManager& mgr) {
   // This entry point is called only by gameplay, never the frontend or UI.
   static const bool envChecked = [] {
-    const char* value = std::getenv("MP_RANDO_SWEEP");
-    if (value != nullptr && value[0] != '\0' && std::strcmp(value, "0") != 0)
+    if (port::EnvFlag("MP_RANDO_SWEEP"))
       RequestWorldSweep();
     return true;
   }();
@@ -3052,7 +3049,7 @@ bool PageLayout() {
 #if defined(__ANDROID__)
   return true;
 #else
-  static const bool sForced = std::getenv("MP_TOUCH_UI") != nullptr;
+  static const bool sForced = port::EnvFlag("MP_TOUCH_UI");
   return sForced || !sOverlayWindowed;
 #endif
 }
@@ -7010,7 +7007,7 @@ bool DrawPageWindow() {
 bool DrawDesktopWindow() {
   ImGui::SetNextWindowPos(ImVec2(8.f, 8.f), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSize(ImVec2(440.f, 200.f), ImGuiCond_FirstUseEver);
-  if (std::getenv("MP_DEBUG_TAB") != nullptr) // a capture wants to see the tab
+  if (port::EnvString("MP_DEBUG_TAB") != nullptr) // a capture wants to see the tab
     ImGui::SetNextWindowSize(ImVec2(520.f, 620.f), ImGuiCond_Once);
   bool open = true;
   if (ImGui::Begin("Metroid Prime Port", &open, ImGuiWindowFlags_MenuBar)) {

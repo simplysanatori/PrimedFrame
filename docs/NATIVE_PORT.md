@@ -1124,8 +1124,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
 - `MP_DISABLE_AI_AUDIO=1`: start streamed AI audio muted. It can subsequently be
   enabled from the overlay. MusyX mute is independent.
 - `MP_FAST_BOOT=1`, `MP_SKIP_CUTSCENES=1`, `MP_CUTSCENE_SPEED=8`,
-  `MP_SHOW_DEBUG_UI=1`: development controls. Presence flags are enabled by
-  being set; unset them to disable them. Cutscene speed is restricted to 1–32.
+  `MP_SHOW_DEBUG_UI=1`: development controls. On/off variables share one rule (`platform/include/port_env.h`): unset
+  leaves the default, empty/`0`/`false`/`off`/`no` mean off, anything else on. Cutscene speed is restricted to 1–32.
   Cutscene skipping is only available this way, for tests: it is not a player
   setting, since skipping every cinematic at once broke script state.
   `MP_DEBUG_TAB=<page>` (e.g. `Video/Quality`; `Chat` opens Archipelago on its Chat sub-tab) opens the desktop overlay on that page,

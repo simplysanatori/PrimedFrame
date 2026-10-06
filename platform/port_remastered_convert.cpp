@@ -6,6 +6,7 @@
 // checked against the other. Where a line looks needlessly particular about
 // the order of an addition, that is why.
 
+#include "port_env.h"
 #include "port_remastered_convert.h"
 #include "port_remastered_anuv.h"
 
@@ -2848,7 +2849,7 @@ std::vector<WeightKey> SkinWeights(const std::vector<double>& P, size_t n, const
     }
     // MP_REMASTERED_JOINTS=1: each joint's vote and the bones it got, with the
     // centres of its vertices and of each retail bone's.
-    if (const char* env = std::getenv("MP_REMASTERED_JOINTS"); env != nullptr && env[0] == '1') {
+    if (port::EnvFlag("MP_REMASTERED_JOINTS")) {
       char buf[256];
       std::vector<double> bc(nb * 3, 0.0), bn(nb, 0.0), jc(nj * 3, 0.0), jn(nj, 0.0);
       for (size_t v = 0; v < nr; ++v) {

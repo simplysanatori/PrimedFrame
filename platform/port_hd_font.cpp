@@ -1,5 +1,6 @@
 // Draws a mod's distance-field font in place of the disc's glyph images (port_hd_font.h).
 
+#include "port_env.h"
 #include "port_hd_font.h"
 
 #include "port_gci.h"
@@ -107,8 +108,7 @@ GXColor PaletteColor(const CGraphicsPalette* palette, int index, const GXColor& 
 
 bool Enabled() {
   if (sEnabled < 0) {
-    const char* const env = std::getenv("MP_HD_FONT");
-    sEnabled = env != nullptr && env[0] == '0' ? 0 : 1;
+    sEnabled = port::EnvFlag("MP_HD_FONT", true) ? 1 : 0;
   }
   return sEnabled != 0;
 }
