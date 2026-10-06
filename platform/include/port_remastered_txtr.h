@@ -120,6 +120,16 @@ bool DecodeTxtrCubeRgba8(const uint8_t* data, size_t size, uint32_t& edge, std::
 // images of width * height texels, layer slowest.
 bool DecodeTxtrLayersRgba8(const uint8_t* data, size_t size, uint32_t& width, uint32_t& height,
                            uint32_t& layers, std::vector<uint8_t>& rgba, std::string& error);
+// A BC6H array texture (kind 5), which is what a room's baked lightmap is: the top mip of
+// every layer, the layers' blocks in stored order (rows of ceil(width / 4) blocks).
+struct TxtrLayersBc6h {
+  uint32_t width = 0, height = 0;
+  bool isSigned = false;
+  std::vector<std::vector<uint8_t>> layers;
+};
+bool ReadTxtrLayersBc6h(const uint8_t* data, size_t size, TxtrLayersBc6h& out, std::string& error);
+// DecodeBc6hFace for a width x height image (any size).
+void DecodeBc6hImage(const uint8_t* blocks, uint32_t width, uint32_t height, bool isSigned, uint16_t* rgba);
 // Decodes one face of BC6H blocks (`texels` on a side) into RGBA half floats, alpha 1.
 void DecodeBc6hFace(const uint8_t* blocks, uint32_t texels, bool isSigned, uint16_t* rgba);
 

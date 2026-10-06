@@ -296,6 +296,21 @@ Id16 SwapUuid(const uint8_t* b) {
   return id;
 }
 
+// A property-order uuid as it prints (8-4-4-4-12).
+std::string UuidText(const uint8_t* propertyId) {
+  const Id16 id = SwapUuid(propertyId);
+  std::string out;
+  char hex[3];
+  for (size_t i = 0; i < 16; ++i) {
+    std::snprintf(hex, sizeof hex, "%02x", id[i]);
+    out += hex;
+    if (i == 3 || i == 5 || i == 7 || i == 9) {
+      out += '-';
+    }
+  }
+  return out;
+}
+
 // Numpy-style products, in the same order, so the signs of zeros come out alike.
 Vec3 MulR2G(const Vec3& v) {
   Vec3 out{};
@@ -365,12 +380,23 @@ struct Component {
   int entity = -1;  // index of the Entity component this one belongs to
 };
 
+// The room's baked lighting record (HEAD/BLIT): its lightmap texture, and the atlas lookup
+// (offU, offV, scale, 0) of each component that is lit by it, by the component's guid.
+struct Blit {
+  bool present = false;
+  uint32_t flags = 0;  // 1 lightmap, 2 probe
+  Id16 lightmap{};     // the TXTR's id in property byte order
+  std::map<Id16, std::array<float, 4>> lookups;
+  bool HasLightmap() const { return present && (flags & 1) != 0 && lightmap != Id16{}; }
+};
+
 class Room {
 public:
   // `data` must outlive the Room.
   bool Parse(const std::vector<uint8_t>& data, std::string& error);
 
   const std::vector<Component>& Components() const { return m_comps; }
+  const Blit& Lighting() const { return m_blit; }
   std::vector<const Component*> Of(uint32_t type) const {
     std::vector<const Component*> out;
     for (const Component& c : m_comps) {
@@ -455,6 +481,7 @@ private:
   std::map<Id16, size_t> m_byGuid;
   Span m_strings;
   std::vector<size_t> m_listed;
+  Blit m_blit;
 };
 
 bool Room::Chunks(size_t o, size_t end, std::vector<Chunk>& out, std::string& error) const {
@@ -510,6 +537,7 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
   m_byGuid.clear();
   m_strings = {};
   m_listed.clear();
+  m_blit = {};
   const std::vector<uint8_t>& d = data;
   if (d.size() < 32 || std::memcmp(d.data(), "RFRM", 4) != 0) {
     error = "not an RFRM file";
@@ -544,6 +572,36 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
     const size_t n = s.size >= 4 ? std::min<size_t>(ReadLE32(&d[s.start]), (s.size - 4) / 16) : 0;
     for (size_t i = 0; i < n; ++i) {
       m_listed.push_back(s.start + 4 + 16 * i);
+    }
+  }
+  // BLIT: u32 flags, the lightmap's guid, u32 n and n component guids, u32 n and n vec4
+  // lookups (parallel to the guids), then an LTPB guid. One that does not fit is left out.
+  std::vector<Span> blit;
+  const uint32_t pBlit[] = {Tag("HEAD"), Tag("BLIT")};
+  if (!Find(rs, re, pBlit, 2, blit, error)) {
+    return false;
+  }
+  if (!blit.empty() && blit[0].size >= 24) {
+    const uint8_t* b = &d[blit[0].start];
+    const size_t size = blit[0].size;
+    const size_t n = ReadLE32(b + 20);
+    if (n <= (size - 24) / 16 && size - 24 - 16 * n >= 4) {
+      const size_t at = 24 + 16 * n;
+      const size_t m = ReadLE32(b + at);
+      if (m == n && m <= (size - at - 4) / 16) {
+        m_blit.present = true;
+        m_blit.flags = ReadLE32(b);
+        std::memcpy(m_blit.lightmap.data(), b + 4, 16);
+        for (size_t i = 0; i < n; ++i) {
+          Id16 g;
+          std::memcpy(g.data(), b + 24 + 16 * i, 16);
+          std::array<float, 4> v;
+          for (size_t k = 0; k < 4; ++k) {
+            v[k] = ReadLEFloat(b + at + 4 + 16 * i + 4 * k);
+          }
+          m_blit.lookups[g] = v;
+        }
+      }
     }
   }
   std::map<Id16, size_t>& byGuid = m_byGuid;
@@ -1954,6 +2012,18 @@ private:
   bool FindResource(const uint8_t* propertyId, uint32_t type, const RoomPak& home, std::vector<uint8_t>& out,
                     const Pak** foundIn, Id16* foundId) const;
 
+  // The room's baked lightmap (BLIT's TXTR) as BC6H layers, read once per room: the
+  // geometry's lookups index it and the roomenv carries it. `lit` is how many of the
+  // geometry's instances have a lookup (set by WriteGeometry).
+  struct LightmapData {
+    std::string room;
+    bool ok = false;
+    PortRemastered::TxtrLayersBc6h tex;
+    size_t lit = 0;
+  };
+  LightmapData& Lightmap(const RoomData& r) const;
+  mutable LightmapData m_lightmap;
+
   struct Match {
     uint32_t mrea = 0;
     Mat34 a{};
@@ -2055,6 +2125,31 @@ bool Writer::LoadAreas(uint32_t mlvl, std::string& error) {
     m_areas.push_back(std::move(a));
   }
   return true;
+}
+
+Writer::LightmapData& Writer::Lightmap(const RoomData& r) const {
+  LightmapData& lm = m_lightmap;
+  if (lm.room == r.name) {
+    return lm;
+  }
+  lm = LightmapData{};
+  lm.room = r.name;
+  const Blit& blit = r.room.Lighting();
+  if (!blit.HasLightmap()) {
+    return lm;
+  }
+  std::vector<uint8_t> txtr;
+  std::string error;
+  if (!FindResource(blit.lightmap.data(), Tag("TXTR"), RoomPak{r.name, r.pak}, txtr, nullptr, nullptr)) {
+    Log("  " + r.name + ": lightmap texture not found");
+  } else if (!PortRemastered::ReadTxtrLayersBc6h(txtr.data(), txtr.size(), lm.tex, error)) {
+    Log("  " + r.name + ": lightmap not used: " + error);
+  } else if (lm.tex.layers.size() < 4) {
+    Log("  " + r.name + ": lightmap not used: " + std::to_string(lm.tex.layers.size()) + " layers");
+  } else {
+    lm.ok = true;
+  }
+  return lm;
 }
 
 bool Writer::FindResource(const uint8_t* propertyId, uint32_t type, const RoomPak& home,
@@ -3238,6 +3333,8 @@ struct Mcon {
   std::vector<Id16> models;  // in a pak's byte order
   std::vector<uint16_t> index;
   const uint8_t* transforms = nullptr;
+  // Per instance, the lightmap lookup (offU, offV, scale, 0); empty when the MCON has none.
+  std::vector<std::array<float, 4>> lookups;
 };
 
 bool ReadMcon(const std::vector<uint8_t>& d, Mcon& out) {
@@ -3287,6 +3384,21 @@ bool ReadMcon(const std::vector<uint8_t>& d, Mcon& out) {
       }
       for (size_t i = 0; i < indices; ++i) {
         out.index.push_back(ReadLE16(ix + 2 * i));
+      }
+      // Then a vec(2) of zeros, a vec(1) per instance and one per model, and the lookups.
+      // They are optional: anything that does not fit leaves the MCON without.
+      size_t lookups = 0;
+      if (vec(2, other) != nullptr && vec(1, other) != nullptr && vec(1, other) != nullptr) {
+        const uint8_t* lm = vec(16, lookups);
+        if (lm != nullptr && lookups == indices) {
+          for (size_t i = 0; i < lookups; ++i) {
+            std::array<float, 4> v;
+            for (size_t k = 0; k < 4; ++k) {
+              v[k] = ReadLEFloat(lm + 16 * i + 4 * k);
+            }
+            out.lookups.push_back(v);
+          }
+        }
       }
       return true;
     }
@@ -3361,6 +3473,18 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       inst.transform[4 * row + 3] = float(kSign[row] * pos[kAxis[row]]);
     }
   };
+  // The instance's slot in the room's baked lightmap, when the lightmap loaded and the
+  // lookup is one (a scale above 0).
+  const bool lightmapOk = Lightmap(r).ok;
+  size_t lookups = 0;
+  auto setLookup = [&](PortRoomGeo::Instance& inst, const float* v) {
+    if (std::isfinite(v[0]) && std::isfinite(v[1]) && std::isfinite(v[2]) && v[2] > 0.f) {
+      inst.lightmap[0] = v[0];
+      inst.lightmap[1] = v[1];
+      inst.lightmap[2] = v[2];
+      ++lookups;
+    }
+  };
   size_t modcons = 0;
   for (const Component* c : r.room.Of(kModCon)) {
     const bool active = r.room.Active(*c);
@@ -3411,6 +3535,9 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
         inst.transform[4 * row + 3] = float(kSign[row] * double(ReadLEFloat(from + 12)));
       }
       script(inst, c->entity, active);
+      if (lightmapOk && i < mcon.lookups.size()) {
+        setLookup(inst, mcon.lookups[i].data());
+      }
       ++modcons;
     }
   }
@@ -3908,6 +4035,12 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       ++animated;
     }
     script(inst, c->entity, active);
+    if (lightmapOk && c->hasGuid) {
+      const auto lookup = r.room.Lighting().lookups.find(c->guid);
+      if (lookup != r.room.Lighting().lookups.end()) {
+        setLookup(inst, lookup->second.data());
+      }
+    }
     const auto glow = glows.find(size_t(c - comps.data()));
     if (glow != glows.end()) {
       inst.glows = true;
@@ -3981,6 +4114,19 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   if (!m_io.write || !m_io.write(file, out)) {
     Log("  " + r.name + ": could not write " + file);
     return;
+  }
+  Lightmap(r).lit = lookups;
+  if (r.room.Lighting().HasLightmap()) {
+    const LightmapData& lm = Lightmap(r);
+    char text[160];
+    if (lm.ok) {
+      std::snprintf(text, sizeof text, "  %s: lightmap %s %ux%u x %zu layers, %zu of %u instances have a lookup",
+                    r.name.c_str(), UuidText(r.room.Lighting().lightmap.data()).c_str(), lm.tex.width, lm.tex.height,
+                    lm.tex.layers.size(), lookups, count);
+    } else {
+      std::snprintf(text, sizeof text, "  %s: no lightmap, %u instances", r.name.c_str(), count);
+    }
+    Log(text);
   }
   char line[512];
   std::snprintf(line, sizeof line,
@@ -4374,12 +4520,14 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   if (it != placed.end() && Distance(it->second.pos, {trans[0], trans[1], trans[2]}) < 0.5) {
     Grid(RoomPak{r.name, r.pak}, shift, gdoors, grid, gnote);
   }
-  if (cubes.empty() && grid.empty()) {
+  const LightmapData& lightmap = Lightmap(r);
+  const bool withLightmap = lightmap.ok && lightmap.lit != 0;
+  if (cubes.empty() && grid.empty() && !withLightmap) {
     return r.name + ": no probes, " + gnote;
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  AppendLE32(out, 17);
+  AppendLE32(out, 18);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -4575,6 +4723,24 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       AppendLEFloat(out, v);
     }
     AppendLE32(out, s.group);
+  }
+  // The lightmap the room geometry's lookups index, or a width of 0.
+  if (withLightmap) {
+    const PortRemastered::TxtrLayersBc6h& tex = lightmap.tex;
+    AppendLE32(out, tex.width);
+    AppendLE32(out, tex.height);
+    AppendLE32(out, uint32_t(tex.layers.size()));
+    AppendLE32(out, tex.isSigned ? 1 : 0);
+    size_t bytes = 0;
+    for (const auto& layer : tex.layers) {
+      bytes += layer.size();
+    }
+    AppendLE32(out, uint32_t(bytes));
+    for (const auto& layer : tex.layers) {
+      out.insert(out.end(), layer.begin(), layer.end());
+    }
+  } else {
+    AppendLE32(out, 0);
   }
   if (!fogs.empty() || !regions.empty()) {
     Log("  " + r.name + ": " + std::to_string(fogs.size()) + " fog hint(s), " + std::to_string(regions.size()) +

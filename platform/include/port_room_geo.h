@@ -19,7 +19,7 @@ class CVector3f;
 // them in place of the area's own world geometry.
 //
 // The file is little endian:
-//   'MPRG', u32 version (1 to 9), u32 instances
+//   'MPRG', u32 version (1 to 10), u32 instances
 //   instance: u32 CMDL id, f32 transform[12] (rows of model -> area)
 //     version 2 adds: u8 layer, u8 active, u16 links,
 //     version 3 (and 4) then: u32 platform, f32 platformStart[3],
@@ -78,6 +78,13 @@ class CVector3f;
 // Such an object is not drawn while the room geometry stands in for its area and that
 // instance is shown (Hides): the Frigate hangar's floating debris, which Remastered draws as
 // one animated actor, or Omega's tank while Remastered's own explosion plays.
+//
+// Version 10 may then end with the instances' lookups into the room's baked lightmap (the
+// area's .roomenv holds the lightmap itself):
+//   'LMAP', u32 count (the instances'), per instance: f32 offU, offV, scale
+// A model's atlas UV is (offU + u * scale, offV + v * scale) for its UV0 (u, v), as Remastered
+// takes it from the instance's vec4(offU, offV, scale, 0). Scale 0: the instance has none.
+// The section is left out when no instance has a lookup.
 namespace PortRoomGeo {
 
 enum : uint8_t { kEveryLayer = 0xff };
@@ -119,6 +126,7 @@ struct Instance {
   bool animOnShow = false;
   bool sky = false; // the room's sky (version 6), drawn in place of the world's
   float skyRadiance[3] = {}; // version 7; 0: not known
+  float lightmap[3] = {};    // version 10: offU, offV, scale into the room's lightmap; scale 0: none
 };
 
 // Remastered's script objects between what happens in game and a group of instances.

@@ -12,7 +12,7 @@ namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 17;
+constexpr uint32_t kVersion = 18;
 constexpr uint32_t kMaxGrades = 64;
 // A fog record up to its link count (inclusive).
 constexpr size_t kFogBytes = 368;
@@ -28,6 +28,7 @@ constexpr size_t kProbeSize = 112;
 constexpr size_t kCubeHeaderSize = 16;
 constexpr uint32_t kMaxProbes = 4096;
 constexpr uint32_t kMaxCubeSize = 1024;
+constexpr uint32_t kMaxLightmapSize = 8192;
 constexpr size_t kGridHeaderSize = 60;
 constexpr size_t kPointSize = 24;
 constexpr uint32_t kMaxGrids = 64;
@@ -726,6 +727,38 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
         s.group = ReadLE32(q + 32);
       }
       at += size;
+    }
+  }
+  if (version >= 18) {
+    if (data.size() - at < 4) {
+      error = "cut short";
+      return false;
+    }
+    Lightmap& lm = out.lightmap;
+    lm = Lightmap{};
+    lm.width = ReadLE32(data.data() + at);
+    at += 4;
+    if (lm.width != 0) {
+      if (data.size() - at < 16) {
+        error = "cut short";
+        return false;
+      }
+      const uint8_t* p = data.data() + at;
+      lm.height = ReadLE32(p);
+      lm.layers = ReadLE32(p + 4);
+      lm.isSigned = ReadLE32(p + 8) != 0;
+      lm.length = ReadLE32(p + 12);
+      lm.offset = at + 16;
+      at = lm.offset;
+      // Whole 4x4 blocks of 16 bytes, every layer the same size.
+      if (lm.width > kMaxLightmapSize || lm.height == 0 || lm.height > kMaxLightmapSize || lm.layers == 0 ||
+          lm.layers > 16 ||
+          lm.length != size_t(lm.layers) * ((size_t(lm.width) + 3) / 4) * ((size_t(lm.height) + 3) / 4) * 16 ||
+          data.size() - at < lm.length) {
+        error = "bad lightmap";
+        return false;
+      }
+      at += lm.length;
     }
   }
   out.data = std::move(data);

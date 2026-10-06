@@ -11,7 +11,7 @@ namespace PortRoomGeo {
 namespace {
 
 constexpr uint32_t kMagic = 0x4752504D; // 'MPRG'
-constexpr uint32_t kVersion = 9;
+constexpr uint32_t kVersion = 10;
 constexpr size_t kHeaderBytes = 12;
 constexpr size_t kInstanceBytes = 4 + 12 * 4; // version 1; version 2 adds 4 + links
 constexpr size_t kPlatformBytes = 4 + 3 * 4;   // version 3's, after version 2's 4
@@ -26,6 +26,7 @@ constexpr size_t kAnimHeadBytes = 3 * 4;
 constexpr size_t kAnimKeyBytes = 7 * 4;
 constexpr uint32_t kSkyMagic = 0x20594B53; // 'SKY '
 constexpr uint32_t kHideMagic = 0x45444948; // 'HIDE'
+constexpr uint32_t kLmapMagic = 0x50414D4C; // 'LMAP'
 constexpr uint32_t kLodMagic = 0x444F4C52; // 'RLOD'
 constexpr uint32_t kLodVersion = 1;
 
@@ -363,7 +364,8 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
   }
   // Version 3 may end with the script section, version 4 then with the glow section,
   // version 5 then with the animation section, version 6 then with the sky section
-  // (with radiances from version 7) and version 9 then with the hidden objects.
+  // (with radiances from version 7), version 9 then with the hidden objects and version 10
+  // with the lightmap lookups.
   bool ok = true;
   if (version >= 3 && data.size() - at >= 4 && ReadLE32(data.data() + at) == kScriptMagic) {
     ok = ParseScript(data, at, out, parsed, error);
@@ -394,6 +396,25 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
         }
       }
       at += 8 + 8 * size_t(count);
+    }
+  }
+  if (ok && version >= 10 && data.size() - at >= 4 && ReadLE32(data.data() + at) == kLmapMagic) {
+    if (data.size() - at < 8 || ReadLE32(data.data() + at + 4) != out.size() ||
+        (data.size() - at - 8) / 12 < out.size()) {
+      error = "truncated lightmap lookups";
+      ok = false;
+    } else {
+      at += 8;
+      for (Instance& instance : out) {
+        for (size_t j = 0; j < 3; ++j) {
+          float v = 0.f;
+          instance.lightmap[j] = ReadF32(data.data() + at + 4 * j, v) ? v : 0.f;
+        }
+        if (!(instance.lightmap[2] > 0.f)) {
+          instance.lightmap[0] = instance.lightmap[1] = instance.lightmap[2] = 0.f;
+        }
+        at += 12;
+      }
     }
   }
   if (ok && at != data.size()) {
@@ -508,6 +529,16 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
     for (const Script::Hidden& h : script->hidden) {
       AppendLE32(out, h.editorId);
       AppendLE32(out, h.instance);
+    }
+  }
+  const bool lit = std::any_of(instances.begin(), instances.end(), [](const Instance& i) { return i.lightmap[2] > 0.f; });
+  if (lit) {
+    AppendLE32(out, kLmapMagic);
+    AppendLE32(out, uint32_t(instances.size()));
+    for (const Instance& instance : instances) {
+      for (float v : instance.lightmap) {
+        AppendLEFloat(out, v);
+      }
     }
   }
   return out;

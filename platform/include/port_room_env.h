@@ -15,7 +15,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 16), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 18), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -101,6 +101,10 @@
 //        times the intensity). A Remastered directional LightDynamic (see Sun).
 // Version 17 adds to each sun: u32 group (PortRoomGeo::kNoGroup: none), the area's .roomgeo
 //   script group that shows and hides it; until that script has, `on` holds.
+// Version 18 adds, after the suns, the room's baked lightmap (the .roomgeo's LMAP lookups index
+//   it): u32 width, which is 0 when there is none; else u32 height, u32 layers (4 or more:
+//   colour, then the light's x, y, z), u32 signed, u32 bytes, then the BC6H blocks of mip 0 of
+//   every layer, layer-major, each ceil(width / 4) x ceil(height / 4) blocks, rows in stored order.
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -135,6 +139,17 @@ struct Cube {
   bool isSigned = false;
   // Of the blocks, in File::data. Both 0 once the game has made the cubes and dropped the
   // blocks from its copy of the file (port_room_env.cpp keeps only grids and grades).
+  size_t offset = 0;
+  size_t length = 0;
+};
+
+// The room's baked lightmap: a BC6H array texture of `layers` layers, mip 0 only.
+struct Lightmap {
+  uint32_t width = 0; // 0: the room has none
+  uint32_t height = 0;
+  uint32_t layers = 0;
+  bool isSigned = false;
+  // Of the blocks, in File::data; layer l starts at offset + l * length / layers.
   size_t offset = 0;
   size_t length = 0;
 };
@@ -304,6 +319,7 @@ struct File {
   std::vector<Probe> probes;
   std::vector<Cube> cubes;
   std::vector<Grid> grids;
+  Lightmap lightmap;
   std::vector<uint8_t> data;
 };
 
