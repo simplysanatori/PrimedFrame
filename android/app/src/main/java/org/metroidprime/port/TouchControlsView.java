@@ -70,6 +70,10 @@ final class TouchControlsView extends View {
     private static final long WHEEL_ICON_RETRY_MS = 1000;
     private static final float WHEEL_BUTTON_GAP_DP = 8f; // wheel to edge / other button
     private static final float WHEEL_BUTTON_RADIUS = 0.072f;
+    // A wheel button's reach from the stick it anchors to, in layout heights. The
+    // reference phone's centred spots are farther out, so they win there.
+    private static final float WHEEL_ANCHOR_K = 0.55f;
+    private static final float WHEEL_ANCHOR_K_CSTICK = 0.35f;
     private static final float WHEEL_RADIUS_DP = 112f;
     private static final float WHEEL_DEAD_DP = 30f;
     private static final long WHEEL_TAP_MS = 250;
@@ -782,9 +786,10 @@ final class TouchControlsView extends View {
         return fraction * width + (0.5f - fraction) * width * (1f - layoutScale(height));
     }
 
-    // A vertical fraction of the height, from the nearest top or bottom edge.
+    // A vertical fraction of the height. The layout sits in a phone-height band
+    // at the bottom of the screen, so the top half is still in reach.
     private float layoutY(float fraction, float height) {
-        return fraction < 0.5f ? fraction * layoutU(height)
+        return fraction < 0.5f ? (height - layoutU(height)) + fraction * layoutU(height)
                                : layoutYFromBottom(fraction, height);
     }
 
@@ -1225,15 +1230,30 @@ final class TouchControlsView extends View {
     }
 
     // A pill's rect: the middle ones round the centre line, the others from
-    // their side edge, all from the top.
+    // their side edge, all from the top of the layout band. On a screen taller
+    // than the cap the middle ones sit beside the triggers instead.
     private void pillRect(PillButton pill, float width, float height, RectF out) {
         final boolean middle = Math.abs((pill.left + pill.right) * 0.5f - 0.5f) < 0.15f;
+        final float top = layoutY(pill.top, height);
+        final float bottom = layoutY(pill.bottom, height);
+        if (middle && layoutU(height) < height) {
+            final boolean leftSide = pill.left < 0.5f;
+            final int trigger = leftSide ? PillButton.TRIGGER_LEFT : PillButton.TRIGGER_RIGHT;
+            for (PillButton other : pills) {
+                if (other.trigger == trigger) {
+                    pillRect(other, width, height, out);
+                    final float w = (pill.right - pill.left) * width * layoutScale(height);
+                    final float left = leftSide ? out.right + dp(8) : out.left - dp(8) - w;
+                    out.set(left, top, left + w, bottom);
+                    return;
+                }
+            }
+        }
         final float left = middle ? layoutXCentred(pill.left, width, height)
                                   : layoutX(pill.left, width, height);
         final float right = middle ? layoutXCentred(pill.right, width, height)
                                    : layoutX(pill.right, width, height);
-        final float u = layoutU(height);
-        out.set(left, pill.top * u, right, pill.bottom * u);
+        out.set(left, top, right, bottom);
     }
 
     private void drawPillButton(Canvas canvas, PillButton pill, float width, float height) {
@@ -1339,17 +1359,32 @@ final class TouchControlsView extends View {
     // Each wheel opens centred on its button, so the buttons sit a wheel radius
     // up from the edge and far enough apart that a wheel never covers the other.
     // They are centred on screen, or in the gap between the sticks when the
-    // C-stick is shown (classic layout).
+    // C-stick is shown (classic layout). On a wide screen they move in towards
+    // the thumbs: Visor at most WHEEL_ANCHOR_K layout heights right of the left
+    // stick, Beam the mirror of that (or, in classic, that far left of the
+    // C-stick). A phone's centred spot is always the nearer one.
     private float wheelButtonX(int wheel, float width, float height) {
+        final float u = layoutU(height);
         float centre = width * 0.5f;
         if (cStick) {
-            final float left = leftStickX(width, height) + STICK_RADIUS * layoutU(height);
+            final float left = leftStickX(width, height) + STICK_RADIUS * u;
             final float right = rightStickX(width, height) - rightStickRadius(height);
             centre = (left + right) * 0.5f;
         }
         final float offset =
-            (dp(WHEEL_RADIUS_DP) + WHEEL_BUTTON_RADIUS * layoutU(height) + dp(WHEEL_BUTTON_GAP_DP)) * 0.5f;
-        return centre + (wheel == 0 ? -offset : offset);
+            (dp(WHEEL_RADIUS_DP) + WHEEL_BUTTON_RADIUS * u + dp(WHEEL_BUTTON_GAP_DP)) * 0.5f;
+        float x;
+        if (wheel == 0) {
+            x = Math.min(centre - offset, leftStickX(width, height) + WHEEL_ANCHOR_K * u);
+        } else if (cStick) {
+            x = Math.max(centre + offset, rightStickX(width, height) -
+                         rightStickRadius(height) - WHEEL_ANCHOR_K_CSTICK * u);
+        } else {
+            x = Math.max(centre + offset, width - (leftStickX(width, height) + WHEEL_ANCHOR_K * u));
+        }
+        // The open wheel must stay on screen.
+        final float reach = dp(WHEEL_RADIUS_DP);
+        return Math.max(reach, Math.min(width - reach, x));
     }
 
     private float wheelButtonY(float height) {
