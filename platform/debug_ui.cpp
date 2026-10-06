@@ -253,6 +253,15 @@ bool sActorInterpolation = false;
 bool sPoseInterpolation = false;
 bool sRoomGeoResident = false;
 bool sParticleInterpolation = false;
+// The Remastered import's choices. Off on a phone: the rooms have never run on
+// one, and need storage and memory many phones lack (a 256 MB game arena and
+// 12x frame buffers).
+#if defined(__ANDROID__)
+bool sImportGeometry = false;
+#else
+bool sImportGeometry = true;
+#endif
+bool sImportEffects = false;
 float sPresentOverride = -1.f;
 unsigned sPresentCycleFrame = 0;
 bool sTickHold = false;
@@ -605,6 +614,10 @@ void ApplySetting(const std::string& key, const std::string& value) {
     PortRoomGeo::SetLodDistance(std::strtof(value.c_str(), nullptr));
   } else if (key == "particle_interpolation") {
     sParticleInterpolation = ParseBool(value);
+  } else if (key == "remastered_import_geometry") {
+    sImportGeometry = ParseBool(value);
+  } else if (key == "remastered_import_effects") {
+    sImportEffects = ParseBool(value);
   } else if (key == "ai_audio") {
     sAiAudioEnabled = ParseBool(value);
   } else if (key == "musyx_audio") {
@@ -715,6 +728,8 @@ void SaveSettings() {
   file << "room_geo_min_px=" << PortRoomGeo::MinPixels() << '\n';
   file << "room_geo_lod=" << PortRoomGeo::LodDistance() << '\n';
   file << "particle_interpolation=" << (sParticleInterpolation ? 1 : 0) << '\n';
+  file << "remastered_import_geometry=" << (sImportGeometry ? 1 : 0) << '\n';
+  file << "remastered_import_effects=" << (sImportEffects ? 1 : 0) << '\n';
   file << "mouse_aim=" << (sMouseAim ? 1 : 0) << '\n';
   file << "twin_stick=" << (sTwinStick ? 1 : 0) << '\n';
   file << "touch_colors=" << (sTouchColors ? 1 : 0) << '\n';
@@ -3904,35 +3919,31 @@ void DrawRemasteredImport() {
     OpenRemasteredDialog(1);
   }
 #endif
-#if defined(__ANDROID__)
-  // Off on a phone: the rooms have never run on one, and need storage and
-  // memory many phones lack (a 256 MB game arena and 12x frame buffers).
-  static bool sGeometry = false;
-#else
-  static bool sGeometry = true;
-#endif
-  ImGui::Checkbox("Room geometry too##remastered", &sGeometry);
+  if (ImGui::Checkbox("Room geometry too##remastered", &sImportGeometry)) {
+    MarkDirty();
+  }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("Also converts the rooms themselves, not only the models in them. About 6.5 GB in place of "
                       "1 GB, and twice as long.");
   }
 #if defined(__ANDROID__)
   // A tap shows no tooltip, so the warning is spelled out.
-  if (sGeometry) {
+  if (sImportGeometry) {
     ImGui::PushStyleColor(ImGuiCol_Text, ThemeWarnColor(ImVec4(1.f, 0.75f, 0.3f, 1.f)));
     ImGui::TextWrapped("Untested on phones: needs about 6.5 GB free and lots of RAM, and the game may run slowly "
                        "or be closed by Android. Remove mods/remastered-models to go back.");
     ImGui::PopStyleColor();
   }
 #endif
-  PortRemastered::SetImportGeometry(sGeometry);
-  static bool sEffects = false;
-  ImGui::Checkbox("Particle effects (experimental)##remastered", &sEffects);
+  PortRemastered::SetImportGeometry(sImportGeometry);
+  if (ImGui::Checkbox("Particle effects (experimental)##remastered", &sImportEffects)) {
+    MarkDirty();
+  }
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
     ImGui::SetTooltip("Also replaces the disc's particle effects with Remastered's where the two match. Some "
                       "effects may look wrong. Reload the mods afterwards, as for any import.");
   }
-  PortRemastered::SetImportEffects(sEffects);
+  PortRemastered::SetImportEffects(sImportEffects);
   static bool sReconvert = false;
   ImGui::Checkbox("Reconvert everything##remastered", &sReconvert);
   if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
