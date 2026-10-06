@@ -232,6 +232,7 @@ std::chrono::steady_clock::time_point sMapScreenStamp;
 float sMapPanX = 0.f;
 float sMapPanY = 0.f;
 float sMapPanViewDp = 400.f;
+float sMapZoomPending = 1.f;
 std::chrono::steady_clock::time_point sMapPanHeldUntil;
 std::mutex sTouchAimMutex;
 float sTouchAimPendingX = 0.f;
@@ -2162,6 +2163,23 @@ void AddMapPan(float dxDp, float dyDp, float viewHeightDp, int holdMs) {
   sMapPanY += dyDp;
   sMapPanViewDp = viewHeightDp;
   sMapPanHeldUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(holdMs);
+}
+
+// UI thread: a pinch's finger-distance ratio (>1 zooms in); factors multiply.
+void AddMapZoom(float ratio) {
+  if (!std::isfinite(ratio) || !(ratio > 0.f) || !MapScreenOpen()) {
+    return;
+  }
+  std::lock_guard lock(sMapPanMutex);
+  sMapZoomPending = std::clamp(sMapZoomPending * std::clamp(ratio, 0.1f, 10.f), 0.01f, 100.f);
+}
+
+// Game thread: the pending zoom factor (1 = none), cleared.
+float TakeMapZoom() {
+  std::lock_guard lock(sMapPanMutex);
+  const float ratio = sMapZoomPending;
+  sMapZoomPending = 1.f;
+  return ratio;
 }
 
 // Game thread. Drains the pending pan; true while a finger is on the map (a pan
@@ -6715,6 +6733,11 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeMapPan(JNIEnv*, jclass, jfloat dxDp,
                                                          jfloat dyDp, jfloat viewHeightDp) {
   PortDebug::AddMapPan(dxDp, dyDp, viewHeightDp, 250);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapZoom(JNIEnv*, jclass, jfloat ratio) {
+  PortDebug::AddMapZoom(ratio);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

@@ -419,6 +419,8 @@ bool ConsumeMapTapZ();
 void SetMapScreenOpen(bool open);
 bool MapScreenOpen();
 void AddMapPan(float dxDp, float dyDp, float viewHeightDp, int holdMs = 250);
+void AddMapZoom(float ratio);
+float TakeMapZoom();
 bool TakeMapPan(float* dxDp, float* dyDp, float* viewHeightDp);
 void GetFrameMouseDelta(float& dx, float& dy);
 // The yaw/pitch change (radians) the next tick's look input will apply, as seen

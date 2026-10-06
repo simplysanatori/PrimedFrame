@@ -918,6 +918,13 @@ void CAutoMapper::ProcessMapZoomInput(const CFinalInput& input, const CStateMana
     x324_zoomState = kZS_Out;
   }
 
+  // Port: a pinch scales the camera distance by the inverse of the finger spread.
+  const float pinch = PortDebug::TakeMapZoom();
+  if (pinch != 1.f) {
+    xa8_renderState0.x18_camDist =
+        GetClampedMapScreenCameraDistance(xa8_renderState0.x18_camDist / pinch);
+  }
+
   if (oldDist == xa8_renderState0.x18_camDist)
     SetShouldZoomingSoundBePlaying(false);
   else

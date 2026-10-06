@@ -40,6 +40,10 @@ final class TouchControlsView extends View {
     // Travel, in dp, past which a minimap touch is a drag and not a tap.
     // A one-finger drag on the open map screen pans it.
     private static final int MAP_PAN = 7;
+    // A second finger on the map: with the MAP_PAN one it pinches to zoom.
+    private static final int MAP_PAN2 = 8;
+    // Finger spread, in dp, under which a pinch is ignored (the ratio blows up).
+    private static final float MAP_PINCH_MIN_DP = 20f;
     // Tells the game a finger is still down on the map, so it doesn't drift back.
     private static final long MAP_PAN_KEEPALIVE_MS = 100;
     private static final float MAP_TAP_SLOP_DP = 12f;
@@ -199,6 +203,8 @@ final class TouchControlsView extends View {
     private static native void nativeMapPan(float dxDp, float dyDp, float viewHeightDp);
     // True while the map screen is open and can be panned.
     private static native boolean nativeMapScreenOpen();
+    // A pinch: ratio of the finger spread now to before; above 1 zooms in.
+    private static native void nativeMapZoom(float ratio);
     private static native void nativeSetTouchDevice(boolean xboxLayout);
     private static native void nativeToggleDebugOverlay();
     private static native void nativeVirtualButton(int button, boolean down);
@@ -208,6 +214,7 @@ final class TouchControlsView extends View {
     private int rightPointer = -1;
     private int aimPointer = -1;
     private int panPointer = -1;
+    private int pan2Pointer = -1;
     private final Runnable panKeepAlive = new Runnable() {
         @Override
         public void run() {
@@ -395,11 +402,16 @@ final class TouchControlsView extends View {
                 } else if (target.type == AIM) {
                     updateAim(target, event, i);
                 } else if (target.type == MAP_PAN) {
-                    updateMapPan(target, event, i);
+                    if (pan2Pointer == -1) {
+                        updateMapPan(target, event, i);
+                    }
                 } else if (target.type == MAP_TAP) {
                     target.x = event.getX(i);
                     target.y = event.getY(i);
                 }
+            }
+            if (panPointer != -1 && pan2Pointer != -1) {
+                updatePinch(event);
             }
         } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
             releasePointer(event.getPointerId(actionIndex));
@@ -440,6 +452,7 @@ final class TouchControlsView extends View {
         rightPointer = -1;
         aimPointer = -1;
         panPointer = -1;
+        pan2Pointer = -1;
         invalidate();
     }
 
@@ -572,6 +585,12 @@ final class TouchControlsView extends View {
                 targets.put(pointerId, target);
                 nativeMapPan(0f, 0f, panViewDp());
                 postDelayed(panKeepAlive, MAP_PAN_KEEPALIVE_MS);
+            } else if (pan2Pointer == -1) {
+                TouchTarget target = new TouchTarget(MAP_PAN2, 0);
+                target.x = x;
+                target.y = y;
+                pan2Pointer = pointerId;
+                targets.put(pointerId, target);
             }
         } else if (touchAim) {
             // Everything else that is free: one finger at a time aims.
@@ -650,6 +669,35 @@ final class TouchControlsView extends View {
         target.y = lastY;
     }
 
+    // Two fingers on the map: the midpoint's travel pans, the change in their
+    // spread zooms. Uses the latest positions only.
+    private void updatePinch(MotionEvent event) {
+        final int a = event.findPointerIndex(panPointer);
+        final int b = event.findPointerIndex(pan2Pointer);
+        final TouchTarget ta = targets.get(panPointer);
+        final TouchTarget tb = targets.get(pan2Pointer);
+        if (a < 0 || b < 0 || ta == null || tb == null) {
+            return;
+        }
+        final float density = getResources().getDisplayMetrics().density;
+        final float ax = event.getX(a);
+        final float ay = event.getY(a);
+        final float bx = event.getX(b);
+        final float by = event.getY(b);
+        final float midDx = ((ax + bx) - (ta.x + tb.x)) * 0.5f / density;
+        final float midDy = ((ay + by) - (ta.y + tb.y)) * 0.5f / density;
+        final float before = (float) Math.hypot(ta.x - tb.x, ta.y - tb.y) / density;
+        final float now = (float) Math.hypot(ax - bx, ay - by) / density;
+        ta.x = ax;
+        ta.y = ay;
+        tb.x = bx;
+        tb.y = by;
+        nativeMapPan(midDx, midDy, panViewDp());
+        if (before >= MAP_PINCH_MIN_DP && now >= MAP_PINCH_MIN_DP) {
+            nativeMapZoom(now / before);
+        }
+    }
+
     private void updateStick(TouchTarget target, float x, float y) {
         target.x = x;
         target.y = y;
@@ -705,9 +753,24 @@ final class TouchControlsView extends View {
         if (pointerId == aimPointer) {
             aimPointer = -1;
         }
-        if (pointerId == panPointer) {
-            panPointer = -1;
-            removeCallbacks(panKeepAlive);
+        if (pointerId == pan2Pointer) {
+            pan2Pointer = -1;
+        } else if (pointerId == panPointer) {
+            if (pan2Pointer != -1) {
+                // The other finger carries on panning from where it is.
+                TouchTarget second = targets.get(pan2Pointer);
+                if (second != null) {
+                    TouchTarget carried = new TouchTarget(MAP_PAN, 0);
+                    carried.x = second.x;
+                    carried.y = second.y;
+                    targets.put(pan2Pointer, carried);
+                }
+                panPointer = pan2Pointer;
+                pan2Pointer = -1;
+            } else {
+                panPointer = -1;
+                removeCallbacks(panKeepAlive);
+            }
         }
     }
 
@@ -715,7 +778,7 @@ final class TouchControlsView extends View {
         // Nothing to zero for a hide tap, an aim drag (a distance) or a map tap
         // (fired on release only; a cancelled touch is no tap).
         if (target.type == HIDE || target.type == AIM || target.type == MAP_TAP ||
-            target.type == MAP_PAN) {
+            target.type == MAP_PAN || target.type == MAP_PAN2) {
             return;
         }
         if (target.type == BUTTON) {
