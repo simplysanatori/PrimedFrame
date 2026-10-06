@@ -415,6 +415,21 @@ bool TakeTouchLook(float& dyaw, float& dpitch);
 // Tap the minimap to open the map (Android touch overlay). The HUD publishes the
 // minimap's screen rect (0..1 of the window, origin top-left) each frame it is
 // drawn; MinimapRect fills x0,y0,x1,y1 and returns false when it isn't shown.
+// Hold-and-slide beam and visor wheels on the Android overlay. The player
+// publishes WheelState each frame (bits 0-3 visors owned in EPlayerVisor order
+// Combat/X-Ray/Scan/Thermal, 4-7 beams owned in EBeamId order Power/Ice/Wave/
+// Plasma, 8-9 current visor, 10-11 current beam, 12 valid; 0 when stale). A
+// request is read by ControlMapper for ~120 ms as a press of that command.
+bool TouchWheels();
+void SetTouchWheels(bool on);
+bool TouchVisorTapScan();
+void SetTouchVisorTapScan(bool on);
+void SetWheelState(uint32_t mask);
+uint32_t WheelState();
+void RequestVisor(int visor);
+void RequestBeam(int beam);
+bool VisorRequested(int visor);
+bool BeamRequested(int beam);
 bool TouchMapTap();
 void SetTouchMapTap(bool on);
 void SetMinimapRect(bool valid, float x0, float y0, float x1, float y1);

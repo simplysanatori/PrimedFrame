@@ -827,6 +827,21 @@ unpacks to a temporary directory instead of mounting.
   `CInGameGuiManager`) presses Z for one poll, which opens the map; the GameCube
   layout's Z pill is hidden while it is on. Console: `minimap` prints the rect,
   `maptap` sends the tap.
+  **Beam and visor wheels** (Android, `touch_wheels`, on by default; F1 Input >
+  Touch controls): in both layouts the D-pad is replaced by two round buttons,
+  Visor and Beam. Holding one opens a 4-sector wheel centred on the press
+  (clamped on screen) in the stock directions (visors up Combat, right X-Ray,
+  down Thermal, left Scan; beams up Power, right Wave, down Ice, left Plasma);
+  sliding lights the sector, release picks it, release in the centre cancels.
+  Items not owned are greyed (owned/current mask from `CPlayer::Think` via
+  `PortDebug::SetWheelState`, polled by `nativeWheelOwned`; all disabled with no
+  player). A pick calls `PortDebug::RequestVisor/RequestBeam`, which holds the
+  command for 120 ms in `ControlMapper::GetPressInput/GetAnalogInput`: stock
+  rules still apply (no beam change in the morph ball or while charging), and
+  Swap Scan/X-Ray doesn't matter. `touch_visor_tap_scan` (off by default, "Tap
+  Visor for Scan Visor"): a tap (<250 ms, <12 dp) on Visor picks Scan. The
+  wheels don't open while the map screen is open. Console: `visor <name|n>`,
+  `beam <name|n>` (no argument prints the current one).
   **Map pan** (always on): while the map screen is open, a one-finger drag on any
   free part of the overlay (outside the left stick, which rotates) pans the map so
   the content follows the finger (`CAutoMapper::ProcessMapPanInput`: a drag of the

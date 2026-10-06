@@ -218,6 +218,18 @@ float sTouchAimSpeed = 2.25f;
 // Tap the minimap to open the map (Android): the HUD publishes the minimap's
 // screen rect, the touch overlay hit-tests it and injects a Z press per tap.
 bool sTouchMapTap = true;
+// Hold-and-slide beam and visor wheels (Android overlay): the player's state is
+// published each frame, the overlay's pick comes back as a request that
+// ControlMapper reads for a few polls as if the command's button were pressed.
+bool sTouchWheels = true;
+bool sTouchVisorTapScan = false;
+std::atomic<uint32_t> sWheelMask{0};
+std::atomic<uint64_t> sWheelStampNs{0};
+std::atomic<int> sVisorRequest{-1};
+std::atomic<uint64_t> sVisorRequestUntilNs{0};
+std::atomic<int> sBeamRequest{-1};
+std::atomic<uint64_t> sBeamRequestUntilNs{0};
+constexpr uint64_t kWheelRequestNs = 120'000'000;
 std::mutex sMinimapMutex;
 bool sMinimapValid = false;
 float sMinimapRect[4] = {};
@@ -547,6 +559,10 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sTouchAim = ParseBool(value);
   } else if (key == "touch_map_tap") {
     sTouchMapTap = ParseBool(value);
+  } else if (key == "touch_wheels") {
+    sTouchWheels = ParseBool(value);
+  } else if (key == "touch_visor_tap_scan") {
+    sTouchVisorTapScan = ParseBool(value);
   } else if (key == "touch_aim_speed") {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 0.25f && f <= 10.f) {
@@ -801,6 +817,8 @@ void SaveSettings() {
   file << "touch_aim=" << (sTouchAim ? 1 : 0) << '\n';
   file << "touch_aim_speed=" << sTouchAimSpeed << '\n';
   file << "touch_map_tap=" << (sTouchMapTap ? 1 : 0) << '\n';
+  file << "touch_wheels=" << (sTouchWheels ? 1 : 0) << '\n';
+  file << "touch_visor_tap_scan=" << (sTouchVisorTapScan ? 1 : 0) << '\n';
   file << "mouse_invert_x=" << (sMouseInvertX ? 1 : 0) << '\n';
   file << "mouse_invert_y=" << (sMouseInvertY ? 1 : 0) << '\n';
   file << "mouse_buttons=" << (sMouseButtons ? 1 : 0) << '\n';
@@ -2115,6 +2133,64 @@ void SetTouchMapTap(bool on) {
   EnsureInitialized();
   sTouchMapTap = on;
   MarkDirty();
+}
+
+bool TouchWheels() {
+  EnsureInitialized();
+  return sTouchWheels;
+}
+
+void SetTouchWheels(bool on) {
+  EnsureInitialized();
+  sTouchWheels = on;
+  MarkDirty();
+}
+
+bool TouchVisorTapScan() {
+  EnsureInitialized();
+  return sTouchVisorTapScan;
+}
+
+void SetTouchVisorTapScan(bool on) {
+  EnsureInitialized();
+  sTouchVisorTapScan = on;
+  MarkDirty();
+}
+
+// Game thread, once per frame from CPlayer::Think.
+void SetWheelState(uint32_t mask) {
+  sWheelMask.store(mask);
+  sWheelStampNs.store(SDL_GetTicksNS());
+}
+
+// Not refreshed for a while (no player, paused) reads as 0: wheels disabled.
+uint32_t WheelState() {
+  const uint64_t now = SDL_GetTicksNS();
+  return now - sWheelStampNs.load() < 500'000'000 ? sWheelMask.load() : 0;
+}
+
+void RequestVisor(int visor) {
+  if (visor < 0 || visor > 3) {
+    return;
+  }
+  sVisorRequest.store(visor);
+  sVisorRequestUntilNs.store(SDL_GetTicksNS() + kWheelRequestNs);
+}
+
+void RequestBeam(int beam) {
+  if (beam < 0 || beam > 3) {
+    return;
+  }
+  sBeamRequest.store(beam);
+  sBeamRequestUntilNs.store(SDL_GetTicksNS() + kWheelRequestNs);
+}
+
+bool VisorRequested(int visor) {
+  return sVisorRequest.load() == visor && SDL_GetTicksNS() < sVisorRequestUntilNs.load();
+}
+
+bool BeamRequested(int beam) {
+  return sBeamRequest.load() == beam && SDL_GetTicksNS() < sBeamRequestUntilNs.load();
 }
 
 // Game thread, once per HUD draw (valid=false when the minimap isn't shown).
@@ -4968,6 +5044,19 @@ void DrawInputTab() {
     SetTouchMapTap(touchMapTap);
   }
   ItemHelp("Tapping the minimap opens the map; hides the GameCube layout's Z button.");
+  bool touchWheels = sTouchWheels;
+  if (ImGui::Checkbox("Beam and visor wheels", &touchWheels)) {
+    SetTouchWheels(touchWheels);
+  }
+  ItemHelp("Replaces the D-pad with a Visor and a Beam button. Hold one, slide to a sector, "
+           "let go to pick. Letting go in the middle cancels. Off, the D-pad is back.");
+  ImGui::BeginDisabled(!sTouchWheels);
+  bool touchVisorTapScan = sTouchVisorTapScan;
+  if (ImGui::Checkbox("Tap Visor for Scan Visor", &touchVisorTapScan)) {
+    SetTouchVisorTapScan(touchVisorTapScan);
+  }
+  ItemHelp("A quick tap on the Visor button (no slide) selects the Scan Visor.");
+  ImGui::EndDisabled();
   ImGui::BeginDisabled(!sTouchAim);
   float touchAimSpeed = sTouchAimSpeed;
   if (ImGui::SliderFloat("Touch aim speed", &touchAimSpeed, 0.5f, 6.f, "%.2f px/dp",
@@ -6769,6 +6858,33 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchAimDown(JNIEnv*, jclass,
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchAimEnabled(JNIEnv*, jclass) {
   return PortDebug::TouchAim() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchWheelsEnabled(JNIEnv*, jclass) {
+  return PortDebug::TouchWheels() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchVisorTapScan(JNIEnv*, jclass) {
+  return PortDebug::TouchVisorTapScan() ? JNI_TRUE : JNI_FALSE;
+}
+
+// Bits 0-3: visors owned (Combat, X-Ray, Scan, Thermal); 4-7: beams owned
+// (Power, Ice, Wave, Plasma); 8-9 current visor; 10-11 current beam; 12: valid.
+extern "C" JNIEXPORT jint JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeWheelOwned(JNIEnv*, jclass) {
+  return static_cast< jint >(PortDebug::WheelState());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeRequestVisor(JNIEnv*, jclass, jint visor) {
+  PortDebug::RequestVisor(visor);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeRequestBeam(JNIEnv*, jclass, jint beam) {
+  PortDebug::RequestBeam(beam);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

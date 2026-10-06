@@ -7,6 +7,7 @@ import android.graphics.CornerPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
+import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -49,6 +50,23 @@ final class TouchControlsView extends View {
     // Tells the game a finger is still down on the map, so it doesn't drift back.
     private static final long MAP_PAN_KEEPALIVE_MS = 100;
     private static final float MAP_TAP_SLOP_DP = 12f;
+    // Hold-and-slide wheels that replace the D-pad: id 0 = Visor, 1 = Beam.
+    private static final int WHEEL = 9;
+    private static final String[] WHEEL_BUTTON_LABELS = {"Visor", "Beam"};
+    // Sectors run up, right, down, left, as the stock D-pad (visors) and C-stick
+    // (beams) directions do. Items are numbered as the native side does: visors
+    // Combat/X-Ray/Scan/Thermal, beams Power/Ice/Wave/Plasma.
+    private static final String[][] WHEEL_LABELS = {
+        {"Combat", "X-Ray", "Thermal", "Scan"},
+        {"Power", "Wave", "Ice", "Plasma"},
+    };
+    private static final int[][] WHEEL_ITEMS = {{0, 1, 3, 2}, {0, 2, 1, 3}};
+    private static final int WHEEL_VALID_BIT = 1 << 12;
+    private static final float WHEEL_BUTTON_DY = 0.085f; // from the D-pad centre, in heights
+    private static final float WHEEL_BUTTON_RADIUS = 0.072f;
+    private static final float WHEEL_RADIUS_DP = 112f;
+    private static final float WHEEL_DEAD_DP = 30f;
+    private static final long WHEEL_TAP_MS = 250;
 
     // Port-only actions, not game inputs.
     private static final int TOGGLE_DEBUG_OVERLAY = -1;
@@ -178,6 +196,14 @@ final class TouchControlsView extends View {
     private boolean touchAim;
     // GameCube layout: a drag on free area nudges the turn and looks up/down.
     private boolean gcLook;
+    // Beam and visor wheels replace the D-pad. F1 settings, re-read every draw.
+    private boolean wheels;
+    private boolean visorTapScan;
+    private int lastWheelMask;
+    // The open wheel (the WHEEL target's pointer), else -1.
+    private int wheelPointer = -1;
+    private float wheelCx;
+    private float wheelCy;
     // Tap the minimap to open the map; replaces the GameCube layout's Z pill. An
     // F1 setting, re-read every draw.
     private boolean mapTap;
@@ -200,6 +226,13 @@ final class TouchControlsView extends View {
     private static native boolean nativeTouchAimEnabled();
     private static native void nativeTouchAim(float dxDp, float dyDp);
     private static native void nativeTouchAimDown(boolean down);
+    private static native boolean nativeTouchWheelsEnabled();
+    private static native boolean nativeTouchVisorTapScan();
+    // Bits 0-3 visors owned, 4-7 beams owned, 8-9 current visor, 10-11 current
+    // beam, 12 valid (0 = no player: wheels disabled).
+    private static native int nativeWheelOwned();
+    private static native void nativeRequestVisor(int visor);
+    private static native void nativeRequestBeam(int beam);
     private static native boolean nativeTouchMapTapEnabled();
     // The minimap's screen rect as fractions of the view; false when not shown.
     private static native boolean nativeMinimapRect(float[] out4);
@@ -250,6 +283,13 @@ final class TouchControlsView extends View {
             // The overlay can open without this view hearing of it (a pad, or
             // MENU while the first frames are slow enough that a one-off
             // redraw ran before the toggle landed), so redraw on any change.
+            if (wheels) {
+                final int mask = nativeWheelOwned();
+                if (mask != lastWheelMask) {
+                    lastWheelMask = mask;
+                    invalidate();
+                }
+            }
             final boolean overlayVisible = nativeDebugOverlayVisible();
             if (overlayVisible != lastOverlayVisible) {
                 lastOverlayVisible = overlayVisible;
@@ -302,6 +342,8 @@ final class TouchControlsView extends View {
         final boolean aimOn = nativeTouchAimEnabled();
         touchAim = twinStickMode && aimOn;
         gcLook = !twinStickMode && aimOn;
+        wheels = nativeTouchWheelsEnabled();
+        visorTapScan = nativeTouchVisorTapScan();
         mapTap = nativeTouchMapTapEnabled();
         hideBounds.set(width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP),
                        height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP),
@@ -323,8 +365,15 @@ final class TouchControlsView extends View {
         for (ControlButton button : face) {
             drawButton(canvas, button, width, height);
         }
-        drawDpad(canvas, width, height);
+        if (wheels) {
+            drawWheelButtons(canvas, width, height);
+        } else {
+            drawDpad(canvas, width, height);
+        }
         drawEye(canvas, hideBounds);
+        if (wheels && wheelPointer != -1) {
+            drawWheel(canvas);
+        }
     }
 
     // A mouse is not a finger on the overlay. Its clicks are dispatched as
@@ -414,6 +463,9 @@ final class TouchControlsView extends View {
                     if (pan2Pointer == -1) {
                         updateMapPan(target, event, i);
                     }
+                } else if (target.type == WHEEL) {
+                    target.x = event.getX(i);
+                    target.y = event.getY(i);
                 } else if (target.type == MAP_TAP) {
                     target.x = event.getX(i);
                     target.y = event.getY(i);
@@ -561,7 +613,28 @@ final class TouchControlsView extends View {
                 return;
             }
         }
-        int dpadButton = dpadButtonAt(x, y, width, height);
+        if (wheels) {
+            final int wheel = wheelButtonAt(x, y, width, height);
+            if (wheel != -1) {
+                // Not while the map is open (the overlay is handled before this).
+                if (wheelPointer == -1 && !nativeMapScreenOpen() &&
+                    (nativeWheelOwned() & WHEEL_VALID_BIT) != 0) {
+                    TouchTarget target = new TouchTarget(WHEEL, wheel);
+                    target.x = x;
+                    target.y = y;
+                    target.startX = x;
+                    target.startY = y;
+                    target.startMs = SystemClock.uptimeMillis();
+                    final float r = dp(WHEEL_RADIUS_DP);
+                    wheelCx = Math.max(r, Math.min(width - r, x));
+                    wheelCy = Math.max(r, Math.min(height - r, y));
+                    wheelPointer = pointerId;
+                    targets.put(pointerId, target);
+                }
+                return;
+            }
+        }
+        int dpadButton = wheels ? -1 : dpadButtonAt(x, y, width, height);
         if (dpadButton != -1) {
             targets.put(pointerId, new TouchTarget(BUTTON, dpadButton));
             pressControl(dpadButton);
@@ -763,6 +836,11 @@ final class TouchControlsView extends View {
             performClick();
             return;
         }
+        if (target.type == WHEEL) {
+            wheelPointer = -1;
+            finishWheel(target);
+            return;
+        }
         if (target.type == MAP_TAP) {
             // A tap, not a drag that began on the minimap.
             final float slop = dp(MAP_TAP_SLOP_DP);
@@ -807,6 +885,10 @@ final class TouchControlsView extends View {
         // (fired on release only; a cancelled touch is no tap).
         if (target.type == AIM) {
             nativeTouchAimDown(false);
+            return;
+        }
+        if (target.type == WHEEL) {
+            wheelPointer = -1;
             return;
         }
         if (target.type == HIDE || target.type == MAP_TAP ||
@@ -1137,6 +1219,129 @@ final class TouchControlsView extends View {
         canvas.drawCircle(cx, cy, lid * 0.55f, fillPaint);
     }
 
+    // The Visor button's centre; the Beam button sits as far below the D-pad's.
+    private static float wheelButtonY(int wheel, float height) {
+        return (DPAD_Y + (wheel == 0 ? -WHEEL_BUTTON_DY : WHEEL_BUTTON_DY)) * height;
+    }
+
+    private static int wheelButtonAt(float x, float y, float width, float height) {
+        final float radius = WHEEL_BUTTON_RADIUS * height * 1.1f;
+        for (int wheel = 0; wheel < 2; ++wheel) {
+            final double dx = x - DPAD_X * width;
+            final double dy = y - wheelButtonY(wheel, height);
+            if (dx * dx + dy * dy <= radius * radius) {
+                return wheel;
+            }
+        }
+        return -1;
+    }
+
+    private void drawWheelButtons(Canvas canvas, float width, float height) {
+        final boolean enabled = (nativeWheelOwned() & WHEEL_VALID_BIT) != 0;
+        for (int wheel = 0; wheel < 2; ++wheel) {
+            final float cx = DPAD_X * width;
+            final float cy = wheelButtonY(wheel, height);
+            final float radius = WHEEL_BUTTON_RADIUS * height;
+            final boolean active = wheelPointer != -1 && wheelTarget() != null &&
+                                   wheelTarget().id == wheel;
+            fillPaint.setColor(active ? 0xCC48C8E8 : enabled ? 0x77081218 : 0x44081218);
+            strokePaint.setColor(active ? 0xFFE1F8FF : enabled ? 0xBBFFFFFF : 0x66FFFFFF);
+            canvas.drawCircle(cx, cy, radius, fillPaint);
+            canvas.drawCircle(cx, cy, radius, strokePaint);
+            textPaint.setAlpha(enabled ? 255 : 110);
+            drawCenteredLabel(canvas, WHEEL_BUTTON_LABELS[wheel], cx, cy, dp(13));
+            textPaint.setAlpha(255);
+        }
+    }
+
+    private TouchTarget wheelTarget() {
+        return wheelPointer == -1 ? null : targets.get(wheelPointer);
+    }
+
+    // The sector under (x, y) of the open wheel, or -1 inside the centre.
+    private int wheelSector(float x, float y) {
+        final float dx = x - wheelCx;
+        final float dy = y - wheelCy;
+        final float dead = dp(WHEEL_DEAD_DP);
+        if (dx * dx + dy * dy < dead * dead) {
+            return -1;
+        }
+        if (Math.abs(dx) > Math.abs(dy)) {
+            return dx > 0 ? 1 : 3;
+        }
+        return dy < 0 ? 0 : 2;
+    }
+
+    private static boolean wheelOwned(int mask, int wheel, int item) {
+        return (mask & (1 << (wheel * 4 + item))) != 0;
+    }
+
+    // The wheel opens over everything: four sectors, the one under the finger lit.
+    private void drawWheel(Canvas canvas) {
+        final TouchTarget target = wheelTarget();
+        if (target == null) {
+            return;
+        }
+        final int mask = nativeWheelOwned();
+        final int sector = wheelSector(target.x, target.y);
+        final float outer = dp(WHEEL_RADIUS_DP);
+        final float inner = dp(WHEEL_DEAD_DP);
+        final RectF oval = new RectF(wheelCx - outer, wheelCy - outer, wheelCx + outer,
+                                     wheelCy + outer);
+        final RectF hole = new RectF(wheelCx - inner, wheelCy - inner, wheelCx + inner,
+                                     wheelCy + inner);
+        final int currentIndex = target.id == 0 ? (mask >> 8) & 3 : (mask >> 10) & 3;
+        for (int i = 0; i < 4; ++i) {
+            final int item = WHEEL_ITEMS[target.id][i];
+            final boolean owned = wheelOwned(mask, target.id, item);
+            // Sector i is centred on up (-90), right (0), down (90), left (180).
+            final float start = -135f + 90f * i;
+            shapePath.reset();
+            shapePath.arcTo(oval, start, 90f, true);
+            shapePath.arcTo(hole, start + 90f, -90f, false);
+            shapePath.close();
+            final boolean lit = i == sector && owned;
+            fillPaint.setColor(lit ? 0xDD48C8E8 : owned ? 0xAA081218 : 0x66081218);
+            canvas.drawPath(shapePath, fillPaint);
+            strokePaint.setColor(item == currentIndex ? 0xFFE0C020 : 0xBBFFFFFF);
+            canvas.drawPath(shapePath, strokePaint);
+            final double mid = Math.toRadians(start + 45f);
+            final float labelR = (outer + inner) / 2f;
+            textPaint.setAlpha(owned ? 255 : 110);
+            drawCenteredLabel(canvas, WHEEL_LABELS[target.id][i],
+                              wheelCx + labelR * (float) Math.cos(mid),
+                              wheelCy + labelR * (float) Math.sin(mid), dp(12));
+            textPaint.setAlpha(255);
+        }
+    }
+
+    // A finger lifted off a wheel: a slide to an owned sector picks it; a quick
+    // tap on Visor picks Scan when the setting is on; the centre cancels.
+    private void finishWheel(TouchTarget target) {
+        final int mask = nativeWheelOwned();
+        if ((mask & WHEEL_VALID_BIT) == 0) {
+            return;
+        }
+        final int sector = wheelSector(target.x, target.y);
+        if (sector >= 0) {
+            final int item = WHEEL_ITEMS[target.id][sector];
+            if (wheelOwned(mask, target.id, item)) {
+                if (target.id == 0) {
+                    nativeRequestVisor(item);
+                } else {
+                    nativeRequestBeam(item);
+                }
+            }
+            return;
+        }
+        final boolean quick = SystemClock.uptimeMillis() - target.startMs < WHEEL_TAP_MS;
+        final boolean still = Math.hypot(target.x - target.startX, target.y - target.startY) <
+                              dp(MAP_TAP_SLOP_DP);
+        if (target.id == 0 && visorTapScan && quick && still && wheelOwned(mask, 0, 2)) {
+            nativeRequestVisor(2);
+        }
+    }
+
     private void drawCenteredLabel(Canvas canvas, String label, float x, float y, float size) {
         textPaint.setTextSize(size);
         canvas.drawText(label, x, y - (textPaint.ascent() + textPaint.descent()) / 2, textPaint);
@@ -1252,6 +1457,7 @@ final class TouchControlsView extends View {
         float y;
         float startX;
         float startY;
+        long startMs;
 
         TouchTarget(int type, int id) {
             this.type = type;

@@ -820,6 +820,34 @@ void CPlayer::UpdateMouseAim(CStateManager& mgr) {
   }
 }
 
+// port: what the touch overlay's beam and visor wheels read (see
+// PortDebug::SetWheelState for the bit layout).
+static void PublishWheelState(CStateManager& mgr) {
+  const CPlayerState* ps = mgr.GetPlayerState();
+  if (ps == nullptr) {
+    return;
+  }
+  static const CPlayerState::EItemType visorItems[4] = {
+      CPlayerState::kIT_CombatVisor, CPlayerState::kIT_XRayVisor, CPlayerState::kIT_ScanVisor,
+      CPlayerState::kIT_ThermalVisor};
+  static const CPlayerState::EItemType beamItems[4] = {
+      CPlayerState::kIT_PowerBeam, CPlayerState::kIT_IceBeam, CPlayerState::kIT_WaveBeam,
+      CPlayerState::kIT_PlasmaBeam};
+  uint mask = 1u << 12;
+  for (int i = 0; i < 4; ++i) {
+    if (ps->HasPowerUp(visorItems[i])) {
+      mask |= 1u << i;
+    }
+    if (ps->HasPowerUp(beamItems[i])) {
+      mask |= 1u << (4 + i);
+    }
+  }
+  mask |= (static_cast< uint >(ps->GetCurrentVisor()) & 3u) << 8;
+  const int beam = ps->GetCurrentBeam();
+  mask |= (static_cast< uint >(beam >= 0 && beam < 4 ? beam : 0) & 3u) << 10;
+  PortDebug::SetWheelState(mask);
+}
+
 // GameCube scheme only (neither mouse aim nor twin stick): a dragged finger
 // turns Samus by the distance and, while it is down, holds a free-look pitch
 // that eases back to level once it lifts.
@@ -1714,6 +1742,7 @@ void CPlayer::Think(float dt, CStateManager& mgr) {
   AdjustEyeOffset(mgr);
   UpdateEnvironmentDamageCameraShake(dt, mgr);
   UpdatePhazonDamage(dt, mgr);
+  PublishWheelState(mgr);
   if (!MouseControlsAllowed(mgr)) {
     UpdateTouchLook(dt, mgr);
     UpdateFreeLook(dt);

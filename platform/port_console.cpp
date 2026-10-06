@@ -490,6 +490,7 @@ void CmdHelp() {
   Out("give <item> [n]            add an item (name or number, see `items`)");
   Out("take <item> [n]            remove item capacity (drops a suit)");
   Out("items                      the player's inventory");
+  Out("visor <combat|xray|scan|thermal|0-3>, beam <power|ice|wave|plasma|0-3>  switch like the touch wheels");
   Out("heal                       refill health");
   Out("god [on|off]               the player takes no damage (no argument: show)");
   Out("memo <text>                show text as a HUD message");
@@ -1040,6 +1041,19 @@ void CmdHeal(CStateManager& mgr) {
   Finish();
 }
 
+// Picks go through PortDebug::RequestVisor/RequestBeam, the touch wheels' path:
+// ControlMapper reads them as the command's press, so the stock rules apply
+// (owned items only, not in the ball, ...). Names or numbers (EPlayerVisor /
+// EBeamId order).
+int ParseChoice(const char* const* names, const std::string& arg) {
+  for (int i = 0; i < 4; ++i) {
+    if (arg == names[i] || arg == std::to_string(i)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 void CmdVisor(CStateManager& mgr) {
   static const char* const kVisors[] = {"combat", "xray", "scan", "thermal"};
   CPlayerState& ps = *mgr.PlayerState();
@@ -1047,14 +1061,30 @@ void CmdVisor(CStateManager& mgr) {
     Out("visor %s", kVisors[ps.GetCurrentVisor()]);
     return Finish();
   }
-  const std::string arg = Lower(sCmd.args[1]);
-  for (int i = 0; i < 4; ++i) {
-    if (arg == kVisors[i]) {
-      ps.StartTransitionToVisor(static_cast< CPlayerState::EPlayerVisor >(i));
-      return Finish();
-    }
+  const int visor = ParseChoice(kVisors, Lower(sCmd.args[1]));
+  if (visor < 0) {
+    return Finish("usage: visor [combat|xray|scan|thermal|0-3]");
   }
-  Finish("usage: visor [combat|scan|thermal|xray]");
+  PortDebug::RequestVisor(visor);
+  Out("visor %s requested", kVisors[visor]);
+  Finish();
+}
+
+void CmdBeam(CStateManager& mgr) {
+  static const char* const kBeams[] = {"power", "ice", "wave", "plasma"};
+  CPlayerState& ps = *mgr.PlayerState();
+  if (sCmd.args.size() < 2) {
+    const int beam = ps.GetCurrentBeam();
+    Out("beam %s", beam >= 0 && beam < 4 ? kBeams[beam] : "?");
+    return Finish();
+  }
+  const int beam = ParseChoice(kBeams, Lower(sCmd.args[1]));
+  if (beam < 0) {
+    return Finish("usage: beam [power|ice|wave|plasma|0-3]");
+  }
+  PortDebug::RequestBeam(beam);
+  Out("beam %s requested", kBeams[beam]);
+  Finish();
 }
 
 void CmdGod() {
@@ -1676,7 +1706,7 @@ bool IsTickCommand(const std::string& name) {
   }
   static const char* const names[] = {"status", "areas", "objs", "obj", "send", "give",
                                       "take", "items", "heal", "god", "memo", "strg", "language", "tp", "room", "fx", "face", "look", "warp",
-                                      "tracker", "enter", "visor"};
+                                      "tracker", "enter", "visor", "beam"};
   for (const char* n : names) {
     if (name == n) {
       return true;
@@ -1710,6 +1740,8 @@ void RunTick(CStateManager& mgr) {
     CmdGod();
   } else if (name == "visor") {
     CmdVisor(mgr);
+  } else if (name == "beam") {
+    CmdBeam(mgr);
   } else if (name == "memo") {
     CmdMemo();
   } else if (name == "strg") {
