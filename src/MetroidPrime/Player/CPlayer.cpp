@@ -888,8 +888,21 @@ void CPlayer::UpdateTouchLook(float dt, CStateManager& mgr) {
   const float limit = gpTweakPlayer->GetVerticalFreeLookAngleVel();
   if (PortDebug::TouchAimDown()) {
     if (!mTouchLookActive) {
-      // Start from the angle free look already holds, so the view doesn't jump.
+      // Start from the camera's current pitch, as R does, so the view doesn't
+      // jump (it may still be easing back from the last drag).
+      CVector3f lookDir = cameras->GetFirstPersonCamera()->GetTransform().GetColumn(kDY);
+      CVector3f lookDirFlat = lookDir;
+      lookDirFlat.SetZ(0.f);
       mTouchLookPitch = x3ec_freeLookPitchAngle;
+      if (lookDirFlat.CanBeNormalized()) {
+        lookDirFlat.Normalize();
+        mTouchLookPitch = acosf(CMath::Limit(CVector3f::Dot(lookDir, lookDirFlat), 1.f));
+        if (lookDir.GetZ() < 0.f) {
+          mTouchLookPitch = -mTouchLookPitch;
+        }
+      }
+      x3e4_freeLookYawAngle = 0.f;
+      x3ec_freeLookPitchAngle = mTouchLookPitch;
       mTouchLookActive = true;
     }
     mTouchLookPitch = CMath::Clamp(-limit, mTouchLookPitch + dpitch, limit);
@@ -898,16 +911,14 @@ void CPlayer::UpdateTouchLook(float dt, CStateManager& mgr) {
     x3dc_inFreeLook = true;
     x3e0_curFreeLookCenteredTime = 0.f;
   } else if (mTouchLookActive) {
-    // Released: level out at the snap speed, as when R is let go.
+    // Released: leave free look at once, as when R is let go. The first-person
+    // camera levels the view out by itself; holding free look until it had
+    // done so kept Samus rooted for that long.
     mTouchLookPitch = 0.f;
+    mTouchLookActive = false;
     x3f0_vertFreeLookAngleVel = 0.f;
     x3de_lookAnalogHeld = false;
-    if (fabsf(x3ec_freeLookPitchAngle) < gpTweakPlayer->mFreeLookCenteredThresholdAngle) {
-      mTouchLookActive = false;
-    } else {
-      x3dc_inFreeLook = true;
-      x3e0_curFreeLookCenteredTime = 0.f;
-    }
+    x3dc_inFreeLook = false;
   }
 }
 
