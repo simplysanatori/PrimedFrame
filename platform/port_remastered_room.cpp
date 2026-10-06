@@ -3,6 +3,7 @@
 // A port of build/mpr/roomtools/envwrite.py (with roomlib.py, gcres.py and
 // ltpb.cpp). Everything read here is untrusted file content: every read is
 // bounds checked and a malformed file fails its room, never the process.
+#include "port_env.h"
 #include "port_remastered_room.h"
 
 #include <algorithm>
@@ -2843,7 +2844,7 @@ bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>&
   // missing block comes from the world's room whose copy has the most lit points.
   // MP_REMASTERED_GRID_NEIGHBOURS=0 turns this off.
   int borrowed = 0;
-  if (const char* env = std::getenv("MP_REMASTERED_GRID_NEIGHBOURS"); env == nullptr || env[0] != '0') {
+  if (port::EnvFlag("MP_REMASTERED_GRID_NEIGHBOURS", true)) {
     const auto key = [](const GridTexture& t) { return GridKey{int32_t(t.index), t.bx, t.by, t.bz}; };
     if (!m_gridOwnersReady) {
       m_gridOwnersReady = true;

@@ -1,5 +1,6 @@
 // Room environments at run time: which areas have one, their cubes on the GPU, and the
 // cube and ambient for a model. See port_room_env.h.
+#include "port_env.h"
 #include "port_room_env.h"
 
 #include "port_gci.h"
@@ -310,11 +311,6 @@ float HalfToFloat(uint16_t h) {
   return (h & 0x8000) != 0 ? -value : value;
 }
 
-float EnvFloat(const char* name, float fallback) {
-  const char* const text = std::getenv(name);
-  return text != nullptr && text[0] != '\0' ? float(std::atof(text)) : fallback;
-}
-
 void Free(Area& area) {
   // Before the file goes: the worker may be reading it.
   sWorker.Cancel(area.serial);
@@ -355,7 +351,7 @@ uint16_t FloatToHalf(float value) {
 // On the worker; false when cancelled.
 bool FillVolume(const File& file, const Grid& grid, std::vector<uint8_t>& texels, const std::atomic<bool>& cancel) {
   constexpr size_t kPoint = 24;
-  static const int kLayers = int(EnvFloat("MP_ROOM_ENV_FILL_LAYERS", 0.f));
+  static const int kLayers = int(port::EnvFloat("MP_ROOM_ENV_FILL_LAYERS", 0.f));
   const size_t sx = grid.size[0], sy = grid.size[1], sz = grid.size[2];
   const size_t count = sx * sy * sz;
   std::vector<uint8_t> points(file.data.begin() + grid.offset, file.data.begin() + grid.offset + count * kPoint);
@@ -1193,8 +1189,7 @@ void UpdateFrame(bool roomGeoDrawing) {
     SendBrdfLut();
   }
   if (sBombTint < 0) {
-    const char* const env = std::getenv("MP_REMASTERED_BOMB_TINT");
-    sBombTint = env != nullptr && env[0] == '0' ? 0 : 1;
+    sBombTint = port::EnvFlag("MP_REMASTERED_BOMB_TINT", true) ? 1 : 0;
   }
   PowerBombBakedLight(sBombTint != 0 ? sPowerBombTime : -1.f, sBakedLight);
   GXSetPBRBakedLightModulation(sBakedLight);
@@ -1312,8 +1307,7 @@ float FrameExposure() { return sFrame.exposure; }
 
 float GlowScale() {
   if (sStatic < 0) {
-    const char* const env = std::getenv("MP_ROOM_ENV_STATIC_EXPOSURE");
-    sStatic = env != nullptr && env[0] == '0' ? 0 : 1;
+    sStatic = port::EnvFlag("MP_ROOM_ENV_STATIC_EXPOSURE", true) ? 1 : 0;
   }
   if (sStatic == 0 || !sFrame.hasTone || !Enabled() || !RoomExposed()) {
     return 1.f;
@@ -1337,10 +1331,7 @@ float SkyGain() {
 float GlowGain(bool frameExposed) {
   // Before Remastered's exposure was applied the converter folded 0.10 into the glow.
   constexpr float kFallback = 0.10f;
-  static const bool sOff = [] {
-    const char* const env = std::getenv("MP_REMASTERED_GLOW_EXPOSURE");
-    return env != nullptr && env[0] == '0';
-  }();
+  static const bool sOff = !port::EnvFlag("MP_REMASTERED_GLOW_EXPOSURE", true);
   if (sOff || !sFrame.hasTone || !Enabled() || !RoomExposed()) {
     return kFallback;
   }
@@ -1359,8 +1350,7 @@ bool StaticExposure() {
 
 bool AreaLights() {
   if (sAreaLights < 0) {
-    const char* const env = std::getenv("MP_ROOM_ENV_AREA_LIGHTS");
-    sAreaLights = env != nullptr && env[0] == '1' ? 1 : 0;
+    sAreaLights = port::EnvFlag("MP_ROOM_ENV_AREA_LIGHTS") ? 1 : 0;
   }
   return sAreaLights != 0;
 }
@@ -1369,8 +1359,7 @@ void SetAreaLights(bool on) { sAreaLights = on ? 1 : 0; }
 
 bool AutoExposure() {
   if (sAuto < 0) {
-    const char* const env = std::getenv("MP_ROOM_ENV_AUTO_EXPOSURE");
-    sAuto = env != nullptr && env[0] == '0' ? 0 : 1;
+    sAuto = port::EnvFlag("MP_ROOM_ENV_AUTO_EXPOSURE", true) ? 1 : 0;
   }
   return sAuto != 0;
 }
@@ -1379,8 +1368,7 @@ void SetAutoExposure(bool on) { sAuto = on ? 1 : 0; }
 
 bool BloomEnabled() {
   if (sBloom < 0) {
-    const char* const env = std::getenv("MP_BLOOM");
-    sBloom = env != nullptr && env[0] == '0' ? 0 : 1;
+    sBloom = port::EnvFlag("MP_BLOOM", true) ? 1 : 0;
   }
   return sBloom != 0;
 }
@@ -1407,8 +1395,7 @@ bool Bloom(float& threshold, float tints[5][3]) {
 
 bool ColorGradeEnabled() {
   if (sGrade < 0) {
-    const char* const env = std::getenv("MP_COLOR_GRADE");
-    sGrade = env != nullptr && env[0] == '0' ? 0 : 1;
+    sGrade = port::EnvFlag("MP_COLOR_GRADE", true) ? 1 : 0;
   }
   return sGrade != 0;
 }
@@ -1647,8 +1634,7 @@ FogCore BlendFog(const FogCore& a, const FogCore& b, float t) {
 
 bool VolFogEnabled() {
   if (sVolFog < 0) {
-    const char* const env = std::getenv("MP_VOLFOG");
-    sVolFog = env != nullptr && env[0] == '0' ? 0 : 1;
+    sVolFog = port::EnvFlag("MP_VOLFOG", true) ? 1 : 0;
   }
   return sVolFog != 0;
 }
@@ -1978,8 +1964,7 @@ void SetViewArea(uint32_t mrea) {
 
 bool ProbeBlend() {
   if (sBlend.enabled < 0) {
-    const char* const env = std::getenv("MP_ROOM_ENV_BLEND");
-    sBlend.enabled = env != nullptr && env[0] == '0' ? 0 : 1;
+    sBlend.enabled = port::EnvFlag("MP_ROOM_ENV_BLEND", true) ? 1 : 0;
   }
   return sBlend.enabled != 0;
 }
@@ -2006,8 +1991,7 @@ void BakedLightModulation(float rgb[3]) {
 
 bool VolumesEnabled() {
   if (sVolumes < 0) {
-    const char* const env = std::getenv("MP_ROOM_ENV_VOLUME");
-    sVolumes = env != nullptr && env[0] == '0' ? 0 : 1;
+    sVolumes = port::EnvFlag("MP_ROOM_ENV_VOLUME", true) ? 1 : 0;
   }
   return sVolumes != 0;
 }
@@ -2019,7 +2003,7 @@ void SetVolumesEnabled(bool on) {
 
 float AmbientScale() {
   if (sAmbientScale < 0.f) {
-    sAmbientScale = std::max(EnvFloat("MP_ROOM_ENV_AMBIENT", 1.f), 0.f);
+    sAmbientScale = std::max(port::EnvFloat("MP_ROOM_ENV_AMBIENT", 1.f), 0.f);
   }
   return sAmbientScale;
 }
@@ -2031,7 +2015,7 @@ void SetAmbientScale(float scale) {
 
 int VolumeView() {
   if (sVolumeView < 0.f) {
-    sVolumeView = std::max(EnvFloat("MP_ROOM_ENV_VOLUME_SHOW", 0.f), 0.f);
+    sVolumeView = std::max(port::EnvFloat("MP_ROOM_ENV_VOLUME_SHOW", 0.f), 0.f);
   }
   return static_cast<int>(sVolumeView);
 }
@@ -2043,16 +2027,14 @@ void SetVolumeView(int view) {
 
 bool Enabled() {
   if (sEnabled < 0) {
-    const char* const env = std::getenv("MP_ROOM_ENV");
-    sEnabled = env != nullptr && env[0] == '0' ? 0 : 1;
+    sEnabled = port::EnvFlag("MP_ROOM_ENV", true) ? 1 : 0;
   }
   return sEnabled != 0;
 }
 
 bool RoomExposed() {
   if (sExposure < 0) {
-    const char* const env = std::getenv("MP_ROOM_ENV_EXPOSURE");
-    sExposure = env != nullptr && env[0] == '0' ? 0 : 1;
+    sExposure = port::EnvFlag("MP_ROOM_ENV_EXPOSURE", true) ? 1 : 0;
   }
   return sExposure != 0;
 }
@@ -2309,11 +2291,11 @@ void Locate(const float pos[3], Located& out) {
 
 // The Selection for what Locate found, at the frame's exposure and the settings now.
 bool Compose(const Located& located, Selection& out) {
-  static const float gain = EnvFloat("MP_ROOM_ENV_GAIN", 1.f);
+  static const float gain = port::EnvFloat("MP_ROOM_ENV_GAIN", 1.f);
   // The mip a reflection is read from is the cube's own top one, as Remastered's is; the
   // variable only lowers it (PortRoomEnvLod::CubeLod).
-  static const float lod = EnvFloat("MP_ROOM_ENV_LOD", PortRoomEnvLod::kNoCap);
-  static const float volumeBias = EnvFloat("MP_ROOM_ENV_VOLUME_BIAS", 0.f);
+  static const float lod = port::EnvFloat("MP_ROOM_ENV_LOD", PortRoomEnvLod::kNoCap);
+  static const float volumeBias = port::EnvFloat("MP_ROOM_ENV_VOLUME_BIAS", 0.f);
   const float ambient = AmbientScale();
   const float grey = 0.18f * gain;
   out = {};

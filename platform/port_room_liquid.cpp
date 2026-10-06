@@ -1,5 +1,6 @@
 // Liquid surfaces at run time: which areas have a file, their meshes and models, and the
 // draw. See port_room_liquid.h.
+#include "port_env.h"
 #include "port_room_liquid.h"
 
 #include "port_gci.h"
@@ -690,8 +691,7 @@ void SetEnabled(bool enabled) {
 
 bool Enabled() {
   if (sEnabled < 0) {
-    const char* const env = std::getenv("MP_ROOM_LIQUID");
-    sEnabled = env != nullptr && env[0] == '0' ? 0 : 1;
+    sEnabled = port::EnvFlag("MP_ROOM_LIQUID", true) ? 1 : 0;
   }
   return sEnabled != 0;
 }

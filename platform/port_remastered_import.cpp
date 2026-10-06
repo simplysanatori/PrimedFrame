@@ -1,3 +1,4 @@
+#include "port_env.h"
 #include "port_remastered_import.h"
 
 #include <algorithm>
@@ -226,20 +227,17 @@ void Finish(bool ok, const std::string& message) {
 
 // MP_REMASTERED_TEXT=0 leaves the disc's wording alone.
 bool WantsText() {
-  const char* env = std::getenv("MP_REMASTERED_TEXT");
-  return env == nullptr || std::strcmp(env, "0") != 0;
+  return port::EnvFlag("MP_REMASTERED_TEXT", true);
 }
 
 // MP_REMASTERED_HUD=0 leaves the disc's HUD alone.
 bool WantsHud() {
-  const char* env = std::getenv("MP_REMASTERED_HUD");
-  return env == nullptr || std::strcmp(env, "0") != 0;
+  return port::EnvFlag("MP_REMASTERED_HUD", true);
 }
 
 // MP_REMASTERED_GALLERY=0 leaves the Extras gallery out.
 bool WantsGallery() {
-  const char* env = std::getenv("MP_REMASTERED_GALLERY");
-  return env == nullptr || std::strcmp(env, "0") != 0;
+  return port::EnvFlag("MP_REMASTERED_GALLERY", true);
 }
 
 // MP_REMASTERED_MOVIES=0 leaves the disc's movies alone; a size and rate
@@ -264,8 +262,7 @@ bool WantsMovies(MovieFormat& format) {
 std::atomic<bool> sReuse{true};
 
 bool WantsReuse() {
-  const char* env = std::getenv("MP_REMASTERED_REUSE");
-  return sReuse.load() && (env == nullptr || std::strcmp(env, "0") != 0);
+  return sReuse.load() && port::EnvFlag("MP_REMASTERED_REUSE", true);
 }
 
 // What a stage of an import made, written to kManifestName in the mod: a re-import whose stage
@@ -1553,7 +1550,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     io.retail = [&](uint32_t type, uint32_t id, std::vector<uint8_t>& out) { return retail.Read(type, id, out); };
     io.retailId = [&](uint32_t id) { return retail.HasId(id); };
     // MP_REMASTERED_JOINTS=1: the models' skin log (joint to bone) on stderr.
-    if (const char* env = std::getenv("MP_REMASTERED_JOINTS"); env != nullptr && env[0] == '1') {
+    if (port::EnvFlag("MP_REMASTERED_JOINTS")) {
       io.log = [&](const std::string& line) {
         std::lock_guard<std::mutex> lock(reportMutex);
         std::fprintf(stderr, "%s\n", line.c_str());

@@ -13,6 +13,7 @@
 #include <dolphin/vi.h>
 #include <dolphin/dvd.h>
 
+#include "port_env.h"
 #include "port_embedded.h"
 #include "port_crash.h"
 #include "port_debug.h"
@@ -343,7 +344,7 @@ std::string DescribeUnsupportedDisc(const DVDDiskID* id) {
 // the disc dialog is; the answer is then offerPick, which is what happened
 // before the box had a choice.
 bool AskPickDisc(const char* title, const std::string& message, const char* pickLabel, bool offerPick) {
-    if (const char* env = std::getenv("MP_NO_DISC_DIALOG"); env != nullptr && env[0] == '1') {
+    if (port::EnvFlag("MP_NO_DISC_DIALOG")) {
         return offerPick;
     }
     int windowCount = 0;
@@ -572,7 +573,7 @@ std::string AskForDiscImage(bool* cancelled = nullptr) {
         {"Metroid Prime disc image (iso, gcm, rvz, wbfs, ciso, nkit)", "iso;gcm;rvz;wbfs;ciso;nkit"},
         {"All files", "*"},
     };
-    if (const char* env = std::getenv("MP_NO_DISC_DIALOG"); env != nullptr && env[0] == '1') {
+    if (port::EnvFlag("MP_NO_DISC_DIALOG")) {
         // For scripted runs with a window, such as the packaged startup check
         // on a build runner, where the dialog would sit open until it times out.
         PortLog::Write( "metroid_prime_port: not asking for a disc image (MP_NO_DISC_DIALOG)\n");
@@ -744,8 +745,7 @@ int main(int argc, char** argv) {
 #endif
     // The file log starts first so it holds everything after it, build id included.
     {
-        const char* e = std::getenv("MP_LOG_FILE");
-        const bool logFile = e != nullptr ? e[0] != '\0' && std::strcmp(e, "0") != 0 : PortDebug::LogFile();
+        const bool logFile = port::EnvFlag("MP_LOG_FILE", PortDebug::LogFile());
         if (logFile && !PortLogFile::Start()) {
             PortLog::Write("port: cannot write the log to %s\n", PortLogFile::Path().c_str());
         }
@@ -762,8 +762,7 @@ int main(int argc, char** argv) {
     const bool widescreen = PortDebug::AspectMode() != PortDebug::kAspect_4_3;
     // MP_DUMP_TEXTURES=1 writes every source texture to
     // <cachePath>/texture_dumps as DDS, so replacement packs can be authored.
-    const char* dumpEnv = std::getenv("MP_DUMP_TEXTURES");
-    const bool dumpTextures = dumpEnv != nullptr && dumpEnv[0] != '\0' && std::strcmp(dumpEnv, "0") != 0;
+    const bool dumpTextures = port::EnvFlag("MP_DUMP_TEXTURES");
     std::string resourcesPath;
 #if defined(__ANDROID__)
     if (char* pref = SDL_GetPrefPath(nullptr, "Metroid Prime")) {
@@ -791,12 +790,12 @@ int main(int argc, char** argv) {
     const bool roomGeometry = PortMods::HasRoomGeometry();
     uint32_t mem1Size = MEM1_DEFAULT_SIZE;
     {
-        const char* e = std::getenv("MP_MEM1_MB");
-        const unsigned long mb = e != nullptr ? std::strtoul(e, nullptr, 10) : roomGeometry ? kRoomGeoMem1MB : 0;
+        const int envMb = port::EnvInt("MP_MEM1_MB", -1);
+        const unsigned long mb = envMb >= 0 ? static_cast<unsigned long>(envMb) : roomGeometry ? kRoomGeoMem1MB : 0;
         if (mb > MEM1_DEFAULT_SIZE / (1024 * 1024)) {
             mem1Size = static_cast<uint32_t>(std::min(mb, 1024UL) * 1024 * 1024);
             PortLog::Write("port: MEM1 arena raised to %u MB (%s)\n", mem1Size / (1024 * 1024),
-                           e != nullptr ? "MP_MEM1_MB" : "room geometry");
+                           envMb >= 0 ? "MP_MEM1_MB" : "room geometry");
         }
     }
     // With room_geo_resident (or MP_ROOM_GEO_RESIDENT=1), a room geometry mod's models stay on
@@ -810,22 +809,21 @@ int main(int argc, char** argv) {
 #endif
     const unsigned long kResidentFrameBuffers = 2;
     bool resident = roomGeometry && PortDebug::RoomGeoResidentAtStartup();
-    if (const char* e = std::getenv("MP_ROOM_GEO_RESIDENT")) {
-        resident = roomGeometry && e[0] == '1';
-    }
+    resident = roomGeometry && port::EnvFlag("MP_ROOM_GEO_RESIDENT", resident);
     uint32_t residentMiB = 0;
     if (resident) {
-        const char* e = std::getenv("MP_ROOM_GEO_RESIDENT_MB");
+        const int envMiB = port::EnvInt("MP_ROOM_GEO_RESIDENT_MB", -1);
         residentMiB = static_cast<uint32_t>(
-            e != nullptr ? std::clamp(std::strtoul(e, nullptr, 10), 16UL, 2048UL) : kResidentMiB);
+            envMiB >= 0 ? std::clamp(static_cast<unsigned long>(envMiB), 16UL, 2048UL) : kResidentMiB);
     }
     uint32_t frameBufferScale = !roomGeometry ? 1 : resident ? kResidentFrameBuffers : kRoomGeoFrameBuffers;
-    if (const char* e = std::getenv("MP_FRAME_BUFFERS")) {
-        frameBufferScale = static_cast<uint32_t>(std::clamp(std::strtoul(e, nullptr, 10), 1UL, 16UL));
+    const int envFrameBuffers = port::EnvInt("MP_FRAME_BUFFERS", -1);
+    if (envFrameBuffers >= 0) {
+        frameBufferScale = static_cast<uint32_t>(std::clamp(static_cast<unsigned long>(envFrameBuffers), 1UL, 16UL));
     }
     if (frameBufferScale > 1) {
         PortLog::Write("port: frame buffers at %ux (%s)\n", frameBufferScale,
-                       std::getenv("MP_FRAME_BUFFERS") != nullptr ? "MP_FRAME_BUFFERS" : "room geometry");
+                       envFrameBuffers >= 0 ? "MP_FRAME_BUFFERS" : "room geometry");
     }
     // Settings, mods, save states and the shader caches sit in user/ beside the
     // executable when that folder can be written to (port_paths.h).
