@@ -457,6 +457,45 @@ void ForgetDisc(const std::string& path) {
     }
 }
 
+// A read of the image that fails mid-game (damage the mount check missed)
+// ends the session, and the same image would end every later one. So the
+// failure is noted in a file naming the image, and the next launch refuses
+// that image and asks for another.
+std::string DiscReadFailedMarker() {
+    return PortPaths::UserFolder().empty() ? std::string() : PortPaths::UserFolder() + "disc-read-failed";
+}
+
+std::string s_mountedDisc;
+
+void NoteDiscReadFailure() {
+    PortLog::Write("metroid_prime_port: a read of the disc image failed\n");
+    const std::string marker = DiscReadFailedMarker();
+    if (marker.empty()) {
+        return;
+    }
+    if (FILE* file = std::fopen(marker.c_str(), "wb"); file != nullptr) {
+        std::fputs(s_mountedDisc.c_str(), file);
+        std::fclose(file);
+    }
+}
+
+// Whether the last session failed to read this image. Clears the note.
+bool DiscReadFailedLastTime(const std::string& path) {
+    const std::string marker = DiscReadFailedMarker();
+    if (marker.empty()) {
+        return false;
+    }
+    std::ifstream in(marker, std::ios::binary);
+    if (!in) {
+        return false;
+    }
+    const std::string failed((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    std::error_code ec;
+    std::filesystem::remove(marker, ec);
+    return failed == path;
+}
+
 #if defined(__ANDROID__)
 // Android's picker hands back a content:// URI, not a path. Opening one is
 // possible (SDL routes SDL_IOFromFile through ContentResolver) but it depends
@@ -1126,6 +1165,11 @@ int main(int argc, char** argv) {
             problem = DescribeUnsupportedDisc(DVDGetCurrentDiskID());
             PortLog::Write("metroid_prime_port: unsupported disc: %s Expected GM8E01 revision 0.\n", problem.c_str());
             aurora_dvd_close();
+        } else if (DiscReadFailedLastTime(discImage)) {
+            PortLog::Write("metroid_prime_port: refused the disc image: a read of it failed last session\n");
+            problem = "Part of this disc image couldn't be read last time, so it's damaged.\n"
+                      "Copy the file again, or check it in Dolphin (Properties > Verify).";
+            aurora_dvd_close();
         } else if (const std::string unreadable = FindUnreadableDiscFile(); !unreadable.empty()) {
             PortLog::Write("metroid_prime_port: disc image is incomplete: %s can't be read\n", unreadable.c_str());
             problem = "This disc image is incomplete or damaged: part of it (" + unreadable +
@@ -1153,6 +1197,8 @@ int main(int argc, char** argv) {
         discPath = discImage.c_str();
     }
     std::printf("metroid_prime_port: disc mounted: %s\n", discPath);
+    s_mountedDisc = discImage;
+    aurora_dvd_set_read_error_callback(NoteDiscReadFailure);
     // A Remastered import finished in the last session becomes the mod now,
     // before anything has a file of the old one open.
     if (PortRemastered::ApplyPendingImport()) {

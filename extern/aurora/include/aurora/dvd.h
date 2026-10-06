@@ -143,6 +143,13 @@ void aurora_dvd_base_close(void* handle);
 /** \brief Disc offset of a base file's data, or -1 for directories and invalid EntryNums. */
 int64_t aurora_dvd_base_offset(s32 entrynum);
 
+/**
+ * \brief Called the first time a read of the disc image itself fails (overlay files don't count).
+ *
+ * Runs on whichever thread did the read, so it must be thread safe. Pass null to remove it.
+ */
+void aurora_dvd_set_read_error_callback(void (*callback)(void));
+
 #ifdef __cplusplus
 }
 #endif
