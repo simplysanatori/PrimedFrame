@@ -176,9 +176,10 @@ CCubeMaterial CCubeModel::GetMaterialByIndex(const int idx) const {
 // diffuse and F0 factors of a back-facing copy, see GXSetPBRLightScale) and 'PBR6', or those
 // and one more big-endian word (the file id of the material's own reflection cube) and
 // 'PBR7'. A material without one gets the neutral values. A converted TEV material may end
-// in the wrap word alone and 'WRAP' (no floats).
+// in the wrap word alone and 'WRAP' (no floats). A kind 14 record carries a trailer after
+// any of these: 32 floats (the boundary shield's CCH0..CCH6 and DIFC) and 'PBR8'.
 int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap,
-                                    f32 lightScale[2], uint* cube) const {
+                                    f32 lightScale[2], uint* cube, f32* shield) const {
   const uchar* table = static_cast< const uchar* >(x0_instance.GetMaterialPointer()) +
                        (x1c_textures->size() + 1) * 4;
   const uint count = CBasics::SwapBytes(*reinterpret_cast< const uint* >(table));
@@ -188,7 +189,7 @@ int CCubeModel::PortReadPBRMaterial(const int idx, f32 values[19], uint* wrap,
   uint32_t wrapWord;
   uint32_t cubeId;
   const int floats = PortPbrRecord::Read(table + count * 4 + end, end - begin, values, &wrapWord,
-                                         lightScale, &cubeId);
+                                         lightScale, &cubeId, shield);
   if (wrap != nullptr) {
     *wrap = wrapWord;
   }
@@ -413,7 +414,8 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
                                    const bool frameExposed, uint* cube) const {
   f32 values[19];
   f32 lightScale[2];
-  PortReadPBRMaterial(idx, values, nullptr, lightScale, cube);
+  f32 shield[32];
+  PortReadPBRMaterial(idx, values, nullptr, lightScale, cube, shield);
   const f32 kind = values[13];
   if (sPortGlows) {
     values[0] = sPortGlow[0];
@@ -462,11 +464,14 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
   }
   // A liquid's surface (kinds 5 and 6) moves: its first parameter is a rate, and the
   // shader gets the phase. So do falling water (kind 7), the beam glow (9) and the
-  // Waste Disposal tank's distortion (11); glass (8) does not move.
+  // Waste Disposal tank's distortion (11) and the Frigate's force fields (14); glass (8) does not
+  // move.
   if ((values[13] > 4.5f && values[13] < 7.5f) || (values[13] > 8.5f && values[13] < 9.5f) ||
-      (values[13] > 10.5f && values[13] < 11.5f)) {
+      (values[13] > 10.5f && values[13] < 11.5f) || (values[13] > 13.5f && values[13] < 14.5f)) {
     values[15] *= CGraphics::GetSecondsMod900();
   }
+  // Only the boundary shield has constants; every other material clears the last one's.
+  GXSetPBRShield(kind > 13.5f && kind < 14.5f ? reinterpret_cast< const f32(*)[4] >(shield) : nullptr);
   // World up as the shader sees it: view space is right, up, -forward.
   const CTransform4f& view = CGraphics::GetViewMatrix();
   const f32 up[3] = {view.Get20(), view.Get22(), -view.Get21()};
@@ -702,9 +707,9 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       GXSetPBRProbeEx(viewToCube, 1.f, 1.f, 1.f);
       GXSetPBRCube(materialCubeId, materialCubeParams);
     }
-    // Glass (kinds 8 and 11) sees what is behind it: the screen so far, copied into map 7
-    // as the refracting particles copy it (CElementGen).
-    if (((kind > 7.5f && kind < 8.5f) || (kind > 10.5f && kind < 11.5f)) &&
+    // Glass (kinds 8 and 11) and the force fields (14) see what is behind them: the screen so far,
+    // copied into map 7 as the refracting particles copy it (CElementGen).
+    if (((kind > 7.5f && kind < 8.5f) || (kind > 10.5f && kind < 11.5f) || (kind > 13.5f && kind < 14.5f)) &&
         CCubeMaterial::PortScreenCopyUsed()) {
       int portLeft, portTop, portWidth, portHeight;
       CGraphics::GetViewport(portLeft, portTop, portWidth, portHeight);

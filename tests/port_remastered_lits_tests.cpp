@@ -7,6 +7,7 @@
 #include "port_pbr_record.h"
 #include "port_remastered_convert.h"
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -84,6 +85,24 @@ void TestReader() {
     Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s, &cube) == 19, "PBR7 holds 19 floats");
     Check(v[18] == 19.f && wrap == 0x11223344 && s[0] == 0.4f && s[1] == 0.5f, "PBR7 reads as PBR6 before the cube");
     Check(cube == 0xCAFEF00D, "PBR7 cube id");
+  }
+  {  // 'PBR8': 32 shield floats and the tag after any record; the rest reads as before.
+    std::vector<uint8_t> r = Record(19, true, true, "PBR6", 0.4f, 0.5f);
+    for (int i = 0; i < 32; ++i) {
+      PutBe(r, std::bit_cast<uint32_t>(100.f + float(i)));
+    }
+    r.insert(r.end(), {'P', 'B', 'R', '8'});
+    float shield[32] = {};
+    uint32_t cube = 0;
+    Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s, &cube, shield) == 19, "PBR8 holds 19 floats");
+    Check(v[18] == 19.f && wrap == 0x11223344 && s[0] == 0.4f && s[1] == 0.5f, "PBR8 reads the record before it");
+    Check(shield[0] == 100.f && shield[31] == 131.f, "PBR8 shield floats");
+    Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s) == 19, "PBR8 reads without a shield out");
+    const std::vector<uint8_t> plain = Record(19, true, true, "PBR6", 0.4f, 0.5f);
+    shield[5] = 9.f;
+    Check(PortPbrRecord::Read(plain.data() + plain.size(), plain.size(), v, &wrap, s, nullptr, shield) == 19 &&
+              shield[5] == 0.f,
+          "a record with no PBR8 clears the shield floats");
   }
   struct Old {
     int floats;

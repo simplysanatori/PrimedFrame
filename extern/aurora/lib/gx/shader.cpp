@@ -1396,6 +1396,80 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_mrim = clamp(1.0 - pow(abs(pbr_n.z), max(ubuf.pbr_param.x, 1e-3)) - ubuf.pbr_param.w, 0.0, 1.0);
           pbr_glow += pbr_mrim * pbr_vraw.rgb * ubuf.pbr_param.y;
       })""";
+    // Kind 14, Remastered's BoundaryShield_Ship1_DX11 (the Frigate's force fields), permutation
+    // 002_0. Its constants are GXSetPBRShield's rows: CCH0..CCH6, then DIFC. Map 0 is BCLR, map 4
+    // TCH0 (the field's pattern) and map 5 TCH1 (a noise), each at its own UV set. pbr_param.x is
+    // the time. Unlit and alpha-blended: the glow takes the room's exposure itself (it is
+    // added to the tone curve's input), and the screen behind (map 7), bent by the noise,
+    // comes through pbr_pass.
+    if (screen && mapStage[5] != -1) {
+      liquid += fmt::format(R"""(
+      if (pbr_kind > 13.5 && pbr_kind < 14.5) {{
+          let pbr_c0 = ubuf.pbr_shield[0];
+          let pbr_c1 = ubuf.pbr_shield[1];
+          let pbr_c2 = ubuf.pbr_shield[2];
+          let pbr_c3 = ubuf.pbr_shield[3];
+          let pbr_c4 = ubuf.pbr_shield[4];
+          let pbr_c5 = ubuf.pbr_shield[5];
+          let pbr_c6 = ubuf.pbr_shield[6];
+          let pbr_df = ubuf.pbr_shield[7];
+          let pbr_sb = {4};
+          let pbr_uvm = tex{1}_uv;
+          let pbr_uvg = tex{3}_uv;
+          let pbr_m1 = dpdx(pbr_uvm);
+          let pbr_m2 = dpdy(pbr_uvm);
+          let pbr_g1 = dpdx(pbr_uvg);
+          let pbr_g2 = dpdy(pbr_uvg);
+          let pbr_t = ubuf.pbr_param.x;
+          let pbr_sT = pbr_t * pbr_c3.y;
+          let pbr_sq = vec2f((pbr_sT + pbr_sb.x) % 0.45, (pbr_sT + pbr_sb.y) % 0.45);
+          let pbr_sm = mix(pbr_sb.x, pbr_sb.y, pbr_c3.x);
+          let pbr_sn = textureSampleGrad(tex{2}, tex{2}_samp,
+                                         vec2f(pbr_uvg.x + 0.1 * pbr_sq.x * pbr_c1.y * pbr_vraw.a + pbr_t * pbr_c5.z,
+                                               pbr_uvg.y + 0.1 * pbr_sq.y * pbr_c1.y * pbr_vraw.a) * pbr_c5.w,
+                                         pbr_g1 * pbr_c5.w, pbr_g2 * pbr_c5.w).x;
+          let pbr_sk = mix(pbr_sn, 1.0 - pbr_sn, pbr_c6.w);
+          let pbr_sr = 2.0 * pbr_sk * (pbr_uvm - 0.5);
+          let pbr_sa = textureSampleGrad(tex{0}, tex{0}_samp,
+                                         pbr_uvm + pbr_sm + fract(0.1 * pbr_sT - pbr_sb.z), pbr_m1, pbr_m2).x;
+          let pbr_sbw = textureSampleGrad(tex{0}, tex{0}_samp,
+                                          pbr_uvm + pbr_sm + fract(1.25 * pbr_sT - pbr_sb.z), pbr_m1, pbr_m2).w;
+          let pbr_s2 = textureSampleGrad(tex{0}, tex{0}_samp,
+                                         pbr_uvm + 0.1 * pbr_vraw.a * (pbr_sq * pbr_c1.z + pbr_sr * pbr_c6.x),
+                                         pbr_m1, pbr_m2);
+          let pbr_sp = pow(clamp(pbr_sa - 0.1, 0.0, 1.0), 2.0);
+          let pbr_sc = pbr_s2.w * clamp(pbr_sbw - 0.1, 0.0, 1.0);
+          let pbr_tri = abs(1.0 - 2.0 * fract(pbr_t * pbr_c3.z));
+          let pbr_sg = 1.5 * pbr_sb.w * mix(pbr_sp * pbr_sc, pbr_sp + pbr_sc, pbr_tri);
+          let pbr_g1c = clamp(pbr_sg, 0.0, 1.0);
+          let pbr_pulse = 0.5 + 0.5 * sin(pbr_t * pbr_c3.w);
+          let pbr_colg = 0.5 * pbr_c0.rgb + (pbr_sg * pbr_c0.rgb - 0.5 * pbr_c0.rgb) * pbr_g1c;
+          let pbr_kf = 1.0 - pbr_c5.x * (1.0 - pbr_sk);
+          let pbr_sal = clamp(pbr_sb.x * pbr_sb.w + 2.0 * pbr_c5.x * pbr_df.w - 1.0, 0.0, 1.0);
+          let pbr_sw = 0.5 * max(min(pbr_g1c, pbr_c4.w), pbr_c4.z) + max(pbr_kf, pbr_c4.z);
+          let pbr_sw2 = mix(pbr_sw, pbr_c4.w, pbr_s2.y);
+          let pbr_sl = pbr_kf * pbr_c0.rgb * pbr_c5.y + pbr_pulse * pbr_s2.z * pbr_c2.rgb * pbr_c2.w +
+                       pbr_s2.y * pbr_c0.rgb * pbr_c1.w +
+                       (2.0 - pbr_df.x) * pbr_g1c * pbr_colg * (1.0 + 9.0 * pbr_s2.y) * pbr_c0.w + pbr_c1.x * pbr_c2.rgb;
+          var pbr_sx = 1.0;
+          if (ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0) {{
+              pbr_sx = ubuf.pbr_tone[0].w;
+          }}
+          let pbr_sd = min(1.0 / max(length(in.pbr_pos), 1e-3), 1.0);
+          let pbr_suv = in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5 +
+                        pbr_vraw.a * pbr_sd * vec2f(pbr_sq.x * pbr_c4.y + pbr_sr.x * pbr_c6.y,
+                                                    -(pbr_sq.y * pbr_c4.y - pbr_sr.y * pbr_c6.y) + 0.75);
+          let pbr_sfb = textureSampleLevel(tex7, tex7_samp, clamp(pbr_suv, vec2f(0.0), vec2f(1.0)), 0.0).rgb;
+          pbr_alpha = pbr_sal * pbr_c4.w;
+          pbr_lo = vec3f(0.0);
+          pbr_glow = pbr_sl * ((10.0 - 9.0 * pbr_sal) * pbr_sx * pbr_sw2);
+          pbr_pass = pow(max(pbr_sfb, vec3f(0.0)), vec3f(2.2)) * pbr_c4.x * pbr_vraw.rgb;
+      }})""",
+                            underlying(config.tevStages[mapStage[4]].texMapId),
+                            underlying(config.tevStages[mapStage[4]].texCoordId),
+                            underlying(config.tevStages[mapStage[5]].texMapId),
+                            underlying(config.tevStages[mapStage[5]].texCoordId), base);
+    }
   }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
@@ -2541,6 +2615,7 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     uniBufAttrs += "\n    pbr_light_scale: vec4f,";
     uniBufAttrs += fmt::format("\n    pbr_light_color: array<vec4f, {}>,", GX::MaxLights);
     uniBufAttrs += fmt::format("\n    pbr_light_hdr: array<vec4f, {}>,", GX::MaxLights * 3);
+    uniBufAttrs += "\n    pbr_shield: array<vec4f, 8>,";
     auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx);
     if (!pbr.empty() && info.usesVolFog) {
       // The volumetric fog in the light before the tone curve, as Remastered's shaders fog it.
