@@ -19,6 +19,7 @@ namespace {
 constexpr uint32_t kGenp = EffectFourCC("GENP");
 constexpr uint32_t kMati = EffectFourCC("MATI");
 constexpr uint32_t kPart = EffectFourCC("PART");
+constexpr uint32_t kSwsh = EffectFourCC("SWSH");
 constexpr uint32_t kTxtr = EffectFourCC("TXTR");
 constexpr uint32_t kCmdl = EffectFourCC("CMDL");
 
@@ -180,6 +181,8 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"d0766ccc-22d9-444f-8529-a8a6ada6cbdd", 0x1F4FD93A},  // NFTSecondaryFire
     {"bfe5b4c5-421f-41d1-9554-6d3e00f72066", 0xAD51661F},  // NFTSecondarySmoke
     {"93004165-738e-404b-ac29-1f1a059719ae", 0x7DA3DEE5},  // NFTSecondarySparks
+    {"ef65b87f-1e8e-49a2-bc3e-8d2db0405e12", 0x8F91A657},  // NFTSwooshCenter (SWSH)
+    {"bd4c298c-5b95-48c2-89d2-d074284b98a9", 0xC42C2CA6},  // NFTSwooshFire (SWSH)
     {"58175f6a-d712-4852-b350-13321240dc65", 0x7754967A},  // Phazon2nd_1
     {"c8536e8f-2e70-41b2-82b9-1c8410ac9c6f", 0x1C56F6B1},  // PhazonMuzzle
     {"4474842f-b051-45be-b72b-b7d03128d755", 0x18CB74EF},  // PhazonWake
@@ -961,11 +964,14 @@ public:
       return;
     }
     ++m_result.candidates;
-    const std::string name = Hex(retail) + ".PART";
+    // A standalone swoosh (SWSH) replaces a retail SWHC, a GENP a PART.
+    const bool swoosh = m_io.typeOf && m_io.typeOf(id) == kSwsh;
+    const uint32_t rootType = swoosh ? EffectFourCC("SWHC") : kPart;
+    const std::string name = Hex(retail) + "." + EffectFourCCString(rootType);
     std::vector<uint8_t> data;
     std::string error;
     EffectNode effect;
-    if (!m_io.read(kGenp, id, data, error) || !ParseEffect(data.data(), data.size(), effect, error)) {
+    if (!m_io.read(swoosh ? kSwsh : kGenp, id, data, error) || !ParseEffect(data.data(), data.size(), effect, error)) {
       ++m_result.failed;
       Log(name + ": " + error);
       Report(row, "failed", "parse: " + error);
@@ -990,10 +996,13 @@ public:
     }
     const std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
     std::vector<RetailPartProperty> check;
-    if (parts.empty() || !SplitRetailPart(parts[0].part.data(), parts[0].part.size(), check, error)) {
+    if (parts.empty() || parts[0].type != rootType ||
+        !SplitRetailEffect(rootType, parts[0].part.data(), parts[0].part.size(), check, error)) {
       ++m_result.failed;
-      Log(name + ": the converted effect does not read as a PART");
-      Report(row, "failed", "the converted effect does not read as a PART");
+      const std::string why = "the converted effect does not read as a " + EffectFourCCString(rootType) +
+                              (error.empty() ? "" : " (" + error + ")");
+      Log(name + ": " + why);
+      Report(row, "failed", why);
       return;
     }
     for (const ConvertedPart& part : parts) {
@@ -1019,7 +1028,8 @@ public:
     // effect with an invisible one: keep the disc's, before anything is written.
     for (const ConvertedPart& part : parts) {
       const EffectNode* node = part.root ? &effect : FindNode(effect, part.id);
-      if (node != nullptr && SplitRetailPart(part.part.data(), part.part.size(), check, error) &&
+      if (node != nullptr &&
+          SplitRetailEffect(part.root ? rootType : kPart, part.part.data(), part.part.size(), check, error) &&
           LostLook(*node, check)) {
         ++m_result.failed;
         Log(name + ": " + (part.root ? std::string("the root") : "child " + EffectGuidString(part.id)) +
@@ -1047,7 +1057,7 @@ public:
     std::vector<RetailPartProperty> converted;
     std::vector<RetailPartProperty> disc;
     std::vector<uint8_t> discData;
-    if (m_io.retail && SplitRetailPart(root.data(), root.size(), converted, error) && HasLight(converted) &&
+    if (!swoosh && m_io.retail && SplitRetailPart(root.data(), root.size(), converted, error) && HasLight(converted) &&
         m_io.retail(kPart, retail, discData) &&
         SplitRetailPart(discData.data(), discData.size(), disc, error) && HasLight(disc)) {
       root = WithDiscLight(converted, disc);

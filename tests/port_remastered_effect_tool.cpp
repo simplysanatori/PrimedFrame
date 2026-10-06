@@ -111,6 +111,7 @@ private:
 };
 
 constexpr uint32_t kGenp = PortRemastered::EffectFourCC("GENP");
+constexpr uint32_t kSwsh = PortRemastered::EffectFourCC("SWSH");
 constexpr uint32_t kMati = PortRemastered::EffectFourCC("MATI");
 constexpr uint32_t kTxtr = PortRemastered::EffectFourCC("TXTR");
 constexpr uint32_t kPartType = PortRemastered::EffectFourCC("PART");
@@ -269,15 +270,17 @@ int Scan(const std::string& romfs, const std::string& outDir, bool rawOut = fals
       }
       for (const PortRemastered::PakAsset& asset : pak.Assets()) {
         std::vector<uint8_t> data;
-        if (asset.type != kGenp || !written.insert(asset.id).second || !pak.ReadAsset(asset, data, error)) {
+        if ((asset.type != kGenp && asset.type != kSwsh) || !written.insert(asset.id).second ||
+            !pak.ReadAsset(asset, data, error)) {
           continue;
         }
-        std::ofstream out(std::filesystem::path(outDir) / (PortRemastered::IdToString(asset.id) + ".GENP"),
+        std::ofstream out(std::filesystem::path(outDir) / (PortRemastered::IdToString(asset.id) +
+                                                           (asset.type == kSwsh ? ".SWSH" : ".GENP")),
                           std::ios::binary);
         out.write(reinterpret_cast<const char*>(data.data()), std::streamsize(data.size()));
       }
     }
-    std::cout << written.size() << " GENPs written\n";
+    std::cout << written.size() << " GENPs and SWSHs written\n";
     return 0;
   }
 
@@ -802,7 +805,7 @@ int Import(const std::string& romfs, const std::string& retailDir, const std::st
     return text;
   };
   for (const auto& [id, type] : types) {
-    if (type == kGenp && (only.empty() || lower(IdToString(id)) == lower(only) || lower(EffectGuidString(id)) == lower(only))) {
+    if ((type == kGenp || type == PortRemastered::EffectFourCC("SWSH")) && (only.empty() || lower(IdToString(id)) == lower(only) || lower(EffectGuidString(id)) == lower(only))) {
       io.effects.push_back(id);
     }
   }

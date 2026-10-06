@@ -148,25 +148,65 @@ void PortVfxSetLaunchDir(CElementGen::CParticle& particle) {
       m > kEps ? particle.x1c_vel * (1.f / std::sqrt(m)) : CVector3f::Zero();
 }
 
-void CElementGen::PortVfxUpdateSystem() {
-  const CPortVfxData& vfx = *x28_loadedGenDesc->xPortVfx;
-  xPortVsmtMask = 0;
+uint PortVfxEvalVsmt(const CPortVfxData& vfx, int frame, float vsmt[19]) {
+  uint mask = 0;
   for (const CPortVfxElem& e : vfx.vsmt) {
     if (e.a >= 19) {
       continue;
     }
     float v[4] = {};
-    if (EvalElem(e, x74_curFrame, v) > 0) {
-      xPortVsmt[e.a] = v[0];
-      xPortVsmtMask |= 1u << e.a;
+    if (EvalElem(e, frame, v) > 0) {
+      vsmt[e.a] = v[0];
+      mask |= 1u << e.a;
+    }
+  }
+  return mask;
+}
+
+void PortVfxEvalPoint(const CPortVfxData& vfx, int frame, float& iten, float vpmt[4][4]) {
+  iten = EvalReal(vfx.iten, frame, 1.f);
+  for (const CPortVfxElem& e : vfx.vpmt) {
+    if (e.a >= 4) {
+      continue;
+    }
+    float v[4] = {};
+    const int n = EvalElem(e, frame, v);
+    for (int i = 0; i < n && e.b + i < 4; ++i) {
+      vpmt[e.a][e.b + i] = v[i];
     }
   }
 }
 
-// Fills the draw description from the VMAT (and this frame's VSMT); false while a texture is not
-// streamed in. Loads the textures into their GX slots.
-static bool PortVfxBuildDesc(const CPortVfxData& vfx, const float* vsmt, uint vsmtMask,
-                             aurora::gfx::vfx::DrawDesc& desc) {
+void CPortVfxUvXf::Eval(const CPortVfxData& vfx, int frame) {
+  for (u32 s = 0; s < 3 && s < vfx.vtmtCount; ++s) {
+    CRealElement* const* r = &vfx.vtmt[s * 6];
+    a[s] = EvalReal(r[0], frame, 0.f);
+    b[s] = EvalReal(r[1], frame, 0.f);
+    c[s] = EvalReal(r[2], frame, 1.f);
+    d[s] = EvalReal(r[3], frame, 1.f);
+    const float e = EvalReal(r[4], frame, 0.f);
+    cosE[s] = std::cos(e);
+    sinE[s] = std::sin(e);
+    f[s] = EvalReal(r[5], frame, 0.f);
+  }
+}
+
+void CPortVfxUvXf::Apply(float qx, float qy, float uv[3][3]) const {
+  for (int s = 0; s < 3; ++s) {
+    const float dx = (qx - 0.5f) * c[s];
+    const float dy = (qy - 0.5f) * d[s];
+    uv[s][0] = a[s] + 0.5f + cosE[s] * dx - sinE[s] * dy;
+    uv[s][1] = b[s] + 0.5f + sinE[s] * dx + cosE[s] * dy;
+    uv[s][2] = f[s];
+  }
+}
+
+void CElementGen::PortVfxUpdateSystem() {
+  xPortVsmtMask = PortVfxEvalVsmt(*x28_loadedGenDesc->xPortVfx, x74_curFrame, xPortVsmt);
+}
+
+bool PortVfxBuildDesc(const CPortVfxData& vfx, const float* vsmt, uint vsmtMask,
+                      aurora::gfx::vfx::DrawDesc& desc) {
   const CPortVfxMat& mat = vfx.mat;
   desc.features = mat.features;
   desc.blend = static_cast< aurora::gfx::vfx::Blend >(mat.blend);

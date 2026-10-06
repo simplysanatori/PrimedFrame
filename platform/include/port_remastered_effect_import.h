@@ -26,7 +26,7 @@ namespace PortRemastered {
 
 // Ids are in a pak's byte order (what IdToString prints) unless said otherwise.
 struct EffectImportIO {
-  // Every GENP in the image, each once.
+  // Every GENP and standalone swoosh (SWSH) in the image, each once.
   std::vector<EffectGuid> effects;
   // A Remastered asset's bytes by type ('GENP', 'MATI', 'TXTR') and id; false
   // when the image has none.

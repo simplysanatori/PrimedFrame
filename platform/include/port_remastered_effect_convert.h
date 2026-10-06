@@ -21,8 +21,8 @@
 // - ASPR becomes ASPH; a cone or sphere turned about X (REUL) becomes an X
 //   bias; RNDV becomes a whole-sphere ANGC; a GRAD gradient becomes 101
 //   percent keyframes (KEYP) over the particle's life.
-// - DFCP/DFCS (scales retail cannot compute) are taken as 1 and listed in
-//   `approximated`.
+// - DFCP/DFCS (a ramp of the depth from the camera) are written as the port's own
+//   real elements of the same fourccs (CREDistanceFromCameraBlend).
 // - Keyframe blocks and words are byte-swapped; a colour's half keys are
 //   widened to floats.
 // - Port-only (build/fx-port-contract.md): a TEXR or TIND of TXP2 (an atlas with a

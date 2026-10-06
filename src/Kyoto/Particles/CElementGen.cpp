@@ -377,6 +377,8 @@ void CElementGen::ShutDown() { sStaticListInitialized = false; }
 // and the scales at render already, but bakes the local translation and the orientation at spawn
 // (and uses the global orientation only for facing). That baked part is PortEmitterFrame; when it
 // changes, the live particles are carried from the old frame to the new one.
+bool CElementGen::PortIsRemastered() const { return x28_loadedGenDesc->xPortIrnd; }
+
 bool CElementGen::PortFollowsEmitter() const {
   return x28_loadedGenDesc->xPortXfmd == kPortXfmdFollow ||
          x28_loadedGenDesc->xPortXfmd == kPortXfmdFollowUnscaled;

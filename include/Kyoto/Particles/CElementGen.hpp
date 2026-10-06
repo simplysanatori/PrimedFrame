@@ -177,6 +177,16 @@ public:
 
   static void SetGlobalSeed(const ushort seed) { sSeed = seed; }
 
+#ifdef TARGET_PC
+  // World position for DFCS (the system origin) / DFCP (a system-local particle position).
+  CVector3f PortWorldFromLocal(const CVector3f& local) const {
+    return xe8_globalTranslation + x10c_globalScaleTransform * local;
+  }
+  CVector3f PortSystemOrigin() const { return PortWorldFromLocal(xdc_translation); }
+  // True for a converted Remastered PART (its PIRN marker).
+  bool PortIsRemastered() const;
+#endif
+
 private:
   TLockedToken< CGenDescription > x1c_genDesc;
   CGenDescription* x28_loadedGenDesc;

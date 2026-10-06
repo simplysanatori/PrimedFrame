@@ -186,6 +186,15 @@ private:
   std::vector< SPortSegment > xPortSaved;
   bool PortBeginPresent();
   void PortEndPresent();
+  // A converted Remastered swoosh with a VMAT: ITEN and the VPMT rows per point (by slot),
+  // evaluated with COLR, and its draw through the VFX material.
+  struct SPortVfxPoint {
+    float iten = 1.f;
+    float vpmt[4][4] = {};
+  };
+  std::vector< SPortVfxPoint > xPortVfxPts;
+  bool PortVfxSwoosh() const;
+  void PortRenderVfx();
 #endif
 
   static uint mSwooshAliveCount;

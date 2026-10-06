@@ -121,8 +121,8 @@ constexpr ElementSig kRealSigs[] = {
     {"PAP1", "-"},    {"PAP2", "-"},    {"PAP3", "-"},    {"PAP4", "-"},     {"PAP5", "-"},    {"PAP6", "-"},
     {"PAP7", "-"},    {"PAP8", "-"},    {"VXTR", "V"},    {"VYTR", "V"},     {"VZTR", "V"},    {"VMAG", "V"},
     {"ISWT", "RR"},   {"CLTN", "RRRR"}, {"CEQL", "RRRR"}, {"CRNG", "RRRRR"}, {"CEXT", "I"},    {"ITRL", "IR"},
-    {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR RRR"},
-    {"DFCS", "RR RRR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
+    {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR"},
+    {"DFCS", "RR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
 };
 constexpr ElementSig kVectorSigs[] = {
     {"NONE", "-"},   {"CNST", "RRR"},   {"KEYE", "k"},    {"KEYP", "k"},   {"ANGC", "RRRRR"}, {"CONE", "VR"},
@@ -1289,12 +1289,15 @@ void CollectGuids(const EffectNode& node, std::vector<EffectGuid>& out) {
 
 bool ParseEffect(const uint8_t* data, size_t size, EffectNode& out, std::string& error, size_t* failOffset) {
   out = EffectNode();
-  if (size < kRootAt + 25 || std::memcmp(data, "RFRM", 4) != 0 || std::memcmp(data + 0x14, "GENP", 4) != 0) {
+  if (size < kRootAt + 25 || std::memcmp(data, "RFRM", 4) != 0 ||
+      (std::memcmp(data + 0x14, "GENP", 4) != 0 && std::memcmp(data + 0x14, "SWSH", 4) != 0)) {
     error = "not a GENP form";
     return false;
   }
   Parser parser(data, size);
-  if (!parser.Generator(kRootAt, true)) {
+  // A standalone swoosh (SWSH form) has the same header, with a SWSH root.
+  const bool swoosh = std::memcmp(data + 0x14, "SWSH", 4) == 0;
+  if (!(swoosh ? parser.Child(kRootAt) : parser.Generator(kRootAt, true))) {
     char text[64];
     std::snprintf(text, sizeof(text), "no parse past 0x%zx", parser.Furthest());
     error = text;

@@ -43,6 +43,27 @@ struct CPortVfxMeshBatch {
            int partFrame, const CColor& modulate);
 };
 
+// Fills the draw description from the VMAT and the VSMT overrides in `vsmt` (bit i of
+// `vsmtMask` set: slot i is overridden); false while a texture is not streamed in. Loads the
+// textures into their GX slots.
+bool PortVfxBuildDesc(const CPortVfxData& vfx, const float* vsmt, uint vsmtMask,
+                      aurora::gfx::vfx::DrawDesc& desc);
+
+// Evaluates the VSMT overrides at `frame` into `vsmt` (19 slots); returns the mask.
+uint PortVfxEvalVsmt(const CPortVfxData& vfx, int frame, float vsmt[19]);
+
+// ITEN (default 1) and the VPMT rows at `frame`, for a swoosh point. The caller has set
+// CParticleGlobals' particle context.
+void PortVfxEvalPoint(const CPortVfxData& vfx, int frame, float& iten, float vpmt[4][4]);
+
+// The VTMT rows evaluated at one frame: uv = (A, B) + 0.5 + R(E) diag(C, D) (q - 0.5), layer F.
+struct CPortVfxUvXf {
+  float a[3] = {}, b[3] = {}, c[3] = {1.f, 1.f, 1.f}, d[3] = {1.f, 1.f, 1.f};
+  float cosE[3] = {1.f, 1.f, 1.f}, sinE[3] = {}, f[3] = {};
+  void Eval(const CPortVfxData& vfx, int frame);
+  void Apply(float qx, float qy, float uv[3][3]) const;
+};
+
 inline bool PortVfxHasMesh(const CGenDescription& desc) {
   return PortVfxActive(desc) && desc.xPortVfx->meshTris != 0 && desc.xPortPMDV.empty();
 }

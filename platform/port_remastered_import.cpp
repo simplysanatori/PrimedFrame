@@ -88,6 +88,7 @@ constexpr uint32_t kMAPW = 0x4D415057;
 constexpr uint32_t kFRME = 0x46524D45;
 constexpr uint32_t kFMV0 = 0x464D5630;
 constexpr uint32_t kGENP = 0x47454E50;  // a particle effect
+constexpr uint32_t kSWSH = 0x53575348;  // a standalone swoosh effect
 constexpr uint32_t kMATI = 0x4D415449;  // a material instance
 
 constexpr const char* kStagingName = ".remastered-models.importing";
@@ -784,6 +785,8 @@ public:
           m_movies.emplace(IdToString(assets[a].id), Where{m_paks.size(), a});
         } else if (type == kGENP) {
           m_effects.emplace(assets[a].id, Where{m_paks.size(), a});
+        } else if (type == kSWSH) {
+          m_swooshes.emplace(assets[a].id, Where{m_paks.size(), a});
         } else if (type == kMATI) {
           m_materials.emplace(assets[a].id, Where{m_paks.size(), a});
         } else if (type == kGUIF) {
@@ -941,16 +944,24 @@ public:
     for (const auto& [id, where] : m_effects) {
       ids.push_back(id);
     }
+    for (const auto& [id, where] : m_swooshes) {
+      ids.push_back(id);
+    }
     std::sort(ids.begin(), ids.end());
     return ids;
   }
   bool ReadEffectAsset(uint32_t type, const ModelUuid& id, std::vector<uint8_t>& out, std::string& error) const {
-    return Read(type == kGENP ? m_effects : type == kMATI ? m_materials : m_textures, id, out, error);
+    return Read(type == kGENP   ? m_effects
+                : type == kSWSH ? m_swooshes
+                : type == kMATI ? m_materials
+                                : m_textures,
+                id, out, error);
   }
   uint32_t EffectAssetType(const ModelUuid& id) const {
     return m_textures.count(id) != 0    ? kTXTR
            : m_materials.count(id) != 0 ? kMATI
            : m_effects.count(id) != 0   ? kGENP
+           : m_swooshes.count(id) != 0  ? kSWSH
            : m_models.count(id) != 0    ? kCMDL
                                         : 0;
   }
@@ -1026,6 +1037,7 @@ private:
   Index m_texts;
   Index m_fonts;
   Index m_effects;
+  Index m_swooshes;  // standalone SWSH effects
   Index m_materials;
   std::unordered_map<std::string, Where> m_frames;  // GUIF, by FrameKey
   std::unordered_map<std::string, Where> m_tweaks;  // LDTA, by FrameKey

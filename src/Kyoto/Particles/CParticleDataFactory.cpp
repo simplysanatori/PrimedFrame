@@ -197,11 +197,11 @@ static bool PortReadVfxMesh(CPortVfxData& vfx, CInputStream& in, u32 nbytes) {
   return true;
 }
 
-static CPortVfxData& PortVfxData(CGenDescription* desc) {
-  if (!desc->xPortVfx) {
-    desc->xPortVfx.reset(new CPortVfxData);
+static CPortVfxData& PortVfxData(std::unique_ptr< CPortVfxData >& vfx) {
+  if (!vfx) {
+    vfx.reset(new CPortVfxData);
   }
-  return *desc->xPortVfx;
+  return *vfx;
 }
 
 // The VMAT blob v2 (build/mpr/vfx/DESIGN.md section 1). An unknown version is skipped
@@ -273,6 +273,102 @@ static bool PortReadVfxMat(CPortVfxData& vfx, CInputStream& in, u32 nbytes, CSim
   m.modulate = in.ReadFloat();
   m.depthSoften = in.ReadFloat();
   m.spriteCenter = in.ReadLong();
+  return true;
+}
+// The port-only material properties a converted PART or SWSH carries (VMAT, VMSH, VTMT, VPMT,
+// VSMT, SSZE, ITEN, VORN). False when the stream can't be resynchronised.
+bool CParticleDataFactory::PortReadVfxProperty(FourCC clsId, std::unique_ptr< CPortVfxData >& vfxPtr,
+                                               CInputStream& in, CSimplePool* pool) {
+  switch (clsId) {
+  case SBIG('VMAT'): {
+    GetClassID(in);
+    const u32 nbytes = in.ReadLong();
+    if (!PortReadVfxMat(PortVfxData(vfxPtr), in, nbytes, pool)) {
+      return false;
+    }
+  } break;
+  case SBIG('VMSH'): {
+    GetClassID(in);
+    const u32 nbytes = in.ReadLong();
+    if (!PortReadVfxMesh(PortVfxData(vfxPtr), in, nbytes)) {
+      return false;
+    }
+  } break;
+  case SBIG('VTMT'): {
+    CPortVfxData& vfx = PortVfxData(vfxPtr);
+    GetClassID(in);
+    for (CRealElement* e : vfx.vtmt) {
+      delete e;
+    }
+    vfx.vtmt.clear();
+    vfx.vtmtCount = in.ReadLong();
+    if (vfx.vtmtCount > kPortVfxMaxVtmt) {
+      // The stream can't be resynchronised; drop the port material so the PART draws as retail.
+      vfxPtr.reset();
+      return false;
+    }
+    for (u32 i = 0; i < vfx.vtmtCount * 6; ++i) {
+      vfx.vtmt.push_back(GetRealElement(in));
+    }
+  } break;
+  case SBIG('VPMT'):
+  case SBIG('VSMT'): {
+    // VPMT: {kind row comp element}; VSMT: {target kind element}
+    const bool isVpmt = clsId == SBIG('VPMT');
+    std::vector< CPortVfxElem >& list = isVpmt ? PortVfxData(vfxPtr).vpmt : PortVfxData(vfxPtr).vsmt;
+    GetClassID(in);
+    const u32 count = in.ReadLong();
+    if (count > kPortVfxMaxElems) {
+      vfxPtr.reset();
+      return false;
+    }
+    for (u32 i = 0; i < count; ++i) {
+      CPortVfxElem elem;
+      if (isVpmt) {
+        elem.kind = in.ReadLong();
+        elem.a = in.ReadLong();
+        elem.b = in.ReadLong();
+      } else {
+        elem.a = in.ReadLong();
+        elem.kind = in.ReadLong();
+      }
+      switch (elem.kind) {
+      case CPortVfxElem::kReal:
+        elem.real = GetRealElement(in);
+        break;
+      case CPortVfxElem::kVector:
+        elem.vec = GetVectorElement(in);
+        break;
+      case CPortVfxElem::kInt:
+        elem.integer = GetIntElement(in);
+        break;
+      case CPortVfxElem::kColor:
+        elem.color = GetColorElement(in);
+        break;
+      default:
+        vfxPtr.reset(); // frees the elements read so far
+        return false;
+      }
+      list.push_back(elem);
+    }
+  } break;
+  case SBIG('SSZE'): {
+    CPortVfxData& vfx = PortVfxData(vfxPtr);
+    delete vfx.ssze;
+    vfx.ssze = GetRealElement(in);
+  } break;
+  case SBIG('ITEN'): {
+    CPortVfxData& vfx = PortVfxData(vfxPtr);
+    delete vfx.iten;
+    vfx.iten = GetRealElement(in);
+  } break;
+  case SBIG('VORN'):
+    GetClassID(in);
+    PortVfxData(vfxPtr).vorn = in.ReadLong();
+    break;
+  default:
+    break;
+  }
   return true;
 }
 #endif
@@ -438,91 +534,17 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       desc->xPortFaceCamera = in.ReadLong() != 0;
       break;
     // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
-    case SBIG('VMAT'): {
-      GetClassID(in);
-      const u32 nbytes = in.ReadLong();
-      if (!PortReadVfxMat(PortVfxData(desc), in, nbytes, pool)) {
-        return false;
-      }
-    } break;
-    case SBIG('VMSH'): {
-      GetClassID(in);
-      const u32 nbytes = in.ReadLong();
-      if (!PortReadVfxMesh(PortVfxData(desc), in, nbytes)) {
-        return false;
-      }
-    } break;
-    case SBIG('VTMT'): {
-      CPortVfxData& vfx = PortVfxData(desc);
-      GetClassID(in);
-      for (CRealElement* e : vfx.vtmt) {
-        delete e;
-      }
-      vfx.vtmt.clear();
-      vfx.vtmtCount = in.ReadLong();
-      if (vfx.vtmtCount > kPortVfxMaxVtmt) {
-        // The stream can't be resynchronised; drop the port material so the PART draws as retail.
-        desc->xPortVfx.reset();
-        return false;
-      }
-      for (u32 i = 0; i < vfx.vtmtCount * 6; ++i) {
-        vfx.vtmt.push_back(GetRealElement(in));
-      }
-    } break;
+    case SBIG('VMAT'):
+    case SBIG('VMSH'):
+    case SBIG('VTMT'):
     case SBIG('VPMT'):
-    case SBIG('VSMT'): {
-      // VPMT: {kind row comp element}; VSMT: {target kind element}
-      const bool isVpmt = clsId == SBIG('VPMT');
-      std::vector< CPortVfxElem >& list = isVpmt ? PortVfxData(desc).vpmt : PortVfxData(desc).vsmt;
-      GetClassID(in);
-      const u32 count = in.ReadLong();
-      if (count > kPortVfxMaxElems) {
-        desc->xPortVfx.reset();
+    case SBIG('VSMT'):
+    case SBIG('SSZE'):
+    case SBIG('ITEN'):
+    case SBIG('VORN'):
+      if (!PortReadVfxProperty(clsId, desc->xPortVfx, in, pool)) {
         return false;
       }
-      for (u32 i = 0; i < count; ++i) {
-        CPortVfxElem elem;
-        if (isVpmt) {
-          elem.kind = in.ReadLong();
-          elem.a = in.ReadLong();
-          elem.b = in.ReadLong();
-        } else {
-          elem.a = in.ReadLong();
-          elem.kind = in.ReadLong();
-        }
-        switch (elem.kind) {
-        case CPortVfxElem::kReal:
-          elem.real = GetRealElement(in);
-          break;
-        case CPortVfxElem::kVector:
-          elem.vec = GetVectorElement(in);
-          break;
-        case CPortVfxElem::kInt:
-          elem.integer = GetIntElement(in);
-          break;
-        case CPortVfxElem::kColor:
-          elem.color = GetColorElement(in);
-          break;
-        default:
-          desc->xPortVfx.reset(); // frees the elements read so far
-          return false;
-        }
-        list.push_back(elem);
-      }
-    } break;
-    case SBIG('SSZE'): {
-      CPortVfxData& vfx = PortVfxData(desc);
-      delete vfx.ssze;
-      vfx.ssze = GetRealElement(in);
-    } break;
-    case SBIG('ITEN'): {
-      CPortVfxData& vfx = PortVfxData(desc);
-      delete vfx.iten;
-      vfx.iten = GetRealElement(in);
-    } break;
-    case SBIG('VORN'):
-      GetClassID(in);
-      PortVfxData(desc).vorn = in.ReadLong();
       break;
 #endif
     case SBIG('PMOP'):
@@ -894,6 +916,12 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
 #ifdef TARGET_PC
   case SBIG('PSSZ'): {
     return rs_new CREParticleSecondarySize();
+  }
+  case SBIG('DFCS'):
+  case SBIG('DFCP'): {
+    CRealElement* a = GetRealElement(in);
+    CRealElement* b = GetRealElement(in);
+    return rs_new CREDistanceFromCameraBlend(a, b, clsId == SBIG('DFCP'));
   }
 #endif
   case SBIG('PAP1'): {

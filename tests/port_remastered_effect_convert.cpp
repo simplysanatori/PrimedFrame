@@ -276,7 +276,7 @@ void TestSingleNode() {
 
 // Remastered's new elements that have a retail equivalent: MPCB's angle form
 // and an unrotated ANCR become ANGC, MPRD becomes RAND (and a random LTM2
-// comes down by one at both ends), DFCP is taken as 1; a vector of nested
+// comes down by one at both ends), DFCP is kept as the port's element; a vector of nested
 // constants is not read as an id.
 void TestMappedElements() {
   std::vector<uint8_t> out(0x3c, 0);
@@ -328,7 +328,7 @@ void TestMappedElements() {
   want.f("EMTR").f("SEMR").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
   want.f("ANGC").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(0.1f));
   want.f("LTME").f("RAND").f("CNST").w(16).f("CNST").w(32);
-  want.f("SIZE").f("MULT").f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(1.0f));
+  want.f("SIZE").f("MULT").f("CNST").w(Bits(2.0f)).f("DFCP").f("CNST").w(Bits(2.0f)).f("CNST").w(0);
   want.f("POFS").f("ANGC").f("CNST").w(0x80000000u).f("CNST").w(0x80000000u);
   want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(0.5f));
   want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
@@ -339,7 +339,7 @@ void TestMappedElements() {
       std::fprintf(stderr, "  dropped %s\n", d.c_str());
     }
   }
-  Check(parts.size() == 1 && parts[0].approximated.size() == 1, "DFCP is listed as approximated");
+  Check(parts.size() == 1 && parts[0].approximated.empty(), "DFCP is kept, not approximated");
 }
 
 // Properties retail reads as something else than Remastered wrote are left out.
@@ -553,7 +553,7 @@ void TestSwooshElectric() {
 
   Retail swoosh;
   swoosh.f("SWSH").f("LENG").f("CNST").w(8).f("AALP").f("CNST").b(1);
-  swoosh.f("TEXR").f("CNST").f("CNST").w(0x5EED0002).f("_END");
+  swoosh.f("TEXR").f("CNST").f("CNST").w(0x5EED0002).f("PIRN").f("CNST").w(1).f("_END");
   Check(parts[1].type == EffectFourCC("SWHC") && parts[1].id == Legacy(0x0000AAAA), "swoosh child is an SWHC");
   Check(parts[1].part == swoosh.bytes, "SBDM becomes AALP and MTIN the swoosh's TEXR");
   Check(parts[1].droppedRetail == 0, "swoosh drops nothing");

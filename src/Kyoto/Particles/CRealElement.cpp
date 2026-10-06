@@ -1,6 +1,7 @@
 #include "Kyoto/Particles/CRealElement.hpp"
 
 #include "Kyoto/CRandom16.hpp"
+#include "Kyoto/Graphics/CGraphics.hpp"
 #include "Kyoto/Math/CRelAngle.hpp"
 #include "Kyoto/Math/CVector3f.hpp"
 #include "Kyoto/Math/CloseEnough.hpp"
@@ -340,6 +341,36 @@ bool CREParticleSizeOrLineLength::GetValue(int, float& valOut) const {
 #ifdef TARGET_PC
 bool CREParticleSecondarySize::GetValue(int, float& valOut) const {
   valOut = CParticleGlobals::GetCurrentParticle()->xPortSsze;
+  return false;
+}
+
+CREDistanceFromCameraBlend::CREDistanceFromCameraBlend(CRealElement* a, CRealElement* b,
+                                                       bool particle)
+: x4_a(a), x8_b(b), xc_particle(particle) {}
+
+CREDistanceFromCameraBlend::~CREDistanceFromCameraBlend() {
+  delete x4_a;
+  delete x8_b;
+}
+
+bool CREDistanceFromCameraBlend::GetValue(int frame, float& valOut) const {
+  float a = 0.f, b = 0.f;
+  x4_a->GetValue(frame, a);
+  x8_b->GetValue(frame, b);
+  valOut = 0.f;
+  CParticleGlobals::SParticleSystem* sys = CParticleGlobals::GetCurrentParticleSystem();
+  if (sys == nullptr || sys->x4_system == nullptr || fabsf(a - b) < 1e-5f) {
+    return false;
+  }
+  CVector3f pos = sys->x4_system->PortSystemOrigin();
+  if (xc_particle) {
+    if (const CElementGen::CParticle* particle = CParticleGlobals::GetCurrentParticle()) {
+      pos = sys->x4_system->PortWorldFromLocal(particle->x4_pos);
+    }
+  }
+  const CTransform4f camera = CGraphics::GetViewMatrix().GetQuickInverse();
+  const float d = CVector3f::Dot(pos - camera.GetTranslation(), camera.GetForward());
+  valOut = rstl::min_val(rstl::max_val((d - a) / (b - a), 0.f), 1.f);
   return false;
 }
 #endif

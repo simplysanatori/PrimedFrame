@@ -139,6 +139,7 @@ const Signatures& ElementsOf(Type type) {
       {F("ISWT"), "rr"},  {F("CLTN"), "rrrr"}, {F("CEQL"), "rrrr"}, {F("CRNG"), "rrrrr"}, {F("CEXT"), "i"},
       {F("ITRL"), "ir"},  {F("PSSZ"), ""},    {F("SUB_"), "rr"},  {F("GTCR"), "c"},    {F("GTCG"), "c"},   {F("GTCB"), "c"},
       {F("GTCA"), "c"},
+      {F("DFCS"), "rr"},  {F("DFCP"), "rr"},
   };
   static const Signatures vectorElements = {
       {F("NONE"), ""},      {F("CNST"), "rrr"}, {F("KEYE"), "k"},  {F("KEYP"), "k"},   {F("ANGC"), "rrrrr"},
@@ -797,18 +798,48 @@ public:
     if (value.fourcc == F("GRAD") && type == Type::Color) {
       return Gradient(value, out, why);
     }
+    // KEWS: an LE u32 key count, then that many LE floats over a swoosh's
+    // points (newest 0, oldest 1). Retail reads a swoosh's COLR at a point's
+    // age over the life, so this is percent keyframes (the swoosh's PIRN path
+    // makes the life the point count).
+    if (value.fourcc == F("KEWS") && type == Type::Real && value.args.size() == 1 &&
+        value.args[0].kind == EffectValue::Kind::Raw) {
+      const uint8_t* p = m_data + value.args[0].offset;
+      const size_t size = value.args[0].size;
+      const uint32_t count = size >= 4 ? ReadLE32(p) : 0;
+      if (count < 2 || 4 + size_t(count) * 4 > size) {
+        why = "KEWS without its keys";
+        return false;
+      }
+      AppendBE32(out, F("KEYP"));
+      AppendBE32(out, 1);
+      AppendBE32(out, 0);
+      out.push_back(0);
+      out.push_back(0);
+      AppendBE32(out, 101);
+      AppendBE32(out, 0);
+      AppendBE32(out, 101);
+      for (int percent = 0; percent <= 100; ++percent) {
+        const float at = float(percent) / 100.0f * float(count - 1);
+        const uint32_t i = std::min(uint32_t(at), count - 2);
+        float a, b;
+        std::memcpy(&a, p + 4 + 4 * i, 4);
+        std::memcpy(&b, p + 8 + 4 * i, 4);
+        AppendBE32(out, FloatBits(a + (b - a) * (at - float(i))));
+      }
+      return true;
+    }
     // MPRD(a, b): a random int between two, as RAND.
     if (value.fourcc == F("MPRD") && value.args.size() == 2 && (type == Type::Int || type == Type::Real)) {
       AppendBE32(out, F("RAND"));
       return Element(value.args[0], type, out, why) && Element(value.args[1], type, out, why);
     }
-    // DFCP and DFCS scale a real by something retail cannot compute (they look
-    // like fades with the camera's distance); they are taken as 1.
-    if ((value.fourcc == F("DFCP") || value.fourcc == F("DFCS")) && type == Type::Real) {
-      m_approximated.push_back(EffectFourCCString(value.fourcc) + " taken as 1");
-      AppendBE32(out, F("CNST"));
-      AppendBE32(out, FloatBits(1.0f));
-      return true;
+    // DFCS/DFCP(a, b): a ramp of the depth from the camera, a port-only real element.
+    if ((value.fourcc == F("DFCP") || value.fourcc == F("DFCS")) && value.args.size() == 2 &&
+        type == Type::Real) {
+      AppendBE32(out, value.fourcc);
+      return Element(value.args[0], Type::Real, out, why) &&
+             Element(value.args[1], Type::Real, out, why);
     }
     // GPUA is CREGPUAvailabilty, how much GPU time is free (to thin effects
     // out under load): taken as 1, all of it.
@@ -1588,7 +1619,8 @@ public:
   // The port-only properties of a generator whose material instance has a
   // recipe: VMAT and the per-particle data it reads (build/mpr/vfx/DESIGN.md).
   // Writes nothing where the MATI is unavailable or its shader has no recipe.
-  bool Material(const EffectProperty& material, const EffectNode& node, ConvertedPart& result) const {
+  // A swoosh's (`swoosh`) has no SSZE or VORN, and its blend mode is SBDM.
+  bool Material(const EffectProperty& material, const EffectNode& node, ConvertedPart& result, bool swoosh) const {
     if (!m_io.materialData || !m_io.vfxTexture) {
       return false;
     }
@@ -1652,7 +1684,14 @@ public:
     }
 
     uint32_t blend = 0;
-    if (const EffectProperty* pbdm = find(F("PBDM"))) {
+    if (const EffectProperty* sbdm = swoosh ? find(F("SBDM")) : nullptr) {
+      uint32_t word = 0;
+      if (SmallConst(*sbdm, word) && word <= 1) {
+        blend = word == 1 ? 2 : 0;
+      } else {
+        m_approximated.push_back("VMAT: SBDM taken as alpha blend");
+      }
+    } else if (const EffectProperty* pbdm = swoosh ? nullptr : find(F("PBDM"))) {
       uint32_t word = 0;
       if (SmallConst(*pbdm, word) && word <= 3) {
         blend = word;
@@ -1859,7 +1898,7 @@ public:
     // SSZE and ITEN are real elements as they are; VORN is ORNT's byte.
     for (const uint32_t fourcc : {F("SSZE"), F("ITEN")}) {
       const std::string name = EffectFourCCString(fourcc);
-      const EffectProperty* property = find(fourcc);
+      const EffectProperty* property = swoosh && fourcc == F("SSZE") ? nullptr : find(fourcc);
       if (property == nullptr) {
         continue;
       }
@@ -1871,6 +1910,9 @@ public:
       } else {
         result.dropped.push_back(name + ": " + (why.empty() ? "not one element" : why));
       }
+    }
+    if (swoosh) {
+      return true;
     }
     uint32_t orient = 0;
     if (const EffectProperty* ornt = find(F("ORNT"))) {
@@ -1895,6 +1937,7 @@ public:
     AppendBE32(out, HeaderOf(type));
     const auto& retail = PropertiesOf(type);
     const bool part = type == F("PART");
+    const bool swoosh = type == F("SWHC");
     // Swooshes: SBDM is Remastered's blend mode, 0 or 1, which retail has as
     // AALP (additive). Taken only where there's no AALP of its own.
     bool additive = false;
@@ -2013,6 +2056,10 @@ public:
         portOnly.push_back(fourcc);
         continue;
       }
+      if (swoosh && (fourcc == F("TMTR") || fourcc == F("PMTR") || fourcc == F("SMTR") || fourcc == F("ITEN"))) {
+        portOnly.push_back(fourcc);
+        continue;
+      }
       const auto found = retail.find(fourcc);
       if (found == retail.end()) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": Remastered only");
@@ -2082,7 +2129,7 @@ public:
     } else if (material != nullptr) {
       result.dropped.push_back("MTIN: the effect has a TEXR");
     }
-    const bool vmat = part && material != nullptr && Material(*material, node, result);
+    const bool vmat = (part || swoosh) && material != nullptr && Material(*material, node, result, swoosh);
     if (!vmat) {
       for (const uint32_t fourcc : portOnly) {
         result.dropped.push_back(EffectFourCCString(fourcc) + ": no VMAT");
@@ -2136,9 +2183,11 @@ public:
       AppendBE32(out, F("CNST"));
       AppendBE32(out, 1);
     }
-    if (part) {
+    if (part || swoosh) {
       // Port-only: nested IRND elements are evaluated once per particle and element, not at frame 0
       // only (xPortIrnd). Marks every converted PART; retail's own PARTs do not have it.
+      // On a swoosh it marks Remastered's timing: a point's colour runs over the live points
+      // (KEWS), not over LENG.
       AppendBE32(out, F("PIRN"));
       AppendBE32(out, F("CNST"));
       AppendBE32(out, 1);
@@ -2412,6 +2461,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
   }
   const auto& retail = PropertiesOf(type);
   const bool part = type == F("PART");
+  const bool vfx = part || type == F("SWHC"); // swooshes take the VFX material too
   for (;;) {
     const size_t start = reader.At();
     if (!reader.Word(fourcc)) {
@@ -2426,16 +2476,16 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.SpawnTable();
     } else if (part && fourcc == F("PMDV")) {
       ok = reader.ModelVariants();
-    } else if (part && (fourcc == F("VMAT") || fourcc == F("VMSH"))) {
+    } else if ((vfx && fourcc == F("VMAT")) || (part && fourcc == F("VMSH"))) {
       ok = reader.Material();
-    } else if (part && fourcc == F("VTMT")) {
+    } else if (vfx && fourcc == F("VTMT")) {
       ok = reader.TextureTransforms();
-    } else if (part && (fourcc == F("VPMT") || fourcc == F("VSMT"))) {
+    } else if (vfx && (fourcc == F("VPMT") || fourcc == F("VSMT"))) {
       ok = reader.PerParticle(fourcc == F("VSMT"));
-    } else if (part && (fourcc == F("SSZE") || fourcc == F("ITEN"))) {
+    } else if ((part && fourcc == F("SSZE")) || (vfx && fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
-    } else if (part && (fourcc == F("VORN") || fourcc == F("XFMD") || fourcc == F("PIRN") ||
-                        fourcc == F("PFCM"))) {
+    } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") || fourcc == F("PFCM"))) ||
+               (vfx && fourcc == F("PIRN"))) {
       ok = reader.PortWord();
     } else if (const auto found = retail.find(fourcc); found == retail.end()) {
       error = "property " + EffectFourCCString(fourcc) + " retail does not read";
