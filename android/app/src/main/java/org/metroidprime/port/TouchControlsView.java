@@ -25,9 +25,9 @@ import java.util.Set;
  * game's own controller mapping, prompts and rebinding treat it as a real pad,
  * and its sticks are sticks rather than four keys pretending to be one.
  *
- * Two layouts: the GameCube pad's face layout while twin-stick is off, and the
- * Xbox arrangement while it is on, because that mode plays like a modern
- * shooter. Only arrangement and labels change; the game assigns the actions.
+ * One layout, the GameCube pad's. By default there is no C-stick: a drag on the
+ * free screen area aims like a mouse. The "Classic GameCube layout" setting
+ * brings back the C-stick and the D-pad. The game assigns the actions.
  */
 final class TouchControlsView extends View {
     private static final int LEFT_STICK = 1;
@@ -102,7 +102,6 @@ final class TouchControlsView extends View {
 
     // Sticks are drawn and read through these, so the two cannot disagree.
     private static final float STICK_LEFT_X = 0.18f;
-    private static final float STICK_RIGHT_X = 0.58f;
     private static final float STICK_Y = 0.73f;
     private static final float STICK_RADIUS = 0.16f;
     private static final float LEFT_STICK_REACH = 1.5f; // grab area, in stick radii
@@ -127,7 +126,7 @@ final class TouchControlsView extends View {
     private static final float GC_A_FROM_RIGHT = 0.235f;
     private static final float GC_A_Y = 0.700f;
 
-    // The GameCube pad's face, kept while twin-stick is off so the overlay
+    // The GameCube pad's face, so the overlay
     // matches the pad the game was authored for: a big green A, a small red B
     // at its lower left, and X and Y as kidneys curving round A's right and top.
     private static final ControlButton[] GAMECUBE_FACE = {
@@ -135,15 +134,6 @@ final class TouchControlsView extends View {
         ControlButton.round("B", BTN_EAST, -0.123f, 0.103f, 0.050f, GC_RED),
         ControlButton.kidney("X", BTN_WEST, 0.158f, 0.040f, -37f, 55f, GC_GREY),
         ControlButton.kidney("Y", BTN_NORTH, 0.158f, 0.040f, -150f, 55f, GC_GREY),
-    };
-
-    // Twin-stick reads like a modern shooter pad: the Xbox diamond, all four the
-    // same size, because a bigger A is a GameCube trait rather than an Xbox one.
-    private static final ControlButton[] XBOX_FACE = {
-        new ControlButton("A", BTN_SOUTH, 0.875f, 0.795f, 0.055f),
-        new ControlButton("B", BTN_EAST, 0.950f, 0.720f, 0.055f),
-        new ControlButton("X", BTN_WEST, 0.800f, 0.720f, 0.055f),
-        new ControlButton("Y", BTN_NORTH, 0.875f, 0.645f, 0.055f),
     };
 
     // The D-pad is one cross, as on the GameCube pad: its centre as fractions of
@@ -162,10 +152,7 @@ final class TouchControlsView extends View {
 
     // L and R are the pad's analog triggers; Z is its digital shoulder. On the
     // GameCube pad L and R are curved triggers and Z sits in front of R, so Z
-    // goes under R here. In Xbox mode the shoulders stack on both sides, the
-    // trigger above the bumper: LT/RT and LB/RB, where RB carries Z and LB the
-    // twin-stick beam modifier, which is what the port reads the left shoulder
-    // for. X-Box mode has no Z label because the pad has no Z button. L and R
+    // goes under R here. L and R
     // are tall so a quick lock-on is hard to miss; L stops just above the D-pad.
     private static final PillButton[] GAMECUBE_PILLS = {
         new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY,
@@ -177,26 +164,17 @@ final class TouchControlsView extends View {
         new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0.510f, 0.030f, 0.600f, 0.100f),
     };
 
-    private static final PillButton[] XBOX_PILLS = {
-        new PillButton("LT", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.100f),
-        new PillButton("LB", -1, BTN_LEFT_SHOULDER, 0.020f, 0.115f, 0.150f, 0.185f),
-        new PillButton("RT", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.100f),
-        new PillButton("RB", -1, BTN_RIGHT_SHOULDER, 0.850f, 0.115f, 0.980f, 0.185f),
-        new PillButton("START", -1, BTN_START, 0.400f, 0.030f, 0.490f, 0.100f),
-        new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0.510f, 0.030f, 0.600f, 0.100f),
-    };
-
     private ControlButton[] face = GAMECUBE_FACE;
     private PillButton[] pills = GAMECUBE_PILLS;
-    private boolean twinStickMode;
     // The GameCube pad's colours, off by default (plain translucent buttons);
-    // an F1 setting, so it's re-read every draw like twin-stick.
+    // an F1 setting, so it's re-read every draw.
     private boolean colored;
-    // Twin stick with drag-to-aim: no right stick, a drag turns the view. An F1
-    // setting, re-read every draw.
-    private boolean touchAim;
-    // GameCube layout: a drag on free area nudges the turn and looks up/down.
-    private boolean gcLook;
+    // Classic GameCube layout (F1 setting, re-read every draw): the C-stick is
+    // drawn and grabs presses in its zone.
+    private boolean cStick;
+    // A drag on the free area aims (mouse-style, or the classic turn and look
+    // up/down). Always on unless the classic layout turns it off.
+    private boolean aim;
     // Beam and visor wheels replace the D-pad. F1 settings, re-read every draw.
     private boolean wheels;
     private boolean visorTapScan;
@@ -222,7 +200,7 @@ final class TouchControlsView extends View {
     private final Path crossArmPath = new Path();
     private final CornerPathEffect triggerCorners = new CornerPathEffect(dp(8));
     private static native boolean nativeDebugOverlayVisible();
-    private static native boolean nativeTwinStick();
+    private static native boolean nativeTouchClassic();
     private static native boolean nativeTouchColors();
     private static native boolean nativeTouchAimEnabled();
     private static native void nativeTouchAim(float dxDp, float dyDp);
@@ -332,18 +310,13 @@ final class TouchControlsView extends View {
 
         float width = getWidth();
         float height = getHeight();
-        // The layout follows the twin-stick setting, which the player can change
-        // mid-session, so re-check it every draw.
-        if (nativeTwinStick() != twinStickMode) {
-            twinStickMode = !twinStickMode;
-            face = twinStickMode ? XBOX_FACE : GAMECUBE_FACE;
-            pills = twinStickMode ? XBOX_PILLS : GAMECUBE_PILLS;
-        }
-        colored = !twinStickMode && nativeTouchColors();
-        final boolean aimOn = nativeTouchAimEnabled();
-        touchAim = twinStickMode && aimOn;
-        gcLook = !twinStickMode && aimOn;
-        wheels = nativeTouchWheelsEnabled();
+        // The classic setting can change mid-session, so re-check it every draw.
+        // Off, aim and the wheels are always on.
+        final boolean classic = nativeTouchClassic();
+        colored = nativeTouchColors();
+        cStick = classic;
+        aim = !classic || nativeTouchAimEnabled();
+        wheels = !classic || nativeTouchWheelsEnabled();
         visorTapScan = nativeTouchVisorTapScan();
         mapTap = nativeTouchMapTapEnabled();
         hideBounds.set(width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP),
@@ -351,9 +324,9 @@ final class TouchControlsView extends View {
                        width - dp(EYE_MARGIN_DP), height - dp(EYE_MARGIN_DP));
         drawStick(canvas, width * STICK_LEFT_X, height * STICK_Y, height * STICK_RADIUS,
                   leftPointer, 0);
-        // The right stick is the C-stick, yellow on the GameCube pad. Touch aim
-        // has none: a drag anywhere free turns the view.
-        if (!touchAim) {
+        // The right stick is the C-stick, yellow on the GameCube pad. Only the
+        // classic layout has one; otherwise a drag anywhere free aims.
+        if (cStick) {
             drawStick(canvas, rightStickX(width, height), rightStickY(height),
                       rightStickRadius(height), rightPointer, colored ? GC_YELLOW : 0);
         }
@@ -423,7 +396,7 @@ final class TouchControlsView extends View {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
                 autoHidden = false;
                 nativeTakePhysicalInput();
-                nativeSetTouchDevice(twinStickMode);
+                nativeSetTouchDevice(false);
                 invalidate();
             }
             return true;
@@ -441,7 +414,7 @@ final class TouchControlsView extends View {
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             // The in-game prompts follow the input the player reached for, so
             // tell the port which set this overlay is showing.
-            nativeSetTouchDevice(twinStickMode);
+            nativeSetTouchDevice(false);
             int pointerId = event.getPointerId(actionIndex);
             float x = event.getX(actionIndex);
             float y = event.getY(actionIndex);
@@ -674,17 +647,7 @@ final class TouchControlsView extends View {
                 pan2Pointer = pointerId;
                 targets.put(pointerId, target);
             }
-        } else if (touchAim) {
-            // Everything else that is free: one finger at a time aims.
-            if (aimPointer == -1) {
-                TouchTarget target = new TouchTarget(AIM, 0);
-                target.x = x;
-                target.y = y;
-                aimPointer = pointerId;
-                targets.put(pointerId, target);
-                nativeTouchAimDown(true);
-            }
-        } else if (x >= width * 0.38f && x < rightStickRight(width, height) &&
+        } else if (cStick && x >= width * 0.38f && x < rightStickRight(width, height) &&
                    y > height * 0.43f) {
             if (rightPointer == -1) {
                 TouchTarget target = new TouchTarget(RIGHT_STICK, 0);
@@ -692,8 +655,8 @@ final class TouchControlsView extends View {
                 targets.put(pointerId, target);
                 updateStick(target, x, y);
             }
-        } else if (gcLook && aimPointer == -1) {
-            // GameCube layout: a drag on the free area turns and looks up/down.
+        } else if (aim && aimPointer == -1) {
+            // Everything else that is free: one finger at a time aims.
             TouchTarget target = new TouchTarget(AIM, 0);
             target.x = x;
             target.y = y;
@@ -712,22 +675,21 @@ final class TouchControlsView extends View {
     }
 
     private float rightStickX(float width, float height) {
-        return twinStickMode ? width * STICK_RIGHT_X : width - height * GC_CSTICK_FROM_RIGHT;
+        return width - height * GC_CSTICK_FROM_RIGHT;
     }
 
     private float rightStickY(float height) {
-        return height * (twinStickMode ? STICK_Y : GC_CSTICK_Y);
+        return height * GC_CSTICK_Y;
     }
 
     private float rightStickRadius(float height) {
-        return height * (twinStickMode ? STICK_RADIUS : GC_CSTICK_RADIUS);
+        return height * GC_CSTICK_RADIUS;
     }
 
     // Right edge of the area that grabs the right stick. Face buttons are
-    // hit-tested first, so on the GameCube layout it can reach past the C-stick.
+    // hit-tested first, so it can reach past the C-stick.
     private float rightStickRight(float width, float height) {
-        return twinStickMode ? width * 0.72f
-                             : rightStickX(width, height) + rightStickRadius(height) * 1.6f;
+        return rightStickX(width, height) + rightStickRadius(height) * 1.6f;
     }
 
     // Sends the finger's travel since the last event, in dp, through every
@@ -1126,7 +1088,7 @@ final class TouchControlsView extends View {
 
     // The GameCube layout's Z pill only opens the map, which a minimap tap does.
     private boolean pillHidden(PillButton pill) {
-        return mapTap && !twinStickMode && pill.axis < 0 && pill.button == BTN_RIGHT_SHOULDER;
+        return mapTap && pill.axis < 0 && pill.button == BTN_RIGHT_SHOULDER;
     }
 
     private void drawPillButton(Canvas canvas, PillButton pill, float width, float height) {
@@ -1231,10 +1193,10 @@ final class TouchControlsView extends View {
     // Each wheel opens centred on its button, so the buttons sit a wheel radius
     // up from the edge and far enough apart that a wheel never covers the other.
     // They are centred on screen, or in the gap between the sticks when the
-    // right stick is shown.
+    // C-stick is shown (classic layout).
     private float wheelButtonX(int wheel, float width, float height) {
         float centre = width * 0.5f;
-        if (!touchAim) {
+        if (cStick) {
             final float left = STICK_LEFT_X * width + STICK_RADIUS * height;
             final float right = rightStickX(width, height) - rightStickRadius(height);
             centre = (left + right) * 0.5f;

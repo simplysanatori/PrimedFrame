@@ -222,6 +222,9 @@ bool sTouchMapTap = true;
 // published each frame, the overlay's pick comes back as a request that
 // ControlMapper reads for a few polls as if the command's button were pressed.
 bool sTouchWheels = true;
+// Classic GameCube layout (Android overlay): C-stick, D-pad and the per-option
+// toggles. Off, the overlay has no C-stick and dragging aims like a mouse.
+bool sTouchClassic = false;
 bool sTouchVisorTapScan = false;
 std::atomic<uint32_t> sWheelMask{0};
 std::atomic<uint64_t> sWheelStampNs{0};
@@ -337,6 +340,8 @@ std::atomic< bool > sTouchColorsFlag{false};
 // Set when a real pad, keyboard or mouse is used; the Android touch overlay takes
 // it to get out of the way.
 std::atomic< bool > sPhysicalInput{false};
+// Set while the touch overlay is the active device (cleared by physical input).
+std::atomic< bool > sTouchActive{false};
 // Gyro state: the phone's sensor is looked up once, so the sensor list is not
 // walked on every tick.
 bool sPhoneGyroSearched = false;
@@ -559,6 +564,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sTouchAim = ParseBool(value);
   } else if (key == "touch_map_tap") {
     sTouchMapTap = ParseBool(value);
+  } else if (key == "touch_classic_gc") {
+    sTouchClassic = ParseBool(value);
   } else if (key == "touch_wheels") {
     sTouchWheels = ParseBool(value);
   } else if (key == "touch_visor_tap_scan") {
@@ -817,6 +824,7 @@ void SaveSettings() {
   file << "touch_aim=" << (sTouchAim ? 1 : 0) << '\n';
   file << "touch_aim_speed=" << sTouchAimSpeed << '\n';
   file << "touch_map_tap=" << (sTouchMapTap ? 1 : 0) << '\n';
+  file << "touch_classic_gc=" << (sTouchClassic ? 1 : 0) << '\n';
   file << "touch_wheels=" << (sTouchWheels ? 1 : 0) << '\n';
   file << "touch_visor_tap_scan=" << (sTouchVisorTapScan ? 1 : 0) << '\n';
   file << "mouse_invert_x=" << (sMouseInvertX ? 1 : 0) << '\n';
@@ -916,6 +924,7 @@ bool SDLCALL debug_event_watch(void*, SDL_Event* event) {
   }
   if (IsPhysicalInput(*event)) {
     sPhysicalInput.store(true, std::memory_order_release);
+    sTouchActive.store(false, std::memory_order_release);
   }
   return true;
 }
@@ -1529,6 +1538,16 @@ void SetMouseAim(bool enabled) {
   ResetMouseAim();
 }
 
+bool TouchDirectAim() {
+#if defined(__ANDROID__)
+  return !sTouchClassic && sTouchActive.load(std::memory_order_acquire) && !Visible();
+#else
+  return false;
+#endif
+}
+
+bool DirectAim() { return MouseAim() || TwinStick() || TouchDirectAim(); }
+
 bool TwinStick() {
   EnsureInitialized();
   return sTwinStick;
@@ -2135,6 +2154,17 @@ void SetTouchMapTap(bool on) {
   MarkDirty();
 }
 
+bool TouchClassic() {
+  EnsureInitialized();
+  return sTouchClassic;
+}
+
+void SetTouchClassic(bool on) {
+  EnsureInitialized();
+  sTouchClassic = on;
+  MarkDirty();
+}
+
 bool TouchWheels() {
   EnsureInitialized();
   return sTouchWheels;
@@ -2328,7 +2358,7 @@ void SetTouchAimSpeed(float pixelsPerDp) {
 // Called from the Android UI thread; the game thread drains it in
 // BeginFrameMouse.
 void AddTouchAim(float dxDp, float dyDp) {
-  if (!sTouchAim || Visible() || !std::isfinite(dxDp) ||
+  if (!(sTouchAim || !sTouchClassic) || Visible() || !std::isfinite(dxDp) ||
       !std::isfinite(dyDp)) {
     return;
   }
@@ -2346,9 +2376,10 @@ void BeginFrameMouse() {
     touchY = sTouchAimPendingY;
     sTouchAimPendingX = sTouchAimPendingY = 0.f;
   }
-  // With mouse aim or twin stick the touch travel joins the mouse's; in the GameCube
-  // scheme CPlayer::UpdateTouchLook takes it instead (TakeTouchLook).
-  const bool directAim = sMouseAim || sTwinStick;
+  // On the direct aim path (mouse aim, twin stick, or the modern touch layout) the
+  // touch travel joins the mouse's; in the classic GameCube scheme
+  // CPlayer::UpdateTouchLook takes it instead (TakeTouchLook).
+  const bool directAim = DirectAim();
   sTouchLookFrameX = directAim ? 0.f : touchX;
   sTouchLookFrameY = directAim ? 0.f : touchY;
   sMouseFrameX = sMousePendingX + sGyroPendingX + (directAim ? touchX : 0.f);
@@ -5031,33 +5062,44 @@ void DrawInputTab() {
   }
   ItemHelp("Draws the on-screen buttons in the GameCube pad's colours: green A, red B, yellow "
            "C-stick, purple Z. Off, they are plain and see-through.");
+  bool touchClassic = sTouchClassic;
+  if (ImGui::Checkbox("Classic GameCube layout", &touchClassic)) {
+    SetTouchClassic(touchClassic);
+  }
+  ItemHelp("Brings back the C-stick and the D-pad. Off: no C-stick; drag the free screen area to "
+           "aim like a mouse (the left stick strafes), and beams and visors come from the Visor "
+           "and Beam wheels.");
+  ImGui::BeginDisabled(!sTouchClassic);
   bool touchAim = sTouchAim;
   if (ImGui::Checkbox("Touch aim", &touchAim)) {
     SetTouchAim(touchAim);
   }
-  ItemHelp("Drag a finger on the free screen area. Twin stick layout: the view turns by the "
-           "distance dragged, like a mouse (off, the right stick is drawn and sets a turn rate). "
-           "GameCube layout: dragging sideways turns Samus, dragging up or down looks up or down "
-           "like R free look and levels out when you let go. Not while locked on or in the ball.");
+  ItemHelp("Drag a finger on the free screen area. Classic layout with twin stick off: dragging "
+           "sideways turns Samus, dragging up or down looks up or down like R free look and "
+           "levels out when you let go. Otherwise the view aims like a mouse, by the distance "
+           "dragged. Not while locked on or in the ball.");
+  ImGui::EndDisabled();
   bool touchMapTap = sTouchMapTap;
   if (ImGui::Checkbox("Tap minimap for map", &touchMapTap)) {
     SetTouchMapTap(touchMapTap);
   }
   ItemHelp("Tapping the minimap opens the map; hides the GameCube layout's Z button.");
+  ImGui::BeginDisabled(!sTouchClassic);
   bool touchWheels = sTouchWheels;
   if (ImGui::Checkbox("Beam and visor wheels", &touchWheels)) {
     SetTouchWheels(touchWheels);
   }
   ItemHelp("Replaces the D-pad with a Visor and a Beam button. Hold one, slide to a sector, "
            "let go to pick. Letting go in the middle cancels. Off, the D-pad is back.");
-  ImGui::BeginDisabled(!sTouchWheels);
+  ImGui::EndDisabled();
+  ImGui::BeginDisabled(!(!sTouchClassic || sTouchWheels));
   bool touchVisorTapScan = sTouchVisorTapScan;
   if (ImGui::Checkbox("Tap Visor for Scan Visor", &touchVisorTapScan)) {
     SetTouchVisorTapScan(touchVisorTapScan);
   }
   ItemHelp("A quick tap on the Visor button (no slide) selects the Scan Visor.");
   ImGui::EndDisabled();
-  ImGui::BeginDisabled(!sTouchAim);
+  ImGui::BeginDisabled(!(!sTouchClassic || sTouchAim));
   float touchAimSpeed = sTouchAimSpeed;
   if (ImGui::SliderFloat("Touch aim speed", &touchAimSpeed, 0.5f, 6.f, "%.2f px/dp",
                          ImGuiSliderFlags_Logarithmic)) {
@@ -6861,6 +6903,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchAimEnabled(JNIEnv*, jcla
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchClassic(JNIEnv*, jclass) {
+  return PortDebug::TouchClassic() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchWheelsEnabled(JNIEnv*, jclass) {
   return PortDebug::TouchWheels() ? JNI_TRUE : JNI_FALSE;
 }
@@ -6940,12 +6987,8 @@ Java_org_metroidprime_port_TouchControlsView_nativeDebugOverlayVisible(JNIEnv*, 
 
 extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeSetTouchDevice(JNIEnv*, jclass, jboolean xbox) {
+  sTouchActive.store(true, std::memory_order_release);
   PortPrompts::NoteTouchInput(xbox == JNI_TRUE);
-}
-
-extern "C" JNIEXPORT jboolean JNICALL
-Java_org_metroidprime_port_TouchControlsView_nativeTwinStick(JNIEnv*, jclass) {
-  return PortDebug::TwinStickFlag() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

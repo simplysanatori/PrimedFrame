@@ -784,7 +784,7 @@ bool CPlayer::MouseControlsAllowed(const CStateManager& mgr) const {
   // scanned object, so free-look is unaffected.
   const bool inputState = mgr.GetGameState() == CStateManager::kGS_Running ||
                           mgr.GetGameState() == CStateManager::kGS_SoftPaused;
-  return (PortDebug::MouseAim() || PortDebug::TwinStick()) && inputState &&
+  return PortDebug::DirectAim() && inputState &&
          !GetDisableInput() && mgr.GetPlayerState()->IsAlive() &&
          x2f8_morphBallState == kMS_Unmorphed && x2f4_cameraState == kCS_FirstPerson &&
          cameras != nullptr && cameras->GetFirstPersonCamera() != nullptr && cameras->IsInFPCamera() &&
@@ -848,7 +848,7 @@ static void PublishWheelState(CStateManager& mgr) {
   PortDebug::SetWheelState(mask);
 }
 
-// GameCube scheme only (neither mouse aim nor twin stick): a dragged finger
+// Classic GameCube scheme only (not on the direct aim path): a dragged finger
 // turns Samus by the distance and, while it is down, holds a free-look pitch
 // that eases back to level once it lifts.
 void CPlayer::UpdateTouchLook(float dt, CStateManager& mgr) {
@@ -857,7 +857,7 @@ void CPlayer::UpdateTouchLook(float dt, CStateManager& mgr) {
   const bool usable = PortDebug::TakeTouchLook(dyaw, dpitch);
   const CCameraManager* cameras = mgr.GetCameraManager();
   const bool allowed =
-      usable && !PortDebug::MouseAim() && !PortDebug::TwinStick() &&
+      usable && !PortDebug::DirectAim() &&
       mgr.GetGameState() == CStateManager::kGS_Running && !GetDisableInput() &&
       !x760_controlsFrozen && !GetFrozenState() && mgr.GetPlayerState()->IsAlive() &&
       x2f8_morphBallState == kMS_Unmorphed && !IsMorphBallTransitioning() &&

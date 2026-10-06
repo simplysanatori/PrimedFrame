@@ -243,6 +243,12 @@ void SetMouseAim(bool enabled);
 // same aim state as the mouse) and is consumed, so it no longer drives the
 // game's free-look. Works with or without mouse aim.
 bool TwinStick();
+// True on Android when the modern (non-classic) touch layout is the active device: drag aims like a mouse.
+bool TouchDirectAim();
+// The direct aim path is active: mouse aim, twin stick or the modern touch layout.
+bool DirectAim();
+bool TouchClassic();
+void SetTouchClassic(bool on);
 void SetTwinStick(bool enabled);
 // Right stick Y (-1..1) before twin-stick consumed it, for the Spring Ball;
 // 0 when twin-stick is off (the game input still carries it then).
