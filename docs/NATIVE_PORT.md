@@ -1277,8 +1277,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   and takes no area lights (Remastered has no lightmaps; this grid is its room
   lighting). `MP_ROOM_ENV_VOLUME=0` goes back to the area's lights, as does
   `MP_ROOM_GEO_AREA_LIGHTS=1`. For tuning: `MP_ROOM_ENV_VOLUME_BIAS` (metres off
-  the surface a sample is taken, default 0.25) and `MP_ROOM_ENV_VOLUME_SHOW`
-  (1 draws the texture coordinates, 2 the light alone, 3 the shading normal).
+  the surface a sample is taken; default 0, as Remastered samples at the
+  surface) and `MP_ROOM_ENV_VOLUME_SHOW` (1 draws the texture coordinates, 2 the light alone, 3 the shading normal).
 - `tools/pbr_shots.py`: contact sheets of models under PBR, for comparing mod
   builds. One game per (variant, place), each booted straight into the room
   with `MP_BOOT_WORLD` on its own console port and an Xvfb display, about 10 s

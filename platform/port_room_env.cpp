@@ -2312,7 +2312,7 @@ bool Compose(const Located& located, Selection& out) {
   // The mip a reflection is read from is the cube's own top one, as Remastered's is; the
   // variable only lowers it (PortRoomEnvLod::CubeLod).
   static const float lod = EnvFloat("MP_ROOM_ENV_LOD", PortRoomEnvLod::kNoCap);
-  static const float volumeBias = EnvFloat("MP_ROOM_ENV_VOLUME_BIAS", 0.25f);
+  static const float volumeBias = EnvFloat("MP_ROOM_ENV_VOLUME_BIAS", 0.f);
   const float ambient = AmbientScale();
   const float grey = 0.18f * gain;
   out = {};
