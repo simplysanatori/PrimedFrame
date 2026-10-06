@@ -527,8 +527,11 @@ final class TouchControlsView extends View {
                 }
                 if (target.type == LEFT_STICK || target.type == RIGHT_STICK) {
                     updateStick(target, event.getX(i), event.getY(i));
-                } else if (target.type == AIM) {
+                } else if (target.type == AIM || target.aiming) {
                     updateAim(target, event, i);
+                } else if (target.type == BUTTON && target.id == BTN_SOUTH && aim &&
+                           aimPointer == -1) {
+                    startButtonAim(event.getPointerId(i), target, event, i);
                 } else if (target.type == MAP_PAN) {
                     if (pan2Pointer == -1) {
                         updateMapPan(target, event, i);
@@ -679,7 +682,12 @@ final class TouchControlsView extends View {
         }
         for (ControlButton button : face) {
             if (hitButton(button, x, y, width, height)) {
-                targets.put(pointerId, new TouchTarget(BUTTON, button.button));
+                TouchTarget target = new TouchTarget(BUTTON, button.button);
+                target.x = x;
+                target.y = y;
+                target.startX = x;
+                target.startY = y;
+                targets.put(pointerId, target);
                 pressControl(button.button);
                 return;
             }
@@ -838,6 +846,20 @@ final class TouchControlsView extends View {
     private float rightStickGrabLeft(float width, float height) {
         final float right = rightStickRight(width, height);
         return right - (right - width * 0.38f) * layoutScale(height);
+    }
+
+    // A held A (charging) that slides past the tap slop aims too, so one thumb
+    // can charge and aim; A stays held until the finger lifts.
+    private void startButtonAim(int pointerId, TouchTarget target, MotionEvent event, int index) {
+        if (Math.hypot(event.getX(index) - target.startX, event.getY(index) - target.startY) <
+            dp(MAP_TAP_SLOP_DP)) {
+            return;
+        }
+        target.aiming = true;
+        target.x = event.getX(index);
+        target.y = event.getY(index);
+        aimPointer = pointerId;
+        nativeTouchAimDown(true);
     }
 
     // Sends the finger's travel since the last event, in dp, through every
@@ -1015,6 +1037,9 @@ final class TouchControlsView extends View {
         }
         if (target.type == BUTTON) {
             releaseControl(target.id);
+            if (target.aiming) {
+                nativeTouchAimDown(false);
+            }
             return;
         }
         final boolean left = target.type == LEFT_STICK;
@@ -1727,6 +1752,8 @@ final class TouchControlsView extends View {
         float startX;
         float startY;
         long startMs;
+        // A held A button that also aims; see startButtonAim.
+        boolean aiming;
 
         TouchTarget(int type, int id) {
             this.type = type;
