@@ -3323,7 +3323,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   std::vector<bool> dlColor;                   // and whether a colour index comes before them
   // The materials report: one row per output material, as it is pushed.
   auto decide = [&](const RemMaterial& rem, uint32_t sourceIndex, const char* path, const std::string& pathReason,
-                    const std::string& notes, const std::string& tag, uint32_t cube) {
+                    const std::string& notes, const std::string& tag, uint32_t cube, const RetailMaterial& pm) {
     if (!io.decision) {
       return;
     }
@@ -3348,6 +3348,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       d.p[i] = rem.kindParam[i];
     }
     d.cube = cube != 0 ? Hex8(cube) : "-";
+    char retailBlend[48];
+    std::snprintf(retailBlend, sizeof(retailBlend), "%u,%u 0x%X", pm.blendSrc, pm.blendDst, pm.flags);
+    d.retail = retailBlend;
     io.decision(d);
   };
   for (const auto& key : keys) {
@@ -3564,7 +3567,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           recordTag.assign(setBlobs[si].back().end() - 4, setBlobs[si].back().end());
         }
       }
-      decide(rem, std::get<1>(key), "pbr", "ok", loopNotes, recordTag, cube);
+      decide(rem, std::get<1>(key), "pbr", "ok", loopNotes, recordTag, cube, pm);
       continue;
     }
     ++tev;
@@ -3613,7 +3616,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
     }
     dlAttrs.push_back(attrs);
-    decide(rem, std::get<1>(key), "tev", tevReason, loopNotes, wrap != 0x55555555u ? "WRAP" : "TEV", 0);
+    decide(rem, std::get<1>(key), "tev", tevReason, loopNotes, wrap != 0x55555555u ? "WRAP" : "TEV", 0, pm);
     for (size_t si = 0; si < retail.nmat; ++si) {
       const MaterialSet& set = retail.sets[si];
       if (size_t(rmat) >= set.mats.size()) {
