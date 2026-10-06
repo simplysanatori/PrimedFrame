@@ -3528,6 +3528,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
     }
   }
+  // Whether any buffer carries UV0.zw (the lightmap's coordinates, material texcoord 1).
+  bool hasLightmapUv = false;
+  for (uint32_t bi : bufOrder) {
+    hasLightmapUv = hasLightmapUv || (buffers[bi].uv.size() > 1 && !buffers[bi].uv[1].empty());
+  }
   std::vector<double> P, N;
   P.reserve(n * 3);
   N.reserve(n * 3);
@@ -3883,6 +3888,15 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       for (uint32_t& a : attrs) {
         a = a == 0xFFFFFFFFu ? zero : a;
       }
+      // The lightmap's coordinates (texcoord 1: UV0.zw) ride on one more attribute, if the
+      // model has them and a slot is free; the material's 'LMUV' trailer names the slot.
+      int lightmapSlot = -1;
+      if (opt.lightmapUv && hasLightmapUv && ntexattr < 8) {
+        lightmapSlot = int(ntexattr);
+        vtx |= 3u << (8 + 2 * ntexattr);
+        attrs.push_back(uvIndex(1, nullptr));
+        ++ntexattr;
+      }
       dlAttrs.push_back(attrs);
       const uint32_t group = 0x40000000u | uint32_t(dlAttrs.size() - 1);
       const uint32_t cube = Cube(rem.refl);
@@ -3896,6 +3910,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
                                            si == 0 ? anuvCounts : scratch));
         if (si == 0) {
           recordTag.assign(setBlobs[si].back().end() - 4, setBlobs[si].back().end());
+        }
+        if (lightmapSlot >= 0) {
+          P32(setBlobs[si].back(), uint32_t(lightmapSlot));
+          setBlobs[si].back().insert(setBlobs[si].back().end(), {'L', 'M', 'U', 'V'});
         }
       }
       decide(rem, std::get<1>(key), "pbr", "ok", loopNotes, recordTag, cube, pm);

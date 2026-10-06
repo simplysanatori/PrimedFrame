@@ -26,11 +26,18 @@ inline float BeFloat(const uint8_t* p) {
 // back-facing copy (1, 1 without 'PBR6'), and cube the id of the material's own reflection
 // cube (0 without 'PBR7'). Returns how many floats the record held. A TEV material may end
 // in a record of its own: the wrap word and 'WRAP', no floats.
+// A PBR material may end in an 'LMUV' trailer (a big-endian word: the vertex texcoord slot
+// 0..7 holding the model's lightmap UV, then the tag), after everything else. Read() strips it
+// first, so it does not disturb the record; LightmapSlot() returns the slot, or -1 without one.
 // A kind 14-19 record ends in a trailer, 32 floats and 'PBR8' (the boundary shield's CCH0..CCH6
 // and DIFC; the holograms' ICNC + ICMC in row 6), read into `shield` when it is given (all zero without one); the record before it
 // is read as usual.
 inline int Read(const uint8_t* end, size_t size, float values[19], uint32_t* wrap,
                 float lightScale[2], uint32_t* cube = nullptr, float* shield = nullptr) {
+  if (size >= 8 && std::memcmp(end - 4, "LMUV", 4) == 0) {
+    end -= 8;
+    size -= 8;
+  }
   if (shield != nullptr) {
     for (int i = 0; i < 32; ++i) {
       shield[i] = 0.f;
@@ -102,6 +109,15 @@ inline int Read(const uint8_t* end, size_t size, float values[19], uint32_t* wra
     values[i] = BeFloat(record + i * 4);
   }
   return floats;
+}
+
+// The vertex texcoord slot of the 'LMUV' trailer ending at `end`, or -1 if there is none.
+inline int LightmapSlot(const uint8_t* end, size_t size) {
+  if (size >= 8 && std::memcmp(end - 4, "LMUV", 4) == 0) {
+    const uint32_t slot = Be32(end - 8);
+    return slot < 8 ? int(slot) : -1;
+  }
+  return -1;
 }
 
 } // namespace PortPbrRecord
