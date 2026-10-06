@@ -627,7 +627,10 @@ void ApplySetting(const std::string& key, const std::string& value) {
           .store(f);
     }
   } else if (key == "touch_layout") {
-    if (value.size() <= kTouchLayoutMaxLen) {
+    // Printable ASCII only: JNI's NewStringUTF aborts on invalid UTF-8.
+    const bool ascii = std::all_of(value.begin(), value.end(),
+                                   [](unsigned char c) { return c >= 0x20 && c < 0x7F; });
+    if (ascii && value.size() <= kTouchLayoutMaxLen) {
       std::lock_guard< std::mutex > lock(sTouchLayoutMutex);
       sTouchLayout = value;
     }

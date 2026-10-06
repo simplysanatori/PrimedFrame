@@ -250,6 +250,7 @@ final class TouchControlsView extends View {
     private final RectF editRect = new RectF();
     private final RectF clampRect = new RectF();
     private final Paint editPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private DashPathEffect editDashes;
 
     private ControlButton[] face = GAMECUBE_FACE;
     private PillButton[] pills = GAMECUBE_PILLS;
@@ -472,6 +473,15 @@ final class TouchControlsView extends View {
         wheels = !classic || nativeTouchWheelsEnabled();
         visorTapScan = nativeTouchVisorTapScan();
         mapTap = nativeTouchMapTapEnabled();
+        if (!editing) {
+            // A layout made on another screen, or before a rotation or resize,
+            // must not leave a control off screen where it can't be grabbed.
+            for (int i = 0; i < CONTROLS; ++i) {
+                if (ovDx[i] != 0f || ovDy[i] != 0f || ovScale[i] != 1f) {
+                    clampToScreen(i, width, height);
+                }
+            }
+        }
         bottomButtonRect(0, true, width, height, hideBounds);
         drawStick(canvas, leftStickX(width, height), leftStickY(width, height),
                   leftStickRadius(height), leftPointer, 0);
@@ -540,6 +550,9 @@ final class TouchControlsView extends View {
 
     // Moves and scales a control's default rect by its override, round its centre.
     private void applyOverride(int control, RectF rect, float height) {
+        if (ovDx[control] == 0f && ovDy[control] == 0f && ovScale[control] == 1f) {
+            return; // the default layout stays bit-for-bit what it was
+        }
         final float u = layoutU(height);
         final float cx = rect.centerX() + ovDx[control] * u;
         final float cy = rect.centerY() + ovDy[control] * u;
@@ -2118,6 +2131,9 @@ final class TouchControlsView extends View {
     // Keeps at least a control's centre on screen, and its offset sane.
     private void clampToScreen(int control, float width, float height) {
         final float u = layoutU(height);
+        if (!(u > 0f) || !(width > 0f)) {
+            return; // no size yet: dividing by u would put NaN in the layout
+        }
         ovDx[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, ovDx[control]));
         ovDy[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, ovDy[control]));
         controlBounds(control, width, height, clampRect);
@@ -2309,7 +2325,10 @@ final class TouchControlsView extends View {
 
     private void drawEditOverlay(Canvas canvas, float width, float height) {
         final float slack = dp(EDIT_GRAB_DP) * 0.5f;
-        final DashPathEffect dashes = new DashPathEffect(new float[] {dp(6), dp(4)}, 0f);
+        if (editDashes == null) {
+            editDashes = new DashPathEffect(new float[] {dp(6), dp(4)}, 0f);
+        }
+        final DashPathEffect dashes = editDashes;
         for (int c = 0; c < CONTROLS; ++c) {
             if (!editShown(c)) {
                 continue;
