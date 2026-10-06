@@ -2515,7 +2515,8 @@ void Writer::ReadSuns(const RoomData& r, const SceneryScripts& scripts, const Ma
     }
     // The light shines along its local +Y (rotated by Rz*Ry*Rx), so -Y points at the sun. Checked
     // against Remastered's hangar, where the white key light casts the beam's shadow toward the door.
-    const double x = euler[0] * M_PI / 180, y = euler[1] * M_PI / 180, z = euler[2] * M_PI / 180;
+    constexpr double kDegToRad = 3.14159265358979323846 / 180; // M_PI isn't in MSVC's <cmath>
+    const double x = euler[0] * kDegToRad, y = euler[1] * kDegToRad, z = euler[2] * kDegToRad;
     const double cx = std::cos(x), sx = std::sin(x), cy = std::cos(y), sy = std::sin(y), cz = std::cos(z),
                  sz = std::sin(z);
     const Vec3 up = MulR2G({cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx});
