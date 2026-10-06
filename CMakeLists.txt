@@ -223,6 +223,18 @@ if(ANDROID)
 else()
     list(APPEND MP_PORT_SOURCES platform/port_remastered_ffmpeg.cpp)
 endif()
+# The port's own sources build warning-clean: -Wall -Wextra catch mistakes in
+# port code. Decompiled game/engine code (src/, include/) and vendored code
+# (extern/) are excluded. -Wno-multichar: the code deliberately uses 'TXTR'-style
+# FourCC constants. -Wno-unused-parameter and -Wno-ignored-qualifiers: every hit
+# is inside decompiled headers (include/) that platform sources include and that
+# must not be edited (named-but-unused params and const-qualified return types
+# are the decomp style); platform sources themselves have none. MSVC gets nothing
+# here (its own flags live elsewhere).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set_source_files_properties(${MP_PORT_SOURCES} platform/smoke.cpp PROPERTIES
+        COMPILE_OPTIONS "-Wall;-Wextra;-Wno-multichar;-Wno-unused-parameter;-Wno-ignored-qualifiers")
+endif()
 if(ANDROID)
     add_library(metroid_prime_port SHARED ${MP_PORT_SOURCES})
     target_link_libraries(metroid_prime_port PRIVATE mediandk)

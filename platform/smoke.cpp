@@ -487,7 +487,7 @@ void PortSmokeScript(unsigned frame) {
   // Steps run in order and each fires once, at or after its frame. This has to
   // be straight-line rather than inside the parse block: with the loop guard
   // still on sNext, the second and later steps were never reached at all.
-  if (sNext < sCount && static_cast< int >(frame) >= sFrame[sNext]) {
+  if (sNext < static_cast<unsigned>(sCount) && static_cast< int >(frame) >= sFrame[sNext]) {
     sHeld = sButtons[sNext];
     sHoldUntil = frame + sHold[sNext];
     std::fprintf(stderr, "[smoke] frame %u: pressing 0x%04x for %u frame(s)\n", frame, sHeld, sHold[sNext]);

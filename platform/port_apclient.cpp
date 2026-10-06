@@ -549,7 +549,7 @@ void ApplyBuiltinWorld(Runtime& runtime, CStateManager& mgr, CPlayerState& playe
     if (world != nullptr && world->IGetWorldAssetId() == change.mlvl)
       area = world->IGetAreaId(change.mrea);
     if (state == nullptr || area.Value() < 0 ||
-        static_cast<size_t>(area.Value()) >= state->GetAreaLayers().size())
+        static_cast<size_t>(area.Value()) >= static_cast<size_t>(state->GetAreaLayers().size()))
       continue;
     if (change.whileLayer >= 0 && !state->IsLayerActive(area, TLayerId(change.whileLayer)))
       continue;
@@ -557,7 +557,7 @@ void ApplyBuiltinWorld(Runtime& runtime, CStateManager& mgr, CPlayerState& playe
       state->SetLayerActive(area, TLayerId(change.layer), change.active);
   }
   if (layers == nullptr || temple.Value() < 0 ||
-      static_cast<size_t>(temple.Value()) >= layers->GetAreaLayers().size())
+      static_cast<size_t>(temple.Value()) >= static_cast<size_t>(layers->GetAreaLayers().size()))
     return;
   for (int id = CPlayerState::kIT_Truth; id <= CPlayerState::kIT_Newborn; ++id) {
     const bool held = player.GetItemAmount(static_cast<CPlayerState::EItemType>(id)) > 0;
