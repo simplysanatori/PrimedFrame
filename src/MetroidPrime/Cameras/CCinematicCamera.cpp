@@ -19,6 +19,17 @@
 
 #include "rstl/algorithm.hpp"
 
+#ifdef TARGET_PC
+// Port: the aspect a cinematic's FOV is fitted to. Cinematics are framed for the
+// 16:9 letterbox CCameraFilterPass::DrawWideScreen draws, so up to 16:9 the
+// vertical FOV narrows with the aspect, as the bars would crop it. Past 16:9,
+// keep the letterbox's height and widen instead of cropping the shot further.
+static float CinematicAspect(const float aspect) {
+  const float kLetterbox = 16.f / 9.f;
+  return aspect < kLetterbox ? aspect : kLetterbox;
+}
+#endif
+
 CCinematicCamera::CCinematicCamera(const TUniqueId uid, const rstl::string& name,
                                    const CEntityInfo& info, const CTransform4f& xf,
                                    const bool active, const float shotDuration, const float fovy,
@@ -28,7 +39,13 @@ CCinematicCamera::CCinematicCamera(const TUniqueId uid, const rstl::string& name
               (flags & 0x20) != 0, 0)
 , x1e8_duration(shotDuration)
 , x1ec_t(0.f)
+#ifdef TARGET_PC
+// Port: keep the script's FOV (fovy times the load-time aspect) so the camera
+// follows an aspect change; GetInterpolatedHFov divides it by the live one.
+, x1f0_origFovy(fovy * aspect)
+#else
 , x1f0_origFovy(fovy)
+#endif
 , x1f4_passedViewPoint(0)
 , x1f8_passedTarget(0)
 , x1fc_origOrientation(CQuaternion::FromMatrix(xf))
@@ -93,7 +110,11 @@ void CCinematicCamera::Think(float dt, CStateManager& mgr) {
         SetTransform(CTransform4f::LookAt(viewPoint, target, up));
       }
     }
+#ifdef TARGET_PC
+    SetFov(GetInterpolatedHFov(x1d8_viewHFovs, x1ec_t) / CinematicAspect(GetAspectRatio()));
+#else
     SetFov(GetInterpolatedHFov(x1d8_viewHFovs, x1ec_t) / GetAspectRatio());
+#endif
     if (x20c_lookAtId != kInvalidUniqueId) {
       if (CScriptActor* actor = TCastToPtr< CScriptActor >(mgr.ObjectById(x20c_lookAtId))) {
         if (actor->IsPlayerActor()) {
@@ -462,7 +483,11 @@ float CCinematicCamera::GetInterpolatedHFov(const rstl::vector< float >& fovs, f
   float result;
   const int count = fovs.size();
   if (count == 0) {
+#ifdef TARGET_PC
+    result = x1f0_origFovy / CinematicAspect(GetAspectRatio());
+#else
     result = x1f0_origFovy;
+#endif
   } else if (count == 1) {
     result = fovs[0];
   } else {
