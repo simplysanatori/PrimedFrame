@@ -493,12 +493,9 @@ void SaveSettingsNow();
 // controls. Unlike Visible() it performs no lazy initialization, so it is safe
 // to call from the UI thread.
 bool OverlayVisible();
-// Thread-safe snapshot of the twin-stick setting, for the Android touch overlay
-// to choose a controller layout. Like OverlayVisible(), performs no lazy
-// initialization, so it is safe to call from the UI thread.
-bool TwinStickFlag();
 // Same, for whether the Android touch overlay draws the GameCube pad's colours
-// rather than plain translucent buttons.
+// rather than plain translucent buttons. Like OverlayVisible(), performs no lazy
+// initialization, so it is safe to call from the UI thread.
 bool TouchColorsFlag();
 void Toggle();
 // Asks for the overlay to be toggled on the next frame. Safe to call from any

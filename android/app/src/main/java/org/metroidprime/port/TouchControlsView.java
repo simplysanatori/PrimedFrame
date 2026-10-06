@@ -31,6 +31,7 @@ import java.util.Set;
  * brings back the C-stick and the D-pad. The game assigns the actions.
  */
 final class TouchControlsView extends View {
+    // Touch target types.
     private static final int LEFT_STICK = 1;
     private static final int RIGHT_STICK = 2;
     private static final int BUTTON = 3;
@@ -39,51 +40,15 @@ final class TouchControlsView extends View {
     private static final int AIM = 5;
     // A tap on the HUD minimap, which opens the map.
     private static final int MAP_TAP = 6;
-    // Travel, in dp, past which a minimap touch is a drag and not a tap.
     // A one-finger drag on the open map screen pans it.
     private static final int MAP_PAN = 7;
     // A second finger on the map: with the MAP_PAN one it pinches to zoom.
     private static final int MAP_PAN2 = 8;
-    // Finger spread, in dp, under which a pinch is ignored (the ratio blows up).
-    private static final float MAP_PINCH_MIN_DP = 20f;
-    // Screen y points down, so atan2 grows clockwise; this maps it to the map's yaw.
-    private static final float MAP_TWIST_SIGN = 1f;
-    // Tells the game a finger is still down on the map, so it doesn't drift back.
-    private static final long MAP_PAN_KEEPALIVE_MS = 100;
-    private static final float MAP_TAP_SLOP_DP = 12f;
-    // The round buttons along the bottom: START and MENU on the left, the map
-    // and the eye on the right. Inset from the sides and bottom so rounded
-    // display corners don't cut them off.
-    private static final float BOTTOM_BUTTON_RADIUS_DP = 22f;
-    private static final float BOTTOM_BUTTON_SIDE_DP = 28f;
-    private static final float BOTTOM_BUTTON_BOTTOM_DP = 12f;
-    private static final float BOTTOM_BUTTON_GAP_DP = 8f;
-    private static final long MAP_BUTTON_POLL_MS = 200;
     // Hold-and-slide wheels that replace the D-pad: id 0 = Visor, 1 = Beam.
     private static final int WHEEL = 9;
-    private static final String[] WHEEL_BUTTON_LABELS = {"Visor", "Beam"};
-    // Sectors run up, right, down, left, as the stock D-pad (visors) and C-stick
-    // (beams) directions do. Items are numbered as the native side does: visors
-    // Combat/X-Ray/Scan/Thermal, beams Power/Ice/Wave/Plasma.
-    private static final String[][] WHEEL_LABELS = {
-        {"Combat", "X-Ray", "Thermal", "Scan"},
-        {"Power", "Wave", "Ice", "Plasma"},
-    };
-    private static final int[][] WHEEL_ITEMS = {{0, 1, 3, 2}, {0, 2, 1, 3}};
-    private static final int WHEEL_VALID_BIT = 1 << 12;
-    private static final float WHEEL_ICON_DP = 44f;
-    private static final long WHEEL_ICON_RETRY_MS = 1000;
-    private static final float WHEEL_BUTTON_GAP_DP = 8f; // wheel to edge / other button
-    private static final float WHEEL_BUTTON_RADIUS = 0.072f;
-    private static final float WHEEL_BUTTON_ANCHOR_DP = 16f; // gap to the stick / face buttons
-    // START and MENU sit in the bottom-left corner, mirroring the map button and eye.
-    private static final float WHEEL_RADIUS_DP = 112f;
-    private static final float WHEEL_DEAD_DP = 30f;
-    private static final long WHEEL_TAP_MS = 250;
 
     // Port-only actions, not game inputs.
     private static final int TOGGLE_DEBUG_OVERLAY = -1;
-    // The hide eye in the bottom-right corner, in dp.
     // Axis-held controls are tracked with ids above this, to share one press map.
     private static final int AXIS_ID_BASE = 100;
 
@@ -96,7 +61,6 @@ final class TouchControlsView extends View {
     private static final int BTN_WEST = 2;
     private static final int BTN_NORTH = 3;
     private static final int BTN_START = 6;
-    private static final int BTN_LEFT_SHOULDER = 9;
     private static final int BTN_RIGHT_SHOULDER = 10;
     private static final int BTN_DPAD_UP = 11;
     private static final int BTN_DPAD_DOWN = 12;
@@ -110,11 +74,11 @@ final class TouchControlsView extends View {
     private static final int AXIS_TRIGGER_L = 4;
     private static final int AXIS_TRIGGER_R = 5;
 
-    // Sticks are drawn and read through these, so the two cannot disagree.
     // The layout's fractions of the view height stop growing at this many dp
     // (a 500 dp phone is unchanged), so a tablet gets phone-sized controls
     // that keep their distance to the nearest edge.
     private static final float MAX_LAYOUT_DP = 520f;
+    // Sticks are drawn and read through these, so the two cannot disagree.
     private static final float STICK_EXTRA_INSET_DP = 16f;
     private static final float STICK_RADIUS = 0.16f;
     private static final float LEFT_STICK_REACH = 1.5f; // grab area, in stick radii
@@ -174,6 +138,46 @@ final class TouchControlsView extends View {
         new PillButton("START", -1, BTN_START, 0f, 0f, 0f, 0f),
         new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0f, 0f, 0f, 0f),
     };
+
+    // The round buttons along the bottom: START and MENU on the left, the map
+    // and the eye on the right. Inset from the sides and bottom so rounded
+    // display corners don't cut them off.
+    private static final float BOTTOM_BUTTON_RADIUS_DP = 22f;
+    private static final float BOTTOM_BUTTON_SIDE_DP = 28f;
+    private static final float BOTTOM_BUTTON_BOTTOM_DP = 12f;
+    private static final float BOTTOM_BUTTON_GAP_DP = 8f;
+
+    // The Visor and Beam buttons and their wheels.
+    private static final String[] WHEEL_BUTTON_LABELS = {"Visor", "Beam"};
+    // Sectors run up, right, down, left, as the stock D-pad (visors) and C-stick
+    // (beams) directions do. Items are numbered as the native side does: visors
+    // Combat/X-Ray/Scan/Thermal, beams Power/Ice/Wave/Plasma.
+    private static final String[][] WHEEL_LABELS = {
+        {"Combat", "X-Ray", "Thermal", "Scan"},
+        {"Power", "Wave", "Ice", "Plasma"},
+    };
+    private static final int[][] WHEEL_ITEMS = {{0, 1, 3, 2}, {0, 2, 1, 3}};
+    // The bit of nativeWheelOwned() that is set once there is a player.
+    private static final int WHEEL_VALID_BIT = 1 << 12;
+    private static final float WHEEL_BUTTON_RADIUS = 0.072f;
+    private static final float WHEEL_BUTTON_GAP_DP = 8f; // wheel to edge / other button
+    private static final float WHEEL_BUTTON_ANCHOR_DP = 16f; // gap to the stick / face buttons
+    // The open wheel: its outer radius, the dead centre that cancels, and a sector's icon.
+    private static final float WHEEL_RADIUS_DP = 112f;
+    private static final float WHEEL_DEAD_DP = 30f;
+    private static final float WHEEL_ICON_DP = 44f;
+
+    // Finger spread, in dp, under which a pinch is ignored (the ratio blows up).
+    private static final float MAP_PINCH_MIN_DP = 20f;
+    // Travel, in dp, past which a touch is a drag and not a tap (minimap, wheel, A).
+    private static final float MAP_TAP_SLOP_DP = 12f;
+
+    // Tells the game a finger is still down on the map, so it doesn't drift back.
+    private static final long MAP_PAN_KEEPALIVE_MS = 100;
+    private static final long MAP_BUTTON_POLL_MS = 200;
+    private static final long PHYSICAL_INPUT_POLL_MS = 250;
+    private static final long WHEEL_ICON_RETRY_MS = 1000;
+    private static final long WHEEL_TAP_MS = 250;
 
     private ControlButton[] face = GAMECUBE_FACE;
     private PillButton[] pills = GAMECUBE_PILLS;
@@ -245,7 +249,8 @@ final class TouchControlsView extends View {
     private static native void nativeRequestVisor(int visor);
     private static native void nativeRequestBeam(int beam);
     private static native boolean nativeTouchMapTapEnabled();
-    // The minimap's screen rect as fractions of the view; false when not shown.
+    // The minimap's screen rect into out5: x0, y0, x1, y1 as fractions of the view, then 1
+    // when the minimap is drawn there (0: draw a map button instead). False when no rect.
     private static native boolean nativeMinimapRect(float[] out5);
     private static native void nativeMapTap();
     // A map-screen drag in dp (zero deltas = finger still down); the view height in dp.
@@ -281,7 +286,6 @@ final class TouchControlsView extends View {
     private boolean autoHidden;
     private boolean lastOverlayVisible;
 
-    private static final long PHYSICAL_INPUT_POLL_MS = 250;
     private final Runnable physicalInputPoll = new Runnable() {
         @Override
         public void run() {
@@ -514,12 +518,7 @@ final class TouchControlsView extends View {
                 return true;
             }
             if (mapButtonShown && mapButtonRect.contains(x, y)) {
-                TouchTarget target = new TouchTarget(MAP_TAP, 0);
-                target.x = x;
-                target.y = y;
-                target.startX = x;
-                target.startY = y;
-                targets.put(pointerId, target);
+                targets.put(pointerId, TouchTarget.begin(MAP_TAP, 0, x, y));
                 return true;
             }
             assignPointer(pointerId, x, y);
@@ -670,6 +669,11 @@ final class TouchControlsView extends View {
                                   pressure);
     }
 
+    // Touch-down routing, first match wins: pills, face buttons, the wheel
+    // buttons (a hit swallows the touch even when no wheel opens), the D-pad,
+    // the HUD minimap, the left stick, then the open map's pan (nothing else
+    // applies while the map is open), the classic C-stick zone, and the free
+    // area aims.
     private void assignPointer(int pointerId, float x, float y) {
         float width = getWidth();
         float height = getHeight();
@@ -686,12 +690,7 @@ final class TouchControlsView extends View {
         }
         for (ControlButton button : face) {
             if (hitButton(button, x, y, width, height)) {
-                TouchTarget target = new TouchTarget(BUTTON, button.button);
-                target.x = x;
-                target.y = y;
-                target.startX = x;
-                target.startY = y;
-                targets.put(pointerId, target);
+                targets.put(pointerId, TouchTarget.begin(BUTTON, button.button, x, y));
                 pressControl(button.button);
                 return;
             }
@@ -702,11 +701,7 @@ final class TouchControlsView extends View {
             if (wheel != -1) {
                 // Not while the map is open (the overlay is handled before this).
                 if (wheelPointer == -1 && !nativeMapScreenOpen()) {
-                    TouchTarget target = new TouchTarget(WHEEL, wheel);
-                    target.x = x;
-                    target.y = y;
-                    target.startX = x;
-                    target.startY = y;
+                    TouchTarget target = TouchTarget.begin(WHEEL, wheel, x, y);
                     target.startMs = SystemClock.uptimeMillis();
                     wheelCx = wheelButtonX(wheel, width, height);
                     wheelCy = wheelButtonY(height);
@@ -726,12 +721,7 @@ final class TouchControlsView extends View {
         if (mapTap && width > 0f && height > 0f && nativeMinimapRect(minimapRect) &&
             minimapRect[4] != 0f && x >= minimapRect[0] * width && x <= minimapRect[2] * width &&
             y >= minimapRect[1] * height && y <= minimapRect[3] * height) {
-            TouchTarget target = new TouchTarget(MAP_TAP, 0);
-            target.x = x;
-            target.y = y;
-            target.startX = x;
-            target.startY = y;
-            targets.put(pointerId, target);
+            targets.put(pointerId, TouchTarget.begin(MAP_TAP, 0, x, y));
             return;
         }
         if (onLeftStick(x, y, width, height) && leftPointer == -1) {
@@ -742,19 +732,13 @@ final class TouchControlsView extends View {
         } else if (nativeMapScreenOpen()) {
             // Everything else that is free pans the open map, one finger at a time.
             if (panPointer == -1) {
-                TouchTarget target = new TouchTarget(MAP_PAN, 0);
-                target.x = x;
-                target.y = y;
                 panPointer = pointerId;
-                targets.put(pointerId, target);
+                targets.put(pointerId, TouchTarget.begin(MAP_PAN, 0, x, y));
                 nativeMapPan(0f, 0f, panViewDp());
                 postDelayed(panKeepAlive, MAP_PAN_KEEPALIVE_MS);
             } else if (pan2Pointer == -1) {
-                TouchTarget target = new TouchTarget(MAP_PAN2, 0);
-                target.x = x;
-                target.y = y;
                 pan2Pointer = pointerId;
-                targets.put(pointerId, target);
+                targets.put(pointerId, TouchTarget.begin(MAP_PAN2, 0, x, y));
             }
         } else if (cStick && x >= rightStickGrabLeft(width, height) &&
                    x < rightStickRight(width, height) &&
@@ -767,11 +751,8 @@ final class TouchControlsView extends View {
             }
         } else if (aim && aimPointer == -1) {
             // Everything else that is free: one finger at a time aims.
-            TouchTarget target = new TouchTarget(AIM, 0);
-            target.x = x;
-            target.y = y;
             aimPointer = pointerId;
-            targets.put(pointerId, target);
+            targets.put(pointerId, TouchTarget.begin(AIM, 0, x, y));
             nativeTouchAimDown(true);
         }
     }
@@ -942,7 +923,7 @@ final class TouchControlsView extends View {
             } else if (turn <= -Math.PI) {
                 turn += 2f * (float) Math.PI;
             }
-            nativeMapRotate(MAP_TWIST_SIGN * turn);
+            nativeMapRotate(turn);
         }
     }
 
@@ -1193,6 +1174,8 @@ final class TouchControlsView extends View {
         return dy < 0 ? BTN_DPAD_UP : BTN_DPAD_DOWN;
     }
 
+    private final RectF armRect = new RectF();
+
     private void drawDpad(Canvas canvas, float width, float height) {
         float cx = layoutX(DPAD_X, width, height);
         float cy = layoutY(DPAD_Y, height);
@@ -1215,13 +1198,13 @@ final class TouchControlsView extends View {
             }
             float endX = cx + DPAD_DX[i] * arm;
             float endY = cy + DPAD_DY[i] * arm;
-            RectF bounds = new RectF(
+            armRect.set(
                 Math.min(cx, endX) - (DPAD_DX[i] == 0 ? half : 0),
                 Math.min(cy, endY) - (DPAD_DY[i] == 0 ? half : 0),
                 Math.max(cx, endX) + (DPAD_DX[i] == 0 ? half : 0),
                 Math.max(cy, endY) + (DPAD_DY[i] == 0 ? half : 0));
             fillPaint.setColor(colored ? padFill(GC_GREY, true) : 0xCC48C8E8);
-            canvas.drawRoundRect(bounds, corner, corner, fillPaint);
+            canvas.drawRoundRect(armRect, corner, corner, fillPaint);
         }
         strokePaint.setColor(0xBBFFFFFF);
         canvas.drawPath(shapePath, strokePaint);
@@ -1231,8 +1214,10 @@ final class TouchControlsView extends View {
         }
     }
 
+    private final RectF arcRect = new RectF();
+
     // A band round (cx, cy) along the arc, with round ends: GameCube X and Y.
-    private static void kidneyPath(Path path, float cx, float cy, float ring, float half,
+    private void kidneyPath(Path path, float cx, float cy, float ring, float half,
                                    float start, float sweep) {
         float end = start + sweep;
         float endX = cx + ring * (float) Math.cos(Math.toRadians(end));
@@ -1240,14 +1225,14 @@ final class TouchControlsView extends View {
         float startX = cx + ring * (float) Math.cos(Math.toRadians(start));
         float startY = cy + ring * (float) Math.sin(Math.toRadians(start));
         path.reset();
-        path.arcTo(new RectF(cx - ring - half, cy - ring - half, cx + ring + half,
-                             cy + ring + half), start, sweep, true);
-        path.arcTo(new RectF(endX - half, endY - half, endX + half, endY + half),
-                   end, 180f, false);
-        path.arcTo(new RectF(cx - ring + half, cy - ring + half, cx + ring - half,
-                             cy + ring - half), end, -sweep, false);
-        path.arcTo(new RectF(startX - half, startY - half, startX + half, startY + half),
-                   start + 180f, 180f, false);
+        arcRect.set(cx - ring - half, cy - ring - half, cx + ring + half, cy + ring + half);
+        path.arcTo(arcRect, start, sweep, true);
+        arcRect.set(endX - half, endY - half, endX + half, endY + half);
+        path.arcTo(arcRect, end, 180f, false);
+        arcRect.set(cx - ring + half, cy - ring + half, cx + ring - half, cy + ring - half);
+        path.arcTo(arcRect, end, -sweep, false);
+        arcRect.set(startX - half, startY - half, startX + half, startY + half);
+        path.arcTo(arcRect, start + 180f, 180f, false);
         path.close();
     }
 
@@ -1342,10 +1327,6 @@ final class TouchControlsView extends View {
 
     private void drawPillButton(Canvas canvas, PillButton pill, float width, float height) {
         pillRect(pill, width, height, pillHit);
-        float left = pillHit.left;
-        float top = pillHit.top;
-        float right = pillHit.right;
-        float bottom = pillHit.bottom;
         boolean active = held.containsKey(pill.id());
         if (colored && pill.color != 0) {
             fillPaint.setColor(padFill(pill.color, active));
@@ -1358,7 +1339,7 @@ final class TouchControlsView extends View {
             drawCornerButton(canvas, slot, pillHit);
             return;
         }
-        RectF bounds = new RectF(left, top, right, bottom);
+        final RectF bounds = pillHit;
         float radius = Math.min(bounds.width(), bounds.height()) * 0.28f;
         canvas.drawRoundRect(bounds, radius, radius, fillPaint);
         canvas.drawRoundRect(bounds, radius, radius, strokePaint);
@@ -1595,6 +1576,9 @@ final class TouchControlsView extends View {
         return (mask & (1 << (wheel * 4 + item))) != 0;
     }
 
+    private final RectF wheelOval = new RectF();
+    private final RectF wheelHole = new RectF();
+
     // The wheel opens over everything: four sectors, the one under the finger lit.
     private void drawWheel(Canvas canvas) {
         final TouchTarget target = wheelTarget();
@@ -1605,10 +1589,8 @@ final class TouchControlsView extends View {
         final int sector = wheelSector(target.x, target.y);
         final float outer = dp(WHEEL_RADIUS_DP);
         final float inner = dp(WHEEL_DEAD_DP);
-        final RectF oval = new RectF(wheelCx - outer, wheelCy - outer, wheelCx + outer,
-                                     wheelCy + outer);
-        final RectF hole = new RectF(wheelCx - inner, wheelCy - inner, wheelCx + inner,
-                                     wheelCy + inner);
+        wheelOval.set(wheelCx - outer, wheelCy - outer, wheelCx + outer, wheelCy + outer);
+        wheelHole.set(wheelCx - inner, wheelCy - inner, wheelCx + inner, wheelCy + inner);
         final int currentIndex = target.id == 0 ? (mask >> 8) & 3 : (mask >> 10) & 3;
         for (int i = 0; i < 4; ++i) {
             final int item = WHEEL_ITEMS[target.id][i];
@@ -1616,8 +1598,8 @@ final class TouchControlsView extends View {
             // Sector i is centred on up (-90), right (0), down (90), left (180).
             final float start = -135f + 90f * i;
             shapePath.reset();
-            shapePath.arcTo(oval, start, 90f, true);
-            shapePath.arcTo(hole, start + 90f, -90f, false);
+            shapePath.arcTo(wheelOval, start, 90f, true);
+            shapePath.arcTo(wheelHole, start + 90f, -90f, false);
             shapePath.close();
             final boolean lit = i == sector && owned;
             fillPaint.setColor(lit ? 0xDD48C8E8 : owned ? 0xAA081218 : 0x66081218);
@@ -1693,10 +1675,6 @@ final class TouchControlsView extends View {
         final float arcSweep;
         // An RGB fill, or 0 for the overlay's own.
         final int color;
-
-        ControlButton(String label, int button, float x, float y, float radius) {
-            this(label, button, false, x, y, radius, 0f, 0f, 0f, 0);
-        }
 
         private ControlButton(String label, int button, boolean anchored, float x, float y,
                               float radius, float halfWidth, float arcStart, float arcSweep,
@@ -1777,6 +1755,16 @@ final class TouchControlsView extends View {
         TouchTarget(int type, int id) {
             this.type = type;
             this.id = id;
+        }
+
+        // A target whose finger went down at (x, y).
+        static TouchTarget begin(int type, int id, float x, float y) {
+            final TouchTarget target = new TouchTarget(type, id);
+            target.x = x;
+            target.y = y;
+            target.startX = x;
+            target.startY = y;
+            return target;
         }
     }
 }

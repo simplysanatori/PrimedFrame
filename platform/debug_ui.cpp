@@ -346,9 +346,7 @@ std::atomic< int > sWindowFullscreen{-1};
 // Mirrors sVisible for readers on other threads, so they never touch the lazy
 // initialization or the ImGui state owned by the game thread.
 std::atomic< bool > sOverlayVisible{false};
-// Same idea for the twin-stick setting, which the Android touch overlay uses to
-// pick a controller layout.
-std::atomic< bool > sTwinStickFlag{false};
+// Same idea for whether the Android touch overlay draws the GameCube pad's colours.
 std::atomic< bool > sTouchColorsFlag{false};
 // Set when a real pad, keyboard or mouse is used; the Android touch overlay takes
 // it to get out of the way.
@@ -2460,7 +2458,7 @@ void SetTouchAimSpeed(float pixelsPerDp) {
 // Called from the Android UI thread; the game thread drains it in
 // BeginFrameMouse.
 void AddTouchAim(float dxDp, float dyDp) {
-  if (!(sTouchAim || !sTouchClassic) || Visible() || !std::isfinite(dxDp) ||
+  if ((!sTouchAim && sTouchClassic) || Visible() || !std::isfinite(dxDp) ||
       !std::isfinite(dyDp)) {
     return;
   }
@@ -3039,8 +3037,6 @@ bool Visible() {
 
 bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); }
 
-bool TwinStickFlag() { return sTwinStickFlag.load(std::memory_order_acquire); }
-
 bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire); }
 
 void SaveSettingsNow() {
@@ -3442,7 +3438,6 @@ void UpdateControllerNav() {
     }
   }
   sOverlayVisible.store(sVisible, std::memory_order_release);
-  sTwinStickFlag.store(sTwinStick, std::memory_order_release);
   sTouchColorsFlag.store(sTouchColors, std::memory_order_release);
 
   ImGuiIO& io = ImGui::GetIO();
