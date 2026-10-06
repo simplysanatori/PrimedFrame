@@ -396,6 +396,13 @@ void SetMouseSensitivity(float radiansPerPixel);
 void AddMouseDelta(float dx, float dy);
 // Called once per simulated frame to latch the deltas for that frame.
 void BeginFrameMouse();
+// Touch aim (Android drag-to-turn): finger travel in dp, right/down positive.
+// Thread-safe; drained by BeginFrameMouse.
+bool TouchAim();
+void SetTouchAim(bool on);
+float TouchAimSpeed();
+void SetTouchAimSpeed(float pixelsPerDp);
+void AddTouchAim(float dxDp, float dyDp);
 void GetFrameMouseDelta(float& dx, float& dy);
 // The yaw/pitch change (radians) the next tick's look input will apply, as seen
 // a fraction of a tick after the last one. False when there is none to show.

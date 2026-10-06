@@ -33,6 +33,8 @@ final class TouchControlsView extends View {
     private static final int RIGHT_STICK = 2;
     private static final int BUTTON = 3;
     private static final int HIDE = 4;
+    // A drag on the free screen area that turns the view by its travel.
+    private static final int AIM = 5;
 
     // Port-only actions, not game inputs.
     private static final int TOGGLE_DEBUG_OVERLAY = -1;
@@ -130,13 +132,14 @@ final class TouchControlsView extends View {
     // goes under R here. In Xbox mode the shoulders stack on both sides, the
     // trigger above the bumper: LT/RT and LB/RB, where RB carries Z and LB the
     // twin-stick beam modifier, which is what the port reads the left shoulder
-    // for. X-Box mode has no Z label because the pad has no Z button.
+    // for. X-Box mode has no Z label because the pad has no Z button. L and R
+    // are tall so a quick lock-on is hard to miss; L stops just above the D-pad.
     private static final PillButton[] GAMECUBE_PILLS = {
-        new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.125f, GC_GREY,
+        new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY,
                        PillButton.TRIGGER_LEFT),
-        new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.125f, GC_GREY,
+        new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.190f, GC_GREY,
                        PillButton.TRIGGER_RIGHT),
-        new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.140f, 0.960f, 0.200f, GC_PURPLE),
+        new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.205f, 0.960f, 0.265f, GC_PURPLE),
         new PillButton("START", -1, BTN_START, 0.400f, 0.030f, 0.490f, 0.100f),
         new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0.510f, 0.030f, 0.600f, 0.100f),
     };
@@ -156,6 +159,9 @@ final class TouchControlsView extends View {
     // The GameCube pad's colours, off by default (plain translucent buttons);
     // an F1 setting, so it's re-read every draw like twin-stick.
     private boolean colored;
+    // Twin stick with drag-to-aim: no right stick, a drag turns the view. An F1
+    // setting, re-read every draw.
+    private boolean touchAim;
 
     private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -171,6 +177,8 @@ final class TouchControlsView extends View {
     private static native boolean nativeDebugOverlayVisible();
     private static native boolean nativeTwinStick();
     private static native boolean nativeTouchColors();
+    private static native boolean nativeTouchAimEnabled();
+    private static native void nativeTouchAim(float dxDp, float dyDp);
     private static native void nativeSetTouchDevice(boolean xboxLayout);
     private static native void nativeToggleDebugOverlay();
     private static native void nativeVirtualButton(int button, boolean down);
@@ -178,6 +186,7 @@ final class TouchControlsView extends View {
     private static native boolean nativeTakePhysicalInput();
     private int leftPointer = -1;
     private int rightPointer = -1;
+    private int aimPointer = -1;
     private boolean hidden;
     // Hidden because a real pad, keyboard or mouse was used. Unlike HIDE, which
     // leaves a SHOW button, nothing is drawn and any touch brings them back.
@@ -246,14 +255,18 @@ final class TouchControlsView extends View {
             pills = twinStickMode ? XBOX_PILLS : GAMECUBE_PILLS;
         }
         colored = !twinStickMode && nativeTouchColors();
+        touchAim = twinStickMode && nativeTouchAimEnabled();
         hideBounds.set(width - dp(EYE_MARGIN_DP + EYE_WIDTH_DP),
                        height - dp(EYE_MARGIN_DP + EYE_HEIGHT_DP),
                        width - dp(EYE_MARGIN_DP), height - dp(EYE_MARGIN_DP));
         drawStick(canvas, width * STICK_LEFT_X, height * STICK_Y, height * STICK_RADIUS,
                   leftPointer, 0);
-        // The right stick is the C-stick, yellow on the GameCube pad.
-        drawStick(canvas, rightStickX(width, height), rightStickY(height),
-                  rightStickRadius(height), rightPointer, colored ? GC_YELLOW : 0);
+        // The right stick is the C-stick, yellow on the GameCube pad. Touch aim
+        // has none: a drag anywhere free turns the view.
+        if (!touchAim) {
+            drawStick(canvas, rightStickX(width, height), rightStickY(height),
+                      rightStickRadius(height), rightPointer, colored ? GC_YELLOW : 0);
+        }
 
         for (PillButton pill : pills) {
             drawPillButton(canvas, pill, width, height);
@@ -341,9 +354,13 @@ final class TouchControlsView extends View {
         } else if (action == MotionEvent.ACTION_MOVE) {
             for (int i = 0; i < event.getPointerCount(); ++i) {
                 TouchTarget target = targets.get(event.getPointerId(i));
-                if (target != null &&
-                    (target.type == LEFT_STICK || target.type == RIGHT_STICK)) {
+                if (target == null) {
+                    continue;
+                }
+                if (target.type == LEFT_STICK || target.type == RIGHT_STICK) {
                     updateStick(target, event.getX(i), event.getY(i));
+                } else if (target.type == AIM) {
+                    updateAim(target, event, i);
                 }
             }
         } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
@@ -383,6 +400,7 @@ final class TouchControlsView extends View {
         held.clear();
         leftPointer = -1;
         rightPointer = -1;
+        aimPointer = -1;
         invalidate();
     }
 
@@ -491,6 +509,15 @@ final class TouchControlsView extends View {
             leftPointer = pointerId;
             targets.put(pointerId, target);
             updateStick(target, x, y);
+        } else if (touchAim) {
+            // Everything else that is free: one finger at a time aims.
+            if (aimPointer == -1) {
+                TouchTarget target = new TouchTarget(AIM, 0);
+                target.x = x;
+                target.y = y;
+                aimPointer = pointerId;
+                targets.put(pointerId, target);
+            }
         } else if (x >= width * 0.38f && x < rightStickRight(width, height) &&
                    y > height * 0.43f && rightPointer == -1) {
             TouchTarget target = new TouchTarget(RIGHT_STICK, 0);
@@ -517,6 +544,24 @@ final class TouchControlsView extends View {
     private float rightStickRight(float width, float height) {
         return twinStickMode ? width * 0.72f
                              : rightStickX(width, height) + rightStickRadius(height) * 1.6f;
+    }
+
+    // Sends the finger's travel since the last event, in dp, through every
+    // historical sample so a fast swipe stays smooth.
+    private void updateAim(TouchTarget target, MotionEvent event, int index) {
+        final float density = getResources().getDisplayMetrics().density;
+        float lastX = target.x;
+        float lastY = target.y;
+        final int history = event.getHistorySize();
+        for (int h = 0; h <= history; ++h) {
+            final float x = h < history ? event.getHistoricalX(index, h) : event.getX(index);
+            final float y = h < history ? event.getHistoricalY(index, h) : event.getY(index);
+            nativeTouchAim((x - lastX) / density, (y - lastY) / density);
+            lastX = x;
+            lastY = y;
+        }
+        target.x = lastX;
+        target.y = lastY;
     }
 
     private void updateStick(TouchTarget target, float x, float y) {
@@ -563,10 +608,14 @@ final class TouchControlsView extends View {
         if (pointerId == rightPointer) {
             rightPointer = -1;
         }
+        if (pointerId == aimPointer) {
+            aimPointer = -1;
+        }
     }
 
     private void releaseTarget(TouchTarget target) {
-        if (target.type == HIDE) {
+        // Nothing to zero for a hide tap or an aim drag: aim is a distance.
+        if (target.type == HIDE || target.type == AIM) {
             return;
         }
         if (target.type == BUTTON) {

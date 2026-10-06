@@ -810,6 +810,11 @@ unpacks to a temporary directory instead of mounting.
   to 0.2 s before landing still counts. It reads the gyro aim's source but works
   with gyro aim off. The phone's gyro is turned to the screen's orientation, so
   pitch and yaw stay right in landscape.
+  **Touch aim** (Android, `touch_aim`, on by default; `touch_aim_speed`, default
+  2.25 aim px per dp): with twin stick on, the right stick is gone and a finger
+  dragged on the free screen area turns the view by the distance dragged, like a
+  mouse (`AddTouchAim`, drained in `BeginFrameMouse`). Off, the right stick sets
+  a turn rate as before.
   A press of the beam shift springs too (beams don't change in morph ball), as
   X does in Remastered; jump (B) stays the Boost Ball's alone. A shift held from
   before the ball formed has to be let go first.

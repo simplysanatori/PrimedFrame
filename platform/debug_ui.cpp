@@ -209,6 +209,14 @@ std::string sModsDisabled;
 int sGyroMode = 0;
 int sGyroSource = 0;
 float sGyroRate = 600.f;
+// Touch aim (Android): dragging on the free screen area turns the view by the
+// finger's travel. Speed is aim pixels per dp; 2.25 turns ~180 degrees over a
+// 400 dp drag at the default mouse sensitivity (pi / 0.0035 / 400).
+bool sTouchAim = true;
+float sTouchAimSpeed = 2.25f;
+std::mutex sTouchAimMutex;
+float sTouchAimPendingX = 0.f;
+float sTouchAimPendingY = 0.f;
 bool sMouseCaptured = false;
 bool sMouseGameplayActive = false;
 bool sMouseInvertX = false;
@@ -508,6 +516,13 @@ void ApplySetting(const std::string& key, const std::string& value) {
     if (std::isfinite(f) && f >= 20.f && f <= 5000.f) {
       sGyroRate = f;
     }
+  } else if (key == "touch_aim") {
+    sTouchAim = ParseBool(value);
+  } else if (key == "touch_aim_speed") {
+    const float f = static_cast< float >(std::atof(value.c_str()));
+    if (std::isfinite(f) && f >= 0.25f && f <= 10.f) {
+      sTouchAimSpeed = f;
+    }
   } else if (key == "mouse_invert_x") {
     sMouseInvertX = ParseBool(value);
   } else if (key == "mouse_invert_y") {
@@ -754,6 +769,8 @@ void SaveSettings() {
   file << "gyro_mode=" << sGyroMode << '\n';
   file << "gyro_source=" << sGyroSource << '\n';
   file << "gyro_rate=" << sGyroRate << '\n';
+  file << "touch_aim=" << (sTouchAim ? 1 : 0) << '\n';
+  file << "touch_aim_speed=" << sTouchAimSpeed << '\n';
   file << "mouse_invert_x=" << (sMouseInvertX ? 1 : 0) << '\n';
   file << "mouse_invert_y=" << (sMouseInvertY ? 1 : 0) << '\n';
   file << "mouse_buttons=" << (sMouseButtons ? 1 : 0) << '\n';
@@ -1974,6 +1991,8 @@ void ResetMouseAim() {
   sMouseButtonGate.Reset();
   sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
   sGyroPendingX = sGyroPendingY = sStickAimVelX = sStickAimVelY = 0.f;
+  std::lock_guard lock(sTouchAimMutex);
+  sTouchAimPendingX = sTouchAimPendingY = 0.f;
 }
 
 void SetMouseCaptured(bool captured) {
@@ -2045,9 +2064,53 @@ void AddMouseDelta(float dx, float dy) {
   sMousePendingY += dy;
 }
 
+bool TouchAim() {
+  EnsureInitialized();
+  return sTouchAim;
+}
+
+void SetTouchAim(bool on) {
+  EnsureInitialized();
+  sTouchAim = on;
+  MarkDirty();
+}
+
+float TouchAimSpeed() {
+  EnsureInitialized();
+  return sTouchAimSpeed;
+}
+
+void SetTouchAimSpeed(float pixelsPerDp) {
+  EnsureInitialized();
+  if (std::isfinite(pixelsPerDp)) {
+    sTouchAimSpeed = std::clamp(pixelsPerDp, 0.25f, 10.f);
+    MarkDirty();
+  }
+}
+
+// Called from the Android UI thread; the game thread drains it in
+// BeginFrameMouse.
+void AddTouchAim(float dxDp, float dyDp) {
+  if (!sTouchAim || !(sMouseAim || sTwinStick) || Visible() || !std::isfinite(dxDp) ||
+      !std::isfinite(dyDp)) {
+    return;
+  }
+  std::lock_guard lock(sTouchAimMutex);
+  sTouchAimPendingX += dxDp * sTouchAimSpeed;
+  sTouchAimPendingY += dyDp * sTouchAimSpeed;
+}
+
 void BeginFrameMouse() {
-  sMouseFrameX = sMousePendingX + sGyroPendingX;
-  sMouseFrameY = sMousePendingY + sGyroPendingY;
+  float touchX = 0.f;
+  float touchY = 0.f;
+  {
+    std::lock_guard lock(sTouchAimMutex);
+    touchX = sTouchAimPendingX;
+    touchY = sTouchAimPendingY;
+    sTouchAimPendingX = sTouchAimPendingY = 0.f;
+  }
+  sMouseFrameX = sMousePendingX + sGyroPendingX + touchX;
+  sMouseFrameY = sMousePendingY + sGyroPendingY + touchY;
   sMousePendingX = sMousePendingY = 0.f;
   sGyroPendingX = sGyroPendingY = 0.f;
   // AddStickAim sets it again during this tick's input update.
@@ -2064,8 +2127,15 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
   // What the next tick will consume: the mouse and gyro travel so far, plus the
   // stick's travel over the part of the tick already shown.
   const float ahead = std::min(fraction, 1.f) * TickPeriod();
-  const float dx = sMousePendingX + sGyroPendingX + sStickAimVelX * ahead;
-  const float dy = sMousePendingY + sGyroPendingY + sStickAimVelY * ahead;
+  float touchX = 0.f;
+  float touchY = 0.f;
+  {
+    std::lock_guard lock(sTouchAimMutex);
+    touchX = sTouchAimPendingX;
+    touchY = sTouchAimPendingY;
+  }
+  const float dx = sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * ahead;
+  const float dy = sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * ahead;
   float yaw = 0.f;
   float pitch = 0.f;
   if (!sMouseAimState.Preview(dx, dy, MouseSensitivity(), MouseInvertX(), MouseInvertY(), yaw,
@@ -4698,6 +4768,21 @@ void DrawInputTab() {
   }
   ItemHelp("Draws the on-screen buttons in the GameCube pad's colours: green A, red B, yellow "
            "C-stick, purple Z. Off, they are plain and see-through.");
+  bool touchAim = sTouchAim;
+  if (ImGui::Checkbox("Touch aim", &touchAim)) {
+    SetTouchAim(touchAim);
+  }
+  ItemHelp("Twin stick layout: drag a finger on the free screen area to turn the view by the "
+           "distance dragged, like a mouse. Off, the right stick is drawn and sets a turn rate.");
+  ImGui::BeginDisabled(!sTouchAim);
+  float touchAimSpeed = sTouchAimSpeed;
+  if (ImGui::SliderFloat("Touch aim speed", &touchAimSpeed, 0.5f, 6.f, "%.2f px/dp",
+                         ImGuiSliderFlags_Logarithmic)) {
+    SetTouchAimSpeed(touchAimSpeed);
+  }
+  ItemHelp("How far the view turns per dp of finger travel. The default turns about 180 degrees "
+           "over a 400 dp drag at the default mouse sensitivity.");
+  ImGui::EndDisabled();
 #endif
 
   ImGui::SeparatorText("Gyro aim");
@@ -6474,6 +6559,17 @@ Java_org_metroidprime_port_TouchControlsView_nativeVirtualAxis(JNIEnv*, jclass, 
   if (SDL_Joystick* pad = TouchPad().handle) {
     SDL_SetJoystickVirtualAxis(pad, static_cast< int >(axis), PortTouchPad::AxisValue(value));
   }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchAim(JNIEnv*, jclass, jfloat dxDp,
+                                                            jfloat dyDp) {
+  PortDebug::AddTouchAim(dxDp, dyDp);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchAimEnabled(JNIEnv*, jclass) {
+  return PortDebug::TouchAim() ? JNI_TRUE : JNI_FALSE;
 }
 #endif
 
