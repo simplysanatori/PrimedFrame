@@ -222,7 +222,6 @@ struct GameInfo {
   std::string world;
   std::string area;
   uint32_t worldId = 0; // MLVL
-  bool worldImages = false; // show WorldImage(worldId) in place of the logo
   int percent = 0;   // items collected
   bool hard = false;
   int energy = 0;    // total, tanks included
@@ -244,8 +243,7 @@ inline Presence GamePresence(const GameInfo& info, int64_t start) {
   presence.hover = info.area.empty() ? std::string() : info.world;
   if (info.hard)
     presence.hover += presence.hover.empty() ? "Hard mode" : dot + "Hard mode";
-  if (info.worldImages)
-    presence.image = WorldImage(info.worldId);
+  presence.image = WorldImage(info.worldId);
   presence.start = start;
   return presence;
 }
@@ -287,6 +285,9 @@ bool Supported();
 EStatus Status();
 // The last error (no Discord running, bad application id), or empty.
 std::string LastError();
+// The port's own Discord application ("Metroid Prime"), which has the logo and
+// world_* art assets; the player can set another.
+inline constexpr const char* kDefaultAppId = "1557127540030701690";
 // Connects while enabled and an application id is set, reconnecting every few
 // seconds; clears the presence and disconnects when not.
 void Configure(bool enabled, const std::string& appId);
@@ -296,10 +297,6 @@ bool Enabled();
 // changes, at most once every few seconds (Discord's rate limit).
 void SetMenu();
 void SetGame(const GameInfo& info);
-// Per-world pictures (WorldImage) in place of the logo; off by default, as the
-// player must upload them first.
-void SetWorldImages(bool enabled);
-bool WorldImages();
 // The presence as last set, for the overlay and console ("details / state").
 std::string CurrentText();
 

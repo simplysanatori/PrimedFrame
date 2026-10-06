@@ -212,9 +212,8 @@ bool sSpeedrunTimer = false;
 bool sLiveSplit = false;
 std::string sLiveSplitAddress = "127.0.0.1:16834";
 bool sLiveSplitSplitUpgrades = true;
-bool sDiscord = false;
-std::string sDiscordAppId;
-bool sDiscordWorldImages = false;
+bool sDiscord = true;
+std::string sDiscordAppId; // empty = PortDiscord::kDefaultAppId
 // Mods folder (port_mods.h): read at startup only.
 bool sModsEnabled = true;
 std::string sModsDisabled;
@@ -475,8 +474,7 @@ std::string DigitsOnly(const std::string& text) {
 }
 
 void ApplyDiscord() {
-  PortDiscord::SetWorldImages(sDiscordWorldImages);
-  PortDiscord::Configure(sDiscord, sDiscordAppId);
+  PortDiscord::Configure(sDiscord, sDiscordAppId.empty() ? PortDiscord::kDefaultAppId : sDiscordAppId);
 }
 
 void ApplySetting(const std::string& key, const std::string& value) {
@@ -687,12 +685,11 @@ void ApplySetting(const std::string& key, const std::string& value) {
     }
   } else if (key == "livesplit_split_upgrades") {
     sLiveSplitSplitUpgrades = ParseBool(value);
-  } else if (key == "discord") {
+  } else if (key == "discord_presence") {
+    // Not "discord": 0.16.0 saved discord=0 for everyone while it was opt-in.
     sDiscord = ParseBool(value);
   } else if (key == "discord_app_id") {
     sDiscordAppId = DigitsOnly(value);
-  } else if (key == "discord_world_images") {
-    sDiscordWorldImages = ParseBool(value);
   } else if (key == "mods") {
     sModsEnabled = ParseBool(value);
   } else if (key == "mods_disabled") {
@@ -824,9 +821,8 @@ void SaveSettings() {
   file << "livesplit=" << (sLiveSplit ? 1 : 0) << '\n';
   file << "livesplit_address=" << sLiveSplitAddress << '\n';
   file << "livesplit_split_upgrades=" << (sLiveSplitSplitUpgrades ? 1 : 0) << '\n';
-  file << "discord=" << (sDiscord ? 1 : 0) << '\n';
+  file << "discord_presence=" << (sDiscord ? 1 : 0) << '\n';
   file << "discord_app_id=" << sDiscordAppId << '\n';
-  file << "discord_world_images=" << (sDiscordWorldImages ? 1 : 0) << '\n';
   file << "mods=" << (sModsEnabled ? 1 : 0) << '\n';
   file << "mods_disabled=" << sModsDisabled << '\n';
   file << "vsync=" << (sVsyncEnabled ? 1 : 0) << '\n';
@@ -1768,18 +1764,6 @@ std::string DiscordAppId() {
 void SetDiscordAppId(const std::string& id) {
   EnsureInitialized();
   sDiscordAppId = DigitsOnly(id);
-  ApplyDiscord();
-  MarkDirty();
-}
-
-bool DiscordWorldImages() {
-  EnsureInitialized();
-  return sDiscordWorldImages;
-}
-
-void SetDiscordWorldImages(bool enabled) {
-  EnsureInitialized();
-  sDiscordWorldImages = enabled;
   ApplyDiscord();
   MarkDirty();
 }
@@ -4879,22 +4863,16 @@ void DrawDiscordSection() {
       std::snprintf(appId, sizeof(appId), "%s", sDiscordAppId.c_str());
     }
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.f);
-    ImGui::InputText("Application id", appId, sizeof(appId));
+    ImGui::InputTextWithHint("Application id", "default", appId, sizeof(appId));
     editingAppId = ImGui::IsItemActive();
     if (ImGui::IsItemDeactivatedAfterEdit()) {
       SetDiscordAppId(appId);
     }
-    ItemHelp("Rich Presence needs a Discord application: create one at "
-             "discord.com/developers/applications (its name is what Discord shows as the game), add "
-             "an art asset named \"logo\" under Rich Presence, and paste its Application ID here.");
-    bool worldImages = sDiscordWorldImages;
-    if (ImGui::Checkbox("World pictures", &worldImages)) {
-      SetDiscordWorldImages(worldImages);
-    }
-    ItemHelp("Shows a picture of the current world in place of the logo (the logo moves to its "
-             "corner). Upload them first as art assets of your Discord application, named "
-             "world_frigate, world_tallon, world_chozo, world_magmoor, world_phendrana, "
-             "world_mines and world_crater; Discord shows a blank square for a missing one.");
+    ItemHelp("Leave empty to use the port's own Discord application. To use your own, create "
+             "one at discord.com/developers/applications (its name is what Discord shows as the "
+             "game), add art assets named \"logo\", world_frigate, world_tallon, world_chozo, "
+             "world_magmoor, world_phendrana, world_mines and world_crater under Rich Presence, "
+             "and paste its Application ID here.");
     if (sDiscord) {
       ImGui::TextDisabled("Showing: %s", PortDiscord::CurrentText().c_str());
     }

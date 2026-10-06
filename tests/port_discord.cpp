@@ -102,10 +102,9 @@ int main() {
     CHECK(activity->Find("assets")->StringOr("large_text") == game.hover);
     CHECK(game.image.empty() && activity->Find("assets")->Find("small_image") == nullptr);
 
-    // World pictures: the world's asset takes the large image, the logo the
+    // World pictures (always on): the world's asset takes the large image, the logo the
     // small one. A world without one (the end cinema) keeps the logo.
     info.worldId = 0x83F6FF6Fu;
-    info.worldImages = true;
     const Presence pictured = GamePresence(info, 0);
     CHECK(pictured.image == "world_chozo");
     CHECK(ParseOk(ActivityPayload(42, pictured, "9"), value));

@@ -199,7 +199,6 @@ struct Runtime {
   std::thread worker;
   std::atomic<int> status{kStatus_Off};
   std::atomic<bool> active{false}; // enabled with an id, for the game tick
-  std::atomic<bool> worldImages{false};
   Presence want;                   // under mutex
   bool inGame = false;             // game thread only
   int64_t gameStart = 0;           // game thread only
@@ -433,14 +432,8 @@ void SetGame(const GameInfo& info) {
     rt.inGame = true;
     rt.gameStart = static_cast<int64_t>(std::time(nullptr));
   }
-  GameInfo shown = info;
-  shown.worldImages = rt.worldImages.load(std::memory_order_relaxed);
-  rt.Want(GamePresence(shown, rt.gameStart));
+  rt.Want(GamePresence(info, rt.gameStart));
 }
-
-void SetWorldImages(bool enabled) { GetRuntime().worldImages.store(enabled, std::memory_order_relaxed); }
-
-bool WorldImages() { return GetRuntime().worldImages.load(std::memory_order_relaxed); }
 
 std::string CurrentText() {
   Runtime& rt = GetRuntime();
