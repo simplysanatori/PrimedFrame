@@ -106,6 +106,10 @@ void TestReader() {
           "PBR8 hologram rows (ICNC+ICMC, cube gain, DIFC)");
     Check(shield[8] == 108.f && shield[15] == 115.f && shield[16] == 116.f,
           "PBR8 hologram CCH0..3 rows");
+    // Kind 19 (98F0556D, the lit sphere-map fx) keeps ICNC + ICMC in row 6 and DIFC in row 7, as the
+    // holograms do; its REFS and REFV are maps 4 and 5, so the trailer carries nothing else.
+    Check(shield[24] == 124.f && shield[25] == 125.f && shield[28] == 128.f && shield[30] == 130.f,
+          "PBR8 gun-fx rows (ICNC+ICMC, DIFC)");
     Check(PortPbrRecord::Read(r.data() + r.size(), r.size(), v, &wrap, s) == 19, "PBR8 reads without a shield out");
     const std::vector<uint8_t> plain = Record(19, true, true, "PBR6", 0.4f, 0.5f);
     shield[5] = 9.f;

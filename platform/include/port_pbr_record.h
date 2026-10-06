@@ -26,7 +26,7 @@ inline float BeFloat(const uint8_t* p) {
 // back-facing copy (1, 1 without 'PBR6'), and cube the id of the material's own reflection
 // cube (0 without 'PBR7'). Returns how many floats the record held. A TEV material may end
 // in a record of its own: the wrap word and 'WRAP', no floats.
-// A kind 14-18 record ends in a trailer, 32 floats and 'PBR8' (the boundary shield's CCH0..CCH6
+// A kind 14-19 record ends in a trailer, 32 floats and 'PBR8' (the boundary shield's CCH0..CCH6
 // and DIFC; the holograms' ICNC + ICMC in row 6), read into `shield` when it is given (all zero without one); the record before it
 // is read as usual.
 inline int Read(const uint8_t* end, size_t size, float values[19], uint32_t* wrap,
