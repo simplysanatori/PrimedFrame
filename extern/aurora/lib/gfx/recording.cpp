@@ -1,5 +1,7 @@
 #include "recording.hpp"
 
+#include <aurora/phase.hpp>
+
 #include "encoding.hpp"
 #include "frame.hpp"
 #include "resource_cache.hpp"
@@ -1317,7 +1319,10 @@ void push_draw_command(rmlui::DrawData data) {
 
 template <>
 PipelineRef pipeline_ref(const gx::PipelineConfig& config) {
-  return find_pipeline(ShaderType::GX, config, [=] { return create_pipeline(config); });
+  return find_pipeline(ShaderType::GX, config, [=] {
+    phase::Scope compiling(render_worker::is_worker_thread() ? phase::Render : phase::Main, "compiling a GX pipeline");
+    return create_pipeline(config);
+  });
 }
 
 #ifdef AURORA_ENABLE_RMLUI

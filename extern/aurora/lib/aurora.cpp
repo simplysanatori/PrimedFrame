@@ -1,4 +1,5 @@
 #include <aurora/aurora.h>
+#include <aurora/phase.hpp>
 #include <aurora/time.hpp>
 
 #ifdef AURORA_ENABLE_GX
@@ -302,6 +303,7 @@ void shutdown() noexcept {
 
 const AuroraEvent* update() noexcept {
   ZoneScoped;
+  phase::set(phase::Main, "window event pump");
   if (g_initialFrame) {
     g_initialFrame = false;
     input::initialize();
@@ -309,7 +311,9 @@ const AuroraEvent* update() noexcept {
 #ifdef AURORA_ENABLE_GX
   gx::update();
 #endif
-  return window::poll_events();
+  const AuroraEvent* events = window::poll_events();
+  phase::set(phase::Main, "game update");
+  return events;
 }
 
 #ifdef AURORA_ENABLE_GX
@@ -370,6 +374,7 @@ bool begin_frame() noexcept {
     }
   }
 
+  phase::set(phase::Main, "begin_frame (waiting for a frame slot)");
   if (!gfx::begin_frame()) {
     return false;
   }
@@ -383,6 +388,7 @@ bool begin_frame() noexcept {
 void end_frame() noexcept {
   ZoneScoped;
 #ifdef AURORA_ENABLE_GX
+  phase::set(phase::Main, "end_frame (recording and queueing the frame)");
   gx::fifo::drain();
   gx::fifo::end_frame();
   gx::texture::end_frame();
@@ -418,8 +424,10 @@ void end_frame() noexcept {
       window::SurfaceLock surfaceLock;
       if (window::is_presentable() && g_surface) {
         ZoneScopedN("Acquire texture");
+        phase::set(phase::Render, "surface GetCurrentTexture");
         wgpu::SurfaceTexture surfaceTexture;
         g_surface.GetCurrentTexture(&surfaceTexture);
+        phase::set(phase::Render, "present blit recording");
         acquireAttempted = true;
         surfaceStatus = surfaceTexture.status;
         if (surfaceStatus == wgpu::SurfaceGetCurrentTextureStatus::SuccessOptimal) {
@@ -480,8 +488,10 @@ void end_frame() noexcept {
     const auto buffer = encoder.Finish(&cmdBufDescriptor);
     {
       ZoneScopedN("Queue Submit");
+      phase::set(phase::Render, "queue submit");
       g_queue.Submit(1, &buffer);
     }
+    phase::set(phase::Render, "after submit");
     webgpu::gpu_prof::after_submit();
     if (canPresent && g_surface) {
       ZoneScopedN("Present");
@@ -489,9 +499,11 @@ void end_frame() noexcept {
       {
         window::SurfaceLock surfaceLock;
         if (window::is_presentable()) {
+          phase::set(phase::Render, "surface Present");
           status = g_surface.Present();
         }
       }
+      phase::set(phase::Render, "after present");
       if (status) {
         gfx::after_present();
       } else {
@@ -574,6 +586,10 @@ void aurora_shutdown() { aurora::shutdown(); }
 const AuroraEvent* aurora_update() { return aurora::update(); }
 bool aurora_begin_frame() { return aurora::begin_frame(); }
 void aurora_release_lost_surface() { aurora::release_lost_surface(); }
+bool aurora_is_suspended() {
+  return aurora::window::is_backgrounded() || !aurora::window::is_surface_ready() ||
+         aurora::window::is_surface_changing();
+}
 void aurora_end_frame() { aurora::end_frame(); }
 AuroraBackend aurora_get_backend() { return aurora::g_config.desiredBackend; }
 const AuroraBackend* aurora_get_available_backends(size_t* count) {
