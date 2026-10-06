@@ -44,6 +44,8 @@ final class TouchControlsView extends View {
     private static final int MAP_PAN2 = 8;
     // Finger spread, in dp, under which a pinch is ignored (the ratio blows up).
     private static final float MAP_PINCH_MIN_DP = 20f;
+    // Screen y points down, so atan2 grows clockwise; this maps it to the map's yaw.
+    private static final float MAP_TWIST_SIGN = 1f;
     // Tells the game a finger is still down on the map, so it doesn't drift back.
     private static final long MAP_PAN_KEEPALIVE_MS = 100;
     private static final float MAP_TAP_SLOP_DP = 12f;
@@ -205,6 +207,8 @@ final class TouchControlsView extends View {
     private static native boolean nativeMapScreenOpen();
     // A pinch: ratio of the finger spread now to before; above 1 zooms in.
     private static native void nativeMapZoom(float ratio);
+    // A twist, in radians; positive turns the map as the stick's right does.
+    private static native void nativeMapRotate(float radians);
     private static native void nativeSetTouchDevice(boolean xboxLayout);
     private static native void nativeToggleDebugOverlay();
     private static native void nativeVirtualButton(int button, boolean down);
@@ -686,6 +690,7 @@ final class TouchControlsView extends View {
         final float by = event.getY(b);
         final float midDx = ((ax + bx) - (ta.x + tb.x)) * 0.5f / density;
         final float midDy = ((ay + by) - (ta.y + tb.y)) * 0.5f / density;
+        final float beforeAngle = (float) Math.atan2(tb.y - ta.y, tb.x - ta.x);
         final float before = (float) Math.hypot(ta.x - tb.x, ta.y - tb.y) / density;
         final float now = (float) Math.hypot(ax - bx, ay - by) / density;
         ta.x = ax;
@@ -695,6 +700,13 @@ final class TouchControlsView extends View {
         nativeMapPan(midDx, midDy, panViewDp());
         if (before >= MAP_PINCH_MIN_DP && now >= MAP_PINCH_MIN_DP) {
             nativeMapZoom(now / before);
+            float turn = (float) Math.atan2(by - ay, bx - ax) - beforeAngle;
+            if (turn > Math.PI) {
+                turn -= 2f * (float) Math.PI;
+            } else if (turn <= -Math.PI) {
+                turn += 2f * (float) Math.PI;
+            }
+            nativeMapRotate(MAP_TWIST_SIGN * turn);
         }
     }
 

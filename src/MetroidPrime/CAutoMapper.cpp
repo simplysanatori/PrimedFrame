@@ -840,6 +840,15 @@ void CAutoMapper::ProcessMapRotateInput(const CFinalInput& input, const CStateMa
     break;
   }
 
+  const float twist = PortDebug::TakeMapRotate();
+  if (twist != 0.f) {
+    CEulerAngles eulers = CEulerAngles::FromQuaternion(xa8_renderState0.x8_camOrientation);
+    CAbsAngle angZ = CAbsAngle::FromRadians(eulers.GetZ());
+    angZ += CRelAngle(twist);
+    xa8_renderState0.x8_camOrientation = CQuaternion::YXZRotation(
+        CRelAngle(0.f), CRelAngle(eulers.GetX()), CRelAngle(angZ.AsRadians()));
+  }
+
   if (up > 0.f || down > 0.f || left > 0.f || right > 0.f) {
     float deltaFrames = 60.f * input.Time();
     SetShouldRotatingSoundBePlaying(true);

@@ -419,6 +419,8 @@ bool ConsumeMapTapZ();
 void SetMapScreenOpen(bool open);
 bool MapScreenOpen();
 void AddMapPan(float dxDp, float dyDp, float viewHeightDp, int holdMs = 250);
+void AddMapRotate(float radians);
+float TakeMapRotate();
 void AddMapZoom(float ratio);
 float TakeMapZoom();
 bool TakeMapPan(float* dxDp, float* dyDp, float* viewHeightDp);

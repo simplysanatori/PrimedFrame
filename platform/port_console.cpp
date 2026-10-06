@@ -544,6 +544,7 @@ void CmdHelp() {
   Out("touchpad [attach|detach|stick <x> <y>]  a virtual gamepad like Android's touch overlay");
   Out("minimap  the HUD minimap's screen rect (x0 y0 x1 y1, 0..1), or invalid");
   Out("maptap   a touch-overlay minimap tap: one Z press, opens the map");
+  Out("maprotate <degrees>   twist the open map screen's yaw, as two fingers do; positive turns it as the stick's right does");
   Out("mapzoom <ratio>   pinch the open map screen: 2 zooms in to twice the size, 0.5 out");
   Out("mappan <dx> <dy> [hold s]   drag the open map screen by dx,dy dp (view height 400 dp); finger down for hold s (0.25)");
   Out("freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]");
@@ -1933,6 +1934,18 @@ void RunFrame() {
   } else if (name == "maptap") {
     PortDebug::RequestMapTap();
     Out("maptap queued");
+    Finish();
+  } else if (name == "maprotate") {
+    float deg = 0.f;
+    if (sCmd.args.size() < 2 || !ParseFloat(sCmd.args[1], deg)) {
+      return Finish("usage: maprotate <degrees>");
+    }
+    if (!PortDebug::MapScreenOpen()) {
+      Out("maprotate ignored: the map screen is not open");
+    } else {
+      PortDebug::AddMapRotate(deg * (3.14159265f / 180.f));
+      Out("maprotate queued");
+    }
     Finish();
   } else if (name == "mapzoom") {
     float ratio = 1.f;

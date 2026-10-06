@@ -233,6 +233,7 @@ float sMapPanX = 0.f;
 float sMapPanY = 0.f;
 float sMapPanViewDp = 400.f;
 float sMapZoomPending = 1.f;
+float sMapRotatePending = 0.f;
 std::chrono::steady_clock::time_point sMapPanHeldUntil;
 std::mutex sTouchAimMutex;
 float sTouchAimPendingX = 0.f;
@@ -2172,6 +2173,24 @@ void AddMapZoom(float ratio) {
   }
   std::lock_guard lock(sMapPanMutex);
   sMapZoomPending = std::clamp(sMapZoomPending * std::clamp(ratio, 0.1f, 10.f), 0.01f, 100.f);
+}
+
+// UI thread: a twist's angle in radians; positive turns the map as the stick's
+// right does. Angles add.
+void AddMapRotate(float radians) {
+  if (!std::isfinite(radians) || radians == 0.f || !MapScreenOpen()) {
+    return;
+  }
+  std::lock_guard lock(sMapPanMutex);
+  sMapRotatePending = std::clamp(sMapRotatePending + radians, -6.3f, 6.3f);
+}
+
+// Game thread: the pending twist (0 = none), cleared.
+float TakeMapRotate() {
+  std::lock_guard lock(sMapPanMutex);
+  const float radians = sMapRotatePending;
+  sMapRotatePending = 0.f;
+  return radians;
 }
 
 // Game thread: the pending zoom factor (1 = none), cleared.
@@ -6733,6 +6752,11 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeMapPan(JNIEnv*, jclass, jfloat dxDp,
                                                          jfloat dyDp, jfloat viewHeightDp) {
   PortDebug::AddMapPan(dxDp, dyDp, viewHeightDp, 250);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeMapRotate(JNIEnv*, jclass, jfloat radians) {
+  PortDebug::AddMapRotate(radians);
 }
 
 extern "C" JNIEXPORT void JNICALL
