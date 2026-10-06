@@ -348,13 +348,14 @@ uint16_t FloatToHalf(float value) {
 }
 
 
-// A grid as the textures of GXCreatePBRVolume. The points inside walls are empty, and a
-// surface sits between those and the lit ones, so the texture filter would darken every
-// wall; the empty points take the light of their lit neighbours first, layer by layer.
+// A grid as the textures of GXCreatePBRVolume. Remastered samples the grid as it is: the
+// empty points (inside walls, or away from the bake) read 0 and the filter blends them in,
+// with no fill and no validity flag. MP_ROOM_ENV_FILL_LAYERS=n (for comparisons) lets the
+// empty points take the light of their lit neighbours first, n layers deep.
 // On the worker; false when cancelled.
 bool FillVolume(const File& file, const Grid& grid, std::vector<uint8_t>& texels, const std::atomic<bool>& cancel) {
   constexpr size_t kPoint = 24;
-  constexpr int kLayers = 16;
+  static const int kLayers = int(EnvFloat("MP_ROOM_ENV_FILL_LAYERS", 0.f));
   const size_t sx = grid.size[0], sy = grid.size[1], sz = grid.size[2];
   const size_t count = sx * sy * sz;
   std::vector<uint8_t> points(file.data.begin() + grid.offset, file.data.begin() + grid.offset + count * kPoint);
