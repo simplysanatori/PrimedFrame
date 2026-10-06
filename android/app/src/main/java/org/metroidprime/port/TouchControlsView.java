@@ -155,6 +155,9 @@ final class TouchControlsView extends View {
         {"Power", "Wave", "Ice", "Plasma"},
     };
     private static final int[][] WHEEL_ITEMS = {{0, 1, 3, 2}, {0, 2, 1, 3}};
+    // Each beam icon's colour, as Remastered tints them (TweakGuiColorsMP1, Color Assist off):
+    // Power yellow, Ice white, Wave purple, Plasma red. Visor icons stay white.
+    private static final int[] BEAM_ICON_COLORS = {0xFFFFFF00, 0xFFFFFFFF, 0xFF8033FF, 0xFFCC1A1A};
     // The bit of nativeWheelOwned() that is set once there is a player.
     private static final int WHEEL_VALID_BIT = 1 << 12;
     private static final float WHEEL_BUTTON_RADIUS = 0.072f;
@@ -1526,7 +1529,7 @@ final class TouchControlsView extends View {
         canvas.save();
         canvas.translate(cx - w * scale / 2f, cy - h * scale / 2f);
         canvas.scale(scale, scale);
-        iconPaint.setColor(Color.WHITE);
+        iconPaint.setColor(wheel == 1 ? BEAM_ICON_COLORS[item] : Color.WHITE);
         iconPaint.setAlpha(alpha);
         canvas.drawPath(icon, iconPaint);
         canvas.restore();
