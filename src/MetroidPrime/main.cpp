@@ -933,10 +933,13 @@ int CMain::RsMain(int argc, const char* const* argv) {
           } else if (event->type == AURORA_SDL_EVENT &&
                      (event->sdl.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
                       event->sdl.type == SDL_EVENT_MOUSE_BUTTON_UP)) {
-            PortDebug::NoteMouseButton(event->sdl.button.which == SDL_TOUCH_MOUSEID ||
-                                           event->sdl.button.which == SDL_PEN_MOUSEID,
-                                       SDL_BUTTON_MASK(event->sdl.button.button),
-                                       event->sdl.button.down);
+            // Android's SDL reports button 0 when its button state is stale.
+            if (event->sdl.button.button != 0) {
+              PortDebug::NoteMouseButton(event->sdl.button.which == SDL_TOUCH_MOUSEID ||
+                                             event->sdl.button.which == SDL_PEN_MOUSEID,
+                                         SDL_BUTTON_MASK(event->sdl.button.button),
+                                         event->sdl.button.down);
+            }
           } else if (event->type == AURORA_SDL_EVENT &&
                      event->sdl.type == SDL_EVENT_MOUSE_REMOVED) {
             PortDebug::ClearMouseButtons();

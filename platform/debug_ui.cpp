@@ -2128,6 +2128,11 @@ void ResetMouseAim() {
 }
 
 void SetMouseCaptured(bool captured) {
+  // A button held across a capture change can lose its release (Android drops
+  // it when pointer capture ends mid-press, e.g. a boss dying under a charge
+  // shot), and the weapon gate would then wait for a neutral that never comes.
+  // Anything still physically held is ignored by the gate anyway.
+  if (captured != sMouseCaptured) sMouseHeldButtons.Clear();
   sMouseCaptured = captured;
   if (!captured) {
     sMouseButtonGate.Reset();
