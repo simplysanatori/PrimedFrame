@@ -5,7 +5,9 @@
 
 #include "port_ap_metroidprime.h"
 #include "port_ap_protocol.h"
+#include "port_ap_solo.h"
 #include "port_custom_res.h"
+#include "port_rando_gen.h"
 #include "port_randomizer.h"
 #include "port_skip_cutscenes.h"
 #include "port_ws.h"
@@ -575,20 +577,50 @@ void CountChecks(Runtime& runtime, size_t count) {
   runtime.checkCount += static_cast<int>(std::min(count, room));
 }
 
+// What the worker loop talks to: a WebSocket to a real server, or the
+// in-process server of a built-in randomizer seed. The solo server has the
+// WebSocket client's calls, so the loop below is the same for both.
+struct Link {
+  PortWs::Client ws;
+  PortApSolo::Server solo;
+  bool isSolo = false;
+
+  bool IsOpen() const { return isSolo ? solo.IsOpen() : ws.IsOpen(); }
+  bool SendText(const std::string& text) { return isSolo ? solo.SendText(text) : ws.SendText(text); }
+  bool ReceiveText(std::string& text, int timeoutMs) {
+    return isSolo ? solo.ReceiveText(text, timeoutMs) : ws.ReceiveText(text, timeoutMs);
+  }
+  const char* Error() const { return isSolo ? solo.Error() : ws.Error(); }
+  void Close() {
+    if (isSolo)
+      solo.Close();
+    else
+      ws.Close();
+  }
+};
+
 // Archipelago servers take each message as a JSON array of commands; a bare
 // object makes MultiServer iterate its keys and drop the connection.
-bool SendPacket(PortWs::Client& client, const std::string& packet, std::string& error) {
+bool SendPacket(Link& client, const std::string& packet, std::string& error) {
   if (client.SendText(!packet.empty() && packet.front() == '[' ? packet : "[" + packet + "]"))
     return true;
   error = ErrorText(client.Error());
   return false;
 }
 
+// What the status and chat lines call the server.
+std::string ServerLabel(const std::string& server) {
+  std::string seedName;
+  return PortApSolo::ParseServer(server, seedName) ? "solo seed " + seedName : server;
+}
+
 // The URLs to try for the configured server. A bare "host:port", as the
 // Archipelago site shows it, is tried as ws:// and then wss://, the way the
 // official client does, and gets Archipelago's default port when it has none.
+// A solo seed ("solo:<name>") is no URL and is opened in process instead.
 std::vector<std::string> ServerUrls(const std::string& server) {
-  if (server.find("://") != std::string::npos)
+  std::string seedName;
+  if (server.find("://") != std::string::npos || PortApSolo::ParseServer(server, seedName))
     return {server};
   std::string address = server;
   const size_t close = address.rfind(']');
@@ -705,25 +737,35 @@ void WorkerLoop(Runtime& runtime) {
     uint16_t port = 0;
     bool secure = false;
     std::string connectionError;
-    PortWs::Client client;
-    client.SetCancelFlag(&runtime.stop); // quitting must not wait out a timeout
+    Link client;
+    client.ws.SetCancelFlag(&runtime.stop); // quitting must not wait out a timeout
     PortWs::TlsOptions tls;
     tls.caFile = config.tlsCa;
     bool transportReady = false;
-    for (const std::string& url : ServerUrls(config.server)) {
-      if (!PortWs::ParseUrl(url, host, port, path, secure)) {
-        connectionError = "invalid server URL: " + config.server;
-      } else if (!client.Connect(host, port, path, 10000, secure, tls)) {
-        connectionError = ErrorText(client.Error());
-      } else {
-        transportReady = true;
-        client.SetTimeoutMs(10000);
-        PortLog::Write("archipelago: WebSocket open (%s)\n",
-                       client.Compressed() ? "permessage-deflate" : "uncompressed");
-        break;
+    std::string soloSeed;
+    if (PortApSolo::ParseServer(config.server, soloSeed)) {
+      // A built-in randomizer seed: its file is read again on each attempt, so
+      // one that was missing or broken can be fixed without restarting.
+      client.isSolo = true;
+      transportReady = client.solo.Open(soloSeed, connectionError);
+      if (transportReady)
+        PortLog::Write("archipelago: solo seed open\n");
+    } else {
+      for (const std::string& url : ServerUrls(config.server)) {
+        if (!PortWs::ParseUrl(url, host, port, path, secure)) {
+          connectionError = "invalid server URL: " + config.server;
+        } else if (!client.ws.Connect(host, port, path, 10000, secure, tls)) {
+          connectionError = ErrorText(client.Error());
+        } else {
+          transportReady = true;
+          client.ws.SetTimeoutMs(10000);
+          PortLog::Write("archipelago: WebSocket open (%s)\n",
+                         client.ws.Compressed() ? "permessage-deflate" : "uncompressed");
+          break;
+        }
+        if (runtime.stop.load(std::memory_order_acquire))
+          break;
       }
-      if (runtime.stop.load(std::memory_order_acquire))
-        break;
     }
 
     bool connectionFailed = !transportReady;
@@ -847,7 +889,7 @@ void WorkerLoop(Runtime& runtime) {
                 runtime.stateLabel = "connected";
                 runtime.lastError.clear();
                 runtime.LogStateLocked("connected");
-                runtime.AppendChatLocked("port", "Connected to " + config.server + " as " + config.slot);
+                runtime.AppendChatLocked("port", "Connected to " + ServerLabel(config.server) + " as " + config.slot);
                 initialChecks = state.checkedLocations;
                 for (auto queued = runtime.queuedChecks.begin(); queued != runtime.queuedChecks.end();) {
                   if (std::find(initialChecks.begin(), initialChecks.end(), *queued) !=
@@ -1306,9 +1348,11 @@ bool Connect(const ConnectionDetails& details, std::string& error) {
     std::string path;
     uint16_t port = 0;
     bool secure = false;
+    std::string soloSeed;
+    const bool solo = PortApSolo::ParseServer(connection.server, soloSeed);
     const bool bare = connection.server.find("://") == std::string::npos;
-    if ((bare && connection.server.find('/') != std::string::npos) ||
-        !PortWs::ParseUrl(ServerUrls(connection.server).front(), host, port, path, secure)) {
+    if (!solo && ((bare && connection.server.find('/') != std::string::npos) ||
+                  !PortWs::ParseUrl(ServerUrls(connection.server).front(), host, port, path, secure))) {
       error = "not a server address: " + connection.server;
       return false;
     }
@@ -1344,6 +1388,21 @@ bool Connect(const ConnectionDetails& details, std::string& error) {
     error = "could not connect";
     return false;
   }
+}
+
+bool PlaySolo(const std::string& seedName, std::string& error) {
+  // Read it now, so a seed that is missing or broken is said right away
+  // rather than as a connection that keeps failing.
+  PortRandoGen::Seed seed;
+  if (!PortRandoGen::Load(PortRandoGen::SeedPath(seedName), seed, error))
+    return false;
+  ConnectionDetails details;
+  details.server = std::string(PortApSolo::kServerPrefix) + seedName;
+  details.slot = PortApSolo::kSlotName;
+  // The save card is known before the server answers (it names the seed the
+  // same way), so the first frames already use it.
+  details.seed = "solo-" + seed.name;
+  return Connect(details, error);
 }
 
 bool Disconnect(std::string& error) {
