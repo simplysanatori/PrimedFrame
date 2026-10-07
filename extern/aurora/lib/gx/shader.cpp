@@ -1323,9 +1323,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   std::string normal;
   if (mapStage[2] != -1) {
     // glTF normal maps are +Y up with V running down the image, so the bitangent is the
-    // negated dP/dV. Kind 4 scales the map's tilt.
+    // negated dP/dV. Kind 4 scales the map's tilt. Remastered decodes x 255/128 - 1, so that
+    // byte 128 is flat.
     normal = fmt::format(R"""(
-      let pbr_ts = ({0} * 2.0 - 1.0) * select(1.0, ubuf.pbr_param.z, pbr_kind > 3.5 && pbr_kind < 4.5);
+      let pbr_ts = ({0} * 1.9921875 - 1.0) * select(1.0, ubuf.pbr_param.z, pbr_kind > 3.5 && pbr_kind < 4.5);
       let pbr_tn = vec3f(pbr_ts, sqrt(max(0.0, 1.0 - dot(pbr_ts, pbr_ts))));
       if (pbr_tlen > 1e-24) {{
         let pbr_s = inverseSqrt(pbr_tlen);
