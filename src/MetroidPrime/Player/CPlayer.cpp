@@ -684,6 +684,31 @@ void CPlayer::UpdateAssistedAiming(const CTransform4f& xf, CStateManager& mgr) {
   x490_gun->SetAssistAimTransform(assistXf);
 }
 
+#ifdef TARGET_PC
+// Port: below 4:3 the first-person view gets extra height (Vert+) on both sides of its centre,
+// which would lift the arm cannon off the bottom edge and show the forearm. Move it down in the
+// world instead, so it keeps its 4:3 place against the bottom edge while it still points at the
+// crosshair and its shots still leave from its muzzle.
+CVector3f CPlayer::PortAnchorGunDown(const CVector3f& pos, CStateManager& mgr) const {
+  const CCameraManager* camMgr = mgr.GetCameraManager();
+  if (!camMgr->IsInFPCamera()) {
+    return pos;
+  }
+  const float drop = CGameCamera::VertPlusGunDrop(CCameraManager::GetDefaultAspectRatio());
+  if (drop <= 0.f) {
+    return pos;
+  }
+  const CTransform4f camXf = camMgr->GetCurrentCameraTransform(mgr);
+  const CVector3f forward = camXf.GetColumn(kDY);
+  const float depth = CVector3f::Dot(pos - camXf.GetTranslation(), forward);
+  // A translation moves near points further on screen than far ones. Fit it at about the barrel's
+  // depth (3x the gun origin's), so the barrel lands near its 4:3 place; the gun body and the
+  // grapple arm go further below the edge.
+  const float kBarrelDepth = 3.f;
+  return depth > 0.f ? pos - camXf.GetColumn(kDZ) * (drop * depth * kBarrelDepth) : pos;
+}
+#endif
+
 void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
 #if !NONMATCHING
   CTransform4f xf = GetTransform();
@@ -698,6 +723,9 @@ void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
   } else {
     viewGunPos = GetEyePosition() + camXf.Rotate(gunPos - CVector3f(0.f, 0.f, eyeHeight));
   }
+#ifdef TARGET_PC
+  viewGunPos = PortAnchorGunDown(viewGunPos, mgr);
+#endif
   gunXf.SetTranslation(viewGunPos);
 
   CUnitVector3f rightDir(camXf.GetColumn(kDX));

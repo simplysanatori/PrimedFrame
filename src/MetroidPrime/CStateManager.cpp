@@ -3469,27 +3469,11 @@ void CStateManager::DrawWorld() const {
     }
 #endif
 #ifdef TARGET_PC
-    // Port: below 4:3 the world gets extra height (Vert+) on both sides of the view centre, which
-    // lifts the arm cannon off the bottom edge and shows the forearm. Draw it with the 4:3
-    // frustum's bottom edge instead, extended only upward, so it stays anchored as at 4:3.
-    const CGraphics::CProjectionState& gunNow = CGraphics::GetProjectionState();
-    const float gunHalfH = 0.5f * (gunNow.GetTop() - gunNow.GetBottom());
-    const float gunHalfW = 0.5f * (gunNow.GetRight() - gunNow.GetLeft());
-    const bool gunAnchor = x870_cameraManager->IsInFPCamera() && gunNow.IsPerspective() &&
-                           gunHalfW > 0.f && gunHalfH > gunHalfW * 0.75f * 1.001f;
-    if (gunAnchor) {
-      const float bottom = -gunHalfW * 0.75f;
-      CGraphics::SetProjectionState(CGraphics::CProjectionState(
-          true, gunNow.GetLeft(), gunNow.GetRight(), bottom + 2.f * gunHalfH, bottom,
-          gunNow.GetNear(), gunNow.GetFar()));
-    }
-#endif
-#ifdef TARGET_PC
     if (!PortViewModel::Active() && !PortFreeCam::Active())
 #endif
     x84c_player->RenderGun(*this, x870_cameraManager->GetGlobalCameraTranslation(*this));
 #ifdef TARGET_PC
-    if (gunFov || gunAnchor) {
+    if (gunFov) {
       CGraphics::SetProjectionState(gunProj);
     }
 #endif

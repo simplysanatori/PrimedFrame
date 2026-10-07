@@ -54,6 +54,9 @@ public:
   // and widens the vertical FOV instead of squeezing the view into a slice ("Vert+"). Cinematic
   // cameras already derive their vertical FOV from a horizontal one and the live aspect.
   static float VertPlusFov(float fov, float aspect);
+  // How far, per unit of view depth, the first-person arm cannon moves down so it stays on the
+  // screen's bottom edge as at 4:3 when the view is Vert+ widened (0 at 4:3 and wider).
+  static float VertPlusGunDrop(float aspect);
   // FOV before the Vert+ widening, for blending into cameras that get widened.
   float GetUnwidenedFov() const;
   float GetRenderFov() const {

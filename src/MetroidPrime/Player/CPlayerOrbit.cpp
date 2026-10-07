@@ -1718,7 +1718,12 @@ void CPlayer::ApplyGrappleForces(const CFinalInput& input, CStateManager& mgr, f
 
 void CPlayer::UpdateGrappleArmTransform(const CVector3f& offset, CStateManager& mgr, float dt) {
   CTransform4f armXf = GetTransform();
+#ifdef TARGET_PC
+  const CVector3f armPosition =
+      PortAnchorGunDown(GetTransform().Rotate(offset) + GetTranslation(), mgr);
+#else
   const CVector3f armPosition = GetTransform().Rotate(offset) + GetTranslation();
+#endif
   armXf.SetTranslation(armPosition);
   if (x2f8_morphBallState != kMS_Unmorphed) {
     x490_gun->GrappleArm().SetTransform(armXf);

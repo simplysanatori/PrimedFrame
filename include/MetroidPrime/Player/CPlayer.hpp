@@ -290,6 +290,9 @@ public:
   void UpdateAimTargetPrediction(const CTransform4f& xf, CStateManager& mgr);
   void UpdateAssistedAiming(const CTransform4f& xf, CStateManager& mgr);
   void UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr);
+#ifdef TARGET_PC
+  CVector3f PortAnchorGunDown(const CVector3f& pos, CStateManager& mgr) const;
+#endif
   const CTransform4f& GetFirstPersonCameraTransform(CStateManager& mgr) const;
   void UpdateDebugCamera(CStateManager& mgr);
   void UpdateArmAndGunTransforms(float dt, CStateManager& mgr);
