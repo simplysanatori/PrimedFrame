@@ -701,11 +701,6 @@ struct Converter::State {
   ConvertIO io;
   std::map<std::string, std::optional<uint32_t>> ids;  // tag -> texture id, or none where retail's stays
   std::map<uint32_t, std::string> owner;               // texture id -> the tag it was written for
-  struct Mean {
-    float rgb[3];
-    int peak;
-  };
-  std::map<std::string, Mean> means;
   // The last few textures decoded: a map that was measured is usually written
   // straight after, and a bake reads its neighbours.
   std::vector<std::pair<std::string, Image>> opened;
@@ -732,22 +727,6 @@ struct Converter::State {
     if (img.width <= 0 || img.height <= 0 || img.rgba.size() != size_t(img.width) * size_t(img.height) * 4) {
       throw Fail{"texture " + IdToString(map.id) + " decoded to nothing"};
     }
-    // Single precision running sums, in pixel order. On a large bright texture
-    // these stop growing and the mean reads low; the thresholds in PbrEmissive
-    // were measured against exactly that, so it is kept.
-    Mean m{{0.0f, 0.0f, 0.0f}, 0};
-    const size_t count = img.rgba.size() / 4;
-    for (size_t i = 0; i < count; ++i) {
-      for (int c = 0; c < 3; ++c) {
-        const uint8_t v = img.rgba[i * 4 + c];
-        m.rgb[c] += float(v);
-        m.peak = std::max(m.peak, int(v));
-      }
-    }
-    for (float& v : m.rgb) {
-      v /= float(count);
-    }
-    means[map.src] = m;
     if (opened.size() >= 3) {
       opened.erase(opened.begin());
     }
@@ -770,33 +749,6 @@ struct Converter::State {
     return value;
   }
 
-  // The bits of the floats, so that a recalled mean is the one measured.
-  static std::string MeanText(const Mean& m) {
-    char text[48];
-    uint32_t bits[3];
-    std::memcpy(bits, m.rgb, sizeof(bits));
-    std::snprintf(text, sizeof(text), "%08X %08X %08X %d", bits[0], bits[1], bits[2], m.peak);
-    return text;
-  }
-
-  Mean MeanOf(const MapRef& map) {
-    // Through Fact even when Open already measured it, so the next import has it too.
-    const std::string text = Fact("mean:" + map.src, [&] {
-      if (means.find(map.src) == means.end()) {
-        Open(map);
-      }
-      return MeanText(means[map.src]);
-    });
-    Mean m{{0.0f, 0.0f, 0.0f}, 0};
-    uint32_t bits[3] = {0, 0, 0};
-    if (std::sscanf(text.c_str(), "%X %X %X %d", &bits[0], &bits[1], &bits[2], &m.peak) != 4) {
-      Open(map);
-      return means[map.src];
-    }
-    std::memcpy(m.rgb, bits, sizeof(bits));
-    return means[map.src] = m;
-  }
-
   // Whether a map is more than a placeholder texel (over 4 px either way).
   bool Real(const MapRef& map) {
     int w = 0, h = 0;
@@ -810,31 +762,6 @@ struct Converter::State {
       h = img.height;
     }
     return w > 4 || h > 4;
-  }
-
-  // Whether the emissive map adds anything on the PBR path, which sums it over
-  // the lit base. A black map does not (every channel's mean under 4 and no
-  // texel over 32: the mean alone would also drop small lights on a black
-  // field), and neither does a near-copy of the base, which doubles the colour.
-  bool PbrEmissive(const MapRef* maps) {
-    const Mean e = MeanOf(maps[kEmissive]);
-    if (std::max({e.rgb[0], e.rgb[1], e.rgb[2]}) < 4.0f && e.peak <= 32) {
-      return false;
-    }
-    if (maps[kBase].has) {
-      const Mean b = MeanOf(maps[kBase]);
-      float diff = 0.0f;
-      for (int c = 0; c < 3; ++c) {
-        diff = std::max(diff, std::fabs(e.rgb[c] - b.rgb[c]));
-      }
-      const float es = (e.rgb[0] + e.rgb[1]) + e.rgb[2];
-      const float bs = (b.rgb[0] + b.rgb[1]) + b.rgb[2];
-      const float ratio = bs > 1e-6f ? es / bs : float(double(es) / 1e-6);
-      if (diff < 6.0f && std::fabs(ratio - 1.0f) < 0.06f) {
-        return false;
-      }
-    }
-    return true;
   }
 
   // A flat fill has no surface detail to convert: Remastered keeps such a
@@ -1141,7 +1068,7 @@ struct Converter::State {
           k = i;
         }
       }
-      if (rt[k].has && (k != kEmissive || rt[k].mean || rt[k].detail || PbrEmissive(rt))) {
+      if (rt[k].has) {
         src = &rt[k];
         tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : src->mean ? ":mean" : "");
         colourTex = k != kNormal && (k != kMr || src->raw);
