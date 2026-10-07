@@ -1020,6 +1020,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // diffuse light, so the reflection and the glow are not dimmed with it.
   const std::string diffTint =
       config.pbrKind == 10 ? fmt::format("{} * ({}{})", tint, layered ? "1.0" : "prev.a", tintAlpha) : tint;
+  // Remastered's diffuse vertex colour (MFVC) is decoded in its vertex shader as
+  // 2 |c|^2.2 (alpha raw), so a white vertex doubles the diffuse: 882014ee, f22feb5b,
+  // the layered 7248969b/a978d507 and every kShaderTints shader. Of the premultiplied
+  // glass shaders only 11B30369 does, so kind 10 keeps the colour as it is.
+  const std::string vtint =
+      config.pbrKind != 10 ? "vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_vraw.a)" : "pbr_vraw";
   std::string normalXy = mapStage[2] == -1 ? std::string() : fmt::format("sampled{}.rg", mapStage[2]);
   std::string layer = fmt::format(R"""(
       // The stored normal. A PBR6 back copy (F0 factor 0, LITS) is stored turned round like
@@ -1035,11 +1041,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_mw = ubuf.pbr_backlight.w - select(0.0, 16.0, pbr_sky);
       let pbr_cu = pbr_mw > 7.5;
       let pbr_flags = pbr_mw - select(0.0, 8.0, pbr_cu);
-      var pbr_vc = select(vec4f(1.0), pbr_vraw, pbr_flags > 3.5);
+      var pbr_vc = select(vec4f(1.0), {}, pbr_flags > 3.5);
       if (pbr_cu) {{
           pbr_vc = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)) * ubuf.pbr_backlight.rgb, pbr_vraw.a);
       }})""",
-                                  float(config.pbrKind), vclr);
+                                  float(config.pbrKind), vclr, vtint);
   // A cut-out pixel (grass, leaves) that the alpha compare drops is dropped here instead of
   // after the shading. The compare sees prev.a times the vertex alpha unless a height blend,
   // ColorUnlit or a glow mode changes it (pbr_alpha below), and a layered surface's alpha is
