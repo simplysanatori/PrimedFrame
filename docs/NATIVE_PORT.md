@@ -960,6 +960,18 @@ unpacks to a temporary directory instead of mounting.
   The logic is `PortLiveSplit::Tracker` (`platform/include/port_livesplit.h`,
   covered by `port_livesplit_tests`). Console: `timer <0|1>`, `igt <seconds>`,
   `livesplit <0|1> | addr <host:port> | send <command> | status`.
+- Update check (F1 > System > Updates; on by default, `update_check`,
+  `MP_UPDATE_CHECK=0` turns it off for a run). Once a day it asks
+  `api.github.com/repos/Odrannnn/MetroidPrimePort/releases/latest` (an HTTPS
+  GET with nothing but a User-Agent naming the version) whether that tag is newer
+  than this build's version (`MP_BUILD_VERSION`, from `versionName` in
+  `android/app/build.gradle`). If it is, a toast shows at the top for 12 s and
+  F1 offers "Open release page". The answer is kept in `<user>/update-check.txt`,
+  so a known newer release shows at once, offline too; a failed check retries
+  after an hour. Logic in `platform/port_update_check.cpp`, covered by
+  `port_update_check_tests` (`MP_UPDATE_LIVE=1` adds a real request). mprig runs
+  set `MP_UPDATE_CHECK=0`. On Windows, TLS (this and Archipelago `wss://`) trusts
+  the system ROOT store, since the static OpenSSL has no default one.
 - Discord Rich Presence (F1 > System > Discord; desktop only, on by default,
   `discord_presence`). Shows the current room as the activity, with energy,
   missiles (once the launcher is found) and the item percentage below it, a

@@ -795,7 +795,7 @@ int main(int argc, char** argv) {
     PortLogFile::AttachParentConsole();
 #endif
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
-        std::printf("Metroid Prime native port %s\n", MP_BUILD_REVISION);
+        std::printf("Metroid Prime native port %s (%s)\n", MP_BUILD_VERSION, MP_BUILD_REVISION);
         return 0;
     }
 #if defined(__ANDROID__)
@@ -857,7 +857,7 @@ int main(int argc, char** argv) {
         }
     }
     PortCrash::Install();
-    PortLog::Write( "metroid_prime_port: build %s\n", MP_BUILD_REVISION);
+    PortLog::Write( "metroid_prime_port: version %s, build %s\n", MP_BUILD_VERSION, MP_BUILD_REVISION);
     for (const std::string& line : PortPaths::MigrationLog()) {
         PortLog::Write("port: portable data: %s\n", line.c_str());
     }

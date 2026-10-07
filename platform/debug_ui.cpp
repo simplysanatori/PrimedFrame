@@ -23,6 +23,7 @@
 #include "port_remastered_import.h"
 #include "port_remastered_text.h"
 #include "port_discord.h"
+#include "port_update_check.h"
 #include "port_gallery.h"
 #include "port_livesplit.h"
 #include "port_map_pickups.h"
@@ -226,6 +227,7 @@ bool sLiveSplit = false;
 std::string sLiveSplitAddress = "127.0.0.1:16834";
 bool sLiveSplitSplitUpgrades = true;
 bool sDiscord = true;
+bool sUpdateCheck = true;
 // Mods folder (port_mods.h): read at startup only.
 bool sModsEnabled = true;
 std::string sModsDisabled;
@@ -495,6 +497,12 @@ void ApplyDiscord() {
   PortDiscord::Configure(sDiscord, PortDiscord::kDefaultAppId);
 }
 
+void ApplyUpdateCheck() {
+  const std::string& dir = PortPaths::UserFolder();
+  PortUpdateCheck::Configure(sUpdateCheck && port::EnvFlag("MP_UPDATE_CHECK", true), MP_BUILD_VERSION,
+                             (dir.empty() ? std::string("./") : dir) + "update-check.txt");
+}
+
 void ApplySetting(const std::string& key, const std::string& value) {
   if (key == "frame_limit") {
     sFrameLimitEnabled = ParseBool(value);
@@ -733,6 +741,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
   } else if (key == "discord_presence") {
     // Not "discord": 0.16.0 saved discord=0 for everyone while it was opt-in.
     sDiscord = ParseBool(value);
+  } else if (key == "update_check") {
+    sUpdateCheck = ParseBool(value);
   } else if (key == "mods") {
     sModsEnabled = ParseBool(value);
   } else if (key == "mods_disabled") {
@@ -882,6 +892,7 @@ void SaveSettings() {
   file << "livesplit_address=" << sLiveSplitAddress << '\n';
   file << "livesplit_split_upgrades=" << (sLiveSplitSplitUpgrades ? 1 : 0) << '\n';
   file << "discord_presence=" << (sDiscord ? 1 : 0) << '\n';
+  file << "update_check=" << (sUpdateCheck ? 1 : 0) << '\n';
   file << "mods=" << (sModsEnabled ? 1 : 0) << '\n';
   file << "mods_disabled=" << sModsDisabled << '\n';
   file << "vsync=" << (sVsyncEnabled ? 1 : 0) << '\n';
@@ -1157,6 +1168,7 @@ void EnsureInitialized() {
   std::atexit(SaveSettings);
   ApplyLiveSplit();
   ApplyDiscord();
+  ApplyUpdateCheck();
 }
 } // namespace
 
@@ -4567,6 +4579,35 @@ void DrawStaleImportToast() {
   ImGui::End();
 }
 
+// Once per launch, for 12 s: a newer release than this build is out.
+void DrawUpdateToast() {
+  static double sShownAt = -1.0;
+  static bool sDone = false;
+  if (sDone || PortUpdateCheck::Status() != PortUpdateCheck::kStatus_Available) {
+    return;
+  }
+  const double now = ImGui::GetTime();
+  if (sShownAt < 0.0) {
+    sShownAt = now;
+  }
+  if (now - sShownAt > 12.0) {
+    sDone = true;
+    return;
+  }
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + 24.f), ImGuiCond_Always,
+                          ImVec2(0.5f, 0.f));
+  ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, 560.f), 0.f));
+  ImGui::SetNextWindowBgAlpha(0.8f);
+  if (ImGui::Begin("##update-toast", nullptr,
+                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::TextWrapped("Version %s is out (this is %s). F1 > System > Updates opens its release page.",
+                       PortUpdateCheck::Latest().version.c_str(), MP_BUILD_VERSION);
+  }
+  ImGui::End();
+}
+
 // Once per launch, for longer and in red: the last session ended on a failed disc read.
 void DrawDiscReadFailedAlert() {
   static double sShownAt = -1.0;
@@ -5081,6 +5122,59 @@ void DrawDiscordSection() {
     }
   }
 
+}
+
+void DrawUpdateSection() {
+  ImGui::SeparatorText("Updates");
+  bool check = sUpdateCheck;
+  if (ImGui::Checkbox("Check for updates", &check)) {
+    sUpdateCheck = check;
+    ApplyUpdateCheck();
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("Asks GitHub once a day whether a newer release is out. Nothing else is sent.");
+  ImGui::SameLine();
+  const PortUpdateCheck::EStatus status = PortUpdateCheck::Status();
+  switch (status) {
+  case PortUpdateCheck::kStatus_Off:
+    ImGui::TextDisabled(sUpdateCheck ? "off (MP_UPDATE_CHECK=0)" : "off");
+    break;
+  case PortUpdateCheck::kStatus_Checking:
+    ImGui::TextUnformatted("checking...");
+    break;
+  case PortUpdateCheck::kStatus_UpToDate:
+    ImGui::TextColored(ThemeGoodColor(), "up to date");
+    break;
+  case PortUpdateCheck::kStatus_Available:
+    ImGui::TextColored(ThemeGoodColor(), "%s is out", PortUpdateCheck::Latest().version.c_str());
+    break;
+  case PortUpdateCheck::kStatus_Failed:
+    ImGui::TextColored(ThemeBadColor(), "%s", PortUpdateCheck::LastError().c_str());
+    break;
+  }
+  if (status == PortUpdateCheck::kStatus_Off) {
+    return;
+  }
+  ImGui::BeginDisabled(status == PortUpdateCheck::kStatus_Checking);
+  if (ImGui::Button("Check now")) {
+    PortUpdateCheck::CheckNow();
+  }
+  ImGui::EndDisabled();
+  if (status == PortUpdateCheck::kStatus_Available) {
+    ImGui::SameLine();
+    if (ImGui::Button("Open release page")) {
+      SDL_OpenURL(PortUpdateCheck::Latest().url.c_str());
+    }
+  }
+  if (const int64_t checked = PortUpdateCheck::LastChecked(); checked > 0) {
+    const time_t when = static_cast< time_t >(checked);
+    char text[64] = {};
+    if (const std::tm* local = std::localtime(&when)) {
+      std::strftime(text, sizeof(text), "%Y-%m-%d %H:%M", local);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("last checked %s", text);
+  }
 }
 
 #if defined(__ANDROID__)
@@ -7149,8 +7243,9 @@ void DrawSystemTab() {
 #endif
   DrawLogSection();
   DrawDiscordSection();
+  DrawUpdateSection();
   ImGui::SeparatorText("About");
-  ImGui::TextDisabled("Build: %s", MP_BUILD_REVISION);
+  ImGui::TextDisabled("Version %s, build %s", MP_BUILD_VERSION, MP_BUILD_REVISION);
 }
 
 struct DebugPage {
@@ -7854,6 +7949,7 @@ void DrawUI() {
 #endif
   FinishRemasteredImport();
   DrawStaleImportToast();
+  DrawUpdateToast();
   DrawDiscReadFailedAlert();
   if (sTouchLayoutSavePending.exchange(false, std::memory_order_acq_rel)) {
     MarkDirty();
