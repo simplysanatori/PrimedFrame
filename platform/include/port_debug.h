@@ -85,8 +85,8 @@ void SetActorInterpolation(bool enabled);
 bool PoseInterpolation();
 void SetPoseInterpolation(bool enabled);
 // Keeps a room geometry mod's models on the GPU instead of sending them every frame
-// (port_settings.ini room_geo_gpu; an old room_geo_resident=1 still counts). On by default on
-// Android, off elsewhere. Aurora sizes its buffers for it at
+// (port_settings.ini room_geo_gpu; an old room_geo_resident=1 still counts). On by default.
+// Aurora sizes its buffers for it at
 // startup, so a change applies from the next start: RoomGeoResidentAtStartup reads the
 // settings file before the rest of them are loaded.
 bool RoomGeoResident();

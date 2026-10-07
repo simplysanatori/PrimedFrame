@@ -328,12 +328,8 @@ bool sSmoothFrames = true;
 bool sFrameInterpolation = true;
 bool sActorInterpolation = true;
 bool sPoseInterpolation = true;
-// Faster on a phone (POCO F8 Ultra: 8-27% more fps in the heaviest rooms); no gain on a desktop GPU.
-#if defined(__ANDROID__)
+// Faster on a phone (POCO F8 Ultra: 8-27% more fps in the heaviest rooms), even or mixed on a PC.
 constexpr bool kRoomGeoResidentDefault = true;
-#else
-constexpr bool kRoomGeoResidentDefault = false;
-#endif
 bool sRoomGeoResident = kRoomGeoResidentDefault;
 bool sParticleInterpolation = true;
 // The Remastered import's choices. Off on a phone: the rooms have never run on
@@ -6257,11 +6253,7 @@ void DrawRemasteredRoomModels() {
     PortDebug::SetRoomGeoResident(resident);
   }
   ImGui::SetItemTooltip(
-#if defined(__ANDROID__)
       "Recommended: on.\n"
-#else
-      "Recommended: off (makes no difference on a graphics card; mixed on integrated graphics).\n"
-#endif
       "Uploads a room geometry mod's models once when they load instead of\n"
       "every frame, so a frame's buffers can be smaller. Takes effect from the\n"
       "next start.");

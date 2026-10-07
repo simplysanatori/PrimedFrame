@@ -474,8 +474,8 @@ which are authoritative. Inside a mod:
   ordinary CMDLs of the mod and are loaded
   with the area. The Thermal and X-Ray visors draw the retail area. A game
   started with such a mod installed takes a 256 MB arena and larger frame
-  buffers (12 times the usual size, 6 on Android, 2 with
-  `MP_ROOM_GEO_RESIDENT`, Android's default; see `MP_FRAME_BUFFERS`), since these rooms are many
+  buffers (2 times the usual size with `MP_ROOM_GEO_RESIDENT`, the default; 12
+  without it, 6 on Android; see `MP_FRAME_BUFFERS`), since these rooms are many
   times retail's vertex count; a mod loaded into a running game without them
   is not drawn until the next start.
 - a file named `<MREA id, 8 hex digits>.roomliquid`, anywhere in the mod, holds
@@ -1221,11 +1221,11 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   which also prints what is loaded and what the last frame streamed.
   `MP_FRAME_BUFFERS=<1..16>` scales the buffers a frame's vertices, indices,
   arrays and uniforms are streamed through (1 = 5 + 2 + 8 + 24 MiB); it is 12
-  when a mod has room geometry (6 on Android, 2 with `MP_ROOM_GEO_RESIDENT`,
-  which Android has on by default).
+  when a mod has room geometry and `MP_ROOM_GEO_RESIDENT` is off (6 on Android),
+  and 2 with it on (the default).
   A frame that outgrows them aborts with a buffer overflow.
 - `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_gpu`, F1 > Remastered >
-  Room models > Keep on the GPU; on by default on Android, off elsewhere, read at
+  Room models > Keep on the GPU; on by default, read at
   startup; an old `room_geo_resident=1` still turns it on). On a POCO F8 Ultra it
   gives 8 to 27% more frames per second in the heaviest rooms; on a desktop GPU it
   makes no measurable difference. On an integrated GPU (Ryzen 7000 Raphael) the
