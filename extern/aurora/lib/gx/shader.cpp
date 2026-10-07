@@ -812,11 +812,13 @@ enum class NbtSlice : u8 {
   N,
   B,
   T,
+  B1, // GX_NRM_NBT5 only: the second tangent frame
+  T1,
 };
 
 auto attr_load_nbt_slice(const ShaderConfig& config, NbtSlice slice, std::string_view vidx) -> std::string {
   const auto& mapping = config.attrs[GX_VA_NRM];
-  if (mapping.attrType == GX_NONE || mapping.cnt != 9) {
+  if (mapping.attrType == GX_NONE || (mapping.cnt != 9 && mapping.cnt != 15)) {
     Log.fatal("attr_load_nbt_slice: GX_TG_BINRM/TANGENT requires GX_NRM_NBT or GX_NRM_NBT3");
   }
   const auto sliceIdx = static_cast<u32>(slice);
@@ -1003,7 +1005,19 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // A model with vertex tangents (the NBT normal array: N, B, T) shades its normal maps with
   // Remastered's frame: T and the handedness w (B = w * cross(N, T), so w is the sign of
   // dot(cross(N, T), B)). Without them the frame comes from the screen derivatives below.
-  const bool tangents = config.attrs[GX_VA_NRM].attrType != GX_NONE && config.attrs[GX_VA_NRM].cnt == 9;
+  // GX_NRM_NBT5 adds a second frame (B1, T1) for the layered shaders A978D507 and D363D694,
+  // whose second normal map has a tangent stream of its own (TANGENT_1).
+  const bool tangents2 = config.attrs[GX_VA_NRM].attrType != GX_NONE && config.attrs[GX_VA_NRM].cnt == 15;
+  const bool tangents = tangents2 || (config.attrs[GX_VA_NRM].attrType != GX_NONE && config.attrs[GX_VA_NRM].cnt == 9);
+  if (tangents2) {
+    vtxOutAttrs += fmt::format("\n    @location({}) pbr_tan2: vec4f,", vtxOutIdx++);
+    vtxXfrAttrs += fmt::format(
+        "\n    let pbr_vb2 = {};"
+        "\n    let pbr_vt2 = {};"
+        "\n    let pbr_vtv2 = vec4f(pbr_vt2, 0.0) * ubuf.postex_mtx[in_pnmtxidx];"
+        "\n    out.pbr_tan2 = vec4f(pbr_vtv2, select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt2), pbr_vb2) >= 0.0));",
+        attr_load_nbt_slice(config, NbtSlice::B1, vidx), attr_load_nbt_slice(config, NbtSlice::T1, vidx));
+  }
   if (tangents) {
     vtxOutAttrs += fmt::format("\n    @location({}) pbr_tan: vec4f,", vtxOutIdx++);
     vtxXfrAttrs += fmt::format(
@@ -1138,6 +1152,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_tsc = sqrt(pbr_tlen);
       let pbr_t = pbr_tu * pbr_tsc;
       let pbr_b = -cross(pbr_ngs, pbr_tu) * (in.pbr_tan.w * pbr_tsc);)""";
+      if (tangents2) {
+        layer += R"""(
+      let pbr_tu2 = normalize(in.pbr_tan2.xyz);
+      let pbr_t2 = pbr_tu2 * pbr_tsc;
+      let pbr_b2 = -cross(pbr_ngs, pbr_tu2) * (in.pbr_tan2.w * pbr_tsc);)""";
+      }
     } else {
       layer += R"""(
       let pbr_t = pbr_t0;
@@ -1415,6 +1435,19 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       }})""",
                           normalXy, tn,
                           normalXy2.empty() ? "" : "let pbr_tsm = mix(pbr_ts, pbr_ts2, pbr_ls);\n      ");
+    if (tangents2 && !normalXy2.empty()) {
+      // A978D507 / D363D694 (LayerBaseNormal_2TangentStream): each layer's normal is built in
+      // its own tangent frame (TANGENT_0 for map 1, TANGENT_1 for map 2) and the two are mixed.
+      normal += R"""(
+      if (pbr_tlen > 1e-24 && !((pbr_kind > 0.5 && pbr_kind < 1.5) || pbr_kind > 19.5)) {
+        let pbr_s2 = inverseSqrt(pbr_tlen);
+        let pbr_nl1 = normalize(pbr_t * (pbr_s2 * pbr_ts.x) - pbr_b * (pbr_s2 * pbr_ts.y) +
+                                pbr_ng * sqrt(max(0.0, 1.0 - dot(pbr_ts, pbr_ts))));
+        let pbr_nl2 = normalize(pbr_t2 * (pbr_s2 * pbr_ts2.x) - pbr_b2 * (pbr_s2 * pbr_ts2.y) +
+                                pbr_ng * sqrt(max(0.0, 1.0 - dot(pbr_ts2, pbr_ts2))));
+        pbr_n = normalize(mix(pbr_nl1, pbr_nl2, pbr_ls));
+      })""";
+    }
   }
   normal += liquid;
   // And what is seen of it: its own colour in the room's light where it is looked into,

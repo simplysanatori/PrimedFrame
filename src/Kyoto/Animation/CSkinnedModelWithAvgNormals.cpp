@@ -48,8 +48,8 @@ CSkinnedModelWithAvgNormals::CSkinnedModelWithAvgNormals(const CSkinnedModel& sk
   const CVector3f* normals =
       reinterpret_cast< const CVector3f* >(skinnedModel.GetModel()->GetNormals());
 #ifdef TARGET_PC
-  // NBT normals are nine floats per vertex (N, B, T); N is the first.
-  const uint normalStride = skinnedModel.GetModel()->GetCubeModel()->HasNbtNormals() ? 3 : 1;
+  // NBT normals are nine (N, B, T) or fifteen floats per vertex; N is the first.
+  const uint normalStride = skinnedModel.GetModel()->GetCubeModel()->NormalVecs();
 #else
   const uint normalStride = 1;
 #endif
