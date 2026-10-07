@@ -807,9 +807,12 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
     return false;
   }
   {
+    // MP_GPU_POWER=low asks for the integrated GPU on a machine that also has a discrete one.
+    const char* power = std::getenv("MP_GPU_POWER");
+    const bool lowPower = power != nullptr && std::string_view{power} == "low";
     const wgpu::RequestAdapterOptions options{
         .featureLevel = wgpu::FeatureLevel::Compatibility,
-        .powerPreference = wgpu::PowerPreference::HighPerformance,
+        .powerPreference = lowPower ? wgpu::PowerPreference::LowPower : wgpu::PowerPreference::HighPerformance,
         .backendType = backend,
         .compatibleSurface = g_surface,
     };

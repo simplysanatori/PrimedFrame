@@ -261,8 +261,9 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json   # AMD (RADV)
 Worth knowing on a multi-GPU machine: pinning a vendor is not the same as pinning
 a device. `MESA_VK_DEVICE_SELECT` did not move the choice off the Radeon RX 7900
 XTX onto the adjacent Raphael iGPU, so the selector matched a name the loader was
-not using. "Use the integrated GPU" is not reliably expressible through the
-environment.
+not using. To run on the integrated GPU, set `MP_GPU_POWER=low`: the game then
+asks WebGPU for its low-power adapter instead of the high-performance one (the
+log's adapter line says `IntegratedGPU`).
 
 **Headless runs on Xvfb need Mesa's software WSI.** Xvfb exposes no DRI3
 extension, and Mesa's Vulkan WSI requires it:
