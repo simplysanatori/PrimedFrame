@@ -1388,6 +1388,7 @@ constexpr uint32_t kShaderHeightBlend = 0xCA10C453;  // snow and ice over rock
 constexpr uint32_t kShaderUpLayer = 0x9EFE0D2E;   // TCH0-2 are a second layer on what faces up, CCH0.x its edge
 constexpr uint32_t kShaderVertexBlend = 0xE9DF2188;  // TCH0-2 a second layer by the vertex alpha, CCH0.x its edge, TCH3 a detail map
 constexpr uint32_t kShaderDetail = 0x9AB899E7;    // TCH0 is a detail map, on a texcoord of its own
+constexpr uint32_t kShaderDetailTinted = 0x41A12C9E;  // the same with the vertex colour tint
 constexpr uint32_t kShaderLava = 0x023388CD;      // the glow is CCH0.x times the vertex alpha
 // Falling water, unlit: TCH0's three channels are sheets scrolling at CCH1's and CCH2's speeds
 // (times CCH0.x), weighted by the vertex colour, and their sum picks the colour from TCH1, a
@@ -1515,7 +1516,7 @@ std::string ShaderRole(uint32_t shader) {
   auto in = [&](const auto& list) { return std::find(std::begin(list), std::end(list), shader) != std::end(list); };
   add(shader == kShaderHeightBlend, "height-blend");
   add(shader == kShaderUpLayer, "up-layer");
-  add(shader == kShaderDetail, "detail");
+  add(shader == kShaderDetail || shader == kShaderDetailTinted, "detail");
   add(shader == kShaderVertexBlend, "vertex-blend");
   add(shader == kShaderLava, "lava");
   add(shader == kShaderWaterfall, "waterfall");
@@ -1861,7 +1862,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.maps[kEmissive].detail = out.maps[kEmissive].has;
     }
     out.layerSmooth = ShortestDouble(cch[0]->color[0]);
-  } else if (shader == kShaderDetail && tch[0]) {
+  } else if ((shader == kShaderDetail || shader == kShaderDetailTinted) && tch[0]) {
     out.kind = 2;
     set(kBase, tch[0]->texture, &out.layer[kBase]);
   } else if (shader == kShaderLava && cch[0]) {
