@@ -189,9 +189,9 @@ static void ApplyAspectMode() {
   }
   }
   fbWidth &= ~1;
-  // Clamp to .. 21:9 (i12 experiment: no 4:3 floor). Extreme aspects produce degenerate projections and a
-  // blank present.
-  const int maxWidth = efbHeight * 21 / 9;
+  // The GX scissor is a 12-bit field biased by 342, so a framebuffer wider than 3754 wraps it to zero
+  // width and clips every draw (an all-black picture). That is ~7.8:1 at 480 lines, far past any real display.
+  const int maxWidth = 3754;
   if (fbWidth > maxWidth) {
     fbWidth = maxWidth;
   }
