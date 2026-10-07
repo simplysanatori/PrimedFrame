@@ -4692,10 +4692,34 @@ void DrawStaleImportToast() {
 }
 
 // Once per launch, for 12 s: a newer release than this build is out.
+// Taps arrive on Android's UI thread (TouchControlsView), so the rect is shared under
+// a lock and a hit only sets a flag; the page opens on the game thread.
+bool sUpdateToastDone = false;
+std::mutex sUpdateToastMutex;
+bool sUpdateToastShowing = false;
+ImVec4 sUpdateToastRect; // last drawn: x0, y0, x1, y1 as fractions of the window
+std::atomic<bool> sUpdateToastTapped{false};
+
+void SetUpdateToastShowing(bool showing, const ImVec4& rect = ImVec4()) {
+  std::lock_guard lock(sUpdateToastMutex);
+  sUpdateToastShowing = showing;
+  sUpdateToastRect = rect;
+}
+
+void OpenUpdateToastRelease() {
+  SDL_OpenURL(PortUpdateCheck::Latest().url.c_str());
+  sUpdateToastDone = true;
+  SetUpdateToastShowing(false);
+}
+
 void DrawUpdateToast() {
   static double sShownAt = -1.0;
-  static bool sDone = false;
-  if (sDone || PortUpdateCheck::Status() != PortUpdateCheck::kStatus_Available) {
+  SetUpdateToastShowing(false);
+  if (sUpdateToastDone || PortUpdateCheck::Status() != PortUpdateCheck::kStatus_Available) {
+    return;
+  }
+  if (sUpdateToastTapped.exchange(false)) {
+    OpenUpdateToastRelease();
     return;
   }
   const double now = ImGui::GetTime();
@@ -4703,7 +4727,7 @@ void DrawUpdateToast() {
     sShownAt = now;
   }
   if (now - sShownAt > 12.0) {
-    sDone = true;
+    sUpdateToastDone = true;
     return;
   }
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -4716,10 +4740,17 @@ void DrawUpdateToast() {
                        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
     ImGui::TextWrapped("Version %s is out (this is %s). Click or tap here to open its release page.",
                        PortUpdateCheck::Latest().version.c_str(), MP_BUILD_VERSION);
-    // A click (touches arrive as mouse events) anywhere on the toast opens the page and dismisses it.
+    const ImVec2 pos = ImGui::GetWindowPos();
+    const ImVec2 size = ImGui::GetWindowSize();
+    if (viewport->Size.x > 0.f && viewport->Size.y > 0.f) {
+      SetUpdateToastShowing(true, ImVec4((pos.x - viewport->Pos.x) / viewport->Size.x,
+                                         (pos.y - viewport->Pos.y) / viewport->Size.y,
+                                         (pos.x + size.x - viewport->Pos.x) / viewport->Size.x,
+                                         (pos.y + size.y - viewport->Pos.y) / viewport->Size.y));
+    }
+    // A mouse click; taps go through PortDebug::TapUpdateToast.
     if (ImGui::IsWindowHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-      SDL_OpenURL(PortUpdateCheck::Latest().url.c_str());
-      sDone = true;
+      OpenUpdateToastRelease();
     }
   }
   ImGui::End();
@@ -5168,6 +5199,21 @@ void DrawMods() {
 #endif
 }
 } // namespace
+
+bool UpdateToastShowing() {
+  std::lock_guard lock(sUpdateToastMutex);
+  return sUpdateToastShowing;
+}
+
+bool TapUpdateToast(float x, float y) {
+  std::lock_guard lock(sUpdateToastMutex);
+  const ImVec4& r = sUpdateToastRect;
+  if (!sUpdateToastShowing || x < r.x || x > r.z || y < r.y || y > r.w) {
+    return false;
+  }
+  sUpdateToastTapped.store(true);
+  return true;
+}
 
 void DrawGameSection();
 
@@ -8553,6 +8599,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeMapTap(JNIEnv*, jclass) {
   }
 }
 #endif
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTapUpdateToast(JNIEnv*, jclass, jfloat x, jfloat y) {
+  return PortDebug::TapUpdateToast(x, y) ? JNI_TRUE : JNI_FALSE;
+}
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeDebugOverlayVisible(JNIEnv*, jclass) {

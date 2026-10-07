@@ -458,6 +458,12 @@ unsigned MouseMenuButtons(unsigned held, bool focused);
 void NoteMouseButton(bool synthetic, unsigned mask, bool down);
 void ClearMouseButtons();
 unsigned MouseHeldButtons();
+// The "newer release" toast: while it shows, the cursor stays visible outside
+// mouse capture, and a tap inside it (window-relative 0..1 coordinates, from a
+// finger event: in relative mouse mode SDL drops a touch's mouse position)
+// opens the release page (on the next frame; true if it hit). Thread-safe.
+bool UpdateToastShowing();
+bool TapUpdateToast(float x, float y);
 // Called during simulation, using the effective unbobbed camera direction.
 bool UpdateMouseAim(bool active, bool locked, float x, float y, float z);
 void SynchronizeMouseAim(float x, float y, float z);

@@ -937,6 +937,8 @@ int CMain::RsMain(int argc, const char* const* argv) {
                                          SDL_BUTTON_MASK(event->sdl.button.button),
                                          event->sdl.button.down);
             }
+          } else if (event->type == AURORA_SDL_EVENT && event->sdl.type == SDL_EVENT_FINGER_UP) {
+            PortDebug::TapUpdateToast(event->sdl.tfinger.x, event->sdl.tfinger.y);
           } else if (event->type == AURORA_SDL_EVENT &&
                      event->sdl.type == SDL_EVENT_MOUSE_REMOVED) {
             PortDebug::ClearMouseButtons();
@@ -987,9 +989,11 @@ int CMain::RsMain(int argc, const char* const* argv) {
           }
           PortDebug::SetMouseCaptured(wantRelative && SDL_GetWindowRelativeMouseMode(sCaptureWindow));
           // Keep the cursor hidden during play; show it only over the overlay,
-          // which is navigated with the mouse (and the controller).
+          // which is navigated with the mouse (and the controller), and while the
+          // clickable update toast is up and the mouse isn't captured.
           const bool wantCursor =
-              PortDebug::Visible() && SDL_GetKeyboardFocus() == sCaptureWindow;
+              (PortDebug::Visible() || (PortDebug::UpdateToastShowing() && !wantLock)) &&
+              SDL_GetKeyboardFocus() == sCaptureWindow;
           if (wantCursor) {
             SDL_ShowCursor();
           } else {

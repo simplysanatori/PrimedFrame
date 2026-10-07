@@ -400,6 +400,7 @@ final class TouchControlsView extends View {
     private final Path shapePath = new Path();
     private final Path crossArmPath = new Path();
     private static native boolean nativeDebugOverlayVisible();
+    private static native boolean nativeTapUpdateToast(float x, float y);
     private static native boolean nativeTouchClassic();
     private static native boolean nativeTouchTwinStick();
     private static native boolean nativeTouchColors();
@@ -743,6 +744,17 @@ final class TouchControlsView extends View {
             }
         } else if (forwardToSdl(event, action, actionIndex, overlayVisible) || overlayVisible) {
             return true;
+        }
+
+        // A tap on the "newer release" toast opens its page and is not also a press.
+        if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
+            View parent = (View) getParent();
+            if (parent != null
+                    && nativeTapUpdateToast(
+                            (getLeft() + event.getX(actionIndex)) / Math.max(1, parent.getWidth() - 1),
+                            (getTop() + event.getY(actionIndex)) / Math.max(1, parent.getHeight() - 1))) {
+                return true;
+            }
         }
 
         if (autoHidden) {
