@@ -1106,7 +1106,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     std::string first = "\n              var pbr_n1 = pbr_ng;";
     if (mapStage[2] != -1) {
       first += fmt::format(R"""(
-              let pbr_ts1 = sampled{}.rg * 2.0 - 1.0;
+              let pbr_ts1 = sampled{}.rg * 1.9921875 - 1.0;
               if (pbr_tlen > 1e-24) {{
                   let pbr_s1 = inverseSqrt(pbr_tlen);
                   pbr_n1 = normalize(pbr_t * (pbr_s1 * pbr_ts1.x) - pbr_b * (pbr_s1 * pbr_ts1.y) +
@@ -1337,21 +1337,26 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // glTF normal maps are +Y up with V running down the image, so the bitangent is the
     // negated dP/dV. Kind 4 scales the map's tilt. Remastered decodes x 255/128 - 1, so that
     // byte 128 is flat.
-    // Layered shaders decode each layer's normal in full and mix the vectors, which keeps
-    // more tilt at mid weights than mixing the maps' xy.
+    // The layered shaders (7248969B, A978D507) decode each layer's normal in full and mix
+    // the vectors, which keeps more tilt at mid weights. Kind 1 (9EFE0D2E) mixes the maps'
+    // xy and rebuilds z.
     std::string tn = "vec3f(pbr_ts, sqrt(max(0.0, 1.0 - dot(pbr_ts, pbr_ts))))";
     if (!normalXy2.empty()) {
-      tn = fmt::format("normalize(mix({}, vec3f(pbr_ts2, sqrt(max(0.0, 1.0 - dot(pbr_ts2, pbr_ts2)))), pbr_ls))", tn);
+      tn = fmt::format(
+          "select(normalize(mix({}, vec3f(pbr_ts2, sqrt(max(0.0, 1.0 - dot(pbr_ts2, pbr_ts2)))), pbr_ls)), "
+          "vec3f(pbr_tsm, sqrt(max(0.0, 1.0 - dot(pbr_tsm, pbr_tsm)))), pbr_kind > 0.5 && pbr_kind < 1.5)",
+          tn);
       normal = fmt::format("\n      let pbr_ts2 = {} * 1.9921875 - 1.0;", normalXy2);
     }
     normal += fmt::format(R"""(
       let pbr_ts = ({0} * 1.9921875 - 1.0) * select(1.0, ubuf.pbr_param.z, pbr_kind > 3.5 && pbr_kind < 4.5);
-      let pbr_tn = {1};
+      {2}let pbr_tn = {1};
       if (pbr_tlen > 1e-24) {{
         let pbr_s = inverseSqrt(pbr_tlen);
         pbr_n = normalize(pbr_t * (pbr_s * pbr_tn.x) - pbr_b * (pbr_s * pbr_tn.y) + pbr_ng * pbr_tn.z);
       }})""",
-                          normalXy, tn);
+                          normalXy, tn,
+                          normalXy2.empty() ? "" : "let pbr_tsm = mix(pbr_ts, pbr_ts2, pbr_ls);\n      ");
   }
   normal += liquid;
   // And what is seen of it: its own colour in the room's light where it is looked into,
