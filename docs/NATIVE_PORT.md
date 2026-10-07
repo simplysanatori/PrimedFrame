@@ -791,7 +791,7 @@ unpacks to a temporary directory instead of mounting.
   rate) lowers the scale while the frame rate is below the target, in quarter
   steps (half steps above 2x), down to "Lowest scale" (`dynamic_res_min`: 0.5,
   0.75 or 1, default 1). The file also takes a manual `render_scale` under 1.
-- `MP_ASPECT=4:3|16:9|window`; the legacy `MP_WIDESCREEN` selects 16:9.
+- `MP_ASPECT=4:3|16:9|window` (default `window`, persisted as `aspect`); the legacy `MP_WIDESCREEN` selects 16:9.
 - `MP_TWIN_STICK=1` (Controls > Options, persisted as `twin_stick`): twin-stick aiming. The
   right stick feeds the first-person aim through the same path as the mouse (so
   the same sensitivity/invert apply, tuned by `stick_aim_rate`, default 900 px/s)

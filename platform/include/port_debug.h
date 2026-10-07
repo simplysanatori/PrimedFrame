@@ -152,7 +152,7 @@ int DynamicResTarget();
 float DynamicResMin();
 // Rendering aspect ratio. kAspect_4_3 is the game's original 640x480.
 // kAspect_16_9 widens to 16:9; kAspect_Window follows the window and updates
-// live as it is resized.
+// live as it is resized (the default).
 enum EAspectMode {
   kAspect_4_3 = 0,
   kAspect_16_9,
