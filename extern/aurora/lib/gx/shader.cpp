@@ -1027,6 +1027,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   const std::string vtint =
       config.pbrKind != 10 ? "vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_vraw.a)" : "pbr_vraw";
   std::string normalXy = mapStage[2] == -1 ? std::string() : fmt::format("sampled{}.rg", mapStage[2]);
+  std::string normalXy2; // a layered shader's second normal map
+
   std::string layer = fmt::format(R"""(
       // The stored normal. A PBR6 back copy (F0 factor 0, LITS) is stored turned round like
       // every back copy; Remastered keeps the surface's own normal there, and so does this.
@@ -1257,7 +1259,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // Glass_DX11 reads its cube at level 1 of a smooth surface.
     orm = fmt::format("select({}, vec4f(1.0, 0.1, 0.0, 1.0), pbr_kind > 10.5 && pbr_kind < 11.5)", orm);
     if (mapStage[6] != -1 && mapStage[2] != -1) {
-      normalXy = fmt::format("mix({}, sampled{}.rg, pbr_ls)", normalXy, mapStage[6]);
+      normalXy2 = fmt::format("sampled{}.rg", mapStage[6]);
     }
     // The vertex alpha is the layers' weight there and no opacity.
     tintAlpha.clear();
@@ -1335,14 +1337,21 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // glTF normal maps are +Y up with V running down the image, so the bitangent is the
     // negated dP/dV. Kind 4 scales the map's tilt. Remastered decodes x 255/128 - 1, so that
     // byte 128 is flat.
-    normal = fmt::format(R"""(
+    // Layered shaders decode each layer's normal in full and mix the vectors, which keeps
+    // more tilt at mid weights than mixing the maps' xy.
+    std::string tn = "vec3f(pbr_ts, sqrt(max(0.0, 1.0 - dot(pbr_ts, pbr_ts))))";
+    if (!normalXy2.empty()) {
+      tn = fmt::format("normalize(mix({}, vec3f(pbr_ts2, sqrt(max(0.0, 1.0 - dot(pbr_ts2, pbr_ts2)))), pbr_ls))", tn);
+      normal = fmt::format("\n      let pbr_ts2 = {} * 1.9921875 - 1.0;", normalXy2);
+    }
+    normal += fmt::format(R"""(
       let pbr_ts = ({0} * 1.9921875 - 1.0) * select(1.0, ubuf.pbr_param.z, pbr_kind > 3.5 && pbr_kind < 4.5);
-      let pbr_tn = vec3f(pbr_ts, sqrt(max(0.0, 1.0 - dot(pbr_ts, pbr_ts))));
+      let pbr_tn = {1};
       if (pbr_tlen > 1e-24) {{
         let pbr_s = inverseSqrt(pbr_tlen);
         pbr_n = normalize(pbr_t * (pbr_s * pbr_tn.x) - pbr_b * (pbr_s * pbr_tn.y) + pbr_ng * pbr_tn.z);
       }})""",
-                         normalXy);
+                          normalXy, tn);
   }
   normal += liquid;
   // And what is seen of it: its own colour in the room's light where it is looked into,
