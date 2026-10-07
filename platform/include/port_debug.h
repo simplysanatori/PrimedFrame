@@ -594,7 +594,7 @@ void RequestToggle();
 // and handles F1. Call once per frame before the frame is built.
 void UpdateControllerNav();
 
-// GPU self-test (F1 > Video > Quality, console `gpuselftest`, or MP_GPU_SELFTEST=1 once after the first
+// GPU self-test (F1 > Video > Compatibility, console `gpuselftest`, or MP_GPU_SELFTEST=1 once after the first
 // frames): renders known patterns offscreen, reads them back and logs "gpu selftest: <case>: PASS|FAIL".
 void RequestGpuSelfTest();
 // Runs a requested self-test. Call right after a frame begins, before the game draws; it resets the

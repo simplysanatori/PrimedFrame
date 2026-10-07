@@ -5692,48 +5692,6 @@ void DrawVideoQuality() {
     SetMsaa(msaa == 1 ? 4 : 1);
   }
   ImGui::SetItemTooltip("Smooths polygon edges, at about 4x the framebuffer memory.");
-  EndOriginalLocked(locked);
-  size_t backendCount = 0;
-  const AuroraBackend* backends = aurora_get_available_backends(&backendCount);
-  if (std::find(backends, backends + backendCount, BACKEND_OPENGLES) != backends + backendCount) {
-    bool gles = sOpenGles;
-    if (ImGui::Checkbox("Use OpenGL ES", &gles)) {
-      SetOpenGles(gles);
-    }
-    ImGui::SetItemTooltip("Renders through OpenGL ES instead of Vulkan. Try it if the world draws black\n"
-                          "or untextured (some Adreno drivers). Takes effect after a restart; if the\n"
-                          "driver crashes starting it, the next start goes back to Vulkan.");
-    const AuroraBackend live = aurora_get_backend();
-    if (sOpenGles != sOpenGlesAtStart) {
-      ImGui::SameLine();
-      ImGui::TextColored(ThemeWarnColor(), "Restart to apply");
-    } else if (sOpenGles && live != BACKEND_OPENGLES) {
-      ImGui::SameLine();
-      ImGui::TextColored(ThemeWarnColor(), "OpenGL ES failed to start; using %s",
-                         live == BACKEND_VULKAN ? "Vulkan" : "another API");
-    }
-  }
-  DrawGpuDriver();
-  {
-    const bool pending = aurora_gpu_selftest_pending();
-    ImGui::BeginDisabled(pending);
-    if (ImGui::Button("GPU self-test")) {
-      RequestGpuSelfTest();
-    }
-    ImGui::EndDisabled();
-    ImGui::SetItemTooltip("Renders known patterns offscreen through the game's own GX path, reads them back\n"
-                          "and logs one PASS or FAIL line per feature (indexed vertices, TEV, textures, blend,\n"
-                          "depth, EFB copy). For GPU driver bugs such as a black world; attach the log to a report.");
-    char summary[160];
-    if (pending) {
-      ImGui::SameLine();
-      ImGui::TextDisabled("running...");
-    } else if (aurora_gpu_selftest_summary(summary, sizeof(summary)) != 0) {
-      ImGui::SameLine();
-      ImGui::TextUnformatted(summary);
-    }
-  }
-  locked = BeginOriginalLocked();
   {
     int aniso = 0;
     while ((2 << aniso) <= sAnisotropy && aniso < 4) {
@@ -5809,6 +5767,44 @@ void DrawVideoQuality() {
     }
   }
   EndOriginalLocked(locked);
+  ImGui::BeginDisabled(sOriginalExperience);
+  bool font = PortHdFont::Enabled();
+  if (ImGui::Checkbox("HD font", &font)) {
+    PortHdFont::SetEnabled(font);
+  }
+  ImGui::EndDisabled();
+  ImGui::SetItemTooltip("Draws the game's text with a sharp, high-resolution font. Recommended: on.\n"
+                        "Not saved: it is on at each start. Off under Original experience.");
+}
+
+// Rendering API, driver and workarounds for GPU driver bugs, and the self-test that finds them.
+void DrawVideoCompatibility() {
+  ImGui::SeparatorText("Compatibility");
+  ImGui::PushTextWrapPos(0.f);
+  ImGui::TextDisabled("For GPU driver problems, such as a black world or a crash at start. Most of these "
+                      "take effect after a restart.");
+  ImGui::PopTextWrapPos();
+  size_t backendCount = 0;
+  const AuroraBackend* backends = aurora_get_available_backends(&backendCount);
+  if (std::find(backends, backends + backendCount, BACKEND_OPENGLES) != backends + backendCount) {
+    bool gles = sOpenGles;
+    if (ImGui::Checkbox("Use OpenGL ES", &gles)) {
+      SetOpenGles(gles);
+    }
+    ImGui::SetItemTooltip("Renders through OpenGL ES instead of Vulkan. Try it if the world draws black\n"
+                          "or untextured (some Adreno drivers). Takes effect after a restart; if the\n"
+                          "driver crashes starting it, the next start goes back to Vulkan.");
+    const AuroraBackend live = aurora_get_backend();
+    if (sOpenGles != sOpenGlesAtStart) {
+      ImGui::SameLine();
+      ImGui::TextColored(ThemeWarnColor(), "Restart to apply");
+    } else if (sOpenGles && live != BACKEND_OPENGLES) {
+      ImGui::SameLine();
+      ImGui::TextColored(ThemeWarnColor(), "OpenGL ES failed to start; using %s",
+                         live == BACKEND_VULKAN ? "Vulkan" : "another API");
+    }
+  }
+  DrawGpuDriver();
   {
     static const char* const kClampNames[] = {"Auto", "Off", "On"};
     int clamp = sStorageClamp + 1;
@@ -5825,15 +5821,25 @@ void DrawVideoQuality() {
       ImGui::TextColored(ThemeWarnColor(), "Restart to apply");
     }
   }
-  ImGui::BeginDisabled(sOriginalExperience);
-  bool font = PortHdFont::Enabled();
-  if (ImGui::Checkbox("HD font", &font)) {
-    PortHdFont::SetEnabled(font);
+  {
+    const bool pending = aurora_gpu_selftest_pending();
+    ImGui::BeginDisabled(pending);
+    if (ImGui::Button("GPU self-test")) {
+      RequestGpuSelfTest();
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Renders known patterns offscreen through the game's own GX path, reads them back\n"
+                          "and logs one PASS or FAIL line per feature (indexed vertices, TEV, textures, blend,\n"
+                          "depth, EFB copy). For GPU driver bugs such as a black world; attach the log to a report.");
+    char summary[160];
+    if (pending) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("running...");
+    } else if (aurora_gpu_selftest_summary(summary, sizeof(summary)) != 0) {
+      ImGui::SameLine();
+      ImGui::TextUnformatted(summary);
+    }
   }
-  ImGui::EndDisabled();
-  ImGui::SetItemTooltip("Draws the game's text with a sharp, high-resolution font. Recommended: on.\n"
-                        "Not saved: it is on at each start. Off under Original experience.");
-
 }
 
 // The HD texture set and the user's texture pack: the Mods page.
@@ -7616,6 +7622,10 @@ void DrawVideoTab() {
   }
   if (SubTab("Video", "Frame rate")) {
     DrawPerformanceTab();
+    ImGui::EndTabItem();
+  }
+  if (SubTab("Video", "Compatibility")) {
+    DrawVideoCompatibility();
     ImGui::EndTabItem();
   }
   ImGui::EndTabBar();
