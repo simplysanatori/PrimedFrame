@@ -216,7 +216,16 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     // Never round-trip through SetO2WTransform: its quick parent inverse assumes
     // an orthonormal basis. Even slightly non-unit HUD-lag rotations would then
     // compound scale errors every draw, eventually shrinking the helmet lights.
-    widget->DrawWithWorldTransform(parms, x14_camera->GetHudTransform(anchor) * world);
+    CTransform4f hudXf = x14_camera->GetHudTransform(anchor);
+    if (group && aboutEye && spread == 1.f && spreadY != 1.f) {
+      // A cluster off to the side: the rigid path pitches it to face the eye, which tips its
+      // inward-turned cards into a slant against the struts. Sliding it straight down (or up) at
+      // its own depth moves its image without changing its shape, so it looks as it does at 4:3.
+      const float eyeZ = (invView * anchor).GetZ();
+      hudXf = hudScaleXf * spreadView *
+              CTransform4f::Translate(0.f, 0.f, (spreadY - 1.f) * eyeZ) * invView;
+    }
+    widget->DrawWithWorldTransform(parms, hudXf * world);
   }
   if (clipped) {
     GXSetScissor(oldScissor[0], oldScissor[1], oldScissor[2], oldScissor[3]);
