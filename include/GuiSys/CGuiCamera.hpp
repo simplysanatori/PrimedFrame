@@ -47,6 +47,9 @@ public:
   // Widescreen HUD spread for this frame's widgets: 1.0 when inactive.
   float GetAspectSpread() const { return mSpread; }
   float GetAspectSpreadCenterX() const { return mSpreadCenterX; }
+  // Vertical spread, the same remap on the screen-up axis: 1.0 unless the window is narrower than
+  // 4:3 and the frame keeps its authored width.
+  float GetAspectSpreadY() const { return mSpreadY; }
   // Perspective widgets slide in their plane and turn outward in place.
   bool GetAspectSpreadAboutEye() const { return mSpreadAboutEye; }
   const CTransform4f& GetAspectSpreadView() const { return mSpreadView; }
@@ -77,6 +80,7 @@ public:
   bool mSpreadable = true;
   mutable float mSpread = 1.f;
   mutable float mSpreadCenterX = 0.f;
+  mutable float mSpreadY = 1.f;
   mutable bool mSpreadAboutEye = false;
   // Camera-to-world transform used by the last Draw.
   mutable CTransform4f mSpreadView = CTransform4f::Identity();

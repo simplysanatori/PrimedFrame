@@ -98,6 +98,7 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
 
   mSpread = 1.f;
   mSpreadCenterX = 0.f;
+  mSpreadY = 1.f;
   mSpreadAboutEye = false;
   mHudScale = mHudScaled ? static_cast< float >(PortDebug::HudScale()) / 100.f : 1.f;
 
@@ -114,6 +115,12 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
     }
     float fov = mCameraParms.perspective.fov;
     if (fitWidth) {
+      // The window is taller than authored: spread the layout over the extra height, as the
+      // widescreen spread does over extra width.
+      if (mSpreadable) {
+        mSpreadY = authored / renderAspect;
+        mSpreadAboutEye = true;
+      }
       constexpr float kDegToRad = 3.14159265f / 180.f;
       fov = 2.f * std::atan(std::tan(0.5f * fov * kDegToRad) * authored / renderAspect) / kDegToRad;
     }
@@ -129,6 +136,9 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
     if (fitWidth) {
       const float middle = 0.5f * (top + bottom);
       const float halfHeight = 0.5f * (right - left) / renderAspect;
+      if (mSpreadable && top > bottom) {
+        mSpreadY = halfHeight / (0.5f * (top - bottom));
+      }
       top = middle + halfHeight;
       bottom = middle - halfHeight;
     } else if (renderAspect > 0.f) {
@@ -155,18 +165,27 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
 }
 
 CTransform4f CGuiCamera::GetAspectSpreadTransform(const CVector3f& worldAnchor) const {
-  if (mSpread == 1.f) {
+  if (mSpread == 1.f && mSpreadY == 1.f) {
     return CTransform4f::Identity();
   }
   const CTransform4f invView = mSpreadView.GetInverse();
   const CVector3f eyePos = invView * worldAnchor;
   if (!mSpreadAboutEye) {
-    return CTransform4f::Translate(
-        mSpreadView.Rotate(CVector3f((mSpread - 1.f) * (eyePos.GetX() - mSpreadCenterX), 0.f, 0.f)));
+    return CTransform4f::Translate(mSpreadView.Rotate(CVector3f(
+        (mSpread - 1.f) * (eyePos.GetX() - mSpreadCenterX), 0.f,
+        (mSpreadY - 1.f) * (eyePos.GetZ() - mCenterZ))));
   }
   // Camera +Y is forward; +Z is screen-up. Keep the anchor's depth unchanged.
   if (eyePos.GetY() <= 0.f) {
     return CTransform4f::Identity();
+  }
+  if (mSpreadY != 1.f) {
+    // The vertical spread: move in view Z and pitch to face the eye, mirroring the yaw below.
+    const float pitch = std::atan2(eyePos.GetZ(), eyePos.GetY());
+    const float delta = std::atan2(mSpreadY * eyePos.GetZ(), eyePos.GetY()) - pitch;
+    const CVector3f offset(0.f, 0.f, (mSpreadY - 1.f) * eyePos.GetZ());
+    return mSpreadView * CTransform4f::Translate(eyePos + offset) *
+           CTransform4f::RotateX(CRelAngle(delta)) * CTransform4f::Translate(-eyePos) * invView;
   }
   const float yaw = std::atan2(eyePos.GetX(), eyePos.GetY());
   const float delta = std::atan2(mSpread * eyePos.GetX(), eyePos.GetY()) - yaw;

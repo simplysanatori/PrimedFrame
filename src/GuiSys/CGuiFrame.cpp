@@ -114,14 +114,19 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
   const CTransform4f hudScaleXf = x14_camera->GetHudScaleTransform();
   // Perspective elements move in their own plane and turn in place to face the
   // eye, preserving their depth ordering. Orthographic elements only slide.
-  const bool aboutEye = spread != 1.f && x14_camera->GetAspectSpreadAboutEye();
+  const float spreadY = x14_camera->GetAspectSpreadY();
+  const bool aboutEye = (spread != 1.f || spreadY != 1.f) && x14_camera->GetAspectSpreadAboutEye();
   const CTransform4f spreadView =
       aboutEye ? x14_camera->GetAspectSpreadView() : CTransform4f::Identity();
   const CTransform4f invView = aboutEye ? spreadView.GetInverse() : CTransform4f::Identity();
   const CTransform4f stretch =
-      aboutEye ? spreadView * CTransform4f::Scale(spread, 1.f, 1.f) * invView
+      aboutEye ? spreadView * CTransform4f::Scale(spread, 1.f, spreadY) * invView
                : CTransform4f::Identity();
   const CGraphics::CProjectionState& projection = CGraphics::GetProjectionState();
+  const float authoredQuarterHeightPerDepth =
+      aboutEye ? (projection.GetTop() - projection.GetBottom()) /
+                     (4.f * projection.GetNear() * spreadY)
+               : 0.f;
   const float authoredQuarterWidthPerDepth =
       aboutEye ? (projection.GetRight() - projection.GetLeft()) /
                      (4.f * projection.GetNear() * spread)
@@ -139,7 +144,7 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     if (!widget->GetIsVisible()) {
       continue;
     }
-    if (spread == 1.f && hudScale == 1.f) {
+    if (spread == 1.f && spreadY == 1.f && hudScale == 1.f) {
       widget->Draw(parms);
       continue;
     }
@@ -162,9 +167,14 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
           // parent. Only a fixed-size bounding box is examined, never vertices.
           const float farDepth = bounds.GetMaxPoint().GetY();
           const float quarterWidth = farDepth * authoredQuarterWidthPerDepth;
-          if (bounds.GetMinPoint().GetY() > projection.GetNear() && quarterWidth > 0.f &&
-              bounds.GetMinPoint().GetX() < -quarterWidth &&
-              bounds.GetMaxPoint().GetX() > quarterWidth) {
+          const float quarterHeight = farDepth * authoredQuarterHeightPerDepth;
+          const bool spansWidth = spread != 1.f && quarterWidth > 0.f &&
+                                  bounds.GetMinPoint().GetX() < -quarterWidth &&
+                                  bounds.GetMaxPoint().GetX() > quarterWidth;
+          const bool spansHeight = spreadY != 1.f && quarterHeight > 0.f &&
+                                   bounds.GetMinPoint().GetZ() < -quarterHeight &&
+                                   bounds.GetMaxPoint().GetZ() > quarterHeight;
+          if (bounds.GetMinPoint().GetY() > projection.GetNear() && (spansWidth || spansHeight)) {
             // This intentionally widens vertical strokes too, but leaves view Y
             // and depth untouched; compact widgets retain the rigid path below.
             widget->DrawWithWorldTransform(parms, hudScaleXf * stretch * world);
