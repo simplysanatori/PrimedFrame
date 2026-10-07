@@ -635,10 +635,10 @@ bool CPlayerVisor::DrawScanObjectIndicators(const CStateManager& mgr) const {
   const CGameCamera& camera = mgr.GetCameraManager()->GetCurrentCamera(mgr);
   CTransform4f cameraXf = mgr.GetCameraManager()->GetCurrentCameraTransform(mgr);
   CGraphics::SetViewPointMatrix(cameraXf);
-  CFrustumPlanes frustum(cameraXf, 0.01745329238474369f * camera.GetFov(), camera.GetAspectRatio(),
+  CFrustumPlanes frustum(cameraXf, 0.01745329238474369f * camera.GetRenderFov(), camera.GetAspectRatio(),
                          1.f, false, 100.f);
   gpRender->SetClippingPlanes(frustum);
-  gpRender->SetPerspective(camera.GetFov(), CGraphics::GetViewportWidth(),
+  gpRender->SetPerspective(camera.GetRenderFov(), CGraphics::GetViewportWidth(),
                            CGraphics::GetViewportHeight(), camera.GetNearClipDistance(),
                            camera.GetFarClipDistance());
   CMatrix3f cameraRotation = cameraXf.BuildMatrix3f();

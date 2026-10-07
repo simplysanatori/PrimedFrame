@@ -76,12 +76,18 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
     if (vw > 0.f && vh > 0.f) {
       renderAspect = vw / vh;
     }
-    if (PortDebug::AspectMode() == PortDebug::kAspect_4_3) {
-      const float authored =
-          xb8_projection == kProjection_Perspective
-              ? mCameraParms.perspective.aspect
-              : (mCameraParms.orthographic.right - mCameraParms.orthographic.left) /
-                    (mCameraParms.orthographic.top - mCameraParms.orthographic.bottom);
+    const float authored =
+        xb8_projection == kProjection_Perspective
+            ? mCameraParms.perspective.aspect
+            : (mCameraParms.orthographic.right - mCameraParms.orthographic.left) /
+                  (mCameraParms.orthographic.top - mCameraParms.orthographic.bottom);
+    if (PortDebug::AspectMode() != PortDebug::kAspect_4_3) {
+      // A window narrower than the frame was authored for (a portrait window, below 4:3): keep
+      // the authored width and grow the vertical extent, instead of cutting off the sides.
+      if (renderAspect > 0.f && renderAspect < 4.f / 3.f && authored > renderAspect * 1.001f) {
+        fitWidth = true;
+      }
+    } else {
       if (renderAspect > 0.f && authored > renderAspect * 1.1f) {
         fitWidth = !PortDebug::HudWide();
       } else {
@@ -101,7 +107,8 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
     // Widening a fixed FOV keeps the projection uniform; the HUD elements stay
     // correctly shaped but are pulled toward the centre, so spread their
     // positions to reach the true corners.
-    if (renderAspect > 0.f && authored > 0.f && mSpreadable && PortDebug::HudWide()) {
+    if (!fitWidth && renderAspect > 0.f && authored > 0.f && mSpreadable &&
+        PortDebug::HudWide()) {
       mSpread = renderAspect / authored;
       mSpreadAboutEye = true;
     }

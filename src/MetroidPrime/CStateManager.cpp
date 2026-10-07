@@ -2592,7 +2592,7 @@ void CStateManager::PreRender() {
   const CGameCamera& curCam = x870_cameraManager->GetCurrentCamera(*this);
   const CTransform4f curCamXf =
       PortFreeCam::View(x870_cameraManager->GetCurrentCameraTransform(*this));
-  CFrustumPlanes frustum(curCamXf, 0.017453292f * curCam.GetFov(), curCam.GetAspectRatio(),
+  CFrustumPlanes frustum(curCamXf, 0.017453292f * curCam.GetRenderFov(), curCam.GetAspectRatio(),
                          curCam.GetNearClipDistance(), false, 100.f);
 
   for (CGameArea::CChainIterator areaIt = x850_world->ChainHead(CWorld::kC_Alive);
@@ -2644,7 +2644,7 @@ CFrustumPlanes CStateManager::SetupViewForDraw(const CViewport& viewport) const 
   const int left = viewport.mLeft + (viewport.mWidth - width) / 2;
   const int top = viewport.mTop + (viewport.mHeight - height) / 2;
 
-  const float tangent = CMath::SlowTangentR(CMath::Deg2Rad(0.5f * cam.GetFov()));
+  const float tangent = CMath::SlowTangentR(CMath::Deg2Rad(0.5f * cam.GetRenderFov()));
   const float fov = 2.f * CMath::ArcTangentR(tangent * xf30_viewportScaleY);
 
   gpRender->SetViewport(left, top, width, height);
@@ -3463,7 +3463,7 @@ void CStateManager::DrawWorld() const {
     const CGraphics::CProjectionState gunProj = CGraphics::GetProjectionState();
     if (gunFov) {
       const CViewport& gunViewport = CGraphics::GetViewport();
-      gpRender->SetPerspective(PortDebug::kFovRetail, static_cast< float >(gunViewport.mWidth),
+      gpRender->SetPerspective(CGameCamera::VertPlusFov(PortDebug::kFovRetail, gunCam.GetAspectRatio()), static_cast< float >(gunViewport.mWidth),
                                static_cast< float >(gunViewport.mHeight),
                                gunCam.GetNearClipDistance(), gunCam.GetFarClipDistance());
     }
@@ -3514,13 +3514,13 @@ void CStateManager::ResetViewAfterDraw(const CViewport& backupViewport,
                         backupViewport.mHeight);
 
   const CGameCamera& cam = x870_cameraManager->GetCurrentCamera(*this);
-  CFrustumPlanes frustum(backupViewMatrix, 0.017453292f * cam.GetFov(), cam.GetAspectRatio(),
+  CFrustumPlanes frustum(backupViewMatrix, 0.017453292f * cam.GetRenderFov(), cam.GetAspectRatio(),
                          cam.GetNearClipDistance(), false, 100.f);
   gpRender->SetClippingPlanes(frustum);
 
   const CViewport& viewport = CGraphics::GetViewport();
   const float zFar = cam.GetFarClipDistance();
-  gpRender->SetPerspective(cam.GetFov(), static_cast< float >(viewport.mWidth),
+  gpRender->SetPerspective(cam.GetRenderFov(), static_cast< float >(viewport.mWidth),
                            static_cast< float >(viewport.mHeight), cam.GetNearClipDistance(), zFar);
 }
 
@@ -3632,7 +3632,7 @@ void CStateManager::DrawReflection(const CVector3f& point) {
 
   const CViewport& viewport = CGraphics::GetViewport();
   const float zFar = curCam.GetFarClipDistance();
-  gpRender->SetPerspective(curCam.GetFov(), static_cast< float >(viewport.mWidth),
+  gpRender->SetPerspective(curCam.GetRenderFov(), static_cast< float >(viewport.mWidth),
                            static_cast< float >(viewport.mHeight), curCam.GetNearClipDistance(),
                            zFar);
 

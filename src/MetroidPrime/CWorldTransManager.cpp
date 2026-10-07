@@ -1,3 +1,4 @@
+#include "MetroidPrime/Cameras/CGameCamera.hpp"
 #include "MetroidPrime/Player/CWorldTransManager.hpp"
 #include "port_debug.h"
 
@@ -395,7 +396,8 @@ void CWorldTransManager::DrawEnabled() const {
   const float fov = CCameraManager::GetDefaultFirstPersonVerticalFOV();
   const float nearPlane = CCameraManager::GetDefaultFirstPersonNearClipDistance();
   const float farPlane = CCameraManager::GetDefaultFirstPersonFarClipDistance();
-  gpRender->SetPerspective(fov,
+  gpRender->SetPerspective(CGameCamera::VertPlusFov(fov, CCast::LtoF(CGraphics::GetViewportWidth()) /
+                                                            CCast::LtoF(CGraphics::GetViewportHeight())),
                           CCast::LtoF(CGraphics::GetViewportWidth()) /
                               CCast::LtoF(CGraphics::GetViewportHeight()),
                           nearPlane, farPlane);

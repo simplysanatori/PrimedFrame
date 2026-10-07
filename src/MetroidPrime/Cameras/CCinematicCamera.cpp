@@ -59,7 +59,11 @@ CCinematicCamera::CCinematicCamera(const TUniqueId uid, const rstl::string& name
 , x20c_lookAtId(kInvalidUniqueId)
 , x210_moveIntoEyePos(CVector3f::Zero())
 , x21c_flags(flags)
-, x220_24_(false) {}
+, x220_24_(false) {
+#ifdef TARGET_PC
+  x170_26_fovIsFitted = true;
+#endif
+}
 
 CCinematicCamera::~CCinematicCamera() {}
 
