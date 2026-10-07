@@ -157,6 +157,9 @@ final class TouchControlsView extends View {
     // Twin stick's shoulders, like Remastered's: LT locks on (the L trigger), RT
     // fires, LB jumps and RB fires missiles. Z (the map) and R (free look) sit
     // inboard of the right pair. START and MENU as in the GameCube layout.
+    // The Xbox letter drawn big on each diamond button, matching the in-game hint.
+    private static final String[] TWIN_LETTERS = {"A", "B", "X", "Y"};
+
     private static final PillButton[] TWIN_PILLS = {
         new PillButton("LT Lock", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.100f, GC_GREY,
                        TouchControlsView.C_LT),
@@ -702,7 +705,7 @@ final class TouchControlsView extends View {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
                 autoHidden = false;
                 nativeTakePhysicalInput();
-                nativeSetTouchDevice(false);
+                nativeSetTouchDevice(twin);
                 invalidate();
             }
             return true;
@@ -720,7 +723,7 @@ final class TouchControlsView extends View {
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             // The in-game prompts follow the input the player reached for, so
             // tell the port which set this overlay is showing.
-            nativeSetTouchDevice(false);
+            nativeSetTouchDevice(twin);
             int pointerId = event.getPointerId(actionIndex);
             float x = event.getX(actionIndex);
             float y = event.getY(actionIndex);
@@ -1666,6 +1669,24 @@ final class TouchControlsView extends View {
         float radius = Math.min(bounds.width(), bounds.height()) * 0.28f;
         canvas.drawRoundRect(bounds, radius, radius, fillPaint);
         canvas.drawRoundRect(bounds, radius, radius, strokePaint);
+        if (twin && pill.axis < 0 && pill.button == BTN_RIGHT_SHOULDER) {
+            // The Map pill wears Xbox's Menu glyph (three lines), as the hint does.
+            final float h = bounds.height();
+            final float gx = bounds.left + bounds.width() * 0.26f;
+            final float lineW = h * 0.34f;
+            final float lineH = Math.max(1.5f, h * 0.06f);
+            final int saved = fillPaint.getColor();
+            fillPaint.setColor(strokePaint.getColor());
+            for (int i = -1; i <= 1; i++) {
+                final float ly = bounds.centerY() + i * h * 0.16f;
+                canvas.drawRect(gx - lineW / 2f, ly - lineH / 2f, gx + lineW / 2f,
+                                ly + lineH / 2f, fillPaint);
+            }
+            fillPaint.setColor(saved);
+            drawCenteredLabel(canvas, pill.label, bounds.left + bounds.width() * 0.62f,
+                              bounds.centerY(), dp(11));
+            return;
+        }
         drawCenteredLabel(canvas, pill.label, bounds.centerX(), bounds.centerY(),
                           pill.label.length() > 2 ? dp(11) : dp(13));
     }
@@ -1694,6 +1715,13 @@ final class TouchControlsView extends View {
             canvas.drawCircle(x, y, radius, fillPaint);
             canvas.drawCircle(x, y, radius, strokePaint);
         }
+        if (twin) {
+            // The Xbox letter big, the function small under it.
+            final int index = controlOf(button) - C_JUMP;
+            drawCenteredLabel(canvas, TWIN_LETTERS[index], x, y - radius * 0.2f, dp(17) * scale);
+            drawCenteredLabel(canvas, button.label, x, y + radius * 0.52f, dp(8) * scale);
+            return;
+        }
         drawCenteredLabel(canvas, button.label, x, y,
                           (button.label.length() > 2 ? dp(10) : dp(15)) * scale);
     }
@@ -1708,7 +1736,20 @@ final class TouchControlsView extends View {
         canvas.drawCircle(cx, cy, radius, fillPaint);
         canvas.drawCircle(cx, cy, radius, strokePaint);
         final float s = radius * 0.36f;
-        if (slot == 0) {
+        if (slot == 0 && twin) {
+            // Xbox's View glyph (two overlapping squares), as the Pause hint shows.
+            final float side = s * 1.5f;
+            final float off = s * 0.45f;
+            final Paint.Style style = strokePaint.getStyle();
+            final float width = strokePaint.getStrokeWidth();
+            strokePaint.setStrokeWidth(Math.max(1.5f, s * 0.22f));
+            canvas.drawRect(cx - side / 2f - off, cy - side / 2f - off,
+                            cx + side / 2f - off, cy + side / 2f - off, strokePaint);
+            canvas.drawRect(cx - side / 2f + off, cy - side / 2f + off,
+                            cx + side / 2f + off, cy + side / 2f + off, strokePaint);
+            strokePaint.setStrokeWidth(width);
+            strokePaint.setStyle(style);
+        } else if (slot == 0) {
             final int fill = fillPaint.getColor();
             fillPaint.setColor(strokePaint.getColor());
             final float barW = s * 0.55f;

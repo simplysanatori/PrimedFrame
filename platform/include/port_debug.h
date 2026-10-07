@@ -261,6 +261,8 @@ void SetMouseAim(bool enabled);
 // Reads false while touch is in use (TouchActive), as do SwapScanXray, ShiftBinding(2) (-1)
 // and PadAltButton (-1): the touch overlay always does its GameCube-labelled actions.
 bool TwinStick();
+// The stored pad Twin Stick setting, whatever the touch layout: what the pause option edits.
+bool PadTwinStick();
 // Android: touch was the last input and the F1 menu is closed. False on desktop.
 bool TouchActive();
 // True on Android when the modern (non-classic) touch layout is the active device: drag aims like a mouse.

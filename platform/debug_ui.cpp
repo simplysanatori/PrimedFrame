@@ -1660,6 +1660,11 @@ bool TwinStick() {
   return sTwinStick && !TouchActive();
 }
 
+bool PadTwinStick() {
+  EnsureInitialized();
+  return sTwinStick;
+}
+
 void SetTwinStick(bool enabled) {
   EnsureInitialized();
   sTwinStick = enabled;
