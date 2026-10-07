@@ -3,8 +3,9 @@
 #include <cstdint>
 #include <string>
 
-// Asks GitHub once a day whether a newer release than this build is out
-// (api.github.com, .../releases/latest), on a thread of its own. The answer is
+// Asks GitHub at launch, then once a day while running, whether a newer
+// release than this build is out (api.github.com, .../releases/latest), on a
+// thread of its own. The answer is
 // kept in <user>/update-check.txt, so a known newer release shows at once,
 // even offline, until this build is that version or newer.
 namespace PortUpdateCheck {

@@ -961,7 +961,7 @@ unpacks to a temporary directory instead of mounting.
   covered by `port_livesplit_tests`). Console: `timer <0|1>`, `igt <seconds>`,
   `livesplit <0|1> | addr <host:port> | send <command> | status`.
 - Update check (F1 > System > Updates; on by default, `update_check`,
-  `MP_UPDATE_CHECK=0` turns it off for a run). Once a day it asks
+  `MP_UPDATE_CHECK=0` turns it off for a run). At launch, and once a day after that while it runs, it asks
   `api.github.com/repos/Odrannnn/MetroidPrimePort/releases/latest` (an HTTPS
   GET with nothing but a User-Agent naming the version) whether that tag is newer
   than this build's version (`MP_BUILD_VERSION`, from `versionName` in
