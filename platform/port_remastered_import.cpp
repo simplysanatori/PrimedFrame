@@ -3004,6 +3004,29 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
     }
   }
+  // Every file a stage lists must be there before the import is published: an install whose
+  // manifest names files that are gone would load as a mod with missing resources.
+  {
+    size_t missing = 0;
+    std::string first;
+    std::error_code checkError;
+    for (const auto& [stageName, stage] : made) {
+      for (const std::string& file : stage.files) {
+        if (!fs::is_regular_file(staging / PathFromString(file), checkError)) {
+          if (missing++ == 0) {
+            first = stageName + ": " + file;
+          }
+        }
+      }
+    }
+    if (missing != 0) {
+      std::fprintf(stderr, "remastered import: %zu listed file(s) are missing from the staging folder (first: %s)\n",
+                   missing, first.c_str());
+      fail("The import is incomplete (" + std::to_string(missing) + " files missing, first " + first +
+           "); the installed models are kept.");
+      return;
+    }
+  }
   // What each stage made, for the next import to reuse. Without it the next one is a full import.
   {
     const fs::path manifest = staging / kManifestName;
