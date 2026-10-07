@@ -377,8 +377,9 @@ void SetLockOnToggle(bool enabled);
 bool StickyCharge();
 void SetStickyCharge(bool enabled);
 // Remastered charge: holding fire shoots a few quick shots after the press shot
-// (Power 2, Wave 1, Plasma 1, Ice none), then charges faster, with Remastered's
-// per-beam timings (CPlayerGun::PortRapidCharge*).
+// (Power 2, Wave 1, Plasma 1, Ice none), then charges faster (without the Charge
+// Beam: stops until release), with Remastered's per-beam timings
+// (CPlayerGun::PortRapidCharge*).
 bool RapidCharge();
 // The Randomizer page's saved options (rando_settings= in the settings file).
 PortRandoGen::Settings RandoSettings();

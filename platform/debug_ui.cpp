@@ -5437,7 +5437,7 @@ void DrawControlsOptions() {
   }
   ItemHelp("As in Metroid Prime Remastered: holding fire fires a few shots before charging (3 in all "
            "with Power, 2 with Wave or Plasma, 1 with Ice), then charges faster, so a full charge takes about as "
-           "long as before. Needs the Charge Beam.");
+           "long as before. Without the Charge Beam it fires the same shots, then waits for you to let go.");
   bool swapScanXray = sSwapScanXray;
   if (ImGui::Checkbox("Swap the Scan and X-Ray visor buttons", &swapScanXray)) {
     SetSwapScanXray(swapScanXray);
