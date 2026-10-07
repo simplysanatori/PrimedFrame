@@ -1770,25 +1770,24 @@ final class TouchControlsView extends View {
         }
         final String function =
             twin ? button.label : GAMECUBE_FUNCTIONS[controlOf(button) - C_A];
-        // The function goes below the letter. On a kidney both sit along its band
-        // (the tangent, pointing down the screen) so they stay on its centreline:
-        // straight down from Y's tilted band, "Missile" ran into its edge.
-        float dx = 0f;
-        float dy = 1f;
+        // The function goes below the letter. A kidney is sized by its half width,
+        // and a mostly level one (Y) has its text slanted along the band: upright,
+        // "Missile" ran into the border of Y's tilted band.
         float size = radius;
+        float slant = 0f;
         if (button.isKidney()) {
-            final double middle = Math.toRadians(button.arcStart + button.arcSweep / 2);
-            dx = (float) -Math.sin(middle);
-            dy = (float) Math.cos(middle);
-            if (dy < 0f) {
-                dx = -dx;
-                dy = -dy;
+            size = faceGeo[3] * 1.4f;
+            float tangent = button.arcStart + button.arcSweep / 2 + 90f;
+            tangent = ((tangent % 180f) + 270f) % 180f - 90f; // into [-90, 90)
+            if (Math.abs(tangent) <= 45f) {
+                slant = tangent;
             }
-            size = faceGeo[3] * 1.6f;
         }
-        drawCenteredLabel(canvas, letter, x - dx * size * 0.2f, y - dy * size * 0.2f, letterSize);
-        drawCenteredLabel(canvas, function, x + dx * size * 0.52f, y + dy * size * 0.52f,
-                          dp(8) * scale);
+        canvas.save();
+        canvas.rotate(slant, x, y);
+        drawCenteredLabel(canvas, letter, x, y - size * 0.2f, letterSize);
+        drawCenteredLabel(canvas, function, x, y + size * 0.52f, dp(8) * scale);
+        canvas.restore();
     }
 
     // The hide button: an eye.
