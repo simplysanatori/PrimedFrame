@@ -26,6 +26,7 @@
 #include <stdio.h>
 
 #ifdef TARGET_PC
+#include "GuiSys/CGuiCamera.hpp"
 #include "GuiSys/CGuiModel.hpp"
 #include "port_debug.h"
 #include "port_map_pickups.h"
@@ -926,6 +927,13 @@ bool SOptionsFrontEndFrame::PumpLoad() {
     CGuiFrame* frame = x4_frme.GetObject();
     if (frame->GetIsFinishedLoading()) {
       x1c_loadedFrame = frame;
+#ifdef TARGET_PC
+      // Port: pillarbox the options like the file select they open over (issue
+      // #14); stretched, their text ran out past the file select's panel.
+      if (CGuiCamera* cam = frame->GetFrameCamera()) {
+        cam->SetAspectMatch(true, false);
+      }
+#endif
       x20_loadedPauseStrg = x10_pauseScreen.GetObject();
       FinishedLoading();
       return true;

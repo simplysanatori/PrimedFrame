@@ -20,13 +20,20 @@
 #include "rstl/algorithm.hpp"
 
 #ifdef TARGET_PC
-// Port: the aspect a cinematic's FOV is fitted to. Cinematics are framed for the
-// 16:9 letterbox CCameraFilterPass::DrawWideScreen draws, so up to 16:9 the
-// vertical FOV narrows with the aspect, as the bars would crop it. Past 16:9,
-// keep the letterbox's height and widen instead of cropping the shot further.
-static float CinematicAspect(const float aspect) {
+// Port: the vertical FOV for a cinematic's horizontal FOV at the live aspect.
+// Retail divides the angle by its 4:3 aspect and frames the shot for the 16:9
+// letterbox CCameraFilterPass::DrawWideScreen draws over it. Keep that shot's
+// width (in tangent space, so it holds at any aspect) up to 16:9, where the bars
+// crop it to the same band, and past 16:9, where there are no bars, keep the
+// band's height and widen instead of cropping the shot (issues #9 and #14).
+static const float kCinematicRetailAspect = 4.f / 3.f;
+static float CinematicFovy(const float hfov, const float aspect) {
   const float kLetterbox = 16.f / 9.f;
-  return aspect < kLetterbox ? aspect : kLetterbox;
+  const float retailFovy = hfov / kCinematicRetailAspect;
+  const float tanHalfWidth =
+      kCinematicRetailAspect * tanf(CMath::Deg2Rad(0.5f * retailFovy));
+  const float fit = aspect < kLetterbox ? aspect : kLetterbox;
+  return 2.f * CMath::Rad2Deg(atanf(tanHalfWidth / fit));
 }
 #endif
 
@@ -111,7 +118,7 @@ void CCinematicCamera::Think(float dt, CStateManager& mgr) {
       }
     }
 #ifdef TARGET_PC
-    SetFov(GetInterpolatedHFov(x1d8_viewHFovs, x1ec_t) / CinematicAspect(GetAspectRatio()));
+    SetFov(CinematicFovy(GetInterpolatedHFov(x1d8_viewHFovs, x1ec_t), GetAspectRatio()));
 #else
     SetFov(GetInterpolatedHFov(x1d8_viewHFovs, x1ec_t) / GetAspectRatio());
 #endif
@@ -484,7 +491,9 @@ float CCinematicCamera::GetInterpolatedHFov(const rstl::vector< float >& fovs, f
   const int count = fovs.size();
   if (count == 0) {
 #ifdef TARGET_PC
-    result = x1f0_origFovy / CinematicAspect(GetAspectRatio());
+    // Retail returns its fovy here (the script's FOV over the 4:3 aspect), which
+    // Think divides by the aspect a second time.
+    result = x1f0_origFovy / kCinematicRetailAspect;
 #else
     result = x1f0_origFovy;
 #endif
