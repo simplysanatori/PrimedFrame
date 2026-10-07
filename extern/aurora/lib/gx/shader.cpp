@@ -1687,6 +1687,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_lo = vec3f(0.0);
       var pbr_env = vec3f(0.0);
       var pbr_lsum = vec3f(0.0);
+      // The lights' diffuse alone: a lightmapped surface takes it times the baked-light modulation.
+      var pbr_ldiff = vec3f(0.0);
       var pbr_lnl = vec3f(0.0);
       // pbr-sun-vis
       // pbr-lights-begin
@@ -1729,6 +1731,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           }}
           // pbr-sun-light
           pbr_lo += (pbr_diff * pbr_ao + spec * pbr_pi) * rad * nl;
+          pbr_ldiff += pbr_diff * pbr_ao * rad * nl;
           // Stand-in environment: the surroundings as a soft hemisphere lit by this light,
           // seen along the reflection vector.
           let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
@@ -2048,6 +2051,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                              dot(ubuf.pbr_lmap_axes[2].xyz, pbr_n));
           pbr_ambd = max(pbr_l0 * (1.0 + pbr_l1x * pbr_ln.x + pbr_l1y * pbr_ln.y + pbr_l1z * pbr_ln.z),
                          vec3f(0.0)) * ubuf.pbr_lmap_rect.w * pbr_blcm;
+          // The modulation scales the lights' diffuse too: BLCM * (lightmap + sun + clustered
+          // lights), the specular left as it is (bfb300b6 perm 018, kb material/bfb300b6.md).
+          pbr_lo += pbr_ldiff * (pbr_blcm - 1.0);
           // Remastered occludes the probe's reflection by the lightmap's level in place of the
           // grid's (bfb300b6 perm 018): mix(REFP min, intensity, saturate(max(L0) x the
           // modulation's luminance / REFP max)). It replaces the volume's occlusion, not adds to
@@ -2935,6 +2941,7 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
           let f = pbr_f0 + (1.0 - pbr_f0) * pow(1.0 - vh, 5.0);
           let rad = ubuf.shadow_color.rgb;
           pbr_lo += (pbr_diff * pbr_ao + d * vis * f * pbr_pi) * rad * (nl * sun_vis);
+          pbr_ldiff += pbr_diff * pbr_ao * rad * (nl * sun_vis);
           let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
           pbr_env += rad * (env_w * env_w);
           pbr_lsum += rad;
