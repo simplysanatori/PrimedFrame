@@ -863,7 +863,7 @@ bool Generate(const Settings& settings, const std::string& seedText, Seed& out, 
       continue;
     out = Seed();
     out.name = name;
-    out.settings = settings;
+    out.settings = s;
     for (const int id : result.start)
       out.startItems.push_back(MP::kItemBase + id);
     for (size_t i = 0; i < locationCount; ++i)

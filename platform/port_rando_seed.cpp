@@ -251,11 +251,23 @@ std::string SeedPath(const std::string& name) {
   return (std::filesystem::path(SeedDirectory()) / (SafeName(name) + ".json")).string();
 }
 
-bool Save(const Seed& seed, std::string& error) {
+bool Save(Seed& seed, std::string& error) {
   try {
     if (seed.name.empty()) {
       error = "the seed has no name";
       return false;
+    }
+    // Another seed (other options, or a name that comes out as the same file
+    // name) may own this file already, and with it checked locations and a save
+    // card that aren't this seed's, so this one is saved as <name>-2, -3, ...
+    const std::string base = seed.name;
+    for (int n = 2; std::filesystem::exists(SeedPath(seed.name)); ++n) {
+      Seed existing;
+      std::string ignored;
+      if (Load(SeedPath(seed.name), existing, ignored) && existing.settings == seed.settings &&
+          existing.startItems == seed.startItems && existing.placements == seed.placements)
+        break;
+      seed.name = base + "-" + std::to_string(n);
     }
     std::string slotData = seed.slotData.empty() ? std::string("{}") : seed.slotData;
     // Checked here so a seed file is never written that Load would refuse.

@@ -183,6 +183,15 @@ int main() {
     PortRandoGen::Seed broken = seed;
     broken.slotData = "[1]";
     Check(!PortRandoGen::Save(broken, error), "slot data that is not an object is not saved");
+    PortRandoGen::Seed again = seed;
+    Check(PortRandoGen::Save(again, error) && again.name == seed.name, "the same seed saved again keeps its name");
+    PortRandoGen::Seed other = seed;
+    other.settings.requiredArtifacts = 6;
+    Check(PortRandoGen::Save(other, error) && other.name == seed.name + "-2" &&
+              PortRandoGen::Load(PortRandoGen::SeedPath(seed.name), loaded, error) &&
+              loaded.settings == seed.settings,
+          "a different seed with the same name gets a new one and leaves the old file");
+    std::filesystem::remove(PortRandoGen::SeedPath(other.name));
   }
 
   // The handshake through the real session.

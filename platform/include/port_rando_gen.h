@@ -66,7 +66,9 @@ bool Generate(const Settings& settings, const std::string& seedText, Seed& out, 
 // Seed files: <user dir>/randomizer_seeds/<name>.json.
 std::string SeedDirectory();
 std::string SeedPath(const std::string& name);
-bool Save(const Seed& seed, std::string& error);
+// A different seed already saved under the name gets a new one (<name>-2, ...),
+// written back to seed.name.
+bool Save(Seed& seed, std::string& error);
 bool Load(const std::string& path, Seed& out, std::string& error);
 
 } // namespace PortRandoGen
