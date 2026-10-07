@@ -3478,14 +3478,9 @@ void CStateManager::DrawWorld() const {
     const bool gunAnchor = x870_cameraManager->IsInFPCamera() && gunNow.IsPerspective() &&
                            gunHalfW > 0.f && gunHalfH > gunHalfW * 0.75f * 1.001f;
     if (gunAnchor) {
-      // Keeping the 4:3 width share alone leaves a narrow window with a tiny gun, so also
-      // scale it up by sqrt(4:3 / aspect) about the frustum's bottom-right corner: it grows
-      // up and to the left and stays in the corner (x1.15 at 1:1, x1.54 at 9:16).
-      const float zoom = sqrtf(gunHalfH / (gunHalfW * 0.75f));
       const float bottom = -gunHalfW * 0.75f;
-      const float right = gunNow.GetRight();
       CGraphics::SetProjectionState(CGraphics::CProjectionState(
-          true, right - 2.f * gunHalfW / zoom, right, bottom + 2.f * gunHalfH / zoom, bottom,
+          true, gunNow.GetLeft(), gunNow.GetRight(), bottom + 2.f * gunHalfH, bottom,
           gunNow.GetNear(), gunNow.GetFar()));
     }
 #endif
