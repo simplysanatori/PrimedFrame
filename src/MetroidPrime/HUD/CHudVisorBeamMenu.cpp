@@ -75,6 +75,7 @@ CHudVisorBeamMenu::CHudVisorBeamMenu(CGuiFrame& frame, EVisorBeamMenu type,
     x20_textpane_menu->TextSupport().SetFontColor(gpTweakGuiColors->GetBeamMenuTextFont());
     x20_textpane_menu->TextSupport().SetOutlineColor(gpTweakGuiColors->GetBeamMenuTextOutline());
   }
+  PortGroupSpread();
   x1c_basewidget_menutitle->SetColor(CColor::White().WithAlphaOf(0.f));
   x20_textpane_menu->TextSupport().SetText(
       rstl::wstring_l(gpStringTable->GetString(skMenuStringIndices[x4_type][x8_selectedItem])));
@@ -83,6 +84,18 @@ CHudVisorBeamMenu::CHudVisorBeamMenu(CGuiFrame& frame, EVisorBeamMenu type,
     UpdateMenuWidgetTransform(i, *x28_menuItems[i].x0_model_loz, 1.f);
   }
   Update(0.f, true);
+}
+
+// Port: the selector is one compact cluster; the HUD aspect spread moves it by the base widget.
+void CHudVisorBeamMenu::PortGroupSpread() {
+  x0_baseHud.SetSpreadAnchorTree(x18_basewidget_menu);
+  x0_baseHud.SetSpreadAnchor(x20_textpane_menu, x18_basewidget_menu);
+  x0_baseHud.SetSpreadAnchor(x1c_basewidget_menutitle, x18_basewidget_menu);
+  x0_baseHud.SetSpreadAnchor(x24_model_ghost, x18_basewidget_menu);
+  for (int i = 0; i < 4; ++i) {
+    x0_baseHud.SetSpreadAnchor(x28_menuItems[i].x0_model_loz, x18_basewidget_menu);
+    x0_baseHud.SetSpreadAnchor(x28_menuItems[i].x4_model_icon, x18_basewidget_menu);
+  }
 }
 
 void CHudVisorBeamMenu::SetSelection(int selection, int pending, float interp) {
@@ -144,6 +157,7 @@ void CHudVisorBeamMenu::Update(float dt, const bool init) {
     x20_textpane_menu = static_cast< CGuiTextPane* >(
         x0_baseHud.FindWidget(skMenuTitleWidgetNames[GetSwappedType()]));
     x1c_basewidget_menutitle = x0_baseHud.FindWidget(skBaseTitleWidgetNames[GetSwappedType()]);
+    PortGroupSpread();
     for (int i = 0; i < 4; ++i) {
       SMenuItem& item = x28_menuItems[i];
       UpdateMenuWidgetTransform(i, *item.x4_model_icon, item.x8_positioner);

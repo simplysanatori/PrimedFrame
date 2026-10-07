@@ -150,7 +150,18 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     }
     const CTransform4f world = widget->GetWorldTransform();
     CVector3f anchor = world.GetTranslation();
-    if (widget->GetWidgetTypeID() == 'MODL' && widget->GetIsFinishedLoading()) {
+    // A cluster member (visor/beam selector) shares its group's anchor, so the cluster moves as
+    // one unit instead of each icon and lozenge drifting by its own bounding box.
+    const CGuiWidget* group = nullptr;
+    for (const auto& entry : mSpreadAnchors) {
+      if (entry.first == widget) {
+        group = entry.second;
+        break;
+      }
+    }
+    if (group) {
+      anchor = group->GetWorldTransform().GetTranslation();
+    } else if (widget->GetWidgetTypeID() == 'MODL' && widget->GetIsFinishedLoading()) {
       const auto& token = static_cast< const CGuiModel* >(widget)->GetModel();
       const CModel* model = token ? token->GetObject() : nullptr;
       if (model) {
@@ -192,6 +203,27 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
   CGraphics::SetDepthWriteMode(true, kE_LEqual, true);
 #endif
+}
+
+void CGuiFrame::SetSpreadAnchor(const CGuiWidget* member, const CGuiWidget* anchor) {
+  for (auto& entry : mSpreadAnchors) {
+    if (entry.first == member) {
+      entry.second = anchor;
+      return;
+    }
+  }
+  mSpreadAnchors.emplace_back(member, anchor);
+}
+
+void CGuiFrame::SetSpreadAnchorTree(const CGuiWidget* root) {
+  for (CGuiWidget* widget : x2c_widgets) {
+    for (const CGuiObject* obj = widget->GetParent(); obj; obj = obj->GetParent()) {
+      if (obj == root) {
+        SetSpreadAnchor(widget, root);
+        break;
+      }
+    }
+  }
 }
 
 void CGuiFrame::Update(float dt) { xc_headWidget->Update(dt); }
