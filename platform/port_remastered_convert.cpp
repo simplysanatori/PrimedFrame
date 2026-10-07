@@ -609,6 +609,7 @@ struct RemMaterial {
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
   bool tinted = false;     // its vertices carry a colour
   bool tintF0 = false;     // which tints the albedo before F0 too (kShaderTints), not just the diffuse
+  bool cutExact = false;   // drawn as Remastered's 1-bit cutout: full-alpha base, discard at alpha^2 < 0.25 (mode bit 512)
   bool noRefl = false;     // no REFL: its shader samples no cube, so it reflects nothing around it
   bool unlit = false;      // a screen: its own colour and glow, no lighting
   bool glowLinear = false; // inverse-exposed: the emissive strength is drawn as is, uncompressed
@@ -1156,7 +1157,7 @@ struct Converter::State {
       // A cutout's base is the exception: its alpha is the shape.
       // A blended surface's base keeps its whole alpha, which is its opacity.
       alpha = k == kNormal || raw ? "rgba"
-              : k == kBase && (alpha == "punch" || alpha == "blend" || alpha == "mask" || alpha == "mask2") ? alpha
+              : k == kBase && (alpha == "punch" || alpha == "cut" || alpha == "blend" || alpha == "mask" || alpha == "mask2") ? alpha
                                                                                                              : "none";
       cap = kPbrMax[k];
       if (src) {
@@ -1260,7 +1261,7 @@ struct Converter::State {
         img.rgba[i * 4 + 3] = uint8_t((a * a + 127) / 255);
       }
     }
-    const bool keepAlpha = alpha == "punch" || alpha == "blend" || alpha == "mask" || alpha == "mask2";
+    const bool keepAlpha = alpha == "punch" || alpha == "cut" || alpha == "blend" || alpha == "mask" || alpha == "mask2";
     if (isBase && !raw && !keepAlpha && FlatBase(img)) {
       // On the TEV path the retail texture is kept, which beats writing a flat
       // grey over a textured model. On the PBR path a flat albedo is fine: the
@@ -1388,6 +1389,7 @@ constexpr uint32_t kShaderHeightBlend = 0xCA10C453;  // snow and ice over rock
 constexpr uint32_t kShaderUpLayer = 0x9EFE0D2E;   // TCH0-2 are a second layer on what faces up, CCH0.x its edge
 constexpr uint32_t kShaderVertexBlend = 0xE9DF2188;  // TCH0-2 a second layer by the vertex alpha, CCH0.x its edge, TCH3 a detail map
 constexpr uint32_t kShaderDetail = 0x9AB899E7;    // TCH0 is a detail map, on a texcoord of its own
+constexpr uint32_t kShaderDetailTinted = 0x41A12C9E;  // the same with the vertex colour tint
 constexpr uint32_t kShaderLava = 0x023388CD;      // the glow is CCH0.x times the vertex alpha
 // Falling water, unlit: TCH0's three channels are sheets scrolling at CCH1's and CCH2's speeds
 // (times CCH0.x), weighted by the vertex colour, and their sum picks the colour from TCH1, a
@@ -1519,7 +1521,7 @@ std::string ShaderRole(uint32_t shader) {
   auto in = [&](const auto& list) { return std::find(std::begin(list), std::end(list), shader) != std::end(list); };
   add(shader == kShaderHeightBlend, "height-blend");
   add(shader == kShaderUpLayer, "up-layer");
-  add(shader == kShaderDetail, "detail");
+  add(shader == kShaderDetail || shader == kShaderDetailTinted, "detail");
   add(shader == kShaderVertexBlend, "vertex-blend");
   add(shader == kShaderLava, "lava");
   add(shader == kShaderWaterfall, "waterfall");
@@ -1865,7 +1867,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.maps[kEmissive].detail = out.maps[kEmissive].has;
     }
     out.layerSmooth = ShortestDouble(cch[0]->color[0]);
-  } else if (shader == kShaderDetail && tch[0]) {
+  } else if ((shader == kShaderDetail || shader == kShaderDetailTinted) && tch[0]) {
     out.kind = 2;
     set(kBase, tch[0]->texture, &out.layer[kBase]);
   } else if (shader == kShaderLava && cch[0]) {
@@ -2436,7 +2438,8 @@ bool NoEnvSpec(const RemMaterial& m) { return m.noRefl && !m.unlit && !ColorUnli
 int PbrMode(const RemMaterial& m) {
   return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0) +
          (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0) +
-         (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0);
+         (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0) +
+         (m.cutExact ? 512 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
@@ -2460,7 +2463,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     f.push_back(k[i]);
   }
   const char* tag = "PBRM";
-  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m)) {
+  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m) || m.cutExact) {
     f.push_back(m.height);
     f.push_back(double(PbrMode(m)));
     tag = "PBR2";
@@ -4004,10 +4007,15 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // their TEV.
     // Only a room's own material asks for a cutout: a retail material's alpha
     // test says nothing about what the Remastered map's alpha holds.
+    // A plain lit cutout (no vertex colour) is Remastered's 1-bit alpha shader: full alpha,
+    // cut by the shader. Any other keeps the CMPR punch and retail's alpha compare.
+    const bool exactCut = opt.standalone && rem.cutout && rem.kind == 0 && !rem.unlit && !rem.layered;
     const char* const baseAlpha =
-        glow ? "blend" : !opt.standalone ? (frostShell || rem.mask || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? "punch" : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
+        glow ? "blend" : !opt.standalone ? (frostShell || rem.mask || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
     const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || lambertFx || !IsFx(pm)) &&
                         Get("pbr:base", rt, baseAlpha, opt).has_value();
+    // The base map keeps its whole alpha, and the shader cuts it as Remastered's does.
+    rem.cutExact = usePbr && exactCut;
     if (usePbr) {
       ++pbr;
       std::string recordTag;
