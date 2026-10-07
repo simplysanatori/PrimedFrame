@@ -100,6 +100,7 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
   mSpreadCenterX = 0.f;
   mSpreadY = 1.f;
   mSpreadAboutEye = false;
+  mSpreadHalfTan = 0.f;
   mHudScale = mHudScaled ? static_cast< float >(PortDebug::HudScale()) / 100.f : 1.f;
 
   if (xb8_projection == kProjection_Perspective) {
@@ -112,6 +113,8 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
         PortDebug::HudWide()) {
       mSpread = renderAspect / authored;
       mSpreadAboutEye = true;
+      mSpreadHalfTan =
+          std::tan(0.5f * mCameraParms.perspective.fov * 3.14159265f / 180.f) * authored;
     }
     float fov = mCameraParms.perspective.fov;
     if (fitWidth) {
@@ -202,18 +205,44 @@ CTransform4f CGuiCamera::GetAspectSpreadTransform(const CVector3f& worldAnchor) 
     return CTransform4f::Identity();
   }
   if (mSpreadY != 1.f) {
-    // The vertical spread: move in view Z and pitch to face the eye, mirroring the yaw below.
+    // The vertical spread: move in view Z and pitch to face the eye.
     const float pitch = std::atan2(eyePos.GetZ(), eyePos.GetY());
     const float delta = std::atan2(mSpreadY * eyePos.GetZ(), eyePos.GetY()) - pitch;
     const CVector3f offset(0.f, 0.f, (mSpreadY - 1.f) * eyePos.GetZ());
     return mSpreadView * CTransform4f::Translate(eyePos + offset) *
            CTransform4f::RotateX(CRelAngle(delta)) * CTransform4f::Translate(-eyePos) * invView;
   }
-  const float yaw = std::atan2(eyePos.GetX(), eyePos.GetY());
-  const float delta = std::atan2(mSpread * eyePos.GetX(), eyePos.GetY()) - yaw;
-  const CVector3f offset((mSpread - 1.f) * eyePos.GetX(), 0.f, 0.f);
-  return mSpreadView * CTransform4f::Translate(eyePos + offset) *
-         CTransform4f::RotateZ(CRelAngle(-delta)) * CTransform4f::Translate(-eyePos) * invView;
+  // The horizontal spread: x += offset * depth is an exact image translation, so the widget keeps
+  // its authored shape (turning it toward the eye squashed the side clusters at very wide ratios).
+  const float offset = GetAspectSliceOffset(eyePos.GetX() / eyePos.GetY());
+  return mSpreadView *
+         CTransform4f(1.f, offset, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f) * invView;
+}
+
+bool CGuiCamera::GetAspectSlices(float& inner, float& outer) const {
+  if (!mSpreadAboutEye || mSpread == 1.f || mSpreadHalfTan <= 0.f) {
+    return false;
+  }
+  // The middle holds the energy bar with its housing and lettering, and the helmet's top lights;
+  // the band out to `outer` only the frame's top line and the helmet arc. Fractions of the
+  // authored half width.
+  inner = 0.4f * mSpreadHalfTan;
+  outer = 0.455f * mSpreadHalfTan;
+  return true;
+}
+
+float CGuiCamera::GetAspectSliceOffset(float tangent) const {
+  float inner, outer;
+  if (!GetAspectSlices(inner, outer)) {
+    return 0.f;
+  }
+  // Past `outer` everything keeps its authored distance to the screen edge.
+  const float shift = (mSpread - 1.f) * mSpreadHalfTan;
+  const float a = std::fabs(tangent);
+  const float moved = a <= inner   ? 0.f
+                      : a <= outer ? shift * (a - inner) / (outer - inner)
+                                   : shift;
+  return tangent < 0.f ? -moved : moved;
 }
 
 CTransform4f CGuiCamera::GetHudScaleTransform(float scaleWeight) const {

@@ -16,6 +16,7 @@
 #include <dolphin/gx/GXTransform.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -190,6 +191,52 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     slideTop = edgePerDepth * projection.GetTop() * top.GetY();
     slideBottom = edgePerDepth * projection.GetBottom() * bottom.GetY();
   }
+  // Wider than authored, a model spanning the screen (the visor frame, the helmet) is warped in
+  // slices instead of stretched (CGuiCamera::GetAspectSlices): the middle with the energy bar's
+  // housing and lettering keeps its authored size, a band either side stretches, and the rest
+  // slides out with the screen edge, as the compact widgets do. Each slice is drawn under its own
+  // scissor with x' = scale * x + offset * depth in view space, a screen-space scale and slide.
+  float sliceInner = 0.f;
+  float sliceOuter = 0.f;
+  const bool sliced = aboutEye && spreadY == 1.f && x14_camera->GetAspectSlices(sliceInner, sliceOuter);
+  const auto sliceXf = [&](float scale, float offset) {
+    return hudScaleXf * spreadView *
+           CTransform4f(scale, offset, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f) * invView;
+  };
+  const auto drawSliced = [&](CGuiWidget* widget, const CTransform4f& world) {
+    int vpLeft, vpTop, vpWidth, vpHeight;
+    CGraphics::GetViewport(vpLeft, vpTop, vpWidth, vpHeight);
+    u32 old[4];
+    GXGetScissor(&old[0], &old[1], &old[2], &old[3]);
+    const float screenTan = projection.GetRight() / projection.GetNear();
+    const auto column = [&](float t) {
+      t = std::max(-screenTan, std::min(screenTan, t * hudScale));
+      return vpLeft + static_cast< int >(0.5f * vpWidth * (1.f + t / screenTan) + 0.5f);
+    };
+    const float shift = x14_camera->GetAspectSliceOffset(sliceOuter);
+    const float scale = (sliceOuter + shift - sliceInner) / (sliceOuter - sliceInner);
+    const float inner = sliceInner;
+    const float outer = sliceOuter + shift;
+    const float edge = 2.f * screenTan;
+    const float bandOffset = inner * (1.f - scale);
+    const struct {
+      float from, to, scale, offset;
+    } slices[] = {
+        {-inner, inner, 1.f, 0.f},          {inner, outer, scale, bandOffset},
+        {-outer, -inner, scale, -bandOffset}, {outer, edge, 1.f, shift},
+        {-edge, -outer, 1.f, -shift},
+    };
+    for (const auto& slice : slices) {
+      const int left = std::max(column(slice.from), static_cast< int >(old[0]));
+      const int right = std::min(column(slice.to), static_cast< int >(old[0] + old[2]));
+      if (right <= left) {
+        continue;
+      }
+      GXSetScissor(left, old[1], right - left, old[3]);
+      widget->DrawWithWorldTransform(parms, sliceXf(slice.scale, slice.offset) * world);
+    }
+    GXSetScissor(old[0], old[1], old[2], old[3]);
+  };
   for (AUTO(it, x2c_widgets.begin()); it != x2c_widgets.end(); ++it) {
     CGuiWidget* widget = *it;
     if (!widget->GetIsVisible()) {
@@ -254,6 +301,10 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
                                    bounds.GetMinPoint().GetZ() < -quarterHeight &&
                                    bounds.GetMaxPoint().GetZ() > quarterHeight;
 
+          if (sliced && spansWidth && bounds.GetMinPoint().GetY() > projection.GetNear()) {
+            drawSliced(widget, world);
+            continue;
+          }
           if (bounds.GetMinPoint().GetY() > projection.GetNear() && (spansWidth || spansHeight)) {
             // This intentionally widens vertical strokes too, but leaves view Y
             // and depth untouched; compact widgets retain the rigid path below.
