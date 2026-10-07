@@ -972,11 +972,18 @@ int CMain::RsMain(int argc, const char* const* argv) {
           }
         }
         if (sCaptureWindow != nullptr) {
+          const bool focused = SDL_GetKeyboardFocus() == sCaptureWindow;
           const bool wantRelative = PortDebug::MouseAim() && PortDebug::MouseGameplayActive() &&
-                                    !PortDebug::Visible() &&
-                                    SDL_GetKeyboardFocus() == sCaptureWindow;
-          if (SDL_GetWindowRelativeMouseMode(sCaptureWindow) != wantRelative) {
-            SDL_SetWindowRelativeMouseMode(sCaptureWindow, wantRelative);
+                                    !PortDebug::Visible() && focused;
+#ifdef __ANDROID__
+          // A free (hidden) cursor flung to the screen edge brings up the nav bar
+          // or taskbar, so keep the pointer captured unless the overlay is open.
+          const bool wantLock = !PortDebug::Visible() && focused;
+#else
+          const bool wantLock = wantRelative;
+#endif
+          if (SDL_GetWindowRelativeMouseMode(sCaptureWindow) != wantLock) {
+            SDL_SetWindowRelativeMouseMode(sCaptureWindow, wantLock);
           }
           PortDebug::SetMouseCaptured(wantRelative && SDL_GetWindowRelativeMouseMode(sCaptureWindow));
           // Keep the cursor hidden during play; show it only over the overlay,
