@@ -1015,8 +1015,8 @@ unpacks to a temporary directory instead of mounting.
   `api.github.com/repos/Odrannnn/MetroidPrimePort/releases/latest` (an HTTPS
   GET with nothing but a User-Agent naming the version) whether that tag is newer
   than this build's version (`MP_BUILD_VERSION`, from `versionName` in
-  `android/app/build.gradle`). If it is, a toast shows at the top for 12 s and
-  F1 offers "Open release page". The answer is kept in `<user>/update-check.txt`,
+  `android/app/build.gradle`). If it is, a toast shows at the top for 12 s
+  (click or tap it to open the release page) and F1 offers "Open release page". The answer is kept in `<user>/update-check.txt`,
   so a known newer release shows at once, offline too; after a failed check,
   F1 "Check now" tries again. Logic in `platform/port_update_check.cpp`, covered by
   `port_update_check_tests` (`MP_UPDATE_LIVE=1` adds a real request). mprig runs

@@ -4712,10 +4712,15 @@ void DrawUpdateToast() {
   ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, 560.f), 0.f));
   ImGui::SetNextWindowBgAlpha(0.8f);
   if (ImGui::Begin("##update-toast", nullptr,
-                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
                        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
-    ImGui::TextWrapped("Version %s is out (this is %s). F1 > System > Updates opens its release page.",
+    ImGui::TextWrapped("Version %s is out (this is %s). Click or tap here to open its release page.",
                        PortUpdateCheck::Latest().version.c_str(), MP_BUILD_VERSION);
+    // A click (touches arrive as mouse events) anywhere on the toast opens the page and dismisses it.
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+      SDL_OpenURL(PortUpdateCheck::Latest().url.c_str());
+      sDone = true;
+    }
   }
   ImGui::End();
 }
