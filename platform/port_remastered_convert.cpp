@@ -1143,7 +1143,7 @@ struct Converter::State {
         src = &rt[k];
         tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : src->mean ? ":mean" : "");
         colourTex = k != kNormal && (k != kMr || src->raw);
-        if (colourTex) {
+        if (colourTex || k == kNormal) {
           srgbTex = Fact("srgb:" + src->src, [&] { return std::string(Open(*src).srgb ? "1" : "0"); }) == "1";
           tag += srgbTex ? ":srgb" : ":unorm";
         }
@@ -1310,9 +1310,17 @@ struct Converter::State {
                                                               : MapKind::Colour;
     if (k == kNormal) {
       // Two-channel normal maps leave B at 0; the shader rebuilds z. Keep A opaque.
+      // A few are stored in an sRGB format (ASTC 8x5), which Remastered's sampler
+      // decodes before the shader unpacks them; BC5 has no sRGB form, so decode here.
       for (size_t i = 0; i < count; ++i) {
+        if (srgbTex) {
+          for (int c = 0; c < 3; ++c) {
+            img.rgba[i * 4 + c] = SrgbToLinearByte(img.rgba[i * 4 + c]);
+          }
+        }
         img.rgba[i * 4 + 3] = 255;
       }
+      srgbTex = false;  // decoded: from here on it is data
     }
     if (alpha == "blend" || alpha == "mask2") {
       // Remastered's shader squares the base map's alpha into the opacity, or
