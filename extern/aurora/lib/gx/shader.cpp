@@ -1161,15 +1161,17 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }
     const auto& inner = config.tevStages[mapStage[4]];
     // Kind 4 sees map 4 inside the surface: where the view ray is once it has gone the
-    // base map's alpha deep. The sample is taken whatever the kind, as one in a branch has
-    // no derivatives.
+    // base map's alpha deep, in one unclamped step. Remastered's basis is T and
+    // normalize(cross(N, T)) without the handedness (V runs against it, hence the minus).
+    // The sample is taken whatever the kind, as one in a branch has no derivatives.
+    const std::string_view parallaxBasis =
+        tangents ? "vec2f(dot(pbr_tu, in.pbr_pos), -dot(normalize(cross(pbr_ngs, pbr_tu)), in.pbr_pos))"
+                 : "vec2f(dot(pbr_t * inverseSqrt(max(dot(pbr_t, pbr_t), 1e-30)), in.pbr_pos),\n"
+                   "                           dot(pbr_b * inverseSqrt(max(dot(pbr_b, pbr_b), 1e-30)), in.pbr_pos))";
     layer += fmt::format(R"""(
       var pbr_poff = vec2f(0.0);
-      if (pbr_kind > 3.5 && pbr_kind < 4.5 && pbr_tlen > 1e-24) {{
-          let pbr_pz = min(dot(pbr_ng, in.pbr_pos), -0.05 * length(in.pbr_pos));
-          pbr_poff = vec2f(dot(pbr_t * inverseSqrt(max(dot(pbr_t, pbr_t), 1e-30)), in.pbr_pos),
-                           dot(pbr_b * inverseSqrt(max(dot(pbr_b, pbr_b), 1e-30)), in.pbr_pos)) *
-                     ({0}.a * ubuf.pbr_param.w / pbr_pz);
+      if (pbr_kind > 3.5 && pbr_kind < 4.5{6}) {{
+          pbr_poff = {1} * ({0}.a * ubuf.pbr_param.w / dot(pbr_ng, in.pbr_pos));
       }}
       let pbr_inner = max(textureSampleBias(tex{4}, tex{4}_samp, tex{5}_uv + pbr_poff, ubuf.tex{4}_size_bias.z).rgb,
                           vec3f(0.0));
@@ -1186,7 +1188,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_lx = clamp((pbr_lh + pbr_lw * pbr_lt + pbr_lw + pbr_lt) * 0.5 / pbr_lt, 0.0, 1.0);
           pbr_ls = pbr_lx * pbr_lx * (3.0 - 2.0 * pbr_lx);
       }})""",
-                         base, 0, mapStage[4], first, underlying(inner.texMapId), underlying(inner.texCoordId));
+                         base, parallaxBasis, mapStage[4], first, underlying(inner.texMapId), underlying(inner.texCoordId),
+                         tangents ? "" : " && pbr_tlen > 1e-24");
     // Kind 20 (E9DF2188): map 3 is a detail map (the kind has no glow). The albedo is the blend times the
     // vertex colour (2 |c|^2.2, applied below) times 2 times the detail as stored.
     if (mapStage[3] != -1) {
