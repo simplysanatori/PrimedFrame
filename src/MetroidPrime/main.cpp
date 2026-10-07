@@ -189,13 +189,10 @@ static void ApplyAspectMode() {
   }
   }
   fbWidth &= ~1;
-  // Clamp to 4:3 .. 21:9. Extreme aspects produce degenerate projections and a
+  // Clamp to .. 21:9 (i12 experiment: no 4:3 floor). Extreme aspects produce degenerate projections and a
   // blank present.
-  const int minWidth = efbHeight * 4 / 3;
   const int maxWidth = efbHeight * 21 / 9;
-  if (fbWidth < minWidth) {
-    fbWidth = minWidth;
-  } else if (fbWidth > maxWidth) {
+  if (fbWidth > maxWidth) {
     fbWidth = maxWidth;
   }
   if (fbWidth == renderMode.fbWidth) {
