@@ -1938,9 +1938,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           }}
       }}{14}
       let pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));
-      // Highlights roll off into white instead of clipping: unchanged up to 0.6, and the
-      // rest of the range (a room cube's lamps are many times brighter than 1) approaches 1.
-      var pbr_tm = min(pbr_out, vec3f(0.6)) + 0.4 * (1.0 - exp(-max(pbr_out - 0.6, vec3f(0.0)) / 0.4));
+      // Without a room's tone data Remastered draws through its static default
+      // (STonemapParams::BuildLinear(3.0)): exposure 1 and a straight line, clipped at 1.
+      var pbr_tm = clamp(pbr_out, vec3f(0.0), vec3f(1.0));
       if (ubuf.pbr_tone[1].x > 0.0) {{
           // Or a tone curve (GX_AURORA_SET_PBR_TONE): a cubic toe, a line and a shoulder
           // that approaches 1.
@@ -1959,7 +1959,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       }} else if (ubuf.pbr_light_scale.w < -0.5) {{
           pbr_alpha *= -ubuf.pbr_light_scale.w - 1.0;
       }}
-      prev = vec4f(pow(clamp(pbr_tm + pbr_pass, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), pbr_alpha);
+      // Encoded as Remastered's sRGB swapchain does it: the exact piecewise sRGB curve.
+      let pbr_lin = clamp(pbr_tm + pbr_pass, vec3f(0.0), vec3f(1.0));
+      prev = vec4f(select(1.055 * pow(pbr_lin, vec3f(1.0 / 2.4)) - 0.055, 12.92 * pbr_lin,
+                          pbr_lin <= vec3f(0.0031308)), pbr_alpha);
       // A debug view (GXSetPBRDebugView): one input of the shading in place of the result.
       if (ubuf.pbr_layer.w > 0.5) {{
           let pbr_dv = ubuf.pbr_layer.w;
@@ -2836,8 +2839,19 @@ fn vf_untone(y: f32) -> f32 {
     return u / (1.0 - u) / ubuf.volfog_tone[2].y + ubuf.volfog_tone[1].w;
 }
 
+// The EFB holds colour as Remastered's sRGB swapchain does: the exact piecewise sRGB curve.
+fn vf_srgb_enc(c: vec3f) -> vec3f {
+  let l = clamp(c, vec3f(0.0), vec3f(1.0));
+  return select(1.055 * pow(l, vec3f(1.0 / 2.4)) - 0.055, 12.92 * l, l <= vec3f(0.0031308));
+}
+
+fn vf_srgb_dec(c: vec3f) -> vec3f {
+  let e = clamp(c, vec3f(0.0), vec3f(1.0));
+  return select(pow((e + 0.055) / 1.055, vec3f(2.4)), e / 12.92, e <= vec3f(0.04045));
+}
+
 fn vf_exposed(c: vec3f) -> vec3f {
-    let y = pow(clamp(c, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
+    let y = vf_srgb_dec(c);
     return min(vec3f(vf_untone(y.r), vf_untone(y.g), vf_untone(y.b)), vec3f(4.0));
 }
 
@@ -2850,7 +2864,7 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     }
     let x = vf_exposed(c.rgb) * fog.a + light;
     let drawn = vec3f(vf_tone(x.r), vf_tone(x.g), vf_tone(x.b));
-    return vec4f(pow(clamp(drawn, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), c.a);
+    return vec4f(vf_srgb_enc(drawn), c.a);
 })""";
   }
   if (config.pbr) {

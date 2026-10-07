@@ -22,11 +22,13 @@
 //  - four upsamples back, each added to the next finer level, the coarsest first with
 //    tint 0 (four edge taps a texel out and four corners half one, the corners doubled, / 12);
 //  - the result b added to the frame as b / (1 + b).
-// The EFB holds the tone-mapped colour gamma encoded, so the bright pass undoes the room's
-// tone curve to get X back, and the frame is added to in linear terms.
-// The colour grade follows in the same composite, as Remastered's tonemap shader does it right
-// after its tone curve: a 33^3 LUT over the tone-mapped linear colour, sampled at
-// c * 32/33 + 0.5/33; two LUTs mixed while a grade fades into another.
+// The EFB holds the tone-mapped colour sRGB encoded, so the bright pass undoes the room's
+// tone curve to get X back (Remastered reads its HDR frame; this one is capped where the
+// curve has lost its level), and the frame is added to in linear terms.
+// The colour grade comes first in the same composite, as Remastered's tonemap shader does it
+// right after its tone curve: a 33^3 LUT over the tone-mapped linear colour, sampled at
+// c * 32/33 + 0.5/33; two LUTs mixed while a grade fades into another. The bloom is added to
+// the graded colour and clamped, as Remastered's composite runs after the tonemap pass.
 // Before either, the frame's average for auto exposure: Remastered takes the smallest mip of
 // its HDR frame; here a 16x16 grid of tiles, each the mean of 8x8 exposed samples, read back
 // a few frames later and divided by the exposure the frame was drawn at.
@@ -119,12 +121,23 @@ fn untone(y: f32) -> f32 {
   return u / (1.0 - u) / p.tone[2].y + p.tone[1].w;
 }
 
+// The EFB holds colour as Remastered's sRGB swapchain does: the exact piecewise sRGB curve.
+fn srgb_enc(c: vec3f) -> vec3f {
+  let l = clamp(c, vec3f(0.0), vec3f(1.0));
+  return select(1.055 * pow(l, vec3f(1.0 / 2.4)) - 0.055, 12.92 * l, l <= vec3f(0.0031308));
+}
+
+fn srgb_dec(c: vec3f) -> vec3f {
+  let e = clamp(c, vec3f(0.0), vec3f(1.0));
+  return select(pow((e + 0.055) / 1.055, vec3f(2.4)), e / 12.92, e <= vec3f(0.04045));
+}
+
 // A channel at white has lost its level: the shoulder's inverse runs off to hundreds there, which turned a
 // saturated orange hull into a red flood. Cap it where the curve draws about 0.97 of white (4.0 on these rooms).
 const MaxExposed = 4.0;
 
 fn exposed(c: vec3f) -> vec3f {
-  let y = pow(clamp(c, vec3f(0.0), vec3f(1.0)), vec3f(2.2));
+  let y = srgb_dec(c);
   return min(vec3f(untone(y.r), untone(y.g), untone(y.b)), vec3f(MaxExposed));
 }
 
@@ -135,7 +148,7 @@ fn fs_bright(in: VertexOutput) -> @location(0) vec4f {
   // A texel adds nothing unless its level's luminance passes the threshold, and the luminance is at
   // most its largest channel: below the threshold's drawn value (with room for untone's error) skip
   // the inverse, most of the frame on a dark room.
-  let dim = pow(tone(max(p.tint.w, 0.0)), 1.0 / 2.2) * 0.999;
+  let dim = srgb_enc(vec3f(tone(max(p.tint.w, 0.0)))).x * 0.999;
   var sum = vec3f(0.0);
   for (var y = 0; y < 4; y++) {
     for (var x = 0; x < 4; x++) {
@@ -209,17 +222,18 @@ fn fs_up(in: VertexOutput) -> @location(0) vec4f {
 fn fs_composite(in: VertexOutput) -> @location(0) vec4f {
   let size = vec2i(textureDimensions(src));
   let f = textureLoad(src, min(vec2i(floor(in.pos.xy)), size - vec2i(1)), 0);
-  var lin = pow(f.rgb, vec3f(2.2));
-  if (p.grade.w > 0.5) {
-    let b = max(textureSampleLevel(bloomTex, samp, in.uv, 0.0).rgb, vec3f(0.0));
-    lin += b / (1.0 + b);
-  }
-  lin = clamp(lin, vec3f(0.0), vec3f(1.0));
+  let lin = srgb_dec(f.rgb);
   let at = lin * (32.0 / 33.0) + vec3f(0.5 / 33.0);
   let a = select(lin, textureSampleLevel(lutA, samp, at, 0.0).rgb, p.grade.y > 0.5);
   let g = select(lin, textureSampleLevel(lutB, samp, at, 0.0).rgb, p.grade.z > 0.5);
-  let graded = mix(a, g, p.grade.x);
-  return vec4f(pow(clamp(graded, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)), f.a);
+  var graded = mix(a, g, p.grade.x);
+  // Remastered's bloom composite runs after the tonemap pass has graded the frame: the bloom's
+  // b / (1 + b) added to the graded colour, clamped.
+  if (p.grade.w > 0.5) {
+    let b = max(textureSampleLevel(bloomTex, samp, in.uv, 0.0).rgb, vec3f(0.0));
+    graded += b / (1.0 + b);
+  }
+  return vec4f(srgb_enc(graded), f.a);
 }
 )";
 

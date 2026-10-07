@@ -263,9 +263,13 @@ fn tone(c: vec3f) -> vec3f {
     let sh = u.tone2.x * st / (1.0 + st) + u.tone2.w;
     tm = select(select(sh, line, o < vec3f(u.tone1.w)), toe, o < vec3f(u.tone1.z));
   } else {
-    tm = min(o, vec3f(0.6)) + 0.4 * (1.0 - exp(-max(o - 0.6, vec3f(0.0)) / 0.4));
+    // Without a room's tone data: Remastered's static default (STonemapParams::BuildLinear(3.0)),
+    // a straight line clipped at 1.
+    tm = o;
   }
-  return pow(clamp(tm, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2));
+  // Encoded as Remastered's sRGB swapchain does it: the exact piecewise sRGB curve.
+  let l = clamp(tm, vec3f(0.0), vec3f(1.0));
+  return select(1.055 * pow(l, vec3f(1.0 / 2.4)) - 0.055, 12.92 * l, l <= vec3f(0.0031308));
 }
 
 fn fog_factor(fz: f32) -> f32 {
