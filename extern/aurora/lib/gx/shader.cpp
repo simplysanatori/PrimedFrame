@@ -34,17 +34,28 @@ constexpr Module Log{"aurora::gfx::gx"};
 
 // Adreno 730 (Vulkan, driver V@0615.98) drops every GX draw whose fragment shader reads a
 // varying when load_word branches on arrayLength, so the world renders black (issue #7).
-// A clamp works there; elsewhere the upstream branch stays until the clamp is tested on
-// the Adreno drivers that guard was written for.
+// An Adreno 710 shows the same black world on some drivers. A clamp works there; it only
+// differs from the branch on out-of-range reads, so Auto takes it for every Adreno 7xx.
+// The bug needs the game's draw state (a standalone self-test of the same shader passes),
+// so there is no probe for it.
 bool clamp_storage_loads() noexcept {
   static const bool clamp = [] {
-    // MP_STORAGE_CLAMP=1/0 forces it on/off (other Adreno drivers may need it); unset = Vulkan on an Adreno 730.
+    // MP_STORAGE_CLAMP=1/0 forces it on/off; unset = Vulkan on an Adreno 7xx.
     if (const char* force = std::getenv("MP_STORAGE_CLAMP"); force != nullptr && *force != '\0') {
       return *force == '1';
     }
+    if (webgpu::g_backendType != wgpu::BackendType::Vulkan) {
+      return false;
+    }
+    // Device names look like "Adreno (TM) 730": the model is the first number after "Adreno".
     const std::string_view device{webgpu::g_adapterInfo.device};
-    return webgpu::g_backendType == wgpu::BackendType::Vulkan && device.find("Adreno") != std::string_view::npos &&
-           device.find("730") != std::string_view::npos;
+    const size_t adreno = device.find("Adreno");
+    if (adreno == std::string_view::npos) {
+      return false;
+    }
+    const size_t model = device.find_first_of("0123456789", adreno);
+    return model != std::string_view::npos && device[model] == '7' && model + 2 < device.size() &&
+           device[model + 1] >= '0' && device[model + 1] <= '9' && device[model + 2] >= '0' && device[model + 2] <= '9';
   }();
   return clamp;
 }
@@ -3119,7 +3130,7 @@ fn load_word(p: ptr<storage, array<u32>>, word_idx: u32) -> u32 {{
   // This guard is not expected to handle routine out-of-bounds accesses.
   // It appears to discourage some Adreno drivers/optimizers from storage buffer
   // optimizations that can cause visual artifacts, including vertex explosions
-  // in Dusklight. (Swapped for a clamp on Adreno 730 below.)
+  // in Dusklight. (Swapped for a clamp on Adreno 7xx below.)
   if (word_idx < arrayLength(p)) {{
     return p[word_idx];
   }}

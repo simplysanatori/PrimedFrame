@@ -613,13 +613,13 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sGpuDriverAtStart = value;
   } else if (key == "gpu_driver_ok") {
     sGpuDriverKept = value;
-  } else if (key == "anisotropy") {
-    const int a = std::atoi(value.c_str());
-    if (a >= 1 && a <= 16) {
   } else if (key == "storage_clamp") {
     const int v = std::atoi(value.c_str());
     sStorageClamp = v < 0 ? -1 : (v > 0 ? 1 : 0);
     sStorageClampAtStart = sStorageClamp;
+  } else if (key == "anisotropy") {
+    const int a = std::atoi(value.c_str());
+    if (a >= 1 && a <= 16) {
       sAnisotropy = a;
     }
   } else if (key == "fov") {
@@ -5767,7 +5767,7 @@ void DrawVideoQuality() {
       MarkDirty();
     }
     ImGui::SetItemTooltip("Reads GPU buffers without the bounds-check branch some Adreno Vulkan drivers\n"
-                          "miscompile (the world draws black, issue #7). Auto turns it on for the Adreno 730;\n"
+                          "miscompile (the world draws black, issue #7). Auto turns it on for Adreno 7xx GPUs;\n"
                           "try On if the world is black on another Adreno. Takes effect after a restart.");
     if (sStorageClamp != sStorageClampAtStart) {
       ImGui::SameLine();
