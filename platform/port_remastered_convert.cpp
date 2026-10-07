@@ -3389,7 +3389,14 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           b.T[v * 4 + 3] = (vb.tangents[v * 4 + 3] < 0.0f) != (det < 0.0) ? -1.0 : 1.0;
         }
       }
-      const ModelAttribute* const second = vb.Find("TANGENT_1");
+      // (not vb.Find: the converter tests don't link the CMDL parser)
+      const ModelAttribute* second = nullptr;
+      for (const ModelAttribute& attribute : vb.attributes) {
+        if (attribute.name == "TANGENT_1") {
+          second = &attribute;
+          break;
+        }
+      }
       if (second != nullptr && !b.T.empty() && !second->isInteger && second->components == 4 &&
           second->data.size() == b.n * 4) {
         b.T1.resize(b.n * 4);
