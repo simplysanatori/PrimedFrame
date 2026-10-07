@@ -1035,7 +1035,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_mw = ubuf.pbr_backlight.w - select(0.0, 16.0, pbr_sky);
       let pbr_cu = pbr_mw > 7.5;
       let pbr_flags = pbr_mw - select(0.0, 8.0, pbr_cu);
-      var pbr_vc = select(vec4f(1.0), vec4f(4.0, 0.0, 0.0, pbr_vraw.a), pbr_flags > 3.5);
+      var pbr_vc = select(vec4f(1.0), pbr_vraw, pbr_flags > 3.5);
       if (pbr_cu) {{
           pbr_vc = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)) * ubuf.pbr_backlight.rgb, pbr_vraw.a);
       }})""",
