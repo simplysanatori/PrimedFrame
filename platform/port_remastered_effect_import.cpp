@@ -12,6 +12,7 @@
 #include <cstring>
 #include <map>
 #include <optional>
+#include <set>
 
 namespace PortRemastered {
 namespace {
@@ -672,7 +673,21 @@ constexpr MatchedEffect kMatchedEffects[] = {
     // fire at 135 450 and 712 904 (the third PART at 134 450 is dust).
     {"948965e4-288a-4aec-a1ff-be3349f813e6", 0x0BBA6CF8},  // 76C35773 135 450
     {"948965e4-288a-4aec-a1ff-be3349f813e6", 0x2281797B},  // 76C35773 712 904
+    // Ridley's breastplate effects, by animation: one fires c3a53327 with the
+    // jaw effect at 0, as retail EVNT BA4796AE fires 2D16014C with 4B55EA17;
+    // another fires 95964af3 and d701c231 with it, as D640D413 fires D61A362F
+    // and FD17C2C9. d701c231's five model generators are FD17C2C9's five model
+    // children; 95964af3 is a stub (it stands for 53861B29 too), so D61A362F
+    // keeps the disc's.
+    {"c3a53327-731d-4870-8f1e-fdc755bccf13", 0x2D16014C},  // 07BEED38 breastPlate_LCTR
+    {"d701c231-cf56-4451-b177-107724371c42", 0xFD17C2C9},  // 07BEED38 breastPlate_LCTR
 };
+
+// Retail PARTs whose Remastered effect is a stub because Remastered draws them
+// elsewhere: the stub replaces them rather than the disc's being kept. Retail's
+// Artifact Temple laser hit spawns the same five PARTs as Ridley's 2D16014C
+// (which carries them now, as c3a53327), so retail draws them twice.
+const std::set<uint32_t> kStubReplaces = {0x53861B29};
 
 // A retail PART an effect replaces, and the rule that paired them.
 struct Pairing {
@@ -1064,7 +1079,7 @@ public:
     }
     // An effect drawn only by placeholder materials would replace the disc's with
     // an invisible one (PlasmaMuzzle, PlasmaAuxMuzzle): keep the disc's.
-    if (std::any_of(parts.begin(), parts.end(), [](const ConvertedPart& part) { return part.placeholder; }) &&
+    if (kStubReplaces.count(retail) == 0 && std::any_of(parts.begin(), parts.end(), [](const ConvertedPart& part) { return part.placeholder; }) &&
         std::all_of(parts.begin(), parts.end(), [](const ConvertedPart& part) { return part.drawsNothing; })) {
       ++m_result.failed;
       Log(name + ": only placeholder materials draw, the disc's is kept");

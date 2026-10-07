@@ -266,7 +266,9 @@ those back to retail PARTs (checked 2026-10-05):
   on each side, covering half of either, the only such partner on both sides):
   33 of 135, none wrong. 18 pairs from the rules plus 6 by hand (frames, and
   textures for Thardus's arcs); 4B55EA17 goes to Ridley's 500b48b1, which three
-  ANCS agree on. Import: 513 of 536. Scripts: `build/fx-hand/` (`bones2.py`,
+  ANCS agree on. Import: 513 of 536. Later (2026-10-07), Ridley's c3a53327 and
+  d701c231 by which effects fire together in one animation (the event key's
+  group against the retail EVNT's), and their generators. Scripts: `build/fx-hand/` (`bones2.py`,
   `frames.py`, `view.py` lists what is left per character, `sheet.py` draws
   texture contact sheets).
 - Still unpaired (2026-10-05): the CHPR effect sets name 242 fresh GENPs, 113
@@ -420,7 +422,10 @@ written as one. A quad generator whose material's colour texture (BCLR) is nil
 is taken as a placeholder that draws nothing: these generators only carry
 spawns and lights (PlasmaCharge's root), and drawing them black would cover
 their children. Model generators keep the black material. An effect in which
-only placeholders would draw (PlasmaMuzzle, PlasmaAuxMuzzle) keeps the disc's.
+only placeholders would draw (PlasmaMuzzle, PlasmaAuxMuzzle) keeps the disc's,
+except where Remastered draws it elsewhere (`kStubReplaces`): the Artifact
+Temple laser hit 53861B29 spawns the same five PARTs as Ridley's 2D16014C,
+which Remastered's c3a53327 now carries, so its stub replaces it.
 Effects with no retail id (most world effects) are not used yet: nothing on
 the disc names them. The step is off by default. Like the rest of the import, the files take effect
 at the next mods reload (`mods reload` or the debug menu), no restart needed.
