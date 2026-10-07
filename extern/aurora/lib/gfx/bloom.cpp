@@ -16,8 +16,9 @@
 #include <vector>
 
 // Remastered's bloom, as its CRenderPass_Bloom and shaders do it:
-//  - a bright pass over the exposed colour X, at a quarter of the frame's size:
-//    X * min(max(L - threshold, 0), 8) / L times tint 4, L being X's luminance;
+//  - a bright pass over the exposed colour X, at a quarter of the frame's size, on four bilinear
+//    taps a source texel out diagonally (each tap filtered as light, then bright-passed, / 4):
+//    X * min(max(L - threshold, 0), 8) / max(L, 0.001) times tint 4, L being X's luminance;
 //  - four downsamples to 1/64 (the centre four times and four corners a texel out, / 8);
 //  - four upsamples back, each added to the next finer level, the coarsest first with
 //    tint 0 (four edge taps a texel out and four corners half one, the corners doubled, / 12);
@@ -141,28 +142,45 @@ fn exposed(c: vec3f) -> vec3f {
   return min(vec3f(untone(y.r), untone(y.g), untone(y.b)), vec3f(MaxExposed));
 }
 
+// One bilinear tap of Remastered's HDR frame at uv: the four texels it blends, each exposed (the
+// frame is filtered as light, not as the drawn colour), then the bright pass over the blend.
+// Remastered's 000d768 runs the bright pass on each filtered tap: X * min(max(s*L - t, 0), 8) /
+// max(s*L, 0.001) * s, L being X's luminance. The EFB texel is already exposed (s * X), so with
+// c = s * X that is c * min(max(lum(c) - t, 0), 8) / max(lum(c), 0.001).
+fn bright_tap(uv: vec2f, size: vec2i, dim: f32) -> vec3f {
+  let pos = uv * vec2f(size) - vec2f(0.5);
+  let base = floor(pos);
+  let f = pos - base;
+  let last = size - vec2i(1);
+  let j0 = clamp(vec2i(base), vec2i(0), last);
+  let j1 = clamp(vec2i(base) + vec2i(1), vec2i(0), last);
+  let d00 = textureLoad(src, vec2i(j0.x, j0.y), 0).rgb;
+  let d10 = textureLoad(src, vec2i(j1.x, j0.y), 0).rgb;
+  let d01 = textureLoad(src, vec2i(j0.x, j1.y), 0).rgb;
+  let d11 = textureLoad(src, vec2i(j1.x, j1.y), 0).rgb;
+  // A blend is no brighter than its brightest texel: all below the threshold's drawn value adds
+  // nothing (most of the frame in a dark room), and a texel's drawn value is monotonic in its level.
+  let hi = max(max(d00, d10), max(d01, d11));
+  if (max(max(hi.r, hi.g), hi.b) < dim) {
+    return vec3f(0.0);
+  }
+  let c = mix(mix(exposed(d00), exposed(d10), f.x), mix(exposed(d01), exposed(d11), f.x), f.y);
+  let l = dot(c, vec3f(0.2126, 0.7152, 0.0722));
+  return c * (min(max(l - p.tint.w, 0.0), 8.0) / max(l, 0.001));
+}
+
+// The bright pass and the reduction to 1/4 in one (Remastered's 000d768): four diagonal taps a
+// source texel out, each bright-passed, / 4, times the level's tint.
 @fragment
 fn fs_bright(in: VertexOutput) -> @location(0) vec4f {
   let size = vec2i(textureDimensions(src));
-  let base = vec2i(floor(in.pos.xy)) * 4;
-  // A texel adds nothing unless its level's luminance passes the threshold, and the luminance is at
-  // most its largest channel: below the threshold's drawn value (with room for untone's error) skip
-  // the inverse, most of the frame on a dark room.
+  let t = p.texel.xy;
   let dim = srgb_enc(vec3f(tone(max(p.tint.w, 0.0)))).x * 0.999;
-  var sum = vec3f(0.0);
-  for (var y = 0; y < 4; y++) {
-    for (var x = 0; x < 4; x++) {
-      let at = min(base + vec2i(x, y), size - vec2i(1));
-      let drawn = textureLoad(src, at, 0).rgb;
-      if (max(max(drawn.r, drawn.g), drawn.b) < dim) {
-        continue;
-      }
-      let c = exposed(drawn);
-      let l = dot(c, vec3f(0.2126, 0.7152, 0.0722));
-      sum += c * (min(max(l - p.tint.w, 0.0), 8.0) / max(l, 0.001));
-    }
-  }
-  return vec4f(sum / 16.0 * p.tint.rgb, 1.0);
+  var sum = bright_tap(in.uv + vec2f(-t.x, -t.y), size, dim);
+  sum += bright_tap(in.uv + vec2f(t.x, -t.y), size, dim);
+  sum += bright_tap(in.uv + vec2f(-t.x, t.y), size, dim);
+  sum += bright_tap(in.uv + vec2f(t.x, t.y), size, dim);
+  return vec4f(sum * 0.25 * p.tint.rgb, 1.0);
 }
 
 const AverageSize = 16.0;
