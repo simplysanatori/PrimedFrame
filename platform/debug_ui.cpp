@@ -5346,7 +5346,7 @@ void DrawControlsOptions() {
   ImGui::EndDisabled();
   if (springRule >= 0) {
     ImGui::SameLine();
-    ImGui::TextDisabled("(set by the Archipelago seed: %s)", springRule == 0   ? "off"
+    ImGui::TextDisabled("(set by the Archipelago seed: %s)", springRule == 0   ? "not received yet"
                                                              : springRule == 1 ? "with the Bombs"
                                                                                : "unlocked");
   } else {

@@ -2045,7 +2045,8 @@ int SpringBallRule() {
       return runtime.session->ReceivedCount(Prime::kItemBase + Prime::kProgressiveBomb) > 0 ? 2
                                                                                             : 0;
     default:
-      return 0;
+      // The seed leaves Spring Ball out of logic: the port's own setting applies.
+      return -1;
     }
   } catch (...) {
     return -1;
