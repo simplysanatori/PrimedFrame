@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 #include <adrenotools/driver.h>
 #include <dlfcn.h>
+#include <elf.h>
 #include <zlib.h>
 
 #include <algorithm>
@@ -78,11 +79,78 @@ std::string ReadFile(const fs::path& path) {
   return text.str();
 }
 
+// Qualcomm driver packages name their library like the phone's own Vulkan driver
+// (vulkan.adreno.so, which the UI's renderer has already loaded), and the linker then
+// hands back the loaded one by its SONAME. Such a library is installed under, and
+// renamed inside to, "mportv.<rest>" (same length, so the ELF patches in place).
+constexpr char kSystemPrefix[] = "vulkan.";
+constexpr char kLocalPrefix[] = "mportv.";
+static_assert(sizeof(kSystemPrefix) == sizeof(kLocalPrefix));
+
+std::string LocalLibrary(const std::string& library) {
+  return library.rfind(kSystemPrefix, 0) == 0 ? kLocalPrefix + library.substr(sizeof(kSystemPrefix) - 1) : library;
+}
+
+// Rewrites a 64-bit ELF's DT_SONAME "vulkan.*" to "mportv.*". False only for a
+// malformed file; one without such a SONAME is left alone.
+bool RenameSoname(std::vector< uint8_t >& elf) {
+  const auto fits = [&](uint64_t offset, uint64_t size) { return offset <= elf.size() && size <= elf.size() - offset; };
+  if (!fits(0, sizeof(Elf64_Ehdr)) || std::memcmp(elf.data(), ELFMAG, SELFMAG) != 0 || elf[EI_CLASS] != ELFCLASS64) {
+    return false;
+  }
+  Elf64_Ehdr eh;
+  std::memcpy(&eh, elf.data(), sizeof(eh));
+  if (eh.e_phentsize != sizeof(Elf64_Phdr) || !fits(eh.e_phoff, uint64_t(eh.e_phnum) * sizeof(Elf64_Phdr))) {
+    return false;
+  }
+  std::vector< Elf64_Phdr > phdrs(eh.e_phnum);
+  std::memcpy(phdrs.data(), elf.data() + eh.e_phoff, phdrs.size() * sizeof(Elf64_Phdr));
+  uint64_t strtab = 0, soname = 0;
+  bool hasSoname = false;
+  for (const Elf64_Phdr& ph : phdrs) {
+    if (ph.p_type != PT_DYNAMIC || !fits(ph.p_offset, ph.p_filesz)) {
+      continue;
+    }
+    for (uint64_t at = ph.p_offset; at + sizeof(Elf64_Dyn) <= ph.p_offset + ph.p_filesz; at += sizeof(Elf64_Dyn)) {
+      Elf64_Dyn dyn;
+      std::memcpy(&dyn, elf.data() + at, sizeof(dyn));
+      if (dyn.d_tag == DT_NULL) {
+        break;
+      }
+      if (dyn.d_tag == DT_STRTAB) {
+        strtab = dyn.d_un.d_ptr;
+      } else if (dyn.d_tag == DT_SONAME) {
+        soname = dyn.d_un.d_val;
+        hasSoname = true;
+      }
+    }
+  }
+  if (!hasSoname) {
+    return true;
+  }
+  // The string table's address to its place in the file.
+  for (const Elf64_Phdr& ph : phdrs) {
+    if (ph.p_type == PT_LOAD && strtab >= ph.p_vaddr && strtab - ph.p_vaddr < ph.p_filesz) {
+      const uint64_t at = ph.p_offset + (strtab - ph.p_vaddr) + soname;
+      const size_t prefix = sizeof(kSystemPrefix) - 1;
+      if (!fits(at, prefix)) {
+        return false;
+      }
+      if (std::memcmp(elf.data() + at, kSystemPrefix, prefix) == 0) {
+        std::memcpy(elf.data() + at, kLocalPrefix, prefix);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 bool ReadDriver(const fs::path& dir, Driver& out) {
   std::string error;
   out.id = dir.filename().string();
   std::error_code ec;
-  return ReadMeta(ReadFile(dir / "meta.json"), out, error) && fs::is_regular_file(dir / out.library, ec);
+  return ReadMeta(ReadFile(dir / "meta.json"), out, error) &&
+         fs::is_regular_file(dir / LocalLibrary(out.library), ec);
 }
 
 uint16_t Le16(const uint8_t* p) { return uint16_t(p[0] | p[1] << 8); }
@@ -302,7 +370,9 @@ static std::string InstallZip(const std::string& zipPath, std::string& error) {
     if (base.empty() || e.name != top + base || base == "." || base == "..") {
       continue;
     }
-    if (!ExtractZip(zip, e, bytes) || !WriteFile(temp / base, bytes.data(), bytes.size())) {
+    const bool isLibrary = base == driver.library;
+    if (!ExtractZip(zip, e, bytes) || (isLibrary && !RenameSoname(bytes)) ||
+        !WriteFile(temp / (isLibrary ? LocalLibrary(base) : base), bytes.data(), bytes.size())) {
       error = "couldn't unpack " + e.name;
       fs::remove_all(temp, ec);
       return {};
@@ -362,7 +432,7 @@ std::string Prepare(const std::string& id) {
   fs::create_directories(tempDir, ec);
   void* vulkan = adrenotools_open_libvulkan(RTLD_NOW, ADRENOTOOLS_DRIVER_CUSTOM, (tempDir.string() + "/").c_str(),
                                             (libDir + "/").c_str(), (dir.string() + "/").c_str(),
-                                            driver.library.c_str(), nullptr, nullptr);
+                                            LocalLibrary(driver.library).c_str(), nullptr, nullptr);
   if (vulkan == nullptr) {
     const char* why = dlerror();
     return fail(std::string("adrenotools couldn't open it: ") + (why != nullptr ? why : "unknown error"));

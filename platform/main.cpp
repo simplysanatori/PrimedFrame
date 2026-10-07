@@ -1094,16 +1094,16 @@ int main(int argc, char** argv) {
     const std::filesystem::path driverMarker =
         std::filesystem::path(userFolder.empty() ? "." : userFolder) / "gpu_driver_starting";
     static std::string vulkanLibraryDir;
+    const char* envDriver = std::getenv("MP_GPU_DRIVER");
     {
-        const char* envDriver = std::getenv("MP_GPU_DRIVER");
         const std::string driver = envDriver != nullptr ? envDriver : PortDebug::GpuDriver();
         std::error_code ec;
         if (!driver.empty() && config.desiredBackend != BACKEND_OPENGLES && PortGpuDriver::Supported()) {
             if (std::filesystem::exists(driverMarker, ec)) {
-                PortLog::Write("port: the last start with GPU driver %s did not finish; using the system driver\n",
+                PortLog::Write("port: the last start with GPU driver %s crashed or wasn't kept; using the system driver\n",
                                driver.c_str());
                 PortDebug::SetGpuDriver("");
-                PortGpuDriver::SetLoadError("it crashed starting last time; switched back to the system driver");
+                PortGpuDriver::SetLoadError("it crashed or wasn't kept last time; switched back to the system driver");
                 std::filesystem::remove(driverMarker, ec);
             } else {
                 std::ofstream(driverMarker) << driver << '\n';
@@ -1121,7 +1121,12 @@ int main(int argc, char** argv) {
         std::error_code ec;
         std::filesystem::remove(glesMarker, ec);
     }
-    {
+    // A driver's first run (not yet kept; MP_GPU_DRIVER runs are tests) keeps its
+    // marker until the user keeps it, since one that starts can still draw garbage.
+    if (!PortGpuDriver::Active().empty() && envDriver == nullptr &&
+        PortGpuDriver::Active() != PortDebug::GpuDriverKept()) {
+        PortDebug::BeginGpuDriverTrial(driverMarker.string());
+    } else {
         std::error_code ec;
         std::filesystem::remove(driverMarker, ec);
     }

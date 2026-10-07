@@ -221,6 +221,10 @@ bool sOpenGlesAtStart = false;
 // Setting `gpu_driver`: an installed custom Vulkan driver's id (port_gpu_driver.h), "" = the system's.
 std::string sGpuDriver;
 std::string sGpuDriverAtStart;
+// Setting `gpu_driver_ok`: the driver last kept after its trial run (DrawGpuDriverTrial).
+std::string sGpuDriverKept;
+// This run is a driver's trial: the marker main() left, removed once the user keeps it.
+std::string sGpuDriverTrialMarker;
 bool sUnlockHardMode = false;
 // Setting `storage_clamp`: -1 auto (aurora decides), 0 off, 1 on; read once when shaders are first made.
 int sStorageClamp = -1;
@@ -607,6 +611,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
   } else if (key == "gpu_driver") {
     sGpuDriver = value;
     sGpuDriverAtStart = value;
+  } else if (key == "gpu_driver_ok") {
+    sGpuDriverKept = value;
   } else if (key == "anisotropy") {
     const int a = std::atoi(value.c_str());
     if (a >= 1 && a <= 16) {
@@ -897,6 +903,7 @@ void SaveSettings() {
   file << "msaa=" << sMsaa << '\n';
   file << "opengles=" << (sOpenGles ? 1 : 0) << '\n';
   file << "gpu_driver=" << sGpuDriver << '\n';
+  file << "gpu_driver_ok=" << sGpuDriverKept << '\n';
   file << "anisotropy=" << sAnisotropy << '\n';
   file << "unlock_hard_mode=" << (sUnlockHardMode ? 1 : 0) << '\n';
   file << "unlock_fusion_suit=" << (sUnlockFusionSuit ? 1 : 0) << '\n';
@@ -1691,6 +1698,16 @@ void SetGpuDriver(const std::string& id) {
     sGpuDriver = id;
     MarkDirty();
   }
+}
+
+const std::string& GpuDriverKept() {
+  EnsureInitialized();
+  return sGpuDriverKept;
+}
+
+void BeginGpuDriverTrial(const std::string& markerPath) {
+  EnsureInitialized();
+  sGpuDriverTrialMarker = markerPath;
 }
 
 int Anisotropy() {
@@ -4734,6 +4751,69 @@ void DrawDiscReadFailedAlert() {
   ImGui::End();
   ImGui::PopStyleVar(2);
   ImGui::PopStyleColor(3);
+}
+
+// A custom driver's first run: it may start fine and still draw garbage (Turnip
+// builds made for another GPU did), which leaves no readable menu to switch back.
+// So it has to be kept here within kTrialSeconds; otherwise, or if the game closes
+// first (main() finds the marker), the system driver comes back.
+void DrawGpuDriverTrial() {
+  constexpr double kTrialSeconds = 30.0;
+  static double sStartedAt = -1.0;
+  if (sGpuDriverTrialMarker.empty()) {
+    return;
+  }
+  // The panel stays open meanwhile: it's what routes taps and clicks to this window.
+  sVisible = true;
+  const double now = ImGui::GetTime();
+  if (sStartedAt < 0.0) {
+    sStartedAt = now;
+  }
+  const auto finish = [](bool keep) {
+    std::error_code ec;
+    std::filesystem::remove(sGpuDriverTrialMarker, ec);
+    sGpuDriverTrialMarker.clear();
+    if (keep) {
+      sGpuDriverKept = PortGpuDriver::Active();
+    } else if (sGpuDriver == PortGpuDriver::Active()) {
+      sGpuDriver.clear();
+    }
+    MarkDirty();
+    SaveSettings();
+    if (!keep) {
+      // The driver can't be swapped while running; the next start uses the system's.
+      PortLog::Write("port: GPU driver %s not kept; closing to start on the system driver\n",
+                     PortGpuDriver::Active().c_str());
+      SDL_Event quit{};
+      quit.type = SDL_EVENT_QUIT;
+      SDL_PushEvent(&quit);
+    }
+  };
+  const double left = kTrialSeconds - (now - sStartedAt);
+  if (left <= 0.0) {
+    finish(false);
+    return;
+  }
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, 560.f), 0.f));
+  if (ImGui::Begin("Keep this Vulkan driver?", nullptr,
+                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                       ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::TextWrapped("The game is running on %s.", aurora_get_gpu_driver());
+    ImGui::TextWrapped("If the picture looks right, keep it. Otherwise the game closes in %d s and starts on the "
+                       "system driver next time.",
+                       int(left) + 1);
+    const float width = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+    if (ImGui::Button("Keep", ImVec2(width, 0.f))) {
+      finish(true);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Back to the system driver", ImVec2(width, 0.f))) {
+      finish(false);
+    }
+  }
+  ImGui::End();
 }
 
 void DrawRemasteredImport() {
@@ -8204,6 +8284,7 @@ void DrawUI() {
   DrawStaleImportToast();
   DrawUpdateToast();
   DrawDiscReadFailedAlert();
+  DrawGpuDriverTrial();
   if (sTouchLayoutSavePending.exchange(false, std::memory_order_acq_rel)) {
     MarkDirty();
     SaveSettings();
