@@ -2303,9 +2303,20 @@ void CFrontEndUI::Draw() const {
     gpRender->SetBlendMode_AdditiveAlpha();
     gpRender->SetDepthReadWrite(false, false);
     const CColor& color = CColor::White().WithAlphaOf(x64_pressStartAlpha);
-    // Port: centre on the viewport, not on a 640-wide screen.
-    CGraphics::Render2D(*tex, CGraphics::GetViewport().mWidth / 2 - width / 2, 72 - height / 2,
-                        width, height, color);
+    // Port: centre on the viewport, not on a 640-wide screen. Below 4:3 the title movie is drawn
+    // at the viewport's width (PortGetMargins), so scale this with it.
+    const int vpW = CGraphics::GetViewport().mWidth;
+    const int vpH = CGraphics::GetViewport().mHeight;
+    float k = 1.f;
+    int yOff = 0;
+    if (vpW > 0 && vpW < 640 && vpW * 480 < vpH * 640) {
+      k = static_cast< float >(vpW) / 640.f;
+      yOff = (vpH - static_cast< int >(480.f * k)) / 2;
+    }
+    const int w = static_cast< int >(static_cast< float >(width) * k);
+    const int h = static_cast< int >(static_cast< float >(height) * k);
+    CGraphics::Render2D(*tex, vpW / 2 - w / 2,
+                        yOff + static_cast< int >(72.f * k) - h / 2, w, h, color);
   }
 
   if (GetHasAttractMovies()) {
