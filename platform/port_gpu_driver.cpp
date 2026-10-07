@@ -27,7 +27,10 @@ std::string sLoadError;
 
 const std::string& Active() { return sActive; }
 const std::string& LoadError() { return sLoadError; }
-void SetLoadError(std::string why) { sLoadError = std::move(why); }
+void SetLoadError(std::string why) {
+  sActive.clear();
+  sLoadError = std::move(why);
+}
 
 #if defined(__ANDROID__) && defined(__aarch64__)
 namespace {

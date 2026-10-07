@@ -598,6 +598,7 @@ const char* aurora_get_gpu_driver() {
   driver = description.IsUndefined() ? std::string() : std::string(description.data, description.length);
   return driver.c_str();
 }
+bool aurora_vulkan_library_failed() { return aurora::webgpu::g_vulkanLibraryFailed; }
 const AuroraBackend* aurora_get_available_backends(size_t* count) {
   if (count != nullptr) {
     *count = aurora::PreferredBackendOrder.size();

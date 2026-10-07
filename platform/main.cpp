@@ -1121,6 +1121,15 @@ int main(int argc, char** argv) {
         std::error_code ec;
         std::filesystem::remove(glesMarker, ec);
     }
+    // Aurora went back to the system driver when Vulkan failed with the custom one.
+    if (aurora_vulkan_library_failed() && !PortGpuDriver::Active().empty()) {
+        PortLog::Write("port: Vulkan failed with GPU driver %s; using the system driver\n",
+                       PortGpuDriver::Active().c_str());
+        if (envDriver == nullptr) {
+            PortDebug::SetGpuDriver("");
+        }
+        PortGpuDriver::SetLoadError("Vulkan failed to start with it; switched back to the system driver");
+    }
     // A driver's first run (not yet kept; MP_GPU_DRIVER runs are tests) keeps its
     // marker until the user keeps it, since one that starts can still draw garbage.
     if (!PortGpuDriver::Active().empty() && envDriver == nullptr &&

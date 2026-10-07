@@ -303,6 +303,11 @@ also reverts at the next start, like the OpenGL ES toggle does. A kept driver is
 saved as `gpu_driver_ok=<id>` and isn't asked about again; `MP_GPU_DRIVER` runs
 skip the prompt.
 
+If Vulkan doesn't start at all with the chosen driver (Qualcomm's own driver
+packs for the Adreno 840 failed this way), the game retries Vulkan with the
+system driver in the same run instead of falling back to OpenGL ES, switches the
+setting back to System and shows the error under the combo.
+
 A library named `vulkan.*` is installed as `mportv.*`, and a `vulkan.*` SONAME is
 patched to match: Android's linker would otherwise hand back the system
 `vulkan.adreno.so` that HWUI already loaded under the same SONAME.

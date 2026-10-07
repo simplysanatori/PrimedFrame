@@ -35,7 +35,8 @@ std::string Prepare(const std::string& id);
 // The driver this run started with ("" = system) and why loading one failed.
 const std::string& Active();
 const std::string& LoadError();
-// For a driver main() didn't even try (it crashed starting last time).
+// For a driver this run doesn't use after all: main() didn't try it (it crashed
+// starting last time), or Vulkan failed with it. Clears Active().
 void SetLoadError(std::string why);
 
 } // namespace PortGpuDriver
