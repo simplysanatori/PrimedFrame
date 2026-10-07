@@ -1961,20 +1961,18 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_alpha *= -ubuf.pbr_light_scale.w - 1.0;
       }}
       // Encoded as Remastered's sRGB swapchain does it: the exact piecewise sRGB curve.
-      let pbr_lin = clamp(pbr_tm + pbr_pass, vec3f(0.0), vec3f(1.0));
-      prev = vec4f(select(1.055 * pow(pbr_lin, vec3f(1.0 / 2.4)) - 0.055, 12.92 * pbr_lin,
-                          pbr_lin <= vec3f(0.0031308)), pbr_alpha);
+      prev = vec4f(srgb_enc(pbr_tm + pbr_pass), pbr_alpha);
       // A debug view (GXSetPBRDebugView): one input of the shading in place of the result.
       if (ubuf.pbr_layer.w > 0.5) {{
           let pbr_dv = ubuf.pbr_layer.w;
-          var pbr_dc = pow(clamp(pbr_base, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2));
+          var pbr_dc = srgb_enc(pbr_base);
           if (pbr_dv > 1.5) {{ pbr_dc = pbr_n * 0.5 + 0.5; }}
           if (pbr_dv > 2.5) {{ pbr_dc = vec3f(pbr_rough); }}
           if (pbr_dv > 3.5) {{ pbr_dc = vec3f(pbr_metal); }}
           if (pbr_dv > 4.5) {{ pbr_dc = vec3f(pbr_ao); }}
-          if (pbr_dv > 5.5) {{ pbr_dc = pow(clamp(pbr_ambd, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)); }}
-          if (pbr_dv > 6.5) {{ pbr_dc = pow(clamp(pbr_envspec, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)); }}
-          if (pbr_dv > 7.5) {{ pbr_dc = pow(clamp(pbr_glow, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)); }}
+          if (pbr_dv > 5.5) {{ pbr_dc = srgb_enc(pbr_ambd); }}
+          if (pbr_dv > 6.5) {{ pbr_dc = srgb_enc(pbr_envspec); }}
+          if (pbr_dv > 7.5) {{ pbr_dc = srgb_enc(pbr_glow); }}
           if (pbr_dv > 8.5) {{
               // The lit level in stops around middle grey: blue 4 under, green at, red 4 over.
               let pbr_dt = clamp(log2(max(dot(pbr_out, vec3f(0.2126, 0.7152, 0.0722)), 1e-6) / 0.18) / 8.0 + 0.5,
@@ -2009,7 +2007,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                          ubuf.pbr_probe[2].xyz * pbr_v.z);
           }}
           let pbr_diag = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_dd, 0.0).rgb;
-          prev = vec4f(select(pbr_diag, pow(clamp(pbr_diag * pbr_hdr, vec3f(0.0), vec3f(1.0)), vec3f(1.0 / 2.2)),
+          prev = vec4f(select(pbr_diag, srgb_enc(pbr_diag * pbr_hdr),
                               pbr_hdr > 0.0), prev.a);
       }}
     }})""",
@@ -3427,6 +3425,12 @@ fn tev_overflow_vec4f(in: vec4f) -> vec4f {{
 fn srgb_dec(e: vec3f) -> vec3f {{
   let c = max(e, vec3f(0.0));
   return select(pow((c + 0.055) / 1.055, vec3f(2.4)), c / 12.92, c <= vec3f(0.04045));
+}}
+
+// Its inverse, clamped to the range the swapchain stores.
+fn srgb_enc(l: vec3f) -> vec3f {{
+  let c = clamp(l, vec3f(0.0), vec3f(1.0));
+  return select(1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055, 12.92 * c, c <= vec3f(0.0031308));
 }}
 
 {8}
