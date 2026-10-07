@@ -4781,15 +4781,22 @@ void DrawShaderCompilationToast() {
   const uint32_t done = stats->createdPipelines >= sBase ? stats->createdPipelines - sBase : 0;
   const uint32_t total = done + stats->queuedPipelines;
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.f, viewport->Pos.y + viewport->Size.y - 16.f), ImGuiCond_Always,
-                          ImVec2(0.f, 1.f));
-  ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, 260.f), 0.f));
+  // Top centre: the Android touch overlay has its pause/F1 buttons in the bottom corners.
+  ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + 16.f), ImGuiCond_Always,
+                          ImVec2(0.5f, 0.f));
   ImGui::SetNextWindowBgAlpha(0.7f);
+  // Sized to its text: the font scale differs per platform (Android's is larger).
   if (ImGui::Begin("##shader-compilation-toast", nullptr,
                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
-                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
-    ImGui::Text("Compiling shaders %u / %u", done, total);
-    ImGui::ProgressBar(total != 0 ? static_cast<float>(done) / static_cast<float>(total) : 0.f, ImVec2(-1.f, 6.f), "");
+                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings |
+                       ImGuiWindowFlags_AlwaysAutoResize)) {
+    char label[64];
+    std::snprintf(label, sizeof(label), "Compiling shaders %u / %u", total, total); // widest, so the count doesn't jitter
+    const float width = ImGui::CalcTextSize(label).x;
+    std::snprintf(label, sizeof(label), "Compiling shaders %u / %u", done, total);
+    ImGui::TextUnformatted(label);
+    ImGui::ProgressBar(total != 0 ? static_cast<float>(done) / static_cast<float>(total) : 0.f,
+                       ImVec2(width, std::max(6.f, ImGui::GetFontSize() * 0.4f)), "");
   }
   ImGui::End();
 }
