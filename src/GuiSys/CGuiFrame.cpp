@@ -203,7 +203,7 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     return hudScaleXf * spreadView *
            CTransform4f(scale, offset, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f) * invView;
   };
-  const auto drawSliced = [&](CGuiWidget* widget, const CTransform4f& world) {
+  const auto drawSliced = [&](CGuiWidget* widget, const CTransform4f& world, bool curved) {
     int vpLeft, vpTop, vpWidth, vpHeight;
     CGraphics::GetViewport(vpLeft, vpTop, vpWidth, vpHeight);
     u32 old[4];
@@ -213,28 +213,36 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
       t = std::max(-screenTan, std::min(screenTan, t * hudScale));
       return vpLeft + static_cast< int >(0.5f * vpWidth * (1.f + t / screenTan) + 0.5f);
     };
-    const float shift = x14_camera->GetAspectSliceOffset(sliceOuter);
-    const float scale = (sliceOuter + shift - sliceInner) / (sliceOuter - sliceInner);
-    const float inner = sliceInner;
-    const float outer = sliceOuter + shift;
-    const float edge = 2.f * screenTan;
-    const float bandOffset = inner * (1.f - scale);
-    const struct {
-      float from, to, scale, offset;
-    } slices[] = {
-        {-inner, inner, 1.f, 0.f},          {inner, outer, scale, bandOffset},
-        {-outer, -inner, scale, -bandOffset}, {outer, edge, 1.f, shift},
-        {-edge, -outer, 1.f, -shift},
-    };
-    for (const auto& slice : slices) {
-      const int left = std::max(column(slice.from), static_cast< int >(old[0]));
-      const int right = std::min(column(slice.to), static_cast< int >(old[0] + old[2]));
-      if (right <= left) {
-        continue;
+    const auto draw = [&](float from, float to, float scale, float offset) {
+      const int left = std::max(column(from), static_cast< int >(old[0]));
+      const int right = std::min(column(to), static_cast< int >(old[0] + old[2]));
+      if (right > left) {
+        GXSetScissor(left, old[1], right - left, old[3]);
+        widget->DrawWithWorldTransform(parms, sliceXf(scale, offset) * world);
       }
-      GXSetScissor(left, old[1], right - left, old[3]);
-      widget->DrawWithWorldTransform(parms, sliceXf(slice.scale, slice.offset) * world);
+    };
+    float inner, outer;
+    x14_camera->GetAspectSlices(inner, outer, curved);
+    draw(-inner, inner, 1.f, 0.f);
+    // The band is one linear piece, or for the eased curve enough chords that the joints don't
+    // show; each maps its authored span onto the warped one, mirrored on the left.
+    const int pieces = curved ? 16 : 1;
+    float from = inner;
+    float fromWarped = inner;
+    for (int piece = 1; piece <= pieces; ++piece) {
+      const float to = inner + (outer - inner) * piece / pieces;
+      const float toWarped = to + x14_camera->GetAspectSliceOffset(to, curved);
+      const float scale = (toWarped - fromWarped) / (to - from);
+      const float offset = fromWarped - scale * from;
+      draw(fromWarped, toWarped, scale, offset);
+      draw(-toWarped, -fromWarped, scale, -offset);
+      from = to;
+      fromWarped = toWarped;
     }
+    const float shift = fromWarped - outer;
+    const float edge = 2.f * screenTan;
+    draw(fromWarped, edge, 1.f, shift);
+    draw(-edge, -fromWarped, 1.f, -shift);
     GXSetScissor(old[0], old[1], old[2], old[3]);
   };
   for (AUTO(it, x2c_widgets.begin()); it != x2c_widgets.end(); ++it) {
@@ -264,6 +272,9 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
       widget->DrawWithWorldTransform(parms, hudScaleXf * stretch * world);
       continue;
     }
+    // The helmet's arcs take the eased warp wider than authored, and so do its lights with them.
+    const bool curved =
+        sliced && std::find(mSpreadSlide.begin(), mSpreadSlide.end(), widget) != mSpreadSlide.end();
     CVector3f slideCenter;
     if (slide &&
         std::find(mSpreadSlide.begin(), mSpreadSlide.end(), widget) != mSpreadSlide.end() &&
@@ -302,7 +313,7 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
                                    bounds.GetMaxPoint().GetZ() > quarterHeight;
 
           if (sliced && spansWidth && bounds.GetMinPoint().GetY() > projection.GetNear()) {
-            drawSliced(widget, world);
+            drawSliced(widget, world, curved);
             continue;
           }
           if (bounds.GetMinPoint().GetY() > projection.GetNear() && (spansWidth || spansHeight)) {
@@ -325,6 +336,12 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
       const float eyeZ = (invView * anchor).GetZ();
       hudXf = hudScaleXf * spreadView *
               CTransform4f::Translate(0.f, 0.f, (spreadY - 1.f) * eyeZ) * invView;
+    }
+    if (curved) {
+      const CVector3f eye = invView * anchor;
+      if (eye.GetY() > 0.f) {
+        hudXf = sliceXf(1.f, x14_camera->GetAspectSliceOffset(eye.GetX() / eye.GetY(), true));
+      }
     }
     widget->DrawWithWorldTransform(parms, hudXf * world);
   }

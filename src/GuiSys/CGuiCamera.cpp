@@ -219,29 +219,34 @@ CTransform4f CGuiCamera::GetAspectSpreadTransform(const CVector3f& worldAnchor) 
          CTransform4f(1.f, offset, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f) * invView;
 }
 
-bool CGuiCamera::GetAspectSlices(float& inner, float& outer) const {
+bool CGuiCamera::GetAspectSlices(float& inner, float& outer, bool curved) const {
   if (!mSpreadAboutEye || mSpread == 1.f || mSpreadHalfTan <= 0.f) {
     return false;
   }
   // The middle holds the energy bar with its housing and lettering, and the helmet's top lights;
   // the band out to `outer` only the frame's top line and the helmet arc. Fractions of the
   // authored half width.
+  // A curved model (the helmet's arcs) spreads the stretch out to its corners instead, so the arc
+  // stays one smooth curve; a narrow band would flatten it into straight runs with kinks.
   inner = 0.4f * mSpreadHalfTan;
-  outer = 0.455f * mSpreadHalfTan;
+  outer = (curved ? kCurveOuter : 0.455f) * mSpreadHalfTan;
   return true;
 }
 
-float CGuiCamera::GetAspectSliceOffset(float tangent) const {
+float CGuiCamera::GetAspectSliceOffset(float tangent, bool curved) const {
   float inner, outer;
-  if (!GetAspectSlices(inner, outer)) {
+  if (!GetAspectSlices(inner, outer, curved)) {
     return 0.f;
   }
   // Past `outer` everything keeps its authored distance to the screen edge.
   const float shift = (mSpread - 1.f) * mSpreadHalfTan;
   const float a = std::fabs(tangent);
-  const float moved = a <= inner   ? 0.f
-                      : a <= outer ? shift * (a - inner) / (outer - inner)
-                                   : shift;
+  float along = a <= inner ? 0.f : a >= outer ? 1.f : (a - inner) / (outer - inner);
+  if (curved) {
+    // Smoothstep: no change of slope where the stretch starts and ends.
+    along = along * along * (3.f - 2.f * along);
+  }
+  const float moved = shift * along;
   return tangent < 0.f ? -moved : moved;
 }
 

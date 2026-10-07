@@ -67,9 +67,12 @@ public:
   // The horizontal spread about the eye warps the screen in slices, in screen tangents (view X
   // over depth): up to `inner` it is left as authored, from `inner` to `outer` it stretches, and
   // past `outer` it slides by the whole spread. False unless that spread is active.
-  bool GetAspectSlices(float& inner, float& outer) const;
+  // `curved` is the smooth variant for the helmet's arcs: a wider band with an eased stretch.
+  bool GetAspectSlices(float& inner, float& outer, bool curved = false) const;
   // How far that warp moves the image at screen tangent `tangent`.
-  float GetAspectSliceOffset(float tangent) const;
+  float GetAspectSliceOffset(float tangent, bool curved = false) const;
+  // Where the curved warp's band ends, as a fraction of the authored half width.
+  static constexpr float kCurveOuter = 0.85f;
   // HUD scale: frames that opt in shrink about the view centre
   // (see PortDebug::HudScale).
   void SetHudScaled(bool scaled) { mHudScaled = scaled; }
