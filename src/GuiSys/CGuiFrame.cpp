@@ -176,12 +176,32 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
   const bool slide = aboutEye && spread == 1.f && spreadY != 1.f && !mSpreadSlide.empty();
   float slideTop = 0.f;
   float slideBottom = 0.f;
+  // A member reaching well into both halves (Remastered's shell is one model with its top and
+  // bottom pieces) is drawn twice, each half under a scissor and moved with its own edge.
+  const auto spansBoth = [&](const CGuiWidget* member) {
+    const CModel* model = static_cast< const CGuiModel* >(member)->GetModel()->GetObject();
+    const CAABox bounds =
+        model->GetBoundingBox().GetTransformedAABox(invView * member->GetWorldTransform());
+    const float below = -bounds.GetMinPoint().GetZ();
+    const float above = bounds.GetMaxPoint().GetZ();
+    return below > 0.f && above > 0.f && std::min(below, above) > 0.25f * (below + above);
+  };
   if (slide) {
     CVector3f top = CVector3f::Zero();
     CVector3f bottom = CVector3f::Zero();
+    bool split = false;
     for (const CGuiWidget* member : mSpreadSlide) {
       CVector3f center;
-      if (ModelEyeCenter(member, invView, center)) {
+      if (!ModelEyeCenter(member, invView, center)) {
+        continue;
+      }
+      if (spansBoth(member)) {
+        // It holds the outermost pieces of both halves: the edges follow its depth.
+        if (!split || center.GetY() < top.GetY()) {
+          top = bottom = center;
+        }
+        split = true;
+      } else if (!split) {
         if (center.GetZ() > top.GetZ()) {
           top = center;
         }
@@ -282,10 +302,37 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     if (slide &&
         std::find(mSpreadSlide.begin(), mSpreadSlide.end(), widget) != mSpreadSlide.end() &&
         ModelEyeCenter(widget, invView, slideCenter)) {
-      const float offset = slideCenter.GetZ() >= 0.f ? slideTop : slideBottom;
-      widget->DrawWithWorldTransform(
-          parms, hudScaleXf * spreadView * CTransform4f::Translate(0.f, 0.f, offset) * invView *
-                     world);
+      const auto slid = [&](float offset) {
+        return hudScaleXf * spreadView * CTransform4f::Translate(0.f, 0.f, offset) * invView * world;
+      };
+      if (!spansBoth(widget)) {
+        widget->DrawWithWorldTransform(parms,
+                                       slid(slideCenter.GetZ() >= 0.f ? slideTop : slideBottom));
+        continue;
+      }
+      int vpLeft, vpTop, vpWidth, vpHeight;
+      CGraphics::GetViewport(vpLeft, vpTop, vpWidth, vpHeight);
+      u32 old[4];
+      GXGetScissor(&old[0], &old[1], &old[2], &old[3]);
+      // Each half is cut where the authored middle row lands once moved (at the model's depth),
+      // so a half moved past the screen middle doesn't bring the other half's pieces with it.
+      const float rowsPerUnit =
+          0.5f * vpHeight * projection.GetNear() / (projection.GetTop() * slideCenter.GetY());
+      const int middle = vpTop + vpHeight / 2;
+      const int topCut = middle - static_cast< int >(slideTop * rowsPerUnit + 0.5f);
+      const int bottomCut = middle - static_cast< int >(slideBottom * rowsPerUnit - 0.5f);
+      const int first = static_cast< int >(old[1]);
+      const int last = static_cast< int >(old[1] + old[3]);
+      if (std::min(topCut, last) > first) {
+        GXSetScissor(old[0], old[1], old[2], std::min(topCut, last) - first);
+        widget->DrawWithWorldTransform(parms, slid(slideTop));
+      }
+      if (last > std::max(bottomCut, first)) {
+        const int from = std::max(bottomCut, first);
+        GXSetScissor(old[0], from, old[2], last - from);
+        widget->DrawWithWorldTransform(parms, slid(slideBottom));
+      }
+      GXSetScissor(old[0], old[1], old[2], old[3]);
       continue;
     }
     if (group) {
