@@ -1039,9 +1039,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 8 = Remastered's ColorUnlit: its vertex shader linearises the colour and doubles
       // it, and the pixel shader's gain is in the backlight's place.
       // 16 = a sky (with 1, unlit): the backlight's place holds the gain on its colour.
-      // 128 = the vertex colour tints the albedo before F0 too (Remastered's kShaderTints).
-      let pbr_f0t = ubuf.pbr_backlight.w > 127.5;
-      let pbr_mw0 = ubuf.pbr_backlight.w - select(0.0, 128.0, pbr_f0t);
+      // 256 = no reflection of the surroundings (a Remastered material with no REFL: its
+      // shader samples no cube). 128 = the vertex colour tints the albedo before F0 too
+      // (Remastered's kShaderTints).
+      let pbr_noenv = ubuf.pbr_backlight.w > 255.5;
+      let pbr_mwr = ubuf.pbr_backlight.w - select(0.0, 256.0, pbr_noenv);
+      let pbr_f0t = pbr_mwr > 127.5;
+      let pbr_mw0 = pbr_mwr - select(0.0, 128.0, pbr_f0t);
       let pbr_sky = pbr_mw0 > 15.5;
       let pbr_mw = pbr_mw0 - select(0.0, 16.0, pbr_sky);
       let pbr_cu = pbr_mw > 7.5;
@@ -1830,8 +1834,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           }}
       }}
       // pbr-lightmap
-      // Kind 13 scales the probe's reflection by pbr_layer_height.z (CCH1.z).
-      pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5) *
+      // Kind 13 scales the probe's reflection by pbr_layer_height.z (CCH1.z); mode 256 has none.
+      pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5), 0.0, pbr_noenv) *
                                            (pbr_f0 * pbr_ab.x + pbr_ab.y)) * pbr_ao;
       // Remastered's CharacterBacklight (GX_AURORA_SET_PBR_BACKLIGHT; the material's
       // strengths and falloff in the backlight's place): a light from world up and one from

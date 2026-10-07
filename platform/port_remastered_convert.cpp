@@ -608,6 +608,7 @@ struct RemMaterial {
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
   bool tinted = false;     // its vertices carry a colour
   bool tintF0 = false;     // which tints the albedo before F0 too (kShaderTints), not just the diffuse
+  bool noRefl = false;     // no REFL: its shader samples no cube, so it reflects nothing around it
   bool unlit = false;      // a screen: its own colour and glow, no lighting
   bool glowLinear = false; // inverse-exposed: the emissive strength is drawn as is, uncompressed
   int anuv = -1;  // the model's ANUV entry its meshes use, when it flattens
@@ -1661,6 +1662,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     m.src = opt.texturePrefix + IdToString(m.id) + opt.textureSuffix;
   };
   bool bclr = false;
+  bool refl = false;
   const ModelMaterialData* icnc = nullptr;
   const ModelMaterialData* bklt = nullptr;
   const ModelMaterialData* bkla = nullptr;
@@ -1682,6 +1684,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       }
       break;
     case FourCC('R', 'E', 'F', 'L'):
+      refl = refl || texture;
       if (texture && (shader == kShaderIceSpreader || shader == kShaderHoloRefl)) {
         set(kBase, d.texture, &out.refl);
         if (Lower(IdToString(out.refl.id)).rfind(kDefaultRefl, 0) == 0) {
@@ -1778,6 +1781,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       break;
     }
   }
+  out.noRefl = !refl;
   // The strength is ICNC, the incandescence colour (grey in every material
   // seen, 0.15 to 400), times the shader's INCI parameter where it has one. A
   // render type row names the colour that holds a parameter and the component:
@@ -2420,10 +2424,14 @@ bool ExposedGlow(const RemMaterial& m) {
 // emissive map's (mode bit 64).
 bool ExposedStrength(const RemMaterial& m) { return m.kind > 0 && m.kind < 5 && m.kindStrength > 0.0; }
 
+// A lit plain (kind 0) surface without REFL reflects nothing around it: every Remastered
+// shader that samples a cube has REFL, and no other does (mode bit 256).
+bool NoEnvSpec(const RemMaterial& m) { return m.noRefl && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
+
 int PbrMode(const RemMaterial& m) {
   return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0) +
          (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0) +
-         (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0);
+         (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
@@ -2447,7 +2455,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     f.push_back(k[i]);
   }
   const char* tag = "PBRM";
-  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m)) {
+  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m)) {
     f.push_back(m.height);
     f.push_back(double(PbrMode(m)));
     tag = "PBR2";
