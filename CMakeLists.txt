@@ -700,5 +700,10 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_ap_fixture.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_ap_fixture PROPERTIES TIMEOUT 120 LABELS port)
+        # The shipped pipeline seed: every row at the current config versions (else aurora
+        # ignores it) and retail only (tools/pipeline_seed.py explains re-recording it).
+        add_test(NAME port_pipeline_seed
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/pipeline_seed.py check)
+        set_tests_properties(port_pipeline_seed PROPERTIES TIMEOUT 60 LABELS port)
     endif()
 endif()
