@@ -7,6 +7,7 @@
 #include "port_ap_protocol.h"
 #include "port_ap_solo.h"
 #include "port_custom_res.h"
+#include "port_debug.h"
 #include "port_rando_gen.h"
 #include "port_randomizer.h"
 #include "port_skip_cutscenes.h"
@@ -1390,7 +1391,30 @@ bool Connect(const ConnectionDetails& details, std::string& error) {
   }
 }
 
+std::string SoloSeedInPlay() {
+  const ConnectionDetails saved = SavedConnection();
+  std::string name;
+  if (!saved.enabled || !PortApSolo::ParseServer(saved.server, name))
+    return std::string();
+  return name;
+}
+
+bool SameSoloSeed(const std::string& a, const std::string& b) {
+  // Names are made safe for a file name the same way, so "a b" is "a_b".
+  return PortRandoGen::SeedPath(a) == PortRandoGen::SeedPath(b);
+}
+
 bool PlaySolo(const std::string& seedName, std::string& error) {
+  // A loaded game keeps its save card (CSaveGameScreen only switches at the
+  // front end), so another seed would be played on top of this game's
+  // inventory and mix both seeds' progress.
+  if (PortDebug::StateManager() != nullptr) {
+    const std::string current = SoloSeedInPlay();
+    if (current.empty() || !SameSoloSeed(current, seedName)) {
+      error = "Quit to the title screen to switch seeds.";
+      return false;
+    }
+  }
   // Read it now, so a seed that is missing or broken is said right away
   // rather than as a connection that keeps failing.
   PortRandoGen::Seed seed;
@@ -1403,6 +1427,49 @@ bool PlaySolo(const std::string& seedName, std::string& error) {
   // same way), so the first frames already use it.
   details.seed = "solo-" + seed.name;
   return Connect(details, error);
+}
+
+bool DeleteSolo(const std::string& seedName, std::string& error) {
+  // The client and the in-process server write the seed's progress and save
+  // card while it is the connection, so they would bring the files back.
+  const std::string current = SoloSeedInPlay();
+  if (!current.empty() && SameSoloSeed(current, seedName)) {
+    error = "This seed is being played. Play another seed or disconnect first.";
+    return false;
+  }
+  try {
+    const std::string seedPath = PortRandoGen::SeedPath(seedName);
+    std::error_code ec;
+    if (!std::filesystem::exists(seedPath, ec)) {
+      error = "no seed named " + seedName;
+      return false;
+    }
+    // The save card's directory is named after the name inside the seed.
+    PortRandoGen::Seed seed;
+    std::string loadError;
+    const std::string name = PortRandoGen::Load(seedPath, seed, loadError) ? seed.name : seedName;
+    const std::filesystem::path card = GameDirectory(PortApSolo::kSlotName, "solo-" + name);
+    std::filesystem::remove_all(card, ec);
+    if (ec) {
+      error = "could not delete " + card.string() + ": " + ec.message();
+      return false;
+    }
+    const std::string stem = seedPath.substr(0, seedPath.size() - 5);
+    std::filesystem::remove(PortApSolo::StatePath(seedName), ec);
+    std::filesystem::remove(stem + ".spoiler.txt", ec);
+    // Last, so a seed whose other files could not go stays listed.
+    if (!std::filesystem::remove(seedPath, ec)) {
+      error = "could not delete " + seedPath + (ec ? ": " + ec.message() : std::string());
+      return false;
+    }
+    return true;
+  } catch (const std::exception& exception) {
+    error = exception.what();
+    return false;
+  } catch (...) {
+    error = "could not delete the seed";
+    return false;
+  }
 }
 
 bool Disconnect(std::string& error) {

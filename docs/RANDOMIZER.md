@@ -6,9 +6,15 @@ F1 > **Randomizer** makes and plays logic-checked seeds without Archipelago
 installed. Pick the options (goal, item pool, elevators and door colours,
 logic and tricks; saved as the `rando_settings=` line of the settings file),
 type a seed text or leave it empty for a random one, and press **Generate &
-Play**. The page lists saved seeds with Play, a spoiler view and "Write
-spoiler file". The console has the same as `rando gen [seedtext]`,
-`rando play <name>` and `rando list`.
+Play**. The page lists saved seeds with Play, a spoiler view, "Write
+spoiler file" and Delete (the seed, its progress and its save card; not the
+seed being played). The console has the same as `rando gen [seedtext]`,
+`rando play <name>`, `rando delete <name>` and `rando list`.
+
+Each seed has its own save card, which the game switches only at the title
+screen and file select. So while a game is loaded, Play is off for other
+seeds and Generate only saves the new seed: quit to the title screen to
+switch.
 
 - **Generator** (`platform/port_rando_gen.cpp`): the Metroid Prime apworld's
   item pool (`ItemPool.py`) and options, filled with an assumed fill against

@@ -2562,13 +2562,23 @@ void RunFrame() {
       PortRandoGen::Seed seed;
       if (!PortRandoGen::Generate(PortDebug::RandoSettings(), sCmd.args.size() == 3 ? sCmd.args[2] : "", seed,
                                   error) ||
-          !PortRandoGen::Save(seed, error) || !PortAp::PlaySolo(seed.name, error))
+          !PortRandoGen::Save(seed, error))
         return Finish(error.c_str());
-      Out("playing seed %s", seed.name.c_str());
+      if (PortDebug::StateManager() != nullptr) {
+        Out("saved seed %s; quit to the title screen to play it", seed.name.c_str());
+      } else {
+        if (!PortAp::PlaySolo(seed.name, error))
+          return Finish(error.c_str());
+        Out("playing seed %s", seed.name.c_str());
+      }
     } else if (action == "play" && sCmd.args.size() == 3) {
       if (!PortAp::PlaySolo(sCmd.args[2], error))
         return Finish(error.c_str());
       Out("playing seed %s", sCmd.args[2].c_str());
+    } else if (action == "delete" && sCmd.args.size() == 3) {
+      if (!PortAp::DeleteSolo(sCmd.args[2], error))
+        return Finish(error.c_str());
+      Out("deleted seed %s", sCmd.args[2].c_str());
     } else if (action == "list" && sCmd.args.size() == 2) {
       std::error_code ec;
       for (const auto& entry : std::filesystem::directory_iterator(PortRandoGen::SeedDirectory(), ec)) {
@@ -2578,7 +2588,7 @@ void RunFrame() {
           Out("%s", file.substr(0, file.size() - 5).c_str());
       }
     } else {
-      return Finish("usage: rando [gen [seedtext] | play <name> | list]");
+      return Finish("usage: rando [gen [seedtext] | play <name> | delete <name> | list]");
     }
     Finish();
   } else if (name == "wait") {
