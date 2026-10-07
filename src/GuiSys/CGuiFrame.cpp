@@ -102,6 +102,22 @@ void CGuiFrame::Initialize() {
   head->InitializeRecursive();
 }
 
+#ifdef TARGET_PC
+// The view-space centre of a loaded model widget's bounds, through `invView`.
+static bool ModelEyeCenter(const CGuiWidget* widget, const CTransform4f& invView, CVector3f& out) {
+  if (widget->GetWidgetTypeID() != 'MODL' || !widget->GetIsFinishedLoading()) {
+    return false;
+  }
+  const auto& token = static_cast< const CGuiModel* >(widget)->GetModel();
+  const CModel* model = token ? token->GetObject() : nullptr;
+  if (!model) {
+    return false;
+  }
+  out = invView * (widget->GetWorldTransform() * model->GetBoundingBox().GetCenterPoint());
+  return true;
+}
+#endif
+
 void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
   CGraphics::SetCullMode(kCM_None);
   CGraphics::ResetGfxStates();
@@ -150,6 +166,30 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
   // register differently. Spread about the view axis, which is the screen
   // centre, using the element's own depth, so any two elements at the same place
   // get the same answer whichever frame draws them.
+  // A slide group moves each half as one piece, by as far as the screen edge moves at the depth of
+  // its outermost piece (the helmet shell): the shell keeps its 4:3 place against the edge and the
+  // glass along it keeps touching it, instead of each sliding by its own height.
+  const bool slide = aboutEye && spread == 1.f && spreadY != 1.f && !mSpreadSlide.empty();
+  float slideTop = 0.f;
+  float slideBottom = 0.f;
+  if (slide) {
+    CVector3f top = CVector3f::Zero();
+    CVector3f bottom = CVector3f::Zero();
+    for (const CGuiWidget* member : mSpreadSlide) {
+      CVector3f center;
+      if (ModelEyeCenter(member, invView, center)) {
+        if (center.GetZ() > top.GetZ()) {
+          top = center;
+        }
+        if (center.GetZ() < bottom.GetZ()) {
+          bottom = center;
+        }
+      }
+    }
+    const float edgePerDepth = (spreadY - 1.f) / (projection.GetNear() * spreadY);
+    slideTop = edgePerDepth * projection.GetTop() * top.GetY();
+    slideBottom = edgePerDepth * projection.GetBottom() * bottom.GetY();
+  }
   for (AUTO(it, x2c_widgets.begin()); it != x2c_widgets.end(); ++it) {
     CGuiWidget* widget = *it;
     if (!widget->GetIsVisible()) {
@@ -175,6 +215,16 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
       // A bar drawn along a side strut: the strut stretches over the extra height, so the bar
       // must too, or it stays a short piece in the middle of the screen.
       widget->DrawWithWorldTransform(parms, hudScaleXf * stretch * world);
+      continue;
+    }
+    CVector3f slideCenter;
+    if (slide &&
+        std::find(mSpreadSlide.begin(), mSpreadSlide.end(), widget) != mSpreadSlide.end() &&
+        ModelEyeCenter(widget, invView, slideCenter)) {
+      const float offset = slideCenter.GetZ() >= 0.f ? slideTop : slideBottom;
+      widget->DrawWithWorldTransform(
+          parms, hudScaleXf * spreadView * CTransform4f::Translate(0.f, 0.f, offset) * invView *
+                     world);
       continue;
     }
     if (group) {
@@ -258,6 +308,19 @@ void CGuiFrame::SetSpreadStretchTree(const CGuiWidget* root) {
     for (const CGuiObject* obj = widget; obj; obj = obj->GetParent()) {
       if (obj == root) {
         SetSpreadStretch(widget);
+        break;
+      }
+    }
+  }
+}
+
+void CGuiFrame::SetSpreadSlideTree(const CGuiWidget* root) {
+  for (CGuiWidget* widget : x2c_widgets) {
+    for (const CGuiObject* obj = widget; obj; obj = obj->GetParent()) {
+      if (obj == root) {
+        if (std::find(mSpreadSlide.begin(), mSpreadSlide.end(), widget) == mSpreadSlide.end()) {
+          mSpreadSlide.push_back(widget);
+        }
         break;
       }
     }

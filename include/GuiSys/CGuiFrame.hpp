@@ -66,6 +66,10 @@ public:
   void SetSpreadStretch(const CGuiWidget* widget);
   // Port: the same for `root` and every widget parented (at any depth) under it.
   void SetSpreadStretchTree(const CGuiWidget* root);
+  // Port: under the vertical spread, slide the models under `root` (at any depth) straight up or
+  // down without pitching them, all those above the view centre by one offset and all those below
+  // by another, so pieces of one assembly (the helmet shell, its glass and lights) stay together.
+  void SetSpreadSlideTree(const CGuiWidget* root);
 #endif
 
 private:
@@ -85,6 +89,7 @@ private:
 #ifdef TARGET_PC
   std::vector< std::pair< const CGuiWidget*, const CGuiWidget* > > mSpreadAnchors;
   std::vector< const CGuiWidget* > mSpreadStretch;
+  std::vector< const CGuiWidget* > mSpreadSlide;
 #endif
 };
 CHECK_SIZEOF(CGuiFrame, 0x5c);
