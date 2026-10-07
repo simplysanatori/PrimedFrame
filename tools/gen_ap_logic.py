@@ -48,6 +48,13 @@ EXTRA_RULES = {
     ("Tallon Overworld", "Hydro Access Tunnel"): [
         "@Tallon Overworld/Transport Tunnel E,$can_open|Tallon Overworld|Transport Tunnel E|Great Tree Hall",
     ],
+    # Beating Flaahgra opens Sunchamber's door to Sun Tower Access (apworld:
+    # Sunchamber door 0, rule can_flaahgra); the pack has only a sequence
+    # break there. Without it a Sunchamber Lobby start, which can't go back
+    # through Arboretum, reached nothing past Flaahgra.
+    ("Chozo Ruins", "Sun Tower Access"): [
+        "@Chozo Ruins/Sunchamber,@rules/can_flaahgra",
+    ],
 }
 
 OPTIONAL, BRACE, LEVEL = 1, 2, 4
