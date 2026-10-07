@@ -596,7 +596,12 @@ void CCameraManager::SetupInterpolation(const CTransform4f& xf, TUniqueId camId,
 void CCameraManager::CinematicCut(CStateManager& mgr) {
   if (IsInCinematicCamera()) {
     x80_ballCamera->TeleportCamera(GetCurrentCinematicCamera(mgr).GetTransform(), mgr);
+#ifdef TARGET_PC
+    // The cinematic FOV is already fitted to the window; the ball camera widens its own.
+    x80_ballCamera->InterpolateFOV(GetCurrentCinematicCamera(mgr).GetUnwidenedFov(),
+#else
     x80_ballCamera->InterpolateFOV(GetCurrentCinematicCamera(mgr).GetFov(),
+#endif
                                    x80_ballCamera->GetFov(), 1.f, 0.f);
     StopCinematics(mgr);
     SetCurrentCameraId(x80_ballCamera->GetUniqueId());

@@ -72,6 +72,17 @@ float CGameCamera::VertPlusFov(const float fov, const float aspect) {
   const float kDegToRad = 3.14159265f / 180.f;
   return 2.f * std::atan(std::tan(0.5f * fov * kDegToRad) * kMinAspect / aspect) / kDegToRad;
 }
+
+float CGameCamera::GetUnwidenedFov() const {
+  const float kMinAspect = 4.f / 3.f;
+  const float aspect = GetAspectRatio();
+  if (!x170_26_fovIsFitted || !(aspect > 0.f) || aspect >= kMinAspect) {
+    return x15c_currentFov;
+  }
+  const float kDegToRad = 3.14159265f / 180.f;
+  return 2.f * std::atan(std::tan(0.5f * x15c_currentFov * kDegToRad) * aspect / kMinAspect) /
+         kDegToRad;
+}
 #endif
 
 const CMatrix4f& CGameCamera::GetPerspectiveMatrix() const {
