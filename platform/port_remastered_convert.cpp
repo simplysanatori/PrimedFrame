@@ -656,6 +656,7 @@ struct Buffer {
   bool used = false;
   std::vector<double> P, N;
   std::vector<double> T;  // xyzw per vertex, empty where the buffer has no tangents
+  std::vector<double> T1; // TANGENT_1, the same, empty where the buffer has none
   std::vector<std::vector<double>> uv;
   std::vector<uint8_t> C;  // rgba per vertex, white where the buffer has no colours
   bool colored = false;
@@ -1423,6 +1424,10 @@ constexpr uint32_t kShaderIceSpreader = 0x088E025E;
 // opaque, so the vote put it on an opaque retail material, a solid white blob;
 // it keeps retail's blended dome instead.
 constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
+// LayerBaseNormal_2TangentStream: each layer's normal is built in its own tangent frame,
+// TANGENT_0 for the first and TANGENT_1 for the second. Their models carry a second frame
+// (CMDL flag 0x10, 15-float NBT entries, DL opcode 0x94).
+constexpr uint32_t kShaderTwoTangent[] = {0xA978D507, 0xD363D694};
 // The shaders whose fragment code multiplies ICAN x ICNC x INCI by the global system
 // values' inverse tonemap exposure (c4[0].z; USE_INVERSEEXPOSURE, MFC4, which no
 // material sets as a bit): heads, eyes, suits, pirates, creatures, the Metroid's body
@@ -3381,6 +3386,25 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           b.T[v * 4 + 3] = (vb.tangents[v * 4 + 3] < 0.0f) != (det < 0.0) ? -1.0 : 1.0;
         }
       }
+      const ModelAttribute* const second = vb.Find("TANGENT_1");
+      if (second != nullptr && !b.T.empty() && !second->isInteger && second->components == 4 &&
+          second->data.size() == b.n * 4) {
+        b.T1.resize(b.n * 4);
+        for (size_t v = 0; v < b.n; ++v) {
+          double t[3];
+          for (int r = 0; r < 3; ++r) {
+            t[r] = 0.0;
+            for (int c = 0; c < 3; ++c) {
+              t[r] += double(second->data[v * 4 + c]) * M[r][c];
+            }
+          }
+          const double len = std::max(std::sqrt((t[0] * t[0] + t[1] * t[1]) + t[2] * t[2]), 1e-9);
+          for (int r = 0; r < 3; ++r) {
+            b.T1[v * 4 + r] = t[r] / len;
+          }
+          b.T1[v * 4 + 3] = (second->data[v * 4 + 3] < 0.0f) != (det < 0.0) ? -1.0 : 1.0;
+        }
+      }
       // Indexed by a material's texcoord, which takes two from each attribute
       // (TEXCOORD_n.xy, then its zw): the vertex shaders hand varying 2 + c to texcoord c.
       for (size_t c = 0; c < vb.uvs.size() * 2; ++c) {
@@ -3473,6 +3497,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
             b.T.push_back(r == 3 ? -b.T[size_t(i) * 4 + r] : b.T[size_t(i) * 4 + r]);
           }
         }
+        if (!b.T1.empty()) {
+          for (int r = 0; r < 4; ++r) {
+            b.T1.push_back(r == 3 ? -b.T1[size_t(i) * 4 + r] : b.T1[size_t(i) * 4 + r]);
+          }
+        }
         for (std::vector<double>& uv : b.uv) {
           if (!uv.empty()) {
             uv.push_back(uv[size_t(i) * 2]);
@@ -3559,6 +3588,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       if (!b.T.empty()) {
         std::copy_n(b.T.begin() + v * 4, 4, b.T.begin() + kept * 4);
       }
+      if (!b.T1.empty()) {
+        std::copy_n(b.T1.begin() + v * 4, 4, b.T1.begin() + kept * 4);
+      }
       std::copy_n(b.C.begin() + v * 4, 4, b.C.begin() + kept * 4);
       for (std::vector<double>& uv : b.uv) {
         if (!uv.empty()) {
@@ -3571,6 +3603,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     b.P.resize(kept * 3);
     b.N.resize(kept * 3);
     b.T.resize(b.T.empty() ? 0 : kept * 4);
+    b.T1.resize(b.T1.empty() ? 0 : kept * 4);
     b.C.resize(kept * 4);
     for (std::vector<double>& uv : b.uv) {
       if (!uv.empty()) {
@@ -3688,7 +3721,24 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (uint32_t bi : bufOrder) {
     useTan = useTan && !buffers[bi].T.empty();
   }
-  std::vector<double> P, N, T;
+  // A second tangent frame (flag 0x10) only for the models that draw a two-tangent shader
+  // with TANGENT_1 on every buffer; its other surfaces keep the first nine floats (0x93).
+  auto twoTangent = [&](const Prim& p) {
+    for (uint32_t id : kShaderTwoTangent) {
+      if (mats[p.mat].shader == id) {
+        return true;
+      }
+    }
+    return false;
+  };
+  bool useTan2 = false;
+  for (const Prim& p : prims) {
+    useTan2 = useTan2 || twoTangent(p);
+  }
+  for (uint32_t bi : bufOrder) {
+    useTan2 = useTan2 && useTan && !buffers[bi].T1.empty();
+  }
+  std::vector<double> P, N, T, T1;
   P.reserve(n * 3);
   N.reserve(n * 3);
   for (uint32_t bi : bufOrder) {
@@ -3696,6 +3746,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     N.insert(N.end(), buffers[bi].N.begin(), buffers[bi].N.end());
     if (useTan) {
       T.insert(T.end(), buffers[bi].T.begin(), buffers[bi].T.end());
+    }
+    if (useTan2) {
+      T1.insert(T1.end(), buffers[bi].T1.begin(), buffers[bi].T1.end());
     }
   }
   auto uvSet = [&](size_t i) {
@@ -4222,7 +4275,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // UV arrays, weight group) become one, so this is lossless; the first of
   // each keeps its place.
   {
-    const size_t width = (6 + (useTan ? 4 : 0) + uvArrays.size() * 2) * 4 + 4 + 4;
+    const size_t width = (6 + (useTan ? 4 : 0) + (useTan2 ? 4 : 0) + uvArrays.size() * 2) * 4 + 4 + 4;
     std::unordered_map<std::string, uint32_t> seen;
     seen.reserve(n * 2);
     std::vector<uint32_t> vmap(n), rep;
@@ -4243,6 +4296,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       if (useTan) {
         for (int c = 0; c < 4; ++c) {
           put(T[v * 4 + c]);
+        }
+      }
+      if (useTan2) {
+        for (int c = 0; c < 4; ++c) {
+          put(T1[v * 4 + c]);
         }
       }
       for (const auto& a : uvArrays) {
@@ -4276,6 +4334,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     take(N, 3);
     if (useTan) {
       take(T, 4);
+    }
+    if (useTan2) {
+      take(T1, 4);
     }
     for (auto& a : uvArrays) {
       take(a, 2);
@@ -4331,6 +4392,17 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
       for (int c = 0; c < 3; ++c) {
         PF(out, tt[c]);
+      }
+      if (useTan2) {
+        const double* t1 = &T1[v * 4];
+        const double c1[3] = {nn[1] * t1[2] - nn[2] * t1[1], nn[2] * t1[0] - nn[0] * t1[2],
+                              nn[0] * t1[1] - nn[1] * t1[0]};
+        for (int c = 0; c < 3; ++c) {
+          PF(out, c1[c] * t1[3]);
+        }
+        for (int c = 0; c < 3; ++c) {
+          PF(out, t1[c]);
+        }
       }
     }
   };
@@ -4438,7 +4510,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         const std::vector<uint32_t>& tris = chunk.second;
         for (size_t s = 0; s < tris.size(); s += kDlChunk) {
           const size_t count = std::min(kDlChunk, tris.size() - s);
-          P8(dl, useTan ? 0x93 : 0x90);
+          P8(dl, useTan2 && twoTangent(p) ? 0x94 : useTan ? 0x93 : 0x90);
           P16(dl, uint32_t(count));
           for (size_t i = s; i < s + count; ++i) {
             const uint32_t j = uint32_t(local[tris[i]]);
@@ -4536,7 +4608,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       Blob dl;
       for (size_t s = 0; s < p.I.size(); s += kDlChunk) {
         const size_t count = std::min(kDlChunk, p.I.size() - s);
-        P8(dl, useTan ? 0x93 : 0x90);
+        P8(dl, useTan2 && twoTangent(p) ? 0x94 : useTan ? 0x93 : 0x90);
         P16(dl, uint32_t(count));
         for (size_t i = s; i < s + count; ++i) {
           const uint32_t j = remap[p.I[i]];
@@ -4627,7 +4699,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // Float normals, and the packed texcoord section is always written (empty): a retail
   // model without it (the Frigate's B8CB941D) would have the game take that empty
   // section for the surface table.
-  P32(out, ((retail.flags | 0x4) & ~uint32_t(0x2)) | (useTan ? 0x8u : 0u));
+  P32(out, ((retail.flags | 0x4) & ~uint32_t(0x2)) | (useTan ? 0x8u : 0u) | (useTan2 ? 0x10u : 0u));
   for (double v : lo) {
     PF(out, v);
   }

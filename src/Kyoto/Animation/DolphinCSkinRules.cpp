@@ -124,10 +124,10 @@ static inline float LoadBigFloat(const uchar* p) {
 // bone owns the next run of vertices, in the same order for the point and
 // normal arrays. The expressions match CTransform4f/CMatrix3f's operator*, so
 // the output is bit-identical to the retail path.
-// With `nbt` every normal entry is nine floats (N, B, T) and all three rotate alike.
+// `vecs` is the vectors per normal entry (1, or 3 for N, B, T, or 5 with a second frame); all rotate alike.
 static void BuildBoneRange(const CVirtualBone* bones, int first, int end, int offset,
                            const uchar* srcPoints, const uchar* srcNormals, float* points,
-                           float* normals, bool nbt) {
+                           float* normals, int vecs) {
   const uchar* src = srcPoints + offset * 12;
   float* out = points + offset * 3;
   for (int b = first; b < end; ++b) {
@@ -144,7 +144,6 @@ static void BuildBoneRange(const CVirtualBone* bones, int first, int end, int of
     }
   }
 
-  const int vecs = nbt ? 3 : 1;
   src = srcNormals + offset * 12 * vecs;
   out = normals + offset * 3 * vecs;
   for (int b = first; b < end; ++b) {
@@ -273,7 +272,7 @@ void CSkinRules::PortBuildPointsAndNormals(const CModel& model, float* points,
                                            float* normals) const {
   const uchar* srcPoints = static_cast< const uchar* >(model.GetCubeModel()->GetPositions());
   const uchar* srcNormals = static_cast< const uchar* >(model.GetCubeModel()->GetNormals());
-  const bool nbt = model.GetCubeModel()->HasNbtNormals();
+  const int nbt = static_cast< int >(model.GetCubeModel()->NormalVecs());
   const CVirtualBone* bones = x0_virtualBones.data();
   const int boneCount = x0_virtualBones.size();
 

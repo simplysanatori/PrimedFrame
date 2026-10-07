@@ -194,9 +194,9 @@ CSkinnedModel::CSkinnedModel(const CSkinnedModel& other)
 CSkinnedModel::~CSkinnedModel() { Skinning::DelSkinnedRef(); }
 
 #ifdef TARGET_PC
-// Bytes per skinned normal: nine floats (N, B, T) when the model has NBT normals.
+// Bytes per skinned normal: nine floats (N, B, T) when the model has NBT normals, fifteen with a second frame.
 static uint NormalStride(const CModel& model) {
-  return model.GetCubeModel()->HasNbtNormals() ? 36 : 12;
+  return model.GetCubeModel()->NormalVecs() * 12;
 }
 #else
 static uint NormalStride(const CModel&) { return 12; }
