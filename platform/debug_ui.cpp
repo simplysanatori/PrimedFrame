@@ -164,6 +164,7 @@ int sDynHoldLow = 0;        // seconds left without stepping down (a step down g
 int sDynHoldFor = 30;       // the next such hold; doubles each time
 PortDebug::EAspectMode sAspectMode = PortDebug::kAspect_Window;
 bool sHudWide = true;
+bool sCinemaBars = false;
 int sHudScale = PortDebug::kHudScaleMax;
 bool sHideHelmet = false;
 bool sHideVisorEffects = false;
@@ -526,6 +527,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     } else if (value == "4:3") {
       sAspectMode = PortDebug::kAspect_4_3;
     }
+  } else if (key == "cinema_bars") {
+    sCinemaBars = ParseBool(value);
   } else if (key == "hud_wide") {
     sHudWide = ParseBool(value);
   } else if (key == "hud_scale") {
@@ -818,6 +821,7 @@ void SaveSettings() {
   file << "# Environment variables (MP_*) override these for a single run.\n";
   file << "aspect=" << aspect << '\n';
   file << "hud_wide=" << (sHudWide ? 1 : 0) << '\n';
+  file << "cinema_bars=" << (sCinemaBars ? 1 : 0) << '\n';
   file << "hud_scale=" << sHudScale << '\n';
   file << "hide_helmet=" << (sHideHelmet ? 1 : 0) << '\n';
   file << "hide_visor_effects=" << (sHideVisorEffects ? 1 : 0) << '\n';
@@ -1063,6 +1067,7 @@ void EnsureInitialized() {
     sAspectMode = PortDebug::kAspect_16_9;
   }
   sHudWide = port::EnvFlag("MP_HUD_WIDE", sHudWide);
+  sCinemaBars = port::EnvFlag("MP_CINEMA_BARS", sCinemaBars);
   if (port::EnvFlag("MP_MOUSE_AIM")) {
     sMouseAim = true;
   }
@@ -1420,6 +1425,11 @@ void SetHudWide(bool enabled) {
   EnsureInitialized();
   sHudWide = enabled;
   MarkDirty();
+}
+
+bool CinemaBars() {
+  EnsureInitialized();
+  return sCinemaBars;
 }
 
 int HudScale() {
@@ -5068,6 +5078,11 @@ void DrawVideoDisplay() {
     SetAspectMode(static_cast< EAspectMode >(aspect));
     MarkDirty();
   }
+  if (ImGui::Checkbox("Cutscene black bars", &sCinemaBars)) {
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("Off: cutscenes narrower than 16:9 fill the screen with the full shot.\n"
+                        "On: the original 16:9 letterbox.");
 
   ImGui::SeparatorText("HUD and view");
   bool hudWide = sHudWide;

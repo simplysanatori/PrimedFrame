@@ -24,7 +24,8 @@
 // Retail divides the angle by its 4:3 aspect and frames the shot for the 16:9
 // letterbox CCameraFilterPass::DrawWideScreen draws over it. Keep that shot's
 // width (in tangent space, so it holds at any aspect) up to 16:9, where the bars
-// crop it to the same band, and past 16:9, where there are no bars, keep the
+// crop it to the same band (or, with PortDebug::CinemaBars off, the whole shot
+// fills the screen), and past 16:9, where there are no bars, keep the
 // band's height and widen instead of cropping the shot (issues #9 and #14).
 static const float kCinematicRetailAspect = 4.f / 3.f;
 static float CinematicFovy(const float hfov, const float aspect) {

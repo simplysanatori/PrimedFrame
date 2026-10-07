@@ -173,6 +173,10 @@ inline int FourThreeWidth(int width, int height) {
 // the aspect-matched in-game HUD frames.
 bool HudWide();
 void SetHudWide(bool enabled);
+// Scripted 16:9 cutscene bars (CCameraFilterPass kFS_CinemaBars). Off by default:
+// below 16:9 the cinematic camera already renders the full shot, so it fills the
+// screen instead.
+bool CinemaBars();
 // HUD scale in percent (50-100). Compact HUD elements shrink toward the nearest
 // screen edge or corner; screen-spanning decoration keeps its size. Only the
 // combat/scan/ball HUD frames and the minimap, not the helmet or menus.

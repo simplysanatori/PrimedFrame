@@ -2,6 +2,8 @@
 #include "MetroidPrime/Cameras/CCameraFilterPass.hpp"
 #include "MetroidPrime/Tweaks/CTweakGui.hpp"
 
+#include "port_debug.h"
+
 #include "Kyoto/Graphics/CGX.hpp"
 #include "Kyoto/Graphics/CGraphics.hpp"
 #include "Kyoto/Graphics/CGraphicsPalette.hpp"
@@ -369,6 +371,12 @@ void CCameraFilterPass::DrawRandomStatic(const CColor& color, float alpha, bool 
 void CCameraFilterPass::Draw() const {
   float t = GetT(x4_nextType == kFT_Passthru);
   CTexture* tex = x24_texObj.null() ? nullptr : **x24_texObj;
+#ifdef TARGET_PC
+  // Port: scripted cutscene letterbox; without it the shot fills the screen below 16:9.
+  if (x8_shape == kFS_CinemaBars && !PortDebug::CinemaBars()) {
+    return;
+  }
+#endif
   DrawFilter(x0_curType, x8_shape, x18_curColor, tex, t);
 }
 
