@@ -523,6 +523,8 @@ bool OverlayVisible();
 // rather than plain translucent buttons. Like OverlayVisible(), performs no lazy
 // initialization, so it is safe to call from the UI thread.
 bool TouchColorsFlag();
+// Whether it writes each button's function under its letter. Same rules.
+bool TouchLabelsFlag();
 // The touch overlay's side margin, the left stick's extra inset and the face
 // buttons' extra inset, in dp. Also safe to call from the UI thread.
 float TouchSideMarginDp();

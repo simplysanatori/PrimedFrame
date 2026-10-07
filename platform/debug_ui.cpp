@@ -187,6 +187,7 @@ std::atomic<bool> sTouchBeamShift{false}; // the touch twin layout's held Beam b
 bool sSpringBall = false;
 bool sSwapScanXray = false;
 bool sTouchColors = false; // Android touch overlay: the GameCube pad's colours
+bool sTouchLabels = true;  // and each button's function under its letter
 bool sFastMorph = false;
 bool sInvulnerable = false;
 // MP_GODMODE, for this run only: -1 unset, else 0 or 1. Never saved, and changing the
@@ -364,6 +365,7 @@ std::atomic< int > sWindowFullscreen{-1};
 std::atomic< bool > sOverlayVisible{false};
 // Same idea for whether the Android touch overlay draws the GameCube pad's colours.
 std::atomic< bool > sTouchColorsFlag{false};
+std::atomic< bool > sTouchLabelsFlag{true};
 // The Android touch overlay's gap to the side edges for every control, and the
 // left stick's extra gap on top of it, in dp. Read from the UI thread.
 constexpr float kTouchMarginMaxDp = 300.f;
@@ -584,6 +586,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sTwinStick = ParseBool(value);
   } else if (key == "touch_colors") {
     sTouchColors = ParseBool(value);
+  } else if (key == "touch_labels") {
+    sTouchLabels = ParseBool(value);
   } else if (key == "stick_aim_rate") {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 50.f && f <= 4000.f) {
@@ -858,6 +862,7 @@ void SaveSettings() {
   file << "mouse_aim=" << (sMouseAim ? 1 : 0) << '\n';
   file << "twin_stick=" << (sTwinStick ? 1 : 0) << '\n';
   file << "touch_colors=" << (sTouchColors ? 1 : 0) << '\n';
+  file << "touch_labels=" << (sTouchLabels ? 1 : 0) << '\n';
   file << "spring_ball=" << (sSpringBall ? 1 : 0) << '\n';
   file << "swap_scan_xray=" << (sSwapScanXray ? 1 : 0) << '\n';
   file << "shift_key=" << sShiftBindings[0] << '\n';
@@ -3159,6 +3164,7 @@ bool Visible() {
 bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); }
 
 bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire); }
+bool TouchLabelsFlag() { return sTouchLabelsFlag.load(std::memory_order_acquire); }
 float TouchSideMarginDp() { return sTouchSideMargin.load(); }
 float TouchStickInsetDp() { return sTouchStickInset.load(); }
 float TouchButtonInsetDp() { return sTouchButtonInset.load(); }
@@ -3629,6 +3635,7 @@ void UpdateControllerNav() {
   }
   sOverlayVisible.store(sVisible, std::memory_order_release);
   sTouchColorsFlag.store(sTouchColors, std::memory_order_release);
+  sTouchLabelsFlag.store(sTouchLabels, std::memory_order_release);
 
   ImGuiIO& io = ImGui::GetIO();
   io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
@@ -5400,6 +5407,11 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("Draws the on-screen buttons in the GameCube pad's colours: green A, red B, yellow "
            "C-stick, purple Z. Off, they are plain and see-through.");
+  if (ImGui::Checkbox("Button descriptions", &sTouchLabels)) {
+    MarkDirty();
+  }
+  ItemHelp("Writes what each on-screen button does next to its letter (Fire, Jump, Lock...). "
+           "Off, only the letters are shown.");
   int touchLayout = sTouchClassic ? 1 : sTouchTwinStick ? 2 : 0;
   static const char* const kTouchLayouts[] = {"Default", "Classic GameCube", "Twin stick (Remastered)"};
   if (ImGui::Combo("Layout", &touchLayout, kTouchLayouts, 3)) {
@@ -7640,6 +7652,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeSetTouchDevice(JNIEnv*, jclas
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchColors(JNIEnv*, jclass) {
   return PortDebug::TouchColorsFlag() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchLabels(JNIEnv*, jclass) {
+  return PortDebug::TouchLabelsFlag() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jfloat JNICALL

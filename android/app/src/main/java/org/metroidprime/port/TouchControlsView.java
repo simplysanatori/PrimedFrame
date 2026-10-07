@@ -117,6 +117,8 @@ final class TouchControlsView extends View {
         ControlButton.kidney("X", BTN_WEST, 0.158f, 0.040f, -37f, 55f, GC_GREY),
         ControlButton.kidney("Y", BTN_NORTH, 0.158f, 0.040f, -150f, 55f, GC_GREY),
     };
+    // What each GameCube face button does, drawn small under its letter.
+    private static final String[] GAMECUBE_FUNCTIONS = {"Fire", "Jump", "Morph", "Missile"};
 
     // The D-pad is one cross, as on the GameCube pad: its centre as fractions of
     // the view, its arms in view heights so it stays square.
@@ -151,9 +153,9 @@ final class TouchControlsView extends View {
     };
 
     private static final PillButton[] GAMECUBE_PILLS = {
-        new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY),
-        new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.190f, GC_GREY),
-        new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.205f, 0.960f, 0.265f, GC_PURPLE),
+        new PillButton("L Lock", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY),
+        new PillButton("R Look", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.190f, GC_GREY),
+        new PillButton("Z Map", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.205f, 0.960f, 0.265f, GC_PURPLE),
         new PillButton("START", -1, BTN_START, 0f, 0f, 0f, 0f),
         new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0f, 0f, 0f, 0f),
     };
@@ -313,6 +315,8 @@ final class TouchControlsView extends View {
     // The GameCube pad's colours, off by default (plain translucent buttons);
     // an F1 setting, so it's re-read every draw.
     private boolean colored;
+    // Each button's function (Fire, Jump...) drawn with its letter.
+    private boolean labels = true;
     // F1 settings too, in px: every control's gap to the side edges, and the
     // left stick's on top of it.
     private float sideMargin;
@@ -381,6 +385,7 @@ final class TouchControlsView extends View {
     private static native boolean nativeTouchClassic();
     private static native boolean nativeTouchTwinStick();
     private static native boolean nativeTouchColors();
+    private static native boolean nativeTouchLabels();
     // F1's side margin (every control) and the left stick's extra inset, in dp.
     private static native float nativeTouchSideMarginDp();
     private static native float nativeTouchStickInsetDp();
@@ -527,6 +532,7 @@ final class TouchControlsView extends View {
         // Off, aim and the wheels are always on.
         final boolean classic = nativeTouchClassic();
         colored = nativeTouchColors();
+        labels = nativeTouchLabels();
         sideMargin = dp(nativeTouchSideMarginDp());
         stickInset = dp(nativeTouchStickInsetDp());
         buttonInset = dp(nativeTouchButtonInsetDp());
@@ -1708,7 +1714,7 @@ final class TouchControlsView extends View {
         if (twin && pill.axis < 0 && pill.button == BTN_RIGHT_SHOULDER) {
             // The Map pill wears Xbox's Menu glyph (three lines), as the hint does.
             final float h = bounds.height();
-            final float gx = bounds.left + bounds.width() * 0.26f;
+            final float gx = labels ? bounds.left + bounds.width() * 0.26f : bounds.centerX();
             final float lineW = h * 0.34f;
             final float lineH = Math.max(1.5f, h * 0.06f);
             final int saved = fillPaint.getColor();
@@ -1719,12 +1725,16 @@ final class TouchControlsView extends View {
                                 ly + lineH / 2f, fillPaint);
             }
             fillPaint.setColor(saved);
-            drawCenteredLabel(canvas, pill.label, bounds.left + bounds.width() * 0.62f,
-                              bounds.centerY(), dp(11));
+            if (labels) {
+                drawCenteredLabel(canvas, pill.label, bounds.left + bounds.width() * 0.62f,
+                                  bounds.centerY(), dp(11));
+            }
             return;
         }
-        drawCenteredLabel(canvas, pill.label, bounds.centerX(), bounds.centerY(),
-                          pill.label.length() > 2 ? dp(11) : dp(13));
+        // "LB Jump": without descriptions, just the button's name.
+        final String label = labels ? pill.label : pill.label.split(" ")[0];
+        drawCenteredLabel(canvas, label, bounds.centerX(), bounds.centerY(),
+                          label.length() > 2 ? dp(11) : dp(13));
     }
 
     private void drawButton(Canvas canvas, ControlButton button, float width, float height) {
@@ -1751,15 +1761,19 @@ final class TouchControlsView extends View {
             canvas.drawCircle(x, y, radius, fillPaint);
             canvas.drawCircle(x, y, radius, strokePaint);
         }
-        if (twin) {
-            // The Xbox letter big, the function small under it.
-            final int index = controlOf(button) - C_JUMP;
-            drawCenteredLabel(canvas, TWIN_LETTERS[index], x, y - radius * 0.2f, dp(17) * scale);
-            drawCenteredLabel(canvas, button.label, x, y + radius * 0.52f, dp(8) * scale);
+        // The letter big (twin: the Xbox one), the function small under it.
+        final String letter = twin ? TWIN_LETTERS[controlOf(button) - C_JUMP] : button.label;
+        final float letterSize = (twin ? dp(17) : dp(15)) * scale;
+        if (!labels) {
+            drawCenteredLabel(canvas, letter, x, y, letterSize);
             return;
         }
-        drawCenteredLabel(canvas, button.label, x, y,
-                          (button.label.length() > 2 ? dp(10) : dp(15)) * scale);
+        // A kidney is sized by its half width.
+        final float size = button.isKidney() ? faceGeo[3] * 1.4f : radius;
+        final String function =
+            twin ? button.label : GAMECUBE_FUNCTIONS[controlOf(button) - C_A];
+        drawCenteredLabel(canvas, letter, x, y - size * 0.2f, letterSize);
+        drawCenteredLabel(canvas, function, x, y + size * 0.52f, dp(8) * scale);
     }
 
     // The hide button: an eye.
