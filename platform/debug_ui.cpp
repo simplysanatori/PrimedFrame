@@ -1698,6 +1698,10 @@ void SetGpuDriver(const std::string& id) {
     sGpuDriver = id;
     MarkDirty();
   }
+  // Keeping confirms only the current choice: another one gets its own trial.
+  if (sGpuDriverKept != id) {
+    sGpuDriverKept.clear();
+  }
 }
 
 const std::string& GpuDriverKept() {
@@ -4758,21 +4762,21 @@ void DrawDiscReadFailedAlert() {
 // So it has to be kept here within kTrialSeconds; otherwise, or if the game closes
 // first (main() finds the marker), the system driver comes back.
 void DrawGpuDriverTrial() {
-  constexpr double kTrialSeconds = 30.0;
-  static double sStartedAt = -1.0;
+  constexpr float kTrialSeconds = 30.f;
+  static float sElapsed = 0.f;
   if (sGpuDriverTrialMarker.empty()) {
     return;
   }
   // The panel stays open meanwhile: it's what routes taps and clicks to this window.
   sVisible = true;
-  const double now = ImGui::GetTime();
-  if (sStartedAt < 0.0) {
-    sStartedAt = now;
-  }
+  // Long frames (pipeline builds, the app in the background) don't eat into the time
+  // the user has to read the prompt.
+  sElapsed += std::min(ImGui::GetIO().DeltaTime, 0.1f);
   const auto finish = [](bool keep) {
     std::error_code ec;
     std::filesystem::remove(sGpuDriverTrialMarker, ec);
     sGpuDriverTrialMarker.clear();
+    sVisible = false;
     if (keep) {
       sGpuDriverKept = PortGpuDriver::Active();
     } else if (sGpuDriver == PortGpuDriver::Active()) {
@@ -4789,19 +4793,20 @@ void DrawGpuDriverTrial() {
       SDL_PushEvent(&quit);
     }
   };
-  const double left = kTrialSeconds - (now - sStartedAt);
-  if (left <= 0.0) {
+  const float left = kTrialSeconds - sElapsed;
+  if (left <= 0.f) {
     finish(false);
     return;
   }
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, 560.f), 0.f));
+  ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, ImGui::GetFontSize() * 32.f), 0.f));
+  const bool open = ImGui::Begin("Keep this Vulkan driver?", nullptr,
+                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                                     ImGuiWindowFlags_NoSavedSettings);
   // Drawn before the panel, which would otherwise cover it.
-  ImGui::SetNextWindowFocus();
-  if (ImGui::Begin("Keep this Vulkan driver?", nullptr,
-                   ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
-                       ImGuiWindowFlags_NoSavedSettings)) {
+  ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+  if (open) {
     ImGui::TextWrapped("The game is running on %s.", aurora_get_gpu_driver());
     ImGui::TextWrapped("If the picture looks right, keep it. Otherwise the game closes in %d s and starts on the "
                        "system driver next time.",
@@ -4811,7 +4816,7 @@ void DrawGpuDriverTrial() {
       finish(true);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Back to the system driver", ImVec2(width, 0.f))) {
+    if (ImGui::Button("Use system driver", ImVec2(width, 0.f))) {
       finish(false);
     }
   }
@@ -5549,6 +5554,8 @@ void ProcessGpuDriverPick() {
   if (id.empty()) {
     sGpuDriverStatus = "Couldn't install it: " + error + ".";
   } else {
+    // A reinstalled id may be a different build of the driver.
+    sGpuDriverKept.clear();
     SetGpuDriver(id);
     sGpuDriverStatus = "Installed " + id + ".";
   }

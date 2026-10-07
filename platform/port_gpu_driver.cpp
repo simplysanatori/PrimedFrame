@@ -128,9 +128,13 @@ bool RenameSoname(std::vector< uint8_t >& elf) {
   if (!hasSoname) {
     return true;
   }
+  if (soname >= elf.size()) {
+    return false;
+  }
   // The string table's address to its place in the file.
   for (const Elf64_Phdr& ph : phdrs) {
-    if (ph.p_type == PT_LOAD && strtab >= ph.p_vaddr && strtab - ph.p_vaddr < ph.p_filesz) {
+    if (ph.p_type == PT_LOAD && fits(ph.p_offset, ph.p_filesz) && strtab >= ph.p_vaddr &&
+        strtab - ph.p_vaddr < ph.p_filesz) {
       const uint64_t at = ph.p_offset + (strtab - ph.p_vaddr) + soname;
       const size_t prefix = sizeof(kSystemPrefix) - 1;
       if (!fits(at, prefix)) {

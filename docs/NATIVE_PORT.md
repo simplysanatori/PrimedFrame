@@ -292,10 +292,20 @@ it. The "Vulkan driver" combo switches between installed drivers and System, and
 the setting `gpu_driver=<id>` (empty = System) takes effect at the next start.
 `MP_GPU_DRIVER=<id>` overrides it for one run. "Running:" under the combo shows
 the driver the GPU reports, e.g. `Mesa Turnip ...`, since adrenotools quietly falls
-back to the system driver when its hooks fail. A start that crashes before the
-GPU is set up leaves `gpu_driver_starting` in the user folder, and the next start
-then switches back to System, like the OpenGL ES toggle does. The OpenGL ES backend
-always uses the system driver.
+back to the system driver when its hooks fail. The OpenGL ES backend always uses
+the system driver.
+
+A driver can start and still draw garbage (Turnip builds for another GPU did), so
+the first run on a newly chosen driver shows "Keep this Vulkan driver?" for 30 s.
+Without "Keep" the game closes and the next start uses System. While that prompt is
+up, `gpu_driver_starting` stays in the user folder, so a crash (or a closed game)
+also reverts at the next start, like the OpenGL ES toggle does. A kept driver is
+saved as `gpu_driver_ok=<id>` and isn't asked about again; `MP_GPU_DRIVER` runs
+skip the prompt.
+
+A library named `vulkan.*` is installed as `mportv.*`, and a `vulkan.*` SONAME is
+patched to match: Android's linker would otherwise hand back the system
+`vulkan.adreno.so` that HWUI already loaded under the same SONAME.
 
 How it reaches Dawn: Dawn only opens `libvulkan.so` by name from its search paths.
 The port copies `libmport_vkshim.so` (which exports only `vkGetInstanceProcAddr`,
