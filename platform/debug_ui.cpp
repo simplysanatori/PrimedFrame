@@ -199,6 +199,7 @@ int sInvulnerableRun = -1;
 bool sLogFile = true;
 bool sLockOnToggle = false;
 bool sStickyCharge = false;
+bool sRapidCharge = false;
 bool sSpringFlick = false;
 float sSpringFlickRate = 6.f;
 float sStickAimRate = 900.f;
@@ -724,6 +725,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sLockOnToggle = ParseBool(value);
   } else if (key == "sticky_charge") {
     sStickyCharge = ParseBool(value);
+  } else if (key == "rapid_charge") {
+    sRapidCharge = ParseBool(value);
   } else if (key == "spring_ball_flick") {
     sSpringFlick = ParseBool(value);
   } else if (key == "spring_ball_flick_rate") {
@@ -887,6 +890,7 @@ void SaveSettings() {
   file << "logging=" << (sLogFile ? 1 : 0) << '\n';
   file << "lock_on_toggle=" << (sLockOnToggle ? 1 : 0) << '\n';
   file << "sticky_charge=" << (sStickyCharge ? 1 : 0) << '\n';
+  file << "rapid_charge=" << (sRapidCharge ? 1 : 0) << '\n';
   file << "spring_ball_flick=" << (sSpringFlick ? 1 : 0) << '\n';
   file << "spring_ball_flick_rate=" << sSpringFlickRate << '\n';
   file << "stick_aim_rate=" << sStickAimRate << '\n';
@@ -1068,6 +1072,7 @@ void EnsureInitialized() {
   }
   sHudWide = port::EnvFlag("MP_HUD_WIDE", sHudWide);
   sCinemaBars = port::EnvFlag("MP_CINEMA_BARS", sCinemaBars);
+  sRapidCharge = port::EnvFlag("MP_RAPID_CHARGE", sRapidCharge);
   if (port::EnvFlag("MP_MOUSE_AIM")) {
     sMouseAim = true;
   }
@@ -1893,6 +1898,17 @@ bool StickyCharge() {
 void SetStickyCharge(bool enabled) {
   EnsureInitialized();
   sStickyCharge = enabled;
+  MarkDirty();
+}
+
+bool RapidCharge() {
+  EnsureInitialized();
+  return sRapidCharge;
+}
+
+void SetRapidCharge(bool enabled) {
+  EnsureInitialized();
+  sRapidCharge = enabled;
   MarkDirty();
 }
 
@@ -5321,6 +5337,13 @@ void DrawControlsOptions() {
   }
   ItemHelp("Taps fire as usual. Hold fire for a moment and let go, and the beam keeps charging; press "
            "fire again to shoot. Needs the Charge Beam.");
+  bool rapidCharge = sRapidCharge;
+  if (ImGui::Checkbox("Remastered charge (rapid fire)", &rapidCharge)) {
+    SetRapidCharge(rapidCharge);
+  }
+  ItemHelp("As in Metroid Prime Remastered: holding fire first shoots a few quick shots (Power 2, "
+           "Wave 1, Plasma 1, Ice none), then charges faster, so a full charge takes about as "
+           "long as before. Needs the Charge Beam.");
   bool swapScanXray = sSwapScanXray;
   if (ImGui::Checkbox("Swap the Scan and X-Ray visor buttons", &swapScanXray)) {
     SetSwapScanXray(swapScanXray);

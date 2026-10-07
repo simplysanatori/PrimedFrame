@@ -203,6 +203,7 @@ enum EPortOption {
   kPO_SkippableCutscenes,
   kPO_MapPickups,
   kPO_ElevatorRide,
+  kPO_RapidCharge,
 };
 #define PORT_OPTION(opt) static_cast< EGameOption >(opt)
 
@@ -255,11 +256,12 @@ static const SGameOption skPortControllerOptions[] = {
     {PORT_OPTION(kPO_FastMorph), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {PORT_OPTION(kPO_LockOnToggle), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {PORT_OPTION(kPO_StickyCharge), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(kPO_RapidCharge), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
 };
 static SOptionCategory skPauseOptions[] = {
     {11, skPortVisorOptions},     {11, skPortDisplayOptions}, {4, skSoundOptions},
-    {10, skPortControllerOptions}, {0, nullptr},
+    {11, skPortControllerOptions}, {0, nullptr},
 };
 
 static bool IsPortOption(EGameOption option) { return option > kGO_RestoreDefaults; }
@@ -280,6 +282,8 @@ static const wchar_t* PortOptionTitle(EGameOption option) {
     return L"Toggle Lock-On";
   case kPO_StickyCharge:
     return L"Sticky Charge";
+  case kPO_RapidCharge:
+    return L"Remastered Charge";
   case kPO_Fov:
     return L"Field of View";
   case kPO_AntiAliasing:
@@ -323,6 +327,8 @@ static int GetPortOption(EGameOption option) {
     return PortDebug::LockOnToggle() ? 1 : 0;
   case kPO_StickyCharge:
     return PortDebug::StickyCharge() ? 1 : 0;
+  case kPO_RapidCharge:
+    return PortDebug::RapidCharge() ? 1 : 0;
   case kPO_Fov:
     return static_cast< int >(PortDebug::FirstPersonFov() + 0.5f);
   case kPO_AntiAliasing:
@@ -376,6 +382,9 @@ static void SetPortOption(EGameOption option, int value) {
     break;
   case kPO_StickyCharge:
     PortDebug::SetStickyCharge(value > 0);
+    break;
+  case kPO_RapidCharge:
+    PortDebug::SetRapidCharge(value > 0);
     break;
   case kPO_Fov:
     PortDebug::SetFirstPersonFov(static_cast< float >(value));
@@ -588,6 +597,7 @@ void CGameOptions::TryRestoreDefaults(const CFinalInput& input, int category, in
         PortDebug::SetFastMorph(false);
         PortDebug::SetLockOnToggle(false);
         PortDebug::SetStickyCharge(false);
+        PortDebug::SetRapidCharge(false);
         break;
       default:
         break;
