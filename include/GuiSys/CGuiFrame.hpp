@@ -64,6 +64,8 @@ public:
   // Port: under the vertical spread, stretch `widget` with the frame decoration instead of moving
   // it rigidly (the missile and threat bars, which run along the side struts).
   void SetSpreadStretch(const CGuiWidget* widget);
+  // Port: the same for `root` and every widget parented (at any depth) under it.
+  void SetSpreadStretchTree(const CGuiWidget* root);
 #endif
 
 private:

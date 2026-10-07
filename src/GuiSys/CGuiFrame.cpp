@@ -203,6 +203,7 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
           const bool spansHeight = spreadY != 1.f && quarterHeight > 0.f &&
                                    bounds.GetMinPoint().GetZ() < -quarterHeight &&
                                    bounds.GetMaxPoint().GetZ() > quarterHeight;
+
           if (bounds.GetMinPoint().GetY() > projection.GetNear() && (spansWidth || spansHeight)) {
             // This intentionally widens vertical strokes too, but leaves view Y
             // and depth untouched; compact widgets retain the rigid path below.
@@ -240,6 +241,17 @@ void CGuiFrame::SetSpreadStretch(const CGuiWidget* widget) {
   if (widget && std::find(mSpreadStretch.begin(), mSpreadStretch.end(), widget) ==
                     mSpreadStretch.end()) {
     mSpreadStretch.push_back(widget);
+  }
+}
+
+void CGuiFrame::SetSpreadStretchTree(const CGuiWidget* root) {
+  for (CGuiWidget* widget : x2c_widgets) {
+    for (const CGuiObject* obj = widget; obj; obj = obj->GetParent()) {
+      if (obj == root) {
+        SetSpreadStretch(widget);
+        break;
+      }
+    }
   }
 }
 
