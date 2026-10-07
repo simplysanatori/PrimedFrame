@@ -1895,8 +1895,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_pass = vec3f(0.0);
       if (ubuf.pbr_emissive.w > 0.0) {{
           // A height blend (snow and ice laid over rock): the base map's alpha lifts the
-          // vertex alpha, and a smoothstep as wide as the threshold cuts the edge.
-          let pbr_hx = clamp(({0}.a + 1.0){9} * 2.0 - 1.0, 0.0, 1.0);
+          // vertex alpha, and a smoothstep as wide as the threshold cuts the edge. The
+          // alpha is squared (ca10c453: fma(fma(a*a, vw, vw), 2, -1)).
+          let pbr_hx = clamp(({0}.a * {0}.a + 1.0){9} * 2.0 - 1.0, 0.0, 1.0);
           let pbr_hs = clamp((pbr_hx - 0.5 + ubuf.pbr_emissive.w) / (2.0 * ubuf.pbr_emissive.w), 0.0, 1.0);
           pbr_alpha = pbr_hs * pbr_hs * (3.0 - 2.0 * pbr_hs);
       }}
