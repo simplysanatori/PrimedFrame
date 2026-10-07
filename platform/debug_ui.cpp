@@ -1169,7 +1169,7 @@ void EnsureInitialized() {
   ApplyLiveSplit();
   ApplyDiscord();
   ApplyUpdateCheck();
-  PortUpdateCheck::CheckNow(); // every launch, not only once the day is up
+  PortUpdateCheck::CheckNow(); // once per launch
 }
 } // namespace
 
@@ -5131,9 +5131,10 @@ void DrawUpdateSection() {
   if (ImGui::Checkbox("Check for updates", &check)) {
     sUpdateCheck = check;
     ApplyUpdateCheck();
+    PortUpdateCheck::CheckNow(); // switched on: check now, not next launch
     MarkDirty();
   }
-  ImGui::SetItemTooltip("Asks GitHub at launch (and daily while running) whether a newer release is out. Nothing else is sent.");
+  ImGui::SetItemTooltip("Asks GitHub at launch whether a newer release is out. Nothing else is sent.");
   ImGui::SameLine();
   const PortUpdateCheck::EStatus status = PortUpdateCheck::Status();
   switch (status) {

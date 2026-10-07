@@ -3,15 +3,13 @@
 #include <cstdint>
 #include <string>
 
-// Asks GitHub at launch, then once a day while running, whether a newer
-// release than this build is out (api.github.com, .../releases/latest), on a
-// thread of its own. The answer is
+// Asks GitHub at launch whether a newer release than this build is out
+// (api.github.com, .../releases/latest), on a thread of its own. The answer is
 // kept in <user>/update-check.txt, so a known newer release shows at once,
 // even offline, until this build is that version or newer.
 namespace PortUpdateCheck {
 
 constexpr const char* kRepo = "Odrannnn/MetroidPrimePort";
-constexpr int64_t kInterval = 24 * 60 * 60; // seconds between checks
 
 struct Release {
   std::string version; // "0.19.0", no leading v

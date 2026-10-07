@@ -138,18 +138,12 @@ struct Runtime {
     return true;
   }
 
+  // Checks only when asked: once at launch (debug_ui calls CheckNow) and on "Check now".
   void Run() {
     std::unique_lock<std::mutex> lock(mutex);
     while (!stop) {
-      const int64_t now = Now();
-      // A clock set back counts as due, not as years away.
-      const bool due = enabled && (forceCheck || checked <= 0 || now - checked >= kInterval || now < checked);
-      if (!due) {
-        if (enabled) {
-          wake.wait_for(lock, std::chrono::seconds(std::max<int64_t>(1, checked + kInterval - now)));
-        } else {
-          wake.wait(lock);
-        }
+      if (!enabled || !forceCheck) {
+        wake.wait(lock);
         continue;
       }
       forceCheck = false;
@@ -178,8 +172,6 @@ struct Runtime {
         PortLog::Write("port: update check failed: %s\n", why.c_str());
         error = why;
         status = kStatus_Failed;
-        // Try again in an hour, not on every frame or only tomorrow.
-        wake.wait_for(lock, std::chrono::hours(1), [this] { return stop || forceCheck || !enabled; });
       }
     }
     workerDone = true;

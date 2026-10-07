@@ -80,6 +80,7 @@ int main(int argc, char** argv) {
     const std::string fresh = state + ".live";
     std::remove(fresh.c_str());
     Configure(true, "0.0.1", fresh);
+    CheckNow();
     for (int i = 0; i < 300 && LastChecked() == 0 && Status() != kStatus_Failed; ++i) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
