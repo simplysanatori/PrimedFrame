@@ -210,6 +210,9 @@ int sAnisotropy = 16;
 bool sOpenGles = false;
 bool sOpenGlesAtStart = false;
 bool sUnlockHardMode = false;
+// Setting `storage_clamp`: -1 auto (aurora decides), 0 off, 1 on; read once when shaders are first made.
+int sStorageClamp = -1;
+int sStorageClampAtStart = -1;
 bool sUnlockFusionSuit = false;
 bool sUnlockGalleries = false;
 bool sSpeedrunTimer = false;
@@ -579,6 +582,10 @@ void ApplySetting(const std::string& key, const std::string& value) {
   } else if (key == "anisotropy") {
     const int a = std::atoi(value.c_str());
     if (a >= 1 && a <= 16) {
+  } else if (key == "storage_clamp") {
+    const int v = std::atoi(value.c_str());
+    sStorageClamp = v < 0 ? -1 : (v > 0 ? 1 : 0);
+    sStorageClampAtStart = sStorageClamp;
       sAnisotropy = a;
     }
   } else if (key == "fov") {
@@ -845,6 +852,7 @@ void SaveSettings() {
   file << "unlock_hard_mode=" << (sUnlockHardMode ? 1 : 0) << '\n';
   file << "unlock_fusion_suit=" << (sUnlockFusionSuit ? 1 : 0) << '\n';
   file << "unlock_galleries=" << (sUnlockGalleries ? 1 : 0) << '\n';
+  file << "storage_clamp=" << sStorageClamp << '\n';
   file << "speedrun_timer=" << (sSpeedrunTimer ? 1 : 0) << '\n';
   file << "livesplit=" << (sLiveSplit ? 1 : 0) << '\n';
   file << "livesplit_address=" << sLiveSplitAddress << '\n';
@@ -1598,6 +1606,18 @@ int Anisotropy() {
   EnsureInitialized();
   return sAnisotropy;
 }
+void ApplyStorageClamp() {
+  EnsureInitialized();
+  if (sStorageClamp < 0 || std::getenv("MP_STORAGE_CLAMP") != nullptr) {
+    return;
+  }
+#ifdef _WIN32
+  _putenv_s("MP_STORAGE_CLAMP", sStorageClamp > 0 ? "1" : "0");
+#else
+  setenv("MP_STORAGE_CLAMP", sStorageClamp > 0 ? "1" : "0", 1);
+#endif
+}
+
 
 void SetAnisotropy(int level) {
   EnsureInitialized();
@@ -5216,6 +5236,22 @@ void DrawVideoQuality() {
     if (ImGui::SliderFloat("EFB scale", &scale, 1.f, 4.f, "%.2fx")) {
       sPendingScale = scale;
     }
+  {
+    static const char* const kClampNames[] = {"Auto", "Off", "On"};
+    int clamp = sStorageClamp + 1;
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.f);
+    if (ImGui::Combo("Adreno shader fix", &clamp, kClampNames, 3)) {
+      sStorageClamp = clamp - 1;
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Reads GPU buffers without the bounds-check branch some Adreno Vulkan drivers\n"
+                          "miscompile (the world draws black, issue #7). Auto turns it on for the Adreno 730;\n"
+                          "try On if the world is black on another Adreno. Takes effect after a restart.");
+    if (sStorageClamp != sStorageClampAtStart) {
+      ImGui::SameLine();
+      ImGui::TextColored(ThemeWarnColor(), "Restart to apply");
+    }
+  }
     if (sPendingScale > 0.f && !ImGui::IsItemActive()) {
       SetRenderScale(sPendingScale);
       MarkDirty();

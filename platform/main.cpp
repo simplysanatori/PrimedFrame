@@ -1085,6 +1085,7 @@ int main(int argc, char** argv) {
             std::ofstream(glesMarker) << "1\n";
         }
     }
+    PortDebug::ApplyStorageClamp();
     aurora_initialize(argc, argv, &config);
     if (config.desiredBackend == BACKEND_OPENGLES) {
         std::error_code ec;
