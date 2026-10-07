@@ -13,6 +13,7 @@
 #include "port_log_file.h"
 #include "port_paths.h"
 #include "port_apclient.h"
+#include "port_rando_gen.h"
 #include "port_controls.h"
 #include "port_data_folder.h"
 #include "port_gci.h"
@@ -200,6 +201,9 @@ bool sLogFile = true;
 bool sLockOnToggle = false;
 bool sStickyCharge = false;
 bool sRapidCharge = false;
+// The Randomizer page's options; the console's `rando gen` reads them too.
+std::mutex sRandoMutex;
+PortRandoGen::Settings sRandoSettings;
 bool sSpringFlick = false;
 float sSpringFlickRate = 6.f;
 float sStickAimRate = 900.f;
@@ -734,6 +738,13 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sStickyCharge = ParseBool(value);
   } else if (key == "rapid_charge") {
     sRapidCharge = ParseBool(value);
+  } else if (key == "rando_settings") {
+    PortRandoGen::Settings parsed;
+    if (!PortRandoGen::ParseSettings(value, parsed)) {
+      parsed = PortRandoGen::Settings();
+    }
+    std::lock_guard< std::mutex > lock(sRandoMutex);
+    sRandoSettings = parsed;
   } else if (key == "spring_ball_flick") {
     sSpringFlick = ParseBool(value);
   } else if (key == "spring_ball_flick_rate") {
@@ -899,6 +910,10 @@ void SaveSettings() {
   file << "lock_on_toggle=" << (sLockOnToggle ? 1 : 0) << '\n';
   file << "sticky_charge=" << (sStickyCharge ? 1 : 0) << '\n';
   file << "rapid_charge=" << (sRapidCharge ? 1 : 0) << '\n';
+  {
+    std::lock_guard< std::mutex > lock(sRandoMutex);
+    file << "rando_settings=" << PortRandoGen::SettingsText(sRandoSettings) << '\n';
+  }
   file << "spring_ball_flick=" << (sSpringFlick ? 1 : 0) << '\n';
   file << "spring_ball_flick_rate=" << sSpringFlickRate << '\n';
   file << "stick_aim_rate=" << sStickAimRate << '\n';
@@ -1919,6 +1934,12 @@ void SetStickyCharge(bool enabled) {
   EnsureInitialized();
   sStickyCharge = enabled;
   MarkDirty();
+}
+
+PortRandoGen::Settings RandoSettings() {
+  EnsureInitialized();
+  std::lock_guard< std::mutex > lock(sRandoMutex);
+  return sRandoSettings;
 }
 
 bool RapidCharge() {
@@ -7092,12 +7113,290 @@ struct DebugPage {
   void (*draw)();
 };
 
+// Trick names are comma-separated in the settings; the box shows them so.
+std::string JoinNames(const std::vector< std::string >& names) {
+  std::string text;
+  for (const std::string& name : names) {
+    text += (text.empty() ? "" : ", ") + name;
+  }
+  return text;
+}
+
+std::vector< std::string > SplitNames(const char* text) {
+  std::vector< std::string > names;
+  std::string item;
+  for (const char* c = text;; ++c) {
+    if (*c == ',' || *c == '\0') {
+      item = Trim(item);
+      if (!item.empty()) {
+        names.push_back(item);
+      }
+      item.clear();
+      if (*c == '\0') {
+        break;
+      }
+    } else {
+      item += *c;
+    }
+  }
+  return names;
+}
+
+struct RandoSeedRow {
+  std::string name;
+  std::string summary;
+  long long modified = 0;
+};
+
+std::string RandoSummary(const PortRandoGen::Settings& s) {
+  static const char* const kBosses[] = {"both bosses", "Ridley", "Prime", "no boss"};
+  std::string text = std::to_string(s.requiredArtifacts) + " artifacts, " +
+                     kBosses[std::clamp(s.finalBosses, 0, 3)];
+  if (s.elevatorRandomization) {
+    text += ", elevators";
+  }
+  if (s.doorColorRandomization != 0) {
+    text += s.doorColorRandomization == 1 ? ", doors global" : ", doors regional";
+  }
+  if (s.trickDifficulty >= 0) {
+    static const char* const kTricks[] = {"easy", "medium", "hard"};
+    text += std::string(", tricks ") + kTricks[std::min(s.trickDifficulty, 2)];
+  }
+  return text;
+}
+
+std::vector< RandoSeedRow > ScanRandoSeeds() {
+  std::vector< RandoSeedRow > rows;
+  std::error_code ec;
+  for (const auto& entry : std::filesystem::directory_iterator(PortRandoGen::SeedDirectory(), ec)) {
+    const std::string file = entry.path().filename().string();
+    if (file.size() <= 5 || file.compare(file.size() - 5, 5, ".json") != 0 ||
+        (file.size() > 11 && file.compare(file.size() - 11, 11, ".state.json") == 0)) {
+      continue;
+    }
+    RandoSeedRow row;
+    row.name = file.substr(0, file.size() - 5);
+    PortRandoGen::Seed seed;
+    std::string error;
+    row.summary = PortRandoGen::Load(entry.path().string(), seed, error) ? RandoSummary(seed.settings)
+                                                                          : "unreadable: " + error;
+    const auto time = std::filesystem::last_write_time(entry.path(), ec);
+    row.modified = ec ? 0 : static_cast< long long >(time.time_since_epoch().count());
+    rows.push_back(std::move(row));
+  }
+  std::sort(rows.begin(), rows.end(),
+            [](const RandoSeedRow& a, const RandoSeedRow& b) { return a.modified > b.modified; });
+  return rows;
+}
+
+// The built-in randomizer: options, seed text, and the seeds made so far.
+// Playing goes through the Archipelago client, so it replaces any session.
+void DrawRandomizerTab() {
+  static bool sScanned = false;
+  static std::vector< RandoSeedRow > sRows;
+  static char sSeedText[64];
+  static char sAllow[256];
+  static char sDeny[256];
+  static bool sTextLoaded = false;
+  static std::string sMessage;
+  static bool sMessageError = false;
+  static std::string sSpoilerName;
+  static std::string sSpoilerText;
+  static std::string sSpoilerNote;
+  static bool sWasShown = false;
+
+  if (!sWasShown) {
+    sScanned = false;
+  }
+  sWasShown = true;
+  if (!sScanned) {
+    sRows = ScanRandoSeeds();
+    sScanned = true;
+  }
+
+  PortRandoGen::Settings s;
+  {
+    std::lock_guard< std::mutex > lock(sRandoMutex);
+    s = sRandoSettings;
+  }
+  if (!sTextLoaded) {
+    sTextLoaded = true;
+    SDL_strlcpy(sAllow, JoinNames(s.trickAllow).c_str(), sizeof(sAllow));
+    SDL_strlcpy(sDeny, JoinNames(s.trickDeny).c_str(), sizeof(sDeny));
+  }
+  bool changed = false;
+  const auto check = [&](const char* label, bool& value, const char* help) {
+    changed |= ImGui::Checkbox(label, &value);
+    ItemHelp(help);
+  };
+
+  ImGui::TextWrapped("Makes a seed from these options and plays it as a one-player Archipelago game "
+                     "(slot Samus), with its own save card. The same options and seed text give the "
+                     "same seed everywhere.");
+
+  ImGui::SeparatorText("Goal");
+  changed |= ImGui::SliderInt("Required artifacts", &s.requiredArtifacts, 1, 12);
+  ItemHelp("How many of the 12 Chozo artifacts open the way to the end.");
+  changed |= ImGui::Combo("Final bosses", &s.finalBosses, "Ridley and Prime\0Ridley\0Prime\0None\0");
+  ItemHelp("Which bosses must be beaten to finish. None finishes at the artifact temple.");
+  check("Artifact hints", s.artifactHints, "The Artifact Temple totems say where each artifact is.");
+
+  ImGui::SeparatorText("Items");
+  check("Missile Launcher", s.missileLauncher, "Missiles are useless until the Missile Launcher is found.");
+  check("Main Power Bomb", s.mainPowerBomb, "Power bombs need the main Power Bomb item.");
+  check("Shuffle Scan Visor", s.shuffleScanVisor, "The Scan Visor is an item to find, not a start item.");
+  check("Progressive beams", s.progressiveBeams, "Each beam has upgrades received in order, not as named items.");
+  check("Spring Ball", s.springBall, "Include the Spring Ball in the item pool.");
+  changed |= ImGui::Combo("Remove X-Ray requirement", &s.removeXray,
+                          "None\0Most\0All but the Omega Pirate\0");
+  ItemHelp("Takes the X-Ray Visor out of the logic where it is needed to see hidden things.");
+  changed |= ImGui::Combo("Remove Thermal requirement", &s.removeThermal, "None\0Most\0All\0");
+  ItemHelp("Takes the Thermal Visor out of the logic where it is needed.");
+  check("Remove Hive Mecha", s.removeHiveMecha, "Skips the Hive Mecha fight in Hive Totem.");
+
+  ImGui::SeparatorText("World");
+  check("Pre-scanned elevators", s.preScanElevators, "Elevator destinations are known without scanning them.");
+  check("Elevator randomization", s.elevatorRandomization, "Elevators lead to other areas.");
+  changed |= ImGui::Combo("Door colours", &s.doorColorRandomization, "None\0Global\0Regional\0");
+  ItemHelp("Shuffles the coloured door locks, everywhere or within each area.");
+  check("Backwards Lower Mines", s.backwardsLowerMines, "Phazon Mines' lower levels can be entered from the other end.");
+  check("Flaahgra power bombs", s.flaahgraPowerBombs, "Flaahgra can be beaten with power bombs.");
+
+  ImGui::SeparatorText("Logic");
+  check("Heat damage without the Varia Suit", s.nonVariaHeatDamage, "Hot rooms hurt without Varia, so other suits or tanks can carry you through.");
+  changed |= ImGui::Combo("Staggered suit damage", &s.staggeredSuitDamage, "Default\0Progressive\0Additive\0");
+  ItemHelp("How the suits split damage between them.");
+  int combat = s.combatLogic + 1;
+  if (ImGui::Combo("Combat logic", &combat, "None\0Normal\0Minimal\0")) {
+    s.combatLogic = combat - 1;
+    changed = true;
+  }
+  ItemHelp("How strictly the logic expects you to have the gear to win fights.");
+  int tricks = s.trickDifficulty + 1;
+  if (ImGui::Combo("Trick difficulty", &tricks, "None\0Easy\0Medium\0Hard\0")) {
+    s.trickDifficulty = tricks - 1;
+    changed = true;
+  }
+  ItemHelp("Sequence breaks the logic may expect, up to this difficulty.");
+  if (ImGui::InputText("Allow tricks", sAllow, sizeof(sAllow))) {
+    s.trickAllow = SplitNames(sAllow);
+    changed = true;
+  }
+  ItemHelp("Trick names, separated by commas, always expected whatever the difficulty.");
+  if (ImGui::InputText("Deny tricks", sDeny, sizeof(sDeny))) {
+    s.trickDeny = SplitNames(sDeny);
+    changed = true;
+  }
+  ItemHelp("Trick names, separated by commas, never expected whatever the difficulty.");
+
+  if (changed) {
+    {
+      std::lock_guard< std::mutex > lock(sRandoMutex);
+      sRandoSettings = s;
+    }
+    MarkDirty();
+  }
+  if (ImGui::Button("Reset options")) {
+    {
+      std::lock_guard< std::mutex > lock(sRandoMutex);
+      sRandoSettings = PortRandoGen::Settings();
+    }
+    sTextLoaded = false;
+    MarkDirty();
+  }
+
+  ImGui::SeparatorText("New seed");
+  ImGui::InputTextWithHint("Seed", "empty picks a random one", sSeedText, sizeof(sSeedText));
+  ItemHelp("Any text. The same text with the same options makes the same seed.");
+  ImGui::SameLine();
+  if (ImGui::Button("Random")) {
+    sSeedText[0] = '\0';
+  }
+  if (ImGui::Button("Generate & Play")) {
+    PortRandoGen::Seed seed;
+    std::string error;
+    sMessageError = true;
+    if (!PortRandoGen::Generate(s, sSeedText, seed, error) || !PortRandoGen::Save(seed, error) ||
+        !PortAp::PlaySolo(seed.name, error)) {
+      sMessage = error;
+    } else {
+      sMessageError = false;
+      sMessage = "Playing seed " + seed.name;
+    }
+    sScanned = false;
+  }
+  ItemHelp("Makes the seed, saves it and starts playing it. If an Archipelago session is running, it "
+           "is replaced.");
+  if (!sMessage.empty()) {
+    ImGui::TextColored(sMessageError ? ImVec4(1.f, 0.4f, 0.4f, 1.f) : ImVec4(0.5f, 1.f, 0.5f, 1.f), "%s",
+                       sMessage.c_str());
+  }
+
+  ImGui::SeparatorText("Seeds");
+  if (sRows.empty()) {
+    ImGui::TextDisabled("No seeds yet.");
+  }
+  for (const RandoSeedRow& row : sRows) {
+    ImGui::PushID(row.name.c_str());
+    ImGui::TextUnformatted(row.name.c_str());
+    ImGui::TextDisabled("%s", row.summary.c_str());
+    if (ImGui::Button("Play")) {
+      std::string error;
+      sMessageError = !PortAp::PlaySolo(row.name, error);
+      sMessage = sMessageError ? error : "Playing seed " + row.name;
+    }
+    ItemHelp("Plays this seed with its own save card. A running Archipelago session is replaced.");
+    ImGui::SameLine();
+    if (ImGui::Button("Spoiler")) {
+      PortRandoGen::Seed seed;
+      std::string error;
+      sSpoilerName = row.name;
+      sSpoilerNote.clear();
+      sSpoilerText = PortRandoGen::Load(PortRandoGen::SeedPath(row.name), seed, error) ? seed.spoiler
+                                                                                       : "Could not read: " + error;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Write spoiler file")) {
+      PortRandoGen::Seed seed;
+      std::string error;
+      sSpoilerName = row.name;
+      if (!PortRandoGen::Load(PortRandoGen::SeedPath(row.name), seed, error)) {
+        sSpoilerNote = "Could not read: " + error;
+      } else {
+        const std::string path = PortRandoGen::SeedDirectory() + "/" + row.name + ".spoiler.txt";
+        std::ofstream out(path, std::ios::trunc);
+        out << seed.spoiler;
+        sSpoilerNote = out.good() ? "Wrote " + path : "Could not write " + path;
+      }
+    }
+    ImGui::PopID();
+    ImGui::Separator();
+  }
+  if (!sSpoilerNote.empty()) {
+    ImGui::TextWrapped("%s", sSpoilerNote.c_str());
+  }
+  if (!sSpoilerText.empty()) {
+    ImGui::SeparatorText("Spoiler");
+    ImGui::TextColored(ImVec4(1.f, 0.8f, 0.3f, 1.f), "This shows where everything is in seed %s.",
+                       sSpoilerName.c_str());
+    if (ImGui::Button("Hide")) {
+      sSpoilerText.clear();
+    } else if (ImGui::BeginChild("randoSpoiler", ImVec2(0, ImGui::GetFontSize() * 24.f), ImGuiChildFlags_Borders)) {
+      ImGui::TextUnformatted(sSpoilerText.c_str());
+    }
+    if (!sSpoilerText.empty()) {
+      ImGui::EndChild();
+    }
+  }
+}
+
 const DebugPage kDebugPages[] = {
     {"Game", DrawGameTab},
     {"Controls", DrawControlsTab},
     {"Video", DrawVideoTab},
     {"Remastered", DrawRemasteredTab},
     {"Mods", DrawModsTab},
+    {"Randomizer", DrawRandomizerTab},
     {"Archipelago", DrawArchipelagoTab},
     {"Tracker", DrawTrackerTab},
     {"Save states", DrawSaveStatesTab},
