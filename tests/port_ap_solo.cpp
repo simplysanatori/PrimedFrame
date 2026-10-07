@@ -192,6 +192,17 @@ int main() {
               loaded.settings == seed.settings,
           "a different seed with the same name gets a new one and leaves the old file");
     std::filesystem::remove(PortRandoGen::SeedPath(other.name));
+    Check(PortRandoGen::SeedPath("x.state") != PortApSolo::StatePath("x"),
+          "a seed named x.state doesn't take seed x's state file");
+    PortRandoGen::Seed longSeed = seed;
+    longSeed.name = std::string(80, 'L');
+    PortRandoGen::Seed longOther = longSeed;
+    longOther.settings.requiredArtifacts = 7;
+    Check(PortRandoGen::Save(longSeed, error) && PortRandoGen::Save(longOther, error) &&
+              PortRandoGen::SeedPath(longOther.name) != PortRandoGen::SeedPath(longSeed.name),
+          "a long name that is taken still gets a free one");
+    std::filesystem::remove(PortRandoGen::SeedPath(longSeed.name));
+    std::filesystem::remove(PortRandoGen::SeedPath(longOther.name));
   }
 
   // The handshake through the real session.

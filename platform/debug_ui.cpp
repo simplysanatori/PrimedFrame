@@ -7203,12 +7203,12 @@ void DrawRandomizerTab() {
   static std::string sSpoilerName;
   static std::string sSpoilerText;
   static std::string sSpoilerNote;
-  static bool sWasShown = false;
-
-  if (!sWasShown) {
+  // The list is read again each time the page is opened (a frame passed
+  // without it), so seeds made with the console's `rando gen` show up.
+  static int sLastFrame = -2;
+  if (ImGui::GetFrameCount() != sLastFrame + 1)
     sScanned = false;
-  }
-  sWasShown = true;
+  sLastFrame = ImGui::GetFrameCount();
   if (!sScanned) {
     sRows = ScanRandoSeeds();
     sScanned = true;
@@ -7246,7 +7246,7 @@ void DrawRandomizerTab() {
   check("Main Power Bomb", s.mainPowerBomb, "Power bombs need the main Power Bomb item.");
   check("Shuffle Scan Visor", s.shuffleScanVisor, "The Scan Visor is an item to find, not a start item.");
   check("Progressive beams", s.progressiveBeams, "Each beam has upgrades received in order, not as named items.");
-  check("Spring Ball", s.springBall, "Include the Spring Ball in the item pool.");
+  check("Spring Ball", s.springBall, "Morph Ball Bombs also give the Spring Ball (jump in Morph Ball form).");
   changed |= ImGui::Combo("Remove X-Ray requirement", &s.removeXray,
                           "None\0Most\0All but the Omega Pirate\0");
   ItemHelp("Takes the X-Ray Visor out of the logic where it is needed to see hidden things.");

@@ -1,3 +1,4 @@
+#include "port_strings.h"
 #include "port_rando_gen.h"
 
 #include "port_ap_logic.h"
@@ -529,40 +530,23 @@ bool CanComplete(const Settings& s, const Counts& have) {
 // ---------------------------------------------------------------------------
 // Output.
 
-std::string Quote(const std::string& text) {
-  std::string out = "\"";
-  for (const char c : text) {
-    if (c == '"' || c == '\\') {
-      out += '\\';
-      out += c;
-    } else if (static_cast< unsigned char >(c) < 0x20) {
-      char escape[8];
-      std::snprintf(escape, sizeof(escape), "\\u%04x", c);
-      out += escape;
-    } else {
-      out += c;
-    }
-  }
-  return out + "\"";
-}
-
 void AppendNames(std::ostringstream& text, const char* key, const std::vector< std::string >& names) {
   text << ",\"" << key << "\":[";
   for (size_t i = 0; i < names.size(); ++i)
-    text << (i != 0 ? "," : "") << Quote(names[i]);
+    text << (i != 0 ? "," : "") << port::JsonQuote(names[i]);
   text << ']';
 }
 
 void AppendMapping(std::ostringstream& text, const ElevatorMap& mapping, bool withArea) {
   bool firstArea = true;
   for (const auto& area : mapping) {
-    text << (firstArea ? "" : ",") << Quote(area.first) << ":{";
+    text << (firstArea ? "" : ",") << port::JsonQuote(area.first) << ":{";
     firstArea = false;
     if (withArea)
-      text << "\"area\":" << Quote(area.first) << ",\"type_mapping\":{";
+      text << "\"area\":" << port::JsonQuote(area.first) << ",\"type_mapping\":{";
     bool first = true;
     for (const auto& entry : area.second) {
-      text << (first ? "" : ",") << Quote(entry.first) << ':' << Quote(entry.second);
+      text << (first ? "" : ",") << port::JsonQuote(entry.first) << ':' << port::JsonQuote(entry.second);
       first = false;
     }
     text << (withArea ? "}}" : "}");
@@ -602,7 +586,7 @@ std::string SlotData(const Settings& s, const Attempt& a, const std::vector< int
        << ",\"artifact_hints\":" << flag(s.artifactHints);
   AppendNames(text, "trick_allow_list", s.trickAllow);
   AppendNames(text, "trick_deny_list", s.trickDeny);
-  text << ",\"starting_room_name\":" << Quote(a.layout.startRoom) << ",\"elevator_mapping\":{";
+  text << ",\"starting_room_name\":" << port::JsonQuote(a.layout.startRoom) << ",\"elevator_mapping\":{";
   AppendMapping(text, a.layout.elevators, false);
   text << '}';
   if (a.layout.hasDoorColors) {
@@ -617,7 +601,7 @@ std::string SlotData(const Settings& s, const Attempt& a, const std::vector< int
       for (size_t i = 0; i < kLocationCount; ++i) {
         if (a.placed[i] != artifact)
           continue;
-        text << (first ? "" : ",") << Quote(ItemLabel(MP::kItemBase + artifact)) << ":["
+        text << (first ? "" : ",") << port::JsonQuote(ItemLabel(MP::kItemBase + artifact)) << ":["
              << locationIds[i] << ",1]";
         first = false;
       }
@@ -848,7 +832,7 @@ bool Generate(const Settings& settings, const std::string& seedText, Seed& out, 
   s.removeThermal = std::clamp(s.removeThermal, 0, 2);
 
   const std::string name = seedText.empty() ? RandomName() : seedText;
-  const uint64_t hash = HashInput(settings, name);
+  const uint64_t hash = HashInput(s, name);
   size_t locationCount = 0;
   const MP::Location* locations = MP::Locations(locationCount);
   std::vector< int64_t > locationIds;

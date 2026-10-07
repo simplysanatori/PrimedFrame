@@ -1,3 +1,4 @@
+#include "port_strings.h"
 #include "port_rando_gen.h"
 
 #include "port_json.h"
@@ -19,29 +20,6 @@ namespace {
 
 constexpr int kSeedFileVersion = 1;
 
-std::string Quote(const std::string& text) {
-  std::string out = "\"";
-  for (const char c : text) {
-    switch (c) {
-    case '"': out += "\\\""; break;
-    case '\\': out += "\\\\"; break;
-    case '\n': out += "\\n"; break;
-    case '\r': out += "\\r"; break;
-    case '\t': out += "\\t"; break;
-    default:
-      if (static_cast< unsigned char >(c) < 0x20) {
-        char escape[8];
-        std::snprintf(escape, sizeof(escape), "\\u%04x", static_cast< unsigned >(c));
-        out += escape;
-      } else {
-        out.push_back(c);
-      }
-    }
-  }
-  out.push_back('"');
-  return out;
-}
-
 // PortJson only parses, and slot_data is kept as JSON text, so a loaded value
 // is written back out here. Whole numbers stay integers (item and location ids).
 void Write(const PortJson::Value& value, std::string& out) {
@@ -58,7 +36,7 @@ void Write(const PortJson::Value& value, std::string& out) {
     out += text;
     break;
   }
-  case PortJson::Value::Type::String: out += Quote(value.AsString()); break;
+  case PortJson::Value::Type::String: out += port::JsonQuote(value.AsString()); break;
   case PortJson::Value::Type::Array: {
     out.push_back('[');
     bool first = true;
@@ -78,7 +56,7 @@ void Write(const PortJson::Value& value, std::string& out) {
       if (!first)
         out.push_back(',');
       first = false;
-      out += Quote(key);
+      out += port::JsonQuote(key);
       out.push_back(':');
       Write(member, out);
     }
@@ -121,7 +99,7 @@ void NamesText(const std::vector< std::string >& names, std::string& out) {
   for (size_t i = 0; i < names.size(); ++i) {
     if (i != 0)
       out.push_back(',');
-    out += Quote(names[i]);
+    out += port::JsonQuote(names[i]);
   }
   out.push_back(']');
 }
@@ -139,6 +117,9 @@ std::string SafeName(const std::string& name) {
   safe = start == std::string::npos ? std::string() : safe.substr(start);
   if (safe.size() > 64)
     safe.resize(64);
+  // <name>.state.json is the solo server's state of seed <name>.
+  if (port::EndsWith(safe, ".state"))
+    safe.back() = '_';
   return safe.empty() ? "seed" : safe;
 }
 
@@ -260,8 +241,13 @@ bool Save(Seed& seed, std::string& error) {
     // Another seed (other options, or a name that comes out as the same file
     // name) may own this file already, and with it checked locations and a save
     // card that aren't this seed's, so this one is saved as <name>-2, -3, ...
-    const std::string base = seed.name;
+    // The base is cut so the suffix survives SafeName's length limit.
+    const std::string base = seed.name.substr(0, 56);
     for (int n = 2; std::filesystem::exists(SeedPath(seed.name)); ++n) {
+      if (n > 999) {
+        error = "too many seeds named " + base;
+        return false;
+      }
       Seed existing;
       std::string ignored;
       if (Load(SeedPath(seed.name), existing, ignored) && existing.settings == seed.settings &&
@@ -279,7 +265,7 @@ bool Save(Seed& seed, std::string& error) {
       return false;
     }
     std::string out = "{\"version\":" + std::to_string(kSeedFileVersion);
-    out += ",\"name\":" + Quote(seed.name);
+    out += ",\"name\":" + port::JsonQuote(seed.name);
     out += ",\"settings\":" + SettingsText(seed.settings);
     out += ",\"slot_data\":";
     Write(slot, out); // normalised, so the file has no stray whitespace
@@ -297,7 +283,7 @@ bool Save(Seed& seed, std::string& error) {
       first = false;
       out += "\"" + std::to_string(location) + "\":" + std::to_string(item);
     }
-    out += "},\"spoiler\":" + Quote(seed.spoiler) + "}\n";
+    out += "},\"spoiler\":" + port::JsonQuote(seed.spoiler) + "}\n";
 
     const std::filesystem::path path = SeedPath(seed.name);
     std::error_code ec;

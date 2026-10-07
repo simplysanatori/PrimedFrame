@@ -1,3 +1,4 @@
+#include "port_strings.h"
 #include "port_ap_solo.h"
 
 #include "port_ap_metroidprime.h"
@@ -17,29 +18,6 @@ constexpr int64_t kSlot = 1;
 constexpr int64_t kGoalComplete = 30; // ClientStatus.CLIENT_GOAL
 constexpr int64_t kStartLocation = -2; // what Archipelago gives a starting item
 
-std::string Quote(const std::string& text) {
-  std::string out = "\"";
-  for (const char c : text) {
-    switch (c) {
-    case '"': out += "\\\""; break;
-    case '\\': out += "\\\\"; break;
-    case '\n': out += "\\n"; break;
-    case '\r': out += "\\r"; break;
-    case '\t': out += "\\t"; break;
-    default:
-      if (static_cast< unsigned char >(c) < 0x20) {
-        char escape[8];
-        std::snprintf(escape, sizeof(escape), "\\u%04x", static_cast< unsigned >(c));
-        out += escape;
-      } else {
-        out.push_back(c);
-      }
-    }
-  }
-  out.push_back('"');
-  return out;
-}
-
 std::string IdList(const std::vector< int64_t >& ids) {
   std::string out = "[";
   for (size_t i = 0; i < ids.size(); ++i) {
@@ -54,7 +32,7 @@ std::string IdList(const std::vector< int64_t >& ids) {
 // One line of server text, the way MultiServer words its PrintJSON.
 std::string PrintJson(const char* type, const std::string& text, const std::string& extra = "") {
   return std::string("{\"cmd\":\"PrintJSON\",\"type\":\"") + type + "\"," + extra +
-         "\"data\":[{\"type\":\"text\",\"text\":" + Quote(text) + "}]}";
+         "\"data\":[{\"type\":\"text\",\"text\":" + port::JsonQuote(text) + "}]}";
 }
 
 std::vector< int64_t > Ids(const PortJson::Value* list) {
@@ -150,7 +128,7 @@ bool Server::OpenSeed(const PortRandoGen::Seed& seed, const std::string& statePa
         "\"tags\":[],\"password\":false,\"permissions\":{\"release\":0,\"collect\":0,\"remaining\":0},"
         "\"hint_cost\":0,\"location_check_points\":1,\"games\":[\"Metroid Prime\"],"
         "\"datapackage_checksums\":{},\"seed_name\":" +
-        Quote("solo-" + mSeed.name) + ",\"time\":0}");
+        port::JsonQuote("solo-" + mSeed.name) + ",\"time\":0}");
   return true;
 }
 
@@ -255,9 +233,10 @@ bool Server::Check(int64_t location) {
 void Server::SaveState() {
   if (mStatePath.empty())
     return;
-  // The client keeps its own copy of the checks too; a failed write only
-  // costs the item indices staying in step on the next launch.
-  WriteAtomic(mStatePath, "{\"checked\":" + IdList(mChecked) + "}\n");
+  // Items are numbered in check order, so a lost state file renumbers them
+  // on the next launch: say so rather than lose it quietly.
+  if (!WriteAtomic(mStatePath, "{\"checked\":" + IdList(mChecked) + "}\n"))
+    Queue(PrintJson("Tutorial", "Could not save the seed's progress to " + mStatePath));
 }
 
 void Server::Handle(const PortJson::Value& packet) {
@@ -278,8 +257,8 @@ void Server::Handle(const PortJson::Value& packet) {
     }
     // No slot_info: it only exists to have the client fetch other games' names.
     Queue("{\"cmd\":\"Connected\",\"team\":0,\"slot\":" + std::to_string(kSlot) +
-          ",\"players\":[{\"team\":0,\"slot\":" + std::to_string(kSlot) + ",\"alias\":" + Quote(kSlotName) +
-          ",\"name\":" + Quote(kSlotName) + "}],\"missing_locations\":" + IdList(missing) +
+          ",\"players\":[{\"team\":0,\"slot\":" + std::to_string(kSlot) + ",\"alias\":" + port::JsonQuote(kSlotName) +
+          ",\"name\":" + port::JsonQuote(kSlotName) + "}],\"missing_locations\":" + IdList(missing) +
           ",\"checked_locations\":" + IdList(mChecked) + ",\"slot_data\":" + mSeed.slotData + "}");
     Queue(ReceivedItemsJson(0));
   } else if (command == "LocationChecks") {
@@ -319,7 +298,7 @@ void Server::Handle(const PortJson::Value& packet) {
       Queue(PrintJson("CommandResult", "Commands are not available in a solo game."));
     } else {
       Queue(PrintJson("Chat", std::string(kSlotName) + ": " + text,
-                      "\"team\":0,\"slot\":" + std::to_string(kSlot) + ",\"message\":" + Quote(text) + ","));
+                      "\"team\":0,\"slot\":" + std::to_string(kSlot) + ",\"message\":" + port::JsonQuote(text) + ","));
     }
   } else if (command == "Get" || command == "SetNotify") {
     // Nothing is stored in a solo game; a key asked for is just empty.
@@ -333,7 +312,7 @@ void Server::Handle(const PortJson::Value& packet) {
         if (!first)
           out.push_back(',');
         first = false;
-        out += Quote(key.AsString()) + ":null";
+        out += port::JsonQuote(key.AsString()) + ":null";
       }
     }
     out += "}}";
