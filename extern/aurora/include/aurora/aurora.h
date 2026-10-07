@@ -138,6 +138,12 @@ typedef struct {
    */
   const uint8_t* pipelineCacheSeedData;
   size_t pipelineCacheSeedSize;
+
+  /*
+   * A directory (with a trailing slash) Dawn searches first for the Vulkan library, e.g. a shim
+   * for a custom driver. Null searches the usual places only.
+   */
+  const char* vulkanLibraryDir;
 } AuroraConfig;
 
 typedef struct {
@@ -172,6 +178,8 @@ void aurora_set_graphics_quality(uint32_t msaa, uint16_t maxTextureAnisotropy);
 void aurora_set_timescale(float scale);
 
 AuroraBackend aurora_get_backend();
+// The driver's description from the graphics adapter (e.g. "Turnip Mesa driver 25.1.0"); "" before init.
+const char* aurora_get_gpu_driver();
 const AuroraBackend* aurora_get_available_backends(size_t* count);
 float aurora_get_timescale();
 

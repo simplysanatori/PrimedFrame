@@ -35,6 +35,7 @@
 #include "port_input_map.h"
 #include "port_textures.h"
 #include "port_build_info.h"
+#include "port_gpu_driver.h"
 #if defined(__ANDROID__)
 #include "touch_pad.h"
 #endif
@@ -105,6 +106,7 @@
 #include <fstream>
 #include <iterator>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -216,6 +218,9 @@ int sAnisotropy = 16;
 // Setting `opengles`; sOpenGlesAtStart is what this run was started with.
 bool sOpenGles = false;
 bool sOpenGlesAtStart = false;
+// Setting `gpu_driver`: an installed custom Vulkan driver's id (port_gpu_driver.h), "" = the system's.
+std::string sGpuDriver;
+std::string sGpuDriverAtStart;
 bool sUnlockHardMode = false;
 // Setting `storage_clamp`: -1 auto (aurora decides), 0 off, 1 on; read once when shaders are first made.
 int sStorageClamp = -1;
@@ -595,6 +600,9 @@ void ApplySetting(const std::string& key, const std::string& value) {
   } else if (key == "opengles") {
     sOpenGles = ParseBool(value);
     sOpenGlesAtStart = sOpenGles;
+  } else if (key == "gpu_driver") {
+    sGpuDriver = value;
+    sGpuDriverAtStart = value;
   } else if (key == "anisotropy") {
     const int a = std::atoi(value.c_str());
     if (a >= 1 && a <= 16) {
@@ -882,6 +890,7 @@ void SaveSettings() {
   file << "fov=" << sFirstPersonFov << '\n';
   file << "msaa=" << sMsaa << '\n';
   file << "opengles=" << (sOpenGles ? 1 : 0) << '\n';
+  file << "gpu_driver=" << sGpuDriver << '\n';
   file << "anisotropy=" << sAnisotropy << '\n';
   file << "unlock_hard_mode=" << (sUnlockHardMode ? 1 : 0) << '\n';
   file << "unlock_fusion_suit=" << (sUnlockFusionSuit ? 1 : 0) << '\n';
@@ -1643,6 +1652,19 @@ void SetOpenGles(bool enabled) {
   EnsureInitialized();
   if (sOpenGles != enabled) {
     sOpenGles = enabled;
+    MarkDirty();
+  }
+}
+
+const std::string& GpuDriver() {
+  EnsureInitialized();
+  return sGpuDriver;
+}
+
+void SetGpuDriver(const std::string& id) {
+  EnsureInitialized();
+  if (sGpuDriver != id) {
+    sGpuDriver = id;
     MarkDirty();
   }
 }
@@ -5320,6 +5342,131 @@ void DrawVideoDisplay() {
 
 }
 
+// Custom Vulkan drivers (port_gpu_driver.h, Android only). The file dialog answers
+// on another thread, so its pick waits in sGpuDriverPick for ProcessGpuDriverPick.
+namespace {
+std::mutex sGpuDriverPickMutex;
+std::optional<std::string> sGpuDriverPick;
+std::atomic<bool> sGpuDriverDialogOpen{false};
+std::string sGpuDriverStatus;
+std::vector<PortGpuDriver::Driver> sGpuDrivers;
+bool sGpuDriversListed = false;
+
+void OpenGpuDriverDialog() {
+  int windowCount = 0;
+  SDL_Window** windows = SDL_GetWindows(&windowCount);
+  SDL_Window* window = windows != nullptr && windowCount > 0 ? windows[0] : nullptr;
+  SDL_free(windows);
+  const SDL_DialogFileCallback done = [](void*, const char* const* files, int) {
+    std::lock_guard lock(sGpuDriverPickMutex);
+    // Empty = cancelled; a leading \x01 marks a failed dialog's error.
+    sGpuDriverPick = files != nullptr ? std::string(files[0] != nullptr ? files[0] : "")
+                                      : std::string("\x01") + SDL_GetError();
+    sGpuDriverDialogOpen = false;
+  };
+  sGpuDriverDialogOpen = true;
+  SDL_ShowOpenFileDialog(done, nullptr, window, nullptr, 0, nullptr, false);
+}
+
+void ProcessGpuDriverPick() {
+  std::string path;
+  {
+    std::lock_guard lock(sGpuDriverPickMutex);
+    if (!sGpuDriverPick) {
+      return;
+    }
+    path = std::move(*sGpuDriverPick);
+    sGpuDriverPick.reset();
+  }
+  if (path.empty() || path[0] == '\x01') {
+    if (path.size() > 1) {
+      sGpuDriverStatus = "The file dialog failed: " + path.substr(1);
+    }
+    return;
+  }
+  std::string error;
+  const std::string id = PortGpuDriver::Install(path, error);
+  sGpuDriversListed = false;
+  if (id.empty()) {
+    sGpuDriverStatus = "Couldn't install it: " + error + ".";
+  } else {
+    SetGpuDriver(id);
+    sGpuDriverStatus = "Installed " + id + ".";
+  }
+}
+
+void DrawGpuDriver() {
+  if (!PortGpuDriver::Supported() || aurora_get_backend() != BACKEND_VULKAN) {
+    return;
+  }
+  if (!sGpuDriversListed) {
+    sGpuDrivers = PortGpuDriver::List();
+    sGpuDriversListed = true;
+  }
+  const auto label = [](const PortGpuDriver::Driver& d) {
+    return d.version.empty() ? d.name : d.name + " " + d.version;
+  };
+  std::string preview = "System";
+  for (const auto& d : sGpuDrivers) {
+    if (d.id == sGpuDriver) {
+      preview = label(d);
+    }
+  }
+  if (ImGui::BeginCombo("Vulkan driver", preview.c_str())) {
+    if (ImGui::Selectable("System", sGpuDriver.empty())) {
+      SetGpuDriver("");
+    }
+    for (const auto& d : sGpuDrivers) {
+      ImGui::PushID(d.id.c_str());
+      if (ImGui::Selectable(label(d).c_str(), d.id == sGpuDriver)) {
+        SetGpuDriver(d.id);
+      }
+      if (!d.description.empty()) {
+        ImGui::SetItemTooltip("%s", d.description.c_str());
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::SetItemTooltip("Loads a custom Vulkan driver instead of the phone's, such as Mesa Turnip for\n"
+                        "Adreno GPUs. Install one from a driver zip (the kind Android emulators use).\n"
+                        "Takes effect after a restart; if it crashes starting, the next start goes\n"
+                        "back to the system driver.");
+  // main() already switched a driver that crashed back to System: nothing to restart for.
+  const bool crashedBack = sGpuDriver.empty() && !PortGpuDriver::LoadError().empty();
+  if (sGpuDriver != sGpuDriverAtStart && !crashedBack) {
+    ImGui::SameLine();
+    ImGui::TextColored(ThemeWarnColor(), "Restart to apply");
+  }
+  ImGui::BeginDisabled(sGpuDriverDialogOpen);
+  if (ImGui::Button("Install driver (.zip)...")) {
+    sGpuDriverStatus.clear();
+    OpenGpuDriverDialog();
+  }
+  ImGui::EndDisabled();
+  const bool removable = !sGpuDriver.empty() && sGpuDriver != PortGpuDriver::Active();
+  if (removable) {
+    ImGui::SameLine();
+    if (ImGui::Button("Remove")) {
+      const std::string id = sGpuDriver;
+      sGpuDriverStatus = PortGpuDriver::Remove(id) ? "Removed " + id + "." : "Couldn't remove " + id + ".";
+      SetGpuDriver("");
+      sGpuDriversListed = false;
+    }
+  }
+  if (!PortGpuDriver::LoadError().empty() && !sGpuDriverAtStart.empty()) {
+    ImGui::TextColored(ThemeWarnColor(), "%s didn't load: %s", sGpuDriverAtStart.c_str(),
+                       PortGpuDriver::LoadError().c_str());
+  }
+  ImGui::TextDisabled("Running: %s", aurora_get_gpu_driver());
+  ImGui::SetItemTooltip("What the GPU reports right now. A loaded custom driver says so here\n"
+                        "(Turnip: \"Mesa Turnip ...\"); otherwise the phone's driver is in use.");
+  if (!sGpuDriverStatus.empty()) {
+    ImGui::TextWrapped("%s", sGpuDriverStatus.c_str());
+  }
+}
+} // namespace
+
 void DrawVideoQuality() {
   ImGui::SeparatorText("Quality");
   int msaa = sMsaa >= 4 ? 1 : 0;
@@ -5347,6 +5494,7 @@ void DrawVideoQuality() {
                          live == BACKEND_VULKAN ? "Vulkan" : "another API");
     }
   }
+  DrawGpuDriver();
   {
     const bool pending = aurora_gpu_selftest_pending();
     ImGui::BeginDisabled(pending);
@@ -7944,6 +8092,7 @@ void DrawUI() {
   }
 #endif
   ProcessCardPicks();
+  ProcessGpuDriverPick();
 #if !defined(__ANDROID__)
   // Every frame, not only with the panel open: an importer stops when its
   // output pipe fills.

@@ -592,6 +592,12 @@ bool aurora_is_suspended() {
 }
 void aurora_end_frame() { aurora::end_frame(); }
 AuroraBackend aurora_get_backend() { return aurora::g_config.desiredBackend; }
+const char* aurora_get_gpu_driver() {
+  static std::string driver;
+  const wgpu::StringView description = aurora::webgpu::g_adapterInfo.description;
+  driver = description.IsUndefined() ? std::string() : std::string(description.data, description.length);
+  return driver.c_str();
+}
 const AuroraBackend* aurora_get_available_backends(size_t* count) {
   if (count != nullptr) {
     *count = aurora::PreferredBackendOrder.size();

@@ -277,6 +277,33 @@ Without it the run creates the device and then dies at surface creation with
 does). Software Vulkan (lavapipe) fails differently, segfaulting inside Dawn's
 surface setup rather than logging.
 
+### Custom Vulkan drivers (Android, Turnip)
+
+On Adreno phones the game can run on Mesa's Turnip (or another custom Vulkan
+driver) instead of the phone's own. It loads the driver through
+[libadrenotools](https://github.com/bylaws/libadrenotools) (`extern/adrenotools`,
+`platform/port_gpu_driver.cpp`), the same way Android GameCube/Switch emulators do,
+and takes the same driver zips (a `meta.json` naming the library, plus that
+library; e.g. the AdrenoToolsDrivers releases). None is bundled.
+
+F1 > Video > Quality > "Install driver (.zip)..." unpacks a zip into the app's
+internal storage (`gpu_drivers/<id>/`; dlopen refuses shared storage) and selects
+it. The "Vulkan driver" combo switches between installed drivers and System, and
+the setting `gpu_driver=<id>` (empty = System) takes effect at the next start.
+`MP_GPU_DRIVER=<id>` overrides it for one run. "Running:" under the combo shows
+the driver the GPU reports, e.g. `Mesa Turnip ...`, since adrenotools quietly falls
+back to the system driver when its hooks fail. A start that crashes before the
+GPU is set up leaves `gpu_driver_starting` in the user folder, and the next start
+then switches back to System, like the OpenGL ES toggle does. The OpenGL ES backend
+always uses the system driver.
+
+How it reaches Dawn: Dawn only opens `libvulkan.so` by name from its search paths.
+The port copies `libmport_vkshim.so` (which exports only `vkGetInstanceProcAddr`,
+forwarding to the custom driver's) to `<internal>/vkshim/libvulkan.so`, loads it,
+points it at the driver adrenotools opened, and puts that folder first in
+`DawnInstanceDescriptor::additionalRuntimeSearchPaths` (`AuroraConfig::vulkanLibraryDir`).
+The log says `GPU driver <id> ... loaded through adrenotools`, or why it was not.
+
 ### Running out of device memory
 
 A Vulkan allocation that does not fit is fatal:

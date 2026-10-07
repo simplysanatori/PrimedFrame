@@ -154,6 +154,7 @@ set(MP_PORT_SOURCES
     platform/port_ap_solo.cpp
     platform/port_rando_seed.cpp
     platform/port_json.cpp
+    platform/port_gpu_driver.cpp
     platform/port_discord.cpp
     platform/port_update_check.cpp
     platform/port_livesplit.cpp
@@ -244,6 +245,15 @@ if(ANDROID)
     add_library(metroid_prime_port SHARED ${MP_PORT_SOURCES})
     target_link_libraries(metroid_prime_port PRIVATE mediandk)
     target_link_options(metroid_prime_port PRIVATE "-Wl,-u,SDL_main")
+    # Custom Vulkan drivers (Turnip) through libadrenotools (port_gpu_driver.cpp). Its
+    # hook libraries and the shim Dawn loads as libvulkan.so are separate shared
+    # libraries, loaded by path: android/app/build.gradle lists them as targets.
+    if(ANDROID_ABI STREQUAL "arm64-v8a")
+        add_subdirectory(extern/adrenotools EXCLUDE_FROM_ALL)
+        add_library(mport_vkshim SHARED platform/android/vkshim.c)
+        set_target_properties(mport_vkshim PROPERTIES C_VISIBILITY_PRESET hidden)
+        target_link_libraries(metroid_prime_port PRIVATE adrenotools z)
+    endif()
 else()
     add_executable(metroid_prime_port ${MP_PORT_SOURCES})
 endif()

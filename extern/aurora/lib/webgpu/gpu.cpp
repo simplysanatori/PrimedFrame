@@ -785,6 +785,11 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
     dawnInstanceDescriptor.nextInChain = &instanceTogglesDescriptor;
     dawnInstanceDescriptor.backendValidationLevel = dawn::native::BackendValidationLevel::Disabled;
     dawnInstanceDescriptor.SetLoggingCallback(wgpu_log);
+    const char* vulkanLibraryDir = g_config.vulkanLibraryDir;
+    if (vulkanLibraryDir != nullptr && vulkanLibraryDir[0] != '\0') {
+      dawnInstanceDescriptor.additionalRuntimeSearchPathsCount = 1;
+      dawnInstanceDescriptor.additionalRuntimeSearchPaths = &vulkanLibraryDir;
+    }
 #ifdef TRACY_ENABLE
     dawnInstanceDescriptor.platform = tracy_dawn_platform();
 #endif

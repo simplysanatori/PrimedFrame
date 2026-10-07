@@ -248,6 +248,10 @@ void SetAnisotropy(int level);
 // creation, so it takes a restart; aurora falls back to Vulkan if it fails.
 bool OpenGles();
 void SetOpenGles(bool enabled);
+// Setting `gpu_driver`: the custom Vulkan driver (PortGpuDriver id) to load at the
+// next start, "" = the system's. Android only.
+const std::string& GpuDriver();
+void SetGpuDriver(const std::string& id);
 // Setting `storage_clamp` (Auto/Off/On): sets MP_STORAGE_CLAMP for aurora's shader
 // generator unless it's already in the environment. Call before aurora_initialize.
 void ApplyStorageClamp();
