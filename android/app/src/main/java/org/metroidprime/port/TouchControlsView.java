@@ -159,8 +159,8 @@ final class TouchControlsView extends View {
     };
 
     // Twin stick's shoulders, like Remastered's: LT locks on (the L trigger), RT
-    // fires, LB jumps and RB fires missiles. Z (the map) and R (free look) sit
-    // inboard of the right pair. START and MENU as in the GameCube layout.
+    // fires, LB jumps and RB fires missiles. Z (the map) sits inboard of the
+    // right pair; R (free look) has no use with a right stick that aims. START and MENU as in the GameCube layout.
     // The Xbox letter drawn big on each diamond button, matching the in-game hint.
     private static final String[] TWIN_LETTERS = {"A", "B", "X", "Y"};
 
@@ -175,8 +175,6 @@ final class TouchControlsView extends View {
                        TouchControlsView.C_RB),
         new PillButton("Map", -1, BTN_RIGHT_SHOULDER, 0.730f, 0.030f, 0.830f, 0.100f, GC_PURPLE,
                        TouchControlsView.C_TZ),
-        new PillButton("R", AXIS_TRIGGER_R, -1, 0.730f, 0.115f, 0.830f, 0.185f,
-                       GC_GREY, TouchControlsView.C_TR),
         new PillButton("START", -1, BTN_START, 0f, 0f, 0f, 0f),
         new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0f, 0f, 0f, 0f),
     };
@@ -1748,20 +1746,7 @@ final class TouchControlsView extends View {
         canvas.drawCircle(cx, cy, radius, fillPaint);
         canvas.drawCircle(cx, cy, radius, strokePaint);
         final float s = radius * 0.36f;
-        if (slot == 0 && twin) {
-            // Xbox's View glyph (two overlapping squares), as the Pause hint shows.
-            final float side = s * 1.5f;
-            final float off = s * 0.45f;
-            final Paint.Style style = strokePaint.getStyle();
-            final float width = strokePaint.getStrokeWidth();
-            strokePaint.setStrokeWidth(Math.max(1.5f, s * 0.22f));
-            canvas.drawRect(cx - side / 2f - off, cy - side / 2f - off,
-                            cx + side / 2f - off, cy + side / 2f - off, strokePaint);
-            canvas.drawRect(cx - side / 2f + off, cy - side / 2f + off,
-                            cx + side / 2f + off, cy + side / 2f + off, strokePaint);
-            strokePaint.setStrokeWidth(width);
-            strokePaint.setStyle(style);
-        } else if (slot == 0) {
+        if (slot == 0) {
             final int fill = fillPaint.getColor();
             fillPaint.setColor(strokePaint.getColor());
             final float barW = s * 0.55f;
@@ -2168,8 +2153,9 @@ final class TouchControlsView extends View {
             case C_LB:
             case C_RT:
             case C_RB:
-            case C_TR:
                 return twin;
+            case C_TR:
+                return false; // retired: twin's R pill, kept so saved ids don't shift
             case C_DPAD:
                 return !wheels;
             case C_Z:
