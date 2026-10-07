@@ -149,6 +149,7 @@ set(MP_PORT_SOURCES
     platform/port_ap_protocol.cpp
     platform/port_ap_logic.cpp
     platform/port_ap_world.cpp
+    platform/port_rando_gen.cpp
     platform/port_apclient.cpp
     platform/port_ap_solo.cpp
     platform/port_rando_seed.cpp
@@ -507,6 +508,16 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_ap_logic_tests PRIVATE
         platform/include extern/aurora/include include)
     target_compile_definitions(port_ap_logic_tests PRIVATE TARGET_PC VERSION=0)
+    add_executable(port_rando_gen_tests
+        tests/port_rando_gen.cpp
+        platform/port_rando_gen.cpp
+        platform/port_ap_metroidprime.cpp
+        platform/port_ap_logic.cpp
+        platform/port_ap_world.cpp
+        platform/port_json.cpp)
+    target_include_directories(port_rando_gen_tests PRIVATE
+        platform/include extern/aurora/include include)
+    target_compile_definitions(port_rando_gen_tests PRIVATE TARGET_PC VERSION=0)
     add_executable(port_musyx_tests tests/port_musyx.c)
     target_link_libraries(port_musyx_tests PRIVATE musyx)
     # A break must retire a looping voice in the PC mixer, as it does on the DSP.
@@ -647,7 +658,7 @@ if(MP_BUILD_TESTS)
     add_test(NAME port_gci_tests COMMAND port_gci_tests)
     set_tests_properties(port_gci_tests PROPERTIES TIMEOUT 15 LABELS port)
     aurora_copy_runtime_dlls(port_gci_tests)
-    foreach(test IN ITEMS port_remastered_report_tests port_buffer_tests port_ai_tests port_randomizer_tests port_apclient_tests port_ap_solo_tests port_ap_logic_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_mouse_tests port_touch_pad_tests port_json_tests port_ws_tests port_mods_tests port_actor_collision_bounds_tests port_room_env_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_astc_tests port_remastered_hud_tests port_remastered_movie_tests port_gallery_tests port_remastered_nso_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_anuv_tests port_remastered_lits_tests port_remastered_blend_tests port_remastered_image_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_remastered_effect_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_env_tests port_tick_pair_tests port_livesplit_tests port_discord_tests port_savestate_tests port_timing_tests port_audio_math_tests)
+    foreach(test IN ITEMS port_remastered_report_tests port_buffer_tests port_ai_tests port_randomizer_tests port_apclient_tests port_ap_solo_tests port_ap_logic_tests port_rando_gen_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_mouse_tests port_touch_pad_tests port_json_tests port_ws_tests port_mods_tests port_actor_collision_bounds_tests port_room_env_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_astc_tests port_remastered_hud_tests port_remastered_movie_tests port_gallery_tests port_remastered_nso_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_anuv_tests port_remastered_lits_tests port_remastered_blend_tests port_remastered_image_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_remastered_effect_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_env_tests port_tick_pair_tests port_livesplit_tests port_discord_tests port_savestate_tests port_timing_tests port_audio_math_tests)
         add_test(NAME ${test} COMMAND ${test})
         set_tests_properties(${test} PROPERTIES TIMEOUT 15 LABELS port)
         aurora_copy_runtime_dlls(${test})
@@ -656,6 +667,8 @@ if(MP_BUILD_TESTS)
     # is not instant on a loaded runner; 15 seconds is enough to time it out and
     # report nothing about which part was slow.
     set_tests_properties(port_ws_tests PROPERTIES TIMEOUT 120)
+    # 200+ seeds, each a few hundred logic sweeps.
+    set_tests_properties(port_rando_gen_tests PROPERTIES TIMEOUT 120)
     # The tools' own checks, so a change to the location join or the fixture
     # generator fails here rather than in whoever runs the tools next. Both are
     # dependency-free Python and skip themselves when python3 is absent.
