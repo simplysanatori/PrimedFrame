@@ -4797,6 +4797,8 @@ void DrawGpuDriverTrial() {
   const ImGuiViewport* viewport = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
   ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, 560.f), 0.f));
+  // Drawn before the panel, which would otherwise cover it.
+  ImGui::SetNextWindowFocus();
   if (ImGui::Begin("Keep this Vulkan driver?", nullptr,
                    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
                        ImGuiWindowFlags_NoSavedSettings)) {
