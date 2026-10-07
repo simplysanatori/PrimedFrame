@@ -12,6 +12,9 @@
 #include "Kyoto/Input/CFinalInput.hpp"
 #include "rstl/algorithm.hpp"
 
+#include <dolphin/gx/GXGet.h>
+#include <dolphin/gx/GXTransform.h>
+
 #include <cstdio>
 #include <cstdlib>
 
@@ -104,6 +107,13 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
   CGraphics::SetAmbientColor(CColor::White());
   DisableLights();
   x14_camera->Draw(parms);
+  int clipLeft, clipTop, clipWidth, clipHeight;
+  const bool clipped = x14_camera->GetClipBand(clipLeft, clipTop, clipWidth, clipHeight);
+  u32 oldScissor[4];
+  if (clipped) {
+    GXGetScissor(&oldScissor[0], &oldScissor[1], &oldScissor[2], &oldScissor[3]);
+    GXSetScissor(clipLeft, clipTop, clipWidth, clipHeight);
+  }
   CGraphics::SetTevOp(kTS_Stage0, CGraphics::kEnvModulate);
   CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_InvSrcAlpha, kLO_Clear);
   // Widescreen HUD: spread compact elements rigidly, but stretch screen-spanning
@@ -198,6 +208,9 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     // an orthonormal basis. Even slightly non-unit HUD-lag rotations would then
     // compound scale errors every draw, eventually shrinking the helmet lights.
     widget->DrawWithWorldTransform(parms, x14_camera->GetHudTransform(anchor) * world);
+  }
+  if (clipped) {
+    GXSetScissor(oldScissor[0], oldScissor[1], oldScissor[2], oldScissor[3]);
   }
   CGraphics::SetCullMode(kCM_Front);
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02

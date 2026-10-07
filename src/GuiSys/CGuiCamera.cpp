@@ -161,6 +161,28 @@ void CGuiCamera::Draw(const CGuiWidgetDrawParms& parms) const {
   mSpreadView =
       CTransform4f::Translate(parms.GetCameraOffset()) * GetWorldTransform();
   CGraphics::SetViewPointMatrix(mSpreadView);
+  // A pillarboxed frame (no spread) in a window taller than authored would show widgets placed
+  // just off the authored screen (the file select's corner brackets above its panel): clip it to
+  // the authored band, as the original screen did.
+  // CGuiFrame::Draw applies it around the frame's widgets.
+  mClipHeight = 0;
+  if (fitWidth && !mSpreadable) {
+    int vpLeft, vpTop, vpWidth, vpHeight;
+    CGraphics::GetViewport(vpLeft, vpTop, vpWidth, vpHeight);
+    const float authored =
+        xb8_projection == kProjection_Perspective
+            ? mCameraParms.perspective.aspect
+            : (mCameraParms.orthographic.right - mCameraParms.orthographic.left) /
+                  (mCameraParms.orthographic.top - mCameraParms.orthographic.bottom);
+    const int band =
+        authored > 0.f ? static_cast< int >(static_cast< float >(vpWidth) / authored + 0.5f) : 0;
+    if (band > 0 && band < vpHeight) {
+      mClipLeft = vpLeft;
+      mClipTop = vpTop + (vpHeight - band) / 2;
+      mClipWidth = vpWidth;
+      mClipHeight = band;
+    }
+  }
   CGuiWidget::Draw(parms);
 }
 

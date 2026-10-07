@@ -53,6 +53,15 @@ public:
   // Perspective widgets slide in their plane and turn outward in place.
   bool GetAspectSpreadAboutEye() const { return mSpreadAboutEye; }
   const CTransform4f& GetAspectSpreadView() const { return mSpreadView; }
+  // A pillarboxed frame in a window taller than authored is clipped to the authored band (GX
+  // scissor, top-left origin); false when the whole viewport is shown.
+  bool GetClipBand(int& left, int& top, int& width, int& height) const {
+    left = mClipLeft;
+    top = mClipTop;
+    width = mClipWidth;
+    height = mClipHeight;
+    return mClipHeight > 0;
+  }
   CTransform4f GetAspectSpreadTransform(const CVector3f& worldAnchor) const;
   // HUD scale: frames that opt in shrink about the view centre
   // (see PortDebug::HudScale).
@@ -89,6 +98,10 @@ public:
   // The view centre drawn by the last Draw (orthographic cameras may be offset).
   mutable float mCenterX = 0.f;
   mutable float mCenterZ = 0.f;
+  mutable int mClipLeft = 0;
+  mutable int mClipTop = 0;
+  mutable int mClipWidth = 0;
+  mutable int mClipHeight = 0;
 };
 
 #endif // _CGUICAMERA
