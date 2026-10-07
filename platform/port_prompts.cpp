@@ -638,7 +638,46 @@ std::string IconStemForDpad(const char* device) {
   return up == dpadUp ? std::string(device) + "_dpad" : up;
 }
 
+// The touch twin-stick layout's hints. The overlay is no pad, so the real pad's mappings
+// (PADGetButtonMappings) mean nothing here: this is what the overlay sends for each GameCube
+// action, in Remastered's Dual Sticks positions. Z is the Map pill (Menu glyph) and Start the
+// Pause button (View glyph); the overlay draws those glyphs on them. The D-pad picks visors, and
+// with the Beam button (Y) held the beams, so the C-stick's beam hints show the D-pad direction
+// that picks them (the pad preset shows the right stick there, which twin stick consumes).
+std::string TouchTwinStemForPrompt(uint32_t prompt) {
+  switch (prompt) {
+  case PROMPT_STICK: return "xbox_stick_l";
+  case PROMPT_STICK_UP: return "xbox_stick_l_up";
+  case PROMPT_STICK_DOWN: return "xbox_stick_l_down";
+  case PROMPT_STICK_LEFT: return "xbox_stick_l_left";
+  case PROMPT_STICK_RIGHT: return "xbox_stick_l_right";
+  case PROMPT_CSTICK: return "xbox_dpad";
+  case PROMPT_CSTICK_UP: return "xbox_dpad_up";
+  case PROMPT_CSTICK_DOWN: return "xbox_dpad_down";
+  case PROMPT_CSTICK_LEFT: return "xbox_dpad_left";
+  case PROMPT_CSTICK_RIGHT: return "xbox_dpad_right";
+  case PROMPT_DPAD: return "xbox_dpad";
+  case PAD_BUTTON_UP: return "xbox_dpad_up";
+  case PAD_BUTTON_DOWN: return "xbox_dpad_down";
+  case PAD_BUTTON_LEFT: return "xbox_dpad_left";
+  case PAD_BUTTON_RIGHT: return "xbox_dpad_right";
+  case PAD_BUTTON_A: return "xbox_rt";
+  case PAD_BUTTON_B: return "xbox_south";
+  case PAD_BUTTON_X: return "xbox_west";
+  case PAD_BUTTON_Y: return "xbox_rightshoulder";
+  case PAD_TRIGGER_L: return "xbox_lt";
+  case PAD_TRIGGER_R: return "xbox_rightstick";
+  case PAD_TRIGGER_Z: return "xbox_start";
+  case PAD_BUTTON_START: return "xbox_back";
+  default: return {};
+  }
+}
+
 std::string IconStemForPrompt(uint32_t prompt, const char* device) {
+  if (sActiveInput.load(std::memory_order_relaxed) == ActiveInput::TouchXbox &&
+      std::strcmp(device, "xbox") == 0) {
+    return TouchTwinStemForPrompt(prompt);
+  }
   switch (prompt) {
   case PROMPT_STICK: return IconStemForStick(kStickAxes, -1, device);
   case PROMPT_STICK_UP: return IconStemForStick(kStickAxes, 0, device);

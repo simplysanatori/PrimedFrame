@@ -183,9 +183,11 @@ bool sMouseAim = false;
 bool sTwinStick = false;
 float sTwinStickRightY = 0.f;
 bool sBeamShiftHeld = false;
+std::atomic<bool> sTouchBeamShift{false}; // the touch twin layout's held Beam button
 bool sSpringBall = false;
 bool sSwapScanXray = false;
 bool sTouchColors = false; // Android touch overlay: the GameCube pad's colours
+bool sTouchLabels = true;  // and each button's function under its letter
 bool sFastMorph = false;
 bool sInvulnerable = false;
 // MP_GODMODE, for this run only: -1 unset, else 0 or 1. Never saved, and changing the
@@ -236,6 +238,7 @@ bool sTouchWheels = true;
 // Classic GameCube layout (Android overlay): C-stick, D-pad and the per-option
 // toggles. Off, the overlay has no C-stick and dragging aims like a mouse.
 bool sTouchClassic = false;
+bool sTouchTwinStick = false;  // exclusive with sTouchClassic; classic wins on load
 bool sTouchVisorTapScan = false;
 std::atomic<uint32_t> sWheelMask{0};
 // The touch wheels' icons: ARGB pixels per [wheel][item], filled by the game thread, copied out by
@@ -364,6 +367,7 @@ std::atomic< int > sWindowFullscreen{-1};
 std::atomic< bool > sOverlayVisible{false};
 // Same idea for whether the Android touch overlay draws the GameCube pad's colours.
 std::atomic< bool > sTouchColorsFlag{false};
+std::atomic< bool > sTouchLabelsFlag{true};
 // The Android touch overlay's gap to the side edges for every control, and the
 // left stick's extra gap on top of it, in dp. Read from the UI thread.
 constexpr float kTouchMarginMaxDp = 300.f;
@@ -374,6 +378,17 @@ std::atomic< float > sTouchStickInset{kTouchStickInsetDefault};
 // The face buttons' and C-stick's extra gap to the right edge, in dp.
 constexpr float kTouchButtonInsetDefault = 0.f;
 std::atomic< float > sTouchButtonInset{kTouchButtonInsetDefault};
+// Each touch control's own offset and size, as an opaque string the touch view
+// parses (`<id>:<dx>,<dy>,<scale>;...`). Java reads and writes it on the UI thread
+// and the settings file on the game thread, hence the mutex.
+std::mutex sTouchLayoutMutex;
+std::string sTouchLayout;
+constexpr size_t kTouchLayoutMaxLen = 4096;
+// Java's layout change is saved by the game thread's next frame: ImGui's settings
+// path isn't safe from the UI thread.
+std::atomic< bool > sTouchLayoutSavePending{false};
+// The F1 "Edit layout" button; the touch view takes it and opens its editor.
+std::atomic< bool > sTouchEditRequested{false};
 // Set when a real pad, keyboard or mouse is used; the Android touch overlay takes
 // it to get out of the way.
 std::atomic< bool > sPhysicalInput{false};
@@ -573,6 +588,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sTwinStick = ParseBool(value);
   } else if (key == "touch_colors") {
     sTouchColors = ParseBool(value);
+  } else if (key == "touch_labels") {
+    sTouchLabels = ParseBool(value);
   } else if (key == "stick_aim_rate") {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 50.f && f <= 4000.f) {
@@ -599,6 +616,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sTouchMapTap = ParseBool(value);
   } else if (key == "touch_classic_gc") {
     sTouchClassic = ParseBool(value);
+  } else if (key == "touch_twin_stick") {
+    sTouchTwinStick = ParseBool(value);
   } else if (key == "touch_wheels") {
     sTouchWheels = ParseBool(value);
   } else if (key == "touch_visor_tap_scan") {
@@ -616,6 +635,14 @@ void ApplySetting(const std::string& key, const std::string& value) {
        : key == "touch_stick_inset" ? sTouchStickInset
                                     : sTouchButtonInset)
           .store(f);
+    }
+  } else if (key == "touch_layout") {
+    // Printable ASCII only: JNI's NewStringUTF aborts on invalid UTF-8.
+    const bool ascii = std::all_of(value.begin(), value.end(),
+                                   [](unsigned char c) { return c >= 0x20 && c < 0x7F; });
+    if (ascii && value.size() <= kTouchLayoutMaxLen) {
+      std::lock_guard< std::mutex > lock(sTouchLayoutMutex);
+      sTouchLayout = value;
     }
   } else if (key == "mouse_invert_x") {
     sMouseInvertX = ParseBool(value);
@@ -769,6 +796,9 @@ void LoadSettings() {
       ApplySetting(key, value);
     }
   }
+  if (sTouchClassic) {
+    sTouchTwinStick = false;
+  }
 }
 
 void SaveSettings() {
@@ -837,6 +867,7 @@ void SaveSettings() {
   file << "mouse_aim=" << (sMouseAim ? 1 : 0) << '\n';
   file << "twin_stick=" << (sTwinStick ? 1 : 0) << '\n';
   file << "touch_colors=" << (sTouchColors ? 1 : 0) << '\n';
+  file << "touch_labels=" << (sTouchLabels ? 1 : 0) << '\n';
   file << "spring_ball=" << (sSpringBall ? 1 : 0) << '\n';
   file << "swap_scan_xray=" << (sSwapScanXray ? 1 : 0) << '\n';
   file << "shift_key=" << sShiftBindings[0] << '\n';
@@ -863,8 +894,13 @@ void SaveSettings() {
   file << "touch_side_margin=" << sTouchSideMargin.load() << '\n';
   file << "touch_stick_inset=" << sTouchStickInset.load() << '\n';
   file << "touch_button_inset=" << sTouchButtonInset.load() << '\n';
+  {
+    std::lock_guard< std::mutex > lock(sTouchLayoutMutex);
+    file << "touch_layout=" << sTouchLayout << '\n';
+  }
   file << "touch_map_tap=" << (sTouchMapTap ? 1 : 0) << '\n';
   file << "touch_classic_gc=" << (sTouchClassic ? 1 : 0) << '\n';
+  file << "touch_twin_stick=" << (sTouchTwinStick ? 1 : 0) << '\n';
   file << "touch_wheels=" << (sTouchWheels ? 1 : 0) << '\n';
   file << "touch_visor_tap_scan=" << (sTouchVisorTapScan ? 1 : 0) << '\n';
   file << "mouse_invert_x=" << (sMouseInvertX ? 1 : 0) << '\n';
@@ -1626,7 +1662,18 @@ bool DirectAim() { return MouseAim() || TwinStick() || TouchDirectAim(); }
 // touch overlay always does what its buttons say. The F1 menu (Visible) sees the stored values.
 bool TwinStick() {
   EnsureInitialized();
+#if defined(__ANDROID__)
+  // Touch has its own twin stick (the right stick aims), apart from the pad preset.
+  if (TouchActive()) {
+    return sTouchTwinStick;
+  }
+#endif
   return sTwinStick && !TouchActive();
+}
+
+bool PadTwinStick() {
+  EnsureInitialized();
+  return sTwinStick;
 }
 
 void SetTwinStick(bool enabled) {
@@ -1640,6 +1687,8 @@ float TwinStickRightY() { return sTwinStickRightY; }
 void SetTwinStickRightY(float y) { sTwinStickRightY = y; }
 
 bool BeamShiftHeld() { return sBeamShiftHeld; }
+
+bool TouchBeamShift() { return sTouchBeamShift.load(std::memory_order_acquire) && TouchActive(); }
 
 void SetBeamShiftHeld(bool held) { sBeamShiftHeld = held; }
 
@@ -1888,7 +1937,7 @@ void SetStickAimRate(float pixelsPerSecond) {
 
 void AddStickAim(float x, float y, float dt) {
   EnsureInitialized();
-  if (!sTwinStick || Visible() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(dt) ||
+  if (!TwinStick() || Visible() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(dt) ||
       dt <= 0.f) {
     return;
   }
@@ -2236,6 +2285,23 @@ bool TouchClassic() {
 void SetTouchClassic(bool on) {
   EnsureInitialized();
   sTouchClassic = on;
+  if (on) {
+    sTouchTwinStick = false;
+  }
+  MarkDirty();
+}
+
+bool TouchTwinStick() {
+  EnsureInitialized();
+  return sTouchTwinStick;
+}
+
+void SetTouchTwinStick(bool on) {
+  EnsureInitialized();
+  sTouchTwinStick = on;
+  if (on) {
+    sTouchClassic = false;
+  }
   MarkDirty();
 }
 
@@ -3109,9 +3175,28 @@ bool Visible() {
 bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); }
 
 bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire); }
+bool TouchLabelsFlag() { return sTouchLabelsFlag.load(std::memory_order_acquire); }
 float TouchSideMarginDp() { return sTouchSideMargin.load(); }
 float TouchStickInsetDp() { return sTouchStickInset.load(); }
 float TouchButtonInsetDp() { return sTouchButtonInset.load(); }
+
+std::string TouchLayout() {
+  std::lock_guard< std::mutex > lock(sTouchLayoutMutex);
+  return sTouchLayout;
+}
+
+void SetTouchLayout(const std::string& layout) {
+  if (layout.size() > kTouchLayoutMaxLen) {
+    return;
+  }
+  {
+    std::lock_guard< std::mutex > lock(sTouchLayoutMutex);
+    sTouchLayout = layout;
+  }
+  sTouchLayoutSavePending.store(true, std::memory_order_release);
+}
+
+bool TakeTouchEditRequested() { return sTouchEditRequested.exchange(false, std::memory_order_acq_rel); }
 
 void SaveSettingsNow() {
   EnsureInitialized();
@@ -3561,6 +3646,7 @@ void UpdateControllerNav() {
   }
   sOverlayVisible.store(sVisible, std::memory_order_release);
   sTouchColorsFlag.store(sTouchColors, std::memory_order_release);
+  sTouchLabelsFlag.store(sTouchLabels, std::memory_order_release);
 
   ImGuiIO& io = ImGui::GetIO();
   io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
@@ -5332,13 +5418,27 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("Draws the on-screen buttons in the GameCube pad's colours: green A, red B, yellow "
            "C-stick, purple Z. Off, they are plain and see-through.");
-  bool touchClassic = sTouchClassic;
-  if (ImGui::Checkbox("Classic GameCube layout", &touchClassic)) {
-    SetTouchClassic(touchClassic);
+  if (ImGui::Checkbox("Button descriptions", &sTouchLabels)) {
+    MarkDirty();
   }
-  ItemHelp("Brings back the C-stick and the D-pad. Off: no C-stick; drag the free screen area to "
-           "aim like a mouse (the left stick strafes), and beams and visors come from the Visor "
-           "and Beam wheels.");
+  ItemHelp("Writes what each on-screen button does next to its letter (Fire, Jump, Lock...). "
+           "Off, only the letters are shown.");
+  int touchLayout = sTouchClassic ? 1 : sTouchTwinStick ? 2 : 0;
+  static const char* const kTouchLayouts[] = {"Default", "Classic GameCube", "Twin stick (Remastered)"};
+  if (ImGui::Combo("Layout", &touchLayout, kTouchLayouts, 3)) {
+    SetTouchClassic(touchLayout == 1);
+    SetTouchTwinStick(touchLayout == 2);
+    if (touchLayout == 2) {
+      // Remastered picks beams with Y + the D-pad, so twin starts with the D-pad, not the wheels.
+      SetTouchWheels(false);
+    }
+  }
+  ItemHelp("Default: the GameCube pad without a C-stick; drag the free screen area to aim like a "
+           "mouse (the left stick strafes), and beams and visors come from the Visor and Beam "
+           "wheels. Classic GameCube: brings back the C-stick and the D-pad. Twin stick "
+           "(Remastered): a right stick that aims, with Remastered's Dual Sticks buttons (Jump, "
+           "Fire, Morph, Missile, LT Lock) and a D-pad for visors; hold Y (Beam) and press the D-pad to pick "
+           "a beam. The free-area drag stays on; the wheels can replace the D-pad.");
   ImGui::BeginDisabled(!sTouchClassic);
   bool touchAim = sTouchAim;
   if (ImGui::Checkbox("Touch aim", &touchAim)) {
@@ -5354,7 +5454,7 @@ void DrawControlsTouchGyro() {
     SetTouchMapTap(touchMapTap);
   }
   ItemHelp("Tapping the minimap opens the map; hides the GameCube layout's Z button.");
-  ImGui::BeginDisabled(!sTouchClassic);
+  ImGui::BeginDisabled(!sTouchClassic && !sTouchTwinStick);
   bool touchWheels = sTouchWheels;
   if (ImGui::Checkbox("Beam and visor wheels", &touchWheels)) {
     SetTouchWheels(touchWheels);
@@ -5362,7 +5462,7 @@ void DrawControlsTouchGyro() {
   ItemHelp("Replaces the D-pad with a Visor and a Beam button. Hold one, slide to a sector, "
            "let go to pick. Letting go in the middle cancels. Off, the D-pad is back.");
   ImGui::EndDisabled();
-  ImGui::BeginDisabled(!(!sTouchClassic || sTouchWheels));
+  ImGui::BeginDisabled(!((!sTouchClassic && !sTouchTwinStick) || sTouchWheels));
   bool touchVisorTapScan = sTouchVisorTapScan;
   if (ImGui::Checkbox("Tap Visor for Scan Visor", &touchVisorTapScan)) {
     SetTouchVisorTapScan(touchVisorTapScan);
@@ -5405,6 +5505,13 @@ void DrawControlsTouchGyro() {
     sTouchButtonInset.store(kTouchButtonInsetDefault);
     MarkDirty();
   }
+  if (ImGui::Button("Edit layout")) {
+    // The touch view takes the request and opens its editor over the game.
+    sTouchEditRequested.store(true, std::memory_order_release);
+    RequestToggle();
+  }
+  ItemHelp("Closes this menu and lets you drag each on-screen control to where you want it and "
+           "pinch it to resize. Done saves; Reset all puts everything back.");
 #endif
 
   ImGui::SeparatorText("Gyro aim");
@@ -7280,6 +7387,10 @@ void DrawUI() {
   FinishRemasteredImport();
   DrawStaleImportToast();
   DrawDiscReadFailedAlert();
+  if (sTouchLayoutSavePending.exchange(false, std::memory_order_acq_rel)) {
+    MarkDirty();
+    SaveSettings();
+  }
   if (!sVisible) {
     UpdateMenuSounds(false);
     sTouchScroll = TouchScroll{};
@@ -7422,6 +7533,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchClassic(JNIEnv*, jclass)
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchTwinStick(JNIEnv*, jclass) {
+  return PortDebug::TouchTwinStick() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchWheelsEnabled(JNIEnv*, jclass) {
   return PortDebug::TouchWheels() ? JNI_TRUE : JNI_FALSE;
 }
@@ -7532,6 +7648,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeDebugOverlayVisible(JNIEnv*, 
 }
 
 extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchBeamShift(JNIEnv*, jclass, jboolean held) {
+  sTouchBeamShift.store(held == JNI_TRUE, std::memory_order_release);
+}
+
+extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeSetTouchDevice(JNIEnv*, jclass, jboolean xbox) {
   sTouchActive.store(true, std::memory_order_release);
   PortPrompts::NoteTouchInput(xbox == JNI_TRUE);
@@ -7540,6 +7661,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeSetTouchDevice(JNIEnv*, jclas
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchColors(JNIEnv*, jclass) {
   return PortDebug::TouchColorsFlag() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchLabels(JNIEnv*, jclass) {
+  return PortDebug::TouchLabelsFlag() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jfloat JNICALL
@@ -7555,6 +7681,29 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchStickInsetDp(JNIEnv*, jc
 extern "C" JNIEXPORT jfloat JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchButtonInsetDp(JNIEnv*, jclass) {
   return PortDebug::TouchButtonInsetDp();
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchLayout(JNIEnv* env, jclass) {
+  return env->NewStringUTF(PortDebug::TouchLayout().c_str());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeSetTouchLayout(JNIEnv* env, jclass,
+                                                                  jstring layout) {
+  if (layout == nullptr) {
+    return;
+  }
+  const char* chars = env->GetStringUTFChars(layout, nullptr);
+  if (chars != nullptr) {
+    PortDebug::SetTouchLayout(chars);
+    env->ReleaseStringUTFChars(layout, chars);
+  }
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchEditRequested(JNIEnv*, jclass) {
+  return PortDebug::TakeTouchEditRequested() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

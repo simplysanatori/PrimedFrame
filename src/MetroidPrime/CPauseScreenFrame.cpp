@@ -314,7 +314,7 @@ static int GetPortOption(EGameOption option) {
   case kPO_WidescreenHUD:
     return PortDebug::HudWide() ? 1 : 0;
   case kPO_TwinStick:
-    return PortDebug::TwinStick() ? 1 : 0;
+    return PortDebug::PadTwinStick() ? 1 : 0;
   case kPO_AimSpeed:
     return AimSpeedToStep(PortDebug::StickAimRate());
   case kPO_FastMorph:

@@ -262,6 +262,8 @@ void SetMouseAim(bool enabled);
 // Reads false while touch is in use (TouchActive), as do SwapScanXray, ShiftBinding(2) (-1)
 // and PadAltButton (-1): the touch overlay always does its GameCube-labelled actions.
 bool TwinStick();
+// The stored pad Twin Stick setting, whatever the touch layout: what the pause option edits.
+bool PadTwinStick();
 // Android: touch was the last input and the F1 menu is closed. False on desktop.
 bool TouchActive();
 // True on Android when the modern (non-classic) touch layout is the active device: drag aims like a mouse.
@@ -270,6 +272,8 @@ bool TouchDirectAim();
 bool DirectAim();
 bool TouchClassic();
 void SetTouchClassic(bool on);
+bool TouchTwinStick();
+void SetTouchTwinStick(bool on);
 void SetTwinStick(bool enabled);
 // Right stick Y (-1..1) before twin-stick consumed it, for the Spring Ball;
 // 0 when twin-stick is off (the game input still carries it then).
@@ -278,6 +282,8 @@ void SetTwinStickRightY(float y);
 // The bound beam shift is held in game this poll (no overlay, window focused),
 // which springs the Spring Ball in morph ball, as X does in Remastered.
 bool BeamShiftHeld();
+// The touch twin layout's Beam button is held: the D-pad picks beams (false off Android / without touch).
+bool TouchBeamShift();
 void SetBeamShiftHeld(bool held);
 // Spring Ball (C-stick up in morph ball, as in Metroid Prime Trilogy) once the
 // Morph Ball Bombs are held. A connected Archipelago seed overrides it.
@@ -518,11 +524,19 @@ bool OverlayVisible();
 // rather than plain translucent buttons. Like OverlayVisible(), performs no lazy
 // initialization, so it is safe to call from the UI thread.
 bool TouchColorsFlag();
+// Whether it writes each button's function under its letter. Same rules.
+bool TouchLabelsFlag();
 // The touch overlay's side margin, the left stick's extra inset and the face
 // buttons' extra inset, in dp. Also safe to call from the UI thread.
 float TouchSideMarginDp();
 float TouchStickInsetDp();
 float TouchButtonInsetDp();
+// Per-control offset and size, an opaque `<id>:<dx>,<dy>,<scale>;...` string the
+// Android touch view owns. Setting it saves the config on the next frame.
+std::string TouchLayout();
+void SetTouchLayout(const std::string& layout);
+// True once after F1's "Edit layout" was pressed.
+bool TakeTouchEditRequested();
 void Toggle();
 // Asks for the overlay to be toggled on the next frame. Safe to call from any
 // thread, unlike Toggle(), which touches ImGui state.

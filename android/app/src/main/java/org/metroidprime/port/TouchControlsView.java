@@ -3,6 +3,7 @@ package org.metroidprime.port;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
@@ -12,8 +13,10 @@ import android.view.View;
 
 import org.libsdl.app.SDLActivity;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -24,9 +27,11 @@ import java.util.Set;
  * game's own controller mapping, prompts and rebinding treat it as a real pad,
  * and its sticks are sticks rather than four keys pretending to be one.
  *
- * One layout, the GameCube pad's. By default there is no C-stick: a drag on the
- * free screen area aims like a mouse. The "Classic GameCube layout" setting
- * brings back the C-stick and the D-pad. The game assigns the actions.
+ * Three layouts (the F1 "Layout" setting). Default: the GameCube pad's, with no
+ * C-stick; a drag on the free screen area aims like a mouse. Classic GameCube
+ * brings back the C-stick and the D-pad. Twin stick (Remastered) has a right
+ * stick that aims directly and Remastered's Dual Sticks button labels. The game
+ * assigns the actions.
  */
 final class TouchControlsView extends View {
     // Touch target types.
@@ -47,6 +52,9 @@ final class TouchControlsView extends View {
 
     // Port-only actions, not game inputs.
     private static final int TOGGLE_DEBUG_OVERLAY = -1;
+    // Twin stick's Beam button: held, it turns the D-pad into the beam picker (the
+    // port's pad preset does the same with Y). It sends no GameCube button.
+    private static final int BEAM_SHIFT = -2;
     // Axis-held controls are tracked with ids above this, to share one press map.
     private static final int AXIS_ID_BASE = 100;
 
@@ -109,6 +117,8 @@ final class TouchControlsView extends View {
         ControlButton.kidney("X", BTN_WEST, 0.158f, 0.040f, -37f, 55f, GC_GREY),
         ControlButton.kidney("Y", BTN_NORTH, 0.158f, 0.040f, -150f, 55f, GC_GREY),
     };
+    // What each GameCube face button does, drawn small under its letter.
+    private static final String[] GAMECUBE_FUNCTIONS = {"Fire", "Jump", "Morph", "Missile"};
 
     // The D-pad is one cross, as on the GameCube pad: its centre as fractions of
     // the view, its arms in view heights so it stays square.
@@ -128,10 +138,45 @@ final class TouchControlsView extends View {
     // front of R on the GameCube pad, so Z goes under R here. L and R are tall so
     // a quick lock-on is hard to miss; L stops just above the D-pad. START and
     // MENU ignore their rects: see cornerSlot.
+    // Twin stick (Remastered): a diamond in Xbox positions, round A's spot, with
+    // Remastered's Dual Sticks functions on the GameCube buttons they send: Jump
+    // is B, Fire is A, Morph is X, and Y held shifts the D-pad to beams (Missile is
+    // the RB pill). Bottom, right, left, top, so
+    // the controls are C_JUMP + index. Coloured, each takes the colour of the
+    // GameCube button it sends.
+    private static final float TWIN_DIAMOND = 0.095f;
+    private static final ControlButton[] TWIN_FACE = {
+        ControlButton.round("Jump", BTN_EAST, 0f, TWIN_DIAMOND, 0.055f, GC_RED),
+        ControlButton.round("Fire", BTN_SOUTH, TWIN_DIAMOND, 0f, 0.055f, GC_GREEN),
+        ControlButton.round("Morph", BTN_WEST, -TWIN_DIAMOND, 0f, 0.055f, GC_GREY),
+        ControlButton.round("Beam", BEAM_SHIFT, 0f, -TWIN_DIAMOND, 0.055f, GC_GREY),
+    };
+
     private static final PillButton[] GAMECUBE_PILLS = {
-        new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY),
-        new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.190f, GC_GREY),
-        new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.205f, 0.960f, 0.265f, GC_PURPLE),
+        new PillButton("L Lock", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY),
+        new PillButton("R Look", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.190f, GC_GREY),
+        new PillButton("Z Map", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.205f, 0.960f, 0.265f, GC_PURPLE),
+        new PillButton("START", -1, BTN_START, 0f, 0f, 0f, 0f),
+        new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0f, 0f, 0f, 0f),
+    };
+
+    // Twin stick's shoulders, like Remastered's: LT locks on (the L trigger), RT
+    // fires, LB jumps and RB fires missiles. Z (the map) sits inboard of the
+    // right pair; R (free look) has no use with a right stick that aims. START and MENU as in the GameCube layout.
+    // The Xbox letter drawn big on each diamond button, matching the in-game hint.
+    private static final String[] TWIN_LETTERS = {"A", "B", "X", "Y"};
+
+    private static final PillButton[] TWIN_PILLS = {
+        new PillButton("LT Lock", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.100f, GC_GREY,
+                       TouchControlsView.C_LT),
+        new PillButton("LB Jump", -1, BTN_EAST, 0.020f, 0.115f, 0.150f, 0.185f,
+                       GC_RED, TouchControlsView.C_LB),
+        new PillButton("RT Fire", -1, BTN_SOUTH, 0.850f, 0.030f, 0.980f, 0.100f,
+                       GC_GREEN, TouchControlsView.C_RT),
+        new PillButton("RB Missile", -1, BTN_NORTH, 0.850f, 0.115f, 0.980f, 0.185f, GC_GREY,
+                       TouchControlsView.C_RB),
+        new PillButton("Map", -1, BTN_RIGHT_SHOULDER, 0.730f, 0.030f, 0.830f, 0.100f, GC_PURPLE,
+                       TouchControlsView.C_TZ),
         new PillButton("START", -1, BTN_START, 0f, 0f, 0f, 0f),
         new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0f, 0f, 0f, 0f),
     };
@@ -181,11 +226,97 @@ final class TouchControlsView extends View {
     private static final long WHEEL_ICON_RETRY_MS = 1000;
     private static final long WHEEL_TAP_MS = 250;
 
+    // Every control is one movable unit. Its override is an offset (in layoutU
+    // units, so it follows the screen's size) and a size scale, both applied on
+    // top of the default position, which still follows the F1 margin settings.
+    private static final int C_LSTICK = 0;
+    private static final int C_CSTICK = 1;
+    private static final int C_DPAD = 2;
+    private static final int C_A = 3; // A, B, X, Y follow in GAMECUBE_FACE's order
+    private static final int C_B = 4;
+    private static final int C_X = 5;
+    private static final int C_Y = 6;
+    private static final int C_L = 7;
+    private static final int C_R = 8;
+    private static final int C_Z = 9;
+    private static final int C_VISOR = 10; // the beam button follows
+    private static final int C_BEAM = 11;
+    private static final int C_START = 12;
+    private static final int C_MENU = 13;
+    private static final int C_MAP = 14;
+    private static final int C_EYE = 15;
+    // Twin stick's own controls, so a layout made there doesn't move the
+    // default or classic layout's buttons. The four face buttons are bottom,
+    // right, left, top (TWIN_FACE's order).
+    private static final int C_RSTICK = 16;
+    private static final int C_JUMP = 17;
+    private static final int C_FIRE = 18;
+    private static final int C_MORPH = 19;
+    private static final int C_MISSILE = 20;
+    private static final int C_LT = 21;
+    private static final int C_LB = 22;
+    private static final int C_RT = 23;
+    private static final int C_RB = 24;
+    private static final int C_TZ = 25;
+    private static final int C_TR = 26;
+    private static final int CONTROLS = 27;
+    // The ids the saved layout uses; never rename one.
+    private static final String[] CONTROL_IDS = {
+        "lstick", "cstick", "dpad", "a", "b", "x", "y", "l", "r", "z", "visor", "beam", "start",
+        "menu", "map", "eye", "rstick", "jump", "fire", "morph", "missile", "lt", "lb", "rt", "rb",
+        "tz", "tr",
+    };
+    private static final String[] CONTROL_NAMES = {
+        "Left stick", "C-stick", "D-pad", "A", "B", "X", "Y", "L", "R", "Z", "Visor", "Beam",
+        "Start", "Menu", "Map", "Hide", "Right stick", "Jump", "Fire", "Morph", "Missile",
+        "LT Lock", "LB Jump", "RT Fire", "RB Missile", "Map (Z)", "R",
+    };
+    private static final float MIN_SCALE = 0.5f;
+    private static final float MAX_SCALE = 2.5f;
+    private static final float SCALE_STEP = 0.1f;
+    // A saved offset beyond this many layout heights is junk, not a layout.
+    private static final float MAX_OFFSET = 4f;
+    // The editor's toolbar: -, +, Reset, Reset all, Done.
+    private static final String[] EDIT_LABELS = {"−", "+", "Reset", "Reset all", "Done"};
+    private static final float[] EDIT_WIDTHS_DP = {48f, 48f, 72f, 96f, 72f};
+    private static final float EDIT_BAR_HEIGHT_DP = 44f;
+    private static final float EDIT_BAR_GAP_DP = 6f;
+    private static final float EDIT_GRAB_DP = 8f; // slack round a control's bounds
+    private static final int EDIT_MINUS = 0;
+    private static final int EDIT_PLUS = 1;
+    private static final int EDIT_RESET = 2;
+    private static final int EDIT_RESET_ALL = 3;
+    private static final int EDIT_DONE = 4;
+
+    private final float[] ovDx = new float[CONTROLS];
+    private final float[] ovDy = new float[CONTROLS];
+    private final float[] ovScale = new float[CONTROLS];
+    // The layout string last read from or written to the native config.
+    private String layoutText = "";
+    // F1's "Edit layout" was pressed; the editor opens once the overlay is gone.
+    private boolean editPending;
+    private boolean editing;
+    private int selected = -1;
+    private int dragPointer = -1;
+    private int pinchPointer = -1;
+    private int editToolPointer = -1;
+    private float dragLastX;
+    private float dragLastY;
+    private float pinchStartDist;
+    private float pinchStartScale;
+    private final RectF[] editBar = new RectF[EDIT_LABELS.length];
+    private final RectF editRect = new RectF();
+    private final RectF clampRect = new RectF();
+    private final Paint editPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private DashPathEffect editDashes;
+
     private ControlButton[] face = GAMECUBE_FACE;
     private PillButton[] pills = GAMECUBE_PILLS;
     // The GameCube pad's colours, off by default (plain translucent buttons);
     // an F1 setting, so it's re-read every draw.
     private boolean colored;
+    // Each button's function (Fire, Jump...) drawn with its letter.
+    private boolean labels = true;
     // F1 settings too, in px: every control's gap to the side edges, and the
     // left stick's on top of it.
     private float sideMargin;
@@ -194,6 +325,9 @@ final class TouchControlsView extends View {
     // Classic GameCube layout (F1 setting, re-read every draw): the C-stick is
     // drawn and grabs presses in its zone.
     private boolean cStick;
+    // Twin stick (Remastered) layout, also an F1 setting re-read every draw: the
+    // right stick is drawn (cStick is on too) but aims, with Jump/Fire/Morph/Missile.
+    private boolean twin;
     // A drag on the free area aims (mouse-style, or the classic turn and look
     // up/down). Always on unless the classic layout turns it off.
     private boolean aim;
@@ -223,6 +357,10 @@ final class TouchControlsView extends View {
     private final Runnable mapButtonPoll = new Runnable() {
         @Override
         public void run() {
+            // The editor shows every control; leaving it redraws and re-arms this.
+            if (editing) {
+                return;
+            }
             if ((mapTap && mapButtonState(getWidth(), getHeight()) != mapButtonShown) ||
                 (wheels && ((nativeWheelOwned() & WHEEL_VALID_BIT) != 0) != wheelButtonsShown) ||
                 rHidden() != rHiddenNow) {
@@ -245,12 +383,20 @@ final class TouchControlsView extends View {
     private final Path crossArmPath = new Path();
     private static native boolean nativeDebugOverlayVisible();
     private static native boolean nativeTouchClassic();
+    private static native boolean nativeTouchTwinStick();
     private static native boolean nativeTouchColors();
+    private static native boolean nativeTouchLabels();
     // F1's side margin (every control) and the left stick's extra inset, in dp.
     private static native float nativeTouchSideMarginDp();
     private static native float nativeTouchStickInsetDp();
     // The face buttons' and C-stick's extra inset from the right edge, in dp.
     private static native float nativeTouchButtonInsetDp();
+    // The saved per-control layout (`<id>:<dx>,<dy>,<scale>;...`), and its writer, which
+    // also saves F1's config.
+    private static native String nativeTouchLayout();
+    private static native void nativeSetTouchLayout(String layout);
+    // True once after F1's "Edit layout" was pressed.
+    private static native boolean nativeTouchEditRequested();
     private static native boolean nativeTouchAimEnabled();
     private static native void nativeTouchAim(float dxDp, float dyDp);
     private static native void nativeTouchAimDown(boolean down);
@@ -281,6 +427,8 @@ final class TouchControlsView extends View {
     private static native void nativeSetTouchDevice(boolean xboxLayout);
     private static native void nativeToggleDebugOverlay();
     private static native void nativeVirtualButton(int button, boolean down);
+    // The twin layout's Beam button is held: the D-pad picks beams, not visors.
+    private static native void nativeTouchBeamShift(boolean held);
     private static native void nativeVirtualAxis(int axis, float value);
     private static native boolean nativeTakePhysicalInput();
     private int leftPointer = -1;
@@ -308,9 +456,12 @@ final class TouchControlsView extends View {
         public void run() {
             // Always drained, so input from while the controls were already
             // hidden cannot hide them again the moment they come back.
-            if (nativeTakePhysicalInput() && !hidden && !autoHidden) {
+            if (nativeTakePhysicalInput() && !hidden && !autoHidden && !editing) {
                 autoHidden = true;
                 releaseAll();
+            }
+            if (nativeTouchEditRequested()) {
+                editPending = true;
             }
             // The overlay can open without this view hearing of it (a pad, or
             // MENU while the first frames are slow enough that a one-off
@@ -327,6 +478,14 @@ final class TouchControlsView extends View {
                 lastOverlayVisible = overlayVisible;
                 invalidate();
             }
+            // F1 closes itself on the request; open the editor once it has.
+            if (editPending && !overlayVisible) {
+                editPending = false;
+                beginEdit();
+            } else if (editing && overlayVisible) {
+                // The overlay was opened some other way (a pad's chord): keep what was done.
+                endEdit(true);
+            }
             postDelayed(this, PHYSICAL_INPUT_POLL_MS);
         }
     };
@@ -341,23 +500,29 @@ final class TouchControlsView extends View {
         textPaint.setColor(Color.WHITE);
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setFakeBoldText(true);
+        editPaint.setStyle(Paint.Style.STROKE);
+        editPaint.setStrokeWidth(dp(2));
+        Arrays.fill(ovScale, 1f);
+        for (int i = 0; i < editBar.length; ++i) {
+            editBar[i] = new RectF();
+        }
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
+        if (!editing) {
+            syncLayout();
+        }
         // The debug overlay is drawn into the surface below; stay out of its way.
         // It is usually closed from its own Close button, which this view never
         // hears about, so keep checking; otherwise the controls stayed invisible
         // until the next touch happened to redraw them.
-        if (nativeDebugOverlayVisible()) {
+        if (nativeDebugOverlayVisible() && !editing) {
             postInvalidateDelayed(150);
             return;
         }
-        if (autoHidden) {
-            return;
-        }
-        if (hidden) {
+        if ((autoHidden || hidden) && !editing) {
             return;
         }
 
@@ -367,25 +532,42 @@ final class TouchControlsView extends View {
         // Off, aim and the wheels are always on.
         final boolean classic = nativeTouchClassic();
         colored = nativeTouchColors();
+        labels = nativeTouchLabels();
         sideMargin = dp(nativeTouchSideMarginDp());
         stickInset = dp(nativeTouchStickInsetDp());
         buttonInset = dp(nativeTouchButtonInsetDp());
-        cStick = classic;
+        // Classic and twin stick are exclusive (the native side keeps them so).
+        twin = !classic && nativeTouchTwinStick();
+        face = twin ? TWIN_FACE : GAMECUBE_FACE;
+        pills = twin ? TWIN_PILLS : GAMECUBE_PILLS;
+        cStick = classic || twin;
         aim = !classic || nativeTouchAimEnabled();
-        wheels = !classic || nativeTouchWheelsEnabled();
+        // The wheels are the default layout's only beam and visor control; classic and
+        // twin stick have the D-pad (twin: Beam held + D-pad) and the setting.
+        wheels = (!classic && !twin) || nativeTouchWheelsEnabled();
         visorTapScan = nativeTouchVisorTapScan();
         mapTap = nativeTouchMapTapEnabled();
+        if (!editing) {
+            // A layout made on another screen, or before a rotation or resize,
+            // must not leave a control off screen where it can't be grabbed.
+            for (int i = 0; i < CONTROLS; ++i) {
+                if (editShown(i) && (ovDx[i] != 0f || ovDy[i] != 0f || ovScale[i] != 1f)) {
+                    clampToScreen(i, width, height);
+                }
+            }
+        }
         bottomButtonRect(0, true, width, height, hideBounds);
         drawStick(canvas, leftStickX(width, height), leftStickY(width, height),
-                  layoutU(height) * STICK_RADIUS, leftPointer, 0);
-        // The right stick is the C-stick, yellow on the GameCube pad. Only the
-        // classic layout has one; otherwise a drag anywhere free aims.
+                  leftStickRadius(height), leftPointer, 0);
+        // The right stick is the C-stick, yellow on the GameCube pad, in the classic
+        // layout; in twin stick it aims, plain like the left. Otherwise a drag
+        // anywhere free aims.
         if (cStick) {
             drawStick(canvas, rightStickX(width, height), rightStickY(height),
-                      rightStickRadius(height), rightPointer, colored ? GC_YELLOW : 0);
+                      rightStickRadius(height), rightPointer, colored && !twin ? GC_YELLOW : 0);
         }
 
-        rHiddenNow = rHidden();
+        rHiddenNow = !editing && rHidden();
         for (PillButton pill : pills) {
             if (pillShown(pill)) {
                 drawPillButton(canvas, pill, width, height);
@@ -411,13 +593,17 @@ final class TouchControlsView extends View {
         if (wheels && wheelPointer != -1) {
             drawWheel(canvas);
         }
+        if (editing) {
+            drawEditOverlay(canvas, width, height);
+        }
     }
 
     // True, with mapButtonRect set, when the map button should show.
     private boolean mapButtonState(float width, float height) {
-        // Shown in the open map too: a tap is a Z press, which closes it.
+        // Shown in the open map too: a tap is a Z press, which closes it. The
+        // editor shows it whenever it can appear.
         if (!mapTap || width <= 0f || height <= 0f ||
-            (!nativeMinimapRect(minimapRect) && !nativeMapScreenOpen())) {
+            (!editing && !nativeMinimapRect(minimapRect) && !nativeMapScreenOpen())) {
             return false;
         }
         bottomButtonRect(1, true, width, height, mapButtonRect);
@@ -433,6 +619,21 @@ final class TouchControlsView extends View {
         final float left = right ? width - fromSide - d : fromSide;
         final float bottom = height - dp(BOTTOM_BUTTON_BOTTOM_DP);
         out.set(left, bottom - d, left + d, bottom);
+        applyOverride(right ? (slot == 0 ? C_EYE : C_MAP) : (slot == 0 ? C_START : C_MENU), out,
+                      height);
+    }
+
+    // Moves and scales a control's default rect by its override, round its centre.
+    private void applyOverride(int control, RectF rect, float height) {
+        if (ovDx[control] == 0f && ovDy[control] == 0f && ovScale[control] == 1f) {
+            return; // the default layout stays bit-for-bit what it was
+        }
+        final float u = layoutU(height);
+        final float cx = rect.centerX() + ovDx[control] * u;
+        final float cy = rect.centerY() + ovDy[control] * u;
+        final float halfW = rect.width() * 0.5f * ovScale[control];
+        final float halfH = rect.height() * 0.5f * ovScale[control];
+        rect.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
     }
 
     // A round button with a folded map: three panels, the middle one raised.
@@ -483,6 +684,10 @@ final class TouchControlsView extends View {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        // The editor takes every touch, a mouse's included: nothing reaches the game.
+        if (editing) {
+            return onEditTouch(event);
+        }
         if (fromMouse(event)) {
             return false;
         }
@@ -512,7 +717,7 @@ final class TouchControlsView extends View {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
                 autoHidden = false;
                 nativeTakePhysicalInput();
-                nativeSetTouchDevice(false);
+                nativeSetTouchDevice(twin);
                 invalidate();
             }
             return true;
@@ -530,7 +735,7 @@ final class TouchControlsView extends View {
         if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
             // The in-game prompts follow the input the player reached for, so
             // tell the port which set this overlay is showing.
-            nativeSetTouchDevice(false);
+            nativeSetTouchDevice(twin);
             int pointerId = event.getPointerId(actionIndex);
             float x = event.getX(actionIndex);
             float y = event.getY(actionIndex);
@@ -704,14 +909,18 @@ final class TouchControlsView extends View {
             }
             pillRect(pill, width, height, pillHit);
             if (pillHit.contains(x, y)) {
-                targets.put(pointerId, new TouchTarget(BUTTON, pill.id()));
+                final TouchTarget target = new TouchTarget(BUTTON, pill.id());
+                target.control = pill;
+                targets.put(pointerId, target);
                 pressControl(pill.id());
                 return;
             }
         }
         for (ControlButton button : face) {
             if (hitButton(button, x, y, width, height)) {
-                targets.put(pointerId, TouchTarget.begin(BUTTON, button.button, x, y));
+                final TouchTarget target = TouchTarget.begin(BUTTON, button.button, x, y);
+                target.control = button;
+                targets.put(pointerId, target);
                 pressControl(button.button);
                 return;
             }
@@ -724,8 +933,12 @@ final class TouchControlsView extends View {
                 if (wheelPointer == -1 && !nativeMapScreenOpen()) {
                     TouchTarget target = TouchTarget.begin(WHEEL, wheel, x, y);
                     target.startMs = SystemClock.uptimeMillis();
-                    wheelCx = wheelButtonX(wheel, width, height);
-                    wheelCy = wheelButtonY(height);
+                    // A moved button must still open its wheel on screen.
+                    final float reach = dp(WHEEL_RADIUS_DP);
+                    wheelCx = Math.max(reach, Math.min(width - reach,
+                                                       wheelButtonX(wheel, width, height)));
+                    wheelCy = Math.max(reach, Math.min(height - reach,
+                                                       wheelButtonY(wheel, height)));
                     wheelPointer = pointerId;
                     targets.put(pointerId, target);
                 }
@@ -761,9 +974,7 @@ final class TouchControlsView extends View {
                 pan2Pointer = pointerId;
                 targets.put(pointerId, TouchTarget.begin(MAP_PAN2, 0, x, y));
             }
-        } else if (cStick && x >= rightStickGrabLeft(width, height) &&
-                   x < rightStickRight(width, height) &&
-                   y > layoutYFromBottom(0.43f, height)) {
+        } else if (cStick && inRightStickGrab(x, y, width, height)) {
             if (rightPointer == -1) {
                 TouchTarget target = new TouchTarget(RIGHT_STICK, 0);
                 rightPointer = pointerId;
@@ -782,7 +993,7 @@ final class TouchControlsView extends View {
     private boolean onLeftStick(float x, float y, float width, float height) {
         final float dx = x - leftStickX(width, height);
         final float dy = y - leftStickY(width, height);
-        final float reach = layoutU(height) * STICK_RADIUS * LEFT_STICK_REACH;
+        final float reach = leftStickRadius(height) * LEFT_STICK_REACH;
         return dx * dx + dy * dy <= reach * reach;
     }
 
@@ -822,41 +1033,82 @@ final class TouchControlsView extends View {
     // Mirrors the face cluster's gap to the right edge (side margin included,
     // button inset not), plus the stick inset, so the two thumbs' controls look
     // balanced.
-    private float leftStickX(float width, float height) {
+    // The default position, without the override: the Visor button, the face
+    // cluster and the pill shift hang off it, so moving the stick moves none of them.
+    private float baseLeftStickX(float width, float height) {
         faceBounds(width, height, stickFaceRect);
         return (width - stickFaceRect.right - buttonInset) + stickInset +
                STICK_RADIUS * layoutU(height);
     }
 
     // Level with the face cluster's middle.
-    private float leftStickY(float width, float height) {
+    private float baseLeftStickY(float width, float height) {
         faceBounds(width, height, stickFaceRect);
         return stickFaceRect.centerY();
     }
 
-    private float rightStickX(float width, float height) {
+    private float leftStickX(float width, float height) {
+        return baseLeftStickX(width, height) + ovDx[C_LSTICK] * layoutU(height);
+    }
+
+    private float leftStickY(float width, float height) {
+        return baseLeftStickY(width, height) + ovDy[C_LSTICK] * layoutU(height);
+    }
+
+    private float leftStickRadius(float height) {
+        return layoutU(height) * STICK_RADIUS * ovScale[C_LSTICK];
+    }
+
+    // The control id the right stick's override is stored under.
+    private int rightControl() {
+        return twin ? C_RSTICK : C_CSTICK;
+    }
+
+    private float baseRightStickX(float width, float height) {
         return width - sideMargin - buttonInset - layoutU(height) * GC_CSTICK_FROM_RIGHT;
     }
 
+    private float rightStickX(float width, float height) {
+        return baseRightStickX(width, height) + ovDx[rightControl()] * layoutU(height);
+    }
+
+    // Twin's stick is level with the left one, which sits at the face cluster's
+    // middle: A's spot, the diamond's centre. The C-stick sits lower, as on the pad.
+    private float baseRightStickY(float height) {
+        return layoutY(twin ? GC_A_Y : GC_CSTICK_Y, height);
+    }
+
     private float rightStickY(float height) {
-        return layoutY(GC_CSTICK_Y, height);
+        return baseRightStickY(height) + ovDy[rightControl()] * layoutU(height);
+    }
+
+    // The default radius in layout units: twin's aiming stick matches the left
+    // stick, the C-stick is the GameCube pad's small one.
+    private float rightStickBaseRadius() {
+        return twin ? STICK_RADIUS : GC_CSTICK_RADIUS;
     }
 
     private float rightStickRadius(float height) {
-        return layoutU(height) * GC_CSTICK_RADIUS;
+        return layoutU(height) * rightStickBaseRadius() * ovScale[rightControl()];
     }
 
-    // Right edge of the area that grabs the right stick. Face buttons are
-    // hit-tested first, so it can reach past the C-stick.
-    private float rightStickRight(float width, float height) {
-        return rightStickX(width, height) + rightStickRadius(height) * 1.6f;
-    }
-
-    // Its left edge: a phone's 0.38 of the width, with the area's reach to the
-    // stick scaled down on a big screen.
-    private float rightStickGrabLeft(float width, float height) {
-        final float right = rightStickRight(width, height);
-        return right - (right - width * 0.38f) * layoutScale(height);
+    // Whether (x, y) is in the area that grabs the right stick. By default the
+    // right edge is the stick's reach (face buttons are hit-tested first, so it
+    // can pass them), the left edge a phone's 0.38 of the width with the reach
+    // scaled down on a big screen, and the top 0.43 of the height from the
+    // bottom. The moved stick takes the whole area along, scaled by its size, so
+    // no grab is left at the old place.
+    private boolean inRightStickGrab(float x, float y, float width, float height) {
+        final float u = layoutU(height);
+        final float scale = ovScale[rightControl()];
+        final float baseCy = baseRightStickY(height);
+        final float baseRight = baseRightStickX(width, height) + u * rightStickBaseRadius() * 1.6f;
+        final float baseLeft = baseRight - (baseRight - width * 0.38f) * layoutScale(height);
+        final float baseTop = layoutYFromBottom(0.43f, height);
+        final float cy = rightStickY(height);
+        final float right = rightStickX(width, height) + rightStickRadius(height) * 1.6f;
+        return x >= right - (baseRight - baseLeft) * scale && x < right &&
+               y > cy - (baseCy - baseTop) * scale && y <= cy + (height - baseCy) * scale;
     }
 
     // A held A (charging) that slides past the tap slop aims too, so one thumb
@@ -958,7 +1210,7 @@ final class TouchControlsView extends View {
         float height = getHeight();
         float centreX = left ? leftStickX(width, height) : rightStickX(width, height);
         float centreY = left ? leftStickY(width, height) : rightStickY(height);
-        float radius = left ? layoutU(height) * STICK_RADIUS : rightStickRadius(height);
+        float radius = left ? leftStickRadius(height) : rightStickRadius(height);
         // SDL's gamepad axes are +X right and +Y *down* (Aurora inverts Y for the
         // GameCube stick, whose +Y is up), so screen coordinates apply as-is.
         float dx = (x - centreX) / radius;
@@ -1078,7 +1330,9 @@ final class TouchControlsView extends View {
         }
         int count = held.containsKey(id) ? held.get(id) : 0;
         if (count == 0) {
-            if (id >= AXIS_ID_BASE) {
+            if (id == BEAM_SHIFT) {
+                nativeTouchBeamShift(true);
+            } else if (id >= AXIS_ID_BASE) {
                 nativeVirtualAxis(id - AXIS_ID_BASE, 1f);
             } else {
                 nativeVirtualButton(id, true);
@@ -1098,7 +1352,9 @@ final class TouchControlsView extends View {
         }
         if (current <= 1) {
             held.remove(id);
-            if (id >= AXIS_ID_BASE) {
+            if (id == BEAM_SHIFT) {
+                nativeTouchBeamShift(false);
+            } else if (id >= AXIS_ID_BASE) {
                 // Triggers are axes, and SDL's joystick axes run -32768..32767
                 // with a trigger resting at the minimum: releasing with 0 left
                 // the trigger half pressed, so the game stayed locked on (and
@@ -1160,11 +1416,54 @@ final class TouchControlsView extends View {
         return layoutY(button.anchored ? GC_A_Y + button.y : button.y, height);
     }
 
+    private int controlOf(ControlButton button) {
+        final int first = twin ? C_JUMP : C_A;
+        for (int i = 0; i < face.length; ++i) {
+            if (face[i] == button) {
+                return first + i;
+            }
+        }
+        return first;
+    }
+
+    // The button's centre, radius (a kidney's is its arc's) and band half width
+    // into out: x, y, radius, half. `moved` applies the override, which scales a
+    // kidney round its own middle rather than round its arc's centre; draw and hit
+    // test both go through here.
+    private void faceGeometry(ControlButton button, float width, float height, boolean moved,
+                              float[] out) {
+        final float u = layoutU(height);
+        float x = centreX(button, width, height);
+        float y = centreY(button, height);
+        float radius = button.radius * u;
+        float half = button.halfWidth * u;
+        if (moved) {
+            final int control = controlOf(button);
+            final float scale = ovScale[control];
+            if (button.isKidney()) {
+                final double middle = Math.toRadians(button.arcStart + button.arcSweep / 2);
+                x += radius * (1f - scale) * (float) Math.cos(middle);
+                y += radius * (1f - scale) * (float) Math.sin(middle);
+            }
+            x += ovDx[control] * u;
+            y += ovDy[control] * u;
+            radius *= scale;
+            half *= scale;
+        }
+        out[0] = x;
+        out[1] = y;
+        out[2] = radius;
+        out[3] = half;
+    }
+
+    private final float[] faceGeo = new float[4];
+
     private boolean hitButton(ControlButton button, float x, float y, float width, float height) {
-        float dx = x - centreX(button, width, height);
-        float dy = y - centreY(button, height);
+        faceGeometry(button, width, height, true, faceGeo);
+        float dx = x - faceGeo[0];
+        float dy = y - faceGeo[1];
         if (!button.isKidney()) {
-            float radius = button.radius * layoutU(height);
+            float radius = faceGeo[2];
             return dx * dx + dy * dy <= radius * radius;
         }
         // Distance to the nearest point of the kidney's centre arc.
@@ -1174,10 +1473,10 @@ final class TouchControlsView extends View {
             along = along - button.arcSweep < 360 - along ? button.arcSweep : 0;
         }
         double nearest = Math.toRadians(button.arcStart + along);
-        float ring = button.radius * layoutU(height);
+        float ring = faceGeo[2];
         float px = dx - ring * (float) Math.cos(nearest);
         float py = dy - ring * (float) Math.sin(nearest);
-        float half = button.halfWidth * layoutU(height);
+        float half = faceGeo[3];
         return px * px + py * py <= half * half;
     }
 
@@ -1185,10 +1484,10 @@ final class TouchControlsView extends View {
     // counts, by the dominant axis, so a thumb that slips off an arm's side or
     // into a corner still presses something; only a small centre is dead.
     private int dpadButtonAt(float x, float y, float width, float height) {
-        float dx = x - layoutX(DPAD_X, width, height);
-        float dy = y - layoutY(DPAD_Y, height);
-        float arm = DPAD_ARM * layoutU(height);
-        float dead = DPAD_HALF * layoutU(height) * 0.4f;
+        float dx = x - dpadX(width, height);
+        float dy = y - dpadY(height);
+        float arm = DPAD_ARM * layoutU(height) * ovScale[C_DPAD];
+        float dead = DPAD_HALF * layoutU(height) * ovScale[C_DPAD] * 0.4f;
         if (Math.abs(dx) > arm || Math.abs(dy) > arm || dx * dx + dy * dy < dead * dead) {
             return -1;
         }
@@ -1200,11 +1499,19 @@ final class TouchControlsView extends View {
 
     private final RectF armRect = new RectF();
 
+    private float dpadX(float width, float height) {
+        return layoutX(DPAD_X, width, height) + ovDx[C_DPAD] * layoutU(height);
+    }
+
+    private float dpadY(float height) {
+        return layoutY(DPAD_Y, height) + ovDy[C_DPAD] * layoutU(height);
+    }
+
     private void drawDpad(Canvas canvas, float width, float height) {
-        float cx = layoutX(DPAD_X, width, height);
-        float cy = layoutY(DPAD_Y, height);
-        float arm = DPAD_ARM * layoutU(height);
-        float half = DPAD_HALF * layoutU(height);
+        float cx = dpadX(width, height);
+        float cy = dpadY(height);
+        float arm = DPAD_ARM * layoutU(height) * ovScale[C_DPAD];
+        float half = DPAD_HALF * layoutU(height) * ovScale[C_DPAD];
         float corner = half * 0.35f;
         shapePath.reset();
         shapePath.addRoundRect(cx - arm, cy - half, cx + arm, cy + half, corner, corner,
@@ -1234,7 +1541,7 @@ final class TouchControlsView extends View {
         canvas.drawPath(shapePath, strokePaint);
         for (int i = 0; i < DPAD_BUTTONS.length; ++i) {
             drawCenteredLabel(canvas, DPAD_LABELS[i], cx + DPAD_DX[i] * arm * 0.62f,
-                              cy + DPAD_DY[i] * arm * 0.62f, dp(12));
+                              cy + DPAD_DY[i] * arm * 0.62f, dp(12) * ovScale[C_DPAD]);
         }
     }
 
@@ -1283,9 +1590,9 @@ final class TouchControlsView extends View {
     // With drag-to-aim, R's hold-still free look is redundant, so R only shows
     // where it does something else: morphed (Spider Ball), in the pause menu,
     // and on the map screen. Not part of pillHidden, so the pills' layout
-    // doesn't jump as R comes and goes.
+    // doesn't jump as R comes and goes. Twin stick always shows it.
     private boolean rHidden() {
-        return aim && (nativeWheelOwned() & WHEEL_MORPHED_BIT) == 0 && !nativePauseScreenOpen() &&
+        return aim && !twin && (nativeWheelOwned() & WHEEL_MORPHED_BIT) == 0 && !nativePauseScreenOpen() &&
                !nativeMapScreenOpen();
     }
 
@@ -1335,7 +1642,7 @@ final class TouchControlsView extends View {
             }
         }
         faceBounds(width, height, faceRect);
-        final float stickTop = leftStickY(width, height) - STICK_RADIUS * layoutU(height);
+        final float stickTop = baseLeftStickY(width, height) - STICK_RADIUS * layoutU(height);
         return Math.max(0f, Math.min(stickTop, faceRect.top) - dp(12) - bottom);
     }
 
@@ -1360,11 +1667,35 @@ final class TouchControlsView extends View {
         final float shift = pillShift(width, height);
         out.set(layoutX(pill.left, width, height), layoutY(pill.top, height) + shift,
                 layoutX(pill.right, width, height), layoutY(pill.bottom, height) + shift);
+        applyOverride(pillControl(pill), out, height);
+    }
+
+    private static int pillControl(PillButton pill) {
+        if (pill.control >= 0) {
+            return pill.control;
+        }
+        if (pill.axis == AXIS_TRIGGER_L) {
+            return C_L;
+        }
+        if (pill.axis == AXIS_TRIGGER_R) {
+            return C_R;
+        }
+        return pill.button == BTN_RIGHT_SHOULDER ? C_Z : C_L;
+    }
+
+    // Whether a finger is down on this control itself.
+    private boolean pressedControl(Object control) {
+        for (TouchTarget target : targets.values()) {
+            if (target.control == control) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void drawPillButton(Canvas canvas, PillButton pill, float width, float height) {
         pillRect(pill, width, height, pillHit);
-        boolean active = held.containsKey(pill.id());
+        boolean active = pressedControl(pill);
         if (colored && pill.color != 0) {
             fillPaint.setColor(padFill(pill.color, active));
         } else {
@@ -1380,15 +1711,39 @@ final class TouchControlsView extends View {
         float radius = Math.min(bounds.width(), bounds.height()) * 0.28f;
         canvas.drawRoundRect(bounds, radius, radius, fillPaint);
         canvas.drawRoundRect(bounds, radius, radius, strokePaint);
-        drawCenteredLabel(canvas, pill.label, bounds.centerX(), bounds.centerY(),
-                          pill.label.length() > 2 ? dp(11) : dp(13));
+        if (twin && pill.axis < 0 && pill.button == BTN_RIGHT_SHOULDER) {
+            // The Map pill wears Xbox's Menu glyph (three lines), as the hint does.
+            final float h = bounds.height();
+            final float gx = labels ? bounds.left + bounds.width() * 0.26f : bounds.centerX();
+            final float lineW = h * 0.34f;
+            final float lineH = Math.max(1.5f, h * 0.06f);
+            final int saved = fillPaint.getColor();
+            fillPaint.setColor(strokePaint.getColor());
+            for (int i = -1; i <= 1; i++) {
+                final float ly = bounds.centerY() + i * h * 0.16f;
+                canvas.drawRect(gx - lineW / 2f, ly - lineH / 2f, gx + lineW / 2f,
+                                ly + lineH / 2f, fillPaint);
+            }
+            fillPaint.setColor(saved);
+            if (labels) {
+                drawCenteredLabel(canvas, pill.label, bounds.left + bounds.width() * 0.62f,
+                                  bounds.centerY(), dp(11));
+            }
+            return;
+        }
+        // "LB Jump": without descriptions, just the button's name.
+        final String label = labels ? pill.label : pill.label.split(" ")[0];
+        drawCenteredLabel(canvas, label, bounds.centerX(), bounds.centerY(),
+                          label.length() > 2 ? dp(11) : dp(13));
     }
 
     private void drawButton(Canvas canvas, ControlButton button, float width, float height) {
-        float x = centreX(button, width, height);
-        float y = centreY(button, height);
-        float radius = button.radius * layoutU(height);
-        boolean active = held.containsKey(button.button);
+        faceGeometry(button, width, height, true, faceGeo);
+        float x = faceGeo[0];
+        float y = faceGeo[1];
+        float radius = faceGeo[2];
+        final float scale = ovScale[controlOf(button)];
+        boolean active = pressedControl(button);
         if (colored && button.color != 0) {
             fillPaint.setColor(padFill(button.color, active));
         } else {
@@ -1396,8 +1751,7 @@ final class TouchControlsView extends View {
         }
         strokePaint.setColor(active ? 0xFFE1F8FF : 0xBBFFFFFF);
         if (button.isKidney()) {
-            kidneyPath(shapePath, x, y, radius, button.halfWidth * layoutU(height), button.arcStart,
-                       button.arcSweep);
+            kidneyPath(shapePath, x, y, radius, faceGeo[3], button.arcStart, button.arcSweep);
             canvas.drawPath(shapePath, fillPaint);
             canvas.drawPath(shapePath, strokePaint);
             double middle = Math.toRadians(button.arcStart + button.arcSweep / 2);
@@ -1407,8 +1761,33 @@ final class TouchControlsView extends View {
             canvas.drawCircle(x, y, radius, fillPaint);
             canvas.drawCircle(x, y, radius, strokePaint);
         }
-        drawCenteredLabel(canvas, button.label, x, y,
-                          button.label.length() > 2 ? dp(10) : dp(15));
+        // The letter big (twin: the Xbox one), the function small under it.
+        final String letter = twin ? TWIN_LETTERS[controlOf(button) - C_JUMP] : button.label;
+        final float letterSize = (twin ? dp(17) : dp(15)) * scale;
+        if (!labels) {
+            drawCenteredLabel(canvas, letter, x, y, letterSize);
+            return;
+        }
+        final String function =
+            twin ? button.label : GAMECUBE_FUNCTIONS[controlOf(button) - C_A];
+        // The function goes below the letter. A kidney is sized by its half width,
+        // and a mostly level one (Y) has its text slanted along the band: upright,
+        // "Missile" ran into the border of Y's tilted band.
+        float size = radius;
+        float slant = 0f;
+        if (button.isKidney()) {
+            size = faceGeo[3] * 1.4f;
+            float tangent = button.arcStart + button.arcSweep / 2 + 90f;
+            tangent = ((tangent % 180f) + 270f) % 180f - 90f; // into [-90, 90)
+            if (Math.abs(tangent) <= 45f) {
+                slant = tangent;
+            }
+        }
+        canvas.save();
+        canvas.rotate(slant, x, y);
+        drawCenteredLabel(canvas, letter, x, y - size * 0.2f, letterSize);
+        drawCenteredLabel(canvas, function, x, y + size * 0.52f, dp(8) * scale);
+        canvas.restore();
     }
 
     // The hide button: an eye.
@@ -1489,27 +1868,33 @@ final class TouchControlsView extends View {
         final float edge = dp(WHEEL_BUTTON_ANCHOR_DP) + WHEEL_BUTTON_RADIUS * layoutU(height);
         float x;
         if (wheel == 0) {
-            x = leftStickX(width, height) + STICK_RADIUS * layoutU(height) + edge;
+            x = baseLeftStickX(width, height) + STICK_RADIUS * layoutU(height) + edge;
         } else if (cStick) {
-            x = rightStickX(width, height) - rightStickRadius(height) - edge;
+            x = baseRightStickX(width, height) - layoutU(height) * rightStickBaseRadius() - edge;
         } else {
             faceBounds(width, height, faceRect);
             x = faceRect.left - edge;
         }
         // The open wheel must stay on screen.
         final float reach = dp(WHEEL_RADIUS_DP);
-        return Math.max(reach, Math.min(width - reach, x));
+        return Math.max(reach, Math.min(width - reach, x)) +
+               ovDx[C_VISOR + wheel] * layoutU(height);
     }
 
-    private float wheelButtonY(float height) {
-        return height - dp(WHEEL_RADIUS_DP) - dp(WHEEL_BUTTON_GAP_DP);
+    private float wheelButtonY(int wheel, float height) {
+        return height - dp(WHEEL_RADIUS_DP) - dp(WHEEL_BUTTON_GAP_DP) +
+               ovDy[C_VISOR + wheel] * layoutU(height);
+    }
+
+    private float wheelButtonRadius(int wheel, float height) {
+        return WHEEL_BUTTON_RADIUS * layoutU(height) * ovScale[C_VISOR + wheel];
     }
 
     private int wheelButtonAt(float x, float y, float width, float height) {
-        final float radius = WHEEL_BUTTON_RADIUS * layoutU(height) * 1.1f;
         for (int wheel = 0; wheel < 2; ++wheel) {
+            final float radius = wheelButtonRadius(wheel, height) * 1.1f;
             final double dx = x - wheelButtonX(wheel, width, height);
-            final double dy = y - wheelButtonY(height);
+            final double dy = y - wheelButtonY(wheel, height);
             if (dx * dx + dy * dy <= radius * radius) {
                 return wheel;
             }
@@ -1574,15 +1959,15 @@ final class TouchControlsView extends View {
 
     private void drawWheelButtons(Canvas canvas, float width, float height) {
         final int mask = nativeWheelOwned();
-        wheelButtonsShown = (mask & WHEEL_VALID_BIT) != 0;
+        wheelButtonsShown = (mask & WHEEL_VALID_BIT) != 0 || editing;
         if (!wheelButtonsShown) {
             return;
         }
         refreshWheelIcons();
         for (int wheel = 0; wheel < 2; ++wheel) {
             final float cx = wheelButtonX(wheel, width, height);
-            final float cy = wheelButtonY(height);
-            final float radius = WHEEL_BUTTON_RADIUS * layoutU(height);
+            final float cy = wheelButtonY(wheel, height);
+            final float radius = wheelButtonRadius(wheel, height);
             final boolean active = wheelPointer != -1 && wheelTarget() != null &&
                                    wheelTarget().id == wheel;
             fillPaint.setColor(active ? 0xCC48C8E8 : 0x77081218);
@@ -1591,7 +1976,8 @@ final class TouchControlsView extends View {
             canvas.drawCircle(cx, cy, radius, strokePaint);
             final int current = wheel == 0 ? (mask >> 8) & 3 : (mask >> 10) & 3;
             if (!drawWheelIcon(canvas, wheel, current, cx, cy, radius * 1.4f, 255)) {
-                drawCenteredLabel(canvas, WHEEL_BUTTON_LABELS[wheel], cx, cy, dp(13));
+                drawCenteredLabel(canvas, WHEEL_BUTTON_LABELS[wheel], cx, cy,
+                                  dp(13) * ovScale[C_VISOR + wheel]);
             }
         }
     }
@@ -1694,6 +2080,496 @@ final class TouchControlsView extends View {
         canvas.drawText(label, x, y - (textPaint.ascent() + textPaint.descent()) / 2, textPaint);
     }
 
+    // The layout is stored natively (the F1 config), so a reset there, or the
+    // editor's save, reaches the next draw. Re-parsed only when the text changes.
+    private void syncLayout() {
+        final String text = nativeTouchLayout();
+        if (text != null && !text.equals(layoutText)) {
+            layoutText = text;
+            loadLayout(text);
+        }
+    }
+
+    // `id:dx,dy,scale;...`. Unknown ids and malformed entries are skipped, so a
+    // layout from a newer version still loads what this one knows.
+    private void loadLayout(String text) {
+        Arrays.fill(ovDx, 0f);
+        Arrays.fill(ovDy, 0f);
+        Arrays.fill(ovScale, 1f);
+        for (String entry : text.split(";")) {
+            final int colon = entry.indexOf(':');
+            if (colon <= 0) {
+                continue;
+            }
+            final String id = entry.substring(0, colon).trim();
+            int control = -1;
+            for (int i = 0; i < CONTROLS; ++i) {
+                if (CONTROL_IDS[i].equals(id)) {
+                    control = i;
+                    break;
+                }
+            }
+            final String[] parts = entry.substring(colon + 1).split(",");
+            if (control < 0 || parts.length != 3) {
+                continue;
+            }
+            try {
+                final float dx = Float.parseFloat(parts[0].trim());
+                final float dy = Float.parseFloat(parts[1].trim());
+                final float scale = Float.parseFloat(parts[2].trim());
+                if (Float.isNaN(dx) || Float.isInfinite(dx) || Float.isNaN(dy) ||
+                    Float.isInfinite(dy) || Float.isNaN(scale) || Float.isInfinite(scale)) {
+                    continue;
+                }
+                ovDx[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, dx));
+                ovDy[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, dy));
+                ovScale[control] = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+            } catch (NumberFormatException e) {
+                // A malformed entry: leave the control at its default.
+            }
+        }
+    }
+
+    // Only the controls that were changed, so a default layout is the empty string.
+    private String serializeLayout() {
+        final StringBuilder out = new StringBuilder();
+        for (int i = 0; i < CONTROLS; ++i) {
+            if (ovDx[i] == 0f && ovDy[i] == 0f && ovScale[i] == 1f) {
+                continue;
+            }
+            if (out.length() > 0) {
+                out.append(';');
+            }
+            out.append(String.format(Locale.ROOT, "%s:%.4f,%.4f,%.3f", CONTROL_IDS[i], ovDx[i],
+                                     ovDy[i], ovScale[i]));
+        }
+        return out.toString();
+    }
+
+    private void resetControl(int control) {
+        ovDx[control] = 0f;
+        ovDy[control] = 0f;
+        ovScale[control] = 1f;
+    }
+
+    // The editor: every touch is consumed, so nothing reaches the game (F1 does
+    // not pause it, so it keeps running underneath). Inputs held on entry are
+    // released first so a stick or button isn't left pressed.
+    private void beginEdit() {
+        releaseAll();
+        // Fingers handed to SDL (over the closing overlay) must still be lifted.
+        for (int pointerId : forwarded) {
+            SDLActivity.onNativeTouch(0, pointerId, MotionEvent.ACTION_CANCEL, 0f, 0f, 0f);
+        }
+        forwarded.clear();
+        hidden = false;
+        autoHidden = false;
+        editing = true;
+        selected = -1;
+        dragPointer = -1;
+        pinchPointer = -1;
+        editToolPointer = -1;
+        invalidate();
+    }
+
+    private void endEdit(boolean save) {
+        if (save) {
+            layoutText = serializeLayout();
+            nativeSetTouchLayout(layoutText);
+        }
+        editing = false;
+        editPending = false;
+        selected = -1;
+        dragPointer = -1;
+        pinchPointer = -1;
+        editToolPointer = -1;
+        invalidate();
+    }
+
+    // Whether the current settings draw this control.
+    private boolean editShown(int control) {
+        switch (control) {
+            case C_CSTICK:
+                return cStick && !twin;
+            case C_A:
+            case C_B:
+            case C_X:
+            case C_Y:
+            case C_L:
+            case C_R:
+                return !twin;
+            case C_RSTICK:
+            case C_JUMP:
+            case C_FIRE:
+            case C_MORPH:
+            case C_MISSILE:
+            case C_LT:
+            case C_LB:
+            case C_RT:
+            case C_RB:
+                return twin;
+            case C_TR:
+                return false; // retired: twin's R pill, kept so saved ids don't shift
+            case C_DPAD:
+                return !wheels;
+            case C_Z:
+                return !twin && !mapTap;
+            case C_TZ:
+                return twin && !mapTap;
+            case C_MAP:
+                return mapTap;
+            case C_VISOR:
+            case C_BEAM:
+                return wheels;
+            default:
+                return true;
+        }
+    }
+
+    private PillButton pillOf(int control) {
+        for (PillButton pill : pills) {
+            if (cornerSlot(pill) < 0 && pillControl(pill) == control) {
+                return pill;
+            }
+        }
+        return null;
+    }
+
+    // A control's current bounds: the same geometry the draw and hit test use.
+    private void controlBounds(int control, float width, float height, RectF out) {
+        final float u = layoutU(height);
+        switch (control) {
+            case C_LSTICK: {
+                final float r = leftStickRadius(height);
+                final float x = leftStickX(width, height);
+                final float y = leftStickY(width, height);
+                out.set(x - r, y - r, x + r, y + r);
+                return;
+            }
+            case C_CSTICK:
+            case C_RSTICK: {
+                final float r = rightStickRadius(height);
+                final float x = rightStickX(width, height);
+                final float y = rightStickY(height);
+                out.set(x - r, y - r, x + r, y + r);
+                return;
+            }
+            case C_DPAD: {
+                final float arm = DPAD_ARM * u * ovScale[C_DPAD];
+                final float x = dpadX(width, height);
+                final float y = dpadY(height);
+                out.set(x - arm, y - arm, x + arm, y + arm);
+                return;
+            }
+            case C_A:
+            case C_B:
+            case C_X:
+            case C_Y:
+            case C_JUMP:
+            case C_FIRE:
+            case C_MORPH:
+            case C_MISSILE: {
+                final ControlButton button = face[control >= C_JUMP ? control - C_JUMP
+                                                                    : control - C_A];
+                faceGeometry(button, width, height, true, faceGeo);
+                if (button.isKidney()) {
+                    kidneyPath(facePath, faceGeo[0], faceGeo[1], faceGeo[2], faceGeo[3],
+                               button.arcStart, button.arcSweep);
+                    facePath.computeBounds(out, true);
+                } else {
+                    out.set(faceGeo[0] - faceGeo[2], faceGeo[1] - faceGeo[2],
+                            faceGeo[0] + faceGeo[2], faceGeo[1] + faceGeo[2]);
+                }
+                return;
+            }
+            case C_L:
+            case C_R:
+            case C_Z:
+            case C_LT:
+            case C_LB:
+            case C_RT:
+            case C_RB:
+            case C_TZ:
+            case C_TR: {
+                final PillButton pill = pillOf(control);
+                if (pill != null) {
+                    pillRect(pill, width, height, out);
+                } else {
+                    out.setEmpty();
+                }
+                return;
+            }
+            case C_VISOR:
+            case C_BEAM: {
+                final int wheel = control - C_VISOR;
+                final float r = wheelButtonRadius(wheel, height);
+                final float x = wheelButtonX(wheel, width, height);
+                final float y = wheelButtonY(wheel, height);
+                out.set(x - r, y - r, x + r, y + r);
+                return;
+            }
+            case C_START:
+                bottomButtonRect(0, false, width, height, out);
+                return;
+            case C_MENU:
+                bottomButtonRect(1, false, width, height, out);
+                return;
+            case C_MAP:
+                bottomButtonRect(1, true, width, height, out);
+                return;
+            default:
+                bottomButtonRect(0, true, width, height, out);
+        }
+    }
+
+    // Keeps at least a control's centre on screen, and its offset sane.
+    private void clampToScreen(int control, float width, float height) {
+        final float u = layoutU(height);
+        if (!(u > 0f) || !(width > 0f)) {
+            return; // no size yet: dividing by u would put NaN in the layout
+        }
+        ovDx[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, ovDx[control]));
+        ovDy[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, ovDy[control]));
+        controlBounds(control, width, height, clampRect);
+        final float cx = clampRect.centerX();
+        final float cy = clampRect.centerY();
+        ovDx[control] += (Math.max(0f, Math.min(width, cx)) - cx) / u;
+        ovDy[control] += (Math.max(0f, Math.min(height, cy)) - cy) / u;
+    }
+
+    private void layoutEditBar(float width) {
+        float total = 0f;
+        for (float w : EDIT_WIDTHS_DP) {
+            total += dp(w);
+        }
+        final float gap = dp(4);
+        total += gap * (EDIT_WIDTHS_DP.length - 1);
+        final float fit = Math.min(1f, (width - 2f * dp(8)) / total);
+        float x = (width - total * fit) / 2f;
+        final float top = dp(8);
+        for (int i = 0; i < EDIT_WIDTHS_DP.length; ++i) {
+            final float w = dp(EDIT_WIDTHS_DP[i]) * fit;
+            editBar[i].set(x, top, x + w, top + dp(EDIT_BAR_HEIGHT_DP));
+            x += w + gap * fit;
+        }
+    }
+
+    private int editBarAt(float x, float y) {
+        for (int i = 0; i < editBar.length; ++i) {
+            if (editBar[i].contains(x, y)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void editAction(int action, float width, float height) {
+        switch (action) {
+            case EDIT_MINUS:
+            case EDIT_PLUS:
+                if (selected >= 0) {
+                    final float step = action == EDIT_PLUS ? SCALE_STEP : -SCALE_STEP;
+                    // Rounded so repeated steps land on tidy percentages.
+                    ovScale[selected] = Math.max(MIN_SCALE, Math.min(MAX_SCALE,
+                        Math.round((ovScale[selected] + step) * 100f) / 100f));
+                    clampToScreen(selected, width, height);
+                }
+                break;
+            case EDIT_RESET:
+                if (selected >= 0) {
+                    resetControl(selected);
+                }
+                break;
+            case EDIT_RESET_ALL:
+                for (int i = 0; i < CONTROLS; ++i) {
+                    resetControl(i);
+                }
+                break;
+            default:
+                endEdit(true);
+                return;
+        }
+        invalidate();
+    }
+
+    private boolean onEditTouch(MotionEvent event) {
+        final float width = getWidth();
+        final float height = getHeight();
+        final int action = event.getActionMasked();
+        final int index = event.getActionIndex();
+        layoutEditBar(width);
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN: {
+                final int id = event.getPointerId(index);
+                final float x = event.getX(index);
+                final float y = event.getY(index);
+                final int tool = editBarAt(x, y);
+                if (tool >= 0) {
+                    if (editToolPointer == -1) {
+                        editToolPointer = id;
+                        editAction(tool, width, height);
+                    }
+                } else if (dragPointer != -1 && pinchPointer == -1 && selected >= 0) {
+                    final int other = event.findPointerIndex(dragPointer);
+                    if (other >= 0) {
+                        final float dist = (float) Math.hypot(x - event.getX(other),
+                                                              y - event.getY(other));
+                        if (dist >= dp(MAP_PINCH_MIN_DP)) {
+                            pinchPointer = id;
+                            pinchStartDist = dist;
+                            pinchStartScale = ovScale[selected];
+                        }
+                    }
+                } else if (dragPointer == -1) {
+                    final int hit = editHit(x, y, width, height);
+                    selected = hit;
+                    if (hit >= 0) {
+                        dragPointer = id;
+                        dragLastX = x;
+                        dragLastY = y;
+                    }
+                    invalidate();
+                }
+                return true;
+            }
+            case MotionEvent.ACTION_MOVE: {
+                if (selected < 0) {
+                    return true;
+                }
+                final int drag = event.findPointerIndex(dragPointer);
+                final int pinch = event.findPointerIndex(pinchPointer);
+                if (drag >= 0 && pinch >= 0) {
+                    final float dist = (float) Math.hypot(event.getX(drag) - event.getX(pinch),
+                                                          event.getY(drag) - event.getY(pinch));
+                    ovScale[selected] = Math.max(MIN_SCALE, Math.min(MAX_SCALE,
+                        pinchStartScale * dist / pinchStartDist));
+                    // Keep the drag anchor current so lifting one finger doesn't jump.
+                    dragLastX = event.getX(drag);
+                    dragLastY = event.getY(drag);
+                    clampToScreen(selected, width, height);
+                } else if (drag >= 0) {
+                    final float u = layoutU(height);
+                    ovDx[selected] += (event.getX(drag) - dragLastX) / u;
+                    ovDy[selected] += (event.getY(drag) - dragLastY) / u;
+                    dragLastX = event.getX(drag);
+                    dragLastY = event.getY(drag);
+                    clampToScreen(selected, width, height);
+                }
+                invalidate();
+                return true;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP: {
+                final int id = event.getPointerId(index);
+                if (id == editToolPointer) {
+                    editToolPointer = -1;
+                } else if (id == pinchPointer) {
+                    pinchPointer = -1;
+                } else if (id == dragPointer) {
+                    // The pinch finger carries on as the drag.
+                    dragPointer = pinchPointer;
+                    pinchPointer = -1;
+                    final int next = event.findPointerIndex(dragPointer);
+                    if (next >= 0) {
+                        dragLastX = event.getX(next);
+                        dragLastY = event.getY(next);
+                    }
+                }
+                if (action == MotionEvent.ACTION_UP) {
+                    dragPointer = -1;
+                    pinchPointer = -1;
+                    editToolPointer = -1;
+                }
+                return true;
+            }
+            case MotionEvent.ACTION_CANCEL:
+                dragPointer = -1;
+                pinchPointer = -1;
+                editToolPointer = -1;
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    // The smallest shown control under (x, y), so a small button on a big one
+    // (B near A, the stick under Visor) is still reachable.
+    private int editHit(float x, float y, float width, float height) {
+        int best = -1;
+        float bestArea = Float.MAX_VALUE;
+        final float slack = dp(EDIT_GRAB_DP);
+        for (int c = 0; c < CONTROLS; ++c) {
+            if (!editShown(c)) {
+                continue;
+            }
+            controlBounds(c, width, height, editRect);
+            if (editRect.isEmpty()) {
+                continue;
+            }
+            editRect.inset(-slack, -slack);
+            final float area = editRect.width() * editRect.height();
+            if (editRect.contains(x, y) && area < bestArea) {
+                best = c;
+                bestArea = area;
+            }
+        }
+        return best;
+    }
+
+    private void drawEditOverlay(Canvas canvas, float width, float height) {
+        final float slack = dp(EDIT_GRAB_DP) * 0.5f;
+        if (editDashes == null) {
+            editDashes = new DashPathEffect(new float[] {dp(6), dp(4)}, 0f);
+        }
+        final DashPathEffect dashes = editDashes;
+        for (int c = 0; c < CONTROLS; ++c) {
+            if (!editShown(c)) {
+                continue;
+            }
+            controlBounds(c, width, height, editRect);
+            if (editRect.isEmpty()) {
+                continue;
+            }
+            editRect.inset(-slack, -slack);
+            final float corner = dp(8);
+            if (c == selected) {
+                fillPaint.setColor(0x5548C8E8);
+                canvas.drawRoundRect(editRect, corner, corner, fillPaint);
+                editPaint.setPathEffect(null);
+                editPaint.setColor(0xFFFFE04A);
+            } else {
+                editPaint.setPathEffect(dashes);
+                editPaint.setColor(0xCCFFFFFF);
+            }
+            canvas.drawRoundRect(editRect, corner, corner, editPaint);
+        }
+        editPaint.setPathEffect(null);
+
+        layoutEditBar(width);
+        for (int i = 0; i < editBar.length; ++i) {
+            fillPaint.setColor(i == EDIT_DONE ? 0xDD2E8B57 : 0xDD081218);
+            strokePaint.setColor(0xCCFFFFFF);
+            final float corner = dp(8);
+            canvas.drawRoundRect(editBar[i], corner, corner, fillPaint);
+            canvas.drawRoundRect(editBar[i], corner, corner, strokePaint);
+            drawCenteredLabel(canvas, EDIT_LABELS[i], editBar[i].centerX(), editBar[i].centerY(),
+                              i < 2 ? dp(22) : dp(14));
+        }
+
+        final String hint = selected >= 0
+            ? CONTROL_NAMES[selected] + "  " + Math.round(ovScale[selected] * 100f) + "%"
+            : "Drag a control to move it; pinch to resize";
+        textPaint.setTextSize(dp(13));
+        final float textW = textPaint.measureText(hint);
+        final float top = editBar[0].bottom + dp(EDIT_BAR_GAP_DP);
+        final float cx = width / 2f;
+        editRect.set(cx - textW / 2f - dp(10), top, cx + textW / 2f + dp(10), top + dp(26));
+        fillPaint.setColor(0xCC081218);
+        canvas.drawRoundRect(editRect, dp(8), dp(8), fillPaint);
+        drawCenteredLabel(canvas, hint, cx, editRect.centerY(), dp(13));
+    }
+
     private final RectF pillHit = new RectF();
 
     private int dp(float value) {
@@ -1759,13 +2635,21 @@ final class TouchControlsView extends View {
         final float bottom;
         // An RGB fill, or 0 for the overlay's own.
         final int color;
+        // The editor control this pill is, or -1 to go by its axis/button (pillControl).
+        final int control;
         PillButton(String label, int axis, int button, float left, float top, float right,
                    float bottom) {
-            this(label, axis, button, left, top, right, bottom, 0);
+            this(label, axis, button, left, top, right, bottom, 0, -1);
         }
 
         PillButton(String label, int axis, int button, float left, float top, float right,
                    float bottom, int color) {
+            this(label, axis, button, left, top, right, bottom, color, -1);
+        }
+
+        PillButton(String label, int axis, int button, float left, float top, float right,
+                   float bottom, int color, int control) {
+            this.control = control;
             this.color = color;
             this.label = label;
             this.axis = axis;
@@ -1793,6 +2677,9 @@ final class TouchControlsView extends View {
         long startMs;
         // A held A button that also aims; see startButtonAim.
         boolean aiming;
+        // The pill or face button a BUTTON target pressed. Twin sends one GC button
+        // from two controls, so the highlight follows the control, not `held`.
+        Object control;
 
         TouchTarget(int type, int id) {
             this.type = type;
