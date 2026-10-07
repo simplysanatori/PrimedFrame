@@ -903,14 +903,18 @@ final class TouchControlsView extends View {
             }
             pillRect(pill, width, height, pillHit);
             if (pillHit.contains(x, y)) {
-                targets.put(pointerId, new TouchTarget(BUTTON, pill.id()));
+                final TouchTarget target = new TouchTarget(BUTTON, pill.id());
+                target.control = pill;
+                targets.put(pointerId, target);
                 pressControl(pill.id());
                 return;
             }
         }
         for (ControlButton button : face) {
             if (hitButton(button, x, y, width, height)) {
-                targets.put(pointerId, TouchTarget.begin(BUTTON, button.button, x, y));
+                final TouchTarget target = TouchTarget.begin(BUTTON, button.button, x, y);
+                target.control = button;
+                targets.put(pointerId, target);
                 pressControl(button.button);
                 return;
             }
@@ -1673,9 +1677,19 @@ final class TouchControlsView extends View {
         return pill.button == BTN_RIGHT_SHOULDER ? C_Z : C_L;
     }
 
+    // Whether a finger is down on this control itself.
+    private boolean pressedControl(Object control) {
+        for (TouchTarget target : targets.values()) {
+            if (target.control == control) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void drawPillButton(Canvas canvas, PillButton pill, float width, float height) {
         pillRect(pill, width, height, pillHit);
-        boolean active = held.containsKey(pill.id());
+        boolean active = pressedControl(pill);
         if (colored && pill.color != 0) {
             fillPaint.setColor(padFill(pill.color, active));
         } else {
@@ -1719,7 +1733,7 @@ final class TouchControlsView extends View {
         float y = faceGeo[1];
         float radius = faceGeo[2];
         final float scale = ovScale[controlOf(button)];
-        boolean active = held.containsKey(button.button);
+        boolean active = pressedControl(button);
         if (colored && button.color != 0) {
             fillPaint.setColor(padFill(button.color, active));
         } else {
@@ -2635,6 +2649,9 @@ final class TouchControlsView extends View {
         long startMs;
         // A held A button that also aims; see startButtonAim.
         boolean aiming;
+        // The pill or face button a BUTTON target pressed. Twin sends one GC button
+        // from two controls, so the highlight follows the control, not `held`.
+        Object control;
 
         TouchTarget(int type, int id) {
             this.type = type;
