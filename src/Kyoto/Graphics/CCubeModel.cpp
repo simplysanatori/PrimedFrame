@@ -108,7 +108,9 @@ void CCubeModel::SetStaticArraysCurrent() const {
 void CCubeModel::SetArraysCurrent() const {
   CGX::SetArray(GX_VA_POS, x0_instance.GetVertexPointer(), x0_instance.GetVertexSize(),
                 sizeof(CVector3f));
-  const int stride = (x41_visorFlags & 1) ? sizeof(short) * 3 : sizeof(CVector3f);
+  const int stride = HasNbtNormals()          ? sizeof(float) * 9
+                     : (x41_visorFlags & 1) ? sizeof(short) * 3
+                                            : sizeof(CVector3f);
   CGX::SetArray(GX_VA_NRM, x0_instance.GetNormalPointer(), x0_instance.GetNormalSize(), stride);
   SetStaticArraysCurrent();
 }

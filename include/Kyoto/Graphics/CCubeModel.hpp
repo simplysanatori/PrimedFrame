@@ -103,6 +103,10 @@ public:
   bool GetShouldDrawWorldFlag() const { return x40_25_visible; }
   void SetShouldDrawWorldFlag(bool shouldDraw) { x40_25_visible = shouldDraw; }
   uchar GetModelFlags() const { return x41_visorFlags; }
+  // CMDL flag 0x8 (the port's converted models): each normal entry is N, B, T (9 floats), kept in
+  // x41_visorFlags' bit 7. Drawn through GX_VTXFMT3 (DL opcode 0x93).
+  static constexpr uchar kNbtNormals = 0x80;
+  bool HasNbtNormals() const { return (x41_visorFlags & kNbtNormals) != 0; }
   int GetModelIndex() const { return x44_idx; } // TODO: name
 
   CCubeMaterial GetMaterialByIndex(const int idx) const;

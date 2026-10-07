@@ -951,7 +951,7 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8 
 // one, multiplies the diffuse albedo (not the specular) as a linear value, and its alpha
 // the output's: that is what Remastered's shader does with it.
 auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& vtxOutAttrs,
-              std::string& vtxXfrAttrs, size_t& vtxOutIdx) -> std::string {
+              std::string& vtxXfrAttrs, size_t& vtxOutIdx, std::string_view vidx) -> std::string {
   const auto& cc = config.colorChannels[GX_COLOR0];
   if (!info.sampledColorChannels.test(0)) {
     return {};
@@ -1000,6 +1000,19 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   vtxOutAttrs += fmt::format("\n    @location({}) pbr_pos: vec3f,", vtxOutIdx++);
   vtxOutAttrs += fmt::format("\n    @location({}) pbr_nrm: vec3f,", vtxOutIdx++);
   vtxXfrAttrs += "\n    out.pbr_pos = mv_pos;\n    out.pbr_nrm = mv_nrm;";
+  // A model with vertex tangents (the NBT normal array: N, B, T) shades its normal maps with
+  // Remastered's frame: T and the handedness w (B = w * cross(N, T), so w is the sign of
+  // dot(cross(N, T), B)). Without them the frame comes from the screen derivatives below.
+  const bool tangents = config.attrs[GX_VA_NRM].attrType != GX_NONE && config.attrs[GX_VA_NRM].cnt == 9;
+  if (tangents) {
+    vtxOutAttrs += fmt::format("\n    @location({}) pbr_tan: vec4f,", vtxOutIdx++);
+    vtxXfrAttrs += fmt::format(
+        "\n    let pbr_vb = {};"
+        "\n    let pbr_vt = {};"
+        "\n    let pbr_vtv = vec4f(pbr_vt, 0.0) * ubuf.postex_mtx[in_pnmtxidx];"
+        "\n    out.pbr_tan = vec4f(pbr_vtv, select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt), pbr_vb) >= 0.0));",
+        attr_load_nbt_slice(config, NbtSlice::B, vidx), attr_load_nbt_slice(config, NbtSlice::T, vidx));
+  }
   // A vertex colour is the surface's tint where the material says so (mode 4), whatever
   // the channel does with it: the game points an unlit channel at its material register,
   // which would lose it. A retail model's colours are not a tint.
@@ -1112,10 +1125,24 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_duv2 = -dpdy(tex{0}_uv);
       let pbr_dp2perp = cross(pbr_dp2, pbr_ngs);
       let pbr_dp1perp = cross(pbr_ngs, pbr_dp1);
-      let pbr_t = pbr_dp2perp * pbr_duv1.x + pbr_dp1perp * pbr_duv2.x;
-      let pbr_b = pbr_dp2perp * pbr_duv1.y + pbr_dp1perp * pbr_duv2.y;
-      let pbr_tlen = max(dot(pbr_t, pbr_t), dot(pbr_b, pbr_b));)""",
+      let pbr_t0 = pbr_dp2perp * pbr_duv1.x + pbr_dp1perp * pbr_duv2.x;
+      let pbr_b0 = pbr_dp2perp * pbr_duv1.y + pbr_dp1perp * pbr_duv2.y;
+      let pbr_tlen = max(dot(pbr_t0, pbr_t0), dot(pbr_b0, pbr_b0));)""",
                          underlying(config.tevStages[mapStage[mapStage[2] != -1 ? 2 : 0]].texCoordId));
+    if (tangents) {
+      // The vertex frame, made orthonormal on the stored normal and given the derivative
+      // frame's length (every consumer scales by 1 / sqrt(pbr_tlen)) and its orientation: T
+      // along U, B against V (n = t * x - b * y).
+      layer += R"""(
+      let pbr_tu = normalize(in.pbr_tan.xyz - pbr_ngs * dot(pbr_ngs, in.pbr_tan.xyz));
+      let pbr_tsc = sqrt(pbr_tlen);
+      let pbr_t = pbr_tu * pbr_tsc;
+      let pbr_b = -cross(pbr_ngs, pbr_tu) * (in.pbr_tan.w * pbr_tsc);)""";
+    } else {
+      layer += R"""(
+      let pbr_t = pbr_t0;
+      let pbr_b = pbr_b0;)""";
+    }
   }
   std::string kinds = "\n      var pbr_kglow = vec3f(0.0);";
   if (layered) {
@@ -2903,7 +2930,7 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     uniBufAttrs += "\n    pbr_shield: array<vec4f, 8>,";
     uniBufAttrs += "\n    pbr_lmap_rect: vec4f,";
     uniBufAttrs += "\n    pbr_lmap_axes: array<vec4f, 3>,";
-    auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx);
+    auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx, vidxAttr);
     // An unlit surface (baked room light: pbr_func drops its light loop) has no room light to
     // shadow, but takes the sun's own colour.
     if (!pbr.empty() && info.shadowReceive) {

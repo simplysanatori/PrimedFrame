@@ -392,7 +392,8 @@ std::vector< uint8_t > MergeCmdl(const std::vector< uint8_t >& source, const CCu
   const size_t positionCount = positionsSize / 12;
 
   // Each surface's list, read once: the vertex layout from its material, the primitives'
-  // vertex format (which tells the normals' size: VTXFMT0 floats, 1 and 2 shorts).
+  // vertex format (which tells the normals' size: VTXFMT0 floats, 1 and 2 shorts, 3 the NBT
+  // triples of floats).
   struct Surface {
     size_t stride = 0;
     size_t normalAt = 0; // in a vertex; SIZE_MAX without normals
@@ -459,7 +460,8 @@ std::vector< uint8_t > MergeCmdl(const std::vector< uint8_t >& source, const CCu
       }
     }
   }
-  const size_t normalSize = format > 0 ? 6 : 12;
+  const bool nbt = format == 3;
+  const size_t normalSize = nbt ? 36 : format > 0 ? 6 : 12;
   const size_t normalCount = normalsSize / normalSize;
   if (std::max(positionCount, normalCount) * copies > 0x10000) {
     return {};
@@ -553,7 +555,43 @@ std::vector< uint8_t > MergeCmdl(const std::vector< uint8_t >& source, const CCu
         // The cofactors are the inverse transpose times the determinant: a mirrored copy's
         // would point its normals inward.
         const float sign = m.Get00() * c[0] + m.Get01() * c[1] + m.Get02() * c[2] < 0.f ? -1.f : 1.f;
-        for (size_t v = 0; v < normalCount; ++v) {
+        for (size_t v = 0; v < normalCount && nbt; ++v) {
+          // N, B, T: the normal as below, the tangent by the matrix itself and the bitangent
+          // rebuilt from the handedness (B = w * cross(N, T)), which a mirror flips.
+          const uint8_t* const p = src + v * normalSize;
+          float n[3], b[3], t[3];
+          for (int k = 0; k < 3; ++k) {
+            n[k] = ReadBigFloat(p + k * 4);
+            b[k] = ReadBigFloat(p + 12 + k * 4);
+            t[k] = ReadBigFloat(p + 24 + k * 4);
+          }
+          const float handed = (n[1] * t[2] - n[2] * t[1]) * b[0] + (n[2] * t[0] - n[0] * t[2]) * b[1] +
+                                       (n[0] * t[1] - n[1] * t[0]) * b[2] < 0.f ? -sign : sign;
+          float wn[3], wt[3];
+          for (int r = 0; r < 3; ++r) {
+            wn[r] = c[r * 3] * n[0] + c[r * 3 + 1] * n[1] + c[r * 3 + 2] * n[2];
+          }
+          const CVector3f moved = *places[copy] * CVector3f(t[0], t[1], t[2]) -
+                                  *places[copy] * CVector3f(0.f, 0.f, 0.f);
+          wt[0] = moved.GetX();
+          wt[1] = moved.GetY();
+          wt[2] = moved.GetZ();
+          const float nLength = std::sqrt(wn[0] * wn[0] + wn[1] * wn[1] + wn[2] * wn[2]);
+          const float tLength = std::sqrt(wt[0] * wt[0] + wt[1] * wt[1] + wt[2] * wt[2]);
+          for (int k = 0; k < 3; ++k) {
+            wn[k] = nLength > 0.f ? sign * wn[k] / nLength : 0.f;
+            wt[k] = tLength > 0.f ? wt[k] / tLength : 0.f;
+          }
+          const float wb[3] = {(wn[1] * wt[2] - wn[2] * wt[1]) * handed, (wn[2] * wt[0] - wn[0] * wt[2]) * handed,
+                               (wn[0] * wt[1] - wn[1] * wt[0]) * handed};
+          uint8_t* const q = dst + (copy * normalCount + v) * normalSize;
+          for (int k = 0; k < 3; ++k) {
+            WriteBigFloat(q + k * 4, wn[k]);
+            WriteBigFloat(q + 12 + k * 4, wb[k]);
+            WriteBigFloat(q + 24 + k * 4, wt[k]);
+          }
+        }
+        for (size_t v = 0; v < normalCount && !nbt; ++v) {
           const uint8_t* const p = src + v * normalSize;
           float n[3];
           for (int k = 0; k < 3; ++k) {

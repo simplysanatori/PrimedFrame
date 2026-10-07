@@ -654,6 +654,7 @@ struct Buffer {
   bool loaded = false;
   bool used = false;
   std::vector<double> P, N;
+  std::vector<double> T;  // xyzw per vertex, empty where the buffer has no tangents
   std::vector<std::vector<double>> uv;
   std::vector<uint8_t> C;  // rgba per vertex, white where the buffer has no colours
   bool colored = false;
@@ -3411,6 +3412,24 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           b.N[v * 3 + r] = nrm[r] / len;
         }
       }
+      if (vb.tangents.size() == b.n * 4) {
+        // Moved with the positions; a mirror turns the handedness over.
+        b.T.resize(b.n * 4);
+        for (size_t v = 0; v < b.n; ++v) {
+          double t[3];
+          for (int r = 0; r < 3; ++r) {
+            t[r] = 0.0;
+            for (int c = 0; c < 3; ++c) {
+              t[r] += double(vb.tangents[v * 4 + c]) * M[r][c];
+            }
+          }
+          const double len = std::max(std::sqrt((t[0] * t[0] + t[1] * t[1]) + t[2] * t[2]), 1e-9);
+          for (int r = 0; r < 3; ++r) {
+            b.T[v * 4 + r] = t[r] / len;
+          }
+          b.T[v * 4 + 3] = (vb.tangents[v * 4 + 3] < 0.0f) != (det < 0.0) ? -1.0 : 1.0;
+        }
+      }
       // Indexed by a material's texcoord, which takes two from each attribute
       // (TEXCOORD_n.xy, then its zw): the vertex shaders hand varying 2 + c to texcoord c.
       for (size_t c = 0; c < vb.uvs.size() * 2; ++c) {
@@ -3497,6 +3516,12 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           b.P.push_back(b.P[size_t(i) * 3 + r]);
           b.N.push_back(-b.N[size_t(i) * 3 + r]);
         }
+        if (!b.T.empty()) {
+          // The normal turns round and B = w * cross(N, T) stays, so w turns with it.
+          for (int r = 0; r < 4; ++r) {
+            b.T.push_back(r == 3 ? -b.T[size_t(i) * 4 + r] : b.T[size_t(i) * 4 + r]);
+          }
+        }
         for (std::vector<double>& uv : b.uv) {
           if (!uv.empty()) {
             uv.push_back(uv[size_t(i) * 2]);
@@ -3580,6 +3605,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       b.srcOf.push_back(v < b.src->vertexCount ? uint32_t(v) : b.copyOf[v - b.src->vertexCount]);
       std::copy_n(b.P.begin() + v * 3, 3, b.P.begin() + kept * 3);
       std::copy_n(b.N.begin() + v * 3, 3, b.N.begin() + kept * 3);
+      if (!b.T.empty()) {
+        std::copy_n(b.T.begin() + v * 4, 4, b.T.begin() + kept * 4);
+      }
       std::copy_n(b.C.begin() + v * 4, 4, b.C.begin() + kept * 4);
       for (std::vector<double>& uv : b.uv) {
         if (!uv.empty()) {
@@ -3591,6 +3619,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     b.n = kept;
     b.P.resize(kept * 3);
     b.N.resize(kept * 3);
+    b.T.resize(b.T.empty() ? 0 : kept * 4);
     b.C.resize(kept * 4);
     for (std::vector<double>& uv : b.uv) {
       if (!uv.empty()) {
@@ -3703,12 +3732,21 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (uint32_t bi : bufOrder) {
     hasLightmapUv = hasLightmapUv || (buffers[bi].uv.size() > 1 && !buffers[bi].uv[1].empty());
   }
-  std::vector<double> P, N;
+  // Vertex tangents (the NBT normal section, CMDL flag 0x8) only when every buffer has them. A
+  // skinned model keeps the shader's derivative frame: the skinner moves 12-byte normals.
+  bool useTan = !opt.skins.empty() ? false : !bufOrder.empty();
+  for (uint32_t bi : bufOrder) {
+    useTan = useTan && !buffers[bi].T.empty();
+  }
+  std::vector<double> P, N, T;
   P.reserve(n * 3);
   N.reserve(n * 3);
   for (uint32_t bi : bufOrder) {
     P.insert(P.end(), buffers[bi].P.begin(), buffers[bi].P.end());
     N.insert(N.end(), buffers[bi].N.begin(), buffers[bi].N.end());
+    if (useTan) {
+      T.insert(T.end(), buffers[bi].T.begin(), buffers[bi].T.end());
+    }
   }
   auto uvSet = [&](size_t i) {
     std::vector<double> out;
@@ -4234,7 +4272,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // UV arrays, weight group) become one, so this is lossless; the first of
   // each keeps its place.
   {
-    const size_t width = (6 + uvArrays.size() * 2) * 4 + 4 + 4;
+    const size_t width = (6 + (useTan ? 4 : 0) + uvArrays.size() * 2) * 4 + 4 + 4;
     std::unordered_map<std::string, uint32_t> seen;
     seen.reserve(n * 2);
     std::vector<uint32_t> vmap(n), rep;
@@ -4251,6 +4289,11 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       }
       for (int c = 0; c < 3; ++c) {
         put(N[v * 3 + c]);
+      }
+      if (useTan) {
+        for (int c = 0; c < 4; ++c) {
+          put(T[v * 4 + c]);
+        }
       }
       for (const auto& a : uvArrays) {
         put(a[v * 2]);
@@ -4281,6 +4324,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     };
     take(P, 3);
     take(N, 3);
+    if (useTan) {
+      take(T, 4);
+    }
     for (auto& a : uvArrays) {
       take(a, 2);
     }
@@ -4316,6 +4362,26 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         }
       }
       Write(Hex8(id) + ".CSKR", cskr);
+    }
+  };
+
+  // One NBT entry of the normal section: N, B, T, with B = w * cross(N, T) so the shader can
+  // read the handedness back.
+  auto putNormal = [&](Blob& out, size_t v) {
+    for (int c = 0; c < 3; ++c) {
+      PF(out, N[v * 3 + c]);
+    }
+    if (useTan) {
+      const double* nn = &N[v * 3];
+      const double* tt = &T[v * 4];
+      const double cr[3] = {nn[1] * tt[2] - nn[2] * tt[1], nn[2] * tt[0] - nn[0] * tt[2],
+                            nn[0] * tt[1] - nn[1] * tt[0]};
+      for (int c = 0; c < 3; ++c) {
+        PF(out, cr[c] * tt[3]);
+      }
+      for (int c = 0; c < 3; ++c) {
+        PF(out, tt[c]);
+      }
     }
   };
 
@@ -4401,12 +4467,12 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           const double* pos = &P[size_t(cv[i]) * 3];
           for (int c = 0; c < 3; ++c) {
             PF(secP, pos[c]);
-            PF(secN, N[size_t(cv[i]) * 3 + c]);
             centre[c] += pos[c];
             clo[c] = i ? std::min(clo[c], pos[c]) : pos[c];
             chi[c] = i ? std::max(chi[c], pos[c]) : pos[c];
           }
           bound(pos);
+          putNormal(secN, size_t(cv[i]));
           if (useColor) {
             secC.insert(secC.end(), C.begin() + size_t(cv[i]) * 4, C.begin() + size_t(cv[i]) * 4 + 4);
           }
@@ -4422,7 +4488,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         const std::vector<uint32_t>& tris = chunk.second;
         for (size_t s = 0; s < tris.size(); s += kDlChunk) {
           const size_t count = std::min(kDlChunk, tris.size() - s);
-          P8(dl, 0x90);
+          P8(dl, useTan ? 0x93 : 0x90);
           P16(dl, uint32_t(count));
           for (size_t i = s; i < s + count; ++i) {
             const uint32_t j = uint32_t(local[tris[i]]);
@@ -4502,8 +4568,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       bound(pos);
       for (int c = 0; c < 3; ++c) {
         PF(secP, pos[c]);
-        PF(secN, N[size_t(order[i]) * 3 + c]);
       }
+      putNormal(secN, size_t(order[i]));
       if (useColor) {
         secC.insert(secC.end(), C.begin() + size_t(order[i]) * 4, C.begin() + size_t(order[i]) * 4 + 4);
       }
@@ -4520,7 +4586,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       Blob dl;
       for (size_t s = 0; s < p.I.size(); s += kDlChunk) {
         const size_t count = std::min(kDlChunk, p.I.size() - s);
-        P8(dl, 0x90);
+        P8(dl, useTan ? 0x93 : 0x90);
         P16(dl, uint32_t(count));
         for (size_t i = s; i < s + count; ++i) {
           const uint32_t j = remap[p.I[i]];
@@ -4611,7 +4677,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   // Float normals, and the packed texcoord section is always written (empty): a retail
   // model without it (the Frigate's B8CB941D) would have the game take that empty
   // section for the surface table.
-  P32(out, (retail.flags | 0x4) & ~uint32_t(0x2));
+  P32(out, ((retail.flags | 0x4) & ~uint32_t(0x2)) | (useTan ? 0x8u : 0u));
   for (double v : lo) {
     PF(out, v);
   }
