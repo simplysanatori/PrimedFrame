@@ -1,5 +1,6 @@
 #include "GuiSys/CGuiFrame.hpp"
 
+#include "GuiSys/CAuiEnergyBarT01.hpp"
 #include "GuiSys/CGuiCamera.hpp"
 #include "GuiSys/CGuiFeeHelper.hpp"
 #include "GuiSys/CGuiHeadWidget.hpp"
@@ -11,6 +12,8 @@
 #include "Kyoto/Graphics/CModel.hpp"
 #include "Kyoto/Input/CFinalInput.hpp"
 #include "rstl/algorithm.hpp"
+
+#include "port_hud_bars.h"
 
 #include <dolphin/gx/GXGet.h>
 #include <dolphin/gx/GXTransform.h>
@@ -287,6 +290,19 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     }
     if (group) {
       anchor = group->GetWorldTransform().GetTranslation();
+    } else if (aboutEye && widget->GetWidgetTypeID() == 'ENRG') {
+      // A mod's bar (port_hud_bars.h) keeps its widget at the frame centre and its strip out by a
+      // side strut (Remastered's missile and threat bars): anchor it at the strip's middle, or it
+      // stays put while the strut slides out.
+      const PortHudBars::Bar* bar = static_cast< const CAuiEnergyBarT01* >(widget)->PortBar();
+      if (bar && !bar->stations.empty()) {
+        CVector3f sum = CVector3f::Zero();
+        for (const PortHudBars::Station& station : bar->stations) {
+          sum += CVector3f(station.a[0] + station.b[0], station.a[1] + station.b[1],
+                           station.a[2] + station.b[2]);
+        }
+        anchor = world * (sum * (0.5f / static_cast< float >(bar->stations.size())));
+      }
     } else if (widget->GetWidgetTypeID() == 'MODL' && widget->GetIsFinishedLoading()) {
       const auto& token = static_cast< const CGuiModel* >(widget)->GetModel();
       const CModel* model = token ? token->GetObject() : nullptr;
