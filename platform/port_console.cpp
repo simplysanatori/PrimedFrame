@@ -579,6 +579,7 @@ void CmdHelp() {
   Out("gci list | import <path> | export <dir or .raw> | dolphin import|export   memory card transfer");
   Out("ap [connect <server> <slot> [password] | disconnect | recent | resume <n> | say <text> | chat]   Archipelago, as the F1 Archipelago page does");
   Out("quit                       exit the game");
+  Out("title                      quit the game to the title screen");
   Out("ids: hex editor id (002900A1), u<index> unique id, or an exact debug name");
 }
 
@@ -1829,6 +1830,13 @@ void RunFrame() {
   } else if (name == "quit") {
     Finish();
     sQuit = true;
+  } else if (name == "title") {
+    CStateManager* const mgr = const_cast< CStateManager* >(PortDebug::StateManager());
+    if (mgr == nullptr) {
+      return Finish("not in a game");
+    }
+    mgr->QuitGame(); // restart mode kRM_Default: back through the pre-front end
+    Finish();
   } else if (name == "aspect") {
     const std::string mode = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "";
     if (mode == "4:3") {
