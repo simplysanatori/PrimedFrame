@@ -1062,12 +1062,24 @@ final class TouchControlsView extends View {
         return baseRightStickX(width, height) + ovDx[rightControl()] * layoutU(height);
     }
 
+    // Twin's stick is level with the left one, which sits at the face cluster's
+    // middle: A's spot, the diamond's centre. The C-stick sits lower, as on the pad.
+    private float baseRightStickY(float height) {
+        return layoutY(twin ? GC_A_Y : GC_CSTICK_Y, height);
+    }
+
     private float rightStickY(float height) {
-        return layoutY(GC_CSTICK_Y, height) + ovDy[rightControl()] * layoutU(height);
+        return baseRightStickY(height) + ovDy[rightControl()] * layoutU(height);
+    }
+
+    // The default radius in layout units: twin's aiming stick matches the left
+    // stick, the C-stick is the GameCube pad's small one.
+    private float rightStickBaseRadius() {
+        return twin ? STICK_RADIUS : GC_CSTICK_RADIUS;
     }
 
     private float rightStickRadius(float height) {
-        return layoutU(height) * GC_CSTICK_RADIUS * ovScale[rightControl()];
+        return layoutU(height) * rightStickBaseRadius() * ovScale[rightControl()];
     }
 
     // Whether (x, y) is in the area that grabs the right stick. By default the
@@ -1079,8 +1091,8 @@ final class TouchControlsView extends View {
     private boolean inRightStickGrab(float x, float y, float width, float height) {
         final float u = layoutU(height);
         final float scale = ovScale[rightControl()];
-        final float baseCy = layoutY(GC_CSTICK_Y, height);
-        final float baseRight = baseRightStickX(width, height) + u * GC_CSTICK_RADIUS * 1.6f;
+        final float baseCy = baseRightStickY(height);
+        final float baseRight = baseRightStickX(width, height) + u * rightStickBaseRadius() * 1.6f;
         final float baseLeft = baseRight - (baseRight - width * 0.38f) * layoutScale(height);
         final float baseTop = layoutYFromBottom(0.43f, height);
         final float cy = rightStickY(height);
@@ -1816,7 +1828,7 @@ final class TouchControlsView extends View {
         if (wheel == 0) {
             x = baseLeftStickX(width, height) + STICK_RADIUS * layoutU(height) + edge;
         } else if (cStick) {
-            x = baseRightStickX(width, height) - layoutU(height) * GC_CSTICK_RADIUS - edge;
+            x = baseRightStickX(width, height) - layoutU(height) * rightStickBaseRadius() - edge;
         } else {
             faceBounds(width, height, faceRect);
             x = faceRect.left - edge;
