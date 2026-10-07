@@ -1444,7 +1444,10 @@ void CStateManager::Update(float dt) {
     CObjectList* actors = x808_objectLists[kOL_Actor].get();
     for (int idx = actors->GetFirstObjectIndex(); idx != -1;
          idx = actors->GetNextObjectIndex(idx)) {
-      static_cast< CActor* >((*actors)[idx])->PortSnapshotRenderTransform();
+      // operator[] is null for a scripting-blocked actor; such an actor
+      // simply isn't interpolated this tick.
+      if (CActor* act = static_cast< CActor* >((*actors)[idx]))
+        act->PortSnapshotRenderTransform();
     }
     if (x84c_player != nullptr && x84c_player->GetPlayerGun() != nullptr) {
       x84c_player->GetPlayerGun()->PortSnapshotPresentedPose(*this);
