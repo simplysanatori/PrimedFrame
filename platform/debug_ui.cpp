@@ -236,6 +236,7 @@ bool sTouchWheels = true;
 // Classic GameCube layout (Android overlay): C-stick, D-pad and the per-option
 // toggles. Off, the overlay has no C-stick and dragging aims like a mouse.
 bool sTouchClassic = false;
+bool sTouchTwinStick = false;  // exclusive with sTouchClassic; classic wins on load
 bool sTouchVisorTapScan = false;
 std::atomic<uint32_t> sWheelMask{0};
 // The touch wheels' icons: ARGB pixels per [wheel][item], filled by the game thread, copied out by
@@ -608,6 +609,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sTouchMapTap = ParseBool(value);
   } else if (key == "touch_classic_gc") {
     sTouchClassic = ParseBool(value);
+  } else if (key == "touch_twin_stick") {
+    sTouchTwinStick = ParseBool(value);
   } else if (key == "touch_wheels") {
     sTouchWheels = ParseBool(value);
   } else if (key == "touch_visor_tap_scan") {
@@ -783,6 +786,9 @@ void LoadSettings() {
       ApplySetting(key, value);
     }
   }
+  if (sTouchClassic) {
+    sTouchTwinStick = false;
+  }
 }
 
 void SaveSettings() {
@@ -883,6 +889,7 @@ void SaveSettings() {
   }
   file << "touch_map_tap=" << (sTouchMapTap ? 1 : 0) << '\n';
   file << "touch_classic_gc=" << (sTouchClassic ? 1 : 0) << '\n';
+  file << "touch_twin_stick=" << (sTouchTwinStick ? 1 : 0) << '\n';
   file << "touch_wheels=" << (sTouchWheels ? 1 : 0) << '\n';
   file << "touch_visor_tap_scan=" << (sTouchVisorTapScan ? 1 : 0) << '\n';
   file << "mouse_invert_x=" << (sMouseInvertX ? 1 : 0) << '\n';
@@ -1644,6 +1651,12 @@ bool DirectAim() { return MouseAim() || TwinStick() || TouchDirectAim(); }
 // touch overlay always does what its buttons say. The F1 menu (Visible) sees the stored values.
 bool TwinStick() {
   EnsureInitialized();
+#if defined(__ANDROID__)
+  // Touch has its own twin stick (the right stick aims), apart from the pad preset.
+  if (TouchActive()) {
+    return sTouchTwinStick;
+  }
+#endif
   return sTwinStick && !TouchActive();
 }
 
@@ -1906,7 +1919,7 @@ void SetStickAimRate(float pixelsPerSecond) {
 
 void AddStickAim(float x, float y, float dt) {
   EnsureInitialized();
-  if (!sTwinStick || Visible() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(dt) ||
+  if (!TwinStick() || Visible() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(dt) ||
       dt <= 0.f) {
     return;
   }
@@ -2254,6 +2267,23 @@ bool TouchClassic() {
 void SetTouchClassic(bool on) {
   EnsureInitialized();
   sTouchClassic = on;
+  if (on) {
+    sTouchTwinStick = false;
+  }
+  MarkDirty();
+}
+
+bool TouchTwinStick() {
+  EnsureInitialized();
+  return sTouchTwinStick;
+}
+
+void SetTouchTwinStick(bool on) {
+  EnsureInitialized();
+  sTouchTwinStick = on;
+  if (on) {
+    sTouchClassic = false;
+  }
   MarkDirty();
 }
 
@@ -5362,13 +5392,17 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("Draws the on-screen buttons in the GameCube pad's colours: green A, red B, yellow "
            "C-stick, purple Z. Off, they are plain and see-through.");
-  bool touchClassic = sTouchClassic;
-  if (ImGui::Checkbox("Classic GameCube layout", &touchClassic)) {
-    SetTouchClassic(touchClassic);
+  int touchLayout = sTouchClassic ? 1 : sTouchTwinStick ? 2 : 0;
+  static const char* const kTouchLayouts[] = {"Default", "Classic GameCube", "Twin stick (Remastered)"};
+  if (ImGui::Combo("Layout", &touchLayout, kTouchLayouts, 3)) {
+    SetTouchClassic(touchLayout == 1);
+    SetTouchTwinStick(touchLayout == 2);
   }
-  ItemHelp("Brings back the C-stick and the D-pad. Off: no C-stick; drag the free screen area to "
-           "aim like a mouse (the left stick strafes), and beams and visors come from the Visor "
-           "and Beam wheels.");
+  ItemHelp("Default: the GameCube pad without a C-stick; drag the free screen area to aim like a "
+           "mouse (the left stick strafes), and beams and visors come from the Visor and Beam "
+           "wheels. Classic GameCube: brings back the C-stick and the D-pad. Twin stick "
+           "(Remastered): a right stick that aims, with Remastered's Dual Sticks buttons (Jump, "
+           "Fire, Morph, Missile, LT Lock); the free-area drag and the wheels stay on.");
   ImGui::BeginDisabled(!sTouchClassic);
   bool touchAim = sTouchAim;
   if (ImGui::Checkbox("Touch aim", &touchAim)) {
@@ -7462,6 +7496,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchAimEnabled(JNIEnv*, jcla
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchClassic(JNIEnv*, jclass) {
   return PortDebug::TouchClassic() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchTwinStick(JNIEnv*, jclass) {
+  return PortDebug::TouchTwinStick() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

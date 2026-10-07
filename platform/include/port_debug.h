@@ -269,6 +269,8 @@ bool TouchDirectAim();
 bool DirectAim();
 bool TouchClassic();
 void SetTouchClassic(bool on);
+bool TouchTwinStick();
+void SetTouchTwinStick(bool on);
 void SetTwinStick(bool enabled);
 // Right stick Y (-1..1) before twin-stick consumed it, for the Spring Ball;
 // 0 when twin-stick is off (the game input still carries it then).

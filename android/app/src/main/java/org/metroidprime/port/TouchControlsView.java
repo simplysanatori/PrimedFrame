@@ -27,9 +27,11 @@ import java.util.Set;
  * game's own controller mapping, prompts and rebinding treat it as a real pad,
  * and its sticks are sticks rather than four keys pretending to be one.
  *
- * One layout, the GameCube pad's. By default there is no C-stick: a drag on the
- * free screen area aims like a mouse. The "Classic GameCube layout" setting
- * brings back the C-stick and the D-pad. The game assigns the actions.
+ * Three layouts (the F1 "Layout" setting). Default: the GameCube pad's, with no
+ * C-stick; a drag on the free screen area aims like a mouse. Classic GameCube
+ * brings back the C-stick and the D-pad. Twin stick (Remastered) has a right
+ * stick that aims directly and Remastered's Dual Sticks button labels. The game
+ * assigns the actions.
  */
 final class TouchControlsView extends View {
     // Touch target types.
@@ -131,10 +133,43 @@ final class TouchControlsView extends View {
     // front of R on the GameCube pad, so Z goes under R here. L and R are tall so
     // a quick lock-on is hard to miss; L stops just above the D-pad. START and
     // MENU ignore their rects: see cornerSlot.
+    // Twin stick (Remastered): a diamond in Xbox positions, round A's spot, with
+    // Remastered's Dual Sticks functions on the GameCube buttons they send: Jump
+    // is B, Fire is A, Morph is X, Missile is Y. Bottom, right, left, top, so
+    // the controls are C_JUMP + index. Coloured, each takes the colour of the
+    // GameCube button it sends.
+    private static final float TWIN_DIAMOND = 0.095f;
+    private static final ControlButton[] TWIN_FACE = {
+        ControlButton.round("Jump", BTN_EAST, 0f, TWIN_DIAMOND, 0.055f, GC_RED),
+        ControlButton.round("Fire", BTN_SOUTH, TWIN_DIAMOND, 0f, 0.055f, GC_GREEN),
+        ControlButton.round("Morph", BTN_WEST, -TWIN_DIAMOND, 0f, 0.055f, GC_GREY),
+        ControlButton.round("Missile", BTN_NORTH, 0f, -TWIN_DIAMOND, 0.055f, GC_GREY),
+    };
+
     private static final PillButton[] GAMECUBE_PILLS = {
         new PillButton("L", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.190f, GC_GREY),
         new PillButton("R", AXIS_TRIGGER_R, -1, 0.850f, 0.030f, 0.980f, 0.190f, GC_GREY),
         new PillButton("Z", -1, BTN_RIGHT_SHOULDER, 0.870f, 0.205f, 0.960f, 0.265f, GC_PURPLE),
+        new PillButton("START", -1, BTN_START, 0f, 0f, 0f, 0f),
+        new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0f, 0f, 0f, 0f),
+    };
+
+    // Twin stick's shoulders, like Remastered's: LT locks on (the L trigger), RT
+    // fires, LB jumps and RB fires missiles. Z (the map) and R (free look) sit
+    // inboard of the right pair. START and MENU as in the GameCube layout.
+    private static final PillButton[] TWIN_PILLS = {
+        new PillButton("LT Lock", AXIS_TRIGGER_L, -1, 0.020f, 0.030f, 0.150f, 0.100f, GC_GREY,
+                       TouchControlsView.C_LT),
+        new PillButton("LB Jump", -1, BTN_EAST, 0.020f, 0.115f, 0.150f, 0.185f,
+                       GC_RED, TouchControlsView.C_LB),
+        new PillButton("RT Fire", -1, BTN_SOUTH, 0.850f, 0.030f, 0.980f, 0.100f,
+                       GC_GREEN, TouchControlsView.C_RT),
+        new PillButton("RB Missile", -1, BTN_NORTH, 0.850f, 0.115f, 0.980f, 0.185f, GC_GREY,
+                       TouchControlsView.C_RB),
+        new PillButton("Map", -1, BTN_RIGHT_SHOULDER, 0.730f, 0.030f, 0.830f, 0.100f, GC_PURPLE,
+                       TouchControlsView.C_TZ),
+        new PillButton("R", AXIS_TRIGGER_R, -1, 0.730f, 0.115f, 0.830f, 0.185f,
+                       GC_GREY, TouchControlsView.C_TR),
         new PillButton("START", -1, BTN_START, 0f, 0f, 0f, 0f),
         new PillButton("MENU", -1, TOGGLE_DEBUG_OVERLAY, 0f, 0f, 0f, 0f),
     };
@@ -203,15 +238,31 @@ final class TouchControlsView extends View {
     private static final int C_MENU = 13;
     private static final int C_MAP = 14;
     private static final int C_EYE = 15;
-    private static final int CONTROLS = 16;
+    // Twin stick's own controls, so a layout made there doesn't move the
+    // default or classic layout's buttons. The four face buttons are bottom,
+    // right, left, top (TWIN_FACE's order).
+    private static final int C_RSTICK = 16;
+    private static final int C_JUMP = 17;
+    private static final int C_FIRE = 18;
+    private static final int C_MORPH = 19;
+    private static final int C_MISSILE = 20;
+    private static final int C_LT = 21;
+    private static final int C_LB = 22;
+    private static final int C_RT = 23;
+    private static final int C_RB = 24;
+    private static final int C_TZ = 25;
+    private static final int C_TR = 26;
+    private static final int CONTROLS = 27;
     // The ids the saved layout uses; never rename one.
     private static final String[] CONTROL_IDS = {
         "lstick", "cstick", "dpad", "a", "b", "x", "y", "l", "r", "z", "visor", "beam", "start",
-        "menu", "map", "eye",
+        "menu", "map", "eye", "rstick", "jump", "fire", "morph", "missile", "lt", "lb", "rt", "rb",
+        "tz", "tr",
     };
     private static final String[] CONTROL_NAMES = {
         "Left stick", "C-stick", "D-pad", "A", "B", "X", "Y", "L", "R", "Z", "Visor", "Beam",
-        "Start", "Menu", "Map", "Hide",
+        "Start", "Menu", "Map", "Hide", "Right stick", "Jump", "Fire", "Morph", "Missile",
+        "LT Lock", "LB Jump", "RT Fire", "RB Missile", "Map (Z)", "R",
     };
     private static final float MIN_SCALE = 0.5f;
     private static final float MAX_SCALE = 2.5f;
@@ -265,6 +316,9 @@ final class TouchControlsView extends View {
     // Classic GameCube layout (F1 setting, re-read every draw): the C-stick is
     // drawn and grabs presses in its zone.
     private boolean cStick;
+    // Twin stick (Remastered) layout, also an F1 setting re-read every draw: the
+    // right stick is drawn (cStick is on too) but aims, with Jump/Fire/Morph/Missile.
+    private boolean twin;
     // A drag on the free area aims (mouse-style, or the classic turn and look
     // up/down). Always on unless the classic layout turns it off.
     private boolean aim;
@@ -320,6 +374,7 @@ final class TouchControlsView extends View {
     private final Path crossArmPath = new Path();
     private static native boolean nativeDebugOverlayVisible();
     private static native boolean nativeTouchClassic();
+    private static native boolean nativeTouchTwinStick();
     private static native boolean nativeTouchColors();
     // F1's side margin (every control) and the left stick's extra inset, in dp.
     private static native float nativeTouchSideMarginDp();
@@ -468,7 +523,11 @@ final class TouchControlsView extends View {
         sideMargin = dp(nativeTouchSideMarginDp());
         stickInset = dp(nativeTouchStickInsetDp());
         buttonInset = dp(nativeTouchButtonInsetDp());
-        cStick = classic;
+        // Classic and twin stick are exclusive (the native side keeps them so).
+        twin = !classic && nativeTouchTwinStick();
+        face = twin ? TWIN_FACE : GAMECUBE_FACE;
+        pills = twin ? TWIN_PILLS : GAMECUBE_PILLS;
+        cStick = classic || twin;
         aim = !classic || nativeTouchAimEnabled();
         wheels = !classic || nativeTouchWheelsEnabled();
         visorTapScan = nativeTouchVisorTapScan();
@@ -477,7 +536,7 @@ final class TouchControlsView extends View {
             // A layout made on another screen, or before a rotation or resize,
             // must not leave a control off screen where it can't be grabbed.
             for (int i = 0; i < CONTROLS; ++i) {
-                if (ovDx[i] != 0f || ovDy[i] != 0f || ovScale[i] != 1f) {
+                if (editShown(i) && (ovDx[i] != 0f || ovDy[i] != 0f || ovScale[i] != 1f)) {
                     clampToScreen(i, width, height);
                 }
             }
@@ -485,11 +544,12 @@ final class TouchControlsView extends View {
         bottomButtonRect(0, true, width, height, hideBounds);
         drawStick(canvas, leftStickX(width, height), leftStickY(width, height),
                   leftStickRadius(height), leftPointer, 0);
-        // The right stick is the C-stick, yellow on the GameCube pad. Only the
-        // classic layout has one; otherwise a drag anywhere free aims.
+        // The right stick is the C-stick, yellow on the GameCube pad, in the classic
+        // layout; in twin stick it aims, plain like the left. Otherwise a drag
+        // anywhere free aims.
         if (cStick) {
             drawStick(canvas, rightStickX(width, height), rightStickY(height),
-                      rightStickRadius(height), rightPointer, colored ? GC_YELLOW : 0);
+                      rightStickRadius(height), rightPointer, colored && !twin ? GC_YELLOW : 0);
         }
 
         rHiddenNow = !editing && rHidden();
@@ -980,20 +1040,25 @@ final class TouchControlsView extends View {
         return layoutU(height) * STICK_RADIUS * ovScale[C_LSTICK];
     }
 
+    // The control id the right stick's override is stored under.
+    private int rightControl() {
+        return twin ? C_RSTICK : C_CSTICK;
+    }
+
     private float baseRightStickX(float width, float height) {
         return width - sideMargin - buttonInset - layoutU(height) * GC_CSTICK_FROM_RIGHT;
     }
 
     private float rightStickX(float width, float height) {
-        return baseRightStickX(width, height) + ovDx[C_CSTICK] * layoutU(height);
+        return baseRightStickX(width, height) + ovDx[rightControl()] * layoutU(height);
     }
 
     private float rightStickY(float height) {
-        return layoutY(GC_CSTICK_Y, height) + ovDy[C_CSTICK] * layoutU(height);
+        return layoutY(GC_CSTICK_Y, height) + ovDy[rightControl()] * layoutU(height);
     }
 
     private float rightStickRadius(float height) {
-        return layoutU(height) * GC_CSTICK_RADIUS * ovScale[C_CSTICK];
+        return layoutU(height) * GC_CSTICK_RADIUS * ovScale[rightControl()];
     }
 
     // Whether (x, y) is in the area that grabs the right stick. By default the
@@ -1004,7 +1069,7 @@ final class TouchControlsView extends View {
     // no grab is left at the old place.
     private boolean inRightStickGrab(float x, float y, float width, float height) {
         final float u = layoutU(height);
-        final float scale = ovScale[C_CSTICK];
+        final float scale = ovScale[rightControl()];
         final float baseCy = layoutY(GC_CSTICK_Y, height);
         final float baseRight = baseRightStickX(width, height) + u * GC_CSTICK_RADIUS * 1.6f;
         final float baseLeft = baseRight - (baseRight - width * 0.38f) * layoutScale(height);
@@ -1317,12 +1382,13 @@ final class TouchControlsView extends View {
     }
 
     private int controlOf(ControlButton button) {
+        final int first = twin ? C_JUMP : C_A;
         for (int i = 0; i < face.length; ++i) {
             if (face[i] == button) {
-                return C_A + i;
+                return first + i;
             }
         }
-        return C_A;
+        return first;
     }
 
     // The button's centre, radius (a kidney's is its arc's) and band half width
@@ -1489,9 +1555,9 @@ final class TouchControlsView extends View {
     // With drag-to-aim, R's hold-still free look is redundant, so R only shows
     // where it does something else: morphed (Spider Ball), in the pause menu,
     // and on the map screen. Not part of pillHidden, so the pills' layout
-    // doesn't jump as R comes and goes.
+    // doesn't jump as R comes and goes. Twin stick always shows it.
     private boolean rHidden() {
-        return aim && (nativeWheelOwned() & WHEEL_MORPHED_BIT) == 0 && !nativePauseScreenOpen() &&
+        return aim && !twin && (nativeWheelOwned() & WHEEL_MORPHED_BIT) == 0 && !nativePauseScreenOpen() &&
                !nativeMapScreenOpen();
     }
 
@@ -1570,6 +1636,9 @@ final class TouchControlsView extends View {
     }
 
     private static int pillControl(PillButton pill) {
+        if (pill.control >= 0) {
+            return pill.control;
+        }
         if (pill.axis == AXIS_TRIGGER_L) {
             return C_L;
         }
@@ -2029,11 +2098,31 @@ final class TouchControlsView extends View {
     private boolean editShown(int control) {
         switch (control) {
             case C_CSTICK:
-                return cStick;
+                return cStick && !twin;
+            case C_A:
+            case C_B:
+            case C_X:
+            case C_Y:
+            case C_L:
+            case C_R:
+                return !twin;
+            case C_RSTICK:
+            case C_JUMP:
+            case C_FIRE:
+            case C_MORPH:
+            case C_MISSILE:
+            case C_LT:
+            case C_LB:
+            case C_RT:
+            case C_RB:
+            case C_TR:
+                return twin;
             case C_DPAD:
                 return !wheels;
             case C_Z:
-                return !mapTap;
+                return !twin && !mapTap;
+            case C_TZ:
+                return twin && !mapTap;
             case C_MAP:
                 return mapTap;
             case C_VISOR:
@@ -2064,7 +2153,8 @@ final class TouchControlsView extends View {
                 out.set(x - r, y - r, x + r, y + r);
                 return;
             }
-            case C_CSTICK: {
+            case C_CSTICK:
+            case C_RSTICK: {
                 final float r = rightStickRadius(height);
                 final float x = rightStickX(width, height);
                 final float y = rightStickY(height);
@@ -2081,8 +2171,13 @@ final class TouchControlsView extends View {
             case C_A:
             case C_B:
             case C_X:
-            case C_Y: {
-                final ControlButton button = face[control - C_A];
+            case C_Y:
+            case C_JUMP:
+            case C_FIRE:
+            case C_MORPH:
+            case C_MISSILE: {
+                final ControlButton button = face[control >= C_JUMP ? control - C_JUMP
+                                                                    : control - C_A];
                 faceGeometry(button, width, height, true, faceGeo);
                 if (button.isKidney()) {
                     kidneyPath(facePath, faceGeo[0], faceGeo[1], faceGeo[2], faceGeo[3],
@@ -2096,7 +2191,13 @@ final class TouchControlsView extends View {
             }
             case C_L:
             case C_R:
-            case C_Z: {
+            case C_Z:
+            case C_LT:
+            case C_LB:
+            case C_RT:
+            case C_RB:
+            case C_TZ:
+            case C_TR: {
                 final PillButton pill = pillOf(control);
                 if (pill != null) {
                     pillRect(pill, width, height, out);
@@ -2441,13 +2542,21 @@ final class TouchControlsView extends View {
         final float bottom;
         // An RGB fill, or 0 for the overlay's own.
         final int color;
+        // The editor control this pill is, or -1 to go by its axis/button (pillControl).
+        final int control;
         PillButton(String label, int axis, int button, float left, float top, float right,
                    float bottom) {
-            this(label, axis, button, left, top, right, bottom, 0);
+            this(label, axis, button, left, top, right, bottom, 0, -1);
         }
 
         PillButton(String label, int axis, int button, float left, float top, float right,
                    float bottom, int color) {
+            this(label, axis, button, left, top, right, bottom, color, -1);
+        }
+
+        PillButton(String label, int axis, int button, float left, float top, float right,
+                   float bottom, int color, int control) {
+            this.control = control;
             this.color = color;
             this.label = label;
             this.axis = axis;
