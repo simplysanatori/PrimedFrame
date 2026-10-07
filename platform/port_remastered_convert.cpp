@@ -3955,7 +3955,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // test says nothing about what the Remastered map's alpha holds.
     // A plain lit cutout (no vertex colour) is Remastered's 1-bit alpha shader: full alpha,
     // cut by the shader. Any other keeps the CMPR punch and retail's alpha compare.
-    const bool exactCut = opt.standalone && rem.cutout && rem.kind == 0 && !rem.tinted && !rem.unlit && !rem.layered;
+    const bool exactCut = opt.standalone && rem.cutout && rem.kind == 0 && !rem.unlit && !rem.layered;
     const char* const baseAlpha =
         glow ? "blend" : !opt.standalone ? (frostShell || rem.mask || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
     const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || lambertFx || !IsFx(pm)) &&

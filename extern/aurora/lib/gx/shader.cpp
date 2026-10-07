@@ -1099,10 +1099,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }
   }
   if (mapStage[4] == -1) {
-    // Remastered's cutout (mode 512): the filtered base alpha squared against 0.25. DIFC.a
-    // is 1 on every material that has it.
+    // Remastered's cutout (mode 512): the filtered base alpha squared, times the raw vertex
+    // alpha on tinted shaders (pbr_vc.a is 1 otherwise), against 0.25. DIFC.a is 1 on every
+    // material that has it.
     layer += R"""(
-      if (pbr_cut && prev.a * prev.a < 0.25) {
+      if (pbr_cut && prev.a * prev.a * pbr_vc.a < 0.25) {
           discard;
       })""";
   }
