@@ -475,7 +475,7 @@ which are authoritative. Inside a mod:
   with the area. The Thermal and X-Ray visors draw the retail area. A game
   started with such a mod installed takes a 256 MB arena and larger frame
   buffers (12 times the usual size, 6 on Android, 2 with
-  `MP_ROOM_GEO_RESIDENT=1`; see `MP_FRAME_BUFFERS`), since these rooms are many
+  `MP_ROOM_GEO_RESIDENT`, Android's default; see `MP_FRAME_BUFFERS`), since these rooms are many
   times retail's vertex count; a mod loaded into a running game without them
   is not drawn until the next start.
 - a file named `<MREA id, 8 hex digits>.roomliquid`, anywhere in the mod, holds
@@ -1221,11 +1221,17 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   which also prints what is loaded and what the last frame streamed.
   `MP_FRAME_BUFFERS=<1..16>` scales the buffers a frame's vertices, indices,
   arrays and uniforms are streamed through (1 = 5 + 2 + 8 + 24 MiB); it is 12
-  when a mod has room geometry (6 on Android, 2 with `MP_ROOM_GEO_RESIDENT=1`).
+  when a mod has room geometry (6 on Android, 2 with `MP_ROOM_GEO_RESIDENT`,
+  which Android has on by default).
   A frame that outgrows them aborts with a buffer overflow.
-- `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_resident`, F1 > Remastered >
-  Room models > Keep on the GPU; off by default, read at startup):
-  experimental. Each room geometry model's vertex arrays and display lists are
+- `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_gpu`, F1 > Remastered >
+  Room models > Keep on the GPU; on by default on Android, off elsewhere, read at
+  startup; an old `room_geo_resident=1` still turns it on). On a POCO F8 Ultra it
+  gives 8 to 27% more frames per second in the heaviest rooms; on a desktop GPU it
+  makes no measurable difference. On an integrated GPU (Ryzen 7000 Raphael) the
+  results were mixed: GPU time was the same or lower in every room, and up to 4 ms lower in Frigate Crash Site
+  (65 to 97 fps), but turning around in Main Plaza ran at 80 fps with it against
+  96 without. Each room geometry model's vertex arrays and display lists are
   uploaded to the GPU once when it loads and drawn from there, instead of being
   copied into the frame's buffers every frame. The frame buffers then start at 2
   times the usual size instead of 12 (6 on Android), and 256 MiB (128 on
