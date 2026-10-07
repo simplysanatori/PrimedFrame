@@ -45,7 +45,7 @@ inline constexpr int kConverter = 22;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get, Cube
 // and Baked. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
-inline constexpr int kTextures = 0;
+inline constexpr int kTextures = 1;
 inline constexpr int kModels = 4;      // the table's models, their looks and the ANCS copies
 inline constexpr int kEffects = 6;     // port_remastered_effect_import and the particle converters
 inline constexpr int kRooms = 6;       // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps

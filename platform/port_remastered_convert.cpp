@@ -945,8 +945,9 @@ struct Converter::State {
   // 'MPCB', u32 edge, u32 mips, then RGBA16F, every mip of face 0 from the largest down,
   // then face 1 and so on (GXCreatePBRCube's layout), little endian. The faces are
   // Remastered's, in its world (PortRoomEnv's probes map a direction into it the same way).
-  // The stored colours are sRGB and come out linear, a box filter down to kCubeEdge and on
-  // to 1x1. 0 when the material has none or the import cannot read cubes.
+  // The colours are what the GPU samples (io.cube decodes by format: most REFL cubes are
+  // UNORM ASTC and stay as stored, BC6H keeps its range), a box filter down to kCubeEdge
+  // and on to 1x1. 0 when the material has none or the import cannot read cubes.
   static constexpr uint32_t kCubeEdge = 128;
   uint32_t Cube(const MapRef& refl) {
     if (!refl.has || !io.cube) {
@@ -962,7 +963,7 @@ struct Converter::State {
     std::string was;
     const bool kept = io.recall && io.recall(key, was) && was == Hex8(tid);
     uint32_t edge = 0;
-    std::vector<uint8_t> faces;
+    std::vector<float> faces;
     const auto read = [&] {
       std::string error;
       if (!io.cube(refl.id, edge, faces, error) || edge == 0 || faces.size() != size_t(edge) * edge * 24) {
@@ -988,11 +989,6 @@ struct Converter::State {
       return ids[tag].value_or(0);
     }
     Writing writing(*this);
-    float lut[256];
-    for (int i = 0; i < 256; ++i) {
-      const float c = float(i) / 255.0f;
-      lut[i] = c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
-    }
     const uint32_t top = std::min(edge, kCubeEdge);
     uint32_t mips = 0;
     while ((top >> mips) != 0) {
@@ -1008,7 +1004,7 @@ struct Converter::State {
     le32(top);
     le32(mips);
     for (int face = 0; face < 6; ++face) {
-      const uint8_t* src = faces.data() + size_t(face) * edge * edge * 4;
+      const float* src = faces.data() + size_t(face) * edge * edge * 4;
       // The top mip: each texel the mean of the block of source texels it covers.
       const uint32_t step = edge / top;
       std::vector<float> level(size_t(top) * top * 4);
@@ -1017,9 +1013,9 @@ struct Converter::State {
           float sum[3] = {0.0f, 0.0f, 0.0f};
           for (uint32_t sy = 0; sy < step; ++sy) {
             for (uint32_t sx = 0; sx < step; ++sx) {
-              const uint8_t* p = src + (size_t(y * step + sy) * edge + x * step + sx) * 4;
+              const float* p = src + (size_t(y * step + sy) * edge + x * step + sx) * 4;
               for (int c = 0; c < 3; ++c) {
-                sum[c] += lut[p[c]];
+                sum[c] += p[c];
               }
             }
           }
