@@ -186,10 +186,12 @@ bool sTwinStick = false;
 float sTwinStickRightY = 0.f;
 bool sBeamShiftHeld = false;
 std::atomic<bool> sTouchBeamShift{false}; // the touch twin layout's held Beam button
+std::atomic<bool> sTouchTurboFire{false}; // the touch Turbo button, held
 bool sSpringBall = false;
 bool sSwapScanXray = false;
 bool sTouchColors = false; // Android touch overlay: the GameCube pad's colours
 bool sTouchLabels = true;  // and each button's function under its letter
+bool sTouchTurbo = false;  // a Turbo button beside Fire
 bool sFastMorph = false;
 bool sInvulnerable = false;
 // MP_GODMODE, for this run only: -1 unset, else 0 or 1. Never saved, and changing the
@@ -309,6 +311,7 @@ int sMouseActions[PortInputMap::kMouseButtonCount] = {
 // a controller button (an SDL gamepad button or PAD_NATIVE_BUTTON_TRIGGER_*),
 // -1 for none.
 int sShiftBindings[3] = {SDL_SCANCODE_LSHIFT, -1, -1};
+int sTurboBindings[3] = {-1, -1, -1}; // turbo fire: two keys, then a controller button
 // A second controller button per PAD button, indexed by the PAD bit's position;
 // the same codes as the shift's pad slot, -1 for none.
 int sPadAltButtons[PortDebug::kPadAltCount] = {-1, -1, -1, -1, -1, -1, -1, -1,
@@ -377,6 +380,7 @@ std::atomic< bool > sOverlayVisible{false};
 // Same idea for whether the Android touch overlay draws the GameCube pad's colours.
 std::atomic< bool > sTouchColorsFlag{false};
 std::atomic< bool > sTouchLabelsFlag{true};
+std::atomic< bool > sTouchTurboFlag{false};
 // The Android touch overlay's gap to the side edges for every control, and the
 // left stick's extra gap on top of it, in dp. Read from the UI thread.
 constexpr float kTouchMarginMaxDp = 300.f;
@@ -605,6 +609,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sTouchColors = ParseBool(value);
   } else if (key == "touch_labels") {
     sTouchLabels = ParseBool(value);
+  } else if (key == "touch_turbo") {
+    sTouchTurbo = ParseBool(value);
   } else if (key == "stick_aim_rate") {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 50.f && f <= 4000.f) {
@@ -688,6 +694,13 @@ void ApplySetting(const std::string& key, const std::string& value) {
     const long code = std::strtol(value.c_str(), &end, 10);
     if (end != value.c_str() && *end == '\0') {
       sShiftBindings[slot] = static_cast< int >(code);
+    }
+  } else if (key == "turbo_key" || key == "turbo_key_alt" || key == "turbo_pad") {
+    const int slot = key == "turbo_key" ? 0 : key == "turbo_key_alt" ? 1 : 2;
+    char* end = nullptr;
+    const long code = std::strtol(value.c_str(), &end, 10);
+    if (end != value.c_str() && *end == '\0') {
+      sTurboBindings[slot] = static_cast< int >(code);
     }
   } else if (key == "pad_alt") {
     // kPadAltCount comma-separated codes; a short or malformed list keeps the
@@ -894,11 +907,15 @@ void SaveSettings() {
   file << "twin_stick=" << (sTwinStick ? 1 : 0) << '\n';
   file << "touch_colors=" << (sTouchColors ? 1 : 0) << '\n';
   file << "touch_labels=" << (sTouchLabels ? 1 : 0) << '\n';
+  file << "touch_turbo=" << (sTouchTurbo ? 1 : 0) << '\n';
   file << "spring_ball=" << (sSpringBall ? 1 : 0) << '\n';
   file << "swap_scan_xray=" << (sSwapScanXray ? 1 : 0) << '\n';
   file << "shift_key=" << sShiftBindings[0] << '\n';
   file << "shift_key_alt=" << sShiftBindings[1] << '\n';
   file << "shift_pad=" << sShiftBindings[2] << '\n';
+  file << "turbo_key=" << sTurboBindings[0] << '\n';
+  file << "turbo_key_alt=" << sTurboBindings[1] << '\n';
+  file << "turbo_pad=" << sTurboBindings[2] << '\n';
   file << "pad_alt=";
   for (int i = 0; i < PortDebug::kPadAltCount; ++i) {
     file << (i != 0 ? "," : "") << sPadAltButtons[i];
@@ -1738,6 +1755,8 @@ bool BeamShiftHeld() { return sBeamShiftHeld; }
 
 bool TouchBeamShift() { return sTouchBeamShift.load(std::memory_order_acquire) && TouchActive(); }
 
+bool TouchTurboFire() { return sTouchTurboFire.load(std::memory_order_acquire) && TouchActive(); }
+
 void SetBeamShiftHeld(bool held) { sBeamShiftHeld = held; }
 
 bool SpringBall() {
@@ -1760,6 +1779,22 @@ void SetSwapScanXray(bool enabled) {
   EnsureInitialized();
   sSwapScanXray = enabled;
   MarkDirty();
+}
+
+int TurboBinding(int slot) {
+  EnsureInitialized();
+  if (slot == 2 && TouchActive()) {
+    return -1;
+  }
+  return slot >= 0 && slot < 3 ? sTurboBindings[slot] : -1;
+}
+
+void SetTurboBinding(int slot, int code) {
+  EnsureInitialized();
+  if (slot >= 0 && slot < 3) {
+    sTurboBindings[slot] = code;
+    MarkDirty();
+  }
 }
 
 int ShiftBinding(int slot) {
@@ -3241,6 +3276,7 @@ bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); 
 
 bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire); }
 bool TouchLabelsFlag() { return sTouchLabelsFlag.load(std::memory_order_acquire); }
+bool TouchTurboFlag() { return sTouchTurboFlag.load(std::memory_order_acquire); }
 float TouchSideMarginDp() { return sTouchSideMargin.load(); }
 float TouchStickInsetDp() { return sTouchStickInset.load(); }
 float TouchButtonInsetDp() { return sTouchButtonInset.load(); }
@@ -3712,6 +3748,7 @@ void UpdateControllerNav() {
   sOverlayVisible.store(sVisible, std::memory_order_release);
   sTouchColorsFlag.store(sTouchColors, std::memory_order_release);
   sTouchLabelsFlag.store(sTouchLabels, std::memory_order_release);
+  sTouchTurboFlag.store(sTouchTurbo, std::memory_order_release);
 
   ImGuiIO& io = ImGui::GetIO();
   io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
@@ -5516,6 +5553,14 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("Writes what each on-screen button does next to its letter (Fire, Jump, Lock...). "
            "Off, only the letters are shown.");
+  if (ImGui::Checkbox("Turbo fire button", &sTouchTurbo)) {
+    if (!sTouchTurbo) {
+      sTouchTurboFire.store(false, std::memory_order_release);
+    }
+    MarkDirty();
+  }
+  ItemHelp("Adds a Turbo button next to Fire: holding it fires as if Fire were tapped as fast as the "
+           "game accepts. It can be moved and resized in Edit layout.");
   int touchLayout = sTouchClassic ? 1 : sTouchTwinStick ? 2 : 0;
   static const char* const kTouchLayouts[] = {"Default", "Classic GameCube", "Twin stick (Remastered)"};
   if (ImGui::Combo("Layout", &touchLayout, kTouchLayouts, 3)) {
@@ -8021,6 +8066,16 @@ Java_org_metroidprime_port_TouchControlsView_nativeDebugOverlayVisible(JNIEnv*, 
 extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchBeamShift(JNIEnv*, jclass, jboolean held) {
   sTouchBeamShift.store(held == JNI_TRUE, std::memory_order_release);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchTurboFire(JNIEnv*, jclass, jboolean held) {
+  sTouchTurboFire.store(held == JNI_TRUE, std::memory_order_release);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchTurbo(JNIEnv*, jclass) {
+  return PortDebug::TouchTurboFlag() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

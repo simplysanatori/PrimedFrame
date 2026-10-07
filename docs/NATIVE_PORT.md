@@ -857,6 +857,13 @@ unpacks to a temporary directory instead of mounting.
   button or trigger, default none, because Aurora maps LB on many pads to L), and
   it can go on a mouse button. Twin stick keeps left shift as its own modifier,
   and L and LB too while `shift_pad` is unbound.
+- Turbo fire (Controls > Options, "Turbo fire (hold)"): while it is held, A is
+  pressed and released on alternate ticks, as if fire were mashed, so each beam
+  shoots as fast as its own shot delay allows (it doesn't charge). Two key slots
+  (`turbo_key`, `turbo_key_alt`) and a pad slot (`turbo_pad`), all unbound by
+  default; presets leave them alone. On Android, F1 Touch controls "Turbo fire
+  button" (`touch_turbo=`, off by default) adds a "T" button to either touch
+  layout, movable and resizable in the layout editor (issue #10).
 - Alt controller buttons (Controls > Controller, "Alt button" column, persisted as
   `pad_alt`, 16 comma-separated native codes indexed by the PAD bit, -1 for
   none): a second controller button or trigger per GameCube button. Aurora maps

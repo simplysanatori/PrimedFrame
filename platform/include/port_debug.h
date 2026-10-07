@@ -295,6 +295,8 @@ bool BeamShiftHeld();
 // The touch twin layout's Beam button is held: the D-pad picks beams (false off Android / without touch).
 bool TouchBeamShift();
 void SetBeamShiftHeld(bool held);
+// The touch overlay's Turbo button is held (false off Android / without touch).
+bool TouchTurboFire();
 // Spring Ball (C-stick up in morph ball, as in Metroid Prime Trilogy) once the
 // Morph Ball Bombs are held. A connected Archipelago seed overrides it.
 bool SpringBall();
@@ -308,6 +310,10 @@ void SetSwapScanXray(bool enabled);
 // (SDL gamepad button or PAD_NATIVE_BUTTON_TRIGGER_*); -1 for none.
 int ShiftBinding(int slot);
 void SetShiftBinding(int slot, int code);
+// The turbo fire's bindings (PortControls::TurboHeld), laid out as ShiftBinding's
+// (slot 2 reads -1 while touch is in use); all -1 (none) by default.
+int TurboBinding(int slot);
+void SetTurboBinding(int slot, int code);
 // A second controller button for a GameCube button (Aurora maps one each),
 // ORed in by CDolphinController: `bit` is the PAD_BUTTON_* / PAD_TRIGGER_* bit's
 // position, the code as ShiftBinding's slot 2; -1 for none.
@@ -543,6 +549,8 @@ bool OverlayVisible();
 bool TouchColorsFlag();
 // Whether it writes each button's function under its letter. Same rules.
 bool TouchLabelsFlag();
+// Whether it shows the Turbo fire button. Same rules.
+bool TouchTurboFlag();
 // The touch overlay's side margin, the left stick's extra inset and the face
 // buttons' extra inset, in dp. Also safe to call from the UI thread.
 float TouchSideMarginDp();
