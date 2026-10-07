@@ -3732,9 +3732,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (uint32_t bi : bufOrder) {
     hasLightmapUv = hasLightmapUv || (buffers[bi].uv.size() > 1 && !buffers[bi].uv[1].empty());
   }
-  // Vertex tangents (the NBT normal section, CMDL flag 0x8) only when every buffer has them. A
-  // skinned model keeps the shader's derivative frame: the skinner moves 12-byte normals.
-  bool useTan = !opt.skins.empty() ? false : !bufOrder.empty();
+  // Vertex tangents (the NBT normal section, CMDL flag 0x8) only when every buffer has them.
+  bool useTan = !bufOrder.empty();
   for (uint32_t bi : bufOrder) {
     useTan = useTan && !buffers[bi].T.empty();
   }

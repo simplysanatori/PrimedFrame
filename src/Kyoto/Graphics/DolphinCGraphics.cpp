@@ -1659,7 +1659,7 @@ void CGraphics::CRenderState::Flush() {}
 
 int CGraphics::CRenderState::SetVtxState(const float* pos, const float* nrm, const uint* clr) {
   CGX::SetArrayNative(GX_VA_POS, pos, x8_skinnedPosBytes, 12);
-  CGX::SetArrayNative(GX_VA_NRM, nrm, xc_skinnedNrmBytes, 12);
+  CGX::SetArrayNative(GX_VA_NRM, nrm, xc_skinnedNrmBytes, x10_skinnedNrmStride);
   CGX::SetArray(GX_VA_CLR0, clr, 0, 4);
   int result = 1;
   if (nrm != nullptr) {

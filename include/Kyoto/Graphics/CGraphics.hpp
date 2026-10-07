@@ -195,12 +195,15 @@ public:
     int SetVtxState(const float* pos, const float* nrm, const uint* clr);
     // Byte sizes of the skinned position/normal arrays, since the renderer needs
     // them to upload the array data (the original SDK form carried no size).
-    void SetSkinnedArraySizes(uint positionsBytes, uint normalsBytes) {
+    // A model with NBT normals (CMDL flag 0x8) skins nine floats per normal, not three.
+    void SetSkinnedArraySizes(uint positionsBytes, uint normalsBytes, uint normalStride = 12) {
       x8_skinnedPosBytes = positionsBytes;
       xc_skinnedNrmBytes = normalsBytes;
+      x10_skinnedNrmStride = normalStride;
     }
     uint GetSkinnedPosBytes() const { return x8_skinnedPosBytes; }
     uint GetSkinnedNrmBytes() const { return xc_skinnedNrmBytes; }
+    uint GetSkinnedNrmStride() const { return x10_skinnedNrmStride; }
 
     // In map this takes two args, but x4 is unused?
     void Set(int v0) { x0_ = v0; }
@@ -210,6 +213,7 @@ public:
     int x4_;
     uint x8_skinnedPosBytes = 0;
     uint xc_skinnedNrmBytes = 0;
+    uint x10_skinnedNrmStride = 12;
   };
 
   class CProjectionState {

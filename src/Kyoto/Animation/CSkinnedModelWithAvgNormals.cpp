@@ -47,6 +47,12 @@ CSkinnedModelWithAvgNormals::CSkinnedModelWithAvgNormals(const CSkinnedModel& sk
 
   const CVector3f* normals =
       reinterpret_cast< const CVector3f* >(skinnedModel.GetModel()->GetNormals());
+#ifdef TARGET_PC
+  // NBT normals are nine floats per vertex (N, B, T); N is the first.
+  const uint normalStride = skinnedModel.GetModel()->GetCubeModel()->HasNbtNormals() ? 3 : 1;
+#else
+  const uint normalStride = 1;
+#endif
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
   CVector3f* avgNormals = reinterpret_cast< CVector3f* >(x3c_avgNormals.get());
   AUTO(mapCur, vertMap.begin());
@@ -62,7 +68,7 @@ CSkinnedModelWithAvgNormals::CSkinnedModelWithAvgNormals(const CSkinnedModel& sk
     AUTO(lit, mapCur->second.begin());
     AUTO(listEnd, mapCur->second.end());
     for (; lit != listEnd; ++lit) {
-      accum += normals[*lit];
+      accum += normals[*lit * normalStride];
     }
 
     lit = mapCur->second.begin();

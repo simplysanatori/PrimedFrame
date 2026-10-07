@@ -1130,11 +1130,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_tlen = max(dot(pbr_t0, pbr_t0), dot(pbr_b0, pbr_b0));)""",
                          underlying(config.tevStages[mapStage[mapStage[2] != -1 ? 2 : 0]].texCoordId));
     if (tangents) {
-      // The vertex frame, made orthonormal on the stored normal and given the derivative
-      // frame's length (every consumer scales by 1 / sqrt(pbr_tlen)) and its orientation: T
-      // along U, B against V (n = t * x - b * y).
+      // Remastered's vertex frame: T normalised (not made orthogonal to N), B = cross(N, T) * w,
+      // given the derivative frame's length (every consumer scales by 1 / sqrt(pbr_tlen)) and
+      // its orientation: B against V (n = t * x - b * y).
       layer += R"""(
-      let pbr_tu = normalize(in.pbr_tan.xyz - pbr_ngs * dot(pbr_ngs, in.pbr_tan.xyz));
+      let pbr_tu = normalize(in.pbr_tan.xyz);
       let pbr_tsc = sqrt(pbr_tlen);
       let pbr_t = pbr_tu * pbr_tsc;
       let pbr_b = -cross(pbr_ngs, pbr_tu) * (in.pbr_tan.w * pbr_tsc);)""";

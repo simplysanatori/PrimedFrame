@@ -124,9 +124,10 @@ static inline float LoadBigFloat(const uchar* p) {
 // bone owns the next run of vertices, in the same order for the point and
 // normal arrays. The expressions match CTransform4f/CMatrix3f's operator*, so
 // the output is bit-identical to the retail path.
+// With `nbt` every normal entry is nine floats (N, B, T) and all three rotate alike.
 static void BuildBoneRange(const CVirtualBone* bones, int first, int end, int offset,
                            const uchar* srcPoints, const uchar* srcNormals, float* points,
-                           float* normals) {
+                           float* normals, bool nbt) {
   const uchar* src = srcPoints + offset * 12;
   float* out = points + offset * 3;
   for (int b = first; b < end; ++b) {
@@ -143,19 +144,22 @@ static void BuildBoneRange(const CVirtualBone* bones, int first, int end, int of
     }
   }
 
-  src = srcNormals + offset * 12;
-  out = normals + offset * 3;
+  const int vecs = nbt ? 3 : 1;
+  src = srcNormals + offset * 12 * vecs;
+  out = normals + offset * 3 * vecs;
   for (int b = first; b < end; ++b) {
     const CMatrix3f& rot = bones[b].GetRotation();
     const float m00 = rot.Get00(), m01 = rot.Get01(), m02 = rot.Get02();
     const float m10 = rot.Get10(), m11 = rot.Get11(), m12 = rot.Get12();
     const float m20 = rot.Get20(), m21 = rot.Get21(), m22 = rot.Get22();
     const int count = bones[b].GetNumIndices();
-    for (int i = 0; i < count; ++i, src += 12, out += 3) {
-      const float x = LoadBigFloat(src), y = LoadBigFloat(src + 4), z = LoadBigFloat(src + 8);
-      out[0] = x * m00 + y * m01 + z * m02;
-      out[1] = x * m10 + y * m11 + z * m12;
-      out[2] = x * m20 + y * m21 + z * m22;
+    for (int i = 0; i < count; ++i) {
+      for (int v = 0; v < vecs; ++v, src += 12, out += 3) {
+        const float x = LoadBigFloat(src), y = LoadBigFloat(src + 4), z = LoadBigFloat(src + 8);
+        out[0] = x * m00 + y * m01 + z * m02;
+        out[1] = x * m10 + y * m11 + z * m12;
+        out[2] = x * m20 + y * m21 + z * m22;
+      }
     }
   }
 }
@@ -269,12 +273,13 @@ void CSkinRules::PortBuildPointsAndNormals(const CModel& model, float* points,
                                            float* normals) const {
   const uchar* srcPoints = static_cast< const uchar* >(model.GetCubeModel()->GetPositions());
   const uchar* srcNormals = static_cast< const uchar* >(model.GetCubeModel()->GetNormals());
+  const bool nbt = model.GetCubeModel()->HasNbtNormals();
   const CVirtualBone* bones = x0_virtualBones.data();
   const int boneCount = x0_virtualBones.size();
 
   const int threads = x10_vertexCount >= ThreadThreshold() ? SkinPool::Get().Threads() : 1;
   if (threads <= 1 || boneCount < 2) {
-    BuildBoneRange(bones, 0, boneCount, 0, srcPoints, srcNormals, points, normals);
+    BuildBoneRange(bones, 0, boneCount, 0, srcPoints, srcNormals, points, normals, nbt);
     return;
   }
 
@@ -301,7 +306,7 @@ void CSkinRules::PortBuildPointsAndNormals(const CModel& model, float* points,
 
   const std::function< void(int) > job = [&](int c) {
     BuildBoneRange(bones, chunkFirst[c], chunkFirst[c + 1], chunkOffset[c], srcPoints, srcNormals,
-                   points, normals);
+                   points, normals, nbt);
   };
   SkinPool::Get().Run(count, job);
 }
