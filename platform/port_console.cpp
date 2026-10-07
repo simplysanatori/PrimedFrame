@@ -557,6 +557,7 @@ void CmdHelp() {
   Out("freecam [on|off|freeze on|off|player on|off|speed <n>|pos <x> <y> <z>|look <yaw> <pitch>]");
   Out("                           fly the view away from the player (HUD hidden; freeze holds the game still)");
   Out("aspect <4:3|16:9|window>   switch the rendering aspect, as the Options row does");
+  Out("original [on|off]   Original experience (retail settings over the saved ones)");
   Out("fov <45..90>               first-person vertical FOV, as the Options row does");
   Out("window [<w> <h>]           resize the window (leaves fullscreen); prints the size");
   Out("msaa <1|4>, aniso <1..16>  anti-aliasing and anisotropic filtering, applied next frame");
@@ -1839,6 +1840,15 @@ void RunFrame() {
     } else {
       return Finish("usage: aspect <4:3|16:9|window>");
     }
+    Finish();
+  } else if (name == "original") {
+    const std::string mode = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "";
+    if (mode == "on" || mode == "off") {
+      PortDebug::SetOriginalExperience(mode == "on");
+    } else if (!mode.empty()) {
+      return Finish("usage: original [on|off]");
+    }
+    Out(PortDebug::OriginalExperience() ? "original experience on" : "original experience off");
     Finish();
   } else if (name == "fov") {
     const float fov =

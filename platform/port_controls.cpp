@@ -1129,6 +1129,10 @@ bool ShiftHeld() {
 }
 
 bool TurboHeld() {
+  // Retail has no turbo; the bindings stay listed for when it's turned off.
+  if (PortDebug::OriginalExperience()) {
+    return false;
+  }
   for (int slot = 0; slot < PAD_KEY_SLOT_COUNT; ++slot) {
     const SInput key = RowInput(ECapture::kTurboKey, 0, slot);
     if (key.code != PAD_KEY_INVALID && InputHeld(key)) {

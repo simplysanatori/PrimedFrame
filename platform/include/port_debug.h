@@ -345,6 +345,14 @@ void SetDiscordPresence(bool enabled);
 // off, '/'-separated. Both take effect on the next launch.
 bool ModsEnabled();
 void SetModsEnabled(bool enabled);
+// Original experience: the game as it shipped. While on, the getters for the
+// port's additions (render scale, MSAA, aspect, wide HUD, FOV, interpolation,
+// sim rate, mods, unlocks, the gameplay assists, turbo, ...) return retail's
+// values; the saved settings are not changed, so turning it off restores them.
+// Input aids, cheats, save states, the randomizer/Archipelago, timers and
+// Discord follow their own settings.
+bool OriginalExperience();
+void SetOriginalExperience(bool enabled);
 std::string ModsDisabled();
 void SetModsDisabled(const std::string& list);
 // Starts a Remastered import (port_remastered_import.h) with the mods unloaded

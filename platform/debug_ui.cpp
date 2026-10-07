@@ -236,6 +236,10 @@ bool sUpdateCheck = true;
 // Mods folder (port_mods.h): read at startup only.
 bool sModsEnabled = true;
 std::string sModsDisabled;
+// Original experience (`original_experience=`, MP_ORIGINAL): the getters return retail
+// values for the port's additions while it is on. The saved settings are left as they
+// are, so turning it off brings them back.
+bool sOriginalExperience = false;
 // Gyro aiming: off / hold / always, auto / controller / phone, and how fast a
 // rotation turns into aim travel.
 int sGyroMode = 0;
@@ -753,6 +757,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sUpdateCheck = ParseBool(value);
   } else if (key == "mods") {
     sModsEnabled = ParseBool(value);
+  } else if (key == "original_experience") {
+    sOriginalExperience = ParseBool(value);
   } else if (key == "mods_disabled") {
     sModsDisabled = value;
   } else if (key == "fast_morph") {
@@ -903,6 +909,7 @@ void SaveSettings() {
   file << "discord_presence=" << (sDiscord ? 1 : 0) << '\n';
   file << "update_check=" << (sUpdateCheck ? 1 : 0) << '\n';
   file << "mods=" << (sModsEnabled ? 1 : 0) << '\n';
+  file << "original_experience=" << (sOriginalExperience ? 1 : 0) << '\n';
   file << "mods_disabled=" << sModsDisabled << '\n';
   file << "vsync=" << (sVsyncEnabled ? 1 : 0) << '\n';
   file << "fullscreen=" << (sFullscreen ? 1 : 0) << '\n';
@@ -1173,6 +1180,7 @@ void EnsureInitialized() {
   if (port::EnvFlag("MP_SIM_ADAPTIVE")) {
     sSimAdaptive = true;
   }
+  sOriginalExperience = port::EnvFlag("MP_ORIGINAL", sOriginalExperience);
 
   std::atexit(SaveSettings);
   ApplyLiveSplit();
@@ -1220,7 +1228,7 @@ float CutsceneSpeed() {
 
 unsigned SimRate() {
   EnsureInitialized();
-  return sSimRate;
+  return sOriginalExperience ? 60u : sSimRate;
 }
 
 void SetSimRate(unsigned hz) {
@@ -1236,7 +1244,7 @@ float SimPeriod() { return 1.f / static_cast< float >(SimRate()); }
 
 bool SimAdaptive() {
   EnsureInitialized();
-  return sSimAdaptive;
+  return sSimAdaptive && !sOriginalExperience;
 }
 
 bool Turbo() {
@@ -1268,10 +1276,22 @@ void SetTickPeriod(float dt) {
 
 float TickFrames() { return sTickPeriod * 60.f; }
 
+// What the frame code uses: the settings, or retail's under Original experience.
+static bool EffectiveFrameLimit() { return sFrameLimitEnabled || sOriginalExperience; }
+static float EffectiveRenderScale() { return sOriginalExperience ? 1.f : sRenderScale; }
+static int EffectiveMsaa() { return sOriginalExperience ? 1 : sMsaa; }
+static int EffectiveAnisotropy() { return sOriginalExperience ? 1 : sAnisotropy; }
+
+static void ApplyGraphicsQuality() {
+  aurora_set_graphics_quality(static_cast< uint32_t >(EffectiveMsaa()),
+                              static_cast< uint16_t >(EffectiveAnisotropy()));
+}
+
 bool FrameLimitEnabled() {
   EnsureInitialized();
-  return sFrameLimitEnabled;
+  return EffectiveFrameLimit();
 }
+
 
 static double DynamicResTargetFps() {
   double target = sDynamicResTarget;
@@ -1279,7 +1299,7 @@ static double DynamicResTargetFps() {
     const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
     target = mode != nullptr && mode->refresh_rate > 0.f ? mode->refresh_rate : 60.0;
   }
-  return sFrameLimitEnabled ? std::min(target, 60.0) : target;
+  return EffectiveFrameLimit() ? std::min(target, 60.0) : target;
 }
 
 static void ResetDynamicRes() {
@@ -1290,7 +1310,7 @@ static void ResetDynamicRes() {
   sDynFpsBefore = 0.0;
   if (sDynScale > 0.f) {
     sDynScale = 0.f;
-    VISetFrameBufferScale(sRenderScale);
+    VISetFrameBufferScale(EffectiveRenderScale());
   }
 }
 
@@ -1298,9 +1318,9 @@ static void ResetDynamicRes() {
 // GPU, so it steps rarely: down after two slow seconds, up after a steady stretch that
 // doubles each time a step up turns out too slow.
 static void UpdateDynamicRes(double fps, unsigned frames) {
-  const float top = sRenderScale;
+  const float top = EffectiveRenderScale();
   const float bottom = std::min(sDynamicResMin, top);
-  if (!sDynamicRes || top <= bottom || sTurbo) {
+  if (!sDynamicRes || sOriginalExperience || top <= bottom || sTurbo) {
     ResetDynamicRes();
     return;
   }
@@ -1395,7 +1415,7 @@ void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
     if (sTraceTiming) {
       std::fprintf(stderr,
                    "[timing] presented=%.1f FPS throughput=%.1f FPS simulation=%.1f ticks/s cap=%s\n",
-                   sActualFps, sThroughputFps, sActualTps, sFrameLimitEnabled ? "60" : "off");
+                   sActualFps, sThroughputFps, sActualTps, EffectiveFrameLimit() ? "60" : "off");
     }
     UpdateDynamicRes(sActualFps, sTimingFrames);
     sTimingNs = 0;
@@ -1406,6 +1426,10 @@ void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
 
 void SetFrameLimitEnabled(bool enabled) {
   EnsureInitialized();
+  // Original experience holds the cap; F10 must not change what it restores.
+  if (sOriginalExperience) {
+    return;
+  }
   if (sFrameLimitEnabled != enabled) {
     sFrameLimitEnabled = enabled;
     MarkDirty();
@@ -1443,7 +1467,7 @@ void SetFullscreen(bool enabled) {
 
 float RenderScale() {
   EnsureInitialized();
-  return sRenderScale;
+  return EffectiveRenderScale();
 }
 
 void SetRenderScale(float scale) {
@@ -1454,12 +1478,12 @@ void SetRenderScale(float scale) {
   sRenderScale = scale;
   sDynScale = 0.f;
   ResetDynamicRes();
-  VISetFrameBufferScale(scale);
+  VISetFrameBufferScale(EffectiveRenderScale());
 }
 
 bool DynamicRes() {
   EnsureInitialized();
-  return sDynamicRes;
+  return sDynamicRes && !sOriginalExperience;
 }
 
 int DynamicResTarget() {
@@ -1474,7 +1498,7 @@ float DynamicResMin() {
 
 EAspectMode AspectMode() {
   EnsureInitialized();
-  return sAspectMode;
+  return sOriginalExperience ? kAspect_4_3 : sAspectMode;
 }
 
 void SetAspectMode(EAspectMode mode) {
@@ -1485,7 +1509,7 @@ void SetAspectMode(EAspectMode mode) {
 
 bool HudWide() {
   EnsureInitialized();
-  return sHudWide;
+  return sHudWide && !sOriginalExperience;
 }
 
 void SetHudWide(bool enabled) {
@@ -1496,12 +1520,12 @@ void SetHudWide(bool enabled) {
 
 bool CinemaBars() {
   EnsureInitialized();
-  return sCinemaBars;
+  return sCinemaBars || sOriginalExperience;
 }
 
 int HudScale() {
   EnsureInitialized();
-  return sHudScale;
+  return sOriginalExperience ? kHudScaleMax : sHudScale;
 }
 
 void SetHudScale(int percent) {
@@ -1512,7 +1536,7 @@ void SetHudScale(int percent) {
 
 bool HideHelmet() {
   EnsureInitialized();
-  return sHideHelmet;
+  return sHideHelmet && !sOriginalExperience;
 }
 
 void SetHideHelmet(bool enabled) {
@@ -1523,7 +1547,7 @@ void SetHideHelmet(bool enabled) {
 
 bool HideVisorEffects() {
   EnsureInitialized();
-  return sHideVisorEffects;
+  return sHideVisorEffects && !sOriginalExperience;
 }
 
 void SetHideVisorEffects(bool enabled) {
@@ -1534,7 +1558,7 @@ void SetHideVisorEffects(bool enabled) {
 
 bool RevealMap() {
   EnsureInitialized();
-  return sRevealMap;
+  return sRevealMap && !sOriginalExperience;
 }
 
 void SetRevealMap(bool enabled) {
@@ -1578,7 +1602,7 @@ void SetApSuitDamage(int mode) {
 
 bool SkippableCutscenes() {
   EnsureInitialized();
-  return sSkippableCutscenes;
+  return sSkippableCutscenes && !sOriginalExperience;
 }
 
 void SetSkippableCutscenes(bool enabled) {
@@ -1605,7 +1629,7 @@ void SetTextLanguage(const char* code) {
 
 EElevatorRide ElevatorRide() {
   EnsureInitialized();
-  return static_cast< EElevatorRide >(sElevatorRide);
+  return sOriginalExperience ? kElevatorRide_Original : static_cast< EElevatorRide >(sElevatorRide);
 }
 
 void SetElevatorRide(EElevatorRide mode) {
@@ -1617,7 +1641,7 @@ void SetElevatorRide(EElevatorRide mode) {
 
 float FirstPersonFov() {
   EnsureInitialized();
-  return sFirstPersonFov;
+  return sOriginalExperience ? kFovRetail : sFirstPersonFov;
 }
 
 void SetFirstPersonFov(float degrees) {
@@ -1630,7 +1654,7 @@ void SetFirstPersonFov(float degrees) {
 
 int Msaa() {
   EnsureInitialized();
-  return sMsaa;
+  return EffectiveMsaa();
 }
 
 void SetMsaa(int samples) {
@@ -1638,7 +1662,7 @@ void SetMsaa(int samples) {
   samples = samples >= 4 ? 4 : 1;
   if (sMsaa != samples) {
     sMsaa = samples;
-    aurora_set_graphics_quality(static_cast< uint32_t >(sMsaa), static_cast< uint16_t >(sAnisotropy));
+    ApplyGraphicsQuality();
     MarkDirty();
   }
 }
@@ -1671,7 +1695,7 @@ void SetGpuDriver(const std::string& id) {
 
 int Anisotropy() {
   EnsureInitialized();
-  return sAnisotropy;
+  return EffectiveAnisotropy();
 }
 void ApplyStorageClamp() {
   EnsureInitialized();
@@ -1691,14 +1715,14 @@ void SetAnisotropy(int level) {
   level = std::clamp(level, 1, 16);
   if (sAnisotropy != level) {
     sAnisotropy = level;
-    aurora_set_graphics_quality(static_cast< uint32_t >(sMsaa), static_cast< uint16_t >(sAnisotropy));
+    ApplyGraphicsQuality();
     MarkDirty();
   }
 }
 
 bool UnlockHardMode() {
   EnsureInitialized();
-  return sUnlockHardMode;
+  return sUnlockHardMode && !sOriginalExperience;
 }
 
 void SetUnlockHardMode(bool enabled) {
@@ -1709,7 +1733,7 @@ void SetUnlockHardMode(bool enabled) {
 
 bool UnlockFusionSuit() {
   EnsureInitialized();
-  return sUnlockFusionSuit;
+  return sUnlockFusionSuit && !sOriginalExperience;
 }
 
 void SetUnlockFusionSuit(bool enabled) {
@@ -1720,7 +1744,7 @@ void SetUnlockFusionSuit(bool enabled) {
 
 bool UnlockGalleries() {
   EnsureInitialized();
-  return sUnlockGalleries;
+  return sUnlockGalleries && !sOriginalExperience;
 }
 
 void SetUnlockGalleries(bool enabled) {
@@ -1790,13 +1814,15 @@ bool BeamShiftHeld() { return sBeamShiftHeld; }
 
 bool TouchBeamShift() { return sTouchBeamShift.load(std::memory_order_acquire) && TouchActive(); }
 
-bool TouchTurboFire() { return sTouchTurboFire.load(std::memory_order_acquire) && TouchActive(); }
+bool TouchTurboFire() {
+  return sTouchTurboFire.load(std::memory_order_acquire) && TouchActive() && !sOriginalExperience;
+}
 
 void SetBeamShiftHeld(bool held) { sBeamShiftHeld = held; }
 
 bool SpringBall() {
   EnsureInitialized();
-  return sSpringBall;
+  return sSpringBall && !sOriginalExperience;
 }
 
 void SetSpringBall(bool enabled) {
@@ -1807,7 +1833,7 @@ void SetSpringBall(bool enabled) {
 
 bool SwapScanXray() {
   EnsureInitialized();
-  return sSwapScanXray && !TouchActive();
+  return sSwapScanXray && !TouchActive() && !sOriginalExperience;
 }
 
 void SetSwapScanXray(bool enabled) {
@@ -1930,13 +1956,36 @@ void SetLiveSplitAddress(const std::string& address) {
 
 bool ModsEnabled() {
   EnsureInitialized();
-  return sModsEnabled;
+  return sModsEnabled && !sOriginalExperience;
 }
 
 void SetModsEnabled(bool enabled) {
   EnsureInitialized();
   sModsEnabled = enabled;
   MarkDirty();
+}
+
+bool OriginalExperience() {
+  EnsureInitialized();
+  return sOriginalExperience;
+}
+
+void SetOriginalExperience(bool enabled) {
+  EnsureInitialized();
+  if (sOriginalExperience == enabled) {
+    return;
+  }
+  sOriginalExperience = enabled;
+  MarkDirty();
+  PortLog::Write("port: original experience %s\n", enabled ? "on" : "off");
+  // The rest reads the getters each frame; these were applied once.
+  sDynScale = 0.f;
+  ResetDynamicRes();
+  VISetFrameBufferScale(EffectiveRenderScale());
+  ApplyGraphicsQuality();
+  if (PortMods::CurrentStatus().active != ModsEnabled() && !PortMods::Suspended()) {
+    PortSaveState::RequestModReload();
+  }
 }
 
 std::string ModsDisabled() {
@@ -1975,7 +2024,7 @@ void SetLogFile(bool enabled) {
 
 bool FastMorph() {
   EnsureInitialized();
-  return sFastMorph;
+  return sFastMorph && !sOriginalExperience;
 }
 
 void SetFastMorph(bool enabled) {
@@ -1986,7 +2035,7 @@ void SetFastMorph(bool enabled) {
 
 bool LockOnToggle() {
   EnsureInitialized();
-  return sLockOnToggle;
+  return sLockOnToggle && !sOriginalExperience;
 }
 
 void SetLockOnToggle(bool enabled) {
@@ -1997,7 +2046,7 @@ void SetLockOnToggle(bool enabled) {
 
 bool StickyCharge() {
   EnsureInitialized();
-  return sStickyCharge;
+  return sStickyCharge && !sOriginalExperience;
 }
 
 void SetStickyCharge(bool enabled) {
@@ -2014,7 +2063,7 @@ PortRandoGen::Settings RandoSettings() {
 
 bool RapidCharge() {
   EnsureInitialized();
-  return sRapidCharge;
+  return sRapidCharge && !sOriginalExperience;
 }
 
 void SetRapidCharge(bool enabled) {
@@ -2025,7 +2074,7 @@ void SetRapidCharge(bool enabled) {
 
 bool SpringBallFlick() {
   EnsureInitialized();
-  return sSpringFlick;
+  return sSpringFlick && !sOriginalExperience;
 }
 
 void SetSpringBallFlick(bool enabled) {
@@ -2774,7 +2823,7 @@ bool TakeTouchLook(float& dyaw, float& dpitch) {
 
 bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
   dyaw = dpitch = 0.f;
-  if (!sFrameInterpolation || !sMouseGameplayActive || !sAimAppliedLastTick ||
+  if (!FrameInterpolation() || !sMouseGameplayActive || !sAimAppliedLastTick ||
       !std::isfinite(fraction) || fraction < 0.f) {
     return false;
   }
@@ -2803,7 +2852,7 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
 
 bool FrameInterpolation() {
   EnsureInitialized();
-  return sFrameInterpolation;
+  return sFrameInterpolation && !sOriginalExperience;
 }
 
 void SetFrameInterpolation(bool enabled) {
@@ -2813,7 +2862,7 @@ void SetFrameInterpolation(bool enabled) {
 
 bool SmoothFrames() {
   EnsureInitialized();
-  return sSmoothFrames;
+  return sSmoothFrames && !sOriginalExperience;
 }
 
 void SetSmoothFrames(bool enabled) {
@@ -2825,7 +2874,7 @@ void SetSmoothFrames(bool enabled) {
 
 bool ActorInterpolation() {
   EnsureInitialized();
-  return sActorInterpolation;
+  return sActorInterpolation && !sOriginalExperience;
 }
 
 void SetActorInterpolation(bool enabled) {
@@ -2835,7 +2884,7 @@ void SetActorInterpolation(bool enabled) {
 
 bool PoseInterpolation() {
   EnsureInitialized();
-  return sPoseInterpolation;
+  return sPoseInterpolation && !sOriginalExperience;
 }
 
 void SetPoseInterpolation(bool enabled) {
@@ -2877,7 +2926,7 @@ bool RoomGeoResidentAtStartup() {
 
 bool ParticleInterpolation() {
   EnsureInitialized();
-  return sParticleInterpolation;
+  return sParticleInterpolation && !sOriginalExperience;
 }
 
 void SetParticleInterpolation(bool enabled) {
@@ -3783,7 +3832,7 @@ void UpdateControllerNav() {
   sOverlayVisible.store(sVisible, std::memory_order_release);
   sTouchColorsFlag.store(sTouchColors, std::memory_order_release);
   sTouchLabelsFlag.store(sTouchLabels, std::memory_order_release);
-  sTouchTurboFlag.store(sTouchTurbo, std::memory_order_release);
+  sTouchTurboFlag.store(sTouchTurbo && !sOriginalExperience, std::memory_order_release);
 
   ImGuiIO& io = ImGui::GetIO();
   io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
@@ -3896,8 +3945,26 @@ void SameLineAfterHelp() {
 }
 } // namespace
 
+// Rows the Original experience overrides: shown with their saved values, which
+// come back when it's turned off.
+bool BeginOriginalLocked() {
+  if (!sOriginalExperience) {
+    return false;
+  }
+  ImGui::TextDisabled("Original experience is on: these keep their values for later.");
+  ImGui::BeginDisabled();
+  return true;
+}
+
+void EndOriginalLocked(bool locked) {
+  if (locked) {
+    ImGui::EndDisabled();
+  }
+}
+
 void DrawPerformanceTab() {
   ImGui::SeparatorText("Frame rate");
+  const bool locked = BeginOriginalLocked();
   bool frameLimit = sFrameLimitEnabled;
   if (ImGui::Checkbox("60 FPS cap (target)", &frameLimit)) {
     SetFrameLimitEnabled(frameLimit);
@@ -3911,10 +3978,10 @@ void DrawPerformanceTab() {
               static_cast< double >(ImGui::GetIO().DeltaTime) * 1000.0);
   ImGui::SetItemTooltip("Presented is what reaches the screen. Throughput leaves out the wait for the\n"
                         "frame cap: the gap between the two is the headroom at the current frame cost.");
-  if (sSimAdaptive) {
+  if (SimAdaptive()) {
     ImGui::Text("Simulation %.1f ticks/s (adaptive)", sActualTps);
   } else {
-    ImGui::Text("Simulation %.1f ticks/s (target %u)", sActualTps, sSimRate);
+    ImGui::Text("Simulation %.1f ticks/s (target %u)", sActualTps, SimRate());
   }
 
   bool smooth = sSmoothFrames;
@@ -3945,6 +4012,7 @@ void DrawPerformanceTab() {
            "game logic at that rate instead of smoothing frames between 60 Hz ticks; leave the "
            "FPS cap off for it to matter. For smooth high frame rates, use Smooth uncapped "
            "frames instead.");
+  EndOriginalLocked(locked);
 }
 
 // Memory card transfer (port_gci.h). The work runs on the main thread; the
@@ -4925,6 +4993,9 @@ void DrawImporters() {
 void DrawMods() {
   ImGui::SeparatorText("Mods");
   const PortMods::Status& status = PortMods::CurrentStatus();
+  if (sOriginalExperience) {
+    ImGui::TextDisabled("Original experience is on: no mods are loaded.");
+  }
   bool enabled = sModsEnabled;
   if (ImGui::Checkbox("Load mods", &enabled)) {
     SetModsEnabled(enabled);
@@ -4934,7 +5005,7 @@ void DrawMods() {
            "type (1A2B3C4D.TXTR) replaces it in every PAK. Mods load at startup.");
   // What the settings would load next time, against what this launch loaded.
   std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
-  bool changed = sModsEnabled != status.active;
+  bool changed = ModsEnabled() != status.active;
   if (status.mods.empty()) {
     ImGui::TextDisabled("No mods in the folder.");
   }
@@ -4965,7 +5036,7 @@ void DrawMods() {
       ImGui::SameLine();
       ImGui::TextColored(ThemeWarnColor(), "re-import needed");
     }
-    changed = changed || (sModsEnabled && on) != mod.enabled;
+    changed = changed || (ModsEnabled() && on) != mod.enabled;
   }
   if (PortMods::Suspended()) {
     ImGui::TextColored(ThemeWarnColor(), "Unloaded while the Remastered import runs; they load again when it ends.");
@@ -5010,6 +5081,7 @@ void DrawGameSection();
 
 void DrawCutscenesSection() {
   ImGui::SeparatorText("Cutscenes");
+  const bool locked = BeginOriginalLocked();
   bool skippable = sSkippableCutscenes;
   if (ImGui::Checkbox("Skippable cutscenes", &skippable)) {
     SetSkippableCutscenes(skippable);
@@ -5028,11 +5100,13 @@ void DrawCutscenesSection() {
            "far faster; Fast ends it about 2 s in, once the next area is loaded; Skip shows black "
            "until the area is loaded. The cinematic played in the elevator room before the ride is "
            "not affected.");
+  EndOriginalLocked(locked);
 
 }
 
 void DrawUnlocksSection() {
   ImGui::SeparatorText("Unlocks");
+  const bool locked = BeginOriginalLocked();
   bool hardMode = sUnlockHardMode;
   if (ImGui::Checkbox("Hard mode", &hardMode)) {
     SetUnlockHardMode(hardMode);
@@ -5061,6 +5135,7 @@ void DrawUnlocksSection() {
   ImGui::TextDisabled("What finishing the game unlocks. Not written into the save.");
   ItemHelp("Turning an option off locks it again. Metroid (NES) stays locked: its emulator can't run "
            "in the port.");
+  EndOriginalLocked(locked);
 
 }
 
@@ -5285,6 +5360,7 @@ void DrawVideoDisplay() {
     MarkDirty();
   }
 
+  const bool locked = BeginOriginalLocked();
   int aspect = static_cast< int >(sAspectMode);
   if (ImGui::Combo("Aspect ratio", &aspect, "4:3\0" "16:9\0" "Follow window\0")) {
     SetAspectMode(static_cast< EAspectMode >(aspect));
@@ -5339,6 +5415,7 @@ void DrawVideoDisplay() {
     ImGui::SetItemTooltip("First-person vertical FOV (retail 55). The arm cannon stays at the retail\n"
                           "FOV; morph ball and cutscene cameras are unchanged.");
   }
+  EndOriginalLocked(locked);
 
 }
 
@@ -5469,11 +5546,13 @@ void DrawGpuDriver() {
 
 void DrawVideoQuality() {
   ImGui::SeparatorText("Quality");
+  bool locked = BeginOriginalLocked();
   int msaa = sMsaa >= 4 ? 1 : 0;
   if (ImGui::Combo("Anti-aliasing", &msaa, "Off\0" "4x MSAA\0")) {
     SetMsaa(msaa == 1 ? 4 : 1);
   }
   ImGui::SetItemTooltip("Smooths polygon edges, at about 4x the framebuffer memory.");
+  EndOriginalLocked(locked);
   size_t backendCount = 0;
   const AuroraBackend* backends = aurora_get_available_backends(&backendCount);
   if (std::find(backends, backends + backendCount, BACKEND_OPENGLES) != backends + backendCount) {
@@ -5514,6 +5593,7 @@ void DrawVideoQuality() {
       ImGui::TextUnformatted(summary);
     }
   }
+  locked = BeginOriginalLocked();
   {
     int aniso = 0;
     while ((2 << aniso) <= sAnisotropy && aniso < 4) {
@@ -5538,22 +5618,6 @@ void DrawVideoQuality() {
     if (ImGui::SliderFloat("EFB scale", &scale, 1.f, 4.f, "%.2fx")) {
       sPendingScale = scale;
     }
-  {
-    static const char* const kClampNames[] = {"Auto", "Off", "On"};
-    int clamp = sStorageClamp + 1;
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.f);
-    if (ImGui::Combo("Adreno shader fix", &clamp, kClampNames, 3)) {
-      sStorageClamp = clamp - 1;
-      MarkDirty();
-    }
-    ImGui::SetItemTooltip("Reads GPU buffers without the bounds-check branch some Adreno Vulkan drivers\n"
-                          "miscompile (the world draws black, issue #7). Auto turns it on for the Adreno 730;\n"
-                          "try On if the world is black on another Adreno. Takes effect after a restart.");
-    if (sStorageClamp != sStorageClampAtStart) {
-      ImGui::SameLine();
-      ImGui::TextColored(ThemeWarnColor(), "Restart to apply");
-    }
-  }
     if (sPendingScale > 0.f && !ImGui::IsItemActive()) {
       SetRenderScale(sPendingScale);
       MarkDirty();
@@ -5604,12 +5668,31 @@ void DrawVideoQuality() {
                   DynamicResTargetFps());
     }
   }
+  EndOriginalLocked(locked);
+  {
+    static const char* const kClampNames[] = {"Auto", "Off", "On"};
+    int clamp = sStorageClamp + 1;
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 8.f);
+    if (ImGui::Combo("Adreno shader fix", &clamp, kClampNames, 3)) {
+      sStorageClamp = clamp - 1;
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Reads GPU buffers without the bounds-check branch some Adreno Vulkan drivers\n"
+                          "miscompile (the world draws black, issue #7). Auto turns it on for the Adreno 730;\n"
+                          "try On if the world is black on another Adreno. Takes effect after a restart.");
+    if (sStorageClamp != sStorageClampAtStart) {
+      ImGui::SameLine();
+      ImGui::TextColored(ThemeWarnColor(), "Restart to apply");
+    }
+  }
+  ImGui::BeginDisabled(sOriginalExperience);
   bool font = PortHdFont::Enabled();
   if (ImGui::Checkbox("HD font", &font)) {
     PortHdFont::SetEnabled(font);
   }
+  ImGui::EndDisabled();
   ImGui::SetItemTooltip("Draws the game's text with a sharp, high-resolution font. Recommended: on.\n"
-                        "Not saved: it is on at each start.");
+                        "Not saved: it is on at each start. Off under Original experience.");
 
 }
 
@@ -5663,6 +5746,7 @@ void DrawTexturePack() {
 
 void DrawControlsOptions() {
   ImGui::SeparatorText("Buttons");
+  const bool locked = BeginOriginalLocked();
   bool lockOnToggle = sLockOnToggle;
   if (ImGui::Checkbox("Toggle Lock-On", &lockOnToggle)) {
     SetLockOnToggle(lockOnToggle);
@@ -5715,6 +5799,7 @@ void DrawControlsOptions() {
              "held. Twin stick still passes the right stick up to it, and the beam shift (X in the "
              "Remastered preset) springs too.");
   }
+  EndOriginalLocked(locked);
 }
 
 void DrawControlsKeyboardMouse() {
@@ -5797,12 +5882,14 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("Writes what each on-screen button does next to its letter (Fire, Jump, Lock...). "
            "Off, only the letters are shown.");
+  ImGui::BeginDisabled(sOriginalExperience);
   if (ImGui::Checkbox("Turbo fire button", &sTouchTurbo)) {
     if (!sTouchTurbo) {
       sTouchTurboFire.store(false, std::memory_order_release);
     }
     MarkDirty();
   }
+  ImGui::EndDisabled();
   ItemHelp("Adds a Turbo button next to Fire: holding it fires as if Fire were tapped as fast as the "
            "game accepts. It can be moved and resized in Edit layout.");
   int touchLayout = sTouchClassic ? 1 : sTouchTwinStick ? 2 : 0;
@@ -6699,7 +6786,7 @@ void DrawRemasteredRoomModels() {
                         "top of them to compare the two. Does nothing without a room geometry mod.");
 #ifdef __ANDROID__
   // The defaults (MSAA off, 1x) are fine; this catches a phone set up for the original rooms.
-  if (PortRoomGeo::GetMode() != PortRoomGeo::Mode::Off && (sMsaa > 1 || sRenderScale <= 0.f || sRenderScale > 2.f)) {
+  if (PortRoomGeo::GetMode() != PortRoomGeo::Mode::Off && (EffectiveMsaa() > 1 || EffectiveRenderScale() <= 0.f || EffectiveRenderScale() > 2.f)) {
     ImGui::TextColored(ThemeWarnColor(), "Slow on phones with MSAA or native scale.");
     ImGui::SameLine();
     if (ImGui::SmallButton("Use 2x, MSAA off")) {
@@ -7128,9 +7215,11 @@ void DrawTrackerLogic() {
 
 void DrawTrackerTab() {
   bool reveal = sRevealMap;
+  ImGui::BeginDisabled(sOriginalExperience);
   if (ImGui::Checkbox("Reveal map", &reveal)) {
     SetRevealMap(reveal);
   }
+  ImGui::EndDisabled();
   ItemHelp("Shows every world's map as if its map station had been used, and lists every world on "
            "the star map. Rooms a map station leaves hidden stay hidden, and rooms you haven't "
            "entered keep the unexplored colour. The save is not changed.");
@@ -7328,7 +7417,20 @@ void DrawGameAudio() {
                         "file the next time you save, and loading a save restores its volumes.");
 }
 
+void DrawOriginalSection() {
+  bool original = sOriginalExperience;
+  if (ImGui::Checkbox("Original experience", &original)) {
+    SetOriginalExperience(original);
+  }
+  ItemHelp("Plays the game as on the GameCube: 640x480 at 4:3, 60 Hz with no interpolation, no "
+           "mods, the retail HUD, font, button icons, FOV and cutscenes, and none of the gameplay extras (spring ball, "
+           "fast morph, charge and lock-on options, turbo fire, unlocks). The other settings keep "
+           "their values and come back when it's turned off. Controls, cheats, save states, the "
+           "randomizer, Archipelago and the timer still work.");
+}
+
 void DrawGameTab() {
+  DrawOriginalSection();
   DrawGameSection();
   DrawCutscenesSection();
   DrawUnlocksSection();
