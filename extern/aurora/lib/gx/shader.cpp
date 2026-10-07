@@ -1066,8 +1066,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 256 = no reflection of the surroundings (a Remastered material with no REFL: its
       // shader samples no cube). 128 = the vertex colour tints the albedo before F0 too
       // (Remastered's kShaderTints).
-      let pbr_noenv = ubuf.pbr_backlight.w > 255.5;
-      let pbr_mwr = ubuf.pbr_backlight.w - select(0.0, 256.0, pbr_noenv);
+      // 512 = Remastered's 1-bit cutout: discard where base.a^2 < 0.25, opaque otherwise,
+      // in place of the GX alpha compare.
+      let pbr_cut = ubuf.pbr_backlight.w > 511.5;
+      let pbr_mw1 = ubuf.pbr_backlight.w - select(0.0, 512.0, pbr_cut);
+      let pbr_noenv = pbr_mw1 > 255.5;
+      let pbr_mwr = pbr_mw1 - select(0.0, 256.0, pbr_noenv);
       let pbr_f0t = pbr_mwr > 127.5;
       let pbr_mw0 = pbr_mwr - select(0.0, 128.0, pbr_f0t);
       let pbr_sky = pbr_mw0 > 15.5;
@@ -1087,12 +1091,20 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     const auto discard = alpha_compare_discard(config);
     if (discard.constant == -1) {
       layer += fmt::format(R"""(
-      if (ubuf.pbr_emissive.w <= 0.0 && !pbr_cu && pbr_flags - select(0.0, 4.0, pbr_flags > 3.5) < 1.5) {{
+      if (!pbr_cut && ubuf.pbr_emissive.w <= 0.0 && !pbr_cu && pbr_flags - select(0.0, 4.0, pbr_flags > 3.5) < 1.5) {{
           let alphaCompare = u32(round(clamp(prev.a{}, 0.0, 1.0) * 255.0));
           if ({}) {{ discard; }}
       }})""",
                            tintAlpha, discard.expr);
     }
+  }
+  if (mapStage[4] == -1) {
+    // Remastered's cutout (mode 512): the filtered base alpha squared against 0.25. DIFC.a
+    // is 1 on every material that has it.
+    layer += R"""(
+      if (pbr_cut && prev.a * prev.a < 0.25) {
+          discard;
+      })""";
   }
   if (costTest == 1 || costTest == 7) {
     // The base map, shaded by the facing only, and nothing else. Test 7 keeps the other
@@ -1958,6 +1970,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       if (pbr_cu) {{
           // ColorUnlit's alpha: the base map's times the vertex's.
           pbr_alpha = {0}.a * pbr_vraw.a;
+      }}
+      if (pbr_cut) {{
+          pbr_alpha = 1.0;
       }}
       // 1 = unlit, 2 = the base map's alpha masks the glow, 4 = tinted by the vertex colour
       // (pbr_vc), 8 = ColorUnlit, 16 = sky (above); the sum of those.
