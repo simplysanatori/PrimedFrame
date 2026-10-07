@@ -2012,9 +2012,17 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                              dot(ubuf.pbr_lmap_axes[2].xyz, pbr_n));
           pbr_ambd = max(pbr_l0 * (1.0 + pbr_l1x * pbr_ln.x + pbr_l1y * pbr_ln.y + pbr_l1z * pbr_ln.z),
                          vec3f(0.0)) * ubuf.pbr_lmap_rect.w * pbr_blcm;
-          // Remastered occludes the probe's reflection by the raw level: none where L0 is 0, all
-          // from 1 up (its shader's mix(0, probe intensity, saturate(max(L0)))).
-          pbr_envspec *= clamp(max(pbr_l0.r, max(pbr_l0.g, pbr_l0.b)), 0.0, 1.0);
+          // Remastered occludes the probe's reflection by the lightmap's level in place of the
+          // grid's (bfb300b6 perm 018): mix(REFP min, intensity, saturate(max(L0) x the
+          // modulation's luminance / REFP max)). It replaces the volume's occlusion, not adds to
+          // it. Without those parameters the raw level stands in, from 0 to 1.
+          let pbr_lmax = max(pbr_l0.r, max(pbr_l0.g, pbr_l0.b));
+          if (pbr_hdr > 0.0 && ubuf.pbr_probe[0].w > 0.0 && ubuf.pbr_probe[2].w > 0.0) {
+              pbr_envspec = pbr_cubel * mix(ubuf.pbr_probe[1].w, 1.0,
+                  clamp(pbr_lmax * dot(pbr_blcm, vec3f(0.2126, 0.7152, 0.0722)) * ubuf.pbr_probe[2].w, 0.0, 1.0));
+          } else {
+              pbr_envspec *= clamp(pbr_lmax, 0.0, 1.0);
+          }
           if (ubuf.pbr_volume[5].w > 1.5 && ubuf.pbr_volume[5].w < 2.5) {
               pbr_vdiag = pbr_ambd;
           }
