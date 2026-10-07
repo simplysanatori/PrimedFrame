@@ -607,6 +607,7 @@ struct RemMaterial {
   bool blended = false;    // drawn over what is behind it: glass, decals, ice
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
   bool tinted = false;     // its vertices carry a colour
+  bool tintF0 = false;     // which tints the albedo before F0 too (kShaderTints), not just the diffuse
   bool unlit = false;      // a screen: its own colour and glow, no lighting
   bool glowLinear = false; // inverse-exposed: the emissive strength is drawn as is, uncompressed
   int anuv = -1;  // the model's ANUV entry its meshes use, when it flattens
@@ -1609,8 +1610,10 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   // vertex alpha, which is all the opacity a pane has (its base map is a flat grey, alpha 1).
   const bool premulGlass =
       std::find(std::begin(kShaderPremulGlass), std::end(kShaderPremulGlass), shader) != std::end(kShaderPremulGlass);
-  out.tinted = (mat.unk1 & kVertexColorFlag) != 0 &&
-               (!custom || premulGlass || std::find(std::begin(kShaderTints), std::end(kShaderTints), shader) != std::end(kShaderTints));
+  // Plain MFVC shaders (882014EE, F22FEB5B, the layered ones) multiply only the diffuse;
+  // every kShaderTints shader multiplies the albedo, so its F0 is tinted too.
+  out.tintF0 = std::find(std::begin(kShaderTints), std::end(kShaderTints), shader) != std::end(kShaderTints);
+  out.tinted = (mat.unk1 & kVertexColorFlag) != 0 && (!custom || premulGlass || out.tintF0);
   // What the alpha a shader writes is made of is only in its code. Every one
   // read writes the base map's alpha squared, times the vertex alpha, bar these:
   // with the mask flag the base alpha scales the glow instead and the vertex
@@ -2401,7 +2404,7 @@ bool ColorUnlitDraw(const RemMaterial& m) { return m.colorUnlit && m.unlit && m.
 
 // The PBR record's mode word: 1 unlit, 2 glow masked by the base alpha, 4 tinted by the vertex
 // colour, 8 ColorUnlit's draw, 32 a glow the runtime exposes (ExposedGlow), 64 a kind's
-// glow strength it exposes (ExposedStrength).
+// glow strength it exposes (ExposedStrength), 128 the vertex colour tints F0 too.
 int PbrMode(const RemMaterial& m);
 
 // Whether the glow is Remastered's bare ICAN x ICNC in scene radiance, which the frame's
@@ -2419,7 +2422,8 @@ bool ExposedStrength(const RemMaterial& m) { return m.kind > 0 && m.kind < 5 && 
 
 int PbrMode(const RemMaterial& m) {
   return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0) +
-         (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0);
+         (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0) +
+         (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {

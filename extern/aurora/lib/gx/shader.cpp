@@ -1039,8 +1039,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 8 = Remastered's ColorUnlit: its vertex shader linearises the colour and doubles
       // it, and the pixel shader's gain is in the backlight's place.
       // 16 = a sky (with 1, unlit): the backlight's place holds the gain on its colour.
-      let pbr_sky = ubuf.pbr_backlight.w > 15.5;
-      let pbr_mw = ubuf.pbr_backlight.w - select(0.0, 16.0, pbr_sky);
+      // 128 = the vertex colour tints the albedo before F0 too (Remastered's kShaderTints).
+      let pbr_f0t = ubuf.pbr_backlight.w > 127.5;
+      let pbr_mw0 = ubuf.pbr_backlight.w - select(0.0, 128.0, pbr_f0t);
+      let pbr_sky = pbr_mw0 > 15.5;
+      let pbr_mw = pbr_mw0 - select(0.0, 16.0, pbr_sky);
       let pbr_cu = pbr_mw > 7.5;
       let pbr_flags = pbr_mw - select(0.0, 8.0, pbr_cu);
       var pbr_vc = select(vec4f(1.0), {}, pbr_flags > 3.5);
@@ -1666,7 +1669,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_n = pbr_ng;{3}
       let pbr_v = normalize(-in.pbr_pos);
       let pbr_nv = max(dot(pbr_n, pbr_v), 1e-4);
-      let pbr_f0 = mix(vec3f(0.04), pbr_base, pbr_metal) * ubuf.pbr_light_scale.y;
+      let pbr_f0 = mix(vec3f(0.04), pbr_base * select(vec3f(1.0), pbr_vc.rgb, pbr_f0t), pbr_metal) *
+          ubuf.pbr_light_scale.y;
       let pbr_diff = pbr_base * (1.0 - pbr_metal){8} * ubuf.pbr_light_scale.x *
           select(1.0, clamp(pbr_vraw.a * ubuf.pbr_layer_height.y, 0.0, 1.0), pbr_kind > 12.5 && pbr_kind < 13.5);
       let pbr_a2 = pow(pbr_rough, 4.0);
