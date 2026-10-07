@@ -1663,6 +1663,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         decoded.width = int(image.width);
         decoded.height = int(image.height);
         decoded.rgba = std::move(image.rgba);
+        decoded.srgb = image.srgb;
         return true;
       });
     };

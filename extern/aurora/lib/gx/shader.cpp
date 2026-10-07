@@ -1133,8 +1133,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                            dot(pbr_b * inverseSqrt(max(dot(pbr_b, pbr_b), 1e-30)), in.pbr_pos)) *
                      ({0}.a * ubuf.pbr_param.w / pbr_pz);
       }}
-      let pbr_inner = pow(max(textureSampleBias(tex{4}, tex{4}_samp, tex{5}_uv + pbr_poff, ubuf.tex{4}_size_bias.z).rgb,
-                              vec3f(0.0)), vec3f(2.2));
+      let pbr_inner = max(textureSampleBias(tex{4}, tex{4}_samp, tex{5}_uv + pbr_poff, ubuf.tex{4}_size_bias.z).rgb,
+                          vec3f(0.0));
       var pbr_ls = 0.0;
       if (ubuf.pbr_layer.x > 0.0) {{
           var pbr_lw = pbr_vraw.a * 2.0 - 1.0;
@@ -1149,12 +1149,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_ls = pbr_lx * pbr_lx * (3.0 - 2.0 * pbr_lx);
       }})""",
                          base, 0, mapStage[4], first, underlying(inner.texMapId), underlying(inner.texCoordId));
-    // Kind 2: map 4 is a detail map, grey where it leaves the base alone. Kind 4: the
+    // Kind 2: map 4 is a detail map that leaves the base alone where the sampler returns 0.5 (the texture's
+    // own format decides which byte that is). Kind 4: the
     // inside shows where the surface is seen edge on (a fresnel that also takes it to the
     // vertex colour) and where the base map's alpha says it is clear, and glows there.
     kinds += fmt::format(R"""(
       if (pbr_kind > 1.5 && pbr_kind < 2.5) {{
-          pbr_base = pbr_base * pow(max(sampled{1}.rgb, vec3f(0.0)), vec3f(2.2)) * 2.0;
+          pbr_base = pbr_base * max(sampled{1}.rgb, vec3f(0.0)) * 2.0;
       }}
       if (pbr_kind > 3.5 && pbr_kind < 4.5) {{
           let pbr_kf = pow(clamp(dot(pbr_ng, normalize(-in.pbr_pos)), 0.0, 1.0), max(ubuf.pbr_param.x, 1e-4)) *
@@ -1192,7 +1193,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_mm = normalize(pbr_t * (pbr_ms * pbr_mt.x) - pbr_b * (pbr_ms * pbr_mt.y) +
                                  pbr_ng * sqrt(max(0.0, 1.0 - dot(pbr_mt, pbr_mt))));
           let pbr_mc = textureSampleLevel(tex{1}, tex{1}_samp, 0.5 + 0.5 * pbr_mm.xy, 0.0).rgb;
-          pbr_base = pow(max(pbr_mc, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_layer.z * max(ubuf.pbr_emissive.rgb, vec3f(0.0));
+          pbr_base = max(pbr_mc, vec3f(0.0)) * ubuf.pbr_layer.z * max(ubuf.pbr_emissive.rgb, vec3f(0.0));
       }})""",
                            mapStage[2], underlying(inner.texMapId));
     }
@@ -1225,7 +1226,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                                                          pbr_vraw.a + ubuf.pbr_layer.z),
                                                    vec2f(0.02), vec2f(0.98)), 0.0);
           pbr_base = vec3f(0.0);
-          pbr_kglow = pow(max(pbr_framp.rgb, vec3f(0.0)), vec3f(2.2)) * max(ubuf.pbr_emissive.rgb, vec3f(0.0));
+          pbr_kglow = max(pbr_framp.rgb, vec3f(0.0)) * max(ubuf.pbr_emissive.rgb, vec3f(0.0));
           pbr_kalpha = pbr_framp.a;
       }})""",
                            underlying(inner.texMapId), underlying(inner.texCoordId), ramp);
@@ -1235,8 +1236,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // third, pbr_param.x the time). Their sum less twice the vertex colour's, offset by
     // pbr_param.w, picks the glow from map 5, a ramp whose row is the vertex alpha; it is
     // scaled by its own alpha and pbr_layer.z. The surface under it stays lit. Both maps are
-    // sRGB in Remastered, so the hardware linearised the noise as well as the ramp; the
-    // vertex colour is a plain UNORM attribute and stays as it is.
+    // sRGB in Remastered, and so are the converted textures (written sRGB when their source
+    // format is), so the sampler linearises the noise as well as the ramp; the vertex colour is
+    // a plain UNORM attribute and stays as it is.
     if (mapStage[5] != -1) {
       kinds += fmt::format(R"""(
       if (pbr_kind > 8.5 && pbr_kind < 9.5) {{
@@ -1247,12 +1249,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_gn = vec3f(textureSampleGrad(tex{0}, tex{0}_samp, tex{1}_uv + pbr_gr, pbr_fuv1, pbr_fuv2).r,
                              textureSampleGrad(tex{0}, tex{0}_samp, tex{1}_uv + pbr_gg, pbr_fuv1, pbr_fuv2).g,
                              textureSampleGrad(tex{0}, tex{0}_samp, tex{1}_uv + pbr_gb, pbr_fuv1, pbr_fuv2).b);
-          let pbr_gl = pow(max(pbr_gn, vec3f(0.0)), vec3f(2.2));
+          let pbr_gl = max(pbr_gn, vec3f(0.0));
           let pbr_gs = pbr_gl.x + pbr_gl.y + pbr_gl.z;
           let pbr_gu = pbr_gs - 2.0 * (pbr_vraw.r + pbr_vraw.g + pbr_vraw.b) + 3.0 + ubuf.pbr_param.w;
           let pbr_gramp = textureSampleLevel(tex{2}, tex{2}_samp,
                                              clamp(vec2f(pbr_gu, 1.0 - pbr_vraw.a), vec2f(0.02), vec2f(0.98)), 0.0);
-          pbr_kglow = pow(max(pbr_gramp.rgb, vec3f(0.0)), vec3f(2.2)) * (pbr_gramp.a * ubuf.pbr_layer.z);
+          pbr_kglow = max(pbr_gramp.rgb, vec3f(0.0)) * (pbr_gramp.a * ubuf.pbr_layer.z);
       }})""",
                            underlying(inner.texMapId), underlying(inner.texCoordId),
                            underlying(config.tevStages[mapStage[5]].texMapId));
@@ -1313,7 +1315,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                                              clamp(vec2f(pbr_qxy.x + pbr_qd * (3.0 - 2.0 * pbr_qt) * pbr_qt * pbr_qt, pbr_qheat),
                                                    vec2f(0.02), vec2f(0.98)), 0.0).rgb;
           pbr_base = vec3f(0.0);
-          pbr_kglow = pow(max(pbr_qramp, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_layer.z;
+          pbr_kglow = max(pbr_qramp, vec3f(0.0)) * ubuf.pbr_layer.z;
       }})""",
                          mapOf(0), mapOf(4), mapOf(5), mapStage[6], uv);
     // Kind 5, water: the normal is two copies of map 2 moving across each other
@@ -1335,10 +1337,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }
   }
   const std::string baseRgb =
-      layered ? fmt::format("mix(pow(max({0}.rgb, vec3f(0.0)), vec3f(2.2)), pow(max(sampled{1}.rgb, vec3f(0.0)), "
-                            "vec3f(2.2)), pbr_ls)",
-                            base, mapStage[4])
-              : fmt::format("pow(max({}.rgb, vec3f(0.0)), vec3f(2.2))", base);
+      layered ? fmt::format("mix(max({0}.rgb, vec3f(0.0)), max(sampled{1}.rgb, vec3f(0.0)), pbr_ls)", base,
+                            mapStage[4])
+              : fmt::format("max({}.rgb, vec3f(0.0))", base);
   std::string normal;
   if (mapStage[2] != -1) {
     // glTF normal maps are +Y up with V running down the image, so the bitangent is the
@@ -1435,7 +1436,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       if (pbr_kind > 10.5 && pbr_kind < 11.5) {{
           pbr_alpha = 1.0;
           pbr_lo = pbr_envspec * (pbr_ab.x * pbr_vraw.a * ubuf.pbr_layer_height.z + pbr_ab.y) +
-                   pow(max({0}.rgb, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_layer_height.x +
+                   max({0}.rgb, vec3f(0.0)) * ubuf.pbr_layer_height.x +
                    2.0 * pow(max(pbr_vraw.rgb, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_layer_height.y;
           pbr_glow = vec3f(0.0);{1}
       }})""",
@@ -1551,8 +1552,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_pw = vec2f(dot(ubuf.pbr_shield[4].xyz, in.pbr_pos) + ubuf.pbr_shield[4].w,
                              dot(ubuf.pbr_shield[5].xyz, in.pbr_pos) + ubuf.pbr_shield[5].w);
           let pbr_puv = vec2f(pbr_pw.x * pbr_c1.x, pbr_pw.y * pbr_c1.x - ubuf.pbr_param.x * pbr_c0.z);
-          let pbr_pg = pow(max(textureSampleGrad(tex{1}, tex{1}_samp, pbr_puv, dpdx(pbr_puv), dpdy(pbr_puv)).rgb,
-                               vec3f(0.0)), vec3f(2.2));
+          let pbr_pg = max(textureSampleGrad(tex{1}, tex{1}_samp, pbr_puv, dpdx(pbr_puv), dpdy(pbr_puv)).rgb,
+                           vec3f(0.0));
           let pbr_pcg = pbr_pf1 * pbr_pg * pbr_c1.w;
           let pbr_ph = {2}.rgb;
           let pbr_pgl = (pbr_ph.x * pbr_vraw.rgb * pbr_c1.y + pbr_ph.y * pbr_pcg.x * pbr_c2.rgb * pbr_c2.w) * pbr_pfb;
@@ -1576,7 +1577,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     if (pbr_kind > 15.5 && pbr_kind < 17.5) {{
         let pbr_yi = ubuf.pbr_shield[6];
         let pbr_yd = ubuf.pbr_shield[7];
-        var pbr_yc = pow(max({0}.rgb, vec3f(0.0)), vec3f(2.2)) * pbr_yd.rgb + pbr_yi.rgb;
+        var pbr_yc = max({0}.rgb, vec3f(0.0)) * pbr_yd.rgb + pbr_yi.rgb;
         if (pbr_kind > 16.5 && pbr_yi.w > 0.0) {{
             let pbr_yq = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, 0.0).rgb;
             pbr_yc += select(pow(max(pbr_yq, vec3f(0.0)), vec3f(2.2)), pbr_yq * pbr_hdr, pbr_hdr > 0.0) * pbr_yi.w;
@@ -1613,7 +1614,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         let pbr_yj = 0.01 * pbr_yc0.z * pbr_yc0.w * sin(6.2831853 * pbr_yt * pbr_yc1.x);
         let pbr_ya = pbr_yb.a * select(0.75, 1.0, pbr_yj > 0.0);
         let pbr_ym = pbr_yv.y > 0.01;
-        let pbr_yri = pow(max(pbr_yb.rgb, vec3f(0.0)), vec3f(2.2)) * pbr_yd.rgb;
+        let pbr_yri = max(pbr_yb.rgb, vec3f(0.0)) * pbr_yd.rgb;
         let pbr_yg = pbr_yri * select(pbr_yv.x, 1.0, pbr_ym) * pbr_yc0.z + vec3f(pbr_yj);
         let pbr_yp = pow(max(abs(pbr_ng.z), 1e-6), pbr_yc3.z);
         let pbr_yrm = pbr_yc3.w + (1.0 - pbr_yc3.w) * (1.0 - pbr_yp * (1.0 - pbr_yv.y));
@@ -1638,8 +1639,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     liquid += fmt::format(R"""(
     if (pbr_kind > 18.5 && pbr_kind < 19.5) {{
         let pbr_zl = (pbr_ambd + pbr_lnl) * pbr_ao;
-        let pbr_zs = pow(max(textureSampleLevel(tex{0}, tex{0}_samp, 0.5 + 0.5 * pbr_n.xy, 0.0).rgb, vec3f(0.0)), vec3f(2.2));
-        let pbr_zv = pow(max(sampled{1}.rgb, vec3f(0.0)), vec3f(2.2));
+        let pbr_zs = max(textureSampleLevel(tex{0}, tex{0}_samp, 0.5 + 0.5 * pbr_n.xy, 0.0).rgb, vec3f(0.0));
+        let pbr_zv = max(sampled{1}.rgb, vec3f(0.0));
         let pbr_zx = select(1.0, ubuf.pbr_tone[0].w, ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0);
         pbr_lo = pbr_zv * pbr_zs * dot(pbr_zl, vec3f(0.2126, 0.7152, 0.0722)) + pbr_base * pbr_zl * ubuf.pbr_shield[7].rgb;
         pbr_glow = ubuf.pbr_shield[6].rgb * pbr_zx;
@@ -1669,7 +1670,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_ao = pbr_orm.r;
       let pbr_rough = clamp(pbr_orm.g, 0.02, 1.0);
       let pbr_metal = clamp(pbr_orm.b, 0.0, 1.0);
-      let pbr_emissive = pow(max({2}.rgb, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_emissive.rgb;
+      let pbr_emissive = max({2}.rgb, vec3f(0.0)) * ubuf.pbr_emissive.rgb;
       var pbr_n = pbr_ng;{3}
       let pbr_v = normalize(-in.pbr_pos);
       let pbr_nv = max(dot(pbr_n, pbr_v), 1e-4);

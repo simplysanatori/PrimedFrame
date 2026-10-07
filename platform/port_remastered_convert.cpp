@@ -1127,6 +1127,11 @@ struct Converter::State {
     int ncap = 0;  // largest edge of the native .dds, 0 for none
     int k = -1;    // the PBR map, on that path
     bool surface = true;  // the PBR base's normal map has a surface to it
+    // A PBR colour texture (base, glow, a shader's ramp) follows its source format, as
+    // Remastered's GPU does: an sRGB one is filtered in linear light and written sRGB, so
+    // the GPU decodes it; a UNORM one is data, filtered and sampled raw. MR and normal
+    // maps are never decoded.
+    bool colourTex = false, srgbTex = false;
     Bake bake;
     if (role.rfind("pbr:", 0) == 0) {
       for (int i = 0; i < kMaps; ++i) {
@@ -1137,6 +1142,11 @@ struct Converter::State {
       if (rt[k].has && (k != kEmissive || rt[k].mean || PbrEmissive(rt))) {
         src = &rt[k];
         tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : src->mean ? ":mean" : "");
+        colourTex = k != kNormal && (k != kMr || src->raw);
+        if (colourTex) {
+          srgbTex = Fact("srgb:" + src->src, [&] { return std::string(Open(*src).srgb ? "1" : "0"); }) == "1";
+          tag += srgbTex ? ":srgb" : ":unorm";
+        }
         // Named fields, not positional: the size and the alpha follow them.
         if (k == kMr && !src->raw) {
           tag += ":mmax=" + FormatG(src->metalMax);
@@ -1273,15 +1283,21 @@ struct Converter::State {
     Writing writing(*this);
     Image img = Open(*src);
     if (src->mean) {
+      // An sRGB texture is averaged in linear light, then encoded again.
       double sum[3] = {0.0, 0.0, 0.0};
       const size_t n = img.rgba.size() / 4;
       for (size_t i = 0; i < n; ++i) {
         for (int c = 0; c < 3; ++c) {
-          sum[c] += double(img.rgba[i * 4 + c]) * double(img.rgba[i * 4 + 3]) / 255.0;
+          const double v = srgbTex ? double(SrgbByteToLinear(img.rgba[i * 4 + c])) : double(img.rgba[i * 4 + c]);
+          sum[c] += v * double(img.rgba[i * 4 + 3]) / 255.0;
         }
       }
-      img = Solid(uint8_t(std::nearbyint(sum[0] / double(n))), uint8_t(std::nearbyint(sum[1] / double(n))),
-                  uint8_t(std::nearbyint(sum[2] / double(n))));
+      uint8_t mean[3];
+      for (int c = 0; c < 3; ++c) {
+        const double m = sum[c] / double(n);
+        mean[c] = srgbTex ? LinearToSrgbByteExact(float(m)) : uint8_t(std::nearbyint(m));
+      }
+      img = Solid(mean[0], mean[1], mean[2]);
     }
     const size_t count = img.rgba.size() / 4;
     const bool isBase = k == kBase || role == "diffuse";
@@ -1289,7 +1305,8 @@ struct Converter::State {
     // and the TEV colour slots are sRGB colour, the normal map a direction,
     // and the MR and reflect maps are plain data.
     const MapKind mapKind = k == kNormal                  ? MapKind::Normal
-                            : (k == kMr || role == "reflect") ? MapKind::Data
+                            : k >= 0                          ? (srgbTex ? MapKind::Colour : MapKind::Data)
+                            : role == "reflect"               ? MapKind::Data
                                                               : MapKind::Colour;
     if (k == kNormal) {
       // Two-channel normal maps leave B at 0; the shader rebuilds z. Keep A opaque.
@@ -1327,7 +1344,24 @@ struct Converter::State {
       for (int c = 0; c < 3; ++c) {
         col[c] = uint8_t(std::nearbyint(double(sum[c]) / double(count)));
       }
-      Write(name + ".TXTR", EncodeTxtrRgba8(Solid(col[0], col[1], col[2]), 8));
+      if (srgbTex) {
+        // Average in linear light. The .dds holds the sRGB bytes (the GPU decodes
+        // them); the TXTR stub, sampled raw, holds the linear ones.
+        double lin[3] = {0.0, 0.0, 0.0};
+        for (size_t i = 0; i < count; ++i) {
+          for (int c = 0; c < 3; ++c) {
+            lin[c] += double(SrgbByteToLinear(img.rgba[i * 4 + c]));
+          }
+        }
+        for (int c = 0; c < 3; ++c) {
+          col[c] = LinearToSrgbByteExact(float(lin[c] / double(count)));
+        }
+        Write(name + ".dds", EncodeDds(Solid(col[0], col[1], col[2]), ColourDdsFormat(), false, MapKind::Data, true));
+        Write(name + ".TXTR",
+              EncodeTxtrRgba8(Solid(SrgbToLinearByte(col[0]), SrgbToLinearByte(col[1]), SrgbToLinearByte(col[2])), 8));
+      } else {
+        Write(name + ".TXTR", EncodeTxtrRgba8(Solid(col[0], col[1], col[2]), 8));
+      }
       Remember(key, name, writing.files);
       return tid;
     }
@@ -1364,13 +1398,15 @@ struct Converter::State {
           img.rgba[i * 4 + 3] = 255;  // alpha "none", as the stub's CMPR
         }
       }
-      if (std::max(w, h) > cap) {  // otherwise the stub already holds every texel
+      // otherwise the stub already holds every texel (an sRGB one is always drawn from its
+      // .dds: the stub holds 8-bit linear, which is coarse in the darks)
+      if (srgbTex || std::max(w, h) > cap) {
         const DdsFormat format = k == kNormal ? NormalDdsFormat() : ColourDdsFormat();
         const bool punch = alpha == "punch";
         if (w == img.width && h == img.height) {
-          Write(name + ".dds", EncodeDds(img, format, punch, mapKind));
+          Write(name + ".dds", EncodeDds(img, format, punch, mapKind, srgbTex));
         } else {
-          Write(name + ".dds", EncodeDds(Resize(img, w, h, mapKind), format, punch, mapKind));
+          Write(name + ".dds", EncodeDds(Resize(img, w, h, mapKind), format, punch, mapKind, srgbTex));
         }
       }
     }
@@ -1379,10 +1415,20 @@ struct Converter::State {
     if (w != img.width || h != img.height) {
       img = Resize(img, w, h, mapKind);
     }
+    // The stub is sampled raw: an sRGB texture's holds linear bytes, mipped as data.
+    MapKind stubKind = mapKind;
+    if (srgbTex) {
+      for (size_t i = 0; i < img.rgba.size(); i += 4) {
+        for (int c = 0; c < 3; ++c) {
+          img.rgba[i + c] = SrgbToLinearByte(img.rgba[i + c]);
+        }
+      }
+      stubKind = MapKind::Data;
+    }
     if (alpha == "none" || alpha == "punch") {
-      Write(name + ".TXTR", EncodeTxtrCmpr(img, alpha == "punch", mapKind));
+      Write(name + ".TXTR", EncodeTxtrCmpr(img, alpha == "punch", stubKind));
     } else {
-      Write(name + ".TXTR", EncodeTxtrRgba8(img, role == "emissive" ? 4 : 8, mapKind));
+      Write(name + ".TXTR", EncodeTxtrRgba8(img, role == "emissive" ? 4 : 8, stubKind));
     }
     Remember(key, name, writing.files);
     return tid;
