@@ -52,6 +52,9 @@ final class TouchControlsView extends View {
 
     // Port-only actions, not game inputs.
     private static final int TOGGLE_DEBUG_OVERLAY = -1;
+    // Twin stick's Beam button: held, it turns the D-pad into the beam picker (the
+    // port's pad preset does the same with Y). It sends no GameCube button.
+    private static final int BEAM_SHIFT = -2;
     // Axis-held controls are tracked with ids above this, to share one press map.
     private static final int AXIS_ID_BASE = 100;
 
@@ -135,7 +138,8 @@ final class TouchControlsView extends View {
     // MENU ignore their rects: see cornerSlot.
     // Twin stick (Remastered): a diamond in Xbox positions, round A's spot, with
     // Remastered's Dual Sticks functions on the GameCube buttons they send: Jump
-    // is B, Fire is A, Morph is X, Missile is Y. Bottom, right, left, top, so
+    // is B, Fire is A, Morph is X, and Y held shifts the D-pad to beams (Missile is
+    // the RB pill). Bottom, right, left, top, so
     // the controls are C_JUMP + index. Coloured, each takes the colour of the
     // GameCube button it sends.
     private static final float TWIN_DIAMOND = 0.095f;
@@ -143,7 +147,7 @@ final class TouchControlsView extends View {
         ControlButton.round("Jump", BTN_EAST, 0f, TWIN_DIAMOND, 0.055f, GC_RED),
         ControlButton.round("Fire", BTN_SOUTH, TWIN_DIAMOND, 0f, 0.055f, GC_GREEN),
         ControlButton.round("Morph", BTN_WEST, -TWIN_DIAMOND, 0f, 0.055f, GC_GREY),
-        ControlButton.round("Missile", BTN_NORTH, 0f, -TWIN_DIAMOND, 0.055f, GC_GREY),
+        ControlButton.round("Beam", BEAM_SHIFT, 0f, -TWIN_DIAMOND, 0.055f, GC_GREY),
     };
 
     private static final PillButton[] GAMECUBE_PILLS = {
@@ -420,6 +424,8 @@ final class TouchControlsView extends View {
     private static native void nativeSetTouchDevice(boolean xboxLayout);
     private static native void nativeToggleDebugOverlay();
     private static native void nativeVirtualButton(int button, boolean down);
+    // The twin layout's Beam button is held: the D-pad picks beams, not visors.
+    private static native void nativeTouchBeamShift(boolean held);
     private static native void nativeVirtualAxis(int axis, float value);
     private static native boolean nativeTakePhysicalInput();
     private int leftPointer = -1;
@@ -532,7 +538,9 @@ final class TouchControlsView extends View {
         pills = twin ? TWIN_PILLS : GAMECUBE_PILLS;
         cStick = classic || twin;
         aim = !classic || nativeTouchAimEnabled();
-        wheels = !classic || nativeTouchWheelsEnabled();
+        // The wheels are the default layout's only beam and visor control; classic and
+        // twin stick have the D-pad (twin: Beam held + D-pad) and the setting.
+        wheels = (!classic && !twin) || nativeTouchWheelsEnabled();
         visorTapScan = nativeTouchVisorTapScan();
         mapTap = nativeTouchMapTapEnabled();
         if (!editing) {
@@ -1302,7 +1310,9 @@ final class TouchControlsView extends View {
         }
         int count = held.containsKey(id) ? held.get(id) : 0;
         if (count == 0) {
-            if (id >= AXIS_ID_BASE) {
+            if (id == BEAM_SHIFT) {
+                nativeTouchBeamShift(true);
+            } else if (id >= AXIS_ID_BASE) {
                 nativeVirtualAxis(id - AXIS_ID_BASE, 1f);
             } else {
                 nativeVirtualButton(id, true);
@@ -1322,7 +1332,9 @@ final class TouchControlsView extends View {
         }
         if (current <= 1) {
             held.remove(id);
-            if (id >= AXIS_ID_BASE) {
+            if (id == BEAM_SHIFT) {
+                nativeTouchBeamShift(false);
+            } else if (id >= AXIS_ID_BASE) {
                 // Triggers are axes, and SDL's joystick axes run -32768..32767
                 // with a trigger resting at the minimum: releasing with 0 left
                 // the trigger half pressed, so the game stayed locked on (and

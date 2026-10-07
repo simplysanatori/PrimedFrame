@@ -641,8 +641,9 @@ std::string IconStemForDpad(const char* device) {
 // The touch twin-stick layout's hints. The overlay is no pad, so the real pad's mappings
 // (PADGetButtonMappings) mean nothing here: this is what the overlay sends for each GameCube
 // action, in Remastered's Dual Sticks positions. Z is the Map pill (Menu glyph) and Start the
-// Pause button (View glyph); the overlay draws those glyphs on them. There is no D-pad, so its
-// prompt falls back to the static icon.
+// Pause button (View glyph); the overlay draws those glyphs on them. The D-pad picks visors, and
+// with the Beam button (Y) held the beams, so the C-stick's beam hints show the D-pad direction
+// that picks them (the pad preset shows the right stick there, which twin stick consumes).
 std::string TouchTwinStemForPrompt(uint32_t prompt) {
   switch (prompt) {
   case PROMPT_STICK: return "xbox_stick_l";
@@ -650,12 +651,16 @@ std::string TouchTwinStemForPrompt(uint32_t prompt) {
   case PROMPT_STICK_DOWN: return "xbox_stick_l_down";
   case PROMPT_STICK_LEFT: return "xbox_stick_l_left";
   case PROMPT_STICK_RIGHT: return "xbox_stick_l_right";
-  case PROMPT_CSTICK: return "xbox_stick_r";
-  case PROMPT_CSTICK_UP: return "xbox_stick_r_up";
-  case PROMPT_CSTICK_DOWN: return "xbox_stick_r_down";
-  case PROMPT_CSTICK_LEFT: return "xbox_stick_r_left";
-  case PROMPT_CSTICK_RIGHT: return "xbox_stick_r_right";
-  case PROMPT_DPAD: return {};
+  case PROMPT_CSTICK: return "xbox_dpad";
+  case PROMPT_CSTICK_UP: return "xbox_dpad_up";
+  case PROMPT_CSTICK_DOWN: return "xbox_dpad_down";
+  case PROMPT_CSTICK_LEFT: return "xbox_dpad_left";
+  case PROMPT_CSTICK_RIGHT: return "xbox_dpad_right";
+  case PROMPT_DPAD: return "xbox_dpad";
+  case PAD_BUTTON_UP: return "xbox_dpad_up";
+  case PAD_BUTTON_DOWN: return "xbox_dpad_down";
+  case PAD_BUTTON_LEFT: return "xbox_dpad_left";
+  case PAD_BUTTON_RIGHT: return "xbox_dpad_right";
   case PAD_BUTTON_A: return "xbox_rt";
   case PAD_BUTTON_B: return "xbox_south";
   case PAD_BUTTON_X: return "xbox_west";

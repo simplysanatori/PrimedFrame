@@ -281,6 +281,8 @@ void SetTwinStickRightY(float y);
 // The bound beam shift is held in game this poll (no overlay, window focused),
 // which springs the Spring Ball in morph ball, as X does in Remastered.
 bool BeamShiftHeld();
+// The touch twin layout's Beam button is held: the D-pad picks beams (false off Android / without touch).
+bool TouchBeamShift();
 void SetBeamShiftHeld(bool held);
 // Spring Ball (C-stick up in morph ball, as in Metroid Prime Trilogy) once the
 // Morph Ball Bombs are held. A connected Archipelago seed overrides it.

@@ -183,6 +183,7 @@ bool sMouseAim = false;
 bool sTwinStick = false;
 float sTwinStickRightY = 0.f;
 bool sBeamShiftHeld = false;
+std::atomic<bool> sTouchBeamShift{false}; // the touch twin layout's held Beam button
 bool sSpringBall = false;
 bool sSwapScanXray = false;
 bool sTouchColors = false; // Android touch overlay: the GameCube pad's colours
@@ -1676,6 +1677,8 @@ float TwinStickRightY() { return sTwinStickRightY; }
 void SetTwinStickRightY(float y) { sTwinStickRightY = y; }
 
 bool BeamShiftHeld() { return sBeamShiftHeld; }
+
+bool TouchBeamShift() { return sTouchBeamShift.load(std::memory_order_acquire) && TouchActive(); }
 
 void SetBeamShiftHeld(bool held) { sBeamShiftHeld = held; }
 
@@ -5402,12 +5405,17 @@ void DrawControlsTouchGyro() {
   if (ImGui::Combo("Layout", &touchLayout, kTouchLayouts, 3)) {
     SetTouchClassic(touchLayout == 1);
     SetTouchTwinStick(touchLayout == 2);
+    if (touchLayout == 2) {
+      // Remastered picks beams with Y + the D-pad, so twin starts with the D-pad, not the wheels.
+      SetTouchWheels(false);
+    }
   }
   ItemHelp("Default: the GameCube pad without a C-stick; drag the free screen area to aim like a "
            "mouse (the left stick strafes), and beams and visors come from the Visor and Beam "
            "wheels. Classic GameCube: brings back the C-stick and the D-pad. Twin stick "
            "(Remastered): a right stick that aims, with Remastered's Dual Sticks buttons (Jump, "
-           "Fire, Morph, Missile, LT Lock); the free-area drag and the wheels stay on.");
+           "Fire, Morph, Missile, LT Lock) and a D-pad for visors; hold Y (Beam) and press the D-pad to pick "
+           "a beam. The free-area drag stays on; the wheels can replace the D-pad.");
   ImGui::BeginDisabled(!sTouchClassic);
   bool touchAim = sTouchAim;
   if (ImGui::Checkbox("Touch aim", &touchAim)) {
@@ -5423,7 +5431,7 @@ void DrawControlsTouchGyro() {
     SetTouchMapTap(touchMapTap);
   }
   ItemHelp("Tapping the minimap opens the map; hides the GameCube layout's Z button.");
-  ImGui::BeginDisabled(!sTouchClassic);
+  ImGui::BeginDisabled(!sTouchClassic && !sTouchTwinStick);
   bool touchWheels = sTouchWheels;
   if (ImGui::Checkbox("Beam and visor wheels", &touchWheels)) {
     SetTouchWheels(touchWheels);
@@ -5431,7 +5439,7 @@ void DrawControlsTouchGyro() {
   ItemHelp("Replaces the D-pad with a Visor and a Beam button. Hold one, slide to a sector, "
            "let go to pick. Letting go in the middle cancels. Off, the D-pad is back.");
   ImGui::EndDisabled();
-  ImGui::BeginDisabled(!(!sTouchClassic || sTouchWheels));
+  ImGui::BeginDisabled(!((!sTouchClassic && !sTouchTwinStick) || sTouchWheels));
   bool touchVisorTapScan = sTouchVisorTapScan;
   if (ImGui::Checkbox("Tap Visor for Scan Visor", &touchVisorTapScan)) {
     SetTouchVisorTapScan(touchVisorTapScan);
@@ -7616,6 +7624,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeMapTap(JNIEnv*, jclass) {
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeDebugOverlayVisible(JNIEnv*, jclass) {
   return PortDebug::OverlayVisible() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchBeamShift(JNIEnv*, jclass, jboolean held) {
+  sTouchBeamShift.store(held == JNI_TRUE, std::memory_order_release);
 }
 
 extern "C" JNIEXPORT void JNICALL
