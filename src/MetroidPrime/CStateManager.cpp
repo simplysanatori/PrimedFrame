@@ -714,6 +714,11 @@ CStateManager::~CStateManager() {
   }
   delete sPortPresence;
   sPortPresence = nullptr;
+  // The Remastered rooms of the last areas drawn are freed only when a frame loads others;
+  // without this they stayed on the GPU through the title screen and the next world's load.
+  PortRoomEnv::SetLoadedAreas(nullptr, 0);
+  PortRoomGeo::SetLoadedAreas(nullptr, 0);
+  PortRoomLiquid::SetLoadedAreas(nullptr, 0);
   CMemory::OffsetFakeStatics(
       -(x808_objectLists.size() * sizeof(CObjectList) + 0x11c)); // TODO what is this 11c?
   x88c_rumbleManager->HardStopAll();
