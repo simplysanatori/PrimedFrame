@@ -1401,7 +1401,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_gn = ({0} - 0.5) * ubuf.pbr_param.x * vec2f(1.0, -1.0);
           let pbr_guv = in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5 + pbr_gn;
           let pbr_gs = textureSampleLevel(tex7, tex7_samp, clamp(pbr_guv, vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-          pbr_pass = pow(max(pbr_gs, vec3f(0.0)), vec3f(2.2)) * max(ubuf.pbr_emissive.rgb, vec3f(0.0)) * pbr_gt;)""",
+          pbr_pass = srgb_dec(pbr_gs) * max(ubuf.pbr_emissive.rgb, vec3f(0.0)) * pbr_gt;)""",
                             mapStage[5] == -1 ? "vec2f(0.5)"s : fmt::format("sampled{}.rg", mapStage[5]));
     }
     liquid += fmt::format(R"""(
@@ -1428,7 +1428,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_hd = pbr_hn * (ubuf.pbr_param.z * min(1.0 / max(length(in.pbr_pos), 1e-3), 1.0)) * vec2f(1.0, -1.0);
           let pbr_huv = in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5 + pbr_hd;
           let pbr_hg = textureSampleLevel(tex7, tex7_samp, clamp(pbr_huv, vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-          pbr_pass = pow(max(pbr_hg, vec3f(0.0)), vec3f(2.2)) *
+          pbr_pass = srgb_dec(pbr_hg) *
                      max(vec3f(1.0) + ubuf.pbr_emissive.rgb * (ubuf.pbr_param.w - 1.0 + pbr_vraw.a), vec3f(0.0));)""",
                          underlying(inner4.texMapId), underlying(inner4.texCoordId));
     }
@@ -1517,7 +1517,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_alpha = pbr_sal * pbr_c4.w;
           pbr_lo = vec3f(0.0);
           pbr_glow = pbr_sl * ((10.0 - 9.0 * pbr_sal) * pbr_sx * pbr_sw2);
-          pbr_pass = pow(max(pbr_sfb, vec3f(0.0)), vec3f(2.2)) * pbr_c4.x * pbr_vraw.rgb;
+          pbr_pass = srgb_dec(pbr_sfb) * pbr_c4.x * pbr_vraw.rgb;
       }})""",
                             underlying(config.tevStages[mapStage[4]].texMapId),
                             underlying(config.tevStages[mapStage[4]].texCoordId),
@@ -1580,7 +1580,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         var pbr_yc = max({0}.rgb, vec3f(0.0)) * pbr_yd.rgb + pbr_yi.rgb;
         if (pbr_kind > 16.5 && pbr_yi.w > 0.0) {{
             let pbr_yq = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, 0.0).rgb;
-            pbr_yc += select(pow(max(pbr_yq, vec3f(0.0)), vec3f(2.2)), pbr_yq * pbr_hdr, pbr_hdr > 0.0) * pbr_yi.w;
+            pbr_yc += select(srgb_dec(pbr_yq), pbr_yq * pbr_hdr, pbr_hdr > 0.0) * pbr_yi.w;
         }}
         pbr_alpha = clamp({0}.a * {0}.a * pbr_yd.w, 0.0, 1.0);
         pbr_lo = vec3f(0.0);
@@ -1760,7 +1760,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_lod = select({7}.0, ubuf.pbr_cube.y, pbr_hdr > 0.0);
       // The LOD takes the roughness unfloored, as Remastered's does (only the BRDF floors it).
       let pbr_cubed = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, saturate(pbr_orm.g) * pbr_lod).rgb;
-      let pbr_cubel = select(pow(max(pbr_cubed, vec3f(0.0)), vec3f(2.2)), pbr_cubed * pbr_hdr, pbr_hdr > 0.0);
+      let pbr_cubel = select(srgb_dec(pbr_cubed), pbr_cubed * pbr_hdr, pbr_hdr > 0.0);
       var pbr_envspec = mix(pbr_amb + pbr_env * 0.35, pbr_cubel, min(ubuf.pbr_probe[0].w, 1.0));
       // The room cube also shapes the ambient: its blurriest useful mip (z) along the
       // normal says how much of the room's light comes from that side, and w scales that
@@ -3420,6 +3420,13 @@ fn tev_overflow_vec3f(in: vec3f) -> vec3f {{
 fn tev_overflow_vec4f(in: vec4f) -> vec4f {{
   let byte_space = in * 255.0;
   return (byte_space - floor(byte_space / 256.0) * 256.0) / 255.0;
+}}
+
+// The EFB (and the probes captured from it) holds colour as Remastered's sRGB swapchain
+// does: the exact piecewise sRGB curve.
+fn srgb_dec(e: vec3f) -> vec3f {{
+  let c = max(e, vec3f(0.0));
+  return select(pow((c + 0.055) / 1.055, vec3f(2.4)), c / 12.92, c <= vec3f(0.04045));
 }}
 
 {8}
