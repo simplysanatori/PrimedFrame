@@ -1187,6 +1187,15 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_ls = pbr_lx * pbr_lx * (3.0 - 2.0 * pbr_lx);
       }})""",
                          base, 0, mapStage[4], first, underlying(inner.texMapId), underlying(inner.texCoordId));
+    // Kind 20 (E9DF2188): map 3 is a detail map (the kind has no glow). The albedo is the blend times the
+    // vertex colour (2 |c|^2.2, applied below) times 2 times the detail as stored.
+    if (mapStage[3] != -1) {
+      kinds += fmt::format(R"""(
+      if (pbr_kind > 19.5 && pbr_kind < 20.5) {{
+          pbr_base = pbr_base * max(sampled{}.rgb, vec3f(0.0)) * 2.0;
+      }})""",
+                           mapStage[3]);
+    }
     // Kind 2: map 4 is a detail map that leaves the base alone where the sampler returns 0.5 (the texture's
     // own format decides which byte that is). Kind 4: the
     // inside shows where the surface is seen edge on (a fresnel that also takes it to the
@@ -1384,13 +1393,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // negated dP/dV. Kind 4 scales the map's tilt. Remastered decodes x 255/128 - 1, so that
     // byte 128 is flat.
     // The layered shaders (7248969B, A978D507) decode each layer's normal in full and mix
-    // the vectors, which keeps more tilt at mid weights. Kind 1 (9EFE0D2E) mixes the maps'
-    // xy and rebuilds z.
+    // the vectors, which keeps more tilt at mid weights. Kind 1 (9EFE0D2E) and kind 20
+    // (E9DF2188) mix the maps' xy and rebuild z.
     std::string tn = "vec3f(pbr_ts, sqrt(max(0.0, 1.0 - dot(pbr_ts, pbr_ts))))";
     if (!normalXy2.empty()) {
       tn = fmt::format(
           "select(normalize(mix({}, vec3f(pbr_ts2, sqrt(max(0.0, 1.0 - dot(pbr_ts2, pbr_ts2)))), pbr_ls)), "
-          "vec3f(pbr_tsm, sqrt(max(0.0, 1.0 - dot(pbr_tsm, pbr_tsm)))), pbr_kind > 0.5 && pbr_kind < 1.5)",
+          "vec3f(pbr_tsm, sqrt(max(0.0, 1.0 - dot(pbr_tsm, pbr_tsm)))), (pbr_kind > 0.5 && pbr_kind < 1.5) || pbr_kind > 19.5)",
           tn);
       normal = fmt::format("\n      let pbr_ts2 = {} * 1.9921875 - 1.0;", normalXy2);
     }
@@ -2056,7 +2065,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                      // A sky's ICAN is its base map (the converter writes a black emissive map where
                      // it copies the base), and its glow ICAN x ICNC is most of what it shows. The
                      // map's last mip, its mean, tells that black map from one with dark texels.
-                     mapStage[3] == -1
+                     mapStage[3] == -1 || config.pbrKind == 20
                          ? "vec4f(0.0)"s
                          : fmt::format("select({0}, {1}, pbr_sky && dot(textureSampleLevel(tex3, tex3_samp, "
                                        "vec2f(0.5), 16.0).rgb, vec3f(1.0)) < 0.004)",

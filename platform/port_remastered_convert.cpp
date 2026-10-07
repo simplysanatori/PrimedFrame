@@ -589,6 +589,7 @@ struct MapRef {
   std::string src;  // how the texture is named in a tag
   bool raw = false;  // a shader's own data (a ramp, noise): every texel and channel kept as it is
   bool mean = false;  // drawn as its colour times alpha, averaged: one colour
+  bool detail = false;  // kind 20's detail map, which rides in the emissive slot (that shader has no glow)
   double metalMax = kPbrMetalMax;  // an MR map's metalness ceiling
 };
 
@@ -1140,7 +1141,7 @@ struct Converter::State {
           k = i;
         }
       }
-      if (rt[k].has && (k != kEmissive || rt[k].mean || PbrEmissive(rt))) {
+      if (rt[k].has && (k != kEmissive || rt[k].mean || rt[k].detail || PbrEmissive(rt))) {
         src = &rt[k];
         tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : src->mean ? ":mean" : "");
         colourTex = k != kNormal && (k != kMr || src->raw);
@@ -1457,6 +1458,7 @@ constexpr uint32_t kIncanMaskFlag = 0x200;   // the base map's alpha masks the g
 constexpr uint32_t kShaderHeightBlend = 0xCA10C453;  // snow and ice over rock
 // Shaders with maps and parameters of their own (TCHn, CCHn), read from their code.
 constexpr uint32_t kShaderUpLayer = 0x9EFE0D2E;   // TCH0-2 are a second layer on what faces up, CCH0.x its edge
+constexpr uint32_t kShaderVertexBlend = 0xE9DF2188;  // TCH0-2 a second layer by the vertex alpha, CCH0.x its edge, TCH3 a detail map
 constexpr uint32_t kShaderDetail = 0x9AB899E7;    // TCH0 is a detail map, on a texcoord of its own
 constexpr uint32_t kShaderLava = 0x023388CD;      // the glow is CCH0.x times the vertex alpha
 // Falling water, unlit: TCH0's three channels are sheets scrolling at CCH1's and CCH2's speeds
@@ -1586,6 +1588,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderHeightBlend, "height-blend");
   add(shader == kShaderUpLayer, "up-layer");
   add(shader == kShaderDetail, "detail");
+  add(shader == kShaderVertexBlend, "vertex-blend");
   add(shader == kShaderLava, "lava");
   add(shader == kShaderWaterfall, "waterfall");
   add(shader == kShaderParallax, "parallax");
@@ -1634,6 +1637,7 @@ const char* KindName(int kind) {
   case 17: return "holo-refl";
   case 18: return "hologram";
   case 19: return "gun-fx";
+  case 20: return "vertex-blend";
   default: return "kind?";
   }
 }
@@ -1891,10 +1895,10 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   }
   // The shaders of their own. ICNC is 1 in every lava material and the strength
   // is CCH0.x instead.
-  const ModelMaterialData* tch[3] = {nullptr, nullptr, nullptr};
+  const ModelMaterialData* tch[4] = {nullptr, nullptr, nullptr, nullptr};
   const ModelMaterialData* cch[7] = {};
   for (const ModelMaterialData& d : mat.data) {
-    for (uint32_t i = 0; i < 3; ++i) {
+    for (uint32_t i = 0; i < 4; ++i) {
       if (d.kind == ModelMaterialData::Kind::Texture && d.usage == FourCC('T', 'C', 'H', char('0' + i))) {
         tch[i] = &d;
       }
@@ -1912,6 +1916,21 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       if (tch[i]) {
         set(slot[i], tch[i]->texture, &out.layer[slot[i]]);
       }
+    }
+    out.layerSmooth = ShortestDouble(cch[0]->color[0]);
+  } else if (shader == kShaderVertexBlend && tch[0] && cch[0]) {
+    // Bottom layer BCLR/METL/NMAP, top layer TCH0-2 by the vertex alpha (CCH0.x the edge). TCH3 multiplies
+    // the blended albedo: it rides in the emissive slot, which this shader has no use for.
+    out.kind = 20;
+    static const int slot[3] = {kBase, kMr, kNormal};
+    for (int i = 0; i < 3; ++i) {
+      if (tch[i]) {
+        set(slot[i], tch[i]->texture, &out.layer[slot[i]]);
+      }
+    }
+    if (tch[3] && !out.maps[kEmissive].has) {
+      set(kEmissive, tch[3]->texture);
+      out.maps[kEmissive].detail = out.maps[kEmissive].has;
     }
     out.layerSmooth = ShortestDouble(cch[0]->color[0]);
   } else if (shader == kShaderDetail && tch[0]) {
@@ -2363,7 +2382,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
                                              "frozen-shell", "matcap-shell", "boundary-shield", "pickup",
-                                             "holo",         "holo-refl",    "hologram",     "gun-fx"};
+                                             "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -2377,6 +2396,9 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && !out.layered) {
     if (out.kind != 0) {
       out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
+    }
+    if (out.maps[kEmissive].detail) {
+      out.maps[kEmissive] = MapRef();
     }
     out.kind = 0;
     out.vcolor = false;
@@ -2467,7 +2489,7 @@ int PbrMode(const RemMaterial& m);
 // glows (glowLinear: they are drawn as the screen shows them), a ramp's mean, nor a
 // liquid or glass, whose first three floats are a tint.
 bool ExposedGlow(const RemMaterial& m) {
-  return !m.glowLinear && m.maps[kEmissive].has && !m.maps[kEmissive].mean && m.kind != 7 &&
+  return !m.glowLinear && m.maps[kEmissive].has && !m.maps[kEmissive].mean && m.kind != 7 && m.kind != 20 &&
          m.kind != 8 && m.kind != 11 && m.kind != 14;
 }
 
@@ -2512,7 +2534,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     tag = "PBR2";
     if (m.layered || m.kind) {
       // Only a blend of two layers has an edge.
-      f.push_back(m.kind == 7 || (m.layered && m.kind <= 1) ? m.layerSmooth : 0.0);
+      f.push_back(m.kind == 7 || m.kind == 20 || (m.layered && m.kind <= 1) ? m.layerSmooth : 0.0);
       for (double h : m.layerHeight) {
         f.push_back(h);
       }
@@ -2577,7 +2599,8 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The emissive map is stored as authored (the PBR path scales it at run time), but the
   // fallback adds it as it is: it took the 0.10 the converter used to bake in, as a konst
   // (in the gamma domain TEV works in, that is 0.10^(1/2.2) of the byte).
-  const bool emissiveKonst = rem.maps[kEmissive].has && !rem.maps[kEmissive].mean && !rem.maps[kEmissive].raw;
+  const bool emissiveKonst = rem.maps[kEmissive].has && !rem.maps[kEmissive].mean && !rem.maps[kEmissive].raw &&
+                             !rem.maps[kEmissive].detail;
   const uint32_t emissiveSel = colorUnlit ? 0x0Du : 0x0Cu;  // GX_TEV_KCSEL_K1 / K0
   const uint32_t flags = (pm.flags & 0xFFFF & ~uint32_t(0x8 | 0x40 | 0x100 | 0x400 | 0x800 | 0x2000)) |
                          0xF0000 | kPbrFlag | (colorUnlit || emissiveKonst ? 0x8u : 0u);
@@ -2639,7 +2662,8 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   const int nstages = rem.kind == 8 || rem.kind == 11 || rem.kind == 14 ? nmaps + 1 : nmaps;
   P32(b, uint32_t(nstages));
   for (int i = 0; i < nstages; ++i) {
-    const uint32_t* t = tev[std::min(i, kLayeredMaps - 1)];
+    // Kind 20's map 3 is a detail map, sampled only (the table's stage adds it as glow).
+    const uint32_t* t = tev[rem.maps[kEmissive].detail && i == kEmissive ? 2 : std::min(i, kLayeredMaps - 1)];
     const bool gain = colorUnlit && i == 1;
     const bool emissiveStage = emissiveKonst && i == kEmissive;
     P32(b, gain ? 0x7B80Fu : emissiveStage ? 0x390Fu : t[0]);  // gain: ZERO, CPREV, KONST, ZERO, then x2; emissive: ZERO, TEXC, KONST, CPREV
