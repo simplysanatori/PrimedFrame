@@ -169,6 +169,7 @@ int sDynHoldFor = 30;       // the next such hold; doubles each time
 PortDebug::EAspectMode sAspectMode = PortDebug::kAspect_Window;
 bool sHudWide = true;
 bool sCinemaBars = false;
+bool sShowShaderCompilation = true;
 int sHudScale = PortDebug::kHudScaleMax;
 bool sHideHelmet = false;
 bool sHideVisorEffects = false;
@@ -562,6 +563,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     }
   } else if (key == "cinema_bars") {
     sCinemaBars = ParseBool(value);
+  } else if (key == "show_shader_compilation") {
+    sShowShaderCompilation = ParseBool(value);
   } else if (key == "hud_wide") {
     sHudWide = ParseBool(value);
   } else if (key == "hud_scale") {
@@ -886,6 +889,7 @@ void SaveSettings() {
   file << "aspect=" << aspect << '\n';
   file << "hud_wide=" << (sHudWide ? 1 : 0) << '\n';
   file << "cinema_bars=" << (sCinemaBars ? 1 : 0) << '\n';
+  file << "show_shader_compilation=" << (sShowShaderCompilation ? 1 : 0) << '\n';
   file << "hud_scale=" << sHudScale << '\n';
   file << "hide_helmet=" << (sHideHelmet ? 1 : 0) << '\n';
   file << "hide_visor_effects=" << (sHideVisorEffects ? 1 : 0) << '\n';
@@ -4756,6 +4760,40 @@ void DrawUpdateToast() {
   ImGui::End();
 }
 
+// While pipelines compile in the background (the shipped seed on a first start, then new
+// shaders as they appear): after half a second, a count and a bar since the toast opened.
+void DrawShaderCompilationToast() {
+  static double sQueuedSince = -1.0;
+  static uint32_t sBase = 0; // createdPipelines when the toast opened
+  const AuroraStats* stats = aurora_get_stats();
+  if (!sShowShaderCompilation || stats == nullptr || stats->queuedPipelines == 0) {
+    sQueuedSince = -1.0;
+    return;
+  }
+  const double now = ImGui::GetTime();
+  if (sQueuedSince < 0.0) {
+    sQueuedSince = now;
+    sBase = stats->createdPipelines;
+  }
+  if (now - sQueuedSince < 0.5) {
+    return;
+  }
+  const uint32_t done = stats->createdPipelines >= sBase ? stats->createdPipelines - sBase : 0;
+  const uint32_t total = done + stats->queuedPipelines;
+  const ImGuiViewport* viewport = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 16.f, viewport->Pos.y + viewport->Size.y - 16.f), ImGuiCond_Always,
+                          ImVec2(0.f, 1.f));
+  ImGui::SetNextWindowSize(ImVec2(std::min(viewport->Size.x - 32.f, 260.f), 0.f));
+  ImGui::SetNextWindowBgAlpha(0.7f);
+  if (ImGui::Begin("##shader-compilation-toast", nullptr,
+                   ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                       ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::Text("Compiling shaders %u / %u", done, total);
+    ImGui::ProgressBar(total != 0 ? static_cast<float>(done) / static_cast<float>(total) : 0.f, ImVec2(-1.f, 6.f), "");
+  }
+  ImGui::End();
+}
+
 // Once per launch, for longer and in red: the last session ended on a failed disc read.
 void DrawDiscReadFailedAlert() {
   static double sShownAt = -1.0;
@@ -5692,6 +5730,13 @@ void DrawVideoQuality() {
     SetMsaa(msaa == 1 ? 4 : 1);
   }
   ImGui::SetItemTooltip("Smooths polygon edges, at about 4x the framebuffer memory.");
+  EndOriginalLocked(locked);
+  if (ImGui::Checkbox("Show shader compilation", &sShowShaderCompilation)) {
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("A small progress bar while shaders compile in the background (mostly the first start\n"
+                        "after an install or update). Draws whose shader isn't ready yet are skipped.");
+  locked = BeginOriginalLocked();
   {
     int aniso = 0;
     while ((2 << aniso) <= sAnisotropy && aniso < 4) {
@@ -8355,6 +8400,7 @@ void DrawUI() {
   DrawUpdateToast();
   DrawDiscReadFailedAlert();
   DrawGpuDriverTrial();
+  DrawShaderCompilationToast();
   if (sTouchLayoutSavePending.exchange(false, std::memory_order_acq_rel)) {
     MarkDirty();
     SaveSettings();
