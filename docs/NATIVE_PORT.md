@@ -902,7 +902,7 @@ unpacks to a temporary directory instead of mounting.
   saved by Aurora next to the other controller data, with buttons to clear the
   keyboard bindings and restore the controller defaults. The beam shift and the
   mouse buttons are rows here too (port settings, not Aurora's).
-- `MP_HUD_WIDE=1` (Video > Display, persisted as `hud_wide`): widescreen HUD. The
+- `MP_HUD_WIDE=0|1` (Video > Display, persisted as `hud_wide`, default on): widescreen HUD. The
   aspect-matched in-game HUD frames keep each element's shape but move it away
   from the screen centre, so edge elements (scan panels, energy bar, map) reach
   the true wide corners instead of being pulled inward. Under a perspective

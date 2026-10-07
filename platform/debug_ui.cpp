@@ -163,7 +163,7 @@ double sDynFpsBefore = 0.0; // the rate before the last step down
 int sDynHoldLow = 0;        // seconds left without stepping down (a step down gained nothing)
 int sDynHoldFor = 30;       // the next such hold; doubles each time
 PortDebug::EAspectMode sAspectMode = PortDebug::kAspect_Window;
-bool sHudWide = false;
+bool sHudWide = true;
 int sHudScale = PortDebug::kHudScaleMax;
 bool sHideHelmet = false;
 bool sHideVisorEffects = false;
@@ -1062,9 +1062,7 @@ void EnsureInitialized() {
   } else if (port::EnvFlag("MP_WIDESCREEN")) {
     sAspectMode = PortDebug::kAspect_16_9;
   }
-  if (port::EnvFlag("MP_HUD_WIDE")) {
-    sHudWide = true;
-  }
+  sHudWide = port::EnvFlag("MP_HUD_WIDE", sHudWide);
   if (port::EnvFlag("MP_MOUSE_AIM")) {
     sMouseAim = true;
   }
