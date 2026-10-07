@@ -61,6 +61,9 @@ public:
   void SetSpreadAnchor(const CGuiWidget* member, const CGuiWidget* anchor);
   // Port: the same for every widget parented (at any depth) under `root`, with `root` as anchor.
   void SetSpreadAnchorTree(const CGuiWidget* root);
+  // Port: under the vertical spread, stretch `widget` with the frame decoration instead of moving
+  // it rigidly (the missile and threat bars, which run along the side struts).
+  void SetSpreadStretch(const CGuiWidget* widget);
 #endif
 
 private:
@@ -79,6 +82,7 @@ private:
   mutable bool x58_24_loaded : 1;
 #ifdef TARGET_PC
   std::vector< std::pair< const CGuiWidget*, const CGuiWidget* > > mSpreadAnchors;
+  std::vector< const CGuiWidget* > mSpreadStretch;
 #endif
 };
 CHECK_SIZEOF(CGuiFrame, 0x5c);

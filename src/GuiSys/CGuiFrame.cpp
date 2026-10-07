@@ -15,6 +15,7 @@
 #include <dolphin/gx/GXGet.h>
 #include <dolphin/gx/GXTransform.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
@@ -169,6 +170,13 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
         break;
       }
     }
+    if (aboutEye && spreadY != 1.f &&
+        std::find(mSpreadStretch.begin(), mSpreadStretch.end(), widget) != mSpreadStretch.end()) {
+      // A bar drawn along a side strut: the strut stretches over the extra height, so the bar
+      // must too, or it stays a short piece in the middle of the screen.
+      widget->DrawWithWorldTransform(parms, hudScaleXf * stretch * world);
+      continue;
+    }
     if (group) {
       anchor = group->GetWorldTransform().GetTranslation();
     } else if (widget->GetWidgetTypeID() == 'MODL' && widget->GetIsFinishedLoading()) {
@@ -226,6 +234,13 @@ void CGuiFrame::SetSpreadAnchor(const CGuiWidget* member, const CGuiWidget* anch
     }
   }
   mSpreadAnchors.emplace_back(member, anchor);
+}
+
+void CGuiFrame::SetSpreadStretch(const CGuiWidget* widget) {
+  if (widget && std::find(mSpreadStretch.begin(), mSpreadStretch.end(), widget) ==
+                    mSpreadStretch.end()) {
+    mSpreadStretch.push_back(widget);
+  }
 }
 
 void CGuiFrame::SetSpreadAnchorTree(const CGuiWidget* root) {
