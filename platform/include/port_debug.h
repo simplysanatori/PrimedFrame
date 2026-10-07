@@ -364,9 +364,9 @@ bool LockOnToggle();
 void SetLockOnToggle(bool enabled);
 bool StickyCharge();
 void SetStickyCharge(bool enabled);
-// Remastered charge: holding fire first shoots a few quick shots (Power 2,
-// Wave 1, Plasma 1, Ice none), then charges faster, with Remastered's per-beam
-// timings (CPlayerGun::PortRapidCharge*).
+// Remastered charge: holding fire shoots a few quick shots after the press shot
+// (Power 2, Wave 1, Plasma 1, Ice none), then charges faster, with Remastered's
+// per-beam timings (CPlayerGun::PortRapidCharge*).
 bool RapidCharge();
 void SetRapidCharge(bool enabled);
 // Spring Ball on a gyro flick (pad or phone tilted up sharply, like Trilogy's

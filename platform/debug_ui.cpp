@@ -5341,8 +5341,8 @@ void DrawControlsOptions() {
   if (ImGui::Checkbox("Remastered charge (rapid fire)", &rapidCharge)) {
     SetRapidCharge(rapidCharge);
   }
-  ItemHelp("As in Metroid Prime Remastered: holding fire first shoots a few quick shots (Power 2, "
-           "Wave 1, Plasma 1, Ice none), then charges faster, so a full charge takes about as "
+  ItemHelp("As in Metroid Prime Remastered: holding fire fires a few shots before charging (3 in all "
+           "with Power, 2 with Wave or Plasma, 1 with Ice), then charges faster, so a full charge takes about as "
            "long as before. Needs the Charge Beam.");
   bool swapScanXray = sSwapScanXray;
   if (ImGui::Checkbox("Swap the Scan and X-Ray visor buttons", &swapScanXray)) {
