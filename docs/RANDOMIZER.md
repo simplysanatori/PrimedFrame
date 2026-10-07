@@ -25,6 +25,18 @@ switch.
   give the same seed (own PRNG, no `std` distributions). Elevator
   randomization, or a shuffled Scan Visor without pre-scanned elevators,
   starts at Save Station 1, as the apworld does, so sphere 0 has a location.
+- **Start, beam, doors.** Starting room (normal, safe, buckle up) with the
+  apworld's loadouts and prefills (`StartRoomData.py`), random starting beam,
+  door colours, blast shields (replace existing, mix it up, with frequency and
+  beam combos) and locked doors, with the Power Beam and Morph Ball Bomb door
+  options. Differences from the apworld, where it would make a dead seed:
+  a normal start that needs Save Station 1 keeps its prefill even with
+  shields or tricks; replace existing keeps the Missile shields on the
+  regions mix it up leaves alone for the start (Save Station 1's Morph Ball
+  and Bombs sit behind Main Plaza); and an early item with no free sphere-0
+  location is placed like the rest instead of displacing the prefill. The
+  Sunchamber → Sun Tower Access rule the tracker pack lacks is added in
+  `tools/gen_ap_logic.py`.
 - **Playing** reuses the Archipelago client unchanged: a seed is served by an
   in-process server (`platform/port_ap_solo.cpp`, server `solo:<name>`, slot
   `Samus`), so the item models, scan text, temple hints, elevator and door
@@ -35,8 +47,6 @@ switch.
   spoiler; `<name>.state.json` beside it the locations checked, in order
   (items are numbered by it). A different seed under a taken name is saved as
   `<name>-2`, `-3`, ....
-- Not generated yet: random starting room or beam, blast shields, locked
-  doors.
 
 ## Seed files from other tools
 

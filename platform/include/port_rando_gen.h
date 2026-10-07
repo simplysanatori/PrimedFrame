@@ -12,8 +12,8 @@
 // in-process server (PortApSolo), so every AP patch applies unchanged.
 namespace PortRandoGen {
 
-// The apworld's options (PrimeOptions.py), with its values. Cosmetic options,
-// starting room/beam and blast shields are not offered yet.
+// The apworld's options (PrimeOptions.py), with its values. Cosmetic options
+// are not offered.
 struct Settings {
   int requiredArtifacts = 12;      // 1..12
   int finalBosses = 0;             // 0 both, 1 Ridley, 2 Prime, 3 none
@@ -37,6 +37,14 @@ struct Settings {
   int removeThermal = 0;           // 0 none, 1 most, 2 all
   bool removeHiveMecha = false;
   bool springBall = true;
+  int startingRoom = 0;            // 0 normal, 1 safe, 2 buckle up (a random room and loadout)
+  bool randomizeStartingBeam = false;
+  int blastShieldRandomization = 0; // 0 none, 1 replace existing, 2 mix it up
+  int blastShieldFrequency = 4;    // 1 low, 4 medium, 6 high (tenths of each area's regions)
+  int blastShieldAvailableTypes = 0; // 0 no beam combos, 1 all
+  int lockedDoorCount = 0;         // 0..2 areas with one door locked for good
+  bool includePowerBeamDoors = false;
+  bool includeMorphBallBombDoors = false;
 
   bool operator==(const Settings& other) const;
   bool operator!=(const Settings& other) const { return !(*this == other); }

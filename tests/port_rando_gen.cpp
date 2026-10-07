@@ -145,7 +145,42 @@ void CheckSeed(const Settings& settings, const std::string& text) {
     CHECK(counts.count(49) == 0);
   }
   CHECK((counts.count(5) != 0 ? counts.at(5) : 0) == 1);
-  CHECK(seed.startItems.size() == (settings.shuffleScanVisor ? 1u : 2u));
+  // The beam, the start room's loadout, and the Scan Visor unless shuffled.
+  CHECK(seed.startItems.size() >= (settings.shuffleScanVisor ? 1u : 2u));
+  CHECK(std::set< int64_t >(seed.startItems.begin(), seed.startItems.end()).size() == seed.startItems.size());
+  PortApWorld::Place place;
+  CHECK(PortApWorld::StartRoom(layout, place));
+  if (settings.startingRoom == 0)
+    CHECK(layout.startRoom == "Landing Site" || layout.startRoom == "Save Station 1");
+  CHECK(layout.hasShields == (settings.blastShieldRandomization != 0 || settings.lockedDoorCount > 0));
+  int locked = 0;
+  const std::set< std::string > types = {"Bomb",       "Charge Beam", "Flamethrower",  "Ice Spreader",
+                                         "Wavebuster", "Power Bomb",  "Super Missile", "Missile", "Disabled"};
+  for (const auto& area : layout.shields) {
+    int combos = 0;
+    for (const auto& room : area.second) {
+      for (const auto& entry : room.second) {
+        CHECK(types.count(entry.second) != 0);
+        locked += entry.second == "Disabled" ? 1 : 0;
+        combos += entry.second == "Flamethrower" || entry.second == "Ice Spreader" || entry.second == "Wavebuster";
+        // replace_existing turns the vanilla Missile shields into something else.
+        if (settings.blastShieldRandomization == 1)
+          CHECK(entry.second != "Missile");
+      }
+    }
+    CHECK(combos <= 1);
+    if (settings.blastShieldAvailableTypes == 0)
+      CHECK(combos == 0);
+  }
+  CHECK(locked == settings.lockedDoorCount);
+  if (settings.blastShieldRandomization != 0)
+    CHECK(!layout.shields.empty());
+  const PortJson::Value* beam = root.Find("starting_beam");
+  if (beam != nullptr)
+    CHECK(beam->IsString() && (beam->AsString() == "Power Beam" || beam->AsString() == "Wave Beam" ||
+                               beam->AsString() == "Ice Beam" || beam->AsString() == "Plasma Beam"));
+  if (!settings.randomizeStartingBeam && settings.doorColorRandomization == 0 && settings.startingRoom == 0)
+    CHECK(beam == nullptr);
 
   const PortJson::Value* hints = root.Find("artifact_locations");
   if (settings.artifactHints) {
@@ -209,6 +244,14 @@ int main() {
     s.backwardsLowerMines = (i % 10) == 0;
     s.flaahgraPowerBombs = (i % 8) == 0;
     s.springBall = (i % 4) != 0;
+    s.startingRoom = (i / 3) % 3;
+    s.randomizeStartingBeam = (i % 5) == 1;
+    s.blastShieldRandomization = (i / 2) % 3;
+    s.blastShieldFrequency = (i % 3 == 0) ? 1 : (i % 3 == 1 ? 4 : 6);
+    s.blastShieldAvailableTypes = (i / 4) % 2;
+    s.lockedDoorCount = (i / 5) % 3;
+    s.includePowerBeamDoors = (i % 6) >= 3;
+    s.includeMorphBallBombDoors = (i % 7) >= 4;
     CheckSeed(s, "seed" + std::to_string(i));
     ++made;
   }

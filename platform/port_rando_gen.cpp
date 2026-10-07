@@ -57,7 +57,8 @@ enum Item : int {
 };
 
 constexpr size_t kLocationCount = 100;
-constexpr int kMaxAttempts = 60;
+// Most failed attempts are shield layouts that close the start, caught before the fill.
+constexpr int kMaxAttempts = 500;
 
 // ---------------------------------------------------------------------------
 // Determinism: our own PRNG and hash, since the standard distributions and
@@ -167,6 +168,14 @@ uint64_t HashInput(const Settings& s, const std::string& seedText) {
   h.Add(s.removeThermal);
   h.Add(s.removeHiveMecha);
   h.Add(s.springBall);
+  h.Add(s.startingRoom);
+  h.Add(s.randomizeStartingBeam);
+  h.Add(s.blastShieldRandomization);
+  h.Add(s.blastShieldFrequency);
+  h.Add(s.blastShieldAvailableTypes);
+  h.Add(s.lockedDoorCount);
+  h.Add(s.includePowerBeamDoors);
+  h.Add(s.includeMorphBallBombDoors);
   return h.Value();
 }
 
@@ -216,11 +225,123 @@ ElevatorMap DefaultElevators() {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Start rooms (StartRoomData.py), in its dictionary order.
+
+enum Difficulty : int { kNormalStart = 0, kSafeStart = 1, kBuckleUpStart = 2 };
+
+// A location the start room's loadout fills; one of `choices` at random.
+// kLauncher and kMainPb stand for whatever the options make of them, and a
+// beam for its progressive form under progressive beams.
+struct ItemRule {
+  const char* location;
+  std::vector< int > choices;
+};
+using RuleSet = std::vector< ItemRule >;
+
+struct Loadout {
+  int beam;
+  std::vector< int > items;     // given at the start
+  std::vector< RuleSet > rules; // one set is prefilled, picked at random
+};
+
+// Under elevator randomization, the start area's elevator `source` may only
+// lead to one of `targets`.
+struct AllowedElevator {
+  const char* source;
+  std::vector< const char* > targets;
+};
+
+struct StartRoom {
+  const char* name;
+  int area;
+  int difficulty;
+  std::vector< Loadout > loadouts;
+  std::vector< int > localEarly; // placed in a location open from the start
+  std::vector< AllowedElevator > elevators;
+  bool needsScanVisor; // only when the Scan Visor isn't shuffled
+  bool forceBeam;      // the loadout's beam stays whatever the door colours
+  bool noPowerDoorAtStart;
+};
+
+const std::vector< StartRoom >& StartRooms() {
+  static const char* const kHive = "Chozo Ruins: Hive Totem";
+  static const char* const kBeetle = "Chozo Ruins: Ruined Shrine - Plated Beetle";
+  static const char* const kGallery = "Chozo Ruins: Ruined Gallery - Missile Wall";
+  static const std::vector< RuleSet > kLandingRules = {
+      {{kHive, {kLauncher}}, {kBeetle, {kMorph}}, {kGallery, {kBomb}}},
+      {{kHive, {kLauncher}}, {kBeetle, {kBomb}}, {kGallery, {kMorph}}},
+  };
+  static const std::vector< AllowedElevator > kTallonElevators = {
+      {"Transport to Chozo Ruins West", {"Transport to Magmoor Caverns North", "Transport to Magmoor Caverns West"}},
+      {"Transport to Magmoor Caverns East",
+       {"Transport to Tallon Overworld North", "Transport to Magmoor Caverns West",
+        "Transport to Magmoor Caverns North"}},
+  };
+  static const std::vector< StartRoom > kRooms = {
+      {"Landing Site", 0, kNormalStart,
+       {{kPower, {}, kLandingRules}, {kPower, {}, {{{kHive, {kLauncher}}, {kGallery, {kMorph}}}}}},
+       {}, {}, false, false, false},
+      {"Arboretum", 1, kSafeStart, {{kPower, {kLauncher}, {}}}, {kMorph, kScan}, {}, true, false, false},
+      {"Burn Dome", 1, kSafeStart,
+       {{kPower,
+         {kMorph},
+         {{{"Chozo Ruins: Burn Dome - Incinerator Drone", {kBomb}}, {"Chozo Ruins: Burn Dome - Missile", {kLauncher}}}}}},
+       {}, {}, false, false, false},
+      {"Ruined Fountain", 1, kSafeStart, {{kPower, {kLauncher}, {}}}, {kMorph}, {}, false, false, false},
+      {"Save Station 1", 1, kSafeStart, {{kPower, {}, kLandingRules}}, {},
+       {{"Transport to Tallon Overworld North",
+         {"Transport to Chozo Ruins East", "Transport to Magmoor Caverns West", "Transport to Chozo Ruins West"}}},
+       false, false, false},
+      {"Save Station 2", 1, kSafeStart, {{kPower, {kLauncher}, {}}}, {}, {}, false, false, false},
+      {"Tower Chamber", 1, kSafeStart,
+       {{kWave,
+         {},
+         {{{"Chozo Ruins: Tower Chamber", {kMorph}},
+           {kBeetle, {kBomb, kMainPb}},
+           {"Chozo Ruins: Ruined Shrine - Lower Tunnel", {kLauncher}}}}}},
+       {}, {}, false, false, false},
+      {"Warrior Shrine", 2, kSafeStart,
+       {{kPower, {kVaria, kMorph}, {{{"Magmoor Caverns: Storage Cavern", {kBomb}}}}}}, {}, {}, false, false, false},
+      {"East Tower", 3, kBuckleUpStart,
+       {{kWave,
+         {kLauncher},
+         {{{"Phendrana Drifts: Phendrana Canyon", {kSpace}},
+           {"Phendrana Drifts: Research Lab Aether - Tank", {kPlasma}}}}}},
+       {}, {}, true, false, true},
+      {"Save Station B", 3, kSafeStart,
+       {{kPlasma, {kLauncher}, {{{"Phendrana Drifts: Phendrana Shorelines - Behind Ice", {kSpace}}}}}}, {}, {}, true,
+       true, false},
+      {"Arbor Chamber", 0, kSafeStart, {{kPower, {kLauncher}, {}}}, {}, kTallonElevators, false, false, false},
+      {"Transport to Chozo Ruins East", 0, kSafeStart,
+       {{kIce, {kMorph}, {{{"Tallon Overworld: Overgrown Cavern", {kLauncher}}}}}}, {}, kTallonElevators, false, false,
+       false},
+      {"Quarantine Monitor", 3, kBuckleUpStart,
+       {{kWave,
+         {kThermal},
+         {{{"Phendrana Drifts: Quarantine Monitor", {kMorph}},
+           {"Phendrana Drifts: Quarantine Cave", {kSpider}},
+           {"Phendrana Drifts: Ice Ruins East - Spider Track", {kSpace}},
+           {"Phendrana Drifts: Ruined Courtyard", {kPlasma}}}}}},
+       {}, {}, true, false, false},
+      {"Sunchamber Lobby", 1, kBuckleUpStart, {{kPower, {kMorph, kLauncher, kBomb}, {}}}, {}, {}, false, false, false},
+  };
+  return kRooms;
+}
+
+const StartRoom& FindStartRoom(const char* name) {
+  for (const StartRoom& room : StartRooms()) {
+    if (std::string(room.name) == name)
+      return room;
+  }
+  return StartRooms()[0];
+}
+
 // get_random_elevator_mapping: pair elevators two ways across areas, always
-// starting from the area with the most unpaired ones. `saveStation1` is the
-// start room's allowed_elevators rule. False when the walk strands the last
-// area (the apworld would raise); the caller rolls again.
-bool RandomElevators(Rng& rng, bool saveStation1, ElevatorMap& out) {
+// starting from the area with the most unpaired ones. The start room's
+// allowed elevators (in `area`) are paired first. False when the walk strands
+// the last area (the apworld would raise); the caller rolls again.
+bool RandomElevators(Rng& rng, int area, const std::vector< AllowedElevator >& allowed, ElevatorMap& out) {
   out.clear();
   std::vector< std::vector< int > > available(kAreaCount);
   for (int i = 0; i < kElevatorCount; ++i)
@@ -240,17 +361,20 @@ bool RandomElevators(Rng& rng, bool saveStation1, ElevatorMap& out) {
     drop(kElevators[target].area, target);
   };
 
-  if (saveStation1) {
-    // Save Station 1's elevator (Chozo Ruins: Transport to Tallon Overworld
-    // North) may only lead to three of the other areas' elevators.
-    static const char* const kAllowed[] = {"Transport to Chozo Ruins East", "Transport to Magmoor Caverns West",
-                                           "Transport to Chozo Ruins West"};
-    const int source = 5;
+  for (const AllowedElevator& rule : allowed) {
+    int source = -1;
+    for (const int i : available[area]) {
+      if (std::string(rule.source) == kElevators[i].name)
+        source = i;
+    }
+    if (source < 0)
+      return false;
     std::vector< int > options;
     for (int i = 0; i < kElevatorCount; ++i) {
-      if (kElevators[i].area == kElevators[source].area)
+      const std::vector< int >& left = available[kElevators[i].area];
+      if (kElevators[i].area == area || std::find(left.begin(), left.end(), i) == left.end())
         continue;
-      for (const char* name : kAllowed) {
+      for (const char* name : rule.targets) {
         if (std::string(name) == kElevators[i].name)
           options.push_back(i);
       }
@@ -280,54 +404,341 @@ bool RandomElevators(Rng& rng, bool saveStation1, ElevatorMap& out) {
   return true;
 }
 
-// generate_random_door_color_mapping: the three coloured locks shuffled until
-// none keeps its own colour.
-std::map< std::string, std::string > RandomLocks(Rng& rng) {
-  const std::vector< std::string > locks = {"Wave Beam", "Ice Beam", "Plasma Beam"};
-  std::vector< std::string > shuffled = locks;
+// The lock a beam opens, as DoorLockType names it.
+const char* LockOf(int beam) {
+  switch (beam) {
+  case kWave: return "Wave Beam";
+  case kIce: return "Ice Beam";
+  case kPlasma: return "Plasma Beam";
+  default: return "Power Beam Only";
+  }
+}
+
+const char* const kColorLocks[] = {"Wave Beam", "Ice Beam", "Plasma Beam"};
+
+// generate_random_door_color_mapping: the coloured locks (and Power Beam Only
+// doors when asked) shuffled until none of the three keeps its own colour.
+// Quarantine Monitor's start also needs its wave doors not to turn ice.
+std::map< std::string, std::string > RandomLocks(const Settings& s, bool quarantineMonitor, Rng& rng) {
+  std::vector< std::string > shuffled(std::begin(kColorLocks), std::end(kColorLocks));
+  if (s.includePowerBeamDoors && !s.randomizeStartingBeam)
+    shuffled.push_back("Power Beam Only");
+  std::map< std::string, std::string > out;
   for (;;) {
     rng.Shuffle(shuffled);
+    out.clear();
     bool valid = true;
-    for (size_t i = 0; i < locks.size(); ++i)
-      valid = valid && locks[i] != shuffled[i];
+    for (size_t i = 0; i < std::size(kColorLocks); ++i) {
+      out[kColorLocks[i]] = shuffled[i];
+      valid = valid && shuffled[i] != kColorLocks[i];
+    }
+    if (quarantineMonitor)
+      valid = valid && out["Wave Beam"] != "Ice Beam";
     if (valid)
-      break;
+      return out;
   }
-  std::map< std::string, std::string > out;
-  for (size_t i = 0; i < locks.size(); ++i)
-    out[locks[i]] = shuffled[i];
+}
+
+// get_world_door_mapping, with the bomb doors of one area other than the start's.
+ElevatorMap RandomDoorColors(const Settings& s, const StartRoom& room, Rng& rng) {
+  ElevatorMap colors;
+  const bool quarantineMonitor = std::string(room.name) == "Quarantine Monitor";
+  if (s.doorColorRandomization == 1) {
+    const auto mapping = RandomLocks(s, quarantineMonitor, rng);
+    for (const char* area : kAreas)
+      colors[area] = mapping;
+  } else if (s.doorColorRandomization == 2) {
+    for (const char* area : kAreas)
+      colors[area] = RandomLocks(s, quarantineMonitor, rng);
+  } else {
+    return colors;
+  }
+  if (s.includeMorphBallBombDoors) {
+    std::vector< int > areas;
+    for (int area = 0; area < kAreaCount; ++area) {
+      if (area != room.area)
+        areas.push_back(area);
+    }
+    const int area = rng.Pick(areas);
+    colors[kAreas[area]][kColorLocks[rng.Below(std::size(kColorLocks))]] = "Bomb";
+  }
+  return colors;
+}
+
+// The start room and loadout (init_starting_room_data, init_starting_beam).
+struct Start {
+  const StartRoom* room = nullptr;
+  Loadout loadout;
+  // The loadout's items and prefill are given (the apworld's bk prevention,
+  // off for a Normal start that has more checks to reach).
+  bool bkPrevention = true;
+  int beam = kPower;
+  bool beamReplaced = false;
+};
+
+Start PickStart(const Settings& s, Rng& rng) {
+  Start out;
+  if (s.startingRoom == kNormalStart) {
+    // Without pre-scanned elevators and a shuffled Scan Visor, Landing Site has
+    // no way out, tricks or not, so Save Station 1 is used then as well (the
+    // apworld skips that case). Its prefill is then kept: without it, shields
+    // often close every way out of Save Station 1.
+    const bool noScanElevators = !s.preScanElevators && s.shuffleScanVisor;
+    const bool saveStation = s.elevatorRandomization || noScanElevators;
+    out.room = &FindStartRoom(saveStation ? "Save Station 1" : "Landing Site");
+    const bool moreChecks =
+        (s.blastShieldRandomization != 0 || s.trickDifficulty != -1) && !s.elevatorRandomization;
+    out.bkPrevention = !moreChecks || saveStation;
+  } else {
+    std::vector< const StartRoom* > candidates;
+    for (const StartRoom& room : StartRooms()) {
+      if (room.difficulty != s.startingRoom || (room.needsScanVisor && s.shuffleScanVisor))
+        continue;
+      // A random beam without door colours needs a Power Beam room.
+      if (s.doorColorRandomization == 0 && s.randomizeStartingBeam && room.loadouts[0].beam != kPower)
+        continue;
+      candidates.push_back(&room);
+    }
+    out.room = rng.Pick(candidates);
+  }
+  out.loadout = rng.Pick(out.room->loadouts);
+  if (!out.bkPrevention)
+    out.loadout.items.clear();
+  out.beam = out.loadout.beam;
   return out;
 }
 
-// The start room the apworld picks for the Normal start (init_starting_room_data).
-struct StartInfo {
-  const char* room;
-  bool saveStation1;
-  bool prefill; // the vanilla-start prefill that keeps a first-sphere walk possible
-};
-
-StartInfo PickStart(const Settings& s) {
-  const bool tricks = s.trickDifficulty != -1 && !s.elevatorRandomization;
-  const bool noScanElevators = !s.preScanElevators && s.shuffleScanVisor;
-  // Without pre-scanned elevators and a shuffled Scan Visor, Landing Site has
-  // no way out, tricks or not, so Save Station 1 is used then as well (the
-  // apworld skips that case); only the vanilla-start prefill stays off.
-  if (s.elevatorRandomization || noScanElevators)
-    return {"Save Station 1", true, !tricks};
-  return {"Landing Site", false, !tricks};
+// init_starting_beam: a coloured start beam follows its doors' new colour,
+// otherwise randomize_starting_beam picks one.
+void PickBeam(const Settings& s, const ElevatorMap& colors, Start& start, Rng& rng) {
+  if (start.room->forceBeam)
+    return;
+  if (!colors.empty() && start.beam != kPower) {
+    const std::string& lock = colors.at(kAreas[start.room->area]).at(LockOf(start.beam));
+    for (const int beam : {kPower, kWave, kIce, kPlasma}) {
+      if (lock == LockOf(beam)) {
+        start.beam = beam;
+        start.beamReplaced = true;
+      }
+    }
+  } else if (s.randomizeStartingBeam) {
+    start.beam = rng.Pick(std::vector< int >{kWave, kIce, kPlasma});
+    start.beamReplaced = true;
+  }
 }
 
-PortApWorld::Layout MakeLayout(const Settings& s, const StartInfo& start, const ElevatorMap& elevators,
-                               const std::map< std::string, std::map< std::string, std::string > >& colors) {
+// remap_doors_to_power_beam_if_necessary: doors of the start beam's colour
+// open to the Power Beam instead.
+void RemapPowerDoors(const Settings& s, const Start& start, ElevatorMap& colors) {
+  if (!s.includePowerBeamDoors || colors.empty() || start.beam == kPower)
+    return;
+  for (auto& area : colors) {
+    if (area.first == kAreas[start.room->area] && start.room->noPowerDoorAtStart)
+      continue;
+    for (auto& entry : area.second) {
+      if (entry.second == LockOf(start.beam))
+        entry.second = "Power Beam Only";
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Blast shields (BlastShieldRando.py, data/BlastShieldRegions.py).
+
+struct ShieldRegion {
+  int area;
+  const char* name;
+  bool lockable; // may hold a locked door
+  std::vector< std::pair< const char*, const char* > > doors; // (room, the room it leads to)
+  std::vector< const char* > invalidStarts;                   // start rooms it can't take a shield with
+};
+
+const std::vector< ShieldRegion >& ShieldRegions() {
+  static const std::vector< ShieldRegion > kRegions = {
+      {0, "Alcove", false, {{"Landing Site", "Alcove"}}, {"Arbor Chamber"}},
+      {0, "Canyon Cavern", true, {{"Landing Site", "Canyon Cavern"}}, {"Arbor Chamber", "Transport to Chozo Ruins East", "Landing Site"}},
+      {0, "Temple Hall", false, {{"Landing Site", "Temple Hall"}}, {"Arbor Chamber", "Transport to Chozo Ruins East", "Landing Site"}},
+      {0, "Waterfall Cavern", true, {{"Landing Site", "Waterfall Cavern"}}, {"Transport to Chozo Ruins East", "Landing Site"}},
+      {0, "Transport Tunnel B", true, {{"Tallon Canyon", "Root Tunnel"}, {"Root Cave", "Transport Tunnel B"}}, {"Warrior Shrine", "Arbor Chamber", "Transport to Chozo Ruins East", "Landing Site"}},
+      {0, "Transport Tunnel D", true, {{"Great Tree Hall", "Transport Tunnel D"}}, {"Warrior Shrine"}},
+      {0, "Transport Tunnel E", true, {{"Great Tree Hall", "Transport Tunnel E"}}, {"Warrior Shrine"}},
+      {0, "Great Tree Chamber", false, {{"Great Tree Hall", "Great Tree Chamber"}}, {}},
+      {1, "Ruins Entrance", false, {{"Transport to Tallon Overworld North", "Ruins Entrance"}, {"Ruins Entrance", "Main Plaza"}}, {"Warrior Shrine", "Transport to Chozo Ruins East", "Arbor Chamber", "Landing Site"}},
+      {1, "Ruined Shrine", false, {{"Main Plaza", "Ruined Shrine Access"}}, {"Arboretum", "Sunchamber Lobby", "Save Station 1", "Save Station 2", "Burn Dome", "Ruined Fountain", "Tower Chamber"}},
+      {1, "Tower of Light", false, {{"Ruined Shrine", "Tower of Light Access"}}, {"Tower Chamber"}},
+      {1, "Ruined Nursery", true, {{"Main Plaza", "Nursery Access"}}, {"Arboretum", "Sunchamber Lobby", "Save Station 1", "Save Station 2", "Burn Dome", "Ruined Fountain", "Tower Chamber"}},
+      {1, "Hive Totem", true, {{"North Atrium", "Ruined Gallery"}, {"Totem Access", "Hive Totem"}, {"Transport Access North", "Transport to Magmoor Caverns North"}}, {"Save Station 1", "Tower Chamber"}},
+      {1, "Vault", false, {{"Transport to Magmoor Caverns North", "Vault Access"}, {"Vault", "Plaza Access"}}, {}},
+      {1, "Training Chamber", false, {{"Main Plaza", "Ruined Fountain Access"}, {"Ruined Fountain", "Meditation Fountain"}, {"Meditation Fountain", "Magma Pool"}, {"Magma Pool", "Training Chamber Access"}, {"Training Chamber Access", "Training Chamber"}}, {}},
+      {1, "Ruined Fountain", false, {{"Ruined Fountain", "Arboretum Access"}, {"Arboretum Access", "Arboretum"}}, {"Arboretum", "Sunchamber Lobby", "Save Station 1", "Save Station 2", "Burn Dome", "Ruined Fountain"}},
+      {1, "Arboretum", false, {{"Sunchamber Lobby", "Arboretum"}, {"Gathering Hall Access", "Arboretum"}}, {"Arboretum", "Sunchamber Lobby", "Save Station 1", "Save Station 2", "Burn Dome", "Ruined Fountain"}},
+      {1, "Watery Hall", false, {{"Gathering Hall", "Watery Hall Access"}, {"Watery Hall", "Dynamo Access"}}, {"Arboretum", "Sunchamber Lobby", "Save Station 1", "Save Station 2", "Burn Dome", "Ruined Fountain"}},
+      {1, "Energy Core", true, {{"Gathering Hall", "East Atrium"}, {"Energy Core Access", "Energy Core"}}, {"Arboretum", "Sunchamber Lobby", "Save Station 1", "Save Station 2", "Burn Dome", "Ruined Fountain"}},
+      {1, "Burn Dome", false, {{"Burn Dome Access", "Burn Dome"}}, {"Burn Dome", "Arboretum"}},
+      {1, "Furnace", true, {{"Furnace", "East Furnace Access"}}, {}},
+      {1, "Crossway", false, {{"Crossway Access West", "Crossway"}}, {}},
+      {1, "Elder Hall Access", false, {{"Crossway", "Elder Hall Access"}}, {}},
+      {1, "Hall of the Elders", false, {{"Hall of the Elders", "Reflecting Pool Access"}}, {}},
+      {1, "Reflecting Pool", false, {{"Antechamber", "Reflecting Pool"}, {"Save Station 3", "Reflecting Pool"}, {"Transport Access South", "Reflecting Pool"}}, {}},
+      {2, "Lava Lake", false, {{"Transport to Chozo Ruins North", "Burning Trail"}, {"Lake Tunnel", "Lava Lake"}}, {"Warrior Shrine"}},
+      {2, "Pit Tunnel", false, {{"Lava Lake", "Pit Tunnel"}}, {"Warrior Shrine"}},
+      {2, "Storage Cavern", false, {{"Triclops Pit", "Storage Cavern"}}, {"Warrior Shrine"}},
+      {2, "Transport to Phendrana Drifts North", false, {{"Monitor Station", "Transport Tunnel A"}, {"Transport to Phendrana Drifts North", "Transport Tunnel A"}}, {}},
+      {2, "Warrior Shrine", false, {{"Monitor Station", "Warrior Shrine"}}, {"Warrior Shrine"}},
+      {2, "Transport Tunnel B", false, {{"Fiery Shores", "Transport Tunnel B"}}, {"Warrior Shrine"}},
+      {2, "Geothermal Core", false, {{"Transport to Tallon Overworld West", "Twin Fires Tunnel"}, {"Twin Fires Tunnel", "Twin Fires"}, {"North Core Tunnel", "Geothermal Core"}}, {}},
+      {2, "Magmoor Workstation", false, {{"South Core Tunnel", "Magmoor Workstation"}}, {}},
+      {2, "Transport Tunnel C", false, {{"Magmoor Workstation", "Transport Tunnel C"}}, {}},
+      {2, "Workstation Tunnel", false, {{"Magmoor Workstation", "Workstation Tunnel"}}, {}},
+      {3, "Shoreline Entrance", false, {{"Phendrana Shorelines", "Shoreline Entrance"}}, {}},
+      {3, "Temple Entryway", false, {{"Phendrana Shorelines", "Temple Entryway"}}, {"Save Station B", "East Tower", "Quarantine Monitor"}},
+      {3, "Ice Ruins East", true, {{"Ice Ruins Access", "Phendrana Shorelines"}, {"Plaza Walkway", "Phendrana Shorelines"}}, {"Save Station B", "East Tower", "Quarantine Monitor"}},
+      {3, "Ice Ruins West", false, {{"Phendrana Shorelines", "Ruins Entryway"}, {"Ruins Entryway", "Ice Ruins West"}}, {"Save Station B", "East Tower", "Quarantine Monitor"}},
+      {3, "Phendrana Canyon", false, {{"Ice Ruins West", "Canyon Entryway"}}, {"Save Station B", "East Tower", "Quarantine Monitor"}},
+      {3, "Ruined Courtyard", false, {{"Ice Ruins West", "Courtyard Entryway"}}, {"Save Station B", "East Tower", "Quarantine Monitor"}},
+      {3, "Quarantine Access", true, {{"Ruined Courtyard", "Quarantine Access"}}, {"Save Station B", "East Tower", "Quarantine Monitor"}},
+      {3, "Specimen Storage", true, {{"Ruined Courtyard", "Specimen Storage"}}, {"Save Station B", "East Tower", "Quarantine Monitor"}},
+      {3, "Quarantine Cave", true, {{"Quarantine Cave", "South Quarantine Tunnel"}}, {"Save Station B", "East Tower", "Quarantine Monitor"}},
+      {3, "Research Lab Hydra", true, {{"Research Lab Hydra", "Observatory Access"}, {"Observatory", "West Tower Entrance"}, {"Control Tower", "East Tower"}, {"Research Lab Aether", "Research Core Access"}, {"Research Core", "Pike Access"}}, {"Save Station B", "East Tower", "Quarantine Monitor"}},
+      {3, "Transport to Magmoor Caverns South", false, {{"Transport to Magmoor Caverns South", "Transport Access"}}, {"Quarantine Monitor"}},
+      {3, "Frost Cave", true, {{"Frozen Pike", "Frost Cave Access"}, {"Frost Cave", "Upper Edge Tunnel"}, {"Hunter Cave", "Lower Edge Tunnel"}}, {"Quarantine Monitor"}},
+      {4, "Quarry Access", false, {{"Main Quarry", "Quarry Access"}}, {}},
+      {4, "Waste Disposal", false, {{"Main Quarry", "Waste Disposal"}}, {}},
+      {4, "Elite Research", false, {{"Main Quarry", "Security Access A"}, {"Security Access B", "Elite Research"}}, {}},
+      {4, "Ore Processing", true, {{"Research Access", "Ore Processing"}}, {}},
+      {4, "Elevator A", true, {{"Ore Processing", "Elevator Access A"}, {"Elevator Access A", "Elevator A"}}, {}},
+      {4, "Storage Depot B", false, {{"Ore Processing", "Storage Depot B"}}, {}},
+      {4, "Elite Control", true, {{"Elite Control Access", "Elite Control"}}, {}},
+      {4, "Maintenance Tunnel", true, {{"Elite Control", "Maintenance Tunnel"}}, {}},
+      {4, "Ventilation Shaft", true, {{"Elite Control", "Ventilation Shaft"}}, {}},
+      {4, "Metroid Quarantine A", true, {{"Central Dynamo", "Quarantine Access A"}, {"Quarantine Access A", "Metroid Quarantine A"}, {"Elevator Access B", "Metroid Quarantine A"}}, {}},
+      {4, "Metroid Quarantine B", true, {{"Fungal Hall Access", "Fungal Hall A"}, {"Fungal Hall A", "Phazon Mining Tunnel"}, {"Fungal Hall B", "Quarantine Access B"}, {"Metroid Quarantine B", "Elite Quarters Access"}}, {}},
+      {4, "Elite Quarters", true, {{"Elite Quarters", "Processing Center Access"}}, {}},
+      {4, "Phazon Processing Center", true, {{"Phazon Processing Center", "Maintenance Tunnel"}}, {}},
+  };
+  return kRegions;
+}
+
+using ShieldMap = std::map< std::string, std::map< std::string, std::map< int, std::string > > >;
+
+bool IsBeamCombo(const std::string& type) {
+  return type == "Flamethrower" || type == "Ice Spreader" || type == "Wavebuster";
+}
+
+// get_world_blast_shield_mapping: shields per area, and locked_door_count
+// areas with one door locked for good. Every area that takes part has a
+// mapping, empty or not.
+bool RandomShields(const Settings& s, const StartRoom& start, Rng& rng, ShieldMap& out, std::string& why) {
+  static const char* const kTypes[] = {"Bomb",       "Charge Beam", "Flamethrower",  "Ice Spreader",
+                                       "Wavebuster", "Power Bomb",  "Super Missile", "Missile"};
+  std::vector< int > locked;
+  if (s.lockedDoorCount > 0) {
+    std::vector< int > areas = {0, 1, 3, 4};
+    rng.Shuffle(areas);
+    locked.assign(areas.begin(), areas.begin() + std::min< std::ptrdiff_t >(s.lockedDoorCount, 4));
+  }
+  std::vector< int > areas = locked;
+  if (s.blastShieldRandomization != 0)
+    areas = {0, 1, 2, 3, 4};
+
+  for (const int area : areas) {
+    auto& mapping = out[kAreas[area]];
+    std::vector< const ShieldRegion* > regions;
+    std::vector< const ShieldRegion* > startRegions;
+    for (const ShieldRegion& region : ShieldRegions()) {
+      if (region.area != area)
+        continue;
+      const bool invalid =
+          area == start.area && std::any_of(region.invalidStarts.begin(), region.invalidStarts.end(),
+                                            [&start](const char* name) { return std::string(name) == start.name; });
+      (invalid ? startRegions : regions).push_back(&region);
+    }
+    int combos = 0;
+    const auto pickType = [&]() {
+      std::vector< std::string > types;
+      for (const char* type : kTypes) {
+        if (s.blastShieldRandomization == 1 && std::string(type) == "Missile")
+          continue;
+        if (IsBeamCombo(type) && (s.blastShieldAvailableTypes != 1 || combos >= 1))
+          continue;
+        types.push_back(type);
+      }
+      const std::string type = rng.Pick(types);
+      combos += IsBeamCombo(type) ? 1 : 0;
+      return type;
+    };
+    // A random door of the region; `type` null for a random shield.
+    const auto place = [&](const ShieldRegion& region, const char* type) {
+      const auto& door = rng.Pick(region.doors);
+      const int dock = PortApWorld::DockTo(kAreas[area], door.first, door.second);
+      const std::string chosen = type != nullptr ? std::string(type) : pickType();
+      if (dock < 0) {
+        why = std::string("no door from ") + door.first + " to " + door.second;
+        return false;
+      }
+      mapping[door.first][dock] = chosen;
+      return true;
+    };
+    if (s.blastShieldRandomization == 2) {
+      std::vector< const ShieldRegion* > shuffled = regions;
+      rng.Shuffle(shuffled);
+      const size_t count =
+          std::min(shuffled.size(), (static_cast< size_t >(s.blastShieldFrequency) * shuffled.size() + 9) / 10);
+      for (size_t i = 0; i < count; ++i) {
+        if (!place(*shuffled[i], nullptr))
+          return false;
+      }
+    } else if (s.blastShieldRandomization == 1) {
+      for (const auto& door : PortApWorld::DiscShields(kAreas[area])) {
+        // The apworld's door data has no shield between Dynamo Access and
+        // Dynamo, so its replace_existing leaves that pair as on the disc.
+        if (door.first == "Dynamo" || (door.first == "Dynamo Access" && door.second == 1))
+          continue;
+        // The apworld replaces the start's own exits too, which closes Save
+        // Station 1 for good (its prefilled Morph Ball or Bombs sit behind
+        // Main Plaza's shields). The doors of the regions mix_it_up leaves
+        // alone for this start keep their Missile shield.
+        const bool kept = std::any_of(startRegions.begin(), startRegions.end(), [&](const ShieldRegion* region) {
+          return std::any_of(region->doors.begin(), region->doors.end(), [&](const auto& pair) {
+            return (pair.first == door.first &&
+                    PortApWorld::DockTo(kAreas[area], pair.first, pair.second) == door.second) ||
+                   (pair.second == door.first &&
+                    PortApWorld::DockTo(kAreas[area], pair.second, pair.first) == door.second);
+          });
+        });
+        if (!kept)
+          mapping[door.first][door.second] = pickType();
+      }
+    }
+    if (std::find(locked.begin(), locked.end(), area) != locked.end()) {
+      for (const ShieldRegion* region : regions) {
+        if (region->lockable) {
+          if (!place(*region, "Disabled"))
+            return false;
+          break;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+PortApWorld::Layout MakeLayout(const Settings& s, const Start& start, const ElevatorMap& elevators,
+                               const ElevatorMap& colors, const ShieldMap& shields) {
   PortApWorld::Layout layout;
-  layout.startRoom = start.room;
+  layout.startRoom = start.room->name;
   layout.finalBosses = s.finalBosses;
   layout.requiredArtifacts = s.requiredArtifacts;
   layout.elevators = elevators;
   layout.doorColorRandomization = s.doorColorRandomization != 0;
   layout.hasDoorColors = !colors.empty();
   layout.doorColors = colors;
-  layout.removeHiveMecha = s.removeHiveMecha;
+  layout.hasShields = s.blastShieldRandomization != 0 || s.lockedDoorCount > 0;
+  layout.shields = shields;
+  // Without the Power Beam the Hive Mecha can't be fought from these starts.
+  const std::string room = start.room->name;
+  layout.removeHiveMecha =
+      s.removeHiveMecha || ((room == "Landing Site" || room == "Save Station 1") && start.beam != kPower);
   layout.backwardsLowerMines = s.backwardsLowerMines;
   layout.flaahgraPowerBombs = s.flaahgraPowerBombs;
   return layout;
@@ -373,32 +784,35 @@ int BeamItem(const Settings& s, int beam) {
 int LauncherItem(const Settings& s) { return s.missileLauncher ? kLauncher : kMissileExp; }
 int MainPbItem(const Settings& s) { return s.mainPowerBomb ? kMainPb : kPbExp; }
 
-// The start room's vanilla-loadout prefill: location name -> item. One rule set
-// is picked at random, as StartRoomData.py does.
-std::vector< std::pair< const char*, int > > PickPrefill(const Settings& s, const StartInfo& start, Rng& rng) {
-  if (!start.prefill)
-    return {};
-  const char* const hive = "Chozo Ruins: Hive Totem";
-  const char* const beetle = "Chozo Ruins: Ruined Shrine - Plated Beetle";
-  const char* const gallery = "Chozo Ruins: Ruined Gallery - Missile Wall";
-  using Rule = std::vector< std::pair< const char*, int > >;
-  std::vector< Rule > rules = {
-      {{hive, kLauncher}, {beetle, kMorph}, {gallery, kBomb}},
-      {{hive, kLauncher}, {beetle, kBomb}, {gallery, kMorph}},
-  };
-  // Landing Site has a second loadout with a smaller prefill; Save Station 1 doesn't.
-  if (!start.saveStation1 && rng.Below(2) == 1)
-    rules = {{{hive, kLauncher}, {gallery, kMorph}}};
-  Rule rule = rules[rng.Below(rules.size())];
-  for (auto& entry : rule) {
-    if (entry.second == kLauncher)
-      entry.second = LauncherItem(s);
+// get_item_for_options for a loadout item.
+int MapItem(const Settings& s, int item) {
+  switch (item) {
+  case kLauncher: return LauncherItem(s);
+  case kMainPb: return MainPbItem(s);
+  case kPower:
+  case kWave:
+  case kIce:
+  case kPlasma: return BeamItem(s, item);
+  default: return item;
   }
-  return rule;
 }
 
-std::vector< int > StartInventory(const Settings& s) {
-  std::vector< int > items = {BeamItem(s, kPower)};
+// The start loadout's prefill: location name -> item, from one of its rule
+// sets picked at random (StartRoomData.py). Only with bk prevention.
+std::vector< std::pair< const char*, int > > PickPrefill(const Settings& s, const Start& start, Rng& rng) {
+  std::vector< std::pair< const char*, int > > out;
+  if (!start.bkPrevention || start.loadout.rules.empty())
+    return out;
+  for (const ItemRule& rule : rng.Pick(start.loadout.rules))
+    out.emplace_back(rule.location, MapItem(s, rng.Pick(rule.choices)));
+  return out;
+}
+
+// generate_base_start_inventory.
+std::vector< int > StartInventory(const Settings& s, const Start& start) {
+  std::vector< int > items = {BeamItem(s, start.beam)};
+  for (const int item : start.loadout.items)
+    items.push_back(MapItem(s, item));
   if (!s.shuffleScanVisor)
     items.push_back(kScan);
   return items;
@@ -562,6 +976,8 @@ struct Attempt {
   PortApWorld::Layout layout;
   std::vector< int > placed; // location index -> item offset
   std::vector< int > start;
+  int beam = kPower;
+  bool beamReplaced = false;
   std::vector< std::vector< int > > spheres;
   Counts finalItems{};
 };
@@ -581,9 +997,18 @@ std::string SlotData(const Settings& s, const Attempt& a, const std::vector< int
        << ",\"non_varia_heat_damage\":" << flag(s.nonVariaHeatDamage)
        << ",\"staggered_suit_damage\":" << s.staggeredSuitDamage
        << ",\"backwards_lower_mines\":" << flag(s.backwardsLowerMines)
-       << ",\"remove_hive_mecha\":" << flag(s.removeHiveMecha) << ",\"spring_ball\":" << flag(s.springBall)
+       << ",\"remove_hive_mecha\":" << flag(a.layout.removeHiveMecha) << ",\"spring_ball\":" << flag(s.springBall)
        << ",\"required_artifacts\":" << s.requiredArtifacts << ",\"final_bosses\":" << s.finalBosses
-       << ",\"artifact_hints\":" << flag(s.artifactHints);
+       << ",\"artifact_hints\":" << flag(s.artifactHints) << ",\"starting_room\":" << s.startingRoom
+       << ",\"randomize_starting_beam\":" << flag(s.randomizeStartingBeam)
+       << ",\"blast_shield_randomization\":" << s.blastShieldRandomization
+       << ",\"blast_shield_frequency\":" << s.blastShieldFrequency
+       << ",\"blast_shield_available_types\":" << s.blastShieldAvailableTypes
+       << ",\"locked_door_count\":" << s.lockedDoorCount
+       << ",\"include_power_beam_doors\":" << flag(s.includePowerBeamDoors)
+       << ",\"include_morph_ball_bomb_doors\":" << flag(s.includeMorphBallBombDoors);
+  if (a.beamReplaced)
+    text << ",\"starting_beam\":" << port::JsonQuote(ItemLabel(MP::kItemBase + a.beam)); // a SuitUpgrade, not a lock
   AppendNames(text, "trick_allow_list", s.trickAllow);
   AppendNames(text, "trick_deny_list", s.trickDeny);
   text << ",\"starting_room_name\":" << port::JsonQuote(a.layout.startRoom) << ",\"elevator_mapping\":{";
@@ -592,6 +1017,28 @@ std::string SlotData(const Settings& s, const Attempt& a, const std::vector< int
   if (a.layout.hasDoorColors) {
     text << ",\"door_color_mapping\":{";
     AppendMapping(text, a.layout.doorColors, true);
+    text << '}';
+  }
+  if (a.layout.hasShields) {
+    text << ",\"blast_shield_mapping\":{";
+    bool firstArea = true;
+    for (const auto& area : a.layout.shields) {
+      text << (firstArea ? "" : ",") << port::JsonQuote(area.first) << ":{\"area\":" << port::JsonQuote(area.first)
+           << ",\"type_mapping\":{";
+      firstArea = false;
+      bool firstRoom = true;
+      for (const auto& room : area.second) {
+        text << (firstRoom ? "" : ",") << port::JsonQuote(room.first) << ":{";
+        firstRoom = false;
+        bool first = true;
+        for (const auto& entry : room.second) {
+          text << (first ? "" : ",") << '"' << entry.first << "\":" << port::JsonQuote(entry.second);
+          first = false;
+        }
+        text << '}';
+      }
+      text << "}}";
+    }
     text << '}';
   }
   if (s.artifactHints) {
@@ -618,6 +1065,8 @@ std::string Spoiler(const std::string& name, const Settings& s, const Attempt& a
   for (const int id : a.start)
     text << ' ' << ItemLabel(MP::kItemBase + id) << ';';
   text << '\n';
+  if (a.beamReplaced)
+    text << "Starting beam: " << ItemLabel(MP::kItemBase + a.beam) << '\n';
   if (s.elevatorRandomization) {
     text << "\nElevators:\n";
     for (const auto& area : a.layout.elevators) {
@@ -632,6 +1081,15 @@ std::string Spoiler(const std::string& name, const Settings& s, const Attempt& a
       for (const auto& entry : area.second)
         text << ' ' << entry.first << " -> " << entry.second << ';';
       text << '\n';
+    }
+  }
+  if (a.layout.hasShields) {
+    text << "\nBlast shields:\n";
+    for (const auto& area : a.layout.shields) {
+      for (const auto& room : area.second) {
+        for (const auto& entry : room.second)
+          text << "  " << area.first << ": " << room.first << " door " << entry.first << ": " << entry.second << '\n';
+      }
     }
   }
   text << "\nPlaythrough:\n";
@@ -665,40 +1123,48 @@ bool TryOnce(const Settings& s, Rng& rng, Attempt& out, std::string& why) {
     return false;
   }
 
-  const StartInfo start = PickStart(s);
+  // In the apworld's order: start room, door colours, start beam, shields,
+  // elevators.
+  Start start = PickStart(s, rng);
+  ElevatorMap colors = RandomDoorColors(s, *start.room, rng);
+  PickBeam(s, colors, start, rng);
+  RemapPowerDoors(s, start, colors);
+  const auto prefill = PickPrefill(s, start, rng);
+  ShieldMap shields;
+  if ((s.blastShieldRandomization != 0 || s.lockedDoorCount > 0) &&
+      !RandomShields(s, *start.room, rng, shields, why))
+    return false;
   ElevatorMap elevators;
   if (s.elevatorRandomization) {
-    if (!RandomElevators(rng, start.saveStation1, elevators)) {
+    if (!RandomElevators(rng, start.room->area, start.room->elevators, elevators)) {
       why = "elevator layout stranded an area";
       return false;
     }
   } else {
     elevators = DefaultElevators();
   }
-  ElevatorMap colors;
-  if (s.doorColorRandomization == 1) {
-    const auto mapping = RandomLocks(rng);
-    for (const char* area : kAreas)
-      colors[area] = mapping;
-  } else if (s.doorColorRandomization == 2) {
-    for (const char* area : kAreas)
-      colors[area] = RandomLocks(rng);
-  }
-  out.layout = MakeLayout(s, start, elevators, colors);
+  out.layout = MakeLayout(s, start, elevators, colors, shields);
+  out.beam = start.beam;
+  out.beamReplaced = start.beamReplaced;
   const PortApLogic::Options options = LogicFor(s, out.layout);
 
-  // The start inventory and the prefilled locations.
-  const auto prefill = PickPrefill(s, start, rng);
-  out.start = StartInventory(s);
+  // The start inventory and the prefilled locations; a prefilled item the
+  // start inventory already has is left to the fill.
+  out.start = StartInventory(s, start);
   out.placed.assign(kLocationCount, -1);
   std::vector< int > prefilledItems;
   for (const auto& entry : prefill) {
-    for (size_t i = 0; i < kLocationCount; ++i) {
-      if (std::string(locations[i].name) == entry.first) {
-        out.placed[i] = entry.second;
-        prefilledItems.push_back(entry.second);
-      }
+    if (std::find(out.start.begin(), out.start.end(), entry.second) != out.start.end())
+      continue;
+    size_t i = 0;
+    while (i < kLocationCount && std::string(locations[i].name) != entry.first)
+      ++i;
+    if (i == kLocationCount) {
+      why = std::string("unknown prefill location ") + entry.first;
+      return false;
     }
+    out.placed[i] = entry.second;
+    prefilledItems.push_back(entry.second);
   }
   std::vector< PoolItem > pool = BuildPool(s, prefilledItems, out.start);
 
@@ -729,42 +1195,59 @@ bool TryOnce(const Settings& s, Rng& rng, Attempt& out, std::string& why) {
     (item.progression ? progression : rest).push_back(item.id);
   rng.Shuffle(progression);
 
-  // Scan Visor early when the elevators need it: any location in logic before
-  // other items come in (prefilled ones count, they're placed already).
-  if (s.shuffleScanVisor && !s.preScanElevators) {
-    const auto it = std::find(progression.begin(), progression.end(), static_cast< int >(kScan));
-    if (it != progression.end()) {
-      progression.erase(it);
-      Closure(options, base, out.placed, reached);
-      // The prefill may hold every sphere-0 location (Save Station 1 reaches
-      // only the Hive Totem). The Scan Visor then takes it and the prefilled
-      // item goes back among the progression items.
-      std::vector< int > candidates;
-      for (size_t i = 0; i < kLocationCount; ++i) {
-        if (reached[i] && out.placed[i] < 0)
-          candidates.push_back(static_cast< int >(i));
-      }
-      if (candidates.empty()) {
-        for (size_t i = 0; i < kLocationCount; ++i) {
-          if (reached[i])
-            candidates.push_back(static_cast< int >(i));
-        }
-      }
-      if (candidates.empty()) {
-        // Nothing opens before some other item (tricks start without the
-        // prefill): the Scan Visor is placed like the rest.
-        progression.push_back(kScan);
-      } else {
-        const size_t chosen = static_cast< size_t >(rng.Pick(candidates));
-        if (out.placed[chosen] >= 0)
-          progression.push_back(out.placed[chosen]);
-        out.placed[chosen] = kScan;
-      }
+  // Items placed early, in a location open from the start: the start room's
+  // local_early items (with bk prevention), and the Scan Visor when the
+  // elevators need it. Prefilled locations count as open, they're placed already.
+  std::vector< int > early;
+  if (start.bkPrevention) {
+    for (const int item : start.room->localEarly)
+      early.push_back(MapItem(s, item));
+  }
+  if (s.shuffleScanVisor && !s.preScanElevators)
+    early.push_back(kScan);
+  for (size_t e = 0; e < early.size(); ++e) {
+    const int item = early[e];
+    if (std::find(early.begin(), early.begin() + static_cast< std::ptrdiff_t >(e), item) !=
+        early.begin() + static_cast< std::ptrdiff_t >(e))
+      continue;
+    const auto it = std::find(progression.begin(), progression.end(), item);
+    if (it == progression.end())
+      continue;
+    progression.erase(it);
+    Closure(options, base, out.placed, reached);
+    std::vector< int > candidates;
+    for (size_t i = 0; i < kLocationCount; ++i) {
+      if (reached[i] && out.placed[i] < 0)
+        candidates.push_back(static_cast< int >(i));
+    }
+    if (candidates.empty()) {
+      // Nothing free opens before some other item (the prefill holds all of
+      // sphere 0, or shields close the start): the item is placed like the
+      // rest, as AP's early fill does.
+      progression.push_back(item);
+    } else {
+      out.placed[static_cast< size_t >(rng.Pick(candidates))] = item;
     }
   }
 
   // Assumed fill: each progression item goes where the player could stand
-  // holding every progression item still unplaced.
+  // holding every progression item still unplaced. Every such set holds
+  // sphere 0, so one free sphere-0 location is kept back until it's the only
+  // choice: a small sphere 0 (blast shields, buckle-up starts) otherwise
+  // fills up before the last items.
+  Closure(options, base, out.placed, reached);
+  std::vector< int > sphere0;
+  for (size_t i = 0; i < kLocationCount; ++i) {
+    if (reached[i] && out.placed[i] < 0)
+      sphere0.push_back(static_cast< int >(i));
+  }
+  if (sphere0.empty() && !progression.empty()) {
+    // Shields or locked doors can close every way out of a start: no
+    // placement saves it, so fail before the fill.
+    why = "the start reaches no open location";
+    return false;
+  }
+  const int reserve = sphere0.empty() ? -1 : rng.Pick(sphere0);
   Counts assumed = base;
   for (const int id : progression)
     ++assumed[static_cast< size_t >(id)];
@@ -773,9 +1256,11 @@ bool TryOnce(const Settings& s, Rng& rng, Attempt& out, std::string& why) {
     Closure(options, assumed, out.placed, reached);
     std::vector< int > candidates;
     for (size_t i = 0; i < kLocationCount; ++i) {
-      if (reached[i] && out.placed[i] < 0)
+      if (reached[i] && out.placed[i] < 0 && static_cast< int >(i) != reserve)
         candidates.push_back(static_cast< int >(i));
     }
+    if (candidates.empty() && reserve >= 0)
+      candidates.push_back(reserve);
     if (candidates.empty()) {
       why = "no reachable location for a progression item";
       return false;
@@ -830,6 +1315,11 @@ bool Generate(const Settings& settings, const std::string& seedText, Seed& out, 
   s.trickDifficulty = std::clamp(s.trickDifficulty, -1, 2);
   s.removeXray = std::clamp(s.removeXray, 0, 2);
   s.removeThermal = std::clamp(s.removeThermal, 0, 2);
+  s.startingRoom = std::clamp(s.startingRoom, 0, 2);
+  s.blastShieldRandomization = std::clamp(s.blastShieldRandomization, 0, 2);
+  s.blastShieldFrequency = std::clamp(s.blastShieldFrequency, 1, 6);
+  s.blastShieldAvailableTypes = std::clamp(s.blastShieldAvailableTypes, 0, 1);
+  s.lockedDoorCount = std::clamp(s.lockedDoorCount, 0, 2);
 
   const std::string name = seedText.empty() ? RandomName() : seedText;
   const uint64_t hash = HashInput(s, name);

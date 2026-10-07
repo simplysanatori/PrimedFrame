@@ -7752,6 +7752,15 @@ std::string RandoSummary(const PortRandoGen::Settings& s) {
   if (s.doorColorRandomization != 0) {
     text += s.doorColorRandomization == 1 ? ", doors global" : ", doors regional";
   }
+  if (s.startingRoom != 0) {
+    text += s.startingRoom == 1 ? ", safe start" : ", buckle-up start";
+  }
+  if (s.blastShieldRandomization != 0) {
+    text += s.blastShieldRandomization == 1 ? ", shields replaced" : ", shields mixed";
+  }
+  if (s.lockedDoorCount > 0) {
+    text += ", " + std::to_string(s.lockedDoorCount) + " locked";
+  }
   if (s.trickDifficulty >= 0) {
     static const char* const kTricks[] = {"easy", "medium", "hard"};
     text += std::string(", tricks ") + kTricks[std::min(s.trickDifficulty, 2)];
@@ -7835,6 +7844,13 @@ void DrawRandomizerTab() {
   ItemHelp("Which bosses must be beaten to finish. None finishes at the artifact temple.");
   check("Artifact hints", s.artifactHints, "The Artifact Temple totems say where each artifact is.");
 
+  ImGui::SeparatorText("Start");
+  changed |= ImGui::Combo("Starting room", &s.startingRoom, "Normal\0Safe\0Buckle up\0");
+  ItemHelp("Normal starts at the Landing Site (Save Station 1 with random elevators). Safe and Buckle up "
+           "start in a random room with that room's items; Buckle up's rooms are harder to get out of.");
+  check("Random starting beam", s.randomizeStartingBeam,
+        "Start with the Wave, Ice or Plasma Beam instead of the Power Beam.");
+
   ImGui::SeparatorText("Items");
   check("Missile Launcher", s.missileLauncher, "Missiles are useless until the Missile Launcher is found.");
   check("Main Power Bomb", s.mainPowerBomb, "Power bombs need the main Power Bomb item.");
@@ -7853,6 +7869,28 @@ void DrawRandomizerTab() {
   check("Elevator randomization", s.elevatorRandomization, "Elevators lead to other areas.");
   changed |= ImGui::Combo("Door colours", &s.doorColorRandomization, "None\0Global\0Regional\0");
   ItemHelp("Shuffles the coloured door locks, everywhere or within each area.");
+  check("Power Beam doors", s.includePowerBeamDoors,
+        "Door colours may turn a colour into Power Beam doors (with a random starting beam, the start "
+        "beam's doors open to the Power Beam instead).");
+  check("Morph Ball Bomb doors", s.includeMorphBallBombDoors,
+        "With door colours, one colour of one area other than the start's opens to Morph Ball Bombs.");
+  changed |= ImGui::Combo("Blast shields", &s.blastShieldRandomization, "None\0Replace existing\0Mix it up\0");
+  ItemHelp("Replace existing gives the disc's missile shields random types. Mix it up puts random shields on "
+           "doors all over each area instead.");
+  ImGui::BeginDisabled(s.blastShieldRandomization != 2);
+  int frequency = s.blastShieldFrequency >= 6 ? 2 : s.blastShieldFrequency >= 4 ? 1 : 0;
+  if (ImGui::Combo("Blast shield frequency", &frequency, "Low (10%)\0Medium (40%)\0High (60%)\0")) {
+    s.blastShieldFrequency = frequency == 0 ? 1 : frequency == 1 ? 4 : 6;
+    changed = true;
+  }
+  ItemHelp("How many of each area's doors take a shield under Mix it up.");
+  ImGui::EndDisabled();
+  ImGui::BeginDisabled(s.blastShieldRandomization == 0);
+  changed |= ImGui::Combo("Blast shield types", &s.blastShieldAvailableTypes, "No beam combos\0All\0");
+  ItemHelp("All adds Flamethrower, Ice Spreader and Wavebuster shields, at most one per area.");
+  ImGui::EndDisabled();
+  changed |= ImGui::SliderInt("Locked doors", &s.lockedDoorCount, 0, 2);
+  ItemHelp("How many areas (not Magmoor) get one door locked for good.");
   check("Backwards Lower Mines", s.backwardsLowerMines, "Phazon Mines' lower levels can be entered from the other end.");
   check("Flaahgra power bombs", s.flaahgraPowerBombs, "Flaahgra can be beaten with power bombs.");
 

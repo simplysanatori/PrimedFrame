@@ -335,6 +335,30 @@ std::string Text(const Layout& layout) {
   return text.str();
 }
 
+int DockTo(const std::string& area, const std::string& room, const std::string& dest) {
+  const std::string areaName = Folded(area);
+  const std::string roomName = Folded(room);
+  const std::string destName = Folded(dest);
+  for (const Door& door : kDoors) {
+    const Room& r = kRooms[door.room];
+    if (door.dest >= 0 && Folded(kAreas[r.area]) == areaName && Folded(r.name) == roomName &&
+        Folded(kRooms[door.dest].name) == destName)
+      return door.dock;
+  }
+  return -1;
+}
+
+std::vector< std::pair< std::string, int > > DiscShields(const std::string& area) {
+  const std::string areaName = Folded(area);
+  std::vector< std::pair< std::string, int > > out;
+  for (const Door& door : kDoors) {
+    const Room& r = kRooms[door.room];
+    if (door.shield >= 0 && Folded(kAreas[r.area]) == areaName)
+      out.emplace_back(r.name, door.dock);
+  }
+  return out;
+}
+
 bool StartRoom(const Layout& layout, Place& out) {
   std::string name = Folded(layout.startRoom);
   if (name.empty())

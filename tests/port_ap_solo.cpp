@@ -121,6 +121,14 @@ int main() {
     settings.removeThermal = 2;
     settings.removeHiveMecha = true;
     settings.springBall = false;
+    settings.startingRoom = 2;
+    settings.randomizeStartingBeam = true;
+    settings.blastShieldRandomization = 2;
+    settings.blastShieldFrequency = 6;
+    settings.blastShieldAvailableTypes = 1;
+    settings.lockedDoorCount = 2;
+    settings.includePowerBeamDoors = true;
+    settings.includeMorphBallBombDoors = true;
     Check(PortRandoGen::ParseSettings(PortRandoGen::SettingsText(settings), parsed) && parsed == settings,
           "changed settings round-trip");
     PortRandoGen::Settings other = settings;
