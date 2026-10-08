@@ -1105,9 +1105,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 524288 = the vertex colour is used raw (premultiplied glass 941068bf / bcc73459, whose
       // vertex shader has no log2/exp2 decode).
       let pbr_rawv = ubuf.pbr_backlight.w > 524287.5;
-      let pbr_mwr = ubuf.pbr_backlight.w - select(0.0, 524288.0, pbr_rawv);
-      let pbr_flat = pbr_mwr > 262143.5;
-      let pbr_mwf = pbr_mwr - select(0.0, 262144.0, pbr_flat);
+      let pbr_mwv5 = ubuf.pbr_backlight.w - select(0.0, 524288.0, pbr_rawv);
+      let pbr_flat = pbr_mwv5 > 262143.5;
+      let pbr_mwf = pbr_mwv5 - select(0.0, 262144.0, pbr_flat);
       // 131072 = a bare unlit surface (the Surface shaders 67135a0b / 6fc4d540): Remastered
       // multiplies it by no exposure of its own, so the frame's tonemap exposes it; the backlight
       // rgb holds the part of that exposure GlowScale (tone row 0 w) leaves.
