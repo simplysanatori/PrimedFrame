@@ -22,6 +22,11 @@ enum EStateFlags {
   // Port: unused by retail data. Converted mod materials set it to be shaded
   // with Aurora's PBR path (maps 0-3 = base, ORM, normal, emissive).
   kStateFlag_PortPBR = (1 << 14),
+  // Port: unused by retail data. A converted HUD picture whose Remastered shader also adds
+  // its base map, unscaled by the widget colour (3853595c: rgb += ICAN * ICNC). The surface
+  // is drawn a second time, additively (src alpha, one) in white at the first pass's alpha.
+  // Both passes write the HUD's UNORM target after tone mapping, so the sum clamps at 1.
+  kStateFlag_PortHudGlow = (1 << 15),
 #endif
   kStateFlag_TextureSlotMask = static_cast< uint >(~kStateFlag_LightmapUvArray),
 };

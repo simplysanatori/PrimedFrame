@@ -533,6 +533,26 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   }
 
 #ifdef TARGET_PC
+  // Port: a HUD glow picture (kStateFlag_PortHudGlow) is drawn twice, as Remastered's
+  // alpha-blended 3853595c shades it: alpha blended as given (its blend is the shader's, not the
+  // widget's draw mode, which the converted frames carry as additive), then additively in
+  // white with the same alpha (the ICAN * ICNC term, ICNC = 1).
+  static bool sHudGlowSecondPass = false;
+  if (material.IsFlagSet(kStateFlag_PortHudGlow) && !sHudGlowSecondPass &&
+      modelFlags.GetTrans() >= CModelFlags::kT_Blend) {
+    const CColor& base = modelFlags.GetColorRef();
+    const CModelFlags blend(CModelFlags::kT_Blend, static_cast< uchar >(modelFlags.GetShaderSet()),
+                            static_cast< CModelFlags::EFlags >(modelFlags.GetOtherFlags()), base);
+    const CModelFlags glow(CModelFlags::kT_Additive, static_cast< uchar >(modelFlags.GetShaderSet()),
+                           static_cast< CModelFlags::EFlags >(modelFlags.GetOtherFlags()),
+                           CColor(1.f, 1.f, 1.f, base.GetAlpha()));
+    sHudGlowSecondPass = true;  // also guards the first call from recursing
+    DrawSurface(surface, blend);
+    CCubeMaterial::ResetCachedMaterials();  // the same material's blend must be set again
+    DrawSurface(surface, glow);
+    sHudGlowSecondPass = false;
+    return;
+  }
   // Port: an untinted alpha blend (the arm cannon is always drawn alpha blended for its fade,
   // and Samus fades in and out of the morph ball) stays on a PBR material. At full alpha it
   // draws as opaque, since the PBR shader's alpha is the base map's, which a blend would show
