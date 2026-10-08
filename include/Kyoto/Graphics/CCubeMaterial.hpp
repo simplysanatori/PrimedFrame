@@ -68,8 +68,7 @@ public:
   static int sPortPBRProbeMode;
   static uint sPortPBRDraws;
   // Port: the converted Remastered HUD's DYIN (x = 1 - the HUD's fade-in alpha, y = random;
-  // CSamusHud::Draw sets it, zero otherwise) and whether a draw with its interference material
-  // has been seen, which is when the HUD is Remastered's and retail's fade static is skipped.
+  // CSamusHud::Draw sets it while the HUD fades in, zero otherwise).
   static float sPortHudDyin[2];
   // The PBR draws outside the probe's own capture that reflected the live probe rather than a
   // room environment's cube; while none do, the capture is skipped.

@@ -124,12 +124,6 @@ private:
   CGuiFrame* x274_loadedFrmeBaseHud;
   rstl::optional_object< TCachedToken< CGuiFrame > > x278_selectedHud;
   CGuiFrame* x288_loadedSelectedHud;
-#ifdef TARGET_PC
-  // Port: whether the HUD frames drawn now fade in through Remastered's interference material;
-  // recomputed when a frame pointer changes (see Draw).
-  mutable const CGuiFrame* mPortHudFrames[2] = {nullptr, nullptr};
-  mutable bool mPortHudInterference = false;
-#endif
   rstl::single_ptr< CHudEnergyInterface > x28c_energyIntf;
   rstl::single_ptr< IHudThreatInterface > x290_threatIntf;
   rstl::single_ptr< CHudMissileInterface > x294_missileIntf;
