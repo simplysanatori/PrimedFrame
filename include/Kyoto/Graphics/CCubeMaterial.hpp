@@ -27,6 +27,13 @@ enum EStateFlags {
   // Drawn once, with the widget's own blend, and TEV stage 0 as T + T*c (clamped at 1, as the
   // shader output is into the HUD's UNORM target after tone mapping).
   kStateFlag_PortHudGlow = (1 << 15),
+  // Port: unused by retail data. A converted HUD picture whose Remastered shader squares the
+  // filtered alpha it samples (ca1106b0 with unk1&1, 3853595c, 2d606234).
+  kStateFlag_PortHudSquare = (1 << 16),
+  // Port: unused by retail data. A converted HUD picture drawn with Remastered's
+  // UI_Interference (ad2c208c); bits 18..20 index PortRemastered::kHudInterferenceRows.
+  kStateFlag_PortHudInterference = (1 << 17),
+  kStateFlag_PortHudInterferenceShift = 18,
 #endif
   kStateFlag_TextureSlotMask = static_cast< uint >(~kStateFlag_LightmapUvArray),
 };
@@ -60,6 +67,11 @@ public:
   // 0 off, 1 on, 2 mirror, 3 window; -1 takes it from MP_PBR_PROBE on first use.
   static int sPortPBRProbeMode;
   static uint sPortPBRDraws;
+  // Port: the converted Remastered HUD's DYIN (x = 1 - the HUD's fade-in alpha, y = random;
+  // CSamusHud::Draw sets it, zero otherwise) and whether a draw with its interference material
+  // has been seen, which is when the HUD is Remastered's and retail's fade static is skipped.
+  static float sPortHudDyin[2];
+  static bool sPortHudInterferenceSeen;
   // The PBR draws outside the probe's own capture that reflected the live probe rather than a
   // room environment's cube; while none do, the capture is skipped.
   static uint sPortPBRProbeDraws;

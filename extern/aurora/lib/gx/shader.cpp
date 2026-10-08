@@ -12,6 +12,7 @@
 
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
+#include <algorithm>
 #include <atomic>
 #include <cstdlib>
 #include <filesystem>
@@ -3041,6 +3042,41 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
                                    "\n    }}",
                                    i, float(config.sdf) / 255.f);
     }
+    if (config.hudSample == 1) {
+      // GX_AURORA_SET_HUD_SAMPLE: Remastered's UI shaders square the filtered alpha.
+      fragmentFnPre += fmt::format("\n    sampled{0}.a = sampled{0}.a * sampled{0}.a;", i);
+    } else if (config.hudSample >= 2) {
+      // Remastered's UI_Interference (ad2c208c): DYIN.x scales a per-row jitter of the three
+      // channels' vertical sample position, DYIN.y seeds the rows' hash; DYIN.x == 0 is the
+      // plain picture. The picture is hudRows tall (CCH5.x).
+      static constexpr float kRows[5] = {414.476f, 195.048f, 100.f, 64.f, 128.f};
+      const float rows = kRows[std::min<int>(config.hudSample - 2, 4)];
+      fragmentFnPre += fmt::format(
+          "\n    {{"
+          "\n        let hi_uv = {1};"
+          "\n        let hi_amp = ubuf.hud_dyin.x / {2:.6f};"
+          "\n        var hi_s = 1.0;"
+          "\n        if (hi_uv.x < 0.1) {{ hi_s = 0.0; }}"
+          "\n        else if (hi_uv.x < 0.2) {{ hi_s = 0.1; }}"
+          "\n        else if (hi_uv.x < 0.3) {{ hi_s = 0.2; }}"
+          "\n        else if (hi_uv.x < 0.6) {{ hi_s = 0.3; }}"
+          "\n        else if (hi_uv.x < 0.65) {{ hi_s = 0.6; }}"
+          "\n        else if (hi_uv.x < 0.8) {{ hi_s = 0.65; }}"
+          "\n        else if (hi_uv.x < 0.9) {{ hi_s = 0.8; }}"
+          "\n        let hi_seed = hi_s + ubuf.hud_dyin.y;"
+          "\n        let hi_row = floor(hi_uv.y * {2:.6f});"
+          "\n        let hi_h0 = fract(sin(hi_row * 78.233 + hi_seed * 12.9898) * 43758.5469);"
+          "\n        let hi_h1 = fract(sin(hi_row * 78.233 + (hi_seed + 1.0) * 12.9898) * 43758.5469);"
+          "\n        let hi_h2 = fract(sin(hi_row * 78.233 + (hi_seed + 2.0) * 12.9898) * 43758.5469);"
+          "\n        let hi_r = textureSampleBias(tex{3}, tex{3}_samp, vec2f(hi_uv.x, hi_uv.y + hi_amp * -40.3 * (hi_h0 - 0.5)), ubuf.tex{3}_size_bias.z);"
+          "\n        let hi_g = textureSampleBias(tex{3}, tex{3}_samp, vec2f(hi_uv.x, hi_uv.y + hi_amp * -80.0 * (hi_h1 - 0.5)), ubuf.tex{3}_size_bias.z);"
+          "\n        let hi_b = textureSampleBias(tex{3}, tex{3}_samp, vec2f(hi_uv.x, hi_uv.y + hi_amp * 40.1 * (hi_h2 - 0.5)), ubuf.tex{3}_size_bias.z);"
+          "\n        if (ubuf.hud_dyin.x != 0.0) {{"
+          "\n            sampled{0} = vec4f(hi_r.r, hi_g.g, hi_b.b, (hi_r.a + hi_g.a + hi_b.a) / 3.0);"
+          "\n        }}"
+          "\n    }}",
+          i, uvIn, rows, underlying(stage.texMapId));
+    }
   }
   // Remastered's volumetric fog on the draws after its full-screen pass (between
   // GX_AURORA_PORT_VOLUMETRIC_FOG and its END): blended and additive draws are fogged per vertex,
@@ -3260,6 +3296,9 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
             fmt::format("\n@group(2) @binding({})\nvar pbr_lmap: texture_2d_array<f32>;", kLightmapBinding);
       }
     }
+  }
+  if (info.usesHudDyin) {
+    uniBufAttrs += "\n    hud_dyin: vec4f,";
   }
   if (info.usesPTTexMtx.any()) {
     uniBufAttrs += fmt::format("\n    postmtx: array<mat3x4f, {}>,", MaxPTTexMtx);

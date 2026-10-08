@@ -291,6 +291,13 @@ void GXSetSDF(u8 edge) {
   GX_WRITE_U8(edge);
 }
 
+void GXSetHudSample(u8 mode, f32 dyinX, f32 dyinY) {
+  GX_WRITE_AURORA(GX_AURORA_SET_HUD_SAMPLE);
+  GX_WRITE_U8(mode);
+  GX_WRITE_F32(dyinX);
+  GX_WRITE_F32(dyinY);
+}
+
 void GXPortSetDepthPrepass(u8 pass) {
   GX_WRITE_AURORA(GX_AURORA_PORT_DEPTH_PREPASS);
   GX_WRITE_U8(pass);

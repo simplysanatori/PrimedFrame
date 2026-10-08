@@ -408,6 +408,8 @@ struct GXState {
   u8 numTexGens = 0;
   u8 pbr = 0; // GX_AURORA_SET_PBR: above 1, a cost test (GXSetPBRCostTest)
   u8 sdf = 0; // GX_AURORA_SET_SDF
+  u8 hudSample = 0; // GX_AURORA_SET_HUD_SAMPLE
+  Vec4<float> hudDyin{0.f, 0.f, 0.f, 0.f}; // its DYIN
   u8 depthPrepass = 0; // GX_AURORA_PORT_DEPTH_PREPASS
   std::array<u32, 3> drawTag{0, UINT32_MAX, 0}; // GX_AURORA_SET_DRAW_TAG: asset, model index, material
   u32 drawSerial = 0; // GX_AURORA_PORT_DRAW_SERIAL
@@ -587,7 +589,8 @@ struct ShaderConfig {
   u8 volFog = 0;
   // With pbr, the vertex attribute holding the baked lightmap's UV (GX_VA_TEX0..7), or GX_VA_NULL: a varying in the shader.
   u8 pbrLightmapAttr = GX_VA_NULL;
-  u8 pad2[3]{}; // keeps the struct free of padding (memcmp and hash)
+  u8 hudSample = 0; // GX_AURORA_SET_HUD_SAMPLE
+  u8 pad2[2]{}; // keeps the struct free of padding (memcmp and hash)
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;
@@ -629,6 +632,7 @@ struct ShaderInfo {
   bool lightingEnabled : 1 = false;
   u8 lineMode : 2 = 0;
   bool usesPbr : 1 = false;
+  bool usesHudDyin : 1 = false; // ShaderConfig::hudSample >= 2: the hud_dyin uniform
   bool usesLightmap : 1 = false; // ShaderConfig::pbrLightmapAttr is set
   bool usesVolFog : 1 = false;
   bool usesShadow : 1 = false;    // ShaderConfig::shadow: the shadow uniforms and vs_shadow

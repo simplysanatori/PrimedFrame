@@ -831,8 +831,25 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     PortBeginDraw(surface, pbr);
   }
 #endif
+#ifdef TARGET_PC
+  // A converted Remastered HUD picture: its alpha squared after the filter, or its
+  // UI_Interference static (aurora's GX_AURORA_SET_HUD_SAMPLE).
+  u8 hudSample = 0;
+  if (material.IsFlagSet(kStateFlag_PortHudInterference)) {
+    hudSample = static_cast< u8 >(
+        2 + ((material.GetFlags() >> kStateFlag_PortHudInterferenceShift) & 7));
+    CCubeMaterial::sPortHudInterferenceSeen = true;
+    GXSetHudSample(hudSample, CCubeMaterial::sPortHudDyin[0], CCubeMaterial::sPortHudDyin[1]);
+  } else if (material.IsFlagSet(kStateFlag_PortHudSquare)) {
+    hudSample = 1;
+    GXSetHudSample(hudSample, 0.f, 0.f);
+  }
+#endif
   surface.CallDisplayList();
 #ifdef TARGET_PC
+  if (hudSample != 0) {
+    GXSetHudSample(0, 0.f, 0.f);
+  }
   GXSetDrawTag(0, 0xFFFFFFFF, 0);
   if (sPortDrawNumbering) {
     GXPortSetDrawSerial(0);

@@ -354,6 +354,10 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
     // colours, then 3 HDR rows per light
     info.uniformSize += sizeof(Mat3x4<float>) + sizeof(Vec4<float>) * (31 + GX::MaxLights * 4);
   }
+  if (config.hudSample >= 2) {
+    info.usesHudDyin = true;
+    info.uniformSize += sizeof(Vec4<float>);
+  }
   if (info.usesPTTexMtx.any()) {
     info.uniformSize += sizeof(Mat3x4<float>) * MaxPTTexMtx;
   }
@@ -510,6 +514,9 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
     for (const auto& v : g_gxState.pbrLightmapAxes) {
       buf.append(v);
     }
+  }
+  if (info.usesHudDyin) {
+    buf.append(g_gxState.hudDyin);
   }
   if (info.usesPTTexMtx.any()) {
     for (int i = 0; i < info.usesPTTexMtx.size(); ++i) {

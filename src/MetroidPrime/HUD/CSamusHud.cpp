@@ -9,7 +9,9 @@
 #include "Kyoto/Audio/CSfxManager.hpp"
 #include "Kyoto/Basics/CBasics.hpp"
 #include "Kyoto/Basics/CStopwatch.hpp"
+#include "Kyoto/CRandom16.hpp"
 #include "Kyoto/CSimplePool.hpp"
+#include "Kyoto/Graphics/CCubeMaterial.hpp"
 #include "Kyoto/Math/CMath.hpp"
 #include "Kyoto/Math/CRelAngle.hpp"
 #include "Kyoto/Math/CSphere.hpp"
@@ -1567,6 +1569,12 @@ void CSamusHud::Draw(const CStateManager& mgr, float alpha, uint helmetVis, bool
   if (x2bc_nextState == kHS_None) {
     return;
   }
+#ifdef TARGET_PC
+  // DYIN is set below, for this draw only.
+  struct PortDyinReset {
+    ~PortDyinReset() { CCubeMaterial::sPortHudDyin[0] = CCubeMaterial::sPortHudDyin[1] = 0.f; }
+  } portDyinReset;
+#endif
   const CPlayer::EPlayerMorphBallState ballState = mgr.GetPlayer()->GetMorphballTransitionState();
   x3a8_camFilter.Draw();
   if (ballState == CPlayer::kMS_Unmorphed) {
@@ -1587,6 +1595,18 @@ void CSamusHud::Draw(const CStateManager& mgr, float alpha, uint helmetVis, bool
     x7ac_profileInfo[11].x8_drawUsec = currentTime - previousTime;
     if (helmetVis < 5) {
       if (alpha < 1.f) {
+#ifdef TARGET_PC
+        // Remastered's HUD fades in through its interference material, driven by DYIN = (1 -
+        // alpha, random), not by a full-screen filter; the random is the display's own so the
+        // simulation's stays untouched. Retail's HUD keeps the filter.
+        static CRandom16 sPortStaticRandom(0x4455);
+        const bool remasteredHud = CCubeMaterial::sPortHudInterferenceSeen;
+        if (remasteredHud) {
+          CCubeMaterial::sPortHudDyin[0] = 1.f - alpha;
+          CCubeMaterial::sPortHudDyin[1] = sPortStaticRandom.Float();
+        }
+        if (!remasteredHud)
+#endif
         CCameraFilterPass::DrawFilter(CCameraFilterPass::kFT_NoColor,
                                       CCameraFilterPass::kFS_CookieCutterDepthRandomStatic,
                                       CColor::White(), nullptr, 1.f - alpha);

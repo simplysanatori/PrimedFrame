@@ -27,6 +27,9 @@ void GXSetPBR(GXBool enable);
 // Aurora extension: distance-field texturing for the following draws (see
 // GX_AURORA_SET_SDF). 0 turns it off.
 void GXSetSDF(u8 edge);
+// Port extension: how the following draws sample a converted Remastered HUD picture (see
+// GX_AURORA_SET_HUD_SAMPLE). Mode 0 turns it off.
+void GXSetHudSample(u8 mode, f32 dyinX, f32 dyinY);
 // Port extension: a depth pre-pass for surfaces that alpha-test. Pass 1 writes only depth,
 // and its pixel shader keeps nothing but what the alpha compare needs; pass 2 draws the same
 // surfaces again where the depth is equal, without writing it, so each pixel is shaded once

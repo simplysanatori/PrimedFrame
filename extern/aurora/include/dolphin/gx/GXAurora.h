@@ -213,6 +213,13 @@ extern "C" {
 //   u8 edge (distance of the outer edge x 255; 128 = the shape itself, 0 = off)
 #define GX_AURORA_SET_SDF 0x004F
 
+// Port: how the following draws sample a converted Remastered HUD picture (GXSetHudSample).
+// Payload:
+//   u8  mode (0 none; 1 the sampled alpha is squared, as Remastered's UI shaders do;
+//             2 + n the UI_Interference shader with a picture of kHudInterferenceRows[n] rows)
+//   f32 x, y (the shader's DYIN: x = 1 - the HUD's fade-in alpha, y = a random 0..1 per frame)
+#define GX_AURORA_SET_HUD_SAMPLE 0x0068
+
 // Names the following draws for diagnostics (see GXSetDrawTag); changes no state.
 // Payload:
 //   u32 asset id, u32 model index, u32 material

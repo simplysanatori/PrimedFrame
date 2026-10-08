@@ -1035,6 +1035,19 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.sdf = sdf;
       g_gxState.dirty |= DirtyPipeline;
     }
+  } else if (subCmd == GX_AURORA_SET_HUD_SAMPLE) {
+    const u8 mode = reader.read<u8>();
+    const f32 x = reader.read<f32>();
+    const f32 y = reader.read<f32>();
+    if (g_gxState.hudSample != mode) {
+      g_gxState.hudSample = mode;
+      g_gxState.dirty |= DirtyPipeline;
+    }
+    const Vec4<float> dyin{x, y, 0.f, 0.f};
+    if (g_gxState.hudDyin != dyin) {
+      g_gxState.hudDyin = dyin;
+      g_gxState.dirty |= DirtyUniform;
+    }
   } else if (subCmd == GX_AURORA_PORT_DEPTH_PREPASS) {
     const u8 pass = reader.read<u8>();
     if (g_gxState.depthPrepass != pass) {

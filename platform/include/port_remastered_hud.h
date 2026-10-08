@@ -23,6 +23,7 @@
 // output is the player's own, made from their copies of both games.
 
 #include <array>
+#include <iterator>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -35,6 +36,11 @@
 #include "port_remastered_convert.h"
 
 namespace PortRemastered {
+
+// UI_Interference (ad2c208c)'s CCH5.x, the picture's height in rows, one per material the HUD
+// has; a converted material carries the index (kStateFlag_PortHudInterference) and the shader
+// (aurora's GX_AURORA_SET_HUD_SAMPLE mode 2 + index) has the same table.
+inline constexpr float kHudInterferenceRows[5] = {414.476f, 195.048f, 100.f, 64.f, 128.f};
 
 // A Remastered frame by its asset name, and the disc frame it stands in for.
 struct HudFrame {
