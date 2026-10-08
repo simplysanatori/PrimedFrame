@@ -803,8 +803,8 @@ void StepLights(uint32_t mrea, Area& area, float dt) {
     }
     if (ended) {
       l.playing = false;
-      // (Every such link in the game's rooms is the forward end's; a backward end is assumed alike.)
-      if (file.offAtEnd) {
+      // Only the backward end (t = 0) sends the event these links answer; the forward end's is unlinked.
+      if (file.offAtStart && !l.forward) {
         l.active = false;
       }
     }
