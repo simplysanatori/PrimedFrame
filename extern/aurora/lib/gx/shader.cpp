@@ -1922,6 +1922,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
               var pbr_xl = 1.0;
               if (ubuf.pbr_lmap_rect.z != 0.0) {{
                   pbr_xl = max(pbr_l0v.r, max(pbr_l0v.g, pbr_l0v.b)) * dot(pbr_blcm, vec3f(0.2126, 0.7152, 0.0722));
+              }} else if (pbr_kind > 29.5 && pbr_bmeanok) {{
+                  // cc8afd0f's probe perms (BLPD 008-011, grid 014-017): the same occlusion from the mean.
+                  pbr_xl = max(pbr_bmean.r, max(pbr_bmean.g, pbr_bmean.b)) * dot(pbr_blcm, vec3f(0.2126, 0.7152, 0.0722));
               }}
               pbr_xenv = pbr_xc * mix(ubuf.pbr_probe[1].w, 1.0, saturate(pbr_xl * ubuf.pbr_probe[2].w));
           }}
@@ -1931,6 +1934,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_lo = pbr_xenv * (pbr_xab.x * 0.04 + pbr_xab.y);
           if (ubuf.pbr_lmap_rect.z != 0.0) {{
               pbr_lo += pbr_xbase * pbr_l0v * pbr_blcm * ((1.0 - pbr_xv3.w) / pbr_pi);
+          }} else if (pbr_kind > 29.5 && pbr_bmeanok) {{
+              pbr_lo += pbr_xbase * pbr_bmean * pbr_blcm * ((1.0 - pbr_xv3.w) / pbr_pi);
           }}
           pbr_pass = select(pbr_xbase, vec3f(1.0), pbr_kind > 29.5) * pbr_xv3.w * pbr_xscene;
       }})""",
@@ -2279,6 +2284,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // normal says how much of the room's light comes from that side, and w scales that
       // to 1 for the cube's average. The game's ambient keeps the level and the colour.
       var pbr_ambd = pbr_amb;
+      // The baked mean without the modulation (the BLPD record's mean, or the grid's mean
+      // texture): the glass kinds (30) light with this alone, no lobes.
+      var pbr_bmean = vec3f(0.0);
+      var pbr_bmeanok = false;
       if (pbr_hdr > 0.0 && ubuf.pbr_cube.w > 0.0) {{
           let pbr_nd = ubuf.pbr_probe[0].xyz * pbr_n.x + ubuf.pbr_probe[1].xyz * pbr_n.y +
                        ubuf.pbr_probe[2].xyz * pbr_n.z;
@@ -2296,6 +2305,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           // w is 1 when the game's ambient sets the level, 2 when the baked light is the level.
           pbr_ambd = select(dot(pbr_amb, vec3f(0.2126, 0.7152, 0.0722)), 1.0, ubuf.pbr_ambient[0].w > 1.5) * max(ubuf.pbr_ambient[0].rgb + ubuf.pbr_ambient[1].rgb * pow(pbr_aq, ubuf.pbr_ambient[2].rgb),
                          vec3f(0.0)) * pbr_blcm;
+          pbr_bmean = select(dot(pbr_amb, vec3f(0.2126, 0.7152, 0.0722)), 1.0, ubuf.pbr_ambient[0].w > 1.5) *
+                      max(ubuf.pbr_ambient[0].rgb + ubuf.pbr_ambient[1].rgb / (ubuf.pbr_ambient[2].rgb + 1.0), vec3f(0.0));
+          pbr_bmeanok = true;
       }}
       // An ambient volume (GX_AURORA_SET_PBR_VOLUME) is the same lobes, read at this pixel
       // from the room's grid, a little off the surface so that a wall is lit by the air in
@@ -2327,6 +2339,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                               dot(ubuf.pbr_volume[5].xyz, pbr_refl));
           let pbr_vrq = clamp(vec3f(dot(pbr_vrn, pbr_vr.xyz * 2.0 - 1.0), dot(pbr_vrn, pbr_vg.xyz * 2.0 - 1.0),
                                     dot(pbr_vrn, pbr_vb.xyz * 2.0 - 1.0)) * 0.5 + 0.5, vec3f(0.0), vec3f(1.0));
+          pbr_bmean = pbr_vmean * ubuf.pbr_volume[3].w;
+          pbr_bmeanok = true;
           pbr_envspec = max(pbr_vmean - pbr_vlobe + 2.0 * pbr_vlobe * (1.0 + pbr_vs) * pow(pbr_vrq, 1.0 + 2.0 * pbr_vs),
                             vec3f(0.0)) * ubuf.pbr_volume[3].w;
           // With a room cube and Remastered's reflection occlusion (w of probe rows 1 and 2,
