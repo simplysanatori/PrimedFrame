@@ -3472,10 +3472,10 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     vtxOutAttrs += fmt::format("\n    @location({}) vf: vec4f,", vtxOutIdx++);
     if (config.volFog == VolFogOpaque) {
       vtxXfrAttrs += "\n    out.vf = vec4f(out.pos.xy, out.pos.w, -mv_pos.z);";
-      volFogSample = fmt::format("vf_visible(vf_at(vec4f(in.vf.xy, 0.0, in.vf.z), in.vf.w), {})", fragDepth);
+      volFogSample = fmt::format("vf_at(vec4f(in.vf.xy, 0.0, in.vf.z), vf_depth(in.vf.w, {}))", fragDepth);
     } else {
       vtxXfrAttrs += "\n    out.vf = vf_at(out.pos, -mv_pos.z);";
-      volFogSample = fmt::format("vf_visible(in.vf, {})", fragDepth);
+      volFogSample = "in.vf";
     }
     texBindings += fmt::format("\n@group(2) @binding({})\n"
                                "var vf_froxels: texture_3d<f32>;\n"
@@ -3491,9 +3491,16 @@ fn vf_at(clip: vec4f, viewz: f32) -> vec4f {
     return textureSampleLevel(vf_froxels, vf_samp, vec3f(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, slice), 0.0);
 }
 
-// Nearer than the world's depth range is the viewmodel, which is not fogged.
-fn vf_visible(fog: vec4f, z: f32) -> vec4f {
-    return select(fog, vec4f(0.0, 0.0, 0.0, 1.0), z < ubuf.volfog.w);
+// The per-pixel (opaque) fog is the full-screen pass, which reads the depth buffer. Nearer than
+// the world's depth range is the viewmodel; Remastered draws it in the range 0.0097656..0.0386719
+// (construct_depth_range_from_flags 0xb40e20, flag bit 8) and the pass reads that as a full-range
+// depth, so it takes the first froxel slices. volfog_tone[0].w is 1 - near / far.
+fn vf_depth(viewz: f32, z: f32) -> f32 {
+    if (z < ubuf.volfog.w) {
+        let d = mix(0.0097656, 0.0386719, z / ubuf.volfog.w);
+        return ubuf.volfog.x / (1.0 - d * ubuf.volfog_tone[0].w);
+    }
+    return viewz;
 }
 
 fn vf_tone(x: f32) -> f32 {

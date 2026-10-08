@@ -1249,12 +1249,14 @@ void handle_aurora(ByteReader& reader) noexcept {
     std::memcpy(&params, words, sizeof(params));
     if (gfx::volfog::record(params)) {
       // The draws after it fog themselves through the froxels it fills.
-      // w: where the world's depth range starts; nearer is the viewmodel, which isn't fogged.
+      // w: where the world's depth range starts; nearer is the viewmodel (vf_depth).
       const Vec4<float> fogParams{params.depth[0], params.fog[0], params.colorA[3], params.depth[2]};
       std::array<Vec4<float>, 3> tone;
       for (size_t i = 0; i < tone.size(); ++i) {
         tone[i] = {params.tone[i][0], params.tone[i][1], params.tone[i][2], params.tone[i][3]};
       }
+      // The viewmodel's depth reading (vf_depth) needs 1 - near / far; tone[0].w is unused.
+      tone[0] = {params.tone[0][0], params.tone[0][1], params.tone[0][2], 1.f - params.depth[0] / params.depth[1]};
       if (!g_gxState.volFog) {
         g_gxState.volFog = true;
         g_gxState.dirty |= DirtyPipeline;
