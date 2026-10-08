@@ -508,7 +508,7 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
   }
   // Only the boundary shield, the pickup, the holograms (16-18) and the Phazon3 stone (21) have constants;
   // every other material clears the last one's.
-  GXSetPBRShield((kind > 13.5f && kind < 19.5f) || (kind > 20.5f && kind < 22.5f) || (kind > 24.5f && kind < 25.5f) ? reinterpret_cast< const f32(*)[4] >(shield) : nullptr);
+  GXSetPBRShield((kind > 13.5f && kind < 19.5f) || (kind > 20.5f && kind < 22.5f) || (kind > 24.5f && kind < 25.5f) || (kind > 27.5f && kind < 28.5f) ? reinterpret_cast< const f32(*)[4] >(shield) : nullptr);
   // World up as the shader sees it: view space is right, up, -forward.
   const f32 up[3] = {view.Get20(), view.Get22(), -view.Get21()};
   GXSetPBRMaterial(values, values + 3, values[6], values[7], values + 8, values + 13, up);
@@ -773,7 +773,9 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
           {viewToWorld[2][0], viewToWorld[2][1], viewToWorld[2][2]},
           {viewToWorld[1][0], viewToWorld[1][1], viewToWorld[1][2]},
       };
-      GXSetPBRProbeEx(viewToCube, 1.f, 1.f, 1.f);
+      // The ice (kind 28, 088e025e) darkens its reflection by the room's occlusion as the room cubes do.
+      const bool occluded = found && kind > 27.5f && kind < 28.5f;
+      GXSetPBRProbeEx(viewToCube, 1.f, occluded ? env.occlusionMin : 1.f, occluded ? env.occlusionInvMax : 1.f);
       GXSetPBRCube(materialCubeId, materialCubeParams);
     }
     // Glass (kinds 8 and 11) and the force fields (14) see what is behind them: the screen so far,
