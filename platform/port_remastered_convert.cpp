@@ -1532,6 +1532,10 @@ constexpr uint32_t kShaderPhazonB = 0x9E52AA74;
 // Distortion2 (24670bf0, the Phendrana ice walls, the crater's flesh glass; kind 23): refracts a mipped copy of
 // the frame by its normal map and a fresnel term, tinted by the base map and the vertex colour (kb material/24670bf0.md).
 constexpr uint32_t kShaderRefractGlass = 0x24670BF0;
+// The same body from the baked-probe pack (cc8afd0f, 31 materials: Phendrana ice walls and waterfalls; kind 30):
+// the scene term is v3.w x scene, without the base map and vertex colour tint (kb material/cc8afd0f.md).
+constexpr uint32_t kShaderHoloGlassB = 0x3991DA00;  // HoloGlass: scrolling indirect layers over a distorted screen copy
+constexpr uint32_t kShaderRefractGlassB = 0xCC8AFD0F;
 // The decal cutouts (kind 24; kb material/e538b757.md, 42fe2ed0.md): a bfb300b6 surface cut by a smoothstep of an
 // alpha A about CCH0.x = c (0.5 on all of them): discard where t²(3-2t) < 0.25, t = (A - 0.5 + c) / 2c; output
 // alpha 1, no vertex colour. e538b757 cuts on BCLR.a², 42fe2ed0 on TCH0.r (its alpha map, in the emissive slot).
@@ -1575,7 +1579,7 @@ std::string ShaderRole(uint32_t shader) {
   add(in(kShaderGunBody), "gun-body");
   add(shader == kShaderGunPanel, "gun-panel");
   add(in(kShaderPremulGlass), "premul-glass");
-  add(shader == kShaderHoloGlass, "holo-glass");
+  add(shader == kShaderHoloGlassB, "holo-glass-b");
   add(shader == kShaderBoundaryShield || shader == kShaderForceField, "boundary-shield");
   add(shader == kShaderPickUp, "pickup");
   add(shader == kShaderHolo, "holo");
@@ -1587,7 +1591,8 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderColorUnlit, "color-unlit");
   add(shader == kShaderPhazon, "phazon");
   add(shader == kShaderPhazonB, "phazon-b");
-  add(shader == kShaderRefractGlass, "refract-glass");
+  add(shader == kShaderRefractGlass || shader == kShaderRefractGlassB, "refract-glass");
+  add(shader == kShaderHoloGlassB, "holo-glass-b");
   add(shader == kShaderDecalCut || shader == kShaderDecalAlphaMap, "decal-cut");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
@@ -1623,6 +1628,8 @@ const char* KindName(int kind) {
   case 26: return "projected-blend";
   case 27: return "decal-alpha";
   case 28: return "ice";
+  case 29: return "holo-glass-b";
+  case 30: return "refract-glass-b";
   default: return "kind?";
   }
 }
@@ -2162,14 +2169,46 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 4; ++i) {
       out.shieldRows[28 + i] = 1.0;
     }
-  } else if (shader == kShaderRefractGlass && out.maps[kBase].has && out.maps[kNormal].has && cch[0]) {
-    out.kind = 23;
+  } else if ((shader == kShaderRefractGlass || shader == kShaderRefractGlassB) && out.maps[kBase].has &&
+             out.maps[kNormal].has && cch[0]) {
+    out.kind = shader == kShaderRefractGlassB ? 30 : 23;
     out.vcolor = true;
     // BCLR (alpha = roughness, squared in the shader) and NMAP are maps 0 and 2 as in the standard
     // shader. CCH0 (the refraction, the normal's share, the fresnel power and scale) goes whole to
     // kindParam. REFP and BLCM are the room's, which the runtime already has.
     for (int i = 0; i < 4; ++i) {
       out.kindParam[i] = ShortestDouble(cch[0]->color[i]);
+    }
+  } else if (shader == kShaderHoloGlassB && out.maps[kBase].has && tch[0] && tch[1] && tch[2] && cch[0] && cch[1] &&
+             cch[2] && cch[3]) {
+    out.kind = 29;
+    out.vcolor = true;
+    // BCLR is the base map (its alpha the roughness); TCH0 and TCH2 are indirect offsets (raw) and TCH1
+    // a colour (sRGB), bound as the second layer's base, MR and normal on their own AUVI texcoords.
+    // The shader's constants go to the runtime whole (rows 0-3 CCH0..CCH3, row 7 DIFC); row 4 x is the
+    // per-object phase the game fills, row 6 w says whether the material has a cube of its own.
+    set(kBase, tch[0]->texture, &out.layer[kBase]);
+    set(kMr, tch[1]->texture, &out.layer[kMr]);
+    set(kNormal, tch[2]->texture, &out.layer[kNormal]);
+    out.layer[kBase].raw = out.layer[kNormal].raw = true;
+    out.kindParam[0] = 1.0;  // the game multiplies it by the time
+    out.tint[0] = out.tint[1] = out.tint[2] = 0.0;
+    double difc[4] = {1.0, 1.0, 1.0, 1.0};
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind == ModelMaterialData::Kind::Color && d.usage == FourCC('D', 'I', 'F', 'C')) {
+        for (int i = 0; i < 4; ++i) {
+          difc[i] = ShortestDouble(d.color[i]);
+        }
+      }
+    }
+    for (int r = 0; r < 4; ++r) {
+      for (int i = 0; i < 4; ++i) {
+        out.shieldRows[r * 4 + i] = ShortestDouble(cch[r]->color[i]);
+      }
+    }
+    out.shieldRows[27] = out.refl.has ? 1.0 : 0.0;
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = difc[i];
     }
   } else if ((shader == kShaderBoundaryShield || shader == kShaderForceField) && out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] &&
              cch[2] && cch[3] && cch[4] && cch[5] && cch[6]) {
@@ -2410,7 +2449,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
   }
-  if (out.kind == 14) {
+  if (out.kind == 14 || out.kind == 29) {
     // Unlit and alpha blended; every colour is the shader's, and it reads the screen copy.
     out.layered = out.blended = true;
     out.cutout = out.tinted = out.mask = out.unlit = false;
@@ -2479,7 +2518,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
     out.height = 0.0;
   }
-  if (out.kind == 23) {
+  if (out.kind == 23 || out.kind == 30) {
     // Opaque: the shader writes alpha 1, and what is behind it is its own copy of the frame. The
     // vertex alpha is the transmission weight and the base alpha the roughness, neither an opacity.
     out.layered = true; // keeps the kind (the demotion below), drawn opaque all the same
@@ -2711,7 +2750,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25 || m.kind == 28) {
+  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25 || m.kind == 28 || m.kind == 29) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     for (double v : m.shieldRows) {
       PF(b, v);
@@ -2773,8 +2812,8 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
   // 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
   const bool lambertFx = rem.shader == kShaderLambertFx || rem.opaqueFx;
-  P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : rem.kind >= 15 && rem.kind <= 18 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
-  P16(b, rem.kind == 14 || (rem.kind >= 15 && rem.kind <= 18) ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
+  P16(b, rem.kind == 13 || rem.kind == 14 || rem.kind == 29 ? 5 : rem.kind >= 15 && rem.kind <= 18 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
+  P16(b, rem.kind == 14 || rem.kind == 29 || (rem.kind >= 15 && rem.kind <= 18) ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
   // fallback too, which is what draws it whenever the model is not opaque: channel
   // 0 unlit with the vertex colour as its material colour (bit 2), and the alpha
@@ -2799,7 +2838,7 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   };
   // Glass samples the frame behind it, which the game copies into map 7 (the
   // spare buffer's) before it draws one: a stage of its own binds it.
-  const int nstages = rem.kind == 8 || rem.kind == 11 || rem.kind == 14 || rem.kind == 23 ? nmaps + 1 : nmaps;
+  const int nstages = rem.kind == 8 || rem.kind == 11 || rem.kind == 14 || rem.kind == 23 || rem.kind == 29 || rem.kind == 30 ? nmaps + 1 : nmaps;
   P32(b, uint32_t(nstages));
   for (int i = 0; i < nstages; ++i) {
     // Kind 20's map 3 is a detail map, sampled only (the table's stage adds it as glow).
@@ -3849,7 +3888,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (Prim& p : prims) {
     if (opt.standalone) {
       const RemMaterial& m = mats[p.mat];
-      p.rmat = m.kind == 8 || m.kind == 10 || m.kind == 11 || m.kind == 14 || m.kind == 23 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
+      p.rmat = m.kind == 8 || m.kind == 10 || m.kind == 11 || m.kind == 14 || m.kind == 23 || m.kind == 29 || m.kind == 30 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
       continue;
     }
     if (opt.material >= 0) {
@@ -3996,7 +4035,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   bool useColor = false;
   for (const Prim& p : prims) {
     const bool reads = opt.standalone ? mats[p.mat].tinted || mats[p.mat].vcolor
-                                      : ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 9 || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 15 || mats[p.mat].kind == 18;
+                                      : ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 9 || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 29 || mats[p.mat].kind == 15 || mats[p.mat].kind == 18;
     useColor = useColor || (reads && buffers[p.buffer].colored);
   }
   if (useColor) {
@@ -4007,7 +4046,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     std::vector<bool> keepAlpha(n, false);
     for (const Prim& p : prims) {
       if (((mats[p.mat].blended || mats[p.mat].layered) && mats[p.mat].tinted) || mats[p.mat].vcolor ||
-          ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 15 || mats[p.mat].kind == 18) {
+          ownGlow(mats[p.mat], retail.mats[p.rmat]) || mats[p.mat].kind == 13 || mats[p.mat].kind == 14 || mats[p.mat].kind == 29 || mats[p.mat].kind == 15 || mats[p.mat].kind == 18) {
         for (uint32_t i : p.I) {
           keepAlpha[i] = true;
         }
@@ -4152,7 +4191,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // the shader: its alpha, rim and colours are all the Remastered material's.
     const bool matcapShell = rem.kind == 13;
     // And the Frigate's force fields (kind 14), a retail model's fx surface drawn by the shader.
-    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25 || rem.kind == 28;
+    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25 || rem.kind == 28 || rem.kind == 29;
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
     // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,

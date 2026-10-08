@@ -1763,6 +1763,70 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                             underlying(config.tevStages[mapStage[5]].texMapId),
                             underlying(config.tevStages[mapStage[5]].texCoordId), base);
     }
+    // Kind 29, Remastered's HoloGlass (3991DA00, the intro's hologram glass and the Mines' energy
+    // glass). Map 0 is BCLR (alpha = roughness, raw), map 4 TCH0 and map 6 TCH2 are indirect
+    // offsets, map 5 TCH1 a colour, each at its own UV set; map 7 is the screen copy (mipped as
+    // kind 23's). Constants are GXSetPBRShield's rows CCH0..CCH3 and DIFC (row 7); row 4 x is the
+    // object's phase and row 6 w says whether the material has a cube of its own. Unlit and alpha
+    // blended: the sum is all glow (no exposure factor) times DIFC, and the room behind it,
+    // bent by TCH2, comes through pbr_pass.
+    if (screen && mapStage[0] != -1 && mapStage[5] != -1 && mapStage[6] != -1) {
+      liquid += fmt::format(R"""(
+      if (pbr_kind > 28.5 && pbr_kind < 29.5) {{
+          let pbr_h0 = ubuf.pbr_shield[0];
+          let pbr_h2 = ubuf.pbr_shield[2];
+          let pbr_h3 = ubuf.pbr_shield[3];
+          let pbr_ph = ubuf.pbr_shield[4].x;
+          let pbr_df = ubuf.pbr_shield[7];
+          let pbr_t = ubuf.pbr_param.x;
+          let pbr_uvb = tex{1}_uv;
+          let pbr_uva = tex{3}_uv;
+          let pbr_uvc = tex{5}_uv;
+          let pbr_uve = tex{7}_uv;
+          let pbr_i1 = textureSampleGrad(tex{2}, tex{2}_samp, pbr_uva, dpdx(pbr_uva), dpdy(pbr_uva)).xy;
+          let pbr_sec = textureSampleGrad(tex{4}, tex{4}_samp, pbr_uvc, dpdx(pbr_uvc), dpdy(pbr_uvc));
+          let pbr_i2 = textureSampleGrad(tex{6}, tex{6}_samp,
+                                         pbr_uve + vec2f(pbr_t * 0.25 * pbr_h3.y + pbr_ph, pbr_t * pbr_h3.y + pbr_ph),
+                                         dpdx(pbr_uve), dpdy(pbr_uve)).xy;
+          let pbr_r = {0}.a;
+          let pbr_uvb2 = pbr_uvb + (pbr_i1 - 0.5) * pbr_h0.x + (pbr_h0.z * pbr_t * 0.5 + pbr_ph);
+          let pbr_bc = textureSampleGrad(tex{8}, tex{8}_samp, pbr_uvb2, dpdx(pbr_uvb), dpdy(pbr_uvb)).rgb;
+          let pbr_v5 = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_vraw.a);
+          let pbr_vx = min(abs(1.0 / min(in.pbr_pos.z, -1e-3)), 1.0);
+          let pbr_suv = in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5 +
+                        (pbr_i2 - 0.5) * (pbr_h3.x * pbr_vx) * vec2f(1.0, -1.0);
+          let pbr_sdim = vec2f(textureDimensions(tex7));
+          let pbr_smips = ceil(log2(max(pbr_sdim.x, pbr_sdim.y))) + 1.0;
+          let pbr_slod = max(0.0, pbr_smips * pbr_h3.w * (1.0 - pbr_sec.a) - 1.0);
+          let pbr_sscene = srgb_dec(textureSampleLevel(tex7, tex7_samp, clamp(pbr_suv, vec2f(0.0), vec2f(1.0)), pbr_slod).rgb);
+          let pbr_snv = saturate(-dot(normalize(in.pbr_pos), pbr_n));
+          let pbr_sq = pbr_r * pbr_c0 + pbr_c1;
+          let pbr_sa = min(pbr_sq.x * pbr_sq.x, exp2(-9.28 * pbr_snv)) * pbr_sq.x + pbr_sq.y;
+          var pbr_sab = vec2f(-1.04, 1.04) * pbr_sa + pbr_sq.zw;
+          if (ubuf.pbr_light_scale.z > 0.0) {{
+              pbr_sab = textureSampleLevel(pbr_brdf_lut, pbr_cube_samp, vec2f(pbr_snv, pbr_r), 0.0).rg;
+          }}
+          var pbr_scube = vec3f(0.0);
+          if (ubuf.pbr_shield[6].w > 0.0) {{
+              let pbr_sqc = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, pbr_r * pbr_lod).rgb;
+              pbr_scube = select(srgb_dec(pbr_sqc), pbr_sqc * pbr_hdr, pbr_hdr > 0.0);
+          }}
+          pbr_alpha = clamp(pbr_v5.a * pbr_df.a, 0.0, 1.0);
+          pbr_lo = vec3f(0.0);
+          pbr_glow = (pbr_scube * (pbr_sab.x * (pbr_v5.a * pbr_h0.y) + pbr_sab.y) + pbr_v5.rgb * pbr_h2.y +
+                      pbr_bc * pbr_h0.w + pbr_sec.rgb * pbr_h2.w) * pbr_df.rgb * pbr_df.a;
+          pbr_pass = pbr_sscene * pbr_h3.z * pbr_df.rgb * pbr_df.a;
+      }})""",
+                          base,
+                          underlying(config.tevStages[mapStage[0]].texCoordId),
+                          underlying(config.tevStages[mapStage[4]].texMapId),
+                          underlying(config.tevStages[mapStage[4]].texCoordId),
+                          underlying(config.tevStages[mapStage[5]].texMapId),
+                          underlying(config.tevStages[mapStage[5]].texCoordId),
+                          underlying(config.tevStages[mapStage[6]].texMapId),
+                          underlying(config.tevStages[mapStage[6]].texCoordId),
+                          underlying(config.tevStages[mapStage[0]].texMapId));
+    }
     // Kind 15, Remastered's PickUp (3E95A9FE, the item pickups' rings and beams), permutation 000_0.
     // Its constants are GXSetPBRShield's rows: CCH0..CCH3, rows 4 and 5 (world x and y as a dot
     // of the view-space position with xyz, plus w; the game fills them) and DIFC in row 7. Map 0
@@ -1819,11 +1883,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // plus the room cube's reflection (F0 0.04, no metal, no AO, no direct light). On a lightmap the
   // diffuse part is the baked level L0 x BLCM for what the vertex alpha leaves of the glass.
   // Opaque (alpha 1); the room comes through pbr_pass, after the tone curve.
-  if (config.pbrKind == 23 && screen && mapStage[2] != -1) {
-    vtxOutAttrs += fmt::format("\n    @location({}) pbr_scr: vec4f,", vtxOutIdx++);
-    vtxXfrAttrs += "\n    out.pbr_scr = out.pos;";
+  if ((config.pbrKind == 23 || config.pbrKind == 30) && screen && mapStage[2] != -1) {
+    if (!layered) { // the layered block above has declared it otherwise
+      vtxOutAttrs += fmt::format("\n    @location({}) pbr_scr: vec4f,", vtxOutIdx++);
+      vtxXfrAttrs += "\n    out.pbr_scr = out.pos;";
+    }
     liquid += fmt::format(R"""(
-      if (pbr_kind > 22.5 && pbr_kind < 23.5) {{
+      if ((pbr_kind > 22.5 && pbr_kind < 23.5) || (pbr_kind > 29.5 && pbr_kind < 30.5)) {{
           let pbr_xr = {0}.a * {0}.a;
           let pbr_xv3 = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_vraw.a);
           let pbr_xnm = sampled{1}.rg;
@@ -1862,7 +1928,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           if (ubuf.pbr_lmap_rect.z != 0.0) {{
               pbr_lo += pbr_xbase * pbr_l0v * pbr_blcm * ((1.0 - pbr_xv3.w) / pbr_pi);
           }}
-          pbr_pass = pbr_xbase * pbr_xv3.w * pbr_xscene;
+          pbr_pass = select(pbr_xbase, vec3f(1.0), pbr_kind > 29.5) * pbr_xv3.w * pbr_xscene;
       }})""",
                         base, mapStage[2]);
   }
