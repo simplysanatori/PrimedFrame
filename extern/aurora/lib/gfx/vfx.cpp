@@ -364,9 +364,10 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   if (a <= 0.0) { discard; }
   var alpha = clamp(a, 0.0, 1.0);
   if (BLEND == 4u) {
-    // Multiply: the target times rgb where alpha covers it; fog fades the factor to 1.
+    // Multiply: the target times rgb where alpha covers it. Unfogged, as every blend but
+    // alpha and opaque (SetupFogFromBlendMode 0x2887b0).
     let k = mix(vec3f(1.0), max(rgb, vec3f(0.0)), alpha);
-    return vec4f(mix(k, vec3f(1.0), fog_factor(in.pos.z)), alpha);
+    return vec4f(k, alpha);
   }
   var col = tone(rgb);
   // Remastered blends in HDR: a sparse web at intensity 35 and alpha 0.2 still adds 7 and blooms white.
