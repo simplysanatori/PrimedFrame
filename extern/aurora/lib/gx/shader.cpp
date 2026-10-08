@@ -1266,6 +1266,36 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                            underlying(config.tevStages[mapStage[0]].texCoordId), base,
                            underlying(config.tevStages[mapStage[4]].texMapId), sampled(1, "vec4f(1.0, 0.6, 0.0, 1.0)"));
     }
+    // Kind 22, Remastered's 9e52aa74 (the Phazon Mines' stone and the crater's flesh), permutation 034_0. The
+    // maps and constants are kind 21's, with these differences: the mask (map 5) is read at the base UV; the
+    // pulse is sin(mask + t) and the mask also joins the vertex alpha (2 va + mask - 1, not squared) for the
+    // ramp's weight; the ramp's column is offset and scaled by CCH0.z/.w; a second ramp read at (a^2.2 + CCH2.z +
+    // CCH2.x) CCH2.y on row 0 gives the alpha that, with the vertex green, lights the CCH3 cavity glow (no
+    // phase); the ramp glow is 4 t va.r CCH0.x CCH0.y grad. There is no DIFC, and no exposure factor on the glow.
+    if (config.pbrKind == 22 && mapStage[2] != -1 && mapStage[4] != -1 && mapStage[5] != -1) {
+      kinds += fmt::format(R"""(
+      let pbr_zc0 = ubuf.pbr_shield[0];
+      let pbr_zc1 = ubuf.pbr_shield[1];
+      let pbr_zc2 = ubuf.pbr_shield[2];
+      let pbr_zxy = sampled{0}.rg * 1.9921875 - 1.0;
+      let pbr_znz = sqrt(1.0 - clamp(dot(pbr_zxy, pbr_zxy), 0.0, 1.0));
+      let pbr_zm = textureSampleGrad(tex{1}, tex{1}_samp, tex{2}_uv, dpdx(tex{2}_uv), dpdy(tex{2}_uv)).x;
+      let pbr_zph = sin(pbr_zm + ubuf.pbr_param.x);
+      let pbr_zr = {3}.r;
+      let pbr_za = pow(abs({3}.a), 2.2);
+      let pbr_zg = select(2.0 * pbr_zr * (1.0 - pbr_za), 1.0 - 2.0 * pbr_za * (1.0 - pbr_zr), pbr_zr > 0.5);
+      let pbr_zu = (pow(abs(1.0 - pow(pbr_znz, 0.454545438)), 2.2) + pbr_zg + pbr_zc0.z) * pbr_zc0.w;
+      let pbr_zgrad = max(textureSampleLevel(tex{4}, tex{4}_samp, vec2f(pbr_zu, pbr_zph * 0.5 + 0.5), 0.0).rgb,
+                          vec3f(0.0));
+      let pbr_zca = textureSampleLevel(tex{4}, tex{4}_samp, vec2f((pbr_za + pbr_zc2.z + pbr_zc2.x) * pbr_zc2.y, 0.0), 0.0).a;
+      let pbr_zt = clamp(2.0 * pbr_vraw.a + pbr_zm - 1.0, 0.0, 1.0);
+      let pbr_zcav = clamp(pbr_vraw.g - 1.0 + pbr_zca, 0.0, 1.0) +
+                     clamp(pbr_vraw.b - 1.0 + clamp((pbr_zc1.x - {5}.r + 1.0) * pbr_zc1.y, 0.0, 1.0), 0.0, 1.0);
+      pbr_base = mix(max({3}.rgb, vec3f(0.0)), pbr_zgrad * (1.0 - pbr_zc0.y), pbr_zt);)""",
+                           mapStage[2], underlying(config.tevStages[mapStage[5]].texMapId),
+                           underlying(config.tevStages[mapStage[0]].texCoordId), base,
+                           underlying(config.tevStages[mapStage[4]].texMapId), sampled(1, "vec4f(1.0, 0.6, 0.0, 1.0)"));
+    }
     // Kind 2: map 4 is a detail map that leaves the base alone where the sampler returns 0.5 (the texture's
     // own format decides which byte that is). Kind 4: the
     // inside shows where the surface is seen edge on (a fresnel that also takes it to the
@@ -1586,6 +1616,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       liquid += R"""(
       pbr_glow += (pbr_zph + 2.0) * ubuf.pbr_shield[3].rgb * (ubuf.pbr_shield[0].z * pbr_zs2) +
                   pbr_zgrad * (pbr_zt2 * pbr_vraw.r * ubuf.pbr_shield[0].x * ubuf.pbr_shield[0].y);)""";
+    }
+    // Kind 22's glow: Remastered adds it with no exposure factor, so the room-exposure scale below is undone for it.
+    if (config.pbrKind == 22 && mapStage[2] != -1 && mapStage[4] != -1 && mapStage[5] != -1) {
+      liquid += R"""(
+      pbr_glow += pbr_zcav * ubuf.pbr_shield[3].rgb +
+                  pbr_zgrad * (4.0 * pbr_zt * pbr_vraw.r * ubuf.pbr_shield[0].x * ubuf.pbr_shield[0].y);)""";
     }
     // Kind 14, Remastered's BoundaryShield_Ship1_DX11 (the Frigate's force fields), permutation
     // 002_0. Its constants are GXSetPBRShield's rows: CCH0..CCH6, then DIFC. Map 0 is BCLR, map 4
@@ -2076,7 +2112,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       }}
       // Emitted light is at the room's static exposure, not the frame's (w of tone row 0).
       if (ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0) {{
-          pbr_glow *= ubuf.pbr_tone[0].w;
+          if (!(pbr_kind > 21.5 && pbr_kind < 22.5)) {{
+              pbr_glow *= ubuf.pbr_tone[0].w;
+          }}
           if ((pbr_mode > 0.5 && pbr_mode < 1.5) || pbr_mode > 2.5) {{
               pbr_lo *= ubuf.pbr_tone[0].w;
           }}

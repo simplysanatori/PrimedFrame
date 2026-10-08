@@ -1440,6 +1440,7 @@ void CStateManager::Update(float dt) {
     PortConsoleTick(*this);
     return;
   }
+  CGraphics::TickSimTime(dt);
 #endif
 
 #ifdef TARGET_PC

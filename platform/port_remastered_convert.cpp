@@ -1505,6 +1505,10 @@ constexpr uint32_t kShaderColorUnlit = 0x992941B7;
 // read at the normal map's rim, where the vertex alpha and BCLR's alpha say, pulsed by a mask (TCH1) and the
 // time (kind 21). The vertex colour is raw data (alpha and red weights, blue a cavity mask), no tint.
 constexpr uint32_t kShaderPhazon = 0xCC96C27D;
+// The same family's other member (9e52aa74, 0x100010 RLTG stone of the Phazon Mines and the crater's flesh;
+// kind 22): no mask scale, the phase is sin(mask + time), a second ramp read gives the cavity glow's alpha term,
+// and the glow takes no exposure factor.
+constexpr uint32_t kShaderPhazonB = 0x9E52AA74;
 // A shader with parameters of its own (TCHn, CCHn) reads the vertex colour as
 // it likes: masks for its extra maps, a colour seen through ice. These are the
 // ones read that multiply the albedo by it, as the standard shader does
@@ -1551,6 +1555,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderGunFx, "gun-fx");
   add(shader == kShaderColorUnlit, "color-unlit");
   add(shader == kShaderPhazon, "phazon");
+  add(shader == kShaderPhazonB, "phazon-b");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
 }
@@ -1578,6 +1583,7 @@ const char* KindName(int kind) {
   case 19: return "gun-fx";
   case 20: return "vertex-blend";
   case 21: return "phazon";
+  case 22: return "phazon-b";
   default: return "kind?";
   }
 }
@@ -2057,6 +2063,24 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         }
       }
     }
+  } else if (shader == kShaderPhazonB && out.maps[kBase].has && out.maps[kNormal].has && tch[0] && tch[1] &&
+             cch[0] && cch[1] && cch[2] && cch[3]) {
+    out.kind = 22;
+    out.vcolor = true;
+    // As kind 21: TCH0 (the ramp) and TCH1 (the mask, here read at the base UV) are the second layer's
+    // base and MR, CCH0..CCH3 are rows 0-3. This shader has no DIFC (the output alpha is 1).
+    set(kBase, tch[0]->texture, &out.layer[kBase]);
+    set(kMr, tch[1]->texture, &out.layer[kMr]);
+    out.layer[kBase].raw = out.layer[kMr].raw = true;
+    out.kindParam[0] = 1.0;  // the game multiplies it by the time
+    for (int r = 0; r < 4; ++r) {
+      for (int i = 0; i < 4; ++i) {
+        out.shieldRows[r * 4 + i] = ShortestDouble(cch[r]->color[i]);
+      }
+    }
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = 1.0;
+    }
   } else if ((shader == kShaderBoundaryShield || shader == kShaderForceField) && out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] &&
              cch[2] && cch[3] && cch[4] && cch[5] && cch[6]) {
     out.kind = 14;
@@ -2338,7 +2362,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
     out.height = 0.0;
   }
-  if (out.kind == 21) {
+  if (out.kind == 21 || out.kind == 22) {
     // Opaque and lit; the base alpha is a weight in the shader and no opacity, the glow is the
     // shader's (ICNC is 0 on every material) and the vertex alpha picks no layer.
     out.layered = true;
@@ -2549,7 +2573,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21) {
+  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     for (double v : m.shieldRows) {
       PF(b, v);

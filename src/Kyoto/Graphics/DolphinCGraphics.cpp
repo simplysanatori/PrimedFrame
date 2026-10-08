@@ -268,6 +268,7 @@ uint CGraphics::mFifoSize = 0;
 #endif
 uint CGraphics::mRenderTimings;
 float CGraphics::mSecondsMod900;
+uint CGraphics::mSimTicks;
 CTimeProvider* CGraphics::mpExternalTimeProvider;
 int CGraphics::mScreenStretch;
 int CGraphics::mScreenPositionX;
@@ -1427,6 +1428,17 @@ void CGraphics::LoadDolphinSpareTexture(int width, int height, GXCITexFmt fmt, G
 void CGraphics::TickRenderTimings(uint ticks) {
   mRenderTimings = (mRenderTimings + ticks) % (900 * 60);
   mSecondsMod900 = static_cast< float >(mRenderTimings) / 60.f;
+}
+
+// Remastered's CScene::SimulateScene adds floor(dt * 600 + 0.5) ticks (1/600 s) and wraps the
+// total at floor(15120 * 600 + 0.5) = 9,072,000 ticks.
+void CGraphics::TickSimTime(float dt) {
+  const uint add = static_cast< uint >(static_cast< double >(dt) * 600.0 + 0.5);
+  mSimTicks = (mSimTicks + add) % 9072000u;
+}
+
+float CGraphics::GetSimTime() {
+  return static_cast< float >(static_cast< double >(mSimTicks) / 600.0);
 }
 
 float CGraphics::GetSecondsMod900() {
