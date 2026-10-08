@@ -1404,6 +1404,9 @@ constexpr uint32_t kShaderLava = 0x023388CD;      // the glow is CCH0.x times th
 // ramp whose row is the vertex alpha. CCH0's y, z and w are the sum's softness and the ramp's
 // offsets, CCH3 the colour.
 constexpr uint32_t kShaderWaterfall = 0x50412FE7;
+// 963E469B folds to the same output as 50412FE7 (same samplers, same params; kb material/963e469b.md): kind 7 too.
+constexpr uint32_t kShaderWaterfall2 = 0x963E469B;
+constexpr bool IsWaterfall(uint32_t shader) { return shader == kShaderWaterfall || shader == kShaderWaterfall2; }
 constexpr uint32_t kShaderParallax = 0x2F3FB02B;  // TCH0 is seen inside the surface; CCH0 and CCH1.x say how
 // Glass: the frame behind it, offset by TCH1's RG noise times CCH0.x and tinted by
 // CCH1 x CCH3 x CCH4.x x CCH4.z, where TCH0's R (and the vertex blue) lets it through;
@@ -1480,6 +1483,9 @@ constexpr const char* kDefaultRefl = "7b98170f";
 // phazon and plasma glass, soot_translucent. Its opacity scales the diffuse light
 // only; the reflection and the glow show at full strength on the clearest pane.
 constexpr uint32_t kShaderPremulGlass[] = {0x11B30369, 0x941068BF, 0xBCC73459};
+// Of those, 941068bf and bcc73459 read the vertex colour raw (no log2/exp2 in their vertex shaders); 11b30369
+// decodes it as 2 |c|^2.2 like every other MFVC shader (mode bit 262144, kb material/11b30369.md).
+constexpr uint32_t kShaderRawVertex[] = {0x941068BF, 0xBCC73459};
 // Glass_DX11 (HoloGlass; only the Waste Disposal tank): the scene behind it, bent by TCH2
 // and tinted, plus the reflection, BCLR and the vertex colour, blended with a second
 // colour output (build/mpr/glass/NOTES.md). The port draws it from the screen copy.
@@ -1516,6 +1522,10 @@ constexpr uint32_t kShaderGunFx = 0x98F0556D;
 // dda64c97 (stored id 974ca6dd), the Eyon's eyeball_gloss: bfb300b6's actor lighting (normal map, GGX) with a
 // matcap term, REFV x REFS(N'.xy) x luminance(L), in place of the reflection. Kind 25 (kb material/dda64c97.md).
 constexpr uint32_t kShaderEyeGloss = 0x974CA6DD;
+// 7cf91c66 (variasuit Eyeball_Exterior) is the same lighting and matcap with CCH0 (tint, alpha) in place of DIFC, a
+// script-driven glow c4[0].y x CCH1 (INCI/DMGI, zero at rest) and the base map folded through the tint (kb material/7cf91c66.md).
+constexpr uint32_t kShaderEyeGloss2 = 0x7CF91C66;
+constexpr bool IsEyeGloss(uint32_t shader) { return shader == kShaderEyeGloss || shader == kShaderEyeGloss2; }
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -1541,6 +1551,10 @@ constexpr uint32_t kShaderRefractGlassB = 0xCC8AFD0F;
 // (kind 31, kb material/fb2bc671.md, df3e3423.md).
 constexpr uint32_t kShaderXrayStatic = 0xFB2BC671;
 constexpr uint32_t kShaderXraySkinned = 0xDF3E3423;
+// DFC2A7DC folds to exactly DF3E3423's perm 002_0 (same registers, same outputs; kb material/dfc2a7dc.md).
+constexpr uint32_t kShaderXraySkinned2 = 0xDFC2A7DC;
+constexpr bool IsXraySkinned(uint32_t shader) { return shader == kShaderXraySkinned || shader == kShaderXraySkinned2; }
+constexpr bool IsXrayGhost(uint32_t shader) { return shader == kShaderXrayStatic || IsXraySkinned(shader); }
 // The decal cutouts (kind 24; kb material/e538b757.md, 42fe2ed0.md): a bfb300b6 surface cut by a smoothstep of an
 // alpha A about CCH0.x = c (0.5 on all of them): discard where t²(3-2t) < 0.25, t = (A - 0.5 + c) / 2c; output
 // alpha 1, no vertex colour. e538b757 cuts on BCLR.a², 42fe2ed0 on TCH0.r (its alpha map, in the emissive slot).
@@ -1583,7 +1597,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderDetail || shader == kShaderDetailTinted, "detail");
   add(shader == kShaderVertexBlend, "vertex-blend");
   add(shader == kShaderLava, "lava");
-  add(shader == kShaderWaterfall, "waterfall");
+  add(IsWaterfall(shader), "waterfall");
   add(shader == kShaderParallax, "parallax");
   add(shader == kShaderGlass, "glass");
   add(in(kShaderLavaPool), "lava-pool");
@@ -1603,13 +1617,13 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderHologram, "hologram");
   add(shader == kShaderLambertFx, "lambert-fx");
   add(shader == kShaderGunFx, "gun-fx");
-  add(shader == kShaderEyeGloss, "eye-gloss");
+  add(IsEyeGloss(shader), "eye-gloss");
   add(shader == kShaderColorUnlit, "color-unlit");
   add(shader == kShaderPhazon, "phazon");
   add(shader == kShaderPhazonB, "phazon-b");
   add(shader == kShaderRefractGlass || shader == kShaderRefractGlassB, "refract-glass");
   add(shader == kShaderHoloGlassB, "holo-glass-b");
-  add(shader == kShaderXrayStatic || shader == kShaderXraySkinned, "xray-ghost");
+  add(IsXrayGhost(shader), "xray-ghost");
   add(shader == kShaderDecalCut || shader == kShaderDecalAlphaMap, "decal-cut");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
@@ -1665,8 +1679,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   out.role = ShaderRole(shader);
   out.shell = shader == kShaderMatcapShell;
   out.shield = shader == kShaderBoundaryShield || shader == kShaderForceField || shader == kShaderPickUp || shader == kShaderHolo ||
-               shader == kShaderHoloRefl || shader == kShaderHologram || shader == kShaderGunFx || shader == kShaderEyeGloss ||
-               shader == kShaderXrayStatic || shader == kShaderXraySkinned;
+               shader == kShaderHoloRefl || shader == kShaderHologram || shader == kShaderGunFx || IsEyeGloss(shader) ||
+               IsXrayGhost(shader);
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
     const uint32_t family = d.usage & 0xFFFFFF00u;
@@ -1780,7 +1794,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     case FourCC('R', 'E', 'F', 'S'):
     case FourCC('R', 'E', 'F', 'V'):
       // 98F0556D's sphere map and reflectivity map: the second layer's base and MR (kind 19).
-      if (texture && (shader == kShaderGunFx || shader == kShaderEyeGloss)) {
+      if (texture && (shader == kShaderGunFx || IsEyeGloss(shader))) {
         const bool sphere = d.usage == FourCC('R', 'E', 'F', 'S');
         MapRef& m = sphere ? out.layer[kBase] : out.layer[kMr];
         set(sphere ? kBase : kMr, d.texture, &m);
@@ -2026,7 +2040,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.layerHeight[1] = 2.4;   // the heat's gain, a literal of the shader
     out.layerHeight[2] = period;  // takes the phase back to seconds for the shimmer
     out.kindStrength = c[2];
-  } else if (shader == kShaderWaterfall && tch[0] && tch[1] && cch[0] && cch[1] && cch[2]) {
+  } else if (IsWaterfall(shader) && tch[0] && tch[1] && cch[0] && cch[1] && cch[2]) {
     out.kind = 7;
     out.vcolor = true;
     set(kBase, tch[1]->texture);
@@ -2043,8 +2057,17 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.kindParam[2] = ShortestDouble(cch[0]->color[1]);
     out.kindParam[3] = ShortestDouble(cch[0]->color[2]);
     out.kindStrength = ShortestDouble(cch[0]->color[3]);
+    // The fold's output is ramp x c5[0] + c5[1]: c5 follows the CCH block (c4[0..2] are CCH0-2, CCH3 is never read),
+    // so c5[0] = DIFC and c5[1] = ICMC. DIFC.w = 1 and ICMC.rgb = 0 on all 20 materials, so only the rgb tint is carried.
     for (int i = 0; i < 3; ++i) {
-      out.tint[i] = cch[3] ? ShortestDouble(cch[3]->color[i]) : 1.0;
+      out.tint[i] = 1.0;
+    }
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind == ModelMaterialData::Kind::Color && d.usage == FourCC('D', 'I', 'F', 'C')) {
+        for (int i = 0; i < 3; ++i) {
+          out.tint[i] = ShortestDouble(d.color[i]);
+        }
+      }
     }
   } else if (shader == kShaderGlass && out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] && cch[2] &&
              cch[3] && cch[4]) {
@@ -2188,7 +2211,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 4; ++i) {
       out.shieldRows[28 + i] = 1.0;
     }
-  } else if ((shader == kShaderXrayStatic || shader == kShaderXraySkinned) && out.maps[kBase].has &&
+  } else if ((IsXrayGhost(shader)) && out.maps[kBase].has &&
              out.maps[kNormal].has && cch[0] && cch[1]) {
     out.kind = 31;
     // CCH0 (fresnel power, ICAN scale, alpha at the near and far depth) and CCH1 (the depth range, the alpha-by-fresnel
@@ -2216,7 +2239,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         }
       }
     }
-    out.shieldRows[15] = shader == kShaderXraySkinned && out.maps[kEmissive].has ? 1.0 : 0.0;
+    out.shieldRows[15] = IsXraySkinned(shader) && out.maps[kEmissive].has ? 1.0 : 0.0;
   } else if ((shader == kShaderRefractGlass || shader == kShaderRefractGlassB) && out.maps[kBase].has &&
              out.maps[kNormal].has && cch[0]) {
     out.kind = shader == kShaderRefractGlassB ? 30 : 23;
@@ -2356,7 +2379,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.shieldRows[28 + i] = difc[i];
     }
   }
-  const bool eyeGloss = shader == kShaderEyeGloss;
+  const bool eyeGloss = IsEyeGloss(shader);
   if ((shader == kShaderGunFx || eyeGloss) && out.maps[kBase].has && out.layer[kBase].has && out.layer[kMr].has) {
     out.kind = eyeGloss ? 25 : 19;
     // The Eyon's BCLR is a 1x1 black that is the base all the same (diffuse 0, F0 from METL): no TEV fallback.
@@ -2748,7 +2771,8 @@ int PbrMode(const RemMaterial& m) {
          (m.cutExact ? 512 : 0) + (PureLambert(m) ? 1024 : 0) + (VfxBase(m) ? 2048 + 4096 : 0) +
          (m.indirect ? 8192 : 0) + (m.macro ? 16384 : 0) +
          (m.wind ? 32768 : 0) + (m.wind && m.shader == kShaderVertexAlpha ? 65536 : 0) +
-         (SurfaceUnlit(m) ? 131072 : 0);
+         (SurfaceUnlit(m) ? 131072 : 0) +
+         (std::find(std::begin(kShaderRawVertex), std::end(kShaderRawVertex), m.shader) != std::end(kShaderRawVertex) ? 262144 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
