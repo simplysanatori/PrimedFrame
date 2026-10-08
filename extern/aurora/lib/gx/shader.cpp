@@ -2804,6 +2804,19 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
         pos, clr);
   };
 
+  // The pickup's (kind 15, Remastered's PickUp 3E95A9FE, perm 000_1) travelling bump: the skinned model-space
+  // position moves along its unit normal by sin(CCH3.y t - CCH3.x p.y) CCH3.z a, a = the vertex colour's alpha
+  // (raw), times vp_c1[0].x (an engine constant, 1 here). CCH3 is pbr_shield[3], t is pbr_param.x.
+  const bool hasBump = config.pbr && config.pbrKind == 15 && config.attrs[GX_VA_CLR0].attrType != GX_NONE;
+  const auto bumpCode = [&](const std::string& pos, const std::string& clr, const std::string& nrm) {
+    return fmt::format(
+        "\n    let bump_n = {2};"
+        "\n    let bump_k = sin(ubuf.pbr_shield[3].y * ubuf.pbr_param.x - ubuf.pbr_shield[3].x * {0}.y) *"
+        "\n                 ubuf.pbr_shield[3].z * {1}.a;"
+        "\n    let bump_pos = {0} + select(bump_n, normalize(bump_n), dot(bump_n, bump_n) > 1e-10) * bump_k;",
+        pos, clr, nrm);
+  };
+
   // ShaderConfig::shadow: vs_shadow places the vertex in the sun's shadow map (gfx/shadow.cpp's caster pass).
   std::string shadowVs;
   if (config.shadow && config.lineMode == 0) {
@@ -2838,6 +2851,10 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     if (hasWind) {
       vtxXfrAttrsPre += windCode(windPos, vtx_attr(config, GX_VA_CLR0));
       windPos = "wind_pos";
+    }
+    if (hasBump) {
+      vtxXfrAttrsPre += bumpCode(windPos, vtx_attr(config, GX_VA_CLR0), vtx_attr(config, GX_VA_NRM));
+      windPos = "bump_pos";
     }
     vtxXfrAttrsPre += fmt::format(
         "\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
