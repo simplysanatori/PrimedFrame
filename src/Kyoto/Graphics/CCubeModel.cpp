@@ -837,7 +837,7 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     // Glass (kinds 8 and 11) and the force fields (14) see what is behind them: the screen so far,
     // copied into map 7 as the refracting particles copy it (CElementGen).
     if (((kind > 7.5f && kind < 8.5f) || (kind > 10.5f && kind < 11.5f) || (kind > 13.5f && kind < 14.5f) ||
-         (kind > 22.5f && kind < 23.5f) || (kind > 28.5f && kind < 30.5f)) &&
+         (kind > 22.5f && kind < 23.5f) || (kind > 28.5f && kind < 30.5f) || (kind > 33.5f && kind < 34.5f)) &&
         CCubeMaterial::PortScreenCopyUsed()) {
       int portLeft, portTop, portWidth, portHeight;
       CGraphics::GetViewport(portLeft, portTop, portWidth, portHeight);

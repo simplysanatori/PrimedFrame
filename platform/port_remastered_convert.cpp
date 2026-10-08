@@ -1705,6 +1705,7 @@ const char* KindName(int kind) {
   case 30: return "refract-glass-b";
   case 31: return "xray-ghost";
   case 32: return "phazon-pool";
+  case 34: return "dual-glass";
   default: return "kind?";
   }
 }
@@ -2728,7 +2729,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   }
   // All but lava, premultiplied glass, the holograms (kinds 16-18, one map) and the decal cutouts draw
   // with the second layer's maps.
-  if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && out.kind != 27 && !out.layered) {
+  if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && out.kind != 27 && out.kind != 34 && !out.layered) {
     if (out.kind != 0) {
       out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
     }
@@ -4386,7 +4387,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // the shader: its alpha, rim and colours are all the Remastered material's.
     const bool matcapShell = rem.kind == 13;
     // And the Frigate's force fields (kind 14), a retail model's fx surface drawn by the shader.
-    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25 || rem.kind == 28 || rem.kind == 29 || rem.kind == 31;
+    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25 || rem.kind == 28 || rem.kind == 29 || rem.kind == 31 || rem.kind == 34;
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
     // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,
