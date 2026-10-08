@@ -1851,6 +1851,17 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_glow = (pbr_scube * (pbr_sab.x * (pbr_v5.a * pbr_h0.y) + pbr_sab.y) + pbr_v5.rgb * pbr_h2.y +
                       pbr_bc * pbr_h0.w + pbr_sec.rgb * pbr_h2.w) * pbr_df.rgb * pbr_df.a;
           pbr_pass = pbr_sscene * pbr_h3.z * pbr_df.rgb * pbr_df.a;
+          if (ubuf.pbr_shield[5].x > 0.5) {{
+              // 2f95a061: the bent room is tinted by CCH1, and what is behind keeps (o1) of itself
+              // (SRC1_COLOR): DIFC.a x (1 - CCH1 x (1 - vertex alpha)) per channel. Drawn opaque, the
+              // room (map 7 at the fragment, unbent) comes through pbr_pass.
+              let pbr_h1 = ubuf.pbr_shield[1];
+              let pbr_sdst = srgb_dec(textureSampleLevel(tex7, tex7_samp,
+                                      clamp(in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5, vec2f(0.0), vec2f(1.0)), 0.0).rgb);
+              pbr_alpha = 1.0;
+              pbr_pass = pbr_sscene * pbr_h3.z * pbr_h1.rgb * pbr_df.rgb * pbr_df.a +
+                         pbr_sdst * (pbr_df.a * (vec3f(1.0) - pbr_h1.rgb * (1.0 - pbr_v5.a)));
+          }}
       }})""",
                           base,
                           underlying(config.tevStages[mapStage[0]].texCoordId),
