@@ -533,26 +533,6 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   }
 
 #ifdef TARGET_PC
-  // Port: a HUD glow picture (kStateFlag_PortHudGlow) is drawn twice, as Remastered's
-  // alpha-blended 3853595c shades it: alpha blended as given (its blend is the shader's, not the
-  // widget's draw mode, which the converted frames carry as additive), then additively in
-  // white with the same alpha (the ICAN * ICNC term, ICNC = 1).
-  static bool sHudGlowSecondPass = false;
-  if (material.IsFlagSet(kStateFlag_PortHudGlow) && !sHudGlowSecondPass &&
-      modelFlags.GetTrans() >= CModelFlags::kT_Blend) {
-    const CColor& base = modelFlags.GetColorRef();
-    const CModelFlags blend(CModelFlags::kT_Blend, static_cast< uchar >(modelFlags.GetShaderSet()),
-                            static_cast< CModelFlags::EFlags >(modelFlags.GetOtherFlags()), base);
-    const CModelFlags glow(CModelFlags::kT_Additive, static_cast< uchar >(modelFlags.GetShaderSet()),
-                           static_cast< CModelFlags::EFlags >(modelFlags.GetOtherFlags()),
-                           CColor(1.f, 1.f, 1.f, base.GetAlpha()));
-    sHudGlowSecondPass = true;  // also guards the first call from recursing
-    DrawSurface(surface, blend);
-    CCubeMaterial::ResetCachedMaterials();  // the same material's blend must be set again
-    DrawSurface(surface, glow);
-    sHudGlowSecondPass = false;
-    return;
-  }
   // Port: an untinted alpha blend (the arm cannon is always drawn alpha blended for its fade,
   // and Samus fades in and out of the morph ball) stays on a PBR material. At full alpha it
   // draws as opaque, since the PBR shader's alpha is the base map's, which a blend would show
@@ -591,6 +571,13 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     }
   }
   material.SetCurrent(drawFlags, surface, *this);
+  if (material.IsFlagSet(kStateFlag_PortHudGlow) && !material.IsFlagSet(kStateFlag_PortPBR)) {
+    // Remastered's 3853595c on FRME_Helmet: rgb = T*v1 + T*ICNC (ICNC white), alpha T.a^2*v1.a,
+    // drawn with the widget's own blend (additive: src alpha, one) into the UNORM target after
+    // tone mapping, so the sum clamps at 1 before the blend. The material's stage 0 is
+    // texture * vertex colour; T + T*c is that sum and the TEV clamps it the same way.
+    CGX::SetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_TEXC, GX_CC_RASC, GX_CC_TEXC);
+  }
   // Port: PBR mod materials. The fallback TEV set above stays valid for the
   // paths PortPBRAllowed rejects.
   const bool pbr = fadeBlend || (material.IsFlagSet(kStateFlag_PortPBR) &&

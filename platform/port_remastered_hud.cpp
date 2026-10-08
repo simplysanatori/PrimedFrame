@@ -528,7 +528,7 @@ struct Part {
   std::vector<uint32_t> indices;
   const ModelMaterial* material = nullptr;
   uint32_t slot = 0;  // which of the model's textures it draws with
-  bool glow = false;  // also drawn additively, white (HudGlow)
+  bool glow = false;  // takes the glow sum T + T*c (HudGlow)
 };
 
 bool MeshPart(const Model& model, uint32_t mesh, Part& out) {
@@ -599,10 +599,9 @@ bool SquaresAlpha(const ModelMaterial& material) {
   return (shader == 0xCA1106B0u && (material.unk1 & 1) != 0) || shader == 0x3853595Cu;
 }
 
-// Whether a mesh is drawn a second time, additively (kStateFlag_PortHudGlow, which the draw
-// code adds in white at the first pass's alpha): 3853595c with ICAN the same picture as DIFT
-// and ICNC white, as on all of FRME_Helmet's. Another ICNC isn't supported by the second pass
-// (it takes no colour), so such a mesh keeps the first pass alone.
+// Whether a mesh takes the glow sum (kStateFlag_PortHudGlow: TEV T + T*c, see the draw code):
+// 3853595c with ICNC white, as on all of FRME_Helmet's. Another ICNC isn't supported (the TEV
+// has no constant for it), so such a mesh keeps the plain product.
 bool HudGlow(const ModelMaterial& material) {
   if (ShaderOf(material) != 0x3853595Cu) {
     return false;
