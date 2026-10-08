@@ -626,6 +626,7 @@ struct RemMaterial {
   // A second layer (base, MR, normal) the vertex alpha blends over the first
   // by the two base maps' heights: snow on rock, moss on stone.
   bool layered = false;
+  bool macro = false;  // a macro normal map (MNMP, layer[kNormal]) on a single-layer material
   MapRef layer[3];
   double layerSmooth = 0.0;                      // BLSM: the width of the blend's edge
   double layerHeight[4] = {1.0, 0.0, 1.0, 0.0};  // BSAO: scale and offset of each layer's height
@@ -1433,7 +1434,10 @@ constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
 // LayerBaseNormal_2TangentStream: each layer's normal is built in its own tangent frame,
 // TANGENT_0 for the first and TANGENT_1 for the second. Their models carry a second frame
 // (CMDL flag 0x10, 15-float NBT entries, DL opcode 0x94).
-constexpr uint32_t kShaderTwoTangent[] = {0xA978D507, 0xD363D694};
+constexpr uint32_t kShaderTwoTangent[] = {0xA978D507, 0xD363D694, 0xA3C367BE, 0x72B34E42, 0xB9E899F3};
+// The macro-normal shaders (a3c367be, 72b34e42, b9e899f3): NMAP in TANGENT_0's frame, then MNMP
+// (kept in layer[kNormal], map 6) added to it in TANGENT_1's frame (mode bit 16384).
+constexpr uint32_t kShaderMacroNormal[] = {0xA3C367BE, 0x72B34E42, 0xB9E899F3};
 // The shaders whose fragment code multiplies ICAN x ICNC x INCI by the global system
 // values' inverse tonemap exposure (c4[0].z; USE_INVERSEEXPOSURE, MFC4, which no
 // material sets as a bit): heads, eyes, suits, pirates, creatures, the Metroid's body
@@ -1779,6 +1783,13 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     case FourCC('N', 'M', 'A', 'P'):
       if (texture) {
         set(kNormal, d.texture);
+      }
+      break;
+    case FourCC('M', 'N', 'M', 'P'):
+      if (texture && std::find(std::begin(kShaderMacroNormal), std::end(kShaderMacroNormal), shader) !=
+                         std::end(kShaderMacroNormal)) {
+        set(kNormal, d.texture, &out.layer[kNormal]);
+        out.macro = out.layer[kNormal].has;
       }
       break;
     case FourCC('N', 'R', 'M', 'L'):
@@ -2592,7 +2603,7 @@ int PbrMode(const RemMaterial& m) {
   return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0) +
          (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0) +
          (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0) +
-         (m.cutExact ? 512 : 0) + (VfxBase(m) ? 1024 + 2048 + 4096 : 0);
+         (m.cutExact ? 512 : 0) + (VfxBase(m) ? 1024 + 2048 + 4096 : 0) + (m.macro ? 16384 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
@@ -2616,7 +2627,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     f.push_back(k[i]);
   }
   const char* tag = "PBRM";
-  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m) || m.cutExact) {
+  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m) || m.cutExact || m.macro) {
     f.push_back(m.height);
     f.push_back(double(PbrMode(m)));
     tag = "PBR2";
@@ -2678,7 +2689,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
 Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx, uint32_t group,
                  const uint32_t* coords, const RemMaterial& rem, uint32_t wrap, uint32_t cube,
                  const uint32_t* authored, const AnuvEntry* anim, AnuvCounts& counts) {
-  const int nmaps = rem.layered ? kLayeredMaps : kMaps;
+  const int nmaps = rem.layered || rem.macro ? kLayeredMaps : kMaps;
   Blob b;
   // ColorUnlit's colour, out of linear light, is (2 x gain)^(1/2.2) times the vertex
   // colour times the base map, both as stored: a stage multiplies by half that
@@ -2766,7 +2777,9 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   for (int i = 0; i < nstages; ++i) {
     P8(b, 0);
     P8(b, 0);
-    P8(b, uint8_t(i < nmaps ? i : 7));
+    // A macro-normal material has no second layer: its maps 4 and 5 are only placeholders, sampled
+    // from map 0 so that the shader sees map 6 (the macro normal) without a layer base.
+    P8(b, uint8_t(rem.macro && !rem.layered && (i == 4 || i == 5) ? 0 : i < nmaps ? i : 7));
     P8(b, uint8_t(i < nmaps ? coords[i] : 0));
   }
   // One texgen per texcoord the maps use. Each reads its own texcoord through the
@@ -4118,6 +4131,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       rem.kind = 0;
       rem.vcolor = false;
     }
+    rem.macro = rem.macro && opt.standalone;
     rem.layered = rem.layered && (gunGlow || frostShell || matcapShell || shield || (opt.standalone && (rem.kind != 0 || (useColor && rem.tinted))));
     // Nor do the alpha and shading modes belong on one: what they say is about the
     // Remastered surface, and a retail model keeps the retail material's
@@ -4185,13 +4199,17 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       ++pbr;
       std::string recordTag;
       // A layered material's base alphas are the two heights the blend compares.
-      const int nmaps = rem.layered ? kLayeredMaps : kMaps;
+      const int nmaps = rem.layered || rem.macro ? kLayeredMaps : kMaps;
       MapRef both[kLayeredMaps + 1];
       std::copy(rt, rt + kMaps, both);
       std::copy(rem.layer, rem.layer + 3, both + kMaps);
       uint32_t tids[kLayeredMaps];
       for (int k = 0; k < nmaps; ++k) {
         const int m = k % kMaps;
+        if (rem.macro && !rem.layered && (k == 4 || k == 5)) {
+          tids[k] = tids[0];
+          continue;
+        }
         tids[k] = *Get(std::string("pbr:") + kMapName[m], both + (k - m), m == kBase ? baseAlpha : "", opt);
       }
       // Each map keeps the texcoord set it was authored on. The descriptor

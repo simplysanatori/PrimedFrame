@@ -1093,8 +1093,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 2048 = the opacity is the base map's alpha as it is: no vertex alpha, nothing squared.
       // 4096 = the baked light's modulation (BLCM) multiplies the lights' diffuse too, not
       // just the baked ambient (that shader's baked-light perms: BLCM x (lobe + lights)).
-      let pbr_blit = ubuf.pbr_backlight.w > 4095.5;
-      let pbr_mwa = ubuf.pbr_backlight.w - select(0.0, 4096.0, pbr_blit);
+      // 16384 = a macro normal map (MNMP, map 6) whiteout-blended over the normal in TANGENT_1's
+      // frame (a3c367be, 72b34e42, b9e899f3).
+      let pbr_macro = ubuf.pbr_backlight.w > 16383.5;
+      let pbr_mwz = ubuf.pbr_backlight.w - select(0.0, 16384.0, pbr_macro);
+      let pbr_blit = pbr_mwz > 4095.5;
+      let pbr_mwa = pbr_mwz - select(0.0, 4096.0, pbr_blit);
       let pbr_raw = pbr_mwa > 2047.5;
       let pbr_mwb = pbr_mwa - select(0.0, 2048.0, pbr_raw);
       let pbr_nols = pbr_mwb > 1023.5;
@@ -1556,6 +1560,24 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         pbr_n = normalize(mix(pbr_nl1, pbr_nl2, pbr_ls));
       })""";
     }
+  }
+  if (!layered && mapStage[6] != -1) {
+    // Remastered's macro normal (MNMP): the detail normal M (map 1, TANGENT_0's frame) goes into
+    // TANGENT_1's frame, the macro map's xy is added there and z is scaled by its z:
+    // x = m.x + T2.M, y = m.y + B2.M, z = N.M sqrt(1 - |m|^2), B2 = cross(N, T2) w (our
+    // bitangent is the negated one).
+    normal += fmt::format(R"""(
+      if (pbr_macro && pbr_tlen > 1e-24) {{
+        let pbr_ks = inverseSqrt(pbr_tlen);
+        let pbr_km = clamp(sampled{}.rg * 1.9921875 - 1.0, vec2f(-1.0), vec2f(1.0));
+        let pbr_kt = {} * pbr_ks;
+        let pbr_kb = -{} * pbr_ks;
+        let pbr_kx = pbr_km.x + dot(pbr_kt, pbr_n);
+        let pbr_ky = pbr_km.y + dot(pbr_kb, pbr_n);
+        let pbr_kz = dot(pbr_ng, pbr_n) * sqrt(max(0.0, 1.0 - dot(pbr_km, pbr_km)));
+        pbr_n = normalize(pbr_ng * pbr_kz + pbr_kt * pbr_kx + pbr_kb * pbr_ky);
+      }})""",
+                          mapStage[6], tangents2 ? "pbr_t2" : "pbr_t", tangents2 ? "pbr_b2" : "pbr_b");
   }
   normal += liquid;
   // And what is seen of it: its own colour in the room's light where it is looked into,
