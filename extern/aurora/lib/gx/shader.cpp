@@ -1750,6 +1750,61 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                           mapStage[2], underlying(config.tevStages[mapStage[4]].texMapId), base);
     }
   }
+  // Kind 23, Remastered's Distortion2 (24670BF0, the ice walls and flesh glass), permutations 018 and
+  // 002 (lightmapped). Map 0 is BCLR, map 2 NMAP, map 7 the screen copy with its mips. CCH0
+  // is in pbr_param: x the normal map's distortion, y the geometry normal's, z the fresnel
+  // power, w its scale. r = BCLR.a^2 is the roughness and the blur of the copy and the cube. The
+  // surface is the room behind it, bent by the maps, times BCLR x the vertex colour (v3, alpha raw),
+  // plus the room cube's reflection (F0 0.04, no metal, no AO, no direct light). On a lightmap the
+  // diffuse part is the baked level L0 x BLCM for what the vertex alpha leaves of the glass.
+  // Opaque (alpha 1); the room comes through pbr_pass, after the tone curve.
+  if (config.pbrKind == 23 && screen && mapStage[2] != -1) {
+    vtxOutAttrs += fmt::format("\n    @location({}) pbr_scr: vec4f,", vtxOutIdx++);
+    vtxXfrAttrs += "\n    out.pbr_scr = out.pos;";
+    liquid += fmt::format(R"""(
+      if (pbr_kind > 22.5 && pbr_kind < 23.5) {{
+          let pbr_xr = {0}.a * {0}.a;
+          let pbr_xv3 = vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_vraw.a);
+          let pbr_xnm = sampled{1}.rg;
+          let pbr_xvd = normalize(in.pbr_pos);
+          let pbr_xf = pow(saturate(dot(pbr_ng, -pbr_xvd)), max(ubuf.pbr_param.z, 0.001)) * ubuf.pbr_param.w;
+          let pbr_xs = min(abs(1.0 / min(in.pbr_pos.z, -1e-3)), 1.0) * 10.0;
+          let pbr_xd = vec2f((pbr_xnm.x * 0.99609375 - 0.5) * ubuf.pbr_param.x + pbr_ng.x * (1.0 - pbr_xf) * ubuf.pbr_param.y,
+                             (pbr_xnm.y * 0.99609375 - 0.5) * ubuf.pbr_param.x + pbr_ng.y * (pbr_xf - 1.0) * ubuf.pbr_param.y) * pbr_xs;
+          let pbr_xdim = vec2f(textureDimensions(tex7));
+          // The engine's copy has ceil(log2(max side)) + 1 mips.
+          let pbr_xmips = ceil(log2(max(pbr_xdim.x, pbr_xdim.y))) + 1.0;
+          let pbr_xlod = max(0.0, pbr_xr * (0.5 * pbr_xmips - 2.0) + 1.0);
+          let pbr_xuv = in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5 + pbr_xd * vec2f(1.0, -1.0);
+          let pbr_xscene = srgb_dec(textureSampleLevel(tex7, tex7_samp, clamp(pbr_xuv, vec2f(0.0), vec2f(1.0)), pbr_xlod).rgb);
+          let pbr_xnv = saturate(-dot(pbr_xvd, pbr_n));
+          let pbr_xrough = max(pbr_xr, 0.02);
+          let pbr_xq = pbr_xrough * pbr_c0 + pbr_c1;
+          let pbr_xa = min(pbr_xq.x * pbr_xq.x, exp2(-9.28 * pbr_xnv)) * pbr_xq.x + pbr_xq.y;
+          var pbr_xab = vec2f(-1.04, 1.04) * pbr_xa + pbr_xq.zw;
+          if (ubuf.pbr_light_scale.z > 0.0) {{
+              pbr_xab = textureSampleLevel(pbr_brdf_lut, pbr_cube_samp, vec2f(pbr_xnv, pbr_xrough), 0.0).rg;
+          }}
+          var pbr_xenv = pbr_envspec;
+          if (pbr_hdr > 0.0 && ubuf.pbr_probe[0].w > 0.0 && ubuf.pbr_probe[2].w > 0.0) {{
+              let pbr_xc = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, pbr_xr * pbr_lod).rgb * pbr_hdr;
+              var pbr_xl = 1.0;
+              if (ubuf.pbr_lmap_rect.z != 0.0) {{
+                  pbr_xl = max(pbr_l0v.r, max(pbr_l0v.g, pbr_l0v.b)) * dot(pbr_blcm, vec3f(0.2126, 0.7152, 0.0722));
+              }}
+              pbr_xenv = pbr_xc * mix(ubuf.pbr_probe[1].w, 1.0, saturate(pbr_xl * ubuf.pbr_probe[2].w));
+          }}
+          let pbr_xbase = {0}.rgb * pbr_xv3.rgb;
+          pbr_alpha = 1.0;
+          pbr_glow = vec3f(0.0);
+          pbr_lo = pbr_xenv * (pbr_xab.x * 0.04 + pbr_xab.y);
+          if (ubuf.pbr_lmap_rect.z != 0.0) {{
+              pbr_lo += pbr_xbase * pbr_l0v * pbr_blcm * ((1.0 - pbr_xv3.w) / pbr_pi);
+          }}
+          pbr_pass = pbr_xbase * pbr_xv3.w * pbr_xscene;
+      }})""",
+                        base, mapStage[2]);
+  }
   // Kinds 16 and 17, Remastered's unlit holograms 86CD1703 and 6344950D (permutation 002_0,
   // additive): rgb = DIFT x DIFC + ICNC + ICMC (+ the material's own REFL cube at the reflection
   // vector for 17), alpha = DIFT.a^2 x DIFC.a. No exposure factor in either, so none here (this
@@ -1872,6 +1927,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_lsum = vec3f(0.0);
       // The lights' diffuse alone: a lightmapped surface takes it times the baked-light modulation.
       var pbr_ldiff = vec3f(0.0);
+      var pbr_l0v = vec3f(0.0);
       var pbr_lnl = vec3f(0.0);
       // pbr-sun-vis
       // pbr-lights-begin
@@ -2238,6 +2294,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   cut("// pbr-lightmap", lightmapUsed && costTest != 3 ? R"""(if (ubuf.pbr_lmap_rect.z != 0.0) {
           let pbr_luv = ubuf.pbr_lmap_rect.xy + in.pbr_lmuv * ubuf.pbr_lmap_rect.z;
           let pbr_l0 = textureSampleLevel(pbr_lmap, pbr_cube_samp, pbr_luv, 0, 0.0).rgb;
+          pbr_l0v = pbr_l0;
           let pbr_l1x = textureSampleLevel(pbr_lmap, pbr_cube_samp, pbr_luv, 1, 0.0).rgb;
           let pbr_l1y = textureSampleLevel(pbr_lmap, pbr_cube_samp, pbr_luv, 2, 0.0).rgb;
           let pbr_l1z = textureSampleLevel(pbr_lmap, pbr_cube_samp, pbr_luv, 3, 0.0).rgb;

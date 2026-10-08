@@ -338,14 +338,16 @@ struct GXState {
     u32 width = 0;
     u32 height = 0;
     GXTexFmt format = GX_TF_I4;
+    bool mips = false;
 
     bool operator==(const CopyTextureKey& rhs) const {
-      return dest == rhs.dest && width == rhs.width && height == rhs.height && format == rhs.format;
+      return dest == rhs.dest && width == rhs.width && height == rhs.height && format == rhs.format &&
+             mips == rhs.mips;
     }
 
     template <typename H>
     friend H AbslHashValue(H h, const CopyTextureKey& key) {
-      return H::combine(std::move(h), key.dest, key.width, key.height, key.format);
+      return H::combine(std::move(h), key.dest, key.width, key.height, key.format, key.mips);
     }
   };
 
@@ -470,6 +472,7 @@ struct GXState {
   u32 texCopyDstWidth = 0;
   u32 texCopyDstHeight = 0;
   bool texCopyDstWide = false;
+  bool texCopyMips = false; // GXSetTexCopyDst mipmap flag: the copy gets a full mip chain
   const void* texCopyDest = nullptr;
   absl::flat_hash_map<const void*, CopyTextureRef> copyTextures;
   absl::flat_hash_map<CopyTextureKey, CopyTextureRef> copyTextureCache;
