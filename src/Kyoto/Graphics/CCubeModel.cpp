@@ -601,8 +601,14 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     };
     // A room environment from a mod has a cube for where the model stands, which replaces
     // the live probe; it needs no captures, so only `probe off` turns it off.
-    const CVector3f origin = CGraphics::GetModelMatrix().GetTranslation();
-    const float pos[3] = {origin.GetX(), origin.GetY(), origin.GetZ()};
+    // Remastered's RequestLightProbeIfApplicable samples at the world centre of the
+    // model's local box (the node translation when the box is invalid); the first-person
+    // gun overrides it with the player's position.
+    const CTransform4f& modelXf = CGraphics::GetModelMatrix();
+    const CVector3f origin = x20_bounds.Invalid() ? modelXf.GetTranslation()
+                                                  : modelXf * x20_bounds.GetCenterPoint();
+    float pos[3] = {origin.GetX(), origin.GetY(), origin.GetZ()};
+    PortRoomEnv::ProbeOverride(pos);
     PortRoomEnv::Selection env;
     const int mode = CCubeMaterial::sPortPBRProbeMode;
     const bool found = PortRoomEnv::Select(pos, env);

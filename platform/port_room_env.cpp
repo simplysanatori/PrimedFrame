@@ -2255,6 +2255,23 @@ void ClearVolumeHint() {
   sHintLightmap[2] = 0.f;
 }
 
+static bool sProbeOverride = false;
+static float sProbeOverridePos[3] = {};
+
+void SetProbeOverride(const float pos[3]) {
+  sProbeOverride = true;
+  std::memcpy(sProbeOverridePos, pos, sizeof(sProbeOverridePos));
+}
+
+void ClearProbeOverride() { sProbeOverride = false; }
+
+bool ProbeOverride(float pos[3]) {
+  if (sProbeOverride) {
+    std::memcpy(pos, sProbeOverridePos, sizeof(sProbeOverridePos));
+  }
+  return sProbeOverride;
+}
+
 bool HasVolume(uint32_t mrea) {
   if (!Enabled() || !VolumesEnabled()) {
     return false;

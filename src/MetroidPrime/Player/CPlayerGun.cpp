@@ -1,5 +1,6 @@
 #include "MetroidPrime/Player/CPlayerGun.hpp"
 #include "port_debug.h"
+#include "port_room_env.h"
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
 #endif
@@ -585,6 +586,11 @@ void CPlayerGun::PortSnapshotPresentedPose(const CStateManager& mgr) const {
 
 void CPlayerGun::Render(const CStateManager& mgr, const CVector3f& pos,
                         const CModelFlags& flags) const {
+#ifdef TARGET_PC
+  const CVector3f probePos = mgr.GetPlayer()->GetTranslation();
+  const float probeXyz[3] = {probePos.GetX(), probePos.GetY(), probePos.GetZ()};
+  const PortRoomEnv::ProbeOverrideScope probeScope(probeXyz);
+#endif
   const CTransform4f worldView = CGraphics::GetViewMatrix();
   if (mgr.GetCameraManager()->IsInFPCamera() &&
       mgr.GetPlayer()->GetCameraState() == CPlayer::kCS_FirstPerson &&
