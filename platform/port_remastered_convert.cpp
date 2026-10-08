@@ -1535,8 +1535,8 @@ constexpr uint32_t kShaderGunFx = 0x98F0556D;
 // dda64c97 (stored id 974ca6dd), the Eyon's eyeball_gloss: bfb300b6's actor lighting (normal map, GGX) with a
 // matcap term, REFV x REFS(N'.xy) x luminance(L), in place of the reflection. Kind 25 (kb material/dda64c97.md).
 constexpr uint32_t kShaderEyeGloss = 0x974CA6DD;
-// 7cf91c66 (variasuit Eyeball_Exterior) is the same lighting and matcap with CCH0 (tint, alpha) in place of DIFC, a
-// script-driven glow c4[0].y x CCH1 (INCI/DMGI, zero at rest) and the base map folded through the tint (kb material/7cf91c66.md).
+// 7cf91c66 (variasuit Eyeball_Exterior) is the same lighting and matcap. Its glow is DMGI(CCH2.y) x ICMC + ICNC (c4[0].y x
+// c5[1] + c4[1]; c5[0] is DIFC), which is zero in all 11 materials whatever DMGI is: nothing to drive (kb material/7cf91c66.md).
 constexpr uint32_t kShaderEyeGloss2 = 0x7CF91C66;
 constexpr bool IsEyeGloss(uint32_t shader) { return shader == kShaderEyeGloss || shader == kShaderEyeGloss2; }
 // Unlit, the vertex colour times the base map (a door shield's noise), which
