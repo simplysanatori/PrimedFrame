@@ -1419,10 +1419,10 @@ constexpr uint32_t kShaderGunGlow[] = {0xA13D6235, 0x62F671E0};
 // and the edge glows CCH1.x x CCH2. Without its maps it is not drawn: as a plain
 // surface it froze the gun for good.
 constexpr uint32_t kShaderFrozenShell = 0x2FC554A2;
-// Ice (Model_IceSpreader: the Ice charge's shards, frozen nozzles): lit PBR that
-// reflects its own REFL cube (x CCH5.x, tinted CCH2) and adds TCH0 unlit, a frost
-// layer seen a little below the surface (parallax CCH0.w), times CCH1.x and the base
-// alpha squared, plus a CCH3 rim. Drawn as plain PBR the pale albedo alone read white.
+// Ice (Model_IceSpreader: the Ice charge's shards, frozen nozzles; PBR kind 28): one
+// light slot over 1/pi, its own REFL cube (x CCH5.x, tinted CCH2) with a light-luma
+// specular occlusion, TCH0 as a frost layer seen a little below the surface (parallax
+// CCH0.w) times CCH1.x, the base alpha squared and the vertex mask, plus a CCH3 rim.
 constexpr uint32_t kShaderIceSpreader = 0x088E025E;
 // A Metroid's dome: a matcap shell (PBR kind 13). Its glTF calls it
 // opaque, so the vote put it on an opaque retail material, a solid white blob;
@@ -1607,6 +1607,7 @@ const char* KindName(int kind) {
   case 23: return "refract-glass";
   case 24: return "decal-cut";
   case 25: return "eye-gloss";
+  case 28: return "ice";
   default: return "kind?";
   }
 }
@@ -2278,13 +2279,22 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.blended && !out.cutout) {
     out.kind = 10;
   }
-  if (shader == kShaderIceSpreader && tch[0] && !out.maps[kEmissive].has) {
-    // The frost layer is the glow, masked by the base alpha squared (the parallax and
-    // the rim are not drawn).
+  if (shader == kShaderIceSpreader && tch[0] && !out.maps[kEmissive].has && cch[0] && cch[1] && cch[2] && cch[3]) {
+    // Ice (088e025e, kind 28): TCH0 is the frost, shifted by a parallax along the view and drawn
+    // over the lit surface with a rim. Rows: CCH0 (normal strength z, parallax scale w), CCH1
+    // (frost gain x, rim gain y, rim power z), CCH2 rgb with CCH5.x in w (cube tint and gain),
+    // CCH3 (rim colour).
     set(kEmissive, tch[0]->texture);
-    out.emissive = cch[1] ? ShortestDouble(cch[1]->color[0]) : 1.0;
-    out.mask = out.maskSquared = true;
-    out.reason += "ice: TCH0 frost as glow, own cube; ";
+    out.kind = 28;
+    const ModelMaterialData* rows[4] = {cch[0], cch[1], cch[2], cch[3]};
+    for (int r = 0; r < 4; ++r) {
+      for (int i = 0; i < 4; ++i) {
+        out.shieldRows[r * 4 + i] = ShortestDouble(rows[r]->color[i]);
+      }
+    }
+    out.shieldRows[11] = cch[5] ? ShortestDouble(cch[5]->color[0]) : 1.0;
+    out.emissive = 1.0;
+    out.reason += "ice: kind 28, own cube; ";
   }
   // The texture matrix a scroll loads has no scale, so CCH1.yz (1 on every door
   // shield seen) is not drawn.
@@ -2379,6 +2389,12 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.emissive = 0.0;
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
+  }
+  if (out.kind == 28) {
+    // Lit, with the frost map in the emissive slot and its own opacity (the base alpha).
+    out.tinted = out.mask = out.maskSquared = out.unlit = false;
+    out.height = 0.0;
+    out.backlight = out.backlightTop = 0.0;
   }
   if (out.kind == 25) {
     // As kind 19, but the normal map, MR and the light's spec stay: only the reflection is the matcap.
@@ -2636,7 +2652,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25) {
+  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25 || m.kind == 28) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     for (double v : m.shieldRows) {
       PF(b, v);
@@ -4075,7 +4091,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // the shader: its alpha, rim and colours are all the Remastered material's.
     const bool matcapShell = rem.kind == 13;
     // And the Frigate's force fields (kind 14), a retail model's fx surface drawn by the shader.
-    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25;
+    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25 || rem.kind == 28;
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
     // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,

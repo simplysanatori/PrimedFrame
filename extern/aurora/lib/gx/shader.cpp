@@ -1535,7 +1535,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       normal = fmt::format("\n      let pbr_ts2 = {} * 1.9921875 - 1.0;", normalXy2);
     }
     normal += fmt::format(R"""(
-      let pbr_ts = ({0} * 1.9921875 - 1.0) * select(1.0, ubuf.pbr_param.z, pbr_kind > 3.5 && pbr_kind < 4.5);
+      let pbr_ts = ({0} * 1.9921875 - 1.0) * select(select(1.0, ubuf.pbr_param.z, pbr_kind > 3.5 && pbr_kind < 4.5), ubuf.pbr_shield[0].z, pbr_kind > 27.5 && pbr_kind < 28.5);
       {2}let pbr_tn = {1};
       if (pbr_tlen > 1e-24) {{
         let pbr_s = inverseSqrt(pbr_tlen);
@@ -1926,6 +1926,45 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         pbr_pass = vec3f(0.0);
     }})""",
                         underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base);
+  }
+  // Kind 28, Remastered's 088e025e (Model_IceSpreader, permutation 002_0). Shield rows: 0 = CCH0 (z normal strength,
+  // w frost parallax), 1 = CCH1 (x frost gain, y rim gain, z rim power), 2 = CCH2 rgb (cube tint) and CCH5.x in w
+  // (cube gain), 3 = CCH3 rgb (rim colour). Map 3 is the frost TCH0. L is the baked probe's mean (BLPD) times BLCM:
+  //   rgb = AO x BCLR x (1 - metal) x L / pi
+  //       + occ x cube x CCH5.x x CCH2 x (F0 x ab.x + ab.y)   occ = AO x mix(min, 1, sat(max(mean) x luma(BLCM) x 1/max))
+  //       + TCH0(uv + BCLR.a x CCH0.w x (T.V, B.V) / (N0.V)) x BCLR.a^2 x vertex alpha x CCH1.x
+  //       + (1 - sat(N'.V))^CCH1.z x CCH1.y x CCH3 x (1 / exposure)
+  // with B = normalize(cross(N0, T)) and no handedness, as the parallax is written there. Alpha = BCLR.a (not squared).
+  if (mapStage[2] != -1 && mapStage[3] != -1) {
+    const auto& frost = config.tevStages[mapStage[3]];
+    liquid += fmt::format(R"""(
+    if (pbr_kind > 27.5 && pbr_kind < 28.5) {{
+        let pbr_ic = ubuf.pbr_shield[1];
+        let pbr_it = {2};
+        let pbr_ib = normalize(cross(pbr_ngs, pbr_it));
+        let pbr_iv = in.pbr_pos;
+        let pbr_ip = {1}.a * ubuf.pbr_shield[0].w / dot(pbr_ngs, pbr_iv);
+        let pbr_iuv = tex{3}_uv + pbr_ip * vec2f(dot(pbr_it, pbr_iv), dot(pbr_ib, pbr_iv));
+        let pbr_ifr = textureSampleBias(tex{0}, tex{0}_samp, pbr_iuv, ubuf.tex{0}_size_bias.z).rgb;
+        var pbr_il = pbr_amb;
+        if (ubuf.pbr_ambient[0].w > 0.0) {{
+            pbr_il = select(dot(pbr_amb, vec3f(0.2126, 0.7152, 0.0722)), 1.0, ubuf.pbr_ambient[0].w > 1.5) *
+                     max(ubuf.pbr_ambient[0].rgb + ubuf.pbr_ambient[1].rgb / (ubuf.pbr_ambient[2].rgb + 1.0), vec3f(0.0));
+        }}
+        let pbr_iocc = pbr_ao * mix(ubuf.pbr_probe[1].w, 1.0,
+                                    clamp(max(pbr_il.r, max(pbr_il.g, pbr_il.b)) * dot(pbr_blcm, vec3f(0.2126, 0.7152, 0.0722)) *
+                                          ubuf.pbr_probe[2].w, 0.0, 1.0));
+        let pbr_if0 = mix(vec3f(0.04), pbr_base, pbr_metal);
+        let pbr_ix = select(1.0, 1.0 / ubuf.pbr_tone[0].w, ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0);
+        pbr_lo = pbr_ao * pbr_base * (1.0 - pbr_metal) * pbr_il * pbr_blcm * 0.31830988 +
+                 pbr_iocc * pbr_cubel * (ubuf.pbr_shield[2].w * ubuf.pbr_shield[2].rgb) * (pbr_if0 * pbr_ab.x + pbr_ab.y);
+        pbr_glow = pbr_ifr * ({1}.a * {1}.a * pbr_vraw.a * pbr_ic.x) +
+                   pbr_ix * pow(1.0 - clamp(dot(pbr_n, pbr_v), 0.0, 1.0), pbr_ic.z) * pbr_ic.y * ubuf.pbr_shield[3].rgb;
+        pbr_alpha = clamp({1}.a, 0.0, 1.0);
+        pbr_pass = vec3f(0.0);
+    }})""",
+                        underlying(frost.texMapId), base,
+                        tangents ? "normalize(in.pbr_tan.xyz)"s : "normalize(pbr_t0)"s, underlying(frost.texCoordId));
   }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
