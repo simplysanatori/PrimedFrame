@@ -226,8 +226,15 @@ constexpr uint32_t kPropWaterMaterial[5] = {0x9201a855, 0x00c267c0, 0x50c8ac86, 
 
 constexpr size_t kMaxChunks = 1u << 20;
 constexpr size_t kMaxVolumeFloats = size_t(1) << 28;
-// A grid above this is halved: 24 bytes a point, so no file's grid passes 24 MB.
+// A grid above this is halved: 24 bytes a point. Desktop keeps every grid whole (the
+// largest, the hangar's, is 14.5M points: 349 MB on disk, 465 MB of volume textures),
+// as Remastered samples them; Android keeps each file's grid under 24 MB so low-memory
+// devices aren't killed in the 9 rooms past it.
+#ifdef __ANDROID__
 constexpr size_t kMaxGridPoints = size_t(1) << 20;
+#else
+constexpr size_t kMaxGridPoints = size_t(1) << 30;
+#endif
 
 // Remastered room coordinates -> GameCube area coordinates: (x, y, z) -> (-x, z, y).
 constexpr double kR2G[3][3] = {{-1, 0, 0}, {0, 0, 1}, {0, 1, 0}};
@@ -3191,9 +3198,9 @@ bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>&
     }
     m[i][3] = -shifted[size_t(i)] / 2 - double(origin[i]);
   }
-  // The game reads a room's file in one go when the area loads, and the largest
-  // rooms have millions of points; ambient light varies slowly, so those are
-  // kept at half the resolution, each point the average of its lit ones.
+  // Android only (see kMaxGridPoints): the largest rooms have millions of points and
+  // ambient light varies slowly, so those are kept at half the resolution, each point
+  // the average of its lit ones.
   while (points > kMaxGridPoints) {
     const int64_t half[3] = {(size[0] + 1) / 2, (size[1] + 1) / 2, (size[2] + 1) / 2};
     const size_t fewer = size_t(half[0]) * size_t(half[1]) * size_t(half[2]);
