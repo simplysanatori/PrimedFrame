@@ -1585,7 +1585,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // level. It is drawn premultiplied, so what shows through is added after the tone curve.
     const auto& inner4 = config.tevStages[mapStage[4]];
     std::string through;
-    if (screen) {
+    if (screen && config.pbrKind != 31 && config.pbrKind != 23) {
       vtxOutAttrs += fmt::format("\n    @location({}) pbr_scr: vec4f,", vtxOutIdx++);
       vtxXfrAttrs += "\n    out.pbr_scr = out.pos;";
       through = fmt::format(R"""(
@@ -1927,6 +1927,33 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }})""",
                         underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base);
   }
+  // Kind 31, Remastered's fb2bc671 (static) and df3e3423 (skinned, ICAN emissive), the ChozoGhost's X-ray material (every
+  // fragment permutation shares this core; their ambient is zeroed by c1[0].z). With fade = mix(CCH0.z, CCH0.w, sat((-z -
+  // CCH1.x) / (CCH1.y - CCH1.x))) by view depth and fr = 1 - max(0, N'.z)^CCH0.x (N' the normal map's, in view space):
+  // alpha = (CCH1.z != 0 ? fade x fr : fade) x ICNC.a. rim = fr + BCLR.a; fb2bc671: rim unless CCH1.w != 0 (then 0);
+  // df3e3423: CCH1.w != 0 ? rim x ICAN x CCH0.y : ICAN x CCH0.y + rim. rgb = max(0, (that + ICMC) x ICNC) x exposure
+  // + the lights' GGX specular (roughness 0.1, F = 1, no diffuse: pbr_lspec / pi). shield rows: 0 CCH0, 1 CCH1, 2 ICNC, 3 ICMC
+  // (w = 1 for df3e3423).
+  if (config.pbrKind == 31) {
+    liquid += fmt::format(R"""(
+    if (pbr_kind > 30.5) {{
+        let pbr_c0 = ubuf.pbr_shield[0];
+        let pbr_c1 = ubuf.pbr_shield[1];
+        let pbr_fz = clamp((-in.pbr_pos.z - pbr_c1.x) / (pbr_c1.y - pbr_c1.x), 0.0, 1.0);
+        let pbr_fade = mix(pbr_c0.z, pbr_c0.w, pbr_fz);
+        let pbr_fr = 1.0 - pow(max(pbr_n.z, 0.0), pbr_c0.x);
+        let pbr_rim = pbr_fr + {0}.a;
+        let pbr_ican = max({1}.rgb, vec3f(0.0)) * pbr_c0.y;
+        let pbr_sw = pbr_c1.w != 0.0;
+        let pbr_val = select(select(vec3f(pbr_rim), vec3f(0.0), pbr_sw),
+                             select(pbr_ican + vec3f(pbr_rim), pbr_ican * pbr_rim, pbr_sw),
+                             ubuf.pbr_shield[3].w > 0.5);
+        pbr_lo = pbr_lspec / pbr_pi;
+        pbr_glow = max((pbr_val + ubuf.pbr_shield[3].rgb) * ubuf.pbr_shield[2].rgb, vec3f(0.0));
+        pbr_alpha = clamp(select(pbr_fade, pbr_fade * pbr_fr, pbr_c1.z != 0.0) * ubuf.pbr_shield[2].w, 0.0, 1.0);
+        pbr_pass = vec3f(0.0);
+    }})""", base, mapStage[3] == -1 ? "vec4f(0.0)"s : sampled(3, "vec4f(0.0)"));
+  }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
     attn = R"""(
@@ -1946,16 +1973,17 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_base = {11};{13}
       let pbr_orm = {1}.rgb;
       let pbr_ao = pbr_orm.r;
-      let pbr_rough = clamp(pbr_orm.g, 0.02, 1.0);
+      let pbr_rough = select(clamp(pbr_orm.g, 0.02, 1.0), 0.1, pbr_kind > 30.5);
       let pbr_metal = clamp(pbr_orm.b, 0.0, 1.0);
       let pbr_emissive = max({2}.rgb, vec3f(0.0)) * ubuf.pbr_emissive.rgb;
       var pbr_n = pbr_ng;{3}
       let pbr_v = normalize(-in.pbr_pos);
       let pbr_nv = max(dot(pbr_n, pbr_v), 1e-4);
-      let pbr_f0 = mix(vec3f(0.04), pbr_base * select(vec3f(1.0), pbr_vc.rgb, pbr_f0t), pbr_metal) *
-          ubuf.pbr_light_scale.y;
-      let pbr_diff = pbr_base * (1.0 - pbr_metal){8} * ubuf.pbr_light_scale.x *
-          select(1.0, clamp(pbr_vraw.a * ubuf.pbr_layer_height.y, 0.0, 1.0), pbr_kind > 12.5 && pbr_kind < 13.5);
+      let pbr_f0 = select(mix(vec3f(0.04), pbr_base * select(vec3f(1.0), pbr_vc.rgb, pbr_f0t), pbr_metal) *
+          ubuf.pbr_light_scale.y, vec3f(1.0), pbr_kind > 30.5);
+      let pbr_diff = select(pbr_base * (1.0 - pbr_metal){8} * ubuf.pbr_light_scale.x *
+          select(1.0, clamp(pbr_vraw.a * ubuf.pbr_layer_height.y, 0.0, 1.0), pbr_kind > 12.5 && pbr_kind < 13.5),
+          vec3f(0.0), pbr_kind > 30.5);
       let pbr_a2 = pow(pbr_rough, 4.0);
       let pbr_k = pbr_rough * pbr_rough * 0.5;
       // A normal-mapped reflection can point into the surface; lift it back to the horizon

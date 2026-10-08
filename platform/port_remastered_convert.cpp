@@ -1521,6 +1521,10 @@ constexpr uint32_t kShaderPhazonB = 0x9E52AA74;
 // Distortion2 (24670bf0, the Phendrana ice walls, the crater's flesh glass; kind 23): refracts a mipped copy of
 // the frame by its normal map and a fresnel term, tinted by the base map and the vertex colour (kb material/24670bf0.md).
 constexpr uint32_t kShaderRefractGlass = 0x24670BF0;
+// FB2BC671 and DF3E3423 (the ids as the reports print them), the ChozoGhost's X-ray materials, static and skinned
+// (kind 31, kb material/fb2bc671.md, df3e3423.md).
+constexpr uint32_t kShaderXrayStatic = 0xFB2BC671;
+constexpr uint32_t kShaderXraySkinned = 0xDF3E3423;
 // The decal cutouts (kind 24; kb material/e538b757.md, 42fe2ed0.md): a bfb300b6 surface cut by a smoothstep of an
 // alpha A about CCH0.x = c (0.5 on all of them): discard where t²(3-2t) < 0.25, t = (A - 0.5 + c) / 2c; output
 // alpha 1, no vertex colour. e538b757 cuts on BCLR.a², 42fe2ed0 on TCH0.r (its alpha map, in the emissive slot).
@@ -1575,6 +1579,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderPhazon, "phazon");
   add(shader == kShaderPhazonB, "phazon-b");
   add(shader == kShaderRefractGlass, "refract-glass");
+  add(shader == kShaderXrayStatic || shader == kShaderXraySkinned, "xray-ghost");
   add(shader == kShaderDecalCut || shader == kShaderDecalAlphaMap, "decal-cut");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
@@ -1607,6 +1612,7 @@ const char* KindName(int kind) {
   case 23: return "refract-glass";
   case 24: return "decal-cut";
   case 25: return "eye-gloss";
+  case 31: return "xray-ghost";
   default: return "kind?";
   }
 }
@@ -1624,7 +1630,8 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   out.role = ShaderRole(shader);
   out.shell = shader == kShaderMatcapShell;
   out.shield = shader == kShaderBoundaryShield || shader == kShaderForceField || shader == kShaderPickUp || shader == kShaderHolo ||
-               shader == kShaderHoloRefl || shader == kShaderHologram || shader == kShaderGunFx || shader == kShaderEyeGloss;
+               shader == kShaderHoloRefl || shader == kShaderHologram || shader == kShaderGunFx || shader == kShaderEyeGloss ||
+               shader == kShaderXrayStatic || shader == kShaderXraySkinned;
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
     const uint32_t family = d.usage & 0xFFFFFF00u;
@@ -2112,6 +2119,35 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 4; ++i) {
       out.shieldRows[28 + i] = 1.0;
     }
+  } else if ((shader == kShaderXrayStatic || shader == kShaderXraySkinned) && out.maps[kBase].has &&
+             out.maps[kNormal].has && cch[0] && cch[1]) {
+    out.kind = 31;
+    // CCH0 (fresnel power, ICAN scale, alpha at the near and far depth) and CCH1 (the depth range, the alpha-by-fresnel
+    // and rim switches) are rows 0 and 1, ICNC row 2 (rgba), ICMC row 3 with w = 1 where the shader reads ICAN (the
+    // skinned one).
+    for (int r = 0; r < 2; ++r) {
+      for (int i = 0; i < 4; ++i) {
+        out.shieldRows[r * 4 + i] = ShortestDouble(cch[r]->color[i]);
+      }
+    }
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[8 + i] = 1.0;
+    }
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind != ModelMaterialData::Kind::Color) {
+        continue;
+      }
+      if (d.usage == FourCC('I', 'C', 'N', 'C')) {
+        for (int i = 0; i < 4; ++i) {
+          out.shieldRows[8 + i] = ShortestDouble(d.color[i]);
+        }
+      } else if (d.usage == FourCC('I', 'C', 'M', 'C')) {
+        for (int i = 0; i < 3; ++i) {
+          out.shieldRows[12 + i] = ShortestDouble(d.color[i]);
+        }
+      }
+    }
+    out.shieldRows[15] = shader == kShaderXraySkinned && out.maps[kEmissive].has ? 1.0 : 0.0;
   } else if (shader == kShaderRefractGlass && out.maps[kBase].has && out.maps[kNormal].has && cch[0]) {
     out.kind = 23;
     out.vcolor = true;
@@ -2380,6 +2416,18 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
   }
+  if (out.kind == 31) {
+    // Alpha blended and lit by the lights' specular alone; the shader makes the rest (ICAN is kept for the skinned one).
+    out.layered = out.blended = true;
+    out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 0.0;
+    out.backlight = out.backlightTop = 0.0;
+    out.maps[kMr].has = false;
+    if (out.shieldRows[15] == 0.0) {
+      out.maps[kEmissive].has = false;
+    }
+  }
   if (out.kind == 25) {
     // As kind 19, but the normal map, MR and the light's spec stay: only the reflection is the matcap.
     out.layered = true;
@@ -2636,7 +2684,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25) {
+  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25 || m.kind == 31) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     for (double v : m.shieldRows) {
       PF(b, v);
@@ -2698,8 +2746,8 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
   // 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
   const bool lambertFx = rem.shader == kShaderLambertFx || rem.opaqueFx;
-  P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : rem.kind >= 15 && rem.kind <= 18 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
-  P16(b, rem.kind == 14 || (rem.kind >= 15 && rem.kind <= 18) ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
+  P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
+  P16(b, rem.kind == 14 || (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
   // fallback too, which is what draws it whenever the model is not opaque: channel
   // 0 unlit with the vertex colour as its material colour (bit 2), and the alpha
@@ -4075,7 +4123,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // the shader: its alpha, rim and colours are all the Remastered material's.
     const bool matcapShell = rem.kind == 13;
     // And the Frigate's force fields (kind 14), a retail model's fx surface drawn by the shader.
-    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25;
+    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25 || rem.kind == 31;
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
     // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,
