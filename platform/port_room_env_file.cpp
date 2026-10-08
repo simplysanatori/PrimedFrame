@@ -949,7 +949,8 @@ bool SampleGrid(const File& file, const Grid& grid, const float pos[3], Ambient&
   for (int row = 0; row < 3; ++row) {
     const float* r = m + row * 4;
     at[row] = r[0] * pos[0] + r[1] * pos[1] + r[2] * pos[2] + r[3];
-    // A point's light reaches half a cell past the edge, no further.
+    // The baked-probe textures are sampled with CLAMP_TO_BORDER and a transparent black
+    // border (0x1c93f0): taps past the edge read 0, so the light is gone half a cell out.
     if (!(at[row] >= -0.5f && at[row] <= float(grid.size[row]) - 0.5f)) {
       return false;
     }
@@ -958,7 +959,6 @@ bool SampleGrid(const File& file, const Grid& grid, const float pos[3], Ambient&
   }
   // mean, lobe, sharpness, then the three directions along the grid's axes
   float sum[18] = {};
-  float total = 0.f;
   for (int corner = 0; corner < 8; ++corner) {
     float weight = 1.f;
     size_t index = 0;
@@ -971,13 +971,10 @@ bool SampleGrid(const File& file, const Grid& grid, const float pos[3], Ambient&
       index = index * grid.size[axis] + size_t(outside ? 0 : i);
     }
     if (outside || weight <= 0.f) {
-      continue;
+      continue; // border texel: zero
     }
     const uint8_t* p = file.data.data() + grid.offset + index * kPointSize;
     const float mean[3] = {GetHalf(p), GetHalf(p + 2), GetHalf(p + 4)};
-    if (mean[0] + mean[1] + mean[2] <= 0.f) {
-      continue;
-    }
     for (int i = 0; i < 3; ++i) {
       sum[i] += weight * mean[i];
       sum[3 + i] += weight * GetHalf(p + 6 + i * 2);
@@ -986,14 +983,8 @@ bool SampleGrid(const File& file, const Grid& grid, const float pos[3], Ambient&
     for (int i = 0; i < 9; ++i) {
       sum[9 + i] += weight * (float(p[15 + i]) / 127.5f - 1.f);
     }
-    total += weight;
   }
-  if (total < 0.02f) {
-    return false;
-  }
-  for (float& value : sum) {
-    value /= total;
-  }
+  // Plain trilinear, as the GPU pass: empty texels count as stored, nothing renormalised.
   // The grid's axes are the world's turned and scaled alike, so a direction goes back
   // through the transpose.
   const float scale = std::sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
