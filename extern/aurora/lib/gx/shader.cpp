@@ -967,7 +967,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                         config.tevStages[0].texMapId != GX_TEXMAP_NULL &&
                         config.tevStages[0].texCoordId != GX_TEXCOORD_NULL &&
                         config.colorChannels[GX_COLOR1].lightingEnabled;
-  std::array<int, 7> mapStage{-1, -1, -1, -1, -1, -1, -1};
+  std::array<int, 8> mapStage{-1, -1, -1, -1, -1, -1, -1, -1};
   for (int i = shadowed ? 1 : 0; i < config.tevStageCount; ++i) {
     const auto& stage = config.tevStages[i];
     const u32 map = underlying(stage.texMapId);
@@ -990,8 +990,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   }
   // Glass (kind 8) also samples map 7, a copy of what is behind it on screen. The
   // shadow's stage samples map 7 too, so a shadowed surface goes without.
+  // 3c66aaef (layered + MNMP) binds its macro normal as map 7, which is not a scene copy.
+  const bool layeredMacro = mapStage[4] != -1 && mapStage[7] != -1 && (config.pbrKind == 0 || config.pbrKind == 24);
   bool screen = false;
-  for (int i = 0; i < config.tevStageCount && !shadowed; ++i) {
+  for (int i = 0; i < config.tevStageCount && !shadowed && !layeredMacro; ++i) {
     const auto& stage = config.tevStages[i];
     if (stage.texMapId == GX_TEXMAP7 && uses_texture_sample(stage) && stage.texCoordId != GX_TEXCOORD_NULL) {
       screen = true;
@@ -1624,7 +1626,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       }})""",
                           normalXy, tn,
                           normalXy2.empty() ? "" : "let pbr_tsm = mix(pbr_ts, pbr_ts2, pbr_ls);\n      ");
-    if (tangents2 && !normalXy2.empty()) {
+    if (tangents2 && !normalXy2.empty() && !layeredMacro) {
       // A978D507 / D363D694 (LayerBaseNormal_2TangentStream): each layer's normal is built in
       // its own tangent frame (TANGENT_0 for map 1, TANGENT_1 for map 2) and the two are mixed.
       normal += R"""(
@@ -1644,7 +1646,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         pbr_n = normalize(pbr_ng + (pbr_n - pbr_ng) * pbr_vraw.b);
       })""";
   }
-  if (!layered && mapStage[6] != -1) {
+  const int macroStage = layered ? (layeredMacro ? mapStage[7] : -1) : mapStage[6];
+  if (macroStage != -1) {
     // Remastered's macro normal (MNMP): the detail normal M (map 1, TANGENT_0's frame) goes into
     // TANGENT_1's frame, the macro map's xy is added there and z is scaled by its z:
     // x = m.x + T2.M, y = m.y + B2.M, z = N.M sqrt(1 - |m|^2), B2 = cross(N, T2) w (our
@@ -1660,7 +1663,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         let pbr_kz = dot(pbr_ng, pbr_n) * sqrt(max(0.0, 1.0 - dot(pbr_km, pbr_km)));
         pbr_n = normalize(pbr_ng * pbr_kz + pbr_kt * pbr_kx + pbr_kb * pbr_ky);
       }})""",
-                          mapStage[6], tangents2 ? "pbr_t2" : "pbr_t", tangents2 ? "pbr_b2" : "pbr_b");
+                          macroStage, tangents2 ? "pbr_t2" : "pbr_t", tangents2 ? "pbr_b2" : "pbr_b");
   }
   normal += liquid;
   // And what is seen of it: its own colour in the room's light where it is looked into,
