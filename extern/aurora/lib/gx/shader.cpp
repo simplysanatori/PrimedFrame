@@ -1576,6 +1576,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         pbr_n = normalize(mix(pbr_nl1, pbr_nl2, pbr_ls));
       })""";
     }
+    // 231F8383 (kind 8) lerps the map's normal in by the vertex colour's blue:
+    // normalize(Ng + (N - Ng) x v4.z) (kb material/231f8383.md).
+    normal += R"""(
+      if (pbr_kind > 7.5 && pbr_kind < 8.5) {
+        pbr_n = normalize(pbr_ng + (pbr_n - pbr_ng) * pbr_vraw.b);
+      })""";
   }
   if (!layered && mapStage[6] != -1) {
     // Remastered's macro normal (MNMP): the detail normal M (map 1, TANGENT_0's frame) goes into
@@ -1620,7 +1626,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // (map 7) is seen through it, bent by map 5's noise (pbr_param.x) and tinted
     // (pbr_emissive). pbr_param.z is how fast the clear part loses its opacity, y the
     // reflection's weight, pbr_layer_height the glow's colour and in w the reflection's
-    // level. It is drawn premultiplied, so what shows through is added after the tone curve.
+    // level. It is drawn with straight alpha (class 1), as Remastered's output rgb holds the
+    // scene term too, so what shows through is added after the tone curve and blended by alpha.
     const auto& inner4 = config.tevStages[mapStage[4]];
     std::string through;
     if (screen && config.pbrKind != 31) {
@@ -1638,8 +1645,20 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_gm = sampled{0};
           let pbr_gt = clamp(pbr_gm.r * pbr_vraw.b + pbr_vraw.r, 0.0, 1.0);
           pbr_alpha = clamp(pbr_gm.a * pow(max(1.0 - pbr_gt, 1e-6), ubuf.pbr_param.z) * pbr_vraw.a, 0.0, 1.0);
+          // The reflection is the bare cube at lod m.z x REFP.x (no occlusion), and the BRDF
+          // row is m.z too (TCH0 blue is the roughness, not the MR map's).
+          let pbr_gq = pbr_gm.b * pbr_c0 + pbr_c1;
+          let pbr_ga = min(pbr_gq.x * pbr_gq.x, exp2(-9.28 * saturate(pbr_nv))) * pbr_gq.x + pbr_gq.y;
+          var pbr_gab = vec2f(-1.04, 1.04) * pbr_ga + pbr_gq.zw;
+          if (ubuf.pbr_light_scale.z > 0.0) {{
+              pbr_gab = textureSampleLevel(pbr_brdf_lut, pbr_cube_samp, vec2f(saturate(pbr_nv), pbr_gm.b), 0.0).rg;
+          }}
+          var pbr_gcube = pbr_envspec;
+          if (pbr_hdr > 0.0 && ubuf.pbr_probe[0].w > 0.0) {{
+              pbr_gcube = textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, pbr_gm.b * pbr_lod).rgb * pbr_hdr;
+          }}
           pbr_lo = clamp(pbr_gm.g + pbr_vraw.g, 0.0, 1.0) * max(ubuf.pbr_layer_height.xyz, vec3f(0.0)) +
-                   pbr_envspec * (pbr_ab.x * pbr_alpha * ubuf.pbr_param.y + pbr_ab.y) * ubuf.pbr_layer_height.w;
+                   pbr_gcube * (pbr_gab.x * pbr_alpha * ubuf.pbr_param.y + pbr_gab.y) * ubuf.pbr_layer_height.w;
           pbr_glow = vec3f(0.0);{1}
       }})""",
                           mapStage[4], through);
