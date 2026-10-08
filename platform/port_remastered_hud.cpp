@@ -14,6 +14,7 @@
 #include <cstring>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 
 namespace PortRemastered {
@@ -582,6 +583,15 @@ bool MaterialTexture(const ModelMaterial& material, ModelUuid& out) {
   return false;
 }
 
+// Whether a material's shader writes its base map's alpha squared: ca1106b0,
+// the unlit alpha-blended image (a = BCLR.a^2 * DIFC.a, DIFC 1 on all 57).
+bool SquaresAlpha(const ModelMaterial& material) {
+  uint8_t sid[4];
+  std::memcpy(sid, &material.shaderId, 4);
+  const uint32_t shader = uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
+  return shader == 0xCA1106B0u && (material.unk1 & 1) != 0;
+}
+
 // A bar's mesh as the strip the game fills (port_hud_bars.h). The mesh is a
 // ribbon: each of its two edges holds one value of one texture coordinate, and
 // the other coordinate runs along it from the empty end to the full one.
@@ -924,8 +934,8 @@ bool HudConverter::LoadMaterial(std::string& error) {
 }
 
 std::optional<uint32_t> HudConverter::Texture(const ModelUuid& id, HudCounts& counts, const std::string& owner,
-                                              const Tint& tint) {
-  const std::pair<ModelUuid, Tint> key{id, tint};
+                                              const Tint& tint, bool squareAlpha) {
+  const std::tuple<ModelUuid, Tint, bool> key{id, tint, squareAlpha};
   const auto known = m_textures.find(key);
   if (known != m_textures.end()) {
     return known->second == 0 ? std::nullopt : std::optional<uint32_t>(known->second);
@@ -938,6 +948,13 @@ std::optional<uint32_t> HudConverter::Texture(const ModelUuid& id, HudCounts& co
       m_io.log(owner + ": texture " + IdToString(id) + ": " + textureError);
     }
     return std::nullopt;
+  }
+  if (squareAlpha) {
+    // Remastered's blended unlit shader writes the picture's alpha squared (times its tint's).
+    for (size_t i = 3; i < image.rgba.size(); i += 4) {
+      const unsigned a = image.rgba[i];
+      image.rgba[i] = uint8_t((a * a + 127) / 255);
+    }
   }
   if (tint != Tint{1.f, 1.f, 1.f, 1.f}) {
     for (size_t i = 0; i < image.rgba.size(); ++i) {
@@ -995,7 +1012,7 @@ bool HudConverter::ConvertModel(const Model& model, uint32_t id, HudCounts& coun
     if (!MeshPart(model, mesh, part) || !MaterialTexture(*part.material, picture)) {
       continue;
     }
-    const std::optional<uint32_t> tid = Texture(picture, counts, Hex8(id));
+    const std::optional<uint32_t> tid = Texture(picture, counts, Hex8(id), {1.f, 1.f, 1.f, 1.f}, SquaresAlpha(*part.material));
     if (!tid) {
       continue;
     }
@@ -1472,8 +1489,9 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
       return std::nullopt;
     }
     const auto tint = m_tints.find(Lower(widget));
-    return tint == m_tints.end() ? Texture(id, counts, Hex8(retailFrame))
-                                 : Texture(id, counts, Hex8(retailFrame), tint->second);
+    const bool square = SquaresAlpha(*part.material);
+    return tint == m_tints.end() ? Texture(id, counts, Hex8(retailFrame), {1.f, 1.f, 1.f, 1.f}, square)
+                                 : Texture(id, counts, Hex8(retailFrame), tint->second, square);
   };
   PortHudBars::Bars bars;
   for (Widget& w : out) {
