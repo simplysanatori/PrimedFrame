@@ -612,6 +612,8 @@ struct RemMaterial {
   bool tinted = false;     // its vertices carry a colour
   bool tintF0 = false;     // which tints the albedo before F0 too (kShaderTints), not just the diffuse
   bool cutExact = false;   // drawn as Remastered's 1-bit cutout: full-alpha base, discard at alpha^2 < 0.25 (mode bit 512)
+  bool indirect = false;   // 8CE05ED0: map 1 is INDI, the base map's uv offset (mode bit 8192); indStrength is INDS
+  double indStrength = 0.0;
   bool noRefl = false;     // no REFL: its shader samples no cube, so it reflects nothing around it
   bool unlit = false;      // a screen: its own colour and glow, no lighting
   bool glowLinear = false; // inverse-exposed: the emissive strength is drawn as is, uncompressed
@@ -1500,6 +1502,9 @@ constexpr uint32_t kShaderLambertFx = 0x4BC890C1;
 // opacity the base alpha as it is. No specular from the lights, no reflection, no AO (kb
 // material/29d9fdfb.md). Retail models; the retail blend stays.
 constexpr uint32_t kShaderVfxBase = 0x29D9FDFB;
+// 1982DB27: the same without the vertex colour (alpha BCLR.a raw, BLCM on the whole sum).
+constexpr uint32_t kShaderVfxBase2 = 0x1982DB27;
+constexpr uint32_t kShaderIndirect = 0x8CE05ED0;
 constexpr uint32_t kShaderGunFx = 0x98F0556D;
 // dda64c97 (stored id 974ca6dd), the Eyon's eyeball_gloss: bfb300b6's actor lighting (normal map, GGX) with a
 // matcap term, REFV x REFS(N'.xy) x luminance(L), in place of the reflection. Kind 25 (kb material/dda64c97.md).
@@ -1691,6 +1696,16 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   const ModelMaterialData* bklt = nullptr;
   const ModelMaterialData* bkla = nullptr;
   for (const ModelMaterialData& d : mat.data) {
+    if (shader == kShaderIndirect && d.usage == FourCC('I', 'N', 'D', 'S')) {
+      out.indStrength = d.kind == ModelMaterialData::Kind::Scalar ? d.scalar : d.color[0];
+    }
+    if (shader == kShaderIndirect && d.usage == FourCC('I', 'N', 'D', 'I') && d.kind == ModelMaterialData::Kind::Texture &&
+        d.texture.hasUsage) {
+      // The offset map is data (its xy are the offset), on its own texcoord set.
+      set(kMr, d.texture);
+      out.maps[kMr].raw = true;
+      out.indirect = out.unlit;
+    }
     const bool texture = d.kind == ModelMaterialData::Kind::Texture;
     const bool layered = d.kind == ModelMaterialData::Kind::LayeredTexture;
     switch (d.usage) {
@@ -2562,14 +2577,22 @@ bool ExposedStrength(const RemMaterial& m) { return m.kind > 0 && m.kind < 5 && 
 
 // A lit plain (kind 0) surface without REFL reflects nothing around it: every Remastered
 // shader that samples a cube has REFL, and no other does (mode bit 256).
-bool VfxBase(const RemMaterial& m) { return m.shader == kShaderVfxBase && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
-bool NoEnvSpec(const RemMaterial& m) { return (m.noRefl || VfxBase(m)) && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
+// VFX_Model_Base (29D9FDFB, and 1982DB27 without the vertex colour) and LambertFx (4BC890C1) are
+// pure Lambert: no specular lobe and no cube (kb material/{29d9fdfb,1982db27,4bc890c1}.md).
+bool VfxBase(const RemMaterial& m) {
+  return (m.shader == kShaderVfxBase || m.shader == kShaderVfxBase2) && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0;
+}
+bool PureLambert(const RemMaterial& m) {
+  return (VfxBase(m) || (m.shader == kShaderLambertFx && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0));
+}
+bool NoEnvSpec(const RemMaterial& m) { return (m.noRefl || PureLambert(m)) && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
 
 int PbrMode(const RemMaterial& m) {
   return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0) +
          (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0) +
          (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0) +
-         (m.cutExact ? 512 : 0) + (VfxBase(m) ? 1024 + 2048 + 4096 : 0);
+         (m.cutExact ? 512 : 0) + (PureLambert(m) ? 1024 : 0) + (VfxBase(m) ? 2048 + 4096 : 0) +
+         (m.indirect ? 8192 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
@@ -2583,6 +2606,8 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     k[0] = std::max(m.backlight, 0.0);
     k[1] = std::max(m.backlightTop, 0.0);
     k[2] = m.backlightFalloff;
+  } else if (m.indirect) {
+    k[0] = m.indStrength;  // INDS: an unlit surface has no use for the backlight
   }
   std::vector<double> f;
   for (int i = 0; i < 3; ++i) {
@@ -2593,7 +2618,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     f.push_back(k[i]);
   }
   const char* tag = "PBRM";
-  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m) || m.cutExact) {
+  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m) || m.cutExact || m.indirect) {
     f.push_back(m.height);
     f.push_back(double(PbrMode(m)));
     tag = "PBR2";
@@ -4081,7 +4106,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,
     // which Remastered draws opaque whatever retail's blend (the missile pickup's top,
     // 274D21BE; kb topic/mesh-blend-class.md).
-    const bool lambertFx = rem.shader == kShaderLambertFx || rem.shader == kShaderVfxBase ||
+    const bool lambertFx = rem.shader == kShaderLambertFx || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2 ||
                            (!opt.standalone && !(rem.flags & (kTransparentFlag | kCutoutFlag)));
     rem.opaqueFx = !opt.standalone && IsFx(pm) && !(rem.flags & (kTransparentFlag | kCutoutFlag));
     if (rem.kind == 19 || rem.kind == 25) {
@@ -4153,7 +4178,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // cut by the shader. Any other keeps the CMPR punch and retail's alpha compare.
     const bool exactCut = opt.standalone && rem.cutout && (rem.kind == 0 || rem.kind == 24) && !rem.unlit && !rem.layered;
     const char* const baseAlpha =
-        glow ? "blend" : !opt.standalone ? (frostShell || rem.mask || rem.shader == kShaderVfxBase || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
+        glow ? "blend" : !opt.standalone ? (frostShell || rem.mask || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2 || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
     const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || lambertFx || !IsFx(pm)) &&
                         Get("pbr:base", rt, baseAlpha, opt).has_value();
     // The base map keeps its whole alpha, and the shader cuts it as Remastered's does.

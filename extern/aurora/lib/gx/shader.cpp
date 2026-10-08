@@ -1093,8 +1093,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 2048 = the opacity is the base map's alpha as it is: no vertex alpha, nothing squared.
       // 4096 = the baked light's modulation (BLCM) multiplies the lights' diffuse too, not
       // just the baked ambient (that shader's baked-light perms: BLCM x (lobe + lights)).
-      let pbr_blit = ubuf.pbr_backlight.w > 4095.5;
-      let pbr_mwa = ubuf.pbr_backlight.w - select(0.0, 4096.0, pbr_blit);
+      // 8192 = map 1 is an indirect offset map (Remastered's INDI, 8ce05ed0), not metal/roughness:
+      // the base map is sampled at uv + (INDI.xy - 0.5) * INDS (INDS in the backlight's x), and
+      // the surface has no AO or metal.
+      let pbr_ind = ubuf.pbr_backlight.w > 8191.5;
+      let pbr_mwi = ubuf.pbr_backlight.w - select(0.0, 8192.0, pbr_ind);
+      let pbr_blit = pbr_mwi > 4095.5;
+      let pbr_mwa = pbr_mwi - select(0.0, 4096.0, pbr_blit);
       let pbr_raw = pbr_mwa > 2047.5;
       let pbr_mwb = pbr_mwa - select(0.0, 2048.0, pbr_raw);
       let pbr_nols = pbr_mwb > 1023.5;
@@ -1945,9 +1950,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_pi = 3.14159265;{10}
       var pbr_base = {11};{13}
       let pbr_orm = {1}.rgb;
-      let pbr_ao = pbr_orm.r;
-      let pbr_rough = clamp(pbr_orm.g, 0.02, 1.0);
-      let pbr_metal = clamp(pbr_orm.b, 0.0, 1.0);
+      let pbr_ao = select(pbr_orm.r, 1.0, pbr_ind);
+      let pbr_rough = clamp(select(pbr_orm.g, 0.6, pbr_ind), 0.02, 1.0);
+      let pbr_metal = clamp(select(pbr_orm.b, 0.0, pbr_ind), 0.0, 1.0);
       let pbr_emissive = max({2}.rgb, vec3f(0.0)) * ubuf.pbr_emissive.rgb;
       var pbr_n = pbr_ng;{3}
       let pbr_v = normalize(-in.pbr_pos);
@@ -2920,6 +2925,21 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
   if (info.usedIndStages.any()) {
     fragmentFnPre += "\n    var t_TexCoord = vec2f(0.0);";
   }
+  // PBR mode bit 8192 (8ce05ed0): the first stage reading map 0 samples at uv + (INDI.xy - 0.5) * INDS,
+  // INDI being map 1 on its own texcoord. The bit is read at run time from the material.
+  int indBase = -1, indMr = -1;
+  if (config.pbr) {
+    const bool indShadowed = config.tevStageCount > 2 && config.tevStages[0].channelId == GX_COLOR1A1;
+    for (int i = indShadowed ? 1 : 0; i < config.tevStageCount; ++i) {
+      const auto& stage = config.tevStages[i];
+      const u32 map = underlying(stage.texMapId);
+      if (map < 2 && uses_texture_sample(stage) && stage.texCoordId != GX_TEXCOORD_NULL &&
+          stage.indTexMtxId == GX_ITM_OFF) {
+        int& slot = map == 0 ? indBase : indMr;
+        slot = slot == -1 ? i : slot;
+      }
+    }
+  }
   for (int i = 0; i < config.tevStageCount; ++i) {
     const auto& stage = config.tevStages[i];
     const bool needsIndirectCoord = stage.indTexMtxId != GX_ITM_OFF;
@@ -3091,6 +3111,17 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     if (uvIn.empty()) {
       // No indirect texturing
       uvIn = fmt::format("tex{0}_uv", underlying(stage.texCoordId));
+    }
+    if (i == indBase && indMr != -1) {
+      const auto& ms = config.tevStages[indMr];
+      fragmentFnPre += fmt::format(
+          "\n    var ind_off = vec2f(0.0);"
+          "\n    if (ubuf.pbr_backlight.w > 8191.5) {{"
+          "\n        let ind_s = textureSampleBias(tex{0}, tex{0}_samp, tex{1}_uv, ubuf.tex{0}_size_bias.z);"
+          "\n        ind_off = (ind_s.xy - vec2f(0.5)) * ubuf.pbr_backlight.x;"
+          "\n    }}",
+          underlying(ms.texMapId), underlying(ms.texCoordId));
+      uvIn = fmt::format("({} + ind_off)", uvIn);
     }
     fragmentFnPre +=
         fmt::format("\n    var sampled{0} = textureSampleBias(tex{1}, tex{1}_samp, {2}, ubuf.tex{1}_size_bias.z);", i,
