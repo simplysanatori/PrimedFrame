@@ -1082,8 +1082,18 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // (Remastered's kShaderTints).
       // 512 = Remastered's 1-bit cutout: discard where base.a^2 < 0.25, opaque otherwise,
       // in place of the GX alpha compare.
-      let pbr_cut = ubuf.pbr_backlight.w > 511.5;
-      let pbr_mw1 = ubuf.pbr_backlight.w - select(0.0, 512.0, pbr_cut);
+      // 1024 = no specular from the lights (Remastered's pure Lambert VFX_Model_Base, 29d9fdfb).
+      // 2048 = the opacity is the base map's alpha as it is: no vertex alpha, nothing squared.
+      // 4096 = the baked light's modulation (BLCM) multiplies the lights' diffuse too, not
+      // just the baked ambient (that shader's baked-light perms: BLCM x (lobe + lights)).
+      let pbr_blit = ubuf.pbr_backlight.w > 4095.5;
+      let pbr_mwa = ubuf.pbr_backlight.w - select(0.0, 4096.0, pbr_blit);
+      let pbr_raw = pbr_mwa > 2047.5;
+      let pbr_mwb = pbr_mwa - select(0.0, 2048.0, pbr_raw);
+      let pbr_nols = pbr_mwb > 1023.5;
+      let pbr_mwc = pbr_mwb - select(0.0, 1024.0, pbr_nols);
+      let pbr_cut = pbr_mwc > 511.5;
+      let pbr_mw1 = pbr_mwc - select(0.0, 512.0, pbr_cut);
       let pbr_noenv = pbr_mw1 > 255.5;
       let pbr_mwr = pbr_mw1 - select(0.0, 256.0, pbr_noenv);
       let pbr_f0t = pbr_mwr > 127.5;
@@ -1105,7 +1115,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     const auto discard = alpha_compare_discard(config);
     if (discard.constant == -1) {
       layer += fmt::format(R"""(
-      if (!pbr_cut && ubuf.pbr_emissive.w <= 0.0 && !pbr_cu && pbr_flags - select(0.0, 4.0, pbr_flags > 3.5) < 1.5) {{
+      if (!pbr_cut && !pbr_raw && ubuf.pbr_emissive.w <= 0.0 && !pbr_cu && pbr_flags - select(0.0, 4.0, pbr_flags > 3.5) < 1.5) {{
           let alphaCompare = u32(round(clamp(prev.a{}, 0.0, 1.0) * 255.0));
           if ({}) {{ discard; }}
       }})""",
@@ -1826,7 +1836,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
               rad = hdr_c.rgb * hdr_fa{16};
           }}
           // pbr-sun-light
-          pbr_lo += (pbr_diff * pbr_ao + spec * pbr_pi) * rad * nl;
+          pbr_lo += (pbr_diff * pbr_ao + select(spec * pbr_pi, vec3f(0.0), pbr_nols)) * rad * nl;
           pbr_ldiff += pbr_diff * pbr_ao * rad * nl;
           // Stand-in environment: the surroundings as a soft hemisphere lit by this light,
           // seen along the reflection vector.
@@ -1933,6 +1943,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
               pbr_vdiag = pbr_n * 0.5 + 0.5;
           }}
       }}
+      // The same modulation on the lights where the baked ambient is a lobe or a grid volume
+      // (not a lightmap, which does it below): BLCM x (ambient + lights), mode 4096.
+      if (pbr_blit && ubuf.pbr_lmap_rect.z == 0.0 && (ubuf.pbr_ambient[0].w > 0.0 || ubuf.pbr_volume[3].w > 0.0)) {{
+          pbr_lo += pbr_ldiff * (pbr_blcm - 1.0);
+      }}
       // pbr-lightmap
       // Kind 13 scales the probe's reflection by pbr_layer_height.z (CCH1.z); mode 256 has none.
       pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5), 0.0, pbr_noenv) *
@@ -2000,6 +2015,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_hx = clamp(({0}.a * {0}.a + 1.0){9} * 2.0 - 1.0, 0.0, 1.0);
           let pbr_hs = clamp((pbr_hx - 0.5 + ubuf.pbr_emissive.w) / (2.0 * ubuf.pbr_emissive.w), 0.0, 1.0);
           pbr_alpha = pbr_hs * pbr_hs * (3.0 - 2.0 * pbr_hs);
+      }}
+      if (pbr_raw) {{
+          pbr_alpha = {12};
       }}
       if (pbr_cu) {{
           // ColorUnlit's alpha: the base map's times the vertex's.
@@ -3039,7 +3057,7 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
           let vis = 0.25 / (max(pbr_nv * (1.0 - pbr_k) + pbr_k, 1e-4) * max(nl * (1.0 - pbr_k) + pbr_k, 1e-4));
           let f = pbr_f0 + (1.0 - pbr_f0) * pow(1.0 - vh, 5.0);
           let rad = ubuf.shadow_color.rgb;
-          pbr_lo += (pbr_diff * pbr_ao + d * vis * f * pbr_pi) * rad * (nl * sun_vis);
+          pbr_lo += (pbr_diff * pbr_ao + select(d * vis * f * pbr_pi, vec3f(0.0), pbr_nols)) * rad * (nl * sun_vis);
           pbr_ldiff += pbr_diff * pbr_ao * rad * (nl * sun_vis);
           let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
           pbr_env += rad * (env_w * env_w);

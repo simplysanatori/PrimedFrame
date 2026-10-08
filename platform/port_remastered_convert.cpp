@@ -1494,6 +1494,10 @@ constexpr uint32_t kShaderHolo = 0x86CD1703;
 constexpr uint32_t kShaderHoloRefl = 0x6344950D;
 constexpr uint32_t kShaderHologram = 0x4CA0017C;
 constexpr uint32_t kShaderLambertFx = 0x4BC890C1;
+// 29D9FDFB, VFX_Model_Base: pure Lambert, BCLR x vertex colour x (baked light + lights) / pi, the
+// opacity the base alpha as it is. No specular from the lights, no reflection, no AO (kb
+// material/29d9fdfb.md). Retail models; the retail blend stays.
+constexpr uint32_t kShaderVfxBase = 0x29D9FDFB;
 constexpr uint32_t kShaderGunFx = 0x98F0556D;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
@@ -2433,13 +2437,14 @@ bool ExposedStrength(const RemMaterial& m) { return m.kind > 0 && m.kind < 5 && 
 
 // A lit plain (kind 0) surface without REFL reflects nothing around it: every Remastered
 // shader that samples a cube has REFL, and no other does (mode bit 256).
-bool NoEnvSpec(const RemMaterial& m) { return m.noRefl && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
+bool VfxBase(const RemMaterial& m) { return m.shader == kShaderVfxBase && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
+bool NoEnvSpec(const RemMaterial& m) { return (m.noRefl || VfxBase(m)) && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
 
 int PbrMode(const RemMaterial& m) {
   return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0) +
          (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0) +
          (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0) +
-         (m.cutExact ? 512 : 0);
+         (m.cutExact ? 512 : 0) + (VfxBase(m) ? 1024 + 2048 + 4096 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
@@ -3948,7 +3953,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const bool shield = rem.kind >= 14 && rem.kind <= 19;
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
-    const bool lambertFx = rem.shader == kShaderLambertFx;
+    const bool lambertFx = rem.shader == kShaderLambertFx || rem.shader == kShaderVfxBase;
     if (rem.kind == 19) {
       // Row 6 w (unused by this kind otherwise): the retail konst alpha, a factor of the alpha of a particle model.
       rem.shieldRows[27] = GunFxParticle(pm) ? pm.konstAlpha : 1.0;
@@ -4018,7 +4023,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // cut by the shader. Any other keeps the CMPR punch and retail's alpha compare.
     const bool exactCut = opt.standalone && rem.cutout && rem.kind == 0 && !rem.unlit && !rem.layered;
     const char* const baseAlpha =
-        glow ? "blend" : !opt.standalone ? (frostShell || rem.mask || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
+        glow ? "blend" : !opt.standalone ? (frostShell || rem.mask || rem.shader == kShaderVfxBase || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
     const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || lambertFx || !IsFx(pm)) &&
                         Get("pbr:base", rt, baseAlpha, opt).has_value();
     // The base map keeps its whole alpha, and the shader cuts it as Remastered's does.
