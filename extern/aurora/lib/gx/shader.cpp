@@ -1232,6 +1232,40 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       }})""",
                            mapStage[3]);
     }
+    // Kind 21, Remastered's Phazon3 (CC96C27D, the Phazon Mines' stone), permutation 034_0. Constants are
+    // GXSetPBRShield's rows: CCH0..CCH3 in rows 0-3 and DIFC in row 7; pbr_param.x is the time. Map 0 is BCLR
+    // (its alpha a weight), map 1 METL, map 2 NMAP, map 4 TCH0 (a colour ramp) and map 5 TCH1 (a mask read at
+    // the base UV times CCH0.w). The ramp's column is a rim term of the normal map's z (1 - nz^(1/2.2))^2.2
+    // plus an overlay of BCLR.r and BCLR.a^2.2, its row the pulse sin(t CCH2.x + mask CCH2.y) / 2 + 1/2. Where
+    // the vertex alpha (2 va + a^2.2 - 1, squared) says, the albedo is that colour; the vertex blue (with the
+    // AO cavity) masks the CCH3 glow. The vertex colour is raw. The glow is added at the inverse of the exposure
+    // (see liquid below).
+    if (config.pbrKind == 21 && mapStage[2] != -1 && mapStage[4] != -1 && mapStage[5] != -1) {
+      kinds += fmt::format(R"""(
+      let pbr_zc0 = ubuf.pbr_shield[0];
+      let pbr_zc1 = ubuf.pbr_shield[1];
+      let pbr_zc2 = ubuf.pbr_shield[2];
+      let pbr_zdf = ubuf.pbr_shield[7];
+      let pbr_zxy = sampled{0}.rg * 1.9921875 - 1.0;
+      let pbr_znz = sqrt(1.0 - clamp(dot(pbr_zxy, pbr_zxy), 0.0, 1.0));
+      let pbr_zuv = tex{2}_uv * pbr_zc0.w;
+      let pbr_zm = textureSampleGrad(tex{1}, tex{1}_samp, pbr_zuv, dpdx(pbr_zuv), dpdy(pbr_zuv)).x;
+      let pbr_zph = sin(ubuf.pbr_param.x * pbr_zc2.x + pbr_zm * pbr_zc2.y);
+      let pbr_zr = {3}.r;
+      let pbr_za = pow(abs({3}.a), 2.2);
+      let pbr_zg = select(2.0 * pbr_zr * (1.0 - pbr_za), 1.0 - 2.0 * pbr_za * (1.0 - pbr_zr), pbr_zr > 0.5);
+      let pbr_zu = (pow(abs(1.0 - pow(pbr_znz, 0.454545438)), 2.2) + pbr_zg + pbr_zc1.x) * pbr_zc1.y;
+      let pbr_zgrad = max(textureSampleLevel(tex{4}, tex{4}_samp, vec2f(pbr_zu, pbr_zph * 0.5 + 0.5), 0.0).rgb,
+                          vec3f(0.0));
+      let pbr_zt = clamp(2.0 * pbr_vraw.a + pbr_za - 1.0, 0.0, 1.0);
+      let pbr_zt2 = pbr_zt * pbr_zt;
+      let pbr_zs = clamp(pbr_vraw.b - 1.0 + clamp((pbr_zc1.z - {5}.r + 1.0) * pbr_zc1.w, 0.0, 1.0), 0.0, 1.0);
+      let pbr_zs2 = pbr_zs * pbr_zs;
+      pbr_base = mix(max({3}.rgb, vec3f(0.0)), pbr_zgrad * (1.0 - pbr_zc0.y), pbr_zt2) * pbr_zdf.rgb;)""",
+                           mapStage[2], underlying(config.tevStages[mapStage[5]].texMapId),
+                           underlying(config.tevStages[mapStage[0]].texCoordId), base,
+                           underlying(config.tevStages[mapStage[4]].texMapId), sampled(1, "vec4f(1.0, 0.6, 0.0, 1.0)"));
+    }
     // Kind 2: map 4 is a detail map that leaves the base alone where the sampler returns 0.5 (the texture's
     // own format decides which byte that is). Kind 4: the
     // inside shows where the surface is seen edge on (a fresnel that also takes it to the
@@ -1546,6 +1580,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_mrim = clamp(1.0 - pow(abs(pbr_n.z), max(ubuf.pbr_param.x, 1e-3)) - ubuf.pbr_param.w, 0.0, 1.0);
           pbr_glow += pbr_mrim * pbr_vraw.rgb * ubuf.pbr_param.y;
       })""";
+    // Kind 21's glow, at the inverse of the exposure: the pulsing CCH3 glow in the AO cavities (blue mask) and the
+    // ramp's colour where the vertex alpha says, scaled by the vertex red.
+    if (config.pbrKind == 21 && mapStage[2] != -1 && mapStage[4] != -1 && mapStage[5] != -1) {
+      liquid += R"""(
+      pbr_glow += (pbr_zph + 2.0) * ubuf.pbr_shield[3].rgb * (ubuf.pbr_shield[0].z * pbr_zs2) +
+                  pbr_zgrad * (pbr_zt2 * pbr_vraw.r * ubuf.pbr_shield[0].x * ubuf.pbr_shield[0].y);)""";
+    }
     // Kind 14, Remastered's BoundaryShield_Ship1_DX11 (the Frigate's force fields), permutation
     // 002_0. Its constants are GXSetPBRShield's rows: CCH0..CCH6, then DIFC. Map 0 is BCLR, map 4
     // TCH0 (the field's pattern) and map 5 TCH1 (a noise), each at its own UV set. pbr_param.x is

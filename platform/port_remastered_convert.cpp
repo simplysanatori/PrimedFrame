@@ -1501,6 +1501,10 @@ constexpr uint32_t kShaderGunFx = 0x98F0556D;
 // map is sRGB, and the pixel shader scales the product by CCH0.x x CCH1.x; the
 // alpha is the base map's times the vertex's, not squared.
 constexpr uint32_t kShaderColorUnlit = 0x992941B7;
+// Phazon3 (cc96c27d, the Phazon Mines' stone): a lit surface whose albedo and glow are a gradient ramp (TCH0)
+// read at the normal map's rim, where the vertex alpha and BCLR's alpha say, pulsed by a mask (TCH1) and the
+// time (kind 21). The vertex colour is raw data (alpha and red weights, blue a cavity mask), no tint.
+constexpr uint32_t kShaderPhazon = 0xCC96C27D;
 // A shader with parameters of its own (TCHn, CCHn) reads the vertex colour as
 // it likes: masks for its extra maps, a colour seen through ice. These are the
 // ones read that multiply the albedo by it, as the standard shader does
@@ -1546,6 +1550,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderLambertFx, "lambert-fx");
   add(shader == kShaderGunFx, "gun-fx");
   add(shader == kShaderColorUnlit, "color-unlit");
+  add(shader == kShaderPhazon, "phazon");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
 }
@@ -1572,6 +1577,7 @@ const char* KindName(int kind) {
   case 18: return "hologram";
   case 19: return "gun-fx";
   case 20: return "vertex-blend";
+  case 21: return "phazon";
   default: return "kind?";
   }
 }
@@ -2023,6 +2029,34 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         out.layerHeight[1] = ShortestDouble(d.color[3]);
       }
     }
+  } else if (shader == kShaderPhazon && out.maps[kBase].has && out.maps[kNormal].has && tch[0] && tch[1] &&
+             cch[0] && cch[1] && cch[2] && cch[3]) {
+    out.kind = 21;
+    out.vcolor = true;
+    // BCLR, METL and NMAP are maps 0-2 as in the standard shader. TCH0 (the gradient ramp, read at
+    // a computed coordinate) and TCH1 (the pulse's mask, read at uv x CCH0.w) are bound as the
+    // second layer's base and MR; the sampler modes they were authored with are kept. The shader's
+    // constants go whole to the runtime in GXSetPBRShield's rows: CCH0..CCH3 in rows 0-3, DIFC in
+    // row 7 (the game multiplies CCH2.x by the time).
+    set(kBase, tch[0]->texture, &out.layer[kBase]);
+    set(kMr, tch[1]->texture, &out.layer[kMr]);
+    out.layer[kBase].raw = out.layer[kMr].raw = true;
+    out.kindParam[0] = 1.0;  // the game multiplies it by the time
+    for (int r = 0; r < 4; ++r) {
+      for (int i = 0; i < 4; ++i) {
+        out.shieldRows[r * 4 + i] = ShortestDouble(cch[r]->color[i]);
+      }
+    }
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = 1.0;
+    }
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind == ModelMaterialData::Kind::Color && d.usage == FourCC('D', 'I', 'F', 'C')) {
+        for (int i = 0; i < 4; ++i) {
+          out.shieldRows[28 + i] = ShortestDouble(d.color[i]);
+        }
+      }
+    }
   } else if ((shader == kShaderBoundaryShield || shader == kShaderForceField) && out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] &&
              cch[2] && cch[3] && cch[4] && cch[5] && cch[6]) {
     out.kind = 14;
@@ -2304,6 +2338,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
     out.height = 0.0;
   }
+  if (out.kind == 21) {
+    // Opaque and lit; the base alpha is a weight in the shader and no opacity, the glow is the
+    // shader's (ICNC is 0 on every material) and the vertex alpha picks no layer.
+    out.layered = true;
+    out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 0.0;
+    out.maps[kEmissive].has = false;
+  }
   if (out.kind == 9) {
     // The glow is all the shader's; the vertex alpha picks the ramp's row and is no
     // opacity, and there is no edge between layers.
@@ -2316,7 +2359,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
                                              "frozen-shell", "matcap-shell", "boundary-shield", "pickup",
-                                             "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend"};
+                                             "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend", "phazon"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -2424,7 +2467,7 @@ int PbrMode(const RemMaterial& m);
 // liquid or glass, whose first three floats are a tint.
 bool ExposedGlow(const RemMaterial& m) {
   return !m.glowLinear && m.maps[kEmissive].has && !m.maps[kEmissive].mean && m.kind != 7 && m.kind != 20 &&
-         m.kind != 8 && m.kind != 11 && m.kind != 14;
+         m.kind != 8 && m.kind != 11 && m.kind != 14 && m.kind != 21;
 }
 
 // A glow strength of a kind below 5 (the parallax's inside), exposed at run time like the
@@ -2506,7 +2549,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if (m.kind >= 14 && m.kind <= 19) {
+  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     for (double v : m.shieldRows) {
       PF(b, v);
