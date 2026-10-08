@@ -1579,6 +1579,10 @@ constexpr ShaderTwin kShaderTwins[] = {
     {0x88E65647, kShaderIndirect},  {0x1DD39C60, kShaderRefractGlassB}, {0x94438883, kShaderXrayStatic},
     {0x7126CA03, kShaderLambertFx}, {0x0A23705E, kShaderPickUp},        {0x24F4B1FE, kShaderPickUp},
     {0x9B6E0881, kShaderIceSpreader}, {0xCD6C8057, kShaderHoloGlassB},
+    // The skinned variants: identical fragment shaders; the vertex shaders add the bone-matrix fetch (vp_c5, indices in
+    // v5, weights in v6) and renormalise the skinned N and T (T1 too), nothing else. The port skins on its side
+    // (DolphinCSkinRules.cpp, FinishTangentFrame, incl. the second frame).
+    {0xC36C5166, kShaderIceSpreader}, {0xB55635D2, 0xA978D507}, {0xEF94ACCF, kShaderLava},
 };
 uint32_t ShaderFamily(uint32_t shader) {
   for (const ShaderTwin& t : kShaderTwins)
