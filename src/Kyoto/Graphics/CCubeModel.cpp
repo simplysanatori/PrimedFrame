@@ -478,11 +478,14 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
   }
   // A liquid's surface (kinds 5 and 6) moves: its first parameter is a rate, and the
   // shader gets the phase. So do falling water (kind 7), the beam glow (9) and the
-  // Waste Disposal tank's distortion (11) and the Frigate's force fields (14); glass (8) does not
+  // Waste Disposal tank's distortion (11), the Frigate's force fields (14) and the Phazon3 stone (21); glass (8) does not
   // move.
   if ((values[13] > 4.5f && values[13] < 7.5f) || (values[13] > 8.5f && values[13] < 9.5f) ||
-      (values[13] > 10.5f && values[13] < 11.5f) || (values[13] > 13.5f && values[13] < 15.5f) || (values[13] > 17.5f && values[13] < 18.5f)) {
-    values[15] *= CGraphics::GetSecondsMod900();
+      (values[13] > 10.5f && values[13] < 11.5f) || (values[13] > 13.5f && values[13] < 15.5f) || (values[13] > 17.5f && values[13] < 18.5f) ||
+      (values[13] > 20.5f && values[13] < 22.5f)) {
+    // The Phazon3 stone reads Remastered's scene clock (stops while paused, wraps at 15120 s).
+    values[15] *= (values[13] > 20.5f && values[13] < 22.5f) ? CGraphics::GetSimTime()
+                                                              : CGraphics::GetSecondsMod900();
   }
   const CTransform4f& view = CGraphics::GetViewMatrix();
   // The pickup (kind 15) reads its gradient at the world position: rows 4 and 5 of its constants
@@ -498,9 +501,9 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
     shield[22] = -view.Get11();
     shield[23] = view.Get13();
   }
-  // Only the boundary shield, the pickup and the holograms (16-18) have constants; every other material
-  // clears the last one's.
-  GXSetPBRShield(kind > 13.5f && kind < 19.5f ? reinterpret_cast< const f32(*)[4] >(shield) : nullptr);
+  // Only the boundary shield, the pickup, the holograms (16-18) and the Phazon3 stone (21) have constants;
+  // every other material clears the last one's.
+  GXSetPBRShield((kind > 13.5f && kind < 19.5f) || (kind > 20.5f && kind < 22.5f) ? reinterpret_cast< const f32(*)[4] >(shield) : nullptr);
   // World up as the shader sees it: view space is right, up, -forward.
   const f32 up[3] = {view.Get20(), view.Get22(), -view.Get21()};
   GXSetPBRMaterial(values, values + 3, values[6], values[7], values + 8, values + 13, up);

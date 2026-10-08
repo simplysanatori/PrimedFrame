@@ -324,6 +324,10 @@ public:
   // Advances the animation clock by simulation ticks (not rendered frames), so
   // animations stay real-time when the frame rate is uncapped.
   static void TickRenderTimings(uint ticks = 1);
+  // Port: Remastered's scene simulation clock (CScene::GetModularSimulationTime). It advances with
+  // the game's updates only (it stands still on the pause screen) and wraps at 15120 s.
+  static void TickSimTime(float dt);
+  static float GetSimTime();
   static const CProjectionState& GetProjectionState();
   static void SetProjectionState(const CProjectionState& proj);
   static CClippedScreenRect ClipScreenRectFromVS(const CVector3f& p1, const CVector3f& p2,
@@ -472,6 +476,7 @@ private:
 #endif
   static uint mRenderTimings;
   static float mSecondsMod900;
+  static uint mSimTicks;
   static CTimeProvider* mpExternalTimeProvider;
   static int mScreenStretch;
   static int mScreenPositionX;
