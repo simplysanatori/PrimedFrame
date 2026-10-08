@@ -1009,13 +1009,19 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // whose second normal map has a tangent stream of its own (TANGENT_1).
   const bool tangents2 = config.attrs[GX_VA_NRM].attrType != GX_NONE && config.attrs[GX_VA_NRM].cnt == 15;
   const bool tangents = tangents2 || (config.attrs[GX_VA_NRM].attrType != GX_NONE && config.attrs[GX_VA_NRM].cnt == 9);
+  // Remastered's vertex shaders (static and skinned) multiply the handedness by the sign of
+  // the model-view determinant, so a mirrored model keeps its bitangent (0 for a flat matrix).
+  if (tangents) {
+    vtxXfrAttrs += "\n    let pbr_mv = ubuf.postex_mtx[in_pnmtxidx];"
+                   "\n    let pbr_mvsign = sign(dot(pbr_mv[0].xyz, cross(pbr_mv[1].xyz, pbr_mv[2].xyz)));";
+  }
   if (tangents2) {
     vtxOutAttrs += fmt::format("\n    @location({}) pbr_tan2: vec4f,", vtxOutIdx++);
     vtxXfrAttrs += fmt::format(
         "\n    let pbr_vb2 = {};"
         "\n    let pbr_vt2 = {};"
         "\n    let pbr_vtv2 = vec4f(pbr_vt2, 0.0) * ubuf.postex_mtx[in_pnmtxidx];"
-        "\n    out.pbr_tan2 = vec4f(pbr_vtv2, select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt2), pbr_vb2) >= 0.0));",
+        "\n    out.pbr_tan2 = vec4f(pbr_vtv2, pbr_mvsign * select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt2), pbr_vb2) >= 0.0));",
         attr_load_nbt_slice(config, NbtSlice::B1, vidx), attr_load_nbt_slice(config, NbtSlice::T1, vidx));
   }
   if (tangents) {
@@ -1024,7 +1030,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         "\n    let pbr_vb = {};"
         "\n    let pbr_vt = {};"
         "\n    let pbr_vtv = vec4f(pbr_vt, 0.0) * ubuf.postex_mtx[in_pnmtxidx];"
-        "\n    out.pbr_tan = vec4f(pbr_vtv, select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt), pbr_vb) >= 0.0));",
+        "\n    out.pbr_tan = vec4f(pbr_vtv, pbr_mvsign * select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt), pbr_vb) >= 0.0));",
         attr_load_nbt_slice(config, NbtSlice::B, vidx), attr_load_nbt_slice(config, NbtSlice::T, vidx));
   }
   // A vertex colour is the surface's tint where the material says so (mode 4), whatever
