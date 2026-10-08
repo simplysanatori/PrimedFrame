@@ -1068,7 +1068,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // Kind 10, lit glass drawn premultiplied (One, InvSrcAlpha): the opacity scales only the
   // diffuse light, so the reflection and the glow are not dimmed with it.
   const std::string diffTint =
-      config.pbrKind == 10 ? fmt::format("{} * ({}{})", tint, layered ? "1.0" : "prev.a", tintAlpha) : tint;
+      (config.pbrKind == 10 || config.pbrKind == 34) ? fmt::format("{} * ({}{})", tint, layered ? "1.0" : "prev.a", tintAlpha) : tint;
   // Remastered's diffuse vertex colour (MFVC) is decoded in its vertex shader as
   // 2 |c|^2.2 (alpha raw), so a white vertex doubles the diffuse: 882014ee, f22feb5b,
   // the layered 7248969b/a978d507, 11b30369 and every kShaderTints shader. Only the premultiplied
@@ -1989,6 +1989,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // plus the room cube's reflection (F0 0.04, no metal, no AO, no direct light). On a lightmap the
   // diffuse part is the baked level L0 x BLCM for what the vertex alpha leaves of the glass.
   // Opaque (alpha 1); the room comes through pbr_pass, after the tone curve.
+  if (config.pbrKind == 34 && screen && !layered) {
+    // Kind 34 reads the screen copy at the fragment (the end of the PBR block).
+    vtxOutAttrs += fmt::format("\n    @location({}) pbr_scr: vec4f,", vtxOutIdx++);
+    vtxXfrAttrs += "\n    out.pbr_scr = out.pos;";
+  }
   if ((config.pbrKind == 23 || config.pbrKind == 30) && screen && mapStage[2] != -1) {
     if (!layered) { // the layered block above has declared it otherwise
       vtxOutAttrs += fmt::format("\n    @location({}) pbr_scr: vec4f,", vtxOutIdx++);
@@ -2239,7 +2244,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_base = {11};{13}
       let pbr_orm = {1}.rgb;
       let pbr_ao = select(pbr_orm.r, 1.0, pbr_ind);
-      let pbr_rough = select(select(clamp(select(pbr_orm.g, 0.6, pbr_ind), 0.02, 1.0), 0.1, pbr_kind > 30.5),
+      let pbr_rough = select(select(clamp(select(pbr_orm.g, 0.6, pbr_ind), 0.02, 1.0), 0.1, pbr_kind > 30.5 && pbr_kind < 33.5),
                              max(pbr_orm.g - pbr_knoise, 0.02), pbr_kind > 31.5 && pbr_kind < 32.5);
       let pbr_metal = clamp(select(pbr_orm.b, 0.0, pbr_ind), 0.0, 1.0);
       let pbr_emissive = max({2}.rgb, vec3f(0.0)) * ubuf.pbr_emissive.rgb;
@@ -2247,10 +2252,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_v = normalize(-in.pbr_pos);
       let pbr_nv = max(dot(pbr_n, pbr_v), 1e-4);
       let pbr_f0 = select(mix(vec3f(0.04), pbr_base * select(vec3f(1.0), pbr_vc.rgb, pbr_f0t), pbr_metal) *
-          ubuf.pbr_light_scale.y, vec3f(1.0), pbr_kind > 30.5);
+          ubuf.pbr_light_scale.y, vec3f(1.0), pbr_kind > 30.5 && pbr_kind < 33.5);
       let pbr_diff = select(pbr_base * (1.0 - pbr_metal){8} * ubuf.pbr_light_scale.x *
           select(1.0, clamp(pbr_vraw.a * ubuf.pbr_layer_height.y, 0.0, 1.0), pbr_kind > 12.5 && pbr_kind < 13.5),
-          vec3f(0.0), pbr_kind > 30.5);
+          vec3f(0.0), pbr_kind > 30.5 && pbr_kind < 33.5);
       let pbr_a2 = pow(pbr_rough, 4.0);
       let pbr_k = pbr_rough * pbr_rough * 0.5;
       // A normal-mapped reflection can point into the surface; lift it back to the horizon
@@ -2677,6 +2682,22 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                      (layered ? "\n      if (pbr_kind < 0.5 && ubuf.pbr_emissive.w <= 0.0) {\n          pbr_alpha = pbr_lalpha;\n      }"
                                 "\n      if (pbr_kind > 25.5 && pbr_kind < 26.5) {\n          pbr_alpha = pbr_lma;\n      }"s
                               : ""s) + decalAlpha);
+  if (config.pbrKind == 34 && screen) {
+    const size_t at = source.find("      // A model fading (w of the light scale)");
+    assert(at != std::string::npos);
+    source.insert(at, R"""(
+      if (pbr_kind > 33.5 && pbr_kind < 34.5) {
+          // Kind 34, Remastered's 788360de (coloured translucency, blend One / Src1Color): o0 is the lit
+          // colour (diffuse scaled by A, kind 10's diffTint) and o1 = exposure x (1 - T (1 - A)), with
+          // T = BCLR.rgb x DIFC.rgb and A = BCLR.a² x DIFC.w. Emulated through the screen copy (map 7),
+          // as 2f95a061 is: the scene target holds sRGB-encoded values, so a GPU blend would not be exact.
+          // Drawn opaque (alpha 1) with the scene behind this fragment kept by o1 in linear light.
+          let pbr_sdst = srgb_dec(textureSampleLevel(tex7, tex7_samp,
+                                  clamp(in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5, vec2f(0.0), vec2f(1.0)), 0.0).rgb);
+          pbr_pass += pbr_sdst * (vec3f(1.0) - pbr_base * (1.0 - pbr_alpha));
+          pbr_alpha = 1.0;
+      })""");
+  }
   if (!lit || costTest == 2) {
     // The uniform block has no lights then.
     const size_t begin = source.find("// pbr-lights-begin");

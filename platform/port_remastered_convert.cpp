@@ -1498,7 +1498,9 @@ constexpr const char* kDefaultRefl = "7b98170f";
 constexpr uint32_t kShaderPremulGlass[] = {0x11B30369, 0x941068BF, 0xBCC73459};
 // Of those, 941068bf and bcc73459 read the vertex colour raw (no log2/exp2 in their vertex shaders); 11b30369
 // decodes it as 2 |c|^2.2 like every other MFVC shader (mode bit 524288, kb material/11b30369.md).
-constexpr uint32_t kShaderRawVertex[] = {0x941068BF, 0xBCC73459};
+// 788360de, lit glass with coloured translucency (dual-source blend One / Src1Color, kb material/788360de.md).
+constexpr uint32_t kShaderDualGlass = 0x788360DE;
+constexpr uint32_t kShaderRawVertex[] = {0x941068BF, 0xBCC73459, kShaderDualGlass};
 // Glass_DX11 (HoloGlass; only the Waste Disposal tank): the scene behind it, bent by TCH2
 // and tinted, plus the reflection, BCLR and the vertex colour, blended with a second
 // colour output (build/mpr/glass/NOTES.md). The port draws it from the screen copy.
@@ -1662,6 +1664,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderPhazonPool, "phazon-pool");
   add(shader == kShaderRefractGlass || shader == kShaderRefractGlassB, "refract-glass");
   add(shader == kShaderHoloGlassB || shader == kShaderHoloGlassC, "holo-glass-b");
+  add(shader == kShaderDualGlass, "dual-glass");
   add(IsXrayGhost(shader), "xray-ghost");
   add(shader == kShaderDecalCut || shader == kShaderDecalAlphaMap, "decal-cut");
   add(in(kShaderTints), "tinted");
@@ -2517,6 +2520,9 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.blended && !out.cutout) {
     out.kind = 10;
   }
+  if (shader == kShaderDualGlass && out.blended && !out.cutout) {
+    out.kind = 34;
+  }
   if (shader == kShaderIceSpreader && tch[0] && !out.maps[kEmissive].has && cch[0] && cch[1] && cch[2] && cch[3]) {
     // Ice (088e025e, kind 28): TCH0 is the frost, shifted by a parallax along the view and drawn
     // over the lit surface with a rim. Rows: CCH0 (normal strength z, parallax scale w), CCH1
@@ -2987,8 +2993,8 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
   // 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
   const bool lambertFx = rem.family == kShaderLambertFx || rem.opaqueFx;
-  P16(b, rem.kind == 8 || rem.kind == 13 || rem.kind == 14 || rem.kind == 29 ? 5 : (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
-  P16(b, rem.kind == 8 || rem.kind == 14 || rem.kind == 29 || (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
+  P16(b, rem.kind == 8 || rem.kind == 13 || rem.kind == 14 || rem.kind == 29 || rem.kind == 34 ? 5 : (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
+  P16(b, rem.kind == 8 || rem.kind == 14 || rem.kind == 29 || rem.kind == 34 || (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
   // fallback too, which is what draws it whenever the model is not opaque: channel
   // 0 unlit with the vertex colour as its material colour (bit 2), and the alpha
@@ -3013,7 +3019,7 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   };
   // Glass samples the frame behind it, which the game copies into map 7 (the
   // spare buffer's) before it draws one: a stage of its own binds it.
-  const int nstages = rem.kind == 8 || rem.kind == 11 || rem.kind == 14 || rem.kind == 23 || rem.kind == 29 || rem.kind == 30 ? nmaps + 1 : nmaps;
+  const int nstages = rem.kind == 8 || rem.kind == 11 || rem.kind == 14 || rem.kind == 23 || rem.kind == 29 || rem.kind == 30 || rem.kind == 34 ? nmaps + 1 : nmaps;
   P32(b, uint32_t(nstages));
   for (int i = 0; i < nstages; ++i) {
     // Kind 20's map 3 is a detail map, sampled only (the table's stage adds it as glow).
@@ -4077,7 +4083,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (Prim& p : prims) {
     if (opt.standalone) {
       const RemMaterial& m = mats[p.mat];
-      p.rmat = m.kind == 8 || m.kind == 10 || m.kind == 11 || m.kind == 14 || m.kind == 23 || m.kind == 29 || m.kind == 30 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
+      p.rmat = m.kind == 8 || m.kind == 10 || m.kind == 11 || m.kind == 14 || m.kind == 23 || m.kind == 29 || m.kind == 30 || m.kind == 34 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
       continue;
     }
     if (opt.material >= 0) {
