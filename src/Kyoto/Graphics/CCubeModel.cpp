@@ -501,9 +501,52 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
     shield[22] = -view.Get11();
     shield[23] = view.Get13();
   }
+  // Mode bit 32768: Remastered's procedural wind. The record holds the model's WIND set (v1, v2,
+  // rate, b, c); the shader gets CWindModelDataSourceManager::SimulateSingle's constants for
+  // the default wind (direction (0, 0, -1), strength 0.3, no impulses) in rows 0-3, and the
+  // inverse of the model->world 3x3 with the world translation in rows 4-6.
+  bool wind = false;
+  if ((int(values[7] + 0.5f) & 32768) != 0) {
+    wind = true;
+    const CTransform4f& m = CGraphics::GetModelMatrix();
+    const f32 a00 = m.Get00(), a01 = m.Get01(), a02 = m.Get02();
+    const f32 a10 = m.Get10(), a11 = m.Get11(), a12 = m.Get12();
+    const f32 a20 = m.Get20(), a21 = m.Get21(), a22 = m.Get22();
+    const f32 c00 = a11 * a22 - a12 * a21, c01 = a12 * a20 - a10 * a22, c02 = a10 * a21 - a11 * a20;
+    const f32 det = a00 * c00 + a01 * c01 + a02 * c02;
+    const f32 id = std::fabs(det) > 1e-12f ? 1.f / det : 0.f;
+    const f32 v1[3] = {shield[0], shield[1], shield[2]};
+    const f32 v2[3] = {shield[3], shield[4], shield[5]};
+    const f32 rate = shield[6], b = shield[7], c = shield[8];
+    constexpr f32 kStrength = 0.3f;
+    constexpr f32 kDir[3] = {0.f, 0.f, -1.f};
+    f32 rows[32] = {};
+    for (int i = 0; i < 3; ++i) {
+      rows[i] = kDir[i] * ((1.f - b) * kStrength);
+      rows[4 + i] = v1[i];
+      rows[8 + i] = v2[i];
+      rows[12 + i] = b + (1.f - b) * (std::fabs(kDir[i]) * 0.75f + 0.25f);
+    }
+    rows[3] = 0.5f * kStrength + b * (c - 0.5f * kStrength);
+    rows[7] = rate * CGraphics::GetSimTime();
+    // Inverse rows (adjugate / det) with the world translation in w.
+    rows[16] = c00 * id;
+    rows[17] = (a02 * a21 - a01 * a22) * id;
+    rows[18] = (a01 * a12 - a02 * a11) * id;
+    rows[19] = m.Get03();
+    rows[20] = c01 * id;
+    rows[21] = (a00 * a22 - a02 * a20) * id;
+    rows[22] = (a02 * a10 - a00 * a12) * id;
+    rows[23] = m.Get13();
+    rows[24] = c02 * id;
+    rows[25] = (a01 * a20 - a00 * a21) * id;
+    rows[26] = (a00 * a11 - a01 * a10) * id;
+    rows[27] = m.Get23();
+    std::memcpy(shield, rows, sizeof(shield));
+  }
   // Only the boundary shield, the pickup, the holograms (16-18) and the Phazon3 stone (21) have constants;
   // every other material clears the last one's.
-  GXSetPBRShield((kind > 13.5f && kind < 19.5f) || (kind > 20.5f && kind < 22.5f) || (kind > 24.5f && kind < 25.5f) ? reinterpret_cast< const f32(*)[4] >(shield) : nullptr);
+  GXSetPBRShield(wind || (kind > 13.5f && kind < 19.5f) || (kind > 20.5f && kind < 22.5f) || (kind > 24.5f && kind < 25.5f) ? reinterpret_cast< const f32(*)[4] >(shield) : nullptr);
   // World up as the shader sees it: view space is right, up, -forward.
   const f32 up[3] = {view.Get20(), view.Get22(), -view.Get21()};
   GXSetPBRMaterial(values, values + 3, values[6], values[7], values + 8, values + 13, up);
