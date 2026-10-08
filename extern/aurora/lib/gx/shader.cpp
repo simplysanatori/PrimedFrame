@@ -1230,7 +1230,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_lt = ubuf.pbr_layer.x;
           let pbr_lx = clamp((pbr_lh + pbr_lw * pbr_lt + pbr_lw + pbr_lt) * 0.5 / pbr_lt, 0.0, 1.0);
           pbr_ls = pbr_lx * pbr_lx * (3.0 - 2.0 * pbr_lx);
-      }})""",
+      }}
+      // Kind 0 (the BCRL shaders: 7248969b, a978d507, d363d694, df0677ff, ea49e9e1...): the opacity is
+      // the blended alpha squared times DIFC.a (1 on all of them), not the vertex alpha, which is the weight.
+      let pbr_lma = mix({0}.a, sampled{2}.a, pbr_ls);
+      let pbr_lalpha = pbr_lma * pbr_lma;)""",
                          base, parallaxBasis, mapStage[4], first, underlying(inner.texMapId), underlying(inner.texCoordId),
                          tangents ? "" : " && pbr_tlen > 1e-24");
     // Kind 20 (E9DF2188): map 3 is a detail map (the kind has no glow). The albedo is the blend times the
@@ -2146,7 +2150,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_hx = clamp(({0}.a * {0}.a + 1.0){9} * 2.0 - 1.0, 0.0, 1.0);
           let pbr_hs = clamp((pbr_hx - 0.5 + ubuf.pbr_emissive.w) / (2.0 * ubuf.pbr_emissive.w), 0.0, 1.0);
           pbr_alpha = pbr_hs * pbr_hs * (3.0 - 2.0 * pbr_hs);
-      }}
+      }}{17}
       if (pbr_raw) {{
           pbr_alpha = {12};
       }}
@@ -2276,7 +2280,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                      normal, GX::MaxLights, attn, amb,
                      gfx::probe::MipCount - 1, diffTint, tintAlpha, layer, baseRgb, layered ? "1.0" : "prev.a", kinds, liquid,
                      shadowed ? "(ubuf.lightState0 | ubuf.lightState1)" : "ubuf.lightState0",
-                     shadowed ? " * select(vec3f(1.0), sampled0.rgb, (ubuf.lightState0 & (1u << i)) == 0u)" : "");
+                     shadowed ? " * select(vec3f(1.0), sampled0.rgb, (ubuf.lightState0 & (1u << i)) == 0u)" : "",
+                     layered ? "\n      if (pbr_kind < 0.5 && ubuf.pbr_emissive.w <= 0.0) {\n          pbr_alpha = pbr_lalpha;\n      }" : "");
   if (!lit || costTest == 2) {
     // The uniform block has no lights then.
     const size_t begin = source.find("// pbr-lights-begin");
