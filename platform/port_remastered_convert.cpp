@@ -597,6 +597,7 @@ struct MapRef {
 struct RemMaterial {
   std::string name;
   uint32_t shader = 0;      // the Remastered shader id (big-endian first word), for the report
+  uint32_t family = 0;      // the id of the shader whose code this one repeats exactly (kShaderTwins), else shader
   uint32_t flags = 0;       // the material's feature flags (unk1)
   std::string role;         // the shader lists it is in
   std::string reason;       // which rule chose the kind, for the report
@@ -1548,6 +1549,22 @@ constexpr uint32_t kShaderRefractGlassB = 0xCC8AFD0F;
 // (kind 31, kb material/fb2bc671.md, df3e3423.md).
 constexpr uint32_t kShaderXrayStatic = 0xFB2BC671;
 constexpr uint32_t kShaderXraySkinned = 0xDF3E3423;
+// Shaders that are verbatim copies of one the port already handles: every permutation, vertex and fragment, has the
+// same code (build/mpr/twins/twins.py, exact_twins; kb topic/shader-twins.md). They take the twin's kind and mode.
+struct ShaderTwin {
+  uint32_t copy;
+  uint32_t of;
+};
+constexpr ShaderTwin kShaderTwins[] = {
+    {0x88E65647, kShaderIndirect},  {0x1DD39C60, kShaderRefractGlassB}, {0x94438883, kShaderXrayStatic},
+    {0x7126CA03, kShaderLambertFx}, {0x0A23705E, kShaderPickUp},        {0x24F4B1FE, kShaderPickUp},
+    {0x9B6E0881, kShaderIceSpreader}, {0xCD6C8057, kShaderHoloGlassB},
+};
+uint32_t ShaderFamily(uint32_t shader) {
+  for (const ShaderTwin& t : kShaderTwins)
+    if (t.copy == shader) return t.of;
+  return shader;
+}
 // The decal cutouts (kind 24; kb material/e538b757.md, 42fe2ed0.md): a bfb300b6 surface cut by a smoothstep of an
 // alpha A about CCH0.x = c (0.5 on all of them): discard where t²(3-2t) < 0.25, t = (A - 0.5 + c) / 2c; output
 // alpha 1, no vertex colour. e538b757 cuts on BCLR.a², 42fe2ed0 on TCH0.r (its alpha map, in the emissive slot).
@@ -1667,8 +1684,10 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   out.blended = (mat.unk1 & kTransparentFlag) != 0 && !out.cutout;
   uint8_t sid[4];
   std::memcpy(sid, &mat.shaderId, 4);
-  const uint32_t shader = uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
-  out.shader = shader;
+  const uint32_t rawShader = uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
+  const uint32_t shader = ShaderFamily(rawShader);
+  out.shader = rawShader;
+  out.family = shader;
   out.role = ShaderRole(shader);
   out.shell = shader == kShaderMatcapShell;
   out.shield = shader == kShaderBoundaryShield || shader == kShaderForceField || shader == kShaderPickUp || shader == kShaderHolo ||
@@ -2743,12 +2762,12 @@ bool VfxBase(const RemMaterial& m) {
   return (m.shader == kShaderVfxBase || m.shader == kShaderVfxBase2) && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0;
 }
 bool PureLambert(const RemMaterial& m) {
-  return (VfxBase(m) || (m.shader == kShaderLambertFx && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0));
+  return (VfxBase(m) || (m.family == kShaderLambertFx && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0));
 }
 // LambertFx's fragment perms (042-057) sample no lightmap, probe volume or BLCM: the light sum starts
 // from the flat ambient constant alone (mode bit 262144; kb material/4bc890c1.md, perms 000/001 have no
 // fragment shader, they are the depth pass).
-bool FlatAmbient(const RemMaterial& m) { return m.shader == kShaderLambertFx && PureLambert(m); }
+bool FlatAmbient(const RemMaterial& m) { return m.family == kShaderLambertFx && PureLambert(m); }
 bool NoEnvSpec(const RemMaterial& m) { return (m.noRefl || PureLambert(m)) && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
 
 bool SurfaceUnlit(const RemMaterial& m) {
@@ -2894,7 +2913,7 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The boundary shield (kind 14) and cracked glass (kind 8, class 1 with the scene in rgb) are plainly alpha blended, GX_BL_SRCALPHA and GX_BL_INVSRCALPHA.
   // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
   // 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
-  const bool lambertFx = rem.shader == kShaderLambertFx || rem.opaqueFx;
+  const bool lambertFx = rem.family == kShaderLambertFx || rem.opaqueFx;
   P16(b, rem.kind == 8 || rem.kind == 13 || rem.kind == 14 || rem.kind == 29 ? 5 : (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
   P16(b, rem.kind == 8 || rem.kind == 14 || rem.kind == 29 || (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
@@ -4294,7 +4313,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,
     // which Remastered draws opaque whatever retail's blend (the missile pickup's top,
     // 274D21BE; kb topic/mesh-blend-class.md).
-    const bool lambertFx = rem.shader == kShaderLambertFx || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2 ||
+    const bool lambertFx = rem.family == kShaderLambertFx || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2 ||
                            (!opt.standalone && !(rem.flags & (kTransparentFlag | kCutoutFlag)));
     rem.opaqueFx = !opt.standalone && IsFx(pm) && !(rem.flags & (kTransparentFlag | kCutoutFlag));
     if (rem.kind == 19 || rem.kind == 25) {
