@@ -1599,6 +1599,7 @@ uint32_t ShaderFamily(uint32_t shader) {
 // DFC2A7DC folds to exactly DF3E3423's perm 002_0 (same registers, same outputs; kb material/dfc2a7dc.md).
 constexpr uint32_t kShaderXraySkinned2 = 0xDFC2A7DC;
 constexpr bool IsXraySkinned(uint32_t shader) { return shader == kShaderXraySkinned || shader == kShaderXraySkinned2; }
+constexpr uint32_t kShaderXrayMap = 0x65E90E82;
 constexpr bool IsXrayGhost(uint32_t shader) { return shader == kShaderXrayStatic || IsXraySkinned(shader); }
 // The decal cutouts (kind 24; kb material/e538b757.md, 42fe2ed0.md): a bfb300b6 surface cut by a smoothstep of an
 // alpha A about CCH0.x = c (0.5 on all of them): discard where t²(3-2t) < 0.25, t = (A - 0.5 + c) / 2c; output
@@ -1670,6 +1671,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderRefractGlass || shader == kShaderRefractGlassB, "refract-glass");
   add(shader == kShaderHoloGlassB || shader == kShaderHoloGlassC, "holo-glass-b");
   add(IsXrayGhost(shader), "xray-ghost");
+  add(shader == kShaderXrayMap, "xray-map");
   add(shader == kShaderDecalCut || shader == kShaderDecalAlphaMap, "decal-cut");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
@@ -1709,6 +1711,7 @@ const char* KindName(int kind) {
   case 30: return "refract-glass-b";
   case 31: return "xray-ghost";
   case 32: return "phazon-pool";
+  case 33: return "xray-map";
   default: return "kind?";
   }
 }
@@ -1729,7 +1732,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   out.shell = shader == kShaderMatcapShell;
   out.shield = shader == kShaderBoundaryShield || shader == kShaderForceField || shader == kShaderPickUp || shader == kShaderHolo ||
                shader == kShaderHoloRefl || shader == kShaderHologram || shader == kShaderGunFx || IsEyeGloss(shader) ||
-               IsXrayGhost(shader);
+               IsXrayGhost(shader) || shader == kShaderXrayMap;
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
     const uint32_t family = d.usage & 0xFFFFFF00u;
@@ -2296,6 +2299,35 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         }
       }
     }
+  } else if (shader == kShaderXrayMap && out.maps[kBase].has && out.maps[kNormal].has && tch[0] && cch[0] && cch[1]) {
+    out.kind = 33;
+    // 65e90e82, the X-ray visor's map material: CCH0/CCH1 are rows 0 and 1 as kind 31's, DIFC row 2 (rgba, default 1),
+    // ICMC row 3 (rgb, default 0). TCH0 (subtracted twice from the colour and averaged into the alpha) rides in the MR slot.
+    for (int r = 0; r < 2; ++r) {
+      for (int i = 0; i < 4; ++i) {
+        out.shieldRows[r * 4 + i] = ShortestDouble(cch[r]->color[i]);
+      }
+    }
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[8 + i] = 1.0;
+    }
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind != ModelMaterialData::Kind::Color) {
+        continue;
+      }
+      if (d.usage == FourCC('D', 'I', 'F', 'C')) {
+        for (int i = 0; i < 4; ++i) {
+          out.shieldRows[8 + i] = ShortestDouble(d.color[i]);
+        }
+      } else if (d.usage == FourCC('I', 'C', 'M', 'C')) {
+        for (int i = 0; i < 3; ++i) {
+          out.shieldRows[12 + i] = ShortestDouble(d.color[i]);
+        }
+      }
+    }
+    out.shieldRows[15] = 1.0;
+    set(kMr, tch[0]->texture);
+    out.maps[kMr].raw = true;
   } else if ((IsXrayGhost(shader)) && out.maps[kBase].has &&
              out.maps[kNormal].has && cch[0] && cch[1]) {
     out.kind = 31;
@@ -2644,6 +2676,14 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.height = 0.0;
     out.backlight = out.backlightTop = 0.0;
   }
+  if (out.kind == 33) {
+    // As kind 31, but TCH0 stays in the MR slot and the ICAN map is always read.
+    out.layered = out.blended = true;
+    out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 0.0;
+    out.backlight = out.backlightTop = 0.0;
+  }
   if (out.kind == 31) {
     // Alpha blended and lit by the lights' specular alone; the shader makes the rest (ICAN is kept for the skinned one).
     out.layered = out.blended = true;
@@ -2946,7 +2986,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 32 || m.kind == 25 || m.kind == 28 || m.kind == 29 || m.kind == 31 || m.wind) {
+  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 32 || m.kind == 25 || m.kind == 28 || m.kind == 29 || m.kind == 31 || m.kind == 33 || m.wind) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     // A swaying leaf's is the model's SWindSet (v1, v2, rate, b, c) in the first nine.
     for (double v : m.shieldRows) {
@@ -3009,8 +3049,8 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
   // 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
   const bool lambertFx = rem.family == kShaderLambertFx || rem.opaqueFx;
-  P16(b, rem.kind == 8 || rem.kind == 13 || rem.kind == 14 || rem.kind == 29 ? 5 : (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
-  P16(b, rem.kind == 8 || rem.kind == 14 || rem.kind == 29 || (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
+  P16(b, rem.kind == 8 || rem.kind == 13 || rem.kind == 14 || rem.kind == 29 ? 5 : (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 || rem.kind == 33 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
+  P16(b, rem.kind == 8 || rem.kind == 14 || rem.kind == 29 || (rem.kind >= 15 && rem.kind <= 18) || rem.kind == 31 || rem.kind == 33 ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
   // fallback too, which is what draws it whenever the model is not opaque: channel
   // 0 unlit with the vertex colour as its material colour (bit 2), and the alpha
@@ -4402,7 +4442,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // the shader: its alpha, rim and colours are all the Remastered material's.
     const bool matcapShell = rem.kind == 13;
     // And the Frigate's force fields (kind 14), a retail model's fx surface drawn by the shader.
-    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25 || rem.kind == 28 || rem.kind == 29 || rem.kind == 31;
+    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25 || rem.kind == 28 || rem.kind == 29 || rem.kind == 31 || rem.kind == 33;
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
     // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,

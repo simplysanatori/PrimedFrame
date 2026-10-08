@@ -2193,7 +2193,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // df3e3423: CCH1.w != 0 ? rim x ICAN x CCH0.y : ICAN x CCH0.y + rim. rgb = max(0, (that + ICMC) x ICNC) x exposure
   // + the lights' GGX specular (roughness 0.1, F = 1, no diffuse: pbr_lspec / pi). shield rows: 0 CCH0, 1 CCH1, 2 ICNC, 3 ICMC
   // (w = 1 for df3e3423).
-  if (config.pbrKind == 31) {
+  // Kind 33, 65e90e82: the same with DIFC for ICNC (row 2), ICAN always, TCH0 (map 1) in rgb - 2 x TCH0 and, with CCH1.z != 0,
+  // alpha = fade x fr + mean(TCH0) (then x DIFC.a); fade alone otherwise.
+  if (config.pbrKind == 31 || config.pbrKind == 33) {
+    const bool map65 = config.pbrKind == 33;
     liquid += fmt::format(R"""(
     if (pbr_kind > 30.5) {{
         let pbr_c0 = ubuf.pbr_shield[0];
@@ -2208,10 +2211,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                              select(pbr_ican + vec3f(pbr_rim), pbr_ican * pbr_rim, pbr_sw),
                              ubuf.pbr_shield[3].w > 0.5);
         pbr_lo = pbr_lspec / pbr_pi;
-        pbr_glow = max((pbr_val + ubuf.pbr_shield[3].rgb) * ubuf.pbr_shield[2].rgb, vec3f(0.0));
-        pbr_alpha = clamp(select(pbr_fade, pbr_fade * pbr_fr, pbr_c1.z != 0.0) * ubuf.pbr_shield[2].w, 0.0, 1.0);
+        pbr_glow = max((pbr_val + ubuf.pbr_shield[3].rgb) * ubuf.pbr_shield[2].rgb{2}, vec3f(0.0));
+        pbr_alpha = clamp(select(pbr_fade, {3}, pbr_c1.z != 0.0) * ubuf.pbr_shield[2].w, 0.0, 1.0);
         pbr_pass = vec3f(0.0);
-    }})""", base, mapStage[3] == -1 ? "vec4f(0.0)"s : sampled(3, "vec4f(0.0)"));
+    }})""", base, mapStage[3] == -1 ? "vec4f(0.0)"s : sampled(3, "vec4f(0.0)"),
+                           map65 ? " - 2.0 * " + sampled(1, "vec4f(0.0)") + ".rgb" : ""s,
+                           map65 ? "pbr_fade * pbr_fr + (" + sampled(1, "vec4f(0.0)") + ".r + " + sampled(1, "vec4f(0.0)") + ".g + " + sampled(1, "vec4f(0.0)") + ".b) * 0.333333343" : "pbr_fade * pbr_fr"s);
   }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
