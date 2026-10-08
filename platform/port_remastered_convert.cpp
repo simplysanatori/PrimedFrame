@@ -607,6 +607,7 @@ struct RemMaterial {
   bool cutout = false;     // the base map's alpha cuts holes: leaves, grates
   bool blended = false;    // drawn over what is behind it: glass, decals, ice
   bool additive = false;   // its meshes are of class 3: added to what is behind it (SrcA, One)
+  bool opaqueFx = false;   // a retail fx material Remastered draws opaque (mesh class 0)
   bool tinted = false;     // its vertices carry a colour
   bool tintF0 = false;     // which tints the albedo before F0 too (kShaderTints), not just the diffuse
   bool cutExact = false;   // drawn as Remastered's 1-bit cutout: full-alpha base, discard at alpha^2 < 0.25 (mode bit 512)
@@ -2663,7 +2664,7 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The boundary shield (kind 14) is plainly alpha blended, GX_BL_SRCALPHA and GX_BL_INVSRCALPHA.
   // The pickup (kind 15) is SrcAlpha with the mesh class's destination: One where it is additive.
   // 4BC890C1 (a lit Lambert over a retail effect) is opaque, as Remastered's mesh class 0 draws it.
-  const bool lambertFx = rem.shader == kShaderLambertFx;
+  const bool lambertFx = rem.shader == kShaderLambertFx || rem.opaqueFx;
   P16(b, rem.kind == 13 || rem.kind == 14 ? 5 : rem.kind >= 15 && rem.kind <= 18 ? (rem.additive ? 1 : 5) : rem.kind == 19 ? (GunFxParticle(pm) ? 5 : 0) : lambertFx ? 0 : pm.blendDst);
   P16(b, rem.kind == 14 || (rem.kind >= 15 && rem.kind <= 18) ? 4 : rem.kind == 19 ? (GunFxParticle(pm) ? 4 : 1) : rem.kind == 13 || lambertFx ? 1 : pm.blendSrc);
   // An unlit surface coloured by its vertices (a door shield) keeps that in the
@@ -4044,7 +4045,12 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const bool shield = rem.kind >= 14 && rem.kind <= 19;
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
-    const bool lambertFx = rem.shader == kShaderLambertFx || rem.shader == kShaderVfxBase;
+    // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,
+    // which Remastered draws opaque whatever retail's blend (the missile pickup's top,
+    // 274D21BE; kb topic/mesh-blend-class.md).
+    const bool lambertFx = rem.shader == kShaderLambertFx || rem.shader == kShaderVfxBase ||
+                           (!opt.standalone && !(rem.flags & (kTransparentFlag | kCutoutFlag)));
+    rem.opaqueFx = !opt.standalone && IsFx(pm) && !(rem.flags & (kTransparentFlag | kCutoutFlag));
     if (rem.kind == 19) {
       // Row 6 w (unused by this kind otherwise): the retail konst alpha, a factor of the alpha of a particle model.
       rem.shieldRows[27] = GunFxParticle(pm) ? pm.konstAlpha : 1.0;

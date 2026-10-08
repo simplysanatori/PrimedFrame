@@ -593,10 +593,11 @@ uint32_t ShaderOf(const ModelMaterial& material) {
 }
 
 // 3853595c (filterlight / lightglow) writes a = DIFT.a^2 * v1.a * DIFC.a like ca1106b0, and
-// adds ICAN * ICNC to its colour, unscaled by the widget colour v1.
+// adds ICAN * ICNC to its colour, unscaled by the widget colour v1. 2d606234 (the GUI
+// frames' unlit vertex-colour texture) writes a = DIFT.a^2 * v1.a * DIFC.a in every perm.
 bool SquaresAlpha(const ModelMaterial& material) {
   const uint32_t shader = ShaderOf(material);
-  return (shader == 0xCA1106B0u && (material.unk1 & 1) != 0) || shader == 0x3853595Cu;
+  return (shader == 0xCA1106B0u && (material.unk1 & 1) != 0) || shader == 0x3853595Cu || shader == 0x2D606234u;
 }
 
 // Whether a mesh takes the glow sum (kStateFlag_PortHudGlow: TEV T + T*c, see the draw code):

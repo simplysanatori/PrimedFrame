@@ -1009,13 +1009,19 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // whose second normal map has a tangent stream of its own (TANGENT_1).
   const bool tangents2 = config.attrs[GX_VA_NRM].attrType != GX_NONE && config.attrs[GX_VA_NRM].cnt == 15;
   const bool tangents = tangents2 || (config.attrs[GX_VA_NRM].attrType != GX_NONE && config.attrs[GX_VA_NRM].cnt == 9);
+  // Remastered's vertex shaders (static and skinned) multiply the handedness by the sign of
+  // the model-view determinant, so a mirrored model keeps its bitangent (0 for a flat matrix).
+  if (tangents) {
+    vtxXfrAttrs += "\n    let pbr_mv = ubuf.postex_mtx[in_pnmtxidx];"
+                   "\n    let pbr_mvsign = sign(dot(pbr_mv[0].xyz, cross(pbr_mv[1].xyz, pbr_mv[2].xyz)));";
+  }
   if (tangents2) {
     vtxOutAttrs += fmt::format("\n    @location({}) pbr_tan2: vec4f,", vtxOutIdx++);
     vtxXfrAttrs += fmt::format(
         "\n    let pbr_vb2 = {};"
         "\n    let pbr_vt2 = {};"
         "\n    let pbr_vtv2 = vec4f(pbr_vt2, 0.0) * ubuf.postex_mtx[in_pnmtxidx];"
-        "\n    out.pbr_tan2 = vec4f(pbr_vtv2, select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt2), pbr_vb2) >= 0.0));",
+        "\n    out.pbr_tan2 = vec4f(pbr_vtv2, pbr_mvsign * select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt2), pbr_vb2) >= 0.0));",
         attr_load_nbt_slice(config, NbtSlice::B1, vidx), attr_load_nbt_slice(config, NbtSlice::T1, vidx));
   }
   if (tangents) {
@@ -1024,7 +1030,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         "\n    let pbr_vb = {};"
         "\n    let pbr_vt = {};"
         "\n    let pbr_vtv = vec4f(pbr_vt, 0.0) * ubuf.postex_mtx[in_pnmtxidx];"
-        "\n    out.pbr_tan = vec4f(pbr_vtv, select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt), pbr_vb) >= 0.0));",
+        "\n    out.pbr_tan = vec4f(pbr_vtv, pbr_mvsign * select(-1.0, 1.0, dot(cross(in_nrm, pbr_vt), pbr_vb) >= 0.0));",
         attr_load_nbt_slice(config, NbtSlice::B, vidx), attr_load_nbt_slice(config, NbtSlice::T, vidx));
   }
   // A vertex colour is the surface's tint where the material says so (mode 4), whatever
@@ -2083,16 +2089,19 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       if (pbr_blit && ubuf.pbr_lmap_rect.z == 0.0 && (ubuf.pbr_ambient[0].w > 0.0 || ubuf.pbr_volume[3].w > 0.0)) {{
           pbr_lo += pbr_ldiff * (pbr_blcm - 1.0);
       }}
+      // CharacterBacklight (ae819893) without probe data (no baked ambient, no volume) is
+      // Remastered's perm 078: flat ambient, no environment reflection, white backlights.
+      let pbr_bkl = ubuf.pbr_backlight.xyz;
+      let pbr_bnoprobe = pbr_bkl.z > 0.5 && ubuf.pbr_ambient[0].w <= 0.0 && ubuf.pbr_volume[3].w <= 0.0;
       // pbr-lightmap
       // Kind 13 scales the probe's reflection by pbr_layer_height.z (CCH1.z); mode 256 has none.
-      pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5), 0.0, pbr_noenv) *
+      pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5), 0.0, pbr_noenv || pbr_bnoprobe) *
                                            (pbr_f0 * pbr_ab.x + pbr_ab.y)) * pbr_ao;
       // Remastered's CharacterBacklight (GX_AURORA_SET_PBR_BACKLIGHT; the material's
       // strengths and falloff in the backlight's place): a light from world up and one from
       // behind, each coloured like the baked ambient on its side brought up to a luminance of
       // 1, so that it does not go dark with the room. Both fade towards the bottom of the
       // model's bounds; ambient occlusion counts twice, as it does there.
-      let pbr_bkl = ubuf.pbr_backlight.xyz;
       if (!pbr_cu && !pbr_sky && pbr_bkl.z > 0.5 && ubuf.pbr_bklight[2].x + ubuf.pbr_bklight[1].w > 0.0) {{
           let pbr_bt = clamp(dot(ubuf.pbr_bklight[0], vec4f(in.pbr_pos, 1.0)), 0.0, 1.0);
           let pbr_bf = select(pow(pbr_bt, pbr_bkl.z - 1.0), 1.0, pbr_bkl.z < 1.5);
@@ -2112,8 +2121,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           }}
           let pbr_btl = dot(pbr_btc, vec3f(0.2126, 0.7152, 0.0722));
           let pbr_bbl = dot(pbr_bbc, vec3f(0.2126, 0.7152, 0.0722));
-          pbr_btc = select(vec3f(1.0), pbr_btc * max(1.0 / pbr_btl, 1.0), pbr_btl > 0.05);
-          pbr_bbc = select(vec3f(1.0), pbr_bbc * max(1.0 / pbr_bbl, 1.0), pbr_bbl > 0.05);
+          pbr_btc = select(vec3f(1.0), pbr_btc * max(1.0 / pbr_btl, 1.0), pbr_btl > 0.05 && !pbr_bnoprobe);
+          pbr_bbc = select(vec3f(1.0), pbr_bbc * max(1.0 / pbr_bbl, 1.0), pbr_bbl > 0.05 && !pbr_bnoprobe);
           let pbr_bla = normalize(ubuf.pbr_up.xyz);
           let pbr_blb = vec3f(0.57735, 0.57735, -0.57735);
           let pbr_bnla = clamp(dot(pbr_n, pbr_bla), 0.0, 1.0);
