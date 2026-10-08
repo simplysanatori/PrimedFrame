@@ -571,6 +571,13 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     }
   }
   material.SetCurrent(drawFlags, surface, *this);
+  if (material.IsFlagSet(kStateFlag_PortHudGlow) && !material.IsFlagSet(kStateFlag_PortPBR)) {
+    // Remastered's 3853595c on FRME_Helmet: rgb = T*v1 + T*ICNC (ICNC white), alpha T.a^2*v1.a,
+    // drawn with the widget's own blend (additive: src alpha, one) into the UNORM target after
+    // tone mapping, so the sum clamps at 1 before the blend. The material's stage 0 is
+    // texture * vertex colour; T + T*c is that sum and the TEV clamps it the same way.
+    CGX::SetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_TEXC, GX_CC_RASC, GX_CC_TEXC);
+  }
   // Port: PBR mod materials. The fallback TEV set above stays valid for the
   // paths PortPBRAllowed rejects.
   const bool pbr = fadeBlend || (material.IsFlagSet(kStateFlag_PortPBR) &&

@@ -528,6 +528,7 @@ struct Part {
   std::vector<uint32_t> indices;
   const ModelMaterial* material = nullptr;
   uint32_t slot = 0;  // which of the model's textures it draws with
+  bool glow = false;  // takes the glow sum T + T*c (HudGlow)
 };
 
 bool MeshPart(const Model& model, uint32_t mesh, Part& out) {
@@ -585,11 +586,33 @@ bool MaterialTexture(const ModelMaterial& material, ModelUuid& out) {
 
 // Whether a material's shader writes its base map's alpha squared: ca1106b0,
 // the unlit alpha-blended image (a = BCLR.a^2 * DIFC.a, DIFC 1 on all 57).
-bool SquaresAlpha(const ModelMaterial& material) {
+uint32_t ShaderOf(const ModelMaterial& material) {
   uint8_t sid[4];
   std::memcpy(sid, &material.shaderId, 4);
-  const uint32_t shader = uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
-  return shader == 0xCA1106B0u && (material.unk1 & 1) != 0;
+  return uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
+}
+
+// 3853595c (filterlight / lightglow) writes a = DIFT.a^2 * v1.a * DIFC.a like ca1106b0, and
+// adds ICAN * ICNC to its colour, unscaled by the widget colour v1.
+bool SquaresAlpha(const ModelMaterial& material) {
+  const uint32_t shader = ShaderOf(material);
+  return (shader == 0xCA1106B0u && (material.unk1 & 1) != 0) || shader == 0x3853595Cu;
+}
+
+// Whether a mesh takes the glow sum (kStateFlag_PortHudGlow: TEV T + T*c, see the draw code):
+// 3853595c with ICNC white, as on all of FRME_Helmet's. Another ICNC isn't supported (the TEV
+// has no constant for it), so such a mesh keeps the plain product.
+bool HudGlow(const ModelMaterial& material) {
+  if (ShaderOf(material) != 0x3853595Cu) {
+    return false;
+  }
+  const ModelMaterialData* icnc = nullptr;
+  for (const ModelMaterialData& d : material.data) {
+    if (d.usage == Tag('I', 'C', 'N', 'C') && d.kind == ModelMaterialData::Kind::Color) {
+      icnc = &d;
+    }
+  }
+  return icnc != nullptr && icnc->color[0] == 1.f && icnc->color[1] == 1.f && icnc->color[2] == 1.f;
 }
 
 // A bar's mesh as the strip the game fills (port_hud_bars.h). The mesh is a
@@ -695,6 +718,9 @@ bool BuildModel(const std::vector<Part>& parts, const std::vector<uint32_t>& tex
     set.insert(set.end(), material.begin(), material.end());
     SetBE32(set, at + 8, part.slot);
     SetBE32(set, at + 0x1c, 0x3000);  // both colour channels unlit
+    if (part.glow) {
+      SetBE32(set, at, GetBE32(set, at) | 0x8000);  // kStateFlag_PortHudGlow
+    }
   }
   sections.push_back(std::move(set));
 
@@ -1018,6 +1044,7 @@ bool HudConverter::ConvertModel(const Model& model, uint32_t id, HudCounts& coun
     }
     const auto slot = std::find(textures.begin(), textures.end(), *tid);
     part.slot = uint32_t(slot - textures.begin());
+    part.glow = HudGlow(*part.material);
     if (slot == textures.end()) {
       textures.push_back(*tid);
     }
@@ -1519,6 +1546,8 @@ bool HudConverter::Convert(uint32_t retailFrame, const uint8_t* guif, size_t siz
         }
         const auto slot = std::find(textures.begin(), textures.end(), *tid);
         part.slot = uint32_t(slot - textures.begin());
+        const auto tint = m_tints.find(Lower(w.name));
+        part.glow = HudGlow(*part.material) && (tint == m_tints.end() || tint->second == Tint{1.f, 1.f, 1.f, 1.f});
         if (slot == textures.end()) {
           textures.push_back(*tid);
         }
