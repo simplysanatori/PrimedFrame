@@ -1940,9 +1940,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         let pbr_zl = (pbr_ambd + pbr_lnl) * pbr_ao;
         let pbr_zs = max(textureSampleLevel(tex{0}, tex{0}_samp, 0.5 + 0.5 * pbr_n.xy, 0.0).rgb, vec3f(0.0));
         let pbr_zv = max(sampled{1}.rgb, vec3f(0.0));
-        let pbr_zx = select(1.0, ubuf.pbr_tone[0].w, ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0);
         pbr_lo = pbr_zv * pbr_zs * dot(pbr_zl, vec3f(0.2126, 0.7152, 0.0722)) + pbr_base * pbr_zl * ubuf.pbr_shield[7].rgb;
-        pbr_glow = ubuf.pbr_shield[6].rgb * pbr_zx;
+        pbr_glow = ubuf.pbr_shield[6].rgb;
         pbr_alpha = clamp({2}.a * {2}.a * ubuf.pbr_shield[7].w * ubuf.pbr_shield[6].w, 0.0, 1.0);
         pbr_pass = vec3f(0.0);
     }})""",
@@ -1958,10 +1957,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         let pbr_gl = pbr_ambd + pbr_lnl;
         let pbr_gs = max(textureSampleLevel(tex{0}, tex{0}_samp, 0.5 + 0.5 * pbr_n.xy, 0.0).rgb, vec3f(0.0));
         let pbr_gv = max(sampled{1}.rgb, vec3f(0.0));
-        let pbr_gx = select(1.0, ubuf.pbr_tone[0].w, ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0);
         pbr_lo = pbr_gv * pbr_gs * dot(pbr_gl, vec3f(0.2126, 0.7152, 0.0722)) +
                  pbr_base * (1.0 - pbr_metal) * pbr_ao * pbr_gl * ubuf.pbr_shield[7].rgb * 0.31830988 + pbr_lspec;
-        pbr_glow = ubuf.pbr_shield[6].rgb * pbr_gx;
+        pbr_glow = ubuf.pbr_shield[6].rgb;
         pbr_alpha = clamp({2}.a * {2}.a * ubuf.pbr_shield[7].w * ubuf.pbr_shield[6].w, 0.0, 1.0);
         pbr_pass = vec3f(0.0);
     }})""",
