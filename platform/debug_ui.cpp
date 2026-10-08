@@ -196,7 +196,7 @@ bool sSwapScanXray = false;
 bool sTouchColors = false; // Android touch overlay: the GameCube pad's colours
 bool sTouchLabels = true;  // and each button's function under its letter
 bool sTouchTurbo = false;  // a Turbo button beside Fire
-bool sTouchFloatingStick = false; // the left stick appears where the left half is touched
+bool sTouchFloatingStick = true;  // the left stick appears where the left half is touched
 bool sFastMorph = false;
 bool sInvulnerable = false;
 // MP_GODMODE, for this run only: -1 unset, else 0 or 1. Never saved, and changing the
@@ -398,7 +398,7 @@ std::atomic< bool > sOverlayVisible{false};
 std::atomic< bool > sTouchColorsFlag{false};
 std::atomic< bool > sTouchLabelsFlag{true};
 std::atomic< bool > sTouchTurboFlag{false};
-std::atomic< bool > sTouchFloatingStickFlag{false};
+std::atomic< bool > sTouchFloatingStickFlag{true};
 // The Android touch overlay's gap to the side edges for every control, and the
 // left stick's extra gap on top of it, in dp. Read from the UI thread.
 constexpr float kTouchMarginMaxDp = 300.f;
