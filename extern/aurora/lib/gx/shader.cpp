@@ -1100,8 +1100,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 32768 = the vertex shader's procedural wind (Remastered's USE_PROCEDURAL_WIND_ANIMATION);
       // the fragment ignores it.
       // 65536 = the opacity is the vertex alpha alone (495899e7: o0.w = v5.w * DIFC.a, DIFC.a = 1).
-      let pbr_vao = ubuf.pbr_backlight.w > 65535.5;
-      let pbr_mwv = ubuf.pbr_backlight.w - select(0.0, 65536.0, pbr_vao);
+      // 131072 = flat ambient only: no baked lobes, grid volume or lightmap, and no BLCM (4bc890c1
+      // LambertFx, whose perms sample none of them and seed the light sum with the flat constant).
+      let pbr_flat = ubuf.pbr_backlight.w > 131071.5;
+      let pbr_mwf = ubuf.pbr_backlight.w - select(0.0, 131072.0, pbr_flat);
+      let pbr_vao = pbr_mwf > 65535.5;
+      let pbr_mwv = pbr_mwf - select(0.0, 65536.0, pbr_vao);
       let pbr_wnd = pbr_mwv > 32767.5;
       let pbr_mww = pbr_mwv - select(0.0, 32768.0, pbr_wnd);
       // 16384 = a macro normal map (MNMP, map 6) whiteout-blended over the normal in TANGENT_1's
@@ -2372,6 +2376,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_bkl = ubuf.pbr_backlight.xyz;
       let pbr_bnoprobe = pbr_bkl.z > 0.5 && ubuf.pbr_ambient[0].w <= 0.0 && ubuf.pbr_volume[3].w <= 0.0;
       // pbr-lightmap
+      if (pbr_flat) {{
+          pbr_ambd = pbr_amb;
+      }}
       // Kind 13 scales the probe's reflection by pbr_layer_height.z (CCH1.z); mode 256 has none.
       pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5), 0.0, pbr_noenv || pbr_bnoprobe) *
                                            (pbr_f0 * pbr_ab.x + pbr_ab.y)) * pbr_ao;
@@ -2806,7 +2813,7 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
   const auto windCode = [&](const std::string& pos, const std::string& clr) {
     return fmt::format(
         "\n    var wind_pos = {0};"
-        "\n    if (ubuf.pbr_backlight.w > 32767.5) {{"
+        "\n    if ((u32(ubuf.pbr_backlight.w) & 32768u) != 0u) {{"
         "\n      let w_p = {0};"
         "\n      let w_a = {1}.a;"
         "\n      let w_c0 = ubuf.pbr_shield[0];"

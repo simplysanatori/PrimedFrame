@@ -2731,6 +2731,10 @@ bool VfxBase(const RemMaterial& m) {
 bool PureLambert(const RemMaterial& m) {
   return (VfxBase(m) || (m.shader == kShaderLambertFx && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0));
 }
+// LambertFx's fragment perms (042-057) sample no lightmap, probe volume or BLCM: the light sum starts
+// from the flat ambient constant alone (mode bit 131072; kb material/4bc890c1.md, perms 000/001 have no
+// fragment shader, they are the depth pass).
+bool FlatAmbient(const RemMaterial& m) { return m.shader == kShaderLambertFx && PureLambert(m); }
 bool NoEnvSpec(const RemMaterial& m) { return (m.noRefl || PureLambert(m)) && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
 
 int PbrMode(const RemMaterial& m) {
@@ -2739,7 +2743,7 @@ int PbrMode(const RemMaterial& m) {
          (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0) +
          (m.cutExact ? 512 : 0) + (PureLambert(m) ? 1024 : 0) + (VfxBase(m) ? 2048 + 4096 : 0) +
          (m.indirect ? 8192 : 0) + (m.macro ? 16384 : 0) +
-         (m.wind ? 32768 : 0) + (m.wind && m.shader == kShaderVertexAlpha ? 65536 : 0);
+         (m.wind ? 32768 : 0) + (m.wind && m.shader == kShaderVertexAlpha ? 65536 : 0) + (FlatAmbient(m) ? 131072 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
