@@ -1889,19 +1889,17 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_vdiag = vec3f(0.0);
       if (ubuf.pbr_volume[3].w > 0.0) {{
           let pbr_vp = vec4f(in.pbr_pos + pbr_n * ubuf.pbr_volume[4].w, 1.0);
-          let pbr_vuv = vec3f(dot(ubuf.pbr_volume[0], pbr_vp), dot(ubuf.pbr_volume[1], pbr_vp),
-                              dot(ubuf.pbr_volume[2], pbr_vp));
+          let pbr_vuv0 = vec3f(dot(ubuf.pbr_volume[0], pbr_vp), dot(ubuf.pbr_volume[1], pbr_vp),
+                               dot(ubuf.pbr_volume[2], pbr_vp));
           // Remastered samples with a black border (CLAMP_TO_BORDER), so outside the grid it
-          // reads 0; this weight turns the clamp-to-edge sample into that.
-          let pbr_vsize = vec3f(textureDimensions(pbr_vol_mean));
-          let pbr_vt = pbr_vuv * pbr_vsize;
-          let pbr_vw = clamp(min(pbr_vt + 0.5, pbr_vsize + 0.5 - pbr_vt), vec3f(0.0), vec3f(1.0));
-          let pbr_vborder = pbr_vw.x * pbr_vw.y * pbr_vw.z;
-          let pbr_vmean = textureSampleLevel(pbr_vol_mean, pbr_cube_samp, pbr_vuv, 0.0).rgb * pbr_vborder;
-          let pbr_vlobe = textureSampleLevel(pbr_vol_lobe, pbr_cube_samp, pbr_vuv, 0.0).rgb * pbr_vborder;
-          let pbr_vr = textureSampleLevel(pbr_vol_r, pbr_cube_samp, pbr_vuv, 0.0) * pbr_vborder;
-          let pbr_vg = textureSampleLevel(pbr_vol_g, pbr_cube_samp, pbr_vuv, 0.0) * pbr_vborder;
-          let pbr_vb = textureSampleLevel(pbr_vol_b, pbr_cube_samp, pbr_vuv, 0.0) * pbr_vborder;
+          // reads 0. The volume carries one zero texel around it; vuv is mapped into that.
+          let pbr_vsize = vec3f(textureDimensions(pbr_vol_mean)) - 2.0;
+          let pbr_vuv = (pbr_vuv0 * pbr_vsize + 1.0) / (pbr_vsize + 2.0);
+          let pbr_vmean = textureSampleLevel(pbr_vol_mean, pbr_cube_samp, pbr_vuv, 0.0).rgb;
+          let pbr_vlobe = textureSampleLevel(pbr_vol_lobe, pbr_cube_samp, pbr_vuv, 0.0).rgb;
+          let pbr_vr = textureSampleLevel(pbr_vol_r, pbr_cube_samp, pbr_vuv, 0.0);
+          let pbr_vg = textureSampleLevel(pbr_vol_g, pbr_cube_samp, pbr_vuv, 0.0);
+          let pbr_vb = textureSampleLevel(pbr_vol_b, pbr_cube_samp, pbr_vuv, 0.0);
           let pbr_vn = vec3f(dot(ubuf.pbr_volume[3].xyz, pbr_n), dot(ubuf.pbr_volume[4].xyz, pbr_n),
                              dot(ubuf.pbr_volume[5].xyz, pbr_n));
           let pbr_vq = clamp(vec3f(dot(pbr_vn, pbr_vr.xyz * 2.0 - 1.0), dot(pbr_vn, pbr_vg.xyz * 2.0 - 1.0),
@@ -1928,7 +1926,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           }}
           // Diagnostics (w of row 5): 1 the texture coordinates, 2 the light alone, 3 the
           // normal.
-          pbr_vdiag = select(pbr_ambd, pbr_vuv, ubuf.pbr_volume[5].w < 1.5);
+          pbr_vdiag = select(pbr_ambd, pbr_vuv0, ubuf.pbr_volume[5].w < 1.5);
           if (ubuf.pbr_volume[5].w > 2.5) {{
               pbr_vdiag = pbr_n * 0.5 + 0.5;
           }}
