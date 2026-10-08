@@ -169,6 +169,11 @@ GXBool GXPortVolumetricFog(const GXPortFogParams* fog) {
 
 void GXPortVolumetricFogEnd() { GX_WRITE_AURORA(GX_AURORA_PORT_VOLUMETRIC_FOG_END); }
 
+void GXPortSetParticleFog(GXBool on) {
+  GX_WRITE_AURORA(GX_AURORA_PORT_PARTICLE_FOG);
+  GX_WRITE_U8(on ? 1 : 0);
+}
+
 void GXPortSetShadowCaster(GXBool on) {
   GX_WRITE_AURORA(GX_AURORA_PORT_SHADOW_CASTER);
   GX_WRITE_U8(on ? 1 : 0);

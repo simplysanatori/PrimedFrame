@@ -276,6 +276,11 @@ GXBool GXPortVolumetricFog(const GXPortFogParams* params);
 // opaque ones per pixel as the full-screen pass, blended and additive ones per vertex (blended:
 // colour T + in-scatter, additive: colour T). Harmless when no fog was drawn.
 void GXPortVolumetricFogEnd(void);
+// Marks the draws up to the next call with false as particles' (inside the volumetric fog). As
+// Remastered's particle renderers, they fog themselves per vertex as colour T + in-scatter unless
+// their blend mode is additive or premultiplied (the static render state's "no fog" flag), when
+// they are not fogged at all and only add to the already fogged frame.
+void GXPortSetParticleFog(GXBool on);
 // Stores a 33x33x33 RGBA8 colour grade LUT (red fastest) under a non-zero id.
 void GXPortColorGradeLut(u32 id, const u8* rgba);
 // The average radiance (linear rgb) of the latest frame measured by GXPortPostProcess, and a
