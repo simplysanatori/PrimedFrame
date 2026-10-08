@@ -2085,16 +2085,19 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       if (pbr_blit && ubuf.pbr_lmap_rect.z == 0.0 && (ubuf.pbr_ambient[0].w > 0.0 || ubuf.pbr_volume[3].w > 0.0)) {{
           pbr_lo += pbr_ldiff * (pbr_blcm - 1.0);
       }}
+      // CharacterBacklight (ae819893) without probe data (no baked ambient, no volume) is
+      // Remastered's perm 078: flat ambient, no environment reflection, white backlights.
+      let pbr_bkl = ubuf.pbr_backlight.xyz;
+      let pbr_bnoprobe = pbr_bkl.z > 0.5 && ubuf.pbr_ambient[0].w <= 0.0 && ubuf.pbr_volume[3].w <= 0.0;
       // pbr-lightmap
       // Kind 13 scales the probe's reflection by pbr_layer_height.z (CCH1.z); mode 256 has none.
-      pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5), 0.0, pbr_noenv) *
+      pbr_lo += (pbr_ambd * pbr_diff + pbr_envspec * select(select(1.0, ubuf.pbr_layer_height.z, pbr_kind > 12.5 && pbr_kind < 13.5), 0.0, pbr_noenv || pbr_bnoprobe) *
                                            (pbr_f0 * pbr_ab.x + pbr_ab.y)) * pbr_ao;
       // Remastered's CharacterBacklight (GX_AURORA_SET_PBR_BACKLIGHT; the material's
       // strengths and falloff in the backlight's place): a light from world up and one from
       // behind, each coloured like the baked ambient on its side brought up to a luminance of
       // 1, so that it does not go dark with the room. Both fade towards the bottom of the
       // model's bounds; ambient occlusion counts twice, as it does there.
-      let pbr_bkl = ubuf.pbr_backlight.xyz;
       if (!pbr_cu && !pbr_sky && pbr_bkl.z > 0.5 && ubuf.pbr_bklight[2].x + ubuf.pbr_bklight[1].w > 0.0) {{
           let pbr_bt = clamp(dot(ubuf.pbr_bklight[0], vec4f(in.pbr_pos, 1.0)), 0.0, 1.0);
           let pbr_bf = select(pow(pbr_bt, pbr_bkl.z - 1.0), 1.0, pbr_bkl.z < 1.5);
@@ -2114,8 +2117,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           }}
           let pbr_btl = dot(pbr_btc, vec3f(0.2126, 0.7152, 0.0722));
           let pbr_bbl = dot(pbr_bbc, vec3f(0.2126, 0.7152, 0.0722));
-          pbr_btc = select(vec3f(1.0), pbr_btc * max(1.0 / pbr_btl, 1.0), pbr_btl > 0.05);
-          pbr_bbc = select(vec3f(1.0), pbr_bbc * max(1.0 / pbr_bbl, 1.0), pbr_bbl > 0.05);
+          pbr_btc = select(vec3f(1.0), pbr_btc * max(1.0 / pbr_btl, 1.0), pbr_btl > 0.05 && !pbr_bnoprobe);
+          pbr_bbc = select(vec3f(1.0), pbr_bbc * max(1.0 / pbr_bbl, 1.0), pbr_bbl > 0.05 && !pbr_bnoprobe);
           let pbr_bla = normalize(ubuf.pbr_up.xyz);
           let pbr_blb = vec3f(0.57735, 0.57735, -0.57735);
           let pbr_bnla = clamp(dot(pbr_n, pbr_bla), 0.0, 1.0);
