@@ -1620,7 +1620,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // level. It is drawn premultiplied, so what shows through is added after the tone curve.
     const auto& inner4 = config.tevStages[mapStage[4]];
     std::string through;
-    if (screen && config.pbrKind != 31 && config.pbrKind != 23) {
+    if (screen && config.pbrKind != 31) {
       vtxOutAttrs += fmt::format("\n    @location({}) pbr_scr: vec4f,", vtxOutIdx++);
       vtxXfrAttrs += "\n    out.pbr_scr = out.pos;";
       through = fmt::format(R"""(
@@ -2035,7 +2035,6 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }})""",
                         underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base);
   }
-<<<<<<< HEAD
   // Kind 28, Remastered's 088e025e (Model_IceSpreader, permutation 002_0). Shield rows: 0 = CCH0 (z normal strength,
   // w frost parallax), 1 = CCH1 (x frost gain, y rim gain, z rim power), 2 = CCH2 rgb (cube tint) and CCH5.x in w
   // (cube gain), 3 = CCH3 rgb (rim colour). Map 3 is the frost TCH0. L is the baked probe's mean (BLPD) times BLCM:
@@ -2074,7 +2073,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }})""",
                         underlying(frost.texMapId), base,
                         tangents ? "normalize(in.pbr_tan.xyz)"s : "normalize(pbr_t0)"s, underlying(frost.texCoordId));
-=======
+  }
   // Kind 31, Remastered's fb2bc671 (static) and df3e3423 (skinned, ICAN emissive), the ChozoGhost's X-ray material (every
   // fragment permutation shares this core; their ambient is zeroed by c1[0].z). With fade = mix(CCH0.z, CCH0.w, sat((-z -
   // CCH1.x) / (CCH1.y - CCH1.x))) by view depth and fr = 1 - max(0, N'.z)^CCH0.x (N' the normal map's, in view space):
@@ -2101,7 +2100,6 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
         pbr_alpha = clamp(select(pbr_fade, pbr_fade * pbr_fr, pbr_c1.z != 0.0) * ubuf.pbr_shield[2].w, 0.0, 1.0);
         pbr_pass = vec3f(0.0);
     }})""", base, mapStage[3] == -1 ? "vec4f(0.0)"s : sampled(3, "vec4f(0.0)"));
->>>>>>> shd-xray
   }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
@@ -2133,15 +2131,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_pi = 3.14159265;{10}
       var pbr_base = {11};{13}
       let pbr_orm = {1}.rgb;
-<<<<<<< HEAD
       let pbr_ao = select(pbr_orm.r, 1.0, pbr_ind);
-      let pbr_rough = clamp(select(pbr_orm.g, 0.6, pbr_ind), 0.02, 1.0);
+      let pbr_rough = select(clamp(select(pbr_orm.g, 0.6, pbr_ind), 0.02, 1.0), 0.1, pbr_kind > 30.5);
       let pbr_metal = clamp(select(pbr_orm.b, 0.0, pbr_ind), 0.0, 1.0);
-=======
-      let pbr_ao = pbr_orm.r;
-      let pbr_rough = select(clamp(pbr_orm.g, 0.02, 1.0), 0.1, pbr_kind > 30.5);
-      let pbr_metal = clamp(pbr_orm.b, 0.0, 1.0);
->>>>>>> shd-xray
       let pbr_emissive = max({2}.rgb, vec3f(0.0)) * ubuf.pbr_emissive.rgb;
       var pbr_n = pbr_ng;{3}
       let pbr_v = normalize(-in.pbr_pos);
