@@ -448,6 +448,10 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
       config.shaderConfig.pbrLightmapAttr = lightmapAttr;
     }
   }
+  if (bind_pos_active()) {
+    config.shaderConfig.pbrBindPos = true;
+    config.shaderConfig.pbrBindLe = g_gxState.arrays[GX_VA_TEX7].le;
+  }
   config.shaderConfig.sdf = g_gxState.sdf;
   config.shaderConfig.hudSample = g_gxState.hudSample;
   u8 vtxOffset = 0;

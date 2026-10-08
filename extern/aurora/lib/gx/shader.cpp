@@ -1003,6 +1003,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   vtxOutAttrs += fmt::format("\n    @location({}) pbr_pos: vec3f,", vtxOutIdx++);
   vtxOutAttrs += fmt::format("\n    @location({}) pbr_nrm: vec3f,", vtxOutIdx++);
   vtxXfrAttrs += "\n    out.pbr_pos = mv_pos;\n    out.pbr_nrm = mv_nrm;";
+  // The backlight's height fade of a skinned draw, from the bind pose (see bind_pos_active):
+  // saturate(bind y * scale + offset), or -1 where the draw has none.
+  vtxOutAttrs += fmt::format("\n    @location({}) pbr_bty: f32,", vtxOutIdx++);
+  vtxXfrAttrs += "\n    out.pbr_bty = pbr_bind_y;";
   // A model with vertex tangents (the NBT normal array: N, B, T) shades its normal maps with
   // Remastered's frame: T and the handedness w (B = w * cross(N, T), so w is the sign of
   // dot(cross(N, T), B)). Without them the frame comes from the screen derivatives below.
@@ -1684,8 +1688,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // Kind 14, Remastered's BoundaryShield_Ship1_DX11 (the Frigate's force fields), permutation
     // 002_0. Its constants are GXSetPBRShield's rows: CCH0..CCH6, then DIFC. Map 0 is BCLR, map 4
     // TCH0 (the field's pattern) and map 5 TCH1 (a noise), each at its own UV set. pbr_param.x is
-    // the time. Unlit and alpha-blended: the glow takes the room's exposure itself (it is
-    // added to the tone curve's input), and the screen behind (map 7), bent by the noise,
+    // the time. Unlit and alpha-blended: the glow is written at the exposure's inverse (the generic
+    // scaling re-applies it), and the screen behind (map 7), bent by the noise,
     // comes through pbr_pass.
     if (screen && mapStage[5] != -1) {
       liquid += fmt::format(R"""(
@@ -1736,14 +1740,18 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_sl = pbr_kf * pbr_c0.rgb * pbr_c5.y + pbr_pulse * pbr_s2.z * pbr_c2.rgb * pbr_c2.w +
                        pbr_s2.y * pbr_c0.rgb * pbr_c1.w +
                        (2.0 - pbr_df.x) * pbr_g1c * pbr_colg * (1.0 + 9.0 * pbr_s2.y) * pbr_c0.w + pbr_c1.x * pbr_c2.rgb;
+          // Remastered writes the glow times c3.z (the tone curve's inverse exposure), so it nets
+          // to the glow itself on screen. The generic scaling below applies the exposure, so the
+          // inverse goes in here.
           var pbr_sx = 1.0;
           if (ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0) {{
-              pbr_sx = ubuf.pbr_tone[0].w;
+              pbr_sx = 1.0 / ubuf.pbr_tone[0].w;
           }}
-          let pbr_sd = min(1.0 / max(length(in.pbr_pos), 1e-3), 1.0);
+          let pbr_sd = min(abs(1.0 / min(in.pbr_pos.z, -1e-3)), 1.0);
           let pbr_suv = in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5 +
                         pbr_vraw.a * pbr_sd * vec2f(pbr_sq.x * pbr_c4.y + pbr_sr.x * pbr_c6.y,
-                                                    -(pbr_sq.y * pbr_c4.y - pbr_sr.y * pbr_c6.y) + 0.75);
+                                                    -(pbr_sq.y * pbr_c4.y - pbr_sr.y * pbr_c6.y)) +
+                        vec2f(0.0, 0.75 * pbr_sd);
           let pbr_sfb = textureSampleLevel(tex7, tex7_samp, clamp(pbr_suv, vec2f(0.0), vec2f(1.0)), 0.0).rgb;
           pbr_alpha = pbr_sal * pbr_c4.w;
           pbr_lo = vec3f(0.0);
@@ -1760,8 +1768,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // of the view-space position with xyz, plus w; the game fills them) and DIFC in row 7. Map 0
     // is BCLR, a three-channel mask, map 2 the normal map and map 4 TCH0, a gradient read at the
     // world position and scrolled along V by CCH0.z a second. Unlit and alpha blended: all of it
-    // is glow, the room's exposure on all but the gradient's own term (Cg), which is added at the
-    // exposure's inverse. The vertex shader's travelling sine bump is not drawn.
+    // is glow, at the screen level of the glow x DIFC plus the gradient's own term (Cg), which
+    // is exposure x Cg. The vertex shader's travelling sine bump is not drawn.
     if (mapStage[2] != -1 && mapStage[4] != -1) {
       liquid += fmt::format(R"""(
       if (pbr_kind > 14.5 && pbr_kind < 15.5) {{
@@ -1788,11 +1796,16 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_pcg = pbr_pf1 * pbr_pg * pbr_c1.w;
           let pbr_ph = {2}.rgb;
           let pbr_pgl = (pbr_ph.x * pbr_vraw.rgb * pbr_c1.y + pbr_ph.y * pbr_pcg.x * pbr_c2.rgb * pbr_c2.w) * pbr_pfb;
-          // Room exposure is applied once, by the generic scaling after this block. The
-          // vertex colour is the model's own cyan tint (R~0.1, G~0.65, B~0.93).
+          // The generic scaling after this block applies the room's exposure: Remastered's sum
+          // nets to itself on screen (times DIFC) and Cg to exposure x Cg, so only Cg keeps it.
+          // The vertex colour is the model's own cyan tint (R~0.1, G~0.65, B~0.93).
+          var pbr_ix = 1.0;
+          if (ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0) {{
+              pbr_ix = 1.0 / ubuf.pbr_tone[0].w;
+          }}
           pbr_alpha = clamp(pbr_df.w * pbr_c3.w, 0.0, 1.0);
           pbr_lo = vec3f(0.0);
-          pbr_glow = (pbr_pcg + pbr_pgl + pbr_ph.z * pbr_vraw.rgb) * pbr_df.rgb + pbr_pcg;
+          pbr_glow = (pbr_pcg + pbr_pgl + pbr_ph.z * pbr_vraw.rgb) * pbr_df.rgb * pbr_ix + pbr_pcg;
           pbr_pass = vec3f(0.0);
       }})""",
                           mapStage[2], underlying(config.tevStages[mapStage[4]].texMapId), base);
@@ -2216,7 +2229,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 1, so that it does not go dark with the room. Both fade towards the bottom of the
       // model's bounds; ambient occlusion counts twice, as it does there.
       if (!pbr_cu && !pbr_sky && pbr_bkl.z > 0.5 && ubuf.pbr_bklight[2].x + ubuf.pbr_bklight[1].w > 0.0) {{
-          let pbr_bt = clamp(dot(ubuf.pbr_bklight[0], vec4f(in.pbr_pos, 1.0)), 0.0, 1.0);
+          let pbr_bt = select(clamp(dot(ubuf.pbr_bklight[0], vec4f(in.pbr_pos, 1.0)), 0.0, 1.0), in.pbr_bty, in.pbr_bty >= 0.0);
           let pbr_bf = select(pow(pbr_bt, pbr_bkl.z - 1.0), 1.0, pbr_bkl.z < 1.5);
           var pbr_btc = pbr_amb;
           var pbr_bbc = pbr_amb;
@@ -2593,6 +2606,21 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     // in_pnmtxidx and in_pos written above for line mode
     if ((attr != GX_VA_PNMTXIDX && attr != GX_VA_POS) || config.lineMode == 0) {
       vtxXfrAttrsPre += fmt::format("\n    let {} = {};", vtx_attr(config, attr), attr_load(config, attr, vidxAttr));
+    }
+  }
+  if (config.pbr != 0) {
+    if (config.pbrBindPos && config.attrs[GX_VA_POS].attrType != GX_NONE) {
+      const auto& pm = config.attrs[GX_VA_POS];
+      // TEX7's array holds the bind-pose positions (12 bytes each), indexed like POS.
+      const auto index = fmt::format(fmt::runtime(pm.attrType == GX_INDEX8 ? "raw_fetch_u8_1(&vbuf, imm.vtx_start + {} * {}u + {}u)"
+                                                              : "raw_fetch_u16_1(&vbuf, imm.vtx_start + {} * {}u + {}u, false)"),
+                                     vidxAttr, config.vtxStride, pm.offset);
+      vtxXfrAttrsPre += fmt::format(
+          "\n    let pbr_bind_y = clamp(raw_fetch_f32_1(&abuf, {} + {} * 12u + 4u, {}) * ubuf.pbr_bklight[2].z"
+          " + ubuf.pbr_bklight[2].y, 0.0, 1.0);",
+          imm_array_start(GX_VA_TEX7), index, config.pbrBindLe ? "true" : "false");
+    } else {
+      vtxXfrAttrsPre += "\n    let pbr_bind_y = -1.0;";
     }
   }
   bool needsBinrm = false;

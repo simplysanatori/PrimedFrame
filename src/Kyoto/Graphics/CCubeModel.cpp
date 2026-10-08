@@ -108,6 +108,8 @@ void CCubeModel::SetStaticArraysCurrent() const {
 void CCubeModel::SetArraysCurrent() const {
   CGX::SetArray(GX_VA_POS, x0_instance.GetVertexPointer(), x0_instance.GetVertexSize(),
                 sizeof(CVector3f));
+  // Not a skinned draw: no bind pose (see SetSkinningArraysCurrent).
+  CGX::ClearArray(GX_VA_TEX7);
   const int stride = HasNbtNormals()          ? sizeof(float) * 3 * NormalVecs()
                      : (x41_visorFlags & 1) ? sizeof(short) * 3
                                             : sizeof(CVector3f);
@@ -127,6 +129,9 @@ void CCubeModel::SetSkinningArraysCurrent(const float* positions, const float* n
   // backend to drop its cached copy or the new vertex data is never uploaded.
   CGX::ClearArray(GX_VA_POS);
   CGX::ClearArray(GX_VA_NRM);
+  // The bind pose (the file's positions) goes in as GX_VA_TEX7's array for the PBR backlight,
+  // which fades by the bind-pose height, as Remastered's CharacterBacklight does.
+  CGX::SetArray(GX_VA_TEX7, x0_instance.GetVertexPointer(), x0_instance.GetVertexSize(), sizeof(CVector3f));
   CGraphics::sRenderState.SetVtxState(positions, normals,
                                       static_cast< const uint* >(x0_instance.GetColorPointer()));
   SetStaticArraysCurrent();
@@ -726,7 +731,7 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       return env != nullptr && env[0] == '0';
     }();
     if (sBacklightOff) {
-      GXSetPBRBacklight(nullptr, nullptr, 0.f, 0.f);
+      GXSetPBRBacklight(nullptr, nullptr, 0.f, 0.f, 0.f, 0.f);
     } else {
       const CAABox& box = GetBoundingBox();
       const f32 bottom = box.GetMinPoint().GetY();
@@ -749,7 +754,7 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       float top = 2.f;
       float back = 4.f;
       PortRoomEnv::Backlight(top, back);
-      GXSetPBRBacklight(plane, backDir, back, top);
+      GXSetPBRBacklight(plane, backDir, back, top, scale, -bottom * scale);
     }
     // An opaque material's own alpha (dst factor zero) means nothing to a blend.
     uint materialCube = 0;

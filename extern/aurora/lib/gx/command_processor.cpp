@@ -453,8 +453,9 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
 
   DrawImmediateData immediates{
       .vtxStart = vertRange.offset, .currentPnMtx = state.currentPnMtx, .serial = state.drawSerial};
+  const bool bindPos = bind_pos_active();
   for (int i = GX_VA_POS; i <= GX_VA_TEX7; ++i) {
-    if (state.vtxDesc[i] != GX_INDEX8 && state.vtxDesc[i] != GX_INDEX16) {
+    if (state.vtxDesc[i] != GX_INDEX8 && state.vtxDesc[i] != GX_INDEX16 && !(bindPos && i == GX_VA_TEX7)) {
       continue;
     }
     auto& array = state.arrays[i];
@@ -838,7 +839,7 @@ void handle_aurora(ByteReader& reader) noexcept {
     auto& array = g_gxState.arrays[attrIdx];
     const auto newData = reinterpret_cast<void*>(arrayAddr);
     if (array.data != newData || array.size != arraySize || array.le != le) {
-      if (array.le != le) {
+      if (array.le != le || (attrIdx == GX_VA_TEX7 && (array.data == nullptr) != (newData == nullptr))) {
         // Endianness is baked into the shader
         g_gxState.dirty |= DirtyPipeline;
       }
@@ -1348,16 +1349,19 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.dirty |= DirtyUniform;
     }
   } else if (subCmd == GX_AURORA_SET_PBR_BACKLIGHT) {
-    f32 v[9];
+    f32 v[11];
     for (f32& f : v) {
       f = reader.read<f32>();
     }
     const std::array<Vec4<float>, 3> value{
         Vec4<float>{v[0], v[1], v[2], v[3]},
         Vec4<float>{v[4], v[5], v[6], v[7]},
-        Vec4<float>{v[8], 0.f, 0.f, 0.f},
+        Vec4<float>{v[8], v[9], v[10], 0.f},
     };
     if (g_gxState.pbrBacklightLights != value) {
+      if ((g_gxState.pbrBacklightLights[2].z() > 0.f) != (value[2].z() > 0.f)) {
+        g_gxState.dirty |= DirtyPipeline;
+      }
       g_gxState.pbrBacklightLights = value;
       g_gxState.dirty |= DirtyUniform;
     }
