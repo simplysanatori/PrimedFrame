@@ -524,8 +524,9 @@ struct SPortGlassCopy {
   u32 serial;
   int frame;
   int left, top, width, height;
+  bool mips; // copied with a mip chain (kind 23 samples blurred levels; the others read level 0)
 };
-SPortGlassCopy sPortGlassCopy = {false, 0, 0, 0, 0, 0, 0};
+SPortGlassCopy sPortGlassCopy = {false, 0, 0, 0, 0, 0, 0, false};
 } // namespace
 #endif
 
@@ -772,18 +773,22 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     }
     // Glass (kinds 8 and 11) and the force fields (14) see what is behind them: the screen so far,
     // copied into map 7 as the refracting particles copy it (CElementGen).
-    if (((kind > 7.5f && kind < 8.5f) || (kind > 10.5f && kind < 11.5f) || (kind > 13.5f && kind < 14.5f)) &&
+    if (((kind > 7.5f && kind < 8.5f) || (kind > 10.5f && kind < 11.5f) || (kind > 13.5f && kind < 14.5f) ||
+         (kind > 22.5f && kind < 23.5f)) &&
         CCubeMaterial::PortScreenCopyUsed()) {
       int portLeft, portTop, portWidth, portHeight;
       CGraphics::GetViewport(portLeft, portTop, portWidth, portHeight);
       SPortGlassCopy& copy = sPortGlassCopy;
+      const bool wantMips = kind > 22.5f && kind < 23.5f;
       const bool current = copy.valid && copy.serial == GXPortCopySerial() &&
                            copy.frame == CGraphics::GetFrameCounter() && copy.left == portLeft &&
-                           copy.top == portTop && copy.width == portWidth && copy.height == portHeight;
+                           copy.top == portTop && copy.width == portWidth && copy.height == portHeight &&
+                           (copy.mips || !wantMips);
       if (!current) {
         GXSetTexCopySrc(static_cast< u16 >(portLeft), static_cast< u16 >(portTop), static_cast< u16 >(portWidth),
                         static_cast< u16 >(portHeight));
-        GXSetTexCopyDst(static_cast< u16 >(portWidth), static_cast< u16 >(portHeight), GX_TF_RGB565, GX_FALSE);
+        GXSetTexCopyDst(static_cast< u16 >(portWidth), static_cast< u16 >(portHeight), GX_TF_RGB565,
+                         wantMips ? GX_TRUE : GX_FALSE);
         const bool useVideoFilter = CGraphics::GetUseVideoFilter();
         CGraphics::SetUseVideoFilter(false);
         GXCopyTex(CGraphics::GetDolphinSpareBuffer(), GX_FALSE);
@@ -796,10 +801,21 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
         copy.top = portTop;
         copy.width = portWidth;
         copy.height = portHeight;
+        copy.mips = wantMips;
       }
       // Map 7 is shared, so it is bound again either way.
       CGraphics::LoadDolphinSpareTexture(portWidth, portHeight, GX_TF_RGB565, nullptr,
                                          CGraphics::kSpareBufferTexMapID);
+      if (wantMips) {
+        // The shader picks the level (textureSampleLevel); the sampler must allow them all.
+        GXTexObj mipObj;
+        GXInitTexObj(&mipObj, CGraphics::GetDolphinSpareBuffer(), static_cast< u16 >(portWidth),
+                     static_cast< u16 >(portHeight), GX_TF_RGB565, GX_CLAMP, GX_CLAMP, GX_TRUE);
+        GXInitTexObjLOD(&mipObj, GX_LIN_MIP_LIN, GX_LINEAR, 0.f, 16.f, 0.f, GX_DISABLE, GX_DISABLE,
+                        GX_ANISO_1);
+        GXLoadTexObj(&mipObj, CGraphics::kSpareBufferTexMapID);
+        CTexture::InvalidateTexmap(CGraphics::kSpareBufferTexMapID);
+      }
     }
     GXSetPBR(GX_TRUE);
     ++CCubeMaterial::sPortPBRDraws;

@@ -1513,6 +1513,9 @@ constexpr uint32_t kShaderPhazon = 0xCC96C27D;
 // kind 22): no mask scale, the phase is sin(mask + time), a second ramp read gives the cavity glow's alpha term,
 // and the glow takes no exposure factor.
 constexpr uint32_t kShaderPhazonB = 0x9E52AA74;
+// Distortion2 (24670bf0, the Phendrana ice walls, the crater's flesh glass; kind 23): refracts a mipped copy of
+// the frame by its normal map and a fresnel term, tinted by the base map and the vertex colour (kb material/24670bf0.md).
+constexpr uint32_t kShaderRefractGlass = 0x24670BF0;
 // A shader with parameters of its own (TCHn, CCHn) reads the vertex colour as
 // it likes: masks for its extra maps, a colour seen through ice. These are the
 // ones read that multiply the albedo by it, as the standard shader does
@@ -1560,6 +1563,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderColorUnlit, "color-unlit");
   add(shader == kShaderPhazon, "phazon");
   add(shader == kShaderPhazonB, "phazon-b");
+  add(shader == kShaderRefractGlass, "refract-glass");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
 }
@@ -1588,6 +1592,7 @@ const char* KindName(int kind) {
   case 20: return "vertex-blend";
   case 21: return "phazon";
   case 22: return "phazon-b";
+  case 23: return "refract-glass";
   default: return "kind?";
   }
 }
@@ -2085,6 +2090,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 4; ++i) {
       out.shieldRows[28 + i] = 1.0;
     }
+  } else if (shader == kShaderRefractGlass && out.maps[kBase].has && out.maps[kNormal].has && cch[0]) {
+    out.kind = 23;
+    out.vcolor = true;
+    // BCLR (alpha = roughness, squared in the shader) and NMAP are maps 0 and 2 as in the standard
+    // shader. CCH0 (the refraction, the normal's share, the fresnel power and scale) goes whole to
+    // kindParam. REFP and BLCM are the room's, which the runtime already has.
+    for (int i = 0; i < 4; ++i) {
+      out.kindParam[i] = ShortestDouble(cch[0]->color[i]);
+    }
   } else if ((shader == kShaderBoundaryShield || shader == kShaderForceField) && out.maps[kBase].has && tch[0] && tch[1] && cch[0] && cch[1] &&
              cch[2] && cch[3] && cch[4] && cch[5] && cch[6]) {
     out.kind = 14;
@@ -2365,6 +2379,16 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.layered = true;
     out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
     out.height = 0.0;
+  }
+  if (out.kind == 23) {
+    // Opaque: the shader writes alpha 1, and what is behind it is its own copy of the frame. The
+    // vertex alpha is the transmission weight and the base alpha the roughness, neither an opacity.
+    out.layered = true; // keeps the kind (the demotion below), drawn opaque all the same
+    out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 0.0;
+    out.backlight = out.backlightTop = 0.0;
+    out.maps[kMr].has = out.maps[kEmissive].has = false;
   }
   if (out.kind == 21 || out.kind == 22) {
     // Opaque and lit; the base alpha is a weight in the shader and no opacity, the glow is the
@@ -2666,7 +2690,7 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   };
   // Glass samples the frame behind it, which the game copies into map 7 (the
   // spare buffer's) before it draws one: a stage of its own binds it.
-  const int nstages = rem.kind == 8 || rem.kind == 11 || rem.kind == 14 ? nmaps + 1 : nmaps;
+  const int nstages = rem.kind == 8 || rem.kind == 11 || rem.kind == 14 || rem.kind == 23 ? nmaps + 1 : nmaps;
   P32(b, uint32_t(nstages));
   for (int i = 0; i < nstages; ++i) {
     // Kind 20's map 3 is a detail map, sampled only (the table's stage adds it as glow).
@@ -3714,7 +3738,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   for (Prim& p : prims) {
     if (opt.standalone) {
       const RemMaterial& m = mats[p.mat];
-      p.rmat = m.kind == 8 || m.kind == 10 || m.kind == 11 || m.kind == 14 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
+      p.rmat = m.kind == 8 || m.kind == 10 || m.kind == 11 || m.kind == 14 || m.kind == 23 ? 3 : m.cutout ? 1 : m.additive ? 4 : m.blended ? 2 : 0;
       continue;
     }
     if (opt.material >= 0) {

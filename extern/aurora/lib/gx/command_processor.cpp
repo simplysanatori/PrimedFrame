@@ -928,7 +928,7 @@ void handle_aurora(ByteReader& reader) noexcept {
     g_gxState.texCopyDstWidth = reader.read<u32>();
     g_gxState.texCopyDstHeight = reader.read<u32>();
     g_gxState.texCopyFmt = static_cast<GXTexFmt>(reader.read<u32>());
-    reader.skip(1); // mipmap is not implemented, but remains part of the command payload
+    g_gxState.texCopyMips = reader.read<u8>() != 0;
     g_gxState.texCopyDstWide = true;
   } else if (subCmd == GX_AURORA_LOAD_COPY_DEST) {
     g_gxState.texCopyDest = reinterpret_cast<const void*>(reader.read<u64>());
