@@ -1389,6 +1389,8 @@ constexpr uint32_t kIncanMaskFlag = 0x200;   // the base map's alpha masks the g
 constexpr uint32_t kShaderHeightBlend = 0xCA10C453;  // snow and ice over rock
 // Shaders with maps and parameters of their own (TCHn, CCHn), read from their code.
 constexpr uint32_t kShaderUpLayer = 0x9EFE0D2E;   // TCH0-2 are a second layer on what faces up, CCH0.x its edge
+constexpr uint32_t kShaderProjBlend = 0xD6AA2A3A;    // 9EFE0D2E's blend of TCH0-2 on what faces up (CCH0.x its edge), alpha lerp(BCLR.a, TCH0.a, w)
+constexpr uint32_t kShaderDecalBlend = 0x17E458CD;   // a blended decal whose alpha is a smoothstep of TCH0.x about CCH0.x
 constexpr uint32_t kShaderVertexBlend = 0xE9DF2188;  // TCH0-2 a second layer by the vertex alpha, CCH0.x its edge, TCH3 a detail map
 constexpr uint32_t kShaderDetail = 0x9AB899E7;    // TCH0 is a detail map, on a texcoord of its own
 constexpr uint32_t kShaderDetailTinted = 0x41A12C9E;  // the same with the vertex colour tint
@@ -1546,6 +1548,8 @@ std::string ShaderRole(uint32_t shader) {
   auto in = [&](const auto& list) { return std::find(std::begin(list), std::end(list), shader) != std::end(list); };
   add(shader == kShaderHeightBlend, "height-blend");
   add(shader == kShaderUpLayer, "up-layer");
+  add(shader == kShaderProjBlend, "projected-blend");
+  add(shader == kShaderDecalBlend, "decal-alpha");
   add(shader == kShaderDetail || shader == kShaderDetailTinted, "detail");
   add(shader == kShaderVertexBlend, "vertex-blend");
   add(shader == kShaderLava, "lava");
@@ -1607,6 +1611,8 @@ const char* KindName(int kind) {
   case 23: return "refract-glass";
   case 24: return "decal-cut";
   case 25: return "eye-gloss";
+  case 26: return "projected-blend";
+  case 27: return "decal-alpha";
   default: return "kind?";
   }
 }
@@ -1886,6 +1892,23 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         set(slot[i], tch[i]->texture, &out.layer[slot[i]]);
       }
     }
+    out.layerSmooth = ShortestDouble(cch[0]->color[0]);
+  } else if (shader == kShaderProjBlend && tch[0] && cch[0]) {
+    // 9EFE0D2E's blend (the up-facing weight of the bottom layer's normal, the heights in the alphas), whose TCH0-2
+    // are read on a texcoord set of their own. Its alpha is the plain lerp of the two base alphas (kind 26).
+    out.kind = 26;
+    static const int slot[3] = {kBase, kMr, kNormal};
+    for (int i = 0; i < 3; ++i) {
+      if (tch[i]) {
+        set(slot[i], tch[i]->texture, &out.layer[slot[i]]);
+      }
+    }
+    out.layerSmooth = ShortestDouble(cch[0]->color[0]);
+  } else if (shader == kShaderDecalBlend && tch[0] && cch[0] && !out.maps[kEmissive].has) {
+    // The alpha map TCH0 rides in the emissive slot as kind 24's does; CCH0.x is the edge width (kind 27).
+    out.kind = 27;
+    set(kEmissive, tch[0]->texture);
+    out.maps[kEmissive].detail = out.maps[kEmissive].has;
     out.layerSmooth = ShortestDouble(cch[0]->color[0]);
   } else if (shader == kShaderVertexBlend && tch[0] && cch[0]) {
     // Bottom layer BCLR/METL/NMAP, top layer TCH0-2 by the vertex alpha (CCH0.x the edge). TCH3 multiplies
@@ -2445,7 +2468,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
                                              "frozen-shell", "matcap-shell", "boundary-shield", "pickup",
-                                             "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend", "phazon"};
+                                             "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend", "phazon", "projected-blend", "decal-alpha"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -2456,7 +2479,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   }
   // All but lava, premultiplied glass, the holograms (kinds 16-18, one map) and the decal cutouts draw
   // with the second layer's maps.
-  if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && !out.layered) {
+  if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && out.kind != 27 && !out.layered) {
     if (out.kind != 0) {
       out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
     }
@@ -2599,7 +2622,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     tag = "PBR2";
     if (m.layered || m.kind) {
       // Only a blend of two layers has an edge.
-      f.push_back(m.kind == 7 || m.kind == 20 || (m.layered && m.kind <= 1) ? m.layerSmooth : 0.0);
+      f.push_back(m.kind == 7 || m.kind == 20 || m.kind == 26 || m.kind == 27 || (m.layered && m.kind <= 1) ? m.layerSmooth : 0.0);
       for (double h : m.layerHeight) {
         f.push_back(h);
       }

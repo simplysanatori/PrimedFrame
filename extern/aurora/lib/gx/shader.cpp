@@ -1238,7 +1238,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_ls = 0.0;
       if (ubuf.pbr_layer.x > 0.0) {{
           var pbr_lw = pbr_vraw.a * 2.0 - 1.0;
-          if (pbr_kind > 0.5 && pbr_kind < 1.5) {{{3}
+          if ((pbr_kind > 0.5 && pbr_kind < 1.5) || (pbr_kind > 25.5 && pbr_kind < 26.5)) {{{3}
               let pbr_va2 = max(pbr_vraw.a * 2.0, 1e-4);
               pbr_lw = max(0.0, (dot(pbr_n1, ubuf.pbr_up.xyz) + pbr_va2 - 1.0) / pbr_va2) * 2.0 - 1.0;
           }}
@@ -1939,6 +1939,18 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   }
   const std::string amb = lit ? (cc.ambSrc == GX_SRC_REG ? "ubuf.cc0_amb.rgb"s : "vec3f(0.2)"s)
                               : (cc.matSrc == GX_SRC_REG ? "ubuf.cc0_mat.rgb"s : "vec3f(1.0)"s);
+  // Kind 27, Remastered's 17e458cd (a decal with an alpha map): g = clamp(2 va (1 + TCH0.x) - 1), c = CCH0.x
+  // (pbr_layer.x), t = clamp((g - 0.5 + c) / 2c), alpha = t²(3 - 2t). BCLR.a is not used; no discard.
+  std::string decalAlpha;
+  if (config.pbrKind == 27 && mapStage[3] != -1) {
+    decalAlpha = fmt::format(R"""(
+      if (pbr_kind > 26.5 && pbr_kind < 27.5) {{
+          let pbr_dg = clamp(2.0 * pbr_vraw.a * (1.0 + sampled{}.x) - 1.0, 0.0, 1.0);
+          let pbr_dt = clamp((pbr_dg - 0.5 + ubuf.pbr_layer.x) / (2.0 * ubuf.pbr_layer.x), 0.0, 1.0);
+          pbr_alpha = pbr_dt * pbr_dt * (3.0 - 2.0 * pbr_dt);
+      }})""",
+                             mapStage[3]);
+  }
   std::string source = fmt::format(R"""(
     // PBR (GX_AURORA_SET_PBR)
     {{
@@ -2355,7 +2367,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                      // A sky's ICAN is its base map (the converter writes a black emissive map where
                      // it copies the base), and its glow ICAN x ICNC is most of what it shows. The
                      // map's last mip, its mean, tells that black map from one with dark texels.
-                     mapStage[3] == -1 || config.pbrKind == 20 || config.pbrKind == 24
+                     mapStage[3] == -1 || config.pbrKind == 20 || config.pbrKind == 24 || config.pbrKind == 27
                          ? "vec4f(0.0)"s
                          : fmt::format("select({0}, {1}, pbr_sky && dot(textureSampleLevel(tex3, tex3_samp, "
                                        "vec2f(0.5), 16.0).rgb, vec3f(1.0)) < 0.004)",
@@ -2364,7 +2376,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                      gfx::probe::MipCount - 1, diffTint, tintAlpha, layer, baseRgb, layered ? "1.0" : "prev.a", kinds, liquid,
                      shadowed ? "(ubuf.lightState0 | ubuf.lightState1)" : "ubuf.lightState0",
                      shadowed ? " * select(vec3f(1.0), sampled0.rgb, (ubuf.lightState0 & (1u << i)) == 0u)" : "",
-                     layered ? "\n      if (pbr_kind < 0.5 && ubuf.pbr_emissive.w <= 0.0) {\n          pbr_alpha = pbr_lalpha;\n      }" : "");
+                     (layered ? "\n      if (pbr_kind < 0.5 && ubuf.pbr_emissive.w <= 0.0) {\n          pbr_alpha = pbr_lalpha;\n      }"
+                                "\n      if (pbr_kind > 25.5 && pbr_kind < 26.5) {\n          pbr_alpha = pbr_lma;\n      }"s
+                              : ""s) + decalAlpha);
   if (!lit || costTest == 2) {
     // The uniform block has no lights then.
     const size_t begin = source.find("// pbr-lights-begin");
