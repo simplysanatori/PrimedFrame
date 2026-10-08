@@ -2000,6 +2000,46 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_lnl += rad * nl;
       }}
       // pbr-lights-end
+      // The room's Remastered point and spot lights (GX_AURORA_PORT_ROOM_LIGHTS), on every surface,
+      // lightmapped or not: Lambert times a distance falloff and, for a spot, its cone.
+      for (var ri = 0u; ri < u32(ubuf.pbr_room_lights.y); ri++) {{
+          let rb = bitcast<u32>(ubuf.pbr_room_lights.x) + ri * 16u;
+          let r0 = bitcast<vec4f>(vec4u(abuf[rb], abuf[rb + 1u], abuf[rb + 2u], abuf[rb + 3u]));
+          let r1 = bitcast<vec4f>(vec4u(abuf[rb + 4u], abuf[rb + 5u], abuf[rb + 6u], abuf[rb + 7u]));
+          let r2 = bitcast<vec4f>(vec4u(abuf[rb + 8u], abuf[rb + 9u], abuf[rb + 10u], abuf[rb + 11u]));
+          let r3 = bitcast<vec4f>(vec4u(abuf[rb + 12u], abuf[rb + 13u], abuf[rb + 14u], abuf[rb + 15u]));
+          var ldir = r0.xyz - in.pbr_pos;
+          let dist = length(ldir);
+          ldir = ldir / max(dist, 1e-4);
+          let rt = clamp(dist * r0.w + r1.w, 0.0, 1.0);
+          var fa = 1.0;
+          if (r3.y > 2.5) {{
+              fa = 1.0 - rt * rt * (3.0 - 2.0 * rt);
+          }} else if (r3.y > 1.5) {{
+              fa = (1.0 - rt) * (1.0 - rt);
+          }} else if (r3.y > 0.5) {{
+              fa = 1.0 - rt;
+          }}
+          if (r3.z > 0.5) {{
+              fa *= clamp(dot(ldir, r2.xyz) * r2.w + r3.x, 0.0, 1.0);
+          }}
+          if (fa <= 0.0) {{ continue; }}
+          let rad = r1.rgb * fa;
+          let nl = max(dot(pbr_n, ldir), 0.0);
+          let h = normalize(ldir + pbr_v);
+          let nh = max(dot(pbr_n, h), 0.0);
+          let vh = max(dot(pbr_v, h), 0.0);
+          let dd = nh * nh * (pbr_a2 - 1.0) + 1.0;
+          let d = pbr_a2 / max(pbr_pi * dd * dd, 1e-6 * pbr_a2);
+          let vis = 0.25 / (max(pbr_nv * (1.0 - pbr_k) + pbr_k, 1e-4) * max(nl * (1.0 - pbr_k) + pbr_k, 1e-4));
+          let f = pbr_f0 + (1.0 - pbr_f0) * pow(1.0 - vh, 5.0);
+          pbr_lo += (pbr_diff * pbr_ao + select(d * vis * f * pbr_pi, vec3f(0.0), pbr_nols)) * rad * nl;
+          pbr_ldiff += pbr_diff * pbr_ao * rad * nl;
+          let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
+          pbr_env += rad * (env_w * env_w);
+          pbr_lsum += rad;
+          pbr_lnl += rad * nl;
+      }}
       // pbr-sun
       // Ambient: diffuse plus the split-sum environment BRDF (Karis' analytic fit) applied
       // to the reflection probe, a cube map whose mips are picked by roughness. The
@@ -3203,6 +3243,7 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     uniBufAttrs += "\n    pbr_shield: array<vec4f, 8>,";
     uniBufAttrs += "\n    pbr_lmap_rect: vec4f,";
     uniBufAttrs += "\n    pbr_lmap_axes: array<vec4f, 3>,";
+    uniBufAttrs += "\n    pbr_room_lights: vec4f,";
     auto pbr = pbr_func(config, info, vtxOutAttrs, vtxXfrAttrs, vtxOutIdx, vidxAttr);
     // An unlit surface (baked room light: pbr_func drops its light loop) has no room light to
     // shadow, but takes the sun's own colour.

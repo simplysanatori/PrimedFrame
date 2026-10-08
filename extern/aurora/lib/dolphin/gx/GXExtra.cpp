@@ -199,6 +199,14 @@ void GXPortGetShadowInfo(f32 sunDir[3], f32 color[3], f32* radius, f32 center[3]
   *casters = aurora::gfx::shadow::last_caster_count();
 }
 
+void GXPortSetRoomLights(const f32* records, u32 count) {
+  GX_WRITE_AURORA(GX_AURORA_PORT_ROOM_LIGHTS);
+  GX_WRITE_U32(count);
+  for (u32 i = 0; i < count * 16; ++i) {
+    GX_WRITE_F32(records[i]);
+  }
+}
+
 void GXPortSetShadowFrame(const f32 worldToView[3][4], const f32 sunDir[3], f32 radius, const f32 color[3]) {
   std::memcpy(sShadowFrame.worldToView, worldToView, sizeof(sShadowFrame.worldToView));
   std::memcpy(sShadowFrame.sunDir, sunDir, sizeof(sShadowFrame.sunDir));

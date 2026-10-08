@@ -105,6 +105,18 @@
 //   it): u32 width, which is 0 when there is none; else u32 height, u32 layers (4 or more:
 //   colour, then the light's x, y, z), u32 signed, u32 bytes, then the BC6H blocks of mip 0 of
 //   every layer, layer-major, each ceil(width / 4) x ceil(height / 4) blocks, rows in stored order.
+// Version 19 adds, after the lightmap:
+//   u32 lights
+//   light: s32 layer, u8 on, u8 spot, u8 falloff (1 linear, 2 squared, 3 smooth), u8 pad,
+//          f32 pos[3] (retail world), f32 toLight[3] (spots: unit, against the beam), f32 color[3]
+//          (linear, times the intensity), f32 near, f32 far (already times the entity's scale),
+//          f32 inner, f32 outer (cone, full angles in degrees), u32 group (as a sun's),
+//          u32 links, then links as a grade's with the light actions (kLightStart...),
+//          u8 animated, u8 playing, u8 loop, u8 offAtEnd, u8 animFalloff, u8 pad[3],
+//          f32 length, f32 scale x, f32 scale y, f32 intensity, f32 rgb[3] (the colour's
+//          two factors, for a timeline without their spline), then kLightSplines splines (PointLight's
+//          order), each u32 bytes (0: none) and that many bytes of a CMayaSpline padded to 4.
+//          A Remastered point or spot LightDynamic (see RoomLights).
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -300,6 +312,57 @@ struct SunLight {
   uint32_t group = 0xffffffff;  // PortRoomGeo::kNoGroup
 };
 
+// A point or spot LightDynamic (CLightDynamicGOC). Static: colour, range and cone as stored.
+// Animated (its Attributes' animated flag): a playback over `length` seconds
+// (CTimePlaybackManager, steps of 1/60000 s; it advances only while playing and active,
+// stops at the end unless `loop` wraps it; backwards mirrors that) gives t, and then the
+// intensity is intensity(t), the colour the gradient (r, g, b) at saturate(color(t)), near and
+// far near(t) and far(t) times the entity's scale x and y, the cone inner(t) and outer(t);
+// a missing spline keeps the static value. `offAtEnd`: its finished event deactivates it.
+// Links: kShow / kHide / kToggle set it active; the light actions (each only while active):
+// Start plays from where it is, Stop pauses, Reset rewinds to 0, Forward / Backward set the
+// direction, Reverse flips it.
+constexpr uint8_t kLightStart = 20;
+constexpr uint8_t kLightStop = 21;
+constexpr uint8_t kLightReset = 22;
+constexpr uint8_t kLightForward = 23;
+constexpr uint8_t kLightBackward = 24;
+constexpr uint8_t kLightReverse = 25;
+enum LightSpline : uint8_t {
+  kLightSplineIntensity,
+  kLightSplineNear,
+  kLightSplineFar,
+  kLightSplineInner,
+  kLightSplineOuter,
+  kLightSplineColor,
+  kLightSplineGradient, // r, g, b, a
+  kLightSplines = kLightSplineGradient + 4,
+};
+struct PointLight {
+  int32_t layer = -1;
+  bool on = true;
+  bool spot = false;
+  uint8_t falloff = 3;
+  float pos[3] = {};
+  float toLight[3] = {};
+  float color[3] = {};
+  float nearFar[2] = {};
+  float cone[2] = {};  // inner, outer
+  uint32_t group = 0xffffffff;  // PortRoomGeo::kNoGroup
+  std::vector<GradeLink> links;
+  bool animated = false;
+  bool playing = false;
+  bool loop = false;
+  bool offAtEnd = false;
+  uint8_t animFalloff = 3;
+  float length = 0.f;
+  float scale[2] = {1.f, 1.f};
+  float intensity = 0.f;
+  float rgb[3] = {};
+  PortMayaSpline splines[kLightSplines];
+  bool hasSpline[kLightSplines] = {};
+};
+
 struct File {
   uint32_t version = 0;
   float tonemap[4] = {};
@@ -316,6 +379,7 @@ struct File {
   std::vector<FogRegion> regions;
   std::vector<FogTransition> transitions;
   std::vector<SunLight> suns;
+  std::vector<PointLight> lights;
   std::vector<Probe> probes;
   std::vector<Cube> cubes;
   std::vector<Grid> grids;
@@ -553,6 +617,14 @@ bool Backlight(float& top, float& back);
 bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3], float color[3]);
 // The camera area's suns, one line each, and what the last Sun call made of them (console).
 std::string SunInfo();
+// The loaded areas' point and spot lights that shine now (active, on an active layer, not black),
+// in GXPortSetRoomLights' records: 16 floats each, appended to `out`. `worldToView` holds the
+// view matrix's three rows (retail world -> the view space the PBR shader lights in). Their
+// timelines step in UpdateFog. Nothing when the rooms aren't exposed (see Sun), MP_ROOM_LIGHTS=0
+// or MP_ROOM_ENV is off.
+void RoomLights(const float worldToView[3][4], std::vector<float>& out);
+// The console's `shadow`: each loaded area's point and spot lights and their state.
+std::string RoomLightInfo();
 // Remastered's volumetric fog hints (CVolumetricFogManager), picked as the grade's are.
 // UpdateFog runs once a frame, `dt` seconds long, before the world is drawn. A change of the
 // camera area's pick starts an interpolation from the fog on screen (SVolumetricFogDynamicData's

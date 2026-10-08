@@ -297,6 +297,12 @@ GXBool GXPortShadowBoxCasts(const f32 min[3], const f32 max[3]);
 // in world space, and how many draws the last map drawn had.
 void GXPortGetShadowInfo(f32 sunDir[3], f32 color[3], f32* radius, f32 center[3], u32* casters);
 GXBool GXPortRenderShadowMap(void);
+// The room's Remastered point and spot lights for the rest of the frame, added on every PBR draw
+// (lit, lightmapped or not) as the sun is. Each record is 16 f32: view-space position, A; colour
+// (linear, scaled), B; view-space axis toward the light, cone scale; cone bias, falloff (0 none,
+// 1 linear, 2 squared, 3 smooth), spot (0/1), 0. The distance falloff runs on
+// t = clamp(dist * A + B, 0, 1), the cone on clamp(dot(L, axis) * scale + bias, 0, 1).
+void GXPortSetRoomLights(const f32* records, u32 count);
 
 void GXColor4f32(float r, float g, float b, float a);
 

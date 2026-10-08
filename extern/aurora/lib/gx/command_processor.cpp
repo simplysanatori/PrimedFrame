@@ -1310,6 +1310,26 @@ void handle_aurora(ByteReader& reader) noexcept {
         g_gxState.dirty |= DirtyUniform;
       }
     }
+  } else if (subCmd == GX_AURORA_PORT_ROOM_LIGHTS) {
+    const u32 count = reader.read<u32>();
+    std::vector<f32> records(static_cast<size_t>(count) * 16);
+    for (f32& v : records) {
+      v = reader.read<f32>();
+    }
+    Vec4<float> value{};
+    if (count != 0) {
+      const auto range = gfx::push_storage(reinterpret_cast<const uint8_t*>(records.data()), records.size() * sizeof(f32));
+      if (!gfx::overflowed(range)) {
+        const u32 base = range.offset / sizeof(u32);
+        std::memcpy(&value.x(), &base, sizeof(base));
+        value.y() = static_cast<f32>(count);
+      }
+    }
+    // x holds a u32 offset as float bits: compare bits, since denormals may compare equal under FTZ/DAZ.
+    if (std::memcmp(&g_gxState.pbrRoomLights, &value, sizeof(value)) != 0) {
+      g_gxState.pbrRoomLights = value;
+      g_gxState.dirty |= DirtyUniform;
+    }
   } else if (subCmd == GX_AURORA_PORT_SHADOW_RENDER) {
     gfx::shadow::record();
   } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_SKIP) {
@@ -1415,6 +1435,11 @@ void clear_draw_cache() noexcept {
   sDrawCache.uniformRange = {};
   sDrawCache.fogRange = {};
   sDrawCache.hasFogRange = false;
+  // GX_AURORA_PORT_ROOM_LIGHTS points into this frame's storage buffer.
+  if (g_gxState.pbrRoomLights.y() != 0.f) {
+    g_gxState.pbrRoomLights = {};
+    g_gxState.dirty |= DirtyUniform;
+  }
 }
 
 } // namespace aurora::gx::fifo

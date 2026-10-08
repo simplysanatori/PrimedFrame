@@ -430,6 +430,7 @@ struct GXState {
   u32 pbrLightmap = 0; // GX_AURORA_SET_PBR_LIGHTMAP
   Vec4<float> pbrLightmapRect{};                  // offU, offV, scale (0: off), level
   std::array<Vec4<float>, 3> pbrLightmapAxes{};   // xyz: a row taking a view-space normal to the lightmap's axes
+  Vec4<float> pbrRoomLights{}; // GX_AURORA_PORT_ROOM_LIGHTS: x the first record (u32 bits, in words), y the count
   u8 pbrLightmapAttr = GX_VA_NULL; // GX_AURORA_SET_PBR_LIGHTMAP_ATTR
   std::array<Vec4<float>, 3> pbrTone{}; // GX_AURORA_SET_PBR_TONE
   Vec4<float> pbrLightSkip{}; // GX_AURORA_SET_PBR_LIGHT_SKIP: x the mask

@@ -2812,7 +2812,7 @@ static bool PortRoomSun(const CGameArea& area, CScriptLayerManager* layers, bool
 }
 
 static bool PortSetupShadow(const CTransform4f& view, const CGameArea* area, CScriptLayerManager* layers,
-                            bool cinematic, bool enabled) {
+                            bool cinematic, bool enabled, bool roomLights) {
   static const bool sOn = port::EnvFlag("MP_SHADOWS", true);
   static const float sRadius = port::EnvFloat("MP_SHADOW_RADIUS", 40.f);
   float dir[3] = {0.f, 0.f, 0.f};
@@ -2865,6 +2865,13 @@ static bool PortSetupShadow(const CTransform4f& view, const CGameArea* area, CSc
     worldToView[r][3] = -(axes[r][0] * eye.GetX() + axes[r][1] * eye.GetY() + axes[r][2] * eye.GetZ());
   }
   GXPortSetShadowFrame(worldToView, dir, radius, color);
+  // Remastered's point and spot lights, in the same view space.
+  static std::vector< float > sRoomLights;
+  sRoomLights.clear();
+  if (roomLights) {
+    PortRoomEnv::RoomLights(worldToView, sRoomLights);
+  }
+  GXPortSetRoomLights(sRoomLights.data(), u32(sRoomLights.size() / 16));
   return radius > 0.f;
 }
 
@@ -3222,7 +3229,8 @@ void CStateManager::DrawWorld() const {
   // The opaque world casts (and receives) from here to GXPortRenderShadowMap, but for the sky.
   const bool portShadow =
       PortSetupShadow(backupViewMatrix, portVisArea, x8c8_worldLayerState.GetPtr(),
-                      x870_cameraManager->IsInCinematicCamera(), !thermal && visor != CPlayerState::kPV_XRay && !portCollisionOnly);
+                      x870_cameraManager->IsInCinematicCamera(), !thermal && visor != CPlayerState::kPV_XRay && !portCollisionOnly,
+                      !thermal && visor != CPlayerState::kPV_XRay);
   GXPortSetShadowCaster(portShadow);
 #endif
   for (int i = areas.size() - 1; i >= 0; --i) {

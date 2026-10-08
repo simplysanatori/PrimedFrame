@@ -12,7 +12,7 @@ namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 18;
+constexpr uint32_t kVersion = 19;
 constexpr uint32_t kMaxGrades = 64;
 // A fog record up to its link count (inclusive).
 constexpr size_t kFogBytes = 368;
@@ -759,6 +759,101 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
         return false;
       }
       at += lm.length;
+    }
+  }
+  if (version >= 19) {
+    if (data.size() - at < 4) {
+      error = "cut short";
+      return false;
+    }
+    const uint32_t lights = ReadLE32(data.data() + at);
+    at += 4;
+    // The fixed part, the link count, the animation block and the spline sizes.
+    constexpr size_t kSize = 64;
+    constexpr size_t kAnimBytes = 36;
+    constexpr size_t kLeast = kSize + 4 + kAnimBytes + 4 * kLightSplines;
+    if ((data.size() - at) / kLeast < lights) {
+      error = "cut short";
+      return false;
+    }
+    out.lights.resize(lights);
+    for (PointLight& l : out.lights) {
+      if (data.size() - at < kLeast) {
+        error = "cut short";
+        return false;
+      }
+      const uint8_t* q = data.data() + at;
+      l.layer = int32_t(ReadLE32(q));
+      l.on = q[4] != 0;
+      l.spot = q[5] != 0;
+      l.falloff = q[6];
+      for (int i = 0; i < 3; ++i) {
+        l.pos[i] = ReadLEFloat(q + 8 + 4 * i);
+        l.toLight[i] = ReadLEFloat(q + 20 + 4 * i);
+        l.color[i] = ReadLEFloat(q + 32 + 4 * i);
+      }
+      for (int i = 0; i < 2; ++i) {
+        l.nearFar[i] = ReadLEFloat(q + 44 + 4 * i);
+        l.cone[i] = ReadLEFloat(q + 52 + 4 * i);
+      }
+      l.group = ReadLE32(q + 60);
+      at += kSize;
+      const uint32_t links = ReadLE32(data.data() + at);
+      at += 4;
+      if (links > kMaxGradeLinks || (data.size() - at) / 8 < links) {
+        error = "cut short";
+        return false;
+      }
+      l.links.resize(links);
+      for (GradeLink& link : l.links) {
+        const uint8_t* k = data.data() + at;
+        link.sender = ReadLE32(k);
+        link.state = k[4];
+        link.action = k[5];
+        at += 8;
+      }
+      if (data.size() - at < kAnimBytes) {
+        error = "cut short";
+        return false;
+      }
+      const uint8_t* a = data.data() + at;
+      l.animated = a[0] != 0;
+      l.playing = a[1] != 0;
+      l.loop = a[2] != 0;
+      l.offAtEnd = a[3] != 0;
+      l.animFalloff = a[4];
+      l.length = ReadLEFloat(a + 8);
+      l.scale[0] = ReadLEFloat(a + 12);
+      l.scale[1] = ReadLEFloat(a + 16);
+      l.intensity = ReadLEFloat(a + 20);
+      for (int i = 0; i < 3; ++i) {
+        l.rgb[i] = ReadLEFloat(a + 24 + 4 * i);
+      }
+      at += kAnimBytes;
+      if (!std::isfinite(l.length) || l.length < 0.f) {
+        l.length = 0.f;
+      }
+      for (int i = 0; i < kLightSplines; ++i) {
+        if (data.size() - at < 4) {
+          error = "cut short";
+          return false;
+        }
+        const uint32_t size = ReadLE32(data.data() + at);
+        at += 4;
+        const size_t padded = (size_t(size) + 3) & ~size_t(3);
+        if (data.size() - at < padded) {
+          error = "cut short";
+          return false;
+        }
+        if (size != 0) {
+          if (!l.splines[i].Load(data.data() + at, size)) {
+            error = "bad light spline";
+            return false;
+          }
+          l.hasSpline[i] = true;
+        }
+        at += padded;
+      }
     }
   }
   out.data = std::move(data);

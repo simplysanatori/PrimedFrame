@@ -2016,6 +2016,7 @@ void RunFrame() {
           PortRoomGeo::OffscreenCasters() ? "on" : "off");
     }
     OutLines(PortRoomEnv::SunInfo());
+    OutLines(PortRoomEnv::RoomLightInfo());
     Finish();
   } else if (name == "view") {
     CmdView();
