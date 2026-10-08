@@ -1097,10 +1097,14 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 2048 = the opacity is the base map's alpha as it is: no vertex alpha, nothing squared.
       // 4096 = the baked light's modulation (BLCM) multiplies the lights' diffuse too, not
       // just the baked ambient (that shader's baked-light perms: BLCM x (lobe + lights)).
+      // 32768 = the vertex shader's procedural wind (Remastered's USE_PROCEDURAL_WIND_ANIMATION);
+      // the fragment ignores it.
+      let pbr_wnd = ubuf.pbr_backlight.w > 32767.5;
+      let pbr_mww = ubuf.pbr_backlight.w - select(0.0, 32768.0, pbr_wnd);
       // 16384 = a macro normal map (MNMP, map 6) whiteout-blended over the normal in TANGENT_1's
       // frame (a3c367be, 72b34e42, b9e899f3).
-      let pbr_macro = ubuf.pbr_backlight.w > 16383.5;
-      let pbr_mwz = ubuf.pbr_backlight.w - select(0.0, 16384.0, pbr_macro);
+      let pbr_macro = pbr_mww > 16383.5;
+      let pbr_mwz = pbr_mww - select(0.0, 16384.0, pbr_macro);
       // 8192 = map 1 is an indirect offset map (Remastered's INDI, 8ce05ed0), not metal/roughness:
       // the base map is sampled at uv + (INDI.xy - 0.5) * INDS (INDS in the backlight's x), and
       // the surface has no AO or metal.
@@ -2767,10 +2771,36 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
                             vtx_attr(config, GX_VA_POS));
   }
   if (config.lineMode == 0) {
+    std::string windPos = vtx_attr(config, GX_VA_POS);
+    // Remastered's procedural foliage sway (WindAnimData c4[0..3], in pbr_shield[0..3]): the
+    // model's position moves by the inverse of the model->world 3x3 (rows in pbr_shield[4..6],
+    // the world translation in their w) applied to a per-axis sine, scaled by the vertex
+    // colour's alpha. The impulse terms (c4[4..11]) are zero without a source.
+    if (config.pbr && config.pbrKind == 0 && config.attrs[GX_VA_CLR0].attrType != GX_NONE) {
+      vtxXfrAttrsPre += fmt::format(
+          "\n    var wind_pos = {0};"
+          "\n    if (ubuf.pbr_backlight.w > 32767.5) {{"
+          "\n      let w_p = {0};"
+          "\n      let w_a = {1}.a;"
+          "\n      let w_c0 = ubuf.pbr_shield[0];"
+          "\n      let w_c1 = ubuf.pbr_shield[1];"
+          "\n      let w_c2 = ubuf.pbr_shield[2];"
+          "\n      let w_c3 = ubuf.pbr_shield[3];"
+          "\n      let w_s = vec3f("
+          "\n        sin(w_c1.w + ubuf.pbr_shield[4].w + w_p.y * w_c2.y + w_p.z * w_c2.z),"
+          "\n        sin(w_c1.w + ubuf.pbr_shield[5].w + w_p.x * w_c2.x + w_p.z * w_c2.z),"
+          "\n        sin(w_c1.w + ubuf.pbr_shield[6].w + w_p.x * w_c2.x + w_p.y * w_c2.y));"
+          "\n      let w_d = ((w_s * w_c0.w + w_c0.xyz) * w_c3.xyz) * w_a;"
+          "\n      wind_pos = w_p + vec3f(dot(w_d, ubuf.pbr_shield[4].xyz), dot(w_d, ubuf.pbr_shield[5].xyz),"
+          "\n                             dot(w_d, ubuf.pbr_shield[6].xyz)) * w_c1.xyz;"
+          "\n    }}",
+          windPos, vtx_attr(config, GX_VA_CLR0));
+      windPos = "wind_pos";
+    }
     vtxXfrAttrsPre += fmt::format(
         "\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
         "\n    out.pos = vec4f(mv_pos, 1.0) * ubuf.proj;",
-        vtx_attr(config, GX_VA_POS));
+        windPos);
   } else if (config.lineMode == 3) {
     // GX_POINTS: expand single vertex to axis-aligned screen-space square
     vtxXfrAttrsPre +=

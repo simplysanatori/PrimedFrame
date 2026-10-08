@@ -611,6 +611,7 @@ struct RemMaterial {
   bool opaqueFx = false;   // a retail fx material Remastered draws opaque (mesh class 0)
   bool tinted = false;     // its vertices carry a colour
   bool tintF0 = false;     // which tints the albedo before F0 too (kShaderTints), not just the diffuse
+  bool wind = false;       // procedural wind sway (mode bit 32768): the model's SWindSet rides in shieldRows[0..8]
   bool cutExact = false;   // drawn as Remastered's 1-bit cutout: full-alpha base, discard at alpha^2 < 0.25 (mode bit 512)
   bool indirect = false;   // 8CE05ED0: map 1 is INDI, the base map's uv offset (mode bit 8192); indStrength is INDS
   double indStrength = 0.0;
@@ -1540,6 +1541,9 @@ constexpr uint32_t kShaderRefractGlassB = 0xCC8AFD0F;
 // alpha A about CCH0.x = c (0.5 on all of them): discard where t²(3-2t) < 0.25, t = (A - 0.5 + c) / 2c; output
 // alpha 1, no vertex colour. e538b757 cuts on BCLR.a², 42fe2ed0 on TCH0.r (its alpha map, in the emissive slot).
 constexpr uint32_t kShaderDecalCut = 0xE538B757;
+// The foliage shaders with USE_PROCEDURAL_WIND_ANIMATION whose vertex stage the port reproduces (kb material/2ef20548.md,
+// f7a0a891.md): the sway of the model's 'WIND' set, weighted by the vertex colour's alpha.
+constexpr uint32_t kShaderWindFoliage[] = {0x2EF20548, 0xF7A0A891};
 constexpr uint32_t kShaderDecalAlphaMap = 0x42FE2ED0;
 // A shader with parameters of its own (TCHn, CCHn) reads the vertex colour as
 // it likes: masks for its extra maps, a colour seen through ice. These are the
@@ -2681,7 +2685,8 @@ int PbrMode(const RemMaterial& m) {
          (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0) +
          (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0) +
          (m.cutExact ? 512 : 0) + (PureLambert(m) ? 1024 : 0) + (VfxBase(m) ? 2048 + 4096 : 0) +
-         (m.indirect ? 8192 : 0) + (m.macro ? 16384 : 0);
+         (m.indirect ? 8192 : 0) + (m.macro ? 16384 : 0) +
+         (m.wind ? 32768 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
@@ -2707,7 +2712,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     f.push_back(k[i]);
   }
   const char* tag = "PBRM";
-  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m) || m.cutExact || m.indirect || m.macro) {
+  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m) || m.cutExact || m.indirect || m.macro || m.wind) {
     f.push_back(m.height);
     f.push_back(double(PbrMode(m)));
     tag = "PBR2";
@@ -2750,8 +2755,9 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25 || m.kind == 28 || m.kind == 29) {
+  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25 || m.kind == 28 || m.kind == 29 || m.wind) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
+    // A swaying leaf's is the model's SWindSet (v1, v2, rate, b, c) in the first nine.
     for (double v : m.shieldRows) {
       PF(b, v);
     }
@@ -3504,6 +3510,20 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   std::vector<RemMaterial> mats;
   for (const ModelMaterial& m : model.materials) {
     mats.push_back(ReadMaterial(m, opt));
+    // The wind a material sways with: its index into the model's WIND sets (0xFF none). Only the plain lit
+    // foliage (kind 0) of a standalone model, whose vertices can carry the weight in their colour alpha.
+    RemMaterial& rem = mats.back();
+    const size_t at = mats.size() - 1;
+    if (opt.standalone && rem.kind == 0 && !rem.unlit && !rem.colorUnlit && !rem.blended && !rem.layered &&
+        std::find(std::begin(kShaderWindFoliage), std::end(kShaderWindFoliage), rem.shader) !=
+            std::end(kShaderWindFoliage) &&
+        at < model.windMaterialSet.size() && model.windMaterialSet[at] < model.windSets.size()) {
+      rem.wind = true;
+      rem.vcolor = true;
+      for (int i = 0; i < 9; ++i) {
+        rem.shieldRows[i] = ShortestDouble(model.windSets[model.windMaterialSet[at]][size_t(i)]);
+      }
+    }
   }
   // How Remastered blends a mesh is its class (the two-bit map after the meshes),
   // not a material flag: 0 opaque, 2 alpha tested, 1 sorted and blended straight
