@@ -541,7 +541,7 @@ std::vector<uint32_t> SkinBones(Span d) {
 
 // ---- Remastered side ----
 
-enum { kBase = 0, kMr = 1, kNormal = 2, kEmissive = 3, kMaps = 4, kLayeredMaps = 7 };
+enum { kBase = 0, kMr = 1, kNormal = 2, kEmissive = 3, kMaps = 4, kLayeredMaps = 7, kMacroMaps = 8 };
 const char* const kMapName[kMaps] = {"base", "mr", "normal", "emissive"};
 // The texel a missing map gets: white, no occlusion / mid roughness / no metal,
 // a normal pointing straight out, black.
@@ -633,6 +633,10 @@ struct RemMaterial {
   bool layered = false;
   bool macro = false;  // a macro normal map (MNMP, layer[kNormal]) on a single-layer material
   MapRef layer[3];
+  // A macro normal on a layered material (3c66aaef): its own map 7, whiteout-blended over the mixed
+  // layer normals in TANGENT_1's frame (mode bit 16384, as the single-layer macro).
+  bool macroLayered = false;
+  MapRef macroMap;
   double layerSmooth = 0.0;                      // BLSM: the width of the blend's edge
   double layerHeight[4] = {1.0, 0.0, 1.0, 0.0};  // BSAO: scale and offset of each layer's height
   // A shader of its own the port draws (GXSetPBRMaterial's kinds): 1 a second
@@ -1448,7 +1452,7 @@ constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
 // TANGENT_0 for the first and TANGENT_1 for the second. Their models carry a second frame
 // (CMDL flag 0x10, 15-float NBT entries, DL opcode 0x94).
 constexpr uint32_t kShaderTwoTangent[] = {0xA978D507, 0xD363D694, 0xA3C367BE, 0x72B34E42, 0xB9E899F3,
-                                           0x7FEB9E94, 0xF84AC32D};
+                                           0x7FEB9E94, 0xF84AC32D, 0x3C66AAEF};
 // The macro-normal shaders (a3c367be, 72b34e42, b9e899f3, 7feb9e94 without vertex colour, f84ac32d
 // with MNMP on texcoord set 1; same whiteout fold, kb material/7feb9e94.md): NMAP in TANGENT_0's frame, then MNMP
 // (kept in layer[kNormal], map 6) added to it in TANGENT_1's frame (mode bit 16384).
@@ -1456,6 +1460,9 @@ constexpr uint32_t kShaderTwoTangent[] = {0xA978D507, 0xD363D694, 0xA3C367BE, 0x
 // (and ICAN) is the 1x1 white default a6cc3300, which is the whole base, not a missing one: the colour comes from the
 // vertices and constants, so the flat base must not send the surface back to retail's TEV material.
 constexpr uint32_t kShaderAreaLight[] = {0x69EDCC3C, 0xC2B36795};
+// 3c66aaef is d37039f7's two layers (both in TANGENT_0's frame) plus MNMP (kb material/3c66aaef.md): a layered
+// material whose macro normal is an 8th map.
+constexpr uint32_t kShaderLayeredMacro = 0x3C66AAEF;
 constexpr uint32_t kShaderMacroNormal[] = {0xA3C367BE, 0x72B34E42, 0xB9E899F3, 0x7FEB9E94, 0xF84AC32D};
 // The shaders whose fragment code multiplies ICAN x ICNC x INCI by the global system
 // values' inverse tonemap exposure (c4[0].z; USE_INVERSEEXPOSURE, MFC4, which no
@@ -1884,8 +1891,11 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       }
       break;
     case FourCC('M', 'N', 'M', 'P'):
-      if (texture && std::find(std::begin(kShaderMacroNormal), std::end(kShaderMacroNormal), shader) !=
-                         std::end(kShaderMacroNormal)) {
+      if (texture && shader == kShaderLayeredMacro) {
+        set(kNormal, d.texture, &out.macroMap);
+        out.macroLayered = out.macroMap.has;
+      } else if (texture && std::find(std::begin(kShaderMacroNormal), std::end(kShaderMacroNormal), shader) !=
+                                std::end(kShaderMacroNormal)) {
         set(kNormal, d.texture, &out.layer[kNormal]);
         out.macro = out.layer[kNormal].has;
       }
@@ -2864,7 +2874,7 @@ int PbrMode(const RemMaterial& m) {
          (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0) +
          (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0) +
          (m.cutExact ? 512 : 0) + (PureLambert(m) ? 1024 : 0) + (VfxBase(m) ? 2048 + 4096 : 0) +
-         (m.indirect ? 8192 : 0) + (m.macro ? 16384 : 0) +
+         (m.indirect ? 8192 : 0) + (m.macro || m.macroLayered ? 16384 : 0) +
          (m.wind ? 32768 : 0) + (m.wind && m.shader == kShaderVertexAlpha ? 65536 : 0) +
          (SurfaceUnlit(m) ? 131072 : 0) + (FlatAmbient(m) ? 262144 : 0) +
          (std::find(std::begin(kShaderRawVertex), std::end(kShaderRawVertex), m.shader) != std::end(kShaderRawVertex) ? 524288 : 0);
@@ -2893,7 +2903,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     f.push_back(k[i]);
   }
   const char* tag = "PBRM";
-  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m) || m.cutExact || m.indirect || m.macro || m.wind) {
+  if (m.height > 0.0 || m.unlit || m.mask || m.layered || m.tinted || m.kind || ExposedGlow(m) || NoEnvSpec(m) || m.cutExact || m.indirect || m.macro || m.macroLayered || m.wind) {
     f.push_back(m.height);
     f.push_back(double(PbrMode(m)));
     tag = "PBR2";
@@ -2956,7 +2966,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
 Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx, uint32_t group,
                  const uint32_t* coords, const RemMaterial& rem, uint32_t wrap, uint32_t cube,
                  const uint32_t* authored, const AnuvEntry* anim, AnuvCounts& counts) {
-  const int nmaps = rem.layered || rem.macro ? kLayeredMaps : kMaps;
+  const int nmaps = rem.macroLayered ? kMacroMaps : rem.layered || rem.macro ? kLayeredMaps : kMaps;
   Blob b;
   // ColorUnlit's colour, out of linear light, is (2 x gain)^(1/2.2) times the vertex
   // colour times the base map, both as stored: a stage multiplies by half that
@@ -4414,6 +4424,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     }
     rem.macro = rem.macro && opt.standalone;
     rem.layered = rem.layered && (gunGlow || frostShell || matcapShell || shield || (opt.standalone && (rem.kind != 0 || (useColor && rem.tinted))));
+    rem.macroLayered = rem.macroLayered && rem.layered && opt.standalone;
     // Nor do the alpha and shading modes belong on one: what they say is about the
     // Remastered surface, and a retail model keeps the retail material's
     // (bar a glow of its own, whose colour and fade are all in it).
@@ -4480,13 +4491,14 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       ++pbr;
       std::string recordTag;
       // A layered material's base alphas are the two heights the blend compares.
-      const int nmaps = rem.layered || rem.macro ? kLayeredMaps : kMaps;
-      MapRef both[kLayeredMaps + 1];
+      const int nmaps = rem.macroLayered ? kMacroMaps : rem.layered || rem.macro ? kLayeredMaps : kMaps;
+      MapRef both[kMacroMaps];
       std::copy(rt, rt + kMaps, both);
       std::copy(rem.layer, rem.layer + 3, both + kMaps);
-      uint32_t tids[kLayeredMaps];
+      both[kLayeredMaps] = rem.macroMap;
+      uint32_t tids[kMacroMaps];
       for (int k = 0; k < nmaps; ++k) {
-        const int m = k % kMaps;
+        const int m = k == kLayeredMaps ? int(kNormal) : k % kMaps;
         if (rem.macro && !rem.layered && (k == 4 || k == 5)) {
           tids[k] = tids[0];
           continue;
@@ -4499,12 +4511,12 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       // is past it too, onto 0, which the descriptor always has.
       size_t bset = std::min<size_t>(rt[kBase].coord, maxuv);
       bset = bset < ntexattr ? bset : 0;
-      uint32_t coords[kLayeredMaps];
+      uint32_t coords[kMacroMaps];
       for (int k = 0; k < nmaps; ++k) {
         const size_t c = std::min<size_t>(both[k].has ? both[k].coord : bset, maxuv);
         coords[k] = uint32_t(c < ntexattr ? c : bset);
       }
-      uint32_t authored[kLayeredMaps];
+      uint32_t authored[kMacroMaps];
       for (int k = 0; k < nmaps; ++k) {
         authored[k] = both[k].has ? both[k].authored : 0xFFFFFFFFu;
       }
@@ -4584,7 +4596,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       const uint32_t group = 0x40000000u | uint32_t(dlAttrs.size() - 1);
       const uint32_t cube = Cube(rem.refl);
       for (size_t si = 0; si < retail.nmat; ++si) {
-        uint32_t idx[kLayeredMaps];
+        uint32_t idx[kMacroMaps];
         for (int k = 0; k < nmaps; ++k) {
           idx[k] = texIndex(si, tids[k]);
         }
