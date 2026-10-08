@@ -838,7 +838,6 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   if (material.IsFlagSet(kStateFlag_PortHudInterference)) {
     hudSample = static_cast< u8 >(
         2 + ((material.GetFlags() >> kStateFlag_PortHudInterferenceShift) & 7));
-    CCubeMaterial::sPortHudInterferenceSeen = true;
     GXSetHudSample(hudSample, CCubeMaterial::sPortHudDyin[0], CCubeMaterial::sPortHudDyin[1]);
   } else if (material.IsFlagSet(kStateFlag_PortHudSquare)) {
     hudSample = 1;

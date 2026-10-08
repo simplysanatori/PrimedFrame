@@ -1600,7 +1600,14 @@ void CSamusHud::Draw(const CStateManager& mgr, float alpha, uint helmetVis, bool
         // alpha, random), not by a full-screen filter; the random is the display's own so the
         // simulation's stays untouched. Retail's HUD keeps the filter.
         static CRandom16 sPortStaticRandom(0x4455);
-        const bool remasteredHud = CCubeMaterial::sPortHudInterferenceSeen;
+        if (mPortHudFrames[0] != x274_loadedFrmeBaseHud || mPortHudFrames[1] != x288_loadedSelectedHud) {
+          mPortHudFrames[0] = x274_loadedFrmeBaseHud;
+          mPortHudFrames[1] = x288_loadedSelectedHud;
+          mPortHudInterference =
+              (x274_loadedFrmeBaseHud != nullptr && x274_loadedFrmeBaseHud->PortHasHudInterference()) ||
+              (x288_loadedSelectedHud != nullptr && x288_loadedSelectedHud->PortHasHudInterference());
+        }
+        const bool remasteredHud = mPortHudInterference;
         if (remasteredHud) {
           CCubeMaterial::sPortHudDyin[0] = 1.f - alpha;
           CCubeMaterial::sPortHudDyin[1] = sPortStaticRandom.Float();

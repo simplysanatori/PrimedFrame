@@ -71,7 +71,6 @@ public:
   // CSamusHud::Draw sets it, zero otherwise) and whether a draw with its interference material
   // has been seen, which is when the HUD is Remastered's and retail's fade static is skipped.
   static float sPortHudDyin[2];
-  static bool sPortHudInterferenceSeen;
   // The PBR draws outside the probe's own capture that reflected the live probe rather than a
   // room environment's cube; while none do, the capture is skipped.
   static uint sPortPBRProbeDraws;
