@@ -376,12 +376,11 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     alpha = clamp(a * hdr, 0.0, 1.0);
     col = tone(rgb * (a / alpha));
   }
-  // Fog fades towards the fog colour, but an additive draw adds nothing in the distance and a
-  // premultiplied one adds the fog colour weighted by its alpha.
-  var fc = u.fogColor.rgb;
-  if (BLEND == 2u) { fc = vec3f(0.0); }
-  if (BLEND == 1u) { fc = fc * alpha; }
-  col = mix(col, fc, fog_factor(in.pos.z));
+  // Remastered sets a no-fog bit for every particle blend but alpha and opaque
+  // (SetupFogFromBlendMode), so additive and premultiplied draws are not fogged at all.
+  if (BLEND == 0u || BLEND == 3u) {
+    col = mix(col, u.fogColor.rgb, fog_factor(in.pos.z));
+  }
   return vec4f(col, alpha);
 }
 )";
