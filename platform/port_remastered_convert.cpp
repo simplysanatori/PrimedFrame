@@ -1413,7 +1413,7 @@ constexpr uint32_t kShaderGlass = 0x231F8383;
 // A lava pool's surface (a LavaRenderVolume's model): BCLR is a colour ramp, TCH0 a pattern
 // carried along TCH2's flow map in two phases that TCH1's noise offsets, CCH0 the flow's
 // strength, its period in seconds and the brightness, CCH1 the maps' scales.
-constexpr uint32_t kShaderLavaPool[] = {0x3ADE58B7, 0xB9C24545};
+constexpr uint32_t kShaderLavaPool[] = {0x3ADE58B7, 0xB9C24545, 0xBB4CD79B};
 // The arm cannon's beam glow (Wave, Plasma), over a lit surface: TCH0's three
 // channels scroll at CCH1's and CCH2.xy's speeds (times CCH0.y) and, less twice
 // the vertex colour, plus CCH0.w, pick a colour from TCH1, a ramp whose row is
@@ -1437,10 +1437,16 @@ constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
 // LayerBaseNormal_2TangentStream: each layer's normal is built in its own tangent frame,
 // TANGENT_0 for the first and TANGENT_1 for the second. Their models carry a second frame
 // (CMDL flag 0x10, 15-float NBT entries, DL opcode 0x94).
-constexpr uint32_t kShaderTwoTangent[] = {0xA978D507, 0xD363D694, 0xA3C367BE, 0x72B34E42, 0xB9E899F3};
-// The macro-normal shaders (a3c367be, 72b34e42, b9e899f3): NMAP in TANGENT_0's frame, then MNMP
+constexpr uint32_t kShaderTwoTangent[] = {0xA978D507, 0xD363D694, 0xA3C367BE, 0x72B34E42, 0xB9E899F3,
+                                           0x7FEB9E94, 0xF84AC32D};
+// The macro-normal shaders (a3c367be, 72b34e42, b9e899f3, 7feb9e94 without vertex colour, f84ac32d
+// with MNMP on texcoord set 1; same whiteout fold, kb material/7feb9e94.md): NMAP in TANGENT_0's frame, then MNMP
 // (kept in layer[kNormal], map 6) added to it in TANGENT_1's frame (mode bit 16384).
-constexpr uint32_t kShaderMacroNormal[] = {0xA3C367BE, 0x72B34E42, 0xB9E899F3};
+// AreaLight unlit (69edcc3c, c2b36795; kb material/69edcc3c.md): DIFT x DIFC x vertex colour + ICNC + ICMC. Their DIFT
+// (and ICAN) is the 1x1 white default a6cc3300, which is the whole base, not a missing one: the colour comes from the
+// vertices and constants, so the flat base must not send the surface back to retail's TEV material.
+constexpr uint32_t kShaderAreaLight[] = {0x69EDCC3C, 0xC2B36795};
+constexpr uint32_t kShaderMacroNormal[] = {0xA3C367BE, 0x72B34E42, 0xB9E899F3, 0x7FEB9E94, 0xF84AC32D};
 // The shaders whose fragment code multiplies ICAN x ICNC x INCI by the global system
 // values' inverse tonemap exposure (c4[0].z; USE_INVERSEEXPOSURE, MFC4, which no
 // material sets as a bit): heads, eyes, suits, pirates, creatures, the Metroid's body
@@ -1535,6 +1541,7 @@ constexpr uint32_t kShaderPhazonB = 0x9E52AA74;
 constexpr uint32_t kShaderRefractGlass = 0x24670BF0;
 // The same body from the baked-probe pack (cc8afd0f, 31 materials: Phendrana ice walls and waterfalls; kind 30):
 // the scene term is v3.w x scene, without the base map and vertex colour tint (kb material/cc8afd0f.md).
+constexpr uint32_t kShaderHoloGlassC = 0x2F95A061;  // HoloGlass's twin: the bent room tinted by CCH1, dual-source blended
 constexpr uint32_t kShaderHoloGlassB = 0x3991DA00;  // HoloGlass: scrolling indirect layers over a distorted screen copy
 constexpr uint32_t kShaderRefractGlassB = 0xCC8AFD0F;
 // FB2BC671 and DF3E3423 (the ids as the reports print them), the ChozoGhost's X-ray materials, static and skinned
@@ -1605,7 +1612,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderPhazon, "phazon");
   add(shader == kShaderPhazonB, "phazon-b");
   add(shader == kShaderRefractGlass || shader == kShaderRefractGlassB, "refract-glass");
-  add(shader == kShaderHoloGlassB, "holo-glass-b");
+  add(shader == kShaderHoloGlassB || shader == kShaderHoloGlassC, "holo-glass-b");
   add(shader == kShaderXrayStatic || shader == kShaderXraySkinned, "xray-ghost");
   add(shader == kShaderDecalCut || shader == kShaderDecalAlphaMap, "decal-cut");
   add(in(kShaderTints), "tinted");
@@ -2224,7 +2231,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 4; ++i) {
       out.kindParam[i] = ShortestDouble(cch[0]->color[i]);
     }
-  } else if (shader == kShaderHoloGlassB && out.maps[kBase].has && tch[0] && tch[1] && tch[2] && cch[0] && cch[1] &&
+  } else if ((shader == kShaderHoloGlassB || shader == kShaderHoloGlassC) && out.maps[kBase].has && tch[0] && tch[1] && tch[2] && cch[0] && cch[1] &&
              cch[2] && cch[3]) {
     out.kind = 29;
     out.vcolor = true;
@@ -2251,6 +2258,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         out.shieldRows[r * 4 + i] = ShortestDouble(cch[r]->color[i]);
       }
     }
+    out.shieldRows[20] = shader == kShaderHoloGlassC ? 1.0 : 0.0;  // row 5 x: tint and dual-source terms
     out.shieldRows[27] = out.refl.has ? 1.0 : 0.0;
     for (int i = 0; i < 4; ++i) {
       out.shieldRows[28 + i] = difc[i];
@@ -2352,6 +2360,9 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 4; ++i) {
       out.shieldRows[28 + i] = difc[i];
     }
+  }
+  if (std::find(std::begin(kShaderAreaLight), std::end(kShaderAreaLight), shader) != std::end(kShaderAreaLight)) {
+    out.maps[kBase].solid = true;
   }
   const bool eyeGloss = shader == kShaderEyeGloss;
   if ((shader == kShaderGunFx || eyeGloss) && out.maps[kBase].has && out.layer[kBase].has && out.layer[kMr].has) {
