@@ -283,7 +283,7 @@ those back to retail PARTs (checked 2026-10-05):
   4d818e87). Only these six CHPRs carry names. Import: 539 imported (529 before).
   Scripts `build/fx-name/` (`vote.py`).
 - Still unpaired (2026-10-08): the CHPR effect sets name 242 fresh GENPs, 103
-  of them unpaired (about 93 of the 232 in a retail ANCS). These rules were tried and
+  of them unpaired (93 of the 232 in a retail ANCS). These rules were tried and
   fail when a known pair is hidden, so none is used:
   - Texture ids: only 2 GENP textures are carried-over copies.
   - LTME/MAXP: the child generators' values differ from retail in 291 of 423.

@@ -2827,7 +2827,8 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
   // The pickup's (kind 15, Remastered's PickUp 3E95A9FE, perm 000_1) travelling bump: the skinned model-space
   // position moves along its unit normal by sin(CCH3.y t - CCH3.x p.y) CCH3.z a, a = the vertex colour's alpha
   // (raw), times vp_c1[0].x (an engine constant, 1 here). CCH3 is pbr_shield[3], t is pbr_param.x.
-  const bool hasBump = config.pbr && config.pbrKind == 15 && config.attrs[GX_VA_CLR0].attrType != GX_NONE;
+  const bool hasBump = config.pbr && config.pbrKind == 15 && config.attrs[GX_VA_CLR0].attrType != GX_NONE &&
+                       config.attrs[GX_VA_NRM].attrType != GX_NONE;
   const auto bumpCode = [&](const std::string& pos, const std::string& clr, const std::string& nrm) {
     return fmt::format(
         "\n    let bump_n = {2};"
