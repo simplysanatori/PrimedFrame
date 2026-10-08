@@ -589,6 +589,7 @@ struct MapRef {
   std::string src;  // how the texture is named in a tag
   bool raw = false;  // a shader's own data (a ramp, noise): every texel and channel kept as it is
   bool mean = false;  // drawn as its colour times alpha, averaged: one colour
+  bool solid = false;  // a flat map that is the surface's colour all the same (the Eyon gloss's black BCLR)
   bool detail = false;  // kind 20's detail map, which rides in the emissive slot (that shader has no glow)
   double metalMax = kPbrMetalMax;  // an MR map's metalness ceiling
 };
@@ -1091,7 +1092,7 @@ struct Converter::State {
           // glow map still makes Remastered's draw its own (a flat suit light, the
           // eye's shadow): a solid base under them is what it draws. Nothing but
           // placeholders (the Eyon's) gives Remastered nothing to draw.
-          surface = real(kNormal) || real(kMr) || (rt[kEmissive].has && real(kEmissive)) || real(kBase);
+          surface = real(kNormal) || real(kMr) || (rt[kEmissive].has && real(kEmissive)) || real(kBase) || rt[kBase].solid;
           tag += surface ? "" : ":bare";
         }
       } else {
@@ -1500,6 +1501,9 @@ constexpr uint32_t kShaderLambertFx = 0x4BC890C1;
 // material/29d9fdfb.md). Retail models; the retail blend stays.
 constexpr uint32_t kShaderVfxBase = 0x29D9FDFB;
 constexpr uint32_t kShaderGunFx = 0x98F0556D;
+// dda64c97 (stored id 974ca6dd), the Eyon's eyeball_gloss: bfb300b6's actor lighting (normal map, GGX) with a
+// matcap term, REFV x REFS(N'.xy) x luminance(L), in place of the reflection. Kind 25 (kb material/dda64c97.md).
+constexpr uint32_t kShaderEyeGloss = 0x974CA6DD;
 // Unlit, the vertex colour times the base map (a door shield's noise), which
 // scrolls at (CCH0.y, -CCH0.z) a second over texcoords scaled by CCH1.yz. Its
 // vertex shader linearises the colour and doubles it (2 pow(|c|, 2.2)), the base
@@ -1566,6 +1570,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderHologram, "hologram");
   add(shader == kShaderLambertFx, "lambert-fx");
   add(shader == kShaderGunFx, "gun-fx");
+  add(shader == kShaderEyeGloss, "eye-gloss");
   add(shader == kShaderColorUnlit, "color-unlit");
   add(shader == kShaderPhazon, "phazon");
   add(shader == kShaderPhazonB, "phazon-b");
@@ -1601,6 +1606,7 @@ const char* KindName(int kind) {
   case 22: return "phazon-b";
   case 23: return "refract-glass";
   case 24: return "decal-cut";
+  case 25: return "eye-gloss";
   default: return "kind?";
   }
 }
@@ -1618,7 +1624,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   out.role = ShaderRole(shader);
   out.shell = shader == kShaderMatcapShell;
   out.shield = shader == kShaderBoundaryShield || shader == kShaderForceField || shader == kShaderPickUp || shader == kShaderHolo ||
-               shader == kShaderHoloRefl || shader == kShaderHologram || shader == kShaderGunFx;
+               shader == kShaderHoloRefl || shader == kShaderHologram || shader == kShaderGunFx || shader == kShaderEyeGloss;
   bool custom = false;
   for (const ModelMaterialData& d : mat.data) {
     const uint32_t family = d.usage & 0xFFFFFF00u;
@@ -1722,7 +1728,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     case FourCC('R', 'E', 'F', 'S'):
     case FourCC('R', 'E', 'F', 'V'):
       // 98F0556D's sphere map and reflectivity map: the second layer's base and MR (kind 19).
-      if (texture && shader == kShaderGunFx) {
+      if (texture && (shader == kShaderGunFx || shader == kShaderEyeGloss)) {
         const bool sphere = d.usage == FourCC('R', 'E', 'F', 'S');
         MapRef& m = sphere ? out.layer[kBase] : out.layer[kMr];
         set(sphere ? kBase : kMr, d.texture, &m);
@@ -2213,8 +2219,11 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.shieldRows[28 + i] = difc[i];
     }
   }
-  if (shader == kShaderGunFx && out.maps[kBase].has && out.layer[kBase].has && out.layer[kMr].has) {
-    out.kind = 19;
+  const bool eyeGloss = shader == kShaderEyeGloss;
+  if ((shader == kShaderGunFx || eyeGloss) && out.maps[kBase].has && out.layer[kBase].has && out.layer[kMr].has) {
+    out.kind = eyeGloss ? 25 : 19;
+    // The Eyon's BCLR is a 1x1 black that is the base all the same (diffuse 0, F0 from METL): no TEV fallback.
+    out.maps[kBase].solid = eyeGloss;
     // Lit: REFV (map 5) x REFS (map 4, read at the view-space normal) x luminance(L) + DIFT x DIFC x L
     // + ICNC + ICMC. Row 6 = ICNC + ICMC, row 7 = DIFC; Remastered's mesh has no colour stream.
     out.layer[kMr].coord = out.layer[kBase].coord = 0;
@@ -2370,6 +2379,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.emissive = 0.0;
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kNormal].has = out.maps[kEmissive].has = false;
+  }
+  if (out.kind == 25) {
+    // As kind 19, but the normal map, MR and the light's spec stay: only the reflection is the matcap.
+    out.layered = true;
+    out.blended = out.cutout = out.tinted = out.mask = out.unlit = false;
+    out.height = 0.0;
+    out.emissive = 0.0;
+    out.backlight = out.backlightTop = 0.0;
+    out.maps[kEmissive].has = false;
   }
   if (out.kind == 19) {
     // Lit and opaque (Remastered's mesh class 0; a fade is the model flags'). Maps 4 and 5 are
@@ -2618,7 +2636,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22) {
+  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     for (double v : m.shieldRows) {
       PF(b, v);
@@ -4057,7 +4075,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // the shader: its alpha, rim and colours are all the Remastered material's.
     const bool matcapShell = rem.kind == 13;
     // And the Frigate's force fields (kind 14), a retail model's fx surface drawn by the shader.
-    const bool shield = rem.kind >= 14 && rem.kind <= 19;
+    const bool shield = (rem.kind >= 14 && rem.kind <= 19) || rem.kind == 25;
     // 4BC890C1 is a plain lit Lambert that Remastered draws opaque (mesh class 0) where retail
     // used a blended effect: it takes the standard path, so it leaves the retail-fx gate.
     // Likewise any Remastered material without the blend or cutout flag: its mesh is class 0,
@@ -4066,7 +4084,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const bool lambertFx = rem.shader == kShaderLambertFx || rem.shader == kShaderVfxBase ||
                            (!opt.standalone && !(rem.flags & (kTransparentFlag | kCutoutFlag)));
     rem.opaqueFx = !opt.standalone && IsFx(pm) && !(rem.flags & (kTransparentFlag | kCutoutFlag));
-    if (rem.kind == 19) {
+    if (rem.kind == 19 || rem.kind == 25) {
       // Row 6 w (unused by this kind otherwise): the retail konst alpha, a factor of the alpha of a particle model.
       rem.shieldRows[27] = GunFxParticle(pm) ? pm.konstAlpha : 1.0;
     }

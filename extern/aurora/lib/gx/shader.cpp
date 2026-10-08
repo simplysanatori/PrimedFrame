@@ -1908,6 +1908,25 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     }})""",
                         underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base);
   }
+  // Kind 25, Remastered's dda64c97 (the Eyon's eyeball_gloss, permutation 042_0): kind 19's matcap, but read at
+  // the normal map's N' (pbr_n), and bfb300b6's lighting kept: rgb = REFV x REFS(0.5 + 0.5 N'.xy) x luminance(L)
+  // + ICNC + ICMC + AO x BCLR x (1 - metal) x DIFC x L / pi (c1[0].w) + the lights' GGX specular (unmasked, no reflection of the
+  // surroundings). L = ambient + the lights' N.L (not times AO). Alpha = BCLR.a^2 x DIFC.a, as kind 19.
+  if (mapStage[4] != -1 && mapStage[5] != -1) {
+    liquid += fmt::format(R"""(
+    if (pbr_kind > 24.5 && pbr_kind < 25.5) {{
+        let pbr_gl = pbr_ambd + pbr_lnl;
+        let pbr_gs = max(textureSampleLevel(tex{0}, tex{0}_samp, 0.5 + 0.5 * pbr_n.xy, 0.0).rgb, vec3f(0.0));
+        let pbr_gv = max(sampled{1}.rgb, vec3f(0.0));
+        let pbr_gx = select(1.0, ubuf.pbr_tone[0].w, ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0);
+        pbr_lo = pbr_gv * pbr_gs * dot(pbr_gl, vec3f(0.2126, 0.7152, 0.0722)) +
+                 pbr_base * (1.0 - pbr_metal) * pbr_ao * pbr_gl * ubuf.pbr_shield[7].rgb * 0.31830988 + pbr_lspec;
+        pbr_glow = ubuf.pbr_shield[6].rgb * pbr_gx;
+        pbr_alpha = clamp({2}.a * {2}.a * ubuf.pbr_shield[7].w * ubuf.pbr_shield[6].w, 0.0, 1.0);
+        pbr_pass = vec3f(0.0);
+    }})""",
+                        underlying(config.tevStages[mapStage[4]].texMapId), mapStage[5], base);
+  }
   std::string attn;
   if (cc.attnFn == GX_AF_SPOT) {
     attn = R"""(
@@ -1950,6 +1969,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_ldiff = vec3f(0.0);
       var pbr_l0v = vec3f(0.0);
       var pbr_lnl = vec3f(0.0);
+      // The lights' specular alone (kind 25 adds it unmasked to the matcap).
+      var pbr_lspec = vec3f(0.0);
       // pbr-sun-vis
       // pbr-lights-begin
       for (var i = 0u; i < {4}u; i++) {{
@@ -1992,6 +2013,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           // pbr-sun-light
           pbr_lo += (pbr_diff * pbr_ao + select(spec * pbr_pi, vec3f(0.0), pbr_nols)) * rad * nl;
           pbr_ldiff += pbr_diff * pbr_ao * rad * nl;
+          pbr_lspec += select(spec * pbr_pi, vec3f(0.0), pbr_nols) * rad * nl;
           // Stand-in environment: the surroundings as a soft hemisphere lit by this light,
           // seen along the reflection vector.
           let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
@@ -2035,6 +2057,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let f = pbr_f0 + (1.0 - pbr_f0) * pow(1.0 - vh, 5.0);
           pbr_lo += (pbr_diff * pbr_ao + select(d * vis * f * pbr_pi, vec3f(0.0), pbr_nols)) * rad * nl;
           pbr_ldiff += pbr_diff * pbr_ao * rad * nl;
+          pbr_lspec += select(d * vis * f * pbr_pi, vec3f(0.0), pbr_nols) * rad * nl;
           let env_w = 0.5 + 0.5 * dot(pbr_refl, ldir);
           pbr_env += rad * (env_w * env_w);
           pbr_lsum += rad;
