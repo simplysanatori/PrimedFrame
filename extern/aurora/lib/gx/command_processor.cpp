@@ -1272,6 +1272,12 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.volFog = false;
       g_gxState.dirty |= DirtyPipeline;
     }
+  } else if (subCmd == GX_AURORA_PORT_PARTICLE_FOG) {
+    const bool on = reader.read<u8>() != 0;
+    if (g_gxState.particleFog != on) {
+      g_gxState.particleFog = on;
+      g_gxState.dirty |= DirtyPipeline;
+    }
   } else if (subCmd == GX_AURORA_PORT_SHADOW_CASTER) {
     const u8 mode = reader.read<u8>();
     const bool on = mode != 0;
