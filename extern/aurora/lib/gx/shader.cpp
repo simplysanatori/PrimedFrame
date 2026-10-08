@@ -1620,7 +1620,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       {2}let pbr_tn = {1};
       if (pbr_tlen > 1e-24) {{
         let pbr_s = inverseSqrt(pbr_tlen);
-        pbr_n = normalize(pbr_t * (pbr_s * pbr_tn.x) - pbr_b * (pbr_s * pbr_tn.y) + pbr_ng * pbr_tn.z);
+        let pbr_nu = pbr_t * (pbr_s * pbr_tn.x) - pbr_b * (pbr_s * pbr_tn.y) + pbr_ng * pbr_tn.z;
+        // 07acff46 (kind 32) lights the mapped normal as it is, never normalised (kb material/07acff46.md).
+        pbr_n = select(normalize(pbr_nu), pbr_nu, pbr_kind > 31.5 && pbr_kind < 32.5);
       }})""",
                           normalXy, tn,
                           normalXy2.empty() ? "" : "let pbr_tsm = mix(pbr_ts, pbr_ts2, pbr_ls);\n      ");

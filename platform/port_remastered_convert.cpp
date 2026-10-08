@@ -2757,7 +2757,19 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   //
   // Lava pools (kind 6) and waterfalls (kind 7) keep their existing forced UV0.
   // No surveyed material of either kind has AUVI; combined behavior is unverified.
-  if (out.kind != 6 && out.kind != 7) {
+  if (out.kind == 32) {
+    // 07acff46 reads AUVI per sampler slot, not by the authored texcoord: x feeds BCLR, y the noise volume, z METL and
+    // w NMAP (kb material/07acff46.md), so the set a map uses is its slot's component whatever `@k` it named.
+    if (const int32_t* auvi = Auvi(mat)) {
+      MapRef* slots[] = {&out.maps[kBase], &out.layer[kBase], &out.maps[kMr], &out.maps[kNormal]};
+      for (size_t i = 0; i < std::size(slots); ++i) {
+        slots[i]->authored = slots[i]->coord;
+        if (auvi[i] >= 0) {
+          slots[i]->coord = uint32_t(auvi[i]);
+        }
+      }
+    }
+  } else if (out.kind != 6 && out.kind != 7) {
     MapRef* mapRefs[] = {&out.maps[kBase], &out.maps[kMr], &out.maps[kNormal], &out.maps[kEmissive],
                          &out.layer[kBase], &out.layer[kMr], &out.layer[kNormal]};
     uint32_t coords[std::size(mapRefs)];
