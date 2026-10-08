@@ -478,6 +478,19 @@ void SetVolumeHint(uint32_t mrea, const float centre[3]);
 // turns lightmaps off; MP_ROOM_ENV_LIGHTMAP_SCALE multiplies their light.
 void SetLightmapHint(const float lookup[3]);
 void ClearVolumeHint();
+// Remastered samples a model's baked probe at the world centre of its local box. The
+// first-person gun and grapple arm instead sample at the player's position
+// (SetLightProbeEvaluationWorldPosition); this overrides the sample point of the draws
+// made while it is set. ProbeOverride answers false when none is set.
+void SetProbeOverride(const float pos[3]);
+void ClearProbeOverride();
+bool ProbeOverride(float pos[3]);
+struct ProbeOverrideScope {
+  explicit ProbeOverrideScope(const float pos[3]) { SetProbeOverride(pos); }
+  ~ProbeOverrideScope() { ClearProbeOverride(); }
+  ProbeOverrideScope(const ProbeOverrideScope&) = delete;
+  ProbeOverrideScope& operator=(const ProbeOverrideScope&) = delete;
+};
 // Whether a model announced for this area would get a volume: false until all of the
 // area's volumes are on the GPU.
 bool HasVolume(uint32_t mrea);

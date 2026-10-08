@@ -2255,6 +2255,23 @@ void ClearVolumeHint() {
   sHintLightmap[2] = 0.f;
 }
 
+static bool sProbeOverride = false;
+static float sProbeOverridePos[3] = {};
+
+void SetProbeOverride(const float pos[3]) {
+  sProbeOverride = true;
+  std::memcpy(sProbeOverridePos, pos, sizeof(sProbeOverridePos));
+}
+
+void ClearProbeOverride() { sProbeOverride = false; }
+
+bool ProbeOverride(float pos[3]) {
+  if (sProbeOverride) {
+    std::memcpy(pos, sProbeOverridePos, sizeof(sProbeOverridePos));
+  }
+  return sProbeOverride;
+}
+
 bool HasVolume(uint32_t mrea) {
   if (!Enabled() || !VolumesEnabled()) {
     return false;
@@ -2470,17 +2487,14 @@ void Locate(const float pos[3], Located& out) {
     }
   }
   if (AmbientScale() > 0.f) {
-    // A model's origin is often on the floor, where the grid has no point for it, so the
-    // spot a metre up counts too. The first grid with light at the first spot is the one.
-    const float above[3] = {pos[0], pos[1], pos[2] + 1.f};
-    for (const float* spot : {pos, above}) {
-      for (auto& [mrea, area] : sAreas) {
-        for (const Grid& grid : area.file.grids) {
-          if (grid.average > 0.f && SampleGrid(area.file, grid, spot, out.sample)) {
-            out.ambientArea = &area;
-            out.average = grid.average;
-            return;
-          }
+    // The first grid with light whose texture holds the point is the one. Remastered has
+    // no fallback spot: outside a texture the sampler reads its transparent black border.
+    for (auto& [mrea, area] : sAreas) {
+      for (const Grid& grid : area.file.grids) {
+        if (grid.average > 0.f && SampleGrid(area.file, grid, pos, out.sample)) {
+          out.ambientArea = &area;
+          out.average = grid.average;
+          return;
         }
       }
     }
