@@ -1517,6 +1517,11 @@ constexpr uint32_t kShaderPhazonB = 0x9E52AA74;
 // Distortion2 (24670bf0, the Phendrana ice walls, the crater's flesh glass; kind 23): refracts a mipped copy of
 // the frame by its normal map and a fresnel term, tinted by the base map and the vertex colour (kb material/24670bf0.md).
 constexpr uint32_t kShaderRefractGlass = 0x24670BF0;
+// The decal cutouts (kind 24; kb material/e538b757.md, 42fe2ed0.md): a bfb300b6 surface cut by a smoothstep of an
+// alpha A about CCH0.x = c (0.5 on all of them): discard where t²(3-2t) < 0.25, t = (A - 0.5 + c) / 2c; output
+// alpha 1, no vertex colour. e538b757 cuts on BCLR.a², 42fe2ed0 on TCH0.r (its alpha map, in the emissive slot).
+constexpr uint32_t kShaderDecalCut = 0xE538B757;
+constexpr uint32_t kShaderDecalAlphaMap = 0x42FE2ED0;
 // A shader with parameters of its own (TCHn, CCHn) reads the vertex colour as
 // it likes: masks for its extra maps, a colour seen through ice. These are the
 // ones read that multiply the albedo by it, as the standard shader does
@@ -1565,6 +1570,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderPhazon, "phazon");
   add(shader == kShaderPhazonB, "phazon-b");
   add(shader == kShaderRefractGlass, "refract-glass");
+  add(shader == kShaderDecalCut || shader == kShaderDecalAlphaMap, "decal-cut");
   add(in(kShaderTints), "tinted");
   return out.empty() ? "-" : out;
 }
@@ -1594,6 +1600,7 @@ const char* KindName(int kind) {
   case 21: return "phazon";
   case 22: return "phazon-b";
   case 23: return "refract-glass";
+  case 24: return "decal-cut";
   default: return "kind?";
   }
 }
@@ -1889,6 +1896,14 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.maps[kEmissive].detail = out.maps[kEmissive].has;
     }
     out.layerSmooth = ShortestDouble(cch[0]->color[0]);
+  } else if (out.cutout && cch[0] && cch[0]->color[0] == 0.5 &&
+             (shader == kShaderDecalCut || (shader == kShaderDecalAlphaMap && tch[0] && !out.maps[kEmissive].has))) {
+    // c = 0.5 (t = A) is the only value they use, and the one the shader assumes.
+    out.kind = 24;
+    if (shader == kShaderDecalAlphaMap) {
+      set(kEmissive, tch[0]->texture);
+      out.maps[kEmissive].detail = out.maps[kEmissive].has;
+    }
   } else if ((shader == kShaderDetail || shader == kShaderDetailTinted) && tch[0]) {
     out.kind = 2;
     set(kBase, tch[0]->texture, &out.layer[kBase]);
@@ -2421,9 +2436,9 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   } else {
     out.reason += std::string("kind ") + KindName(out.kind) + " from the shader (" + out.role + "); ";
   }
-  // All but lava, premultiplied glass and the holograms (kinds 16-18, one map) draw with the second
-  // layer's maps.
-  if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && !out.layered) {
+  // All but lava, premultiplied glass, the holograms (kinds 16-18, one map) and the decal cutouts draw
+  // with the second layer's maps.
+  if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && !out.layered) {
     if (out.kind != 0) {
       out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
     }
@@ -2520,7 +2535,7 @@ int PbrMode(const RemMaterial& m);
 // liquid or glass, whose first three floats are a tint.
 bool ExposedGlow(const RemMaterial& m) {
   return !m.glowLinear && m.maps[kEmissive].has && !m.maps[kEmissive].mean && m.kind != 7 && m.kind != 20 &&
-         m.kind != 8 && m.kind != 11 && m.kind != 14 && m.kind != 21;
+         m.kind != 8 && m.kind != 11 && m.kind != 14 && m.kind != 21 && m.kind != 24;
 }
 
 // A glow strength of a kind below 5 (the parallax's inside), exposed at run time like the
@@ -4118,7 +4133,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // test says nothing about what the Remastered map's alpha holds.
     // A plain lit cutout (no vertex colour) is Remastered's 1-bit alpha shader: full alpha,
     // cut by the shader. Any other keeps the CMPR punch and retail's alpha compare.
-    const bool exactCut = opt.standalone && rem.cutout && rem.kind == 0 && !rem.unlit && !rem.layered;
+    const bool exactCut = opt.standalone && rem.cutout && (rem.kind == 0 || rem.kind == 24) && !rem.unlit && !rem.layered;
     const char* const baseAlpha =
         glow ? "blend" : !opt.standalone ? (frostShell || rem.mask || rem.shader == kShaderVfxBase || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
     const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || lambertFx || !IsFx(pm)) &&

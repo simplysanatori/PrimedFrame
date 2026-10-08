@@ -1128,7 +1128,17 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                            tintAlpha, discard.expr);
     }
   }
-  if (mapStage[4] == -1) {
+  if (mapStage[4] == -1 && config.pbrKind == 24) {
+    // The decal cutouts (kind 24: e538b757, 42fe2ed0): t = clamp((A - 0.5 + c) / 2c), cut where t²(3 - 2t) < 0.25,
+    // with c = CCH0.x = 0.5 on all of them, so t = A. A is the alpha map's red (42fe2ed0's TCH0, map 3), else
+    // the base alpha squared; no vertex alpha.
+    layer += fmt::format(R"""(
+      let pbr_dca = clamp({}, 0.0, 1.0);
+      if (pbr_cut && pbr_dca * pbr_dca * (3.0 - 2.0 * pbr_dca) < 0.25) {{
+          discard;
+      }})""",
+                         mapStage[3] != -1 ? fmt::format("sampled{}.r", mapStage[3]) : "prev.a * prev.a"s);
+  } else if (mapStage[4] == -1) {
     // Remastered's cutout (mode 512): the filtered base alpha squared, times the raw vertex
     // alpha on tinted shaders (pbr_vc.a is 1 otherwise), against 0.25. DIFC.a is 1 on every
     // material that has it.
@@ -2281,7 +2291,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                      // A sky's ICAN is its base map (the converter writes a black emissive map where
                      // it copies the base), and its glow ICAN x ICNC is most of what it shows. The
                      // map's last mip, its mean, tells that black map from one with dark texels.
-                     mapStage[3] == -1 || config.pbrKind == 20
+                     mapStage[3] == -1 || config.pbrKind == 20 || config.pbrKind == 24
                          ? "vec4f(0.0)"s
                          : fmt::format("select({0}, {1}, pbr_sky && dot(textureSampleLevel(tex3, tex3_samp, "
                                        "vec2f(0.5), 16.0).rgb, vec3f(1.0)) < 0.004)",
