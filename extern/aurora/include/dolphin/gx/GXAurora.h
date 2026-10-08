@@ -321,7 +321,7 @@ extern "C" {
 // Port extension: the room's Remastered point and spot lights (GXPortSetRoomLights).
 // Payload: u32 count, then count records of 16 f32 (see GXPortSetRoomLights). Lasts until the
 // end of the frame.
-#define GX_AURORA_PORT_ROOM_LIGHTS 0x0068
+#define GX_AURORA_PORT_ROOM_LIGHTS 0x0069
 
 #define GX2_SET_POLYGON_OFFSET 0x1000
 
