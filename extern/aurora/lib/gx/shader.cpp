@@ -1071,10 +1071,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       config.pbrKind == 10 ? fmt::format("{} * ({}{})", tint, layered ? "1.0" : "prev.a", tintAlpha) : tint;
   // Remastered's diffuse vertex colour (MFVC) is decoded in its vertex shader as
   // 2 |c|^2.2 (alpha raw), so a white vertex doubles the diffuse: 882014ee, f22feb5b,
-  // the layered 7248969b/a978d507 and every kShaderTints shader. Of the premultiplied
-  // glass shaders only 11B30369 does, so kind 10 keeps the colour as it is.
+  // the layered 7248969b/a978d507, 11b30369 and every kShaderTints shader. Only the premultiplied
+  // glass 941068bf/bcc73459 keep the colour raw (mode bit 524288).
   const std::string vtint =
-      config.pbrKind != 10 ? "vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_vraw.a)" : "pbr_vraw";
+      "select(vec4f(2.0 * pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_vraw.a), pbr_vraw, pbr_rawv)";
   std::string normalXy = mapStage[2] == -1 ? std::string() : fmt::format("sampled{}.rg", mapStage[2]);
   std::string normalXy2; // a layered shader's second normal map
 
@@ -1102,8 +1102,12 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 65536 = the opacity is the vertex alpha alone (495899e7: o0.w = v5.w * DIFC.a, DIFC.a = 1).
       // 262144 = flat ambient only: no baked lobes, grid volume or lightmap, and no BLCM (4bc890c1
       // LambertFx, whose perms sample none of them and seed the light sum with the flat constant).
-      let pbr_flat = ubuf.pbr_backlight.w > 262143.5;
-      let pbr_mwf = ubuf.pbr_backlight.w - select(0.0, 262144.0, pbr_flat);
+      // 524288 = the vertex colour is used raw (premultiplied glass 941068bf / bcc73459, whose
+      // vertex shader has no log2/exp2 decode).
+      let pbr_rawv = ubuf.pbr_backlight.w > 524287.5;
+      let pbr_mwr = ubuf.pbr_backlight.w - select(0.0, 524288.0, pbr_rawv);
+      let pbr_flat = pbr_mwr > 262143.5;
+      let pbr_mwf = pbr_mwr - select(0.0, 262144.0, pbr_flat);
       // 131072 = a bare unlit surface (the Surface shaders 67135a0b / 6fc4d540): Remastered
       // multiplies it by no exposure of its own, so the frame's tonemap exposes it; the backlight
       // rgb holds the part of that exposure GlowScale (tone row 0 w) leaves.
@@ -1428,10 +1432,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                              textureSampleGrad(tex{0}, tex{0}_samp, tex{1}_uv + pbr_fb, pbr_fuv1, pbr_fuv2).b);
           let pbr_fw = max(pbr_fs + pbr_vraw.rgb * 2.0 + ubuf.pbr_param.w - 1.0, vec3f(0.0));
           let pbr_fsum = pbr_fw.x + pbr_fw.y + pbr_fw.z;
-          let pbr_framp = textureSampleLevel(tex{2}, tex{2}_samp,
-                                             clamp(vec2f(pbr_fsum / max(pbr_fsum + ubuf.pbr_param.z, 1.0),
-                                                         pbr_vraw.a + ubuf.pbr_layer.z),
-                                                   vec2f(0.02), vec2f(0.98)), 0.0);
+          let pbr_framp = textureSample(tex{2}, tex{2}_samp,
+                                        vec2f(pbr_fsum / max(pbr_fsum + ubuf.pbr_param.z, 1.0),
+                                              pbr_vraw.a + ubuf.pbr_layer.z));
           pbr_base = vec3f(0.0);
           pbr_kglow = max(pbr_framp.rgb, vec3f(0.0)) * max(ubuf.pbr_emissive.rgb, vec3f(0.0));
           pbr_kalpha = pbr_framp.a;
