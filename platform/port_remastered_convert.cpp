@@ -591,6 +591,7 @@ struct MapRef {
   bool mean = false;  // drawn as its colour times alpha, averaged: one colour
   bool solid = false;  // a flat map that is the surface's colour all the same (the Eyon gloss's black BCLR)
   bool detail = false;  // kind 20's detail map, which rides in the emissive slot (that shader has no glow)
+  bool volume = false;  // a 3D texture, kept whole as an 8 x 8 atlas of its 64 slices (ConvertIO::volume), RGBA8, level 0 only
   double metalMax = kPbrMetalMax;  // an MR map's metalness ceiling
 };
 
@@ -730,7 +731,7 @@ struct Converter::State {
     }
     Image img;
     std::string error;
-    if (!io.texture(map.id, img, error)) {
+    if (!(map.volume ? io.volume && io.volume(map.id, img, error) : io.texture(map.id, img, error))) {
       throw Fail{"texture " + IdToString(map.id) + ": " + error};
     }
     if (img.width <= 0 || img.height <= 0 || img.rgba.size() != size_t(img.width) * size_t(img.height) * 4) {
@@ -1079,7 +1080,8 @@ struct Converter::State {
       }
       if (rt[k].has) {
         src = &rt[k];
-        tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : src->mean ? ":mean" : "");
+        tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : src->mean ? ":mean" : "") +
+              (src->volume ? ":vol" : "");
         colourTex = k != kNormal && (k != kMr || src->raw);
         if (colourTex || k == kNormal) {
           srgbTex = Fact("srgb:" + src->src, [&] { return std::string(Open(*src).srgb ? "1" : "0"); }) == "1";
@@ -1170,6 +1172,10 @@ struct Converter::State {
       if (src) {
         ncap = opt.nativeMax > 0 ? std::min(kPbrNative[k], opt.nativeMax) : kPbrNative[k];
         cap = std::min(cap, kPbrStub[k]);
+        if (src->volume) {
+          ncap = 0;  // every texel exact: the atlas is the TXTR, never a .dds
+          cap = 512;
+        }
       }
     } else if (alpha == "full") {
       cap = 1024;
@@ -1547,6 +1553,10 @@ constexpr uint32_t kShaderPhazon = 0xCC96C27D;
 // kind 22): no mask scale, the phase is sin(mask + time), a second ramp read gives the cavity glow's alpha term,
 // and the glow takes no exposure factor.
 constexpr uint32_t kShaderPhazonB = 0x9E52AA74;
+// PhazonPool (07acff46, the Phazon Mines' blisters, FNLI/EMSI/FNLS; kind 32): a lit PBR surface whose normal
+// strength and roughness follow an animated 3D noise (TCH0, a 64^3 volume) and whose glow is a fresnel-driven ramp
+// (TCH1), see kb material/07acff46.md.
+constexpr uint32_t kShaderPhazonPool = 0x07ACFF46;
 // Distortion2 (24670bf0, the Phendrana ice walls, the crater's flesh glass; kind 23): refracts a mipped copy of
 // the frame by its normal map and a fresnel term, tinted by the base map and the vertex colour (kb material/24670bf0.md).
 constexpr uint32_t kShaderRefractGlass = 0x24670BF0;
@@ -1645,6 +1655,7 @@ std::string ShaderRole(uint32_t shader) {
   add(shader == kShaderColorUnlit, "color-unlit");
   add(shader == kShaderPhazon, "phazon");
   add(shader == kShaderPhazonB, "phazon-b");
+  add(shader == kShaderPhazonPool, "phazon-pool");
   add(shader == kShaderRefractGlass || shader == kShaderRefractGlassB, "refract-glass");
   add(shader == kShaderHoloGlassB || shader == kShaderHoloGlassC, "holo-glass-b");
   add(IsXrayGhost(shader), "xray-ghost");
@@ -1686,6 +1697,7 @@ const char* KindName(int kind) {
   case 29: return "holo-glass-b";
   case 30: return "refract-glass-b";
   case 31: return "xray-ghost";
+  case 32: return "phazon-pool";
   default: return "kind?";
   }
 }
@@ -2237,6 +2249,39 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     for (int i = 0; i < 4; ++i) {
       out.shieldRows[28 + i] = 1.0;
     }
+  } else if (shader == kShaderPhazonPool && out.maps[kBase].has && out.maps[kNormal].has && tch[0] && tch[1] &&
+             cch[0] && cch[1]) {
+    out.kind = 32;
+    // TCH0 (the noise volume, stacked into one 2D atlas by the importer) and TCH1 (the emission ramp) are the second
+    // layer's base and MR, on TCH0's texcoord set. CCH0 (fresnel power, gain, noise scale along the view, emission
+    // gain) and CCH1 (noise speed, depth along BCLR.a) are rows 0 and 1, ICMC row 6 and DIFC row 7.
+    set(kBase, tch[0]->texture, &out.layer[kBase]);
+    set(kMr, tch[1]->texture, &out.layer[kMr]);
+    out.layer[kBase].raw = out.layer[kMr].raw = true;
+    out.layer[kBase].volume = true;
+    out.kindParam[0] = 1.0;  // the game multiplies it by the time
+    for (int r = 0; r < 2; ++r) {
+      for (int i = 0; i < 4; ++i) {
+        out.shieldRows[r * 4 + i] = ShortestDouble(cch[r]->color[i]);
+      }
+    }
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = 1.0;
+    }
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind != ModelMaterialData::Kind::Color) {
+        continue;
+      }
+      if (d.usage == FourCC('D', 'I', 'F', 'C')) {
+        for (int i = 0; i < 4; ++i) {
+          out.shieldRows[28 + i] = ShortestDouble(d.color[i]);
+        }
+      } else if (d.usage == FourCC('I', 'C', 'M', 'C')) {
+        for (int i = 0; i < 3; ++i) {
+          out.shieldRows[24 + i] = ShortestDouble(d.color[i]);
+        }
+      }
+    }
   } else if ((IsXrayGhost(shader)) && out.maps[kBase].has &&
              out.maps[kNormal].has && cch[0] && cch[1]) {
     out.kind = 31;
@@ -2641,7 +2686,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.backlight = out.backlightTop = 0.0;
     out.maps[kMr].has = out.maps[kEmissive].has = false;
   }
-  if (out.kind == 21 || out.kind == 22) {
+  if (out.kind == 21 || out.kind == 22 || out.kind == 32) {
     // Opaque and lit; the base alpha is a weight in the shader and no opacity, the glow is the
     // shader's (ICNC is 0 on every material) and the vertex alpha picks no layer.
     out.layered = true;
@@ -2662,7 +2707,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     static const char* const kKindRoles[] = {"up-layer", "detail", "lava", "parallax", "waterfall",
                                              "glass",    "lava-pool", "gun-glow", "premul-glass", "holo-glass",
                                              "frozen-shell", "matcap-shell", "boundary-shield", "pickup",
-                                             "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend", "phazon", "projected-blend", "decal-alpha"};
+                                             "holo",         "holo-refl",    "hologram",     "gun-fx", "vertex-blend", "phazon", "projected-blend", "decal-alpha", "phazon-pool"};
     for (const char* name : kKindRoles) {
       if (out.role.find(name) != std::string::npos) {
         out.reason += std::string("fallback: ") + name + " shader without its maps/params (or blend); ";
@@ -2875,7 +2920,7 @@ void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
     P32(b, cube);
   }
   b.insert(b.end(), tag, tag + 4);
-  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 25 || m.kind == 28 || m.kind == 29 || m.kind == 31 || m.wind) {
+  if ((m.kind >= 14 && m.kind <= 19) || m.kind == 21 || m.kind == 22 || m.kind == 32 || m.kind == 25 || m.kind == 28 || m.kind == 29 || m.kind == 31 || m.wind) {
     // The boundary shield's (or pickup's) constants follow the record, as a trailer the reader strips first.
     // A swaying leaf's is the model's SWindSet (v1, v2, rate, b, c) in the first nine.
     for (double v : m.shieldRows) {

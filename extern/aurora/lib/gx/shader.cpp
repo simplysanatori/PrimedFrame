@@ -1237,7 +1237,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_b = pbr_b0;)""";
     }
   }
-  std::string kinds = "\n      var pbr_kglow = vec3f(0.0);";
+  std::string kinds = "\n      var pbr_kglow = vec3f(0.0);\n      var pbr_kns = 1.0;\n      var pbr_knoise = 0.0;";
   if (layered) {
     // Kind 1 lays the second layer on what faces up: the weight is the first layer's own
     // normal along world up, lifted by the vertex alpha.
@@ -1359,6 +1359,55 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                            mapStage[2], underlying(config.tevStages[mapStage[5]].texMapId),
                            underlying(config.tevStages[mapStage[0]].texCoordId), base,
                            underlying(config.tevStages[mapStage[4]].texMapId), sampled(1, "vec4f(1.0, 0.6, 0.0, 1.0)"));
+    }
+    // Kind 32, Remastered's PhazonPool (07acff46, the blisters), permutation 018_0. Constants are GXSetPBRShield's
+    // rows: CCH0 (fresnel power, gain, noise scale along the view, emission gain), CCH1 (noise speed, depth along
+    // BCLR.a), ICMC in row 6 and DIFC in row 7; pbr_param.x is the sim clock. Map 4 is TCH0, a 64^3 noise volume the
+    // importer stacked into a 512x512 atlas (slice z at tile (z % 8, z / 8)), read here as a repeating trilinear
+    // 3D texture on its own texcoord set; map 5 is TCH1, the emission ramp. The noise is read at the UV offset
+    // along the view in the tangent frame (T, normalize(cross(N, T)), no handedness) by BCLR.a x CCH0.z over
+    // N.pos, and at z = fract(t CCH1.x + BCLR.a CCH1.y). It scales the normal map's tilt (max(1.25 n, 0.1)) and
+    // lowers the roughness; the ramp is read at (n + f, f) for the fresnel f = (N.V)^CCH0.x CCH0.y of the
+    // geometric normal, and its colour times CCH0.w is the glow (times the exposure, as every glow here).
+    if (config.pbrKind == 32 && mapStage[2] != -1 && mapStage[4] != -1 && mapStage[5] != -1) {
+      kinds += fmt::format(R"""(
+      let pbr_pc0 = ubuf.pbr_shield[0];
+      let pbr_pc1 = ubuf.pbr_shield[1];
+      let pbr_pdf = ubuf.pbr_shield[7];
+      let pbr_ps = {0}.a * pbr_pc0.z;
+      let pbr_pnp = dot(pbr_ng, in.pbr_pos);
+      let pbr_pq = pbr_ps / select(-1e-6, pbr_pnp, abs(pbr_pnp) > 1e-6);
+      let pbr_pbv = {3};
+      let pbr_pz = fract(ubuf.pbr_param.x * pbr_pc1.x + {0}.a * pbr_pc1.y);
+      let pbr_puv = (tex{1}_uv + pbr_pbv * pbr_pq) * 64.0 - 0.5;
+      let pbr_pf = fract(pbr_puv);
+      let pbr_pci = vec2i(floor(pbr_puv));
+      let pbr_pzz = pbr_pz * 64.0 - 0.5;
+      let pbr_pzf = fract(pbr_pzz);
+      let pbr_pzi = i32(floor(pbr_pzz));
+      var pbr_pn = 0.0;
+      for (var pbr_pk = 0; pbr_pk < 2; pbr_pk++) {{
+          let pbr_pl = (pbr_pzi + pbr_pk) & 63;
+          let pbr_po = vec2i((pbr_pl & 7) * 64, (pbr_pl >> 3) * 64);
+          let pbr_px0 = pbr_pci.x & 63;
+          let pbr_px1 = (pbr_pci.x + 1) & 63;
+          let pbr_py0 = pbr_pci.y & 63;
+          let pbr_py1 = (pbr_pci.y + 1) & 63;
+          let pbr_pa = mix(textureLoad(tex{2}, pbr_po + vec2i(pbr_px0, pbr_py0), 0).x,
+                           textureLoad(tex{2}, pbr_po + vec2i(pbr_px1, pbr_py0), 0).x, pbr_pf.x);
+          let pbr_pb = mix(textureLoad(tex{2}, pbr_po + vec2i(pbr_px0, pbr_py1), 0).x,
+                           textureLoad(tex{2}, pbr_po + vec2i(pbr_px1, pbr_py1), 0).x, pbr_pf.x);
+          pbr_pn += mix(pbr_pa, pbr_pb, pbr_pf.y) * select(1.0 - pbr_pzf, pbr_pzf, pbr_pk == 1);
+      }}
+      pbr_knoise = pbr_pn;
+      pbr_kns = max(1.25 * pbr_pn, 0.1);
+      let pbr_pfr = exp2(max(pbr_pc0.x, 0.001) * log2(clamp(dot(pbr_ng, normalize(-in.pbr_pos)), 0.0, 1.0))) * pbr_pc0.y;
+      let pbr_pramp = textureSampleLevel(tex{4}, tex{4}_samp, vec2f(clamp(pbr_pn + pbr_pfr, 0.0, 1.0), clamp(pbr_pfr, 0.0, 1.0)), 0.0).rgb;
+      pbr_base = pbr_base * pbr_pdf.rgb;)""",
+                           base, underlying(config.tevStages[mapStage[4]].texCoordId),
+                           underlying(config.tevStages[mapStage[4]].texMapId),
+                           parallaxBasis,
+                           underlying(config.tevStages[mapStage[5]].texMapId));
     }
     // Kind 2: map 4 is a detail map that leaves the base alone where the sampler returns 0.5 (the texture's
     // own format decides which byte that is). Kind 4: the
@@ -1567,7 +1616,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       normal = fmt::format("\n      let pbr_ts2 = {} * 1.9921875 - 1.0;", normalXy2);
     }
     normal += fmt::format(R"""(
-      let pbr_ts = ({0} * 1.9921875 - 1.0) * select(select(1.0, ubuf.pbr_param.z, pbr_kind > 3.5 && pbr_kind < 4.5), ubuf.pbr_shield[0].z, pbr_kind > 27.5 && pbr_kind < 28.5);
+      let pbr_ts = ({0} * 1.9921875 - 1.0) * select(select(1.0, ubuf.pbr_param.z, pbr_kind > 3.5 && pbr_kind < 4.5), ubuf.pbr_shield[0].z, pbr_kind > 27.5 && pbr_kind < 28.5) * select(1.0, pbr_kns, pbr_kind > 31.5 && pbr_kind < 32.5);
       {2}let pbr_tn = {1};
       if (pbr_tlen > 1e-24) {{
         let pbr_s = inverseSqrt(pbr_tlen);
@@ -1716,6 +1765,14 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       liquid += R"""(
       pbr_glow += (pbr_zph + 2.0) * ubuf.pbr_shield[3].rgb * (ubuf.pbr_shield[0].z * pbr_zs2) +
                   pbr_zgrad * (pbr_zt2 * pbr_vraw.r * ubuf.pbr_shield[0].x * ubuf.pbr_shield[0].y);)""";
+    }
+    // Kind 32's glow: the ramp colour times CCH0.w, times the exposure (the generic scaling below), plus ICMC, which
+    // has none (so it is divided by the scaling here where that applies).
+    if (config.pbrKind == 32 && mapStage[2] != -1 && mapStage[4] != -1 && mapStage[5] != -1) {
+      liquid += R"""(
+      pbr_glow += pbr_pramp * pbr_pc0.w;
+      pbr_glow += ubuf.pbr_shield[6].rgb /
+                  select(1.0, ubuf.pbr_tone[0].w, ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0);)""";
     }
     // Kind 22's glow: Remastered adds it with no exposure factor, so the room-exposure scale below is undone for it.
     if (config.pbrKind == 22 && mapStage[2] != -1 && mapStage[4] != -1 && mapStage[5] != -1) {
@@ -2182,7 +2239,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       var pbr_base = {11};{13}
       let pbr_orm = {1}.rgb;
       let pbr_ao = select(pbr_orm.r, 1.0, pbr_ind);
-      let pbr_rough = select(clamp(select(pbr_orm.g, 0.6, pbr_ind), 0.02, 1.0), 0.1, pbr_kind > 30.5);
+      let pbr_rough = select(select(clamp(select(pbr_orm.g, 0.6, pbr_ind), 0.02, 1.0), 0.1, pbr_kind > 30.5),
+                             max(pbr_orm.g - pbr_knoise, 0.02), pbr_kind > 31.5 && pbr_kind < 32.5);
       let pbr_metal = clamp(select(pbr_orm.b, 0.0, pbr_ind), 0.0, 1.0);
       let pbr_emissive = max({2}.rgb, vec3f(0.0)) * ubuf.pbr_emissive.rgb;
       var pbr_n = pbr_ng;{3}
