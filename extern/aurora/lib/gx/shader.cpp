@@ -1740,9 +1740,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_g1c = clamp(pbr_sg, 0.0, 1.0);
           let pbr_pulse = 0.5 + 0.5 * sin(pbr_t * pbr_c3.w);
           let pbr_colg = 0.5 * pbr_c0.rgb + (pbr_sg * pbr_c0.rgb - 0.5 * pbr_c0.rgb) * pbr_g1c;
-          let pbr_kf = 1.0 - pbr_c5.x * (1.0 - pbr_sk);
+          let pbr_kf = 1.0 - pbr_df.x * (1.0 - pbr_sk);
           let pbr_sal = clamp(pbr_sb.x * pbr_sb.w + 2.0 * pbr_c5.x * pbr_df.w - 1.0, 0.0, 1.0);
-          let pbr_sw = 0.5 * max(min(pbr_g1c, pbr_c4.w), pbr_c4.z) + max(pbr_kf, pbr_c4.z);
+          let pbr_sw = pbr_c6.z * max(min(pbr_g1c, pbr_c4.w), pbr_c4.z) + max(pbr_kf, pbr_c4.z);
           let pbr_sw2 = mix(pbr_sw, pbr_c4.w, pbr_s2.y);
           let pbr_sl = pbr_kf * pbr_c0.rgb * pbr_c5.y + pbr_pulse * pbr_s2.z * pbr_c2.rgb * pbr_c2.w +
                        pbr_s2.y * pbr_c0.rgb * pbr_c1.w +
