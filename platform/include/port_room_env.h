@@ -725,6 +725,10 @@ float SkyGain();
 // pass) takes the frame's. 0.10 where rooms are not exposed or MP_REMASTERED_GLOW_EXPOSURE=0,
 // the constant the glow used to be baked at.
 float GlowGain(bool frameExposed);
+// What a bare unlit surface (mode bit 131072: the Surface shaders 67135a0b / 6fc4d540) is
+// multiplied by besides GlowScale, so that it is exposed at the frame's 2^(3 - EV) as the
+// tonemap exposes it; GlowGain's rule without the 0.10 fallback (1 outside exposed rooms).
+float UnlitGain(bool frameExposed);
 void SetStaticExposure(bool on);
 bool StaticExposure();
 // Whether a model lit by the baked light (an absolute ambient or a volume) also takes the

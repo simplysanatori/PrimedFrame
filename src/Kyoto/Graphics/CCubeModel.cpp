@@ -457,6 +457,11 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
     }
     values[7] = f32(mode & ~(32 | 64));
   }
+  if ((mode & 131072) != 0) {
+    // A bare unlit surface: the backlight's place holds the exposure GlowScale leaves.
+    const f32 gain = PortRoomEnv::UnlitGain(frameExposed);
+    values[3] = values[4] = values[5] = gain;
+  }
   if (sPortSky) {
     // Unlit (1) and a sky (16), keeping the material's other flags: the backlight's place
     // holds the gain (see GXSetPBRMaterial).
