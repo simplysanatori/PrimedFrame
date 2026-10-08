@@ -1555,6 +1555,16 @@ float GlowGain(bool frameExposed) {
   return std::isfinite(gain) && gain > 0.f ? gain : kFallback;
 }
 
+float UnlitGain(bool frameExposed) {
+  // Outside an exposed room Remastered's static default (exposure 1) applies: nothing to add.
+  if (!sFrame.hasTone || !Enabled() || !RoomExposed()) {
+    return 1.f;
+  }
+  const float sky = SkyGain();
+  const float gain = frameExposed || sky <= 0.f ? sFrame.exposure : sky;
+  return std::isfinite(gain) && gain > 0.f ? gain : 1.f;
+}
+
 void SetStaticExposure(bool on) { sStatic = on ? 1 : 0; }
 
 bool StaticExposure() {

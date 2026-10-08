@@ -1555,6 +1555,9 @@ constexpr uint32_t kShaderWindFoliage[] = {0x2EF20548, 0xF7A0A891, 0x83BDED1D, 0
 // 495899e7 (TendrilLights): a3c14cce's lighting with the opacity the vertex alpha alone (mode bit 65536).
 constexpr uint32_t kShaderVertexAlpha = 0x495899E7;
 constexpr uint32_t kShaderDecalAlphaMap = 0x42FE2ED0;
+// The unlit "Surface" shaders (byte-identical code): BCLR x AO x (1 - metal), no exposure factor
+// (mode bit 131072: the runtime exposes them with the frame's, as the tonemap does).
+constexpr uint32_t kShaderSurfaceUnlit[] = {0x67135A0B, 0x6FC4D540};
 // A shader with parameters of its own (TCHn, CCHn) reads the vertex colour as
 // it likes: masks for its extra maps, a colour seen through ice. These are the
 // ones read that multiply the albedo by it, as the standard shader does
@@ -2733,13 +2736,19 @@ bool PureLambert(const RemMaterial& m) {
 }
 bool NoEnvSpec(const RemMaterial& m) { return (m.noRefl || PureLambert(m)) && !m.unlit && !ColorUnlitDraw(m) && m.kind == 0; }
 
+bool SurfaceUnlit(const RemMaterial& m) {
+  return m.unlit && m.kind == 0 && !ColorUnlitDraw(m) &&
+         std::find(std::begin(kShaderSurfaceUnlit), std::end(kShaderSurfaceUnlit), m.shader) != std::end(kShaderSurfaceUnlit);
+}
+
 int PbrMode(const RemMaterial& m) {
   return (m.unlit ? 1 : 0) + (m.mask ? 2 : 0) + (m.tinted ? 4 : 0) + (ColorUnlitDraw(m) ? 8 : 0) +
          (ExposedGlow(m) ? 32 : 0) + (ExposedStrength(m) ? 64 : 0) +
          (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0) +
          (m.cutExact ? 512 : 0) + (PureLambert(m) ? 1024 : 0) + (VfxBase(m) ? 2048 + 4096 : 0) +
          (m.indirect ? 8192 : 0) + (m.macro ? 16384 : 0) +
-         (m.wind ? 32768 : 0) + (m.wind && m.shader == kShaderVertexAlpha ? 65536 : 0);
+         (m.wind ? 32768 : 0) + (m.wind && m.shader == kShaderVertexAlpha ? 65536 : 0) +
+         (SurfaceUnlit(m) ? 131072 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {

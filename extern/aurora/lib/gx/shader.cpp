@@ -1100,8 +1100,13 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // 32768 = the vertex shader's procedural wind (Remastered's USE_PROCEDURAL_WIND_ANIMATION);
       // the fragment ignores it.
       // 65536 = the opacity is the vertex alpha alone (495899e7: o0.w = v5.w * DIFC.a, DIFC.a = 1).
-      let pbr_vao = ubuf.pbr_backlight.w > 65535.5;
-      let pbr_mwv = ubuf.pbr_backlight.w - select(0.0, 65536.0, pbr_vao);
+      // 131072 = a bare unlit surface (the Surface shaders 67135a0b / 6fc4d540): Remastered
+      // multiplies it by no exposure of its own, so the frame's tonemap exposes it; the backlight
+      // rgb holds the part of that exposure GlowScale (tone row 0 w) leaves.
+      let pbr_uex = ubuf.pbr_backlight.w > 131071.5;
+      let pbr_mwu = ubuf.pbr_backlight.w - select(0.0, 131072.0, pbr_uex);
+      let pbr_vao = pbr_mwu > 65535.5;
+      let pbr_mwv = pbr_mwu - select(0.0, 65536.0, pbr_vao);
       let pbr_wnd = pbr_mwv > 32767.5;
       let pbr_mww = pbr_mwv - select(0.0, 32768.0, pbr_wnd);
       // 16384 = a macro normal map (MNMP, map 6) whiteout-blended over the normal in TANGENT_1's
@@ -2463,7 +2468,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       if ((pbr_mode > 0.5 && pbr_mode < 1.5) || pbr_mode > 2.5) {{
           // Unlit (screens, holograms): the surface's own colour and its glow.
           pbr_lo = pbr_diff * pbr_ao;
-          if (pbr_sky) {{
+          if (pbr_sky || pbr_uex) {{
               pbr_lo *= max(ubuf.pbr_backlight.rgb, vec3f(0.0));
           }}
       }}
