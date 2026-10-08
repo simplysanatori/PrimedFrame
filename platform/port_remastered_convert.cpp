@@ -1551,7 +1551,9 @@ constexpr uint32_t kShaderDecalCut = 0xE538B757;
 // f63182ce (2ef + an emissive map), 73ea9e03 (f7a0 + an emissive map), 5f7e93a7 and 8195894e (2ef/f7a0 with a
 // push pre-stage that moves y by a runtime sphere term; its default push is zero, so the sway is the same).
 constexpr uint32_t kShaderWindFoliage[] = {0x2EF20548, 0xF7A0A891, 0x83BDED1D, 0xA3C14CCE,
-                                           0xF63182CE, 0x73EA9E03, 0x5F7E93A7, 0x8195894E};
+                                           0xF63182CE, 0x73EA9E03, 0x5F7E93A7, 0x8195894E, 0x495899E7};
+// 495899e7 (TendrilLights): a3c14cce's lighting with the opacity the vertex alpha alone (mode bit 65536).
+constexpr uint32_t kShaderVertexAlpha = 0x495899E7;
 constexpr uint32_t kShaderDecalAlphaMap = 0x42FE2ED0;
 // A shader with parameters of its own (TCHn, CCHn) reads the vertex colour as
 // it likes: masks for its extra maps, a colour seen through ice. These are the
@@ -2737,7 +2739,7 @@ int PbrMode(const RemMaterial& m) {
          (m.tinted && m.tintF0 && !ColorUnlitDraw(m) ? 128 : 0) + (NoEnvSpec(m) ? 256 : 0) +
          (m.cutExact ? 512 : 0) + (PureLambert(m) ? 1024 : 0) + (VfxBase(m) ? 2048 + 4096 : 0) +
          (m.indirect ? 8192 : 0) + (m.macro ? 16384 : 0) +
-         (m.wind ? 32768 : 0);
+         (m.wind ? 32768 : 0) + (m.wind && m.shader == kShaderVertexAlpha ? 65536 : 0);
 }
 
 void PbrRecord(Blob& b, const RemMaterial& m, uint32_t wrap, uint32_t cube) {
