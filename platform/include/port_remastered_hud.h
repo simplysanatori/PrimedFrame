@@ -28,6 +28,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "port_remastered_cmdl.h"
@@ -85,12 +86,12 @@ private:
   // The port id of a Remastered picture (pak byte order) multiplied by `tint`,
   // written once; nothing for one that would not open.
   std::optional<uint32_t> Texture(const ModelUuid& id, HudCounts& counts, const std::string& owner,
-                                  const Tint& tint = {1.f, 1.f, 1.f, 1.f});
+                                  const Tint& tint = {1.f, 1.f, 1.f, 1.f}, bool squareAlpha = false);
 
   ConvertIO m_io;
   std::map<std::string, Tint> m_tints;
-  // By pak-order id and tint; 0 for one that would not open.
-  std::map<std::pair<ModelUuid, Tint>, uint32_t> m_textures;
+  // By pak-order id, tint and whether the alpha is squared; 0 for one that would not open.
+  std::map<std::tuple<ModelUuid, Tint, bool>, uint32_t> m_textures;
   std::vector<uint8_t> m_material;           // the disc material the models are drawn with
   uint32_t m_nextModel;
   uint32_t m_nextTexture;
