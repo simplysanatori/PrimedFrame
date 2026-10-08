@@ -1099,8 +1099,11 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       // just the baked ambient (that shader's baked-light perms: BLCM x (lobe + lights)).
       // 32768 = the vertex shader's procedural wind (Remastered's USE_PROCEDURAL_WIND_ANIMATION);
       // the fragment ignores it.
-      let pbr_wnd = ubuf.pbr_backlight.w > 32767.5;
-      let pbr_mww = ubuf.pbr_backlight.w - select(0.0, 32768.0, pbr_wnd);
+      // 65536 = the opacity is the vertex alpha alone (495899e7: o0.w = v5.w * DIFC.a, DIFC.a = 1).
+      let pbr_vao = ubuf.pbr_backlight.w > 65535.5;
+      let pbr_mwv = ubuf.pbr_backlight.w - select(0.0, 65536.0, pbr_vao);
+      let pbr_wnd = pbr_mwv > 32767.5;
+      let pbr_mww = pbr_mwv - select(0.0, 32768.0, pbr_wnd);
       // 16384 = a macro normal map (MNMP, map 6) whiteout-blended over the normal in TANGENT_1's
       // frame (a3c367be, 72b34e42, b9e899f3).
       let pbr_macro = pbr_mww > 16383.5;
@@ -2453,6 +2456,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           // vertex alpha alone is.
           pbr_glow = pbr_emissive * {0}.a;
           pbr_alpha = 1.0{9};
+      }}
+      if (pbr_vao) {{
+          pbr_alpha = pbr_vraw.a;
       }}
       if ((pbr_mode > 0.5 && pbr_mode < 1.5) || pbr_mode > 2.5) {{
           // Unlit (screens, holograms): the surface's own colour and its glow.
