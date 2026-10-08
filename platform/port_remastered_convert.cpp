@@ -1547,7 +1547,11 @@ constexpr uint32_t kShaderXraySkinned = 0xDF3E3423;
 constexpr uint32_t kShaderDecalCut = 0xE538B757;
 // The foliage shaders with USE_PROCEDURAL_WIND_ANIMATION whose vertex stage the port reproduces (kb material/2ef20548.md,
 // f7a0a891.md): the sway of the model's 'WIND' set, weighted by the vertex colour's alpha.
-constexpr uint32_t kShaderWindFoliage[] = {0x2EF20548, 0xF7A0A891};
+// 2ef20548/f7a0a891 plus the shaders whose vertex stage is the same sway: 83bded1d (2ef's FS), a3c14cce and
+// f63182ce (2ef + an emissive map), 73ea9e03 (f7a0 + an emissive map), 5f7e93a7 and 8195894e (2ef/f7a0 with a
+// push pre-stage that moves y by a runtime sphere term; its default push is zero, so the sway is the same).
+constexpr uint32_t kShaderWindFoliage[] = {0x2EF20548, 0xF7A0A891, 0x83BDED1D, 0xA3C14CCE,
+                                           0xF63182CE, 0x73EA9E03, 0x5F7E93A7, 0x8195894E};
 constexpr uint32_t kShaderDecalAlphaMap = 0x42FE2ED0;
 // A shader with parameters of its own (TCHn, CCHn) reads the vertex colour as
 // it likes: masks for its extra maps, a colour seen through ice. These are the

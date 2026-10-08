@@ -2777,6 +2777,33 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
                                   attr_load_nbt_slice(config, NbtSlice::T, vidxAttr));
   }
 
+  // Remastered's procedural foliage sway (WindAnimData c4[0..3], in pbr_shield[0..3]): the
+  // model's position moves by the inverse of the model->world 3x3 (rows in pbr_shield[4..6],
+  // the world translation in their w) applied to a per-axis sine, scaled by the vertex
+  // colour's alpha. The impulse terms (c4[4..11]) are zero without a source.
+  // The sway as WGSL: wind_pos from the model-space position and the vertex colour (its alpha is the weight).
+  const bool hasWind = config.pbr && config.pbrKind == 0 && config.attrs[GX_VA_CLR0].attrType != GX_NONE;
+  const auto windCode = [&](const std::string& pos, const std::string& clr) {
+    return fmt::format(
+        "\n    var wind_pos = {0};"
+        "\n    if (ubuf.pbr_backlight.w > 32767.5) {{"
+        "\n      let w_p = {0};"
+        "\n      let w_a = {1}.a;"
+        "\n      let w_c0 = ubuf.pbr_shield[0];"
+        "\n      let w_c1 = ubuf.pbr_shield[1];"
+        "\n      let w_c2 = ubuf.pbr_shield[2];"
+        "\n      let w_c3 = ubuf.pbr_shield[3];"
+        "\n      let w_s = vec3f("
+        "\n        sin(w_c1.w + ubuf.pbr_shield[4].w + w_p.y * w_c2.y + w_p.z * w_c2.z),"
+        "\n        sin(w_c1.w + ubuf.pbr_shield[5].w + w_p.x * w_c2.x + w_p.z * w_c2.z),"
+        "\n        sin(w_c1.w + ubuf.pbr_shield[6].w + w_p.x * w_c2.x + w_p.y * w_c2.y));"
+        "\n      let w_d = ((w_s * w_c0.w + w_c0.xyz) * w_c3.xyz) * w_a;"
+        "\n      wind_pos = w_p + vec3f(dot(w_d, ubuf.pbr_shield[4].xyz), dot(w_d, ubuf.pbr_shield[5].xyz),"
+        "\n                             dot(w_d, ubuf.pbr_shield[6].xyz)) * w_c1.xyz;"
+        "\n    }}",
+        pos, clr);
+  };
+
   // ShaderConfig::shadow: vs_shadow places the vertex in the sun's shadow map (gfx/shadow.cpp's caster pass).
   std::string shadowVs;
   if (config.shadow && config.lineMode == 0) {
@@ -2787,42 +2814,29 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
       shadowVs += fmt::format("\n    let {} = {};", vtx_attr(config, GX_VA_PNMTXIDX),
                               attr_load(config, GX_VA_PNMTXIDX, vidxAttr));
     }
-    shadowVs += fmt::format("\n    let {} = {};"
-                            "\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
+    // Remastered's depth/shadow perm (000_1) carries the same sway, so the caster moves with the foliage.
+    std::string shadowPos = vtx_attr(config, GX_VA_POS);
+    std::string shadowWind;
+    if (hasWind) {
+      shadowWind = fmt::format("\n    let {} = {};", vtx_attr(config, GX_VA_CLR0), attr_load(config, GX_VA_CLR0, vidxAttr)) +
+                   windCode(shadowPos, vtx_attr(config, GX_VA_CLR0));
+      shadowPos = "wind_pos";
+    }
+    shadowVs += fmt::format("\n    let {} = {};", vtx_attr(config, GX_VA_POS), attr_load(config, GX_VA_POS, vidxAttr));
+    shadowVs += shadowWind;
+    shadowVs += fmt::format("\n    let mv_pos = vec4f({}, 1.0) * ubuf.postex_mtx[in_pnmtxidx];"
                             "\n    var pos = vec4f(mv_pos, 1.0) * ubuf.shadow_caster;"
                             // Pancaked: a caster further toward the sun than the map reaches (a roof high
                             // over the floor) sits on its near plane rather than being clipped. The map is
                             // orthographic, so that moves nothing across it.
                             "\n    pos.z = max(pos.z, 0.0);"
                             "\n    return pos;\n}}",
-                            vtx_attr(config, GX_VA_POS), attr_load(config, GX_VA_POS, vidxAttr),
-                            vtx_attr(config, GX_VA_POS));
+                            shadowPos);
   }
   if (config.lineMode == 0) {
     std::string windPos = vtx_attr(config, GX_VA_POS);
-    // Remastered's procedural foliage sway (WindAnimData c4[0..3], in pbr_shield[0..3]): the
-    // model's position moves by the inverse of the model->world 3x3 (rows in pbr_shield[4..6],
-    // the world translation in their w) applied to a per-axis sine, scaled by the vertex
-    // colour's alpha. The impulse terms (c4[4..11]) are zero without a source.
-    if (config.pbr && config.pbrKind == 0 && config.attrs[GX_VA_CLR0].attrType != GX_NONE) {
-      vtxXfrAttrsPre += fmt::format(
-          "\n    var wind_pos = {0};"
-          "\n    if (ubuf.pbr_backlight.w > 32767.5) {{"
-          "\n      let w_p = {0};"
-          "\n      let w_a = {1}.a;"
-          "\n      let w_c0 = ubuf.pbr_shield[0];"
-          "\n      let w_c1 = ubuf.pbr_shield[1];"
-          "\n      let w_c2 = ubuf.pbr_shield[2];"
-          "\n      let w_c3 = ubuf.pbr_shield[3];"
-          "\n      let w_s = vec3f("
-          "\n        sin(w_c1.w + ubuf.pbr_shield[4].w + w_p.y * w_c2.y + w_p.z * w_c2.z),"
-          "\n        sin(w_c1.w + ubuf.pbr_shield[5].w + w_p.x * w_c2.x + w_p.z * w_c2.z),"
-          "\n        sin(w_c1.w + ubuf.pbr_shield[6].w + w_p.x * w_c2.x + w_p.y * w_c2.y));"
-          "\n      let w_d = ((w_s * w_c0.w + w_c0.xyz) * w_c3.xyz) * w_a;"
-          "\n      wind_pos = w_p + vec3f(dot(w_d, ubuf.pbr_shield[4].xyz), dot(w_d, ubuf.pbr_shield[5].xyz),"
-          "\n                             dot(w_d, ubuf.pbr_shield[6].xyz)) * w_c1.xyz;"
-          "\n    }}",
-          windPos, vtx_attr(config, GX_VA_CLR0));
+    if (hasWind) {
+      vtxXfrAttrsPre += windCode(windPos, vtx_attr(config, GX_VA_CLR0));
       windPos = "wind_pos";
     }
     vtxXfrAttrsPre += fmt::format(
