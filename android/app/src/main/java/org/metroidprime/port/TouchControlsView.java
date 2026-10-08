@@ -332,6 +332,14 @@ final class TouchControlsView extends View {
     private boolean colored;
     // Each button's function (Fire, Jump...) drawn with its letter.
     private boolean labels = true;
+    // F1's "Floating left stick", re-read every draw: the left stick is hidden
+    // until a free touch on the left half, then centred at (floatX, floatY), where
+    // that finger came down (pulled in so the ring stays on screen).
+    private boolean floating;
+    private float floatX;
+    private float floatY;
+    // The held left stick is a floating one (stays so if the map opens meanwhile).
+    private boolean leftFloated;
     // F1's "Turbo fire button", re-read every draw; the button when it is on.
     private boolean turbo;
     private ControlButton turboButton;
@@ -405,6 +413,7 @@ final class TouchControlsView extends View {
     private static native boolean nativeTouchTwinStick();
     private static native boolean nativeTouchColors();
     private static native boolean nativeTouchLabels();
+    private static native boolean nativeTouchFloatingStick();
     private static native boolean nativeTouchTurbo();
     // F1's side margin (every control) and the left stick's extra inset, in dp.
     private static native float nativeTouchSideMarginDp();
@@ -559,6 +568,7 @@ final class TouchControlsView extends View {
         final boolean classic = nativeTouchClassic();
         colored = nativeTouchColors();
         labels = nativeTouchLabels();
+        floating = nativeTouchFloatingStick();
         sideMargin = dp(nativeTouchSideMarginDp());
         stickInset = dp(nativeTouchStickInsetDp());
         buttonInset = dp(nativeTouchButtonInsetDp());
@@ -588,8 +598,12 @@ final class TouchControlsView extends View {
             }
         }
         bottomButtonRect(0, true, width, height, hideBounds);
-        drawStick(canvas, leftStickX(width, height), leftStickY(width, height),
-                  leftStickRadius(height), leftPointer, 0);
+        if (leftPointer != -1 && leftFloated) {
+            drawStick(canvas, floatX, floatY, leftStickRadius(height), leftPointer, 0);
+        } else if (!floatingStick()) {
+            drawStick(canvas, leftStickX(width, height), leftStickY(width, height),
+                      leftStickRadius(height), leftPointer, 0);
+        }
         // The right stick is the C-stick, yellow on the GameCube pad, in the classic
         // layout; in twin stick it aims, plain like the left. Otherwise a drag
         // anywhere free aims.
@@ -1010,9 +1024,17 @@ final class TouchControlsView extends View {
             targets.put(pointerId, TouchTarget.begin(MAP_TAP, 0, x, y));
             return;
         }
-        if (onLeftStick(x, y, width, height) && leftPointer == -1) {
+        final boolean floatHere = floatingStick() && x < width * 0.5f;
+        if ((floatHere || (!floatingStick() && onLeftStick(x, y, width, height))) &&
+            leftPointer == -1) {
+            if (floatHere) {
+                final float radius = leftStickRadius(height);
+                floatX = Math.max(radius, Math.min(width - radius, x));
+                floatY = Math.max(radius, Math.min(height - radius, y));
+            }
             TouchTarget target = new TouchTarget(LEFT_STICK, 0);
             leftPointer = pointerId;
+            leftFloated = floatHere;
             targets.put(pointerId, target);
             updateStick(target, x, y);
         } else if (nativeMapScreenOpen()) {
@@ -1039,6 +1061,12 @@ final class TouchControlsView extends View {
             targets.put(pointerId, TouchTarget.begin(AIM, 0, x, y));
             nativeTouchAimDown(true);
         }
+    }
+
+    // The floating left stick, except on the map screen (whose free area pans)
+    // and in the layout editor, which place the fixed one.
+    private boolean floatingStick() {
+        return floating && !editing && !nativeMapScreenOpen();
     }
 
     // A press within half a stick radius outside the left stick's ring grabs it.
@@ -1260,8 +1288,11 @@ final class TouchControlsView extends View {
         final boolean left = target.type == LEFT_STICK;
         float width = getWidth();
         float height = getHeight();
-        float centreX = left ? leftStickX(width, height) : rightStickX(width, height);
-        float centreY = left ? leftStickY(width, height) : rightStickY(height);
+        // A floating stick keeps the centre it was grabbed at, even if the map
+        // opens while it is held.
+        final boolean floated = left && leftFloated;
+        float centreX = floated ? floatX : left ? leftStickX(width, height) : rightStickX(width, height);
+        float centreY = floated ? floatY : left ? leftStickY(width, height) : rightStickY(height);
         float radius = left ? leftStickRadius(height) : rightStickRadius(height);
         // SDL's gamepad axes are +X right and +Y *down* (Aurora inverts Y for the
         // GameCube stick, whose +Y is up), so screen coordinates apply as-is.

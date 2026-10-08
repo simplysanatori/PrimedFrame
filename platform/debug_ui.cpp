@@ -196,6 +196,7 @@ bool sSwapScanXray = false;
 bool sTouchColors = false; // Android touch overlay: the GameCube pad's colours
 bool sTouchLabels = true;  // and each button's function under its letter
 bool sTouchTurbo = false;  // a Turbo button beside Fire
+bool sTouchFloatingStick = false; // the left stick appears where the left half is touched
 bool sFastMorph = false;
 bool sInvulnerable = false;
 // MP_GODMODE, for this run only: -1 unset, else 0 or 1. Never saved, and changing the
@@ -397,6 +398,7 @@ std::atomic< bool > sOverlayVisible{false};
 std::atomic< bool > sTouchColorsFlag{false};
 std::atomic< bool > sTouchLabelsFlag{true};
 std::atomic< bool > sTouchTurboFlag{false};
+std::atomic< bool > sTouchFloatingStickFlag{false};
 // The Android touch overlay's gap to the side edges for every control, and the
 // left stick's extra gap on top of it, in dp. Read from the UI thread.
 constexpr float kTouchMarginMaxDp = 300.f;
@@ -640,6 +642,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sTouchLabels = ParseBool(value);
   } else if (key == "touch_turbo") {
     sTouchTurbo = ParseBool(value);
+  } else if (key == "touch_floating_stick") {
+    sTouchFloatingStick = ParseBool(value);
   } else if (key == "stick_aim_rate") {
     const float f = static_cast< float >(std::atof(value.c_str()));
     if (std::isfinite(f) && f >= 50.f && f <= 4000.f) {
@@ -946,6 +950,7 @@ void SaveSettings() {
   file << "touch_colors=" << (sTouchColors ? 1 : 0) << '\n';
   file << "touch_labels=" << (sTouchLabels ? 1 : 0) << '\n';
   file << "touch_turbo=" << (sTouchTurbo ? 1 : 0) << '\n';
+  file << "touch_floating_stick=" << (sTouchFloatingStick ? 1 : 0) << '\n';
   file << "spring_ball=" << (sSpringBall ? 1 : 0) << '\n';
   file << "swap_scan_xray=" << (sSwapScanXray ? 1 : 0) << '\n';
   file << "shift_key=" << sShiftBindings[0] << '\n';
@@ -3386,6 +3391,7 @@ bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); 
 bool TouchColorsFlag() { return sTouchColorsFlag.load(std::memory_order_acquire); }
 bool TouchLabelsFlag() { return sTouchLabelsFlag.load(std::memory_order_acquire); }
 bool TouchTurboFlag() { return sTouchTurboFlag.load(std::memory_order_acquire); }
+bool TouchFloatingStickFlag() { return sTouchFloatingStickFlag.load(std::memory_order_acquire); }
 float TouchSideMarginDp() { return sTouchSideMargin.load(); }
 float TouchStickInsetDp() { return sTouchStickInset.load(); }
 float TouchButtonInsetDp() { return sTouchButtonInset.load(); }
@@ -3858,6 +3864,7 @@ void UpdateControllerNav() {
   sTouchColorsFlag.store(sTouchColors, std::memory_order_release);
   sTouchLabelsFlag.store(sTouchLabels, std::memory_order_release);
   sTouchTurboFlag.store(sTouchTurbo && !sOriginalExperience, std::memory_order_release);
+  sTouchFloatingStickFlag.store(sTouchFloatingStick, std::memory_order_release);
 
   ImGuiIO& io = ImGui::GetIO();
   io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
@@ -6090,6 +6097,12 @@ void DrawControlsTouchGyro() {
   ImGui::EndDisabled();
   ItemHelp("Adds a Turbo button next to Fire: holding it fires as if Fire were tapped as fast as the "
            "game accepts. It can be moved and resized in Edit layout.");
+  if (ImGui::Checkbox("Floating left stick", &sTouchFloatingStick)) {
+    MarkDirty();
+  }
+  ItemHelp("Hides the left stick until a finger touches a free spot on the left half of the screen, "
+           "then centres it under that finger. Another finger on the left half aims, like the rest "
+           "of the free area. The map screen keeps the fixed stick.");
   int touchLayout = sTouchClassic ? 1 : sTouchTwinStick ? 2 : 0;
   static const char* const kTouchLayouts[] = {"Default", "Classic GameCube", "Twin stick (Remastered)"};
   if (ImGui::Combo("Layout", &touchLayout, kTouchLayouts, 3)) {
@@ -8740,6 +8753,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchColors(JNIEnv*, jclass) 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchLabels(JNIEnv*, jclass) {
   return PortDebug::TouchLabelsFlag() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchFloatingStick(JNIEnv*, jclass) {
+  return PortDebug::TouchFloatingStickFlag() ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jfloat JNICALL

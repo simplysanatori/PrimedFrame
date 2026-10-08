@@ -575,6 +575,8 @@ bool TouchColorsFlag();
 bool TouchLabelsFlag();
 // Whether it shows the Turbo fire button. Same rules.
 bool TouchTurboFlag();
+// Whether the left stick floats (hidden, centred where the left half is touched). Same rules.
+bool TouchFloatingStickFlag();
 // The touch overlay's side margin, the left stick's extra inset and the face
 // buttons' extra inset, in dp. Also safe to call from the UI thread.
 float TouchSideMarginDp();
