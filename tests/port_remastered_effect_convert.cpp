@@ -1272,10 +1272,13 @@ uint32_t VmatWord(const std::vector<uint8_t>& v, size_t at) {
 // header blend (EBlendMode, the LE u32 at 0x61).
 const EffectGuid kWaveMati = {0xfc, 0x33, 0x65, 0x75, 0x32, 0xe8, 0xf2, 0x48,
                               0xb1, 0xef, 0xeb, 0xb4, 0x1f, 0xce, 0xa1, 0x4f};
+// aurora::gfx::vfx::AlreadyExposed in a VMAT features word.
+constexpr uint32_t kAlreadyExposedBit = 1u << 31;
 
-// Converts a VmatEffect (PBDM `pbdm`, 0 by default) whose material is `material` and returns the VMAT blob's blend word, or ~0u
-// when no VMAT came out.
-uint32_t ConvertBlend(std::vector<uint8_t> mati, const EffectGuid& material, bool model, uint32_t pbdm = 0) {
+// Converts a VmatEffect (PBDM `pbdm`, 0 by default) whose material is `material` and returns the VMAT blob's blend word
+// (or the word at `word`: 12 is the features), or ~0u when no VMAT came out.
+uint32_t ConvertBlend(std::vector<uint8_t> mati, const EffectGuid& material, bool model, uint32_t pbdm = 0,
+                      size_t word = 16) {
   const std::vector<uint8_t> data = VmatEffect(model, material, pbdm);
   EffectNode effect;
   std::string error;
@@ -1300,7 +1303,7 @@ uint32_t ConvertBlend(std::vector<uint8_t> mati, const EffectGuid& material, boo
   }
   for (const RetailPartProperty& property : properties) {
     if (property.fourcc == EffectFourCC("VMAT")) {
-      return VmatWord(property.value, 16);
+      return VmatWord(property.value, word);
     }
   }
   return ~0u;
@@ -1344,18 +1347,45 @@ void TestWaveOrbSwoosh(const std::vector<uint8_t>& mati) {
     return atlas;
   };
   const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), io);
-  uint32_t blend = ~0u;
+  uint32_t blend = ~0u, features = ~0u;
   for (const ConvertedPart& part : parts) {
     std::vector<RetailPartProperty> properties;
     if (part.type == EffectFourCC("SWHC") && SplitRetailEffect(part.type, part.part.data(), part.part.size(), properties, error)) {
       for (const RetailPartProperty& property : properties) {
         if (property.fourcc == EffectFourCC("VMAT")) {
           blend = VmatWord(property.value, 16);
+          features = VmatWord(property.value, 12);
         }
       }
     }
   }
   Check(blend == 0, "a swoosh on the orb's MATI keeps SBDM (alpha), not AdditiveOne");
+  Check(features != ~0u && (features & kAlreadyExposedBit) == 0, "a swoosh on the orb's MATI keeps the room's exposure");
+}
+
+// The exposure policy (aurora::gfx::vfx::AlreadyExposed, the features word's bit 31) is the orb's exact
+// gate only, tested on its own: it is not read off the blend.
+void TestWaveOrbExposurePolicy() {
+  auto orb = [](uint32_t shader, uint32_t headerBlend) {
+    std::vector<uint8_t> mati = Mati(shader, {{shader == 0x642dd72b ? "BCLR" : "TCH0", Fresh(8)}});
+    mati[0x61] = uint8_t(headerBlend);
+    return mati;
+  };
+  const uint32_t flagged = ConvertBlend(orb(0x642dd72b, 1), kWaveMati, true, 0, 12);
+  const uint32_t plain = ConvertBlend(orb(0x642dd72b, 1), Fresh(7), true, 0, 12);
+  Check(flagged != ~0u && (flagged & kAlreadyExposedBit) != 0, "wave orb MATI + PMDL + 642dd72b + header 1: AlreadyExposed");
+  Check(plain != ~0u && (flagged & ~kAlreadyExposedBit) == plain,
+        "the policy bit is the only feature difference (the shader features are the recipe's)");
+  Check(ConvertBlend(orb(0x642dd72b, 1), kWaveMati, true, 2, 12) == flagged, "the policy holds whatever the PBDM");
+  const auto unflagged = [](uint32_t f) { return f != ~0u && (f & kAlreadyExposedBit) == 0; };
+  Check(unflagged(plain), "near miss: another MATI guid has no policy");
+  Check(unflagged(ConvertBlend(orb(0x461071b8, 1), kWaveMati, true, 0, 12)), "near miss: another shader has no policy");
+  Check(unflagged(ConvertBlend(orb(0x642dd72b, 1), kWaveMati, false, 0, 12)), "near miss: no PMDL has no policy");
+  Check(unflagged(ConvertBlend(orb(0x642dd72b, 0), kWaveMati, true, 0, 12)), "near miss: header blend 0 has no policy");
+  Check(unflagged(ConvertBlend(orb(0x642dd72b, 2), kWaveMati, true, 0, 12)), "near miss: header blend 2 has no policy");
+  for (uint32_t pbdm = 0; pbdm <= 3; ++pbdm) {
+    Check(unflagged(ConvertBlend(orb(0x642dd72b, 1), Fresh(7), true, pbdm, 12)), "no policy from any PBDM alone");
+  }
 }
 
 // Only the wave orb's MATI, on a model particle, with header blend 1 takes Additive over PBDM.
@@ -1566,6 +1596,7 @@ int main() {
   TestModelRotation();
   TestVmatNewRecipes();
   TestWaveOrbHeaderBlend();
+  TestWaveOrbExposurePolicy();
   TestModelsOnly();
   TestFacingRotation();
   if (sFailures != 0) {

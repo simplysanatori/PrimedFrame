@@ -95,6 +95,7 @@ if (AURORA_ENABLE_GX)
     ../lib/gx/dl.cpp
     gx_dl_test.cpp
     gx_resident_test.cpp
+    gx_scene_hdr_fifo_test.cpp
   )
 
   target_include_directories(gx_fifo_tests PRIVATE
@@ -186,6 +187,9 @@ if (AURORA_ENABLE_GX)
     gx_inventory_visor_test.cpp
     vfx_blend_test.cpp
     render_target_layout_test.cpp
+    scene_hdr_test.cpp
+    scene_hdr_writer_test.cpp
+    scene_hdr_water_fog_test.cpp
   )
   target_include_directories(gfx_recording_tests PRIVATE
     ../include

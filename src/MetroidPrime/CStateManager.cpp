@@ -3226,6 +3226,7 @@ void CStateManager::PortCaptureProbeFace() const {
 #endif
 
 #ifdef TARGET_PC
+bool CStateManager::sPortSceneHdrRequest = false;
 float CStateManager::sPortViewZoom = 1.f;
 
 float CStateManager::PortZoomedFov(float fov) {
@@ -3241,8 +3242,14 @@ void CStateManager::DrawWorld() const {
   // A zoomed pass (sharp scan window) draws before the frame's own: the frame's captures and
   // the gun belong to that one.
   const bool portZoomed = sPortViewZoom != 1.f;
+  const bool portSceneHdrRequested = sPortSceneHdrRequest;
+  sPortSceneHdrRequest = false;
   if (!portZoomed)
     PortCaptureProbeFace();
+  // Probe faces are retail/display colour. Start HDR only after the capture and before the
+  // first real world draw; a post from the preceding scan-zoom pass has already returned to LDR.
+  if (portSceneHdrRequested)
+    GXPortSceneHdr(GX_TRUE);
 #endif
 #ifdef TARGET_PC
   // Port: material UV animations read the presented time between ticks (smooth frames).

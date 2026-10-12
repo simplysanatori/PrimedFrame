@@ -1,4 +1,5 @@
 #include "../gfx/hash.hpp"
+#include "../gfx/hdr_tone.hpp"
 #include "../gfx/probe.hpp"
 #include "../gfx/types.hpp"
 
@@ -2844,6 +2845,48 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     cut("textureSampleLevel(pbr_cube, pbr_cube_samp, pbr_pd, saturate(pbr_orm.g) * pbr_lod).rgb", "vec3f(0.2)");
     cut("if (pbr_hdr > 0.0 && ubuf.pbr_cube.w > 0.0) {", "if (false) {");
   }
+  if (config.sceneHdr) {
+    // Into the HDR scene: the exposed light (exposure applied once, above) plus the pass-through,
+    // without the tone curve, the clip or the sRGB encode; the single post-tone after the scene
+    // does those. The debug views are display colours, so they go back through the curve.
+    // Screen reads (map 7, kinds 8/11/14/23/29/30/34/36): in the HDR scene CCubeModel's copy is
+    // GXPortCopyScene's linear RGBA16F one, so they read the scene raw (no sRGB decode, no second
+    // exposure). Base and cube maps keep their decodes.
+    // NOT CLASSIFIED YET (stage 3): pbr_pass mixes terms LDR adds after the tone curve (display
+    // domain) with terms that may be light. Each producer needs its own domain from the material
+    // before HDR is activated or the render is called correct; until then this sum is not exact,
+    // and no blanket inverse of pbr_pass stands in for that classification.
+    // Kind 36: the coverage C scales the light before the tone, which is the source's HDR coverage
+    // (source (lit + ICMC) * C); LDR's C after the tone is a port workaround. The pause inventory
+    // stays an LDR pass, so this is not its default.
+    const auto put = [&](std::string_view what, std::string_view with) {
+      const size_t at = source.find(what);
+      if (at == std::string::npos) {
+        Log.fatal("hdr: pbr_func has no '{}'", what);
+      }
+      source.replace(at, what.size(), with);
+    };
+    put("      // Without a room's tone data", "      var pbr_lin = pbr_out;\n      // Without a room's tone data");
+    if (source.find("      pbr_tm *= inv_c;\n") != std::string::npos) {
+      put("      pbr_tm *= inv_c;\n", "      pbr_tm *= inv_c;\n      pbr_lin *= inv_c;\n");
+    }
+    put("prev = vec4f(srgb_enc(pbr_tm + pbr_pass), pbr_alpha);", "prev = vec4f(pbr_lin + pbr_pass, pbr_alpha);");
+    put("prev = vec4f(clamp(pbr_dc, vec3f(0.0), vec3f(1.0)), prev.a);",
+        "prev = vec4f(hdr_exposed(pbr_dc, ubuf.pbr_tone[0], ubuf.pbr_tone[1], ubuf.pbr_tone[2]), prev.a);");
+    put("prev = vec4f(clamp(pbr_vdiag, vec3f(0.0), vec3f(1.0)), prev.a);",
+        "prev = vec4f(hdr_exposed(pbr_vdiag, ubuf.pbr_tone[0], ubuf.pbr_tone[1], ubuf.pbr_tone[2]), prev.a);");
+    put("prev = vec4f(select(pbr_diag, ", "prev = vec4f(hdr_exposed(select(pbr_diag, ");
+    put("pbr_hdr > 0.0), prev.a);", "pbr_hdr > 0.0), ubuf.pbr_tone[0], ubuf.pbr_tone[1], ubuf.pbr_tone[2]), prev.a);");
+    const auto rawScreen = [&](std::string_view what, std::string_view with) {
+      for (size_t at = source.find(what); at != std::string::npos; at = source.find(what, at + with.size())) {
+        source.replace(at, what.size(), with);
+      }
+    };
+    rawScreen("srgb_dec(pbr_gs)", "pbr_gs");
+    rawScreen("srgb_dec(pbr_hg)", "pbr_hg");
+    rawScreen("srgb_dec(pbr_sfb)", "pbr_sfb");
+    rawScreen("srgb_dec(textureSampleLevel(tex7, tex7_samp,", "(textureSampleLevel(tex7, tex7_samp,");
+  }
   return source;
 }
 
@@ -3681,6 +3724,7 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
   // slice sqrt((z - near) / (range - near)). Blended draws (and premultiplied ones, by their alpha)
   // take on the in-scatter; additive ones are only dimmed.
   bool pbrVolFog = false;
+  bool pbrEmitted = false; // pbr_func wrote prev: in the HDR scene it is exposed light already
   std::string volFogSample;
   const auto volFogWeight = [&](std::string_view alpha) -> std::string {
     switch (config.volFog) {
@@ -3785,6 +3829,19 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     let drawn = vec3f(vf_tone(x.r), vf_tone(x.g), vf_tone(x.b));
     return vec4f(vf_srgb_enc(drawn), c.a);
 })""";
+    if (config.sceneHdr) {
+      uniformPre += R"""(
+
+// The HDR scene's fog: c is exposed linear light already, so it is fogged as it is (transmittance
+// plus w of the in-scatter) and left as light; the post-tone after the scene draws it.
+fn vf_apply_hdr(c: vec4f, fog: vec4f, w: f32) -> vec4f {
+    let light = max(fog.rgb, vec3f(0.0)) * ubuf.volfog.z * w;
+    if (fog.a > 0.9995 && max(max(light.r, light.g), light.b) < 1e-4) {
+        return c;
+    }
+    return vec4f(c.rgb * fog.a + light, c.a);
+})""";
+    }
   }
   if (config.pbr) {
     uniBufAttrs += "\n    pbr_probe: mat3x4f,";
@@ -3897,6 +3954,7 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
       pbrVolFog = true;
     }
     if (!pbr.empty()) {
+      pbrEmitted = true;
       fragmentFn += pbr;
       texBindings += fmt::format("\n@group(2) @binding({})\n"
                                  "var pbr_cube: texture_cube<f32>;\n"
@@ -3915,6 +3973,12 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
       }
     }
   }
+  if (info.usesHdrTone) {
+    uniBufAttrs += "\n    hdr_tone: array<vec4f, 3>,";
+  }
+  // The tone rows a display colour goes back through into the HDR scene.
+  const std::string_view hdrTone = config.pbr ? "ubuf.pbr_tone[0], ubuf.pbr_tone[1], ubuf.pbr_tone[2]"
+                                              : "ubuf.hdr_tone[0], ubuf.hdr_tone[1], ubuf.hdr_tone[2]";
   if (info.usesHudDyin) {
     uniBufAttrs += "\n    hud_dyin: vec4f,";
   }
@@ -3970,7 +4034,15 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
           "\n    var fogZ = exp2(-8.0 * fogF * fogF);";
       break;
     }
-    fragmentFn += "\n    prev = vec4f(mix(prev.rgb, ubuf.fog.color.rgb, clamp(fogZ, 0.0, 1.0)), prev.a);";
+    if (config.sceneHdr && pbrEmitted) {
+      // The PBR light is exposed linear here: the display fog colour goes back through the curve
+      // (an approximation of fogging before the tone; the display-domain mix is not reproduced).
+      fragmentFn += fmt::format(
+          "\n    prev = vec4f(mix(prev.rgb, hdr_exposed(ubuf.fog.color.rgb, {}), clamp(fogZ, 0.0, 1.0)), prev.a);",
+          hdrTone);
+    } else {
+      fragmentFn += "\n    prev = vec4f(mix(prev.rgb, ubuf.fog.color.rgb, clamp(fogZ, 0.0, 1.0)), prev.a);";
+    }
   }
   if (info.usesVolFog) {
     uniBufAttrs += "\n    volfog: vec4f,";
@@ -4003,14 +4075,25 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     uniBufAttrs += "\n    shadow_splits: vec4f,";
     uniBufAttrs += "\n    shadow_fade: vec4f,";
   }
-  if (!prevColorNormalized && !prevAlphaNormalized) {
+  // HDR PBR light above 1 is light, not a TEV byte overflow: only its alpha wraps.
+  const bool hdrPbrColor = config.sceneHdr && pbrEmitted;
+  if (!prevColorNormalized && !prevAlphaNormalized && !hdrPbrColor) {
     fragmentFn += "\n    prev = tev_overflow_vec4f(prev);";
-  } else if (!prevColorNormalized) {
+  } else if (!prevColorNormalized && !hdrPbrColor) {
     fragmentFn += "\n    prev = vec4f(tev_overflow_vec3f(prev.rgb), prev.a);";
   } else if (!prevAlphaNormalized) {
     fragmentFn += "\n    prev.a = tev_overflow_f32(prev.a);";
   }
-  if (info.usesVolFog && !pbrVolFog) {
+  bool hdrConverted = false;
+  if (info.usesVolFog && !pbrVolFog && config.sceneHdr) {
+    // The HDR scene fogs in the light it holds: the TEV colour (its display fog mixed in above) goes
+    // into the exposed domain first, then the fog applies to it there, with no curve either side.
+    // A PBR draw fogs its own light (pbrVolFog), so only TEV colour reaches here.
+    fragmentFn += fmt::format("\n    // HDR scene\n    prev = vec4f(hdr_exposed(prev.rgb, {}), prev.a);", hdrTone);
+    hdrConverted = true;
+    fragmentFn += fmt::format("\n    // Volumetric fog\n    prev = vf_apply_hdr(prev, {}, {});", volFogSample,
+                              volFogWeight("clamp(prev.a, 0.0, 1.0)"));
+  } else if (info.usesVolFog && !pbrVolFog) {
     fragmentFn += fmt::format("\n    // Volumetric fog\n    prev = vf_apply(prev, {}, {});", volFogSample,
                               volFogWeight("clamp(prev.a, 0.0, 1.0)"));
   }
@@ -4024,6 +4107,11 @@ fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
           "\n    let alphaCompare = u32(round(clamp(prev.a, 0.0, 1.0) * 255.0));";
       fragmentFn += fmt::format("\n    if ({}) {{ discard; }}", discard.expr);
     }
+  }
+  if (config.sceneHdr && !pbrEmitted && !hdrConverted) {
+    // Retail TEV (and SDF) colour is display sRGB: decoded and taken back through the room's tone
+    // curve, so the post-tone after the HDR scene draws it as before. Alpha as it is (blends linear).
+    fragmentFn += fmt::format("\n    // HDR scene\n    prev = vec4f(hdr_exposed(prev.rgb, {}), prev.a);", hdrTone);
   }
   if (config.depthOnly != 0) {
     // Depth pre-pass: nothing is written but the depth, so the compiler can drop all the
@@ -4433,6 +4521,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
     shaderSource.replace(at, tail.size(),
                          "    return vec4f(f32(imm.serial & 255u), f32((imm.serial >> 8u) & 255u), "
                          "f32((imm.serial >> 16u) & 255u), 255.0) / 255.0;\n}");
+  }
+  if (config.sceneHdr) {
+    shaderSource += gfx::hdr::ToneWgsl;
   }
   if (EnableDebugPrints) {
     Log.info("Generated shader (hash {:x}): {}", hash, shaderSource);

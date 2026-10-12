@@ -334,6 +334,10 @@ extern "C" {
 #define GX_AURORA_PORT_XRAY 0x006B
 // Port extension: one pass of Remastered's thermal visor post (GXPortThermalPass). Payload: 20 u32 words.
 #define GX_AURORA_PORT_THERMAL 0x006C
+// Port extension: EFB draws go to the RGBA16F linear HDR scene (GXPortSceneHdr). Payload: u8 on.
+#define GX_AURORA_PORT_SCENE_HDR 0x006E
+// Port extension: the EFB copies that follow are linear scene copies (GXPortCopyScene). Payload: u8 on.
+#define GX_AURORA_PORT_COPY_SCENE 0x006F
 
 #define GX2_SET_POLYGON_OFFSET 0x1000
 

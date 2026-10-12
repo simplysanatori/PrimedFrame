@@ -905,7 +905,7 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
                          wantMips ? GX_TRUE : GX_FALSE);
         const bool useVideoFilter = CGraphics::GetUseVideoFilter();
         CGraphics::SetUseVideoFilter(false);
-        GXCopyTex(CGraphics::GetDolphinSpareBuffer(), GX_FALSE);
+        GXPortCopyScene(CGraphics::GetDolphinSpareBuffer(), GX_FALSE);
         CGraphics::SetUseVideoFilter(useVideoFilter);
         GXPixModeSync();
         copy.valid = true;

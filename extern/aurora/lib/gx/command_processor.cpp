@@ -472,7 +472,10 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
 
   const u8 lineMode = line_mode_for_prim(prim);
   const bool pipelineValid = cache.hasPipeline && (state.dirty & DirtyPipeline) == 0 && cache.fmt == fmt &&
-                             cache.lineMode == lineMode && cache.config.msaaSamples == gfx::get_sample_count();
+                             cache.lineMode == lineMode && cache.config.msaaSamples == gfx::get_sample_count() &&
+                             // The pass's target, not only the FIFO's switch: a new frame (reset to LDR),
+                             // an offscreen pass or a colour pass must not keep an HDR pipeline, or back.
+                             cache.config.shaderConfig.sceneHdr == gfx::scene_hdr_pass_active();
   if (!pipelineValid) {
     const bool hadPipeline = cache.hasPipeline;
     const auto prevSampledTextures = cache.shaderInfo.sampledTextures;
@@ -1089,7 +1092,16 @@ void handle_aurora(ByteReader& reader) noexcept {
       g_gxState.dirty |= DirtyImmediates;
     }
   } else if (subCmd == GX_AURORA_PORT_DRAW_ID_MODE) {
-    const bool on = reader.read<u8>() != 0;
+    bool on = reader.read<u8>() != 0;
+    // Draw-id output is a flat LDR colour: leave the HDR scene first, or stay out of draw-id mode.
+    if (on && gfx::scene_hdr_active()) {
+      if (gfx::set_scene_hdr(false)) {
+        g_gxState.dirty |= DirtyPipeline;
+      } else {
+        Log.warn("GX_AURORA_PORT_DRAW_ID_MODE: refused, the HDR scene cannot be left here");
+        on = false;
+      }
+    }
     if (g_gxState.drawIdMode != on) {
       g_gxState.drawIdMode = on;
       g_gxState.dirty |= DirtyPipeline;
@@ -1265,7 +1277,12 @@ void handle_aurora(ByteReader& reader) noexcept {
     gfx::bloom::Params params;
     static_assert(sizeof(params) == sizeof(words));
     std::memcpy(&params, words, sizeof(params));
+    const bool hdrBefore = gfx::scene_hdr_active();
     gfx::bloom::record(params);
+    if (gfx::scene_hdr_active() != hdrBefore) {
+      // An HDR post left the scene: the draws after it go to the display EFB's format.
+      g_gxState.dirty |= DirtyPipeline;
+    }
   } else if (subCmd == GX_AURORA_PORT_VOLUMETRIC_FOG) {
     gfx::volfog::Params params;
     u32 words[sizeof(params) / sizeof(u32)];
@@ -1316,6 +1333,25 @@ void handle_aurora(ByteReader& reader) noexcept {
     }
     std::memcpy(&params, words, sizeof(params));
     gfx::thermal::record(params);
+  } else if (subCmd == GX_AURORA_PORT_SCENE_HDR) {
+    const u8 value = reader.read<u8>();
+    if (value > 1) {
+      Log.warn("GX_AURORA_PORT_SCENE_HDR: invalid value {}", value);
+    } else if (value != 0 && g_gxState.drawIdMode) {
+      Log.warn("GX_AURORA_PORT_SCENE_HDR: refused in draw-id mode");
+    } else if (gfx::scene_hdr_active() != (value != 0)) {
+      if (gfx::set_scene_hdr(value != 0)) {
+        g_gxState.dirty |= DirtyPipeline;
+      } else {
+        Log.warn("GX_AURORA_PORT_SCENE_HDR: switch to {} refused", value);
+      }
+    }
+  } else if (subCmd == GX_AURORA_PORT_COPY_SCENE) {
+    const u8 value = reader.read<u8>();
+    if (value > 1) {
+      Log.warn("GX_AURORA_PORT_COPY_SCENE: invalid value {}", value);
+    }
+    g_gxState.copySceneLinear = value == 1;
   } else if (subCmd == GX_AURORA_PORT_PARTICLE_FOG) {
     const bool on = reader.read<u8>() != 0;
     if (g_gxState.particleFog != on) {
@@ -1508,6 +1544,7 @@ void clear_draw_cache() noexcept {
   sDrawCache.uniformRange = {};
   sDrawCache.fogRange = {};
   sDrawCache.hasFogRange = false;
+  g_gxState.copySceneLinear = false;
   // GX_AURORA_PORT_ROOM_LIGHTS points into this frame's storage buffer.
   if (g_gxState.pbrRoomLights.y() != 0.f) {
     g_gxState.pbrRoomLights = {};

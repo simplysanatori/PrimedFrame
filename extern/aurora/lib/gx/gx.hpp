@@ -339,15 +339,17 @@ struct GXState {
     u32 height = 0;
     GXTexFmt format = GX_TF_I4;
     bool mips = false;
+    // The texture holds the linear RGBA16F scene (GXPortCopyScene in an HDR pass), not a GX copy.
+    bool linear = false;
 
     bool operator==(const CopyTextureKey& rhs) const {
       return dest == rhs.dest && width == rhs.width && height == rhs.height && format == rhs.format &&
-             mips == rhs.mips;
+             mips == rhs.mips && linear == rhs.linear;
     }
 
     template <typename H>
     friend H AbslHashValue(H h, const CopyTextureKey& key) {
-      return H::combine(std::move(h), key.dest, key.width, key.height, key.format, key.mips);
+      return H::combine(std::move(h), key.dest, key.width, key.height, key.format, key.mips, key.linear);
     }
   };
 
@@ -483,6 +485,7 @@ struct GXState {
   bool texCopyDstWide = false;
   bool texCopyMips = false; // GXSetTexCopyDst mipmap flag: the copy gets a full mip chain
   const void* texCopyDest = nullptr;
+  bool copySceneLinear = false; // GX_AURORA_PORT_COPY_SCENE: copies are linear scene copies (GXPortCopyScene)
   absl::flat_hash_map<const void*, CopyTextureRef> copyTextures;
   absl::flat_hash_map<CopyTextureKey, CopyTextureRef> copyTextureCache;
 
@@ -602,7 +605,9 @@ struct ShaderConfig {
   // endianness.
   u8 pbrBindPos : 1 = false;
   u8 pbrBindLe : 1 = false;
-  u8 pad1 : 1 = 0;
+  // The draw writes the RGBA16F HDR scene (gfx::scene_hdr_pass_active): exposed linear light, not
+  // display sRGB. The old padding bit, so an LDR config keeps its bytes and cache keys.
+  u8 sceneHdr : 1 = false;
   u8 pbr = 0; // GX_AURORA_SET_PBR
   u8 sdf = 0; // GX_AURORA_SET_SDF
   u8 depthOnly = 0; // pass 1 of GX_AURORA_PORT_DEPTH_PREPASS: the colour is not written
@@ -659,6 +664,7 @@ struct ShaderInfo {
   bool usesVolFog : 1 = false;
   bool usesShadow : 1 = false;    // ShaderConfig::shadow: the shadow uniforms and vs_shadow
   bool shadowReceive : 1 = false; // shadow_receives: group 2 uses the shadow layout
+  bool usesHdrTone : 1 = false;   // ShaderConfig::sceneHdr without pbr: the hdr_tone uniform (GXState::pbrTone)
 };
 struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};

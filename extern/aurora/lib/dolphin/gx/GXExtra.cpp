@@ -8,6 +8,7 @@
 #include "../../gfx/volfog.hpp"
 #include "../../gfx/thermal.hpp"
 #include "../../gfx/xray.hpp"
+#include "../../webgpu/gpu.hpp"
 #include "../../webgpu/gpu_prof.hpp"
 
 #include <atomic>
@@ -93,12 +94,10 @@ struct PBRMaterialWrite {
 };
 } // namespace
 
-extern "C" {
-GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
-                         u32 gradeB, f32 gradeWeight, f32 exposure) {
-  if (GXGetPBRCostTest() == 10 || sDrawIdMode) {
-    return true;
-  }
+namespace {
+aurora::gfx::bloom::Params post_process_params(GXBool bloom, f32 threshold, const f32 tints[5][3],
+                                               const f32 tone[3][4], u32 gradeA, u32 gradeB, f32 gradeWeight,
+                                               f32 exposure) {
   aurora::gfx::bloom::Params params{};
   // Cost tests 12-14 price the bloom, the frame copy and the depth reload after the break; 15
   // always reloads the depth, to price clearing it when the HUD doesn't need it.
@@ -123,9 +122,10 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
   params.gradeWeight = gradeWeight;
   // The curve's toe has no use for row 0's w; it carries the exposure (see bloom.hpp).
   params.tone[0][3] = tone != nullptr && exposure > 0.f ? exposure : 0.f;
-  if (!params.bloom && gradeA == 0 && gradeB == 0 && params.tone[0][3] == 0.f) {
-    return true;
-  }
+  return params;
+}
+
+bool write_post_process(const aurora::gfx::bloom::Params& params) {
   if (!aurora::gfx::bloom::ensure_task()) {
     return false;
   }
@@ -139,6 +139,35 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
     GX_WRITE_U32(word);
   }
   return true;
+}
+} // namespace
+
+extern "C" {
+GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
+                         u32 gradeB, f32 gradeWeight, f32 exposure) {
+  if (GXGetPBRCostTest() == 10 || sDrawIdMode) {
+    return true;
+  }
+  const auto params = post_process_params(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, exposure);
+  if (!params.bloom && gradeA == 0 && gradeB == 0 && params.tone[0][3] == 0.f) {
+    return true;
+  }
+  return write_post_process(params);
+}
+
+GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
+                              u32 gradeB, f32 gradeWeight, f32 exposure) {
+  // The EFB the copies saw is about to change target (the HDR scene ends here).
+  __GXPortInvalidateCopySerial();
+  if (sDrawIdMode) {
+    return true;
+  }
+  // Cost test 10 skips the post's work, not the scene's conversion: bloom and grades off.
+  const bool noPost = GXGetPBRCostTest() == 10;
+  auto params = noPost ? post_process_params(false, threshold, tints, tone, 0, 0, 0.f, 0.f)
+                       : post_process_params(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, exposure);
+  params.bloom |= aurora::gfx::bloom::ForceScene;
+  return write_post_process(params);
 }
 
 GXBool GXPortVolumetricFog(const GXPortFogParams* fog) {
@@ -211,6 +240,20 @@ GXBool GXPortThermalPass(const f32 tone[3][4], const f32 v[4], const f32 r[4]) {
   for (const u32 word : words) {
     GX_WRITE_U32(word);
   }
+  return true;
+}
+
+GXBool GXPortSceneHdr(GXBool on) {
+  // A switch changes what an EFB copy holds (the HDR scene's light or the display EFB) without one being
+  // made, so the game thread's copy caches must not take an earlier copy for this one. Every request
+  // counts, refused or not, and whatever the FIFO later makes of it: a spare recopy is only a copy.
+  // (The switch back to the display EFB at the post, GXPortPostProcessScene, invalidates it the same way.)
+  __GXPortInvalidateCopySerial();
+  if (on && (sDrawIdMode || !aurora::webgpu::scene_hdr_supported())) {
+    return false;
+  }
+  GX_WRITE_AURORA(GX_AURORA_PORT_SCENE_HDR);
+  GX_WRITE_U8(on ? 1 : 0);
   return true;
 }
 
