@@ -195,6 +195,8 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     if (std::isfinite(f) && f >= 2.f && f <= 20.f) {
       s.springFlickRate = f;
     }
+  } else if (key == "spring_ball_swipe") {
+    s.springSwipe = ParseBool(value);
   } else {
     return false;
   }
@@ -244,6 +246,7 @@ void WriteAimSettings(std::ostream& out) {
   const Settings& s = Get();
   out << "spring_ball_flick=" << (s.springFlick ? 1 : 0) << '\n';
   out << "spring_ball_flick_rate=" << s.springFlickRate << '\n';
+  out << "spring_ball_swipe=" << (s.springSwipe ? 1 : 0) << '\n';
   out << "stick_aim_rate=" << s.stickAimRate << '\n';
   out << "stick_aim_split=" << (s.stickAimSplit ? 1 : 0) << '\n';
   out << "stick_aim_rate_y=" << s.stickAimRateY << '\n';

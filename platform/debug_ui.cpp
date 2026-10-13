@@ -2979,6 +2979,25 @@ void BeginFrameMouse() {
   sAimAppliedLastTick = false;
 }
 
+bool SpringBallSwipe() {
+  EnsureInitialized();
+  return sInput.springSwipe;
+}
+
+void SetSpringBallSwipe(bool enabled) {
+  EnsureInitialized();
+  sInput.springSwipe = enabled;
+  MarkDirty();
+}
+
+// CMorphBall springs on the request only on the ground in the ball with the
+// Spring Ball unlocked, so a swipe anywhere else just expires.
+void TouchSpringSwipe() {
+  if (sInput.springSwipe && !sOriginalExperience && !Visible()) {
+    RequestSpringBall();
+  }
+}
+
 void SetTouchAimDown(bool down) { sTouchAimDown = down; }
 
 void HoldTouchAim(float seconds) {
@@ -7081,6 +7100,12 @@ void DrawControlsTouchGyro() {
   ItemHelp("How far the view turns per dp of finger travel. The default turns about 180 degrees "
            "over a 400 dp drag at the default mouse sensitivity.");
   ImGui::EndDisabled();
+  bool springSwipe = sInput.springSwipe;
+  if (ImGui::Checkbox("Spring Ball on swipe up", &springSwipe)) {
+    SetSpringBallSwipe(springSwipe);
+  }
+  ItemHelp("In morph ball, a quick swipe up on the free screen area (or a fast slide up from "
+           "Fire or Jump) springs, without a gyro flick. Needs the Spring Ball option.");
   float sideMargin = sInput.touchSideMargin.load();
   if (ImGui::SliderFloat("Side margin", &sideMargin, 0.f, kTouchMarginMaxDp, "%.0f dp")) {
     sInput.touchSideMargin.store(sideMargin);
@@ -10069,6 +10094,11 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchAim(JNIEnv*, jclass, jfloat dxDp,
                                                             jfloat dyDp) {
   PortDebug::AddTouchAim(dxDp, dyDp);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchSpringSwipe(JNIEnv*, jclass) {
+  PortDebug::TouchSpringSwipe();
 }
 
 extern "C" JNIEXPORT void JNICALL
