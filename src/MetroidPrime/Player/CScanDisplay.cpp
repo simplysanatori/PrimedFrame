@@ -351,7 +351,14 @@ void CScanDisplay::Update(float dt, float scanningTime) {
     case CDataDot::kDS_Done: {
       const CGuiCamera* const camera = mSelHud->GetFrameCamera();
       const CVector3f position = mPaneStates[i].mImagePane->GetWorldTransform().GetTranslation();
+#ifdef TARGET_PC
+      // Port: aim at the pane where the widescreen HUD draws it (CGuiFrame::Draw), not where the
+      // authored 4:3 camera would put it.
+      const CVector3f screen = camera->ConvertToDrawnScreenSpace(
+          position, mSelHud->GetSpreadWeight(mPaneStates[i].mImagePane));
+#else
       const CVector3f screen = camera->ConvertToScreenSpace(position);
+#endif
       const CVector2f viewport(0.5f * (screen.GetX() * CGraphics::GetViewportWidth()),
                                0.5f * (screen.GetY() * CGraphics::GetViewportHeight()));
       dot.SetDestPosition(viewport);

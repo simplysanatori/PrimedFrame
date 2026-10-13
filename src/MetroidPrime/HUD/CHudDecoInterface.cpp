@@ -16,6 +16,11 @@
 #include "MetroidPrime/Tweaks/CTweakGuiColors.hpp"
 #include "rstl/math.hpp"
 
+#ifdef TARGET_PC
+#include "MetroidPrime/Factories/CScannableObjectInfo.hpp"
+#include "port_debug.h"
+#endif
+
 static const char skDecoWidgetName[] = "basewidget_deco";
 static const char skBarDecoWidgetName[] = "basewidget_tickdeco0";
 static const char skPivotWidgetName[] = "basewidget_pivot";
@@ -316,6 +321,18 @@ CHudDecoInterfaceScan::CHudDecoInterfaceScan(CGuiFrame& hud)
                                              x24c_basewidget_leftside->RotateO2P(sidesPos));
   x250_basewidget_rightside->SetLocalPosition(x224_rightsidePosition -
                                               x250_basewidget_rightside->RotateO2P(sidesPos));
+#ifdef TARGET_PC
+  // Issue #56: on a wide screen the side panels and the scan images can be kept nearer the
+  // centre, out from under a phone's touch controls (setting scan_spread).
+  float (*const scanSpread)() = [] {
+    return static_cast< float >(PortDebug::ScanSpread()) / 100.f;
+  };
+  hud.SetSpreadWeightTree(x24c_basewidget_leftside, scanSpread);
+  hud.SetSpreadWeightTree(x250_basewidget_rightside, scanSpread);
+  for (int i = 0; i < 20; ++i) {
+    hud.SetSpreadWeightTree(hud.FindWidget(CScannableObjectInfo::GetImagePaneName(i)), scanSpread);
+  }
+#endif
   UpdateHudAlpha();
 }
 

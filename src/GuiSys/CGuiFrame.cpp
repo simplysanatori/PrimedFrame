@@ -298,6 +298,8 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     }
     const CTransform4f world = widget->GetWorldTransform();
     CVector3f anchor = world.GetTranslation();
+    // A widget moved by only part of the horizontal spread (the scan visor's side panels).
+    const float spreadWeight = mSpreadWeights.empty() ? 1.f : GetSpreadWeight(widget);
     // A cluster member (visor/beam selector) shares its group's anchor, so the cluster moves as
     // one unit instead of each icon and lozenge drifting by its own bounding box.
     const CGuiWidget* group = nullptr;
@@ -387,7 +389,7 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
           const float farDepth = bounds.GetMaxPoint().GetY();
           const float quarterWidth = farDepth * authoredQuarterWidthPerDepth;
           const float quarterHeight = farDepth * authoredQuarterHeightPerDepth;
-          const bool spansWidth = spread != 1.f && quarterWidth > 0.f &&
+          const bool spansWidth = spread != 1.f && spreadWeight == 1.f && quarterWidth > 0.f &&
                                   bounds.GetMinPoint().GetX() < -quarterWidth &&
                                   bounds.GetMaxPoint().GetX() > quarterWidth;
           const bool spansHeight = spreadY != 1.f && quarterHeight > 0.f &&
@@ -411,7 +413,7 @@ void CGuiFrame::Draw(const CGuiWidgetDrawParms& parms) const {
     // Never round-trip through SetO2WTransform: its quick parent inverse assumes
     // an orthonormal basis. Even slightly non-unit HUD-lag rotations would then
     // compound scale errors every draw, eventually shrinking the helmet lights.
-    CTransform4f hudXf = x14_camera->GetHudTransform(anchor);
+    CTransform4f hudXf = x14_camera->GetHudTransform(anchor, 1.f, spreadWeight);
     if (group && aboutEye && spread == 1.f && spreadY != 1.f) {
       // A cluster off to the side: the rigid path pitches it to face the eye, which tips its
       // inward-turned cards into a slant against the struts. Sliding it straight down (or up) at
@@ -476,6 +478,35 @@ void CGuiFrame::SetSpreadSlideTree(const CGuiWidget* root) {
       }
     }
   }
+}
+
+void CGuiFrame::SetSpreadWeightTree(const CGuiWidget* root, float (*weight)()) {
+  if (!root || !weight) {
+    return;
+  }
+  for (CGuiWidget* widget : x2c_widgets) {
+    for (const CGuiObject* obj = widget; obj; obj = obj->GetParent()) {
+      if (obj == root) {
+        auto it = std::find_if(mSpreadWeights.begin(), mSpreadWeights.end(),
+                               [&](const auto& entry) { return entry.first == widget; });
+        if (it != mSpreadWeights.end()) {
+          it->second = weight;
+        } else {
+          mSpreadWeights.emplace_back(widget, weight);
+        }
+        break;
+      }
+    }
+  }
+}
+
+float CGuiFrame::GetSpreadWeight(const CGuiWidget* widget) const {
+  for (const auto& entry : mSpreadWeights) {
+    if (entry.first == widget) {
+      return std::max(0.f, std::min(1.f, entry.second()));
+    }
+  }
+  return 1.f;
 }
 
 void CGuiFrame::SetSpreadAnchorTree(const CGuiWidget* root) {

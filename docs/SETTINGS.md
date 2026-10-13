@@ -283,6 +283,12 @@
   menus and the minimap toward the screen centre, each frame as a whole so the
   pieces stay on the visor frame. The helmet is not scaled. The minimap eases
   back to full size as it opens into the map screen.
+- Scan image spread (Video > Display, persisted as `scan_spread`, 0-100 percent,
+  default 100): how far the widescreen HUD moves the scan visor's side panels and
+  the scan images out toward the screen edges. At 0 they keep their 4:3 place
+  near the centre, clear of a phone's touch controls; the rest of the HUD still
+  spreads. No effect at 4:3, without the widescreen HUD, or under Original
+  experience. Console: `scanspread <0..100>`.
 - Crosshair opacity and colour (Video > Display, persisted as `crosshair_opacity`,
   0-100 percent, default 100, and `crosshair_color`, `RRGGBB` or empty for the
   game's own colour): the centre crosshair of free aim, mouse aim and twin stick.
