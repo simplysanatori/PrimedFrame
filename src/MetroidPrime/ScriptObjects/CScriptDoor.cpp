@@ -211,8 +211,12 @@ CScriptDoor::EDoorOpenCondition CScriptDoor::GetDoorOpenCondition(CStateManager&
     // list (PCA + Phazon Processing Center + Elite Quarters in backwards Lower
     // Mines), and AllocateUniqueId then hangs in the error handler. Release
     // those rooms first, as the doorway trigger's SetToZero would; TravelToArea
-    // deallocates them before it streams the new one.
-    if (mgr.GetNextAreaId() == dock->GetAreaId()) {
+    // deallocates them before it streams the new one. Only in PCA, the one room
+    // where this can happen, so every other door keeps the original behaviour.
+    const CAssetId kProcessingCenterAccess = 0xED6DE73B;
+    if (mgr.GetNextAreaId() == dock->GetAreaId() &&
+        mgr.GetWorld()->GetAreaAlways(dock->GetAreaId()).IGetAreaAssetId() ==
+            kProcessingCenterAccess) {
       bool otherOpen = false;
       CObjectList& doors = mgr.ObjectListById(kOL_PlatformAndDoor);
       for (int i = doors.GetFirstObjectIndex(); i != -1; i = doors.GetNextObjectIndex(i)) {
