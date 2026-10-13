@@ -641,6 +641,23 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_remastered_effect_tests PRIVATE platform/include)
     add_executable(port_remastered_effect_convert_tests tests/port_remastered_effect_convert.cpp platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp)
     target_include_directories(port_remastered_effect_convert_tests PRIVATE platform/include)
+    add_executable(port_ice_rotation_element_tests
+        tests/port_ice_rotation_element.cpp
+        src/Kyoto/Particles/CVectorElement.cpp
+        src/Kyoto/Math/CQuaternion.cpp
+        src/Kyoto/Math/CVector3f.cpp
+        src/Kyoto/Math/CMatrix3f.cpp)
+    target_include_directories(port_ice_rotation_element_tests PRIVATE include extern/aurora/include)
+    target_compile_definitions(port_ice_rotation_element_tests PRIVATE TARGET_PC VERSION=0)
+    if(MSVC)
+        target_compile_options(port_ice_rotation_element_tests PRIVATE /Gy)
+        target_link_options(port_ice_rotation_element_tests PRIVATE /OPT:REF)
+    else()
+        target_compile_options(port_ice_rotation_element_tests PRIVATE -ffunction-sections -fdata-sections)
+        target_link_options(port_ice_rotation_element_tests PRIVATE -Wl,--gc-sections)
+    endif()
+    add_test(NAME port_ice_rotation_element_tests COMMAND port_ice_rotation_element_tests)
+    set_tests_properties(port_ice_rotation_element_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_remastered_effect_import_tests tests/port_remastered_effect_import.cpp platform/port_remastered_effect_import.cpp platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp platform/port_remastered_image.cpp)
     target_include_directories(port_remastered_effect_import_tests PRIVATE platform/include)
     target_link_libraries(port_remastered_effect_import_tests PRIVATE astcenc)

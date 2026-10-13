@@ -998,8 +998,8 @@ void TestParameterDefault() {
         "SPAF is listed as approximated");
 }
 
-// PMRQ REUL(x, y, z, #00) is retail's PMRT (both Rz * Ry * Rx in degrees);
-// an angle with IRND is dropped (retail would give 0 after frame 0).
+// A direct PMRQ REUL remains the existing PMRT CNST path, including its
+// existing refusal to represent IRND.
 void TestModelRotation() {
   auto parts = ConvertOne(OneGenerator([](auto& o) {
                  PutProperty(o, "PMRQ", 3);
@@ -1036,6 +1036,104 @@ void TestModelRotation() {
   Check(parts.size() == 1 && parts[0].part == plain.bytes, "PMRQ with IRND writes nothing");
   Check(!parts.empty() && parts[0].dropped.size() == 1 && parts[0].dropped[0] == "PMRQ: an angle with IRND",
         "PMRQ with IRND is listed as dropped");
+}
+
+void PutLoopingEmitterKey(std::vector<uint8_t>& out) {
+  PutFourCC(out, "KEYE");
+  Put32(out, 0);    // emitter time, not life percentage
+  Put32(out, 0);    // unknown
+  out.push_back(1); // loop
+  out.push_back(0); // unknown
+  Put32(out, 120);  // end
+  Put32(out, 0);    // start
+  Put32(out, 120);  // all source samples
+  for (int i = 0; i < 120; ++i) {
+    const float degrees = i == 119 ? 360.00003f : i == 0 ? 0.f : float(i) * 3.0252087f;
+    Put32(out, Bits(degrees));
+  }
+}
+
+void PutStaticEuler(std::vector<uint8_t>& out, float x, float y, float z, uint8_t order = 0) {
+  PutFourCC(out, "REUL");
+  PutConstant(out, Bits(x));
+  PutConstant(out, Bits(y));
+  PutConstant(out, Bits(z));
+  out.push_back(order);
+}
+
+void TestComposedModelRotation() {
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                  PutProperty(o, "PMRQ", 3);
+                  PutFourCC(o, "RADD");
+                  PutFourCC(o, "REUL");
+                  for (int i = 0; i < 3; ++i) {
+                    PutFourCC(o, "IRND");
+                    PutConstant(o, Bits(0.f));
+                    PutConstant(o, Bits(360.f));
+                  }
+                  o.push_back(0);
+                  PutFourCC(o, "REUL");
+                  PutLoopingEmitterKey(o);
+                  PutLoopingEmitterKey(o);
+                  PutConstant(o, Bits(0.f));
+                  o.push_back(0);
+                  PutTexr(o, 0x1234ABCD);
+                }),
+                {});
+
+  Retail want;
+  want.f("GPSM").f("PMRT").f("PQAD");
+  want.f("CNST");
+  for (int i = 0; i < 3; ++i) {
+    want.f("IRND").f("CNST").w(Bits(0.f)).f("CNST").w(Bits(360.f));
+  }
+  want.f("CNST");
+  for (int axis = 0; axis < 2; ++axis) {
+    want.f("KEYE").w(0).w(0).b(1).b(0).w(120).w(0).w(120);
+    for (int i = 0; i < 120; ++i) {
+      const float degrees = i == 119 ? 360.00003f : i == 0 ? 0.f : float(i) * 3.0252087f;
+      want.w(Bits(degrees));
+    }
+  }
+  want.f("CNST").w(Bits(0.f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  Check(parts.size() == 1 && parts[0].part == want.bytes,
+        "ordered PMRQ preserves IRND and all 120 looping KEYE samples in PQAD");
+  Check(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(),
+        "ordered PMRQ has no dropped or approximated rotation data");
+  if (!parts.empty()) {
+    std::vector<RetailPartProperty> properties;
+    std::string error;
+    Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
+          "PQAD PMRT passes the retail element reader");
+  }
+
+  parts = ConvertOne(OneGenerator([](auto& o) {
+                PutProperty(o, "PMRQ", 3);
+                PutFourCC(o, "RADD");
+                PutStaticEuler(o, 90.f, 0.f, 0.f, 1);
+                PutStaticEuler(o, 0.f, 90.f, 0.f);
+                PutTexr(o, 0x1234ABCD);
+              }),
+              {});
+  Check(!parts.empty() && parts[0].dropped.size() == 1 &&
+            parts[0].dropped[0] == "PMRQ: a rotation order other than 0 (XYZ)",
+        "ordered PMRQ rejects an unsupported Euler order");
+
+  parts = ConvertOne(OneGenerator([](auto& o) {
+                PutProperty(o, "PMRQ", 3);
+                PutFourCC(o, "RADD");
+                PutStaticEuler(o, 90.f, 0.f, 0.f);
+                PutFourCC(o, "CNST");
+                PutConstant(o, Bits(0.f));
+                PutConstant(o, Bits(90.f));
+                PutConstant(o, Bits(0.f));
+                PutTexr(o, 0x1234ABCD);
+              }),
+              {});
+  Check(!parts.empty() && parts[0].dropped.size() == 1 &&
+            parts[0].dropped[0] == "PMRQ: a rotation that is not REUL",
+        "ordered PMRQ refuses a non-REUL operand rather than adding Euler components");
 }
 
 // A MATI with one shader and its texture parameters, as ParseMati reads it.
@@ -1564,6 +1662,7 @@ int main() {
   TestGpuAvailability();
   TestParameterDefault();
   TestModelRotation();
+  TestComposedModelRotation();
   TestVmatNewRecipes();
   TestWaveOrbHeaderBlend();
   TestModelsOnly();

@@ -1229,6 +1229,14 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     ret = rs_new CVEColorToVector(value);
     break;
   }
+#ifdef TARGET_PC
+  case SBIG('PQAD'): {
+    CVectorElement* first = GetVectorElement(in);
+    CVectorElement* second = GetVectorElement(in);
+    ret = rs_new CVEOrderedEulerProduct(first, second);
+    break;
+  }
+#endif
   default:
     ret = nullptr;
     break;
