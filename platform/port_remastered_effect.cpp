@@ -219,20 +219,25 @@ bool HasFourCC(const char* words, uint32_t value) {
   return false;
 }
 
-enum class RolePropertyEncoding : uint8_t { Guid, CnstByte, Typed };
+enum class RolePropertyEncoding : uint8_t { Guid, CnstByte, Typed, Rotation };
+
+constexpr uint8_t kAnyRolePropertyTag = 0xff;
 
 struct RolePropertySchema {
   uint32_t form;
   uint32_t property;
   RolePropertyEncoding encoding;
   char type = 0;
+  uint8_t expectedTag = kAnyRolePropertyTag;
 };
 
 // Exact role-root allowlist. Every row is tied to its factory form and one
 // factory-proven representation; the global property-name set and fallback
-// signatures are deliberately irrelevant to role parsing.
+// signatures are deliberately irrelevant to role parsing. The new Plasma rows
+// also pin the observed input-header selector instead of accepting any tag.
 constexpr RolePropertySchema kRolePropertySchemas[] = {
     {FourCCOf("WPSM"), FourCCOf("APSM"), RolePropertyEncoding::Guid},
+    {FourCCOf("WPSM"), FourCCOf("APS2"), RolePropertyEncoding::Guid, 0, 0},
     {FourCCOf("WPSM"), FourCCOf("ASW1"), RolePropertyEncoding::Guid},
     {FourCCOf("WPSM"), FourCCOf("ASW2"), RolePropertyEncoding::Guid},
     {FourCCOf("WPSM"), FourCCOf("ASW3"), RolePropertyEncoding::Guid},
@@ -240,6 +245,7 @@ constexpr RolePropertySchema kRolePropertySchemas[] = {
     {FourCCOf("WPSM"), FourCCOf("FC60"), RolePropertyEncoding::CnstByte},
     {FourCCOf("WPSM"), FourCCOf("SPS1"), RolePropertyEncoding::CnstByte},
     {FourCCOf("WPSM"), FourCCOf("HOMG"), RolePropertyEncoding::CnstByte},
+    {FourCCOf("WPSM"), FourCCOf("INRT"), RolePropertyEncoding::Rotation, 0, 0},
     {FourCCOf("WPSM"), FourCCOf("AP11"), RolePropertyEncoding::CnstByte},
     {FourCCOf("WPSM"), FourCCOf("AP21"), RolePropertyEncoding::CnstByte},
     {FourCCOf("WPSM"), FourCCOf("APSO"), RolePropertyEncoding::CnstByte},
@@ -273,11 +279,15 @@ constexpr RolePropertySchema kRolePropertySchemas[] = {
     {FourCCOf("CRSM"), FourCCOf("RNGE"), RolePropertyEncoding::Typed, 'R'},
     {FourCCOf("CRSM"), FourCCOf("PBHX"), RolePropertyEncoding::Guid},
     {FourCCOf("CRSM"), FourCCOf("CSFX"), RolePropertyEncoding::Guid},
+    {FourCCOf("CRSM"), FourCCOf("3MUD"), RolePropertyEncoding::Guid, 0, 4},
+    {FourCCOf("CRSM"), FourCCOf("3LAV"), RolePropertyEncoding::Guid, 0, 4},
+    {FourCCOf("CRSM"), FourCCOf("3SAN"), RolePropertyEncoding::Guid, 0, 4},
 };
 
 constexpr size_t kMaxRoleProperties = 1024;
 constexpr size_t kMaxRoleExpressionDepth = 64;
 constexpr size_t kMaxRoleValueNodes = 4096;
+constexpr uint8_t kEulerRotationOrderCount = 6;
 
 const RolePropertySchema* FindRolePropertySchema(uint32_t form, uint32_t property) {
   for (const RolePropertySchema& schema : kRolePropertySchemas) {
@@ -549,6 +559,10 @@ public:
         error = "unknown role property " + EffectFourCCString(fourcc) + " at " + offset;
         return false;
       }
+      if (schema->expectedTag != kAnyRolePropertyTag && tag != schema->expectedTag) {
+        error = "role property " + EffectFourCCString(fourcc) + " has an unexpected input-header tag";
+        return false;
+      }
       if (!ConsumeRoleNode(0, nodes)) {
         error = "role value-node budget exceeded";
         return false;
@@ -589,6 +603,20 @@ public:
         element.args.push_back(std::move(byte));
         property.value.push_back(std::move(element));
         valueAt += 5;
+      } else if (schema->encoding == RolePropertyEncoding::Rotation) {
+        EffectValue value;
+        if (!ParseRoleRotation(valueAt, 1, nodes, value, end)) {
+          if (m_roleDepthExceeded) {
+            error = "role expression-depth limit exceeded";
+          } else if (m_roleNodeBudgetExceeded) {
+            error = "role value-node budget exceeded";
+          } else {
+            error = "role property " + EffectFourCCString(fourcc) +
+                    " is not an exact REUL rotation with three typed reals and an enum byte";
+          }
+          return false;
+        }
+        property.value.push_back(std::move(value));
       } else {
         EffectValue value;
         if (!ParseRoleTyped(valueAt, schema->type, 1, nodes, value, end)) {
@@ -1370,6 +1398,56 @@ private:
     }
     value.size = at - start;
     out = std::move(value);
+    return true;
+  }
+
+  bool ParseRoleRotation(size_t& at, size_t depth, size_t& nodes, EffectValue& out, size_t end) {
+    if (depth > kMaxRoleExpressionDepth) {
+      m_roleDepthExceeded = true;
+      return false;
+    }
+    if (!SpanFits(at, 4, end) || !ConsumeRoleNode(depth, nodes)) {
+      return false;
+    }
+    const size_t start = at;
+    if (FourCCAt(at) != FourCCOf("REUL")) {
+      return false;
+    }
+
+    EffectValue rotation;
+    rotation.kind = EffectValue::Kind::Element;
+    rotation.fourcc = FourCCOf("REUL");
+    rotation.offset = start;
+    at += 4;
+    // The source calls GetRealElement three times. Reuse only the unique typed-R
+    // role grammar; Element() and unknown-arity guesses are not valid here.
+    for (size_t i = 0; i < 3; ++i) {
+      EffectValue real;
+      if (!ParseRoleTyped(at, 'R', depth + 1, nodes, real, end)) {
+        return false;
+      }
+      rotation.args.push_back(std::move(real));
+    }
+
+    // GetRotationElement reads and stores one ERotationOrder byte after the
+    // three GetRealElement values. QuatGeneric has the six source enum cases
+    // 0..5; reject the fallback case rather than treating it as another order.
+    if (!SpanFits(at, 1, end) || !ConsumeRoleNode(depth + 1, nodes)) {
+      return false;
+    }
+    const uint8_t order = m_data[at];
+    if (order >= kEulerRotationOrderCount) {
+      return false;
+    }
+    EffectValue enumValue;
+    enumValue.kind = EffectValue::Kind::Byte;
+    enumValue.word = order;
+    enumValue.offset = at;
+    enumValue.size = 1;
+    rotation.args.push_back(std::move(enumValue));
+    ++at;
+    rotation.size = at - start;
+    out = std::move(rotation);
     return true;
   }
 

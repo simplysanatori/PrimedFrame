@@ -54,7 +54,7 @@ inline constexpr int kConverter = 52;
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 3;
 inline constexpr int kModels = 6;      // the table's models, their looks and the ANCS copies
-inline constexpr int kEffects = 21;     // port_remastered_effect_import and the particle converters
+inline constexpr int kEffects = 22;     // port_remastered_effect_import and the particle converters
 inline constexpr int kRooms = 12;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 0;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 0;        // port_remastered_text, and the font (port_remastered_font)
@@ -142,6 +142,49 @@ struct PowerBallDefaultRoleInput {
 };
 
 struct PowerBallDefaultRolePair {
+  std::array<uint8_t, 16> genp{};
+  uint32_t retailPart = 0;
+};
+
+// The USA 1.00 PlasmaBeam collision-response default is independent of its
+// APSM projectile effect: retail WPSC COLR -> CRSC DEFS PART, and Remastered
+// WPSM COLR -> CRSM DEFS GENP. Asset ids use printed UUID order; serialized
+// role links use UUID little-endian order.
+inline constexpr uint32_t kPlasmaBeamWpsc = 0x310D8B94;
+inline constexpr uint32_t kPlasmaBeamCrsc = 0x48036137;
+inline constexpr uint32_t kPlasmaBeamDefaultPart = 0x650D4419;
+// Printed UUID order: CRSM e42c4b33-8618-44ab-ab5c-d88dd71d9ee6,
+// GENP 249c566b-6276-4f00-b905-3c3a73c8c647.
+inline constexpr std::array<uint8_t, 16> kPlasmaBeamCrsm = {0xE4, 0x2C, 0x4B, 0x33, 0x86, 0x18, 0x44, 0xAB,
+                                                           0xAB, 0x5C, 0xD8, 0x8D, 0xD7, 0x1D, 0x9E, 0xE6};
+inline constexpr std::array<uint8_t, 16> kPlasmaBeamDefaultGenp = {0x24, 0x9C, 0x56, 0x6B, 0x62, 0x76, 0x4F, 0x00,
+                                                                  0xB9, 0x05, 0x3C, 0x3A, 0x73, 0xC8, 0xC6, 0x47};
+// The stored links are the same UUIDs in uuid.UUID(...).bytes_le order.
+inline constexpr std::array<uint8_t, 16> kPlasmaBeamCrsmLink = {0x33, 0x4B, 0x2C, 0xE4, 0x18, 0x86, 0xAB, 0x44,
+                                                               0xAB, 0x5C, 0xD8, 0x8D, 0xD7, 0x1D, 0x9E, 0xE6};
+inline constexpr std::array<uint8_t, 16> kPlasmaBeamDefaultGenpLink = {0x6B, 0x56, 0x9C, 0x24, 0x76, 0x62, 0x00, 0x4F,
+                                                                      0xB9, 0x05, 0x3C, 0x3A, 0x73, 0xC8, 0xC6, 0x47};
+
+struct PlasmaBeamDefaultRoleInput {
+  std::string_view weaponName;  // the lower-case FrameKey for PlasmaBeam.WPSM
+  uint32_t retailWpscId = 0;
+  bool retailWpscExists = false;
+  bool retailCrscExists = false;
+  bool retailPartExists = false;
+  bool remasteredWpsmExists = false;
+  bool remasteredCrsmExists = false;
+  bool remasteredGenpExists = false;
+  const uint8_t* retailWpsc = nullptr;
+  size_t retailWpscSize = 0;
+  const uint8_t* retailCrsc = nullptr;
+  size_t retailCrscSize = 0;
+  const uint8_t* remasteredWpsm = nullptr;
+  size_t remasteredWpsmSize = 0;
+  const uint8_t* remasteredCrsm = nullptr;
+  size_t remasteredCrsmSize = 0;
+};
+
+struct PlasmaBeamDefaultRolePair {
   std::array<uint8_t, 16> genp{};
   uint32_t retailPart = 0;
 };
@@ -298,6 +341,64 @@ inline bool ResolvePowerBallDefaultRole(const PowerBallDefaultRoleInput& input, 
   }
   out = {kPowerBallDefaultGenp, part};
   return true;
+}
+
+// Resolve only the raw, typed USA 1.00 PlasmaBeam chain. The caller supplies
+// uniqueness/type checks from the real retail and PAK indexes; every link is
+// then independently parsed and compared against the pinned chain.
+inline bool ResolvePlasmaBeamDefaultRole(const PlasmaBeamDefaultRoleInput& input, PlasmaBeamDefaultRolePair& out,
+                                         std::string* error = nullptr) {
+  auto fail = [error](std::string message) {
+    if (error != nullptr) {
+      *error = std::move(message);
+    }
+    return false;
+  };
+  if (input.weaponName != "plasmabeam" || input.retailWpscId != kPlasmaBeamWpsc || !input.retailWpscExists ||
+      !input.retailCrscExists || !input.retailPartExists || !input.remasteredWpsmExists ||
+      !input.remasteredCrsmExists || !input.remasteredGenpExists) {
+    return fail("pinned USA identity or unique typed-resource presence gate failed");
+  }
+  uint32_t crsc = 0;
+  uint32_t part = 0;
+  std::array<uint8_t, 16> crsm{};
+  std::array<uint8_t, 16> genp{};
+  std::string why;
+  if (!detail::ReadUniqueRetailAssetId(input.retailWpsc, input.retailWpscSize, "WPSM", "COLR", crsc, &why)) {
+    return fail("retail WPSC: " + why);
+  }
+  if (crsc != kPlasmaBeamCrsc) {
+    return fail("retail WPSC COLR does not name the pinned USA CRSC");
+  }
+  if (!detail::ReadUniqueRetailAssetId(input.retailCrsc, input.retailCrscSize, "CRSM", "DEFS", part, &why)) {
+    return fail("retail CRSC: " + why);
+  }
+  if (part != kPlasmaBeamDefaultPart) {
+    return fail("retail CRSC DEFS does not name the pinned USA PART");
+  }
+  if (!detail::ReadUniqueReversedGuidLink(input.remasteredWpsm, input.remasteredWpsmSize, "WPSM", "COLR", 0,
+                                          crsm, &why)) {
+    return fail("Remastered WPSM: " + why);
+  }
+  if (crsm != kPlasmaBeamCrsmLink) {
+    return fail("Remastered WPSM COLR does not name the pinned CRSM");
+  }
+  if (!detail::ReadUniqueReversedGuidLink(input.remasteredCrsm, input.remasteredCrsmSize, "CRSM", "DEFS", 4,
+                                          genp, &why)) {
+    return fail("Remastered CRSM: " + why);
+  }
+  if (genp != kPlasmaBeamDefaultGenpLink) {
+    return fail("Remastered CRSM DEFS does not name the pinned GENP");
+  }
+  out = {kPlasmaBeamDefaultGenp, part};
+  return true;
+}
+
+inline bool ConflictsWithPlasmaBeamDefaultRolePair(const PlasmaBeamDefaultRolePair& candidate,
+                                                   const std::array<uint8_t, 16>& existingGenp,
+                                                   uint32_t existingRetail) {
+  return (existingGenp == candidate.genp || existingRetail == candidate.retailPart) &&
+         !(existingGenp == candidate.genp && existingRetail == candidate.retailPart);
 }
 
 // A default-role mapping must not override another established mapping that

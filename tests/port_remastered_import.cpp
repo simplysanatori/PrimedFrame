@@ -83,6 +83,22 @@ void PutReversedBoolProperty(std::vector<uint8_t>& data, const char (&field)[5],
   data.push_back(value);
 }
 
+void PutReversedRealConstant(std::vector<uint8_t>& data, uint32_t bits = 0) {
+  PutReversedFourCC(data, "CNST");
+  PutLe32(data, bits);
+}
+
+void PutReversedEulerRotation(std::vector<uint8_t>& data, uint8_t order = 0, size_t realCount = 3,
+                              bool includeOrder = true) {
+  PutReversedFourCC(data, "REUL");
+  for (size_t i = 0; i < realCount; ++i) {
+    PutReversedRealConstant(data);
+  }
+  if (includeOrder) {
+    data.push_back(order);
+  }
+}
+
 void PutRoleKeyframeProperty(std::vector<uint8_t>& data, const char (&field)[5],
                              const char (&element)[5], uint32_t count, size_t keySize,
                              uint8_t keyFill = 0) {
@@ -292,6 +308,100 @@ PowerBallDefaultRoleInput PowerBallInput(const Fixture& fixture) {
 void ExpectPowerBallRejected(const Fixture& fixture, const char* what) {
   PowerBallDefaultRolePair pair;
   Check(!ResolvePowerBallDefaultRole(PowerBallInput(fixture), pair), what);
+}
+
+enum class PlasmaRoleField { None, WpscColr, CrscDefs, WpsmColr, CrsmDefs };
+
+Fixture MakePlasmaBeamFixture(uint32_t crsc = kPlasmaBeamCrsc, uint32_t part = kPlasmaBeamDefaultPart,
+                              const std::array<uint8_t, 16>& crsm = kPlasmaBeamCrsmLink,
+                              const std::array<uint8_t, 16>& genp = kPlasmaBeamDefaultGenpLink,
+                              bool retailDecoy = true, bool duplicate = false, bool includeRoleFields = true,
+                              uint8_t wpsmKind = 0, uint8_t crsmKind = 4,
+                              PlasmaRoleField omittedField = PlasmaRoleField::None,
+                              PlasmaRoleField duplicateField = PlasmaRoleField::None) {
+  Fixture fixture;
+  PutFourCC(fixture.retailWpsc, "WPSM");
+  if (retailDecoy) {
+    PutRetailVectorDecoy(fixture.retailWpsc, kPlasmaBeamCrsc);
+  }
+  if (includeRoleFields && omittedField != PlasmaRoleField::WpscColr) {
+    PutRetailLink(fixture.retailWpsc, "COLR", crsc);
+    if (duplicate || duplicateField == PlasmaRoleField::WpscColr) {
+      PutRetailLink(fixture.retailWpsc, "COLR", crsc);
+    }
+  }
+  PutFourCC(fixture.retailWpsc, "_END");
+
+  PutFourCC(fixture.retailCrsc, "CRSM");
+  if (includeRoleFields && omittedField != PlasmaRoleField::CrscDefs) {
+    PutRetailLink(fixture.retailCrsc, "DEFS", part);
+    if (duplicate || duplicateField == PlasmaRoleField::CrscDefs) {
+      PutRetailLink(fixture.retailCrsc, "DEFS", part);
+    }
+  }
+  PutFourCC(fixture.retailCrsc, "_END");
+
+  std::vector<uint8_t> weaponProperties;
+  if (includeRoleFields && omittedField != PlasmaRoleField::WpsmColr) {
+    PutReversedGuidLink(weaponProperties, "COLR", wpsmKind, crsm);
+    if (duplicate || duplicateField == PlasmaRoleField::WpsmColr) {
+      PutReversedGuidLink(weaponProperties, "COLR", wpsmKind, crsm);
+    }
+  }
+  const std::array<uint8_t, 16> nilGuid{};
+  PutReversedGuidLink(weaponProperties, "APS2", 0, nilGuid);
+  PutReversedFourCC(weaponProperties, "INRT");
+  weaponProperties.push_back(0);
+  PutReversedEulerRotation(weaponProperties);
+  PutReversedFourCC(weaponProperties, "_END");
+  weaponProperties.push_back(4);
+  fixture.remasteredWpsm = RemasteredForm("WPSM", "WPSM", std::move(weaponProperties));
+
+  std::vector<uint8_t> collisionProperties;
+  if (includeRoleFields && omittedField != PlasmaRoleField::CrsmDefs) {
+    PutReversedGuidLink(collisionProperties, "DEFS", crsmKind, genp);
+    if (duplicate || duplicateField == PlasmaRoleField::CrsmDefs) {
+      PutReversedGuidLink(collisionProperties, "DEFS", crsmKind, genp);
+    }
+  }
+  constexpr std::array<uint8_t, 16> plasmaDecalGuid = {0x40, 0x3c, 0x04, 0x71, 0x0e, 0x58, 0x05, 0x4c,
+                                                       0xb0, 0xb4, 0x4f, 0xe1, 0xf2, 0x0e, 0x11, 0x2d};
+  PutReversedGuidLink(collisionProperties, "3MUD", 4, plasmaDecalGuid);
+  PutReversedGuidLink(collisionProperties, "3LAV", 4, plasmaDecalGuid);
+  PutReversedGuidLink(collisionProperties, "3SAN", 4, plasmaDecalGuid);
+  PutReversedFourCC(collisionProperties, "_END");
+  collisionProperties.push_back(4);
+  fixture.remasteredCrsm = RemasteredForm("CRSM", "CRSM", std::move(collisionProperties));
+  return fixture;
+}
+
+Fixture MakePlasmaBeamFixtureWithSingleRoleFieldChange(PlasmaRoleField field, bool duplicate) {
+  return MakePlasmaBeamFixture(kPlasmaBeamCrsc, kPlasmaBeamDefaultPart, kPlasmaBeamCrsmLink,
+                               kPlasmaBeamDefaultGenpLink, true, false, true, 0, 4,
+                               duplicate ? PlasmaRoleField::None : field,
+                               duplicate ? field : PlasmaRoleField::None);
+}
+
+PlasmaBeamDefaultRoleInput PlasmaBeamInput(const Fixture& fixture) {
+  PlasmaBeamDefaultRoleInput input;
+  input.weaponName = "plasmabeam";
+  input.retailWpscId = kPlasmaBeamWpsc;
+  input.retailWpscExists = input.retailCrscExists = input.retailPartExists = true;
+  input.remasteredWpsmExists = input.remasteredCrsmExists = input.remasteredGenpExists = true;
+  input.retailWpsc = fixture.retailWpsc.data();
+  input.retailWpscSize = fixture.retailWpsc.size();
+  input.retailCrsc = fixture.retailCrsc.data();
+  input.retailCrscSize = fixture.retailCrsc.size();
+  input.remasteredWpsm = fixture.remasteredWpsm.data();
+  input.remasteredWpsmSize = fixture.remasteredWpsm.size();
+  input.remasteredCrsm = fixture.remasteredCrsm.data();
+  input.remasteredCrsmSize = fixture.remasteredCrsm.size();
+  return input;
+}
+
+void ExpectPlasmaBeamRejected(const Fixture& fixture, const char* what) {
+  PlasmaBeamDefaultRolePair pair;
+  Check(!ResolvePlasmaBeamDefaultRole(PlasmaBeamInput(fixture), pair), what);
 }
 
 void TestExactPairAndNestedDecoys() {
@@ -1086,9 +1196,181 @@ void TestProvenRolePropertySchemas() {
   }());
   error.clear();
   Check(!PortRemastered::ParseRemasteredRoleAsset(wrongDdclForm.data(), wrongDdclForm.size(),
-                                                   PortRemastered::EffectFourCC("WPSM"), node, error) &&
+                                                    PortRemastered::EffectFourCC("WPSM"), node, error) &&
             error.find("unknown role property DDCL") != std::string::npos,
         "CRSM-only DDCL schema does not make the field generally permissive");
+}
+
+void TestPlasmaRoleSchemaExtensions() {
+  using PortRemastered::EffectFourCC;
+  using PortRemastered::EffectValue;
+
+  PortRemastered::EffectNode node;
+  std::string error;
+  const auto parseRoot = [&](const char (&root)[5], std::vector<uint8_t> properties) {
+    PutReversedFourCC(properties, "_END");
+    properties.push_back(4);
+    const std::vector<uint8_t> asset = RemasteredForm(root, root, std::move(properties));
+    error.clear();
+    return PortRemastered::ParseRemasteredRoleAsset(asset.data(), asset.size(), EffectFourCC(root), node, error);
+  };
+  const auto hasGuidProperty = [&](uint32_t fourcc, uint8_t tag, const std::array<uint8_t, 16>& expected) {
+    for (const PortRemastered::EffectProperty& property : node.properties) {
+      if (property.fourcc == fourcc && property.tag == tag && property.value.size() == 1 &&
+          property.value.front().kind == EffectValue::Kind::Guid && property.value.front().guid == expected) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const std::array<uint8_t, 16> nilGuid{};
+  std::vector<uint8_t> aps2;
+  PutReversedGuidLink(aps2, "APS2", 0, nilGuid);
+  Check(parseRoot("WPSM", std::move(aps2)), "raw WPSM APS2 accepts its source-proven nil generator GUID");
+  Check(hasGuidProperty(EffectFourCC("APS2"), 0, nilGuid), "WPSM APS2 exposes the exact nil GUID value");
+
+  std::vector<uint8_t> truncatedAps2;
+  PutReversedFourCC(truncatedAps2, "APS2");
+  truncatedAps2.push_back(0);
+  truncatedAps2.insert(truncatedAps2.end(), nilGuid.begin(), nilGuid.begin() + 8);
+  Check(!parseRoot("WPSM", std::move(truncatedAps2)), "WPSM APS2 rejects a truncated fixed GUID");
+
+  std::vector<uint8_t> wrongKindAps2;
+  PutReversedGuidLink(wrongKindAps2, "APS2", 4, nilGuid);
+  Check(!parseRoot("WPSM", std::move(wrongKindAps2)) && error.find("unexpected input-header tag") != std::string::npos,
+        "WPSM APS2 rejects a valid GUID under the wrong source input-header kind");
+
+  std::vector<uint8_t> aps2InCrsm;
+  PutReversedGuidLink(aps2InCrsm, "APS2", 0, nilGuid);
+  Check(!parseRoot("CRSM", std::move(aps2InCrsm)) && error.find("unknown role property APS2") != std::string::npos,
+        "WPSM-only APS2 is not admitted by the CRSM role schema");
+
+  std::vector<uint8_t> validInrt;
+  PutReversedFourCC(validInrt, "INRT");
+  validInrt.push_back(0);
+  PutReversedEulerRotation(validInrt, 5);
+  Check(parseRoot("WPSM", std::move(validInrt)),
+        "raw WPSM INRT accepts exact REUL with three typed reals and order byte");
+  bool inrtParsed = false;
+  for (const PortRemastered::EffectProperty& property : node.properties) {
+    if (property.fourcc != EffectFourCC("INRT") || property.tag != 0 || property.value.size() != 1) {
+      continue;
+    }
+    const EffectValue& rotation = property.value.front();
+    inrtParsed = rotation.kind == EffectValue::Kind::Element && rotation.fourcc == EffectFourCC("REUL") &&
+                 rotation.size == 29 && rotation.args.size() == 4 &&
+                 rotation.args[3].kind == EffectValue::Kind::Byte && rotation.args[3].word == 5;
+    for (size_t i = 0; i < 3 && inrtParsed; ++i) {
+      const EffectValue& real = rotation.args[i];
+      inrtParsed = real.kind == EffectValue::Kind::Element && real.fourcc == EffectFourCC("CNST") &&
+                   real.args.size() == 1 && real.args.front().kind == EffectValue::Kind::Word &&
+                   real.args.front().word == 0;
+    }
+  }
+  Check(inrtParsed, "WPSM INRT retains three typed real constants plus its exact order byte");
+
+  std::vector<uint8_t> truncatedInrt;
+  PutReversedFourCC(truncatedInrt, "INRT");
+  truncatedInrt.push_back(0);
+  PutReversedEulerRotation(truncatedInrt, 0, 2, false);
+  Check(!parseRoot("WPSM", std::move(truncatedInrt)), "WPSM INRT rejects a truncated three-real REUL expression");
+
+  std::vector<uint8_t> unknownRotation;
+  PutReversedFourCC(unknownRotation, "INRT");
+  unknownRotation.push_back(0);
+  PutReversedFourCC(unknownRotation, "ZZZZ");
+  PutReversedRealConstant(unknownRotation);
+  PutReversedRealConstant(unknownRotation);
+  PutReversedRealConstant(unknownRotation);
+  unknownRotation.push_back(0);
+  Check(!parseRoot("WPSM", std::move(unknownRotation)), "WPSM INRT rejects unproved rotation opcodes without fallback");
+
+  std::vector<uint8_t> unknownReal;
+  PutReversedFourCC(unknownReal, "INRT");
+  unknownReal.push_back(0);
+  PutReversedFourCC(unknownReal, "REUL");
+  PutReversedFourCC(unknownReal, "ZZZZ");
+  PutReversedRealConstant(unknownReal);
+  PutReversedRealConstant(unknownReal);
+  unknownReal.push_back(0);
+  Check(!parseRoot("WPSM", std::move(unknownReal)), "WPSM INRT rejects an unproved typed-real opcode");
+
+  std::vector<uint8_t> ambiguousReal;
+  PutReversedFourCC(ambiguousReal, "INRT");
+  ambiguousReal.push_back(0);
+  PutReversedFourCC(ambiguousReal, "REUL");
+  PutReversedFourCC(ambiguousReal, "MPRD"); // the general table has multiple arities; role parsing refuses to guess
+  PutReversedRealConstant(ambiguousReal);
+  PutReversedRealConstant(ambiguousReal);
+  ambiguousReal.push_back(0);
+  Check(!parseRoot("WPSM", std::move(ambiguousReal)),
+        "WPSM INRT rejects a typed-real opcode with ambiguous arities rather than backtracking");
+
+  std::vector<uint8_t> malformedReal;
+  PutReversedFourCC(malformedReal, "INRT");
+  malformedReal.push_back(0);
+  PutReversedFourCC(malformedReal, "REUL");
+  PutReversedFourCC(malformedReal, "CNST");
+  malformedReal.insert(malformedReal.end(), 3, 0); // a real CNST requires four payload bytes
+  PutReversedRealConstant(malformedReal);
+  PutReversedRealConstant(malformedReal);
+  malformedReal.push_back(0);
+  Check(!parseRoot("WPSM", std::move(malformedReal)), "WPSM INRT rejects a malformed/truncated typed real");
+
+  std::vector<uint8_t> invalidOrder;
+  PutReversedFourCC(invalidOrder, "INRT");
+  invalidOrder.push_back(0);
+  PutReversedEulerRotation(invalidOrder, 6);
+  Check(!parseRoot("WPSM", std::move(invalidOrder)), "WPSM INRT rejects an out-of-range Euler-order enum byte");
+
+  constexpr std::array<uint8_t, 16> plasmaDecalGuid = {0x40, 0x3c, 0x04, 0x71, 0x0e, 0x58, 0x05, 0x4c,
+                                                        0xb0, 0xb4, 0x4f, 0xe1, 0xf2, 0x0e, 0x11, 0x2d};
+  const auto checkDecalField = [&](const char (&field)[5]) {
+    std::vector<uint8_t> valid;
+    PutReversedGuidLink(valid, field, 4, plasmaDecalGuid);
+    Check(parseRoot("CRSM", std::move(valid)), "CRSM source decal field parses as its fixed decal GUID");
+    Check(hasGuidProperty(EffectFourCC(field), 4, plasmaDecalGuid), "CRSM decal field retains its exact GUID");
+
+    std::vector<uint8_t> truncated;
+    PutReversedFourCC(truncated, field);
+    truncated.push_back(4);
+    truncated.insert(truncated.end(), plasmaDecalGuid.begin(), plasmaDecalGuid.begin() + 8);
+    Check(!parseRoot("CRSM", std::move(truncated)), "CRSM source decal field rejects a truncated GUID");
+  };
+  checkDecalField("3MUD");
+  checkDecalField("3LAV");
+  checkDecalField("3SAN");
+
+  std::vector<uint8_t> decalInWpsm;
+  PutReversedGuidLink(decalInWpsm, "3MUD", 4, plasmaDecalGuid);
+  Check(!parseRoot("WPSM", std::move(decalInWpsm)) && error.find("unknown role property 3MUD") != std::string::npos,
+        "CRSM-only decal fields are not admitted by the WPSM role schema");
+
+  std::vector<uint8_t> unknownCrsmField;
+  PutReversedGuidLink(unknownCrsmField, "ZZZZ", 4, plasmaDecalGuid);
+  Check(!parseRoot("CRSM", std::move(unknownCrsmField)) &&
+            error.find("unknown role property ZZZZ") != std::string::npos,
+        "CRSM still rejects unproved properties rather than accepting a GUID fallback");
+}
+
+void TestPlasmaSyntheticSourceShape() {
+  const Fixture fixture = MakePlasmaBeamFixture();
+  PortRemastered::EffectNode wpsm;
+  PortRemastered::EffectNode crsm;
+  std::string error;
+  Check(PortRemastered::ParseRemasteredRoleAsset(fixture.remasteredWpsm.data(), fixture.remasteredWpsm.size(),
+                                                  PortRemastered::EffectFourCC("WPSM"), wpsm, error),
+        "complete synthetic Plasma WPSM with APS2, INRT, and COLR passes strict role parsing");
+  error.clear();
+  Check(PortRemastered::ParseRemasteredRoleAsset(fixture.remasteredCrsm.data(), fixture.remasteredCrsm.size(),
+                                                  PortRemastered::EffectFourCC("CRSM"), crsm, error),
+        "complete synthetic Plasma CRSM with DEFS and all three decals passes strict role parsing");
+  PlasmaBeamDefaultRolePair pair;
+  error.clear();
+  Check(ResolvePlasmaBeamDefaultRole(PlasmaBeamInput(fixture), pair, &error) &&
+            pair.genp == kPlasmaBeamDefaultGenp && pair.retailPart == kPlasmaBeamDefaultPart,
+        "complete source-shaped Remastered and retail Plasma chain resolves to its pinned GENP/PART");
 }
 
 void TestIdentityAndTypedGates() {
@@ -1207,6 +1489,148 @@ void TestPowerBallIdentityAndTypedGates() {
   input.remasteredGenpExists = false;
   Check(!ResolvePowerBallDefaultRole(input, pair), "a missing, ambiguous, or wrong-type GENP is rejected");
 }
+
+void TestPlasmaBeamExactChainAndConflicts() {
+  const Fixture fixture = MakePlasmaBeamFixture(kPlasmaBeamCrsc, kPlasmaBeamDefaultPart,
+                                                kPlasmaBeamCrsmLink, kPlasmaBeamDefaultGenpLink,
+                                                true);
+  PlasmaBeamDefaultRolePair pair;
+  std::string roleError;
+  const bool resolved = ResolvePlasmaBeamDefaultRole(PlasmaBeamInput(fixture), pair, &roleError);
+  if (!resolved) {
+    std::fprintf(stderr, "PlasmaBeam role resolver: %s\n", roleError.c_str());
+  }
+  Check(resolved,
+        "the exact PlasmaBeam role chain resolves despite a nested retail decoy");
+  Check(pair.genp == kPlasmaBeamDefaultGenp && pair.retailPart == kPlasmaBeamDefaultPart,
+        "PlasmaBeam resolves only to the pinned full GENP GUID and retail PART id");
+  uint32_t retailLink = 0;
+  Check(detail::ReadUniqueRetailAssetId(fixture.retailWpsc.data(), fixture.retailWpsc.size(), "WPSM", "COLR",
+                                        retailLink) && retailLink == kPlasmaBeamCrsc,
+        "PlasmaBeam WPSC COLR is read as a top-level typed link");
+
+  Check(!ConflictsWithPlasmaBeamDefaultRolePair(pair, pair.genp, pair.retailPart),
+        "an identical existing PlasmaBeam pair is idempotent");
+  auto otherGenp = pair.genp;
+  otherGenp[0] ^= 1;
+  Check(ConflictsWithPlasmaBeamDefaultRolePair(pair, otherGenp, pair.retailPart),
+        "a different effect claiming the pinned PlasmaBeam retail PART is a conflict");
+  Check(ConflictsWithPlasmaBeamDefaultRolePair(pair, pair.genp, pair.retailPart + 1),
+        "the pinned PlasmaBeam effect claiming another retail id is a conflict");
+  Check(!ConflictsWithPlasmaBeamDefaultRolePair(pair, otherGenp, pair.retailPart + 1),
+        "an unrelated PlasmaBeam effect/id pair does not conflict");
+
+  Fixture trailing = MakePlasmaBeamFixture();
+  PutRetailLink(trailing.retailWpsc, "COLR", kPlasmaBeamCrsc); // after retail _END
+  PutReversedGuidLink(trailing.remasteredWpsm, "COLR", 0, kPlasmaBeamCrsmLink); // after declared RFRM form
+  PlasmaBeamDefaultRolePair trailingPair;
+  Check(ResolvePlasmaBeamDefaultRole(PlasmaBeamInput(trailing), trailingPair),
+        "bytes beyond retail _END and the declared RFRM form do not add duplicate role links");
+}
+
+void TestPlasmaBeamWrongLinksAndMalformedResources() {
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixture(kPlasmaBeamCrsc + 1),
+                           "a wrong retail PlasmaBeam WPSC COLR link is rejected");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixture(kPlasmaBeamCrsc, kPlasmaBeamDefaultPart + 1),
+                           "a wrong retail PlasmaBeam CRSC DEFS link is rejected");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixture(kPlasmaBeamCrsc, kPlasmaBeamDefaultPart,
+                                                 [] { auto id = kPlasmaBeamCrsmLink; id[0] ^= 1; return id; }()),
+                           "a wrong complete PlasmaBeam Remastered CRSM GUID is rejected");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixture(kPlasmaBeamCrsc, kPlasmaBeamDefaultPart,
+                                                 kPlasmaBeamCrsmLink,
+                                                 [] { auto id = kPlasmaBeamDefaultGenpLink; id[15] ^= 1; return id; }()),
+                           "a wrong complete PlasmaBeam Remastered GENP GUID is rejected");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixture(kPlasmaBeamCrsc, kPlasmaBeamDefaultPart,
+                                                 kPlasmaBeamCrsmLink, kPlasmaBeamDefaultGenpLink,
+                                                 true, true),
+                           "duplicate retail and Remastered PlasmaBeam role fields are rejected");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixture(kPlasmaBeamCrsc, kPlasmaBeamDefaultPart,
+                                                 kPlasmaBeamCrsmLink, kPlasmaBeamDefaultGenpLink,
+                                                 true, false, false),
+                           "absent PlasmaBeam role fields in any chain member are rejected");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixture(kPlasmaBeamCrsc, kPlasmaBeamDefaultPart,
+                                                 kPlasmaBeamCrsmLink, kPlasmaBeamDefaultGenpLink,
+                                                 true, false, true, 4, 4),
+                           "a WPSM COLR with the wrong typed-link kind is rejected");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixture(kPlasmaBeamCrsc, kPlasmaBeamDefaultPart,
+                                                 kPlasmaBeamCrsmLink, kPlasmaBeamDefaultGenpLink,
+                                                 true, false, true, 0, 0),
+                           "a CRSM DEFS with the wrong typed-link kind is rejected");
+
+  Fixture fixture = MakePlasmaBeamFixture();
+  fixture.retailWpsc.pop_back();
+  ExpectPlasmaBeamRejected(fixture, "a malformed PlasmaBeam retail WPSC stream is rejected");
+  fixture = MakePlasmaBeamFixture();
+  fixture.retailCrsc[0] = 'X';
+  ExpectPlasmaBeamRejected(fixture, "a retail PlasmaBeam CRSC with the wrong form type is rejected");
+  fixture = MakePlasmaBeamFixture();
+  fixture.retailWpsc.insert(fixture.retailWpsc.end() - 4, {'B', 'A', 'D', '_'});
+  ExpectPlasmaBeamRejected(fixture, "an unknown top-level retail PlasmaBeam WPSC field is rejected");
+  fixture = MakePlasmaBeamFixture();
+  fixture.remasteredWpsm.pop_back();
+  ExpectPlasmaBeamRejected(fixture, "a truncated PlasmaBeam RFRM resource is rejected");
+  fixture = MakePlasmaBeamFixture();
+  fixture.remasteredWpsm[64] = 'X'; // COLR's reversed FourCC is the first top-level property.
+  ExpectPlasmaBeamRejected(fixture, "an unknown top-level Remastered PlasmaBeam WPSM field is rejected");
+  fixture = MakePlasmaBeamFixture();
+  fixture.remasteredWpsm[23] = 'X'; // Corrupt only the outer RFRM form id.
+  ExpectPlasmaBeamRejected(fixture, "a Remastered PlasmaBeam WPSM with the wrong outer form type is rejected");
+  fixture = MakePlasmaBeamFixture();
+  fixture.remasteredCrsm[23] = 'X'; // Corrupt only the outer RFRM form id.
+  ExpectPlasmaBeamRejected(fixture, "a Remastered PlasmaBeam CRSM with the wrong outer form type is rejected");
+  fixture = MakePlasmaBeamFixture();
+  SetLe64(fixture.remasteredCrsm, 4, UINT64_MAX);
+  ExpectPlasmaBeamRejected(fixture, "an overflowing PlasmaBeam CRSM form declaration is rejected");
+}
+
+void TestPlasmaBeamIndividualRoleFieldPresence() {
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixtureWithSingleRoleFieldChange(PlasmaRoleField::WpscColr, false),
+                           "a missing WPSC COLR alone is rejected while the other three role links remain valid");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixtureWithSingleRoleFieldChange(PlasmaRoleField::CrscDefs, false),
+                           "a missing CRSC DEFS alone is rejected while the other three role links remain valid");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixtureWithSingleRoleFieldChange(PlasmaRoleField::WpsmColr, false),
+                           "a missing WPSM COLR alone is rejected while the other three role links remain valid");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixtureWithSingleRoleFieldChange(PlasmaRoleField::CrsmDefs, false),
+                           "a missing CRSM DEFS alone is rejected while the other three role links remain valid");
+
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixtureWithSingleRoleFieldChange(PlasmaRoleField::WpscColr, true),
+                           "a duplicate WPSC COLR alone is rejected while the other three role links remain valid");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixtureWithSingleRoleFieldChange(PlasmaRoleField::CrscDefs, true),
+                           "a duplicate CRSC DEFS alone is rejected while the other three role links remain valid");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixtureWithSingleRoleFieldChange(PlasmaRoleField::WpsmColr, true),
+                           "a duplicate WPSM COLR alone is rejected while the other three role links remain valid");
+  ExpectPlasmaBeamRejected(MakePlasmaBeamFixtureWithSingleRoleFieldChange(PlasmaRoleField::CrsmDefs, true),
+                           "a duplicate CRSM DEFS alone is rejected while the other three role links remain valid");
+}
+
+void TestPlasmaBeamIdentityAndTypedGates() {
+  const Fixture fixture = MakePlasmaBeamFixture();
+  PlasmaBeamDefaultRoleInput input = PlasmaBeamInput(fixture);
+  PlasmaBeamDefaultRolePair pair;
+  input.weaponName = "plasma-beam";
+  Check(!ResolvePlasmaBeamDefaultRole(input, pair), "a different PlasmaBeam FrameKey is rejected");
+  input = PlasmaBeamInput(fixture);
+  input.retailWpscId++;
+  Check(!ResolvePlasmaBeamDefaultRole(input, pair), "a different regional PlasmaBeam WPSC identity is rejected");
+  input = PlasmaBeamInput(fixture);
+  input.retailWpscExists = false;
+  Check(!ResolvePlasmaBeamDefaultRole(input, pair), "a missing or ambiguous PlasmaBeam typed WPSC is rejected");
+  input = PlasmaBeamInput(fixture);
+  input.retailCrscExists = false;
+  Check(!ResolvePlasmaBeamDefaultRole(input, pair), "a missing or ambiguous PlasmaBeam typed CRSC is rejected");
+  input = PlasmaBeamInput(fixture);
+  input.retailPartExists = false;
+  Check(!ResolvePlasmaBeamDefaultRole(input, pair), "a missing or ambiguous PlasmaBeam typed PART is rejected");
+  input = PlasmaBeamInput(fixture);
+  input.remasteredWpsmExists = false;
+  Check(!ResolvePlasmaBeamDefaultRole(input, pair), "a missing or ambiguous named PlasmaBeam WPSM is rejected");
+  input = PlasmaBeamInput(fixture);
+  input.remasteredCrsmExists = false;
+  Check(!ResolvePlasmaBeamDefaultRole(input, pair), "a missing or ambiguous typed PlasmaBeam CRSM is rejected");
+  input = PlasmaBeamInput(fixture);
+  input.remasteredGenpExists = false;
+  Check(!ResolvePlasmaBeamDefaultRole(input, pair), "a missing, ambiguous, or wrong-type PlasmaBeam GENP is rejected");
+}
 } // namespace
 
 int main() {
@@ -1217,13 +1641,19 @@ int main() {
   TestStrictRoleAllowlistAndBudgets();
   TestStrictRoleKeyframeWidths();
   TestProvenRolePropertySchemas();
+  TestPlasmaRoleSchemaExtensions();
+  TestPlasmaSyntheticSourceShape();
   TestIdentityAndTypedGates();
   TestPowerBallExactChainAndConflicts();
   TestPowerBallWrongLinksAndMalformedResources();
   TestPowerBallIdentityAndTypedGates();
+  TestPlasmaBeamExactChainAndConflicts();
+  TestPlasmaBeamWrongLinksAndMalformedResources();
+  TestPlasmaBeamIndividualRoleFieldPresence();
+  TestPlasmaBeamIdentityAndTypedGates();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d remastered-import tests failed\n", sFailures);
     return 1;
   }
-  std::puts("missile and PowerBall import pairing tests passed");
+  std::puts("missile, PowerBall, and PlasmaBeam import pairing tests passed");
 }

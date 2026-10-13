@@ -1766,6 +1766,70 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
       }
     }
   }
+
+  // PlasmaBeam's collision-response default is independently pinned to USA
+  // 1.00. Its APSM projectile link is a different role and remains untouched.
+  // The exact lower-case FrameKey and unique typed-resource checks make other
+  // regions, duplicates, missing assets, and conflicting claims fail closed.
+  uint32_t plasmaBeamWpsc = 0;
+  std::vector<uint8_t> plasmaBeamWeapon;
+  std::vector<uint8_t> plasmaBeamProjectile;
+  std::vector<uint8_t> plasmaBeamRetailCollision;
+  std::vector<uint8_t> plasmaBeamRemasteredCollision;
+  std::string plasmaBeamError;
+  if (!retail.WpscId("plasmabeam", plasmaBeamWpsc)) {
+    lines.push_back("WPSM plasmabeam COLR/DEFS: no unique disc WPSC named PlasmaBeam");
+  } else if (!retail.Read(kWPSC, plasmaBeamWpsc, plasmaBeamWeapon) ||
+             !remastered.ReadProjectile("plasmabeam", plasmaBeamProjectile, plasmaBeamError)) {
+    lines.push_back("WPSM plasmabeam COLR/DEFS: could not read the exact named weapon assets");
+  } else {
+    const bool crscPresent = retail.HasUniqueResource(kCRSC, ImportDetail::kPlasmaBeamCrsc) &&
+                             retail.Read(kCRSC, ImportDetail::kPlasmaBeamCrsc, plasmaBeamRetailCollision);
+    const bool crsmPresent = remastered.HasUniqueCollision(ImportDetail::kPlasmaBeamCrsm) &&
+                             remastered.ReadCollision(ImportDetail::kPlasmaBeamCrsm, plasmaBeamRemasteredCollision,
+                                                      plasmaBeamError);
+    const bool genpPresent = remastered.HasUniqueEffect(ImportDetail::kPlasmaBeamDefaultGenp) &&
+                             remastered.EffectAssetType(ImportDetail::kPlasmaBeamDefaultGenp) == kGENP;
+    ImportDetail::PlasmaBeamDefaultRoleInput input;
+    input.weaponName = "plasmabeam";
+    input.retailWpscId = plasmaBeamWpsc;
+    input.retailWpscExists = retail.HasUniqueResource(kWPSC, plasmaBeamWpsc);
+    input.retailCrscExists = crscPresent;
+    input.retailPartExists = retail.HasUniqueResource(kPART, ImportDetail::kPlasmaBeamDefaultPart);
+    input.remasteredWpsmExists = true;  // ReadProjectile rejected missing/ambiguous names.
+    input.remasteredCrsmExists = crsmPresent;
+    input.remasteredGenpExists = genpPresent;
+    input.retailWpsc = plasmaBeamWeapon.data();
+    input.retailWpscSize = plasmaBeamWeapon.size();
+    input.retailCrsc = plasmaBeamRetailCollision.data();
+    input.retailCrscSize = plasmaBeamRetailCollision.size();
+    input.remasteredWpsm = plasmaBeamProjectile.data();
+    input.remasteredWpsmSize = plasmaBeamProjectile.size();
+    input.remasteredCrsm = plasmaBeamRemasteredCollision.data();
+    input.remasteredCrsmSize = plasmaBeamRemasteredCollision.size();
+    ImportDetail::PlasmaBeamDefaultRolePair candidate;
+    std::string roleError;
+    if (!ImportDetail::ResolvePlasmaBeamDefaultRole(input, candidate, &roleError)) {
+      lines.push_back("WPSM plasmabeam COLR/DEFS: not the pinned USA 1.00 default role (" + roleError + "); no pair");
+    } else {
+      bool exact = false;
+      bool conflict = false;
+      for (const EffectPairing& have : pairings) {
+        if (have.id == candidate.genp && have.retail == candidate.retailPart) {
+          exact = true;
+        } else if (ImportDetail::ConflictsWithPlasmaBeamDefaultRolePair(candidate, have.id, have.retail)) {
+          conflict = true;
+          lines.push_back("WPSM plasmabeam COLR/DEFS: conflict with " + have.method + " (" +
+                          EffectGuidString(ToStored(have.id)) + " -> " + HexId(have.retail) + "); no pair");
+        }
+      }
+      if (!conflict && !exact) {
+        pairings.push_back({candidate.genp, candidate.retailPart, "wpsm plasmabeam COLR/DEFS default"});
+        lines.push_back("WPSM plasmabeam COLR/DEFS default: " + EffectGuidString(ToStored(candidate.genp)) + " -> " +
+                        HexId(candidate.retailPart));
+      }
+    }
+  }
   return pairings;
 }
 
