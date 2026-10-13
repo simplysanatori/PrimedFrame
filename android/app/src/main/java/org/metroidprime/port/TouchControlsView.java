@@ -126,6 +126,12 @@ final class TouchControlsView extends View {
     // The same buttons while morphed (#106): A lays a bomb, B boosts, X still morphs (out),
     // Y lays a power bomb.
     private static final String[] GAMECUBE_MORPH_FUNCTIONS = {"Bomb", "Boost", "Morph", "P.Bomb"};
+    // In the pause menu (Y turns the inventory's suit view), on the map screen
+    // (A switches area and world map, Y shows the legend) and in save station or
+    // message boxes; blank where the button does nothing there.
+    private static final String[] GAMECUBE_PAUSE_FUNCTIONS = {"Select", "Back", "", "View"};
+    private static final String[] GAMECUBE_MAP_FUNCTIONS = {"World", "Exit", "", "Legend"};
+    private static final String[] GAMECUBE_DIALOG_FUNCTIONS = {"OK", "", "", ""};
     // The optional Turbo button (F1 "Turbo fire button"), above the cluster on the
     // right. Not in the face arrays: those index the editor ids and are always drawn.
     private static final ControlButton GAMECUBE_TURBO =
@@ -165,6 +171,10 @@ final class TouchControlsView extends View {
     // Turbo, above Beam.
     // TWIN_FACE's functions while morphed; Beam still shifts the D-pad.
     private static final String[] TWIN_MORPH_FUNCTIONS = {"Boost", "Bomb", "Morph", "Beam"};
+    // The menus' TWIN_FACE functions, as GAMECUBE_PAUSE_FUNCTIONS and the rest.
+    private static final String[] TWIN_PAUSE_FUNCTIONS = {"Back", "Select", "", ""};
+    private static final String[] TWIN_MAP_FUNCTIONS = {"Exit", "World", "", ""};
+    private static final String[] TWIN_DIALOG_FUNCTIONS = {"", "OK", "", ""};
     private static final ControlButton TWIN_TURBO =
         ControlButton.round("Turbo", TURBO_FIRE, 0f, -0.21f, 0.045f, GC_GREEN);
 
@@ -463,6 +473,8 @@ final class TouchControlsView extends View {
     private static native boolean nativeMapScreenOpen();
     // True while the pause menu (inventory, logbook) is up.
     private static native boolean nativePauseScreenOpen();
+    // A save station or message box over the paused game (not the pause menu).
+    private static native boolean nativeMessageBoxOpen();
     // A pinch: ratio of the finger spread now to before; above 1 zooms in.
     private static native void nativeMapZoom(float ratio);
     // A twist, in radians; positive turns the map as the stick's right does.
@@ -499,8 +511,15 @@ final class TouchControlsView extends View {
     // leaves a SHOW button, nothing is drawn and any touch brings them back.
     private boolean autoHidden;
     private boolean lastOverlayVisible;
-    // morphedLabels() as of the last draw; the poll redraws when it changes.
-    private boolean morphedLabelsNow;
+    // What the buttons are labelled for (#106): play, morph ball, pause menu, map
+    // screen or a message box. labelContext() as of the last draw; the poll
+    // redraws when it changes.
+    private static final int LABELS_PLAY = 0;
+    private static final int LABELS_MORPH = 1;
+    private static final int LABELS_PAUSE = 2;
+    private static final int LABELS_MAP = 3;
+    private static final int LABELS_DIALOG = 4;
+    private int labelContextNow = LABELS_PLAY;
 
     private final Runnable physicalInputPoll = new Runnable() {
         @Override
@@ -528,7 +547,7 @@ final class TouchControlsView extends View {
                     invalidate();
                 }
             }
-            if (labels && !hidden && !autoHidden && morphedLabels() != morphedLabelsNow) {
+            if (labels && !hidden && !autoHidden && labelContext() != labelContextNow) {
                 invalidate();
             }
             final boolean overlayVisible = nativeDebugOverlayVisible();
@@ -636,7 +655,7 @@ final class TouchControlsView extends View {
         }
 
         rHiddenNow = !editing && rHidden();
-        morphedLabelsNow = labels && morphedLabels();
+        labelContextNow = labels ? labelContext() : LABELS_PLAY;
         for (PillButton pill : pills) {
             if (pillShown(pill)) {
                 drawPillButton(canvas, pill, width, height);
@@ -1948,31 +1967,114 @@ final class TouchControlsView extends View {
                           label.length() > 2 ? dp(11) : dp(13));
     }
 
-    // Whether the buttons wear the morph ball's functions (#106): while Samus is
-    // morphed or morphing, in play. Paused, the wheel state reads 0, so the pause
-    // menu gets the usual names; the editor always does.
-    private boolean morphedLabels() {
-        return !editing && (nativeWheelOwned() & WHEEL_MORPHED_BIT) != 0;
+    // Which functions the buttons wear. The map screen comes first: the pause
+    // menu's map is one too. Morphed (or morphing) is only in play: paused, the
+    // wheel state reads 0. The editor always shows the usual names.
+    private int labelContext() {
+        if (editing) {
+            return LABELS_PLAY;
+        }
+        if (nativeMapScreenOpen()) {
+            return LABELS_MAP;
+        }
+        if (nativePauseScreenOpen()) {
+            return LABELS_PAUSE;
+        }
+        if (nativeMessageBoxOpen()) {
+            return LABELS_DIALOG;
+        }
+        return (nativeWheelOwned() & WHEEL_MORPHED_BIT) != 0 ? LABELS_MORPH : LABELS_PLAY;
     }
 
-    // A shoulder pill's text, with its morph ball function while morphed.
+    // A shoulder pill's text for labelContextNow. In a menu, a pill that does
+    // nothing there shows just its button's name.
     private String pillLabel(PillButton pill) {
-        if (!morphedLabelsNow) {
+        if (labelContextNow == LABELS_PLAY || isMenuPill(pill)) {
             return pill.label;
         }
-        if (pill.axis == AXIS_TRIGGER_R) {
-            return "R Spider";
+        final String name = pill.label.split(" ")[0];
+        final int sent = pill.axis >= 0 ? -1 : pill.button;
+        switch (labelContextNow) {
+        case LABELS_MORPH:
+            if (pill.axis == AXIS_TRIGGER_R) {
+                return "R Spider";
+            }
+            if (sent == BTN_EAST) {
+                return "LB Boost";
+            }
+            if (sent == BTN_SOUTH) {
+                return "RT Bomb";
+            }
+            if (sent == BTN_NORTH) {
+                return "RB P.Bomb";
+            }
+            return pill.label;
+        case LABELS_PAUSE:
+            // L and R page through the subscreens.
+            if (pill.axis == AXIS_TRIGGER_L) {
+                return name + " Prev";
+            }
+            if (pill.axis == AXIS_TRIGGER_R) {
+                return name + " Next";
+            }
+            if (sent == BTN_EAST) {
+                return name + " Back";
+            }
+            if (sent == BTN_SOUTH) {
+                return name + " Select";
+            }
+            if (sent == BTN_NORTH) {
+                return name + " View";
+            }
+            return name;
+        case LABELS_MAP:
+            // L zooms out and R in; B and Z leave.
+            if (pill.axis == AXIS_TRIGGER_L) {
+                return name + " Out";
+            }
+            if (pill.axis == AXIS_TRIGGER_R) {
+                return name + " In";
+            }
+            if (sent == BTN_EAST || sent == BTN_RIGHT_SHOULDER) {
+                return name + " Exit";
+            }
+            if (sent == BTN_SOUTH) {
+                return name + " World";
+            }
+            if (sent == BTN_NORTH) {
+                return name + " Legend";
+            }
+            return name;
+        default:
+            return sent == BTN_SOUTH ? name + " OK" : name;
         }
-        if (pill.axis < 0 && pill.button == BTN_EAST) {
-            return "LB Boost";
+    }
+
+    // START and MENU, whose labels name no game function.
+    private static boolean isMenuPill(PillButton pill) {
+        return pill.axis < 0 && (pill.button == BTN_START || pill.button == TOGGLE_DEBUG_OVERLAY);
+    }
+
+    // A face button's function for labelContextNow.
+    private String faceFunction(ControlButton button) {
+        if (twin) {
+            final int i = controlOf(button) - C_JUMP;
+            switch (labelContextNow) {
+            case LABELS_MORPH: return TWIN_MORPH_FUNCTIONS[i];
+            case LABELS_PAUSE: return TWIN_PAUSE_FUNCTIONS[i];
+            case LABELS_MAP: return TWIN_MAP_FUNCTIONS[i];
+            case LABELS_DIALOG: return TWIN_DIALOG_FUNCTIONS[i];
+            default: return button.label;
+            }
         }
-        if (pill.axis < 0 && pill.button == BTN_SOUTH) {
-            return "RT Bomb";
+        final int i = controlOf(button) - C_A;
+        switch (labelContextNow) {
+        case LABELS_MORPH: return GAMECUBE_MORPH_FUNCTIONS[i];
+        case LABELS_PAUSE: return GAMECUBE_PAUSE_FUNCTIONS[i];
+        case LABELS_MAP: return GAMECUBE_MAP_FUNCTIONS[i];
+        case LABELS_DIALOG: return GAMECUBE_DIALOG_FUNCTIONS[i];
+        default: return GAMECUBE_FUNCTIONS[i];
         }
-        if (pill.axis < 0 && pill.button == BTN_NORTH) {
-            return "RB P.Bomb";
-        }
-        return pill.label;
     }
 
     private void drawButton(Canvas canvas, ControlButton button, float width, float height) {
@@ -2008,11 +2110,7 @@ final class TouchControlsView extends View {
             drawCenteredLabel(canvas, letter, x, y, letterSize);
             return;
         }
-        final String function = isTurbo ? button.label
-                                : twin ? (morphedLabelsNow ? TWIN_MORPH_FUNCTIONS[controlOf(button) - C_JUMP]
-                                                           : button.label)
-                                : (morphedLabelsNow ? GAMECUBE_MORPH_FUNCTIONS
-                                                    : GAMECUBE_FUNCTIONS)[controlOf(button) - C_A];
+        final String function = isTurbo ? button.label : faceFunction(button);
         // The function goes below the letter. A kidney is sized by its half width,
         // and a mostly level one (Y) has its text slanted along the band: upright,
         // "Missile" ran into the border of Y's tilted band.
