@@ -2861,7 +2861,14 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   }
   // All but lava, premultiplied glass, the holograms (kinds 16-18, one map) and the decal cutouts draw
   // with the second layer's maps.
-  if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && out.kind != 27 && out.kind != 34 && out.kind != 36 && out.kind != 37 && !out.layered) {
+  // Ice's fragment shader (088e025e) uses the standard single-layer PBR slots 0-2
+  // plus its frost map in slot 3. Keep its kind only when those source maps exist;
+  // otherwise the shader would bind neutral placeholders. Its CCH0-CCH3 row guard
+  // is above, where kind 28 is assigned. Layered ice retains its historical path.
+  const bool iceSingleLayerMapsBound = out.kind == 28 && !out.layered && out.maps[kBase].has && out.maps[kMr].has &&
+                                       out.maps[kNormal].has && out.maps[kEmissive].has;
+  if (out.kind != 3 && out.kind != 10 && !(out.kind >= 16 && out.kind <= 18) && out.kind != 24 && out.kind != 27 &&
+      out.kind != 34 && out.kind != 36 && out.kind != 37 && !out.layered && !iceSingleLayerMapsBound) {
     if (out.kind != 0) {
       out.reason += std::string("demoted ") + KindName(out.kind) + " to standard: not layered; ";
     }
