@@ -15,6 +15,7 @@
 
 #include "port_debug.h"
 #include "port_photo.h"
+#include "port_pointer.h"
 #include "port_savestate.h"
 #include "port_log.h"
 #include "port_memory_log.h"
@@ -971,7 +972,12 @@ int CMain::RsMain(int argc, const char* const* argv) {
         PortSaveState::SetEventPumpSafe(true);
         const AuroraEvent* event = aurora_update();
         PortSaveState::SetEventPumpSafe(false);
+        PortPointer::BeginFrame();
         while (event != nullptr && event->type != AURORA_NONE) {
+          // Menu pointer gestures; ImGui keeps the events it wants itself.
+          if (event->type == AURORA_SDL_EVENT && !PortDebug::Visible()) {
+            PortPointer::HandleEvent(event->sdl);
+          }
           if (event->type == AURORA_EXIT) {
             // Quick resume: written here, between ticks and before shutdown.
             // (Android's background events never get here: SDL only calls
@@ -1051,6 +1057,8 @@ int CMain::RsMain(int argc, const char* const* argv) {
           PortSaveState::ResumeInfo promptInfo;
           bool promptYes = true;
           const bool resumePrompt = PortSaveState::ResumePromptShown(promptInfo, promptYes);
+          // A pointer-driven menu or map wants a free, visible cursor.
+          const bool pointerMenu = PortPointer::Enabled() && PortPointer::ScreenActive() && !PortPhoto::Active();
           // Photo mode's free camera looks with the mouse even without mouse aim.
           const bool wantRelative =
               (PortPhoto::Active() ? PortPhoto::MouseLook()
@@ -1062,13 +1070,16 @@ int CMain::RsMain(int argc, const char* const* argv) {
           // or taskbar, so keep the pointer captured unless the overlay is open.
           // Photo mode keeps it free even with the panel hidden: taps arrive as
           // mouse events, and a captured pointer has no position for its touch bar.
-          const bool wantLock = !PortDebug::Visible() && !PortPhoto::Active() && !resumePrompt && focused;
+          const bool wantLock =
+              !PortDebug::Visible() && !PortPhoto::Active() && !(pointerMenu && PortPointer::MouseIsLast()) &&
+              !resumePrompt && focused;
 #else
           // Morph ball has no mouse aim, but its bombs are on the mouse buttons:
           // keep the pointer locked so a click can't land outside the window.
-          const bool wantLock = wantRelative ||
-                                (PortDebug::MouseAim() && MorphBallHoldsMouse() && !PortDebug::Visible() &&
-                                 !PortPhoto::PanelWantsCursor() && !resumePrompt && focused);
+          const bool wantLock = !pointerMenu &&
+                                (wantRelative ||
+                                 (PortDebug::MouseAim() && MorphBallHoldsMouse() && !PortDebug::Visible() &&
+                                  !PortPhoto::PanelWantsCursor() && !resumePrompt && focused));
 #endif
           if (SDL_GetWindowRelativeMouseMode(sCaptureWindow) != wantLock) {
             SDL_SetWindowRelativeMouseMode(sCaptureWindow, wantLock);
@@ -1079,6 +1090,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
           // clickable update toast is up and the mouse isn't captured.
           const bool wantCursor =
               (PortDebug::Visible() || PortPhoto::PanelWantsCursor() || resumePrompt ||
+               (pointerMenu && PortPointer::MouseIsLast()) ||
                (PortDebug::UpdateToastShowing() && !wantLock)) &&
               SDL_GetKeyboardFocus() == sCaptureWindow;
           if (wantCursor) {

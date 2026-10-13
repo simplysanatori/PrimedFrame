@@ -7,6 +7,7 @@
 #include "port_debug.h"
 #include "port_freecam.h"
 #include "port_photo.h"
+#include "port_pointer.h"
 #include "port_hd_font.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
@@ -2546,8 +2547,10 @@ unsigned MouseMenuButtons(unsigned held, bool focused) {
   PortSaveState::ResumeInfo promptInfo;
   bool promptYes = true;
   const bool resumePrompt = PortSaveState::ResumePromptShown(promptInfo, promptYes);
+  // A pointer-driven screen reads the clicks itself (hover, then click = A).
+  const bool pointerScreen = PortPointer::Enabled() && PortPointer::ScreenActive();
   return sMouseMenuGate.Poll(MouseAim() && MouseButtons() && !MouseGameplayActive() &&
-                                 !Visible() && !resumePrompt && focused,
+                                 !Visible() && !resumePrompt && !pointerScreen && focused,
                              held);
 }
 void NoteMouseButton(bool synthetic, unsigned mask, bool down) {

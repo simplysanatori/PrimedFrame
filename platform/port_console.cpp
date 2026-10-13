@@ -10,6 +10,7 @@
 #include "port_discord.h"
 #include "port_freecam.h"
 #include "port_photo.h"
+#include "port_pointer.h"
 #include "port_hd_font.h"
 #include "port_livesplit.h"
 #include "port_rando_gen.h"
@@ -2048,6 +2049,50 @@ void RunFrame() {
                              static_cast< float >(std::atof(sCmd.args[2].c_str())),
                              static_cast< float >(std::atof(sCmd.args[3].c_str()))};
     PortDebug::SetGunOffset(offset);
+    Finish();
+  } else if (name == "pointer") {
+    // Coordinates are GUI (EFB) pixels, as the screenshots show them.
+    static const char* const kUsage =
+        "usage: pointer <x> <y> move|click|dclick|tap|dtap|drag <x1> <y1> [l|r|touch]|wheel <n>|pinch <ratio>"
+        " | pointer back | pointer where";
+    const std::string verb = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : std::string();
+    if (verb == "back") {
+      PortPointer::ScriptBack();
+      return Finish();
+    }
+    if (verb == "where") {
+      float gx = 0.f, gy = 0.f;
+      const bool has = PortPointer::Position(gx, gy);
+      Out("pointer %s %.1f %.1f last=%s screen=%d enabled=%d", has ? "at" : "none", gx, gy,
+          PortPointer::MouseIsLast() ? "mouse" : PortPointer::TouchIsLast() ? "touch" : "other",
+          PortPointer::ScreenActive() ? 1 : 0, PortPointer::Enabled() ? 1 : 0);
+      return Finish();
+    }
+    if (sCmd.args.size() < 4) {
+      return Finish(kUsage);
+    }
+    const float x = static_cast< float >(std::atof(sCmd.args[1].c_str()));
+    const float y = static_cast< float >(std::atof(sCmd.args[2].c_str()));
+    const std::string action = Lower(sCmd.args[3]);
+    if (action == "move") {
+      PortPointer::ScriptMove(x, y);
+    } else if (action == "click" || action == "dclick") {
+      PortPointer::ScriptClick(x, y, action == "dclick", false);
+    } else if (action == "tap" || action == "dtap") {
+      PortPointer::ScriptClick(x, y, action == "dtap", true);
+    } else if (action == "drag" && sCmd.args.size() >= 6) {
+      const std::string how = sCmd.args.size() > 6 ? Lower(sCmd.args[6]) : std::string("l");
+      PortPointer::ScriptDrag(x, y, static_cast< float >(std::atof(sCmd.args[4].c_str())),
+                              static_cast< float >(std::atof(sCmd.args[5].c_str())),
+                              how == "r" ? PortPointer::kButtonRight : PortPointer::kButtonLeft, how == "touch");
+    } else if (action == "wheel" && sCmd.args.size() >= 5) {
+      PortPointer::ScriptMove(x, y);
+      PortPointer::ScriptWheel(static_cast< float >(std::atof(sCmd.args[4].c_str())));
+    } else if (action == "pinch" && sCmd.args.size() >= 5) {
+      PortPointer::ScriptPinch(x, y, static_cast< float >(std::atof(sCmd.args[4].c_str())));
+    } else {
+      return Finish(kUsage);
+    }
     Finish();
   } else if (name == "window") {
     int count = 0;

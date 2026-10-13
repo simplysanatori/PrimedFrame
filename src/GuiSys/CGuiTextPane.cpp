@@ -5,6 +5,10 @@
 #include "Kyoto/CSimplePool.hpp"
 #include "Kyoto/Graphics/CGraphics.hpp"
 
+#ifdef TARGET_PC
+#include "port_pointer.h"
+#endif
+
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
 bool CGuiTextPane::sDrawPaneRects = false;
 #elif defined(TARGET_PC)
@@ -91,6 +95,11 @@ void CGuiTextPane::Draw(const CGuiWidgetDrawParms& parms) const {
   }
 
   const float* vtxBuf = GetVtxBuf();
+#ifdef TARGET_PC
+  // Port: the pane's rect (not the glyphs), for mouse and touch menus.
+  PortGuiHit::RecordPoints(this, GetWorldTransform() * CTransform4f::Translate(GetScaleCenter()), vtxBuf,
+                           4);
+#endif
   CVector2f dimensions = GetDimensions();
   float width = GetTextSupport().GetTextBoundingWidth() == 0
                     ? 0.f
