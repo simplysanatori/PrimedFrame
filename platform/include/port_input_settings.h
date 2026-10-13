@@ -43,6 +43,7 @@ struct Settings {
   bool remasteredMovement = true;
   bool springFlick = false;
   float springFlickRate = 6.f;
+  bool springSwipe = true;  // Android: a quick swipe up on the touch aim area springs
   float stickAimRate = 900.f;
   // With stickAimSplit on, stickAimRateY drives vertical stick aim and
   // stickAimRate only the horizontal; off, stickAimRate drives both.

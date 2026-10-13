@@ -62,6 +62,7 @@
 {"Controls", "Touch & gyro", "Touch controls", "Beam and visor wheels", "beam visor wheel touch d-pad"},
 {"Controls", "Touch & gyro", "Touch controls", "Tap Visor for Scan Visor", "scan visor tap touch"},
 {"Controls", "Touch & gyro", "Touch controls", "Touch aim speed", "touch look speed sensitivity"},
+{"Controls", "Touch & gyro", "Touch controls", "Spring Ball on swipe up", "spring ball swipe flick jump touch"},
 {"Controls", "Touch & gyro", "Touch controls", "Side margin", "margin edge spacing touch screen"},
 {"Controls", "Touch & gyro", "Touch controls", "Stick inset", "stick spacing touch edge"},
 {"Controls", "Touch & gyro", "Touch controls", "Button inset", "button spacing touch edge"},

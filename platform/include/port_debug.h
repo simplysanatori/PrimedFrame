@@ -536,6 +536,11 @@ void SetTouchAim(bool on);
 float TouchAimSpeed();
 void SetTouchAimSpeed(float pixelsPerDp);
 void AddTouchAim(float dxDp, float dyDp);
+// A quick swipe up on the touch aim area (the overlay detects it): requests the
+// Spring Ball when "Spring Ball on swipe up" is on. Thread-safe.
+bool SpringBallSwipe();
+void SetSpringBallSwipe(bool enabled);
+void TouchSpringSwipe();
 // GameCube scheme (neither mouse aim nor twin stick): CPlayer turns by the touch
 // travel and holds a free-look pitch while a touch-aim finger is down.
 // TakeTouchLook returns this tick's world yaw/pitch change in radians (once per

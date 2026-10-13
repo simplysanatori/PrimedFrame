@@ -89,6 +89,12 @@
   to 0.2 s before landing still counts. It reads the gyro aim's source but works
   with gyro aim off. The phone's gyro is turned to the screen's orientation, so
   pitch and yaw stay right in landscape.
+  **Spring Ball on swipe up** (Android, Touch controls, `spring_ball_swipe`, on
+  by default) springs on a quick swipe up of an aiming finger (the free-area
+  drag, or Fire/Jump slid): 40 dp up, more up than sideways, within 150 ms of
+  where the stroke began, once per stroke (`TouchControlsView.trackSwipe` →
+  `PortDebug::TouchSpringSwipe` → the Spring Ball request). Touch aim does
+  nothing in the ball, so the swipe takes nothing away there.
   **Touch aim** (Android, `touch_aim`, on by default; `touch_aim_speed`, default
   2.25 aim px per dp): with twin stick on, the right stick is gone and a finger
   dragged on the free screen area turns the view by the distance dragged, like a
