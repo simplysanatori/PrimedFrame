@@ -54,7 +54,7 @@ inline constexpr int kConverter = 52;
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 3;
 inline constexpr int kModels = 6;      // the table's models, their looks and the ANCS copies
-inline constexpr int kEffects = 20;     // port_remastered_effect_import and the particle converters
+inline constexpr int kEffects = 21;     // port_remastered_effect_import and the particle converters
 inline constexpr int kRooms = 12;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 0;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 0;        // port_remastered_text, and the font (port_remastered_font)
@@ -101,6 +101,47 @@ struct MissileDefaultRoleInput {
 };
 
 struct MissileDefaultRolePair {
+  std::array<uint8_t, 16> genp{};
+  uint32_t retailPart = 0;
+};
+
+// The USA 1.00 PowerBall collision-response default is independent of its
+// APSM projectile effect: retail WPSC COLR -> CRSC DEFS PART, and Remastered
+// WPSM COLR -> CRSM DEFS GENP. These exact identities prevent cross-region or
+// other-default pairing.
+inline constexpr uint32_t kPowerBallWpsc = 0x87D4CA7C;
+inline constexpr uint32_t kPowerBallCrsc = 0x39EB7161;
+inline constexpr uint32_t kPowerBallDefaultPart = 0x09C2016D;
+inline constexpr std::array<uint8_t, 16> kPowerBallCrsm = {0x76, 0x69, 0x0A, 0x3F, 0x48, 0x95, 0x4F, 0xD9,
+                                                           0x8C, 0x6E, 0xB3, 0x4F, 0x15, 0x6D, 0xEC, 0x58};
+inline constexpr std::array<uint8_t, 16> kPowerBallDefaultGenp = {0xDA, 0x57, 0xEF, 0xF5, 0xBB, 0xEB, 0x41, 0xDE,
+                                                                 0x9C, 0x9B, 0xCA, 0x90, 0xEF, 0x19, 0x22, 0x6E};
+// Reversed-guid byte order in Remastered COLR/DEFS links.
+inline constexpr std::array<uint8_t, 16> kPowerBallCrsmLink = {0x3F, 0x0A, 0x69, 0x76, 0x95, 0x48, 0xD9, 0x4F,
+                                                              0x8C, 0x6E, 0xB3, 0x4F, 0x15, 0x6D, 0xEC, 0x58};
+inline constexpr std::array<uint8_t, 16> kPowerBallDefaultGenpLink = {0xF5, 0xEF, 0x57, 0xDA, 0xEB, 0xBB, 0xDE, 0x41,
+                                                                      0x9C, 0x9B, 0xCA, 0x90, 0xEF, 0x19, 0x22, 0x6E};
+
+struct PowerBallDefaultRoleInput {
+  std::string_view weaponName;  // lower-case FrameKey for the named PowerBall WPSM
+  uint32_t retailWpscId = 0;
+  bool retailWpscExists = false;
+  bool retailCrscExists = false;
+  bool retailPartExists = false;
+  bool remasteredWpsmExists = false;
+  bool remasteredCrsmExists = false;
+  bool remasteredGenpExists = false;
+  const uint8_t* retailWpsc = nullptr;
+  size_t retailWpscSize = 0;
+  const uint8_t* retailCrsc = nullptr;
+  size_t retailCrscSize = 0;
+  const uint8_t* remasteredWpsm = nullptr;
+  size_t remasteredWpsmSize = 0;
+  const uint8_t* remasteredCrsm = nullptr;
+  size_t remasteredCrsmSize = 0;
+};
+
+struct PowerBallDefaultRolePair {
   std::array<uint8_t, 16> genp{};
   uint32_t retailPart = 0;
 };
@@ -206,6 +247,66 @@ inline bool ResolveMissileDefaultRole(const MissileDefaultRoleInput& input, Miss
   }
   out = {kMissileDefaultGenp, part};
   return true;
+}
+
+// Resolve only the raw, typed USA 1.00 PowerBall chain. The caller supplies
+// uniqueness/type checks from the real retail and PAK indexes; every link is
+// then independently parsed and compared against the pinned chain.
+inline bool ResolvePowerBallDefaultRole(const PowerBallDefaultRoleInput& input, PowerBallDefaultRolePair& out,
+                                        std::string* error = nullptr) {
+  auto fail = [error](std::string message) {
+    if (error != nullptr) {
+      *error = std::move(message);
+    }
+    return false;
+  };
+  if (input.weaponName != "powerball" || input.retailWpscId != kPowerBallWpsc || !input.retailWpscExists ||
+      !input.retailCrscExists || !input.retailPartExists || !input.remasteredWpsmExists ||
+      !input.remasteredCrsmExists || !input.remasteredGenpExists) {
+    return fail("pinned USA identity or unique typed-resource presence gate failed");
+  }
+  uint32_t crsc = 0;
+  uint32_t part = 0;
+  std::array<uint8_t, 16> crsm{};
+  std::array<uint8_t, 16> genp{};
+  std::string why;
+  if (!detail::ReadUniqueRetailAssetId(input.retailWpsc, input.retailWpscSize, "WPSM", "COLR", crsc, &why)) {
+    return fail("retail WPSC: " + why);
+  }
+  if (crsc != kPowerBallCrsc) {
+    return fail("retail WPSC COLR does not name the pinned USA CRSC");
+  }
+  if (!detail::ReadUniqueRetailAssetId(input.retailCrsc, input.retailCrscSize, "CRSM", "DEFS", part, &why)) {
+    return fail("retail CRSC: " + why);
+  }
+  if (part != kPowerBallDefaultPart) {
+    return fail("retail CRSC DEFS does not name the pinned USA PART");
+  }
+  if (!detail::ReadUniqueReversedGuidLink(input.remasteredWpsm, input.remasteredWpsmSize, "WPSM", "COLR", 0,
+                                          crsm, &why)) {
+    return fail("Remastered WPSM: " + why);
+  }
+  if (crsm != kPowerBallCrsmLink) {
+    return fail("Remastered WPSM COLR does not name the pinned CRSM");
+  }
+  if (!detail::ReadUniqueReversedGuidLink(input.remasteredCrsm, input.remasteredCrsmSize, "CRSM", "DEFS", 4,
+                                          genp, &why)) {
+    return fail("Remastered CRSM: " + why);
+  }
+  if (genp != kPowerBallDefaultGenpLink) {
+    return fail("Remastered CRSM DEFS does not name the pinned GENP");
+  }
+  out = {kPowerBallDefaultGenp, part};
+  return true;
+}
+
+// A default-role mapping must not override another established mapping that
+// claims either side. An exact existing pair is handled as already resolved.
+inline bool ConflictsWithPowerBallDefaultRolePair(const PowerBallDefaultRolePair& candidate,
+                                                  const std::array<uint8_t, 16>& existingGenp,
+                                                  uint32_t existingRetail) {
+  return (existingGenp == candidate.genp || existingRetail == candidate.retailPart) &&
+         !(existingGenp == candidate.genp && existingRetail == candidate.retailPart);
 }
 }  // namespace ImportDetail
 // Any stage's bump raises it. A full import writes it to kImportStampName in the mod; the mod scan

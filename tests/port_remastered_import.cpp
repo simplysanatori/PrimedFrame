@@ -215,6 +215,85 @@ void ExpectRejected(const Fixture& fixture, const char* what) {
   Check(!ResolveMissileDefaultRole(Input(fixture), pair), what);
 }
 
+Fixture MakePowerBallFixture(uint32_t crsc = kPowerBallCrsc, uint32_t part = kPowerBallDefaultPart,
+                             const std::array<uint8_t, 16>& crsm = kPowerBallCrsmLink,
+                             const std::array<uint8_t, 16>& genp = kPowerBallDefaultGenpLink,
+                             bool retailDecoy = true, bool remasteredDecoy = false, bool duplicate = false,
+                             bool includeRoleFields = true) {
+  Fixture fixture;
+  PutFourCC(fixture.retailWpsc, "WPSM");
+  if (retailDecoy) {
+    PutRetailVectorDecoy(fixture.retailWpsc, kPowerBallCrsc);
+  }
+  if (includeRoleFields) {
+    PutRetailLink(fixture.retailWpsc, "COLR", crsc);
+    if (duplicate) {
+      PutRetailLink(fixture.retailWpsc, "COLR", crsc);
+    }
+  }
+  PutFourCC(fixture.retailWpsc, "_END");
+
+  PutFourCC(fixture.retailCrsc, "CRSM");
+  if (includeRoleFields) {
+    PutRetailLink(fixture.retailCrsc, "DEFS", part);
+    if (duplicate) {
+      PutRetailLink(fixture.retailCrsc, "DEFS", part);
+    }
+  }
+  PutFourCC(fixture.retailCrsc, "_END");
+
+  std::vector<uint8_t> weaponProperties;
+  if (remasteredDecoy) {
+    PutPvarDecoy(weaponProperties, crsm);
+  }
+  if (includeRoleFields) {
+    PutReversedGuidLink(weaponProperties, "COLR", 0, crsm);
+    if (duplicate) {
+      PutReversedGuidLink(weaponProperties, "COLR", 0, crsm);
+    }
+  }
+  PutReversedFourCC(weaponProperties, "_END");
+  weaponProperties.push_back(4);
+  fixture.remasteredWpsm = RemasteredForm("WPSM", "WPSM", std::move(weaponProperties));
+
+  std::vector<uint8_t> collisionProperties;
+  if (remasteredDecoy) {
+    PutPvarDecoy(collisionProperties, genp);
+  }
+  if (includeRoleFields) {
+    PutReversedGuidLink(collisionProperties, "DEFS", 4, genp);
+    if (duplicate) {
+      PutReversedGuidLink(collisionProperties, "DEFS", 4, genp);
+    }
+  }
+  PutReversedFourCC(collisionProperties, "_END");
+  collisionProperties.push_back(4);
+  fixture.remasteredCrsm = RemasteredForm("CRSM", "CRSM", std::move(collisionProperties));
+  return fixture;
+}
+
+PowerBallDefaultRoleInput PowerBallInput(const Fixture& fixture) {
+  PowerBallDefaultRoleInput input;
+  input.weaponName = "powerball";
+  input.retailWpscId = kPowerBallWpsc;
+  input.retailWpscExists = input.retailCrscExists = input.retailPartExists = true;
+  input.remasteredWpsmExists = input.remasteredCrsmExists = input.remasteredGenpExists = true;
+  input.retailWpsc = fixture.retailWpsc.data();
+  input.retailWpscSize = fixture.retailWpsc.size();
+  input.retailCrsc = fixture.retailCrsc.data();
+  input.retailCrscSize = fixture.retailCrsc.size();
+  input.remasteredWpsm = fixture.remasteredWpsm.data();
+  input.remasteredWpsmSize = fixture.remasteredWpsm.size();
+  input.remasteredCrsm = fixture.remasteredCrsm.data();
+  input.remasteredCrsmSize = fixture.remasteredCrsm.size();
+  return input;
+}
+
+void ExpectPowerBallRejected(const Fixture& fixture, const char* what) {
+  PowerBallDefaultRolePair pair;
+  Check(!ResolvePowerBallDefaultRole(PowerBallInput(fixture), pair), what);
+}
+
 void TestExactPairAndNestedDecoys() {
   const Fixture fixture = MakeFixture();
   MissileDefaultRolePair pair;
@@ -1040,6 +1119,94 @@ void TestIdentityAndTypedGates() {
   input.remasteredGenpExists = false;
   Check(!ResolveMissileDefaultRole(input, pair), "missing unique GENP is rejected");
 }
+
+void TestPowerBallExactChainAndConflicts() {
+  const Fixture fixture = MakePowerBallFixture();
+  PowerBallDefaultRolePair pair;
+  Check(ResolvePowerBallDefaultRole(PowerBallInput(fixture), pair),
+        "the exact USA PowerBall role chain resolves despite nested retail decoys");
+  Check(pair.genp == kPowerBallDefaultGenp && pair.retailPart == kPowerBallDefaultPart,
+        "PowerBall resolves only to the pinned full GENP GUID and retail PART id");
+  uint32_t retailLink = 0;
+  Check(detail::ReadUniqueRetailAssetId(fixture.retailWpsc.data(), fixture.retailWpsc.size(), "WPSM", "COLR",
+                                        retailLink) && retailLink == kPowerBallCrsc,
+        "PowerBall WPSC COLR is read as a top-level typed link");
+
+  Check(!ConflictsWithPowerBallDefaultRolePair(pair, pair.genp, pair.retailPart),
+        "an identical existing PowerBall pair is not a conflict");
+  auto otherGenp = pair.genp;
+  otherGenp[0] ^= 1;
+  Check(ConflictsWithPowerBallDefaultRolePair(pair, otherGenp, pair.retailPart),
+        "a different effect claiming the pinned retail PART is a conflict");
+  Check(ConflictsWithPowerBallDefaultRolePair(pair, pair.genp, pair.retailPart + 1),
+        "the pinned effect claiming another retail id is a conflict");
+  Check(!ConflictsWithPowerBallDefaultRolePair(pair, otherGenp, pair.retailPart + 1),
+        "an unrelated effect/id pair does not conflict");
+}
+
+void TestPowerBallWrongLinksAndMalformedResources() {
+  ExpectPowerBallRejected(MakePowerBallFixture(kPowerBallCrsc + 1),
+                          "a wrong retail WPSC COLR link is rejected");
+  ExpectPowerBallRejected(MakePowerBallFixture(kPowerBallCrsc, kPowerBallDefaultPart + 1),
+                          "a wrong retail CRSC DEFS link is rejected");
+  ExpectPowerBallRejected(MakePowerBallFixture(kPowerBallCrsc, kPowerBallDefaultPart,
+                                               [] { auto id = kPowerBallCrsmLink; id[0] ^= 1; return id; }()),
+                          "a wrong complete Remastered CRSM GUID is rejected");
+  ExpectPowerBallRejected(MakePowerBallFixture(kPowerBallCrsc, kPowerBallDefaultPart, kPowerBallCrsmLink,
+                                               [] { auto id = kPowerBallDefaultGenpLink; id[0] ^= 1; return id; }()),
+                          "a wrong complete Remastered GENP GUID is rejected");
+  ExpectPowerBallRejected(MakePowerBallFixture(kPowerBallCrsc, kPowerBallDefaultPart, kPowerBallCrsmLink,
+                                               kPowerBallDefaultGenpLink, false, false, true),
+                          "duplicate retail and Remastered role fields are ambiguous and rejected");
+  ExpectPowerBallRejected(MakePowerBallFixture(kPowerBallCrsc, kPowerBallDefaultPart, kPowerBallCrsmLink,
+                                               kPowerBallDefaultGenpLink, false, false, false, false),
+                          "absent role links in any member of the chain are rejected");
+
+  Fixture fixture = MakePowerBallFixture();
+  fixture.retailWpsc.pop_back();
+  ExpectPowerBallRejected(fixture, "a malformed retail WPSC stream is rejected");
+  fixture = MakePowerBallFixture();
+  fixture.retailCrsc[0] = 'X';
+  ExpectPowerBallRejected(fixture, "a resource with the wrong retail CRSC type is rejected");
+  fixture = MakePowerBallFixture();
+  fixture.remasteredWpsm[0x44] = 4; // COLR's allowed link kind is zero.
+  ExpectPowerBallRejected(fixture, "a Remastered WPSM COLR with the wrong typed-link kind is rejected");
+  fixture = MakePowerBallFixture();
+  fixture.remasteredCrsm[0x44] = 0; // DEFS is a GENP link (kind four).
+  ExpectPowerBallRejected(fixture, "a Remastered CRSM DEFS with the wrong typed-link kind is rejected");
+  fixture = MakePowerBallFixture();
+  SetLe64(fixture.remasteredCrsm, 4, UINT64_MAX);
+  ExpectPowerBallRejected(fixture, "an overflowing Remastered form declaration is rejected");
+}
+
+void TestPowerBallIdentityAndTypedGates() {
+  const Fixture fixture = MakePowerBallFixture();
+  PowerBallDefaultRoleInput input = PowerBallInput(fixture);
+  PowerBallDefaultRolePair pair;
+  input.weaponName = "superpowerball";
+  Check(!ResolvePowerBallDefaultRole(input, pair), "a different WPSM name is rejected");
+  input = PowerBallInput(fixture);
+  input.retailWpscId++;
+  Check(!ResolvePowerBallDefaultRole(input, pair), "a different regional WPSC identity is rejected");
+  input = PowerBallInput(fixture);
+  input.retailWpscExists = false;
+  Check(!ResolvePowerBallDefaultRole(input, pair), "a missing or ambiguous typed WPSC is rejected");
+  input = PowerBallInput(fixture);
+  input.retailCrscExists = false;
+  Check(!ResolvePowerBallDefaultRole(input, pair), "a missing or ambiguous typed CRSC is rejected");
+  input = PowerBallInput(fixture);
+  input.retailPartExists = false;
+  Check(!ResolvePowerBallDefaultRole(input, pair), "a missing or ambiguous typed PART is rejected");
+  input = PowerBallInput(fixture);
+  input.remasteredWpsmExists = false;
+  Check(!ResolvePowerBallDefaultRole(input, pair), "a missing or ambiguous named WPSM is rejected");
+  input = PowerBallInput(fixture);
+  input.remasteredCrsmExists = false;
+  Check(!ResolvePowerBallDefaultRole(input, pair), "a missing or ambiguous typed CRSM is rejected");
+  input = PowerBallInput(fixture);
+  input.remasteredGenpExists = false;
+  Check(!ResolvePowerBallDefaultRole(input, pair), "a missing, ambiguous, or wrong-type GENP is rejected");
+}
 } // namespace
 
 int main() {
@@ -1051,9 +1218,12 @@ int main() {
   TestStrictRoleKeyframeWidths();
   TestProvenRolePropertySchemas();
   TestIdentityAndTypedGates();
+  TestPowerBallExactChainAndConflicts();
+  TestPowerBallWrongLinksAndMalformedResources();
+  TestPowerBallIdentityAndTypedGates();
   if (sFailures != 0) {
-    std::fprintf(stderr, "%d missile-import tests failed\n", sFailures);
+    std::fprintf(stderr, "%d remastered-import tests failed\n", sFailures);
     return 1;
   }
-  std::puts("missile import pairing tests passed");
+  std::puts("missile and PowerBall import pairing tests passed");
 }

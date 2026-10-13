@@ -1702,6 +1702,70 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
       }
     }
   }
+
+  // PowerBall's collision-response default is separately pinned to USA 1.00:
+  // WPSC COLR -> CRSC DEFS PART and named WPSM COLR -> CRSM DEFS GENP. The
+  // named lookups and unique typed-resource checks make other regions,
+  // duplicates, missing assets, and conflicting effect-id claims fail closed.
+  uint32_t powerBallWpsc = 0;
+  std::vector<uint8_t> powerBallWeapon;
+  std::vector<uint8_t> powerBallProjectile;
+  std::vector<uint8_t> powerBallRetailCollision;
+  std::vector<uint8_t> powerBallRemasteredCollision;
+  std::string powerBallError;
+  if (!retail.WpscId("powerball", powerBallWpsc)) {
+    lines.push_back("WPSM powerball COLR/DEFS: no unique disc WPSC named PowerBall");
+  } else if (!retail.Read(kWPSC, powerBallWpsc, powerBallWeapon) ||
+             !remastered.ReadProjectile("powerball", powerBallProjectile, powerBallError)) {
+    lines.push_back("WPSM powerball COLR/DEFS: could not read the exact named weapon assets");
+  } else {
+    const bool crscPresent = retail.HasUniqueResource(kCRSC, ImportDetail::kPowerBallCrsc) &&
+                             retail.Read(kCRSC, ImportDetail::kPowerBallCrsc, powerBallRetailCollision);
+    const bool crsmPresent = remastered.HasUniqueCollision(ImportDetail::kPowerBallCrsm) &&
+                             remastered.ReadCollision(ImportDetail::kPowerBallCrsm, powerBallRemasteredCollision,
+                                                      powerBallError);
+    const bool genpPresent = remastered.HasUniqueEffect(ImportDetail::kPowerBallDefaultGenp) &&
+                             remastered.EffectAssetType(ImportDetail::kPowerBallDefaultGenp) == kGENP;
+    ImportDetail::PowerBallDefaultRoleInput input;
+    input.weaponName = "powerball";
+    input.retailWpscId = powerBallWpsc;
+    input.retailWpscExists = retail.HasUniqueResource(kWPSC, powerBallWpsc);
+    input.retailCrscExists = crscPresent;
+    input.retailPartExists = retail.HasUniqueResource(kPART, ImportDetail::kPowerBallDefaultPart);
+    input.remasteredWpsmExists = true;  // ReadProjectile rejected missing/ambiguous names.
+    input.remasteredCrsmExists = crsmPresent;
+    input.remasteredGenpExists = genpPresent;
+    input.retailWpsc = powerBallWeapon.data();
+    input.retailWpscSize = powerBallWeapon.size();
+    input.retailCrsc = powerBallRetailCollision.data();
+    input.retailCrscSize = powerBallRetailCollision.size();
+    input.remasteredWpsm = powerBallProjectile.data();
+    input.remasteredWpsmSize = powerBallProjectile.size();
+    input.remasteredCrsm = powerBallRemasteredCollision.data();
+    input.remasteredCrsmSize = powerBallRemasteredCollision.size();
+    ImportDetail::PowerBallDefaultRolePair candidate;
+    std::string roleError;
+    if (!ImportDetail::ResolvePowerBallDefaultRole(input, candidate, &roleError)) {
+      lines.push_back("WPSM powerball COLR/DEFS: not the pinned USA 1.00 default role (" + roleError + "); no pair");
+    } else {
+      bool exact = false;
+      bool conflict = false;
+      for (const EffectPairing& have : pairings) {
+        if (have.id == candidate.genp && have.retail == candidate.retailPart) {
+          exact = true;
+        } else if (ImportDetail::ConflictsWithPowerBallDefaultRolePair(candidate, have.id, have.retail)) {
+          conflict = true;
+          lines.push_back("WPSM powerball COLR/DEFS: conflict with " + have.method + " (" +
+                          EffectGuidString(ToStored(have.id)) + " -> " + HexId(have.retail) + "); no pair");
+        }
+      }
+      if (!conflict && !exact) {
+        pairings.push_back({candidate.genp, candidate.retailPart, "wpsm powerball COLR/DEFS default"});
+        lines.push_back("WPSM powerball COLR/DEFS default: " + EffectGuidString(ToStored(candidate.genp)) + " -> " +
+                        HexId(candidate.retailPart));
+      }
+    }
+  }
   return pairings;
 }
 
