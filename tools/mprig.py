@@ -667,7 +667,7 @@ def start_run(a):
         "DISPLAY": f":{display}", "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}", "SDL_AUDIO_DRIVER": "dummy",
         "MESA_VK_WSI_DEBUG": "sw", "SDL_VIDEODRIVER": "x11",  # RADV on Xvfb has no DRI3
         "MP_USER_PATH": str(user), "MP_CACHE_PATH": str(CACHE), "MP_MODS": str(mods),
-        "MP_FAST_BOOT": "1", "MP_DISABLE_AI_AUDIO": "1", "MP_UPDATE_CHECK": "0", "MP_ASPECT": "16:9", "MP_CONSOLE": str(port),
+        "MP_FAST_BOOT": "0" if getattr(a, "front", False) else "1", "MP_DISABLE_AI_AUDIO": "1", "MP_UPDATE_CHECK": "0", "MP_ASPECT": "16:9", "MP_CONSOLE": str(port),
         "ASAN_OPTIONS": "detect_leaks=0:abort_on_error=1",
     })
     if a.room:
@@ -697,7 +697,13 @@ def start_run(a):
         if game.poll() is not None:
             break
         try:
-            if not legacy:
+            if getattr(a, "front", False):
+                # the front end has no game state for `status`; `pointer where` needs none
+                res = console(port, ["pointer where"], timeout=10)
+                if res and res[0][1]:
+                    ready = True
+                    break
+            elif not legacy:
                 res = console(port, ["status --json"], timeout=10)
                 if res and not res[0][1] and "unknown" in res[0][2][-1].lower():
                     legacy = True
@@ -1183,6 +1189,7 @@ def build_parser():
     def start_args(s, room_help):
         s.add_argument("--build", help="build dir name under build/ or a path (default: rig.ini build)")
         s.add_argument("--disc")
+        s.add_argument("--front", action="store_true", help="boot the real front end (no fast boot); ready once the console answers")
         s.add_argument("--env", action="append", default=[], metavar="K=V")
         s.add_argument("--mods", help="mods dir, or 'none' for an empty one (default: the real user's)")
         s.add_argument("--settings", help="port_settings.ini to use, or 'none' (default: the real user's)")
