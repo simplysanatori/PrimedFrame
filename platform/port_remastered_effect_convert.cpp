@@ -309,6 +309,16 @@ constexpr uint32_t kAlreadyExposed = 1u << 31;
 constexpr EffectGuid kWaveOrbMati = {0xfc, 0x33, 0x65, 0x75, 0x32, 0xe8, 0xf2, 0x48,
                                      0xb1, 0xef, 0xeb, 0xb4, 0x1f, 0xce, 0xa1, 0x4f};
 
+// PowerBall projectile/APSM child, MATI and constant PMDL.
+// These are little-endian UUID bytes, as read from the Remastered GENP/MATI.
+constexpr EffectGuid kPowerBallChild = {0x82, 0x07, 0x87, 0xae, 0xf4, 0x41, 0x26, 0x4c,
+                                        0x88, 0x76, 0xc2, 0xf0, 0x70, 0xcf, 0x1e, 0x06};
+constexpr EffectGuid kPowerBallMati = {0x46, 0x2a, 0x75, 0x86, 0x33, 0xe7, 0x23, 0x4d,
+                                       0xad, 0xc8, 0xc7, 0x4f, 0x28, 0x15, 0x80, 0xec};
+constexpr EffectGuid kPowerBallModel = {0x60, 0xae, 0xf6, 0x4b, 0xe5, 0x3b, 0x51, 0x4d,
+                                        0x88, 0xbd, 0x50, 0xbb, 0xd1, 0xbd, 0xf6, 0x71};
+constexpr uint32_t kPowerBallShader = 0xe899b1df;
+
 enum class Role { Color, Opacity, Ramp, Ramp2, Threshold, Indirect, Palette };
 
 // A MATI texture parameter (`tag`) in the role it plays, and which CCH0
@@ -1710,6 +1720,18 @@ public:
       }
       return nullptr;
     };
+    auto findUnique = [&node](uint32_t fourcc) -> const EffectProperty* {
+      const EffectProperty* found = nullptr;
+      for (const EffectProperty& property : node.properties) {
+        if (property.fourcc == fourcc) {
+          if (found != nullptr) {
+            return nullptr;
+          }
+          found = &property;
+        }
+      }
+      return found;
+    };
     const auto cch0 = mati.vectors.count("CCH0") ? mati.vectors.at("CCH0") : std::array<float, 4>{};
     if (recipe->unitCch0 && (cch0[2] != 1.0f || cch0[3] != 0.0f)) {
       m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " has a fade gain/bias the renderer lacks");
@@ -1769,6 +1791,53 @@ public:
     uint32_t features = recipe->features;
     if (!swoosh && find(F("PMDL")) != nullptr && guid->guid == kWaveOrbMati && mati.shader == 0x642dd72b &&
         mati.headerBlend == 1) {
+      features |= kAlreadyExposed;
+    }
+    // PowerBall's projectile/source material writes RGB multiplied by inverse
+    // auto-exposure on the CPU; the source post restores that exposure. Require the exact
+    // material, shader, header, model and source render-state fields: PBDM or a
+    // similar ramp material alone does not prove exposure invariance.
+    const EffectProperty* powerPmdl = findUnique(F("PMDL"));
+    const EffectProperty* powerDvvn = findUnique(F("DVVN"));
+    const EffectProperty* powerPbdm = findUnique(F("PBDM"));
+    const EffectProperty* powerMtin = findUnique(F("MTIN"));
+    const bool exactMatiProperty = powerMtin == &material && material.tag == 0 && material.value.size() == 2 &&
+                                   material.value[0].kind == EffectValue::Kind::Byte && material.value[0].word == 0 &&
+                                   material.value[1].kind == EffectValue::Kind::Guid &&
+                                   material.value[1].guid == kPowerBallMati;
+    const bool hasIexp = std::any_of(node.properties.begin(), node.properties.end(),
+                                     [](const EffectProperty& property) { return property.fourcc == F("IEXP"); });
+    const auto constantIs = [](const EffectProperty* property, uint8_t expectedTag, uint32_t expected,
+                               bool requireCnst, bool requireByte) {
+      if (property == nullptr || property->tag != expectedTag || property->value.size() != 1) {
+        return false;
+      }
+      const EffectValue* value = &property->value[0];
+      if (requireByte) {
+        return value->kind == EffectValue::Kind::Byte && value->word == expected;
+      }
+      if (IsElement(*value, F("CNST")) && value->args.size() == 1) {
+        value = &value->args[0];
+      } else if (requireCnst) {
+        return false;
+      }
+      return (value->kind == EffectValue::Kind::Byte || value->kind == EffectValue::Kind::Word) &&
+             value->word == expected;
+    };
+    const auto guidIs = [](const EffectProperty* property, const EffectGuid& expected) {
+      if (property == nullptr || property->tag != 3 || property->value.size() != 1) {
+        return false;
+      }
+      const EffectValue* value = &property->value[0];
+      if (!IsElement(*value, F("CNST")) || value->args.size() != 1) {
+        return false;
+      }
+      value = &value->args[0];
+      return value->kind == EffectValue::Kind::Guid && value->guid == expected;
+    };
+    if (!swoosh && node.id == kPowerBallChild && exactMatiProperty && mati.shader == kPowerBallShader &&
+        mati.headerBlend == kNoHeaderBlend && guidIs(powerPmdl, kPowerBallModel) &&
+        constantIs(powerDvvn, 1, 4, false, true) && constantIs(powerPbdm, 1, 0, true, false) && !hasIexp) {
       features |= kAlreadyExposed;
     }
     if (recipe->frameBuffer) {
