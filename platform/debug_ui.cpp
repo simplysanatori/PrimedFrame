@@ -6860,8 +6860,8 @@ void DrawControlsKeyboardMouse() {
     MarkDirty();
   }
   ImGui::TextDisabled("Also switches on Twin stick, so a controller's right stick aims too.");
-  if (ImGui::SliderFloat("Sensitivity", &sInput.mouseSensitivity, 0.0005f, 0.02f, "%.4f rad/px",
-                         ImGuiSliderFlags_Logarithmic)) {
+  if (ImGui::SliderFloat("Sensitivity", &sInput.mouseSensitivity, 0.000001f, 0.02f, "%.6f rad/px",
+                         ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat)) {
     MarkDirty();
   }
   if (ImGui::Checkbox("Invert X", &sInput.mouseInvertX)) {
