@@ -228,7 +228,8 @@ void CElementGen::PortVfxUpdateSystem() {
 bool PortVfxBuildDesc(const CPortVfxData& vfx, const float* vsmt, uint vsmtMask,
                       aurora::gfx::vfx::DrawDesc& desc) {
   const CPortVfxMat& mat = vfx.mat;
-  desc.features = mat.features;
+  desc.features = mat.features & ~uint32_t(aurora::gfx::vfx::AlreadyExposed);
+  desc.alreadyExposed = (mat.features & aurora::gfx::vfx::AlreadyExposed) != 0;
   desc.blend = static_cast< aurora::gfx::vfx::Blend >(mat.blend);
   desc.colorSlot = static_cast< int8_t >(mat.colorSlot);
   desc.opacitySlot = static_cast< int8_t >(mat.opacitySlot);

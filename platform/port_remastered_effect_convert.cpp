@@ -302,6 +302,8 @@ constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kInd
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
+// aurora::gfx::vfx::AlreadyExposed: an exposure policy carried in the features word, not a shader feature.
+constexpr uint32_t kAlreadyExposed = 1u << 31;
 
 // MTIN 756533fc-e832-48f2-b1ef-ebb41fcea14f, the wave orb's material, as the table's little-endian GUID.
 constexpr EffectGuid kWaveOrbMati = {0xfc, 0x33, 0x65, 0x75, 0x32, 0xe8, 0xf2, 0x48,
@@ -1760,6 +1762,15 @@ public:
         mati.headerBlend == 1) {
       blend = kBlendAdditiveOne;
     }
+    // Its exposure: the source scales the orb by the inverse of the auto exposure and the post
+    // multiplies it back, so the light it adds to the (already exposed) HDR scene is T * COLR * ITEN,
+    // net exposure 1. Validated for this MATI only; every other effect keeps the room's exposure.
+    // Its own test, not read off the blend: a later blend change must not move the policy.
+    uint32_t features = recipe->features;
+    if (!swoosh && find(F("PMDL")) != nullptr && guid->guid == kWaveOrbMati && mati.shader == 0x642dd72b &&
+        mati.headerBlend == 1) {
+      features |= kAlreadyExposed;
+    }
     if (recipe->frameBuffer) {
       if (cch0[0] != 0.0f || cch0[1] != 0.0f) {
         m_approximated.push_back(std::string("VMAT: shader ") + shaderText + "'s scene warp dropped (drawn as a multiply)");
@@ -1779,7 +1790,7 @@ public:
     // The blob.
     std::vector<uint8_t> blob;
     AppendBE32(blob, 2);
-    AppendBE32(blob, recipe->features);
+    AppendBE32(blob, features);
     AppendBE32(blob, blend);
     AppendBE32(blob, uint32_t(slots.size()));
     int32_t slotOf[7] = {-1, -1, -1, -1, -1, -1, -1};

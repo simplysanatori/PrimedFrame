@@ -304,14 +304,14 @@ wgpu::TextureFormat depth_format() noexcept { return webgpu::g_graphicsConfig.de
 
 uint32_t sample_count() noexcept { return webgpu::g_graphicsConfig.msaaSamples; }
 
-RenderTargetLayout scene_render_target_layout() noexcept {
+static RenderTargetLayout efb_render_target_layout(const webgpu::TextureWithSampler& color) noexcept {
   RenderTargetLayout layout{
       .colorAttachmentCount = 1,
       .colorAttachments = {{{
           .semantic = ColorAttachmentSemantic::SceneColor,
-          .format = webgpu::g_frameBuffer.format,
-          .width = webgpu::g_frameBuffer.size.width,
-          .height = webgpu::g_frameBuffer.size.height,
+          .format = color.format,
+          .width = color.size.width,
+          .height = color.size.height,
       }}},
       .depthStencilFormat = webgpu::g_graphicsConfig.depthFormat,
       .sampleCount = webgpu::g_graphicsConfig.msaaSamples,
@@ -319,6 +319,14 @@ RenderTargetLayout scene_render_target_layout() noexcept {
   finalize_render_target_layout(layout);
   return layout;
 }
+
+// The target EFB passes draw into now: the HDR scene while it is active (set_scene_hdr), else the
+// display EFB. color_format() stays the surface format either way.
+RenderTargetLayout scene_render_target_layout() noexcept {
+  return efb_render_target_layout(scene_hdr_active() ? webgpu::g_sceneHdr : webgpu::g_frameBuffer);
+}
+
+RenderTargetLayout display_render_target_layout() noexcept { return efb_render_target_layout(webgpu::g_frameBuffer); }
 
 bool uses_reversed_z() noexcept { return gx::UseReversedZ; }
 

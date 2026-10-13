@@ -55,6 +55,9 @@ void increment_merged_draw_count() noexcept {}
 
 namespace aurora::webgpu {
 GraphicsConfig g_graphicsConfig{};
+// Tests clear it to see GXPortSceneHdr fail closed.
+bool g_testSceneHdrSupported = true;
+bool scene_hdr_supported() noexcept { return g_testSceneHdrSupported; }
 } // namespace aurora::webgpu
 
 #include "webgpu/gpu_prof.hpp"
@@ -127,9 +130,15 @@ void set_render_scissor(const gfx::ClipRect& scissor) noexcept { g_gxState.rende
 } // namespace aurora::gx
 
 // --- Shader/pipeline stubs ---
+namespace aurora::gfx {
+bool scene_hdr_pass_active() noexcept;
+} // namespace aurora::gfx
 namespace aurora::gx {
+// How many times a draw rebuilt its pipeline config; the HDR bit is taken as the real one takes it.
+uint32_t g_testPopulateCount = 0;
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept {
-  // No-op for tests
+  ++g_testPopulateCount;
+  config.shaderConfig.sceneHdr = gfx::scene_hdr_pass_active();
 }
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept { return {}; }
 ShaderInfo build_shader_info(const ShaderConfig& config) noexcept { return {}; }
@@ -168,6 +177,23 @@ Vec2<uint32_t> get_render_target_size() noexcept { return {640, 480}; }
 void set_viewport(const Viewport& viewport) noexcept {}
 void set_scissor(uint32_t x, uint32_t y, uint32_t w, uint32_t h) noexcept {}
 uint32_t get_sample_count() noexcept { return 1; }
+// The scene HDR mode the FIFO set, and how many switches it asked for.
+bool g_testSceneHdr = false;
+uint32_t g_testSceneHdrSwitches = 0;
+// Tests set it to see a refused switch.
+bool g_testSceneHdrRefuse = false;
+bool set_scene_hdr(bool on) {
+  if (g_testSceneHdrRefuse) {
+    return false;
+  }
+  ++g_testSceneHdrSwitches;
+  g_testSceneHdr = on;
+  return true;
+}
+bool scene_hdr_active() noexcept { return g_testSceneHdr; }
+// Tests set it to stand for an offscreen pass while the HDR scene is on.
+bool g_testSceneHdrOffscreen = false;
+bool scene_hdr_pass_active() noexcept { return g_testSceneHdr && !g_testSceneHdrOffscreen; }
 RenderTargetLayout get_render_target_layout() noexcept {
   return {
       .colorAttachmentCount = 1,
@@ -240,7 +266,15 @@ TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t m
                                      const char* label) noexcept {
   return {};
 }
-TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label, uint32_t mips) noexcept {
+namespace testing {
+// The last new_render_texture's mip count and format.
+uint32_t lastRenderTextureMips = 0;
+wgpu::TextureFormat lastRenderTextureFormat = wgpu::TextureFormat::Undefined;
+} // namespace testing
+TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label, uint32_t mips,
+                                 wgpu::TextureFormat format) noexcept {
+  testing::lastRenderTextureMips = mips;
+  testing::lastRenderTextureFormat = format;
   return {};
 }
 TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept { return {}; }
@@ -255,11 +289,19 @@ std::atomic<uint32_t> endOffscreenCount{0};
 std::atomic<uint32_t> resolvePassCount{0};
 std::atomic<uint32_t> offscreenWidth{0};
 std::atomic<uint32_t> offscreenHeight{0};
+// The last resolve_pass_into's ResolveHdr (hdr::Tone{} / false when it passed none).
+bool lastResolveHasHdr = false;
+ResolveHdr lastResolveHdr{};
+bool lastResolveMips = false;
 } // namespace testing
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
-                       Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat, int probeFace, bool resolveMips) {
+                       Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat, int probeFace,
+                       bool resolveMips, const ResolveHdr* hdr) {
   testing::resolvePassCount.fetch_add(1, std::memory_order_release);
+  testing::lastResolveHasHdr = hdr != nullptr;
+  testing::lastResolveHdr = hdr != nullptr ? *hdr : ResolveHdr{};
+  testing::lastResolveMips = resolveMips;
 }
 namespace probe {
 TextureHandle face(uint32_t face) { return {}; }
@@ -288,9 +330,23 @@ bool is_offscreen() noexcept { return false; }
 } // namespace aurora::gfx
 
 namespace aurora::gfx::bloom {
+namespace testing {
+// Whether ensure_task succeeds, and what the POST_PROCESS handler recorded.
+bool task = false;
+uint32_t records = 0;
+Params lastRecord{};
+bool leaveScene = false; // record leaves the HDR scene, as the real one does
+} // namespace testing
 bool push(const Params& params) { return false; }
-bool ensure_task() { return false; }
-void record(const Params& params) {}
+bool ensure_task() { return testing::task; }
+bool record(const Params& params) {
+  ++testing::records;
+  testing::lastRecord = params;
+  if (testing::leaveScene) {
+    g_testSceneHdr = false;
+  }
+  return testing::task;
+}
 void set_grade_lut(uint32_t id, const uint8_t* rgba) {}
 void after_submit() noexcept {}
 bool frame_radiance(float out[3], uint32_t& serial) { return false; }
@@ -387,8 +443,12 @@ void set_latest(uint32_t width, uint32_t height, const std::vector<uint32_t>& da
 } // namespace testing
 } // namespace aurora::gfx::depth_peek
 
+namespace aurora::gfx::testing {
+// When set, RGB565 needs a conversion, as it does on a real device (tex_copy_conv's pipelines).
+bool copyConvertsRgb565 = false;
+} // namespace aurora::gfx::testing
 namespace aurora::gfx::tex_copy_conv {
-bool needs_conversion(GXTexFmt fmt) { return false; }
+bool needs_conversion(GXTexFmt fmt) { return testing::copyConvertsRgb565 && fmt == GX_TF_RGB565; }
 } // namespace aurora::gfx::tex_copy_conv
 
 namespace aurora::gfx::tex_palette_conv {

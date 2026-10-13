@@ -28,7 +28,10 @@ enum Feature : uint32_t {
   ColorIndexing = 512,  // colorSlot = lookup (x index, y alpha), paletteSlot read at (i.x*s + o, z), layer 0
   AddColor = 1024,      // extra[addRow] = (add.rgb, scale): rgb = rgb * scale + add
   OpacityFade = 2048,   // a *= S(sat(-p.x / (p.y - p.x))), p = fadeX/fadeY
-  ColorRgbOnly = 4096   // with ColorTex: the map's alpha is not opacity (a stays 1)
+  ColorRgbOnly = 4096,  // with ColorTex: the map's alpha is not opacity (a stays 1)
+  // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
+  // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
+  AlreadyExposed = 1u << 31
 };
 // Multiply is port-only: the FrameBuffer_* shaders draw the scene behind them x rgb, warped by an
 // indirect map. The pass can't sample its own target, so the warp is dropped and the target is
@@ -98,6 +101,10 @@ struct DrawDesc {
   Src fresnelX, fresnelY;     // OpacityFresnel: F.x, F.y
   Src fadeX, fadeY;           // OpacityFade: p.x, p.y
   Src indexScale, indexOffset, indexRow; // ColorIndexing: palette coordinate (i.x*s + o, z)
+  // The colour is already exposed light: into the HDR scene it is written at exposure 1 instead of the
+  // room's (the GX tone row's exposure, as every other draw takes it). An LDR draw ignores it.
+  // Set only for the material the converter validated (the wave orb's MATI), not for VFX in general.
+  bool alreadyExposed = false;
 };
 
 // Records quadCount quads (4 vertices each, drawn as two triangles) into the current pass with the
