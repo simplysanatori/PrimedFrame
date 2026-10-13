@@ -1,9 +1,9 @@
 # Metroid Prime — native port
 
-A native build of **Metroid Prime** (GameCube, USA v1.00, v1.01 or v1.02 `GM8E01`, or PAL `GM8P01` as experimental) for Linux,
-Windows and Android. The game is compiled natively from the
-[PrimeDecomp](https://github.com/PrimeDecomp/prime) decompiled source and renders
-through Aurora (SDL3 and WebGPU), with no emulator involved.
+A native build of **Metroid Prime** for Linux, Windows and Android, compiled
+from the [PrimeDecomp](https://github.com/PrimeDecomp/prime) decompilation and
+rendered through Aurora (SDL3/WebGPU). There's no emulator involved. Supported
+discs: USA 1.00, 1.01 and 1.02 (`GM8E01`), and PAL (`GM8P01`, experimental).
 
 **No game content is included.** You need your own copy of the game: the port
 reads it from a disc image and never ships any of its assets. This repository
@@ -11,39 +11,30 @@ ships no disc image, and neither does any package or release built from it.
 
 ## What it adds over the console release
 
-- Widescreen rendering — 4:3, 16:9 or following the window — with the HUD spread
-  to the edges and the menus, pause and map screens aspect-corrected
-- An uncapped presentation rate over a fixed-rate simulation, so physics and
-  animation stay console-accurate at any frame rate
-- Graphics options: first-person FOV, MSAA and anisotropic filtering, HUD scale,
-  and toggles to hide the helmet and the visor effects
-- Mouse aim and twin-stick aiming, with sensitivity, inversion and crosshair size
-- A Controls page for rebinding keyboard, mouse and controller, with a second key
-  per action, conflict warnings, controller presets (GameCube, Modern,
-  Southpaw), deadzones and gyro aim
-- Optional gameplay tweaks, all off by default: Fast Morph (quick morph and
-  unmorph that keep momentum), Spring Ball (optionally on a gyro flick), Toggle
-  Lock-On and Sticky Charge
-- Skippable cutscenes: Start skips cutscenes the console release forces you to
-  watch
-- Save states (eight slots plus undo, F5/F9) and a reveal-whole-map option with
-  an item, scan and room tracker
-- An on-screen in-game timer and a LiveSplit Server client that starts, splits
-  on upgrades and stops at the credits
-- Hard mode, the Fusion Suit and the image galleries can be unlocked without
-  beating the game
-- Memory card import and export as `.gci` files or raw card images, including
-  straight from and to Dolphin
-- A mods folder that replaces loose disc files or single resources inside PAKs (or adds new ones),
-  user texture packs, HD texture replacements, and in-game button prompts that
-  follow the input bound to each action
-- Discord Rich Presence on desktop (bring your own Discord application id)
-- The common options sit in pause > Options beside the game's own; the F1
-  overlay holds everything, in pages for Game, Controls, Video, Remastered,
-  Mods, Archipelago, Tracker, Save states, System and Debug (cheats sit behind
-  a "Show cheats" box)
-- A touch overlay on Android, with a virtual controller for the sticks, triggers,
-  shoulders and face buttons
+- **Remastered assets** — import models and effects from your own Metroid Prime
+  Remastered dump (F1 > Remastered; see `docs/MODS.md`)
+- **Widescreen** with an edge-to-edge HUD, and an **uncapped frame rate** over
+  the original fixed-rate simulation
+- **Graphics:** FOV, MSAA, anisotropic filtering, HUD scale, arm cannon offset,
+  and toggles to hide the helmet and visor effects
+- **Controls:** mouse and twin-stick aim, gyro, full rebinding with presets
+  (GameCube, Remastered, Modern, Southpaw), and button prompts that match your
+  bindings
+- **Optional tweaks**, all off by default: Fast Morph, Spring Ball, Toggle
+  Lock-On, Sticky Charge
+- **Skippable cutscenes**
+- **Save states** (eight slots plus undo) and **quick resume** after quitting
+- **Saves:** import from and export to USA/PAL GameCube, Wii Trilogy and Dolphin
+- **Photo mode** with a free camera and high-resolution capture
+- **Speedrunning:** in-game timer and LiveSplit auto-splitting
+- **Map and tracker:** reveal the map, plus item, scan and room tracking
+- **Mods and texture packs**, including HD texture replacements
+- **Unlocks:** Hard mode, the Fusion Suit and the galleries, without finishing
+  the game first
+- **1.00 compatibility mode** for later disc revisions
+- **Discord Rich Presence** on desktop, and a **touch overlay** on Android
+- The **F1 overlay** has every setting, with search; the common ones are also in
+  pause > Options
 
 ## Randomizer and Archipelago
 
@@ -60,9 +51,7 @@ Both are supported, on all three platforms.
   and the Chat sub-tab shows the server log and sends messages such as `!hint`.
   DeathLink is supported.
 
-  `wss://` needs no extra setup on any platform: OpenSSL is vendored and linked
-  statically on Android, and the trust store is enumerated by hand, so the
-  system CA bundle is not required. See `docs/ARCHIPELAGO.md`.
+  `wss://` works out of the box on every platform. See `docs/ARCHIPELAGO.md`.
 
 Cutscenes are always skippable in randomizer and Archipelago games.
 
