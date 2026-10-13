@@ -6860,7 +6860,7 @@ void DrawControlsKeyboardMouse() {
     MarkDirty();
   }
   ImGui::TextDisabled("Also switches on Twin stick, so a controller's right stick aims too.");
-  if (ImGui::SliderFloat("Sensitivity", &sInput.mouseSensitivity, 0.000001f, 0.02f, "%.6f rad/px",
+  if (ImGui::SliderFloat("Sensitivity", &sInput.mouseSensitivity, 0.00001f, 0.02f, "%.6f rad/px",
                          ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat)) {
     MarkDirty();
   }
