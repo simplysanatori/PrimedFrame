@@ -148,7 +148,7 @@ const Signatures& ElementsOf(Type type) {
       {F("CONE"), "vr"},    {F("CIRC"), "vvrrr"}, {F("CCLU"), "vvir"}, {F("ADD_"), "vv"}, {F("MULT"), "vv"},
       {F("CHAN"), "vvi"},   {F("PULS"), "iivv"}, {F("RTOV"), "r"},  {F("PLOC"), ""},    {F("PLCO"), ""},
       {F("PVEL"), ""},      {F("PSOF"), ""},    {F("PSOU"), ""},   {F("PSOR"), ""},    {F("PSTR"), ""},
-      {F("SUB_"), "vv"},    {F("CTVC"), "c"},
+      {F("SUB_"), "vv"},    {F("CTVC"), "c"},     {F("PQAD"), "vv"},
   };
   static const Signatures modVectorElements = {
       {F("NONE"), ""},     {F("CNST"), "rrr"},  {F("GRAV"), "v"},    {F("WIND"), "vr"},  {F("EXPL"), "rr"},
@@ -1051,29 +1051,60 @@ public:
                        [fourcc](const EffectValue& arg) { return UsesElement(arg, fourcc); });
   }
 
-  // PMRQ (a model particle's rotation) REUL(x, y, z, #00) as retail's PMRT
-  // CNST(x, y, z). CERotationEuler::QuatGeneric's order 0 is Rz * Ry * Rx in
-  // degrees, as CElementGen builds PMRT. IRND is left out: retail evaluates a
-  // varying PMRT afresh each frame, where IRND gives 0 after frame 0.
+  // PMRQ's direct REUL remains the existing PMRT CNST path. For the source's
+  // ordered RADD(REUL, REUL), PQAD carries two Euler vectors; CNST(r, r, r)
+  // preserves each real expression and the runtime composes the rotations as
+  // Rz * Ry * Rx in degrees. RTOV is not suitable here: it replicates one real
+  // into all three vector components.
   bool ModelRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
     const EffectValue* reul = value.size() == 1 ? &value[0] : nullptr;
-    if (reul == nullptr || !IsElement(*reul, F("REUL")) || reul->args.size() != 4) {
+    if (reul != nullptr && IsElement(*reul, F("REUL")) && reul->args.size() == 4) {
+      const EffectValue& order = reul->args[3];
+      if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
+        why = "a rotation order other than 0 (XYZ)";
+        return false;
+      }
+      AppendBE32(out, F("CNST"));
+      for (size_t i = 0; i < 3; ++i) {
+        // Keep the pre-existing direct-REUL behavior. IRND is supported only
+        // by the ordered composition carrier, where PIRN makes it stable per particle.
+        if (UsesElement(reul->args[i], F("IRND"))) {
+          why = "an angle with IRND";
+          return false;
+        }
+        if (!Element(reul->args[i], Type::Real, out, why)) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    const EffectValue* add = value.size() == 1 && IsElement(value[0], F("RADD")) ? &value[0] : nullptr;
+    if (add == nullptr || add->args.size() != 2) {
       why = "a rotation that is not REUL";
       return false;
     }
-    const EffectValue& order = reul->args[3];
-    if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
-      why = "a rotation order other than 0 (XYZ)";
-      return false;
-    }
-    AppendBE32(out, F("CNST"));
-    for (size_t i = 0; i < 3; ++i) {
-      if (UsesElement(reul->args[i], F("IRND"))) {
-        why = "an angle with IRND";
+    for (const EffectValue& operand : add->args) {
+      if (!IsElement(operand, F("REUL")) || operand.args.size() != 4) {
+        why = "a rotation that is not REUL";
         return false;
       }
-      if (!Element(reul->args[i], Type::Real, out, why)) {
+      const EffectValue& order = operand.args[3];
+      if (order.kind != EffectValue::Kind::Byte || order.word != 0) {
+        why = "a rotation order other than 0 (XYZ)";
         return false;
+      }
+    }
+
+    AppendBE32(out, F("PQAD"));
+    for (const EffectValue& operand : add->args) {
+      // CNST is the vector carrier: RTOV only replicates one scalar and cannot
+      // represent REUL's three independent angle expressions.
+      AppendBE32(out, F("CNST"));
+      for (size_t i = 0; i < 3; ++i) {
+        if (!Element(operand.args[i], Type::Real, out, why)) {
+          return false;
+        }
       }
     }
     return true;
