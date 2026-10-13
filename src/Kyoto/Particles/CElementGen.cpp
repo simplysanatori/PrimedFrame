@@ -33,6 +33,8 @@
 #include "dolphin/gx/GXGeometry.h"
 #include "dolphin/gx/GXTev.h"
 
+#include <cmath>
+
 #ifdef TARGET_PC
 #include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
@@ -181,6 +183,10 @@ CElementGen::CElementGen(TToken< CGenDescription > gen, EModelOrientationType or
 , xPortLineShiftSet(false)
 , xPortVsmt{}
 , xPortVsmtMask(0)
+, xPortNestedHdrColor{1.f, 1.f, 1.f, 1.f}
+, xPortNestedHdrInnerRadius(0.f)
+, xPortNestedHdrOuterRadius(0.f)
+, xPortNestedHdrRadiiValid(false)
 #endif
 {
 #ifdef TARGET_PC
@@ -686,6 +692,9 @@ void CElementGen::UpdateLightParameters() {
   CGenDescription* desc = x28_loadedGenDesc;
   if (desc->xf0_LCLR) {
     desc->xf0_LCLR->GetValue(x74_curFrame, x30c_LCLR);
+    if (desc->xPortNestedHdrLight) {
+      desc->xf0_LCLR->GetValueHdr(x74_curFrame, xPortNestedHdrColor);
+    }
   }
   if (desc->xf4_LINT) {
     desc->xf4_LINT->GetValue(x74_curFrame, x310_LINT);
@@ -703,6 +712,16 @@ void CElementGen::UpdateLightParameters() {
   }
   if (x308_lightType != kLT_Custom && desc->xfc_LDIR) {
     desc->xfc_LDIR->GetValue(x74_curFrame, x320_LDIR);
+  }
+  xPortNestedHdrRadiiValid = false;
+  if (desc->xPortNestedHdrLight && desc->xPortNestedLightInnerRadius != nullptr &&
+      desc->xPortNestedLightOuterRadius != nullptr) {
+    desc->xPortNestedLightInnerRadius->GetValue(x74_curFrame, xPortNestedHdrInnerRadius);
+    desc->xPortNestedLightOuterRadius->GetValue(x74_curFrame, xPortNestedHdrOuterRadius);
+    xPortNestedHdrRadiiValid = std::isfinite(xPortNestedHdrInnerRadius) &&
+                               std::isfinite(xPortNestedHdrOuterRadius) &&
+                               xPortNestedHdrInnerRadius >= 0.f &&
+                               xPortNestedHdrOuterRadius > xPortNestedHdrInnerRadius;
   }
 #else
   x28_loadedGenDesc->xf0_LCLR->GetValue(x74_curFrame, x30c_LCLR);
@@ -3273,6 +3292,28 @@ const CVector3f& CElementGen::GetGlobalTranslation() const { return xe8_globalTr
 
 #ifdef TARGET_PC
 uint CElementGen::PortFxAsset() const { return CToken(x1c_genDesc).GetTag().GetId(); }
+
+void CElementGen::PortCollectNestedLightSnapshots(
+    std::vector< CPortNestedLightSnapshot >& out) const {
+  if (x28_loadedGenDesc->xPortNestedHdrLight &&
+      x28_loadedGenDesc->xPortNestedLightInnerRadius != nullptr &&
+      x28_loadedGenDesc->xPortNestedLightOuterRadius != nullptr && SystemHasLight() &&
+      xPortNestedHdrRadiiValid) {
+    CLight light = GetLight();
+    // CGameLight applies its actor transform to this zero local position;
+    // its PBR carrier then uses this same world origin with no EMTR/LOFF.
+    PortSetNestedHdrCarrier(light, xPortNestedHdrColor, x310_LINT, xPortNestedHdrInnerRadius,
+                            xPortNestedHdrOuterRadius);
+    out.push_back({this, PortSystemOrigin(), light});
+  }
+
+  for (int i = 0; i < GetNumActiveChildParticles(); ++i) {
+    CParticleGen* child = GetActiveChildParticle(i);
+    if (child != nullptr && child->Get4CharId() == 'PART') {
+      static_cast< CElementGen* >(child)->PortCollectNestedLightSnapshots(out);
+    }
+  }
+}
 
 void CElementGen::PortFxDescribe(PortFxInfo& out) const {
   out.kind = 'PART';

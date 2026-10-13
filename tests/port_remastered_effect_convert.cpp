@@ -1,11 +1,14 @@
 #include "port_remastered_effect_convert.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
 using namespace PortRemastered;
+
+std::vector<ConvertedPart> ConvertOne(const std::vector<uint8_t>& data, const EffectConvertIO& io);
 
 namespace {
 int sFailures = 0;
@@ -159,6 +162,138 @@ std::vector<uint8_t> Effect() {
   PutProperty(out, "_END", 4);
   out.insert(out.end(), {'F', 'O', 'O', 'T'});
   return out;
+}
+
+constexpr EffectGuid kPlasmaNestedLight = {0x1f, 0x70, 0x11, 0xf9, 0x15, 0xec, 0x8b, 0x45,
+                                            0xae, 0x13, 0xca, 0x2b, 0xf6, 0x5d, 0x42, 0xf6};
+
+void PutRealKey(std::vector<uint8_t>& out, float first, float second) {
+  PutFourCC(out, "KEYE");
+  Put32(out, 1); // percent-keyed
+  Put32(out, 0);
+  out.push_back(0);
+  out.push_back(0);
+  Put32(out, 9);
+  Put32(out, 0);
+  Put32(out, 2);
+  Put32(out, Bits(first));
+  Put32(out, Bits(second));
+}
+
+std::vector<uint8_t> NestedLightEffect(const EffectGuid& childId, uint8_t lightType = 2,
+                                       uint8_t falloff = 3, bool includeRadii = true) {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "_END", 4);
+  Put32(out, 1);
+  PutGuid(out, childId);
+  PutGenerator(out, false);
+  PutProperty(out, "LTYP", 0);
+  out.push_back(lightType);
+  PutProperty(out, "LFOT", 0);
+  out.push_back(falloff);
+  PutProperty(out, "LCLR", 0);
+  PutFourCC(out, "CNST");
+  for (float value : {0.921881f, 0.151383f, 0.0102983f, 1.f}) {
+    PutConstant(out, Bits(value));
+  }
+  PutProperty(out, "LINT", 0);
+  PutFourCC(out, "MULT");
+  PutConstant(out, Bits(20.f));
+  PutRealKey(out, 0.f, 1.f);
+  PutProperty(out, "EMTR", 0);
+  PutFourCC(out, "SEMR");
+  PutFourCC(out, "CNST");
+  PutConstant(out, Bits(0.f));
+  PutConstant(out, Bits(0.1f));
+  PutConstant(out, Bits(0.f));
+  PutFourCC(out, "CNST");
+  PutConstant(out, Bits(0.f));
+  PutConstant(out, Bits(0.f));
+  PutConstant(out, Bits(0.f));
+  PutProperty(out, "PMOP", 0);
+  PutFourCC(out, "CNST");
+  PutConstant(out, Bits(0.f));
+  PutConstant(out, Bits(0.2f));
+  PutConstant(out, Bits(0.f));
+  if (includeRadii) {
+    PutProperty(out, "LIRD", 0);
+    PutConstant(out, Bits(0.25f));
+    PutProperty(out, "LORD", 0);
+    PutConstant(out, Bits(3.f));
+  }
+  PutProperty(out, "_END", 4);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  return out;
+}
+
+void TestPlasmaNestedHdrLight() {
+  std::string error;
+  std::vector<RetailPartProperty> properties;
+  const auto parts = ConvertOne(NestedLightEffect(kPlasmaNestedLight), {});
+  Check(parts.size() == 2, "the Plasma nested-light fixture converts root and child");
+  if (parts.size() == 2) {
+    Check(SplitRetailPart(parts[1].part.data(), parts[1].part.size(), properties, error),
+          "the marked child with PHDR parses as a PART");
+    auto find = [&properties](const char* name) -> const RetailPartProperty* {
+      const uint32_t fourcc = uint32_t(uint8_t(name[0])) << 24 | uint32_t(uint8_t(name[1])) << 16 |
+                              uint32_t(uint8_t(name[2])) << 8 | uint32_t(uint8_t(name[3]));
+      for (const RetailPartProperty& property : properties) {
+        if (property.fourcc == fourcc) {
+          return &property;
+        }
+      }
+      return nullptr;
+    };
+    const RetailPartProperty* marker = find("PHDR");
+    const RetailPartProperty* inner = find("PIR0");
+    const RetailPartProperty* outer = find("POR0");
+    Check(marker != nullptr && marker->value.size() == 8 && std::memcmp(marker->value.data(), "CNST", 4) == 0 &&
+              marker->value[7] == 1,
+          "PHDR opts only the exact child into nested PBR lighting");
+    Check(inner != nullptr && inner->value.size() == 8 && std::memcmp(inner->value.data(), "CNST", 4) == 0 &&
+              ((uint32_t(inner->value[4]) << 24 | uint32_t(inner->value[5]) << 16 |
+                uint32_t(inner->value[6]) << 8 | inner->value[7]) == Bits(0.25f)),
+          "PIR0 preserves LIRD as the real inner radius");
+    Check(outer != nullptr && outer->value.size() == 8 && std::memcmp(outer->value.data(), "CNST", 4) == 0 &&
+              ((uint32_t(outer->value[4]) << 24 | uint32_t(outer->value[5]) << 16 |
+                uint32_t(outer->value[6]) << 8 | outer->value[7]) == Bits(3.f)),
+          "POR0 preserves LORD as the real outer radius");
+    const RetailPartProperty* intensity = find("LINT");
+    Check(intensity != nullptr && intensity->value.size() >= 16 &&
+              std::memcmp(intensity->value.data(), "MULT", 4) == 0,
+          "the source 20-times-keyed LINT element remains dynamic");
+    Check(find("EMTR") != nullptr && find("PMOP") != nullptr && find("LOFF") == nullptr,
+          "the .1 EMTR and .2 PMOP offsets remain non-light particle data");
+    Check(find("LTYP") != nullptr && find("LFOT") != nullptr,
+          "the legacy GX fallback still receives the mapped retail light properties");
+    Check(!parts[0].part.empty() && std::search(parts[0].part.begin(), parts[0].part.end(), "PHDR", "PHDR" + 4) ==
+                                          parts[0].part.end(),
+          "the unmarked root does not get a duplicate nested-light proxy");
+  }
+
+  const auto wrongGuid = ConvertOne(NestedLightEffect(Fresh(7)), {});
+  Check(wrongGuid.size() == 2 &&
+            std::search(wrongGuid[1].part.begin(), wrongGuid[1].part.end(), "PHDR", "PHDR" + 4) ==
+                wrongGuid[1].part.end(),
+        "the same light properties on another child do not enable the feature");
+  const auto wrongType = ConvertOne(NestedLightEffect(kPlasmaNestedLight, 1, 3), {});
+  Check(wrongType.size() == 2 &&
+            std::search(wrongType[1].part.begin(), wrongType[1].part.end(), "PHDR", "PHDR" + 4) ==
+                wrongType[1].part.end(),
+        "a non-point LTYP does not enable the feature");
+  const auto wrongFalloff = ConvertOne(NestedLightEffect(kPlasmaNestedLight, 2, 2), {});
+  Check(wrongFalloff.size() == 2 &&
+            std::search(wrongFalloff[1].part.begin(), wrongFalloff[1].part.end(), "PHDR", "PHDR" + 4) ==
+                wrongFalloff[1].part.end(),
+        "a non-smooth LFOT does not enable the feature");
+  const auto missingRadius = ConvertOne(NestedLightEffect(kPlasmaNestedLight, 2, 3, false), {});
+  Check(missingRadius.size() == 2 &&
+            std::search(missingRadius[1].part.begin(), missingRadius[1].part.end(), "PHDR", "PHDR" + 4) ==
+                missingRadius[1].part.end(),
+        "missing validated LIRD/LORD leaves the child unmarked");
 }
 
 void TestRetailId() {
@@ -1774,6 +1909,7 @@ int main() {
   TestAtlasTexture();
   TestModelChoice();
   TestRetailId();
+  TestPlasmaNestedHdrLight();
   TestSwooshElectric();
   TestConvert();
   TestRejects();

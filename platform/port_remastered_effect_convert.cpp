@@ -1632,6 +1632,17 @@ public:
     return true;
   }
 
+  // LTYP and LFOT are usually stored as a byte property in Remastered, though
+  // the typed integer form is also accepted by the grammar.
+  static bool SmallInteger(const EffectProperty& property, uint32_t& word) {
+    if (property.value.size() == 1 && (property.value[0].kind == EffectValue::Kind::Byte ||
+                                       property.value[0].kind == EffectValue::Kind::Word)) {
+      word = property.value[0].word;
+      return true;
+    }
+    return SmallConst(property, word);
+  }
+
   // SMVR as `SMOV(EXTT, CNST(0, 0, 0), EXTR, NONE, NONE)`: the emitter's own
   // translation and rotation with no offset (1114 of 1233 SMVR forms).
   static bool IdentityMover(const EffectProperty& mover) {
@@ -2135,6 +2146,48 @@ public:
     const auto& retail = PropertiesOf(type);
     const bool part = type == F("PART");
     const bool swoosh = type == F("SWHC");
+    // This is deliberately not a general Remastered particle-light mapping:
+    // source proof covers only this embedded Plasma impact child.
+    std::vector<uint8_t> nestedLightInnerRadius;
+    std::vector<uint8_t> nestedLightOuterRadius;
+    bool nestedHdrLight = false;
+    if (part && EffectGuidString(node.id) == "f911701f-ec15-458b-ae13-ca2bf65d42f6") {
+      auto unique = [&node](uint32_t fourcc) -> const EffectProperty* {
+        const EffectProperty* found = nullptr;
+        for (const EffectProperty& property : node.properties) {
+          if (property.fourcc == fourcc) {
+            if (found != nullptr) {
+              return nullptr;
+            }
+            found = &property;
+          }
+        }
+        return found;
+      };
+      const EffectProperty* ltyp = unique(F("LTYP"));
+      const EffectProperty* lfot = unique(F("LFOT"));
+      const EffectProperty* lclr = unique(F("LCLR"));
+      const EffectProperty* lint = unique(F("LINT"));
+      const EffectProperty* lird = unique(F("LIRD"));
+      const EffectProperty* lord = unique(F("LORD"));
+      uint32_t lightType = 0;
+      uint32_t falloff = 0;
+      std::string why;
+      std::vector<uint8_t> colorProbe;
+      std::vector<uint8_t> intensityProbe;
+      nestedHdrLight = ltyp != nullptr && lfot != nullptr && lird != nullptr && lord != nullptr &&
+                       lclr != nullptr && lint != nullptr && lclr->value.size() == 1 &&
+                       lint->value.size() == 1 &&
+                       SmallInteger(*ltyp, lightType) && lightType == 2 && SmallInteger(*lfot, falloff) &&
+                       falloff == 3 && lird->value.size() == 1 && lord->value.size() == 1 &&
+                       Element(lclr->value[0], Type::Color, colorProbe, why) &&
+                       Element(lint->value[0], Type::Real, intensityProbe, why) &&
+                       Element(lird->value[0], Type::Real, nestedLightInnerRadius, why) &&
+                       Element(lord->value[0], Type::Real, nestedLightOuterRadius, why);
+      if (!nestedHdrLight) {
+        result.dropped.push_back("PHDR: exact Plasma child lacks constant point/smooth light or supported LIRD/LORD");
+      }
+    }
     // Swooshes: SBDM is Remastered's blend mode, 0 or 1, which retail has as
     // AALP (additive). Taken only where there's no AALP of its own.
     bool additive = false;
@@ -2486,6 +2539,15 @@ public:
       AppendBE32(out, F("CNST"));
       AppendBE32(out, 1);
     }
+    if (nestedHdrLight) {
+      AppendBE32(out, F("PHDR"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, 1);
+      AppendBE32(out, F("PIR0"));
+      out.insert(out.end(), nestedLightInnerRadius.begin(), nestedLightInnerRadius.end());
+      AppendBE32(out, F("POR0"));
+      out.insert(out.end(), nestedLightOuterRadius.begin(), nestedLightOuterRadius.end());
+    }
     AppendBE32(out, F("_END"));
     result.approximated = std::move(m_approximated);
     m_approximated.clear();
@@ -2794,9 +2856,11 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.TextureTransforms();
     } else if (vfx && (fourcc == F("VPMT") || fourcc == F("VSMT"))) {
       ok = reader.PerParticle(fourcc == F("VSMT"));
-    } else if ((part && fourcc == F("SSZE")) || (vfx && fourcc == F("ITEN"))) {
+    } else if ((part && (fourcc == F("SSZE") || fourcc == F("PIR0") || fourcc == F("POR0"))) ||
+               (vfx && fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
-    } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") || fourcc == F("PFCM") || fourcc == F("PSHP"))) ||
+    } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") || fourcc == F("PFCM") ||
+                         fourcc == F("PSHP") || fourcc == F("PHDR"))) ||
                (vfx && fourcc == F("PIRN"))) {
       ok = reader.PortWord();
     } else if (vfx && fourcc == F("PVRT")) {

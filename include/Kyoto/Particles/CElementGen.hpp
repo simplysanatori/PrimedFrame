@@ -19,6 +19,7 @@ class CModVectorElement;
 
 #pragma cpp_extensions on
 #ifdef TARGET_PC
+#include <vector>
 struct CPortVfxMeshBatch;
 #endif
 
@@ -181,9 +182,48 @@ public:
   static void SetGlobalSeed(const ushort seed) { sSeed = seed; }
 
 #ifdef TARGET_PC
+  struct CPortNestedLightSnapshot {
+    const CParticleGen* generator; // identity key only; never dereferenced after Update()
+    CVector3f origin;
+    CLight light;
+  };
+  static bool PortHasNestedLightSnapshotFor(
+      const std::vector< CPortNestedLightSnapshot >& snapshots, const CParticleGen* generator) {
+    for (const CPortNestedLightSnapshot& snapshot : snapshots) {
+      if (snapshot.generator == generator) {
+        return true;
+      }
+    }
+    return false;
+  }
   // World position for DFCS (the system origin) / DFCP (a system-local particle position).
   CVector3f PortWorldFromLocal(const CVector3f& local) const {
-    return xe8_globalTranslation + x10c_globalScaleTransform * local;
+    return PortWorldFromLocal(xe8_globalTranslation, x10c_globalScaleTransform, local);
+  }
+  // Exposed for the numeric spawn-translation fixture; this is the same affine
+  // mapping used by PortSystemOrigin and intentionally excludes EMTR/PMOP.
+  static CVector3f PortWorldFromLocal(const CVector3f& globalTranslation,
+                                      const CTransform4f& globalScaleTransform,
+                                      const CVector3f& local) {
+    const CVector3f transformed(
+        globalScaleTransform.Get00() * local.GetX() + globalScaleTransform.Get01() * local.GetY() +
+            globalScaleTransform.Get02() * local.GetZ() + globalScaleTransform.Get03(),
+        globalScaleTransform.Get10() * local.GetX() + globalScaleTransform.Get11() * local.GetY() +
+            globalScaleTransform.Get12() * local.GetZ() + globalScaleTransform.Get13(),
+        globalScaleTransform.Get20() * local.GetX() + globalScaleTransform.Get21() * local.GetY() +
+            globalScaleTransform.Get22() * local.GetZ() + globalScaleTransform.Get23());
+    return CVector3f(globalTranslation.GetX() + transformed.GetX(),
+                     globalTranslation.GetY() + transformed.GetY(),
+                     globalTranslation.GetZ() + transformed.GetZ());
+  }
+  static void PortSetNestedHdrCarrier(CLight& light, const float sourceRgba[4], float intensity,
+                                      float innerRadius, float outerRadius) {
+    const float linearColor[3] = {sourceRgba[0] * intensity, sourceRgba[1] * intensity,
+                                  sourceRgba[2] * intensity};
+    const CVector3f noOffset = CVector3f::Zero();
+    light.SetPosition(noOffset);
+    light.SetPortHdr(linearColor, noOffset, innerRadius, outerRadius, CLight::kPHF_Smooth);
+    light.SetPortHdrBoundsRadius(outerRadius);
   }
   CVector3f PortSystemOrigin() const { return PortWorldFromLocal(xdc_translation); }
   // True for a converted Remastered PART (its PIRN marker).
@@ -212,6 +252,7 @@ public:
   // The global translation just set is already the presented one (placed from
   // the presented camera on every drawn frame): draw it as is, unblended.
   void PortGlobalIsPresented();
+  void PortCollectNestedLightSnapshots(std::vector< CPortNestedLightSnapshot >& out) const;
 #endif
 
 private:
@@ -334,6 +375,9 @@ private:
   // mask = slot n was written; slots 0..10 are the Src values, 11+2*tex+k the warp scales.
   float xPortVsmt[19];
   uint xPortVsmtMask;
+  float xPortNestedHdrColor[4];
+  float xPortNestedHdrInnerRadius, xPortNestedHdrOuterRadius;
+  bool xPortNestedHdrRadiiValid;
   void PortVfxUpdateSystem();
   // XFMD 3/4: the spawn-baked part of the emitter's transform, and moving the live particles from
   // one such frame to the next.
