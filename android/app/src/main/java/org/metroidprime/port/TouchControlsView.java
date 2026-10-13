@@ -123,6 +123,9 @@ final class TouchControlsView extends View {
     };
     // What each GameCube face button does, drawn small under its letter.
     private static final String[] GAMECUBE_FUNCTIONS = {"Fire", "Jump", "Morph", "Missile"};
+    // The same buttons while morphed (#106): A lays a bomb, B boosts, X unmorphs,
+    // Y lays a power bomb.
+    private static final String[] GAMECUBE_MORPH_FUNCTIONS = {"Bomb", "Boost", "Unmorph", "P.Bomb"};
     // The optional Turbo button (F1 "Turbo fire button"), above the cluster on the
     // right. Not in the face arrays: those index the editor ids and are always drawn.
     private static final ControlButton GAMECUBE_TURBO =
@@ -160,6 +163,8 @@ final class TouchControlsView extends View {
         ControlButton.round("Beam", BEAM_SHIFT, 0f, -TWIN_DIAMOND, 0.055f, GC_GREY),
     };
     // Turbo, above Beam.
+    // TWIN_FACE's functions while morphed; Beam still shifts the D-pad.
+    private static final String[] TWIN_MORPH_FUNCTIONS = {"Boost", "Bomb", "Unmorph", "Beam"};
     private static final ControlButton TWIN_TURBO =
         ControlButton.round("Turbo", TURBO_FIRE, 0f, -0.21f, 0.045f, GC_GREEN);
 
@@ -487,6 +492,8 @@ final class TouchControlsView extends View {
     // leaves a SHOW button, nothing is drawn and any touch brings them back.
     private boolean autoHidden;
     private boolean lastOverlayVisible;
+    // morphedLabels() as of the last draw; the poll redraws when it changes.
+    private boolean morphedLabelsNow;
 
     private final Runnable physicalInputPoll = new Runnable() {
         @Override
@@ -513,6 +520,9 @@ final class TouchControlsView extends View {
                     lastWheelMask = mask;
                     invalidate();
                 }
+            }
+            if (labels && !hidden && !autoHidden && morphedLabels() != morphedLabelsNow) {
+                invalidate();
             }
             final boolean overlayVisible = nativeDebugOverlayVisible();
             if (overlayVisible != lastOverlayVisible) {
@@ -619,6 +629,7 @@ final class TouchControlsView extends View {
         }
 
         rHiddenNow = !editing && rHidden();
+        morphedLabelsNow = labels && morphedLabels();
         for (PillButton pill : pills) {
             if (pillShown(pill)) {
                 drawPillButton(canvas, pill, width, height);
@@ -1904,9 +1915,36 @@ final class TouchControlsView extends View {
             return;
         }
         // "LB Jump": without descriptions, just the button's name.
-        final String label = labels ? pill.label : pill.label.split(" ")[0];
+        final String label = labels ? pillLabel(pill) : pill.label.split(" ")[0];
         drawCenteredLabel(canvas, label, bounds.centerX(), bounds.centerY(),
                           label.length() > 2 ? dp(11) : dp(13));
+    }
+
+    // Whether the buttons wear the morph ball's functions (#106): while Samus is
+    // morphed or morphing, in play. Paused, the wheel state reads 0, so the pause
+    // menu gets the usual names; the editor always does.
+    private boolean morphedLabels() {
+        return !editing && (nativeWheelOwned() & WHEEL_MORPHED_BIT) != 0;
+    }
+
+    // A shoulder pill's text, with its morph ball function while morphed.
+    private String pillLabel(PillButton pill) {
+        if (!morphedLabelsNow) {
+            return pill.label;
+        }
+        if (pill.axis == AXIS_TRIGGER_R) {
+            return "R Spider";
+        }
+        if (pill.axis < 0 && pill.button == BTN_EAST) {
+            return "LB Boost";
+        }
+        if (pill.axis < 0 && pill.button == BTN_SOUTH) {
+            return "RT Bomb";
+        }
+        if (pill.axis < 0 && pill.button == BTN_NORTH) {
+            return "RB P.Bomb";
+        }
+        return pill.label;
     }
 
     private void drawButton(Canvas canvas, ControlButton button, float width, float height) {
@@ -1942,8 +1980,11 @@ final class TouchControlsView extends View {
             drawCenteredLabel(canvas, letter, x, y, letterSize);
             return;
         }
-        final String function =
-            twin || isTurbo ? button.label : GAMECUBE_FUNCTIONS[controlOf(button) - C_A];
+        final String function = isTurbo ? button.label
+                                : twin ? (morphedLabelsNow ? TWIN_MORPH_FUNCTIONS[controlOf(button) - C_JUMP]
+                                                           : button.label)
+                                : (morphedLabelsNow ? GAMECUBE_MORPH_FUNCTIONS
+                                                    : GAMECUBE_FUNCTIONS)[controlOf(button) - C_A];
         // The function goes below the letter. A kidney is sized by its half width,
         // and a mostly level one (Y) has its text slanted along the band: upright,
         // "Missile" ran into the border of Y's tilted band.
