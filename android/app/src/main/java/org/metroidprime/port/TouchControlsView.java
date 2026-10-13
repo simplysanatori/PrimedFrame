@@ -123,6 +123,9 @@ final class TouchControlsView extends View {
     };
     // What each GameCube face button does, drawn small under its letter.
     private static final String[] GAMECUBE_FUNCTIONS = {"Fire", "Jump", "Morph", "Missile"};
+    // The same buttons while morphed (#106): A lays a bomb, B boosts, X still morphs (out),
+    // Y lays a power bomb.
+    private static final String[] GAMECUBE_MORPH_FUNCTIONS = {"Bomb", "Boost", "Morph", "P.Bomb"};
     // The optional Turbo button (F1 "Turbo fire button"), above the cluster on the
     // right. Not in the face arrays: those index the editor ids and are always drawn.
     private static final ControlButton GAMECUBE_TURBO =
@@ -160,6 +163,8 @@ final class TouchControlsView extends View {
         ControlButton.round("Beam", BEAM_SHIFT, 0f, -TWIN_DIAMOND, 0.055f, GC_GREY),
     };
     // Turbo, above Beam.
+    // TWIN_FACE's functions while morphed; Beam still shifts the D-pad.
+    private static final String[] TWIN_MORPH_FUNCTIONS = {"Boost", "Bomb", "Morph", "Beam"};
     private static final ControlButton TWIN_TURBO =
         ControlButton.round("Turbo", TURBO_FIRE, 0f, -0.21f, 0.045f, GC_GREEN);
 
@@ -224,6 +229,11 @@ final class TouchControlsView extends View {
     private static final float WHEEL_RADIUS_DP = 112f;
     private static final float WHEEL_DEAD_DP = 30f;
     private static final float WHEEL_ICON_DP = 44f;
+
+    // A swipe up that springs the morph ball: at least this far, in dp, within
+    // this many ms of the stroke's start (about 270 dp/s or faster).
+    private static final float SWIPE_UP_DP = 40f;
+    private static final long SWIPE_UP_MS = 150;
 
     // Finger spread, in dp, under which a pinch is ignored (the ratio blows up).
     private static final float MAP_PINCH_MIN_DP = 20f;
@@ -431,6 +441,8 @@ final class TouchControlsView extends View {
     private static native boolean nativeTouchAimEnabled();
     private static native void nativeTouchAim(float dxDp, float dyDp);
     private static native void nativeTouchAimDown(boolean down);
+    // A quick swipe up on the aim drag (trackSwipe): the Spring Ball, if F1 allows it.
+    private static native void nativeTouchSpringSwipe();
     private static native boolean nativeTouchWheelsEnabled();
     private static native boolean nativeTouchVisorTapScan();
     // Bits 0-3 visors owned, 4-7 beams owned, 8-9 current visor, 10-11 current
@@ -487,6 +499,8 @@ final class TouchControlsView extends View {
     // leaves a SHOW button, nothing is drawn and any touch brings them back.
     private boolean autoHidden;
     private boolean lastOverlayVisible;
+    // morphedLabels() as of the last draw; the poll redraws when it changes.
+    private boolean morphedLabelsNow;
 
     private final Runnable physicalInputPoll = new Runnable() {
         @Override
@@ -513,6 +527,9 @@ final class TouchControlsView extends View {
                     lastWheelMask = mask;
                     invalidate();
                 }
+            }
+            if (labels && !hidden && !autoHidden && morphedLabels() != morphedLabelsNow) {
+                invalidate();
             }
             final boolean overlayVisible = nativeDebugOverlayVisible();
             if (overlayVisible != lastOverlayVisible) {
@@ -619,6 +636,7 @@ final class TouchControlsView extends View {
         }
 
         rHiddenNow = !editing && rHidden();
+        morphedLabelsNow = labels && morphedLabels();
         for (PillButton pill : pills) {
             if (pillShown(pill)) {
                 drawPillButton(canvas, pill, width, height);
@@ -1236,11 +1254,32 @@ final class TouchControlsView extends View {
             final float x = h < history ? event.getHistoricalX(index, h) : event.getX(index);
             final float y = h < history ? event.getHistoricalY(index, h) : event.getY(index);
             nativeTouchAim((x - lastX) / density, (y - lastY) / density);
+            trackSwipe(target, x / density, y / density,
+                       h < history ? event.getHistoricalEventTime(h) : event.getEventTime());
             lastX = x;
             lastY = y;
         }
         target.x = lastX;
         target.y = lastY;
+    }
+
+    // A quick swipe up while aiming springs the morph ball (F1 "Spring Ball on
+    // swipe up"; the game ignores it out of the ball). A stroke starts where the
+    // finger last moved down or stalled; it springs once it has gone SWIPE_UP_DP
+    // up, more up than sideways, within SWIPE_UP_MS. Positions are in dp.
+    private void trackSwipe(TouchTarget target, float x, float y, long timeMs) {
+        if (target.swipeMs < 0 || y >= target.swipeY || timeMs - target.swipeMs > SWIPE_UP_MS) {
+            target.swipeX = x;
+            target.swipeY = y;
+            target.swipeMs = timeMs;
+            target.swiped = false;
+            return;
+        }
+        final float up = target.swipeY - y;
+        if (!target.swiped && up >= SWIPE_UP_DP && Math.abs(x - target.swipeX) < up) {
+            target.swiped = true;
+            nativeTouchSpringSwipe();
+        }
     }
 
     private float panViewDp() {
@@ -1904,9 +1943,36 @@ final class TouchControlsView extends View {
             return;
         }
         // "LB Jump": without descriptions, just the button's name.
-        final String label = labels ? pill.label : pill.label.split(" ")[0];
+        final String label = labels ? pillLabel(pill) : pill.label.split(" ")[0];
         drawCenteredLabel(canvas, label, bounds.centerX(), bounds.centerY(),
                           label.length() > 2 ? dp(11) : dp(13));
+    }
+
+    // Whether the buttons wear the morph ball's functions (#106): while Samus is
+    // morphed or morphing, in play. Paused, the wheel state reads 0, so the pause
+    // menu gets the usual names; the editor always does.
+    private boolean morphedLabels() {
+        return !editing && (nativeWheelOwned() & WHEEL_MORPHED_BIT) != 0;
+    }
+
+    // A shoulder pill's text, with its morph ball function while morphed.
+    private String pillLabel(PillButton pill) {
+        if (!morphedLabelsNow) {
+            return pill.label;
+        }
+        if (pill.axis == AXIS_TRIGGER_R) {
+            return "R Spider";
+        }
+        if (pill.axis < 0 && pill.button == BTN_EAST) {
+            return "LB Boost";
+        }
+        if (pill.axis < 0 && pill.button == BTN_SOUTH) {
+            return "RT Bomb";
+        }
+        if (pill.axis < 0 && pill.button == BTN_NORTH) {
+            return "RB P.Bomb";
+        }
+        return pill.label;
     }
 
     private void drawButton(Canvas canvas, ControlButton button, float width, float height) {
@@ -1942,8 +2008,11 @@ final class TouchControlsView extends View {
             drawCenteredLabel(canvas, letter, x, y, letterSize);
             return;
         }
-        final String function =
-            twin || isTurbo ? button.label : GAMECUBE_FUNCTIONS[controlOf(button) - C_A];
+        final String function = isTurbo ? button.label
+                                : twin ? (morphedLabelsNow ? TWIN_MORPH_FUNCTIONS[controlOf(button) - C_JUMP]
+                                                           : button.label)
+                                : (morphedLabelsNow ? GAMECUBE_MORPH_FUNCTIONS
+                                                    : GAMECUBE_FUNCTIONS)[controlOf(button) - C_A];
         // The function goes below the letter. A kidney is sized by its half width,
         // and a mostly level one (Y) has its text slanted along the band: upright,
         // "Missile" ran into the border of Y's tilted band.
@@ -2869,6 +2938,12 @@ final class TouchControlsView extends View {
         int touchControl = -1;
         // A touch: binding took the control over: no button of its own to release.
         boolean bound;
+        // The aiming finger's current upward stroke (see trackSwipe): where and
+        // when it began (swipeMs -1: none yet), and whether it already sprang.
+        float swipeX;
+        float swipeY;
+        long swipeMs = -1;
+        boolean swiped;
 
         TouchTarget(int type, int id) {
             this.type = type;
