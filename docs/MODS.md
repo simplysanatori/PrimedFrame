@@ -325,10 +325,8 @@ baked ambient grid. A grid of more than about a million points is stored at
 half resolution, which keeps every file under 25 MB. A world that can't be
 read is reported and skipped; the models are installed all the same.
 
-With "Room geometry too" ticked in the panel (on by default; off by default
-on Android, where ticking it shows a warning), or `MP_REMASTERED_GEOMETRY=all` (or a comma-separated
-list of room names, or `none`) for the command line and the console, the
-import also writes the rooms' static geometry: every model a room places,
+Unless `MP_REMASTERED_GEOMETRY` says otherwise (`all`, the default, a
+comma-separated list of room names, or `none`), the import also writes the rooms' static geometry: every model a room places,
 converted as above with textures capped at 1024 px, and a `.roomgeo` per
 area, in the mod's `roomgeo` folder. Experimental: the full set is about
 8,500 models and brings the mod from 1 GB to 6.5 GB, and the game has to be
@@ -352,7 +350,7 @@ Remastered's controls or use one of its icons keep the disc's text, as do
 strings with characters outside ASCII. `MP_REMASTERED_TEXT=0` leaves the text
 out.
 `MP_REMASTERED_EFFECTS=1` (or 0; also true/on/yes) turns the experimental particle effect step on or off
-(default off; `docs/REMASTERED_EFFECTS.md`).
+(default on; `docs/REMASTERED_EFFECTS.md`).
 
 Remastered's French, Spanish, German, Italian and Dutch text comes along too
 (about 1,900 strings each), as extra language sections in the same tables,
@@ -421,8 +419,9 @@ set, else an `ffmpeg` next to the game's executable, else the one on the path.
 The Windows package has one next to the executable; on Linux install it from
 your distribution.
 Without one the import finishes without the movies and says so; install ffmpeg
-and use "Import movies" in the same panel (or `--import-remastered-movies
-<nsp> [keys]`), which adds only the movies to the mod already there.
+and import again (the unchanged stages are reused), or run
+`--import-remastered-movies <nsp> [keys]`, which adds only the movies to the
+mod already there.
 Android cannot start a program like that, so there the system's own decoder
 (MediaCodec) reads the movies and the port writes the JPEGs itself; nothing has
 to be installed.

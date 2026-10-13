@@ -1185,15 +1185,7 @@ private:
 
 }  // namespace
 
-namespace {
-std::atomic<bool> sEffects{false};
-}  // namespace
-
-bool WantsRemasteredEffects() {
-  return port::EnvFlag("MP_REMASTERED_EFFECTS", sEffects.load());
-}
-
-void SetImportEffects(bool on) { sEffects = on; }
+bool WantsRemasteredEffects() { return port::EnvFlag("MP_REMASTERED_EFFECTS", true); }
 
 EffectImportResult ImportEffects(const EffectImportIO& io) { return Importer(io).Run(); }
 

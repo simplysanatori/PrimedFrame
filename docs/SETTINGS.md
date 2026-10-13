@@ -649,8 +649,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   when a mod has room geometry and `MP_ROOM_GEO_RESIDENT` is off (6 on Android),
   and 2 with it on (the default).
   A frame that outgrows them aborts with a buffer overflow.
-- `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_gpu`, F1 > Remastered >
-  Room models > Keep on the GPU; on by default, read at
+- `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_gpu`, F1 > Debug >
+  Remastered room models > Keep on the GPU; on by default, read at
   startup; an old `room_geo_resident=1` still turns it on). On a POCO F8 Ultra it
   gives 8 to 27% more frames per second in the heaviest rooms; on a desktop GPU it
   makes no measurable difference. On an integrated GPU (Ryzen 7000 Raphael) the
@@ -665,12 +665,12 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   that. Console `stats` and the F1 > Debug > Rendering frame statistics show how much of it is in use. A
   model that finds no room left is sent every frame as before, which can
   overflow the smaller frame buffers: raise the room if the log warns of it.
-- `MP_ROOM_GEO_MIN_PX=<n>` (setting `room_geo_min_px`, F1 > Remastered >
-  Room models > Skip small models, console `roomgeo minpx <n>`; default 0): leaves out room
+- `MP_ROOM_GEO_MIN_PX=<n>` (setting `room_geo_min_px`, F1 > Debug >
+  Remastered room models > Skip small models, console `roomgeo minpx <n>`; default 0): leaves out room
   geometry instances that span fewer than n pixels of the game's 480-line
   screen.
-- `MP_ROOM_GEO_LOD=<scale>` (setting `room_geo_lod`, F1 > Remastered >
-  Room models > Detail distance, console `roomgeo lod <scale>`;
+- `MP_ROOM_GEO_LOD=<scale>` (setting `room_geo_lod`, F1 > Debug >
+  Remastered room models > Detail distance, console `roomgeo lod <scale>`;
   default 1): the import also converts each room model's coarser Remastered
   levels of detail (a level is kept only when it has at most 3/4 of the
   triangles of the one before) and lists them in `roomgeo/lods.bin`. An

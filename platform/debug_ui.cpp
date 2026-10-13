@@ -364,15 +364,6 @@ bool sPoseInterpolation = true;
 constexpr bool kRoomGeoResidentDefault = true;
 bool sRoomGeoResident = kRoomGeoResidentDefault;
 bool sParticleInterpolation = true;
-// The Remastered import's choices. Off on a phone: the rooms have never run on
-// one, and need storage and memory many phones lack (a 256 MB game arena and
-// 12x frame buffers).
-#if defined(__ANDROID__)
-bool sImportGeometry = false;
-#else
-bool sImportGeometry = true;
-#endif
-bool sImportEffects = false;
 float sPresentOverride = -1.f;
 unsigned sPresentCycleFrame = 0;
 bool sTickHold = false;
@@ -734,10 +725,6 @@ void ApplySetting(const std::string& key, const std::string& value) {
     PortRoomGeo::SetMinPixels(std::strtof(value.c_str(), nullptr));
   } else if (key == "room_geo_lod") {
     PortRoomGeo::SetLodDistance(std::strtof(value.c_str(), nullptr));
-  } else if (key == "remastered_import_geometry") {
-    sImportGeometry = ParseBool(value);
-  } else if (key == "remastered_import_effects") {
-    sImportEffects = ParseBool(value);
   } else if (key == "ai_audio") {
     sAiAudioEnabled = ParseBool(value);
   } else if (key == "musyx_audio") {
@@ -873,8 +860,6 @@ std::string SettingsText() {
   file << "room_geo_gpu=" << (sRoomGeoResident ? 1 : 0) << '\n';
   file << "room_geo_min_px=" << PortRoomGeo::MinPixels() << '\n';
   file << "room_geo_lod=" << PortRoomGeo::LodDistance() << '\n';
-  file << "remastered_import_geometry=" << (sImportGeometry ? 1 : 0) << '\n';
-  file << "remastered_import_effects=" << (sImportEffects ? 1 : 0) << '\n';
   PortInput::WriteControlSettings(file);
   file << "invulnerable=" << (sInvulnerable ? 1 : 0) << '\n';
   file << "logging=" << (sLogFile ? 1 : 0) << '\n';
@@ -5776,10 +5761,6 @@ void DrawRemasteredImport() {
     ImGui::TextColored(ThemeWarnColor(),
                        "Re-import needed: the installed models were made by an older version.");
   }
-  ImGui::PushStyleColor(ImGuiCol_Text, ThemeWarnColor(ImVec4(1.f, 0.75f, 0.3f, 1.f)));
-  ImGui::TextWrapped("Very experimental and currently unsupported: expect wrong or missing models, crashes and "
-                     "heavy memory use. Remove mods/remastered-models to get the retail game back.");
-  ImGui::PopStyleColor();
   ImGui::BeginDisabled(state.running);
 #if defined(__ANDROID__)
   // No path to type here: the files are picked, and shown by name.
@@ -5810,38 +5791,6 @@ void DrawRemasteredImport() {
     OpenRemasteredDialog(1);
   }
 #endif
-  if (ImGui::Checkbox("Room geometry too##remastered", &sImportGeometry)) {
-    MarkDirty();
-  }
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Also converts the rooms themselves, not only the models in them. About 6.5 GB in place of "
-                      "1 GB, and twice as long.");
-  }
-#if defined(__ANDROID__)
-  // A tap shows no tooltip, so the warning is spelled out.
-  if (sImportGeometry) {
-    ImGui::PushStyleColor(ImGuiCol_Text, ThemeWarnColor(ImVec4(1.f, 0.75f, 0.3f, 1.f)));
-    ImGui::TextWrapped("Untested on phones: needs about 6.5 GB free and lots of RAM, and the game may run slowly "
-                       "or be closed by Android. Remove mods/remastered-models to go back.");
-    ImGui::PopStyleColor();
-  }
-#endif
-  PortRemastered::SetImportGeometry(sImportGeometry);
-  if (ImGui::Checkbox("Particle effects (experimental)##remastered", &sImportEffects)) {
-    MarkDirty();
-  }
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("Also replaces the disc's particle effects with Remastered's where the two match. Some "
-                      "effects may look wrong. Reload the mods afterwards, as for any import.");
-  }
-  PortRemastered::SetImportEffects(sImportEffects);
-  static bool sReconvert = false;
-  ImGui::Checkbox("Reconvert everything##remastered", &sReconvert);
-  if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-    ImGui::SetTooltip("A re-import normally keeps what the last import made where nothing it depends on has "
-                      "changed. This makes everything anew, as the first import did.");
-  }
-  PortRemastered::SetImportReuse(!sReconvert);
   ImGui::EndDisabled();
   if (state.running) {
     ImGui::ProgressBar(state.total > 0 ? float(state.done) / float(state.total) : 0.f, ImVec2(-1.f, 0.f),
@@ -5870,18 +5819,6 @@ void DrawRemasteredImport() {
     }
     if (ImGui::IsItemHovered()) {
       ImGui::SetTooltip("The mods are unloaded while it runs, and loaded again with the new import when it ends.");
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Import movies##remastered")) {
-      rememberTyped();
-      PortRemastered::StartMovieImport(sImage, sKeys);
-    }
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-#if defined(__ANDROID__)
-      ImGui::SetTooltip("Only the menu movies and the gallery, added to the mod already imported.");
-#else
-      ImGui::SetTooltip("Only the menu movies (needs ffmpeg) and the gallery, added to the mod already imported.");
-#endif
     }
     ImGui::EndDisabled();
     if (state.finished && state.ok) {
@@ -5979,12 +5916,16 @@ void DrawMods() {
   // What the settings would load next time, against what this launch loaded.
   std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
   bool changed = ModsEnabled() != status.active;
-  if (status.mods.empty()) {
-    ImGui::TextDisabled("No mods in the folder.");
-  }
+  bool listed = false;
   for (const PortMods::ModInfo& mod : status.mods) {
     const auto found = std::find(disabled.begin(), disabled.end(), mod.name);
     bool on = found == disabled.end();
+    // The Remastered import is switched on its own page.
+    if (mod.name == PortRemastered::kImportModName) {
+      changed = changed || (ModsEnabled() && on) != mod.enabled;
+      continue;
+    }
+    listed = true;
     ImGui::BeginDisabled(!sModsEnabled);
     if (ImGui::Checkbox(mod.name.c_str(), &on)) {
       if (on) {
@@ -6010,6 +5951,9 @@ void DrawMods() {
       ImGui::TextColored(ThemeWarnColor(), "re-import needed");
     }
     changed = changed || (ModsEnabled() && on) != mod.enabled;
+  }
+  if (!listed) {
+    ImGui::TextDisabled("No mods in the folder.");
   }
   if (PortMods::Suspended()) {
     ImGui::TextColored(ThemeWarnColor(), "Unloaded while the Remastered import runs; they load again when it ends.");
@@ -8065,16 +8009,8 @@ void DrawLanguageSection() {
 
 }
 
-// What a player sets for Remastered's rooms; the rest is under Debug.
-void DrawRemasteredRoomModels() {
-  ImGui::SeparatorText("Room models");
-  // The frame's buffers are only sized for room geometry when the game started with some.
-  const bool geoReady = PortRoomGeo::BuffersReady();
-  if (!geoReady && PortMods::RoomGeometryLoaded()) {
-    ImGui::TextColored(ThemeWarnColor(), "Restart the game to see the Remastered rooms.");
-    ImGui::SetItemTooltip("The game started without room geometry installed, so it set no room aside\n"
-                          "for it. Once it starts with some, mods can be changed without a restart.");
-  }
+// The saved settings for Remastered's rooms, at the top of Debug's room models header.
+void DrawRemasteredRoomModels(bool geoReady) {
   ImGui::BeginDisabled(!geoReady);
   static const char* const kModes[] = {"off", "in place of the room", "on top of the room"};
   int mode = int(PortRoomGeo::GetMode());
@@ -8133,11 +8069,52 @@ void DrawRemasteredRoomModels() {
       "Uploads a room geometry mod's models once when they load instead of\n"
       "every frame, so a frame's buffers can be smaller. Takes effect from the\n"
       "next start.");
+  ImGui::Separator();
+}
 
+// Switches the imported mod on and off, as the Mods page does for the others.
+void DrawRemasteredModToggle() {
+  const PortMods::Status& status = PortMods::CurrentStatus();
+  const auto mod = std::find_if(status.mods.begin(), status.mods.end(), [](const PortMods::ModInfo& m) {
+    return m.name == PortRemastered::kImportModName;
+  });
+  if (mod == status.mods.end()) {
+    ImGui::TextDisabled("Not imported yet.");
+    return;
+  }
+  std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
+  bool on = std::find(disabled.begin(), disabled.end(), mod->name) == disabled.end();
+  ImGui::BeginDisabled(!sModsEnabled);
+  if (ImGui::Checkbox("Use the Remastered models", &on)) {
+    if (on) {
+      disabled.erase(std::remove(disabled.begin(), disabled.end(), mod->name), disabled.end());
+    } else {
+      disabled.push_back(mod->name);
+    }
+    SetModsDisabled(PortMods::JoinDisabled(disabled));
+  }
+  ImGui::EndDisabled();
+  ItemHelp("Off plays the retail game. Takes effect when the mods are reloaded.");
+  if (!sModsEnabled) {
+    SameLineAfterHelp();
+    ImGui::TextDisabled("(mods are off: Mods page)");
+  }
+  if (PortMods::Suspended()) {
+    return;
+  }
+  if ((ModsEnabled() && on) != mod->enabled) {
+    ImGui::TextColored(ThemeWarnColor(), "Reload the mods to apply.");
+    ImGui::SameLine();
+    if (ImGui::Button("Reload mods##remastered")) {
+      PortSaveState::RequestModReload();
+    }
+  }
 }
 
 void DrawRemasteredTab() {
   DrawRemasteredWarning();
+  ImGui::SeparatorText("Remastered models");
+  DrawRemasteredModToggle();
   ImGui::SeparatorText("Import");
   DrawRemasteredImport();
 
@@ -8153,8 +8130,6 @@ void DrawRemasteredTab() {
       sGalleryOpen = true;
     }
   }
-
-  DrawRemasteredRoomModels();
 }
 
 // The Remastered pass tests and inspectors, for the Debug page.
@@ -8173,6 +8148,7 @@ void DrawRemasteredDebug() {
       ImGui::SetItemTooltip("The game started without room geometry installed, so it set no room aside\n"
                             "for it. Once it starts with some, mods can be changed without a restart.");
     }
+    DrawRemasteredRoomModels(geoReady);
     ImGui::BeginDisabled(!geoReady);
     bool merged = PortRoomGeo::MergedDraws();
     if (ImGui::Checkbox("Draw merged copies", &merged)) {

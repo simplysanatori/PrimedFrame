@@ -135,6 +135,7 @@
 #endif
 {"Video", "Compatibility", "Compatibility", "Adreno shader fix", "adreno shader fix qualcomm android gpu"},
 {"Video", "Compatibility", "Compatibility", "GPU self-test", "gpu test check diagnose"},
+{"Remastered", "", "Remastered models", "Use the Remastered models", "remastered mod enable disable toggle on off retail"},
 #if defined(__ANDROID__)
 {"Remastered", "", "Metroid Prime Remastered models", "Pick the .nsp/.xci...", "remastered file pick nsp xci game image"},
 {"Remastered", "", "Metroid Prime Remastered models", "Pick the keys...", "remastered keys prod.keys pick"},
@@ -142,20 +143,8 @@
 {"Remastered", "", "Metroid Prime Remastered models", "Browse...", "remastered browse image file path nsp xci game"},
 {"Remastered", "", "Metroid Prime Remastered models", "Browse...", "remastered browse keys prod.keys path decryption"},
 #endif
-{"Remastered", "", "Metroid Prime Remastered models", "Room geometry too", "remastered room geometry models import"},
-{"Remastered", "", "Metroid Prime Remastered models", "Particle effects (experimental)", "remastered particles effects experimental"},
-{"Remastered", "", "Metroid Prime Remastered models", "Reconvert everything", "remastered reconvert rebuild all import"},
-{"Remastered", "", "Metroid Prime Remastered models", "Import", "remastered start import run"},
-{"Remastered", "", "Metroid Prime Remastered models", "Import movies", "remastered movies videos import"},
+{"Remastered", "", "Metroid Prime Remastered models", "Import", "remastered start import run room geometry particles effects movies"},
 {"Remastered", "", "Metroid Prime Remastered models", "Load it again", "remastered reload again import"},
-{"Remastered", "", "Room models", "Room geometry", "remastered room geometry models quality"},
-#if defined(__ANDROID__)
-{"Remastered", "", "Room models", "Use 2x, MSAA off", "remastered preset quality 2x msaa"},
-#endif
-{"Remastered", "", "Room models", "Take the area's lights", "remastered lights area lighting"},
-{"Remastered", "", "Room models", "Skip small models", "remastered distance cull small models"},
-{"Remastered", "", "Room models", "Detail distance", "remastered lod distance detail"},
-{"Remastered", "", "Room models", "Keep on the GPU (next start)", "remastered gpu memory resident keep"},
 {"Mods", "", "Mods", "Load mods", "mods enable disable mod loader"},
 {"Mods", "", "Mods", "Reload mods", "mods reload refresh"},
 #if !defined(__ANDROID__)
@@ -273,6 +262,14 @@
 {"Debug", "", "Audio backends", "MusyX audio (effects/streams)", "musyx audio effects backend"},
 {"Debug", "", "Sounds playing", "Freeze list", "sounds playing list freeze"},
 {"Debug", "", "Sounds playing", "Unmute all", "sounds unmute mute audio"},
+{"Debug", "", "Remastered room models", "Room geometry", "remastered room geometry models quality"},
+#if defined(__ANDROID__)
+{"Debug", "", "Remastered room models", "Use 2x, MSAA off", "remastered preset quality 2x msaa"},
+#endif
+{"Debug", "", "Remastered room models", "Take the area's lights", "remastered lights area lighting"},
+{"Debug", "", "Remastered room models", "Skip small models", "remastered distance cull small models"},
+{"Debug", "", "Remastered room models", "Detail distance", "remastered lod distance detail"},
+{"Debug", "", "Remastered room models", "Keep on the GPU (next start)", "remastered gpu memory resident keep"},
 {"Debug", "", "Remastered room models", "Draw merged copies", "remastered merged copies rooms draw"},
 {"Debug", "", "Remastered room models", "Draw nearest first", "remastered nearest first order draw"},
 {"Debug", "", "Remastered room models", "Depth pre-pass for cut-outs", "remastered depth cutout pre pass"},

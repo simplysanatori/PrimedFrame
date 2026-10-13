@@ -165,15 +165,11 @@ std::vector<std::pair<int, float>> CoarserLevels(const Model& model) {
 }
 
 // The rooms whose geometry is imported, from MP_REMASTERED_GEOMETRY: "all", or
-// room names (any part of one) separated by commas, or "none". Without it,
-// what SetImportGeometry() last said: none, the port's drawing of room
-// geometry being unfinished.
-std::atomic<bool> sGeometry{false};
-
+// room names (any part of one) separated by commas, or "none". Without it, all.
 bool WantsGeometry(const std::string& room) {
   const char* env = std::getenv("MP_REMASTERED_GEOMETRY");
   if (env == nullptr || env[0] == '\0') {
-    return sGeometry.load();
+    return true;
   }
   const std::string list = env;
   if (list == "none") {
@@ -271,13 +267,9 @@ bool WantsMovies(MovieFormat& format) {
 
 // --- Reusing the previous import ----------------------------------------------
 
-// Off with MP_REMASTERED_REUSE=0 or the import panel's "Reconvert everything". With
-// MP_REMASTERED_REUSE=textures only the converted textures are reused (TextureMemory).
-std::atomic<bool> sReuse{true};
-
-bool WantsReuse() {
-  return sReuse.load() && port::EnvFlag("MP_REMASTERED_REUSE", true);
-}
+// Off with MP_REMASTERED_REUSE=0. With MP_REMASTERED_REUSE=textures only the converted
+// textures are reused (TextureMemory).
+bool WantsReuse() { return port::EnvFlag("MP_REMASTERED_REUSE", true); }
 
 // What a stage of an import made, written to kManifestName in the mod: a re-import whose stage
 // has the same key (and, for a stage that gives out ids, the same ids taken before it) links
@@ -2750,7 +2742,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
                                       std::to_string(ImportStage::kRooms) + " geometry " +
                                           (geometryEnv != nullptr && geometryEnv[0] != '\0'
                                                ? std::string(geometryEnv)
-                                               : std::string(sGeometry ? "all" : "none")) +  // as the env says it
+                                               : std::string("all")) +  // as the env says it
                                           keyConverter,
                                       false);
   // Remastered's environment BRDF table, from the user's own executable. Nothing
@@ -3788,9 +3780,6 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
   return true;
 }
 
-void SetImportGeometry(bool on) { sGeometry = on; }
-
-void SetImportReuse(bool on) { sReuse = on; }
 
 ImportState ImportStatus() {
   std::lock_guard<std::mutex> lock(sStateMutex);
