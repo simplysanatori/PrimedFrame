@@ -3330,7 +3330,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       int reworded = 0;
       int translated = 0;
       if (!retail.Read(kSTRG, strg, original) ||
-          !MergeStringTable(original.data(), original.size(), strings, checkWording, merged, reworded, translated)) {
+          !MergeStringTable(original.data(), original.size(), strings, checkWording, merged, reworded, translated, strg)) {
         continue;  // not on this disc, or worded as it was
       }
       char name[16];
