@@ -94,11 +94,14 @@ constexpr uint32_t kFRME = 0x46524D45;
 constexpr uint32_t kFMV0 = 0x464D5630;
 constexpr uint32_t kGENP = 0x47454E50;  // a particle effect
 constexpr uint32_t kSWSH = 0x53575348;  // a standalone swoosh effect
+constexpr uint32_t kCRSM = 0x4352534D;  // a projectile collision response
 constexpr uint32_t kELSM = 0x454C534D;  // a standalone electric effect (retail ELSC)
 constexpr uint32_t kELC2 = 0x454C4332;  // the same, in the newer form
 constexpr uint32_t kMATI = 0x4D415449;  // a material instance
 constexpr uint32_t kWPSM = 0x5750534D;  // a projectile weapon (Remastered's WPSC)
 constexpr uint32_t kWPSC = 0x57505343;  // the disc's projectile weapon
+constexpr uint32_t kCRSC = 0x43525343;  // the disc's projectile collision response
+constexpr uint32_t kPART = 0x50415254;  // a disc particle effect
 
 constexpr const char* kStagingName = ".remastered-models.importing";
 // Written last, so a staging folder without it is an import that was cut short.
@@ -637,18 +640,22 @@ public:
           if (be32(at) == kWPSC) {
             std::string name(reinterpret_cast<const char*>(header.data() + at + 12), length);
             std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-            m_wpscNames.emplace(std::move(name), be32(at + 4));
+            if (!m_wpscNames.emplace(name, be32(at + 4)).second) {
+              m_ambiguousWpscNames.insert(std::move(name));
+            }
           }
           at += 12 + length;
         }
       }
       for (const PortMods::PakResource& res : table.resources) {
         m_ids.insert(res.id);
+        ++m_resourceCounts[Key(res.type, res.id)];
         if (res.type == kWPSC) {
           m_wpsc.emplace(Key(res.type, res.id), Where{entry, res.offset, res.size, res.compressed != 0});
         }
         if (res.type == kCMDL || res.type == kCSKR || res.type == kANCS || res.type == kTXTR || res.type == kMLVL ||
-            res.type == kMREA || res.type == kSTRG || res.type == kFRME || res.type == kMAPA || res.type == kMAPW) {
+            res.type == kMREA || res.type == kSTRG || res.type == kFRME || res.type == kMAPA || res.type == kMAPW ||
+            res.type == kCRSC) {
           m_resources.emplace(Key(res.type, res.id), Where{entry, res.offset, res.size, res.compressed != 0});
         }
       }
@@ -661,6 +668,11 @@ public:
   }
 
   bool HasId(uint32_t id) const { return m_ids.count(id) != 0; }
+
+  bool HasUniqueResource(uint32_t type, uint32_t id) const {
+    const auto found = m_resourceCounts.find(Key(type, id));
+    return found != m_resourceCounts.end() && found->second == 1;
+  }
 
   // The ids of every resource of `type` it reads, in no particular order.
   std::vector<uint32_t> Ids(uint32_t type) const {
@@ -691,6 +703,9 @@ public:
 
   // The id of the disc's projectile weapon (WPSC) of this name.
   bool WpscId(const std::string& name, uint32_t& id) const {
+    if (m_ambiguousWpscNames.count(name) != 0) {
+      return false;
+    }
     const auto found = m_wpscNames.find(name);
     if (found == m_wpscNames.end()) {
       return false;
@@ -777,6 +792,8 @@ private:
   std::unordered_set<uint32_t> m_ids;
   std::unordered_map<uint64_t, Where> m_wpsc;                 // the projectile weapons, read on demand
   std::unordered_map<std::string, uint32_t> m_wpscNames;      // WPSC id by name
+  std::unordered_set<std::string> m_ambiguousWpscNames;
+  std::unordered_map<uint64_t, size_t> m_resourceCounts;      // typed ids, including PART/CRSC
 };
 
 // --- The Remastered image ------------------------------------------------------
@@ -832,7 +849,9 @@ public:
         } else if (type == kFMV0) {
           m_movies.emplace(IdToString(assets[a].id), Where{m_paks.size(), a});
         } else if (type == kGENP) {
-          m_effects.emplace(assets[a].id, Where{m_paks.size(), a});
+          if (!m_effects.emplace(assets[a].id, Where{m_paks.size(), a}).second) {
+            m_effectDuplicates.insert(assets[a].id);
+          }
           for (const std::string& name : assets[a].names) {
             m_effectNames.emplace(FrameKey(name), assets[a].id);
             m_effectIdNames.emplace(assets[a].id, FrameKey(name));
@@ -851,7 +870,15 @@ public:
           }
         } else if (type == kWPSM) {
           for (const std::string& name : assets[a].names) {
-            m_projectiles.emplace(FrameKey(name), Where{m_paks.size(), a});
+            const std::string key = FrameKey(name);
+            const auto [found, inserted] = m_projectiles.emplace(key, Where{m_paks.size(), a});
+            if (!inserted && (found->second.pak != m_paks.size() || found->second.asset != a)) {
+              m_ambiguousProjectiles.insert(key);
+            }
+          }
+        } else if (type == kCRSM) {
+          if (!m_collisions.emplace(assets[a].id, Where{m_paks.size(), a}).second) {
+            m_collisionDuplicates.insert(assets[a].id);
           }
         } else if (type == kMATI) {
           m_materials.emplace(assets[a].id, Where{m_paks.size(), a});
@@ -1029,6 +1056,10 @@ public:
     return names;
   }
   bool ReadProjectile(const std::string& name, std::vector<uint8_t>& out, std::string& error) const {
+    if (m_ambiguousProjectiles.count(name) != 0) {
+      error = "ambiguous asset name";
+      return false;
+    }
     const auto found = m_projectiles.find(name);
     if (found == m_projectiles.end()) {
       error = "not in the image";
@@ -1036,6 +1067,19 @@ public:
     }
     const Pak& pak = *m_paks[found->second.pak];
     return pak.ReadAsset(pak.Assets()[found->second.asset], out, error);
+  }
+  bool HasUniqueCollision(const ModelUuid& id) const {
+    return m_collisions.count(id) != 0 && m_collisionDuplicates.count(id) == 0;
+  }
+  bool ReadCollision(const ModelUuid& id, std::vector<uint8_t>& out, std::string& error) const {
+    if (!HasUniqueCollision(id)) {
+      error = "missing or ambiguous collision response";
+      return false;
+    }
+    return Read(m_collisions, id, out, error);
+  }
+  bool HasUniqueEffect(const ModelUuid& id) const {
+    return m_effects.count(id) != 0 && m_effectDuplicates.count(id) == 0;
   }
   // A GENP/SWSH's (lower-case) name; the first when it has several.
   bool EffectName(const ModelUuid& id, std::string& name) const {
@@ -1153,11 +1197,15 @@ private:
   Index m_texts;
   Index m_fonts;
   Index m_effects;
+  std::unordered_set<ModelUuid, PakIdHash> m_effectDuplicates;
   Index m_swooshes;  // standalone SWSH effects
   Index m_electrics;  // standalone ELSM and ELC2 effects
   std::unordered_map<ModelUuid, uint32_t, PakIdHash> m_electricTypes;
   Index m_materials;
+  Index m_collisions;
+  std::unordered_set<ModelUuid, PakIdHash> m_collisionDuplicates;
   std::unordered_map<std::string, Where> m_projectiles;  // WPSM, by FrameKey
+  std::unordered_set<std::string> m_ambiguousProjectiles;
   std::map<ModelUuid, std::string> m_effectIdNames;  // the first name of a GENP and SWSH
   std::unordered_map<std::string, ModelUuid> m_effectNames;  // the named GENP and SWSH, by FrameKey
   std::unordered_map<std::string, Where> m_frames;  // GUIF, by FrameKey
@@ -1588,6 +1636,70 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
     if (!retail.HasId(synthetic) && remastered.EffectByName(name, id)) {
       pairings.push_back({id, synthetic, std::string("synthetic ") + name});
       lines.push_back(std::string("synthetic ") + name + ": " + EffectGuidString(ToStored(id)) + " -> " + HexId(synthetic));
+    }
+  }
+
+  // Missile's collision-response default is a separate role from APSM/ASW:
+  // WPSM COLR -> CRSM DEFS GENP, matching WPSC COLR -> CRSC DEFS PART. Pin
+  // only the verified USA chain; any absent, ambiguous, region-mismatched, or
+  // conflicting record leaves the disc's collision response untouched.
+  uint32_t missileWpsc = 0;
+  std::vector<uint8_t> missileWeapon;
+  std::vector<uint8_t> missileProjectile;
+  std::vector<uint8_t> missileRetailCollision;
+  std::vector<uint8_t> missileRemasteredCollision;
+  std::string missileError;
+  if (!retail.WpscId("missile", missileWpsc)) {
+    lines.push_back("WPSM missile COLR/DEFS: no unique disc WPSC named Missile");
+  } else if (!retail.Read(kWPSC, missileWpsc, missileWeapon) ||
+             !remastered.ReadProjectile("missile", missileProjectile, missileError)) {
+    lines.push_back("WPSM missile COLR/DEFS: could not read the exact weapon assets");
+  } else {
+    const bool crscPresent = retail.HasUniqueResource(kCRSC, ImportDetail::kMissileCrsc) &&
+                             retail.Read(kCRSC, ImportDetail::kMissileCrsc, missileRetailCollision);
+    const bool crsmPresent = remastered.HasUniqueCollision(ImportDetail::kMissileCrsm) &&
+                             remastered.ReadCollision(ImportDetail::kMissileCrsm, missileRemasteredCollision,
+                                                      missileError);
+    const bool genpPresent = remastered.HasUniqueEffect(ImportDetail::kMissileDefaultGenp) &&
+                             remastered.EffectAssetType(ImportDetail::kMissileDefaultGenp) == kGENP;
+    ImportDetail::MissileDefaultRoleInput input;
+    input.weaponName = "missile";
+    input.retailWpscId = missileWpsc;
+    input.retailWpscExists = retail.HasUniqueResource(kWPSC, missileWpsc);
+    input.retailCrscExists = crscPresent;
+    input.retailPartExists = retail.HasUniqueResource(kPART, ImportDetail::kMissileDefaultPart);
+    input.remasteredWpsmExists = true;  // ReadProjectile rejected missing/ambiguous names.
+    input.remasteredCrsmExists = crsmPresent;
+    input.remasteredGenpExists = genpPresent;
+    input.retailWpsc = missileWeapon.data();
+    input.retailWpscSize = missileWeapon.size();
+    input.retailCrsc = missileRetailCollision.data();
+    input.retailCrscSize = missileRetailCollision.size();
+    input.remasteredWpsm = missileProjectile.data();
+    input.remasteredWpsmSize = missileProjectile.size();
+    input.remasteredCrsm = missileRemasteredCollision.data();
+    input.remasteredCrsmSize = missileRemasteredCollision.size();
+    ImportDetail::MissileDefaultRolePair candidate;
+    std::string roleError;
+    if (!ImportDetail::ResolveMissileDefaultRole(input, candidate, &roleError)) {
+      lines.push_back("WPSM missile COLR/DEFS: not the pinned USA default role (" + roleError + "); no pair");
+    } else {
+      bool exact = false;
+      bool conflict = false;
+      for (const EffectPairing& have : pairings) {
+        if (have.id == candidate.genp && have.retail == candidate.retailPart) {
+          exact = true;
+        } else if (have.id == candidate.genp || have.retail == candidate.retailPart) {
+          conflict = true;
+          lines.push_back("WPSM missile COLR/DEFS: conflict with " + have.method + " (" +
+                          EffectGuidString(ToStored(have.id)) + " -> " + HexId(have.retail) + "); no pair");
+        }
+      }
+      if (!conflict && !exact) {
+        pairings.push_back({candidate.genp, candidate.retailPart, "wpsm missile COLR/DEFS default"});
+        lines.push_back("WPSM missile COLR/DEFS default: " + EffectGuidString(ToStored(candidate.genp)) + " -> " +
+                        HexId(candidate.retailPart));
+      }
     }
   }
   return pairings;

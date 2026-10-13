@@ -1,5 +1,7 @@
 #pragma once
 
+#include "port_remastered_effect.h"
+
 // Builds the "remastered-models" mod inside the port, from the user's own
 // copy of Metroid Prime Remastered (.nsp) and their own Switch key file.
 //
@@ -13,7 +15,12 @@
 // takes the place of <mods>/remastered-models at the next start, before mods
 // are scanned: the running game may be reading the files of the one it loaded.
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace PortRemastered {
@@ -47,7 +54,7 @@ inline constexpr int kConverter = 52;
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 3;
 inline constexpr int kModels = 6;      // the table's models, their looks and the ANCS copies
-inline constexpr int kEffects = 19;     // port_remastered_effect_import and the particle converters
+inline constexpr int kEffects = 20;     // port_remastered_effect_import and the particle converters
 inline constexpr int kRooms = 12;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 0;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 0;        // port_remastered_text, and the font (port_remastered_font)
@@ -55,6 +62,152 @@ inline constexpr int kHud = 7;         // port_remastered_hud, port_remastered_m
 inline constexpr int kMovies = 0;      // port_remastered_movie
 inline constexpr int kGallery = 0;     // the gallery pictures (port_gallery)
 }  // namespace ImportStage
+
+// The USA retail Missile WPSC's COLR collision response defaults to the
+// Remastered Missile WPSM's COLR response's DEFS GENP. Keep this one pinned
+// role mapping separate from the broader projectile APSM/ASW rules below.
+namespace ImportDetail {
+inline constexpr uint32_t kMissileWpsc = 0x466208AB;
+inline constexpr uint32_t kMissileCrsc = 0xD27D6EDD;
+inline constexpr uint32_t kMissileDefaultPart = 0xA594B6AE;
+// Pak asset-index / EffectPairing order (printed UUID byte order).
+inline constexpr std::array<uint8_t, 16> kMissileCrsm = {0xAC, 0xE0, 0xF7, 0xA8, 0x67, 0xC6, 0x4B, 0xD6,
+                                                         0xB3, 0xE3, 0xC1, 0x8E, 0x1D, 0xC1, 0x10, 0x54};
+inline constexpr std::array<uint8_t, 16> kMissileDefaultGenp = {0xE2, 0xCF, 0x01, 0x68, 0x90, 0xA2, 0x4E, 0xFA,
+                                                                0x82, 0x3C, 0xAB, 0x99, 0xC0, 0x2D, 0x85, 0x50};
+// The link records carry the same GUIDs in uuid.UUID(...).bytes_le order.
+inline constexpr std::array<uint8_t, 16> kMissileCrsmLink = {0xA8, 0xF7, 0xE0, 0xAC, 0xC6, 0x67, 0xD6, 0x4B,
+                                                             0xB3, 0xE3, 0xC1, 0x8E, 0x1D, 0xC1, 0x10, 0x54};
+inline constexpr std::array<uint8_t, 16> kMissileDefaultGenpLink = {0x68, 0x01, 0xCF, 0xE2, 0xA2, 0x90, 0xFA, 0x4E,
+                                                                    0x82, 0x3C, 0xAB, 0x99, 0xC0, 0x2D, 0x85, 0x50};
+
+struct MissileDefaultRoleInput {
+  std::string_view weaponName;  // the lower-case FrameKey, not a filename guess
+  uint32_t retailWpscId = 0;
+  bool retailWpscExists = false;
+  bool retailCrscExists = false;
+  bool retailPartExists = false;
+  bool remasteredWpsmExists = false;
+  bool remasteredCrsmExists = false;
+  bool remasteredGenpExists = false;
+  const uint8_t* retailWpsc = nullptr;
+  size_t retailWpscSize = 0;
+  const uint8_t* retailCrsc = nullptr;
+  size_t retailCrscSize = 0;
+  const uint8_t* remasteredWpsm = nullptr;
+  size_t remasteredWpsmSize = 0;
+  const uint8_t* remasteredCrsm = nullptr;
+  size_t remasteredCrsmSize = 0;
+};
+
+struct MissileDefaultRolePair {
+  std::array<uint8_t, 16> genp{};
+  uint32_t retailPart = 0;
+};
+
+namespace detail {
+inline bool ReadUniqueRetailAssetId(const uint8_t* data, size_t size, const char (&classId)[5],
+                                    const char (&field)[5], uint32_t& id, std::string* error = nullptr) {
+  return PortRemastered::ReadRetailRoleAssetId(data, size, PortRemastered::EffectFourCC(classId),
+                                               PortRemastered::EffectFourCC(field), id, error);
+}
+
+inline bool ReadUniqueReversedGuidLink(const uint8_t* data, size_t size, const char (&form)[5],
+                                       const char (&field)[5], uint8_t kind, std::array<uint8_t, 16>& guid,
+                                       std::string* error = nullptr) {
+  PortRemastered::EffectNode asset;
+  std::string parseError;
+  if (!PortRemastered::ParseRemasteredRoleAsset(data, size, PortRemastered::EffectFourCC(form), asset, parseError)) {
+    if (error != nullptr) {
+      *error = std::move(parseError);
+    }
+    return false;
+  }
+  size_t found = 0;
+  std::array<uint8_t, 16> parsed{};
+  const uint32_t wanted = PortRemastered::EffectFourCC(field);
+  for (const PortRemastered::EffectProperty& property : asset.properties) {
+    if (property.fourcc != wanted) {
+      continue;
+    }
+    if (++found != 1) {
+      if (error != nullptr) {
+        *error = "duplicate top-level " + std::string(field) + " fields";
+      }
+      return false;
+    }
+    if (property.tag != kind || property.value.size() != 1 ||
+        property.value.front().kind != PortRemastered::EffectValue::Kind::Guid) {
+      if (error != nullptr) {
+        *error = "top-level " + std::string(field) + " has the wrong kind or value type";
+      }
+      return false;
+    }
+    parsed = property.value.front().guid;
+  }
+  if (found != 1) {
+    if (error != nullptr) {
+      *error = "top-level " + std::string(field) + " field is missing";
+    }
+    return false;
+  }
+  guid = parsed;
+  return true;
+}
+}  // namespace detail
+
+// Returns a pair only for the exact, uniquely identified USA default-role
+// chain. The RFRM and retail class ids, field tags/kinds, complete GUIDs, and
+// typed resource-presence flags are all part of the gate; an incomplete or
+// ambiguous chain safely leaves retail's collision response in place.
+inline bool ResolveMissileDefaultRole(const MissileDefaultRoleInput& input, MissileDefaultRolePair& out,
+                                      std::string* error = nullptr) {
+  auto fail = [error](std::string message) {
+    if (error != nullptr) {
+      *error = std::move(message);
+    }
+    return false;
+  };
+  if (input.weaponName != "missile" || input.retailWpscId != kMissileWpsc || !input.retailWpscExists ||
+      !input.retailCrscExists || !input.retailPartExists || !input.remasteredWpsmExists ||
+      !input.remasteredCrsmExists || !input.remasteredGenpExists) {
+    return fail("pinned identity or typed-resource presence gate failed");
+  }
+  uint32_t crsc = 0;
+  uint32_t part = 0;
+  std::array<uint8_t, 16> crsm{};
+  std::array<uint8_t, 16> genp{};
+  std::string why;
+  if (!detail::ReadUniqueRetailAssetId(input.retailWpsc, input.retailWpscSize, "WPSM", "COLR", crsc, &why)) {
+    return fail("retail WPSC: " + why);
+  }
+  if (crsc != kMissileCrsc) {
+    return fail("retail WPSC COLR does not name the pinned CRSC");
+  }
+  if (!detail::ReadUniqueRetailAssetId(input.retailCrsc, input.retailCrscSize, "CRSM", "DEFS", part, &why)) {
+    return fail("retail CRSC: " + why);
+  }
+  if (part != kMissileDefaultPart) {
+    return fail("retail CRSC DEFS does not name the pinned PART");
+  }
+  if (!detail::ReadUniqueReversedGuidLink(input.remasteredWpsm, input.remasteredWpsmSize, "WPSM", "COLR", 0,
+                                          crsm, &why)) {
+    return fail("Remastered WPSM: " + why);
+  }
+  if (crsm != kMissileCrsmLink) {
+    return fail("Remastered WPSM COLR does not name the pinned CRSM");
+  }
+  if (!detail::ReadUniqueReversedGuidLink(input.remasteredCrsm, input.remasteredCrsmSize, "CRSM", "DEFS", 4,
+                                          genp, &why)) {
+    return fail("Remastered CRSM: " + why);
+  }
+  if (genp != kMissileDefaultGenpLink) {
+    return fail("Remastered CRSM DEFS does not name the pinned GENP");
+  }
+  out = {kMissileDefaultGenp, part};
+  return true;
+}
+}  // namespace ImportDetail
 // Any stage's bump raises it. A full import writes it to kImportStampName in the mod; the mod scan
 // (port_mods.h) tells the player when an import carries a lower number, or none.
 inline constexpr int kImportVersion = 38 + ImportStage::kConverter + ImportStage::kTextures + ImportStage::kModels +
