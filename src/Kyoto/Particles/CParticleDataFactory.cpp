@@ -542,6 +542,19 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortIrnd = in.ReadLong() != 0;
       break;
+    // Port-only metadata for the one source-proven nested smooth point light.
+    case SBIG('PHDR'):
+      GetClassID(in);
+      desc->xPortNestedHdrLight = in.ReadLong() != 0;
+      break;
+    case SBIG('PIR0'):
+      delete desc->xPortNestedLightInnerRadius;
+      desc->xPortNestedLightInnerRadius = GetRealElement(in);
+      break;
+    case SBIG('POR0'):
+      delete desc->xPortNestedLightOuterRadius;
+      desc->xPortNestedLightOuterRadius = GetRealElement(in);
+      break;
     // Port-only: the swooshes a converted effect starts beyond SSWH's one (xPortExtraSwooshes).
     case SBIG('PSWX'): {
       GetClassID(in);
