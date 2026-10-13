@@ -1275,6 +1275,18 @@ const EffectGuid kWaveMati = {0xfc, 0x33, 0x65, 0x75, 0x32, 0xe8, 0xf2, 0x48,
 // aurora::gfx::vfx::AlreadyExposed in a VMAT features word.
 constexpr uint32_t kAlreadyExposedBit = 1u << 31;
 
+// PowerBall source fixture IDs, stored as little-endian UUIDs by GENP/MATI.
+const EffectGuid kPowerBallChild = {0x82, 0x07, 0x87, 0xae, 0xf4, 0x41, 0x26, 0x4c,
+                                    0x88, 0x76, 0xc2, 0xf0, 0x70, 0xcf, 0x1e, 0x06};
+const EffectGuid kPowerBallMati = {0x46, 0x2a, 0x75, 0x86, 0x33, 0xe7, 0x23, 0x4d,
+                                   0xad, 0xc8, 0xc7, 0x4f, 0x28, 0x15, 0x80, 0xec};
+const EffectGuid kPowerBallModel = {0x60, 0xae, 0xf6, 0x4b, 0xe5, 0x3b, 0x51, 0x4d,
+                                    0x88, 0xbd, 0x50, 0xbb, 0xd1, 0xbd, 0xf6, 0x71};
+const EffectGuid kPowerBallRamp = {0x4f, 0xb8, 0xea, 0xe1, 0xa1, 0x69, 0x03, 0x40,
+                                   0x98, 0x6a, 0xed, 0xf9, 0xbd, 0x1e, 0x5b, 0xfe};
+const EffectGuid kPowerBallIndirect = {0x79, 0x40, 0x9b, 0xb8, 0x4b, 0x2b, 0x39, 0x49,
+                                       0xa2, 0x49, 0xe7, 0x36, 0x09, 0x7f, 0x3a, 0xf0};
+
 // Converts a VmatEffect (PBDM `pbdm`, 0 by default) whose material is `material` and returns the VMAT blob's blend word
 // (or the word at `word`: 12 is the features), or ~0u when no VMAT came out.
 uint32_t ConvertBlend(std::vector<uint8_t> mati, const EffectGuid& material, bool model, uint32_t pbdm = 0,
@@ -1386,6 +1398,188 @@ void TestWaveOrbExposurePolicy() {
   for (uint32_t pbdm = 0; pbdm <= 3; ++pbdm) {
     Check(unflagged(ConvertBlend(orb(0x642dd72b, 1), Fresh(7), true, pbdm, 12)), "no policy from any PBDM alone");
   }
+}
+
+std::vector<uint8_t> PowerBallMati(uint32_t shader = 0xe899b1df, uint32_t headerBlend = ~0u) {
+  std::vector<uint8_t> mati = MatiCch0(shader, {{"TCH0", kPowerBallRamp}, {"TCH1", kPowerBallIndirect}},
+                                       0.5f, 0.5f, 1.0f, 0.0f);
+  for (int i = 0; i < 4; ++i) {
+    mati[0x61 + size_t(i)] = uint8_t(headerBlend >> (8 * i));
+  }
+  return mati;
+}
+
+struct PowerBallFields {
+  EffectGuid child = kPowerBallChild;
+  EffectGuid material = kPowerBallMati;
+  uint8_t materialTag = 0;
+  uint8_t materialSelector = 0;
+  EffectGuid model = kPowerBallModel;
+  uint32_t shader = 0xe899b1df;
+  uint32_t headerBlend = ~0u;
+  uint32_t dvvn = 4;
+  uint8_t dvvnTag = 1;
+  uint32_t pbdm = 0;
+  uint8_t pbdmTag = 1;
+  uint8_t modelTag = 3;
+  uint32_t iexp = 1;
+  bool hasModel = true;
+  bool hasDvvn = true;
+  bool hasPbdm = true;
+  bool hasIexp = false;
+  bool unsupportedModel = false;
+  bool unsupportedDvvn = false;
+  bool unsupportedPbdm = false;
+  bool bareModel = false;
+  bool barePbdm = false;
+  bool duplicateMaterial = false;
+};
+
+std::vector<uint8_t> PowerBallEffect(const PowerBallFields& fields) {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "DVVN", 1);
+  out.push_back(4);  // WPSM/APSM root's DVVN #04
+  PutProperty(out, "_END", 4);
+  Put32(out, 1);
+  PutGuid(out, fields.child);
+  PutGenerator(out, false);
+  if (fields.hasDvvn) {
+    PutProperty(out, "DVVN", fields.dvvnTag);
+    if (fields.unsupportedDvvn) {
+      PutFourCC(out, "RAND");
+      PutConstant(out, 0);
+      PutConstant(out, fields.dvvn);
+    } else {
+      out.push_back(uint8_t(fields.dvvn));  // source stores DVVN as the raw flag byte (#04)
+    }
+  }
+  PutProperty(out, "MAXP", 1);
+  PutConstant(out, 1);
+  PutProperty(out, "ITEN", 3);
+  PutConstant(out, Bits(3.0f));
+  if (fields.hasPbdm) {
+    PutProperty(out, "PBDM", fields.pbdmTag);
+    if (fields.unsupportedPbdm) {
+      PutFourCC(out, "RAND");
+      PutConstant(out, 0);
+      PutConstant(out, fields.pbdm);
+    } else if (fields.barePbdm) {
+      out.push_back(uint8_t(fields.pbdm));
+    } else {
+      PutConstant(out, fields.pbdm);
+    }
+  }
+  PutProperty(out, "MTIN", fields.materialTag);
+  out.push_back(fields.materialSelector);
+  PutGuid(out, fields.material);
+  if (fields.duplicateMaterial) {
+    PutProperty(out, "MTIN", 0);
+    out.push_back(0);
+    PutGuid(out, fields.material);
+  }
+  if (fields.hasModel) {
+    PutProperty(out, "PMDL", fields.modelTag);
+    if (fields.unsupportedModel) {
+      PutFourCC(out, "RAND");
+      PutConstant(out, 0);
+      PutConstant(out, 1);
+    } else if (fields.bareModel) {
+      PutGuid(out, fields.model);
+    } else {
+      PutFourCC(out, "CNST");
+      PutGuid(out, fields.model);
+    }
+  }
+  if (fields.hasIexp) {
+    PutProperty(out, "IEXP", 1);
+    out.push_back(uint8_t(fields.iexp));
+  }
+  PutProperty(out, "_END", 4);
+  Put32(out, 0);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  return out;
+}
+
+uint32_t ConvertPowerBallFeatures(const PowerBallFields& fields) {
+  const std::vector<uint8_t> data = PowerBallEffect(fields);
+  const std::vector<uint8_t> mati = PowerBallMati(fields.shader, fields.headerBlend);
+  EffectNode effect;
+  std::string error;
+  if (!ParseEffect(data.data(), data.size(), effect, error)) {
+    std::fprintf(stderr, "FAIL: PowerBall fixture does not parse: %s\n", error.c_str());
+    ++sFailures;
+    return ~0u;
+  }
+  EffectConvertIO io;
+  io.assetId = [&fields](const EffectGuid& id, uint32_t type) {
+    return type == EffectFourCC("CMDL") && id == fields.model ? 0xC0DE4BF6u : 0u;
+  };
+  io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+  io.materialData = [&mati](const EffectGuid&) { return mati; };
+  io.vfxTexture = [](const EffectGuid& texture) {
+    if (texture == kPowerBallRamp) {
+      return FlipbookAtlas{0x5EED0008u, 1, 1, 1};
+    }
+    if (texture == kPowerBallIndirect) {
+      return FlipbookAtlas{0x5EED0009u, 1, 1, 1};
+    }
+    return FlipbookAtlas{};
+  };
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
+  for (const ConvertedPart& part : parts) {
+    if (part.id != fields.child) {
+      continue;
+    }
+    std::vector<RetailPartProperty> properties;
+    if (!SplitRetailPart(part.part.data(), part.part.size(), properties, error)) {
+      return ~0u;
+    }
+    for (const RetailPartProperty& property : properties) {
+      if (property.fourcc == EffectFourCC("VMAT")) {
+        return VmatWord(property.value, 12);
+      }
+    }
+  }
+  return ~0u;
+}
+
+void TestPowerBallExposurePolicy() {
+  const uint32_t flagged = ConvertPowerBallFeatures({});
+  Check(flagged != ~0u && (flagged & kAlreadyExposedBit) != 0,
+        "PowerBall MATI e899b1df/header -1 + PMDL/DVVN 4/PBDM 0/no IEXP: AlreadyExposed");
+  const auto unflagged = [](uint32_t features) {
+    return features != ~0u && (features & kAlreadyExposedBit) == 0;
+  };
+  const uint32_t plain = ConvertPowerBallFeatures(PowerBallFields{.dvvn = 3});
+  Check(plain != ~0u && (flagged & ~kAlreadyExposedBit) == plain,
+        "PowerBall exposure policy changes only the AlreadyExposed bit");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.material = Fresh(7)})), "near miss: other MATI GUID");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.materialTag = 1})), "near miss: MTIN tag");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.materialSelector = 1})), "near miss: MTIN selector");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.duplicateMaterial = true})), "duplicate MTIN fails closed");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.child = Fresh(8)})), "near miss: other child GUID");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.shader = 0x461071b8})), "near miss: other MATI shader");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.headerBlend = 1})), "near miss: MATI header blend 1");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.headerBlend = 0})), "near miss: MATI header blend 0");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.hasModel = false})), "near miss: PMDL absent");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.modelTag = 1})), "near miss: PMDL tag");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.model = Fresh(4)})), "near miss: different PMDL GUID");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.unsupportedModel = true})), "near miss: PMDL expression");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.bareModel = true})), "near miss: PMDL without CNST");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.dvvn = 3})), "near miss: DVVN 3");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.dvvnTag = 3})), "near miss: DVVN tag");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.hasDvvn = false})), "missing DVVN fails closed");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.unsupportedDvvn = true})), "DVVN expression fails closed");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.pbdm = 1})), "near miss: PBDM 1");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.pbdmTag = 3})), "near miss: PBDM tag");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.hasPbdm = false})), "missing PBDM fails closed");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.unsupportedPbdm = true})), "PBDM expression fails closed");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.barePbdm = true})), "PBDM without CNST fails closed");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.iexp = 0, .hasIexp = true})), "IEXP false present fails closed");
+  Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.hasIexp = true})), "IEXP true present fails closed");
 }
 
 // Only the wave orb's MATI, on a model particle, with header blend 1 takes Additive over PBDM.
@@ -1597,6 +1791,7 @@ int main() {
   TestVmatNewRecipes();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();
+  TestPowerBallExposurePolicy();
   TestModelsOnly();
   TestFacingRotation();
   if (sFailures != 0) {
