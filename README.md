@@ -162,3 +162,7 @@ Nintendo and Retro Studios, and ships no game data.
 `docs/NATIVE_PORT.md` is the detailed reference: build options, the smoke-test hooks,
 and the platform notes. Every setting and environment variable lives in
 `docs/SETTINGS.md` (debug console: `docs/CONSOLE.md`, mods: `docs/MODS.md`).
+
+## AI assistance
+
+Parts of this port were written with AI coding assistants, under my oversight.
