@@ -2033,9 +2033,8 @@ public:
     if (const EffectProperty* smtr = find(F("SMTR"))) {
       std::vector<uint8_t> items;
       uint32_t count = 0;
+      constexpr uint32_t kCch0 = F("CCH0");
       for (const EffectValue& item : smtr->value) {
-        // The id's four bytes read little-endian: 'CCH0'.
-        constexpr uint32_t kCch0 = 0x30484343;
         if (item.word != kCch0 || item.args.size() != 2) {
           result.dropped.push_back("SMTR: " + std::string(item.word == kCch0 ? "an entry" : "a parameter") +
                                    " VSMT cannot take");

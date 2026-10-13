@@ -1,9 +1,11 @@
 #include "port_remastered_effect_convert.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace PortRemastered;
@@ -1501,6 +1503,151 @@ uint32_t VmatWord(const std::vector<uint8_t>& v, size_t at) {
   return at + 4 <= v.size() ? uint32_t(v[at]) << 24 | v[at + 1] << 16 | v[at + 2] << 8 | v[at + 3] : ~0u;
 }
 
+struct SmtrTestEntry {
+  const char* parameter;
+  uint8_t component;
+  float value;
+};
+
+size_t PutSmtrItem(std::vector<uint8_t>& out, const SmtrTestEntry& entry) {
+  PutConstant(out, Bits(entry.value));
+  const size_t parameterAt = out.size();
+  PutFourCC(out, entry.parameter);
+  out.push_back(0);  // reserved
+  out.push_back(entry.component);
+  return parameterAt;
+}
+
+std::vector<uint8_t> SmtrVmatEffect(size_t& cch0BytesAt) {
+  std::vector<uint8_t> data = VmatEffect();
+  const std::vector<SmtrTestEntry> entries = {
+      {"CCH0", 0, 0.25f}, {"CCH0", 1, 0.5f}, {"CCH0", 2, 0.75f}, {"NOPE", 0, 0.875f}};
+  std::vector<uint8_t> smtr;
+  PutProperty(smtr, "SMTR", 0);
+  smtr.push_back(0);  // SMTR version
+  smtr.push_back(uint8_t(entries.size()));
+  smtr.push_back(uint8_t(entries.size()));  // group 0 item count
+  cch0BytesAt = size_t(-1);
+  for (const SmtrTestEntry& entry : entries) {
+    const size_t parameterAt = PutSmtrItem(smtr, entry);
+    if (cch0BytesAt == size_t(-1)) {
+      cch0BytesAt = data.size() - 13 + parameterAt;
+    }
+  }
+  for (int group = 1; group < 5; ++group) {
+    smtr.push_back(0);
+  }
+  data.insert(data.end() - 13, smtr.begin(), smtr.end());  // before _END, child count and FOOT
+  return data;
+}
+
+void TestSmtrCch0Overrides() {
+  size_t cch0BytesAt = 0;
+  const std::vector<uint8_t> data = SmtrVmatEffect(cch0BytesAt);
+  Check(cch0BytesAt + 4 <= data.size() && data[cch0BytesAt] == 0x30 && data[cch0BytesAt + 1] == 0x48 &&
+            data[cch0BytesAt + 2] == 0x43 && data[cch0BytesAt + 3] == 0x43,
+        "SMTR fixture serializes CCH0 as source bytes 30 48 43 43");
+
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(data.data(), data.size(), effect, error), "raw SMTR effect parses");
+  if (!error.empty()) {
+    std::fprintf(stderr, "  %s\n", error.c_str());
+  }
+  const auto smtr = std::find_if(effect.properties.begin(), effect.properties.end(),
+                                 [](const EffectProperty& property) {
+                                   return property.fourcc == EffectFourCC("SMTR");
+                                 });
+  Check(smtr != effect.properties.end() && smtr->value.size() == 4, "parser retains all raw SMTR entries");
+  if (smtr != effect.properties.end() && smtr->value.size() == 4) {
+    Check(smtr->value[0].word == EffectFourCC("CCH0"), "raw CCH0 bytes parse to the canonical FourCC");
+    Check(smtr->value[3].word != EffectFourCC("CCH0"), "unknown SMTR id remains distinct");
+  }
+
+  const EffectGuid texture0 = Fresh(8), texture1 = Fresh(9), texture2 = Fresh(10);
+  const std::vector<uint8_t> mati = MatiCch0(0x8e6bfa33,
+      {{"TCH0", texture0}, {"TCH1", texture1}, {"TCH2", texture2}}, 0.0f, 0.0f, 0.0f, 0.0f);
+  EffectConvertIO io;
+  io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+  io.materialData = [&mati](const EffectGuid& material) {
+    return material == Fresh(7) ? mati : std::vector<uint8_t>();
+  };
+  io.vfxTexture = [](const EffectGuid& texture) {
+    FlipbookAtlas atlas;
+    if (texture == Fresh(8)) atlas.id = 0x5EED0008;
+    if (texture == Fresh(9)) atlas.id = 0x5EED0009;
+    if (texture == Fresh(10)) atlas.id = 0x5EED000A;
+    return atlas;
+  };
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
+  Check(parts.size() == 1, "raw SMTR converts through ConvertEffect");
+  if (parts.size() != 1) {
+    return;
+  }
+
+  std::vector<RetailPartProperty> properties;
+  Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
+        "SMTR output reads as retail PART");
+  const auto vsmt = std::find_if(properties.begin(), properties.end(),
+                                 [](const RetailPartProperty& property) {
+                                   return property.fourcc == EffectFourCC("VSMT");
+                                 });
+  std::vector<uint8_t> expected;
+  const auto appendBe32 = [&expected](uint32_t word) {
+    expected.push_back(uint8_t(word >> 24));
+    expected.push_back(uint8_t(word >> 16));
+    expected.push_back(uint8_t(word >> 8));
+    expected.push_back(uint8_t(word));
+  };
+  expected.insert(expected.end(), {'C', 'N', 'S', 'T'});
+  appendBe32(3);
+  const std::array<std::pair<uint32_t, float>, 3> overrides = {{{3, 0.25f}, {11, 0.5f}, {12, 0.75f}}};
+  for (const auto& [target, value] : overrides) {
+    appendBe32(target);
+    appendBe32(0);  // real element kind
+    expected.insert(expected.end(), {'C', 'N', 'S', 'T'});
+    appendBe32(Bits(value));
+  }
+  Check(vsmt != properties.end() && vsmt->value == expected,
+        "CCH0 x maps to the Src override and y/z map to TCH0 warp overrides");
+  if (vsmt == properties.end() || vsmt->value != expected) {
+    std::fprintf(stderr, "  VSMT expected %zu bytes, got %zu\n", expected.size(),
+                 vsmt == properties.end() ? 0 : vsmt->value.size());
+    if (vsmt != properties.end()) {
+      for (uint8_t byte : vsmt->value) std::fprintf(stderr, "%02x", byte);
+      std::fprintf(stderr, "\n");
+    }
+    for (const std::string& dropped : parts[0].dropped) std::fprintf(stderr, "  dropped: %s\n", dropped.c_str());
+  }
+  Check(std::find(parts[0].dropped.begin(), parts[0].dropped.end(), "SMTR: a parameter VSMT cannot take") !=
+            parts[0].dropped.end(),
+        "unknown SMTR parameter id is rejected");
+
+  EffectNode withoutSmtr = effect;
+  withoutSmtr.properties.erase(std::remove_if(withoutSmtr.properties.begin(), withoutSmtr.properties.end(),
+      [](const EffectProperty& property) { return property.fourcc == EffectFourCC("SMTR"); }),
+      withoutSmtr.properties.end());
+  const std::vector<ConvertedPart> baseline = ConvertEffect(withoutSmtr, data.data(), io);
+  std::vector<RetailPartProperty> baselineProperties;
+  Check(baseline.size() == 1 &&
+            SplitRetailPart(baseline[0].part.data(), baseline[0].part.size(), baselineProperties, error),
+        "SMTR-free baseline converts");
+  const auto withoutVsmt = [](std::vector<RetailPartProperty> values) {
+    values.erase(std::remove_if(values.begin(), values.end(), [](const RetailPartProperty& property) {
+                   return property.fourcc == EffectFourCC("VSMT");
+                 }), values.end());
+    return values;
+  };
+  const auto convertedBase = withoutVsmt(properties);
+  const auto expectedBase = withoutVsmt(baselineProperties);
+  bool nonOverrideBytesMatch = convertedBase.size() == expectedBase.size();
+  for (size_t i = 0; nonOverrideBytesMatch && i < convertedBase.size(); ++i) {
+    nonOverrideBytesMatch = convertedBase[i].fourcc == expectedBase[i].fourcc &&
+                            convertedBase[i].value == expectedBase[i].value;
+  }
+  Check(nonOverrideBytesMatch, "CCH0 conversion changes only the VSMT override property");
+}
+
 // The wave orb's exact MATI (MTIN 756533fc-e832-48f2-b1ef-ebb41fcea14f, little-endian groups) and its
 // header blend (EBlendMode, the LE u32 at 0x61).
 const EffectGuid kWaveMati = {0xfc, 0x33, 0x65, 0x75, 0x32, 0xe8, 0xf2, 0x48,
@@ -2027,6 +2174,7 @@ int main() {
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();
   TestPowerBallExposurePolicy();
+  TestSmtrCch0Overrides();
   TestModelsOnly();
   TestFacingRotation();
   if (sFailures != 0) {
