@@ -183,6 +183,9 @@ public:
     return false;
   }
 
+  int BuildingFrame() const { return mBuildingFrame; }
+  int DoneFrame() const { return mDoneFrame; }
+
   void Clear() {
     mBuilding.clear();
     mDone.clear();

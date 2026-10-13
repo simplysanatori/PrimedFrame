@@ -7,6 +7,8 @@
 
 #include <SDL3/SDL.h>
 
+#include <cstdio>
+
 namespace PortPointer {
 namespace {
 
@@ -14,6 +16,9 @@ bool sEnabled = true;
 Recognizer sGestures;
 SDL_WindowID sWindowId = 0;
 double sScreenActiveTime = -1.0;
+bool sScriptMoved = false;
+// A console "down … touch" holds the script finger until "up".
+bool sScriptFingerDown = false;
 // Scripted fingers use ids no real touch screen hands out.
 constexpr uint64_t kScriptFinger0 = 0xfffffffffff00000ull;
 constexpr uint64_t kScriptFinger1 = kScriptFinger0 + 1;
@@ -174,7 +179,12 @@ void HandleEvent(const SDL_Event& e) {
 // Runs before the frame's events, so Moved() means "moved this frame".
 void BeginFrame() {
   sGestures.Expire(NowF());
-  sGestures.ClearMoved();
+  // A console move lands between frames; let the next frame see it.
+  if (sScriptMoved) {
+    sScriptMoved = false;
+  } else {
+    sGestures.ClearMoved();
+  }
 }
 
 void Reset() { sGestures.Reset(); }
@@ -228,7 +238,31 @@ bool ScreenActive() { return sEnabled && sScreenActiveTime >= 0.0 && Now() - sSc
 void ScriptMove(float gx, float gy) {
   float x = 0.f, y = 0.f;
   GuiToWindow(gx, gy, x, y);
-  sGestures.MouseMove(x, y, NowF());
+  if (sScriptFingerDown) {
+    sGestures.FingerMove(kScriptFinger0, x, y, NowF());
+  } else {
+    sGestures.MouseMove(x, y, NowF());
+  }
+  sScriptMoved = true;
+}
+
+void ScriptPress(float gx, float gy, bool down, uint8_t buttons, bool touch) {
+  float x = 0.f, y = 0.f;
+  GuiToWindow(gx, gy, x, y);
+  const float t = NowF();
+  if (touch) {
+    if (down) {
+      sGestures.FingerDown(kScriptFinger0, x, y, t);
+    } else {
+      sGestures.FingerUp(kScriptFinger0, x, y, t);
+    }
+    sScriptFingerDown = down;
+    return;
+  }
+  sGestures.MouseMove(x, y, t);
+  for (uint8_t bit = 1; bit <= kButtonMiddle; bit <<= 1) {
+    if (buttons & bit) sGestures.MouseButton(bit, down, x, y, t);
+  }
 }
 
 void ScriptClick(float gx, float gy, bool doubleClick, bool touch) {
@@ -404,6 +438,31 @@ bool IsUnder(const CGuiWidget* hit, const CGuiWidget* ancestor) {
 
 bool Bounds(const CGuiWidget* widget, bool children, PortPointerMath::Rect& out) {
   return sHits.Bounds(CGraphics::GetFrameCounter(), Key(widget), children, out);
+}
+
+std::string Describe(float gx, float gy) {
+  const int frame = CGraphics::GetFrameCounter();
+  const auto& list = sHits.Current(frame);
+  char buf[256];
+  std::snprintf(buf, sizeof(buf), "hits frame=%d building=%d done=%d fresh=%d entries=%zu", frame,
+                sHits.BuildingFrame(), sHits.DoneFrame(), sHits.Fresh(frame) ? 1 : 0, list.size());
+  std::string out = buf;
+  // Under the point, or every rect when the point is off screen.
+  const bool all = gx < 0.f || gy < 0.f;
+  int shown = 0;
+  for (size_t i = list.size(); i-- > 0 && shown < (all ? 64 : 8);) {
+    const auto& e = list[i];
+    if (!all && !e.rect.Contains(gx, gy)) {
+      continue;
+    }
+    const auto* w = static_cast< const CGuiWidget* >(static_cast< const CGuiObject* >(e.chain[0]));
+    std::snprintf(buf, sizeof(buf), "\n  id=%d worker=%d [%.0f,%.0f %.0f,%.0f] depth=%d",
+                  w->GetWidgetID(), w->GetWorkerId(),
+                  e.rect.x0, e.rect.y0, e.rect.x1, e.rect.y1, e.depth);
+    out += buf;
+    ++shown;
+  }
+  return out;
 }
 
 } // namespace PortGuiHit

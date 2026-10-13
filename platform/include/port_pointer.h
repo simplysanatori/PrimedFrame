@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 // Port: mouse and touch for the game's own menus and map. The main loop feeds
 // SDL events here; screens that support the pointer read gestures in GUI
 // (EFB pixel) coordinates and hit-test the widgets drawn last frame. The state
@@ -53,6 +55,8 @@ bool ScreenActive();
 
 // Scripted input for the console (`pointer`), in EFB pixels.
 void ScriptMove(float gx, float gy);
+// Press or release without moving on: drags that span frames, as real ones do.
+void ScriptPress(float gx, float gy, bool down, uint8_t buttons, bool touch);
 void ScriptClick(float gx, float gy, bool doubleClick, bool touch);
 void ScriptDrag(float gx0, float gy0, float gx1, float gy1, uint8_t buttons, bool touch);
 void ScriptWheel(float notches);
@@ -80,5 +84,8 @@ const CGuiWidget* PickAtPointer(const CGuiFrame* frame);
 bool IsUnder(const CGuiWidget* hit, const CGuiWidget* ancestor);
 // Screen bounds drawn last frame for widget (and its children).
 bool Bounds(const CGuiWidget* widget, bool children, PortPointerMath::Rect& out);
+
+// Console diagnostics: the hit list's state and the rects under a point.
+std::string Describe(float gx, float gy);
 
 } // namespace PortGuiHit

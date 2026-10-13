@@ -2051,13 +2051,17 @@ void RunFrame() {
     PortDebug::SetGunOffset(offset);
     Finish();
   } else if (name == "pointer") {
-    // Coordinates are GUI (EFB) pixels, as the screenshots show them.
+    // Coordinates are GUI (EFB) pixels, not window pixels; `pointer hits` lists the rects.
     static const char* const kUsage =
-        "usage: pointer <x> <y> move|click|dclick|tap|dtap|drag <x1> <y1> [l|r|touch]|wheel <n>|pinch <ratio>"
-        " | pointer back | pointer where";
+        "usage: pointer <x> <y> move|click|dclick|tap|dtap|down|up [l|r|touch]|drag <x1> <y1> [l|r|touch]|wheel <n>|pinch <ratio>"
+        " | pointer back | pointer where | pointer hits";
     const std::string verb = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : std::string();
     if (verb == "back") {
       PortPointer::ScriptBack();
+      return Finish();
+    }
+    if (verb == "hits") {
+      OutLines(PortGuiHit::Describe(-1.f, -1.f));
       return Finish();
     }
     if (verb == "where") {
@@ -2066,6 +2070,7 @@ void RunFrame() {
       Out("pointer %s %.1f %.1f last=%s screen=%d enabled=%d", has ? "at" : "none", gx, gy,
           PortPointer::MouseIsLast() ? "mouse" : PortPointer::TouchIsLast() ? "touch" : "other",
           PortPointer::ScreenActive() ? 1 : 0, PortPointer::Enabled() ? 1 : 0);
+      OutLines(PortGuiHit::Describe(gx, gy));
       return Finish();
     }
     if (sCmd.args.size() < 4) {
@@ -2080,6 +2085,10 @@ void RunFrame() {
       PortPointer::ScriptClick(x, y, action == "dclick", false);
     } else if (action == "tap" || action == "dtap") {
       PortPointer::ScriptClick(x, y, action == "dtap", true);
+    } else if (action == "down" || action == "up") {
+      const std::string how = sCmd.args.size() > 4 ? Lower(sCmd.args[4]) : std::string("l");
+      PortPointer::ScriptPress(x, y, action == "down",
+                               how == "r" ? PortPointer::kButtonRight : PortPointer::kButtonLeft, how == "touch");
     } else if (action == "drag" && sCmd.args.size() >= 6) {
       const std::string how = sCmd.args.size() > 6 ? Lower(sCmd.args[6]) : std::string("l");
       PortPointer::ScriptDrag(x, y, static_cast< float >(std::atof(sCmd.args[4].c_str())),

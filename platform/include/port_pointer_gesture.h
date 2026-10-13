@@ -51,6 +51,9 @@ public:
   bool Dragging() const { return mDragging || mFingerCount >= 2; }
   // A button or finger is down.
   bool Pressed() const { return mButtons != 0 || mFingerCount > 0; }
+  // Where the current (or last) press started.
+  float PressX() const { return mPressX; }
+  float PressY() const { return mPressY; }
   int FingerCount() const { return mFingerCount; }
   uint8_t Buttons() const { return mButtons; }
 

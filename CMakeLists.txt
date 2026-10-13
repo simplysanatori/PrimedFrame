@@ -231,6 +231,7 @@ set(MP_PORT_SOURCES
     platform/port_room_liquid.cpp
     platform/port_collision_view.cpp
     platform/port_pointer.cpp
+    platform/port_pointer_menu.cpp
     platform/port_remastered_cmdl.cpp
     platform/port_remastered_anuv.cpp
     platform/port_remastered_image.cpp
