@@ -984,7 +984,13 @@ void CPlayerGun::Update(float grappleSwingT, float cameraBobT, float dt, CStateM
     const float scaleFactor =
         (emitting && x832_26_comboFiring) ? (1.f - x344_comboXferTimer) * 2.f : 2.f;
     const CVector3f scale(scaleFactor, scaleFactor, scaleFactor);
+#ifdef TARGET_PC
+    // The muzzle system inherits the gun/world pose from the render frame; pass only
+    // the sampled gun-local LBEAM locator so converted XFMD3 children inherit its rotation.
+    x72c_currentBeam->UpdateMuzzleFx(advDt, scale, x418_beamLocalXf, emitting);
+#else
     x72c_currentBeam->UpdateMuzzleFx(advDt, scale, x418_beamLocalXf.GetTranslation(), emitting);
+#endif
     x800_auxMuzzleGenerators[x320_currentAuxBeam]->SetGlobalOrientAndTrans(x418_beamLocalXf);
     x800_auxMuzzleGenerators[x320_currentAuxBeam]->SetGlobalScale(scale);
     x800_auxMuzzleGenerators[x320_currentAuxBeam]->SetParticleEmission(emitting);
