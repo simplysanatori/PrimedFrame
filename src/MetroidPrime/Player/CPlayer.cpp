@@ -2,6 +2,7 @@
 
 #include "port_console.h"
 #include "port_debug.h"
+#include "port_mouse.h"
 #include "port_freecam.h"
 
 #include "Collision/CInternalCollisionStructure.hpp"
@@ -766,6 +767,33 @@ void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
     break;
   }
 
+#ifdef TARGET_PC
+  // Port: pointer aim. Shots leave along the ray through the pointer; the gun model turns
+  // toward it too, but only so far, so it stays in view. No assist bends the shot off the
+  // pointer (a lock re-centres the pointer and aims as usual).
+  float pointerX = 0.f;
+  float pointerY = 0.f;
+  if (x498_gunHolsterState == kGH_Drawn && PortDebug::PointerAimPosition(pointerX, pointerY) &&
+      (pointerX != 0.f || pointerY != 0.f)) {
+    const CGameCamera& cam = mgr.GetCameraManager()->GetCurrentCamera(mgr);
+    float yaw = 0.f;
+    float pitch = 0.f;
+    PortMouse::PointerAim::RayAngles(pointerX, pointerY, cam.GetRenderFov(),
+                                     cam.GetAspectRatio(), yaw, pitch);
+    CTransform4f aimXf = camXf.GetRotation() * CTransform4f::RotateZ(CRelAngle::FromRadians(-yaw)) *
+                         CTransform4f::RotateX(CRelAngle::FromRadians(pitch));
+    aimXf.SetTranslation(viewGunPos);
+    const float kMaxGunAngle = 25.f * (M_PIF / 180.f);
+    PortMouse::PointerAim::ClampAngles(yaw, pitch, kMaxGunAngle);
+    gunXf = camXf.GetRotation() * CTransform4f::RotateZ(CRelAngle::FromRadians(-yaw)) *
+            CTransform4f::RotateX(CRelAngle::FromRadians(pitch));
+    gunXf.SetTranslation(viewGunPos);
+    x490_gun->SetTransform(gunXf);
+    UpdateAimTargetPrediction(aimXf, mgr);
+    x490_gun->SetAssistAimTransform(aimXf);
+    return;
+  }
+#endif
   x490_gun->SetTransform(gunXf);
   CTransform4f out = gunXf;
   UpdateAimTargetPrediction(out, mgr);
@@ -856,7 +884,7 @@ void CPlayer::UpdateMouseAim(CStateManager& mgr) {
     // pitch-down under free mouse look, and CheckPostGrapple reads a zero jump
     // timer in the air as a grapple jump, which blocked the sideways dash.
     x3ec_freeLookPitchAngle = PortDebug::AimPitch();
-    x9c4_25_showCrosshairs = PortDebug::MouseCrosshair() && MouseLookIsFree(mgr);
+    x9c4_25_showCrosshairs = PortDebug::AimCrosshair() && MouseLookIsFree(mgr);
   }
 }
 
@@ -1494,7 +1522,7 @@ void CPlayer::UpdateFreeLookState(const CFinalInput& input, float dt, CStateMana
     x3e4_freeLookYawAngle = 0.f;
     x3e8_horizFreeLookAngleVel = 0.f;
     x3f0_vertFreeLookAngleVel = 0.f;
-    x9c4_25_showCrosshairs = PortDebug::MouseCrosshair() && MouseLookIsFree(mgr);
+    x9c4_25_showCrosshairs = PortDebug::AimCrosshair() && MouseLookIsFree(mgr);
     return;
   }
   if (x304_orbitState == kOS_ForcedOrbitObject || IsMorphBallTransitioning() ||
@@ -3302,7 +3330,7 @@ void CPlayer::DoPostCameraStuff(float dt, CStateManager& mgr) {
     if (PortDebug::MouseAim() && PortDebug::MouseGameplayActive()) x490_gun->CancelMouseInput(mgr);
     PortDebug::SetMouseGameplayActive(false);
   } else {
-    x9c4_25_showCrosshairs = PortDebug::MouseCrosshair() && MouseLookIsFree(mgr);
+    x9c4_25_showCrosshairs = PortDebug::AimCrosshair() && MouseLookIsFree(mgr);
     if (PortDebug::AimInitialized()) x3ec_freeLookPitchAngle = PortDebug::AimPitch();
   }
   UpdateArmAndGunTransforms(dt, mgr);

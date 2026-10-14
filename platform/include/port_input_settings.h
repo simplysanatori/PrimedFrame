@@ -22,6 +22,13 @@ constexpr int kPadAltCount = 16;
 constexpr int kCrosshairSizeMin = 25;
 constexpr int kCrosshairSizeMax = 100;
 constexpr int kCrosshairSizeDefault = 50;
+// Pointer aim: dead box in percent of the half screen, edge turn speed in degrees/second.
+constexpr int kPointerAimBoxMin = 20;
+constexpr int kPointerAimBoxMax = 95;
+constexpr int kPointerAimBoxDefault = 70;
+constexpr int kPointerAimTurnMin = 30;
+constexpr int kPointerAimTurnMax = 720;
+constexpr int kPointerAimTurnDefault = 180;
 // The Android touch overlay's margins, in dp.
 constexpr float kTouchMarginMaxDp = 300.f;
 constexpr float kTouchSideMarginDefault = 16.f;
@@ -75,6 +82,9 @@ struct Settings {
   bool mouseButtons = true;
   bool mouseCrosshair = true;
   int crosshairSize = kCrosshairSizeDefault;
+  bool pointerAim = false; // the mouse moves a pointer; the view turns past the dead box
+  int pointerAimBox = kPointerAimBoxDefault;
+  int pointerAimTurn = kPointerAimTurnDefault;
   float mouseSensitivity = 0.0035f;
   // What each mouse button does under mouse aim (PortInputMap::EMouseAction).
   int mouseActions[PortInputMap::kMouseButtonCount] = {

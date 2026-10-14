@@ -131,5 +131,34 @@ int main() {
   Check(held.Held() == 4);
   held.Clear();
   Check(held.Held() == 0);
-  std::puts("mouse axes, limits, handoff and held-button regressions passed");
+
+  // Pointer aim: the pointer stops at the edges, holds still inside the dead box and
+  // turns toward the edge past it, full speed at the edge.
+  PortMouse::PointerAim pointer;
+  pointer.Move(0.5f, -3.f);
+  Check(Near(pointer.x, 0.5f) && Near(pointer.y, -1.f));
+  pointer.Move(std::numeric_limits< float >::quiet_NaN(), 0.f);
+  Check(Near(pointer.x, 0.5f));
+  float turnYaw = 1.f, turnPitch = 1.f;
+  PortMouse::PointerAim::TurnAt(0.6f, -0.69f, 0.7f, 3.f, 0.5f, turnYaw, turnPitch);
+  Check(turnYaw == 0.f && turnPitch == 0.f);
+  PortMouse::PointerAim::TurnAt(1.f, -0.85f, 0.7f, 3.f, 0.5f, turnYaw, turnPitch);
+  Check(Near(turnYaw, -1.5f) && Near(turnPitch, 0.75f)); // right turns -yaw, up turns +pitch
+  pointer.Center();
+  Check(pointer.x == 0.f && pointer.y == 0.f);
+  // The ray through a corner of a 90-degree, 2:1 view; the clamp keeps its direction.
+  float rayYaw = 0.f, rayPitch = 0.f;
+  PortMouse::PointerAim::RayAngles(1.f, -1.f, 90.f, 2.f, rayYaw, rayPitch);
+  Check(Near(rayYaw, std::atan(2.f)) && Near(rayPitch, std::atan2(1.f, std::sqrt(5.f))));
+  PortMouse::PointerAim::RayAngles(0.f, 0.f, 90.f, 2.f, rayYaw, rayPitch);
+  Check(rayYaw == 0.f && rayPitch == 0.f);
+  float clampYaw = 0.8f, clampPitch = 0.4f;
+  PortMouse::PointerAim::ClampAngles(clampYaw, clampPitch, 0.3f);
+  Check(std::fabs(std::acos(std::cos(clampYaw) * std::cos(clampPitch)) - 0.3f) < 0.001f);
+  Check(Near(clampYaw / clampPitch, 2.f));
+  PortMouse::AimState turned;
+  turned.Synchronize(0.f, 1.f, 0.f);
+  turned.Turn(0.25f, 10.f);
+  Check(Near(turned.yaw, 0.25f) && Near(turned.pitch, PortMouse::kMaxPitch));
+  std::puts("mouse axes, limits, handoff, held-button and pointer-aim regressions passed");
 }

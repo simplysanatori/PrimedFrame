@@ -344,6 +344,9 @@ bool sMouseGameplayActive = false;
 std::string sGameOptions;
 bool sGameOptionsRestored = false;
 PortMouse::AimState sMouseAimState;
+// Pointer aim's pointer, and whether it steered this tick (free look).
+PortMouse::PointerAim sPointerAim;
+bool sPointerAimFree = false;
 PortMouse::ButtonGate sMouseButtonGate;
 PortMouse::ButtonGate sMouseMenuGate;
 PortMouse::HeldButtons sMouseHeldButtons;
@@ -2554,6 +2557,8 @@ void PollGyro() {
 
 void ResetMouseAim() {
   sMouseAimState.Reset();
+  sPointerAim.Center();
+  sPointerAimFree = false;
   sMouseGameplayActive = false;
   sMouseButtonGate.Reset();
   sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
@@ -2586,6 +2591,61 @@ bool MouseInvertX() { EnsureInitialized(); return sInput.mouseInvertX; }
 bool MouseInvertY() { EnsureInitialized(); return sInput.mouseInvertY; }
 bool MouseButtons() { EnsureInitialized(); return sInput.mouseButtons; }
 bool MouseCrosshair() { EnsureInitialized(); return sInput.mouseCrosshair; }
+// Window travel (pixels) to pointer units (-1..1 of the half view). At the default
+// sensitivity the pointer follows the cursor's speed; the sensitivity slider scales it.
+static void PointerAimScale(float& sx, float& sy) {
+  constexpr float kReferenceSensitivity = 0.0035f;
+  int width = 0, height = 0;
+  if (!WindowSize(width, height)) {
+    width = 640;
+    height = 480;
+  }
+  const float speed = MouseSensitivity() / kReferenceSensitivity;
+  sx = 2.f / static_cast<float>(width) * speed;
+  sy = 2.f / static_cast<float>(height) * speed;
+}
+
+bool AimCrosshair() { return MouseCrosshair() || PointerAim(); }
+bool PointerAim() {
+  EnsureInitialized();
+#if defined(__ANDROID__)
+  return false; // mouse only for now
+#else
+  return sInput.pointerAim && sInput.mouseAim && !sOriginalExperience;
+#endif
+}
+void SetPointerAim(bool on) {
+  EnsureInitialized();
+  sInput.pointerAim = on;
+  sPointerAim.Center();
+  MarkDirty();
+}
+int PointerAimBox() { EnsureInitialized(); return sInput.pointerAimBox; }
+int PointerAimTurn() { EnsureInitialized(); return sInput.pointerAimTurn; }
+void SetPointerAimPosition(float x, float y) {
+  sPointerAim.Center();
+  sPointerAim.Move(x, y);
+}
+bool PointerAimPosition(float& x, float& y) {
+  x = sPointerAim.x;
+  y = sPointerAim.y;
+  return sPointerAimFree;
+}
+bool PresentedPointerAimPosition(float& x, float& y) {
+  if (!PointerAimPosition(x, y)) return false;
+  // The travel since the tick, so the drawn pointer moves every frame.
+  float touchX = 0.f, touchY = 0.f;
+  {
+    std::lock_guard lock(sTouchAimMutex);
+    touchX = sTouchAimPendingX;
+    touchY = sTouchAimPendingY;
+  }
+  float sx = 0.f, sy = 0.f;
+  PointerAimScale(sx, sy);
+  PortMouse::PointerAim::Move((sMousePendingX + sGyroPendingX + touchX) * sx,
+                              (sMousePendingY + sGyroPendingY + touchY) * sy, x, y);
+  return true;
+}
 int CrosshairSize() { EnsureInitialized(); return sInput.crosshairSize; }
 void SetCrosshairSize(int percent) {
   EnsureInitialized();
@@ -2615,8 +2675,32 @@ unsigned MouseHeldButtons() { return sMouseHeldButtons.Held(); }
 
 bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   SetMouseGameplayActive(active);
-  const bool applied = sMouseAimState.Update(active, locked, x, y, z, sMouseFrameX, sMouseFrameY,
-                                            MouseSensitivity(), MouseInvertX(), MouseInvertY());
+  const bool pointer = PointerAim();
+  float dx = sMouseFrameX;
+  float dy = sMouseFrameY;
+  if (pointer) {
+    // The travel moves the pointer, not the view. A lock (or anything that stops free
+    // look) re-centres it: lock-on, scan and grapple still aim through the centre.
+    if (active && !locked) {
+      float sx = 0.f, sy = 0.f;
+      PointerAimScale(sx, sy);
+      sPointerAim.Move(dx * sx, dy * sy);
+    } else {
+      sPointerAim.Center();
+    }
+    dx = dy = 0.f;
+  }
+  const bool applied = sMouseAimState.Update(active, locked, x, y, z, dx, dy, MouseSensitivity(),
+                                            MouseInvertX(), MouseInvertY());
+  if (applied && pointer) {
+    float dyaw = 0.f, dpitch = 0.f;
+    PortMouse::PointerAim::TurnAt(sPointerAim.x, sPointerAim.y, PointerAimBox() / 100.f,
+                                  PointerAimTurn() * (PortMouse::kPi / 180.f), TickPeriod(), dyaw,
+                                  dpitch);
+    sMouseAimState.Turn(dyaw, dpitch);
+  }
+  sPointerAimFree = pointer && applied;
+  if (!sPointerAimFree) sPointerAim.Center();
   if (applied) sMouseFrameX = sMouseFrameY = 0.f;
   sAimAppliedLastTick = applied;
   return applied;
@@ -3079,6 +3163,16 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
   }
   const float dx = sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * ahead;
   const float dy = sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * ahead;
+  if (sPointerAimFree) {
+    // The edge turn the next tick will make, over the part of it already shown.
+    float sx = 0.f, sy = 0.f;
+    PointerAimScale(sx, sy);
+    float px = sPointerAim.x, py = sPointerAim.y;
+    PortMouse::PointerAim::Move(dx * sx, dy * sy, px, py);
+    PortMouse::PointerAim::TurnAt(px, py, PointerAimBox() / 100.f,
+                                  PointerAimTurn() * (PortMouse::kPi / 180.f), ahead, dyaw, dpitch);
+    return dyaw != 0.f || dpitch != 0.f;
+  }
   float yaw = 0.f;
   float pitch = 0.f;
   if (!sMouseAimState.Preview(dx, dy, MouseSensitivity(), MouseInvertX(), MouseInvertY(), yaw,
@@ -6960,6 +7054,32 @@ void DrawControlsKeyboardMouse() {
     SetCrosshairSize(crosshairSize);
   }
   ImGui::SetItemTooltip("Applies under mouse aim and twin stick.");
+
+  ImGui::SeparatorText("Pointer aim");
+  bool pointerAim = sInput.pointerAim;
+  if (ImGui::Checkbox("Pointer aim (Trilogy style)", &pointerAim)) {
+    SetPointerAim(pointerAim);
+  }
+  ItemHelp("The mouse moves the crosshair over the screen and the shots follow it; the view "
+           "turns only when the crosshair passes the dead box, faster the closer it gets to the "
+           "edge. Lock-on, scanning and grappling still aim through the centre. Needs Mouse aim; "
+           "Invert X/Y do not apply.");
+  ImGui::BeginDisabled(!sInput.pointerAim);
+  if (ImGui::SliderInt("Dead box", &sInput.pointerAimBox, PortInput::kPointerAimBoxMin, PortInput::kPointerAimBoxMax,
+                       "%d%%")) {
+    sInput.pointerAimBox = std::clamp(sInput.pointerAimBox, PortInput::kPointerAimBoxMin, PortInput::kPointerAimBoxMax);
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("How far from the centre (percent of the half screen) the crosshair moves "
+                        "before the view turns.");
+  if (ImGui::SliderInt("Edge turn speed", &sInput.pointerAimTurn, PortInput::kPointerAimTurnMin,
+                       PortInput::kPointerAimTurnMax, "%d deg/s")) {
+    sInput.pointerAimTurn =
+        std::clamp(sInput.pointerAimTurn, PortInput::kPointerAimTurnMin, PortInput::kPointerAimTurnMax);
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("The turn speed with the crosshair at the screen edge.");
+  ImGui::EndDisabled();
 
   ImGui::SeparatorText("Mouse buttons");
   ImGui::TextDisabled("Mouse buttons are bound in Controls > Remap (Keyboard & mouse).");

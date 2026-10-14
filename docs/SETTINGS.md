@@ -616,6 +616,15 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   under mouse aim and twin stick, where it is always shown and the retail size
   covers much of the view. Holding R without either keeps the retail size.
   Console: `crosshair <25..100>`.
+- Pointer aim (Controls > Mouse settings > Pointer aim, `pointer_aim`, default off,
+  `MP_POINTER_AIM=1`; needs Mouse aim, desktop only): the Trilogy/Prime 3 scheme. The
+  mouse moves the crosshair over the screen and shots leave along the ray through it;
+  the gun model turns toward it, at most 25 degrees. Past the dead box (`pointer_aim_box`,
+  20-95 percent of the half screen, default 70) the view turns toward that edge, up to
+  `pointer_aim_turn` degrees/second (30-720, default 180) at the edge itself. The
+  sensitivity slider scales the pointer speed (the default follows the cursor); Invert
+  X/Y do not apply. The crosshair is always shown. Lock-on, scanning and grappling
+  re-centre the pointer and aim as before; auto-aim does not bend pointer shots.
   Lock-on owns the camera while held; releasing it resumes at the actual locked
   direction rather than at accumulated mouse angles. Jump/fall auto-pitch is
   bypassed during free mouse aim. Capture/UI transitions cancel held charges and

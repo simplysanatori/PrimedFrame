@@ -134,6 +134,18 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     s.mouseButtons = ParseBool(value);
   } else if (key == "mouse_crosshair") {
     s.mouseCrosshair = ParseBool(value);
+  } else if (key == "pointer_aim") {
+    s.pointerAim = ParseBool(value);
+  } else if (key == "pointer_aim_box") {
+    const int v = std::atoi(value.c_str());
+    if (v >= kPointerAimBoxMin && v <= kPointerAimBoxMax) {
+      s.pointerAimBox = v;
+    }
+  } else if (key == "pointer_aim_turn") {
+    const int v = std::atoi(value.c_str());
+    if (v >= kPointerAimTurnMin && v <= kPointerAimTurnMax) {
+      s.pointerAimTurn = v;
+    }
   } else if (key == "crosshair_size") {
     const int v = std::atoi(value.c_str());
     if (v >= kCrosshairSizeMin && v <= kCrosshairSizeMax) {
@@ -274,6 +286,9 @@ void WriteAimSettings(std::ostream& out) {
   out << "mouse_crosshair=" << (s.mouseCrosshair ? 1 : 0) << '\n';
   out << "crosshair_size=" << s.crosshairSize << '\n';
   out << "mouse_sensitivity=" << s.mouseSensitivity << '\n';
+  out << "pointer_aim=" << (s.pointerAim ? 1 : 0) << '\n';
+  out << "pointer_aim_box=" << s.pointerAimBox << '\n';
+  out << "pointer_aim_turn=" << s.pointerAimTurn << '\n';
 }
 
 void WriteSettings(std::ostream& out) {
@@ -303,6 +318,9 @@ void ApplyEnvOverrides() {
   }
   if (port::EnvFlag("MP_DISABLE_MOUSE_CROSSHAIR")) {
     s.mouseCrosshair = false;
+  }
+  if (port::EnvFlag("MP_POINTER_AIM")) {
+    s.pointerAim = true;
   }
   const float sensitivity = port::EnvFloat("MP_MOUSE_SENS", 0.f);
   if (std::isfinite(sensitivity) && sensitivity > 0.f) {

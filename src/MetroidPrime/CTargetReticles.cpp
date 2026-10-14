@@ -35,6 +35,7 @@
 
 #ifdef TARGET_PC
 #include "port_debug.h"
+#include "port_mouse.h"
 #endif
 
 #include <float.h>
@@ -1227,6 +1228,25 @@ void CCompoundTargetReticle::DrawOrbitZoneGroup(const CMatrix3f& rot,
     const CCameraManager* camMgr = mgr.GetCameraManager();
     targetPos = camMgr->GetCurrentCameraTransform(mgr) *
                 (camMgr->GetSimulationCameraTransform(mgr).GetInverse() * targetPos);
+    // Pointer aim: the crosshair is the pointer, moved every drawn frame. The model's
+    // geometry sits well in front of its origin (it turns with the camera), so put its
+    // centre on the ray through the pointer at the depth it is drawn at when centred.
+    float pointerX = 0.f;
+    float pointerY = 0.f;
+    if (PortDebug::PresentedPointerAimPosition(pointerX, pointerY)) {
+      const CGameCamera& cam = camMgr->GetCurrentCamera(mgr);
+      float yaw = 0.f;
+      float pitch = 0.f;
+      PortMouse::PointerAim::RayAngles(pointerX, pointerY, cam.GetRenderFov(),
+                                       cam.GetAspectRatio(), yaw, pitch);
+      const CTransform4f camXf = camMgr->GetCurrentCameraTransform(mgr);
+      const CVector3f centre = model->GetBoundingBox().GetCenterPoint() * scale;
+      const float depth = (camXf.GetInverse() * targetPos).GetY() + centre.GetY();
+      const CVector3f dir(sinf(yaw) * cosf(pitch), cosf(yaw) * cosf(pitch), sinf(pitch));
+      if (depth > 0.f && dir.GetY() > 0.f) {
+        targetPos = camXf * (dir * (depth / dir.GetY()) - centre);
+      }
+    }
 #endif
     gpRender->SetModelMatrix(CTransform4f(rot, targetPos) * CTransform4f::Scale(scale));
 

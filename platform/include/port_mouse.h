@@ -113,6 +113,13 @@ struct AimState {
     return true;
   }
 
+  // Pointer aim's edge turn: radians, world +pitch up.
+  void Turn(float dyaw, float dpitch) {
+    if (!initialized || !std::isfinite(dyaw) || !std::isfinite(dpitch)) return;
+    yaw = static_cast<float>(std::remainder(double(yaw) + dyaw, 2.0 * kPi));
+    pitch = ClampPitch(double(pitch) + dpitch);
+  }
+
 private:
   static void Apply(float dx, float dy, float sensitivity, bool invertX, bool invertY,
                     float& outYaw, float& outPitch) {
@@ -128,6 +135,71 @@ private:
   static float ClampPitch(double angle) {
     return static_cast<float>(angle < -kMaxPitch ? -kMaxPitch : angle > kMaxPitch ? kMaxPitch : angle);
   }
+};
+
+// Pointer aim (the Trilogy/Prime 3 scheme): the mouse moves a pointer over the
+// screen, x and y in -1..1 of the view's half width/height (right/down
+// positive). Inside the dead box the view holds still; past it the view turns
+// toward that edge, faster the further out the pointer is.
+struct PointerAim {
+  float x = 0.f;
+  float y = 0.f;
+
+  void Center() { x = y = 0.f; }
+
+  // dx, dy: window-space travel already scaled to the -1..1 range.
+  static void Move(float dx, float dy, float& outX, float& outY) {
+    if (!std::isfinite(dx) || !std::isfinite(dy)) return;
+    outX = Clamp1(outX + dx);
+    outY = Clamp1(outY + dy);
+  }
+  void Move(float dx, float dy) { Move(dx, dy, x, y); }
+
+  // How far past the dead box (0..1) the pointer is on one axis, signed.
+  static float Overshoot(float value, float box) {
+    if (!(box >= 0.f && box < 1.f)) return 0.f;
+    const float past = (std::fabs(value) - box) / (1.f - box);
+    if (!(past > 0.f)) return 0.f;
+    return value < 0.f ? -std::fmin(past, 1.f) : std::fmin(past, 1.f);
+  }
+
+  // The view turn for dt seconds at (px, py): radians, world yaw (+left) and
+  // pitch (+up). maxRate is the turn speed in radians/second at the screen edge.
+  static void TurnAt(float px, float py, float box, float maxRate, float dt, float& dyaw,
+                     float& dpitch) {
+    dyaw = dpitch = 0.f;
+    if (!std::isfinite(maxRate) || !std::isfinite(dt) || maxRate <= 0.f || dt <= 0.f) return;
+    dyaw = -Overshoot(px, box) * maxRate * dt;
+    dpitch = -Overshoot(py, box) * maxRate * dt;
+  }
+
+  // The view ray through (px, py) in camera space as yaw (+right) and pitch (+up)
+  // angles applied in that order, for a vertical fov (degrees) and aspect ratio.
+  static void RayAngles(float px, float py, float fovYDeg, float aspect, float& yaw,
+                        float& pitch) {
+    yaw = pitch = 0.f;
+    const float tanY = std::tan(0.5f * fovYDeg * (kPi / 180.f));
+    if (!std::isfinite(tanY) || !(tanY > 0.f) || !(aspect > 0.f)) return;
+    const float right = px * tanY * aspect;
+    const float up = -py * tanY;
+    yaw = std::atan(right);
+    pitch = std::atan2(up, std::sqrt(1.f + right * right));
+  }
+
+  // Scales (yaw, pitch) so the direction stays within maxAngle of straight ahead.
+  // The angle is not linear in the scale, so a few passes settle it onto maxAngle.
+  static void ClampAngles(float& yaw, float& pitch, float maxAngle) {
+    for (int pass = 0; pass < 4; ++pass) {
+      const float angle = std::acos(std::cos(yaw) * std::cos(pitch));
+      if (!std::isfinite(angle) || !(angle > maxAngle) || !(angle > 0.f)) return;
+      const float scale = maxAngle / angle;
+      yaw *= scale;
+      pitch *= scale;
+    }
+  }
+
+private:
+  static float Clamp1(float v) { return v < -1.f ? -1.f : v > 1.f ? 1.f : v; }
 };
 
 class ButtonGate {

@@ -589,6 +589,7 @@ void CmdHelp() {
   Out("padpreset gamecube|remastered|modern|southpaw   apply a controller preset to pad 1");
   Out("fov <45..90>               first-person vertical FOV, as the Options row does");
   Out("gunoffset <r> <f> <u>      arm cannon offset in metres (+-1), as the Video row does");
+  Out("pointeraim [on|off|<x> <y>] pointer aim mode, or place its pointer (-1..1); prints it");
   Out("window [<w> <h>]           resize the window (leaves fullscreen); prints the size");
   Out("msaa <1|4>, aniso <1..16>  anti-aliasing and anisotropic filtering, applied next frame");
   Out("pixellight [0|1]         per-pixel lighting (1) or the original per-vertex (0); no argument prints it");
@@ -2052,6 +2053,22 @@ void RunFrame() {
                              static_cast< float >(std::atof(sCmd.args[2].c_str())),
                              static_cast< float >(std::atof(sCmd.args[3].c_str()))};
     PortDebug::SetGunOffset(offset);
+    Finish();
+  } else if (name == "pointeraim") {
+    if (sCmd.args.size() == 2 && (Lower(sCmd.args[1]) == "on" || Lower(sCmd.args[1]) == "off")) {
+      PortDebug::SetPointerAim(Lower(sCmd.args[1]) == "on");
+    } else if (sCmd.args.size() == 3) {
+      PortDebug::SetPointerAimPosition(static_cast< float >(std::atof(sCmd.args[1].c_str())),
+                                       static_cast< float >(std::atof(sCmd.args[2].c_str())));
+    } else if (sCmd.args.size() != 1) {
+      return Finish("usage: pointeraim [on|off|<x> <y>]   x, y in -1..1 of the half view");
+    }
+    float x = 0.f, y = 0.f;
+    const bool free = PortDebug::PointerAimPosition(x, y);
+    char line[128];
+    std::snprintf(line, sizeof(line), "pointeraim %s %s x=%.3f y=%.3f",
+                  PortDebug::PointerAim() ? "on" : "off", free ? "free" : "centred", x, y);
+    Out(line);
     Finish();
   } else if (name == "pointer") {
     // Coordinates are GUI (EFB) pixels, not window pixels; `pointer hits` lists the rects.
