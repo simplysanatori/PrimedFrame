@@ -130,7 +130,10 @@ struct FrameState {
   float from[6] = {};
   float to[6] = {};
   float shown[6] = {};
-  std::chrono::steady_clock::time_point start;
+  // CPostFXManager::TransitionTonemapParams: while `moving`, shown = from + (to - from) *
+  // progress, and a new target keeps both `from` and `progress`.
+  bool moving = false;
+  float progress = 0.f;
   std::chrono::steady_clock::time_point last;
   float carry = 0.f; // seconds not stepped yet
   float exposure = 0.f; // 2^(3 - EV); 0: none yet
@@ -1579,19 +1582,38 @@ void UpdateFrame(bool roomGeoDrawing) {
     f.started = true;
     std::memcpy(f.from, target, sizeof(target));
     std::memcpy(f.to, target, sizeof(target));
-    f.start = f.last = now;
+    f.last = now;
+    f.moving = false;
+    f.progress = 0.f;
     f.carry = 0.f;
     f.measured = false;
     f.ignoreUntil = serial + kInFlight;
-  } else if (std::memcmp(target, f.to, sizeof(target)) != 0) {
-    std::memcpy(f.from, f.shown, sizeof(f.shown));
+  } else {
     std::memcpy(f.to, target, sizeof(target));
-    f.start = now;
   }
   f.area = sViewArea;
-  const float moved = std::min(std::chrono::duration<float>(now - f.start).count(), 1.f);
-  for (int i = 0; i < 6; ++i) {
-    f.shown[i] = f.from[i] + (f.to[i] - f.from[i]) * moved;
+  // TransitionTonemapParams 0xb005bc: idle at `from`; a target that differs starts a move at
+  // progress 0, and every moving frame adds dt over the transition time (1 s up or down,
+  // skTonemap_ParamTransition*Time) before it blends. Retargeting mid-move keeps `from` and
+  // the progress; the move ends by making the target `from`.
+  constexpr float kTransitionTime = 1.f;
+  if (!f.moving && !jump) {
+    if (std::memcmp(target, f.from, sizeof(target)) != 0) {
+      f.moving = true;
+      f.progress = 0.f;
+    }
+  }
+  if (f.moving) {
+    f.progress = std::min(f.progress + std::chrono::duration<float>(now - f.last).count() / kTransitionTime, 1.f);
+    for (int i = 0; i < 6; ++i) {
+      f.shown[i] = f.from[i] + (f.to[i] - f.from[i]) * f.progress;
+    }
+    if (f.progress >= 1.f) {
+      std::memcpy(f.from, f.to, sizeof(f.from));
+      f.moving = false;
+    }
+  } else {
+    std::memcpy(f.shown, f.from, sizeof(f.shown));
   }
   if (f.sigma != file.exposureSigma) {
     f.sigma = file.exposureSigma;
@@ -1639,6 +1661,12 @@ void UpdateFrame(bool roomGeoDrawing) {
   f.hasTone = f.exposure > 0.f && f.shown[1] > 0.f && f.shown[1] < 1.f;
   if (f.hasTone) {
     BuildTone(f.shown[1], f.shown[2], f.shown[3], f.shown[4], f.tone);
+  }
+  static const bool sLog = port::EnvFlag("MP_ROOM_ENV_EXPOSURE_LOG");
+  if (sLog) {
+    PortLog::Write("room env exposure: area %08X jump %d shown %g %g %g %g %g %g ev %g target %g\n", sViewArea,
+                   int(jump), f.shown[0], f.shown[1], f.shown[2], f.shown[3], f.shown[4], f.shown[5], f.ev.value,
+                   f.targetEv);
   }
 }
 
