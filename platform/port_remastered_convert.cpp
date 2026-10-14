@@ -3792,6 +3792,23 @@ void SurfaceHeader(Blob& s, const double* centre, uint32_t mat, size_t dlSize, u
 
 } // namespace
 
+int MaterialKind(const ModelMaterial& mat) { return ReadMaterial(mat, ConvertOptions{}).kind; }
+
+int MaterialDriverSlot(const ModelMaterial& mat, uint32_t variable) {
+  const RemMaterial rem = ReadMaterial(mat, ConvertOptions{});
+  if (rem.kind != 7) {
+    return -1;
+  }
+  // The material binds the variable to a component of CCH0 (renderTypes: variable, CCH0, 1, component);
+  // the converter carries CCH0.z in kindParam[3] and nothing else a driver could move.
+  for (const ModelRenderType& r : mat.renderTypes) {
+    if (r.dataId == variable && r.dataType == FourCC('C', 'C', 'H', '0') && r.flag2 == 2) {
+      return 3;
+    }
+  }
+  return -1;
+}
+
 void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
   Retail retail;
   if (opt.standalone) {

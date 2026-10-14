@@ -236,6 +236,8 @@ struct SPortPBROverride {
 std::vector< SPortPBROverride > sPortPBROverrides;
 bool sPortGlows = false;
 f32 sPortGlow[3];
+int sPortKindSlot = -1;
+f32 sPortKindValue = 0.f;
 bool sPortSky = false;
 f32 sPortSkyGain[3];
 f32 sPortChargeShell = 0.f;
@@ -262,6 +264,11 @@ void CCubeModel::PortSetGlow(const f32* rgb) {
   for (int i = 0; i < 3; ++i) {
     sPortGlow[i] = rgb[i];
   }
+}
+
+void CCubeModel::PortSetKindParam(const int slot, const f32 value) {
+  sPortKindSlot = slot >= 0 && slot < 4 ? slot : -1;
+  sPortKindValue = value;
 }
 
 void CCubeModel::PortOverridePBR(const CCubeModel* model, const int material, const int field,
@@ -490,6 +497,8 @@ f32 CCubeModel::PortSetPBRMaterial(const int idx, const f32 fade, const bool fad
       values[entry.field] = entry.value;
     }
   }
+  // A float driver's value for the kind parameter (falling water's GRDU, CCH0.z).
+  PortApplyKindParam(sPortKindSlot, sPortKindValue, values);
   // A liquid's surface (kinds 5 and 6) moves: its first parameter is a rate, and the
   // shader gets the phase. So do falling water (kind 7), the beam glow (9) and the
   // Waste Disposal tank's distortion (11), the Frigate's force fields (14) and the Phazon3 stone (21); glass (8) does not

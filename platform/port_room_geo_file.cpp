@@ -2,6 +2,7 @@
 #include "port_room_geo.h"
 #include "port_strings.h"
 #include "port_bytes.h"
+#include "port_maya_spline.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,7 +12,7 @@ namespace PortRoomGeo {
 namespace {
 
 constexpr uint32_t kMagic = 0x4752504D; // 'MPRG'
-constexpr uint32_t kVersion = 10;
+constexpr uint32_t kVersion = 11;
 constexpr size_t kHeaderBytes = 12;
 constexpr size_t kInstanceBytes = 4 + 12 * 4; // version 1; version 2 adds 4 + links
 constexpr size_t kPlatformBytes = 4 + 3 * 4;   // version 3's, after version 2's 4
@@ -27,6 +28,7 @@ constexpr size_t kAnimKeyBytes = 7 * 4;
 constexpr uint32_t kSkyMagic = 0x20594B53; // 'SKY '
 constexpr uint32_t kHideMagic = 0x45444948; // 'HIDE'
 constexpr uint32_t kLmapMagic = 0x50414D4C; // 'LMAP'
+constexpr uint32_t kWdrvMagic = 0x56524457; // 'WDRV'
 constexpr uint32_t kLodMagic = 0x444F4C52; // 'RLOD'
 constexpr uint32_t kLodVersion = 1;
 
@@ -286,6 +288,47 @@ bool ParseFileName(const std::string& fileName, uint32_t& id) {
   return port::ParseHexFileName(fileName, ".roomgeo", id);
 }
 
+// The driver section (WDRV) at `at`, which it moves past.
+static bool ParseDrivers(const std::vector<uint8_t>& data, size_t& at, std::vector<Instance>& out, std::string& error) {
+  const size_t left = data.size() - at;
+  const uint32_t count = left >= 8 ? ReadLE32(data.data() + at + 4) : 0;
+  if (count == 0 || count > out.size() || left < 8) {
+    error = "truncated float drivers";
+    return false;
+  }
+  size_t o = at + 8;
+  for (uint32_t k = 0; k < count; ++k) {
+    if (data.size() - o < 20) {
+      error = "truncated float drivers";
+      return false;
+    }
+    const uint32_t index = ReadLE32(data.data() + o);
+    const uint8_t slot = data[o + 4];
+    Instance::Driver d;
+    d.slot = slot;
+    d.delay = float(size_t(data[o + 6]) | size_t(data[o + 7]) << 8) / 100.f;
+    d.sender = ReadLE32(data.data() + o + 8);
+    d.state = data[o + 12];
+    const uint32_t size = ReadLE32(data.data() + o + 16);
+    o += 20;
+    if (index >= out.size() || !out[index].drivers.empty() || slot > 3 || size > data.size() - o) {
+      error = "a float driver of a missing instance or slot";
+      return false;
+    }
+    d.spline.assign(data.begin() + long(o), data.begin() + long(o + size));
+    PortMayaSpline spline;
+    size_t used = 0;
+    if (!spline.Load(d.spline.data(), d.spline.size(), &used) || used != d.spline.size() || spline.Size() == 0) {
+      error = "a float driver's spline is malformed";
+      return false;
+    }
+    o += size;
+    out[index].drivers.push_back(std::move(d));
+  }
+  at = o;
+  return true;
+}
+
 bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::string& error, Script* script) {
   out.clear();
   Script scratch;
@@ -417,6 +460,9 @@ bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::st
       }
     }
   }
+  if (ok && version >= 11 && data.size() - at >= 4 && ReadLE32(data.data() + at) == kWdrvMagic) {
+    ok = ParseDrivers(data, at, out, error);
+  }
   if (ok && at != data.size()) {
     error = "unknown data after the instances";
     ok = false;
@@ -539,6 +585,30 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
       for (float v : instance.lightmap) {
         AppendLEFloat(out, v);
       }
+    }
+  }
+  std::vector<uint32_t> driven;
+  for (size_t i = 0; i < instances.size(); ++i) {
+    if (!instances[i].drivers.empty()) {
+      driven.push_back(uint32_t(i));
+    }
+  }
+  if (!driven.empty()) {
+    AppendLE32(out, kWdrvMagic);
+    AppendLE32(out, uint32_t(driven.size()));
+    for (const uint32_t i : driven) {
+      const Instance::Driver& d = instances[i].drivers[0];
+      AppendLE32(out, i);
+      out.push_back(d.slot);
+      out.push_back(0);
+      const uint32_t delay = uint32_t(std::lround(std::clamp(d.delay, 0.f, kMaxDriverDelay) * 100.f));
+      out.push_back(uint8_t(delay));
+      out.push_back(uint8_t(delay >> 8));
+      AppendLE32(out, d.sender);
+      out.push_back(d.state);
+      out.insert(out.end(), 3, 0);
+      AppendLE32(out, uint32_t(d.spline.size()));
+      out.insert(out.end(), d.spline.begin(), d.spline.end());
     }
   }
   return out;

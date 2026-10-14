@@ -2,6 +2,7 @@
 // port_room_geo.h.
 #include "port_env.h"
 #include "port_room_geo.h"
+#include "port_maya_spline.h"
 #include "port_room_sky.h"
 
 #include "port_gci.h"
@@ -147,6 +148,21 @@ struct Placed {
   bool sky = false; // Instance::sky: drawn by Sky, not with the room
   float skyRadiance[3] = {};
   float lightmap[3] = {}; // Instance::lightmap
+  // Instance::drivers[0]: a float driver of one kind parameter. `value` is the spline at the
+  // area's clock, from `startAt` (infinite until it starts).
+  bool driven = false;
+  int driverSlot = 0;
+  double startAt = 1e300;
+  float driverValue = 0.f;
+  PortMayaSpline driverSpline;
+};
+
+// A driven instance's driver starting: the delay after `sender` sends `state`.
+struct DriverStart {
+  uint32_t sender;
+  uint8_t state;
+  size_t item;
+  float delay;
 };
 
 // Copies of one small model that never move or change, built into one model at their world
@@ -210,6 +226,7 @@ struct Area {
   size_t levelsLoaded = 0;
   bool clusterLevels = false; // BuildClusterLevels has run
   std::vector< Trigger > triggers;
+  std::vector< DriverStart > driverStarts;
   bool gated = false; // some instance has a layer
   size_t loaded = 0;
   // Remastered's own script objects (Script), what each is now, the items of each group,
@@ -684,7 +701,7 @@ void BuildClusters(Area& area) {
   std::vector< size_t > copies(area.models.size(), 0);
   const auto mergeable = [&](const Placed& item) {
     return item.layer == kEveryLayer && item.platform == 0 && item.follow == 0 && item.active && !item.glows &&
-           item.anim.empty() && !item.sky;
+           item.anim.empty() && !item.sky && !item.driven;
   };
   std::vector< bool > linked(area.items.size(), false);
   for (const Trigger& trigger : area.triggers) {
@@ -1023,6 +1040,15 @@ void Load(uint32_t mrea, Area& area) {
       }
       area.groups[instance.group].push_back(area.items.size() - 1);
     }
+    if (!instance.drivers.empty()) {
+      const Instance::Driver& driver = instance.drivers[0];
+      if (item.driverSpline.Load(driver.spline.data(), driver.spline.size())) {
+        item.driven = true;
+        item.driverSlot = driver.slot;
+        item.driverValue = item.driverSpline.Eval(item.driverSpline.FirstTime());
+        area.driverStarts.push_back({driver.sender & 0x3ffffff, driver.state, area.items.size() - 1, driver.delay});
+      }
+    }
     for (const Link& link : instance.links) {
       if (link.action == kFollow) {
         // GetIdForScript wants the layer bits too.
@@ -1051,7 +1077,7 @@ void Load(uint32_t mrea, Area& area) {
     }
   }
   ResetNodes(area);
-  sTriggers = sTriggers || !area.triggers.empty() || area.retailEdges;
+  sTriggers = sTriggers || !area.triggers.empty() || !area.driverStarts.empty() || area.retailEdges;
   area.instances.clear();
   area.instances.shrink_to_fit();
   area.hasFile = !area.items.empty();
@@ -1465,6 +1491,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     // Placed::lightmap; null for a cluster, whose members each have their own (it takes the
     // volume instead)
     const float* lightmap;
+    const Placed* driven; // its float driver's instance, or null
   };
   static std::vector< Visible > visible;
   visible.clear();
@@ -1474,9 +1501,9 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
   static const CTransform4f kIdentity = CTransform4f::Identity();
   const auto add = [&](Model& model, const CModel& drawn, const CTransform4f& xf, CActorLights* lights,
                        const CAABox& bounds, const float* glow = nullptr, const float* lightmap = nullptr,
-                       bool inView = true) {
+                       bool inView = true, const Placed* driven = nullptr) {
     (inView ? visible : casters)
-        .push_back({cutout(model), distanceSq(bounds), &drawn, &xf, lights, &bounds, glow, lightmap});
+        .push_back({cutout(model), distanceSq(bounds), &drawn, &xf, lights, &bounds, glow, lightmap, driven});
   };
   // In view, or else whether it can cast into view: an opaque model in the shadow map's box.
   const auto inView = [&](Model& model, const CAABox& bounds, bool& casts) {
@@ -1538,7 +1565,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     const CModelData& data = item.level < 0 ? *model.data : *model.levels[item.level].data;
     const CModel& cmodel = **data.PickStaticModel(CModelData::kWM_Normal);
     if (casts) {
-      add(model, cmodel, item.xf, item.lights.get(), item.bounds, nullptr, nullptr, false);
+      add(model, cmodel, item.xf, item.lights.get(), item.bounds, nullptr, nullptr, false, item.driven ? &item : nullptr);
       continue;
     }
     if (item.level >= 0) {
@@ -1549,7 +1576,8 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       ++sDrawn;
       continue;
     }
-    add(model, cmodel, item.xf, item.lights.get(), item.bounds, item.glows ? item.glow : nullptr, item.lightmap);
+    add(model, cmodel, item.xf, item.lights.get(), item.bounds, item.glows ? item.glow : nullptr, item.lightmap, true,
+        item.driven ? &item : nullptr);
     if (!cmodel.IsDefinitelyOpaque()) {
       area.sorted.push_back(&item);
     }
@@ -1575,7 +1603,13 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     if (draw.glow != nullptr) {
       CCubeModel::PortSetGlow(draw.glow);
     }
+    if (draw.driven != nullptr) {
+      CCubeModel::PortSetKindParam(draw.driven->driverSlot, draw.driven->driverValue);
+    }
     draw.model->DrawUnsortedParts(CModelFlags::Normal());
+    if (draw.driven != nullptr) {
+      CCubeModel::PortSetKindParam(-1, 0.f);
+    }
     if (draw.glow != nullptr) {
       CCubeModel::PortSetGlow(nullptr);
     }
@@ -1658,10 +1692,16 @@ void DrawSorted(const void* drawable) {
   if (item.glows) {
     CCubeModel::PortSetGlow(item.glow);
   }
+  if (item.driven) {
+    CCubeModel::PortSetKindParam(item.driverSlot, item.driverValue);
+  }
   if (item.alpha < 1.f) {
     cmodel.Draw(CModelFlags(CModelFlags::kT_Blend, item.alpha));
   } else {
     cmodel.DrawSortedParts(CModelFlags::Normal());
+  }
+  if (item.driven) {
+    CCubeModel::PortSetKindParam(-1, 0.f);
   }
   if (item.glows) {
     CCubeModel::PortSetGlow(nullptr);
@@ -1836,6 +1876,12 @@ void OnScriptState(CStateManager& mgr, uint32_t editorId, int state) {
     }
     Act(mrea, area, trigger);
   }
+  // A driver's ResetAndStart: started over, the delay after the state.
+  for (const DriverStart& start : area.driverStarts) {
+    if (start.sender == sender && start.state == state) {
+      area.items[start.item].startAt = area.clock + start.delay;
+    }
+  }
   if (area.retailEdges) {
     for (const ScriptEdge& edge : area.script.edges) {
       if (edge.retail && (edge.from & 0x3ffffff) == sender && edge.event == state) {
@@ -1869,6 +1915,13 @@ void Think(CStateManager& mgr, float dt) {
       const size_t trigger = next->trigger;
       area.pending.erase(next);
       Act(mrea, area, area.triggers[trigger]);
+    }
+    for (const DriverStart& start : area.driverStarts) {
+      Placed& item = area.items[start.item];
+      item.startAt = DriverStartAt(item.shown, item.startAt, area.clock);
+      // Before it starts the parameter is the first key; after the last it holds that key.
+      item.driverValue = item.driverSpline.Eval(
+          item.driverSpline.FirstTime() + float(std::max(0., area.clock - item.startAt)));
     }
   }
   if (!any) {
@@ -1990,6 +2043,10 @@ void ResetScriptState() {
       item.clipStart = 0.;
       item.following = false;
       item.alpha = 1.f;
+      if (item.driven) {
+        item.startAt = 1e300;
+        item.driverValue = item.driverSpline.Eval(item.driverSpline.FirstTime());
+      }
     }
   }
 }

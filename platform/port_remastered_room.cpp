@@ -21,6 +21,7 @@
 #include "port_maya_spline.h"
 #include "port_remastered_anim.h"
 #include "port_remastered_cmdl.h"
+#include "port_remastered_convert.h"
 #include "port_remastered_txtr.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
@@ -1012,6 +1013,15 @@ constexpr uint32_t kActionEntityDeactivate = 0x49435456;  // 'ICTV'
 constexpr uint32_t kTriggerMP1 = 0xf526fc2a;
 constexpr uint32_t kCounter = 0xa7db53c1;
 constexpr uint32_t kRelay = 0x8fe0bfc9;
+// A float driver for a material variable: RealNumberDriver (a spline over time) -> typed link ->
+// RealValueRelay -> typed link -> MaterialVariableDriverMP1 -> typed link -> the actors.
+constexpr uint32_t kRealNumberDriver = 0xd81ef16f;
+constexpr uint32_t kRealValueRelay = 0x63dd6841;
+constexpr uint32_t kMaterialVariableDriver = 0x8a12a2f9;
+constexpr uint32_t kActionDriverStart = 0xd1cd9262;  // ResetAndStart
+constexpr uint32_t kPropDriverSpline = 0x4675e9d0;
+constexpr uint32_t kPropMaterialSet[2] = {0x0238c7cb, 0x7501b39e};  // names in STRP
+constexpr uint32_t kPropMaterialVariable[2] = {0x0238c7cb, 0x4c107e13};
 constexpr uint32_t kDebugOptions = 0xef2184e8;  // answers the debug menu only
 constexpr uint32_t kPropTriggerFlags = 0x7ad69562;
 constexpr uint32_t kTriggerDetectCamera = 0x4000;
@@ -1333,7 +1343,117 @@ struct SceneryScripts {
   // in component order, which is the order the clips are written in.
   std::map<int, std::vector<size_t>> keyframes;
   size_t scriptUnresolved = 0;    // connections into the script not traced
+  // A float driver of a material variable (see kRealNumberDriver): by the entity of each actor it
+  // feeds. The importer checks that the actor's model binds the variable to a parameter it can
+  // drive; the start links are in `links` under `driverStart`.
+  struct Driver {
+    int start = -1;  // the RealNumberDriver's entity: its incoming links are the start triggers
+    std::string set, variable;
+    std::vector<uint8_t> spline;
+  };
+  std::map<int, std::vector<Driver>> drivers;
 };
+
+// The one start of a driver: every link the walk found is a Show of the same state of the same
+// sender after the same wait. False for none, or for several that differ.
+bool SingleDriverStart(const std::vector<PortRoomGeo::Link>& starts, PortRoomGeo::Link& first) {
+  if (starts.empty()) {
+    return false;
+  }
+  first = starts[0];
+  return std::all_of(starts.begin(), starts.end(), [&](const PortRoomGeo::Link& l) {
+    return l.action == PortRoomGeo::kShow && l.sender == first.sender && l.state == first.state && l.delay == first.delay;
+  });
+}
+
+// The kind parameter the driver's variable is bound to in the material of its set's name; -1 when
+// the model has none or the port cannot drive what it binds.
+int DriverSlot(const std::vector<PortRemastered::ModelMaterial>& materials, const SceneryScripts::Driver& d) {
+  if (d.variable.size() != 4) {
+    return -1;
+  }
+  // The runtime override reaches every kind 7 material of the model, so it must be the only one.
+  if (std::count_if(materials.begin(), materials.end(),
+                    [](const PortRemastered::ModelMaterial& m) { return PortRemastered::MaterialKind(m) == 7; }) != 1) {
+    return -1;
+  }
+  for (const PortRemastered::ModelMaterial& m : materials) {
+    if (m.name == d.set) {
+      return PortRemastered::MaterialDriverSlot(
+          m, (uint32_t(uint8_t(d.variable[0])) << 24) | (uint32_t(uint8_t(d.variable[1])) << 16) |
+                 (uint32_t(uint8_t(d.variable[2])) << 8) | uint32_t(uint8_t(d.variable[3])));
+    }
+  }
+  return -1;
+}
+
+// Float drivers of material variables, by the entity of each actor they feed: each
+// MaterialVariableDriverMP1 fed by exactly one RealValueRelay that exactly one RealNumberDriver
+// feeds, with a readable spline and the names of a material set and variable. `starts` gets the
+// RealNumberDrivers' entities.
+std::map<int, std::vector<SceneryScripts::Driver>> FindMaterialDrivers(const Room& room, std::set<int>& driverStarts) {
+  std::map<int, std::vector<SceneryScripts::Driver>> result;
+  const std::vector<Component>& comps = room.Components();
+  const auto reaches = [&](const std::vector<int>& targets, size_t to) {
+    return std::any_of(targets.begin(), targets.end(), [&](int t) {
+      // A link names a component, or the entity that owns it (the Entity component itself).
+      return t >= 0 && (size_t(t) == to || (comps[to].entity >= 0 && t == comps[to].entity));
+    });
+  };
+  const auto feeding = [&](uint32_t type, size_t to) {
+    std::vector<size_t> from;
+    for (size_t i = 0; i < comps.size(); ++i) {
+      if (comps[i].type == type && reaches(ReadEntityLinks(room, i), to)) {
+        from.push_back(i);
+      }
+    }
+    return from;
+  };
+  for (size_t m = 0; m < comps.size(); ++m) {
+    if (comps[m].type != kMaterialVariableDriver) {
+      continue;
+    }
+    const std::vector<size_t> relays = feeding(kRealValueRelay, m);
+    const std::vector<size_t> drivers = relays.size() == 1 ? feeding(kRealNumberDriver, relays[0]) : std::vector<size_t>{};
+    if (drivers.size() != 1 || comps[drivers[0]].entity < 0) {
+      continue;
+    }
+    SceneryScripts::Driver driver;
+    driver.start = comps[drivers[0]].entity;
+    Span sp;
+    PortMayaSpline check;
+    size_t used = 0;
+    if (!room.Nested(comps[drivers[0]], {kPropDriverSpline}, sp) || !check.Load(room.Bytes(sp), sp.size, &used) ||
+        used != sp.size || check.Size() == 0) {
+      continue;
+    }
+    driver.spline.assign(room.Bytes(sp), room.Bytes(sp) + sp.size);
+    bool named = true;
+    for (int k = 0; k < 2; ++k) {
+      const uint32_t* path = k == 0 ? kPropMaterialSet : kPropMaterialVariable;
+      std::string& to = k == 0 ? driver.set : driver.variable;
+      named = named && room.Nested(comps[m], {path[0], path[1]}, sp) && sp.size >= 8 &&
+              room.String(ReadLE32(room.Bytes(sp)), ReadLE32(room.Bytes(sp) + 4), to);
+    }
+    if (!named) {
+      continue;
+    }
+    for (int t : ReadEntityLinks(room, m)) {
+      const int entity = t < 0 ? -1 : comps[size_t(t)].type == kEntity ? t : comps[size_t(t)].entity;
+      if (entity < 0) {
+        continue;
+      }
+      const bool actor = std::any_of(comps.begin(), comps.end(), [&](const Component& c) {
+        return c.entity == entity && c.type == kActorMP1;
+      });
+      if (actor) {
+        result[entity].push_back(driver);
+      }
+    }
+    driverStarts.insert(driver.start);
+  }
+  return result;
+}
 
 SceneryScripts MatchScripts(const Room& room, const Area& area) {
   SceneryScripts result;
@@ -1680,6 +1800,8 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       result.platform[comps[size_t(t)].entity] = &sender;
     }
   }
+  std::set<int> driverStarts;
+  result.drivers = FindMaterialDrivers(room, driverStarts);
   for (const Ent& e : ents) {
     const auto v = votes.find(e.layer);
     if (v != votes.end() && !e.baseLayer) {
@@ -1717,7 +1839,14 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     std::vector<int> seen{e.entity};
     const bool transition = transitionEntities.count(e.entity) != 0;
     const bool light = lightEntities.count(e.entity) != 0;
-    const auto act = [&](uint32_t action) {
+    // A driver's start (what the timers wait before it) is shown like an actor, to be read back.
+    const bool driverStart = driverStarts.count(e.entity) != 0;
+    // The show and hide of an actor a driver fades come through the script's longest chains.
+    const int maxDepth = driverStart || result.drivers.count(e.entity) != 0 ? 8 : 6;
+    const auto act = [&](uint32_t action) -> uint8_t {
+      if (driverStart && action == kActionDriverStart) {
+        return PortRoomGeo::kShow;
+      }
       if (transition) {
         return TransitionAct(action);
       }
@@ -1773,7 +1902,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
           if (linkAct != 0 && state < 256) {
             links.push_back({objects[size_t(match[size_t(s)])].id, uint8_t(state), linkAct, delay});
           }
-        } else if (IsPass(type) && sender.entity >= 0 && depth < 6 &&
+        } else if (IsPass(type) && sender.entity >= 0 && depth < maxDepth &&
                    std::find(seen.begin(), seen.end(), sender.entity) == seen.end()) {
           seen.push_back(sender.entity);
           float wait = 0.f;
@@ -3899,7 +4028,8 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   // Entities a Timer hides. One that also starts hidden is shown only while an event plays:
   // the waterfalls of Ice Shorelines and the Hive Totem pour for 17 and 6.25 s and fade with
   // their Waterfalls.GRDU driver, and pieces of the Frigate's hangar flash for 0.25 s. Their
-  // links keep the timers' delays (Link::delay), but not the fades, so they are left out. An
+  // links keep the timers' delays (Link::delay); those with a float driver that moves a
+  // parameter of their material (driverOf) are kept with the driver, the others are left out. An
   // animated actor is drawn: the Mines turbine's explosion, shown 5.5 s after its pickup is
   // taken and hidden 2.5 s later, partway through its clip.
   std::set<int> timedOff;
@@ -4189,7 +4319,41 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     }
     return true;
   };
-  size_t posed = 0;
+  // The float driver of an actor's material variable: its model's material of that name binds
+  // the variable to a kind parameter the port can drive, and exactly one start (a retail
+  // object's state, after the timers' wait) is traced. One that does not hold keeps the
+  // actor as it was: left out when timed off.
+  auto driverOf = [&](const Component& c, const uint8_t* modelId, PortRoomGeo::Instance::Driver& out) {
+    const auto found = scripts.drivers.find(c.entity);
+    if (found == scripts.drivers.end() || found->second.size() != 1 || modelId == nullptr) {
+      return false;
+    }
+    const SceneryScripts::Driver& d = found->second[0];
+    const auto starts = scripts.links.find(d.start);
+    PortRoomGeo::Link first;
+    if (starts == scripts.links.end() || !SingleDriverStart(starts->second, first) ||
+        first.delay > PortRoomGeo::kMaxDriverDelay) {
+      return false;
+    }
+    std::vector<uint8_t> data;
+    PortRemastered::Model cmdl;
+    std::string error;
+    if (!FindResource(modelId, Tag("CMDL"), home, data, nullptr, nullptr) ||
+        !PortRemastered::ParseModel(data.data(), data.size(), cmdl, error)) {
+      return false;
+    }
+    const int slot = DriverSlot(cmdl.materials, d);
+    if (slot < 0) {
+      return false;
+    }
+    out.slot = uint8_t(slot);
+    out.sender = first.sender;
+    out.state = first.state;
+    out.delay = first.delay;
+    out.spline = d.spline;
+    return true;
+  };
+  size_t posed = 0, drivenActors = 0;
   for (const Component* c : r.room.Of(kActorMP1)) {
     const auto f = r.room.Flat(*c);
     const auto prop = f.find(kPropActorModel);
@@ -4203,7 +4367,9 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       continue;
     }
     const bool active = r.room.Active(*c);
-    if (!active && (!canShow(c->entity) || (timedOff.count(c->entity) != 0 && !hasAnim))) {
+    PortRoomGeo::Instance::Driver driver;
+    const bool driven = hasModel && driverOf(*c, r.room.Bytes(prop->second), driver);
+    if (!active && (!canShow(c->entity) || (timedOff.count(c->entity) != 0 && !hasAnim && !driven))) {
       ++inactive;
       continue;
     }
@@ -4317,6 +4483,10 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
       ++animated;
     }
     script(inst, c->entity, active);
+    if (driven) {
+      inst.drivers.push_back(driver);
+      ++drivenActors;
+    }
     if (lightmapOk && c->hasGuid) {
       const auto lookup = r.room.Lighting().lookups.find(c->guid);
       if (lookup != r.room.Lighting().lookups.end()) {
@@ -4415,10 +4585,10 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
                 "  %s (%08X): %u instances (%zu from MCON, %zu actors, %zu skies, %zu inactive objects left out; %zu on a layer, "
                 "%zu scripted, %zu in %zu groups of %zu script objects and %zu connections (%zu untraced), %zu on a "
                 "platform, %zu with untraced links, %zu glowing, %zu animated, %zu left to retail actors, %zu left to "
-                "cinematics; %zu of %zu entities matched), %zu dropped",
+                "cinematics; %zu of %zu entities matched; %zu with a material driver), %zu dropped",
                 r.name.c_str(), mrea, count, modcons, actors, skies, inactive, gated, linked, grouped, scripts.group.size(),
                 scripts.script.nodes.size(), scripts.script.edges.size(), scripts.scriptUnresolved, riding, unresolved,
-                glowing, animated, retailDrawn, posed, scripts.matched, scripts.entities, dropped);
+                glowing, animated, retailDrawn, posed, scripts.matched, scripts.entities, drivenActors, dropped);
   Log(line);
 }
 
