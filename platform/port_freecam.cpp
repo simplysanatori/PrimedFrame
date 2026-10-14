@@ -6,6 +6,7 @@
 #include "Kyoto/Math/CRelAngle.hpp"
 #include "Kyoto/Math/CTransform4f.hpp"
 #include "Kyoto/Math/CVector3f.hpp"
+#include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include <algorithm>
@@ -28,14 +29,58 @@ float sTouchMoveX = 0.f;
 float sTouchMoveY = 0.f;
 float sTouchYaw = 0.f;
 float sTouchPitch = 0.f;
+// The pose and field of view the current tick started from. The pose only moves on
+// ticks, so frames presented between them blend from here (as actors do) instead of
+// holding still and jumping at a frame rate above the tick rate.
+Pose sPrevPose = sPose;
+float sPrevFov = 0.f;
+uint sPrevGeneration = 0;
 
-CTransform4f Rotation() {
-  return CTransform4f::RotateZ(CRelAngle::FromDegrees(sPose.yaw)) *
-         CTransform4f::RotateX(CRelAngle::FromDegrees(sPose.pitch));
+CTransform4f Rotation(const Pose& pose) {
+  return CTransform4f::RotateZ(CRelAngle::FromDegrees(pose.yaw)) *
+         CTransform4f::RotateX(CRelAngle::FromDegrees(pose.pitch));
 }
 
-CTransform4f ViewRotation() {
-  return Rotation() * CTransform4f::RotateY(CRelAngle::FromDegrees(sPose.roll));
+CTransform4f ViewRotation(const Pose& pose) {
+  return Rotation(pose) * CTransform4f::RotateY(CRelAngle::FromDegrees(pose.roll));
+}
+
+// Once per tick, before the first change: what this tick's frames blend from.
+void MarkTick() {
+  if (sPrevGeneration != CActor::PortTickGeneration()) {
+    sPrevPose = sPose;
+    sPrevFov = sFov;
+    sPrevGeneration = CActor::PortTickGeneration();
+  }
+}
+
+// A jump (a new start, a typed pose, a slider): no blend from where it was.
+void Snap() {
+  sPrevPose = sPose;
+  sPrevFov = sFov;
+}
+
+// Where the frame being drawn sits between the tick's start and its end, or -1 to draw
+// the end: no tick moved the camera since (paused, frozen for a shot), or no blending.
+float Blend() {
+  const float t = CCameraManager::GetPresentationInterpolation();
+  if (t < 0.f || t >= 1.f || sPrevGeneration != CActor::PortTickGeneration()) {
+    return -1.f;
+  }
+  return t;
+}
+
+Pose PresentedPose() {
+  const float t = Blend();
+  if (t < 0.f) {
+    return sPose;
+  }
+  const auto lerp = [t](float a, float b) { return a + (b - a) * t; };
+  float yaw = sPose.yaw - sPrevPose.yaw;
+  yaw -= 360.f * std::round(yaw / 360.f);
+  return Pose{lerp(sPrevPose.x, sPose.x),         lerp(sPrevPose.y, sPose.y),
+              lerp(sPrevPose.z, sPose.z),         sPrevPose.yaw + yaw * t,
+              lerp(sPrevPose.pitch, sPose.pitch), lerp(sPrevPose.roll, sPose.roll)};
 }
 
 } // namespace
@@ -55,6 +100,7 @@ void SetActive(bool on, const CStateManager* mgr) {
     sPose.roll = 0.f;
   }
   sActive = on;
+  Snap();
   SetTouchMove(0.f, 0.f);
   sTouchYaw = 0.f;
   sTouchPitch = 0.f;
@@ -75,13 +121,26 @@ void SetShowPlayer(bool show) { sShowPlayer = show; }
 
 Pose GetPose() { return sPose; }
 
-void SetPose(const Pose& pose) {
+void SetPose(const Pose& pose, bool snap) {
+  if (!snap) {
+    MarkTick();
+  }
   sPose = pose;
   sPose.pitch = std::clamp(sPose.pitch, -kPitchLimit, kPitchLimit);
   sPose.roll = std::isfinite(sPose.roll) ? std::clamp(sPose.roll, -180.f, 180.f) : 0.f;
+  if (snap) {
+    Snap();
+  }
 }
 
 float FovOverride() { return sActive ? sFov : 0.f; }
+float PresentedFovOverride() {
+  const float t = Blend();
+  if (!sActive || sFov <= 0.f || sPrevFov <= 0.f || t < 0.f) {
+    return FovOverride();
+  }
+  return sPrevFov + (sFov - sPrevFov) * t;
+}
 void SetTouchMove(float x, float y) {
   sTouchMoveX = std::isfinite(x) ? std::clamp(x, -1.f, 1.f) : 0.f;
   sTouchMoveY = std::isfinite(y) ? std::clamp(y, -1.f, 1.f) : 0.f;
@@ -94,12 +153,21 @@ void AddTouchTurn(float yaw, float pitch) {
   }
 }
 
-void SetFovOverride(float degrees) { sFov = std::isfinite(degrees) && degrees > 0.f ? std::clamp(degrees, 1.f, 170.f) : 0.f; }
+void SetFovOverride(float degrees, bool snap) {
+  if (!snap) {
+    MarkTick();
+  }
+  sFov = std::isfinite(degrees) && degrees > 0.f ? std::clamp(degrees, 1.f, 170.f) : 0.f;
+  if (snap) {
+    sPrevFov = sFov;
+  }
+}
 
 bool Input(const CFinalInput& input) {
   if (!sActive) {
     return false;
   }
+  MarkTick();
   if (PortDebug::OverlayVisible()) {
     return true; // the overlay has the pad
   }
@@ -123,7 +191,7 @@ bool Input(const CFinalInput& input) {
   const float step = sSpeed * (input.DRTrigger() || input.DR() ? 4.f : 1.f) * dt;
   const float rise = (input.DZ() || input.DDPUp() ? 1.f : 0.f) -
                      (input.DLTrigger() || input.DL() || input.DDPDown() ? 1.f : 0.f);
-  const CTransform4f rot = Rotation();
+  const CTransform4f rot = Rotation(sPose);
   const float ahead = std::clamp(input.ALeftY() + sTouchMoveY, -1.f, 1.f);
   const float side = std::clamp(input.ALeftX() + sTouchMoveX, -1.f, 1.f);
   const CVector3f move = rot.GetForward() * ahead + rot.GetRight() * side;
@@ -137,8 +205,9 @@ CTransform4f View(const CTransform4f& game) {
   if (!sActive) {
     return game;
   }
-  CTransform4f xf = ViewRotation();
-  xf.SetTranslation(CVector3f(sPose.x, sPose.y, sPose.z));
+  const Pose pose = PresentedPose();
+  CTransform4f xf = ViewRotation(pose);
+  xf.SetTranslation(CVector3f(pose.x, pose.y, pose.z));
   return xf;
 }
 

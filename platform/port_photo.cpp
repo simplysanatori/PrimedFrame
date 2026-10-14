@@ -423,10 +423,13 @@ bool Input(const CFinalInput& input) {
     }
     const float side = (input.DDPRight() ? 1.f : 0.f) - (input.DDPLeft() ? 1.f : 0.f);
     if (side != 0.f) {
+      // Steps blended over the tick, not jumps (PortFreeCam::SetPose).
       if (input.DX()) {
-        SetFov(Fov() + side * kFovRate * dt);
+        PortFreeCam::SetFovOverride(std::clamp(Fov() + side * kFovRate * dt, kFovMin, kFovMax), false);
       } else {
-        SetRoll(Roll() + side * kRollRate * dt);
+        PortFreeCam::Pose pose = PortFreeCam::GetPose();
+        pose.roll = std::clamp(pose.roll + side * kRollRate * dt, -180.f, 180.f);
+        PortFreeCam::SetPose(pose, false);
       }
     }
   }

@@ -30,12 +30,16 @@ struct Pose {
   float roll = 0.f; // degrees about the view axis; movement ignores it
 };
 Pose GetPose();
-void SetPose(const Pose& pose);
+// snap false: a step taken in this tick's input, blended over the tick like the
+// camera's own moves; true (default): a jump.
+void SetPose(const Pose& pose, bool snap = true);
 
 // A vertical field of view in degrees that replaces the game camera's while the camera is on
 // (photo mode); 0 leaves the game's. FovFor widens it to the game's aspect like the camera does.
 float FovOverride();
-void SetFovOverride(float degrees);
+// The override for the frame being drawn, blended between ticks like the view.
+float PresentedFovOverride();
+void SetFovOverride(float degrees, bool snap = true);
 
 // Touch (photo mode on a phone): a stick in [-1, 1] added to the left stick until changed
 // (y is ahead), and a turn in degrees taken at the next tick.
@@ -46,7 +50,7 @@ void AddTouchTurn(float yaw, float pitch);
 // L and Z (or the d-pad's up and down) go down and up. Returns true when the input was
 // taken and the player must not see it.
 bool Input(const CFinalInput& input);
-// The view the world is drawn from; `game` when the camera is off.
+// The view the world is drawn from, blended between ticks; `game` when the camera is off.
 CTransform4f View(const CTransform4f& game);
 
 } // namespace PortFreeCam
