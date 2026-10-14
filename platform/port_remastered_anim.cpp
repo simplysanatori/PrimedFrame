@@ -571,10 +571,12 @@ std::vector<std::string> ReadNames(const Bytes& d) {
 struct Record {
   size_t offset;
   uint32_t id;
-  size_t end;
+  size_t end;  // the size field's position + size (CAnimCompStream::Load 0xbb45f4)
 };
 
-// Compressed animation records: 01 <id u32> <len u32> payload, the next record 12 + len on.
+// Compressed animation records: 01 <id u32> <len u32> payload (the CPooledName of the SBaseInfo,
+// then the blob whose first u32 is its size from that field on); the next record's SBaseInfo
+// header is 7 bytes past the end, so it starts 12 + len on.
 std::vector<Record> ReadRecords(const Bytes& d, size_t start) {
   std::vector<Record> recs;
   size_t o = start;
@@ -584,7 +586,7 @@ std::vector<Record> ReadRecords(const Bytes& d, size_t start) {
     if (id > 0xff || len < 0x18 || !d.Has(o, size_t(12) + len)) {  // a blob header is 24 bytes
       break;
     }
-    recs.push_back({o, id, o + 12 + len});
+    recs.push_back({o, id, o + 5 + len});
     o += 12 + len;
   }
   return recs;
@@ -613,7 +615,7 @@ std::vector<Record> FindRecords(const Bytes& d) {
       const uint32_t len = ReadLE32(d.data + o + 5);
       const uint32_t dequant = ReadLE16(d.data + o + 11);
       if (len != 0 && dequant > 0x18 && dequant < len && d.Has(o, size_t(12) + len)) {
-        best.push_back({o, d.data[o + 1], o + 12 + len});
+        best.push_back({o, d.data[o + 1], o + 5 + len});
         o += 12 + len - 1;  // the regex scan does not overlap matches
       }
     }
@@ -957,7 +959,16 @@ Key MatrixKey(const Mat& m) {
 
 // The skeleton and skin palette (NOTES-skel.md): the CCharInfo stream read sequentially.
 // All offsets are checked, so a short or damaged file fails with a message.
-void ReadSkeleton(const Bytes& d, Character& out) {
+// The CCharInfo header counts after SChannel::Load (CCharInfo ctor 0xb819b0): u8 nModels,
+// u8, u8 nAnchors, u16 nAnims, u16 nParams.
+struct Header {
+  bool valid = false;
+  size_t models = 0;
+  size_t anchors = 0;
+  size_t anims = 0;
+};
+
+void ReadSkeleton(const Bytes& d, Character& out, Header& header) {
   size_t p = 0x29;
   auto u8 = [&](size_t at) -> uint32_t {
     d.Need(at, 1, "skeleton");
@@ -1038,6 +1049,21 @@ void ReadSkeleton(const Bytes& d, Character& out) {
   }
   p += 2 * (ra + rb + rc + rd);
   d.Need(p, 48 * (ra + 1 + rd), "inverse binds");
+  {
+    // SRenderContext::Load 0xb7e5ec reads 2(ra+rb+rc+rd) + 48(ra+rd+1) + e bytes in one go
+    // (e = the op blob), then SChannel::Load 0xb7e9e0: u8 n, per channel a CPooledName
+    // (bool, u32 if set), i16, bool, bool and a guid.
+    size_t q = p + 48 * (ra + 1 + rd) + u32(p - 2 * (ra + rb + rc + rd) - 4);
+    const size_t channels = u8(q++);
+    for (size_t i = 0; i < channels; ++i) {
+      q += u8(q) != 0 ? 5 : 1;
+      q += 4 + 16;
+    }
+    header.models = u8(q);
+    header.anchors = u8(q + 2);
+    header.anims = u16(q + 3);
+    header.valid = true;
+  }
   auto matAt = [&](size_t index) {
     Mat m;
     for (size_t i = 0; i < 12; ++i) {
@@ -1156,21 +1182,33 @@ bool ReadCharacter(const std::vector<uint8_t>& chpr, Character& out, std::string
       anim.name = animNames.size() == recs.size() ? animNames[i] : std::string();
       out.anims.push_back(std::move(anim));
     }
-    // After the last record come a few fixed fields, a 16 byte reference (not the
-    // skinned model) and then the SMDL reference, 0x22 bytes past the last record.
-    const size_t smdl = recs.back().end + 0x22;
-    if (d.Has(smdl, 16)) {
-      std::copy(d.data + smdl, d.data + smdl + 16, out.skinnedModel.begin());
-    }
     // The skeleton is optional: the animations are usable without it.
+    Header header;
     try {
-      ReadSkeleton(d, out);
+      ReadSkeleton(d, out, header);
     } catch (const Failure& failure) {
       out.bones.clear();
       out.animBone.clear();
       out.jointBone.clear();
       out.inverseBind.clear();
       out.skeletonError = failure.message;
+    }
+    // CCharInfo ctor 0xb819b0: the last CAnim ends at its size field + size (the 7 bytes that
+    // follow every other record are the next CAnim's SBaseInfo), then nAnchors 12-byte
+    // SAnchorInfo (u16, u16, u32, u32), then nModels SModelNode (SModelNode ctor 0xb7fa38):
+    // CPooledName (bool, u32 if set), i32, i32, the node guid and the SMDL guid. nAnchors and
+    // nModels come from the header after SChannel (nAnims counts every CAnim, also those with
+    // no compressed record, so the records are at most that many). A file that does not fit
+    // has no model.
+    if (header.valid && header.models > 0 && recs.size() <= header.anims) {
+      size_t node = recs.back().end + 12 * header.anchors;
+      if (d.Has(node, 1)) {
+        node += d.data[node] != 0 ? 5 : 1;
+        node += 8 + 16;
+        if (d.Has(node, 16)) {
+          std::copy(d.data + node, d.data + node + 16, out.skinnedModel.begin());
+        }
+      }
     }
   } catch (const Failure& failure) {
     error = failure.message;

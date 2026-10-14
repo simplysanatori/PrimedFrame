@@ -179,6 +179,49 @@ void Run(const char* what, int records, bool tinyTail, bool pools = false, bool 
     Check(!c.anims.empty() && !c.anims[0].tracked.empty() && c.anims[0].tracked[0], "bone 0 is driven");
   }
 }
+
+// The model list: the header after SChannel::Load (here at 0x86 of an all-zero skeleton:
+// u8 nModels, u8, u8 nAnchors, u16 nAnims) gives the anchor count; the last record ends at
+// its size field + size, nAnchors 12-byte SAnchorInfo follow, then SModelNode: CPooledName,
+// i32, i32, the node guid and the SMDL guid. The 7 bytes File() leaves after a record are
+// the next CAnim's SBaseInfo, which the last record does not have.
+std::vector<uint8_t> ModelFile(size_t anchors, size_t headerAnims, bool nameFlag) {
+  std::vector<uint8_t> f = File(1, false, false, false);
+  f[0x86] = 1;
+  f[0x88] = uint8_t(anchors);
+  f[0x89] = uint8_t(headerAnims);
+  f.resize(f.size() - 7);
+  f.resize(f.size() + 12 * anchors, 0xee);
+  f.push_back(nameFlag ? 1 : 0);
+  if (nameFlag) {
+    Le(f, 0x1234, 4);
+  }
+  Le(f, 0, 4);
+  Le(f, 0xffffffffu, 4);
+  for (int i = 0; i < 16; ++i) {
+    f.push_back(uint8_t(0x10 + i));  // the node guid
+  }
+  for (int i = 0; i < 16; ++i) {
+    f.push_back(uint8_t(0xa0 + i));  // the SMDL
+  }
+  f.resize(f.size() + 64, 0);
+  return f;
+}
+
+void RunAnchors(size_t anchors, bool nameFlag) {
+  PortRemasteredAnim::Character c;
+  std::string error;
+  Check(PortRemasteredAnim::ReadCharacter(ModelFile(anchors, 4, nameFlag), c, error), "anchor test reads");
+  Check(c.skinnedModel[0] == 0xa0 && c.skinnedModel[15] == 0xaf, "SMDL is the node's second guid");
+}
+
+// A header with fewer animations than records leaves no model instead of guessing one.
+void RunMismatch() {
+  PortRemasteredAnim::Character c;
+  std::string error;
+  Check(PortRemasteredAnim::ReadCharacter(ModelFile(2, 0, true), c, error), "mismatch test reads");
+  Check(c.skinnedModel[0] == 0 && c.skinnedModel[15] == 0, "no SMDL when the header counts fewer animations than records");
+}
 }  // namespace
 
 int main() {
@@ -186,5 +229,9 @@ int main() {
   Run("two records and a tiny false record", 2, true);
   Run("stream names pool 1 of 2, list far before the records", 1, false, true);
   Run("bone ops beside real32, int32 and one-bit values", 1, false, false, true);
+  RunAnchors(0, true);
+  RunAnchors(1, true);
+  RunAnchors(2, false);
+  RunMismatch();
   return sFailures == 0 ? 0 : 1;
 }
