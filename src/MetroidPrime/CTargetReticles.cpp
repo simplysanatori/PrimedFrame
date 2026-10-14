@@ -1233,7 +1233,8 @@ void CCompoundTargetReticle::DrawOrbitZoneGroup(const CMatrix3f& rot,
     // centre on the ray through the pointer at the depth it is drawn at when centred.
     float pointerX = 0.f;
     float pointerY = 0.f;
-    if (PortDebug::PresentedPointerAimPosition(pointerX, pointerY)) {
+    if (PortDebug::PresentedPointerAimPosition(CCameraManager::GetPresentationInterpolation(),
+                                                    pointerX, pointerY)) {
       const CGameCamera& cam = camMgr->GetCurrentCamera(mgr);
       float yaw = 0.f;
       float pitch = 0.f;

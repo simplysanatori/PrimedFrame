@@ -514,9 +514,10 @@ bool MouseButtons();
 bool MouseCrosshair();
 // The free-aim crosshair under direct aim: the setting, or always with pointer aim.
 bool AimCrosshair();
-// Pointer aim (Trilogy style, mouse aim only): the mouse moves a pointer and the
-// view turns once it passes the dead box (percent of the half view) at up to
-// PointerAimTurn degrees/second. Shots and the gun follow the pointer.
+// Pointer aim (Trilogy style, any direct aim): the mouse, right stick, gyro or a
+// touch drag moves a pointer and the view turns once it passes the dead box
+// (percent of the half view) at up to PointerAimTurn degrees/second. Shots and
+// the gun follow the pointer.
 bool PointerAim();
 void SetPointerAim(bool on);
 int PointerAimBox();
@@ -524,8 +525,9 @@ int PointerAimTurn();
 // The pointer (-1..1 of the half view, right/down positive) as of the last tick;
 // false (and centre) unless it steered that tick's free look.
 bool PointerAimPosition(float& x, float& y);
-// The same, plus the travel since the tick, for drawing.
-bool PresentedPointerAimPosition(float& x, float& y);
+// The same, plus the travel since the tick, for drawing; fraction is the part of
+// the tick shown (CCameraManager::GetPresentationInterpolation).
+bool PresentedPointerAimPosition(float fraction, float& x, float& y);
 // Places the pointer (console `pointeraim <x> <y>`); the next tick's look may re-centre it.
 void SetPointerAimPosition(float x, float y);
 // Crosshair size in percent while mouse aim or twin stick is on (the retail

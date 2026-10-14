@@ -2606,13 +2606,10 @@ static void PointerAimScale(float& sx, float& sy) {
 }
 
 bool AimCrosshair() { return MouseCrosshair() || PointerAim(); }
+// Any direct aim moves the pointer: the mouse, twin stick's right stick, gyro and touch drags.
 bool PointerAim() {
   EnsureInitialized();
-#if defined(__ANDROID__)
-  return false; // mouse only for now
-#else
-  return sInput.pointerAim && sInput.mouseAim && !sOriginalExperience;
-#endif
+  return sInput.pointerAim && DirectAim() && !sOriginalExperience;
 }
 void SetPointerAim(bool on) {
   EnsureInitialized();
@@ -2631,19 +2628,23 @@ bool PointerAimPosition(float& x, float& y) {
   y = sPointerAim.y;
   return sPointerAimFree;
 }
-bool PresentedPointerAimPosition(float& x, float& y) {
+bool PresentedPointerAimPosition(float fraction, float& x, float& y) {
   if (!PointerAimPosition(x, y)) return false;
-  // The travel since the tick, so the drawn pointer moves every frame.
+  // The travel since the tick (the stick's over the part of the tick already shown), so the
+  // drawn pointer moves every frame.
   float touchX = 0.f, touchY = 0.f;
   {
     std::lock_guard lock(sTouchAimMutex);
     touchX = sTouchAimPendingX;
     touchY = sTouchAimPendingY;
   }
+  const float ahead =
+      FrameInterpolation() && std::isfinite(fraction) && fraction > 0.f ? std::min(fraction, 1.f) * TickPeriod()
+                                                                        : 0.f;
   float sx = 0.f, sy = 0.f;
   PointerAimScale(sx, sy);
-  PortMouse::PointerAim::Move((sMousePendingX + sGyroPendingX + touchX) * sx,
-                              (sMousePendingY + sGyroPendingY + touchY) * sy, x, y);
+  PortMouse::PointerAim::Move((sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * ahead) * sx,
+                              (sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * ahead) * sy, x, y);
   return true;
 }
 int CrosshairSize() { EnsureInitialized(); return sInput.crosshairSize; }
@@ -6984,6 +6985,31 @@ void DrawControlsOptions() {
   ItemHelp("On, as the original: without Lock-On, the arm cannon turns toward the enemy nearest the "
            "middle of the screen and shots home in on it. Off, shots go where you aim; Lock-On still "
            "aims at its target.");
+  bool pointerAim = sInput.pointerAim;
+  if (ImGui::Checkbox("Pointer aim (Trilogy style)", &pointerAim)) {
+    SetPointerAim(pointerAim);
+  }
+  ItemHelp("The mouse, the right stick (twin stick), gyro or a touch drag moves the crosshair over "
+           "the screen and the shots follow it; the view turns only when the crosshair passes the "
+           "dead box, faster the closer it gets to the edge. Lock-on, scanning and grappling still "
+           "aim through the centre. Needs Mouse aim, Twin stick or the modern touch layout; Invert "
+           "X/Y do not apply.");
+  ImGui::BeginDisabled(!sInput.pointerAim);
+  if (ImGui::SliderInt("Dead box", &sInput.pointerAimBox, PortInput::kPointerAimBoxMin, PortInput::kPointerAimBoxMax,
+                       "%d%%")) {
+    sInput.pointerAimBox = std::clamp(sInput.pointerAimBox, PortInput::kPointerAimBoxMin, PortInput::kPointerAimBoxMax);
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("How far from the centre (percent of the half screen) the crosshair moves "
+                        "before the view turns.");
+  if (ImGui::SliderInt("Edge turn speed", &sInput.pointerAimTurn, PortInput::kPointerAimTurnMin,
+                       PortInput::kPointerAimTurnMax, "%d deg/s")) {
+    sInput.pointerAimTurn =
+        std::clamp(sInput.pointerAimTurn, PortInput::kPointerAimTurnMin, PortInput::kPointerAimTurnMax);
+    MarkDirty();
+  }
+  ImGui::SetItemTooltip("The turn speed with the crosshair at the screen edge.");
+  ImGui::EndDisabled();
 
   ImGui::SeparatorText("Morph ball");
   bool fastMorph = sInput.fastMorph;
@@ -7054,32 +7080,6 @@ void DrawControlsKeyboardMouse() {
     SetCrosshairSize(crosshairSize);
   }
   ImGui::SetItemTooltip("Applies under mouse aim and twin stick.");
-
-  ImGui::SeparatorText("Pointer aim");
-  bool pointerAim = sInput.pointerAim;
-  if (ImGui::Checkbox("Pointer aim (Trilogy style)", &pointerAim)) {
-    SetPointerAim(pointerAim);
-  }
-  ItemHelp("The mouse moves the crosshair over the screen and the shots follow it; the view "
-           "turns only when the crosshair passes the dead box, faster the closer it gets to the "
-           "edge. Lock-on, scanning and grappling still aim through the centre. Needs Mouse aim; "
-           "Invert X/Y do not apply.");
-  ImGui::BeginDisabled(!sInput.pointerAim);
-  if (ImGui::SliderInt("Dead box", &sInput.pointerAimBox, PortInput::kPointerAimBoxMin, PortInput::kPointerAimBoxMax,
-                       "%d%%")) {
-    sInput.pointerAimBox = std::clamp(sInput.pointerAimBox, PortInput::kPointerAimBoxMin, PortInput::kPointerAimBoxMax);
-    MarkDirty();
-  }
-  ImGui::SetItemTooltip("How far from the centre (percent of the half screen) the crosshair moves "
-                        "before the view turns.");
-  if (ImGui::SliderInt("Edge turn speed", &sInput.pointerAimTurn, PortInput::kPointerAimTurnMin,
-                       PortInput::kPointerAimTurnMax, "%d deg/s")) {
-    sInput.pointerAimTurn =
-        std::clamp(sInput.pointerAimTurn, PortInput::kPointerAimTurnMin, PortInput::kPointerAimTurnMax);
-    MarkDirty();
-  }
-  ImGui::SetItemTooltip("The turn speed with the crosshair at the screen edge.");
-  ImGui::EndDisabled();
 
   ImGui::SeparatorText("Mouse buttons");
   ImGui::TextDisabled("Mouse buttons are bound in Controls > Remap (Keyboard & mouse).");
