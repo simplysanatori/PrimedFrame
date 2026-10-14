@@ -782,6 +782,24 @@ void COptionsScreen::ProcessInput(const CFinalInput& input) {
   }
 }
 
+#ifdef TARGET_PC
+void COptionsScreen::PortPointerInput(CFinalInput& input) {
+  if (!x19c_quitGame.null()) {
+    PortPointerMenu::Table(x19c_quitGame->PortTable());
+    if (PortPointerMenu::TakeBack()) {
+      PortPointerMenu::PressB(input);
+    }
+    return;
+  }
+  // The slider and value rows set the option; the rest is the shared tables.
+  if (!PortPointerMenu::Slider(x18c_slidergroup_slider)) {
+    PortPointerMenu::Table(x190_tablegroup_double, false, false);
+    PortPointerMenu::Table(x194_tablegroup_triple, false, false);
+  }
+  CPauseScreenBase::PortPointerInput(input);
+}
+#endif
+
 void COptionsScreen::Draw(float transInterp, float totalAlpha, float yOff) const {
   CPauseScreenBase::Draw(transInterp, totalAlpha, yOff);
   x1a0_gameCube->Draw(transInterp * (1.f - x29c_optionAlpha));
