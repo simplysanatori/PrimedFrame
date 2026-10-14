@@ -953,9 +953,56 @@ void TestExposureHints() {
   t.Snap(b);
   Check(!t.moving && t.shown[3] == 14.f && t.from[3] == 14.f, "transition: snap");
 }
+// A version 21 tile-set section: identity transform, `box`, one 1x1x1 layer-0 tile.
+std::vector<uint8_t> MakeTileSection(const float matrix0, const int32_t box[6], uint32_t count = 1) {
+  std::vector<uint8_t> out;
+  for (int i = 0; i < 12; ++i) {
+    PutFloat(out, i == 0 ? matrix0 : 0.f);
+  }
+  for (int i = 0; i < 6; ++i) {
+    Put32(out, uint32_t(box[i]));
+  }
+  Put32(out, count);
+  Put32(out, count != 0 ? 6 : 0);
+  for (uint32_t i = 0; i < count; ++i) {
+    for (uint32_t v : {0u, i, 0u, 0u, 0u, 0u, 0u, 1u, 1u, 1u, 0u}) {
+      Put32(out, v);
+    }
+  }
+  out.insert(out.end(), count != 0 ? 6 : 0, 0);
+  return out;
+}
+
+void TestTileSection() {
+  const int32_t good[6] = {0, 0, 0, 10, 10, 10};
+  const auto parse = [](const std::vector<uint8_t>& d) {
+    PortRoomEnvTiles::TileSet set;
+    std::string error;
+    size_t at = 0;
+    return PortRoomEnv::ParseTileSet(d, at, set, error);
+  };
+  Check(parse(MakeTileSection(1.f, good)), "tiles: well formed");
+  const int32_t inverted[6] = {5, 0, 0, 4, 10, 10};
+  Check(!parse(MakeTileSection(1.f, inverted)), "tiles: inverted box");
+  const int32_t huge[6] = {-2000000000, 0, 0, 2000000000, 10, 10};
+  Check(!parse(MakeTileSection(1.f, huge)), "tiles: absurd box");
+  const int32_t wide[6] = {0, 0, 0, 100000, 10, 10};
+  Check(!parse(MakeTileSection(1.f, wide)), "tiles: box wider than a room");
+  Check(!parse(MakeTileSection(std::numeric_limits<float>::infinity(), good)), "tiles: non-finite transform");
+  std::vector<uint8_t> many = MakeTileSection(1.f, good);
+  many[72] = 0xFF;
+  many[73] = 0xFF;
+  many[74] = 0xFF;
+  many[75] = 0x7F;
+  Check(!parse(many), "tiles: absurd tile count");
+  std::vector<uint8_t> cut = MakeTileSection(1.f, good);
+  cut.pop_back();
+  Check(!parse(cut), "tiles: cut short");
+}
 } // namespace
 
 int main() {
+  TestTileSection();
   TestBrdfLut();
   TestPowerBomb();
   TestNames();
