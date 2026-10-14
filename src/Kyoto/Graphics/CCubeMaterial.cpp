@@ -679,7 +679,14 @@ bool CCubeMaterial::PortNeedsModelMatrix() const {
 
 void CCubeMaterial::SetCurrent(const CModelFlags& flags, const CCubeSurface& surface,
                                const CCubeModel& model) const {
-  if (x0_data == sLastMaterialCached) {
+#ifdef TARGET_PC
+  // The cached channel state was built under the TEV light skip it was applied with.
+  static uint sAppliedTevLightSkip = 0;
+  const bool tevLightSkipChanged = sPortTevLightSkip != sAppliedTevLightSkip;
+#else
+  const bool tevLightSkipChanged = false;
+#endif
+  if (x0_data == sLastMaterialCached && !tevLightSkipChanged) {
     switch (sMaterialCachedState) {
     case 1:
       if (sLastModelCached == sRenderingModel) {
@@ -743,10 +750,14 @@ void CCubeMaterial::SetCurrent(const CModelFlags& flags, const CCubeSurface& sur
   }
 
   const int groupIdx = static_cast< int >(SBig(materialDataCur.words[1]));
-  if (sLastMaterialUnique != -1 && sLastMaterialUnique == groupIdx && sMaterialCachedState == 0) {
+  if (sLastMaterialUnique != -1 && sLastMaterialUnique == groupIdx && sMaterialCachedState == 0 &&
+      !tevLightSkipChanged) {
     return;
   }
   sLastMaterialUnique = groupIdx;
+#ifdef TARGET_PC
+  sAppliedTevLightSkip = sPortTevLightSkip;
+#endif
 
   CGX::SetVtxDescv_Compressed(SBig(materialDataCur.words[0]));
   materialDataCur.words += 2;
