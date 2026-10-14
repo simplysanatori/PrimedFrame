@@ -908,6 +908,51 @@ void TestPowerBomb() {
   PortRoomEnv::PowerBombBakedLight(4.5f, rgb);
   Check(isColor(rgb, 1.f, 1.f, 1.f), "bomb: white again from 4.5 s");
 }
+void TestExposureHints() {
+  using PortRoomEnv::ExposureHints;
+  using PortRoomEnv::FluidHint;
+  using PortRoomEnv::ParamTransition;
+  std::vector<FluidHint> hints(2);
+  hints[0].mode = 1;
+  hints[1].mode = 2;
+  ExposureHints h;
+  // Camera outside at load: mode 1 idle, mode 2 inactive until the first exit.
+  Check(!h.Load(hints, false), "hints: nothing registers at load outside a fluid");
+  Check(h.Pick(2) == -1, "hints: the plain hint outside");
+  Check(h.Set(hints, true), "hints: entering registers mode 1 (snap)");
+  Check(h.Pick(2) == 0, "hints: mode 1 in force inside");
+  Check(!h.Set(hints, true), "hints: no change, no snap");
+  Check(h.Set(hints, false), "hints: leaving registers mode 2 (snap)");
+  Check(h.Pick(2) == 1, "hints: mode 2 in force after the exit");
+  Check(h.Set(hints, true) && h.Pick(2) == 0, "hints: re-entering swaps back to mode 1");
+  // Camera inside at load: mode 1 registers (snap), mode 2 stays out.
+  Check(h.Load(hints, true) && h.Pick(2) == 0, "hints: inside at load starts mode 1");
+  // Mode 1 alone: leaving unregisters without a snap.
+  std::vector<FluidHint> one(1);
+  ExposureHints g;
+  g.Load(one, false);
+  g.Set(one, true);
+  Check(!g.Set(one, false) && g.Pick(1) == -1, "hints: leaving only unregisters mode 1");
+
+  const float a[6] = {1, 2, 3, 4, 5, 6};
+  const float b[6] = {11, 12, 13, 14, 15, 16};
+  const float c[6] = {21, 22, 23, 24, 25, 26};
+  ParamTransition t;
+  t.Snap(a);
+  t.Step(a, 0.1f);
+  Check(!t.moving && t.shown[0] == 1.f, "transition: idle at the target");
+  t.Step(b, 0.f);
+  Check(t.moving && t.progress == 0.f && t.shown[0] == 1.f, "transition: a new target starts at progress 0");
+  t.Step(b, 0.5f);
+  Check(std::fabs(t.shown[0] - 6.f) < 1e-4f && std::fabs(t.progress - 0.5f) < 1e-6f, "transition: half way");
+  t.Step(c, 0.f);
+  Check(t.from[0] == 1.f && std::fabs(t.progress - 0.5f) < 1e-6f, "transition: retarget keeps from and progress");
+  Check(std::fabs(t.shown[0] - 1.f) > 0.f && t.to[0] == 21.f, "transition: the retarget aims at the new target");
+  t.Step(c, 0.5f);
+  Check(!t.moving && t.from[0] == 21.f && t.shown[0] == 21.f, "transition: ends on the target");
+  t.Snap(b);
+  Check(!t.moving && t.shown[3] == 14.f && t.from[3] == 14.f, "transition: snap");
+}
 } // namespace
 
 int main() {
@@ -920,6 +965,7 @@ int main() {
   TestBlend();
   TestGrid();
   TestLod();
+  TestExposureHints();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

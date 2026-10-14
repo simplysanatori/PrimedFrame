@@ -15,7 +15,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 18), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 20), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -117,6 +117,11 @@
 //          two factors, for a timeline without their spline), then kLightSplines splines (PointLight's
 //          order), each u32 bytes (0: none) and that many bytes of a CMayaSpline padded to 4.
 //          A Remastered point or spot LightDynamic (see RoomLights).
+// Version 20 adds, after the lights:
+//   u32 hints
+//   hint: u8 mode (1 active while the camera is inside a fluid, 2 once it has left one), u8 pad[3],
+//         f32 min, f32 max, f32 bias, f32 sigma, f32 static lerp. Remastered's fluid-mode
+//         CAutoExposureHintGOC (see ExposureHints); the plain hint stays in the header fields.
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -364,6 +369,15 @@ struct PointLight {
   bool hasSpline[kLightSplines] = {};
 };
 
+// An auto exposure hint with a fluid mode (CAutoExposureHintGOC mode 1 or 2).
+struct FluidHint {
+  uint8_t mode = 1;
+  float exposure[2] = {};
+  float bias = 0.f;
+  float sigma = 32.f;
+  float staticLerp = 0.5f;
+};
+
 struct File {
   uint32_t version = 0;
   float tonemap[4] = {};
@@ -371,6 +385,7 @@ struct File {
   float exposureBias = 0.f;
   float exposureSigma = 32.f; // Remastered's default
   float staticLerp = 0.5f;
+  std::vector<FluidHint> fluidHints; // version 20
   float contrast = 0.f;
   float bloomThreshold = 0.9f;
   std::vector<float> bloomTints; // RGBA; empty: the room has no bloom
@@ -675,6 +690,37 @@ void SendScriptState(uint32_t sender, int state);
 // Once a frame: whether the player and the camera are in a fluid. A change drives the
 // grades of the loaded areas linked to kSenderPlayerFluid / kSenderCameraWater.
 void SetFluid(bool player, bool camera);
+
+// CAutoExposureHintGOC's fluid modes (0x539574 EntityLoaded, 0x539644 InsideFluidStateChanged):
+// the hints of a room are told whether the CAMERA is inside a fluid. Mode 1 is active while it
+// is, mode 2 once it has left one (it starts inactive, even outside). A hint that becomes
+// active registers with the post effects manager as type 1, which snaps the exposure; one
+// that stops unregisters. Of the registered hints the newest wins at equal priority.
+struct ExposureHints {
+  bool inside = false; // the last fluid state told (the GOC's +0x48)
+  std::vector<uint8_t> active; // per FluidHint
+  std::vector<uint64_t> order; // per FluidHint: registration number, 0 when unregistered
+  uint64_t next = 1;
+  // Starts the room's hints as EntityLoaded does with the camera's current state.
+  bool Load(const std::vector<FluidHint>& hints, bool cameraInside);
+  // The camera entered or left a fluid. True when a hint registered, which snaps.
+  bool Set(const std::vector<FluidHint>& hints, bool cameraInside);
+  // The registered hint that wins, or -1 for the room's plain hint.
+  int Pick(size_t count) const;
+};
+
+// TransitionTonemapParams 0xb005bc: one step of the move between tonemap parameter sets
+// (`from`, `to`; 6 values). A new target starts a move at progress 0 when idle; a move in
+// progress keeps `from` and its progress when retargeted. Returns the shown values.
+struct ParamTransition {
+  float from[6] = {};
+  float to[6] = {};
+  float shown[6] = {};
+  float progress = 0.f;
+  bool moving = false;
+  void Snap(const float target[6]);
+  void Step(const float target[6], float dt, float time = 1.f);
+};
 // A new game: every grade back to how it starts.
 void ResetGrades();
 // The console's `roomenv grades`: the camera area's grades and which are on.

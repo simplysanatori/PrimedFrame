@@ -73,6 +73,8 @@ struct Area {
   float exposure = 0.f; // what takes the room's radiance to the display's range; 0: unknown
   float tone[3][4] = {}; // its tone curve
   bool hasGeo = false;   // the mod replaces its geometry
+  ExposureHints hints;   // the fluid-mode exposure hints' state
+  bool hintSnap = false; // a fluid hint registered this frame: the exposure snaps
   uint64_t layers = ~uint64_t(0); // its active script layers (SetAreaLayers)
   // Its grades' requests (Remastered's CAreaPrioritizedGameHintManager): on or off, and
   // when they were last turned on, which decides between equal priorities.
@@ -130,7 +132,10 @@ struct FrameState {
   float from[6] = {};
   float to[6] = {};
   float shown[6] = {};
-  std::chrono::steady_clock::time_point start;
+  // CPostFXManager::TransitionTonemapParams: while `moving`, shown = from + (to - from) *
+  // progress, and a new target keeps both `from` and `progress`.
+  bool moving = false;
+  float progress = 0.f;
   std::chrono::steady_clock::time_point last;
   float carry = 0.f; // seconds not stepped yet
   float exposure = 0.f; // 2^(3 - EV); 0: none yet
@@ -962,6 +967,7 @@ void Finish(uint32_t mrea, Area& area) {
   }
   area.volumes.resize(area.file.grids.size());
   StartGrades(mrea, area, area.pendingFluid, area.pendingWater);
+  area.hintSnap = area.hints.Load(area.file.fluidHints, area.pendingWater);
   area.exposure = RoomExposure(area);
   if (LoadTiming()) {
     PortLog::Write("room env timing: %08X finish: waited %.2f ms for the loader, then %.2f ms (%zu cubes, %zu grids, "
@@ -1559,13 +1565,29 @@ void UpdateFrame(bool roomGeoDrawing) {
     f.loaded.swap(loaded);
     return;
   }
-  const Area& area = view->second;
+  Area& area = view->second;
   const File& file = area.file;
   const float* const t = file.tonemap;
-  const bool hint = file.exposure[0] != 0.f || file.exposure[1] != 0.f;
+  // The hint in force: a registered fluid hint, else the room's plain one.
+  struct Hint {
+    float exposure[2];
+    float bias, sigma, staticLerp;
+  } eff = {{file.exposure[0], file.exposure[1]}, file.exposureBias, file.exposureSigma, file.staticLerp};
+  const int fluidPick = area.hints.Pick(file.fluidHints.size());
+  if (fluidPick >= 0) {
+    const FluidHint& h = file.fluidHints[size_t(fluidPick)];
+    eff = {{h.exposure[0], h.exposure[1]}, h.bias, h.sigma, h.staticLerp};
+  }
+  const bool hint = eff.exposure[0] != 0.f || eff.exposure[1] != 0.f;
+  // A hint that registered this frame is type 1: SetValue instead of the Gaussian's easing. The
+  // types are cleared after every frame, wherever the view was.
+  const bool hintSnap = fluidPick >= 0 && area.hintSnap;
+  for (auto& entry : sAreas) {
+    entry.second.hintSnap = false;
+  }
   // CSceneTonemapParams' static exposure: a fixed point in the hint's range, or the
   // tonemap's own EV without one.
-  const float staticEv = hint ? file.exposure[0] + (file.exposure[1] - file.exposure[0]) * file.staticLerp : t[0];
+  const float staticEv = hint ? eff.exposure[0] + (eff.exposure[1] - eff.exposure[0]) * eff.staticLerp : t[0];
   const float target[6] = {t[0], t[1], file.contrast, t[2], t[3], staticEv};
   float radiance[3] = {};
   uint32_t serial = 0;
@@ -1579,22 +1601,39 @@ void UpdateFrame(bool roomGeoDrawing) {
     f.started = true;
     std::memcpy(f.from, target, sizeof(target));
     std::memcpy(f.to, target, sizeof(target));
-    f.start = f.last = now;
+    f.last = now;
+    f.moving = false;
+    f.progress = 0.f;
     f.carry = 0.f;
     f.measured = false;
     f.ignoreUntil = serial + kInFlight;
-  } else if (std::memcmp(target, f.to, sizeof(target)) != 0) {
-    std::memcpy(f.from, f.shown, sizeof(f.shown));
+  } else {
     std::memcpy(f.to, target, sizeof(target));
-    f.start = now;
   }
   f.area = sViewArea;
-  const float moved = std::min(std::chrono::duration<float>(now - f.start).count(), 1.f);
-  for (int i = 0; i < 6; ++i) {
-    f.shown[i] = f.from[i] + (f.to[i] - f.from[i]) * moved;
+  // TransitionTonemapParams 0xb005bc: idle at `from`; a target that differs starts a move at
+  // progress 0, and every moving frame adds dt over the transition time (1 s up or down,
+  // skTonemap_ParamTransition*Time) before it blends. Retargeting mid-move keeps `from` and
+  // the progress; the move ends by making the target `from`.
+  {
+    ParamTransition tr;
+    std::memcpy(tr.from, f.from, sizeof(tr.from));
+    std::memcpy(tr.to, f.to, sizeof(tr.to));
+    tr.progress = f.progress;
+    tr.moving = f.moving;
+    if (jump) {
+      tr.Snap(target);
+    } else {
+      tr.Step(target, std::chrono::duration<float>(now - f.last).count());
+    }
+    std::memcpy(f.from, tr.from, sizeof(f.from));
+    std::memcpy(f.to, tr.to, sizeof(f.to));
+    std::memcpy(f.shown, tr.shown, sizeof(f.shown));
+    f.progress = tr.progress;
+    f.moving = tr.moving;
   }
-  if (f.sigma != file.exposureSigma) {
-    f.sigma = file.exposureSigma;
+  if (f.sigma != eff.sigma) {
+    f.sigma = eff.sigma;
     f.ev.SetSigma(f.sigma);
   }
   // Measuring settles only where the picture follows the exposure: room geometry, lit by
@@ -1605,8 +1644,8 @@ void UpdateFrame(bool roomGeoDrawing) {
     f.serial = serial;
     const float peak = std::max(std::max(radiance[0], radiance[1]), radiance[2]);
     if (f.measuring && int32_t(serial - f.ignoreUntil) > 0 && peak > 0.f && std::isfinite(peak)) {
-      const float ev = std::log2(peak / kGrey) + 3.f + file.exposureBias;
-      f.measuredEv = std::min(std::max(ev, file.exposure[0]), file.exposure[1]);
+      const float ev = std::log2(peak / kGrey) + 3.f + eff.bias;
+      f.measuredEv = std::min(std::max(ev, eff.exposure[0]), eff.exposure[1]);
       f.measured = true;
     }
   }
@@ -1624,7 +1663,7 @@ void UpdateFrame(bool roomGeoDrawing) {
   // through the Gaussian, a step every 60th of a second.
   f.carry += std::chrono::duration<float>(now - f.last).count();
   f.last = now;
-  if (jump || !hint) {
+  if (jump || !hint || hintSnap) {
     f.ev.SetValue(f.targetEv);
     f.carry = 0.f;
   } else {
@@ -1639,6 +1678,12 @@ void UpdateFrame(bool roomGeoDrawing) {
   f.hasTone = f.exposure > 0.f && f.shown[1] > 0.f && f.shown[1] < 1.f;
   if (f.hasTone) {
     BuildTone(f.shown[1], f.shown[2], f.shown[3], f.shown[4], f.tone);
+  }
+  static const bool sLog = port::EnvFlag("MP_ROOM_ENV_EXPOSURE_LOG");
+  if (sLog) {
+    PortLog::Write("room env exposure: area %08X jump %d shown %g %g %g %g %g %g ev %g target %g fluid %d snap %d\n",
+                   sViewArea, int(jump), f.shown[0], f.shown[1], f.shown[2], f.shown[3], f.shown[4], f.shown[5],
+                   f.ev.value, f.targetEv, fluidPick, int(hintSnap));
   }
 }
 
@@ -2577,6 +2622,10 @@ void SetFluid(bool player, bool camera) {
     sCameraWater = camera;
     for (auto& [mrea, area] : sAreas) {
       DriveGrades(mrea, area, kSenderCameraWater, camera ? 0 : 1);
+      // The hints hear the camera's fluid state in every loaded area (once their file is in).
+      if (area.hasFile && area.hints.Set(area.file.fluidHints, camera)) {
+        area.hintSnap = true;
+      }
     }
   }
 }

@@ -2280,7 +2280,7 @@ private:
   };
   bool MatchRoom(const RoomData& r, const std::map<std::string, Placement>& placed, Match& out) const;
   void Tonemap(const RoomData& r, float out[5]) const;
-  void Exposure(const RoomData& r, float out[5]) const;
+  void Exposure(const RoomData& r, float out[5], std::vector<PortRoomEnv::FluidHint>* fluid = nullptr) const;
   void ReadBloom(const RoomData& r, BloomData& out) const;
   // The room's global ColorGrades in component order; `area` gives their retail layers.
   void ReadGrades(const RoomData& r, const Area* area, std::vector<GradeData>& out) const;
@@ -2515,9 +2515,10 @@ void Writer::Tonemap(const RoomData& r, float out[5]) const {
 // sigma it eases by and where in the range the static exposure sits, or 0, 0, 0, 32, 0.5
 // for a room without auto exposure. A room can have several hints: the plain
 // one for the whole room is wanted, not those with a mode (they are for a state of the
-// room, such as a cutscene) or a volume of their own. A value the hint leaves out is
+// room, such as a cutscene) or a volume of their own. Hints with mode 1 or 2 (active while
+// the camera is inside a fluid / once it has left one) go to `fluid` with their mode. A value the hint leaves out is
 // SLdrAutoExposureHint's default.
-void Writer::Exposure(const RoomData& r, float out[5]) const {
+void Writer::Exposure(const RoomData& r, float out[5], std::vector<PortRoomEnv::FluidHint>* fluid) const {
   out[0] = out[1] = out[2] = 0.f;
   out[3] = 32.f;
   out[4] = 0.5f;
@@ -2539,7 +2540,22 @@ void Writer::Exposure(const RoomData& r, float out[5]) const {
     const bool whole = !r.room.Xform(*c, pos, rot, scale) ||
                        (std::fabs(scale[0] - 1.0) < 1e-3 && std::fabs(scale[1] - 1.0) < 1e-3 &&
                         std::fabs(scale[2] - 1.0) < 1e-3);
-    const int rank = f.find(kPropHintMode) != f.end() ? 1 : whole ? 3 : 2;
+    const auto modeIt = f.find(kPropHintMode);
+    const int mode = modeIt != f.end() && modeIt->second.size >= 4 ? int(ReadLE32(r.room.Bytes(modeIt->second))) : 0;
+    if (mode == 1 || mode == 2) {
+      if (fluid != nullptr) {
+        PortRoomEnv::FluidHint h;
+        h.mode = uint8_t(mode);
+        h.exposure[0] = range[0];
+        h.exposure[1] = range[1];
+        h.bias = std::isfinite(bias) ? bias : 0.f;
+        h.sigma = sigma >= 0.f && sigma < 10000.f ? sigma : 32.f;
+        h.staticLerp = lerp >= 0.f && lerp <= 1.f ? lerp : 0.5f;
+        fluid->push_back(h);
+      }
+      continue;
+    }
+    const int rank = modeIt != f.end() ? 1 : whole ? 3 : 2;
     if (rank > best) {
       best = rank;
       out[0] = range[0];
@@ -4979,7 +4995,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  AppendLE32(out, 19);
+  AppendLE32(out, 20);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -4995,7 +5011,8 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   AppendLE32(out, grid.empty() ? 0 : 1);
   out.insert(out.end(), grid.begin(), grid.end());
   float exposure[5];
-  Exposure(r, exposure);
+  std::vector<PortRoomEnv::FluidHint> fluidHints;
+  Exposure(r, exposure, &fluidHints);
   AppendLEFloat(out, exposure[0]);
   AppendLEFloat(out, exposure[1]);
   AppendLEFloat(out, exposure[2]);
@@ -5244,6 +5261,16 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       out.insert(out.end(), spline.begin(), spline.end());
       out.insert(out.end(), (4 - spline.size() % 4) % 4, 0);
     }
+  }
+  AppendLE32(out, uint32_t(fluidHints.size()));
+  for (const PortRoomEnv::FluidHint& h : fluidHints) {
+    out.push_back(h.mode);
+    out.insert(out.end(), 3, 0);
+    AppendLEFloat(out, h.exposure[0]);
+    AppendLEFloat(out, h.exposure[1]);
+    AppendLEFloat(out, h.bias);
+    AppendLEFloat(out, h.sigma);
+    AppendLEFloat(out, h.staticLerp);
   }
   if (!fogs.empty() || !regions.empty()) {
     Log("  " + r.name + ": " + std::to_string(fogs.size()) + " fog hint(s), " + std::to_string(regions.size()) +
