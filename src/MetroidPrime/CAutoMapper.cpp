@@ -985,6 +985,10 @@ void CAutoMapper::PortPointerInput(CFinalInput& input, const CStateManager& mgr)
       xa8_renderState0.x8_camOrientation = CQuaternion::YXZRotation(
           CRelAngle(0.f), CRelAngle(angX.AsRadians()), CRelAngle(angZ.AsRadians()));
     }
+    if (m.twist != 0.f) {
+      // A two-finger twist turns the map, as on the Android overlay.
+      PortDebug::AddMapRotate(m.twist);
+    }
     if (m.zoom != 0.f) {
       PortDebug::AddMapZoom(static_cast< float >(pow(2.0, 0.5 * m.zoom)));
     }

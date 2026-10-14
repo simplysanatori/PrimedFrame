@@ -37,6 +37,7 @@ public:
   static constexpr float kDoubleTime = 0.4f;  // seconds
   static constexpr float kDoubleDist = 16.f;  // points
   static constexpr float kExpire = 0.25f;     // seconds an untaken result is kept
+  static constexpr float kPi = 3.14159265f;
 
   // Position of the last pointer seen, and whether it moved (or a finger
   // landed) since ClearMoved. An idle cursor doesn't move, so it never steals
@@ -136,6 +137,7 @@ public:
       mTapCancelled = true;
       mDragging = false;
       mPrevSpan = Span();
+      mPrevAngle = Angle();
       mPrevCx = 0.5f * (mFingers[0].x + mFingers[1].x);
       mPrevCy = 0.5f * (mFingers[0].y + mFingers[1].y);
     }
@@ -176,6 +178,16 @@ public:
       mPinchTime = Stamp(mPinchTime, t);
     }
     mPrevSpan = span;
+    const float angle = Angle();
+    float turn = angle - mPrevAngle;
+    if (turn > kPi) {
+      turn -= 2.f * kPi;
+    } else if (turn <= -kPi) {
+      turn += 2.f * kPi;
+    }
+    mTwist += turn;
+    mTwistTime = Stamp(mTwistTime, t);
+    mPrevAngle = angle;
     mLast = Device::Touch;
   }
 
@@ -260,6 +272,14 @@ public:
     mPinchTime = -1.f;
     return p;
   }
+  // Two-finger twist since the last take, in radians, positive clockwise on
+  // screen (y down).
+  float TakeTwist() {
+    const float a = mTwist;
+    mTwist = 0.f;
+    mTwistTime = -1.f;
+    return a;
+  }
   float TakeWheel() {
     const float w = mWheel;
     mWheel = 0.f;
@@ -284,6 +304,10 @@ public:
       mPinch = 1.f;
       mPinchTime = -1.f;
     }
+    if (mTwistTime >= 0.f && t - mTwistTime > kExpire) {
+      mTwist = 0.f;
+      mTwistTime = -1.f;
+    }
     if (mWheelTime >= 0.f && t - mWheelTime > kExpire) {
       mWheel = 0.f;
       mWheelTime = -1.f;
@@ -297,10 +321,10 @@ public:
     mDragging = false;
     mTapCancelled = false;
     mHasClick = mHasBack = false;
-    mDragX = mDragY = mPanX = mPanY = mWheel = 0.f;
+    mDragX = mDragY = mPanX = mPanY = mWheel = mTwist = 0.f;
     mDragButtons = 0;
     mPinch = 1.f;
-    mDragTime = mPanTime = mPinchTime = mWheelTime = -1.f;
+    mDragTime = mPanTime = mPinchTime = mWheelTime = mTwistTime = -1.f;
   }
 
 private:
@@ -318,6 +342,9 @@ private:
       if (mFingers[i].id == id) return i;
     }
     return -1;
+  }
+  float Angle() const {
+    return std::atan2(mFingers[1].y - mFingers[0].y, mFingers[1].x - mFingers[0].x);
   }
   float Span() const {
     return Dist(mFingers[0].x, mFingers[0].y, mFingers[1].x, mFingers[1].y);
@@ -369,7 +396,7 @@ private:
   Finger mFingers[2];
   int mFingerCount = 0;
   bool mTapCancelled = false;
-  float mPrevSpan = 0.f, mPrevCx = 0.f, mPrevCy = 0.f;
+  float mPrevSpan = 0.f, mPrevAngle = 0.f, mPrevCx = 0.f, mPrevCy = 0.f;
 
   Click mClick;
   bool mHasClick = false;
@@ -386,6 +413,7 @@ private:
   float mDragTime = -1.f;
   float mPanX = 0.f, mPanY = 0.f, mPanTime = -1.f;
   float mPinch = 1.f, mPinchTime = -1.f;
+  float mTwist = 0.f, mTwistTime = -1.f;
   float mWheel = 0.f, mWheelTime = -1.f;
 };
 

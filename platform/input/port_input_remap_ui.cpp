@@ -1480,7 +1480,7 @@ void Draw() {
   ImGui::SetItemTooltip("On: the mouse and touch work the game's menus and map. Hovering or tapping selects, "
                         "a click (or a tap on the selected item) confirms, right click backs out, a click on a "
                         "button hint presses it. Drags set sliders and turn the Samus doll and the map; the "
-                        "wheel or a pinch zooms them.\nOff: menus and the map read only buttons and keys.");
+                        "wheel or a pinch zooms them; a two-finger twist turns the map.\nOff: menus and the map read only buttons and keys.");
   ImGui::Separator();
 
   const bool editorOnTop = sEditing != kEditNone && !sEditRowShown;

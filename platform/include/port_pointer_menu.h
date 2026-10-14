@@ -60,11 +60,13 @@ float RowPitch(CGuiTableGroup* table, int a, int b, float fallback);
 // Pointer motion for a 3D view this frame. rotate is a left drag (one finger
 // on touch); pan is a right or middle drag or a two-finger pan; both in EFB
 // pixels. zoom is wheel notches plus pinch (one notch per 41% spread),
-// positive = closer. False when nothing moved.
+// positive = closer. twist is a two-finger turn in radians, positive clockwise
+// on screen. False when nothing moved.
 struct ViewMotion {
   float rotateX = 0.f, rotateY = 0.f;
   float panX = 0.f, panY = 0.f;
   float zoom = 0.f;
+  float twist = 0.f;
 };
 bool TakeViewMotion(ViewMotion& out);
 

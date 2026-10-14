@@ -266,8 +266,9 @@ bool TakeViewMotion(ViewMotion& out) {
   if (pinch > 0.f && pinch != 1.f) {
     out.zoom += 2.f * std::log2(pinch);
   }
+  out.twist = g.TakeTwist();
   return out.rotateX != 0.f || out.rotateY != 0.f || out.panX != 0.f || out.panY != 0.f ||
-         out.zoom != 0.f;
+         out.zoom != 0.f || out.twist != 0.f;
 }
 
 void NoteAdvanced() { sLastAdvanced = true; }

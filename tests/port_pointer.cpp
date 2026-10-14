@@ -217,6 +217,18 @@ int main() {
     g.FingerUp(5, 260.f, 160.f, 2.08f);
     CHECK(!g.TakeClick(c) && g.FingerCount() == 0);
 
+    // A two-finger twist: a quarter turn clockwise on screen, across the +-pi wrap.
+    g.TakeTwist();
+    g.FingerDown(6, 200.f, 100.f, 3.f);
+    g.FingerDown(7, 100.f, 100.f, 3.01f);  // the pair points at pi
+    g.FingerMove(7, 150.f, 50.f, 3.02f);   // -3pi/4: +pi/4 through the wrap
+    g.FingerMove(6, 150.f, 150.f, 3.03f);  // -pi/2: another +pi/4
+    CHECK(Near(g.TakeTwist(), 0.5f * 3.14159265f));
+    CHECK(Near(g.TakeTwist(), 0.f));
+    g.FingerUp(6, 150.f, 150.f, 3.05f);
+    g.FingerUp(7, 150.f, 50.f, 3.06f);
+    CHECK(!g.TakeClick(c));
+
     // A system-cancelled gesture leaves no tap behind.
     g.FingerDown(6, 50.f, 50.f, 3.f);
     g.CancelTouches();
