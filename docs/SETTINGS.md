@@ -547,7 +547,20 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   `save.bin.bak`): the newest save replaces the Metroid Prime game the Trilogy
   last used (it shows one per Mii, so start one there and save once first);
   Echoes/Corruption are kept. A Wii `data.bin` is console-signed and
-  cannot be written. Logic in `platform/port_gci.cpp` and
+  cannot be written. The buttons also work with PrimeHack (its Flatpak's
+  `~/.var/app/io.github.shiiion.primehack/data/dolphin-emu` is searched too).
+  `emulator_folder` (empty = auto) names the Dolphin/PrimeHack user folder (the
+  one with `GC/`; a `GC`, region or `Card A` folder is accepted too) for portable
+  installs; when set it is the only folder looked at. `share_emulator_card`
+  (default off, desktop, console `gci share on|off`, `gci emulator <folder|auto>`)
+  mounts the emulator's `GC/<region>/Card A` as the port's card, so both read and
+  write the same files live; it applies at the title screen (and at boot, so
+  quick resume saves there too) and is refused in game. Never run both at once:
+  one overwrites the other's saves. GameCube Metroid Prime only; the Trilogy save
+  cannot be shared. The card needs to exist (set the emulator's Slot A to "GCI
+  Folder", start the game once). Randomizer/Archipelago keep their own cards.
+  "Copy port saves into shared card" copies the port's own card over (its old
+  files move to `_replaced`). Logic in `platform/port_gci.cpp` and
   `platform/port_save_convert.cpp`, covered by `port_gci_tests` and
   `port_save_convert`. Console: `gci list | import <path> | export [usa|pal]
   <dir or .raw> | export trilogy <save.bin> | dolphin import | dolphin export

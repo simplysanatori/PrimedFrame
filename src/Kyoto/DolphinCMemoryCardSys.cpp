@@ -373,6 +373,11 @@ void CMemoryCardSys::Initialize() {
     CARDInit(PortGci::GameCode(), "01");
     mIsInitialized = true;
     MigrateLegacyPalSave();
+    // Sharing the emulator's card: quick resume and boot-to-game save there too.
+    const std::string shared = PortGci::CardTargetDirectory("");
+    if (!shared.empty()) {
+      PortSwitchCard(shared.c_str());
+    }
   }
 }
 
