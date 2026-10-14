@@ -602,7 +602,9 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   handling. Diagonal input/speed is bounded. Lock-on keeps its native orbit/dash
   behavior; closing F1 does not require reacquiring a lock to strafe.
 - Mouse mode requests the GC aiming crosshair without holding R or entering the
-  console's movement-restricting free-look mode. `MP_DISABLE_MOUSE_CROSSHAIR=1`
+  console's movement-restricting free-look mode. While locked on (aim follows the
+  target) the crosshair shrinks away as in the original and returns on release
+  (issue #112). `MP_DISABLE_MOUSE_CROSSHAIR=1`
   opts out. The Controls > Mouse settings sub-tab exposes inversion, weapon-button and crosshair toggles.
 - Crosshair size (Controls > Mouse settings and pause Options > Controller, persisted as
   `crosshair_size`, 25-100 percent, default 50): scales the free-aim crosshair

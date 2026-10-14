@@ -856,7 +856,7 @@ void CPlayer::UpdateMouseAim(CStateManager& mgr) {
     // pitch-down under free mouse look, and CheckPostGrapple reads a zero jump
     // timer in the air as a grapple jump, which blocked the sideways dash.
     x3ec_freeLookPitchAngle = PortDebug::AimPitch();
-    x9c4_25_showCrosshairs = PortDebug::MouseCrosshair();
+    x9c4_25_showCrosshairs = PortDebug::MouseCrosshair() && MouseLookIsFree(mgr);
   }
 }
 
@@ -1494,7 +1494,7 @@ void CPlayer::UpdateFreeLookState(const CFinalInput& input, float dt, CStateMana
     x3e4_freeLookYawAngle = 0.f;
     x3e8_horizFreeLookAngleVel = 0.f;
     x3f0_vertFreeLookAngleVel = 0.f;
-    x9c4_25_showCrosshairs = PortDebug::MouseCrosshair();
+    x9c4_25_showCrosshairs = PortDebug::MouseCrosshair() && MouseLookIsFree(mgr);
     return;
   }
   if (x304_orbitState == kOS_ForcedOrbitObject || IsMorphBallTransitioning() ||
@@ -3302,7 +3302,7 @@ void CPlayer::DoPostCameraStuff(float dt, CStateManager& mgr) {
     if (PortDebug::MouseAim() && PortDebug::MouseGameplayActive()) x490_gun->CancelMouseInput(mgr);
     PortDebug::SetMouseGameplayActive(false);
   } else {
-    x9c4_25_showCrosshairs = PortDebug::MouseCrosshair();
+    x9c4_25_showCrosshairs = PortDebug::MouseCrosshair() && MouseLookIsFree(mgr);
     if (PortDebug::AimInitialized()) x3ec_freeLookPitchAngle = PortDebug::AimPitch();
   }
   UpdateArmAndGunTransforms(dt, mgr);
