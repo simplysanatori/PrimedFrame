@@ -6,13 +6,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <string>
 
 namespace PortRoomEnv {
 namespace {
 
 constexpr uint32_t kMagic = 0x5645504D; // 'MPEV'
-constexpr uint32_t kVersion = 20;
+constexpr uint32_t kVersion = 21;
 constexpr uint32_t kMaxGrades = 64;
 // A fog record up to its link count (inclusive).
 constexpr size_t kFogBytes = 368;
@@ -71,6 +72,77 @@ uint32_t GradeLutId(const uint8_t* lut) {
 }
 
 using port::HexDigit;
+
+constexpr uint32_t kMaxTiles = 1u << 16;
+constexpr size_t kTileHeaderSize = 12 * 4 + 6 * 4 + 8;
+constexpr size_t kTileRecordSize = 44;
+
+// Reads a version 21 tile set at `at`, checking every record against the data it points into.
+bool ParseTiles(const std::vector<uint8_t>& data, size_t& at, PortRoomEnvTiles::TileSet& set, std::string& error) {
+  using namespace PortRoomEnvTiles;
+  if (data.size() - at < kTileHeaderSize) {
+    error = "cut short";
+    return false;
+  }
+  const uint8_t* p = data.data() + at;
+  for (int i = 0; i < 12; ++i) {
+    set.worldToPoint[i] = ReadLEFloat(p + i * 4);
+    if (!std::isfinite(set.worldToPoint[i])) {
+      error = "a tile set is not finite";
+      return false;
+    }
+  }
+  for (int i = 0; i < 6; ++i) {
+    set.box[i] = int32_t(ReadLE32(p + 48 + i * 4));
+  }
+  const uint32_t count = ReadLE32(p + 72);
+  const uint32_t bytes = ReadLE32(p + 76);
+  at += kTileHeaderSize;
+  if (count > kMaxTiles || (data.size() - at) / kTileRecordSize < count) {
+    error = "cut short";
+    return false;
+  }
+  const uint8_t* records = data.data() + at;
+  at += size_t(count) * kTileRecordSize;
+  if (data.size() - at < bytes) {
+    error = "cut short";
+    return false;
+  }
+  set.tiles.resize(count);
+  for (uint32_t i = 0; i < count; ++i) {
+    const uint8_t* r = records + size_t(i) * kTileRecordSize;
+    Tile& tile = set.tiles[i];
+    tile.key = {int32_t(ReadLE32(r)), int32_t(ReadLE32(r + 4)), int32_t(ReadLE32(r + 8)), int32_t(ReadLE32(r + 12))};
+    for (int a = 0; a < 3; ++a) {
+      tile.lo[a] = int32_t(ReadLE32(r + 16 + a * 4));
+      tile.size[a] = int32_t(ReadLE32(r + 28 + a * 4));
+    }
+    tile.offset = ReadLE32(r + 40);
+    if (tile.key.layer < 0 || tile.key.layer >= kLayers || (i != 0 && !(set.tiles[i - 1].key < tile.key))) {
+      error = "bad tile key";
+      return false;
+    }
+    const int32_t extent[3] = {TileWidth(tile.key.layer), 64, 16};
+    const bool empty = tile.size[0] == 0 && tile.size[1] == 0 && tile.size[2] == 0;
+    if (!empty) {
+      for (int a = 0; a < 3; ++a) {
+        if (tile.size[a] <= 0 || tile.lo[a] < 0 || tile.lo[a] > extent[a] - tile.size[a]) {
+          error = "bad tile crop";
+          return false;
+        }
+      }
+      const size_t tileBytes = size_t(tile.size[0]) * size_t(tile.size[1]) * size_t(tile.size[2]) *
+                               size_t(TileBytes(tile.key.layer));
+      if (tile.offset > bytes || bytes - tile.offset < tileBytes) {
+        error = "bad tile data";
+        return false;
+      }
+    }
+  }
+  set.data.assign(data.begin() + ptrdiff_t(at), data.begin() + ptrdiff_t(at + bytes));
+  at += bytes;
+  return true;
+}
 
 } // namespace
 
@@ -183,7 +255,25 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
     }
     at = cube.offset + cube.length;
   }
-  if (version >= 2) {
+  if (version >= 21) {
+    if (data.size() - at < 4) {
+      error = "cut short";
+      return false;
+    }
+    const uint32_t hasTiles = ReadLE32(data.data() + at);
+    at += 4;
+    if (hasTiles > 1) {
+      error = "bad tile flag";
+      return false;
+    }
+    if (hasTiles != 0) {
+      auto set = std::make_shared<PortRoomEnvTiles::TileSet>();
+      if (!ParseTiles(data, at, *set, error)) {
+        return false;
+      }
+      out.tiles = std::move(set);
+    }
+  } else if (version >= 2) {
     if (data.size() - at < 4) {
       error = "cut short";
       return false;
@@ -1176,7 +1266,8 @@ bool SampleGrid(const File& file, const Grid& grid, const float pos[3], Ambient&
     if (outside || weight <= 0.f) {
       continue; // border texel: zero
     }
-    const uint8_t* p = file.data.data() + grid.offset + index * kPointSize;
+    const uint8_t* base = grid.points ? grid.points->data() : file.data.data() + grid.offset;
+    const uint8_t* p = base + index * kPointSize;
     const float mean[3] = {GetHalf(p), GetHalf(p + 2), GetHalf(p + 4)};
     for (int i = 0; i < 3; ++i) {
       sum[i] += weight * mean[i];

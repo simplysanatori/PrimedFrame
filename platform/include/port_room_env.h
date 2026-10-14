@@ -2,10 +2,12 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "port_maya_spline.h"
+#include "port_room_env_tiles.h"
 
 // A room's lighting environment for PBR models: reflection probes, each a box of the world
 // and a prefiltered HDR cube map of what surrounds it. A mod supplies one per area as
@@ -15,7 +17,7 @@
 // ambient colour.
 //
 // The file is little endian:
-//   'MPEV', u32 version (1 to 20), f32 tonemap[4], u32 probes, u32 cubes
+//   'MPEV', u32 version (1 to 21), f32 tonemap[4], u32 probes, u32 cubes
 //   probe: f32 worldToBox[12], f32 worldToCube[9], s32 layer, u32 cube, f32 scale, f32 padding
 //          and from version 8 on, s32 priority, f32 intensity min, f32 intensity max
 //          (before it the padding is unused, 1 m, and the rest 0, 0, 1). From version 9
@@ -30,6 +32,14 @@
 //   point: half mean[3], half lobe[3], u8 sharpness[3], u8 direction[3][3] (of red, green
 //          and blue, along the grid's axes; 0..255 is -1..1). A mean of zero is no point
 //          (inside a wall).
+// Version 21 replaces the grids: the u32 is 0 or 1, and 1 is followed by the area's own
+// baked-lighting tiles (see port_room_env_tiles.h; nothing is borrowed from a neighbour):
+//   f32 worldToPoint[12] (area space to world point coordinates), s32 box[6] (PHDR lo xyz,
+//   hi xyz, in points), u32 tiles, u32 dataBytes
+//   tile:  s32 layer (0..5), s32 bx, by, bz (tile origin / (64 or 128, 64, 16)), s32 lo[3],
+//          s32 size[3] (the crop within the tile; size 0 is an empty tile), u32 offset
+//   then dataBytes of crops, x fastest then y then z: layers 0 and 1 hold 3 halves a
+//   point, layers 2..5 3 bytes. Tiles are sorted by (layer, bx, by, bz).
 // Version 3 goes on:
 //   f32 exposure[2], the lowest and highest exposure value the room's auto exposure may
 //          settle on (0, 0: the room has no auto exposure)
@@ -177,6 +187,9 @@ struct Grid {
   uint32_t size[3] = {};
   size_t offset = 0; // of the points, in File::data
   float average = 0.f; // geometric mean of the lit points' luminance
+  // Version 21 on: the points composed from the world's mapped tiles (port_room_env_tiles.h),
+  // which are not in the file; offset is unused then.
+  std::shared_ptr<const std::vector<uint8_t>> points;
 };
 
 constexpr uint32_t kGradeLutSize = 33;
@@ -399,6 +412,8 @@ struct File {
   std::vector<Probe> probes;
   std::vector<Cube> cubes;
   std::vector<Grid> grids;
+  // Version 21 on: the area's own baked-lighting tiles instead of grids (null before it).
+  std::shared_ptr<const PortRoomEnvTiles::TileSet> tiles;
   Lightmap lightmap;
   std::vector<uint8_t> data;
 };

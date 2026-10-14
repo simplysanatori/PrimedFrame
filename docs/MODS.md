@@ -321,8 +321,13 @@ role, so a map shared by several models is written once.
 After the models, `_room` writes a `.roomenv` (above) for every area into the
 mod's `roomenv` folder: it matches each Remastered room to the retail area by
 its doors, and takes the room's reflection probes, their HDR cubes and its
-baked ambient grid. A grid of more than about a million points is stored at
-half resolution, which keeps every file under 25 MB. A world that can't be
+baked ambient tiles (roomenv v21): the area's own 64x64x16 / 128x64x16 tiles of
+Remastered's baked-lighting texture, keyed by world position and cropped to
+their lit points. The game maps one tile per key across all loaded areas, the
+first loaded area's copy winning and a later copy taking over when it unloads
+(`platform/port_room_env_tiles.h`), and composes each area's grid from the
+mapped tiles. Files are larger than before (the biggest, Frigate hangar, is
+about 146 MB). A world that can't be
 read is reported and skipped; the models are installed all the same.
 
 Unless `MP_REMASTERED_GEOMETRY` says otherwise (`all`, the default, a
