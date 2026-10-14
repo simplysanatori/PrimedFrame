@@ -368,7 +368,7 @@ CIOWin::EMessageReturn CSaveGameScreen::Update(float dt) {
   // Saves imported from Dolphin (port_gci.h) are picked up the same way.
   if (x0_saveCtx == kSC_FrontEnd && !x90_needsDriverReset && x80_iowRet == CIOWin::kMR_Normal &&
       !CMemoryCardDriver::IsCardBusy(x6c_cardDriver->GetState()) &&
-      (CMemoryCardSys::PortSwitchCard(PortAp::SaveCardDirectory().c_str()) ||
+      (CMemoryCardSys::PortSwitchCard(PortGci::CardTargetDirectory(PortAp::SaveCardDirectory()).c_str()) ||
        PortGci::RemountIfChanged())) {
     ResetCardDriver();
     return CIOWin::kMR_Normal;

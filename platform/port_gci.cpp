@@ -11,6 +11,7 @@
 #include <cstring>
 #include <ctime>
 #include <fstream>
+#include <mutex>
 #include <system_error>
 
 #if defined(_WIN32)
@@ -764,9 +765,20 @@ Report ExportTrilogy(const fs::path& folder, const fs::path& saveBin) {
 
 namespace {
 
-// Dolphin's user folders on this machine, in its own order of preference.
+std::mutex sEmulatorMutex;
+std::string sEmulatorFolder;
+bool sShareCard = false;
+
+// Dolphin's (and PrimeHack's) user folders on this machine, in preference order.
 std::vector<fs::path> DolphinRoots() {
   std::vector<fs::path> roots;
+  {
+    std::lock_guard<std::mutex> lock(sEmulatorMutex);
+    if (!sEmulatorFolder.empty()) {
+      roots.push_back(PathFromString(sEmulatorFolder));
+      return roots;
+    }
+  }
 #if defined(__ANDROID__)
   // No Dolphin to find.
 #elif defined(_WIN32)
@@ -806,6 +818,7 @@ std::vector<fs::path> DolphinRoots() {
   if (!homeDir.empty()) {
     roots.push_back(fs::path(homeDir) / ".var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu");
     roots.push_back(fs::path(homeDir) / ".dolphin-emu");
+    roots.push_back(fs::path(homeDir) / ".var/app/io.github.shiiion.primehack/data/dolphin-emu");
   }
 #endif
 #endif
@@ -813,6 +826,83 @@ std::vector<fs::path> DolphinRoots() {
 }
 
 } // namespace
+
+fs::path NormalizeEmulatorFolder(const fs::path& picked) {
+  fs::path path = picked;
+  if (!path.has_filename()) {
+    path = path.parent_path(); // a trailing slash
+  }
+  auto up = [&](int levels) {
+    for (int i = 0; i < levels; ++i) {
+      path = path.parent_path();
+    }
+  };
+  const std::string name = PathString(path.filename());
+  if (name == "Card A" && path.parent_path().parent_path().filename() == "GC") {
+    up(3);
+  } else if ((name == "USA" || name == "EUR" || name == "JAP") &&
+             path.parent_path().filename() == "GC") {
+    up(2);
+  } else if (name == "GC") {
+    up(1);
+  }
+  return path;
+}
+
+void SetEmulatorFolder(const std::string& path) {
+  const std::string normal = path.empty() ? path : PathString(NormalizeEmulatorFolder(PathFromString(path)));
+  std::lock_guard<std::mutex> lock(sEmulatorMutex);
+  sEmulatorFolder = normal;
+}
+
+std::string EmulatorFolder() {
+  std::lock_guard<std::mutex> lock(sEmulatorMutex);
+  return sEmulatorFolder;
+}
+
+void SetShareEmulatorCard(bool share) {
+#if defined(__ANDROID__)
+  share = false; // no emulator to share with
+#endif
+  std::lock_guard<std::mutex> lock(sEmulatorMutex);
+  sShareCard = share;
+}
+
+bool ShareEmulatorCard() {
+  std::lock_guard<std::mutex> lock(sEmulatorMutex);
+  return sShareCard;
+}
+
+fs::path SharedCardBase(std::string* why) {
+  if (!ShareEmulatorCard()) {
+    if (why != nullptr) {
+      *why = "Sharing is off.";
+    }
+    return {};
+  }
+  std::error_code ec;
+  const std::vector<fs::path> roots = DolphinRoots();
+  for (const fs::path& root : roots) {
+    if (fs::is_directory(root / "GC" / CardRegion() / "Card A", ec)) {
+      return root / "GC";
+    }
+  }
+  if (why != nullptr) {
+    *why = roots.empty()
+               ? "No Dolphin or PrimeHack folder found: choose it above."
+               : std::string("The emulator folder has no GCI-folder card for this region (") +
+                     CardRegion() +
+                     "): set its Slot A to \"GCI Folder\" and start the game once there.";
+  }
+  return {};
+}
+
+std::string CardTargetDirectory(const std::string& apDirectory) {
+  if (!apDirectory.empty()) {
+    return apDirectory;
+  }
+  return PathString(SharedCardBase());
+}
 
 DolphinCard FindDolphinCard(const char* region) {
   DolphinCard card;

@@ -120,6 +120,25 @@ struct DolphinCard {
   bool Found() const { return !gciFolder.empty() || !rawImage.empty(); }
 };
 DolphinCard FindDolphinCard(const char* region = nullptr);
+// The emulator's user folder the player chose (Dolphin or PrimeHack, the one
+// with GC/ in it; needed for portable installs), or empty for autodetection. It
+// is normalised: a GC folder, a GC/<region> folder or a GC/<region>/Card A
+// folder resolve to the user folder above them. When set it is the only
+// folder looked at.
+std::filesystem::path NormalizeEmulatorFolder(const std::filesystem::path& picked);
+void SetEmulatorFolder(const std::string& path);
+std::string EmulatorFolder();
+// Share the emulator's card A with the port (desktop only): the port mounts
+// <emulator folder>/GC as its card base, so both read and write the same files.
+void SetShareEmulatorCard(bool share);
+bool ShareEmulatorCard();
+// The base to mount for sharing, <root>/GC of the first emulator folder whose
+// GC/<region>/Card A is a directory; empty when sharing is off or there is none,
+// with `why` (if given) saying why for the player.
+std::filesystem::path SharedCardBase(std::string* why = nullptr);
+// The card base the game should mount: the Archipelago/randomizer card when it
+// has one, else the shared emulator card, else "" (the port's own card).
+std::string CardTargetDirectory(const std::string& apDirectory);
 // Dolphin's Trilogy save.bin (USA, else PAL), or empty when it has none.
 std::filesystem::path FindDolphinTrilogy();
 

@@ -228,7 +228,7 @@
 {"System", "", "Settings", "Reset configuration...", "reset defaults configuration factory"},
 {"System", "", "Memory card", "Import file...", "memory card import gci raw wii save"},
 #if !defined(__ANDROID__)
-{"System", "", "Memory card", "Import from Dolphin", "memory card dolphin import saves"},
+{"System", "", "Memory card", "Import from Dolphin/PrimeHack", "memory card dolphin primehack import saves"},
 #endif
 {"System", "", "Memory card", "Export as", "memory card export format release"},
 #if defined(__ANDROID__)
@@ -237,7 +237,9 @@
 #else
 {"System", "", "Memory card", "Export to folder...", "memory card export folder gci"},
 {"System", "", "Memory card", "Export into save.bin...", "memory card export trilogy wii save.bin"},
-{"System", "", "Memory card", "Export to Dolphin", "memory card export dolphin saves"},
+{"System", "", "Memory card", "Export to Dolphin/PrimeHack", "memory card export dolphin primehack saves"},
+{"System", "", "Memory card", "Emulator folder", "memory card emulator folder dolphin primehack path auto"},
+{"System", "", "Memory card", "Share memory card with emulator", "memory card share emulator dolphin primehack live saves"},
 {"System", "", "Memory card", "Open card folder", "memory card folder open directory"},
 #endif
 #if defined(__ANDROID__)

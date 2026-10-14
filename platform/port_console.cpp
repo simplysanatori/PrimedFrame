@@ -9,6 +9,7 @@
 #include "port_debug.h"
 #include "port_discord.h"
 #include "port_freecam.h"
+#include "port_gci.h"
 #include "port_photo.h"
 #include "port_pointer.h"
 #include "port_hd_font.h"
@@ -609,7 +610,7 @@ void CmdHelp() {
   Out("timer <0|1>                on-screen in-game time; igt <seconds> sets the play time");
   Out("livesplit <0|1> | addr <host:port> | send <command> | status   LiveSplit Server client");
   Out("discord <0|1> | status   Discord Rich Presence");
-  Out("gci list | import <path> | export <dir or .raw> | dolphin import|export   memory card transfer");
+  Out("gci list | share on|off | emulator <folder|auto> | import <path> | export <dir or .raw> | dolphin import|export   memory card transfer");
   Out("ap [connect <server> <slot> [password] | disconnect | recent | resume <n> | say <text> | chat]   Archipelago, as the F1 Archipelago page does");
   Out("quit                       exit the game");
   Out("title                      quit the game to the title screen");
@@ -2862,8 +2863,22 @@ void RunFrame() {
     } else if (action == "dolphin" && sub == "export" && sCmd.args.size() <= 4 &&
                (sCmd.args.size() == 3 || isFormat(Lower(sCmd.args[3])))) {
       text = PortDebug::CardExportDolphin(sCmd.args.size() == 4 ? Lower(sCmd.args[3]) : "");
+    } else if (action == "share" && (sub == "on" || sub == "off") && sCmd.args.size() == 3) {
+      PortGci::SetShareEmulatorCard(sub == "on");
+      PortDebug::SaveSettingsNow();
+      std::string why;
+      if (sub == "on" && PortGci::SharedCardBase(&why).empty()) {
+        why = " (" + why + ")";
+      } else {
+        why.clear();
+      }
+      text = "sharing the emulator card: " + sub + why + "; it takes effect at the title screen";
+    } else if (action == "emulator" && !path.empty()) {
+      PortGci::SetEmulatorFolder(Lower(path) == "auto" ? "" : path);
+      PortDebug::SaveSettingsNow();
+      text = "emulator folder: " + (PortGci::EmulatorFolder().empty() ? "auto" : PortGci::EmulatorFolder());
     } else {
-      return Finish("usage: gci list | import <path> | export [usa|pal] <dir or .raw> | export trilogy "
+      return Finish("usage: gci list | share on|off | emulator <folder|auto> | import <path> | export [usa|pal] <dir or .raw> | export trilogy "
                     "<save.bin> | dolphin import | dolphin export [usa|pal|trilogy]");
     }
     size_t start = 0;
