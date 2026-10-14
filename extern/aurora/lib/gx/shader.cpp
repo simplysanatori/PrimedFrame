@@ -1199,14 +1199,20 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       //@CUT_END)""",
                          mapStage[3] != -1 ? fmt::format("sampled{}.r", mapStage[3]) : "prev.a * prev.a"s);
   } else if (mapStage[4] == -1) {
-    // Remastered's cutout (mode 512): the filtered base alpha squared, times the raw vertex
-    // alpha on tinted shaders (pbr_vc.a is 1 otherwise), against 0.25. DIFC.a is 1 on every
-    // material that has it.
+    // Remastered's cutout (mode 512): the filtered base alpha squared against 0.25. The
+    // DepthOnly caster (93e0c484, 0b2e072b) multiplies by c3[0].w = DIFC.w = 1 and has no
+    // vertex colour, so the caster test (up to the marker) has no vertex alpha. The colour
+    // pass also multiplies by the raw vertex alpha on tinted shaders (pbr_vc.a is 1
+    // otherwise); that second test discards a superset since vc.a <= 1.
     layer += R"""(
+      if (pbr_cut && prev.a * prev.a < 0.25) {
+          discard;
+      }
+      //@CUT_END
       if (pbr_cut && prev.a * prev.a * pbr_vc.a < 0.25) {
           discard;
       }
-      //@CUT_END)""";
+)""";
   }
   if (costTest == 1 || costTest == 7) {
     // The base map, shaded by the facing only, and nothing else. Test 7 keeps the other
