@@ -2642,8 +2642,8 @@ void CStateManager::PreRender() {
   const CTransform4f curCamXf =
       PortFreeCam::View(x870_cameraManager->GetCurrentCameraTransform(*this));
 #ifdef TARGET_PC
-  const float curRenderFov = PortFreeCam::FovOverride() > 0.f
-                                 ? CGameCamera::VertPlusFov(PortFreeCam::FovOverride(), curCam.GetAspectRatio())
+  const float curRenderFov = PortFreeCam::PresentedFovOverride() > 0.f
+                                 ? CGameCamera::VertPlusFov(PortFreeCam::PresentedFovOverride(), curCam.GetAspectRatio())
                                  : curCam.GetRenderFov();
 #else
   const float curRenderFov = curCam.GetRenderFov();
@@ -2701,8 +2701,8 @@ CFrustumPlanes CStateManager::SetupViewForDraw(const CViewport& viewport) const 
   const int top = viewport.mTop + (viewport.mHeight - height) / 2;
 
 #ifdef TARGET_PC
-  const float renderFov = PortFreeCam::FovOverride() > 0.f
-                              ? CGameCamera::VertPlusFov(PortFreeCam::FovOverride(), cam.GetAspectRatio())
+  const float renderFov = PortFreeCam::PresentedFovOverride() > 0.f
+                              ? CGameCamera::VertPlusFov(PortFreeCam::PresentedFovOverride(), cam.GetAspectRatio())
                               : cam.GetRenderFov();
   const float tangent = CMath::SlowTangentR(CMath::Deg2Rad(0.5f * renderFov)) / sPortViewZoom;
 #else

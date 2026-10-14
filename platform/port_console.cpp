@@ -591,6 +591,7 @@ void CmdHelp() {
   Out("window [<w> <h>]           resize the window (leaves fullscreen); prints the size");
   Out("msaa <1|4>, aniso <1..16>  anti-aliasing and anisotropic filtering, applied next frame");
   Out("hudscale <50..100>         HUD scale in percent, as the Options row does");
+  Out("scanspread <0..100>        how far the widescreen HUD moves the scan panels out");
   Out("crosshair <25..100>        mouse/twin-stick crosshair size in percent");
   Out("helmet <0|1>, visorfx <0|1> show (1) or hide (0) the helmet and visor effects");
   Out("interp [actor|pose|particle|all <0|1>]   frame interpolation settings (F1 Video > Frame rate)");
@@ -2145,6 +2146,13 @@ void RunFrame() {
       return Finish("usage: hudscale <50..100>");
     }
     PortDebug::SetHudScale(value);
+    Finish();
+  } else if (name == "scanspread") {
+    const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : -1;
+    if (value < PortDebug::kScanSpreadMin || value > PortDebug::kScanSpreadMax) {
+      return Finish("usage: scanspread <0..100>");
+    }
+    PortDebug::SetScanSpread(value);
     Finish();
   } else if (name == "crosshair") {
     const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : 0;

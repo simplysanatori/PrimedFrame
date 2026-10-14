@@ -216,6 +216,11 @@ constexpr const char* kPromptGlyphs[] = {"auto", "xbox", "playstation", "switch"
 bool sShowShaderCompilation = true;
 bool sShowMenuHint = true;
 int sHudScale = PortDebug::kHudScaleMax;
+#if defined(__ANDROID__)
+int sScanSpread = PortDebug::kScanSpreadMin; // touch controls cover the screen edges
+#else
+int sScanSpread = PortDebug::kScanSpreadMax;
+#endif
 int sCrosshairOpacity = PortDebug::kCrosshairOpacityMax;
 bool sCrosshairCustomColor = false;
 float sCrosshairColor[3] = {1.f, 1.f, 1.f};
@@ -582,6 +587,11 @@ void ApplySetting(const std::string& key, const std::string& value) {
     if (s >= PortDebug::kHudScaleMin && s <= PortDebug::kHudScaleMax) {
       sHudScale = s;
     }
+  } else if (key == "scan_spread") {
+    const int s = std::atoi(value.c_str());
+    if (s >= PortDebug::kScanSpreadMin && s <= PortDebug::kScanSpreadMax) {
+      sScanSpread = s;
+    }
   } else if (key == "crosshair_opacity") {
     const int s = std::atoi(value.c_str());
     if (s >= PortDebug::kCrosshairOpacityMin && s <= PortDebug::kCrosshairOpacityMax) {
@@ -797,6 +807,7 @@ std::string SettingsText() {
   file << "show_shader_compilation=" << (sShowShaderCompilation ? 1 : 0) << '\n';
   file << "show_menu_hint=" << (sShowMenuHint ? 1 : 0) << '\n';
   file << "hud_scale=" << sHudScale << '\n';
+  file << "scan_spread=" << sScanSpread << '\n';
   file << "crosshair_opacity=" << sCrosshairOpacity << '\n';
   {
     char hex[8] = "";
@@ -1593,6 +1604,17 @@ int HudScale() {
 void SetHudScale(int percent) {
   EnsureInitialized();
   sHudScale = std::clamp(percent, kHudScaleMin, kHudScaleMax);
+  MarkDirty();
+}
+
+int ScanSpread() {
+  EnsureInitialized();
+  return sOriginalExperience ? kScanSpreadMax : sScanSpread;
+}
+
+void SetScanSpread(int percent) {
+  EnsureInitialized();
+  sScanSpread = std::clamp(percent, kScanSpreadMin, kScanSpreadMax);
   MarkDirty();
 }
 
@@ -6366,6 +6388,13 @@ void DrawVideoDisplay() {
   if (ImGui::SliderInt("HUD scale", &hudScale, kHudScaleMin, kHudScaleMax, "%d%%")) {
     SetHudScale(hudScale);
   }
+  int scanSpread = sScanSpread;
+  if (ImGui::SliderInt("Scan image spread", &scanSpread, kScanSpreadMin, kScanSpreadMax, "%d%%")) {
+    SetScanSpread(scanSpread);
+  }
+  ImGui::SetItemTooltip("How far the widescreen HUD moves the scan visor's side panels and images\n"
+                        "toward the screen edges. 0%% keeps them where they are at 4:3, clear of\n"
+                        "touch controls; 100%% puts them at the edges with the rest of the HUD.");
   if (ImGui::SliderInt("Crosshair opacity", &sCrosshairOpacity, kCrosshairOpacityMin,
                        kCrosshairOpacityMax, "%d%%")) {
     MarkDirty();

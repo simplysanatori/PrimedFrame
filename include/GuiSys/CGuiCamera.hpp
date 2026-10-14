@@ -63,7 +63,8 @@ public:
     height = mClipHeight;
     return mClipHeight > 0;
   }
-  CTransform4f GetAspectSpreadTransform(const CVector3f& worldAnchor) const;
+  // `weight` scales the horizontal spread (CGuiFrame::SetSpreadWeightTree); 1 is the full spread.
+  CTransform4f GetAspectSpreadTransform(const CVector3f& worldAnchor, float weight = 1.f) const;
   // The horizontal spread about the eye warps the screen in slices, in screen tangents (view X
   // over depth): up to `inner` it is left as authored, from `inner` to `outer` it stretches, and
   // past `outer` it slides by the whole spread. False unless that spread is active.
@@ -88,7 +89,7 @@ public:
   float GetLaggedTangent(float tangent, float depth) const;
   // How far the warp moves the image at view-space point `eye`, as a drawn screen tangent: the
   // point is taken back through the lag, warped there, and lagged again.
-  float GetLaggedSliceOffset(const CVector3f& eye, bool curved = false) const;
+  float GetLaggedSliceOffset(const CVector3f& eye, bool curved = false, float weight = 1.f) const;
   // Where the curved warp's band ends, as a fraction of the authored half width.
   static constexpr float kCurveOuter = 0.85f;
   // A frame whose centre piece is wider than the combat HUD's energy bar (the thermal and X-ray
@@ -112,11 +113,17 @@ public:
   CTransform4f GetHudScaleTransform(float scaleWeight = 1.f) const;
   // The widescreen spread followed by the HUD scale for a widget anchored at
   // worldAnchor.
-  CTransform4f GetHudTransform(const CVector3f& worldAnchor, float scaleWeight = 1.f) const;
+  CTransform4f GetHudTransform(const CVector3f& worldAnchor, float scaleWeight = 1.f,
+                               float spreadWeight = 1.f) const;
 
   FourCC GetWidgetTypeID() const override { return 'CAMR'; }
 
   CVector3f ConvertToScreenSpace(const CVector3f& point) const;
+  // Port: where CGuiFrame::Draw puts a rigid widget's `point` on screen, in [-1, 1] (x right, y
+  // up), with the render aspect, the spread (weighted by `spreadWeight`), the HUD scale and the lag
+  // of the last Draw. ConvertToScreenSpace projects with the authored 4:3 camera instead. Falls
+  // back to it before the first Draw and for orthographic cameras.
+  CVector3f ConvertToDrawnScreenSpace(const CVector3f& point, float spreadWeight = 1.f) const;
 
 public:
   EProjection xb8_projection;
@@ -142,6 +149,9 @@ public:
   mutable CTransform4f mSpreadView = CTransform4f::Identity();
   bool mHudScaled = false;
   mutable float mHudScale = 1.f;
+  // The perspective half-extents (tangents) drawn by the last Draw; 0 before it or orthographic.
+  mutable float mDrawTanX = 0.f;
+  mutable float mDrawTanY = 0.f;
   // The view centre drawn by the last Draw (orthographic cameras may be offset).
   mutable float mCenterX = 0.f;
   mutable float mCenterZ = 0.f;

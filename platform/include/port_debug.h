@@ -206,6 +206,13 @@ const int kHudScaleMin = 50;
 const int kHudScaleMax = 100;
 int HudScale();
 void SetHudScale(int percent);
+// How far the widescreen HUD spread moves the scan visor's side panels and their images, in
+// percent of the full spread (0 keeps them at their 4:3 place near the centre, 100 takes them
+// out to the screen edges with the rest of the HUD). Touch controls cover the edges on phones.
+const int kScanSpreadMin = 0;
+const int kScanSpreadMax = 100;
+int ScanSpread();
+void SetScanSpread(int percent);
 // The centre crosshair (free aim, mouse aim, twin stick): opacity in percent,
 // and an optional colour that replaces the game's (false = the game's own).
 const int kCrosshairOpacityMin = 0;
