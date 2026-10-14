@@ -16,6 +16,7 @@
 #include "MetroidPrime/Player/CGameState.hpp"
 #include "port_apclient.h"
 #include "port_gci.h"
+#include "port_pointer_menu.h"
 #endif
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
@@ -432,6 +433,12 @@ CIOWin::EMessageReturn CSaveGameScreen::Update(float dt) {
 
 void CSaveGameScreen::ProcessUserInput(const CFinalInput& input) {
   if (x50_loadedFrame != nullptr) {
+#ifdef TARGET_PC
+    // Port: hover and click the choices (port_pointer_menu.h).
+    if (PortPointerMenu::Begin()) {
+      PortPointerMenu::Table(x58_tablegroup_choices);
+    }
+#endif
     x50_loadedFrame->ProcessUserInput(input);
   }
 }
