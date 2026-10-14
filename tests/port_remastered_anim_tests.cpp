@@ -130,7 +130,7 @@ void Run(const char* what, int records, bool tinyTail) {
   Check(ok, what);
   if (ok) {
     Check(c.anims.size() == size_t(records), "one animation per record");
-    Check(!c.anims.empty() && c.anims[0].frames == 1 && c.anims[0].fps == 30.0f, "frames and rate");
+    Check(!c.anims.empty() && c.anims[0].frames == 1 && c.anims[0].fps == 60.0f, "frames and rate");
     Check(!c.anims.empty() && !c.anims[0].tracked.empty() && c.anims[0].tracked[0], "bone 0 is driven");
   }
 }

@@ -13,7 +13,7 @@
 namespace PortRemasteredAnim {
 namespace {
 
-constexpr float kFramesPerRate = 30.0f;  // Anim::fps
+constexpr float kFramesPerRate = 60.0f;  // Anim::fps
 
 // A problem with the file or a layout the decoder does not know. Thrown inside this
 // file only and turned into the error string at the API boundary.
