@@ -725,6 +725,7 @@ struct ParamTransition {
 void ResetGrades();
 // The console's `roomenv grades`: the camera area's grades and which are on.
 std::string GradeInfo();
+void SetViewGradesOn(bool on); // debug: every grade request of the viewed room on or off
 // MP_COLOR_GRADE, the console's `grade`.
 void SetColorGradeEnabled(bool on);
 bool ColorGradeEnabled();

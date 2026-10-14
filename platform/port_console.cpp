@@ -2449,6 +2449,9 @@ void RunFrame() {
       } else if (arg == "bloom" && sCmd.args.size() > 2 &&
                  (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
         PortRoomEnv::SetBloomEnabled(Lower(sCmd.args[2]) == "on");
+      } else if (arg == "grades" && sCmd.args.size() > 2 &&
+                 (Lower(sCmd.args[2]) == "on" || Lower(sCmd.args[2]) == "off")) {
+        PortRoomEnv::SetViewGradesOn(Lower(sCmd.args[2]) == "on");
       } else if (arg == "grades") {
         OutLines(PortRoomEnv::GradeInfo());
         return Finish();
