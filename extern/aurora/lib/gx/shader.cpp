@@ -1451,9 +1451,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           pbr_base = pbr_base * max(sampled{1}.rgb, vec3f(0.0)) * 2.0;
       }}
       if (pbr_kind > 3.5 && pbr_kind < 4.5) {{
-          let pbr_kf = pow(clamp(dot(pbr_ng, normalize(-in.pbr_pos)), 0.0, 1.0), max(ubuf.pbr_param.x, 1e-4)) *
+          let pbr_kf = pow(clamp(dot(pbr_ng, normalize(-in.pbr_pos)), 0.0, 1.0), max(ubuf.pbr_param.x, 0.001)) *
                        ubuf.pbr_param.y;
-          let pbr_ki = mix(pbr_inner, pbr_vraw.rgb, pbr_kf);
+          // 2F3FB02B's vertex shader hands the pixel shader |c|^2.2 (no doubling): 034_1 o3, 034_0 temp_245.
+          let pbr_ki = mix(pbr_inner, pow(abs(pbr_vraw.rgb), vec3f(2.2)), pbr_kf);
           let pbr_ka = {0}.a * {0}.a * pbr_vraw.a;
           pbr_base = mix(pbr_base, pbr_ki, clamp(pbr_kf + pbr_ka - 1.0, 0.0, 1.0));
           pbr_kglow = pbr_ki * (pbr_ka * ubuf.pbr_layer.z);
@@ -1678,8 +1679,9 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       if (pbr_tlen > 1e-24) {{
         let pbr_s = inverseSqrt(pbr_tlen);
         let pbr_nu = pbr_t * (pbr_s * pbr_tn.x) - pbr_b * (pbr_s * pbr_tn.y) + pbr_ng * pbr_tn.z;
-        // 07acff46 (kind 32) lights the mapped normal as it is, never normalised (kb material/07acff46.md).
-        pbr_n = select(normalize(pbr_nu), pbr_nu, pbr_kind > 31.5 && pbr_kind < 32.5);
+        // 07acff46 (kind 32) lights the mapped normal as it is, never normalised (kb material/07acff46.md);
+        // so does 2F3FB02B (kind 4, 034_0 temp_125..127).
+        pbr_n = select(normalize(pbr_nu), pbr_nu, (pbr_kind > 31.5 && pbr_kind < 32.5) || (pbr_kind > 3.5 && pbr_kind < 4.5));
       }})""",
                           normalXy, tn,
                           normalXy2.empty() ? "" : "let pbr_tsm = mix(pbr_ts, pbr_ts2, pbr_ls);\n      ");
