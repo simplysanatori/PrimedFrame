@@ -24,6 +24,24 @@
 #include "Kyoto/Graphics/CGX.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
 #include "port_map_pickups.h"
+
+namespace {
+// Rooms mode: true when the area still holds a pickup whose memory relay is not
+// in the world's mailbox.
+bool PortRoomHoldsPickup(const IWorld& world, int areaIdx) {
+  const CAssetId worldId = world.IGetWorldAssetId();
+  const CScriptMailbox& mailbox = *gpGameState->StateForWorld(worldId).Mailbox().GetPtr();
+  size_t count = 0;
+  const PortMapPickups::Dot* dots = PortMapPickups::Dots(count);
+  for (size_t i = 0; i < count; ++i) {
+    if (dots[i].world == worldId && world.IGetAreaId(dots[i].area).Value() == areaIdx &&
+        !mailbox.HasMsg(TEditorId(dots[i].relay))) {
+      return true;
+    }
+  }
+  return false;
+}
+} // namespace
 #endif
 
 struct CMapObjectSortInfoGreaterThan {
@@ -383,6 +401,15 @@ void CMapWorld::DrawAreas(const CMapWorldDrawParms& parms, int selArea,
       finalSurface = CColor::Lerp(finalSurface, flashColor, pulse);
       finalOutline = CColor::Lerp(finalOutline, flashColor, pulse);
     }
+#ifdef TARGET_PC
+    if (PortMapPickups::Mode() == PortDebug::kMapPickups_Rooms &&
+        PortRoomHoldsPickup(parms.GetWorld(), areaIdx)) {
+      // Amber half way, alpha kept.
+      const CColor amber(0xffb030ffu);
+      finalSurface = CColor::Lerp(finalSurface, amber, 0.5f).WithAlphaOf(finalSurface.GetAlpha());
+      finalOutline = CColor::Lerp(finalOutline, amber, 0.5f).WithAlphaOf(finalOutline.GetAlpha());
+    }
+#endif
     const CTransform4f modelView =
         cameraXf.GetQuickInverse() * area->GetAreaPostTransform(parms.GetWorld(), areaIdx);
     int j;
@@ -494,7 +521,8 @@ void CMapWorld::DrawAreas(const CMapWorldDrawParms& parms, int selArea,
     }
   }
 #ifdef TARGET_PC
-  if (PortMapPickups::Active()) {
+  if (PortMapPickups::Mode() == PortDebug::kMapPickups_All ||
+      PortMapPickups::Mode() == PortDebug::kMapPickups_Seen) {
     DrawPortPickups(parms, bfsInfos);
   }
 #endif
@@ -502,8 +530,9 @@ void CMapWorld::DrawAreas(const CMapWorldDrawParms& parms, int selArea,
 
 #ifdef TARGET_PC
 // Port: a white dot for each pickup not yet collected (PortMapPickups), in the
-// rooms this pass drew; tracker colours in an Archipelago game. Map objects sort after everything else, so drawing the
-// dots last keeps retail's order. A pickup counts as collected once its memory
+// rooms this pass drew (Seen mode: only those the player has seen); tracker
+// colours in an Archipelago game. Map objects sort after everything else, so
+// drawing the dots last keeps retail's order. A pickup counts as collected once its memory
 // relay is in the world's mailbox, which is what keeps it gone after a reload.
 void CMapWorld::DrawPortPickups(const CMapWorldDrawParms& parms,
                                 const rstl::vector< CMapAreaBFSInfo >& bfsInfos) const {
@@ -532,9 +561,10 @@ void CMapWorld::DrawPortPickups(const CMapWorldDrawParms& parms,
   if (!PortMapPickups::Colors(tracker)) {
     tracker = nullptr;
   }
+  const bool seenOnly = PortMapPickups::Mode() == PortDebug::kMapPickups_Seen;
   for (size_t i = 0; i < count; ++i) {
     const PortMapPickups::Dot& dot = dots[i];
-    if (dot.world != worldId) {
+    if (dot.world != worldId || (seenOnly && !PortMapPickups::Seen(i))) {
       continue;
     }
     CColor color = white;

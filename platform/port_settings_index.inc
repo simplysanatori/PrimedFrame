@@ -210,7 +210,7 @@
 {"Archipelago", "Connection", "Connect", "Disconnect", "disconnect leave archipelago"},
 {"Archipelago", "Chat", "", "Send", "chat message say send"},
 {"Tracker", "", "", "Reveal map", "map reveal show all rooms"},
-{"Tracker", "", "", "Pickup dots on the map", "map pickup dots items tracker"},
+{"Tracker", "", "", "Pickups on the map", "map pickup dots items tracker seen rooms amber"},
 {"Tracker", "", "Archipelago checks", "Colour the map's dots by logic", "tracker logic map dots colour"},
 {"Tracker", "", "Progress", "Show progress", "progress tracker items scans rooms"},
 {"Save states", "", "", "Keep enemies and room objects", "save state room enemies doors objects"},

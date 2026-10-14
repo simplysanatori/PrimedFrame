@@ -227,7 +227,7 @@ float sCrosshairColor[3] = {1.f, 1.f, 1.f};
 bool sHideHelmet = false;
 bool sHideVisorEffects = false;
 bool sRevealMap = false;
-bool sMapPickups = false;
+int sMapPickups = PortDebug::kMapPickups_Off;
 bool sMapLogicColors = true;
 // The Tracker tab's item, scan and room counts. Off so the tab doesn't spoil
 // what is left to find until asked.
@@ -615,7 +615,11 @@ void ApplySetting(const std::string& key, const std::string& value) {
   } else if (key == "reveal_map") {
     sRevealMap = ParseBool(value);
   } else if (key == "map_pickups") {
-    sMapPickups = ParseBool(value);
+    // Old hand-edited on/true/yes meant the all-pickups dots.
+    const int mode = ParseBool(value) ? PortDebug::kMapPickups_All : std::atoi(value.c_str());
+    sMapPickups = mode >= PortDebug::kMapPickups_Off && mode <= PortDebug::kMapPickups_Rooms
+                      ? mode
+                      : PortDebug::kMapPickups_Off;
   } else if (key == "tracker_progress") {
     sTrackerProgress = ParseBool(value);
   } else if (key == "map_logic_colors") {
@@ -826,7 +830,7 @@ std::string SettingsText() {
   file << "hide_helmet=" << (sHideHelmet ? 1 : 0) << '\n';
   file << "hide_visor_effects=" << (sHideVisorEffects ? 1 : 0) << '\n';
   file << "reveal_map=" << (sRevealMap ? 1 : 0) << '\n';
-  file << "map_pickups=" << (sMapPickups ? 1 : 0) << '\n';
+  file << "map_pickups=" << sMapPickups << '\n';
   file << "tracker_progress=" << (sTrackerProgress ? 1 : 0) << '\n';
   file << "map_logic_colors=" << (sMapLogicColors ? 1 : 0) << '\n';
   file << "ap_suit_damage=" << sApSuitDamage << '\n';
@@ -1702,14 +1706,14 @@ void SetRevealMap(bool enabled) {
   MarkDirty();
 }
 
-bool MapPickups() {
+EMapPickups MapPickups() {
   EnsureInitialized();
-  return sMapPickups;
+  return static_cast< EMapPickups >(sMapPickups);
 }
 
-void SetMapPickups(bool enabled) {
+void SetMapPickups(EMapPickups mode) {
   EnsureInitialized();
-  sMapPickups = enabled;
+  sMapPickups = mode >= kMapPickups_Off && mode <= kMapPickups_Rooms ? mode : kMapPickups_Off;
   MarkDirty();
 }
 
@@ -8566,17 +8570,24 @@ void DrawTrackerTab() {
   ItemHelp("Shows every world's map as if its map station had been used, and lists every world on "
            "the star map. Rooms a map station leaves hidden stay hidden, and rooms you haven't "
            "entered keep the unexplored colour. The save is not changed.");
-  bool pickups = sMapPickups;
-  if (ImGui::Checkbox("Pickup dots on the map", &pickups)) {
-    SetMapPickups(pickups);
+  // Combo order: Off, Seen, Rooms, All.
+  static const EMapPickups kPickupModes[] = {kMapPickups_Off, kMapPickups_Seen, kMapPickups_Rooms,
+                                             kMapPickups_All};
+  int pickups = 0;
+  for (int i = 0; i < 4; ++i) {
+    if (kPickupModes[i] == sMapPickups) {
+      pickups = i;
+    }
   }
-  ItemHelp("A white dot marks each item pickup in the rooms the map shows, until you collect it. "
-           "Every item gets the same dot, so it doesn't give away what a pickup holds. An "
-           "Archipelago game colours them by what its logic lets you reach.");
-  if (PortMapPickups::Forced()) {
-    SameLineAfterHelp();
-    ImGui::TextDisabled("(on in randomized games)");
+  if (ImGui::Combo("Pickups on the map", &pickups, "Off\0Seen\0Rooms\0All\0")) {
+    SetMapPickups(kPickupModes[pickups]);
   }
+  ItemHelp("Marks item pickups on the map and minimap, until you collect them. Seen: a white dot "
+           "once you have seen the pickup, in the room or through a gap. Rooms: no dots; each "
+           "room the map shows that still holds an uncollected pickup is tinted amber. All: a dot "
+           "for every pickup in the rooms the map shows. Every item gets the same dot, so it "
+           "doesn't give away what a pickup holds. In Seen and All an Archipelago game colours the "
+           "dots by what its logic lets you reach.");
 
   DrawTrackerLogic();
 

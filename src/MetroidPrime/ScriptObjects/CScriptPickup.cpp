@@ -24,6 +24,11 @@
 #include "Kyoto/Text/CStringTable.hpp"
 
 #include "port_apclient.h"
+#ifdef TARGET_PC
+#include "Collision/CMaterialFilter.hpp"
+#include "MetroidPrime/CGameArea.hpp"
+#include "port_map_pickups.h"
+#endif
 #include "port_randomizer.h"
 #include "rstl/math.hpp"
 
@@ -66,6 +71,59 @@ CScriptPickup::CScriptPickup(TUniqueId uid, const rstl::string& name, const CEnt
 
 CScriptPickup::~CScriptPickup() {}
 
+#ifdef TARGET_PC
+// Port: map_pickups = Seen. Marks this pickup's map dot once the player has had
+// it in view: within 40 units of the camera, inside the view cone and with a
+// clear line from the eye to the pickup (static geometry and solid actors
+// block; the pickup itself and characters do not).
+void CScriptPickup::PortMarkSeen(CStateManager& mgr) {
+  if (PortMapPickups::Mode() != PortDebug::kMapPickups_Seen || (++xpc_seenTicks % 6) != 0) {
+    return;
+  }
+  if (xpc_dotIndex == -2) {
+    const CWorld* world = mgr.GetWorld();
+    xpc_dotIndex = -1;
+    if (world != nullptr && !x28c_24_generated) {
+      const CGameArea& area = world->GetAreaAlways(GetAreaId());
+      const CVector3f pos = GetTranslation();
+      const float p[3] = {pos.GetX(), pos.GetY(), pos.GetZ()};
+      xpc_dotIndex = PortMapPickups::DotIndex(world->IGetWorldAssetId(), area.GetAreaAssetId(), p);
+    }
+  }
+  if (xpc_dotIndex < 0 || PortMapPickups::Seen(xpc_dotIndex)) {
+    return;
+  }
+  // Only the first-person camera sees pickups: not the morph ball, cinematic or boss cameras.
+  const CFirstPersonCamera* camera = mgr.CameraManager()->FirstPersonCamera();
+  if (camera == nullptr || mgr.CameraManager()->GetCurrentCameraId() != camera->GetUniqueId()) {
+    return;
+  }
+  const CVector3f eye = camera->GetTranslation();
+  const CVector3f center = GetBoundingBox().GetCenterPoint();
+  const CVector3f delta = center - eye;
+  const float distSq = delta.MagSquared();
+  if (distSq > 40.f * 40.f || !delta.CanBeNormalized()) {
+    return;
+  }
+  // On screen: in front of the camera and inside the projected view.
+  if (CVector3f::Dot(camera->GetTransform().GetColumn(kDY), delta) <= 0.f) {
+    return;
+  }
+  const CVector3f screen = camera->ConvertToScreenSpace(center);
+  if (fabsf(screen.GetX()) > 1.f || fabsf(screen.GetY()) > 1.f) {
+    return;
+  }
+  static const CMaterialFilter kSightFilter = CMaterialFilter::MakeIncludeExclude(
+      CMaterialList(kMT_Solid),
+      CMaterialList(kMT_Player, kMT_Character, kMT_CameraPassthrough, kMT_ProjectilePassthrough));
+  // Stop a little short, so floor and wall hugging pickups don't block themselves.
+  const CVector3f end = center - delta.AsNormalized() * 0.5f;
+  if (!mgr.RayCollideWorld(eye, end, kSightFilter, this)) {
+    PortMapPickups::MarkSeen(static_cast< size_t >(xpc_dotIndex));
+  }
+}
+#endif
+
 void CScriptPickup::Think(float dt, CStateManager& mgr) {
   if (!GetActive()) {
     return;
@@ -76,6 +134,10 @@ void CScriptPickup::Think(float dt, CStateManager& mgr) {
     x278_delayTimer -= dt;
     return;
   }
+
+#ifdef TARGET_PC
+  PortMarkSeen(mgr);
+#endif
 
   x270_curTime += dt;
   if (x28c_25_inTractor && (x26c_lifeTime - x270_curTime) < 2.f) {

@@ -231,7 +231,7 @@ static const SGameOption skPortVisorOptions[] = {
     {PORT_OPTION(kPO_HideHelmet), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {PORT_OPTION(kPO_HideVisorEffects), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {PORT_OPTION(kPO_RevealMap), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
-    {PORT_OPTION(kPO_MapPickups), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
+    {PORT_OPTION(kPO_MapPickups), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
     {PORT_OPTION(kPO_SkippableCutscenes), -1, 0.f, 1.f, 1.f, kOT_DoubleEnum},
     {PORT_OPTION(kPO_ElevatorRide), -1, 0.f, 2.f, 1.f, kOT_TripleEnum},
     {kGO_RestoreDefaults, 35, 0.f, 1.f, 1.f, kOT_RestoreDefaults},
@@ -369,8 +369,16 @@ static int GetPortOption(EGameOption option) {
   case kPO_RevealMap:
     return PortDebug::RevealMap() ? 1 : 0;
   case kPO_MapPickups:
-    // Randomized games force it on; show what is in effect.
-    return PortMapPickups::Active() ? 1 : 0;
+    // Row order Off, Seen, third (Rooms when that is the mode, else All).
+    switch (PortDebug::MapPickups()) {
+    case PortDebug::kMapPickups_Seen:
+      return 1;
+    case PortDebug::kMapPickups_Rooms:
+    case PortDebug::kMapPickups_All:
+      return 2;
+    default:
+      return 0;
+    }
   case kPO_SkippableCutscenes:
     // Randomized games force it on; show what is in effect.
     return PortSkipCutscenes::Active() ? 1 : 0;
@@ -471,7 +479,12 @@ static void SetPortOption(EGameOption option, int value) {
     PortDebug::SetRevealMap(value > 0);
     break;
   case kPO_MapPickups:
-    PortDebug::SetMapPickups(value > 0);
+    // The row has three cells; F1 and the console reach every mode.
+    PortDebug::SetMapPickups(value == 0 ? PortDebug::kMapPickups_Off
+                             : value == 1 ? PortDebug::kMapPickups_Seen
+                             : PortDebug::MapPickups() == PortDebug::kMapPickups_Rooms
+                                 ? PortDebug::kMapPickups_Rooms
+                                 : PortDebug::kMapPickups_All);
     break;
   case kPO_SkippableCutscenes:
     PortDebug::SetSkippableCutscenes(value > 0);
@@ -650,7 +663,7 @@ void CGameOptions::TryRestoreDefaults(const CFinalInput& input, int category, in
         PortDebug::SetHideHelmet(false);
         PortDebug::SetHideVisorEffects(false);
         PortDebug::SetRevealMap(false);
-        PortDebug::SetMapPickups(false);
+        PortDebug::SetMapPickups(PortDebug::kMapPickups_Off);
         PortDebug::SetSkippableCutscenes(false);
         PortDebug::SetElevatorRide(PortDebug::kElevatorRide_Original);
         break;
@@ -972,10 +985,15 @@ void COptionsScreen::UpdateOptionView() {
       CGuiTextPane* label =
           static_cast< CGuiTextPane* >(x194_tablegroup_triple->GetWorkerWidget(i));
       static const wchar_t* const kElevatorLabels[] = {L"Original", L"Fast", L"Skip"};
+      static const wchar_t* const kPickupLabels[] = {L"Off", L"Seen", L"All"};
       if (opt.option == PORT_OPTION(kPO_AspectRatio)) {
         label->TextSupport().SetText(rstl::wstring_l(kAspectLabels[i]));
       } else if (opt.option == PORT_OPTION(kPO_ElevatorRide)) {
         label->TextSupport().SetText(rstl::wstring_l(kElevatorLabels[i]));
+      } else if (opt.option == PORT_OPTION(kPO_MapPickups)) {
+        label->TextSupport().SetText(rstl::wstring_l(
+            i == 2 && PortDebug::MapPickups() == PortDebug::kMapPickups_Rooms ? L"Rooms"
+                                                                              : kPickupLabels[i]));
       } else {
         label->TextSupport().SetText(rstl::wstring_l(xc_pauseStrg.GetString(96 + i)));
       }

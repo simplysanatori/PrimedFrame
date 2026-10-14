@@ -185,6 +185,7 @@ set(MP_PORT_SOURCES
     platform/port_livesplit.cpp
     platform/port_tracker.cpp
     platform/port_map_pickups.cpp
+    platform/port_map_pickups_index.cpp
     platform/port_viewmodel.cpp
     platform/port_freecam.cpp
     platform/port_photo.cpp
@@ -526,6 +527,9 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_ai_tests PRIVATE platform/include extern/aurora/include)
     target_compile_definitions(port_ai_tests PRIVATE TARGET_PC)
     target_link_libraries(port_ai_tests PRIVATE ${AURORA_SDL3_TARGET})
+    add_executable(port_map_pickups_tests tests/port_map_pickups.cpp platform/port_map_pickups_index.cpp)
+    target_include_directories(port_map_pickups_tests PRIVATE platform/include extern/aurora/include)
+    target_compile_definitions(port_map_pickups_tests PRIVATE TARGET_PC)
     add_executable(port_randomizer_tests
         tests/port_randomizer.cpp
         platform/port_randomizer.cpp)
@@ -806,7 +810,7 @@ if(MP_BUILD_TESTS)
     target_compile_definitions(port_charge_locator_tests PRIVATE TARGET_PC VERSION=0)
     add_test(NAME port_charge_locator_tests COMMAND port_charge_locator_tests)
     set_tests_properties(port_charge_locator_tests PROPERTIES TIMEOUT 15 LABELS port)
-    foreach(test IN ITEMS port_remastered_report_tests port_buffer_tests port_ai_tests port_randomizer_tests port_apclient_tests port_ap_solo_tests port_ap_logic_tests port_rando_gen_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_skip_streams_tests port_revision_scripts_tests port_mouse_tests port_touch_pad_tests port_json_tests port_ws_tests port_mods_tests port_pal_languages_tests port_actor_collision_bounds_tests port_room_env_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_astc_tests port_remastered_hud_tests port_remastered_movie_tests port_gallery_tests port_remastered_nso_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_anuv_tests port_remastered_lits_tests port_remastered_ice_tests port_remastered_blend_tests port_inventory_visor_tests port_remastered_image_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_nested_light_tests port_remastered_effect_import_tests port_remastered_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_pointer_tests port_input_engine_tests port_input_bindings_tests port_env_tests port_tick_pair_tests port_presentation_rules_tests port_livesplit_tests port_discord_tests port_update_check_tests port_savestate_tests port_timing_tests port_audio_math_tests)
+    foreach(test IN ITEMS port_remastered_report_tests port_buffer_tests port_ai_tests port_map_pickups_tests port_randomizer_tests port_apclient_tests port_ap_solo_tests port_ap_logic_tests port_rando_gen_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_skip_streams_tests port_revision_scripts_tests port_mouse_tests port_touch_pad_tests port_json_tests port_ws_tests port_mods_tests port_pal_languages_tests port_actor_collision_bounds_tests port_room_env_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_astc_tests port_remastered_hud_tests port_remastered_movie_tests port_gallery_tests port_remastered_nso_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_anuv_tests port_remastered_lits_tests port_remastered_ice_tests port_remastered_blend_tests port_inventory_visor_tests port_remastered_image_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_nested_light_tests port_remastered_effect_import_tests port_remastered_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_pointer_tests port_input_engine_tests port_input_bindings_tests port_env_tests port_tick_pair_tests port_presentation_rules_tests port_livesplit_tests port_discord_tests port_update_check_tests port_savestate_tests port_timing_tests port_audio_math_tests)
         add_test(NAME ${test} COMMAND ${test})
         set_tests_properties(${test} PROPERTIES TIMEOUT 15 LABELS port)
         aurora_copy_runtime_dlls(${test})

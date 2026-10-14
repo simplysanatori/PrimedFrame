@@ -54,6 +54,7 @@
 #include "MetroidPrime/Enemies/CPatterned.hpp"
 #include "MetroidPrime/HUD/CSamusHud.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
+#include "port_map_pickups.h"
 #include "MetroidPrime/Player/CPlayer.hpp"
 #include "MetroidPrime/Player/CPlayerGun.hpp"
 #include "MetroidPrime/Player/CPlayerState.hpp"
@@ -2191,11 +2192,41 @@ void RunFrame() {
     PortDebug::SetRevealMap(value == "1");
     Finish();
   } else if (name == "pickups") {
-    const std::string value = sCmd.args.size() > 1 ? sCmd.args[1] : "";
-    if (value != "0" && value != "1") {
-      return Finish("usage: pickups <0|1>   pickup dots on the map (on in randomized games)");
+    const std::string value = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "";
+    if (value == "seen") {
+      const std::string sub = sCmd.args.size() > 2 ? Lower(sCmd.args[2]) : "";
+      if (sub == "clear") {
+        PortMapPickups::ClearSeen();
+      } else if (sub == "all") {
+        PortMapPickups::MarkAllSeen();
+      } else if (!sub.empty()) {
+        return Finish("usage: pickups seen [clear|all]");
+      } else {
+        PortDebug::SetMapPickups(PortDebug::kMapPickups_Seen);
+      }
+      size_t dots = 0;
+      const PortMapPickups::Dot* list = PortMapPickups::Dots(dots);
+      const uint32_t world = gpGameState != nullptr ? gpGameState->CurrentWorldAssetId() : 0;
+      std::string indices;
+      for (size_t i = 0; i < dots; ++i) {
+        if (PortMapPickups::Seen(i) && list[i].world == world) {
+          indices += (indices.empty() ? "" : " ") + std::to_string(i);
+        }
+      }
+      Out("seen %zu of %zu; this world: %s", PortMapPickups::SeenCount(), dots,
+          indices.empty() ? "none" : indices.c_str());
+      return Finish();
     }
-    PortDebug::SetMapPickups(value == "1");
+    if (value == "0" || value == "off") {
+      PortDebug::SetMapPickups(PortDebug::kMapPickups_Off);
+    } else if (value == "1" || value == "all") {
+      PortDebug::SetMapPickups(PortDebug::kMapPickups_All);
+    } else if (value == "rooms") {
+      PortDebug::SetMapPickups(PortDebug::kMapPickups_Rooms);
+    } else {
+      return Finish("usage: pickups <off|seen|rooms|all>   pickups on the map (0 and 1 are off and all)\n"
+                    "       pickups seen [clear|all]   the pickups seen so far in this save");
+    }
     Finish();
   } else if (name == "mods") {
     // mods [reload]: what is loaded; reload reads the folder again.

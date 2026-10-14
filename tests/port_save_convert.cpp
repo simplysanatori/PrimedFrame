@@ -120,6 +120,8 @@ Save SyntheticSave(Layout layout) {
   s.ap[0] = 0x41505834;
   for (size_t i = 1; i < kApWords; ++i)
     s.ap[i] = i < 11 ? 0x01010101u * uint32_t(i) : uint32_t(i * 99);
+  s.hasSeen = true;
+  s.seen = {0x80000001u, 0, 0x12345678u, 0x7Fu};
   return save;
 }
 
@@ -163,6 +165,7 @@ bool RoundTrip(Save& save, bool pal, const char* what) {
         std::string(what) + ": option values");
   Check(a.hintState == b.hintState && a.hintTime == b.hintTime, std::string(what) + ": hints");
   Check(b.hasAp && a.ap == b.ap, std::string(what) + ": Archipelago trailer");
+  Check(b.hasSeen && a.seen == b.seen, std::string(what) + ": seen-pickups trailer");
   Check(back.system.fps == 2 && back.system.ball == 1 && back.system.powerBombs == 1 &&
             back.system.logScan == 77 && back.system.flags == save.system.flags &&
             back.system.autoMapper == 2 && back.system.palField == save.system.palField,

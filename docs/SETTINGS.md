@@ -381,9 +381,14 @@
   pause Options > Visor, off by default) shows every world's map as if its map
   station had been used and lists every world on the star map. It only changes
   what the map screen asks, never the save; rooms a map station leaves hidden
-  stay hidden. Pickup dots (`map_pickups`, also pause Options > Visor, off by
-  default, always on in randomized games) draw a plain white dot on the map and
-  minimap for every pickup not yet collected, in rooms the map shows. The dots
+  stay hidden. Pickup marking (`map_pickups`, also pause Options > Visor, off by
+  default; Tracker page: Off, Seen, Rooms, All; the pause row cycles Off, Seen
+  and All, with Rooms shown as the third value when set elsewhere): All draws a
+  plain white dot on the map and minimap for every pickup not yet collected, in
+  rooms the map shows; Seen draws the dot only once you have had that pickup in
+  view (within 40 units, in the view cone, with a clear line from the eye;
+  kept per save, `pickups seen`); Rooms draws no dots but tints the rooms that
+  still hold an uncollected pickup amber. An old saved `1` stays All. The dots
   never tell what the item is; an Archipelago game colours them by its logic
   (`map_logic_colors`, see `ARCHIPELAGO.md`). The positions come from
   `tools/gen_map_pickups.py` (`platform/port_map_pickups.inc`). With Show

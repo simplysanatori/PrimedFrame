@@ -3,31 +3,54 @@
 #include "port_ap_metroidprime.h"
 #include "port_apclient.h"
 #include "port_debug.h"
-#include "port_skip_cutscenes.h"
+#include "MetroidPrime/Player/CGameState.hpp"
 
 namespace PortMapPickups {
-namespace {
 
-const Dot kDots[] = {
-#include "port_map_pickups.inc"
-};
+PortDebug::EMapPickups Mode() { return PortDebug::MapPickups(); }
 
-} // namespace
+bool Seen(size_t dot) { return gpGameState != nullptr && IsSeen(gpGameState->PortSeenPickups(), dot); }
 
-bool Forced() { return PortSkipCutscenes::Forced(); }
+bool MarkSeen(size_t dot) {
+  if (gpGameState == nullptr || dot >= kSeenWords * 32 || IsSeen(gpGameState->PortSeenPickups(), dot)) {
+    return false;
+  }
+  SetSeen(gpGameState->PortSeenPickups(), dot);
+  return true;
+}
 
-bool Active() { return PortDebug::MapPickups() || Forced(); }
+size_t SeenCount() {
+  size_t count = 0;
+  size_t dots = 0;
+  Dots(dots);
+  for (size_t i = 0; i < dots; ++i) {
+    count += Seen(i) ? 1 : 0;
+  }
+  return count;
+}
 
-const Dot* Dots(size_t& count) {
-  count = sizeof(kDots) / sizeof(kDots[0]);
-  return kDots;
+void ClearSeen() {
+  if (gpGameState != nullptr) {
+    for (int i = 0; i < kSeenWords; ++i) {
+      gpGameState->PortSeenPickups()[i] = 0;
+    }
+  }
+}
+
+void MarkAllSeen() {
+  size_t dots = 0;
+  Dots(dots);
+  for (size_t i = 0; i < dots; ++i) {
+    MarkSeen(i);
+  }
 }
 
 bool Colors(const unsigned char*& colors) {
-  static const size_t kCount = sizeof(kDots) / sizeof(kDots[0]);
-  static unsigned char sColors[kCount];
+  size_t kCount = 0;
+  const Dot* kDots = Dots(kCount);
+  static unsigned char sColors[kMaxDots];
   // Which AP location each dot is: the one whose pickup sets the same relay.
-  static int sLocation[kCount];
+  static int sLocation[kMaxDots];
   static bool sMapped = false;
   if (!sMapped) {
     size_t count = 0;

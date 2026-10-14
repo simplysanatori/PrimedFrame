@@ -245,10 +245,14 @@ void SetHideVisorEffects(bool enabled);
 // not changed.
 bool RevealMap();
 void SetRevealMap(bool enabled);
-// A white dot on the map for each item pickup not yet collected. Randomizer
-// and Archipelago games force it on (PortMapPickups::Active).
-bool MapPickups();
-void SetMapPickups(bool enabled);
+// Pickup marking on the map (PortMapPickups): Off; Seen draws a dot for each
+// uncollected pickup the player has laid eyes on; Rooms tints the rooms that
+// still hold an uncollected pickup; All draws a dot for every uncollected
+// pickup. The saved value 1 (the old on/off setting) is All.
+// The values are stored in the config: don't reorder or renumber.
+enum EMapPickups { kMapPickups_Off, kMapPickups_All, kMapPickups_Seen, kMapPickups_Rooms };
+EMapPickups MapPickups();
+void SetMapPickups(EMapPickups mode);
 // In an Archipelago game, colour the dots by the seed's logic like a tracker
 // (green in logic, yellow sequence break, blue visible only, red out of reach,
 // grey checked). On by default; off gives the plain white dots.

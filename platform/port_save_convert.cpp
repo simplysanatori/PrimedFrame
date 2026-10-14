@@ -144,6 +144,8 @@ int BitCount(u32 n) {
 }
 
 constexpr u32 kApMagic = 0x41505834; // "APX4", CGameState.cpp kPortApMagic
+constexpr u32 kSeenMagic = 0x504B534E; // "PKSN", CGameState.cpp kPortSeenMagic
+constexpr size_t kSeenBits = 5 * 32;
 constexpr size_t kApBits = kApWords * 32 - 4 * 16;
 
 // ---- bits --------------------------------------------------------------------
@@ -410,6 +412,20 @@ void ReadSlot(const uint8_t* d, size_t size, const SlotFmt& f, Slot& s, std::set
         s.ap[i] = peek.Read(i < 11 ? 32 : 16);
     }
   }
+  if (!f.wii) {
+    // The seen trailer follows the AP one, or the retail data when there is none.
+    BitReader peek = r;
+    if (s.hasAp) {
+      peek.Read(32);
+      for (size_t i = 1; i < kApWords; ++i)
+        peek.Read(i < 11 ? 32 : 16);
+    }
+    if (!peek.eof && peek.Left() >= kSeenBits && peek.Read(32) == kSeenMagic) {
+      s.hasSeen = true;
+      for (auto& word : s.seen)
+        word = peek.Read(32);
+    }
+  }
   s.present = !r.eof || s.mlvl != 0 || s.timestamp != 0;
 }
 
@@ -500,6 +516,11 @@ bool WriteSlot(const Slot& s, Layout layout, int flags, size_t slotSize, std::ve
   if (s.hasAp && !wii && w.Fits(kApBits)) {
     for (size_t i = 0; i < kApWords; ++i)
       w.Write(i == 0 ? kApMagic : s.ap[i], i < 11 ? 32 : 16);
+  }
+  if (s.hasSeen && !wii && w.Fits(kSeenBits)) {
+    w.Write(kSeenMagic, 32);
+    for (u32 word : s.seen)
+      w.Write(word, 32);
   }
   if (w.overflow)
     ++stats.truncatedSlots;

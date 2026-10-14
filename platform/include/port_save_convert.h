@@ -76,6 +76,9 @@ struct Slot {
   // The port's Archipelago trailer ("APX4"), when the stream carried one.
   bool hasAp = false;
   std::array<uint32_t, kApWords> ap{};
+  // The port's seen-pickups trailer ("PKSN" plus four words), after the AP one.
+  bool hasSeen = false;
+  std::array<uint32_t, 4> seen{};
   // A Trilogy slot's own cinematics (System::cine has every slot's); dropped
   // by a retarget, after which the slot takes System::cine.
   std::optional<std::set<std::pair<uint32_t, uint32_t>>> cine;
