@@ -257,15 +257,22 @@ GXBool GXPortSceneHdr(GXBool on) {
   return true;
 }
 
+// The mode last written, for the game thread (the FIFO state is read on the render thread).
+static u8 sShadowCasterMode = 0;
+
 void GXPortSetShadowCaster(GXBool on) {
+  sShadowCasterMode = on ? 1 : 0;
   GX_WRITE_AURORA(GX_AURORA_PORT_SHADOW_CASTER);
   GX_WRITE_U8(on ? 1 : 0);
 }
 
 void GXPortSetShadowCasterOnly(GXBool on) {
+  sShadowCasterMode = on ? 2 : 1;
   GX_WRITE_AURORA(GX_AURORA_PORT_SHADOW_CASTER);
   GX_WRITE_U8(on ? 2 : 1);
 }
+
+u8 GXPortGetShadowCasterMode() { return sShadowCasterMode; }
 
 // The last shadow frame, for GXPortShadowBoxCasts and GXPortGetShadowInfo on the game thread.
 static struct {

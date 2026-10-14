@@ -3287,6 +3287,11 @@ void CStateManager::DrawWorld() const {
   }
 
   const CPlayerState::EPlayerVisor visor = x8b8_playerState->GetActiveVisor(*this);
+#ifdef TARGET_PC
+  // Remastered's per-visor mesh filter for everything this frame draws, thermal's extra passes
+  // included (CCubeModel, PortVisorMesh).
+  CCubeModel::PortSetActiveVisor(static_cast< int >(visor));
+#endif
   uint mask;
   bool thermal = visor == CPlayerState::kPV_Thermal;
   uint targetMask;
@@ -3531,6 +3536,14 @@ void CStateManager::DrawWorld() const {
     fprintf(stderr, "shadow-actor-check: frame %u offscreen eligible=%u model draws=%u\n",
             static_cast< uint >(CGraphics::GetFrameCounter()), portShadowEligible,
             portShadowDrawn);
+  }
+  static const bool sVisorMeshLog = getenv("MP_VISORMESH_LOG") != nullptr;
+  if (sVisorMeshLog && !portZoomed && CGraphics::GetFrameCounter() % 60 == 0) {
+    unsigned visorSkipped = 0, shadowSkipped = 0;
+    CCubeModel::PortTakeVisorSkipCounts(visorSkipped, shadowSkipped);
+    fprintf(stderr, "visor-mesh: frame %u visor %d skipped surfaces: visor bit %u, shadow bit %u\n",
+            static_cast< uint >(CGraphics::GetFrameCounter()), static_cast< int >(visor), visorSkipped,
+            shadowSkipped);
   }
   if (portShadow) {
     GXPortSetShadowCaster(false);
