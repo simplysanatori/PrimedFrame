@@ -3839,6 +3839,17 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
             std::any_of(links->second.begin(), links->second.end(),
                         [](const PortRoomGeo::Link& l) { return l.action != PortRoomGeo::kHide; }));
   };
+  // Whether a link shows the entity and another hides it again, the hide carrying its Timer's
+  // delay: the hangar's boundary shield flashes for 0.25 s when a hit is blocked.
+  auto showsAndHides = [&](int entity) {
+    const auto links = scripts.links.find(entity);
+    if (links == scripts.links.end()) {
+      return false;
+    }
+    const auto& v = links->second;
+    return std::any_of(v.begin(), v.end(), [](const PortRoomGeo::Link& l) { return l.action == PortRoomGeo::kShow; }) &&
+           std::any_of(v.begin(), v.end(), [](const PortRoomGeo::Link& l) { return l.action == PortRoomGeo::kHide; });
+  };
   size_t gated = 0, linked = 0, grouped = 0, inactive = 0, unresolved = 0;
   // What the entity's scripts make of an instance: its layer, whether it starts shown, and
   // what shows and hides it.
@@ -4029,7 +4040,8 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   // the waterfalls of Ice Shorelines and the Hive Totem pour for 17 and 6.25 s and fade with
   // their Waterfalls.GRDU driver, and pieces of the Frigate's hangar flash for 0.25 s. Their
   // links keep the timers' delays (Link::delay); those with a float driver that moves a
-  // parameter of their material (driverOf) are kept with the driver, the others are left out. An
+  // parameter of their material (driverOf) are kept with the driver, those with both a show and
+  // a hide link (the hangar's boundary shield) are kept with the links, the others are left out. An
   // animated actor is drawn: the Mines turbine's explosion, shown 5.5 s after its pickup is
   // taken and hidden 2.5 s later, partway through its clip.
   std::set<int> timedOff;
@@ -4369,7 +4381,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     const bool active = r.room.Active(*c);
     PortRoomGeo::Instance::Driver driver;
     const bool driven = hasModel && driverOf(*c, r.room.Bytes(prop->second), driver);
-    if (!active && (!canShow(c->entity) || (timedOff.count(c->entity) != 0 && !hasAnim && !driven))) {
+    if (!active && (!canShow(c->entity) || (timedOff.count(c->entity) != 0 && !hasAnim && !driven && !showsAndHides(c->entity)))) {
       ++inactive;
       continue;
     }
