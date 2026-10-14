@@ -430,7 +430,9 @@ void CCubeModel::PortSetFallbackGlow(const CCubeMaterial& material, const int id
   }
   // The konst holds the emissive in gamma 2.2 and cannot exceed 1.0, so a glow brighter
   // than that (s * gain > 1) is clamped to it.
-  const f32 gain = PortRoomEnv::GlowGain(frameExposed);
+  // An opaque-pass glow is shown at the static exposure (the PBR shader's pbr_tone.w), so the
+  // frame-exposed gain is rescaled by GlowScale() unless the draw is frame-exposed.
+  const f32 gain = PortRoomEnv::GlowGain(frameExposed) * (frameExposed ? 1.f : PortRoomEnv::GlowScale());
   GXColor color{0, 0, 0, 255};
   u8* channels[3] = {&color.r, &color.g, &color.b};
   for (int i = 0; i < 3; ++i) {
@@ -686,7 +688,24 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       }
     }
   }
+  // The TEV fallback of a PBR material lit by the bake takes only the runtime lights, as its PBR
+  // draw does (GXSetPBRLightSkip below); Remastered has no area lights on a baked-lit model.
+  if (!inventory && material.IsFlagSet(kStateFlag_PortPBR) && CCubeMaterial::sPortAreaLights != 0 &&
+      !PortRoomEnv::AreaLights() && !(outside && (fadeBlend || CCubeMaterial::PortPBRAllowed(drawFlags)))) {
+    const CTransform4f& tevXf = CGraphics::GetModelMatrix();
+    const CVector3f tevOrigin = x20_bounds.Invalid() ? tevXf.GetTranslation() : tevXf * x20_bounds.GetCenterPoint();
+    float pos[3] = {tevOrigin.GetX(), tevOrigin.GetY(), tevOrigin.GetZ()};
+    PortRoomEnv::ProbeOverride(pos);
+    PortRoomEnv::Selection env;
+    const bool found = PortRoomEnv::Select(pos, env);
+    const bool lightmap =
+        found && env.lightmap != 0 && PortLightmapSlot(static_cast< int >(surface.GetMaterialIndex())) >= 0;
+    if (found && ((env.hasAmbient && env.ambientAbsolute) || env.volume != 0 || lightmap)) {
+      CCubeMaterial::sPortTevLightSkip = CCubeMaterial::sPortAreaLights;
+    }
+  }
   material.SetCurrent(drawFlags, surface, *this);
+  CCubeMaterial::sPortTevLightSkip = 0;
   if (material.IsFlagSet(kStateFlag_PortHudGlow) && !material.IsFlagSet(kStateFlag_PortPBR)) {
     // Remastered's 3853595c on FRME_Helmet: rgb = T*v1 + T*ICNC (ICNC white), alpha T.a^2*v1.a,
     // drawn with the widget's own blend (additive: src alpha, one) into the UNORM target after
