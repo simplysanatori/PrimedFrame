@@ -1001,6 +1001,17 @@ void CAutoMapper::PortPointerInput(CFinalInput& input, const CStateManager& mgr)
     PortDebug::AddMapPan(0.f, 0.f, sPortMapViewPx, 250);
   }
 
+  // A tap on the corner A prompt (icon or label) presses A, as the button does.
+  if (x2c_frmeInitialized != NULL && (universe || HasCurrentMapUniverseWorld(mgr))) {
+    const CGuiWidget* icon = x2c_frmeInitialized->FindWidget("textpane_right1");
+    const CGuiWidget* label = x2c_frmeInitialized->FindWidget("textpane_right");
+    if ((icon != NULL && PortPointerMenu::TakeClickOn(icon)) ||
+        (label != NULL && PortPointerMenu::TakeClickOn(label))) {
+      PortMapStopGlide();
+      PortPointerMenu::PressA(input);
+    }
+  }
+
   float gx, gy;
   int count;
   if (sPortMapHitsUniverse == universe && PortPointerMenu::TakeClickPoint(gx, gy, count)) {
@@ -1276,6 +1287,22 @@ void CAutoMapper::ProcessMapZoomInput(const CFinalInput& input, const CStateMana
 
   // Port: a pinch scales the camera distance by the inverse of the finger spread.
   const float pinch = PortDebug::TakeMapZoom();
+  // Port: pinching or scrolling out past the farthest area-map distance opens
+  // the world map, as A does. It takes a doubling of the distance (two wheel
+  // notches) beyond the limit, so reaching the limit alone doesn't switch.
+  static float sPortZoomOutPast = 0.f;
+  if (x1bc_state == kAMS_MapScreen && pinch < 1.f &&
+      xa8_renderState0.x18_camDist >= gpTweakAutoMapper->x10_maxCamDist &&
+      HasCurrentMapUniverseWorld(mgr)) {
+    sPortZoomOutPast -= static_cast< float >(log(pinch) / log(2.0));
+    if (sPortZoomOutPast >= 1.f) {
+      sPortZoomOutPast = 0.f;
+      BeginMapperStateTransition(kAMS_MapScreenUniverse, mgr);
+      return;
+    }
+  } else if (pinch != 1.f || xa8_renderState0.x18_camDist < gpTweakAutoMapper->x10_maxCamDist) {
+    sPortZoomOutPast = 0.f;
+  }
   if (pinch != 1.f) {
     xa8_renderState0.x18_camDist =
         GetClampedMapScreenCameraDistance(xa8_renderState0.x18_camDist / pinch);
