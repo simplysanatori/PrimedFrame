@@ -537,6 +537,12 @@ void CCubeMaterial::SetCurrentBlack() const {
   CGX::SetNumIndStages(0);
 }
 
+#ifdef TARGET_PC
+static uint PortTevLightSkip() { return CCubeMaterial::sPortTevLightSkip; }
+#else
+static uint PortTevLightSkip() { return 0; }
+#endif
+
 static uint HandleColorChannels(uint chanCount, uint firstChan) {
   if (sbRenderModelShadow) {
     if (chanCount != 0) {
@@ -545,7 +551,7 @@ static uint HandleColorChannels(uint chanCount, uint firstChan) {
       CGX::SetChanCtrl(CGX::Channel1, true, GX_SRC_REG, GX_SRC_REG,
                        static_cast< GXLightID >(sChannel1EnableLightMask), GX_DF_CLAMP, GX_AF_SPOT);
 
-      const uchar chan0Lights = CGraphics::GetLightMask() & ~sChannel0DisableLightMask;
+      const uchar chan0Lights = CGraphics::GetLightMask() & ~sChannel0DisableLightMask & ~PortTevLightSkip();
       CGX::SetChanCtrl_Compressed(CGX::Channel0, static_cast< GXLightID >(chan0Lights), firstChan);
       if (chan0Lights != 0) {
         CGX::SetChanMatColor(CGX::Channel0, sGXWhite);
@@ -565,7 +571,7 @@ static uint HandleColorChannels(uint chanCount, uint firstChan) {
   }
 
   if (chanCount >= 1) {
-    const uchar lightMask = CGraphics::GetLightMask();
+    const uchar lightMask = CGraphics::GetLightMask() & ~PortTevLightSkip();
     CGX::SetChanCtrl_Compressed(CGX::Channel0, static_cast< GXLightID >(lightMask), firstChan);
     if (lightMask != 0) {
       CGX::SetChanMatColor(CGX::Channel0, sGXWhite);
@@ -1050,6 +1056,7 @@ uint CCubeMaterial::sPortPBRProbeDraws = 0;
 bool CCubeMaterial::sPortCapturingProbe = false;
 CCubeMaterial::EPortPBRThermal CCubeMaterial::sPortPBRThermal = CCubeMaterial::kPT_None;
 uint CCubeMaterial::sPortAreaLights = 0;
+uint CCubeMaterial::sPortTevLightSkip = 0;
 
 bool CCubeMaterial::PortPBRAllowed(const CModelFlags& flags) {
   return !sbRenderModelBlack &&
