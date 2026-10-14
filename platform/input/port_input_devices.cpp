@@ -6,6 +6,7 @@
 #include "port_log.h"
 #include "port_paths.h"
 #include "port_photo.h"
+#include "port_pointer.h"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/Player/CPlayer.hpp"
 #include "MetroidPrime/Player/CPlayerGun.hpp"
@@ -399,13 +400,16 @@ void BindPortControls(Profile& p) {
   Bind(p, Action::PhotoMode, Make(Device::Key, SDL_SCANCODE_F8));
 
   // The wheel cycles beams, as in PrimeHack (issue #61); retail has no wheel.
-  // Escape, as on PC: pauses, backs out of menus (B; the pause screen's top level
-  // resumes on it) and closes the map (Z, its exit; Start does nothing there).
+  // With pointer menus, Escape works as on PC: pauses, backs out of menus (B; the
+  // pause screen's top level resumes on it) and closes the map (Z, its exit; Start
+  // does nothing there).
   if (!PortDebug::OriginalExperience()) {
-    const Input esc = Make(Device::Key, SDL_SCANCODE_ESCAPE);
-    BindIn(p, Action::PadStart, esc, PortInput::kCtxGameplay | PortInput::kCtxMorphBall);
-    BindIn(p, Action::PadB, esc, PortInput::kCtxMenu);
-    BindIn(p, Action::PadZ, esc, PortInput::kCtxMap);
+    if (PortPointer::Enabled()) {
+      const Input esc = Make(Device::Key, SDL_SCANCODE_ESCAPE);
+      BindIn(p, Action::PadStart, esc, PortInput::kCtxGameplay | PortInput::kCtxMorphBall);
+      BindIn(p, Action::PadB, esc, PortInput::kCtxMenu);
+      BindIn(p, Action::PadZ, esc, PortInput::kCtxMap);
+    }
     Bind(p, Action::BeamPrev, Make(Device::MouseWheel, 0, 1));
     Bind(p, Action::BeamNext, Make(Device::MouseWheel, 0, -1));
   }
@@ -1138,6 +1142,10 @@ SPoll Poll(unsigned mouseHeld, bool focused) {
     r.status.button &= static_cast< u16 >(~PAD_BUTTON_A);
     if (out.Held(Action::MenuA)) r.status.button |= PAD_BUTTON_A;
   }
+  // Escape there is gameplay's Start (pause), not also the Menu context's B.
+  if (ScanTextOpen(contexts) && raw.keys.test(SDL_SCANCODE_ESCAPE) && PortPointer::Enabled() &&
+      !PortDebug::OriginalExperience())
+    r.status.button &= static_cast< u16 >(~PAD_BUTTON_B);
   return r;
 }
 

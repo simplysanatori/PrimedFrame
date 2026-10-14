@@ -231,8 +231,8 @@
   on the selected one opens it. While such a screen is up the mouse is released and the
   cursor shown; the button prompts show mouse glyphs after the mouse was last used; on
   Android the gameplay touch buttons hide, leaving a back button. Escape pauses, backs out
-  of menus (resuming from the pause screen's top level) and closes the map, a default
-  outside Original experience.
+  of menus (resuming from the pause screen's top level) and closes the map while this is
+  on, outside Original experience.
   It binds any action to an input or a chord of up to four
   (hold the first ones, press the last; or "Any order" within the chord window). The editor's
   Advanced section holds the typed input text, the trigger (press, tap, hold, double tap,
