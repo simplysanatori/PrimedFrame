@@ -400,6 +400,10 @@ final class TouchControlsView extends View {
     private boolean wheelButtonsShown;
     // rHidden() as of the last draw; touches go by what is drawn.
     private boolean rHiddenNow;
+    // nativePointerMenuActive() as of the last draw: then only the back button
+    // shows, and every other finger goes to the SDL surface for the game.
+    private boolean pointerMenuNow;
+    private final RectF backButtonRect = new RectF();
     private final Runnable mapButtonPoll = new Runnable() {
         @Override
         public void run() {
@@ -409,9 +413,9 @@ final class TouchControlsView extends View {
             }
             if ((mapTap && mapButtonState(getWidth(), getHeight()) != mapButtonShown) ||
                 (wheels && ((nativeWheelOwned() & WHEEL_VALID_BIT) != 0) != wheelButtonsShown) ||
-                rHidden() != rHiddenNow) {
+                rHidden() != rHiddenNow || nativePointerMenuActive() != pointerMenuNow) {
                 invalidate();
-            } else if (mapTap || wheels || aim) {
+            } else {
                 postDelayed(this, MAP_BUTTON_POLL_MS);
             }
         }
@@ -475,6 +479,8 @@ final class TouchControlsView extends View {
     private static native boolean nativePauseScreenOpen();
     // A save station or message box over the paused game (not the pause menu).
     private static native boolean nativeMessageBoxOpen();
+    // A game menu or the map takes touches itself (the pointer_menus setting).
+    private static native boolean nativePointerMenuActive();
     // A pinch: ratio of the finger spread now to before; above 1 zooms in.
     private static native void nativeMapZoom(float ratio);
     // A twist, in radians; positive turns the map as the stick's right does.
@@ -614,6 +620,14 @@ final class TouchControlsView extends View {
         sideMargin = dp(nativeTouchSideMarginDp());
         stickInset = dp(nativeTouchStickInsetDp());
         buttonInset = dp(nativeTouchButtonInsetDp());
+        pointerMenuNow = !editing && nativePointerMenuActive();
+        if (pointerMenuNow) {
+            bottomButtonRect(0, false, width, height, backButtonRect);
+            drawBackButton(canvas);
+            removeCallbacks(mapButtonPoll);
+            postDelayed(mapButtonPoll, MAP_BUTTON_POLL_MS);
+            return;
+        }
         // Classic and twin stick are exclusive (the native side keeps them so).
         twin = !classic && nativeTouchTwinStick();
         face = twin ? TWIN_FACE : GAMECUBE_FACE;
@@ -678,9 +692,7 @@ final class TouchControlsView extends View {
             drawMapButton(canvas);
         }
         removeCallbacks(mapButtonPoll);
-        if (mapTap || wheels || aim) {
-            postDelayed(mapButtonPoll, MAP_BUTTON_POLL_MS);
-        }
+        postDelayed(mapButtonPoll, MAP_BUTTON_POLL_MS);
         if (wheels && wheelPointer != -1) {
             drawWheel(canvas);
         }
@@ -725,6 +737,30 @@ final class TouchControlsView extends View {
         final float halfW = rect.width() * 0.5f * ovScale[control];
         final float halfH = rect.height() * 0.5f * ovScale[control];
         rect.set(cx - halfW, cy - halfH, cx + halfW, cy + halfH);
+    }
+
+    // The back button of a pointer menu, where START sits; hiding the controls hides it.
+    private boolean onBackButton(float x, float y) {
+        return pointerMenuNow && !hidden && !autoHidden && backButtonRect.contains(x, y);
+    }
+
+    // A round button with a left arrow: B in the game's menus and map.
+    private void drawBackButton(Canvas canvas) {
+        final float cx = backButtonRect.centerX();
+        final float cy = backButtonRect.centerY();
+        final float radius = backButtonRect.width() * 0.5f;
+        fillPaint.setColor(held.containsKey(BTN_EAST) ? 0xCC3A5A70 : 0x99081218);
+        strokePaint.setColor(0xBBFFFFFF);
+        canvas.drawCircle(cx, cy, radius, fillPaint);
+        canvas.drawCircle(cx, cy, radius, strokePaint);
+        final float w = radius * 0.5f;
+        shapePath.reset();
+        shapePath.moveTo(cx + w, cy);
+        shapePath.lineTo(cx - w, cy);
+        shapePath.moveTo(cx - w * 0.3f, cy - w * 0.7f);
+        shapePath.lineTo(cx - w, cy);
+        shapePath.lineTo(cx - w * 0.3f, cy + w * 0.7f);
+        canvas.drawPath(shapePath, strokePaint);
     }
 
     // A round button with a folded map: three panels, the middle one raised.
@@ -794,12 +830,16 @@ final class TouchControlsView extends View {
         if (overlayVisible && (!targets.isEmpty() || !held.isEmpty())) {
             releaseAll();
         }
+        // In a pointer menu every finger but one on the back button is the game's.
+        final boolean menu = !overlayVisible && nativePointerMenuActive();
+        final boolean toGame = overlayVisible ||
+            (menu && !onBackButton(event.getX(actionIndex), event.getY(actionIndex)));
         if (action == MotionEvent.ACTION_DOWN) {
             cancelForwarded(event);
-            if (overlayVisible) {
+            if (toGame) {
                 return false;
             }
-        } else if (forwardToSdl(event, action, actionIndex, overlayVisible) || overlayVisible) {
+        } else if (forwardToSdl(event, action, actionIndex, toGame) || overlayVisible) {
             return true;
         }
 
@@ -841,6 +881,13 @@ final class TouchControlsView extends View {
             int pointerId = event.getPointerId(actionIndex);
             float x = event.getX(actionIndex);
             float y = event.getY(actionIndex);
+            if (menu) {
+                // Only the back button gets here (toGame took the rest).
+                targets.put(pointerId, new TouchTarget(BUTTON, BTN_EAST));
+                pressControl(BTN_EAST);
+                invalidate();
+                return true;
+            }
             if (hideBounds.contains(x, y)) {
                 targets.put(pointerId, new TouchTarget(HIDE, 0));
                 return true;
@@ -940,11 +987,11 @@ final class TouchControlsView extends View {
     //
     // Returns whether the event was entirely such fingers.
     private boolean forwardToSdl(MotionEvent event, int action, int actionIndex,
-                                 boolean overlayVisible) {
+                                 boolean toGame) {
         final int pointerId = event.getPointerId(actionIndex);
         switch (action) {
             case MotionEvent.ACTION_POINTER_DOWN:
-                if (!overlayVisible) {
+                if (!toGame) {
                     return false;
                 }
                 forwarded.add(pointerId);

@@ -10202,6 +10202,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeMessageBoxOpen(JNIEnv*, jclas
   return PortDebug::PausedMenuOpen() && !PortDebug::PauseScreenOpen() ? JNI_TRUE : JNI_FALSE;
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativePointerMenuActive(JNIEnv*, jclass) {
+  return PortPointer::ScreenActive() ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeMapTap(JNIEnv*, jclass) {
   if (PortDebug::TouchMapTap()) {
