@@ -4,7 +4,9 @@
 #include "../logging.hpp"
 #include "../webgpu/gpu.hpp"
 #include "../webgpu/gpu_prof.hpp"
+#include "encoding.hpp"
 #include "pipeline_cache.hpp"
+#include "resource_cache.hpp"
 #include "recording.hpp"
 #include "resources.hpp"
 
@@ -169,6 +171,10 @@ void encode(const EncoderTaskContext&, const wgpu::CommandEncoder& cmd, const vo
       auto immediates = draw.immediateData;
       immediates.serial = c;
       pass.SetPipeline(pipeline);
+      if (draw.bindGroups.textureBindGroup) {
+        // A cutout's pipeline alpha-tests with the draw's own textures.
+        pass.SetBindGroup(2, find_bind_group(draw.bindGroups.textureBindGroup));
+      }
       pass.SetImmediates(0, &immediates, sizeof(immediates));
       pass.SetBindGroup(1, resources.uniformBindGroup, 1, &draw.uniformRange.offset);
       pass.SetIndexBuffer(resources.indexBuffer, wgpu::IndexFormat::Uint16, draw.idxRange.offset, draw.idxRange.size);
@@ -180,6 +186,7 @@ void encode(const EncoderTaskContext&, const wgpu::CommandEncoder& cmd, const vo
     }
     pass.End();
   }
+  forget_texture_group();
 }
 } // namespace
 

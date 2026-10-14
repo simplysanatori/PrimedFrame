@@ -129,7 +129,9 @@ std::vector<FogRangeLutEntry> sFogRangeLuts;
 struct PipelineMemo {
   ShaderInfo shaderInfo{};
   gfx::PipelineRef shadowPipelineRef{};
+  gfx::PipelineRef cutPipelineRef{};
   bool shadowCaster = false;
+  bool cutCaster = false;
 };
 // Keyed by pipeline ref (the config's hash); entries stay valid until the config's pipeline is
 // dropped, which gfx::touch_pipeline reports.
@@ -142,6 +144,10 @@ struct DrawCache {
   // The sun's shadow-map pipeline, for a draw that casts (GXPortSetShadowCaster)
   gfx::PipelineRef shadowPipelineRef{};
   bool shadowCaster = false;
+  // A cutout caster's own texture group: the receiver layout holds the shadow map being drawn into.
+  gfx::PipelineRef cutPipelineRef{};
+  bool cutCaster = false;
+  GXBindGroups cutBindGroups{};
   GXBindGroups bindGroups{};
   uint64_t bindGeneration = 0;
   GXVtxFmt fmt = GX_MAX_VTXFMT;
@@ -493,12 +499,15 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     const gfx::PipelineRef ref = xxh3_hash(cache.config, static_cast<HashType>(gfx::ShaderType::GX));
     auto memoIt = sPipelineMemo.find(ref);
     if (memoIt != sPipelineMemo.end() && gfx::touch_pipeline(ref) &&
-        (!memoIt->second.shadowCaster || gfx::touch_pipeline(memoIt->second.shadowPipelineRef))) {
+        (!memoIt->second.shadowCaster || gfx::touch_pipeline(memoIt->second.shadowPipelineRef)) &&
+        (!memoIt->second.cutCaster || gfx::touch_pipeline(memoIt->second.cutPipelineRef))) {
       const auto& memo = memoIt->second;
       cache.shaderInfo = memo.shaderInfo;
       cache.pipelineRef = ref;
       cache.shadowCaster = memo.shadowCaster;
       cache.shadowPipelineRef = memo.shadowPipelineRef;
+      cache.cutPipelineRef = memo.cutPipelineRef;
+      cache.cutCaster = memo.cutCaster;
     } else {
       cache.shaderInfo = build_shader_info(cache.config.shaderConfig);
       warn_missing_uv_sets(cache.config.shaderConfig, cache.shaderInfo);
@@ -517,10 +526,20 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
         shadowConfig.msaaSamples = 1;
         cache.shadowPipelineRef = gfx::pipeline_ref(shadowConfig);
       }
+      // A Remastered cutout (the PBR cut bit of a draw's mode) casts through its own cut test.
+      cache.cutCaster = cache.shadowCaster && sc.pbr != 0 && sc.shadow && shader_has_cut_caster(sc);
+      if (cache.cutCaster) {
+        PipelineConfig cutConfig = cache.config;
+        cutConfig.shadowPass = 2;
+        cutConfig.msaaSamples = 1;
+        cache.cutPipelineRef = gfx::pipeline_ref(cutConfig);
+      }
       sPipelineMemo.insert_or_assign(cache.pipelineRef, PipelineMemo{
                                                             .shaderInfo = cache.shaderInfo,
                                                             .shadowPipelineRef = cache.shadowPipelineRef,
+                                                            .cutPipelineRef = cache.cutPipelineRef,
                                                             .shadowCaster = cache.shadowCaster,
+                                                            .cutCaster = cache.cutCaster,
                                                         });
     }
     cache.fmt = fmt;
@@ -530,7 +549,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     if (!hadPipeline || prevSampledTextures != cache.shaderInfo.sampledTextures ||
         prevSampledIndTextures != cache.shaderInfo.sampledIndTextures ||
         prevUsesVolFog != cache.shaderInfo.usesVolFog || prevUsesLightmap != cache.shaderInfo.usesLightmap ||
-        prevShadowReceive != cache.shaderInfo.shadowReceive) {
+        prevShadowReceive != cache.shaderInfo.shadowReceive || cache.cutCaster) {
       cache.bindGeneration = 0;
     }
   }
@@ -543,6 +562,11 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     const auto prevBindGroup = cache.bindGroups.textureBindGroup;
     resolve_sampled_textures(cache.shaderInfo);
     cache.bindGroups = build_bind_groups(cache.shaderInfo);
+    if (cache.cutCaster) {
+      ShaderInfo plain = cache.shaderInfo;
+      plain.shadowReceive = false;
+      cache.cutBindGroups = build_bind_groups(plain);
+    }
     cache.bindGeneration = texture::current_bind_generation();
     state.dirty &= ~DirtyTextures;
     // For texture_size_bias uniform
@@ -605,6 +629,11 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     DrawData caster = draw;
     caster.pipeline = cache.shadowPipelineRef;
     caster.bindGroups = {};
+    // The PBR mode's cut bit (512): the colour pass discards the pixel, so it casts no shadow either.
+    if (cache.cutCaster && (static_cast<u32>(std::max(state.pbrBacklight.w(), 0.f)) & 512u) != 0) {
+      caster.pipeline = cache.cutPipelineRef;
+      caster.bindGroups = cache.cutBindGroups;
+    }
     gfx::shadow::add_caster(caster);
   }
 }

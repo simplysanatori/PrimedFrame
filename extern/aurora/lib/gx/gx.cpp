@@ -357,18 +357,27 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
         .depthBias = 2,
         .depthBiasSlopeScale = 4.0f,
     };
+    // Pass 2 alpha-tests (a Remastered cutout): its fragment stage samples the draw's own textures, so it
+    // takes the colour pass's plain texture layout (never the receiver one, which holds this map) and has no colour target.
+    const bool cut = config.shadowPass == 2;
+    const wgpu::FragmentState cutFragment{
+        .module = shader,
+        .entryPoint = "fs_shadow",
+        .targetCount = 0,
+    };
     const wgpu::RenderPipelineDescriptor descriptor{
         .label = label,
-        .layout = sShadowPipelineLayout,
+        .layout = cut ? sPipelineLayout : sShadowPipelineLayout,
         .vertex =
             {
                 .module = shader,
-                .entryPoint = "vs_shadow",
+                .entryPoint = cut ? "vs_shadow_cut" : "vs_shadow",
                 .bufferCount = static_cast<uint32_t>(vtxBuffers.size()),
                 .buffers = vtxBuffers.data(),
             },
         .primitive = to_primitive_state(config.cullMode),
         .depthStencil = &depthStencil,
+        .fragment = cut ? &cutFragment : nullptr,
     };
     return g_device.CreateRenderPipeline(&descriptor);
   }
