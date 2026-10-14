@@ -46,15 +46,20 @@ static const float skTransitionFilterTime = .95f;
 static bool sFastMorphAirCarry = false;
 // Remastered movement under direct aim (PortDebug::RemasteredMovement), set by
 // ComputeMovement: one force along the stick, and GetDampedClampedVelocityWR
-// slows the planar speed as a whole, with Remastered's air drag in every air
-// state. Retail skips the friction while a jump rises, so the speed dips at
-// takeoff and recovers at the apex (issue #46); Remastered and PrimeHack don't.
+// slows the planar speed as a whole, with Remastered's air drag in a fall.
+// Retail skips the friction while a jump rises, so the speed dips at takeoff
+// and recovers at the apex (issue #46); jumps keep that (sJumpAirCarry).
 static bool sPlanarMovement = false;
 // Set while airborne once an orbit was held (a scan dash or strafe jump): the
 // rest of that airtime moves as retail, whose rising jump keeps the dash's
 // speed (Remastered's drag took a dash from 20 to 13 u/s), so dash tricks
 // such as Space Jump early still carry. Cleared on landing.
 static bool sOrbitAirCarry = false;
+// Set once a jump takes off, cleared on landing: the jump moves as retail.
+// Remastered's air drag holds the air speed near 11.5 where retail's rise
+// climbs toward 16.5, so running Space Jumps fell short (Phendrana
+// Observatory's bomb slot ledge, issue #114). A walk off a ledge stays planar.
+static bool sJumpAirCarry = false;
 #endif
 
 static const CMaterialList BallTransitionInclude = CMaterialList(kMT_Solid);
@@ -359,11 +364,18 @@ void CPlayer::ComputeMovement(const CFinalInput& input, CStateManager& mgr, floa
 #ifdef TARGET_PC
   if (x258_movementState == NPlayer::kMS_OnGround) {
     sOrbitAirCarry = false;
-  } else if (x304_orbitState != kOS_NoOrbit) {
-    sOrbitAirCarry = true;
+    sJumpAirCarry = false;
+  } else {
+    if (x304_orbitState != kOS_NoOrbit) {
+      sOrbitAirCarry = true;
+    }
+    if (x258_movementState == NPlayer::kMS_Jump ||
+        x258_movementState == NPlayer::kMS_ApplyJump) {
+      sJumpAirCarry = true;
+    }
   }
-  sPlanarMovement =
-      MouseControlsAllowed(mgr) && PortDebug::RemasteredMovement() && !sOrbitAirCarry;
+  sPlanarMovement = MouseControlsAllowed(mgr) && PortDebug::RemasteredMovement() &&
+                    !sOrbitAirCarry && !sJumpAirCarry;
 #endif
   float turnInput = mouseMovement ? 0.f : TurnInput(input);
   float forwardInput = ForwardInput(input, turnInput);
