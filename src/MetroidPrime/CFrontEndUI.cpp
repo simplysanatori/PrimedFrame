@@ -2375,6 +2375,9 @@ void CFrontEndUI::ProcessUserInput(const CFinalInput& padInput, CArchitectureQue
     }
     return;
   }
+  // The whole front end but the NES emulator is a pointer screen: the touch
+  // overlay keeps its gameplay buttons hidden through loading, movies and fades.
+  const bool pointerScreen = xec_emuFrme.get() == nullptr && PortPointerMenu::Begin();
 #endif
   if (gpMain->GetCardBusy())
     return;
@@ -2386,8 +2389,15 @@ void CFrontEndUI::ProcessUserInput(const CFinalInput& padInput, CArchitectureQue
     return;
   }
 
-  if (x14_phase != kP_DisplayFrontEnd)
+  if (x14_phase != kP_DisplayFrontEnd) {
+#ifdef TARGET_PC
+    // A tap while loading or fading out must not land on the next screen.
+    if (pointerScreen) {
+      PortPointerMenu::TakeClick();
+    }
+#endif
     return;
+  }
   if (input.ControllerNumber() != 0)
     return;
 
@@ -2397,7 +2407,7 @@ void CFrontEndUI::ProcessUserInput(const CFinalInput& padInput, CArchitectureQue
   const bool clickIsA = x54_nextScreen == kS_AttractMovie ||
                         (x50_curScreen == kS_OpenCredits && x54_nextScreen == kS_Title) ||
                         (x50_curScreen == kS_Title && x54_nextScreen == kS_Title);
-  if (clickIsA && PortPointerMenu::Begin() && PortPointerMenu::TakeClick()) {
+  if (clickIsA && pointerScreen && PortPointerMenu::TakeClick()) {
     PortPointerMenu::PressA(input);
   }
 #endif

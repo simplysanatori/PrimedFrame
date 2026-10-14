@@ -404,6 +404,7 @@ final class TouchControlsView extends View {
     // shows, and every other finger goes to the SDL surface for the game.
     private boolean pointerMenuNow;
     private final RectF backButtonRect = new RectF();
+    private final RectF cogButtonRect = new RectF();
     private final Runnable mapButtonPoll = new Runnable() {
         @Override
         public void run() {
@@ -624,6 +625,12 @@ final class TouchControlsView extends View {
         if (pointerMenuNow) {
             bottomButtonRect(0, false, width, height, backButtonRect);
             drawBackButton(canvas);
+            // The cog stays beside it, so the overlay opens from any menu.
+            bottomButtonRect(1, false, width, height, cogButtonRect);
+            final boolean cogDown = held.containsKey(TOGGLE_DEBUG_OVERLAY);
+            fillPaint.setColor(cogDown ? 0xCC48C8E8 : 0x99081218);
+            strokePaint.setColor(cogDown ? 0xFFE1F8FF : 0xCCFFFFFF);
+            drawCornerButton(canvas, 1, cogButtonRect);
             removeCallbacks(mapButtonPoll);
             postDelayed(mapButtonPoll, MAP_BUTTON_POLL_MS);
             return;
@@ -744,6 +751,11 @@ final class TouchControlsView extends View {
         return pointerMenuNow && !hidden && !autoHidden && backButtonRect.contains(x, y);
     }
 
+    // The cog beside it, where MENU sits.
+    private boolean onCogButton(float x, float y) {
+        return pointerMenuNow && !hidden && !autoHidden && cogButtonRect.contains(x, y);
+    }
+
     // A round button with a left arrow: B in the game's menus and map.
     private void drawBackButton(Canvas canvas) {
         final float cx = backButtonRect.centerX();
@@ -830,10 +842,12 @@ final class TouchControlsView extends View {
         if (overlayVisible && (!targets.isEmpty() || !held.isEmpty())) {
             releaseAll();
         }
-        // In a pointer menu every finger but one on the back button is the game's.
+        // In a pointer menu every finger but one on the back or cog button is the game's.
         final boolean menu = !overlayVisible && nativePointerMenuActive();
+        final float actionX = event.getX(actionIndex);
+        final float actionY = event.getY(actionIndex);
         final boolean toGame = overlayVisible ||
-            (menu && !onBackButton(event.getX(actionIndex), event.getY(actionIndex)));
+            (menu && !onBackButton(actionX, actionY) && !onCogButton(actionX, actionY));
         if (action == MotionEvent.ACTION_DOWN) {
             cancelForwarded(event);
             if (toGame) {
@@ -882,9 +896,10 @@ final class TouchControlsView extends View {
             float x = event.getX(actionIndex);
             float y = event.getY(actionIndex);
             if (menu) {
-                // Only the back button gets here (toGame took the rest).
-                targets.put(pointerId, new TouchTarget(BUTTON, BTN_EAST));
-                pressControl(BTN_EAST);
+                // Only the back and cog buttons get here (toGame took the rest).
+                final int id = onCogButton(x, y) ? TOGGLE_DEBUG_OVERLAY : BTN_EAST;
+                targets.put(pointerId, new TouchTarget(BUTTON, id));
+                pressControl(id);
                 invalidate();
                 return true;
             }

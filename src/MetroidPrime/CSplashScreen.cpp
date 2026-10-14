@@ -16,6 +16,7 @@
 
 #include "port_debug.h"
 #ifdef TARGET_PC
+#include "port_pointer_menu.h"
 #include "port_savestate.h"
 #endif
 
@@ -115,9 +116,21 @@ CIOWin::EMessageReturn CSplashScreen::OnMessage(const CArchitectureMessage& mess
     }
     break;
   }
-  case kAM_UserInput:
+  case kAM_UserInput: {
+#ifdef TARGET_PC
+    // Port: a pointer screen, so touch hides its gameplay buttons.
+    const bool pointerScreen = PortPointerMenu::Begin();
+#endif
     if (mTexturesLoaded) {
+#ifdef TARGET_PC
+      // Port: a click or tap is A.
+      CFinalInput input = MakeMsg::GetParmUserInput(message).GetUserInput();
+      if (pointerScreen && PortPointerMenu::TakeClick()) {
+        PortPointerMenu::PressA(input);
+      }
+#else
       const CFinalInput& input = MakeMsg::GetParmUserInput(message).GetUserInput();
+#endif
       if (mProgressivePhase == kPP_Selection) {
         if (input.DLALeft() || input.DDPLeft()) {
           mProgressiveMode = true;
@@ -142,6 +155,7 @@ CIOWin::EMessageReturn CSplashScreen::OnMessage(const CArchitectureMessage& mess
 #endif
     }
     break;
+  }
   default:
     break;
   }
