@@ -1156,9 +1156,21 @@ bool ReadCharacter(const std::vector<uint8_t>& chpr, Character& out, std::string
       anim.name = animNames.size() == recs.size() ? animNames[i] : std::string();
       out.anims.push_back(std::move(anim));
     }
-    // After the last record come a few fixed fields, a 16 byte reference (not the
-    // skinned model) and then the SMDL reference, 0x22 bytes past the last record.
-    const size_t smdl = recs.back().end + 0x22;
+    // After the last record come the SAnchorInfo list (12 bytes each) and then the
+    // SModelNode list of CCharInfo: CPooledName (bool, u32 if set), i32 0, i32 -1, the
+    // node guid and the SMDL guid (45 bytes with the name flag). The anchor count is in
+    // a header far before, so find it as the one count whose first node is well formed;
+    // the chain end of the last record is 7 bytes past the real end of the animation.
+    // One anchor puts the SMDL 0x22 bytes past that end, which is the fallback.
+    size_t smdl = recs.back().end + 0x22;
+    for (size_t anchors = 0; anchors <= 8; ++anchors) {
+      const size_t node = recs.back().end - 7 + 12 * anchors;
+      if (d.Has(node, 45) && d.data[node] == 1 && ReadLE32(d.data + node + 5) == 0 &&
+          (ReadLE32(d.data + node + 9) == 0xffffffffu || ReadLE32(d.data + node + 9) == 0)) {
+        smdl = node + 29;
+        break;
+      }
+    }
     if (d.Has(smdl, 16)) {
       std::copy(d.data + smdl, d.data + smdl + 16, out.skinnedModel.begin());
     }

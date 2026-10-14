@@ -179,6 +179,30 @@ void Run(const char* what, int records, bool tinyTail, bool pools = false, bool 
     Check(!c.anims.empty() && !c.anims[0].tracked.empty() && c.anims[0].tracked[0], "bone 0 is driven");
   }
 }
+
+// A two-anchor character: the model list starts 12 bytes later than with one anchor, and
+// the SMDL is the second guid of the first node, not the 16 bytes at a fixed distance.
+void RunAnchors(size_t anchors) {
+  std::vector<uint8_t> f = File(1, false, false, false);
+  // The chain end is the file end here (the 7 pad bytes belong to the record's length).
+  const size_t node = f.size() - 7 + 12 * anchors;
+  f.resize(node, 0);
+  f.push_back(1);
+  Le(f, 0, 4);
+  Le(f, 0, 4);
+  Le(f, 0xffffffffu, 4);
+  for (int i = 0; i < 16; ++i) {
+    f.push_back(uint8_t(0x10 + i));  // the node guid
+  }
+  for (int i = 0; i < 16; ++i) {
+    f.push_back(uint8_t(0xa0 + i));  // the SMDL
+  }
+  f.resize(f.size() + 64, 0);
+  PortRemasteredAnim::Character c;
+  std::string error;
+  Check(PortRemasteredAnim::ReadCharacter(f, c, error), "anchor test reads");
+  Check(c.skinnedModel[0] == 0xa0 && c.skinnedModel[15] == 0xaf, "SMDL is the node's second guid");
+}
 }  // namespace
 
 int main() {
@@ -186,5 +210,7 @@ int main() {
   Run("two records and a tiny false record", 2, true);
   Run("stream names pool 1 of 2, list far before the records", 1, false, true);
   Run("bone ops beside real32, int32 and one-bit values", 1, false, false, true);
+  RunAnchors(1);
+  RunAnchors(2);
   return sFailures == 0 ? 0 : 1;
 }
