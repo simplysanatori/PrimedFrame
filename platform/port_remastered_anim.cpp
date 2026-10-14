@@ -118,6 +118,9 @@ Quat RotLerp2(const Quat& a, Quat b, double t) {
 // One value of a track (a rotation, or for the vec3 track types a translation or scale):
 // how to dequantize it and the two keyframes it is currently interpolating between.
 struct Value {
+  bool custom = false;  // types 3 to 5: only a bit count in the data stream, no bone
+  int realExp = 0;  // type 4: the value is cur / 2^realExp (tween_real32 0xba35d0)
+  int customBits = 0;  // bits the data stream holds per keyframe of this value
   bool vec = false;  // a vec3 value: no flag7 or sign bits, one to three components
   int W = 0;  // bits per component
   int q = 0;  // fixed-point shift
@@ -149,10 +152,6 @@ struct StreamInfo {
   uint32_t u6 = 0;  // bits flagging a keyframe change per frame
   uint32_t ctx = 0;  // index of the constant pool this stream reads (InitConstData)
   std::vector<Track> tracks;
-  // Types 3 to 5 (bool words, custom real32/int32 variables) never touch a bone, and their
-  // value layout (NAnimOp::dquant_bits and friends) is not decoded: a stream that has values
-  // of those types can only be skipped, not decoded.
-  bool undecodable = false;
 };
 
 // Blob layout: 24 byte header, header bits, init-dequant bit stream, then per stream info a
@@ -205,7 +204,10 @@ std::vector<StreamInfo> ParseBlob(const Bytes& d, size_t base) {
       t.boolWords = extra;
       t.flag = int(flag);
       t.values.resize(count);
-      info.undecodable = info.undecodable || (type > 2 && count != 0);
+      for (Value& val : t.values) {
+        val.custom = type > 2;
+        val.customBits = type == 3 ? 1 : 0;  // 4 and 5 get their width in InitDequant
+      }
       info.tracks.push_back(std::move(t));
     }
     if (hasConsts) {
@@ -278,11 +280,16 @@ void InitDequant(std::vector<StreamInfo>& infos) {
           val.mask = 1;
         }
       }
-    } else if (op == 4) {  // real32 values: two 5 bit fields and a flag
-      for (size_t k = 0; k < track.values.size(); ++k) {
-        bs.Read(5);
-        bs.Read(5);
-        bs.Read(1);
+    } else if (op == 4) {  // real32 values: bit width, fraction exponent, signed flag
+      // NAnimComp::init_dequant_real32 0xbb7bf0 stores them; dquant_int32_and_real32_gen
+      // 0xba2cc0 reads `width` bits per keyframe. The exponent and flag only shape the value.
+      if (track.type != 4) {
+        Fail("init-dequant real32 names a track of another type");
+      }
+      for (Value& val : track.values) {
+        val.customBits = int(bs.Read(5));
+        val.realExp = int(bs.Read(5));
+        val.isSigned = int(bs.Read(1));
       }
     } else if (op == 5) {  // bool: 12 bit word count, then a flag plus 16 bits each
       const uint32_t entries = bs.Read(12);
@@ -290,10 +297,13 @@ void InitDequant(std::vector<StreamInfo>& infos) {
         bs.Read(1);
         bs.Read(16);
       }
-    } else {  // 6: int32 values, a 5 bit field and a flag
-      for (size_t k = 0; k < track.values.size(); ++k) {
-        bs.Read(5);
-        bs.Read(1);
+    } else {  // 6: int32 values, bit width and signed flag (init_dequant_int32 0xbb7e90)
+      if (track.type != 5) {
+        Fail("init-dequant int32 names a track of another type");
+      }
+      for (Value& val : track.values) {
+        val.customBits = int(bs.Read(5));
+        val.isSigned = int(bs.Read(1));
       }
     }
   }
@@ -368,6 +378,18 @@ private:
 
   void Load(const std::vector<Value*>& list) {
     for (Value* val : list) {
+      if (val->custom) {
+        // NAnimOp::dquant_bits 0xba2de0 (type 3: one bit per value) and
+        // dquant_int32_and_real32_gen (types 4, 5: `width` bits) only fill custom variables.
+        // The int32 read sign-extends when the init flag is set (dquant_int32_and_real32_gen).
+        int64_t x = int64_t(m_bs.Read(val->customBits));
+        if (val->isSigned) {
+          x = SignExtend(x, val->customBits);
+        }
+        val->prev[0] = val->cur[0];
+        val->cur[0] = x;
+        continue;
+      }
       for (int i = 0; i < 3; ++i) {
         val->prev[i] = val->cur[i];
         val->cur[i] = 0;
@@ -433,6 +455,17 @@ std::array<double, 3> TweenVec3(const Value& val, int64_t t) {
   const double frac = double(t - val.curFrame) * val.inv;
   return {prev[0] + (cur[0] - prev[0]) * frac, prev[1] + (cur[1] - prev[1]) * frac,
           prev[2] + (cur[2] - prev[2]) * frac};
+}
+
+// A type 4 (real32) value at frame time t: linear between the two keyframes.
+double TweenReal(const Value& val, int64_t t) {
+  const double scale = std::ldexp(1.0, -val.realExp);
+  const double prev = F32(double(val.prev[0]) * scale);
+  if (t == val.curFrame) {
+    return prev;
+  }
+  const double cur = F32(double(val.cur[0]) * scale);
+  return prev + (cur - prev) * (double(t - val.curFrame) * val.inv);
 }
 
 // One entry of the op stream: which bone, and where its rotation, scale and
@@ -684,12 +717,20 @@ void Evaluate(const StreamInfo& info, const std::vector<Op>& ops, const std::vec
       // left at the fragment's default, a delta of zero
     } else if (op.scale & 0x8000) {
       if (op.scale & 0x4000) {
-        Fail("single-real scale tracks are not supported");
+        // tween_scale_for_coords 0xba3be0: one real32 value for all three axes.
+        const size_t track = (op.scale >> 10) & 0xf;
+        const size_t index = op.scale & 0x3ff;
+        if (track >= info.tracks.size() || index >= info.tracks[track].values.size() ||
+            info.tracks[track].type != 4) {
+          Fail("a single-real scale names a value that is not a real32");
+        }
+        sc[0] = sc[1] = sc[2] = TweenReal(info.tracks[track].values[index], t);
+      } else {
+        const std::array<double, 3> v = vecTrack(op.scale);
+        sc[0] = v[0];
+        sc[1] = v[1];
+        sc[2] = v[2];
       }
-      const std::array<double, 3> v = vecTrack(op.scale);
-      sc[0] = v[0];
-      sc[1] = v[1];
-      sc[2] = v[2];
     } else if (op.scale & 0x4000) {
       sc[0] = sc[1] = sc[2] = *poolAt(op.scale & 0x3fff, 1);
     } else {
@@ -732,9 +773,6 @@ Anim DecodeAnim(const Bytes& d, const Record& rec,
     std::vector<Op> ops = ParseOps(info);
     if (ops.empty()) {
       continue;  // custom variables and bool words only: nothing for the skeleton
-    }
-    if (info.undecodable) {
-      Fail("a stream with bone ops also holds bool or custom variable values");
     }
     active.push_back({&info, std::move(ops)});
   }

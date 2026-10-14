@@ -42,22 +42,36 @@ void Le(std::vector<uint8_t>& v, uint32_t x, int bytes) {
 // Stream 0: no tracks, one op stream group `sub-op 3, 1 entry` (a rotation and a translation
 // pool reference). Stream 1: one type 3 track (bool words, extra 1) and an op stream with a
 // sub-op 4 (a byte, the track index, one u16 word).
-std::vector<uint8_t> Blob(uint32_t ctx0) {
+std::vector<uint8_t> Blob(uint32_t ctx0, bool mixed) {
   Bits h;  // header bits
   h.Put(2, 4);
   h.Put(1, 10);
   h.Put(0, 4);
-  const uint32_t w1[2] = {0x34, 0x44};
-  const uint32_t w2[2] = {0x38, 0x48};
+  const uint32_t pad = mixed ? 32 : 0;  // room for the longer header and init-dequant bits
+  const uint32_t w1[2] = {0x34 + pad, 0x44 + pad};
+  const uint32_t w2[2] = {0x38 + pad, 0x48 + pad};
   for (int s = 0; s < 2; ++s) {
     h.Put(w1[s], 20);
     h.Put(w2[s], 20);
-    h.Put(s, 4);  // tracks
+    h.Put(s == 0 && mixed ? 3 : s, 4);  // tracks
     h.Put(0, 1);
     h.Put(0, 1);
     h.Put(1, 4);  // v
     h.Put(0, 4);  // u6
     h.Put(s == 0 ? ctx0 : 0, 4);  // constant pool index
+    if (s == 0 && mixed) {
+      // Variable values next to the bone ops: real32, int32 and a one-bit value.
+      h.Put(1, 10);
+      h.Put(4, 3);
+      h.Put(0, 1);
+      h.Put(1, 10);
+      h.Put(5, 3);
+      h.Put(0, 1);
+      h.Put(1, 10);
+      h.Put(3, 3);
+      h.Put(0, 1);
+      h.Put(1, 6);
+    }
     if (s == 1) {
       h.Put(1, 10);  // count
       h.Put(3, 3);   // type: bool words
@@ -66,6 +80,19 @@ std::vector<uint8_t> Blob(uint32_t ctx0) {
     }
   }
   Bits init;
+  if (mixed) {
+    init.Put(0, 4);  // select stream 0
+    init.Put(0, 4);
+    init.Put(4, 4);  // track 0: real32, 8 bits, exponent 2, signed
+    init.Put(0, 4);
+    init.Put(8, 5);
+    init.Put(2, 5);
+    init.Put(1, 1);
+    init.Put(6, 4);  // track 1: int32, 6 bits, signed
+    init.Put(1, 4);
+    init.Put(6, 5);
+    init.Put(1, 1);
+  }
   init.Put(0, 4);  // select stream
   init.Put(1, 4);
   init.Put(5, 4);  // bool values
@@ -75,29 +102,29 @@ std::vector<uint8_t> Blob(uint32_t ctx0) {
   init.Put(0x1234, 16);
   init.Put(1, 4);  // done
   std::vector<uint8_t> b;
-  Le(b, 0x54, 4);
+  Le(b, 0x54 + pad, 4);
   Le(b, 0x18, 2);
-  Le(b, 0x2c, 2);  // init-dequant offset: not the usual 0x28
+  Le(b, 0x2c + pad / 2, 2);  // init-dequant offset: not the usual 0x28
   Le(b, 0, 4);
   Le(b, 0x3f800000, 4);  // rate 1.0
   Le(b, 1, 2);           // frames
   Le(b, 1, 4);
   Le(b, 0, 2);
   b.insert(b.end(), h.bytes.begin(), h.bytes.end());
-  b.resize(0x2c);
+  b.resize(0x2c + pad / 2);
   b.insert(b.end(), init.bytes.begin(), init.bytes.end());
-  b.resize(0x34);
-  b.resize(0x38, 0);  // stream 0 data
+  b.resize(0x34 + pad);
+  b.resize(0x38 + pad, 0);  // stream 0 data
   const uint8_t ops0[] = {1, 8, 0, 3, 1, 0, 0, 0, 0, 1, 0, 0};
   b.insert(b.end(), ops0, ops0 + sizeof ops0);
-  b.resize(0x48, 0);  // stream 1 data
+  b.resize(0x48 + pad, 0);  // stream 1 data
   const uint8_t ops1[] = {1, 5, 0, 4, 0, 0, 0x34, 0x12, 0};
   b.insert(b.end(), ops1, ops1 + sizeof ops1);
-  b.resize(0x54, 0);
+  b.resize(0x54 + pad, 0);
   return b;
 }
 
-std::vector<uint8_t> File(int records, bool tinyTail, bool pools) {
+std::vector<uint8_t> File(int records, bool tinyTail, bool pools, bool mixed) {
   std::vector<uint8_t> f(0x100, 0);
   std::memcpy(f.data(), "RFRM", 4);
   std::memcpy(f.data() + 0x14, "CHPR", 4);
@@ -119,7 +146,7 @@ std::vector<uint8_t> File(int records, bool tinyTail, bool pools) {
       p += 12;
     }
   }
-  const std::vector<uint8_t> blob = Blob(pools ? 1 : 0);
+  const std::vector<uint8_t> blob = Blob(pools ? 1 : 0, mixed);
   for (int r = 0; r < records; ++r) {
     f.push_back(1);
     Le(f, uint32_t(r + 1), 4);
@@ -138,10 +165,10 @@ std::vector<uint8_t> File(int records, bool tinyTail, bool pools) {
   return f;
 }
 
-void Run(const char* what, int records, bool tinyTail, bool pools = false) {
+void Run(const char* what, int records, bool tinyTail, bool pools = false, bool mixed = false) {
   PortRemasteredAnim::Character c;
   std::string error;
-  const bool ok = PortRemasteredAnim::ReadCharacter(File(records, tinyTail, pools), c, error);
+  const bool ok = PortRemasteredAnim::ReadCharacter(File(records, tinyTail, pools, mixed), c, error);
   if (!ok) {
     std::fprintf(stderr, "%s: %s\n", what, error.c_str());
   }
@@ -158,5 +185,6 @@ int main() {
   Run("single record, init-dequant offset 0x2c", 1, false);
   Run("two records and a tiny false record", 2, true);
   Run("stream names pool 1 of 2, list far before the records", 1, false, true);
+  Run("bone ops beside real32, int32 and one-bit values", 1, false, false, true);
   return sFailures == 0 ? 0 : 1;
 }
