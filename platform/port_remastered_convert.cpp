@@ -10,6 +10,7 @@
 #include "port_remastered_convert.h"
 #include "port_strings.h"
 #include "port_remastered_anuv.h"
+#include "port_visor_mesh.h"
 
 #include <algorithm>
 #include <array>
@@ -686,6 +687,7 @@ struct Prim {
   int rmat = 0;
   int omat = 0;
   bool litsBack = false;  // the back copy of a material with a positive LITS (see BackLightScale)
+  uint32_t visor = 0;     // PortVisorMesh::FromFlags of the mesh's flag word; 0 for most meshes
 };
 
 using WeightKey = std::vector<std::pair<uint32_t, double>>;
@@ -4046,6 +4048,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     Prim backPrim;
     p.buffer = mesh.vertexBuffer;
     p.mat = mesh.material;
+    p.visor = PortVisorMesh::FromFlags(uint32_t(mesh.unkC) | uint32_t(mesh.unkE) << 16);
     p.I = mesh.indices;
     p.I.resize(p.I.size() / 3 * 3);
     for (uint32_t i : p.I) {
@@ -4145,6 +4148,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         backPrim.buffer = p.buffer;
         backPrim.mat = p.mat;
         backPrim.litsBack = true;
+        backPrim.visor = p.visor;
         backPrim.I.assign(p.I.begin() + front, p.I.end());
         p.I.resize(front);
       }
@@ -5203,7 +5207,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         P32(s, useColor ? uint32_t(start) : 0);
         P32(s, uint32_t(start * k));
         P32(s, 0);
-        s.resize(s.size() + 16, 0);
+        P32(s, p.visor);  // disc 0x5c: ConvertSurfaceHeader reads it (0 = no filter bits)
+        s.resize(s.size() + 12, 0);
         Pad(s);
         Append(s, dl);
         surfs.push_back(std::move(s));
@@ -5287,6 +5292,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
       Pad(dl);
       // The mean of the surface's vertices, each once, in index order.
       double centre[3] = {0, 0, 0};
+      double lo[3] = {1e30, 1e30, 1e30}, hi[3] = {-1e30, -1e30, -1e30};
       size_t count = 0;
       for (size_t j = 0; j < n; ++j) {
         if (mark[j]) {
@@ -5294,6 +5300,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           const double* pos = &P[size_t(order[j]) * 3];
           for (int c = 0; c < 3; ++c) {
             centre[c] += pos[c];
+            lo[c] = std::min(lo[c], pos[c]);
+            hi[c] = std::max(hi[c], pos[c]);
           }
           ++count;
         }
@@ -5302,7 +5310,22 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
         c /= double(count);
       }
       Blob s;
-      SurfaceHeader(s, centre, uint32_t(p.omat), dl.size(), 0);
+      if (p.visor != 0) {
+        // A surface with filter bits needs the extra block that holds them (bounds, no base
+        // indices); the others keep the plain header.
+        SurfaceHeader(s, centre, uint32_t(p.omat), dl.size(), 64);
+        for (double v : lo) {
+          PF(s, v);
+        }
+        for (double v : hi) {
+          PF(s, v);
+        }
+        s.resize(s.size() + 24, 0);  // no PBIX block
+        P32(s, p.visor);
+        s.resize(s.size() + 12, 0);
+      } else {
+        SurfaceHeader(s, centre, uint32_t(p.omat), dl.size(), 0);
+      }
       Pad(s);
       Append(s, dl);
       surfs.push_back(std::move(s));
