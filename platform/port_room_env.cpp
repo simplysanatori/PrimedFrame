@@ -25,6 +25,7 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <mutex>
 #include <thread>
@@ -46,9 +47,25 @@ struct GpuVolume {
   uint32_t id = 0; // 0: not made yet (the worker is filling it in)
 };
 
+// A room's file as the loader thread leaves it.
+struct Loaded {
+  File file;
+  std::string error; // set when the file could not be read or parsed
+  bool ok = false;
+  std::vector<float> average; // per cube (CubeAverage)
+  std::vector<float> peak;
+};
+
 struct Area {
   File file;
   bool hasFile = false; // the file was read
+  // Load reads and parses the file on another thread; until Finish takes the result the area
+  // looks like one without a file, and the script states it is sent wait in `queued`.
+  std::future<Loaded> pending;
+  uint32_t pendingFrames = 0;
+  bool pendingFluid = false; // sPlayerFluid and sCameraWater when Load was called
+  bool pendingWater = false;
+  std::vector<std::pair<uint32_t, int>> queued; // sender, state
   uint32_t serial = 0;  // of this load, which the worker's jobs for it carry
   std::vector<GpuCube> cubes;
   std::vector<GpuVolume> volumes; // one a grid
@@ -331,6 +348,9 @@ float HalfToFloat(uint16_t h) {
 }
 
 void Free(Area& area) {
+  if (area.pending.valid()) {
+    area.pending.wait(); // the loader thread reads nothing of the area, but the future must not outlive it
+  }
   // Before the file goes: the worker may be reading it.
   sWorker.Cancel(area.serial);
   for (GpuCube& cube : area.cubes) {
@@ -824,7 +844,7 @@ void DriveGrades(uint32_t mrea, Area& area, uint32_t sender, int state) {
 }
 
 // Every grade and backlight as it starts, then the fluids the player and camera are in already.
-void StartGrades(uint32_t mrea, Area& area) {
+void StartGrades(uint32_t mrea, Area& area, bool playerFluid, bool cameraWater) {
   area.grades.assign(area.file.grades.size(), {});
   for (size_t i = 0; i < area.grades.size(); ++i) {
     area.grades[i].on = area.file.grades[i].on;
@@ -858,37 +878,96 @@ void StartGrades(uint32_t mrea, Area& area) {
       StartTransition(area, i);
     }
   }
-  if (sPlayerFluid) {
+  if (playerFluid) {
     DriveGrades(mrea, area, kSenderPlayerFluid, 0);
   }
-  if (sCameraWater) {
+  if (cameraWater) {
     DriveGrades(mrea, area, kSenderCameraWater, 0);
   }
 }
 
+// MP_ROOMENV_TIMING=1 logs where Load's time goes.
+bool LoadTiming() {
+  static const bool on = port::EnvFloat("MP_ROOMENV_TIMING", 0.f) != 0.f;
+  return on;
+}
+
+double MsSince(std::chrono::steady_clock::time_point t) {
+  return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+}
+
+// Reads and parses a room's file, and averages its cubes, on a thread of its own: the file
+// is up to 40 MB, which stalled the render thread for 140 ms when a room loaded cold.
+Loaded ReadRoomFile(const std::string& path) {
+  Loaded loaded;
+  std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
+  std::vector<uint8_t> data = ReadAll(in);
+  if (!in || !Parse(std::move(data), loaded.file, loaded.error)) {
+    if (loaded.error.empty()) {
+      loaded.error = "cannot read";
+    }
+    return loaded;
+  }
+  const size_t cubes = loaded.file.cubes.size();
+  loaded.average.resize(cubes);
+  loaded.peak.resize(cubes);
+  for (size_t i = 0; i < cubes; ++i) {
+    loaded.average[i] = CubeAverage(loaded.file, loaded.file.cubes[i], loaded.peak[i]);
+  }
+  loaded.ok = true;
+  return loaded;
+}
+
+// Starts the area's load; Finish completes it on the render thread.
 void Load(uint32_t mrea, Area& area) {
   area.hasGeo = !PortMods::RoomGeoPath(mrea).empty();
   const std::string path = PortMods::RoomEnvPath(mrea);
   if (path.empty()) {
     return;
   }
-  std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
-  std::vector<uint8_t> data = ReadAll(in);
-  std::string error;
-  if (!in || !Parse(std::move(data), area.file, error)) {
-    PortLog::Write("room env: %s: %s\n", path.c_str(), error.empty() ? "cannot read" : error.c_str());
-    area.file = {};
+  area.pendingFrames = 0;
+  area.pendingFluid = sPlayerFluid;
+  area.pendingWater = sCameraWater;
+  area.queued.clear();
+  try {
+    area.pending = std::async(std::launch::async, ReadRoomFile, path);
+  } catch (...) {
+    area.pending = std::async(std::launch::deferred, ReadRoomFile, path);
+  }
+}
+
+// Completes a load: takes the file from the loader thread (waiting for it if need be), then
+// does what Load did on the render thread, and sends the area the states it was sent since.
+void Finish(uint32_t mrea, Area& area) {
+  if (!area.pending.valid()) {
     return;
   }
+  const auto t0 = std::chrono::steady_clock::now();
+  Loaded loaded = area.pending.get();
+  const double waitMs = MsSince(t0);
+  if (!loaded.ok) {
+    PortLog::Write("room env: %s: %s\n", PortMods::RoomEnvPath(mrea).c_str(), loaded.error.c_str());
+    area.file = {};
+    area.queued.clear();
+    return;
+  }
+  const auto t1 = std::chrono::steady_clock::now();
+  area.file = std::move(loaded.file);
   area.cubes.resize(area.file.cubes.size());
   for (size_t i = 0; i < area.cubes.size(); ++i) {
-    area.cubes[i].average = CubeAverage(area.file, area.file.cubes[i], area.cubes[i].peak);
+    area.cubes[i].average = loaded.average[i];
+    area.cubes[i].peak = loaded.peak[i];
     // Black: nothing to reflect, and no exposure to set by it.
     area.cubes[i].failed = !(area.cubes[i].average > 1e-6f);
   }
   area.volumes.resize(area.file.grids.size());
-  StartGrades(mrea, area);
+  StartGrades(mrea, area, area.pendingFluid, area.pendingWater);
   area.exposure = RoomExposure(area);
+  if (LoadTiming()) {
+    PortLog::Write("room env timing: %08X finish: waited %.2f ms for the loader, then %.2f ms (%zu cubes, %zu grids, "
+                   "pending %u frames)\n",
+                   mrea, waitMs, MsSince(t1), area.file.cubes.size(), area.file.grids.size(), area.pendingFrames);
+  }
   const float* const t = area.file.tonemap;
   if (area.exposure > 0.f && t[1] > 0.f && t[1] < 1.f) {
     BuildTone(t[1], area.file.contrast, t[2], t[3], area.tone);
@@ -926,6 +1005,29 @@ void Load(uint32_t mrea, Area& area) {
   // Drops the cubes' and lightmap's blocks once they are made.
   if (!area.file.cubes.empty() || lightmapFits) {
     sWorker.Submit({JobKind::Keep, mrea, area.serial, 0, &area.file});
+  }
+  std::vector<std::pair<uint32_t, int>> queued;
+  queued.swap(area.queued);
+  for (const auto& [sender, state] : queued) {
+    DriveGrades(mrea, area, sender, state);
+  }
+  Invalidate();
+}
+
+// Completes the loads that are ready, and any that must be: the room the camera is in (it
+// draws this frame), and one that has waited so long a draw may need it.
+void FinishLoads() {
+  constexpr uint32_t kMaxPendingFrames = 8;
+  for (auto& [mrea, area] : sAreas) {
+    if (!area.pending.valid()) {
+      continue;
+    }
+    const bool ready = area.pending.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+    if (ready || mrea == sViewArea || area.pendingFrames >= kMaxPendingFrames) {
+      Finish(mrea, area);
+    } else {
+      ++area.pendingFrames;
+    }
   }
 }
 
@@ -1222,8 +1324,14 @@ void TakeResults() {
       if (sNextVolume == 0) {
         sNextVolume = 1;
       }
-      GXCreatePBRVolume(gpuVolume.id, grid.size[0], grid.size[1], grid.size[2], result.volume.data(),
-                        uint32_t(result.volume.size()));
+      const auto tv = std::chrono::steady_clock::now();
+      const size_t volumeBytes = result.volume.size();
+      GXCreatePBRVolumeOwned(gpuVolume.id, grid.size[0], grid.size[1], grid.size[2],
+                             new std::vector<uint8_t>(std::move(result.volume)));
+      if (LoadTiming()) {
+        PortLog::Write("room env timing: %08X GXCreatePBRVolume %.2f ms (%zu bytes)\n", result.area, MsSince(tv),
+                       volumeBytes);
+      }
       PortLog::Write("room env: %08X volume %u %ux%ux%u average %g\n", result.area, gpuVolume.id, grid.size[0],
                      grid.size[1], grid.size[2], grid.average);
     }
@@ -1428,6 +1536,7 @@ void UpdateFrame(bool roomGeoDrawing) {
   constexpr float kGrey = 0.2158605f; // sRGB 128, linear
   constexpr uint32_t kInFlight = 3;   // readbacks Aurora may have queued
   using Clock = std::chrono::steady_clock;
+  FinishLoads();
   TakeResults();
   // The exposure moves every frame, so a model's last answer is stale.
   sLastValid = false;
@@ -2439,12 +2548,20 @@ void OnScriptState(uint32_t mrea, uint32_t sender, int state) {
     Load(mrea, found->second);
     Invalidate();
   }
+  if (found->second.pending.valid()) {
+    found->second.queued.emplace_back(sender, state);
+    return;
+  }
   DriveGrades(mrea, found->second, sender, state);
 }
 
 void SendScriptState(uint32_t sender, int state) {
   for (auto& [mrea, area] : sAreas) {
-    DriveGrades(mrea, area, sender, state);
+    if (area.pending.valid()) {
+      area.queued.emplace_back(sender, state);
+    } else {
+      DriveGrades(mrea, area, sender, state);
+    }
   }
 }
 
@@ -2471,7 +2588,13 @@ void ResetGrades() {
   sBacklight = {};
   sFog = {};
   for (auto& [mrea, area] : sAreas) {
-    StartGrades(mrea, area);
+    // A load still waiting for its file starts its grades when it finishes.
+    if (!area.pending.valid()) {
+      StartGrades(mrea, area, false, false);
+    } else {
+      area.pendingFluid = area.pendingWater = false;
+      area.queued.clear();
+    }
   }
 }
 
@@ -2531,6 +2654,11 @@ void SetViewArea(uint32_t mrea) {
   if (sViewArea != mrea) {
     sViewArea = mrea;
     sLastValid = false;
+    // It draws this frame: no waiting for its file past here.
+    const auto found = sAreas.find(mrea);
+    if (found != sAreas.end()) {
+      Finish(mrea, found->second);
+    }
   }
 }
 

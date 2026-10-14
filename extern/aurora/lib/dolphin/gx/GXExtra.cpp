@@ -578,6 +578,15 @@ void GXCreatePBRVolume(u32 id, u32 sizeX, u32 sizeY, u32 sizeZ, const void* texe
   GX_WRITE_U64(reinterpret_cast<u64>(copy));
 }
 
+extern "C++" void GXCreatePBRVolumeOwned(u32 id, u32 sizeX, u32 sizeY, u32 sizeZ, void* owned) {
+  GX_WRITE_AURORA(GX_AURORA_CREATE_PBR_VOLUME);
+  GX_WRITE_U32(id);
+  GX_WRITE_U32(sizeX);
+  GX_WRITE_U32(sizeY);
+  GX_WRITE_U32(sizeZ);
+  GX_WRITE_U64(reinterpret_cast<u64>(owned));
+}
+
 void GXDestroyPBRVolume(u32 id) {
   GX_WRITE_AURORA(GX_AURORA_DESTROY_PBR_VOLUME);
   GX_WRITE_U32(id);
