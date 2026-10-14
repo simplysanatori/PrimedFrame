@@ -359,6 +359,11 @@ void GXColor4f32(float r, float g, float b, float a);
 #ifdef __cplusplus
 }
 #endif
+#ifdef __cplusplus
+// As GXCreatePBRVolume, taking the texels' buffer (a std::vector<u8>*, freed by the processor)
+// instead of copying it.
+extern "C++" void GXCreatePBRVolumeOwned(u32 id, u32 sizeX, u32 sizeY, u32 sizeZ, void* owned);
+#endif
 #endif
 
 #endif
