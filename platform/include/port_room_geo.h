@@ -20,7 +20,7 @@ class CVector3f;
 // them in place of the area's own world geometry.
 //
 // The file is little endian:
-//   'MPRG', u32 version (1 to 10), u32 instances
+//   'MPRG', u32 version (1 to 11), u32 instances
 //   instance: u32 CMDL id, f32 transform[12] (rows of model -> area)
 //     version 2 adds: u8 layer, u8 active, u16 links,
 //     version 3 (and 4) then: u32 platform, f32 platformStart[3],
@@ -87,6 +87,16 @@ class CVector3f;
 // takes it from the instance's vec4(offU, offV, scale, 0). Scale 0 with an offset is one texel
 // for the whole model (Remastered's props: 17,969 of its MCON instances); all three 0: none.
 // The section is left out when no instance has a lookup.
+//
+// Version 11 may then end with the instances a Remastered float driver (a RealNumberDriver
+// feeding a material variable) moves one of the material's parameters of:
+//   'WDRV', u32 count (1 or more), per driven instance:
+//     u32 instance, u8 slot (0 to 3: the kind parameter, as the PBR record's), u8 0,
+//     u16 start delay (1/100 s), u32 sender, u8 state, u8[3] 0, u32 spline bytes, the spline
+//     (PortMayaSpline's raw form)
+// The driver starts (again) the delay after the retail object `sender` sends `state`, as its
+// ResetAndStart does, and runs in game time. Until it starts the parameter is the spline at its
+// first key; after its last key it holds that key. The instances' materials are drawn with it.
 namespace PortRoomGeo {
 
 // Whether (offU, offV, scale) is a lookup into the room's lightmap (see above).
@@ -135,6 +145,15 @@ struct Instance {
   bool sky = false; // the room's sky (version 6), drawn in place of the world's
   float skyRadiance[3] = {}; // version 7; 0: not known
   float lightmap[3] = {};    // version 10: offU, offV, scale into the room's lightmap; all 0: none
+  // Version 11: a float driver of one kind parameter of its materials (WDRV).
+  struct Driver {
+    uint8_t slot = 0;
+    uint32_t sender = 0; // retail editor id, layer bits included
+    uint8_t state = 0;
+    float delay = 0.f; // seconds from the state to the driver starting
+    std::vector<uint8_t> spline;
+  };
+  std::vector<Driver> drivers; // empty: none (at most one is written)
 };
 
 // Remastered's script objects between what happens in game and a group of instances.
@@ -203,7 +222,7 @@ struct Script {
 bool ParseFileName(const std::string& fileName, uint32_t& id);
 bool Parse(const std::vector<uint8_t>& data, std::vector<Instance>& out, std::string& error,
            Script* script = nullptr);
-// The file for these instances (version 9), with the script section when there is a script
+// The file for these instances (version 11), with the script section when there is a script
 // or a group, the glow section when an instance glows, the animation section when one is
 // animated, the sky section when one is a sky and the hidden objects when there are any.
 std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script* script = nullptr);

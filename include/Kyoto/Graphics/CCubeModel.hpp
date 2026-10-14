@@ -148,6 +148,17 @@ public:
   // in for the emissive strength Remastered gave the material (ICNC), as a ColorModulateMP1
   // in its incandescence mode does (PortRoomGeo::Instance::glow).
   static void PortSetGlow(const float* rgb);
+  // One kind parameter (0 to 3) of kind 7 materials, for the draws that follow; slot < 0 clears.
+  static void PortSetKindParam(int slot, float value);
+  // `values` is a PBR record's (kind at 13, kind parameters from 15): the driven one is set for
+  // a kind 7 material and for no other; false when nothing changed.
+  static bool PortApplyKindParam(int slot, float value, f32* values) {
+    if (slot < 0 || slot >= 4 || !(values[13] > 6.5f && values[13] < 7.5f)) {
+      return false;
+    }
+    values[15 + slot] = value;
+    return true;
+  }
   // Until called again with null: every PBR material drawn is a sky's, unlit and its colour
   // multiplied by this (a Remastered Skybox's colour and intensity, exposed; CWorld::DrawSky).
   static void PortSetSky(const float* rgb);

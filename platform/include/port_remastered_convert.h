@@ -143,4 +143,9 @@ private:
   State* m_state;
 };
 
+// The PBR record's kind-parameter slot (0 to 3) a material's variable (a FourCC, 'GRDU') moves when
+// a MaterialVariableDriverMP1 drives it, -1 when the material does not bind it to a parameter the
+// converted material carries. Read from the material's own binding table, not from its name.
+int MaterialDriverSlot(const ModelMaterial& mat, uint32_t variable);
+
 } // namespace PortRemastered
