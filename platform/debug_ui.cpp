@@ -563,6 +563,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sSecondaryCrosshairs = ParseBool(value);
   } else if (key == "menu_standard_buttons") {
     sMenuStandardButtons = ParseBool(value);
+  } else if (key == "pointer_menus") {
+    PortPointer::SetEnabled(ParseBool(value));
   } else if (key == "prompt_glyphs") {
     for (int i = 0; i < int(std::size(kPromptGlyphs)); ++i) {
       if (value == kPromptGlyphs[i]) {
@@ -790,6 +792,7 @@ std::string SettingsText() {
   file << "scan_speed=" << sScanSpeed << '\n';
   file << "secondary_crosshairs=" << (sSecondaryCrosshairs ? 1 : 0) << '\n';
   file << "menu_standard_buttons=" << (sMenuStandardButtons ? 1 : 0) << '\n';
+  file << "pointer_menus=" << (PortPointer::Enabled() ? 1 : 0) << '\n';
   file << "prompt_glyphs=" << kPromptGlyphs[sPromptGlyphs.load(std::memory_order_relaxed)] << '\n';
   file << "show_shader_compilation=" << (sShowShaderCompilation ? 1 : 0) << '\n';
   file << "show_menu_hint=" << (sShowMenuHint ? 1 : 0) << '\n';
@@ -1165,6 +1168,7 @@ void EnsureInitialized() {
                           PortDebug::kScanSpeedMax);
   sSecondaryCrosshairs = port::EnvFlag("MP_SECONDARY_CROSSHAIRS", sSecondaryCrosshairs);
   sMenuStandardButtons = port::EnvFlag("MP_MENU_STANDARD_BUTTONS", sMenuStandardButtons);
+  PortPointer::SetEnabled(port::EnvFlag("MP_POINTER_MENUS", PortPointer::Enabled()));
   PortInput::ApplyEnvOverrides();
   if (port::EnvFlag("MP_DISABLE_AI_AUDIO")) {
     sAiAudioEnabled = false;
@@ -1610,6 +1614,12 @@ bool MenuStandardButtons() {
 void SetMenuStandardButtons(bool enabled) {
   EnsureInitialized();
   sMenuStandardButtons = enabled;
+  MarkDirty();
+}
+
+void SetPointerMenus(bool enabled) {
+  EnsureInitialized();
+  PortPointer::SetEnabled(enabled);
   MarkDirty();
 }
 

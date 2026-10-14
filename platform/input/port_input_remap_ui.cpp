@@ -4,6 +4,7 @@
 #include "port_debug.h"
 #include "port_input_bindings.h"
 #include "port_input_devices.h"
+#include "port_pointer.h"
 
 #include <dolphin/pad.h>
 #include <imgui.h>
@@ -1473,6 +1474,13 @@ void Draw() {
                         "button keep their gameplay inputs. Keys and mouse buttons on those rows replace their "
                         "gameplay action there. Bindings set for Menu or Map under Advanced still apply.\nOff: menus and the map follow your gameplay bindings, and the Menus and map "
                         "rows do nothing.");
+  ImGui::SameLine();
+  bool pointerMenus = PortPointer::Enabled();
+  if (ImGui::Checkbox("Point and click menus", &pointerMenus)) PortDebug::SetPointerMenus(pointerMenus);
+  ImGui::SetItemTooltip("On: the mouse and touch work the game's menus and map. Hovering or tapping selects, "
+                        "a click (or a tap on the selected item) confirms, right click backs out, a click on a "
+                        "button hint presses it. Drags set sliders and turn the Samus doll and the map; the "
+                        "wheel or a pinch zooms them.\nOff: menus and the map read only buttons and keys.");
   ImGui::Separator();
 
   const bool editorOnTop = sEditing != kEditNone && !sEditRowShown;

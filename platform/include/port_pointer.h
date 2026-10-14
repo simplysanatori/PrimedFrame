@@ -18,7 +18,7 @@ class CVector3f;
 
 namespace PortPointer {
 
-// The pointer_menus setting.
+// The pointer_menus setting (saved by debug_ui.cpp; set through PortDebug::SetPointerMenus).
 bool Enabled();
 void SetEnabled(bool enabled);
 

@@ -399,7 +399,13 @@ void BindPortControls(Profile& p) {
   Bind(p, Action::PhotoMode, Make(Device::Key, SDL_SCANCODE_F8));
 
   // The wheel cycles beams, as in PrimeHack (issue #61); retail has no wheel.
+  // Escape, as on PC: pauses, backs out of menus (B; the pause screen's top level
+  // resumes on it) and closes the map (Z, its exit; Start does nothing there).
   if (!PortDebug::OriginalExperience()) {
+    const Input esc = Make(Device::Key, SDL_SCANCODE_ESCAPE);
+    BindIn(p, Action::PadStart, esc, PortInput::kCtxGameplay | PortInput::kCtxMorphBall);
+    BindIn(p, Action::PadB, esc, PortInput::kCtxMenu);
+    BindIn(p, Action::PadZ, esc, PortInput::kCtxMap);
     Bind(p, Action::BeamPrev, Make(Device::MouseWheel, 0, 1));
     Bind(p, Action::BeamNext, Make(Device::MouseWheel, 0, -1));
   }

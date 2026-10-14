@@ -219,6 +219,20 @@
   rows apply in menus and the map with or without a controller, replacing what that key
   does in gameplay there; touch is unchanged. With
   the option off, menus and the map follow the gameplay bindings and the rows do nothing.
+  "Point and click menus" (on by default; `pointer_menus=`, `MP_POINTER_MENUS`) lets
+  the mouse and touch work the game's own menus (front end, pause screen, save stations,
+  upgrade messages) and the map. A hover selects (a tap on touch), a click confirms (a
+  tap on the selected item), right click (or Android back) backs out, and a click on a
+  button hint presses that button. The wheel or a drag pages the log book text, a press
+  or drag sets a slider, and in the Samus doll view a drag turns the doll, a right drag
+  or two fingers move it and the wheel or a pinch zooms.
+  On the map a left drag rotates (one finger pans), a right or middle drag or two
+  fingers pan, the wheel or a pinch zooms, a click selects a world or room and a click
+  on the selected one opens it. While such a screen is up the mouse is released and the
+  cursor shown; the button prompts show mouse glyphs after the mouse was last used; on
+  Android the gameplay touch buttons hide, leaving a back button. Escape pauses, backs out
+  of menus (resuming from the pause screen's top level) and closes the map, a default
+  outside Original experience.
   It binds any action to an input or a chord of up to four
   (hold the first ones, press the last; or "Any order" within the chord window). The editor's
   Advanced section holds the typed input text, the trigger (press, tap, hold, double tap,
