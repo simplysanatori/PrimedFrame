@@ -423,6 +423,8 @@ struct File {
 // "1A2B3C4D.roomenv" (any case) -> 0x1A2B3C4D.
 bool ParseFileName(const std::string& fileName, uint32_t& id);
 bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error);
+// One version 21 tile-set section at `at` (advanced past it); false with `error` when malformed.
+bool ParseTileSet(const std::vector<uint8_t>& data, size_t& at, PortRoomEnvTiles::TileSet& set, std::string& error);
 // The roomenv/brdf.lut a mod supplies: a 16x8 RG8 table of Remastered's environment BRDF
 // (scale in red, bias in green). The file must be exactly this long.
 constexpr size_t kBrdfLutSize = 16 * 8 * 2;

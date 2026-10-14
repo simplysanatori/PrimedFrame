@@ -1522,15 +1522,13 @@ void TakeResults() {
       continue;
     } else {
       if (result.resolved) {
-        // The old volume goes when the new one is made (a draw may still hold it this frame).
-        if (area.volumes[0].id != 0) {
-          GXDestroyPBRVolume(area.volumes[0].id);
-          area.volumes[0].id = 0;
-        }
         area.resolved.assign(1, std::move(result.grid));
       }
       const Grid& grid = result.resolved ? area.resolved[0] : file.grids[result.index];
       GpuVolume& gpuVolume = area.volumes[result.resolved ? 0 : result.index];
+      // The old volume is destroyed after the new one is created: aurora erases it when the destroy
+      // command is processed (not deferred), so commands already queued that name it still run first.
+      const uint32_t oldVolume = result.resolved ? gpuVolume.id : 0;
       gpuVolume.id = sNextVolume++;
       if (sNextVolume == 0) {
         sNextVolume = 1;
@@ -1545,6 +1543,9 @@ void TakeResults() {
       }
       PortLog::Write("room env: %08X volume %u %ux%ux%u average %g\n", result.area, gpuVolume.id, grid.size[0],
                      grid.size[1], grid.size[2], grid.average);
+      if (oldVolume != 0) {
+        GXDestroyPBRVolume(oldVolume);
+      }
     }
     // What Select finds changes with what is on the GPU.
     Invalidate();

@@ -110,6 +110,12 @@ float OwnAverage(const TileSet& own) {
   return filled != 0 ? float(std::exp(sum / double(filled))) : 0.f;
 }
 
+// Before halving, the grid is held at full resolution: 2^25 points is 800 MB at 24 bytes, above any real room.
+constexpr size_t kMaxComposedPoints = size_t(1) << 25;
+// The blocks a tile set may cover per axis (a room spans tens).
+constexpr int64_t kMaxBoxBlocks = 256;
+constexpr int64_t kMaxBoxBlockCount = int64_t(1) << 20;
+
 std::vector<TileKey> Region(const TileSet& own) {
   std::set<TileKey> keys;
   std::set<std::array<int32_t, 3>> blocks;
@@ -123,9 +129,16 @@ std::vector<TileKey> Region(const TileSet& own) {
       blocks.insert({t.key.x * 2 + 1, t.key.y, t.key.z});
     }
   }
-  for (int32_t z = FloorDiv(own.box[2], 16); z <= FloorDiv(own.box[5], 16); ++z) {
-    for (int32_t y = FloorDiv(own.box[1], 64); y <= FloorDiv(own.box[4], 64); ++y) {
-      for (int32_t x = FloorDiv(own.box[0], 64); x <= FloorDiv(own.box[3], 64); ++x) {
+  const int32_t z0 = FloorDiv(own.box[2], 16), z1 = FloorDiv(own.box[5], 16);
+  const int32_t y0 = FloorDiv(own.box[1], 64), y1 = FloorDiv(own.box[4], 64);
+  const int32_t x0 = FloorDiv(own.box[0], 64), x1 = FloorDiv(own.box[3], 64);
+  if (int64_t(z1) - z0 >= kMaxBoxBlocks || int64_t(y1) - y0 >= kMaxBoxBlocks || int64_t(x1) - x0 >= kMaxBoxBlocks ||
+      (int64_t(z1) - z0 + 1) * (int64_t(y1) - y0 + 1) * (int64_t(x1) - x0 + 1) > kMaxBoxBlockCount) {
+    return {keys.begin(), keys.end()}; // a box ParseTiles would have refused
+  }
+  for (int32_t z = z0; z <= z1; ++z) {
+    for (int32_t y = y0; y <= y1; ++y) {
+      for (int32_t x = x0; x <= x1; ++x) {
         blocks.insert({x, y, z});
       }
     }
@@ -192,6 +205,10 @@ bool ResolveGrid(const TileSet& own, const Lookup& lookup, size_t maxPoints, Res
     return false;
   }
   size_t points = size_t(size[0]) * size_t(size[1]) * size_t(size[2]);
+  if (points > kMaxComposedPoints) {
+    note = "grid too large";
+    return false;
+  }
   std::vector<uint8_t> pts(points * 24, 0);
   const auto pointAt = [&](int64_t x, int64_t y, int64_t z) {
     return &pts[((size_t(z - c0[2]) * size_t(size[1]) + size_t(y - c0[1])) * size_t(size[0]) + size_t(x - c0[0])) * 24];

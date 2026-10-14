@@ -95,6 +95,14 @@ bool ParseTiles(const std::vector<uint8_t>& data, size_t& at, PortRoomEnvTiles::
   for (int i = 0; i < 6; ++i) {
     set.box[i] = int32_t(ReadLE32(p + 48 + i * 4));
   }
+  // A box of lit points: ordered, and no wider than 4096 points (a room spans a few hundred).
+  for (int a = 0; a < 3; ++a) {
+    const int64_t lo = set.box[a], hi = set.box[a + 3];
+    if (hi < lo || hi - lo > 4096 || lo < -(int64_t(1) << 24) || hi > (int64_t(1) << 24)) {
+      error = "bad tile box";
+      return false;
+    }
+  }
   const uint32_t count = ReadLE32(p + 72);
   const uint32_t bytes = ReadLE32(p + 76);
   at += kTileHeaderSize;
@@ -145,6 +153,10 @@ bool ParseTiles(const std::vector<uint8_t>& data, size_t& at, PortRoomEnvTiles::
 }
 
 } // namespace
+
+bool ParseTileSet(const std::vector<uint8_t>& data, size_t& at, PortRoomEnvTiles::TileSet& set, std::string& error) {
+  return ParseTiles(data, at, set, error);
+}
 
 bool ParseFileName(const std::string& fileName, uint32_t& id) {
   return port::ParseHexFileName(fileName, ".roomenv", id);
