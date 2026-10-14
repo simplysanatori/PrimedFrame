@@ -12,7 +12,7 @@ namespace PortRoomGeo {
 namespace {
 
 constexpr uint32_t kMagic = 0x4752504D; // 'MPRG'
-constexpr uint32_t kVersion = 11;
+constexpr uint32_t kVersion = 12;
 constexpr size_t kHeaderBytes = 12;
 constexpr size_t kInstanceBytes = 4 + 12 * 4; // version 1; version 2 adds 4 + links
 constexpr size_t kPlatformBytes = 4 + 3 * 4;   // version 3's, after version 2's 4
@@ -25,6 +25,7 @@ constexpr size_t kGlowBytes = 4 + 3 * 4;
 constexpr uint32_t kAnimMagic = 0x4D494E41; // 'ANIM'
 constexpr size_t kAnimHeadBytes = 3 * 4;
 constexpr size_t kAnimKeyBytes = 7 * 4;
+constexpr size_t kAnimStretchBytes = 9 * 4;
 constexpr uint32_t kSkyMagic = 0x20594B53; // 'SKY '
 constexpr uint32_t kHideMagic = 0x45444948; // 'HIDE'
 constexpr uint32_t kLmapMagic = 0x50414D4C; // 'LMAP'
@@ -198,6 +199,7 @@ bool ParseAnim(const std::vector<uint8_t>& data, size_t& at, uint32_t version, s
         return false;
       }
       float fps;
+      bool stretched = false;
       const uint32_t frames = ReadLE32(data.data() + at + 4);
       if (!ReadF32(data.data() + at, fps) || fps <= 0.f || frames < 2) {
         error = "bad animation";
@@ -206,15 +208,30 @@ bool ParseAnim(const std::vector<uint8_t>& data, size_t& at, uint32_t version, s
       clip.fps = fps;
       at += 8;
       if (version >= 8) {
-        if (data[at] > 1 || data[at + 1] != 0 || data[at + 2] != 0 || data[at + 3] != 0) {
+        // Version 12: the second byte says the frames are followed by a stretch each.
+        if (data[at] > 1 || data[at + 1] > (version >= 12 ? 1 : 0) || data[at + 2] != 0 || data[at + 3] != 0) {
           error = "bad animation";
           return false;
         }
         clip.loop = data[at] != 0;
+        stretched = data[at + 1] != 0;
         at += 4;
       }
       if (!ParseFrames(data, at, frames, clip, error)) {
         return false;
+      }
+      if (stretched) {
+        if (frames > (data.size() - at) / kAnimStretchBytes) {
+          error = "truncated animation";
+          return false;
+        }
+        clip.stretch.resize(size_t(frames) * 9);
+        for (size_t k = 0; k < clip.stretch.size(); ++k, at += 4) {
+          if (!ReadF32(data.data() + at, clip.stretch[k])) {
+            error = "bad animation";
+            return false;
+          }
+        }
       }
     }
   }
@@ -545,11 +562,14 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
           AppendLEFloat(out, clip.fps);
           AppendLE32(out, uint32_t(clip.keys.size() / 7));
           out.push_back(clip.loop ? 1 : 0);
-          out.push_back(0);
+          out.push_back(clip.stretch.empty() ? 0 : 1);
           out.push_back(0);
           out.push_back(0);
           for (size_t k = 0; k < clip.keys.size() / 7 * 7; ++k) {
             AppendLEFloat(out, clip.keys[k]);
+          }
+          for (const float v : clip.stretch) {
+            AppendLEFloat(out, v);
           }
         }
       }

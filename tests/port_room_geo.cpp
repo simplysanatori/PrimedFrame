@@ -99,6 +99,24 @@ void TestVersion1() {
   Check(!PortRoomGeo::Parse(file, out, error), "unknown version rejected");
 }
 
+// A scaling joint's clip keeps its stretch through the file and rejects a truncated one.
+void TestAnimStretch() {
+  std::vector<PortRoomGeo::Instance> in;
+  in.push_back(MakeInstance(0x11111111, 1.f));
+  in[0].anim.emplace_back();
+  in[0].anim[0].fps = 30.f;
+  in[0].anim[0].keys = {0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1};
+  in[0].anim[0].stretch = {2, 0, 0, 0, 1, 0, 0, 0, 1, 1.5f, 0, 0.25f, 0, 0.5f, 0, 0, 0, 1};
+  std::vector<PortRoomGeo::Instance> out;
+  std::string error;
+  const std::vector<uint8_t> file = PortRoomGeo::Write(in);
+  Check(PortRoomGeo::Parse(file, out, error) && out.size() == 1 && out[0].anim.size() == 1 &&
+            out[0].anim[0].stretch == in[0].anim[0].stretch && out[0].anim[0].keys == in[0].anim[0].keys,
+        "stretch round trip");
+  std::vector<uint8_t> cut(file.begin(), file.end() - 4);
+  Check(!PortRoomGeo::Parse(cut, out, error), "truncated stretch rejected");
+}
+
 // The animation section, alone and after the script and glow sections.
 void TestAnim() {
   std::vector<PortRoomGeo::Instance> in;
@@ -176,7 +194,7 @@ void TestClips() {
   std::vector<PortRoomGeo::Instance> out;
   std::string error;
   const std::vector<uint8_t> file = PortRoomGeo::Write(in);
-  Check(file.size() > 8 && file[4] == 11, "version 11 written");
+  Check(file.size() > 8 && file[4] == 12, "version 12 written");
   Check(PortRoomGeo::Parse(file, out, error), "clips file parses");
   Check(out.size() == 2 && out[0].anim.empty() && !out[0].animOnShow && out[1].animOnShow &&
             out[1].anim.size() == 2 && out[1].anim[0].fps == 24.f && !out[1].anim[0].loop &&
@@ -639,6 +657,7 @@ int main() {
   TestScript();
   TestGlow();
   TestAnim();
+  TestAnimStretch();
   TestClips();
   TestSky();
   TestHide();

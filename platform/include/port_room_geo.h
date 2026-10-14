@@ -139,6 +139,9 @@ struct Instance {
     float fps = 0.f;
     bool loop = true;
     std::vector<float> keys; // 7 per frame: rotation x, y, z, w, translation x, y, z
+    // Version 12: a joint that scales poses as rotation * stretch. 9 per frame, row-major
+    // 3x3 applied first (before the rotation); empty: no stretch (the identity).
+    std::vector<float> stretch;
   };
   std::vector<AnimClip> anim;
   bool animOnShow = false;
