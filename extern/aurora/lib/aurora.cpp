@@ -717,5 +717,12 @@ void aurora_set_resampler(AuroraSampler sampler) {
 void aurora_set_graphics_quality(uint32_t msaa, uint16_t maxTextureAnisotropy) {
   aurora::g_pendingQuality.store(std::min(msaa, 4u) << 16 | maxTextureAnisotropy, std::memory_order_release);
 }
+void aurora_set_per_pixel_lighting(bool enabled) {
+#ifdef AURORA_ENABLE_GX
+  aurora::gx::set_per_pixel_lighting(enabled);
+#else
+  (void)enabled;
+#endif
+}
 void aurora_set_timescale(float scale) { aurora::time::set_scale(scale); }
 float aurora_get_timescale() { return aurora::time::scale(); }

@@ -306,6 +306,10 @@ int Msaa();
 void SetMsaa(int samples);
 int Anisotropy();
 void SetAnisotropy(int level);
+// Setting `per_pixel_lighting` (default off, off in the original experience): GX
+// lights summed per pixel instead of per vertex. Lit pipelines rebuild on next use.
+bool PerPixelLighting();
+void SetPerPixelLighting(bool enabled);
 // Setting `opengles`: start on Dawn's OpenGL ES backend instead of Vulkan, for
 // drivers that draw wrong on Vulkan (Adreno 7xx, issue #7). Read at window
 // creation, so it takes a restart; aurora falls back to Vulkan if it fails.

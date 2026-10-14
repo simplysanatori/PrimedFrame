@@ -292,6 +292,13 @@
   textures, which retail asks for as GX_ANISO_4. Both apply at the start of the
   next frame without a restart; an MSAA change rebuilds the framebuffers and
   pipelines, so it hitches once. Console: `msaa <1|4>`, `aniso <1..16>`.
+- Per-pixel lighting (Video > Quality, persisted as `per_pixel_lighting`,
+  default off, off in the original experience; issue #113): the GX lights on
+  lit draws (Samus, enemies, items and other vertex-lit models) are summed per pixel
+  from the interpolated view-space position and normal, as Dolphin's option
+  does, instead of per vertex. Remastered (PBR) models are per pixel already
+  and unchanged. Lit pipelines rebuild on their next draw, so turning it on
+  hitches once. Console: `pixellight [0|1]`.
 - HUD scale (Video > Display and pause Options > Display, persisted as `hud_scale`,
   50-100 percent, default 100): shrinks the combat HUD, radar, beam and visor
   menus and the minimap toward the screen centre, each frame as a whole so the

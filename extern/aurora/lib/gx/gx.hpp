@@ -47,7 +47,6 @@ constexpr float GX_LARGE_NUMBER = -1048576.0f;
 namespace aurora::gx {
 constexpr bool EnableNormalVisualization = false;
 constexpr bool EnableDebugPrints = false;
-constexpr bool UsePerPixelLighting = false;
 constexpr bool UseReversedZ = true;
 
 constexpr u32 MaxTextures = GX_MAX_TEXMAP;
@@ -617,7 +616,11 @@ struct ShaderConfig {
   // With pbr, the vertex attribute holding the baked lightmap's UV (GX_VA_TEX0..7), or GX_VA_NULL: a varying in the shader.
   u8 pbrLightmapAttr = GX_VA_NULL;
   u8 hudSample = 0; // GX_AURORA_SET_HUD_SAMPLE
-  u8 pad2[2]{}; // keeps the struct free of padding (memcmp and hash)
+  // aurora_set_per_pixel_lighting, on a draw with a lit channel: the GX lights are summed per
+  // fragment from the interpolated view-space position and normal instead of per vertex. The
+  // old padding, so a config with it off keeps its bytes and cache keys.
+  u8 perPixelLight = 0;
+  u8 pad2[1]{}; // keeps the struct free of padding (memcmp and hash)
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;
@@ -670,6 +673,22 @@ struct BindGroupRanges {
   std::array<gfx::Range, MaxIndexAttr> vaRanges{};
 };
 void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXVtxFmt fmt) noexcept;
+// aurora_set_per_pixel_lighting; any thread.
+void set_per_pixel_lighting(bool enabled) noexcept;
+bool per_pixel_lighting() noexcept;
+// ShaderConfig::perPixelLight for a config with its other fields set: a PBR draw shades per
+// pixel already (and has no interpolators to spare).
+inline bool wants_per_pixel_light(const ShaderConfig& config) noexcept {
+  if (!per_pixel_lighting() || config.pbr != 0) {
+    return false;
+  }
+  for (const auto& cc : config.colorChannels) {
+    if (cc.lightingEnabled) {
+      return true;
+    }
+  }
+  return false;
+}
 wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu::VertexBufferLayout> vtxBuffers,
                                     wgpu::ShaderModule shader, const char* label) noexcept;
 std::string build_shader_source(const ShaderConfig& config) noexcept;

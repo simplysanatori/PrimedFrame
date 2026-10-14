@@ -590,6 +590,7 @@ void CmdHelp() {
   Out("gunoffset <r> <f> <u>      arm cannon offset in metres (+-1), as the Video row does");
   Out("window [<w> <h>]           resize the window (leaves fullscreen); prints the size");
   Out("msaa <1|4>, aniso <1..16>  anti-aliasing and anisotropic filtering, applied next frame");
+  Out("pixellight [0|1]         per-pixel lighting (1) or the original per-vertex (0); no argument prints it");
   Out("hudscale <50..100>         HUD scale in percent, as the Options row does");
   Out("scanspread <0..100>        how far the widescreen HUD moves the scan panels out");
   Out("crosshair <25..100>        mouse/twin-stick crosshair size in percent");
@@ -2139,6 +2140,16 @@ void RunFrame() {
     } else {
       PortDebug::SetAnisotropy(value);
     }
+    Finish();
+  } else if (name == "pixellight") {
+    if (sCmd.args.size() > 1) {
+      const std::string& v = sCmd.args[1];
+      if (v != "0" && v != "1") {
+        return Finish("usage: pixellight [0|1]");
+      }
+      PortDebug::SetPerPixelLighting(v == "1");
+    }
+    Out(PortDebug::PerPixelLighting() ? "pixellight 1" : "pixellight 0");
     Finish();
   } else if (name == "hudscale") {
     const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : 0;

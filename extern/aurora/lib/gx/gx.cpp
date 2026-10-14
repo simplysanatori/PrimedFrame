@@ -228,7 +228,11 @@ wgpu::PrimitiveState to_primitive_state(GXCullMode gx_cullMode) {
       .cullMode = cullMode,
   };
 }
+std::atomic_bool sPerPixelLighting{false};
 } // namespace
+
+void set_per_pixel_lighting(bool enabled) noexcept { sPerPixelLighting.store(enabled, std::memory_order_relaxed); }
+bool per_pixel_lighting() noexcept { return sPerPixelLighting.load(std::memory_order_relaxed); }
 
 void set_viewport_policy(AuroraViewportPolicy policy) noexcept {
   sPendingViewportPolicy.store(policy, std::memory_order_release);
@@ -544,6 +548,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
       };
     }
   }
+  config.shaderConfig.perPixelLight = wants_per_pixel_light(config.shaderConfig);
   for (u8 i = 0; i < g_gxState.numTexGens; ++i) {
     config.shaderConfig.tcgs[i] = g_gxState.tcgs[i];
   }

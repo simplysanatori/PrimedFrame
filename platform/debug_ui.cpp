@@ -261,6 +261,7 @@ float sFirstPersonFov = PortDebug::kFovRetail;
 float sGunOffset[3] = {};
 int sMsaa = 1;
 int sAnisotropy = 16;
+bool sPerPixelLighting = false;
 // Setting `opengles`; sOpenGlesAtStart is what this run was started with.
 bool sOpenGles = false;
 bool sOpenGlesAtStart = false;
@@ -664,6 +665,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     const int v = std::atoi(value.c_str());
     sStorageClamp = v < 0 ? -1 : (v > 0 ? 1 : 0);
     sStorageClampAtStart = sStorageClamp;
+  } else if (key == "per_pixel_lighting") {
+    sPerPixelLighting = ParseBool(value);
   } else if (key == "anisotropy") {
     const int a = std::atoi(value.c_str());
     if (a >= 1 && a <= 16) {
@@ -842,6 +845,7 @@ std::string SettingsText() {
   file << "opengles=" << (sOpenGles ? 1 : 0) << '\n';
   file << "gpu_driver=" << sGpuDriver << '\n';
   file << "anisotropy=" << sAnisotropy << '\n';
+  file << "per_pixel_lighting=" << (sPerPixelLighting ? 1 : 0) << '\n';
   file << "unlock_hard_mode=" << (sUnlockHardMode ? 1 : 0) << '\n';
   file << "unlock_fusion_suit=" << (sUnlockFusionSuit ? 1 : 0) << '\n';
   file << "unlock_galleries=" << (sUnlockGalleries ? 1 : 0) << '\n';
@@ -1309,6 +1313,7 @@ static int EffectiveAnisotropy() { return sOriginalExperience ? 1 : sAnisotropy;
 static void ApplyGraphicsQuality() {
   aurora_set_graphics_quality(static_cast< uint32_t >(EffectiveMsaa()),
                               static_cast< uint16_t >(EffectiveAnisotropy()));
+  aurora_set_per_pixel_lighting(sPerPixelLighting && !sOriginalExperience);
 }
 
 bool FrameLimitEnabled() {
@@ -1884,6 +1889,19 @@ void SetAnisotropy(int level) {
   level = std::clamp(level, 1, 16);
   if (sAnisotropy != level) {
     sAnisotropy = level;
+    ApplyGraphicsQuality();
+    MarkDirty();
+  }
+}
+
+bool PerPixelLighting() {
+  EnsureInitialized();
+  return sPerPixelLighting && !sOriginalExperience;
+}
+void SetPerPixelLighting(bool enabled) {
+  EnsureInitialized();
+  if (sPerPixelLighting != enabled) {
+    sPerPixelLighting = enabled;
     ApplyGraphicsQuality();
     MarkDirty();
   }
@@ -6623,6 +6641,13 @@ void DrawVideoQuality() {
       SetAnisotropy(1 << aniso);
     }
     ImGui::SetItemTooltip("Keeps textures sharp at grazing angles. Recommended: 16x.");
+    bool perPixel = sPerPixelLighting;
+    if (ImGui::Checkbox("Per-pixel lighting", &perPixel)) {
+      SetPerPixelLighting(perPixel);
+    }
+    ImGui::SetItemTooltip("Sums the game's lights per pixel instead of per vertex, like Dolphin's option:\n"
+                          "smoother lighting on low-poly models. Not the original look. Remastered models\n"
+                          "shade per pixel already.");
   }
 
   bool autoScale = sRenderScale <= 0.f;

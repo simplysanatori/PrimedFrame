@@ -475,7 +475,10 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
                              cache.lineMode == lineMode && cache.config.msaaSamples == gfx::get_sample_count() &&
                              // The pass's target, not only the FIFO's switch: a new frame (reset to LDR),
                              // an offscreen pass or a colour pass must not keep an HDR pipeline, or back.
-                             cache.config.shaderConfig.sceneHdr == gfx::scene_hdr_pass_active();
+                             cache.config.shaderConfig.sceneHdr == gfx::scene_hdr_pass_active() &&
+                             // A lit config made before aurora_set_per_pixel_lighting changed.
+                             cache.config.shaderConfig.perPixelLight ==
+                                 wants_per_pixel_light(cache.config.shaderConfig);
   if (!pipelineValid) {
     const bool hadPipeline = cache.hasPipeline;
     const auto prevSampledTextures = cache.shaderInfo.sampledTextures;
