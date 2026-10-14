@@ -5,6 +5,7 @@
 #include "port_debug.h"
 #include "port_embedded.h"
 #include "port_input_devices.h"
+#include "port_pointer.h"
 #include "port_textures.h"
 
 #include <dolphin/gx.h>
@@ -325,6 +326,10 @@ bool sEnabled = false;
 // device resolves to "keyboard" anyway.
 enum class ActiveInput { Pad, Keyboard, TouchXbox, TouchGameCube };
 std::atomic< ActiveInput > sActiveInput{ActiveInput::Pad};
+// Within Keyboard, whether a key rather than the mouse was used last. When the
+// mouse was (PortPointer::MouseIsLast), a screen the pointer drives shows A and B
+// as its clicks.
+std::atomic< bool > sKeyInput{false};
 
 // Keys sent by the phone or the OS rather than a keyboard in the player's hands.
 bool IsSystemKey(SDL_Scancode scancode) {
@@ -358,16 +363,19 @@ bool SDLCALL active_input_watch(void*, SDL_Event* event) {
   case SDL_EVENT_MOUSE_MOTION:
     if (!IsTouchMouse(event->motion.which)) {
       sActiveInput.store(ActiveInput::Keyboard, std::memory_order_relaxed);
+      sKeyInput.store(false, std::memory_order_relaxed);
     }
     break;
   case SDL_EVENT_MOUSE_BUTTON_DOWN:
     if (!IsTouchMouse(event->button.which)) {
       sActiveInput.store(ActiveInput::Keyboard, std::memory_order_relaxed);
+      sKeyInput.store(false, std::memory_order_relaxed);
     }
     break;
   case SDL_EVENT_MOUSE_WHEEL:
     if (!IsTouchMouse(event->wheel.which)) {
       sActiveInput.store(ActiveInput::Keyboard, std::memory_order_relaxed);
+      sKeyInput.store(false, std::memory_order_relaxed);
     }
     break;
   case SDL_EVENT_KEY_DOWN:
@@ -375,6 +383,7 @@ bool SDLCALL active_input_watch(void*, SDL_Event* event) {
     // overlay, not a physical keyboard.
     if (!event->key.repeat && !IsSystemKey(event->key.scancode)) {
       sActiveInput.store(ActiveInput::Keyboard, std::memory_order_relaxed);
+      sKeyInput.store(true, std::memory_order_relaxed);
     }
     break;
   case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
@@ -541,6 +550,16 @@ std::string IconStemForButton(PADButton button, const char* device) {
     return GameCubeStemForButton(button);
   }
   if (std::strcmp(device, "keyboard") == 0) {
+    // On a screen the pointer drives, a click is A and a right click B.
+    if (!sKeyInput.load(std::memory_order_relaxed) && PortPointer::MouseIsLast() &&
+        PortPointer::ScreenActive()) {
+      if (button == PAD_BUTTON_A) {
+        return "mouse_left";
+      }
+      if (button == PAD_BUTTON_B) {
+        return "mouse_right";
+      }
+    }
     const char* stem = StemForScancode(KeyForButton(button));
     return stem != nullptr ? std::string(stem) : std::string();
   }
