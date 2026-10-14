@@ -28,8 +28,8 @@ inline Planar ClampPlanar(Planar value, float maximum) {
 // on dt. Off 60 Hz (tickScale = dt*60 != 1, friction already scaled to f*tickScale),
 // this gives the 60 Hz result over tickScale ticks: the force is scaled to
 // close 1-(1-k60)^tickScale of the gap, and the desired speed is shifted so the
-// equilibrium stays the 60 Hz one (frictionApplied: the player subtracts the
-// friction this tick).
+// post-friction speed (the one the position integrates) keeps its 60 Hz
+// equilibrium (frictionApplied: the player subtracts the friction this tick).
 struct ForceLaw {
   float frictionSpeed; // replaces f*m*vmax/(dt*A)
   float shift;         // added to the desired speed, signed like the input
@@ -41,8 +41,9 @@ inline ForceLaw ForceLawAtRate(float tickScale, float friction, float mass, floa
   const float kRef = acceleration / (60.f * mass * maxSpeed);
   if (!(kRef > 0.f && kRef < 1.f && k > 0.f)) return {friction / k, 0.f, 1.f};
   const float gain = 1.f - std::pow(1.f - kRef, tickScale);
-  const float shift =
-      frictionApplied ? friction * tickScale * (1.f - gain) / gain - friction * (1.f - kRef) / kRef : 0.f;
+  // The position integrates the post-friction speed v1 = v2 - f*tickScale, so the
+  // equilibrium to keep is v1 = vmax - f/kRef, not the 60 Hz post-force speed.
+  const float shift = frictionApplied ? friction * tickScale / gain - friction / kRef : 0.f;
   return {friction / kRef, shift, gain / k};
 }
 
