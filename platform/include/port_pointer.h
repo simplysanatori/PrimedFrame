@@ -76,6 +76,9 @@ void Record(const CGuiWidget* widget, const CTransform4f& model, const CVector3f
 // The same for a point list (x, y, z triples), such as a pane's quad.
 void RecordPoints(const CGuiWidget* widget, const CTransform4f& model, const float* xyz, int count);
 
+// The GUI point of point in the space of model, through the current CGraphics
+// view, projection and viewport. False when it is behind the eye.
+bool Project(const CTransform4f& model, const CVector3f& point, float& gx, float& gy);
 // The last-drawn widget of frame under the GUI point (EFB pixels), or null.
 const CGuiWidget* Pick(const CGuiFrame* frame, float gx, float gy);
 // The same at the pointer position; false when there is none.

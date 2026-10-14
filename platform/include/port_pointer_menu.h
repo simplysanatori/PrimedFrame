@@ -44,6 +44,8 @@ bool Slider(CGuiSliderGroup* slider);
 bool TakeClickOn(const CGuiWidget* widget);
 // Any click or tap, taken.
 bool TakeClick();
+// The pending left click or tap in EFB pixels, taken; count is 2 for a double.
+bool TakeClickPoint(float& gx, float& gy, int& count);
 // A right click (or scripted back), taken.
 bool TakeBack();
 

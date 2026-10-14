@@ -184,6 +184,19 @@ bool TakeClickOn(const CGuiWidget* widget) {
   return true;
 }
 
+bool TakeClickPoint(float& gx, float& gy, int& count) {
+  PortPointer::Recognizer& g = PortPointer::Gestures();
+  PortPointer::Click click;
+  if (!g.PeekClick(click) || click.button != PortPointer::kButtonLeft ||
+      !ClickToGui(click, gx, gy)) {
+    return false;
+  }
+  g.TakeClick(click);
+  count = click.count;
+  sLastAdvanced = false;
+  return true;
+}
+
 bool TakeClick() {
   PortPointer::Click click;
   if (!PortPointer::Gestures().TakeClick(click)) {

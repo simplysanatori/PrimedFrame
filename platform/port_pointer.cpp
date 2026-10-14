@@ -339,10 +339,9 @@ PortPointerMath::HitList sHits;
 
 const void* Key(const CGuiObject* object) { return object; }
 
-void RecordCorners(const CGuiWidget* widget, const CTransform4f& model, const CVector3f* points,
-                   int count) {
+// The current CGraphics projection and viewport.
+void CurrentProjection(PortPointerMath::Projection& proj, PortPointerMath::Viewport& vp) {
   const CGraphics::CProjectionState& ps = CGraphics::GetProjectionState();
-  PortPointerMath::Projection proj;
   proj.perspective = ps.IsPerspective();
   proj.left = ps.GetLeft();
   proj.right = ps.GetRight();
@@ -351,8 +350,15 @@ void RecordCorners(const CGuiWidget* widget, const CTransform4f& model, const CV
   proj.znear = ps.GetNear();
   proj.zfar = ps.GetFar();
   const CViewport& v = CGraphics::GetViewport();
-  const PortPointerMath::Viewport vp{static_cast< float >(v.mLeft), static_cast< float >(v.mTop),
-                                     static_cast< float >(v.mWidth), static_cast< float >(v.mHeight)};
+  vp = {static_cast< float >(v.mLeft), static_cast< float >(v.mTop), static_cast< float >(v.mWidth),
+        static_cast< float >(v.mHeight)};
+}
+
+void RecordCorners(const CGuiWidget* widget, const CTransform4f& model, const CVector3f* points,
+                   int count) {
+  PortPointerMath::Projection proj;
+  PortPointerMath::Viewport vp;
+  CurrentProjection(proj, vp);
   const CTransform4f toEye = CGraphics::GetViewMatrix().GetInverse() * model;
 
   PortPointerMath::Rect rect;
@@ -393,6 +399,14 @@ void Record(const CGuiWidget* widget, const CTransform4f& model, const CVector3f
                            (i & 4) ? localMax.GetZ() : localMin.GetZ());
   }
   RecordCorners(widget, model, corners, 8);
+}
+
+bool Project(const CTransform4f& model, const CVector3f& point, float& gx, float& gy) {
+  PortPointerMath::Projection proj;
+  PortPointerMath::Viewport vp;
+  CurrentProjection(proj, vp);
+  const CVector3f eye = CGraphics::GetViewMatrix().GetInverse() * model * point;
+  return PortPointerMath::EyeToViewport(proj, vp, eye.GetX(), eye.GetY(), eye.GetZ(), gx, gy);
 }
 
 void RecordPoints(const CGuiWidget* widget, const CTransform4f& model, const float* xyz, int count) {
