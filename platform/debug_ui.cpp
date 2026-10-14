@@ -215,7 +215,11 @@ constexpr const char* kPromptGlyphs[] = {"auto", "xbox", "playstation", "switch"
 bool sShowShaderCompilation = true;
 bool sShowMenuHint = true;
 int sHudScale = PortDebug::kHudScaleMax;
+#if defined(__ANDROID__)
+int sScanSpread = PortDebug::kScanSpreadMin; // touch controls cover the screen edges
+#else
 int sScanSpread = PortDebug::kScanSpreadMax;
+#endif
 int sCrosshairOpacity = PortDebug::kCrosshairOpacityMax;
 bool sCrosshairCustomColor = false;
 float sCrosshairColor[3] = {1.f, 1.f, 1.f};

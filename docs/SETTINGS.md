@@ -284,7 +284,7 @@
   pieces stay on the visor frame. The helmet is not scaled. The minimap eases
   back to full size as it opens into the map screen.
 - Scan image spread (Video > Display, persisted as `scan_spread`, 0-100 percent,
-  default 100): how far the widescreen HUD moves the scan visor's side panels and
+  default 100, 0 on Android): how far the widescreen HUD moves the scan visor's side panels and
   the scan images out toward the screen edges. At 0 they keep their 4:3 place
   near the centre, clear of a phone's touch controls; the rest of the HUD still
   spreads. No effect at 4:3, without the widescreen HUD, or under Original
