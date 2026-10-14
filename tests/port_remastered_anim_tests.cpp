@@ -3,6 +3,7 @@
 // other than 0x28, and a record chain followed by a false record with a tiny length.
 #include "port_remastered_anim.h"
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -222,9 +223,43 @@ void RunMismatch() {
   Check(PortRemasteredAnim::ReadCharacter(ModelFile(2, 0, true), c, error), "mismatch test reads");
   Check(c.skinnedModel[0] == 0 && c.skinnedModel[15] == 0, "no SMDL when the header counts fewer animations than records");
 }
+
+// Joint scale in SkinPose: a parent scaled by 2 along x carries its child's matrix with it
+// (abs_bone_rel, 0xba19a0); an inverse-scale child (abs op 6, 0xba1bf0) divides the
+// parent's scale back out of its rows, leaving its translation alone.
+void RunScale() {
+  using namespace PortRemasteredAnim;
+  for (int inverse = 0; inverse < 2; ++inverse) {
+    Character c;
+    c.bones.resize(2);
+    c.bones[1].parent = 0;
+    c.bones[1].absOp = inverse ? 6 : 4;
+    c.bones[1].invScale = inverse != 0;
+    c.bones[1].bind.translation[0] = 1.0f;
+    c.animBone = {0, 1};
+    c.jointBone = {1};
+    c.inverseBind = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0}};
+    Anim a;
+    a.frames = 1;
+    a.fps = 30.f;
+    a.bones.assign(2, std::vector<Key>(1));
+    a.tracked = {true, true};
+    a.bones[0][0].scale[0] = 2.0f;
+    std::vector<std::array<float, 12>> out;
+    Check(SkinPose(c, a, 0, out) && out.size() == 1, "scaled pose resolves");
+    if (out.size() != 1) {
+      continue;
+    }
+    // Translation: the parent's scaled x on the child's bind offset.
+    Check(out[0][3] == 2.0f, "the child's offset is scaled by the parent");
+    Check(out[0][0] == (inverse ? 1.0f : 2.0f), inverse ? "inverse scale cancels the parent's" : "scale is inherited");
+    Check(out[0][5] == 1.0f && out[0][10] == 1.0f, "unscaled axes stay");
+  }
+}
 }  // namespace
 
 int main() {
+  RunScale();
   Run("single record, init-dequant offset 0x2c", 1, false);
   Run("two records and a tiny false record", 2, true);
   Run("stream names pool 1 of 2, list far before the records", 1, false, true);

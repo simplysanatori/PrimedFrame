@@ -32,6 +32,10 @@ struct Key {
 struct Bone {
   std::string name;
   int parent = -1;  // bone index, -1 for a root
+  // The abs op that places the bone: 4/5 plain, 6 inverse parent scale (SkinPose applies
+  // it), 7-9 base / extract-inverse-scale forms (not applied), 0 unknown.
+  uint8_t absOp = 0;
+  bool invScale = false;
   Key bind;         // the bind pose relative to the parent (scale = the matrix column lengths)
 };
 

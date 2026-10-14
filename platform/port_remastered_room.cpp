@@ -4146,10 +4146,18 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
         clips.push_back({anim, loop != f.end() && loop->second.size == 1 && r.room.Bytes(loop->second)[0] != 0});
       }
     }
-    // Per clip, per frame, the joints' skin matrices in GC axes (R' = A R A^T, t' = A t for the
-    // axis change A), as rotation quaternions and translations. A matrix that is not a
-    // rotation (a joint that scales or shears) cannot be a rigid piece's pose.
-    std::vector<std::map<int, std::vector<float>>> keys(clips.size());
+    // Per clip, per frame, the joints' skin matrices in GC axes (M' = A M A^T, t' = A t for the
+    // axis change A). A joint whose matrices are all rotations bakes as rotation quaternions
+    // and translations. One that scales (Remastered keys joint scale, inherited down the
+    // chain as abs_bone_rel does, 0xba19a0) bakes M = R U per frame: R the rotation of the
+    // polar decomposition as a quaternion, U = R^T M the stretch (kept in `stretch`, nine per
+    // frame). Only a reflection or a collapsed matrix cannot be a piece's pose.
+    struct Frame {
+      double m[3][3];
+      double t[3];
+    };
+    std::vector<std::map<int, std::vector<Frame>>> frames(clips.size());
+    std::vector<std::map<int, std::vector<float>>> keys(clips.size()), stretch(clips.size());
     std::vector<std::array<float, 12>> skin;
     for (size_t i = 0; i < clips.size(); ++i) {
       for (uint32_t frame = 0; frame < clips[i].anim->frames; ++frame) {
@@ -4159,13 +4167,21 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
         }
         for (const int j : joints) {
           const std::array<float, 12>& s = skin[size_t(j)];
-          double m[3][3], t[3];
+          Frame fr;
           for (int row = 0; row < 3; ++row) {
             for (int col = 0; col < 3; ++col) {
-              m[row][col] = kSign[row] * kSign[col] * double(s[4 * kAxis[row] + kAxis[col]]);
+              fr.m[row][col] = kSign[row] * kSign[col] * double(s[4 * kAxis[row] + kAxis[col]]);
             }
-            t[row] = kSign[row] * double(s[4 * kAxis[row] + 3]);
+            fr.t[row] = kSign[row] * double(s[4 * kAxis[row] + 3]);
           }
+          frames[i][j].push_back(fr);
+        }
+      }
+      for (const int j : joints) {
+        const std::vector<Frame>& list = frames[i][j];
+        bool rigid = true;
+        for (const Frame& fr : list) {
+          const double(&m)[3][3] = fr.m;
           double worst = 0;
           for (int a = 0; a < 3; ++a) {
             for (int b = 0; b < 3; ++b) {
@@ -4176,9 +4192,57 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
           const double det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
                              m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
                              m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
-          if (!(worst < 0.02) || !(det > 0)) {
-            Log("  " + r.name + ": animation \"" + clips[i].anim->name + "\" scales joint " + std::to_string(j));
+          if (!(det > 0)) {
+            Log("  " + r.name + ": animation \"" + clips[i].anim->name + "\" reflects joint " + std::to_string(j));
             return false;
+          }
+          rigid = rigid && worst < 0.02;
+        }
+        std::vector<float>& out = keys[i][j];
+        std::vector<float>& st = stretch[i][j];
+        for (const Frame& fr : list) {
+          double m[3][3];
+          std::memcpy(m, fr.m, sizeof m);
+          double rot[3][3];
+          std::memcpy(rot, m, sizeof rot);
+          if (!rigid) {
+            // Polar decomposition: R <- (R + R^-T) / 2 until it settles.
+            bool settled = false;
+            for (int it = 0; it < 64 && !settled; ++it) {
+              const double det = rot[0][0] * (rot[1][1] * rot[2][2] - rot[1][2] * rot[2][1]) -
+                                 rot[0][1] * (rot[1][0] * rot[2][2] - rot[1][2] * rot[2][0]) +
+                                 rot[0][2] * (rot[1][0] * rot[2][1] - rot[1][1] * rot[2][0]);
+              if (!(det > 1e-12)) {
+                Log("  " + r.name + ": animation \"" + clips[i].anim->name + "\" collapses joint " + std::to_string(j));
+                return false;
+              }
+              double inv[3][3];  // the inverse transpose = the cofactor matrix / det
+              for (int a = 0; a < 3; ++a) {
+                for (int b = 0; b < 3; ++b) {
+                  const int a1 = (a + 1) % 3, a2 = (a + 2) % 3, b1 = (b + 1) % 3, b2 = (b + 2) % 3;
+                  inv[a][b] = (rot[a1][b1] * rot[a2][b2] - rot[a1][b2] * rot[a2][b1]) / det;
+                }
+              }
+              double change = 0;
+              for (int a = 0; a < 3; ++a) {
+                for (int b = 0; b < 3; ++b) {
+                  const double next = 0.5 * (rot[a][b] + inv[a][b]);
+                  change = std::max(change, std::fabs(next - rot[a][b]));
+                  rot[a][b] = next;
+                }
+              }
+              settled = change < 1e-13;
+            }
+            if (!settled) {
+              Log("  " + r.name + ": animation \"" + clips[i].anim->name + "\" has no rotation for joint " + std::to_string(j));
+              return false;
+            }
+            for (int a = 0; a < 3; ++a) {
+              for (int b = 0; b < 3; ++b) {
+                st.push_back(float(rot[0][a] * m[0][b] + rot[1][a] * m[1][b] + rot[2][a] * m[2][b]));
+              }
+            }
+            std::memcpy(m, rot, sizeof m);
           }
           // The quaternion of m, from its largest component.
           double q[4];
@@ -4205,15 +4269,15 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
             q[3] = (m[d][b] - m[b][d]) / w;
           }
           const double len = std::sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-          std::vector<float>& out = keys[i][j];
           for (int k = 0; k < 4; ++k) {
             out.push_back(float(q[k] / len));
           }
           for (int k = 0; k < 3; ++k) {
-            out.push_back(float(t[k]));
+            out.push_back(float(fr.t[k]));
           }
         }
       }
+      frames[i].clear();
     }
     // Each piece's bounds as its first clip starts, in world space, and the retail objects in
     // them it stands for (Script::hidden): debris, and Actors in the same Active state - the
@@ -4311,6 +4375,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
         clip.fps = clips[i].anim->fps;
         clip.loop = clips[i].loop;
         clip.keys = std::move(keys[i][j]);
+        clip.stretch = std::move(stretch[i][j]);
       }
       script(inst, c.entity, active);
       ++made;

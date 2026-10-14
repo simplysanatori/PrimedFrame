@@ -1078,13 +1078,16 @@ void ReadSkeleton(const Bytes& d, Character& out, Header& header) {
   auto name = [&](uint32_t ref) { return (ref & 0x0fffffff) < strs.size() ? strs[ref & 0x0fffffff] : std::string(); };
 
   std::vector<int> parent(boneCount, -1);
+  std::vector<uint8_t> absOp(boneCount, 0);
   for (size_t o = 0; o + 6 < absC;) {
     const uint8_t* r = d.data + cblob + o;
-    if ((r[0] == 4 || r[0] == 5) && o + 7 <= absC) {
+    const size_t len = r[0] == 6 || r[0] == 7 ? 9 : 7;
+    if (r[0] >= 4 && r[0] <= 9 && o + len <= absC) {
       const uint32_t self = ReadLE16(r + 1), par = ReadLE16(r + 3);
       if (self % 6 == 0 && par % 6 == 0 && self / 6 < boneCount && par / 6 < boneCount) {
         parent[self / 6] = int(par / 6);
-        o += 7;
+        absOp[self / 6] = r[0];
+        o += len;
         continue;
       }
     }
@@ -1102,6 +1105,8 @@ void ReadSkeleton(const Bytes& d, Character& out, Header& header) {
     Bone bone;
     bone.name = name(nameRefs[absSet][i]);
     bone.parent = parent[i];
+    bone.absOp = absOp[i];
+    bone.invScale = absOp[i] == 6;
     if (hasWorld[i]) {
       Mat loc = world[i];
       Mat parentInv;
@@ -1233,6 +1238,12 @@ bool SkinPose(const Character& c, const Anim& anim, uint32_t frame, std::vector<
   if (boneCount == 0 || frame >= anim.frames || c.jointBone.size() != c.inverseBind.size()) {
     return false;
   }
+  // Abs ops 7-9 (base pose / extract-inverse-scale) are decoded but not applied: refuse them.
+  for (const Bone& b : c.bones) {
+    if (b.absOp >= 7) {
+      return false;
+    }
+  }
   // The anim track (op bone id) that drives each skeleton bone.
   std::vector<int> track(boneCount, -1);
   for (size_t j = c.animBone.size(); j-- > 0;) {
@@ -1264,8 +1275,19 @@ bool SkinPose(const Character& c, const Anim& anim, uint32_t frame, std::vector<
         std::fill(std::begin(unscaled.scale), std::end(unscaled.scale), 1.0f);
       }
       const Mat bind = KeyMatrix(unscaled);
-      const Mat local = track[b] >= 0 ? MatMul(bind, KeyMatrix(anim.bones[size_t(track[b])][frame])) : bind;
+      Mat local = track[b] >= 0 ? MatMul(bind, KeyMatrix(anim.bones[size_t(track[b])][frame])) : bind;
       const int par = c.bones[b].parent;
+      if (c.bones[b].invScale && par >= 0) {
+        // abs_bone_rel_inv_scale (0xba1bf0): local = diag(1/Sp) * R * diag(S), Sp the
+        // parent's scale; the translation is left as it is.
+        const int pt = track[size_t(par)];
+        const float* sp = pt >= 0 ? anim.bones[size_t(pt)][frame].scale : c.bones[size_t(par)].bind.scale;
+        for (size_t r = 0; r < 3; ++r) {
+          for (size_t col = 0; col < 3; ++col) {
+            local[r * 4 + col] /= double(sp[r]);
+          }
+        }
+      }
       if (par >= 0 && state[size_t(par)] == 2) {
         world[b] = MatMul(world[size_t(par)], local);
       } else if (par >= 0) {
