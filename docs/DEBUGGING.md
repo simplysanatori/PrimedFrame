@@ -23,7 +23,7 @@ vs the current `kImportVersion`, `/tmp` space, stale runs).
     $M start t1 --room 83F6FF6F:D5CDB809    # prints: t1 :200 5100 <log>
     $M cmd t1 status 'roomenv info'          # one console command per argument
     $M shot t1 /tmp/a.png 'view albedo'      # run commands, screenshot -> PNG
-    $M stop --all                            # always finish with this
+    $M stop --all t                          # always finish with this: your runs named t*
 
 `start --room` returns in about 7-8 s, once the player is in control: cutscenes are skipped
 (even unseen ones) and the fade-in after them has run. Pass `--cutscenes` to see them. Use your own run names so sessions stay apart.
@@ -68,7 +68,7 @@ a `warp` sent through `cmd`/`shot`, and `shot` wait for it (not on `--cutscenes`
 - `fxbisect <name> <root PART> --shot-cmds "cmd;cmd" --bad-region x,y,w,h [--settle N] [--out-dir D]`: runs the shot commands, reads the effect's `fx tree`, then mutes each distinct asset in turn (re-running the shot commands) and ranks them by how much the region changes against the unmuted reference (an unmuted repeat gives the noise floor, subtracted). Writes shots and `sheet.png` under `build/rig/<name>/fxbisect/`.
 - `log <name> [-n 40] [--grep RE] [--raw]`: tail of `game.log`, dropping `MP frame|prompt |mpstream` lines (constant `NOISE`).
 - `crash [<name>|<logfile>] [--binary PATH]`: symbolizes the last `port: crashed:` block with one `addr2line` call (`#N func file:line`); warns if the log's `port: build` differs from `<binary> --version`. For Android pass the matching `libmain.so` with `--binary`.
-- `ls` (alive/dead, display, port, build, room, uptime; reaps Xvfb of dead runs), `stop <name>|--all` (sends `quit`, then SIGTERM/SIGKILL on the recorded pids only; reports a crash found in the log), `clean [--keep 5]` (deletes dead run dirs under `build/rig/` only).
+- `ls` (alive/dead, display, port, build, room, uptime; reaps Xvfb of dead runs), `stop <name>|--all PREFIX|--everyone` (`--all` stops only live runs whose name starts with PREFIX, so give your runs a topic prefix; `--everyone` also stops other sessions' runs; sends `quit`, then SIGTERM/SIGKILL on the recorded pids only; reports a crash found in the log), `clean [--keep 5]` (deletes dead run dirs under `build/rig/` only).
 
 ## Recipes
 

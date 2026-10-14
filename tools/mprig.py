@@ -5,7 +5,7 @@
     mprig.py cmd t1 status 'roomenv info'          # one console command per argument
     mprig.py shot t1 /tmp/a.png 'roomenv bloom off'
     mprig.py ab t1 /tmp/x --a 'roomenv bloom off' --b 'roomenv bloom on'
-    mprig.py stop --all
+    mprig.py stop --all t                          # your runs whose name starts with "t"
 
 State lives in build/rig/ (git-ignored): build/rig/<name>/{run.json,game.log,user/,shots/}.
 Defaults (disc, real user dir, build) come from build/rig.ini [rig], overridden by env
@@ -760,15 +760,20 @@ def stop_run(run, quiet=False):
 
 
 def cmd_stop(a):
-    if a.all:
-        runs = [r for r in all_runs() if game_alive(r) or xvfb_alive(r)]
+    if a.all is not None or a.everyone:
+        # Other sessions share build/rig/: a bulk stop is scoped to the caller's own name prefix.
+        if a.all is not None and not a.all:
+            die("--all needs the prefix of your own run names (e.g. --all emucard-); --everyone stops every session's runs")
+        runs = [r for r in all_runs() if (game_alive(r) or xvfb_alive(r)) and (a.everyone or r["name"].startswith(a.all))]
         if not runs:
             print("no live runs")
+        if a.everyone and runs:
+            print("stopping every session's runs: " + " ".join(r["name"] for r in runs), file=sys.stderr)
         for r in runs:
             stop_run(r)
         return
     if not a.name:
-        die("give a run name or --all")
+        die("give a run name or --all PREFIX")
     stop_run(load_run(a.name))
 
 
@@ -1270,7 +1275,9 @@ def build_parser():
     s.add_argument("--out-dir", help="where the shots go (default: build/rig/<name>/fxbisect)")
     s = add("stop", cmd_stop, "quit the game, then kill only the recorded processes")
     s.add_argument("name", nargs="?")
-    s.add_argument("--all", action="store_true")
+    s.add_argument("--all", metavar="PREFIX", nargs="?", const="",
+                   help="stop your live runs whose name starts with PREFIX")
+    s.add_argument("--everyone", action="store_true", help="stop every live run, other sessions' included")
     add("ls", cmd_ls, "list runs; reaps the Xvfb of dead runs")
     s = add("log", cmd_log, "tail game.log without the noisy lines")
     s.add_argument("name")
