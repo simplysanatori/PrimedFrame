@@ -775,6 +775,7 @@ void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
   // pointer (a lock re-centres the pointer and aims as usual).
   float pointerX = 0.f;
   float pointerY = 0.f;
+  x490_gun->PortSetPointerAimPoint(false, CVector3f::Zero());
   if (x498_gunHolsterState == kGH_Drawn && PortDebug::PointerAimPosition(pointerX, pointerY) &&
       (pointerX != 0.f || pointerY != 0.f)) {
     const CGameCamera& cam = mgr.GetCameraManager()->GetCurrentCamera(mgr);
@@ -837,6 +838,7 @@ void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
     x490_gun->SetTransform(gunXf);
     UpdateAimTargetPrediction(aimXf, mgr);
     x490_gun->SetAssistAimTransform(aimXf);
+    x490_gun->PortSetPointerAimPoint(true, eye + rayDir * distance);
     return;
   }
 #endif

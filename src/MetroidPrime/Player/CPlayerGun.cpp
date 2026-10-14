@@ -360,6 +360,8 @@ CPlayerGun::CPlayerGun(TUniqueId playerId)
 , mPortRapidCharge(false)
 , mPortRapidShots(0)
 , mPortRapidTimer(0.f)
+, mPortPointerAimValid(false)
+, mPortPointerAimPoint(CVector3f::Zero())
 #endif
 {
 
@@ -588,6 +590,40 @@ CTransform4f PortGunRelativePose(const CStateManager& mgr, const CTransform4f& g
 void CPlayerGun::PortSnapshotPresentedPose(const CStateManager& mgr) const {
   sPortGunPrevRel = PortGunRelativePose(mgr, GetGunMotionTransform());
   sPortGunPrevGeneration = CActor::PortTickGeneration();
+}
+
+void CPlayerGun::PortShotFromDrawnMuzzle(const CStateManager& mgr, CTransform4f& xf) const {
+  // CStateManager's RenderGun pass draws the gun at the retail FOV when the view's differs,
+  // so on screen the muzzle sits where a world point at the same depth, scaled out from the
+  // view axis by the ratio of the two projections, would. Shots start there, so they leave
+  // the cannon as drawn; with pointer aim they still head for the pointed point.
+  const CCameraManager* camMgr = mgr.GetCameraManager();
+  if (!camMgr->IsInFPCamera()) {
+    return;
+  }
+  const CGameCamera& cam = camMgr->GetCurrentCamera(mgr);
+  if (cam.GetFov() == PortDebug::kFovRetail) {
+    return;
+  }
+  const float gunTan = tanf(CGameCamera::VertPlusFov(PortDebug::kFovRetail, cam.GetAspectRatio()) *
+                            0.5f * (M_PIF / 180.f));
+  const float viewTan = tanf(cam.GetRenderFov() * 0.5f * (M_PIF / 180.f));
+  if (gunTan <= 0.f || viewTan <= 0.f) {
+    return;
+  }
+  const float scale = viewTan / gunTan;
+  const CTransform4f viewXf = cam.GetTransform();
+  const CVector3f eye = viewXf.GetTranslation();
+  const CVector3f p = viewXf.TransposeRotate(xf.GetTranslation() - eye);
+  const CVector3f pos =
+      eye + viewXf.Rotate(CVector3f(p.GetX() * scale, p.GetY(), p.GetZ() * scale));
+  if (mPortPointerAimValid) {
+    const CVector3f toAim = mPortPointerAimPoint - pos;
+    if (toAim.CanBeNormalized()) {
+      xf = CTransform4f::LookAt(CVector3f::Zero(), toAim);
+    }
+  }
+  xf.SetTranslation(pos);
 }
 
 CTransform4f CPlayerGun::PortGunView(const CStateManager& mgr,
@@ -1327,6 +1363,11 @@ void CPlayerGun::UpdateNormalShotCycle(float dt, CStateManager& mgr) {
     xf = x478_assistAimXf;
     xf.SetTranslation(pos);
   }
+#ifdef TARGET_PC
+  if (!x833_29_pointBlankWorldSurface) {
+    PortShotFromDrawnMuzzle(mgr, xf);
+  }
+#endif
 
   xf.AddTranslation(mgr.GetCameraManager()->GetGlobalCameraTranslation(mgr));
   x38c_muzzleEffectVisTimer = 0.0625f;
@@ -1394,6 +1435,11 @@ void CPlayerGun::FireSecondary(float dt, CStateManager& mgr) {
       xf = x478_assistAimXf;
       xf.SetTranslation(pos);
     }
+#ifdef TARGET_PC
+    if (!x833_29_pointBlankWorldSurface) {
+      PortShotFromDrawnMuzzle(mgr, xf);
+    }
+#endif
 
     xf.AddTranslation(mgr.GetCameraManager()->GetGlobalCameraTranslation(mgr));
 #ifdef MP_ENABLE_SMOKE_DRIVER
@@ -2834,7 +2880,13 @@ void CPlayerGun::ReturnArmAndGunToDefault(CStateManager& mgr, bool returnToDefau
 }
 
 void CPlayerGun::UpdateAuxWeapons(float dt, const CTransform4f& targetXf, CStateManager& mgr) {
+#ifdef TARGET_PC
+  CTransform4f fireXf = GetGunMotionTransform() * x418_beamLocalXf;
+  PortShotFromDrawnMuzzle(mgr, fireXf);
+  const CVector3f firePoint = fireXf.GetTranslation();
+#else
   const CVector3f firePoint = GetGunMotionTransform() * x418_beamLocalXf.GetTranslation();
+#endif
   const CVector3f camPos = mgr.GetCameraManager()->GetGlobalCameraTranslation(mgr);
   bool done = x744_auxWeapon->UpdateComboFx(dt, kScaleVector, firePoint + camPos, targetXf, mgr);
   if (IsWeaponStateSet(0x10)) {
