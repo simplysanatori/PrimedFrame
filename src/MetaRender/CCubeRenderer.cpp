@@ -1701,6 +1701,15 @@ void CCubeRenderer::ReallyRenderFogVolume(const CColor& color, const CAABox& aab
 
   int maxChunkW = 0x140;
   int maxChunkH = 0xe0;
+#ifdef TARGET_PC
+  // The GC tiles the fog into 320x224 chunks only because two chunk copies
+  // fit in the spare buffer. On PC each copy breaks the render pass (a full
+  // framebuffer store and reload, plus an MSAA resolve), so tiling made acid,
+  // lava and water fog cost ~8 pass breaks per volume per frame (issue #111).
+  // One chunk covering the viewport gives the same result with two copies.
+  maxChunkW = vpWidth;
+  maxChunkH = vpHeight;
+#endif
   int chunkH = maxChunkH;
   int chunkW = maxChunkW;
   int drawLeft = 0;
