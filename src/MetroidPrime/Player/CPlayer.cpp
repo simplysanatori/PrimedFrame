@@ -778,13 +778,16 @@ void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
   if (x498_gunHolsterState == kGH_Drawn && PortDebug::PointerAimPosition(pointerX, pointerY) &&
       (pointerX != 0.f || pointerY != 0.f)) {
     const CGameCamera& cam = mgr.GetCameraManager()->GetCurrentCamera(mgr);
+    // The view's own transform: the crosshair is drawn from it, and the gun-follow camera
+    // can trail it by a few degrees.
+    const CTransform4f viewXf = cam.GetTransform();
     float yaw = 0.f;
     float pitch = 0.f;
     PortMouse::PointerAim::RayAngles(pointerX, pointerY, cam.GetRenderFov(),
                                      cam.GetAspectRatio(), yaw, pitch);
-    const CVector3f rayDir = camXf.Rotate(
+    const CVector3f rayDir = viewXf.Rotate(
         CVector3f(sinf(yaw) * cosf(pitch), cosf(yaw) * cosf(pitch), sinf(pitch)));
-    const CVector3f eye = camXf.GetTranslation();
+    const CVector3f eye = viewXf.GetTranslation();
     const float kAimRange = 100.f;
     const float kMinAimDistance = 3.f;
     float distance = kAimRange;
@@ -806,13 +809,29 @@ void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
     }
     CTransform4f aimXf = CTransform4f::LookAt(CVector3f::Zero(), toAim);
     aimXf.SetTranslation(viewGunPos);
+    // With the FOV slider off retail the gun is drawn at the retail FOV (CStateManager's
+    // RenderGun pass), so the model aims where the point sits under that projection: the
+    // same screen spot as the crosshair at the same depth.
+    CVector3f toModelAim = toAim;
+    if (mgr.GetCameraManager()->IsInFPCamera() && cam.GetFov() != PortDebug::kFovRetail) {
+      const float gunTan =
+          tanf(CGameCamera::VertPlusFov(PortDebug::kFovRetail, cam.GetAspectRatio()) * 0.5f *
+               (M_PIF / 180.f));
+      const float viewTan = tanf(cam.GetRenderFov() * 0.5f * (M_PIF / 180.f));
+      const CVector3f p = viewXf.TransposeRotate(rayDir * distance);
+      const float k = gunTan / viewTan;
+      toModelAim = eye + viewXf.Rotate(CVector3f(p.GetX() * k, p.GetY(), p.GetZ() * k)) - viewGunPos;
+      if (!toModelAim.CanBeNormalized()) {
+        toModelAim = toAim;
+      }
+    }
     // The same direction as camera-space yaw (+right) and pitch (+up), for the clamp.
-    const CVector3f local = camXf.TransposeRotate(toAim.AsNormalized());
+    const CVector3f local = viewXf.TransposeRotate(toModelAim.AsNormalized());
     yaw = atan2f(local.GetX(), local.GetY());
     pitch = atan2f(local.GetZ(), sqrtf(local.GetX() * local.GetX() + local.GetY() * local.GetY()));
     const float kMaxGunAngle = 50.f * (M_PIF / 180.f);
     PortMouse::PointerAim::ClampAngles(yaw, pitch, kMaxGunAngle);
-    gunXf = camXf.GetRotation() * CTransform4f::RotateZ(CRelAngle::FromRadians(-yaw)) *
+    gunXf = viewXf.GetRotation() * CTransform4f::RotateZ(CRelAngle::FromRadians(-yaw)) *
             CTransform4f::RotateX(CRelAngle::FromRadians(pitch));
     gunXf.SetTranslation(viewGunPos);
     x490_gun->SetTransform(gunXf);
