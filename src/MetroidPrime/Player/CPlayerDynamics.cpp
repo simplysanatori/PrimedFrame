@@ -804,6 +804,36 @@ float CPlayer::JumpInput(const CFinalInput& input, CStateManager& mgr) {
   return 0.f;
 }
 
+#ifdef TARGET_PC
+// The jump force runs on the press tick and on every later tick until this
+// timeout, counted down once per tick, reaches zero; once the button is released
+// it runs only while the timeout is still at or above the minimum timeout. At
+// 60 Hz the 0.235 s jump therefore pushes for 15 ticks (0.25 s); at 120 Hz it
+// would round to 29 ticks (0.242 s) and jump ~7% lower. Set both timeouts so the
+// push lasts the retail 60 Hz durations at the current tick rate.
+static void JumpTimeoutsAtRate(float& timeout, float& minTimeout) {
+  const float period = PortDebug::TickPeriod();
+  if (period * 60.f == 1.f) {
+    return;
+  }
+  int pushTicks = 1;
+  int minTicks = 1;
+  float left = timeout;
+  for (int i = 0; i < 600; ++i) {
+    left -= 1.f / 60.f;
+    if (left <= 0.f) {
+      break;
+    }
+    ++pushTicks;
+    if (minTimeout <= left) {
+      ++minTicks;
+    }
+  }
+  timeout = static_cast<float>(pushTicks) / 60.f - 0.5f * period;
+  minTimeout = timeout - (static_cast<float>(minTicks) / 60.f - 0.5f * period);
+}
+#endif
+
 void CPlayer::SetMoveState(NPlayer::EPlayerMovementState state, CStateManager& mgr) {
   switch (state) {
   case NPlayer::kMS_Jump:
@@ -813,12 +843,18 @@ void CPlayer::SetMoveState(NPlayer::EPlayerMovementState state, CStateManager& m
       x288_startingJumpTimeout = gpTweakPlayer->GetAllowedDoubleJumpTime();
       x290_minJumpTimeout =
           gpTweakPlayer->GetAllowedDoubleJumpTime() - gpTweakPlayer->GetMinDoubleJumpTime();
+#ifdef TARGET_PC
+      JumpTimeoutsAtRate(x288_startingJumpTimeout, x290_minJumpTimeout);
+#endif
       x28c_sjTimer = 0.f;
     } else if (x258_movementState != NPlayer::kMS_Jump) {
       DoSfxEffects(CSfxManager::SfxStart(SFXsam_b_jump_01, 127, 64, true));
       x2a0_ = 0.01f;
       x288_startingJumpTimeout = gpTweakPlayer->GetAllowedJumpTime();
       x290_minJumpTimeout = gpTweakPlayer->GetAllowedJumpTime() - gpTweakPlayer->GetMinJumpTime();
+#ifdef TARGET_PC
+      JumpTimeoutsAtRate(x288_startingJumpTimeout, x290_minJumpTimeout);
+#endif
       if (mgr.GetPlayerState()->GetItemAmount(CPlayerState::kIT_SpaceJumpBoots) != 0) {
         x28c_sjTimer = gpTweakPlayer->GetMaxDoubleJumpWindow();
       } else {
