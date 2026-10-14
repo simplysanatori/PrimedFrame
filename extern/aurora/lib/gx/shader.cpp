@@ -1195,16 +1195,24 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
       let pbr_dca = clamp({}, 0.0, 1.0);
       if (pbr_cut && pbr_dca * pbr_dca * (3.0 - 2.0 * pbr_dca) < 0.25) {{
           discard;
-      }})""",
+      }}
+      //@CUT_END)""",
                          mapStage[3] != -1 ? fmt::format("sampled{}.r", mapStage[3]) : "prev.a * prev.a"s);
   } else if (mapStage[4] == -1) {
-    // Remastered's cutout (mode 512): the filtered base alpha squared, times the raw vertex
-    // alpha on tinted shaders (pbr_vc.a is 1 otherwise), against 0.25. DIFC.a is 1 on every
-    // material that has it.
+    // Remastered's cutout (mode 512): the filtered base alpha squared against 0.25. The
+    // DepthOnly caster (93e0c484, 0b2e072b) multiplies by c3[0].w = DIFC.w = 1 and has no
+    // vertex colour, so the caster test (up to the marker) has no vertex alpha. The colour
+    // pass also multiplies by the raw vertex alpha on tinted shaders (pbr_vc.a is 1
+    // otherwise); that second test discards a superset since vc.a <= 1.
     layer += R"""(
+      if (pbr_cut && prev.a * prev.a < 0.25) {
+          discard;
+      }
+      //@CUT_END
       if (pbr_cut && prev.a * prev.a * pbr_vc.a < 0.25) {
           discard;
-      })""";
+      }
+)""";
   }
   if (costTest == 1 || costTest == 7) {
     // The base map, shaded by the facing only, and nothing else. Test 7 keeps the other
@@ -2897,6 +2905,56 @@ std::string_view inventory_visor_expr(std::string_view name) noexcept {
   return name == "alpha" ? InvAlphaExpr : name == "weight" ? InvWeightExpr : std::string_view{};
 }
 
+namespace {
+// The sun shadow map's alpha-tested caster of a Remastered cutout (shadowPass 2): vs_shadow_cut is vs_main (so the
+// fragment stage gets every interpolant) with the position of vs_shadow, and fs_shadow is fs_main up to its cut test
+// (marked //@CUT_END), where it returns: the pixel the colour pass discards casts no shadow either. Remastered's
+// DepthOnly perms of the three cutout shaders (93e0c484, 0b2e072b, 42fe2ed0) are the same test followed by KIL.
+void add_cut_caster(std::string& source, const ShaderConfig& config) {
+  constexpr std::string_view marker = "//@CUT_END";
+  constexpr std::string_view fsHead = "@fragment\nfn fs_main(in: VertexOutput) -> @location(0) vec4f {";
+  constexpr std::string_view vsHead = "@vertex\nfn vs_main(";
+  constexpr std::string_view vsTail = "\n    return out;\n}";
+  if (!config.shadow || config.lineMode != 0 || config.pbr == 0) {
+    return;
+  }
+  const size_t markerAt = source.find(marker);
+  const size_t fsAt = source.find(fsHead);
+  const size_t vsAt = source.find(vsHead);
+  if (markerAt == std::string::npos || fsAt == std::string::npos || vsAt == std::string::npos || markerAt < fsAt) {
+    return;
+  }
+  const size_t vsEnd = source.find(vsTail, vsAt);
+  if (vsEnd == std::string::npos) {
+    return;
+  }
+  int depth = 1;
+  for (size_t i = fsAt + fsHead.size(); i < markerAt; ++i) {
+    depth += source[i] == '{' ? 1 : source[i] == '}' ? -1 : 0;
+  }
+  if (depth < 1) {
+    return;
+  }
+  std::string vs = source.substr(vsAt, vsEnd - vsAt);
+  vs.replace(vs.find("fn vs_main("), 11, "fn vs_shadow_cut(");
+  vs += "\n    var shadow_pos = vec4f(mv_pos, 1.0) * ubuf.shadow_caster[imm.serial];"
+        "\n    shadow_pos.z = max(shadow_pos.z, 0.0);"
+        "\n    out.pos = shadow_pos;";
+  vs += vsTail;
+  std::string fs = "@fragment\nfn fs_shadow(in: VertexOutput) {";
+  fs += source.substr(fsAt + fsHead.size(), markerAt - (fsAt + fsHead.size()));
+  fs += "\n    return;";
+  for (int i = 0; i < depth; ++i) {
+    fs += "\n}";
+  }
+  source += "\n\n" + vs + "\n\n" + fs + "\n";
+}
+} // namespace
+
+bool shader_has_cut_caster(const ShaderConfig& config) noexcept {
+  return build_shader_source(config).find("fn fs_shadow(") != std::string::npos;
+}
+
 std::string build_shader_source(const ShaderConfig& config) noexcept {
   ZoneScoped;
   const auto hash = xxh3_hash(config);
@@ -4515,6 +4573,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
     assert(at != std::string::npos);
     shaderSource.replace(at, guard.size(), "  return p[min(word_idx, arrayLength(p) - 1u)];\n");
   }
+  add_cut_caster(shaderSource, config);
   if (config.drawId) {
     // The draw serial as the colour, 8 bits a channel, whatever the shading came to (it can still discard).
     constexpr std::string_view tail = "    return prev;\n}";

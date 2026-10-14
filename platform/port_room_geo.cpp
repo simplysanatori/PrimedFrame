@@ -1512,7 +1512,9 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     }
     const float lo[3] = {bounds.GetMinPoint().GetX(), bounds.GetMinPoint().GetY(), bounds.GetMinPoint().GetZ()};
     const float hi[3] = {bounds.GetMaxPoint().GetX(), bounds.GetMaxPoint().GetY(), bounds.GetMaxPoint().GetZ()};
-    casts = sOffscreenCasters && !cutout(model) && GXPortShadowBoxCasts(lo, hi);
+    // A cutout casts too: aurora gives a draw a caster only when it can discard like the colour pass does
+    // (a Remastered cut bit); a retail alpha-tested draw (alphaCompare) still gets none.
+    casts = sOffscreenCasters && GXPortShadowBoxCasts(lo, hi);
     return false;
   };
   for (Cluster& cluster : area.clusters) {
