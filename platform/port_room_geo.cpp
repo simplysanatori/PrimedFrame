@@ -1918,6 +1918,7 @@ void Think(CStateManager& mgr, float dt) {
     }
     for (const DriverStart& start : area.driverStarts) {
       Placed& item = area.items[start.item];
+      item.startAt = DriverStartAt(item.shown, item.startAt, area.clock);
       // Before it starts the parameter is the first key; after the last it holds that key.
       item.driverValue = item.driverSpline.Eval(
           item.driverSpline.FirstTime() + float(std::max(0., area.clock - item.startAt)));

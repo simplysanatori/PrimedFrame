@@ -601,7 +601,7 @@ std::vector<uint8_t> Write(const std::vector<Instance>& instances, const Script*
       AppendLE32(out, i);
       out.push_back(d.slot);
       out.push_back(0);
-      const uint32_t delay = uint32_t(std::lround(std::max(0.f, d.delay) * 100.f));
+      const uint32_t delay = uint32_t(std::lround(std::clamp(d.delay, 0.f, kMaxDriverDelay) * 100.f));
       out.push_back(uint8_t(delay));
       out.push_back(uint8_t(delay >> 8));
       AppendLE32(out, d.sender);

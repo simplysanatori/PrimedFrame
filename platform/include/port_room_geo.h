@@ -150,7 +150,7 @@ struct Instance {
     uint8_t slot = 0;
     uint32_t sender = 0; // retail editor id, layer bits included
     uint8_t state = 0;
-    float delay = 0.f; // seconds from the state to the driver starting
+    float delay = 0.f; // seconds from the state to the driver starting, 0 to kMaxDriverDelay
     std::vector<uint8_t> spline;
   };
   std::vector<Driver> drivers; // empty: none (at most one is written)
@@ -292,6 +292,16 @@ int SetGroupShown(uint32_t group, bool shown);
 // What the area's script last did to group `group`: 1 shown, 0 hidden, -1 nothing yet (or no
 // such area or group; a toggle of a group it has not set shows it).
 int GroupShown(uint32_t mrea, uint32_t group);
+// The longest delay a WDRV record holds (16 bits of centiseconds).
+constexpr float kMaxDriverDelay = 655.35f;
+// When a driven instance's driver starts at `clock`: `startAt` if a start set it (anything under
+// 1e200), else now if the instance is shown. A save state or a death resets the scripts and does
+// not resend the start, so an instance shown without one fades from when it appears, which is
+// where the files put the start (its Show and Start links carry the same sender, state and delay).
+inline double DriverStartAt(bool shown, double startAt, double clock) {
+  return startAt < 1e200 || !shown ? startAt : clock;
+}
+
 // A new game, a death or a save state builds a new CStateManager: every instance goes back
 // to how the file starts it, since the scripts will not resend what already happened.
 void ResetScriptState();

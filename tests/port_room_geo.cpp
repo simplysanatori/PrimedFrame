@@ -606,6 +606,20 @@ void TestDrivers() {
   std::vector<uint8_t> with = PortRoomGeo::Write({in[0], driven});
   Check(with.size() > PortRoomGeo::Write({in[0], in[1]}).size(), "the section is only written for drivers");
 
+  // A delay past the 16 bit field is clamped on write, not wrapped.
+  in[1].drivers.push_back(d);
+  in[1].drivers[0].delay = 1000.f;
+  Check(PortRoomGeo::Parse(PortRoomGeo::Write(in), out, error) && out[1].drivers.size() == 1 &&
+            std::fabs(out[1].drivers[0].delay - PortRoomGeo::kMaxDriverDelay) < 0.01f,
+        "an over-long delay clamps");
+  in[1].drivers.clear();
+
+  // A shown driven instance with no start (a save state reset the scripts) starts now; a started
+  // one keeps its start; a hidden one waits.
+  Check(PortRoomGeo::DriverStartAt(true, 1e300, 42.0) == 42.0, "shown without a start fades from now");
+  Check(PortRoomGeo::DriverStartAt(true, 40.0, 42.0) == 40.0, "a started driver keeps its start");
+  Check(PortRoomGeo::DriverStartAt(false, 1e300, 42.0) == 1e300, "a hidden one waits");
+
   // A version 10 file (the version word 10, no WDRV) still loads.
   std::vector<uint8_t> old = without;
   old[4] = 10;

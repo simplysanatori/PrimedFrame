@@ -3792,6 +3792,8 @@ void SurfaceHeader(Blob& s, const double* centre, uint32_t mat, size_t dlSize, u
 
 } // namespace
 
+int MaterialKind(const ModelMaterial& mat) { return ReadMaterial(mat, ConvertOptions{}).kind; }
+
 int MaterialDriverSlot(const ModelMaterial& mat, uint32_t variable) {
   const RemMaterial rem = ReadMaterial(mat, ConvertOptions{});
   if (rem.kind != 7) {

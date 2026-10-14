@@ -312,6 +312,13 @@ void TestSlot() {
 
   ModelMaterial component = water;
   component.renderTypes[0].flag2 = 0;  // CCH0.x: not what the port carries
+  ModelMaterial second = water;
+  second.name = "Waterfalls2";
+  Check(DriverSlot({water, second}, d) == -1, "a model with a second kind 7 material is not driven");
+  ModelMaterial plain = water;
+  plain.name = "Rock";
+  plain.shaderId[0] = 0;
+  Check(DriverSlot({plain, water}, d) == 3, "other kinds beside the driven material do not count");
   Check(DriverSlot({component}, d) == -1, "an unsupported component");
   ModelMaterial channel = water;
   channel.renderTypes[0].dataType = FourCC('C', 'C', 'H', '1');

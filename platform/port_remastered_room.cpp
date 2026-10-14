@@ -1372,6 +1372,11 @@ int DriverSlot(const std::vector<PortRemastered::ModelMaterial>& materials, cons
   if (d.variable.size() != 4) {
     return -1;
   }
+  // The runtime override reaches every kind 7 material of the model, so it must be the only one.
+  if (std::count_if(materials.begin(), materials.end(),
+                    [](const PortRemastered::ModelMaterial& m) { return PortRemastered::MaterialKind(m) == 7; }) != 1) {
+    return -1;
+  }
   for (const PortRemastered::ModelMaterial& m : materials) {
     if (m.name == d.set) {
       return PortRemastered::MaterialDriverSlot(
@@ -4326,7 +4331,8 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     const SceneryScripts::Driver& d = found->second[0];
     const auto starts = scripts.links.find(d.start);
     PortRoomGeo::Link first;
-    if (starts == scripts.links.end() || !SingleDriverStart(starts->second, first)) {
+    if (starts == scripts.links.end() || !SingleDriverStart(starts->second, first) ||
+        first.delay > PortRoomGeo::kMaxDriverDelay) {
       return false;
     }
     std::vector<uint8_t> data;
