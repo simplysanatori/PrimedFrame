@@ -1927,16 +1927,22 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
     const auto now = std::chrono::steady_clock::now();
     if (!f.started) {
       f = {true, target, target, 0.f, 0.f, now};
+    } else if (pick == nullptr) {
+      // No grade requested: CColorGradeManager::OnHintChangedCallback (0x6b86ec) returns
+      // without a transition when the new hint is null, so the last grade keeps its full
+      // weight (Remastered never fades to identity).
     } else if (target != f.to) {
       // Mid-fade, the new fade starts from whichever grade showed more.
       const float shown = f.seconds > 0.f
           ? std::chrono::duration<float>(now - f.start).count() / f.seconds : 1.f;
       f.from = shown >= 0.5f ? f.to : f.from;
       f.to = target;
-      f.seconds = off != nullptr ? off->fadeOut : pick != nullptr ? pick->fadeIn : f.fadeOut;
+      f.seconds = off != nullptr ? off->fadeOut : pick->fadeIn;
       f.start = now;
     }
-    f.fadeOut = pick != nullptr ? pick->fadeOut : 0.f;
+    if (pick != nullptr) {
+      f.fadeOut = pick->fadeOut;
+    }
   }
   GradeFade& f = sGradeFade;
   if (!f.started) {
@@ -2647,9 +2653,30 @@ void ResetGrades() {
   }
 }
 
+void SetViewGradesOn(bool on) {
+  const auto it = sAreas.find(sViewArea);
+  if (it == sAreas.end()) {
+    return;
+  }
+  for (auto& request : it->second.grades) {
+    request.on = on;
+    if (on) {
+      request.order = ++sGradeOrder;
+    }
+  }
+}
+
 std::string GradeInfo() {
   std::string out;
   char line[256];
+  if (sGradeFade.started) {
+    const GradeFade& f = sGradeFade;
+    const float t = f.seconds > 0.f
+        ? std::min(1.f, std::chrono::duration<float>(std::chrono::steady_clock::now() - f.start).count() / f.seconds)
+        : 1.f;
+    std::snprintf(line, sizeof(line), "grade fade: %08X -> %08X, weight %.3f over %g s\n", f.from, f.to, t, f.seconds);
+    out += line;
+  }
   std::snprintf(line, sizeof(line), "player in fluid %d, camera in water %d\n", int(sPlayerFluid), int(sCameraWater));
   out += line;
   float top, back;
