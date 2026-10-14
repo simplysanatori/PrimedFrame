@@ -281,6 +281,14 @@ void CActor::PreRender(CStateManager& mgr, const CFrustumPlanes& planes) {
                 GetShadow()->GetMaxShadowBox(GetModelData()->GetBounds(GetTransform()))) == true) {
           Shadow()->Calculate(GetModelData()->GetBounds(), GetTransform(), mgr);
           SetShadowDirty(false);
+#ifdef TARGET_PC
+          // Remastered re-poses a clipped actor whose dirty shadow box is in view
+          // (CActorMP1::PreRender 0xc4bb84 via PreRenderShadow 0xc4bc74), so the
+          // shadow of an off-screen animated actor follows its animation.
+          if (GetModelData()->HasAnimation()) {
+            ModelData()->AnimationData()->PreRender();
+          }
+#endif
         }
       }
     }
