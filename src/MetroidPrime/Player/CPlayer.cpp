@@ -768,8 +768,10 @@ void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
   }
 
 #ifdef TARGET_PC
-  // Port: pointer aim. Shots leave along the ray through the pointer; the gun model turns
-  // toward it too, but only so far, so it stays in view. No assist bends the shot off the
+  // Port: pointer aim. The gun sits off to the side of the eye, so a shot parallel to the
+  // ray through the pointer would miss what the pointer is on. Shots and the gun model aim
+  // from the gun at the point the ray hits instead (or a far point when it hits nothing);
+  // the model turns only so far, so it stays in view. No assist bends the shot off the
   // pointer (a lock re-centres the pointer and aims as usual).
   float pointerX = 0.f;
   float pointerY = 0.f;
@@ -780,10 +782,35 @@ void CPlayer::UpdateGunTransform(const CVector3f& gunPos, CStateManager& mgr) {
     float pitch = 0.f;
     PortMouse::PointerAim::RayAngles(pointerX, pointerY, cam.GetRenderFov(),
                                      cam.GetAspectRatio(), yaw, pitch);
-    CTransform4f aimXf = camXf.GetRotation() * CTransform4f::RotateZ(CRelAngle::FromRadians(-yaw)) *
-                         CTransform4f::RotateX(CRelAngle::FromRadians(pitch));
+    const CVector3f rayDir = camXf.Rotate(
+        CVector3f(sinf(yaw) * cosf(pitch), cosf(yaw) * cosf(pitch), sinf(pitch)));
+    const CVector3f eye = camXf.GetTranslation();
+    const float kAimRange = 100.f;
+    const float kMinAimDistance = 3.f;
+    float distance = kAimRange;
+    {
+      static const CMaterialFilter filter = CMaterialFilter::MakeIncludeExclude(
+          CMaterialList(kMT_Solid), CMaterialList(kMT_Player, kMT_ProjectilePassthrough));
+      TEntityList nearList;
+      mgr.BuildNearList(nearList, eye, rayDir, kAimRange, filter, this);
+      TUniqueId hitId = kInvalidUniqueId;
+      const CRayCastResult hit =
+          mgr.RayWorldIntersection(hitId, eye, rayDir, kAimRange, filter, nearList);
+      if (hit.IsValid()) {
+        distance = CMath::Max((hit.GetPoint() - eye).Magnitude(), kMinAimDistance);
+      }
+    }
+    CVector3f toAim = eye + rayDir * distance - viewGunPos;
+    if (!toAim.CanBeNormalized()) {
+      toAim = rayDir;
+    }
+    CTransform4f aimXf = CTransform4f::LookAt(CVector3f::Zero(), toAim);
     aimXf.SetTranslation(viewGunPos);
-    const float kMaxGunAngle = 25.f * (M_PIF / 180.f);
+    // The same direction as camera-space yaw (+right) and pitch (+up), for the clamp.
+    const CVector3f local = camXf.TransposeRotate(toAim.AsNormalized());
+    yaw = atan2f(local.GetX(), local.GetY());
+    pitch = atan2f(local.GetZ(), sqrtf(local.GetX() * local.GetX() + local.GetY() * local.GetY()));
+    const float kMaxGunAngle = 50.f * (M_PIF / 180.f);
     PortMouse::PointerAim::ClampAngles(yaw, pitch, kMaxGunAngle);
     gunXf = camXf.GetRotation() * CTransform4f::RotateZ(CRelAngle::FromRadians(-yaw)) *
             CTransform4f::RotateX(CRelAngle::FromRadians(pitch));
