@@ -1504,13 +1504,19 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // and the lighting is the standard PBR one on map 1 (a METL map: AO, roughness, metal).
     if (mapStage[2] != -1) {
       kinds += fmt::format(R"""(
-      if (pbr_kind > 12.5 && pbr_kind < 13.5 && pbr_tlen > 1e-24) {{
+      if (pbr_kind > 12.5 && pbr_kind < 13.5) {{
           let pbr_mt = (sampled{0}.rg * 1.9921875 - 1.0) * ubuf.pbr_param.z;
-          let pbr_ms = inverseSqrt(pbr_tlen);
-          let pbr_mm = normalize(pbr_t * (pbr_ms * pbr_mt.x) - pbr_b * (pbr_ms * pbr_mt.y) +
-                                 pbr_ng * sqrt(max(0.0, 1.0 - dot(pbr_mt, pbr_mt))));
-          let pbr_mc = textureSampleLevel(tex{1}, tex{1}_samp, 0.5 + 0.5 * pbr_mm.xy, 0.0).rgb;
-          pbr_base = max(pbr_mc, vec3f(0.0)) * ubuf.pbr_layer.z * max(ubuf.pbr_emissive.rgb, vec3f(0.0));
+          let pbr_ms = select(0.0, inverseSqrt(pbr_tlen), pbr_tlen > 1e-24);
+          // c83e6fcd uses the mapped normal as it is, never normalised.
+          let pbr_mm = pbr_t * (pbr_ms * pbr_mt.x) - pbr_b * (pbr_ms * pbr_mt.y) +
+                       pbr_ng * sqrt(max(0.0, 1.0 - dot(pbr_mt, pbr_mt)));
+          // c83e6fcd's matcap read is an implicit-derivative texture(), so it picks the matcap's
+          // mips; the derivatives are taken here, outside the pbr_tlen test, to stay uniform.
+          let pbr_muv = 0.5 + 0.5 * pbr_mm.xy;
+          let pbr_mc = textureSampleGrad(tex{1}, tex{1}_samp, pbr_muv, dpdx(pbr_muv), dpdy(pbr_muv)).rgb;
+          if (pbr_tlen > 1e-24) {{
+              pbr_base = max(pbr_mc, vec3f(0.0)) * ubuf.pbr_layer.z * max(ubuf.pbr_emissive.rgb, vec3f(0.0));
+          }}
       }})""",
                            mapStage[2], underlying(inner.texMapId));
     }
@@ -1812,12 +1818,14 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                           base, holo);
     // Kind 13's opacity is the vertex alpha times DIFC.a (pbr_layer_height.y), blended. Its
     // rim, 1 - |n.z|^pbr_param.x - pbr_param.w (CCH0.x, CCH1.y), times the vertex colour and
-    // pbr_param.y (CCH0.y), is added after the room's exposure (it is at inverse exposure).
+    // pbr_param.y (CCH0.y), is at inverse exposure (c4[0].z), so it is divided by the room-exposure
+    // scaling below where that applies, as kind 32's ICMC.
     liquid += R"""(
       if (pbr_kind > 12.5 && pbr_kind < 13.5) {
           pbr_alpha = clamp(pbr_vraw.a * ubuf.pbr_layer_height.y, 0.0, 1.0);
           let pbr_mrim = clamp(1.0 - pow(abs(pbr_n.z), max(ubuf.pbr_param.x, 1e-3)) - ubuf.pbr_param.w, 0.0, 1.0);
-          pbr_glow += pbr_mrim * pbr_vraw.rgb * ubuf.pbr_param.y;
+          pbr_glow += pbr_mrim * pbr_vraw.rgb * ubuf.pbr_param.y /
+                      select(1.0, ubuf.pbr_tone[0].w, ubuf.pbr_tone[1].x > 0.0 && ubuf.pbr_tone[0].w > 0.0);
       })""";
     // Kind 21's glow, at the inverse of the exposure: the pulsing CCH3 glow in the AO cavities (blue mask) and the
     // ramp's colour where the vertex alpha says, scaled by the vertex red.
