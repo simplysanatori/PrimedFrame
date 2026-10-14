@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -1332,6 +1333,7 @@ struct SceneryScripts {
   std::map<int, std::vector<PortRoomGeo::Link>> links;  // by entity
   std::map<int, size_t> unresolved;                      // by entity: connections not traced
   std::map<int, std::string> unresolvedHow;              // a grade hint's: sender type/event/action
+  std::map<std::string, std::pair<size_t, std::set<int>>> missStats;  // MP_REMASTERED_MISS: class -> connections, entities
   std::map<int, const ScriptObject*> platform;           // by entity: the platform carrying it
   size_t entities = 0, matched = 0;
   // Remastered's own objects in between (camera volumes, counters, relays) and the
@@ -1816,9 +1818,23 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     std::vector<PortRoomGeo::Link> links;
     size_t bad = 0;
     std::string how;
+    static const bool logMisses = std::getenv("MP_REMASTERED_MISS") != nullptr;
     // One more connection not traced; a grade hint's are named in the import log.
     const auto miss = [&](const Component& sender, const Connection& c, uint32_t first, int depth) {
       ++bad;
+      if (logMisses) {
+        const int ms = entityOf(int(c.sender));
+        const bool unmatched = ms < 0 || match[size_t(ms)] < 0;
+        const bool nostate = RetailState(sender.type, c.event) < 0;
+        char key[160];
+        std::snprintf(key, sizeof key, "%s%s%s (target %08X, sender %08X event %08X action %08X, depth %d)",
+                      unmatched ? "unmatched " : "", nostate ? "nostate " : "",
+                      !unmatched && !nostate ? (depth >= 6 ? "depth " : "other ") : "", e.type, sender.type, c.event, first,
+                      depth);
+        auto& stat = result.missStats[key];
+        ++stat.first;
+        stat.second.insert(e.entity);
+      }
       if (hintEntities.count(e.entity) != 0) {
         const int s = entityOf(int(c.sender));
         char text[96];
@@ -3845,6 +3861,10 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   std::vector<PortRoomGeo::Instance> instances;
   size_t dropped = 0;
   SceneryScripts scripts = MatchScripts(r.room, area);  // `pieces` adds the objects hidden
+  for (const auto& [key, stat] : scripts.missStats) {
+    Log("  " + r.name + ": untraced " + std::to_string(stat.first) + " connection(s) on " +
+        std::to_string(stat.second.size()) + " entities: " + key);
+  }
   // Whether an entity that starts inactive can be shown: by a retail object (links) or by
   // Remastered's own script. One that cannot is never seen: the ships of the landing
   // cutscene sit in the sky and on the pad, where retail's own ship already is.
@@ -3854,6 +3874,17 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
            (links != scripts.links.end() &&
             std::any_of(links->second.begin(), links->second.end(),
                         [](const PortRoomGeo::Link& l) { return l.action != PortRoomGeo::kHide; }));
+  };
+  // Whether a link shows the entity and another hides it again, the hide carrying its Timer's
+  // delay: the hangar's boundary shield flashes for 0.25 s when a hit is blocked.
+  auto showsAndHides = [&](int entity) {
+    const auto links = scripts.links.find(entity);
+    if (links == scripts.links.end()) {
+      return false;
+    }
+    const auto& v = links->second;
+    return std::any_of(v.begin(), v.end(), [](const PortRoomGeo::Link& l) { return l.action == PortRoomGeo::kShow; }) &&
+           std::any_of(v.begin(), v.end(), [](const PortRoomGeo::Link& l) { return l.action == PortRoomGeo::kHide; });
   };
   size_t gated = 0, linked = 0, grouped = 0, inactive = 0, unresolved = 0;
   // What the entity's scripts make of an instance: its layer, whether it starts shown, and
@@ -4045,7 +4076,8 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
   // the waterfalls of Ice Shorelines and the Hive Totem pour for 17 and 6.25 s and fade with
   // their Waterfalls.GRDU driver, and pieces of the Frigate's hangar flash for 0.25 s. Their
   // links keep the timers' delays (Link::delay); those with a float driver that moves a
-  // parameter of their material (driverOf) are kept with the driver, the others are left out. An
+  // parameter of their material (driverOf) are kept with the driver, those with both a show and
+  // a hide link (the hangar's boundary shield) are kept with the links, the others are left out. An
   // animated actor is drawn: the Mines turbine's explosion, shown 5.5 s after its pickup is
   // taken and hidden 2.5 s later, partway through its clip.
   std::set<int> timedOff;
@@ -4385,7 +4417,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     const bool active = r.room.Active(*c);
     PortRoomGeo::Instance::Driver driver;
     const bool driven = hasModel && driverOf(*c, r.room.Bytes(prop->second), driver);
-    if (!active && (!canShow(c->entity) || (timedOff.count(c->entity) != 0 && !hasAnim && !driven))) {
+    if (!active && (!canShow(c->entity) || (timedOff.count(c->entity) != 0 && !hasAnim && !driven && !showsAndHides(c->entity)))) {
       ++inactive;
       continue;
     }
