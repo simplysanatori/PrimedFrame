@@ -134,6 +134,7 @@ struct Value {
 struct Track {
   int type = 0;
   int flag = 0;
+  uint32_t boolWords = 0;  // type 3: how many words the bool data holds (init-dequant op 5)
   std::vector<Value> values;
 };
 
@@ -147,77 +148,124 @@ struct StreamInfo {
   uint32_t v = 0;  // quantization steps per frame
   uint32_t u6 = 0;  // bits flagging a keyframe change per frame
   std::vector<Track> tracks;
+  // Types 3 to 5 (bool words, custom real32/int32 variables) never touch a bone, and their
+  // value layout (NAnimOp::dquant_bits and friends) is not decoded: a stream that has values
+  // of those types can only be skipped, not decoded.
+  bool undecodable = false;
 };
 
-// Blob layout: 24 byte header, header bits, init-dequant bit stream, data bit
-// stream, op stream (see NOTES-anim.md).
-StreamInfo ParseBlob(const Bytes& d, size_t base) {
+// Blob layout: 24 byte header, header bits, init-dequant bit stream, then per stream info a
+// data bit stream and an op stream. CAnimCompStream::Load reads one info per stream; every
+// stream has its own tracks, step length and bit streams.
+std::vector<StreamInfo> ParseBlob(const Bytes& d, size_t base) {
   d.Need(base, 24, "animation header");
   const uint32_t size = ReadLE32(d.data + base);
   if (size < 24 || !d.Has(base, size)) {
     Fail("animation blob runs past the end of the file");
   }
-  StreamInfo info;
-  info.blob = Bytes{d.data + base, size};
+  const Bytes blob{d.data + base, size};
   const uint16_t offBits = ReadLE16(d.data + base + 4);
-  info.offInit = ReadLE16(d.data + base + 6);
-  info.headerFloat = ReadLEFloat(d.data + base + 12);
-  info.frames = ReadLE16(d.data + base + 16);
+  const uint32_t offInit = ReadLE16(d.data + base + 6);
+  const float headerFloat = ReadLEFloat(d.data + base + 12);
+  const uint32_t frames = ReadLE16(d.data + base + 16);
 
-  BitStream bs(info.blob, uint64_t(offBits) * 8);
+  BitStream bs(blob, uint64_t(offBits) * 8);
   const uint32_t streamInfos = bs.Read(4);
   bs.Read(10);  // total tracks
   bs.Read(4);
-  if (streamInfos != 1) {
-    Fail(std::to_string(streamInfos) + " stream infos are not supported");
-  }
-  info.w1 = bs.Read(20);
-  info.w2 = bs.Read(20);
-  const uint32_t trackCount = bs.Read(4);
-  bs.Read(1);
-  bs.Read(1);
-  info.v = bs.Read(4);
-  info.u6 = bs.Read(4);
-  bs.Read(4);
-  for (uint32_t i = 0; i < trackCount; ++i) {
-    const uint32_t count = bs.Read(10);
-    const uint32_t type = bs.Read(3);
-    const uint32_t flag = bs.Read(1);
-    if (type == 3) {
-      bs.Read(6);
+  std::vector<StreamInfo> out;
+  for (uint32_t s = 0; s < streamInfos; ++s) {
+    StreamInfo info;
+    info.blob = blob;
+    info.offInit = offInit;
+    info.headerFloat = headerFloat;
+    info.frames = frames;
+    info.w1 = bs.Read(20);
+    info.w2 = bs.Read(20);
+    const uint32_t trackCount = bs.Read(4);
+    const uint32_t hasConsts = bs.Read(1);
+    bs.Read(1);
+    info.v = bs.Read(4);
+    info.u6 = bs.Read(4);
+    bs.Read(4);  // context
+    for (uint32_t i = 0; i < trackCount; ++i) {
+      const uint32_t count = bs.Read(10);
+      const uint32_t type = bs.Read(3);
+      const uint32_t flag = bs.Read(1);
+      uint32_t extra = 0;
+      if (type == 3) {
+        extra = bs.Read(6);  // the bool word count tween_bool_words_op reads
+      }
+      if (type > 5) {
+        Fail("track type " + std::to_string(type) + " is not supported");
+      }
+      Track t;
+      t.type = int(type);
+      t.boolWords = extra;
+      t.flag = int(flag);
+      t.values.resize(count);
+      info.undecodable = info.undecodable || (type > 2 && count != 0);
+      info.tracks.push_back(std::move(t));
     }
-    if (type > 2) {
-      Fail("track type " + std::to_string(type) + " is not supported");
+    if (hasConsts) {
+      // Inline constants (InitConstData): u16 id, f32, optional quaternion, optional vec3.
+      const uint32_t entries = bs.Read(4);
+      for (uint32_t k = 0; k < entries; ++k) {
+        bs.Read(16);
+        bs.Read(32);
+        if (bs.Read(1)) {
+          for (int c = 0; c < 4; ++c) {
+            bs.Read(32);
+          }
+        }
+        if (bs.Read(1)) {
+          for (int c = 0; c < 3; ++c) {
+            bs.Read(32);
+          }
+        }
+      }
     }
-    Track t;
-    t.type = int(type);
-    t.flag = int(flag);
-    t.values.resize(count);
-    info.tracks.push_back(std::move(t));
+    if (bs.Overrun()) {
+      Fail("animation header bits run past the blob");
+    }
+    out.push_back(std::move(info));
   }
-  if (bs.Overrun()) {
-    Fail("animation header bits run past the blob");
-  }
-  return info;
+  return out;
 }
 
-void InitDequant(StreamInfo& info) {
-  BitStream bs(info.blob, uint64_t(info.offInit) * 8);
+// The init-dequant bit stream is shared by all streams: op 0 selects the stream the next
+// ops apply to (CAnimCompStreamObj::InitDequant, init_stream_inst).
+void InitDequant(std::vector<StreamInfo>& infos) {
+  if (infos.empty()) {
+    return;
+  }
+  BitStream bs(infos[0].blob, uint64_t(infos[0].offInit) * 8);
+  size_t current = 0;
   for (;;) {
     if (bs.Overrun()) {
       Fail("init-dequant stream has no end marker");
     }
     const uint32_t op = bs.Read(4);
     if (op == 0) {
-      bs.Read(4);
-    } else if (op == 1) {
-      break;
-    } else if (op == 2 || op == 3) {  // 2 = rotation values, 3 = vec3 values; same layout
-      const uint32_t index = bs.Read(4);
-      if (index >= info.tracks.size()) {
-        Fail("init-dequant names a track that does not exist");
+      current = bs.Read(4);
+      if (current >= infos.size()) {
+        Fail("init-dequant selects a stream that does not exist");
       }
-      Track& track = info.tracks[index];
+      continue;
+    }
+    if (op == 1) {
+      break;
+    }
+    if (op < 2 || op > 6) {
+      Fail("init-dequant op " + std::to_string(op) + " is not supported");
+    }
+    StreamInfo& info = infos[current];
+    const uint32_t index = bs.Read(4);
+    if (index >= info.tracks.size()) {
+      Fail("init-dequant names a track that does not exist");
+    }
+    Track& track = info.tracks[index];
+    if (op == 2 || op == 3) {  // 2 = rotation values, 3 = vec3 values; same layout
       for (Value& val : track.values) {
         val.W = int(bs.Read(5));
         val.q = int(bs.Read(5));
@@ -229,8 +277,23 @@ void InitDequant(StreamInfo& info) {
           val.mask = 1;
         }
       }
-    } else {
-      Fail("init-dequant op " + std::to_string(op) + " is not supported");
+    } else if (op == 4) {  // real32 values: two 5 bit fields and a flag
+      for (size_t k = 0; k < track.values.size(); ++k) {
+        bs.Read(5);
+        bs.Read(5);
+        bs.Read(1);
+      }
+    } else if (op == 5) {  // bool: 12 bit word count, then a flag plus 16 bits each
+      const uint32_t entries = bs.Read(12);
+      for (uint32_t k = 0; k < entries; ++k) {
+        bs.Read(1);
+        bs.Read(16);
+      }
+    } else {  // 6: int32 values, a 5 bit field and a flag
+      for (size_t k = 0; k < track.values.size(); ++k) {
+        bs.Read(5);
+        bs.Read(1);
+      }
     }
   }
 }
@@ -376,8 +439,13 @@ std::array<double, 3> TweenVec3(const Value& val, int64_t t) {
 struct Op {
   uint32_t bone;
   uint16_t rot, scale, trans;
+  bool noScale = false;  // sub-op 3: the scale is left at its default
 };
 
+// The op stream is `01 <u16 skip>` and then sub-ops, each `<id byte><payload>`, until id 0
+// (NAnimOp::tween_solve over sTweenFuncSet): 2 = bone coordinates with scale, 3 = bone
+// coordinates without scale, 4 = bool words, 5 = move update, 6/7 = custom real32/int32.
+// Only 2 and 3 produce bone keys; the others are stepped over by their payload size.
 std::vector<Op> ParseOps(const StreamInfo& info) {
   const Bytes& b = info.blob;
   size_t p = info.w2;
@@ -396,20 +464,44 @@ std::vector<Op> ParseOps(const StreamInfo& info) {
     while (p < b.size) {
       const uint8_t sub = b.data[p++];
       if (sub == 0) {
-        break;
+        return out;  // done_func ends the solve; the next group belongs to another stream
       }
-      if (sub != 2) {
+      if (sub == 5) {
+        continue;  // tween_update_move: no payload
+      }
+      if (sub == 4) {  // tween_bool_words_op: a track index, then that track's word count of u16
+        const uint8_t track = byteAt(p + 1);
+        if (track >= info.tracks.size()) {
+          Fail("bool words op names a track that does not exist");
+        }
+        p += 2 + 2 * size_t(info.tracks[track].boolWords);
+        continue;
+      }
+      if (sub == 6 || sub == 7) {  // u8 count, u16 header, count u16 references
+        p += 3 + 2 * size_t(byteAt(p));
+        continue;
+      }
+      if (sub != 2 && sub != 3) {
         Fail("op stream sub-op " + std::to_string(sub) + " is not supported");
       }
+      const size_t entry = sub == 2 ? 6 : 4;
       const uint32_t count = byteAt(p);
       b.Need(p + 1, 2, "op stream");
       const uint32_t hdr = ReadLE16(b.data + p + 1);
       p += 3;
       const uint32_t bone = (hdr >> 5) & 0x7ff;
       for (uint32_t k = 0; k < count; ++k) {
-        b.Need(p, 6, "op stream");
-        out.push_back({bone + k, ReadLE16(b.data + p), ReadLE16(b.data + p + 2), ReadLE16(b.data + p + 4)});
-        p += 6;
+        b.Need(p, entry, "op stream");
+        Op o{bone + k, ReadLE16(b.data + p), 0, 0};
+        if (sub == 2) {
+          o.scale = ReadLE16(b.data + p + 2);
+          o.trans = ReadLE16(b.data + p + 4);
+        } else {
+          o.noScale = true;
+          o.trans = ReadLE16(b.data + p + 2);
+        }
+        out.push_back(o);
+        p += entry;
       }
     }
   }
@@ -455,7 +547,7 @@ std::vector<Record> ReadRecords(const Bytes& d, size_t start) {
   while (d.Has(o, 9) && d.data[o] == 1) {
     const uint32_t id = ReadLE32(d.data + o + 1);
     const uint32_t len = ReadLE32(d.data + o + 5);
-    if (id > 0xff || len == 0 || !d.Has(o, size_t(12) + len)) {
+    if (id > 0xff || len < 0x18 || !d.Has(o, size_t(12) + len)) {  // a blob header is 24 bytes
       break;
     }
     recs.push_back({o, id, o + 12 + len});
@@ -478,13 +570,15 @@ std::vector<Record> FindRecords(const Bytes& d) {
   if (!best.empty()) {
     return best;
   }
-  // A file with one animation has no chain: look for `01 id 00 00 00 <size> 18 00 28 00`,
-  // the record marker followed by the blob header.
+  // A file with one animation has no chain: look for `01 id 00 00 00 <size> 18 00 <off> 00`,
+  // the record marker followed by the blob header. The init-dequant offset <off> is 0x28 with
+  // one context and larger (0x30 seen) with more, so it only has to lie inside the blob.
   for (size_t o = 0; d.Has(o, 13); ++o) {
     if (d.data[o] == 1 && d.data[o + 2] == 0 && d.data[o + 3] == 0 && d.data[o + 4] == 0 &&
-        ReadLE16(d.data + o + 9) == 0x18 && ReadLE16(d.data + o + 11) == 0x28) {
+        ReadLE16(d.data + o + 9) == 0x18) {
       const uint32_t len = ReadLE32(d.data + o + 5);
-      if (len != 0 && d.Has(o, size_t(12) + len)) {
+      const uint32_t dequant = ReadLE16(d.data + o + 11);
+      if (len != 0 && dequant > 0x18 && dequant < len && d.Has(o, size_t(12) + len)) {
         best.push_back({o, d.data[o + 1], o + 12 + len});
         o += 12 + len - 1;  // the regex scan does not overlap matches
       }
@@ -565,8 +659,10 @@ void Evaluate(const StreamInfo& info, const std::vector<Op>& ops, const std::vec
       }
       return TweenVec3(info.tracks[track].values[index], t);
     };
-    double sc[3];
-    if (op.scale & 0x8000) {
+    double sc[3] = {0.0, 0.0, 0.0};
+    if (op.noScale) {
+      // left at the fragment's default, a delta of zero
+    } else if (op.scale & 0x8000) {
       if (op.scale & 0x4000) {
         Fail("single-real scale tracks are not supported");
       }
@@ -604,41 +700,69 @@ void Evaluate(const StreamInfo& info, const std::vector<Op>& ops, const std::vec
 }
 
 Anim DecodeAnim(const Bytes& d, const Record& rec, const std::vector<double>& pool) {
-  StreamInfo info = ParseBlob(d, rec.offset + 5);
-  InitDequant(info);
-  Stream stream(info);
-  const std::vector<Op> ops = ParseOps(info);
-  stream.InitFrames();
+  std::vector<StreamInfo> infos = ParseBlob(d, rec.offset + 5);
+  InitDequant(infos);
+  struct Active {
+    StreamInfo* info;
+    std::vector<Op> ops;
+  };
+  std::vector<Active> active;
+  for (StreamInfo& info : infos) {
+    std::vector<Op> ops = ParseOps(info);
+    if (ops.empty()) {
+      continue;  // custom variables and bool words only: nothing for the skeleton
+    }
+    if (info.undecodable) {
+      Fail("a stream with bone ops also holds bool or custom variable values");
+    }
+    active.push_back({&info, std::move(ops)});
+  }
+  if (infos.empty()) {
+    Fail("animation has no stream info");
+  }
+  const StreamInfo& head = infos[0];
 
   Anim anim;
   anim.id = rec.id;
-  anim.fps = kFramesPerRate * info.headerFloat;
-  anim.frames = info.frames;
+  anim.fps = kFramesPerRate * head.headerFloat;
+  anim.frames = head.frames;
   uint32_t boneCount = 0;
-  for (const Op& op : ops) {
-    boneCount = std::max(boneCount, op.bone + 1);
+  for (const Active& a : active) {
+    for (const Op& op : a.ops) {
+      boneCount = std::max(boneCount, op.bone + 1);
+    }
   }
   // A damaged header can claim 65535 frames of 2000 bones; real files have well under this.
-  if (uint64_t(boneCount) * info.frames > (uint64_t(1) << 23)) {
+  if (uint64_t(boneCount) * head.frames > (uint64_t(1) << 23)) {
     Fail("animation is implausibly large");
   }
   anim.bones.assign(boneCount, std::vector<Key>());
   for (std::vector<Key>& keys : anim.bones) {
-    keys.reserve(info.frames);
+    keys.reserve(head.frames);
   }
   anim.tracked.assign(boneCount, false);
-  for (const Op& op : ops) {
-    anim.tracked[op.bone] = true;
+  for (const Active& a : active) {
+    for (const Op& op : a.ops) {
+      anim.tracked[op.bone] = true;
+    }
+  }
+  std::vector<Stream> streams;
+  streams.reserve(active.size());
+  for (const Active& a : active) {
+    streams.emplace_back(*a.info);
+    streams.back().InitFrames();
   }
   std::vector<Key> frameKeys(boneCount);
   std::vector<bool> has(boneCount);
-  for (uint32_t f = 0; f < info.frames; ++f) {
-    const int64_t t = int64_t(f) * int64_t(info.v);
-    while (stream.Cur() < t) {
-      stream.DequantFrame();
-    }
+  for (uint32_t f = 0; f < head.frames; ++f) {
     std::fill(has.begin(), has.end(), false);
-    Evaluate(info, ops, pool, t, frameKeys, has);
+    for (size_t i = 0; i < active.size(); ++i) {
+      const int64_t t = int64_t(f) * int64_t(active[i].info->v);
+      while (streams[i].Cur() < t) {
+        streams[i].DequantFrame();
+      }
+      Evaluate(*active[i].info, active[i].ops, pool, t, frameKeys, has);
+    }
     for (uint32_t b = 0; b < boneCount; ++b) {
       anim.bones[b].push_back(has[b] ? frameKeys[b] : Key());
     }
