@@ -42,7 +42,7 @@ void Le(std::vector<uint8_t>& v, uint32_t x, int bytes) {
 // Stream 0: no tracks, one op stream group `sub-op 3, 1 entry` (a rotation and a translation
 // pool reference). Stream 1: one type 3 track (bool words, extra 1) and an op stream with a
 // sub-op 4 (a byte, the track index, one u16 word).
-std::vector<uint8_t> Blob() {
+std::vector<uint8_t> Blob(uint32_t ctx0) {
   Bits h;  // header bits
   h.Put(2, 4);
   h.Put(1, 10);
@@ -57,7 +57,7 @@ std::vector<uint8_t> Blob() {
     h.Put(0, 1);
     h.Put(1, 4);  // v
     h.Put(0, 4);  // u6
-    h.Put(0, 4);  // context
+    h.Put(s == 0 ? ctx0 : 0, 4);  // constant pool index
     if (s == 1) {
       h.Put(1, 10);  // count
       h.Put(3, 3);   // type: bool words
@@ -97,11 +97,29 @@ std::vector<uint8_t> Blob() {
   return b;
 }
 
-std::vector<uint8_t> File(int records, bool tinyTail) {
+std::vector<uint8_t> File(int records, bool tinyTail, bool pools) {
   std::vector<uint8_t> f(0x100, 0);
   std::memcpy(f.data(), "RFRM", 4);
   std::memcpy(f.data() + 0x14, "CHPR", 4);
-  const std::vector<uint8_t> blob = Blob();
+  if (pools) {
+    // Pool list well before the first record: bool, count, then (u16 a, u16 n, n floats) each.
+    size_t p = 0x40;
+    f[p++] = 1;
+    f[p++] = 2;  // count, u32
+    p += 3;
+    for (int k = 0; k < 2; ++k) {
+      f[p++] = 0;
+      f[p++] = 0;
+      f[p++] = 4;
+      f[p++] = 0;
+      const uint32_t one = 0x3f800000;
+      for (int b = 0; b < 4; ++b) {
+        f[p++] = uint8_t(one >> (8 * b));
+      }
+      p += 12;
+    }
+  }
+  const std::vector<uint8_t> blob = Blob(pools ? 1 : 0);
   for (int r = 0; r < records; ++r) {
     f.push_back(1);
     Le(f, uint32_t(r + 1), 4);
@@ -120,10 +138,10 @@ std::vector<uint8_t> File(int records, bool tinyTail) {
   return f;
 }
 
-void Run(const char* what, int records, bool tinyTail) {
+void Run(const char* what, int records, bool tinyTail, bool pools = false) {
   PortRemasteredAnim::Character c;
   std::string error;
-  const bool ok = PortRemasteredAnim::ReadCharacter(File(records, tinyTail), c, error);
+  const bool ok = PortRemasteredAnim::ReadCharacter(File(records, tinyTail, pools), c, error);
   if (!ok) {
     std::fprintf(stderr, "%s: %s\n", what, error.c_str());
   }
@@ -139,5 +157,6 @@ void Run(const char* what, int records, bool tinyTail) {
 int main() {
   Run("single record, init-dequant offset 0x2c", 1, false);
   Run("two records and a tiny false record", 2, true);
+  Run("stream names pool 1 of 2, list far before the records", 1, false, true);
   return sFailures == 0 ? 0 : 1;
 }

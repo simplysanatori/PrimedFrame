@@ -147,6 +147,7 @@ struct StreamInfo {
   uint32_t frames = 0;
   uint32_t v = 0;  // quantization steps per frame
   uint32_t u6 = 0;  // bits flagging a keyframe change per frame
+  uint32_t ctx = 0;  // index of the constant pool this stream reads (InitConstData)
   std::vector<Track> tracks;
   // Types 3 to 5 (bool words, custom real32/int32 variables) never touch a bone, and their
   // value layout (NAnimOp::dquant_bits and friends) is not decoded: a stream that has values
@@ -187,7 +188,7 @@ std::vector<StreamInfo> ParseBlob(const Bytes& d, size_t base) {
     bs.Read(1);
     info.v = bs.Read(4);
     info.u6 = bs.Read(4);
-    bs.Read(4);  // context
+    info.ctx = bs.Read(4);  // constant pool index
     for (uint32_t i = 0; i < trackCount; ++i) {
       const uint32_t count = bs.Read(10);
       const uint32_t type = bs.Read(3);
@@ -587,47 +588,66 @@ std::vector<Record> FindRecords(const Bytes& d) {
   return best;
 }
 
-// The constant pool: u16 0, u16 n, n floats starting 1 0 0 0, then under 128 bytes of
-// other data and the first record. The candidate that ends closest to the record wins.
-std::vector<double> FindPool(const Bytes& d, size_t first) {
-  bool found = false;
+// The CharInfo's constant pools (SStreamConstData::Load): bool 1, i32 count, then per pool
+// u16 a, u16 n and n floats starting 1 0 0 0. They end a few bytes before the first record;
+// the list that ends closest to it wins. A stream reads pool `ctx` (InitConstData). When small
+// placeholder records sit between the animations the longest chain starts after them, so
+// without `near` the closest list anywhere before it is taken.
+std::vector<std::vector<double>> FindPoolsIn(const Bytes& d, size_t first, bool near) {
+  const size_t from = near && first >= 0x20000 ? first - 0x20000 : 0;
+  std::vector<std::vector<double>> best;
   size_t bestEnd = 0;
-  size_t bestOffset = 0;
-  uint32_t bestCount = 0;
-  const size_t from = first >= 0x20000 ? first - 0x20000 : 0;
-  for (size_t o = from; o + 20 < first; ++o) {
-    const uint32_t a = ReadLE16(d.data + o);
-    const uint32_t n = ReadLE16(d.data + o + 2);
-    const size_t end = o + 4 + 4 * size_t(n);
-    if (a >= 16 || n < 4 || end > first || first - end >= 128 || (found && end <= bestEnd)) {
+  for (size_t s = from; s + 5 < first; ++s) {
+    if (d.data[s] != 1) {
       continue;
     }
-    if (ReadLEFloat(d.data + o + 4) != 1.0f || ReadLEFloat(d.data + o + 8) != 0.0f ||
-        ReadLEFloat(d.data + o + 12) != 0.0f || ReadLEFloat(d.data + o + 16) != 0.0f) {
+    const uint32_t count = ReadLE32(d.data + s + 1);
+    if (count < 1 || count > 16) {
       continue;
     }
+    size_t p = s + 5;
     bool ok = true;
-    for (uint32_t i = 0; i < n; ++i) {
-      if (!(std::fabs(ReadLEFloat(d.data + o + 4 + 4 * size_t(i))) < 1e6f)) {
+    for (uint32_t i = 0; i < count && ok; ++i) {
+      if (p + 20 > first) {
         ok = false;
         break;
       }
+      const uint32_t a = ReadLE16(d.data + p);
+      const uint32_t n = ReadLE16(d.data + p + 2);
+      const size_t end = p + 4 + 4 * size_t(n);
+      ok = a < 16 && n >= 4 && end <= first && ReadLEFloat(d.data + p + 4) == 1.0f &&
+           ReadLEFloat(d.data + p + 8) == 0.0f && ReadLEFloat(d.data + p + 12) == 0.0f &&
+           ReadLEFloat(d.data + p + 16) == 0.0f;
+      p = end;
     }
-    if (ok) {
-      found = true;
-      bestEnd = end;
-      bestOffset = o;
-      bestCount = n;
+    if (!ok || (near && first - p >= 128) || (!best.empty() && p <= bestEnd)) {
+      continue;
+    }
+    std::vector<std::vector<double>> pools;
+    size_t q = s + 5;
+    for (uint32_t i = 0; i < count; ++i) {
+      const uint32_t n = ReadLE16(d.data + q + 2);
+      std::vector<double> pool;
+      for (uint32_t k = 0; k < n; ++k) {
+        pool.push_back(double(ReadLEFloat(d.data + q + 4 + 4 * size_t(k))));
+      }
+      pools.push_back(std::move(pool));
+      q += 4 + 4 * size_t(n);
+    }
+    best = std::move(pools);
+    bestEnd = p;
+  }
+  return best;
+}
+
+std::vector<std::vector<double>> FindPools(const Bytes& d, size_t first) {
+  for (const bool near : {true, false}) {
+    std::vector<std::vector<double>> pools = FindPoolsIn(d, first, near);
+    if (!pools.empty()) {
+      return pools;
     }
   }
-  std::vector<double> pool;
-  if (!found) {
-    return {1.0, 0.0, 0.0, 0.0};
-  }
-  for (uint32_t i = 0; i < bestCount; ++i) {
-    pool.push_back(double(ReadLEFloat(d.data + bestOffset + 4 + 4 * size_t(i))));
-  }
-  return pool;
+  return {{1.0, 0.0, 0.0, 0.0}};
 }
 
 void Evaluate(const StreamInfo& info, const std::vector<Op>& ops, const std::vector<double>& pool,
@@ -699,7 +719,8 @@ void Evaluate(const StreamInfo& info, const std::vector<Op>& ops, const std::vec
   }
 }
 
-Anim DecodeAnim(const Bytes& d, const Record& rec, const std::vector<double>& pool) {
+Anim DecodeAnim(const Bytes& d, const Record& rec,
+                const std::vector<std::vector<double>>& pools) {
   std::vector<StreamInfo> infos = ParseBlob(d, rec.offset + 5);
   InitDequant(infos);
   struct Active {
@@ -761,7 +782,11 @@ Anim DecodeAnim(const Bytes& d, const Record& rec, const std::vector<double>& po
       while (streams[i].Cur() < t) {
         streams[i].DequantFrame();
       }
-      Evaluate(*active[i].info, active[i].ops, pool, t, frameKeys, has);
+      const uint32_t ctx = active[i].info->ctx;
+      if (ctx >= pools.size()) {
+        Fail("stream names a constant pool that does not exist");
+      }
+      Evaluate(*active[i].info, active[i].ops, pools[ctx], t, frameKeys, has);
     }
     for (uint32_t b = 0; b < boneCount; ++b) {
       anim.bones[b].push_back(has[b] ? frameKeys[b] : Key());
@@ -1087,9 +1112,9 @@ bool ReadCharacter(const std::vector<uint8_t>& chpr, Character& out, std::string
     if (primary && afterPrimary.size() == recs.size()) {
       animNames = afterPrimary;
     }
-    const std::vector<double> pool = FindPool(d, recs[0].offset);
+    const std::vector<std::vector<double>> pools = FindPools(d, recs[0].offset);
     for (size_t i = 0; i < recs.size(); ++i) {
-      Anim anim = DecodeAnim(d, recs[i], pool);
+      Anim anim = DecodeAnim(d, recs[i], pools);
       anim.name = animNames.size() == recs.size() ? animNames[i] : std::string();
       out.anims.push_back(std::move(anim));
     }
