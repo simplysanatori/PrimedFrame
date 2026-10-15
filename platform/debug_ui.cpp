@@ -7678,7 +7678,8 @@ void DrawArchipelagoConnect() {
   for (size_t i = 0; i < sRecent.size(); ++i) {
     const PortAp::ConnectionDetails& game = sRecent[i];
     const bool isCurrent = PortAp::Enabled() && current.server == game.server &&
-                           current.slot == game.slot && current.seed == game.seed;
+                           current.slot == game.slot && current.seed == game.seed &&
+                           current.room == game.room;
     ImGui::PushID(static_cast<int>(i));
     ImGui::BeginDisabled(inGame || isCurrent);
     if (ImGui::Button(isCurrent ? "Current" : "Resume")) {

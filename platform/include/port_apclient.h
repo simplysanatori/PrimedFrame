@@ -46,6 +46,8 @@ struct ConnectionDetails {
   // The game's seed, when known. Connect uses it to pick that game's save card
   // before the server answers; empty keeps the saved one for the same slot.
   std::string seed;
+  // The server room of that seed (rooms generated from one seed share it).
+  std::string room;
   int64_t lastPlayed = 0; // Unix time, RecentGames only
 };
 ConnectionDetails SavedConnection();
