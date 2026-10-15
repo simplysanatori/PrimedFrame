@@ -407,7 +407,7 @@
   Map stations show pickups (`map_station_pickups`, on by default) also marks
   every pickup in the rooms a map station has mapped (or a hint, or Reveal map,
   which makes Seen show as much as All). Show major and minor items
-  (`map_pickup_kinds`, on by default) draws a major item as a filled dot, a
+  (`map_pickup_kinds`, off by default) draws a major item as a filled dot, a
   minor one (missile or power bomb expansion, energy tank) as a ring, and a
   collected pickup as a grey cross; in a randomized game it tells what kind of
   item a pickup holds (from the seed; in Archipelago an item for another game is

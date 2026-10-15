@@ -229,7 +229,9 @@ bool sHideVisorEffects = false;
 bool sRevealMap = false;
 int sMapPickups = PortDebug::kMapPickups_Off;
 bool sMapLogicColors = true;
-bool sMapPickupKinds = true;
+// Off by default: it says what kind of item a pickup holds, which spoils a
+// first playthrough.
+bool sMapPickupKinds = false;
 bool sMapStationPickups = true;
 // The Tracker tab's item, scan and room counts. Off so the tab doesn't spoil
 // what is left to find until asked.
