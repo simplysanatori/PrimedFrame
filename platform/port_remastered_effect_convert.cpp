@@ -74,6 +74,20 @@ const PropertyTable& ElectricProperties() {
   return table;
 }
 
+// Port-only: the ELC2 (CParticleElectric2) fields retail's ELSM has no property for. An ELC2 is written
+// as an ELSC stream that starts with the PEL2 marker and carries these (ELC2_RE.md).
+const PropertyTable& Elc2Properties() {
+  static const PropertyTable table = [] {
+    PropertyTable t;
+    AddProperties(t, "SIDE LWQD NFOM TSPN BDEP BNDI", Type::Int);
+    AddProperties(t, "RADS LRAD RRAD SLVF BLNC BCFF BLEN BANG BIDF BLDF AMDF", Type::Real);
+    AddProperties(t, "NCLR", Type::Color);
+    AddProperties(t, "LLRD FPLB", Type::Bool);
+    return t;
+  }();
+  return table;
+}
+
 const PropertyTable& RetailProperties() {
   static const PropertyTable table = [] {
     PropertyTable t;
@@ -1756,7 +1770,9 @@ public:
   // recipe: VMAT and the per-particle data it reads (build/mpr/vfx/DESIGN.md).
   // Writes nothing where the MATI is unavailable or its shader has no recipe.
   // A swoosh's (`swoosh`) has no SSZE or VORN, and its blend mode is SBDM.
-  bool Material(const EffectProperty& material, const EffectNode& node, ConvertedPart& result, bool swoosh) const {
+  // An ELC2 (`electric`, with `swoosh` set) takes its blend from EBDM.
+  bool Material(const EffectProperty& material, const EffectNode& node, ConvertedPart& result, bool swoosh,
+                bool electric = false) const {
     if (!m_io.materialData || !m_io.vfxTexture) {
       return false;
     }
@@ -1832,7 +1848,18 @@ public:
     }
 
     uint32_t blend = 0;
-    if (const EffectProperty* sbdm = swoosh ? find(F("SBDM")) : nullptr) {
+    if (const EffectProperty* ebdm = electric ? find(F("EBDM")) : nullptr) {
+      // InitStaticRenderStateImpl (0xb72618) indexes a 6-entry table: 1 reads row 2 and 2 row 1 of the
+      // PBDM-style rows (0 alpha, 1 premultiplied, 2 additive); 3-5 read row 0. Row meaning UNVERIFIED.
+      uint32_t word = 0;
+      if (SmallConst(*ebdm, word) && word <= 5) {
+        blend = word == 1 ? 2 : word == 2 ? 1 : 0;
+      } else {
+        m_approximated.push_back("VMAT: EBDM taken as alpha blend");
+      }
+    } else if (electric) {
+      blend = 0;
+    } else if (const EffectProperty* sbdm = swoosh ? find(F("SBDM")) : nullptr) {
       uint32_t word = 0;
       if (SmallConst(*sbdm, word) && word <= 1) {
         blend = word == 1 ? 2 : 0;
@@ -2206,6 +2233,14 @@ public:
     const auto& retail = PropertiesOf(type);
     const bool part = type == F("PART");
     const bool swoosh = type == F("SWHC");
+    // An ELC2 (CParticleElectric2) is written as an ELSC stream that starts with the port-only PEL2
+    // marker and carries the ELC2 fields; it draws through its VMAT like a swoosh.
+    const bool electric = type == F("ELSC") && node.form == F("ELC2");
+    if (electric) {
+      AppendBE32(out, F("PEL2"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, 1);
+    }
     // This is deliberately not a general Remastered particle-light mapping:
     // source proof covers only this embedded Plasma impact child.
     std::vector<uint8_t> nestedLightInnerRadius;
@@ -2355,7 +2390,7 @@ public:
       } else if (type == F("SWHC") && fourcc == F("SBDM") && !additive) {
         fourcc = F("AALP");
       }
-      if (fourcc == F("MTIN") && textured) {
+      if (fourcc == F("MTIN") && (textured || electric)) {
         material = &property;
         continue;
       }
@@ -2404,8 +2439,21 @@ public:
         portOnly.push_back(fourcc);
         continue;
       }
-      if (swoosh && (fourcc == F("TMTR") || fourcc == F("PMTR") || fourcc == F("SMTR") || fourcc == F("ITEN"))) {
+      if ((swoosh || electric) &&
+          (fourcc == F("TMTR") || fourcc == F("PMTR") || fourcc == F("SMTR") || fourcc == F("ITEN"))) {
         portOnly.push_back(fourcc);
+        continue;
+      }
+      // Port-only ELC2 fields, written as the retail encoding under their own tags.
+      if (electric && Elc2Properties().count(fourcc) != 0) {
+        std::vector<uint8_t> bytes;
+        std::string why;
+        if (Property(fourcc, Elc2Properties().at(fourcc), property.value, bytes, why)) {
+          AppendBE32(out, fourcc);
+          out.insert(out.end(), bytes.begin(), bytes.end());
+        } else {
+          result.dropped.push_back(EffectFourCCString(fourcc) + ": " + why);
+        }
         continue;
       }
       // Port-only PSRO: a swoosh's POFS of ROTV(v, EXTR) is v turned by the swoosh's orientation.
@@ -2486,7 +2534,7 @@ public:
       AppendBE32(out, FloatBits(0.0f));
     }
     // A material instance draws with its texture where there is no TEXR.
-    if (material != nullptr && !texture) {
+    if (material != nullptr && !texture && !electric) {
       const EffectValue* guid = nullptr;
       for (const EffectValue& value : material->value) {
         if (value.kind == EffectValue::Kind::Guid) {
@@ -2503,10 +2551,11 @@ public:
         result.dropped.push_back("MTIN: no texture for its material");
         ++result.droppedRetail;
       }
-    } else if (material != nullptr) {
+    } else if (material != nullptr && !electric) {
       result.dropped.push_back("MTIN: the effect has a TEXR");
     }
-    const bool vmat = (part || swoosh) && material != nullptr && Material(*material, node, result, swoosh);
+    const bool vmat = (part || swoosh || electric) && material != nullptr &&
+                      Material(*material, node, result, swoosh || electric, electric);
     if (!vmat) {
       for (const uint32_t fourcc : portOnly) {
         result.dropped.push_back(EffectFourCCString(fourcc) + ": no VMAT");
@@ -2903,7 +2952,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
   }
   const auto& retail = PropertiesOf(type);
   const bool part = type == F("PART");
-  const bool vfx = part || type == F("SWHC"); // swooshes take the VFX material too
+  const bool electric = type == F("ELSC");
+  const bool vfx = part || type == F("SWHC") || electric; // swooshes and ELC2s take the VFX material too
   for (;;) {
     const size_t start = reader.At();
     if (!reader.Word(fourcc)) {
@@ -2937,6 +2987,11 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortExtraSwooshes();
     } else if (!part && vfx && fourcc == F("PSRO")) {
       ok = reader.PortWord();
+    } else if (electric && fourcc == F("PEL2")) {
+      ok = reader.PortWord();
+    } else if (electric && Elc2Properties().count(fourcc) != 0) {
+      const Type elcType = Elc2Properties().at(fourcc).type;
+      ok = elcType == Type::Bool ? reader.Bool() : reader.Element(elcType);
     } else if (const auto found = retail.find(fourcc); found == retail.end()) {
       error = "property " + EffectFourCCString(fourcc) + " retail does not read";
       return false;

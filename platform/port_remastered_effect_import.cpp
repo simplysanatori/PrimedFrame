@@ -238,6 +238,9 @@ bool LostLook(const EffectNode& node, const std::vector<RetailPartProperty>& par
     return std::any_of(part.begin(), part.end(),
                        [&](const RetailPartProperty& property) { return property.fourcc == fourcc; });
   };
+  if (has(EffectFourCC("PEL2"))) {
+    return false;  // an ELC2 draws through its VMAT, which has no TEXR
+  }
   if (HasProperty(node, EffectFourCC("PMDL"))) {
     return !has(EffectFourCC("PMDL"));
   }
