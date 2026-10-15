@@ -2873,7 +2873,7 @@ static bool PortSetupShadow(const CTransform4f& view, const CGameArea* area, CSc
   float dir[3] = {0.f, 0.f, 0.f};
   float color[3] = {0.f, 0.f, 0.f};
   float distance = 0.f;
-  if (sOn && enabled) {
+  if (sOn && enabled && PortDebug::SunShadows()) {
     static const char* sDirEnv = getenv("MP_SHADOW_DIR");
     static const char* sColorEnv = getenv("MP_SHADOW_COLOR");
     float envDir[3];

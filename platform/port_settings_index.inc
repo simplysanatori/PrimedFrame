@@ -123,6 +123,7 @@
 {"Video", "Quality", "Quality", "Show F1 hint at launch", "f1 hint menu launch tip"},
 {"Video", "Quality", "Quality", "Anisotropic filtering", "anisotropic texture filter sharp"},
 {"Video", "Quality", "Quality", "Per-pixel lighting", "per pixel lighting shading smooth dolphin"},
+{"Video", "Quality", "Quality", "Sun shadows", "sun shadow cascades outdoor remastered look"},
 {"Video", "Quality", "Quality", "Auto render scale (native)", "resolution scale native auto render"},
 {"Video", "Quality", "Quality", "EFB scale", "resolution scale efb framebuffer"},
 {"Video", "Quality", "Quality", "Dynamic resolution", "dynamic resolution scale performance fps"},

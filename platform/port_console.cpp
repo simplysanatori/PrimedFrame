@@ -594,6 +594,7 @@ void CmdHelp() {
   Out("window [<w> <h>]           resize the window (leaves fullscreen); prints the size");
   Out("msaa <1|4>, aniso <1..16>  anti-aliasing and anisotropic filtering, applied next frame");
   Out("pixellight [0|1]         per-pixel lighting (1) or the original per-vertex (0); no argument prints it");
+  Out("sunshadow [0|1]          the port's sun shadow in outdoor rooms (1) or off, as Remastered; no argument prints it");
   Out("hudscale <50..100>         HUD scale in percent, as the Options row does");
   Out("scanspread <0..100>        how far the widescreen HUD moves the scan panels out");
   Out("crosshair <25..100>        mouse/twin-stick crosshair size in percent");
@@ -2169,6 +2170,16 @@ void RunFrame() {
       PortDebug::SetPerPixelLighting(v == "1");
     }
     Out(PortDebug::PerPixelLighting() ? "pixellight 1" : "pixellight 0");
+    Finish();
+  } else if (name == "sunshadow") {
+    if (sCmd.args.size() > 1) {
+      const std::string& v = sCmd.args[1];
+      if (v != "0" && v != "1") {
+        return Finish("usage: sunshadow [0|1]");
+      }
+      PortDebug::SetSunShadows(v == "1");
+    }
+    Out(PortDebug::SunShadows() ? "sunshadow 1" : "sunshadow 0");
     Finish();
   } else if (name == "hudscale") {
     const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : 0;

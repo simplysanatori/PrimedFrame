@@ -314,6 +314,10 @@ void SetAnisotropy(int level);
 // lights summed per pixel instead of per vertex. Lit pipelines rebuild on next use.
 bool PerPixelLighting();
 void SetPerPixelLighting(bool enabled);
+// Setting `sun_shadows` (default on): the 4-cascade sun shadow in outdoor rooms. Remastered
+// draws none; off gives PortSetupShadow distance 0, as in a room with no sun.
+bool SunShadows();
+void SetSunShadows(bool enabled);
 // Setting `opengles`: start on Dawn's OpenGL ES backend instead of Vulkan, for
 // drivers that draw wrong on Vulkan (Adreno 7xx, issue #7). Read at window
 // creation, so it takes a restart; aurora falls back to Vulkan if it fails.

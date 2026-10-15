@@ -299,6 +299,12 @@
   does, instead of per vertex. Remastered (PBR) models are per pixel already
   and unchanged. Lit pipelines rebuild on their next draw, so turning it on
   hitches once. Console: `pixellight [0|1]`.
+- Sun shadows (Video > Quality, persisted as `sun_shadows`, default on, not
+  forced by the original experience): the port's 4-cascade shadow from the sun
+  in outdoor rooms. Remastered does not draw sun shadows; turn off for the
+  Remastered look. Off behaves like a room with no sun (no cascades, no
+  receiver sampling); room point/spot lights are unaffected. Console:
+  `sunshadow [0|1]`.
 - HUD scale (Video > Display and pause Options > Display, persisted as `hud_scale`,
   50-100 percent, default 100): shrinks the combat HUD, radar, beam and visor
   menus and the minimap toward the screen centre, each frame as a whole so the
