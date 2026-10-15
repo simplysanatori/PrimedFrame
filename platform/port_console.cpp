@@ -2275,6 +2275,37 @@ void RunFrame() {
           indices.empty() ? "none" : indices.c_str());
       return Finish();
     }
+    if (value == "kinds" || value == "station") {
+      const std::string sub = sCmd.args.size() > 2 ? Lower(sCmd.args[2]) : "";
+      if (sub == "on" || sub == "off") {
+        if (value == "kinds") {
+          PortDebug::SetMapPickupKinds(sub == "on");
+        } else {
+          PortDebug::SetMapStationPickups(sub == "on");
+        }
+        return Finish();
+      }
+      if (!sub.empty() || value == "station") {
+        return Finish("usage: pickups kinds|station <on|off>");
+      }
+      // This world's dots and what they hold: M major, m minor, ? unknown.
+      size_t dots = 0;
+      const PortMapPickups::Dot* list = PortMapPickups::Dots(dots);
+      const unsigned char* kinds = PortMapPickups::Kinds();
+      const uint32_t world = gpGameState != nullptr ? gpGameState->CurrentWorldAssetId() : 0;
+      std::string text;
+      for (size_t i = 0; i < dots; ++i) {
+        if (list[i].world == world) {
+          text += (text.empty() ? "" : " ") + std::to_string(i) +
+                  (kinds[i] == PortMapPickups::kK_Major   ? "M"
+                   : kinds[i] == PortMapPickups::kK_Minor ? "m"
+                                                          : "?");
+        }
+      }
+      Out("kinds %s; this world: %s", PortDebug::MapPickupKinds() ? "on" : "off",
+          text.empty() ? "none" : text.c_str());
+      return Finish();
+    }
     if (value == "0" || value == "off") {
       PortDebug::SetMapPickups(PortDebug::kMapPickups_Off);
     } else if (value == "1" || value == "all") {
@@ -2283,7 +2314,9 @@ void RunFrame() {
       PortDebug::SetMapPickups(PortDebug::kMapPickups_Rooms);
     } else {
       return Finish("usage: pickups <off|seen|rooms|all>   pickups on the map (0 and 1 are off and all)\n"
-                    "       pickups seen [clear|all]   the pickups seen so far in this save");
+                    "       pickups seen [clear|all]   the pickups seen so far in this save\n"
+                    "       pickups kinds [on|off]     major/minor shapes; no argument lists them\n"
+                    "       pickups station <on|off>   map stations show pickups in Seen");
     }
     Finish();
   } else if (name == "mods") {

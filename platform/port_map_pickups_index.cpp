@@ -36,6 +36,18 @@ int DotIndex(uint32_t world, uint32_t area, const float pos[3]) {
   return best;
 }
 
+EKind KindOfItem(int item, int capacity) {
+  switch (item) {
+  case 4:  // Missiles: the disc's launcher is one too
+  case 24: // EnergyTanks
+    return kK_Minor;
+  case 7: // PowerBombs: the main one carries 4
+    return capacity < 4 ? kK_Minor : kK_Major;
+  default:
+    return kK_Major;
+  }
+}
+
 bool IsSeen(const uint32_t* words, size_t dot) {
   return dot < kSeenWords * 32 && (words[dot / 32] >> (dot % 32) & 1u) != 0;
 }

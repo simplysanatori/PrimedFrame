@@ -72,14 +72,32 @@ CScriptPickup::CScriptPickup(TUniqueId uid, const rstl::string& name, const CEnt
 CScriptPickup::~CScriptPickup() {}
 
 #ifdef TARGET_PC
-// Port: map_pickups = Seen. Marks this pickup's map dot once the player has had
-// it in view: within 40 units of the camera, inside the view cone and with a
-// clear line from the eye to the pickup (static geometry and solid actors
-// block; the pickup itself and characters do not).
-void CScriptPickup::PortMarkSeen(CStateManager& mgr) {
-  if (PortMapPickups::Mode() != PortDebug::kMapPickups_Seen || (++xpc_seenTicks % 6) != 0) {
+// Port: map_pickups = Seen. Marks this pickup's map dot once the player has
+// looked at it for half a second: within 40 units of the camera, near the middle
+// of the view and with a clear line from the eye to the pickup (static geometry
+// and solid actors block; see-through surfaces such as gratings, the pickup
+// itself and characters do not).
+void CScriptPickup::PortMarkSeen(float dt, CStateManager& mgr) {
+  if (PortMapPickups::Mode() != PortDebug::kMapPickups_Seen) {
     return;
   }
+  xpc_seenStep += dt;
+  if ((++xpc_seenTicks % 6) != 0) {
+    return;
+  }
+  const float step = xpc_seenStep;
+  xpc_seenStep = 0.f;
+  if (!PortInSight(mgr)) {
+    xpc_seenDwell = 0.f;
+    return;
+  }
+  xpc_seenDwell += step;
+  if (xpc_seenDwell >= 0.5f) {
+    PortMapPickups::MarkSeen(static_cast< size_t >(xpc_dotIndex));
+  }
+}
+
+bool CScriptPickup::PortInSight(CStateManager& mgr) {
   if (xpc_dotIndex == -2) {
     const CWorld* world = mgr.GetWorld();
     xpc_dotIndex = -1;
@@ -91,36 +109,38 @@ void CScriptPickup::PortMarkSeen(CStateManager& mgr) {
     }
   }
   if (xpc_dotIndex < 0 || PortMapPickups::Seen(xpc_dotIndex)) {
-    return;
+    return false;
   }
   // Only the first-person camera sees pickups: not the morph ball, cinematic or boss cameras.
   const CFirstPersonCamera* camera = mgr.CameraManager()->FirstPersonCamera();
   if (camera == nullptr || mgr.CameraManager()->GetCurrentCameraId() != camera->GetUniqueId()) {
-    return;
+    return false;
   }
   const CVector3f eye = camera->GetTranslation();
   const CVector3f center = GetBoundingBox().GetCenterPoint();
   const CVector3f delta = center - eye;
   const float distSq = delta.MagSquared();
   if (distSq > 40.f * 40.f || !delta.CanBeNormalized()) {
-    return;
+    return false;
   }
-  // On screen: in front of the camera and inside the projected view.
+  // In front of the camera and in the middle half of the view, so a pickup at the
+  // edge of the screen doesn't count.
   if (CVector3f::Dot(camera->GetTransform().GetColumn(kDY), delta) <= 0.f) {
-    return;
+    return false;
   }
   const CVector3f screen = camera->ConvertToScreenSpace(center);
-  if (fabsf(screen.GetX()) > 1.f || fabsf(screen.GetY()) > 1.f) {
-    return;
+  if (fabsf(screen.GetX()) > 0.5f || fabsf(screen.GetY()) > 0.5f) {
+    return false;
   }
+  // As CVisorFlare's occlusion test: see-through surfaces don't block the view.
   static const CMaterialFilter kSightFilter = CMaterialFilter::MakeIncludeExclude(
       CMaterialList(kMT_Solid),
-      CMaterialList(kMT_Player, kMT_Character, kMT_CameraPassthrough, kMT_ProjectilePassthrough));
+      CMaterialList(kMT_Player, kMT_Character, kMT_CameraPassthrough, kMT_ProjectilePassthrough,
+                    kMT_SeeThrough));
   // Stop a little short, so floor and wall hugging pickups don't block themselves.
   const CVector3f end = center - delta.AsNormalized() * 0.5f;
-  if (!mgr.RayCollideWorld(eye, end, kSightFilter, this)) {
-    PortMapPickups::MarkSeen(static_cast< size_t >(xpc_dotIndex));
-  }
+  // True when nothing blocks the line.
+  return mgr.RayCollideWorld(eye, end, kSightFilter, this);
 }
 #endif
 
@@ -136,7 +156,7 @@ void CScriptPickup::Think(float dt, CStateManager& mgr) {
   }
 
 #ifdef TARGET_PC
-  PortMarkSeen(mgr);
+  PortMarkSeen(dt, mgr);
 #endif
 
   x270_curTime += dt;

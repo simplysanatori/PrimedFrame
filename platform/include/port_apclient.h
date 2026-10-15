@@ -158,6 +158,10 @@ void AnnouncePickup(uint32_t world, uint32_t area, uint32_t entity);
 // retail model) when AP is off, the location isn't scouted yet, or the item
 // has no pickup on the disc.
 bool PickupModel(uint32_t world, uint32_t area, uint32_t entity, PortRandomizer::PickupModel& out);
+// Whether the item at an AP location is a minor one (a missile or power bomb
+// expansion or an energy tank of this game, or a filler item of another): 1
+// minor, 0 major, -1 not an AP game or not scouted yet.
+int PickupMinor(uint32_t world, uint32_t area, uint32_t entity);
 // The scan text for that item ("Hookshot\nfor Bob (A Link to the Past)"),
 // empty before the location is scouted. False when the location isn't one of
 // the multiworld's (AP off, or not an AP location).

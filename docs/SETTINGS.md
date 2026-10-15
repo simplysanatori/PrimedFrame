@@ -399,11 +399,22 @@
   default; Tracker page: Off, Seen, Rooms, All; the pause row cycles Off, Seen
   and All, with Rooms shown as the third value when set elsewhere): All draws a
   plain white dot on the map and minimap for every pickup not yet collected, in
-  rooms the map shows; Seen draws the dot only once you have had that pickup in
-  view (within 40 units, in the view cone, with a clear line from the eye;
-  kept per save, `pickups seen`); Rooms draws no dots but tints the rooms that
-  still hold an uncollected pickup amber. An old saved `1` stays All. The dots
-  never tell what the item is; an Archipelago game colours them by its logic
+  rooms the map shows; Seen draws the dot only once you have looked at that
+  pickup for half a second (within 40 units, in the middle half of the view,
+  with a clear line from the eye; see-through surfaces such as gratings don't
+  block it; kept per save, `pickups seen`); Rooms draws no dots but tints the rooms that
+  still hold an uncollected pickup amber. An old saved `1` stays All. In Seen,
+  Map stations show pickups (`map_station_pickups`, on by default) also marks
+  every pickup in the rooms a map station has mapped (or a hint, or Reveal map,
+  which makes Seen show as much as All). Show major and minor items
+  (`map_pickup_kinds`, on by default) draws a major item as a filled dot, a
+  minor one (missile or power bomb expansion, energy tank) as a ring, and a
+  collected pickup as a grey cross; in a randomized game it tells what kind of
+  item a pickup holds (from the seed; in Archipelago an item for another game is
+  major when it is progression, an unscouted pickup is a dot). The disc's Missile
+  Launcher is an ordinary missile pickup, so it shows minor (also in a legacy
+  seed); only an Archipelago launcher item is major. Off, every dot is the same
+  plain white and a collected pickup's goes away. An Archipelago game colours them by its logic
   (`map_logic_colors`, see `ARCHIPELAGO.md`). The positions come from
   `tools/gen_map_pickups.py` (`platform/port_map_pickups.inc`). With Show
   progress on (`tracker_progress`, off by default so it spoils nothing), the
@@ -411,7 +422,7 @@
   capacity (in packs of 5, launcher included), power bombs, artifacts, missing
   upgrades, logbook scans per category (artifacts count at the game's 50%),
   rooms visited per world and the current world's unvisited rooms (their names
-  load on first view). Console: `reveal <0|1>`, `pickups <0|1>`, `tracker`.
+  load on first view). Console: `reveal <0|1>`, `pickups <off|seen|rooms|all>`, `pickups kinds|station <on|off>`, `tracker`.
 - Skippable cutscenes (F1 > Game > Cutscenes, pause Options > Visor,
   `skippable_cutscenes`, off by default; always on in randomizer and
   Archipelago games) lets Start skip every cutscene, including the ones retail

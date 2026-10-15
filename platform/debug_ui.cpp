@@ -229,6 +229,8 @@ bool sHideVisorEffects = false;
 bool sRevealMap = false;
 int sMapPickups = PortDebug::kMapPickups_Off;
 bool sMapLogicColors = true;
+bool sMapPickupKinds = true;
+bool sMapStationPickups = true;
 // The Tracker tab's item, scan and room counts. Off so the tab doesn't spoil
 // what is left to find until asked.
 bool sTrackerProgress = false;
@@ -629,6 +631,10 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sTrackerProgress = ParseBool(value);
   } else if (key == "map_logic_colors") {
     sMapLogicColors = ParseBool(value);
+  } else if (key == "map_pickup_kinds") {
+    sMapPickupKinds = ParseBool(value);
+  } else if (key == "map_station_pickups") {
+    sMapStationPickups = ParseBool(value);
   } else if (key == "ap_suit_damage") {
     const int mode = std::atoi(value.c_str());
     sApSuitDamage = mode >= 0 && mode <= 2 ? mode : 1;
@@ -846,6 +852,8 @@ std::string SettingsText() {
   file << "map_pickups=" << sMapPickups << '\n';
   file << "tracker_progress=" << (sTrackerProgress ? 1 : 0) << '\n';
   file << "map_logic_colors=" << (sMapLogicColors ? 1 : 0) << '\n';
+  file << "map_pickup_kinds=" << (sMapPickupKinds ? 1 : 0) << '\n';
+  file << "map_station_pickups=" << (sMapStationPickups ? 1 : 0) << '\n';
   file << "ap_suit_damage=" << sApSuitDamage << '\n';
   file << "cheats=" << (sCheats ? 1 : 0) << '\n';
   file << "skippable_cutscenes=" << (sSkippableCutscenes ? 1 : 0) << '\n';
@@ -1742,6 +1750,28 @@ bool MapLogicColors() {
 void SetMapLogicColors(bool enabled) {
   EnsureInitialized();
   sMapLogicColors = enabled;
+  MarkDirty();
+}
+
+bool MapPickupKinds() {
+  EnsureInitialized();
+  return sMapPickupKinds;
+}
+
+void SetMapPickupKinds(bool enabled) {
+  EnsureInitialized();
+  sMapPickupKinds = enabled;
+  MarkDirty();
+}
+
+bool MapStationPickups() {
+  EnsureInitialized();
+  return sMapStationPickups;
+}
+
+void SetMapStationPickups(bool enabled) {
+  EnsureInitialized();
+  sMapStationPickups = enabled;
   MarkDirty();
 }
 
@@ -8875,9 +8905,30 @@ void DrawTrackerTab() {
   ItemHelp("Marks item pickups on the map and minimap, until you collect them. Seen: a white dot "
            "once you have seen the pickup, in the room or through a gap. Rooms: no dots; each "
            "room the map shows that still holds an uncollected pickup is tinted amber. All: a dot "
-           "for every pickup in the rooms the map shows. Every item gets the same dot, so it "
-           "doesn't give away what a pickup holds. In Seen and All an Archipelago game colours the "
-           "dots by what its logic lets you reach.");
+           "for every pickup in the rooms the map shows. In Seen and All an Archipelago game "
+           "colours the dots by what its logic lets you reach.");
+  const bool dots = sMapPickups == kMapPickups_Seen || sMapPickups == kMapPickups_All;
+  ImGui::BeginDisabled(!dots);
+  bool kinds = sMapPickupKinds;
+  if (ImGui::Checkbox("Show major and minor items", &kinds)) {
+    SetMapPickupKinds(kinds);
+  }
+  ImGui::EndDisabled();
+  ItemHelp("A filled dot for a major item (a beam, visor, suit, ball upgrade, artifact, the main "
+           "Power Bomb, or an Archipelago Missile Launcher), a ring for a minor one (a missile or "
+           "power bomb expansion or an energy tank), and a grey cross where a pickup was "
+           "collected. In a randomized game this tells what kind of item each pickup holds. "
+           "Otherwise the Missile Launcher is an ordinary missile pickup, so it shows as minor; in "
+           "Archipelago an item for another game is major when it is progression, and a pickup "
+           "not scouted yet is a dot. Off: one white dot for every item, gone once collected.");
+  ImGui::BeginDisabled(sMapPickups != kMapPickups_Seen);
+  bool station = sMapStationPickups;
+  if (ImGui::Checkbox("Map stations show pickups", &station)) {
+    SetMapStationPickups(station);
+  }
+  ImGui::EndDisabled();
+  ItemHelp("In Seen, a map station also marks every pickup in the rooms it maps, as a hint does "
+           "for its room. With Reveal map on, that is every room, as in All.");
 
   DrawTrackerLogic();
 
