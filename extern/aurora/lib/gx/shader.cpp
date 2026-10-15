@@ -3200,6 +3200,9 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
                             // over the floor) sits on its near plane rather than being clipped. The map is
                             // orthographic, so that moves nothing across it.
                             "\n    pos.z = max(pos.z, 0.0);"
+                            // The map is orthographic: an actor's caster[0] holds its height weight in column 3
+                            // (the decal reads it), so w is pinned to 1 rather than taken from the matrix.
+                            "\n    pos.w = 1.0;"
                             "\n    return pos;\n}}",
                             shadowPos);
   }

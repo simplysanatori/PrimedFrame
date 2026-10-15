@@ -686,7 +686,8 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, ByteReader& 
   if (totalVtxBytes > reader.remaining())
     UNLIKELY { handle_draw_overrun(totalVtxBytes, reader); }
 
-  const bool cleanState = g_gxState.dirty == 0 && fmt == sDrawCache.lastDrawFmt && sDrawCache.lineMode == 0 &&
+  // A cast-only draw pushes no command of its own, so it must not extend the last world draw.
+  const bool cleanState = g_gxState.dirty == 0 && !g_gxState.shadowCasterOnly && g_gxState.actorLayer < 0 && fmt == sDrawCache.lastDrawFmt && sDrawCache.lineMode == 0 &&
                           prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS;
   auto* lastDraw = cleanState ? gfx::get_last_draw_command<DrawData>() : nullptr;
   const bool canMerge = lastDraw != nullptr && lastDraw->instanceCount == 1;

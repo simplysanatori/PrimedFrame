@@ -10,6 +10,8 @@
 #include "port_debug.h"
 #include "port_room_geo.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 
 namespace PortActorShadow {
@@ -46,6 +48,20 @@ void RenderFrame(const CStateManager& mgr, const CTransform4f& view) {
       w2v[r][c] = axes[r][c];
     }
     w2v[r][3] = -(axes[r][0] * eye.GetX() + axes[r][1] * eye.GetY() + axes[r][2] * eye.GetZ());
+  }
+  static const bool debug = std::getenv("MP_ACTOR_SHADOW_DEBUG") != nullptr;
+  static unsigned frame = 0;
+  if (debug && (++frame % 120) == 0) {
+    for (size_t i = 0; i < sActors.size(); ++i) {
+      const CSimpleShadow& s = *sActors[i]->GetShadow();
+      const float* m = s.PortMapBox();
+      const float* r = s.PortReceiverBox();
+      fprintf(stderr,
+              "actorshadow[%zu] id=%x op=%.3f fade=%.3f map c=(%.2f %.2f %.2f) h=(%.2f %.2f %.2f) recv c=(%.2f %.2f %.2f) "
+              "h=(%.2f %.2f %.2f) dyn=%d\n",
+              i, sActors[i]->GetUniqueId().Value(), s.PortOpacity(), s.PortFadeStart(), m[0], m[1], m[2], m[3], m[4],
+              m[5], r[0], r[1], r[2], r[3], r[4], r[5], s.PortDynamic() ? 1 : 0);
+    }
   }
   for (size_t i = 0; i < sActors.size(); ++i) {
     const CActor& actor = *sActors[i];

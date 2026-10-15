@@ -13,6 +13,7 @@
 #include <aurora/gfx.hpp>
 
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -152,6 +153,13 @@ bool record() {
     return false;
   }
   ensure_map();
+  if (std::getenv("MP_ACTOR_SHADOW_DEBUG") != nullptr) {
+    for (uint32_t l = 0; l < MaxLayers; ++l) {
+      if (!g_casters[l].empty()) {
+        Log.info("actor shadow record: layer {} casters {}", l, g_casters[l].size());
+      }
+    }
+  }
   const uint32_t slot = g_nextSlot % g_recorded.size();
   for (uint32_t l = 0; l < MaxLayers; ++l) {
     g_recorded[slot][l].swap(g_casters[l]);
