@@ -180,6 +180,11 @@ const wgpu::TextureView& map_view() {
   return g_state.mapView;
 }
 
+// Remastered's NShadowMap::skSamplerParams (KB topic/simple-shadow.md line 41; REPORT.md "Shadow-map sampler"):
+// bilinear, compare ON (LEQUAL), wrap U/V NVN mode 5, border white. Linear min/mag with a compare sampler is the
+// hardware 2x2 compare filter. Mode 5 is CLAMP_TO_BORDER (the same table row the BLPD/LTPB KB entries read), which
+// WebGPU has no address mode for: the decal shader returns vis = 1 (the white border) for any uv outside [0,1], so
+// the clamp only ever serves the border texel row and ClampToEdge is the equivalent.
 const wgpu::Sampler& sampler() {
   if (!g_state.sampler) {
     const wgpu::SamplerDescriptor descriptor{
