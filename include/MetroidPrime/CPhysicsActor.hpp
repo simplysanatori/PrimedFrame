@@ -146,6 +146,7 @@ public:
   const CVector3f& GetImpulseWR() const { return x168_impulse; }
   CVector3f& ImpulseWR() { return x168_impulse; }
   void SetImpulseWR(const CVector3f& impulse) { x168_impulse = impulse; }
+  void SetMoveImpulseWR(const CVector3f& impulse) { x18c_moveImpulse = impulse; }
   const CAxisAngle& GetTorqueWR() const { return x174_torque; }
   void SetTorqueWR(const CAxisAngle& torque) { x174_torque = torque; }
   const CAxisAngle& GetAngularImpulseWR() const { return x180_angularImpulse; }
