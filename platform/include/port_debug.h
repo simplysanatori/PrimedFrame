@@ -518,6 +518,16 @@ int GyroSource();
 void SetGyroSource(int source);
 float GyroSensitivity();
 void SetGyroSensitivity(float scale);
+// Gyro space: 0 local (the pad's own yaw axis), 1 player, 2 world (the turn
+// about gravity). Auto calibration learns the gyro's drift while the pad is
+// still; the confidence is 0..1, or negative when the source has no
+// accelerometer (no calibration or gravity then).
+int GyroSpace();
+void SetGyroSpace(int space);
+bool GyroAutoCalibrate();
+void SetGyroAutoCalibrate(bool on);
+void ResetGyroCalibration();
+float GyroCalibrationConfidence();
 // The input engine's "Gyro aim" action, set each frame before PollGyro.
 void SetGyroButton(bool held);
 // Reads the gyro, feeds the aim and spots Spring Ball flicks. Call once per

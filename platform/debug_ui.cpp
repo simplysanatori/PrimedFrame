@@ -361,6 +361,17 @@ std::atomic< bool > sTouchEditRequested{false};
 std::atomic< bool > sPhysicalInput{false};
 // Set while the touch overlay is the active device (cleared by physical input).
 std::atomic< bool > sTouchActive{false};
+// Gyro state: the phone's sensor is looked up once, so the sensor list is not
+// walked on every tick.
+bool sPhoneGyroSearched = false;
+SDL_Sensor* sPhoneGyro = nullptr;
+SDL_Sensor* sPhoneAccel = nullptr;
+const char* sGyroStatus = "off";
+// Calibration and gravity for the current source, reset when it changes (a
+// different pad, or the phone), and whether that source has an accelerometer.
+PortGyro::Motion sGyroMotion;
+const void* sGyroMotionSource = nullptr;
+bool sGyroHasAccel = false;
 // Flick state: seconds left on the last flick, and whether the pitch has dropped
 // back since, so a long flick counts once.
 float sSpringFlickLatch = 0.f;
@@ -1825,11 +1836,163 @@ void SetGyroSensitivity(float scale) {
   }
 }
 
+int GyroSpace() {
+  EnsureInitialized();
+  return sInput.gyroSpace;
+}
+
+void SetGyroSpace(int space) {
+  EnsureInitialized();
+  if (space < 0 || space > 2) {
+    return;
+  }
+  sInput.gyroSpace = space;
+  MarkDirty();
+}
+
+bool GyroAutoCalibrate() {
+  EnsureInitialized();
+  return sInput.gyroAutoCalibrate;
+}
+
+void SetGyroAutoCalibrate(bool on) {
+  EnsureInitialized();
+  sInput.gyroAutoCalibrate = on;
+  MarkDirty();
+}
+
+void ResetGyroCalibration() { sGyroMotion.Reset(); }
+
+float GyroCalibrationConfidence() {
+  return sGyroMotionSource != nullptr && sGyroHasAccel ? sGyroMotion.Confidence() : -1.f;
+}
+
 void SetGyroButton(bool held) { sGyroButtonHeld = held; }
 
 const char* GyroStatus() { return sGyroStatus; }
 
 namespace {
+// Quarter turns from portrait, as SDL numbers Android rotations (landscape is
+// the phone's right side up).
+int OrientationQuarters(SDL_DisplayOrientation orientation) {
+  switch (orientation) {
+  case SDL_ORIENTATION_LANDSCAPE:
+    return 1;
+  case SDL_ORIENTATION_PORTRAIT_FLIPPED:
+    return 2;
+  case SDL_ORIENTATION_LANDSCAPE_FLIPPED:
+    return 3;
+  default:
+    return 0;
+  }
+}
+
+// Pitch (x, positive tilts the far edge up) and yaw (positive turns right)
+// rates in rad/s from the chosen source, after calibration and gyro space;
+// false when there is none. dt is the time since the last call.
+bool ReadGyroRates(float& pitch, float& yaw, float dt) {
+  if (sGyroOverride) {
+    pitch = sGyroOverridePitch;
+    yaw = sGyroOverrideYaw;
+    sGyroStatus = "console";
+    return true;
+  }
+  const bool wantController = sInput.gyroSource == 0 || sInput.gyroSource == 1;
+  const bool wantPhone = sInput.gyroSource == 0 || sInput.gyroSource == 2;
+  // SDL's sensor axes (x right, y up, z toward the player), rad/s and m/s^2.
+  float gyro[3];
+  float accel[3];
+  bool haveAccel = false;
+  const void* source = nullptr;
+
+  if (wantController) {
+    if (SDL_Gamepad* pad = PADGetSDLGamepadForIndex(0)) {
+      if (SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO)) {
+        // Asked per pad, so a reconnected or swapped pad gets its sensors on too.
+        if (!SDL_GamepadSensorEnabled(pad, SDL_SENSOR_GYRO)) {
+          SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_GYRO, true);
+        }
+        if (SDL_GetGamepadSensorData(pad, SDL_SENSOR_GYRO, gyro, 3)) {
+          source = pad;
+          sGyroStatus = "controller";
+          if (SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL)) {
+            if (!SDL_GamepadSensorEnabled(pad, SDL_SENSOR_ACCEL)) {
+              SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true);
+            }
+            haveAccel = SDL_GetGamepadSensorData(pad, SDL_SENSOR_ACCEL, accel, 3);
+          }
+        }
+      }
+    }
+  }
+
+  if (source == nullptr && wantPhone) {
+    if (sPhoneGyro == nullptr && !sPhoneGyroSearched) {
+      sPhoneGyroSearched = true;
+      int count = 0;
+      if (SDL_SensorID* ids = SDL_GetSensors(&count)) {
+        for (int i = 0; i < count; ++i) {
+          const SDL_SensorType type = SDL_GetSensorTypeForID(ids[i]);
+          if (type == SDL_SENSOR_GYRO && sPhoneGyro == nullptr) {
+            sPhoneGyro = SDL_OpenSensor(ids[i]);
+          } else if (type == SDL_SENSOR_ACCEL && sPhoneAccel == nullptr) {
+            sPhoneAccel = SDL_OpenSensor(ids[i]);
+          }
+        }
+        SDL_free(ids);
+      }
+    }
+    if (sPhoneGyro != nullptr && SDL_GetSensorData(sPhoneGyro, gyro, 3)) {
+      source = sPhoneGyro;
+      sGyroStatus = "phone";
+      haveAccel = sPhoneAccel != nullptr && SDL_GetSensorData(sPhoneAccel, accel, 3);
+      // The phone reports its own axes (x right, y up in its natural
+      // orientation), so turn them to the screen's, as SDL does for its
+      // accelerometer: landscape would otherwise swap pitch and yaw. Then it
+      // is held like a pad.
+      const SDL_DisplayID display = SDL_GetPrimaryDisplay();
+      const int quarters = (OrientationQuarters(SDL_GetCurrentDisplayOrientation(display)) -
+                            OrientationQuarters(SDL_GetNaturalDisplayOrientation(display)) + 4) %
+                           4;
+      const auto turn = [quarters](float v[3]) {
+        const float x = v[0];
+        const float y = v[1];
+        switch (quarters) {
+        case 1:
+          v[0] = -y;
+          v[1] = x;
+          break;
+        case 2:
+          v[0] = -x;
+          v[1] = -y;
+          break;
+        case 3:
+          v[0] = y;
+          v[1] = -x;
+          break;
+        default:
+          break;
+        }
+      };
+      turn(gyro);
+      if (haveAccel) {
+        turn(accel);
+      }
+    }
+  }
+
+  if (source == nullptr) {
+    return false;
+  }
+  if (source != sGyroMotionSource || haveAccel != sGyroHasAccel) {
+    sGyroMotion.Reset();
+    sGyroMotionSource = source;
+    sGyroHasAccel = haveAccel;
+  }
+  sGyroMotion.Process(gyro, haveAccel ? accel : nullptr, dt, sInput.gyroSpace, sInput.gyroAutoCalibrate, pitch,
+                      yaw);
+  return true;
+}
 } // namespace
 
 void PollGyro() {
@@ -1855,7 +2018,7 @@ void PollGyro() {
 
   float yaw = 0.f;
   float pitch = 0.f;
-  if (!ReadGyroRates(pitch, yaw)) {
+  if (!ReadGyroRates(pitch, yaw, dt)) {
     sGyroStatus = "no gyro found";
     sSpringFlickArmed = true;
     return;
@@ -6441,6 +6604,32 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("How far the camera turns per turn of the pad: at 1.00x turning the pad 90 degrees turns "
            "the camera 90 degrees, at 2.00x 180. Independent of the mouse sensitivity and invert.");
+  const char* gyroSpaces[] = {"Local", "Player", "World"};
+  int gyroSpace = sInput.gyroSpace;
+  if (ImGui::Combo("Space", &gyroSpace, gyroSpaces, 3)) {
+    SetGyroSpace(gyroSpace);
+  }
+  ItemHelp("Which turn of the pad turns the camera left and right. Local: the pad's own yaw axis, "
+           "best held flat. Player: turning or leaning the pad both work, however it is held (the "
+           "usual choice). World: only turning about the real vertical. Player and world need an "
+           "accelerometer; without one they act as local.");
+  bool autoCalibrate = sInput.gyroAutoCalibrate;
+  if (ImGui::Checkbox("Auto calibrate", &autoCalibrate)) {
+    SetGyroAutoCalibrate(autoCalibrate);
+  }
+  ItemHelp("Measures the gyro's drift whenever the pad is still and removes it, so the camera "
+           "doesn't creep. Put the pad down for a couple of seconds to calibrate. Needs an "
+           "accelerometer.");
+  ImGui::SameLine();
+  if (ImGui::Button("Recalibrate")) {
+    ResetGyroCalibration();
+  }
+  const float confidence = GyroCalibrationConfidence();
+  if (confidence >= 0.f) {
+    ImGui::Text("Calibration: %d%%", int(confidence * 100.f + 0.5f));
+  } else {
+    ImGui::TextDisabled("Calibration: no accelerometer");
+  }
   ImGui::EndDisabled();
 
   bool springFlick = sInput.springFlick;

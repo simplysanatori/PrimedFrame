@@ -88,6 +88,13 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     if (v >= 0 && v <= 2) {
       s.gyroSource = static_cast< int >(v);
     }
+  } else if (key == "gyro_space") {
+    const long v = std::strtol(value.c_str(), nullptr, 10);
+    if (v >= 0 && v <= 2) {
+      s.gyroSpace = static_cast< int >(v);
+    }
+  } else if (key == "gyro_auto_calibrate") {
+    s.gyroAutoCalibrate = ParseBool(value);
   } else if (key == "gyro_sensitivity") {
     const float f = ParseFloat(value);
     if (std::isfinite(f) && f >= kGyroSensitivityMin && f <= kGyroSensitivityMax) {
@@ -288,6 +295,8 @@ void WriteAimSettings(std::ostream& out) {
   out << "gyro_mode=" << s.gyroMode << '\n';
   out << "gyro_source=" << s.gyroSource << '\n';
   out << "gyro_sensitivity=" << s.gyroSensitivity << '\n';
+  out << "gyro_space=" << s.gyroSpace << '\n';
+  out << "gyro_auto_calibrate=" << (s.gyroAutoCalibrate ? 1 : 0) << '\n';
   out << "touch_aim=" << (s.touchAim ? 1 : 0) << '\n';
   out << "touch_aim_speed=" << s.touchAimSpeed << '\n';
   out << "touch_side_margin=" << s.touchSideMargin.load() << '\n';

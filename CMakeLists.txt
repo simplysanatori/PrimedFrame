@@ -158,6 +158,7 @@ set(MP_PORT_SOURCES
     platform/main.cpp
     platform/debug_ui.cpp
     platform/port_input_settings.cpp
+    platform/port_gyro_motion.cpp
     platform/disc.cpp
     platform/shims.cpp
     platform/sdk_stubs.cpp
@@ -808,6 +809,10 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_input_settings_tests PRIVATE platform/include)
     add_test(NAME port_input_settings_tests COMMAND port_input_settings_tests)
     set_tests_properties(port_input_settings_tests PROPERTIES TIMEOUT 15 LABELS port)
+    add_executable(port_gyro_motion_tests tests/port_gyro_motion.cpp platform/port_gyro_motion.cpp)
+    target_include_directories(port_gyro_motion_tests PRIVATE platform/include)
+    add_test(NAME port_gyro_motion_tests COMMAND port_gyro_motion_tests)
+    set_tests_properties(port_gyro_motion_tests PROPERTIES TIMEOUT 15 LABELS port)
     aurora_copy_runtime_dlls(port_input_settings_tests)
     add_executable(port_log_redact_tests tests/port_log_redact.cpp)
     target_include_directories(port_log_redact_tests PRIVATE platform/include)

@@ -45,6 +45,7 @@ travels with any build that contains it.
 | ARM astc-encoder 5.7.0 — ASTC texture encoder for the Remastered importer | Apache-2.0, © Arm Limited | `extern/astcenc/LICENSE.txt` |
 | libadrenotools — loads custom Vulkan drivers (Turnip) on Android | BSD-2-Clause, © Billy Laws | `extern/adrenotools/LICENSE` |
 | liblinkernsbypass — used by libadrenotools | BSD-2-Clause, © Billy Laws | `extern/adrenotools/lib/linkernsbypass/LICENSE` |
+| GamepadMotionHelpers — gyro calibration and player/world space | MIT, © Julian "Jibb" Smart | `extern/GamepadMotionHelpers/LICENSE` |
 | Dear ImGui | MIT | fetched, `imgui-src/` |
 | fmt | MIT | fetched, `fmt-src/` |
 | zstd | BSD | fetched, `zstd-src/` |

@@ -68,6 +68,11 @@ struct Settings {
   int gyroMode = 0;
   int gyroSource = 0;
   float gyroSensitivity = 2.f;
+  // Which turn of the pad steers yaw: its own axis (local), the turn about
+  // gravity mixed with lean (player), or the turn about gravity (world); and
+  // whether the gyro's drift is measured while the pad is still.
+  int gyroSpace = 1;
+  bool gyroAutoCalibrate = true;
   // An old gyro_rate line (aim pixels per rad/s, scaled by the mouse sensitivity)
   // and whether gyro_sensitivity was read since the last PostLoad, which turns the
   // first into the second when only it was there.

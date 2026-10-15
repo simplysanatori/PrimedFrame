@@ -84,6 +84,14 @@ int main() {
   PostLoad();
   Check(Get().gyroSensitivity == 1.5f, "gyro_sensitivity wins over gyro_rate");
   Check(Text().find("gyro_rate") == std::string::npos, "gyro_rate not written");
+  Check(Get().gyroSpace == 1 && Get().gyroAutoCalibrate, "gyro space/calibration defaults");
+  ApplySetting("gyro_space", "2");
+  ApplySetting("gyro_space", "3");
+  ApplySetting("gyro_auto_calibrate", "0");
+  Check(Get().gyroSpace == 2 && !Get().gyroAutoCalibrate, "gyro space/calibration");
+  Check(Text().find("gyro_space=2\n") != std::string::npos &&
+            Text().find("gyro_auto_calibrate=0\n") != std::string::npos,
+        "gyro space/calibration written");
   ApplySetting("shift_key_alt", "44");
   ApplySetting("turbo_pad", "3");
   Check(Get().shiftBindings[1] == 44 && Get().turboBindings[2] == 3, "bindings");
