@@ -125,6 +125,13 @@ typedef struct {
   uint32_t frameBufferScale;
 
   /*
+   * Like frameBufferScale, for the array (storage) buffer alone: 8 MiB at 1. 0 follows
+   * frameBufferScale. Room geometry kept resident only sends the arrays that miss its
+   * region, but those can outgrow the vertex scale.
+   */
+  uint32_t frameStorageScale;
+
+  /*
    * MiB of the shared vertex, index and array buffers set aside for data kept across frames
    * (GXPortRetainResident), on top of what a frame holds. 0 sets none aside; the device's
    * limits may allow less.

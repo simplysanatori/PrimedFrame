@@ -453,6 +453,20 @@ void initialize() {
     if (scale != std::max<uint32_t>(g_config.frameBufferScale, 1)) {
       Log.warn("Frame buffer scale {} is beyond this device, using {}", g_config.frameBufferScale, scale);
     }
+    // The arrays can be scaled apart from the rest: frameStorageScale 0 follows the scale.
+    uint32_t storageScale = g_config.frameStorageScale != 0 ? g_config.frameStorageScale : scale;
+    const uint32_t wantedStorageScale = storageScale;
+    while (storageScale > scale) {
+      g_bufferSizes.storage = StorageBufferSize * storageScale;
+      if (g_bufferSizes.storage <= maxBinding && g_bufferSizes.staging() <= maxBuffer) {
+        break;
+      }
+      --storageScale;
+    }
+    g_bufferSizes.storage = StorageBufferSize * storageScale;
+    if (storageScale != wantedStorageScale) {
+      Log.warn("Frame storage scale {} is beyond this device, using {}", wantedStorageScale, storageScale);
+    }
     // The resident regions follow a frame's data in the device buffers, which are bound
     // whole, so they take what the device leaves after it: two fifths each to vertices and
     // arrays, a fifth to indices.
@@ -827,6 +841,9 @@ const AuroraStats* aurora_get_stats() { return &aurora::gfx::detail::resources()
 
 uint32_t aurora_get_frame_buffer_scale() {
   return static_cast<uint32_t>(aurora::gfx::frame_buffer_sizes().vertex / aurora::gfx::VertexBufferSize);
+}
+uint32_t aurora_get_frame_storage_scale() {
+  return static_cast<uint32_t>(aurora::gfx::frame_buffer_sizes().storage / aurora::gfx::StorageBufferSize);
 }
 uint32_t aurora_get_resident_geometry_mib() {
   const auto& sizes = aurora::gfx::frame_buffer_sizes();

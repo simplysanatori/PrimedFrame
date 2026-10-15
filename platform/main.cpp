@@ -932,6 +932,11 @@ int main(int argc, char** argv) {
     const unsigned long kResidentMiB = 256;
 #endif
     const unsigned long kResidentFrameBuffers = 2;
+    // The arrays that miss the resident region are sent in the frame's storage buffer, and
+    // on a device whose region fills that is nearly all of them: the heaviest room measured
+    // (Main Plaza, nothing resident) pushed 24 MB of them, so 6x (48 MiB) holds it 2x.
+    // Only the storage buffer is that big; vertices and indices stay at kResidentFrameBuffers.
+    const unsigned long kResidentStorageBuffers = 6;
     bool resident = roomGeometry && PortDebug::RoomGeoResidentAtStartup();
     resident = roomGeometry && port::EnvFlag("MP_ROOM_GEO_RESIDENT", resident);
     uint32_t residentMiB = 0;
@@ -945,9 +950,17 @@ int main(int argc, char** argv) {
     if (envFrameBuffers >= 0) {
         frameBufferScale = static_cast<uint32_t>(std::clamp(static_cast<unsigned long>(envFrameBuffers), 1UL, 16UL));
     }
-    if (frameBufferScale > 1) {
-        PortLog::Write("port: frame buffers at %ux (%s)\n", frameBufferScale,
-                       envFrameBuffers >= 0 ? "MP_FRAME_BUFFERS" : "room geometry");
+    // 0 follows frameBufferScale; a resident room geometry mod gets its own for the arrays.
+    uint32_t frameStorageScale = resident && envFrameBuffers < 0 ? kResidentStorageBuffers : 0;
+    const int envStorageBuffers = port::EnvInt("MP_STORAGE_BUFFERS", -1);
+    if (envStorageBuffers >= 0) {
+        frameStorageScale = static_cast<uint32_t>(std::clamp(static_cast<unsigned long>(envStorageBuffers), 1UL, 16UL));
+    }
+    if (frameBufferScale > 1 || frameStorageScale > 1) {
+        PortLog::Write("port: frame buffers at %ux, storage at %ux (%s)\n", frameBufferScale,
+                       frameStorageScale != 0 ? frameStorageScale : frameBufferScale,
+                       envFrameBuffers >= 0 || envStorageBuffers >= 0 ? "MP_FRAME_BUFFERS/MP_STORAGE_BUFFERS"
+                                                                      : "room geometry");
     }
     // Settings, mods, save states and the shader caches sit in user/ beside the
     // executable when that folder can be written to (port_paths.h).
@@ -1042,6 +1055,7 @@ int main(int argc, char** argv) {
         .mem1Size = mem1Size,
         .mem2Size = ARAM_DEFAULT_SIZE,
         .frameBufferScale = frameBufferScale,
+        .frameStorageScale = frameStorageScale,
         .residentGeometryMiB = residentMiB,
         // An embedded seed wins over a stale initial_pipeline_cache.db beside the executable.
         .pipelineCacheSeedData = embeddedSeed.data(),
@@ -1165,6 +1179,9 @@ int main(int argc, char** argv) {
         std::filesystem::remove(driverMarker, ec);
     }
     // From what the device gave, which can be less than was asked for.
+    if (aurora_get_frame_storage_scale() != (frameStorageScale != 0 ? frameStorageScale : frameBufferScale)) {
+        PortLog::Write("port: frame storage at %ux, all this device allows\n", aurora_get_frame_storage_scale());
+    }
     if (aurora_get_frame_buffer_scale() != frameBufferScale) {
         PortLog::Write("port: frame buffers at %ux, all this device allows\n", aurora_get_frame_buffer_scale());
     }
