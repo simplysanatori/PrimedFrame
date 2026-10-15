@@ -29,6 +29,9 @@ constexpr int kPointerAimBoxDefault = 70;
 constexpr int kPointerAimTurnMin = 30;
 constexpr int kPointerAimTurnMax = 720;
 constexpr int kPointerAimTurnDefault = 180;
+// Gyro aim: camera turn per turn of the pad.
+constexpr float kGyroSensitivityMin = 0.1f;
+constexpr float kGyroSensitivityMax = 10.f;
 // The Android touch overlay's margins, in dp.
 constexpr float kTouchMarginMaxDp = 300.f;
 constexpr float kTouchSideMarginDefault = 16.f;
@@ -60,11 +63,16 @@ struct Settings {
   // stickAimRate only the horizontal; off, stickAimRate drives both.
   bool stickAimSplit = false;
   float stickAimRateY = 900.f;
-  // Gyro aiming: off / hold / always, auto / controller / phone, and how fast a
-  // rotation turns into aim travel.
+  // Gyro aiming: off / hold to aim / always / hold to pause, auto / controller /
+  // phone, and how far the camera turns per turn of the pad (1 = the same angle).
   int gyroMode = 0;
   int gyroSource = 0;
-  float gyroRate = 600.f;
+  float gyroSensitivity = 2.f;
+  // An old gyro_rate line (aim pixels per rad/s, scaled by the mouse sensitivity)
+  // and whether gyro_sensitivity was read since the last PostLoad, which turns the
+  // first into the second when only it was there.
+  float gyroLegacyRate = 0.f;
+  bool gyroSensitivityRead = false;
   // Android touch overlay.
   bool touchColors = false;        // the GameCube pad's colours
   bool touchLabels = true;         // each button's function under its letter
@@ -112,7 +120,8 @@ const Settings& Get();
 
 // Applies one settings-file line; false if the key isn't an input key.
 bool ApplySetting(std::string_view key, std::string_view value);
-// After a whole file is read: classic and twin-stick touch layouts are exclusive.
+// After a whole file is read: classic and twin-stick touch layouts are exclusive,
+// and an old gyro_rate becomes gyro_sensitivity.
 void PostLoad();
 // The input keys' lines, in three runs that sit at their old places in the file:
 // bindings and toggles, gameplay options, then aim/touch/mouse. WriteSettings is all three.

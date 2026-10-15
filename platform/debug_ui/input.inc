@@ -55,6 +55,14 @@ float sMousePendingY = 0.f;
 // which is dropped whenever the mouse is not captured (twin stick, phones).
 float sGyroPendingX = 0.f;
 float sGyroPendingY = 0.f;
+// With pointer aim and "Gyro also turns the camera": the gyro's camera turn, in
+// the mouse's pixels, kept apart since the pointer takes the rest of the travel.
+float sGyroCameraPendingX = 0.f;
+float sGyroCameraPendingY = 0.f;
+float sGyroCameraFrameX = 0.f;
+float sGyroCameraFrameY = 0.f;
+// The "Gyro aim" binding, set each frame by the input engine before PollGyro.
+bool sGyroButtonHeld = false;
 // The last tick applied look input. A paused game or a cinematic skips the
 // player update, and would then drop what the frames between ticks showed.
 bool sAimAppliedLastTick = false;
@@ -62,7 +70,14 @@ bool sAimAppliedLastTick = false;
 // walked on every tick.
 bool sPhoneGyroSearched = false;
 SDL_Sensor* sPhoneGyro = nullptr;
+SDL_Sensor* sPhoneAccel = nullptr;
 const char* sGyroStatus = "off";
+// Calibration and gravity for the current source, reset when it changes (a
+// different pad, or the phone), and whether that source has an accelerometer.
+PortGyro::Motion sGyroMotion;
+const void* sGyroMotionSource = nullptr;
+bool sGyroHasAccel = false;
+PortGyro::Filter sGyroFilter;
 } // namespace
 
 int GyroMode() {
@@ -93,19 +108,51 @@ void SetGyroSource(int source) {
   MarkDirty();
 }
 
-float GyroRate() {
+float GyroSensitivity() {
   EnsureInitialized();
-  return sInput.gyroRate;
+  return sInput.gyroSensitivity;
 }
 
-void SetGyroRate(float pixelsPerSecondPerRad) {
+void SetGyroSensitivity(float scale) {
   EnsureInitialized();
-  if (std::isfinite(pixelsPerSecondPerRad) && pixelsPerSecondPerRad >= 20.f &&
-      pixelsPerSecondPerRad <= 5000.f) {
-    sInput.gyroRate = pixelsPerSecondPerRad;
+  if (std::isfinite(scale)) {
+    sInput.gyroSensitivity = std::clamp(scale, PortInput::kGyroSensitivityMin, PortInput::kGyroSensitivityMax);
     MarkDirty();
   }
 }
+
+int GyroSpace() {
+  EnsureInitialized();
+  return sInput.gyroSpace;
+}
+
+void SetGyroSpace(int space) {
+  EnsureInitialized();
+  if (space < 0 || space >= PortGyro::kSpaceCount) {
+    return;
+  }
+  sInput.gyroSpace = space;
+  MarkDirty();
+}
+
+bool GyroAutoCalibrate() {
+  EnsureInitialized();
+  return sInput.gyroAutoCalibrate;
+}
+
+void SetGyroAutoCalibrate(bool on) {
+  EnsureInitialized();
+  sInput.gyroAutoCalibrate = on;
+  MarkDirty();
+}
+
+void ResetGyroCalibration() { sGyroMotion.Reset(); }
+
+float GyroCalibrationConfidence() {
+  return sGyroMotionSource != nullptr && sGyroHasAccel ? sGyroMotion.Confidence() : -1.f;
+}
+
+void SetGyroButton(bool held) { sGyroButtonHeld = held; }
 
 const char* GyroStatus() { return sGyroStatus; }
 
@@ -126,8 +173,9 @@ int OrientationQuarters(SDL_DisplayOrientation orientation) {
 }
 
 // Pitch (x, positive tilts the far edge up) and yaw (positive turns right)
-// rates in rad/s from the chosen source; false when there is none.
-bool ReadGyroRates(float& pitch, float& yaw) {
+// rates in rad/s from the chosen source, after calibration and gyro space;
+// false when there is none. dt is the time since the last call.
+bool ReadGyroRates(float& pitch, float& yaw, float dt) {
   if (sGyroOverride) {
     pitch = sGyroOverridePitch;
     yaw = sGyroOverrideYaw;
@@ -136,79 +184,105 @@ bool ReadGyroRates(float& pitch, float& yaw) {
   }
   const bool wantController = sInput.gyroSource == 0 || sInput.gyroSource == 1;
   const bool wantPhone = sInput.gyroSource == 0 || sInput.gyroSource == 2;
-  bool haveRates = false;
+  // SDL's sensor axes (x right, y up, z toward the player), rad/s and m/s^2.
+  float gyro[3];
+  float accel[3];
+  bool haveAccel = false;
+  const void* source = nullptr;
 
   if (wantController) {
     if (SDL_Gamepad* pad = PADGetSDLGamepadForIndex(0)) {
       if (SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO)) {
-        // Asked per pad, so a reconnected or swapped pad gets its gyro on too.
+        // Asked per pad, so a reconnected or swapped pad gets its sensors on too.
         if (!SDL_GamepadSensorEnabled(pad, SDL_SENSOR_GYRO)) {
           SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_GYRO, true);
         }
-        float data[3];
-        if (SDL_GetGamepadSensorData(pad, SDL_SENSOR_GYRO, data, 3)) {
-          // Radians per second; x is pitch, y is yaw. Sensor rates are
-          // counter-clockwise positive, so a positive y turns left.
-          yaw = -data[1];
-          pitch = data[0];
-          haveRates = true;
+        if (SDL_GetGamepadSensorData(pad, SDL_SENSOR_GYRO, gyro, 3)) {
+          source = pad;
           sGyroStatus = "controller";
+          if (SDL_GamepadHasSensor(pad, SDL_SENSOR_ACCEL)) {
+            if (!SDL_GamepadSensorEnabled(pad, SDL_SENSOR_ACCEL)) {
+              SDL_SetGamepadSensorEnabled(pad, SDL_SENSOR_ACCEL, true);
+            }
+            haveAccel = SDL_GetGamepadSensorData(pad, SDL_SENSOR_ACCEL, accel, 3);
+          }
         }
       }
     }
   }
 
-  if (!haveRates && wantPhone) {
+  if (source == nullptr && wantPhone) {
     if (sPhoneGyro == nullptr && !sPhoneGyroSearched) {
       sPhoneGyroSearched = true;
       int count = 0;
       if (SDL_SensorID* ids = SDL_GetSensors(&count)) {
         for (int i = 0; i < count; ++i) {
-          if (SDL_GetSensorTypeForID(ids[i]) == SDL_SENSOR_GYRO) {
+          const SDL_SensorType type = SDL_GetSensorTypeForID(ids[i]);
+          if (type == SDL_SENSOR_GYRO && sPhoneGyro == nullptr) {
             sPhoneGyro = SDL_OpenSensor(ids[i]);
-            break;
+          } else if (type == SDL_SENSOR_ACCEL && sPhoneAccel == nullptr) {
+            sPhoneAccel = SDL_OpenSensor(ids[i]);
           }
         }
         SDL_free(ids);
       }
     }
-    if (sPhoneGyro != nullptr) {
-      float data[3];
-      if (SDL_GetSensorData(sPhoneGyro, data, 3)) {
-        // The phone reports its own axes (x right, y up in its natural
-        // orientation), so turn them to the screen's, as SDL does for its
-        // accelerometer: landscape would otherwise swap pitch and yaw. The
-        // rate about the screen's up axis is negated, as for a pad.
-        const SDL_DisplayID display = SDL_GetPrimaryDisplay();
-        const int quarters = (OrientationQuarters(SDL_GetCurrentDisplayOrientation(display)) -
-                              OrientationQuarters(SDL_GetNaturalDisplayOrientation(display)) + 4) %
-                             4;
+    if (sPhoneGyro != nullptr && SDL_GetSensorData(sPhoneGyro, gyro, 3)) {
+      source = sPhoneGyro;
+      sGyroStatus = "phone";
+      haveAccel = sPhoneAccel != nullptr && SDL_GetSensorData(sPhoneAccel, accel, 3);
+      // The phone reports its own axes (x right, y up in its natural
+      // orientation), so turn them to the screen's, as SDL does for its
+      // accelerometer: landscape would otherwise swap pitch and yaw. Then it
+      // is held like a pad.
+      const SDL_DisplayID display = SDL_GetPrimaryDisplay();
+      const int quarters = (OrientationQuarters(SDL_GetCurrentDisplayOrientation(display)) -
+                            OrientationQuarters(SDL_GetNaturalDisplayOrientation(display)) + 4) %
+                           4;
+      const auto turn = [quarters](float v[3]) {
+        const float x = v[0];
+        const float y = v[1];
         switch (quarters) {
         case 1:
-          pitch = -data[1];
-          yaw = -data[0];
+          v[0] = -y;
+          v[1] = x;
           break;
         case 2:
-          pitch = -data[0];
-          yaw = data[1];
+          v[0] = -x;
+          v[1] = -y;
           break;
         case 3:
-          pitch = data[1];
-          yaw = data[0];
+          v[0] = y;
+          v[1] = -x;
           break;
         default:
-          pitch = data[0];
-          yaw = -data[1];
           break;
         }
-        haveRates = true;
-        sGyroStatus = "phone";
+      };
+      turn(gyro);
+      if (haveAccel) {
+        turn(accel);
       }
     }
   }
-  return haveRates;
+
+  if (source == nullptr) {
+    return false;
+  }
+  if (source != sGyroMotionSource || haveAccel != sGyroHasAccel) {
+    sGyroMotion.Reset();
+    sGyroFilter.Reset();
+    sGyroMotionSource = source;
+    sGyroHasAccel = haveAccel;
+  }
+  sGyroMotion.Process(gyro, haveAccel ? accel : nullptr, dt, sInput.gyroSpace, sInput.gyroAutoCalibrate, pitch,
+                      yaw);
+  sGyroFilter.Apply(pitch, yaw, dt, sInput.gyroSmoothing, sInput.gyroTightening);
+  return true;
 }
 } // namespace
+
+static void PointerAimScale(float& sx, float& sy);
 
 void PollGyro() {
   EnsureInitialized();
@@ -233,7 +307,7 @@ void PollGyro() {
 
   float yaw = 0.f;
   float pitch = 0.f;
-  if (!ReadGyroRates(pitch, yaw)) {
+  if (!ReadGyroRates(pitch, yaw, dt)) {
     sGyroStatus = "no gyro found";
     sSpringFlickArmed = true;
     return;
@@ -257,29 +331,48 @@ void PollGyro() {
     return;
   }
 
-  bool active = sInput.gyroMode == 2;
+  // The "Gyro aim" binding (R3 / left ctrl by default) turns gyro on while held
+  // in hold to aim, and off while held in hold to pause (ratcheting).
+  const bool active = sInput.gyroMode == 2 || (sInput.gyroMode == 1) == sGyroButtonHeld;
   if (!active) {
-    // Hold to aim: right stick click on a pad, left ctrl on a keyboard.
-    if (SDL_Gamepad* pad = PADGetSDLGamepadForIndex(0)) {
-      active = SDL_GetGamepadButton(pad, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
-    }
-    if (!active) {
-      const bool* keys = SDL_GetKeyboardState(nullptr);
-      active = keys != nullptr && keys[SDL_SCANCODE_LCTRL] != 0;
-    }
-  }
-  if (!active) {
-    sGyroStatus = "held off";
+    sGyroStatus = sInput.gyroMode == 1 ? "waiting for the Gyro aim button" : "paused by the Gyro aim button";
     return;
   }
 
   if (!std::isfinite(dt) || dt <= 0.f) {
     return;
   }
-  // x right / y up, the same shape AddStickAim takes; the aim state expects
-  // right/down positive.
-  sGyroPendingX += yaw * sInput.gyroRate * dt;
-  sGyroPendingY -= pitch * sInput.gyroRate * dt;
+  // Natural scale: the pending pixels become mouse_sensitivity rad each in
+  // direct aim (with the mouse inversion applied), so divide that back out and
+  // pre-undo the inversion: gyro turns gyro_sensitivity times the pad's angle
+  // whatever the mouse is set to. x right / y up; the aim state expects right/down.
+  const float perPixel = MouseSensitivity();
+  if (!(perPixel > 0.f)) {
+    return;
+  }
+  const float sx = MouseInvertX() ? -1.f : 1.f;
+  const float sy = MouseInvertY() ? -1.f : 1.f;
+  const float scale = sInput.gyroSensitivity * dt / perPixel;
+  if (!PointerAim()) {
+    sGyroPendingX += sx * yaw * scale;
+    sGyroPendingY -= sy * pitch * scale;
+    return;
+  }
+  // Pointer aim: gyro_cursor_angle degrees of pad turn sweep the pointer across
+  // the screen (2 pointer units), at the same pixels per degree both ways, so
+  // divide out the window and mouse scaling the pointer applies. No inversion.
+  float px = 0.f, py = 0.f;
+  PointerAimScale(px, py);
+  const float sweep = sInput.gyroCursorAngle * (PortMouse::kPi / 180.f);
+  if (px > 0.f && sweep > 0.f) {
+    const float cursor = 2.f / sweep * dt / px;
+    sGyroPendingX += yaw * cursor;
+    sGyroPendingY -= pitch * cursor;
+  }
+  if (sInput.gyroCursorCamera) {
+    sGyroCameraPendingX += sx * yaw * scale;
+    sGyroCameraPendingY -= sy * pitch * scale;
+  }
 }
 
 void ResetMouseAim() {
@@ -291,6 +384,7 @@ void ResetMouseAim() {
   sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
   sTouchLookFrameX = sTouchLookFrameY = 0.f;
   sGyroPendingX = sGyroPendingY = sStickFrameX = sStickFrameY = 0.f;
+  sGyroCameraPendingX = sGyroCameraPendingY = sGyroCameraFrameX = sGyroCameraFrameY = 0.f;
   std::lock_guard lock(sTouchAimMutex);
   sTouchAimPendingX = sTouchAimPendingY = 0.f;
 }
@@ -415,7 +509,9 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
     } else {
       sPointerAim.Center();
     }
-    dx = dy = 0.f;
+    // Only the gyro's own camera turn (if on) moves the view directly.
+    dx = sGyroCameraFrameX;
+    dy = sGyroCameraFrameY;
   }
   const bool applied = sMouseAimState.Update(active, locked, x, y, z, dx, dy, MouseSensitivity(),
                                             MouseInvertX(), MouseInvertY(), pointer ? 0.f : sStickFrameX,
@@ -429,7 +525,10 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   }
   sPointerAimFree = pointer && applied;
   if (!sPointerAimFree) sPointerAim.Center();
-  if (applied) sMouseFrameX = sMouseFrameY = sStickFrameX = sStickFrameY = 0.f;
+  if (applied) {
+    sMouseFrameX = sMouseFrameY = sStickFrameX = sStickFrameY = 0.f;
+    sGyroCameraFrameX = sGyroCameraFrameY = 0.f;
+  }
   sAimAppliedLastTick = applied;
   return applied;
 }
@@ -828,6 +927,9 @@ void BeginFrameMouse() {
   sMouseFrameY = sMousePendingY + sGyroPendingY + (directAim ? touchY : 0.f);
   sMousePendingX = sMousePendingY = 0.f;
   sGyroPendingX = sGyroPendingY = 0.f;
+  sGyroCameraFrameX = sGyroCameraPendingX;
+  sGyroCameraFrameY = sGyroCameraPendingY;
+  sGyroCameraPendingX = sGyroCameraPendingY = 0.f;
   // AddStickAim adds this tick's travel during its input update.
   sStickFrameX = sStickFrameY = 0.f;
   sAimAppliedLastTick = false;
@@ -907,6 +1009,13 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
     sPointerAim.Presented(lag, dx * sx, dy * sy, px, py);
     PortMouse::PointerAim::TurnAt(px, py, PointerAimBox() / 100.f,
                                   PointerAimTurn() * (PortMouse::kPi / 180.f), ahead, dyaw, dpitch);
+    // Plus the gyro's own camera turn so far.
+    float gyroYaw = 0.f, gyroPitch = 0.f;
+    if (sMouseAimState.Preview(sGyroCameraPendingX, sGyroCameraPendingY, MouseSensitivity(),
+                               MouseInvertX(), MouseInvertY(), gyroYaw, gyroPitch, lag)) {
+      dyaw += static_cast<float>(std::remainder(double(gyroYaw) - sMouseAimState.yaw, 2.0 * PortMouse::kPi));
+      dpitch += gyroPitch - sMouseAimState.pitch;
+    }
     return dyaw != 0.f || dpitch != 0.f;
   }
   float yaw = 0.f;

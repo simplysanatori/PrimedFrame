@@ -11,6 +11,7 @@
 #include "port_env.h"
 #include "port_collision_view.h"
 #include "port_debug.h"
+#include "port_gyro_motion.h"
 #include "port_freecam.h"
 #include "port_photo.h"
 #include "port_pointer.h"
@@ -304,10 +305,16 @@ PortMouse::AimState sMouseAimState;
 PortMouse::ButtonGate sMouseButtonGate;
 float sMouseFrameX = 0.f;
 float sMouseFrameY = 0.f;
-// The twin stick's part of this tick's sMouseFrame travel. Frames between ticks
-// draw its turn after the tick (docs/FRAME_INTERPOLATION.md section 4).
-float sStickFrameX = 0.f;
-float sStickFrameY = 0.f;
+// Gyro travel since the last tick. Kept apart from the mouse's pending delta,
+// which is dropped whenever the mouse is not captured (twin stick, phones).
+float sGyroPendingX = 0.f;
+float sGyroPendingY = 0.f;
+// The "Gyro aim" binding, set each frame by the input engine before PollGyro.
+bool sGyroButtonHeld = false;
+// The twin stick's aim speed at the last tick, in pixels per second, so frames
+// between ticks can show the travel the next tick will add.
+float sStickAimVelX = 0.f;
+float sStickAimVelY = 0.f;
 // Frame interpolation (docs/FRAME_INTERPOLATION.md): uncapped frames show look
 // input before the tick that applies it. One setting, smooth_frames, turns all
 // four parts on or off; the console's interp command flips them one at a time
@@ -638,15 +645,2103 @@ void EnsureInitialized() {
 
 namespace PortDebug {
 
-#include "debug_ui/options.inc"
-#include "debug_ui/input.inc"
-#include "debug_ui/runtime.inc"
-#include "debug_ui/ui_common.inc"
-#include "debug_ui/performance.inc"
-#include "debug_ui/file_dialogs.inc"
+bool FastBoot() {
+  EnsureInitialized();
+  return sFastBoot;
+}
+
+bool BootWorld(uint32_t& worldId, uint32_t& areaAssetId) {
+  static uint32_t sWorld = 0, sArea = 0;
+  static const bool sSet = [] {
+    const char* value = std::getenv("MP_BOOT_WORLD");
+    if (value == nullptr) {
+      return false;
+    }
+    char* end = nullptr;
+    sWorld = static_cast< uint32_t >(std::strtoul(value, &end, 16));
+    if (end != nullptr && *end == ':') {
+      sArea = static_cast< uint32_t >(std::strtoul(end + 1, nullptr, 16));
+    }
+    return sWorld != 0;
+  }();
+  worldId = sWorld;
+  areaAssetId = sArea;
+  return sSet;
+}
+
+bool SkipCutscenes() {
+  EnsureInitialized();
+  return sSkipCutscenes;
+}
+
+float CutsceneSpeed() {
+  EnsureInitialized();
+  return sCutsceneSpeed;
+}
+
+unsigned SimRate() {
+  EnsureInitialized();
+  return sOriginalExperience ? 60u : sSimRate;
+}
+
+void SetSimRate(unsigned hz) {
+  EnsureInitialized();
+  if (hz < 30u || hz > 480u) {
+    return;
+  }
+  sSimRate = hz;
+  MarkDirty();
+}
+
+float SimPeriod() { return 1.f / static_cast< float >(SimRate()); }
+
+bool SimAdaptive() {
+  EnsureInitialized();
+  return sSimAdaptive && !sOriginalExperience;
+}
+
+bool Turbo() {
+  EnsureInitialized();
+  return sTurbo;
+}
+
+unsigned TurboTicks() {
+  EnsureInitialized();
+  return sTurbo ? sTurboTicks : 1;
+}
+
+void SetSimAdaptive(bool enabled) {
+  EnsureInitialized();
+  sSimAdaptive = enabled;
+  MarkDirty();
+}
+
+float TickPeriod() {
+  EnsureInitialized();
+  return sTickPeriod;
+}
+
+void SetTickPeriod(float dt) {
+  if (std::isfinite(dt) && dt > 0.f) {
+    sTickPeriod = dt;
+  }
+}
+
+float TickFrames() { return sTickPeriod * 60.f; }
+
+// What the frame code uses: the settings, or retail's under Original experience.
+static bool EffectiveFrameLimit() { return sFrameLimitEnabled || sOriginalExperience; }
+// Photo mode's supersampled capture holds the EFB at this scale for a few frames; never saved.
+static float sCaptureScale = 0.f;
+static float EffectiveRenderScale() {
+  return sCaptureScale > 0.f ? sCaptureScale : sOriginalExperience ? 1.f : sRenderScale;
+}
+static int EffectiveMsaa() { return sOriginalExperience ? 1 : sMsaa; }
+static int EffectiveAnisotropy() { return sOriginalExperience ? 1 : sAnisotropy; }
+
+static void ApplyGraphicsQuality() {
+  aurora_set_graphics_quality(static_cast< uint32_t >(EffectiveMsaa()),
+                              static_cast< uint16_t >(EffectiveAnisotropy()));
+  aurora_set_per_pixel_lighting(sPerPixelLighting && !sOriginalExperience);
+}
+
+bool FrameLimitEnabled() {
+  EnsureInitialized();
+  return EffectiveFrameLimit();
+}
+
+int FrameRateCap() {
+  EnsureInitialized();
+  return EffectiveFrameLimit() ? 60 : sFpsCap;
+}
+
+
+static double DynamicResTargetFps() {
+  double target = sDynamicResTarget;
+  if (target <= 0.0) {
+    const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
+    target = mode != nullptr && mode->refresh_rate > 0.f ? mode->refresh_rate : 60.0;
+  }
+  const int cap = EffectiveFrameLimit() ? 60 : sFpsCap;
+  return cap > 0 ? std::min(target, static_cast< double >(cap)) : target;
+}
+
+static void ResetDynamicRes() {
+  sDynSlow = sDynSteady = sDynSettle = sDynHoldLow = 0;
+  sDynRaiseAfter = 4;
+  sDynHoldFor = 30;
+  sDynSinceRaise = -1;
+  sDynFpsBefore = 0.0;
+  if (sDynScale > 0.f) {
+    sDynScale = 0.f;
+    VISetFrameBufferScale(EffectiveRenderScale());
+  }
+}
+
+// Once a second, from the presented rate. Each step reallocates the EFB and waits for the
+// GPU, so it steps rarely: down after two slow seconds, up after a steady stretch that
+// doubles each time a step up turns out too slow.
+static void UpdateDynamicRes(double fps, unsigned frames) {
+  if (sCaptureScale > 0.f) {
+    return;
+  }
+  const float top = EffectiveRenderScale();
+  const float bottom = std::min(sDynamicResMin, top);
+  if (!sDynamicRes || sOriginalExperience || top <= bottom || sTurbo) {
+    ResetDynamicRes();
+    return;
+  }
+  // Paused or loading: nothing to go on.
+  if (frames < 10) {
+    return;
+  }
+  // The second after a step holds its reallocation stall.
+  if (sDynSettle > 0) {
+    --sDynSettle;
+    return;
+  }
+  const float scale = sDynScale > 0.f ? sDynScale : top;
+  // Half steps above 2x, where a quarter step changes the pixel count by little.
+  const float stepUp = scale >= 2.f ? 0.5f : 0.25f;
+  const float stepDown = scale > 2.f ? 0.5f : 0.25f;
+  const double target = DynamicResTargetFps();
+  if (sDynHoldLow > 0) {
+    --sDynHoldLow;
+  }
+  float next = scale;
+  if (sDynFpsBefore > 0.0) {
+    // The first reading after a step down: no gain means the GPU's pixels were not what
+    // held the frame back, so go back up and stay there for a while.
+    if (fps < sDynFpsBefore * 1.03) {
+      next = scale + stepUp;
+      sDynHoldLow = sDynHoldFor;
+      sDynHoldFor = std::min(sDynHoldFor * 2, 240);
+    }
+    sDynFpsBefore = 0.0;
+  } else if (fps < target * 0.93) {
+    sDynSteady = 0;
+    if (sDynSinceRaise >= 0) {
+      next = scale - stepDown;
+      sDynRaiseAfter = std::min(sDynRaiseAfter * 2, 64);
+      sDynSinceRaise = -1;
+    } else if (++sDynSlow >= 2 && sDynHoldLow == 0 && scale > bottom) {
+      next = scale - stepDown;
+      sDynFpsBefore = fps;
+    }
+  } else {
+    sDynSlow = 0;
+    if (sDynSinceRaise >= 0 && ++sDynSinceRaise >= 3) {
+      sDynSinceRaise = -1;
+    }
+    if (sDynSinceRaise < 0 && fps >= target * 0.97 && scale < top && ++sDynSteady >= sDynRaiseAfter) {
+      next = scale + stepUp;
+      sDynSteady = 0;
+      sDynSinceRaise = 0;
+    }
+  }
+  next = std::clamp(next, bottom, top);
+  if (next != scale) {
+    sDynSlow = 0;
+    sDynScale = next;
+    sDynSettle = 1;
+    VISetFrameBufferScale(next);
+    PortLog::Write("port: dynamic resolution %.2fx (%.0f fps, target %.0f)\n", next, fps, target);
+  }
+}
+
+void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
+  sMainLoopRan = true;
+  sTimingNs += durationNs;
+  sTimingTicks += ticks;
+  if (presented) ++sTimingFrames;
+  // Wall-clock time for the same span, kept separately from the frame's own
+  // duration. Dividing presented frames by the frame's CPU time reports
+  // throughput, which is what the process can *produce*; dividing by wall time
+  // reports what reaches the screen. The two agree while the 60 Hz cap is
+  // waiting more than the frame costs, and part company exactly when a frame
+  // overruns its budget - which is the case someone opens the Video > Frame rate page
+  // to diagnose. One of the two numbers without the other is misleading there.
+  {
+    const uint64_t nowNs = SDL_GetTicksNS();
+    if (sTimingWallLastNs != 0) {
+      sTimingWallNs += nowNs - sTimingWallLastNs;
+    }
+    sTimingWallLastNs = nowNs;
+  }
+  // Also on wall time: a light frame under the cap took several seconds to
+  // gather one second of work, so the readout lagged that far behind.
+  if (sTimingNs >= 1000000000ull || sTimingWallNs >= 1000000000ull) {
+    const double seconds = static_cast<double>(sTimingNs) / 1000000000.0;
+    const double wallSeconds = static_cast<double>(sTimingWallNs) / 1000000000.0;
+    sActualFps = sTimingFrames / (wallSeconds > 0.0 ? wallSeconds : seconds);
+    sThroughputFps = sTimingFrames / seconds;
+    // Ticks per wall second: the simulation's rate is what the player sees, not
+    // what it could reach. Over the frame's own time it read above the target
+    // whenever the cap or vsync left the loop idle.
+    sActualTps = sTimingTicks / (wallSeconds > 0.0 ? wallSeconds : seconds);
+    if (sTraceTiming) {
+      std::fprintf(stderr,
+                   "[timing] presented=%.1f FPS throughput=%.1f FPS simulation=%.1f ticks/s cap=%d\n",
+                   sActualFps, sThroughputFps, sActualTps, EffectiveFrameLimit() ? 60 : sFpsCap);
+    }
+    UpdateDynamicRes(sActualFps, sTimingFrames);
+    sTimingNs = 0;
+    sTimingWallNs = 0;
+    sTimingFrames = sTimingTicks = 0;
+  }
+}
+
+void SetFrameLimitEnabled(bool enabled) {
+  EnsureInitialized();
+  // Original experience holds the cap; F10 must not change what it restores.
+  if (sOriginalExperience) {
+    return;
+  }
+  if (sFrameLimitEnabled != enabled) {
+    sFrameLimitEnabled = enabled;
+    MarkDirty();
+  }
+}
+
+bool VsyncEnabled() {
+  EnsureInitialized();
+  return sVsyncEnabled;
+}
+
+void SetVsyncEnabled(bool enabled) {
+  EnsureInitialized();
+  // Always re-apply: the stored value can match while the surface still has the
+  // previous present mode (e.g. the persisted value applied before the first
+  // frame), which made the first toggle a no-op.
+  sVsyncEnabled = enabled;
+  aurora_enable_vsync(enabled);
+}
+
+bool Fullscreen() {
+  EnsureInitialized();
+  return sFullscreen;
+}
+
+void SetFullscreen(bool enabled) {
+  EnsureInitialized();
+  if (sFullscreen != enabled) {
+    sFullscreen = enabled;
+    MarkDirty();
+  }
+  PortLog::Write("metroid_prime_port: fullscreen %s\n", enabled ? "on" : "off");
+  VISetWindowFullscreen(enabled);
+}
+
+float RenderScale() {
+  EnsureInitialized();
+  return EffectiveRenderScale();
+}
+
+void SetRenderScale(float scale) {
+  EnsureInitialized();
+  if (sRenderScale == scale) {
+    return;
+  }
+  sRenderScale = scale;
+  sDynScale = 0.f;
+  ResetDynamicRes();
+  VISetFrameBufferScale(EffectiveRenderScale());
+}
+
+SDL_Window* MainWindow();
+
+float BaseRenderScale() {
+  EnsureInitialized();
+  if (sOriginalExperience) {
+    return 1.f;
+  }
+  if (sRenderScale > 0.f) {
+    return sRenderScale;
+  }
+  // Auto draws at the window's pixel size; as a multiple of the 480-line base.
+  int width = 0, height = 0;
+  SDL_Window* window = MainWindow();
+  if (window != nullptr && SDL_GetWindowSizeInPixels(window, &width, &height) && height > 0) {
+    return static_cast< float >(height) / 480.f;
+  }
+  return 1.f;
+}
+
+void SetCaptureRenderScale(float scale) {
+  EnsureInitialized();
+  const float next = scale > 0.f ? scale : 0.f;
+  if (sCaptureScale == next) {
+    return;
+  }
+  sCaptureScale = next;
+  sDynScale = 0.f;
+  VISetFrameBufferScale(EffectiveRenderScale());
+}
+
+bool DynamicRes() {
+  EnsureInitialized();
+  return sDynamicRes && !sOriginalExperience;
+}
+
+int DynamicResTarget() {
+  EnsureInitialized();
+  return sDynamicResTarget;
+}
+
+float DynamicResMin() {
+  EnsureInitialized();
+  return sDynamicResMin;
+}
+
+EAspectMode AspectMode() {
+  EnsureInitialized();
+  return sOriginalExperience ? kAspect_4_3 : sAspectMode;
+}
+
+void SetAspectMode(EAspectMode mode) {
+  EnsureInitialized();
+  sAspectMode = mode;
+  MarkDirty();
+}
+
+bool HudWide() {
+  EnsureInitialized();
+  return sHudWide && !sOriginalExperience;
+}
+
+void SetHudWide(bool enabled) {
+  EnsureInitialized();
+  sHudWide = enabled;
+  MarkDirty();
+}
+
+bool CinemaBars() {
+  EnsureInitialized();
+  return sCinemaBars || sOriginalExperience;
+}
+
+bool SharpScanWindow() {
+  EnsureInitialized();
+  return sSharpScanWindow && !sOriginalExperience;
+}
+
+const char* PromptGlyphs() {
+  const int glyphs = sPromptGlyphs.load(std::memory_order_relaxed);
+  return glyphs > 0 ? kPromptGlyphs[glyphs] : nullptr;
+}
+
+int HudScale() {
+  EnsureInitialized();
+  return sOriginalExperience ? kHudScaleMax : sHudScale;
+}
+
+void SetHudScale(int percent) {
+  EnsureInitialized();
+  sHudScale = std::clamp(percent, kHudScaleMin, kHudScaleMax);
+  MarkDirty();
+}
+
+int ScanSpread() {
+  EnsureInitialized();
+  return sOriginalExperience ? kScanSpreadMax : sScanSpread;
+}
+
+void SetScanSpread(int percent) {
+  EnsureInitialized();
+  sScanSpread = std::clamp(percent, kScanSpreadMin, kScanSpreadMax);
+  MarkDirty();
+}
+
+bool AutoAim() {
+  EnsureInitialized();
+  return sAutoAim || sOriginalExperience;
+}
+
+float ScanSpeed() {
+  EnsureInitialized();
+  return sOriginalExperience ? 1.f : static_cast< float >(sScanSpeed) / 100.f;
+}
+
+bool MenuStandardButtons() {
+  EnsureInitialized();
+  return sMenuStandardButtons;
+}
+
+void SetMenuStandardButtons(bool enabled) {
+  EnsureInitialized();
+  sMenuStandardButtons = enabled;
+  MarkDirty();
+}
+
+void SetPointerMenus(bool enabled) {
+  EnsureInitialized();
+  PortPointer::SetEnabled(enabled);
+  MarkDirty();
+}
+
+bool SecondaryCrosshairs() {
+  EnsureInitialized();
+  return sSecondaryCrosshairs || sOriginalExperience;
+}
+
+int CrosshairOpacity() {
+  EnsureInitialized();
+  return sOriginalExperience ? kCrosshairOpacityMax : sCrosshairOpacity;
+}
+
+bool CrosshairColor(float rgb[3]) {
+  EnsureInitialized();
+  if (!sCrosshairCustomColor || sOriginalExperience) {
+    return false;
+  }
+  std::copy_n(sCrosshairColor, 3, rgb);
+  return true;
+}
+
+bool HideHelmet() {
+  EnsureInitialized();
+  return (sHideHelmet || PortPhoto::Active()) && !sOriginalExperience;
+}
+
+void SetHideHelmet(bool enabled) {
+  EnsureInitialized();
+  sHideHelmet = enabled;
+  MarkDirty();
+}
+
+bool HideVisorEffects() {
+  EnsureInitialized();
+  return (sHideVisorEffects || PortPhoto::Active()) && !sOriginalExperience;
+}
+
+void SetHideVisorEffects(bool enabled) {
+  EnsureInitialized();
+  sHideVisorEffects = enabled;
+  MarkDirty();
+}
+
+bool RevealMap() {
+  EnsureInitialized();
+  return sRevealMap && !sOriginalExperience;
+}
+
+void SetRevealMap(bool enabled) {
+  EnsureInitialized();
+  sRevealMap = enabled;
+  MarkDirty();
+}
+
+EMapPickups MapPickups() {
+  EnsureInitialized();
+  return static_cast< EMapPickups >(sMapPickups);
+}
+
+void SetMapPickups(EMapPickups mode) {
+  EnsureInitialized();
+  sMapPickups = mode >= kMapPickups_Off && mode <= kMapPickups_Rooms ? mode : kMapPickups_Off;
+  MarkDirty();
+}
+
+bool MapLogicColors() {
+  EnsureInitialized();
+  return sMapLogicColors;
+}
+
+void SetMapLogicColors(bool enabled) {
+  EnsureInitialized();
+  sMapLogicColors = enabled;
+  MarkDirty();
+}
+
+int ApSuitDamage() {
+  EnsureInitialized();
+  return sApSuitDamage;
+}
+
+void SetApSuitDamage(int mode) {
+  EnsureInitialized();
+  sApSuitDamage = mode >= 0 && mode <= 2 ? mode : 1;
+  MarkDirty();
+}
+
+bool SkippableCutscenes() {
+  EnsureInitialized();
+  return sSkippableCutscenes && !sOriginalExperience;
+}
+
+void SetSkippableCutscenes(bool enabled) {
+  EnsureInitialized();
+  sSkippableCutscenes = enabled;
+  MarkDirty();
+}
+
+bool Revision100Compatibility() {
+  EnsureInitialized();
+  return sRevision100Compatibility;
+}
+
+void SetRevision100Compatibility(bool enabled) {
+  EnsureInitialized();
+  sRevision100Compatibility = enabled;
+  MarkDirty();
+}
+
+const char* TextLanguage() {
+  EnsureInitialized();
+  for (size_t i = 0; i < PortRemastered::kTextLanguageCount; ++i) {
+    if (sTextLanguage == PortRemastered::kTextLanguages[i].code) {
+      return PortRemastered::kTextLanguages[i].code;
+    }
+  }
+  return "";
+}
+
+void SetTextLanguage(const char* code) {
+  EnsureInitialized();
+  sTextLanguage = code;
+  MarkDirty();
+}
+
+EElevatorRide ElevatorRide() {
+  EnsureInitialized();
+  return sOriginalExperience ? kElevatorRide_Original : static_cast< EElevatorRide >(sElevatorRide);
+}
+
+void SetElevatorRide(EElevatorRide mode) {
+  EnsureInitialized();
+  sElevatorRide = mode >= kElevatorRide_Original && mode <= kElevatorRide_Skip ? mode
+                                                                               : kElevatorRide_Original;
+  MarkDirty();
+}
+
+EBootLogos BootLogos() {
+  EnsureInitialized();
+  return sOriginalExperience ? kBootLogos_Show : static_cast< EBootLogos >(sBootLogos);
+}
+
+void SetBootLogos(EBootLogos mode) {
+  EnsureInitialized();
+  sBootLogos = mode >= kBootLogos_Show && mode <= kBootLogos_Off ? mode : kBootLogos_Skippable;
+  MarkDirty();
+}
+
+float FirstPersonFov() {
+  EnsureInitialized();
+  return sOriginalExperience ? kFovRetail : sFirstPersonFov;
+}
+
+void SetFirstPersonFov(float degrees) {
+  EnsureInitialized();
+  if (std::isfinite(degrees)) {
+    sFirstPersonFov = std::clamp(degrees, kFovMin, kFovMax);
+    MarkDirty();
+  }
+}
+
+void GunOffset(float out[3]) {
+  EnsureInitialized();
+  for (int i = 0; i < 3; ++i) {
+    out[i] = sOriginalExperience ? 0.f : sGunOffset[i];
+  }
+}
+
+void SetGunOffset(const float offset[3]) {
+  EnsureInitialized();
+  for (int i = 0; i < 3; ++i) {
+    if (std::isfinite(offset[i])) {
+      sGunOffset[i] = std::clamp(offset[i], -kGunOffsetMax, kGunOffsetMax);
+    }
+  }
+  MarkDirty();
+}
+
+int Msaa() {
+  EnsureInitialized();
+  return EffectiveMsaa();
+}
+
+void SetMsaa(int samples) {
+  EnsureInitialized();
+  samples = samples >= 4 ? 4 : 1;
+  if (sMsaa != samples) {
+    sMsaa = samples;
+    ApplyGraphicsQuality();
+    MarkDirty();
+  }
+}
+
+bool OpenGles() {
+  EnsureInitialized();
+  return sOpenGles;
+}
+
+void SetOpenGles(bool enabled) {
+  EnsureInitialized();
+  if (sOpenGles != enabled) {
+    sOpenGles = enabled;
+    MarkDirty();
+  }
+}
+
+const std::string& GpuDriver() {
+  EnsureInitialized();
+  return sGpuDriver;
+}
+
+void SetGpuDriver(const std::string& id) {
+  EnsureInitialized();
+  if (sGpuDriver != id) {
+    sGpuDriver = id;
+    MarkDirty();
+  }
+}
+
+int Anisotropy() {
+  EnsureInitialized();
+  return EffectiveAnisotropy();
+}
+void ApplyStorageClamp() {
+  EnsureInitialized();
+  if (sStorageClamp < 0 || std::getenv("MP_STORAGE_CLAMP") != nullptr) {
+    return;
+  }
+#ifdef _WIN32
+  _putenv_s("MP_STORAGE_CLAMP", sStorageClamp > 0 ? "1" : "0");
+#else
+  setenv("MP_STORAGE_CLAMP", sStorageClamp > 0 ? "1" : "0", 1);
+#endif
+}
+
+
+void SetAnisotropy(int level) {
+  EnsureInitialized();
+  level = std::clamp(level, 1, 16);
+  if (sAnisotropy != level) {
+    sAnisotropy = level;
+    ApplyGraphicsQuality();
+    MarkDirty();
+  }
+}
+
+bool PerPixelLighting() {
+  EnsureInitialized();
+  return sPerPixelLighting && !sOriginalExperience;
+}
+void SetPerPixelLighting(bool enabled) {
+  EnsureInitialized();
+  if (sPerPixelLighting != enabled) {
+    sPerPixelLighting = enabled;
+    ApplyGraphicsQuality();
+    MarkDirty();
+  }
+}
+
+bool SunShadows() {
+  EnsureInitialized();
+  return sSunShadows;
+}
+void SetSunShadows(bool enabled) {
+  EnsureInitialized();
+  if (sSunShadows != enabled) {
+    sSunShadows = enabled;
+    MarkDirty();
+  }
+}
+
+bool ProjectedShadows() {
+  EnsureInitialized();
+  return sProjectedShadows;
+}
+void SetProjectedShadows(bool enabled) {
+  EnsureInitialized();
+  if (sProjectedShadows != enabled) {
+    sProjectedShadows = enabled;
+    MarkDirty();
+  }
+}
+
+bool UnlockHardMode() {
+  EnsureInitialized();
+  return sUnlockHardMode && !sOriginalExperience;
+}
+
+void SetUnlockHardMode(bool enabled) {
+  EnsureInitialized();
+  sUnlockHardMode = enabled;
+  MarkDirty();
+}
+
+bool UnlockFusionSuit() {
+  EnsureInitialized();
+  return sUnlockFusionSuit && !sOriginalExperience;
+}
+
+void SetUnlockFusionSuit(bool enabled) {
+  EnsureInitialized();
+  sUnlockFusionSuit = enabled;
+  MarkDirty();
+}
+
+bool UnlockGalleries() {
+  EnsureInitialized();
+  return sUnlockGalleries && !sOriginalExperience;
+}
+
+void SetUnlockGalleries(bool enabled) {
+  EnsureInitialized();
+  sUnlockGalleries = enabled;
+  MarkDirty();
+}
+
+bool MouseAim() {
+  EnsureInitialized();
+  return sInput.mouseAim;
+}
+
+void SetMouseAim(bool enabled) {
+  EnsureInitialized();
+  sInput.mouseAim = enabled;
+  ResetMouseAim();
+}
+
+bool TouchDirectAim() {
+#if defined(__ANDROID__)
+  return !sInput.touchClassic && sTouchActive.load(std::memory_order_acquire) && !Visible();
+#else
+  return false;
+#endif
+}
+
+bool TouchActive() {
+#if defined(__ANDROID__)
+  return sTouchActive.load(std::memory_order_acquire) && !Visible();
+#else
+  return false;
+#endif
+}
+
+bool DirectAim() { return MouseAim() || TwinStick() || TouchDirectAim(); }
+
+// The pad-preset getters below read as the GameCube preset (off / unbound) while touch is in use: the
+// touch overlay always does what its buttons say. The F1 menu (Visible) sees the stored values.
+bool TwinStick() {
+  EnsureInitialized();
+#if defined(__ANDROID__)
+  // Touch has its own twin stick (the right stick aims), apart from the pad preset.
+  if (TouchActive()) {
+    return sInput.touchTwinStick;
+  }
+#endif
+  return sInput.twinStick && !TouchActive();
+}
+
+bool PadTwinStick() {
+  EnsureInitialized();
+  return sInput.twinStick;
+}
+
+void SetTwinStick(bool enabled) {
+  EnsureInitialized();
+  sInput.twinStick = enabled;
+  MarkDirty();
+}
+
+float TwinStickRightY() { return sTwinStickRightY; }
+
+void SetTwinStickRightY(float y) { sTwinStickRightY = y; }
+
+bool TouchBeamShift() { return sTouchBeamShift.load(std::memory_order_acquire); }
+
+bool TouchTurboFire() {
+  return sTouchTurboFire.load(std::memory_order_acquire) && TouchActive() && !sOriginalExperience;
+}
+
+bool SpringBall() {
+  EnsureInitialized();
+  return sInput.springBall && !sOriginalExperience;
+}
+
+void SetSpringBall(bool enabled) {
+  EnsureInitialized();
+  sInput.springBall = enabled;
+  MarkDirty();
+}
+
+bool SwapScanXray() {
+  EnsureInitialized();
+  return sInput.swapScanXray && !TouchActive() && !sOriginalExperience;
+}
+
+void SetSwapScanXray(bool enabled) {
+  EnsureInitialized();
+  sInput.swapScanXray = enabled;
+  MarkDirty();
+}
+
+int TurboBinding(int slot) {
+  EnsureInitialized();
+  if (slot == 2 && TouchActive()) {
+    return -1;
+  }
+  return slot >= 0 && slot < 3 ? sInput.turboBindings[slot] : -1;
+}
+
+void SetTurboBinding(int slot, int code) {
+  EnsureInitialized();
+  if (slot >= 0 && slot < 3) {
+    sInput.turboBindings[slot] = code;
+    MarkDirty();
+  }
+}
+
+int ShiftBinding(int slot) {
+  EnsureInitialized();
+  if (slot == 2 && TouchActive()) {
+    return -1;
+  }
+  return slot >= 0 && slot < 3 ? sInput.shiftBindings[slot] : -1;
+}
+
+void SetShiftBinding(int slot, int code) {
+  EnsureInitialized();
+  if (slot >= 0 && slot < 3) {
+    sInput.shiftBindings[slot] = code;
+    MarkDirty();
+  }
+}
+
+int PadAltButton(int bit) {
+  EnsureInitialized();
+  return bit >= 0 && bit < kPadAltCount && !TouchActive() ? sInput.padAltButtons[bit] : -1;
+}
+
+void SetPadAltButton(int bit, int code) {
+  EnsureInitialized();
+  if (bit >= 0 && bit < kPadAltCount && sInput.padAltButtons[bit] != code) {
+    sInput.padAltButtons[bit] = code;
+    MarkDirty();
+  }
+}
+
+int MouseAction(int button) {
+  EnsureInitialized();
+  return button >= 0 && button < PortInputMap::kMouseButtonCount ? sInput.mouseActions[button]
+                                                                  : PortInputMap::kMA_None;
+}
+
+void SetMouseAction(int button, int action) {
+  EnsureInitialized();
+  if (button >= 0 && button < PortInputMap::kMouseButtonCount && action >= 0 &&
+      action < PortInputMap::kMA_Count) {
+    sInput.mouseActions[button] = action;
+    // A button held as it changes must not start the new action mid-press.
+    sMouseButtonGate.Reset();
+    MarkDirty();
+  }
+}
+
+bool SpeedrunTimer() {
+  EnsureInitialized();
+  return sSpeedrunTimer;
+}
+
+void SetSpeedrunTimer(bool enabled) {
+  EnsureInitialized();
+  sSpeedrunTimer = enabled;
+  MarkDirty();
+}
+
+bool LiveSplit() {
+  EnsureInitialized();
+  return sLiveSplit;
+}
+
+void SetLiveSplit(bool enabled) {
+  EnsureInitialized();
+  sLiveSplit = enabled;
+  ApplyLiveSplit();
+  MarkDirty();
+}
+
+bool DiscordPresence() {
+  EnsureInitialized();
+  return sDiscord;
+}
+
+void SetDiscordPresence(bool enabled) {
+  EnsureInitialized();
+  sDiscord = enabled;
+  ApplyDiscord();
+  MarkDirty();
+}
+
+std::string LiveSplitAddress() {
+  EnsureInitialized();
+  return sLiveSplitAddress;
+}
+
+void SetLiveSplitAddress(const std::string& address) {
+  EnsureInitialized();
+  if (address.empty()) {
+    return;
+  }
+  sLiveSplitAddress = address;
+  ApplyLiveSplit();
+  MarkDirty();
+}
+
+bool ModsEnabled() {
+  EnsureInitialized();
+  return sModsEnabled && !sOriginalExperience;
+}
+
+void SetModsEnabled(bool enabled) {
+  EnsureInitialized();
+  sModsEnabled = enabled;
+  MarkDirty();
+}
+
+bool OriginalExperience() {
+  EnsureInitialized();
+  return sOriginalExperience;
+}
+
+void SetOriginalExperience(bool enabled) {
+  EnsureInitialized();
+  if (sOriginalExperience == enabled) {
+    return;
+  }
+  sOriginalExperience = enabled;
+  MarkDirty();
+  PortLog::Write("port: original experience %s\n", enabled ? "on" : "off");
+  // The rest reads the getters each frame; these were applied once.
+  sDynScale = 0.f;
+  ResetDynamicRes();
+  VISetFrameBufferScale(EffectiveRenderScale());
+  ApplyGraphicsQuality();
+  if (PortMods::CurrentStatus().active != ModsEnabled() && !PortMods::Suspended()) {
+    PortSaveState::RequestModReload();
+  }
+}
+
+std::string ModsDisabled() {
+  EnsureInitialized();
+  return sModsDisabled;
+}
+
+void SetModsDisabled(const std::string& list) {
+  EnsureInitialized();
+  sModsDisabled = list;
+  MarkDirty();
+}
+
+bool Invulnerable() {
+  EnsureInitialized();
+  return sInvulnerableRun >= 0 ? sInvulnerableRun != 0 : sInvulnerable;
+}
+
+void SetInvulnerable(bool enabled) {
+  EnsureInitialized();
+  sInvulnerable = enabled;
+  sInvulnerableRun = -1;
+  MarkDirty();
+}
+
+bool LogFile() {
+  EnsureInitialized();
+  return sLogFile;
+}
+
+void SetLogFile(bool enabled) {
+  EnsureInitialized();
+  sLogFile = enabled;
+  MarkDirty();
+}
+
+bool FastMorph() {
+  EnsureInitialized();
+  return sInput.fastMorph && !sOriginalExperience;
+}
+
+void SetFastMorph(bool enabled) {
+  EnsureInitialized();
+  sInput.fastMorph = enabled;
+  MarkDirty();
+}
+
+bool LockOnToggle() {
+  EnsureInitialized();
+  return sInput.lockOnToggle && !sOriginalExperience;
+}
+
+void SetLockOnToggle(bool enabled) {
+  EnsureInitialized();
+  sInput.lockOnToggle = enabled;
+  MarkDirty();
+}
+
+bool StickyCharge() {
+  EnsureInitialized();
+  return sInput.stickyCharge && !sOriginalExperience;
+}
+
+void SetStickyCharge(bool enabled) {
+  EnsureInitialized();
+  sInput.stickyCharge = enabled;
+  MarkDirty();
+}
+
+PortRandoGen::Settings RandoSettings() {
+  EnsureInitialized();
+  std::lock_guard< std::mutex > lock(sRandoMutex);
+  return sRandoSettings;
+}
+
+bool RapidCharge() {
+  EnsureInitialized();
+  return sInput.rapidCharge && !sOriginalExperience;
+}
+
+void SetRapidCharge(bool enabled) {
+  EnsureInitialized();
+  sInput.rapidCharge = enabled;
+  MarkDirty();
+}
+
+bool RemasteredMovement() {
+  EnsureInitialized();
+  return sInput.remasteredMovement && !sOriginalExperience;
+}
+
+void SetRemasteredMovement(bool enabled) {
+  EnsureInitialized();
+  sInput.remasteredMovement = enabled;
+  MarkDirty();
+}
+
+bool SpringBallFlick() {
+  EnsureInitialized();
+  return sInput.springFlick && !sOriginalExperience;
+}
+
+void SetSpringBallFlick(bool enabled) {
+  EnsureInitialized();
+  sInput.springFlick = enabled;
+  MarkDirty();
+}
+
+float SpringBallFlickRate() {
+  EnsureInitialized();
+  return sInput.springFlickRate;
+}
+
+void SetSpringBallFlickRate(float radiansPerSecond) {
+  EnsureInitialized();
+  if (std::isfinite(radiansPerSecond) && radiansPerSecond >= 2.f && radiansPerSecond <= 20.f) {
+    sInput.springFlickRate = radiansPerSecond;
+    MarkDirty();
+  }
+}
+
+bool SpringBallFlickPending() { return sSpringFlickLatch > 0.f; }
+
+void ClearSpringBallFlick() { sSpringFlickLatch = 0.f; }
+
+void SetGyroOverride(bool active, float pitch, float yaw) {
+  sGyroOverride = active;
+  sGyroOverridePitch = pitch;
+  sGyroOverrideYaw = yaw;
+}
+
+float StickAimRate() {
+  EnsureInitialized();
+  return sInput.stickAimRate;
+}
+
+void SetStickAimRate(float pixelsPerSecond) {
+  EnsureInitialized();
+  if (std::isfinite(pixelsPerSecond) && pixelsPerSecond >= 50.f && pixelsPerSecond <= 10000.f) {
+    sInput.stickAimRate = pixelsPerSecond;
+    MarkDirty();
+  }
+}
+
+void AddStickAim(float x, float y, float dt) {
+  EnsureInitialized();
+  if (!TwinStick() || Visible() || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(dt) ||
+      dt <= 0.f) {
+    return;
+  }
+  // Stick aim stands in for free look, so it follows the game's Reverse Y Axis
+  // option, as free look does.
+  if (gpGameState != nullptr && gpGameState->GameOptions().GetInvertYAxis()) {
+    y = -y;
+  }
+  // x right / y up; the aim state expects SDL-style right/down positive.
+  sStickAimVelX = x * sInput.stickAimRate;
+  sStickAimVelY = -y * (sInput.stickAimSplit ? sInput.stickAimRateY : sInput.stickAimRate);
+  sMouseFrameX += sStickAimVelX * dt;
+  sMouseFrameY += sStickAimVelY * dt;
+}
+
+int GyroMode() {
+  EnsureInitialized();
+  return sInput.gyroMode;
+}
+
+void SetGyroMode(int mode) {
+  EnsureInitialized();
+  if (mode < 0 || mode > 3) {
+    return;
+  }
+  sInput.gyroMode = mode;
+  MarkDirty();
+}
+
+int GyroSource() {
+  EnsureInitialized();
+  return sInput.gyroSource;
+}
+
+void SetGyroSource(int source) {
+  EnsureInitialized();
+  if (source < 0 || source > 2) {
+    return;
+  }
+  sInput.gyroSource = source;
+  MarkDirty();
+}
+
+float GyroSensitivity() {
+  EnsureInitialized();
+  return sInput.gyroSensitivity;
+}
+
+void SetGyroSensitivity(float scale) {
+  EnsureInitialized();
+  if (std::isfinite(scale)) {
+    sInput.gyroSensitivity = std::clamp(scale, PortInput::kGyroSensitivityMin, PortInput::kGyroSensitivityMax);
+    MarkDirty();
+  }
+}
+
+void SetGyroButton(bool held) { sGyroButtonHeld = held; }
+
+const char* GyroStatus() { return sGyroStatus; }
+
 namespace {
 } // namespace
-#include "debug_ui/gallery.inc"
+
+void PollGyro() {
+  EnsureInitialized();
+  // Called once per presented frame, which is not once per tick when the
+  // frame limiter is off, so the rates integrate over the real frame time.
+  static uint64_t sLastNs = 0;
+  const uint64_t nowNs = SDL_GetTicksNS();
+  const float dt = sLastNs == 0 ? 0.f : std::min(float(double(nowNs - sLastNs) * 1e-9), 0.1f);
+  sLastNs = nowNs;
+  if (sSpringFlickLatch > 0.f) {
+    sSpringFlickLatch -= dt;
+  }
+  // Gyro feeds the same aim state the mouse, twin stick and the touch layout's
+  // drag aim use, so aiming only has an effect where that is driving the
+  // camera. Flicks need no aim. The raw sInput.twinStick: TwinStick() reads false
+  // while touch is in use, yet touch keeps the direct aim path.
+  const bool aim = sInput.gyroMode != 0 && (sInput.mouseAim || sInput.twinStick || TouchDirectAim());
+  if (!aim && !sInput.springFlick) {
+    sGyroStatus = sInput.gyroMode == 0 ? "off" : "needs mouse aim, twin stick or touch controls";
+    return;
+  }
+
+  float yaw = 0.f;
+  float pitch = 0.f;
+  if (!ReadGyroRates(pitch, yaw)) {
+    sGyroStatus = "no gyro found";
+    sSpringFlickArmed = true;
+    return;
+  }
+
+  if (sInput.springFlick) {
+    // One flick per upward swing: it re-arms once the pitch speed has dropped
+    // to half the threshold. The latch outlives the tick so a flick just before
+    // the ball lands still springs.
+    if (sSpringFlickArmed && pitch > sInput.springFlickRate) {
+      sSpringFlickLatch = 0.2f;
+      sSpringFlickArmed = false;
+    } else if (pitch < sInput.springFlickRate * 0.5f) {
+      sSpringFlickArmed = true;
+    }
+  }
+  if (!aim) {
+    if (sInput.gyroMode != 0) {
+      sGyroStatus = "flicks only (aim needs mouse aim, twin stick or touch controls)";
+    }
+    return;
+  }
+
+  // The "Gyro aim" binding (R3 / left ctrl by default) turns gyro on while held
+  // in hold to aim, and off while held in hold to pause (ratcheting).
+  const bool active = sInput.gyroMode == 2 || (sInput.gyroMode == 1) == sGyroButtonHeld;
+  if (!active) {
+    sGyroStatus = sInput.gyroMode == 1 ? "waiting for the Gyro aim button" : "paused by the Gyro aim button";
+    return;
+  }
+
+  if (!std::isfinite(dt) || dt <= 0.f) {
+    return;
+  }
+  // Natural scale: the pending pixels become mouse_sensitivity rad each in
+  // direct aim (with the mouse inversion applied), so divide that back out and
+  // pre-undo the inversion: gyro turns gyro_sensitivity times the pad's angle
+  // whatever the mouse is set to. Pointer aim scales by the same sensitivity
+  // but has no inversion. x right / y up; the aim state expects right/down.
+  const float perPixel = MouseSensitivity();
+  if (!(perPixel > 0.f)) {
+    return;
+  }
+  const bool direct = !PointerAim();
+  const float sx = direct && MouseInvertX() ? -1.f : 1.f;
+  const float sy = direct && MouseInvertY() ? -1.f : 1.f;
+  const float scale = sInput.gyroSensitivity * dt / perPixel;
+  sGyroPendingX += sx * yaw * scale;
+  sGyroPendingY -= sy * pitch * scale;
+}
+
+void ResetMouseAim() {
+  sMouseAimState.Reset();
+  sPointerAim.Center();
+  sPointerAimFree = false;
+  sMouseGameplayActive = false;
+  sMouseButtonGate.Reset();
+  sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
+  sTouchLookFrameX = sTouchLookFrameY = 0.f;
+  sGyroPendingX = sGyroPendingY = sStickAimVelX = sStickAimVelY = 0.f;
+  std::lock_guard lock(sTouchAimMutex);
+  sTouchAimPendingX = sTouchAimPendingY = 0.f;
+}
+
+void SetMouseCaptured(bool captured) {
+  // A button held across a capture change can lose its release (Android drops
+  // it when pointer capture ends mid-press, e.g. a boss dying under a charge
+  // shot), and the weapon gate would then wait for a neutral that never comes.
+  // Anything still physically held is ignored by the gate anyway.
+  if (captured != sMouseCaptured) sMouseHeldButtons.Clear();
+  sMouseCaptured = captured;
+  if (!captured) {
+    sMouseButtonGate.Reset();
+    sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
+  }
+}
+
+bool MouseCaptured() { return sMouseCaptured; }
+bool MouseGameplayActive() { return sMouseGameplayActive; }
+void SetMouseGameplayActive(bool active) {
+  sMouseGameplayActive = active;
+  if (!active) ResetMouseAim();
+}
+bool MouseInvertX() { EnsureInitialized(); return sInput.mouseInvertX; }
+bool MouseInvertY() { EnsureInitialized(); return sInput.mouseInvertY; }
+bool MouseButtons() { EnsureInitialized(); return sInput.mouseButtons; }
+bool MouseCrosshair() { EnsureInitialized(); return sInput.mouseCrosshair; }
+// Window travel (pixels) to pointer units (-1..1 of the half view). At the default
+// sensitivity the pointer follows the cursor's speed; the sensitivity slider scales it.
+static void PointerAimScale(float& sx, float& sy) {
+  constexpr float kReferenceSensitivity = 0.0035f;
+  int width = 0, height = 0;
+  if (!WindowSize(width, height)) {
+    width = 640;
+    height = 480;
+  }
+  const float speed = MouseSensitivity() / kReferenceSensitivity;
+  sx = 2.f / static_cast<float>(width) * speed;
+  sy = 2.f / static_cast<float>(height) * speed;
+}
+
+bool AimCrosshair() { return MouseCrosshair() || PointerAim(); }
+// Any direct aim moves the pointer: the mouse, twin stick's right stick, gyro and touch drags.
+bool PointerAim() {
+  EnsureInitialized();
+  return sInput.pointerAim && DirectAim() && !sOriginalExperience;
+}
+void SetPointerAim(bool on) {
+  EnsureInitialized();
+  sInput.pointerAim = on;
+  sPointerAim.Center();
+  MarkDirty();
+}
+int PointerAimBox() { EnsureInitialized(); return sInput.pointerAimBox; }
+int PointerAimTurn() { EnsureInitialized(); return sInput.pointerAimTurn; }
+void SetPointerAimPosition(float x, float y) {
+  sPointerAim.Center();
+  sPointerAim.Move(x, y);
+}
+bool PointerAimPosition(float& x, float& y) {
+  x = sPointerAim.x;
+  y = sPointerAim.y;
+  return sPointerAimFree;
+}
+bool PresentedPointerAimPosition(float fraction, float& x, float& y) {
+  if (!PointerAimPosition(x, y)) return false;
+  // The travel since the tick (the stick's over the part of the tick already shown), so the
+  // drawn pointer moves every frame.
+  float touchX = 0.f, touchY = 0.f;
+  {
+    std::lock_guard lock(sTouchAimMutex);
+    touchX = sTouchAimPendingX;
+    touchY = sTouchAimPendingY;
+  }
+  const float ahead =
+      FrameInterpolation() && std::isfinite(fraction) && fraction > 0.f ? std::min(fraction, 1.f) * TickPeriod()
+                                                                        : 0.f;
+  float sx = 0.f, sy = 0.f;
+  PointerAimScale(sx, sy);
+  PortMouse::PointerAim::Move((sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * ahead) * sx,
+                              (sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * ahead) * sy, x, y);
+  return true;
+}
+int CrosshairSize() { EnsureInitialized(); return sInput.crosshairSize; }
+void SetCrosshairSize(int percent) {
+  EnsureInitialized();
+  sInput.crosshairSize = std::clamp(percent, kCrosshairSizeMin, kCrosshairSizeMax);
+  MarkDirty();
+}
+unsigned MouseWeaponButtons(unsigned held) {
+  return sMouseButtonGate.Poll(MouseAim() && MouseButtons() && MouseGameplayActive() &&
+                               MouseCaptured() && !Visible(), held);
+}
+unsigned MouseMenuButtons(unsigned held, bool focused) {
+  // The resume prompt's buttons take the click; the game must not also read it as A.
+  PortSaveState::ResumeInfo promptInfo;
+  bool promptYes = true;
+  const bool resumePrompt = PortSaveState::ResumePromptShown(promptInfo, promptYes);
+  // A pointer-driven screen reads the clicks itself (hover, then click = A).
+  const bool pointerScreen = PortPointer::Enabled() && PortPointer::ScreenActive();
+  return sMouseMenuGate.Poll(MouseAim() && MouseButtons() && !MouseGameplayActive() &&
+                                 !Visible() && !resumePrompt && !pointerScreen && focused,
+                             held);
+}
+void NoteMouseButton(bool synthetic, unsigned mask, bool down) {
+  sMouseHeldButtons.Note(synthetic, mask, down);
+}
+void ClearMouseButtons() { sMouseHeldButtons.Clear(); }
+unsigned MouseHeldButtons() { return sMouseHeldButtons.Held(); }
+
+bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
+  SetMouseGameplayActive(active);
+  const bool pointer = PointerAim();
+  float dx = sMouseFrameX;
+  float dy = sMouseFrameY;
+  if (pointer) {
+    // The travel moves the pointer, not the view. A lock (or anything that stops free
+    // look) re-centres it: lock-on, scan and grapple still aim through the centre.
+    if (active && !locked) {
+      float sx = 0.f, sy = 0.f;
+      PointerAimScale(sx, sy);
+      sPointerAim.Move(dx * sx, dy * sy);
+    } else {
+      sPointerAim.Center();
+    }
+    dx = dy = 0.f;
+  }
+  const bool applied = sMouseAimState.Update(active, locked, x, y, z, dx, dy, MouseSensitivity(),
+                                            MouseInvertX(), MouseInvertY());
+  if (applied && pointer) {
+    float dyaw = 0.f, dpitch = 0.f;
+    PortMouse::PointerAim::TurnAt(sPointerAim.x, sPointerAim.y, PointerAimBox() / 100.f,
+                                  PointerAimTurn() * (PortMouse::kPi / 180.f), TickPeriod(), dyaw,
+                                  dpitch);
+    sMouseAimState.Turn(dyaw, dpitch);
+  }
+  sPointerAimFree = pointer && applied;
+  if (!sPointerAimFree) sPointerAim.Center();
+  if (applied) sMouseFrameX = sMouseFrameY = 0.f;
+  sAimAppliedLastTick = applied;
+  return applied;
+}
+void SynchronizeMouseAim(float x, float y, float z) { sMouseAimState.Synchronize(x, y, z); }
+
+float MouseSensitivity() {
+  EnsureInitialized();
+  return sInput.mouseSensitivity;
+}
+
+void SetMouseSensitivity(float radiansPerPixel) {
+  EnsureInitialized();
+  if (std::isfinite(radiansPerPixel) && radiansPerPixel > 0.f) {
+    sInput.mouseSensitivity = radiansPerPixel;
+  }
+}
+
+void AddMouseDelta(float dx, float dy) {
+  if (!sMouseCaptured || !(MouseAim() || PortPhoto::Active()) || Visible() || !std::isfinite(dx) ||
+      !std::isfinite(dy)) {
+    return;
+  }
+  sMousePendingX += dx;
+  sMousePendingY += dy;
+}
+
+bool TouchAim() {
+  EnsureInitialized();
+  return sInput.touchAim;
+}
+
+void SetTouchAim(bool on) {
+  EnsureInitialized();
+  sInput.touchAim = on;
+  MarkDirty();
+}
+
+bool TouchMapTap() {
+  EnsureInitialized();
+  return sInput.touchMapTap;
+}
+
+void SetTouchMapTap(bool on) {
+  EnsureInitialized();
+  sInput.touchMapTap = on;
+  MarkDirty();
+}
+
+bool TouchClassic() {
+  EnsureInitialized();
+  return sInput.touchClassic;
+}
+
+void SetTouchClassic(bool on) {
+  EnsureInitialized();
+  sInput.touchClassic = on;
+  if (on) {
+    sInput.touchTwinStick = false;
+  }
+  MarkDirty();
+}
+
+bool TouchTwinStick() {
+  EnsureInitialized();
+  return sInput.touchTwinStick;
+}
+
+void SetTouchTwinStick(bool on) {
+  EnsureInitialized();
+  sInput.touchTwinStick = on;
+  if (on) {
+    sInput.touchClassic = false;
+  }
+  MarkDirty();
+}
+
+bool TouchWheels() {
+  EnsureInitialized();
+  return sInput.touchWheels;
+}
+
+void SetTouchWheels(bool on) {
+  EnsureInitialized();
+  sInput.touchWheels = on;
+  MarkDirty();
+}
+
+bool TouchVisorTapScan() {
+  EnsureInitialized();
+  return sInput.touchVisorTapScan;
+}
+
+void SetTouchVisorTapScan(bool on) {
+  EnsureInitialized();
+  sInput.touchVisorTapScan = on;
+  MarkDirty();
+}
+
+// Game thread, once per frame from CPlayer::Think.
+void SetWheelState(uint32_t mask) {
+  sWheelMask.store(mask);
+  sWheelStampNs.store(SDL_GetTicksNS());
+}
+
+// Not refreshed for a while (no player, paused) reads as 0: wheels disabled.
+uint32_t WheelState() {
+  const uint64_t now = SDL_GetTicksNS();
+  return now - sWheelStampNs.load() < 500'000'000 ? sWheelMask.load() : 0;
+}
+
+// Game thread, once per frame from CInGameGuiManager::Update.
+void SetPauseScreenOpen(bool open, bool dialog) {
+  sPauseScreenOpen.store(open);
+  sPausedDialogOpen.store(dialog);
+  sPauseScreenStampNs.store(SDL_GetTicksNS());
+}
+
+// Not refreshed for a while (left the game) counts as closed.
+bool PauseScreenOpen() {
+  return sPauseScreenOpen.load() && SDL_GetTicksNS() - sPauseScreenStampNs.load() < 300'000'000;
+}
+
+bool PausedMenuOpen() {
+  return (sPauseScreenOpen.load() || sPausedDialogOpen.load()) &&
+         SDL_GetTicksNS() - sPauseScreenStampNs.load() < 300'000'000;
+}
+
+void RequestVisor(int visor) {
+  if (visor < 0 || visor > 3) {
+    return;
+  }
+  sVisorRequest.store(visor);
+  sVisorRequestUntilNs.store(SDL_GetTicksNS() + kWheelRequestNs);
+}
+
+void RequestBeam(int beam) {
+  if (beam < 0 || beam > 3) {
+    return;
+  }
+  sBeamRequest.store(beam);
+  sBeamRequestUntilNs.store(SDL_GetTicksNS() + kWheelRequestNs);
+}
+
+void CaptureWheelIcons(int wheel, CGuiModel* const* icons) {
+  if (wheel < 0 || wheel > 1) {
+    return;
+  }
+  for (int i = 0; i < 4; ++i) {
+    {
+      std::lock_guard<std::mutex> lock(sWheelIconMutex);
+      if (!sWheelIcons[wheel][i].argb.empty()) {
+        continue;
+      }
+    }
+    if (icons[i] == nullptr || !icons[i]->GetModel().valid()) {
+      continue;
+    }
+    // The model is locked at construction and caches on its first draw; an icon the player
+    // doesn't own yet isn't drawn, so take it here once it has loaded.
+    TCachedToken<CModel>& modelToken = const_cast<TCachedToken<CModel>&>(*icons[i]->GetModel());
+    modelToken.TryCache();
+    CModel* model = modelToken.GetObject();
+    uint texId = 0;
+    const CTexture* tex = model != nullptr ? model->PortFirstTexture(&texId) : nullptr;
+    // A mod's picture replaces the texels the game holds; those are a stub. Load the retail
+    // icon from the disc by id instead (the ids the retail models use).
+    static const uint kRetailIcons[2][4] = {
+        {0x2DDA38B8, 0x04503F39, 0xD518730E, 0x2EA5AE14},
+        {0x8865D14F, 0x5C595218, 0x07183B57, 0xC156B36E},
+    };
+    static TCachedToken<CTexture>* retailTokens[2][4] = {};
+    if (tex != nullptr && tex->PortNativeId() != 0 && gpSimplePool != nullptr) {
+      if (retailTokens[wheel][i] == nullptr) {
+        // Kept for the run: the icon texture stays loaded.
+        retailTokens[wheel][i] = new TCachedToken<CTexture>(
+            gpSimplePool->GetObj(SObjectTag('TXTR', kRetailIcons[wheel][i])));
+        retailTokens[wheel][i]->Lock();
+      }
+      TCachedToken<CTexture>& tok = *retailTokens[wheel][i];
+      if (!tok.TryCache()) {
+        tok.ForceCache();
+      }
+      tex = tok.GetObject();
+      texId = kRetailIcons[wheel][i];
+    }
+    if (tex == nullptr || tex->PortNativeId() != 0) {
+      continue;
+    }
+    uint32_t w = 0;
+    uint32_t h = 0;
+    std::vector<uint8_t> rgba(256 * 256 * 4);
+    if (!aurora_gx_texobj_rgba8(tex->PortTexObj(), &w, &h, rgba.data(), rgba.size())) {
+      continue;
+    }
+    WheelIcon icon;
+    icon.w = static_cast<int>(w);
+    icon.h = static_cast<int>(h);
+    icon.argb.resize(size_t(w) * h);
+    // The HUD models map these textures bottom row first; flip to upright.
+    for (uint32_t y = 0; y < h; ++y) {
+      for (uint32_t x = 0; x < w; ++x) {
+        const uint8_t* c = &rgba[(size_t(h - 1 - y) * w + x) * 4];
+        icon.argb[size_t(y) * w + x] =
+            uint32_t(c[3]) << 24 | uint32_t(c[0]) << 16 | uint32_t(c[1]) << 8 | c[2];
+      }
+    }
+    PortLog::Write("port: touch wheel icon %d/%d: %ux%u fmt %d id %08X\n", wheel, i, w, h,
+                  int(tex->GetTexelFormat()), texId);
+    std::lock_guard<std::mutex> lock(sWheelIconMutex);
+    sWheelIcons[wheel][i] = std::move(icon);
+  }
+}
+
+bool VisorRequested(int visor) {
+  return sVisorRequest.load() == visor && SDL_GetTicksNS() < sVisorRequestUntilNs.load();
+}
+
+bool BeamRequested(int beam) {
+  return sBeamRequest.load() == beam && SDL_GetTicksNS() < sBeamRequestUntilNs.load();
+}
+
+void RequestSpringBall() { sSpringRequestUntilNs.store(SDL_GetTicksNS() + kWheelRequestNs); }
+
+bool SpringBallRequested() { return SDL_GetTicksNS() < sSpringRequestUntilNs.load(); }
+
+void RequestSaveStateHotkey(int which) {
+  if (which == 1 || which == 2) {
+    sSaveStateHotkey.store(which, std::memory_order_release);
+  }
+}
+
+// Game thread, once per HUD draw (valid=false when the minimap isn't shown).
+void SetMinimapRect(bool valid, bool drawn, float x0, float y0, float x1, float y1) {
+  std::lock_guard lock(sMinimapMutex);
+  sMinimapDrawn = drawn;
+  sMinimapValid = valid && std::isfinite(x0) && std::isfinite(y0) && std::isfinite(x1) &&
+                  std::isfinite(y1);
+  sMinimapRect[0] = x0;
+  sMinimapRect[1] = y0;
+  sMinimapRect[2] = x1;
+  sMinimapRect[3] = y1;
+  sMinimapStamp = std::chrono::steady_clock::now();
+}
+
+// A rect not refreshed for a while (HUD not drawn at all) counts as gone.
+bool MinimapRect(float* out4, bool* drawn) {
+  std::lock_guard lock(sMinimapMutex);
+  if (!sMinimapValid ||
+      std::chrono::steady_clock::now() - sMinimapStamp > std::chrono::milliseconds(300)) {
+    return false;
+  }
+  if (out4 != nullptr) {
+    std::copy(sMinimapRect, sMinimapRect + 4, out4);
+  }
+  if (drawn != nullptr) {
+    *drawn = sMinimapDrawn;
+  }
+  return true;
+}
+
+void RequestMapTap() {
+  sMapTapPending.fetch_add(1);
+}
+
+// Game thread, once per frame from CAutoMapper::Update.
+void SetMapScreenOpen(bool open) {
+  std::lock_guard lock(sMapPanMutex);
+  sMapScreenOpen = open;
+  sMapScreenStamp = std::chrono::steady_clock::now();
+}
+
+// Not refreshed for a while (paused, left the game) counts as closed.
+bool MapScreenOpen() {
+  std::lock_guard lock(sMapPanMutex);
+  return sMapScreenOpen &&
+         std::chrono::steady_clock::now() - sMapScreenStamp < std::chrono::milliseconds(300);
+}
+
+// UI thread. A call with zero deltas still marks the finger as down, for holdMs.
+void AddMapPan(float dxDp, float dyDp, float viewHeightDp, int holdMs) {
+  if (!std::isfinite(dxDp) || !std::isfinite(dyDp) || !(viewHeightDp > 0.f) ||
+      !MapScreenOpen()) {
+    return;
+  }
+  std::lock_guard lock(sMapPanMutex);
+  sMapPanX += dxDp;
+  sMapPanY += dyDp;
+  sMapPanViewDp = viewHeightDp;
+  sMapPanHeldUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(holdMs);
+}
+
+// UI thread: a pinch's finger-distance ratio (>1 zooms in); factors multiply.
+void AddMapZoom(float ratio) {
+  if (!std::isfinite(ratio) || !(ratio > 0.f) || !MapScreenOpen()) {
+    return;
+  }
+  std::lock_guard lock(sMapPanMutex);
+  sMapZoomPending = std::clamp(sMapZoomPending * std::clamp(ratio, 0.1f, 10.f), 0.01f, 100.f);
+}
+
+// UI thread: a twist's angle in radians; positive turns the map as the stick's
+// right does. Angles add.
+void AddMapRotate(float radians) {
+  if (!std::isfinite(radians) || radians == 0.f || !MapScreenOpen()) {
+    return;
+  }
+  std::lock_guard lock(sMapPanMutex);
+  sMapRotatePending = std::clamp(sMapRotatePending + radians, -6.3f, 6.3f);
+}
+
+// Game thread: the pending twist (0 = none), cleared.
+float TakeMapRotate() {
+  std::lock_guard lock(sMapPanMutex);
+  const float radians = sMapRotatePending;
+  sMapRotatePending = 0.f;
+  return radians;
+}
+
+// Game thread: the pending zoom factor (1 = none), cleared.
+float TakeMapZoom() {
+  std::lock_guard lock(sMapPanMutex);
+  const float ratio = sMapZoomPending;
+  sMapZoomPending = 1.f;
+  return ratio;
+}
+
+// Game thread. Drains the pending pan; true while a finger is on the map (a pan
+// within the last 250 ms), so the map doesn't drift back to its area meanwhile.
+bool TakeMapPan(float* dxDp, float* dyDp, float* viewHeightDp) {
+  std::lock_guard lock(sMapPanMutex);
+  *dxDp = sMapPanX;
+  *dyDp = sMapPanY;
+  *viewHeightDp = sMapPanViewDp;
+  sMapPanX = 0.f;
+  sMapPanY = 0.f;
+  return std::chrono::steady_clock::now() < sMapPanHeldUntil;
+}
+
+// Game thread, once per pad poll. Returns true for the poll that should read Z
+// held: a tap presses for one poll and releases on the next, so each tap is
+// one press edge.
+bool ConsumeMapTapZ() {
+  if (sMapTapHeld) {
+    sMapTapHeld = false;
+    return false;
+  }
+  if (sMapTapPending.load() > 0) {
+    sMapTapPending.fetch_sub(1);
+    sMapTapHeld = true;
+    return true;
+  }
+  return false;
+}
+
+float TouchAimSpeed() {
+  EnsureInitialized();
+  return sInput.touchAimSpeed;
+}
+
+void SetTouchAimSpeed(float pixelsPerDp) {
+  EnsureInitialized();
+  if (std::isfinite(pixelsPerDp)) {
+    sInput.touchAimSpeed = std::clamp(pixelsPerDp, 0.25f, 10.f);
+    MarkDirty();
+  }
+}
+
+// Called from the Android UI thread; the game thread drains it in
+// BeginFrameMouse.
+void AddTouchAim(float dxDp, float dyDp) {
+  if ((!sInput.touchAim && sInput.touchClassic) || Visible() || !std::isfinite(dxDp) ||
+      !std::isfinite(dyDp)) {
+    return;
+  }
+  std::lock_guard lock(sTouchAimMutex);
+  sTouchAimPendingX += dxDp * sInput.touchAimSpeed;
+  sTouchAimPendingY += dyDp * sInput.touchAimSpeed;
+}
+
+void BeginFrameMouse() {
+  float touchX = 0.f;
+  float touchY = 0.f;
+  {
+    std::lock_guard lock(sTouchAimMutex);
+    touchX = sTouchAimPendingX;
+    touchY = sTouchAimPendingY;
+    sTouchAimPendingX = sTouchAimPendingY = 0.f;
+  }
+  // On the direct aim path (mouse aim, twin stick, or the modern touch layout) the
+  // touch travel joins the mouse's; in the classic GameCube scheme
+  // CPlayer::UpdateTouchLook takes it instead (TakeTouchLook).
+  const bool directAim = DirectAim();
+  sTouchLookFrameX = directAim ? 0.f : touchX;
+  sTouchLookFrameY = directAim ? 0.f : touchY;
+  sMouseFrameX = sMousePendingX + sGyroPendingX + (directAim ? touchX : 0.f);
+  sMouseFrameY = sMousePendingY + sGyroPendingY + (directAim ? touchY : 0.f);
+  sMousePendingX = sMousePendingY = 0.f;
+  sGyroPendingX = sGyroPendingY = 0.f;
+  // AddStickAim sets it again during this tick's input update.
+  sStickAimVelX = sStickAimVelY = 0.f;
+  sAimAppliedLastTick = false;
+}
+
+bool SpringBallSwipe() {
+  EnsureInitialized();
+  return sInput.springSwipe;
+}
+
+void SetSpringBallSwipe(bool enabled) {
+  EnsureInitialized();
+  sInput.springSwipe = enabled;
+  MarkDirty();
+}
+
+// CMorphBall springs on the request only on the ground in the ball with the
+// Spring Ball unlocked, so a swipe anywhere else just expires.
+void TouchSpringSwipe() {
+  if (sInput.springSwipe && !sOriginalExperience && !Visible()) {
+    RequestSpringBall();
+  }
+}
+
+void SetTouchAimDown(bool down) { sTouchAimDown = down; }
+
+void HoldTouchAim(float seconds) {
+  sTouchAimHoldUntilNs = SDL_GetTicksNS() + static_cast<uint64_t>(std::max(seconds, 0.f) * 1e9);
+}
+
+bool TouchAimDown() {
+  return sTouchAimDown || SDL_GetTicksNS() < sTouchAimHoldUntilNs;
+}
+
+bool TakeTouchLook(float& dyaw, float& dpitch) {
+  dyaw = dpitch = 0.f;
+  const float x = sTouchLookFrameX;
+  const float y = sTouchLookFrameY;
+  sTouchLookFrameX = sTouchLookFrameY = 0.f;
+  // Same signs and scale as the mouse aim: right/down travel in, world yaw/pitch out.
+  dyaw = x * MouseSensitivity() * (MouseInvertX() ? 1.f : -1.f);
+  dpitch = y * MouseSensitivity() * (MouseInvertY() ? 1.f : -1.f);
+  return sInput.touchAim && !Visible();
+}
+
+bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
+  dyaw = dpitch = 0.f;
+  if (!FrameInterpolation() || !sMouseGameplayActive || !sAimAppliedLastTick ||
+      !std::isfinite(fraction) || fraction < 0.f) {
+    return false;
+  }
+  // What the next tick will consume: the mouse and gyro travel so far, plus the
+  // stick's travel over the part of the tick already shown.
+  const float ahead = std::min(fraction, 1.f) * TickPeriod();
+  float touchX = 0.f;
+  float touchY = 0.f;
+  {
+    std::lock_guard lock(sTouchAimMutex);
+    touchX = sTouchAimPendingX;
+    touchY = sTouchAimPendingY;
+  }
+  const float dx = sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * ahead;
+  const float dy = sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * ahead;
+  if (sPointerAimFree) {
+    // The edge turn the next tick will make, over the part of it already shown.
+    float sx = 0.f, sy = 0.f;
+    PointerAimScale(sx, sy);
+    float px = sPointerAim.x, py = sPointerAim.y;
+    PortMouse::PointerAim::Move(dx * sx, dy * sy, px, py);
+    PortMouse::PointerAim::TurnAt(px, py, PointerAimBox() / 100.f,
+                                  PointerAimTurn() * (PortMouse::kPi / 180.f), ahead, dyaw, dpitch);
+    return dyaw != 0.f || dpitch != 0.f;
+  }
+  float yaw = 0.f;
+  float pitch = 0.f;
+  if (!sMouseAimState.Preview(dx, dy, MouseSensitivity(), MouseInvertX(), MouseInvertY(), yaw,
+                              pitch)) {
+    return false;
+  }
+  dyaw = static_cast<float>(std::remainder(double(yaw) - sMouseAimState.yaw, 2.0 * PortMouse::kPi));
+  dpitch = pitch - sMouseAimState.pitch;
+  return dyaw != 0.f || dpitch != 0.f;
+}
+
+bool FrameInterpolation() {
+  EnsureInitialized();
+  return sFrameInterpolation && !sOriginalExperience;
+}
+
+void SetFrameInterpolation(bool enabled) {
+  EnsureInitialized();
+  sFrameInterpolation = enabled;
+}
+
+bool SmoothFrames() {
+  EnsureInitialized();
+  return sSmoothFrames && !sOriginalExperience;
+}
+
+void SetSmoothFrames(bool enabled) {
+  EnsureInitialized();
+  sSmoothFrames = enabled;
+  sFrameInterpolation = sActorInterpolation = sPoseInterpolation = sParticleInterpolation = enabled;
+  MarkDirty();
+}
+
+bool ActorInterpolation() {
+  EnsureInitialized();
+  return sActorInterpolation && !sOriginalExperience;
+}
+
+void SetActorInterpolation(bool enabled) {
+  EnsureInitialized();
+  sActorInterpolation = enabled;
+}
+
+bool PoseInterpolation() {
+  EnsureInitialized();
+  return sPoseInterpolation && !sOriginalExperience;
+}
+
+void SetPoseInterpolation(bool enabled) {
+  EnsureInitialized();
+  sPoseInterpolation = enabled;
+}
+
+bool RoomGeoResident() {
+  EnsureInitialized();
+  return sRoomGeoResident;
+}
+
+void SetRoomGeoResident(bool enabled) {
+  EnsureInitialized();
+  sRoomGeoResident = enabled;
+  MarkDirty();
+}
+
+bool RoomGeoResidentAtStartup() {
+  std::ifstream file(SettingsFilePath());
+  std::string line;
+  bool on = kRoomGeoResidentDefault;
+  while (std::getline(file, line)) {
+    const size_t separator = line.find('=');
+    if (separator == std::string::npos) {
+      continue;
+    }
+    const std::string key = Trim(line.substr(0, separator));
+    std::string value = line.substr(separator + 1);
+    value.erase(std::min(value.find('#'), value.size()));
+    if (key == "room_geo_gpu") {
+      on = ParseBool(Trim(value));
+    } else if (key == "room_geo_resident") {
+      on = on || ParseBool(Trim(value));
+    }
+  }
+  return on;
+}
+
+bool ParticleInterpolation() {
+  EnsureInitialized();
+  return sParticleInterpolation && !sOriginalExperience;
+}
+
+void SetParticleInterpolation(bool enabled) {
+  EnsureInitialized();
+  sParticleInterpolation = enabled;
+}
+
+bool PresentOverride(float& t) {
+  EnsureInitialized();
+  if (sPresentOverride < 0.f) {
+    return false;
+  }
+  if (sPresentOverride == kPresentTick) {
+    t = -1.f;
+  } else if (sPresentOverride > 1.f) {
+    t = 0.25f * static_cast< float >(sPresentCycleFrame++ & 3);
+  } else {
+    t = sPresentOverride;
+  }
+  return true;
+}
+
+void SetPresentOverride(float value) {
+  EnsureInitialized();
+  sPresentOverride = value < 0.f             ? -1.f
+                     : value == kPresentTick ? kPresentTick
+                     : value > 1.f           ? kPresentCycle
+                                             : value;
+  sPresentCycleFrame = 0;
+}
+
+float PresentOverrideValue() {
+  EnsureInitialized();
+  return sPresentOverride;
+}
+
+bool TickHold() { return sTickHold; }
+
+void SetTickHold(bool held) {
+  sTickHold = held;
+  sHeldTicks = 0;
+}
+
+void StepTicks(unsigned count) { sHeldTicks += count; }
+
+unsigned PendingHeldTicks() { return sHeldTicks; }
+
+unsigned TakeHeldTicks() {
+  // One tick per loop, like MP_TURBO=1, so each step is one drawn frame.
+  if (sHeldTicks == 0) {
+    return 0;
+  }
+  --sHeldTicks;
+  return 1;
+}
+
+void GetFrameMouseDelta(float& dx, float& dy) {
+  dx = sMouseFrameX;
+  dy = sMouseFrameY;
+}
+
+float AimYaw() { return sMouseAimState.yaw; }
+float AimPitch() { return sMouseAimState.pitch; }
+bool AimInitialized() { return sMouseAimState.initialized; }
+
+bool AiAudioEnabled() {
+  EnsureInitialized();
+  return AIPortOutputEnabled() != 0;
+}
+
+void SetAiAudioEnabled(bool enabled) {
+  EnsureInitialized();
+  if (sAiAudioEnabled == enabled && AiAudioEnabled() == enabled) {
+    return;
+  }
+  sAiAudioEnabled = enabled;
+  AIPortSetOutputEnabled(enabled ? 1 : 0);
+}
+
+bool MusyxAudioEnabled() {
+  EnsureInitialized();
+  return sMusyxAudioEnabled;
+}
+
+void SetMusyxAudioEnabled(bool enabled) {
+  EnsureInitialized();
+  if (sMusyxAudioEnabled == enabled) {
+    return;
+  }
+  sMusyxAudioEnabled = enabled;
+  salSetMuted(enabled ? 0 : 1);
+}
+
+void RequestReset() { sResetRequested = true; }
+
+bool ConsumeResetRequest() {
+  const bool requested = sResetRequested;
+  sResetRequested = false;
+  return requested;
+}
+
+void SetStateManager(CStateManager* mgr) {
+  if (mgr != sStateManager) {
+    // The tracker's room names come from the old world's PAKs.
+    PortTracker::Reset();
+  }
+  sStateManager = mgr;
+}
+bool QuickResume() { return sQuickResume; }
+bool SaveStateRoomState() { return sSaveStateRoomState; }
+CStateManager* StateManager() { return sStateManager; }
+bool ViewRay(float origin[3], float forward[3]) {
+  if (sStateManager == nullptr || sStateManager->GetCameraManager() == nullptr) {
+    return false;
+  }
+  const CTransform4f view =
+      PortFreeCam::View(sStateManager->GetCameraManager()->GetCurrentCameraTransform(*sStateManager));
+  const CVector3f at = view.GetTranslation();
+  const CVector3f to = view.GetForward();
+  origin[0] = at.GetX();
+  origin[1] = at.GetY();
+  origin[2] = at.GetZ();
+  forward[0] = to.GetX();
+  forward[1] = to.GetY();
+  forward[2] = to.GetZ();
+  return true;
+}
+
 namespace {
 } // namespace
 #include "debug_ui/overlays.inc"
@@ -4319,14 +6414,16 @@ void DrawControlsTouchGyro() {
 #endif
 
   ImGui::SeparatorText("Gyro aim");
-  const char* gyroModes[] = {"Off", "Hold to aim", "Always aim"};
+  const char* gyroModes[] = {"Off", "Hold to aim", "Always aim", "Hold to pause"};
   int gyroMode = sInput.gyroMode;
-  if (ImGui::Combo("Mode", &gyroMode, gyroModes, 3)) {
+  if (ImGui::Combo("Mode", &gyroMode, gyroModes, 4)) {
     SetGyroMode(gyroMode);
   }
-  ItemHelp("Tilt the pad or the phone to aim. Hold to aim uses right stick click or left ctrl. Needs "
-           "mouse aim, twin stick or the touch controls (not the classic layout), since the gyro "
-           "feeds that same aim.");
+  ItemHelp("Tilt the pad or the phone to aim. Hold to aim aims only while the Gyro aim button is "
+           "held; hold to pause aims all the time except while it is held, so you can recentre the "
+           "pad (ratcheting). The button is right stick click or left ctrl by default; change it, or "
+           "make it a toggle, on the Remap page. Needs mouse aim, twin stick or the touch controls "
+           "(not the classic layout), since the gyro feeds that same aim.");
   ImGui::BeginDisabled(sInput.gyroMode == 0 && !sInput.springFlick);
   const char* gyroSources[] = {"Auto", "Controller", "Phone"};
   int gyroSource = sInput.gyroSource;
@@ -4336,12 +6433,14 @@ void DrawControlsTouchGyro() {
   ImGui::Text("Gyro: %s", GyroStatus());
   ImGui::EndDisabled();
   ImGui::BeginDisabled(sInput.gyroMode == 0);
-  float gyroRate = sInput.gyroRate;
+  float gyroSensitivity = sInput.gyroSensitivity;
   // The ## suffix keeps its ImGui id apart from the mouse Sensitivity slider.
-  if (ImGui::SliderFloat("Sensitivity##gyro", &gyroRate, 50.f, 3000.f, "%.0f px/s per rad/s",
-                         ImGuiSliderFlags_Logarithmic)) {
-    SetGyroRate(gyroRate);
+  if (ImGui::SliderFloat("Sensitivity##gyro", &gyroSensitivity, PortInput::kGyroSensitivityMin,
+                         PortInput::kGyroSensitivityMax, "%.2fx", ImGuiSliderFlags_Logarithmic)) {
+    SetGyroSensitivity(gyroSensitivity);
   }
+  ItemHelp("How far the camera turns per turn of the pad: at 1.00x turning the pad 90 degrees turns "
+           "the camera 90 degrees, at 2.00x 180. Independent of the mouse sensitivity and invert.");
   ImGui::EndDisabled();
 
   bool springFlick = sInput.springFlick;

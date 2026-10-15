@@ -80,7 +80,7 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     }
   } else if (key == "gyro_mode") {
     const long v = std::strtol(value.c_str(), nullptr, 10);
-    if (v >= 0 && v <= 2) {
+    if (v >= 0 && v <= 3) {
       s.gyroMode = static_cast< int >(v);
     }
   } else if (key == "gyro_source") {
@@ -88,10 +88,16 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     if (v >= 0 && v <= 2) {
       s.gyroSource = static_cast< int >(v);
     }
+  } else if (key == "gyro_sensitivity") {
+    const float f = ParseFloat(value);
+    if (std::isfinite(f) && f >= kGyroSensitivityMin && f <= kGyroSensitivityMax) {
+      s.gyroSensitivity = f;
+      s.gyroSensitivityRead = true;
+    }
   } else if (key == "gyro_rate") {
     const float f = ParseFloat(value);
     if (std::isfinite(f) && f >= 20.f && f <= 5000.f) {
-      s.gyroRate = f;
+      s.gyroLegacyRate = f;
     }
   } else if (key == "touch_aim") {
     s.touchAim = ParseBool(value);
@@ -230,6 +236,13 @@ void PostLoad() {
   if (s.touchClassic) {
     s.touchTwinStick = false;
   }
+  // gyro_rate was aim pixels per rad/s, and a pixel turned mouse_sensitivity rad.
+  if (!s.gyroSensitivityRead && s.gyroLegacyRate > 0.f) {
+    s.gyroSensitivity =
+        std::clamp(s.gyroLegacyRate * s.mouseSensitivity, kGyroSensitivityMin, kGyroSensitivityMax);
+  }
+  s.gyroLegacyRate = 0.f;
+  s.gyroSensitivityRead = false;
 }
 
 void WriteControlSettings(std::ostream& out) {
@@ -274,7 +287,7 @@ void WriteAimSettings(std::ostream& out) {
   out << "stick_aim_rate_y=" << s.stickAimRateY << '\n';
   out << "gyro_mode=" << s.gyroMode << '\n';
   out << "gyro_source=" << s.gyroSource << '\n';
-  out << "gyro_rate=" << s.gyroRate << '\n';
+  out << "gyro_sensitivity=" << s.gyroSensitivity << '\n';
   out << "touch_aim=" << (s.touchAim ? 1 : 0) << '\n';
   out << "touch_aim_speed=" << s.touchAimSpeed << '\n';
   out << "touch_side_margin=" << s.touchSideMargin.load() << '\n';

@@ -1,5 +1,6 @@
 #include "port_input_settings.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -56,6 +57,7 @@ int main() {
   Check(Get().touchSideMargin.load() == 40.f, "touch_side_margin");
   ApplySetting("touch_side_margin", "400");
   Check(Get().touchSideMargin.load() == 40.f, "touch_side_margin range");
+<<<<<<< HEAD
   ApplySetting("touch_opacity", "50");
   Check(Get().touchOpacity.load() == 50.f, "touch_opacity");
   ApplySetting("touch_opacity", "400");
@@ -64,7 +66,24 @@ int main() {
   Check(Get().touchOpacity.load() == 50.f, "touch_opacity below range");
   ApplySetting("gyro_mode", "2");
   ApplySetting("gyro_mode", "3");
-  Check(Get().gyroMode == 2, "gyro_mode range");
+  ApplySetting("gyro_mode", "4");
+  Check(Get().gyroMode == 3, "gyro_mode range");
+  Check(Get().gyroSensitivity == 2.f, "gyro_sensitivity default");
+  ApplySetting("gyro_sensitivity", "1.5");
+  ApplySetting("gyro_sensitivity", "50");
+  Check(Get().gyroSensitivity == 1.5f, "gyro_sensitivity range");
+  PostLoad();
+  // An old gyro_rate (pixels per rad/s at mouse_sensitivity rad per pixel) becomes
+  // the same turn on the natural scale, unless gyro_sensitivity is also there.
+  ApplySetting("mouse_sensitivity", "0.0035");
+  ApplySetting("gyro_rate", "600");
+  PostLoad();
+  Check(std::fabs(Get().gyroSensitivity - 2.1f) < 1e-4f, "gyro_rate migrates");
+  ApplySetting("gyro_rate", "600");
+  ApplySetting("gyro_sensitivity", "1.5");
+  PostLoad();
+  Check(Get().gyroSensitivity == 1.5f, "gyro_sensitivity wins over gyro_rate");
+  Check(Text().find("gyro_rate") == std::string::npos, "gyro_rate not written");
   ApplySetting("shift_key_alt", "44");
   ApplySetting("turbo_pad", "3");
   Check(Get().shiftBindings[1] == 44 && Get().turboBindings[2] == 3, "bindings");

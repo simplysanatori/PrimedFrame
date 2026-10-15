@@ -74,9 +74,9 @@
 {"Controls", "Touch & gyro", "Touch controls", "Reset margins", "default spacing margins reset"},
 {"Controls", "Touch & gyro", "Touch controls", "Edit layout", "drag move touch layout position"},
 #endif
-{"Controls", "Touch & gyro", "Gyro aim", "Mode", "gyro tilt aim hold mode"},
+{"Controls", "Touch & gyro", "Gyro aim", "Mode", "gyro tilt aim hold mode ratchet pause"},
 {"Controls", "Touch & gyro", "Gyro aim", "Source", "gyro device pad phone motion sensor"},
-{"Controls", "Touch & gyro", "Gyro aim", "Sensitivity", "gyro speed sensitivity aim"},
+{"Controls", "Touch & gyro", "Gyro aim", "Sensitivity", "gyro speed sensitivity aim natural real world scale"},
 {"Controls", "Touch & gyro", "Gyro aim", "Spring Ball on gyro flick", "spring ball flick tilt jump"},
 {"Controls", "Touch & gyro", "Gyro aim", "Flick strength", "flick jump threshold tilt"},
 {"Controls", "Remap", "", "Only bound", "bound inputs filter show"},
