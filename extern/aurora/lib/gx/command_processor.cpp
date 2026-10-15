@@ -1512,8 +1512,20 @@ void handle_aurora(ByteReader& reader) noexcept {
         st.actorDecal = false;
         st.dirty |= DirtyPipeline | DirtyUniform;
       }
+      // The caster/decal layers bound their own pipelines, bind groups and uniforms (and the depth
+      // passes forgot the texture groups): re-emit everything for the draws that follow.
+      sDrawCache.hasPipeline = false;
+      sDrawCache.bindGeneration = 0;
+      sDrawCache.uniformRange = {};
+      sDrawCache.lastDrawFmt = GX_MAX_VTXFMT;
+      st.dirty |= DirtyPipeline | DirtyUniform | DirtyTextures;
     } else if (mode == 3) {
       gfx::actor_shadow::record();
+      sDrawCache.hasPipeline = false;
+      sDrawCache.bindGeneration = 0;
+      sDrawCache.uniformRange = {};
+      sDrawCache.lastDrawFmt = GX_MAX_VTXFMT;
+      st.dirty |= DirtyPipeline | DirtyUniform | DirtyTextures;
     }
   } else if (subCmd == GX_AURORA_SET_PBR_LIGHT_SKIP) {
     const Vec4<float> value{static_cast<f32>(reader.read<u32>() & 0xFF), 0.f, 0.f, 0.f};
