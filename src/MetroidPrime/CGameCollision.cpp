@@ -863,7 +863,6 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   CPhysicsActor& actor = player;
   const CMaterialFilter& materialFilter = actor.GetMaterialFilter();
   const float mass = actor.GetMass();
-  const float tick = 1.f / 60.f;
 
   CAABox motionVolume = actor.GetMotionVolume(dt);
   TEntityList nearList;
@@ -877,169 +876,333 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   CAreaCollisionCache cache(motionVolume);
   BuildAreaCollisionCache(mgr, cache);
 
-  CVector3f mi = CVector3f::Zero(); // impact impulse (momentum units), applied after the steps
+  // NCollisionUtils is_floor / is_wall (0xc7xxxx). Port contacts carry
+  // DefaultCollisionMaterial's kind 0xffffffff; kMT_Floor stands in for kind 0
+  // (inferred, not proven). Remastered normals are Y-up: normal.up = port Z.
+  struct Classify {
+    static bool IsFloor(const CMaterialList& mat, const CVector3f& n) {
+      // is_floor: up > 0.85 || kind == 0 || (up > 0.7071 && kind >= 3).
+      return mat.HasMaterial(kMT_Floor) || n.GetZ() > 0.70710677f;
+    }
+    static bool IsWall(const CMaterialList& mat, const CVector3f& n) {
+      // is_wall: false above 0.85; kind 2 true; else -0.7071 <= up <= 0.7071 && kind > 1.
+      return !mat.HasMaterial(kMT_Floor) && n.GetZ() >= -0.70710677f && n.GetZ() <= 0.70710677f;
+    }
+  };
+
   bool hadCollision = false;
-  bool grounded = false;
+  bool grounded = false; // Remastered object state == 1
   CCollisionInfoList groundList;
-  float remaining = dt;
-  int stalled = 0;
+  TUniqueId riderId = kInvalidUniqueId; // object +0x1210
 
-  // 0xf943b4: up to 10 steps while time remains; a step that makes no progress
-  // five times in a row ends the move.
-  for (int step = 0; step < 10 && remaining > 1e-5f && stalled < 5; ++step) {
-    CMotionState motion = actor.PredictMotion_Internal(remaining);
-    const CVector3f full = motion.GetTranslation();
-    actor.MoveCollisionPrimitive(full);
-    const bool blocked = DetectCollisionBoolean_Cached(
-        mgr, cache, *actor.GetCollisionPrimitive(), actor.GetPrimitiveTransform(), materialFilter,
-        nearList);
-    if (!blocked) {
-      // 0xf948d4: the whole step is free.
+  // Collision test with the primitive shifted by `offset` from the actor.
+  struct Test {
+    CStateManager& mgr;
+    CAreaCollisionCache& cache;
+    CPhysicsActor& actor;
+    const CMaterialFilter& filter;
+    const TEntityList& list;
+    bool Blocked(const CVector3f& offset) const {
+      actor.MoveCollisionPrimitive(offset);
+      const bool b = DetectCollisionBoolean_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
+                                                   actor.GetPrimitiveTransform(), filter, list);
       actor.MoveCollisionPrimitive(CVector3f::Zero());
-      actor.AddMotionState(motion);
-      actor.ImpulseWR() = CVector3f::Zero();
-      actor.SetMoveImpulseWR(CVector3f::Zero());
-      remaining = 0.f;
-      break;
+      return b;
+    }
+  };
+  const Test test = {mgr, cache, actor, materialFilter, nearList};
+
+  // 0xc6d110 GroundCheckForOffGroundMoverCollider(from, target): the actor sits
+  // at `target` except for its height.
+  struct Ground {
+    static bool Check(CStateManager& mgr, CAreaCollisionCache& cache, CPlayer& player,
+                      const CMaterialFilter& filter, const TEntityList& list,
+                      const CVector3f& from, float targetZ) {
+      CPhysicsActor& actor = player;
+      if (player.GetPlayerMovementState() == NPlayer::kMS_OnGround) {
+        return true;
+      }
+      if (player.GetFallingTime() <= 0.4f) {
+        return false;
+      }
+      const float dz = targetZ - actor.GetTranslation().GetZ();
+      const float aabbMin =
+          actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform())
+              .GetMinPoint()
+              .GetZ() +
+          dz;
+      const float feet = aabbMin; // target.up - height (vtable 0x198)
+      float probeZ = rstl::max_val(feet, from.GetZ());
+      probeZ = rstl::min_val(probeZ, targetZ - 0.002f);
+      actor.MoveCollisionPrimitive(CVector3f(0.f, 0.f, probeZ - actor.GetTranslation().GetZ()));
+      CCollisionInfoList list2;
+      TUniqueId id2 = kInvalidUniqueId;
+      DetectCollision_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
+                             actor.GetPrimitiveTransform(), filter, list, id2, list2);
+      actor.MoveCollisionPrimitive(CVector3f::Zero());
+      bool result = false;
+      float low = feet - 0.002f;
+      for (int i = 0; i < list2.GetCount(); ++i) {
+        const CCollisionInfo& info = list2[i];
+        const float pz = info.GetPoint().GetZ();
+        if (pz > aabbMin || pz <= low) {
+          continue;
+        }
+        result = Classify::IsFloor(info.GetMaterialLeft(), info.GetNormalLeft());
+        low = pz;
+      }
+      return result;
+    }
+  };
+
+  // 0xf948d4 DoMovementStep: returns the time consumed.
+  // One movement step (0xf948d4). `consumedOut` is the time the step reports.
+  struct Stepper {
+    CStateManager& mgr;
+    CAreaCollisionCache& cache;
+    CPlayer& player;
+    CPhysicsActor& actor;
+    const CMaterialFilter& filter;
+    const TEntityList& nearList;
+    const Test& test;
+    float mass;
+    float worldDt;
+    bool& hadCollision;
+    bool& grounded;
+    CCollisionInfoList& groundList;
+    TUniqueId& riderId;
+
+    // 511-533: post-step 0.1 down probe while rising.
+    void PostProbe() {
+      if (grounded || actor.GetVelocityWR().GetZ() <= 0.f) {
+        return;
+      }
+      const CVector3f pos = actor.GetTranslation();
+      if (Ground::Check(mgr, cache, player, filter, nearList, pos, pos.GetZ() - 0.1f)) {
+        grounded = true;
+      }
     }
 
-    // 0xf948d4: bisect the step down to 5% of its length.
-    float lo = 0.f;
-    float hi = 1.f;
-    while (hi - lo > 0.05f) {
-      const float mid = 0.5f * (lo + hi);
-      actor.MoveCollisionPrimitive(full * mid);
-      if (DetectCollisionBoolean_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
-                                        actor.GetPrimitiveTransform(), materialFilter,
-                                        nearList)) {
-        hi = mid;
+    float Step(float stepDt) {
+      const CVector3f startPos = actor.GetTranslation();
+      CMotionState motion = actor.PredictMotion_Internal(stepDt);
+      if (!test.Blocked(motion.GetTranslation())) {
+        // The whole step is free (0xf948d4 line ~511).
+        actor.AddMotionState(motion);
+        actor.ImpulseWR() = CVector3f::Zero();
+        PostProbe();
+        return stepDt;
+      }
+
+      // Exactly four bisection tests: dt/2, then +-dt/4, dt/8, dt/16; the
+      // reported time is the bracket midpoint, the state the last free one.
+      float loT = 0.f;
+      float hiT = stepDt;
+      float t = stepDt * 0.5f;
+      float half = stepDt * 0.5f;
+      float reported = t;
+      while (stepDt * 0.05f < half) {
+        const bool blocked = test.Blocked(actor.PredictMotion_Internal(t).GetTranslation());
+        half *= 0.5f;
+        if (blocked) {
+          hiT = t;
+          t -= half;
+        } else {
+          loT = t;
+          t += half;
+        }
+        reported = t;
+      }
+
+      // Contacts are gathered at the colliding state (hi).
+      CCollisionInfoList list;
+      TUniqueId id = kInvalidUniqueId;
+      actor.MoveCollisionPrimitive(actor.PredictMotion_Internal(hiT).GetTranslation());
+      DetectCollision_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
+                             actor.GetPrimitiveTransform(), filter, nearList, id, list);
+      actor.MoveCollisionPrimitive(CVector3f::Zero());
+
+      if (list.GetCount() == 0) {
+        // No contact list: the state becomes hi (no response).
+        actor.AddMotionState(actor.PredictMotion_Internal(hiT));
+        actor.ImpulseWR() = CVector3f::Zero();
+        PostProbe();
+        return reported;
+      }
+
+      // Otherwise the state is lo; momentumless impulse seeded from 0x118c.
+      actor.AddMotionState(actor.PredictMotion_Internal(loT));
+      actor.ImpulseWR() = CVector3f::Zero();
+      CVector3f mi = actor.GetMoveImpulseWR();
+      const CVector3f stateVel = actor.GetVelocityWR();
+      CPhysicsActor* const other = TCastToPtr< CPhysicsActor >(mgr.ObjectById(id));
+      CVector3f riderVel = CVector3f::Zero();
+      if (other != NULL && riderId != kInvalidUniqueId && id == riderId) {
+        riderVel = other->GetVelocityWR();
+      }
+
+      bool floorContact = false;
+      CCollisionInfoList accepted;
+      for (int i = 0; i < list.GetCount(); ++i) {
+        const CCollisionInfo& info = list[i];
+        CVector3f n = info.GetNormalLeft();
+        // Normal components below 2.38e-7 are zeroed (0xf948d4).
+        if (fabsf(n.GetX()) < 2.38e-7f) n.SetX(0.f);
+        if (fabsf(n.GetY()) < 2.38e-7f) n.SetY(0.f);
+        if (fabsf(n.GetZ()) < 2.38e-7f) n.SetZ(0.f);
+        // Remastered reports a corner touch as one contact with a secondary
+        // normal (+0x44/+0x38; 0xc6d460 picks the working normal when either
+        // normal is a ceiling, is_ceiling_normal = up < -0.70710677). The port
+        // lists the two faces as separate contacts at one point; the ceiling
+        // face of such a pair is dropped so only the wall normal acts (a
+        // jump along a ledge corner keeps its rise). Which normal Remastered
+        // keeps is inferred from the ledge-jump measurement.
+        if (n.GetZ() < -0.70710677f) {
+          bool pairedWithOther = false;
+          for (int j = 0; j < list.GetCount(); ++j) {
+            const CCollisionInfo& o = list[j];
+            const CVector3f d = o.GetPoint() - info.GetPoint();
+            if (j != i && o.GetNormalLeft().GetZ() >= -0.70710677f &&
+                d.MagSquared() < 1e-8f) {
+              pairedWithOther = true;
+            }
+          }
+          if (pairedWithOther) continue;
+        }
+        // A contact the player is already separating from (relative to its
+        // rider) is skipped.
+        if (CVector3f::Dot(stateVel - riderVel, n) > 0.f) {
+          continue;
+        }
+        accepted.Add(info, false);
+        hadCollision = true;
+
+        const bool isFloor = Classify::IsFloor(info.GetMaterialLeft(), n);
+        if (isFloor) {
+          floorContact = true;
+          groundList.Add(info, false);
+          if (other != NULL) {
+            riderId = id;
+          }
+        }
+
+        // 0xc6d460 ImpactResponseForOffGroundMoverCollider (flag 0x100 is never
+        // set for port contacts: its setter is not in the decompile).
+        CVector3f vel = actor.GetVelocityWR();
+        const bool flatFloor = fabsf(1.f - n.GetZ()) < 1e-5f;
+        if (flatFloor && (vel.GetZ() > 0.f ||
+                          actor.GetTranslation().GetZ() <= info.GetPoint().GetZ())) {
+          continue;
+        }
+        if (!isFloor) {
+          // Push scale 0.0025 / world step dt * mass.
+          mi += n * (0.0025f / worldDt) * mass;
+        }
+        const float miDot = CVector3f::Dot(n, mi);
+        if (miDot < 0.f) {
+          mi -= n * miDot; // 0xc186a0
+        }
+        const float velDot = CVector3f::Dot(n, vel);
+        if (velDot <= 1.19e-7f) {
+          vel -= n * velDot; // 0xc18700, e = mu = 0
+        }
+        if (player.GetPlayerMovementState() == NPlayer::kMS_ApplyJump) {
+          const bool isWall = Classify::IsWall(info.GetMaterialLeft(), n);
+          if (isWall && n.GetZ() < -0.1f && vel.GetZ() > 0.f) {
+            vel.SetZ(vel.GetZ() * 0.5f);
+          }
+          float t1 = 0.25f;
+          float t2 = 0.37f;
+          float scale = 1.f;
+          float mult = 1.f;
+          float floorMag = 0.f;
+          if (player.CheckSubmerged() &&
+              !mgr.GetPlayerState()->HasPowerUp(CPlayerState::kIT_GravitySuit)) {
+            t1 = 0.01f;
+            t2 = 0.05f;
+            scale = 0.8f;
+            mult = 35.f;
+            floorMag = 5.f;
+          }
+          const float az = fabsf(n.GetZ());
+          if (az > t1 && (az > t2 || vel.GetZ() < 0.f)) {
+            const float mag = rstl::max_val(mult * az, floorMag);
+            actor.SetForceWR(CVector3f(0.f, 0.f, 1.f) * (mag + 1.f) * mass * player.GetGravity());
+            vel = vel * scale;
+          }
+        }
+        actor.SetVelocityWR(vel);
+      }
+      // SetMomentumlessImpulse(local_10c0), colliding branch only (line 503).
+      actor.SetMoveImpulseWR(mi);
+
+      if (accepted.GetCount() > 0) {
+        MakeCollisionCallbacks(mgr, actor, id, accepted);
+      }
+      if (floorContact && !grounded) {
+        if (Ground::Check(mgr, cache, player, filter, nearList, startPos,
+                          actor.GetTranslation().GetZ())) {
+          grounded = true;
+        }
+        return reported; // a floor contact skips the post-probe (line 509)
+      }
+      if (!floorContact) {
+        PostProbe();
+      }
+      return reported;
+    }
+  };
+  Stepper stepper = {mgr,  cache,       player,      actor,    materialFilter,
+                     nearList, test,    mass,        dt,       hadCollision,
+                     grounded, groundList, riderId};
+
+  // 0xf943b4 MoveObject: one step, then up to ten more while time remains.
+  CVector3f prevVel = actor.GetVelocityWR();
+  float remaining = dt - stepper.Step(dt);
+  bool stalledFlag = false;
+  if (remaining > 1e-5f) {
+    int iter = 0;
+    int stallCount = 0;
+    for (;;) {
+      if (grounded) {
+        break;
+      }
+      const float consumed = stepper.Step(remaining);
+      bool keep;
+      if (iter < 5 || fabsf(consumed) >= 1e-5f) {
+        ++iter;
+        keep = true;
+        if (close_enough(prevVel, actor.GetVelocityWR(), 1e-4f)) {
+          stalledFlag = true;
+          const bool second = stallCount > 0;
+          ++stallCount;
+          if (second) {
+            keep = false;
+          }
+        }
+        if (keep) {
+          prevVel = actor.GetVelocityWR();
+        }
       } else {
-        lo = mid;
+        keep = false;
       }
-    }
-
-    // Contacts are gathered at the colliding end of the bracket.
-    CCollisionInfoList list;
-    TUniqueId id = kInvalidUniqueId;
-    actor.MoveCollisionPrimitive(full * hi);
-    DetectCollision_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
-                           actor.GetPrimitiveTransform(), materialFilter, nearList, id, list);
-    actor.MoveCollisionPrimitive(CVector3f::Zero());
-
-    // The position is the last non-colliding end of the bracket.
-    const float consumed = remaining * lo;
-    if (lo > 0.f) {
-      actor.AddMotionState(actor.PredictMotion_Internal(consumed));
-      actor.ImpulseWR() = CVector3f::Zero();
-      actor.SetMoveImpulseWR(CVector3f::Zero());
       remaining -= consumed;
-      stalled = 0;
-    } else {
-      ++stalled;
-    }
-
-    CPhysicsActor* const otherActor = TCastToPtr< CPhysicsActor >(mgr.ObjectById(id));
-    const bool dynamicHit = id != kInvalidUniqueId;
-    const CVector3f hiMove = full * (hi - lo);
-    CCollisionInfoList accepted;
-    for (int i = 0; i < list.GetCount(); ++i) {
-      const CCollisionInfo& info = list[i];
-      CVector3f n = info.GetNormalLeft();
-      // 0xf948d4: a contact the step is already moving away from is skipped.
-      if (CVector3f::Dot(n, hiMove) > 0.f) {
-        continue;
-      }
-      accepted.Add(info, false);
-      hadCollision = true;
-
-      // 0xf948d4: tiny normal components are zeroed.
-      if (fabsf(n.GetX()) < 2.38e-7f) n.SetX(0.f);
-      if (fabsf(n.GetY()) < 2.38e-7f) n.SetY(0.f);
-      if (fabsf(n.GetZ()) < 2.38e-7f) n.SetZ(0.f);
-
-      const bool isFloor = IsFloor(info.GetMaterialLeft(), n);
-      if (isFloor) {
-        groundList.Add(info, false);
-      }
-
-      // 0xc6d460 ImpactResponseForOffGroundMoverCollider.
-      CVector3f vel = actor.GetVelocityWR();
-      const bool flatFloor = fabsf(1.f - n.GetZ()) < 1e-5f;
-      if (!dynamicHit && flatFloor && (vel.GetZ() > 0.f ||
-                                       actor.GetTranslation().GetZ() <= info.GetPoint().GetZ())) {
-        continue;
-      }
-      if (!isFloor) {
-        // Contacts that are not floors push the player out along the normal.
-        mi += n * (0.0025f / tick) * mass;
-      }
-      const float miDot = CVector3f::Dot(n, mi);
-      if (miDot < 0.f) {
-        mi -= n * miDot;
-      }
-      const float velDot = CVector3f::Dot(n, vel);
-      if (velDot <= 1.19e-7f) {
-        vel -= n * velDot;
-      }
-      if (player.GetPlayerMovementState() == NPlayer::kMS_ApplyJump) {
-        const bool isWall = !isFloor && fabsf(n.GetZ()) < 0.85f;
-        if (isWall && n.GetZ() < -0.1f && vel.GetZ() > 0.f) {
-          // 0xc6d460: a jump into an overhanging wall loses half its rise.
-          vel.SetZ(vel.GetZ() * 0.5f);
-        }
-        float t1 = 0.25f;
-        float t2 = 0.37f;
-        float scale = 1.f;
-        float mult = 1.f;
-        float floorMag = 0.f;
-        if (player.CheckSubmerged() &&
-            !mgr.GetPlayerState()->HasPowerUp(CPlayerState::kIT_GravitySuit)) {
-          t1 = 0.01f;
-          t2 = 0.05f;
-          scale = 0.8f;
-          mult = 35.f;
-          floorMag = 5.f;
-        }
-        const float az = fabsf(n.GetZ());
-        if (az > t1 && (az > t2 || vel.GetZ() < 0.f)) {
-          const float mag = rstl::max_val(mult * az, floorMag);
-          // 0xc6d460 param_7: a force replacing the state force (not an impulse).
-          actor.SetForceWR(CVector3f(0.f, 0.f, 1.f) * (mag + 1.f) * mass * player.GetGravity());
-          vel = vel * scale;
-        }
-      }
-      actor.SetVelocityWR(vel);
-    }
-
-    if (accepted.GetCount() > 0) {
-      MakeCollisionCallbacks(mgr, actor, id, accepted);
-      if (!stalled && lo <= 0.f) {
-        ++stalled;
+      if (!keep || iter > 9 || remaining <= 1e-5f) {
+        break;
       }
     }
-    (void)otherActor;
   }
 
-  // Apply the accumulated impact impulse as momentum, then drop the impulses.
-  if (mi.Magnitude() > 0.f) {
-    actor.SetVelocityWR((actor.GetConstantForceWR() + mi) * (1.f / mass));
-  }
-  actor.ImpulseWR() = CVector3f::Zero();
-  actor.SetMoveImpulseWR(CVector3f::Zero());
-
-  // 0xc6d110: a floor contact lands the player only after 0.4 s of falling.
-  if (groundList.GetCount() > 0 && player.GetPlayerMovementState() != NPlayer::kMS_OnGround &&
-      player.GetFallingTime() > 0.4f) {
+  if (groundList.GetCount() > 0 && grounded) {
     SendScriptMessages(mgr, actor, NULL, groundList);
-    grounded = true;
   }
-
   if (!hadCollision) {
     mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_Falling);
   }
-  CollisionFailsafe(mgr, cache, actor, *actor.GetCollisionPrimitive(), nearList,
-                    remaining / dt, 2);
-  (void)grounded;
+  if (!(fabsf(remaining) < 1e-5f && !stalledFlag)) {
+    CollisionFailsafe(mgr, cache, actor, *actor.GetCollisionPrimitive(), nearList,
+                      remaining / dt, 2);
+  }
   actor.ClearForcesAndTorques();
   actor.MoveCollisionPrimitive(CVector3f::Zero());
 }
