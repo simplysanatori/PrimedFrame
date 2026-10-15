@@ -176,9 +176,10 @@ void OnInventoryReset();
 // layout is known (seeds skip the frigate). `area` is 0 for the world's first.
 bool NewGameStart(uint32_t& world, uint32_t& area);
 
-// Where declining a save station with L and R held leads: the seed's starting
-// room, as every randomprime seed of the apworld allows (`area` is 0 for the
-// world's first). False without a seed layout.
+// Where a save station's "Warp to start" choice (or declining it with L and R
+// held) leads: the seed's starting room, as every randomprime seed of the
+// apworld allows, or the Landing Site for a legacy MP_RANDO seed (`area` is 0
+// for the world's first). False without a randomizer seed.
 bool WarpToStart(uint32_t& world, uint32_t& area);
 
 // The strings the seed gives the string table `strg` in place of the disc's

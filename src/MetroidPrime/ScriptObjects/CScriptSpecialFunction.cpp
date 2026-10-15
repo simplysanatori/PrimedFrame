@@ -7,6 +7,7 @@
 #include "MetroidPrime/CMapWorld.hpp"
 #include "MetroidPrime/CMapWorldInfo.hpp"
 #include "MetroidPrime/CRumbleManager.hpp"
+#include "MetroidPrime/CSaveGameScreen.hpp"
 #include "MetroidPrime/CScriptLayerManager.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/CWorld.hpp"
@@ -659,12 +660,14 @@ void CScriptSpecialFunction::ThinkSaveStation(float, CStateManager& mgr) {
       SendScriptMsgs(kSS_MaxReached, mgr, kSM_None);
     } else {
       SendScriptMsgs(kSS_Zero, mgr, kSM_None);
-      // Port: an Archipelago seed warps to its start room when the save is
-      // declined with L and R held (randomprime's patch_warp_to_start).
+      // Port: a randomizer seed warps to its start room when the save prompt
+      // chose "Warp to start", or declined with L and R held (randomprime's
+      // patch_warp_to_start).
       const CControllerGamepadData& pad = gpController->GetGamepadData(0);
+      const bool chosen = CSaveGameScreen::PortTakeWarpToStart();
       uint32_t startWorld = 0;
       uint32_t startArea = 0;
-      if (pad.GetButton(kBU_L).GetIsPressed() && pad.GetButton(kBU_R).GetIsPressed() &&
+      if ((chosen || (pad.GetButton(kBU_L).GetIsPressed() && pad.GetButton(kBU_R).GetIsPressed())) &&
           PortAp::WarpToStart(startWorld, startArea)) {
         PortDebug::RequestWorldTeleport(startWorld, startArea);
         // The Impact Crater's relay would bring Samus back in at this station.

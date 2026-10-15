@@ -1884,8 +1884,14 @@ bool NewGameStart(uint32_t& world, uint32_t& area) {
 bool WarpToStart(uint32_t& world, uint32_t& area) {
   try {
     const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
-    if (seedLayout == nullptr)
-      return false;
+    if (seedLayout == nullptr) {
+      // A legacy seed only moves pickups, so its start is the new game's.
+      if (!PortRandomizer::Enabled())
+        return false;
+      world = MetroidPrime::kTallonWorld;
+      area = MetroidPrime::kLandingSiteArea;
+      return true;
+    }
     const PortApWorld::Layout& layout = *seedLayout;
     // A start room the tables don't have is the Landing Site, as for a new game.
     PortApWorld::Place place;

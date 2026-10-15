@@ -216,16 +216,12 @@ void CSaveGameScreen::SetUIText() {
 #ifdef TARGET_PC
   rstl::wstring message =
       messageA + (msgB == -1 ? empty : rstl::wstring_l(strings.GetString(msgB)));
-  // Port: an Archipelago seed's save prompt says how to warp to the start room
-  // (randomprime's patch_memorycard_strg, with its L and R button images).
+  // Port: a randomizer seed's save prompt offers a third choice that warps to
+  // the start room (randomprime's L and R combo on No still works too).
   uint32_t startWorld = 0;
   uint32_t startArea = 0;
-  if (x10_uiType == kUIT_SaveReady && x0_saveCtx == kSC_InGame &&
-      PortAp::WarpToStart(startWorld, startArea)) {
-    message = message + rstl::wstring_l(L"\nHold &image=SI,0.70,0.68,46434ED3; + "
-                                        L"&image=SI,0.70,0.68,08A2E4B9; while choosing No "
-                                        L"to warp to starting room.");
-  }
+  const bool warpChoice = x10_uiType == kUIT_SaveReady && x0_saveCtx == kSC_InGame &&
+                          PortAp::WarpToStart(startWorld, startArea);
 #else
   const rstl::wstring message =
       messageA + (msgB == -1 ? empty : rstl::wstring_l(strings.GetString(msgB)));
@@ -243,6 +239,12 @@ void CSaveGameScreen::SetUIText() {
   x60_textpane_choice1->SetIsSelectable(opt1 != -1);
   x64_textpane_choice2->SetIsSelectable(opt2 != -1);
   x68_textpane_choice3->SetIsSelectable(opt3 != -1);
+#ifdef TARGET_PC
+  if (warpChoice) {
+    x64_textpane_choice2->TextSupport().SetText(rstl::wstring_l(L"Warp to start"));
+    x64_textpane_choice2->SetIsSelectable(true);
+  }
+#endif
   x58_tablegroup_choices->SetUserSelection(0);
   x58_tablegroup_choices->SetIsActive(opt0 != -1 || opt1 != -1 || opt2 != -1 || opt3 != -1);
   SetUIColors();
@@ -506,6 +508,16 @@ void CSaveGameScreen::StartGame(int idx) {
   }
 }
 
+#ifdef TARGET_PC
+static bool sPortWarpToStart = false;
+
+bool CSaveGameScreen::PortTakeWarpToStart() {
+  const bool warp = sPortWarpToStart;
+  sPortWarpToStart = false;
+  return warp;
+}
+#endif
+
 void CSaveGameScreen::DoAdvance(CGuiTableGroup* caller) {
   int userSel = x58_tablegroup_choices->GetUserSelection();
   int sfx = -1;
@@ -664,6 +676,13 @@ void CSaveGameScreen::DoAdvance(CGuiTableGroup* caller) {
       } else if (userSel == 1) {
         x80_iowRet = CIOWin::kMR_RemoveIOWinAndExit;
         sfx = x8c_navBackSfx;
+#ifdef TARGET_PC
+      } else if (userSel == 2) {
+        // Declines the save; the save station then warps.
+        sPortWarpToStart = true;
+        x80_iowRet = CIOWin::kMR_RemoveIOWinAndExit;
+        sfx = x84_navConfirmSfx;
+#endif
       }
     }
     break;
