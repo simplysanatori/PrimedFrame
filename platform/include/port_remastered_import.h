@@ -54,7 +54,8 @@ inline constexpr int kConverter = 52;
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 3;
 inline constexpr int kModels = 8;      // the table's models, their looks and the ANCS copies
-inline constexpr int kEffects = 24;     // port_remastered_effect_import and the particle converters
+// 25: swoosh GRAD is the exact PGRD element, no longer a 101-key KEYP bake.
+inline constexpr int kEffects = 25;    // port_remastered_effect_import and the particle converters
 inline constexpr int kRooms = 19;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
