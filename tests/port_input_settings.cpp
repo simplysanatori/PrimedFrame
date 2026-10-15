@@ -92,6 +92,14 @@ int main() {
   Check(Text().find("gyro_space=2\n") != std::string::npos &&
             Text().find("gyro_auto_calibrate=0\n") != std::string::npos,
         "gyro space/calibration written");
+  Check(Get().gyroSmoothing == 0.f && Get().gyroTightening == 0.f, "gyro filter defaults off");
+  ApplySetting("gyro_smoothing", "5");
+  ApplySetting("gyro_tightening", "3");
+  ApplySetting("gyro_tightening", "51");
+  Check(Get().gyroSmoothing == 5.f && Get().gyroTightening == 3.f, "gyro filter");
+  Check(Text().find("gyro_smoothing=5\n") != std::string::npos &&
+            Text().find("gyro_tightening=3\n") != std::string::npos,
+        "gyro filter written");
   ApplySetting("shift_key_alt", "44");
   ApplySetting("turbo_pad", "3");
   Check(Get().shiftBindings[1] == 44 && Get().turboBindings[2] == 3, "bindings");

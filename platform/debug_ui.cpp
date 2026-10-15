@@ -372,6 +372,7 @@ const char* sGyroStatus = "off";
 PortGyro::Motion sGyroMotion;
 const void* sGyroMotionSource = nullptr;
 bool sGyroHasAccel = false;
+PortGyro::Filter sGyroFilter;
 // Flick state: seconds left on the last flick, and whether the pitch has dropped
 // back since, so a long flick counts once.
 float sSpringFlickLatch = 0.f;
@@ -1986,11 +1987,13 @@ bool ReadGyroRates(float& pitch, float& yaw, float dt) {
   }
   if (source != sGyroMotionSource || haveAccel != sGyroHasAccel) {
     sGyroMotion.Reset();
+    sGyroFilter.Reset();
     sGyroMotionSource = source;
     sGyroHasAccel = haveAccel;
   }
   sGyroMotion.Process(gyro, haveAccel ? accel : nullptr, dt, sInput.gyroSpace, sInput.gyroAutoCalibrate, pitch,
                       yaw);
+  sGyroFilter.Apply(pitch, yaw, dt, sInput.gyroSmoothing, sInput.gyroTightening);
   return true;
 }
 } // namespace
@@ -6630,6 +6633,23 @@ void DrawControlsTouchGyro() {
   } else {
     ImGui::TextDisabled("Calibration: no accelerometer");
   }
+  float gyroSmoothing = sInput.gyroSmoothing;
+  if (ImGui::SliderFloat("Smoothing", &gyroSmoothing, 0.f, PortInput::kGyroThresholdMax,
+                         gyroSmoothing > 0.f ? "below %.0f deg/s" : "off")) {
+    sInput.gyroSmoothing = std::clamp(gyroSmoothing, 0.f, PortInput::kGyroThresholdMax);
+    MarkDirty();
+  }
+  ItemHelp("Averages slow turns of the pad over a few frames to hide sensor jitter; faster turns, "
+           "above twice this speed, stay direct. Adds a little lag to fine aim. Off by default.");
+  float gyroTightening = sInput.gyroTightening;
+  if (ImGui::SliderFloat("Tightening", &gyroTightening, 0.f, PortInput::kGyroThresholdMax,
+                         gyroTightening > 0.f ? "below %.0f deg/s" : "off")) {
+    sInput.gyroTightening = std::clamp(gyroTightening, 0.f, PortInput::kGyroThresholdMax);
+    MarkDirty();
+  }
+  ItemHelp("Turns slower than this are scaled down (the slower, the more), so a pad held still "
+           "doesn't wobble the aim. Keep it low: high values make fine aim sluggish. Off by "
+           "default.");
   ImGui::EndDisabled();
 
   bool springFlick = sInput.springFlick;

@@ -32,6 +32,8 @@ constexpr int kPointerAimTurnDefault = 180;
 // Gyro aim: camera turn per turn of the pad.
 constexpr float kGyroSensitivityMin = 0.1f;
 constexpr float kGyroSensitivityMax = 10.f;
+// Gyro smoothing/tightening thresholds, deg/s.
+constexpr float kGyroThresholdMax = 50.f;
 // The Android touch overlay's margins, in dp.
 constexpr float kTouchMarginMaxDp = 300.f;
 constexpr float kTouchSideMarginDefault = 16.f;
@@ -73,6 +75,9 @@ struct Settings {
   // whether the gyro's drift is measured while the pad is still.
   int gyroSpace = 1;
   bool gyroAutoCalibrate = true;
+  // Gyro smoothing and tightening thresholds in deg/s (0 = off; see PortGyro::Filter).
+  float gyroSmoothing = 0.f;
+  float gyroTightening = 0.f;
   // An old gyro_rate line (aim pixels per rad/s, scaled by the mouse sensitivity)
   // and whether gyro_sensitivity was read since the last PostLoad, which turns the
   // first into the second when only it was there.

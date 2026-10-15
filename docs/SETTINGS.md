@@ -98,6 +98,10 @@
   `gyro_auto_calibrate` (default on) learns the gyro's drift while the pad is
   still; F1 shows the calibration confidence and has a Recalibrate button. Both
   use GamepadMotionHelpers (`extern/GamepadMotionHelpers`).
+  `gyro_smoothing` and `gyro_tightening` (deg/s, 0-50, both 0 = off by default)
+  are JoyShockMapper-style: turns below the smoothing threshold are averaged over
+  0.125 s, fading to direct by twice it; turns below the tightening threshold are
+  scaled by speed/threshold.
 - Spring Ball (Controls > Options, persisted as `spring_ball`, off by default): C-stick
   up in morph ball jumps, as in Metroid Prime Trilogy and the randomprime discs
   the Archipelago world makes, once the Morph Ball Bombs are held. It is a bomb

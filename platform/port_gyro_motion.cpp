@@ -113,4 +113,43 @@ void Filter::Apply(float& pitch, float& yaw, float dt, float smoothDeg, float ti
   }
 }
 
+void Filter::Reset() {
+  mSamples = {};
+  mNext = 0;
+}
+
+void Filter::Apply(float& pitch, float& yaw, float dt, float smoothDeg, float tightenDeg) {
+  if (smoothDeg > 0.f && dt > 0.f) {
+    const float speed = std::hypot(pitch, yaw) * kDegPerRad;
+    const float direct = std::clamp((speed - smoothDeg) / smoothDeg, 0.f, 1.f);
+    mSamples[mNext] = {pitch * (1.f - direct), yaw * (1.f - direct), dt};
+    mNext = (mNext + 1) % int(mSamples.size());
+    // Average the newest samples over the window, weighted by their time.
+    float sumPitch = 0.f;
+    float sumYaw = 0.f;
+    float time = 0.f;
+    for (int i = 1; i <= int(mSamples.size()) && time < kSmoothWindow; ++i) {
+      const Sample& sample = mSamples[(mNext - i + int(mSamples.size())) % int(mSamples.size())];
+      if (sample.dt <= 0.f) {
+        break;
+      }
+      const float w = std::min(sample.dt, kSmoothWindow - time);
+      sumPitch += sample.pitch * w;
+      sumYaw += sample.yaw * w;
+      time += w;
+    }
+    pitch = pitch * direct + sumPitch / time;
+    yaw = yaw * direct + sumYaw / time;
+  } else if (smoothDeg <= 0.f) {
+    Reset();
+  }
+  if (tightenDeg > 0.f) {
+    const float speed = std::hypot(pitch, yaw) * kDegPerRad;
+    if (speed < tightenDeg) {
+      pitch *= speed / tightenDeg;
+      yaw *= speed / tightenDeg;
+    }
+  }
+}
+
 } // namespace PortGyro
