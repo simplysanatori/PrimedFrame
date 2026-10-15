@@ -1487,6 +1487,11 @@ CColorElement* CParticleDataFactory::GetColorElement(CInputStream& in) {
   case SBIG('KEYP'):
     ret = rs_new CCEKeyframeEmitter(in);
     break;
+#ifdef TARGET_PC
+  case SBIG('PGRD'):
+    ret = rs_new CCEGradient(in);
+    break;
+#endif
   case SBIG('FADE'): {
     CColorElement* a = GetColorElement(in);
     CColorElement* b = GetColorElement(in);

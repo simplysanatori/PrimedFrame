@@ -2,6 +2,9 @@
 
 #include "Kyoto/Math/CMath.hpp"
 #include "Kyoto/Particles/CParticleGlobals.hpp"
+#include "Kyoto/Particles/CParticleDataFactory.hpp"
+#include "Kyoto/Particles/CIntElement.hpp"
+#include "Kyoto/Particles/PortParticleMath.hpp"
 #include "Kyoto/Streams/CInputStream.hpp"
 
 #include "rstl/math.hpp"
@@ -243,6 +246,43 @@ bool CCEParticleColor::GetValue(int frame, CColor& colorOut) const {
 }
 
 #ifdef TARGET_PC
+CCEGradient::CCEGradient(CInputStream& in) {
+  const int count = in.ReadLong();
+  x4_stops.reserve(count > 0 ? count : 0);
+  for (int i = 0; i < count; ++i) {
+    std::array< float, 5 > stop;
+    for (float& v : stop) {
+      v = in.ReadFloat();
+    }
+    x4_stops.push_back(stop);
+  }
+  x1c_period = CParticleDataFactory::GetIntElement(in);
+  x20_repeat = in.ReadBool();
+}
+
+CCEGradient::~CCEGradient() { delete x1c_period; }
+
+bool CCEGradient::GetValueHdr(int frame, float out[4]) const {
+  int period = 1;
+  x1c_period->GetValue(frame, period);
+  std::vector< PortParticleMath::GradientStop > stops(x4_stops.size());
+  for (size_t i = 0; i < stops.size(); ++i) {
+    for (int c = 0; c < 4; ++c) {
+      stops[i].color[c] = x4_stops[i][c];
+    }
+    stops[i].position = x4_stops[i][4];
+  }
+  PortParticleMath::EvalGradient(stops.data(), int(stops.size()), period, x20_repeat, frame, out);
+  return false;
+}
+
+bool CCEGradient::GetValue(int frame, CColor& colorOut) const {
+  float c[4];
+  GetValueHdr(frame, c);
+  colorOut.Set(c[0], c[1], c[2], c[3]); // clamped, as every other element's SDR value
+  return false;
+}
+
 bool CColorElement::GetValueHdr(int frame, float out[4]) const {
   CColor c;
   const bool ret = GetValue(frame, c);

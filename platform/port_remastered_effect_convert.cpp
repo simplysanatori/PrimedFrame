@@ -1113,7 +1113,12 @@ public:
   // GRAD: u8 stop count, per stop four halves (RGBA) and an f32 position,
   // then what the position runs over: ILPT(CNST(n)) (n% of the particle's
   // life) or CNST(n) (n frames), then a byte (1: the gradient repeats).
-  // Written as retail's percent keyframes (KEYP, 101 keys over the life).
+  // A swoosh's gradient is written as the port-only PGRD element, which evaluates Remastered's
+  // CCEGradient exactly on the segment's age (Remastered feeds a swoosh COLR the age in frames,
+  // UpdateExisting 0x27d590). The period stays the source's own int element (ILPT(CNST n) or
+  // CNST n). A generator's gradient is written as retail's percent keyframes (KEYP, 101 keys over
+  // the life): its time base in Remastered is not verified (compiled var contexts), and KEYP
+  // reproduces the bake the importer shipped before.
   bool Gradient(const EffectValue& value, std::vector<uint8_t>& out, std::string& why) const {
     if (value.args.size() != 1 || value.args[0].kind != EffectValue::Kind::Raw) {
       why = "GRAD without its stops";
@@ -1126,6 +1131,31 @@ public:
     if (stops == 0 || at > size) {
       why = "GRAD without its stops";
       return false;
+    }
+    if (m_swoosh) {
+      AppendBE32(out, F("PGRD"));
+      AppendBE32(out, uint32_t(stops));
+      for (size_t i = 0; i < stops; ++i) {
+        for (size_t c = 0; c < 4; ++c) {
+          AppendBE32(out, FloatBits(HalfToFloat(uint16_t(p[1 + 12 * i + 2 * c] | p[2 + 12 * i + 2 * c] << 8))));
+        }
+        AppendBE32(out, ReadLE32(p + 1 + 12 * i + 8));  // the f32 position, bits unchanged
+      }
+      if (at + 12 <= size && ReadLE32(p + at) == F("ILPT") && ReadLE32(p + at + 4) == F("CNST")) {
+        AppendBE32(out, F("ILPT"));
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, ReadLE32(p + at + 8));
+        at += 12;
+      } else if (at + 8 <= size && ReadLE32(p + at) == F("CNST")) {
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, ReadLE32(p + at + 4));
+        at += 8;
+      } else {
+        why = "GRAD over something other than the life or frames";
+        return false;
+      }
+      out.push_back(at < size && p[at] != 0 ? 1 : 0);
+      return true;
     }
     // How many percent of the life one pass over the gradient takes.
     float span = 0.0f;
@@ -2226,6 +2256,7 @@ public:
     }
     // A constant lifetime, for gradients timed in frames. Both count in
     // Remastered's frames, so LTM2 is taken as it is (one above retail's).
+    m_swoosh = node.form == F("SWSH");
     m_lifetime = 0;
     for (const EffectProperty& property : node.properties) {
       if ((property.fourcc == F("LTM2") || property.fourcc == F("LTME")) && property.value.size() == 1 &&
@@ -2601,6 +2632,7 @@ private:
   const EffectConvertIO& m_io;
   mutable std::vector<PvarEntry> m_vars;            // the PVAR of the generator being written
   mutable std::vector<std::string> m_approximated;  // for the generator being written
+  mutable bool m_swoosh = false;                    // the node being written is a SWSH
   mutable int32_t m_lifetime = 0;                   // its constant lifetime in frames, or 0
 };
 
@@ -2655,6 +2687,12 @@ public:
     if ((fourcc == F("VARF") && type == Type::Real) || (fourcc == F("VARI") && type == Type::Int) ||
         (fourcc == F("VARV") && type == Type::Vector) || (fourcc == F("VARC") && type == Type::Color)) {
       return Skip(4);
+    }
+    // Port-only PGRD (a swoosh's gradient): stop count, five floats per stop, the period as an
+    // int element, then the repeat byte.
+    if (fourcc == F("PGRD") && type == Type::Color) {
+      uint32_t count;
+      return Word(count) && count <= 0x10000 && Skip(size_t(count) * 20) && Element(Type::Int) && Skip(1);
     }
     const Signatures& elements = ElementsOf(type);
     const auto found = elements.find(fourcc);
