@@ -72,11 +72,7 @@ struct Area {
   uint32_t serial = 0;  // of this load, which the worker's jobs for it carry
   std::vector<GpuCube> cubes;
   std::vector<GpuVolume> volumes; // one a grid
-  // Version 21 files (file.tiles): the one grid composed from the world's mapped tiles (see
-  // ResolveVolume), empty until the worker has made it. Older files keep their grids in `file`.
-  std::vector<Grid> resolved;
-  std::vector<PortRoomEnvTiles::TileKey> region; // the tile keys the grid is composed from, sorted
-  uint32_t gridGen = 0;  // of the grid being resolved; a result of an older one is dropped
+  // Version 21 files (file.tiles) have no grid of their own: the world's one (World).
   float ownAverage = 0.f; // of the area's own tiles, for the exposure before the grid exists
   uint64_t loadSeq = 0;  // the order of Load calls, which is the order tiles are registered in
   bool registered = false; // its tiles are in sTiles
@@ -181,6 +177,9 @@ enum class JobKind { Cube, Volume, Lightmap, Keep };
 struct VolumeInput {
   std::shared_ptr<const PortRoomEnvTiles::TileSet> own;
   std::map<PortRoomEnvTiles::TileKey, std::shared_ptr<const PortRoomEnvTiles::TileSet>> mapped;
+  // The world texture's job (serial 0): every mapped key, composed in one space.
+  bool world = false;
+  float worldToPoint[12] = {};
 };
 
 struct Job {
@@ -191,7 +190,7 @@ struct Job {
   const File* file = nullptr;
   bool raw = false; // Lightmap: the device takes its BC6H blocks as they are
   std::shared_ptr<const VolumeInput> input; // Volume of a version 21 file
-  uint32_t gen = 0;                         // Area::gridGen when it was made
+  uint32_t gen = 0;                         // World::gen when it was made
 };
 
 struct Result {
@@ -250,9 +249,9 @@ Worker sWorker;
 // OnRegisterContextNode 0x1ca01c): the first copy stays mapped and later ones wait on standby,
 // and when the mapped copy's area unloads (0x1ca650) the most recently registered standby copy
 // takes over, or the tile is unmapped. sTiles is that table, sTileSets the tiles of each
-// registered area, and sTileSeq the order areas have been asked to load in. An area's grid is
-// composed from what is mapped for the keys of its region (ResolveVolume), and composed again
-// when one of those keys changes owner.
+// registered area, and sTileSeq the order areas have been asked to load in. The one world
+// grid is composed from every mapped key (SubmitWorld, ResolveVolume), and composed again when
+// a key changes owner or an area comes or goes.
 PortRoomEnvTiles::TileTable sTiles;
 std::unordered_map<uint32_t, std::shared_ptr<const PortRoomEnvTiles::TileSet>> sTileSets;
 uint64_t sTileSeq = 0;
@@ -265,9 +264,25 @@ constexpr size_t kMaxGridPoints = size_t(1) << 20;
 constexpr size_t kMaxGridPoints = 0;
 #endif
 
+// Remastered samples one texture for the whole world, by position alone, so a version 21
+// file has no grid of its own: the port composes every mapped tile of every loaded area into
+// one dense grid and volume (SubmitWorld), rebuilt when a tile changes owner or an area comes
+// or goes. The old volume stays bound until the new one is on the GPU.
+struct World {
+  Grid grid;             // the composed grid; size 0 with none
+  uint32_t volume = 0;   // GXCreatePBRVolume's id; 0 until the worker has made it
+  uint32_t gen = 0;      // of the composition asked for; a result of an older one is dropped
+  bool dirty = false;    // a tile changed owner since the last SubmitWorld
+  bool has() const { return volume != 0 && grid.average > 0.f; }
+};
+World sWorld;
+File sNoFile; // the file of the world's job, which reads none
+
 // The grids an area samples: the composed one of a version 21 file, else the file's own.
+// Version 21 areas share the world grid (World), so it is not one of theirs.
 const std::vector<Grid>& Grids(const Area& area) {
-  return area.file.tiles != nullptr ? area.resolved : area.file.grids;
+  static const std::vector<Grid> none;
+  return area.file.tiles != nullptr ? none : area.file.grids;
 }
 
 uint32_t sNextCube = 1;
@@ -564,7 +579,18 @@ bool ResolveVolume(const VolumeInput& input, const File* file, Result& out, cons
   PortRoomEnvTiles::ResolvedGrid resolved;
   std::string note;
   out.resolved = true;
-  if (!PortRoomEnvTiles::ResolveGrid(*input.own, lookup, kMaxGridPoints, resolved, note)) {
+  bool composed;
+  if (input.world) {
+    std::vector<PortRoomEnvTiles::TileKey> keys;
+    keys.reserve(input.mapped.size());
+    for (const auto& entry : input.mapped) {
+      keys.push_back(entry.first);
+    }
+    composed = PortRoomEnvTiles::ResolveWorld(input.worldToPoint, keys, lookup, kMaxGridPoints, resolved, note);
+  } else {
+    composed = PortRoomEnvTiles::ResolveGrid(*input.own, lookup, kMaxGridPoints, resolved, note);
+  }
+  if (!composed) {
     out.empty = true;
     out.grid = {};
     PortLog::Write("room env: %08X tiles: %s\n", out.area, note.c_str());
@@ -644,6 +670,9 @@ float RoomExposure(const Area& area) {
         level = std::max(level, grid.average);
       }
       level = std::max(level, area.ownAverage);
+      if (area.file.tiles != nullptr && level <= 0.f) {
+        level = sWorld.grid.average;
+      }
     }
     if (!(level > 0.f)) {
       return 0.f;
@@ -1026,45 +1055,48 @@ void Load(uint32_t mrea, Area& area) {
   }
 }
 
-// Has the worker compose the area's grid from the tiles mapped now (a version 21 file).
-void SubmitGrid(uint32_t mrea, Area& area) {
+// Has the worker compose the world texture from the tiles mapped now: every mapped key of
+// every registered area, in one grid (a version 21 file). Called once the tables settle.
+void SubmitWorld() {
+  sWorld.dirty = false;
   auto input = std::make_shared<VolumeInput>();
-  input->own = area.file.tiles;
-  for (const PortRoomEnvTiles::TileKey& key : area.region) {
-    uint32_t node = 0;
-    if (!sTiles.Active(key, &node)) {
-      continue; // unmapped: the tile reads zero
-    }
+  input->world = true;
+  const PortRoomEnvTiles::TileSet* first = nullptr;
+  for (const auto& [key, node] : sTiles.Mapped()) {
     const auto set = sTileSets.find(node);
-    if (set != sTileSets.end() && set->second->Find(key) != nullptr) {
-      input->mapped.emplace(key, set->second);
-    }
-  }
-  ++area.gridGen;
-  sWorker.DropVolumes(area.serial);
-  Job job{JobKind::Volume, mrea, area.serial, 0, &area.file};
-  job.input = std::move(input);
-  job.gen = area.gridGen;
-  sWorker.Submit(job);
-}
-
-// Composes again the grids of the registered areas (but `except`) that sample a key whose
-// mapped copy changed hands.
-void RefreshGrids(const std::vector<PortRoomEnvTiles::TileKey>& changed, uint32_t except) {
-  if (changed.empty()) {
-    return;
-  }
-  for (auto& [mrea, area] : sAreas) {
-    if (mrea == except || !area.registered) {
+    if (set == sTileSets.end() || set->second->Find(key) == nullptr) {
       continue;
     }
-    for (const PortRoomEnvTiles::TileKey& key : changed) {
-      if (std::binary_search(area.region.begin(), area.region.end(), key)) {
-        SubmitGrid(mrea, area);
-        break;
+    if (first == nullptr) {
+      first = set->second.get();
+      std::copy(std::begin(first->worldToPoint), std::end(first->worldToPoint), input->worldToPoint);
+    } else if (!std::equal(std::begin(first->worldToPoint), std::end(first->worldToPoint),
+                           std::begin(set->second->worldToPoint))) {
+      static bool warned = false;
+      if (!warned) {
+        warned = true;
+        PortLog::Write("room env: area %08X has a different tile space than the others; its tiles are placed "
+                       "as if it had the same one\n", node);
       }
     }
+    input->mapped.emplace(key, set->second);
   }
+  ++sWorld.gen;
+  sWorker.DropVolumes(0);
+  if (first == nullptr) {
+    // Nothing is mapped: nothing to sample.
+    if (sWorld.volume != 0) {
+      GXDestroyPBRVolume(sWorld.volume);
+      sWorld.volume = 0;
+    }
+    sWorld.grid = {};
+    Invalidate();
+    return;
+  }
+  Job job{JobKind::Volume, 0, 0, 0, &sNoFile};
+  job.input = std::move(input);
+  job.gen = sWorld.gen;
+  sWorker.Submit(job);
 }
 
 // Registers the tiles of the areas that have loaded, in the order Load was called (the order
@@ -1087,17 +1119,19 @@ void RegisterReady() {
       }
     }
     if (next == nullptr || next->loadSeq > waiting) {
-      return;
+      break;
     }
     std::vector<PortRoomEnvTiles::TileKey> keys;
     for (const PortRoomEnvTiles::Tile& tile : next->file.tiles->tiles) {
       keys.push_back(tile.key);
     }
     sTileSets[nextMrea] = next->file.tiles;
-    const std::vector<PortRoomEnvTiles::TileKey> changed = sTiles.Register(nextMrea, keys);
+    sTiles.Register(nextMrea, keys);
     next->registered = true;
-    SubmitGrid(nextMrea, *next);
-    RefreshGrids(changed, nextMrea);
+    sWorld.dirty = true;
+  }
+  if (sWorld.dirty) {
+    SubmitWorld();
   }
 }
 
@@ -1121,7 +1155,6 @@ void Finish(uint32_t mrea, Area& area) {
   const auto t1 = std::chrono::steady_clock::now();
   area.file = std::move(loaded.file);
   if (area.file.tiles != nullptr) {
-    area.region = PortRoomEnvTiles::Region(*area.file.tiles);
     area.ownAverage = PortRoomEnvTiles::OwnAverage(*area.file.tiles);
   }
   area.cubes.resize(area.file.cubes.size());
@@ -1459,10 +1492,52 @@ bool Worker::Do(const Job& job, Result& out) {
 // Hands the worker's decoded cubes and filled volumes to the GPU, one a frame: each is
 // megabytes for Aurora to copy and upload, and an area brings several at once. While the
 // room environment is off they wait (nothing would use them), and so does the worker.
+// The world texture's result: a volume made from tiles that have changed hands since is dropped.
+void TakeWorld(Result& result) {
+  if (result.gen != sWorld.gen) {
+    return;
+  }
+  if (result.empty) {
+    if (sWorld.volume != 0) {
+      GXDestroyPBRVolume(sWorld.volume);
+      sWorld.volume = 0;
+    }
+    sWorld.grid = {};
+    return;
+  }
+  sWorld.grid = std::move(result.grid);
+  const Grid& grid = sWorld.grid;
+  // The old volume is destroyed after the new one is created: aurora erases it when the destroy
+  // command is processed (not deferred), so commands already queued that name it still run first.
+  const uint32_t oldVolume = sWorld.volume;
+  sWorld.volume = sNextVolume++;
+  if (sNextVolume == 0) {
+    sNextVolume = 1;
+  }
+  const auto tv = std::chrono::steady_clock::now();
+  const size_t volumeBytes = result.volume.size();
+  GXCreatePBRVolumeOwned(sWorld.volume, grid.size[0], grid.size[1], grid.size[2],
+                         new std::vector<uint8_t>(std::move(result.volume)));
+  if (LoadTiming()) {
+    PortLog::Write("room env timing: world GXCreatePBRVolume %.2f ms (%zu bytes)\n", MsSince(tv), volumeBytes);
+  }
+  PortLog::Write("room env: world volume %u %ux%ux%u average %g (%zu mapped tiles)\n", sWorld.volume, grid.size[0],
+                 grid.size[1], grid.size[2], grid.average, sTiles.KeyCount());
+  if (oldVolume != 0) {
+    GXDestroyPBRVolume(oldVolume);
+  }
+}
+
 void TakeResults() {
   bool gpu = Enabled();
   Result result;
   while (sWorker.Take(result, gpu)) {
+    if (result.kind == JobKind::Volume && result.serial == 0) {
+      TakeWorld(result);
+      Invalidate();
+      gpu = false;
+      continue;
+    }
     const auto found = sAreas.find(result.area);
     if (found == sAreas.end() || found->second.serial != result.serial) {
       continue; // Free drops an area's results, so this does not happen
@@ -1509,26 +1584,9 @@ void TakeResults() {
       }
       gpuCube.mipCount = cube.mipCount;
       GXCreatePBRCube(gpuCube.id, cube.size, cube.mipCount, result.cube.data(), uint32_t(result.cube.size() * 2));
-    } else if (result.resolved && result.gen != area.gridGen) {
-      continue; // composed from tiles that have changed hands since
-    } else if (result.resolved && result.empty) {
-      // No tile of the area's region is mapped: nothing to sample.
-      if (area.volumes[0].id != 0) {
-        GXDestroyPBRVolume(area.volumes[0].id);
-        area.volumes[0].id = 0;
-      }
-      area.resolved.clear();
-      Invalidate();
-      continue;
     } else {
-      if (result.resolved) {
-        area.resolved.assign(1, std::move(result.grid));
-      }
-      const Grid& grid = result.resolved ? area.resolved[0] : file.grids[result.index];
-      GpuVolume& gpuVolume = area.volumes[result.resolved ? 0 : result.index];
-      // The old volume is destroyed after the new one is created: aurora erases it when the destroy
-      // command is processed (not deferred), so commands already queued that name it still run first.
-      const uint32_t oldVolume = result.resolved ? gpuVolume.id : 0;
+      const Grid& grid = file.grids[result.index];
+      GpuVolume& gpuVolume = area.volumes[result.index];
       gpuVolume.id = sNextVolume++;
       if (sNextVolume == 0) {
         sNextVolume = 1;
@@ -1543,9 +1601,6 @@ void TakeResults() {
       }
       PortLog::Write("room env: %08X volume %u %ux%ux%u average %g\n", result.area, gpuVolume.id, grid.size[0],
                      grid.size[1], grid.size[2], grid.average);
-      if (oldVolume != 0) {
-        GXDestroyPBRVolume(oldVolume);
-      }
     }
     // What Select finds changes with what is on the GPU.
     Invalidate();
@@ -3072,6 +3127,9 @@ bool HasVolume(uint32_t mrea) {
   // Only once the worker has made every volume the area has: until then its models are lit
   // as they are without volumes.
   const Area& area = found->second;
+  if (area.file.tiles != nullptr) {
+    return area.ownAverage > 0.f && sWorld.has();
+  }
   bool lit = false;
   const std::vector<Grid>& grids = Grids(area);
   for (size_t i = 0; i < grids.size() && i < area.volumes.size(); ++i) {
@@ -3148,6 +3206,14 @@ void Reset() {
   sTiles.Clear();
   sTileSets.clear();
   sTileSeq = 0;
+  sWorker.Cancel(0);
+  if (sWorld.volume != 0) {
+    GXDestroyPBRVolume(sWorld.volume);
+  }
+  sWorld.volume = 0;
+  sWorld.grid = {};
+  sWorld.dirty = false;
+  ++sWorld.gen;
   FreeBlend();
   sFrame = {};
   sBrdfSent = false;
@@ -3159,13 +3225,13 @@ void Reset() {
 
 void SetLoadedAreas(const uint32_t* mreas, size_t count) {
   bool changed = false;
-  std::vector<PortRoomEnvTiles::TileKey> freed;
   for (auto it = sAreas.begin(); it != sAreas.end();) {
     if (std::find(mreas, mreas + count, it->first) == mreas + count) {
       if (it->second.registered) {
         // Its mapped tiles go to the most recent copy another area holds (or unmap).
-        const std::vector<PortRoomEnvTiles::TileKey> keys = sTiles.Unregister(it->first);
-        freed.insert(freed.end(), keys.begin(), keys.end());
+        if (!sTiles.Unregister(it->first).empty()) {
+          sWorld.dirty = true;
+        }
       }
       sTileSets.erase(it->first);
       Free(it->second);
@@ -3184,12 +3250,7 @@ void SetLoadedAreas(const uint32_t* mreas, size_t count) {
       changed = true;
     }
   }
-  if (!freed.empty()) {
-    std::sort(freed.begin(), freed.end());
-    freed.erase(std::unique(freed.begin(), freed.end()), freed.end());
-    RefreshGrids(freed, 0xFFFFFFFFu);
-  }
-  RegisterReady();
+  RegisterReady(); // also composes the world texture again when a tile changed hands
   if (changed) {
     Invalidate();
   }
@@ -3272,26 +3333,42 @@ void Locate(const float pos[3], Located& out) {
       out.cube = &gpu;
     }
   }
-  if (sHint && VolumesEnabled()) {
+  if (VolumesEnabled() && !sHint && sWorld.has() && !sAreas.empty() && sAreas.begin()->second.file.tiles != nullptr) {
+    // A draw with no hint area: Remastered samples the same world texture by position, so it
+    // gets the world volume, with the first area's exposure.
+    out.volumeArea = &sAreas.begin()->second;
+    out.grid = &sWorld.grid;
+    out.volume = sWorld.volume;
+  } else if (sHint && VolumesEnabled()) {
     const auto found = sAreas.find(sHintArea);
     if (found != sAreas.end()) {
       Area& area = found->second;
-      int pick = -1;
-      float nearest = 0.f;
-      const std::vector<Grid>& grids = Grids(area);
-      for (size_t i = 0; i < grids.size() && i < area.volumes.size(); ++i) {
-        const float distance = GridDistance(grids[i], pos);
-        if (grids[i].average > 0.f && (pick < 0 || distance < nearest)) {
-          pick = int(i);
-          nearest = distance;
-        }
-      }
-      if (pick >= 0) {
-        const GpuVolume& gpu = area.volumes[pick];
-        if (gpu.id != 0) {
+      if (area.file.tiles != nullptr) {
+        // One texture for the world, sampled by position alone (a tap past the mapped
+        // tiles reads the transparent black border).
+        if (sWorld.has()) {
           out.volumeArea = &area;
-          out.grid = &grids[pick];
-          out.volume = gpu.id;
+          out.grid = &sWorld.grid;
+          out.volume = sWorld.volume;
+        }
+      } else {
+        int pick = -1;
+        float nearest = 0.f;
+        const std::vector<Grid>& grids = Grids(area);
+        for (size_t i = 0; i < grids.size() && i < area.volumes.size(); ++i) {
+          const float distance = GridDistance(grids[i], pos);
+          if (grids[i].average > 0.f && (pick < 0 || distance < nearest)) {
+            pick = int(i);
+            nearest = distance;
+          }
+        }
+        if (pick >= 0) {
+          const GpuVolume& gpu = area.volumes[pick];
+          if (gpu.id != 0) {
+            out.volumeArea = &area;
+            out.grid = &grids[pick];
+            out.volume = gpu.id;
+          }
         }
       }
     }
@@ -3307,6 +3384,12 @@ void Locate(const float pos[3], Located& out) {
           return;
         }
       }
+    }
+    // Version 21 areas: the world grid. Its exposure is the hint's area's, else the first's.
+    if (sWorld.grid.average > 0.f && !sAreas.empty() && SampleGrid(sNoFile, sWorld.grid, pos, out.sample)) {
+      const auto hint = sAreas.find(sHintArea);
+      out.ambientArea = hint != sAreas.end() ? &hint->second : &sAreas.begin()->second;
+      out.average = sWorld.grid.average;
     }
   }
 }
@@ -3654,6 +3737,20 @@ std::string Info(const float pos[3]) {
       }
       out += line;
     }
+  }
+  if (sWorld.grid.size[0] != 0) {
+    Ambient ambient;
+    const float distance = GridDistance(sWorld.grid, pos);
+    const bool lit = distance == 0.f && SampleGrid(sNoFile, sWorld.grid, pos, ambient);
+    char here[160] = "no light here";
+    if (lit) {
+      std::snprintf(here, sizeof(here), "lit here, mean %g %g %g", ambient.mean[0], ambient.mean[1], ambient.mean[2]);
+    }
+    std::snprintf(line, sizeof(line), "  world grid: %u x %u x %u (%.1f M points), average %g, volume %u, %s\n",
+                  sWorld.grid.size[0], sWorld.grid.size[1], sWorld.grid.size[2],
+                  double(sWorld.grid.size[0]) * sWorld.grid.size[1] * sWorld.grid.size[2] / 1e6, sWorld.grid.average,
+                  sWorld.volume, here);
+    out += line;
   }
   // The tile table: per registered area, its load order, tiles, and how many it owns (the
   // mapped copy of a key is the first loaded one; see Grids()).
