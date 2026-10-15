@@ -174,7 +174,7 @@ inline void DecalParams(const float worldToView[3][4], const Box& map, const Box
 bool Active();
 void BeginFrame();
 void Register(const CActor* actor);
-// Renders each registered actor into its depth map and decals the room geometry under it.
+// Renders each actor registered since the last call into its depth map and decals the room geometry under it.
 void RenderFrame(const CStateManager& mgr, const CTransform4f& view);
 
 } // namespace PortActorShadow

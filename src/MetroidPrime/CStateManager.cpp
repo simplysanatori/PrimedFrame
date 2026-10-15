@@ -3437,11 +3437,11 @@ void CStateManager::DrawWorld() const {
   };
 #endif
 #ifdef TARGET_PC
-  // The actor blob-shadow maps and decals are drawn after the area loop, so each area's sorted draws wait
-  // for them: the decals land on the opaque world and under the transparent surfaces, as in Remastered.
-  const bool deferSorted = PortActorShadow::Active() && !thermal && visor != CPlayerState::kPV_XRay &&
-                           !portCollisionOnly;
-  std::vector< int > portDeferred;
+  // The actors an area registered get their shadow maps and decals just before that area's sorted draws:
+  // the decals land on the opaque world and under the transparent surfaces, as in Remastered, while the
+  // buckets are still drawn per area with that area's own fog and light fade.
+  const bool flushShadows = PortActorShadow::Active() && !thermal && visor != CPlayerState::kPV_XRay &&
+                            !portCollisionOnly;
 #endif
   for (int i = 0; i < areas.size(); ++i) {
     const CGameArea& area = *areas[i];
@@ -3531,9 +3531,8 @@ void CStateManager::DrawWorld() const {
     }
 #endif
 #ifdef TARGET_PC
-    if (deferSorted) {
-      portDeferred.push_back(i);
-      continue;
+    if (flushShadows) {
+      PortActorShadow::RenderFrame(*this, backupViewMatrix);
     }
 #endif
     gpRender->EnablePVS(&set, area.GetId().Value());
@@ -3564,18 +3563,6 @@ void CStateManager::DrawWorld() const {
   if (portShadow) {
     GXPortSetShadowCaster(false);
     GXPortRenderShadowMap();
-  }
-  if (!thermal && visor != CPlayerState::kPV_XRay && !portCollisionOnly) {
-    PortActorShadow::RenderFrame(*this, backupViewMatrix);
-  }
-  for (int i : portDeferred) {
-    const CGameArea& area = *areas[i];
-    SetupFogForArea(area);
-    gpRender->SetWorldLightFadeLevel(area.GetPostConstructed()->x1128_worldLightingLevel);
-    gpRender->EnablePVS(&visibility[i], area.GetId().Value());
-    PortRoomGeo::sReplacingArea = portRoomGeo[i];
-    gpRender->DrawSortedGeometry(area.GetId().Value(), mask, targetMask);
-    PortRoomGeo::sReplacingArea = false;
   }
   if (!thermal) {
     PortCollisionView::Draw(*this, areas.begin(), areas.size());

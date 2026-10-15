@@ -99,6 +99,8 @@ void RenderFrame(const CStateManager& mgr, const CTransform4f& view) {
     }
   }
   GXPortActorShadowEnd();
+  // Each call covers the actors registered since the last one (one area's); the next area starts at layer 0.
+  sActors.clear();
 }
 
 } // namespace PortActorShadow

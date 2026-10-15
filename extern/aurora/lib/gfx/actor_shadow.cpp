@@ -35,7 +35,7 @@ struct State {
 
 State g_state;
 std::array<std::vector<gx::DrawData>, MaxLayers> g_casters;
-std::array<std::array<std::vector<gx::DrawData>, MaxLayers>, 8> g_recorded;
+std::array<std::array<std::vector<gx::DrawData>, MaxLayers>, 32> g_recorded;
 uint32_t g_nextSlot = 0;
 
 void ensure_map() {
