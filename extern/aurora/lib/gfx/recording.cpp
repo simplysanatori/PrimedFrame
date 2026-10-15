@@ -738,6 +738,20 @@ RecordedFrame end_recording() {
   frame.stats.lastIndexSize = frame.indices.size();
   frame.stats.lastStorageSize = frame.storage.size();
   frame.stats.lastTextureUploadSize = frame.textureUpload.size();
+  {
+    // AURORA_FRAME_PEAKS=1 logs each new high-water mark of a frame's buffer use.
+    static const bool enabled = std::getenv("AURORA_FRAME_PEAKS") != nullptr;
+    static uint64_t peakVert, peakUniform, peakIndex, peakStorage;
+    if (enabled && (frame.verts.size() > peakVert || frame.uniforms.size() > peakUniform ||
+                    frame.indices.size() > peakIndex || frame.storage.size() > peakStorage)) {
+      peakVert = std::max<uint64_t>(peakVert, frame.verts.size());
+      peakUniform = std::max<uint64_t>(peakUniform, frame.uniforms.size());
+      peakIndex = std::max<uint64_t>(peakIndex, frame.indices.size());
+      peakStorage = std::max<uint64_t>(peakStorage, frame.storage.size());
+      Log.info("frame peaks: vertex {} uniform {} index {} storage {} (bytes)", peakVert, peakUniform, peakIndex,
+               peakStorage);
+    }
+  }
 
   for (auto& array : gx::g_gxState.arrays) {
     array.cachedRange = {};
@@ -1537,7 +1551,12 @@ Range push_storage(const uint8_t* data, size_t length) {
   if (!check_recording("push_storage")) {
     return {};
   }
-  return push(current_frame_packet().storage, data, length, resources().limits.minStorageBufferOffsetAlignment);
+  const auto range =
+      push(current_frame_packet().storage, data, length, resources().limits.minStorageBufferOffsetAlignment);
+  if (overflowed(range)) {
+    request_storage_growth();
+  }
+  return range;
 }
 
 Range push_texture_data(const uint8_t* data, u32 bytesPerRow, u32 rowsPerImage) {

@@ -945,9 +945,18 @@ int main(int argc, char** argv) {
     if (envFrameBuffers >= 0) {
         frameBufferScale = static_cast<uint32_t>(std::clamp(static_cast<unsigned long>(envFrameBuffers), 1UL, 16UL));
     }
-    if (frameBufferScale > 1) {
-        PortLog::Write("port: frame buffers at %ux (%s)\n", frameBufferScale,
-                       envFrameBuffers >= 0 ? "MP_FRAME_BUFFERS" : "room geometry");
+    // 0 follows frameBufferScale and, in resident mode, grows after an overflow (aurora,
+    // up to 6x); MP_STORAGE_BUFFERS pins it.
+    uint32_t frameStorageScale = 0;
+    const int envStorageBuffers = port::EnvInt("MP_STORAGE_BUFFERS", -1);
+    if (envStorageBuffers >= 0) {
+        frameStorageScale = static_cast<uint32_t>(std::clamp(static_cast<unsigned long>(envStorageBuffers), 1UL, 16UL));
+    }
+    if (frameBufferScale > 1 || frameStorageScale > 1) {
+        PortLog::Write("port: frame buffers at %ux, storage at %ux (%s)\n", frameBufferScale,
+                       frameStorageScale != 0 ? frameStorageScale : frameBufferScale,
+                       envFrameBuffers >= 0 || envStorageBuffers >= 0 ? "MP_FRAME_BUFFERS/MP_STORAGE_BUFFERS"
+                                                                      : "room geometry");
     }
     // Settings, mods, save states and the shader caches sit in user/ beside the
     // executable when that folder can be written to (port_paths.h).
@@ -1042,6 +1051,7 @@ int main(int argc, char** argv) {
         .mem1Size = mem1Size,
         .mem2Size = ARAM_DEFAULT_SIZE,
         .frameBufferScale = frameBufferScale,
+        .frameStorageScale = frameStorageScale,
         .residentGeometryMiB = residentMiB,
         // An embedded seed wins over a stale initial_pipeline_cache.db beside the executable.
         .pipelineCacheSeedData = embeddedSeed.data(),
@@ -1165,6 +1175,9 @@ int main(int argc, char** argv) {
         std::filesystem::remove(driverMarker, ec);
     }
     // From what the device gave, which can be less than was asked for.
+    if (aurora_get_frame_storage_scale() != (frameStorageScale != 0 ? frameStorageScale : frameBufferScale)) {
+        PortLog::Write("port: frame storage at %ux, all this device allows\n", aurora_get_frame_storage_scale());
+    }
     if (aurora_get_frame_buffer_scale() != frameBufferScale) {
         PortLog::Write("port: frame buffers at %ux, all this device allows\n", aurora_get_frame_buffer_scale());
     }
