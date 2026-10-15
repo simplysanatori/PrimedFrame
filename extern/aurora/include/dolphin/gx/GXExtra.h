@@ -349,6 +349,16 @@ GXBool GXPortShadowBoxCasts(const f32 min[3], const f32 max[3]);
 // centre of its last cascade in world space, and how many draws the last map drawn had.
 void GXPortGetShadowInfo(f32 sunDir[3], f32 color[3], f32* distance, f32 center[3], u32* casters);
 GXBool GXPortRenderShadowMap(void);
+// Remastered's actor shadow. Between GXPortActorShadowCasters and GXPortActorShadowEnd the opaque
+// draws cast (and are not drawn) into one layer of the actor depth maps, through `clip` (16 floats:
+// the view -> map clip matrix as four vec4 rows applied dot(vec4(p, 1), row), x y z w). Between
+// GXPortActorShadowDecal and End the draws are the receivers, redrawn as the multiply decal with
+// `params` (16 vec4: see platform/port_actor_shadow.h). GXPortActorShadowRender draws the maps
+// recorded so far, before the decals. False when the port cannot (no task, drawid view).
+void GXPortActorShadowCasters(u32 layer, const f32 clip[16]);
+void GXPortActorShadowDecal(u32 layer, const f32 params[64]);
+void GXPortActorShadowEnd(void);
+GXBool GXPortActorShadowRender(void);
 // The room's Remastered point and spot lights for the rest of the frame, added on every PBR draw
 // (lit, lightmapped or not) as the sun is. Each record is 16 f32: view-space position, A; colour
 // (linear, scaled), B; view-space axis toward the light, cone scale; cone bias, falloff (0 none,

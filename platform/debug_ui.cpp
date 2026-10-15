@@ -263,6 +263,7 @@ int sMsaa = 1;
 int sAnisotropy = 16;
 bool sPerPixelLighting = false;
 bool sSunShadows = true;
+bool sProjectedShadows = true;
 // Setting `opengles`; sOpenGlesAtStart is what this run was started with.
 bool sOpenGles = false;
 bool sOpenGlesAtStart = false;
@@ -679,6 +680,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     sStorageClampAtStart = sStorageClamp;
   } else if (key == "sun_shadows") {
     sSunShadows = ParseBool(value);
+  } else if (key == "projected_shadows") {
+    sProjectedShadows = ParseBool(value);
   } else if (key == "per_pixel_lighting") {
     sPerPixelLighting = ParseBool(value);
   } else if (key == "anisotropy") {
@@ -863,6 +866,7 @@ std::string SettingsText() {
   file << "anisotropy=" << sAnisotropy << '\n';
   file << "per_pixel_lighting=" << (sPerPixelLighting ? 1 : 0) << '\n';
   file << "sun_shadows=" << (sSunShadows ? 1 : 0) << '\n';
+  file << "projected_shadows=" << (sProjectedShadows ? 1 : 0) << '\n';
   file << "unlock_hard_mode=" << (sUnlockHardMode ? 1 : 0) << '\n';
   file << "unlock_fusion_suit=" << (sUnlockFusionSuit ? 1 : 0) << '\n';
   file << "unlock_galleries=" << (sUnlockGalleries ? 1 : 0) << '\n';
@@ -1932,6 +1936,18 @@ void SetSunShadows(bool enabled) {
   EnsureInitialized();
   if (sSunShadows != enabled) {
     sSunShadows = enabled;
+    MarkDirty();
+  }
+}
+
+bool ProjectedShadows() {
+  EnsureInitialized();
+  return sProjectedShadows;
+}
+void SetProjectedShadows(bool enabled) {
+  EnsureInitialized();
+  if (sProjectedShadows != enabled) {
+    sProjectedShadows = enabled;
     MarkDirty();
   }
 }
@@ -6872,6 +6888,13 @@ void DrawVideoQuality() {
     }
     ImGui::SetItemTooltip("Sun shadows: the port's shadow from the sun (outdoor rooms). Remastered does not\n"
                           "draw sun shadows; turn off for the Remastered look.");
+    bool projShadows = sProjectedShadows;
+    if (ImGui::Checkbox("Projected actor shadows", &projShadows)) {
+      SetProjectedShadows(projShadows);
+    }
+    ImGui::SetItemTooltip("Remastered's actor shadow: each actor casts a depth map straight down onto the\n"
+                          "floor, multiplied over it. Needs the Remastered world geometry; otherwise the\n"
+                          "original blob shadow is drawn.");
   }
 
   bool autoScale = sRenderScale <= 0.f;

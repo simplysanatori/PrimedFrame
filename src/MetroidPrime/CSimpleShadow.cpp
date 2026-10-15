@@ -14,7 +14,9 @@
 #ifdef TARGET_PC
 #include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "port_actor_shadow.h"
 #include "port_debug.h"
+#include <algorithm>
 #endif
 
 CSimpleShadow::CSimpleShadow(float scale, float userAlpha, float maxObjHeight, float displacement)
@@ -77,6 +79,74 @@ void CSimpleShadow::Calculate(const CAABox& aabb, const CTransform4f& xf,
     }
   }
 }
+
+#ifdef TARGET_PC
+void CSimpleShadow::PortCalculate(const CAABox& bounds, const CStateManager& mgr) {
+  const CVector3f lo = bounds.GetMinPoint();
+  const CVector3f hi = bounds.GetMaxPoint();
+  const float now[6] = {lo.GetX(), lo.GetY(), lo.GetZ(), hi.GetX(), hi.GetY(), hi.GetZ()};
+  if (xPortValid && !PortActorShadow::BoundsMoved(now, xPortBounds)) {
+    return;
+  }
+  std::copy(now, now + 6, xPortBounds);
+  const float top = hi.GetZ();
+  const float anchors[5][2] = {
+      {(lo.GetX() + hi.GetX()) * 0.5f, (lo.GetY() + hi.GetY()) * 0.5f},
+      {lo.GetX(), lo.GetY()},
+      {hi.GetX(), lo.GetY()},
+      {hi.GetX(), hi.GetY()},
+      {lo.GetX(), hi.GetY()},
+  };
+  const auto cast = [&](unsigned a) {
+    const CRayCastResult res = mgr.RayStaticIntersection(
+        CVector3f(anchors[a][0], anchors[a][1], top), CVector3f(0.f, 0.f, -1.f), 20.f,
+        CMaterialFilter::MakeExclude(CMaterialList(kMT_SeeThrough)));
+    xPortHasHit[a] = res.IsValid();
+    if (res.IsValid()) {
+      xPortHit[a] = top - res.GetTime();
+    }
+  };
+  if (!xPortValid) {
+    for (unsigned a = 0; a < PortActorShadow::kAnchors; ++a) {
+      cast(a);
+    }
+  } else {
+    cast(PortActorShadow::AnchorForUpdate(xPortUpdate++));
+  }
+  float hitMin = 0.f, hitMax = 0.f;
+  bool any = false;
+  xPortOpacity = 0.f;
+  for (unsigned a = 0; a < PortActorShadow::kAnchors; ++a) {
+    if (!xPortHasHit[a]) {
+      continue;
+    }
+    if (!any) {
+      xPortOpacity = PortActorShadow::Opacity(top, xPortHit[a], 20.f, x38_userAlpha);
+      hitMin = hitMax = xPortHit[a];
+      any = true;
+    } else {
+      hitMin = std::min(hitMin, xPortHit[a]);
+      hitMax = std::max(hitMax, xPortHit[a]);
+    }
+  }
+  xPortValid = any;
+  if (!any) {
+    return;
+  }
+  const float dx = hi.GetX() - lo.GetX();
+  const float dy = hi.GetY() - lo.GetY();
+  const float dz = hi.GetZ() - lo.GetZ();
+  const float cx = (lo.GetX() + hi.GetX()) * 0.5f;
+  const float cy = (lo.GetY() + hi.GetY()) * 0.5f;
+  const float map[6] = {cx, cy, (lo.GetZ() + hi.GetZ()) * 0.5f, std::max(dx * 0.5f, 0.01f),
+                        std::max(dy * 0.5f, 0.01f), std::max(dz * 0.5f, 0.01f)};
+  std::copy(map, map + 6, xPortMap);
+  const PortActorShadow::Box box = PortActorShadow::ReceiverBox(
+      cx, cy, hitMin, hitMax, PortActorShadow::ReceiverRadius(dx, dy, x30_scale));
+  std::copy(box.centre, box.centre + 3, xPortReceiver);
+  std::copy(box.half, box.half + 3, xPortReceiver + 3);
+}
+#endif
 
 void CSimpleShadow::Render(const CTexture* tex) const {
   if (!x48_24_collision)

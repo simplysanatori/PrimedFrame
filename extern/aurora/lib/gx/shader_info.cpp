@@ -383,6 +383,7 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
   if (config.shadow) {
     info.usesShadow = true;
     info.shadowReceive = shadow_receives(config);
+    info.actorDecal = info.shadowReceive && config.actorDecal != 0;
     // The caster and receiver matrices, the sun's direction and colour (GXState::shadowUniform)
     info.uniformSize += sizeof(g_gxState.shadowUniform);
   }

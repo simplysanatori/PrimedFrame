@@ -29,6 +29,7 @@
 
 #ifdef TARGET_PC
 #include "port_debug.h"
+#include "port_actor_shadow.h"
 #include "port_presentation_rules.h"
 #include "Kyoto/Math/CQuaternion.hpp"
 #endif
@@ -246,6 +247,11 @@ void CActor::PreRender(CStateManager& mgr, const CFrustumPlanes& planes) {
 
       // TODO why doesn't GetDrawShadow() work?
       if (GetShadowDirty() && xe5_24_shadowEnabled && HasShadow()) {
+#ifdef TARGET_PC
+        if (PortActorShadow::Active()) {
+          Shadow()->PortCalculate(GetModelData()->GetBounds(GetTransform()), mgr);
+        } else
+#endif
         Shadow()->Calculate(GetModelData()->GetBounds(), GetTransform(), mgr);
         SetShadowDirty(false);
       }
@@ -279,6 +285,11 @@ void CActor::PreRender(CStateManager& mgr, const CFrustumPlanes& planes) {
       if (GetShadowDirty() && xe5_24_shadowEnabled && HasShadow()) {
         if (planes.BoxInFrustumPlanes(
                 GetShadow()->GetMaxShadowBox(GetModelData()->GetBounds(GetTransform()))) == true) {
+#ifdef TARGET_PC
+          if (PortActorShadow::Active()) {
+            Shadow()->PortCalculate(GetModelData()->GetBounds(GetTransform()), mgr);
+          } else
+#endif
           Shadow()->Calculate(GetModelData()->GetBounds(), GetTransform(), mgr);
           SetShadowDirty(false);
 #ifdef TARGET_PC
@@ -309,6 +320,22 @@ void CActor::AddToRenderer(const CFrustumPlanes& planes, const CStateManager& mg
       }
     }
 
+#ifdef TARGET_PC
+    // The projected shadow has its own validity and bounds: the retail ones are never set.
+    if (PortActorShadow::Active()) {
+      if (mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_XRay &&
+          mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_Thermal && GetDrawShadow() &&
+          GetShadow()->PortValid()) {
+        const float* rb = GetShadow()->PortReceiverBox();
+        const CAABox box(CVector3f(rb[0] - rb[3], rb[1] - rb[4], rb[2] - rb[5]),
+                         CVector3f(rb[0] + rb[3], rb[1] + rb[4], rb[2] + rb[5]));
+        if (planes.BoxInFrustumPlanes(box) == true) {
+          PortActorShadow::Register(this);
+        }
+      }
+      return;
+    }
+#endif
     if (mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_XRay &&
         mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_Thermal && GetDrawShadow() &&
         GetShadow()->Valid() && planes.BoxInFrustumPlanes(GetShadow()->GetBounds()) == true) {
@@ -454,6 +481,15 @@ bool CActor::PortRenderShadowCaster(const CStateManager& mgr) const {
     RenderInternal(mgr);
   }
   return true;
+}
+#endif
+
+#ifdef TARGET_PC
+void CActor::PortRenderActorShadowCaster(const CStateManager& mgr) const {
+  if (!HasModelData() || NullModel() || !IsDrawEnabled() || !xe7_27_enableRender) {
+    return;
+  }
+  RenderInternal(mgr);
 }
 #endif
 

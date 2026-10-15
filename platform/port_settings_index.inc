@@ -124,6 +124,7 @@
 {"Video", "Quality", "Quality", "Anisotropic filtering", "anisotropic texture filter sharp"},
 {"Video", "Quality", "Quality", "Per-pixel lighting", "per pixel lighting shading smooth dolphin"},
 {"Video", "Quality", "Quality", "Sun shadows", "sun shadow cascades outdoor remastered look"},
+{"Video", "Quality", "Quality", "Projected actor shadows", "actor shadow blob projected depth map floor remastered"},
 {"Video", "Quality", "Quality", "Auto render scale (native)", "resolution scale native auto render"},
 {"Video", "Quality", "Quality", "EFB scale", "resolution scale efb framebuffer"},
 {"Video", "Quality", "Quality", "Dynamic resolution", "dynamic resolution scale performance fps"},

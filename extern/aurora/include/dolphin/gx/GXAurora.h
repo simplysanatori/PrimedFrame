@@ -338,6 +338,9 @@ extern "C" {
 #define GX_AURORA_PORT_SCENE_HDR 0x006E
 // Port extension: the EFB copies that follow are linear scene copies (GXPortCopyScene). Payload: u8 on.
 #define GX_AURORA_PORT_COPY_SCENE 0x006F
+// Port extension: Remastered's actor shadow (GXPortActorShadow*). Payload: u8 mode (0 end, 1 casters
+// begin, 2 decal begin, 3 render the actor maps), then for 1 and 2 u8 layer and 16 vec4 floats.
+#define GX_AURORA_PORT_ACTOR_SHADOW 0x0070
 
 #define GX2_SET_POLYGON_OFFSET 0x1000
 

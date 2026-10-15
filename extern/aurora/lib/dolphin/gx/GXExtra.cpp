@@ -5,6 +5,7 @@
 #include "../../gfx/pipeline_cache.hpp"
 #include "../../gfx/probe.hpp"
 #include "../../gfx/shadow.hpp"
+#include "../../gfx/actor_shadow.hpp"
 #include "../../gfx/volfog.hpp"
 #include "../../gfx/thermal.hpp"
 #include "../../gfx/xray.hpp"
@@ -339,6 +340,38 @@ GXBool GXPortRenderShadowMap() {
     return false;
   }
   GX_WRITE_AURORA(GX_AURORA_PORT_SHADOW_RENDER);
+  return true;
+}
+
+void GXPortActorShadowCasters(u32 layer, const f32 clip[16]) {
+  GX_WRITE_AURORA(GX_AURORA_PORT_ACTOR_SHADOW);
+  GX_WRITE_U8(1);
+  GX_WRITE_U8(static_cast<u8>(layer));
+  for (u32 i = 0; i < 64; ++i) {
+    GX_WRITE_F32(i < 16 ? clip[i] : 0.f);
+  }
+}
+
+void GXPortActorShadowDecal(u32 layer, const f32 params[64]) {
+  GX_WRITE_AURORA(GX_AURORA_PORT_ACTOR_SHADOW);
+  GX_WRITE_U8(2);
+  GX_WRITE_U8(static_cast<u8>(layer));
+  for (u32 i = 0; i < 64; ++i) {
+    GX_WRITE_F32(params[i]);
+  }
+}
+
+void GXPortActorShadowEnd() {
+  GX_WRITE_AURORA(GX_AURORA_PORT_ACTOR_SHADOW);
+  GX_WRITE_U8(0);
+}
+
+GXBool GXPortActorShadowRender() {
+  if (sDrawIdMode || !aurora::gfx::actor_shadow::ensure_task()) {
+    return false;
+  }
+  GX_WRITE_AURORA(GX_AURORA_PORT_ACTOR_SHADOW);
+  GX_WRITE_U8(3);
   return true;
 }
 

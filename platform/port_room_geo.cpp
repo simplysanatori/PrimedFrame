@@ -1290,6 +1290,31 @@ void SetLoadedAreas(const uint32_t* mreas, size_t count) {
   }
 }
 
+namespace {
+struct ShadowReceiver {
+  const CModel* model;
+  const CTransform4f* xf;
+  CAABox bounds;
+};
+std::vector< ShadowReceiver > sShadowReceivers;
+} // namespace
+
+void ClearShadowReceivers() { sShadowReceivers.clear(); }
+
+void DrawShadowReceivers(const float lo[3], const float hi[3]) {
+  CGraphics::DisableAllLights();
+  for (const ShadowReceiver& r : sShadowReceivers) {
+    const CVector3f& a = r.bounds.GetMinPoint();
+    const CVector3f& b = r.bounds.GetMaxPoint();
+    if (b.GetX() < lo[0] || a.GetX() > hi[0] || b.GetY() < lo[1] || a.GetY() > hi[1] ||
+        b.GetZ() < lo[2] || a.GetZ() > hi[2]) {
+      continue;
+    }
+    gpRender->SetModelMatrix(*r.xf);
+    r.model->DrawUnsortedParts(CModelFlags::Normal());
+  }
+}
+
 bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPlanes& frustum) {
   if (GetMode() == Mode::Off) {
     return false;
@@ -1519,6 +1544,9 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
                        bool inView = true, const Placed* driven = nullptr) {
     (inView ? visible : casters)
         .push_back({cutout(model), distanceSq(bounds), &drawn, &xf, lights, &bounds, glow, lightmap, driven});
+    if (inView && !visible.back().cutout) {
+      sShadowReceivers.push_back({&drawn, &xf, bounds});
+    }
   };
   // In view, or else whether it can cast into view: an opaque model in the shadow map's box.
   const auto inView = [&](Model& model, const CAABox& bounds, bool& casts) {

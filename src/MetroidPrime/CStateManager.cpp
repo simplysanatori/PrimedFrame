@@ -1,5 +1,6 @@
 #define CSTATEMANAGER_OUT_OF_LINE_GETPLAYER
 #include "MetroidPrime/CStateManager.hpp"
+#include "port_actor_shadow.h"
 #include "port_apclient.h"
 #include "port_collision_view.h"
 #include "port_debug.h"
@@ -3325,6 +3326,8 @@ void CStateManager::DrawWorld() const {
                       x870_cameraManager->IsInCinematicCamera(), !thermal && visor != CPlayerState::kPV_XRay && !portCollisionOnly,
                       !thermal && visor != CPlayerState::kPV_XRay);
   GXPortSetShadowCaster(portShadow);
+  PortActorShadow::BeginFrame();
+  PortRoomGeo::ClearShadowReceivers();
 #endif
   for (int i = areas.size() - 1; i >= 0; --i) {
     const CGameArea& area = *areas[i];
@@ -3548,6 +3551,9 @@ void CStateManager::DrawWorld() const {
   if (portShadow) {
     GXPortSetShadowCaster(false);
     GXPortRenderShadowMap();
+  }
+  if (!thermal && visor != CPlayerState::kPV_XRay && !portCollisionOnly) {
+    PortActorShadow::RenderFrame(*this, backupViewMatrix);
   }
   if (!thermal) {
     PortCollisionView::Draw(*this, areas.begin(), areas.size());
