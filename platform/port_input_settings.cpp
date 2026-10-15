@@ -100,6 +100,13 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     if (std::isfinite(f) && f >= 0.f && f <= kGyroThresholdMax) {
       (key == "gyro_smoothing" ? s.gyroSmoothing : s.gyroTightening) = f;
     }
+  } else if (key == "gyro_cursor_angle") {
+    const float f = ParseFloat(value);
+    if (std::isfinite(f) && f >= kGyroCursorAngleMin && f <= kGyroCursorAngleMax) {
+      s.gyroCursorAngle = f;
+    }
+  } else if (key == "gyro_cursor_camera") {
+    s.gyroCursorCamera = ParseBool(value);
   } else if (key == "gyro_sensitivity") {
     const float f = ParseFloat(value);
     if (std::isfinite(f) && f >= kGyroSensitivityMin && f <= kGyroSensitivityMax) {
@@ -304,6 +311,8 @@ void WriteAimSettings(std::ostream& out) {
   out << "gyro_auto_calibrate=" << (s.gyroAutoCalibrate ? 1 : 0) << '\n';
   out << "gyro_smoothing=" << s.gyroSmoothing << '\n';
   out << "gyro_tightening=" << s.gyroTightening << '\n';
+  out << "gyro_cursor_angle=" << s.gyroCursorAngle << '\n';
+  out << "gyro_cursor_camera=" << (s.gyroCursorCamera ? 1 : 0) << '\n';
   out << "touch_aim=" << (s.touchAim ? 1 : 0) << '\n';
   out << "touch_aim_speed=" << s.touchAimSpeed << '\n';
   out << "touch_side_margin=" << s.touchSideMargin.load() << '\n';

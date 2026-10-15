@@ -309,6 +309,12 @@ float sMouseFrameY = 0.f;
 // which is dropped whenever the mouse is not captured (twin stick, phones).
 float sGyroPendingX = 0.f;
 float sGyroPendingY = 0.f;
+// With pointer aim and "Gyro also turns the camera": the gyro's camera turn, in
+// the mouse's pixels, kept apart since the pointer takes the rest of the travel.
+float sGyroCameraPendingX = 0.f;
+float sGyroCameraPendingY = 0.f;
+float sGyroCameraFrameX = 0.f;
+float sGyroCameraFrameY = 0.f;
 // The "Gyro aim" binding, set each frame by the input engine before PollGyro.
 bool sGyroButtonHeld = false;
 // The twin stick's aim speed at the last tick, in pixels per second, so frames
@@ -1998,6 +2004,8 @@ bool ReadGyroRates(float& pitch, float& yaw, float dt) {
 }
 } // namespace
 
+static void PointerAimScale(float& sx, float& sy);
+
 void PollGyro() {
   EnsureInitialized();
   // Called once per presented frame, which is not once per tick when the
@@ -2059,18 +2067,34 @@ void PollGyro() {
   // Natural scale: the pending pixels become mouse_sensitivity rad each in
   // direct aim (with the mouse inversion applied), so divide that back out and
   // pre-undo the inversion: gyro turns gyro_sensitivity times the pad's angle
-  // whatever the mouse is set to. Pointer aim scales by the same sensitivity
-  // but has no inversion. x right / y up; the aim state expects right/down.
+  // whatever the mouse is set to. x right / y up; the aim state expects right/down.
   const float perPixel = MouseSensitivity();
   if (!(perPixel > 0.f)) {
     return;
   }
-  const bool direct = !PointerAim();
-  const float sx = direct && MouseInvertX() ? -1.f : 1.f;
-  const float sy = direct && MouseInvertY() ? -1.f : 1.f;
+  const float sx = MouseInvertX() ? -1.f : 1.f;
+  const float sy = MouseInvertY() ? -1.f : 1.f;
   const float scale = sInput.gyroSensitivity * dt / perPixel;
-  sGyroPendingX += sx * yaw * scale;
-  sGyroPendingY -= sy * pitch * scale;
+  if (!PointerAim()) {
+    sGyroPendingX += sx * yaw * scale;
+    sGyroPendingY -= sy * pitch * scale;
+    return;
+  }
+  // Pointer aim: gyro_cursor_angle degrees of pad turn sweep the pointer across
+  // the screen (2 pointer units), at the same pixels per degree both ways, so
+  // divide out the window and mouse scaling the pointer applies. No inversion.
+  float px = 0.f, py = 0.f;
+  PointerAimScale(px, py);
+  const float sweep = sInput.gyroCursorAngle * (PortMouse::kPi / 180.f);
+  if (px > 0.f && sweep > 0.f) {
+    const float cursor = 2.f / sweep * dt / px;
+    sGyroPendingX += yaw * cursor;
+    sGyroPendingY -= pitch * cursor;
+  }
+  if (sInput.gyroCursorCamera) {
+    sGyroCameraPendingX += sx * yaw * scale;
+    sGyroCameraPendingY -= sy * pitch * scale;
+  }
 }
 
 void ResetMouseAim() {
@@ -2082,6 +2106,7 @@ void ResetMouseAim() {
   sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
   sTouchLookFrameX = sTouchLookFrameY = 0.f;
   sGyroPendingX = sGyroPendingY = sStickAimVelX = sStickAimVelY = 0.f;
+  sGyroCameraPendingX = sGyroCameraPendingY = sGyroCameraFrameX = sGyroCameraFrameY = 0.f;
   std::lock_guard lock(sTouchAimMutex);
   sTouchAimPendingX = sTouchAimPendingY = 0.f;
 }
@@ -2207,7 +2232,9 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
     } else {
       sPointerAim.Center();
     }
-    dx = dy = 0.f;
+    // Only the gyro's own camera turn (if on) moves the view directly.
+    dx = sGyroCameraFrameX;
+    dy = sGyroCameraFrameY;
   }
   const bool applied = sMouseAimState.Update(active, locked, x, y, z, dx, dy, MouseSensitivity(),
                                             MouseInvertX(), MouseInvertY());
@@ -2220,7 +2247,7 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   }
   sPointerAimFree = pointer && applied;
   if (!sPointerAimFree) sPointerAim.Center();
-  if (applied) sMouseFrameX = sMouseFrameY = 0.f;
+  if (applied) sMouseFrameX = sMouseFrameY = sGyroCameraFrameX = sGyroCameraFrameY = 0.f;
   sAimAppliedLastTick = applied;
   return applied;
 }
@@ -2619,6 +2646,9 @@ void BeginFrameMouse() {
   sMouseFrameY = sMousePendingY + sGyroPendingY + (directAim ? touchY : 0.f);
   sMousePendingX = sMousePendingY = 0.f;
   sGyroPendingX = sGyroPendingY = 0.f;
+  sGyroCameraFrameX = sGyroCameraPendingX;
+  sGyroCameraFrameY = sGyroCameraPendingY;
+  sGyroCameraPendingX = sGyroCameraPendingY = 0.f;
   // AddStickAim sets it again during this tick's input update.
   sStickAimVelX = sStickAimVelY = 0.f;
   sAimAppliedLastTick = false;
@@ -2690,6 +2720,13 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
     PortMouse::PointerAim::Move(dx * sx, dy * sy, px, py);
     PortMouse::PointerAim::TurnAt(px, py, PointerAimBox() / 100.f,
                                   PointerAimTurn() * (PortMouse::kPi / 180.f), ahead, dyaw, dpitch);
+    // Plus the gyro's own camera turn so far.
+    float yaw = 0.f, pitch = 0.f;
+    if (sMouseAimState.Preview(sGyroCameraPendingX, sGyroCameraPendingY, MouseSensitivity(),
+                               MouseInvertX(), MouseInvertY(), yaw, pitch)) {
+      dyaw += static_cast<float>(std::remainder(double(yaw) - sMouseAimState.yaw, 2.0 * PortMouse::kPi));
+      dpitch += pitch - sMouseAimState.pitch;
+    }
     return dyaw != 0.f || dpitch != 0.f;
   }
   float yaw = 0.f;
@@ -6599,6 +6636,30 @@ void DrawControlsTouchGyro() {
   ImGui::Text("Gyro: %s", GyroStatus());
   ImGui::EndDisabled();
   ImGui::BeginDisabled(sInput.gyroMode == 0);
+  // With pointer aim the gyro moves the pointer at its own speed; the camera
+  // sensitivity then only matters if the gyro also turns the camera.
+  const bool gyroPointer = PointerAim();
+  if (gyroPointer) {
+    float cursorAngle = sInput.gyroCursorAngle;
+    if (ImGui::SliderFloat("Pointer speed##gyro", &cursorAngle, PortInput::kGyroCursorAngleMin,
+                           PortInput::kGyroCursorAngleMax, "%.0f deg across the screen")) {
+      sInput.gyroCursorAngle =
+          std::clamp(cursorAngle, PortInput::kGyroCursorAngleMin, PortInput::kGyroCursorAngleMax);
+      MarkDirty();
+    }
+    ItemHelp("Pointer aim is on, so the gyro moves the pointer like a mouse cursor: this is how far "
+             "the pad turns to sweep the pointer from one side of the screen to the other. Smaller "
+             "is faster. Independent of the mouse sensitivity.");
+    bool cursorCamera = sInput.gyroCursorCamera;
+    if (ImGui::Checkbox("Gyro also turns the camera", &cursorCamera)) {
+      sInput.gyroCursorCamera = cursorCamera;
+      MarkDirty();
+    }
+    ItemHelp("Turns the camera with the gyro as without pointer aim (at the Sensitivity below) while "
+             "it also moves the pointer, so the view follows the pad and the pointer fine-tunes "
+             "the aim.");
+  }
+  ImGui::BeginDisabled(gyroPointer && !sInput.gyroCursorCamera);
   float gyroSensitivity = sInput.gyroSensitivity;
   // The ## suffix keeps its ImGui id apart from the mouse Sensitivity slider.
   if (ImGui::SliderFloat("Sensitivity##gyro", &gyroSensitivity, PortInput::kGyroSensitivityMin,
@@ -6606,7 +6667,9 @@ void DrawControlsTouchGyro() {
     SetGyroSensitivity(gyroSensitivity);
   }
   ItemHelp("How far the camera turns per turn of the pad: at 1.00x turning the pad 90 degrees turns "
-           "the camera 90 degrees, at 2.00x 180. Independent of the mouse sensitivity and invert.");
+           "the camera 90 degrees, at 2.00x 180. Independent of the mouse sensitivity and invert. "
+           "With pointer aim it applies only if the gyro also turns the camera.");
+  ImGui::EndDisabled();
   // Listed by how common they are; the setting keeps PortGyro::Space's numbers.
   static constexpr int kSpaceOrder[] = {PortGyro::kPlayer, PortGyro::kWorld, PortGyro::kLocal, PortGyro::kLocalRoll,
                                         PortGyro::kLocalBoth};

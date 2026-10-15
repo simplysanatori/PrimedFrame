@@ -103,6 +103,11 @@
   are JoyShockMapper-style: turns below the smoothing threshold are averaged over
   0.125 s, fading to direct by twice it; turns below the tightening threshold are
   scaled by speed/threshold.
+  With pointer aim on, the gyro moves the pointer like a mouse cursor:
+  `gyro_cursor_angle` (degrees, 5-180, default 40) is how far the pad turns to
+  sweep it across the screen, independent of the mouse sensitivity. With
+  `gyro_cursor_camera` (default off) the gyro also turns the camera at
+  `gyro_sensitivity` while it moves the pointer.
 - Spring Ball (Controls > Options, persisted as `spring_ball`, off by default): C-stick
   up in morph ball jumps, as in Metroid Prime Trilogy and the randomprime discs
   the Archipelago world makes, once the Morph Ball Bombs are held. It is a bomb

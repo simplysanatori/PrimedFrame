@@ -100,6 +100,15 @@ int main() {
   Check(Text().find("gyro_smoothing=5\n") != std::string::npos &&
             Text().find("gyro_tightening=3\n") != std::string::npos,
         "gyro filter written");
+  Check(Get().gyroCursorAngle == PortInput::kGyroCursorAngleDefault && !Get().gyroCursorCamera,
+        "gyro cursor defaults");
+  ApplySetting("gyro_cursor_angle", "60");
+  ApplySetting("gyro_cursor_angle", "200");
+  ApplySetting("gyro_cursor_camera", "1");
+  Check(Get().gyroCursorAngle == 60.f && Get().gyroCursorCamera, "gyro cursor");
+  Check(Text().find("gyro_cursor_angle=60\n") != std::string::npos &&
+            Text().find("gyro_cursor_camera=1\n") != std::string::npos,
+        "gyro cursor written");
   ApplySetting("shift_key_alt", "44");
   ApplySetting("turbo_pad", "3");
   Check(Get().shiftBindings[1] == 44 && Get().turboBindings[2] == 3, "bindings");
