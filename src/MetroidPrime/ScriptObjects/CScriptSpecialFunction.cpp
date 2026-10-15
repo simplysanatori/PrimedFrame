@@ -787,6 +787,14 @@ void CScriptSpecialFunction::ThinkSpinnerController(float dt, CStateManager& mgr
   const bool noBackward = xec_locatorName.find(rstl::string_l("NoBackward"), 0) != -1;
   const float pointOneByDt = 0.1f * dt;
   const float twoByDt = 2.f * dt;
+#ifdef TARGET_PC
+  // The push is added once per tick but the decay is per second, so off 60 Hz the push is
+  // scaled to keep the 60 Hz lift per second (at 30 Hz a power shot did not move the
+  // Sunchamber mirrors and a missile no longer raised them fully).
+  const float pushScale = PortDebug::TickPeriod() * 60.f;
+#else
+  const float pushScale = 1.f;
+#endif
 
   for (rstl::vector< SConnection >::const_iterator conn = GetConnectionList().begin();
        conn != GetConnectionList().end(); ++conn) {
@@ -821,7 +829,7 @@ void CScriptSpecialFunction::ThinkSpinnerController(float dt, CStateManager& mgr
             }
 
             x180_ = spinImpulse;
-            x138_ += 0.01f * spinImpulse * xfc_float1;
+            x138_ += 0.01f * spinImpulse * xfc_float1 * pushScale;
 
             if (!noBackward) {
               x138_ -= decay;
@@ -830,7 +838,7 @@ void CScriptSpecialFunction::ThinkSpinnerController(float dt, CStateManager& mgr
             x138_ = previous - twoByDt;
           }
         } else if (mode == kSCM_One) {
-          x138_ = (0.01f * x16c_) * xfc_float1 + previous;
+          x138_ = (0.01f * x16c_) * xfc_float1 * pushScale + previous;
 
           if (!noBackward) {
             x138_ -= decay;

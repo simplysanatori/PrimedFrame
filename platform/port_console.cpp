@@ -828,6 +828,8 @@ void CmdObj(CStateManager& mgr) {
   if (const CScriptSpecialFunction* func = TCastToConstPtr< CScriptSpecialFunction >(ent)) {
     Out("special function %d, locator \"%s\"", static_cast< int >(func->PortFunction()),
         func->PortLocatorName().data());
+    Out("floats %.3f %.3f %.3f %.3f, phase %.4f, push %.4f", func->PortFloat(0), func->PortFloat(1),
+        func->PortFloat(2), func->PortFloat(3), func->PortSpinnerPhase(), func->PortSpinnerPush());
   }
   if (const CScriptPlayerHint* hint = TCastToConstPtr< CScriptPlayerHint >(ent)) {
     Out("player hint flags 0x%x, priority %d, count %d", hint->GetOverrideFlags(), hint->GetPriority(),
