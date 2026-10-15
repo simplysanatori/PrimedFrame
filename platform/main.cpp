@@ -932,11 +932,6 @@ int main(int argc, char** argv) {
     const unsigned long kResidentMiB = 256;
 #endif
     const unsigned long kResidentFrameBuffers = 2;
-    // The arrays that miss the resident region are sent in the frame's storage buffer, and
-    // on a device whose region fills that is nearly all of them: the heaviest room measured
-    // (Main Plaza, nothing resident) pushed 24 MB of them, so 6x (48 MiB) holds it 2x.
-    // Only the storage buffer is that big; vertices and indices stay at kResidentFrameBuffers.
-    const unsigned long kResidentStorageBuffers = 6;
     bool resident = roomGeometry && PortDebug::RoomGeoResidentAtStartup();
     resident = roomGeometry && port::EnvFlag("MP_ROOM_GEO_RESIDENT", resident);
     uint32_t residentMiB = 0;
@@ -950,8 +945,9 @@ int main(int argc, char** argv) {
     if (envFrameBuffers >= 0) {
         frameBufferScale = static_cast<uint32_t>(std::clamp(static_cast<unsigned long>(envFrameBuffers), 1UL, 16UL));
     }
-    // 0 follows frameBufferScale; a resident room geometry mod gets its own for the arrays.
-    uint32_t frameStorageScale = resident && envFrameBuffers < 0 ? kResidentStorageBuffers : 0;
+    // 0 follows frameBufferScale and, in resident mode, grows after an overflow (aurora,
+    // up to 6x); MP_STORAGE_BUFFERS pins it.
+    uint32_t frameStorageScale = 0;
     const int envStorageBuffers = port::EnvInt("MP_STORAGE_BUFFERS", -1);
     if (envStorageBuffers >= 0) {
         frameStorageScale = static_cast<uint32_t>(std::clamp(static_cast<unsigned long>(envStorageBuffers), 1UL, 16UL));

@@ -1551,7 +1551,12 @@ Range push_storage(const uint8_t* data, size_t length) {
   if (!check_recording("push_storage")) {
     return {};
   }
-  return push(current_frame_packet().storage, data, length, resources().limits.minStorageBufferOffsetAlignment);
+  const auto range =
+      push(current_frame_packet().storage, data, length, resources().limits.minStorageBufferOffsetAlignment);
+  if (overflowed(range)) {
+    request_storage_growth();
+  }
+  return range;
 }
 
 Range push_texture_data(const uint8_t* data, u32 bytesPerRow, u32 rowsPerImage) {
