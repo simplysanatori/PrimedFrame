@@ -10,7 +10,7 @@
 #include "Kyoto/Particles/CParticleGlobals.hpp"
 #include "Kyoto/Particles/IElement.hpp"
 #include "port_fx_debug.h"
-#include "port_swoosh_ring.h"
+#include "port_room_env.h"
 #include "port_vfx_particles.h"
 
 using PortElectric2::V3;
@@ -274,13 +274,13 @@ void CParticleElectric2Port::Render(int frame, const CTransform4f& view) {
   uvXf.Eval(vfx, frame);
   const float modu[4] = {mModu.GetRed(), mModu.GetGreen(), mModu.GetBlue(), mModu.GetAlpha()};
   const int tspn = IntOr(mDesc->xPortTSPN, frame, 0);
-
-  const CVector3f camPos = view.GetTranslation();
-  const PortSwooshRing::Vec cam{camPos.GetX(), camPos.GetY(), camPos.GetZ()};
-  auto vec = [](const V3& v) { return PortSwooshRing::Vec{v.x, v.y, v.z}; };
+  const V3 cameraForward = ToV3(view.GetForward());
+  const int nfom = IntOr(mDesc->xPortNFOM, frame, 0);
+  float tone[3][4];
+  const float exposure = PortRoomEnv::Tone(tone) ? PortRoomEnv::FrameExposure() : 1.f;
 
   std::vector< aurora::gfx::vfx::Vertex > verts;
-  auto emit = [&](const PortSwooshRing::Vec& p, float u, float v, const float color[4], const float extra[4][4]) {
+  auto emit = [&](const V3& p, float u, float v, const float color[4], const float extra[4][4]) {
     aurora::gfx::vfx::Vertex out{};
     out.pos[0] = p.x;
     out.pos[1] = p.y;
@@ -298,8 +298,9 @@ void CParticleElectric2Port::Render(int frame, const CTransform4f& view) {
 
   for (const Bolt& bolt : mBolts) {
     float color[4];
+    const float iten = PortElectric2::ExposureCompensatedIntensity(bolt.iten, exposure);
     for (int c = 0; c < 4; ++c) {
-      color[c] = bolt.color[c] * (c < 3 ? bolt.iten : 1.f) * modu[c];
+      color[c] = bolt.color[c] * (c < 3 ? iten : 1.f) * modu[c];
     }
     for (const auto& line : bolt.lines) {
       const int n = int(line.size());
@@ -308,14 +309,19 @@ void CParticleElectric2Port::Render(int frame, const CTransform4f& view) {
       }
       // UpdateRenderData_Electric2 0x2b8694: u advances 1/TSPN per segment, or 1/nodes when TSPN is absent.
       const float segLen = tspn > 0 ? 1.f / float(tspn) : 1.f / float(n);
-      std::vector<PortSwooshRing::Vec> a(static_cast<size_t>(n)), b(static_cast<size_t>(n));
+      std::vector<V3> a(static_cast<size_t>(n)), b(static_cast<size_t>(n));
+      bool validFrame = true;
       for (int i = 0; i < n; ++i) {
-        const PortSwooshRing::Vec pos = vec(line[size_t(i)]);
-        const PortSwooshRing::Vec older = i > 0 ? vec(line[size_t(i - 1)]) : pos;
-        const PortSwooshRing::Vec newer = i + 1 < n ? vec(line[size_t(i + 1)]) : pos;
-        const PortSwooshRing::Vec axis =
-            PortSwooshRing::WidthAxis(pos, cam, i > 0 ? &older : nullptr, i + 1 < n ? &newer : nullptr);
-        PortSwooshRing::Ring(pos, axis, bolt.leftRad, bolt.rightRad, a[size_t(i)], b[size_t(i)]);
+        V3 width;
+        if (!PortElectric2::Electric2RibbonWidthAxis(line, size_t(i), nfom, mSide, cameraForward, width)) {
+          validFrame = false;
+          break;
+        }
+        PortElectric2::Electric2RibbonSidePoints(line[size_t(i)], width, bolt.leftRad, bolt.rightRad,
+                                                 a[size_t(i)], b[size_t(i)]);
+      }
+      if (!validFrame) {
+        continue;
       }
       for (int i = 0; i + 1 < n; ++i) {
         const float u0 = float(i) * segLen;

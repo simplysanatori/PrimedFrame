@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -23,6 +24,63 @@ inline bool IsNormalizable(const V3& v) {
          Dot(v, v) >= 0x1p-46f;
 }
 inline V3 Normalized(const V3& v) { return v * (1.f / std::sqrt(Dot(v, v))); }
+
+// The source's CVector3f basis vectors (main.raw): skUp=(0,1,0), skForward=(0,0,1),
+// skBack=(0,0,-1). SIDE 2 uses camera forward as the reference for the ribbon frame.
+inline constexpr V3 kElectric2Up{0.f, 1.f, 0.f};
+inline constexpr V3 kElectric2Forward{0.f, 0.f, 1.f};
+inline constexpr V3 kElectric2Back{0.f, 0.f, -1.f};
+
+// InitBoltNodeOrientation 0xb76f98. NFOM=0 uses one endpoint tangent for every node;
+// NFOM=1 uses the next segment's tangent, with the final node inheriting the previous one.
+// SIDE=2's first basis row is camera-forward x tangent. If that is degenerate, the source
+// retries with skUpVector; other SIDE values use skUpVector and retry with skBackVector.
+// CrossIntoMatrixRow 0x286d70 rejects squared magnitudes below 2^-46.
+inline bool Electric2RibbonWidthAxis(const std::vector<V3>& line, size_t node, int nfom, int side,
+                                     const V3& cameraForward, V3& width) {
+  if (line.size() < 2 || node >= line.size()) {
+    return false;
+  }
+
+  V3 tangent;
+  if (nfom == 1 && node + 1 < line.size()) {
+    tangent = line[node + 1] - line[node];
+  } else if (nfom == 1) {
+    tangent = line[node] - line[node - 1];
+  } else {
+    tangent = line.back() - line.front();
+  }
+  if (!IsNormalizable(tangent)) {
+    tangent = kElectric2Forward;
+  } else {
+    tangent = Normalized(tangent);
+  }
+
+  const bool cameraFacing = side == 2;
+  const V3 reference = cameraFacing ? cameraForward : kElectric2Up;
+  width = Cross(reference, tangent);
+  if (!IsNormalizable(width)) {
+    width = Cross(cameraFacing ? kElectric2Up : kElectric2Back, tangent);
+    if (!IsNormalizable(width)) {
+      return false;
+    }
+  }
+  width = Normalized(width);
+  return true;
+}
+
+// SIDE=2 samples theta 0 (RRAD, positive local X) and theta 180 (LRAD, negative local X).
+inline void Electric2RibbonSidePoints(const V3& center, const V3& width, float leftRad, float rightRad,
+                                     V3& theta0, V3& theta180) {
+  theta0 = center + width * rightRad;
+  theta180 = center - width * leftRad;
+}
+
+// ELC2's vertex AddVar is multiplied by inverse exposure before the VFX shader applies
+// the room exposure. A missing/nonpositive exposure means no exposed-room factor is active.
+inline float ExposureCompensatedIntensity(float intensity, float exposure) {
+  return std::isfinite(exposure) && exposure > 0.f ? intensity / exposure : intensity;
+}
 
 // CRandom16 as the ELC2 object uses it: seed = seed * 0x41c64e6d + 0x3039, Float() reads the
 // low 28 bits (* 2^-28), integers the high half. (Advance-then-read order and the initial seed

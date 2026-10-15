@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 using namespace PortElectric2;
 
@@ -15,6 +16,7 @@ void Check(bool ok, const char* what) {
 }
 
 bool Same(const V3& a, const V3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+bool Near(float a, float b, float eps = 1e-5f) { return std::fabs(a - b) <= eps; }
 } // namespace
 
 int main() {
@@ -56,6 +58,17 @@ int main() {
   Check(bez.size() == 8 && Same(bez.front(), start) && Same(bez.back(), end), "Bezier ends pinned");
   Check(bez[3].y > 0.f, "Bezier bends toward the start direction");
 
+  // Both shipped Wave ELC2 assets author IEMT/FEMT direction=(0, 0.01, 0). The raw
+  // CalculatePointsForBolt branch at 0xb73cc0 sends that pair directly to the cubic path;
+  // it bypasses the later count comparison/linear loop at 0xb73d84/0xb73e48.
+  std::vector<V3> waveCurve;
+  Rng waveRng;
+  const V3 waveDirection{0.f, 0.01f, 0.f};
+  CalculatePointsForBolt(waveRng, prm, start, end, waveDirection, waveDirection, waveCurve, 0.f, 0.f);
+  Check(waveCurve.size() == 8 && Same(waveCurve.front(), start) && Same(waveCurve.back(), end) &&
+            waveCurve[3].y > 0.f,
+        "Wave's paired nonzero emitter directions take the four-control cubic path");
+
   // One node count and one point per node for the minimum.
   BoltParams one;
   one.nodes = 2;
@@ -63,6 +76,60 @@ int main() {
   Rng r5;
   CalculatePointsForBolt(r5, one, start, end, {}, {}, two, 0.5f, 0.1f);
   Check(two.size() == 2 && Same(two[1], end), "two-node bolt is its endpoints");
+
+  // SIDE=2, NFOM=0 uses camera-forward x the endpoint tangent for every node, rather than
+  // the swoosh renderer's local perspective frame. The chosen axes also pin the source handedness.
+  const std::vector<V3> bent{{0.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {1.f, 1.f, 0.f}, {1.f, 1.f, 1.f}};
+  const V3 cameraForward{0.f, 0.f, 1.f};
+  V3 sharedAxis{};
+  Check(Electric2RibbonWidthAxis(bent, 0, 0, 2, cameraForward, sharedAxis),
+        "SIDE=2 shared ribbon basis is valid");
+  bool shared = true;
+  for (size_t i = 1; i < bent.size(); ++i) {
+    V3 axis{};
+    shared = shared && Electric2RibbonWidthAxis(bent, i, 0, 2, cameraForward, axis) && Same(axis, sharedAxis);
+  }
+  Check(shared, "NFOM=0 shares the first-to-last tangent basis across nodes");
+  V3 otherNfomAxis{};
+  Check(Electric2RibbonWidthAxis(bent, 0, 2, 2, cameraForward, otherNfomAxis) &&
+            Same(otherNfomAxis, sharedAxis),
+        "NFOM values other than 1 follow the source's shared-tangent branch");
+
+  V3 screenUp{};
+  Check(Electric2RibbonWidthAxis(std::vector<V3>{{0.f, 0.f, 0.f}, {1.f, 0.f, 0.f}}, 0, 0, 2,
+                                cameraForward, screenUp) &&
+            Same(screenUp, V3{0.f, 1.f, 0.f}),
+        "camera-forward x forward beam gives positive screen-up width");
+  V3 perNode0{}, perNode1{};
+  Check(Electric2RibbonWidthAxis(bent, 0, 1, 2, cameraForward, perNode0) &&
+            Electric2RibbonWidthAxis(bent, 1, 1, 2, cameraForward, perNode1) &&
+            !Same(perNode0, perNode1),
+        "NFOM=1 uses per-node next-segment tangents");
+
+  const std::vector<V3> degenerate{{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
+  V3 fallbackAxis{};
+  Check(Electric2RibbonWidthAxis(degenerate, 0, 0, 2, cameraForward, fallbackAxis) &&
+            Same(fallbackAxis, V3{1.f, 0.f, 0.f}),
+        "degenerate tangent and camera cross use source forward/up fallbacks");
+  const std::vector<V3> parallel{{0.f, 0.f, 0.f}, {0.f, 1.f, 0.f}};
+  Check(!Electric2RibbonWidthAxis(parallel, 0, 0, 2, V3{0.f, 1.f, 0.f}, fallbackAxis),
+        "two degenerate source cross attempts do not invent a third basis");
+
+  V3 theta0{}, theta180{};
+  Electric2RibbonSidePoints(V3{10.f, 20.f, 30.f}, V3{0.f, 1.f, 0.f}, 0.25f, 0.1f, theta0, theta180);
+  Check(Near(theta0.y, 20.1f) && Near(theta180.y, 19.75f),
+        "SIDE=2 theta 0 uses RRAD and theta 180 uses LRAD");
+
+  constexpr float rawIntensity = 0.37f;
+  bool cancels = true;
+  for (float exposure : {0.25f, 0.5f, 1.f, 2.f, 4.f}) {
+    const float compensated = ExposureCompensatedIntensity(rawIntensity, exposure);
+    cancels = cancels && Near(compensated * exposure, rawIntensity);
+  }
+  Check(cancels, "ELC2 inverse exposure cancels the VFX exposure at varied frame exposures");
+  Check(ExposureCompensatedIntensity(rawIntensity, 0.f) == rawIntensity &&
+            ExposureCompensatedIntensity(rawIntensity, std::numeric_limits<float>::infinity()) == rawIntensity,
+        "missing or invalid exposure leaves ELC2 intensity unchanged");
 
   if (failures == 0) {
     std::puts("port_electric2_bolt: ok");
