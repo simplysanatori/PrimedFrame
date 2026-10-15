@@ -128,6 +128,10 @@ DolphinCard FindDolphinCard(const char* region = nullptr);
 std::filesystem::path NormalizeEmulatorFolder(const std::filesystem::path& picked);
 void SetEmulatorFolder(const std::string& path);
 std::string EmulatorFolder();
+// The emulator user folders autodetection knows about that exist on this
+// machine (they contain GC/), in preference order, ignoring the chosen folder.
+// Lets the player pick PrimeHack when Dolphin is installed too (issue #115).
+std::vector<std::filesystem::path> DetectedEmulatorFolders();
 // Share the emulator's card A with the port (desktop only): the port mounts
 // <emulator folder>/GC as its card base, so both read and write the same files.
 void SetShareEmulatorCard(bool share);

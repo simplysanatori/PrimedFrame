@@ -241,6 +241,7 @@
 {"System", "", "Memory card", "Export into save.bin...", "memory card export trilogy wii save.bin"},
 {"System", "", "Memory card", "Export to Dolphin/PrimeHack", "memory card export dolphin primehack saves"},
 {"System", "", "Memory card", "Emulator folder", "memory card emulator folder dolphin primehack path auto"},
+{"System", "", "Memory card", "Installed emulators", "memory card emulator installed detected dolphin primehack flatpak"},
 {"System", "", "Memory card", "Share memory card with emulator", "memory card share emulator dolphin primehack live saves"},
 {"System", "", "Memory card", "Open card folder", "memory card folder open directory"},
 #endif

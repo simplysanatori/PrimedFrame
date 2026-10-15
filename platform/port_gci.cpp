@@ -769,16 +769,9 @@ std::mutex sEmulatorMutex;
 std::string sEmulatorFolder;
 bool sShareCard = false;
 
-// Dolphin's (and PrimeHack's) user folders on this machine, in preference order.
-std::vector<fs::path> DolphinRoots() {
+// Where Dolphin (and PrimeHack) keep their user folders, in preference order.
+std::vector<fs::path> AutoDolphinRoots() {
   std::vector<fs::path> roots;
-  {
-    std::lock_guard<std::mutex> lock(sEmulatorMutex);
-    if (!sEmulatorFolder.empty()) {
-      roots.push_back(PathFromString(sEmulatorFolder));
-      return roots;
-    }
-  }
 #if defined(__ANDROID__)
   // No Dolphin to find.
 #elif defined(_WIN32)
@@ -825,7 +818,29 @@ std::vector<fs::path> DolphinRoots() {
   return roots;
 }
 
+// The chosen emulator folder, else the autodetected ones.
+std::vector<fs::path> DolphinRoots() {
+  {
+    std::lock_guard<std::mutex> lock(sEmulatorMutex);
+    if (!sEmulatorFolder.empty()) {
+      return {PathFromString(sEmulatorFolder)};
+    }
+  }
+  return AutoDolphinRoots();
+}
+
 } // namespace
+
+std::vector<fs::path> DetectedEmulatorFolders() {
+  std::vector<fs::path> found;
+  std::error_code ec;
+  for (const fs::path& root : AutoDolphinRoots()) {
+    if (fs::is_directory(root / "GC", ec)) {
+      found.push_back(root);
+    }
+  }
+  return found;
+}
 
 fs::path NormalizeEmulatorFolder(const fs::path& picked) {
   fs::path path = picked;

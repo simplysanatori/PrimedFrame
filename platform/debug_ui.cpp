@@ -4984,6 +4984,28 @@ void DrawEmulatorCard() {
     SaveSettings();
   }
   ImGui::EndDisabled();
+  // Issue #115: with Dolphin and PrimeHack both installed, Auto takes Dolphin,
+  // and the folder dialog may hide PrimeHack's ~/.var folder.
+  const std::vector<std::filesystem::path> detected = PortGci::DetectedEmulatorFolders();
+  if (!detected.empty()) {
+    auto label = [](const std::filesystem::path& root) {
+      const std::string path = PortGci::PathString(root);
+      return (path.find("primehack") != std::string::npos ? "PrimeHack: " : "Dolphin: ") + path;
+    };
+    const std::string preview = chosen.empty() ? "Auto" : chosen;
+    if (ImGui::BeginCombo("Installed emulators", preview.c_str())) {
+      for (const std::filesystem::path& root : detected) {
+        const std::string path = PortGci::PathString(root);
+        if (ImGui::Selectable(label(root).c_str(), path == chosen)) {
+          PortGci::SetEmulatorFolder(path);
+          SaveSettings();
+        }
+      }
+      ImGui::EndCombo();
+    }
+    ItemHelp("Dolphin and PrimeHack installs found on this computer. Pick one to use it instead of the "
+             "automatic choice.");
+  }
   bool share = PortGci::ShareEmulatorCard();
   ImGui::BeginDisabled(inGame);
   if (ImGui::Checkbox("Share memory card with emulator", &share)) {
