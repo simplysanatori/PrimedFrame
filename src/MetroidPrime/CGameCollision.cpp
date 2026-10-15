@@ -1041,6 +1041,29 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         riderVel = other->GetVelocityWR();
       }
 
+      // The port's overlap test also reports a player resting on (or grazing)
+      // a floor it is not moving into, which the 0xf948d4 per-contact filter
+      // skips for every contact (moving away relative to the rider, or a
+      // paired ceiling face). Nothing then blocks the step, so it takes the
+      // whole dt as a free target does; bisecting to lo would drop the time
+      // between lo and dt (a free jump lost 1/32 of its first push).
+      {
+        bool anyActing = false;
+        for (int i = 0; i < list.GetCount(); ++i) {
+          const CVector3f cn = list[i].GetNormalLeft();
+          if (cn.GetZ() < -0.70710677f || CVector3f::Dot(stateVel - riderVel, cn) <= 0.f) {
+            anyActing = true;
+            break;
+          }
+        }
+        if (!anyActing) {
+          actor.AddMotionState(actor.PredictMotion_Internal(stepDt - loT));
+          actor.ImpulseWR() = CVector3f::Zero();
+          PostProbe();
+          return stepDt;
+        }
+      }
+
       bool floorContact = false;
       CCollisionInfoList accepted;
       for (int i = 0; i < list.GetCount(); ++i) {
@@ -1158,6 +1181,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
 
   // 0xf943b4 MoveObject: one step, then up to ten more while time remains.
   CVector3f prevVel = actor.GetVelocityWR();
+  const CVector3f entryVel = prevVel;
+  const CVector3f entryPos = actor.GetTranslation();
   float remaining = dt - stepper.Step(dt);
   bool stalledFlag = false;
   if (remaining > 1e-5f) {
@@ -1200,8 +1225,20 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_Falling);
   }
   if (!(fabsf(remaining) < 1e-5f && !stalledFlag)) {
-    CollisionFailsafe(mgr, cache, actor, *actor.GetCollisionPrimitive(), nearList,
-                      remaining / dt, 2);
+    const bool resolved = CollisionFailsafe(mgr, cache, actor, *actor.GetCollisionPrimitive(),
+                                            nearList, remaining / dt, 2);
+    // 0xf943b4: a failsafe that did not reposition the actor, with the whole
+    // dt still unconsumed, stops it dead.
+    if (!resolved && fabsf(remaining - dt) < 1e-5f) {
+      actor.SetVelocityWR(CVector3f::Zero());
+    }
+    // 0xf943b4: falling fast (entry up-velocity < -0.75) and still speeding
+    // up although the actor did not move down, vertical velocity is zeroed.
+    const CVector3f endVel = actor.GetVelocityWR();
+    if (entryVel.GetZ() < -0.75f && endVel.GetZ() < entryVel.GetZ() &&
+        -0.001f < actor.GetTranslation().GetZ() - entryPos.GetZ()) {
+      actor.SetVelocityWR(CVector3f(endVel.GetX(), endVel.GetY(), 0.f));
+    }
   }
   actor.ClearForcesAndTorques();
   actor.MoveCollisionPrimitive(CVector3f::Zero());
@@ -1347,7 +1384,7 @@ void CGameCollision::MoveAndCollide(CStateManager& mgr, CPhysicsActor& actor, fl
   IsUser(0);
 }
 
-void CGameCollision::CollisionFailsafe(const CStateManager& mgr, CAreaCollisionCache& cache,
+bool CGameCollision::CollisionFailsafe(const CStateManager& mgr, CAreaCollisionCache& cache,
                                        CPhysicsActor& actor, const CCollisionPrimitive& prim,
                                        const TEntityList& nearList, float dtFrac,
                                        uint failsafeTicks) {
@@ -1362,7 +1399,7 @@ void CGameCollision::CollisionFailsafe(const CStateManager& mgr, CAreaCollisionC
     actor.SetNumTicksPartialUpdate(0);
     actor.SetNumTicksStuck(actor.GetNumTicksStuck() + 1);
     if (actor.GetNumTicksStuck() < failsafeTicks) {
-      return;
+      return false;
     }
 
     const CMotionState& oldState = actor.GetMotionState();
@@ -1376,6 +1413,7 @@ void CGameCollision::CollisionFailsafe(const CStateManager& mgr, CAreaCollisionC
                        0.5f * lastState.GetVelocity(), lastState.GetAngularMomentum() * 0.5f));
       gDebugPrintCount++;
       actor.SetNumTicksStuck(0);
+      return true; // repositioned to the last non-colliding state (0xc1fa68 returns 1)
     } else {
       actor.SetMotionState(CMotionState(oldState));
       rstl::optional_object< CVector3f > vec =
@@ -1386,6 +1424,7 @@ void CGameCollision::CollisionFailsafe(const CStateManager& mgr, CAreaCollisionC
                                           oldState.GetAngularMomentum()));
         actor.SetLastNonCollidingState(actor.GetMotionState());
         gDebugPrintCount++;
+        return true; // pushed out along a non-intersecting vector
       } else {
         gDebugPrintCount++;
         actor.SetLastNonCollidingState(
@@ -1397,6 +1436,7 @@ void CGameCollision::CollisionFailsafe(const CStateManager& mgr, CAreaCollisionC
     actor.SetLastNonCollidingState(actor.GetMotionState());
     actor.SetNumTicksStuck(0);
   }
+  return false;
 }
 
 rstl::optional_object< CVector3f >

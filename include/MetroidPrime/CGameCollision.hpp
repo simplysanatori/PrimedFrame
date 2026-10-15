@@ -92,7 +92,7 @@ public:
   FindNonIntersectingVector(const CStateManager& mgr, CAreaCollisionCache& cache,
                             CPhysicsActor& actor, const CCollisionPrimitive& prim,
                             const TEntityList& nearList); // name?
-  static void CollisionFailsafe(const CStateManager& mgr, CAreaCollisionCache& cache,
+  static bool CollisionFailsafe(const CStateManager& mgr, CAreaCollisionCache& cache,
                                 CPhysicsActor& actor,
                                 const CCollisionPrimitive& prim,
                                 const TEntityList& nearList, float dt,
