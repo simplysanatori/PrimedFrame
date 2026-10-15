@@ -1612,8 +1612,8 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
                                  {"slowbluetailswoosh2", 0x699EA052},
                                  {"jaggytrail", 0x5E11D659},
                                  {"spiderelectric", 0x4735D6E1},
-                                 {"wave2nd_1", 0x16871871},
-                                 {"wave2nd_2", 0x21D217FC}};
+                                 {"wave2ndelec2_1", 0x16871871},
+                                 {"wave2ndelec2_2", 0x21D217FC}};
   for (const Named& named : kNamed) {
     ModelUuid id;
     if (named.retail != 0 && retail.HasId(named.retail) && remastered.EffectByName(named.name, id)) {

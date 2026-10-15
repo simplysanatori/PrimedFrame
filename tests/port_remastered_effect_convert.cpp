@@ -662,6 +662,10 @@ void TestSwooshElectric() {
   PutFourCC(out, "ELC2");
   PutProperty(out, "SCNT", 1);
   PutConstant(out, 4);
+  PutProperty(out, "SIDE", 1);
+  PutConstant(out, 3);
+  PutProperty(out, "RADS", 3);
+  PutConstant(out, Bits(0.5f));
   PutProperty(out, "MTIN", 0);
   out.push_back(1);
   PutGuid(out, Fresh(2));
@@ -699,10 +703,12 @@ void TestSwooshElectric() {
   electric.f("ELSM").f("LWD1").f("CNST").w(Bits(2.0f)).f("SSWH").f("CNST").w(0x0000AAAA).f("GPSM").f("NONE").f("_END");
   Check(parts[2].type == EffectFourCC("ELSC") && parts[2].part == electric.bytes, "ELSM child is an ELSC");
 
+  // An ELC2 child is an ELSC stream led by the port-only PEL2 marker; its fields follow.
   Retail elc2;
-  elc2.f("ELSM").f("SCNT").f("CNST").w(4).f("_END");
-  Check(parts[3].type == EffectFourCC("ELSC") && parts[3].part == elc2.bytes, "ELC2 child is an ELSC");
-  Check(parts[3].dropped.size() == 1 && parts[3].droppedRetail == 0, "ELC2's MTIN is Remastered only");
+  elc2.f("ELSM").f("PEL2").f("CNST").w(1).f("SCNT").f("CNST").w(4);
+  elc2.f("SIDE").f("CNST").w(3).f("RADS").f("CNST").w(Bits(0.5f)).f("_END");
+  Check(parts[3].type == EffectFourCC("ELSC") && parts[3].part == elc2.bytes, "ELC2 child is an ELSC with PEL2");
+  Check(parts[3].droppedRetail == 0, "ELC2 drops no retail property");
 
   for (const ConvertedPart& part : parts) {
     std::vector<RetailPartProperty> properties;
