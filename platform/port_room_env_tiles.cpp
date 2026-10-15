@@ -151,14 +151,14 @@ std::vector<TileKey> Region(const TileSet& own) {
   return {keys.begin(), keys.end()};
 }
 
-bool ResolveGrid(const TileSet& own, const Lookup& lookup, size_t maxPoints, ResolvedGrid& out, std::string& note) {
+namespace {
+
+// Composes the points of `blocks` (layer-0 block coordinates) from the mapped tiles lookup
+// finds, cropped to the lit points and one empty point around them. worldToPoint is the one
+// matrix of the world's points; no axis may be longer than axisLimit.
+bool ComposeBlocks(const float worldToPoint[12], const std::set<std::array<int32_t, 3>>& blocks, const Lookup& lookup,
+                   size_t maxPoints, int64_t axisLimit, ResolvedGrid& out, std::string& note) {
   out = {};
-  std::set<std::array<int32_t, 3>> blocks;
-  for (const TileKey& key : Region(own)) {
-    if (key.layer == 0) {
-      blocks.insert({key.x, key.y, key.z});
-    }
-  }
   // The mapped copies, per key, looked up once.
   std::map<TileKey, std::pair<std::shared_ptr<const TileSet>, const Tile*>> mapped;
   const auto find = [&](const TileKey& key) -> const std::pair<std::shared_ptr<const TileSet>, const Tile*>& {
@@ -200,13 +200,15 @@ bool ResolveGrid(const TileSet& own, const Lookup& lookup, size_t maxPoints, Res
     return false;
   }
   int64_t size[3] = {c1[0] - c0[0], c1[1] - c0[1], c1[2] - c0[2]};
-  if (size[0] > 1024 || size[1] > 1024 || size[2] > 1024) {
-    note = "grid too large";
+  if (size[0] > axisLimit || size[1] > axisLimit || size[2] > axisLimit) {
+    note = "grid too large: " + std::to_string(size[0]) + "x" + std::to_string(size[1]) + "x" + std::to_string(size[2]) +
+           " points, axis limit " + std::to_string(axisLimit) + "; baked lighting disabled for it";
     return false;
   }
   size_t points = size_t(size[0]) * size_t(size[1]) * size_t(size[2]);
   if (points > kMaxComposedPoints) {
-    note = "grid too large";
+    note = "grid too large: " + std::to_string(size[0]) + "x" + std::to_string(size[1]) + "x" + std::to_string(size[2]) +
+           " points, limit " + std::to_string(kMaxComposedPoints) + "; baked lighting disabled for it";
     return false;
   }
   std::vector<uint8_t> pts(points * 24, 0);
@@ -265,7 +267,7 @@ bool ResolveGrid(const TileSet& own, const Lookup& lookup, size_t maxPoints, Res
   double m[3][4];
   for (int i = 0; i < 3; ++i) {
     for (int j = 0; j < 4; ++j) {
-      m[i][j] = own.worldToPoint[i * 4 + j];
+      m[i][j] = worldToPoint[i * 4 + j];
     }
     m[i][3] -= double(c0[i]);
   }
@@ -355,6 +357,61 @@ bool ResolveGrid(const TileSet& own, const Lookup& lookup, size_t maxPoints, Res
   std::snprintf(buf, sizeof buf, "grid %lldx%lldx%lld %.0f%% lit", (long long)size[0], (long long)size[1],
                 (long long)size[2], 100.0 * double(litCount) / double(points));
   note = buf;
+  return true;
+}
+
+} // namespace
+
+bool ResolveGrid(const TileSet& own, const Lookup& lookup, size_t maxPoints, ResolvedGrid& out, std::string& note) {
+  std::set<std::array<int32_t, 3>> blocks;
+  for (const TileKey& key : Region(own)) {
+    if (key.layer == 0) {
+      blocks.insert({key.x, key.y, key.z});
+    }
+  }
+  return ComposeBlocks(own.worldToPoint, blocks, lookup, maxPoints, 1024, out, note);
+}
+
+bool ResolveWorld(const float worldToPoint[12], const std::vector<TileKey>& keys, const Lookup& lookup, size_t maxPoints,
+                  ResolvedGrid& out, std::string& note) {
+  std::set<std::array<int32_t, 3>> blocks;
+  for (const TileKey& key : keys) {
+    if (key.layer < 2) {
+      blocks.insert({key.x, key.y, key.z});
+    } else {
+      blocks.insert({key.x * 2, key.y, key.z});
+      blocks.insert({key.x * 2 + 1, key.y, key.z});
+    }
+  }
+  return ComposeBlocks(worldToPoint, blocks, lookup, maxPoints, 4096, out, note);
+}
+
+TileKey TileOf(int layer, int64_t x, int64_t y, int64_t z, int32_t local[3]) {
+  const int width = TileWidth(layer);
+  const TileKey key{layer, FloorDiv(x, width), FloorDiv(y, 64), FloorDiv(z, 16)};
+  if (local != nullptr) {
+    local[0] = int32_t(x - int64_t(key.x) * width);
+    local[1] = int32_t(y - int64_t(key.y) * 64);
+    local[2] = int32_t(z - int64_t(key.z) * 16);
+  }
+  return key;
+}
+
+bool ReadPoint(const Lookup& lookup, int layer, int64_t x, int64_t y, int64_t z, uint8_t out[6]) {
+  std::memset(out, 0, 6);
+  int32_t local[3];
+  const TileKey key = TileOf(layer, x, y, z, local);
+  const std::shared_ptr<const TileSet> set = lookup(key);
+  const Tile* tile = set != nullptr ? set->Find(key) : nullptr;
+  if (tile == nullptr || tile->size[0] == 0) {
+    return false;
+  }
+  const int32_t q[3] = {local[0] - tile->lo[0], local[1] - tile->lo[1], local[2] - tile->lo[2]};
+  if (q[0] < 0 || q[1] < 0 || q[2] < 0 || q[0] >= tile->size[0] || q[1] >= tile->size[1] || q[2] >= tile->size[2]) {
+    return false;
+  }
+  const int bytes = TileBytes(layer);
+  std::memcpy(out, &set->data[tile->offset + ((size_t(q[2]) * size_t(tile->size[1]) + size_t(q[1])) * size_t(tile->size[0]) + size_t(q[0])) * size_t(bytes)], size_t(bytes));
   return true;
 }
 

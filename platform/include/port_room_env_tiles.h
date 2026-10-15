@@ -78,6 +78,21 @@ using Lookup = std::function<std::shared_ptr<const TileSet>(const TileKey&)>;
 // halves the grid until it fits.
 bool ResolveGrid(const TileSet& own, const Lookup& lookup, size_t maxPoints, ResolvedGrid& out, std::string& note);
 
+// The one world texture's grid, composed from every key in `keys` as the lookup maps it: the
+// points of all loaded areas in the single point space worldToPoint gives, cropped to the lit
+// points and one empty point around them (a point outside reads Remastered's transparent
+// black border). A tap across a tile seam reads the neighbouring tile's copy, whichever
+// area it came from. maxPoints > 0 halves the grid until it fits. False with a note when
+// no point is lit or the grid is over the limits.
+bool ResolveWorld(const float worldToPoint[12], const std::vector<TileKey>& keys, const Lookup& lookup, size_t maxPoints,
+                  ResolvedGrid& out, std::string& note);
+// The indirection of the world texture: the tile that holds point (x, y, z) of a layer, and
+// the point's place inside it (0..width, 0..64, 0..16).
+TileKey TileOf(int layer, int64_t x, int64_t y, int64_t z, int32_t local[3]);
+// The stored bytes (6 for layers 0 and 1, 3 otherwise) of that point from the mapped tile;
+// zeros and false when the tile is unmapped or the point is outside its crop.
+bool ReadPoint(const Lookup& lookup, int layer, int64_t x, int64_t y, int64_t z, uint8_t out[6]);
+
 class TileTable {
 public:
   // Registers node's copies of keys (an area finishing its load). Returns the keys whose
@@ -88,6 +103,19 @@ public:
   std::vector<TileKey> Unregister(uint32_t node);
   // The node whose copy is mapped for key, or false when the tile is unmapped.
   bool Active(const TileKey& key, uint32_t* node) const;
+  // Every mapped key and the node whose copy is mapped: what the world texture holds.
+  std::vector<std::pair<TileKey, uint32_t>> Mapped() const {
+    std::vector<std::pair<TileKey, uint32_t>> out;
+    for (const auto& [key, entries] : m_entries) {
+      for (const Entry& entry : entries) {
+        if (entry.active) {
+          out.emplace_back(key, entry.node);
+          break;
+        }
+      }
+    }
+    return out;
+  }
   void Clear() { m_entries.clear(); }
   size_t KeyCount() const { return m_entries.size(); }
 

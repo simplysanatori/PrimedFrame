@@ -119,5 +119,56 @@ int main() {
     rightMapped = false;
     Check(ResolveGrid(*own, lookup, 0, grid, note) && grid.size[0] == 4, "unmapped neighbour is not in the grid");
   }
+  // The world texture's indirection: a point's tile and place in it, by position alone.
+  {
+    int32_t local[3];
+    TileKey k = TileOf(0, -1, 64, 16, local);
+    Check(k.layer == 0 && k.x == -1 && k.y == 1 && k.z == 1 && local[0] == 63 && local[1] == 0 && local[2] == 0,
+          "layer 0 point (-1,64,16) is block (-1,1,1) at (63,0,0)");
+    k = TileOf(2, 130, 5, 31, local);
+    Check(k.layer == 2 && k.x == 1 && k.y == 0 && k.z == 1 && local[0] == 2 && local[1] == 5 && local[2] == 15,
+          "layer 2 tiles are 128 wide");
+    k = TileOf(0, 63, 63, 15, local);
+    Check(k.x == 0 && k.y == 0 && k.z == 0 && local[0] == 63 && local[1] == 63 && local[2] == 15,
+          "the last point of a block stays in it");
+  }
+  // ReadPoint: unmapped and out-of-crop points read zero (the border), mapped ones their bytes.
+  {
+    constexpr uint16_t kOne = 0x3C00;
+    const auto set = MakeSet(0, kOne, 62); // x 62,63 of block 0, y/z 0..1
+    const Lookup lookup = [&](const TileKey& key) -> std::shared_ptr<const TileSet> {
+      return set->Find(key) != nullptr ? set : nullptr;
+    };
+    uint8_t p[6];
+    Check(ReadPoint(lookup, 0, 63, 1, 1, p) && p[0] == (kOne & 0xFF) && p[1] == (kOne >> 8), "mapped point reads its bytes");
+    Check(!ReadPoint(lookup, 0, 64, 1, 1, p) && p[0] == 0 && p[5] == 0, "unmapped tile reads zero");
+    Check(!ReadPoint(lookup, 0, 61, 1, 1, p) && p[1] == 0, "a point outside the tile's crop reads zero");
+    Check(!ReadPoint(lookup, 0, 63, 2, 1, p), "a point past the crop in y reads zero");
+  }
+  // A surface straddling a door seam: the two sides belong to different areas, both loaded; the
+  // world grid holds both sides in one point space with no gap, and taps across the seam read the
+  // neighbour's points. With only one side mapped the other side is the black border.
+  {
+    constexpr uint16_t kOne = 0x3C00, kTwo = 0x4000;
+    const auto west = MakeSet(0, kOne, 62); // x 62,63
+    const auto east = MakeSet(1, kTwo, 0);  // x 64,65
+    bool eastMapped = true;
+    const Lookup lookup = [&](const TileKey& k) -> std::shared_ptr<const TileSet> {
+      if (k.x == 0 && west->Find(k)) return west;
+      if (k.x == 1 && eastMapped && east->Find(k)) return east;
+      return nullptr;
+    };
+    ResolvedGrid grid;
+    std::string note;
+    const float m[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+    Check(ResolveWorld(m, {west->tiles[0].key, east->tiles[0].key}, lookup, 0, grid, note), "world grid resolves");
+    Check(grid.size[0] == 6, "the world grid spans both areas' tiles");
+    Check(PointMean(grid, 0, 2, 1, 1) == kOne && PointMean(grid, 0, 3, 1, 1) == kTwo,
+          "the points either side of the seam are contiguous");
+    eastMapped = false;
+    Check(ResolveWorld(m, {west->tiles[0].key, east->tiles[0].key}, lookup, 0, grid, note) && grid.size[0] == 4,
+          "an unmapped side is the empty border, not the other area's grid");
+    Check(!ResolveWorld(m, {}, lookup, 0, grid, note), "no keys: no grid");
+  }
   return sFailures == 0 ? 0 : 1;
 }
