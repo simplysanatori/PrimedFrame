@@ -1,5 +1,6 @@
 #define CSTATEMANAGER_OUT_OF_LINE_GETPLAYER
 #include "MetroidPrime/CStateManager.hpp"
+#include "port_actor_shadow.h"
 #include "port_apclient.h"
 #include "port_collision_view.h"
 #include "port_debug.h"
@@ -3325,6 +3326,8 @@ void CStateManager::DrawWorld() const {
                       x870_cameraManager->IsInCinematicCamera(), !thermal && visor != CPlayerState::kPV_XRay && !portCollisionOnly,
                       !thermal && visor != CPlayerState::kPV_XRay);
   GXPortSetShadowCaster(portShadow);
+  PortActorShadow::BeginFrame();
+  PortRoomGeo::ClearShadowReceivers();
 #endif
   for (int i = areas.size() - 1; i >= 0; --i) {
     const CGameArea& area = *areas[i];
@@ -3433,6 +3436,13 @@ void CStateManager::DrawWorld() const {
     }
   };
 #endif
+#ifdef TARGET_PC
+  // The actors an area registered get their shadow maps and decals just before that area's sorted draws:
+  // the decals land on the opaque world and under the transparent surfaces, as in Remastered, while the
+  // buckets are still drawn per area with that area's own fog and light fade.
+  const bool flushShadows = PortActorShadow::Active() && !thermal && visor != CPlayerState::kPV_XRay &&
+                            !portCollisionOnly;
+#endif
   for (int i = 0; i < areas.size(); ++i) {
     const CGameArea& area = *areas[i];
     const CPVSVisSet& set = visibility[i];
@@ -3518,6 +3528,11 @@ void CStateManager::DrawWorld() const {
 #else
     if (xf7c_projectedShadow != nullptr) {
       xf7c_projectedShadow->Render(*this);
+    }
+#endif
+#ifdef TARGET_PC
+    if (flushShadows) {
+      PortActorShadow::RenderFrame(*this, backupViewMatrix);
     }
 #endif
     gpRender->EnablePVS(&set, area.GetId().Value());

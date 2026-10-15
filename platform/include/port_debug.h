@@ -318,6 +318,10 @@ void SetPerPixelLighting(bool enabled);
 // draws none; off gives PortSetupShadow distance 0, as in a room with no sun.
 bool SunShadows();
 void SetSunShadows(bool enabled);
+// Setting `projected_shadows` (default on): Remastered's projected actor shadows (CSimpleShadow decal
+// mode); only active with Remastered world geometry, else the retail blob quad is drawn.
+bool ProjectedShadows();
+void SetProjectedShadows(bool enabled);
 // Setting `opengles`: start on Dawn's OpenGL ES backend instead of Vulkan, for
 // drivers that draw wrong on Vulkan (Adreno 7xx, issue #7). Read at window
 // creation, so it takes a restart; aurora falls back to Vulkan if it fails.

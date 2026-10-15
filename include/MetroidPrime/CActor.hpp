@@ -108,6 +108,9 @@ public:
   // sorted submission). True when the model draw was issued (the pipeline may still reject a blended or cutout draw);
   // false when there was nothing to draw or the box is outside the map.
   bool PortRenderShadowCaster(const CStateManager& mgr) const;
+  // Port: draws the base model as a caster into the current projected actor shadow map.
+  void PortRenderActorShadowCaster(const CStateManager& mgr) const;
+  void PortConfigureShadow(const CStateManager& mgr);
 #endif
   void CreateShadowIfNeeded();
 

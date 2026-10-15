@@ -187,6 +187,7 @@ set(MP_PORT_SOURCES
     platform/port_map_pickups.cpp
     platform/port_map_pickups_index.cpp
     platform/port_viewmodel.cpp
+    platform/port_actor_shadow.cpp
     platform/port_freecam.cpp
     platform/port_photo.cpp
     platform/port_console.cpp
@@ -737,6 +738,10 @@ if(MP_BUILD_TESTS)
     target_compile_definitions(port_hdr_scene_policy_tests PRIVATE TARGET_PC VERSION=0)
     add_test(NAME port_hdr_scene_policy_tests COMMAND port_hdr_scene_policy_tests)
     set_tests_properties(port_hdr_scene_policy_tests PROPERTIES TIMEOUT 15 LABELS port)
+    add_executable(port_actor_shadow_tests tests/port_actor_shadow.cpp)
+    target_include_directories(port_actor_shadow_tests PRIVATE platform/include)
+    add_test(NAME port_actor_shadow_tests COMMAND port_actor_shadow_tests)
+    set_tests_properties(port_actor_shadow_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_visor_mesh_tests tests/port_visor_mesh.cpp)
     target_include_directories(port_visor_mesh_tests PRIVATE platform/include)
     add_test(NAME port_visor_mesh_tests COMMAND port_visor_mesh_tests)

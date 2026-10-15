@@ -4,6 +4,7 @@
 #include "pipeline_cache.hpp"
 #include "bloom.hpp"
 #include "shadow.hpp"
+#include "actor_shadow.hpp"
 #include "volfog.hpp"
 #include "thermal.hpp"
 #include "xray.hpp"
@@ -614,6 +615,7 @@ void shutdown() {
   xray::shutdown();
   thermal::shutdown();
   shadow::shutdown();
+  actor_shadow::shutdown();
   vfx::shutdown();
   water::shutdown();
   tex_palette_conv::shutdown();

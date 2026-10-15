@@ -29,6 +29,8 @@
 
 #ifdef TARGET_PC
 #include "port_debug.h"
+#include "port_actor_shadow.h"
+#include "MetroidPrime/Enemies/CPatterned.hpp"
 #include "port_presentation_rules.h"
 #include "Kyoto/Math/CQuaternion.hpp"
 #endif
@@ -246,6 +248,12 @@ void CActor::PreRender(CStateManager& mgr, const CFrustumPlanes& planes) {
 
       // TODO why doesn't GetDrawShadow() work?
       if (GetShadowDirty() && xe5_24_shadowEnabled && HasShadow()) {
+#ifdef TARGET_PC
+        if (PortActorShadow::Active()) {
+          PortConfigureShadow(mgr);
+          Shadow()->PortCalculate(GetModelData()->GetBounds(GetTransform()), mgr);
+        } else
+#endif
         Shadow()->Calculate(GetModelData()->GetBounds(), GetTransform(), mgr);
         SetShadowDirty(false);
       }
@@ -279,6 +287,12 @@ void CActor::PreRender(CStateManager& mgr, const CFrustumPlanes& planes) {
       if (GetShadowDirty() && xe5_24_shadowEnabled && HasShadow()) {
         if (planes.BoxInFrustumPlanes(
                 GetShadow()->GetMaxShadowBox(GetModelData()->GetBounds(GetTransform()))) == true) {
+#ifdef TARGET_PC
+          if (PortActorShadow::Active()) {
+            PortConfigureShadow(mgr);
+          Shadow()->PortCalculate(GetModelData()->GetBounds(GetTransform()), mgr);
+          } else
+#endif
           Shadow()->Calculate(GetModelData()->GetBounds(), GetTransform(), mgr);
           SetShadowDirty(false);
 #ifdef TARGET_PC
@@ -309,6 +323,22 @@ void CActor::AddToRenderer(const CFrustumPlanes& planes, const CStateManager& mg
       }
     }
 
+#ifdef TARGET_PC
+    // The projected shadow has its own validity and bounds: the retail ones are never set.
+    if (PortActorShadow::Active()) {
+      if (mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_XRay &&
+          mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_Thermal && GetDrawShadow() &&
+          GetShadow()->PortValid()) {
+        const float* rb = GetShadow()->PortReceiverBox();
+        const CAABox box(CVector3f(rb[0] - rb[3], rb[1] - rb[4], rb[2] - rb[5]),
+                         CVector3f(rb[0] + rb[3], rb[1] + rb[4], rb[2] + rb[5]));
+        if (planes.BoxInFrustumPlanes(box) == true) {
+          PortActorShadow::Register(this);
+        }
+      }
+      return;
+    }
+#endif
     if (mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_XRay &&
         mgr.GetPlayerState()->GetActiveVisor(mgr) != CPlayerState::kPV_Thermal && GetDrawShadow() &&
         GetShadow()->Valid() && planes.BoxInFrustumPlanes(GetShadow()->GetBounds()) == true) {
@@ -454,6 +484,30 @@ bool CActor::PortRenderShadowCaster(const CStateManager& mgr) const {
     RenderInternal(mgr);
   }
   return true;
+}
+#endif
+
+#ifdef TARGET_PC
+// AI actors (CAi's setup_for_anchor_sampled_mode(2.0,-2.0,0.5)): explicit height mode, fade 0.625,
+// alpha = CPatterned's fade alpha (+0x5c0) times its strength (+0x5d4, no retail field: 1.0), or
+// the CAi default 0.7. Everything else is sampled mode with fade 0.
+void CActor::PortConfigureShadow(const CStateManager& mgr) {
+  if (!HasShadow()) {
+    return;
+  }
+  // CPatterned is the only CAi the game builds with a shadow that TCastTo can name.
+  if (const CPatterned* patterned = TCastToConstPtr< CPatterned >(this)) {
+    Shadow()->PortSetMode(true, PortActorShadow::kAiFadeStart, patterned->GetModelAlphau8(mgr) / 255.f);
+  } else {
+    Shadow()->PortSetMode(false, 0.f, 1.f);
+  }
+}
+
+void CActor::PortRenderActorShadowCaster(const CStateManager& mgr) const {
+  if (!HasModelData() || NullModel() || !IsDrawEnabled() || !xe7_27_enableRender) {
+    return;
+  }
+  RenderInternal(mgr);
 }
 #endif
 

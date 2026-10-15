@@ -305,6 +305,14 @@
   Remastered look. Off behaves like a room with no sun (no cascades, no
   receiver sampling); room point/spot lights are unaffected. Console:
   `sunshadow [0|1]`.
+- Projected actor shadows (Video > Quality, persisted as `projected_shadows`,
+  default on): Remastered's actor shadow. Each shadowed actor renders depth
+  only into a 256x256 map looking straight down, and the room geometry under it
+  is redrawn with a multiply decal (fades towards the top of the shadow box).
+  Only with Remastered room geometry loaded; otherwise (and when off) the
+  retail blob quad is drawn. Known gaps: dynamic receivers (platforms) and
+  sorted/cutout geometry are not decaled; at most 16 actors per frame.
+  Console: `projshadow [0|1]`.
 - HUD scale (Video > Display and pause Options > Display, persisted as `hud_scale`,
   50-100 percent, default 100): shrinks the combat HUD, radar, beam and visor
   menus and the minimap toward the screen centre, each frame as a whole so the

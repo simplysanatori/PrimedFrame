@@ -2949,6 +2949,8 @@ void add_cut_caster(std::string& source, const ShaderConfig& config) {
   vs.replace(vs.find("fn vs_main("), 11, "fn vs_shadow_cut(");
   vs += "\n    var shadow_pos = vec4f(mv_pos, 1.0) * ubuf.shadow_caster[imm.serial];"
         "\n    shadow_pos.z = max(shadow_pos.z, 0.0);"
+        // As vs_shadow: an actor's caster[0] holds its height weight in column 3, so w is pinned to 1.
+        "\n    shadow_pos.w = 1.0;"
         "\n    out.pos = shadow_pos;";
   vs += vsTail;
   std::string fs = "@fragment\nfn fs_shadow(in: VertexOutput) {";
@@ -3200,6 +3202,9 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
                             // over the floor) sits on its near plane rather than being clipped. The map is
                             // orthographic, so that moves nothing across it.
                             "\n    pos.z = max(pos.z, 0.0);"
+                            // The map is orthographic: an actor's caster[0] holds its height weight in column 3
+                            // (the decal reads it), so w is pinned to 1 rather than taken from the matrix.
+                            "\n    pos.w = 1.0;"
                             "\n    return pos;\n}}",
                             shadowPos);
   }
@@ -3249,6 +3254,13 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
       "\n    let nrm_tmp = vec4f({}, 0.0) * ubuf.nrm_mtx[in_pnmtxidx];"
       "\n    let mv_nrm = select(nrm_tmp, normalize(nrm_tmp), dot(nrm_tmp, nrm_tmp) > 1e-10);",
       vtx_attr(config, GX_VA_NRM));
+  if (config.actorDecal != 0 && config.lineMode == 0) {
+    // Remastered's projected actor shadow (gfx/actor_shadow.hpp): the fragment stage needs the view-space
+    // position, and the decal sits 0.015 m toward the camera so it wins LEQUAL against the surface it paints.
+    vtxOutAttrs += fmt::format("\n    @location({}) dc_pos: vec3f,", vtxOutIdx++);
+    vtxXfrAttrsPre += "\n    out.dc_pos = mv_pos;"
+                      "\n    out.pos = vec4f(mv_pos + vec3f(0.0, 0.0, 0.015), 1.0) * ubuf.proj;";
+  }
   if constexpr (EnableNormalVisualization) {
     vtxOutAttrs += fmt::format("\n    @location({}) nrm: vec3f,", vtxOutIdx++);
     vtxXfrAttrsPre += "\n    out.nrm = mv_nrm;";
@@ -4134,6 +4146,13 @@ fn vf_apply_hdr(c: vec4f, fog: vec4f, w: f32) -> vec4f {
         "var tex{0}_samp: sampler;",
         i, i * 2, i * 2 + 1);
   }
+  if (config.actorDecal != 0 && info.shadowReceive) {
+    texBindings += fmt::format("\n@group(2) @binding({})\n"
+                               "var shadow_map: texture_depth_2d_array;\n"
+                               "@group(2) @binding({})\n"
+                               "var shadow_samp: sampler_comparison;",
+                               kShadowMapBinding, kShadowSamplerBinding);
+  }
   if (info.usesShadow) {
     // GXState::shadowUniform (gfx/shadow.hpp's Uniform): view space to each cascade's map for this
     // frame's casters and for the maps the receivers read (the previous frame's), the sun's view-space
@@ -4592,6 +4611,47 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
     shaderSource.replace(at, tail.size(),
                          "    return vec4f(f32(imm.serial & 255u), f32((imm.serial >> 8u) & 255u), "
                          "f32((imm.serial >> 16u) & 255u), 255.0) / 255.0;\n}");
+  }
+  if (config.actorDecal != 0 && config.lineMode == 0) {
+    // The decal colour: 1 - (1 - vis) * opacity * (1 - sat(w))^2, vis one bilinear compare tap of the caster's
+    // 256^2 depth map (white outside it). shadowUniform holds, as vec4s: 0-2 view -> map clip x/y/z, 3 height
+    // row, 4-9 the receiver box planes, 10 (opacity, fade start height, 1/fade range, layer), 11 (up, normal
+    // threshold). Vec4 k of the uniform is column k % 4 of matrix k / 4.
+    constexpr std::string_view tail = "    return prev;\n}";
+    const size_t at = shaderSource.rfind(tail);
+    assert(at != std::string::npos);
+    shaderSource.replace(at, tail.size(), R"WGSL(    let dc_dx = dpdx(in.dc_pos);
+    let dc_dy = dpdy(in.dc_pos);
+    var dc_n = normalize(cross(dc_dx, dc_dy));
+    if (dot(dc_n, in.dc_pos) > 0.0) {
+        dc_n = -dc_n;
+    }
+    let dc_p = vec4f(in.dc_pos, 1.0);
+    let dc_up = ubuf.shadow_caster[2][3];
+    for (var i = 0u; i < 6u; i++) {
+        let k = 4u + i;
+        if (dot(dc_p, ubuf.shadow_caster[k / 4u][k % 4u]) < 0.0) {
+            discard;
+        }
+    }
+    if (dot(dc_n, dc_up.xyz) < dc_up.w) {
+        discard;
+    }
+    let dc_par = ubuf.shadow_caster[2][2];
+    let dc_cx = dot(dc_p, ubuf.shadow_caster[0][0]);
+    let dc_cy = dot(dc_p, ubuf.shadow_caster[0][1]);
+    let dc_cz = dot(dc_p, ubuf.shadow_caster[0][2]);
+    let dc_uv = vec2f(dc_cx * 0.5 + 0.5, 0.5 - dc_cy * 0.5);
+    var dc_vis = 1.0;
+    if (all(dc_uv >= vec2f(0.0)) && all(dc_uv <= vec2f(1.0))) {
+        dc_vis = textureSampleCompareLevel(shadow_map, shadow_samp, dc_uv, i32(dc_par.w), saturate(dc_cz));
+    }
+    let dc_w = saturate((dot(dc_p, ubuf.shadow_caster[0][3]) - dc_par.y) * dc_par.z);
+    let dc_f = 1.0 - dc_w;
+    let dc_rgb = 1.0 - (1.0 - dc_vis) * dc_par.x * dc_f * dc_f;
+    return vec4f(vec3f(dc_rgb), 1.0);
+}
+)WGSL");
   }
   if (config.sceneHdr) {
     shaderSource += gfx::hdr::ToneWgsl;

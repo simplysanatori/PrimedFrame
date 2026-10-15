@@ -403,6 +403,21 @@ const wgpu::Sampler& sampler() {
 void shutdown() {}
 } // namespace aurora::gfx::shadow
 
+namespace aurora::gfx::actor_shadow {
+bool ensure_task() { return false; }
+void add_caster(uint32_t layer, const gx::DrawData& draw) {}
+bool record() { return false; }
+const wgpu::TextureView& map_view() {
+  static const wgpu::TextureView view;
+  return view;
+}
+const wgpu::Sampler& sampler() {
+  static const wgpu::Sampler sampler;
+  return sampler;
+}
+void shutdown() {}
+} // namespace aurora::gfx::actor_shadow
+
 namespace aurora::gfx::depth_peek {
 namespace {
 bool s_snapshotRequested = false;

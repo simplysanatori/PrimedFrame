@@ -461,6 +461,15 @@ struct GXState {
   bool shadowCasterOnly = false; // they cast but aren't drawn (GXPortSetShadowCasterOnly)
   bool shadowActive = false;
   std::array<Vec4<float>, 36> shadowUniform{};
+  // GX_AURORA_PORT_ACTOR_SHADOW: actorLayer >= 0 while an actor's casters are recorded (into that
+  // layer of the actor maps; the sun's state is saved in actorSaved* meanwhile); actorDecal while
+  // the receivers' decal draws are.
+  int actorLayer = -1;
+  bool actorDecal = false;
+  bool actorSavedCaster = false;
+  bool actorSavedCasterOnly = false;
+  bool actorSavedActive = false;
+  std::array<Vec4<float>, 36> actorSavedUniform{};
 
   // GX2 polygon offset state
   f32 frontOffset = 0.0f;
@@ -620,7 +629,10 @@ struct ShaderConfig {
   // fragment from the interpolated view-space position and normal instead of per vertex. The
   // old padding, so a config with it off keeps its bytes and cache keys.
   u8 perPixelLight = 0;
-  u8 pad2[1]{}; // keeps the struct free of padding (memcmp and hash)
+  // GX_AURORA_PORT_ACTOR_SHADOW decal: the draw is a receiver redrawn as Remastered's actor shadow
+  // decal (multiplies the frame by the shadow, shadowUniform holds its view-space planes). The old
+  // padding byte, so other configs keep their bytes and cache keys.
+  u8 actorDecal = 0;
   std::array<AttrConfig, MaxVtxAttr> attrs;
   std::array<TevSwap, MaxTevSwap> tevSwapTable;
   std::array<TevStage, MaxTevStages> tevStages;
@@ -636,8 +648,10 @@ struct ShaderConfig {
 static_assert(std::has_unique_object_representations_v<ShaderConfig>);
 // Whether a draw samples the sun's shadow map: a lit PBR surface drawn in colour without per-pixel fog.
 inline bool shadow_receives(const ShaderConfig& sc) noexcept {
-  return sc.shadow && sc.pbr != 0 && sc.volFog == VolFogNone && sc.depthOnly == 0 && sc.lineMode == 0 && !sc.drawId;
+  return sc.shadow && (sc.pbr != 0 || sc.actorDecal != 0) && sc.volFog == VolFogNone && sc.depthOnly == 0 && sc.lineMode == 0 && !sc.drawId;
 }
+// Whether a draw is the actor shadow decal (samples gfx/actor_shadow.hpp's maps).
+inline bool actor_decal(const ShaderConfig& sc) noexcept { return sc.actorDecal != 0 && sc.shadow; }
 
 struct PipelineConfig;
 
@@ -667,6 +681,7 @@ struct ShaderInfo {
   bool usesVolFog : 1 = false;
   bool usesShadow : 1 = false;    // ShaderConfig::shadow: the shadow uniforms and vs_shadow
   bool shadowReceive : 1 = false; // shadow_receives: group 2 uses the shadow layout
+  bool actorDecal : 1 = false;    // actor_decal: group 2 uses the shadow layout with the actor maps
   bool usesHdrTone : 1 = false;   // ShaderConfig::sceneHdr without pbr: the hdr_tone uniform (GXState::pbrTone)
 };
 struct BindGroupRanges {

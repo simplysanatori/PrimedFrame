@@ -12,6 +12,7 @@
 #include "../gfx/recording.hpp"
 #include "../gfx/resource_cache.hpp"
 #include "../gfx/shadow.hpp"
+#include "../gfx/actor_shadow.hpp"
 #include "../gfx/volfog.hpp"
 #include "../gfx/texture.hpp"
 #include "gx_fmt.hpp"
@@ -583,6 +584,32 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   }
   config.shaderConfig.volFog = drawId ? VolFogNone : vol_fog_mode(depthOnly);
   config.shaderConfig.shadow = g_gxState.shadowCaster && g_gxState.shadowActive && config.shaderConfig.lineMode == 0;
+  if (g_gxState.actorDecal && config.shaderConfig.shadow && !drawId && !depthOnly) {
+    // Remastered's actor shadow decal: the receiver's geometry multiplies the frame by the shadow
+    // alone, so none of the draw's own shading, fog or PBR reaches the shader.
+    auto& sc = config.shaderConfig;
+    sc.actorDecal = 1;
+    sc.pbr = 0;
+    sc.pbrKind = 0;
+    sc.pbrBindPos = false;
+    sc.pbrBindLe = false;
+    sc.pbrLightmapAttr = GX_VA_NULL;
+    sc.sdf = 0;
+    sc.hudSample = 0;
+    sc.perPixelLight = 0;
+    sc.fogType = GX_FOG_NONE;
+    sc.fogRangeEnabled = false;
+    sc.volFog = VolFogNone;
+    sc.alphaCompare = {};
+    sc.numIndStages = 0;
+    sc.indStages = {};
+    for (auto& ts : sc.tevStages) {
+      ts = {};
+    }
+    sc.tevStageCount = 1;
+  } else if (g_gxState.actorDecal) {
+    config.shaderConfig.shadow = false;
+  }
   // Field by field: an aggregate assignment would copy the 2.7 KB shader config twice more on
   // every pipeline switch. Every field outside shaderConfig is written here.
   config.version = GXPipelineConfigVersion;
@@ -600,6 +627,18 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   config.shadowPass = 0;
   config.depthCompare = g_gxState.depthCompare;
   config.depthUpdate = g_gxState.depthUpdate && !depthEqual;
+  if (config.shaderConfig.actorDecal != 0) {
+    // Framebuffer *= the decal (DstColor, Zero), LEQUAL against the world's depth without writing,
+    // back faces culled; the pipeline state of Remastered's actor shadow draw.
+    config.blendMode = GX_BM_BLEND;
+    config.blendFacSrc = GX_BL_SRCCLR;
+    config.blendFacDst = GX_BL_ZERO;
+    config.depthFunc = GX_LEQUAL;
+    config.depthCompare = true;
+    config.depthUpdate = false;
+    // The receiver keeps its own cull (back faces for the world's geometry), as Remastered's
+    // decal draw does.
+  }
   config.alphaUpdate = g_gxState.alphaUpdate && !depthOnly;
   config.colorUpdate = g_gxState.colorUpdate && !depthOnly;
   static_assert(sizeof(PipelineConfig) == sizeof(ShaderConfig) + 13 * sizeof(uint32_t) + 4 * sizeof(bool),
@@ -636,7 +675,10 @@ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
   textureEntries[kVolFogFroxelBinding].textureView = gfx::volfog::froxel_view().Get();
   textureEntries[kVolFogSamplerBinding].binding = kVolFogSamplerBinding;
   textureEntries[kVolFogSamplerBinding].sampler = gfx::volfog::sampler().Get();
-  if (info.shadowReceive) {
+  if (info.shadowReceive && info.actorDecal) {
+    textureEntries[kShadowMapBinding].textureView = gfx::actor_shadow::map_view().Get();
+    textureEntries[kShadowSamplerBinding].sampler = gfx::actor_shadow::sampler().Get();
+  } else if (info.shadowReceive) {
     textureEntries[kShadowMapBinding].textureView = gfx::shadow::map_view().Get();
     textureEntries[kShadowSamplerBinding].sampler = gfx::shadow::sampler().Get();
   }

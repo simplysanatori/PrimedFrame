@@ -595,6 +595,7 @@ void CmdHelp() {
   Out("msaa <1|4>, aniso <1..16>  anti-aliasing and anisotropic filtering, applied next frame");
   Out("pixellight [0|1]         per-pixel lighting (1) or the original per-vertex (0); no argument prints it");
   Out("sunshadow [0|1]          the port's sun shadow in outdoor rooms (1) or off, as Remastered; no argument prints it");
+  Out("projshadow [0|1]         Remastered projected actor shadows (1) or the retail blob (0); no argument prints it");
   Out("hudscale <50..100>         HUD scale in percent, as the Options row does");
   Out("scanspread <0..100>        how far the widescreen HUD moves the scan panels out");
   Out("crosshair <25..100>        mouse/twin-stick crosshair size in percent");
@@ -934,6 +935,20 @@ void CmdTp(CStateManager& mgr) {
     return Finish("usage: tp <x> <y> <z>");
   }
   TeleportPlayer(mgr, CVector3f(x, y, z), mgr.GetPlayer()->GetTransform().GetForward());
+  Finish();
+}
+
+// lift <id> <dz>: moves an actor up by dz (for looking at its shadow with floor visible beside it).
+void CmdLift(CStateManager& mgr) {
+  float dz;
+  if (sCmd.args.size() < 3 || !ParseFloat(sCmd.args[2], dz)) {
+    return Finish("usage: lift <id> <dz>");
+  }
+  CActor* actor = TCastToPtr< CActor >(FindObject(mgr, sCmd.args[1]));
+  if (actor == nullptr) {
+    return Finish("no such actor");
+  }
+  actor->SetTranslation(actor->GetTranslation() + CVector3f(0.f, 0.f, dz));
   Finish();
 }
 
@@ -1863,7 +1878,7 @@ bool IsTickCommand(const std::string& name) {
     }
   }
   static const char* const names[] = {"status", "areas", "objs", "obj", "send", "give",
-                                      "take", "items", "heal", "kill", "hurt", "die", "god", "memo", "strg", "language", "tp", "room", "fx", "face", "look", "warp",
+                                      "take", "items", "heal", "kill", "hurt", "die", "god", "memo", "strg", "language", "tp", "lift", "room", "fx", "face", "look", "warp",
                                       "tracker", "enter", "visor", "beam", "photo"};
   for (const char* n : names) {
     if (name == n) {
@@ -1916,6 +1931,8 @@ void RunTick(CStateManager& mgr) {
     CmdLanguage();
   } else if (name == "tp") {
     CmdTp(mgr);
+  } else if (name == "lift") {
+    CmdLift(mgr);
   } else if (name == "room") {
     CmdRoom();
   } else if (name == "fx") {
@@ -2180,6 +2197,16 @@ void RunFrame() {
       PortDebug::SetSunShadows(v == "1");
     }
     Out(PortDebug::SunShadows() ? "sunshadow 1" : "sunshadow 0");
+    Finish();
+  } else if (name == "projshadow") {
+    if (sCmd.args.size() > 1) {
+      const std::string& v = sCmd.args[1];
+      if (v != "0" && v != "1") {
+        return Finish("usage: projshadow [0|1]");
+      }
+      PortDebug::SetProjectedShadows(v == "1");
+    }
+    Out(PortDebug::ProjectedShadows() ? "projshadow 1" : "projshadow 0");
     Finish();
   } else if (name == "hudscale") {
     const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : 0;
