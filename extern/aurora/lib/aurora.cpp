@@ -128,9 +128,13 @@ void record_screenshot(wgpu::CommandEncoder& encoder, std::vector<gfx::AfterSubm
           }
 
           const void* pixels = readback.GetConstMappedRange(0, byteSize);
+          // The present source's alpha is not meaningful and is usually 0, so a surface with an
+          // alpha channel saves an image every viewer shows as fully transparent (a 32-bit BMP
+          // with an alpha mask, or a PNG whose alpha is 0). The X formats drop it: SDL writes a
+          // 24-bit BMP and converts to opaque RGBA for PNG.
           SDL_Surface* surface = SDL_CreateSurfaceFrom(
               static_cast<int>(width), static_cast<int>(height),
-              bgra ? SDL_PIXELFORMAT_BGRA32 : SDL_PIXELFORMAT_RGBA32, const_cast<void*>(pixels),
+              bgra ? SDL_PIXELFORMAT_BGRX32 : SDL_PIXELFORMAT_RGBX32, const_cast<void*>(pixels),
               static_cast<int>(bytesPerRow));
           if (surface == nullptr) {
             Log.warn("Unable to create screenshot surface: {}", SDL_GetError());
