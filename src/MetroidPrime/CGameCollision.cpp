@@ -858,6 +858,18 @@ void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float 
 // resets a blocked player to its last free state and zeroes its vertical
 // speed, so a jump into a lip or wall stalled (issue #117). The mover slides
 // along the contact instead.
+//
+// 0xf948d4's "pre-probe" (0xf94954-0xf94ae8: clear the contact list, the rise cap,
+// a dt=0 motion prediction, the full collision test at the actor's current
+// position, and - on a hit - (*(obj+0x1280))->vt[0x10] plus
+// CPhysicsCollisionFailsafe::DoCollisionFailsafe(world, obj) 0xc1fa68) is deliberately
+// not ported: it cannot run in the shipped mover. Its gate is
+// `!bool_b && |dt - worldDt| < 1e-5` (0xf94934-0xf94950), and of its only two call
+// sites (both in MoveObject 0xf943b4) the first step of a tick passes bool_b = 1
+// (0xf94528 `mov w4,#1`, skipped) while the retry loop - entered only when the first
+// step consumed more than 1e-5 s (0xf9455c) and subtracting each step's consumption
+// (0xf946ac) - never has dt == worldDt again. The base class has the same two flags
+// (0xc1cdd0, 0xc1ce7c). See build/s-issue117-20261015/airfix/REPORT.md.
 void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, float dt,
                                          const TEntityList* colliderList) {
   CPhysicsActor& actor = player;
