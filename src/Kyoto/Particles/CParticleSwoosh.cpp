@@ -144,6 +144,16 @@ CParticleSwoosh::~CParticleSwoosh() { --mSwooshAliveCount; }
 
 bool CParticleSwoosh::IsLargeEnough() const { return x1b4_LENG >= 2 && x1b8_SIDE >= 2; }
 
+#ifdef TARGET_PC
+// DFCS/DFCP context: Remastered builds T(global) * R(orientation) * S(scale) from the swoosh's
+// registers and applies it to the segment position / local translation (0x299064, 0x299134).
+static CParticleGlobals::SPortSwooshEval PortSwooshEvalFor(const CTransform4f& world,
+                                                           const CVector3f& systemLocal,
+                                                           const CVector3f* segmentPos) {
+  return {world, systemLocal, segmentPos};
+}
+#endif
+
 const bool CParticleSwoosh::Update(double dt) {
 #ifdef TARGET_PC
   PortFx::UpdateScope fxScope(dt);
@@ -178,6 +188,12 @@ const bool CParticleSwoosh::Update(double dt) {
     }
     if (x1d0_24_emitting && x28_curFrame < x2c_PSLT) {
       UpdateSwooshTranslation(x38_translation);
+#ifdef TARGET_PC
+      const CParticleGlobals::SPortSwooshEval spawnEval = PortSwooshEvalFor(
+          CTransform4f::Translate(xa4_globalTranslation) * xb0_globalOrientation * xec_scaleXf,
+          x38_translation, &x15c_swooshes[x158_curParticle].mTranslation);
+      CParticleGlobals::PortSwooshEvalScope spawnEvalScope(&spawnEval);
+#endif
       if (x1c_desc->x1c_IROT) {
         x1c_desc->x1c_IROT->GetValue(x28_curFrame, x15c_swooshes[x158_curParticle].mInitialRot);
       } else {
@@ -262,6 +278,12 @@ void CParticleSwoosh::UpdateTranslationAndOrientation() {
     }
     swoosh.mFrame = x28_curFrame - swoosh.mStartFrame;
     CParticleGlobals::UpdateParticleLifetimeTweenValues(swoosh.mFrame);
+#ifdef TARGET_PC
+    const CParticleGlobals::SPortSwooshEval segEval = PortSwooshEvalFor(
+        CTransform4f::Translate(xa4_globalTranslation) * xb0_globalOrientation * xec_scaleXf,
+        x38_translation, &swoosh.mTranslation);
+    CParticleGlobals::PortSwooshEvalScope segEvalScope(&segEval);
+#endif
     if (x1c_desc->x44_28_SROT == true) {
       if (x1c_desc->x1c_IROT) {
         x1c_desc->x1c_IROT->GetValue(x28_curFrame, swoosh.mInitialRot);
