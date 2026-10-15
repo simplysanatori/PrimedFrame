@@ -47,20 +47,26 @@ static bool sFastMorphAirCarry = false;
 // Remastered movement under direct aim (PortDebug::RemasteredMovement), set by
 // ComputeMovement: one force along the stick, and GetDampedClampedVelocityWR
 // slows and clamps the planar speed as a whole, with Remastered's air drag in
-// a fall.
-// Retail skips the friction while a jump rises, so the speed dips at takeoff
-// and recovers at the apex (issue #46); jumps keep that (sJumpAirCarry).
+// the air. Jumps follow Remastered's CPlayerMP1::JumpInput (0xcf0060; issue
+// #117): see RemasteredJump.
 static bool sPlanarMovement = false;
 // Set while airborne once an orbit was held (a scan dash or strafe jump): the
 // rest of that airtime moves as retail, whose rising jump keeps the dash's
 // speed (Remastered's drag took a dash from 20 to 13 u/s), so dash tricks
 // such as Space Jump early still carry. Cleared on landing.
 static bool sOrbitAirCarry = false;
-// Set once a jump takes off, cleared on landing: the jump moves as retail.
-// Remastered's air drag holds the air speed near 11.5 where retail's rise
-// climbs toward 16.5, so running Space Jumps fell short (Phendrana
-// Observatory's bomb slot ledge, issue #114). A walk off a ledge stays planar.
-static bool sJumpAirCarry = false;
+// Remastered movement jumps as Remastered: the jump timeouts are 0.25 s
+// (0.117 s for a double jump) instead of 0.235 (0.1), the press cancels the
+// vertical velocity, and the last push tick blends the jump force into
+// gravity by the fraction of the tick left on the timeout. The fraction makes
+// the push last the timeout at any tick rate, so JumpTimeoutsAtRate is not
+// needed. Both minimum times equal the allowed times, as in retail, so the
+// minimum timeout is 0 and a release does not end the push early.
+static const float kRemasteredJumpTime = 0.25f;
+static const float kRemasteredDoubleJumpTime = 0.117f;
+static bool RemasteredJump(const CPlayer& player, const CStateManager& mgr) {
+  return player.MouseControlsAllowed(mgr) && PortDebug::RemasteredMovement();
+}
 // Direct aim without Remastered movement moves along the stick as retail moves
 // forward: ComputeMovement pushes along the stick and GetDampedClampedVelocityWR
 // takes the friction along and across it, as retail takes it along and across
@@ -394,18 +400,10 @@ void CPlayer::ComputeMovement(const CFinalInput& input, CStateManager& mgr, floa
 #ifdef TARGET_PC
   if (x258_movementState == NPlayer::kMS_OnGround) {
     sOrbitAirCarry = false;
-    sJumpAirCarry = false;
-  } else {
-    if (x304_orbitState != kOS_NoOrbit) {
-      sOrbitAirCarry = true;
-    }
-    if (x258_movementState == NPlayer::kMS_Jump ||
-        x258_movementState == NPlayer::kMS_ApplyJump) {
-      sJumpAirCarry = true;
-    }
+  } else if (x304_orbitState != kOS_NoOrbit) {
+    sOrbitAirCarry = true;
   }
-  sPlanarMovement = MouseControlsAllowed(mgr) && PortDebug::RemasteredMovement() &&
-                    !sOrbitAirCarry && !sJumpAirCarry;
+  sPlanarMovement = RemasteredJump(*this, mgr) && !sOrbitAirCarry;
 #endif
   float turnInput = mouseMovement ? 0.f : TurnInput(input);
   float forwardInput = ForwardInput(input, turnInput);
@@ -786,6 +784,12 @@ float CPlayer::JumpInput(const CFinalInput& input, CStateManager& mgr) {
     if (x258_movementState != NPlayer::kMS_Jump) {
       if (ControlMapper::GetPressInput(ControlMapper::kC_JumpOrBoost, input)) {
         SetMoveState(NPlayer::kMS_Jump, mgr);
+#ifdef TARGET_PC
+        if (RemasteredJump(*this, mgr)) {
+          const CVector3f impulse(0.f, 0.f, -GetVelocityWR().GetZ() * GetMass());
+          ApplyImpulseWR(impulse, CAxisAngle::Identity());
+        }
+#endif
         return jumpFactor * (verticalJumpAccel * GetMass());
       }
       return 0.f;
@@ -795,8 +799,17 @@ float CPlayer::JumpInput(const CFinalInput& input, CStateManager& mgr) {
     if (forward < backward) {
       forward = ControlMapper::GetAnalogInput(ControlMapper::kC_Backward, input);
     }
-    return jumpFactor *
-           ((verticalJumpAccel - forward * (verticalJumpAccel - horizontalJumpAccel)) * GetMass());
+    const float force = jumpFactor * ((verticalJumpAccel -
+                                       forward * (verticalJumpAccel - horizontalJumpAccel)) *
+                                      GetMass());
+#ifdef TARGET_PC
+    const float dt = PortDebug::TickPeriod();
+    if (RemasteredJump(*this, mgr) && x288_startingJumpTimeout < dt) {
+      const float pushed = x288_startingJumpTimeout / dt;
+      return pushed * force + (1.f - pushed) * GetGravity() * GetMass();
+    }
+#endif
+    return force;
   }
   if (x258_movementState == NPlayer::kMS_Jump) {
     SetMoveState(NPlayer::kMS_ApplyJump, mgr);
@@ -844,7 +857,12 @@ void CPlayer::SetMoveState(NPlayer::EPlayerMovementState state, CStateManager& m
       x290_minJumpTimeout =
           gpTweakPlayer->GetAllowedDoubleJumpTime() - gpTweakPlayer->GetMinDoubleJumpTime();
 #ifdef TARGET_PC
-      JumpTimeoutsAtRate(x288_startingJumpTimeout, x290_minJumpTimeout);
+      if (RemasteredJump(*this, mgr)) {
+        x288_startingJumpTimeout = kRemasteredDoubleJumpTime;
+        x290_minJumpTimeout = 0.f;
+      } else {
+        JumpTimeoutsAtRate(x288_startingJumpTimeout, x290_minJumpTimeout);
+      }
 #endif
       x28c_sjTimer = 0.f;
     } else if (x258_movementState != NPlayer::kMS_Jump) {
@@ -853,7 +871,18 @@ void CPlayer::SetMoveState(NPlayer::EPlayerMovementState state, CStateManager& m
       x288_startingJumpTimeout = gpTweakPlayer->GetAllowedJumpTime();
       x290_minJumpTimeout = gpTweakPlayer->GetAllowedJumpTime() - gpTweakPlayer->GetMinJumpTime();
 #ifdef TARGET_PC
-      JumpTimeoutsAtRate(x288_startingJumpTimeout, x290_minJumpTimeout);
+      if (RemasteredJump(*this, mgr)) {
+        x288_startingJumpTimeout = kRemasteredJumpTime;
+        x290_minJumpTimeout = 0.f;
+      } else {
+        JumpTimeoutsAtRate(x288_startingJumpTimeout, x290_minJumpTimeout);
+      }
+      // Remastered SetMoveState (0xcf0788) drops the ground collider on a ground
+      // jump, so the jump moves with the off-ground mover from its first tick
+      // instead of being snapped back to the floor (issue #117).
+      if (RemasteredJump(*this, mgr)) {
+        RemoveMaterial(kMT_GroundCollider, mgr);
+      }
 #endif
       if (mgr.GetPlayerState()->GetItemAmount(CPlayerState::kIT_SpaceJumpBoots) != 0) {
         x28c_sjTimer = gpTweakPlayer->GetMaxDoubleJumpWindow();
@@ -904,6 +933,12 @@ void CPlayer::SetMoveState(NPlayer::EPlayerMovementState state, CStateManager& m
     x288_startingJumpTimeout = 0.f;
     if (x258_movementState != NPlayer::kMS_ApplyJump) {
       x258_movementState = NPlayer::kMS_ApplyJump;
+#ifdef TARGET_PC
+      // Remastered SetMoveState (0xcf0788) drops it here too.
+      if (RemasteredJump(*this, mgr)) {
+        RemoveMaterial(kMT_GroundCollider, mgr);
+      }
+#endif
       if (x294_jumpCameraTimer <= 0.f && x29c_fallCameraTimer <= 0.f && !x3dc_inFreeLook &&
           !x3dd_lookButtonHeld) {
         x29c_fallCameraTimer = 0.01f;

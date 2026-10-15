@@ -27,6 +27,10 @@
 #include <Collision/CRayCastResult.hpp>
 #include <WorldFormat/CCollidableOBBTreeGroup.hpp>
 
+#ifdef TARGET_PC
+#include "port_debug.h"
+#endif
+
 static int gDebugPrintCount;
 
 void CGameCollision::InitCollision() {
@@ -800,6 +804,24 @@ void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float 
                                 const TEntityList* colliderList) {
   actor.SetApplyRotationWhenInCollision(true);
   actor.AddMotionState(actor.PredictAngularMotion(dt));
+
+#ifdef TARGET_PC
+  // Remastered movement: Remastered's stepped mover (0xf943b4) caps a standing
+  // player's rise before the move, scaling the whole velocity, where retail
+  // caps it only after the move. Without the early cap the jump's first tick
+  // moves at the uncapped speed (issue #117).
+  if (CPlayer* player = TCastToPtr< CPlayer >(&actor)) {
+    if (player->GetMorphballTransitionState() == CPlayer::kMS_Unmorphed &&
+        player->GetPlayerMovementState() != NPlayer::kMS_OnGround &&
+        player->MouseControlsAllowed(mgr) && PortDebug::RemasteredMovement()) {
+      const float maxUp = player->GetMaximumPlayerPositiveVerticalVelocity(mgr);
+      const CVector3f velocity = player->GetVelocityWR();
+      if (velocity.GetZ() > maxUp) {
+        player->SetVelocityWR(velocity * (maxUp / velocity.GetZ()));
+      }
+    }
+  }
+#endif
 
   if (actor.IsStandardCollider()) {
     CBallFilter filter(actor);
