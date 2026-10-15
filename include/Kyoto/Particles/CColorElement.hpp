@@ -7,7 +7,8 @@
 #include "Kyoto/Particles/IElement.hpp"
 
 #ifdef TARGET_PC
-#include <array>
+#include "Kyoto/Particles/PortParticleMath.hpp"
+
 #include <vector>
 #endif
 
@@ -126,7 +127,7 @@ class CIntElement;
 // integer frame it is given (a swoosh passes the segment's age). The period is an int element
 // (CNST frames, or ILPT for a percent of the lifetime).
 class CCEGradient : public CColorElement {
-  std::vector< std::array< float, 5 > > x4_stops; // r, g, b, a, position
+  std::vector< PortParticleMath::GradientStop > x4_stops;
   CIntElement* x1c_period;
   bool x20_repeat;
 
