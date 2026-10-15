@@ -70,9 +70,9 @@ struct Settings {
   int gyroMode = 0;
   int gyroSource = 0;
   float gyroSensitivity = 2.f;
-  // Which turn of the pad steers yaw: its own axis (local), the turn about
-  // gravity mixed with lean (player), or the turn about gravity (world); and
-  // whether the gyro's drift is measured while the pad is still.
+  // Which turn of the pad steers yaw (PortGyro::Space: 0 local yaw, 1 player,
+  // 2 world, 3 local roll, 4 local yaw and roll); and whether the gyro's drift
+  // is measured while the pad is still.
   int gyroSpace = 1;
   bool gyroAutoCalibrate = true;
   // Gyro smoothing and tightening thresholds in deg/s (0 = off; see PortGyro::Filter).

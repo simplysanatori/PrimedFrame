@@ -90,7 +90,7 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     }
   } else if (key == "gyro_space") {
     const long v = std::strtol(value.c_str(), nullptr, 10);
-    if (v >= 0 && v <= 2) {
+    if (v >= 0 && v <= 4) {
       s.gyroSpace = static_cast< int >(v);
     }
   } else if (key == "gyro_auto_calibrate") {

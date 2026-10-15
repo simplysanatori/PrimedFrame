@@ -91,10 +91,11 @@
   turned. It ignores the mouse sensitivity and invert. An older `gyro_rate` (aim
   pixels per rad/s, which also scaled with the mouse sensitivity) is read once as
   `gyro_rate × mouse_sensitivity` and no longer written.
-  `gyro_space` picks which turn moves the camera left/right: 0 local (the pad's
-  own yaw axis), 1 player (default: turning or leaning both work, however the
-  pad is held) or 2 world (turning about the real vertical only). Player and
-  world use the accelerometer; without one they act as local.
+  `gyro_space` picks which turn moves the camera left/right (GyroWiki's terms):
+  1 player (default: turning the pad, flat or upright), 2 world (turning about
+  the real vertical only), 0 local yaw (the pad's flat turn), 3 local roll (the
+  turn of a pad held upright) or 4 local yaw and roll (both, Overwatch-style).
+  Player and world use the accelerometer; without one they act as local yaw.
   `gyro_auto_calibrate` (default on) learns the gyro's drift while the pad is
   still; F1 shows the calibration confidence and has a Recalibrate button. Both
   use GamepadMotionHelpers (`extern/GamepadMotionHelpers`).

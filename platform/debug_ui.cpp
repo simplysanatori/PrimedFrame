@@ -1844,7 +1844,7 @@ int GyroSpace() {
 
 void SetGyroSpace(int space) {
   EnsureInitialized();
-  if (space < 0 || space > 2) {
+  if (space < 0 || space >= PortGyro::kSpaceCount) {
     return;
   }
   sInput.gyroSpace = space;
@@ -6607,15 +6607,25 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("How far the camera turns per turn of the pad: at 1.00x turning the pad 90 degrees turns "
            "the camera 90 degrees, at 2.00x 180. Independent of the mouse sensitivity and invert.");
-  const char* gyroSpaces[] = {"Local", "Player", "World"};
-  int gyroSpace = sInput.gyroSpace;
-  if (ImGui::Combo("Space", &gyroSpace, gyroSpaces, 3)) {
-    SetGyroSpace(gyroSpace);
+  // Listed by how common they are; the setting keeps PortGyro::Space's numbers.
+  static constexpr int kSpaceOrder[] = {PortGyro::kPlayer, PortGyro::kWorld, PortGyro::kLocal, PortGyro::kLocalRoll,
+                                        PortGyro::kLocalBoth};
+  static constexpr const char* kSpaceNames[] = {"Player (turn)", "World (turn)", "Local yaw", "Local roll",
+                                                "Local yaw and roll"};
+  int spaceRow = 0;
+  for (int i = 0; i < PortGyro::kSpaceCount; ++i) {
+    if (kSpaceOrder[i] == sInput.gyroSpace) {
+      spaceRow = i;
+    }
   }
-  ItemHelp("Which turn of the pad turns the camera left and right. Local: the pad's own yaw axis, "
-           "best held flat. Player: turning or leaning the pad both work, however it is held (the "
-           "usual choice). World: only turning about the real vertical. Player and world need an "
-           "accelerometer; without one they act as local.");
+  if (ImGui::Combo("Space", &spaceRow, kSpaceNames, PortGyro::kSpaceCount)) {
+    SetGyroSpace(kSpaceOrder[spaceRow]);
+  }
+  ItemHelp("Which turn of the pad turns the camera left and right. Player: turning the pad left "
+           "and right, whether it is held flat or upright (the usual choice). World: turning about "
+           "the real vertical only. Local yaw: the pad's own flat turn, best held flat. Local roll: "
+           "the turn of a pad held upright (as a handheld). Local yaw and roll: both at once. Player "
+           "and world need an accelerometer; without one they act as local yaw.");
   bool autoCalibrate = sInput.gyroAutoCalibrate;
   if (ImGui::Checkbox("Auto calibrate", &autoCalibrate)) {
     SetGyroAutoCalibrate(autoCalibrate);

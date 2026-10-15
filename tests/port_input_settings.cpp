@@ -86,7 +86,7 @@ int main() {
   Check(Text().find("gyro_rate") == std::string::npos, "gyro_rate not written");
   Check(Get().gyroSpace == 1 && Get().gyroAutoCalibrate, "gyro space/calibration defaults");
   ApplySetting("gyro_space", "2");
-  ApplySetting("gyro_space", "3");
+  ApplySetting("gyro_space", "5");
   ApplySetting("gyro_auto_calibrate", "0");
   Check(Get().gyroSpace == 2 && !Get().gyroAutoCalibrate, "gyro space/calibration");
   Check(Text().find("gyro_space=2\n") != std::string::npos &&
