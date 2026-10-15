@@ -1826,6 +1826,36 @@ bool PickupModel(uint32_t world, uint32_t area, uint32_t entity, PortRandomizer:
   }
 }
 
+int PickupMinor(uint32_t world, uint32_t area, uint32_t entity) {
+  try {
+    const MetroidPrime::Location* location = MetroidPrime::FindPickup(world, area, entity);
+    if (location == nullptr || !BuiltinRules())
+      return -1;
+    int64_t item = 0;
+    bool sameGame = false;
+    int64_t flags = 0;
+    {
+      Runtime& runtime = GetRuntime();
+      std::lock_guard<std::mutex> lock(runtime.mutex);
+      if (!runtime.enabled || runtime.session == nullptr ||
+          !runtime.session->ScoutedAt(location->id, item, sameGame, &flags))
+        return -1;
+    }
+    if (!sameGame)
+      return (flags & 1) != 0 ? 0 : 1; // progression
+    switch (item - MetroidPrime::kItemBase) {
+    case MetroidPrime::kMissileExpansion:
+    case MetroidPrime::kPowerBombExpansion:
+    case MetroidPrime::kEnergyTank:
+      return 1;
+    default:
+      return 0;
+    }
+  } catch (...) {
+    return -1;
+  }
+}
+
 bool PickupScanText(uint32_t world, uint32_t area, uint32_t entity, std::string& out) {
   try {
     const MetroidPrime::Location* location = MetroidPrime::FindPickup(world, area, entity);

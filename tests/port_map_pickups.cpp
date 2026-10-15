@@ -41,5 +41,22 @@ int main() {
   }
   PortMapPickups::SetSeen(words, PortMapPickups::kMaxDots); // out of range: ignored
   Check(!PortMapPickups::IsSeen(words, PortMapPickups::kMaxDots));
-  std::puts("map pickup dot matching and seen bitset passed");
+  // The disc's kinds: 50 missile pickups (the launcher is one of them), 14
+  // energy tanks and 4 power bomb expansions are minor; the main Power Bomb and
+  // the rest are major.
+  int missiles = 0, tanks = 0, bombMajor = 0, bombMinor = 0, minor = 0;
+  for (size_t i = 0; i < count; ++i) {
+    missiles += dots[i].item == 4 ? 1 : 0;
+    tanks += dots[i].item == 24 ? 1 : 0;
+    if (dots[i].item == 7) {
+      (PortMapPickups::KindOfItem(7, dots[i].capacity) == PortMapPickups::kK_Major ? bombMajor
+                                                                                  : bombMinor)++;
+    }
+    minor += PortMapPickups::KindOfItem(dots[i].item, dots[i].capacity) == PortMapPickups::kK_Minor;
+  }
+  Check(missiles == 50 && tanks == 14 && bombMajor == 1 && bombMinor == 4);
+  Check(minor == 68 && count - minor == 32);
+  Check(PortMapPickups::KindOfItem(0, 1) == PortMapPickups::kK_Major);
+  Check(PortMapPickups::KindOfItem(29, 1) == PortMapPickups::kK_Major);
+  std::puts("map pickup dot matching, seen bitset and kinds passed");
 }

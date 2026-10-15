@@ -216,6 +216,8 @@
 {"Archipelago", "Chat", "", "Send", "chat message say send"},
 {"Tracker", "", "", "Reveal map", "map reveal show all rooms"},
 {"Tracker", "", "", "Pickups on the map", "map pickup dots items tracker seen rooms amber"},
+{"Tracker", "", "", "Show major and minor items", "map pickup dots ring cross collected kinds"},
+{"Tracker", "", "", "Map stations show pickups", "map station pickup dots seen reveal hint"},
 {"Tracker", "", "Archipelago checks", "Colour the map's dots by logic", "tracker logic map dots colour"},
 {"Tracker", "", "Progress", "Show progress", "progress tracker items scans rooms"},
 {"Save states", "", "", "Keep enemies and room objects", "save state room enemies doors objects"},
