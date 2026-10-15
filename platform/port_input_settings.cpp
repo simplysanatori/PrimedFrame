@@ -161,6 +161,11 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     if (std::isfinite(f) && f > 0.f && f <= 1.f) {
       s.mouseSensitivity = f;
     }
+  } else if (key == "mouse_dpi") {
+    const int v = std::atoi(value.c_str());
+    if (v >= 100 && v <= 64000) {
+      s.mouseDpi = v;
+    }
   } else if (key == "spring_ball") {
     s.springBall = ParseBool(value);
   } else if (key == "swap_scan_xray") {
@@ -292,6 +297,7 @@ void WriteAimSettings(std::ostream& out) {
   out << "mouse_crosshair=" << (s.mouseCrosshair ? 1 : 0) << '\n';
   out << "crosshair_size=" << s.crosshairSize << '\n';
   out << "mouse_sensitivity=" << s.mouseSensitivity << '\n';
+  out << "mouse_dpi=" << s.mouseDpi << '\n';
   out << "pointer_aim=" << (s.pointerAim ? 1 : 0) << '\n';
   out << "pointer_aim_box=" << s.pointerAimBox << '\n';
   out << "pointer_aim_turn=" << s.pointerAimTurn << '\n';

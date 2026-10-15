@@ -17,6 +17,13 @@ bool Near(float a, float b) { return std::fabs(a - b) < 0.00001f; }
 }
 
 int main() {
+  // Source scale: 1.0 is 0.022 degrees a count, and the conversion round-trips.
+  Check(std::fabs(PortMouse::RadiansFromSource(1.f) - 0.022f * PortMouse::kPi / 180.f) < 1e-9f);
+  Check(std::fabs(PortMouse::SourceFromRadians(0.0035f) - 9.115f) < 0.001f);
+  Check(Near(PortMouse::SourceFromRadians(PortMouse::RadiansFromSource(2.5f)), 2.5f));
+  // Sensitivity 1 at 800 DPI is the familiar ~51.95 cm per turn.
+  Check(std::fabs(PortMouse::CentimetresPer360(PortMouse::RadiansFromSource(1.f), 800.f) - 51.95f) < 0.01f);
+  Check(PortMouse::CentimetresPer360(0.f, 800.f) == 0.f);
   const auto diagonal = PortMouse::ClampPlanar({1.f, 1.f}, 1.f);
   Check(std::fabs(std::hypot(diagonal.right, diagonal.forward) - 1.f) < 0.00001f);
   Check(PortMouse::AxisForce(1.f, 0.f, 12.f, 0.1f, 90.f, 1.f / 60.f, 1000.f) > 0.f);

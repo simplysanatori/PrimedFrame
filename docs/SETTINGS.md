@@ -651,6 +651,10 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   while the overlay is visible or relative capture/focus is absent. Mouse mode
   uses immediate yaw/pitch with an approximately ±87° pitch range. Up moves aim
   up by default; `MP_MOUSE_INVERT_X=1` and `MP_MOUSE_INVERT_Y=1` invert either axis.
+  `MP_MOUSE_SENS` and `mouse_sensitivity` are radians per mouse count; the F1
+  slider shows them on the Quake/Source/Apex scale (0.022 degrees a count per
+  unit, so the default 0.0035 is about 9.12), with a cm/360 readout for
+  `mouse_dpi` (display only, default 800).
   SDL and the compositor own pointer locking; capture is released outside
   playable first person (menus, cinematics, and scripted input locks). Morph ball
   has no mouse aim but keeps the pointer locked, so a bomb click can't land

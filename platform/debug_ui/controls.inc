@@ -116,10 +116,25 @@ void DrawControlsKeyboardMouse() {
     MarkDirty();
   }
   ImGui::TextDisabled("Also switches on Twin stick, so a controller's right stick aims too.");
-  if (ImGui::SliderFloat("Sensitivity", &sInput.mouseSensitivity, 0.00001f, 0.02f, "%.6f rad/px",
+  // Shown on the Quake/Source/Apex scale (0.022 degrees a count per unit), stored in radians.
+  float sourceSensitivity = PortMouse::SourceFromRadians(sInput.mouseSensitivity);
+  if (ImGui::SliderFloat("Sensitivity", &sourceSensitivity, 0.05f, 30.f, "%.3f",
                          ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat)) {
+    SetMouseSensitivity(PortMouse::RadiansFromSource(sourceSensitivity));
     MarkDirty();
   }
+  ImGui::SetItemTooltip("The scale of Quake, Source and Apex Legends games (0.022 degrees a count "
+                        "per unit): the same number turns the same. Ctrl+click to type a value.");
+  ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.f);
+  if (ImGui::InputInt("Mouse DPI", &sInput.mouseDpi, 0, 0)) {
+    sInput.mouseDpi = std::clamp(sInput.mouseDpi, 100, 64000);
+    MarkDirty();
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("%.1f cm (%.1f in) per 360 degrees",
+                      PortMouse::CentimetresPer360(sInput.mouseSensitivity, float(sInput.mouseDpi)),
+                      PortMouse::CentimetresPer360(sInput.mouseSensitivity, float(sInput.mouseDpi)) / 2.54f);
+  ImGui::SetItemTooltip("Only for this readout; the game reads mouse counts.");
   if (ImGui::Checkbox("Invert X", &sInput.mouseInvertX)) {
     MarkDirty();
   }
@@ -149,6 +164,8 @@ void DrawControlsKeyboardMouse() {
   ImGui::SeparatorText("Mouse buttons");
   ImGui::TextDisabled("Mouse buttons are bound in Controls > Remap (Keyboard & mouse).");
 }
+
+
 
 void DrawControlsController() {
   ImGui::SeparatorText("Stick aim");

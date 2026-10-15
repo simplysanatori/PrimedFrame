@@ -92,7 +92,8 @@ struct Settings {
   bool pointerAim = false; // the mouse moves a pointer; the view turns past the dead box
   int pointerAimBox = kPointerAimBoxDefault;
   int pointerAimTurn = kPointerAimTurnDefault;
-  float mouseSensitivity = 0.0035f;
+  float mouseSensitivity = 0.0035f; // radians per count; shown on the Source scale
+  int mouseDpi = 800;               // only for the cm/360 readout
   // What each mouse button does under mouse aim (PortInputMap::EMouseAction).
   int mouseActions[PortInputMap::kMouseButtonCount] = {
       PortInputMap::DefaultMouseAction(0), PortInputMap::DefaultMouseAction(1),
