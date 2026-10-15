@@ -938,6 +938,20 @@ void CmdTp(CStateManager& mgr) {
   Finish();
 }
 
+// lift <id> <dz>: moves an actor up by dz (for looking at its shadow with floor visible beside it).
+void CmdLift(CStateManager& mgr) {
+  float dz;
+  if (sCmd.args.size() < 3 || !ParseFloat(sCmd.args[2], dz)) {
+    return Finish("usage: lift <id> <dz>");
+  }
+  CActor* actor = TCastToPtr< CActor >(FindObject(mgr, sCmd.args[1]));
+  if (actor == nullptr) {
+    return Finish("no such actor");
+  }
+  actor->SetTranslation(actor->GetTranslation() + CVector3f(0.f, 0.f, dz));
+  Finish();
+}
+
 // room <area>: the F1 debug panel's room teleport (to a loaded area's spawn point).
 void CmdRoom() {
   char* end = nullptr;
@@ -1864,7 +1878,7 @@ bool IsTickCommand(const std::string& name) {
     }
   }
   static const char* const names[] = {"status", "areas", "objs", "obj", "send", "give",
-                                      "take", "items", "heal", "kill", "hurt", "die", "god", "memo", "strg", "language", "tp", "room", "fx", "face", "look", "warp",
+                                      "take", "items", "heal", "kill", "hurt", "die", "god", "memo", "strg", "language", "tp", "lift", "room", "fx", "face", "look", "warp",
                                       "tracker", "enter", "visor", "beam", "photo"};
   for (const char* n : names) {
     if (name == n) {
@@ -1917,6 +1931,8 @@ void RunTick(CStateManager& mgr) {
     CmdLanguage();
   } else if (name == "tp") {
     CmdTp(mgr);
+  } else if (name == "lift") {
+    CmdLift(mgr);
   } else if (name == "room") {
     CmdRoom();
   } else if (name == "fx") {
