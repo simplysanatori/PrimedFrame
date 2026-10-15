@@ -90,54 +90,83 @@ void CSimpleShadow::PortCalculate(const CAABox& bounds, const CStateManager& mgr
   }
   std::copy(now, now + 6, xPortBounds);
   const float top = hi.GetZ();
-  const float anchors[5][2] = {
-      {(lo.GetX() + hi.GetX()) * 0.5f, (lo.GetY() + hi.GetY()) * 0.5f},
-      {lo.GetX(), lo.GetY()},
-      {hi.GetX(), lo.GetY()},
-      {hi.GetX(), hi.GetY()},
-      {lo.GetX(), hi.GetY()},
-  };
-  const auto cast = [&](unsigned a) {
+  const float cx = (lo.GetX() + hi.GetX()) * 0.5f;
+  const float cy = (lo.GetY() + hi.GetY()) * 0.5f;
+  float hitMin = 0.f, hitMax = 0.f;
+  bool any = false;
+  if (xPortExplicit) {
+    // UpdateShadowAnchorForExplicitHeight (0xfac1c4): one cast straight down from the bounds'
+    // centre; the box is 2 above to 2 below the hit. A miss clears the shadow.
+    const float cz = (lo.GetZ() + hi.GetZ()) * 0.5f;
     const CRayCastResult res = mgr.RayStaticIntersection(
-        CVector3f(anchors[a][0], anchors[a][1], top), CVector3f(0.f, 0.f, -1.f), 20.f,
+        CVector3f(cx, cy, cz), CVector3f(0.f, 0.f, -1.f), x40_maxObjHeight,
         CMaterialFilter::MakeExclude(CMaterialList(kMT_SeeThrough)));
+    xPortDynamicBits = 0;
+    xPortOpacity = x38_userAlpha;
+    xPortValid = res.IsValid();
+    if (!xPortValid) {
+      return;
+    }
+    const float hitZ = cz - res.GetTime();
+    hitMin = hitZ - 2.f + PortActorShadow::kZMargin;
+    hitMax = hitZ + 2.f - PortActorShadow::kZMargin;
+    any = true;
+  } else {
+    // UpdateShadowSampled (0xfab920): one anchor ray per update, from the first calculation on.
+    const float anchors[5][2] = {
+        {cx, cy},
+        {lo.GetX(), lo.GetY()},
+        {hi.GetX(), lo.GetY()},
+        {hi.GetX(), hi.GetY()},
+        {lo.GetX(), hi.GetY()},
+    };
+    const unsigned a = PortActorShadow::AnchorForUpdate(xPortUpdate++);
+    const CVector3f origin(anchors[a][0], anchors[a][1], top);
+    const CVector3f down(0.f, 0.f, -1.f);
+    const CMaterialFilter filter = CMaterialFilter::MakeExclude(CMaterialList(kMT_SeeThrough));
+    const CRayCastResult res = mgr.RayStaticIntersection(origin, down, 20.f, filter);
     xPortHasHit[a] = res.IsValid();
     if (res.IsValid()) {
       xPortHit[a] = top - res.GetTime();
     }
-  };
-  if (!xPortValid) {
-    for (unsigned a = 0; a < PortActorShadow::kAnchors; ++a) {
-      cast(a);
+    // A platform under the anchor, nearer than the floor, marks the anchor (node flag +0x10a).
+    bool platform = false;
+    {
+      TEntityList nearList;
+      mgr.BuildNearList(nearList, origin, down, 20.f,
+                        CMaterialFilter::MakeInclude(CMaterialList(kMT_Platform)), nullptr);
+      TUniqueId cid = kInvalidUniqueId;
+      const CRayCastResult dyn = CGameCollision::RayDynamicIntersection(
+          mgr, cid, origin, down, 20.f, CMaterialFilter::GetPassEverything(), nearList);
+      platform = dyn.IsValid() && (!res.IsValid() || dyn.GetTime() < res.GetTime());
+      if (platform) {
+        xPortHasHit[a] = true;
+        xPortHit[a] = top - dyn.GetTime();
+      }
     }
-  } else {
-    cast(PortActorShadow::AnchorForUpdate(xPortUpdate++));
+    xPortDynamicBits = platform ? (xPortDynamicBits | (1u << a)) : (xPortDynamicBits & ~(1u << a));
+    xPortOpacity = 0.f;
+    for (unsigned i = 0; i < PortActorShadow::kAnchors; ++i) {
+      if (!xPortHasHit[i]) {
+        continue;
+      }
+      if (!any) {
+        xPortOpacity = PortActorShadow::Opacity(top, xPortHit[i], 20.f, x38_userAlpha);
+        hitMin = hitMax = xPortHit[i];
+        any = true;
+      } else {
+        hitMin = std::min(hitMin, xPortHit[i]);
+        hitMax = std::max(hitMax, xPortHit[i]);
+      }
+    }
+    xPortValid = any;
   }
-  float hitMin = 0.f, hitMax = 0.f;
-  bool any = false;
-  xPortOpacity = 0.f;
-  for (unsigned a = 0; a < PortActorShadow::kAnchors; ++a) {
-    if (!xPortHasHit[a]) {
-      continue;
-    }
-    if (!any) {
-      xPortOpacity = PortActorShadow::Opacity(top, xPortHit[a], 20.f, x38_userAlpha);
-      hitMin = hitMax = xPortHit[a];
-      any = true;
-    } else {
-      hitMin = std::min(hitMin, xPortHit[a]);
-      hitMax = std::max(hitMax, xPortHit[a]);
-    }
-  }
-  xPortValid = any;
   if (!any) {
     return;
   }
   const float dx = hi.GetX() - lo.GetX();
   const float dy = hi.GetY() - lo.GetY();
   const float dz = hi.GetZ() - lo.GetZ();
-  const float cx = (lo.GetX() + hi.GetX()) * 0.5f;
-  const float cy = (lo.GetY() + hi.GetY()) * 0.5f;
   const float map[6] = {cx, cy, (lo.GetZ() + hi.GetZ()) * 0.5f, std::max(dx * 0.5f, 0.01f),
                         std::max(dy * 0.5f, 0.01f), std::max(dz * 0.5f, 0.01f)};
   std::copy(map, map + 6, xPortMap);

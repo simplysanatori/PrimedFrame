@@ -636,7 +636,8 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
     config.depthFunc = GX_LEQUAL;
     config.depthCompare = true;
     config.depthUpdate = false;
-    config.cullMode = GX_CULL_NONE;
+    // The receiver keeps its own cull (back faces for the world's geometry), as Remastered's
+    // decal draw does.
   }
   config.alphaUpdate = g_gxState.alphaUpdate && !depthOnly;
   config.colorUpdate = g_gxState.colorUpdate && !depthOnly;

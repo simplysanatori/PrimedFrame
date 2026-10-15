@@ -110,6 +110,7 @@ public:
   bool PortRenderShadowCaster(const CStateManager& mgr) const;
   // Port: draws the base model as a caster into the current projected actor shadow map.
   void PortRenderActorShadowCaster(const CStateManager& mgr) const;
+  void PortConfigureShadow(const CStateManager& mgr);
 #endif
   void CreateShadowIfNeeded();
 

@@ -66,6 +66,21 @@ void RenderFrame(const CStateManager& mgr, const CTransform4f& view) {
     const float lo[3] = {rb.centre[0] - rb.half[0], rb.centre[1] - rb.half[1], rb.centre[2] - rb.half[2]};
     const float hi[3] = {rb.centre[0] + rb.half[0], rb.centre[1] + rb.half[1], rb.centre[2] + rb.half[2]};
     PortRoomGeo::DrawShadowReceivers(lo, hi);
+    if (s.PortDynamic()) {
+      // Filter 0x40 receivers: platforms inside the box are redrawn as decals too.
+      TEntityList near;
+      mgr.BuildNearList(near, CAABox(CVector3f(lo[0], lo[1], lo[2]), CVector3f(hi[0], hi[1], hi[2])),
+                        CMaterialFilter::MakeInclude(CMaterialList(kMT_Platform)), nullptr);
+      for (const TUniqueId id : near) {
+        const CActor* platform = TCastToConstPtr< CActor >(mgr.GetObjectById(id));
+        if (platform == nullptr || platform == sActors[i] || !platform->HasModelData() ||
+            platform->NullModel() || !platform->IsDrawEnabled()) {
+          continue;
+        }
+        CPortActorRenderScope presented(*platform);
+        platform->PortRenderActorShadowCaster(mgr);
+      }
+    }
   }
   GXPortActorShadowEnd();
 }

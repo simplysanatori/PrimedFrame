@@ -639,10 +639,15 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     }
     if (state.actorLayer >= 0) {
       if (caster.pipeline == cache.shadowPipelineRef) {
-        // The actor map's frame is mirrored (z = -world z), so it culls nothing, whatever the draw does.
+        // The node's own cull, as Remastered's RenderShadowMaps leaves it to the material. The map's
+        // frame is mirrored (z = -world z), which flips the winding: back and front swap.
         PipelineConfig actorConfig = cache.config;
         actorConfig.shadowPass = 1;
-        actorConfig.cullMode = GX_CULL_NONE;
+        if (actorConfig.cullMode == GX_CULL_BACK) {
+          actorConfig.cullMode = GX_CULL_FRONT;
+        } else if (actorConfig.cullMode == GX_CULL_FRONT) {
+          actorConfig.cullMode = GX_CULL_BACK;
+        }
         actorConfig.msaaSamples = 1;
         caster.pipeline = gfx::pipeline_ref(actorConfig);
       }
