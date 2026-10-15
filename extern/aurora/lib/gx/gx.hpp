@@ -691,6 +691,11 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
 // aurora_set_per_pixel_lighting; any thread.
 void set_per_pixel_lighting(bool enabled) noexcept;
 bool per_pixel_lighting() noexcept;
+// While set, every draw's pipeline lookup joins the front of the compile queue and waits for it
+// (see gfx::PipelinePriority::Blocking): the draws of the passes that set it are never skipped for a
+// pipeline that is still compiling. The GPU self-test sets it for its own passes; off by default.
+void set_blocking_pipelines(bool enabled) noexcept;
+bool blocking_pipelines() noexcept;
 // ShaderConfig::perPixelLight for a config with its other fields set: a PBR draw shades per
 // pixel already (and has no interpolators to spare).
 inline bool wants_per_pixel_light(const ShaderConfig& config) noexcept {

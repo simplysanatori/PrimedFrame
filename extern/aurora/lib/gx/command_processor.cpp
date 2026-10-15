@@ -138,6 +138,9 @@ struct PipelineMemo {
 // dropped, which gfx::touch_pipeline reports.
 absl::flat_hash_map<gfx::PipelineRef, PipelineMemo> sPipelineMemo;
 
+// aurora_gpu_selftest_run sets blocking_pipelines() for its passes, so a draw of those passes is not
+// skipped for a pipeline that is still compiling (gx.cpp).
+
 struct DrawCache {
   PipelineConfig config{};
   ShaderInfo shaderInfo{};
@@ -497,9 +500,11 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     populate_pipeline_config(cache.config, prim, fmt);
     // A frame switches pipelines hundreds of times between a few hundred configs. The config's
     // hash is the pipeline's ref, so a config seen before reuses its shader info and shadow
-    // pipeline without the second lookup (shader info depends on the config alone).
+    // pipeline without the second lookup (shader info depends on the config alone). With blocking
+    // pipelines the lookup must still happen, since it is what waits for this draw's pipeline.
+    const bool blocking = blocking_pipelines();
     const gfx::PipelineRef ref = xxh3_hash(cache.config, static_cast<HashType>(gfx::ShaderType::GX));
-    auto memoIt = sPipelineMemo.find(ref);
+    auto memoIt = blocking ? sPipelineMemo.end() : sPipelineMemo.find(ref);
     if (memoIt != sPipelineMemo.end() && gfx::touch_pipeline(ref) &&
         (!memoIt->second.shadowCaster || gfx::touch_pipeline(memoIt->second.shadowPipelineRef)) &&
         (!memoIt->second.cutCaster || gfx::touch_pipeline(memoIt->second.cutPipelineRef))) {
@@ -513,7 +518,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     } else {
       cache.shaderInfo = build_shader_info(cache.config.shaderConfig);
       warn_missing_uv_sets(cache.config.shaderConfig, cache.shaderInfo);
-      cache.pipelineRef = gfx::pipeline_ref(cache.config);
+      cache.pipelineRef = gfx::pipeline_ref(cache.config, blocking);
       // Only an opaque surface that writes depth casts: the shadow map's vertex-only pass can't
       // alpha-test or blend. The game draws most opaque surfaces as a ONE/ZERO blend.
       const auto& sc = cache.config.shaderConfig;
@@ -526,7 +531,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
         PipelineConfig shadowConfig = cache.config;
         shadowConfig.shadowPass = 1;
         shadowConfig.msaaSamples = 1;
-        cache.shadowPipelineRef = gfx::pipeline_ref(shadowConfig);
+        cache.shadowPipelineRef = gfx::pipeline_ref(shadowConfig, blocking);
       }
       // A Remastered cutout (the PBR cut bit of a draw's mode) casts through its own cut test.
       cache.cutCaster = cache.shadowCaster && sc.pbr != 0 && sc.shadow && shader_has_cut_caster(sc);
@@ -534,7 +539,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
         PipelineConfig cutConfig = cache.config;
         cutConfig.shadowPass = 2;
         cutConfig.msaaSamples = 1;
-        cache.cutPipelineRef = gfx::pipeline_ref(cutConfig);
+        cache.cutPipelineRef = gfx::pipeline_ref(cutConfig, blocking);
       }
       sPipelineMemo.insert_or_assign(cache.pipelineRef, PipelineMemo{
                                                             .shaderInfo = cache.shaderInfo,

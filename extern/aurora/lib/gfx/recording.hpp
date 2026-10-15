@@ -6,6 +6,10 @@
 #include <cstddef>
 #include <string>
 
+namespace aurora::gx {
+struct PipelineConfig;
+} // namespace aurora::gx
+
 namespace aurora::gfx::detail {
 
 struct FramePacket;
@@ -142,6 +146,9 @@ template <typename DrawData>
 DrawData* get_last_draw_command();
 template <typename PipelineConfig>
 PipelineRef pipeline_ref(const PipelineConfig& config);
+// As above, but the lookup joins the front of the compile queue and waits for the result, so the
+// draw that follows cannot be skipped for a pipeline that is not built yet (the GPU self-test).
+PipelineRef pipeline_ref(const gx::PipelineConfig& config, bool blocking);
 
 // An EFB copy recorded while the pass draws the HDR scene (scene_hdr_pass_active): the tone curve
 // it post-tones the scene through, as it was when the copy was made, or, linear, the scene itself

@@ -142,6 +142,8 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   config.shaderConfig.sceneHdr = gfx::scene_hdr_pass_active();
 }
 bool per_pixel_lighting() noexcept { return false; }
+// The GPU self-test is not linked here; its blocking lookups stay off.
+bool blocking_pipelines() noexcept { return false; }
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept { return {}; }
 ShaderInfo build_shader_info(const ShaderConfig& config) noexcept { return {}; }
 gfx::Range build_uniform(const ShaderInfo& info) noexcept { return {.size = 1}; }
@@ -235,6 +237,7 @@ template <>
 PipelineRef pipeline_ref<gx::PipelineConfig>(const gx::PipelineConfig& config) {
   return 0;
 }
+PipelineRef pipeline_ref(const gx::PipelineConfig& config, bool blocking) { return 0; }
 // Never live, so the shader-info memo is rebuilt on every draw.
 bool touch_pipeline(PipelineRef ref) { return false; }
 gx::DrawData g_testLastDraw{};

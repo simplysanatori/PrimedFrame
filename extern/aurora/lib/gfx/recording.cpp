@@ -1452,12 +1452,25 @@ void push_draw_command(rmlui::DrawData data) {
 }
 #endif
 
+// A GX draw's pipeline: blocking when the caller must not lose its draw (gx::blocking_pipelines).
+static PipelineRef gx_pipeline_ref(const gx::PipelineConfig& config, bool blocking) {
+  return find_pipeline(
+      ShaderType::GX, config,
+      [=] {
+        phase::Scope compiling(render_worker::is_worker_thread() ? phase::Render : phase::Main,
+                               "compiling a GX pipeline");
+        return create_pipeline(config);
+      },
+      blocking ? PipelinePriority::Blocking : PipelinePriority::Normal);
+}
+
 template <>
 PipelineRef pipeline_ref(const gx::PipelineConfig& config) {
-  return find_pipeline(ShaderType::GX, config, [=] {
-    phase::Scope compiling(render_worker::is_worker_thread() ? phase::Render : phase::Main, "compiling a GX pipeline");
-    return create_pipeline(config);
-  });
+  return gx_pipeline_ref(config, false);
+}
+
+PipelineRef pipeline_ref(const gx::PipelineConfig& config, bool blocking) {
+  return gx_pipeline_ref(config, blocking);
 }
 
 #ifdef AURORA_ENABLE_RMLUI

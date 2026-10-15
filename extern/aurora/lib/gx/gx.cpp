@@ -230,10 +230,14 @@ wgpu::PrimitiveState to_primitive_state(GXCullMode gx_cullMode) {
   };
 }
 std::atomic_bool sPerPixelLighting{false};
+std::atomic_bool sBlockingPipelines{false};
 } // namespace
 
 void set_per_pixel_lighting(bool enabled) noexcept { sPerPixelLighting.store(enabled, std::memory_order_relaxed); }
 bool per_pixel_lighting() noexcept { return sPerPixelLighting.load(std::memory_order_relaxed); }
+
+void set_blocking_pipelines(bool enabled) noexcept { sBlockingPipelines.store(enabled, std::memory_order_relaxed); }
+bool blocking_pipelines() noexcept { return sBlockingPipelines.load(std::memory_order_relaxed); }
 
 void set_viewport_policy(AuroraViewportPolicy policy) noexcept {
   sPendingViewportPolicy.store(policy, std::memory_order_release);

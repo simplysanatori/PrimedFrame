@@ -233,6 +233,9 @@ compares them (RGB, +-2 per channel). Cases: direct, 8-bit and 16-bit indexed ve
 colour, a 3-stage TEV combine, RGBA8 / IA8 / I8 / CMPR textures, alpha blend and alpha-compare, depth in both
 draw orders, EFB copy sampled back.
 A silent warm-up pass runs first so the async pipeline compiles finish, then the logged pass (a few frames later).
+Each case's own pipeline is waited for (a blocking lookup), so a draw is never skipped because its pipeline is
+still compiling: a FAIL means the draw happened and the device rendered it wrong. The wait can delay the call
+by one compile of a fresh case's pipeline (~300 ms) however busy the compile queue is otherwise.
 
     F1 > Video > Compatibility > "GPU self-test"      # or: console `gpuselftest`, or MP_GPU_SELFTEST=1 (once, ~120 frames in)
     grep 'gpu selftest' game.log

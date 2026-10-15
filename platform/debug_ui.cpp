@@ -4260,7 +4260,7 @@ void RequestGpuSelfTest() { sGpuSelfTestRequested.store(true, std::memory_order_
 
 void RunGpuSelfTestIfRequested() {
   // Pipelines compile asynchronously and a draw is skipped until its pipeline is ready, so a request first
-  // runs a silent warm-up pass, waits for the compile queue to drain, then runs the logged pass.
+  // runs a silent warm-up pass that waits for the test's own pipelines (selftest.cpp), then the logged pass.
   enum class Stage { Idle, WarmingUp };
   static Stage stage = Stage::Idle;
   static unsigned waited = 0;
@@ -4274,9 +4274,9 @@ void RunGpuSelfTestIfRequested() {
     if (aurora_gpu_selftest_pending()) {
       return;
     }
-    // Let the pipelines the warm-up queued finish (a few frames at least, and not forever).
-    const bool drained = aurora_get_stats()->queuedPipelines == 0;
-    if (++waited < 3 || (!drained && waited < 1800)) {
+    // The warm-up's lookups waited for every case's pipeline, so the logged pass cannot lose a draw:
+    // a couple of frames between the passes is all that is left to do.
+    if (++waited < 2) {
       return;
     }
     stage = Stage::Idle;
