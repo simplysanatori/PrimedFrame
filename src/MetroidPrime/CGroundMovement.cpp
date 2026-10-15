@@ -673,7 +673,15 @@ CMaterialList CGroundMovement::MoveObjectAnalytical(CStateManager& mgr, CPhysics
   // delta per tick: 0.12 units/s at 60 Hz, twice that at 120 Hz (a standing jump
   // peaked 0.06 lower). Scale it to the tick rate for moves that hit nothing;
   // moves that hit something keep the full gap to the surface.
-  const float freeDelta = options.x20_minimumTranslationDelta * (PortDebug::TickPeriod() * 60.f);
+  // Remastered's stepped mover (CPhysicsSteppedMoverColliderMP1::DoMovementStep
+  // 0xf948d4) takes the whole step when it hits nothing, so with Remastered
+  // movement a free move loses nothing: the ground run is 16.5 - 1/k = 10.843
+  // u/s as in Remastered, not 10.723.
+  const CPlayer* player = TCastToConstPtr< CPlayer >(&actor);
+  const float freeDelta =
+      player && player->MouseControlsAllowed(mgr) && PortDebug::RemasteredMovement()
+          ? 0.f
+          : options.x20_minimumTranslationDelta * (PortDebug::TickPeriod() * 60.f);
 #else
   const float freeDelta = options.x20_minimumTranslationDelta;
 #endif
