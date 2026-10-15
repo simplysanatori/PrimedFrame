@@ -10,6 +10,7 @@
 #include "port_debug.h"
 #include "port_rando_gen.h"
 #include "port_randomizer.h"
+#include "port_savestate.h"
 #include "port_skip_cutscenes.h"
 #include "port_strings.h"
 #include "port_ws.h"
@@ -350,6 +351,9 @@ struct Runtime {
   bool goalSent = false;
   // The checks the running game records have been handed to this session.
   bool recordSynced = false;
+  // SwitchNotice(): set when a game of another seed or room was sent back to
+  // the title.
+  std::string switchNotice;
 };
 
 Runtime& GetRuntime() {
@@ -453,23 +457,22 @@ void QueueRecordedChecksLocked(Runtime& runtime, const CGameState::ApProgress& p
 // the save records how many it holds, and on load the session rewinds to that
 // many and has the server replay the rest. The other way round, the save
 // records the checks it made, some of which the session may not have seen.
-void ReconcileLocked(Runtime& runtime, CGameState::ApProgress& progress) {
+// True when the running game is another seed's or room's than the session's
+// (the server changed under it): the caller sends it back to the title.
+bool ReconcileLocked(Runtime& runtime, CGameState::ApProgress& progress) {
   const Protocol::State& state = runtime.session->GetState();
   if (state.seed.empty())
-    return; // no session yet to compare with; nothing can have been granted
+    return false; // no session yet to compare with; nothing can have been granted
   const uint32_t identity = SessionIdentity(state.seed, runtime.config.slot, runtime.roomSuffix);
   if (progress.reconciled) {
-    // The server changed seeds under a running game. The session has already
-    // dropped the old seed's progress, and none of the new one's is held yet.
-    if (progress.identity != identity) {
-      progress.identity = identity;
-      progress.appliedIndex = 0;
-      ClearChecked(progress);
-    } else if (!runtime.recordSynced) {
+    // The game holds the old seed's or room's items, which the new one's
+    // checks and receipts can't be applied on top of.
+    if (progress.identity != identity)
+      return true;
+    if (!runtime.recordSynced)
       QueueRecordedChecksLocked(runtime, progress); // reconnected mid-game
-    }
     runtime.recordSynced = true;
-    return;
+    return false;
   }
   progress.reconciled = true;
   runtime.recordSynced = true;
@@ -490,14 +493,14 @@ void ReconcileLocked(Runtime& runtime, CGameState::ApProgress& progress) {
     progress.identity = identity;
     progress.appliedIndex = static_cast<uint>(
         std::clamp<int64_t>(firstPending, 0, std::numeric_limits<uint32_t>::max()));
-    return;
+    return false;
   }
   // A new game, or a save from another seed or slot, holds none of these items.
   const int64_t held = progress.identity == identity ? progress.appliedIndex : 0;
   progress.identity = identity;
   progress.appliedIndex = static_cast<uint>(held);
   if (held == firstPending)
-    return;
+    return false;
   PortLog::Write("archipelago: the loaded game holds %lld of %lld received items; "
                  "asking the server for the rest\n",
                  static_cast<long long>(held), static_cast<long long>(state.nextItemIndex));
@@ -506,6 +509,7 @@ void ReconcileLocked(Runtime& runtime, CGameState::ApProgress& progress) {
   runtime.grants.clear();
   runtime.itemCount = static_cast<int>(std::min<int64_t>(held, std::numeric_limits<int>::max()));
   runtime.syncWanted = true;
+  return false;
 }
 
 // With the built-in tables the game is a plain disc, so what the AP ISO patches
@@ -1874,6 +1878,17 @@ const char* LastMessage() {
   return message.c_str();
 }
 
+const char* SwitchNotice() {
+  EnsureLoaded();
+  Runtime& runtime = GetRuntime();
+  thread_local std::string notice;
+  {
+    std::lock_guard<std::mutex> lock(runtime.mutex);
+    notice = runtime.switchNotice;
+  }
+  return notice.c_str();
+}
+
 bool TakeNotification(std::string& text) {
   try {
     EnsureLoaded();
@@ -2551,7 +2566,21 @@ void Poll(CStateManager& mgr) {
       std::lock_guard<std::mutex> lock(runtime.mutex);
       if (!runtime.enabled || runtime.session == nullptr)
         return;
-      ReconcileLocked(runtime, progress);
+      if (ReconcileLocked(runtime, progress)) {
+        // Its items stay in the game, and quick resume would take it for the
+        // new one's (whose identity it now has), so it is left for the file
+        // select. The new game's receipts stay queued for it.
+        if (mgr.GetWantsToQuit())
+          return;
+        PortLog::Write("archipelago: the server is another seed or room than the game in "
+                       "play; back to the title\n");
+        runtime.switchNotice = "This is another Archipelago seed or room than the game that "
+                               "was running. Start its game from the file select.";
+        PortSaveState::ResumeDiscard();
+        mgr.QuitGame();
+        return;
+      }
+      runtime.switchNotice.clear();
       grants.swap(runtime.grants);
       const size_t room = static_cast<size_t>(std::max(0, std::numeric_limits<int>::max() -
                                                            runtime.itemCount));

@@ -91,6 +91,10 @@ int ItemCount();
 int CheckCount();
 // Most recent PrintJSON text, or "" when there has not been one.
 const char* LastMessage();
+// Why the running game was sent back to the title (the server is another
+// seed or room than the game in play), or "" until then. Cleared when the
+// next game starts.
+const char* SwitchNotice();
 // Drains the oldest human-readable notification (an item receipt or a
 // PrintJSON line) into `text`. False when the queue is empty. Call from the
 // game thread.

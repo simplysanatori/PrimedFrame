@@ -984,9 +984,13 @@ bool RequestResumeLoad() {
   return true;
 }
 
-void ResumeClear() {
+void ResumeDiscard() {
   DropSnapshot();
   RemoveResumeFile();
+}
+
+void ResumeClear() {
+  ResumeDiscard();
   SetMessage("Resume state deleted");
 }
 

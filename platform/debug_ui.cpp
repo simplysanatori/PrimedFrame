@@ -7919,6 +7919,12 @@ void DrawArchipelagoSession() {
     }
     ImGui::SameLine();
     ImGui::TextWrapped("%s", PortAp::StatusText());
+    const char* switchNotice = PortAp::SwitchNotice();
+    if (switchNotice[0] != '\0') {
+      ImGui::PushStyleColor(ImGuiCol_Text, ThemeBadColor());
+      ImGui::TextWrapped("%s", switchNotice);
+      ImGui::PopStyleColor();
+    }
     const char* seedName = PortAp::SeedName();
     if (seedName != nullptr && seedName[0] != '\0')
       ImGui::TextWrapped("Seed: %s", seedName);

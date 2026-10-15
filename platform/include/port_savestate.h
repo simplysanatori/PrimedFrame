@@ -205,6 +205,9 @@ int TakeResumePromptAnswer();
 // Console: load the resume state from inside a game; delete it; one line.
 bool RequestResumeLoad();
 void ResumeClear();
+// Drops the snapshot and the resume file, silently: the game in play is no
+// longer the one its identity names (an Archipelago room switch).
+void ResumeDiscard();
 std::string ResumeStatus();
 
 // The folder states live in (created on first use).
