@@ -262,6 +262,7 @@ float sGunOffset[3] = {};
 int sMsaa = 1;
 int sAnisotropy = 16;
 bool sPerPixelLighting = false;
+bool sSunShadows = true;
 // Setting `opengles`; sOpenGlesAtStart is what this run was started with.
 bool sOpenGles = false;
 bool sOpenGlesAtStart = false;
@@ -676,6 +677,8 @@ void ApplySetting(const std::string& key, const std::string& value) {
     const int v = std::atoi(value.c_str());
     sStorageClamp = v < 0 ? -1 : (v > 0 ? 1 : 0);
     sStorageClampAtStart = sStorageClamp;
+  } else if (key == "sun_shadows") {
+    sSunShadows = ParseBool(value);
   } else if (key == "per_pixel_lighting") {
     sPerPixelLighting = ParseBool(value);
   } else if (key == "anisotropy") {
@@ -859,6 +862,7 @@ std::string SettingsText() {
   file << "gpu_driver=" << sGpuDriver << '\n';
   file << "anisotropy=" << sAnisotropy << '\n';
   file << "per_pixel_lighting=" << (sPerPixelLighting ? 1 : 0) << '\n';
+  file << "sun_shadows=" << (sSunShadows ? 1 : 0) << '\n';
   file << "unlock_hard_mode=" << (sUnlockHardMode ? 1 : 0) << '\n';
   file << "unlock_fusion_suit=" << (sUnlockFusionSuit ? 1 : 0) << '\n';
   file << "unlock_galleries=" << (sUnlockGalleries ? 1 : 0) << '\n';
@@ -1916,6 +1920,18 @@ void SetPerPixelLighting(bool enabled) {
   if (sPerPixelLighting != enabled) {
     sPerPixelLighting = enabled;
     ApplyGraphicsQuality();
+    MarkDirty();
+  }
+}
+
+bool SunShadows() {
+  EnsureInitialized();
+  return sSunShadows;
+}
+void SetSunShadows(bool enabled) {
+  EnsureInitialized();
+  if (sSunShadows != enabled) {
+    sSunShadows = enabled;
     MarkDirty();
   }
 }
@@ -6850,6 +6866,12 @@ void DrawVideoQuality() {
     ImGui::SetItemTooltip("Sums the game's lights per pixel instead of per vertex, like Dolphin's option:\n"
                           "smoother lighting on low-poly models. Not the original look. Remastered models\n"
                           "shade per pixel already.");
+    bool sunShadows = sSunShadows;
+    if (ImGui::Checkbox("Sun shadows", &sunShadows)) {
+      SetSunShadows(sunShadows);
+    }
+    ImGui::SetItemTooltip("Sun shadows: the port's shadow from the sun (outdoor rooms). Remastered does not\n"
+                          "draw sun shadows; turn off for the Remastered look.");
   }
 
   bool autoScale = sRenderScale <= 0.f;
