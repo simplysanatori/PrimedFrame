@@ -638,19 +638,18 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
       caster.bindGroups = cache.cutBindGroups;
     }
     if (state.actorLayer >= 0) {
-      if (caster.pipeline == cache.shadowPipelineRef) {
-        // The node's own cull, as Remastered's RenderShadowMaps leaves it to the material. The map's
-        // frame is mirrored (z = -world z), which flips the winding: back and front swap.
-        PipelineConfig actorConfig = cache.config;
-        actorConfig.shadowPass = 1;
-        if (actorConfig.cullMode == GX_CULL_BACK) {
-          actorConfig.cullMode = GX_CULL_FRONT;
-        } else if (actorConfig.cullMode == GX_CULL_FRONT) {
-          actorConfig.cullMode = GX_CULL_BACK;
-        }
-        actorConfig.msaaSamples = 1;
-        caster.pipeline = gfx::pipeline_ref(actorConfig);
+      // The node's own cull, as Remastered's RenderShadowMaps leaves it to the material. The map's
+      // frame is mirrored (z = -world z), which flips the winding: back and front swap. A cutout's
+      // caster (shadowPass 2) alpha-tests the same way and takes the same cull.
+      PipelineConfig actorConfig = cache.config;
+      actorConfig.shadowPass = caster.pipeline == cache.shadowPipelineRef ? 1 : 2;
+      if (actorConfig.cullMode == GX_CULL_BACK) {
+        actorConfig.cullMode = GX_CULL_FRONT;
+      } else if (actorConfig.cullMode == GX_CULL_FRONT) {
+        actorConfig.cullMode = GX_CULL_BACK;
       }
+      actorConfig.msaaSamples = 1;
+      caster.pipeline = gfx::pipeline_ref(actorConfig);
       gfx::actor_shadow::add_caster(static_cast<uint32_t>(state.actorLayer), caster);
     } else {
       gfx::shadow::add_caster(caster);

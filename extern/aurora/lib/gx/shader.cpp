@@ -2949,6 +2949,8 @@ void add_cut_caster(std::string& source, const ShaderConfig& config) {
   vs.replace(vs.find("fn vs_main("), 11, "fn vs_shadow_cut(");
   vs += "\n    var shadow_pos = vec4f(mv_pos, 1.0) * ubuf.shadow_caster[imm.serial];"
         "\n    shadow_pos.z = max(shadow_pos.z, 0.0);"
+        // As vs_shadow: an actor's caster[0] holds its height weight in column 3, so w is pinned to 1.
+        "\n    shadow_pos.w = 1.0;"
         "\n    out.pos = shadow_pos;";
   vs += vsTail;
   std::string fs = "@fragment\nfn fs_shadow(in: VertexOutput) {";
