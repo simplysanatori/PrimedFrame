@@ -4,6 +4,7 @@
 #include "GuiSys/CGuiTableGroup.hpp"
 #include "GuiSys/CGuiTextPane.hpp"
 #include "GuiSys/CGuiWidgetDrawParms.hpp"
+#include "Kyoto/Input/CFinalInput.hpp"
 #include "Kyoto/Audio/CSfxManager.hpp"
 #include "Kyoto/CResFactory.hpp"
 #include "Kyoto/Graphics/CColor.hpp"
@@ -434,9 +435,19 @@ CIOWin::EMessageReturn CSaveGameScreen::Update(float dt) {
 void CSaveGameScreen::ProcessUserInput(const CFinalInput& input) {
   if (x50_loadedFrame != nullptr) {
 #ifdef TARGET_PC
-    // Port: hover and click the choices (port_pointer_menu.h).
+    // Port: hover and click the choices (port_pointer_menu.h); a click
+    // anywhere else confirms the selected one, as A (issue #120). A double
+    // click's second half is dropped, so it can't also confirm the next prompt.
+    float gx, gy;
+    int count = 0;
     if (PortPointerMenu::Begin()) {
       PortPointerMenu::Table(x58_tablegroup_choices);
+      if (PortPointerMenu::TakeClickPoint(gx, gy, count) && count == 1) {
+        CFinalInput pointerInput = input;
+        PortPointerMenu::PressA(pointerInput);
+        x50_loadedFrame->ProcessUserInput(pointerInput);
+        return;
+      }
     }
 #endif
     x50_loadedFrame->ProcessUserInput(input);

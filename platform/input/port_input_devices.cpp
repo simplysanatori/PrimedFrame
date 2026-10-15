@@ -1137,10 +1137,17 @@ SPoll Poll(unsigned mouseHeld, bool focused) {
 
   r.status = Synthesize(out);
   // The scan text reads only A: the Menu row's, not gameplay's (issue #93). The
-  // other buttons keep gameplay's, so the held lock stays.
+  // other buttons keep gameplay's, so the held lock stays. A mouse button on A
+  // (fire under mouse aim) still turns the page, as it does in the other text
+  // boxes (issue #120).
   if (ScanTextOpen(contexts) && MenuButtonsActive()) {
     r.status.button &= static_cast< u16 >(~PAD_BUTTON_A);
     if (out.Held(Action::MenuA)) r.status.button |= PAD_BUTTON_A;
+    for (int i = 0; i < PortInputMap::kMouseButtonCount; ++i) {
+      if ((raw.mouseButtons & (1u << (kMouseGameplay + i))) != 0 &&
+          PortInputMap::MouseActionInfo(PortDebug::MouseAction(i)).padButton == PAD_BUTTON_A)
+        r.status.button |= PAD_BUTTON_A;
+    }
   }
   // Escape there is gameplay's Start (pause), not also the Menu context's B.
   if (ScanTextOpen(contexts) && raw.keys.test(SDL_SCANCODE_ESCAPE) && PortPointer::Enabled() &&

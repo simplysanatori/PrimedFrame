@@ -22,6 +22,42 @@
 
 #include <rstl/math.hpp>
 
+#ifdef TARGET_PC
+#include "port_pointer.h"
+
+namespace {
+// Port: with pointer menus, a mouse click anywhere turns the scan page, as A
+// does (issue #120). Touch is left out: the overlay's own A and lock buttons
+// are under the finger. A click whose press already gave A (a mouse button on
+// A) is dropped, so one click turns one page.
+bool PortScanClick(bool pressedA) {
+  static bool sPressGaveA = false;
+  if (!PortPointer::Enabled()) {
+    sPressGaveA = false;
+    return false;
+  }
+  PortPointer::Recognizer& g = PortPointer::Gestures();
+  if (pressedA && g.Pressed()) {
+    sPressGaveA = true;
+  }
+  PortPointer::Click click;
+  if (!g.PeekClick(click)) {
+    if (!g.Pressed()) {
+      sPressGaveA = false;
+    }
+    return false;
+  }
+  if (click.device != PortPointer::Device::Mouse || click.button != PortPointer::kButtonLeft) {
+    return false;
+  }
+  g.TakeClick(click);
+  const bool turn = !sPressGaveA && !pressedA;
+  sPressGaveA = false;
+  return turn;
+}
+} // namespace
+#endif
+
 void CScanDisplay::SetScanMessageTypeEffect(CGuiTextPane* pane, bool type) {
   if (type) {
     pane->TextSupport().SetTypeWriteEffectOptions(true, 0.1f, 60.f);
@@ -401,8 +437,14 @@ void CScanDisplay::ProcessInput(const CFinalInput& input) {
   if (inactive) {
     return;
   }
+  bool confirm = input.PA();
+#ifdef TARGET_PC
+  if (PortScanClick(confirm)) {
+    confirm = true;
+  }
+#endif
   if (mState == kSS_DownloadComplete && mXAlpha == 0.f) {
-    if (input.PA()) {
+    if (confirm) {
       CGuiTextSupport& support = mMessage->TextSupport();
       if (support.GetCurTime() < support.GetTotalAnimationTime()) {
         support.SetCurTime(support.GetTotalAnimationTime());
@@ -415,7 +457,7 @@ void CScanDisplay::ProcessInput(const CFinalInput& input) {
   } else if (mState == kSS_ViewingScan) {
     const int oldCounter = mPageCounter;
     const int totalPages = mScrollMessage->TextSupport().GetTotalPageCount();
-    if (input.PA() && totalPages != -1) {
+    if (confirm && totalPages != -1) {
       CGuiTextSupport& support =
           oldCounter == 0 ? mMessage->TextSupport() : mScrollMessage->TextSupport();
       if (support.GetCurTime() < support.GetTotalAnimationTime()) {
