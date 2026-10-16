@@ -154,6 +154,12 @@
 #endif
 {"Remastered", "", "Metroid Prime Remastered models", "Import", "remastered start import run room geometry particles effects movies"},
 {"Remastered", "", "Metroid Prime Remastered models", "Load it again", "remastered reload again import"},
+{"Remastered", "", "Metroid Prime Remastered models", "Room geometry", "remastered import parts room geometry models skip size"},
+{"Remastered", "", "Metroid Prime Remastered models", "Particle effects", "remastered import parts particle effects skip"},
+{"Remastered", "", "Metroid Prime Remastered models", "HUD", "remastered import parts hud skip"},
+{"Remastered", "", "Metroid Prime Remastered models", "Text", "remastered import parts text strings skip"},
+{"Remastered", "", "Metroid Prime Remastered models", "Movies", "remastered import parts movies fmv skip ffmpeg"},
+{"Remastered", "", "Metroid Prime Remastered models", "Gallery", "remastered import parts gallery extras skip"},
 {"Mods", "", "Mods", "Load mods", "mods enable disable mod loader"},
 {"Mods", "", "Mods", "Reload mods", "mods reload refresh"},
 #if !defined(__ANDROID__)

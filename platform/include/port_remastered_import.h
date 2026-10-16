@@ -33,11 +33,30 @@ struct ImportState {
   int done = 0;            // models tried so far
   int total = 0;
   int failed = 0;
+  // Where a full import is: step `step` of `steps` (0 when not counted, as for a movies-only
+  // import), and how far into that step, out of stepTotal (0 when it cannot say).
+  int step = 0;
+  int steps = 0;
+  int stepDone = 0;
+  int stepTotal = 0;
+  bool cancelling = false; // cancel was asked for and the import has not stopped yet
   std::string message;     // what it is doing, or how it ended
   std::vector<std::string> lines;  // the newest kImportMaxLines of its log
 };
 
 inline constexpr size_t kImportMaxLines = 200;
+
+// The parts of the game the panel leaves out of the next import, on top of the
+// MP_REMASTERED_* switches (docs/MODS.md): a part is imported only when both want it.
+struct ImportParts {
+  bool hud = true;
+  bool text = true;
+  bool effects = true;
+  bool movies = true;
+  bool gallery = true;
+  bool geometry = true; // the rooms' static geometry (MP_REMASTERED_GEOMETRY)
+};
+void SetImportParts(const ImportParts& parts);
 
 // The mod folder an import ends up as.
 inline constexpr const char* kImportModName = "remastered-models";

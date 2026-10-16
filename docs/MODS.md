@@ -298,6 +298,12 @@ and installed as `mods/remastered-models`, replacing an older one, when the
 import ends (a mod reload then loads it; the pending install also applies at
 the next start). A cancelled or interrupted import leaves nothing behind.
 Once it has ended, "Load it again" in the same panel reloads the mods by hand.
+"What to import" in the panel leaves parts out of the next import (room
+geometry, particle effects, HUD, text, movies, gallery), kept as
+`remastered_skip` in the settings file; the `MP_REMASTERED_*` switches below
+can still leave a part out the panel keeps. While it runs, the bar counts the
+import's steps; when it ends with models that failed, the panel says how many,
+and "Copy the notes" puts the notes on the clipboard for a report.
 From a terminal,
 `metroid_prime_port --import-remastered <image.nsp|image.xci> [key file]` does the same
 on every core without starting the game and installs at once (the disc comes

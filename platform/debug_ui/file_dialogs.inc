@@ -800,6 +800,7 @@ static void ReloadUntilDone() {
 }
 
 bool StartRemasteredImport(const std::string& image, const std::string& keys) {
+  PortRemastered::SetImportParts(RemasteredImportParts());
 #if defined(__ANDROID__)
   // Each worker holds a world's models while it converts them; a phone has
   // the memory for two of those, not for one per core.
