@@ -147,8 +147,7 @@ jobs:
           cp extern/GamepadMotionHelpers/LICENSE dist/licenses/gamepadmotionhelpers.txt
           cp "$(brew --prefix openssl@3)/LICENSE.txt" dist/licenses/openssl.txt 2>/dev/null ||
             curl -fsSL -o dist/licenses/openssl.txt https://raw.githubusercontent.com/openssl/openssl/openssl-3.5/LICENSE.txt
-          # Dawn and nod are prebuilt packages with no licence file of their own.
-          cp packaging/licenses/*.txt dist/licenses/
+          if [ -f build-mac/_deps/freetype-src/docs/FTL.TXT ]; then cp build-mac/_deps/freetype-src/docs/FTL.TXT dist/licenses/freetype-FTL.txt; fi
           (cd build-mac/_deps && find . -type f \( -name 'LICENSE*' -o -name 'COPYING*' -o -name 'NOTICE*' \) -not -path '*/build/*' |
             while read -r f; do mkdir -p "../../dist/licenses/$(dirname "$f")"; cp "$f" "../../dist/licenses/$f"; done)
           cp docs/NATIVE_PORT.md dist/README.md

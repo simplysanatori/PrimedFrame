@@ -139,9 +139,7 @@ jobs:
               New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
               Copy-Item $_.FullName $destination
             }
-          # Dawn (webgpu_dawn.dll) and nod (linked in, dual MIT / Apache-2.0) are
-          # prebuilt packages with no licence file of their own.
-          Copy-Item packaging/licenses/*.txt dist/licenses/
+          if (Test-Path build-win/_deps/freetype-src/docs/FTL.TXT) { Copy-Item build-win/_deps/freetype-src/docs/FTL.TXT dist/licenses/freetype-FTL.txt }
           $license = @("$root/license.txt", "$root/LICENSE.txt") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if ($license) { Copy-Item $license dist/licenses/openssl.txt }
           else { Invoke-WebRequest https://raw.githubusercontent.com/openssl/openssl/openssl-3.5/LICENSE.txt -OutFile dist/licenses/openssl.txt }

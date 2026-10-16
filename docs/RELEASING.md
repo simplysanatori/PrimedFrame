@@ -25,6 +25,9 @@ the port asks for the image on first launch when it cannot find one.
 | Dear ImGui | MIT | fetched, `imgui-src/LICENSE` |
 | fmt | MIT | fetched, `fmt-src/LICENSE` |
 | zstd | BSD | fetched, `zstd-src/LICENSE` |
+| Abseil, libpng, FreeType, xxHash | Apache-2.0, libpng, FTL, BSD-2 | fetched, `<name>-src/` |
+| Dawn, nod | BSD-3 (and bundled), MIT or Apache-2.0 | `packaging/licenses/` (prebuilt archives carry none) |
+| randomprime, apworld, PopTracker pack data tables | MIT | `packaging/licenses/` |
 | Button prompt icons | Kenney CC0 | `tools/prompt_icons/`, built into `textures/` |
 
 **The repository's own work is MIT, and the game code is not.** `LICENSE` grants
