@@ -40,6 +40,16 @@ class Wiring(unittest.TestCase):
         self.assertIn("PortAirMoverContact::PushDistance(flag100)", air)
         self.assertIn("tc.minVertical, mi, tc.flag100)", air)
 
+    def test_landing_follows_mover_state(self):
+        # Terrain events keep the retail convention: matLeft is the touched surface.
+        self.assertIn("actor.GetMaterialList(),\n                                     material, primary)", air)
+        # 0xc545bc lands on the mover's grounded state; no second 0.85 IsFloor test.
+        self.assertNotIn("SendScriptMessages(", air)
+        landing = air.split("  if (grounded) {\n    for (int i = 0; i < groundList.GetCount(); ++i)", 1)
+        self.assertEqual(len(landing), 2, "grounded must land the player")
+        self.assertIn("mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_OnFloor)",
+                      landing[1].split("kSM_Falling", 1)[0])
+
 
 if __name__ == "__main__":
     unittest.main()

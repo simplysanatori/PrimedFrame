@@ -1300,8 +1300,10 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         // a native contact paired by index or a fabricated point.
         if (tc.pointCount != 0) {
           const auto& point = tc.points[0];
-          const CCollisionInfo event(CVector3f(point.x,point.y,point.z), material,
-                                     actor.GetMaterialList(), primary);
+          // Retail convention, as the native dynamic infos: the 2nd ctor
+          // argument lands in matLeft, which must be the touched surface.
+          const CCollisionInfo event(CVector3f(point.x,point.y,point.z), actor.GetMaterialList(),
+                                     material, primary);
           accepted.Add(event, false);
           if (isFloor) groundList.Add(event, false);
         }
@@ -1386,8 +1388,17 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     }
   }
 
-  if (groundList.GetCount() > 0 && grounded) {
-    SendScriptMessages(mgr, actor, NULL, groundList);
+  // 0xc545bc CPhysicsActorMP1::PostPhysicsUpdate lands on the mover's object
+  // state alone: state 1 (grounded) sends OnFloor (0x17) with no second floor
+  // test. Retail SendScriptMessages re-tests each contact with IsFloor
+  // (n.z > 0.85), which refuses the 0.7071..0.85 floors the mover grounded
+  // on, so the player never landed there and the loop froze (issue #117).
+  // Surface messages come from 0xcf1a2c CollidedWithNew for floor contacts.
+  if (grounded) {
+    for (int i = 0; i < groundList.GetCount(); ++i) {
+      SendMaterialMessage(mgr, groundList[i].GetMaterialLeft(), actor);
+    }
+    mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_OnFloor);
   }
   if (!hadCollision) {
     mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_Falling);
