@@ -1,0 +1,206 @@
+// The model (mesh) opacity form of Remastered's "OpacityFresnel" recipes: which material selects it,
+// what it changes in the draw description and what alpha it produces. The formulas are the shader's
+// own (extern/aurora/lib/gfx/vfx.cpp: feature 2048 OpacityFade uses d = 0, feature 256 OpacityFresnel
+// d = |n.z|/|n|; both then clamp sat((d - A) / (B - A)) and smooth it), and the material is the
+// Power charge sphere's (build/s-powercharge-20261016/spheres/FADE-AUDIT.md).
+
+#include "port_vfx_opacity.h"
+
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+
+using aurora::gfx::vfx::Blend;
+using aurora::gfx::vfx::DrawDesc;
+using aurora::gfx::vfx::Feature;
+using aurora::gfx::vfx::Src;
+using aurora::gfx::vfx::select_model_depth;
+
+namespace {
+int sFailures = 0;
+
+// The shader's own arithmetic (extern/aurora/lib/gfx/vfx.cpp) is float and its degree constant is
+// 0.0174532942, so cos(90) is -1.7e-7 rather than 0: comparisons that are "zero" use this bound.
+constexpr float kTiny = 1e-6f;
+
+void Check(bool condition, const char* what) {
+  if (!condition) {
+    std::fprintf(stderr, "FAIL: %s\n", what);
+    ++sFailures;
+  }
+}
+
+float Sat(float x) { return x < 0.f ? 0.f : (x > 1.f ? 1.f : x); }
+
+float Smooth3(float x) { return x * x * (3.f - 2.f * x); }
+
+// vfx.cpp src(): the two fade angles are degrees and the shader takes their cosine. The component the
+// source names (row, comp of the per-particle extras) is the angle: the Power material's PMTR row 2
+// comps 0/1 are 90 and 0, which is what the test's Src values carry.
+float AngleDegrees(const Src& src) { return src.value; }
+
+// The alpha factor of the fade feature the description carries, at d = |n.z| / |n| (the sprite form
+// has no normal, so its d is 0).
+float FadeFactor(const DrawDesc& desc, float d) {
+  const bool fresnel = (desc.features & uint32_t(Feature::OpacityFresnel)) != 0;
+  const bool fade = (desc.features & uint32_t(Feature::OpacityFade)) != 0;
+  if (!fresnel && !fade) {
+    return 1.f;
+  }
+  const Src& x = fresnel ? desc.fresnelX : desc.fadeX;
+  const Src& y = fresnel ? desc.fresnelY : desc.fadeY;
+  const float a = std::cos(AngleDegrees(x) * 0.0174532942f);
+  const float b = std::cos(AngleDegrees(y) * 0.0174532942f);
+  const float term = fresnel ? d : 0.f;
+  const float q = b - a;
+  return Smooth3(q != 0.f ? Sat((term - a) / q) : (term >= a ? 1.f : 0.f));
+}
+
+// The Power charge sphere's VMAT, as the loader builds it: PMTR row 2 comps 0/1 are the fade angles
+// (90/0 in the source dump), blend alpha (PBDM 0), and the recipe's feature word.
+DrawDesc PowerSphereDesc(uint32_t features = kPortVfxModelOpacityFeatures,
+                         uint32_t blend = uint32_t(Blend::Alpha)) {
+  DrawDesc desc;
+  desc.features = features & ~uint32_t(Feature::AlreadyExposed);
+  desc.blend = static_cast< Blend >(blend);
+  desc.rampSlot = 0;
+  desc.indirectSlot = 1;
+  desc.modulate = 1.f;
+  desc.rampRow[0] = 0;
+  desc.rampRow[1] = 1;
+  desc.addRow = -1;
+  desc.fadeX = Src{2, 0, 90.f};
+  desc.fadeY = Src{2, 1, 0.f};
+  desc.tex[0].uvSet = 0;
+  desc.tex[0].cols = 2;
+  return desc;
+}
+
+constexpr uint32_t kAllFeatures = uint32_t(Feature::ColorTex) | uint32_t(Feature::OpacityTex) |
+                                  uint32_t(Feature::Erosion) | uint32_t(Feature::Ramp) |
+                                  uint32_t(Feature::Indirect) | uint32_t(Feature::DepthSoften) |
+                                  uint32_t(Feature::Thresholding) | uint32_t(Feature::DualMod) |
+                                  uint32_t(Feature::OpacityFresnel) | uint32_t(Feature::ColorIndexing) |
+                                  uint32_t(Feature::AddColor) | uint32_t(Feature::OpacityFade) |
+                                  uint32_t(Feature::ColorRgbOnly);
+
+// Only this material selects the model form; every other recipe keeps the description it has.
+void TestSelectionIsThePinnedRecipe() {
+  Check(PortVfxUsesModelOpacity(kPortVfxModelOpacityFeatures), "the recipe's own word selects the model form");
+  Check(PortVfxUsesModelOpacity(kPortVfxModelOpacityFeatures | uint32_t(Feature::AlreadyExposed)),
+        "the exposure policy bit is not part of the recipe");
+  // Every other recipe that carries OpacityFade today (FADE-AUDIT.md section 4); none selects it.
+  // A hand copy, so it proves only these words: a new converter row reusing the key would fail
+  // tests/port_vfx_opacity_wiring.py, not this list.
+  const uint32_t otherFadeRecipes[] = {
+      uint32_t(Feature::Ramp) | uint32_t(Feature::Indirect) | uint32_t(Feature::OpacityFade),          // 0x818
+      uint32_t(Feature::ColorTex) | uint32_t(Feature::OpacityTex) | uint32_t(Feature::Erosion) |
+          uint32_t(Feature::DepthSoften) | uint32_t(Feature::OpacityFade),                             // 0x827
+      uint32_t(Feature::ColorTex) | uint32_t(Feature::Erosion) | uint32_t(Feature::OpacityFade),       // 0x805
+      uint32_t(Feature::Ramp) | uint32_t(Feature::Indirect) | uint32_t(Feature::DualMod) |
+          uint32_t(Feature::OpacityFade),                                                              // 0x898
+      uint32_t(Feature::OpacityTex) | uint32_t(Feature::Ramp) | uint32_t(Feature::DualMod) |
+          uint32_t(Feature::OpacityFade),                                                              // 0x88a
+      uint32_t(Feature::ColorTex) | uint32_t(Feature::OpacityTex) | uint32_t(Feature::Erosion) |
+          uint32_t(Feature::OpacityFade),                                                              // 0x807
+  };
+  for (const uint32_t word : otherFadeRecipes) {
+    Check(!PortVfxUsesModelOpacity(word), "another OpacityFade recipe does not select the model form");
+    Check(!PortVfxUsesModelOpacity(word | uint32_t(Feature::AlreadyExposed)), "nor with the policy bit");
+    DrawDesc desc = PowerSphereDesc(word);
+    const DrawDesc before = desc;
+    Check(!PortVfxSelectModelOpacity(word, desc), "another OpacityFade recipe's mesh draw is left alone");
+    Check(std::memcmp(&desc, &before, sizeof(desc)) == 0, "and its description is byte-identical");
+  }
+  // A material with no fade feature has nothing to swap, and a second call changes nothing.
+  DrawDesc plain;
+  plain.features = kPortVfxModelOpacityFeatures & ~uint32_t(Feature::OpacityFade);
+  const DrawDesc plainBefore = plain;
+  Check(!PortVfxSelectModelOpacity(kPortVfxModelOpacityFeatures, plain), "no fade feature, nothing to swap");
+  Check(std::memcmp(&plain, &plainBefore, sizeof(plain)) == 0, "and the description is byte-identical");
+  DrawDesc already = PowerSphereDesc();
+  Check(PortVfxSelectModelOpacity(kPortVfxModelOpacityFeatures, already), "the first call swaps");
+  const DrawDesc swapped = already;
+  Check(!PortVfxSelectModelOpacity(kPortVfxModelOpacityFeatures, already), "the second call is a no-op");
+  Check(std::memcmp(&already, &swapped, sizeof(already)) == 0, "and changes nothing");
+}
+
+// Mesh versus sprite: the same material, only the fade form differs, and its parameters carry over.
+void TestMeshVersusSprite() {
+  const DrawDesc sprite = PowerSphereDesc(); // the sprite path draws this, unmodified
+  DrawDesc mesh = sprite;
+  Check(PortVfxSelectModelOpacity(kPortVfxModelOpacityFeatures | uint32_t(Feature::AlreadyExposed), mesh),
+        "the mesh draw of the Power material swaps the form");
+
+  const uint32_t moved = sprite.features ^ mesh.features;
+  Check((sprite.features & uint32_t(Feature::OpacityFade)) != 0, "the sprite keeps the normal-free fade");
+  Check((mesh.features & uint32_t(Feature::OpacityFade)) == 0, "the mesh drops it");
+  Check((mesh.features & uint32_t(Feature::OpacityFresnel)) != 0, "the mesh carries the normal test");
+  Check(moved == (uint32_t(Feature::OpacityFade) | uint32_t(Feature::OpacityFresnel)),
+        "no other feature flag moves");
+  Check((sprite.features & uint32_t(Feature::OpacityFresnel)) == 0, "the sprite never carries the normal test");
+  Check((sprite.features & ~kAllFeatures) == 0 && (mesh.features & ~kAllFeatures) == 0,
+        "neither draw carries a bit outside the feature set");
+
+  // The parameters carry over unswapped: A is PMTR row 2 comp 0, B is comp 1 in both forms.
+  Check(mesh.fresnelX.row == sprite.fadeX.row && mesh.fresnelX.comp == sprite.fadeX.comp &&
+            mesh.fresnelX.value == sprite.fadeX.value && mesh.fresnelY.row == sprite.fadeY.row &&
+            mesh.fresnelY.comp == sprite.fadeY.comp && mesh.fresnelY.value == sprite.fadeY.value,
+        "the two angle parameters are copied over, A then B");
+
+  // 90/0 degrees: the sprite form has no normal term and its fade is 0 for every facing — the shell
+  // is invisible, which is what the Power charge sphere did before this selection existed.
+  for (float d = 0.f; d <= 1.f; d += 0.25f) {
+    Check(std::fabs(FadeFactor(sprite, d)) < kTiny, "the sprite's fade is 0 at 90/0 degrees, for every facing");
+  }
+  // The mesh form is the facing gradient: opaque head-on, 0 at the silhouette.
+  Check(std::fabs(FadeFactor(mesh, 1.f) - 1.f) < kTiny, "the mesh is opaque head-on");
+  Check(std::fabs(FadeFactor(mesh, 0.f)) < kTiny, "the mesh fades out at the silhouette");
+  Check(std::fabs(FadeFactor(mesh, 0.5f) - 0.5f) < kTiny, "and is smooth in between (d = 0.5 at half facing)");
+  Check(FadeFactor(mesh, 0.25f) > 0.1f, "a slightly facing fragment is visible");
+  // The forms agree where d = 0: the model form is the only difference, which is why a recipe whose
+  // mesh permutation was not read keeps the sprite form.
+  Check(std::fabs(FadeFactor(mesh, 0.f) - FadeFactor(sprite, 0.f)) < kTiny, "the two forms agree where d = 0");
+}
+
+// Blend (alpha/additive) and the depth policy are not part of the selection.
+void TestBlendAndDepthUnchanged() {
+  for (uint32_t blend = 0; blend <= 5; ++blend) {
+    const DrawDesc sprite = PowerSphereDesc(kPortVfxModelOpacityFeatures, blend);
+    DrawDesc mesh = sprite;
+    Check(PortVfxSelectModelOpacity(kPortVfxModelOpacityFeatures, mesh), "the swap runs for every blend");
+    Check(mesh.blend == sprite.blend, "the blend is untouched");
+    Check(mesh.colorSlot == sprite.colorSlot && mesh.opacitySlot == sprite.opacitySlot &&
+              mesh.rampSlot == sprite.rampSlot && mesh.ramp2Slot == sprite.ramp2Slot &&
+              mesh.thresholdSlot == sprite.thresholdSlot && mesh.indirectSlot == sprite.indirectSlot &&
+              mesh.paletteSlot == sprite.paletteSlot,
+          "the texture slots are untouched");
+    Check(mesh.modulate == sprite.modulate && mesh.depthSoften == sprite.depthSoften &&
+              mesh.alreadyExposed == sprite.alreadyExposed && mesh.rampRow[0] == sprite.rampRow[0] &&
+              mesh.rampRow[1] == sprite.rampRow[1] && mesh.addRow == sprite.addRow,
+          "modulate, depth soften, exposure and the extra rows are untouched");
+    Check(mesh.erosion.row == sprite.erosion.row && mesh.thrX.comp == sprite.thrX.comp &&
+              mesh.indexScale.value == sprite.indexScale.value,
+          "the other sources are untouched");
+    Check(mesh.tex[0].uvSet == sprite.tex[0].uvSet && mesh.tex[0].cols == sprite.tex[0].cols,
+          "the textures are untouched");
+    for (int m = 0; m < 8; ++m) {
+      const bool z = m & 1, aaph = m & 2, zbuf = m & 4;
+      Check(select_model_depth(mesh.blend, z, aaph, zbuf) == select_model_depth(sprite.blend, z, aaph, zbuf),
+            "the depth selection is untouched");
+    }
+  }
+}
+} // namespace
+
+int main() {
+  TestSelectionIsThePinnedRecipe();
+  TestMeshVersusSprite();
+  TestBlendAndDepthUnchanged();
+  if (sFailures != 0) {
+    std::fprintf(stderr, "%d failure(s)\n", sFailures);
+    return 1;
+  }
+  std::printf("port_vfx_opacity: ok\n");
+  return 0;
+}

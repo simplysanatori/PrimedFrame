@@ -969,6 +969,13 @@ if(MP_BUILD_TESTS)
     add_test(NAME port_particle_math_tests COMMAND port_particle_math_tests)
     set_tests_properties(port_particle_math_tests PROPERTIES TIMEOUT 15 LABELS port)
     set_tests_properties(port_charge_locator_tests PROPERTIES TIMEOUT 15 LABELS port)
+    # The model (mesh) opacity selection of Remastered's OpacityFresnel recipes: header-only
+    # (platform/include/port_vfx_opacity.h), so it needs no sources of its own.
+    add_executable(port_vfx_opacity_tests tests/port_vfx_opacity.cpp)
+    target_include_directories(port_vfx_opacity_tests PRIVATE platform/include extern/aurora/include)
+    target_compile_definitions(port_vfx_opacity_tests PRIVATE TARGET_PC VERSION=0)
+    add_test(NAME port_vfx_opacity_tests COMMAND port_vfx_opacity_tests)
+    set_tests_properties(port_vfx_opacity_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_swoosh_ring_tests tests/port_swoosh_ring.cpp)
     target_include_directories(port_swoosh_ring_tests PRIVATE platform/include)
     add_test(NAME port_swoosh_ring_tests COMMAND port_swoosh_ring_tests)
@@ -1035,5 +1042,12 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_map_side_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_map_side_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # The model-opacity key must be carried by exactly one row of the converter's
+        # recipe table (port_vfx_opacity.h): the C++ tests pin that one recipe's word
+        # and the selection, not the count.
+        add_test(NAME port_vfx_opacity_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_vfx_opacity_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_vfx_opacity_wiring PROPERTIES TIMEOUT 15 LABELS port)
     endif()
 endif()

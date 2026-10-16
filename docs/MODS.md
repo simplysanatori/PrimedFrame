@@ -490,6 +490,25 @@ for the `.nsp`/`.xci` and one for the key file. Neither file is copied: the impo
 reads them where they are. It runs on two threads there to keep its memory
 down. Not yet run on a device.
 
+Remastered authors a beam effect's child offsets in its LBEAM bone frame (X
+right, Y up, Z back down the barrel; in the source skeleton the bone's relative
+rotation is Ry(+90) to its tip_base parent, while `Rx(+90)` below is the
+port-side coordinate-basis correction between that frame and the retail
+locator's), where the retail locator the port samples has Y forward and Z up, so
+a converted charge effect drawn with it put its authored +Z offset - the Power
+charge disc's `(0,0,0.15)` at scale 2 - straight up (0.30 m) instead of back
+along the barrel, and the ball sat above the muzzle. The
+converted charge effect now takes `locator x Rx(+90 deg)`
+(`NPortChargeFxDetail::ConvertedChargeMuzzleFrame`). Scope, deliberately
+narrow: only the charge muzzle effect (slot 1 of the gun weapon's two) and only
+when its generator came from an import; its sampled translation, the global
+scale, the retail path (translation only, no orientation) and every other
+muzzle flash, combo-transfer and auxiliary-muzzle attachment are unchanged, and
+nothing else in this file follows from it. The frame change rests on the arm
+chain and bone labels of the Remastered gun skeleton, not on a captured
+comparison; a converted normal muzzle flash keeps the sampled locator because
+its own frame was not established.
+
 ### Collision stays on the disc's model
 
 A solid static actor with no authored collision extent (zero or negative) takes

@@ -285,7 +285,12 @@ void CGunWeapon::UpdateMuzzleFx(const float dt, const CVector3f& scale, const CV
 void CGunWeapon::UpdateMuzzleFx(const float dt, const CVector3f& scale,
                                 const CTransform4f& locator, const bool emitting) {
   CElementGen& generator = *x1a4_muzzleGenerators[x208_muzzleEffectIdx];
-  NPortChargeFxDetail::SetLocalLocator(generator, locator);
+  // This overload serves both slots: the charge effect (the ball) and the normal muzzle
+  // flash, which shares the call site through `x832_25_chargeEffectVisible`. The converted
+  // charge effect is the one authored in Remastered's LBEAM frame, so only it takes the
+  // muzzle-frame compose; the flash keeps the sampled locator (a separate question).
+  const bool chargeEffect = x208_muzzleEffectIdx == NPortChargeFxDetail::kMuzzleEffectChargeSlot;
+  NPortChargeFxDetail::SetLocalLocator(generator, locator, chargeEffect);
   generator.SetGlobalScale(scale);
   generator.SetParticleEmission(emitting);
   generator.Update(dt);

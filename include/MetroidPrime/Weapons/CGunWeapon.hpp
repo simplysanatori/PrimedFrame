@@ -33,12 +33,46 @@ class SWeaponInfo;
 
 #ifdef TARGET_PC
 namespace NPortChargeFxDetail {
+// CGunWeapon's muzzle-effect slots: 0 is the normal muzzle flash and 1 the charge effect
+// (`ActivateCharge` switches between them; see `GetChargeMuzzleFx`).
+inline constexpr unsigned kMuzzleEffectChargeSlot = 1;
+
+// Remastered authors a beam effect's child offsets in its LBEAM bone frame. Relative to the
+// gun that frame is X right, Y up, Z back down the barrel. The bone's own relative rotation is
+// Ry(+90) in the source skeleton's coordinates (its parent is tip_base; the bone and chain are
+// byte-identical in Power/Ice/Wave/Plasma/Phazon,
+// build/s-powercharge-20261016/pos/VERIFIED.md). Do not conflate the two: Rx(+90) below is the
+// port-side coordinate-basis correction between that source frame and the retail locator frame,
+// not the bone's source rotation. The retail LBEAM locator the port samples instead has Y
+// forward and Z up, so a converted generator placed with it draws its authored +Z offset - the
+// Power charge disc's EMTR (0,0,0.15), global scale 2 - straight up (0.30 m) instead of back
+// along the barrel, leaving the ball floating above the muzzle.
+//
+// `locator x Rx(+90 deg)`: the sampled rotation with that basis correction composed into it, on
+// the locator's own side, not a replaced constant frame (the locator is animated: its translation
+// tracks the gun pose and its rotation carries up to ~1 deg of pose tilt). Rx(+90) has columns
+// (1,0,0), (0,0,1), (0,-1,0) and determinant +1, written out exactly rather than built from an
+// angle; it has no translation, so the result's columns are the locator's own (col0, col2,
+// -col1) and its translation is the sampled one, unchanged.
+inline CTransform4f ConvertedChargeMuzzleFrame(const CTransform4f& locator) {
+  const CVector3f translation = locator.GetTranslation();
+  return CTransform4f(locator.Get00(), locator.Get02(), -locator.Get01(), translation.GetX(),
+                      locator.Get10(), locator.Get12(), -locator.Get11(), translation.GetY(),
+                      locator.Get20(), locator.Get22(), -locator.Get21(), translation.GetZ());
+}
+
+// Only the converted charge effect takes the Remastered muzzle frame. Retail effects keep
+// their legacy translation-only path, and the converted normal muzzle flash (slot 0) keeps
+// the sampled locator as-is: its own frame is a separate question this change does not touch.
 template < typename Generator >
-void SetLocalLocator(Generator& generator, const CTransform4f& locator) {
-  if (generator.PortIsRemastered()) {
-    generator.SetGlobalOrientAndTrans(locator);
-  } else {
+void SetLocalLocator(Generator& generator, const CTransform4f& locator, const bool chargeEffect) {
+  if (!generator.PortIsRemastered()) {
     generator.SetGlobalTranslation(locator.GetTranslation());
+  } else if (chargeEffect) {
+    generator.SetGlobalOrientAndTrans(ConvertedChargeMuzzleFrame(locator));
+  } else {
+    // The sampled locator itself, no copy.
+    generator.SetGlobalOrientAndTrans(locator);
   }
 }
 } // namespace NPortChargeFxDetail
