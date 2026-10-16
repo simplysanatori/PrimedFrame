@@ -805,6 +805,9 @@ int main(int argc, char** argv) {
     }
     PortLogFile::AttachParentConsole();
 #endif
+    if (argc == 2 && std::strcmp(argv[1], "--settings-selftest") == 0) {
+        return PortDebug::SettingsSelfTest();
+    }
     if (argc == 2 && std::strcmp(argv[1], "--version") == 0) {
         std::printf("Metroid Prime native port %s (%s)\n", MP_BUILD_VERSION, MP_BUILD_REVISION);
         return 0;

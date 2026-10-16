@@ -509,297 +509,440 @@ void ApplyUpdateCheck() {
                              (dir.empty() ? std::string("./") : dir) + "update-check.txt");
 }
 
-void ApplySetting(const std::string& key, const std::string& value) {
-  if (PortInput::ApplySetting(key, value)) {
-    return;
-  }
-  if (key == "frame_limit") {
-    sFrameLimitEnabled = ParseBool(value);
-  } else if (key == "fps_cap") {
-    sFpsCap = ClampFpsCap(std::atoi(value.c_str()));
-  } else if (key == "vsync") {
-    sVsyncEnabled = ParseBool(value);
-  } else if (key == "fullscreen") {
-    sFullscreen = ParseBool(value);
-  } else if (key == "overlay_windowed") {
-    sOverlayWindowed = ParseBool(value);
-  } else if (key == "ui_theme") {
-    sUiTheme = SDL_strcasecmp(value.c_str(), "prime") == 0        ? 1
-               : SDL_strcasecmp(value.c_str(), "remastered") == 0 ? 2
-               : SDL_strcasecmp(value.c_str(), "plain") == 0      ? 3
-                                                                  : 0;
-  } else if (key == "ui_sounds") {
-    sUiSounds = ParseBool(value);
-  } else if (key == "disc_path") {
-    sDiscPath = value;
-  } else if (key == "remastered_nsp") {
-    sRemasteredImagePath = value;
-  } else if (key == "remastered_keys") {
-    sRemasteredKeysPath = value;
-  } else if (key == "photo_supersample") {
-    PortPhoto::SetSupersample(std::atoi(value.c_str()));
-  } else if (key == "photo_speed") {
-    const float f = static_cast< float >(std::atof(value.c_str()));
-    if (std::isfinite(f)) {
-      PortPhoto::SetSpeed(f);
-    }
-  } else if (key == "render_scale") {
-    const float f = static_cast< float >(std::atof(value.c_str()));
-    if (std::isfinite(f) && f >= 0.f && f <= 4.f) {
-      sRenderScale = f;
-    }
-  } else if (key == "dynamic_res") {
-    sDynamicRes = ParseBool(value);
-  } else if (key == "dynamic_res_target") {
-    sDynamicResTarget = std::clamp(std::atoi(value.c_str()), 0, 240);
-  } else if (key == "dynamic_res_min") {
-    const float f = static_cast< float >(std::atof(value.c_str()));
-    if (std::isfinite(f)) {
-      sDynamicResMin = std::clamp(f, 0.5f, 1.f);
-    }
-  } else if (key == "aspect") {
-    if (value == "16:9") {
-      sAspectMode = PortDebug::kAspect_16_9;
-    } else if (value == "window") {
-      sAspectMode = PortDebug::kAspect_Window;
-    } else if (value == "4:3") {
-      sAspectMode = PortDebug::kAspect_4_3;
-    }
-  } else if (key == "cinema_bars") {
-    sCinemaBars = ParseBool(value);
-  } else if (key == "sharp_scan_window") {
-    sSharpScanWindow = ParseBool(value);
-  } else if (key == "auto_aim") {
-    sAutoAim = ParseBool(value);
-  } else if (key == "scan_speed") {
-    const int s = std::atoi(value.c_str());
-    if (s >= PortDebug::kScanSpeedMin && s <= PortDebug::kScanSpeedMax) {
-      sScanSpeed = s;
-    }
-  } else if (key == "secondary_crosshairs") {
-    sSecondaryCrosshairs = ParseBool(value);
-  } else if (key == "menu_standard_buttons") {
-    sMenuStandardButtons = ParseBool(value);
-  } else if (key == "pointer_menus") {
-    PortPointer::SetEnabled(ParseBool(value));
-  } else if (key == "prompt_glyphs") {
-    for (int i = 0; i < int(std::size(kPromptGlyphs)); ++i) {
-      if (value == kPromptGlyphs[i]) {
-        sPromptGlyphs.store(i, std::memory_order_relaxed);
-      }
-    }
-  } else if (key == "show_shader_compilation") {
-    sShowShaderCompilation = ParseBool(value);
-  } else if (key == "show_menu_hint") {
-    sShowMenuHint = ParseBool(value);
-  } else if (key == "hud_wide") {
-    sHudWide = ParseBool(value);
-  } else if (key == "hud_scale") {
-    const int s = std::atoi(value.c_str());
-    if (s >= PortDebug::kHudScaleMin && s <= PortDebug::kHudScaleMax) {
-      sHudScale = s;
-    }
-  } else if (key == "scan_spread") {
-    const int s = std::atoi(value.c_str());
-    if (s >= PortDebug::kScanSpreadMin && s <= PortDebug::kScanSpreadMax) {
-      sScanSpread = s;
-    }
-  } else if (key == "crosshair_opacity") {
-    const int s = std::atoi(value.c_str());
-    if (s >= PortDebug::kCrosshairOpacityMin && s <= PortDebug::kCrosshairOpacityMax) {
-      sCrosshairOpacity = s;
-    }
-  } else if (key == "crosshair_color") {
-    // RRGGBB, or empty for the game's own colour.
-    unsigned rgb = 0;
-    sCrosshairCustomColor =
-        value.size() == 6 && std::sscanf(value.c_str(), "%6x", &rgb) == 1;
-    if (sCrosshairCustomColor) {
-      for (int i = 0; i < 3; ++i) {
-        sCrosshairColor[i] = static_cast< float >((rgb >> (16 - 8 * i)) & 0xff) / 255.f;
-      }
-    }
-  } else if (key == "hide_helmet") {
-    sHideHelmet = ParseBool(value);
-  } else if (key == "hide_visor_effects") {
-    sHideVisorEffects = ParseBool(value);
-  } else if (key == "reveal_map") {
-    sRevealMap = ParseBool(value);
-  } else if (key == "map_pickups") {
-    // Old hand-edited on/true/yes meant the all-pickups dots.
-    const int mode = ParseBool(value) ? PortDebug::kMapPickups_All : std::atoi(value.c_str());
-    sMapPickups = mode >= PortDebug::kMapPickups_Off && mode <= PortDebug::kMapPickups_Rooms
-                      ? mode
-                      : PortDebug::kMapPickups_Off;
-  } else if (key == "tracker_progress") {
-    sTrackerProgress = ParseBool(value);
-  } else if (key == "map_logic_colors") {
-    sMapLogicColors = ParseBool(value);
-  } else if (key == "map_pickup_kinds") {
-    sMapPickupKinds = ParseBool(value);
-  } else if (key == "map_station_pickups") {
-    sMapStationPickups = ParseBool(value);
-  } else if (key == "ap_suit_damage") {
-    const int mode = std::atoi(value.c_str());
-    sApSuitDamage = mode >= 0 && mode <= 2 ? mode : 1;
-  } else if (key == "cheats") {
-    sCheats = ParseBool(value);
-  } else if (key == "emulator_folder") {
-    PortGci::SetEmulatorFolder(value);
-  } else if (key == "share_emulator_card") {
-    PortGci::SetShareEmulatorCard(ParseBool(value));
-  } else if (key == "text_language") {
-    sTextLanguage = value;
-  } else if (key == "skippable_cutscenes") {
-    sSkippableCutscenes = ParseBool(value);
-  } else if (key == "revision_100_compatibility") {
-    sRevision100Compatibility = ParseBool(value);
-  } else if (key == "elevator_ride") {
-    const int mode = std::atoi(value.c_str());
-    sElevatorRide = mode >= PortDebug::kElevatorRide_Original && mode <= PortDebug::kElevatorRide_Skip
+// One key of port_settings.ini: how its value is read and how it is written.
+// The table is the file's order. ApplySetting reads through it, SettingsText
+// writes through it, and SettingsSelfTest checks that each key's write reads
+// back as the same value.
+struct SettingKey {
+  // nullptr: a block of keys another module writes (PortInput), read by it too.
+  const char* key;
+  void (*read)(const std::string& value);
+  // The value only, after "key="; nullptr for an old name that is only read.
+  void (*write)(std::ostream& out);
+  // Write no line while the value is empty.
+  bool omitEmpty;
+  // Two different values as written, which the self-test applies in turn and
+  // expects back; nullptr when the written form is not the one read (a path
+  // that is normalised, a value with its own text format).
+  const char* sampleA;
+  const char* sampleB;
+};
+
+void WriteBool(std::ostream& out, bool value) { out << (value ? 1 : 0); }
+
+const SettingKey kSettingKeys[] = {
+    {"aspect",
+     [](const std::string& value) {
+       if (value == "16:9") {
+         sAspectMode = PortDebug::kAspect_16_9;
+       } else if (value == "window") {
+         sAspectMode = PortDebug::kAspect_Window;
+       } else if (value == "4:3") {
+         sAspectMode = PortDebug::kAspect_4_3;
+       }
+     },
+     [](std::ostream& out) {
+       out << (sAspectMode == PortDebug::kAspect_16_9    ? "16:9"
+               : sAspectMode == PortDebug::kAspect_Window ? "window"
+                                                          : "4:3");
+     },
+     false, "16:9", "window"},
+    {"hud_wide", [](const std::string& value) { sHudWide = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sHudWide); }, false, "1", "0"},
+    {"cinema_bars", [](const std::string& value) { sCinemaBars = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sCinemaBars); }, false, "1", "0"},
+    {"sharp_scan_window", [](const std::string& value) { sSharpScanWindow = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sSharpScanWindow); }, false, "1", "0"},
+    {"auto_aim", [](const std::string& value) { sAutoAim = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sAutoAim); }, false, "1", "0"},
+    {"scan_speed",
+     [](const std::string& value) {
+       const int s = std::atoi(value.c_str());
+       if (s >= PortDebug::kScanSpeedMin && s <= PortDebug::kScanSpeedMax) {
+         sScanSpeed = s;
+       }
+     },
+     [](std::ostream& out) { out << sScanSpeed; }, false, "100", "500"},
+    {"secondary_crosshairs", [](const std::string& value) { sSecondaryCrosshairs = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sSecondaryCrosshairs); }, false, "1", "0"},
+    {"menu_standard_buttons", [](const std::string& value) { sMenuStandardButtons = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sMenuStandardButtons); }, false, "1", "0"},
+    {"pointer_menus", [](const std::string& value) { PortPointer::SetEnabled(ParseBool(value)); },
+     [](std::ostream& out) { WriteBool(out, PortPointer::Enabled()); }, false, "1", "0"},
+    {"prompt_glyphs",
+     [](const std::string& value) {
+       for (int i = 0; i < int(std::size(kPromptGlyphs)); ++i) {
+         if (value == kPromptGlyphs[i]) {
+           sPromptGlyphs.store(i, std::memory_order_relaxed);
+         }
+       }
+     },
+     [](std::ostream& out) { out << kPromptGlyphs[sPromptGlyphs.load(std::memory_order_relaxed)]; }, false,
+     "playstation", "keyboard"},
+    {"show_shader_compilation", [](const std::string& value) { sShowShaderCompilation = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sShowShaderCompilation); }, false, "1", "0"},
+    {"show_menu_hint", [](const std::string& value) { sShowMenuHint = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sShowMenuHint); }, false, "1", "0"},
+    {"hud_scale",
+     [](const std::string& value) {
+       const int s = std::atoi(value.c_str());
+       if (s >= PortDebug::kHudScaleMin && s <= PortDebug::kHudScaleMax) {
+         sHudScale = s;
+       }
+     },
+     [](std::ostream& out) { out << sHudScale; }, false, "50", "100"},
+    {"scan_spread",
+     [](const std::string& value) {
+       const int s = std::atoi(value.c_str());
+       if (s >= PortDebug::kScanSpreadMin && s <= PortDebug::kScanSpreadMax) {
+         sScanSpread = s;
+       }
+     },
+     [](std::ostream& out) { out << sScanSpread; }, false, "0", "100"},
+    {"crosshair_opacity",
+     [](const std::string& value) {
+       const int s = std::atoi(value.c_str());
+       if (s >= PortDebug::kCrosshairOpacityMin && s <= PortDebug::kCrosshairOpacityMax) {
+         sCrosshairOpacity = s;
+       }
+     },
+     [](std::ostream& out) { out << sCrosshairOpacity; }, false, "0", "100"},
+    {"crosshair_color",
+     [](const std::string& value) {
+       // RRGGBB, or empty for the game's own colour.
+       unsigned rgb = 0;
+       sCrosshairCustomColor = value.size() == 6 && std::sscanf(value.c_str(), "%6x", &rgb) == 1;
+       if (sCrosshairCustomColor) {
+         for (int i = 0; i < 3; ++i) {
+           sCrosshairColor[i] = static_cast< float >((rgb >> (16 - 8 * i)) & 0xff) / 255.f;
+         }
+       }
+     },
+     [](std::ostream& out) {
+       char hex[8] = "";
+       if (sCrosshairCustomColor) {
+         unsigned rgb = 0;
+         for (const float c : sCrosshairColor) {
+           rgb = rgb << 8 | static_cast< unsigned >(std::lround(std::clamp(c, 0.f, 1.f) * 255.f));
+         }
+         std::snprintf(hex, sizeof(hex), "%06x", rgb);
+       }
+       out << hex;
+     },
+     false, "ff8000", ""},
+    {"hide_helmet", [](const std::string& value) { sHideHelmet = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sHideHelmet); }, false, "1", "0"},
+    {"hide_visor_effects", [](const std::string& value) { sHideVisorEffects = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sHideVisorEffects); }, false, "1", "0"},
+    {"reveal_map", [](const std::string& value) { sRevealMap = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sRevealMap); }, false, "1", "0"},
+    {"map_pickups",
+     [](const std::string& value) {
+       // Old hand-edited on/true/yes meant the all-pickups dots.
+       const int mode = ParseBool(value) ? PortDebug::kMapPickups_All : std::atoi(value.c_str());
+       sMapPickups = mode >= PortDebug::kMapPickups_Off && mode <= PortDebug::kMapPickups_Rooms
+                         ? mode
+                         : PortDebug::kMapPickups_Off;
+     },
+     [](std::ostream& out) { out << sMapPickups; }, false, "2", "3"},
+    {"tracker_progress", [](const std::string& value) { sTrackerProgress = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sTrackerProgress); }, false, "1", "0"},
+    {"map_logic_colors", [](const std::string& value) { sMapLogicColors = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sMapLogicColors); }, false, "1", "0"},
+    {"map_pickup_kinds", [](const std::string& value) { sMapPickupKinds = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sMapPickupKinds); }, false, "1", "0"},
+    {"map_station_pickups", [](const std::string& value) { sMapStationPickups = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sMapStationPickups); }, false, "1", "0"},
+    {"ap_suit_damage",
+     [](const std::string& value) {
+       const int mode = std::atoi(value.c_str());
+       sApSuitDamage = mode >= 0 && mode <= 2 ? mode : 1;
+     },
+     [](std::ostream& out) { out << sApSuitDamage; }, false, "0", "2"},
+    {"cheats", [](const std::string& value) { sCheats = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sCheats); }, false, "1", "0"},
+    {"skippable_cutscenes", [](const std::string& value) { sSkippableCutscenes = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sSkippableCutscenes); }, false, "1", "0"},
+    {"revision_100_compatibility",
+     [](const std::string& value) { sRevision100Compatibility = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sRevision100Compatibility); }, false, "1", "0"},
+    // Normalised on the way in (NormalizeEmulatorFolder), so not sampled.
+    {"emulator_folder", [](const std::string& value) { PortGci::SetEmulatorFolder(value); },
+     [](std::ostream& out) { out << PortGci::EmulatorFolder(); }, false, nullptr, nullptr},
+    {"share_emulator_card", [](const std::string& value) { PortGci::SetShareEmulatorCard(ParseBool(value)); },
+     [](std::ostream& out) { WriteBool(out, PortGci::ShareEmulatorCard()); }, false, "1", "0"},
+    {"text_language", [](const std::string& value) { sTextLanguage = value; },
+     [](std::ostream& out) { out << sTextLanguage; }, false, "fr", "de"},
+    {"elevator_ride",
+     [](const std::string& value) {
+       const int mode = std::atoi(value.c_str());
+       sElevatorRide = mode >= PortDebug::kElevatorRide_Original && mode <= PortDebug::kElevatorRide_Skip
+                           ? mode
+                           : PortDebug::kElevatorRide_Original;
+     },
+     [](std::ostream& out) { out << sElevatorRide; }, false, "1", "2"},
+    {"boot_logos",
+     [](const std::string& value) {
+       const int mode = std::atoi(value.c_str());
+       sBootLogos = mode >= PortDebug::kBootLogos_Show && mode <= PortDebug::kBootLogos_Off
                         ? mode
-                        : PortDebug::kElevatorRide_Original;
-  } else if (key == "boot_logos") {
-    const int mode = std::atoi(value.c_str());
-    sBootLogos = mode >= PortDebug::kBootLogos_Show && mode <= PortDebug::kBootLogos_Off
-                     ? mode
-                     : PortDebug::kBootLogos_Skippable;
-  } else if (key == "savestate_hotkeys") {
-    sSaveStateHotkeys = ParseBool(value);
-  } else if (key == "quick_resume") {
-    sQuickResume = ParseBool(value);
-  } else if (key == "savestate_room_state") {
-    sSaveStateRoomState = ParseBool(value);
-  } else if (key == "unlock_hard_mode") {
-    sUnlockHardMode = ParseBool(value);
-  } else if (key == "unlock_fusion_suit") {
-    sUnlockFusionSuit = ParseBool(value);
-  } else if (key == "unlock_galleries") {
-    sUnlockGalleries = ParseBool(value);
-  } else if (key == "msaa") {
-    sMsaa = std::atoi(value.c_str()) >= 4 ? 4 : 1;
-  } else if (key == "opengles") {
-    sOpenGles = ParseBool(value);
-    sOpenGlesAtStart = sOpenGles;
-  } else if (key == "gpu_driver") {
-    sGpuDriver = value;
-    sGpuDriverAtStart = value;
-  } else if (key == "storage_clamp") {
-    const int v = std::atoi(value.c_str());
-    sStorageClamp = v < 0 ? -1 : (v > 0 ? 1 : 0);
-    sStorageClampAtStart = sStorageClamp;
-  } else if (key == "sun_shadows") {
-    sSunShadows = ParseBool(value);
-  } else if (key == "projected_shadows") {
-    sProjectedShadows = ParseBool(value);
-  } else if (key == "per_pixel_lighting") {
-    sPerPixelLighting = ParseBool(value);
-  } else if (key == "anisotropy") {
-    const int a = std::atoi(value.c_str());
-    if (a >= 1 && a <= 16) {
-      sAnisotropy = a;
-    }
-  } else if (key == "fov") {
-    const float f = static_cast< float >(std::atof(value.c_str()));
-    if (std::isfinite(f) && f >= PortDebug::kFovMin && f <= PortDebug::kFovMax) {
-      sFirstPersonFov = f;
-    }
-  } else if (key == "gun_offset") {
-    float v[3] = {};
-    if (std::sscanf(value.c_str(), "%f,%f,%f", &v[0], &v[1], &v[2]) == 3) {
-      for (int i = 0; i < 3; ++i) {
-        sGunOffset[i] = std::isfinite(v[i]) ? std::clamp(v[i], -PortDebug::kGunOffsetMax,
-                                                         PortDebug::kGunOffsetMax)
-                                            : 0.f;
-      }
-    }
-  } else if (key == "game_options") {
-    sGameOptions = value;
-  } else if (key == "speedrun_timer") {
-    sSpeedrunTimer = ParseBool(value);
-  } else if (key == "livesplit") {
-    sLiveSplit = ParseBool(value);
-  } else if (key == "livesplit_address") {
-    if (!value.empty()) {
-      sLiveSplitAddress = value;
-    }
-  } else if (key == "livesplit_split_upgrades") {
-    sLiveSplitSplitUpgrades = ParseBool(value);
-  } else if (key == "discord_presence") {
+                        : PortDebug::kBootLogos_Skippable;
+     },
+     [](std::ostream& out) { out << sBootLogos; }, false, "0", "2"},
+    {"savestate_hotkeys", [](const std::string& value) { sSaveStateHotkeys = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sSaveStateHotkeys); }, false, "1", "0"},
+    {"quick_resume", [](const std::string& value) { sQuickResume = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sQuickResume); }, false, "1", "0"},
+    {"savestate_room_state", [](const std::string& value) { sSaveStateRoomState = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sSaveStateRoomState); }, false, "1", "0"},
+    {"fov",
+     [](const std::string& value) {
+       const float f = static_cast< float >(std::atof(value.c_str()));
+       if (std::isfinite(f) && f >= PortDebug::kFovMin && f <= PortDebug::kFovMax) {
+         sFirstPersonFov = f;
+       }
+     },
+     [](std::ostream& out) { out << sFirstPersonFov; }, false, "45", "72.5"},
+    {"gun_offset",
+     [](const std::string& value) {
+       float v[3] = {};
+       if (std::sscanf(value.c_str(), "%f,%f,%f", &v[0], &v[1], &v[2]) == 3) {
+         for (int i = 0; i < 3; ++i) {
+           sGunOffset[i] =
+               std::isfinite(v[i]) ? std::clamp(v[i], -PortDebug::kGunOffsetMax, PortDebug::kGunOffsetMax) : 0.f;
+         }
+       }
+     },
+     [](std::ostream& out) { out << sGunOffset[0] << ',' << sGunOffset[1] << ',' << sGunOffset[2]; }, false,
+     "0.5,-0.25,1", "0,0,0"},
+    {"msaa", [](const std::string& value) { sMsaa = std::atoi(value.c_str()) >= 4 ? 4 : 1; },
+     [](std::ostream& out) { out << sMsaa; }, false, "4", "1"},
+    {"opengles",
+     [](const std::string& value) {
+       sOpenGles = ParseBool(value);
+       sOpenGlesAtStart = sOpenGles;
+     },
+     [](std::ostream& out) { WriteBool(out, sOpenGles); }, false, "1", "0"},
+    {"gpu_driver",
+     [](const std::string& value) {
+       sGpuDriver = value;
+       sGpuDriverAtStart = value;
+     },
+     [](std::ostream& out) { out << sGpuDriver; }, false, "turnip", ""},
+    {"anisotropy",
+     [](const std::string& value) {
+       const int a = std::atoi(value.c_str());
+       if (a >= 1 && a <= 16) {
+         sAnisotropy = a;
+       }
+     },
+     [](std::ostream& out) { out << sAnisotropy; }, false, "1", "16"},
+    {"per_pixel_lighting", [](const std::string& value) { sPerPixelLighting = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sPerPixelLighting); }, false, "1", "0"},
+    {"sun_shadows", [](const std::string& value) { sSunShadows = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sSunShadows); }, false, "1", "0"},
+    {"projected_shadows", [](const std::string& value) { sProjectedShadows = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sProjectedShadows); }, false, "1", "0"},
+    {"unlock_hard_mode", [](const std::string& value) { sUnlockHardMode = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sUnlockHardMode); }, false, "1", "0"},
+    {"unlock_fusion_suit", [](const std::string& value) { sUnlockFusionSuit = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sUnlockFusionSuit); }, false, "1", "0"},
+    {"unlock_galleries", [](const std::string& value) { sUnlockGalleries = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sUnlockGalleries); }, false, "1", "0"},
+    {"storage_clamp",
+     [](const std::string& value) {
+       const int v = std::atoi(value.c_str());
+       sStorageClamp = v < 0 ? -1 : (v > 0 ? 1 : 0);
+       sStorageClampAtStart = sStorageClamp;
+     },
+     [](std::ostream& out) { out << sStorageClamp; }, false, "-1", "1"},
+    {"speedrun_timer", [](const std::string& value) { sSpeedrunTimer = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sSpeedrunTimer); }, false, "1", "0"},
+    {"livesplit", [](const std::string& value) { sLiveSplit = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sLiveSplit); }, false, "1", "0"},
+    {"livesplit_address",
+     [](const std::string& value) {
+       if (!value.empty()) {
+         sLiveSplitAddress = value;
+       }
+     },
+     [](std::ostream& out) { out << sLiveSplitAddress; }, false, "127.0.0.1:16834", "localhost:1"},
+    {"livesplit_split_upgrades", [](const std::string& value) { sLiveSplitSplitUpgrades = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sLiveSplitSplitUpgrades); }, false, "1", "0"},
     // Not "discord": 0.16.0 saved discord=0 for everyone while it was opt-in.
-    sDiscord = ParseBool(value);
-  } else if (key == "update_check") {
-    sUpdateCheck = ParseBool(value);
-  } else if (key == "mods") {
-    sModsEnabled = ParseBool(value);
-  } else if (key == "original_experience") {
-    sOriginalExperience = ParseBool(value);
-  } else if (key == "mods_disabled") {
-    sModsDisabled = value;
-  } else if (key == "invulnerable") {
-    sInvulnerable = ParseBool(value);
-  } else if (key == "logging") {
+    {"discord_presence", [](const std::string& value) { sDiscord = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sDiscord); }, false, "1", "0"},
+    {"update_check", [](const std::string& value) { sUpdateCheck = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sUpdateCheck); }, false, "1", "0"},
+    {"mods", [](const std::string& value) { sModsEnabled = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sModsEnabled); }, false, "1", "0"},
+    {"original_experience", [](const std::string& value) { sOriginalExperience = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sOriginalExperience); }, false, "1", "0"},
+    {"mods_disabled", [](const std::string& value) { sModsDisabled = value; },
+     [](std::ostream& out) { out << sModsDisabled; }, false, "a,b", ""},
+    {"vsync", [](const std::string& value) { sVsyncEnabled = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sVsyncEnabled); }, false, "1", "0"},
+    {"fullscreen", [](const std::string& value) { sFullscreen = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sFullscreen); }, false, "1", "0"},
+    {"overlay_windowed", [](const std::string& value) { sOverlayWindowed = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sOverlayWindowed); }, false, "1", "0"},
+    {"ui_theme",
+     [](const std::string& value) {
+       sUiTheme = SDL_strcasecmp(value.c_str(), "prime") == 0        ? 1
+                  : SDL_strcasecmp(value.c_str(), "remastered") == 0 ? 2
+                  : SDL_strcasecmp(value.c_str(), "plain") == 0      ? 3
+                                                                     : 0;
+     },
+     [](std::ostream& out) {
+       out << (sUiTheme == 1 ? "prime" : sUiTheme == 2 ? "remastered" : sUiTheme == 3 ? "plain" : "auto");
+     },
+     false, "remastered", "auto"},
+    {"ui_sounds", [](const std::string& value) { sUiSounds = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sUiSounds); }, false, "1", "0"},
+    {"photo_supersample", [](const std::string& value) { PortPhoto::SetSupersample(std::atoi(value.c_str())); },
+     [](std::ostream& out) { out << PortPhoto::Supersample(); }, false, "4", "1"},
+    {"photo_speed",
+     [](const std::string& value) {
+       const float f = static_cast< float >(std::atof(value.c_str()));
+       if (std::isfinite(f)) {
+         PortPhoto::SetSpeed(f);
+       }
+     },
+     [](std::ostream& out) { out << PortPhoto::Speed(); }, false, "0.5", "20"},
+    {"render_scale",
+     [](const std::string& value) {
+       const float f = static_cast< float >(std::atof(value.c_str()));
+       if (std::isfinite(f) && f >= 0.f && f <= 4.f) {
+         sRenderScale = f;
+       }
+     },
+     [](std::ostream& out) { out << sRenderScale; }, false, "0.5", "2"},
+    {"dynamic_res", [](const std::string& value) { sDynamicRes = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sDynamicRes); }, false, "1", "0"},
+    {"dynamic_res_target",
+     [](const std::string& value) { sDynamicResTarget = std::clamp(std::atoi(value.c_str()), 0, 240); },
+     [](std::ostream& out) { out << sDynamicResTarget; }, false, "0", "60"},
+    {"dynamic_res_min",
+     [](const std::string& value) {
+       const float f = static_cast< float >(std::atof(value.c_str()));
+       if (std::isfinite(f)) {
+         sDynamicResMin = std::clamp(f, 0.5f, 1.f);
+       }
+     },
+     [](std::ostream& out) { out << sDynamicResMin; }, false, "0.5", "0.75"},
+    {"frame_limit", [](const std::string& value) { sFrameLimitEnabled = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sFrameLimitEnabled); }, false, "1", "0"},
+    {"fps_cap", [](const std::string& value) { sFpsCap = ClampFpsCap(std::atoi(value.c_str())); },
+     [](std::ostream& out) { out << sFpsCap; }, false, "0", "144"},
+    {"sim_rate",
+     [](const std::string& value) {
+       const long rate = std::strtol(value.c_str(), nullptr, 10);
+       if (rate >= 30 && rate <= 480) {
+         sSimRate = static_cast< unsigned >(rate);
+       }
+     },
+     [](std::ostream& out) { out << sSimRate; }, false, "30", "120"},
+    {"sim_adaptive", [](const std::string& value) { sSimAdaptive = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sSimAdaptive); }, false, "1", "0"},
+    {"smooth_frames",
+     [](const std::string& value) {
+       sSmoothFrames = ParseBool(value);
+       sFrameInterpolation = sActorInterpolation = sPoseInterpolation = sParticleInterpolation = sSmoothFrames;
+     },
+     [](std::ostream& out) { WriteBool(out, sSmoothFrames); }, false, "1", "0"},
+    {"room_geo_gpu", [](const std::string& value) { sRoomGeoResident = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sRoomGeoResident); }, false, "1", "0"},
+    // The old key, saved as 0 by everyone while it was off by default: only an explicit 1 counts.
+    {"room_geo_resident", [](const std::string& value) { sRoomGeoResident = sRoomGeoResident || ParseBool(value); },
+     nullptr, false, nullptr, nullptr},
+    {"room_geo_min_px",
+     [](const std::string& value) { PortRoomGeo::SetMinPixels(std::strtof(value.c_str(), nullptr)); },
+     [](std::ostream& out) { out << PortRoomGeo::MinPixels(); }, false, "0", "3.5"},
+    {"room_geo_lod",
+     [](const std::string& value) { PortRoomGeo::SetLodDistance(std::strtof(value.c_str(), nullptr)); },
+     [](std::ostream& out) { out << PortRoomGeo::LodDistance(); }, false, "0.5", "2"},
+    {nullptr, nullptr, [](std::ostream& out) { PortInput::WriteControlSettings(out); }, false, nullptr, nullptr},
+    {"invulnerable", [](const std::string& value) { sInvulnerable = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sInvulnerable); }, false, "1", "0"},
     // Not "log_file": builds from before the log was on by default wrote
     // log_file=0 into every settings file, which kept it off after an update.
-    sLogFile = ParseBool(value);
-  } else if (key == "rando_settings") {
-    PortRandoGen::Settings parsed;
-    if (!PortRandoGen::ParseSettings(value, parsed)) {
-      parsed = PortRandoGen::Settings();
-    }
-    std::lock_guard< std::mutex > lock(sRandoMutex);
-    sRandoSettings = parsed;
-  } else if (key == "sim_rate") {
-    const long rate = std::strtol(value.c_str(), nullptr, 10);
-    if (rate >= 30 && rate <= 480) {
-      sSimRate = static_cast< unsigned >(rate);
-    }
-  } else if (key == "sim_adaptive") {
-    sSimAdaptive = ParseBool(value);
-  } else if (key == "smooth_frames") {
-    sSmoothFrames = ParseBool(value);
-    sFrameInterpolation = sActorInterpolation = sPoseInterpolation = sParticleInterpolation = sSmoothFrames;
-  } else if (key == "room_geo_gpu") {
-    sRoomGeoResident = ParseBool(value);
-  } else if (key == "room_geo_resident") {
-    // The old key, saved as 0 by everyone while it was off by default: only an explicit 1 counts.
-    sRoomGeoResident = sRoomGeoResident || ParseBool(value);
-  } else if (key == "room_geo_min_px") {
-    PortRoomGeo::SetMinPixels(std::strtof(value.c_str(), nullptr));
-  } else if (key == "room_geo_lod") {
-    PortRoomGeo::SetLodDistance(std::strtof(value.c_str(), nullptr));
-  } else if (key == "ai_audio") {
-    sAiAudioEnabled = ParseBool(value);
-  } else if (key == "musyx_audio") {
-    sMusyxAudioEnabled = ParseBool(value);
-  } else if (key == "voices_muted") {
-    MusyxPortClearSampleMutes();
-    const char* cursor = value.c_str();
-    while (*cursor != '\0') {
-      char* end = nullptr;
-      const unsigned long id = std::strtoul(cursor, &end, 10);
-      if (end == cursor) {
-        break;
-      }
-      MusyxPortSetSampleMuted(static_cast< unsigned >(id), 1);
-      cursor = end;
-      while (*cursor == ',' || *cursor == ' ') {
-        ++cursor;
-      }
+    {"logging", [](const std::string& value) { sLogFile = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sLogFile); }, false, "1", "0"},
+    {nullptr, nullptr, [](std::ostream& out) { PortInput::WriteGameplaySettings(out); }, false, nullptr, nullptr},
+    // Its own JSON text (PortRandoGen::SettingsText), so not sampled here.
+    {"rando_settings",
+     [](const std::string& value) {
+       PortRandoGen::Settings parsed;
+       if (!PortRandoGen::ParseSettings(value, parsed)) {
+         parsed = PortRandoGen::Settings();
+       }
+       std::lock_guard< std::mutex > lock(sRandoMutex);
+       sRandoSettings = parsed;
+     },
+     [](std::ostream& out) {
+       std::lock_guard< std::mutex > lock(sRandoMutex);
+       out << PortRandoGen::SettingsText(sRandoSettings);
+     },
+     false, nullptr, nullptr},
+    {nullptr, nullptr, [](std::ostream& out) { PortInput::WriteAimSettings(out); }, false, nullptr, nullptr},
+    {"game_options", [](const std::string& value) { sGameOptions = value; },
+     [](std::ostream& out) { out << sGameOptions; }, true, "0a1b", "ff"},
+    {"disc_path", [](const std::string& value) { sDiscPath = value; }, [](std::ostream& out) { out << sDiscPath; },
+     true, "/games/Metroid Prime #1 (v1.00).iso", "C:\\Games\\mp.rvz"},
+    {"remastered_nsp", [](const std::string& value) { sRemasteredImagePath = value; },
+     [](std::ostream& out) { out << sRemasteredImagePath; }, true, "/dumps/mpr.nsp", "/dumps/mpr.xci"},
+    {"remastered_keys", [](const std::string& value) { sRemasteredKeysPath = value; },
+     [](std::ostream& out) { out << sRemasteredKeysPath; }, true, "/keys/prod.keys", "/k/p.keys"},
+    {"ai_audio", [](const std::string& value) { sAiAudioEnabled = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sAiAudioEnabled); }, false, "1", "0"},
+    {"musyx_audio", [](const std::string& value) { sMusyxAudioEnabled = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sMusyxAudioEnabled); }, false, "1", "0"},
+    {"voices_muted",
+     [](const std::string& value) {
+       MusyxPortClearSampleMutes();
+       const char* cursor = value.c_str();
+       while (*cursor != '\0') {
+         char* end = nullptr;
+         const unsigned long id = std::strtoul(cursor, &end, 10);
+         if (end == cursor) {
+           break;
+         }
+         MusyxPortSetSampleMuted(static_cast< unsigned >(id), 1);
+         cursor = end;
+         while (*cursor == ',' || *cursor == ' ') {
+           ++cursor;
+         }
+       }
+     },
+     [](std::ostream& out) {
+       unsigned muted[64];
+       const int mutedCount = MusyxPortGetMutedSamples(muted, 64);
+       for (int i = 0; i < mutedCount; ++i) {
+         out << (i == 0 ? "" : ",") << muted[i];
+       }
+     },
+     true, "3,7", "12"},
+};
+
+// False for a key nothing reads.
+bool ApplySetting(const std::string& key, const std::string& value) {
+  if (PortInput::ApplySetting(key, value)) {
+    return true;
+  }
+  for (const SettingKey& entry : kSettingKeys) {
+    if (entry.key != nullptr && key == entry.key) {
+      entry.read(value);
+      return true;
     }
   }
+  return false;
 }
 
-void LoadSettings() {
-  const std::string path = SettingsFilePath();
-  std::ifstream file(path);
-  if (!file.is_open()) {
-    return;
-  }
-  std::fprintf(stderr, "metroid_prime_port: loaded settings from %s\n", path.c_str());
+// Applies the key=value lines of a settings file. Only whole-line comments:
+// values are written raw, and a path may contain '#'.
+void ApplySettingsText(std::istream& text) {
   std::string line;
-  while (std::getline(file, line)) {
-    // Only whole-line comments: values are written raw, and a path may contain '#'.
+  while (std::getline(text, line)) {
     const size_t first = line.find_first_not_of(" \t");
     if (first == std::string::npos || line[first] == '#') {
       continue;
@@ -814,138 +957,40 @@ void LoadSettings() {
       ApplySetting(key, value);
     }
   }
-  PortInput::PostLoad();
 }
 
 // The settings file's text, as written by SaveSettings and copied into the log.
 std::string SettingsText() {
   std::ostringstream file;
-  const char* aspect = sAspectMode == PortDebug::kAspect_16_9  ? "16:9"
-                       : sAspectMode == PortDebug::kAspect_Window ? "window"
-                                                                  : "4:3";
   file << "# Metroid Prime native port settings. Written by the F1 debug overlay.\n";
   file << "# Environment variables (MP_*) override these for a single run.\n";
-  file << "aspect=" << aspect << '\n';
-  file << "hud_wide=" << (sHudWide ? 1 : 0) << '\n';
-  file << "cinema_bars=" << (sCinemaBars ? 1 : 0) << '\n';
-  file << "sharp_scan_window=" << (sSharpScanWindow ? 1 : 0) << '\n';
-  file << "auto_aim=" << (sAutoAim ? 1 : 0) << '\n';
-  file << "scan_speed=" << sScanSpeed << '\n';
-  file << "secondary_crosshairs=" << (sSecondaryCrosshairs ? 1 : 0) << '\n';
-  file << "menu_standard_buttons=" << (sMenuStandardButtons ? 1 : 0) << '\n';
-  file << "pointer_menus=" << (PortPointer::Enabled() ? 1 : 0) << '\n';
-  file << "prompt_glyphs=" << kPromptGlyphs[sPromptGlyphs.load(std::memory_order_relaxed)] << '\n';
-  file << "show_shader_compilation=" << (sShowShaderCompilation ? 1 : 0) << '\n';
-  file << "show_menu_hint=" << (sShowMenuHint ? 1 : 0) << '\n';
-  file << "hud_scale=" << sHudScale << '\n';
-  file << "scan_spread=" << sScanSpread << '\n';
-  file << "crosshair_opacity=" << sCrosshairOpacity << '\n';
-  {
-    char hex[8] = "";
-    if (sCrosshairCustomColor) {
-      unsigned rgb = 0;
-      for (const float c : sCrosshairColor) {
-        rgb = rgb << 8 | static_cast< unsigned >(std::lround(std::clamp(c, 0.f, 1.f) * 255.f));
-      }
-      std::snprintf(hex, sizeof(hex), "%06x", rgb);
+  for (const SettingKey& entry : kSettingKeys) {
+    if (entry.write == nullptr) {
+      continue;
     }
-    file << "crosshair_color=" << hex << '\n';
-  }
-  file << "hide_helmet=" << (sHideHelmet ? 1 : 0) << '\n';
-  file << "hide_visor_effects=" << (sHideVisorEffects ? 1 : 0) << '\n';
-  file << "reveal_map=" << (sRevealMap ? 1 : 0) << '\n';
-  file << "map_pickups=" << sMapPickups << '\n';
-  file << "tracker_progress=" << (sTrackerProgress ? 1 : 0) << '\n';
-  file << "map_logic_colors=" << (sMapLogicColors ? 1 : 0) << '\n';
-  file << "map_pickup_kinds=" << (sMapPickupKinds ? 1 : 0) << '\n';
-  file << "map_station_pickups=" << (sMapStationPickups ? 1 : 0) << '\n';
-  file << "ap_suit_damage=" << sApSuitDamage << '\n';
-  file << "cheats=" << (sCheats ? 1 : 0) << '\n';
-  file << "skippable_cutscenes=" << (sSkippableCutscenes ? 1 : 0) << '\n';
-  file << "revision_100_compatibility=" << (sRevision100Compatibility ? 1 : 0) << '\n';
-  file << "emulator_folder=" << PortGci::EmulatorFolder() << '\n';
-  file << "share_emulator_card=" << (PortGci::ShareEmulatorCard() ? 1 : 0) << '\n';
-  file << "text_language=" << sTextLanguage << '\n';
-  file << "elevator_ride=" << sElevatorRide << '\n';
-  file << "boot_logos=" << sBootLogos << '\n';
-  file << "savestate_hotkeys=" << (sSaveStateHotkeys ? 1 : 0) << '\n';
-  file << "quick_resume=" << (sQuickResume ? 1 : 0) << '\n';
-  file << "savestate_room_state=" << (sSaveStateRoomState ? 1 : 0) << '\n';
-  file << "fov=" << sFirstPersonFov << '\n';
-  file << "gun_offset=" << sGunOffset[0] << ',' << sGunOffset[1] << ',' << sGunOffset[2] << '\n';
-  file << "msaa=" << sMsaa << '\n';
-  file << "opengles=" << (sOpenGles ? 1 : 0) << '\n';
-  file << "gpu_driver=" << sGpuDriver << '\n';
-  file << "anisotropy=" << sAnisotropy << '\n';
-  file << "per_pixel_lighting=" << (sPerPixelLighting ? 1 : 0) << '\n';
-  file << "sun_shadows=" << (sSunShadows ? 1 : 0) << '\n';
-  file << "projected_shadows=" << (sProjectedShadows ? 1 : 0) << '\n';
-  file << "unlock_hard_mode=" << (sUnlockHardMode ? 1 : 0) << '\n';
-  file << "unlock_fusion_suit=" << (sUnlockFusionSuit ? 1 : 0) << '\n';
-  file << "unlock_galleries=" << (sUnlockGalleries ? 1 : 0) << '\n';
-  file << "storage_clamp=" << sStorageClamp << '\n';
-  file << "speedrun_timer=" << (sSpeedrunTimer ? 1 : 0) << '\n';
-  file << "livesplit=" << (sLiveSplit ? 1 : 0) << '\n';
-  file << "livesplit_address=" << sLiveSplitAddress << '\n';
-  file << "livesplit_split_upgrades=" << (sLiveSplitSplitUpgrades ? 1 : 0) << '\n';
-  file << "discord_presence=" << (sDiscord ? 1 : 0) << '\n';
-  file << "update_check=" << (sUpdateCheck ? 1 : 0) << '\n';
-  file << "mods=" << (sModsEnabled ? 1 : 0) << '\n';
-  file << "original_experience=" << (sOriginalExperience ? 1 : 0) << '\n';
-  file << "mods_disabled=" << sModsDisabled << '\n';
-  file << "vsync=" << (sVsyncEnabled ? 1 : 0) << '\n';
-  file << "fullscreen=" << (sFullscreen ? 1 : 0) << '\n';
-  file << "overlay_windowed=" << (sOverlayWindowed ? 1 : 0) << '\n';
-  file << "ui_theme=" << (sUiTheme == 1 ? "prime" : sUiTheme == 2 ? "remastered" : sUiTheme == 3 ? "plain" : "auto")
-       << '\n';
-  file << "ui_sounds=" << (sUiSounds ? 1 : 0) << '\n';
-  file << "photo_supersample=" << PortPhoto::Supersample() << '\n';
-  file << "photo_speed=" << PortPhoto::Speed() << '\n';
-  file << "render_scale=" << sRenderScale << '\n';
-  file << "dynamic_res=" << (sDynamicRes ? 1 : 0) << '\n';
-  file << "dynamic_res_target=" << sDynamicResTarget << '\n';
-  file << "dynamic_res_min=" << sDynamicResMin << '\n';
-  file << "frame_limit=" << (sFrameLimitEnabled ? 1 : 0) << '\n';
-  file << "fps_cap=" << sFpsCap << '\n';
-  file << "sim_rate=" << sSimRate << '\n';
-  file << "sim_adaptive=" << (sSimAdaptive ? 1 : 0) << '\n';
-  file << "smooth_frames=" << (sSmoothFrames ? 1 : 0) << '\n';
-  file << "room_geo_gpu=" << (sRoomGeoResident ? 1 : 0) << '\n';
-  file << "room_geo_min_px=" << PortRoomGeo::MinPixels() << '\n';
-  file << "room_geo_lod=" << PortRoomGeo::LodDistance() << '\n';
-  PortInput::WriteControlSettings(file);
-  file << "invulnerable=" << (sInvulnerable ? 1 : 0) << '\n';
-  file << "logging=" << (sLogFile ? 1 : 0) << '\n';
-  PortInput::WriteGameplaySettings(file);
-  {
-    std::lock_guard< std::mutex > lock(sRandoMutex);
-    file << "rando_settings=" << PortRandoGen::SettingsText(sRandoSettings) << '\n';
-  }
-  PortInput::WriteAimSettings(file);
-  if (!sGameOptions.empty()) {
-    file << "game_options=" << sGameOptions << '\n';
-  }
-  if (!sDiscPath.empty()) {
-    file << "disc_path=" << sDiscPath << '\n';
-  }
-  if (!sRemasteredImagePath.empty()) {
-    file << "remastered_nsp=" << sRemasteredImagePath << '\n';
-  }
-  if (!sRemasteredKeysPath.empty()) {
-    file << "remastered_keys=" << sRemasteredKeysPath << '\n';
-  }
-  file << "ai_audio=" << (sAiAudioEnabled ? 1 : 0) << '\n';
-  file << "musyx_audio=" << (sMusyxAudioEnabled ? 1 : 0) << '\n';
-  unsigned muted[64];
-  const int mutedCount = MusyxPortGetMutedSamples(muted, 64);
-  if (mutedCount > 0) {
-    file << "voices_muted=";
-    for (int i = 0; i < mutedCount; ++i) {
-      file << (i == 0 ? "" : ",") << muted[i];
+    if (entry.key == nullptr) {
+      entry.write(file);
+      continue;
     }
-    file << '\n';
+    std::ostringstream value;
+    entry.write(value);
+    if (entry.omitEmpty && value.str().empty()) {
+      continue;
+    }
+    file << entry.key << '=' << value.str() << '\n';
   }
   return file.str();
+}
+
+void LoadSettings() {
+  const std::string path = SettingsFilePath();
+  std::ifstream file(path);
+  if (!file.is_open()) {
+    return;
+  }
+  std::fprintf(stderr, "metroid_prime_port: loaded settings from %s\n", path.c_str());
+  ApplySettingsText(file);
+  PortInput::PostLoad();
 }
 
 // key=value lines of a settings text, comments skipped.
@@ -1249,6 +1294,50 @@ void EnsureInitialized() {
 } // namespace
 
 namespace PortDebug {
+
+int SettingsSelfTest() {
+  int failures = 0;
+  int sampled = 0;
+  // Each sampled key, through the file reader: both values must come back as written.
+  for (const SettingKey& entry : kSettingKeys) {
+    if (entry.key == nullptr || entry.write == nullptr || entry.sampleA == nullptr) {
+      continue;
+    }
+    ++sampled;
+    for (const char* sample : {entry.sampleA, entry.sampleB}) {
+      std::istringstream line(std::string(entry.key) + "=" + sample + "\n");
+      ApplySettingsText(line);
+      const auto written = SettingsValues(SettingsText());
+      const auto found = written.find(entry.key);
+      const std::string got = found == written.end() ? std::string() : found->second;
+      if (got != sample) {
+        std::fprintf(stderr, "settings self-test: %s=%s reads back as %s=%s\n", entry.key, sample, entry.key,
+                     got.c_str());
+        ++failures;
+      }
+    }
+  }
+  // Every line written is a key something reads, and reading the whole file
+  // back writes it unchanged.
+  const std::string first = SettingsText();
+  for (const auto& [key, value] : SettingsValues(first)) {
+    if (!ApplySetting(key, value)) {
+      std::fprintf(stderr, "settings self-test: %s is written but nothing reads it\n", key.c_str());
+      ++failures;
+    }
+  }
+  std::istringstream again(first);
+  ApplySettingsText(again);
+  const std::string second = SettingsText();
+  if (second != first) {
+    std::fprintf(stderr, "settings self-test: the file changes when read back\n%s\n---\n%s\n", first.c_str(),
+                 second.c_str());
+    ++failures;
+  }
+  std::fprintf(stderr, "settings self-test: %d keys sampled, %zu lines round-tripped, %d failure(s)\n", sampled,
+               SettingsValues(first).size(), failures);
+  return failures == 0 ? 0 : 1;
+}
 
 bool FastBoot() {
   EnsureInitialized();

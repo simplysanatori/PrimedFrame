@@ -16,6 +16,10 @@ class CGuiModel;
 
 namespace PortDebug {
 
+// --settings-selftest: checks that every settings key reads back as written,
+// without starting the game. Returns the process exit code. Never saves.
+int SettingsSelfTest();
+
 // Live game state for the debug menu (set every simulation tick by
 // CStateManager::Update). Null before gameplay starts.
 void SetStateManager(CStateManager* mgr);

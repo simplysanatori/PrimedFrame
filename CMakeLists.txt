@@ -878,6 +878,11 @@ if(MP_BUILD_TESTS)
     set_tests_properties(port_ws_tests PROPERTIES TIMEOUT 120)
     # 200+ seeds, each a few hundred logic sweeps.
     set_tests_properties(port_rando_gen_tests PROPERTIES TIMEOUT 120)
+    # Every port_settings.ini key reads back as written (platform/debug_ui.cpp,
+    # kSettingKeys); the game binary checks itself and exits before starting.
+    add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)
+    set_tests_properties(port_settings_roundtrip PROPERTIES TIMEOUT 30 LABELS port
+        ENVIRONMENT "MP_USER_PATH=${CMAKE_CURRENT_BINARY_DIR}/settings-selftest/")
     # The tools' own checks, so a change to the location join or the fixture
     # generator fails here rather than in whoever runs the tools next. Both are
     # dependency-free Python and skip themselves when python3 is absent.
