@@ -2,6 +2,9 @@
 #define _CGAMESTATE
 
 #include "types.h"
+#ifdef TARGET_PC
+#include "port_map_marks.h"
+#endif
 
 #include "MetroidPrime/Player/CGameOptions.hpp"
 #include "MetroidPrime/Player/CHintOptions.hpp"
@@ -98,6 +101,9 @@ public:
   // per dot index. Saved as the "PKSN" trailer after the Archipelago one.
   static const int kPortSeenWords = 4;
   uint* PortSeenPickups() { return xpc_seenPickups; }
+  // The rooms the player marked on the map (PortMapMarks), the "RMMK" trailer
+  // after the "PKSN" one.
+  PortMapMarks::List& PortMapMarkList() { return xpc_mapMarks; }
 #endif
 
 private:
@@ -120,6 +126,7 @@ private:
 #ifdef TARGET_PC
   ApProgress xpc_apProgress;
   uint xpc_seenPickups[kPortSeenWords];
+  PortMapMarks::List xpc_mapMarks;
 #endif
 };
 CHECK_SIZEOF(CGameState, 0x230)
