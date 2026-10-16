@@ -143,9 +143,12 @@ Decision Controller::Update(const Sample& s) {
   }
   // GPU times are coming but none is published yet: wait rather than guess, for a few
   // seconds; a driver that never publishes one is followed by the frame rate instead.
+  // Only seconds with frames to judge count: a long load at a crawl can publish nothing
+  // for that long without anything being wrong with the GPU times.
   if (s.gpuMs == 0.0 && !mGpuDropped) {
-    if (++mCollecting < kCollectTimeout) {
-      mReason = Reason::Collecting;
+    const bool judgeable = s.frames >= 10 && s.targetFps > 0.0;
+    if (!judgeable || ++mCollecting < kCollectTimeout) {
+      mReason = judgeable ? Reason::Collecting : Reason::Paused;
       return {mScale, false, mReason};
     }
     mGpuDropped = true;

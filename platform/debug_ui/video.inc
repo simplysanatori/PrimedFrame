@@ -376,8 +376,8 @@ void DrawVideoQuality() {
         ImGui::Text("GPU times not used (none arrived, or lowering on them gained nothing): %s", reason);
       } else if (sDynGpuMs > 0.0) {
         ImGui::Text("GPU %.1f of %.1f ms a frame: %s", sDynGpuMs, 1000.0 / DynamicResTargetFps(), reason);
-      } else if (sDynGpuMs < 0.0 && GXPortGpuTimesSupported() != GX_TRUE) {
-        ImGui::Text("This GPU cannot time itself; following the frame rate: %s", reason);
+      } else if (sDynGpuMs < 0.0) {
+        ImGui::Text("No GPU times (unsupported, or MP_DYNRES_GPU_TIMES=0); following the frame rate: %s", reason);
       } else {
         ImGui::Text("%s", reason);
       }

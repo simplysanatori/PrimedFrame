@@ -234,7 +234,9 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
   const float top = EffectiveRenderScale();
   const float bottom = std::min(sDynamicResMin, top);
   const bool active = sDynamicRes && !sOriginalExperience && top > bottom && !sTurbo;
-  const bool gpuTimes = GXPortGpuTimesSupported() == GX_TRUE;
+  // MP_DYNRES_GPU_TIMES=0 steers on the frame rate alone, as on a GPU without timestamps.
+  static const bool gpuTimesAllowed = port::EnvFlag("MP_DYNRES_GPU_TIMES", true);
+  const bool gpuTimes = gpuTimesAllowed && GXPortGpuTimesSupported() == GX_TRUE;
   WantGpuTimes(kGpuTimesDynamicRes, active && gpuTimes);
   if (!active) {
     if (sDynActive) {

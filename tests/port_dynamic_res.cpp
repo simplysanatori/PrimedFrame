@@ -274,6 +274,27 @@ int main() {
     Check(run.controller.GpuTimesDropped(), "then gives up on GPU times");
     Check(run.controller.Scale() < 2.f, "and lowers on the frame rate");
   }
+  // A long load at a crawl publishes no GPU time for many seconds; those seconds are a
+  // pause, not a driver that never publishes, so the GPU times are still used after it.
+  {
+    Controller c;
+    c.Reset(2.f);
+    Sample load;
+    load.fps = 3.0;
+    load.frames = 3;
+    load.gpuMs = 0.0;
+    load.top = 2.f;
+    load.bottom = 0.5f;
+    for (int i = 0; i < 20; ++i) {
+      c.Update(load);
+    }
+    Check(!c.GpuTimesDropped() && c.LastReason() == Reason::Paused, "a long load does not drop the GPU times");
+    Run run;
+    run.controller = c;
+    Scene heavy;
+    run.Seconds(heavy, 20);
+    Check(!run.controller.GpuTimesDropped() && run.controller.Scale() < 1.5f, "and they are used once it ends");
+  }
   // The fixed part is forgotten a minute after it was measured.
   {
     Run run;

@@ -80,8 +80,9 @@
   off, and after twice stops using GPU times. It raises after a steady stretch,
   undoes a raise that proves too slow and waits longer before the next, and skips
   changes under 0.1x, since each one reallocates the EFB and stutters. Without GPU
-  times (none, or none published within 5 s) it steps on the frame rate in
-  quarter steps (half above 2x). F1 > Video shows the GPU time, the budget and
+  times (none, none published within 5 s of seconds with frames to judge, or
+  `MP_DYNRES_GPU_TIMES=0`, which forces this path for testing) it steps on the
+  frame rate in quarter steps (half above 2x). F1 > Video shows the GPU time, the budget and
   why the scale is what it is; the log has a `port: dynamic resolution` line per
   change. The controller is `platform/port_dynamic_res.cpp` (test
   `port_dynamic_res_tests`). A step keeps Aurora's cached bind groups, dropping two
