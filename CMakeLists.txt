@@ -952,6 +952,13 @@ if(MP_BUILD_TESTS)
     add_test(NAME port_particle_math_tests COMMAND port_particle_math_tests)
     set_tests_properties(port_particle_math_tests PROPERTIES TIMEOUT 15 LABELS port)
     set_tests_properties(port_charge_locator_tests PROPERTIES TIMEOUT 15 LABELS port)
+    # The model (mesh) opacity selection of Remastered's OpacityFresnel recipes: header-only
+    # (platform/include/port_vfx_opacity.h), so it needs no sources of its own.
+    add_executable(port_vfx_opacity_tests tests/port_vfx_opacity.cpp)
+    target_include_directories(port_vfx_opacity_tests PRIVATE platform/include extern/aurora/include)
+    target_compile_definitions(port_vfx_opacity_tests PRIVATE TARGET_PC VERSION=0)
+    add_test(NAME port_vfx_opacity_tests COMMAND port_vfx_opacity_tests)
+    set_tests_properties(port_vfx_opacity_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_swoosh_ring_tests tests/port_swoosh_ring.cpp)
     target_include_directories(port_swoosh_ring_tests PRIVATE platform/include)
     add_test(NAME port_swoosh_ring_tests COMMAND port_swoosh_ring_tests)
