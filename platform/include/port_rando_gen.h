@@ -38,6 +38,8 @@ struct Settings {
   int removeThermal = 0;           // 0 none, 1 most, 2 all
   bool removeHiveMecha = false;
   bool springBall = true;
+  bool shuffleUnlimitedMissiles = false;    // Unlimited Missiles is an item in the pool
+  bool shuffleUnlimitedPowerBombs = false;  // Unlimited Power Bombs is an item in the pool
   int startingRoom = 0;            // 0 normal, 1 safe, 2 buckle up (a random room and loadout)
   bool randomizeStartingBeam = false;
   int blastShieldRandomization = 0; // 0 none, 1 replace existing, 2 mix it up

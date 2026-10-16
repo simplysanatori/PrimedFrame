@@ -151,6 +151,10 @@ void DrawRandomizerTab() {
   check("Shuffle Scan Visor", s.shuffleScanVisor, "The Scan Visor is an item to find, not a start item.");
   check("Progressive beams", s.progressiveBeams, "Each beam has upgrades received in order, not as named items.");
   check("Spring Ball", s.springBall, "Morph Ball Bombs also give the Spring Ball (jump in Morph Ball form).");
+  check("Shuffle Unlimited Missiles", s.shuffleUnlimitedMissiles,
+        "Adds an Unlimited Missiles item to the pool, in place of a Missile Expansion.");
+  check("Shuffle Unlimited Power Bombs", s.shuffleUnlimitedPowerBombs,
+        "Adds an Unlimited Power Bombs item to the pool, in place of a Missile Expansion.");
   changed |= ImGui::Combo("Remove X-Ray requirement", &s.removeXray,
                           "None\0Most\0All but the Omega Pirate\0");
   ItemHelp("Takes the X-Ray Visor out of the logic where it is needed to see hidden things.");

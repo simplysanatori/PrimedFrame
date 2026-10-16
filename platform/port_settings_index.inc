@@ -178,6 +178,8 @@
 {"Randomizer", "", "Items", "Shuffle Scan Visor", "scan visor shuffle item"},
 {"Randomizer", "", "Items", "Progressive beams", "beam upgrades progressive order"},
 {"Randomizer", "", "Items", "Spring Ball", "spring ball item shuffle"},
+{"Randomizer", "", "Items", "Shuffle Unlimited Missiles", "unlimited missiles infinite ammo item shuffle"},
+{"Randomizer", "", "Items", "Shuffle Unlimited Power Bombs", "unlimited power bombs infinite ammo item shuffle"},
 {"Randomizer", "", "Items", "Remove X-Ray requirement", "xray visor logic requirement remove"},
 {"Randomizer", "", "Items", "Remove Thermal requirement", "thermal visor logic requirement remove"},
 {"Randomizer", "", "Items", "Remove Hive Mecha", "hive mecha boss skip totem"},
