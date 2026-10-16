@@ -232,11 +232,25 @@ the tick right before.
 - `PortDebug::PresentedAimDelta` previews the yaw/pitch the next tick will
   apply (`MouseAimState::Preview`, same clamp and sensitivity) from the pending
   mouse delta, the gyro accumulator (`PollGyro`, per frame with the real frame
-  dt) and the twin-stick velocity times `t * dt`.
+  dt) and the twin stick's velocity.
   `CCameraManager::GetPresentedLookRotation` turns that into a world rotation
   about the camera (yaw about world Z, pitch about the camera's right axis) and
   `GetCurrentCameraTransform` applies it to the presented view. The tick still
   consumes the whole delta, so the shot direction is unchanged.
+- The mouse, gyro and touch travel is measured, so it is shown as it arrives
+  (that is what keeps the reticle on the shot direction). The twin stick cannot
+  be measured, only predicted from the rate the last tick sampled, and its turn
+  is shown over the period that *follows* its tick, like every other
+  interpolated state: the drawn travel is the un-elapsed part of the tick
+  (`ahead - TickPeriod()`, an offset in `[-period, 0]`), reaching the tick's own
+  value as the next tick approaches. Drawing it over the period *before* the
+  tick instead put the stick a tick ahead of the world, so releasing the stick
+  retracted turn that had already been drawn and the view snapped back about one
+  tick's turn, against the direction it had been moving (issue #128). The
+  simulation is untouched either way; the cost is that the twin stick's look
+  trails the simulation by up to one tick, as the classic C-stick look already
+  does. The pointer-aim crosshair (`PresentedPointerAimPosition`) takes the same
+  offset, so it cannot snap back with it.
 - It is only active when the last tick applied free aim
   (`sAimAppliedLastTick`), so menus, morph ball and cinematics are untouched.
 - The arm cannon stays on the simulation camera, so it is fixed on screen while

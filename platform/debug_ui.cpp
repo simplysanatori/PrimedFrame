@@ -2708,13 +2708,18 @@ bool PresentedPointerAimPosition(float fraction, float& x, float& y) {
     touchX = sTouchAimPendingX;
     touchY = sTouchAimPendingY;
   }
-  const float ahead =
-      FrameInterpolation() && std::isfinite(fraction) && fraction > 0.f ? std::min(fraction, 1.f) * TickPeriod()
-                                                                        : 0.f;
+  const bool interpolating = FrameInterpolation() && std::isfinite(fraction) && fraction >= 0.f;
+  const float ahead = interpolating ? std::min(fraction, 1.f) * TickPeriod() : 0.f;
+  // The tick's stick turn is shown over the period that follows it, like every
+  // other interpolated state (docs/FRAME_INTERPOLATION.md): the travel drawn now
+  // is the un-elapsed part of the tick, an offset in [-period, 0]. Drawing it
+  // over the period before the tick instead (ahead) put the stick a tick ahead
+  // of the world and snapped the view back when the stick was released (#128).
+  const float stickAhead = interpolating ? ahead - TickPeriod() : 0.f;
   float sx = 0.f, sy = 0.f;
   PointerAimScale(sx, sy);
-  PortMouse::PointerAim::Move((sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * ahead) * sx,
-                              (sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * ahead) * sy, x, y);
+  PortMouse::PointerAim::Move((sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * stickAhead) * sx,
+                              (sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * stickAhead) * sy, x, y);
   return true;
 }
 int CrosshairSize() { EnsureInitialized(); return sInput.crosshairSize; }
@@ -3222,9 +3227,17 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
       !std::isfinite(fraction) || fraction < 0.f) {
     return false;
   }
-  // What the next tick will consume: the mouse and gyro travel so far, plus the
-  // stick's travel over the part of the tick already shown.
+  // What the next tick will consume: the mouse, gyro and touch travel so far,
+  // plus the stick's turn (below), and the edge turn a pointer dead box makes
+  // over the part of the tick already shown.
   const float ahead = std::min(fraction, 1.f) * TickPeriod();
+  // The stick cannot be measured, only predicted from the rate the last tick
+  // sampled. Its turn is shown over the period that follows its tick, like every
+  // other interpolated state: the travel drawn now is the un-elapsed part of the
+  // tick, an offset in [-period, 0]. Drawing it over the period before the tick
+  // instead put the stick a tick ahead of the world, so releasing it retracted
+  // turn that had already been drawn and the view snapped back (issue #128).
+  const float stickAhead = ahead - TickPeriod();
   float touchX = 0.f;
   float touchY = 0.f;
   {
@@ -3232,8 +3245,8 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
     touchX = sTouchAimPendingX;
     touchY = sTouchAimPendingY;
   }
-  const float dx = sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * ahead;
-  const float dy = sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * ahead;
+  const float dx = sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * stickAhead;
+  const float dy = sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * stickAhead;
   if (sPointerAimFree) {
     // The edge turn the next tick will make, over the part of it already shown.
     float sx = 0.f, sy = 0.f;
