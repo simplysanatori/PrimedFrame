@@ -78,3 +78,79 @@ tracked in `CPlayer`, so a refused snap resends the previous message exactly as
   path, and there is no per-tick comparison beyond the port's own tests and
   telemetry. Ground replacement being wired is not the same as matching
   Remastered.
+
+## The airborne landing query for box actors
+
+The airborne mover (`CGameCollision::MoveAirborneStepped`, source `MoveObject`
+0xf943b4 / `DoMovementStep` 0xf948d4) calls the source's landing check,
+`CPlayerMP1::GroundCheckForOffGroundMoverCollider` 0xc6d110, from its post-step
+down probe while rising and on a floor contact. Its terrain half is the port's own
+contacts and runs first; its **dynamic half** now has a source-exact path for one
+box actor, decided by the pure, header-only
+`platform/include/port_remastered_box_landing.h` (unit-tested by
+`tests/port_remastered_box_landing.cpp`) under the pre-select in
+`CGameCollision::MoveAirborneStepped` (`Ground::Check`). The dynamic walk starts
+from whatever `low` the terrain half already found, so a terrain point at or above
+a dynamic one keeps priority.
+
+When exactly one near-list candidate is bounds-overlapping the probed player box
+and is active, non-platform and a box primitive (`AABX`), that pair alone answers
+the dynamic landing check:
+
+- The impacts are the source's paired ones, `CCollidableAABox::AABox_AABox`
+  0xbf61b4 through 0xbf6650 (`BoxBoxPairedImpacts` in
+  `platform/include/port_collision_failsafe.h`): each half carries its owner's
+  outward face normal, the shared depth and one face-centre point of the
+  intersection face, in the source's axis order. The walk reads the other half's
+  point.
+- The pair is gated the way `CheckCollision` 0xc1ec60 gates it: the candidate's
+  own collision filter against the player's actor material, then the player's
+  filter against the candidate's material, both through
+  `CIncludeExcludeCollisionFilterMP1::Passes` 0xcb7084 and both against the
+  translated material form (`CPhysicsActorMP1::MaterialListChanged` 0xc53ccc /
+  `NGamePhysicsUtilsMP1::TranslateMP1Material` 0xc59b70), never against the
+  port's raw material-list bits. Each candidate impact is then filtered by
+  `SurfaceCollisionPasses` 0xcb7110 with the other half's outward normal.
+- A point is accepted on the source's strict height band
+  `pz <= feet && pz > low`, and advances `low` whether or not it grounds. It
+  grounds only when `is_floor(orientation, up)` 0xbecb40 holds **and** the
+  material passes the eligibility `(behavior & 0x10) == 0 || (filter & 0x2) != 0`:
+  a material whose behaviour has 0x10 (the `NoPlayerCollision` value, which
+  `Character` without `SolidCharacter` also produces) cannot ground unless its
+  Platform channel 0x2 is set.
+
+**Everything else keeps the pre-existing retail landing query, unchanged.** A
+second bounds-overlapping candidate, another primitive type, a `CScriptPlatform`,
+an inactive actor, non-finite or inverted candidate bounds, and the source's
+physics-object type 2 classes (`Door`, `Dock`, `BloodFlower`, which skip the
+candidate-filter visit test at 0xc1ed44 and so cannot use the gated path) all run
+the port's original `DetectDynamicCollision` block with its retail
+`AABoxAABoxIntersection` contact shapes. No bounds-overlapping candidate at all
+leaves the terrain's result standing. The path is part of the existing
+`remastered_movement` switch and adds no setting.
+
+- **Not proven: the broadphase and its order.** The near list is the tick's
+  collider list (the port's `CStateManager::BuildColliderList` when none is
+  given), so its contents and order are the port's; the source's
+  material-filtered near-list coverage and traversal order are **not** verified.
+  Only the pair, once exactly one candidate is selected, is claimed to be the
+  source's.
+- **Not source: the response, the rider and the terrain classification.** The
+  response half still runs over the port's native dynamic contacts, platform
+  riders are the port's existing code, and the terrain half of the same check
+  still classifies with the port's raw-bits rule rather than the translated
+  material, so a grounded verdict can come from a pair the response producer
+  never saw.
+- **The grounded mover is untouched by this.** Its own dynamic-contact fallback
+  and static-terrain scope above are unchanged: only the airborne landing query
+  has a source path, and a morph ball or a gate-off tick still runs retail end to
+  end.
+- **The morph-ball retained result is not implemented** for this path, as before.
+- **The runtime evidence is narrow, and no parity claim follows.** On Linux, in a
+  private Ruined Fountain run, the dynamic half was reached with exactly one active
+  static `CScriptActor` box: two repetitions of 285 samples each, with the samples and
+  the plan point identical between them (the same plan point, not an exact-tick
+  comparison). Under GDB the new pair path and its kernel call were entered for two
+  landings, for that one actor only. Nothing here has been captured from Remastered,
+  run on another platform, or compared for general ground, ball, response or rider
+  parity.

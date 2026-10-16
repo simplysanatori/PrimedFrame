@@ -13,7 +13,10 @@
 #include "MetroidPrime/CGroundMovement.hpp"
 #include "MetroidPrime/CPhysicsActor.hpp"
 #include "MetroidPrime/CWorld.hpp"
+#include "MetroidPrime/Enemies/CBloodFlower.hpp"
 #include "MetroidPrime/Player/CPlayer.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptDock.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptDoor.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptPlatform.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 #include "MetroidPrime/UserNames.hpp"
@@ -32,6 +35,7 @@
 #include "port_debug.h"
 #include "port_air_mover_contact.h"
 #include "port_collision_failsafe.h"
+#include "port_remastered_box_landing.h"
 #include "port_remastered_ground_policy.h"
 #include "port_remastered_ground_world.h"
 #endif
@@ -1127,6 +1131,109 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   };
   const Test test = {mgr, cache, actor, materialFilter, nearList};
 
+  // 0xc6d110's dynamic half for a box (AABX) candidate. The source pair producer
+  // (0xbf61b4) and its landing walk have only been proven for the one pair shape the
+  // audit covers, so the adapter pre-selects it and every other shape (another
+  // overlapping candidate, another primitive, a platform, a Door/Dock/BloodFlower,
+  // an inactive actor, malformed bounds, a non-AABX self) falls through to the
+  // unchanged retail block. Every one of those pre-select rejections is a PORT
+  // conservative gate, never a claim about the source's physics-object type.
+  struct BoxLanding {
+    enum ESelection { kNone, kPair, kUnsupported };
+
+    static PortCollisionFailsafe::Vec3 V(const CVector3f& v) {
+      return {v.GetX(), v.GetY(), v.GetZ()};
+    }
+    static PortCollisionFailsafe::Box B(const CAABox& b) {
+      return {V(b.GetMinPoint()), V(b.GetMaxPoint())};
+    }
+    // The port's filter as the source's CIncludeExcludeCollisionFilterMP1: the
+    // include/exclude lists are MP1 material-list bits (the source's ctor 0xcb6f0c
+    // stores exactly these), the mode is the filter's own.
+    static PortRemasteredCollisionMaterial::MaterialFilter Filter(const CMaterialFilter& f) {
+      return {f.GetIncludeList().GetValue(), f.GetExcludeList().GetValue(),
+              static_cast< uint32_t >(f.GetFilterType())};
+    }
+
+    // The source's physics-object type 2 classes: CPhysicsActorMP1::SetupPhysicsObject
+    // 0xc529f0 gives Door, Dock and BloodFlower type 2,
+    // and CheckCollision 0xc1ed44-0xc1ed4c reads +0xc and branches straight to the pair
+    // collision for type 2, skipping the other-filter visit test PairPasses always
+    // applies. Rather than weaken that gate or invent a native type mapping, these
+    // classes stay on the unchanged retail fallback. CBloodFlower has no TCastTo
+    // registration (the visitor list in TCastTo.hpp never names it, and the port builds
+    // without TypesMatch.cpp), so it is the one class cast by RTTI, which the port
+    // already uses elsewhere (CStateManager.cpp, platform/port_savestate_room.cpp).
+    static bool Type2Class(const CPhysicsActor& other) {
+      return TCastToConstPtr< CScriptDoor >(&other) != NULL ||
+             TCastToConstPtr< CScriptDock >(&other) != NULL ||
+             dynamic_cast< const CBloodFlower* >(&other) != NULL;
+    }
+
+    // One near-list candidate. A candidate whose bounds cannot be compared is rejected
+    // BEFORE the overlap test, so a malformed box cannot turn the query into a silent
+    // "no candidate" by comparison accident.
+    static PortRemasteredBoxLanding::Candidate Classify(
+        const PortRemasteredBoxLanding::Box& selfBox,
+        const PortRemasteredBoxLanding::Box& otherBox, const CPhysicsActor& other) {
+      using namespace PortRemasteredBoxLanding;
+      if (!FiniteOrdered(selfBox) || !FiniteOrdered(otherBox)) {
+        return Candidate::kUnsupportedPair;
+      }
+      if (!BoxesOverlap(selfBox, otherBox)) return Candidate::kOutside;
+      const CCollisionPrimitive* prim = other.GetCollisionPrimitive();
+      if (prim == NULL || prim->GetPrimType() != 'AABX') return Candidate::kUnsupportedPair;
+      if (TCastToConstPtr< CScriptPlatform >(&other) != NULL) {
+        return Candidate::kUnsupportedPair;
+      }
+      if (Type2Class(other)) return Candidate::kUnsupportedPair;
+      if (!other.GetActive()) return Candidate::kUnsupportedPair;
+      return Candidate::kPair;
+    }
+
+    // Walks the provided near list in its given order (null, self and primitive-less
+    // entries skipped as the retail path does) while the caller has the probe offset
+    // applied, and reports the pure selection state. `pair` is snapshotted only for the
+    // one accepted candidate; `low`/`result` are never touched here.
+    static ESelection Select(CStateManager& mgr, CPhysicsActor& actor,
+                             const CMaterialFilter& filter, const TEntityList& list, float feet,
+                             PortRemasteredBoxLanding::Pair& pair) {
+      using namespace PortRemasteredBoxLanding;
+      const CCollisionPrimitive* selfPrim = actor.GetCollisionPrimitive();
+      if (selfPrim == NULL || selfPrim->GetPrimType() != 'AABX') return kUnsupported;
+      const Box selfBox = B(selfPrim->CalculateAABox(actor.GetPrimitiveTransform()));
+      if (!FiniteOrdered(selfBox)) return kUnsupported;
+      PairSelection selection(FiniteBand(feet));
+      for (const TUniqueId* id = list.begin(); id != list.end(); ++id) {
+        const CPhysicsActor* other = TCastToConstPtr< CPhysicsActor >(mgr.GetObjectById(*id));
+        if (other == NULL || other == &actor || other->GetCollisionPrimitive() == NULL) continue;
+        const Box otherBox =
+            B(other->GetCollisionPrimitive()->CalculateAABox(other->GetPrimitiveTransform()));
+        const Candidate candidate = Classify(selfBox, otherBox, *other);
+        selection.Candidate(candidate);
+        if (candidate == Candidate::kPair &&
+            selection.State() == SelectionState::kPair) {
+          pair.selfBox = selfBox;
+          pair.otherBox = otherBox;
+          pair.selfMaterialBits = actor.GetMaterialList().GetValue();
+          pair.otherMaterialBits = other->GetMaterialList().GetValue();
+          pair.selfFilter = Filter(filter);
+          pair.otherFilter = Filter(other->GetMaterialFilter());
+          pair.feet = feet;
+        }
+      }
+      switch (selection.State()) {
+      case SelectionState::kPair:
+        return kPair;
+      case SelectionState::kNone:
+        return kNone;
+      case SelectionState::kUnsupported:
+        break;
+      }
+      return kUnsupported;
+    }
+  };
+
   // 0xc6d110: landing checks consume impacts, not the NoPostFilter SAT result.
   struct Ground {
     static bool Check(CStateManager& mgr, CAreaCollisionCache& cache, CPlayer& player,
@@ -1154,6 +1261,35 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
                                      CVector3f(work.x,work.y,work.z));
           low = pz;
         }
+      }
+      // The dynamic half. The source query needs the player's box AT THE PROBED
+      // position and the retail block needs the probe offset back at zero before it
+      // installs its own, so the pre-select runs under `delta` and is released here.
+      // Exactly one eligible active non-platform AABox candidate makes the dynamic
+      // landing source-exact (0xbf61b4 + 0xc6d110 through
+      // platform/include/port_remastered_box_landing.h); anything else falls through
+      // to the unchanged retail producer below, whose comment explains its shapes.
+      actor.MoveCollisionPrimitive(delta);
+      PortRemasteredBoxLanding::Pair pair;
+      const BoxLanding::ESelection selection =
+          BoxLanding::Select(mgr, actor, filter, list, feet, pair);
+      actor.MoveCollisionPrimitive(CVector3f::Zero());
+      if (selection == BoxLanding::kPair) {
+        // A pair either filter rejects, or one whose impacts are all filtered out, is
+        // still the source's answer - no contact from this pair - so the retail
+        // producer does not run for it either, and Apply's return is not consulted.
+        static std::vector< PortCollisionFailsafe::PairedImpact > boxImpacts;  // game thread
+        PortRemasteredBoxLanding::LandingState landing = {low, result};
+        PortRemasteredBoxLanding::Apply(pair, landing, boxImpacts);
+        low = landing.low;
+        result = landing.result;
+        return result;
+      }
+      if (selection == BoxLanding::kNone) {
+        // No near-list primitive's box overlaps the probed box, and the retail
+        // producer can only report a contact for an overlapping one, so the terrain's
+        // result stands.
+        return result;
       }
       actor.MoveCollisionPrimitive(delta);
       CCollisionInfoList dynamic;

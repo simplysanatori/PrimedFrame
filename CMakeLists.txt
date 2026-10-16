@@ -819,7 +819,9 @@ if(MP_BUILD_TESTS)
     target_compile_definitions(port_octree_frontonly_tests PRIVATE TARGET_PC VERSION=0)
     add_test(NAME port_octree_frontonly_tests COMMAND port_octree_frontonly_tests)
     set_tests_properties(port_octree_frontonly_tests PROPERTIES TIMEOUT 15 LABELS port)
-    foreach(t port_remastered_ground_contacts port_collision_failsafe)
+    # The Remastered box-actor landing query (header-only over the 0xbf61b4 impacts) runs
+    # under the same exact-IEEE flags and links the same contact library.
+    foreach(t port_remastered_ground_contacts port_collision_failsafe port_remastered_box_landing)
         add_executable(${t}_tests tests/${t}.cpp)
         target_link_libraries(${t}_tests PRIVATE port_remastered_ground_contacts)
         set_target_properties(${t}_tests PROPERTIES CXX_STANDARD 17)
