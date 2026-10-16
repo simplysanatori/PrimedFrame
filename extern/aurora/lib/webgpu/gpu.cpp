@@ -1432,8 +1432,16 @@ void release_surface() noexcept {
   }
 }
 
+// Where the last resize spent its time, for resize_swapchain's log line: dropping the caches
+// that hold the old size, and making the new targets.
+static double g_resizeCachesMs = 0.0;
+int g_resizeFramesToTime = 0;
+static double g_resizeTargetsMs = 0.0;
+
 static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t nativeWidth, uint32_t nativeHeight,
                                       bool force) {
+  using clock = std::chrono::steady_clock;
+  g_resizeCachesMs = g_resizeTargetsMs = 0.0;
   if (!g_surface || !g_device || width == 0 || height == 0 || nativeHeight == 0 || nativeWidth == 0) {
     return;
   }
@@ -1444,6 +1452,7 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
   if (!force && !sizeChanged) {
     return;
   }
+  const auto cachesStart = clock::now();
   if (sizeChanged) {
     gx::trim_copy_texture_cache();
     // A new EFB scale alone (dynamic resolution) keeps the cached bind groups, so the
@@ -1456,6 +1465,8 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
       gfx::detail::expire_unused_bind_groups_soon();
     }
   }
+  g_resizeCachesMs = std::chrono::duration<double, std::milli>(clock::now() - cachesStart).count();
+  const auto targetsStart = clock::now();
   // A new EFB scale alone (dynamic resolution) keeps the swapchain as it is.
   if (force || surfaceChanged) {
     g_graphicsConfig.surfaceConfiguration.width = nativeWidth;
@@ -1471,6 +1482,7 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
   release_scene_hdr_target();
   g_depthBuffer = create_depth_texture(width, height);
   g_CopyBindGroup = create_copy_bind_group(present_source());
+  g_resizeTargetsMs = std::chrono::duration<double, std::milli>(clock::now() - targetsStart).count();
 }
 
 bool refresh_surface(bool recreate) {
@@ -1507,13 +1519,18 @@ bool refresh_surface(bool recreate) {
 
 void resize_swapchain(uint32_t width, uint32_t height, uint32_t nativeWidth, uint32_t nativeHeight, bool force) {
   // Timed so the stutter of a resize (a dynamic resolution step) can be read from the log.
-  const auto start = std::chrono::steady_clock::now();
+  // The parts are timed apart: the wait for the GPU's queued work, the caches, the targets.
+  using clock = std::chrono::steady_clock;
+  const auto start = clock::now();
   const bool efbChanged = g_frameBuffer.size.width != width || g_frameBuffer.size.height != height;
   gfx::gpu_synchronize();
+  const double waitMs = std::chrono::duration<double, std::milli>(clock::now() - start).count();
   resize_swapchain_internal(width, height, nativeWidth, nativeHeight, force);
   if (efbChanged) {
-    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-    Log.info("EFB {}x{}: resized in {:.1f} ms", width, height, ms);
+    const double ms = std::chrono::duration<double, std::milli>(clock::now() - start).count();
+    Log.info("EFB {}x{}: resized in {:.1f} ms (GPU wait {:.1f}, caches {:.1f}, targets {:.1f})", width, height, ms,
+             waitMs, g_resizeCachesMs, g_resizeTargetsMs);
+    g_resizeFramesToTime = 2;
   }
 }
 

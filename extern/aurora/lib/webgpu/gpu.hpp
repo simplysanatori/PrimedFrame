@@ -47,6 +47,9 @@ extern wgpu::BackendType g_backendType;
 extern bool g_vulkanLibraryFailed;
 extern GraphicsConfig g_graphicsConfig;
 extern TextureWithSampler g_frameBuffer;
+// Frames left to time after an EFB resize (end_frame logs them): the new targets' first use
+// can cost more than the resize itself.
+extern int g_resizeFramesToTime;
 extern TextureWithSampler g_frameBufferResolved;
 extern TextureWithSampler g_depthBuffer;
 // Linear HDR scene colour (MSAA + resolved), the world EFB's size, sharing g_depthBuffer. Empty until
