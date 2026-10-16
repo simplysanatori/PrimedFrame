@@ -8,7 +8,9 @@ logic and tricks; saved as the `rando_settings=` line of the settings file),
 type a seed text or leave it empty for a random one, and press **Generate &
 Play**. The page lists saved seeds with Play, a spoiler view, "Write
 spoiler file" and Delete (the seed, its progress and its save card; not the
-seed being played). The console has the same as `rando gen [seedtext]`,
+seed being played). Energy tank capacity (10-200, default 100) sets the
+energy each tank holds; the suit alone holds one less, so 50 gives 49 + 50
+per tank. Combat logic still counts tanks as if they held 100. The console has the same as `rando gen [seedtext]`,
 `rando play <name>`, `rando delete <name>` and `rando list`.
 
 Each seed has its own save card, which the game switches only at the title

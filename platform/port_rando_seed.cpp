@@ -145,6 +145,7 @@ bool Settings::operator==(const Settings& other) const {
          staggeredSuitDamage == other.staggeredSuitDamage && combatLogic == other.combatLogic &&
          trickDifficulty == other.trickDifficulty && trickAllow == other.trickAllow &&
          trickDeny == other.trickDeny && flaahgraPowerBombs == other.flaahgraPowerBombs &&
+         etankCapacity == other.etankCapacity &&
          backwardsLowerMines == other.backwardsLowerMines && removeXray == other.removeXray &&
          removeThermal == other.removeThermal && removeHiveMecha == other.removeHiveMecha &&
          springBall == other.springBall && startingRoom == other.startingRoom &&
@@ -179,6 +180,7 @@ std::string SettingsText(const Settings& s) {
   out += ",\"trick_deny_list\":";
   NamesText(s.trickDeny, out);
   out += std::string(",\"flaahgra_power_bombs\":") + flag(s.flaahgraPowerBombs);
+  out += ",\"etank_capacity\":" + std::to_string(s.etankCapacity);
   out += std::string(",\"backwards_lower_mines\":") + flag(s.backwardsLowerMines);
   out += ",\"remove_xray_requirements\":" + std::to_string(s.removeXray);
   out += ",\"remove_thermal_requirements\":" + std::to_string(s.removeThermal);
@@ -218,6 +220,7 @@ void ReadSettings(const PortJson::Value& root, Settings& out) {
   NamesMember(root, "trick_allow_list", s.trickAllow);
   NamesMember(root, "trick_deny_list", s.trickDeny);
   s.flaahgraPowerBombs = BoolMember(root, "flaahgra_power_bombs", s.flaahgraPowerBombs);
+  s.etankCapacity = IntMember(root, "etank_capacity", s.etankCapacity, 10, 200);
   s.backwardsLowerMines = BoolMember(root, "backwards_lower_mines", s.backwardsLowerMines);
   s.removeXray = IntMember(root, "remove_xray_requirements", s.removeXray, 0, 2);
   s.removeThermal = IntMember(root, "remove_thermal_requirements", s.removeThermal, 0, 2);

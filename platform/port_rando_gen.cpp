@@ -163,6 +163,9 @@ uint64_t HashInput(const Settings& s, const std::string& seedText) {
   for (const std::string& name : s.trickDeny)
     h.Add(name);
   h.Add(s.flaahgraPowerBombs);
+  // Only a changed capacity enters the hash, so older seeds keep their text.
+  if (s.etankCapacity != 100)
+    h.Add(s.etankCapacity);
   h.Add(s.backwardsLowerMines);
   h.Add(s.removeXray);
   h.Add(s.removeThermal);
@@ -741,6 +744,7 @@ PortApWorld::Layout MakeLayout(const Settings& s, const Start& start, const Elev
       s.removeHiveMecha || ((room == "Landing Site" || room == "Save Station 1") && start.beam != kPower);
   layout.backwardsLowerMines = s.backwardsLowerMines;
   layout.flaahgraPowerBombs = s.flaahgraPowerBombs;
+  layout.etankCapacity = s.etankCapacity;
   return layout;
 }
 
@@ -994,6 +998,7 @@ std::string SlotData(const Settings& s, const Attempt& a, const std::vector< int
        << ",\"trick_difficulty\":" << s.trickDifficulty << ",\"combat_logic_difficulty\":" << s.combatLogic
        << ",\"remove_xray_requirements\":" << s.removeXray << ",\"remove_thermal_requirements\":" << s.removeThermal
        << ",\"flaahgra_power_bombs\":" << flag(s.flaahgraPowerBombs)
+       << ",\"etank_capacity\":" << s.etankCapacity
        << ",\"non_varia_heat_damage\":" << flag(s.nonVariaHeatDamage)
        << ",\"staggered_suit_damage\":" << s.staggeredSuitDamage
        << ",\"backwards_lower_mines\":" << flag(s.backwardsLowerMines)
@@ -1312,6 +1317,7 @@ bool Generate(const Settings& settings, const std::string& seedText, Seed& out, 
   s.finalBosses = std::clamp(s.finalBosses, 0, 3);
   s.doorColorRandomization = std::clamp(s.doorColorRandomization, 0, 2);
   s.combatLogic = std::clamp(s.combatLogic, -1, 1);
+  s.etankCapacity = std::clamp(s.etankCapacity, 10, 200);
   s.trickDifficulty = std::clamp(s.trickDifficulty, -1, 2);
   s.removeXray = std::clamp(s.removeXray, 0, 2);
   s.removeThermal = std::clamp(s.removeThermal, 0, 2);
