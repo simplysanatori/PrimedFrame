@@ -79,7 +79,14 @@
   in quarter steps (half above 2x). F1 > Video shows the GPU time, the budget and
   why the scale is what it is; the log has a `port: dynamic resolution` line per
   change. The controller is `platform/port_dynamic_res.cpp` (test
-  `port_dynamic_res_tests`). The file also takes a manual `render_scale` under 1.
+  `port_dynamic_res_tests`). A step keeps Aurora's cached bind groups (they expire
+  on their own) and clears only the offscreen targets, and the log times each EFB
+  resize (`aurora::gpu: EFB WxH: resized in N ms`). "Sharpen when upscaled"
+  (`upscale_sharpen`: `off`, `dynamic` (default: only while dynamic resolution has
+  lowered the scale) or `always`; strength "Sharpening", `upscale_sharpen_amount`
+  0-100, default 50) applies contrast-adaptive sharpening (after AMD's CAS) in the
+  present resample, and only to a frame smaller than the window. The file also
+  takes a manual `render_scale` under 1.
 - `MP_ASPECT=4:3|16:9|window` (default `window`, persisted as `aspect`); the legacy `MP_WIDESCREEN` selects 16:9.
 - `MP_TWIN_STICK=1` (Controls > Options, persisted as `twin_stick`): twin-stick aiming. The
   right stick feeds the first-person aim through the same path as the mouse (so

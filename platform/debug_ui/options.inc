@@ -160,10 +160,28 @@ static float EffectiveRenderScale() {
 static int EffectiveMsaa() { return sOriginalExperience ? 1 : sMsaa; }
 static int EffectiveAnisotropy() { return sOriginalExperience ? 1 : sAnisotropy; }
 
+// Sharpening for a frame stretched up to the window (Aurora's present resample); only
+// passed on when it changes.
+static void ApplyPresentSharpness() {
+  float amount = 0.f;
+  if (!sOriginalExperience && sSharpenAmount > 0) {
+    const bool lowered = sDynScale > 0.f && sDynScale < EffectiveRenderScale();
+    if (sSharpenMode == 2 || (sSharpenMode == 1 && lowered)) {
+      amount = static_cast< float >(sSharpenAmount) / 100.f;
+    }
+  }
+  static float sApplied = -1.f;
+  if (amount != sApplied) {
+    sApplied = amount;
+    aurora_set_present_sharpness(amount);
+  }
+}
+
 static void ApplyGraphicsQuality() {
   aurora_set_graphics_quality(static_cast< uint32_t >(EffectiveMsaa()),
                               static_cast< uint16_t >(EffectiveAnisotropy()));
   aurora_set_per_pixel_lighting(sPerPixelLighting && !sOriginalExperience);
+  ApplyPresentSharpness();
 }
 
 bool FrameLimitEnabled() {
@@ -203,6 +221,7 @@ static void ResetDynamicRes() {
     sDynScale = 0.f;
     VISetFrameBufferScale(EffectiveRenderScale());
   }
+  ApplyPresentSharpness();
 }
 
 // Once a second, from the presented rate and, where the GPU can time itself, the GPU's
@@ -245,6 +264,7 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
   if (decision.changed) {
     sDynScale = decision.scale;
     VISetFrameBufferScale(decision.scale);
+    ApplyPresentSharpness();
     PortLog::Write("port: dynamic resolution %.2fx (%.0f fps, target %.0f, GPU %.1f ms): %s\n", decision.scale,
                    fps, sample.targetFps, sample.gpuMs, PortDynamicRes::ReasonText(decision.reason));
   }

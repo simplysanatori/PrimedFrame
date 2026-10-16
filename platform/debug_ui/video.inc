@@ -381,6 +381,22 @@ void DrawVideoQuality() {
       }
       ImGui::PopStyleColor();
     }
+    int sharpen = sSharpenMode;
+    if (ImGui::Combo("Sharpen when upscaled", &sharpen, "Off\0" "With dynamic resolution\0" "Always\0")) {
+      sSharpenMode = sharpen;
+      ApplyPresentSharpness();
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Contrast-adaptive sharpening for a frame drawn smaller than the window and\n"
+                          "stretched to it, so a lowered scale looks less soft. With dynamic\n"
+                          "resolution: only while it has lowered the scale. Always: also a fixed low\n"
+                          "scale on a large window. A frame at or above the window's size is not touched.");
+    if (sSharpenMode != 0) {
+      if (ImGui::SliderInt("Sharpening", &sSharpenAmount, 0, 100, "%d%%", ImGuiSliderFlags_AlwaysClamp)) {
+        ApplyPresentSharpness();
+        MarkDirty();
+      }
+    }
   }
   EndOriginalLocked(locked);
   ImGui::BeginDisabled(sOriginalExperience);

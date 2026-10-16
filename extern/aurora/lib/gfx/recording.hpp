@@ -76,6 +76,7 @@ bool scene_hdr_active() noexcept;
 // begin_color_pass pass on another target): what GX and VFX pipelines take their colour format from.
 bool scene_hdr_pass_active() noexcept;
 void clear_caches() noexcept;
+void clear_offscreen_cache() noexcept;
 
 namespace tex_palette_conv {
 struct ConvRequest;

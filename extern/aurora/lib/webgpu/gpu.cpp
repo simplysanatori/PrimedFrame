@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <chrono>
 #include <vector>
 
 #include <aurora/aurora.h>
@@ -36,9 +37,6 @@
 namespace aurora::gx {
 void trim_copy_texture_cache() noexcept;
 } // namespace aurora::gx
-namespace aurora::gfx {
-void clear_offscreen_cache();
-} // namespace aurora::gfx
 
 namespace aurora::webgpu {
 static Module Log("aurora::gpu");
@@ -108,13 +106,17 @@ struct ResampleUniformBlock {
   uint32_t samplerMode = 0;
   float frameWidth = 0.f;
   float frameHeight = 0.f;
+  float sharpness = 0.f; // 0 = off; set only while the frame is stretched up to the window
 };
+// Set on the game thread, read by the render worker's present resample.
+std::atomic<float> g_presentSharpness{0.f};
 
 constexpr std::string_view resampleShaderSource = R"(
 struct Uniforms {
     sampler_mode: u32,
     frame_width: f32,
     frame_height: f32,
+    sharpness: f32,
 };
 
 struct VertexOutput {
@@ -194,11 +196,32 @@ fn sample_area(frag_position: vec4<f32>) -> vec4<f32> {
 
 // END AREA SAMPLER REGION
 
+// Contrast-adaptive sharpening (after AMD's CAS) for a frame stretched up to the window:
+// a cross of source texels around the sample, weighted down where the neighbourhood has
+// little headroom, so edges sharpen without ringing and flat areas stay flat.
+fn sharpen(uv: vec2<f32>, color: vec4<f32>) -> vec4<f32> {
+    let texel = 1.0 / vec2<f32>(textureDimensions(t));
+    let n = textureSample(t, s, uv + vec2<f32>(0.0, -texel.y)).rgb;
+    let so = textureSample(t, s, uv + vec2<f32>(0.0, texel.y)).rgb;
+    let w = textureSample(t, s, uv + vec2<f32>(-texel.x, 0.0)).rgb;
+    let e = textureSample(t, s, uv + vec2<f32>(texel.x, 0.0)).rgb;
+    let c = color.rgb;
+    let mn = min(c, min(min(n, so), min(w, e)));
+    let mx = max(c, max(max(n, so), max(w, e)));
+    let amp = sqrt(clamp(min(mn, vec3<f32>(1.0) - mx) / max(mx, vec3<f32>(1.0e-5)), vec3<f32>(0.0), vec3<f32>(1.0)));
+    let weight = amp * mix(-0.125, -0.2, clamp(uniforms.sharpness, 0.0, 1.0));
+    let sharp = (c + (n + so + w + e) * weight) / (vec3<f32>(1.0) + 4.0 * weight);
+    return vec4<f32>(clamp(sharp, vec3<f32>(0.0), vec3<f32>(1.0)), color.a);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color = textureSample(t, s, in.uv);
     if (uniforms.sampler_mode == 1u) {
         color = sample_area(in.position);
+    }
+    if (uniforms.sharpness > 0.0) {
+        color = sharpen(in.uv, color);
     }
     return vec4(color.rgb, 1.0);
 }
@@ -475,6 +498,11 @@ void set_resampler(AuroraSampler sampler) noexcept {
 }
 
 AuroraSampler get_resampler() noexcept { return g_Resampler; }
+
+void set_present_sharpness(float sharpness) noexcept {
+  g_presentSharpness.store(std::isfinite(sharpness) ? std::clamp(sharpness, 0.f, 1.f) : 0.f,
+                           std::memory_order_relaxed);
+}
 
 Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
                                     uint32_t content_height) noexcept {
@@ -795,10 +823,14 @@ const TextureWithSampler& resample_present_source(const wgpu::CommandEncoder& en
     g_resampledFrameBuffer = create_render_texture(width, height, false);
   }
 
+  // Only a frame stretched up to the window is sharpened: one drawn at or above its size
+  // (supersampled) already has the detail.
+  const bool upscaled = source.size.width < width || source.size.height < height;
   const ResampleUniformBlock uniform{
       .samplerMode = sampler_mode(g_Resampler),
       .frameWidth = static_cast<float>(width),
       .frameHeight = static_cast<float>(height),
+      .sharpness = upscaled ? g_presentSharpness.load(std::memory_order_relaxed) : 0.f,
   };
   AURORA_ASSERT(gfx::render_worker::is_worker_thread(), "Present resample queue write must run on the render worker");
   g_queue.WriteBuffer(g_ResampleUniformBuffer, 0, &uniform, sizeof(uniform));
@@ -1411,7 +1443,13 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
   }
   if (sizeChanged) {
     gx::trim_copy_texture_cache();
-    gfx::clear_caches();
+    // A new EFB scale alone (dynamic resolution) keeps the cached bind groups: they
+    // expire on their own (see gfx::clear_offscreen_cache).
+    if (force || surfaceChanged) {
+      gfx::clear_caches();
+    } else {
+      gfx::clear_offscreen_cache();
+    }
   }
   // A new EFB scale alone (dynamic resolution) keeps the swapchain as it is.
   if (force || surfaceChanged) {
@@ -1463,8 +1501,15 @@ bool refresh_surface(bool recreate) {
 }
 
 void resize_swapchain(uint32_t width, uint32_t height, uint32_t nativeWidth, uint32_t nativeHeight, bool force) {
+  // Timed so the stutter of a resize (a dynamic resolution step) can be read from the log.
+  const auto start = std::chrono::steady_clock::now();
+  const bool efbChanged = g_frameBuffer.size.width != width || g_frameBuffer.size.height != height;
   gfx::gpu_synchronize();
   resize_swapchain_internal(width, height, nativeWidth, nativeHeight, force);
+  if (efbChanged) {
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    Log.info("EFB {}x{}: resized in {:.1f} ms", width, height, ms);
+  }
 }
 
 void set_quality(uint32_t msaaSamples, uint16_t anisotropy) {

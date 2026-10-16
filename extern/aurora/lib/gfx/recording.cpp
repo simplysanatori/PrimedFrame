@@ -1201,6 +1201,12 @@ void clear_caches() noexcept {
   clear_bind_group_cache();
 }
 
+// What an EFB-scale change invalidates: the offscreen targets are kept per size, so the
+// old size's are only dead weight. Bind groups are cached by what they reference and
+// expire after a few frames unused, so stale ones need no clearing, and rebuilding all
+// of them made the frame after a dynamic resolution step slower still.
+void clear_offscreen_cache() noexcept { g_offscreenCache.clear(); }
+
 bool push_custom_draw(DrawTypeId type, const void* payload, size_t payloadSize) {
   if (type == InvalidDrawType) {
     Log.warn("push_custom_draw: invalid draw type");

@@ -718,6 +718,14 @@ void aurora_set_resampler(AuroraSampler sampler) {
   (void)sampler;
 #endif
 }
+
+void aurora_set_present_sharpness(float sharpness) {
+#ifdef AURORA_ENABLE_GX
+  aurora::webgpu::set_present_sharpness(sharpness);
+#else
+  (void)sharpness;
+#endif
+}
 void aurora_set_graphics_quality(uint32_t msaa, uint16_t maxTextureAnisotropy) {
   aurora::g_pendingQuality.store(std::min(msaa, 4u) << 16 | maxTextureAnisotropy, std::memory_order_release);
 }
