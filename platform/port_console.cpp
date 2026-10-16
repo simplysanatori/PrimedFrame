@@ -184,6 +184,21 @@ void SendRaw(unsigned generation, const std::string& text) {
 }
 
 #ifndef _WIN32
+// "GET / HTTP/1.1" and the like: an upper-case method, a target, a version.
+bool LooksLikeHttp(const std::string& line) {
+  const size_t method = line.find(' ');
+  if (method == std::string::npos || method == 0) {
+    return false;
+  }
+  for (size_t i = 0; i < method; ++i) {
+    if (line[i] < 'A' || line[i] > 'Z') {
+      return false;
+    }
+  }
+  const size_t version = line.rfind(" HTTP/");
+  return version != std::string::npos && version > method;
+}
+
 void ListenThread(int listener) {
   std::string buffer;
   for (;;) {
@@ -212,6 +227,8 @@ void ListenThread(int listener) {
     }
     std::fprintf(stderr, "[console] client connected\n");
     buffer.clear();
+    bool firstLine = true;
+    bool refused = false;
     char chunk[512];
     for (;;) {
       const ssize_t n = recv(client, chunk, sizeof(chunk), 0);
@@ -226,6 +243,14 @@ void ListenThread(int listener) {
         if (!line.empty() && line.back() == '\r') {
           line.pop_back();
         }
+        // A web page can POST to a loopback port; the request line and headers
+        // would otherwise run as commands. No console client speaks HTTP.
+        if (firstLine && LooksLikeHttp(line)) {
+          std::fprintf(stderr, "[console] HTTP request refused; disconnecting the client\n");
+          refused = true;
+          break;
+        }
+        firstLine = false;
         bool queued = false;
         {
           std::lock_guard< std::mutex > lock(sQueueMutex);
@@ -237,6 +262,9 @@ void ListenThread(int listener) {
         if (!queued) {
           SendRaw(generation, "=> err: too many commands waiting\n");
         }
+      }
+      if (refused) {
+        break;
       }
       if (buffer.size() > kMaxLine) {
         std::fprintf(stderr, "[console] line too long; disconnecting the client\n");
@@ -262,13 +290,22 @@ void Start() {
 #ifdef _WIN32
   std::fputs("[console] MP_CONSOLE is not supported on Windows\n", stderr);
 #else
-  int port = std::atoi(value);
-  if (port <= 1) {
-    port = 4777;
+  // MP_CONSOLE=1 (or any non-number) is the default port; a number names one.
+  char* end = nullptr;
+  const long requested = std::strtol(value, &end, 10);
+  int port = 4777;
+  if (end != value && *end == '\0' && requested > 1) {
+    if (requested > 65535) {
+      std::fprintf(stderr, "[console] MP_CONSOLE=%s is not a port (2-65535)\n", value);
+      return;
+    }
+    port = static_cast< int >(requested);
   }
   const int listener = socket(AF_INET, SOCK_STREAM, 0);
-  const int yes = 1;
-  setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+  if (listener >= 0) {
+    const int yes = 1;
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+  }
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_port = htons(static_cast< uint16_t >(port));

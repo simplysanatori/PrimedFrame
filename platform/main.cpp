@@ -57,6 +57,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <clocale>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1156,6 +1157,11 @@ int main(int argc, char** argv) {
     }
     PortDebug::ApplyStorageClamp();
     aurora_initialize(argc, argv, &config);
+    // The settings file, JSON and the logs read and write numbers with the C
+    // library, in the "C" format. A toolkit loaded with the window (a GTK
+    // decoration plugin, an input method) may call setlocale(LC_ALL, ""), which
+    // under a comma-decimal locale would make "1.5" read as 1 and print as "1,5".
+    std::setlocale(LC_NUMERIC, "C");
     if (config.desiredBackend == BACKEND_OPENGLES) {
         std::error_code ec;
         std::filesystem::remove(glesMarker, ec);

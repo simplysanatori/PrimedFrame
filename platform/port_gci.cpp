@@ -264,11 +264,20 @@ bool InstallGci(const fs::path& folder, const std::vector<uint8_t>& gci, std::st
   bool replaced = false;
   // A card refuses two files with one identity, whatever they are called, and
   // the file at the target name has to go even if it is something else.
-  for (const auto& entry : fs::directory_iterator(folder, ec)) {
-    const fs::path& path = entry.path();
-    if (!entry.is_regular_file(ec) || path.extension() != ".gci") {
-      continue;
+  // Listed first, then moved: the listing's error is the only one that means
+  // the folder could not be read, and nothing is renamed mid-iteration.
+  std::vector< fs::path > candidates;
+  for (fs::directory_iterator it(folder, ec), end; !ec && it != end; it.increment(ec)) {
+    std::error_code entryEc;
+    if (it->is_regular_file(entryEc) && it->path().extension() == ".gci") {
+      candidates.push_back(it->path());
     }
+  }
+  if (ec) {
+    error = "cannot list " + PathString(folder) + ": " + ec.message();
+    return false;
+  }
+  for (const fs::path& path : candidates) {
     Header existing;
     const bool sameName = path.filename() == target.filename();
     const bool sameIdentity = ReadHeader(path, existing) && existing.game == header.game &&
@@ -280,10 +289,6 @@ bool InstallGci(const fs::path& folder, const std::vector<uint8_t>& gci, std::st
       }
       replaced = true;
     }
-  }
-  if (ec) {
-    error = "cannot list " + PathString(folder) + ": " + ec.message();
-    return false;
   }
   if (!WriteAll(target, gci, error)) {
     return false;

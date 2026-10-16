@@ -1,7 +1,9 @@
 # Debug console
 
 `MP_CONSOLE=<port>` (any build, `1` = 4777, POSIX only): a debug
-command console on 127.0.0.1. Its `press`/`stick` input is read even when
+command console on 127.0.0.1 (a port above 65535 refuses to start; a client
+whose first line is an HTTP request, as a web page's would be, is
+disconnected unread). Its `press`/`stick` input is read even when
 the window has no keyboard focus. `tools/mpcon.py` is the client: one-shot
 (`tools/mpcon.py 'warp chozo 492CBF4A' 'objs eyeball' shot`), a script
 (`-f file`) or an interactive prompt with no arguments. Commands: `status [--json]`
