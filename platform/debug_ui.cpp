@@ -364,10 +364,10 @@ float sMouseFrameY = 0.f;
 // which is dropped whenever the mouse is not captured (twin stick, phones).
 float sGyroPendingX = 0.f;
 float sGyroPendingY = 0.f;
-// The twin stick's aim speed at the last tick, in pixels per second, so frames
-// between ticks can show the travel the next tick will add.
-float sStickAimVelX = 0.f;
-float sStickAimVelY = 0.f;
+// The twin stick's part of this tick's sMouseFrame travel. Frames between ticks
+// draw its turn after the tick (docs/FRAME_INTERPOLATION.md section 4).
+float sStickFrameX = 0.f;
+float sStickFrameY = 0.f;
 // Frame interpolation (docs/FRAME_INTERPOLATION.md): uncapped frames show look
 // input before the tick that applies it. One setting, smooth_frames, turns all
 // four parts on or off; the console's interp command flips them one at a time
@@ -2402,10 +2402,12 @@ void AddStickAim(float x, float y, float dt) {
     y = -y;
   }
   // x right / y up; the aim state expects SDL-style right/down positive.
-  sStickAimVelX = x * sInput.stickAimRate;
-  sStickAimVelY = -y * (sInput.stickAimSplit ? sInput.stickAimRateY : sInput.stickAimRate);
-  sMouseFrameX += sStickAimVelX * dt;
-  sMouseFrameY += sStickAimVelY * dt;
+  const float travelX = x * sInput.stickAimRate * dt;
+  const float travelY = -y * (sInput.stickAimSplit ? sInput.stickAimRateY : sInput.stickAimRate) * dt;
+  sMouseFrameX += travelX;
+  sMouseFrameY += travelY;
+  sStickFrameX += travelX;
+  sStickFrameY += travelY;
 }
 
 int GyroMode() {
@@ -2633,7 +2635,7 @@ void ResetMouseAim() {
   sMouseButtonGate.Reset();
   sMousePendingX = sMousePendingY = sMouseFrameX = sMouseFrameY = 0.f;
   sTouchLookFrameX = sTouchLookFrameY = 0.f;
-  sGyroPendingX = sGyroPendingY = sStickAimVelX = sStickAimVelY = 0.f;
+  sGyroPendingX = sGyroPendingY = sStickFrameX = sStickFrameY = 0.f;
   std::lock_guard lock(sTouchAimMutex);
   sTouchAimPendingX = sTouchAimPendingY = 0.f;
 }
@@ -2700,8 +2702,8 @@ bool PointerAimPosition(float& x, float& y) {
 }
 bool PresentedPointerAimPosition(float fraction, float& x, float& y) {
   if (!PointerAimPosition(x, y)) return false;
-  // The travel since the tick (the stick's over the part of the tick already shown), so the
-  // drawn pointer moves every frame.
+  // The travel since the tick, so the drawn pointer moves every frame, and the
+  // last tick's stick travel drawn after its tick (PresentedAimDelta).
   float touchX = 0.f, touchY = 0.f;
   {
     std::lock_guard lock(sTouchAimMutex);
@@ -2709,17 +2711,11 @@ bool PresentedPointerAimPosition(float fraction, float& x, float& y) {
     touchY = sTouchAimPendingY;
   }
   const bool interpolating = FrameInterpolation() && std::isfinite(fraction) && fraction >= 0.f;
-  const float ahead = interpolating ? std::min(fraction, 1.f) * TickPeriod() : 0.f;
-  // The tick's stick turn is shown over the period that follows it, like every
-  // other interpolated state (docs/FRAME_INTERPOLATION.md): the travel drawn now
-  // is the un-elapsed part of the tick, an offset in [-period, 0]. Drawing it
-  // over the period before the tick instead (ahead) put the stick a tick ahead
-  // of the world and snapped the view back when the stick was released (#128).
-  const float stickAhead = interpolating ? ahead - TickPeriod() : 0.f;
+  const float lag = interpolating ? 1.f - std::min(fraction, 1.f) : 0.f;
   float sx = 0.f, sy = 0.f;
   PointerAimScale(sx, sy);
-  PortMouse::PointerAim::Move((sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * stickAhead) * sx,
-                              (sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * stickAhead) * sy, x, y);
+  sPointerAim.Presented(lag, (sMousePendingX + sGyroPendingX + touchX) * sx,
+                        (sMousePendingY + sGyroPendingY + touchY) * sy, x, y);
   return true;
 }
 int CrosshairSize() { EnsureInitialized(); return sInput.crosshairSize; }
@@ -2760,14 +2756,15 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
     if (active && !locked) {
       float sx = 0.f, sy = 0.f;
       PointerAimScale(sx, sy);
-      sPointerAim.Move(dx * sx, dy * sy);
+      sPointerAim.MoveLagged(dx * sx, dy * sy, sStickFrameX * sx, sStickFrameY * sy);
     } else {
       sPointerAim.Center();
     }
     dx = dy = 0.f;
   }
   const bool applied = sMouseAimState.Update(active, locked, x, y, z, dx, dy, MouseSensitivity(),
-                                            MouseInvertX(), MouseInvertY());
+                                            MouseInvertX(), MouseInvertY(), pointer ? 0.f : sStickFrameX,
+                                            pointer ? 0.f : sStickFrameY);
   if (applied && pointer) {
     float dyaw = 0.f, dpitch = 0.f;
     PortMouse::PointerAim::TurnAt(sPointerAim.x, sPointerAim.y, PointerAimBox() / 100.f,
@@ -2777,7 +2774,7 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   }
   sPointerAimFree = pointer && applied;
   if (!sPointerAimFree) sPointerAim.Center();
-  if (applied) sMouseFrameX = sMouseFrameY = 0.f;
+  if (applied) sMouseFrameX = sMouseFrameY = sStickFrameX = sStickFrameY = 0.f;
   sAimAppliedLastTick = applied;
   return applied;
 }
@@ -3176,8 +3173,8 @@ void BeginFrameMouse() {
   sMouseFrameY = sMousePendingY + sGyroPendingY + (directAim ? touchY : 0.f);
   sMousePendingX = sMousePendingY = 0.f;
   sGyroPendingX = sGyroPendingY = 0.f;
-  // AddStickAim sets it again during this tick's input update.
-  sStickAimVelX = sStickAimVelY = 0.f;
+  // AddStickAim adds this tick's travel during its input update.
+  sStickFrameX = sStickFrameY = 0.f;
   sAimAppliedLastTick = false;
 }
 
@@ -3228,16 +3225,16 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
     return false;
   }
   // What the next tick will consume: the mouse, gyro and touch travel so far,
-  // plus the stick's turn (below), and the edge turn a pointer dead box makes
-  // over the part of the tick already shown.
+  // and the edge turn a pointer dead box makes over the part of the tick
+  // already shown.
   const float ahead = std::min(fraction, 1.f) * TickPeriod();
-  // The stick cannot be measured, only predicted from the rate the last tick
-  // sampled. Its turn is shown over the period that follows its tick, like every
-  // other interpolated state: the travel drawn now is the un-elapsed part of the
-  // tick, an offset in [-period, 0]. Drawing it over the period before the tick
-  // instead put the stick a tick ahead of the world, so releasing it retracted
-  // turn that had already been drawn and the view snapped back (issue #128).
-  const float stickAhead = ahead - TickPeriod();
+  // The stick cannot be measured, only predicted, so its turn is shown over the
+  // period that follows its tick, like every other interpolated state: the last
+  // tick's stick turn (after the pitch or pointer edge clamp, so a clamped
+  // stick draws no motion) with the un-elapsed share `lag` taken back. Drawing a
+  // predicted turn before the tick instead put the stick a tick ahead of the
+  // world, so releasing it retracted turn already drawn (issue #128).
+  const float lag = 1.f - std::min(fraction, 1.f);
   float touchX = 0.f;
   float touchY = 0.f;
   {
@@ -3245,14 +3242,14 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
     touchX = sTouchAimPendingX;
     touchY = sTouchAimPendingY;
   }
-  const float dx = sMousePendingX + sGyroPendingX + touchX + sStickAimVelX * stickAhead;
-  const float dy = sMousePendingY + sGyroPendingY + touchY + sStickAimVelY * stickAhead;
+  const float dx = sMousePendingX + sGyroPendingX + touchX;
+  const float dy = sMousePendingY + sGyroPendingY + touchY;
   if (sPointerAimFree) {
     // The edge turn the next tick will make, over the part of it already shown.
     float sx = 0.f, sy = 0.f;
     PointerAimScale(sx, sy);
-    float px = sPointerAim.x, py = sPointerAim.y;
-    PortMouse::PointerAim::Move(dx * sx, dy * sy, px, py);
+    float px = 0.f, py = 0.f;
+    sPointerAim.Presented(lag, dx * sx, dy * sy, px, py);
     PortMouse::PointerAim::TurnAt(px, py, PointerAimBox() / 100.f,
                                   PointerAimTurn() * (PortMouse::kPi / 180.f), ahead, dyaw, dpitch);
     return dyaw != 0.f || dpitch != 0.f;
@@ -3260,7 +3257,7 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
   float yaw = 0.f;
   float pitch = 0.f;
   if (!sMouseAimState.Preview(dx, dy, MouseSensitivity(), MouseInvertX(), MouseInvertY(), yaw,
-                              pitch)) {
+                              pitch, lag)) {
     return false;
   }
   dyaw = static_cast<float>(std::remainder(double(yaw) - sMouseAimState.yaw, 2.0 * PortMouse::kPi));

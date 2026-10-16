@@ -156,6 +156,38 @@ int main() {
   Check(aim.yaw == previewYaw && aim.pitch == previewPitch);
   Check(aim.Preview(0.f, 1.e6f, sensitivity, false, false, previewYaw, previewPitch));
   Check(Near(previewPitch, -PortMouse::kMaxPitch));
+  // The twin stick's turn is drawn after its tick (issue #128): a frame takes
+  // back the un-elapsed share of the turn the tick made, after the clamp.
+  aim.Synchronize(0.f, 1.f, 0.f);
+  const float startYaw = aim.yaw;
+  aim.Update(true, false, 0.f, 1.f, 0.f, 100.f, 0.f, sensitivity, false, false, 100.f, 0.f);
+  Check(Near(aim.lagYaw, aim.yaw - startYaw));
+  Check(aim.Preview(0.f, 0.f, sensitivity, false, false, previewYaw, previewPitch, 1.f));
+  Check(Near(previewYaw, startYaw)); // just after the tick: where the last frame was
+  Check(aim.Preview(0.f, 0.f, sensitivity, false, false, previewYaw, previewPitch, 0.5f));
+  Check(Near(previewYaw, startYaw + 0.5f * aim.lagYaw));
+  // Mouse travel in the same tick is not lagged.
+  const float mixYaw = aim.yaw;
+  aim.Update(true, false, 0.f, 1.f, 0.f, 150.f, 0.f, sensitivity, false, false, 100.f, 0.f);
+  Check(Near(aim.lagYaw, aim.yaw - mixYaw - 50.f * sensitivity * -1.f));
+  // Released: the next tick turns nothing and the drawn view stays put.
+  const float releasedYaw = aim.yaw;
+  aim.Update(true, false, 0.f, 1.f, 0.f, 0.f, 0.f, sensitivity, false, false);
+  Check(aim.lagYaw == 0.f && aim.lagPitch == 0.f);
+  Check(aim.Preview(0.f, 0.f, sensitivity, false, false, previewYaw, previewPitch, 1.f));
+  Check(previewYaw == releasedYaw);
+  // Held into the pitch limit: the clamp eats the travel, so no frame moves.
+  aim.Update(true, false, 0.f, 1.f, 0.f, 0.f, -1.e6f, sensitivity, false, false, 0.f, -1.e6f);
+  Check(Near(aim.pitch, PortMouse::kMaxPitch));
+  aim.Update(true, false, 0.f, 1.f, 0.f, 0.f, -100.f, sensitivity, false, false, 0.f, -100.f);
+  Check(aim.lagPitch == 0.f);
+  for (const float lag : {0.f, 0.3f, 1.f}) {
+    Check(aim.Preview(0.f, 0.f, sensitivity, false, false, previewYaw, previewPitch, lag));
+    Check(previewPitch == aim.pitch);
+  }
+  // A lock drops the lagged turn.
+  aim.Update(true, true, 0.f, 1.f, 0.f, 0.f, -100.f, sensitivity, false, false, 0.f, -100.f);
+  Check(aim.lagYaw == 0.f && aim.lagPitch == 0.f);
   aim.Reset();
   Check(!aim.Preview(1.f, 1.f, sensitivity, false, false, previewYaw, previewPitch));
   Check(!aim.Update(true, false, 0.f, 0.f, 0.f, 1.f, 1.f, sensitivity, false, false));
@@ -191,6 +223,25 @@ int main() {
   Check(Near(pointer.x, 0.5f) && Near(pointer.y, -1.f));
   pointer.Move(std::numeric_limits< float >::quiet_NaN(), 0.f);
   Check(Near(pointer.x, 0.5f));
+  // The stick's pointer travel is drawn after its tick, after the edge clamp: a
+  // stick holding the pointer at the edge draws it still (issue #128).
+  float drawnX = 0.f, drawnY = 0.f;
+  pointer.MoveLagged(0.3f, 0.f, 0.2f, 0.f);
+  Check(Near(pointer.x, 0.8f) && Near(pointer.lagX, 0.2f));
+  pointer.Presented(1.f, 0.f, 0.f, drawnX, drawnY);
+  Check(Near(drawnX, 0.6f) && Near(drawnY, -1.f));
+  pointer.Presented(0.5f, 0.05f, 0.f, drawnX, drawnY);
+  Check(Near(drawnX, 0.75f));
+  pointer.MoveLagged(0.4f, 0.f, 0.4f, 0.f);
+  pointer.MoveLagged(0.4f, 0.f, 0.4f, 0.f);
+  Check(pointer.x == 1.f && pointer.lagX == 0.f);
+  for (const float lag : {0.f, 0.4f, 1.f}) {
+    pointer.Presented(lag, 0.f, 0.f, drawnX, drawnY);
+    Check(drawnX == 1.f);
+  }
+  pointer.Center();
+  Check(pointer.lagX == 0.f && pointer.lagY == 0.f);
+  pointer.Move(0.5f, -3.f);
   float turnYaw = 1.f, turnPitch = 1.f;
   PortMouse::PointerAim::TurnAt(0.6f, -0.69f, 0.7f, 3.f, 0.5f, turnYaw, turnPitch);
   Check(turnYaw == 0.f && turnPitch == 0.f);
