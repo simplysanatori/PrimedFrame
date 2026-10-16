@@ -65,9 +65,21 @@
   supersamples (4x at 16:9 is 3755x2112; with MSAA 4 the targets take
   several hundred MB). "Dynamic
   resolution" (`dynamic_res`, `dynamic_res_target` in fps, 0 = the display's
-  rate) lowers the scale while the frame rate is below the target, in quarter
-  steps (half steps above 2x), down to "Lowest scale" (`dynamic_res_min`: 0.5,
-  0.75 or 1, default 1). The file also takes a manual `render_scale` under 1.
+  rate) lowers the scale while the GPU cannot hold the target, down to "Lowest
+  scale" (`dynamic_res_min`: 0.5, 0.75 or 1, default 1), and raises it back when
+  there is room. Where the GPU can time itself (timestamp queries, Aurora's
+  `gpu_prof`, switched on while dynamic resolution is) it reads the GPU's time per
+  frame: a slow scene whose GPU has time to spare is CPU-bound and left alone, and
+  a GPU-bound one goes straight to the scale predicted to fit 85% of the frame
+  budget (GPU time taken as a fixed part plus a part growing with the scale
+  squared, the fixed part learnt from two scales). It lowers after two slow
+  seconds, raises after a steady stretch, undoes a raise that proves too slow and
+  waits longer before the next, and skips changes under 0.1x, since each one
+  reallocates the EFB and stutters. Without GPU times it steps on the frame rate
+  in quarter steps (half above 2x). F1 > Video shows the GPU time, the budget and
+  why the scale is what it is; the log has a `port: dynamic resolution` line per
+  change. The controller is `platform/port_dynamic_res.cpp` (test
+  `port_dynamic_res_tests`). The file also takes a manual `render_scale` under 1.
 - `MP_ASPECT=4:3|16:9|window` (default `window`, persisted as `aspect`); the legacy `MP_WIDESCREEN` selects 16:9.
 - `MP_TWIN_STICK=1` (Controls > Options, persisted as `twin_stick`): twin-stick aiming. The
   right stick feeds the first-person aim through the same path as the mouse (so

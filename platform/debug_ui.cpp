@@ -11,6 +11,7 @@
 #include "port_env.h"
 #include "port_collision_view.h"
 #include "port_debug.h"
+#include "port_dynamic_res.h"
 #include "port_freecam.h"
 #include "port_photo.h"
 #include "port_pointer.h"

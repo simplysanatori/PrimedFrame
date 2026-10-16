@@ -332,10 +332,11 @@ void DrawVideoQuality() {
       ResetDynamicRes();
       MarkDirty();
     }
-    ImGui::SetItemTooltip("Lowers the EFB scale, down to the lowest scale below, while the frame rate\n"
-                          "is below the target, and raises it back to the scale above when there is\n"
-                          "room. Each change stutters for a frame, so it changes at most once every\n"
-                          "couple of seconds.");
+    ImGui::SetItemTooltip("Lowers the EFB scale, down to the lowest scale below, while the GPU cannot\n"
+                          "hold the target frame rate, and raises it back toward the scale above when\n"
+                          "there is room. It times the GPU to tell whether pixels are what is slow (a\n"
+                          "CPU-heavy scene is left alone) and goes straight to the scale that fits.\n"
+                          "Each change stutters for a frame, so it moves only when that is worth it.");
     if (sDynamicRes) {
       static const int kTargets[] = {0, 30, 60, 90, 120};
       int target = 0;
@@ -369,6 +370,16 @@ void DrawVideoQuality() {
                             "which lets a phone reach 90 or 120 fps.");
       ImGui::Text("Drawing at %.2fx (target %.0f fps)", sDynScale > 0.f ? sDynScale : sRenderScale,
                   DynamicResTargetFps());
+      ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+      const char* reason = PortDynamicRes::ReasonText(sDynController.LastReason());
+      if (sDynGpuMs > 0.0) {
+        ImGui::Text("GPU %.1f of %.1f ms a frame: %s", sDynGpuMs, 1000.0 / DynamicResTargetFps(), reason);
+      } else if (sDynGpuMs < 0.0 && GXPortGpuTimesSupported() != GX_TRUE) {
+        ImGui::Text("This GPU cannot time itself; following the frame rate: %s", reason);
+      } else {
+        ImGui::Text("%s", reason);
+      }
+      ImGui::PopStyleColor();
     }
   }
   EndOriginalLocked(locked);

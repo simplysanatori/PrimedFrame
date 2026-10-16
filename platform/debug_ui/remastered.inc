@@ -286,7 +286,7 @@ void DrawRemasteredDebug() {
                                                  "Post always reloading the depth"};
     static bool gpuTimes = false;
     if (ImGui::Checkbox("GPU pass times", &gpuTimes)) {
-      GXPortSetGpuTimes(gpuTimes ? GX_TRUE : GX_FALSE);
+      WantGpuTimes(kGpuTimesPanel, gpuTimes);
     }
     ImGui::SetItemTooltip("Not saved. Times each render pass on the GPU (timestamp queries), averaged\n"
                           "over 60 frames. Total is the sum of the passes; span is first start to last end.");
