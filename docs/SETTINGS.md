@@ -528,21 +528,25 @@
   draw cyan on the map and the minimap, over the Rooms amber, whatever
   `map_pickups` is. A save keeps up to 64 marks, and which pickups it has seen,
   in a small side file beside the card: `mapdata/<card>-<slot>.bin` under the
-  port's user folder (the card's own directory keys the name, so the port's
-  card, a shared emulator card and an Archipelago room's card each have their
-  own; nothing is written into the emulator's folder). The file holds a
-  fingerprint of the exact slot bytes, so it is only used for the save it was
-  written for and a save replaced elsewhere - Dolphin, an import, a conversion,
-  an older build - falls back to what the slot itself carries. It is written
-  after a memory card write has finished (never for one that failed) and read
-  back when that slot is loaded. Beside it the slot still holds an "RMMK"
-  trailer after the pickup-seen one - the first 20 marks, exactly the format
-  earlier builds wrote, so either build reads the other's save - and that
-  trailer is all a slot gets without the side file: a USA slot with an
-  Archipelago trailer has no room for it at all, and a save copied to another
-  machine by hand carries the 20. Save states carry the whole list themselves
-  (the blob's tail), so a state round trip keeps every mark. The map legend
-  lists the pickup shapes in use and the marked-room colour. Console: `mark`.
+  port's user folder. The card's identity keys the name - the directory it
+  resolves to, the game id and maker its files are created with, and the card
+  port - so the port's card, a shared emulator card, an Archipelago room's card
+  and even a PAL and a USA card under one directory each keep their own, and
+  nothing is written into the emulator's folder. The file holds a fingerprint of
+  the exact slot bytes and is only used on the card it was written for, so a
+  save replaced elsewhere - Dolphin, an import, a conversion, an older build -
+  falls back to what the slot itself carries. It is written after a memory card
+  write has finished (never for one that failed) and read back when that slot is
+  loaded. Beside it the slot still holds an "RMMK" trailer after the
+  pickup-seen one - the first 20 marks, exactly the format earlier builds wrote,
+  so either build reads the other's save - and that trailer is all a slot gets
+  without the side file: a USA slot with an Archipelago trailer has no room for
+  it at all, a save copied to another machine by hand or brought in by an import
+  or a conversion carries the 20 until the game next saves it, and the front end
+  has no slot-copy feature of its own. Save states carry the whole list
+  themselves (the blob's tail), so a state round trip keeps every mark. The map
+  legend lists the pickup shapes in use and the marked-room colour. Console:
+  `mark`.
 - Skippable cutscenes (F1 > Game > Cutscenes, pause Options > Visor,
   `skippable_cutscenes`, off by default; always on in randomizer and
   Archipelago games) lets Start skip every cutscene, including the ones retail

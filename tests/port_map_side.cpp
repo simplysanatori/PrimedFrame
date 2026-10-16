@@ -1,9 +1,9 @@
-// The seen-pickup / room-mark side file: its format, its file layer and the
-// staging the memory card driver goes through (see port_map_side.h). The
-// engine's own wiring - the four call sites in CMemoryCardDriver.cpp and the
-// directory the files are keyed on - is checked by
-// tests/port_map_side_wiring.py, so this test needs no card stack: it provides
-// PortMapSide::Location itself.
+// The seen-pickup / room-mark side file: its format, its card key, its file
+// layer and the staging the memory card driver goes through (see
+// port_map_side.h). The engine's own wiring - the four call sites in
+// CMemoryCardDriver.cpp and the card identity the files are keyed on - is
+// checked by tests/port_map_side_wiring.py, so this test needs no card stack:
+// it provides PortMapSide::Location itself.
 #include "port_map_side.h"
 
 #include <cstdio>
@@ -23,6 +23,7 @@ void Check(bool condition, const char* what) {
 }
 
 fs::path sDirectory;
+std::string sIdentity;
 
 std::string ReadRaw(const fs::path& path) {
   std::ifstream in(path, std::ios::binary);
@@ -45,11 +46,12 @@ int CountFiles(const fs::path& dir) {
 
 } // namespace
 
-// What platform/port_map_side_paths.cpp does in the game.
+// What platform/port_map_side_paths.cpp does in the game: the port's user
+// folder and the identity of the mounted card.
 namespace PortMapSide {
-void Location(std::string& userFolder, std::string& cardBase) {
+void Location(std::string& userFolder, std::string& cardIdentity) {
   userFolder = sDirectory.string() + "/";
-  cardBase = "/cards/mine/";
+  cardIdentity = sIdentity;
 }
 } // namespace PortMapSide
 
@@ -61,6 +63,7 @@ int main() {
   std::error_code ec;
   const fs::path root = fs::temp_directory_path(ec) / "port_map_side_tests";
   fs::remove_all(root, ec);
+  fs::create_directories(root / "cards" / "usa", ec);
   sDirectory = root;
 
   uint8_t slot[940];
@@ -136,9 +139,31 @@ int main() {
             d.marks.Has(Pack(3, 1)),
         "repeat and out of range dropped");
 
-  // Cards: the same directory gives the same key, another does not.
-  Check(CardKey("/a/card") == CardKey("/a/card") && CardKey("/a/card") != CardKey("/a/card2"),
-        "card key");
+  // --- the card key ----------------------------------------------------------
+  const std::string usaDir = PathToUtf8(root / "cards" / "usa");
+  const std::string usa = CardIdentity(usaDir, "GM8E01", 0);
+  Check(CardKey(usa) == CardKey(CardIdentity(usaDir, "GM8E01", 0)), "the same card keys the same");
+  // A PAL card in the USA card's directory is another card, and so is another
+  // channel: neither may overwrite the other's map data.
+  const std::string pal = CardIdentity(usaDir, "GM8P01", 0);
+  Check(pal != usa && CardKey(pal) != CardKey(usa), "another game id in one directory");
+  const std::string otherChannel = CardIdentity(usaDir, "GM8E01", 1);
+  Check(CardKey(otherChannel) != CardKey(usa), "another channel in one directory");
+  // Spellings of one directory agree: a trailing separator, a "." step, a ".."
+  // step, a symlink and a relative path.
+  Check(CardIdentity(usaDir + "/", "GM8E01", 0) == usa, "trailing separator");
+  Check(CardIdentity(usaDir + "/./", "GM8E01", 0) == usa, "a dot step");
+  Check(CardIdentity(usaDir + "/../usa", "GM8E01", 0) == usa, "a dot dot step");
+  fs::create_directory_symlink(root / "cards" / "usa", root / "link", ec);
+  Check(CardIdentity(PathToUtf8(root / "link"), "GM8E01", 0) == usa, "a symlink resolves");
+  {
+    const fs::path here = fs::current_path(ec);
+    fs::current_path(root, ec);
+    Check(CardIdentity("cards/usa", "GM8E01", 0) == usa, "a relative path");
+    Check(CardIdentity("./cards/usa/", "GM8E01", 0) == usa, "a relative path with a dot step");
+    fs::current_path(here, ec);
+  }
+  Check(NormalizedDirectory("") == std::string() && CardKey("x") != CardKey("y"), "key input");
 
   // --- the file layer --------------------------------------------------------
   const fs::path file = root / "mapdata" / "file.bin";
@@ -150,19 +175,25 @@ int main() {
   Check(ReadFile(file, fp, back) && back.marks.count == 64 && back.seen[3] == in.seen[3],
         "read round trip");
   Check(!ReadFile(file, fp ^ 1, back), "another fingerprint reads false");
-  // The second write replaces the first, and the first is not read back.
+  // A second write replaces the first: the latest data is what comes back, and
+  // the file is not the old one plus the new one.
   Data other;
   other.seen[1] = 7;
   other.marks.Toggle(Pack(6, 2));
   Check(WriteFile(file, fp, other), "write replaces");
-  Check(ReadFile(file, fp, back) && back.marks.count == 1 && back.seen[0] == 0, "new content");
+  Check(ReadFile(file, fp, back) && back.marks.count == 1 && back.seen[0] == 0 &&
+            back.seen[1] == 7 && !back.marks.Has(Pack(0, 0)),
+        "the latest data is the one read back");
+  Check(ReadRaw(file).size() == Encode(fp, other).size(), "and nothing of the old file is left");
+  Check(WriteFile(file, fp, in) && ReadFile(file, fp, back) && back.marks.count == 64,
+        "and back again");
   // Every malformed shape the decoder rejects is rejected through the file too.
   {
     std::ofstream garbage(file, std::ios::binary | std::ios::trunc);
     garbage << ReadRaw(file).substr(0, 30) << "extra";
   }
   Check(!ReadFile(file, fp, back), "damaged file reads false");
-  Check(back.marks.count == 1, "damaged file leaves the caller's data");
+  Check(back.marks.count == 64, "damaged file leaves the caller's data");
   // A file far longer than the format allows is refused without being read.
   {
     std::vector< char > huge(kMaxBytes * 4, 0);
@@ -170,6 +201,22 @@ int main() {
     big.write(huge.data(), static_cast< std::streamsize >(huge.size()));
   }
   Check(!ReadFile(file, fp, back), "oversized file reads false");
+  // A write that fails leaves the previous file exactly as it was (the
+  // temporary cannot be written, so nothing replaces it).
+  Data previous;
+  previous.marks.Toggle(Pack(4, 4));
+  Check(WriteFile(file, fp, previous), "a previous file");
+  const std::string previousBytes = ReadRaw(file);
+  Check(fs::create_directories(file.string() + ".tmp", ec), "the temporary is blocked");
+  {
+    std::ofstream inside(file.string() + ".tmp/keep");
+    inside << "x";
+  }
+  Check(!WriteFile(file, fp, in), "a failed write reports false");
+  Check(FileExists(file) && ReadRaw(file) == previousBytes, "the previous file is untouched");
+  Check(ReadFile(file, fp, back) && back.marks.count == 1 && back.marks.Has(Pack(4, 4)),
+        "and still reads back");
+  fs::remove_all(file.string() + ".tmp", ec);
   // Errors: a path whose parent is a file cannot be written or removed.
   const fs::path blocked = file / "inside.bin";
   Check(!WriteFile(blocked, fp, in) && !FileExists(blocked), "unwritable path refuses");
@@ -178,17 +225,34 @@ int main() {
   // A directory that still holds something is not removed.
   const fs::path full = root / "full";
   fs::create_directories(full, ec);
-  { std::ofstream keep(full / "keep.bin"); keep << "x"; }
+  {
+    std::ofstream keep(full / "keep.bin");
+    keep << "x";
+  }
   Check(!RemoveFile(full), "a non-empty directory reports failure");
   fs::remove_all(full, ec);
 
   // --- the staging the driver goes through ----------------------------------
-  Check(Flush(nullptr, 0) == 0, "nothing staged, nothing written");
-  const PortMapSide::SlotBytes slots[3] = {{slot, sizeof(slot)}, {nullptr, 0}, {nullptr, 0}};
-
+  sIdentity = usa;
   // A rebuilt slot, then the card write finished: the file lands under mapdata,
-  // keyed on the card (FNV-1a of "/cards/mine/") and the slot.
-  const fs::path slot0 = root / "mapdata" / "38fb4584ba12400e-0.bin";
+  // keyed on the card (FNV-1a of the identity) and the slot.
+  char name[48];
+  std::snprintf(name, sizeof(name), "%016llx-0.bin",
+                static_cast< unsigned long long >(CardKey(usa)));
+  const fs::path slot0 = root / "mapdata" / name;
+  const SlotBytes slots[3] = {{slot, sizeof(slot)}, {nullptr, 0}, {nullptr, 0}};
+
+  Check(Flush(nullptr, 0) == 0, "nothing staged, nothing written");
+  // No card set up: nothing is written and nothing is read, whatever is staged.
+  sIdentity.clear();
+  Stage(0, slot, sizeof(slot), in);
+  Check(Flush(slots, 3) == 0 && CountFiles(root / "mapdata") == 0,
+        "without a card nothing is written");
+  uint32_t noCardSeen[kSeenWords] = {9, 9, 9, 9};
+  PortMapMarks::List noCardMarks;
+  Check(!Apply(0, slot, sizeof(slot), noCardSeen, noCardMarks) && noCardMarks.count == 0,
+        "without a card nothing is read");
+  sIdentity = usa;
   Stage(0, slot, sizeof(slot), in);
   // The slot the file does not hold writes nothing, and is dropped rather than
   // written by a later write.
@@ -202,8 +266,7 @@ int main() {
   for (size_t i = 0; i < sizeof(otherSlot); ++i) {
     otherSlot[i] = static_cast< uint8_t >(i);
   }
-  const PortMapSide::SlotBytes staleSlots[3] = {{otherSlot, sizeof(otherSlot)}, {nullptr, 0},
-                                                {nullptr, 0}};
+  const SlotBytes staleSlots[3] = {{otherSlot, sizeof(otherSlot)}, {nullptr, 0}, {nullptr, 0}};
   Check(Flush(staleSlots, 3) == 0 && CountFiles(root / "mapdata") == 0, "stale slot refused");
   Stage(0, slot, sizeof(slot), in);
   Check(Flush(slots, 3) == 1, "staged slot written");
@@ -212,15 +275,54 @@ int main() {
   Check(FileExists(slot0), "named for the card and the slot");
   Check(Flush(slots, 3) == 0, "flushing again writes nothing");
 
+  // The card changes while a save is in flight (an Archipelago room's card, the
+  // emulator-card setting): what was staged for the old card is not written to
+  // the new one, and the new card's files are left alone.
+  sIdentity = CardIdentity(usaDir, "GM8P01", 0);
+  Stage(0, slot, sizeof(slot), in);
+  sIdentity = usa;
+  Stage(0, slot, sizeof(slot), previous);
+  Check(Flush(slots, 3) == 1 && ReadFile(slot0, fp, back) && back.marks.Has(Pack(4, 4)) &&
+            back.marks.count == 1,
+        "the card that is mounted now gets its own staging");
+  sIdentity = CardIdentity(usaDir, "GM8P01", 0);
+  Stage(0, slot, sizeof(slot), in);
+  sIdentity = usa;
+  Check(Flush(slots, 3) == 0 && ReadFile(slot0, fp, back) && back.marks.count == 1,
+        "another card's staging cannot touch this card's file");
+  Check(Flush(nullptr, 0) == 0, "and is dropped, not written later");
+  // An erase of a slot the written file still holds keeps its map data: the
+  // erase did not get through, so there is still a save to explain.
+  sIdentity = usa;
+  StageErase(0);
+  Check(Flush(slots, 3) == 0 && FileExists(slot0) && ReadFile(slot0, fp, back),
+        "erasing a slot that is still in the file keeps its file");
+  // Once the file really has no such slot, the erase removes it (and removing
+  // one that is not there is not an error).
+  StageErase(0);
+  Check(Flush(slots + 1, 2) == 1 && !FileExists(slot0), "the erase deletes the file");
+  StageErase(0);
+  Check(Flush(slots + 1, 2) == 1, "erasing a file that is not there still counts as gone");
+  // An erase staged for another card cannot delete it.
+  Stage(0, slot, sizeof(slot), in);
+  Check(Flush(slots, 3) == 1, "back for the erase test");
+  sIdentity = CardIdentity(usaDir, "GM8P01", 0);
+  StageErase(0);
+  sIdentity = usa;
+  Check(Flush(slots + 1, 2) == 0 && FileExists(slot0), "another card's erase cannot delete it");
+  Check(Flush(slots + 1, 2) == 0 && FileExists(slot0), "and is dropped, not applied later");
+
   // Loading that slot: the side file replaces the game's seen set and marks.
+  Stage(0, slot, sizeof(slot), in);
+  Check(Flush(slots, 3) == 1, "staged for the read test");
   uint32_t seen[kSeenWords] = {1, 2, 3, 4};
   PortMapMarks::List marks;
   marks.Toggle(Pack(0, 0));
   Check(Apply(0, slot, sizeof(slot), seen, marks), "apply matches");
   Check(seen[0] == in.seen[0] && seen[3] == in.seen[3] && seen[1] == in.seen[1], "seen restored");
   Check(marks.count == 64 && marks.Has(Pack(1, 1)), "marks restored");
-  // A slot the file was not written for, or one that changed since: the caller
-  // keeps what the save's own trailers gave it.
+  // A slot the file was not written for, or one that changed since, or another
+  // card: the caller keeps what the save's own trailers gave it.
   uint32_t untouched[kSeenWords] = {5, 6, 7, 8};
   PortMapMarks::List untouchedMarks;
   untouchedMarks.Toggle(Pack(4, 4));
@@ -228,24 +330,20 @@ int main() {
   Check(untouched[0] == 5 && untouchedMarks.count == 1, "a stale file changes nothing");
   Check(!Apply(1, slot, sizeof(slot), untouched, untouchedMarks), "another slot has no file");
   Check(!Apply(2, slot, sizeof(slot), untouched, untouchedMarks), "nor the third");
+  sIdentity = CardIdentity(usaDir, "GM8P01", 0);
+  Check(!Apply(0, slot, sizeof(slot), untouched, untouchedMarks),
+        "nor does another card see this file");
+  sIdentity = usa;
   // Two slots of one card keep their own files.
   Data second;
   second.seen[2] = 0x1234;
   second.marks.Toggle(Pack(3, 3));
   Stage(1, slot, sizeof(slot), second);
-  const PortMapSide::SlotBytes two[3] = {{slot, sizeof(slot)}, {slot, sizeof(slot)}, {nullptr, 0}};
+  const SlotBytes two[3] = {{slot, sizeof(slot)}, {slot, sizeof(slot)}, {nullptr, 0}};
   Check(Flush(two, 3) == 1 && CountFiles(root / "mapdata") == 2, "one file per slot");
   Check(Apply(0, slot, sizeof(slot), seen, marks) && marks.count == 64, "slot 0 unchanged");
   Check(Apply(1, slot, sizeof(slot), seen, marks) && marks.count == 1 && seen[2] == 0x1234,
         "slot 1 own data");
-
-  // Erase: the file goes with the slot.
-  StageErase(0);
-  Check(Flush(two, 3) == 1 && !FileExists(slot0) && CountFiles(root / "mapdata") == 1,
-        "erase deletes the file");
-  Check(!Apply(0, slot, sizeof(slot), seen, marks), "erased slot falls back to the save");
-  StageErase(0);
-  Check(Flush(two, 3) == 1, "erasing a missing file still counts as gone");
   // Written files whose directory cannot be made are not fatal: the save on the
   // card is what matters.
   fs::remove_all(root / "mapdata", ec);
@@ -257,6 +355,7 @@ int main() {
   Check(Flush(slots, 3) == 0, "an unwritable directory reports nothing written");
   Check(!Apply(0, slot, sizeof(slot), seen, marks), "and nothing is readable there");
   fs::remove(root / "mapdata", ec);
+  Check(Flush(nullptr, 0) == 0, "and the staging is still emptied");
   fs::remove_all(root, ec);
 
   std::puts("port_map_side_tests ok");

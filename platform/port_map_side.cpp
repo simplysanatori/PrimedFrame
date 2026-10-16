@@ -1,43 +1,69 @@
 #include "port_map_side.h"
 
 #include <cstdio>
-#include <string>
+#include <map>
 
 #include "port_log.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace PortMapSide {
 namespace {
 
 namespace fs = std::filesystem;
 
-// The port's own text is UTF-8 and std::filesystem's narrow form is not, so a
-// folder goes through the u8 form (what PortGci::PathFromString does); keeping
-// it here leaves this unit free of the gci code, and so of the card stack.
-fs::path FromUtf8(const std::string& text) {
-  return fs::path(std::u8string(text.begin(), text.end()));
+// Puts the temporary in place of the file, replacing one that is there. The C
+// rename replaces an existing destination on POSIX; on Windows it does not, and
+// removing the old file first would leave a moment with neither file (the same
+// as port_ap_protocol.cpp's writer): MoveFileExW replaces it in one step and
+// writes it through.
+bool ReplaceFile(const fs::path& temporary, const fs::path& path) {
+  if (std::rename(PathToUtf8(temporary).c_str(), PathToUtf8(path).c_str()) == 0) {
+    return true;
+  }
+#ifdef _WIN32
+  return MoveFileExW(temporary.c_str(), path.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+  return false;
+#endif
 }
 
 // What one card write should leave behind, held from the moment the slot's
-// buffer is rebuilt until the write finished.
+// buffer is rebuilt until the write finished: the card the buffer and the data
+// belong to, and the file to write for it. Both are taken at Stage, so a card
+// that changes in between cannot make this write land on another card.
 struct Staged {
   bool erase = false;
   uint64_t fingerprint = 0;
   Data data;
+  std::string identity;
+  fs::path path;
 };
 
 std::map< int, Staged > sStaged;
 
-fs::path SlotPath(int slot) {
-  std::string user;
-  std::string card;
-  Location(user, card);
-  if (user.empty()) {
+fs::path SlotPath(const std::string& userFolder, const std::string& identity, int slot) {
+  if (userFolder.empty() || identity.empty()) {
     return {};
   }
   char name[48];
   std::snprintf(name, sizeof(name), "%016llx-%d.bin",
-                static_cast< unsigned long long >(CardKey(card.c_str())), slot);
-  return FromUtf8(user + "mapdata") / name;
+                static_cast< unsigned long long >(CardKey(identity)), slot);
+  return PathFromUtf8(userFolder + "mapdata") / name;
+}
+
+// The staged record of a slot of the card in use now, or a path-less one when
+// there is no such card.
+Staged StagedFor(int slot, bool erase) {
+  Staged staged;
+  staged.erase = erase;
+  std::string userFolder;
+  Location(userFolder, staged.identity);
+  staged.path = SlotPath(userFolder, staged.identity, slot);
+  return staged;
 }
 
 } // namespace
@@ -81,7 +107,9 @@ bool WriteFile(const fs::path& path, uint64_t fingerprint, const Data& data) {
     std::ofstream out(temp, std::ios::binary | std::ios::trunc);
     out.write(reinterpret_cast< const char* >(bytes.data()),
               static_cast< std::streamsize >(bytes.size()));
-    // A full disk shows up here or at the close, so flush before checking.
+    // A full disk shows up at the flush or at the close, where the flush's last
+    // buffer goes, and the rename only follows a close that worked: a half
+    // written temporary must never take the previous file's place.
     out.flush();
     if (!out) {
       PortLog::Write("map data: couldn't write %s\n", temp.string().c_str());
@@ -89,11 +117,15 @@ bool WriteFile(const fs::path& path, uint64_t fingerprint, const Data& data) {
       fs::remove(temp, ec);
       return false;
     }
+    out.close();
+    if (!out) {
+      PortLog::Write("map data: couldn't finish %s\n", temp.string().c_str());
+      fs::remove(temp, ec);
+      return false;
+    }
   }
-  fs::rename(temp, path, ec);
-  if (ec) {
-    PortLog::Write("map data: couldn't rename %s: %s\n", temp.string().c_str(),
-                   ec.message().c_str());
+  if (!ReplaceFile(temp, path)) {
+    PortLog::Write("map data: couldn't replace %s\n", path.string().c_str());
     fs::remove(temp, ec);
     return false;
   }
@@ -113,47 +145,51 @@ bool RemoveFile(const fs::path& path) {
 
 #ifdef TARGET_PC
 void Stage(int slot, const uint8_t* slotBytes, size_t size, const Data& data) {
-  Staged staged;
+  Staged staged = StagedFor(slot, false);
   staged.fingerprint = Fingerprint(slotBytes, size);
   staged.data = data;
   sStaged[slot] = staged;
 }
 
-void StageErase(int slot) {
-  Staged staged;
-  staged.erase = true;
-  sStaged[slot] = staged;
-}
+void StageErase(int slot) { sStaged[slot] = StagedFor(slot, true); }
 
 int Flush(const SlotBytes* slots, int slotCount) {
+  std::string userFolder;
+  std::string identity;
+  Location(userFolder, identity);
   int written = 0;
   for (const auto& entry : sStaged) {
     const int slot = entry.first;
-    const fs::path path = SlotPath(slot);
-    if (path.empty()) {
+    if (entry.second.path.empty()) {
       continue;
     }
+    if (entry.second.identity != identity) {
+      // Staged for another card (a switch while a save was in flight): its
+      // files are not ours to write or delete now.
+      PortLog::Write("map data: slot %d was staged for another card; leaving it\n", slot);
+      continue;
+    }
+    const bool inFile = slot < slotCount && slots[slot].bytes != nullptr;
     if (entry.second.erase) {
-      written += RemoveFile(path) ? 1 : 0;
-      continue;
-    }
-    const SlotBytes* inFile = nullptr;
-    for (int i = 0; i < slotCount; ++i) {
-      if (i == slot && slots[i].bytes != nullptr) {
-        inFile = &slots[i];
-        break;
+      // Only once the file that was just written really has no such slot: an
+      // erase that failed or was cancelled leaves the slot, and its map data,
+      // in place.
+      if (inFile) {
+        continue;
       }
-    }
-    if (inFile == nullptr) {
-      // The file written has no such slot (a save that was built and then
-      // abandoned, or an erase), so the card does not hold these bytes.
+      written += RemoveFile(entry.second.path) ? 1 : 0;
       continue;
     }
-    if (Fingerprint(inFile->bytes, inFile->size) != entry.second.fingerprint) {
+    if (!inFile) {
+      // The file written has no such slot (a save that was built and then
+      // abandoned), so the card does not hold these bytes.
+      continue;
+    }
+    if (Fingerprint(slots[slot].bytes, slots[slot].size) != entry.second.fingerprint) {
       PortLog::Write("map data: slot %d was not the save that was staged; leaving it\n", slot);
       continue;
     }
-    written += WriteFile(path, entry.second.fingerprint, entry.second.data) ? 1 : 0;
+    written += WriteFile(entry.second.path, entry.second.fingerprint, entry.second.data) ? 1 : 0;
   }
   sStaged.clear();
   return written;
@@ -161,7 +197,10 @@ int Flush(const SlotBytes* slots, int slotCount) {
 
 bool Apply(int slot, const uint8_t* slotBytes, size_t size, uint32_t* seen,
            PortMapMarks::List& marks) {
-  const fs::path path = SlotPath(slot);
+  std::string userFolder;
+  std::string identity;
+  Location(userFolder, identity);
+  const fs::path path = SlotPath(userFolder, identity, slot);
   if (path.empty()) {
     return false;
   }
