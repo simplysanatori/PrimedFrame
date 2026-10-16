@@ -298,6 +298,7 @@ endif()
 # disc.cpp and port_pal_languages.cpp inflate compressed images and fonts. Aurora
 # provides ZLIB::ZLIB everywhere (its zlib-ng on Windows).
 target_link_libraries(metroid_prime_port PRIVATE ZLIB::ZLIB)
+target_link_libraries(metroid_prime_port PRIVATE port_remastered_ground_contacts)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID)
     # port_crash.cpp logs each C++ throw's type and stack.
     target_link_options(metroid_prime_port PRIVATE "-Wl,--wrap=__cxa_throw")
@@ -510,6 +511,20 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/io.github.odrannnn.metroidpr
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
               ${CMAKE_CURRENT_SOURCE_DIR}/NOTICE
     DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/metroid-prime-port)
+
+# Source-derived Remastered box/triangle contact geometry (0xc0a180) and its
+# adapter. Linked into the game by the Remastered mover; the tests use it
+# standalone. The exact IEEE semantics (-ffp-contract=off) are part of the contract.
+add_library(port_remastered_ground_contacts STATIC
+    platform/port_remastered_ground_contacts.cpp
+    platform/port_remastered_ground_world.cpp)
+target_include_directories(port_remastered_ground_contacts PUBLIC platform/include)
+set_target_properties(port_remastered_ground_contacts PROPERTIES CXX_STANDARD 17)
+if(MSVC)
+    target_compile_options(port_remastered_ground_contacts PRIVATE /fp:strict)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(port_remastered_ground_contacts PRIVATE -fno-fast-math -ffp-contract=off)
+endif()
 
 if(MP_BUILD_TESTS)
     enable_testing()

@@ -29,6 +29,7 @@
 
 #ifdef TARGET_PC
 #include "port_debug.h"
+#include "port_remastered_ground_world.h"
 #endif
 
 static int gDebugPrintCount;
@@ -967,6 +968,71 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     }
   };
 
+  // Remastered's static terrain contacts for the box placed `delta` from the actor,
+  // as the shipped mover sees them: NCollidableBoxTree::build_collision_info
+  // (0xc0a180) run over the same triangles the port's static half walks, through the
+  // source-exact producer (platform/port_remastered_ground_world.cpp). One contact per
+  // triangle, reduced to the non-self side (0xf928c0:66-70, 0xf93c9c:311-315,
+  // 0xf934ec:546-549), because that is the side whose normal, material and optional
+  // secondary normal every shipped consumer reads.
+  struct TerrainContacts {
+    static bool Build(CStateManager& mgr, CAreaCollisionCache& cache, CPhysicsActor& actor,
+                      const CMaterialFilter& filter, const CVector3f& delta,
+                      std::vector< PortRemasteredGroundWorld::Contact >& out) {
+      out.clear();
+      actor.MoveCollisionPrimitive(delta);
+      const CAABox box =
+          actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform());
+      actor.MoveCollisionPrimitive(CVector3f::Zero());
+      rstl::vector< CMetroidAreaCollider::CTerrainTriangle > src;
+      if (cache.HasCacheOverflowed()) {
+        const CWorld* world = mgr.GetWorld();
+        for (CGameArea::CConstChainIterator it = world->GetChainHead(CWorld::kC_Alive);
+             it != CWorld::skGlobalEnd; ++it) {
+          CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles((*it).GetOctTree(), box,
+                                                                     filter, src);
+        }
+      } else {
+        for (int i = 0; i < int(cache.GetNumCaches()); ++i) {
+          CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles(
+              cache.GetOctreeLeafCache(i), box, filter, src);
+        }
+      }
+      if (src.size() == 0) {
+        return false;
+      }
+      std::vector< PortRemasteredGroundWorld::Triangle > tris;
+      tris.reserve(size_t(src.size()));
+      for (int i = 0; i < int(src.size()); ++i) {
+        const CMetroidAreaCollider::CTerrainTriangle& t = src[i];
+        PortRemasteredGroundWorld::Triangle tri;
+        tri.verts[0] = {t.x0_a.GetX(), t.x0_a.GetY(), t.x0_a.GetZ()};
+        tri.verts[1] = {t.xc_b.GetX(), t.xc_b.GetY(), t.xc_b.GetZ()};
+        tri.verts[2] = {t.x18_c.GetX(), t.x18_c.GetY(), t.x18_c.GetZ()};
+        const CUnitVector3f n =
+            CCollisionSurface(t.x0_a, t.xc_b, t.x18_c, t.x24_flags).GetNormal();
+        tri.normal = {n.GetX(), n.GetY(), n.GetZ()};
+        tri.materialBits = t.x24_flags;
+        tris.push_back(tri);
+      }
+      PortRemasteredGroundWorld::Query query;
+      query.box.min = {box.GetMinPoint().GetX(), box.GetMinPoint().GetY(),
+                       box.GetMinPoint().GetZ()};
+      query.box.max = {box.GetMaxPoint().GetX(), box.GetMaxPoint().GetY(),
+                       box.GetMaxPoint().GetZ()};
+      query.actorMaterialBits = actor.GetMaterialList().GetValue();
+      const PortRemasteredGroundWorld::Result res =
+          PortRemasteredGroundWorld::BuildContacts(query, tris.data(), tris.size());
+      std::vector< const PortRemasteredGroundWorld::Contact* > consumer;
+      PortRemasteredGroundWorld::ConsumerContacts(res, consumer);
+      out.reserve(consumer.size());
+      for (const PortRemasteredGroundWorld::Contact* c : consumer) {
+        out.push_back(*c);
+      }
+      return !out.empty();
+    }
+  };
+
   // 0xf948d4 DoMovementStep: returns the time consumed.
   // One movement step (0xf948d4). `consumedOut` is the time the step reports.
   struct Stepper {
@@ -1026,13 +1092,32 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         reported = t;
       }
 
-      // Contacts are gathered at the colliding state (hi).
+      // Contacts are gathered at the colliding state (hi). The static half is taken on
+      // its own so the source-exact terrain contacts below line up with it one to one:
+      // the port adds one entry per terrain triangle, the producer returns one contact
+      // per triangle, both in the octree's own order.
       CCollisionInfoList list;
       TUniqueId id = kInvalidUniqueId;
-      actor.MoveCollisionPrimitive(actor.PredictMotion_Internal(hiT).GetTranslation());
-      DetectCollision_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
-                             actor.GetPrimitiveTransform(), filter, nearList, id, list);
+      const CVector3f hiDelta = actor.PredictMotion_Internal(hiT).GetTranslation();
+      actor.MoveCollisionPrimitive(hiDelta);
+      if (!filter.GetExcludeList().HasMaterial(kMT_NoStaticCollision)) {
+        DetectStaticCollision_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
+                                     actor.GetPrimitiveTransform(), filter, list);
+      }
+      const int staticCount = list.GetCount();
+      TUniqueId dynamicId = kInvalidUniqueId;
+      DetectDynamicCollision(*actor.GetCollisionPrimitive(), actor.GetPrimitiveTransform(),
+                             nearList, dynamicId, list, mgr);
+      if (dynamicId != kInvalidUniqueId) {
+        id = dynamicId;
+      }
       actor.MoveCollisionPrimitive(CVector3f::Zero());
+      // The terrain contacts with their optional secondary normal (0xc0a180 through the
+      // verified producer). A native CCollisionInfo cannot carry that field, so the
+      // per-contact response below reads it from here.
+      std::vector< PortRemasteredGroundWorld::Contact > terrainContacts;
+      const bool terrainOk =
+          TerrainContacts::Build(mgr, cache, actor, filter, hiDelta, terrainContacts);
 
       if (list.GetCount() == 0) {
         // No contact list: the state becomes hi (no response).
@@ -1085,14 +1170,38 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         if (fabsf(n.GetX()) < 2.38e-7f) n.SetX(0.f);
         if (fabsf(n.GetY()) < 2.38e-7f) n.SetY(0.f);
         if (fabsf(n.GetZ()) < 2.38e-7f) n.SetZ(0.f);
-        // Remastered reports a corner touch as one contact with a secondary
-        // normal (+0x44/+0x38; 0xc6d460 picks the working normal when either
-        // normal is a ceiling, is_ceiling_normal = up < -0.70710677). The port
-        // lists the two faces as separate contacts at one point; the ceiling
-        // face of such a pair is dropped so only the wall normal acts (a
-        // jump along a ledge corner keeps its rise). Which normal Remastered
-        // keeps is inferred from the ledge-jump measurement.
-        if (n.GetZ() < -0.70710677f) {
+        // 0xc6d460's working normal (+0x38/+0x44, LAB_00c6d624): a contact carrying a
+        // secondary normal is responded to along the *secondary* unless both relevant
+        // ups are <= 0.866025 and neither normal is a ceiling (is_ceiling_normal,
+        // up < -0.70710677) - and then bVar1 is false, which suppresses the
+        // kMS_ApplyJump push below. Otherwise the primary acts.
+        CVector3f nw = n;
+        bool primaryActs = true;
+        const bool haveSecondary =
+            i < staticCount && int(terrainContacts.size()) > i && terrainContacts[i].hasSecondary;
+        if (haveSecondary) {
+          CVector3f sec(terrainContacts[i].secondaryX, terrainContacts[i].secondaryY,
+                        terrainContacts[i].secondaryZ);
+          if (fabsf(sec.GetX()) < 2.38e-7f) sec.SetX(0.f);
+          if (fabsf(sec.GetY()) < 2.38e-7f) sec.SetY(0.f);
+          if (fabsf(sec.GetZ()) < 2.38e-7f) sec.SetZ(0.f);
+          const bool keepPrimary = n.GetZ() <= 0.866025f && sec.GetZ() <= 0.866025f &&
+                                   !(n.GetZ() < -0.70710677f) && !(sec.GetZ() < -0.70710677f);
+          if (!keepPrimary) {
+            nw = sec;
+            primaryActs = false;
+          }
+        }
+        // The port's paired-ceiling drop was the stand-in for that secondary: a ceiling
+        // face was dropped when another contact shared its point, so only the wall normal
+        // acted (the old comment here admitted the kept normal was inferred from a
+        // ledge-jump measurement). A shipped contact that carries a secondary is
+        // *responded to*, not dropped - 0xc6d460 reaches LAB_00c6d908 either way - so this
+        // now runs only where the producer reports no secondary: dynamic contacts and
+        // bare ceilings. The producer's output for the reporter's stall geometry
+        // (build/s-issue117-20261015/airfix/REPORT.md section 3) is the evidence: all four
+        // terrain contacts there carry a secondary.
+        if (!haveSecondary && n.GetZ() < -0.70710677f) {
           bool pairedWithOther = false;
           for (int j = 0; j < list.GetCount(); ++j) {
             const CCollisionInfo& o = list[j];
@@ -1131,19 +1240,21 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         }
         if (!isFloor) {
           // Push scale 0.0025 / world step dt * mass.
-          mi += n * (0.0025f / worldDt) * mass;
+          mi += nw * (0.0025f / worldDt) * mass;
         }
-        const float miDot = CVector3f::Dot(n, mi);
+        const float miDot = CVector3f::Dot(nw, mi);
         if (miDot < 0.f) {
-          mi -= n * miDot; // 0xc186a0
+          mi -= nw * miDot; // 0xc186a0
         }
-        const float velDot = CVector3f::Dot(n, vel);
+        const float velDot = CVector3f::Dot(nw, vel);
         if (velDot <= 1.19e-7f) {
-          vel -= n * velDot; // 0xc18700, e = mu = 0
+          vel -= nw * velDot; // 0xc18700, e = mu = 0
         }
-        if (player.GetPlayerMovementState() == NPlayer::kMS_ApplyJump) {
+        // 0xc6d460: the kMS_ApplyJump block runs only while the primary is the working
+        // normal (bVar1); the halving and the push use that working normal.
+        if (primaryActs && player.GetPlayerMovementState() == NPlayer::kMS_ApplyJump) {
           const bool isWall = Classify::IsWall(info.GetMaterialLeft(), n);
-          if (isWall && n.GetZ() < -0.1f && vel.GetZ() > 0.f) {
+          if (isWall && nw.GetZ() < -0.1f && vel.GetZ() > 0.f) {
             vel.SetZ(vel.GetZ() * 0.5f);
           }
           float t1 = 0.25f;
@@ -1159,7 +1270,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
             mult = 35.f;
             floorMag = 5.f;
           }
-          const float az = fabsf(n.GetZ());
+          const float az = fabsf(nw.GetZ());
           if (az > t1 && (az > t2 || vel.GetZ() < 0.f)) {
             const float mag = rstl::max_val(mult * az, floorMag);
             actor.SetForceWR(CVector3f(0.f, 0.f, 1.f) * (mag + 1.f) * mass * player.GetGravity());
