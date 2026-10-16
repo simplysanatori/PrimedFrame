@@ -48,7 +48,14 @@ read-only and changes no behaviour, and it reports what the state holds, not wha
 a mover decides: nothing in it says which mover (retail or Remastered) the next
 tick selects.
 
-- `tick`: `CStateManager::GetUpdateFrameIndex()`, the ticks already completed.
+- `tick`: the simulation tick this command is dispatching in —
+  `CActor::PortTickGeneration()`, bumped exactly once per dispatched tick in
+  `CGameArchitectureSupport::UpdateTicks` before that tick's messages and object
+  update. It is not a count of completed world ticks: `status` runs early in the
+  tick, so most fields below are still the previous tick's result, and the
+  counter also advances on dispatched ticks that update no physics — the game
+  paused, or the debug free camera frozen (`CStateManager::Update` returns after
+  the console tick). It is a `uint32` that skips 0 on wrap.
 - `pos`, `vel`: the player's translation and world velocity, per component as
   `%.9g`, so a float round-trips through the JSON (the top-level `pos` stays
   `%.3f`). A whole number prints bare, as `0`, and a non-finite component (a
@@ -76,6 +83,6 @@ tick selects.
 Phase: `status` is a tick command, run by `PortConsoleTick` early in
 `CStateManager::Update`, before that tick updates the objects and the player
 (`x8d8_updateFrameIdx` is bumped near the end of the update). The values are
-therefore what the previous tick left, and `tick` counts the ticks already done. A
-`press`, `stick` or other tick command sent in the same `cmd` client call takes
-effect in a later tick.
+therefore mostly what the previous tick left, while `tick` is the generation of
+the tick that is dispatching now. A `press`, `stick` or other tick command sent
+in the same `cmd` client call takes effect in a later tick.

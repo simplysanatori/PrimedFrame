@@ -672,11 +672,13 @@ const char* ProbeModeName() {
   return mode >= 0 && mode < 4 ? names[mode] : "unset";
 }
 
-// The `physics` object of `status --json`: what the last completed tick left behind, reported
-// for the movement-parity work (issue #117). These are observations, not assertions about what
-// the mover will do next: `ground_collider` is the kMT_GroundCollider material flag on the
-// player (Remastered drops it in the air), which is NOT the same as being grounded, and the
-// fields say nothing about which mover (retail or Remastered) a later tick will select.
+// The `physics` object of `status --json`: state sampled inside the current simulation tick,
+// reported for the movement-parity work (issue #117). These are observations, not assertions
+// about what the mover will do next: `ground_collider` is the kMT_GroundCollider material flag
+// on the player (Remastered drops it in the air), which is NOT the same as being grounded, and
+// the fields say nothing about which mover (retail or Remastered) a later tick will select.
+// `tick` is the tick generation this command is running in (CActor::PortTickGeneration), and
+// `status` runs early in the tick, so most fields are the previous tick's result.
 // Returns the object's members without its braces, for the one-line JSON. Built as a
 // std::string (port_console_physics.h): nothing here can be cut off at a fixed size.
 std::string PhysicsJson(CStateManager& mgr, const CPlayer& player, const CVector3f& pos) {
@@ -694,7 +696,7 @@ std::string PhysicsJson(CStateManager& mgr, const CPlayer& player, const CVector
   char editor[16];
   std::snprintf(editor, sizeof(editor), "%08X", editorId); // 8 hex digits and a terminator
   const auto flag = [](bool value) { return value ? "true" : "false"; };
-  std::string out = "\"tick\":" + std::to_string(mgr.GetUpdateFrameIndex());
+  std::string out = "\"tick\":" + std::to_string(CActor::PortTickGeneration());
   out += ",\"pos\":";
   out += PortConsolePhysics::JsonVector(pos.GetX(), pos.GetY(), pos.GetZ());
   out += ",\"vel\":";
