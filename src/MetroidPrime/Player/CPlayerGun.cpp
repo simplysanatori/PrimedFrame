@@ -1,6 +1,7 @@
 #include "MetroidPrime/Player/CPlayerGun.hpp"
 #include "port_debug.h"
 #include "port_room_env.h"
+#include "port_shot_aim.h"
 #include "port_synthetic_effect.h"
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
@@ -647,12 +648,28 @@ CVector3f CPlayerGun::PortShotAimPoint(const CStateManager& mgr, const CVector3f
     return from;
   }
   const CVector3f forward = dir.AsNormalized();
-  // Locked on (or assist-aimed): retail's shot heads for the target's aim position, so meet
-  // the line there, at the target's depth along it, whether or not it touches its collision.
-  if (const CActor* target = TCastToConstPtr< CActor >(mgr.GetObjectById(mgr.GetPlayer()->GetAimTargetId()))) {
-    const float depth = CVector3f::Dot(target->GetAimPosition(mgr, 0.f) - from, forward);
-    if (depth >= kMinDepth) {
-      return from + forward * depth;
+  // Assist-aimed at a target: retail's shot heads for the assisted aim point (the target with
+  // its lead), so meet the line at its depth, whether or not the shot touches the target. Only
+  // when this shot was aimed at it (port_shot_aim.h): it took the assist direction, and that
+  // direction, from the gun, points at the aim point. An aim target kept after it left the box
+  // or the line of sight, or one assist was clamped or off for, is not where the shot goes.
+  const CPlayer& player = *mgr.GetPlayer();
+  if (TCastToConstPtr< CActor >(mgr.GetObjectById(player.GetAimTargetId())) != nullptr &&
+      x478_assistAimXf.GetForward().CanBeNormalized()) {
+    const CVector3f assistDir = x478_assistAimXf.GetForward().AsNormalized();
+    const CVector3f gun = GetTransform().GetTranslation();
+    const CVector3f& aim = player.GetAssistedTargetAim();
+    const float dirXyz[3] = {forward.GetX(), forward.GetY(), forward.GetZ()};
+    const float assistXyz[3] = {assistDir.GetX(), assistDir.GetY(), assistDir.GetZ()};
+    const float gunXyz[3] = {gun.GetX(), gun.GetY(), gun.GetZ()};
+    const float aimXyz[3] = {aim.GetX(), aim.GetY(), aim.GetZ()};
+    const float fromXyz[3] = {from.GetX(), from.GetY(), from.GetZ()};
+    if (PortShotAim::SameDirection(dirXyz, assistXyz) &&
+        PortShotAim::PointsAt(gunXyz, assistXyz, aimXyz, kMinDepth)) {
+      const float depth = PortShotAim::DepthAlong(fromXyz, dirXyz, aimXyz);
+      if (depth >= kMinDepth) {
+        return from + forward * depth;
+      }
     }
   }
   // Else what retail's shot would meet first: the world, or an actor.
