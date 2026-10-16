@@ -116,4 +116,15 @@ bool BoxSphereImpacts(const Box& self, const Vec3& center, float radius,
 // 0xbf7e50.
 RayHit RayAABox(const Box& box, const Vec3& start, const Vec3& dir, float length);
 
+// NCollisionRayCast::Sphere 0xbf6ac0 through the CCollidableSphere::RayCast wrapper
+// 0xc0289c: `center` and `radius` are the sphere after the wrapper's transform (the
+// radius is passed through untouched) and `dir` is the ray's unit direction, as the
+// source's CUnitVector3f. A ray starting STRICTLY inside the sphere
+// returns code 1 with t = 0 and the wrapper's untouched skUpVector normal; the boundary
+// is not inside. Otherwise the entry point (t = B - sqrt, `t < length`, an endpoint
+// exactly at `length` is a miss) is code 2 with the normal normalized from the hit
+// point, and a backward ray or exact tangency (disc <= 0) misses.
+RayHit RaySphere(const Vec3& center, float radius, const Vec3& start, const Vec3& dir,
+                 float length);
+
 } // namespace PortCollisionFailsafe

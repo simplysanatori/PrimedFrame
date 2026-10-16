@@ -1,6 +1,7 @@
 // Remastered collision failsafe decisions (platform/port_collision_failsafe.cpp) on
 // hand-built contacts: core push selection 0xc1fc54, wrapper 0xc1fa68, tunneling
-// 0xc20214, safe offset 0xc217a0, box-box impacts 0xbf61b4 and the AABox ray 0xbf7e50.
+// 0xc20214, safe offset 0xc217a0, box-box impacts 0xbf61b4, the AABox ray 0xbf7e50 and
+// the sphere ray NCollisionRayCast::Sphere 0xbf6ac0 (wrapper 0xc0289c).
 #include "port_collision_failsafe.h"
 
 #include <cfloat>
@@ -540,6 +541,80 @@ static void BoxSpherePush() {
         "bs-push: fallback-safe contact uses the failsafe-filter result");
 }
 
+static void SphereRay() {
+  // Strictly inside: code 1, t = 0 and the wrapper's untouched skUpVector normal,
+  // which is port +Z (Remastered's (0,1,0) under ToRem/FromRem).
+  RayHit r = RaySphere({0, 0, 0}, 1.f, {0, 0, 0}, {1, 0, 0}, 5.f);
+  Check(r.code == kRay_Inside && r.t == 0.f && Near(r.normal, {0, 0, 1}),
+        "sphereray: from the centre");
+  r = RaySphere({0, 0, 0}, 1.f, {.25f, 0, .25f}, {0, 1, 0}, 5.f);
+  Check(r.code == kRay_Inside && r.t == 0.f && Near(r.normal, {0, 0, 1}),
+        "sphereray: inside, off centre");
+  // A translated centre is measured from the ray start, and the inside arm never
+  // reads `length`.
+  r = RaySphere({0, 0, 10}, 2.f, {0, 0, 9}, {0, 0, 1}, 5.f);
+  Check(r.code == kRay_Inside && r.t == 0.f, "sphereray: inside a translated sphere");
+  r = RaySphere({0, 0, 0}, 1.f, {.5f, 0, 0}, {1, 0, 0}, 0.f);
+  Check(r.code == kRay_Inside && r.t == 0.f, "sphereray: inside with zero length");
+
+  // The boundary is NOT inside (r2 <= d2): heading in reports the entry at t = 0,
+  // heading out misses (B < 0).
+  r = RaySphere({0, 0, 0}, 1.f, {1, 0, 0}, {-1, 0, 0}, 5.f);
+  Check(r.code == kRay_Hit && Near(r.t, 0.f, 1e-6f) && Near(r.normal, {1, 0, 0}),
+        "sphereray: on the boundary heading in");
+  r = RaySphere({0, 0, 0}, 1.f, {1, 0, 0}, {1, 0, 0}, 5.f);
+  Check(r.code == kRay_Miss, "sphereray: on the boundary heading out");
+
+  // A straight entry along port +X: the entry point is the near side (port x = -1)
+  // and the normal is radial, point - centre.
+  r = RaySphere({0, 0, 0}, 1.f, {-2, 0, 0}, {1, 0, 0}, 5.f);
+  Check(r.code == kRay_Hit && Near(r.t, 1.f, 1e-5f) && Near(r.normal, {-1, 0, 0}, 1e-5f),
+        "sphereray: entry along an axis");
+  // Translated centre, down port +Z: t = 10 - 2 at (0,0,8), normal -Z.
+  r = RaySphere({0, 0, 10}, 2.f, {0, 0, 0}, {0, 0, 1}, 20.f);
+  Check(r.code == kRay_Hit && Near(r.t, 8.f, 1e-5f) && Near(r.normal, {0, 0, -1}, 1e-5f),
+        "sphereray: entry into a translated sphere");
+  // Off centre: the chord sits at |y| = 0.5, so t = 2 - sqrt(0.75) and the normal is
+  // the radial (sqrt(0.75), 0.5, 0) in Remastered, i.e. (-0.8660254, 0.5, 0) in port.
+  r = RaySphere({0, 0, 0}, 1.f, {-2, .5f, 0}, {1, 0, 0}, 5.f);
+  Check(r.code == kRay_Hit && Near(r.t, 1.1339746f, 1e-5f), "sphereray: off-centre entry t");
+  Check(Near(r.normal, {-0.8660254f, .5f, 0.f}, 1e-5f), "sphereray: off-centre radial normal");
+  Check(Near(r.normal.x * r.normal.x + r.normal.y * r.normal.y + r.normal.z * r.normal.z, 1.f,
+             1e-5f),
+        "sphereray: unit normal");
+
+  // The entry distance uses the source's root (CMath::SqrtF 0x65f70: the ARM
+  // reciprocal-sqrt estimate refined TWICE, times the value), not a correctly rounded
+  // sqrt. r = 1.0150001 (0x3f81eb86) is a witness: its entry t reads 0.984999776
+  // (0x3f7c28f2) where a host root of the same discriminant gives 0.984999895
+  // (0x3f7c28f4), so this pins the emulation rather than a plain sqrt.
+  const float witnessR = 1.0150001f;
+  r = RaySphere({0, 0, 0}, witnessR, {-2, 0, 0}, {1, 0, 0}, 10.f);
+  const float hostRoot = 2.f - std::sqrt(witnessR * witnessR);
+  Check(r.code == kRay_Hit && r.t == 0.984999776f, "sphereray: source sqrt of the discriminant");
+  Check(r.t != hostRoot, "sphereray: not a correctly rounded host sqrt");
+
+  // Misses. `t < length` is strict, so the endpoint itself misses.
+  r = RaySphere({0, 0, 0}, 1.f, {-2, 0, 0}, {1, 0, 0}, 1.f);
+  Check(r.code == kRay_Miss, "sphereray: endpoint is a miss");
+  r = RaySphere({0, 0, 0}, 1.f, {-2, 0, 0}, {1, 0, 0}, 1.0001f);
+  Check(r.code == kRay_Hit && Near(r.t, 1.f, 1e-5f), "sphereray: just past the endpoint");
+  r = RaySphere({0, 0, 0}, 1.f, {-2, 0, 0}, {1, 0, 0}, .5f);
+  Check(r.code == kRay_Miss, "sphereray: too short");
+  r = RaySphere({0, 0, 0}, 1.f, {-2, 0, 0}, {1, 0, 0}, 0.f);
+  Check(r.code == kRay_Miss, "sphereray: zero length");
+  r = RaySphere({0, 0, 0}, 1.f, {-2, 0, 0}, {-1, 0, 0}, 5.f);
+  Check(r.code == kRay_Miss, "sphereray: pointing away");
+  r = RaySphere({0, 0, 0}, 1.f, {-2, 1.5f, 0}, {1, 0, 0}, 5.f);
+  Check(r.code == kRay_Miss, "sphereray: past the side");
+  // Exact tangency: disc == 0 is excluded (0.0 < disc is strict).
+  r = RaySphere({0, 0, 0}, 1.f, {-2, 1.f, 0}, {1, 0, 0}, 5.f);
+  Check(r.code == kRay_Miss, "sphereray: tangent");
+  // A degenerate zero radius is never strictly inside and never tangent-positive.
+  r = RaySphere({0, 0, 0}, 0.f, {0, 0, 0}, {1, 0, 0}, 5.f);
+  Check(r.code == kRay_Miss, "sphereray: zero radius at the centre");
+}
+
 int main() {
   PushSelection();
   CoreLoop();
@@ -549,6 +624,7 @@ int main() {
   SafeOffset();
   BoxBox();
   Ray();
+  SphereRay();
   BoxSphereFaces();
   BoxSphereEdgeCorner();
   BoxSphereInterior();
