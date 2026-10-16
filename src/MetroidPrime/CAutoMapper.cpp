@@ -667,8 +667,8 @@ void CAutoMapper::ProcessControllerInput(const CFinalInput& frameInput,
         rstl::wstring mark;
         mark.append(L"&image=", -1);
         mark.append(CStringExtras::ConvertToUNICODE(rstl::string(CBasics::Stringize(
-                        "%8.8X", gpTweakPlayerRes->xac_xButton[0]))));
-        mark.append(L";", -1);
+                        "SI,0.6,1.0,%8.8X", gpTweakPlayerRes->xac_xButton[0]))));
+        mark.append(L"; ", -1);
         mark.append(PortMapMarks::IsMarked(x24_world->IGetWorldAssetId(), xa0_curAreaId.value)
                         ? L"Unmark room"
                         : L"Mark room",
@@ -999,8 +999,8 @@ static rstl::wstring PortLegendText() {
     ++entries;
     text.append(L"&image=", -1);
     text.append(CStringExtras::ConvertToUNICODE(
-        rstl::string(CBasics::Stringize("SI,1.0,1.0,%8.8X", id))));
-    text.append(L";", -1);
+        rstl::string(CBasics::Stringize("SI, 0.6875,0.6875,%8.8X", id))));
+    text.append(L"; - ", -1);
     text.append(label, -1);
   };
   if (mode == PortDebug::kMapPickups_Seen || mode == PortDebug::kMapPickups_All) {
@@ -1012,7 +1012,7 @@ static rstl::wstring PortLegendText() {
       entry(PortCustomRes::kLegendDotTxtr, L"Pickup");
     }
   }
-  entry(PortCustomRes::kLegendMarkTxtr, L"Marked");
+  entry(PortCustomRes::kLegendMarkTxtr, L"Marked room");
   return text;
 }
 #endif
