@@ -910,66 +910,6 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   CCollisionInfoList groundList;
   TUniqueId riderId = kInvalidUniqueId; // object +0x1210
 
-  // Collision test with the primitive shifted by `offset` from the actor.
-  struct Test {
-    CStateManager& mgr;
-    CAreaCollisionCache& cache;
-    CPhysicsActor& actor;
-    const CMaterialFilter& filter;
-    const TEntityList& list;
-    bool Blocked(const CVector3f& offset) const {
-      actor.MoveCollisionPrimitive(offset);
-      const bool b = DetectCollisionBoolean_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
-                                                   actor.GetPrimitiveTransform(), filter, list);
-      actor.MoveCollisionPrimitive(CVector3f::Zero());
-      return b;
-    }
-  };
-  const Test test = {mgr, cache, actor, materialFilter, nearList};
-
-  // 0xc6d110 GroundCheckForOffGroundMoverCollider(from, target): the actor sits
-  // at `target` except for its height.
-  struct Ground {
-    static bool Check(CStateManager& mgr, CAreaCollisionCache& cache, CPlayer& player,
-                      const CMaterialFilter& filter, const TEntityList& list,
-                      const CVector3f& from, float targetZ) {
-      CPhysicsActor& actor = player;
-      if (player.GetPlayerMovementState() == NPlayer::kMS_OnGround) {
-        return true;
-      }
-      if (player.GetFallingTime() <= 0.4f) {
-        return false;
-      }
-      const float dz = targetZ - actor.GetTranslation().GetZ();
-      const float aabbMin =
-          actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform())
-              .GetMinPoint()
-              .GetZ() +
-          dz;
-      const float feet = aabbMin; // target.up - height (vtable 0x198)
-      float probeZ = rstl::max_val(feet, from.GetZ());
-      probeZ = rstl::min_val(probeZ, targetZ - 0.002f);
-      actor.MoveCollisionPrimitive(CVector3f(0.f, 0.f, probeZ - actor.GetTranslation().GetZ()));
-      CCollisionInfoList list2;
-      TUniqueId id2 = kInvalidUniqueId;
-      DetectCollision_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
-                             actor.GetPrimitiveTransform(), filter, list, id2, list2);
-      actor.MoveCollisionPrimitive(CVector3f::Zero());
-      bool result = false;
-      float low = feet - 0.002f;
-      for (int i = 0; i < list2.GetCount(); ++i) {
-        const CCollisionInfo& info = list2[i];
-        const float pz = info.GetPoint().GetZ();
-        if (pz > aabbMin || pz <= low) {
-          continue;
-        }
-        result = Classify::IsFloor(info.GetMaterialLeft(), info.GetNormalLeft());
-        low = pz;
-      }
-      return result;
-    }
-  };
-
   // The static half of a collision query runs only when the material filter does not exclude
   // static collision - the guard CGameCollision::DetectCollision and
   // DetectCollisionBoolean put in front of their static half, and the one the native half of
@@ -990,24 +930,34 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   struct TerrainContacts {
     static bool Build(CStateManager& mgr, CAreaCollisionCache& cache, CPhysicsActor& actor,
                       const CMaterialFilter& filter, const CVector3f& delta,
-                      std::vector< PortRemasteredGroundWorld::Contact >& out) {
+                       std::vector< PortRemasteredGroundWorld::Contact >& out,
+                       bool produceImpacts = true) {
       out.clear();
+      if (!StaticQuery::Allowed(filter)) return false;
       actor.MoveCollisionPrimitive(delta);
       const CAABox box =
           actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform());
       actor.MoveCollisionPrimitive(CVector3f::Zero());
+      if (!box.Inside(cache.GetCacheBounds())) {
+        CAABox bounds(box.GetMinPoint() - CVector3f(.2f, .2f, .2f),
+                     box.GetMaxPoint() + CVector3f(.2f, .2f, .2f));
+        bounds.AccumulateBounds(cache.GetCacheBounds().GetMinPoint());
+        bounds.AccumulateBounds(cache.GetCacheBounds().GetMaxPoint());
+        cache.SetCacheBounds(bounds);
+        BuildAreaCollisionCache(mgr, cache);
+      }
       rstl::vector< CMetroidAreaCollider::CTerrainTriangle > src;
       if (cache.HasCacheOverflowed()) {
         const CWorld* world = mgr.GetWorld();
         for (CGameArea::CConstChainIterator it = world->GetChainHead(CWorld::kC_Alive);
              it != CWorld::skGlobalEnd; ++it) {
           CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles((*it).GetOctTree(), box,
-                                                                     filter, src);
+                                                                     filter, src, true);
         }
       } else {
         for (int i = 0; i < int(cache.GetNumCaches()); ++i) {
           CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles(
-              cache.GetOctreeLeafCache(i), box, filter, src);
+              cache.GetOctreeLeafCache(i), box, filter, src, true);
         }
       }
       if (src.size() == 0) {
@@ -1033,15 +983,78 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       query.box.max = {box.GetMaxPoint().GetX(), box.GetMaxPoint().GetY(),
                        box.GetMaxPoint().GetZ()};
       query.actorMaterialBits = actor.GetMaterialList().GetValue();
-      const PortRemasteredGroundWorld::Result res =
-          PortRemasteredGroundWorld::BuildContacts(query, tris.data(), tris.size());
+      const PortRemasteredGroundWorld::TerrainResult res =
+          PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), produceImpacts);
       std::vector< const PortRemasteredGroundWorld::Contact* > consumer;
-      PortRemasteredGroundWorld::ConsumerContacts(res, consumer);
+      PortRemasteredGroundWorld::ConsumerContacts(res.impacts, consumer);
       out.reserve(consumer.size());
       for (const PortRemasteredGroundWorld::Contact* c : consumer) {
         out.push_back(*c);
       }
-      return !out.empty();
+      return res.booleanHit;
+    }
+  };
+
+  struct Test {
+    CStateManager& mgr;
+    CAreaCollisionCache& cache;
+    CPhysicsActor& actor;
+    const CMaterialFilter& filter;
+    const TEntityList& list;
+    bool Blocked(const CVector3f& offset) const {
+      std::vector<PortRemasteredGroundWorld::Contact> unused;
+      if (TerrainContacts::Build(mgr, cache, actor, filter, offset, unused, false)) return true;
+      actor.MoveCollisionPrimitive(offset);
+      const bool b = DetectDynamicCollisionBoolean(*actor.GetCollisionPrimitive(),
+                                                    actor.GetPrimitiveTransform(), list, mgr);
+      actor.MoveCollisionPrimitive(CVector3f::Zero());
+      return b;
+    }
+  };
+  const Test test = {mgr, cache, actor, materialFilter, nearList};
+
+  // 0xc6d110: landing checks consume impacts, not the NoPostFilter SAT result.
+  struct Ground {
+    static bool Check(CStateManager& mgr, CAreaCollisionCache& cache, CPlayer& player,
+                      const CMaterialFilter& filter, const TEntityList& list,
+                      const CVector3f& from, float targetZ) {
+      CPhysicsActor& actor = player;
+      if (player.GetPlayerMovementState() == NPlayer::kMS_OnGround) return true;
+      if (player.GetFallingTime() <= .4f) return false;
+      const float feet = actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform())
+                             .GetMinPoint().GetZ() + targetZ - actor.GetTranslation().GetZ();
+      const float probeZ = rstl::min_val(rstl::max_val(feet, from.GetZ()), targetZ - .002f);
+      const CVector3f delta(0.f, 0.f, probeZ - actor.GetTranslation().GetZ());
+      std::vector<PortRemasteredGroundWorld::Contact> terrain;
+      TerrainContacts::Build(mgr, cache, actor, filter, delta, terrain);
+      bool result = false;
+      float low = feet - .002f;
+      for (const auto& c : terrain) {
+        const auto work = PortAirMoverContact::WorkingNormal(
+            {c.normalX,c.normalY,c.normalZ}, c.hasSecondary,
+            {c.secondaryX,c.secondaryY,c.secondaryZ});
+        for (std::size_t p=0; p<c.pointCount; ++p) {
+          const float pz = c.pointVertical[p];
+          if (pz > feet || pz <= low) continue;
+          result = Classify::IsFloor(CMaterialList(c.materialBits),
+                                     CVector3f(work.x,work.y,work.z));
+          low = pz;
+        }
+      }
+      actor.MoveCollisionPrimitive(delta);
+      CCollisionInfoList dynamic;
+      TUniqueId id = kInvalidUniqueId;
+      DetectDynamicCollision(*actor.GetCollisionPrimitive(), actor.GetPrimitiveTransform(),
+                             list, id, dynamic, mgr);
+      actor.MoveCollisionPrimitive(CVector3f::Zero());
+      for (int i=0; i<dynamic.GetCount(); ++i) {
+        const auto& c = dynamic[i];
+        const float pz = c.GetPoint().GetZ();
+        if (pz > feet || pz <= low) continue;
+        result = Classify::IsFloor(c.GetMaterialLeft(),c.GetNormalLeft());
+        low = pz;
+      }
+      return result;
     }
   };
 
@@ -1057,9 +1070,6 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     const Test& test;
     float mass;
     float worldDt;
-    // The translation the tick started from: the source's per-contact displacement is
-    // (translation - previousTranslation) and the mover's tick entry is that value here.
-    CVector3f entryPos;
     bool& hadCollision;
     bool& grounded;
     CCollisionInfoList& groundList;
@@ -1136,6 +1146,10 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     float Step(float stepDt) {
       const CVector3f startPos = actor.GetTranslation();
       CMotionState motion = actor.PredictMotion_Internal(stepDt);
+      // Save the ORIGINAL full-step target before bisection overwrites its
+      // candidates (0xf94b30-50, 0xf94f34-0xf94fe4). Prediction is a delta in
+      // the port; the source target is relative to previousTranslation.
+      const CVector3f fullTarget = startPos + motion.GetTranslation();
       if (!test.Blocked(motion.GetTranslation())) {
         // The whole step is free (0xf948d4 line ~511).
         actor.AddMotionState(motion);
@@ -1164,19 +1178,13 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         reported = t;
       }
 
-      // Contacts are gathered at the colliding state (hi). The static half is taken on
-      // its own so the source-exact terrain contacts below line up with it one to one:
-      // the port adds one entry per terrain triangle, the producer returns one contact
-      // per triangle, both in the octree's own order.
+      // 0xf94d00: full CheckCollision at hi, distinct from NoPostFilter SAT.
+      // Terrain impacts alone supply the static half; never query native static
+      // contacts or associate contacts produced by different clipping rules.
       CCollisionInfoList list;
       TUniqueId id = kInvalidUniqueId;
       const CVector3f hiDelta = actor.PredictMotion_Internal(hiT).GetTranslation();
       actor.MoveCollisionPrimitive(hiDelta);
-      if (!filter.GetExcludeList().HasMaterial(kMT_NoStaticCollision)) {
-        DetectStaticCollision_Cached(mgr, cache, *actor.GetCollisionPrimitive(),
-                                     actor.GetPrimitiveTransform(), filter, list);
-      }
-      const int staticCount = list.GetCount();
       TUniqueId dynamicId = kInvalidUniqueId;
       DetectDynamicCollision(*actor.GetCollisionPrimitive(), actor.GetPrimitiveTransform(),
                              nearList, dynamicId, list, mgr);
@@ -1184,20 +1192,10 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         id = dynamicId;
       }
       actor.MoveCollisionPrimitive(CVector3f::Zero());
-      // The terrain contacts with their optional secondary normal (0xc0a180 through the
-      // verified producer). A native CCollisionInfo cannot carry that field, so the
-      // per-contact response below reads it from here. The query runs under the same guard
-      // as the native static half above: a filter that excludes kMT_NoStaticCollision
-      // means "no static collision at all" (CGameCollision::DetectCollision and
-      // DetectCollisionBoolean both test the exclude list before their static half), and
-      // the per-surface material filter inside the collector is the same one
-      // NPhysicsSimulationUtils' query applies per collidable.
       std::vector< PortRemasteredGroundWorld::Contact > terrainContacts;
-      const bool staticAllowed = StaticQuery::Allowed(filter);
-      const bool terrainOk =
-          staticAllowed && TerrainContacts::Build(mgr, cache, actor, filter, hiDelta, terrainContacts);
+      TerrainContacts::Build(mgr, cache, actor, filter, hiDelta, terrainContacts);
 
-      if (list.GetCount() == 0) {
+      if (!PortAirMoverContact::HasImpacts(terrainContacts.size(), list.GetCount())) {
         // No contact list: the state becomes hi (no response).
         actor.AddMotionState(actor.PredictMotion_Internal(hiT));
         actor.ImpulseWR() = CVector3f::Zero();
@@ -1216,44 +1214,13 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         riderVel = other->GetVelocityWR();
       }
 
-      // The port's overlap test also reports a player resting on (or grazing)
-      // a floor it is not moving into, which the 0xf948d4 per-contact filter
-      // skips for every contact (moving away relative to the rider, or a
-      // paired ceiling face). Nothing then blocks the step, so it takes the
-      // whole dt as a free target does; bisecting to lo would drop the time
-      // between lo and dt (a free jump lost 1/32 of its first push).
-      {
-        bool anyActing = false;
-        // The static half is judged on the working normal (the secondary when the contact
-        // has one): skipping that decision was how a blocking secondary could be missed and
-        // the whole-dt rule taken instead (0xf94ff0-0xf95028 tests the working normal).
-        for (std::size_t t = 0; t < terrainContacts.size() && !anyActing; ++t) {
-          const PortRemasteredGroundWorld::Contact& tc = terrainContacts[t];
-          const PortAirMoverContact::Vec3 work =
-              PortAirMoverContact::WorkingNormal({tc.normalX, tc.normalY, tc.normalZ},
-                                                 tc.hasSecondary,
-                                                 {tc.secondaryX, tc.secondaryY, tc.secondaryZ});
-          const CVector3f cn(work.x, work.y, work.z);
-          if (cn.GetZ() < -0.70710677f || CVector3f::Dot(stateVel - riderVel, cn) <= 0.f) {
-            anyActing = true;
-          }
-        }
-        for (int i = 0; i < list.GetCount() && !anyActing; ++i) {
-          const CVector3f cn = list[i].GetNormalLeft();
-          if (cn.GetZ() < -0.70710677f || CVector3f::Dot(stateVel - riderVel, cn) <= 0.f) {
-            anyActing = true;
-          }
-        }
-        if (!anyActing) {
-          actor.AddMotionState(actor.PredictMotion_Internal(stepDt - loT));
-          actor.ImpulseWR() = CVector3f::Zero();
-          PostProbe();
-          return stepDt;
-        }
-      }
-
+      // No "all responses rejected => whole dt" compensation: 0xf948d4
+      // retains the bracket-reported time even when every impact separates
+      // (0xf952d4-0xf95324). SAT touching and impact production are deliberately
+      // different predicates, not grounds for overriding the reported time.
       bool floorContact = false;
       CCollisionInfoList accepted;
+      CCollisionInfoList acceptedDynamic;
       for (int i = 0; i < list.GetCount(); ++i) {
         const CCollisionInfo& info = list[i];
         CVector3f n = info.GetNormalLeft();
@@ -1265,7 +1232,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         // its own (dynamic actor contacts): 0xc6d460 has no such branch, so it is a known
         // divergence there, and it is deliberately not applied to the static terrain
         // response, which now runs from the producer's own contact list below.
-        if (i >= staticCount && n.GetZ() < -0.70710677f) {
+        if (n.GetZ() < -0.70710677f) {
           bool pairedWithOther = false;
           for (int j = 0; j < list.GetCount(); ++j) {
             const CCollisionInfo& o = list[j];
@@ -1282,7 +1249,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         if (CVector3f::Dot(stateVel - riderVel, n) > 0.f) {
           continue;
         }
-        accepted.Add(info, false);
+        acceptedDynamic.Add(info, false);
         hadCollision = true;
 
         const bool isFloor = Classify::IsFloor(info.GetMaterialLeft(), n);
@@ -1294,9 +1261,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
           }
         }
 
-        // The response of this entry is deferred to the passes below so that the order is the
-        // shipped list's: the port builds one list (static half first, then the dynamic
-        // near-list) and 0xf948d4 responds to its entries in that order.
+        // Defer response, preserving native actor acceptance. Rejected dynamic
+        // entries must not leak into the response pass (AUDIT-3 F3).
       }
       // The static terrain response runs from the producer's own contact list: one contact
       // per triangle the shipped builder retains (0xc0a180), each with the secondary normal
@@ -1308,46 +1274,52 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       for (std::size_t t = 0; t < terrainContacts.size(); ++t) {
         const PortRemasteredGroundWorld::Contact& tc = terrainContacts[t];
         CVector3f primary(tc.normalX, tc.normalY, tc.normalZ);
-        if (fabsf(primary.GetX()) < 2.38e-7f) primary.SetX(0.f);
-        if (fabsf(primary.GetY()) < 2.38e-7f) primary.SetY(0.f);
-        if (fabsf(primary.GetZ()) < 2.38e-7f) primary.SetZ(0.f);
-        CVector3f working = primary;
-        bool w25 = true;
-        if (tc.hasSecondary) {
-          working = CVector3f(tc.secondaryX, tc.secondaryY, tc.secondaryZ);
-          if (fabsf(working.GetX()) < 2.38e-7f) working.SetX(0.f);
-          if (fabsf(working.GetY()) < 2.38e-7f) working.SetY(0.f);
-          if (fabsf(working.GetZ()) < 2.38e-7f) working.SetZ(0.f);
-          // 0xc6d658-0xc6d698: w25 = 1 only when neither up exceeds 0.866025 and neither
-          // normal is a ceiling (is_ceiling_normal, up < -0.70710677). A present but
-          // degenerate (zero) secondary is still the working normal the source uses.
-          w25 = primary.GetZ() <= 0.866025f && working.GetZ() <= 0.866025f &&
-                !(primary.GetZ() < -0.70710677f) && !(working.GetZ() < -0.70710677f);
-        }
+        const auto p = PortAirMoverContact::Vec3{primary.GetX(),primary.GetY(),primary.GetZ()};
+        const auto s = PortAirMoverContact::Vec3{tc.secondaryX,tc.secondaryY,tc.secondaryZ};
+        const auto work = PortAirMoverContact::WorkingNormal(p,tc.hasSecondary,s);
+        const auto gate = PortAirMoverContact::WorkingNormal(
+            PortAirMoverContact::GatePrimary(p),tc.hasSecondary,s);
+        // Secondary components bypass primary cleanup (0xf94fb0-0xf94fd8).
+        const CVector3f working(work.x,work.y,work.z);
+        const bool w25 = PortAirMoverContact::W25(tc.hasSecondary,p,s);
         const CMaterialList material(tc.materialBits);
-        const bool isFloor = Classify::IsFloor(material, primary);
-        if (isFloor) {
-          floorContact = true;
-        }
-        // 0xf94ff0-0xf95028: a contact is responded to only when the tick's own motion
-        // (the actor's translation minus the translation the tick started from, the rider
-        // offset subtracted) is not separating along the WORKING normal. dot > 0 skips.
-        const CVector3f disp = actor.GetTranslation() - entryPos;
-        if (!PortAirMoverContact::Acts({disp.GetX(), disp.GetY(), disp.GetZ()},
-                                       {riderVel.GetX(), riderVel.GetY(), riderVel.GetZ()},
-                                       {working.GetX(), working.GetY(), working.GetZ()})) {
+        // (target-previous) - (current-previous) - riderOffset: previous
+        // cancels. CURRENT IS THE PRE-STEP STATE: the source does not apply
+        // its selected motion until 0xf95420 (decompile line 538). The port
+        // has already applied lo to expose its predicted velocity to Respond,
+        // so reading actor.GetTranslation() here would silently substitute
+        // the accepted bisection sample (AUDIT-3 F1) for the source operand.
+        // For static terrain riderOffset is zero: no actor owns it.
+        const auto disp = PortAirMoverContact::RemainingDisplacement(
+            {fullTarget.GetX(),fullTarget.GetY(),fullTarget.GetZ()},
+            {startPos.GetX(),startPos.GetY(),startPos.GetZ()});
+        if (!PortAirMoverContact::Acts(disp, {0.f,0.f,0.f}, gate)) {
           continue;
         }
+        const bool isFloor = Classify::IsFloor(material,CVector3f(gate.x,gate.y,gate.z)) && !tc.flag100;
+        // Retain native game messaging, but derive its static entries ONLY
+        // from accepted source impacts. Use an actual produced point, never
+        // a native contact paired by index or a fabricated point.
+        if (tc.pointCount != 0) {
+          const auto& point = tc.points[0];
+          const CCollisionInfo event(CVector3f(point.x,point.y,point.z), material,
+                                     actor.GetMaterialList(), primary);
+          accepted.Add(event, false);
+          if (isFloor) groundList.Add(event, false);
+        }
+        if (isFloor) floorContact = true;
         hadCollision = true;
-        Respond(material, primary, working, w25, isFloor, tc.minVertical, mi);
+        Respond(material, primary, working, w25,
+                Classify::IsFloor(material, primary) && !tc.flag100, tc.minVertical, mi);
       }
-      // The dynamic near-list entries follow the static half, as they do in the port's list
-      // (DetectDynamicCollision appends after the static entries) and in the shipped single
-      // list. A dynamic contact has no secondary normal to select (the terrain producer is
-      // the only source that sets one), so 0xc6d63c takes the w25 = 1 path and the primary
-      // is both the classifying and the working normal.
-      for (int i = staticCount; i < list.GetCount(); ++i) {
-        const CCollisionInfo& info = list[i];
+      // Preserve the port's terrain-then-near-list order. The source iterates
+      // candidate/impact order (0xf94e40-0xf9521c), but does not establish a
+      // universal static-first world order. Actor primitives, ownership,
+      // pairing and velocity-relative acceptance stay native; there is no
+      // source actor-secondary/rider-displacement producer here.
+      for (int i = 0; i < acceptedDynamic.GetCount(); ++i) {
+        const CCollisionInfo& info = acceptedDynamic[i];
+        accepted.Add(info, false);
         CVector3f n = info.GetNormalLeft();
         if (fabsf(n.GetX()) < 2.38e-7f) n.SetX(0.f);
         if (fabsf(n.GetY()) < 2.38e-7f) n.SetY(0.f);
@@ -1375,7 +1347,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     }
   };
   Stepper stepper = {mgr,  cache,       player,      actor,    materialFilter,
-                     nearList, test,    mass,        dt,       entryPos, hadCollision,
+                     nearList, test,    mass,        dt,       hadCollision,
                      grounded, groundList, riderId};
 
   // 0xf943b4 MoveObject: one step, then up to ten more while time remains.

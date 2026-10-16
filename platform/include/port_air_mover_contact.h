@@ -2,6 +2,7 @@
 // The airborne mover's contact decisions that do not need the game: 0xc6d460's working-normal
 // selection and 0xf948d4's per-contact separation gate, so they can be regression-tested.
 #include <cmath>
+#include <cstddef>
 
 namespace PortAirMoverContact {
 
@@ -23,6 +24,15 @@ inline Vec3 WorkingNormal(Vec3 primary, bool hasSecondary, Vec3 secondary) {
   return hasSecondary ? secondary : primary;
 }
 
+// Only the mover's gate cleans primary components. The callback re-reads
+// raw contact normals, and a present secondary bypasses this cleanup entirely.
+inline Vec3 GatePrimary(Vec3 n) {
+  constexpr float threshold = 2.3841858e-7f;
+  return {std::fabs(n.x) < threshold ? 0.f : n.x,
+          std::fabs(n.y) < threshold ? 0.f : n.y,
+          std::fabs(n.z) < threshold ? 0.f : n.z};
+}
+
 // 0xc6d658-0xc6d698 -> 0xc6d6b4 (`mov w25,#1`) when no secondary is present, otherwise w25 = 1
 // only while neither up exceeds 0.866025 and neither normal is a ceiling. w25 gates the
 // kMS_ApplyJump gravity/force block at 0xc6d7f4 (`cbz w25`); it never changes the working normal.
@@ -34,10 +44,23 @@ inline bool W25(bool hasSecondary, Vec3 primary, Vec3 secondary) {
          !IsCeilingNormal(secondary);
 }
 
-// 0xf94ff0-0xf95028: dot(displacement - riderOffset, working normal) > 0 skips the contact
-// (`b.hi 0xf94f00`); otherwise it is responded to. The displacement is the tick's own motion and
-// the normal is the working one, so a contact whose primary looks separating but whose secondary
-// blocks is still responded to.
+// 0xf94b30-50 saves the original target; 0xf94f34-0xf94fe4 subtracts
+// current-minus-previous and rider DISPLACEMENT from target-minus-previous.
+// The common previous-origin cancels; neither velocity nor accepted-lo motion
+// is the target. `current` is the PRE-STEP snapshot: ApplyMotionState is deferred
+// until 0xf95420, not performed before the response loop. Static terrain cannot
+// be the actor's rider.
+inline Vec3 RemainingDisplacement(Vec3 fullTarget, Vec3 current) {
+  return {fullTarget.x-current.x,fullTarget.y-current.y,fullTarget.z-current.z};
+}
+
+// Full CheckCollision selects lo only if impacts were produced (0xf94d00).
+// SAT hit alone does not select it; response rejection does not change time.
+inline bool HasImpacts(std::size_t terrainCount, std::size_t dynamicCount) {
+  return terrainCount != 0 || dynamicCount != 0;
+}
+
+// 0xf94ff0-0xf95028: dot(remaining displacement - riderOffset, working) > 0 skips.
 inline float SeparationDot(Vec3 displacement, Vec3 riderOffset, Vec3 working) {
   const float dx = displacement.x - riderOffset.x;
   const float dy = displacement.y - riderOffset.y;

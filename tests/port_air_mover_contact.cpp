@@ -10,6 +10,7 @@
 #include "Collision/CMaterialFilter.hpp"
 
 #include "port_air_mover_contact.h"
+#include "port_remastered_ground_world.h"
 
 #include <cmath>
 #include <cstdio>
@@ -75,7 +76,7 @@ static void TestSeparationGate() {
   // The converse: motion along -Z (into the -Z working normal) is separating.
   Check(!Acts({0.f, 0.f, -1.f}, noRider, work), "separating along the working normal skips");
   // A zero secondary never separates: dot = 0, so the contact is responded to (the guard is
-  // `> 0`), which is why the whole-dt rule must see the working normal.
+  // `> 0`). Rejection never changes the bracket's reported time.
   Check(Acts(motion, noRider, {0.f, 0.f, 0.f}), "zero working normal never separates");
   // The rider offset is subtracted before the dot (0xf94ff0-0xf95020).
   Check(!Acts({1.f, 0.f, 0.f}, {2.f, 0.f, 0.f}, {1.f, 0.f, 0.f}) == false,
@@ -95,11 +96,92 @@ static void TestStaticGuard() {
         "an open filter queries the static half");
 }
 
+static void TestTargetAndBracket() {
+  // The source applies its selected motion only at exit. Current remains 10,
+  // not the accepted-lo position 10.5; target remains the full prediction 12.
+  const Vec3 remain = PortAirMoverContact::RemainingDisplacement({12.f,0.f,0.f},{10.f,0.f,0.f});
+  Check(remain.x == 2.f, "F1 gate uses full target minus PRE-STEP current");
+  Check(!Acts(remain,{1.75f,0.f,0.f},{1.f,0.f,0.f}), "F1 rider is displacement, not velocity");
+  Check(Acts({1.5f,0.f,0.f},{1.75f,0.f,0.f},{1.f,0.f,0.f}),
+        "wrong target-minus-accepted-lo would act");
+  Check(Acts({.5f,0.f,0.f},{1.75f,0.f,0.f},{1.f,0.f,0.f}),
+        "wrong accepted-lo-minus-entry would act");
+  Check(!PortAirMoverContact::HasImpacts(0,0), "F2 SAT alone selects hi, not lo");
+  Check(PortAirMoverContact::HasImpacts(1,0), "F2 source impacts select lo without native entries");
+  Check(PortAirMoverContact::HasImpacts(0,1), "F2 actor impact independently selects lo");
+}
+
+static void TestTerrainPredicates() {
+  namespace W = PortRemasteredGroundWorld;
+  W::Query q;
+  q.box = {{-1.f,-1.f,-1.f},{1.f,1.f,1.f}};
+  W::Triangle tri;
+  // Exactly on the top plane: inclusive SAT hits but strict clipping emits no
+  // impact. This is precisely why list-nonempty cannot define NoPostFilter.
+  tri.verts = {{{-.5f,-.5f,1.f},{.5f,-.5f,1.f},{0.f,.5f,1.f}}};
+  tri.normal = {0.f,0.f,1.f};
+  auto r = W::QueryTerrain(q,&tri,1,true);
+  Check(r.booleanHit, "inclusive SAT counts touching");
+  Check(r.impacts.contacts.empty(), "strict impact clipping does not count touching");
+  tri.verts[0].z = tri.verts[1].z = tri.verts[2].z = .9f;
+  r = W::QueryTerrain(q,&tri,1,true);
+  Check(r.booleanHit && r.impacts.contacts.size() == 2, "penetrating triangle supplies both results");
+  const auto b = W::QueryTerrain(q,&tri,1,false);
+  Check(b.booleanHit && b.impacts.contacts.empty(), "NoPostFilter does not produce impacts");
+  tri.verts[0].z = tri.verts[1].z = tri.verts[2].z = 1.01f;
+  r = W::QueryTerrain(q,&tri,1,true);
+  Check(!r.booleanHit && r.impacts.contacts.empty(), "separated triangle supplies neither result");
+}
+
+static void TestSATReference() {
+  namespace G = PortRemasteredGroundContacts;
+  // Independent generic 13-axis SAT, exact for these small integer inputs.
+  // Unlike the production routine this projects all three points on every
+  // axis and uses double arithmetic; no source endpoint shortcuts are reused.
+  const G::AABB box{{-2.f,-3.f,-4.f},{2.f,3.f,4.f}};
+  unsigned rng = 117;
+  for (int trial=0; trial<50000; ++trial) {
+    std::array<G::Vec3,3> t;
+    for (auto& p : t) {
+      auto next = [&]() { rng=rng*1664525u+1013904223u; return float(int(rng%21)-10); };
+      p = {next(),next(),next()};
+    }
+    auto sub = [](G::Vec3 a,G::Vec3 b) {return G::Vec3{a.x-b.x,a.y-b.y,a.z-b.z};};
+    auto cross = [](G::Vec3 a,G::Vec3 b) {
+      return G::Vec3{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};
+    };
+    const G::Vec3 e[] = {sub(t[1],t[0]),sub(t[2],t[1]),sub(t[0],t[2])};
+    const G::Vec3 xyz[] = {{1,0,0},{0,1,0},{0,0,1}};
+    G::Vec3 axes[13];
+    for(int i=0;i<3;++i) axes[i]=xyz[i];
+    axes[3]=cross(e[0],e[1]);
+    for(int i=0;i<3;++i) for(int j=0;j<3;++j) axes[4+i*3+j]=cross(e[i],xyz[j]);
+    bool expected=true;
+    for(auto a:axes) {
+      const double radius=2.*std::fabs(a.x)+3.*std::fabs(a.y)+4.*std::fabs(a.z);
+      double lo=1e30,hi=-1e30;
+      for(auto p:t) {
+        const double dot=double(a.x)*p.x+double(a.y)*p.y+double(a.z)*p.z;
+        if(dot<lo) lo=dot;
+        if(dot>hi) hi=dot;
+      }
+      if(lo>radius || hi < -radius) expected=false;
+    }
+    if (G::Intersects(box,t)!=expected) {
+      Check(false,"source SAT agrees with independent 13-axis reference (50,000 cases)");
+      return;
+    }
+  }
+}
+
 int main() {
   TestWorkingNormal();
   TestW25();
   TestSeparationGate();
   TestStaticGuard();
+  TestTargetAndBracket();
+  TestTerrainPredicates();
+  TestSATReference();
   if (gFailures == 0) {
     std::printf("port_air_mover_contact_tests: all passed\n");
   }

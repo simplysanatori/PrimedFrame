@@ -1,0 +1,40 @@
+"""Production wiring guards for AUDIT-3, alongside executable geometry tests.
+
+Accepts another revision's CGameCollision.cpp so the guards can be checked against
+018ee83ce without rebuilding or modifying that revision's worktree.
+"""
+import pathlib
+import sys
+import unittest
+
+source = pathlib.Path(sys.argv.pop()).read_text()
+air = source.split("void CGameCollision::MoveAirborneStepped(", 1)[1]
+air = air.split("#endif", 1)[0]
+
+
+class Wiring(unittest.TestCase):
+    def test_f1_full_target_gate(self):
+        self.assertIn("fullTarget = startPos + motion.GetTranslation()", air)
+        self.assertIn("PortAirMoverContact::RemainingDisplacement(", air)
+        self.assertIn("{startPos.GetX(),startPos.GetY(),startPos.GetZ()}", air)
+        self.assertNotIn("{current.GetX(),current.GetY(),current.GetZ()}", air)
+        self.assertNotIn("const CVector3f disp = actor.GetTranslation() - entryPos", air)
+
+    def test_f2_no_native_terrain_or_time_override(self):
+        self.assertNotIn("DetectStaticCollision_Cached(", air)
+        self.assertNotIn("DetectCollisionBoolean_Cached(", air)
+        self.assertNotIn("DetectCollision_Cached(", air)
+        self.assertNotIn("if (!anyActing)", air)
+        self.assertIn("PortAirMoverContact::HasImpacts(terrainContacts.size(), list.GetCount())", air)
+        self.assertIn("QueryTerrain(query, tris.data(), tris.size(), produceImpacts)", air)
+
+    def test_f3_dynamic_response_only_accepted(self):
+        response = air.split("for (int i = 0; i < acceptedDynamic.GetCount(); ++i)", 1)
+        self.assertEqual(len(response), 2, "response must iterate accepted actors, not raw contacts")
+        self.assertIn("acceptedDynamic.Add(info, false)", response[0])
+        self.assertIn("const CCollisionInfo& info = acceptedDynamic[i]", response[1])
+        self.assertNotIn("for (int i = staticCount; i < list.GetCount(); ++i)", air)
+
+
+if __name__ == "__main__":
+    unittest.main()
