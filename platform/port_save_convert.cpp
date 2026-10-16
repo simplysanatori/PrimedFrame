@@ -1,5 +1,7 @@
 #include "port_save_convert.h"
 
+#include "port_map_marks.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -424,6 +426,13 @@ void ReadSlot(const uint8_t* d, size_t size, const SlotFmt& f, Slot& s, std::set
       s.hasSeen = true;
       for (auto& word : s.seen)
         word = peek.Read(32);
+      // The room marks follow; a cut or absent trailer leaves none.
+      if (!peek.eof && peek.Left() >= PortMapMarks::kHeaderBits && peek.Read(32) == PortMapMarks::kMagic) {
+        const PortMapMarks::List list = PortMapMarks::Get([&peek](unsigned bits) { return peek.Read(int(bits)); });
+        if (!peek.eof) {
+          s.marks.assign(list.packed, list.packed + list.count);
+        }
+      }
     }
   }
   s.present = !r.eof || s.mlvl != 0 || s.timestamp != 0;
@@ -521,6 +530,14 @@ bool WriteSlot(const Slot& s, Layout layout, int flags, size_t slotSize, std::ve
     w.Write(kSeenMagic, 32);
     for (u32 word : s.seen)
       w.Write(word, 32);
+    PortMapMarks::List list;
+    for (size_t i = 0; i < s.marks.size() && i < PortMapMarks::kMaxMarks; ++i) {
+      list.packed[list.count++] = s.marks[i];
+    }
+    const size_t fit = PortMapMarks::Fit(list.count, w.limit, w.pos);
+    if (fit != 0) {
+      PortMapMarks::Put(list, fit, [&w](u32 value, unsigned bits) { w.Write(value, int(bits)); });
+    }
   }
   if (w.overflow)
     ++stats.truncatedSlots;

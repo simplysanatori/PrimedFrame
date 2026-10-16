@@ -56,6 +56,8 @@
 #include "MetroidPrime/Enemies/CPatterned.hpp"
 #include "MetroidPrime/HUD/CSamusHud.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
+#include "MetroidPrime/CScriptMailbox.hpp"
+#include "port_map_marks.h"
 #include "port_map_pickups.h"
 #include "MetroidPrime/Player/CPlayer.hpp"
 #include "MetroidPrime/Player/CPlayerGun.hpp"
@@ -2390,6 +2392,22 @@ void RunFrame() {
           indices.empty() ? "none" : indices.c_str());
       return Finish();
     }
+    if (value == "collect") {
+      // pickups collect <dot>: posts the dot's memory relay to its world's
+      // mailbox, as picking it up does, so the map shows it collected.
+      size_t dots = 0;
+      const PortMapPickups::Dot* list = PortMapPickups::Dots(dots);
+      const long index = sCmd.args.size() > 2 ? std::strtol(sCmd.args[2].c_str(), nullptr, 10) : -1;
+      if (gpGameState == nullptr || index < 0 || static_cast< size_t >(index) >= dots) {
+        return Finish("usage: pickups collect <dot index>   (needs a game; see pickups kinds)");
+      }
+      gpGameState->StateForWorld(list[index].world)
+          .Mailbox()
+          .GetPtr()
+          ->AddMsg(TEditorId(list[index].relay));
+      Out("dot %ld collected", index);
+      return Finish();
+    }
     if (value == "kinds" || value == "station") {
       const std::string sub = sCmd.args.size() > 2 ? Lower(sCmd.args[2]) : "";
       if (sub == "on" || sub == "off") {
@@ -2431,8 +2449,40 @@ void RunFrame() {
       return Finish("usage: pickups <off|seen|rooms|all>   pickups on the map (0 and 1 are off and all)\n"
                     "       pickups seen [clear|all]   the pickups seen so far in this save\n"
                     "       pickups kinds [on|off]     major/minor shapes; no argument lists them\n"
+                    "       pickups collect <dot>      mark a dot's pickup collected (test aid)\n"
                     "       pickups station <on|off>   map stations show pickups in Seen");
     }
+    Finish();
+  } else if (name == "mark") {
+    // mark [list|clear|toggle [area]]: the map's room marks of the current world.
+    const std::string sub = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "list";
+    const PortMapMarks::List* list = PortMapMarks::Current();
+    if (list == nullptr || gpGameState == nullptr) {
+      return Finish("not in a game");
+    }
+    if (sub == "clear") {
+      PortMapMarks::Clear();
+    } else if (sub == "toggle") {
+      const long area =
+          sCmd.args.size() > 2 ? std::strtol(sCmd.args[2].c_str(), nullptr, 10) : -1;
+      if (area < 0) {
+        return Finish("usage: mark toggle <area index>");
+      }
+      const int result = PortMapMarks::Toggle(gpGameState->CurrentWorldAssetId(), int(area));
+      if (result == 0) {
+        return Finish("not possible (list full or unknown area)");
+      }
+      Out("area %ld %s", area, result > 0 ? "marked" : "unmarked");
+    } else if (sub != "list") {
+      return Finish("usage: mark [list|clear|toggle <area>]");
+    }
+    std::string text;
+    for (uint32_t i = 0; i < list->count; ++i) {
+      text += (text.empty() ? "" : " ") + std::to_string(PortMapMarks::WorldOf(list->packed[i])) +
+              ":" + std::to_string(PortMapMarks::AreaOf(list->packed[i]));
+    }
+    Out("%u marks (max %zu; world:area): %s", list->count, PortMapMarks::kMaxMarks,
+        text.empty() ? "none" : text.c_str());
     Finish();
   } else if (name == "mods") {
     // mods [reload]: what is loaded; reload reads the folder again.

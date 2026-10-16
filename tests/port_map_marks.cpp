@@ -1,0 +1,99 @@
+#include "port_map_marks.h"
+
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+
+namespace {
+void Check(bool condition, const char* what) {
+  if (!condition) {
+    std::fprintf(stderr, "FAIL: %s\n", what);
+    std::abort();
+  }
+}
+
+struct Bits {
+  std::vector< bool > bits;
+  size_t pos = 0;
+  void Write(uint32_t value, unsigned n) {
+    for (int i = static_cast< int >(n) - 1; i >= 0; --i) {
+      bits.push_back(((value >> i) & 1) != 0);
+    }
+  }
+  uint32_t Read(unsigned n) {
+    uint32_t v = 0;
+    for (unsigned i = 0; i < n; ++i) {
+      v = (v << 1) | (pos < bits.size() && bits[pos] ? 1u : 0u);
+      ++pos;
+    }
+    return v;
+  }
+};
+} // namespace
+
+int main() {
+  using namespace PortMapMarks;
+
+  // Pack/unpack: every legal world and area survives.
+  for (unsigned w = 0; w < 8; ++w) {
+    for (unsigned a = 0; a < 128; ++a) {
+      Check(Valid(w, a) && WorldOf(Pack(w, a)) == w && AreaOf(Pack(w, a)) == a, "pack");
+    }
+  }
+  Check(!Valid(8, 0) && !Valid(0, 128), "range");
+
+  // Toggle adds, removes, keeps order and refuses past the cap.
+  List list;
+  Check(list.Toggle(Pack(1, 5)) == 1 && list.Toggle(Pack(4, 60)) == 1 && list.Toggle(Pack(0, 0)) == 1, "add");
+  Check(list.count == 3 && list.Has(Pack(4, 60)), "has");
+  Check(list.Toggle(Pack(4, 60)) == -1 && list.count == 2 && !list.Has(Pack(4, 60)), "remove");
+  Check(list.packed[0] == Pack(1, 5) && list.packed[1] == Pack(0, 0), "order kept");
+  List full;
+  for (unsigned i = 0; i < kMaxMarks; ++i) {
+    Check(full.Toggle(Pack(i % 7, i)) == 1, "fill");
+  }
+  Check(full.Toggle(Pack(7, 100)) == 0 && full.count == kMaxMarks, "cap");
+  Check(full.Toggle(Pack(0, 0)) == -1, "a full list can still unmark");
+
+  // Encode and decode round trip, the magic first.
+  Bits bits;
+  Put(full, full.count, [&bits](uint32_t v, unsigned n) { bits.Write(v, n); });
+  Check(bits.bits.size() == kHeaderBits + full.count * kMarkBits, "encoded size");
+  Check(bits.Read(32) == kMagic, "magic");
+  const List back = Get([&bits](unsigned n) { return bits.Read(n); });
+  Check(back.count == full.count, "decoded count");
+  for (uint32_t i = 0; i < full.count; ++i) {
+    Check(back.packed[i] == full.packed[i], "decoded mark");
+  }
+
+  // A count above the cap (garbage, a cut trailer) reads as empty; repeats drop.
+  Bits junk;
+  junk.Write(31, kCountBits);
+  Check(Get([&junk](unsigned n) { return junk.Read(n); }).count == 0, "count too big");
+  Bits twice;
+  twice.Write(3, kCountBits);
+  twice.Write(Pack(2, 9), kMarkBits);
+  twice.Write(Pack(2, 9), kMarkBits);
+  twice.Write(Pack(3, 1), kMarkBits);
+  Check(Get([&twice](unsigned n) { return twice.Read(n); }).count == 2, "repeat dropped");
+  Bits empty;
+  Check(Get([&empty](unsigned n) { return empty.Read(n); }).count == 0, "zeros read empty");
+
+  // Budget: the USA slot (940 bytes), 7084 retail bits + PKSN 160 = 7244 used
+  // holds every one of the kMaxMarks with the spare kept; with the 416-bit
+  // Archipelago trailer too, nothing fits.
+  const size_t usaSlot = 940 * 8;
+  const size_t fit = Fit(kMaxMarks, usaSlot, 7084 + 160);
+  Check(fit == kMaxMarks, "usa without archipelago fits the cap");
+  Check(usaSlot - (7084 + 160) - (kHeaderBits + fit * kMarkBits) >= kSpareBits, "spare kept");
+  Check(Fit(kMaxMarks + 1, usaSlot, 7084 + 160) == kMaxMarks, "one more than the cap still fits the cap");
+  Check(Fit(kMaxMarks, usaSlot, 7084 + 416 + 160) == 0, "usa with archipelago fits none");
+  Check(Fit(0, usaSlot, 0) == 0, "no marks, nothing written");
+  // Fit is exact at the edge: one fewer bit of room drops a mark.
+  const size_t edge = 7084 + 160 + kSpareBits + kHeaderBits + kMarkBits * 3;
+  Check(Fit(10, edge, 7084 + 160) == 3 && Fit(10, edge - 1, 7084 + 160) == 2, "fit edge");
+  Check(Fit(5, 0xA7Fu * 8, 7084 + 416 + 160) == 5, "pal holds everything");
+
+  std::puts("port_map_marks_tests ok");
+  return 0;
+}

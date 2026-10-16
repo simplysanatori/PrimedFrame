@@ -522,7 +522,15 @@
   capacity (in packs of 5, launcher included), power bombs, artifacts, missing
   upgrades, logbook scans per category (artifacts count at the game's 50%),
   rooms visited per world and the current world's unvisited rooms (their names
-  load on first view). Console: `reveal <0|1>`, `pickups <off|seen|rooms|all>`, `pickups kinds|station <on|off>`, `tracker`.
+  load on first view). Console: `reveal <0|1>`, `pickups <off|seen|rooms|all>`, `pickups kinds|station <on|off>`, `pickups collect <dot>`, `tracker`.
+  Room marks: on the world map screen X marks or unmarks the shown room (a
+  "Mark room" prompt under the map; with pointer menus click it). Marked rooms
+  draw cyan on the map and the minimap, over the Rooms amber, whatever
+  `map_pickups` is. Up to 20 marks are kept per save in an "RMMK" trailer after
+  the pickup-seen one, written only when there is a mark and it fits the slot
+  with 4 bytes spare (a USA slot with an Archipelago trailer has no room, so
+  those marks last for the session; the PAL slot always fits). The map legend
+  lists the pickup shapes in use and the marked-room colour. Console: `mark`.
 - Skippable cutscenes (F1 > Game > Cutscenes, pause Options > Visor,
   `skippable_cutscenes`, off by default; always on in randomizer and
   Archipelago games) lets Start skip every cutscene, including the ones retail

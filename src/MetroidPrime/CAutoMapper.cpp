@@ -53,6 +53,9 @@
 #include "port_pointer.h"
 #include "port_pointer_menu.h"
 #include "port_map_icons.h"
+#include "port_custom_res.h"
+#include "port_map_marks.h"
+#include "port_map_pickups.h"
 
 static const char* const skFRME_MapScreen = "FRME_MapScreen";
 
@@ -657,7 +660,26 @@ void CAutoMapper::ProcessControllerInput(const CFinalInput& frameInput,
       x300_textpane_instructions->TextSupport().SetText(rstl::wstring_l(L""));
       x308_textpane_instructions2->TextSupport().SetText(rstl::wstring_l(L""));
     } else {
+#ifdef TARGET_PC
+      if (x1bc_state == kAMS_MapScreen && x24_world != nullptr && x328_ == 0 &&
+          IsInPlayerControlState()) {
+        // Port: X marks or unmarks the shown room.
+        rstl::wstring mark;
+        mark.append(L"&image=", -1);
+        mark.append(CStringExtras::ConvertToUNICODE(rstl::string(CBasics::Stringize(
+                        "%8.8X", gpTweakPlayerRes->xac_xButton[0]))));
+        mark.append(L";", -1);
+        mark.append(PortMapMarks::IsMarked(x24_world->IGetWorldAssetId(), xa0_curAreaId.value)
+                        ? L"Unmark room"
+                        : L"Mark room",
+                    -1);
+        x2fc_textpane_hint->TextSupport().SetText(mark);
+      } else {
+        x2fc_textpane_hint->TextSupport().SetText(rstl::wstring_l(L""));
+      }
+#else
       x2fc_textpane_hint->TextSupport().SetText(rstl::wstring_l(L""));
+#endif
 
       const wchar_t imagePrefix[] = L"&image=";
       const wchar_t imageSuffix[] = L";";
@@ -937,6 +959,64 @@ void CAutoMapper::PortRecordPointerHits(const CStateManager& mgr, const CTransfo
 // wheel and pinch zoom, a click picks an area or world and a click on the
 // picked one presses A, a right click presses B. Behind the gates of
 // ProcessMapScreenInput, so hints and leave rules are unchanged.
+#ifdef TARGET_PC
+// Port: the map legend, the disc's text plus a line for each pickup shape in
+// use and the marked-room colour. Rebuilt when the settings behind it change.
+static uint sPortLegendKey = ~0u;
+
+// The swatches are loaded before the text is laid out: text drops an image that
+// is not loaded yet, and retail's legend images come with the frame's assets.
+// The tokens live for the whole run.
+static bool PortLegendReady() {
+  static TToken< CTexture >* tokens[4] = {};
+  if (tokens[0] == nullptr) {
+    for (int i = 0; i < 4; ++i) {
+      tokens[i] = new TToken< CTexture >(
+          gpSimplePool->GetObj(SObjectTag('TXTR', PortCustomRes::kLegendDotTxtr + i)));
+      tokens[i]->Lock();
+    }
+  }
+  for (int i = 0; i < 4; ++i) {
+    if (!tokens[i]->IsLoaded()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static uint PortLegendKey() {
+  const uint mode = static_cast< uint >(PortMapPickups::Mode());
+  return mode | (PortDebug::MapPickupKinds() ? 8u : 0u);
+}
+
+static rstl::wstring PortLegendText() {
+  rstl::wstring text(gpStringTable->GetString(0x31));
+  const PortDebug::EMapPickups mode = PortMapPickups::Mode();
+  // Entries go two to a line so the legend stays clear of the Key/Legend prompt.
+  int entries = 0;
+  auto entry = [&](uint32_t id, const wchar_t* label) {
+    text.append(entries % 2 == 0 ? L"\n" : L"   ", -1);
+    ++entries;
+    text.append(L"&image=", -1);
+    text.append(CStringExtras::ConvertToUNICODE(
+        rstl::string(CBasics::Stringize("SI,1.0,1.0,%8.8X", id))));
+    text.append(L";", -1);
+    text.append(label, -1);
+  };
+  if (mode == PortDebug::kMapPickups_Seen || mode == PortDebug::kMapPickups_All) {
+    if (PortDebug::MapPickupKinds()) {
+      entry(PortCustomRes::kLegendDotTxtr, L"Major");
+      entry(PortCustomRes::kLegendRingTxtr, L"Minor");
+      entry(PortCustomRes::kLegendCrossTxtr, L"Collected");
+    } else {
+      entry(PortCustomRes::kLegendDotTxtr, L"Pickup");
+    }
+  }
+  entry(PortCustomRes::kLegendMarkTxtr, L"Marked");
+  return text;
+}
+#endif
+
 void CAutoMapper::PortPointerInput(CFinalInput& input, const CStateManager& mgr) {
   const bool universe = x1bc_state == kAMS_MapScreenUniverse;
   if (sPortMapGlide && sPortMapGlideUniverse != universe) {
@@ -1010,6 +1090,10 @@ void CAutoMapper::PortPointerInput(CFinalInput& input, const CStateManager& mgr)
       PortMapStopGlide();
       PortPointerMenu::PressA(input);
     }
+  }
+
+  if (!universe && x2fc_textpane_hint != NULL && PortPointerMenu::TakeClickOn(x2fc_textpane_hint)) {
+    PortPointerMenu::PressX(input);
   }
 
   float gx, gy;
@@ -1094,6 +1178,14 @@ void CAutoMapper::ProcessMapScreenInput(const CFinalInput& input, const CStateMa
           pointLocal, CUnitVector3f(camRot.GetColumn(1), CUnitVector3f::kN_No), mgr, *x24_world,
           *mwInfo);
       BeginMapperStateTransition(kAMS_MapScreen, mgr);
+    }
+  }
+
+  if (input.PX() && x1bc_state == kAMS_MapScreen && x328_ == 0 && x24_world != nullptr &&
+      IsInPlayerControlState()) {
+    if (PortMapMarks::Toggle(x24_world->IGetWorldAssetId(), xa0_curAreaId.value) != 0) {
+      CSfxManager::SfxStart(0x5ac, 127, 64, false, CSfxManager::kMedPriority, false,
+                            CSfxManager::kAllAreas);
     }
   }
 
@@ -1823,7 +1915,17 @@ void CAutoMapper::Update(float dt, const CStateManager& mgr) {
           static_cast< CGuiTextPane* >(x2c_frmeInitialized->FindWidget("textpane_mapLegend"));
       mapLegend->TextSupport().SetWordWrap(false);
       mapLegend->TextSupport().SetImageBaseline(true);
+#ifdef TARGET_PC
+      if (PortLegendReady()) {
+        sPortLegendKey = PortLegendKey();
+        mapLegend->TextSupport().SetText(PortLegendText());
+      } else {
+        sPortLegendKey = ~0u;
+        mapLegend->TextSupport().SetText(rstl::wstring(gpStringTable->GetString(0x31)));
+      }
+#else
       mapLegend->TextSupport().SetText(rstl::wstring(gpStringTable->GetString(0x31)));
+#endif
 
       x30c_basewidget_leftPane = x2c_frmeInitialized->FindWidget("basewidget_leftPane");
       x310_basewidget_yButtonPane = x2c_frmeInitialized->FindWidget("basewidget_yButtonPane");
@@ -1837,6 +1939,16 @@ void CAutoMapper::Update(float dt, const CStateManager& mgr) {
 
   // Update frame and text panes
   if (x2c_frmeInitialized != NULL) {
+#ifdef TARGET_PC
+    if (sPortLegendKey != PortLegendKey() && PortLegendReady()) {
+      sPortLegendKey = PortLegendKey();
+      CGuiTextPane* legend =
+          static_cast< CGuiTextPane* >(x2c_frmeInitialized->FindWidget("textpane_mapLegend"));
+      if (legend != NULL) {
+        legend->TextSupport().SetText(PortLegendText());
+      }
+    }
+#endif
     x2c_frmeInitialized->Update(dt);
 
     {
