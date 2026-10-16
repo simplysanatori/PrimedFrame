@@ -181,14 +181,16 @@ public:
   static bool AABoxCollisionCheck_CollectTriangles(const COctreeLeafCache& leafCache,
                                                    const CAABox& aabb,
                                                    const CMaterialFilter& filter,
-                                                   rstl::vector< CTerrainTriangle >& out);
+                                                   rstl::vector< CTerrainTriangle >& out,
+                                                   bool candidatesOnly = false);
 
   // The same collector over the whole octree, for when the leaf cache is incomplete
   // (CAreaCollisionCache caps each area at 64 leaves): the shipped mover queries the
   // world with no leaf cache at all, so a full cache must not cost geometry.
   static bool AABoxCollisionCheck_CollectTriangles(const CAreaOctTree& octTree, const CAABox& aabb,
                                                    const CMaterialFilter& filter,
-                                                   rstl::vector< CTerrainTriangle >& out);
+                                                   rstl::vector< CTerrainTriangle >& out,
+                                                   bool candidatesOnly = false);
   static bool SphereCollisionCheck_Cached(const COctreeLeafCache& leafCache, const CAABox& aabb,
                                           const CSphere& sphere, const CMaterialList& matList,
                                           const CMaterialFilter& filter, CCollisionInfoList& list);
@@ -220,7 +222,8 @@ private:
   static bool CollectLeafTriangles(const CAreaOctTree::Node&, const CAABox&,
                                    const CMaterialFilter&, const CVector3f& center,
                                    const CVector3f& halfExtent,
-                                   rstl::vector< CTerrainTriangle >& out, bool& ret);
+                                   rstl::vector< CTerrainTriangle >& out, bool& ret,
+                                   bool candidatesOnly);
   static bool AABoxCollisionCheckBoolean_Internal(const CAreaOctTree::Node&,
                                                   const CBooleanAABoxAreaCache&);
   static bool SphereCollisionCheck_Internal(const CAreaOctTree::Node&, CSphereAreaCache&);

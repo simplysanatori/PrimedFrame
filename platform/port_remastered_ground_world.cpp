@@ -126,6 +126,13 @@ bool BuildTriangleContacts(const Query& query, const Triangle& tri,
   // already merged into `materialBits`.
   contacts[count++] = FromGeometry(r.box, true, query.actorMaterialBits, boxLo, boxHi, 0);
   contacts[count++] = FromGeometry(r.triangle, false, tri.materialBits, triLo, triHi, 0);
+  for (std::size_t j = 0; j < count; ++j) {
+    const auto& source = j == 0 ? r.box : r.triangle;
+    for (std::size_t p = source.firstPoint; p <= source.lastPoint && p < r.pointCount; ++p) {
+      contacts[j].points[contacts[j].pointCount] = FromRemastered(r.points[p]);
+      contacts[j].pointVertical[contacts[j].pointCount++] = r.points[p].y;
+    }
+  }
   return true;
 }
 
@@ -158,6 +165,30 @@ void ConsumerContacts(const Result& result, std::vector< const Contact* >& out) 
       out.push_back(&result.contacts[i]);
     }
   }
+}
+
+TerrainResult QueryTerrain(const Query& query, const Triangle* tris, std::size_t count,
+                           bool produceImpacts) {
+  TerrainResult out;
+  const AABB box = BoxToRemastered(query.box);
+  for (std::size_t i = 0; i < count; ++i) {
+    const Triangle& tri = tris[i];
+    const std::array<Vec3, 3> verts = {ToRemastered(tri.verts[0]),
+                                      ToRemastered(tri.verts[1]), ToRemastered(tri.verts[2])};
+    if (!PortRemasteredGroundContacts::Intersects(box, verts)) continue;
+    out.booleanHit = true;
+    if (!produceImpacts) return out;
+    std::array<Contact, 2> pair{};
+    std::size_t pairCount = 0;
+    if (!BuildTriangleContacts(query, tri, pair, pairCount)) continue;
+    ++out.impacts.hits;
+    for (std::size_t j = 0; j < pairCount; ++j) {
+      pair[j].triangle = i;
+      out.impacts.contacts.push_back(pair[j]);
+    }
+  }
+  out.impacts.grewBeyondInlineCapacity = out.impacts.contacts.size() > kLegacyCapacity;
+  return out;
 }
 
 } // namespace PortRemasteredGroundWorld

@@ -63,6 +63,11 @@ struct Contact {
   // extremes are the whole contract.
   float minVertical = 0.f;
   float maxVertical = 0.f;
+  // Landing queries select the highest point INSIDE an interval; extrema alone
+  // cannot answer that when the polygon straddles the interval's upper bound.
+  std::array<float, 10> pointVertical{};
+  std::array<Vec3f, 10> points{};
+  std::size_t pointCount = 0;
   float D = 0.f;                  // +0x14
   float H = 0.f;                  // +0x18
   std::size_t triangle = 0;       // caller's triangle index
@@ -104,6 +109,13 @@ struct Result {
   std::size_t hits = 0;
 };
 Result BuildContacts(const Query& query, const Triangle* tris, std::size_t count);
+
+struct TerrainResult {
+  bool booleanHit = false; // 0xc1f110: inclusive SAT, no response/post-filter
+  Result impacts;          // full CheckCollision: SAT followed by impact production
+};
+TerrainResult QueryTerrain(const Query&, const Triangle*, std::size_t count,
+                           bool produceImpacts);
 
 // The contact every shipped height/normal consumer reads out of each 0x90 pair:
 // the side whose +0x30 owner is NOT the queried object —

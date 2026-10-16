@@ -198,7 +198,8 @@ bool CMetroidAreaCollider::AABoxCollisionCheck_Cached(const COctreeLeafCache& le
 bool CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles(const COctreeLeafCache& leafCache,
                                                                 const CAABox& aabb,
                                                                 const CMaterialFilter& filter,
-                                                                rstl::vector< CTerrainTriangle >& out) {
+                                                                rstl::vector< CTerrainTriangle >& out,
+                                                                bool candidatesOnly) {
   const CVector3f center = aabb.GetCenterPoint();
   const CVector3f halfExtent = aabb.GetHalfExtent();
   bool ret = false;
@@ -229,7 +230,7 @@ bool CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles(const COctreeLea
       if (!filter.Passes(material)) {
         continue;
       }
-      if (!CollisionUtil::TriBoxOverlap(center, halfExtent, surf.GetVert(0), surf.GetVert(1),
+      if (!candidatesOnly && !CollisionUtil::TriBoxOverlap(center, halfExtent, surf.GetVert(0), surf.GetVert(1),
                                         surf.GetVert(2))) {
         continue;
       }
@@ -249,7 +250,8 @@ bool CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles(const COctreeLea
 bool CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles(const CAreaOctTree& octTree,
                                                                 const CAABox& aabb,
                                                                 const CMaterialFilter& filter,
-                                                                rstl::vector< CTerrainTriangle >& out) {
+                                                                rstl::vector< CTerrainTriangle >& out,
+                                                                bool candidatesOnly) {
   // The cached collector's body over `AABoxCollisionCheck_Internal`'s descent:
   // branch nodes are pruned by their bounding box, leaves contribute their
   // triangles. Used when the leaf cache is incomplete, so no leaf may be lost.
@@ -259,7 +261,7 @@ bool CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles(const CAreaOctTr
   ResetInternalCounters();
   CollectLeafTriangles(CAreaOctTree::Node(octTree.GetTreeMemory(), octTree.GetBoundingBox(),
                                           octTree, octTree.GetTreeType()),
-                       aabb, filter, center, halfExtent, out, ret);
+                       aabb, filter, center, halfExtent, out, ret, candidatesOnly);
   return ret;
 }
 
@@ -268,7 +270,7 @@ bool CMetroidAreaCollider::CollectLeafTriangles(const CAreaOctTree::Node& node, 
                                                 const CVector3f& center,
                                                 const CVector3f& halfExtent,
                                                 rstl::vector< CTerrainTriangle >& out,
-                                                bool& ret) {
+                                                bool& ret, bool candidatesOnly) {
   switch (node.GetTreeType()) {
   case CAreaOctTree::Node::kTT_Invalid:
     return false;
@@ -276,7 +278,7 @@ bool CMetroidAreaCollider::CollectLeafTriangles(const CAreaOctTree::Node& node, 
     for (int i = 0; i < 8; ++i) {
       CAreaOctTree::Node ch = node.GetChild(i);
       if (ch.GetBoundingBox().DoBoundsOverlap(aabb)) {
-        CollectLeafTriangles(ch, aabb, filter, center, halfExtent, out, ret);
+        CollectLeafTriangles(ch, aabb, filter, center, halfExtent, out, ret, candidatesOnly);
       }
     }
     break;
@@ -298,7 +300,7 @@ bool CMetroidAreaCollider::CollectLeafTriangles(const CAreaOctTree::Node& node, 
       if (!filter.Passes(material)) {
         continue;
       }
-      if (!CollisionUtil::TriBoxOverlap(center, halfExtent, surf.GetVert(0), surf.GetVert(1),
+      if (!candidatesOnly && !CollisionUtil::TriBoxOverlap(center, halfExtent, surf.GetVert(0), surf.GetVert(1),
                                         surf.GetVert(2))) {
         continue;
       }

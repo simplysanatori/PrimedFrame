@@ -124,6 +124,48 @@ bool SweptLineLine(Vec3 o, Vec3 direction, Vec3 sweep, Vec3 axisOrigin, Vec3 axi
 }
 }
 
+bool Intersects(const AABB& b, const std::array<Vec3,3>& t) {
+  const Vec3 center = Mul(Add(b.min,b.max),.5f);
+  const Vec3 extent = Mul(Sub(b.max,b.min),.5f);
+  const Vec3 a = Sub(t[0],center), c = Sub(t[2],center), v = Sub(t[1],center);
+  for (unsigned i=0; i<3; ++i) {
+    const float x = Component(a,i), y = Component(v,i), z = Component(c,i);
+    const float lo = x-y < 0.f ? x : y;
+    const float hi = x-y < 0.f ? y : x;
+    if ((lo-z < 0.f ? lo : z) > Component(extent,i) ||
+        (hi-z < 0.f ? z : hi) < -Component(extent,i)) return false;
+  }
+  const Vec3 e0 = Sub(v,a), e1 = Sub(c,v), e2 = Sub(a,c);
+  const Vec3 n = Cross(e0,e1);
+  if (!(std::fabs(a.z*n.z + (a.x*n.x + a.y*n.y)) <=
+        extent.z*std::fabs(n.z) + (extent.x*std::fabs(n.x) + extent.y*std::fabs(n.y))))
+    return false;
+  // Each edge's two distinct projections: its first vertex and the opposite
+  // vertex. Keep the source's endpoint choice/order, including equality.
+  const Vec3 edges[] = {e0,e1,e2};
+  const Vec3 first[] = {a,a,a};
+  const Vec3 opposite[] = {c,c,v};
+  for (unsigned i=0; i<3; ++i) {
+    const Vec3 e = edges[i], p = first[i], q = opposite[i];
+    // The source uses the second vertex for edge 0's Z-axis projection,
+    // and vertices 1/2 for edge 2's. Algebraically equal edge endpoints
+    // need not be bit-equal in binary32, so do not substitute vertex 0.
+    const Vec3 zFirst = i == 1 ? a : v;
+    const float u[] = {p.y*e.z-p.z*e.y, p.z*e.x-p.x*e.z,
+                       zFirst.x*e.y-e.x*zFirst.y};
+    const float w[] = {e.z*q.y-e.y*q.z, e.x*q.z-e.z*q.x, e.y*c.x-e.x*c.y};
+    const float radius[] = {extent.z*std::fabs(e.y)+extent.y*std::fabs(e.z),
+                            extent.z*std::fabs(e.x)+extent.x*std::fabs(e.z),
+                            extent.y*std::fabs(e.x)+extent.x*std::fabs(e.y)};
+    for (unsigned j=0; j<3; ++j) {
+      const float hi = u[j]-w[j] < 0.f ? w[j] : u[j];
+      const float lo = u[j]-w[j] < 0.f ? u[j] : w[j];
+      if (!((-hi-lo < 0.f ? lo : -hi) <= radius[j])) return false;
+    }
+  }
+  return true;
+}
+
 Result Build(const AABB& b, const std::array<Vec3,3>& t, Vec3 n) {
   Result r;
   auto& p = r.provenance;

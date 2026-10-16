@@ -52,6 +52,9 @@ struct Result {
 // overflow. Degenerate triangles are not rejected by an invented area test.
 // IEEE binary32 round-to-nearest, gradual underflow, no fast-math/contraction.
 Result Build(const AABB&, const std::array<Vec3, 3>&, Vec3 normal);
+// 0xc04740: inclusive SAT predicate used by the NoPostFilter tree traversal.
+// Deliberately independent of Build's strict polygon clipping.
+bool Intersects(const AABB&, const std::array<Vec3, 3>&);
 // Source helpers exposed for independent boundary/ISA regression tests.
 namespace Source {
 bool IsNormalizable(Vec3);
