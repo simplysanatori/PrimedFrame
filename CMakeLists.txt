@@ -793,6 +793,18 @@ if(MP_BUILD_TESTS)
         add_test(NAME ${t}_tests COMMAND ${t}_tests)
         set_tests_properties(${t}_tests PROPERTIES TIMEOUT 15 LABELS port)
     endforeach()
+    # The Remastered grounded mover's pure policy (header-only): the entry, response,
+    # snap and retained-object-state decisions.
+    add_executable(port_remastered_ground_policy_tests tests/port_remastered_ground_policy.cpp)
+    target_include_directories(port_remastered_ground_policy_tests PRIVATE platform/include)
+    if(MSVC)
+        target_compile_options(port_remastered_ground_policy_tests PRIVATE /fp:strict)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(port_remastered_ground_policy_tests PRIVATE -fno-fast-math
+            -ffp-contract=off)
+    endif()
+    add_test(NAME port_remastered_ground_policy_tests COMMAND port_remastered_ground_policy_tests)
+    set_tests_properties(port_remastered_ground_policy_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_hdr_scene_policy_tests tests/port_hdr_scene_policy.cpp)
     target_include_directories(port_hdr_scene_policy_tests PRIVATE include extern/aurora/include)
     target_compile_definitions(port_hdr_scene_policy_tests PRIVATE TARGET_PC VERSION=0)

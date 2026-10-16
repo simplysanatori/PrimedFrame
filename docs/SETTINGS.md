@@ -216,7 +216,8 @@
   stick or mouse aim, diagonals are as fast as straight ahead and the air drag is
   steady, so a jump keeps a smooth arc, as in Remastered and PrimeHack. Off, jumps
   move as on the GameCube. Classic controls always move as on the GameCube. Both
-  are off under the original experience.
+  are off under the original experience. What the port implements on the ground
+  under this setting, and what it does not, is in `docs/REMASTERED_MOVEMENT.md`.
 - The overlay's **Controls** page keeps settings only: "Mouse settings" (inversion,
   crosshair) and "Controller settings" (stick aim and dead
   zones). **Remap > Active controller** selects any detected gamepad, including

@@ -45,8 +45,9 @@ title screen or while paused. Pair with `MP_TURBO` for speed.
 
 `physics` is telemetry added for the movement parity work (issue #117). It is
 read-only and changes no behaviour, and it reports what the state holds, not what
-a mover decides: nothing in it says which mover (retail or Remastered) the next
-tick selects.
+a mover decides: nothing in it predicts which mover (retail or Remastered) the next
+tick selects. `ground_mover_runs` is the one field that speaks about the past — it
+counts ticks that already took the Remastered ground mover (see below).
 
 - `tick`: the simulation tick this command is dispatching in —
   `CActor::PortTickGeneration()`, bumped exactly once per dispatched tick in
@@ -67,6 +68,30 @@ tick selects.
 - `ground_collider`: the player's `kMT_GroundCollider` **material** flag. This is
   not "grounded": Remastered drops that material in the air, and `movement_state`
   is the field that says whether the player is on the ground.
+- `ground_mover_runs`: how many ticks have entered
+  `CGameCollision::MoveGroundedRemastered` **for this player** since the process
+  started — a `uint32`, monotonic, incremented at that function's entry only, after
+  the dynamic-contact fallback guard and before the entry impulse, and never reset
+  (a save-state load rebuilds and teleports the player without clearing it). It
+  answers "is the Remastered ground mover actually running, or is something
+  silently disabling it?" — a morph-ball tick, a save-state load, the
+  dynamic-contact fallback, the retained-state dispatch in `CGameCollision::MovePlayer`,
+  retail movement (`remastered_movement` off) and every airborne tick leave it
+  unchanged. It only says whether the mover ran, and it is not a
+  statement that ground replacement is complete or matches Remastered
+  (`docs/REMASTERED_MOVEMENT.md`). The getter is
+  `TARGET_PC` only; the field is absent in a build without it.
+- `retained_ground_state`: the port's retained Remastered physics object state
+  (`CPhysicsState+0x13c`; the retained ground/air result, one of the fields the
+  movers persist):
+  `1` grounded, `0` no floor, `null` when the port has **no trustworthy value for
+  this tick** (a retail mover ran: a tick outside the mover gate — classic
+  movement, direct aim/mouse controls off, morph ball — the ground dynamic
+  fallback, or a save-state load; the Remastered mover then stands aside until the
+  next Remastered airborne tick). Read-only observation, also `TARGET_PC` only.
+- Neither field above is a clock: `tick` is the simulation generation, and
+  `ground_mover_runs` counts mover entries, which are per-tick, per-player and
+  0 on any tick that took another path. Nothing in the mover reads either.
 - `dashing`, `dash_done`: `CPlayer::IsSidewaysDashing` and
   `GetDoneSidewaysDashing`.
 - `orbit_state`: `no_orbit`, `orbit_object`, `orbit_point`, `orbit_carcass`,

@@ -51,6 +51,10 @@ struct CoreHooks {
 // 0xc1fc54: up to five pushes from `from`, then the tunneling check from the state
 // (`from`) to the result.
 bool Core(const Vec3& from, float worldDt, const CoreHooks& hooks, Vec3& out);
+// Same, with the tunneling test's origin (the object's state transform) apart from `from`
+// (the explicit start of the 0xc1fb88 wrapper). The pushes still reference `from`.
+bool Core(const Vec3& from, const Vec3& objectState, float worldDt, const CoreHooks& hooks,
+          Vec3& out);
 
 // 0xc1fa68. `core(failsafe, out)` runs Core from `cur` with the collision filter
 // (0x1270) or the failsafe filter (0x1290); `blocked(failsafe, pos)` is
