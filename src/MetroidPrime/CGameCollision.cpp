@@ -1073,10 +1073,25 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       // corners' heights are the polygon's lowest and highest points. The low corner
       // alone sits on the probed box bottom, the interval's open end, so a dynamic
       // floor (a moving platform) never grounded.
+      // A box actor's side contact is different: retail AABoxAABoxIntersection gives
+      // every axis contact the overlap box as its bounds, while Remastered's
+      // CCollidableAABox::AABox_AABox (0xbf61b4 via 0xbf6650) gives each axis contact
+      // one point, the centre of the overlap's face, so a side contact sits at the
+      // overlap's mid-height. With the overlap's top as its point, a side contact ties
+      // the top contact's height and, walked first, wins the strict `pz <= low`: a
+      // player overhanging the edge of a box actor never landed. A box contact has an
+      // axis normal and bounds with depth along it; a clipped polygon has none.
       for (int i=0; i<dynamic.GetCount(); ++i) {
         const auto& c = dynamic[i];
-        for (int k = 0; k < 2; ++k) {
-          const float pz = k == 0 ? c.GetPoint().GetZ() : c.GetExtreme().GetZ();
+        const CVector3f& n = c.GetNormalLeft();
+        const CVector3f depth = c.GetExtreme() - c.GetPoint();
+        const bool boxSide = n.GetZ() == 0.f &&
+                             ((n.GetY() == 0.f && depth.GetX() > 0.f) ||
+                              (n.GetX() == 0.f && depth.GetY() > 0.f));
+        for (int k = 0; k < (boxSide ? 1 : 2); ++k) {
+          const float pz = boxSide ? (c.GetPoint().GetZ() + c.GetExtreme().GetZ()) * .5f
+                         : k == 0  ? c.GetPoint().GetZ()
+                                   : c.GetExtreme().GetZ();
           if (pz > feet || pz <= low) continue;
           result = Classify::IsFloor(c.GetMaterialLeft(),c.GetNormalLeft());
           low = pz;
