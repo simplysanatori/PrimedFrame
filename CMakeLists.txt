@@ -673,8 +673,21 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_remastered_text_tests PRIVATE platform/include)
     add_executable(port_remastered_effect_tests tests/port_remastered_effect.cpp platform/port_remastered_effect.cpp)
     target_include_directories(port_remastered_effect_tests PRIVATE platform/include)
-    add_executable(port_remastered_effect_convert_tests tests/port_remastered_effect_convert.cpp platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp)
-    target_include_directories(port_remastered_effect_convert_tests PRIVATE platform/include)
+    add_executable(port_remastered_effect_convert_tests
+        tests/port_remastered_effect_convert.cpp platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp
+        src/Kyoto/Particles/CVectorElement.cpp src/Kyoto/Math/CQuaternion.cpp src/Kyoto/Math/CVector3f.cpp
+        src/Kyoto/Math/CMatrix3f.cpp)
+    target_include_directories(port_remastered_effect_convert_tests PRIVATE platform/include include extern/aurora/include)
+    target_compile_definitions(port_remastered_effect_convert_tests PRIVATE TARGET_PC VERSION=0)
+    if(MSVC OR CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+        target_compile_options(port_remastered_effect_convert_tests PRIVATE /Gy)
+        target_link_options(port_remastered_effect_convert_tests PRIVATE /OPT:REF /FORCE:UNRESOLVED)
+    elseif(APPLE)
+        target_link_options(port_remastered_effect_convert_tests PRIVATE -Wl,-dead_strip)
+    else()
+        target_compile_options(port_remastered_effect_convert_tests PRIVATE -ffunction-sections -fdata-sections)
+        target_link_options(port_remastered_effect_convert_tests PRIVATE -Wl,--gc-sections)
+    endif()
     add_executable(port_electric2_bolt_tests tests/port_electric2_bolt.cpp)
     target_include_directories(port_electric2_bolt_tests PRIVATE platform/include)
     add_executable(port_ice_rotation_element_tests

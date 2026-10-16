@@ -1,9 +1,15 @@
 #include "port_remastered_effect_convert.h"
+#include "Kyoto/Math/CMatrix3f.hpp"
+#include "Kyoto/Math/CQuaternion.hpp"
+#include "Kyoto/Particles/CVectorElement.hpp"
+#include "Kyoto/Particles/IElement.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -105,6 +111,102 @@ struct Retail {
     return *this;
   }
 };
+
+Retail& RetailVector(Retail& out, float x, float y, float z) {
+  out.f("CNST").f("CNST").w(Bits(x)).f("CNST").w(Bits(y)).f("CNST").w(Bits(z));
+  return out;
+}
+
+CQuaternion EulerQuaternion(const CVector3f& degrees) {
+  constexpr float kDegreesToRadians = 0.01745329251994329577f;
+  const float x = std::remainder(degrees.GetX(), 360.f) * kDegreesToRadians * 0.5f;
+  const float y = std::remainder(degrees.GetY(), 360.f) * kDegreesToRadians * 0.5f;
+  const float z = std::remainder(degrees.GetZ(), 360.f) * kDegreesToRadians * 0.5f;
+  return CQuaternion(std::cos(z), 0.f, 0.f, std::sin(z)) * CQuaternion(std::cos(y), 0.f, std::sin(y), 0.f) *
+         CQuaternion(std::cos(x), std::sin(x), 0.f, 0.f);
+}
+
+CMatrix3f EulerMatrix(const CVector3f& degrees) { return EulerQuaternion(degrees).BuildTransform(); }
+
+uint32_t ReadBE32(const std::vector<uint8_t>& bytes, size_t& at) {
+  if (at > bytes.size() || bytes.size() - at < 4) {
+    at = bytes.size() + 1;
+    return 0;
+  }
+  const uint32_t value = uint32_t(bytes[at]) << 24 | uint32_t(bytes[at + 1]) << 16 |
+                         uint32_t(bytes[at + 2]) << 8 | bytes[at + 3];
+  at += 4;
+  return value;
+}
+
+bool ReadStaticReal(const std::vector<uint8_t>& bytes, size_t& at, float& out) {
+  if (ReadBE32(bytes, at) != EffectFourCC("CNST")) {
+    return false;
+  }
+  const uint32_t bits = ReadBE32(bytes, at);
+  if (at > bytes.size()) {
+    return false;
+  }
+  std::memcpy(&out, &bits, sizeof(out));
+  return true;
+}
+
+// Read the converter's serialized, static CNST/PQAD subset into the production
+// vector-element evaluators. SplitRetailPart separately validates the complete
+// PART with the effect reader's typed grammar.
+std::unique_ptr<CVectorElement> ReadStaticRotation(const std::vector<uint8_t>& bytes, size_t& at, int depth = 0) {
+  if (depth > 16) {
+    return {};
+  }
+  const uint32_t type = ReadBE32(bytes, at);
+  if (type == EffectFourCC("CNST")) {
+    float x, y, z;
+    if (!ReadStaticReal(bytes, at, x) || !ReadStaticReal(bytes, at, y) || !ReadStaticReal(bytes, at, z)) {
+      return {};
+    }
+    return std::unique_ptr<CVectorElement>(new CVEFastConstant(x, y, z));
+  }
+  if (type != EffectFourCC("PQAD")) {
+    return {};
+  }
+  std::unique_ptr<CVectorElement> first = ReadStaticRotation(bytes, at, depth + 1);
+  std::unique_ptr<CVectorElement> second = ReadStaticRotation(bytes, at, depth + 1);
+  if (!first || !second) {
+    return {};
+  }
+  return std::unique_ptr<CVectorElement>(
+      new CVEOrderedEulerProduct(first.release(), second.release()));
+}
+
+std::unique_ptr<CVectorElement> ReadConvertedRotation(const ConvertedPart& part) {
+  std::vector<RetailPartProperty> properties;
+  std::string error;
+  if (!SplitRetailPart(part.part.data(), part.part.size(), properties, error)) {
+    Check(false, "serialized rotation PART passes the effect reader");
+    return {};
+  }
+  const auto found = std::find_if(properties.begin(), properties.end(),
+                                  [](const RetailPartProperty& property) {
+                                    return property.fourcc == EffectFourCC("PMRT");
+                                  });
+  if (found == properties.end()) {
+    Check(false, "serialized rotation PART contains PMRT");
+    return {};
+  }
+  size_t at = 0;
+  std::unique_ptr<CVectorElement> rotation = ReadStaticRotation(found->value, at);
+  Check(rotation != nullptr && at == found->value.size(),
+        "serialized static PMRT tree reads completely into native evaluators");
+  return rotation;
+}
+
+bool SameMatrix(const CMatrix3f& a, const CMatrix3f& b, float epsilon = 5.e-5f) {
+  const float difference[] = {a.Get00() - b.Get00(), a.Get01() - b.Get01(), a.Get02() - b.Get02(),
+                              a.Get10() - b.Get10(), a.Get11() - b.Get11(), a.Get12() - b.Get12(),
+                              a.Get20() - b.Get20(), a.Get21() - b.Get21(), a.Get22() - b.Get22()};
+  return std::all_of(std::begin(difference), std::end(difference),
+                     [epsilon](float value) { return std::fabs(value) <= epsilon; });
+}
 
 // A root using most of what the converter undoes, with one embedded child.
 std::vector<uint8_t> Effect() {
@@ -1156,10 +1258,13 @@ void TestModelRotation() {
                }),
                {});
   Retail want;
-  want.f("GPSM").f("PMRT").f("CNST").f("CNST").w(Bits(-90.0f)).f("CNST").w(Bits(0.0f));
-  want.f("SCAL").f("CNST").w(Bits(-0.05f));
+  want.f("GPSM").f("PMRT").f("PQAD");
+  RetailVector(want, 90.f, 0.f, 180.f);
+  want.f("PQAD");
+  want.f("CNST").f("CNST").w(Bits(-90.f)).f("CNST").w(Bits(0.f)).f("SCAL").f("CNST").w(Bits(-0.05f));
+  RetailVector(want, 90.f, 0.f, 180.f);
   want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
-  Check(parts.size() == 1 && parts[0].part == want.bytes, "PMRQ REUL becomes PMRT");
+  Check(parts.size() == 1 && parts[0].part == want.bytes, "PMRQ REUL becomes a basis-conjugated PMRT");
   Check(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(), "PMRQ REUL is exact");
 
   parts = ConvertOne(OneGenerator([](auto& o) {
@@ -1175,12 +1280,16 @@ void TestModelRotation() {
                }),
                {});
   Retail random;
-  random.f("GPSM").f("PMRT").f("CNST").f("CNST").w(Bits(90.0f));
+  random.f("GPSM").f("PMRT").f("PQAD");
+  RetailVector(random, 90.f, 0.f, 180.f);
+  random.f("PQAD");
+  random.f("CNST").f("CNST").w(Bits(90.0f));
   random.f("IRND").f("CNST").w(Bits(0.0f)).f("CNST").w(Bits(360.0f));
   random.f("CNST").w(Bits(0.0f));
+  RetailVector(random, 90.f, 0.f, 180.f);
   random.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == random.bytes,
-        "direct PMRQ REUL preserves (90, IRND(0,360), 0) in PMRT");
+        "basis-conjugated PMRQ REUL preserves (90, IRND(0,360), 0) in PMRT");
   Check(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(),
         "direct PMRQ REUL with IRND is not dropped or approximated");
   if (!parts.empty()) {
@@ -1208,13 +1317,16 @@ void TestModelRotation() {
                }),
                {});
   Retail nested;
-  nested.f("GPSM").f("PMRT").f("CNST").f("CNST").w(Bits(90.0f));
+  nested.f("GPSM").f("PMRT").f("PQAD");
+  RetailVector(nested, 90.f, 0.f, 180.f);
+  nested.f("PQAD").f("CNST").f("CNST").w(Bits(90.0f));
   nested.f("ADD_").f("CNST").w(Bits(15.0f));
   nested.f("IRND").f("CNST").w(Bits(0.0f)).f("CNST").w(Bits(360.0f));
   nested.f("CNST").w(Bits(0.0f));
+  RetailVector(nested, 90.f, 0.f, 180.f);
   nested.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == nested.bytes,
-        "direct PMRQ REUL preserves IRND nested in a supported real expression");
+        "basis-conjugated PMRQ REUL preserves IRND nested in a supported real expression");
   Check(!parts.empty() && parts[0].dropped.empty(), "nested PMRQ IRND is not dropped");
 
   parts = ConvertOne(OneGenerator([](auto& o) {
@@ -1301,6 +1413,8 @@ void TestComposedModelRotation() {
 
   Retail want;
   want.f("GPSM").f("PMRT").f("PQAD");
+  RetailVector(want, 90.f, 0.f, 180.f);
+  want.f("PQAD").f("PQAD");
   want.f("CNST");
   for (int i = 0; i < 3; ++i) {
     want.f("IRND").f("CNST").w(Bits(0.f)).f("CNST").w(Bits(360.f));
@@ -1314,16 +1428,21 @@ void TestComposedModelRotation() {
     }
   }
   want.f("CNST").w(Bits(0.f));
+  RetailVector(want, 90.f, 0.f, 180.f);
   want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   Check(parts.size() == 1 && parts[0].part == want.bytes,
-        "ordered PMRQ preserves IRND and all 120 looping KEYE samples in PQAD");
+        "basis-conjugated ordered PMRQ preserves IRND and all 120 looping KEYE samples in PQAD");
   Check(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(),
         "ordered PMRQ has no dropped or approximated rotation data");
   if (!parts.empty()) {
     std::vector<RetailPartProperty> properties;
     std::string error;
-    Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
-          "PQAD PMRT passes the retail element reader");
+    const bool read = SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error);
+    Check(read, "basis-conjugated PQAD PMRT passes the retail element reader");
+    Check(read && std::any_of(properties.begin(), properties.end(), [](const RetailPartProperty& property) {
+            return property.fourcc == EffectFourCC("PIRN");
+          }),
+          "ordered IRND/KEYE rotation keeps the per-particle PIRN marker");
   }
 
   parts = ConvertOne(OneGenerator([](auto& o) {
@@ -1352,6 +1471,78 @@ void TestComposedModelRotation() {
   Check(!parts.empty() && parts[0].dropped.size() == 1 &&
             parts[0].dropped[0] == "PMRQ: a rotation that is not REUL",
         "ordered PMRQ refuses a non-REUL operand rather than adding Euler components");
+}
+
+ConvertedPart ConvertStaticModelRotation(const std::vector<CVector3f>& eulers) {
+  const std::vector<ConvertedPart> parts = ConvertOne(OneGenerator([&](auto& out) {
+    PutProperty(out, "PMRQ", 3);
+    if (eulers.size() == 1) {
+      PutStaticEuler(out, eulers[0].GetX(), eulers[0].GetY(), eulers[0].GetZ());
+    } else {
+      PutFourCC(out, "RADD");
+      for (const CVector3f& euler : eulers) {
+        PutStaticEuler(out, euler.GetX(), euler.GetY(), euler.GetZ());
+      }
+    }
+    PutTexr(out, 0x1234ABCD);
+  }), {});
+  Check(parts.size() == 1, "static model rotation converts to one PART");
+  if (parts.empty()) {
+    return {};
+  }
+  Check(parts[0].dropped.empty() && parts[0].approximated.empty(),
+        "supported static model rotation is neither dropped nor approximated");
+  return parts[0];
+}
+
+CMatrix3f EvaluateRotation(const ConvertedPart& part) {
+  std::unique_ptr<CVectorElement> rotation = ReadConvertedRotation(part);
+  if (!rotation) {
+    return CMatrix3f::Identity();
+  }
+  CVector3f euler = CVector3f::Zero();
+  rotation->GetValue(0, euler);
+  return EulerMatrix(euler);
+}
+
+void TestModelRotationBasisEvaluation() {
+  const CMatrix3f basis(-1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f, 0.f);
+  const CVector3f asymmetric(25.f, 40.f, 70.f);
+  const CMatrix3f asymmetricExpected = basis * EulerMatrix(asymmetric) * basis.GetTranspose();
+  const CMatrix3f asymmetricActual = EvaluateRotation(ConvertStaticModelRotation({asymmetric}));
+  Check(SameMatrix(asymmetricActual, asymmetricExpected),
+        "serialized direct REUL evaluates to B * R * B-transpose for an asymmetric triple");
+
+  const CVector3f first(90.f, 0.f, 0.f);
+  const CVector3f second(0.f, 90.f, 0.f);
+  const CMatrix3f orderedExpected = basis * EulerMatrix(first) * EulerMatrix(second) * basis.GetTranspose();
+  const CMatrix3f orderedActual = EvaluateRotation(ConvertStaticModelRotation({first, second}));
+  const CMatrix3f reversed = basis * EulerMatrix(second) * EulerMatrix(first) * basis.GetTranspose();
+  Check(SameMatrix(orderedActual, orderedExpected),
+        "serialized RADD evaluates in source operand order before basis conjugation");
+  Check(!SameMatrix(orderedActual, reversed, 0.1f),
+        "noncommuting RADD operands still distinguish reversed composition");
+
+  for (const float y : {90.f, -90.f, 89.9999f, -89.9999f}) {
+    const CVector3f gimbal(37.f, y, -71.f);
+    const CMatrix3f expected = basis * EulerMatrix(gimbal) * basis.GetTranspose();
+    const CMatrix3f actual = EvaluateRotation(ConvertStaticModelRotation({gimbal}));
+    Check(SameMatrix(actual, expected, 8.e-5f),
+          "serialized basis conjugation preserves exact and near-gimbal orientations");
+  }
+
+  const CVector3f convertedPlaneNormal = basis * CVector3f(0.f, 0.f, 1.f);
+  for (int angle = 0; angle < 360; ++angle) {
+    const CVector3f spin(90.f, float(angle), 0.f);
+    const CMatrix3f rotation = EvaluateRotation(ConvertStaticModelRotation({spin}));
+    const CVector3f normal = rotation * convertedPlaneNormal;
+    Check(std::fabs(normal.GetX()) < 8.e-5f && std::fabs(normal.GetY()) < 8.e-5f &&
+              std::fabs(normal.GetZ() + 1.f) < 8.e-5f,
+          "BombExplo source spin keeps the converted ring normal at (0,0,-1)");
+  }
+  const CVector3f oldTilt = EulerMatrix(CVector3f(90.f, 90.f, 0.f)) * convertedPlaneNormal;
+  Check(std::fabs(oldTilt.GetX()) > 0.5f || std::fabs(oldTilt.GetZ() + 1.f) > 0.5f,
+        "unconverted source Euler tuple fails the BombExplo plane-normal invariant");
 }
 
 // A MATI with one shader and its texture parameters, as ParseMati reads it.
@@ -2251,6 +2442,7 @@ int main() {
   TestParameterDefault();
   TestModelRotation();
   TestComposedModelRotation();
+  TestModelRotationBasisEvaluation();
   TestVmatNewRecipes();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();
@@ -2265,3 +2457,10 @@ int main() {
   std::printf("port_remastered_effect_convert: ok\n");
   return 0;
 }
+
+void* IElement::CElementAllocator::Alloc(size_t size, const char*, const char*) { return ::operator new(size); }
+void IElement::CElementAllocator::Free(void* ptr, size_t) { ::operator delete(ptr); }
+void* IElement::operator new(size_t size, const char* file, const char* type) {
+  return CElementAllocator::Alloc(size, file, type);
+}
+void IElement::operator delete(void* ptr, size_t size) { CElementAllocator::Free(ptr, size); }
