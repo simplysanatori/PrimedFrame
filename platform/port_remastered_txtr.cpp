@@ -307,17 +307,31 @@ bool ReadMeta(const uint8_t* data, size_t size, Meta& meta, std::string& error) 
   return true;
 }
 
-// Decompresses every buffer of the META into one buffer, which is the surface
-// as it is stored in memory: tiled, and holding every layer and mip.
+// Decompresses the buffers of the META into one buffer, which is the surface as
+// it is stored in memory: tiled, and holding every layer and mip. With `needed`,
+// only the start of the surface is wanted (the top mip of the first layer, which
+// is laid out first): a buffer that writes nowhere below it is not decompressed,
+// and the surface ends with the last buffer that is.
 bool BuildSurface(const uint8_t* file, size_t fileSize, const Meta& meta,
-                  std::vector<uint8_t>& surface, std::string& error) {
+                  std::vector<uint8_t>& surface, std::string& error, uint64_t needed = UINT64_MAX) {
   if (meta.decompressedSize > 0x40000000u) {
     error = "remastered txtr: META asks for a " + std::to_string(meta.decompressedSize) +
             " byte surface";
     return false;
   }
-  surface.assign(meta.decompressedSize, 0);
+  const auto wanted = [&](const Meta::Buffer& buffer) { return buffer.destOffset < needed; };
+  uint64_t end = std::min<uint64_t>(needed, meta.decompressedSize);
   for (const Meta::Buffer& buffer : meta.buffers) {
+    if (wanted(buffer) && buffer.destOffset <= meta.decompressedSize &&
+        buffer.destSize <= meta.decompressedSize - buffer.destOffset) {
+      end = std::max(end, buffer.destOffset + buffer.destSize);
+    }
+  }
+  surface.assign(size_t(end), 0);
+  for (const Meta::Buffer& buffer : meta.buffers) {
+    if (!wanted(buffer)) {
+      continue;
+    }
     const Meta::Read* read = nullptr;
     for (const Meta::Read& candidate : meta.reads) {
       if (candidate.index == buffer.index) {
@@ -2729,10 +2743,6 @@ bool DecodeTxtr(const uint8_t* data, size_t size, TxtrImage& out, std::string& e
   if (!ReadMeta(data, size, meta, error)) {
     return false;
   }
-  std::vector<uint8_t> surface;
-  if (!BuildSurface(data, size, meta, surface, error)) {
-    return false;
-  }
 
   // A 3D texture's depth is its layer count; for everything else the layers sit
   // side by side and layer 0 is the first slice of the surface either way.
@@ -2748,9 +2758,15 @@ bool DecodeTxtr(const uint8_t* data, size_t size, TxtrImage& out, std::string& e
 
   const size_t swizzledSize = SwizzledMipSize(mipWidth, mipHeight, mipDepth, mipBlockHeight,
                                               bytesPerPixel);
-  if (surface.size() < swizzledSize) {
-    error = "remastered txtr: the surface is " + std::to_string(surface.size()) +
+  if (meta.decompressedSize < swizzledSize) {
+    error = "remastered txtr: the surface is " + std::to_string(meta.decompressedSize) +
             " bytes, its top mip alone needs " + std::to_string(swizzledSize);
+    return false;
+  }
+  // Only the top mip of the first layer is decoded, and it comes first: the
+  // buffers holding the smaller mips and the other layers are left compressed.
+  std::vector<uint8_t> surface;
+  if (!BuildSurface(data, size, meta, surface, error, swizzledSize)) {
     return false;
   }
   const size_t sliceSize = mipWidth * mipHeight * bytesPerPixel;

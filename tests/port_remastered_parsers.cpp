@@ -8,6 +8,7 @@
 #include "port_remastered_txtr.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <random>
@@ -327,12 +328,88 @@ void TestTxtrGarbage() {
   }
   Check(!DecodeTxtr(form.data(), form.size(), image, error), "noise is not a texture");
 }
+
+// A 16x16 RGBA8 texture whose 64 KB surface comes in two stored buffers: the
+// first holds the top mip (and more), the second the rest. `second` is that
+// buffer's bytes as written, mode word included, so it can be made undecodable.
+Blob Texture(const Blob& first, const Blob& second, uint32_t secondSize) {
+  Blob head;
+  for (uint32_t v : {0u, 12u, 16u, 16u, 1u, 0u, 0u, 1u, 1024u}) {
+    Little32(head, v); // kind, format (RGBA8), width, height, layers, tile, swizzle, mips, mip size
+  }
+  Blob body;
+  Chunk(body, "HEAD", head);
+  Blob out;
+  Form(out, body.size(), "TXTR", 47, 51);
+  out.insert(out.end(), body.begin(), body.end());
+
+  const uint32_t firstSize = uint32_t(first.size()) - 4;
+  Blob meta;
+  for (uint32_t v : {0u, 0u, 0u, 0u, 0u, firstSize + secondSize, 1u}) {
+    Little32(meta, v); // ..., decompressed size, read count
+  }
+  // One read covering both buffers; its offset is filled in once the footer's size is known.
+  const size_t readAt = meta.size();
+  meta.push_back(0);
+  Little32(meta, 0);
+  Little32(meta, uint32_t(first.size() + second.size()));
+  Little32(meta, 2);
+  for (const auto& [offset, size, dest, destSize] :
+       {std::array<uint32_t, 4>{0, uint32_t(first.size()), 0, firstSize},
+        std::array<uint32_t, 4>{uint32_t(first.size()), uint32_t(second.size()), firstSize, secondSize}}) {
+    for (uint32_t v : {0u, offset, size, dest, destSize}) {
+      Little32(meta, v);
+    }
+  }
+  Blob footBody;
+  Chunk(footBody, "META", meta);
+  Blob foot;
+  Form(foot, footBody.size(), "FOOT", 1, 1);
+  const size_t footStart = out.size();
+  foot.insert(foot.end(), footBody.begin(), footBody.end());
+  out.insert(out.end(), foot.begin(), foot.end());
+  const uint32_t texels = uint32_t(out.size());
+  const size_t metaInFile = footStart + 32 + 24;
+  for (int i = 0; i < 4; ++i) {
+    out[metaInFile + readAt + 1 + size_t(i)] = uint8_t(texels >> (8 * i));
+  }
+  out.insert(out.end(), first.begin(), first.end());
+  out.insert(out.end(), second.begin(), second.end());
+  return out;
+}
+
+Blob Stored(const Blob& bytes) {
+  Blob out;
+  Little32(out, 0);
+  out.insert(out.end(), bytes.begin(), bytes.end());
+  return out;
+}
+
+void TestTxtrTopMipOnly() {
+  const Blob first = Stored(Sample(32768, 21));
+  const uint32_t secondSize = 32768;
+  const Blob good = Texture(first, Stored(Sample(secondSize, 22)), secondSize);
+  // An LZSS buffer that cannot decompress to its size.
+  Blob broken{1, 0, 0, 0, 0x80, 0xFF, 0xFF};
+  const Blob noSecond = Texture(first, broken, secondSize);
+  TxtrImage a, b;
+  std::string error;
+  Check(DecodeTxtr(good.data(), good.size(), a, error), "synthetic texture decodes");
+  Check(a.width == 16 && a.height == 16 && a.rgba.size() == 16 * 16 * 4, "its size");
+  // Only the top mip is decoded, and only its buffer is decompressed: a broken buffer of the
+  // smaller mips does not matter, and the image is the same.
+  Check(DecodeTxtr(noSecond.data(), noSecond.size(), b, error) && b.rgba == a.rgba,
+        "a buffer past the top mip is not decompressed");
+  const Blob noFirst = Texture(broken, Stored(Sample(secondSize, 22)), 32768);
+  Check(!DecodeTxtr(noFirst.data(), noFirst.size(), b, error), "a broken top-mip buffer still fails");
+}
 } // namespace
 
 int main() {
   TestLzss();
   TestPakRead();
   TestTxtrGarbage();
+  TestTxtrTopMipOnly();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;
