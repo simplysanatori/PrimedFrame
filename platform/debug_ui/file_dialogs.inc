@@ -840,7 +840,8 @@ static void FinishRemasteredImport() {
     return;
   }
   // The finished import is moved into place on the import's thread, not by the mods reload on this
-  // one: on Android's shared storage that move took minutes with the game frozen. Nothing of the
+  // one: in shared storage (what the mods folder used to be on Android) that move took minutes with
+  // the game frozen, and a big folder keeps the game from waiting either way. Nothing of the
   // old mod may be open meanwhile, so the mods are unloaded first if they came back on.
   if (state.ok && !sImportInstallStarted) {
     const PortMods::Status& status = PortMods::CurrentStatus();

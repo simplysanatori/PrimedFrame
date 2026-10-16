@@ -1,5 +1,6 @@
 #include "port_env.h"
 #include "port_remastered_import.h"
+#include "port_remastered_storage.h"
 
 #include <algorithm>
 #include <array>
@@ -70,6 +71,10 @@
 #include <unistd.h>
 #endif
 
+#if defined(__ANDROID__)
+#include <SDL3/SDL_system.h>
+#endif
+
 namespace PortRemastered {
 namespace {
 
@@ -104,7 +109,9 @@ constexpr uint32_t kWPSC = 0x57505343;  // the disc's projectile weapon
 constexpr uint32_t kCRSC = 0x43525343;  // the disc's projectile collision response
 constexpr uint32_t kPART = 0x50415254;  // a disc particle effect
 
-constexpr const char* kStagingName = ".remastered-models.importing";
+// The import's own folders, staged in the root port_remastered_storage.h works out.
+constexpr const char* kStagingName = PortRemasteredStorage::kStagingName;
+constexpr const char* kTrashPrefix = PortRemasteredStorage::kTrashPrefix;
 // Written last, so a staging folder without it is an import that was cut short.
 constexpr const char* kMarkerName = "import-complete";
 constexpr const char* kRoomFolder = "roomenv";
@@ -220,6 +227,11 @@ std::thread sThread;
 std::atomic<bool> sCancel{false};
 
 fs::path PathFromString(const std::string& text) { return fs::path(std::u8string(text.begin(), text.end())); }
+
+std::string PathString(const fs::path& path) {
+  const std::u8string text = path.u8string();
+  return std::string(text.begin(), text.end());
+}
 
 void SetMessage(const std::string& message) {
   std::lock_guard<std::mutex> lock(sStateMutex);
@@ -1255,18 +1267,43 @@ private:
 // --- The import ------------------------------------------------------------------
 
 fs::path StagingFolder() {
+  const std::string root = ImportRootFolder();
+  return root.empty() ? fs::path() : PathFromString(root) / kStagingName;
+}
+
+#if defined(__ANDROID__)
+// The app's own storage, where Android keeps the built-in import (SDL's answer is the folder the
+// APK's private files live in).
+std::string InternalStoragePath() {
+  const char* storage = SDL_GetAndroidInternalStoragePath();
+  return storage != nullptr ? storage : std::string();
+}
+#endif
+
+// The shared mods folder's own import from before Android moved the import into the app, or from a
+// first private import that has none: read-only, and empty when the mods folder is the root itself,
+// where the import already is that folder's.
+std::string LegacySharedImport() {
+  const std::string root = ImportRootFolder();
   const std::string mods = PortMods::Folder();
-  return mods.empty() ? fs::path() : PathFromString(mods) / kStagingName;
+  if (root.empty() || mods.empty() ||
+      PortRemasteredStorage::WithSeparator(mods) == root) {
+    return {};
+  }
+  std::error_code ec;
+  const fs::path legacy = PathFromString(mods) / kImportModName;
+  return fs::is_directory(legacy, ec) ? PathString(legacy) : std::string();
 }
 
 // Where a finished import that is not yet in place waits while the next one reuses it.
-fs::path HeldFolder(const fs::path& staging) { return staging.parent_path() / (std::string(kStagingName) + ".held"); }
+fs::path HeldFolder(const fs::path& staging) {
+  return staging.parent_path() / PortRemasteredStorage::kHeldName;
+}
 
-// Folders on their way out: an old import can be most of a gigabyte, too much to
-// delete while the game waits on a mods reload. Renamed to a hidden name (the mod
-// loader skips it) at once and deleted on a thread; one a quit interrupted is
-// picked up by the next sweep.
-constexpr const char* kTrashPrefix = ".remastered-models.trash-";
+// Folders on their way out (kTrashPrefix): an old import can be most of a gigabyte,
+// too much to delete while the game waits on a mods reload. Renamed to a hidden name
+// (the mod loader skips it) at once and deleted on a thread; one a quit interrupted
+// is picked up by the next sweep.
 std::mutex sTrashMutex;
 bool sTrashSweeping = false;
 bool sTrashAgain = false;
@@ -2041,7 +2078,25 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     fs::remove_all(held, ec);
   }
   const bool fromHeld = fs::exists(held / kMarkerName, ec);
-  const fs::path source = fromHeld ? held : staging.parent_path() / kImportModName;
+  fs::path source = fromHeld ? held : staging.parent_path() / kImportModName;
+  if (!fromHeld) {
+    // Which import the unchanged stages are reused from (port_remastered_storage.h): the installed
+    // one inside the root, else a legacy import in the shared mods folder - which is only read, as
+    // LinkFiles hard-links its files, or copies them where the file systems differ (the card and the
+    // app's storage do), so that folder is left exactly as it is. A full import into the app never
+    // moves or deletes it.
+    const std::string legacy = LegacySharedImport();
+    std::error_code installedEc;
+    std::error_code legacyEc;
+    const bool installedUsable = fs::is_regular_file(source / kManifestName, installedEc);
+    const bool legacyUsable =
+        !legacy.empty() && fs::is_regular_file(PathFromString(legacy) / kManifestName, legacyEc);
+    const std::string reused =
+        PortRemasteredStorage::ReuseFolder(PathString(source), installedUsable, legacy, legacyUsable);
+    if (!reused.empty()) {
+      source = PathFromString(reused);
+    }
+  }
   fs::remove_all(staging, ec);
   fs::create_directories(staging, ec);
   if (ec) {
@@ -3802,6 +3857,57 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
 
 }  // namespace
 
+std::string ImportRootFolder(std::string* error) {
+#if defined(__ANDROID__)
+  const PortRemasteredStorage::RootChoice choice =
+      PortRemasteredStorage::ResolveRoot(true, InternalStoragePath(), std::string());
+#else
+  const PortRemasteredStorage::RootChoice choice =
+      PortRemasteredStorage::ResolveRoot(false, std::string(), PortMods::Folder());
+#endif
+  if (choice.folder.empty()) {
+    if (error != nullptr) {
+      *error = choice.error.empty() ? "There is no mods folder to write to." : choice.error;
+    }
+    return {};
+  }
+  // The root has to exist before anything is staged in it; SDL's internal storage path does.
+  std::error_code ec;
+  fs::create_directories(PathFromString(choice.folder), ec);
+  ec.clear();
+  if (!fs::is_directory(PathFromString(choice.folder), ec)) {
+    if (error != nullptr) {
+      *error = "Cannot use the import folder " + choice.folder + (ec ? ": " + ec.message() : "");
+    }
+    return {};
+  }
+  return choice.folder;
+}
+
+bool UsesPrivateImportRoot() {
+#if defined(__ANDROID__)
+  return PortRemasteredStorage::ResolveRoot(true, InternalStoragePath(), std::string()).kind ==
+         PortRemasteredStorage::Root::kPrivateStorage;
+#else
+  return false;
+#endif
+}
+
+std::string InstalledModFolder() {
+  const std::string root = ImportRootFolder();
+  if (root.empty()) {
+    return {};
+  }
+  // On desktop the root is the mods folder, whose every folder the mod scan already reads.
+  const std::string mods = PortMods::Folder();
+  if (!mods.empty() && PortRemasteredStorage::WithSeparator(mods) == root) {
+    return {};
+  }
+  std::error_code ec;
+  const fs::path installed = PathFromString(root) / kImportModName;
+  return fs::is_directory(installed, ec) ? PathString(installed) : std::string();
+}
+
 std::string DefaultKeysPath() {
   const char* home = std::getenv("HOME");
   if (home == nullptr || home[0] == '\0') {
@@ -3829,18 +3935,33 @@ bool StartMovieImport(const std::string& nspPath, const std::string& keysPath) {
   if (sThread.joinable()) {
     sThread.join();
   }
-  // A finished import that has not been moved into place yet is the newer mod.
-  const fs::path staging = StagingFolder();
+  // A finished import that has not been moved into place yet is the newer mod; the movies go into
+  // the import's own folder (port_remastered_storage.h), never into a legacy one in the shared mods
+  // folder, so on Android a player who still has only that one is asked for a full import.
+  std::string rootError;
+  const std::string root = ImportRootFolder(&rootError);
+  const fs::path staging = root.empty() ? fs::path() : PathFromString(root) / kStagingName;
   std::error_code ec;
-  fs::path mod;
-  if (!staging.empty()) {
-    mod = fs::exists(staging / kMarkerName, ec) ? staging : staging.parent_path() / kImportModName;
+  const std::string legacy = LegacySharedImport();
+  bool legacyExists = false;
+  if (!legacy.empty()) {
+    legacyExists = fs::is_directory(PathFromString(legacy), ec);
   }
+  const bool privateRoot = UsesPrivateImportRoot();
+  PortRemasteredStorage::MovieTarget target;
+  if (!staging.empty()) {
+    target = PortRemasteredStorage::ChooseMovieTarget(
+        privateRoot, PathString(staging), fs::exists(staging / kMarkerName, ec),
+        PathString(staging.parent_path() / kImportModName),
+        fs::is_directory(staging.parent_path() / kImportModName, ec), legacy, legacyExists);
+  }
+  const fs::path mod = target.folder.empty() ? fs::path() : PathFromString(target.folder);
   std::lock_guard<std::mutex> lock(sStateMutex);
   sState = {};
-  if (mod.empty() || !fs::is_directory(mod, ec)) {
+  if (mod.empty()) {
     sState.finished = true;
-    sState.message = "Import the models first: the movies go into that mod.";
+    sState.message = staging.empty() ? (rootError.empty() ? "There is no mods folder to write to." : rootError)
+                                     : target.error;
     return false;
   }
   sCancel = false;
@@ -3860,12 +3981,16 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
   if (sThread.joinable()) {
     sThread.join();
   }
-  const fs::path staging = StagingFolder();
+  // The root the import is made in (port_remastered_storage.h). On Android its absence is an error
+  // that names itself; the shared mods folder is not a fallback.
+  std::string rootError;
+  const std::string root = ImportRootFolder(&rootError);
+  const fs::path staging = root.empty() ? fs::path() : PathFromString(root) / kStagingName;
   std::lock_guard<std::mutex> lock(sStateMutex);
   sState = {};
   if (staging.empty()) {
     sState.finished = true;
-    sState.message = "There is no mods folder to write to.";
+    sState.message = rootError.empty() ? "There is no mods folder to write to." : rootError;
     return false;
   }
   // A first import writes everything (docs/MODS.md: about 1 GB, 6.5 GB with every
@@ -3887,7 +4012,7 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
       if (freeGb < needGb) {
         char text[256];
         std::snprintf(text, sizeof text,
-                      "Not enough free disk space: the import needs about %.1f GB and the mods folder's drive "
+                      "Not enough free disk space: the import needs about %.1f GB and the import folder's drive "
                       "has %.1f GB free.%s",
                       needGb, freeGb, allGeometry ? " Leaving the room geometry out needs less." : "");
         sState.finished = true;
@@ -3962,7 +4087,7 @@ bool MoveIntoPlace(const fs::path& staging) {
   const fs::path target = staging.parent_path() / kImportModName;
   // The working mod is kept as a backup until the new one is in place. Hidden, so the mod loader
   // never picks it up as a second mod if a crash leaves it behind.
-  const fs::path backup = staging.parent_path() / (std::string(".") + kImportModName + ".old");
+  const fs::path backup = staging.parent_path() / PortRemasteredStorage::kBackupName;
   const bool hadTarget = fs::exists(target, ec);
   if (hadTarget) {
     Discard(backup);
@@ -4076,11 +4201,19 @@ int RunImportFromCommandLine(const std::string& nspPath, const std::string& keys
   if (moviesOnly) {
     return 0;
   }
-  if (!ApplyPendingImport()) {
-    std::fprintf(stderr, "could not move the mod into %s\n", PortMods::Folder().c_str());
+  // The root the files actually went into: the mods folder on desktop, the app's own storage on
+  // Android (port_remastered_storage.h).
+  std::string rootError;
+  const std::string root = ImportRootFolder(&rootError);
+  if (root.empty()) {
+    std::fprintf(stderr, "%s\n", rootError.c_str());
     return 1;
   }
-  std::printf("installed as %s/%s\n", PortMods::Folder().c_str(), kImportModName);
+  if (!ApplyPendingImport()) {
+    std::fprintf(stderr, "could not move the mod into %s\n", root.c_str());
+    return 1;
+  }
+  std::printf("installed as %s%s\n", root.c_str(), kImportModName);
   return 0;
 }
 

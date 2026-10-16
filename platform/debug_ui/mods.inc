@@ -67,6 +67,15 @@ void DrawRemasteredImport() {
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
   ImGui::TextWrapped("Converts the models of your own copy of Metroid Prime Remastered into a mod. It needs the "
                      "game's .nsp or .xci and your console's key file (prod.keys), and takes a few minutes.");
+#if defined(__ANDROID__)
+  ImGui::TextDisabled("It is installed into the app's own storage (remastered-imports), not into the mods folder: "
+                      "with the data folder on shared storage, moving a folder there goes file by file through "
+                      "Android's media provider, which is what made an install slow. The data folder setting does "
+                      "not move it, an app update keeps it, and an uninstall or \"clear data\" removes it, so it "
+                      "has to be imported again.");
+  ImGui::TextDisabled("A remastered-models in the mods folder keeps working as the fallback until a full import "
+                      "installs the app's own copy; nothing deletes it by itself.");
+#endif
   if (PortMods::StaleRemasteredImport() != nullptr) {
     ImGui::TextColored(ThemeWarnColor(),
                        "Re-import needed: the installed models were made by an older version.");

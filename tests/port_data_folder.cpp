@@ -105,6 +105,21 @@ int main(int argc, char** argv) {
   Check(PortDataFolder::IsSkipped("dawn_cache.db"), "Dawn cache skipped");
   Check(PortDataFolder::IsSkipped("texture_dumps/a.png"), "texture dumps skipped");
 
+  // The built-in Remastered import belongs to the app, not to the data folder
+  // (port_remastered_storage.h), also when the data folder is the app's own storage, which is
+  // where the import sits: it is neither counted, copied nor deleted with the data.
+  Write(from / "remastered-imports" / "remastered-models" / "1234.CMDL", "private import");
+  Write(from / "remastered-imports" / ".remastered-models.importing" / "part.CMDL", "half an import");
+  Check(PortDataFolder::IsSkipped("remastered-imports"), "the import's root skipped");
+  Check(PortDataFolder::IsSkipped("remastered-imports/remastered-models/1234.CMDL"), "inside the import skipped");
+  Check(PortDataFolder::IsSkipped("remastered-imports/.remastered-models.importing/part.CMDL"),
+        "a staged import skipped");
+  Check(PortDataFolder::Measure(from.string()).files == totals.files, "the import is not data to move");
+  PortDataFolder::Progress afterImport;
+  Check(PortDataFolder::CopyTree(from.string(), to.string(), afterImport, error, true), "the next copy succeeds");
+  Check(afterImport.bytesDone == 0 && afterImport.filesDone == totals.files, "the import is not copied");
+  Check(!fs::exists(to / "remastered-imports"), "nothing of the import reaches the other folder");
+
   Write(from / "disc.iso", "disc");
   PortDataFolder::DeleteData(from.string(), [](const std::string& rel) { return rel == "disc.iso"; });
   Check(Read(from / "disc.iso") == "disc", "kept file survives the delete");
@@ -113,6 +128,10 @@ int main(int argc, char** argv) {
   Check(fs::exists(from / "textures" / "xbox" / "a.png"), "built-in textures survive the delete");
   Check(fs::exists(from / "initial_pipeline_cache.db"), "pipeline cache survives the delete");
   Check(!fs::exists(from / "mods"), "emptied folders removed");
+  Check(Read(from / "remastered-imports" / "remastered-models" / "1234.CMDL") == "private import",
+        "the app's own import survives the delete");
+  Check(fs::exists(from / "remastered-imports" / ".remastered-models.importing" / "part.CMDL"),
+        "a staged import survives the delete");
 
   fs::remove_all(root);
   if (sFailures == 0) {

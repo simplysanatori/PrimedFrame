@@ -244,7 +244,9 @@ the next start. `tools/extract_textures.py`'s `disc_files`/`pak_resources` get
 a resource's original bytes to edit. Checked with a `0552A456.STRG` (the file
 select's "New Game") read from the disc and from a whole-file `MiscData.pak`
 mod. On Android `mods/` is in the data folder; move that to shared storage
-(F1 > System > Data folder) to add mods with a file manager.
+(F1 > System > Data folder) to add mods with a file manager. The built-in
+Remastered import is not one of these folders: it stays in app storage
+(the Remastered section below).
 
 ### Reloading without a restart
 
@@ -284,8 +286,9 @@ alone, so a script should pass it on to its children. Desktop only.
 environments and above all room geometry are work in progress: expect wrong
 or missing models, lighting that is off, crashes and heavy memory use, and a
 re-import after most updates. Bug reports about a game running with this mod
-are not handled for now; remove `mods/remastered-models` to get the retail
-game back.
+are not handled for now; switch it off on the Remastered page (or remove
+`remastered-models` from the import's folder: `mods/` on desktop, the app's own
+storage on Android) to get the retail game back.
 
 The port can build a model mod from your own copy of Metroid Prime Remastered;
 nothing of it ships. F1 > Remastered > Import > "Metroid Prime Remastered models"
@@ -296,11 +299,11 @@ exists). An `.xci`, or an `.nsp` converted from one, needs the key file's
 decompressed first. The panel remembers both files once they are picked
 or used, as `remastered_nsp` and `remastered_keys` in the settings file (on
 Android, the picked documents). Import converts in the background while the game
-runs, on all but two cores. The result is staged in `mods/.remastered-models.importing`
-and installed as `mods/remastered-models`, replacing an older one, when the
-import ends. The mods stay unloaded while it is moved into place in the
-background (shown as "Moving the mod into place"; on Android's shared storage
-that takes a minute or two, since a folder is renamed file by file), then a mod
+runs, on all but two cores. The result is staged in `<root>/.remastered-models.importing`
+and installed as `<root>/remastered-models`, replacing an older one, when the
+import ends. `<root>` is the mods folder on desktop, exactly as it always was, and the app's own
+internal storage (`<internal storage>/remastered-imports`) on Android. The mods stay unloaded
+while it is moved into place in the background (shown as "Moving the mod into place"), then a mod
 reload loads it; an install a quit interrupted applies at the next start. A cancelled or interrupted import leaves nothing behind.
 Once it has ended, "Load it again" in the same panel reloads the mods by hand.
 "What to import" in the panel leaves parts out of the next import (room
@@ -311,8 +314,37 @@ import's steps; when it ends with models that failed, the panel says how many,
 and "Copy the notes" puts the notes on the clipboard for a report.
 From a terminal,
 `metroid_prime_port --import-remastered <image.nsp|image.xci> [key file]` does the same
-on every core without starting the game and installs at once (the disc comes
-from `MP_DISC`, the remembered path, or a copy beside the executable).
+on every core without starting the game and installs at once, printing the folder it installed into
+(the disc comes from `MP_DISC`, the remembered path, or a copy beside the executable).
+
+Where the import lives, in full: on desktop it is a mod folder like any other
+(`mods/remastered-models`, and `MP_MODS`/`MP_USER_PATH` move it with the rest). On Android it is in
+the app's own internal storage, `<internal storage>/remastered-imports`, which is not the mods
+folder and is not moved by `MP_MODS`, `MP_USER_PATH` or the F1 data folder setting (System > Data
+folder): that setting moves the settings, mods, saves, save states and the rest, and leaves the
+import where it is, including when the data folder is the app's own storage, where the import sits
+inside it. The mods folder there is in the data folder, and the data folder is often moved to the
+shared folder on the card (that is how mods are added with a file manager); in shared storage every
+file of an import goes through Android's media provider and a folder move is a file-by-file walk,
+which is where an install there spent its time. Beside the app the same files are plain file-system
+writes and the finished mod is moved into place as one rename. An APK update keeps the import; an
+uninstall or Android's "clear data" removes it (the uninstall dialog's "keep app data" keeps it), so
+it has to be imported again. The mod scan loads the mods folder's own folders and the app's
+`remastered-models` together, in one name order (a later name still wins over an earlier one), and a
+`mods/remastered-models` never shadows the app's copy. A `mods/remastered-models` from an older
+version - or from a player who has only ever imported there - keeps loading as the fallback for as
+long as there is no app copy: nothing migrates or deletes it on its own, and it can be removed by
+hand once the app's own import is good. A full import reuses that folder's files while it is there,
+read only (hard links, or copies where the card and the app's storage are different file systems),
+so it is left exactly as it was. The movies-only import writes into the app's copy too, and with
+only the shared one it refuses and asks for a full import rather than writing the movies there.
+When the app's internal storage cannot be reached at all the import is refused with a message: it
+is never written to the shared mods folder instead.
+
+An import left pending by an older version (unfinished, or finished but never installed, as
+`mods/.remastered-models.importing[.held]`) is **not** installed automatically: nothing migrates or
+finishes it. The next full import writes and installs the app's own copy, and those hidden leftovers
+stay exactly where they are - leave them until that copy has been imported and checked.
 
 A full import writes `.import-version` (the importer's `kImportVersion`, then the build's commit) into
 the mod. At each mod scan, `remastered-models` or any mod with that file counts as an import; one whose

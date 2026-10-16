@@ -135,7 +135,8 @@ managers cannot reach. F1 > System > Data folder moves it to
 `/storage/emulated/0/MetroidPrime/` (the shared storage root): it asks for "All
 files access" (Android 11+; storage permission on 9/10), copies saves, settings,
 mods, save states, the texture pack and the copied disc there with a progress
-bar (built-in textures and the pipeline cache stay behind), then restarts the
+bar (built-in textures, the pipeline cache and the app's own Remastered import
+stay behind; docs/MODS.md), then restarts the
 game. If the shared folder already holds data, it offers to use that data or to
 copy over it. The choice is kept in `data_folder.txt` in app storage; "Move
 back to app storage" reverses it, and "Delete the old copy" frees the space the
@@ -143,7 +144,8 @@ old folder still takes. If access is revoked later, the game starts from app
 storage and says so, with buttons to grant access again or stay there.
 
 `MP_USER_PATH` overrides the folder
-and `MP_CACHE_PATH` the caches alone; use separate directories for automated
+and `MP_CACHE_PATH` the caches alone (neither moves the built-in Remastered
+import, which stays in app storage); use separate directories for automated
 testing so runs do not share normal saves/settings (the memory card stays with
 the executable either way). Screenshots are written to `screenshots/` in the
 working directory.

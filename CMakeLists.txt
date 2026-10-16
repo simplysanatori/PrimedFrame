@@ -727,6 +727,13 @@ if(MP_BUILD_TESTS)
     target_link_libraries(port_remastered_effect_import_tests PRIVATE astcenc)
     add_executable(port_remastered_import_tests tests/port_remastered_import.cpp platform/port_remastered_effect.cpp)
     target_include_directories(port_remastered_import_tests PRIVATE platform/include)
+    # Where the built-in Remastered import lives and how a scan picks it up
+    # (port_remastered_storage.h): policy plus the folder walk, so it gets a scratch folder of its own.
+    add_executable(port_remastered_storage_tests tests/port_remastered_storage.cpp)
+    target_include_directories(port_remastered_storage_tests PRIVATE platform/include)
+    add_test(NAME port_remastered_storage_tests COMMAND port_remastered_storage_tests
+        "${CMAKE_CURRENT_BINARY_DIR}/remastered-storage-test")
+    set_tests_properties(port_remastered_storage_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_hud_bars_tests tests/port_hud_bars.cpp platform/port_hud_bars_file.cpp)
     target_include_directories(port_hud_bars_tests PRIVATE platform/include)
     add_executable(port_remastered_hud_tests tests/port_remastered_hud.cpp platform/port_remastered_hud.cpp platform/port_hud_bars_file.cpp platform/port_remastered_image.cpp platform/port_remastered_pak.cpp)
