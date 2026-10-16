@@ -66,7 +66,9 @@ int main() {
   ApplySetting("gyro_mode", "2");
   ApplySetting("gyro_mode", "3");
   ApplySetting("gyro_mode", "4");
-  Check(Get().gyroMode == 3, "gyro_mode range");
+  Check(Get().gyroMode == 4, "gyro toggle mode");
+  ApplySetting("gyro_mode", "5");
+  Check(Get().gyroMode == 4, "gyro_mode range");
   Check(Get().gyroSensitivity == 2.f, "gyro_sensitivity default");
   ApplySetting("gyro_sensitivity", "1.5");
   ApplySetting("gyro_sensitivity", "50");

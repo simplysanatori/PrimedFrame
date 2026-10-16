@@ -80,7 +80,7 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     }
   } else if (key == "gyro_mode") {
     const long v = std::strtol(value.c_str(), nullptr, 10);
-    if (v >= 0 && v <= 3) {
+    if (v >= 0 && v <= 4) {
       s.gyroMode = static_cast< int >(v);
     }
   } else if (key == "gyro_source") {

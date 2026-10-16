@@ -7,6 +7,36 @@ class GamepadMotion;
 
 namespace PortGyro {
 
+// Tracks the Gyro aim action once per input frame. A mode change starts toggle
+// mode off and requires a fresh press, even if the button is already held.
+class Activation {
+public:
+  void Update(int mode, bool held) {
+    if (mode != mMode) {
+      mMode = mode;
+      mToggled = false;
+    } else if (mode == 4 && held && !mHeld) {
+      mToggled = !mToggled;
+    }
+    mHeld = held;
+  }
+
+  bool Active() const {
+    switch (mMode) {
+    case 1: return mHeld;
+    case 2: return true;
+    case 3: return !mHeld;
+    case 4: return mToggled;
+    default: return false;
+    }
+  }
+
+private:
+  int mMode = 0;
+  bool mHeld = false;
+  bool mToggled = false;
+};
+
 // Gyro space: which turn of the pad steers yaw. Local spaces use the pad's own
 // axes: yaw (held flat), roll (held upright), or both, the larger one's sign
 // with their combined size (as Overwatch). Player and world turn about gravity.

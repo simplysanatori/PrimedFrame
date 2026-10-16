@@ -365,15 +365,17 @@ void DrawControlsTouchGyro() {
 #endif
 
   ImGui::SeparatorText("Gyro aim");
-  const char* gyroModes[] = {"Off", "Hold to aim", "Always aim", "Hold to pause"};
+  const char* gyroModes[] = {"Off", "Hold to aim", "Always aim", "Hold to pause", "Toggle to aim"};
   int gyroMode = sInput.gyroMode;
-  if (ImGui::Combo("Mode", &gyroMode, gyroModes, 4)) {
+  if (ImGui::Combo("Mode", &gyroMode, gyroModes, IM_ARRAYSIZE(gyroModes))) {
     SetGyroMode(gyroMode);
   }
   ItemHelp("Tilt the pad or the phone to aim. Hold to aim aims only while the Gyro aim button is "
            "held; hold to pause aims all the time except while it is held, so you can recentre the "
-           "pad (ratcheting). The button is right stick click or left ctrl by default; change it, or "
-           "make it a toggle, on the Remap page. Needs mouse aim, twin stick or the touch controls "
+           "pad (ratcheting). Toggle to aim starts off: press once to aim, again to stop. "
+           "The button is right stick click or left ctrl by default; change it on the Remap page. "
+           "With toggle mode, leave the binding itself as a normal press. Needs mouse aim, twin stick "
+           "or the touch controls "
            "(not the classic layout), since the gyro feeds that same aim.");
   ImGui::BeginDisabled(sInput.gyroMode == 0 && !sInput.springFlick);
   const char* gyroSources[] = {"Auto", "Controller", "Phone"};

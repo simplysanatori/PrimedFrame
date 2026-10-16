@@ -26,6 +26,36 @@ void Run(PortGyro::Motion& m, const float gyro[3], const float accel[3], float s
 } // namespace
 
 int main() {
+  {
+    PortGyro::Activation activation;
+    activation.Update(4, false);
+    Check(!activation.Active(), "toggle starts off");
+    activation.Update(4, true);
+    Check(activation.Active(), "first press enables gyro");
+    activation.Update(4, true);
+    Check(activation.Active(), "held button does not repeat toggle");
+    activation.Update(4, false);
+    Check(activation.Active(), "release keeps gyro enabled");
+    activation.Update(4, true);
+    Check(!activation.Active(), "second press disables gyro");
+    activation.Update(2, true);
+    Check(activation.Active(), "always mode");
+    activation.Update(4, true);
+    Check(!activation.Active(), "mode change resets toggle despite held button");
+    activation.Update(4, false);
+    activation.Update(4, true);
+    Check(activation.Active(), "fresh press after mode change enables gyro");
+    activation.Update(0, true);
+    Check(!activation.Active(), "off mode");
+    activation.Update(1, true);
+    Check(activation.Active(), "hold-to-aim held");
+    activation.Update(1, false);
+    Check(!activation.Active(), "hold-to-aim released");
+    activation.Update(3, false);
+    Check(activation.Active(), "hold-to-pause released");
+    activation.Update(3, true);
+    Check(!activation.Active(), "hold-to-pause held");
+  }
   float pitch = 0.f;
   float yaw = 0.f;
 

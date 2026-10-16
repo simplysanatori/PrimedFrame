@@ -62,7 +62,7 @@ float sGyroCameraPendingY = 0.f;
 float sGyroCameraFrameX = 0.f;
 float sGyroCameraFrameY = 0.f;
 // The "Gyro aim" binding, set each frame by the input engine before PollGyro.
-bool sGyroButtonHeld = false;
+PortGyro::Activation sGyroActivation;
 // The last tick applied look input. A paused game or a cinematic skips the
 // player update, and would then drop what the frames between ticks showed.
 bool sAimAppliedLastTick = false;
@@ -87,7 +87,7 @@ int GyroMode() {
 
 void SetGyroMode(int mode) {
   EnsureInitialized();
-  if (mode < 0 || mode > 3) {
+  if (mode < 0 || mode > 4) {
     return;
   }
   sInput.gyroMode = mode;
@@ -152,7 +152,7 @@ float GyroCalibrationConfidence() {
   return sGyroMotionSource != nullptr && sGyroHasAccel ? sGyroMotion.Confidence() : -1.f;
 }
 
-void SetGyroButton(bool held) { sGyroButtonHeld = held; }
+void SetGyroButton(bool held) { sGyroActivation.Update(sInput.gyroMode, held); }
 
 const char* GyroStatus() { return sGyroStatus; }
 
@@ -332,10 +332,10 @@ void PollGyro() {
   }
 
   // The "Gyro aim" binding (R3 / left ctrl by default) turns gyro on while held
-  // in hold to aim, and off while held in hold to pause (ratcheting).
-  const bool active = sInput.gyroMode == 2 || (sInput.gyroMode == 1) == sGyroButtonHeld;
+  // in hold to aim, off in hold to pause, or flips aim on each fresh press.
+  const bool active = sGyroActivation.Active();
   if (!active) {
-    sGyroStatus = sInput.gyroMode == 1 ? "waiting for the Gyro aim button" : "paused by the Gyro aim button";
+    sGyroStatus = sInput.gyroMode == 3 ? "paused by the Gyro aim button" : "waiting for the Gyro aim button";
     return;
   }
 

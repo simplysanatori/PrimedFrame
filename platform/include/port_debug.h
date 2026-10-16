@@ -509,7 +509,8 @@ void SetGyroOverride(bool active, float pitch, float yaw);
 float StickAimRate();
 void SetStickAimRate(float pixelsPerSecond);
 // Gyro aiming. Mode: 0 off, 1 aim while the Gyro aim button is held, 2 always
-// aim, 3 aim except while it is held. Source: 0 auto (a pad's gyro if it has
+// aim, 3 aim except while it is held, 4 press to toggle aim (initially off).
+// Source: 0 auto (a pad's gyro if it has
 // one, else the phone's), 1 controller only, 2 the device's own gyro (Android
 // phones). Sensitivity is camera angle per pad angle, apart from the mouse's.
 int GyroMode();

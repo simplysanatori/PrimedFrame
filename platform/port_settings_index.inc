@@ -74,7 +74,7 @@
 {"Controls", "Touch & gyro", "Touch controls", "Reset margins", "default spacing margins reset"},
 {"Controls", "Touch & gyro", "Touch controls", "Edit layout", "drag move touch layout position"},
 #endif
-{"Controls", "Touch & gyro", "Gyro aim", "Mode", "gyro tilt aim hold mode ratchet pause"},
+{"Controls", "Touch & gyro", "Gyro aim", "Mode", "gyro tilt aim hold mode ratchet pause toggle"},
 {"Controls", "Touch & gyro", "Gyro aim", "Source", "gyro device pad phone motion sensor"},
 {"Controls", "Touch & gyro", "Gyro aim", "Sensitivity", "gyro speed sensitivity aim natural real world scale"},
 {"Controls", "Touch & gyro", "Gyro aim", "Space", "gyro space local player world yaw roll lean gravity"},

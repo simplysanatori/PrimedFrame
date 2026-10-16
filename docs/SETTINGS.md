@@ -116,8 +116,10 @@
   same free aim as the mouse, so it needs mouse aim, twin stick or the touch
   controls. `gyro_mode` is 0 off, 1 hold to aim (aims while the "Gyro aim" action
   is held), 2 always, 3 hold to pause (aims except while it is held, to recentre
-  the pad: ratcheting). "Gyro aim" is right stick click and left ctrl by default
-  and can be remapped or made a toggle on the Remap page ("Gyro" group).
+  the pad: ratcheting), 4 toggle to aim (starts off; press once to enable,
+  again to disable). Changing modes resets the toggle. "Gyro aim" is right
+  stick click and left ctrl by default and can be remapped on the Remap page
+  ("Gyro" group). With toggle mode, leave the binding itself as a normal press.
   `gyro_source` is 0 auto, 1 controller, 2 phone. `gyro_sensitivity` (0.1-10,
   default 2) is camera angle per pad angle: 1 turns the camera as far as the pad
   turned. It ignores the mouse sensitivity and invert. An older `gyro_rate` (aim
