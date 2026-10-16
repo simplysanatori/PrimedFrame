@@ -965,9 +965,13 @@ static uint sPortLegendKey = ~0u;
 
 // The swatches are loaded before the text is laid out: text drops an image that
 // is not loaded yet, and retail's legend images come with the frame's assets.
-// The tokens live for the whole run.
+// The tokens live for the whole run. The disc's own legend needs none of them,
+// so they are only asked for while the port's own entries are shown.
 static bool PortLegendReady() {
   static TToken< CTexture >* tokens[4] = {};
+  if (!PortDebug::MapExtraUi()) {
+    return true;
+  }
   if (tokens[0] == nullptr) {
     for (int i = 0; i < 4; ++i) {
       tokens[i] = new TToken< CTexture >(
@@ -985,11 +989,14 @@ static bool PortLegendReady() {
 
 static uint PortLegendKey() {
   const uint mode = static_cast< uint >(PortMapPickups::Mode());
-  return mode | (PortDebug::MapPickupKinds() ? 8u : 0u);
+  return mode | (PortDebug::MapPickupKinds() ? 8u : 0u) | (PortDebug::MapExtraUi() ? 16u : 0u);
 }
 
 static rstl::wstring PortLegendText() {
   rstl::wstring text(gpStringTable->GetString(0x31));
+  if (!PortDebug::MapExtraUi()) {
+    return text;
+  }
   const PortDebug::EMapPickups mode = PortMapPickups::Mode();
   // Entries go two to a line so the legend stays clear of the Key/Legend prompt.
   int entries = 0;
@@ -1126,8 +1133,8 @@ static bool PortMarkPromptUnderPointer(const CGuiTextPane* pane) {
 // Port: the map screen, with the player in control and no room hint text of the
 // disc's up, is when "X Mark room" takes the disc's hint pane.
 bool CAutoMapper::PortShowsMarkPrompt() {
-  if (x1bc_state != kAMS_MapScreen || x24_world == nullptr || x328_ != 0 ||
-      !IsInPlayerControlState()) {
+  if (!PortDebug::MapExtraUi() || x1bc_state != kAMS_MapScreen || x24_world == nullptr ||
+      x328_ != 0 || !IsInPlayerControlState()) {
     return false;
   }
   return !(x78_areaHintDesc.valid() && x78_areaHintDesc->TryCache());
@@ -1209,15 +1216,15 @@ void CAutoMapper::PortPointerInput(CFinalInput& input, const CStateManager& mgr)
     }
   }
 
-  // A click on the prompt presses X, as the button does. The mark prompt takes
-  // only a click on its own glyphs (the disc's hint pane is far wider than it);
-  // the disc's own hint keeps the whole pane.
-  if (!universe && x2fc_textpane_hint != NULL) {
-    const bool ours = PortShowsMarkPrompt();
-    if ((!ours || PortMarkPromptUnderPointer(x2fc_textpane_hint)) &&
-        PortPointerMenu::TakeClickOn(x2fc_textpane_hint)) {
-      PortPointerMenu::PressX(input);
-    }
+  // A click on the mark prompt presses X, as the button does. It takes only a
+  // click on the prompt's own glyphs: the disc's hint pane is far wider than it,
+  // and a hit on the empty part of the pane would swallow a click meant for the
+  // map. Without the prompt (the extra map UI off, or the pane showing a disc
+  // hint) the pane is not a target at all, so nothing invisible marks a room.
+  if (!universe && x2fc_textpane_hint != NULL && PortShowsMarkPrompt() &&
+      PortMarkPromptUnderPointer(x2fc_textpane_hint) &&
+      PortPointerMenu::TakeClickOn(x2fc_textpane_hint)) {
+    PortPointerMenu::PressX(input);
   }
 
   float gx, gy;

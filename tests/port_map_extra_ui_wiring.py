@@ -1,0 +1,187 @@
+"""Production wiring guards for the "Extra map UI" setting (map_extra_ui).
+
+The port adds lines to the world map screen's legend and an "X Mark room" prompt
+the disc has no place for. That is extra UI, so it is a setting, off by default,
+and it must gate exactly those two things: the legend entries (with the pane
+scaled to fit them) and the prompt with the pointer click that marks a room.
+Pickup dots and their kinds, the saved marks, the cyan drawing of them and the
+physical X button are not part of it.
+
+What this checks, none of which a unit test can see (the legend fit and the
+prompt live in CAutoMapper.cpp behind the running map screen):
+
+  * the setting's default is false, and the key is in the settings table with
+    two sample values, which is what the `port_settings_roundtrip` self-test
+    (metroid_prime_port --settings-selftest) applies and reads back;
+  * the F1 Tracker row and the settings search index row exist, on the page and
+    sub-tab the other map rows use;
+  * the legend's cache key carries the setting, so switching it while the map
+    screen is open rebuilds the text (no stale extended legend);
+  * the legend text appends nothing while it is off, the legend's injected
+    textures are not even asked for, and the fit's scale is 1 (the disc's own
+    dimensions and pivot) whenever it is off;
+  * the mark prompt and its pointer click are gated by the setting alone, and
+    the hint pane is not a click target without the prompt (no invisible
+    target);
+  * the pickup dots, the kinds and the room marks do not read the setting;
+  * the console command, the docs and the source registration are in place.
+
+It is a source check: no engine code runs and no game is started.
+"""
+import pathlib
+import sys
+import unittest
+
+root = pathlib.Path(sys.argv.pop())
+DEBUG_UI = root / "platform/debug_ui.cpp"
+SETTINGS = root / "platform/debug_ui/settings.inc"
+OPTIONS = root / "platform/debug_ui/options.inc"
+TRACKER = root / "platform/debug_ui/tracker.inc"
+DEBUG_HEADER = root / "platform/include/port_debug.h"
+INDEX = root / "platform/port_settings_index.inc"
+MAPPER = root / "src/MetroidPrime/CAutoMapper.cpp"
+CONSOLE = root / "platform/port_console.cpp"
+PICKUPS = root / "platform/port_map_pickups.cpp"
+MARKS = root / "platform/port_map_marks.cpp"
+SETTINGS_DOC = root / "docs/SETTINGS.md"
+CONSOLE_DOC = root / "docs/CONSOLE.md"
+CMAKE = root / "CMakeLists.txt"
+
+
+def between(text, start, end, path):
+    assert start in text, f"{path}: no {start!r}"
+    body = text.split(start, 1)[1]
+    assert end in body, f"{path}: no {end!r} after {start!r}"
+    return body.split(end, 1)[0]
+
+
+def body(text, signature, path):
+    """The braced body of the function at signature, nested blocks included."""
+    assert signature in text, f"{path}: no {signature!r}"
+    i = text.index("{", text.index(signature))
+    depth = 0
+    for j in range(i, len(text)):
+        if text[j] == "{":
+            depth += 1
+        elif text[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[i:j + 1]
+    raise AssertionError(f"{path}: {signature!r} has no closing brace")
+
+
+def joined(text):
+    """Source with adjacent string literals put back together on one line."""
+    out = text
+    while True:
+        nxt = out.replace('"\n' + " " * 0, "")
+        # collapse: " ... " (newline, indent) " ... "
+        import re
+        out2 = re.sub(r'"\s*\n\s*"', "", out)
+        if out2 == out:
+            return out2
+        out = out2
+
+
+class Wiring(unittest.TestCase):
+    def test_default_is_off_and_the_key_is_persisted(self):
+        ui = DEBUG_UI.read_text()
+        self.assertIn("bool sMapExtraUi = false;", ui)
+        self.assertNotIn("bool sMapExtraUi = true;", ui)
+        settings = SETTINGS.read_text()
+        key = between(settings, '{"map_extra_ui",', "}, false,", SETTINGS)
+        self.assertIn("sMapExtraUi = ParseBool(value);", key)
+        self.assertIn("WriteBool(out, sMapExtraUi);", key)
+        # Two sample values: the round-trip self-test applies each and expects it
+        # back, so the key is covered by port_settings_roundtrip.
+        self.assertIn('false, "1", "0"}', settings.split('{"map_extra_ui",', 1)[1])
+        self.assertIn("port_settings_roundtrip", CMAKE.read_text())
+
+    def test_accessors_are_declared_and_save_the_setting(self):
+        header = DEBUG_HEADER.read_text()
+        self.assertIn("bool MapExtraUi();", header)
+        self.assertIn("void SetMapExtraUi(bool enabled);", header)
+        options = OPTIONS.read_text()
+        getter = body(options, "bool MapExtraUi() {", OPTIONS)
+        self.assertIn("return sMapExtraUi;", getter)
+        setter = body(options, "void SetMapExtraUi(bool enabled) {", OPTIONS)
+        self.assertIn("sMapExtraUi = enabled;", setter)
+        self.assertIn("MarkDirty();", setter)
+
+    def test_f1_row_and_search_index(self):
+        tracker = TRACKER.read_text()
+        row = between(tracker, 'if (ImGui::Checkbox("Extra map UI", &extraUi)) {', "\n  }", TRACKER)
+        self.assertIn("SetMapExtraUi(extraUi);", row)
+        index = INDEX.read_text()
+        # The Tracker page with no sub-tab, as the rows of the map settings.
+        self.assertIn('{"Tracker", "", "", "Extra map UI", ', index)
+        # The label the index points at is the widget's, and the help text says
+        # what it does and that it is off by default.
+        help_text = joined(between(tracker, 'ImGui::Checkbox("Extra map UI"', "DrawTrackerLogic",
+                                  TRACKER))
+        self.assertIn("Off by default", help_text)
+        self.assertIn("Room marks still work with X", help_text)
+
+    def test_the_legend_key_carries_the_setting(self):
+        mapper = MAPPER.read_text()
+        key = body(mapper, "static uint PortLegendKey() {", MAPPER)
+        self.assertIn("PortDebug::MapPickupKinds() ? 8u : 0u", key)
+        self.assertIn("PortDebug::MapExtraUi() ? 16u : 0u", key)
+        # It is the only key of the legend's text, so switching the setting in an
+        # open map screen rebuilds it.
+        self.assertIn("sPortLegendKey != PortLegendKey()", mapper)
+
+    def test_legend_text_and_assets_are_gated(self):
+        mapper = MAPPER.read_text()
+        text = body(mapper, "static rstl::wstring PortLegendText() {", MAPPER)
+        gate = text.index("if (!PortDebug::MapExtraUi()) {")
+        # Nothing is appended before the gate: the disc's own text alone.
+        self.assertLess(gate, text.index("entry("), "an entry is appended first")
+        ready = body(mapper, "static bool PortLegendReady() {", MAPPER)
+        gate = ready.index("if (!PortDebug::MapExtraUi()) {")
+        self.assertIn("return true;", ready[gate:ready.index("}", gate) + 1])
+        # The injected legend textures are not created before that early return.
+        self.assertLess(gate, ready.index("new TToken< CTexture >"), "textures loaded first")
+        # Off, the pane keeps the disc's own dimensions and pivot: the fit's
+        # scale is 1 and the pivot compensation is a no-op.
+        fit = between(mapper, "static void PortSetLegend(", "legend->SetDimensions(", MAPPER)
+        self.assertIn("rows > base ? static_cast< float >(base) / static_cast< float >(rows) : 1.f",
+                      fit)
+
+    def test_prompt_and_click_are_gated_and_nothing_else_is(self):
+        mapper = MAPPER.read_text()
+        prompt = body(mapper, "bool CAutoMapper::PortShowsMarkPrompt() {", MAPPER)
+        self.assertTrue(prompt.lstrip().startswith("{"), prompt[:40])
+        self.assertTrue(prompt.lstrip("{ \n").startswith("if (!PortDebug::MapExtraUi()"),
+                        "the prompt's first gate is the setting")
+        self.assertIn("PortPlaceMarkHint(x2fc_textpane_hint, PortShowsMarkPrompt());", mapper)
+        # The click on the hint pane is the prompt's alone: gated, and with the
+        # glyph test that keeps the pane from being a wide invisible target.
+        self.assertEqual(mapper.count("PortPointerMenu::TakeClickOn(x2fc_textpane_hint)"), 1)
+        click = between(mapper, "// A click on the mark prompt presses X",
+                        "PortPointerMenu::TakeClickOn(x2fc_textpane_hint)", MAPPER)
+        self.assertIn("PortShowsMarkPrompt() &&", click)
+        self.assertIn("PortMarkPromptUnderPointer(x2fc_textpane_hint) &&", click)
+        under = body(mapper, "static bool PortMarkPromptUnderPointer(", MAPPER)
+        self.assertIn("PortGuiHit::LastBounds(pane, glyphs)", under)
+        # The marks and the dots are not part of the setting.
+        self.assertIn("PortMapMarks::Toggle(", mapper)
+        for path in (PICKUPS, MARKS):
+            self.assertNotIn("MapExtraUi", path.read_text(), path)
+
+    def test_console_docs_and_registration(self):
+        console = CONSOLE.read_text()
+        cmd = between(console, '} else if (name == "mapui") {', "\n  } else if", CONSOLE)
+        self.assertIn("PortDebug::SetMapExtraUi(v == \"1\");", cmd)
+        self.assertIn('Out(PortDebug::MapExtraUi() ? "mapui 1" : "mapui 0");', cmd)
+        self.assertIn("mapui", CONSOLE_DOC.read_text())
+        doc = SETTINGS_DOC.read_text()
+        self.assertIn("`map_extra_ui`, off by default", doc)
+        # Touch marking needs the setting: the prompt is what is tapped.
+        self.assertIn("touch needs the setting on", doc)
+        cmake = CMAKE.read_text()
+        self.assertIn("port_map_extra_ui_wiring", cmake)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

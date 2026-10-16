@@ -1035,5 +1035,11 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_map_side_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_map_side_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # The Extra map UI setting gates the legend entries and the Mark room
+        # prompt alone, is off by default, and is persisted.
+        add_test(NAME port_map_extra_ui_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_map_extra_ui_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_map_extra_ui_wiring PROPERTIES TIMEOUT 15 LABELS port)
     endif()
 endif()

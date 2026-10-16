@@ -232,6 +232,9 @@ bool sMapLogicColors = true;
 // first playthrough.
 bool sMapPickupKinds = false;
 bool sMapStationPickups = true;
+// Off by default: the disc's own map legend and prompts, without the port's
+// lines. Room marks themselves are unaffected.
+bool sMapExtraUi = false;
 // The Tracker tab's item, scan and room counts. Off so the tab doesn't spoil
 // what is left to find until asked.
 bool sTrackerProgress = false;
