@@ -48,13 +48,7 @@ constexpr ItemEntry kItems[] = {
     {"Spirit", 39},        {"Newborn", 40},
 };
 
-struct Placement {
-  int itemType = -1;
-  int amount = 0;
-  int capacity = 0;
-  bool hasAmount = false;
-  bool hasCapacity = false;
-};
+using Placement = SeedPlacement;
 
 struct State {
   std::map<std::string, Placement> placements;
@@ -451,20 +445,17 @@ bool LoadSeed(State& state) {
     return false;
   }
 
-  std::string seedName;
-  std::map<std::string, Placement> placements;
-  std::map<int, PickupModel> models;
-  try {
-    Parser(text).Parse(seedName, placements, models);
-  } catch (const ParseError& error) {
-    PortLog::Write( "randomizer: seed parse error at byte offset %zu: %s\n", error.offset,
-                 error.reason);
+  SeedFile seed;
+  size_t offset = 0;
+  std::string reason;
+  if (!ParseSeedFile(text, seed, offset, reason)) {
+    PortLog::Write("randomizer: seed parse error at byte offset %zu: %s\n", offset, reason.c_str());
     return false;
   }
 
-  state.seedName = std::move(seedName);
-  state.placements = std::move(placements);
-  state.itemModels = std::move(models);
+  state.seedName = std::move(seed.name);
+  state.placements = std::move(seed.placements);
+  state.itemModels = std::move(seed.models);
   state.enabled = !state.placements.empty();
   return state.enabled;
 }
@@ -488,6 +479,20 @@ void AppendLog(const char* fileName, const char* line) noexcept {
 }
 
 } // namespace
+
+bool ParseSeedFile(const std::string& text, SeedFile& out, size_t& errorOffset,
+                   std::string& errorReason) {
+  SeedFile seed;
+  try {
+    Parser(text).Parse(seed.name, seed.placements, seed.models);
+  } catch (const ParseError& error) {
+    errorOffset = error.offset;
+    errorReason = error.reason;
+    return false;
+  }
+  out = std::move(seed);
+  return true;
+}
 
 void EnsureLoaded() {
   try {
