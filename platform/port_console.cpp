@@ -705,6 +705,29 @@ std::string PhysicsJson(CStateManager& mgr, const CPlayer& player, const CVector
   out += ms >= 0 && ms < 5 ? movement[ms] : "?";
   out += "\",\"ground_collider\":";
   out += flag(player.GetMaterialList().HasMaterial(kMT_GroundCollider));
+#ifdef TARGET_PC
+  // Port-only diagnostics for the Remastered ground mover (docs/REMASTERED_MOVEMENT.md).
+  // Both are read-only observations with no source counterpart:
+  // `ground_mover_runs` is the player's cumulative count of ticks that actually entered
+  // CGameCollision::MoveGroundedRemastered (0 on retail movement, on an airborne or
+  // morph-ball tick, on the dynamic-contact fallback, and while the retained state is
+  // invalid), and `retained_ground_state` is the retained Remastered object state
+  // (0 no floor, 1 grounded) or null when the port has no source-retained value for this
+  // tick. Neither is read by any decision the mover makes, and neither is a simulation
+  // tick: `tick` above is the only generation counter. The getter is TARGET_PC-only, like
+  // the mover it counts.
+  out += ",\"ground_mover_runs\":";
+  out += std::to_string(player.PortGroundMoverRuns());
+  out += ",\"retained_ground_state\":";
+  {
+    const PortRemasteredGround::RetainedResult& retained = player.PortRetainedObjectState();
+    if (retained.valid) {
+      out += std::to_string(static_cast< unsigned >(retained.state));
+    } else {
+      out += "null";
+    }
+  }
+#endif
   out += ",\"dashing\":";
   out += flag(player.IsSidewaysDashing());
   out += ",\"dash_done\":";

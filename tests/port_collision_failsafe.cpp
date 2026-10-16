@@ -112,6 +112,28 @@ static void CoreLoop() {
     return true;
   };
   Check(Core({1, 2, 3}, 1.f / 60.f, hooks, out) && Near(out, {1, 2, 3}), "core: tunnel result");
+
+  // Separate object-state origin (0xc1fc54 tunnels from the state transform, the pushes
+  // reference `from`): the tunnel hook sees state -> pushedOut, the push is still from `from`.
+  hooks.collide = [](const Vec3& pos, std::vector< Contact >& list) {
+    if (pos.z >= 0.f) return false;
+    list.resize(1);
+    list[0].impacts = {Terrain(-pos.z, {0, 0, 1})};
+    return true;
+  };
+  Vec3 seenFrom, seenTo;
+  hooks.tunnel = [&](const Vec3& f, const Vec3& t, Vec3&) {
+    seenFrom = f;
+    seenTo = t;
+    return false;
+  };
+  const Vec3 from = {0, 0, -.25f}, state = {5, 6, 7};
+  Check(Core(from, state, 1.f / 60.f, hooks, out), "core-state: moved");
+  Check(Near(seenFrom, state) && Near(seenTo, {0, 0, 1e-4f}) && Near(out, {0, 0, 1e-4f}),
+        "core-state: tunnel state -> pushed-out, push reference from `from`");
+  // The default overload is the airborne case: state == from.
+  Core(from, 1.f / 60.f, hooks, out);
+  Check(Near(seenFrom, from), "core-state: default overload tunnels from `from`");
 }
 
 static void Wrapper() {

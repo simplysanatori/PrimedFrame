@@ -333,6 +333,13 @@ bool DoLoad(CStateManager& mgr, int slot) {
 
 void Place(CStateManager& mgr) {
   CPlayer& player = *mgr.Player();
+  // The retained Remastered physics object state is port-only and never serialized, and the
+  // state being loaded cannot carry it: invalidate it at the one PC point where the player is
+  // put back into a rebuilt world (both a slot load and quick resume reach here), so a value
+  // from before the load is never carried across it. The next verified Remastered airborne
+  // tick restores validity; until then the grounded Remastered mover stands aside (see
+  // CGameCollision.cpp).
+  player.PortInvalidateRetainedObjectState();
   const Header& h = sPendingHeader;
   const CVector3f pos(h.position[0], h.position[1], h.position[2]);
   CVector3f look(h.forward[0], h.forward[1], 0.f);

@@ -109,6 +109,11 @@ public:
 #ifdef TARGET_PC
   static void MoveAirborneStepped(CStateManager& mgr, CPlayer& player, float dt,
                                   const TEntityList*);
+  // Remastered's grounded mover: CPhysicsGroundMoverColliderMP1::MoveObject
+  // 0xf923d8 with MoveAlongGround 0xf92ccc, CanMoveUpAndDownFromPosition 0xf928c0,
+  // IsOnWallAtPosition 0xf93c9c and SnapToGround 0xf934ec.
+  static void MoveGroundedRemastered(CStateManager& mgr, CPlayer& player, float dt,
+                                     const TEntityList*);
 #endif
 
   static void MakeCollisionCallbacks(CStateManager&, CPhysicsActor&, const TUniqueId&,

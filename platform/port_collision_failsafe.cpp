@@ -113,6 +113,11 @@ bool SelectPush(const std::vector< Contact >& contacts, const Vec3& from, float 
 }
 
 bool Core(const Vec3& from, float worldDt, const CoreHooks& hooks, Vec3& out) {
+  return Core(from, from, worldDt, hooks, out);
+}
+
+bool Core(const Vec3& from, const Vec3& objectState, float worldDt, const CoreHooks& hooks,
+          Vec3& out) {
   out = from;
   bool moved = false;
   std::vector< Contact > list;
@@ -126,7 +131,9 @@ bool Core(const Vec3& from, float worldDt, const CoreHooks& hooks, Vec3& out) {
     out = Add(out, push);
   }
   Vec3 tmp = out;
-  if (hooks.tunnel(from, out, tmp)) {
+  // 0xc1fc54 tunnels from the object's state transform (CPhysicsState::GetTransform),
+  // while the pushes and the character centre use `from` (param_3).
+  if (hooks.tunnel(objectState, out, tmp)) {
     out = tmp;
     return true;
   }
