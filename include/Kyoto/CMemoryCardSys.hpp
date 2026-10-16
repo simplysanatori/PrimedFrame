@@ -130,6 +130,8 @@ public:
   // back to the default card for "". Only safe while no card operation runs.
   // True when the card changed.
   static bool PortSwitchCard(const char* directory);
+  // The directory of the card in use ("" before the card is set up).
+  static const char* PortCardBase();
 #endif
   static ECardResult GetSerialNo(EMemoryCardPort port, long long& serialOut);
   static ECardResult UnmountCard(EMemoryCardPort);

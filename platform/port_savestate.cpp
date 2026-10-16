@@ -4,6 +4,7 @@
 #include "port_debug.h"
 #include "port_gci.h"
 #include "port_log.h"
+#include "port_map_side.h"
 #include "port_paths.h"
 #include "port_randomizer.h"
 #include "port_mods.h"
@@ -33,6 +34,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -213,6 +215,9 @@ bool PlayerCanSave(CStateManager& mgr, std::string& why) {
   return true;
 }
 
+// The map record of a captured blob; defined with the load side below.
+void StoreMapData(std::vector< uint8_t >& blob, size_t gameBits);
+
 bool Capture(CStateManager& mgr, Header& header, std::vector< uint8_t >& blob) {
   const CPlayer& player = *mgr.GetPlayer();
   const CWorld& world = *mgr.GetWorld();
@@ -224,10 +229,15 @@ bool Capture(CStateManager& mgr, Header& header, std::vector< uint8_t >& blob) {
   worldState.SetDesiredAreaAssetId(kInvalidAssetId);
 
   blob.assign(kBlobSize, 0);
+  size_t gameBits = 0;
   {
     CMemoryStreamOut out(blob.data(), blob.size());
     gpGameState->PutTo(out);
+    gameBits = out.PortBitsWritten();
   }
+  // After the stream is gone: it flushes its last byte at the destructor, and
+  // the record's fingerprint has to cover the bytes as they are left here.
+  StoreMapData(blob, gameBits);
 
   const CTransform4f& xf = player.GetTransform();
   const CVector3f pos = xf.GetTranslation();
@@ -328,6 +338,69 @@ bool DoLoad(CStateManager& mgr, int slot) {
   sPendingBlob = std::move(blob);
   QuitToPending(mgr);
   SetMessage("Loading " + SlotName(slot) + ": " + header.world + " - " + header.room);
+  return true;
+}
+
+// The map data the blob's own trailers cannot carry (port_map_side.h): the
+// "RMMK" trailer holds PortMapMarks::kTrailerMarks marks, the save's list holds
+// PortMapMarks::kMaxMarks, and a state that came back with only the trailer
+// would drop the rest - and the next save would then write that shortened list
+// into the card's side file. The record sits at a fixed offset past the whole
+// game state (which stays under 1 KiB) as a length and the side file's own
+// bytes; its fingerprint covers everything before it, so a state written by an
+// older build (zeros there) or a damaged one is ignored and the trailers stand.
+constexpr size_t kMapOffset = kBlobSize - 256;
+static_assert(PortMapSide::kMaxBytes + 4 <= kBlobSize - kMapOffset,
+              "the map record fits the tail of the blob");
+
+void StoreMapData(std::vector< uint8_t >& blob, size_t gameBits) {
+  if (blob.size() < kBlobSize || gpGameState == nullptr) {
+    return;
+  }
+  if (gameBits > kMapOffset * 8) {
+    PortLog::Write("save state: the game state grew past the map record (%u bits); marks stay "
+                   "in the trailers only\n",
+                   static_cast< unsigned >(gameBits));
+    return;
+  }
+  PortMapSide::Data data;
+  for (int i = 0; i < PortMapPickups::kSeenWords; ++i) {
+    data.seen[i] = gpGameState->PortSeenPickups()[i];
+  }
+  data.marks = gpGameState->PortMapMarkList();
+  const std::vector< uint8_t > bytes =
+      PortMapSide::Encode(PortMapSide::Fingerprint(blob.data(), kMapOffset), data);
+  uint8_t* tail = blob.data() + kMapOffset;
+  for (int i = 0; i < 4; ++i) {
+    tail[i] = static_cast< uint8_t >(bytes.size() >> (8 * i));
+  }
+  std::memcpy(tail + 4, bytes.data(), bytes.size());
+}
+
+// Puts the record back over the game state the blob was just built into. False
+// (nothing changed) when there is none: an older state keeps what its own
+// trailers gave, which is up to kTrailerMarks marks and the whole seen set.
+bool LoadMapData(const std::vector< uint8_t >& blob) {
+  if (gpGameState == nullptr || blob.size() < kMapOffset + 4) {
+    return false;
+  }
+  const uint8_t* tail = blob.data() + kMapOffset;
+  uint32_t size = 0;
+  for (int i = 0; i < 4; ++i) {
+    size |= static_cast< uint32_t >(tail[i]) << (8 * i);
+  }
+  if (size > PortMapSide::kMaxBytes || kMapOffset + 4 + size > blob.size()) {
+    return false;
+  }
+  PortMapSide::Data data;
+  if (!PortMapSide::Decode(tail + 4, size, PortMapSide::Fingerprint(blob.data(), kMapOffset),
+                           data)) {
+    return false;
+  }
+  for (int i = 0; i < PortMapPickups::kSeenWords; ++i) {
+    gpGameState->PortSeenPickups()[i] = data.seen[i];
+  }
+  gpGameState->PortMapMarkList() = data.marks;
   return true;
 }
 
@@ -673,6 +746,7 @@ void InstallPending() {
   sInstallPending = false;
   CMemoryInStream in(sPendingBlob.data(), sPendingBlob.size(), CMemoryInStream::kOS_NotOwned);
   gpMain->PortLoadGameState(in);
+  LoadMapData(sPendingBlob);
   sPlacePending = true;
 }
 

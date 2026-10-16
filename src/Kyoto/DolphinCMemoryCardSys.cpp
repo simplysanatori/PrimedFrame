@@ -381,6 +381,8 @@ void CMemoryCardSys::Initialize() {
   }
 }
 
+const char* CMemoryCardSys::PortCardBase() { return sCardBase.c_str(); }
+
 bool CMemoryCardSys::PortSwitchCard(const char* directory) {
   if (!mIsInitialized || sDefaultCardBase.empty())
     return false;

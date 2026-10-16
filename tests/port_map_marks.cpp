@@ -55,21 +55,41 @@ int main() {
   Check(full.Toggle(Pack(7, 100)) == 0 && full.count == kMaxMarks, "cap");
   Check(full.Toggle(Pack(0, 0)) == -1, "a full list can still unmark");
 
-  // Encode and decode round trip, the magic first.
+  // Encode and decode round trip, the magic first. Only what Fit() allows
+  // (never more than kTrailerMarks) is handed to Put(): that is the point of
+  // the 5-bit count field, which an older build reads too.
   Bits bits;
-  Put(full, full.count, [&bits](uint32_t v, unsigned n) { bits.Write(v, n); });
-  Check(bits.bits.size() == kHeaderBits + full.count * kMarkBits, "encoded size");
+  const size_t trailer = Fit(full.count, 940 * 8, 7084 + 160);
+  Check(trailer == kTrailerMarks && trailer < full.count, "a USA trailer of 64 takes 20");
+  Put(full, trailer, [&bits](uint32_t v, unsigned n) { bits.Write(v, n); });
+  Check(bits.bits.size() == kHeaderBits + trailer * kMarkBits, "encoded size");
   Check(bits.Read(32) == kMagic, "magic");
   const List back = Get([&bits](unsigned n) { return bits.Read(n); });
-  Check(back.count == full.count, "decoded count");
-  for (uint32_t i = 0; i < full.count; ++i) {
+  Check(back.count == trailer, "decoded count");
+  for (uint32_t i = 0; i < trailer; ++i) {
     Check(back.packed[i] == full.packed[i], "decoded mark");
   }
-
-  // A count above the cap (garbage, a cut trailer) reads as empty; repeats drop.
+  // The first build's trailer: a 5-bit count of 20 and nothing else changes.
+  Check(kCountBits == 5 && kTrailerMarks == 20 && kMaxMarks == 64,
+        "the trailer's fields and cap stay as first shipped, the side file holds 64");
+  Bits legacy;
+  legacy.Write(kMagic, 32);
+  Check(legacy.Read(32) == kMagic, "legacy trailer magic");
+  legacy.Write(kTrailerMarks, kCountBits);
+  for (unsigned i = 0; i < kTrailerMarks; ++i) {
+    legacy.Write(Pack(i % 7, i), kMarkBits);
+  }
+  const List legacyBack = Get([&legacy](unsigned n) { return legacy.Read(n); });
+  Check(legacyBack.count == kTrailerMarks && legacyBack.packed[19] == Pack(5, 19),
+        "an older build's 20-mark trailer reads whole");
+  // A count above the trailer's cap (garbage, a cut trailer) reads as empty;
+  // repeats drop.
   Bits junk;
-  junk.Write(31, kCountBits);
+  junk.Write(kTrailerMarks + 1, kCountBits);
   Check(Get([&junk](unsigned n) { return junk.Read(n); }).count == 0, "count too big");
+  Bits allOnes;
+  allOnes.Write(0x1F, kCountBits);
+  Check(Get([&allOnes](unsigned n) { return allOnes.Read(n); }).count == 0, "all ones too big");
   Bits twice;
   twice.Write(3, kCountBits);
   twice.Write(Pack(2, 9), kMarkBits);
@@ -80,19 +100,21 @@ int main() {
   Check(Get([&empty](unsigned n) { return empty.Read(n); }).count == 0, "zeros read empty");
 
   // Budget: the USA slot (940 bytes), 7084 retail bits + PKSN 160 = 7244 used
-  // holds every one of the kMaxMarks with the spare kept; with the 416-bit
-  // Archipelago trailer too, nothing fits.
+  // holds 20 of the 64 marks with the spare kept (the side file keeps the
+  // rest); with the 416-bit Archipelago trailer too, nothing fits.
   const size_t usaSlot = 940 * 8;
   const size_t fit = Fit(kMaxMarks, usaSlot, 7084 + 160);
-  Check(fit == kMaxMarks, "usa without archipelago fits the cap");
+  Check(fit == kTrailerMarks, "usa without archipelago fits 20 marks (the side file keeps the rest)");
   Check(usaSlot - (7084 + 160) - (kHeaderBits + fit * kMarkBits) >= kSpareBits, "spare kept");
-  Check(Fit(kMaxMarks + 1, usaSlot, 7084 + 160) == kMaxMarks, "one more than the cap still fits the cap");
+  Check(Fit(kTrailerMarks + 1, usaSlot, 7084 + 160) == kTrailerMarks, "one more than fits still fits 20");
   Check(Fit(kMaxMarks, usaSlot, 7084 + 416 + 160) == 0, "usa with archipelago fits none");
   Check(Fit(0, usaSlot, 0) == 0, "no marks, nothing written");
   // Fit is exact at the edge: one fewer bit of room drops a mark.
   const size_t edge = 7084 + 160 + kSpareBits + kHeaderBits + kMarkBits * 3;
   Check(Fit(10, edge, 7084 + 160) == 3 && Fit(10, edge - 1, 7084 + 160) == 2, "fit edge");
-  Check(Fit(5, 0xA7Fu * 8, 7084 + 416 + 160) == 5, "pal holds everything");
+  Check(Fit(5, 0xA7Fu * 8, 7084 + 416 + 160) == 5, "pal holds five");
+  Check(Fit(kMaxMarks, 0xA7Fu * 8, 7084 + 160) == kTrailerMarks,
+        "pal has room for 64 but the trailer keeps to 20");
 
   std::puts("port_map_marks_tests ok");
   return 0;

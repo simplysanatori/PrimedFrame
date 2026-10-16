@@ -187,6 +187,8 @@ set(MP_PORT_SOURCES
     platform/port_tracker.cpp
     platform/port_map_pickups.cpp
     platform/port_map_marks.cpp
+    platform/port_map_side.cpp
+    platform/port_map_side_paths.cpp
     platform/port_map_pickups_index.cpp
     platform/port_viewmodel.cpp
     platform/port_actor_shadow.cpp
@@ -553,6 +555,9 @@ if(MP_BUILD_TESTS)
     target_compile_definitions(port_map_pickups_tests PRIVATE TARGET_PC)
     add_executable(port_map_marks_tests tests/port_map_marks.cpp)
     target_include_directories(port_map_marks_tests PRIVATE platform/include)
+    add_executable(port_map_side_tests tests/port_map_side.cpp platform/port_map_side.cpp)
+    target_include_directories(port_map_side_tests PRIVATE platform/include extern/aurora/include)
+    target_compile_definitions(port_map_side_tests PRIVATE TARGET_PC)
     add_executable(port_randomizer_tests
         tests/port_randomizer.cpp
         platform/port_randomizer.cpp
@@ -959,7 +964,7 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_swoosh_ring_tests PRIVATE platform/include)
     add_test(NAME port_swoosh_ring_tests COMMAND port_swoosh_ring_tests)
     set_tests_properties(port_swoosh_ring_tests PROPERTIES TIMEOUT 15 LABELS port)
-    foreach(test IN ITEMS port_remastered_report_tests port_remastered_parsers_tests port_remastered_source_file_tests port_buffer_tests port_ai_tests port_map_pickups_tests port_map_marks_tests port_randomizer_tests port_apclient_tests port_ap_solo_tests port_ap_logic_tests port_rando_gen_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_skip_streams_tests port_revision_scripts_tests port_mouse_tests port_touch_pad_tests port_json_tests port_console_physics_tests port_ws_tests port_mods_tests port_pal_languages_tests port_actor_collision_bounds_tests port_room_env_tests port_room_env_tiles_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_astc_tests port_remastered_hud_tests port_remastered_movie_tests port_gallery_tests port_remastered_nso_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_anuv_tests port_remastered_lits_tests port_remastered_ice_tests port_remastered_driver_tests port_remastered_blend_tests port_inventory_visor_tests port_remastered_image_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_electric2_bolt_tests port_nested_light_tests port_remastered_effect_import_tests port_remastered_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_pointer_tests port_input_engine_tests port_input_bindings_tests port_env_tests port_tick_pair_tests port_dynamic_res_tests port_presentation_rules_tests port_livesplit_tests port_discord_tests port_update_check_tests port_savestate_tests port_timing_tests port_audio_math_tests)
+    foreach(test IN ITEMS port_remastered_report_tests port_remastered_parsers_tests port_remastered_source_file_tests port_buffer_tests port_ai_tests port_map_pickups_tests port_map_marks_tests port_map_side_tests port_randomizer_tests port_apclient_tests port_ap_solo_tests port_ap_logic_tests port_rando_gen_tests port_musyx_tests port_musyx_charge_loop_tests port_disc_tests port_skip_streams_tests port_revision_scripts_tests port_mouse_tests port_touch_pad_tests port_json_tests port_console_physics_tests port_ws_tests port_mods_tests port_pal_languages_tests port_actor_collision_bounds_tests port_room_env_tests port_room_env_tiles_tests port_room_geo_tests port_hd_font_tests port_hud_bars_tests port_remastered_astc_tests port_remastered_hud_tests port_remastered_movie_tests port_gallery_tests port_remastered_nso_tests port_remastered_text_tests port_remastered_uv_tests port_remastered_anuv_tests port_remastered_lits_tests port_remastered_ice_tests port_remastered_driver_tests port_remastered_blend_tests port_inventory_visor_tests port_remastered_image_tests port_remastered_effect_tests port_remastered_effect_convert_tests port_electric2_bolt_tests port_nested_light_tests port_remastered_effect_import_tests port_remastered_import_tests port_importers_tests port_custom_res_tests port_hold_toggle_tests port_pointer_tests port_input_engine_tests port_input_bindings_tests port_env_tests port_tick_pair_tests port_dynamic_res_tests port_presentation_rules_tests port_livesplit_tests port_discord_tests port_update_check_tests port_savestate_tests port_timing_tests port_audio_math_tests)
         add_test(NAME ${test} COMMAND ${test})
         set_tests_properties(${test} PROPERTIES TIMEOUT 15 LABELS port)
         aurora_copy_runtime_dlls(${test})
@@ -1015,5 +1020,11 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_door_save_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_door_save_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # The map side file reaches its staging, its flush and its load from the
+        # card driver, and the save state carries the same data in its blob.
+        add_test(NAME port_map_side_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_map_side_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_map_side_wiring PROPERTIES TIMEOUT 15 LABELS port)
     endif()
 endif()

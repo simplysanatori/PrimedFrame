@@ -526,10 +526,22 @@
   Room marks: on the world map screen X marks or unmarks the shown room (a
   "Mark room" prompt under the map; with pointer menus click it). Marked rooms
   draw cyan on the map and the minimap, over the Rooms amber, whatever
-  `map_pickups` is. Up to 20 marks are kept per save in an "RMMK" trailer after
-  the pickup-seen one, written only when there is a mark and it fits the slot
-  with 4 bytes spare (a USA slot with an Archipelago trailer has no room, so
-  those marks last for the session; the PAL slot always fits). The map legend
+  `map_pickups` is. A save keeps up to 64 marks, and which pickups it has seen,
+  in a small side file beside the card: `mapdata/<card>-<slot>.bin` under the
+  port's user folder (the card's own directory keys the name, so the port's
+  card, a shared emulator card and an Archipelago room's card each have their
+  own; nothing is written into the emulator's folder). The file holds a
+  fingerprint of the exact slot bytes, so it is only used for the save it was
+  written for and a save replaced elsewhere - Dolphin, an import, a conversion,
+  an older build - falls back to what the slot itself carries. It is written
+  after a memory card write has finished (never for one that failed) and read
+  back when that slot is loaded. Beside it the slot still holds an "RMMK"
+  trailer after the pickup-seen one - the first 20 marks, exactly the format
+  earlier builds wrote, so either build reads the other's save - and that
+  trailer is all a slot gets without the side file: a USA slot with an
+  Archipelago trailer has no room for it at all, and a save copied to another
+  machine by hand carries the 20. Save states carry the whole list themselves
+  (the blob's tail), so a state round trip keeps every mark. The map legend
   lists the pickup shapes in use and the marked-room colour. Console: `mark`.
 - Skippable cutscenes (F1 > Game > Cutscenes, pause Options > Visor,
   `skippable_cutscenes`, off by default; always on in randomizer and
@@ -613,7 +625,10 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   (`savestate_hotkeys`, on by default). A state holds the whole game save
   (items, ammo, doors, pickups, map, scans, world layers) plus Samus's room,
   position, facing and morph ball state; loading reloads that world and puts
-  her back. With `savestate_room_state` (F1 > Save states, on by default) it
+  her back. The room marks and the seen pickups come with it, whatever the
+  card's `mapdata` side file holds: the state carries the whole list in its own
+  blob, so a round trip does not shorten it. With `savestate_room_state` (F1 >
+  Save states, on by default) it
   also keeps the live script objects of the loaded rooms by editor id: killed
   enemies stay dead, enemies, platforms and moving objects keep position,
   velocity and health, doors keep open or closed (set directly, without firing their connections), timers and counters keep
