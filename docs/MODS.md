@@ -317,6 +317,10 @@ once per launch, and the Mods and import panels say "re-import needed". Bump `kI
 leaves the stamp alone.
 Converter 52 extends correct room lightmap UV selection to 14 additional Remastered shader
 families (15 covered total); existing Remastered-model imports need re-importing.
+Rooms 20: when two Remastered rooms match one area, only the closer match's environment,
+geometry and liquids are written (before, the later room's overwrote the first's). Existing imports
+show "re-import needed"; a re-import makes the rooms stage again, and the room models stage
+again only if the rooms now place a different set of models.
 
 The port reads the image itself (`platform/port_remastered_nsp.cpp`, `_pak`,
 `_txtr`, `_cmdl`), and `_convert` writes a CMDL (plus CSKR for skinned models)
