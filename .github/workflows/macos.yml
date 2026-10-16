@@ -144,6 +144,7 @@ jobs:
           cp extern/aurora/LICENSE dist/licenses/aurora.txt
           cp extern/musyx/LICENSE dist/licenses/musyx.txt
           cp extern/astcenc/LICENSE.txt dist/licenses/astcenc.txt
+          cp extern/GamepadMotionHelpers/LICENSE dist/licenses/gamepadmotionhelpers.txt
           cp "$(brew --prefix openssl@3)/LICENSE.txt" dist/licenses/openssl.txt 2>/dev/null ||
             curl -fsSL -o dist/licenses/openssl.txt https://raw.githubusercontent.com/openssl/openssl/openssl-3.5/LICENSE.txt
           # Dawn and nod are prebuilt packages with no licence file of their own.

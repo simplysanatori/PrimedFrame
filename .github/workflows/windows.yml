@@ -121,6 +121,7 @@ jobs:
           Copy-Item extern/aurora/LICENSE dist/licenses/aurora.txt
           Copy-Item extern/musyx/LICENSE dist/licenses/musyx.txt
           Copy-Item extern/astcenc/LICENSE.txt dist/licenses/astcenc.txt
+          Copy-Item extern/GamepadMotionHelpers/LICENSE dist/licenses/gamepadmotionhelpers.txt
           Copy-Item docs/NATIVE_PORT.md dist/README.md
           Copy-Item docs/SETTINGS.md dist/SETTINGS.md
           Copy-Item docs/MODS.md dist/MODS.md

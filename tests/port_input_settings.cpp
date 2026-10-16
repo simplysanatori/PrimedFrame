@@ -57,7 +57,6 @@ int main() {
   Check(Get().touchSideMargin.load() == 40.f, "touch_side_margin");
   ApplySetting("touch_side_margin", "400");
   Check(Get().touchSideMargin.load() == 40.f, "touch_side_margin range");
-<<<<<<< HEAD
   ApplySetting("touch_opacity", "50");
   Check(Get().touchOpacity.load() == 50.f, "touch_opacity");
   ApplySetting("touch_opacity", "400");
