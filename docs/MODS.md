@@ -253,7 +253,10 @@ again while the game runs: added, removed, edited, enabled and disabled mods
 all take effect, PAK resources and native `.dds` textures alike. The game is
 rebuilt where Samus stands, exactly as a save state load does, room state included when `savestate_room_state` is on (otherwise enemies, doors
 and puzzles come back as after a memory card load), with every PAK reopened so
-that all it draws is loaded from the new files. It runs at the next game tick,
+that all it draws is loaded from the new files. A room whose script the reload
+changed gets no saved objects from the state it captured (the same rule as a
+save state load: see the note under Save states in `docs/SETTINGS.md`); it comes
+back as after a memory card load. It runs at the next game tick,
 so unpause first; pressed in the menus, it happens when a game starts. Change
 the folder first, then reload: until then the game still reads the old files,
 so don't delete a loaded mod and keep playing.

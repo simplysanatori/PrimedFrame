@@ -980,5 +980,11 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_air_mover_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR}/src/MetroidPrime/CGameCollision.cpp)
         set_tests_properties(port_air_mover_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # The door payload reaches its encoder and decoder from the capture
+        # and the restore (issue #131).
+        add_test(NAME port_door_save_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_door_save_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_door_save_wiring PROPERTIES TIMEOUT 15 LABELS port)
     endif()
 endif()
