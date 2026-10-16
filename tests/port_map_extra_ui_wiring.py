@@ -29,6 +29,7 @@ prompt live in CAutoMapper.cpp behind the running map screen):
 It is a source check: no engine code runs and no game is started.
 """
 import pathlib
+import re
 import sys
 import unittest
 
@@ -168,6 +169,40 @@ class Wiring(unittest.TestCase):
         self.assertIn("PortMapMarks::Toggle(", mapper)
         for path in (PICKUPS, MARKS):
             self.assertNotIn("MapExtraUi", path.read_text(), path)
+
+    def test_pane_caches_are_reset_with_the_frame(self):
+        # The frame's widgets are new objects each time it is loaded, but a freed
+        # pane can come back at the same address: a cache left over from the old
+        # frame would keep the disc's geometry from being taken again, would skip
+        # the fit on the reopened frame and would leave the prompt unplaced.
+        mapper = MAPPER.read_text()
+        forget = body(mapper, "static void PortForgetMapPanes() {", MAPPER)
+        for reset in ("sPortLegendFit.pane = nullptr;", "sPortLegendFit.rows = 0;",
+                      "sPortLegendFit.retailRows = 0;", "sPortHintPane.pane = nullptr;",
+                      "sPortHintPane.placed = false;"):
+            self.assertIn(reset, forget)
+        # Once when the frame is loaded and once when it is dropped, and the load
+        # one comes before the frame's legend pane is read.
+        self.assertEqual(mapper.count("PortForgetMapPanes();"), 2, "one call each way")
+        load = between(mapper, "if (x28_frmeMapScreen.get() != NULL && x2c_frmeInitialized == NULL) {",
+                       'FindWidget("textpane_mapLegend")', MAPPER)
+        self.assertIn("PortForgetMapPanes();", load)
+        drop = between(mapper, "if (x1c0_nextState == kAMS_MiniMap) {", "x28_frmeMapScreen = NULL;",
+                       MAPPER)
+        self.assertIn("PortForgetMapPanes();", drop)
+
+    def test_legend_labels_stay_within_the_disc_legend_width(self):
+        # The left pane slides out by a fixed distance to hide the legend (key
+        # state 2), so the port's entries may not draw the block wider than the
+        # disc's own: with the labels below the appended lines are 233 text px and
+        # the row ratio (11/13) draws them 197 px wide against the disc's 198.
+        # Longer labels would leave a tail on screen while the panel is away.
+        mapper = MAPPER.read_text()
+        labels = re.findall(r'entry\(PortCustomRes::kLegend\w+Txtr, L"([^"]+)"\)', mapper)
+        self.assertEqual(sorted(labels), ["Collected", "Major", "Marked", "Minor", "Pickup"])
+        self.assertLessEqual(max(len(l) for l in labels), 9, labels)
+        paired = sorted((len(l) for l in labels), reverse=True)
+        self.assertLessEqual(sum(paired[:2]), 15, "the widest two-per-line pair is 15 chars")
 
     def test_console_docs_and_registration(self):
         console = CONSOLE.read_text()

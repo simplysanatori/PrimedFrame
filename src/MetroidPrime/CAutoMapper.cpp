@@ -1018,7 +1018,7 @@ static rstl::wstring PortLegendText() {
       entry(PortCustomRes::kLegendDotTxtr, L"Pickup");
     }
   }
-  entry(PortCustomRes::kLegendMarkTxtr, L"Marked room");
+  entry(PortCustomRes::kLegendMarkTxtr, L"Marked");
   return text;
 }
 
@@ -1099,6 +1099,22 @@ struct SPortHintPane {
   bool placed = false;
 };
 SPortHintPane sPortHintPane;
+
+// Port: both caches above (and the legend's fit) are keyed on the pane, and a
+// released pane can come back at the same address when the frame is loaded
+// again - the map screen leaves and is re-entered, and the pause screen's pools
+// hand out what was just freed. A stale cache would keep the disc's geometry
+// from being re-taken, would leave the last row count in place (skipping the
+// fit on the reopened frame) and would keep a placement flag set, so the prompt
+// of a reopened frame would never be placed. Cleared when the map frame is
+// dropped and when it is loaded again, before anything reads them.
+static void PortForgetMapPanes() {
+  sPortLegendFit.pane = nullptr;
+  sPortLegendFit.rows = 0;
+  sPortLegendFit.retailRows = 0;
+  sPortHintPane.pane = nullptr;
+  sPortHintPane.placed = false;
+}
 
 static void PortPlaceMarkHint(CGuiTextPane* pane, bool show) {
   if (pane == nullptr) {
@@ -2019,6 +2035,11 @@ void CAutoMapper::Update(float dt, const CStateManager& mgr) {
   if (x28_frmeMapScreen.get() != NULL && x2c_frmeInitialized == NULL) {
     if (x28_frmeMapScreen->TryCache()) {
       x2c_frmeInitialized = x28_frmeMapScreen->GetObject();
+#ifdef TARGET_PC
+      // Port: the new frame's widgets, before the port's own state is taken from
+      // them (see PortForgetMapPanes).
+      PortForgetMapPanes();
+#endif
       // Port: keep the map screen's proportions in widescreen instead of
       // stretching it across the wider viewport.
       if (CGuiCamera* cam = x2c_frmeInitialized->GetFrameCamera()) {
@@ -2386,6 +2407,10 @@ void CAutoMapper::CompleteMapperStateTransition(const CStateManager& mgr) {
   }
 
   if (x1c0_nextState == kAMS_MiniMap) {
+#ifdef TARGET_PC
+    // Port: the frame's widgets go away with it (see PortForgetMapPanes).
+    PortForgetMapPanes();
+#endif
     x28_frmeMapScreen = NULL;
     x2c_frmeInitialized = NULL;
     x2fc_textpane_hint = NULL;
