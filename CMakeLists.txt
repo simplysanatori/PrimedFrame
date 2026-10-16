@@ -298,6 +298,7 @@ endif()
 # disc.cpp and port_pal_languages.cpp inflate compressed images and fonts. Aurora
 # provides ZLIB::ZLIB everywhere (its zlib-ng on Windows).
 target_link_libraries(metroid_prime_port PRIVATE ZLIB::ZLIB)
+target_link_libraries(metroid_prime_port PRIVATE port_remastered_ground_contacts)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR ANDROID)
     # port_crash.cpp logs each C++ throw's type and stack.
     target_link_options(metroid_prime_port PRIVATE "-Wl,--wrap=__cxa_throw")
@@ -510,6 +511,20 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/packaging/io.github.odrannnn.metroidpr
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
               ${CMAKE_CURRENT_SOURCE_DIR}/NOTICE
     DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/metroid-prime-port)
+
+# Source-derived Remastered box/triangle contact geometry (0xc0a180) and its
+# adapter. Linked into the game by the Remastered mover; the tests use it
+# standalone. The exact IEEE semantics (-ffp-contract=off) are part of the contract.
+add_library(port_remastered_ground_contacts STATIC
+    platform/port_remastered_ground_contacts.cpp
+    platform/port_remastered_ground_world.cpp)
+target_include_directories(port_remastered_ground_contacts PUBLIC platform/include)
+set_target_properties(port_remastered_ground_contacts PROPERTIES CXX_STANDARD 17)
+if(MSVC)
+    target_compile_options(port_remastered_ground_contacts PRIVATE /fp:strict)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(port_remastered_ground_contacts PRIVATE -fno-fast-math -ffp-contract=off)
+endif()
 
 if(MP_BUILD_TESTS)
     enable_testing()
@@ -735,6 +750,19 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_custom_res_tests PRIVATE platform/include)
     add_executable(port_env_tests tests/port_env.cpp)
     target_include_directories(port_env_tests PRIVATE platform/include)
+    add_executable(port_air_mover_contact_tests tests/port_air_mover_contact.cpp
+        src/Collision/CMaterialFilter.cpp platform/port_remastered_ground_contacts.cpp
+        platform/port_remastered_ground_world.cpp)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(port_air_mover_contact_tests PRIVATE -ffp-contract=off -fno-fast-math)
+    endif()
+    target_include_directories(port_air_mover_contact_tests PRIVATE platform/include include
+        extern/sdk/include)
+    add_test(NAME port_air_mover_contact_tests COMMAND port_air_mover_contact_tests)
+    set_tests_properties(port_air_mover_contact_tests PROPERTIES TIMEOUT 15 LABELS port)
+    add_test(NAME port_air_mover_wiring COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/port_air_mover_wiring.py
+        ${CMAKE_SOURCE_DIR}/src/MetroidPrime/CGameCollision.cpp)
     add_executable(port_hdr_scene_policy_tests tests/port_hdr_scene_policy.cpp)
     target_include_directories(port_hdr_scene_policy_tests PRIVATE include extern/aurora/include)
     target_compile_definitions(port_hdr_scene_policy_tests PRIVATE TARGET_PC VERSION=0)
