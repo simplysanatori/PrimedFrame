@@ -83,13 +83,13 @@ self-contained — and it is why `MP_USER_PATH` cannot be used to move saves.
   the same LGPL `ffmpeg` as Windows in `Contents/MacOS`, and collects the
   licences into `licenses/` beside the app. Both are ad-hoc signed, not
   notarised.
-- **The AppImage and the APK**: `tools/make_appimage.sh` collects them into
-  `usr/share/licenses/metroid-prime-port/`. It bundles no shared libraries.
-  The APK's `syncLicenseNotices` task gathers the same set into `assets/`,
-  verified present in a built package (0.21.0, twelve files): `port-license.txt`,
-  `port-notice.txt`, `aurora.txt`, `musyx.txt`, `astcenc.txt`, `adrenotools.txt`,
-  `linkernsbypass.txt`, `sdl-src.txt`, `imgui-src.txt`, `fmt-src.txt`,
-  `zstd-src.txt` and `openssl-license.txt`.
+- **The AppImage, the Linux tarball and the APK**: `tools/collect_licenses.sh`
+  gathers the AppImage's and the tarball's into `share/licenses/metroid-prime-port/`:
+  the port's grant and notice, the vendored snapshots, every fetched package's
+  licence (`<dep>.txt`) and `packaging/licenses/` (Dawn and nod, whose prebuilt
+  archives carry none). It bundles no shared libraries. The APK's
+  `syncLicenseNotices` task gathers the same set into `assets/`, plus
+  `adrenotools.txt`, `linkernsbypass.txt` and `openssl-license.txt`.
 - **The Flatpak** collects them in the manifest's `post-install`: the two
   vendored snapshots out of the tree, and the four fetched packages by glob,
   because the fetched ones only exist once `cmake-ninja` has run.

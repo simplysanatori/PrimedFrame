@@ -7,22 +7,26 @@ name: windows
 on:
   workflow_dispatch:
 
+# Nothing here writes to the repository.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
-      - uses: hendrikmuhs/ccache-action@v1
+      - uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639 # v1.2.20
         with:
           key: ${{ runner.os }}-clangcl
 
       # Configure downloads and unpacks about a dozen dependencies. Keep the
       # unpacked sources and the stamps that say they are current; the build
       # directories beside them are left out, since ccache covers those.
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             build-win/_deps/*-src
@@ -68,13 +72,13 @@ jobs:
       # carries a small LGPL build made here from the official source: the
       # H.264 decoder and the JPEG encoder, nothing else. Rebuilt only when
       # the script changes.
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: ffmpeg
         with:
           path: ffmpeg-min/out
           key: ffmpeg-min-${{ hashFiles('tools/build_ffmpeg_min.sh') }}
 
-      - uses: msys2/setup-msys2@v2
+      - uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
         if: steps.ffmpeg.outputs.cache-hit != 'true'
         with:
           msystem: MINGW64
@@ -128,9 +132,9 @@ jobs:
               New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
               Copy-Item $_.FullName $destination
             }
-          # nod is now linked in: ship its licence (dual MIT / Apache-2.0).
-          Invoke-WebRequest https://raw.githubusercontent.com/encounter/nod/v2.0.0-alpha.12/LICENSE-MIT -OutFile dist/licenses/nod-MIT.txt
-          Invoke-WebRequest https://raw.githubusercontent.com/encounter/nod/v2.0.0-alpha.12/LICENSE-APACHE -OutFile dist/licenses/nod-Apache-2.0.txt
+          # Dawn (webgpu_dawn.dll) and nod (linked in, dual MIT / Apache-2.0) are
+          # prebuilt packages with no licence file of their own.
+          Copy-Item packaging/licenses/*.txt dist/licenses/
           $license = @("$root/license.txt", "$root/LICENSE.txt") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if ($license) { Copy-Item $license dist/licenses/openssl.txt }
           else { Invoke-WebRequest https://raw.githubusercontent.com/openssl/openssl/openssl-3.5/LICENSE.txt -OutFile dist/licenses/openssl.txt }
@@ -167,7 +171,7 @@ jobs:
           # reads as malformed and feeds Dawn bad pipeline blobs.
           Remove-Item -Force -ErrorAction SilentlyContinue ./dist/metroid_prime_port.log, ./dist/dawn_cache.db*, ./dist/pipeline_cache.db*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: metroid_prime_port-windows
           path: dist
