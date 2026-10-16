@@ -1046,6 +1046,23 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
         outgoing.push_back(std::move(update));
       }
     }
+    {
+      std::string line = "connected as " + mSlotDescription + "; the server has " +
+                         std::to_string(mState.checkedLocations.size()) + " location(s) checked";
+      if (mConfig.builtin) {
+        line += mSlotData.received ? "; seed options: missile_launcher=" +
+                                         std::to_string(mSlotData.requireMissileLauncher ? 1 : 0) +
+                                         " main_power_bomb=" +
+                                         std::to_string(mSlotData.requireMainPowerBomb ? 1 : 0) +
+                                         " required_artifacts=" + std::to_string(mSlotData.requiredArtifacts) +
+                                         " spring_ball=" + std::to_string(mSlotData.springBall) +
+                                         " death_link=" + std::to_string(mConfig.deathLink ? 1 : 0)
+                                   : "; no slot_data, so the seed's options are the defaults";
+      }
+      Log(std::move(line));
+      for (const std::string& warning : mSlotData.warnings)
+        Log("seed option " + warning);
+    }
     // The built-in tables take the retail item out of each pickup, so what the
     // pickup holds instead is asked for up front and named when collected.
     if (mConfig.builtin) {
@@ -1124,6 +1141,9 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
     const PortJson::Value::Elements empty;
     const auto& itemList = items != nullptr && items->IsArray() ? items->AsArray() : empty;
     const int64_t expectedIndex = mState.nextItemIndex;
+    Log("received " + std::to_string(itemList.size()) + " item(s) from #" + std::to_string(index) +
+        " (next expected #" + std::to_string(expectedIndex) + ", the loaded game holds the first " +
+        std::to_string(mGrantFrom) + ")");
     // Nothing processed yet: the server is starting a fresh inventory, so the
     // progressive counts start over and the replay rebuilds them.
     if (index == 0 && expectedIndex == 0)
@@ -1133,6 +1153,9 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
     if (index == 0)
       mDesynced = false;
     if (index > 0 && index != expectedIndex) {
+      Log("item #" + std::to_string(index) + " is not the next one (#" + std::to_string(expectedIndex) +
+          "): asking the server to resend everything" +
+          (index > expectedIndex ? "; these wait for its reply" : "; the ones already processed are skipped"));
       mDesynced = true;
       outgoing.push_back(BuildSync());
       // Items past a gap are left for the Sync reply. Taking them now would
@@ -1157,7 +1180,7 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
         continue;
       const int64_t receivedIndex = index + static_cast<int64_t>(position);
       if (receivedIndex < mState.nextItemIndex)
-        continue;
+        continue; // processed already (a resend's overlap)
       // Below mGrantFrom the loaded save already holds the item: the replay
       // only rebuilds the progressive counts and the tracker.
       const bool alreadyHeld = receivedIndex < mGrantFrom;
@@ -1194,6 +1217,18 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
         grant.index = receivedIndex;
         seenBefore = count;
         notification = grant.display;
+        {
+          std::string line = "item #" + std::to_string(receivedIndex) + " " + std::to_string(itemId) + " " +
+                             grant.display;
+          if (grant.itemType < 0)
+            line += ": counted, nothing to grant";
+          else
+            line += ": game item " + std::to_string(grant.itemType) + ", capacity +" +
+                    std::to_string(grant.capacity) + ", amount +" + std::to_string(grant.amount);
+          if (alreadyHeld)
+            line += " (the loaded game holds it already: counted, not granted)";
+          Log(std::move(line));
+        }
         if (!alreadyHeld)
           granted.push_back(std::move(grant));
       } else {
@@ -1204,6 +1239,8 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
         if (!alreadyHeld)
           granted.push_back(grant);
         mLastError = "unknown item id " + std::to_string(itemId);
+        Log("item #" + std::to_string(receivedIndex) + " " + std::to_string(itemId) +
+            ": not an item of this game's table, nothing granted");
         notification = "unknown item " + std::to_string(itemId);
       }
 
@@ -1371,6 +1408,26 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
   } catch (...) {
     // Malformed packets and allocation failures must not escape into the client.
   }
+
+void Session::Log(std::string line) {
+  // Far more than one packet writes; a session that nobody drains stays bounded.
+  constexpr size_t kLogLimit = 512;
+  if (mLog.size() >= kLogLimit)
+    mLog.erase(mLog.begin());
+  mLog.push_back(std::move(line));
+}
+
+bool Session::TakeLogLine(std::string& line) {
+  try {
+    if (mLog.empty())
+      return false;
+    line = std::move(mLog.front());
+    mLog.erase(mLog.begin());
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
 
 bool Session::TakeChatLine(ChatLine& line) {
   try {
@@ -1679,6 +1736,8 @@ std::string Session::BuildBounce(const std::string& cause) const {
 }
 
 void Session::RewindTo(int64_t heldCount) {
+  Log("rewinding: the loaded game holds the first " + std::to_string(std::max<int64_t>(0, heldCount)) +
+      " item(s); the server's next resend grants the rest");
   mState.nextItemIndex = 0;
   mState.progressive.clear();
   mTracked.clear();
@@ -1698,6 +1757,19 @@ bool Session::MarkLocationChecked(const std::string& locationKey, int64_t& id) {
 
 bool Session::KnowsLocation(const std::string& locationKey) const {
   return mConfig.locations.find(locationKey) != mConfig.locations.end();
+}
+
+bool Session::LocationIdFor(const std::string& locationKey, int64_t& id) const {
+  const auto found = mConfig.locations.find(locationKey);
+  if (found == mConfig.locations.end())
+    return false;
+  id = found->second;
+  return true;
+}
+
+bool Session::LocationChecked(int64_t id) const {
+  return std::find(mState.checkedLocations.begin(), mState.checkedLocations.end(), id) !=
+         mState.checkedLocations.end();
 }
 
 std::vector<int64_t> Session::AllLocationIds() const {

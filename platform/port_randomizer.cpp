@@ -510,6 +510,19 @@ void RecordCheck(uint32_t worldAssetId, uint32_t areaAssetId, uint32_t entityId,
   }
 }
 
+void LogPickupGrant(uint32_t worldAssetId, uint32_t areaAssetId, uint32_t entityId, int itemType,
+                    int capacity, int amount, int amountAfter, int capacityAfter) {
+  try {
+    if (!GetState().enabled)
+      return;
+    char key[32];
+    FormatLocationKey(worldAssetId, areaAssetId, entityId, key, sizeof(key));
+    PortLog::Write("randomizer: picked up %s: %s, capacity +%d, amount +%d; now %d/%d (amount/capacity)\n",
+                   key, ItemName(itemType), capacity, amount, amountAfter, capacityAfter);
+  } catch (...) {
+  }
+}
+
 const char* ItemName(int itemType) {
   for (const ItemEntry& item : kItems) {
     if (item.value == itemType)

@@ -208,6 +208,11 @@ public:
   // Every PrintJSON message in full, repeats included, for the chat log. Drained
   // like the notifications; the queue is capped.
   bool TakeChatLine(ChatLine& line);
+  // What the session did with each packet that a bug report needs: the handshake
+  // and the seed's options, every item received (its index, what it grants, or
+  // why it grants nothing), gaps and resends, and rewinds. Plain sentences, no
+  // prefix, oldest first; drained by the client into the log. The queue is capped.
+  bool TakeLogLine(std::string& line);
   // Seed name from RoomInfo, or "" before it arrives.
   const std::string& SeedName() const { return mSeedName; }
   // Alias of a player slot from Connected, or "player <slot>" when unknown.
@@ -293,6 +298,9 @@ public:
   // key with no id is dropped on the floor, so the session plays normally and
   // the server simply never records the check.
   bool KnowsLocation(const std::string& locationKey) const;
+  // The location id the table gives the key, for naming a check in the log.
+  bool LocationIdFor(const std::string& locationKey, int64_t& id) const;
+  bool LocationChecked(int64_t id) const;
   // Every configured location id, for the MP_AP_SEND_ALL debug path.
   std::vector< int64_t > AllLocationIds() const;
 
@@ -377,6 +385,8 @@ private:
   bool AnnouncedLocally(int64_t locationId, int64_t finder) const;
   std::vector< std::string > mNotifications;
   std::vector< ChatLine > mChat;
+  std::vector< std::string > mLog;
+  void Log(std::string line);
   std::vector< TrackedItem > mTracked;
   SlotData mSlotData;
   // DeathLink bookkeeping: bounces owed to the game, and who to blame.

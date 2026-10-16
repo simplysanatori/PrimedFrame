@@ -914,6 +914,56 @@ int main() {
     Check(!session.GetSlotData().preScanElevators, "a seed without pre_scan_elevators scans nothing");
   }
   {
+    // The log a bug report needs (#136): the handshake and seed options, each
+    // received item with what it grants, the rewind a loaded game asks for, and
+    // which items the replay only counts.
+    Session session(builtin, State());
+    std::vector<std::string> outgoing;
+    std::vector<ItemGrant> grants;
+    std::vector<std::string> log;
+    const auto drain = [&] {
+      for (std::string line; session.TakeLogLine(line);)
+        log.push_back(line);
+    };
+    const auto logged = [&](const std::string& part) {
+      return std::any_of(log.begin(), log.end(), [&](const std::string& line) { return Contains(line, part); });
+    };
+    session.HandlePacket(Packet(R"({"cmd":"Connected","slot":1,"team":0,"players":[],
+        "checked_locations":[5031100],"slot_data":{"missile_launcher":1,"main_power_bomb":0}})"),
+                         outgoing, grants);
+    drain();
+    Check(logged("connected as slot 1, team 0; the server has 1 location(s) checked") &&
+              logged("missile_launcher=1 main_power_bomb=0"),
+          "the log names the slot, the checks the server has and the seed's options");
+    const std::string both = R"({"cmd":"ReceivedItems","index":0,"items":[
+        {"item":5031000,"location":-1,"player":0,"flags":0},
+        {"item":5031021,"location":5,"player":1,"flags":0}]})";
+    session.HandlePacket(Packet(both), outgoing, grants);
+    session.RewindTo(1);
+    log.clear();
+    drain();
+    Check(logged("rewinding: the loaded game holds the first 1 item(s)"), "a rewind is logged");
+    session.HandlePacket(Packet(both), outgoing, grants);
+    session.HandlePacket(Packet(R"({"cmd":"ReceivedItems","index":3,"items":[
+        {"item":5031043,"location":7,"player":1,"flags":1}]})"),
+                         outgoing, grants);
+    session.HandlePacket(Packet(R"({"cmd":"ReceivedItems","index":2,"items":[
+        {"item":5031043,"location":7,"player":1,"flags":1},
+        {"item":12345,"location":8,"player":1,"flags":0}]})"),
+                         outgoing, grants);
+    drain();
+    Check(logged("received 2 item(s) from #0 (next expected #0, the loaded game holds the first 1)"),
+          "each ReceivedItems is logged with the index it starts at and the one expected");
+    Check(logged("item #0 5031000 Power Beam") && logged("(the loaded game holds it already: counted, not granted)"),
+          "an item the loaded game holds is logged as counted, not granted");
+    Check(logged("item #3 is not the next one (#2): asking the server to resend everything; these wait"),
+          "a gap is logged with what happens to the items past it");
+    Check(logged("item #2 5031043 Missile Launcher: game item ") && logged("capacity +5, amount +5"),
+          "a received Missile Launcher is logged with what it grants");
+    Check(logged("item #3 12345: not an item of this game's table, nothing granted"),
+          "an unknown item is logged as granting nothing");
+  }
+  {
     Session session(builtin, State());
     std::vector<std::string> outgoing;
     std::vector<ItemGrant> grants;

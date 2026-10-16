@@ -440,6 +440,29 @@ dots; console `tracker` prints the same list); its rules are compiled from the
 The port's screenshot capture does not
 include Aurora's UI layer, so an F1 screenshot will not show either.
 
+## What the log records
+
+`metroid_prime_port.log` (attach it to a report) follows every item and check, so a
+missing item can be traced to where it stopped (`archipelago:` lines):
+
+- `connected as slot N, team T; the server has K location(s) checked; seed options: ...`:
+  the handshake, and the options that change grants (`missile_launcher`, `main_power_bomb`).
+- `check <world:area:entity> (location ID) queued to send` when a pickup is collected, or
+  `... was recorded already ...; not sent again` when the server or the game had it, so
+  no item comes back for it.
+- `received N item(s) from #I (next expected #E, ...)`, then one `item #I <id> <name>: game
+  item T, capacity +C, amount +A` per item; `(the loaded game holds it already: counted,
+  not granted)` during a replay, and a line for a gap and the resend it asks for.
+- `applied item #I <name>: <item> a/c -> a/c (amount/capacity)`: the inventory before and
+  after, once the game takes the grant.
+- `lining up a loaded game: ...`, then `in step`, `holds X of Y ...; asking the server for
+  the rest` with `rewinding: ...`, or `taking the loaded game to hold ...`: what a save,
+  resume or save state brings, and what the client does about it.
+- `DeathLink: N death(s) from the multiworld`.
+
+Without Archipelago, a seed's pickups log `randomizer: picked up <key>: <item>, capacity
++C, amount +A; now a/c` (the per-check `randomizer_checks.log` is unchanged).
+
 ## Verified
 
 - `port_apclient_tests` covers configuration parsing and its error cases, the

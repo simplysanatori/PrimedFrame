@@ -210,6 +210,14 @@ struct Runtime {
     }
   }
 
+  // The session's account of what it did (Session::TakeLogLine), into the log.
+  void DrainSessionLogLocked() {
+    if (session == nullptr)
+      return;
+    for (std::string line; session->TakeLogLine(line);)
+      PortLog::Write("archipelago: %s\n", line.c_str());
+  }
+
   void SetError(const std::string& error) {
     std::lock_guard<std::mutex> lock(mutex);
     connected = false;
@@ -476,10 +484,22 @@ bool ReconcileLocked(Runtime& runtime, CGameState::ApProgress& progress) {
   }
   progress.reconciled = true;
   runtime.recordSynced = true;
+  // The record a loaded game (a save, a resume or a save state) brings, before
+  // it is lined up: what the decision below starts from.
+  PortLog::Write("archipelago: lining up a loaded game: it records %s, %u item(s) applied; "
+                 "the session has received %lld, %zu waiting for the game\n",
+                 !progress.recorded              ? "nothing (a save from before the record)"
+                 : progress.identity == 0        ? "a new game"
+                 : progress.identity == identity ? "this seed and slot"
+                                                 : "another seed or slot",
+                 progress.appliedIndex, static_cast<long long>(state.nextItemIndex), runtime.grants.size());
   // Checks made in another seed or slot are not this one's. A new game's
   // (identity 0) were made under this session before its seed was known.
-  if (progress.identity != 0 && progress.identity != identity)
+  if (progress.identity != 0 && progress.identity != identity) {
+    PortLog::Write("archipelago: the loaded game's checks were made in another seed or slot; "
+                   "they are not sent\n");
     ClearChecked(progress);
+  }
   else
     QueueRecordedChecksLocked(runtime, progress);
   // Where the game's items end on the session's side: grants still queued
@@ -493,18 +513,24 @@ bool ReconcileLocked(Runtime& runtime, CGameState::ApProgress& progress) {
     progress.identity = identity;
     progress.appliedIndex = static_cast<uint>(
         std::clamp<int64_t>(firstPending, 0, std::numeric_limits<uint32_t>::max()));
+    PortLog::Write("archipelago: taking the loaded game to hold the first %lld item(s)\n",
+                   static_cast<long long>(firstPending));
     return false;
   }
   // A new game, or a save from another seed or slot, holds none of these items.
   const int64_t held = progress.identity == identity ? progress.appliedIndex : 0;
   progress.identity = identity;
   progress.appliedIndex = static_cast<uint>(held);
-  if (held == firstPending)
+  if (held == firstPending) {
+    PortLog::Write("archipelago: the loaded game is in step: it holds the first %lld item(s)\n",
+                   static_cast<long long>(held));
     return false;
+  }
   PortLog::Write("archipelago: the loaded game holds %lld of %lld received items; "
                  "asking the server for the rest\n",
                  static_cast<long long>(held), static_cast<long long>(state.nextItemIndex));
   runtime.session->RewindTo(held);
+  runtime.DrainSessionLogLocked();
   runtime.MarkStateDirtyLocked();
   runtime.grants.clear();
   runtime.itemCount = static_cast<int>(std::min<int64_t>(held, std::numeric_limits<int>::max()));
@@ -982,6 +1008,7 @@ void WorkerLoop(Runtime& runtime) {
         runtime.lastMessage = runtime.session->LastMessage();
         for (Protocol::ChatLine line; runtime.session->TakeChatLine(line);)
           runtime.AppendChatLocked(std::move(line.type), std::move(line.text));
+        runtime.DrainSessionLogLocked();
         const std::string& packetError = runtime.session->LastError();
         if (cmd != "ConnectionRefused" && !packetError.empty() && packetError != oldError &&
             packetError != runtime.lastError) {
@@ -1930,6 +1957,11 @@ void QueueCheck(const char* locationKey) {
       return;
     int64_t id = 0;
     if (!runtime.session->MarkLocationChecked(locationKey, id)) {
+      if (runtime.session->LocationIdFor(locationKey, id))
+        PortLog::Write("archipelago: check %s (location %lld) was recorded already (%s); not sent again\n",
+                       locationKey, static_cast<long long>(id),
+                       runtime.session->LocationChecked(id) ? "the server or this game has it"
+                                                            : "queued earlier");
       // Two things come back false here and only one of them is a problem. A key
       // the table knows but has already recorded is the ordinary case. A key the
       // table has never heard of means this location will never be reported, and
@@ -1953,6 +1985,8 @@ void QueueCheck(const char* locationKey) {
     }
     runtime.MarkStateDirtyLocked();
     runtime.queuedChecks.push_back(id);
+    PortLog::Write("archipelago: check %s (location %lld) %s\n", locationKey, static_cast<long long>(id),
+                   runtime.connected ? "queued to send" : "queued; sent when connected");
   } catch (...) {
     // This is called from game pickup handling; AP must never disrupt gameplay.
   }
@@ -2593,8 +2627,16 @@ void Poll(CStateManager& mgr) {
       if (grant.itemType < 0)
         continue;
       const auto type = static_cast<CPlayerState::EItemType>(grant.itemType);
+      const int amountBefore = player->GetItemAmount(type);
+      const int capacityBefore = player->GetItemCapacity(type);
       player->InitializePowerUp(type, grant.capacity);
       player->IncrPickUp(type, grant.amount);
+      // What the inventory holds after each grant, so a report shows whether an
+      // item reached the game and what it did there.
+      PortLog::Write("archipelago: applied item #%lld %s: %s %d/%d -> %d/%d (amount/capacity)\n",
+                     static_cast<long long>(grant.index), grant.display.c_str(),
+                     PortRandomizer::ItemName(grant.itemType), amountBefore, capacityBefore,
+                     player->GetItemAmount(type), player->GetItemCapacity(type));
       if (type == CPlayerState::kIT_EnergyTanks)
         player->HealthInfo()->SetHP(player->CalculateHealth());
     }
@@ -2630,6 +2672,10 @@ void Poll(CStateManager& mgr) {
           runtime.deathAnnounced = true;
       }
     }
+    if (deathsOwed > 0)
+      PortLog::Write("archipelago: DeathLink: %d death(s) from the multiworld\n", deathsOwed);
+    if (deathsOwed > 0)
+      PortLog::Write("archipelago: DeathLink: %d death(s) from the multiworld\n", deathsOwed);
     for (int i = 0; i < deathsOwed; ++i)
       player->SetPlayerAlive(false);
 
