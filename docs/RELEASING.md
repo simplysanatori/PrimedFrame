@@ -202,10 +202,10 @@ under GNOME unless the port's own X11 preference applies — see
    corrupt, and answering that dialog deletes the file and re-creates it blank, with
    no save data. A save needs a second confirmation, at the screen's `SaveReady`
    state, and the driver was only ever pressing once. With that fixed, a save
-   writes real data and the front end loads it — evidence in
-   `docs/images/save-main-menu.png` (the main menu showing
-   `[Samus A] 00% | Space Pirate Frigate | 00:00 Elapsed`) and
-   `docs/images/save-loaded.png` (the loaded game, on the Frigate). The saved
+   writes real data and the front end loads it: captures showed the main menu
+   listing `[Samus A] 00% | Space Pirate Frigate | 00:00 Elapsed` and the loaded
+   game on the Frigate (not kept in the repository, being pictures of Nintendo's
+   game). The saved
    file's 3004-byte data region has 134 non-zero bytes, a valid CRC and slot 1
    flagged present.
 
