@@ -878,7 +878,7 @@ if(MP_BUILD_TESTS)
     set_tests_properties(port_ws_tests PROPERTIES TIMEOUT 120)
     # 200+ seeds, each a few hundred logic sweeps.
     set_tests_properties(port_rando_gen_tests PROPERTIES TIMEOUT 120)
-    # Every port_settings.ini key reads back as written (platform/debug_ui.cpp,
+    # Every port_settings.ini key reads back as written (platform/debug_ui/settings.inc,
     # kSettingKeys); the game binary checks itself and exits before starting.
     add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)
     set_tests_properties(port_settings_roundtrip PROPERTIES TIMEOUT 30 LABELS port
