@@ -10,9 +10,10 @@ the window has no keyboard focus. `tools/mpcon.py` is the client: one-shot
 (world, area, position, whether the camera is first person or a cinematic
 has it, the sky, and the probe mode, weight and PBR draw count; `--json` is one
 line for scripts: frame, game_state, world, area, mrea, pos, yaw, hp, hp_max,
-morph, visor, beam, first_person, cinematic, freecam, and `fade`, true while the
-in-game fade-in filter after a cinematic skip or world load is still black or
-lifting, i.e. the screen is not fully visible; `tools/mprig.py` waits on it),
+morph, visor, beam, first_person, cinematic, freecam, `physics` (see below) and
+`fade`, true while the in-game fade-in filter after a cinematic skip or world
+load is still black or lifting, i.e. the screen is not fully visible;
+`tools/mprig.py` waits on it),
 `worlds`, `areas`, `warp <world id or name prefix> [mrea]` (replies once the
 new world runs), `tp x y z`, `enter <area>` (makes an area of the current
 world the current one, as walking into it would; `tp` alone does not),
@@ -39,3 +40,42 @@ unique ids or exact debug names. Every reply ends with `=> ok` or
 `=> err: <why>`, and the client exits 1 if any command failed. Game commands
 run inside the state manager tick, so they fail with "not ticking" on the
 title screen or while paused. Pair with `MP_TURBO` for speed.
+
+## `status --json` `physics`
+
+`physics` is telemetry added for the movement parity work (issue #117). It is
+read-only and changes no behaviour, and it reports what the state holds, not what
+a mover decides: nothing in it says which mover (retail or Remastered) the next
+tick selects.
+
+- `tick`: `CStateManager::GetUpdateFrameIndex()`, the ticks already completed.
+- `pos`, `vel`: the player's translation and world velocity, per component as
+  `%.9g`, so a float round-trips through the JSON (the top-level `pos` stays
+  `%.3f`). A whole number prints bare, as `0`, and a non-finite component (a
+  velocity that went NaN or infinite on one axis is the realistic case) is `null`
+  rather than the `nan`/`inf` text that `%.9g` would print, which no JSON parser
+  accepts.
+- `movement_state`: `on_ground`, `jump`, `apply_jump`, `falling`,
+  `falling_morphed` (`NPlayer::EPlayerMovementState`).
+- `ground_collider`: the player's `kMT_GroundCollider` **material** flag. This is
+  not "grounded": Remastered drops that material in the air, and `movement_state`
+  is the field that says whether the player is on the ground.
+- `dashing`, `dash_done`: `CPlayer::IsSidewaysDashing` and
+  `GetDoneSidewaysDashing`.
+- `orbit_state`: `no_orbit`, `orbit_object`, `orbit_point`, `orbit_carcass`,
+  `forced_orbit_object` or `grapple`.
+- `target`, `target_editor`: the orbit target's unique id (`1023` is none) and its
+  editor id as 8 hex digits, `00000000` when there is no target.
+- `remastered_movement`: the setting in effect (`remastered_movement`, or
+  `MP_REMASTERED_MOVEMENT`), not a record of which mover a tick used.
+- `sim_rate`, `sim_adaptive`: `PortDebug::SimRate()`, the fixed clock's step (60,
+  or the F1 Debug simulation rate, which `original` pins to 60), and whether the
+  game instead steps once per frame at the measured frame time (adaptive, off
+  under `MP_TURBO`), where `sim_rate` is not the step in use.
+
+Phase: `status` is a tick command, run by `PortConsoleTick` early in
+`CStateManager::Update`, before that tick updates the objects and the player
+(`x8d8_updateFrameIdx` is bumped near the end of the update). The values are
+therefore what the previous tick left, and `tick` counts the ticks already done. A
+`press`, `stick` or other tick command sent in the same `cmd` client call takes
+effect in a later tick.

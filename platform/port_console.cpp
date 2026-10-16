@@ -6,6 +6,7 @@
 // tick, where every object pointer is live; the rest run once per frame.
 #include "port_apclient.h"
 #include "port_collision_view.h"
+#include "port_console_physics.h"
 #include "port_debug.h"
 #include "port_discord.h"
 #include "port_freecam.h"
@@ -533,7 +534,7 @@ std::string Describe(CStateManager& mgr, CEntity& ent) {
 // Commands
 
 void CmdHelp() {
-  Out("status [--json]            world, area, player position, health, visor, beam; --json: one line, with fade state");
+  Out("status [--json]            world, area, player position, health, visor, beam; --json: one line, with fade and physics state");
   Out("worlds                     world ids and names");
   Out("areas                      areas of the current world (index, MREA)");
   Out("warp <world> [mrea]        load a world (hex MLVL id or name prefix), optionally an area");
@@ -671,6 +672,56 @@ const char* ProbeModeName() {
   return mode >= 0 && mode < 4 ? names[mode] : "unset";
 }
 
+// The `physics` object of `status --json`: what the last completed tick left behind, reported
+// for the movement-parity work (issue #117). These are observations, not assertions about what
+// the mover will do next: `ground_collider` is the kMT_GroundCollider material flag on the
+// player (Remastered drops it in the air), which is NOT the same as being grounded, and the
+// fields say nothing about which mover (retail or Remastered) a later tick will select.
+// Returns the object's members without its braces, for the one-line JSON. Built as a
+// std::string (port_console_physics.h): nothing here can be cut off at a fixed size.
+std::string PhysicsJson(CStateManager& mgr, const CPlayer& player, const CVector3f& pos) {
+  static const char* const movement[] = {"on_ground", "jump", "apply_jump", "falling",
+                                         "falling_morphed"};
+  static const char* const orbit[] = {"no_orbit", "orbit_object", "orbit_point", "orbit_carcass",
+                                      "forced_orbit_object", "grapple"};
+  const int ms = static_cast< int >(player.GetPlayerMovementState());
+  const int os = static_cast< int >(player.GetOrbitState());
+  const CVector3f vel = player.GetVelocityWR();
+  const TUniqueId targetId = player.GetOrbitTargetId();
+  const CEntity* target = mgr.GetObjectById(targetId);
+  const unsigned editorId =
+      target != nullptr ? static_cast< unsigned >(target->GetEditorId().Value()) : 0u;
+  char editor[16];
+  std::snprintf(editor, sizeof(editor), "%08X", editorId); // 8 hex digits and a terminator
+  const auto flag = [](bool value) { return value ? "true" : "false"; };
+  std::string out = "\"tick\":" + std::to_string(mgr.GetUpdateFrameIndex());
+  out += ",\"pos\":";
+  out += PortConsolePhysics::JsonVector(pos.GetX(), pos.GetY(), pos.GetZ());
+  out += ",\"vel\":";
+  out += PortConsolePhysics::JsonVector(vel.GetX(), vel.GetY(), vel.GetZ());
+  out += ",\"movement_state\":\"";
+  out += ms >= 0 && ms < 5 ? movement[ms] : "?";
+  out += "\",\"ground_collider\":";
+  out += flag(player.GetMaterialList().HasMaterial(kMT_GroundCollider));
+  out += ",\"dashing\":";
+  out += flag(player.IsSidewaysDashing());
+  out += ",\"dash_done\":";
+  out += flag(player.GetDoneSidewaysDashing());
+  out += ",\"orbit_state\":\"";
+  out += os >= 0 && os < 6 ? orbit[os] : "?";
+  out += "\",\"target\":";
+  out += std::to_string(static_cast< uint32_t >(targetId.Value()));
+  out += ",\"target_editor\":\"";
+  out += editor;
+  out += "\",\"remastered_movement\":";
+  out += flag(PortDebug::RemasteredMovement());
+  out += ",\"sim_rate\":";
+  out += std::to_string(PortDebug::SimRate());
+  out += ",\"sim_adaptive\":";
+  out += flag(PortDebug::SimAdaptive());
+  return out;
+}
+
 // `status --json`: one line for scripts (tools/mprig.py). `fade` is true while the in-game fade
 // filter that follows a cinematic skip or a world load (CInGameGuiManager::StartFadeIn: black
 // multiply, lifting over 0.5 s) is still applied, i.e. the screen is not fully visible yet.
@@ -702,13 +753,15 @@ void CmdStatusJson(CStateManager& mgr) {
   Out("{\"frame\":%u,\"game_state\":%d,\"world\":\"%08X\",\"area\":%d,\"mrea\":\"%08X\","
       "\"pos\":[%.3f,%.3f,%.3f],\"yaw\":%.2f,\"hp\":%.1f,\"hp_max\":%.1f,\"morph\":\"%s\","
       "\"visor\":\"%s\",\"beam\":\"%s\",\"first_person\":%s,\"cinematic\":%s,\"fade\":%s,"
-      "\"freecam\":{\"on\":%s,\"pos\":[%.3f,%.3f,%.3f],\"yaw\":%.2f,\"pitch\":%.2f}}",
+      "\"freecam\":{\"on\":%s,\"pos\":[%.3f,%.3f,%.3f],\"yaw\":%.2f,\"pitch\":%.2f},"
+      "\"physics\":{%s}}",
       sFrame, static_cast< int >(mgr.GetGameState()), mlvl, areaIdx, mrea, pos.GetX(), pos.GetY(),
       pos.GetZ(), yaw, ps.GetHealthInfo().GetHP(), ps.CalculateHealth(),
       m >= 0 && m < 4 ? morph[m] : "?", v >= 0 && v < 4 ? visors[v] : "?",
       b >= 0 && b < 5 ? beams[b] : "?", mgr.GetCameraManager()->IsInFPCamera() ? "true" : "false",
       mgr.GetCameraManager()->IsInCinematicCamera() ? "true" : "false", fade ? "true" : "false",
-      PortFreeCam::Active() ? "true" : "false", pose.x, pose.y, pose.z, pose.yaw, pose.pitch);
+      PortFreeCam::Active() ? "true" : "false", pose.x, pose.y, pose.z, pose.yaw, pose.pitch,
+      PhysicsJson(mgr, player, pos).c_str());
 }
 
 void CmdStatus(CStateManager& mgr) {
