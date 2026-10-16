@@ -44,6 +44,16 @@ inline bool W25(bool hasSecondary, Vec3 primary, Vec3 secondary) {
          !IsCeilingNormal(secondary);
 }
 
+// 0xc6d5d8: flag100 bypasses the flat-floor early return entirely.
+inline bool SkipFlatFloor(float primaryUp, float velocityUp, float actorUp,
+                          float contactUp, bool flag100) {
+  return !flag100 && std::fabs(1.f-primaryUp) < 1e-5f &&
+         (velocityUp > 0.f || actorUp <= contactUp);
+}
+
+// 0xc6d6e8-0xc6d6ec: flagged contacts use ten times the ordinary push.
+inline float PushDistance(bool flag100) { return flag100 ? .025f : .0025f; }
+
 // 0xf94b30-50 saves the original target; 0xf94f34-0xf94fe4 subtracts
 // current-minus-previous and rider DISPLACEMENT from target-minus-previous.
 // The common previous-origin cancels; neither velocity nor accepted-lo motion

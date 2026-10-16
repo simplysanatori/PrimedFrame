@@ -1083,16 +1083,14 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     // gravity-and-force block at 0xc6d7f4 (`cbz w25,#0xc6d908`); the wall vertical halving
     // at 0xc6d7cc-0xc6d7f0 runs before that test.
     void Respond(const CMaterialList& material, const CVector3f& primary, const CVector3f& working,
-                 bool w25, bool isFloor, float pointZ, CVector3f& mi) {
+                 bool w25, bool isFloor, float pointZ, CVector3f& mi, bool flag100 = false) {
       CVector3f vel = actor.GetVelocityWR();
-      const bool flatFloor = fabsf(1.f - primary.GetZ()) < 1e-5f;
-      if (flatFloor && (vel.GetZ() > 0.f ||
-                        actor.GetTranslation().GetZ() <= pointZ)) {
+      if (PortAirMoverContact::SkipFlatFloor(primary.GetZ(), vel.GetZ(),
+                                            actor.GetTranslation().GetZ(), pointZ, flag100)) {
         return;
       }
       if (!isFloor) {
-        // Push scale 0.0025 / world step dt * mass.
-        mi += working * (0.0025f / worldDt) * mass;
+        mi += working * (PortAirMoverContact::PushDistance(flag100) / worldDt) * mass;
       }
       const float miDot = CVector3f::Dot(working, mi);
       if (miDot < 0.f) {
@@ -1310,7 +1308,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         if (isFloor) floorContact = true;
         hadCollision = true;
         Respond(material, primary, working, w25,
-                Classify::IsFloor(material, primary) && !tc.flag100, tc.minVertical, mi);
+                Classify::IsFloor(material, primary) && !tc.flag100, tc.minVertical, mi, tc.flag100);
       }
       // Preserve the port's terrain-then-near-list order. The source iterates
       // candidate/impact order (0xf94e40-0xf9521c), but does not establish a

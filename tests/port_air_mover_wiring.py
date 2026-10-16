@@ -35,6 +35,11 @@ class Wiring(unittest.TestCase):
         self.assertIn("const CCollisionInfo& info = acceptedDynamic[i]", response[1])
         self.assertNotIn("for (int i = staticCount; i < list.GetCount(); ++i)", air)
 
+    def test_flag100_response_wiring(self):
+        self.assertIn("PortAirMoverContact::SkipFlatFloor(", air)
+        self.assertIn("PortAirMoverContact::PushDistance(flag100)", air)
+        self.assertIn("tc.minVertical, mi, tc.flag100)", air)
+
 
 if __name__ == "__main__":
     unittest.main()

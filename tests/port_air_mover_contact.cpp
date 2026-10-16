@@ -111,6 +111,18 @@ static void TestTargetAndBracket() {
   Check(PortAirMoverContact::HasImpacts(0,1), "F2 actor impact independently selects lo");
 }
 
+static void TestFlag100Response() {
+  using PortAirMoverContact::SkipFlatFloor;
+  using PortAirMoverContact::PushDistance;
+  Check(SkipFlatFloor(1.f,1.f,2.f,1.f,false), "ordinary rising flat-floor contact skips");
+  Check(!SkipFlatFloor(1.f,1.f,2.f,1.f,true), "flag100 bypasses rising early-out");
+  Check(SkipFlatFloor(1.f,-1.f,1.f,1.f,false), "ordinary at-plane flat-floor contact skips");
+  Check(!SkipFlatFloor(1.f,-1.f,1.f,1.f,true), "flag100 bypasses at-plane early-out");
+  Check(!SkipFlatFloor(.5f,1.f,2.f,1.f,false), "non-flat normal does not take floor early-out");
+  Check(PushDistance(false) == .0025f, "ordinary push is 0.0025");
+  Check(PushDistance(true) == .025f, "flag100 push is 0.025");
+}
+
 static void TestTerrainPredicates() {
   namespace W = PortRemasteredGroundWorld;
   W::Query q;
@@ -180,6 +192,7 @@ int main() {
   TestSeparationGate();
   TestStaticGuard();
   TestTargetAndBracket();
+  TestFlag100Response();
   TestTerrainPredicates();
   TestSATReference();
   if (gFailures == 0) {
