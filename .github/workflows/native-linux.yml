@@ -29,6 +29,13 @@ jobs:
       - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
           key: linux-${{ matrix.compiler }}
+          # Every save is a new entry (the key gets a timestamp), and the
+          # repository's 10 GB of cache is shared: saving from every pull
+          # request evicted the Windows and macOS caches within a day or two.
+          # Pull requests still restore it. Objects this build did not use are
+          # dropped before saving, so an entry holds one build's worth.
+          save: ${{ github.event_name == 'push' }}
+          evict-old-files: job
       # Configure downloads and unpacks about a dozen dependencies. Keep the
       # unpacked sources and the stamps that say they are current; the build
       # directories beside them are left out, since ccache covers those.

@@ -21,7 +21,9 @@ jobs:
     container: almalinux:9
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
-      CCACHE_MAXSIZE: 2G
+      # Each run saves its own entry of up to this size in the repository's
+      # shared 10 GB of cache; native-linux keeps its hits within 500 MB.
+      CCACHE_MAXSIZE: 1G
       MAX_GLIBC: "2.34"
       MAX_GLIBCXX: "3.4.29"
     steps:
