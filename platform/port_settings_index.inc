@@ -192,6 +192,7 @@
 {"Randomizer", "", "World", "Locked doors", "locked doors areas count"},
 {"Randomizer", "", "World", "Backwards Lower Mines", "phazon mines reverse backwards lower"},
 {"Randomizer", "", "World", "Flaahgra power bombs", "flaahgra power bomb boss beat"},
+{"Randomizer", "", "World", "Energy tank capacity", "energy tank health hp capacity difficulty"},
 {"Randomizer", "", "Logic", "Heat damage without the Varia Suit", "heat damage varia suit logic"},
 {"Randomizer", "", "Logic", "Staggered suit damage", "suit damage staggered progressive additive"},
 {"Randomizer", "", "Logic", "Combat logic", "combat logic difficulty gear fight"},

@@ -187,6 +187,8 @@ void DrawRandomizerTab() {
   ItemHelp("How many areas (not Magmoor) get one door locked for good.");
   check("Backwards Lower Mines", s.backwardsLowerMines, "Phazon Mines' lower levels can be entered from the other end.");
   check("Flaahgra power bombs", s.flaahgraPowerBombs, "Flaahgra can be beaten with power bombs.");
+  changed |= ImGui::SliderInt("Energy tank capacity", &s.etankCapacity, 10, 200);
+  ItemHelp("Energy per tank; the suit alone holds one less (100: 99 + 100 per tank). Combat logic still counts tanks as 100.");
 
   ImGui::SeparatorText("Logic");
   check("Heat damage without the Varia Suit", s.nonVariaHeatDamage, "Hot rooms hurt without Varia, so other suits or tanks can carry you through.");
