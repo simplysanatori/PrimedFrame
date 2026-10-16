@@ -1050,6 +1050,63 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     CCollisionInfoList& groundList;
     TUniqueId& riderId;
 
+    // 0xc6d460 ImpactResponseForOffGroundMoverCollider's per-contact response.
+    // `primary` classifies (is_floor 0xc6d6b8/0xc6d6c0, is_wall 0xc6d7c4) and `working` is
+    // the normal every force/projection uses: 0xc6d644-0xc6d65c stores the secondary over
+    // the working normal whenever the presence byte at contact+0x44 is set, and no branch
+    // restores the primary. `w25` (0xc6d69c / 0xc6d6b4) gates only the kMS_ApplyJump
+    // gravity-and-force block at 0xc6d7f4 (`cbz w25,#0xc6d908`); the wall vertical halving
+    // at 0xc6d7cc-0xc6d7f0 runs before that test.
+    void Respond(const CMaterialList& material, const CVector3f& primary, const CVector3f& working,
+                 bool w25, bool isFloor, float pointZ, CVector3f& mi) {
+      CVector3f vel = actor.GetVelocityWR();
+      const bool flatFloor = fabsf(1.f - primary.GetZ()) < 1e-5f;
+      if (flatFloor && (vel.GetZ() > 0.f ||
+                        actor.GetTranslation().GetZ() <= pointZ)) {
+        return;
+      }
+      if (!isFloor) {
+        // Push scale 0.0025 / world step dt * mass.
+        mi += working * (0.0025f / worldDt) * mass;
+      }
+      const float miDot = CVector3f::Dot(working, mi);
+      if (miDot < 0.f) {
+        mi -= working * miDot; // 0xc186a0
+      }
+      const float velDot = CVector3f::Dot(working, vel);
+      if (velDot <= 1.19e-7f) {
+        vel -= working * velDot; // 0xc18700, e = mu = 0
+      }
+      if (player.GetPlayerMovementState() == NPlayer::kMS_ApplyJump) {
+        const bool isWall = Classify::IsWall(material, primary);
+        if (isWall && working.GetZ() < -0.1f && vel.GetZ() > 0.f) {
+          vel.SetZ(vel.GetZ() * 0.5f);
+        }
+        if (w25) {
+          float t1 = 0.25f;
+          float t2 = 0.37f;
+          float scale = 1.f;
+          float mult = 1.f;
+          float floorMag = 0.f;
+          if (player.CheckSubmerged() &&
+              !mgr.GetPlayerState()->HasPowerUp(CPlayerState::kIT_GravitySuit)) {
+            t1 = 0.01f;
+            t2 = 0.05f;
+            scale = 0.8f;
+            mult = 35.f;
+            floorMag = 5.f;
+          }
+          const float az = fabsf(working.GetZ());
+          if (az > t1 && (az > t2 || vel.GetZ() < 0.f)) {
+            const float mag = rstl::max_val(mult * az, floorMag);
+            actor.SetForceWR(CVector3f(0.f, 0.f, 1.f) * (mag + 1.f) * mass * player.GetGravity());
+            vel = vel * scale;
+          }
+        }
+      }
+      actor.SetVelocityWR(vel);
+    }
+
     // 511-533: post-step 0.1 down probe while rising.
     void PostProbe() {
       if (grounded || actor.GetVelocityWR().GetZ() <= 0.f) {
@@ -1170,38 +1227,11 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         if (fabsf(n.GetX()) < 2.38e-7f) n.SetX(0.f);
         if (fabsf(n.GetY()) < 2.38e-7f) n.SetY(0.f);
         if (fabsf(n.GetZ()) < 2.38e-7f) n.SetZ(0.f);
-        // 0xc6d460's working normal (+0x38/+0x44, LAB_00c6d624): a contact carrying a
-        // secondary normal is responded to along the *secondary* unless both relevant
-        // ups are <= 0.866025 and neither normal is a ceiling (is_ceiling_normal,
-        // up < -0.70710677) - and then bVar1 is false, which suppresses the
-        // kMS_ApplyJump push below. Otherwise the primary acts.
-        CVector3f nw = n;
-        bool primaryActs = true;
-        const bool haveSecondary =
-            i < staticCount && int(terrainContacts.size()) > i && terrainContacts[i].hasSecondary;
-        if (haveSecondary) {
-          CVector3f sec(terrainContacts[i].secondaryX, terrainContacts[i].secondaryY,
-                        terrainContacts[i].secondaryZ);
-          if (fabsf(sec.GetX()) < 2.38e-7f) sec.SetX(0.f);
-          if (fabsf(sec.GetY()) < 2.38e-7f) sec.SetY(0.f);
-          if (fabsf(sec.GetZ()) < 2.38e-7f) sec.SetZ(0.f);
-          const bool keepPrimary = n.GetZ() <= 0.866025f && sec.GetZ() <= 0.866025f &&
-                                   !(n.GetZ() < -0.70710677f) && !(sec.GetZ() < -0.70710677f);
-          if (!keepPrimary) {
-            nw = sec;
-            primaryActs = false;
-          }
-        }
-        // The port's paired-ceiling drop was the stand-in for that secondary: a ceiling
-        // face was dropped when another contact shared its point, so only the wall normal
-        // acted (the old comment here admitted the kept normal was inferred from a
-        // ledge-jump measurement). A shipped contact that carries a secondary is
-        // *responded to*, not dropped - 0xc6d460 reaches LAB_00c6d908 either way - so this
-        // now runs only where the producer reports no secondary: dynamic contacts and
-        // bare ceilings. The producer's output for the reporter's stall geometry
-        // (build/s-issue117-20261015/airfix/REPORT.md section 3) is the evidence: all four
-        // terrain contacts there carry a secondary.
-        if (!haveSecondary && n.GetZ() < -0.70710677f) {
+        // The paired-ceiling drop stays for the contacts this port still reasons about on
+        // its own (dynamic actor contacts): 0xc6d460 has no such branch, so it is a known
+        // divergence there, and it is deliberately not applied to the static terrain
+        // response, which now runs from the producer's own contact list below.
+        if (i >= staticCount && n.GetZ() < -0.70710677f) {
           bool pairedWithOther = false;
           for (int j = 0; j < list.GetCount(); ++j) {
             const CCollisionInfo& o = list[j];
@@ -1230,54 +1260,46 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
           }
         }
 
-        // 0xc6d460 ImpactResponseForOffGroundMoverCollider (flag 0x100 is never
-        // set for port contacts: its setter is not in the decompile).
-        CVector3f vel = actor.GetVelocityWR();
-        const bool flatFloor = fabsf(1.f - n.GetZ()) < 1e-5f;
-        if (flatFloor && (vel.GetZ() > 0.f ||
-                          actor.GetTranslation().GetZ() <= info.GetPoint().GetZ())) {
-          continue;
+        if (i >= staticCount) {
+          // A dynamic contact has no secondary normal to select (the terrain producer is
+          // the only source that sets one), so 0xc6d63c takes the w25 = 1 path and the
+          // primary is both the classifying and the working normal.
+          Respond(info.GetMaterialLeft(), n, n, true, isFloor, info.GetPoint().GetZ(), mi);
         }
-        if (!isFloor) {
-          // Push scale 0.0025 / world step dt * mass.
-          mi += nw * (0.0025f / worldDt) * mass;
+      }
+      // The static terrain response runs from the producer's own contact list: one contact
+      // per triangle the shipped builder retains (0xc0a180), each with the secondary normal
+      // it computes. Driving the response from that stream is what keeps a contact's
+      // secondary attached to the contact it belongs to - the native list's inclusive
+      // clipping (CMetroidAreaCollider::ConvexPolyCollision, height >= 0) and the
+      // producer's strict clipping can disagree on a triangle, so the two streams must
+      // never be zipped by index.
+      for (std::size_t t = 0; t < terrainContacts.size(); ++t) {
+        const PortRemasteredGroundWorld::Contact& tc = terrainContacts[t];
+        CVector3f primary(tc.normalX, tc.normalY, tc.normalZ);
+        if (fabsf(primary.GetX()) < 2.38e-7f) primary.SetX(0.f);
+        if (fabsf(primary.GetY()) < 2.38e-7f) primary.SetY(0.f);
+        if (fabsf(primary.GetZ()) < 2.38e-7f) primary.SetZ(0.f);
+        CVector3f working = primary;
+        bool w25 = true;
+        if (tc.hasSecondary) {
+          working = CVector3f(tc.secondaryX, tc.secondaryY, tc.secondaryZ);
+          if (fabsf(working.GetX()) < 2.38e-7f) working.SetX(0.f);
+          if (fabsf(working.GetY()) < 2.38e-7f) working.SetY(0.f);
+          if (fabsf(working.GetZ()) < 2.38e-7f) working.SetZ(0.f);
+          // 0xc6d658-0xc6d698: w25 = 1 only when neither up exceeds 0.866025 and neither
+          // normal is a ceiling (is_ceiling_normal, up < -0.70710677). A present but
+          // degenerate (zero) secondary is still the working normal the source uses.
+          w25 = primary.GetZ() <= 0.866025f && working.GetZ() <= 0.866025f &&
+                !(primary.GetZ() < -0.70710677f) && !(working.GetZ() < -0.70710677f);
         }
-        const float miDot = CVector3f::Dot(nw, mi);
-        if (miDot < 0.f) {
-          mi -= nw * miDot; // 0xc186a0
+        const CMaterialList material(tc.materialBits);
+        const bool isFloor = Classify::IsFloor(material, primary);
+        if (isFloor) {
+          floorContact = true;
         }
-        const float velDot = CVector3f::Dot(nw, vel);
-        if (velDot <= 1.19e-7f) {
-          vel -= nw * velDot; // 0xc18700, e = mu = 0
-        }
-        // 0xc6d460: the kMS_ApplyJump block runs only while the primary is the working
-        // normal (bVar1); the halving and the push use that working normal.
-        if (primaryActs && player.GetPlayerMovementState() == NPlayer::kMS_ApplyJump) {
-          const bool isWall = Classify::IsWall(info.GetMaterialLeft(), n);
-          if (isWall && nw.GetZ() < -0.1f && vel.GetZ() > 0.f) {
-            vel.SetZ(vel.GetZ() * 0.5f);
-          }
-          float t1 = 0.25f;
-          float t2 = 0.37f;
-          float scale = 1.f;
-          float mult = 1.f;
-          float floorMag = 0.f;
-          if (player.CheckSubmerged() &&
-              !mgr.GetPlayerState()->HasPowerUp(CPlayerState::kIT_GravitySuit)) {
-            t1 = 0.01f;
-            t2 = 0.05f;
-            scale = 0.8f;
-            mult = 35.f;
-            floorMag = 5.f;
-          }
-          const float az = fabsf(nw.GetZ());
-          if (az > t1 && (az > t2 || vel.GetZ() < 0.f)) {
-            const float mag = rstl::max_val(mult * az, floorMag);
-            actor.SetForceWR(CVector3f(0.f, 0.f, 1.f) * (mag + 1.f) * mass * player.GetGravity());
-            vel = vel * scale;
-          }
-        }
-        actor.SetVelocityWR(vel);
+        hadCollision = true;
+        Respond(material, primary, working, w25, isFloor, tc.minVertical, mi);
       }
       // SetMomentumlessImpulse(local_10c0), colliding branch only (line 503).
       actor.SetMoveImpulseWR(mi);
