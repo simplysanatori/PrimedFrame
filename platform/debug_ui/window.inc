@@ -289,6 +289,8 @@ void DrawUI() {
     // frame), so the present mode is chosen from real surface capabilities.
     sPresentationSettingsApplied = true;
     aurora_enable_vsync(sVsyncEnabled && !sTurbo);
+    // The saved upscale sharpening, which nothing else sends until the scale changes.
+    ApplyPresentSharpness();
   }
   if (sFullscreenHotkey.exchange(false, std::memory_order_acq_rel)) {
     SetFullscreen(!VIGetWindowFullscreen());

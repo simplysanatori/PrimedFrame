@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -72,6 +73,15 @@ private:
   std::vector<int>* mTrace = nullptr;
   mutable int mCalls = 0;
 };
+
+CMatrix3f BasisMatrix() { return CMatrix3f(-1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f, 0.f); }
+
+std::unique_ptr<CVectorElement> BasisConjugated(CVectorElement* source) {
+  const CVector3f basisAngles(90.f, 0.f, 180.f);
+  return std::unique_ptr<CVectorElement>(new CVEOrderedEulerProduct(
+      new TestVector(basisAngles, true),
+      new CVEOrderedEulerProduct(source, new TestVector(basisAngles, true))));
+}
 
 CVector3f SeededAngles(uint32_t seed) {
   auto next = [&seed]() {
@@ -157,21 +167,40 @@ void TestGimbalAndAnimatedSamples() {
         "emitter-time loop starts at the first sample");
   Check(SameMatrix(EulerMatrix(end), EulerMatrix(keyed.back())), "the complete last key sample is evaluated");
   Check(SameMatrix(EulerMatrix(looped), EulerMatrix(start)), "the 120-frame emitter loop returns to sample zero");
+
+  const CMatrix3f basis = BasisMatrix();
+  std::unique_ptr<CVectorElement> converted = BasisConjugated(new TestVector(keyed));
+  CVector3f convertedStart(0.f, 0.f, 0.f), convertedEnd(0.f, 0.f, 0.f), convertedLoop(0.f, 0.f, 0.f);
+  converted->GetValue(0, convertedStart);
+  converted->GetValue(119, convertedEnd);
+  converted->GetValue(120, convertedLoop);
+  Check(SameMatrix(EulerMatrix(convertedStart), basis * EulerMatrix(keyed.front()) * basis.GetTranspose(), 5.e-5f),
+         "basis-conjugated keyed rotation reads its first frame");
+  Check(SameMatrix(EulerMatrix(convertedEnd), basis * EulerMatrix(keyed.back()) * basis.GetTranspose(), 5.e-5f),
+         "basis-conjugated keyed rotation evaluates the final frame");
+  Check(SameMatrix(EulerMatrix(convertedLoop), EulerMatrix(convertedStart), 5.e-5f),
+         "basis-conjugated keyed rotation retains its emitter-time loop");
 }
 
 void TestStableParticleRandomnessAndFiniteInputs() {
   const CVector3f fixedSeedA = SeededAngles(0x13579bdfu);
   const CVector3f fixedSeedB = SeededAngles(0x2468ace0u);
-  CVEOrderedEulerProduct particleA(new TestVector(fixedSeedA, false),
-                                  new TestVector(CVector3f(0.f, 42.f, 0.f), false));
-  CVEOrderedEulerProduct particleB(new TestVector(fixedSeedB, false),
-                                  new TestVector(CVector3f(0.f, 42.f, 0.f), false));
+  std::unique_ptr<CVectorElement> particleA = BasisConjugated(new TestVector(fixedSeedA, false));
+  std::unique_ptr<CVectorElement> particleB = BasisConjugated(new TestVector(fixedSeedB, false));
   CVector3f a1(0.f, 0.f, 0.f), a2(0.f, 0.f, 0.f), b(0.f, 0.f, 0.f);
-  particleA.GetValue(23, a1);
-  particleA.GetValue(23, a2);
-  particleB.GetValue(23, b);
+  CVector3f aNextFrame(0.f, 0.f, 0.f);
+  particleA->GetValue(23, a1);
+  particleA->GetValue(23, a2);
+  particleA->GetValue(24, aNextFrame);
+  particleB->GetValue(23, b);
   Check(SameMatrix(EulerMatrix(a1), EulerMatrix(a2)), "fixed-seed random Euler values are stable on repeated draws");
-  Check(!SameMatrix(EulerMatrix(a1), EulerMatrix(b), 0.01f), "separate particle seeds are not shared or cached");
+  Check(SameMatrix(EulerMatrix(a1), EulerMatrix(aNextFrame)),
+        "a particle's basis-conjugated IRND remains stable across frames");
+  const CMatrix3f basis = BasisMatrix();
+  Check(SameMatrix(EulerMatrix(a1), basis * EulerMatrix(fixedSeedA) * basis.GetTranspose()),
+        "basis conjugation retains the particle's sampled random orientation");
+  Check(!SameMatrix(EulerMatrix(a1), EulerMatrix(b), 0.01f),
+        "separate basis-conjugated particle seeds are not shared or cached");
 
   CVEOrderedEulerProduct invalid(new TestVector(CVector3f(INFINITY, 0.f, 0.f), false),
                                 new TestVector(CVector3f(0.f, 0.f, 0.f), false));

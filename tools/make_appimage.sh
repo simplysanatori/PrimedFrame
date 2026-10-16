@@ -61,7 +61,9 @@ ln -s metroid-prime.png "$APPDIR/.DirIcon"
 # An AppImage made from a desktop build only runs on distributions at least as
 # new as that desktop.
 
-# Third-party notices have to travel with anything that is handed out.
+# Third-party notices have to travel with anything that is handed out. The
+# shared collector covers the vendored and fetched components, the prebuilt
+# packages that ship no licence, and the generated data tables.
 "$ROOT/tools/collect_licenses.sh" "$BUILD" "$APPDIR/usr/share/licenses/metroid-prime-port"
 
 cat > "$APPDIR/AppRun" <<'EOF'

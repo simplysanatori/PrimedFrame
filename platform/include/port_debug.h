@@ -508,16 +508,29 @@ void SetGyroOverride(bool active, float pitch, float yaw);
 // sensitivity, so both share the same feel).
 float StickAimRate();
 void SetStickAimRate(float pixelsPerSecond);
-// Gyro aiming. Mode: 0 off, 1 aim while the hold input is down, 2 always aim.
-// Source: 0 auto (a pad's gyro if it has one, else the phone's), 1 controller
-// only, 2 the device's own gyro (Android phones). Rate is aim pixels per second
-// per radian per second of rotation, so it reads like the stick aim speed.
+// Gyro aiming. Mode: 0 off, 1 aim while the Gyro aim button is held, 2 always
+// aim, 3 aim except while it is held, 4 press to toggle aim (initially off).
+// Source: 0 auto (a pad's gyro if it has
+// one, else the phone's), 1 controller only, 2 the device's own gyro (Android
+// phones). Sensitivity is camera angle per pad angle, apart from the mouse's.
 int GyroMode();
 void SetGyroMode(int mode);
 int GyroSource();
 void SetGyroSource(int source);
-float GyroRate();
-void SetGyroRate(float pixelsPerSecondPerRad);
+float GyroSensitivity();
+void SetGyroSensitivity(float scale);
+// Gyro space: 0 local (the pad's own yaw axis), 1 player, 2 world (the turn
+// about gravity). Auto calibration learns the gyro's drift while the pad is
+// still; the confidence is 0..1, or negative when the source has no
+// accelerometer (no calibration or gravity then).
+int GyroSpace();
+void SetGyroSpace(int space);
+bool GyroAutoCalibrate();
+void SetGyroAutoCalibrate(bool on);
+void ResetGyroCalibration();
+float GyroCalibrationConfidence();
+// The input engine's "Gyro aim" action, set each frame before PollGyro.
+void SetGyroButton(bool held);
 // Reads the gyro, feeds the aim and spots Spring Ball flicks. Call once per
 // tick, before the frame.
 void PollGyro();

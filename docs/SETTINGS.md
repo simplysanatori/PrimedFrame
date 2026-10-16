@@ -65,9 +65,41 @@
   supersamples (4x at 16:9 is 3755x2112; with MSAA 4 the targets take
   several hundred MB). "Dynamic
   resolution" (`dynamic_res`, `dynamic_res_target` in fps, 0 = the display's
-  rate) lowers the scale while the frame rate is below the target, in quarter
-  steps (half steps above 2x), down to "Lowest scale" (`dynamic_res_min`: 0.5,
-  0.75 or 1, default 1). The file also takes a manual `render_scale` under 1.
+  rate) lowers the scale while the GPU cannot hold the target, down to "Lowest
+  scale" (`dynamic_res_min`: 0.5, 0.75 or 1, default 1), and raises it back when
+  there is room. Where the GPU can time itself (timestamp queries, Aurora's
+  `gpu_prof`, switched on while dynamic resolution is) it reads the GPU's time per
+  frame: a slow scene whose GPU has time to spare is CPU-bound and left alone, and
+  a GPU-bound one goes toward the scale predicted to fit 85% of the frame budget
+  (GPU time taken as a fixed part plus a part growing with the scale squared, the
+  fixed part learnt from two scales, capped at half the GPU time and forgotten
+  after a minute), at most to 0.6x of the scale in one step. The GPU time is the
+  span of the frame's passes, or their sum when the passes cover less than half
+  the span (gaps where the GPU waited). It lowers after two slow seconds and,
+  once settled, checks the frame rate rose: if not it undoes the step and holds
+  off, and after twice stops using GPU times. It raises after a steady stretch,
+  undoes a raise that proves too slow and waits longer before the next, and skips
+  changes under 0.1x, since each one reallocates the EFB and stutters. Without GPU
+  times (none, none published within 5 s of seconds with frames to judge, or
+  `MP_DYNRES_GPU_TIMES=0`, which forces this path for testing) it steps on the
+  frame rate in quarter steps (half above 2x). F1 > Video shows the GPU time, the budget and
+  why the scale is what it is; the log has a `port: dynamic resolution` line per
+  change. The controller is `platform/port_dynamic_res.cpp` (test
+  `port_dynamic_res_tests`). A step keeps Aurora's cached bind groups, dropping two
+  frames later those the new frames did not use (the old size's), and clears the
+  offscreen targets. A step does not wait for the render worker to finish the
+  frames it already has (that wait was most of a step's stutter on a busy GPU):
+  those frames are encoded against the old targets and the worker takes the new
+  ones after them; a window or surface change still waits, and
+  `MP_RESIZE_WAIT=1` makes every resize wait, to rule this out. The log times
+  each EFB resize and its parts (`aurora::gpu: EFB WxH: resized in N ms (worker
+  wait W, caches C, targets T)`) and the two frames after it. "Sharpen when upscaled"
+  (`upscale_sharpen`: `off`, `dynamic` (default: only while dynamic resolution has
+  lowered the scale) or `always`; strength "Sharpening", `upscale_sharpen_amount`
+  0-100, default 50) applies CAS-style contrast-adaptive sharpening to the
+  stretched image in the present resample (not AMD's CAS proper, which scales and
+  sharpens in one filter), and only to a frame smaller than the window. The file also
+  takes a manual `render_scale` under 1.
 - `MP_ASPECT=4:3|16:9|window` (default `window`, persisted as `aspect`); the legacy `MP_WIDESCREEN` selects 16:9.
 - `MP_TWIN_STICK=1` (Controls > Options, persisted as `twin_stick`): twin-stick aiming. The
   right stick feeds the first-person aim through the same path as the mouse (so
@@ -80,6 +112,36 @@
   a C-stick held from the keyboard is not consumed, so keyboard beam keys still
   pick beams, and an L from a key or mouse button stays lock-on. Fire
   stays on whatever is bound to A; remap it in Controls > Remap.
+- Gyro aim (Controls > Touch & gyro): tilting the pad or phone aims through the
+  same free aim as the mouse, so it needs mouse aim, twin stick or the touch
+  controls. `gyro_mode` is 0 off, 1 hold to aim (aims while the "Gyro aim" action
+  is held), 2 always, 3 hold to pause (aims except while it is held, to recentre
+  the pad: ratcheting), 4 toggle to aim (starts off; press once to enable,
+  again to disable). Changing modes resets the toggle. "Gyro aim" is right
+  stick click and left ctrl by default and can be remapped on the Remap page
+  ("Gyro" group). With toggle mode, leave the binding itself as a normal press.
+  `gyro_source` is 0 auto, 1 controller, 2 phone. `gyro_sensitivity` (0.1-10,
+  default 2) is camera angle per pad angle: 1 turns the camera as far as the pad
+  turned. It ignores the mouse sensitivity and invert. An older `gyro_rate` (aim
+  pixels per rad/s, which also scaled with the mouse sensitivity) is read once as
+  `gyro_rate × mouse_sensitivity` and no longer written.
+  `gyro_space` picks which turn moves the camera left/right (GyroWiki's terms):
+  1 player (default: turning the pad, flat or upright), 2 world (turning about
+  the real vertical only), 0 local yaw (the pad's flat turn), 3 local roll (the
+  turn of a pad held upright) or 4 local yaw and roll (both, Overwatch-style).
+  Player and world use the accelerometer; without one they act as local yaw.
+  `gyro_auto_calibrate` (default on) learns the gyro's drift while the pad is
+  still; F1 shows the calibration confidence and has a Recalibrate button. Both
+  use GamepadMotionHelpers (`extern/GamepadMotionHelpers`).
+  `gyro_smoothing` and `gyro_tightening` (deg/s, 0-50, both 0 = off by default)
+  are JoyShockMapper-style: turns below the smoothing threshold are averaged over
+  0.125 s, fading to direct by twice it; turns below the tightening threshold are
+  scaled by speed/threshold.
+  With pointer aim on, the gyro moves the pointer like a mouse cursor:
+  `gyro_cursor_angle` (degrees, 5-180, default 40) is how far the pad turns to
+  sweep it across the screen, independent of the mouse sensitivity. With
+  `gyro_cursor_camera` (default off) the gyro also turns the camera at
+  `gyro_sensitivity` while it moves the pointer.
 - Spring Ball (Controls > Options, persisted as `spring_ball`, off by default): C-stick
   up in morph ball jumps, as in Metroid Prime Trilogy and the randomprime discs
   the Archipelago world makes, once the Morph Ball Bombs are held. It is a bomb
@@ -652,6 +714,10 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   while the overlay is visible or relative capture/focus is absent. Mouse mode
   uses immediate yaw/pitch with an approximately ±87° pitch range. Up moves aim
   up by default; `MP_MOUSE_INVERT_X=1` and `MP_MOUSE_INVERT_Y=1` invert either axis.
+  `MP_MOUSE_SENS` and `mouse_sensitivity` are radians per mouse count; the F1
+  slider shows them on the Quake/Source/Apex scale (0.022 degrees a count per
+  unit, so the default 0.0035 is about 9.12), with a cm/360 readout for
+  `mouse_dpi` (display only, default 800).
   SDL and the compositor own pointer locking; capture is released outside
   playable first person (menus, cinematics, and scripted input locks). Morph ball
   has no mouse aim but keeps the pointer locked, so a bomb click can't land

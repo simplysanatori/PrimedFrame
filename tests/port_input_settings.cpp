@@ -1,5 +1,6 @@
 #include "port_input_settings.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
@@ -64,7 +65,51 @@ int main() {
   Check(Get().touchOpacity.load() == 50.f, "touch_opacity below range");
   ApplySetting("gyro_mode", "2");
   ApplySetting("gyro_mode", "3");
-  Check(Get().gyroMode == 2, "gyro_mode range");
+  ApplySetting("gyro_mode", "4");
+  Check(Get().gyroMode == 4, "gyro toggle mode");
+  ApplySetting("gyro_mode", "5");
+  Check(Get().gyroMode == 4, "gyro_mode range");
+  Check(Get().gyroSensitivity == 2.f, "gyro_sensitivity default");
+  ApplySetting("gyro_sensitivity", "1.5");
+  ApplySetting("gyro_sensitivity", "50");
+  Check(Get().gyroSensitivity == 1.5f, "gyro_sensitivity range");
+  PostLoad();
+  // An old gyro_rate (pixels per rad/s at mouse_sensitivity rad per pixel) becomes
+  // the same turn on the natural scale, unless gyro_sensitivity is also there.
+  ApplySetting("mouse_sensitivity", "0.0035");
+  ApplySetting("gyro_rate", "600");
+  PostLoad();
+  Check(std::fabs(Get().gyroSensitivity - 2.1f) < 1e-4f, "gyro_rate migrates");
+  ApplySetting("gyro_rate", "600");
+  ApplySetting("gyro_sensitivity", "1.5");
+  PostLoad();
+  Check(Get().gyroSensitivity == 1.5f, "gyro_sensitivity wins over gyro_rate");
+  Check(Text().find("gyro_rate") == std::string::npos, "gyro_rate not written");
+  Check(Get().gyroSpace == 1 && Get().gyroAutoCalibrate, "gyro space/calibration defaults");
+  ApplySetting("gyro_space", "2");
+  ApplySetting("gyro_space", "5");
+  ApplySetting("gyro_auto_calibrate", "0");
+  Check(Get().gyroSpace == 2 && !Get().gyroAutoCalibrate, "gyro space/calibration");
+  Check(Text().find("gyro_space=2\n") != std::string::npos &&
+            Text().find("gyro_auto_calibrate=0\n") != std::string::npos,
+        "gyro space/calibration written");
+  Check(Get().gyroSmoothing == 0.f && Get().gyroTightening == 0.f, "gyro filter defaults off");
+  ApplySetting("gyro_smoothing", "5");
+  ApplySetting("gyro_tightening", "3");
+  ApplySetting("gyro_tightening", "51");
+  Check(Get().gyroSmoothing == 5.f && Get().gyroTightening == 3.f, "gyro filter");
+  Check(Text().find("gyro_smoothing=5\n") != std::string::npos &&
+            Text().find("gyro_tightening=3\n") != std::string::npos,
+        "gyro filter written");
+  Check(Get().gyroCursorAngle == PortInput::kGyroCursorAngleDefault && !Get().gyroCursorCamera,
+        "gyro cursor defaults");
+  ApplySetting("gyro_cursor_angle", "60");
+  ApplySetting("gyro_cursor_angle", "200");
+  ApplySetting("gyro_cursor_camera", "1");
+  Check(Get().gyroCursorAngle == 60.f && Get().gyroCursorCamera, "gyro cursor");
+  Check(Text().find("gyro_cursor_angle=60\n") != std::string::npos &&
+            Text().find("gyro_cursor_camera=1\n") != std::string::npos,
+        "gyro cursor written");
   ApplySetting("shift_key_alt", "44");
   ApplySetting("turbo_pad", "3");
   Check(Get().shiftBindings[1] == 44 && Get().turboBindings[2] == 3, "bindings");

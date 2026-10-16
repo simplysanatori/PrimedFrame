@@ -7,6 +7,20 @@ namespace PortMouse {
 constexpr float kMaxPitch = 1.52f; // approximately 87 degrees, short of the pole
 constexpr float kPi = 3.14159265358979323846f;
 
+// Quake/Source/Apex sensitivity scale: one count turns 0.022 degrees per unit
+// (m_yaw), so the same number gives the same turn per count as those games.
+// The setting itself stays in radians per count.
+constexpr double kSourceRadiansPerUnit = 0.022 * 3.14159265358979323846 / 180.0;
+inline float SourceFromRadians(float radiansPerCount) {
+  return float(radiansPerCount / kSourceRadiansPerUnit);
+}
+inline float RadiansFromSource(float source) { return float(source * kSourceRadiansPerUnit); }
+// Hand travel for a full turn at a mouse's counts per inch.
+inline float CentimetresPer360(float radiansPerCount, float dpi) {
+  if (!(radiansPerCount > 0.f) || !(dpi > 0.f)) return 0.f;
+  return float(2.0 * 3.14159265358979323846 / radiansPerCount / dpi * 2.54);
+}
+
 struct Planar {
   float right;
   float forward;

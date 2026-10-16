@@ -116,10 +116,25 @@ void DrawControlsKeyboardMouse() {
     MarkDirty();
   }
   ImGui::TextDisabled("Also switches on Twin stick, so a controller's right stick aims too.");
-  if (ImGui::SliderFloat("Sensitivity", &sInput.mouseSensitivity, 0.00001f, 0.02f, "%.6f rad/px",
+  // Shown on the Quake/Source/Apex scale (0.022 degrees a count per unit), stored in radians.
+  float sourceSensitivity = PortMouse::SourceFromRadians(sInput.mouseSensitivity);
+  if (ImGui::SliderFloat("Sensitivity", &sourceSensitivity, 0.05f, 30.f, "%.3f",
                          ImGuiSliderFlags_Logarithmic | ImGuiSliderFlags_NoRoundToFormat)) {
+    SetMouseSensitivity(PortMouse::RadiansFromSource(sourceSensitivity));
     MarkDirty();
   }
+  ImGui::SetItemTooltip("The scale of Quake, Source and Apex Legends games (0.022 degrees a count "
+                        "per unit): the same number turns the same. Ctrl+click to type a value.");
+  ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.f);
+  if (ImGui::InputInt("Mouse DPI", &sInput.mouseDpi, 0, 0)) {
+    sInput.mouseDpi = std::clamp(sInput.mouseDpi, 100, 64000);
+    MarkDirty();
+  }
+  ImGui::SameLine();
+  ImGui::TextDisabled("%.1f cm (%.1f in) per 360 degrees",
+                      PortMouse::CentimetresPer360(sInput.mouseSensitivity, float(sInput.mouseDpi)),
+                      PortMouse::CentimetresPer360(sInput.mouseSensitivity, float(sInput.mouseDpi)) / 2.54f);
+  ImGui::SetItemTooltip("Only for this readout; the game reads mouse counts.");
   if (ImGui::Checkbox("Invert X", &sInput.mouseInvertX)) {
     MarkDirty();
   }
@@ -350,14 +365,18 @@ void DrawControlsTouchGyro() {
 #endif
 
   ImGui::SeparatorText("Gyro aim");
-  const char* gyroModes[] = {"Off", "Hold to aim", "Always aim"};
+  const char* gyroModes[] = {"Off", "Hold to aim", "Always aim", "Hold to pause", "Toggle to aim"};
   int gyroMode = sInput.gyroMode;
-  if (ImGui::Combo("Mode", &gyroMode, gyroModes, 3)) {
+  if (ImGui::Combo("Mode", &gyroMode, gyroModes, IM_ARRAYSIZE(gyroModes))) {
     SetGyroMode(gyroMode);
   }
-  ItemHelp("Tilt the pad or the phone to aim. Hold to aim uses right stick click or left ctrl. Needs "
-           "mouse aim, twin stick or the touch controls (not the classic layout), since the gyro "
-           "feeds that same aim.");
+  ItemHelp("Tilt the pad or the phone to aim. Hold to aim aims only while the Gyro aim button is "
+           "held; hold to pause aims all the time except while it is held, so you can recentre the "
+           "pad (ratcheting). Toggle to aim starts off: press once to aim, again to stop. "
+           "The button is right stick click or left ctrl by default; change it on the Remap page. "
+           "With toggle mode, leave the binding itself as a normal press. Needs mouse aim, twin stick "
+           "or the touch controls "
+           "(not the classic layout), since the gyro feeds that same aim.");
   ImGui::BeginDisabled(sInput.gyroMode == 0 && !sInput.springFlick);
   const char* gyroSources[] = {"Auto", "Controller", "Phone"};
   int gyroSource = sInput.gyroSource;
@@ -367,12 +386,93 @@ void DrawControlsTouchGyro() {
   ImGui::Text("Gyro: %s", GyroStatus());
   ImGui::EndDisabled();
   ImGui::BeginDisabled(sInput.gyroMode == 0);
-  float gyroRate = sInput.gyroRate;
-  // The ## suffix keeps its ImGui id apart from the mouse Sensitivity slider.
-  if (ImGui::SliderFloat("Sensitivity##gyro", &gyroRate, 50.f, 3000.f, "%.0f px/s per rad/s",
-                         ImGuiSliderFlags_Logarithmic)) {
-    SetGyroRate(gyroRate);
+  // With pointer aim the gyro moves the pointer at its own speed; the camera
+  // sensitivity then only matters if the gyro also turns the camera.
+  const bool gyroPointer = PointerAim();
+  if (gyroPointer) {
+    float cursorAngle = sInput.gyroCursorAngle;
+    if (ImGui::SliderFloat("Pointer speed##gyro", &cursorAngle, PortInput::kGyroCursorAngleMin,
+                           PortInput::kGyroCursorAngleMax, "%.0f deg across the screen")) {
+      sInput.gyroCursorAngle =
+          std::clamp(cursorAngle, PortInput::kGyroCursorAngleMin, PortInput::kGyroCursorAngleMax);
+      MarkDirty();
+    }
+    ItemHelp("Pointer aim is on, so the gyro moves the pointer like a mouse cursor: this is how far "
+             "the pad turns to sweep the pointer from one side of the screen to the other. Smaller "
+             "is faster. Independent of the mouse sensitivity.");
+    bool cursorCamera = sInput.gyroCursorCamera;
+    if (ImGui::Checkbox("Gyro also turns the camera", &cursorCamera)) {
+      sInput.gyroCursorCamera = cursorCamera;
+      MarkDirty();
+    }
+    ItemHelp("Turns the camera with the gyro as without pointer aim (at the Sensitivity below) while "
+             "it also moves the pointer, so the view follows the pad and the pointer fine-tunes "
+             "the aim.");
   }
+  ImGui::BeginDisabled(gyroPointer && !sInput.gyroCursorCamera);
+  float gyroSensitivity = sInput.gyroSensitivity;
+  // The ## suffix keeps its ImGui id apart from the mouse Sensitivity slider.
+  if (ImGui::SliderFloat("Sensitivity##gyro", &gyroSensitivity, PortInput::kGyroSensitivityMin,
+                         PortInput::kGyroSensitivityMax, "%.2fx", ImGuiSliderFlags_Logarithmic)) {
+    SetGyroSensitivity(gyroSensitivity);
+  }
+  ItemHelp("How far the camera turns per turn of the pad: at 1.00x turning the pad 90 degrees turns "
+           "the camera 90 degrees, at 2.00x 180. Independent of the mouse sensitivity and invert. "
+           "With pointer aim it applies only if the gyro also turns the camera.");
+  ImGui::EndDisabled();
+  // Listed by how common they are; the setting keeps PortGyro::Space's numbers.
+  static constexpr int kSpaceOrder[] = {PortGyro::kPlayer, PortGyro::kWorld, PortGyro::kLocal, PortGyro::kLocalRoll,
+                                        PortGyro::kLocalBoth};
+  static constexpr const char* kSpaceNames[] = {"Player (turn)", "World (turn)", "Local yaw", "Local roll",
+                                                "Local yaw and roll"};
+  int spaceRow = 0;
+  for (int i = 0; i < PortGyro::kSpaceCount; ++i) {
+    if (kSpaceOrder[i] == sInput.gyroSpace) {
+      spaceRow = i;
+    }
+  }
+  if (ImGui::Combo("Space", &spaceRow, kSpaceNames, PortGyro::kSpaceCount)) {
+    SetGyroSpace(kSpaceOrder[spaceRow]);
+  }
+  ItemHelp("Which turn of the pad turns the camera left and right. Player: turning the pad left "
+           "and right, whether it is held flat or upright (the usual choice). World: turning about "
+           "the real vertical only. Local yaw: the pad's own flat turn, best held flat. Local roll: "
+           "the turn of a pad held upright (as a handheld). Local yaw and roll: both at once. Player "
+           "and world need an accelerometer; without one they act as local yaw.");
+  bool autoCalibrate = sInput.gyroAutoCalibrate;
+  if (ImGui::Checkbox("Auto calibrate", &autoCalibrate)) {
+    SetGyroAutoCalibrate(autoCalibrate);
+  }
+  ItemHelp("Measures the gyro's drift whenever the pad is still and removes it, so the camera "
+           "doesn't creep. Put the pad down for a couple of seconds to calibrate. Needs an "
+           "accelerometer.");
+  ImGui::SameLine();
+  if (ImGui::Button("Recalibrate")) {
+    ResetGyroCalibration();
+  }
+  const float confidence = GyroCalibrationConfidence();
+  if (confidence >= 0.f) {
+    ImGui::Text("Calibration: %d%%", int(confidence * 100.f + 0.5f));
+  } else {
+    ImGui::TextDisabled("Calibration: no accelerometer");
+  }
+  float gyroSmoothing = sInput.gyroSmoothing;
+  if (ImGui::SliderFloat("Smoothing", &gyroSmoothing, 0.f, PortInput::kGyroThresholdMax,
+                         gyroSmoothing > 0.f ? "below %.0f deg/s" : "off")) {
+    sInput.gyroSmoothing = std::clamp(gyroSmoothing, 0.f, PortInput::kGyroThresholdMax);
+    MarkDirty();
+  }
+  ItemHelp("Averages slow turns of the pad over a few frames to hide sensor jitter; faster turns, "
+           "above twice this speed, stay direct. Adds a little lag to fine aim. Off by default.");
+  float gyroTightening = sInput.gyroTightening;
+  if (ImGui::SliderFloat("Tightening", &gyroTightening, 0.f, PortInput::kGyroThresholdMax,
+                         gyroTightening > 0.f ? "below %.0f deg/s" : "off")) {
+    sInput.gyroTightening = std::clamp(gyroTightening, 0.f, PortInput::kGyroThresholdMax);
+    MarkDirty();
+  }
+  ItemHelp("Turns slower than this are scaled down (the slower, the more), so a pad held still "
+           "doesn't wobble the aim. Keep it low: high values make fine aim sluggish. Off by "
+           "default.");
   ImGui::EndDisabled();
 
   bool springFlick = sInput.springFlick;

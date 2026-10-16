@@ -1065,12 +1065,31 @@ public:
                        [fourcc](const EffectValue& arg) { return UsesElement(arg, fourcc); });
   }
 
-  // PMRQ's direct REUL remains the existing PMRT CNST path. For the source's
-  // ordered RADD(REUL, REUL), PQAD carries two Euler vectors; CNST(r, r, r)
-  // preserves each real expression and the runtime composes the rotations as
-  // Rz * Ry * Rx in degrees. RTOV is not suitable here: it replicates one real
-  // into all three vector components.
+  // PMDL meshes are converted from Remastered coordinates with the model
+  // converter's default basis B = (90, 0, 180) in PMRT's Euler convention.
+  // Conjugate the source rotation by B so it remains in the converted model's
+  // frame. Element() preserves each real expression, including nested IRND;
+  // the PART's PIRN marker keeps those samples stable per particle. For a
+  // source RADD(REUL, REUL), preserve the ordered source product before
+  // conjugating it. RTOV cannot carry three independent angle expressions.
   bool ModelRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
+    const auto appendBasis = [&]() {
+      AppendBE32(out, F("CNST"));
+      for (const float angle : {90.f, 0.f, 180.f}) {
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, FloatBits(angle));
+      }
+    };
+    const auto appendSourceEuler = [&](const EffectValue& reul) {
+      AppendBE32(out, F("CNST"));
+      for (size_t i = 0; i < 3; ++i) {
+        if (!Element(reul.args[i], Type::Real, out, why)) {
+          return false;
+        }
+      }
+      return true;
+    };
+
     const EffectValue* reul = value.size() == 1 ? &value[0] : nullptr;
     if (reul != nullptr && IsElement(*reul, F("REUL")) && reul->args.size() == 4) {
       const EffectValue& order = reul->args[3];
@@ -1078,18 +1097,14 @@ public:
         why = "a rotation order other than 0 (XYZ)";
         return false;
       }
-      AppendBE32(out, F("CNST"));
-      for (size_t i = 0; i < 3; ++i) {
-        // Keep the pre-existing direct-REUL behavior. IRND is supported only
-        // by the ordered composition carrier, where PIRN makes it stable per particle.
-        if (UsesElement(reul->args[i], F("IRND"))) {
-          why = "an angle with IRND";
-          return false;
-        }
-        if (!Element(reul->args[i], Type::Real, out, why)) {
-          return false;
-        }
+      // B is self-inverse: PQAD(B, PQAD(R, B)) evaluates to B * R * B^-1.
+      AppendBE32(out, F("PQAD"));
+      appendBasis();
+      AppendBE32(out, F("PQAD"));
+      if (!appendSourceEuler(*reul)) {
+        return false;
       }
+      appendBasis();
       return true;
     }
 
@@ -1110,17 +1125,17 @@ public:
       }
     }
 
+    // Preserve RADD's source order inside the conjugation: B * (R1 * R2) * B^-1.
+    AppendBE32(out, F("PQAD"));
+    appendBasis();
+    AppendBE32(out, F("PQAD"));
     AppendBE32(out, F("PQAD"));
     for (const EffectValue& operand : add->args) {
-      // CNST is the vector carrier: RTOV only replicates one scalar and cannot
-      // represent REUL's three independent angle expressions.
-      AppendBE32(out, F("CNST"));
-      for (size_t i = 0; i < 3; ++i) {
-        if (!Element(operand.args[i], Type::Real, out, why)) {
-          return false;
-        }
+      if (!appendSourceEuler(operand)) {
+        return false;
       }
     }
+    appendBasis();
     return true;
   }
 

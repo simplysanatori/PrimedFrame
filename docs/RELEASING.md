@@ -20,10 +20,14 @@ the port asks for the image on first launch when it cannot find one.
 | Aurora (windowing, WebGPU/Dawn plumbing) | MIT | `extern/aurora/LICENSE` |
 | MusyX (audio mixer) | MIT | `extern/musyx/LICENSE` |
 | astc-encoder (ASTC texture writer) | Apache-2.0 | `extern/astcenc/LICENSE.txt` |
+| GamepadMotionHelpers (gyro calibration) | MIT | `extern/GamepadMotionHelpers/LICENSE` |
 | SDL3 | zlib | fetched at configure time, `build/*/_deps/sdl-src/LICENSE.txt` |
 | Dear ImGui | MIT | fetched, `imgui-src/LICENSE` |
 | fmt | MIT | fetched, `fmt-src/LICENSE` |
 | zstd | BSD | fetched, `zstd-src/LICENSE` |
+| Abseil, libpng, FreeType, xxHash | Apache-2.0, libpng, FTL, BSD-2 | fetched, `<name>-src/` |
+| Dawn, nod | BSD-3 (and bundled), MIT or Apache-2.0 | `packaging/licenses/` (prebuilt archives carry none) |
+| randomprime, apworld, PopTracker pack data tables | MIT | `packaging/licenses/` |
 | Button prompt icons | Kenney CC0 | `tools/prompt_icons/`, built into `textures/` |
 
 **The repository's own work is MIT, and the game code is not.** `LICENSE` grants

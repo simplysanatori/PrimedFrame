@@ -11,6 +11,8 @@
 #include "port_env.h"
 #include "port_collision_view.h"
 #include "port_debug.h"
+#include "port_gyro_motion.h"
+#include "port_dynamic_res.h"
 #include "port_freecam.h"
 #include "port_photo.h"
 #include "port_pointer.h"
@@ -193,6 +195,10 @@ float sRenderScale = 1.f;
 bool sDynamicRes = false;
 int sDynamicResTarget = 0;  // fps; 0 = the 60 fps cap, or the display's rate without it
 float sDynamicResMin = 1.f; // the lowest scale it drops to: 0.5, 0.75 or 1
+// Sharpening of a frame stretched up to the window: 0 off, 1 while dynamic resolution has
+// lowered the scale, 2 whenever the EFB is smaller than the window. Strength 0-100.
+int sSharpenMode = 1;
+int sSharpenAmount = 50;
 float sDynScale = 0.f;      // the scale in use; 0 = sRenderScale
 PortDebug::EAspectMode sAspectMode = PortDebug::kAspect_Window;
 bool sHudWide = true;

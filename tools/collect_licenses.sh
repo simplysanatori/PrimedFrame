@@ -2,7 +2,8 @@
 # Collects every notice a shipped build has to carry into one directory: the
 # port's own grant and notice, the vendored snapshots' licences, the licences
 # of everything FetchContent fetched into <build-dir>/_deps, and the texts in
-# packaging/licenses/ for prebuilt packages that ship none (Dawn, nod).
+# packaging/licenses/ for prebuilt packages that ship none (Dawn, nod) and for
+# generated data tables whose licence lives only in the project they came from.
 #
 # Usage: tools/collect_licenses.sh <build-dir> <dest-dir>
 #
@@ -31,6 +32,10 @@ copy "$ROOT/NOTICE" port-notice.txt
 copy "$ROOT/extern/aurora/LICENSE" aurora.txt
 copy "$ROOT/extern/musyx/LICENSE" musyx.txt
 copy "$ROOT/extern/astcenc/LICENSE.txt" astcenc.txt
+copy "$ROOT/extern/GamepadMotionHelpers/LICENSE" gamepadmotionhelpers.txt
+# freetype's LICENSE.TXT only points at the licence it is used under, and the
+# fetched loop below only looks at the package's top level.
+copy "$BUILD"/_deps/freetype-src/docs/FTL.TXT freetype-FTL.txt
 for notice in "$ROOT"/packaging/licenses/*.txt; do
     copy "$notice" "$(basename "$notice")"
 done
