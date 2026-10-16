@@ -1,4 +1,5 @@
 #include "port_savestate.h"
+#include "port_log.h"
 
 #include "Kyoto/Math/CTransform4f.hpp"
 #include "MetroidPrime/CGameArea.hpp"
@@ -141,6 +142,21 @@ bool AreaReady(const CWorld& world, int area) {
   return a.IsLoaded() && a.IsValidated();
 }
 
+// The room script data a loaded area runs now: the patched copy when a
+// cutscene-skip patch swapped one in, or null/0 when there is nothing to read.
+void LoadedScriptData(const CWorld& world, int area, const uint8_t*& data, size_t& size) {
+  const CGameArea& a = world.GetAreaAlways(TAreaId(area));
+  const int n = a.GetScriptingSize();
+  const char* bytes = a.GetScriptingData();
+  if (n <= 0 || bytes == nullptr) {
+    data = nullptr;
+    size = 0;
+    return;
+  }
+  data = reinterpret_cast< const uint8_t* >(bytes);
+  size = static_cast< size_t >(n);
+}
+
 // The object's editor id when it is a scripted object of a captured-or-
 // applied area (dynamic objects have none), else kNoEditorId.
 uint32_t ScriptId(const CEntity& ent) {
@@ -279,11 +295,18 @@ void CaptureRoomState(CStateManager& mgr, RoomState& out) {
   const CWorld* world = mgr.GetWorld();
   if (world == nullptr)
     return;
+  // This writer records one fingerprint per captured area; an area whose
+  // scripting data is not readable stays without one.
+  out.fingerprintsRecorded = true;
   std::set< int > areas;
   for (int i = 0; i < world->GetNumAreas(); ++i) {
     if (AreaReady(*world, i)) {
       areas.insert(i);
       out.areas.push_back(i);
+      const uint8_t* data = nullptr;
+      size_t size = 0;
+      LoadedScriptData(*world, i, data, size);
+      out.fingerprints.push_back(MakeAreaFingerprint(i, data, size));
     }
   }
   ForEachObject(mgr, [&](CEntity& ent) {
@@ -307,10 +330,27 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
   for (int32_t area : room.areas) {
     if (std::find(done.begin(), done.end(), area) != done.end())
       continue;
-    if (AreaReady(*world, area))
-      now.insert(area);
-    else
+    if (!AreaReady(*world, area)) {
       ++waiting;
+      continue;
+    }
+    // A rebuilt area may have loaded a different room script than the snapshot
+    // was taken from (a mod reload swaps the patched script under the load).
+    // Its saved editor ids and states then describe other objects, so nothing
+    // is applied to or deleted from that area. It still counts as handled: the
+    // data will not change, so there is nothing to wait for.
+    const uint8_t* data = nullptr;
+    size_t size = 0;
+    LoadedScriptData(*world, area, data, size);
+    const RoomAreaRestore decision = DecideAreaRestore(room, area, data, size);
+    if (decision != RoomAreaRestore::kRestore) {
+      PortLog::Write("[savestate] area %d: %s; its room state is left as loaded\n",
+                     static_cast< int >(area), RoomAreaRestoreReason(decision));
+      ++stats.skipped;
+      done.push_back(area);
+      continue;
+    }
+    now.insert(area);
   }
   if (now.empty())
     return waiting;

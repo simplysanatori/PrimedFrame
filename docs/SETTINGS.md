@@ -549,7 +549,20 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   their count (about 5 KB, 0.2 ms to capture). Enemy AI state is not kept
   (they resume from their start behaviour), nor are projectiles, cutscene or
   boss-fight progress. States without the section, or with the setting off,
-  bring the room back as if just entered. Every load
+  bring the room back as if just entered.
+  A room's objects are restored only while its script still matches the
+  snapshot: each captured room records a fingerprint of the room script it had
+  loaded, and a room whose script changed since keeps nothing of the saved
+  objects — it comes back as a memory card load leaves it, while the rooms that
+  do match still restore. Scripts change when a room is patched differently: a
+  mods reload, the Original experience setting (which turns the
+  skippable-cutscene room patches on and off), and the scripts a randomizer or
+  Archipelago game generates (a changed blast-shield state, for example), which
+  fall back room by room the same way (this has not been exercised with a live
+  Archipelago game). A snapshot is never rewritten, so a room a mismatched
+  restore already damaged stays as it is: load the memory card save to recover
+  it. States written before this check existed carry no fingerprint and restore
+  as they always did. Every load
   first writes slot 0, so "Undo last load" goes back to where you were.
   Saving is refused while Samus is dead. A state saved on an elevator pad
   rides the elevator after loading, like stepping onto it. Console:
@@ -578,7 +591,7 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   or use the pad or keyboard (D-pad left/right to choose, A or Start to
   answer); Yes starts the file it came from and loads the state like a
   save state, straight from black without the file-select movie (a Yes during a
-  splash skips the rest of the splashes; with `savestate_room_state` the room keeps its enemies and doors as saved; boss progress is not kept),
+  splash skips the rest of the splashes; with `savestate_room_state` the room keeps its enemies and doors as saved, for the rooms whose script still matches: see the note under Save states; boss progress is not kept),
   No dismisses the prompt and keeps the file; B does nothing. The file stays after Yes too, until the next safe point replaces it. Nothing is written
   (and a previous resume file stays) on the title screen or before the first
   safe point of a session.

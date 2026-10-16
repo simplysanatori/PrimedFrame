@@ -3,6 +3,7 @@
 #include "port_apclient.h"
 #include "port_debug.h"
 #include "port_gci.h"
+#include "port_log.h"
 #include "port_paths.h"
 #include "port_randomizer.h"
 #include "port_mods.h"
@@ -360,8 +361,8 @@ void TickRoomState(CStateManager& mgr) {
   if (waiting > 0 && ++sRoomFrames < kRoomApplyFrames)
     return;
   sRoomPending = false;
-  std::fprintf(stderr, "[savestate] room state: %d applied, %d removed, %d unmatched\n",
-               sRoomStats.applied, sRoomStats.removed, sRoomStats.unmatched);
+  PortLog::Write("[savestate] room state: %d applied, %d removed, %d unmatched, %d areas skipped\n",
+                 sRoomStats.applied, sRoomStats.removed, sRoomStats.unmatched, sRoomStats.skipped);
 }
 
 
