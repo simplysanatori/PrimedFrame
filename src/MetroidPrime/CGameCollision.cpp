@@ -872,6 +872,25 @@ void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float 
 // step consumed more than 1e-5 s (0xf9455c) and subtracting each step's consumption
 // (0xf946ac) - never has dt == worldDt again. The base class has the same two flags
 // (0xc1cdd0, 0xc1ce7c). See build/s-issue117-20261015/airfix/REPORT.md.
+
+// PORT STOPGAP, not Remastered behaviour. Remastered's mover has no "last
+// non-colliding state": after the step loop MoveObject 0xf94750 calls the push-out
+// DoCollisionFailsafe 0xc1fa68/0xc1fc54 (KB
+// func/CPhysicsCollisionFailsafe-DoCollisionFailsafe.md), which is not ported. Until
+// it is, MoveAirborneStepped keeps calling the retail CollisionFailsafe, which
+// restores LastNonCollidingState; that state is refreshed only by the failsafe's
+// own collision-free branch, so on the rm=1 mover's clean ticks (where the failsafe
+// is skipped) it went stale and a block (a solid actor activated around the player,
+// Observatory) teleported the player metres back. Record the free position on a
+// clean tick that starts and ends out of collision, as that branch does.
+static bool AirMoverIsFree(const CStateManager& mgr, CAreaCollisionCache& cache,
+                           CPhysicsActor& actor, const TEntityList& nearList) {
+  actor.MoveCollisionPrimitive(CVector3f::Zero());
+  return !CGameCollision::DetectCollisionBoolean_Cached(
+      mgr, cache, *actor.GetCollisionPrimitive(), actor.GetPrimitiveTransform(),
+      actor.GetMaterialFilter(), nearList);
+}
+
 void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, float dt,
                                          const TEntityList* colliderList) {
   CPhysicsActor& actor = player;
@@ -890,6 +909,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   }
   CAreaCollisionCache cache(motionVolume);
   BuildAreaCollisionCache(mgr, cache);
+  const bool entryFree = AirMoverIsFree(mgr, cache, actor, nearList); // port stopgap, see above
 
   // NCollisionUtils is_floor / is_wall (0xc7xxxx). Port contacts carry
   // DefaultCollisionMaterial's kind 0xffffffff; kMT_Floor stands in for kind 0
@@ -1436,6 +1456,10 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         -0.001f < actor.GetTranslation().GetZ() - entryPos.GetZ()) {
       actor.SetVelocityWR(CVector3f(endVel.GetX(), endVel.GetY(), 0.f));
     }
+  } else if (entryFree && AirMoverIsFree(mgr, cache, actor, nearList)) {
+    // Port stopgap (AirMoverIsFree): the retail failsafe's collision-free branch.
+    actor.SetLastNonCollidingState(actor.GetMotionState());
+    actor.SetNumTicksStuck(0);
   }
   actor.ClearForcesAndTorques();
   actor.MoveCollisionPrimitive(CVector3f::Zero());
