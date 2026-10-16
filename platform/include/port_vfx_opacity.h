@@ -15,10 +15,13 @@
 // model form is selected by the exact feature word of the one recipe whose model permutation was
 // read against the shader: 0xe899b1df (VFX_ColorRamp_Indirect_OpacityFresnel_Unlit). Every other
 // recipe carrying OpacityFade keeps the sprite form it has today — their model permutations have not
-// been read, so nothing is claimed about them (FADE-AUDIT.md section 4 lists them). A recipe must
-// not reuse this word: add one to the converter's table only together with its own mesh form.
-// tests/port_remastered_effect_convert.cpp pins the word to that recipe, tests/port_vfx_opacity.cpp
-// the selection and the resulting alpha.
+// been read, so nothing is claimed about them (FADE-AUDIT.md section 4 lists them). The word is a
+// shared key: a row added to the converter's table with this word silently inherits this mesh form,
+// so add one only together with its own mesh form. The guard is that count:
+// tests/port_vfx_opacity_wiring.py parses the table and asserts exactly one row (0xe899b1df) carries
+// the word, with and without the exposure policy bit. tests/port_remastered_effect_convert.cpp pins
+// that recipe's converted word to this constant and tests/port_vfx_opacity.cpp the selection and the
+// resulting alpha; neither of them would notice a new colliding row.
 //
 // The same fade still drops the shader's CCH0 gain/bias (FADE-AUDIT.md section 5), which is not
 // part of this selection.

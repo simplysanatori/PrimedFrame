@@ -2211,7 +2211,8 @@ void TestPowerBallExposurePolicy() {
         "PowerBall exposure policy changes only the AlreadyExposed bit");
   // The runtime's model-opacity selection (platform/include/port_vfx_opacity.h) keys on a feature
   // word because the VMAT carries no shader id: this material's word is the key, so its mesh draw
-  // takes the normal test, and no other recipe may reuse the word.
+  // takes the normal test. This pins *that* recipe's word; that no other row of the converter's
+  // table carries the key is not visible from here and is counted by tests/port_vfx_opacity_wiring.py.
   Check(plain == kPortVfxModelOpacityFeatures,
         "e899b1df's recipe word is the model-opacity key (Ramp|Indirect|DepthSoften|OpacityFade)");
   Check(PortVfxUsesModelOpacity(plain) && PortVfxUsesModelOpacity(flagged),

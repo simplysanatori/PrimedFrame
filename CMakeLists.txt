@@ -1019,5 +1019,12 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_door_save_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_door_save_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # The model-opacity key must be carried by exactly one row of the converter's
+        # recipe table (port_vfx_opacity.h): the C++ tests pin that one recipe's word
+        # and the selection, not the count.
+        add_test(NAME port_vfx_opacity_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_vfx_opacity_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_vfx_opacity_wiring PROPERTIES TIMEOUT 15 LABELS port)
     endif()
 endif()

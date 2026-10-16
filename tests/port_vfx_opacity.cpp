@@ -90,6 +90,8 @@ void TestSelectionIsThePinnedRecipe() {
   Check(PortVfxUsesModelOpacity(kPortVfxModelOpacityFeatures | uint32_t(Feature::AlreadyExposed)),
         "the exposure policy bit is not part of the recipe");
   // Every other recipe that carries OpacityFade today (FADE-AUDIT.md section 4); none selects it.
+  // A hand copy, so it proves only these words: a new converter row reusing the key would fail
+  // tests/port_vfx_opacity_wiring.py, not this list.
   const uint32_t otherFadeRecipes[] = {
       uint32_t(Feature::Ramp) | uint32_t(Feature::Indirect) | uint32_t(Feature::OpacityFade),          // 0x818
       uint32_t(Feature::ColorTex) | uint32_t(Feature::OpacityTex) | uint32_t(Feature::Erosion) |
