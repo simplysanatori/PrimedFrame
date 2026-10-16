@@ -67,7 +67,7 @@ ctest --test-dir build/native -L port --output-on-failure
 On Windows, run from an MSVC developer shell and add
 `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl`. CI builds and tests
 Linux (GCC 14 and Clang 18) on each push to `port` and each pull request; Windows (clang-cl) and macOS (arm64,
-experimental) are started by hand from the Actions tab. See `.github/workflows/`.
+experimental) run weekly and can be started by hand from the Actions tab. See `.github/workflows/`.
 CI configures with `-DAURORA_ENABLE_TESTS=ON`, which adds Aurora's GPU-free
 FIFO/GX tests; turn it on to run the same suite locally.
 

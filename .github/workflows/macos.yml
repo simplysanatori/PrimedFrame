@@ -1,8 +1,11 @@
 name: macos
 
-# Experimental Apple Silicon build. Start it by hand like windows.yml.
+# Experimental Apple Silicon build. Start it by hand like windows.yml; it also
+# runs weekly, as windows.yml does.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "47 4 * * 1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,6 +27,8 @@ jobs:
       - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
           key: macos-arm64
+          # Objects this build did not use are dropped before saving.
+          evict-old-files: job
 
       # Configure downloads and unpacks about a dozen dependencies. Keep the
       # unpacked sources and the stamps that say they are current; the build
