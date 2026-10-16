@@ -1065,9 +1065,10 @@ public:
                        [fourcc](const EffectValue& arg) { return UsesElement(arg, fourcc); });
   }
 
-  // PMRQ's direct REUL remains the existing PMRT CNST path. For the source's
-  // ordered RADD(REUL, REUL), PQAD carries two Euler vectors; CNST(r, r, r)
-  // preserves each real expression and the runtime composes the rotations as
+  // REUL's order-0 (XYZ) angles map directly to PMRT's Euler vector. Element()
+  // preserves each real expression, including nested IRND; the PART's PIRN
+  // marker makes those samples stable per particle. For the source's ordered
+  // RADD(REUL, REUL), PQAD carries two Euler vectors and composes them as
   // Rz * Ry * Rx in degrees. RTOV is not suitable here: it replicates one real
   // into all three vector components.
   bool ModelRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
@@ -1080,12 +1081,6 @@ public:
       }
       AppendBE32(out, F("CNST"));
       for (size_t i = 0; i < 3; ++i) {
-        // Keep the pre-existing direct-REUL behavior. IRND is supported only
-        // by the ordered composition carrier, where PIRN makes it stable per particle.
-        if (UsesElement(reul->args[i], F("IRND"))) {
-          why = "an angle with IRND";
-          return false;
-        }
         if (!Element(reul->args[i], Type::Real, out, why)) {
           return false;
         }

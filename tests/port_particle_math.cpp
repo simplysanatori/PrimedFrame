@@ -1,4 +1,5 @@
 #include "Kyoto/Particles/PortParticleMath.hpp"
+#include "Kyoto/Particles/CParticleGlobals.hpp"
 
 #include <cstdio>
 
@@ -70,6 +71,26 @@ int main() {
   Check(EvalGradient(inner, 2, 4, false, 0, out) && Color(out, 1.f, 0.f, 0.f, 1.f), "holds before the first stop");
   Check(EvalGradient(inner, 2, 4, false, 4, out) && Color(out, 0.f, 1.f, 0.f, 1.f), "holds after the last stop");
   Check(EvalGradient(inner, 2, 4, false, 2, out) && Color(out, 0.5f, 0.5f, 0.f, 1.f), "interpolates between inner stops");
+
+  // Converted Remastered IRND values are keyed by the particle's spawn seed
+  // and the individual expression node, so repeated frame reads do not reroll.
+  CElementGen::CParticle particleA;
+  CElementGen::CParticle particleB;
+  particleA.xPortSeed = 0x12345678u;
+  particleB.xPortSeed = 0x12345679u;
+  int angleExpression = 0;
+  int nestedExpression = 0;
+  const u32 sample = CParticleGlobals::PortIrndBits(&particleA, &angleExpression);
+  Check(sample == CParticleGlobals::PortIrndBits(&particleA, &angleExpression),
+        "IRND sampling is stable for the same particle and expression");
+  Check(sample != CParticleGlobals::PortIrndBits(&particleB, &angleExpression),
+        "IRND sampling varies with the particle seed");
+  Check(sample != CParticleGlobals::PortIrndBits(&particleA, &nestedExpression),
+        "separate IRND expressions sample independently");
+  const float irndUnit = CParticleGlobals::PortIrndUnit(&particleA, &angleExpression);
+  Check(irndUnit >= 0.f && irndUnit < 1.f &&
+            irndUnit == static_cast<float>(sample >> 8) * (1.f / 16777216.f),
+        "IRND real sample is the stable unit hash in [0, 1)");
 
   // No stops: Remastered returns 0.
   Check(!EvalGradient(inner, 0, 4, false, 1, out) && Color(out, 0.f, 0.f, 0.f, 0.f), "no stops yields zero");

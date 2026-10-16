@@ -1141,8 +1141,8 @@ void TestParameterDefault() {
         "SPAF is listed as approximated");
 }
 
-// A direct PMRQ REUL remains the existing PMRT CNST path, including its
-// existing refusal to represent IRND.
+// An order-0 PMRQ REUL is one PMRT Euler vector. Preserve its angle expressions,
+// including IRND, which PIRN evaluates once per particle and expression.
 void TestModelRotation() {
   auto parts = ConvertOne(OneGenerator([](auto& o) {
                  PutProperty(o, "PMRQ", 3);
@@ -1174,11 +1174,86 @@ void TestModelRotation() {
                  PutTexr(o, 0x1234ABCD);
                }),
                {});
+  Retail random;
+  random.f("GPSM").f("PMRT").f("CNST").f("CNST").w(Bits(90.0f));
+  random.f("IRND").f("CNST").w(Bits(0.0f)).f("CNST").w(Bits(360.0f));
+  random.f("CNST").w(Bits(0.0f));
+  random.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  Check(parts.size() == 1 && parts[0].part == random.bytes,
+        "direct PMRQ REUL preserves (90, IRND(0,360), 0) in PMRT");
+  Check(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(),
+        "direct PMRQ REUL with IRND is not dropped or approximated");
+  if (!parts.empty()) {
+    std::vector<RetailPartProperty> properties;
+    std::string error;
+    Check(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
+          "direct PMRQ IRND output passes the retail element reader");
+    Check(std::any_of(properties.begin(), properties.end(),
+                       [](const RetailPartProperty& property) { return property.fourcc == EffectFourCC("PIRN"); }),
+          "direct PMRQ IRND output retains the per-particle sampling marker");
+  }
+
+  parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "PMRQ", 3);
+                 PutFourCC(o, "REUL");
+                 PutConstant(o, Bits(90.0f));
+                 PutFourCC(o, "ADD_");
+                 PutConstant(o, Bits(15.0f));
+                 PutFourCC(o, "IRND");
+                 PutConstant(o, Bits(0.0f));
+                 PutConstant(o, Bits(360.0f));
+                 PutConstant(o, Bits(0.0f));
+                 o.push_back(0);
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail nested;
+  nested.f("GPSM").f("PMRT").f("CNST").f("CNST").w(Bits(90.0f));
+  nested.f("ADD_").f("CNST").w(Bits(15.0f));
+  nested.f("IRND").f("CNST").w(Bits(0.0f)).f("CNST").w(Bits(360.0f));
+  nested.f("CNST").w(Bits(0.0f));
+  nested.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  Check(parts.size() == 1 && parts[0].part == nested.bytes,
+        "direct PMRQ REUL preserves IRND nested in a supported real expression");
+  Check(!parts.empty() && parts[0].dropped.empty(), "nested PMRQ IRND is not dropped");
+
+  parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "PMRQ", 3);
+                 PutFourCC(o, "REUL");
+                 PutConstant(o, Bits(90.0f));
+                 PutFourCC(o, "IRND");
+                 PutConstant(o, Bits(0.0f));
+                 PutConstant(o, Bits(360.0f));
+                 PutConstant(o, Bits(0.0f));
+                 o.push_back(1);
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
   Retail plain;
   plain.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
-  Check(parts.size() == 1 && parts[0].part == plain.bytes, "PMRQ with IRND writes nothing");
-  Check(!parts.empty() && parts[0].dropped.size() == 1 && parts[0].dropped[0] == "PMRQ: an angle with IRND",
-        "PMRQ with IRND is listed as dropped");
+  Check(parts.size() == 1 && parts[0].part == plain.bytes, "direct PMRQ rejects an unsupported Euler order");
+  Check(!parts.empty() && parts[0].dropped.size() == 1 &&
+            parts[0].dropped[0] == "PMRQ: a rotation order other than 0 (XYZ)",
+        "direct PMRQ reports an unsupported Euler order");
+}
+
+void TestMalformedModelRotation() {
+  const std::vector<uint8_t> malformed = OneGenerator([](auto& o) {
+    PutProperty(o, "PMRQ", 3);
+    PutFourCC(o, "REUL");
+    PutConstant(o, Bits(90.0f));
+    PutFourCC(o, "IRND");
+    PutConstant(o, Bits(0.0f));
+    PutFourCC(o, "NOPE"); // malformed second IRND operand
+    PutConstant(o, Bits(0.0f));
+    o.push_back(0);
+    PutTexr(o, 0x1234ABCD);
+  });
+  EffectNode effect;
+  std::string error;
+  Check(!ParseEffect(malformed.data(), malformed.size(), effect, error),
+        "malformed nested IRND in PMRQ is rejected by the effect parser");
+  Check(!error.empty(), "malformed PMRQ reports the parse failure");
 }
 
 void PutLoopingEmitterKey(std::vector<uint8_t>& out) {
