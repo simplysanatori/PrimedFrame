@@ -34,6 +34,10 @@ constexpr float kTouchMarginMaxDp = 300.f;
 constexpr float kTouchSideMarginDefault = 16.f;
 constexpr float kTouchStickInsetDefault = 32.f;
 constexpr float kTouchButtonInsetDefault = 0.f;
+// The overlay's opacity in percent, and the range its slider takes.
+constexpr float kTouchOpacityDefault = 100.f;
+constexpr float kTouchOpacityMin = 10.f;
+constexpr float kTouchOpacityMax = 100.f;
 constexpr std::size_t kTouchLayoutMaxLen = 4096;
 // SDL_SCANCODE_LSHIFT (SDL3), the default beam-shift key; debug_ui.cpp checks it.
 constexpr int kScancodeLShift = 225;
@@ -77,6 +81,9 @@ struct Settings {
   std::atomic< float > touchSideMargin{kTouchSideMarginDefault};
   std::atomic< float > touchStickInset{kTouchStickInsetDefault};
   std::atomic< float > touchButtonInset{kTouchButtonInsetDefault};
+  // How visible the gameplay controls are, in percent; the Android view reads it
+  // each draw, so it is atomic like the margins.
+  std::atomic< float > touchOpacity{kTouchOpacityDefault};
   bool mouseInvertX = false;
   bool mouseInvertY = false;
   bool mouseButtons = true;

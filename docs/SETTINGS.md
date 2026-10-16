@@ -95,6 +95,17 @@
   where the stroke began, once per stroke (`TouchControlsView.trackSwipe` →
   `PortDebug::TouchSpringSwipe` → the Spring Ball request). Touch aim does
   nothing in the ball, so the swipe takes nothing away there.
+  **Touch controls opacity** (Android, Touch controls, `touch_opacity`, 10-100,
+  default 100, saved in `controls.toml`): fades every gameplay control, so more of
+  the game shows through the overlay; the layout editor and the menu buttons (the
+  pointer screens' back and cog buttons, the map button) stay fully opaque. The
+  slider is the only way to set it and the view reads it every draw
+  (`TouchControlsView.onDraw` draws the gameplay controls inside a
+  `canvas.saveLayerAlpha`, F1's value through `nativeTouchOpacity` /
+  `PortDebug::TouchOpacity`), so it applies at once, and at 100% exactly as
+  before. Side margin, Stick inset and Button inset on the same page
+  (`touch_side_margin`, `touch_stick_inset`, `touch_button_inset`) move those
+  controls instead, in dp.
   **Touch aim** (Android, `touch_aim`, on by default; `touch_aim_speed`, default
   2.25 aim px per dp): with twin stick on, the right stick is gone and a finger
   dragged on the free screen area turns the view by the distance dragged, like a
