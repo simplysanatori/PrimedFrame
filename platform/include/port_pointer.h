@@ -87,6 +87,9 @@ const CGuiWidget* PickAtPointer(const CGuiFrame* frame);
 bool IsUnder(const CGuiWidget* hit, const CGuiWidget* ancestor);
 // Screen bounds drawn last frame for widget (and its children).
 bool Bounds(const CGuiWidget* widget, bool children, PortPointerMath::Rect& out);
+// The bounds of the last thing widget itself drew (a text pane's glyphs, drawn
+// after its pane), or false when it drew none.
+bool LastBounds(const CGuiWidget* widget, PortPointerMath::Rect& out);
 
 // Console diagnostics: the hit list's state and the rects under a point.
 std::string Describe(float gx, float gy);

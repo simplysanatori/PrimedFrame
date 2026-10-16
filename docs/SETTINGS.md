@@ -527,7 +527,8 @@
   rooms visited per world and the current world's unvisited rooms (their names
   load on first view). Console: `reveal <0|1>`, `pickups <off|seen|rooms|all>`, `pickups kinds|station <on|off>`, `pickups collect <dot>`, `tracker`.
   Room marks: on the world map screen X marks or unmarks the shown room (a
-  "Mark room" prompt under the map; with pointer menus click it). Marked rooms
+  "Mark room" prompt in the map's upper right, clear of the room title, the
+  legend and the prompts along the bottom; with pointer menus click it). Marked rooms
   draw cyan on the map and the minimap, over the Rooms amber, whatever
   `map_pickups` is. A save keeps up to 64 marks, and which pickups it has seen,
   in a small side file beside the card: `mapdata/<card>-<slot>.bin` under the
