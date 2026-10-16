@@ -187,6 +187,9 @@ void aurora_set_log_level(AuroraLogLevel level);
 void aurora_set_pause_on_focus_lost(bool value);
 void aurora_set_background_input(bool value);
 void aurora_set_resampler(AuroraSampler sampler);
+/** Sharpens the frame (CAS-style contrast-adaptive, 0 = off, 1 = most) when it is drawn smaller than
+ * the window and stretched to it; a frame at or above the window's size is never touched. */
+void aurora_set_present_sharpness(float sharpness);
 /** Sets MSAA samples (1 or 4) and max texture anisotropy (1-16); applied at the next frame start. */
 void aurora_set_graphics_quality(uint32_t msaa, uint16_t maxTextureAnisotropy);
 /** Evaluates GX lighting per pixel instead of per vertex (default off); lit pipelines rebuild on next use. */
