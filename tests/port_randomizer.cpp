@@ -61,7 +61,8 @@ bool RefusesSeed(const std::string& text, std::string* reasonOut = nullptr) {
   const bool ok = PortRandomizer::ParseSeedFile(text, out, offset, reason);
   if (reasonOut != nullptr)
     *reasonOut = reason;
-  return !ok && !reason.empty() && offset <= text.size();
+  return !ok && !reason.empty() &&
+         (offset <= text.size() || offset == PortRandomizer::kSeedNoOffset);
 }
 
 void SeedParserTests() {
@@ -163,6 +164,24 @@ void SeedParserTests() {
   for (int i = 0; i < 301; ++i)
     deep += "}";
   Check(RefusesSeed(deep), "nesting limit");
+
+  // Since the move onto PortJson: unknown keys may hold any JSON value, and a
+  // problem in a well-formed file names where it is rather than a byte offset.
+  {
+    SeedFile seed;
+    Check(ParsesSeed(R"({"note":null,"tags":["a",1,{}],"locations":{"a":{"item":"Missiles","x":[null]}}})",
+                     seed) &&
+              seed.placements.size() == 1,
+          "arrays and null in unknown keys");
+    size_t offset = 0;
+    std::string why;
+    Check(!PortRandomizer::ParseSeedFile(R"({"locations":{"Chozo-1":{"item":"Banana"}}})", seed, offset,
+                                         why) &&
+              offset == PortRandomizer::kSeedNoOffset && Contains(why, "Chozo-1") && Contains(why, "Banana"),
+          "an invalid seed names the location and the item");
+    Check(!PortRandomizer::ParseSeedFile("{} x", seed, offset, why) && offset == 3,
+          "malformed JSON reports the byte offset");
+  }
 }
 
 // These tests set environment variables, which Windows spells differently and

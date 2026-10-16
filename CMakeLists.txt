@@ -549,7 +549,8 @@ if(MP_BUILD_TESTS)
     target_compile_definitions(port_map_pickups_tests PRIVATE TARGET_PC)
     add_executable(port_randomizer_tests
         tests/port_randomizer.cpp
-        platform/port_randomizer.cpp)
+        platform/port_randomizer.cpp
+        platform/port_json.cpp)
     target_include_directories(port_randomizer_tests PRIVATE
         platform/include extern/aurora/include include)
     target_compile_definitions(port_randomizer_tests PRIVATE TARGET_PC VERSION=0)

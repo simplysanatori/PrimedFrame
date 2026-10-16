@@ -38,8 +38,12 @@ struct SeedFile {
   std::map< int, PickupModel > models;
 };
 
-// Parses a seed file's text. False on a malformed or invalid seed, with the
-// byte offset the problem was found at and why.
+// The errorOffset of a seed that is well-formed JSON but not a valid seed.
+constexpr size_t kSeedNoOffset = static_cast< size_t >(-1);
+
+// Parses a seed file's text (PortJson, then the schema above). False on a
+// malformed or invalid seed, with why: errorOffset is the byte offset for
+// malformed JSON, kSeedNoOffset for a well-formed file that is not a seed.
 bool ParseSeedFile(const std::string& text, SeedFile& out, size_t& errorOffset,
                    std::string& errorReason);
 
