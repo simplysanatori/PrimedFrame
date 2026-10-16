@@ -25,6 +25,17 @@ constexpr float kMinStep = 0.1f;
 constexpr int kSettleFps = 1;
 constexpr int kSettleGpu = 2;
 constexpr float kMaxRaise = 0.5f;
+// One lowering goes no further than this share of the scale (36% of the pixels), so a
+// wrong estimate cannot send it to the bottom, from where it climbs back slowly.
+constexpr float kMaxDropRatio = 0.6f;
+// A learnt fixed part is from two seconds that may have been in different rooms; it is
+// forgotten after this long, and never taken as more than this share of the GPU time.
+constexpr int kFixedLife = 60;
+constexpr double kFixedShare = 0.5;
+// Seconds to wait for a first GPU time before following the frame rate instead.
+constexpr int kCollectTimeout = 5;
+// GPU-time lowerings that gained nothing before the GPU times are distrusted.
+constexpr int kMaxNoGains = 2;
 
 bool Worth(float from, float to, float top, float bottom) {
   const float d = std::fabs(to - from);
@@ -44,11 +55,12 @@ const char* ReasonText(Reason reason) {
   case Reason::Collecting: return "waiting for GPU times";
   case Reason::Steady: return "steady";
   case Reason::NotGpuBound: return "below target, but not GPU-bound";
-  case Reason::GpuBound: return "lowered: GPU-bound";
+  case Reason::GpuBound: return "GPU-bound: lowering";
   case Reason::AtLowest: return "GPU-bound at the lowest scale";
-  case Reason::Headroom: return "raised: GPU has headroom";
+  case Reason::Headroom: return "GPU has headroom: raising";
   case Reason::RaiseFailed: return "raise was too slow, undone";
   case Reason::NoGain: return "lowering gained nothing, undone";
+  case Reason::NoGpuTimes: return "GPU times unavailable or unreliable; following the frame rate";
   }
   return "?";
 }
@@ -78,15 +90,19 @@ void Controller::Learn(float scale, double gpuMs) {
       // A noisy pair can put it outside what one frame holds; keep what is plausible.
       if (fixed >= 0.0 && fixed < std::min(gpuMs, mMeasuredMs)) {
         mFixedMs = fixed;
+        mFixedAge = 0;
       }
     }
   }
   mMeasuredScale = scale;
   mMeasuredMs = gpuMs;
+  if (mFixedMs >= 0.0 && ++mFixedAge > kFixedLife) {
+    mFixedMs = -1.0;
+  }
 }
 
 double Controller::Predict(float from, double gpuMs, float to) const {
-  const double fixed = mFixedMs >= 0.0 ? std::min(mFixedMs, gpuMs * 0.9) : 0.0;
+  const double fixed = mFixedMs >= 0.0 ? std::min(mFixedMs, gpuMs * kFixedShare) : 0.0;
   const double perPixel = (gpuMs - fixed) / (double(from) * from);
   return fixed + perPixel * double(to) * to;
 }
@@ -125,29 +141,73 @@ Decision Controller::Update(const Sample& s) {
     mReason = Reason::Settling;
     return {mScale, false, mReason};
   }
-  // GPU times are coming but none is published yet: wait rather than guess.
-  if (s.gpuMs == 0.0) {
-    mReason = Reason::Collecting;
-    return {mScale, false, mReason};
+  // GPU times are coming but none is published yet: wait rather than guess, for a few
+  // seconds; a driver that never publishes one is followed by the frame rate instead.
+  if (s.gpuMs == 0.0 && !mGpuDropped) {
+    if (++mCollecting < kCollectTimeout) {
+      mReason = Reason::Collecting;
+      return {mScale, false, mReason};
+    }
+    mGpuDropped = true;
+  }
+  const bool useGpu = s.gpuMs > 0.0 && !mGpuDropped;
+  if (useGpu) {
+    mCollecting = 0;
+  }
+  // The GPU's busy time: the span, unless the timed passes cover under half of it. Then
+  // the span is mostly gaps between passes (the GPU waiting on the CPU, a readback, a
+  // second submit) and the passes' own sum is the better measure.
+  double busy = s.gpuMs;
+  if (useGpu && s.gpuPassMs > 0.0 && s.gpuPassMs < s.gpuMs * 0.5) {
+    busy = s.gpuPassMs;
   }
   // Few frames is a pause or a load, unless the GPU was busy for most of the second:
   // then it is a scene too heavy for it, which is exactly when to lower.
-  const bool gpuFull = s.gpuMs > 0.0 && s.gpuMs * s.frames >= 700.0;
+  const bool gpuFull = useGpu && busy * s.frames >= 700.0;
   if ((s.frames < 10 && !gpuFull) || s.targetFps <= 0.0) {
     mReason = Reason::Paused;
     return {mScale, false, mReason};
   }
-  return s.gpuMs > 0.0 ? UpdateFromGpu(s, top, bottom) : UpdateFromFps(s, top, bottom);
+  if (!useGpu) {
+    const Decision d = UpdateFromFps(s, top, bottom);
+    if (!d.changed && mGpuDropped && d.reason == Reason::Steady) {
+      mReason = Reason::NoGpuTimes;
+      return {mScale, false, mReason};
+    }
+    return d;
+  }
+  return UpdateFromGpu(s, busy, top, bottom);
 }
 
-Decision Controller::UpdateFromGpu(const Sample& s, float top, float bottom) {
-  Learn(mScale, s.gpuMs);
+Decision Controller::UpdateFromGpu(const Sample& s, double busy, float top, float bottom) {
+  Learn(mScale, busy);
   const double budget = 1000.0 / s.targetFps;
   const bool slow = s.fps < s.targetFps * kSlow;
-  const float fit = FitBudget(mScale, s.gpuMs, budget, top, bottom);
+  const float fit = std::max(FitBudget(mScale, busy, budget, top, bottom), std::max(mScale * kMaxDropRatio, bottom));
+  if (mHoldLow > 0) {
+    --mHoldLow;
+  }
+
+  // The first settled second after a lowering: the GPU times promised it would help.
+  // If the frame rate did not rise, they were wrong about what holds the frame back
+  // (gaps the span counts as busy, a tiler's pass timings): undo it and hold off, and
+  // after twice stop trusting them.
+  if (mDropFrom > 0.f) {
+    const float from = mDropFrom;
+    mDropFrom = 0.f;
+    const bool gained = s.fps >= mDropFps * 1.03 || !slow;
+    if (!gained) {
+      mHoldLow = mHoldFor;
+      mHoldFor = std::min(mHoldFor * 2, 240);
+      if (++mNoGains >= kMaxNoGains) {
+        mGpuDropped = true;
+      }
+      return Change(from, Reason::NoGain, kSettleGpu);
+    }
+  }
 
   if (mProbation >= 0) {
-    if (slow && s.gpuMs >= budget * kGpuBusy) {
+    if (slow && busy >= budget * kGpuBusy) {
       // The raise was too much after all: back to where it was, and wait longer next time.
       mRaiseAfter = std::min(mRaiseAfter * 2, 64);
       mProbation = -1;
@@ -161,14 +221,16 @@ Decision Controller::UpdateFromGpu(const Sample& s, float top, float bottom) {
 
   if (slow) {
     mSteady = 0;
-    if (s.gpuMs < budget * kGpuBusy) {
+    if (busy < budget * kGpuBusy) {
       // The GPU had time to spare: fewer pixels would not bring the frames back.
       mSlow = 0;
       mReason = Reason::NotGpuBound;
       return {mScale, false, mReason};
     }
     // Two slow seconds in a row, so a single hitch does not cost a stutter.
-    if (++mSlow >= 2 && fit < mScale && Worth(mScale, fit, top, bottom)) {
+    if (++mSlow >= 2 && mHoldLow == 0 && fit < mScale && Worth(mScale, fit, top, bottom)) {
+      mDropFrom = mScale;
+      mDropFps = s.fps;
       return Change(fit, Reason::GpuBound, kSettleGpu);
     }
     mReason = mScale <= bottom ? Reason::AtLowest : fit < mScale ? Reason::GpuBound : Reason::NotGpuBound;

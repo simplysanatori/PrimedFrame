@@ -372,7 +372,9 @@ void DrawVideoQuality() {
                   DynamicResTargetFps());
       ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
       const char* reason = PortDynamicRes::ReasonText(sDynController.LastReason());
-      if (sDynGpuMs > 0.0) {
+      if (sDynController.GpuTimesDropped()) {
+        ImGui::Text("GPU times not used (none arrived, or lowering on them gained nothing): %s", reason);
+      } else if (sDynGpuMs > 0.0) {
         ImGui::Text("GPU %.1f of %.1f ms a frame: %s", sDynGpuMs, 1000.0 / DynamicResTargetFps(), reason);
       } else if (sDynGpuMs < 0.0 && GXPortGpuTimesSupported() != GX_TRUE) {
         ImGui::Text("This GPU cannot time itself; following the frame rate: %s", reason);

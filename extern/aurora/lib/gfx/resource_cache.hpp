@@ -14,6 +14,8 @@ wgpu::Sampler sampler_ref(const wgpu::SamplerDescriptor& descriptor);
 namespace detail {
 void clear_bind_group_cache();
 void expire_cached_bind_groups();
+// After an EFB resize that kept the cache: two frames on, drop what those frames did not use.
+void expire_unused_bind_groups_soon();
 void shutdown_resource_cache();
 } // namespace detail
 

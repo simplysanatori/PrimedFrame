@@ -27,7 +27,14 @@ struct Scene {
   double perPixelMs = 8.0;  // GPU time per scale^2
   double cpuMs = 5.0;
   double capFps = 60.0;     // 0 = uncapped
+  // Idle time inside the span, between passes (the GPU waiting on the CPU); and the
+  // share of the GPU's work the timed passes cover.
+  double gapMs = 0.0;
+  double passShare = 1.0;
+  bool publishes = true;    // false: GPU times supported but never published
   double Gpu(float scale) const { return fixedMs + perPixelMs * double(scale) * scale; }
+  double Span(float scale) const { return Gpu(scale) + gapMs; }
+  double Passes(float scale) const { return Gpu(scale) * passShare; }
   double Fps(float scale) const {
     const double fps = 1000.0 / std::max(cpuMs, Gpu(scale));
     return capFps > 0.0 ? std::min(fps, capFps) : fps;
@@ -44,7 +51,9 @@ struct Run {
   // Like gpu_prof: GPU times are an average published every 60 frames or half a
   // second of GPU time, so after a change they describe the old scale for a while.
   double published = 0.0;
+  double publishedPasses = 0.0;
   double windowMs = 0.0;
+  double windowPassMs = 0.0;
   int windowFrames = 0;
   Run() { controller.Reset(top); }
   // Seconds of a scene; returns the changes made in them.
@@ -56,14 +65,17 @@ struct Run {
       s.fps = scene.Fps(scale);
       s.frames = unsigned(s.fps);
       for (unsigned f = 0; f < std::max(1u, s.frames); ++f) {
-        windowMs += scene.Gpu(scale);
+        windowMs += scene.Span(scale);
+        windowPassMs += scene.Passes(scale);
         if (++windowFrames == 60 || windowMs >= 500.0) {
           published = windowMs / windowFrames;
-          windowMs = 0.0;
+          publishedPasses = windowPassMs / windowFrames;
+          windowMs = windowPassMs = 0.0;
           windowFrames = 0;
         }
       }
-      s.gpuMs = gpuTimes ? published : -1.0;
+      s.gpuMs = !gpuTimes ? -1.0 : scene.publishes ? published : 0.0;
+      s.gpuPassMs = gpuTimes && scene.publishes ? publishedPasses : -1.0;
       s.targetFps = target;
       s.top = top;
       s.bottom = bottom;
@@ -157,6 +169,8 @@ int main() {
     Check(run.controller.Scale() >= 1.0f, "a lagging reading does not overshoot");
     Check(slow.Fps(run.controller.Scale()) >= 59.9, "the slow GPU reaches the target");
     Check(run.changes <= 3, "the slow GPU settles in a few changes");
+    Check(run.controller.Scale() < 2.f * 0.6f + 0.01f || run.changes >= 2,
+          "one lowering goes no further than 0.6x of the scale");
   }
   // Uncapped, aiming at 120 fps.
   {
@@ -222,6 +236,53 @@ int main() {
       Check(!c.Update(s).changed, "paused: no change");
     }
     Check(c.LastReason() == Reason::Paused, "paused: says why");
+  }
+
+  // CPU-bound, but the GPU waits inside its span, so the span alone reads as busy. The
+  // passes cover less than half of it: their sum is used, and it never lowers.
+  {
+    Run run;
+    Scene gappy;
+    gappy.cpuMs = 25.0;
+    gappy.perPixelMs = 1.0;  // 5 ms of work at 2x
+    gappy.gapMs = 15.0;      // span 20 ms, over the 13.3 ms "busy" line
+    Check(run.Seconds(gappy, 120) == 0 && Near(run.controller.Scale(), 2.f),
+          "gaps in the span: the passes' sum shows it is not GPU-bound");
+  }
+  // The same, with gaps the passes do not give away: the lowering is checked against the
+  // frame rate, undone when it gains nothing, and after twice the GPU times are dropped.
+  {
+    Run run;
+    Scene gappy;
+    gappy.cpuMs = 25.0;
+    gappy.perPixelMs = 2.0;  // 9 ms of work at 2x
+    gappy.gapMs = 7.0;       // span 16 ms: passes are over half of it
+    run.Seconds(gappy, 300);
+    Check(Near(run.controller.Scale(), 2.f), "a lowering that gained nothing is undone");
+    Check(run.controller.GpuTimesDropped(), "twice wrong: the GPU times are no longer used");
+    Check(run.changes <= 10, "and it stops trying soon");
+  }
+  // GPU times reported as supported but never published: after a few seconds it follows
+  // the frame rate instead of waiting for ever.
+  {
+    Run run;
+    Scene broken;
+    broken.publishes = false;
+    run.Seconds(broken, 4);
+    Check(run.controller.LastReason() == Reason::Collecting && run.changes == 0, "waits a little");
+    run.Seconds(broken, 60);
+    Check(run.controller.GpuTimesDropped(), "then gives up on GPU times");
+    Check(run.controller.Scale() < 2.f, "and lowers on the frame rate");
+  }
+  // The fixed part is forgotten a minute after it was measured.
+  {
+    Run run;
+    Scene heavy;
+    heavy.fixedMs = 3.0;
+    run.Seconds(heavy, 20);
+    Check(run.controller.FixedGpuMs() >= 0.0, "fixed part learnt");
+    run.Seconds(heavy, 70);
+    Check(run.controller.FixedGpuMs() < 0.0, "and forgotten once it is old");
   }
 
   if (sFailures == 0) {

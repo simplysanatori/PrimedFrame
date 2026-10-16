@@ -24,6 +24,7 @@
 #include "../gx/gx.hpp"
 #include "../gfx/frame.hpp"
 #include "../gfx/recording.hpp"
+#include "../gfx/resource_cache.hpp"
 #include "../gfx/render_worker.hpp"
 #include "../internal.hpp"
 #include "../window.hpp"
@@ -196,9 +197,11 @@ fn sample_area(frag_position: vec4<f32>) -> vec4<f32> {
 
 // END AREA SAMPLER REGION
 
-// Contrast-adaptive sharpening (after AMD's CAS) for a frame stretched up to the window:
-// a cross of source texels around the sample, weighted down where the neighbourhood has
-// little headroom, so edges sharpen without ringing and flat areas stay flat.
+// Contrast-adaptive sharpening in the manner of AMD's CAS, for a frame stretched up to the
+// window: a cross of source texels around the bilinear sample, weighted down where the
+// neighbourhood has little headroom, so edges sharpen without ringing and flat areas stay
+// flat. Unlike CAS proper it sharpens the stretched image rather than scaling and
+// sharpening the source pixels in one filter.
 fn sharpen(uv: vec2<f32>, color: vec4<f32>) -> vec4<f32> {
     let texel = 1.0 / vec2<f32>(textureDimensions(t));
     let n = textureSample(t, s, uv + vec2<f32>(0.0, -texel.y)).rgb;
@@ -1443,12 +1446,14 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
   }
   if (sizeChanged) {
     gx::trim_copy_texture_cache();
-    // A new EFB scale alone (dynamic resolution) keeps the cached bind groups: they
-    // expire on their own (see gfx::clear_offscreen_cache).
+    // A new EFB scale alone (dynamic resolution) keeps the cached bind groups, so the
+    // next frame does not rebuild them all; those the new frames do not use (the old
+    // size's) are dropped two frames on (see gfx::clear_offscreen_cache).
     if (force || surfaceChanged) {
       gfx::clear_caches();
     } else {
       gfx::clear_offscreen_cache();
+      gfx::detail::expire_unused_bind_groups_soon();
     }
   }
   // A new EFB scale alone (dynamic resolution) keeps the swapchain as it is.

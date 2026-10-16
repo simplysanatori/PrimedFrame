@@ -70,22 +70,29 @@
   there is room. Where the GPU can time itself (timestamp queries, Aurora's
   `gpu_prof`, switched on while dynamic resolution is) it reads the GPU's time per
   frame: a slow scene whose GPU has time to spare is CPU-bound and left alone, and
-  a GPU-bound one goes straight to the scale predicted to fit 85% of the frame
-  budget (GPU time taken as a fixed part plus a part growing with the scale
-  squared, the fixed part learnt from two scales). It lowers after two slow
-  seconds, raises after a steady stretch, undoes a raise that proves too slow and
-  waits longer before the next, and skips changes under 0.1x, since each one
-  reallocates the EFB and stutters. Without GPU times it steps on the frame rate
-  in quarter steps (half above 2x). F1 > Video shows the GPU time, the budget and
+  a GPU-bound one goes toward the scale predicted to fit 85% of the frame budget
+  (GPU time taken as a fixed part plus a part growing with the scale squared, the
+  fixed part learnt from two scales, capped at half the GPU time and forgotten
+  after a minute), at most to 0.6x of the scale in one step. The GPU time is the
+  span of the frame's passes, or their sum when the passes cover less than half
+  the span (gaps where the GPU waited). It lowers after two slow seconds and,
+  once settled, checks the frame rate rose: if not it undoes the step and holds
+  off, and after twice stops using GPU times. It raises after a steady stretch,
+  undoes a raise that proves too slow and waits longer before the next, and skips
+  changes under 0.1x, since each one reallocates the EFB and stutters. Without GPU
+  times (none, or none published within 5 s) it steps on the frame rate in
+  quarter steps (half above 2x). F1 > Video shows the GPU time, the budget and
   why the scale is what it is; the log has a `port: dynamic resolution` line per
   change. The controller is `platform/port_dynamic_res.cpp` (test
-  `port_dynamic_res_tests`). A step keeps Aurora's cached bind groups (they expire
-  on their own) and clears only the offscreen targets, and the log times each EFB
+  `port_dynamic_res_tests`). A step keeps Aurora's cached bind groups, dropping two
+  frames later those the new frames did not use (the old size's), and clears the
+  offscreen targets; the log times each EFB
   resize (`aurora::gpu: EFB WxH: resized in N ms`). "Sharpen when upscaled"
   (`upscale_sharpen`: `off`, `dynamic` (default: only while dynamic resolution has
   lowered the scale) or `always`; strength "Sharpening", `upscale_sharpen_amount`
-  0-100, default 50) applies contrast-adaptive sharpening (after AMD's CAS) in the
-  present resample, and only to a frame smaller than the window. The file also
+  0-100, default 50) applies CAS-style contrast-adaptive sharpening to the
+  stretched image in the present resample (not AMD's CAS proper, which scales and
+  sharpens in one filter), and only to a frame smaller than the window. The file also
   takes a manual `render_scale` under 1.
 - `MP_ASPECT=4:3|16:9|window` (default `window`, persisted as `aspect`); the legacy `MP_WIDESCREEN` selects 16:9.
 - `MP_TWIN_STICK=1` (Controls > Options, persisted as `twin_stick`): twin-stick aiming. The

@@ -258,6 +258,7 @@ static void UpdateDynamicRes(double fps, unsigned frames) {
     float span = 0.f;
     GXPortGetGpuTimes(nullptr, 0, &total, &span);
     sample.gpuMs = span;
+    sample.gpuPassMs = span > 0.f ? total : -1.0;
   }
   sDynGpuMs = sample.gpuMs;
   const PortDynamicRes::Decision decision = sDynController.Update(sample);

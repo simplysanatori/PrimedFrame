@@ -45,6 +45,9 @@ constexpr uint32_t BindGroupCacheSweepPeriod = 16;
 absl::flat_hash_map<BindGroupRef, CachedBindGroup> g_cachedBindGroups;
 absl::flat_hash_map<SamplerRef, wgpu::Sampler> g_cachedSamplers;
 std::mutex g_bindGroupCacheMutex;
+// The frame from which a one-off sweep drops what the frames since an EFB resize did not use
+// (UINT32_MAX: none pending). Guarded by g_bindGroupCacheMutex.
+uint32_t g_resizeSweepFrame = UINT32_MAX;
 std::mutex g_samplerCacheMutex;
 
 } // namespace
@@ -56,9 +59,32 @@ void clear_bind_group_cache() {
   g_cachedBindGroups.clear();
 }
 
+void expire_unused_bind_groups_soon() {
+  std::lock_guard lock{g_bindGroupCacheMutex};
+  const auto frameIndex = current_frame();
+  if (frameIndex != UINT32_MAX) {
+    g_resizeSweepFrame = frameIndex + 2;
+  }
+}
+
 void expire_cached_bind_groups() {
   std::lock_guard lock{g_bindGroupCacheMutex};
   const auto frameIndex = current_frame();
+  // Two frames after an EFB resize, everything still drawn has its bind group at the new
+  // size; the rest mostly points at the old size's targets, which it keeps alive, so it
+  // goes now rather than after the usual retention.
+  if (g_resizeSweepFrame != UINT32_MAX && frameIndex != UINT32_MAX && frameIndex >= g_resizeSweepFrame) {
+    const uint32_t since = g_resizeSweepFrame - 1;
+    g_resizeSweepFrame = UINT32_MAX;
+    for (auto it = g_cachedBindGroups.begin(); it != g_cachedBindGroups.end();) {
+      if (it->second.lastUsedFrame < since) {
+        g_cachedBindGroups.erase(it++);
+      } else {
+        ++it;
+      }
+    }
+    return;
+  }
   if (g_cachedBindGroups.empty() || frameIndex == UINT32_MAX || frameIndex % BindGroupCacheSweepPeriod != 0) {
     return;
   }

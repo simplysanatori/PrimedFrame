@@ -38,8 +38,9 @@ constexpr size_t RingDepth = 4;
 constexpr uint8_t ContextId = 0;
 constexpr uint64_t SaneFrameGapNs = UINT64_C(5'000'000'000);
 constexpr uint32_t WindowFrames = 60;
-// A window also closes after this much GPU time, so a slow frame rate (dynamic
-// resolution reads these once a second) does not wait many seconds for 60 frames.
+// A window also closes once its frames' spans add up to this much GPU time, so a slow GPU
+// (dynamic resolution reads these once a second) does not wait many seconds for 60 frames,
+// while a fast one still averages its full 60.
 constexpr uint64_t WindowNs = UINT64_C(500'000'000);
 
 enum class EventKind : uint8_t {
@@ -104,7 +105,6 @@ Result g_result;
 std::vector<Accum> g_accum;
 double g_accumSpanNs = 0.0;
 uint32_t g_accumFrames = 0;
-uint64_t g_windowBeginNs = 0; // the first pass of the window's first frame
 
 #ifdef TRACY_ENABLE
 bool g_contextEmitted = false;
@@ -341,10 +341,7 @@ void aggregate_frame(const Slot& slot, const uint64_t* ts) {
     return;
   }
   g_accumSpanNs += double(spanEnd - spanBegin);
-  if (g_accumFrames == 0) {
-    g_windowBeginNs = spanBegin;
-  }
-  if (++g_accumFrames < WindowFrames && spanEnd - g_windowBeginNs < WindowNs) {
+  if (++g_accumFrames < WindowFrames && g_accumSpanNs < double(WindowNs)) {
     return;
   }
   const double inv = 1.0 / double(g_accumFrames);
