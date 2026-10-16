@@ -154,3 +154,28 @@ leaves the terrain's result standing. The path is part of the existing
   landings, for that one actor only. Nothing here has been captured from Remastered,
   run on another platform, or compared for general ground, ball, response or rider
   parity.
+
+## The ball's ray-vs-capsule query (prerequisite, not wired)
+
+`NCollisionRayCast::Capsule` 0xbf6f10 — the ray-vs-capsule query the Remastered ball mover
+sweeps — exists as a pure geometry module, `platform/include/port_remastered_capsule_ray.h` /
+`platform/port_remastered_capsule_ray.cpp`, with the source's own dependencies:
+`CMath::SolveQuadratic` 0x699b0 (`Source::SolveQuadratic`), the infinite-cylinder intersection
+0xbf73c0 (`Source::InfiniteCylinder`) and the inline `frecpe` + two `frecps` reciprocal of
+0xbf70bc (`Source::Reciprocal`, its bare estimate exposed as `Source::ReciprocalEstimate`). Its
+output follows the source's quirks rather than a cleaned-up geometry: `tOut` is output-only (a
+miss leaves it untouched, and the perpendicular branch reports `max(tNear, 0)` while ignoring
+the ray length), the capsule epsilon is 1e-5 rather than the quadratic's FLT_EPSILON, a clipped
+parameter below 1e-5 returns "inside" without writing, cap-inside candidates are gated on a
+positive running best, and everything runs in Remastered axes with the public entry converting
+once.
+
+**It has no caller.** Nothing in the game links `port_remastered_capsule_ray`; the library is
+built and tested standalone (`tests/port_remastered_capsule_ray.cpp`). There is no swept
+capsule/box contact producer, no ball mover and no ball result on it, so it changes no gameplay
+and makes no parity claim. Its rows are pinned bit-for-bit against the game's own AArch64
+instruction bodies run under qemu-aarch64 — the provenance, source addresses, evidence digests
+and the 421-row selection rule are in `tests/fixtures/port_remastered_capsule_ray_isa.h`, which
+also carries an 87-row bare-`frecpe` estimate table from the same run — and the finite-input
+contract in the header (unit direction, nonnegative radius and length, no intermediate
+overflow) is what the kernel is claimed for; NaN and overflow rows are outside it.

@@ -547,6 +547,22 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(port_remastered_sphere_sweep PRIVATE -fno-fast-math -ffp-contract=off)
 endif()
 
+# NCollisionRayCast::Capsule 0xbf6f10 with CMath::SolveQuadratic 0x699b0 and
+# NCollisionRayCast::InfiniteCylinder 0xbf73c0: the source ray-vs-capsule query the
+# Remastered ball mover sweeps. Geometry only - no caller, materials or contacts; it links
+# the contact library for the shared 0x6b030/0x6b0b0/0x65f70 helpers. Same exact-IEEE
+# contract as the libraries above.
+add_library(port_remastered_capsule_ray STATIC
+    platform/port_remastered_capsule_ray.cpp)
+target_link_libraries(port_remastered_capsule_ray PUBLIC port_remastered_ground_contacts)
+target_include_directories(port_remastered_capsule_ray PUBLIC platform/include)
+set_target_properties(port_remastered_capsule_ray PROPERTIES CXX_STANDARD 17)
+if(MSVC)
+    target_compile_options(port_remastered_capsule_ray PRIVATE /fp:strict)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(port_remastered_capsule_ray PRIVATE -fno-fast-math -ffp-contract=off)
+endif()
+
 if(MP_BUILD_TESTS)
     enable_testing()
     add_test(NAME port_version COMMAND metroid_prime_port --version)
@@ -869,6 +885,19 @@ if(MP_BUILD_TESTS)
     endif()
     add_test(NAME port_remastered_sphere_sweep_tests COMMAND port_remastered_sphere_sweep_tests)
     set_tests_properties(port_remastered_sphere_sweep_tests PROPERTIES TIMEOUT 15 LABELS port)
+    # The ray-vs-capsule kernel: the capsule spec's hand cases, its threshold and sentinel
+    # behaviour, and the shared quadratic/cylinder/reciprocal prerequisites.
+    add_executable(port_remastered_capsule_ray_tests tests/port_remastered_capsule_ray.cpp)
+    target_link_libraries(port_remastered_capsule_ray_tests PRIVATE port_remastered_capsule_ray)
+    set_target_properties(port_remastered_capsule_ray_tests PROPERTIES CXX_STANDARD 17)
+    if(MSVC)
+        target_compile_options(port_remastered_capsule_ray_tests PRIVATE /fp:strict)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(port_remastered_capsule_ray_tests PRIVATE -fno-fast-math
+            -ffp-contract=off)
+    endif()
+    add_test(NAME port_remastered_capsule_ray_tests COMMAND port_remastered_capsule_ray_tests)
+    set_tests_properties(port_remastered_capsule_ray_tests PROPERTIES TIMEOUT 15 LABELS port)
     # The Remastered grounded mover's pure policy (header-only): the entry, response,
     # snap and retained-object-state decisions.
     add_executable(port_remastered_ground_policy_tests tests/port_remastered_ground_policy.cpp)
