@@ -532,6 +532,21 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(port_remastered_ground_contacts PRIVATE -fno-fast-math -ffp-contract=off)
 endif()
 
+# NCollidablePairs::Sphere_Sphere_Swept 0xc012d0: the sphere-vs-sphere swept query
+# over the shared contact/failsafe helpers. Geometry only; the pair table, materials
+# and the mover's policy stay outside. Same exact-IEEE contract as the library above,
+# which it links for Source::NormalizeWithMagnitude and RaySphere.
+add_library(port_remastered_sphere_sweep STATIC
+    platform/port_remastered_sphere_sweep.cpp)
+target_link_libraries(port_remastered_sphere_sweep PUBLIC port_remastered_ground_contacts)
+target_include_directories(port_remastered_sphere_sweep PUBLIC platform/include)
+set_target_properties(port_remastered_sphere_sweep PROPERTIES CXX_STANDARD 17)
+if(MSVC)
+    target_compile_options(port_remastered_sphere_sweep PRIVATE /fp:strict)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(port_remastered_sphere_sweep PRIVATE -fno-fast-math -ffp-contract=off)
+endif()
+
 if(MP_BUILD_TESTS)
     enable_testing()
     add_test(NAME port_version COMMAND metroid_prime_port --version)
@@ -841,6 +856,19 @@ if(MP_BUILD_TESTS)
         add_test(NAME ${t}_tests COMMAND ${t}_tests)
         set_tests_properties(${t}_tests PROPERTIES TIMEOUT 15 LABELS port)
     endforeach()
+    # The sphere-vs-sphere swept query: the hand cases of its spec plus the shared
+    # NormalizeWithMagnitude helper, under the same exact-IEEE flags.
+    add_executable(port_remastered_sphere_sweep_tests tests/port_remastered_sphere_sweep.cpp)
+    target_link_libraries(port_remastered_sphere_sweep_tests PRIVATE port_remastered_sphere_sweep)
+    set_target_properties(port_remastered_sphere_sweep_tests PROPERTIES CXX_STANDARD 17)
+    if(MSVC)
+        target_compile_options(port_remastered_sphere_sweep_tests PRIVATE /fp:strict)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(port_remastered_sphere_sweep_tests PRIVATE -fno-fast-math
+            -ffp-contract=off)
+    endif()
+    add_test(NAME port_remastered_sphere_sweep_tests COMMAND port_remastered_sphere_sweep_tests)
+    set_tests_properties(port_remastered_sphere_sweep_tests PROPERTIES TIMEOUT 15 LABELS port)
     # The Remastered grounded mover's pure policy (header-only): the entry, response,
     # snap and retained-object-state decisions.
     add_executable(port_remastered_ground_policy_tests tests/port_remastered_ground_policy.cpp)

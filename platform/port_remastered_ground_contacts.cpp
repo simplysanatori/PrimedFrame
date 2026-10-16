@@ -79,6 +79,19 @@ Vec3 Normalize(Vec3 v) {
   return {MulExtended(v.x,reciprocal), MulExtended(v.y,reciprocal), MulExtended(v.z,reciprocal)};
 }
 Vec3 Unit(Vec3 v) { return IsNormalizable(v) ? Normalize(v) : Vec3{}; }
+float NormalizeWithMagnitude(Vec3& v) {
+  // 0x6b100: the same pairs sum as Normalize ((x*x+z*z)+y*y: the source squares
+  // x,y in one NEON pair, moves z down and faddp's) and the same two frsqrts
+  // refinements; the components are written back with fmulx, and the returned
+  // magnitude is the source's `s0 = fmul v1,v2` - squared * that same final
+  // reciprocal, so m is not an independently computed |v|.
+  const float squared = (v.x*v.x + v.z*v.z) + v.y*v.y;
+  float reciprocal = ReciprocalSqrtEstimate(squared);
+  reciprocal *= ReciprocalSqrtStep(squared, reciprocal*reciprocal);
+  reciprocal *= ReciprocalSqrtStep(squared, reciprocal*reciprocal);
+  v = {MulExtended(v.x,reciprocal), MulExtended(v.y,reciprocal), MulExtended(v.z,reciprocal)};
+  return squared*reciprocal;
+}
 Vec3 Corner(const AABB& b, unsigned i) {
   // 0x98908: X/Z/Y bit order.
   return {i & 1 ? b.max.x : b.min.x, i & 4 ? b.max.y : b.min.y, i & 2 ? b.max.z : b.min.z};
