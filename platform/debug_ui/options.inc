@@ -11,12 +11,14 @@ float sTickPeriod = 1.f / 60.f;
 uint64_t sTimingWallNs = 0;
 uint64_t sTimingWallLastNs = 0;
 unsigned sTimingFrames = 0, sTimingTicks = 0;
-int sDynSlow = 0, sDynSteady = 0, sDynSettle = 0;
-int sDynRaiseAfter = 4;  // steady seconds before trying a step up; doubles when one fails
-int sDynSinceRaise = -1; // seconds since the last step up, while it is on probation
-double sDynFpsBefore = 0.0; // the rate before the last step down
-int sDynHoldLow = 0;        // seconds left without stepping down (a step down gained nothing)
-int sDynHoldFor = 30;       // the next such hold; doubles each time
+// Dynamic resolution (port_dynamic_res.h); sDynScale, the scale it draws at, is shared.
+PortDynamicRes::Controller sDynController;
+bool sDynActive = false;
+double sDynGpuMs = -1.0; // the last GPU time it was given, for the Video page
+// GPU pass times (Aurora's gpu_prof) are wanted by dynamic resolution and by the
+// Remastered debug panel. Switching them on restarts their average, so only a change
+// in whether anyone wants them reaches Aurora.
+unsigned sGpuTimesUsers = 0;
 float sTwinStickRightY = 0.f;
 } // namespace
 
@@ -158,10 +160,28 @@ static float EffectiveRenderScale() {
 static int EffectiveMsaa() { return sOriginalExperience ? 1 : sMsaa; }
 static int EffectiveAnisotropy() { return sOriginalExperience ? 1 : sAnisotropy; }
 
+// Sharpening for a frame stretched up to the window (Aurora's present resample); only
+// passed on when it changes.
+static void ApplyPresentSharpness() {
+  float amount = 0.f;
+  if (!sOriginalExperience && sSharpenAmount > 0) {
+    const bool lowered = sDynScale > 0.f && sDynScale < EffectiveRenderScale();
+    if (sSharpenMode == 2 || (sSharpenMode == 1 && lowered)) {
+      amount = static_cast< float >(sSharpenAmount) / 100.f;
+    }
+  }
+  static float sApplied = -1.f;
+  if (amount != sApplied) {
+    sApplied = amount;
+    aurora_set_present_sharpness(amount);
+  }
+}
+
 static void ApplyGraphicsQuality() {
   aurora_set_graphics_quality(static_cast< uint32_t >(EffectiveMsaa()),
                               static_cast< uint16_t >(EffectiveAnisotropy()));
   aurora_set_per_pixel_lighting(sPerPixelLighting && !sOriginalExperience);
+  ApplyPresentSharpness();
 }
 
 bool FrameLimitEnabled() {
@@ -185,86 +205,71 @@ static double DynamicResTargetFps() {
   return cap > 0 ? std::min(target, static_cast< double >(cap)) : target;
 }
 
+enum : unsigned { kGpuTimesDynamicRes = 1, kGpuTimesPanel = 2 };
+void WantGpuTimes(unsigned user, bool on) {
+  const unsigned before = sGpuTimesUsers;
+  sGpuTimesUsers = on ? (before | user) : (before & ~user);
+  if ((before != 0) != (sGpuTimesUsers != 0)) {
+    GXPortSetGpuTimes(sGpuTimesUsers != 0 ? GX_TRUE : GX_FALSE);
+  }
+}
+
 static void ResetDynamicRes() {
-  sDynSlow = sDynSteady = sDynSettle = sDynHoldLow = 0;
-  sDynRaiseAfter = 4;
-  sDynHoldFor = 30;
-  sDynSinceRaise = -1;
-  sDynFpsBefore = 0.0;
+  sDynController.Reset(EffectiveRenderScale());
+  sDynGpuMs = -1.0;
   if (sDynScale > 0.f) {
     sDynScale = 0.f;
     VISetFrameBufferScale(EffectiveRenderScale());
   }
+  ApplyPresentSharpness();
 }
 
-// Once a second, from the presented rate. Each step reallocates the EFB and waits for the
-// GPU, so it steps rarely: down after two slow seconds, up after a steady stretch that
-// doubles each time a step up turns out too slow.
+// Once a second, from the presented rate and, where the GPU can time itself, the GPU's
+// time per frame (gpu_prof's span). The controller (port_dynamic_res.cpp) decides; each
+// change reallocates the EFB and stutters for a frame.
 static void UpdateDynamicRes(double fps, unsigned frames) {
   if (sCaptureScale > 0.f) {
     return;
   }
   const float top = EffectiveRenderScale();
   const float bottom = std::min(sDynamicResMin, top);
-  if (!sDynamicRes || sOriginalExperience || top <= bottom || sTurbo) {
+  const bool active = sDynamicRes && !sOriginalExperience && top > bottom && !sTurbo;
+  // MP_DYNRES_GPU_TIMES=0 steers on the frame rate alone, as on a GPU without timestamps.
+  static const bool gpuTimesAllowed = port::EnvFlag("MP_DYNRES_GPU_TIMES", true);
+  const bool gpuTimes = gpuTimesAllowed && GXPortGpuTimesSupported() == GX_TRUE;
+  WantGpuTimes(kGpuTimesDynamicRes, active && gpuTimes);
+  if (!active) {
+    if (sDynActive) {
+      sDynActive = false;
+      ResetDynamicRes();
+    }
+    return;
+  }
+  if (!sDynActive) {
+    sDynActive = true;
     ResetDynamicRes();
-    return;
   }
-  // Paused or loading: nothing to go on.
-  if (frames < 10) {
-    return;
+  PortDynamicRes::Sample sample;
+  sample.fps = fps;
+  sample.frames = frames;
+  sample.targetFps = DynamicResTargetFps();
+  sample.top = top;
+  sample.bottom = bottom;
+  if (gpuTimes) {
+    float total = 0.f;
+    float span = 0.f;
+    GXPortGetGpuTimes(nullptr, 0, &total, &span);
+    sample.gpuMs = span;
+    sample.gpuPassMs = span > 0.f ? total : -1.0;
   }
-  // The second after a step holds its reallocation stall.
-  if (sDynSettle > 0) {
-    --sDynSettle;
-    return;
-  }
-  const float scale = sDynScale > 0.f ? sDynScale : top;
-  // Half steps above 2x, where a quarter step changes the pixel count by little.
-  const float stepUp = scale >= 2.f ? 0.5f : 0.25f;
-  const float stepDown = scale > 2.f ? 0.5f : 0.25f;
-  const double target = DynamicResTargetFps();
-  if (sDynHoldLow > 0) {
-    --sDynHoldLow;
-  }
-  float next = scale;
-  if (sDynFpsBefore > 0.0) {
-    // The first reading after a step down: no gain means the GPU's pixels were not what
-    // held the frame back, so go back up and stay there for a while.
-    if (fps < sDynFpsBefore * 1.03) {
-      next = scale + stepUp;
-      sDynHoldLow = sDynHoldFor;
-      sDynHoldFor = std::min(sDynHoldFor * 2, 240);
-    }
-    sDynFpsBefore = 0.0;
-  } else if (fps < target * 0.93) {
-    sDynSteady = 0;
-    if (sDynSinceRaise >= 0) {
-      next = scale - stepDown;
-      sDynRaiseAfter = std::min(sDynRaiseAfter * 2, 64);
-      sDynSinceRaise = -1;
-    } else if (++sDynSlow >= 2 && sDynHoldLow == 0 && scale > bottom) {
-      next = scale - stepDown;
-      sDynFpsBefore = fps;
-    }
-  } else {
-    sDynSlow = 0;
-    if (sDynSinceRaise >= 0 && ++sDynSinceRaise >= 3) {
-      sDynSinceRaise = -1;
-    }
-    if (sDynSinceRaise < 0 && fps >= target * 0.97 && scale < top && ++sDynSteady >= sDynRaiseAfter) {
-      next = scale + stepUp;
-      sDynSteady = 0;
-      sDynSinceRaise = 0;
-    }
-  }
-  next = std::clamp(next, bottom, top);
-  if (next != scale) {
-    sDynSlow = 0;
-    sDynScale = next;
-    sDynSettle = 1;
-    VISetFrameBufferScale(next);
-    PortLog::Write("port: dynamic resolution %.2fx (%.0f fps, target %.0f)\n", next, fps, target);
+  sDynGpuMs = sample.gpuMs;
+  const PortDynamicRes::Decision decision = sDynController.Update(sample);
+  if (decision.changed) {
+    sDynScale = decision.scale;
+    VISetFrameBufferScale(decision.scale);
+    ApplyPresentSharpness();
+    PortLog::Write("port: dynamic resolution %.2fx (%.0f fps, target %.0f, GPU %.1f ms): %s\n", decision.scale,
+                   fps, sample.targetFps, sample.gpuMs, PortDynamicRes::ReasonText(decision.reason));
   }
 }
 

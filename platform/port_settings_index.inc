@@ -131,6 +131,8 @@
 {"Video", "Quality", "Quality", "Dynamic resolution", "dynamic resolution scale performance fps"},
 {"Video", "Quality", "Quality", "Target", "dynamic resolution target fps frame"},
 {"Video", "Quality", "Quality", "Lowest scale", "dynamic resolution minimum scale"},
+{"Video", "Quality", "Quality", "Sharpen when upscaled", "sharpening cas upscale blurry soft dynamic resolution"},
+{"Video", "Quality", "Quality", "Sharpening", "sharpen strength cas upscale"},
 {"Video", "Quality", "Quality", "HD font", "font text high resolution hd"},
 {"Video", "Frame rate", "Frame rate", "60 FPS cap (target)", "fps limit cap framerate 60"},
 {"Video", "Frame rate", "Frame rate", "FPS cap", "fps limit cap framerate number"},
