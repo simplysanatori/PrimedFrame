@@ -1,13 +1,55 @@
 #include "port_collision_failsafe.h"
 
+#include "port_remastered_ground_contacts.h" // Source::Unit, the verified 0x6b6b8 emulation
+
 #include <cfloat>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 
 namespace PortCollisionFailsafe {
 namespace {
 
 constexpr float kEps5 = 1e-5f; // 0x3727c5ac
 constexpr float kEps4 = 1e-4f; // 0x38d1b717
+
+// ARM reciprocal-square-root estimate and its refinement step, copied verbatim from
+// platform/port_remastered_ground_contacts.cpp (verified there against
+// CVector3f::Normalize 0x6b0b0/0x6b238). CCollidableSphere::AABox_Sphere 0xc02d70's
+// exterior distance uses the estimate with ONE frsqrts refinement, so the
+// two-refinement helpers exported as PortRemasteredGroundContacts::Source::* cannot
+// stand in for it; its exterior NORMAL does use the two-refinement path and does call
+// that exported Unit (CUnitVector3f ctor 0x71164 -> AsNormalizedOrZero 0x6b6b8).
+static_assert(sizeof(float) == 4 && std::numeric_limits< float >::is_iec559);
+float FromBits(std::uint32_t b) { float f; std::memcpy(&f, &b, 4); return f; }
+std::uint32_t Bits(float f) { std::uint32_t b; std::memcpy(&b, &f, 4); return b; }
+float ReciprocalSqrtEstimate(float v) {
+  const std::uint32_t bits = Bits(v);
+  int exponent = static_cast<int>((bits >> 23) & 255u);
+  std::uint32_t fraction = bits & 0x7fffffu;
+  if (exponent == 255) return fraction ? FromBits(bits | 0x400000u) : 0.f;
+  if ((bits & 0x7fffffffu) == 0) return FromBits((bits & 0x80000000u) | 0x7f800000u);
+  if (bits >> 31) return FromBits(0x7fc00000u);
+  if (exponent == 0) {
+    while ((fraction & 0x400000u) == 0) {
+      fraction <<= 1;
+      --exponent;
+    }
+    fraction = (fraction & 0x3fffffu) << 1;
+  }
+  std::uint32_t scaled = (exponent & 1) ? (128u | (fraction >> 16)) : (256u | (fraction >> 15));
+  scaled = scaled < 256u ? scaled * 2u + 1u : ((scaled & ~1u) + 1u) * 2u;
+  std::uint32_t b = 512u;
+  while (scaled * (b + 1u) * (b + 1u) < (1u << 28)) ++b;
+  return FromBits((static_cast<std::uint32_t>((380 - exponent) / 2) << 23) |
+                  (((b + 1u) / 2u & 255u) << 15));
+}
+float ReciprocalSqrtStep(float a, float b) {
+  // FRSQRTS is fused (3-a*b)/2; zero*infinity is specified to return 1.5.
+  if ((a == 0.f && std::isinf(b)) || (b == 0.f && std::isinf(a))) return 1.5f;
+  return std::fma(-a, b, 3.f) * .5f;
+}
 
 Vec3 Add(const Vec3& a, const Vec3& b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
 Vec3 Sub(const Vec3& a, const Vec3& b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
@@ -252,6 +294,97 @@ bool BoxBoxImpacts(const Box& self, const Box& other, std::vector< Impact >& out
     }
   }
   return out.size() != first;
+}
+
+bool BoxSphereImpacts(const Box& self, const Vec3& center, float radius,
+                      std::vector< Impact >& out) {
+  // CCollidableSphere::AABox_Sphere 0xc02d70 (dispatcher 0xc02cec): the player's box
+  // against a transformed sphere. Remastered axes x, y (up), z; both halves of the
+  // contact carry the same penetration depth, and the failsafe uses the box half's
+  // depth with the sphere half's normal (that normal is all this helper reports).
+  R3 mn, mx;
+  BoxToRem(self, mn, mx);
+  const R3 c = ToRem(center);
+  const float r = radius;
+
+  // 0xc02e34-0xc02ed0: squared distance to the box, adding a squared gap only where
+  // the centre is outside that axis' interval, in Rem X, Y, Z order.
+  float d2 = 0.f;
+  for (int k = 0; k < 3; ++k) {
+    const float v = c.v[k];
+    if (v < mn.v[k]) {
+      const float gap = v - mn.v[k];
+      d2 = d2 + gap * gap;
+    } else if (mx.v[k] < v) {
+      const float gap = v - mx.v[k];
+      d2 = d2 + gap * gap;
+    }
+  }
+
+  Impact impact;
+  if (std::fabs(d2) < kEps5) {
+    // 0xc02ed4-0xc03034: near/interior. Nearest signed face distance, faces visited in
+    // order -X, -Y, -Z, +X, +Y, +Z; every face replaces the incumbent only when
+    // STRICTLY closer, so equal distances keep the earlier face. The compares are strict
+    // because the source guards each block with b.pl after FCMP: PL is N==0 and an
+    // unordered FCMP result is NZCV=0011 (N=0), so the guard IS taken and the incumbent
+    // is kept for an unordered candidate as well.
+    R3 f{{-1.f, 0.f, 0.f}};
+    float best = c.v[0] - mn.v[0];
+    if (c.v[1] - mn.v[1] < best) {
+      f = R3{{0.f, -1.f, 0.f}};
+      best = c.v[1] - mn.v[1];
+    }
+    if (c.v[2] - mn.v[2] < best) {
+      f = R3{{0.f, 0.f, -1.f}};
+      best = c.v[2] - mn.v[2];
+    }
+    if (mx.v[0] - c.v[0] < best) {
+      f = R3{{1.f, 0.f, 0.f}};
+      best = mx.v[0] - c.v[0];
+    }
+    if (mx.v[1] - c.v[1] < best) {
+      f = R3{{0.f, 1.f, 0.f}};
+      best = mx.v[1] - c.v[1];
+    }
+    if (mx.v[2] - c.v[2] < best) {
+      f = R3{{0.f, 0.f, 1.f}};
+      best = mx.v[2] - c.v[2];
+    }
+    impact.depth = r + best; // 0xc0306c
+    // 0xc03034-0xc03068: the sphere half's normal is the NEGATIVE of that face normal
+    // (local_1b0 = (-fVar17,-fVar11,-fVar18); the box half keeps +F).
+    impact.otherNormal = FromRem({{-f.v[0], -f.v[1], -f.v[2]}});
+    out.push_back(impact);
+    return true;
+  }
+  // 0xc02f40-0xc02f48: d2 >= r*r is a miss, exact tangency included.
+  if (r * r <= d2) return false;
+
+  // 0xc03188-0xc032ec: Q = component-wise clamp of the centre onto the box.
+  R3 q = c;
+  for (int k = 0; k < 3; ++k) {
+    if (q.v[k] < mn.v[k]) {
+      q.v[k] = mn.v[k];
+    } else if (mx.v[k] < q.v[k]) {
+      q.v[k] = mx.v[k];
+    }
+  }
+  // 0xc032f0-0xc03330: L = d2 * (estimate refined ONCE); the fcmle/bic pair zeroes the
+  // refinement when d2 <= 0 (an ordered compare, so NaN leaves it alone). Depth = r - L.
+  const float estimate = ReciprocalSqrtEstimate(d2);
+  float refined = estimate * ReciprocalSqrtStep(d2, estimate * estimate);
+  if (d2 <= 0.f) refined = 0.f;
+  const float length = d2 * refined;
+  // 0xc03338: CUnitVector3f 0x71164 -> AsNormalizedOrZero 0x6b6b8, i.e. two
+  // refinements and fmulx, exactly the verified PortRemasteredGroundContacts helper.
+  // d2 >= 1e-5 keeps the difference Q - C normalizable.
+  const PortRemasteredGroundContacts::Vec3 unit = PortRemasteredGroundContacts::Source::Unit(
+      {q.v[0] - c.v[0], q.v[1] - c.v[1], q.v[2] - c.v[2]});
+  impact.depth = r - length;
+  impact.otherNormal = FromRem(R3{{unit.x, unit.y, unit.z}});
+  out.push_back(impact);
+  return true;
 }
 
 RayHit RayAABox(const Box& box, const Vec3& start, const Vec3& dir, float length) {

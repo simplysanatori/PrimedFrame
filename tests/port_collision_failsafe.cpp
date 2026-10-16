@@ -22,6 +22,7 @@ static bool Near(float a, float b, float e = 1e-5f) { return std::fabs(a - b) <=
 static bool Near(const Vec3& a, const Vec3& b, float e = 1e-5f) {
   return Near(a.x, b.x, e) && Near(a.y, b.y, e) && Near(a.z, b.z, e);
 }
+static Vec3 Mul_(const Vec3& a, float s) { return {a.x * s, a.y * s, a.z * s}; }
 
 static Impact Terrain(float depth, Vec3 n) {
   Impact i;
@@ -313,6 +314,232 @@ static void Ray() {
   Check(r.code == kRay_Miss, "ray: behind");
 }
 
+// ---------------------------------------------------------------------------
+// CCollidableSphere::AABox_Sphere 0xc02d70 (dispatcher 0xc02cec). Box-sphere pairs
+// below are built in PORT axes; the routine converts to Remastered's Y-up frame, so
+// every expected normal is stated in port axes with the frame mapping in mind.
+// ---------------------------------------------------------------------------
+
+// Player-like box: 1 x 1 x 2.7, position at the feet.
+static const Box kPlayerBox{{-.5f, -.5f, 0}, {.5f, .5f, 2.7f}};
+
+static bool OneSphere(const Box& self, Vec3 center, float radius, Impact& out) {
+  std::vector< Impact > v;
+  if (!BoxSphereImpacts(self, center, radius, v) || v.size() != 1) return false;
+  out = v[0];
+  return true;
+}
+
+static void BoxSphereFaces() {
+  // Six exterior face contacts, gap g = 0.25 and r = 1: the sphere half's normal is
+  // radial toward the box, i.e. the port axis pointing from the sphere at the box.
+  const float g = .25f, r = 1.f;
+  const struct { Vec3 c; Vec3 n; } cases[6] = {
+      {{.5f + g, 0, 1.35f}, {-1, 0, 0}},  // +X port face is the -X Rem face
+      {{-.5f - g, 0, 1.35f}, {1, 0, 0}},  // -X port face is the +X Rem face
+      {{0, .5f + g, 1.35f}, {0, -1, 0}},  // port +Y is Rem +Z
+      {{0, -.5f - g, 1.35f}, {0, 1, 0}},
+      {{0, 0, 2.7f + g}, {0, 0, -1}},  // port +Z is Rem +Y
+      {{0, 0, -g}, {0, 0, 1}},
+  };
+  const char* names[6] = {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+  for (int i = 0; i < 6; ++i) {
+    Impact im;
+    char what[64];
+    std::snprintf(what, sizeof what, "boxsphere: face %s hit", names[i]);
+    Check(OneSphere(kPlayerBox, cases[i].c, r, im), what);
+    std::snprintf(what, sizeof what, "boxsphere: face %s radial normal", names[i]);
+    Check(Near(im.otherNormal, cases[i].n, 1e-5f), what);
+    std::snprintf(what, sizeof what, "boxsphere: face %s depth r-g", names[i]);
+    Check(Near(im.depth, r - g, 1e-5f), what);
+    Check(Near(im.otherNormal.x * im.otherNormal.x + im.otherNormal.y * im.otherNormal.y +
+                   im.otherNormal.z * im.otherNormal.z,
+               1.f, 1e-5f),
+          "boxsphere: unit normal");
+    Check(!im.otherCharacter && Near(im.otherCenter, {}), "boxsphere: flags left to the caller");
+  }
+  // The exterior distance is the ARM estimate refined ONCE (0xc032f0-0xc03330), not a
+  // correctly-rounded root: for d2 = 0.25^2 it reads 0.249998569, so the depth is
+  // 0.750001431 and not 0.75. A two-refinement or sqrt-based distance would give
+  // exactly 0.75 here, which is what the second check excludes.
+  Impact im;
+  Check(OneSphere(kPlayerBox, {.75f, 0, 1.35f}, r, im), "boxsphere: one-refinement hit");
+  Check(Near(im.depth, 1.f - 0.249998569f, 5e-8f), "boxsphere: exterior depth, one refinement");
+  Check(!Near(im.depth, .75f, 1e-7f), "boxsphere: exterior depth is not the exact distance");
+  // Appends like BoxBoxImpacts and leaves earlier impacts alone.
+  std::vector< Impact > v;
+  v.push_back(Terrain(.5f, {0, 1, 0}));
+  Check(BoxSphereImpacts(kPlayerBox, {.75f, 0, 1.35f}, r, v) && v.size() == 2 &&
+            Near(v[0].depth, .5f) && Near(v[0].otherNormal, {0, 1, 0}),
+        "boxsphere: appends one impact");
+}
+
+static void BoxSphereEdgeCorner() {
+  // Edge: outside the port +X and +Y faces. The sphere normal is radial, not a box
+  // axis, and the depth is r - sqrt(2 * 0.25^2).
+  Impact im;
+  Check(OneSphere(kPlayerBox, {.75f, .75f, 1.35f}, 1.f, im), "boxsphere: edge hit");
+  Check(Near(im.otherNormal, {-0.707106829f, -0.707106829f, 0.f}, 1e-5f),
+        "boxsphere: edge radial normal");
+  Check(std::fabs(im.otherNormal.x) > .5f && std::fabs(im.otherNormal.y) > .5f &&
+            im.otherNormal.z == 0.f,
+        "boxsphere: edge normal is not a box axis");
+  // d2 = 0.125: the one-refinement distance is 0.353549033, the exact one 0.353553391.
+  Check(Near(im.depth, 1.f - 0.353549033f, 5e-8f), "boxsphere: edge depth, one refinement");
+  Check(!Near(im.depth, 1.f - .353553391f, 1e-7f),
+        "boxsphere: edge depth is not the exact distance");
+
+  // Corner: outside three faces of a cube ({-1..1}^3), gaps 0.5, r = 2. All three
+  // components are radial (Rem -X, -Y, -Z map to port +X, -Z, -Y).
+  const Box cube{{-1, -1, -1}, {1, 1, 1}};
+  Check(OneSphere(cube, {1.5f, 1.5f, 1.5f}, 2.f, im), "boxsphere: corner hit");
+  Check(Near(im.otherNormal, {-0.577350259f, -0.577350259f, -0.577350259f}, 1e-5f),
+        "boxsphere: corner radial normal");
+  // d2 = 0.75: one refinement 0.866020024 against 0.866025404 exact.
+  Check(Near(im.depth, 2.f - 0.866020024f, 5e-8f), "boxsphere: corner depth, one refinement");
+  Check(!Near(im.depth, 2.f - .866025404f, 1e-6f),
+        "boxsphere: corner depth is not the exact distance");
+  // The edge normal's bits: two refinements on the Rem vector (0.25, 0, -0.25) give
+  // 0.707106829 while a sqrt normalization gives 0.707106769, so this pins the
+  // CUnitVector3f path (0x71164 -> 0x6b6b8) rather than an invented unit vector.
+  Check(OneSphere(kPlayerBox, {.75f, .75f, 1.35f}, 1.f, im) && im.otherNormal.x == -0.707106829f &&
+            im.otherNormal.y == -0.707106829f,
+        "boxsphere: edge normal uses the source normalization");
+
+  // Tangency and misses: d2 >= r*r is rejected, exact tangency included.
+  std::vector< Impact > v;
+  Check(!BoxSphereImpacts(kPlayerBox, {.75f, 0, 1.35f}, .25f, v) && v.empty(),
+        "boxsphere: exact tangency is a miss");
+  Check(!BoxSphereImpacts(kPlayerBox, {.75f, 0, 1.35f}, .2f, v) && v.empty(),
+        "boxsphere: r below the gap is a miss");
+  Check(!BoxSphereImpacts(kPlayerBox, {5.f, 0, 1.35f}, 1.f, v) && v.empty(),
+        "boxsphere: far miss");
+  Check(BoxSphereImpacts(kPlayerBox, {.75f, 0, 1.35f}, .250001f, v) && v.size() == 1 &&
+            Near(v[0].depth, .250001f - .249998569f, 5e-8f),
+        "boxsphere: a hair more than the gap overlaps");
+  v.clear();
+}
+
+static void BoxSphereInterior() {
+  Impact im;
+  // Interior, off centre: nearest signed face distance in Rem order. 0.2 below the
+  // port +Z (Rem +Y) face while every other face is at least 0.5 away, so Rem +Y wins.
+  Check(OneSphere(kPlayerBox, {0, 0, 2.5f}, 1.f, im), "boxsphere: interior hit");
+  Check(Near(im.otherNormal, {0, 0, -1}), "boxsphere: interior normal is -nearest face");
+  Check(Near(im.depth, 1.f + (2.7f - 2.5f), 1e-6f), "boxsphere: interior depth r + D");
+  // Exact face: the centre on the port +X face (the Rem -X face), D = 0, depth exactly r
+  // and the returned normal is +X in Rem, i.e. -X in port axes.
+  Check(OneSphere(kPlayerBox, {.5f, 0, 1.35f}, 1.f, im), "boxsphere: centre on a face");
+  Check(Near(im.depth, 1.f, 1e-7f) && Near(im.otherNormal, {-1, 0, 0}),
+        "boxsphere: on-face depth r and the port -X normal");
+
+  // Coincident centre: ties keep the Rem order -X, -Y, -Z, +X, +Y, +Z, so what comes
+  // back is the negative of the winning Rem face, mapped into port axes.
+  const Box cube{{-1, -1, -1}, {1, 1, 1}};
+  Check(OneSphere(cube, {}, 2.f, im), "boxsphere: coincident hit");
+  // All six faces are 1 away: -X keeps the tie against -Y and every later face, so the
+  // winner is Rem -X (port +X) and the returned normal is its negative in port axes.
+  Check(Near(im.otherNormal, {-1, 0, 0}) && Near(im.depth, 3.f), "boxsphere: tie keeps Rem -X");
+  const Box wide{{-2, -1, -1}, {2, 1, 1}};
+  Check(OneSphere(wide, {}, 2.f, im), "boxsphere: tie hit 2");
+  Check(Near(im.otherNormal, {0, 0, 1}) && Near(im.depth, 3.f),
+        "boxsphere: tie keeps Rem -Y (port +Z)");
+  const Box slab{{-2, -.5f, -2}, {2, .5f, 2}};
+  Check(OneSphere(slab, {}, 2.f, im), "boxsphere: tie hit 3");
+  Check(Near(im.otherNormal, {0, 1, 0}) && Near(im.depth, 2.5f),
+        "boxsphere: tie keeps Rem -Z (port +Y)");
+
+  // Near/interior is |d2| < 1e-5 and is NOT an inside test: a centre just outside two
+  // faces (d2 = 8e-6) still takes the face branch, whose normal is a pure axis where
+  // the exterior branch would give a 45 degree radial normal.
+  Check(OneSphere(kPlayerBox, {.502f, .502f, 1.35f}, 1.f, im), "boxsphere: near-outside hit");
+  Check(Near(im.otherNormal, {-1, 0, 0}, 1e-6f), "boxsphere: below 1e-5 uses the face normal");
+  Check(Near(im.depth, 1.f - .002f, 1e-5f), "boxsphere: below 1e-5 depth r - gap");
+  // Just above the threshold (d2 = 1.8e-5) the exterior branch runs: radial normal,
+  // depth r - d2*rsqrt_est(d2) with the one-step refinement.
+  Check(OneSphere(kPlayerBox, {.503f, .503f, 1.35f}, 1.f, im), "boxsphere: above-threshold hit");
+  Check(Near(im.otherNormal, {-0.707106829f, -0.707106829f, 0.f}, 1e-5f),
+        "boxsphere: above 1e-5 uses the radial normal");
+  Check(Near(im.depth, 1.f - 0.0042426406f, 1e-6f), "boxsphere: above 1e-5 depth r - L");
+}
+
+static void BoxSpherePush() {
+  // The sphere contact feeds the failsafe core like any other: one contact with the
+  // sphere's depth and normal, then SelectPush 0xc1fc54 decides the translation.
+  std::vector< Impact > v;
+  Check(BoxSphereImpacts(kPlayerBox, {.75f, 0, 1.35f}, 1.f, v) && v.size() == 1,
+        "bs-push: producer");
+  const Impact& i = v[0];
+  Vec3 push;
+  std::vector< Contact > list(1);
+  list[0].impacts = v;
+  Check(SelectPush(list, {}, 1.f / 60.f, push) && Near(push, Mul_(i.otherNormal, i.depth + 1e-4f)),
+        "bs-push: Solid pushes along the sphere normal by depth + eps");
+  // Character / CollisionActor (0x41 flags): horizontal, away from the sphere centre
+  // seen from `from`, capped at worldDt * 50.
+  list[0].impacts[0].otherCharacter = true;
+  list[0].impacts[0].otherCenter = {.75f, 0, 1.35f};
+  Check(SelectPush(list, {}, 1.f / 60.f, push) && Near(push, {-i.depth - 1e-4f, 0, 0}, 1e-6f),
+        "bs-push: Character pushes horizontally by depth + eps");
+  // A deeper overlap hits the worldDt * 50 cap (0.8333 at 60 Hz).
+  std::vector< Impact > deep;
+  Check(BoxSphereImpacts(kPlayerBox, {.75f, 0, 1.35f}, 2.f, deep) && deep.size() == 1,
+        "bs-push: deep producer");
+  std::vector< Contact > deepList(1);
+  deepList[0].impacts = deep;
+  deepList[0].impacts[0].otherCharacter = true;
+  deepList[0].impacts[0].otherCenter = {.75f, 0, 1.35f};
+  Check(deep[0].depth > 50.f / 60.f, "bs-push: deep overlap exceeds the cap");
+  Check(SelectPush(deepList, {}, 1.f / 60.f, push) && Near(push, {-50.f / 60.f, 0, 0}),
+        "bs-push: Character push is capped at worldDt * 50");
+  // Centre directly above `from`: no horizontal direction, zero push, still moved.
+  Check(SelectPush(deepList, {.75f, 0, 0}, 1.f / 60.f, push) && Near(push, {}),
+        "bs-push: Character with no horizontal offset pushes nowhere");
+  // The core loop (0xc1fc54) must consume the real contact and stop on the first free
+  // test, exactly as it does for terrain and box actors.
+  CoreHooks hooks;
+  int calls = 0;
+  hooks.collide = [&](const Vec3&, std::vector< Contact >& out) {
+    if (++calls > 1) return false;
+    out = deepList;
+    return true;
+  };
+  bool tunneled = false;
+  hooks.tunnel = [&](const Vec3& from, const Vec3&, Vec3& out) {
+    tunneled = true;
+    out = from;
+    return false;
+  };
+  Vec3 out2;
+  Check(Core({}, 1.f / 60.f, hooks, out2) && Near(out2, {-50.f / 60.f, 0, 0}) && calls == 2 &&
+            tunneled,
+        "bs-push: core consumes the sphere contact");
+
+  // First pass versus fallback: the material filter (0x1270) sees the sphere, the
+  // failsafe filter (0x1290) excludes Character/CollisionActor, so a position that is
+  // still blocked there cannot be resolved by the second pass.
+  const Vec3 cur{1, 1, 1};
+  const Vec3 first = {2, 2, 2}, second = {3, 3, 3};
+  Vec3 out;
+  int pass[2] = {0, 0};
+  auto core = [&](bool failsafe, Vec3& o) {
+    ++pass[failsafe ? 1 : 0];
+    o = failsafe ? second : first;
+    return !failsafe; // the sphere is not in the 0x1290 filter
+  };
+  auto blocked = [](bool failsafe, const Vec3&) { return !failsafe; };
+  Check(!DoCollisionFailsafe(cur, true, core, blocked, out) && Near(out, cur) && pass[0] == 1 &&
+            pass[1] == 1,
+        "bs-push: Character sphere is a first-pass contact only");
+  auto core2 = [&](bool failsafe, Vec3& o) {
+    ++pass[failsafe ? 1 : 0];
+    o = failsafe ? second : first;
+    return true;
+  };
+  Check(DoCollisionFailsafe(cur, true, core2, blocked, out) && Near(out, second),
+        "bs-push: fallback-safe contact uses the failsafe-filter result");
+}
+
 int main() {
   PushSelection();
   CoreLoop();
@@ -322,6 +549,10 @@ int main() {
   SafeOffset();
   BoxBox();
   Ray();
+  BoxSphereFaces();
+  BoxSphereEdgeCorner();
+  BoxSphereInterior();
+  BoxSpherePush();
   if (gFailures != 0) {
     std::printf("%d failure(s)\n", gFailures);
     return 1;

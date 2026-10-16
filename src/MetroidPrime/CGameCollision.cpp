@@ -1481,8 +1481,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
 
     // 0xc1ec60 with `filter`, the box at `pos`: terrain through the producer, box actors
     // through AABox_AABox 0xbf61b4, tree actors through the producer per triangle.
-    // Sphere actors (SPHR/ABSH) are skipped: CCollidableSphere's producer 0xc029f0 and the
-    // NCollidablePairs AABox pairs are not decoded (unverified).
+    // SPHR uses AABox_Sphere 0xc02d70. ABSH has no construction site in this port.
     bool Collide(const CMaterialFilter& filter, const CVector3f& pos,
                  std::vector< PortCollisionFailsafe::Contact >& out) const {
       out.clear();
@@ -1503,6 +1502,19 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
           for (std::size_t i = 0; i < c.impacts.size(); ++i) {
             c.impacts[i].otherCharacter = character;
             c.impacts[i].otherCenter = V(bounds.GetCenterPoint());
+          }
+          out.push_back(c);
+        } else if (prim.GetPrimType() == 'SPHR') {
+          const CSphere sphere = static_cast< const CCollidableSphere& >(prim).Transform(primXf);
+          PortCollisionFailsafe::Contact c;
+          if (!PortCollisionFailsafe::BoxSphereImpacts(B(self), V(sphere.GetCenter()),
+                                                       sphere.GetRadius(), c.impacts)) continue;
+          // Remastered's CPhysicsState ctor 0xc14f7c / SetCollisionMaterial 0xc1536c
+          // copy the actor's translated material into its primitive. Native joint
+          // spheres retain Solid|NoStaticCollision instead, so use the actor flags.
+          for (std::size_t i = 0; i < c.impacts.size(); ++i) {
+            c.impacts[i].otherCharacter = character;
+            c.impacts[i].otherCenter = V(sphere.GetCenter());
           }
           out.push_back(c);
         } else if (prim.GetPrimType() == 'OBTG') {

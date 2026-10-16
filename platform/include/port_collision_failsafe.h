@@ -105,6 +105,14 @@ bool CalculateOffsetToSafeCollisionPoint(const Box& box, const Vec3& pos, float 
 // along them). Returns false when the boxes do not overlap.
 bool BoxBoxImpacts(const Box& self, const Box& other, std::vector< Impact >& out);
 
+// 0xc02cec dispatcher / 0xc02d70 CCollidableSphere::AABox_Sphere: impacts of `self`
+// against a sphere at `center` with `radius`, normal the sphere half's (push self
+// along it) and depth the box half's (both halves carry the same depth in source).
+// Appends ONE impact, like BoxBoxImpacts; leaves otherCharacter/otherCenter to the
+// caller. Returns false when the sphere is clear of the box or exactly tangent.
+bool BoxSphereImpacts(const Box& self, const Vec3& center, float radius,
+                      std::vector< Impact >& out);
+
 // 0xbf7e50.
 RayHit RayAABox(const Box& box, const Vec3& start, const Vec3& dir, float length);
 
