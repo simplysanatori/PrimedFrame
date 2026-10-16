@@ -1638,6 +1638,14 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         if (prim.GetPrimType() == 'AABX') {
           hit = PortCollisionFailsafe::RayAABox(B(prim.CalculateAABox(other->GetPrimitiveTransform())),
                                                 start, dir, bestT);
+        } else if (prim.GetPrimType() == 'SPHR') {
+          // CCollidableSphere::RayCast 0xc0289c -> NCollisionRayCast::Sphere 0xbf6ac0:
+          // the sphere's translated centre and untouched radius, including the
+          // start-inside code the generic cast below does not report.
+          const CSphere sphere =
+              static_cast< const CCollidableSphere& >(prim).Transform(other->GetPrimitiveTransform());
+          hit = PortCollisionFailsafe::RaySphere(V(sphere.GetCenter()), sphere.GetRadius(), start,
+                                                 dir, bestT);
         } else {
           // Other primitives through the port's ray cast; a start inside is not reported
           // as code 1 (unverified against the source's per-type casts).
