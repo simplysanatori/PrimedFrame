@@ -96,6 +96,19 @@ bool ensure_scene_hdr_target();
 // g_sceneHdr's sample count, 0 while it is not allocated.
 uint32_t scene_hdr_sample_count() noexcept;
 void release_scene_hdr_target() noexcept;
+// The EFB's targets as the calling thread sees them. The main thread records each frame against
+// the newest (g_frameBuffer, g_frameBufferResolved, g_depthBuffer); the render worker encodes
+// frames handed to it earlier, so on the worker these are the ones the frame it is encoding was
+// recorded against. A resize that only changes the EFB scale hands the new set to the worker as a
+// queued item between the last frame at the old size and the first at the new one, instead of
+// waiting for the worker to drain (resize_swapchain).
+struct EfbTargets {
+  TextureWithSampler color;
+  TextureWithSampler resolved;
+  TextureWithSampler depth;
+};
+EfbTargets efb_targets() noexcept;
+// What is presented (the resolved EFB with MSAA, else the EFB), as the calling thread sees it.
 const TextureWithSampler& present_source() noexcept;
 wgpu::BindGroup create_copy_bind_group(const TextureWithSampler& source);
 void set_resampler(AuroraSampler sampler) noexcept;

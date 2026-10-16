@@ -1208,6 +1208,8 @@ void clear_caches() noexcept {
 // (detail::expire_unused_bind_groups_soon), freeing the old size's targets.
 void clear_offscreen_cache() noexcept { g_offscreenCache.clear(); }
 
+bool recording_active() noexcept { return g_recorder.active(); }
+
 bool push_custom_draw(DrawTypeId type, const void* payload, size_t payloadSize) {
   if (type == InvalidDrawType) {
     Log.warn("push_custom_draw: invalid draw type");

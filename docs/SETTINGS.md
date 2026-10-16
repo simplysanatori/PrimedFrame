@@ -87,8 +87,13 @@
   change. The controller is `platform/port_dynamic_res.cpp` (test
   `port_dynamic_res_tests`). A step keeps Aurora's cached bind groups, dropping two
   frames later those the new frames did not use (the old size's), and clears the
-  offscreen targets; the log times each EFB
-  resize (`aurora::gpu: EFB WxH: resized in N ms`). "Sharpen when upscaled"
+  offscreen targets. A step does not wait for the render worker to finish the
+  frames it already has (that wait was most of a step's stutter on a busy GPU):
+  those frames are encoded against the old targets and the worker takes the new
+  ones after them; a window or surface change still waits, and
+  `MP_RESIZE_WAIT=1` makes every resize wait, to rule this out. The log times
+  each EFB resize and its parts (`aurora::gpu: EFB WxH: resized in N ms (worker
+  wait W, caches C, targets T)`) and the two frames after it. "Sharpen when upscaled"
   (`upscale_sharpen`: `off`, `dynamic` (default: only while dynamic resolution has
   lowered the scale) or `always`; strength "Sharpening", `upscale_sharpen_amount`
   0-100, default 50) applies CAS-style contrast-adaptive sharpening to the

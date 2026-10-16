@@ -77,6 +77,8 @@ bool scene_hdr_active() noexcept;
 bool scene_hdr_pass_active() noexcept;
 void clear_caches() noexcept;
 void clear_offscreen_cache() noexcept;
+// Between begin_frame and end_frame on the main thread: a frame is being recorded.
+bool recording_active() noexcept;
 
 namespace tex_palette_conv {
 struct ConvRequest;

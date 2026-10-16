@@ -484,8 +484,28 @@ void release_scene_hdr_target() noexcept {
   g_sceneHdrFailedSamples = 0;
 }
 
+// The render worker's view of the EFB targets (efb_targets): written only by items it runs, or
+// while it is not running.
+static EfbTargets g_workerTargets;
+
+EfbTargets efb_targets() noexcept {
+  if (gfx::render_worker::is_worker_thread()) {
+    return g_workerTargets;
+  }
+  return {g_frameBuffer, g_frameBufferResolved, g_depthBuffer};
+}
+
 const TextureWithSampler& present_source() noexcept {
+  if (gfx::render_worker::is_worker_thread()) {
+    return g_graphicsConfig.msaaSamples > 1 ? g_workerTargets.resolved : g_workerTargets.color;
+  }
   return g_graphicsConfig.msaaSamples > 1 ? g_frameBufferResolved : g_frameBuffer;
+}
+
+// Hands the main thread's targets to the worker, after the frames already queued to it.
+static void publish_worker_targets() {
+  gfx::render_worker::enqueue_work(
+      [targets = EfbTargets{g_frameBuffer, g_frameBufferResolved, g_depthBuffer}] { g_workerTargets = targets; });
 }
 
 void set_resampler(AuroraSampler sampler) noexcept {
@@ -1415,6 +1435,7 @@ void shutdown() {
   g_frameBufferResolved = {};
   release_scene_hdr_target();
   g_depthBuffer = {};
+  g_workerTargets = {}; // the worker is idle: synchronized above
   g_queue = {};
   g_surface = {};
   window::set_surface_held(false);
@@ -1482,6 +1503,7 @@ static void resize_swapchain_internal(uint32_t width, uint32_t height, uint32_t 
   release_scene_hdr_target();
   g_depthBuffer = create_depth_texture(width, height);
   g_CopyBindGroup = create_copy_bind_group(present_source());
+  publish_worker_targets();
   g_resizeTargetsMs = std::chrono::duration<double, std::milli>(clock::now() - targetsStart).count();
 }
 
@@ -1519,17 +1541,32 @@ bool refresh_surface(bool recreate) {
 
 void resize_swapchain(uint32_t width, uint32_t height, uint32_t nativeWidth, uint32_t nativeHeight, bool force) {
   // Timed so the stutter of a resize (a dynamic resolution step) can be read from the log.
-  // The parts are timed apart: the wait for the GPU's queued work, the caches, the targets.
+  // The parts are timed apart: the wait for the render worker, the caches, the targets.
   using clock = std::chrono::steady_clock;
   const auto start = clock::now();
   const bool efbChanged = g_frameBuffer.size.width != width || g_frameBuffer.size.height != height;
-  gfx::gpu_synchronize();
+  const bool surfaceChanged = g_graphicsConfig.surfaceConfiguration.width != nativeWidth ||
+                              g_graphicsConfig.surfaceConfiguration.height != nativeHeight;
+  // Only the EFB scale changed (dynamic resolution): the worker keeps encoding the frames it has
+  // against the old targets (efb_targets), which they and the queued work hold on to, and is
+  // handed the new ones after them, so there is nothing to wait for. Waiting cost a frame or two
+  // of GPU time on a busy GPU: the worker's queued frames block in Present. Anything else
+  // (the window, the surface, a forced rebuild, or a resize in the middle of a frame) waits.
+  // MP_RESIZE_WAIT=1 waits for every resize, as before, to rule this out when chasing a bug.
+  static const bool alwaysWait = [] {
+    const char* value = std::getenv("MP_RESIZE_WAIT");
+    return value != nullptr && value[0] == '1';
+  }();
+  const bool waits = force || surfaceChanged || !efbChanged || gfx::recording_active() || alwaysWait;
+  if (waits) {
+    gfx::gpu_synchronize();
+  }
   const double waitMs = std::chrono::duration<double, std::milli>(clock::now() - start).count();
   resize_swapchain_internal(width, height, nativeWidth, nativeHeight, force);
   if (efbChanged) {
     const double ms = std::chrono::duration<double, std::milli>(clock::now() - start).count();
-    Log.info("EFB {}x{}: resized in {:.1f} ms (GPU wait {:.1f}, caches {:.1f}, targets {:.1f})", width, height, ms,
-             waitMs, g_resizeCachesMs, g_resizeTargetsMs);
+    Log.info("EFB {}x{}: resized in {:.1f} ms (worker wait {}, caches {:.1f}, targets {:.1f})", width, height, ms,
+             waits ? fmt::format("{:.1f}", waitMs) : std::string("skipped"), g_resizeCachesMs, g_resizeTargetsMs);
     g_resizeFramesToTime = 2;
   }
 }
