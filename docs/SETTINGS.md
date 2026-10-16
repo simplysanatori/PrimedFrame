@@ -367,7 +367,9 @@
   45-90, retail 55): the first-person camera's vertical FOV. The overlay also
   shows the horizontal FOV it gives at the current aspect. The arm cannon is
   drawn at the retail FOV whatever the setting (a view-model FOV), so it keeps
-  its size and place. Morph ball, cutscene and other scripted cameras keep
+  its size and place. Shots start where the cannon is drawn and are aimed at
+  where retail's would arrive (the aim target at its depth, or what lies on
+  retail's line), so they hit what retail's hit (#134). Morph ball, cutscene and other scripted cameras keep
   their own FOVs; cutscenes that end in Samus's eyes ease to the setting.
 - Arm cannon offset (Video > Display, persisted as `gun_offset=right,forward,up`,
   metres, each -1 to 1, default 0,0,0; like PrimeHack's): moves the arm
