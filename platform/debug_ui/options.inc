@@ -740,6 +740,19 @@ void SetOpenGles(bool enabled) {
   }
 }
 
+PortDebug::EGraphicsBackend GraphicsBackend() {
+  EnsureInitialized();
+  return sGraphicsBackend;
+}
+
+void SetGraphicsBackend(PortDebug::EGraphicsBackend backend) {
+  EnsureInitialized();
+  if (sGraphicsBackend != backend) {
+    sGraphicsBackend = backend;
+    MarkDirty();
+  }
+}
+
 const std::string& GpuDriver() {
   EnsureInitialized();
   return sGpuDriver;

@@ -1,4 +1,5 @@
 #include "port_fx_debug.h"
+#include "port_vfx_opacity.h"
 #include "port_vfx_particles.h"
 
 #include <algorithm>
@@ -555,6 +556,10 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
     batch.verts.clear();
     return;
   }
+  // This is a model draw, so a material whose mesh permutation was read against the shader takes its
+  // fade from the view-space normal (aurora's OpacityFresnel); every other material keeps the form
+  // its VMAT carries. port_vfx_opacity.h has the formula and why it is pinned to one recipe.
+  PortVfxSelectModelOpacity(x28_loadedGenDesc->xPortVfx->mat.features, desc);
   // The vertices are in world space already.
   CGraphics::SetModelMatrix(CTransform4f::Identity());
   CGraphics::SetCullMode(kCM_None);

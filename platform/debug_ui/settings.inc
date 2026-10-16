@@ -220,6 +220,18 @@ const SettingKey kSettingKeys[] = {
        sOpenGlesAtStart = sOpenGles;
      },
      [](std::ostream& out) { WriteBool(out, sOpenGles); }, false, "1", "0"},
+    {"graphics_backend",
+     [](const std::string& value) {
+       // An unknown value keeps what is already there (the default, Auto, at
+       // startup), so a hand-edited or older file never breaks the start.
+       PortDebug::EGraphicsBackend parsed = sGraphicsBackend;
+       if (PortDebug::ParseGraphicsBackend(value, parsed)) {
+         sGraphicsBackend = parsed;
+         sGraphicsBackendAtStart = parsed;
+       }
+     },
+     [](std::ostream& out) { out << PortDebug::GraphicsBackendConfigName(sGraphicsBackend); }, false, "d3d12",
+     "vulkan"},
     {"gpu_driver",
      [](const std::string& value) {
        sGpuDriver = value;

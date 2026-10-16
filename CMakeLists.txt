@@ -532,6 +532,21 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(port_remastered_ground_contacts PRIVATE -fno-fast-math -ffp-contract=off)
 endif()
 
+# NCollidablePairs::Sphere_Sphere_Swept 0xc012d0: the sphere-vs-sphere swept query
+# over the shared contact/failsafe helpers. Geometry only; the pair table, materials
+# and the mover's policy stay outside. Same exact-IEEE contract as the library above,
+# which it links for Source::NormalizeWithMagnitude and RaySphere.
+add_library(port_remastered_sphere_sweep STATIC
+    platform/port_remastered_sphere_sweep.cpp)
+target_link_libraries(port_remastered_sphere_sweep PUBLIC port_remastered_ground_contacts)
+target_include_directories(port_remastered_sphere_sweep PUBLIC platform/include)
+set_target_properties(port_remastered_sphere_sweep PROPERTIES CXX_STANDARD 17)
+if(MSVC)
+    target_compile_options(port_remastered_sphere_sweep PRIVATE /fp:strict)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(port_remastered_sphere_sweep PRIVATE -fno-fast-math -ffp-contract=off)
+endif()
+
 if(MP_BUILD_TESTS)
     enable_testing()
     add_test(NAME port_version COMMAND metroid_prime_port --version)
@@ -827,7 +842,9 @@ if(MP_BUILD_TESTS)
     target_compile_definitions(port_octree_frontonly_tests PRIVATE TARGET_PC VERSION=0)
     add_test(NAME port_octree_frontonly_tests COMMAND port_octree_frontonly_tests)
     set_tests_properties(port_octree_frontonly_tests PROPERTIES TIMEOUT 15 LABELS port)
-    foreach(t port_remastered_ground_contacts port_collision_failsafe)
+    # The Remastered box-actor landing query (header-only over the 0xbf61b4 impacts) runs
+    # under the same exact-IEEE flags and links the same contact library.
+    foreach(t port_remastered_ground_contacts port_collision_failsafe port_remastered_box_landing)
         add_executable(${t}_tests tests/${t}.cpp)
         target_link_libraries(${t}_tests PRIVATE port_remastered_ground_contacts)
         set_target_properties(${t}_tests PROPERTIES CXX_STANDARD 17)
@@ -839,6 +856,19 @@ if(MP_BUILD_TESTS)
         add_test(NAME ${t}_tests COMMAND ${t}_tests)
         set_tests_properties(${t}_tests PROPERTIES TIMEOUT 15 LABELS port)
     endforeach()
+    # The sphere-vs-sphere swept query: the hand cases of its spec plus the shared
+    # NormalizeWithMagnitude helper, under the same exact-IEEE flags.
+    add_executable(port_remastered_sphere_sweep_tests tests/port_remastered_sphere_sweep.cpp)
+    target_link_libraries(port_remastered_sphere_sweep_tests PRIVATE port_remastered_sphere_sweep)
+    set_target_properties(port_remastered_sphere_sweep_tests PROPERTIES CXX_STANDARD 17)
+    if(MSVC)
+        target_compile_options(port_remastered_sphere_sweep_tests PRIVATE /fp:strict)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(port_remastered_sphere_sweep_tests PRIVATE -fno-fast-math
+            -ffp-contract=off)
+    endif()
+    add_test(NAME port_remastered_sphere_sweep_tests COMMAND port_remastered_sphere_sweep_tests)
+    set_tests_properties(port_remastered_sphere_sweep_tests PROPERTIES TIMEOUT 15 LABELS port)
     # The Remastered grounded mover's pure policy (header-only): the entry, response,
     # snap and retained-object-state decisions.
     add_executable(port_remastered_ground_policy_tests tests/port_remastered_ground_policy.cpp)
@@ -851,6 +881,18 @@ if(MP_BUILD_TESTS)
     endif()
     add_test(NAME port_remastered_ground_policy_tests COMMAND port_remastered_ground_policy_tests)
     set_tests_properties(port_remastered_ground_policy_tests PROPERTIES TIMEOUT 15 LABELS port)
+    # Remastered MP1 collision material translation and filter policy (header-only).
+    add_executable(port_remastered_collision_material_tests tests/port_remastered_collision_material.cpp)
+    target_include_directories(port_remastered_collision_material_tests PRIVATE platform/include)
+    target_link_libraries(port_remastered_collision_material_tests PRIVATE port_remastered_ground_contacts)
+    if(MSVC)
+        target_compile_options(port_remastered_collision_material_tests PRIVATE /fp:strict)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(port_remastered_collision_material_tests PRIVATE -fno-fast-math
+            -ffp-contract=off)
+    endif()
+    add_test(NAME port_remastered_collision_material_tests COMMAND port_remastered_collision_material_tests)
+    set_tests_properties(port_remastered_collision_material_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_hdr_scene_policy_tests tests/port_hdr_scene_policy.cpp)
     target_include_directories(port_hdr_scene_policy_tests PRIVATE include extern/aurora/include)
     target_compile_definitions(port_hdr_scene_policy_tests PRIVATE TARGET_PC VERSION=0)
@@ -891,6 +933,14 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_gyro_motion_tests PRIVATE platform/include)
     add_test(NAME port_gyro_motion_tests COMMAND port_gyro_motion_tests)
     set_tests_properties(port_gyro_motion_tests PROPERTIES TIMEOUT 15 LABELS port)
+    # The Windows renderer choice (issue #135): the names the settings file and
+    # MP_GRAPHICS_BACKEND carry, the per-run override that outranks the file, and the
+    # status the Video page draws (platform/include/port_graphics_backend.h). The
+    # settings key's own read/write is covered by port_settings_roundtrip.
+    add_executable(port_graphics_backend_tests tests/port_graphics_backend.cpp)
+    target_include_directories(port_graphics_backend_tests PRIVATE platform/include extern/aurora/include)
+    add_test(NAME port_graphics_backend_tests COMMAND port_graphics_backend_tests)
+    set_tests_properties(port_graphics_backend_tests PROPERTIES TIMEOUT 15 LABELS port)
     aurora_copy_runtime_dlls(port_input_settings_tests)
     add_executable(port_log_redact_tests tests/port_log_redact.cpp)
     target_include_directories(port_log_redact_tests PRIVATE platform/include)
@@ -969,6 +1019,13 @@ if(MP_BUILD_TESTS)
     add_test(NAME port_particle_math_tests COMMAND port_particle_math_tests)
     set_tests_properties(port_particle_math_tests PROPERTIES TIMEOUT 15 LABELS port)
     set_tests_properties(port_charge_locator_tests PROPERTIES TIMEOUT 15 LABELS port)
+    # The model (mesh) opacity selection of Remastered's OpacityFresnel recipes: header-only
+    # (platform/include/port_vfx_opacity.h), so it needs no sources of its own.
+    add_executable(port_vfx_opacity_tests tests/port_vfx_opacity.cpp)
+    target_include_directories(port_vfx_opacity_tests PRIVATE platform/include extern/aurora/include)
+    target_compile_definitions(port_vfx_opacity_tests PRIVATE TARGET_PC VERSION=0)
+    add_test(NAME port_vfx_opacity_tests COMMAND port_vfx_opacity_tests)
+    set_tests_properties(port_vfx_opacity_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_swoosh_ring_tests tests/port_swoosh_ring.cpp)
     target_include_directories(port_swoosh_ring_tests PRIVATE platform/include)
     add_test(NAME port_swoosh_ring_tests COMMAND port_swoosh_ring_tests)
@@ -1041,5 +1098,12 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_map_extra_ui_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_map_extra_ui_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # The model-opacity key must be carried by exactly one row of the converter's
+        # recipe table (port_vfx_opacity.h): the C++ tests pin that one recipe's word
+        # and the selection, not the count.
+        add_test(NAME port_vfx_opacity_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_vfx_opacity_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_vfx_opacity_wiring PROPERTIES TIMEOUT 15 LABELS port)
     endif()
 endif()
