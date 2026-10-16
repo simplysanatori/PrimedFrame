@@ -778,20 +778,31 @@ public:
     if (found != m_sequences.end()) {
       return found->second;
     }
-    Ends ends;
-    if (count == 0) {
-      ends.push_back(at);
-    } else {
-      const Ends first = Element(at);
-      for (size_t next : first) {
-        AddEnds(ends, Sequence(next, count - 1));
+    // One element at a time over every place the sequence can have reached, so
+    // a long sequence does not nest a call per element.
+    Ends ends{at};
+    for (uint32_t i = 0; i < count && !ends.empty(); ++i) {
+      Ends next;
+      for (size_t pos : ends) {
+        AddEnds(next, Element(pos));
       }
+      ends = std::move(next);
     }
     return m_sequences.emplace(key, std::move(ends)).first->second;
   }
 
   // Where the arguments in `sig` starting at `at` can end.
   Ends Args(size_t at, const std::string& sig) {
+    // Elements nest through their arguments, so a crafted file could nest deep
+    // enough to run out of stack; no real effect comes near the limit.
+    if (m_depth >= kMaxNesting) {
+      return {};
+    }
+    ++m_depth;
+    struct Leave {
+      size_t& depth;
+      ~Leave() { --depth; }
+    } leave{m_depth};
     Ends current{at};
     for (char arg : sig) {
       Ends next;
@@ -1145,6 +1156,17 @@ public:
     if (found != m_properties.end()) {
       return found->second;
     }
+    // Each property recurses into the next one, so the chain's length is stack
+    // depth: the same cap as the role reader's property count, with room for
+    // the generators nested in it.
+    if (m_propertyDepth >= kMaxPropertyChain) {
+      return std::nullopt;
+    }
+    ++m_propertyDepth;
+    struct Leave {
+      size_t& depth;
+      ~Leave() { --depth; }
+    } leave{m_propertyDepth};
     m_properties[key] = std::nullopt; // a cycle cannot parse
     const uint32_t fourcc = FourCCAt(at);
     if (fourcc == 0 || at + 5 > m_size || m_data[at + 4] > 5) {
@@ -1853,6 +1875,10 @@ private:
   std::unordered_map<uint64_t, Ends> m_sequences;
   std::unordered_map<uint64_t, std::optional<size_t>> m_properties;
   size_t m_furthest = 0;
+  static constexpr size_t kMaxNesting = 256;
+  size_t m_depth = 0; // Args calls on the stack
+  static constexpr size_t kMaxPropertyChain = 2 * kMaxRoleProperties;
+  size_t m_propertyDepth = 0; // Properties calls on the stack
 };
 
 // Where the root GPSM starts, after the RFRM header.

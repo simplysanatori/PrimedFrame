@@ -335,7 +335,10 @@ comma-separated list of room names, or `none`), the import also writes the rooms
 converted as above with textures capped at 1024 px, and a `.roomgeo` per
 area, in the mod's `roomgeo` folder. Experimental: the full set is about
 8,500 models and brings the mod from 1 GB to 6.5 GB, and the game has to be
-restarted to draw it.
+restarted to draw it. A first import (no earlier one to reuse) checks the free
+space for that up front and refuses with how much it needs; a later one links
+most of its files from the earlier import instead. The import it replaces is
+deleted in the background after the mods reload.
 
 The room geometry also brings the rooms' liquid
 surfaces: each water, poison or lava volume's own surface model, converted

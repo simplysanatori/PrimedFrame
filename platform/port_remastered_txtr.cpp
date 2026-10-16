@@ -37,6 +37,7 @@
 
 #include "port_remastered_txtr.h"
 #include "port_bytes.h"
+#include "port_remastered_lzss.h"
 
 #include <algorithm>
 #include <cmath>
@@ -180,54 +181,6 @@ bool ReadHeader(const uint8_t* data, size_t size, TextureHeader& head, std::stri
     head.mipSizes[i] = ReadLE32(chunk.data + 32 + i * 4);
   }
   return true;
-}
-
-// retrotool's LZSS (util/lzss.rs), one variant per mode: mode is the log2 of
-// the group's byte count, a clear header bit copies a group verbatim and a set
-// bit copies a back reference. This is deliberately a separate copy of the one
-// in port_remastered_pak.cpp: that file is not to be edited, and until its
-// `DecompressAsset` is exposed this is the only way the texel data can be
-// decompressed. It is a straight port of the Rust, including its behaviour of
-// trusting the data, because retrotool does too.
-bool LzssDecompress(uint32_t mode, const uint8_t* in, size_t inSize, uint8_t* out, size_t outSize) {
-  const size_t groupLen = size_t(1) << (mode - 1);
-  size_t inCur = 0;
-  size_t outCur = 0;
-  uint8_t header = 0;
-  int group = 0;
-  while (inCur < inSize) {
-    if (group == 0) {
-      header = in[inCur++];
-      group = 8;
-    }
-    if ((header & 0x80) == 0) {
-      if (inSize - inCur < groupLen || outSize - outCur < groupLen) {
-        return false;
-      }
-      std::memcpy(out + outCur, in + inCur, groupLen);
-      inCur += groupLen;
-      outCur += groupLen;
-    } else {
-      if (inSize - inCur < 2 || outCur == 0) {
-        return false;
-      }
-      const size_t count = size_t(in[inCur] >> 4) + (4 - size_t(mode));
-      const size_t length = (size_t(in[inCur] & 0x0F) * 256 + size_t(in[inCur + 1])) << (mode - 1);
-      inCur += 2;
-      if (length > outCur || outSize - outCur < count * groupLen) {
-        return false;
-      }
-      // One byte at a time: a back reference may overlap what it is writing,
-      // which is how a run of the same byte is encoded.
-      for (size_t i = 0; i < count * groupLen; ++i) {
-        out[outCur + i] = out[outCur - length + i];
-      }
-      outCur += count * groupLen;
-    }
-    header = uint8_t(header << 1);
-    group -= 1;
-  }
-  return outCur == outSize;
 }
 
 // retrotool's decompress_into (util/compression.rs): a mode word then either

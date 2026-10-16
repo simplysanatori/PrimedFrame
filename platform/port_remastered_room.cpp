@@ -2319,7 +2319,7 @@ private:
   std::string WriteRoom(const RoomData& r, const std::map<std::string, Placement>& placed, const Vec3& shift,
                         const float tonemap[5], const BloomData& bloom, const std::vector<GradeData>& worldGrades,
                         const std::vector<BacklightData>& worldBacklights, const std::vector<FogData>& worldFogs,
-                        int& written, std::string& matched);
+                        const Match& m, int& written, std::string& matched);
 
   const RoomPak& m_master;
   const std::vector<RoomPak>& m_rooms;
@@ -2973,6 +2973,8 @@ void Writer::ReadSuns(const RoomData& r, const SceneryScripts& scripts, const Ma
 
 void Writer::ReadPointLights(const RoomData& r, const SceneryScripts& scripts, const Mat34& xf,
                              std::vector<PointLightData>& out) const {
+  // Read once for the room, not once per light.
+  const std::vector<Connection> conns = ReadConnections(r.room);
   for (const Component* c : r.room.Of(kLightDynamic)) {
     const auto f = r.room.Flat(*c);
     const auto type = f.find(kPropLightType);
@@ -3090,7 +3092,7 @@ void Writer::ReadPointLights(const RoomData& r, const SceneryScripts& scripts, c
           left -= used;
         }
       }
-      for (const Connection& conn : ReadConnections(r.room)) {
+      for (const Connection& conn : conns) {
         const int target = r.room.ByGuid(conn.target);
         if (r.room.Components()[conn.sender].entity == c->entity && target >= 0 &&
             r.room.Components()[size_t(target)].entity == c->entity && conn.event == kEventLightReachedStart &&
@@ -4797,17 +4799,9 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
                               const float tonemap[5], const BloomData& worldBloom,
                               const std::vector<GradeData>& worldGrades,
                               const std::vector<BacklightData>& worldBacklights, const std::vector<FogData>& worldFogs,
-                              int& written, std::string& matched) {
+                              const Match& m, int& written, std::string& matched) {
   matched.clear();
-  Match m;
-  if (!MatchRoom(r, placed, m)) {
-    return r.name + ": not placed by the world";
-  }
   char head[96];
-  if (m.err > 1.0) {
-    std::snprintf(head, sizeof head, "%s: no area matches (best %08X, %.1f m)", r.name.c_str(), m.mrea, m.err);
-    return head;
-  }
   WriteGeometry(r, m.mrea, *m.area);
   WriteLiquids(r, m.mrea);
   const std::vector<Vec3>& gdoors = m.area->doors;
@@ -5364,21 +5358,52 @@ bool Writer::Run(uint32_t mlvl, int& written, std::string& error) {
   ReadBacklights(master, nullptr, backlights);
   std::vector<FogData> fogs;
   ReadFogs(master, nullptr, fogs);
+  // Every room is matched before any is written: two rooms matching one area
+  // would write the same files, so only the closer match (the first, on a tie)
+  // is written and the other is logged as a clash.
+  std::vector<Match> matches(rooms.size());
+  std::vector<bool> placedByWorld(rooms.size());
+  std::map<uint32_t, size_t> winner;
+  for (size_t i = 0; i < rooms.size(); ++i) {
+    placedByWorld[i] = MatchRoom(*rooms[i], placed, matches[i]);
+    if (!placedByWorld[i] || matches[i].err > 1.0) {
+      continue;
+    }
+    const auto [w, fresh] = winner.emplace(matches[i].mrea, i);
+    if (!fresh && matches[i].err < matches[w->second].err) {
+      w->second = i;
+    }
+  }
   std::map<std::string, std::string> seen;
-  for (const auto& r : rooms) {
+  for (size_t i = 0; i < rooms.size(); ++i) {
     if (m_io.cancelled && m_io.cancelled()) {
       error = "cancelled";
       return false;
     }
+    const RoomData& r = *rooms[i];
+    const Match& m = matches[i];
+    if (!placedByWorld[i]) {
+      Log(r.name + ": not placed by the world");
+      continue;
+    }
+    if (m.err > 1.0) {
+      char line[96];
+      std::snprintf(line, sizeof line, "%s: no area matches (best %08X, %.1f m)", r.name.c_str(), m.mrea, m.err);
+      Log(line);
+      continue;
+    }
+    const size_t kept = winner.at(m.mrea);
+    if (kept != i) {
+      char line[64];
+      std::snprintf(line, sizeof line, " both match %08X (%.2f m against %.2f m)", m.mrea, m.err,
+                    matches[kept].err);
+      Log("  CLASH: " + r.name + " and " + rooms[kept]->name + line + "; kept " + rooms[kept]->name);
+      continue;
+    }
     std::string matched;
-    const std::string line = WriteRoom(*r, placed, shift, tonemap, bloom, grades, backlights, fogs, written, matched);
-    Log(line);
+    Log(WriteRoom(r, placed, shift, tonemap, bloom, grades, backlights, fogs, m, written, matched));
     if (!matched.empty()) {
-      const auto s = seen.find(matched);
-      if (s != seen.end()) {
-        Log("  CLASH: " + r->name + " and " + s->second + " both match " + matched);
-      }
-      seen[matched] = r->name;
+      seen[matched] = r.name;
     }
   }
   Log(std::to_string(seen.size()) + " of " + std::to_string(m_areas.size()) + " areas");

@@ -1218,6 +1218,65 @@ fs::path StagingFolder() {
 // Where a finished import that is not yet in place waits while the next one reuses it.
 fs::path HeldFolder(const fs::path& staging) { return staging.parent_path() / (std::string(kStagingName) + ".held"); }
 
+// Folders on their way out: an old import can be most of a gigabyte, too much to
+// delete while the game waits on a mods reload. Renamed to a hidden name (the mod
+// loader skips it) at once and deleted on a thread; one a quit interrupted is
+// picked up by the next sweep.
+constexpr const char* kTrashPrefix = ".remastered-models.trash-";
+std::mutex sTrashMutex;
+bool sTrashSweeping = false;
+bool sTrashAgain = false;
+
+void SweepTrash(const fs::path& mods) {
+  {
+    std::lock_guard<std::mutex> lock(sTrashMutex);
+    if (sTrashSweeping) {
+      sTrashAgain = true;
+      return;
+    }
+    sTrashSweeping = true;
+  }
+  std::thread([mods] {
+    for (;;) {
+      std::error_code ec;
+      std::vector<fs::path> trash;
+      for (fs::directory_iterator it(mods, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().filename().string().rfind(kTrashPrefix, 0) == 0) {
+          trash.push_back(it->path());
+        }
+      }
+      for (const fs::path& dir : trash) {
+        fs::remove_all(dir, ec);
+      }
+      std::lock_guard<std::mutex> lock(sTrashMutex);
+      if (!sTrashAgain) {
+        sTrashSweeping = false;
+        return;
+      }
+      sTrashAgain = false;
+    }
+  }).detach();
+}
+
+// Takes `dir` out of the way now and deletes it later. Deletes it here only when
+// it cannot be renamed.
+void Discard(const fs::path& dir) {
+  std::error_code ec;
+  if (!fs::exists(dir, ec)) {
+    return;
+  }
+  static std::atomic<unsigned> sCount{0};
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  const fs::path trash =
+      dir.parent_path() / (kTrashPrefix + std::to_string(stamp) + "-" + std::to_string(sCount++));
+  fs::rename(dir, trash, ec);
+  if (ec) {
+    fs::remove_all(dir, ec);
+    return;
+  }
+  SweepTrash(dir.parent_path());
+}
+
 ConvertOptions OptionsFor(const TableEntry& entry) {
   ConvertOptions options;
   options.retail = entry.retail;
@@ -3761,6 +3820,35 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
     sState.message = "There is no mods folder to write to.";
     return false;
   }
+  // A first import writes everything (docs/MODS.md: about 1 GB, 6.5 GB with every
+  // room's geometry, plus 0.6 GB of movies); one with an import to reuse links
+  // most of its files instead, so only a first one is checked. Refused up front
+  // rather than failing at some write an hour in.
+  {
+    std::error_code ec;
+    const fs::path target = staging.parent_path() / kImportModName;
+    const fs::space_info space = fs::space(staging.parent_path(), ec);
+    if (!ec && !fs::exists(target, ec) && !fs::exists(HeldFolder(staging), ec)) {
+      const char* movies = std::getenv("MP_REMASTERED_MOVIES");
+      const char* geometry = std::getenv("MP_REMASTERED_GEOMETRY");
+      const bool allGeometry = geometry == nullptr || geometry[0] == '\0' || std::strcmp(geometry, "all") == 0;
+      const bool noGeometry = geometry != nullptr && std::strcmp(geometry, "none") == 0;
+      double needGb = allGeometry ? 6.5 : noGeometry ? 1.0 : 2.0;
+      // Not WantsMovies: it reports a bad value through the lock held here.
+      needGb += movies != nullptr && std::strcmp(movies, "0") == 0 ? 0.0 : 0.6;
+      const double freeGb = double(space.available) / (1024.0 * 1024.0 * 1024.0);
+      if (freeGb < needGb) {
+        char text[256];
+        std::snprintf(text, sizeof text,
+                      "Not enough free disk space: the import needs about %.1f GB and the mods folder's drive "
+                      "has %.1f GB free.%s",
+                      needGb, freeGb, allGeometry ? " MP_REMASTERED_GEOMETRY=none leaves the room geometry out." : "");
+        sState.finished = true;
+        sState.message = text;
+        return false;
+      }
+    }
+  }
   if (threads <= 0) {
     threads = DefaultThreads();
   }
@@ -3802,15 +3890,17 @@ bool ApplyPendingImport() {
   if (staging.empty() || ImportStatus().running) {
     return false;
   }
+  // Whatever a quit left half deleted.
+  SweepTrash(staging.parent_path());
   const fs::path held = HeldFolder(staging);
   if (fs::exists(staging / kMarkerName, ec)) {
     // An older import the finished one was made from, left if the game quit just after it.
-    fs::remove_all(held, ec);
+    Discard(held);
   } else {
-    fs::remove_all(staging, ec);
+    Discard(staging);
     // A finished import held aside by one that never finished (the game quit during it).
     if (!fs::exists(held / kMarkerName, ec)) {
-      fs::remove_all(held, ec);
+      Discard(held);
       return false;
     }
     fs::rename(held, staging, ec);
@@ -3824,7 +3914,7 @@ bool ApplyPendingImport() {
   const fs::path backup = staging.parent_path() / (std::string(".") + kImportModName + ".old");
   const bool hadTarget = fs::exists(target, ec);
   if (hadTarget) {
-    fs::remove_all(backup, ec);
+    Discard(backup);
     fs::rename(target, backup, ec);
     if (ec) {
       std::fprintf(stderr, "metroid_prime_port: could not set aside %s: %s\n", target.string().c_str(),
@@ -3847,7 +3937,7 @@ bool ApplyPendingImport() {
     return false;
   }
   if (hadTarget) {
-    fs::remove_all(backup, ec);
+    Discard(backup);
   }
   fs::remove(target / kMarkerName, ec);
   return true;
