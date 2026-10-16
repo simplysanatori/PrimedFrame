@@ -157,7 +157,6 @@ bool sSkipCutscenes = false;
 float sCutsceneSpeed = 8.f;
 unsigned sSimRate = 60;
 bool sSimAdaptive = false;
-float sTickPeriod = 1.f / 60.f;
 bool sFrameLimitEnabled = true;
 int sFpsCap = 0; // with the 60 FPS cap off; 0 = unlimited
 constexpr int kFpsCapMin = 30;
@@ -167,12 +166,6 @@ bool sTurbo = false;
 unsigned sTurboTicks = 1;
 bool sTraceTiming = false;
 uint64_t sTimingNs = 0;
-// Wall-clock for the same span as sTimingNs, so presented frames can be divided
-// by elapsed time rather than by the frames' own cost. Zero on the first call,
-// which is why the delta is skipped until a previous reading exists.
-uint64_t sTimingWallNs = 0;
-uint64_t sTimingWallLastNs = 0;
-unsigned sTimingFrames = 0, sTimingTicks = 0;
 double sActualFps = 0.0, sActualTps = 0.0;
 double sThroughputFps = 0.0;
 // On by default on macOS: Dawn's Metal backend has no non-tearing mode besides
@@ -201,12 +194,6 @@ bool sDynamicRes = false;
 int sDynamicResTarget = 0;  // fps; 0 = the 60 fps cap, or the display's rate without it
 float sDynamicResMin = 1.f; // the lowest scale it drops to: 0.5, 0.75 or 1
 float sDynScale = 0.f;      // the scale in use; 0 = sRenderScale
-int sDynSlow = 0, sDynSteady = 0, sDynSettle = 0;
-int sDynRaiseAfter = 4;  // steady seconds before trying a step up; doubles when one fails
-int sDynSinceRaise = -1; // seconds since the last step up, while it is on probation
-double sDynFpsBefore = 0.0; // the rate before the last step down
-int sDynHoldLow = 0;        // seconds left without stepping down (a step down gained nothing)
-int sDynHoldFor = 30;       // the next such hold; doubles each time
 PortDebug::EAspectMode sAspectMode = PortDebug::kAspect_Window;
 bool sHudWide = true;
 bool sCinemaBars = false;
@@ -254,7 +241,6 @@ int sBootLogos = PortDebug::kBootLogos_Skippable;
 bool sSaveStateHotkeys = true;
 bool sQuickResume = true;
 bool sSaveStateRoomState = true;
-float sTwinStickRightY = 0.f;
 std::atomic<bool> sTouchBeamShift{false}; // the touch twin layout's held Beam button
 std::atomic<bool> sTouchTurboFire{false}; // the touch Turbo button, held
 bool sInvulnerable = false;
@@ -309,67 +295,15 @@ struct WheelIcon {
 };
 std::mutex sWheelIconMutex;
 WheelIcon sWheelIcons[2][4];
-std::atomic<uint64_t> sWheelStampNs{0};
-// Whether the pause menu (inventory, logbook) is up; the touch overlay shows R there.
-std::atomic<bool> sPauseScreenOpen{false};
-std::atomic<bool> sPausedDialogOpen{false};
-std::atomic<uint64_t> sPauseScreenStampNs{0};
-std::atomic<int> sVisorRequest{-1};
-std::atomic<uint64_t> sVisorRequestUntilNs{0};
-std::atomic<int> sBeamRequest{-1};
-std::atomic<uint64_t> sBeamRequestUntilNs{0};
-std::atomic<uint64_t> sSpringRequestUntilNs{0};
-constexpr uint64_t kWheelRequestNs = 120'000'000;
-std::mutex sMinimapMutex;
-bool sMinimapValid = false;
-bool sMinimapDrawn = false;
-float sMinimapRect[4] = {};
-std::chrono::steady_clock::time_point sMinimapStamp;
-std::atomic< int > sMapTapPending{0};
-bool sMapTapHeld = false;
-// Drag to pan the map screen (Android): the overlay sends dp deltas and the view
-// height, CAutoMapper drains them; it publishes whether panning applies.
-std::mutex sMapPanMutex;
-bool sMapScreenOpen = false;
-std::chrono::steady_clock::time_point sMapScreenStamp;
-float sMapPanX = 0.f;
-float sMapPanY = 0.f;
-float sMapPanViewDp = 400.f;
-float sMapZoomPending = 1.f;
-float sMapRotatePending = 0.f;
-std::chrono::steady_clock::time_point sMapPanHeldUntil;
-std::mutex sTouchAimMutex;
-float sTouchAimPendingX = 0.f;
-float sTouchAimPendingY = 0.f;
-// GameCube scheme: this tick's touch travel, and whether a touch-aim finger is down
-// (JNI, or the console's hold timer).
-float sTouchLookFrameX = 0.f;
-float sTouchLookFrameY = 0.f;
-std::atomic<bool> sTouchAimDown{false};
-std::atomic<uint64_t> sTouchAimHoldUntilNs{0};
-bool sMouseCaptured = false;
-bool sMouseGameplayActive = false;
 // The game's CGameOptions as hex of its PutTo bits. Retail keeps them only in each
 // save file and resets them on the title screen, so a change made without saving
 // at a station was gone on the next launch (issue #45). The port keeps one global
 // copy, like Remastered.
 std::string sGameOptions;
-bool sGameOptionsRestored = false;
 PortMouse::AimState sMouseAimState;
-// Pointer aim's pointer, and whether it steered this tick (free look).
-PortMouse::PointerAim sPointerAim;
-bool sPointerAimFree = false;
 PortMouse::ButtonGate sMouseButtonGate;
-PortMouse::ButtonGate sMouseMenuGate;
-PortMouse::HeldButtons sMouseHeldButtons;
-float sMousePendingX = 0.f;
-float sMousePendingY = 0.f;
 float sMouseFrameX = 0.f;
 float sMouseFrameY = 0.f;
-// Gyro travel since the last tick. Kept apart from the mouse's pending delta,
-// which is dropped whenever the mouse is not captured (twin stick, phones).
-float sGyroPendingX = 0.f;
-float sGyroPendingY = 0.f;
 // The twin stick's part of this tick's sMouseFrame travel. Frames between ticks
 // draw its turn after the tick (docs/FRAME_INTERPOLATION.md section 4).
 float sStickFrameX = 0.f;
@@ -387,16 +321,8 @@ constexpr bool kRoomGeoResidentDefault = true;
 bool sRoomGeoResident = kRoomGeoResidentDefault;
 bool sParticleInterpolation = true;
 float sPresentOverride = -1.f;
-unsigned sPresentCycleFrame = 0;
-bool sTickHold = false;
-unsigned sHeldTicks = 0;
-// The last tick applied look input. A paused game or a cinematic skips the
-// player update, and would then drop what the frames between ticks showed.
-bool sAimAppliedLastTick = false;
 bool sAiAudioEnabled = true;
 bool sMusyxAudioEnabled = true;
-bool sResetRequested = false;
-std::atomic< bool > sToggleRequested{false};
 // F5 = 1 (save), F9 = 2 (load), from the event watch; handled on the game thread.
 std::atomic< int > sSaveStateHotkey{0};
 // F11 asks for a fullscreen toggle; DrawUI applies it on the main thread.
@@ -428,11 +354,6 @@ std::atomic< bool > sTouchEditRequested{false};
 std::atomic< bool > sPhysicalInput{false};
 // Set while the touch overlay is the active device (cleared by physical input).
 std::atomic< bool > sTouchActive{false};
-// Gyro state: the phone's sensor is looked up once, so the sensor list is not
-// walked on every tick.
-bool sPhoneGyroSearched = false;
-SDL_Sensor* sPhoneGyro = nullptr;
-const char* sGyroStatus = "off";
 // Flick state: seconds left on the last flick, and whether the pitch has dropped
 // back since, so a long flick counts once.
 float sSpringFlickLatch = 0.f;
@@ -445,41 +366,12 @@ bool sSettingsDirty = false;
 // Set once "Reset configuration" has moved the files away: nothing may write them
 // back before the process exits (SaveSettings returns early, ImGui's ini is off).
 bool sConfigReset = false;
-bool sAudioSettingsApplied = false;
-bool sPresentationSettingsApplied = false;
 CStateManager* sStateManager = nullptr;
-int sPendingTeleport = -1;
-bool sHasWorldTeleport = false;
 std::string sDiscPath;
 // The Remastered import's image and key file as last used: paths, or on Android
 // the picked content:// addresses (the picker keeps their read grant).
 std::string sRemasteredImagePath;
 std::string sRemasteredKeysPath;
-uint32_t sWorldTeleportWorld = 0;
-uint32_t sWorldTeleportArea = 0;
-bool sWorldSweepRequested = false;
-struct WorldSweep {
-  std::vector< uint32_t > worlds;
-  std::vector< uint32_t > areas;
-  size_t world = 0;
-  size_t area = 0;
-  unsigned settledTicks = 0;
-  unsigned stalledTicks = 0;
-  unsigned completedAreas = 0;
-  bool active = false;
-  bool waiting = false;
-  // An area can hold several layers, and only the active ones are built, so a
-  // pickup behind a layer the save has not unlocked is not in the dump at all.
-  // The tour revisits each area once per layer with a different one active,
-  // which is what makes the dump cover the whole area rather than the state the
-  // save happens to be in.
-  int layer = 0;
-  int layerCount = 1;
-  unsigned layerPasses = 0;
-  // Set between the hop away from an area and the hop back to it: the area has
-  // to be gone before it is rebuilt with the next layer.
-  bool revisiting = false;
-} sWorldSweep;
 
 std::string SettingsFilePath() {
   const std::string& dir = PortPaths::UserFolder();

@@ -1,6 +1,6 @@
-// platform/debug_ui.cpp, in part: The settings file: one table of keys (kSettingKeys) that reads and writes port_settings.ini, and saving it.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: The settings file: one table of keys (kSettingKeys) that reads and
+// writes port_settings.ini, and saving it. Included by debug_ui.cpp at this point in the file, not
+// compiled on its own: it shares that file's state and namespaces.
 
 namespace {
 

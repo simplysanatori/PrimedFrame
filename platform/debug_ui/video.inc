@@ -1,6 +1,6 @@
-// platform/debug_ui.cpp, in part: The Video page: display, GPU driver, quality, compatibility and textures.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: The Video page: display, GPU driver, quality, compatibility and
+// textures. Included by debug_ui.cpp at this point in the file, not compiled on its own: it shares
+// that file's state and namespaces.
 
 void DrawVideoDisplay() {
   ImGui::SeparatorText("Display");

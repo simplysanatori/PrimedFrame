@@ -1,6 +1,6 @@
-// platform/debug_ui.cpp, in part: The Android bridge: JNI entry points the Java side calls.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: The Android bridge: JNI entry points the Java side calls. Included
+// by debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state
+// and namespaces.
 
 #if defined(__ANDROID__)
 // The touch overlay covers the display and consumes every touch before SDL

@@ -1,6 +1,5 @@
-// platform/debug_ui.cpp, in part: The Randomizer tab.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: The Randomizer tab. Included by debug_ui.cpp at this point in the
+// file, not compiled on its own: it shares that file's state and namespaces.
 
 // Trick names are comma-separated in the settings; the box shows them so.
 std::string JoinNames(const std::vector< std::string >& names) {

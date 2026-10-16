@@ -1,8 +1,7 @@
-// platform/debug_ui.cpp, in part: Sections of the Game and System pages: cutscenes, unlocks, speedrun, Discord, updates, the texture pack status and the overlay options.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
-
-void DrawGameSection();
+// Part of platform/debug_ui.cpp: Sections of the Game and System pages: cutscenes, unlocks,
+// speedrun, Discord, updates, the texture pack status and the overlay options. Included by
+// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
+// namespaces.
 
 void DrawCutscenesSection() {
   ImGui::SeparatorText("Cutscenes");

@@ -1,6 +1,12 @@
-// platform/debug_ui.cpp, in part: Touch scrolling, the page and desktop windows, and DrawUI.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: Touch scrolling, the page and desktop windows, and DrawUI.
+// Included by debug_ui.cpp at this point in the file, not compiled on its own: it shares that
+// file's state and namespaces.
+
+// State only this part uses.
+namespace {
+bool sAudioSettingsApplied = false;
+bool sPresentationSettingsApplied = false;
+} // namespace
 
 bool IsResizeGrip(ImGuiWindow* window, ImGuiID id) {
   for (int n = 0; n < 4; ++n) {

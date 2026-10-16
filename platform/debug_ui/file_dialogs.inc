@@ -1,6 +1,6 @@
-// platform/debug_ui.cpp, in part: Memory card import and export (port_gci.h), picking the Remastered image and keys, and the file dialogs both answer through.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: Memory card import and export (port_gci.h), picking the Remastered
+// image and keys, and the file dialogs both answer through. Included by debug_ui.cpp at this point
+// in the file, not compiled on its own: it shares that file's state and namespaces.
 
 // Memory card transfer (port_gci.h). The work runs on the main thread; the
 // file dialogs answer on another one, so their picks wait in sCardPicks.

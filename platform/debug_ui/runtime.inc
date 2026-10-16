@@ -1,6 +1,43 @@
-// platform/debug_ui.cpp, in part: Frame interpolation switches, audio backends, reset, debug views, teleports and the world sweep, overlay visibility, game options and the settings log.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: Frame interpolation switches, audio backends, reset, debug views,
+// teleports and the world sweep, overlay visibility, game options and the settings log. Included by
+// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
+// namespaces.
+
+// State only this part uses.
+namespace {
+bool sGameOptionsRestored = false;
+unsigned sPresentCycleFrame = 0;
+bool sTickHold = false;
+unsigned sHeldTicks = 0;
+bool sResetRequested = false;
+int sPendingTeleport = -1;
+bool sHasWorldTeleport = false;
+uint32_t sWorldTeleportWorld = 0;
+uint32_t sWorldTeleportArea = 0;
+bool sWorldSweepRequested = false;
+struct WorldSweep {
+  std::vector< uint32_t > worlds;
+  std::vector< uint32_t > areas;
+  size_t world = 0;
+  size_t area = 0;
+  unsigned settledTicks = 0;
+  unsigned stalledTicks = 0;
+  unsigned completedAreas = 0;
+  bool active = false;
+  bool waiting = false;
+  // An area can hold several layers, and only the active ones are built, so a
+  // pickup behind a layer the save has not unlocked is not in the dump at all.
+  // The tour revisits each area once per layer with a different one active,
+  // which is what makes the dump cover the whole area rather than the state the
+  // save happens to be in.
+  int layer = 0;
+  int layerCount = 1;
+  unsigned layerPasses = 0;
+  // Set between the hop away from an area and the hop back to it: the area has
+  // to be gone before it is rebuilt with the next layer.
+  bool revisiting = false;
+} sWorldSweep;
+} // namespace
 
 bool FrameInterpolation() {
   EnsureInitialized();

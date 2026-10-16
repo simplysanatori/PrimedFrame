@@ -1,6 +1,12 @@
-// platform/debug_ui.cpp, in part: Shared overlay plumbing: page layout, themes, menu sounds, UI scale, the GPU self-test, controller navigation, the toggle and help markers.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: Shared overlay plumbing: page layout, themes, menu sounds, UI
+// scale, the GPU self-test, controller navigation, the toggle and help markers. Included by
+// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
+// namespaces.
+
+// State only this part uses.
+namespace {
+std::atomic< bool > sToggleRequested{false};
+} // namespace
 
 // The overlay is a full-screen panel with a page list instead of tabs, which
 // fits a touchscreen and reads better on the desktop too. The desktop can go

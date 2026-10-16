@@ -1,6 +1,6 @@
-// platform/debug_ui.cpp, in part: Cheats, the free camera and rendering debug.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: Cheats, the free camera and rendering debug. Included by
+// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
+// namespaces.
 
 void GrantItem(CPlayerState& ps, CPlayerState::EItemType type, int amount, int capacity) {
   ps.SetPowerUp(type, capacity);

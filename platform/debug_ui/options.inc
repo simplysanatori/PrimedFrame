@@ -1,6 +1,24 @@
-// platform/debug_ui.cpp, in part: Accessors for the settings and runtime switches the game and other port code read, and the settings self-test.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: Accessors for the settings and runtime switches the game and other
+// port code read, and the settings self-test. Included by debug_ui.cpp at this point in the file,
+// not compiled on its own: it shares that file's state and namespaces.
+
+// State only this part uses.
+namespace {
+float sTickPeriod = 1.f / 60.f;
+// Wall-clock for the same span as sTimingNs, so presented frames can be divided
+// by elapsed time rather than by the frames' own cost. Zero on the first call,
+// which is why the delta is skipped until a previous reading exists.
+uint64_t sTimingWallNs = 0;
+uint64_t sTimingWallLastNs = 0;
+unsigned sTimingFrames = 0, sTimingTicks = 0;
+int sDynSlow = 0, sDynSteady = 0, sDynSettle = 0;
+int sDynRaiseAfter = 4;  // steady seconds before trying a step up; doubles when one fails
+int sDynSinceRaise = -1; // seconds since the last step up, while it is on probation
+double sDynFpsBefore = 0.0; // the rate before the last step down
+int sDynHoldLow = 0;        // seconds left without stepping down (a step down gained nothing)
+int sDynHoldFor = 30;       // the next such hold; doubles each time
+float sTwinStickRightY = 0.f;
+} // namespace
 
 int SettingsSelfTest() {
   int failures = 0;

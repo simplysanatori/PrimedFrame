@@ -1,6 +1,6 @@
-// platform/debug_ui.cpp, in part: Pages and sub-tabs, and the settings search (index, jumps, results).
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: Pages and sub-tabs, and the settings search (index, jumps,
+// results). Included by debug_ui.cpp at this point in the file, not compiled on its own: it shares
+// that file's state and namespaces.
 
 int TakeJumpPage() {
   const int page = sJump.page;

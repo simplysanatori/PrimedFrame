@@ -1,6 +1,69 @@
-// platform/debug_ui.cpp, in part: Gyro, mouse aim, touch aim and gestures, the visor/beam wheels and the map gestures.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: Gyro, mouse aim, touch aim and gestures, the visor/beam wheels and
+// the map gestures. Included by debug_ui.cpp at this point in the file, not compiled on its own: it
+// shares that file's state and namespaces.
+
+// State only this part uses.
+namespace {
+std::atomic<uint64_t> sWheelStampNs{0};
+// Whether the pause menu (inventory, logbook) is up; the touch overlay shows R there.
+std::atomic<bool> sPauseScreenOpen{false};
+std::atomic<bool> sPausedDialogOpen{false};
+std::atomic<uint64_t> sPauseScreenStampNs{0};
+std::atomic<int> sVisorRequest{-1};
+std::atomic<uint64_t> sVisorRequestUntilNs{0};
+std::atomic<int> sBeamRequest{-1};
+std::atomic<uint64_t> sBeamRequestUntilNs{0};
+std::atomic<uint64_t> sSpringRequestUntilNs{0};
+constexpr uint64_t kWheelRequestNs = 120'000'000;
+std::mutex sMinimapMutex;
+bool sMinimapValid = false;
+bool sMinimapDrawn = false;
+float sMinimapRect[4] = {};
+std::chrono::steady_clock::time_point sMinimapStamp;
+std::atomic< int > sMapTapPending{0};
+bool sMapTapHeld = false;
+// Drag to pan the map screen (Android): the overlay sends dp deltas and the view
+// height, CAutoMapper drains them; it publishes whether panning applies.
+std::mutex sMapPanMutex;
+bool sMapScreenOpen = false;
+std::chrono::steady_clock::time_point sMapScreenStamp;
+float sMapPanX = 0.f;
+float sMapPanY = 0.f;
+float sMapPanViewDp = 400.f;
+float sMapZoomPending = 1.f;
+float sMapRotatePending = 0.f;
+std::chrono::steady_clock::time_point sMapPanHeldUntil;
+std::mutex sTouchAimMutex;
+float sTouchAimPendingX = 0.f;
+float sTouchAimPendingY = 0.f;
+// GameCube scheme: this tick's touch travel, and whether a touch-aim finger is down
+// (JNI, or the console's hold timer).
+float sTouchLookFrameX = 0.f;
+float sTouchLookFrameY = 0.f;
+std::atomic<bool> sTouchAimDown{false};
+std::atomic<uint64_t> sTouchAimHoldUntilNs{0};
+bool sMouseCaptured = false;
+bool sMouseGameplayActive = false;
+// Pointer aim's pointer, and whether it steered this tick (free look).
+PortMouse::PointerAim sPointerAim;
+bool sPointerAimFree = false;
+PortMouse::ButtonGate sMouseMenuGate;
+PortMouse::HeldButtons sMouseHeldButtons;
+float sMousePendingX = 0.f;
+float sMousePendingY = 0.f;
+// Gyro travel since the last tick. Kept apart from the mouse's pending delta,
+// which is dropped whenever the mouse is not captured (twin stick, phones).
+float sGyroPendingX = 0.f;
+float sGyroPendingY = 0.f;
+// The last tick applied look input. A paused game or a cinematic skips the
+// player update, and would then drop what the frames between ticks showed.
+bool sAimAppliedLastTick = false;
+// Gyro state: the phone's sensor is looked up once, so the sensor list is not
+// walked on every tick.
+bool sPhoneGyroSearched = false;
+SDL_Sensor* sPhoneGyro = nullptr;
+const char* sGyroStatus = "off";
+} // namespace
 
 int GyroMode() {
   EnsureInitialized();

@@ -1,6 +1,5 @@
-// platform/debug_ui.cpp, in part: The Save states tab.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: The Save states tab. Included by debug_ui.cpp at this point in the
+// file, not compiled on its own: it shares that file's state and namespaces.
 
 void DrawSaveStatesTab() {
   ImGui::TextDisabled("Save anywhere and load back to the same spot.");

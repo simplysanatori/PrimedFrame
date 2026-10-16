@@ -1,6 +1,6 @@
-// platform/debug_ui.cpp, in part: Windows drawn over the game outside the overlay pages: toasts, the photo mode bar, the resume prompt and alerts.
-// Included by debug_ui.cpp at this point in the file, not compiled on its
-// own: it shares that file's state and namespaces.
+// Part of platform/debug_ui.cpp: Windows drawn over the game outside the overlay pages: toasts, the
+// photo mode bar, the resume prompt and alerts. Included by debug_ui.cpp at this point in the file,
+// not compiled on its own: it shares that file's state and namespaces.
 
 namespace {
 
