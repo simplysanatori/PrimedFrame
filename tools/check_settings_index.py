@@ -30,6 +30,16 @@ EXCLUDED = {
 
 INDEX = pathlib.Path("platform/port_settings_index.inc")
 DEBUG_UI = pathlib.Path("platform/debug_ui.cpp")
+# debug_ui.cpp #includes its parts from here, in place.
+DEBUG_UI_PARTS = pathlib.Path("platform/debug_ui")
+
+
+def debug_ui_sources(root):
+    """debug_ui.cpp and its parts, as (path, text) in file order."""
+    files = [(DEBUG_UI, (root / DEBUG_UI).read_text(encoding="utf-8"))]
+    for part in sorted((root / DEBUG_UI_PARTS).glob("*.inc")):
+        files.append((part.relative_to(root), part.read_text(encoding="utf-8")))
+    return files
 
 STR = r'"((?:[^"\\]|\\.)*)"'
 ROW_RE = re.compile(r"^\{\s*" + STR + r"\s*,\s*" + STR + r"\s*,\s*" + STR + r"\s*,\s*" + STR
@@ -52,7 +62,8 @@ def main(argv):
     root = pathlib.Path(argv[1])
     problems = []
 
-    debug_src = (root / DEBUG_UI).read_text(encoding="utf-8")
+    debug_files = debug_ui_sources(root)
+    debug_src = "\n".join(text for _path, text in debug_files)
     pages = set(PAGE_RE.findall(debug_src))
     subtabs = {}
     for page, sub in SUBTAB_RE.findall(debug_src):
@@ -80,20 +91,21 @@ def main(argv):
             problems.append(f"{INDEX}:{lineno}: empty label")
 
     sources = "\n".join(
-        p.read_text(encoding="utf-8", errors="replace")
-        for p in sorted((root / "platform").rglob("*.cpp")))
+        [p.read_text(encoding="utf-8", errors="replace")
+         for p in sorted((root / "platform").rglob("*.cpp"))] + [text for _path, text in debug_files[1:]])
     for lineno, _page, _sub, _section, label, _keywords in rows:
         if f'"{label}"' not in sources and f'"{label}##' not in sources:
             problems.append(f"{INDEX}:{lineno}: label '{label}' is not a string literal in platform/**/*.cpp")
 
     index_labels = {row[4] for row in rows}
-    for m in WIDGET_RE.finditer(debug_src):
-        label = visible(m.group(2))
-        if not label or label in index_labels or label in EXCLUDED:
-            continue
-        line = debug_src.count("\n", 0, m.start()) + 1
-        problems.append(f"{DEBUG_UI}:{line}: ImGui::{m.group(1)} '{label}' is not in {INDEX} "
-                        "and not in EXCLUDED")
+    for path, text in debug_files:
+        for m in WIDGET_RE.finditer(text):
+            label = visible(m.group(2))
+            if not label or label in index_labels or label in EXCLUDED:
+                continue
+            line = text.count("\n", 0, m.start()) + 1
+            problems.append(f"{path}:{line}: ImGui::{m.group(1)} '{label}' is not in {INDEX} "
+                            "and not in EXCLUDED")
 
     groups = {}
     for lineno, page, sub, _section, label, _keywords in rows:

@@ -550,7 +550,8 @@ if(MP_BUILD_TESTS)
     target_compile_definitions(port_map_pickups_tests PRIVATE TARGET_PC)
     add_executable(port_randomizer_tests
         tests/port_randomizer.cpp
-        platform/port_randomizer.cpp)
+        platform/port_randomizer.cpp
+        platform/port_json.cpp)
     target_include_directories(port_randomizer_tests PRIVATE
         platform/include extern/aurora/include include)
     target_compile_definitions(port_randomizer_tests PRIVATE TARGET_PC VERSION=0)
@@ -773,9 +774,6 @@ if(MP_BUILD_TESTS)
         add_test(NAME ${t}_tests COMMAND ${t}_tests)
         set_tests_properties(${t}_tests PROPERTIES TIMEOUT 15 LABELS port)
     endforeach()
-    add_test(NAME port_air_mover_wiring COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/tests/port_air_mover_wiring.py
-        ${CMAKE_SOURCE_DIR}/src/MetroidPrime/CGameCollision.cpp)
     add_executable(port_hdr_scene_policy_tests tests/port_hdr_scene_policy.cpp)
     target_include_directories(port_hdr_scene_policy_tests PRIVATE include extern/aurora/include)
     target_compile_definitions(port_hdr_scene_policy_tests PRIVATE TARGET_PC VERSION=0)
@@ -893,6 +891,11 @@ if(MP_BUILD_TESTS)
     set_tests_properties(port_ws_tests PROPERTIES TIMEOUT 120)
     # 200+ seeds, each a few hundred logic sweeps.
     set_tests_properties(port_rando_gen_tests PROPERTIES TIMEOUT 120)
+    # Every port_settings.ini key reads back as written (platform/debug_ui/settings.inc,
+    # kSettingKeys); the game binary checks itself and exits before starting.
+    add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)
+    set_tests_properties(port_settings_roundtrip PROPERTIES TIMEOUT 30 LABELS port
+        ENVIRONMENT "MP_USER_PATH=${CMAKE_CURRENT_BINARY_DIR}/settings-selftest/")
     # The tools' own checks, so a change to the location join or the fixture
     # generator fails here rather than in whoever runs the tools next. Both are
     # dependency-free Python and skip themselves when python3 is absent.
@@ -923,5 +926,9 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_settings_index.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_settings_index PROPERTIES TIMEOUT 15 LABELS port)
+        add_test(NAME port_air_mover_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_air_mover_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR}/src/MetroidPrime/CGameCollision.cpp)
+        set_tests_properties(port_air_mover_wiring PROPERTIES TIMEOUT 15 LABELS port)
     endif()
 endif()

@@ -1,6 +1,7 @@
 #include "port_savestate.h"
 #include "port_bytes.h"
 
+#include <algorithm>
 #include <cstring>
 
 // The slot file layout. Kept apart from port_savestate.cpp so the unit test
@@ -74,7 +75,9 @@ struct Reader {
   }
   std::string String() {
     const uint32_t n = U32();
-    if (n > kMaxLabel || !Need(n))
+    if (n > kMaxLabel)
+      ok = false;
+    if (!Need(n))
       return {};
     std::string s = data.substr(pos, n);
     pos += n;
@@ -121,13 +124,19 @@ std::string EncodeRoom(const RoomState& room) {
   for (const RoomObject& obj : room.objects) {
     // The present set is the objects' ids; a block count byte carries the active flag.
     AppendDelta(body, last, obj.editorId);
+    // At most kMaxBlocks, the most DecodeRoom accepts (the count byte has 7 bits).
+    auto fits = [](const RoomBlock& block) { return block.tag < 256 && block.data.size() < 256; };
     size_t count = 0;
     for (const RoomBlock& block : obj.blocks)
-      count += (block.tag < 256 && block.data.size() < 256) ? 1 : 0;
-    body += static_cast< char >((obj.active ? 0x80 : 0) | (count & 0x7f));
+      count += fits(block) ? 1 : 0;
+    count = std::min< size_t >(count, kMaxBlocks);
+    body += static_cast< char >((obj.active ? 0x80 : 0) | count);
+    size_t written = 0;
     for (const RoomBlock& block : obj.blocks) {
-      if (block.tag >= 256 || block.data.size() >= 256)
+      if (!fits(block))
         continue;
+      if (written++ == count)
+        break;
       body += static_cast< char >(block.tag);
       body += static_cast< char >(block.data.size());
       body += block.data;

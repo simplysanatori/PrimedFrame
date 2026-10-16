@@ -112,6 +112,19 @@ int main() {
     Check(fs::exists(card / "01-GZLE-other.gci"), "other game untouched");
     Check(PortGci::GameFiles(card).size() == 1, "one game file");
   }
+#ifndef _WIN32
+  // An entry that cannot be inspected (a symlink loop) is passed over; it is
+  // not a failure to list the folder.
+  {
+    const fs::path odd = root / "odd-card";
+    fs::create_directories(odd);
+    std::error_code ec;
+    fs::create_symlink("loop.gci", odd / "loop.gci", ec);
+    Check(!ec, "symlink loop created");
+    const auto report = PortGci::ImportFile(source, odd, root / "scratch");
+    Check(report.copied == 1 && report.skipped == 0, "import beside an unreadable entry");
+  }
+#endif
   // Another game's .gci is refused.
   {
     Write(root / "zelda.gci", MakeGci("GZLE", "zelda", 1, 0));

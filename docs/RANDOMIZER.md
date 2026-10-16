@@ -121,10 +121,13 @@ directory. Schema:
 ```
 
 `item` is required; `amount` and `capacity` are optional and leave the vanilla
-values untouched when absent. Unknown keys are ignored. Arrays, `null`, comments
-and trailing commas are rejected — a malformed seed disables the randomizer with
-a `randomizer: seed parse error at byte offset N` line on stderr rather than
-applying half of it.
+values untouched when absent, and must be whole numbers from -9999 to 9999.
+Unknown keys are ignored whatever they hold; a repeated key keeps its last value.
+The file is strict JSON (no comments or trailing commas). A seed that cannot be
+used disables the randomizer rather than applying half of it, and says why in the
+log: `randomizer: seed parse error at byte offset N: ...` for malformed JSON,
+`randomizer: seed error: location "...": ...` for a well-formed file with a bad
+entry.
 
 `models` is optional and maps an item name to the assets a pickup of that item
 is drawn with. A rewritten pickup uses that entry so it looks like the item it

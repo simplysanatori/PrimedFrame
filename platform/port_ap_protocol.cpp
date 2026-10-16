@@ -1,4 +1,5 @@
 #include "port_ap_protocol.h"
+#include "port_strings.h"
 
 #include "port_ap_metroidprime.h"
 #include "port_randomizer.h"
@@ -53,34 +54,7 @@ bool IntegerMember(const PortJson::Value& object, const char* name, int64_t& res
   return Integer(Member(object, name), result);
 }
 
-std::string EscapeJson(const std::string& text) {
-  static constexpr char kHex[] = "0123456789abcdef";
-  std::string escaped;
-  escaped.reserve(text.size() + 2);
-  for (unsigned char c : text) {
-    switch (c) {
-    case '"': escaped += "\\\""; break;
-    case '\\': escaped += "\\\\"; break;
-    case '\b': escaped += "\\b"; break;
-    case '\f': escaped += "\\f"; break;
-    case '\n': escaped += "\\n"; break;
-    case '\r': escaped += "\\r"; break;
-    case '\t': escaped += "\\t"; break;
-    default:
-      if (c < 0x20) {
-        escaped += "\\u00";
-        escaped.push_back(kHex[c >> 4]);
-        escaped.push_back(kHex[c & 0x0f]);
-      } else {
-        escaped.push_back(static_cast<char>(c));
-      }
-      break;
-    }
-  }
-  return escaped;
-}
-
-std::string Quote(const std::string& text) { return "\"" + EscapeJson(text) + "\""; }
+std::string Quote(const std::string& text) { return port::JsonQuote(text); }
 
 // Writes through a temporary file and a rename, so a crash mid-write leaves
 // the old file rather than half of the new one.

@@ -26,7 +26,11 @@
   `port_settings.ini` in the user folder (`user/` beside the executable, see above) and restored on the next launch. The System page shows the
   path and has a **Save settings now** button. Environment variables still
   override the file for that run, and are written back into it if any setting is
-  changed during that run.
+  changed during that run. Each key is one row of `kSettingKeys` in
+  `platform/debug_ui/settings.inc`, which both reads and writes it, with two sample
+  values; ctest `port_settings_roundtrip` (`metroid_prime_port
+  --settings-selftest`) checks that every sampled key reads back as written and
+  that the whole file survives being read back. A new setting is a new row.
 - F1 > System > Settings > **Reset configuration...** puts every port setting and
   control mapping back to its default: after a confirmation it saves the current
   settings, moves `port_settings.ini`, `controls.toml`, `imgui.ini`,
@@ -202,6 +206,17 @@
   for 0.35 s or more keeps the charge held after letting go, and the next press
   fires it; shorter taps shoot as usual. Both are off in morph ball and while
   input is disabled. The console's `status` prints the game's L/A and the charge.
+- Remastered charge (Controls > Options, "Remastered charge (rapid fire)", persisted as
+  `rapid_charge`, off by default, `MP_RAPID_CHARGE=<0|1>`): as in Remastered, holding
+  fire fires a few shots before charging (3 in all with Power, 2 with Wave or Plasma,
+  1 with Ice), then charges faster, so a full charge takes about as long as before.
+  Without the Charge Beam it fires the same shots, then waits for fire to be let go.
+- Remastered movement (Controls > Controller settings > Stick aim, persisted as
+  `remastered_movement`, on by default, `MP_REMASTERED_MOVEMENT=<0|1>`): under twin
+  stick or mouse aim, diagonals are as fast as straight ahead and the air drag is
+  steady, so a jump keeps a smooth arc, as in Remastered and PrimeHack. Off, jumps
+  move as on the GameCube. Classic controls always move as on the GameCube. Both
+  are off under the original experience.
 - The overlay's **Controls** page keeps settings only: "Mouse settings" (inversion,
   crosshair) and "Controller settings" (stick aim and dead
   zones). **Remap > Active controller** selects any detected gamepad, including
@@ -315,7 +330,12 @@
   in outdoor rooms. Remastered does not draw sun shadows; turn off for the
   Remastered look. Off behaves like a room with no sun (no cascades, no
   receiver sampling); room point/spot lights are unaffected. Console:
-  `sunshadow [0|1]`.
+  `sunshadow [0|1]`. `MP_SHADOWS=0` turns them off for the run. For tuning:
+  `MP_SHADOW_DIR=<x,y,z>` (the way the light travels; else the room's sun, then
+  the area's first directional light), `MP_SHADOW_COLOR=<r,g,b>` (the sun light's
+  colour; else the room sun's) and `MP_SHADOW_DISTANCE=<units>` (how far from the
+  camera it shadows, default 350). Actors the frustum or PVS rejects still cast,
+  as base models only, as in Remastered; `MP_SHADOW_OFFSCREEN_ACTORS=0` stops that.
 - Projected actor shadows (Video > Quality, persisted as `projected_shadows`,
   default on): Remastered's actor shadow. Each shadowed actor renders depth
   only into a 256x256 map looking straight down, and the room geometry under it
@@ -324,6 +344,12 @@
   retail blob quad is drawn. Known gaps: dynamic receivers (platforms) and
   sorted/cutout geometry are not decaled; at most 16 actors per frame.
   Console: `projshadow [0|1]`.
+- Adreno shader fix (Video > Compatibility, persisted as `storage_clamp`: -1 Auto,
+  the default, 0 Off, 1 On): reads GPU buffers with a clamp instead of the
+  bounds-check branch some Adreno Vulkan drivers miscompile (the world draws
+  black, issue #7). Auto turns it on for Vulkan on an Adreno 7xx. Read once when
+  shaders are first made, so a change needs a restart. `MP_STORAGE_CLAMP=1`
+  forces it on and any other non-empty value off, over the setting.
 - HUD scale (Video > Display and pause Options > Display, persisted as `hud_scale`,
   50-100 percent, default 100): shrinks the combat HUD, radar, beam and visor
   menus and the minimap toward the screen centre, each frame as a whole so the
@@ -742,6 +768,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   when a mod has room geometry and `MP_ROOM_GEO_RESIDENT` is off (6 on Android),
   and 2 with it on (the default).
   A frame that outgrows them aborts with a buffer overflow.
+  `MP_STORAGE_BUFFERS=<1..16>` pins the storage buffers' scale, which otherwise
+  follows it and, with `MP_ROOM_GEO_RESIDENT` on, grows after an overflow (up to 6x).
 - `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_gpu`, F1 > Debug >
   Remastered room models > Keep on the GPU; on by default, read at
   startup; an old `room_geo_resident=1` still turns it on). On a POCO F8 Ultra it
@@ -848,6 +876,19 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   `MP_ROOM_GEO_AREA_LIGHTS=1`. For tuning: `MP_ROOM_ENV_VOLUME_BIAS` (metres off
   the surface a sample is taken; default 0, as Remastered samples at the
   surface) and `MP_ROOM_ENV_VOLUME_SHOW` (1 draws the texture coordinates, 2 the light alone, 3 the shading normal).
+  `MP_ROOM_ENV_FILL_LAYERS=<n>` (for comparisons; default 0, as Remastered) lets
+  the grid's empty points take their lit neighbours' light first, n layers deep.
+  The rooms' baked lightmaps light room geometry in place of the coarser grid:
+  `MP_ROOM_ENV_LIGHTMAP=0` leaves them out, and `MP_ROOM_ENV_LIGHTMAP_SCALE`
+  scales them (default 1; 0 drops them too).
+  `MP_ROOM_LIGHTS=0` drops Remastered's point and spot lights of the loaded areas
+  (only drawn while the rooms are exposed). `MP_REMASTERED_GLOW_EXPOSURE=0` scales
+  glow by a fixed 0.10, the converter's old factor, instead of the room's exposure.
+  `MP_VOLFOG=0` (console `roomenv volfog on|off`) drops Remastered's volumetric fog
+  and fog regions (files of version 12 on). `MP_THERMAL_POST=0` and
+  `MP_XRAY_POST=0` keep the retail Thermal and X-ray visors instead of
+  Remastered's visor post effects (both are retail under the original experience,
+  and Thermal also with a mod that lacks the imported gradient).
 - `tools/pbr_shots.py`: contact sheets of models under PBR, for comparing mod
   builds. One game per (variant, place), each booted straight into the room
   with `MP_BOOT_WORLD` on its own console port and an Xvfb display, about 10 s
@@ -921,6 +962,61 @@ Smooth particles draws particle effects, projectile effects included, between
 their last two 60 Hz positions when the frame limiter is off, using the game's
 own sub-frame particle path. Beam trails (swooshes), electric effects and
 the flamethrower still step at 60 Hz.
+
+## Diagnostics and test drivers
+
+For development only; none is saved. A variable marked "set" takes effect with
+any value, even `0`.
+
+- `MP_WATCHDOG=0`: no stall watchdog. On by default: with no frame for 5, 15, 30
+  and 60 s it logs where the main and render threads are, the main thread's stack
+  at 5 and 30 s, and on Android a logcat dump. `MP_WATCHDOG_TEST_STALL=<frame>`
+  sleeps 8 s on that frame and `MP_WATCHDOG_TEST_THROW=<frame>` throws an exception
+  there, to test it and the crash report.
+- `MP_HEAP_CHECK=1` (not empty, not starting with `0`): deep checks of the game
+  heap's block links on every normal-heap free and of each frame's delayed deletions (queued
+  twice, freed or reused before the flush); a fault logs `HEAP CHECK:` lines and aborts.
+- `MP_PIPELINE_SEED=0`: start from an empty pipeline cache instead of the shipped
+  seed (`tools/pipeline_seed.py` records with it).
+- `MP_HOLD_FRONTEND_SHADERS=<0|1>`: hold the seed's background shader builds while no
+  game is loaded. On by default under D3D11 only, whose drivers made the front end
+  crawl behind them (issue #54).
+- `MP_SKIN_LEGACY=1`: skin with the retail locked-cache path; `MP_SKIN_VERIFY=1`
+  runs both paths and reports any difference; `MP_SKIN_STATS=1` logs skinning time
+  every 5 s. `MP_SKIN_THREAD_MIN=<vertices>` (default 20000): models at least
+  that big are skinned across threads. (`1` here means not empty and not starting with `0`.)
+- `MP_LOG_HUD` (set): log HUD models and frames that are not loaded, HUD state
+  transitions and visor/HUD visibility changes to stderr.
+- `MP_STREAM_TRACE` (set): per-chunk streamed-music refill tracing (`mpstream:`;
+  logcat on Android); starts, stops and stale completions are always logged.
+- `MP_ELC2_LOG` (set): log Remastered electric effects (ELC2) as they are made,
+  and their bolt count every 30 frames.
+- `MP_ACTOR_SHADOW_DEBUG` (set): every 120 frames, log each projected actor
+  shadow's opacity, fade and map and receiver boxes.
+- `MP_SHADOW_ACTOR_CHECK=1`: log the first off-screen actor drawn into the sun
+  shadow, and every 300 frames how many were eligible and drawn.
+- `MP_VISORMESH_LOG` (set): every 60 frames, log how many surfaces the visor and
+  shadow bits skipped.
+- `MP_ROOMENV_TIMING=1`: log where a `.roomenv` load's time goes.
+  `MP_ROOM_ENV_EXPOSURE_LOG=1`: log the room exposure state (area, hint values,
+  EV, target) each time it is worked out.
+- Remastered import: `MP_REMASTERED_REUSE=0` makes every stage again instead of
+  reusing the previous import's unchanged ones (`textures`: only the converted
+  textures are reused); `MP_REMASTERED_JOINTS=1` logs the models' skin matching
+  (each joint's vote and the bones it got) to stderr; `MP_REMASTERED_MISS` (set)
+  lists each room's untraced script connections by kind in the import log.
+- `MP_RANDO_SWEEP_LAYERS=1`: with `MP_RANDO_SWEEP`, tour each area once per script
+  layer (up to the world's widest area), with only that layer active.
+- Smoke driver (`-DMP_ENABLE_SMOKE_DRIVER=ON` builds, see `docs/NATIVE_PORT.md`):
+  `MP_SMOKE_WORLD_RESTARTS=<n>` repeats the `MP_SMOKE_WORLD` jump n times (default
+  1); `MP_SMOKE_WORLD_TICKS=<n>` waits n gameplay ticks before each (default 120,
+  and when set it does not wait for the first-person camera);
+  `MP_SMOKE_MORPH=1` presses X 120 and 360 ticks into first-person gameplay
+  (morph, unmorph); `MP_SMOKE_SAVE=<ticks>` opens the in-game save screen that
+  many ticks in and confirms it (answering one "file corrupt" by deleting the file);
+  `MP_SMOKE_WATER=<cycles>` puts the player in the area's first active water for
+  2 s, walking forward, then back out for 2 s, that many times; `MP_SMOKE_RESIZE=<w>x<h>`
+  resizes the window at frame 300.
 
 ## Photo mode
 

@@ -210,16 +210,11 @@ best case. The presented rate and the jitter are the parts that transfer.
 
 ### Seeing the front end, and where it stops
 
-With `MP_FAST_BOOT` **off** the real front end runs and waits for input. The
-screens captured on the real session, on the AMD adapter, are in
-`docs/images/`:
-
-| Screen | File |
-|---|---|
-| Metroid Prime title | `front-end-title.png` |
-| Nintendo publisher logo | `front-end-publisher.png` |
-| Dolby Surround Pro Logic II | `front-end-dolby.png` |
-| Title with `[ PRESS START ]` | `front-end-press-start.png` |
+With `MP_FAST_BOOT` **off** the real front end runs and waits for input. On the
+real session, on the AMD adapter, captures (`F12` or console `shot`) showed the
+Nintendo publisher logo, the Dolby Surround Pro Logic II logo, the Metroid Prime
+title and the title with `[ PRESS START ]`. The captures are not kept in the
+repository: they are pictures of Nintendo's game.
 
 All four render correctly, so **the reported blank front end does not
 reproduce**. Note that `MP_FAST_BOOT=1` never shows any of them: it drives
@@ -236,7 +231,7 @@ end receives input messages containing no buttons. A scripted press launched int
 an unfocused window on a live desktop is therefore thrown away before anything
 reads it. `MP_SMOKE_SCRIPT` and `MP_SMOKE_FRONTEND` now claim focus the way
 `MP_SMOKE_MOUSE` already did; with that fixed the front end reaches the title and
-its `[ PRESS START ]` prompt (`front-end-press-start.png`).
+its `[ PRESS START ]` prompt.
 
 The front end then loops between the title and the attract movie. The main menu,
 and the Continue option on it, has not been reached: at the few frames per second

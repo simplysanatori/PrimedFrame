@@ -11,6 +11,10 @@ name: linux-release
 on:
   workflow_dispatch:
 
+# Nothing here writes to the repository.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -34,18 +38,18 @@ jobs:
             freetype-devel libpng-devel zlib-devel bzip2-devel brotli-devel \
             libzstd-devel openssl-devel ccache \
             systemd-devel libusb1-devel
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The version string is `git describe`; it needs the tags.
           fetch-depth: 0
       # ccache keeps the objects between runs, and the unpacked dependency
       # sources skip the downloads in Configure, as in windows.yml.
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .ccache
           key: ccache-linux-${{ github.sha }}
           restore-keys: ccache-linux-
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             build/port-gcc/_deps/*-src
@@ -102,11 +106,11 @@ jobs:
           d=build/release/metroid-prime-port-linux-x86_64
           mkdir -p "$d/share/licenses/metroid-prime-port"
           cp build/port-gcc/metroid_prime_port "$d/"
-          cp LICENSE NOTICE "$d/share/licenses/metroid-prime-port/"
+          bash tools/collect_licenses.sh build/port-gcc "$d/share/licenses/metroid-prime-port"
           tar -C build/release -czf build/release/metroid-prime-port-linux-x86_64.tar.gz \
             metroid-prime-port-linux-x86_64
           mv build/appimage/MetroidPrime-x86_64.AppImage build/release/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: metroid_prime_port-linux
           path: |

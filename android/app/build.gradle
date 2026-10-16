@@ -229,22 +229,29 @@ tasks.register("syncLicenseNotices", Sync) {
     // assets/<variant>/<abi>/ where nothing would find them.
     // openssl-license is a copy cmake/AndroidOpenSSL.cmake makes, because the
     // OpenSSL source may come from the dependency cache rather than _deps.
-    ["sdl-src", "imgui-src", "fmt-src", "zstd-src", "openssl-license"].each { dep ->
-        from(layout.projectDirectory.dir(".cxx")) {
-            include "**/_deps/${dep}/LICENSE*"
-            include "**/_deps/${dep}/COPYING*"
-            // A FileTree carries only files, so the copy spec never sees a
-            // directory: naming one in eachFile is what produced the empty
-            // path. The notice goes to the root of the asset dir, because the
-            // same notice appears under every build variant and nested paths
-            // would ship it several times in places nothing would look.
-            eachFile { details ->
-                details.relativePath = new RelativePath(true, ".")
-                details.path = "${dep}.txt"
-            }
-            includeEmptyDirs = false
+    // Every fetched package, not a fixed list: abseil, freetype, libpng and the
+    // rest are linked in too.
+    from(layout.projectDirectory.dir(".cxx")) {
+        include "**/_deps/*-src/LICENSE*"
+        include "**/_deps/*-src/COPYING*"
+        include "**/_deps/openssl-license/LICENSE*"
+        // A FileTree carries only files, so the copy spec never sees a
+        // directory: naming one in eachFile is what produced the empty
+        // path. The notice goes to the root of the asset dir, because the
+        // same notice appears under every build variant and nested paths
+        // would ship it several times in places nothing would look. The
+        // first licence of a package is <dep>.txt, any further one
+        // <dep>-<file>.
+        eachFile { details ->
+            def dep = details.file.parentFile.name
+            def name = details.file.name
+            details.relativePath = new RelativePath(true, ".")
+            details.path = (name ==~ /(?i)LICEN[CS]E(\.(txt|md))?/) ? "${dep}.txt" : "${dep}-${name}"
         }
+        includeEmptyDirs = false
     }
+    // Prebuilt packages that ship no licence of their own (Dawn, nod).
+    from("../../packaging/licenses") { include "*.txt" }
     doLast {
         def out = outputDir.get().asFile
         if (!out.exists() || out.listFiles()?.length == 0) {
