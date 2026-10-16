@@ -517,7 +517,8 @@ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
 # standalone. The exact IEEE semantics (-ffp-contract=off) are part of the contract.
 add_library(port_remastered_ground_contacts STATIC
     platform/port_remastered_ground_contacts.cpp
-    platform/port_remastered_ground_world.cpp)
+    platform/port_remastered_ground_world.cpp
+    platform/port_collision_failsafe.cpp)
 target_include_directories(port_remastered_ground_contacts PUBLIC platform/include)
 set_target_properties(port_remastered_ground_contacts PROPERTIES CXX_STANDARD 17)
 if(MSVC)
@@ -760,6 +761,18 @@ if(MP_BUILD_TESTS)
         extern/sdk/include)
     add_test(NAME port_air_mover_contact_tests COMMAND port_air_mover_contact_tests)
     set_tests_properties(port_air_mover_contact_tests PROPERTIES TIMEOUT 15 LABELS port)
+    foreach(t port_remastered_ground_contacts port_collision_failsafe)
+        add_executable(${t}_tests tests/${t}.cpp)
+        target_link_libraries(${t}_tests PRIVATE port_remastered_ground_contacts)
+        set_target_properties(${t}_tests PROPERTIES CXX_STANDARD 17)
+        if(MSVC)
+            target_compile_options(${t}_tests PRIVATE /fp:strict)
+        elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(${t}_tests PRIVATE -fno-fast-math -ffp-contract=off)
+        endif()
+        add_test(NAME ${t}_tests COMMAND ${t}_tests)
+        set_tests_properties(${t}_tests PROPERTIES TIMEOUT 15 LABELS port)
+    endforeach()
     add_test(NAME port_air_mover_wiring COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/tests/port_air_mover_wiring.py
         ${CMAKE_SOURCE_DIR}/src/MetroidPrime/CGameCollision.cpp)

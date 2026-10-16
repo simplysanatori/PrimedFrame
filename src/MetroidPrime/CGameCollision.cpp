@@ -26,10 +26,12 @@
 #include <Collision/CCollisionPrimitive.hpp>
 #include <Collision/CRayCastResult.hpp>
 #include <WorldFormat/CCollidableOBBTreeGroup.hpp>
+#include <WorldFormat/COBBTree.hpp>
 
 #ifdef TARGET_PC
 #include "port_debug.h"
 #include "port_air_mover_contact.h"
+#include "port_collision_failsafe.h"
 #include "port_remastered_ground_world.h"
 #endif
 
@@ -873,24 +875,6 @@ void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float 
 // (0xf946ac) - never has dt == worldDt again. The base class has the same two flags
 // (0xc1cdd0, 0xc1ce7c). See build/s-issue117-20261015/airfix/REPORT.md.
 
-// PORT STOPGAP, not Remastered behaviour. Remastered's mover has no "last
-// non-colliding state": after the step loop MoveObject 0xf94750 calls the push-out
-// DoCollisionFailsafe 0xc1fa68/0xc1fc54 (KB
-// func/CPhysicsCollisionFailsafe-DoCollisionFailsafe.md), which is not ported. Until
-// it is, MoveAirborneStepped keeps calling the retail CollisionFailsafe, which
-// restores LastNonCollidingState; that state is refreshed only by the failsafe's
-// own collision-free branch, so on the rm=1 mover's clean ticks (where the failsafe
-// is skipped) it went stale and a block (a solid actor activated around the player,
-// Observatory) teleported the player metres back. Record the free position on a
-// clean tick that starts and ends out of collision, as that branch does.
-static bool AirMoverIsFree(const CStateManager& mgr, CAreaCollisionCache& cache,
-                           CPhysicsActor& actor, const TEntityList& nearList) {
-  actor.MoveCollisionPrimitive(CVector3f::Zero());
-  return !CGameCollision::DetectCollisionBoolean_Cached(
-      mgr, cache, *actor.GetCollisionPrimitive(), actor.GetPrimitiveTransform(),
-      actor.GetMaterialFilter(), nearList);
-}
-
 void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, float dt,
                                          const TEntityList* colliderList) {
   CPhysicsActor& actor = player;
@@ -909,7 +893,6 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   }
   CAreaCollisionCache cache(motionVolume);
   BuildAreaCollisionCache(mgr, cache);
-  const bool entryFree = AirMoverIsFree(mgr, cache, actor, nearList); // port stopgap, see above
 
   // NCollisionUtils is_floor / is_wall (0xc7xxxx). Port contacts carry
   // DefaultCollisionMaterial's kind 0xffffffff; kMT_Floor stands in for kind 0
@@ -948,12 +931,14 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   // 0xf934ec:546-549), because that is the side whose normal, material and optional
   // secondary normal every shipped consumer reads.
   struct TerrainContacts {
-    static bool Build(CStateManager& mgr, CAreaCollisionCache& cache, CPhysicsActor& actor,
-                      const CMaterialFilter& filter, const CVector3f& delta,
-                       std::vector< PortRemasteredGroundWorld::Contact >& out,
-                       bool produceImpacts = true) {
-      out.clear();
-      if (!StaticQuery::Allowed(filter)) return false;
+    // The triangles the static half walks for the box placed `delta` from the actor.
+    // `groupEnds` (optional) receives each area's end index into `tris`: one collided
+    // object per area tree.
+    static void Collect(CStateManager& mgr, CAreaCollisionCache& cache, CPhysicsActor& actor,
+                        const CMaterialFilter& filter, const CVector3f& delta,
+                        PortRemasteredGroundWorld::Query& query,
+                        std::vector< PortRemasteredGroundWorld::Triangle >& tris,
+                        std::vector< std::size_t >* groupEnds = NULL) {
       actor.MoveCollisionPrimitive(delta);
       const CAABox box =
           actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform());
@@ -973,17 +958,16 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
              it != CWorld::skGlobalEnd; ++it) {
           CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles((*it).GetOctTree(), box,
                                                                      filter, src, true);
+          if (groupEnds != NULL) groupEnds->push_back(size_t(src.size()));
         }
       } else {
         for (int i = 0; i < int(cache.GetNumCaches()); ++i) {
           CMetroidAreaCollider::AABoxCollisionCheck_CollectTriangles(
               cache.GetOctreeLeafCache(i), box, filter, src, true);
+          if (groupEnds != NULL) groupEnds->push_back(size_t(src.size()));
         }
       }
-      if (src.size() == 0) {
-        return false;
-      }
-      std::vector< PortRemasteredGroundWorld::Triangle > tris;
+      tris.clear();
       tris.reserve(size_t(src.size()));
       for (int i = 0; i < int(src.size()); ++i) {
         const CMetroidAreaCollider::CTerrainTriangle& t = src[i];
@@ -997,12 +981,25 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         tri.materialBits = t.x24_flags;
         tris.push_back(tri);
       }
-      PortRemasteredGroundWorld::Query query;
       query.box.min = {box.GetMinPoint().GetX(), box.GetMinPoint().GetY(),
                        box.GetMinPoint().GetZ()};
       query.box.max = {box.GetMaxPoint().GetX(), box.GetMaxPoint().GetY(),
                        box.GetMaxPoint().GetZ()};
       query.actorMaterialBits = actor.GetMaterialList().GetValue();
+    }
+
+    static bool Build(CStateManager& mgr, CAreaCollisionCache& cache, CPhysicsActor& actor,
+                      const CMaterialFilter& filter, const CVector3f& delta,
+                       std::vector< PortRemasteredGroundWorld::Contact >& out,
+                       bool produceImpacts = true) {
+      out.clear();
+      if (!StaticQuery::Allowed(filter)) return false;
+      PortRemasteredGroundWorld::Query query;
+      std::vector< PortRemasteredGroundWorld::Triangle > tris;
+      Collect(mgr, cache, actor, filter, delta, query, tris);
+      if (tris.empty()) {
+        return false;
+      }
       const PortRemasteredGroundWorld::TerrainResult res =
           PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), produceImpacts);
       std::vector< const PortRemasteredGroundWorld::Contact* > consumer;
@@ -1012,6 +1009,51 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         out.push_back(*c);
       }
       return res.booleanHit;
+    }
+
+    // Failsafe impacts from producer pairs (self contact, then its triangle's): the self
+    // half's +0x14 depth (D, 0xc0b830) and the triangle half's normal. `ends` splits
+    // the triangles into collided objects (one {first,last} range each).
+    static void PairImpacts(const PortRemasteredGroundWorld::Result& res,
+                            const std::vector< std::size_t >& ends,
+                            const PortCollisionFailsafe::Vec3& otherCenter,
+                            std::vector< PortCollisionFailsafe::Contact >& out) {
+      std::vector< PortCollisionFailsafe::Contact > groups(ends.size());
+      for (std::size_t i = 0; i + 1 < res.contacts.size(); ++i) {
+        const PortRemasteredGroundWorld::Contact& self = res.contacts[i];
+        const PortRemasteredGroundWorld::Contact& tri = res.contacts[i + 1];
+        if (!self.self || tri.self || tri.triangle != self.triangle) continue;
+        std::size_t g = 0;
+        while (g < ends.size() && self.triangle >= ends[g]) ++g;
+        if (g == ends.size()) continue;
+        const CMaterialList mat(tri.materialBits);
+        PortCollisionFailsafe::Impact impact;
+        impact.depth = self.D;
+        impact.otherNormal = {tri.normalX, tri.normalY, tri.normalZ};
+        impact.otherCharacter = mat.HasMaterial(kMT_Character) ||
+                                mat.HasMaterial(kMT_CollisionActor); // filter flags 0x41
+        impact.otherCenter = otherCenter;
+        groups[g].impacts.push_back(impact);
+        ++i;
+      }
+      for (std::size_t g = 0; g < groups.size(); ++g) {
+        if (!groups[g].impacts.empty()) out.push_back(groups[g]);
+      }
+    }
+
+    // CheckCollision 0xc1ec60's static half for the failsafe core.
+    static void Impacts(CStateManager& mgr, CAreaCollisionCache& cache, CPhysicsActor& actor,
+                        const CMaterialFilter& filter, const CVector3f& delta,
+                        std::vector< PortCollisionFailsafe::Contact >& out) {
+      if (!StaticQuery::Allowed(filter)) return;
+      PortRemasteredGroundWorld::Query query;
+      std::vector< PortRemasteredGroundWorld::Triangle > tris;
+      std::vector< std::size_t > ends;
+      Collect(mgr, cache, actor, filter, delta, query, tris, &ends);
+      if (tris.empty()) return;
+      const PortRemasteredGroundWorld::TerrainResult res =
+          PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), true);
+      PairImpacts(res.impacts, ends, PortCollisionFailsafe::Vec3(), out);
     }
   };
 
@@ -1073,10 +1115,25 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       // corners' heights are the polygon's lowest and highest points. The low corner
       // alone sits on the probed box bottom, the interval's open end, so a dynamic
       // floor (a moving platform) never grounded.
+      // A box actor's side contact is different: retail AABoxAABoxIntersection gives
+      // every axis contact the overlap box as its bounds, while Remastered's
+      // CCollidableAABox::AABox_AABox (0xbf61b4 via 0xbf6650) gives each axis contact
+      // one point, the centre of the overlap's face, so a side contact sits at the
+      // overlap's mid-height. With the overlap's top as its point, a side contact ties
+      // the top contact's height and, walked first, wins the strict `pz <= low`: a
+      // player overhanging the edge of a box actor never landed. DetectDynamicCollision
+      // stops at the first actor that collides, so every contact is `id`'s; a side
+      // contact of a box (AABX) actor has a horizontal axis normal.
+      const CPhysicsActor* other = TCastToConstPtr< CPhysicsActor >(mgr.GetObjectById(id));
+      const bool boxActor = other != NULL && other->GetCollisionPrimitive() != NULL &&
+                            other->GetCollisionPrimitive()->GetPrimType() == 'AABX';
       for (int i=0; i<dynamic.GetCount(); ++i) {
         const auto& c = dynamic[i];
-        for (int k = 0; k < 2; ++k) {
-          const float pz = k == 0 ? c.GetPoint().GetZ() : c.GetExtreme().GetZ();
+        const bool boxSide = boxActor && c.GetNormalLeft().GetZ() == 0.f;
+        for (int k = 0; k < (boxSide ? 1 : 2); ++k) {
+          const float pz = boxSide ? (c.GetPoint().GetZ() + c.GetExtreme().GetZ()) * .5f
+                         : k == 0  ? c.GetPoint().GetZ()
+                                   : c.GetExtreme().GetZ();
           if (pz > feet || pz <= low) continue;
           result = Classify::IsFloor(c.GetMaterialLeft(),c.GetNormalLeft());
           low = pz;
@@ -1378,6 +1435,290 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
                      nearList, test,    mass,        dt,       hadCollision,
                      grounded, groundList, riderId};
 
+  // CPhysicsCollisionFailsafe (platform/port_collision_failsafe.cpp) over the mover's
+  // near list. Filters (CPhysicsActorMP1::SetupPhysicsObject 0xc529f0): the collision
+  // filter 0x1270 is the material filter, the failsafe filter 0x1290 is Include{Solid}
+  // Exclude{Character, CollisionActor}, the result filter 0x1280 passes everything.
+  struct Failsafe {
+    CStateManager& mgr;
+    CAreaCollisionCache& cache;
+    CPhysicsActor& actor;
+    const CMaterialFilter& materialFilter;
+    const CMaterialFilter failsafeFilter;
+    const TEntityList& nearList;
+    float worldDt;
+    // Scratch for Collide's tree walk, reused across calls.
+    mutable std::vector< PortRemasteredGroundWorld::Triangle > treeTris;
+    mutable std::vector< const COBBTree::CNode* > treeStack;
+
+    static PortCollisionFailsafe::Vec3 V(const CVector3f& v) {
+      return {v.GetX(), v.GetY(), v.GetZ()};
+    }
+    static CVector3f C(const PortCollisionFailsafe::Vec3& v) {
+      return CVector3f(v.x, v.y, v.z);
+    }
+    static PortCollisionFailsafe::Box B(const CAABox& b) {
+      return {V(b.GetMinPoint()), V(b.GetMaxPoint())};
+    }
+    const CMaterialFilter& Filter(bool failsafe) const {
+      return failsafe ? failsafeFilter : materialFilter;
+    }
+    CAABox BoxAt(const CVector3f& pos) const {
+      actor.MoveCollisionPrimitive(pos - actor.GetTranslation());
+      const CAABox b = actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform());
+      actor.MoveCollisionPrimitive(CVector3f::Zero());
+      return b;
+    }
+    // CheckCollision 0xc1ec60 visits another object when its own collision filter passes
+    // us; the filter given to GetCollision then gates the other's material.
+    const CPhysicsActor* Other(TUniqueId id, const CMaterialFilter& filter) const {
+      const CPhysicsActor* other = TCastToConstPtr< CPhysicsActor >(mgr.GetObjectById(id));
+      if (other == NULL || other == &actor || other->GetCollisionPrimitive() == NULL) return NULL;
+      if (!other->GetMaterialFilter().Passes(actor.GetMaterialList())) return NULL;
+      if (!filter.Passes(other->GetMaterialList())) return NULL;
+      return other;
+    }
+
+    // 0xc1ec60 with `filter`, the box at `pos`: terrain through the producer, box actors
+    // through AABox_AABox 0xbf61b4, tree actors through the producer per triangle.
+    // Sphere actors (SPHR/ABSH) are skipped: CCollidableSphere's producer 0xc029f0 and the
+    // NCollidablePairs AABox pairs are not decoded (unverified).
+    bool Collide(const CMaterialFilter& filter, const CVector3f& pos,
+                 std::vector< PortCollisionFailsafe::Contact >& out) const {
+      out.clear();
+      TerrainContacts::Impacts(mgr, cache, actor, filter, pos - actor.GetTranslation(), out);
+      const CAABox self = BoxAt(pos);
+      for (const TUniqueId* id = nearList.begin(); id != nearList.end(); ++id) {
+        const CPhysicsActor* other = Other(*id, filter);
+        if (other == NULL) continue;
+        const CCollisionPrimitive& prim = *other->GetCollisionPrimitive();
+        const CTransform4f primXf = other->GetPrimitiveTransform();
+        const CAABox bounds = prim.CalculateAABox(primXf);
+        const CMaterialList& otherMat = other->GetMaterialList();
+        const bool character =
+            otherMat.HasMaterial(kMT_Character) || otherMat.HasMaterial(kMT_CollisionActor);
+        if (prim.GetPrimType() == 'AABX') {
+          PortCollisionFailsafe::Contact c;
+          if (!PortCollisionFailsafe::BoxBoxImpacts(B(self), B(bounds), c.impacts)) continue;
+          for (std::size_t i = 0; i < c.impacts.size(); ++i) {
+            c.impacts[i].otherCharacter = character;
+            c.impacts[i].otherCenter = V(bounds.GetCenterPoint());
+          }
+          out.push_back(c);
+        } else if (prim.GetPrimType() == 'OBTG') {
+          const CCollidableOBBTreeGroup& group = static_cast< const CCollidableOBBTreeGroup& >(prim);
+          std::vector< PortRemasteredGroundWorld::Triangle >& tris = treeTris;
+          tris.clear();
+          // Nodes are culled against the self box in tree space (as the retail
+          // AABoxCollision walks do), grown by a margin so a triangle that only touches
+          // the box still reaches the producer.
+          const CVector3f margin(.01f, .01f, .01f);
+          const COBBox selfObb = COBBox::FromAABox(
+              CAABox(self.GetMinPoint() - margin, self.GetMaxPoint() + margin),
+              primXf.GetQuickInverse());
+          for (int t = 0; t < group.GetContainer()->NumTrees(); ++t) {
+            const COBBTree& tree = *group.GetOBBTreeAABox(t);
+            std::vector< const COBBTree::CNode* >& stack = treeStack;
+            stack.clear();
+            stack.push_back(&tree.GetRoot());
+            while (!stack.empty()) {
+              const COBBTree::CNode* node = stack.back();
+              stack.pop_back();
+              if (!selfObb.OBBIntersectsBox(node->GetOBB())) continue;
+              if (!node->IsLeaf()) {
+                stack.push_back(&node->GetRightNode());
+                stack.push_back(&node->GetLeftNode());
+                continue;
+              }
+              const rstl::vector< ushort >& surfs = node->GetLeafData().GetSurfaceVector();
+              for (int s = 0; s < int(surfs.size()); ++s) {
+                const CCollisionSurface surf = tree.GetTransformedSurface(surfs[s], primXf);
+                const u64 bits = u64(surf.GetSurfaceFlags()) | prim.GetMaterial().GetValue();
+                if (!filter.Passes(CMaterialList(bits))) continue;
+                PortRemasteredGroundWorld::Triangle tri;
+                for (int k = 0; k < 3; ++k) tri.verts[k] = {surf.GetVert(k).GetX(),
+                                                           surf.GetVert(k).GetY(),
+                                                           surf.GetVert(k).GetZ()};
+                const CVector3f n = surf.GetNormal();
+                tri.normal = {n.GetX(), n.GetY(), n.GetZ()};
+                tri.materialBits = bits;
+                tris.push_back(tri);
+              }
+            }
+          }
+          if (tris.empty()) continue;
+          PortRemasteredGroundWorld::Query query;
+          query.box.min = {self.GetMinPoint().GetX(), self.GetMinPoint().GetY(),
+                           self.GetMinPoint().GetZ()};
+          query.box.max = {self.GetMaxPoint().GetX(), self.GetMaxPoint().GetY(),
+                           self.GetMaxPoint().GetZ()};
+          query.actorMaterialBits = actor.GetMaterialList().GetValue();
+          const PortRemasteredGroundWorld::TerrainResult res =
+              PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), true);
+          std::vector< std::size_t > ends(1, tris.size());
+          const std::size_t before = out.size();
+          TerrainContacts::PairImpacts(res.impacts, ends, V(bounds.GetCenterPoint()), out);
+          if (character && out.size() > before) {
+            for (std::size_t i = 0; i < out.back().impacts.size(); ++i) {
+              out.back().impacts[i].otherCharacter = true;
+            }
+          }
+        }
+      }
+      return !out.empty();
+    }
+
+    // CheckGlobalCollision_Boolean_NoPostFilter 0xc1f240: the inclusive SAT path.
+    bool Blocked(const CMaterialFilter& filter, const CVector3f& pos) const {
+      std::vector< PortRemasteredGroundWorld::Contact > unused;
+      const CVector3f delta = pos - actor.GetTranslation();
+      // Build (Collect) moves the primitive by `delta` and back itself.
+      if (TerrainContacts::Build(mgr, cache, actor, filter, delta, unused, false)) return true;
+      actor.MoveCollisionPrimitive(delta);
+      bool hit = false;
+      for (const TUniqueId* id = nearList.begin(); id != nearList.end() && !hit; ++id) {
+        const CPhysicsActor* other = Other(*id, filter);
+        if (other == NULL) continue;
+        hit = CCollisionPrimitive::CollideBoolean(
+            CInternalCollisionStructure::CPrimDesc(*actor.GetCollisionPrimitive(),
+                                                   CMaterialFilter::skPassEverything,
+                                                   actor.GetPrimitiveTransform()),
+            CInternalCollisionStructure::CPrimDesc(*other->GetCollisionPrimitive(),
+                                                   CMaterialFilter::skPassEverything,
+                                                   other->GetPrimitiveTransform()));
+      }
+      actor.MoveCollisionPrimitive(CVector3f::Zero());
+      return hit;
+    }
+
+    // RayIntersection 0xc20810 with the collision filter: the smallest t below the
+    // current length, stopping at |t| < 1e-5. Terrain hits are code 2 (the port line
+    // test's backface handling against EBackfacingTris 1 is unverified). Character and
+    // CollisionActor objects are left out (FindOverlap Exclude{0x41}). The mover's near
+    // list stands in for 0xc20214's swept-box broadphase.
+    PortCollisionFailsafe::RayHit Ray(const PortCollisionFailsafe::Vec3& start,
+                                      const PortCollisionFailsafe::Vec3& dir, float length) const {
+      PortCollisionFailsafe::RayHit best;
+      float bestT = length;
+      if (StaticQuery::Allowed(materialFilter)) {
+        const CRayCastResult r =
+            RayStaticIntersection(mgr, C(start), C(dir), length, materialFilter);
+        if (r.IsValid() && r.GetTime() < bestT) {
+          bestT = r.GetTime();
+          best.code = PortCollisionFailsafe::kRay_Hit;
+          best.t = r.GetTime();
+          best.normal = V(r.GetPlane().GetNormal());
+          best.orientation = PortRemasteredGroundWorld::Orientation(r.GetMaterial().GetValue());
+        }
+      }
+      for (const TUniqueId* id = nearList.begin(); id != nearList.end(); ++id) {
+        if (best.code != PortCollisionFailsafe::kRay_Miss && fabsf(best.t) < 1e-5f) break;
+        const CPhysicsActor* other = TCastToConstPtr< CPhysicsActor >(mgr.GetObjectById(*id));
+        if (other == NULL || other == &actor || other->GetCollisionPrimitive() == NULL) continue;
+        const CMaterialList& otherMat = other->GetMaterialList();
+        if (otherMat.HasMaterial(kMT_Character) || otherMat.HasMaterial(kMT_CollisionActor) ||
+            !materialFilter.Passes(otherMat)) {
+          continue;
+        }
+        const CCollisionPrimitive& prim = *other->GetCollisionPrimitive();
+        PortCollisionFailsafe::RayHit hit;
+        if (prim.GetPrimType() == 'AABX') {
+          hit = PortCollisionFailsafe::RayAABox(B(prim.CalculateAABox(other->GetPrimitiveTransform())),
+                                                start, dir, bestT);
+        } else {
+          // Other primitives through the port's ray cast; a start inside is not reported
+          // as code 1 (unverified against the source's per-type casts).
+          const CRayCastResult r =
+              prim.CastRay(C(start), C(dir), bestT, materialFilter, other->GetPrimitiveTransform());
+          if (r.IsValid()) {
+            hit.code = PortCollisionFailsafe::kRay_Hit;
+            hit.t = r.GetTime();
+            hit.normal = V(r.GetPlane().GetNormal());
+          }
+        }
+        if (hit.code == PortCollisionFailsafe::kRay_Miss || !(hit.t < bestT)) continue;
+        hit.orientation = PortRemasteredGroundWorld::Orientation(otherMat.GetValue());
+        bestT = hit.t;
+        best = hit;
+      }
+      return best;
+    }
+
+    // 0xc20214 for the actor's current bounds. Runs every airborne tick: the length test
+    // comes first so the usual short step builds no hooks.
+    bool Tunnel(const CVector3f& from, const CVector3f& to, CVector3f& out) const {
+      const CAABox bounds =
+          actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform());
+      if (!PortCollisionFailsafe::TunnelingFailsafeApplies(B(bounds), V(from), V(to))) {
+        out = to;
+        return false;
+      }
+      const PortCollisionFailsafe::Vec3 pos = V(actor.GetTranslation());
+      PortCollisionFailsafe::TunnelHooks hooks;
+      hooks.ray = [this](const PortCollisionFailsafe::Vec3& s, const PortCollisionFailsafe::Vec3& d,
+                         float len) { return Ray(s, d, len); };
+      hooks.safeOffset = [this, &bounds, &pos](const PortCollisionFailsafe::Vec3& at, float maxDist,
+                                               PortCollisionFailsafe::Vec3& offset) {
+        // 0xc21740 -> 0xc217a0 with the collision filter, the box placed at `at`.
+        PortCollisionFailsafe::Box box = B(bounds);
+        const PortCollisionFailsafe::Vec3 shift = {at.x - pos.x, at.y - pos.y, at.z - pos.z};
+        box.min = {box.min.x + shift.x, box.min.y + shift.y, box.min.z + shift.z};
+        box.max = {box.max.x + shift.x, box.max.y + shift.y, box.max.z + shift.z};
+        PortCollisionFailsafe::SafeHooks safe;
+        safe.collidesAt = [this](const PortCollisionFailsafe::Vec3& p) {
+          return Blocked(materialFilter, C(p));
+        };
+        safe.rayBlocked = [this](const PortCollisionFailsafe::Vec3& s,
+                                 const PortCollisionFailsafe::Vec3& d, float len) {
+          const PortCollisionFailsafe::RayHit h = Ray(s, d, len);
+          return h.code != PortCollisionFailsafe::kRay_Miss && h.t < len;
+        };
+        return PortCollisionFailsafe::CalculateOffsetToSafeCollisionPoint(box, at, maxDist, safe,
+                                                                          offset);
+      };
+      PortCollisionFailsafe::Vec3 result;
+      const bool moved =
+          PortCollisionFailsafe::DoTunnelingFailsafe(B(bounds), pos, V(from), V(to), hooks, result);
+      out = C(result);
+      return moved;
+    }
+
+    // 0xc1fa68: sets the translation when it reports resolved.
+    bool Collision() const {
+      const CVector3f cur = actor.GetTranslation();
+      auto core = [this, &cur](bool failsafe, PortCollisionFailsafe::Vec3& out) {
+        PortCollisionFailsafe::CoreHooks hooks;
+        hooks.collide = [this, failsafe](const PortCollisionFailsafe::Vec3& p,
+                                         std::vector< PortCollisionFailsafe::Contact >& list) {
+          return Collide(Filter(failsafe), C(p), list);
+        };
+        hooks.tunnel = [this](const PortCollisionFailsafe::Vec3& f,
+                              const PortCollisionFailsafe::Vec3& t,
+                              PortCollisionFailsafe::Vec3& o) {
+          CVector3f r;
+          const bool moved = Tunnel(C(f), C(t), r);
+          o = V(r);
+          return moved;
+        };
+        return PortCollisionFailsafe::Core(V(cur), worldDt, hooks, out);
+      };
+      auto blocked = [this](bool failsafe, const PortCollisionFailsafe::Vec3& p) {
+        return Blocked(Filter(failsafe), C(p));
+      };
+      PortCollisionFailsafe::Vec3 out;
+      const bool resolved = PortCollisionFailsafe::DoCollisionFailsafe(V(cur), true, core, blocked, out);
+      if (resolved) {
+        actor.SetTranslation(C(out));
+      }
+      return resolved;
+    }
+  };
+  const Failsafe failsafe = {
+      mgr, cache, actor, materialFilter,
+      CMaterialFilter::MakeIncludeExclude(CMaterialList(kMT_Solid),
+                                          CMaterialList(kMT_Character, kMT_CollisionActor)),
+      nearList, dt};
+
   // 0xf943b4 MoveObject: one step, then up to ten more while time remains.
   CVector3f prevVel = actor.GetVelocityWR();
   const CVector3f entryVel = prevVel;
@@ -1442,8 +1783,9 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_Falling);
   }
   if (!(fabsf(remaining) < 1e-5f && !stalledFlag)) {
-    const bool resolved = CollisionFailsafe(mgr, cache, actor, *actor.GetCollisionPrimitive(),
-                                            nearList, remaining / dt, 2);
+    // 0xf94750 CPhysicsCollisionFailsafe::DoCollisionFailsafe 0xc1fa68: push out of
+    // what the actor overlaps. The mover keeps no last free state to fall back on.
+    const bool resolved = failsafe.Collision();
     // 0xf943b4: a failsafe that did not reposition the actor, with the whole
     // dt still unconsumed, stops it dead.
     if (!resolved && fabsf(remaining - dt) < 1e-5f) {
@@ -1456,10 +1798,13 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         -0.001f < actor.GetTranslation().GetZ() - entryPos.GetZ()) {
       actor.SetVelocityWR(CVector3f(endVel.GetX(), endVel.GetY(), 0.f));
     }
-  } else if (entryFree && AirMoverIsFree(mgr, cache, actor, nearList)) {
-    // Port stopgap (AirMoverIsFree): the retail failsafe's collision-free branch.
-    actor.SetLastNonCollidingState(actor.GetMotionState());
-    actor.SetNumTicksStuck(0);
+  }
+  // 0xf947f4-0xf9485c, every tick: DoTunnelingFailsafe 0xc20214 from the entry
+  // position to the current one; a hit places the actor and stops it.
+  CVector3f tunnelOut;
+  if (failsafe.Tunnel(entryPos, actor.GetTranslation(), tunnelOut)) {
+    actor.SetTranslation(tunnelOut);
+    actor.SetVelocityWR(CVector3f::Zero());
   }
   actor.ClearForcesAndTorques();
   actor.MoveCollisionPrimitive(CVector3f::Zero());
