@@ -323,6 +323,48 @@ const RoomBlock* FindBlock(const RoomObject& object, uint32_t tag) {
   return nullptr;
 }
 
+std::string EncodeDoorSaveState(const DoorSaveState& state) {
+  uint8_t flags = 0;
+  if (state.pendingClose)
+    flags |= 0x1;
+  if (state.refusedClosePending)
+    flags |= 0x2;
+  if (state.doClose)
+    flags |= 0x4;
+  std::string out;
+  out.push_back(static_cast< char >(state.open ? 1 : 0));
+  out.push_back(static_cast< char >(flags));
+  return out;
+}
+
+bool DecodeDoorSaveState(const std::string& data, DoorSaveState& out) {
+  // One byte is the old payload (the open flag alone); two is this build's.
+  if (data.empty() || data.size() > 2)
+    return false;
+  const uint8_t open = static_cast< uint8_t >(data[0]);
+  if (open > 1)
+    return false;
+  // Parsed locally and published only once every byte has validated, so a
+  // refused payload leaves the caller's state exactly as it was.
+  DoorSaveState parsed;
+  parsed.open = open != 0;
+  if (data.size() == 2) {
+    const uint8_t flags = static_cast< uint8_t >(data[1]);
+    if ((flags & ~kDoorSaveFlagsKnown) != 0)
+      return false;  // a bit this build does not define
+    parsed.pendingClose = (flags & 0x1) != 0;
+    parsed.refusedClosePending = (flags & 0x2) != 0;
+    parsed.doClose = (flags & 0x4) != 0;
+    // A door that is open has no close in flight, and the two close paths are
+    // different branches of Think that cannot both be owed.
+    if ((parsed.open && (parsed.pendingClose || parsed.refusedClosePending)) ||
+        (parsed.pendingClose && parsed.refusedClosePending))
+      return false;
+  }
+  out = parsed;
+  return true;
+}
+
 uint64_t FingerprintScriptData(const uint8_t* data, size_t size) {
   if (data == nullptr || size == 0)
     return 0;

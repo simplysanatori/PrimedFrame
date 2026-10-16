@@ -550,6 +550,13 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   (they resume from their start behaviour), nor are projectiles, cutscene or
   boss-fight progress. States without the section, or with the setting off,
   bring the room back as if just entered.
+  A door saved while it was closing comes back closed with that close still owed:
+  the door finishes closing, the messages a live close sends still go out (its
+  shield rearms) and it opens again as usual. Its close animation replays from the
+  start rather than from the exact frame it was interrupted at. A close a refused
+  opening or a neighbouring door asked for is kept as well. Snapshots written
+  before this carry the open flag alone and are not repaired: a door an earlier
+  restore left stuck stays as it is.
   A room's objects are restored only while its script still matches the
   snapshot: each captured room records a fingerprint of the room script it had
   loaded, and a room whose script changed since keeps nothing of the saved

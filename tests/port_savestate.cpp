@@ -125,6 +125,11 @@ int main() {
     enemy.blocks.push_back({0xBE, "future block"});
     RoomObject door;
     door.editorId = 0x00050007;
+    // The door payload (tag 7) lives inside the fingerprinted section: a two-byte
+    // mid-close payload (closed, normal close still owed, asked for by another
+    // door) and the RMST version 2 fingerprints must survive the same round trip,
+    // which is what the runtime writes when both features are on.
+    door.blocks.push_back({7, EncodeDoorSaveState(DoorSaveState{false, true, false, true})});
     withRoom.roomState.objects = {enemy, door};
     // Fingerprints: one entry per captured area, in the same order, with the
     // area the entry belongs to; an unreadable area records itself as unknown.
@@ -148,6 +153,19 @@ int main() {
     const RoomObject& got = out.roomState.objects[0];
     CHECK(got.editorId == 0x00020001 && got.active);
     CHECK(out.roomState.objects[1].editorId == 0x00050007 && !out.roomState.objects[1].active);
+    // The door block came back byte for byte and still decodes as mid-close.
+    {
+      const RoomBlock* doorBlock = FindBlock(out.roomState.objects[1], 7);
+      CHECK(doorBlock != nullptr &&
+            doorBlock->data == EncodeDoorSaveState(DoorSaveState{false, true, false, true}));
+      DoorSaveState restored;
+      CHECK(DecodeDoorSaveState(doorBlock->data, restored) && !restored.open &&
+            restored.pendingClose && !restored.refusedClosePending && restored.doClose);
+    }
+    // The file carries the fingerprinted section (RMST version 2).
+    const size_t roomTrailer = data.size();
+    CHECK(file.compare(roomTrailer, 4, "RMST") == 0 &&
+          static_cast< uint8_t >(file[roomTrailer + 4]) == 2);
     const RoomBlock* b = FindBlock(got, 3);
     CHECK(b != nullptr);
     BlockReader hpIn(b->data);
@@ -476,6 +494,84 @@ int main() {
     CHECK(PortSaveState::ChooseResumeWrite(true, true) == ResumeWriteChoice::kRefreshThenWrite);
     CHECK(PortSaveState::ChooseResumeWrite(false, true) == ResumeWriteChoice::kWriteSnapshot);
     CHECK(PortSaveState::ChooseResumeWrite(false, false) == ResumeWriteChoice::kNothing);
+  }
+  // The kTagDoor payload (issue #131): byte 0 is the door's mIsOpen and is the
+  // whole old format; byte 1 is a flag byte for the close paths a door can be
+  // saved in the middle of - a normal close still animating (Think's animation-end
+  // branch owes Closed, decrement included), a refused opening (the mClosing branch
+  // owes Closed but skips the decrement) and a close another door asked for, which
+  // also blocks this door from opening until it finishes. The policy is the pure
+  // encode/decode pair the capture and the restore both call; that the engine
+  // reaches them, and which branch sends what afterwards, is checked by
+  // tests/port_door_save_wiring.py.
+  {
+    using PortSaveState::DoorSaveState;
+    using PortSaveState::DecodeDoorSaveState;
+    using PortSaveState::EncodeDoorSaveState;
+    struct Case {
+      DoorSaveState state;
+      const char* bytes;
+    };
+    // Every state a door can be captured in, and its wire bytes.
+    const Case cases[] = {
+        {{false, false, false, false}, "\0\0"},  // closed, nothing owed
+        {{true, false, false, false}, "\1\0"},   // open
+        {{false, true, false, false}, "\0\1"},   // a normal close still animating
+        {{false, true, false, true}, "\0\5"},    // ... asked for by another door
+        {{false, false, true, false}, "\0\2"},   // a refused opening
+        {{false, false, false, true}, "\0\4"},   // only the block on opening again
+    };
+    for (const Case& c : cases)
+      CHECK(EncodeDoorSaveState(c.state) == std::string(c.bytes, 2));
+    // Round trip of each, whole state compared.
+    for (const Case& c : cases) {
+      DoorSaveState got;
+      CHECK(DecodeDoorSaveState(EncodeDoorSaveState(c.state), got));
+      CHECK(got.open == c.state.open && got.pendingClose == c.state.pendingClose &&
+            got.refusedClosePending == c.state.refusedClosePending &&
+            got.doClose == c.state.doClose);
+    }
+    DoorSaveState out;
+    // The mid-close payload an earlier build of this lane wrote (normal close, no
+    // other flag) still decodes as exactly that.
+    CHECK(DecodeDoorSaveState(std::string("\0\1", 2), out) && !out.open && out.pendingClose &&
+          !out.refusedClosePending && !out.doClose);
+    // Old snapshots: one byte, exactly the old behaviour (open flag alone).
+    CHECK(DecodeDoorSaveState(std::string("\0", 1), out) && !out.open && !out.pendingClose &&
+          !out.refusedClosePending && !out.doClose);
+    CHECK(DecodeDoorSaveState(std::string("\1", 1), out) && out.open && !out.pendingClose &&
+          !out.refusedClosePending && !out.doClose);
+
+    // Invalid payloads are refused, not applied (the door is left as loaded).
+    // Each payload is refused on its own, and each is checked against four
+    // sentinels that differ field by field, so a decoder that published a field
+    // before discovering the payload was malformed is caught whichever field it
+    // wrote first.
+    const std::string invalid[] = {
+        std::string(),                 // empty
+        std::string("\2", 1),          // open flag not 0/1
+        std::string("\3", 1),          // ... and above the flag range
+        std::string("\0\x08", 2),      // unknown flag bit
+        std::string("\0\x80", 2),      // unknown flag bit
+        std::string("\1\1", 2),        // open with a normal close in flight
+        std::string("\1\2", 2),        // open with a refused close in flight
+        std::string("\0\3", 2),        // both close paths owed at once
+        std::string("\0\0\0", 3),      // not a payload we write
+        std::string("\1\0\0", 3),      // open, three bytes
+    };
+    const DoorSaveState sentinels[] = {DoorSaveState{true, false, false, false},
+                                       DoorSaveState{false, true, false, false},
+                                       DoorSaveState{false, false, true, false},
+                                       DoorSaveState{false, false, false, true}};
+    for (const std::string& payload : invalid) {
+      for (const DoorSaveState& sentinel : sentinels) {
+        out = sentinel;
+        CHECK(!DecodeDoorSaveState(payload, out));
+        CHECK(out.open == sentinel.open && out.pendingClose == sentinel.pendingClose &&
+              out.refusedClosePending == sentinel.refusedClosePending &&
+              out.doClose == sentinel.doClose);
+      }
+    }
   }
   // Snapshot refresh schedule.
   {

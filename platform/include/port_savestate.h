@@ -91,6 +91,38 @@ struct BlockReader {
 // The block with `tag`, or nullptr.
 const RoomBlock* FindBlock(const RoomObject& object, uint32_t tag);
 
+// The kTagDoor block payload. Byte 0 is the door's mIsOpen and is what the old
+// format held alone, so a one-byte payload decodes exactly as it used to. Byte 1,
+// written by this build only, is a flag byte for the close paths the door can be
+// captured in the middle of: each one reports closed while Think still owes the
+// Closed message a live close would have sent, and the door's own branch sends it.
+// An open door owes neither close, so its pending bits are clear; doClose is
+// independent of them.
+struct DoorSaveState {
+  bool open = false;
+  // bit 0: !mIsOpen && mWasOpen - the close animation is running and Think's
+  // animation-end branch owes Closed with all of its connections (the dock
+  // decrement included).
+  bool pendingClose = false;
+  // bit 1: mClosing - a refused opening (the room behind was not ready) still owes
+  // Closed, but its branch skips the decrement connection.
+  bool refusedClosePending = false;
+  // bit 2: mDoClose - the close was asked for by another door, which also blocks
+  // this door from opening until the close finishes.
+  bool doClose = false;
+};
+// The flag bits of byte 1: anything else is a payload this build never wrote and
+// is refused.
+constexpr uint8_t kDoorSaveFlagsKnown = 0x7;
+// The two wire bytes, in the order above (for the save writer and the unit test).
+std::string EncodeDoorSaveState(const DoorSaveState& state);
+// False for a payload this build never writes - empty, longer than two bytes, an
+// open flag above 1, an unknown flag bit, open with a close in flight, or both
+// close paths at once, none of which the door's state machine can produce. `out`
+// is modified only for a payload that passes every check: a caller that keeps its
+// previous value keeps it exactly.
+bool DecodeDoorSaveState(const std::string& data, DoorSaveState& out);
+
 // Room script fingerprints (pure, port_savestate_format.cpp, so the unit test
 // runs the same code the runtime decides with). The 64-bit FNV-1a is a
 // compatibility token - "is this still the same room script?" - not a security

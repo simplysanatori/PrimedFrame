@@ -213,9 +213,16 @@ void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
     obj.blocks.push_back({kTagCounter, w.bytes});
   }
   if (CScriptDoor* door = TCastToPtr< CScriptDoor >(&ent)) {
-    BlockWriter w;
-    w.U8(door->IsOpen() ? 1 : 0);
-    obj.blocks.push_back({kTagDoor, w.bytes});
+    DoorSaveState state;
+    state.open = door->IsOpen();
+    // A door that reports open has no close in flight, so its pending bits stay
+    // clear ("open with a close in flight" is not a payload this build writes).
+    if (!state.open) {
+      state.pendingClose = door->PortClosingPending();
+      state.refusedClosePending = door->PortRefusedClosePending();
+    }
+    state.doClose = door->PortDoClosePending();
+    obj.blocks.push_back({kTagDoor, EncodeDoorSaveState(state)});
   }
   if (CScriptPlatform* platform = TCastToPtr< CScriptPlatform >(&ent)) {
     BlockWriter w;
@@ -273,11 +280,23 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj) {
   }
   if (CScriptDoor* door = TCastToPtr< CScriptDoor >(&ent)) {
     if (const RoomBlock* b = FindBlock(obj, kTagDoor)) {
-      BlockReader r(b->data);
-      const bool open = r.U8() != 0;
-      // No script message: Open and Close fire the door's connections again.
-      if (r.ok && open != door->IsOpen())
-        door->PortRestoreOpen(open);
+      DoorSaveState want;
+      // No script message here: a door that still owes Closed sends it from Think's
+      // own branch for the kind of close it was in (once the rest of the saved room
+      // state has been applied). A payload this build did not write is ignored.
+      if (DecodeDoorSaveState(b->data, want)) {
+        CScriptDoor::PortDoorFlags flags;
+        flags.open = want.open;
+        flags.normalClosePending = want.pendingClose;
+        flags.refusedClosePending = want.refusedClosePending;
+        flags.doClose = want.doClose;
+        // Applied even when the door already reads closed: that is what restores
+        // the message an interrupted close still owes, and the block on opening
+        // again a close in flight carries.
+        if (flags.normalClosePending || flags.refusedClosePending || flags.doClose ||
+            flags.open != door->IsOpen())
+          door->PortRestoreDoorState(flags);
+      }
     }
   }
   if (CScriptPlatform* platform = TCastToPtr< CScriptPlatform >(&ent)) {
