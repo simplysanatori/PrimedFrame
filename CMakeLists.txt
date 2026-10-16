@@ -750,6 +750,12 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_custom_res_tests PRIVATE platform/include)
     add_executable(port_env_tests tests/port_env.cpp)
     target_include_directories(port_env_tests PRIVATE platform/include)
+    add_executable(port_air_mover_contact_tests tests/port_air_mover_contact.cpp
+        src/Collision/CMaterialFilter.cpp)
+    target_include_directories(port_air_mover_contact_tests PRIVATE platform/include include
+        extern/sdk/include)
+    add_test(NAME port_air_mover_contact_tests COMMAND port_air_mover_contact_tests)
+    set_tests_properties(port_air_mover_contact_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_hdr_scene_policy_tests tests/port_hdr_scene_policy.cpp)
     target_include_directories(port_hdr_scene_policy_tests PRIVATE include extern/aurora/include)
     target_compile_definitions(port_hdr_scene_policy_tests PRIVATE TARGET_PC VERSION=0)
