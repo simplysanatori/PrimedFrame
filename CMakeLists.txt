@@ -933,6 +933,14 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_gyro_motion_tests PRIVATE platform/include)
     add_test(NAME port_gyro_motion_tests COMMAND port_gyro_motion_tests)
     set_tests_properties(port_gyro_motion_tests PROPERTIES TIMEOUT 15 LABELS port)
+    # The Windows renderer choice (issue #135): the names the settings file and
+    # MP_GRAPHICS_BACKEND carry, the per-run override that outranks the file, and the
+    # status the Video page draws (platform/include/port_graphics_backend.h). The
+    # settings key's own read/write is covered by port_settings_roundtrip.
+    add_executable(port_graphics_backend_tests tests/port_graphics_backend.cpp)
+    target_include_directories(port_graphics_backend_tests PRIVATE platform/include extern/aurora/include)
+    add_test(NAME port_graphics_backend_tests COMMAND port_graphics_backend_tests)
+    set_tests_properties(port_graphics_backend_tests PROPERTIES TIMEOUT 15 LABELS port)
     aurora_copy_runtime_dlls(port_input_settings_tests)
     add_executable(port_log_redact_tests tests/port_log_redact.cpp)
     target_include_directories(port_log_redact_tests PRIVATE platform/include)

@@ -19,6 +19,7 @@
 #include "port_disc.h"
 #include "port_gci.h"
 #include "port_debug.h"
+#include "port_graphics_backend.h"
 #include "port_paths.h"
 #include "port_actor_collision_bounds.h"
 #include "port_apclient.h"
@@ -796,6 +797,35 @@ const char* DefaultTexturesPath() {
     }();
     return sPath.empty() ? nullptr : sPath.c_str();
 }
+
+// The API to ask Aurora for. It is tried first, with Aurora's own order (D3D12,
+// Vulkan, D3D11) as the fallback, so a driver that can't start it still plays.
+AuroraBackend DesiredGraphicsBackend() {
+#if defined(_WIN32)
+    // The `graphics_backend` setting (F1 > Video > Compatibility, issue #135), read at
+    // window creation, so a change needs a restart. Auto keeps asking for nothing in
+    // particular. MP_GRAPHICS_BACKEND=auto|d3d12|vulkan|d3d11 overrides the setting for
+    // one run; an unknown value warns and leaves the saved selection in charge.
+    // port_graphics_backend.h owns the mapping and the same resolution the Video page
+    // shows, so a request cannot be described one way and started another.
+    const char* const env = std::getenv("MP_GRAPHICS_BACKEND");
+    const PortGraphicsBackend::Request request = PortGraphicsBackend::Resolve(PortDebug::GraphicsBackend(), env);
+    if (request.rejected) {
+        PortLog::Write("port: MP_GRAPHICS_BACKEND=%s is not auto, d3d12, vulkan or d3d11; "
+                       "using graphics_backend=%s\n",
+                       env, PortDebug::GraphicsBackendConfigName(request.backend));
+        std::fprintf(stderr,
+                     "metroid_prime_port: MP_GRAPHICS_BACKEND=%s is not auto, d3d12, vulkan or d3d11; "
+                     "using graphics_backend=%s\n",
+                     env, PortDebug::GraphicsBackendConfigName(request.backend));
+    }
+    return PortGraphicsBackend::ToAurora(request.backend);
+#else
+    // Elsewhere the API is Dawn's to choose: MP_OPENGLES=0/1 overrides the `opengles`
+    // setting for one run (Android's OpenGL ES, issue #7).
+    return port::EnvFlag("MP_OPENGLES", PortDebug::OpenGles()) ? BACKEND_OPENGLES : BACKEND_AUTO;
+#endif
+}
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1021,8 +1051,9 @@ int main(int argc, char** argv) {
         .userPath = userFolder.empty() ? nullptr : userFolder.c_str(),
         .cachePath = cacheFolder.empty() ? nullptr : cacheFolder.c_str(),
         .resourcesPath = resourcesPath.empty() ? nullptr : resourcesPath.c_str(),
-        // MP_OPENGLES=0/1 overrides the setting for one run.
-        .desiredBackend = port::EnvFlag("MP_OPENGLES", PortDebug::OpenGles()) ? BACKEND_OPENGLES : BACKEND_AUTO,
+        // Which API to ask Aurora for: aurora tries it first and falls back to its
+        // own order (see DesiredGraphicsBackend).
+        .desiredBackend = DesiredGraphicsBackend(),
         .msaa = static_cast<uint32_t>(PortDebug::Msaa()),
         .maxTextureAnisotropy = static_cast<uint16_t>(PortDebug::Anisotropy()),
         .vsync = false,
@@ -1332,9 +1363,10 @@ int main(int argc, char** argv) {
         if (PortDebug::RenderScale() > 0.f) {
             std::snprintf(scale, sizeof(scale), "%.2fx", static_cast<double>(PortDebug::RenderScale()));
         }
-        PortLog::Write("port: settings: backend %s, msaa %d, anisotropy %d, scale %s, dynamic-res %s, "
+        PortLog::Write("port: settings: backend %s (in use: %s), msaa %d, anisotropy %d, scale %s, dynamic-res %s, "
                        "smoothing %s (interp %s), vsync %s, frame-cap %d, remastered-models %s\n",
-                       config.desiredBackend == BACKEND_OPENGLES ? "opengles" : "auto", PortDebug::Msaa(),
+                       PortGraphicsBackend::DisplayName(config.desiredBackend),
+                       PortGraphicsBackend::DisplayName(aurora_get_backend()), PortDebug::Msaa(),
                        PortDebug::Anisotropy(), scale, dynamicRes,
                        PortDebug::SmoothFrames() ? "on" : "off", PortDebug::FrameInterpolation() ? "on" : "off",
                        PortDebug::VsyncEnabled() ? "on" : "off", PortDebug::FrameRateCap(),

@@ -147,6 +147,9 @@
 {"Video", "Frame rate", "Frame rate", "Smooth uncapped frames", "smooth uncapped frame pacing interpolate"},
 {"Video", "Frame rate", "Simulation rate (very experimental)", "Adaptive (follow frame rate)", "simulation tick adaptive experimental"},
 {"Video", "Frame rate", "Simulation rate (very experimental)", "Sim Hz", "simulation tick rate hz experimental"},
+#if defined(_WIN32)
+{"Video", "Compatibility", "Compatibility", "Renderer", "renderer graphics api backend direct3d d3d12 d3d11 vulkan compatibility"},
+#endif
 {"Video", "Compatibility", "Compatibility", "Use OpenGL ES", "gles opengl android compatibility driver"},
 #if defined(__ANDROID__)
 {"Video", "Compatibility", "Compatibility", "Vulkan driver", "gpu driver vulkan turnip adreno install"},
