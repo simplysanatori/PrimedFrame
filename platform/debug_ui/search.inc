@@ -73,6 +73,24 @@ bool LabelIs(const char* label, const char* text) {
          (shown == length || (shown > length + 1 && label[length] == ' ' && label[length + 1] == '('));
 }
 
+// Whether `label` is one of the headers in `section`: a header, or headers inside one another
+// written outermost first and joined with " > ", as the results list shows them. Each is opened
+// as it is drawn, so the next one in appears on the following frame.
+bool InSection(const char* section, const char* label) {
+  for (const char* part = section; *part != '\0';) {
+    const char* end = std::strstr(part, " > ");
+    const std::string header = end != nullptr ? std::string(part, end) : std::string(part);
+    if (LabelIs(label, header.c_str())) {
+      return true;
+    }
+    if (end == nullptr) {
+      break;
+    }
+    part = end + 3;
+  }
+  return false;
+}
+
 // The row's widget, drawn this frame: the occurrence it wants is scrolled to
 // and focused once, then flashed until the flash fades.
 void SearchItemFound(ImGuiContext& g, ImGuiID id, const ImRect& rect) {
@@ -112,8 +130,8 @@ void SearchItemHook(ImGuiContext* ctx, ImGuiID id, const char* label, ImGuiItemS
   }
   ImGuiContext& g = *ctx;
   const SettingsIndexRow& row = *jump.row;
-  if ((flags & ImGuiItemStatusFlags_Openable) != 0 && *row.section != '\0' && LabelIs(label, row.section)) {
-    // The header the widget sits under, opened on the next frame if closed.
+  if ((flags & ImGuiItemStatusFlags_Openable) != 0 && *row.section != '\0' && InSection(row.section, label)) {
+    // A header the widget sits under, opened on the next frame if closed.
     if ((flags & ImGuiItemStatusFlags_Opened) == 0) {
       g.CurrentWindow->DC.StateStorage->SetInt(id, 1);
     }

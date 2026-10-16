@@ -33,11 +33,30 @@ struct ImportState {
   int done = 0;            // models tried so far
   int total = 0;
   int failed = 0;
+  // Where a full import is: step `step` of `steps` (0 when not counted, as for a movies-only
+  // import), and how far into that step, out of stepTotal (0 when it cannot say).
+  int step = 0;
+  int steps = 0;
+  int stepDone = 0;
+  int stepTotal = 0;
+  bool cancelling = false; // cancel was asked for and the import has not stopped yet
   std::string message;     // what it is doing, or how it ended
   std::vector<std::string> lines;  // the newest kImportMaxLines of its log
 };
 
 inline constexpr size_t kImportMaxLines = 200;
+
+// The parts of the game the panel leaves out of the next import, on top of the
+// MP_REMASTERED_* switches (docs/MODS.md): a part is imported only when both want it.
+struct ImportParts {
+  bool hud = true;
+  bool text = true;
+  bool effects = true;
+  bool movies = true;
+  bool gallery = true;
+  bool geometry = true; // the rooms' static geometry (MP_REMASTERED_GEOMETRY)
+};
+void SetImportParts(const ImportParts& parts);
 
 // The mod folder an import ends up as.
 inline constexpr const char* kImportModName = "remastered-models";
@@ -56,7 +75,8 @@ inline constexpr int kTextures = 3;
 inline constexpr int kModels = 8;      // the table's models, their looks and the ANCS copies
 // 25: swoosh GRAD is the exact PGRD element, no longer a 101-key KEYP bake.
 inline constexpr int kEffects = 27;    // port_remastered_effect_import and the particle converters
-inline constexpr int kRooms = 19;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
+// 20: two rooms matching one area write only the closer match's files, not the later room's.
+inline constexpr int kRooms = 20;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 inline constexpr int kHud = 7;         // port_remastered_hud, port_remastered_map

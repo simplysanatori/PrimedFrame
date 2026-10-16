@@ -103,16 +103,49 @@ void DrawRemasteredImport() {
 #endif
   ImGui::EndDisabled();
   if (state.running) {
-    ImGui::ProgressBar(state.total > 0 ? float(state.done) / float(state.total) : 0.f, ImVec2(-1.f, 0.f),
-                       state.message.c_str());
+    // The whole import, step by step, and within a step as far as it can say.
+    const float within = state.stepTotal > 0 ? std::min(1.f, float(state.stepDone) / float(state.stepTotal)) : 0.f;
+    float fraction = state.total > 0 ? float(state.done) / float(state.total) : 0.f;
+    std::string label = state.cancelling ? "Cancelling..." : state.message;
+    if (state.steps > 0 && state.step > 0) {
+      fraction = (float(state.step - 1) + within) / float(state.steps);
+      if (!state.cancelling) {
+        label = "Step " + std::to_string(state.step) + " of " + std::to_string(state.steps) + ": " + state.message;
+      }
+    }
+    ImGui::ProgressBar(fraction, ImVec2(-1.f, 0.f), label.c_str());
     if (sImportUnloadedMods) {
       ImGui::TextDisabled("The mods are unloaded until the import ends.");
       DrawModReloadMessage();
     }
+    ImGui::BeginDisabled(state.cancelling);
     if (ImGui::Button("Cancel##remastered")) {
       PortRemastered::CancelImport();
     }
+    ImGui::EndDisabled();
+    if (state.cancelling) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("Stopping at the next file, which can take a moment.");
+    }
   } else {
+    if (ImGui::TreeNode("remastered-parts", "What to import")) {
+      // Kept as the parts left out, so a part added later is imported by default.
+      PortRemastered::ImportParts parts = RemasteredImportParts();
+      bool changed = false;
+      changed |= ImGui::Checkbox("Room geometry", &parts.geometry);
+      ItemHelp("Every model the rooms place. Most of the import's size (about 5.5 GB of 6.5 GB) and time; "
+               "the game has to be restarted to draw it.");
+      changed |= ImGui::Checkbox("Particle effects", &parts.effects);
+      changed |= ImGui::Checkbox("HUD", &parts.hud);
+      changed |= ImGui::Checkbox("Text", &parts.text);
+      changed |= ImGui::Checkbox("Movies", &parts.movies);
+      changed |= ImGui::Checkbox("Gallery", &parts.gallery);
+      if (changed) {
+        SetRemasteredImportParts(parts);
+      }
+      ImGui::TextDisabled("Used by the next import. The MP_REMASTERED_* switches can still leave a part out.");
+      ImGui::TreePop();
+    }
     ImGui::BeginDisabled(sImage[0] == '\0' || sKeys[0] == '\0');
 #if !defined(__ANDROID__)
     // A typed path is kept once it is used (Android keeps what was picked).
@@ -135,6 +168,10 @@ void DrawRemasteredImport() {
       ImGui::PushStyleColor(ImGuiCol_Text, ThemeGoodColor(ImVec4(0.5f, 1.f, 0.5f, 1.f)));
       ImGui::TextWrapped("%s", state.message.c_str());
       ImGui::PopStyleColor();
+      if (state.failed > 0) {
+        ImGui::TextColored(ThemeWarnColor(), "%d of %d models could not be converted and keep the disc's look; "
+                           "the notes below say why.", state.failed, state.total);
+      }
       // It loads on its own when the import ends; this is to load it again
       // by hand.
       if (ImGui::Button("Load it again##remastered")) {
@@ -150,6 +187,18 @@ void DrawRemasteredImport() {
     }
   }
   if (!state.lines.empty() && ImGui::TreeNode("remastered-log", "%d notes", int(state.lines.size()))) {
+    if (ImGui::SmallButton("Copy the notes##remastered")) {
+      std::string all;
+      for (const std::string& line : state.lines) {
+        all += line;
+        all += '\n';
+      }
+      ImGui::SetClipboardText(all.c_str());
+    }
+    if (state.lines.size() >= PortRemastered::kImportMaxLines) {
+      ImGui::SameLine();
+      ImGui::TextDisabled("(the newest %d)", int(PortRemastered::kImportMaxLines));
+    }
     for (const std::string& line : state.lines) {
       ImGui::TextWrapped("%s", line.c_str());
     }

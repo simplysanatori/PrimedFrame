@@ -397,6 +397,8 @@ const SettingKey kSettingKeys[] = {
      [](std::ostream& out) { out << sRemasteredImagePath; }, true, "/dumps/mpr.nsp", "/dumps/mpr.xci"},
     {"remastered_keys", [](const std::string& value) { sRemasteredKeysPath = value; },
      [](std::ostream& out) { out << sRemasteredKeysPath; }, true, "/keys/prod.keys", "/k/p.keys"},
+    {"remastered_skip", [](const std::string& value) { sRemasteredSkip = value; },
+     [](std::ostream& out) { out << sRemasteredSkip; }, true, "geometry,movies", "hud"},
     {"ai_audio", [](const std::string& value) { sAiAudioEnabled = ParseBool(value); },
      [](std::ostream& out) { WriteBool(out, sAiAudioEnabled); }, false, "1", "0"},
     {"musyx_audio", [](const std::string& value) { sMusyxAudioEnabled = ParseBool(value); },

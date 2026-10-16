@@ -152,6 +152,45 @@ void TestFailure() {
   std::memcpy(notEffect.data() + 0x14, "PART", 4);
   Check(!ParseEffect(notEffect.data(), notEffect.size(), effect, error), "non-GENP rejected");
 }
+
+// SIZE nested `depth` MULTs deep, then `properties` more MAXPs: a file built to
+// run the parser out of stack is refused instead.
+std::vector<uint8_t> Nested(size_t depth, size_t properties) {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "SIZE", 3);
+  for (size_t i = 0; i < depth; ++i) {
+    PutFourCC(out, "MULT");
+  }
+  PutFourCC(out, "CNST");
+  PutFloat(out, 2.0f);
+  for (size_t i = 0; i < depth; ++i) {
+    PutFourCC(out, "CNST");
+    PutFloat(out, 1.0f);
+  }
+  for (size_t i = 0; i < properties; ++i) {
+    PutProperty(out, "MAXP", 1);
+    PutFourCC(out, "CNST");
+    Put32(out, 5);
+  }
+  PutProperty(out, "_END", 4);
+  Put32(out, 0);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  return out;
+}
+
+void TestDeepNesting() {
+  EffectNode effect;
+  std::string error;
+  std::vector<uint8_t> data = Nested(20, 50);
+  Check(ParseEffect(data.data(), data.size(), effect, error), "nested effect parses");
+  data = Nested(200000, 0);
+  Check(!ParseEffect(data.data(), data.size(), effect, error), "too deeply nested effect is refused");
+  data = Nested(1, 200000);
+  Check(!ParseEffect(data.data(), data.size(), effect, error), "too long a property list is refused");
+}
 } // namespace
 
 void PutConstant(std::vector<uint8_t>& out, float value) {
@@ -374,6 +413,7 @@ int main() {
   TestFlaggedChild();
   TestTextureElements();
   TestGeneratorFlags();
+  TestDeepNesting();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

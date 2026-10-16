@@ -298,6 +298,12 @@ and installed as `mods/remastered-models`, replacing an older one, when the
 import ends (a mod reload then loads it; the pending install also applies at
 the next start). A cancelled or interrupted import leaves nothing behind.
 Once it has ended, "Load it again" in the same panel reloads the mods by hand.
+"What to import" in the panel leaves parts out of the next import (room
+geometry, particle effects, HUD, text, movies, gallery), kept as
+`remastered_skip` in the settings file; the `MP_REMASTERED_*` switches below
+can still leave a part out the panel keeps. While it runs, the bar counts the
+import's steps; when it ends with models that failed, the panel says how many,
+and "Copy the notes" puts the notes on the clipboard for a report.
 From a terminal,
 `metroid_prime_port --import-remastered <image.nsp|image.xci> [key file]` does the same
 on every core without starting the game and installs at once (the disc comes
@@ -311,6 +317,10 @@ once per launch, and the Mods and import panels say "re-import needed". Bump `kI
 leaves the stamp alone.
 Converter 52 extends correct room lightmap UV selection to 14 additional Remastered shader
 families (15 covered total); existing Remastered-model imports need re-importing.
+Rooms 20: when two Remastered rooms match one area, only the closer match's environment,
+geometry and liquids are written (before, the later room's overwrote the first's). Existing imports
+show "re-import needed"; a re-import makes the rooms stage again, and the room models stage
+again only if the rooms now place a different set of models.
 
 The port reads the image itself (`platform/port_remastered_nsp.cpp`, `_pak`,
 `_txtr`, `_cmdl`), and `_convert` writes a CMDL (plus CSKR for skinned models)
@@ -335,7 +345,10 @@ comma-separated list of room names, or `none`), the import also writes the rooms
 converted as above with textures capped at 1024 px, and a `.roomgeo` per
 area, in the mod's `roomgeo` folder. Experimental: the full set is about
 8,500 models and brings the mod from 1 GB to 6.5 GB, and the game has to be
-restarted to draw it.
+restarted to draw it. A first import (no earlier one to reuse) checks the free
+space for that up front and refuses with how much it needs; a later one links
+most of its files from the earlier import instead. The import it replaces is
+deleted in the background after the mods reload.
 
 The room geometry also brings the rooms' liquid
 surfaces: each water, poison or lava volume's own surface model, converted

@@ -1,5 +1,6 @@
 // Settings search index: one row per F1 widget, in draw order.
-// {page, sub-tab ("" if none), section ("" if none), label, extra search keywords}
+// {page, sub-tab ("" if none), section ("" if none; headers inside one another joined
+// with " > ", outermost first), label, extra search keywords}
 // The label is the widget's visible text (the part before any "##").
 // tools/check_settings_index.py checks it against the sources (ctest port_settings_index).
 {"Game", "", "", "Original experience", "gamecube 4:3 640x480 60hz classic original"},
@@ -163,6 +164,12 @@
 #endif
 {"Remastered", "", "Metroid Prime Remastered models", "Import", "remastered start import run room geometry particles effects movies"},
 {"Remastered", "", "Metroid Prime Remastered models", "Load it again", "remastered reload again import"},
+{"Remastered", "", "Metroid Prime Remastered models > What to import", "Room geometry", "remastered import parts room geometry models skip size"},
+{"Remastered", "", "Metroid Prime Remastered models > What to import", "Particle effects", "remastered import parts particle effects skip"},
+{"Remastered", "", "Metroid Prime Remastered models > What to import", "HUD", "remastered import parts hud skip"},
+{"Remastered", "", "Metroid Prime Remastered models > What to import", "Text", "remastered import parts text strings skip"},
+{"Remastered", "", "Metroid Prime Remastered models > What to import", "Movies", "remastered import parts movies fmv skip ffmpeg"},
+{"Remastered", "", "Metroid Prime Remastered models > What to import", "Gallery", "remastered import parts gallery extras skip"},
 {"Mods", "", "Mods", "Load mods", "mods enable disable mod loader"},
 {"Mods", "", "Mods", "Reload mods", "mods reload refresh"},
 #if !defined(__ANDROID__)

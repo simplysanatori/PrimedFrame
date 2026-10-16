@@ -39,11 +39,13 @@
 #include <dolphin/gx/GXExtra.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <memory>
 #include <string>
@@ -970,6 +972,31 @@ void ReadLods() {
   }
 }
 
+// An area's file, read and parsed: all of the load that needs nothing of the game's, so
+// it can run on a worker while the game streams the area in (Prefetch).
+struct Parsed {
+  bool ok = false;
+  std::string error;
+  std::vector< Instance > instances;
+  Script script;
+};
+
+Parsed ReadAndParse(const std::string& path) {
+  Parsed parsed;
+  std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
+  const std::vector< uint8_t > data = ReadAll(in);
+  parsed.ok = in && Parse(data, parsed.instances, parsed.error, &parsed.script);
+  return parsed;
+}
+
+// Prefetches by MREA, with the path each was read from: the main thread only.
+struct Prefetched {
+  std::string path;
+  std::future< Parsed > parsed;
+};
+std::unordered_map< uint32_t, Prefetched > sPrefetched;
+constexpr size_t kMaxPrefetched = 16;
+
 void Load(uint32_t mrea, Area& area) {
   const std::string path = PortMods::RoomGeoPath(mrea);
   if (path.empty() || gpResourceFactory == nullptr) {
@@ -978,15 +1005,24 @@ void Load(uint32_t mrea, Area& area) {
   if (!sLodsRead) {
     ReadLods();
   }
-  std::ifstream in(PortGci::PathFromString(path), std::ios::binary);
-  const std::vector< uint8_t > data = ReadAll(in);
-  std::string error;
-  if (!in || !Parse(data, area.instances, error, &area.script)) {
-    PortLog::Write("room geo: %s: %s\n", path.c_str(), error.empty() ? "cannot read" : error.c_str());
+  Parsed parsed;
+  const auto prefetched = sPrefetched.find(mrea);
+  if (prefetched != sPrefetched.end() && prefetched->second.path == path && prefetched->second.parsed.valid()) {
+    parsed = prefetched->second.parsed.get(); // waits only if the worker is not done yet
+  } else {
+    parsed = ReadAndParse(path);
+  }
+  if (prefetched != sPrefetched.end()) {
+    sPrefetched.erase(prefetched);
+  }
+  if (!parsed.ok) {
+    PortLog::Write("room geo: %s: %s\n", path.c_str(), parsed.error.empty() ? "cannot read" : parsed.error.c_str());
     area.instances.clear();
     area.script = Script();
     return;
   }
+  area.instances = std::move(parsed.instances);
+  area.script = std::move(parsed.script);
   // A model the import could not convert leaves its instances behind.
   std::unordered_map< uint32_t, size_t > index;
   size_t missing = 0;
@@ -1232,6 +1268,33 @@ void Apply(Area& area, const ScriptEdge& edge, int depth) {
 }
 
 } // namespace
+
+void Prefetch(uint32_t mrea) {
+  if (GetMode() == Mode::Off || Areas().count(mrea) != 0 || sPrefetched.count(mrea) != 0) {
+    return;
+  }
+  std::string path = PortMods::RoomGeoPath(mrea);
+  if (path.empty()) {
+    return;
+  }
+  // Areas streamed in and dropped again before they loaded: the finished ones go first.
+  for (auto it = sPrefetched.begin(); sPrefetched.size() >= kMaxPrefetched && it != sPrefetched.end();) {
+    if (it->second.parsed.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+      it = sPrefetched.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  if (sPrefetched.size() >= kMaxPrefetched) {
+    return;
+  }
+  try {
+    std::future< Parsed > parsed = std::async(std::launch::async, ReadAndParse, path);
+    sPrefetched.emplace(mrea, Prefetched{std::move(path), std::move(parsed)});
+  } catch (...) {
+    // No thread to spare: Load reads the file itself.
+  }
+}
 
 void SetLoadedAreas(const uint32_t* mreas, size_t count) {
   auto& areas = Areas();
@@ -2337,6 +2400,7 @@ int ClearMaterialValues() {
 
 void Reset() {
   CCubeModel::PortClearPBROverrides();
+  sPrefetched.clear(); // waits for any still reading: the files are about to change
   Areas().clear();
   sLods.clear();
   sLodsRead = false;

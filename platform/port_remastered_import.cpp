@@ -17,6 +17,7 @@
 #include <fstream>
 #include <functional>
 #include <future>
+#include <iterator>
 #include <list>
 #include <map>
 #include <tuple>
@@ -164,14 +165,29 @@ std::vector<std::pair<int, float>> CoarserLevels(const Model& model) {
   return out;
 }
 
+// What the panel leaves out (SetImportParts). Read by the import thread, set
+// only while no import runs.
+std::mutex sPartsMutex;
+ImportParts sParts;
+
+ImportParts Parts() {
+  std::lock_guard<std::mutex> lock(sPartsMutex);
+  return sParts;
+}
+
 // The rooms whose geometry is imported, from MP_REMASTERED_GEOMETRY: "all", or
-// room names (any part of one) separated by commas, or "none". Without it, all.
-bool WantsGeometry(const std::string& room) {
-  const char* env = std::getenv("MP_REMASTERED_GEOMETRY");
-  if (env == nullptr || env[0] == '\0') {
-    return true;
+// room names (any part of one) separated by commas, or "none". Without it, all;
+// "none" when the panel leaves the geometry out.
+std::string GeometryChoice() {
+  if (!Parts().geometry) {
+    return "none";
   }
-  const std::string list = env;
+  const char* env = std::getenv("MP_REMASTERED_GEOMETRY");
+  return env == nullptr || env[0] == '\0' ? std::string("all") : std::string(env);
+}
+
+bool WantsGeometry(const std::string& room) {
+  const std::string list = GeometryChoice();
   if (list == "none") {
     return false;
   }
@@ -210,6 +226,30 @@ void SetMessage(const std::string& message) {
   sState.message = message;
 }
 
+// The steps of a full import in the order it makes them, for the panel's progress bar: reading
+// the image, then the stages (beginStage's names).
+const char* const kSteps[] = {"disc", "models", "effects", "rooms", "roommodels",
+                              "text", "font",   "hud",     "movies", "gallery"};
+
+void SetStep(const std::string& name) {
+  std::lock_guard<std::mutex> lock(sStateMutex);
+  for (size_t i = 0; i < std::size(kSteps); ++i) {
+    if (name == kSteps[i]) {
+      sState.step = int(i + 1);
+      sState.steps = int(std::size(kSteps));
+      sState.stepDone = 0;
+      sState.stepTotal = 0;
+      return;
+    }
+  }
+}
+
+void SetStepProgress(size_t done, size_t total) {
+  std::lock_guard<std::mutex> lock(sStateMutex);
+  sState.stepDone = int(done);
+  sState.stepTotal = int(total);
+}
+
 // The lines of the stage being made, kept in the manifest so that a re-import that reuses the
 // stage shows them again.
 std::vector<std::string>* sStageLines = nullptr;
@@ -236,22 +276,25 @@ void Finish(bool ok, const std::string& message) {
 
 // MP_REMASTERED_TEXT=0 leaves the disc's wording alone.
 bool WantsText() {
-  return port::EnvFlag("MP_REMASTERED_TEXT", true);
+  return Parts().text && port::EnvFlag("MP_REMASTERED_TEXT", true);
 }
 
 // MP_REMASTERED_HUD=0 leaves the disc's HUD alone.
 bool WantsHud() {
-  return port::EnvFlag("MP_REMASTERED_HUD", true);
+  return Parts().hud && port::EnvFlag("MP_REMASTERED_HUD", true);
 }
 
 // MP_REMASTERED_GALLERY=0 leaves the Extras gallery out.
 bool WantsGallery() {
-  return port::EnvFlag("MP_REMASTERED_GALLERY", true);
+  return Parts().gallery && port::EnvFlag("MP_REMASTERED_GALLERY", true);
 }
 
 // MP_REMASTERED_MOVIES=0 leaves the disc's movies alone; a size and rate
 // ("1280x720@30") is what they are written as.
 bool WantsMovies(MovieFormat& format) {
+  if (!Parts().movies) {
+    return false;
+  }
   const char* env = std::getenv("MP_REMASTERED_MOVIES");
   if (env == nullptr || env[0] == '\0' || std::strcmp(env, "1") == 0) {
     return true;
@@ -809,6 +852,7 @@ public:
         return false;
       }
       SetMessage("Reading the paks (" + std::to_string(i + 1) + "/" + std::to_string(files.size()) + ")");
+      SetStepProgress(i, files.size());
       const RomfsFile* file = files[i];
       auto pak = std::make_unique<Pak>();
       std::string pakError;
@@ -1218,6 +1262,65 @@ fs::path StagingFolder() {
 // Where a finished import that is not yet in place waits while the next one reuses it.
 fs::path HeldFolder(const fs::path& staging) { return staging.parent_path() / (std::string(kStagingName) + ".held"); }
 
+// Folders on their way out: an old import can be most of a gigabyte, too much to
+// delete while the game waits on a mods reload. Renamed to a hidden name (the mod
+// loader skips it) at once and deleted on a thread; one a quit interrupted is
+// picked up by the next sweep.
+constexpr const char* kTrashPrefix = ".remastered-models.trash-";
+std::mutex sTrashMutex;
+bool sTrashSweeping = false;
+bool sTrashAgain = false;
+
+void SweepTrash(const fs::path& mods) {
+  {
+    std::lock_guard<std::mutex> lock(sTrashMutex);
+    if (sTrashSweeping) {
+      sTrashAgain = true;
+      return;
+    }
+    sTrashSweeping = true;
+  }
+  std::thread([mods] {
+    for (;;) {
+      std::error_code ec;
+      std::vector<fs::path> trash;
+      for (fs::directory_iterator it(mods, ec), end; !ec && it != end; it.increment(ec)) {
+        if (it->path().filename().string().rfind(kTrashPrefix, 0) == 0) {
+          trash.push_back(it->path());
+        }
+      }
+      for (const fs::path& dir : trash) {
+        fs::remove_all(dir, ec);
+      }
+      std::lock_guard<std::mutex> lock(sTrashMutex);
+      if (!sTrashAgain) {
+        sTrashSweeping = false;
+        return;
+      }
+      sTrashAgain = false;
+    }
+  }).detach();
+}
+
+// Takes `dir` out of the way now and deletes it later. Deletes it here only when
+// it cannot be renamed.
+void Discard(const fs::path& dir) {
+  std::error_code ec;
+  if (!fs::exists(dir, ec)) {
+    return;
+  }
+  static std::atomic<unsigned> sCount{0};
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  const fs::path trash =
+      dir.parent_path() / (kTrashPrefix + std::to_string(stamp) + "-" + std::to_string(sCount++));
+  fs::rename(dir, trash, ec);
+  if (ec) {
+    fs::remove_all(dir, ec);
+    return;
+  }
+  SweepTrash(dir.parent_path());
+}
+
 ConvertOptions OptionsFor(const TableEntry& entry) {
   ConvertOptions options;
   options.retail = entry.retail;
@@ -1269,6 +1372,7 @@ int ImportMovies(const Remastered& remastered, const fs::path& folder, const Mov
   for (size_t i = 0; i < movies.size() && !sCancel; ++i) {
     const Movie& movie = movies[i];
     SetMessage("Converting the movies (" + std::to_string(i + 1) + "/" + std::to_string(movies.size()) + ")");
+    SetStepProgress(i, movies.size());
     std::vector<uint8_t> raw;
     std::string error;
     size_t offset = 0;
@@ -1968,6 +2072,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   const char* reuseEnv = port::EnvString("MP_REMASTERED_REUSE");
   const bool texturesOnly = reuseEnv != nullptr && std::strcmp(reuseEnv, "textures") == 0;
 
+  SetStep("disc");
   SetMessage("Opening the image");
   std::string error;
   Remastered remastered;
@@ -2046,6 +2151,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   // only if the same ids were taken before it), so that ids stay unique.
   auto beginStage = [&](const std::string& name, const std::string& key, bool strict,
                         const std::string& requiredFile = std::string()) {
+    SetStep(name);
     StageRecord fresh;
     fresh.key = Hex64(Hash64(name + "|" + key + keyCommon));
     fresh.before = TakenHash(taken);
@@ -2528,6 +2634,8 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         ++sState.failed;
       }
       sState.message = "Converting models (" + std::to_string(sState.done) + "/" + std::to_string(sState.total) + ")";
+      sState.stepDone = sState.done;
+      sState.stepTotal = sState.total;
     }
   };
   std::vector<std::thread> workers;
@@ -2596,7 +2704,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   }
 
   // Remastered's particle effects in place of the disc's, when asked for.
-  if (WantsRemasteredEffects() &&
+  if (Parts().effects && WantsRemasteredEffects() &&
       !beginStage("effects", std::to_string(ImportStage::kEffects) + keyConverter, false, "reports/parts/effects.effects.tsv")) {
     SetMessage("Converting effects");
     EffectImportIO effectIO;
@@ -2737,12 +2845,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   SetMessage("Writing the room environments");
   const fs::path roomFolder = staging / kRoomFolder;
   fs::create_directories(roomFolder, ec);
-  const char* geometryEnv = std::getenv("MP_REMASTERED_GEOMETRY");
   const bool roomsReused = beginStage("rooms",
                                       std::to_string(ImportStage::kRooms) + " geometry " +
-                                          (geometryEnv != nullptr && geometryEnv[0] != '\0'
-                                               ? std::string(geometryEnv)
-                                               : std::string("all")) +  // as the env says it
+                                          GeometryChoice() +  // as the env or the panel says it
                                           keyConverter,
                                       false);
   // Remastered's environment BRDF table, from the user's own executable. Nothing
@@ -3233,7 +3338,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
           std::snprintf(name, sizeof(name), "%08X", geometry[i].id);
           AddLine(std::string("room model ") + name + ": " + modelError);
         }
-        SetMessage("Converting room models (" + std::to_string(++seen) + "/" + std::to_string(geometry.size()) + ")");
+        const size_t now = ++seen;
+        SetMessage("Converting room models (" + std::to_string(now) + "/" + std::to_string(geometry.size()) + ")");
+        SetStepProgress(now, geometry.size());
       }
     };
     workers.clear();
@@ -3761,6 +3868,34 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
     sState.message = "There is no mods folder to write to.";
     return false;
   }
+  // A first import writes everything (docs/MODS.md: about 1 GB, 6.5 GB with every
+  // room's geometry, plus 0.6 GB of movies); one with an import to reuse links
+  // most of its files instead, so only a first one is checked. Refused up front
+  // rather than failing at some write an hour in.
+  {
+    std::error_code ec;
+    const fs::path target = staging.parent_path() / kImportModName;
+    const fs::space_info space = fs::space(staging.parent_path(), ec);
+    if (!ec && !fs::exists(target, ec) && !fs::exists(HeldFolder(staging), ec)) {
+      const char* movies = std::getenv("MP_REMASTERED_MOVIES");
+      const std::string geometry = GeometryChoice();
+      const bool allGeometry = geometry == "all";
+      double needGb = allGeometry ? 6.5 : geometry == "none" ? 1.0 : 2.0;
+      // Not WantsMovies: it reports a bad value through the lock held here.
+      needGb += !Parts().movies || (movies != nullptr && std::strcmp(movies, "0") == 0) ? 0.0 : 0.6;
+      const double freeGb = double(space.available) / (1024.0 * 1024.0 * 1024.0);
+      if (freeGb < needGb) {
+        char text[256];
+        std::snprintf(text, sizeof text,
+                      "Not enough free disk space: the import needs about %.1f GB and the mods folder's drive "
+                      "has %.1f GB free.%s",
+                      needGb, freeGb, allGeometry ? " Leaving the room geometry out needs less." : "");
+        sState.finished = true;
+        sState.message = text;
+        return false;
+      }
+    }
+  }
   if (threads <= 0) {
     threads = DefaultThreads();
   }
@@ -3781,9 +3916,16 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
 }
 
 
+void SetImportParts(const ImportParts& parts) {
+  std::lock_guard<std::mutex> lock(sPartsMutex);
+  sParts = parts;
+}
+
 ImportState ImportStatus() {
   std::lock_guard<std::mutex> lock(sStateMutex);
-  return sState;
+  ImportState state = sState;
+  state.cancelling = state.running && sCancel.load();
+  return state;
 }
 
 void CancelImport() { sCancel = true; }
@@ -3802,15 +3944,17 @@ bool ApplyPendingImport() {
   if (staging.empty() || ImportStatus().running) {
     return false;
   }
+  // Whatever a quit left half deleted.
+  SweepTrash(staging.parent_path());
   const fs::path held = HeldFolder(staging);
   if (fs::exists(staging / kMarkerName, ec)) {
     // An older import the finished one was made from, left if the game quit just after it.
-    fs::remove_all(held, ec);
+    Discard(held);
   } else {
-    fs::remove_all(staging, ec);
+    Discard(staging);
     // A finished import held aside by one that never finished (the game quit during it).
     if (!fs::exists(held / kMarkerName, ec)) {
-      fs::remove_all(held, ec);
+      Discard(held);
       return false;
     }
     fs::rename(held, staging, ec);
@@ -3824,7 +3968,7 @@ bool ApplyPendingImport() {
   const fs::path backup = staging.parent_path() / (std::string(".") + kImportModName + ".old");
   const bool hadTarget = fs::exists(target, ec);
   if (hadTarget) {
-    fs::remove_all(backup, ec);
+    Discard(backup);
     fs::rename(target, backup, ec);
     if (ec) {
       std::fprintf(stderr, "metroid_prime_port: could not set aside %s: %s\n", target.string().c_str(),
@@ -3847,7 +3991,7 @@ bool ApplyPendingImport() {
     return false;
   }
   if (hadTarget) {
-    fs::remove_all(backup, ec);
+    Discard(backup);
   }
   fs::remove(target / kMarkerName, ec);
   return true;

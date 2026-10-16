@@ -378,6 +378,9 @@ std::string sDiscPath;
 // the picked content:// addresses (the picker keeps their read grant).
 std::string sRemasteredImagePath;
 std::string sRemasteredKeysPath;
+// The parts the panel leaves out of an import, comma separated (remastered_skip):
+// hud, text, effects, movies, gallery, geometry.
+std::string sRemasteredSkip;
 
 std::string SettingsFilePath() {
   const std::string& dir = PortPaths::UserFolder();
@@ -398,6 +401,42 @@ std::string Trim(const std::string& text) {
 }
 
 void MarkDirty() { sSettingsDirty = true; }
+
+PortRemastered::ImportParts RemasteredImportParts() {
+  PortRemastered::ImportParts parts;
+  for (size_t at = 0; at < sRemasteredSkip.size();) {
+    const size_t comma = std::min(sRemasteredSkip.find(',', at), sRemasteredSkip.size());
+    const std::string part = Trim(sRemasteredSkip.substr(at, comma - at));
+    parts.hud &= part != "hud";
+    parts.text &= part != "text";
+    parts.effects &= part != "effects";
+    parts.movies &= part != "movies";
+    parts.gallery &= part != "gallery";
+    parts.geometry &= part != "geometry";
+    at = comma + 1;
+  }
+  return parts;
+}
+
+void SetRemasteredImportParts(const PortRemastered::ImportParts& parts) {
+  std::string skip;
+  const auto add = [&](bool kept, const char* name) {
+    if (!kept) {
+      skip += skip.empty() ? "" : ",";
+      skip += name;
+    }
+  };
+  add(parts.geometry, "geometry");
+  add(parts.effects, "effects");
+  add(parts.hud, "hud");
+  add(parts.text, "text");
+  add(parts.movies, "movies");
+  add(parts.gallery, "gallery");
+  if (skip != sRemasteredSkip) {
+    sRemasteredSkip = skip;
+    MarkDirty();
+  }
+}
 
 void ApplyLiveSplit() {
   PortLiveSplit::Configure(sLiveSplit, sLiveSplitAddress, sLiveSplitSplitUpgrades);

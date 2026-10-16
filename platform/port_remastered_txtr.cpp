@@ -37,6 +37,7 @@
 
 #include "port_remastered_txtr.h"
 #include "port_bytes.h"
+#include "port_remastered_lzss.h"
 
 #include <algorithm>
 #include <cmath>
@@ -182,54 +183,6 @@ bool ReadHeader(const uint8_t* data, size_t size, TextureHeader& head, std::stri
   return true;
 }
 
-// retrotool's LZSS (util/lzss.rs), one variant per mode: mode is the log2 of
-// the group's byte count, a clear header bit copies a group verbatim and a set
-// bit copies a back reference. This is deliberately a separate copy of the one
-// in port_remastered_pak.cpp: that file is not to be edited, and until its
-// `DecompressAsset` is exposed this is the only way the texel data can be
-// decompressed. It is a straight port of the Rust, including its behaviour of
-// trusting the data, because retrotool does too.
-bool LzssDecompress(uint32_t mode, const uint8_t* in, size_t inSize, uint8_t* out, size_t outSize) {
-  const size_t groupLen = size_t(1) << (mode - 1);
-  size_t inCur = 0;
-  size_t outCur = 0;
-  uint8_t header = 0;
-  int group = 0;
-  while (inCur < inSize) {
-    if (group == 0) {
-      header = in[inCur++];
-      group = 8;
-    }
-    if ((header & 0x80) == 0) {
-      if (inSize - inCur < groupLen || outSize - outCur < groupLen) {
-        return false;
-      }
-      std::memcpy(out + outCur, in + inCur, groupLen);
-      inCur += groupLen;
-      outCur += groupLen;
-    } else {
-      if (inSize - inCur < 2 || outCur == 0) {
-        return false;
-      }
-      const size_t count = size_t(in[inCur] >> 4) + (4 - size_t(mode));
-      const size_t length = (size_t(in[inCur] & 0x0F) * 256 + size_t(in[inCur + 1])) << (mode - 1);
-      inCur += 2;
-      if (length > outCur || outSize - outCur < count * groupLen) {
-        return false;
-      }
-      // One byte at a time: a back reference may overlap what it is writing,
-      // which is how a run of the same byte is encoded.
-      for (size_t i = 0; i < count * groupLen; ++i) {
-        out[outCur + i] = out[outCur - length + i];
-      }
-      outCur += count * groupLen;
-    }
-    header = uint8_t(header << 1);
-    group -= 1;
-  }
-  return outCur == outSize;
-}
-
 // retrotool's decompress_into (util/compression.rs): a mode word then either
 // the data as it is or an LZSS variant of it.
 bool DecompressInto(const uint8_t* in, size_t inSize, uint8_t* out, size_t outSize,
@@ -354,17 +307,31 @@ bool ReadMeta(const uint8_t* data, size_t size, Meta& meta, std::string& error) 
   return true;
 }
 
-// Decompresses every buffer of the META into one buffer, which is the surface
-// as it is stored in memory: tiled, and holding every layer and mip.
+// Decompresses the buffers of the META into one buffer, which is the surface as
+// it is stored in memory: tiled, and holding every layer and mip. With `needed`,
+// only the start of the surface is wanted (the top mip of the first layer, which
+// is laid out first): a buffer that writes nowhere below it is not decompressed,
+// and the surface ends with the last buffer that is.
 bool BuildSurface(const uint8_t* file, size_t fileSize, const Meta& meta,
-                  std::vector<uint8_t>& surface, std::string& error) {
+                  std::vector<uint8_t>& surface, std::string& error, uint64_t needed = UINT64_MAX) {
   if (meta.decompressedSize > 0x40000000u) {
     error = "remastered txtr: META asks for a " + std::to_string(meta.decompressedSize) +
             " byte surface";
     return false;
   }
-  surface.assign(meta.decompressedSize, 0);
+  const auto wanted = [&](const Meta::Buffer& buffer) { return buffer.destOffset < needed; };
+  uint64_t end = std::min<uint64_t>(needed, meta.decompressedSize);
   for (const Meta::Buffer& buffer : meta.buffers) {
+    if (wanted(buffer) && buffer.destOffset <= meta.decompressedSize &&
+        buffer.destSize <= meta.decompressedSize - buffer.destOffset) {
+      end = std::max(end, buffer.destOffset + buffer.destSize);
+    }
+  }
+  surface.assign(size_t(end), 0);
+  for (const Meta::Buffer& buffer : meta.buffers) {
+    if (!wanted(buffer)) {
+      continue;
+    }
     const Meta::Read* read = nullptr;
     for (const Meta::Read& candidate : meta.reads) {
       if (candidate.index == buffer.index) {
@@ -2776,10 +2743,6 @@ bool DecodeTxtr(const uint8_t* data, size_t size, TxtrImage& out, std::string& e
   if (!ReadMeta(data, size, meta, error)) {
     return false;
   }
-  std::vector<uint8_t> surface;
-  if (!BuildSurface(data, size, meta, surface, error)) {
-    return false;
-  }
 
   // A 3D texture's depth is its layer count; for everything else the layers sit
   // side by side and layer 0 is the first slice of the surface either way.
@@ -2795,9 +2758,15 @@ bool DecodeTxtr(const uint8_t* data, size_t size, TxtrImage& out, std::string& e
 
   const size_t swizzledSize = SwizzledMipSize(mipWidth, mipHeight, mipDepth, mipBlockHeight,
                                               bytesPerPixel);
-  if (surface.size() < swizzledSize) {
-    error = "remastered txtr: the surface is " + std::to_string(surface.size()) +
+  if (meta.decompressedSize < swizzledSize) {
+    error = "remastered txtr: the surface is " + std::to_string(meta.decompressedSize) +
             " bytes, its top mip alone needs " + std::to_string(swizzledSize);
+    return false;
+  }
+  // Only the top mip of the first layer is decoded, and it comes first: the
+  // buffers holding the smaller mips and the other layers are left compressed.
+  std::vector<uint8_t> surface;
+  if (!BuildSurface(data, size, meta, surface, error, swizzledSize)) {
     return false;
   }
   const size_t sliceSize = mipWidth * mipHeight * bytesPerPixel;

@@ -23,6 +23,7 @@
 
 #ifdef TARGET_PC
 #include "port_randomizer.h"
+#include "port_room_geo.h"
 #include "port_skip_cutscenes.h"
 
 #include <string.h>
@@ -674,6 +675,8 @@ void CGameArea::StartStreamIn(CStateManager& mgr) {
       std::fprintf(stderr, "MP area %d (MREA %08X) stream start\n", x4_selfIdx.Value(),
                    static_cast< uint >(x84_mrea));
     }
+    // The Remastered room geometry's file is read and parsed while the area streams in.
+    PortRoomGeo::Prefetch(static_cast< uint32_t >(x84_mrea));
 #endif
     VerifyTokenList(mgr);
     if (!xf0_26_tokensReady) {
