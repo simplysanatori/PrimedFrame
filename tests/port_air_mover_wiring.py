@@ -68,20 +68,20 @@ class Wiring(unittest.TestCase):
         check = air.split("struct Ground {", 1)[1].split("struct Stepper {", 1)[0]
         self.assertIn("c.GetExtreme().GetZ()", check)
 
-    def test_clean_tick_refreshes_last_free_state(self):
-        # Port stopgap for the unported DoCollisionFailsafe 0xc1fa68: a clean tick that
-        # starts and ends free refreshes LastNonCollidingState, else the retail failsafe
-        # restores a stale position (Observatory pops).
-        self.assertIn("const bool entryFree = AirMoverIsFree(mgr, cache, actor, nearList)", air)
+    def test_remastered_failsafe_replaces_last_free_state(self):
+        # 0xf94750 DoCollisionFailsafe 0xc1fa68 behind the gate, then DoTunnelingFailsafe
+        # 0xc20214 on every tick; Remastered keeps no last non-colliding state.
+        self.assertNotIn("AirMoverIsFree", source)
+        self.assertNotIn("SetLastNonCollidingState", air)
+        self.assertNotIn("CollisionFailsafe(mgr, cache, actor", air)
         tail = air.split("if (!(fabsf(remaining) < 1e-5f && !stalledFlag)) {", 1)
         self.assertEqual(len(tail), 2, "failsafe gate must stay")
-        clean = tail[1].split("} else if (entryFree && AirMoverIsFree(mgr, cache, actor, nearList)) {", 1)
-        self.assertEqual(len(clean), 2, "clean ticks must re-test the end position")
-        refresh = clean[1].split("actor.ClearForcesAndTorques();", 1)[0]
-        self.assertIn("actor.SetLastNonCollidingState(actor.GetMotionState());", refresh)
-        self.assertIn("actor.SetNumTicksStuck(0);", refresh)
-        self.assertIn("PORT STOPGAP, not Remastered behaviour", source)
-        self.assertIn("func/CPhysicsCollisionFailsafe-DoCollisionFailsafe.md", source)
+        self.assertIn("const bool resolved = failsafe.Collision();", tail[1])
+        tunnel = tail[1].split("failsafe.Tunnel(entryPos, actor.GetTranslation(), tunnelOut)", 1)
+        self.assertEqual(len(tunnel), 2, "tunneling must run after the gate")
+        self.assertIn("actor.ClearForcesAndTorques();", tunnel[1])
+        self.assertIn("PortCollisionFailsafe::DoCollisionFailsafe(", air)
+        self.assertIn("PortCollisionFailsafe::DoTunnelingFailsafe(", air)
 
 
 if __name__ == "__main__":
