@@ -123,6 +123,12 @@ bool IsFloor(float up, int orientation) {
          (up > 0.70710677f && unsigned(orientation - 1) > 1u);
 }
 
+bool TunnelingFailsafeApplies(const Box& bounds, const Vec3& from, const Vec3& to) {
+  const Vec3 delta = Sub(to, from);
+  const float len = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+  return len > MinHalfExtent(bounds);
+}
+
 bool DoTunnelingFailsafe(const Box& bounds, const Vec3& pos, const Vec3& from, const Vec3& to,
                          const TunnelHooks& hooks, Vec3& out) {
   out = to;

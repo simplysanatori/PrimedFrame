@@ -80,6 +80,9 @@ struct TunnelHooks {
   // CalculateOffsetToSafeCollisionPoint at `pos` with `maxDist`; false = no valid offset.
   std::function< bool(const Vec3& pos, float maxDist, Vec3& offset) > safeOffset;
 };
+// 0xc20214's entry test: |to - from| > the bounds' smallest half-extent. False means
+// DoTunnelingFailsafe returns false with out = to; lets the caller skip building hooks.
+bool TunnelingFailsafeApplies(const Box& bounds, const Vec3& from, const Vec3& to);
 // 0xc20214. `bounds`/`pos` are the object's CURRENT collision bounds and translation.
 bool DoTunnelingFailsafe(const Box& bounds, const Vec3& pos, const Vec3& from, const Vec3& to,
                          const TunnelHooks& hooks, Vec3& out);

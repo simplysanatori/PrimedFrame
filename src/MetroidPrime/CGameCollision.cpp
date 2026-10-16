@@ -1121,15 +1121,15 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       // one point, the centre of the overlap's face, so a side contact sits at the
       // overlap's mid-height. With the overlap's top as its point, a side contact ties
       // the top contact's height and, walked first, wins the strict `pz <= low`: a
-      // player overhanging the edge of a box actor never landed. A box contact has an
-      // axis normal and bounds with depth along it; a clipped polygon has none.
+      // player overhanging the edge of a box actor never landed. DetectDynamicCollision
+      // stops at the first actor that collides, so every contact is `id`'s; a side
+      // contact of a box (AABX) actor has a horizontal axis normal.
+      const CPhysicsActor* other = TCastToConstPtr< CPhysicsActor >(mgr.GetObjectById(id));
+      const bool boxActor = other != NULL && other->GetCollisionPrimitive() != NULL &&
+                            other->GetCollisionPrimitive()->GetPrimType() == 'AABX';
       for (int i=0; i<dynamic.GetCount(); ++i) {
         const auto& c = dynamic[i];
-        const CVector3f& n = c.GetNormalLeft();
-        const CVector3f depth = c.GetExtreme() - c.GetPoint();
-        const bool boxSide = n.GetZ() == 0.f &&
-                             ((n.GetY() == 0.f && depth.GetX() > 0.f) ||
-                              (n.GetX() == 0.f && depth.GetY() > 0.f));
+        const bool boxSide = boxActor && c.GetNormalLeft().GetZ() == 0.f;
         for (int k = 0; k < (boxSide ? 1 : 2); ++k) {
           const float pz = boxSide ? (c.GetPoint().GetZ() + c.GetExtreme().GetZ()) * .5f
                          : k == 0  ? c.GetPoint().GetZ()
@@ -1447,6 +1447,9 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     const CMaterialFilter failsafeFilter;
     const TEntityList& nearList;
     float worldDt;
+    // Scratch for Collide's tree walk, reused across calls.
+    mutable std::vector< PortRemasteredGroundWorld::Triangle > treeTris;
+    mutable std::vector< const COBBTree::CNode* > treeStack;
 
     static PortCollisionFailsafe::Vec3 V(const CVector3f& v) {
       return {v.GetX(), v.GetY(), v.GetZ()};
@@ -1504,14 +1507,24 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
           out.push_back(c);
         } else if (prim.GetPrimType() == 'OBTG') {
           const CCollidableOBBTreeGroup& group = static_cast< const CCollidableOBBTreeGroup& >(prim);
-          std::vector< PortRemasteredGroundWorld::Triangle > tris;
+          std::vector< PortRemasteredGroundWorld::Triangle >& tris = treeTris;
+          tris.clear();
+          // Nodes are culled against the self box in tree space (as the retail
+          // AABoxCollision walks do), grown by a margin so a triangle that only touches
+          // the box still reaches the producer.
+          const CVector3f margin(.01f, .01f, .01f);
+          const COBBox selfObb = COBBox::FromAABox(
+              CAABox(self.GetMinPoint() - margin, self.GetMaxPoint() + margin),
+              primXf.GetQuickInverse());
           for (int t = 0; t < group.GetContainer()->NumTrees(); ++t) {
             const COBBTree& tree = *group.GetOBBTreeAABox(t);
-            rstl::vector< const COBBTree::CNode* > stack;
+            std::vector< const COBBTree::CNode* >& stack = treeStack;
+            stack.clear();
             stack.push_back(&tree.GetRoot());
             while (!stack.empty()) {
               const COBBTree::CNode* node = stack.back();
               stack.pop_back();
+              if (!selfObb.OBBIntersectsBox(node->GetOBB())) continue;
               if (!node->IsLeaf()) {
                 stack.push_back(&node->GetRightNode());
                 stack.push_back(&node->GetLeftNode());
@@ -1543,9 +1556,10 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
           const PortRemasteredGroundWorld::TerrainResult res =
               PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), true);
           std::vector< std::size_t > ends(1, tris.size());
+          const std::size_t before = out.size();
           TerrainContacts::PairImpacts(res.impacts, ends, V(bounds.GetCenterPoint()), out);
-          if (character) {
-            for (std::size_t i = 0; !out.empty() && i < out.back().impacts.size(); ++i) {
+          if (character && out.size() > before) {
+            for (std::size_t i = 0; i < out.back().impacts.size(); ++i) {
               out.back().impacts[i].otherCharacter = true;
             }
           }
@@ -1558,6 +1572,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     bool Blocked(const CMaterialFilter& filter, const CVector3f& pos) const {
       std::vector< PortRemasteredGroundWorld::Contact > unused;
       const CVector3f delta = pos - actor.GetTranslation();
+      // Build (Collect) moves the primitive by `delta` and back itself.
       if (TerrainContacts::Build(mgr, cache, actor, filter, delta, unused, false)) return true;
       actor.MoveCollisionPrimitive(delta);
       bool hit = false;
@@ -1629,9 +1644,15 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       return best;
     }
 
-    // 0xc20214 for the actor's current bounds.
+    // 0xc20214 for the actor's current bounds. Runs every airborne tick: the length test
+    // comes first so the usual short step builds no hooks.
     bool Tunnel(const CVector3f& from, const CVector3f& to, CVector3f& out) const {
-      const CAABox bounds = BoxAt(actor.GetTranslation());
+      const CAABox bounds =
+          actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform());
+      if (!PortCollisionFailsafe::TunnelingFailsafeApplies(B(bounds), V(from), V(to))) {
+        out = to;
+        return false;
+      }
       const PortCollisionFailsafe::Vec3 pos = V(actor.GetTranslation());
       PortCollisionFailsafe::TunnelHooks hooks;
       hooks.ray = [this](const PortCollisionFailsafe::Vec3& s, const PortCollisionFailsafe::Vec3& d,
