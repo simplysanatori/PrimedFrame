@@ -153,7 +153,14 @@ version Flatpak reports; `tools/make_flatpak.sh` stops if the two differ.
    - Windows: run `windows.yml`, `gh run download <id> -n metroid_prime_port-windows`,
      drop CI's `user/` folder (log, `dawn_cache.db`, `pipeline_cache.db`), and zip
      the rest as `metroid-prime-port-X-windows-x86_64.zip`.
+   - macOS: run `macos.yml`, download its artifact and zip `Metroid Prime Port.app`
+     and `licenses/` as `metroid-prime-port-X-macos-arm64.zip`.
+   - Flatpak: `tools/make_flatpak.sh` (committed `port` branch), shipped as
+     `MetroidPrimePort.flatpak`.
    - Android: the signed APK, staged as `metroid-prime-port-X-android-arm64.apk`.
+
+   Every release ships all six assets (AppImage, tarball, Flatpak, Windows,
+   macOS, APK); start all the builds together.
 3. Check each artefact's version string, then `git tag -a vX` and `git push user vX`.
 4. `gh release create vX --notes-file …` with every asset passed explicitly, and
    confirm with `gh release view vX --json assets`. Base the notes on the
