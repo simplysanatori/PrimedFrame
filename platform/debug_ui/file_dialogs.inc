@@ -788,6 +788,7 @@ void DrawModReloadMessage() {
 // loads them again when it ends, the new import in place of the old.
 static bool sImportWatched = false;
 static bool sImportUnloadedMods = false;
+static bool sImportInstallStarted = false;
 // A reload is refused where the game can't save (a cutscene, say), so these
 // are asked again every two seconds until one runs.
 static int sReloadAwaited = -1;
@@ -838,7 +839,27 @@ static void FinishRemasteredImport() {
   if (state.running) {
     return;
   }
+  // The finished import is moved into place on the import's thread, not by the mods reload on this
+  // one: on Android's shared storage that move took minutes with the game frozen. Nothing of the
+  // old mod may be open meanwhile, so the mods are unloaded first if they came back on.
+  if (state.ok && !sImportInstallStarted) {
+    const PortMods::Status& status = PortMods::CurrentStatus();
+    if (!sImportUnloadedMods &&
+        std::any_of(status.mods.begin(), status.mods.end(), [](const PortMods::ModInfo& mod) { return mod.enabled; })) {
+      PortMods::SetSuspended(true);
+      ReloadUntilDone();
+      sImportUnloadedMods = true;
+    }
+    if (sReloadAwaited >= 0) {
+      return;
+    }
+    sImportInstallStarted = true;
+    if (PortRemastered::StartInstall()) {
+      return;
+    }
+  }
   sImportWatched = false;
+  sImportInstallStarted = false;
   if (state.ok) {
     // A mod just imported is wanted, even if it was switched off to import.
     std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);

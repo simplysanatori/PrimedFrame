@@ -3937,13 +3937,10 @@ void StopImport() {
   }
 }
 
-bool ApplyPendingImport() {
-  const fs::path staging = StagingFolder();
+namespace {
+
+bool MoveIntoPlace(const fs::path& staging) {
   std::error_code ec;
-  // A running import is still writing there.
-  if (staging.empty() || ImportStatus().running) {
-    return false;
-  }
   // Whatever a quit left half deleted.
   SweepTrash(staging.parent_path());
   const fs::path held = HeldFolder(staging);
@@ -3995,6 +3992,53 @@ bool ApplyPendingImport() {
   }
   fs::remove(target / kMarkerName, ec);
   return true;
+}
+
+} // namespace
+
+bool StartInstall() {
+  {
+    std::lock_guard<std::mutex> lock(sStateMutex);
+    if (sState.running) {
+      return false;
+    }
+  }
+  if (sThread.joinable()) {
+    sThread.join();
+  }
+  const fs::path staging = StagingFolder();
+  std::error_code ec;
+  if (staging.empty() || !fs::exists(staging / kMarkerName, ec)) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(sStateMutex);
+  // The import's result is shown again once the mod is in place.
+  ImportState result = sState;
+  sCancel = false;
+  sState.running = true;
+  sState.installing = true;
+  sState.finished = false;
+  sState.done = sState.total = 0;
+  sState.step = sState.steps = sState.stepDone = sState.stepTotal = 0;
+  sState.message = "Moving the mod into place";
+  sThread = std::thread([staging, result]() mutable {
+    if (!MoveIntoPlace(staging)) {
+      // Left staged: the next mods reload or start tries again.
+      result.lines.push_back("The mod could not be moved into place yet; the next mods reload tries again.");
+    }
+    std::lock_guard<std::mutex> lock(sStateMutex);
+    sState = std::move(result);
+  });
+  return true;
+}
+
+bool ApplyPendingImport() {
+  const fs::path staging = StagingFolder();
+  // A running import is still writing there.
+  if (staging.empty() || ImportStatus().running) {
+    return false;
+  }
+  return MoveIntoPlace(staging);
 }
 
 int RunImportFromCommandLine(const std::string& nspPath, const std::string& keysPath, bool moviesOnly) {

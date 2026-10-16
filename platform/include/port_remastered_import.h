@@ -40,6 +40,7 @@ struct ImportState {
   int stepDone = 0;
   int stepTotal = 0;
   bool cancelling = false; // cancel was asked for and the import has not stopped yet
+  bool installing = false; // StartInstall() is moving the finished import into place; it can't be cancelled
   std::string message;     // what it is doing, or how it ended
   std::vector<std::string> lines;  // the newest kImportMaxLines of its log
 };
@@ -459,6 +460,11 @@ void StopImport();
 // Moves a finished import into place. Call before PortMods::Initialize().
 // True if a mod was installed.
 bool ApplyPendingImport();
+// The same on the import's thread, reported as running with `installing` set, after which the state
+// is the import's result again. On Android's shared storage a folder is renamed file by file, so moving
+// the mod takes minutes there. Nothing may have a file of the installed mod open (unload the mods
+// first). False when an import is running or none is staged.
+bool StartInstall();
 
 // `--import-remastered <nsp> [keys]`: imports with every core, progress on
 // stdout, and installs the mod. The disc must be open. Returns the exit code.

@@ -298,8 +298,10 @@ or used, as `remastered_nsp` and `remastered_keys` in the settings file (on
 Android, the picked documents). Import converts in the background while the game
 runs, on all but two cores. The result is staged in `mods/.remastered-models.importing`
 and installed as `mods/remastered-models`, replacing an older one, when the
-import ends (a mod reload then loads it; the pending install also applies at
-the next start). A cancelled or interrupted import leaves nothing behind.
+import ends. The mods stay unloaded while it is moved into place in the
+background (shown as "Moving the mod into place"; on Android's shared storage
+that takes a minute or two, since a folder is renamed file by file), then a mod
+reload loads it; an install a quit interrupted applies at the next start. A cancelled or interrupted import leaves nothing behind.
 Once it has ended, "Load it again" in the same panel reloads the mods by hand.
 "What to import" in the panel leaves parts out of the next import (room
 geometry, particle effects, HUD, text, movies, gallery), kept as

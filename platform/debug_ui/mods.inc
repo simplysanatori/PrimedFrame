@@ -118,7 +118,7 @@ void DrawRemasteredImport() {
       ImGui::TextDisabled("The mods are unloaded until the import ends.");
       DrawModReloadMessage();
     }
-    ImGui::BeginDisabled(state.cancelling);
+    ImGui::BeginDisabled(state.cancelling || state.installing);
     if (ImGui::Button("Cancel##remastered")) {
       PortRemastered::CancelImport();
     }
