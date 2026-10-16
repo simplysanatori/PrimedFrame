@@ -661,8 +661,7 @@ void CAutoMapper::ProcessControllerInput(const CFinalInput& frameInput,
       x308_textpane_instructions2->TextSupport().SetText(rstl::wstring_l(L""));
     } else {
 #ifdef TARGET_PC
-      if (x1bc_state == kAMS_MapScreen && x24_world != nullptr && x328_ == 0 &&
-          IsInPlayerControlState()) {
+      if (PortShowsMarkPrompt()) {
         // Port: X marks or unmarks the shown room.
         rstl::wstring mark;
         mark.append(L"&image=", -1);
@@ -966,9 +965,13 @@ static uint sPortLegendKey = ~0u;
 
 // The swatches are loaded before the text is laid out: text drops an image that
 // is not loaded yet, and retail's legend images come with the frame's assets.
-// The tokens live for the whole run.
+// The tokens live for the whole run. The disc's own legend needs none of them,
+// so they are only asked for while the port's own entries are shown.
 static bool PortLegendReady() {
   static TToken< CTexture >* tokens[4] = {};
+  if (!PortDebug::MapExtraUi()) {
+    return true;
+  }
   if (tokens[0] == nullptr) {
     for (int i = 0; i < 4; ++i) {
       tokens[i] = new TToken< CTexture >(
@@ -986,11 +989,14 @@ static bool PortLegendReady() {
 
 static uint PortLegendKey() {
   const uint mode = static_cast< uint >(PortMapPickups::Mode());
-  return mode | (PortDebug::MapPickupKinds() ? 8u : 0u);
+  return mode | (PortDebug::MapPickupKinds() ? 8u : 0u) | (PortDebug::MapExtraUi() ? 16u : 0u);
 }
 
 static rstl::wstring PortLegendText() {
   rstl::wstring text(gpStringTable->GetString(0x31));
+  if (!PortDebug::MapExtraUi()) {
+    return text;
+  }
   const PortDebug::EMapPickups mode = PortMapPickups::Mode();
   // Entries go two to a line so the legend stays clear of the Key/Legend prompt.
   int entries = 0;
@@ -1012,8 +1018,142 @@ static rstl::wstring PortLegendText() {
       entry(PortCustomRes::kLegendDotTxtr, L"Pickup");
     }
   }
-  entry(PortCustomRes::kLegendMarkTxtr, L"Marked room");
+  entry(PortCustomRes::kLegendMarkTxtr, L"Marked");
   return text;
+}
+
+// Port: the entries above make the legend taller than the disc's own, whose rows
+// the pane is sized for, and the rows below the fold would run over the
+// Key/Legend prompt under it. The legend is drawn scaled by the row ratio, which
+// shrinks its text and its line spacing together (the icons in it scale with
+// them, so the legend keeps its proportions), and the block ends where the
+// disc's does. A text pane is drawn scaled by its dimensions over the font's
+// extents (CGuiTextPane::Draw) and its glyphs start at the pane's own top-left
+// corner, so the pivot takes back what the smaller pane leaves behind and the
+// text keeps its place.
+struct SPortLegendFit {
+  CGuiTextPane* pane = nullptr;
+  CVector2f dims = CVector2f(0.f, 0.f);
+  CVector3f pivot = CVector3f::Zero();
+  int retailRows = 0;
+  int rows = 0;
+};
+SPortLegendFit sPortLegendFit;
+
+static int PortTextRows(const rstl::wstring& text) {
+  int rows = 1;
+  for (size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == L'\n') {
+      ++rows;
+    }
+  }
+  return rows;
+}
+
+// Rows of the disc's own legend, which its pane is sized for (STRG 0x31): read
+// from the string, so a disc whose legend is laid out differently still fits.
+static int PortRetailLegendRows() {
+  return PortTextRows(rstl::wstring(gpStringTable->GetString(0x31)));
+}
+
+static void PortSetLegend(CGuiTextPane* legend, const rstl::wstring& text) {
+  legend->TextSupport().SetText(text);
+  if (sPortLegendFit.pane != legend) {
+    sPortLegendFit.pane = legend;
+    sPortLegendFit.dims = legend->GetDimensions();
+    sPortLegendFit.pivot = legend->GetScaleCenter();
+    sPortLegendFit.retailRows = PortRetailLegendRows();
+    sPortLegendFit.rows = 0;
+  }
+  const int rows = PortTextRows(text);
+  if (rows == sPortLegendFit.rows) {
+    return;
+  }
+  sPortLegendFit.rows = rows;
+  const int base = sPortLegendFit.retailRows;
+  const float scale =
+      rows > base ? static_cast< float >(base) / static_cast< float >(rows) : 1.f;
+  const CVector2f dims(sPortLegendFit.dims.GetX() * scale, sPortLegendFit.dims.GetY() * scale);
+  legend->SetDimensions(dims, true);
+  // The glyphs start at the pane's top-left corner: the corner moves right and
+  // down as the pane shrinks, so the pivot moves the other way by the same
+  // amount and the corner (and with it the text) stays where the disc put it.
+  legend->ScaleCenter() =
+      CVector3f(sPortLegendFit.pivot.GetX() - 0.5f * (sPortLegendFit.dims.GetX() - dims.GetX()),
+                sPortLegendFit.pivot.GetY(),
+                sPortLegendFit.pivot.GetZ() + 0.5f * (sPortLegendFit.dims.GetY() - dims.GetY()));
+}
+
+// Port: "X Mark room" borrows the disc's hint pane, which the disc fills with a
+// room's hint text and draws under the middle of the map. The prompt moves to
+// the map's upper right: its text (7.6 by 2.0 world units wide and tall, centred
+// in the pane and starting at its top) lands at x +5.7..+13.3, z +6.6..+4.7,
+// below the room title's line and clear of the legend on the left and the
+// prompts along the bottom. The offset is in the pane's parent (the head
+// widget, unrotated); the frame's own transform comes back while the pane holds
+// anything else, or nothing.
+const CVector3f kPortMarkHintOffset(9.5f, 0.f, 15.58f);
+struct SPortHintPane {
+  CGuiTextPane* pane = nullptr;
+  CTransform4f home = CTransform4f::Identity();
+  bool placed = false;
+};
+SPortHintPane sPortHintPane;
+
+// Port: both caches above (and the legend's fit) are keyed on the pane, and a
+// released pane can come back at the same address when the frame is loaded
+// again - the map screen leaves and is re-entered, and the pause screen's pools
+// hand out what was just freed. A stale cache would keep the disc's geometry
+// from being re-taken, would leave the last row count in place (skipping the
+// fit on the reopened frame) and would keep a placement flag set, so the prompt
+// of a reopened frame would never be placed. Cleared when the map frame is
+// dropped and when it is loaded again, before anything reads them.
+static void PortForgetMapPanes() {
+  sPortLegendFit.pane = nullptr;
+  sPortLegendFit.rows = 0;
+  sPortLegendFit.retailRows = 0;
+  sPortHintPane.pane = nullptr;
+  sPortHintPane.placed = false;
+}
+
+static void PortPlaceMarkHint(CGuiTextPane* pane, bool show) {
+  if (pane == nullptr) {
+    return;
+  }
+  if (sPortHintPane.pane != pane) {
+    sPortHintPane.pane = pane;
+    sPortHintPane.home = pane->GetTransform();
+    sPortHintPane.placed = false;
+  }
+  if (show == sPortHintPane.placed) {
+    return;
+  }
+  sPortHintPane.placed = show;
+  pane->SetO2PTransform(show ? CTransform4f::Translate(kPortMarkHintOffset) * sPortHintPane.home
+                             : sPortHintPane.home);
+}
+
+// Port: only the prompt's own glyphs take a click. The disc's hint pane lays one
+// line at its top and its own rect is far wider than "X Mark room": a hit on the
+// empty part of the pane would swallow a click meant for the map and mark the
+// room under it. The pane records its glyphs (port_pointer.h LastBounds).
+static bool PortMarkPromptUnderPointer(const CGuiTextPane* pane) {
+  const PortPointer::Recognizer& gestures = PortPointer::Gestures();
+  PortPointer::Click click;
+  float gx = 0.f, gy = 0.f;
+  PortPointerMath::Rect glyphs;
+  return gestures.PeekClick(click) && PortPointer::WindowToGui(click.x, click.y, gx, gy) &&
+         PortGuiHit::LastBounds(pane, glyphs) && glyphs.Contains(gx, gy);
+}
+
+// Port: the map screen, with the player in control and no room hint text of the
+// disc's up, is when "X Mark room" takes the disc's hint pane.
+bool CAutoMapper::PortShowsMarkPrompt() {
+  if (!PortDebug::MapExtraUi() || x1bc_state != kAMS_MapScreen || x24_world == nullptr ||
+      x328_ != 0 || !IsInPlayerControlState()) {
+    return false;
+  }
+  return !(x78_areaHintDesc.valid() && x78_areaHintDesc->TryCache());
 }
 #endif
 
@@ -1092,7 +1232,14 @@ void CAutoMapper::PortPointerInput(CFinalInput& input, const CStateManager& mgr)
     }
   }
 
-  if (!universe && x2fc_textpane_hint != NULL && PortPointerMenu::TakeClickOn(x2fc_textpane_hint)) {
+  // A click on the mark prompt presses X, as the button does. It takes only a
+  // click on the prompt's own glyphs: the disc's hint pane is far wider than it,
+  // and a hit on the empty part of the pane would swallow a click meant for the
+  // map. Without the prompt (the extra map UI off, or the pane showing a disc
+  // hint) the pane is not a target at all, so nothing invisible marks a room.
+  if (!universe && x2fc_textpane_hint != NULL && PortShowsMarkPrompt() &&
+      PortMarkPromptUnderPointer(x2fc_textpane_hint) &&
+      PortPointerMenu::TakeClickOn(x2fc_textpane_hint)) {
     PortPointerMenu::PressX(input);
   }
 
@@ -1888,6 +2035,11 @@ void CAutoMapper::Update(float dt, const CStateManager& mgr) {
   if (x28_frmeMapScreen.get() != NULL && x2c_frmeInitialized == NULL) {
     if (x28_frmeMapScreen->TryCache()) {
       x2c_frmeInitialized = x28_frmeMapScreen->GetObject();
+#ifdef TARGET_PC
+      // Port: the new frame's widgets, before the port's own state is taken from
+      // them (see PortForgetMapPanes).
+      PortForgetMapPanes();
+#endif
       // Port: keep the map screen's proportions in widescreen instead of
       // stretching it across the wider viewport.
       if (CGuiCamera* cam = x2c_frmeInitialized->GetFrameCamera()) {
@@ -1918,10 +2070,10 @@ void CAutoMapper::Update(float dt, const CStateManager& mgr) {
 #ifdef TARGET_PC
       if (PortLegendReady()) {
         sPortLegendKey = PortLegendKey();
-        mapLegend->TextSupport().SetText(PortLegendText());
+        PortSetLegend(mapLegend, PortLegendText());
       } else {
         sPortLegendKey = ~0u;
-        mapLegend->TextSupport().SetText(rstl::wstring(gpStringTable->GetString(0x31)));
+        PortSetLegend(mapLegend, rstl::wstring(gpStringTable->GetString(0x31)));
       }
 #else
       mapLegend->TextSupport().SetText(rstl::wstring(gpStringTable->GetString(0x31)));
@@ -1945,11 +2097,16 @@ void CAutoMapper::Update(float dt, const CStateManager& mgr) {
       CGuiTextPane* legend =
           static_cast< CGuiTextPane* >(x2c_frmeInitialized->FindWidget("textpane_mapLegend"));
       if (legend != NULL) {
-        legend->TextSupport().SetText(PortLegendText());
+        PortSetLegend(legend, PortLegendText());
       }
     }
 #endif
     x2c_frmeInitialized->Update(dt);
+#ifdef TARGET_PC
+    // Port: the mark prompt's own place, and the disc's hint pane back when it
+    // is not showing it (see PortPlaceMarkHint).
+    PortPlaceMarkHint(x2fc_textpane_hint, PortShowsMarkPrompt());
+#endif
 
     {
       CGuiTextPane* right1 =
@@ -2250,6 +2407,10 @@ void CAutoMapper::CompleteMapperStateTransition(const CStateManager& mgr) {
   }
 
   if (x1c0_nextState == kAMS_MiniMap) {
+#ifdef TARGET_PC
+    // Port: the frame's widgets go away with it (see PortForgetMapPanes).
+    PortForgetMapPanes();
+#endif
     x28_frmeMapScreen = NULL;
     x2c_frmeInitialized = NULL;
     x2fc_textpane_hint = NULL;

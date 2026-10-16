@@ -645,6 +645,7 @@ void CmdHelp() {
   Out("                           tick draws the plain tick state");
   Out("hold <0|1>, step [ticks]   stop the simulation; step runs ticks one per frame");
   Out("reveal <0|1>               reveal every world's map, as the Options row does");
+  Out("mapui [0|1]                 the map's extra legend entries and the Mark room prompt");
   Out("pickups <0|1>              white dots on the map for uncollected pickups");
   Out("tracker                    items, scans and rooms visited (the F1 Tracker page)");
   Out("viewmodel <cmdl> [dist] [yaw] [pitch] | off | status | light <0|1>   draw a model in front of the camera");
@@ -2306,6 +2307,16 @@ void RunFrame() {
       PortDebug::SetPerPixelLighting(v == "1");
     }
     Out(PortDebug::PerPixelLighting() ? "pixellight 1" : "pixellight 0");
+    Finish();
+  } else if (name == "mapui") {
+    if (sCmd.args.size() > 1) {
+      const std::string& v = sCmd.args[1];
+      if (v != "0" && v != "1") {
+        return Finish("usage: mapui [0|1]");
+      }
+      PortDebug::SetMapExtraUi(v == "1");
+    }
+    Out(PortDebug::MapExtraUi() ? "mapui 1" : "mapui 0");
     Finish();
   } else if (name == "sunshadow") {
     if (sCmd.args.size() > 1) {

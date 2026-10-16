@@ -510,23 +510,9 @@ RayHit RayAABox(const Box& box, const Vec3& start, const Vec3& dir, float length
   return hit;
 }
 
-namespace {
-// CMath::SqrtF 0x65f70: v * rsqrt(max(v, 1e-35)), the reciprocal square root being the
-// ARM estimate with TWO frsqrts refinements, and 0 for v <= 0. The guard is a
-// `fcmp/b.le` pair, and AArch64 takes an unordered compare, so the machine rule is
-// `!(v > 0)` and NaN returns 0 like the non-positive inputs. (Unreachable from
-// RaySphere, which only calls this under `0.f < disc`.)
-constexpr float kSqrtFFloor = 1e-35f; // 0x0554ad2e
-float SourceSqrtF(float v) {
-  if (!(v > 0.f)) return 0.f;
-  const float x = std::fmax(v, kSqrtFFloor);
-  const float estimate = ReciprocalSqrtEstimate(x);
-  const float first = estimate * ReciprocalSqrtStep(x, estimate * estimate);
-  const float second = first * ReciprocalSqrtStep(x, first * first);
-  return v * second;
-}
-} // namespace
-
+// CMath::SqrtF 0x65f70 used to be file-local here; it now lives in the contacts module
+// (PortRemasteredGroundContacts::Source::SqrtF, which is where the capsule kernel's
+// 0x699b0 copy can share it). Same instruction sequence, same outputs.
 RayHit RaySphere(const Vec3& center, float radius, const Vec3& start, const Vec3& dir,
                  float length) {
   // 0xbf6ac0 runs in Remastered axes, like the box-sphere producer.
@@ -547,7 +533,7 @@ RayHit RaySphere(const Vec3& center, float radius, const Vec3& start, const Vec3
       // 0xbf6b2c: r2 - (d2 - b*b); 0.0 < disc, so exact tangency misses.
       const float disc = r2 - (d2 - b * b);
       if (0.f < disc) {
-        const float t = b - SourceSqrtF(disc);
+        const float t = b - PortRemasteredGroundContacts::Source::SqrtF(disc);
         if (t < length) {
           // 0xbf6b58-0xbf6b98: hit point = start + t*dir, then CUnitVector3f 0x71164
           // (AsNormalizedOrZero 0x6b6b8) of point - centre, the verified helper.

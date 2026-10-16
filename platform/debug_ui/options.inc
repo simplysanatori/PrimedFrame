@@ -599,6 +599,17 @@ void SetMapStationPickups(bool enabled) {
   MarkDirty();
 }
 
+bool MapExtraUi() {
+  EnsureInitialized();
+  return sMapExtraUi;
+}
+
+void SetMapExtraUi(bool enabled) {
+  EnsureInitialized();
+  sMapExtraUi = enabled;
+  MarkDirty();
+}
+
 int ApSuitDamage() {
   EnsureInitialized();
   return sApSuitDamage;

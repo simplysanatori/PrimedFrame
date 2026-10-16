@@ -544,11 +544,19 @@
   capacity (in packs of 5, launcher included), power bombs, artifacts, missing
   upgrades, logbook scans per category (artifacts count at the game's 50%),
   rooms visited per world and the current world's unvisited rooms (their names
-  load on first view). Console: `reveal <0|1>`, `pickups <off|seen|rooms|all>`, `pickups kinds|station <on|off>`, `pickups collect <dot>`, `tracker`.
-  Room marks: on the world map screen X marks or unmarks the shown room (a
-  "Mark room" prompt under the map; with pointer menus click it). Marked rooms
-  draw cyan on the map and the minimap, over the Rooms amber, whatever
-  `map_pickups` is. A save keeps up to 64 marks, and which pickups it has seen,
+  load on first view). Extra map UI (`map_extra_ui`, off by default) adds the
+  port's own lines to the world map screen: legend entries for the pickup shapes
+  in use (see Show major and minor items) and for the marked-room colour, and the
+  "Mark room" prompt in the map's upper right, clear of the room title, the
+  legend and the prompts along the bottom. Off, the legend is the disc's own text
+  at the disc's own size, and there is no prompt; the legend is drawn scaled by
+  its row count against the disc's so the port's entries never reach the
+  Key/Legend prompt under it. Console: `reveal <0|1>`, `pickups <off|seen|rooms|all>`, `pickups kinds|station <on|off>`, `pickups collect <dot>`, `mapui <0|1>`, `tracker`.
+  Room marks: on the world map screen X marks or unmarks the shown room. With
+  Extra map UI on, a click or tap on the "Mark room" prompt does the same (with
+  pointer menus; touch needs the setting on, since the prompt is what is tapped).
+  Marked rooms draw cyan on the map and the minimap, over the Rooms amber,
+  whatever `map_pickups` is, and marking works whether Extra map UI is on or off. A save keeps up to 64 marks, and which pickups it has seen,
   in a small side file beside the card: `mapdata/<card>-<slot>.bin` under the
   port's user folder. The card's identity keys the name - the directory it
   resolves to, the game id and maker its files are created with, and the card

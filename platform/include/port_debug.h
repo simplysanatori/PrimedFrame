@@ -270,6 +270,12 @@ void SetMapPickupKinds(bool enabled);
 // On by default.
 bool MapStationPickups();
 void SetMapStationPickups(bool enabled);
+// The port's own lines on the world map screen: the legend entries for the
+// pickup shapes in use and the marked-room colour, and the "X Mark room" prompt
+// (with a pointer click on it marking the shown room). Off by default, so the
+// disc's own legend and prompts are what a first playthrough shows.
+bool MapExtraUi();
+void SetMapExtraUi(bool enabled);
 // The apworld's staggered_suit_damage, which the server doesn't send: 0 the
 // game's rule, 1 progressive (the apworld's default, and the port's), 2
 // additive. Only an Archipelago seed uses it.

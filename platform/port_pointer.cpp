@@ -454,6 +454,13 @@ bool Bounds(const CGuiWidget* widget, bool children, PortPointerMath::Rect& out)
   return sHits.Bounds(CGraphics::GetFrameCounter(), Key(widget), children, out);
 }
 
+bool LastBounds(const CGuiWidget* widget, PortPointerMath::Rect& out) {
+  if (widget == nullptr) {
+    return false;
+  }
+  return sHits.LastBounds(CGraphics::GetFrameCounter(), Key(widget), out);
+}
+
 std::string Describe(float gx, float gy) {
   const int frame = CGraphics::GetFrameCounter();
   const auto& list = sHits.Current(frame);

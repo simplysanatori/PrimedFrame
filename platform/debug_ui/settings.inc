@@ -148,6 +148,8 @@ const SettingKey kSettingKeys[] = {
      [](std::ostream& out) { WriteBool(out, sMapPickupKinds); }, false, "1", "0"},
     {"map_station_pickups", [](const std::string& value) { sMapStationPickups = ParseBool(value); },
      [](std::ostream& out) { WriteBool(out, sMapStationPickups); }, false, "1", "0"},
+    {"map_extra_ui", [](const std::string& value) { sMapExtraUi = ParseBool(value); },
+     [](std::ostream& out) { WriteBool(out, sMapExtraUi); }, false, "1", "0"},
     {"ap_suit_damage",
      [](const std::string& value) {
        const int mode = std::atoi(value.c_str());
