@@ -119,19 +119,21 @@ std::string FormatG(double v) {
 
 using port::Lower;
 
-uint32_t Crc32(const std::string& s) {
-  static uint32_t table[256];
-  static bool ready = false;
-  if (!ready) {
-    for (uint32_t i = 0; i < 256; ++i) {
-      uint32_t c = i;
-      for (int k = 0; k < 8; ++k) {
-        c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-      }
-      table[i] = c;
+// Built at compile time: Converter::Convert runs on several import threads at once.
+constexpr std::array< uint32_t, 256 > kCrc32Table = [] {
+  std::array< uint32_t, 256 > table{};
+  for (uint32_t i = 0; i < 256; ++i) {
+    uint32_t c = i;
+    for (int k = 0; k < 8; ++k) {
+      c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
     }
-    ready = true;
+    table[i] = c;
   }
+  return table;
+}();
+
+uint32_t Crc32(const std::string& s) {
+  const auto& table = kCrc32Table;
   uint32_t c = 0xFFFFFFFFu;
   for (unsigned char ch : s) {
     c = table[(c ^ ch) & 0xFF] ^ (c >> 8);

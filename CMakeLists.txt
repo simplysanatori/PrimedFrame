@@ -760,9 +760,6 @@ if(MP_BUILD_TESTS)
         extern/sdk/include)
     add_test(NAME port_air_mover_contact_tests COMMAND port_air_mover_contact_tests)
     set_tests_properties(port_air_mover_contact_tests PROPERTIES TIMEOUT 15 LABELS port)
-    add_test(NAME port_air_mover_wiring COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/tests/port_air_mover_wiring.py
-        ${CMAKE_SOURCE_DIR}/src/MetroidPrime/CGameCollision.cpp)
     add_executable(port_hdr_scene_policy_tests tests/port_hdr_scene_policy.cpp)
     target_include_directories(port_hdr_scene_policy_tests PRIVATE include extern/aurora/include)
     target_compile_definitions(port_hdr_scene_policy_tests PRIVATE TARGET_PC VERSION=0)
@@ -910,5 +907,9 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_settings_index.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_settings_index PROPERTIES TIMEOUT 15 LABELS port)
+        add_test(NAME port_air_mover_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_air_mover_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR}/src/MetroidPrime/CGameCollision.cpp)
+        set_tests_properties(port_air_mover_wiring PROPERTIES TIMEOUT 15 LABELS port)
     endif()
 endif()

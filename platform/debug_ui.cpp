@@ -799,9 +799,10 @@ void LoadSettings() {
   std::fprintf(stderr, "metroid_prime_port: loaded settings from %s\n", path.c_str());
   std::string line;
   while (std::getline(file, line)) {
-    const size_t comment = line.find('#');
-    if (comment != std::string::npos) {
-      line.erase(comment);
+    // Only whole-line comments: values are written raw, and a path may contain '#'.
+    const size_t first = line.find_first_not_of(" \t");
+    if (first == std::string::npos || line[first] == '#') {
+      continue;
     }
     const size_t separator = line.find('=');
     if (separator == std::string::npos) {

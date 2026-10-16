@@ -263,6 +263,39 @@ int main() {
     CHECK(ResumeRefreshDue(true, true, true, 100.0, period));
   }
 
+  // A label length over the cap is rejected, not read past.
+  {
+    std::string crafted = data;
+    const size_t at = crafted.find("Main Plaza");
+    CHECK(at != std::string::npos && at >= 4);
+    crafted[at - 4] = 0x01;  // 257, little-endian
+    crafted[at - 3] = 0x01;
+    Header out;
+    std::vector< uint8_t > outBlob;
+    CHECK(!PortSaveState::Decode(crafted, out, outBlob));
+  }
+
+  // An object with more blocks than the decoder accepts keeps the first kMaxBlocks.
+  {
+    using namespace PortSaveState;
+    Header many = in;
+    RoomObject obj;
+    obj.editorId = 0x00020001;
+    obj.active = true;
+    for (int i = 0; i < 130; ++i)
+      obj.blocks.push_back({static_cast< uint32_t >(i), std::string(1, static_cast< char >(i))});
+    many.roomState.areas = {2};
+    many.roomState.present = {obj.editorId};
+    many.roomState.objects = {obj};
+    Header out;
+    std::vector< uint8_t > outBlob;
+    CHECK(Decode(Encode(many, blob), out, outBlob));
+    CHECK(out.roomState.objects.size() == 1);
+    const RoomObject& got = out.roomState.objects[0];
+    CHECK(got.active && got.blocks.size() == 64);
+    CHECK(got.blocks.back().tag == 63 && got.blocks.back().data == std::string(1, '\x3f'));
+  }
+
   std::puts("savestate tests passed");
   return 0;
 }
