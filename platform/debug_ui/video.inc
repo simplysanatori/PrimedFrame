@@ -418,6 +418,55 @@ void DrawVideoCompatibility() {
   ImGui::TextDisabled("For GPU driver problems, such as a black world or a crash at start. Most of these "
                       "take effect after a restart.");
   ImGui::PopTextWrapPos();
+#if defined(_WIN32)
+  // Which API to ask Aurora for (issue #135). Read at window creation, so it takes a
+  // restart: Aurora tries the choice first and falls back to its own order if it
+  // won't start, and the setting is left alone.
+  {
+    static const char* const kBackendNames[] = {"Auto", "Direct3D 12", "Vulkan", "Direct3D 11"};
+    int choice = static_cast< int >(sGraphicsBackend);
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 11.f);
+    if (ImGui::Combo("Renderer", &choice, kBackendNames, PortDebug::kGraphicsBackendCount)) {
+      SetGraphicsBackend(static_cast< PortDebug::EGraphicsBackend >(choice));
+    }
+    ImGui::SetItemTooltip("Which graphics API to start on. Auto tries Direct3D 12, then Vulkan, then\n"
+                          "Direct3D 11. Takes effect after a restart. If the driver can't start the chosen\n"
+                          "API, this run falls back to Auto and the setting is kept, so it can be changed\n"
+                          "here. MP_GRAPHICS_BACKEND=auto|d3d12|vulkan|d3d11 overrides it for one run.");
+    // What this run asked for is the resolution of the STARTUP selection, not the
+    // setting: MP_GRAPHICS_BACKEND outranks the file, and changing the combo must not
+    // pretend the API this run started on was the one asked for.
+    const char* const env = std::getenv("MP_GRAPHICS_BACKEND");
+    const PortGraphicsBackend::Request request = PortGraphicsBackend::Resolve(sGraphicsBackendAtStart, env);
+    const AuroraBackend live = aurora_get_backend();
+    const PortGraphicsBackend::Status status =
+        PortGraphicsBackend::Describe(sGraphicsBackend, sGraphicsBackendAtStart, request, live);
+    const char* const requested = PortGraphicsBackend::DisplayName(PortGraphicsBackend::ToAurora(status.requested));
+    ImGui::SameLine();
+    // The restart notice is about the saved selection, so an override (which wins the
+    // next start too, while it is set) reports it in its own note below instead.
+    const char* const restartNote =
+        status.restartPending && !status.overridden ? " (restart to apply the new selection)" : "";
+    if (status.fellBack) {
+      ImGui::TextColored(ThemeWarnColor(), "%s could not start; using %s%s", requested,
+                         PortGraphicsBackend::DisplayName(live), restartNote);
+    } else if (restartNote[0] != '\0') {
+      ImGui::TextColored(ThemeWarnColor(), "Restart to apply");
+    } else {
+      ImGui::TextDisabled("Using %s", PortGraphicsBackend::DisplayName(live));
+    }
+    if (status.overridden) {
+      // The override is what this run asked for, so the setting does nothing to it:
+      // say so rather than let a changed combo look like it did. `asks for` also stays
+      // true when the override is the one that fell back.
+      ImGui::PushTextWrapPos(0.f);
+      ImGui::TextDisabled("MP_GRAPHICS_BACKEND=%s asks for %s this run, over the saved selection; a change here "
+                          "starts applying once it is unset%s.",
+                          env, requested, status.restartPending ? ", and the next start uses it then" : "");
+      ImGui::PopTextWrapPos();
+    }
+  }
+#endif
   size_t backendCount = 0;
   const AuroraBackend* backends = aurora_get_available_backends(&backendCount);
   if (std::find(backends, backends + backendCount, BACKEND_OPENGLES) != backends + backendCount) {
@@ -435,7 +484,7 @@ void DrawVideoCompatibility() {
     } else if (sOpenGles && live != BACKEND_OPENGLES) {
       ImGui::SameLine();
       ImGui::TextColored(ThemeWarnColor(), "OpenGL ES failed to start; using %s",
-                         live == BACKEND_VULKAN ? "Vulkan" : "another API");
+                         PortGraphicsBackend::DisplayName(live));
     }
   }
   DrawGpuDriver();

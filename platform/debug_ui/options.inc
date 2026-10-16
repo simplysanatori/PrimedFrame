@@ -599,6 +599,17 @@ void SetMapStationPickups(bool enabled) {
   MarkDirty();
 }
 
+bool MapExtraUi() {
+  EnsureInitialized();
+  return sMapExtraUi;
+}
+
+void SetMapExtraUi(bool enabled) {
+  EnsureInitialized();
+  sMapExtraUi = enabled;
+  MarkDirty();
+}
+
 int ApSuitDamage() {
   EnsureInitialized();
   return sApSuitDamage;
@@ -725,6 +736,19 @@ void SetOpenGles(bool enabled) {
   EnsureInitialized();
   if (sOpenGles != enabled) {
     sOpenGles = enabled;
+    MarkDirty();
+  }
+}
+
+PortDebug::EGraphicsBackend GraphicsBackend() {
+  EnsureInitialized();
+  return sGraphicsBackend;
+}
+
+void SetGraphicsBackend(PortDebug::EGraphicsBackend backend) {
+  EnsureInitialized();
+  if (sGraphicsBackend != backend) {
+    sGraphicsBackend = backend;
     MarkDirty();
   }
 }

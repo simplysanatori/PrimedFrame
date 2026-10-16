@@ -98,6 +98,12 @@ int main() {
     CHECK(Near(r.x0, 0.f) && Near(r.x1, 150.f));
     CHECK(!hits.Bounds(frame + 1, &parent, false, r));
     CHECK(hits.Bounds(frame + 1, &w1, false, r) && Near(r.x1, 100.f));
+    // The last rect a widget drew on its own: a text pane's glyphs, which come
+    // after its pane.
+    hits.Add(frame, &ownerA, c2, 2, Box(60, 60, 120, 90));
+    CHECK(hits.LastBounds(frame + 1, &w2, r));
+    CHECK(Near(r.x0, 60.f) && Near(r.y0, 60.f) && Near(r.x1, 120.f) && Near(r.y1, 90.f));
+    CHECK(hits.Bounds(frame + 1, &w2, false, r) && Near(r.x0, 50.f) && Near(r.x1, 150.f));
     // Frame 11 starts drawing: lookups keep using frame 10's complete list.
     hits.Add(frame + 1, &ownerA, c3, 1, Box(0, 0, 10, 10));
     CHECK(hits.Pick(frame + 1, &ownerA, 65.f, 65.f)->chain[0] == &w2);

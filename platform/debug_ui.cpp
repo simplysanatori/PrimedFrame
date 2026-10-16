@@ -11,6 +11,7 @@
 #include "port_env.h"
 #include "port_collision_view.h"
 #include "port_debug.h"
+#include "port_graphics_backend.h"
 #include "port_gyro_motion.h"
 #include "port_dynamic_res.h"
 #include "port_freecam.h"
@@ -232,6 +233,9 @@ bool sMapLogicColors = true;
 // first playthrough.
 bool sMapPickupKinds = false;
 bool sMapStationPickups = true;
+// Off by default: the disc's own map legend and prompts, without the port's
+// lines. Room marks themselves are unaffected.
+bool sMapExtraUi = false;
 // The Tracker tab's item, scan and room counts. Off so the tab doesn't spoil
 // what is left to find until asked.
 bool sTrackerProgress = false;
@@ -269,6 +273,11 @@ bool sProjectedShadows = true;
 // Setting `opengles`; sOpenGlesAtStart is what this run was started with.
 bool sOpenGles = false;
 bool sOpenGlesAtStart = false;
+// Setting `graphics_backend` (Windows, issue #135); sGraphicsBackendAtStart is what
+// this run was started with, so the Video page can say when a change needs a restart
+// and when Aurora fell back from it.
+PortDebug::EGraphicsBackend sGraphicsBackend = PortDebug::kGraphicsBackend_Auto;
+PortDebug::EGraphicsBackend sGraphicsBackendAtStart = PortDebug::kGraphicsBackend_Auto;
 // Setting `gpu_driver`: an installed custom Vulkan driver's id (port_gpu_driver.h), "" = the system's.
 std::string sGpuDriver;
 std::string sGpuDriverAtStart;

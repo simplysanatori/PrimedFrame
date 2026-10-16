@@ -146,6 +146,15 @@ void DrawTrackerTab() {
   ImGui::EndDisabled();
   ItemHelp("In Seen, a map station also marks every pickup in the rooms it maps, as a hint does "
            "for its room. With Reveal map on, that is every room, as in All.");
+  bool extraUi = sMapExtraUi;
+  if (ImGui::Checkbox("Extra map UI", &extraUi)) {
+    SetMapExtraUi(extraUi);
+  }
+  ItemHelp("The port's own lines on the world map screen: legend entries for the pickup shapes in "
+           "use and for the marked-room colour, and the \"X Mark room\" prompt in the map's upper "
+           "right (in Single Player a click or tap on it marks or unmarks the shown room). Off by "
+           "default, so the disc's own legend and prompts are what a first playthrough shows. "
+           "Room marks still work with X and still draw cyan with this off.");
 
   DrawTrackerLogic();
 
