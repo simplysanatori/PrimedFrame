@@ -635,7 +635,8 @@ bool CGameCollision::RayStaticIntersectionArea(const CGameArea& area, const CVec
 
 CRayCastResult CGameCollision::RayStaticIntersection(const CStateManager& mgr, const CVector3f& pos,
                                                      const CVector3f& dir, float mag,
-                                                     const CMaterialFilter& filter) {
+                                                     const CMaterialFilter& filter,
+                                                     bool frontOnly) {
   const CWorld* world = mgr.GetWorld();
   const CUnitVector3f unitDir = CUnitVector3f(dir.GetX(), dir.GetY(), dir.GetZ());
   CLine line(pos, unitDir);
@@ -647,7 +648,7 @@ CRayCastResult CGameCollision::RayStaticIntersection(const CStateManager& mgr, c
     const CAreaOctTree& collision = (*it).GetOctTree();
     CAreaOctTree::Node node(collision.GetTreeMemory(), collision.GetBoundingBox(), collision,
                             collision.GetTreeType());
-    node.LineTestEx(line, filter, rayRes, mag);
+    node.LineTestEx(line, filter, rayRes, mag, frontOnly);
 
     if (!rayRes.x10_surface || (mag != 0.f && mag < rayRes.x3c_t)) {
       continue;
@@ -1604,8 +1605,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     }
 
     // RayIntersection 0xc20810 with the collision filter: the smallest t below the
-    // current length, stopping at |t| < 1e-5. Terrain hits are code 2 (the port line
-    // test's backface handling against EBackfacingTris 1 is unverified). Character and
+    // current length, stopping at |t| < 1e-5. Terrain hits are code 2, front faces only
+    // (mode 1, TriangleNoBackface 0xbf9360). Character and
     // CollisionActor objects are left out (FindOverlap Exclude{0x41}). The mover's near
     // list stands in for 0xc20214's swept-box broadphase.
     PortCollisionFailsafe::RayHit Ray(const PortCollisionFailsafe::Vec3& start,
@@ -1614,7 +1615,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       float bestT = length;
       if (StaticQuery::Allowed(materialFilter)) {
         const CRayCastResult r =
-            RayStaticIntersection(mgr, C(start), C(dir), length, materialFilter);
+            RayStaticIntersection(mgr, C(start), C(dir), length, materialFilter, true);
         if (r.IsValid() && r.GetTime() < bestT) {
           bestT = r.GetTime();
           best.code = PortCollisionFailsafe::kRay_Hit;

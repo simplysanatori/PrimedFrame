@@ -762,6 +762,19 @@ if(MP_BUILD_TESTS)
         extern/sdk/include)
     add_test(NAME port_air_mover_contact_tests COMMAND port_air_mover_contact_tests)
     set_tests_properties(port_air_mover_contact_tests PROPERTIES TIMEOUT 15 LABELS port)
+    add_executable(port_octree_frontonly_tests tests/port_octree_frontonly.cpp
+        src/WorldFormat/CAreaOctTree_Tests.cpp src/WorldFormat/CAreaOctTree.cpp
+        src/WorldFormat/CCollisionSurface.cpp src/Collision/CMaterialFilter.cpp
+        src/Kyoto/Math/CAABox.cpp src/Kyoto/Math/CVector3i.cpp src/Kyoto/Math/CVector3f.cpp
+        src/Kyoto/Streams/CInputStream.cpp src/Kyoto/Streams/CMemoryInStream.cpp
+        src/Kyoto/Streams/COutputStream.cpp src/Kyoto/Math/CVector2f.cpp
+        src/Kyoto/Math/CTransform4f.cpp src/Kyoto/Math/CUnitVector3f.cpp src/Kyoto/Math/CPlane.cpp
+        src/Kyoto/Math/RMathUtils.cpp)
+    target_include_directories(port_octree_frontonly_tests PRIVATE include extern/aurora/include
+        extern/sdk/include)
+    target_compile_definitions(port_octree_frontonly_tests PRIVATE TARGET_PC VERSION=0)
+    add_test(NAME port_octree_frontonly_tests COMMAND port_octree_frontonly_tests)
+    set_tests_properties(port_octree_frontonly_tests PROPERTIES TIMEOUT 15 LABELS port)
     foreach(t port_remastered_ground_contacts port_collision_failsafe)
         add_executable(${t}_tests tests/${t}.cpp)
         target_link_libraries(${t}_tests PRIVATE port_remastered_ground_contacts)
