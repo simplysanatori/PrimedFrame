@@ -165,8 +165,6 @@ void DrawControlsKeyboardMouse() {
   ImGui::TextDisabled("Mouse buttons are bound in Controls > Remap (Keyboard & mouse).");
 }
 
-
-
 void DrawControlsController() {
   ImGui::SeparatorText("Stick aim");
   bool twinStick = sInput.twinStick;

@@ -87,7 +87,7 @@ int GyroMode() {
 
 void SetGyroMode(int mode) {
   EnsureInitialized();
-  if (mode < 0 || mode > 2) {
+  if (mode < 0 || mode > 3) {
     return;
   }
   sInput.gyroMode = mode;
