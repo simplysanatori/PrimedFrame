@@ -1,6 +1,7 @@
 #include "MetroidPrime/Player/CPlayerGun.hpp"
 #include "port_debug.h"
 #include "port_room_env.h"
+#include "port_shot_aim.h"
 #include "port_synthetic_effect.h"
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
@@ -592,7 +593,7 @@ void CPlayerGun::PortSnapshotPresentedPose(const CStateManager& mgr) const {
   sPortGunPrevGeneration = CActor::PortTickGeneration();
 }
 
-void CPlayerGun::PortShotFromDrawnMuzzle(const CStateManager& mgr, CTransform4f& xf) const {
+void CPlayerGun::PortShotFromDrawnMuzzle(const CStateManager& mgr, CTransform4f& xf, bool aim) const {
   // CStateManager's RenderGun pass draws the gun at the retail FOV when the view's differs,
   // so on screen the muzzle sits where a world point at the same depth, scaled out from the
   // view axis by the ratio of the two projections, would. Shots start there, so they leave
@@ -617,13 +618,72 @@ void CPlayerGun::PortShotFromDrawnMuzzle(const CStateManager& mgr, CTransform4f&
   const CVector3f p = viewXf.TransposeRotate(xf.GetTranslation() - eye);
   const CVector3f pos =
       eye + viewXf.Rotate(CVector3f(p.GetX() * scale, p.GetY(), p.GetZ() * scale));
+  // A shot that only moved would keep retail's direction, aimed from the real muzzle, and pass
+  // beside what it was aimed at by as much as it moved (#134: weak points missed with the FOV
+  // slider off retail). It is aimed from its new start at where retail's would have arrived:
+  // the pointed point, the aim target at its depth along the shot, or what the shot meets.
+  if (!aim) {
+    xf.SetTranslation(pos);
+    return;
+  }
+  CVector3f aimPoint;
   if (mPortPointerAimValid) {
-    const CVector3f toAim = mPortPointerAimPoint - pos;
-    if (toAim.CanBeNormalized()) {
-      xf = CTransform4f::LookAt(CVector3f::Zero(), toAim);
-    }
+    aimPoint = mPortPointerAimPoint;
+  } else {
+    aimPoint = PortShotAimPoint(mgr, xf.GetTranslation(), xf.GetForward());
+  }
+  const CVector3f toAim = aimPoint - pos;
+  if (toAim.CanBeNormalized()) {
+    xf = CTransform4f::LookAt(CVector3f::Zero(), toAim);
   }
   xf.SetTranslation(pos);
+}
+
+CVector3f CPlayerGun::PortShotAimPoint(const CStateManager& mgr, const CVector3f& from,
+                                       const CVector3f& dir) const {
+  // Nearer than this the new start's offset would bend the shot more than it is worth.
+  const float kMinDepth = 2.f;
+  const float kRange = 100.f;
+  if (!dir.CanBeNormalized()) {
+    return from;
+  }
+  const CVector3f forward = dir.AsNormalized();
+  // Assist-aimed at a target: retail's shot heads for the assisted aim point (the target with
+  // its lead), so meet the line at its depth, whether or not the shot touches the target. Only
+  // when this shot was aimed at it (port_shot_aim.h): it took the assist direction, and that
+  // direction, from the gun, points at the aim point. An aim target kept after it left the box
+  // or the line of sight, or one assist was clamped or off for, is not where the shot goes.
+  const CPlayer& player = *mgr.GetPlayer();
+  if (TCastToConstPtr< CActor >(mgr.GetObjectById(player.GetAimTargetId())) != nullptr &&
+      x478_assistAimXf.GetForward().CanBeNormalized()) {
+    const CVector3f assistDir = x478_assistAimXf.GetForward().AsNormalized();
+    const CVector3f gun = GetTransform().GetTranslation();
+    const CVector3f& aim = player.GetAssistedTargetAim();
+    const float dirXyz[3] = {forward.GetX(), forward.GetY(), forward.GetZ()};
+    const float assistXyz[3] = {assistDir.GetX(), assistDir.GetY(), assistDir.GetZ()};
+    const float gunXyz[3] = {gun.GetX(), gun.GetY(), gun.GetZ()};
+    const float aimXyz[3] = {aim.GetX(), aim.GetY(), aim.GetZ()};
+    const float fromXyz[3] = {from.GetX(), from.GetY(), from.GetZ()};
+    if (PortShotAim::SameDirection(dirXyz, assistXyz) &&
+        PortShotAim::PointsAt(gunXyz, assistXyz, aimXyz, kMinDepth)) {
+      const float depth = PortShotAim::DepthAlong(fromXyz, dirXyz, aimXyz);
+      if (depth >= kMinDepth) {
+        return from + forward * depth;
+      }
+    }
+  }
+  // Else what retail's shot would meet first: the world, or an actor.
+  static const CMaterialFilter filter = CMaterialFilter::MakeIncludeExclude(
+      CMaterialList(kMT_Solid), CMaterialList(kMT_Player, kMT_ProjectilePassthrough));
+  TEntityList nearList;
+  mgr.BuildNearList(nearList, from, forward, kRange, filter, mgr.GetPlayer());
+  TUniqueId hitId = kInvalidUniqueId;
+  const CRayCastResult hit = mgr.RayWorldIntersection(hitId, from, forward, kRange, filter, nearList);
+  float depth = kRange;
+  if (hit.IsValid()) {
+    depth = CMath::Max(CVector3f::Dot(hit.GetPoint() - from, forward), kMinDepth);
+  }
+  return from + forward * depth;
 }
 
 CTransform4f CPlayerGun::PortGunView(const CStateManager& mgr,
@@ -2882,7 +2942,8 @@ void CPlayerGun::ReturnArmAndGunToDefault(CStateManager& mgr, bool returnToDefau
 void CPlayerGun::UpdateAuxWeapons(float dt, const CTransform4f& targetXf, CStateManager& mgr) {
 #ifdef TARGET_PC
   CTransform4f fireXf = GetGunMotionTransform() * x418_beamLocalXf;
-  PortShotFromDrawnMuzzle(mgr, fireXf);
+  // The combo beams fire along targetXf; this only places their muzzle effect.
+  PortShotFromDrawnMuzzle(mgr, fireXf, false);
   const CVector3f firePoint = fireXf.GetTranslation();
 #else
   const CVector3f firePoint = GetGunMotionTransform() * x418_beamLocalXf.GetTranslation();
