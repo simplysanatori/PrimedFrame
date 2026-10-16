@@ -56,6 +56,12 @@ int main() {
   Check(Get().touchSideMargin.load() == 40.f, "touch_side_margin");
   ApplySetting("touch_side_margin", "400");
   Check(Get().touchSideMargin.load() == 40.f, "touch_side_margin range");
+  ApplySetting("touch_opacity", "50");
+  Check(Get().touchOpacity.load() == 50.f, "touch_opacity");
+  ApplySetting("touch_opacity", "400");
+  Check(Get().touchOpacity.load() == 50.f, "touch_opacity above range");
+  ApplySetting("touch_opacity", "0");
+  Check(Get().touchOpacity.load() == 50.f, "touch_opacity below range");
   ApplySetting("gyro_mode", "2");
   ApplySetting("gyro_mode", "3");
   Check(Get().gyroMode == 2, "gyro_mode range");

@@ -119,6 +119,11 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
                                     : s.touchButtonInset)
           .store(f);
     }
+  } else if (key == "touch_opacity") {
+    const float f = ParseFloat(value);
+    if (std::isfinite(f) && f >= kTouchOpacityMin && f <= kTouchOpacityMax) {
+      s.touchOpacity.store(f);
+    }
   } else if (key == "touch_layout") {
     // Printable ASCII only: JNI's NewStringUTF aborts on invalid UTF-8.
     const bool ascii = std::all_of(value.begin(), value.end(),
@@ -270,6 +275,7 @@ void WriteAimSettings(std::ostream& out) {
   out << "touch_side_margin=" << s.touchSideMargin.load() << '\n';
   out << "touch_stick_inset=" << s.touchStickInset.load() << '\n';
   out << "touch_button_inset=" << s.touchButtonInset.load() << '\n';
+  out << "touch_opacity=" << s.touchOpacity.load() << '\n';
   out << "touch_layout=" << TouchLayout() << '\n';
   out << "touch_map_tap=" << (s.touchMapTap ? 1 : 0) << '\n';
   out << "touch_classic_gc=" << (s.touchClassic ? 1 : 0) << '\n';

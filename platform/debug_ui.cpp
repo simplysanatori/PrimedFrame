@@ -410,6 +410,8 @@ constexpr float kTouchMarginMaxDp = PortInput::kTouchMarginMaxDp;
 constexpr float kTouchSideMarginDefault = PortInput::kTouchSideMarginDefault;
 constexpr float kTouchStickInsetDefault = PortInput::kTouchStickInsetDefault;
 constexpr float kTouchButtonInsetDefault = PortInput::kTouchButtonInsetDefault;
+constexpr float kTouchOpacityMin = PortInput::kTouchOpacityMin;
+constexpr float kTouchOpacityMax = PortInput::kTouchOpacityMax;
 // Java's layout change is saved by the game thread's next frame: ImGui's settings
 // path isn't safe from the UI thread.
 std::atomic< bool > sTouchLayoutSavePending{false};
@@ -3782,6 +3784,7 @@ bool TouchFloatingStickFlag() { return sTouchFloatingStickFlag.load(std::memory_
 float TouchSideMarginDp() { return sInput.touchSideMargin.load(); }
 float TouchStickInsetDp() { return sInput.touchStickInset.load(); }
 float TouchButtonInsetDp() { return sInput.touchButtonInset.load(); }
+float TouchOpacity() { return sInput.touchOpacity.load(); }
 
 std::string TouchLayout() {
   return PortInput::TouchLayout();
@@ -7453,6 +7456,13 @@ void DrawControlsTouchGyro() {
   }
   ItemHelp("In morph ball, a quick swipe up on the free screen area (or a fast slide up from "
            "Fire or Jump) springs, without a gyro flick. Needs the Spring Ball option.");
+  float touchOpacity = sInput.touchOpacity.load();
+  if (ImGui::SliderFloat("Opacity", &touchOpacity, kTouchOpacityMin, kTouchOpacityMax, "%.0f%%")) {
+    sInput.touchOpacity.store(touchOpacity);
+    MarkDirty();
+  }
+  ItemHelp("How visible the on-screen controls are. Lower lets more of the game show through; "
+           "the layout editor and the menu buttons stay fully visible.");
   float sideMargin = sInput.touchSideMargin.load();
   if (ImGui::SliderFloat("Side margin", &sideMargin, 0.f, kTouchMarginMaxDp, "%.0f dp")) {
     sInput.touchSideMargin.store(sideMargin);
@@ -10715,6 +10725,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchStickInsetDp(JNIEnv*, jc
 extern "C" JNIEXPORT jfloat JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchButtonInsetDp(JNIEnv*, jclass) {
   return PortDebug::TouchButtonInsetDp();
+}
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchOpacity(JNIEnv*, jclass) {
+  return PortDebug::TouchOpacity();
 }
 
 extern "C" JNIEXPORT jstring JNICALL

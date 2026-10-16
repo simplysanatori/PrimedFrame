@@ -447,6 +447,8 @@ final class TouchControlsView extends View {
     private static native float nativeTouchStickInsetDp();
     // The face buttons' and C-stick's extra inset from the right edge, in dp.
     private static native float nativeTouchButtonInsetDp();
+    // F1's opacity for the gameplay controls, in percent (10-100).
+    private static native float nativeTouchOpacity();
     // The saved per-control layout (`<id>:<dx>,<dy>,<scale>;...`), and its writer, which
     // also saves F1's config.
     private static native String nativeTouchLayout();
@@ -635,6 +637,29 @@ final class TouchControlsView extends View {
             postDelayed(mapButtonPoll, MAP_BUTTON_POLL_MS);
             return;
         }
+        // F1's opacity for the on-screen controls: the gameplay controls (and the
+        // layout editor over them) fade together. The pointer menu's back and cog
+        // buttons were drawn above this and stay fully visible.
+        final float touchOpacity = editing ? 100f : nativeTouchOpacity();
+        final int controlsAlpha = Math.round(touchOpacity * 2.55f);
+        // 255 means no layer at all, the default, so nothing changes (and nothing
+        // is paid for) at 100%.
+        final int savedLayer = controlsAlpha < 255
+                ? canvas.saveLayerAlpha(0f, 0f, width, height, controlsAlpha) : -1;
+        try {
+            drawControls(canvas, width, height, classic);
+        } finally {
+            // Every path back out of the controls, including an exception, puts the
+            // canvas back.
+            if (savedLayer >= 0) {
+                canvas.restoreToCount(savedLayer);
+            }
+        }
+    }
+
+    // The gameplay controls and the layout editor, without the pointer menu's own
+    // buttons, which onDraw draws before this (outside the opacity layer).
+    private void drawControls(Canvas canvas, float width, float height, boolean classic) {
         // Classic and twin stick are exclusive (the native side keeps them so).
         twin = !classic && nativeTouchTwinStick();
         face = twin ? TWIN_FACE : GAMECUBE_FACE;

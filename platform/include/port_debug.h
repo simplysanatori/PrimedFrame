@@ -706,6 +706,8 @@ bool TouchFloatingStickFlag();
 float TouchSideMarginDp();
 float TouchStickInsetDp();
 float TouchButtonInsetDp();
+// The overlay's opacity in percent (10-100). Same rules.
+float TouchOpacity();
 // Per-control offset and size, an opaque `<id>:<dx>,<dy>,<scale>;...` string the
 // Android touch view owns. Setting it saves the config on the next frame.
 std::string TouchLayout();
