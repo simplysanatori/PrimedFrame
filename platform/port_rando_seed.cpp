@@ -149,6 +149,8 @@ bool Settings::operator==(const Settings& other) const {
          backwardsLowerMines == other.backwardsLowerMines && removeXray == other.removeXray &&
          removeThermal == other.removeThermal && removeHiveMecha == other.removeHiveMecha &&
          springBall == other.springBall && startingRoom == other.startingRoom &&
+         shuffleUnlimitedMissiles == other.shuffleUnlimitedMissiles &&
+         shuffleUnlimitedPowerBombs == other.shuffleUnlimitedPowerBombs &&
          randomizeStartingBeam == other.randomizeStartingBeam &&
          blastShieldRandomization == other.blastShieldRandomization &&
          blastShieldFrequency == other.blastShieldFrequency &&
@@ -186,6 +188,8 @@ std::string SettingsText(const Settings& s) {
   out += ",\"remove_thermal_requirements\":" + std::to_string(s.removeThermal);
   out += std::string(",\"remove_hive_mecha\":") + flag(s.removeHiveMecha);
   out += std::string(",\"spring_ball\":") + flag(s.springBall);
+  out += std::string(",\"shuffle_unlimited_missiles\":") + flag(s.shuffleUnlimitedMissiles);
+  out += std::string(",\"shuffle_unlimited_power_bombs\":") + flag(s.shuffleUnlimitedPowerBombs);
   out += ",\"starting_room\":" + std::to_string(s.startingRoom);
   out += std::string(",\"randomize_starting_beam\":") + flag(s.randomizeStartingBeam);
   out += ",\"blast_shield_randomization\":" + std::to_string(s.blastShieldRandomization);
@@ -226,6 +230,9 @@ void ReadSettings(const PortJson::Value& root, Settings& out) {
   s.removeThermal = IntMember(root, "remove_thermal_requirements", s.removeThermal, 0, 2);
   s.removeHiveMecha = BoolMember(root, "remove_hive_mecha", s.removeHiveMecha);
   s.springBall = BoolMember(root, "spring_ball", s.springBall);
+  s.shuffleUnlimitedMissiles = BoolMember(root, "shuffle_unlimited_missiles", s.shuffleUnlimitedMissiles);
+  s.shuffleUnlimitedPowerBombs =
+      BoolMember(root, "shuffle_unlimited_power_bombs", s.shuffleUnlimitedPowerBombs);
   s.startingRoom = IntMember(root, "starting_room", s.startingRoom, 0, 2);
   s.randomizeStartingBeam = BoolMember(root, "randomize_starting_beam", s.randomizeStartingBeam);
   s.blastShieldRandomization =

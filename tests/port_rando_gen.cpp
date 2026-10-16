@@ -147,6 +147,12 @@ void CheckSeed(const Settings& settings, const std::string& text) {
     CHECK(counts.count(49) == 0);
   }
   CHECK((counts.count(5) != 0 ? counts.at(5) : 0) == 1);
+  CHECK(counts.count(41) == (settings.shuffleUnlimitedMissiles ? 1u : 0u));
+  CHECK(counts.count(42) == (settings.shuffleUnlimitedPowerBombs ? 1u : 0u));
+  if (settings.shuffleUnlimitedMissiles)
+    CHECK(counts.at(41) == 1);
+  if (settings.shuffleUnlimitedPowerBombs)
+    CHECK(counts.at(42) == 1);
   // The beam, the start room's loadout, and the Scan Visor unless shuffled.
   CHECK(seed.startItems.size() >= (settings.shuffleScanVisor ? 1u : 2u));
   CHECK(std::set< int64_t >(seed.startItems.begin(), seed.startItems.end()).size() == seed.startItems.size());
@@ -225,6 +231,9 @@ int main() {
     CHECK(Make(e, "determinism").placements != a.placements);
     e.etankCapacity = 5;
     CHECK(Make(e, "determinism").slotData.find("\"etank_capacity\":10,") != std::string::npos);
+    Settings u = s;
+    u.shuffleUnlimitedMissiles = true;
+    CHECK(Make(u, "determinism").placements != a.placements);
     const Seed r = Make(Settings(), "");
     CHECK(r.name.size() == 8);
   }
@@ -252,6 +261,8 @@ int main() {
     s.backwardsLowerMines = (i % 10) == 0;
     s.flaahgraPowerBombs = (i % 8) == 0;
     s.etankCapacity = (i % 5) == 0 ? 50 : (i % 5 == 1 ? 200 : 100);
+    s.shuffleUnlimitedMissiles = (i % 3) == 1;
+    s.shuffleUnlimitedPowerBombs = (i % 4) == 2;
     s.springBall = (i % 4) != 0;
     s.startingRoom = (i / 3) % 3;
     s.randomizeStartingBeam = (i % 5) == 1;
