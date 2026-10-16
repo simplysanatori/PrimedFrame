@@ -7,6 +7,8 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <utility>
 
 using namespace PortCollisionFailsafe;
 
@@ -319,6 +321,538 @@ static void BoxBox() {
   Check(!BoxBoxImpacts({{1, 0, 0}, {2, 1, 1}}, {{0, 0, 0}, {1, 1, 1}}, imp), "boxbox: touching");
   // Apart.
   Check(!BoxBoxImpacts({{2, 0, 0}, {3, 1, 1}}, {{0, 0, 0}, {1, 1, 1}}, imp), "boxbox: apart");
+}
+
+
+// ---- AABox x AABox: paired geometry (0xbf61b4 / 0xbf6650) -----------------------------
+// Test-local Remastered frame (rem = (-x, z, y)) and a verbatim copy of the pre-change
+// BoxBoxImpacts. The copy is a legitimate REGRESSION oracle for the refactor (the legacy
+// output must stay bit-identical, zero signs included); it is not an oracle for 0xbf61b4.
+struct RemV {
+  float v[3];
+};
+static void RemBox(const Box& b, RemV& mn, RemV& mx) {
+  mn = {{-b.max.x, b.min.z, b.min.y}};
+  mx = {{-b.min.x, b.max.z, b.max.y}};
+}
+static Vec3 RemToPort(const RemV& r) { return {-r.v[0], r.v[2], r.v[1]}; }
+
+static bool PrechangeBoxBoxImpacts(const Box& self, const Box& other, std::vector< Impact >& out) {
+  // A = self, B = other; Remastered axes x, y (up), z.
+  RemV aMin, aMax, bMin, bMax;
+  RemBox(self, aMin, aMax);
+  RemBox(other, bMin, bMax);
+  // DoBoundsOverlap 0x98234 (inclusive) gates the whole routine.
+  for (int k = 0; k < 3; ++k) {
+    if (aMax.v[k] < bMin.v[k] || bMax.v[k] < aMin.v[k]) return false;
+  }
+  const std::size_t first = out.size();
+  // 0xbf6650: an impact is added only with depth > 0; both halves carry the depth and
+  // their owner's outward face normal: A's +axis*sign, B's -axis*sign.
+  auto add = [&](int axis, float depth, float sign) {
+    if (!(depth > 0.f)) return;
+    RemV n{{0.f, 0.f, 0.f}};
+    n.v[axis] = -sign; // the other (B) half's normal
+    Impact i;
+    i.depth = depth;
+    i.otherNormal = RemToPort(n);
+    out.push_back(i);
+  };
+  for (int k = 0; k < 3; ++k) {
+    const float extB = bMax.v[k] - bMin.v[k];
+    const float extA = aMax.v[k] - aMin.v[k];
+    const float s0 = aMax.v[k] - bMin.v[k];
+    const float s8 = bMax.v[k] - aMin.v[k];
+    if (s0 < extB && s0 < extA) add(k, s0, 1.f);
+    if (s8 < extA && s8 < extB) add(k, s8, -1.f);
+  }
+  if (out.size() == first) {
+    // No axis partly overlaps: the smallest non-negative difference, earlier axis on ties.
+    const float d[6] = {aMax.v[0] - bMin.v[0], bMax.v[0] - aMin.v[0], aMax.v[1] - bMin.v[1],
+                        bMax.v[1] - aMin.v[1], aMax.v[2] - bMin.v[2], bMax.v[2] - aMin.v[2]};
+    float best = (d[0] < FLT_MAX && d[0] >= 0.f) ? d[0] : FLT_MAX;
+    int axis = 0;
+    for (int k = 1; k < 6; ++k) {
+      if (d[k] < best && d[k] >= 0.f) {
+        best = d[k];
+        axis = k / 2;
+      }
+    }
+    const float p = aMax.v[axis] - bMin.v[axis];
+    const float n = bMax.v[axis] - aMin.v[axis];
+    if (p < n) {
+      add(axis, p, 1.f);
+    } else {
+      add(axis, n, -1.f);
+    }
+  }
+  return out.size() != first;
+}
+
+
+static bool Same(float a, float b) { return std::memcmp(&a, &b, sizeof a) == 0; }
+static bool Same(const Vec3& a, const Vec3& b) {
+  return Same(a.x, b.x) && Same(a.y, b.y) && Same(a.z, b.z);
+}
+static bool Eq(const Vec3& a, const Vec3& b) { return a.x == b.x && a.y == b.y && a.z == b.z; }
+
+// Independent restatement of the paired API: candidates are listed first, then filtered.
+// CAUTION: this shares this file's frame helpers (character-for-character BoxToRem/
+// FromRem) and the same operation order as the implementation (corner assignment,
+// ((a+b)+c)+d, the fallback scan), so the random agreement below means "the port matches
+// this reading of the SPEC" - an independent-formulation consistency check - NOT "the port
+// matches 0xbf61b4". A misread axis mapping, a p8/p9 swap, a wrong fallback gate or a wrong
+// rounding order would be duplicated here and would pass. The executable expectations for
+// the source are the hand-derived deterministic cases; the exact tie and zero-sign rules
+// are pinned by BoxBoxPairedBits().
+static bool RefPaired(const Box& self, const Box& other, bool (*passes)(const Vec3&),
+                      std::vector< PairedImpact >& out) {
+  RemV aN, aX, bN, bX;
+  RemBox(self, aN, aX);
+  RemBox(other, bN, bX);
+  for (int k = 0; k < 3; ++k)
+    if (aX.v[k] < bN.v[k] || bX.v[k] < aN.v[k]) return false;
+  RemV iN, iX;
+  for (int k = 0; k < 3; ++k) {
+    // 0x98800: iN (max of the two minima) keeps SELF on an exact tie - fcsel a,a,b,ge;
+    // iX (min of the two maxima) keeps OTHER - fcsel a,b,a,ge. fmax/fmin would leave the
+    // zero-sign choice to the library.
+    iN.v[k] = aN.v[k] >= bN.v[k] ? aN.v[k] : bN.v[k];
+    iX.v[k] = aX.v[k] < bX.v[k] ? aX.v[k] : bX.v[k];
+  }
+  struct Cand {
+    int axis;
+    float depth, sign;
+  };
+  std::vector< Cand > prim;
+  for (int k = 0; k < 3; ++k) {
+    const float wa = aX.v[k] - aN.v[k], wb = bX.v[k] - bN.v[k];
+    const float up = aX.v[k] - bN.v[k], dn = bX.v[k] - aN.v[k];
+    if (up < wb && up < wa) prim.push_back({k, up, 1.f});
+    if (dn < wa && dn < wb) prim.push_back({k, dn, -1.f});
+  }
+  auto build = [&](const Cand& c, PairedImpact& pi) {
+    if (!(c.depth > 0.f)) return false;
+    RemV sn{{0, 0, 0}}, on{{0, 0, 0}};
+    sn.v[c.axis] = c.sign;
+    // 0xbf66b8-0xbf66c0 negate all three components of the skZeroVector-based normal, so
+    // the other half's zero components are negated zeros, not fresh +0.0.
+    on.v[0] = -sn.v[0];
+    on.v[1] = -sn.v[1];
+    on.v[2] = -sn.v[2];
+    if (passes && !passes(RemToPort(on))) return false;
+    const int a1 = (c.axis + 1) % 3, a2 = (c.axis + 2) % 3;
+    const float* faceSelf = c.sign > 0.f ? iX.v : iN.v;
+    const float* faceOther = c.sign > 0.f ? iN.v : iX.v;
+    // corners (a1,a2): (min,min) (min,max) (max,min) (max,max), summed in that order.
+    const float lo1 = iN.v[a1], hi1 = iX.v[a1], lo2 = iN.v[a2], hi2 = iX.v[a2];
+    RemV mid{{0, 0, 0}};
+    mid.v[c.axis] = ((faceSelf[c.axis] + faceSelf[c.axis]) + faceSelf[c.axis] + faceSelf[c.axis]) * 0.25f;
+    mid.v[a1] = (((lo1 + lo1) + hi1) + hi1) * 0.25f;
+    mid.v[a2] = (((lo2 + hi2) + lo2) + hi2) * 0.25f;
+    RemV op = mid;
+    op.v[c.axis] = faceOther[c.axis];
+    pi.selfDepth = pi.otherDepth = c.depth;
+    pi.selfNormal = RemToPort(sn);
+    pi.otherNormal = RemToPort(on);
+    pi.selfPoint = RemToPort(mid);
+    pi.otherPoint = RemToPort(op);
+    return true;
+  };
+  bool any = false;
+  for (const Cand& c : prim) {
+    PairedImpact pi;
+    if (build(c, pi)) {
+      out.push_back(pi);
+      any = true;
+    }
+  }
+  if (any) return true;
+  float diff[6];
+  for (int k = 0; k < 3; ++k) {
+    diff[2 * k] = aX.v[k] - bN.v[k];
+    diff[2 * k + 1] = bX.v[k] - aN.v[k];
+  }
+  float best = (diff[0] < FLT_MAX && diff[0] >= 0.f) ? diff[0] : FLT_MAX;
+  int axis = 0;
+  for (int i = 1; i < 6; ++i)
+    if (diff[i] >= 0.f && diff[i] < best) best = diff[i], axis = i / 2;
+  const float up = diff[2 * axis], dn = diff[2 * axis + 1];
+  const Cand c = up < dn ? Cand{axis, up, 1.f} : Cand{axis, dn, -1.f};
+  PairedImpact pi;
+  if (!build(c, pi)) return false;
+  out.push_back(pi);
+  return true;
+}
+
+static bool NotMinusX(const Vec3& n) { return !(n.x == -1.f); }
+static bool RejectAll(const Vec3&) { return false; }
+static bool HashPass(const Vec3& n) {
+  return ((int)(n.x * 3 + n.y * 5 + n.z * 7 + 100) & 1) != 0;
+}
+
+static bool OnePaired(const Box& s, const Box& o, const NormalPredicate& p,
+                      std::vector< PairedImpact >& v) {
+  return BoxBoxPairedImpacts(s, o, p, v);
+}
+
+static void BoxBoxPaired() {
+  std::vector< PairedImpact > v;
+  // Partial overlap on all three axes: three impacts in Remastered order x, up, z.
+  Check(OnePaired({{0, 0, 0}, {2, 2, 2}}, {{1, 1, 1}, {3, 3, 3}}, NormalPredicate(), v) &&
+            v.size() == 3,
+        "paired: three-axis partial overlap");
+  if (v.size() == 3) {
+    Check(Eq(v[0].selfNormal, {1, 0, 0}) && Eq(v[0].otherNormal, {-1, 0, 0}) &&
+              Eq(v[0].selfPoint, {2, 1.5f, 1.5f}) && Eq(v[0].otherPoint, {1, 1.5f, 1.5f}) &&
+              v[0].selfDepth == 1.f && v[0].otherDepth == 1.f,
+          "paired: x impact normals, depth and points");
+    Check(Eq(v[1].selfNormal, {0, 0, 1}) && Eq(v[1].otherNormal, {0, 0, -1}) &&
+              Eq(v[1].selfPoint, {1.5f, 1.5f, 2}) && Eq(v[1].otherPoint, {1.5f, 1.5f, 1}),
+          "paired: up impact second");
+    Check(Eq(v[2].selfNormal, {0, 1, 0}) && Eq(v[2].otherNormal, {0, -1, 0}) &&
+              Eq(v[2].selfPoint, {1.5f, 2, 1.5f}) && Eq(v[2].otherPoint, {1.5f, 1, 1.5f}),
+          "paired: port-y impact third");
+  }
+  // Mirror: self on the + side of other flips every sign and face plane.
+  v.clear();
+  OnePaired({{1, 1, 1}, {3, 3, 3}}, {{0, 0, 0}, {2, 2, 2}}, NormalPredicate(), v);
+  Check(v.size() == 3 && Eq(v[0].selfNormal, {-1, 0, 0}) && Eq(v[0].selfPoint, {1, 1.5f, 1.5f}) &&
+            Eq(v[0].otherPoint, {2, 1.5f, 1.5f}) && Eq(v[1].otherNormal, {0, 0, 1}),
+        "paired: mirrored signs and planes");
+  // Equal minimum edge on x: neither +1 nor -1 holds, only y and z partial overlaps emit.
+  v.clear();
+  OnePaired({{0, 0, 0}, {2, 2, 2}}, {{0, 1, 1}, {3, 3, 3}}, NormalPredicate(), v);
+  Check(v.size() == 2 && Eq(v[0].selfNormal, {0, 0, 1}) && Eq(v[1].selfNormal, {0, 1, 0}),
+        "paired: equal-edge axis emits nothing");
+  // Equal maximum edge on x.
+  v.clear();
+  OnePaired({{0, 0, 0}, {2, 2, 2}}, {{1, 1, 1}, {2, 3, 3}}, NormalPredicate(), v);
+  Check(v.size() == 2, "paired: equal-max edge emits nothing on that axis");
+  // Touching on x (depth 0) with partial overlaps on y and z: the pair still overlaps.
+  v.clear();
+  OnePaired({{2, 0, 0}, {3, 2, 2}}, {{0, 1, 1}, {2, 3, 3}}, NormalPredicate(), v);
+  Check(v.size() == 2 && Eq(v[0].selfNormal, {0, 0, 1}), "paired: touching axis, others emit");
+  // Touching on every axis candidate: no contact, nothing appended.
+  v.clear();
+  Check(!OnePaired({{2, 0, 0}, {3, 1, 1}}, {{0, 0, 0}, {2, 1, 1}}, NormalPredicate(), v) &&
+            v.empty(),
+        "paired: touching only -> none");
+  // Apart.
+  Check(!OnePaired({{5, 0, 0}, {6, 1, 1}}, {{0, 0, 0}, {2, 1, 1}}, NormalPredicate(), v) &&
+            v.empty(),
+        "paired: apart");
+  // Containment: single fallback impact, tie A == B takes the -1 side, points on the faces.
+  v.clear();
+  Check(OnePaired({{1, 1, 1}, {2, 2, 2}}, {{0, 0, 0}, {3, 3, 3}}, NormalPredicate(), v) &&
+            v.size() == 1,
+        "paired: containment fallback");
+  if (v.size() == 1) {
+    Check(v[0].selfDepth == 2.f && v[0].otherDepth == 2.f && Eq(v[0].selfNormal, {1, 0, 0}) &&
+              Eq(v[0].otherNormal, {-1, 0, 0}) && Eq(v[0].selfPoint, {2, 1.5f, 1.5f}) &&
+              Eq(v[0].otherPoint, {1, 1.5f, 1.5f}),
+          "paired: fallback depth, tie sign, normals and points");
+  }
+  // Fallback axis choice: contained in x and y, nearer the other's top in z.
+  v.clear();
+  OnePaired({{1, 1, 2.5f}, {2, 2, 2.9f}}, {{0, 0, 0}, {3, 3, 3}}, NormalPredicate(), v);
+  Check(v.size() == 1 && Near(v[0].selfDepth, .5f) && Eq(v[0].selfNormal, {0, 0, -1}),
+        "paired: fallback picks the minimum difference axis");
+  // Predicate rejects the only primary impact: the fallback candidate is tried.
+  const Box s{{0, 1, 2.5f}, {2, 1.5f, 2.9f}};
+  const Box o{{1, 0, 0}, {3, 3, 3}};
+  v.clear();
+  OnePaired(s, o, NormalPredicate(), v);
+  Check(v.size() == 1 && Eq(v[0].otherNormal, {-1, 0, 0}) && v[0].selfDepth == 1.f,
+        "paired: single primary without predicate");
+  v.clear();
+  int calls = 0;
+  Vec3 seen;
+  OnePaired(s, o, [&](const Vec3& n) { ++calls; seen = n; return true; }, v);
+  Check(calls == 1 && Eq(seen, {-1, 0, 0}), "paired: predicate asked once with the other normal");
+  v.clear();
+  Check(OnePaired(s, o, NotMinusX, v) && v.size() == 1 && Near(v[0].selfDepth, .5f) &&
+            Eq(v[0].otherNormal, {0, 0, 1}),
+        "paired: predicate rejection runs the fallback");
+  v.clear();
+  Check(!OnePaired(s, o, RejectAll, v) && v.empty(), "paired: everything rejected -> none");
+  // Prefix append keeps earlier entries; a miss leaves the vector untouched.
+  v.clear();
+  PairedImpact sentinel;
+  sentinel.selfDepth = 7.f;
+  v.push_back(sentinel);
+  OnePaired({{0, 0, 0}, {2, 2, 2}}, {{1, 1, 1}, {3, 3, 3}}, NormalPredicate(), v);
+  Check(v.size() == 4 && v[0].selfDepth == 7.f, "paired: appends after a prefix");
+  OnePaired({{9, 9, 9}, {10, 10, 10}}, {{0, 0, 0}, {1, 1, 1}}, NormalPredicate(), v);
+  Check(v.size() == 4, "paired: no hit leaves the prefix");
+}
+
+static unsigned gSeed = 12345u;
+static unsigned Rnd() {
+  gSeed = gSeed * 1664525u + 1013904223u;
+  return gSeed >> 8;
+}
+static float RndCoord(bool grid) {
+  return grid ? (float)(Rnd() % 17) * 0.25f - 1.f : (float)(Rnd() % 100000) / 25000.f - 1.f;
+}
+static Box RndBox(bool grid) {
+  Box b;
+  float a[3], c[3];
+  for (int k = 0; k < 3; ++k) {
+    a[k] = RndCoord(grid);
+    c[k] = RndCoord(grid);
+    if (a[k] > c[k]) std::swap(a[k], c[k]);
+  }
+  b.min = {a[0], a[1], a[2]};
+  b.max = {c[0], c[1], c[2]};
+  return b;
+}
+
+static void BoxBoxRandom() {
+  int hits = 0, fallbacks = 0, mismatches = 0;
+  bool (*preds[3])(const Vec3&) = {nullptr, NotMinusX, HashPass};
+  for (int it = 0; it < 200000; ++it) {
+    const bool grid = (it & 1) == 0;
+    const Box s = RndBox(grid), o = RndBox(grid);
+    // Legacy API vs the verbatim pre-change implementation.
+    std::vector< Impact > a, b;
+    const bool ra = BoxBoxImpacts(s, o, a), rb = PrechangeBoxBoxImpacts(s, o, b);
+    bool ok = ra == rb && a.size() == b.size();
+    for (std::size_t i = 0; ok && i < a.size(); ++i)
+      ok = Same(a[i].depth, b[i].depth) && Same(a[i].otherNormal, b[i].otherNormal) &&
+           !a[i].otherCharacter && Same(a[i].otherCenter, Vec3());
+    // Paired API vs the independent reference, for each predicate; no predicate also
+    // agrees with the legacy depth/normal sequence.
+    for (int pi = 0; pi < 3; ++pi) {
+      std::vector< PairedImpact > got, ref;
+      const bool rg = BoxBoxPairedImpacts(
+          s, o, preds[pi] ? NormalPredicate(preds[pi]) : NormalPredicate(), got);
+      const bool rr = RefPaired(s, o, preds[pi], ref);
+      ok = ok && rg == rr && got.size() == ref.size();
+      for (std::size_t i = 0; ok && i < got.size(); ++i) {
+        ok = Same(got[i].selfDepth, ref[i].selfDepth) && Same(got[i].otherDepth, ref[i].otherDepth) &&
+             Same(got[i].selfNormal, ref[i].selfNormal) &&
+             Same(got[i].otherNormal, ref[i].otherNormal) &&
+             Same(got[i].selfPoint, ref[i].selfPoint) && Same(got[i].otherPoint, ref[i].otherPoint);
+      }
+      if (pi == 0) {
+        ok = ok && got.size() == a.size();
+        // The paired other normal is the source's component-wise negation, so its zero
+        // components carry the opposite zero signs to the legacy helper's +0.0 zeros:
+        // values (and depths) agree, the bits of the zeros need not.
+        for (std::size_t i = 0; ok && i < got.size(); ++i)
+          ok = Same(got[i].selfDepth, a[i].depth) && Eq(got[i].otherNormal, a[i].otherNormal);
+        if (rg) ++hits;
+        if (rg && got.size() == 1) ++fallbacks;
+      }
+    }
+    if (!ok && ++mismatches <= 3) std::printf("box pair mismatch it=%d\n", it);
+  }
+  Check(mismatches == 0,
+        "boxbox random: legacy == prechange regression oracle, paired == restatement");
+  Check(hits > 20000 && fallbacks > 1000, "boxbox random: coverage");
+}
+
+// ---- directed bit patterns: signed zeros, filter calls, source ties -------------------
+// Every expectation here is hand-derived from 0x98800 + 0xbf6650 and compared bitwise
+// (Same/memcmp), because the F1/F2 corrections can differ from the pre-change answers
+// only in zero signs. `Rem3`/`PortFromRem` build test boxes from Remastered-frame extents
+// (the exact inverse of BoxToRem, negating the port x axis), signed zeros included.
+static RemV Rem3(float x, float y, float z) { return {{x, y, z}}; }
+static Box PortFromRem(const RemV& mn, const RemV& mx) {
+  Box b;
+  b.min.x = -mx.v[0];
+  b.max.x = -mn.v[0];
+  b.min.y = mn.v[2];
+  b.max.y = mx.v[2];
+  b.min.z = mn.v[1];
+  b.max.z = mx.v[1];
+  return b;
+}
+
+static void BoxBoxPairedBits() {
+  Check(Same(0.f, 0.f) && !Same(0.f, -0.0f), "paired bits: memcmp separates zero signs");
+
+  // F1 - the other half's normal is the self normal negated COMPONENT BY COMPONENT
+  // (three fneg on the skZeroVector-based normal, 0xbf66b8-0xbf66c0) and the filter
+  // (0xbf66d0) is handed that exact value; the self half keeps skZeroVector's +0.0 zeros.
+  // Self rem [-1,1]^3 against the same box shifted by +-0.5 on one axis has exactly one
+  // candidate: sign +1 for +0.5 (depth 1.5), sign -1 for -0.5 (depth 1.5).
+  const Vec3 selfBits[3][2] = { // [rem axis][0: sign -1, 1: sign +1]
+      {{1, 0, 0}, {-1, 0, 0}},          // port x <- rem x (negated)
+      {{-0.0f, 0, -1}, {-0.0f, 0, 1}},  // port z <- rem y
+      {{-0.0f, -1, 0}, {-0.0f, 1, 0}},  // port y <- rem z
+  };
+  const Vec3 otherBits[3][2] = {
+      {{-1, -0.0f, -0.0f}, {1, -0.0f, -0.0f}},
+      {{0, -0.0f, 1}, {0, -0.0f, -1}},
+      {{0, 1, -0.0f}, {0, -1, -0.0f}},
+  };
+  for (int axis = 0; axis < 3; ++axis) {
+    for (int s = 0; s < 2; ++s) {
+      RemV mn = Rem3(-1, -1, -1), mx = Rem3(1, 1, 1);
+      const float shift = s == 0 ? -0.5f : 0.5f;
+      mn.v[axis] += shift;
+      mx.v[axis] += shift;
+      std::vector< PairedImpact > v;
+      int calls = 0;
+      Vec3 seen;
+      const bool r = BoxBoxPairedImpacts(
+          PortFromRem(Rem3(-1, -1, -1), Rem3(1, 1, 1)), PortFromRem(mn, mx),
+          [&](const Vec3& n) { ++calls; seen = n; return true; }, v);
+      Check(r && v.size() == 1 && calls == 1, "paired bits: one candidate, one filter call");
+      if (v.size() != 1) continue;
+      Check(Same(v[0].selfNormal, selfBits[axis][s]), "paired bits: self normal bits");
+      Check(Same(v[0].otherNormal, otherBits[axis][s]) && Same(seen, otherBits[axis][s]),
+            "paired bits: other normal bits and filter input");
+      Check(Same(v[0].otherNormal.x, -v[0].selfNormal.x) &&
+                Same(v[0].otherNormal.y, -v[0].selfNormal.y) &&
+                Same(v[0].otherNormal.z, -v[0].selfNormal.z),
+            "paired bits: other normal is the component-wise negation");
+      Check(v[0].selfDepth == 1.5f && v[0].otherDepth == 1.5f, "paired bits: depth");
+    }
+  }
+
+  // F2 - 0x98800 keeps SELF on a tie of the two minima (fcsel s0,s0,s2,ge at
+  // 0x98814/0x98820/0x98830) and OTHER on a tie of the two maxima (fcsel s4,s6,s4,ge at
+  // 0x9883c/0x98858/0x98864). Only zero signs can distinguish the two answers, and the
+  // face midpoint on a tangential axis is twice the intersection minimum plus twice the
+  // maximum, summed in corner order and scaled by 0.25, so the tie's zero sign survives
+  // when the other end of the interval is -0.0. Port z is rem y.
+  {
+    // Minima tie: self's rem-y minimum is +0.0, other's is -0.0; both maxima are -0.0,
+    // so ((+0.0 + +0.0) + -0.0) + -0.0 -> +0.0. Keeping other would give -0.0.
+    const Box self = PortFromRem(Rem3(-1, 0.f, -1), Rem3(1, -0.0f, 1));
+    const Box other = PortFromRem(Rem3(-0.5f, -0.0f, -1), Rem3(2, -0.0f, 1));
+    std::vector< PairedImpact > v;
+    Check(OnePaired(self, other, NormalPredicate(), v) && v.size() == 1 &&
+              v[0].selfDepth == 1.5f,
+          "paired bits: min-tie case is one rem-x impact");
+    if (v.size() == 1) {
+      Check(Same(v[0].selfNormal, Vec3{-1, 0, 0}) &&
+                Same(v[0].otherNormal, Vec3{1, -0.0f, -0.0f}),
+            "paired bits: min-tie normals");
+      Check(Same(v[0].selfPoint.z, 0.f) && Same(v[0].otherPoint.z, 0.f),
+            "paired bits: min tie keeps self (+0.0)");
+    }
+  }
+  {
+    // Maxima tie: both minima are -0.0, self's rem-y maximum is +0.0 and other's is -0.0,
+    // so (((-0.0 + -0.0) + -0.0) + -0.0) -> -0.0. Keeping self would give +0.0.
+    const Box self = PortFromRem(Rem3(-1, -0.0f, -1), Rem3(1, 0.f, 1));
+    const Box other = PortFromRem(Rem3(-0.5f, -0.0f, -1), Rem3(2, -0.0f, 1));
+    std::vector< PairedImpact > v;
+    Check(OnePaired(self, other, NormalPredicate(), v) && v.size() == 1,
+          "paired bits: max-tie case is one rem-x impact");
+    if (v.size() == 1) {
+      Check(Same(v[0].selfNormal, Vec3{-1, 0, 0}) &&
+                Same(v[0].otherNormal, Vec3{1, -0.0f, -0.0f}),
+            "paired bits: max-tie normals");
+      Check(Same(v[0].selfPoint.z, -0.0f) && Same(v[0].otherPoint.z, -0.0f),
+            "paired bits: max tie keeps other (-0.0)");
+    }
+  }
+
+  // A candidate whose depth is 0 is dropped by the 0xbf6650 gate BEFORE the 0xbf66d0
+  // filter runs: it is neither appended nor handed to the filter. Self rem [0,2]^3,
+  // other rem x[2,3] y[1,3] z[1,3] gives a depth-0 +1 candidate on rem x (dropped) and
+  // depth-1 +1 candidates on rem y then rem z (filter calls 2, appends 2, no fallback).
+  {
+    const Box self = PortFromRem(Rem3(0, 0, 0), Rem3(2, 2, 2));
+    const Box other = PortFromRem(Rem3(2, 1, 1), Rem3(3, 3, 3));
+    std::vector< PairedImpact > v;
+    std::vector< Vec3 > seen;
+    const bool r = BoxBoxPairedImpacts(
+        self, other, [&](const Vec3& n) { seen.push_back(n); return true; }, v);
+    Check(r && v.size() == 2 && seen.size() == 2,
+          "paired bits: zero-depth candidate never reaches the filter");
+    if (v.size() == 2 && seen.size() == 2) {
+      Check(Same(seen[0], Vec3{0, -0.0f, -1}) && Same(seen[1], Vec3{0, -1, -0.0f}),
+            "paired bits: filter order is axis order, with the other-half normals");
+      Check(Same(v[0].otherNormal, seen[0]) && Same(v[1].otherNormal, seen[1]),
+            "paired bits: filter input is the appended other normal");
+    }
+  }
+
+  // Several candidates: the filter is asked once per candidate in source order (rem x, rem
+  // y, rem z; +1 before -1) and a rejection in the middle does not trigger the fallback.
+  {
+    const Box self = PortFromRem(Rem3(0, 0, 0), Rem3(2, 2, 2));
+    const Box other = PortFromRem(Rem3(1, 1, 1), Rem3(3, 3, 3));
+    std::vector< PairedImpact > v;
+    std::vector< Vec3 > seen;
+    const bool r = BoxBoxPairedImpacts(
+        self, other, [&](const Vec3& n) { seen.push_back(n); return true; }, v);
+    Check(r && v.size() == 3 && seen.size() == 3, "paired bits: three candidates, three calls");
+    if (v.size() == 3 && seen.size() == 3) {
+      Check(Same(seen[0], Vec3{1, -0.0f, -0.0f}) && Same(seen[1], Vec3{0, -0.0f, -1}) &&
+                Same(seen[2], Vec3{0, -1, -0.0f}),
+            "paired bits: candidate call order x, y, z");
+      Check(Same(v[0].otherNormal, seen[0]) && Same(v[1].otherNormal, seen[1]) &&
+                Same(v[2].otherNormal, seen[2]),
+            "paired bits: appended normals follow the call order");
+    }
+    v.clear();
+    seen.clear();
+    int calls = 0;
+    const bool rm = BoxBoxPairedImpacts(
+        self, other, [&](const Vec3& n) { ++calls; seen.push_back(n); return calls != 2; }, v);
+    Check(rm && calls == 3 && v.size() == 2 && Same(seen[1], Vec3{0, -0.0f, -1}),
+          "paired bits: middle candidate rejected, others kept, no fallback");
+    if (v.size() == 2)
+      Check(Same(v[0].otherNormal, Vec3{1, -0.0f, -0.0f}) &&
+                Same(v[1].otherNormal, Vec3{0, -1, -0.0f}),
+            "paired bits: rejection removes only the middle impact");
+  }
+
+  // Every primary candidate rejected: the fallback candidate (0xbf6460ff) is built AND
+  // filtered, so the filter sees it as the last call. Self rem [0,2]^3, other rem
+  // x[1,3] y[1,3] z[0,2] has two +1 candidates (rem x, rem y, depth 1) and no rem-z
+  // candidate; the smallest difference is rem x (1 against 3), sign +1, depth 1.
+  {
+    const Box self = PortFromRem(Rem3(0, 0, 0), Rem3(2, 2, 2));
+    const Box other = PortFromRem(Rem3(1, 1, 0), Rem3(3, 3, 2));
+    std::vector< PairedImpact > v;
+    int calls = 0;
+    const bool ra =
+        BoxBoxPairedImpacts(self, other, [&](const Vec3&) { ++calls; return false; }, v);
+    Check(!ra && v.empty() && calls == 3,
+          "paired bits: filter-all-reject consults the fallback and appends nothing");
+    v.clear();
+    calls = 0;
+    const bool rb = BoxBoxPairedImpacts(self, other, [&](const Vec3&) { return ++calls > 2; }, v);
+    Check(rb && calls == 3 && v.size() == 1 && v[0].selfDepth == 1.f &&
+              Same(v[0].otherNormal, Vec3{1, -0.0f, -0.0f}),
+          "paired bits: the fallback impact is the one the third call accepts");
+  }
+
+  // Asymmetric, non-dyadic face centre: rem self x[0,1.3] y[0.1,0.512] z[0.1,0.56] against
+  // other x[0.4,1.9] y/z unchanged, so the single candidate is rem x +1 with depth
+  // 1.3f - 0.4f = 0.8999999761581421f and the intersection box is x[0.4,1.3] y[0.1,0.512]
+  // z[0.1,0.56]. The corner sums round, and the two corner patterns differ in this case:
+  // rem y (a1 pattern: min,min,max,max) gives ((0.1f+0.1f)+0.512f+0.512f)*0.25f =
+  // 0.3059999942779541f, rem z (a2: min,max,min,max) gives ((0.1f+0.56f)+0.1f+0.56f)*
+  // 0.25f = 0.33000001311302185f; the exact average would be different in both. The port
+  // point is (-rem.x, rem.z, rem.y), so selfPoint = (-1.2999999523162842f,
+  // 0.33000001311302185f, 0.3059999942779541f) and otherPoint takes iMin[0] = 0.4f.
+  {
+    const Box self = PortFromRem(Rem3(0, 0.1f, 0.1f), Rem3(1.3f, 0.512f, 0.56f));
+    const Box other = PortFromRem(Rem3(0.4f, 0.1f, 0.1f), Rem3(1.9f, 0.512f, 0.56f));
+    std::vector< PairedImpact > v;
+    Check(OnePaired(self, other, NormalPredicate(), v) && v.size() == 1,
+          "paired bits: asymmetric case is one rem-x impact");
+    if (v.size() == 1) {
+      Check(Same(v[0].selfDepth, 0.8999999761581421f) &&
+                Same(v[0].selfNormal, Vec3{-1, 0, 0}) &&
+                Same(v[0].otherNormal, Vec3{1, -0.0f, -0.0f}),
+            "paired bits: asymmetric depth and normals");
+      Check(Same(v[0].selfPoint, Vec3{-1.2999999523162842f, 0.33000001311302185f,
+                                      0.3059999942779541f}) &&
+                Same(v[0].otherPoint, Vec3{-0.4000000059604645f, 0.33000001311302185f,
+                                           0.3059999942779541f}),
+            "paired bits: asymmetric non-dyadic face centres");
+    }
+  }
 }
 
 static void Ray() {
@@ -645,6 +1179,9 @@ int main() {
   Floor();
   SafeOffset();
   BoxBox();
+  BoxBoxPaired();
+  BoxBoxRandom();
+  BoxBoxPairedBits();
   Ray();
   SphereRay();
   BoxSphereFaces();
