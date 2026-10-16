@@ -4,8 +4,12 @@ name: windows
 # by far, and running it on every push held up each release. Start it from the
 # Actions tab or with `gh workflow run windows.yml --ref port` when a Windows
 # zip is wanted. Restore the push/pull_request triggers to run it on every push.
+# It also runs once a week, so a Windows break shows up within days and its
+# caches are used often enough not to be evicted between manual runs.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
 
 # Nothing here writes to the repository.
 permissions:
@@ -15,18 +19,20 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
-      - uses: hendrikmuhs/ccache-action@5ebbd400eff9e74630f759d94ddd7b6c26299639 # v1.2.20
+      - uses: hendrikmuhs/ccache-action@f09c25b45002a07be2955cbe52e8cee55643f89d # v1.2.24
         with:
           key: ${{ runner.os }}-clangcl
+          # Objects this build did not use are dropped before saving.
+          evict-old-files: job
 
       # Configure downloads and unpacks about a dozen dependencies. Keep the
       # unpacked sources and the stamps that say they are current; the build
       # directories beside them are left out, since ccache covers those.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             build-win/_deps/*-src
@@ -72,7 +78,7 @@ jobs:
       # carries a small LGPL build made here from the official source: the
       # H.264 decoder and the JPEG encoder, nothing else. Rebuilt only when
       # the script changes.
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: ffmpeg
         with:
           path: ffmpeg-min/out
@@ -171,7 +177,7 @@ jobs:
           # reads as malformed and feeds Dawn bad pipeline blobs.
           Remove-Item -Force -ErrorAction SilentlyContinue ./dist/metroid_prime_port.log, ./dist/dawn_cache.db*, ./dist/pipeline_cache.db*
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: metroid_prime_port-windows
           path: dist
