@@ -325,6 +325,15 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sDynamicResMin; }, false, "0.5", "0.75"},
+    {"upscale_sharpen",
+     [](const std::string& value) {
+       sSharpenMode = value == "off" ? 0 : value == "always" ? 2 : 1;
+     },
+     [](std::ostream& out) { out << (sSharpenMode == 0 ? "off" : sSharpenMode == 2 ? "always" : "dynamic"); },
+     false, "off", "always"},
+    {"upscale_sharpen_amount",
+     [](const std::string& value) { sSharpenAmount = std::clamp(std::atoi(value.c_str()), 0, 100); },
+     [](std::ostream& out) { out << sSharpenAmount; }, false, "0", "80"},
     {"frame_limit", [](const std::string& value) { sFrameLimitEnabled = ParseBool(value); },
      [](std::ostream& out) { WriteBool(out, sFrameLimitEnabled); }, false, "1", "0"},
     {"fps_cap", [](const std::string& value) { sFpsCap = ClampFpsCap(std::atoi(value.c_str())); },

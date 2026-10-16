@@ -73,7 +73,8 @@ public:
                                             const CMaterialFilter&, const TEntityList&, CVector3f,
                                             TUniqueId&, CCollisionInfo&, double&);
   static CRayCastResult RayStaticIntersection(const CStateManager&, const CVector3f&,
-                                              const CVector3f&, float, const CMaterialFilter&);
+                                              const CVector3f&, float, const CMaterialFilter&,
+                                              bool frontOnly = false);
   static bool RayStaticIntersectionBool(const CStateManager&, const CVector3f&, const CVector3f&,
                                         float, const CMaterialFilter&);
   static bool RayStaticIntersectionArea(const CGameArea&, const CVector3f&, const CVector3f&, float,

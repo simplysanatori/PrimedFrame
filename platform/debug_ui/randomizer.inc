@@ -151,6 +151,10 @@ void DrawRandomizerTab() {
   check("Shuffle Scan Visor", s.shuffleScanVisor, "The Scan Visor is an item to find, not a start item.");
   check("Progressive beams", s.progressiveBeams, "Each beam has upgrades received in order, not as named items.");
   check("Spring Ball", s.springBall, "Morph Ball Bombs also give the Spring Ball (jump in Morph Ball form).");
+  check("Shuffle Unlimited Missiles", s.shuffleUnlimitedMissiles,
+        "Adds an Unlimited Missiles item to the pool, in place of a Missile Expansion.");
+  check("Shuffle Unlimited Power Bombs", s.shuffleUnlimitedPowerBombs,
+        "Adds an Unlimited Power Bombs item to the pool, in place of a Missile Expansion.");
   changed |= ImGui::Combo("Remove X-Ray requirement", &s.removeXray,
                           "None\0Most\0All but the Omega Pirate\0");
   ItemHelp("Takes the X-Ray Visor out of the logic where it is needed to see hidden things.");
@@ -187,6 +191,8 @@ void DrawRandomizerTab() {
   ItemHelp("How many areas (not Magmoor) get one door locked for good.");
   check("Backwards Lower Mines", s.backwardsLowerMines, "Phazon Mines' lower levels can be entered from the other end.");
   check("Flaahgra power bombs", s.flaahgraPowerBombs, "Flaahgra can be beaten with power bombs.");
+  changed |= ImGui::SliderInt("Energy tank capacity", &s.etankCapacity, 10, 200);
+  ItemHelp("Energy per tank; the suit alone holds one less (100: 99 + 100 per tank). Combat logic still counts tanks as 100.");
 
   ImGui::SeparatorText("Logic");
   check("Heat damage without the Varia Suit", s.nonVariaHeatDamage, "Hot rooms hurt without Varia, so other suits or tanks can carry you through.");

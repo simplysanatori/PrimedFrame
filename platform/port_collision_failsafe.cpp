@@ -427,4 +427,67 @@ RayHit RayAABox(const Box& box, const Vec3& start, const Vec3& dir, float length
   return hit;
 }
 
+namespace {
+// CMath::SqrtF 0x65f70: v * rsqrt(max(v, 1e-35)), the reciprocal square root being the
+// ARM estimate with TWO frsqrts refinements, and 0 for v <= 0. The guard is a
+// `fcmp/b.le` pair, and AArch64 takes an unordered compare, so the machine rule is
+// `!(v > 0)` and NaN returns 0 like the non-positive inputs. (Unreachable from
+// RaySphere, which only calls this under `0.f < disc`.)
+constexpr float kSqrtFFloor = 1e-35f; // 0x0554ad2e
+float SourceSqrtF(float v) {
+  if (!(v > 0.f)) return 0.f;
+  const float x = std::fmax(v, kSqrtFFloor);
+  const float estimate = ReciprocalSqrtEstimate(x);
+  const float first = estimate * ReciprocalSqrtStep(x, estimate * estimate);
+  const float second = first * ReciprocalSqrtStep(x, first * first);
+  return v * second;
+}
+} // namespace
+
+RayHit RaySphere(const Vec3& center, float radius, const Vec3& start, const Vec3& dir,
+                 float length) {
+  // 0xbf6ac0 runs in Remastered axes, like the box-sphere producer.
+  const R3 c = ToRem(center);
+  const R3 s = ToRem(start);
+  const R3 d = ToRem(dir);
+  const float vx = c.v[0] - s.v[0];
+  const float vy = c.v[1] - s.v[1];
+  const float vz = c.v[2] - s.v[2];
+  const float r2 = radius * radius; // fVar3
+  const float d2 = vx * vx + vy * vy + vz * vz;
+  RayHit result;
+  // `r2 <= d2` leaves the strict interior: the boundary counts as outside, and the
+  // ordered compare sends NaN down the inside arm, as the source branch does.
+  if (r2 <= d2) {
+    const float b = vx * d.v[0] + vy * d.v[1] + vz * d.v[2];
+    if (0.f <= b) {
+      // 0xbf6b2c: r2 - (d2 - b*b); 0.0 < disc, so exact tangency misses.
+      const float disc = r2 - (d2 - b * b);
+      if (0.f < disc) {
+        const float t = b - SourceSqrtF(disc);
+        if (t < length) {
+          // 0xbf6b58-0xbf6b98: hit point = start + t*dir, then CUnitVector3f 0x71164
+          // (AsNormalizedOrZero 0x6b6b8) of point - centre, the verified helper.
+          const Vec3 point = Add(Mul(dir, t), start);
+          const R3 p = ToRem(point);
+          const PortRemasteredGroundContacts::Vec3 unit =
+              PortRemasteredGroundContacts::Source::Unit(
+                  {p.v[0] - c.v[0], p.v[1] - c.v[1], p.v[2] - c.v[2]});
+          result.code = kRay_Hit;
+          result.t = t;
+          result.normal = FromRem(R3{{unit.x, unit.y, unit.z}});
+          return result;
+        }
+      }
+    }
+    return result; // kRay_Miss
+  }
+  // 0xbf6ac4-0xbf6af8: strictly inside. t = 0, the point is the ray start and the
+  // normal is the wrapper's skUpVector, which the helper never writes.
+  result.code = kRay_Inside;
+  result.t = 0.f;
+  result.normal = FromRem(R3{{0.f, 1.f, 0.f}});
+  return result;
+}
+
 } // namespace PortCollisionFailsafe
