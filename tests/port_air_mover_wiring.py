@@ -50,6 +50,24 @@ class Wiring(unittest.TestCase):
         self.assertIn("mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_OnFloor)",
                       landing[1].split("kSM_Falling", 1)[0])
 
+    def test_platform_rider_on_landing(self):
+        # 0xcf1a2c: landing on the rider controller's platform adds the player as a
+        # rider (0x1f to the platform) and records the platform (0x1f to the player).
+        landing = air.split("  if (grounded) {\n    for (int i = 0; i < groundList.GetCount(); ++i)", 1)
+        self.assertEqual(len(landing), 2, "grounded must land the player")
+        grounded = landing[1].split("kSM_Falling", 1)[0]
+        self.assertIn("TCastToPtr< CScriptPlatform >(mgr.ObjectById(riderId))", grounded)
+        self.assertIn("mgr.DeliverScriptMsg(platform, actor.GetUniqueId(), kSM_AddPlatformRider)",
+                      grounded)
+        self.assertIn("mgr.DeliverScriptMsg(&actor, platform->GetUniqueId(), kSM_AddPlatformRider)",
+                      grounded)
+
+    def test_ground_check_reads_dynamic_contact_extent(self):
+        # A native box contact's GetPoint() is its clipped polygon's low corner, which
+        # sits on the probe's open lower bound; the high corner must be read too.
+        check = air.split("struct Ground {", 1)[1].split("struct Stepper {", 1)[0]
+        self.assertIn("c.GetExtreme().GetZ()", check)
+
 
 if __name__ == "__main__":
     unittest.main()

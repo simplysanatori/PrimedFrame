@@ -1047,12 +1047,20 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       DetectDynamicCollision(*actor.GetCollisionPrimitive(), actor.GetPrimitiveTransform(),
                              list, id, dynamic, mgr);
       actor.MoveCollisionPrimitive(CVector3f::Zero());
+      // A native box contact is the bounds of its clipped polygon
+      // (CCollidableOBBTree::AABoxCollideWithLeaf): GetPoint() is the low corner,
+      // GetExtreme() the high one. The source walks every contact point; the two
+      // corners' heights are the polygon's lowest and highest points. The low corner
+      // alone sits on the probed box bottom, the interval's open end, so a dynamic
+      // floor (a moving platform) never grounded.
       for (int i=0; i<dynamic.GetCount(); ++i) {
         const auto& c = dynamic[i];
-        const float pz = c.GetPoint().GetZ();
-        if (pz > feet || pz <= low) continue;
-        result = Classify::IsFloor(c.GetMaterialLeft(),c.GetNormalLeft());
-        low = pz;
+        for (int k = 0; k < 2; ++k) {
+          const float pz = k == 0 ? c.GetPoint().GetZ() : c.GetExtreme().GetZ();
+          if (pz > feet || pz <= low) continue;
+          result = Classify::IsFloor(c.GetMaterialLeft(),c.GetNormalLeft());
+          low = pz;
+        }
       }
       return result;
     }
@@ -1399,6 +1407,16 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       SendMaterialMessage(mgr, groundList[i].GetMaterialLeft(), actor);
     }
     mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_OnFloor);
+    // 0xcf1a2c CPlayerMP1::CollidedWithNew: a floor impact whose owner is the
+    // player's rider controller sends AddPlatformRider (0x1f) to the platform,
+    // from the player, and to the player, from the platform. The rider
+    // controller is the dynamic floor the mover took (object +0x1210, 0xf948d4).
+    CScriptPlatform* const platform =
+        riderId != kInvalidUniqueId ? TCastToPtr< CScriptPlatform >(mgr.ObjectById(riderId)) : NULL;
+    if (platform != NULL) {
+      mgr.DeliverScriptMsg(platform, actor.GetUniqueId(), kSM_AddPlatformRider);
+      mgr.DeliverScriptMsg(&actor, platform->GetUniqueId(), kSM_AddPlatformRider);
+    }
   }
   if (!hadCollision) {
     mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_Falling);
