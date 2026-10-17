@@ -39,8 +39,8 @@ int main() {
 
   // JSON strings and field limits.
   {
-    REQUIRE(JsonString("a\"b\\c\n\x01") == "\"a\\\"b\\\\c\\n\\u0001\"");
-    REQUIRE(JsonString("Ph\xc3\xa9ndrana") == "\"Ph\xc3\xa9ndrana\"");
+    REQUIRE(port::JsonQuote("a\"b\\c\n\x01") == "\"a\\\"b\\\\c\\n\\u0001\"");
+    REQUIRE(port::JsonQuote("Ph\xc3\xa9ndrana") == "\"Ph\xc3\xa9ndrana\"");
     REQUIRE(FitField("x") == "x ");
     REQUIRE(FitField("xy") == "xy");
     std::string longText(127, 'a');
