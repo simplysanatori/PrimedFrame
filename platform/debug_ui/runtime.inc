@@ -44,11 +44,6 @@ bool FrameInterpolation() {
   return sFrameInterpolation && !sOriginalExperience;
 }
 
-void SetFrameInterpolation(bool enabled) {
-  EnsureInitialized();
-  sFrameInterpolation = enabled;
-}
-
 bool SmoothFrames() {
   EnsureInitialized();
   return sSmoothFrames && !sOriginalExperience;
@@ -79,11 +74,6 @@ bool PoseInterpolation() {
 void SetPoseInterpolation(bool enabled) {
   EnsureInitialized();
   sPoseInterpolation = enabled;
-}
-
-bool RoomGeoResident() {
-  EnsureInitialized();
-  return sRoomGeoResident;
 }
 
 void SetRoomGeoResident(bool enabled) {
@@ -193,11 +183,6 @@ void SetAiAudioEnabled(bool enabled) {
   }
   sAiAudioEnabled = enabled;
   AIPortSetOutputEnabled(enabled ? 1 : 0);
-}
-
-bool MusyxAudioEnabled() {
-  EnsureInitialized();
-  return sMusyxAudioEnabled;
 }
 
 void SetMusyxAudioEnabled(bool enabled) {

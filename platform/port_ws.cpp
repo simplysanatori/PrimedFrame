@@ -1883,21 +1883,6 @@ bool Client::ReceiveText(std::string& message, int timeoutMs) {
   }
 }
 
-bool Client::WaitReadable(int timeoutMs) {
-  if (mSocket < 0) {
-    mError = "not connected";
-    return false;
-  }
-  const int ready = WaitIo(timeoutMs);
-  if (ready > 0)
-    return true;
-  if (ready == 0)
-    mError = "receive timed out";
-  else
-    mError = "receive wait failed: " + SystemError(SocketError());
-  return false;
-}
-
 bool Client::SendRaw(const std::string& data) {
   if (mSocket < 0) {
     mError = "not connected";

@@ -2104,15 +2104,6 @@ bool ParseMaterialTrack(const uint8_t* data, size_t size, const EffectProperty& 
   return parser.BuildMaterialTrack(property.offset + 5, property.offset + property.size, trailer, out);
 }
 
-uint32_t EffectMaterialShader(const uint8_t* mati, size_t size) {
-  constexpr size_t kShaderAt = 0x48;  // the MTRL guid, checked in all 2061 MATIs
-  if (size < kShaderAt + 4) {
-    return 0;
-  }
-  const uint8_t* p = mati + kShaderAt;
-  return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3];
-}
-
 std::string DumpEffect(const EffectNode& effect, const uint8_t* data) {
   std::string out;
   DumpNode(effect, data, 0, out);

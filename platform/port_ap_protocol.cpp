@@ -1452,14 +1452,6 @@ bool Session::TakeNotification(std::string& text) {
   }
 }
 
-void Session::CopyRecentTracked(std::vector< TrackedItem >& out, size_t cap) const {
-  out.clear();
-  if (cap == 0)
-    return;
-  const size_t count = std::min(cap, mTracked.size());
-  out.assign(mTracked.end() - static_cast< ptrdiff_t >(count), mTracked.end());
-}
-
 std::string Session::PlayerName(int64_t slot) const {
   try {
     const auto player = mPlayers.find(slot);
@@ -1701,10 +1693,6 @@ std::string Session::AnnounceLocation(int64_t locationId) {
 int64_t Session::ReceivedCount(int64_t itemId) const {
   const auto found = mState.progressive.find(itemId);
   return found != mState.progressive.end() ? found->second : 0;
-}
-
-bool Session::DeathLinkEnabled(const Config& config) {
-  return config.deathLink;
 }
 
 std::string Session::BuildBounce(const std::string& cause) const {

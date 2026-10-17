@@ -87,7 +87,6 @@ void SetSmoothFrames(bool enabled);
 // Per-frame look (docs/FRAME_INTERPOLATION.md, phase 1): with the frame limiter
 // off, frames between ticks show the look input the next tick will apply.
 bool FrameInterpolation();
-void SetFrameInterpolation(bool enabled);
 // Actor transform smoothing (phase 2): with the frame limiter off, actors draw
 // at a blend of their previous and current tick transforms.
 bool ActorInterpolation();
@@ -101,7 +100,6 @@ void SetPoseInterpolation(bool enabled);
 // Aurora sizes its buffers for it at
 // startup, so a change applies from the next start: RoomGeoResidentAtStartup reads the
 // settings file before the rest of them are loaded.
-bool RoomGeoResident();
 void SetRoomGeoResident(bool enabled);
 bool RoomGeoResidentAtStartup();
 // Particle smoothing (phase 4): with the frame limiter off, particle systems
@@ -467,7 +465,6 @@ void SetShiftBinding(int slot, int code);
 // The turbo fire's bindings (read by PortInputDevices), laid out as ShiftBinding's
 // (slot 2 reads -1 while touch is in use); all -1 (none) by default.
 int TurboBinding(int slot);
-void SetTurboBinding(int slot, int code);
 // A second controller button for a GameCube button (Aurora maps one each),
 // ORed in by CDolphinController: `bit` is the PAD_BUTTON_* / PAD_TRIGGER_* bit's
 // position, the code as ShiftBinding's slot 2; -1 for none.
@@ -557,9 +554,7 @@ void SetRemasteredMovement(bool enabled);
 // Spring Ball on a gyro flick (pad or phone tilted up sharply, like Trilogy's
 // nunchuk flick), on top of C-stick up. Rate is the pitch speed in rad/s a flick
 // must pass. The gyro source is the aim's.
-bool SpringBallFlick();
 void SetSpringBallFlick(bool enabled);
-float SpringBallFlickRate();
 void SetSpringBallFlickRate(float radiansPerSecond);
 // True for a short while after a flick, so one just before landing still counts.
 bool SpringBallFlickPending();
@@ -575,19 +570,14 @@ void SetStickAimRate(float pixelsPerSecond);
 // Source: 0 auto (a pad's gyro if it has
 // one, else the phone's), 1 controller only, 2 the device's own gyro (Android
 // phones). Sensitivity is camera angle per pad angle, apart from the mouse's.
-int GyroMode();
 void SetGyroMode(int mode);
-int GyroSource();
 void SetGyroSource(int source);
-float GyroSensitivity();
 void SetGyroSensitivity(float scale);
 // Gyro space: 0 local (the pad's own yaw axis), 1 player, 2 world (the turn
 // about gravity). Auto calibration learns the gyro's drift while the pad is
 // still; the confidence is 0..1, or negative when the source has no
 // accelerometer (no calibration or gravity then).
-int GyroSpace();
 void SetGyroSpace(int space);
-bool GyroAutoCalibrate();
 void SetGyroAutoCalibrate(bool on);
 void ResetGyroCalibration();
 float GyroCalibrationConfidence();
@@ -662,12 +652,10 @@ void BeginFrameMouse();
 // Thread-safe; drained by BeginFrameMouse.
 bool TouchAim();
 void SetTouchAim(bool on);
-float TouchAimSpeed();
 void SetTouchAimSpeed(float pixelsPerDp);
 void AddTouchAim(float dxDp, float dyDp);
 // A quick swipe up on the touch aim area (the overlay detects it): requests the
 // Spring Ball when "Spring Ball on swipe up" is on. Thread-safe.
-bool SpringBallSwipe();
 void SetSpringBallSwipe(bool enabled);
 void TouchSpringSwipe();
 // GameCube scheme (neither mouse aim nor twin stick): CPlayer turns by the touch
@@ -746,7 +734,6 @@ bool AimInitialized();
 // Audio paths
 bool AiAudioEnabled();
 void SetAiAudioEnabled(bool enabled);
-bool MusyxAudioEnabled();
 void SetMusyxAudioEnabled(bool enabled);
 
 // Session

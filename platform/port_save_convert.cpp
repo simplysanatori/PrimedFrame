@@ -866,19 +866,6 @@ const char* FormatName(Format format) {
   }
 }
 
-Layout LayoutOf(Format format) {
-  switch (format) {
-  case Format::PalGci:
-  case Format::PalLegacyGci:
-    return Layout::Pal;
-  case Format::WiiSave:
-  case Format::WiiDataBin:
-    return Layout::Wii;
-  default:
-    return Layout::Usa;
-  }
-}
-
 std::string Stats::Summary() const {
   if (!Any())
     return "nothing dropped";

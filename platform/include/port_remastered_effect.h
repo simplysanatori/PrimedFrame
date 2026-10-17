@@ -137,9 +137,6 @@ struct EffectMaterialTrack {
 // Breaks down a PMTR or SMTR property of an effect parsed from `data`.
 bool ParseMaterialTrack(const uint8_t* data, size_t size, const EffectProperty& property, EffectMaterialTrack& out);
 
-// The shader a MATI draws with: its MTRL guid's first four bytes as stored,
-// read big-endian (the id8 `re.sh shader` takes), or 0 for a short file.
-uint32_t EffectMaterialShader(const uint8_t* mati, size_t size);
 
 // Indented text dump of a parsed effect, one property per line, for diffing
 // against retail PART dumps.

@@ -285,9 +285,6 @@ public:
   // the configuration does not enable DeathLink. `cause` is the text other
   // players see; empty means "<slot> died".
   std::string BuildBounce(const std::string& cause = std::string()) const;
-  // Whether the configuration asked for DeathLink at all, which the world's
-  // RoomInfo is what actually agrees to; both must say yes.
-  static bool DeathLinkEnabled(const Config& config);
 
   // Records a collected location. False when the key has no id, or was already
   // checked; otherwise `id` is the AP location id to send.
@@ -336,10 +333,6 @@ public:
   // Why the loaded progress was thrown away on the last RoomInfo, empty when
   // nothing was. The state itself is already reset when this is set.
   const std::string& ResetReason() const { return mResetReason; }
-  // Copies the tail of the tracked receipts, newest last, into `out`, replacing
-  // its contents. The HUD only cares about the last few; the F1 tracker calls
-  // Tracked() directly for the whole session.
-  void CopyRecentTracked(std::vector< TrackedItem >& out, size_t cap) const;
 
 private:
   Config mConfig;

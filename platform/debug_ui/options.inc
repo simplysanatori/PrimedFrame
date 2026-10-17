@@ -1029,14 +1029,6 @@ int TurboBinding(int slot) {
   return slot >= 0 && slot < 3 ? sInput.turboBindings[slot] : -1;
 }
 
-void SetTurboBinding(int slot, int code) {
-  EnsureInitialized();
-  if (slot >= 0 && slot < 3) {
-    sInput.turboBindings[slot] = code;
-    MarkDirty();
-  }
-}
-
 int ShiftBinding(int slot) {
   EnsureInitialized();
   if (slot == 2 && TouchActive()) {
@@ -1262,20 +1254,10 @@ void SetRemasteredMovement(bool enabled) {
   MarkDirty();
 }
 
-bool SpringBallFlick() {
-  EnsureInitialized();
-  return sInput.springFlick && !sOriginalExperience;
-}
-
 void SetSpringBallFlick(bool enabled) {
   EnsureInitialized();
   sInput.springFlick = enabled;
   MarkDirty();
-}
-
-float SpringBallFlickRate() {
-  EnsureInitialized();
-  return sInput.springFlickRate;
 }
 
 void SetSpringBallFlickRate(float radiansPerSecond) {
