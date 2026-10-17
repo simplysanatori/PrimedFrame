@@ -99,12 +99,7 @@ int EvalElem(const CPortVfxElem& e, int frame, float out[4]) {
     if (e.color == nullptr) {
       return 0;
     }
-    CColor c;
-    e.color->GetValue(frame, c);
-    out[0] = c.GetRed();
-    out[1] = c.GetGreen();
-    out[2] = c.GetBlue();
-    out[3] = c.GetAlpha();
+    e.color->GetValueHdr(frame, out);
     return 4;
   }
   }

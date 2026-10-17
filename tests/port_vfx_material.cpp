@@ -1,5 +1,6 @@
 // Real reader and evaluator/DrawDesc builder, without a renderer or asset pool.
 #include "Kyoto/Particles/CPortVfxMat.hpp"
+#include "Kyoto/Particles/CColorElement.hpp"
 #include "port_vfx_particles.h"
 #include "Kyoto/Graphics/CTexture.hpp"
 #include "Kyoto/Streams/CMemoryInStream.hpp"
@@ -18,6 +19,7 @@ CToken CSimplePool::GetObj(const SObjectTag&) { std::abort(); }
 CToken::CToken(IObj*) { std::abort(); }
 CToken::CToken(const CToken&) { std::abort(); }
 CToken::~CToken() { std::abort(); }
+void CToken::Unlock() { std::abort(); }
 void CTexture::PortLoad(GXTexMapID, EClampMode, EClampMode) const { std::abort(); }
 void* IElement::operator new(size_t n, const char*, const char*) { return ::operator new(n); }
 void IElement::operator delete(void* p, size_t) { ::operator delete(p); }
@@ -110,6 +112,102 @@ public:
   explicit FrameReal(float s) : scale(s) {}
   bool GetValue(int frame, float& value) const override { value = scale * frame; return false; }
 };
+class FrameColor : public CColorElement {
+public:
+  mutable int sdrCalls = 0, hdrCalls = 0;
+  bool GetValue(int frame, CColor& value) const override {
+    ++sdrCalls;
+    value = CColor(8.f + frame * 0.125f, 5.95460939f, 1.43719971f,
+                   0.4321f + frame * 0.001f); // Deliberately clipped/quantized SDR path.
+    return false;
+  }
+  bool GetValueHdr(int frame, float out[4]) const override {
+    ++hdrCalls;
+    out[0] = 8.f + frame * 0.125f;
+    out[1] = 5.95460939f;
+    out[2] = 1.43719971f;
+    out[3] = 0.4321f + frame * 0.001f;
+    return false;
+  }
+};
+class FrameVector : public CVectorElement {
+public:
+  bool GetValue(int frame, CVector3f& value) const override {
+    value = CVector3f(float(frame), 2.5f, -3.75f);
+    return false;
+  }
+};
+void TestHdrEvaluation() {
+  CGenDescription desc;
+  desc.xPortVfx = std::make_unique<CPortVfxData>();
+  auto& vfx = *desc.xPortVfx;
+  const float high[4] = {8.f, 5.95460939f, 1.43719971f, 1.f};
+  const float low[4] = {1.f, 0.3295990526676178f, 0.f, 1.f};
+  auto addColor = [&](u32 row, u32 component, CColorElement* color) {
+    CPortVfxElem e; e.kind = CPortVfxElem::kColor; e.a = row; e.b = component; e.color = color;
+    vfx.vpmt.push_back(e);
+  };
+  addColor(0, 0, new CCEFastConstant(high[0], high[1], high[2], high[3]));
+  addColor(1, 0, new CCEFastConstant(low[0], low[1], low[2], low[3]));
+  auto* dynamic = new FrameColor;
+  addColor(2, 0, dynamic);
+  addColor(3, 2, new FrameColor); // Four-channel result must truncate at the row edge.
+  addColor(3, 0, nullptr); // Null must not overwrite preceding values.
+  auto* invalidRow = new FrameColor;
+  addColor(4, 0, invalidRow); // Invalid row must not evaluate/write.
+  CPortVfxElem real; real.real = new FrameReal(0.25f); real.a = 3;
+  vfx.vpmt.push_back(real);
+  CPortVfxElem vec; vec.kind = CPortVfxElem::kVector; vec.vec = new FrameVector; vec.a = 3; vec.b = 1;
+  vfx.vpmt.push_back(vec);
+  // VSMT shares EvalElem, consuming only its first component.
+  CPortVfxElem system; system.kind = CPortVfxElem::kColor; system.a = 4; system.color = new FrameColor;
+  vfx.vsmt.push_back(system);
+  system.a = 5; system.color = nullptr; vfx.vsmt.push_back(system);
+  for (int frame : {0, 7, 119}) {
+    CElementGen::CParticle particle;
+    particle.x2c_lineLengthOrSize = 2.75f;
+    PortVfxEvalParticle(desc, particle, frame);
+    float point[4][4] = {};
+    float iten = -1.f;
+    PortVfxEvalPoint(vfx, frame, iten, point);
+    for (int c = 0; c < 4; ++c) {
+      Check(particle.xPortVpmt[0][c] == high[c] && point[0][c] == high[c], "particle/point preserve exact HDR source endpoint");
+      Check(particle.xPortVpmt[1][c] == low[c] && point[1][c] == low[c], "particle/point preserve fractional low endpoint");
+      const float expected[] = {8.f + frame * 0.125f, high[1], high[2], 0.4321f + frame * 0.001f};
+      Check(particle.xPortVpmt[2][c] == expected[c] && point[2][c] == expected[c], "particle/point reevaluate HDR RGB and fractional alpha each frame");
+    }
+    Check(particle.xPortSsze == 2.75f && particle.xPortIten == 1.f && iten == 1.f, "null size/intensity defaults unchanged");
+    const float expected[] = {frame * 0.25f, float(frame), 2.5f, -3.75f};
+    for (int c = 0; c < 4; ++c) {
+      Check(particle.xPortVpmt[3][c] == expected[c] && point[3][c] == expected[c], "real/vector widths and evaluation unchanged");
+    }
+    float values[kPortVfxVsmtCount] = {};
+    values[5] = 123.f;
+    Check(PortVfxEvalVsmt(vfx, frame, values) == (1u << 4) && values[4] == 8.f + frame * 0.125f && values[5] == 123.f,
+          "VSMT preserves HDR first component and skips null color");
+  }
+  Check(dynamic->sdrCalls == 0 && dynamic->hdrCalls == 6, "production particle/point path dispatches HDR, never SDR");
+  Check(invalidRow->sdrCalls == 0 && invalidRow->hdrCalls == 0, "invalid row never evaluates color");
+  // Isolate row-edge truncation and null behavior, without the real/vector overrides.
+  delete vfx.vpmt.back().vec;
+  vfx.vpmt.pop_back();
+  delete vfx.vpmt.back().real;
+  vfx.vpmt.pop_back();
+  for (u32 kind : {CPortVfxElem::kReal, CPortVfxElem::kVector, CPortVfxElem::kInt}) {
+    CPortVfxElem e; e.kind = kind; e.a = 3; vfx.vpmt.push_back(e);
+  }
+  float point[4][4] = {}; point[3][0] = 123.f; point[3][1] = 456.f;
+  CElementGen::CParticle particle;
+  particle.xPortVpmt[3][0] = 123.f; particle.xPortVpmt[3][1] = 456.f;
+  float iten;
+  PortVfxEvalParticle(desc, particle, 0);
+  PortVfxEvalPoint(vfx, 0, iten, point);
+  Check(point[3][0] == 123.f && point[3][1] == 456.f && point[3][2] == 8.f && point[3][3] == high[1],
+        "null leaves row intact and color width truncates at component four");
+  for (int c = 0; c < 4; ++c) {
+    Check(particle.xPortVpmt[3][c] == point[3][c], "particle shares point null/width behavior");
+  }
+}
 void TestDynamic() {
   CPortVfxData vfx;
   Parse(vfx, Blob(3));
@@ -140,7 +238,7 @@ void TestDynamic() {
 } // namespace
 
 int main() {
-  TestParsing(); TestPhysicalTruncation(); TestDynamic();
+  TestParsing(); TestPhysicalTruncation(); TestDynamic(); TestHdrEvaluation();
   if (!failures) { std::puts("port_vfx_material: ok"); }
   return failures ? 1 : 0;
 }

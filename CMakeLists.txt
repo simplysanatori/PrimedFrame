@@ -1057,6 +1057,8 @@ if(MP_BUILD_TESTS)
     set_tests_properties(port_vfx_opacity_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_vfx_material_tests tests/port_vfx_material.cpp
         src/Kyoto/Particles/CPortVfxMat.cpp platform/port_vfx_particles.cpp
+        src/Kyoto/Particles/CGenDescription.cpp src/Kyoto/Particles/CColorElement.cpp
+        src/Kyoto/Graphics/DolphinCColor.cpp
         src/Kyoto/Streams/CInputStream.cpp src/Kyoto/Streams/CMemoryInStream.cpp
         src/Kyoto/Math/CVector3f.cpp)
     target_include_directories(port_vfx_material_tests PRIVATE platform/include include extern/aurora/include)
