@@ -2359,7 +2359,11 @@ struct GroundTick {
           static_cast< const CCollidableOBBTreeGroup& >(*platform.GetCollisionPrimitive());
       const CTransform4f xf = platform.GetPrimitiveTransform();
       const COBBox local = COBBox::FromAABox(box, xf.GetQuickInverse());
-      const std::uint64_t objectBits = group.GetMaterial().GetValue();
+      // The object half is read live: 0xc0fce0 merges the collidable's material
+      // (+0x10..+0x24) at query time, and every MaterialListChanged rewrites it
+      // (CPhysicsState::SetCollisionMaterial 0xc1536c), so a material added since the
+      // constructor counts. The tree group's own copy is the constructor's list.
+      const std::uint64_t objectBits = platform.GetMaterialList().GetValue();
       const std::uint32_t owner =
           PortRemasteredGroundRider::OwnerFromRaw(platform.GetUniqueId().value);
       for (int t = 0; t < group.GetContainer()->NumTrees(); ++t) {

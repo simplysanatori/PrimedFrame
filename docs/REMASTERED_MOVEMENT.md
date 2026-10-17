@@ -47,7 +47,8 @@ collision tree that did not rotate this tick (`port_remastered_ground_rider.h`,
 unit-tested by `tests/port_ground_rider.cpp`). Every query appends their triangles
 after the terrain's, platforms ordered by object index (`FindOverlap` 0xc1a760); the
 tree walk is the source's (0xc0fce0: LIFO, root untested) and each triangle carries the
-surface material merged with the platform's. After `Post` the first platform contact of
+surface material merged with the platform's current material list (read live, as
+0xc0fce0 reads the collidable's material that `MaterialListChanged` rewrites). After `Post` the first platform contact of
 the mover's result list (every `MoveAlongGround` pass's contacts, then the snap's,
 appended in that order: `copy_collision_info_list_into` 0xc18c00 never clears) becomes
 the rider (`SetRiderController`
