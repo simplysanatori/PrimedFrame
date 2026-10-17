@@ -1015,6 +1015,14 @@ void CPlayerGun::Update(float grappleSwingT, float cameraBobT, float dt, CStateM
     x350_shakeZ = chargeShakeTbl[static_cast< int >(mgr.Random()->Next()) % 3] * shakeFactor;
   }
 
+#ifdef TARGET_PC
+  // Port: a save state loaded in the ball morphs the player before the beam has loaded, and
+  // nothing touches the gun in the ball, so it never would and every bomb is skipped below.
+  if (!x72c_currentBeam->IsLoaded()
+      && player.GetMorphballTransitionState() == CPlayer::kMS_Morphed) {
+    x72c_currentBeam->Touch(mgr);
+  }
+#endif
   if (!x72c_currentBeam->IsLoaded()) {
     return;
   }
@@ -1651,6 +1659,12 @@ bool CPlayerGun::PortRapidChargeShot(float dt, CStateManager& mgr) {
   const SPortRapidCharge* beam = mPortRapidCharge ? PortRapidChargeFor(x310_currentBeam) : nullptr;
   if (beam == nullptr || mPortRapidShots >= beam->shots) {
     return false;
+  }
+  // A held charge is requested again before the new beam's ToBeam animation ends.
+  // Wait for the switch to finish: firing here calls ExitMissile, which can replace
+  // ChangeWeapon/SetupBeam and leave the switching flag set, blocking every weapon.
+  if (IsWeaponStateSet(0x8)) {
+    return true;
   }
   mPortRapidTimer += dt;
   if (mPortRapidTimer < float(beam->shotFrames[mPortRapidShots]) / 60.f) {
