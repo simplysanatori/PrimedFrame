@@ -66,6 +66,8 @@ PortGyro::Activation sGyroActivation;
 // The last tick applied look input. A paused game or a cinematic skips the
 // player update, and would then drop what the frames between ticks showed.
 bool sAimAppliedLastTick = false;
+// Keeps the twin stick turn the tick's first aim update recorded (issue #140).
+PortMouse::TickLag sAimTickLag;
 // Gyro state: the phone's sensor is looked up once, so the sensor list is not
 // walked on every tick.
 bool sPhoneGyroSearched = false;
@@ -496,6 +498,8 @@ unsigned MouseHeldButtons() { return sMouseHeldButtons.Held(); }
 
 bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   SetMouseGameplayActive(active);
+  const PortMouse::AimState lastAim = sMouseAimState;
+  const PortMouse::PointerAim lastPointer = sPointerAim;
   const bool pointer = PointerAim();
   float dx = sMouseFrameX;
   float dy = sMouseFrameY;
@@ -526,6 +530,7 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   sPointerAimFree = pointer && applied;
   if (!sPointerAimFree) sPointerAim.Center();
   if (applied) {
+    sAimTickLag.Applied(sMouseAimState, lastAim, sPointerAim, lastPointer, sPointerAimFree);
     sMouseFrameX = sMouseFrameY = sStickFrameX = sStickFrameY = 0.f;
     sGyroCameraFrameX = sGyroCameraFrameY = 0.f;
   }
@@ -933,6 +938,7 @@ void BeginFrameMouse() {
   // AddStickAim adds this tick's travel during its input update.
   sStickFrameX = sStickFrameY = 0.f;
   sAimAppliedLastTick = false;
+  sAimTickLag.BeginTick();
 }
 
 bool SpringBallSwipe() {

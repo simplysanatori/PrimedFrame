@@ -268,6 +268,32 @@ private:
   static float Clamp1(float v) { return v < -1.f ? -1.f : v > 1.f ? 1.f : v; }
 };
 
+// The game applies the aim twice a tick: CPlayer::ProcessInput with the tick's
+// travel, then CPlayer::Update to revalidate it with none left. Only the first
+// applied update of a tick records the turn drawn after it (AimState::lagYaw,
+// PointerAim::lagX); the second would clear it, and the twin stick would turn
+// the view once a tick between smooth frames (issue #140).
+class TickLag {
+public:
+  void BeginTick() { mRecorded = false; }
+  // After an applied update; `aim` and `pointer` were `aimBefore` and
+  // `pointerBefore` ahead of it. pointerFree: the update left pointer aim free.
+  void Applied(AimState& aim, const AimState& aimBefore, PointerAim& pointer,
+               const PointerAim& pointerBefore, bool pointerFree) {
+    if (mRecorded) {
+      aim.lagYaw = aimBefore.lagYaw;
+      aim.lagPitch = aimBefore.lagPitch;
+      if (pointerFree) {
+        pointer.lagX = pointerBefore.lagX;
+        pointer.lagY = pointerBefore.lagY;
+      }
+    }
+    mRecorded = true;
+  }
+private:
+  bool mRecorded = false;
+};
+
 class ButtonGate {
 public:
   void Reset() { mReady = false; }

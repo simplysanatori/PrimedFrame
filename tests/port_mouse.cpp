@@ -195,6 +195,31 @@ int main() {
   // A lock drops the lagged turn.
   aim.Update(true, true, 0.f, 1.f, 0.f, 0.f, -100.f, sensitivity, false, false, 0.f, -100.f);
   Check(aim.lagYaw == 0.f && aim.lagPitch == 0.f);
+  // The game applies the aim twice a tick, the second time with no travel left
+  // (issue #140): the turn the stick made is still drawn after the tick, and the
+  // next tick, with the stick released, draws none.
+  {
+    PortMouse::TickLag tickLag;
+    PortMouse::PointerAim noPointer;
+    const auto apply = [&](float dx, float lagDx) {
+      const PortMouse::AimState before = aim;
+      const PortMouse::PointerAim pointerBefore = noPointer;
+      Check(aim.Update(true, false, 0.f, 1.f, 0.f, dx, 0.f, sensitivity, false, false, lagDx, 0.f));
+      tickLag.Applied(aim, before, noPointer, pointerBefore, false);
+    };
+    aim.Synchronize(0.f, 1.f, 0.f);
+    const float tickStart = aim.yaw;
+    tickLag.BeginTick();
+    apply(100.f, 100.f);
+    apply(0.f, 0.f);
+    Check(Near(aim.lagYaw, aim.yaw - tickStart));
+    Check(aim.Preview(0.f, 0.f, sensitivity, false, false, previewYaw, previewPitch, 0.5f));
+    Check(Near(previewYaw, tickStart + 0.5f * aim.lagYaw));
+    tickLag.BeginTick();
+    apply(0.f, 0.f);
+    apply(0.f, 0.f);
+    Check(aim.lagYaw == 0.f && aim.lagPitch == 0.f);
+  }
   aim.Reset();
   Check(!aim.Preview(1.f, 1.f, sensitivity, false, false, previewYaw, previewPitch));
   Check(!aim.Update(true, false, 0.f, 0.f, 0.f, 1.f, 1.f, sensitivity, false, false));
@@ -248,6 +273,28 @@ int main() {
   }
   pointer.Center();
   Check(pointer.lagX == 0.f && pointer.lagY == 0.f);
+  // Pointer aim keeps the stick's pointer travel over the tick's second aim
+  // update too (issue #140).
+  {
+    PortMouse::TickLag tickLag;
+    PortMouse::AimState view;
+    view.Synchronize(0.f, 1.f, 0.f);
+    const auto apply = [&](float dx) {
+      const PortMouse::AimState before = view;
+      const PortMouse::PointerAim pointerBefore = pointer;
+      pointer.MoveLagged(dx, 0.f, dx, 0.f);
+      Check(view.Update(true, false, 0.f, 1.f, 0.f, 0.f, 0.f, 0.001f, false, false));
+      tickLag.Applied(view, before, pointer, pointerBefore, true);
+    };
+    tickLag.BeginTick();
+    apply(0.25f);
+    apply(0.f);
+    Check(Near(pointer.x, 0.25f) && Near(pointer.lagX, 0.25f));
+    tickLag.BeginTick();
+    apply(0.f);
+    Check(pointer.lagX == 0.f);
+    pointer.Center();
+  }
   pointer.Move(0.5f, -3.f);
   float turnYaw = 1.f, turnPitch = 1.f;
   PortMouse::PointerAim::TurnAt(0.6f, -0.69f, 0.7f, 3.f, 0.5f, turnYaw, turnPitch);
