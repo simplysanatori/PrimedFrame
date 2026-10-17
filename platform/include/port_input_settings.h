@@ -110,6 +110,8 @@ struct Settings {
   // How visible the gameplay controls are, in percent; the Android view reads it
   // each draw, so it is atomic like the margins.
   std::atomic< float > touchOpacity{kTouchOpacityDefault};
+  // Off, the Android view draws and handles only its MENU and START buttons.
+  std::atomic< bool > touchControls{true};
   bool mouseInvertX = false;
   bool mouseInvertY = false;
   bool mouseButtons = true;

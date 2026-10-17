@@ -170,6 +170,13 @@
   where the stroke began, once per stroke (`TouchControlsView.trackSwipe` →
   `PortDebug::TouchSpringSwipe` → the Spring Ball request). Touch aim does
   nothing in the ball, so the swipe takes nothing away there.
+  **On-screen controls** (Android, Touch controls, `touch_controls`, on by
+  default, saved in `controls.toml`; #137): off, only the MENU and START buttons
+  stay on screen (fully opaque, at their default spots, never auto-hidden), and
+  the pointer screens keep their back and cog buttons. Any other touch does
+  nothing, so stray touches from a pad player don't bring the controls back.
+  MENU opens F1, where the setting can be turned back on. Edit layout still
+  shows every control.
   **Touch controls opacity** (Android, Touch controls, `touch_opacity`, 10-100,
   default 100, saved in `controls.toml`): fades every gameplay control, so more of
   the game shows through the overlay; the layout editor and the menu buttons (the
