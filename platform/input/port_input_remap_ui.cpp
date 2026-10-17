@@ -1481,8 +1481,15 @@ void Draw() {
   ImGui::SetItemTooltip("On: the mouse and touch work the game's menus and map. Hovering or tapping selects, "
                         "a click (or a tap on the selected item) confirms, right click backs out, a click on a "
                         "button hint presses it. Drags set sliders and turn the Samus doll and the map (two "
-                        "fingers or a right drag pan the map); the wheel or a pinch zooms them; a two-finger "
+                        "fingers or a right drag pan the map, see \"Swap map finger gestures\"); the wheel or a pinch zooms them; a two-finger "
                         "twist turns the map.\nOff: menus and the map read only buttons and keys.");
+  ImGui::SameLine();
+  bool swapFingers = PortPointer::MapSwapFingers();
+  ImGui::BeginDisabled(!pointerMenus);
+  if (ImGui::Checkbox("Swap map finger gestures", &swapFingers)) PortDebug::SetMapSwapFingers(swapFingers);
+  ImGui::EndDisabled();
+  ImGui::SetItemTooltip("On: on the map one finger pans and two fingers rotate. Off: one finger rotates and two "
+                        "fingers pan. Twist and pinch are unchanged; the mouse is not affected.");
   ImGui::Separator();
 
   const bool editorOnTop = sEditing != kEditNone && !sEditRowShown;

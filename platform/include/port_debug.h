@@ -237,6 +237,7 @@ bool SecondaryCrosshairs();
 // Menus and the map read a remapped pad's standard buttons (F1 Controls > Remap).
 bool MenuStandardButtons();
 void SetMenuStandardButtons(bool enabled);
+void SetMapSwapFingers(bool swap); // the map_swap_fingers setting; read with PortPointer::MapSwapFingers()
 void SetPointerMenus(bool enabled); // the pointer_menus setting; read with PortPointer::Enabled()
 // Hide the helmet frame (the visor rim and its glow and lights).
 bool HideHelmet();

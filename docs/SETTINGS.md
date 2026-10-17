@@ -317,7 +317,9 @@
   or two fingers move it and the wheel or a pinch zooms.
   On the map a left drag or one finger rotates (yaw and pitch), a right or middle drag
   or two fingers pan, a two-finger twist turns it, the wheel or a pinch zooms, a click selects a world or room and a click
-  on the selected one opens it. While such a screen is up the mouse is released and the
+  on the selected one opens it. "Swap map finger gestures" (off by default;
+  `map_swap_fingers=`, `MP_MAP_SWAP_FINGERS`) swaps the touch drags: one finger pans and
+  two fingers rotate; the mouse is unchanged. While such a screen is up the mouse is released and the
   cursor shown; the button prompts show mouse glyphs after the mouse was last used; on
   Android the gameplay touch buttons hide, leaving a back button. Escape pauses, backs out
   of menus (resuming from the pause screen's top level) and closes the map while this is

@@ -503,6 +503,12 @@ void SetPointerMenus(bool enabled) {
   MarkDirty();
 }
 
+void SetMapSwapFingers(bool swap) {
+  EnsureInitialized();
+  PortPointer::SetMapSwapFingers(swap);
+  MarkDirty();
+}
+
 bool SecondaryCrosshairs() {
   EnsureInitialized();
   return sSecondaryCrosshairs || sOriginalExperience;

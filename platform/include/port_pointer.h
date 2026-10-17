@@ -21,6 +21,9 @@ namespace PortPointer {
 // The pointer_menus setting (saved by debug_ui.cpp; set through PortDebug::SetPointerMenus).
 bool Enabled();
 void SetEnabled(bool enabled);
+// The map_swap_fingers setting: touch pans with one finger and rotates with two.
+bool MapSwapFingers();
+void SetMapSwapFingers(bool swap);
 
 // One SDL event from the main loop. Synthesized touch mice are ignored (the
 // fingers arrive on their own); keys and pad buttons only mark that the

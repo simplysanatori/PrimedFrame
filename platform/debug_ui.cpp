@@ -660,6 +660,7 @@ void EnsureInitialized() {
   sSecondaryCrosshairs = port::EnvFlag("MP_SECONDARY_CROSSHAIRS", sSecondaryCrosshairs);
   sMenuStandardButtons = port::EnvFlag("MP_MENU_STANDARD_BUTTONS", sMenuStandardButtons);
   PortPointer::SetEnabled(port::EnvFlag("MP_POINTER_MENUS", PortPointer::Enabled()));
+  PortPointer::SetMapSwapFingers(port::EnvFlag("MP_MAP_SWAP_FINGERS", PortPointer::MapSwapFingers()));
   PortInput::ApplyEnvOverrides();
   if (port::EnvFlag("MP_DISABLE_AI_AUDIO")) {
     sAiAudioEnabled = false;
