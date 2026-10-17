@@ -8,7 +8,8 @@ Pickup dots and their kinds, the saved marks, the cyan drawing of them and the
 physical X button are not part of it.
 
 What this checks, none of which a unit test can see (the legend fit and the
-prompt live in CAutoMapper.cpp behind the running map screen):
+prompt live in CAutoMapper.cpp and platform/port_automapper.cpp behind the
+running map screen):
 
   * the setting's default is false, and the key is in the settings table with
     two sample values, which is what the `port_settings_roundtrip` self-test
@@ -45,12 +46,18 @@ TRACKER = root / "platform/debug_ui/tracker.inc"
 DEBUG_HEADER = root / "platform/include/port_debug.h"
 INDEX = root / "platform/port_settings_index.inc"
 MAPPER = root / "src/MetroidPrime/CAutoMapper.cpp"
+MAPPER_PORT = root / "platform/port_automapper.cpp"
 CONSOLE = root / "platform/port_console.cpp"
 PICKUPS = root / "platform/port_map_pickups.cpp"
 MARKS = root / "platform/port_map_marks.cpp"
 SETTINGS_DOC = root / "docs/SETTINGS.md"
 CONSOLE_DOC = root / "docs/CONSOLE.md"
 CMAKE = root / "CMakeLists.txt"
+
+
+def mapper_text():
+    """The map screen's code: the decomp file's hooks and the port file they call."""
+    return MAPPER.read_text() + "\n" + MAPPER_PORT.read_text()
 
 
 class Wiring(WiringCase):
@@ -93,8 +100,8 @@ class Wiring(WiringCase):
         self.assertIn("Room marks still work with X", help_text)
 
     def test_the_legend_key_carries_the_setting(self):
-        mapper = MAPPER.read_text()
-        key = braced(mapper, "static uint PortLegendKey() {", MAPPER)
+        mapper = mapper_text()
+        key = braced(mapper, "uint PortLegendKey() {", MAPPER)
         self.assertIn("PortDebug::MapPickupKinds() ? 8u : 0u", key)
         self.assertIn("PortDebug::MapExtraUi() ? 16u : 0u", key)
         # It is the only key of the legend's text, so switching the setting in an
@@ -102,24 +109,24 @@ class Wiring(WiringCase):
         self.assertIn("sPortLegendKey != PortLegendKey()", mapper)
 
     def test_legend_text_and_assets_are_gated(self):
-        mapper = MAPPER.read_text()
-        text = braced(mapper, "static rstl::wstring PortLegendText() {", MAPPER)
+        mapper = mapper_text()
+        text = braced(mapper, "rstl::wstring PortLegendText() {", MAPPER)
         gate = index(text, "if (!PortDebug::MapExtraUi()) {")
         # Nothing is appended before the gate: the disc's own text alone.
         self.assertLess(gate, index(text, "entry("), "an entry is appended first")
-        ready = squash(braced(mapper, "static bool PortLegendReady() {", MAPPER))
+        ready = squash(braced(mapper, "bool PortLegendReady() {", MAPPER))
         gate = index(ready, "if (!PortDebug::MapExtraUi()) {")
         self.assertIn("return true;", ready[gate:ready.index("}", gate) + 1])
         # The injected legend textures are not created before that early return.
         self.assertLess(gate, index(ready, "new TToken< CTexture >"), "textures loaded first")
         # Off, the pane keeps the disc's own dimensions and pivot: the fit's
         # scale is 1 and the pivot compensation is a no-op.
-        fit = between(mapper, "static void PortSetLegend(", "legend->SetDimensions(", MAPPER)
+        fit = between(mapper, "void PortSetLegend(", "legend->SetDimensions(", MAPPER)
         self.assertIn("rows > base ? static_cast< float >(base) / static_cast< float >(rows) : 1.f",
                       fit)
 
     def test_prompt_and_click_are_gated_and_nothing_else_is(self):
-        mapper = MAPPER.read_text()
+        mapper = mapper_text()
         prompt = braced(mapper, "bool CAutoMapper::PortShowsMarkPrompt() {", MAPPER)
         self.assertTrue(prompt.lstrip().startswith("{"), prompt[:40])
         self.assertTrue(squash(prompt).startswith(squash("{ if (!PortDebug::MapExtraUi()")),
@@ -144,8 +151,8 @@ class Wiring(WiringCase):
         # pane can come back at the same address: a cache left over from the old
         # frame would keep the disc's geometry from being taken again, would skip
         # the fit on the reopened frame and would leave the prompt unplaced.
-        mapper = MAPPER.read_text()
-        forget = braced(mapper, "static void PortForgetMapPanes() {", MAPPER)
+        mapper = mapper_text()
+        forget = braced(mapper, "void PortForgetMapPanes() {", MAPPER)
         for reset in ("sPortLegendFit.pane = nullptr;", "sPortLegendFit.rows = 0;",
                       "sPortLegendFit.retailRows = 0;", "sPortHintPane.pane = nullptr;",
                       "sPortHintPane.placed = false;"):
@@ -166,7 +173,7 @@ class Wiring(WiringCase):
         # disc's own: with the labels below the appended lines are 233 text px and
         # the row ratio (11/13) draws them 197 px wide against the disc's 198.
         # Longer labels would leave a tail on screen while the panel is away.
-        mapper = MAPPER.read_text()
+        mapper = mapper_text()
         labels = re.findall(r'entry\(\s*PortCustomRes::kLegend\w+Txtr\s*,\s*L"([^"]+)"\s*\)',
                             mapper)
         self.assertEqual(sorted(labels), ["Collected", "Major", "Marked", "Minor", "Pickup"])
