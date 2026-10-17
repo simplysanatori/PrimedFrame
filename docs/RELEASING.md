@@ -60,9 +60,9 @@ self-contained — and it is why `MP_USER_PATH` cannot be used to move saves.
 - **All four do.** Each ships the port's own `LICENSE` and `NOTICE` alongside
   the third-party terms, because a grant nobody can read inside the package is
   not much of a grant.
-- **Windows**: `windows.yml` copies the port's grant and notice, Aurora's and
-  MusyX's licences, and every `LICENSE*`/`COPYING*`/`NOTICE*` from the fetched
-  packages into `dist/licenses/`, preserving the dependency path, and puts
+- **Windows**: `windows.yml` collects the licences into `dist/licenses/`
+  with `tools/collect_licenses.sh`, the same set as the Linux packages (see
+  below), adds the statically linked OpenSSL's, and puts
   `docs/NATIVE_PORT.md` in as the `README`, with `docs/SETTINGS.md`, `docs/MODS.md`
   and `docs/CONSOLE.md` alongside it. It also packages `textures/` (the
   HD and button-prompt sets), so the artefact zips as-is with no copy from a
@@ -85,13 +85,15 @@ self-contained — and it is why `MP_USER_PATH` cannot be used to move saves.
   SDL3, nod, OpenSSL, zstd and xxhash linked in statically (the workflow fails
   if `otool -L` shows anything outside `/usr/lib` and `/System/Library`), puts
   the same LGPL `ffmpeg` as Windows in `Contents/MacOS`, and collects the
-  licences into `licenses/` beside the app. Both are ad-hoc signed, not
+  licences into `licenses/` beside the app with `tools/collect_licenses.sh`,
+  plus ffmpeg's and OpenSSL's. Both are ad-hoc signed, not
   notarised.
 - **The AppImage, the Linux tarball and the APK**: `tools/collect_licenses.sh`
   gathers the AppImage's and the tarball's into `share/licenses/metroid-prime-port/`:
   the port's grant and notice, the vendored snapshots, every fetched package's
-  licence (`<dep>.txt`) and `packaging/licenses/` (Dawn and nod, whose prebuilt
-  archives carry none). It bundles no shared libraries. The APK's
+  licence (`<dep>.txt`), the notices deeper in a fetched package's tree under
+  `<dep>/` (SDL's hidapi, for one) and `packaging/licenses/` (Dawn and nod,
+  whose prebuilt archives carry none). It bundles no shared libraries. The APK's
   `syncLicenseNotices` task gathers the same set into `assets/`, plus
   `adrenotools.txt`, `linkernsbypass.txt` and `openssl-license.txt`.
 - **The Flatpak** collects them in the manifest's `post-install`: the two
