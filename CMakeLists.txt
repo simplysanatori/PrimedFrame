@@ -230,6 +230,9 @@ set(MP_PORT_SOURCES
     platform/port_remastered_nso.cpp
     platform/port_remastered_pak.cpp
     platform/port_remastered_txtr.cpp
+    platform/port_remastered_tegra_swizzle.cpp
+    platform/port_remastered_bcdec.cpp
+    platform/port_remastered_astc_decode.cpp
     platform/port_hd_font.cpp
     platform/port_hd_font_file.cpp
     platform/port_font_accent_file.cpp
@@ -333,6 +336,8 @@ if(NOT ANDROID)
         tests/port_remastered_effect_tool.cpp platform/port_remastered_effect.cpp
         platform/port_remastered_effect_convert.cpp platform/port_remastered_effect_import.cpp
         platform/port_remastered_image.cpp platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp
+        platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+        platform/port_remastered_astc_decode.cpp
         platform/port_remastered_convert.cpp platform/port_remastered_cmdl.cpp platform/port_remastered_anuv.cpp
         platform/port_remastered_report.cpp)
     target_include_directories(remastered_effect_tool PRIVATE platform/include)
@@ -814,6 +819,8 @@ if(MP_BUILD_TESTS)
     mp_port_test(port_remastered_parsers_tests
         SOURCES tests/port_remastered_parsers.cpp
             platform/port_remastered_pak.cpp platform/port_remastered_txtr.cpp
+            platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+            platform/port_remastered_astc_decode.cpp
         INCLUDES platform/include)
     mp_port_test(port_shot_aim_tests SOURCES tests/port_shot_aim.cpp INCLUDES platform/include)
     mp_port_test(port_remastered_report_tests
@@ -832,6 +839,8 @@ if(MP_BUILD_TESTS)
         SOURCES tests/port_remastered_driver_tests.cpp
             platform/port_remastered_anim.cpp platform/port_remastered_cmdl.cpp
             platform/port_remastered_txtr.cpp platform/port_room_env_file.cpp
+            platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+            platform/port_remastered_astc_decode.cpp
             platform/port_room_env_tiles.cpp platform/port_room_geo_file.cpp
         INCLUDES platform/include include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
