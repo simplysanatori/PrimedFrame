@@ -968,25 +968,49 @@ void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float 
 
 // The rider carry of PredictMotion 0xc23e40 for the tick, while the controller is live (set
 // by an earlier tick): the ridden platform's pose delta since its PreThink this tick, or its
-// last step once after a deactivation (PortRemasteredGroundRider::RiderCarry). Both
-// Remastered player movers read it.
-static PortRemasteredGround::Vec3 PortRiderCarry(CStateManager& mgr, CPlayer& player,
-                                                 uint simTick) {
+// last step once after a deactivation (PortRemasteredGroundRider::RiderCarryTerm), with the
+// rotation of a turning platform. Both Remastered player movers read it.
+static PortRemasteredGroundRider::Pose PortPose(const CTransform4f& xf) {
+  PortRemasteredGroundRider::Pose pose;
+  const CVector3f t = xf.GetTranslation();
+  pose.origin = {t.GetX(), t.GetY(), t.GetZ()};
+  for (int c = 0; c < 3; ++c) {
+    const CVector3f col = xf.GetColumn(c);
+    pose.basis.c[c] = {col.GetX(), col.GetY(), col.GetZ()};
+  }
+  return pose;
+}
+static PortRemasteredGroundRider::CarryTerm PortRiderCarry(CStateManager& mgr, CPlayer& player,
+                                                           uint simTick) {
   PortRemasteredGroundRider::RiderController& rider = player.PortRider();
   if (rider.Active()) {
     const ushort raw = PortRemasteredGroundRider::RawFromOwner(rider.owner);
     if (const CScriptPlatform* platform = TCastToConstPtr< CScriptPlatform >(
             mgr.GetObjectById(TUniqueId(raw >> 10, raw & 0x3ff)))) {
-      const CVector3f was = platform->PortPreThinkTransform().GetTranslation();
-      const CVector3f now = platform->GetTranslation();
-      const CVector3f end = platform->PortPreThinkEndTranslation();
-      return PortRemasteredGroundRider::RiderCarry(
-          {was.GetX(), was.GetY(), was.GetZ()}, {now.GetX(), now.GetY(), now.GetZ()},
-          {end.GetX(), end.GetY(), end.GetZ()}, platform->PortPoseTick(), simTick,
+      return PortRemasteredGroundRider::RiderCarryTerm(
+          PortPose(platform->PortPreThinkTransform()), PortPose(platform->GetTransform()),
+          PortPose(platform->PortPreThinkEndTransform()), platform->PortPoseTick(), simTick,
           platform->GetActive(), true);
     }
   }
-  return {};
+  return PortRemasteredGroundRider::CarryTerm();
+}
+
+// The rider's yaw (0xc2446c, q_integrated * ZRotation(yaw)) folded into the port's additive
+// orientation delta: AddMotionState adds the delta and normalizes, so the delta that lands on
+// q_integrated * yawq is (q + delta) * yawq - q, and a saved prediction carries it as well.
+static CNUQuaternion PortYawedOrientationDelta(const CPhysicsActor& actor,
+                                               const CNUQuaternion& delta, float yaw) {
+  const CNUQuaternion q = CNUQuaternion::BuildFromQuaternion(actor.GetRotation());
+  CNUQuaternion integrated = q;
+  integrated += delta;
+  const CNUQuaternion yawq(cosf(0.5f * yaw), CVector3f(0.f, 0.f, sinf(0.5f * yaw)));
+  const CNUQuaternion turned = integrated * yawq;
+  return CNUQuaternion(turned.GetScalar() - q.GetScalar(), turned.GetVector() - q.GetVector());
+}
+
+static PortRemasteredGround::Vec3 PortVec(const CVector3f& v) {
+  return {v.GetX(), v.GetY(), v.GetZ()};
 }
 
 // The carry is part of the predicted motion, so the motion volume covers it (unchanged at 0).
@@ -1010,7 +1034,8 @@ static bool PortIsBoxPlatform(const CScriptPlatform& platform) {
 }
 
 // The admission of a near-list platform to the Remastered producer: active, with a DCLN tree
-// or a box, and not rotated this tick (a stale stamp is not a rotation). Both movers use it.
+// or a box; the airborne mover also refuses one rotated this tick (a stale stamp is not a
+// rotation), the grounded one admits it (PortRemasteredGroundRider::AdmitGrounded).
 static PortRemasteredGroundRider::Candidate PortPlatformCandidate(const CScriptPlatform& platform,
                                                                   uint simTick) {
   PortRemasteredGroundRider::Candidate candidate;
@@ -1023,6 +1048,9 @@ static PortRemasteredGroundRider::Candidate PortPlatformCandidate(const CScriptP
 }
 static bool PortAdmitPlatform(const CScriptPlatform& platform, uint simTick) {
   return PortRemasteredGroundRider::Admit(PortPlatformCandidate(platform, simTick));
+}
+static bool PortAdmitGroundedPlatform(const CScriptPlatform& platform, uint simTick) {
+  return PortRemasteredGroundRider::AdmitGrounded(PortPlatformCandidate(platform, simTick));
 }
 
 // The port's filter as the source's CIncludeExcludeCollisionFilterMP1: the include/exclude
@@ -1166,12 +1194,13 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   player.PortSetLastTickRemasteredCarry(true);
   PortRemasteredGroundRider::CarryTerm carry;
   if (carryPlan.remasteredCarry) {
-    carry.carry = PortRiderCarry(mgr, player, simTick);
-    carry.pending = carry.carry.x != 0.f || carry.carry.y != 0.f || carry.carry.z != 0.f;
+    carry = PortRiderCarry(mgr, player, simTick);
   }
   PortRemasteredGroundRider::AirborneRider airRider;
 
-  CAABox motionVolume = PortWidenByCarry(actor.GetMotionVolume(dt), carry.carry);
+  CAABox motionVolume = PortWidenByCarry(
+      actor.GetMotionVolume(dt), carry.pending ? carry.Translation(PortVec(entryPos))
+                                               : PortRemasteredGround::Vec3());
   TEntityList nearList;
   if (colliderList != NULL) {
     nearList = *colliderList;
@@ -1184,7 +1213,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   BuildAreaCollisionCache(mgr, cache);
 
   // The admitted platforms (active, DCLN or box, unrotated) go through the source producer
-  // with the terrain, as on the grounded mover; every other actor stays on the native path.
+  // with the terrain, as on the grounded mover; every other actor stays on the native path,
+  // a platform rotated this tick too (its controller offset 0xc18f80 is not ported).
   std::vector< const CScriptPlatform* > platforms;
   TEntityList nativeList;
   for (const TUniqueId* id = nearList.begin(); id != nearList.end(); ++id) {
@@ -1199,7 +1229,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   PortSortPlatforms(platforms);
   // The rider controller's offset (0xc18f80): its pose delta, read every step whether or not
   // this tick's carry is the Remastered one.
-  const PortRemasteredGround::Vec3 riderCarry = PortRiderCarry(mgr, player, simTick);
+  // A rotated controller keeps the translation part (see the admission above).
+  const PortRemasteredGround::Vec3 riderCarry = PortRiderCarry(mgr, player, simTick).carry;
   const PortAirMoverContact::Vec3 riderOffset = {riderCarry.x, riderCarry.y, riderCarry.z};
 
   // NCollisionUtils is_floor / is_wall (0xc7xxxx). Port contacts carry
@@ -1649,8 +1680,9 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     // t * (v + moveImpulse / m), zero linear momentum delta. The force is folded once per
     // tick by Post (IntegratePostForces below). The rider carry is added whole, unscaled by
     // t, to every prediction of the step while it is pending: the full step, each bisection
-    // sample, hi and lo (lo at t = 0 too). Only the first step has it. The angular part keeps
-    // the port's existing prediction (unverified, as on the ground mover).
+    // sample, hi and lo (lo at t = 0 too). Only the first step has it, with a turning
+    // platform's rotation term (arm from the actor's position now) and yaw. The rest of the
+    // angular part keeps the port's existing prediction (unverified, as on the ground mover).
     CMotionState Predict(float t) const {
       const CMotionState base = actor.PredictMotion_Internal(t);
       const CVector3f v = actor.GetVelocityWR();
@@ -1658,10 +1690,12 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       PortRemasteredGround::Vec3 d = PortRemasteredGround::PredictTranslation(
           t, {v.GetX(), v.GetY(), v.GetZ()}, {jm.GetX(), jm.GetY(), jm.GetZ()},
           1.f / actor.GetMass());
-      if (carry.pending) {
-        d = {d.x + carry.carry.x, d.y + carry.carry.y, d.z + carry.carry.z};
-      }
-      return CMotionState(CVector3f(d.x, d.y, d.z), base.GetOrientation(), CVector3f::Zero(),
+      d = carry.Apply(d, PortVec(actor.GetTranslation()));
+      const CNUQuaternion orientation =
+          carry.pending && carry.rotates
+              ? PortYawedOrientationDelta(actor, base.GetOrientation(), carry.yaw)
+              : base.GetOrientation();
+      return CMotionState(CVector3f(d.x, d.y, d.z), orientation, CVector3f::Zero(),
                           base.GetAngularMomentum());
     }
 
@@ -2691,9 +2725,15 @@ struct GroundTick {
     const PortRemasteredGround::Vec3 d = PortRemasteredGround::PredictTranslation(
         dt, {v.GetX(), v.GetY(), v.GetZ()}, {jm.GetX(), jm.GetY(), jm.GetZ()},
         1.f / actor.GetMass());
-    // The rider carry (0xc23e40, mode 1/2), whole and unscaled, until the first pass applied it.
-    const PortRemasteredGround::Vec3 c = carry.Apply(d);
-    return CMotionState(CVector3f(c.x, c.y, c.z), base.GetOrientation(), CVector3f::Zero(),
+    // The rider carry (0xc23e40, mode 1/2), whole and unscaled, until the first pass applied
+    // it: a turning platform's rotation term about its previous position, the arm from the
+    // actor's position now (S+0x18), and its yaw.
+    const PortRemasteredGround::Vec3 c = carry.Apply(d, PortVec(actor.GetTranslation()));
+    const CNUQuaternion orientation =
+        carry.pending && carry.rotates
+            ? PortYawedOrientationDelta(actor, base.GetOrientation(), carry.yaw)
+            : base.GetOrientation();
+    return CMotionState(CVector3f(c.x, c.y, c.z), orientation, CVector3f::Zero(),
                         base.GetAngularMomentum());
   }
 
@@ -3254,10 +3294,13 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   // The rider carry (PredictMotion 0xc23e40): the ridden platform's pose delta since its
   // PreThink this tick, while the controller is live (set by an earlier grounded tick).
   const uint simTick = mgr.PortSimTick();
-  const PortRemasteredGround::Vec3 riderCarry = PortRiderCarry(mgr, player, simTick);
+  const PortRemasteredGroundRider::CarryTerm riderCarry = PortRiderCarry(mgr, player, simTick);
 
   TEntityList nearList;
-  const CAABox motionVolume = PortWidenByCarry(actor.GetMotionVolume(dt), riderCarry);
+  const CAABox motionVolume = PortWidenByCarry(
+      actor.GetMotionVolume(dt), riderCarry.pending
+                                     ? riderCarry.Translation(PortVec(actor.GetTranslation()))
+                                     : PortRemasteredGround::Vec3());
   if (colliderList != NULL) {
     nearList = *colliderList;
   } else {
@@ -3275,7 +3318,7 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   BuildAreaCollisionCache(mgr, cache);
 
   // Dynamic contacts: everything in the near list that overlaps the whole query region.
-  // Active DCLN and box platforms that did not rotate this tick are admitted (their triangles
+  // Active DCLN and box platforms are admitted, rotated this tick or not (their triangles
   // or box pairs go into the producer lists, after the terrain's); anything else has no Remastered
   // producer, and the tick goes to the port's existing grounded mover: no retail contact is
   // ever presented as a Remastered one.
@@ -3295,7 +3338,7 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
         continue;
       }
       if (const CScriptPlatform* platform = TCastToConstPtr< CScriptPlatform >(other)) {
-        if (PortAdmitPlatform(*platform, simTick)) {
+        if (PortAdmitGroundedPlatform(*platform, simTick)) {
           platforms.push_back(platform);
           continue;
         }
@@ -3361,8 +3404,7 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
                   actor.CPhysicsActor::GetStepDownHeight()};
   tick.platforms = platforms;
   if (carryPlan.remasteredCarry) {
-    tick.carry.carry = riderCarry;
-    tick.carry.pending = riderCarry.x != 0.f || riderCarry.y != 0.f || riderCarry.z != 0.f;
+    tick.carry = riderCarry;
   }
 
   // 0xf923d8: up to five MoveAlongGround passes, stopping after four that consumed

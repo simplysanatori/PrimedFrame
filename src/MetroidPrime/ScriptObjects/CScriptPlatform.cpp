@@ -322,7 +322,7 @@ void CScriptPlatform::PreThink(float dt, CStateManager& mgr) {
   }
 #ifdef TARGET_PC
   if (portStamp) {
-    xPortPreThinkEnd = GetTranslation();
+    xPortPreThinkEnd = GetTransform();
   }
 #endif
 }

@@ -6,6 +6,7 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <cmath>
 #include <initializer_list>
 #include <vector>
 
@@ -178,7 +179,8 @@ int main() {
     assert(rider.count == 0);
   }
 
-  // 7. Gate: only an active, unrotated platform with a tree or a box is admitted.
+  // 7. Gate: only an active platform with a tree or a box is admitted, and unrotated when
+  // airborne.
   {
     assert(Admit({true, true, true, false}));
     assert(!Admit({false, true, true, false})); // not a platform (an actor, a door)
@@ -186,7 +188,13 @@ int main() {
     assert(!Admit({true, true, true, true}));   // rotated this tick
     assert(!Admit({true, false, true, false})); // inactive
     assert(Admit({true, true, false, false, true}));   // AABox platform
-    assert(!Admit({true, true, false, true, true}));   // AABox, rotated (carry not ported)
+    assert(!Admit({true, true, false, true, true}));   // AABox, rotated (airborne refuses)
+    // The grounded mover admits a rotated platform (slice 3: the rotation carry is ported).
+    assert(AdmitGrounded({true, true, false, true, true}));
+    assert(AdmitGrounded({true, true, true, true}));
+    assert(!AdmitGrounded({true, false, false, true, true}));
+    assert(!AdmitGrounded({false, true, false, true, true}));
+    assert(!AdmitGrounded({true, true, false, true, false}));
     assert(!Admit({true, false, false, false, true})); // AABox, inactive
     assert(!Admit({false, true, false, false, true})); // a box actor that is not a platform
   }
@@ -409,6 +417,125 @@ int main() {
     W::Result same = standing;
     G::Merge(same, {});
     assert(same.contacts.size() == standing.contacts.size());
+  }
+  // 10. Rotation carry (PredictMotion 0xc23e40; RESEARCH.md §1 vectors A-G). Platform at
+  // (10,0,0); the arm is the rider's position before v*dt.
+  {
+    const float kPi = 3.14159265358979f;
+    auto Yaw = [](float deg) {
+      const float a = deg * 3.14159265358979f / 180.f;
+      Basis b;
+      b.c[0] = {std::cos(a), std::sin(a), 0.f};
+      b.c[1] = {-std::sin(a), std::cos(a), 0.f};
+      return b;
+    };
+    auto RollX = [](float deg) {
+      const float a = deg * 3.14159265358979f / 180.f;
+      Basis b;
+      b.c[1] = {0.f, std::cos(a), std::sin(a)};
+      b.c[2] = {0.f, -std::sin(a), std::cos(a)};
+      return b;
+    };
+    auto Near = [](float a, float b, float eps) { return std::fabs(a - b) <= eps; };
+    auto Pos = [&](const Pose& start, const Pose& now, const Vec3& self, const Vec3& pred) {
+      const CarryTerm t = RiderCarryTerm(start, now, now, 7, 7, true, true);
+      const Vec3 p = t.Apply(pred, self);
+      return Vec3{self.x + p.x, self.y + p.y, self.z + p.z};
+    };
+    const Vec3 zero{};
+    // A: pure yaw +90 degrees.
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Basis()}, n{{10.f, 0.f, 0.f}, Yaw(90.f)};
+      const Vec3 p = Pos(s, n, {12.f, 0.f, 1.f}, zero);
+      assert(Near(p.x, 10.f, 1e-5f) && Near(p.y, 2.f, 1e-5f) && Near(p.z, 1.f, 1e-6f));
+      const CarryTerm t = RiderCarryTerm(s, n, n, 7, 7, true, true);
+      assert(t.pending && t.rotates && Near(t.yaw, kPi / 2.f, 1e-5f));
+    }
+    // B: +2 degrees.
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Basis()}, n{{10.f, 0.f, 0.f}, Yaw(2.f)};
+      const Vec3 p = Pos(s, n, {13.f, 0.f, 1.f}, zero);
+      assert(Near(p.x, 12.9982f, 1e-4f) && Near(p.y, 0.1047f, 1e-4f) && p.z == 1.f);
+      assert(Near(RiderCarryTerm(s, n, n, 7, 7, true, true).yaw, 2.f * kPi / 180.f, 1e-6f));
+    }
+    // C: translation + yaw, the previous yaw 30 -> 32 degrees: the relative rotation is 2.
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Yaw(30.f)}, n{{10.1f, 0.f, 0.f}, Yaw(32.f)};
+      const Vec3 p = Pos(s, n, {13.f, 0.f, 1.f}, zero);
+      assert(Near(p.x, 13.0982f, 1e-4f) && Near(p.y, 0.1047f, 1e-4f) && Near(p.z, 1.f, 1e-6f));
+      assert(Near(RiderCarryTerm(s, n, n, 7, 7, true, true).yaw, 2.f * kPi / 180.f, 1e-5f));
+    }
+    // D: tiny yaw (+0.05 degrees, the source's matrix path).
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Basis()}, n{{10.f, 0.f, 0.f}, Yaw(.05f)};
+      const Vec3 p = Pos(s, n, {13.f, 0.f, 1.f}, zero);
+      assert(Near(p.x, 13.f, 1e-5f) && Near(p.y, .0026f, 1e-4f) && Near(p.z, 1.f, 1e-6f));
+    }
+    // E: a 10 degree tilt about X moves the rider vertically; no yaw.
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Basis()}, n{{10.f, 0.f, 0.f}, RollX(10.f)};
+      const Vec3 p = Pos(s, n, {13.f, 0.f, 1.f}, zero);
+      assert(Near(p.x, 13.f, 1e-6f) && Near(p.y, -.1736f, 1e-4f) && Near(p.z, .9848f, 1e-4f));
+      assert(RiderCarryTerm(s, n, n, 7, 7, true, true).yaw == 0.f);
+    }
+    // F: v = (6,0,0): the prediction v*dt adds on top, the arm stays the position before it.
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Basis()}, n{{10.f, 0.f, 0.f}, Yaw(2.f)};
+      const Vec3 p = Pos(s, n, {13.f, 0.f, 1.f}, {6.f / 60.f, 0.f, 0.f});
+      assert(Near(p.x, 13.0982f, 1e-4f) && Near(p.y, 0.1047f, 1e-4f));
+    }
+    // G: no live rider, or consumed after the first pass: the prediction alone.
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Basis()}, n{{10.f, 0.f, 0.f}, Yaw(2.f)};
+      assert(!RiderCarryTerm(s, n, n, 7, 7, true, false).pending);
+      CarryTerm t = RiderCarryTerm(s, n, n, 7, 7, true, true);
+      t.ConsumeAfterPass();
+      const Vec3 p = t.Apply({.1f, 0.f, 0.f}, {13.f, 0.f, 1.f});
+      assert(p.x == .1f && p.y == 0.f && p.z == 0.f);
+    }
+    // Composition: two ticks of +1 degree carry as one of +2 to first order in position, and
+    // exactly in yaw.
+    {
+      Vec3 self{13.f, 0.f, 1.f};
+      Basis prev = Basis();
+      float yaw = 0.f;
+      for (int i = 1; i <= 2; ++i) {
+        const Basis cur = Yaw(float(i));
+        const CarryTerm t =
+            RiderCarryTerm({{10.f, 0.f, 0.f}, prev}, {{10.f, 0.f, 0.f}, cur},
+                           {{10.f, 0.f, 0.f}, cur}, 7, 7, true, true);
+        const Vec3 d = t.Translation(self);
+        self = {self.x + d.x, self.y + d.y, self.z + d.z};
+        yaw += t.yaw;
+        prev = cur;
+      }
+      assert(Near(self.x, 12.9982f, 1e-4f) && Near(self.y, 0.1047f, 1e-4f));
+      assert(Near(yaw, 2.f * kPi / 180.f, 1e-5f));
+    }
+    // An unchanged basis: no rotation term, exactly the translation (the 0xc24208 skip).
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Yaw(30.f)}, n{{10.f, 0.f, .25f}, Yaw(30.f)};
+      const CarryTerm t = RiderCarryTerm(s, n, n, 7, 7, true, true);
+      assert(t.pending && !t.rotates && t.yaw == 0.f);
+      const Vec3 c = t.Translation({13.f, 0.f, 1.f});
+      assert(c.x == 0.f && c.y == 0.f && c.z == .25f);
+      // Identity relative rotation gives yaw 0.
+      assert(CarryYaw(Basis()) == 0.f);
+      // Unmoved and unturned: nothing pending.
+      assert(!RiderCarryTerm(s, s, s, 7, 7, true, true).pending);
+    }
+    // A stale stamp carries nothing; a platform deactivated since its last PreThink carries
+    // that PreThink's step, rotation included, never the pose now.
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Basis()}, e{{10.f, 0.f, 0.f}, Yaw(2.f)},
+          warped{{50.f, 0.f, 0.f}, Yaw(90.f)};
+      assert(!RiderCarryTerm(s, e, e, 6, 7, true, true).pending);
+      assert(!RiderCarryTerm(s, warped, e, 5, 7, false, true).pending);
+      const CarryTerm t = RiderCarryTerm(s, warped, e, 6, 7, false, true);
+      assert(t.rotates && Near(t.yaw, 2.f * kPi / 180.f, 1e-6f));
+      const Vec3 c = t.Translation({13.f, 0.f, 1.f});
+      assert(Near(c.x, -0.0018f, 1e-4f) && Near(c.y, 0.1047f, 1e-4f) && c.z == 0.f);
+    }
   }
   return 0;
 }

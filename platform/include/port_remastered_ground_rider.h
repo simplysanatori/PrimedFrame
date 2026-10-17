@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -23,7 +24,8 @@
 //    contact whose owner is not static and can be ridden, and calls SetRiderController
 //    0xc1631c with count 2. No normal test. DecayRiderFrameCount (PostSimulation) 2 -> 1 -> 0.
 //  - PredictMotion 0xc23e40: the rider's pose delta (R+0x1100 - R+0x1128) is added to the
-//    predicted translation, unscaled; the mode is cleared after the first MoveAlongGround
+//    predicted translation, unscaled, with the rotation term and yaw of a turning rider
+//    (slice 3, RotationTerm/CarryYaw); the mode is cleared after the first MoveAlongGround
 //    pass's ApplyMotionState (0xf9349c).
 namespace PortRemasteredGroundRider {
 
@@ -94,10 +96,14 @@ inline PortRemasteredGroundWorld::Triangle PlatformTriangle(
 
 // Admission of one near-list collidable that overlaps the tick's query region: an active
 // CScriptPlatform with a DCLN tree (slice 1) or a box collidable (AABX, its contacts from
-// AABox_AABox 0xbf61b4, port_remastered_ground_box.h) whose orientation did not change this
-// tick. A box does not turn with its platform (GetTransformedAABox 0xbf6064 is translation
-// only), but PredictMotion's rotation carry is not ported, so a yawing box platform is
-// still refused. Anything else sends the whole tick to the retail grounded mover.
+// AABox_AABox 0xbf61b4, port_remastered_ground_box.h). Anything else sends the whole tick to
+// the retail grounded mover.
+//  - The grounded mover admits a platform that rotated this tick (slice 3): its contacts
+//    come from its pose now (a box does not turn with its platform, GetTransformedAABox
+//    0xbf6064 is translation only), and PredictMotion carries the rider's rotation.
+//  - The airborne mover (Admit) still refuses one, so it stays on the native list: its
+//    controller offset for a rotated rider (get_rider_controller_offset 0xc18f80, the
+//    farthest contact point) is not ported.
 struct Candidate {
   bool platform = false;
   bool active = false;
@@ -105,9 +111,10 @@ struct Candidate {
   bool rotated = false;
   bool box = false;
 };
-inline bool Admit(const Candidate& c) {
-  return c.platform && c.active && (c.hasTree || c.box) && !c.rotated;
+inline bool AdmitGrounded(const Candidate& c) {
+  return c.platform && c.active && (c.hasTree || c.box);
 }
+inline bool Admit(const Candidate& c) { return AdmitGrounded(c) && !c.rotated; }
 
 // The rider controller (object +0x1220 side, SetRiderController 0xc1631c): set to 2 by a
 // grounded tick that picked a rider, decayed once at the end of every movement tick.
@@ -182,20 +189,116 @@ inline Vec3 RiderCarry(const Vec3& start, const Vec3& now, const Vec3& end,
   return {};
 }
 
+// A platform's rotation, by columns (CTransform4f::GetColumn), in the port's Z-up frame.
+struct Basis {
+  Vec3 c[3] = {{1.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, 1.f}};
+};
+// PredictMotion's skip (0xc24208): an exactly unchanged orientation has no rotation term.
+inline bool SameBasis(const Basis& a, const Basis& b) {
+  for (int i = 0; i < 3; ++i) {
+    if (a.c[i].x != b.c[i].x || a.c[i].y != b.c[i].y || a.c[i].z != b.c[i].z) return false;
+  }
+  return true;
+}
+inline Vec3 MulBasis(const Basis& m, const Vec3& v) {
+  return {m.c[0].x * v.x + m.c[1].x * v.y + m.c[2].x * v.z,
+          m.c[0].y * v.x + m.c[1].y * v.y + m.c[2].y * v.z,
+          m.c[0].z * v.x + m.c[1].z * v.y + m.c[2].z * v.z};
+}
+// dq = qcur * conj(qprev) (0xc24254, Hamilton product) as a matrix: cur * prev^T, whose
+// column j is cur applied to row j of prev.
+inline Basis RelativeRotation(const Basis& prev, const Basis& cur) {
+  auto at = [](const Vec3& v, int j) { return j == 0 ? v.x : j == 1 ? v.y : v.z; };
+  Basis r;
+  for (int j = 0; j < 3; ++j) {
+    r.c[j] = MulBasis(cur, {at(prev.c[0], j), at(prev.c[1], j), at(prev.c[2], j)});
+  }
+  return r;
+}
+// The rotation term (0xc24228-0xc2441c): dq * d * dq^-1 - d, with the arm d the rider's
+// position at the prediction (S+0x18, before v*dt) minus the platform's previous position.
+// A full 3D rotation: a tilt moves the rider vertically. Evaluated in double, as the
+// source's small-angle matrix path (its float quaternion path agrees, INFERRED).
+inline Vec3 RotationTerm(const Basis& r, const Vec3& pivot, const Vec3& self) {
+  const double d[3] = {double(self.x) - pivot.x, double(self.y) - pivot.y,
+                       double(self.z) - pivot.z};
+  const Vec3* c = r.c;
+  const double x = c[0].x * d[0] + double(c[1].x) * d[1] + double(c[2].x) * d[2];
+  const double y = c[0].y * d[0] + double(c[1].y) * d[1] + double(c[2].y) * d[2];
+  const double z = c[0].z * d[0] + double(c[1].z) * d[1] + double(c[2].z) * d[2];
+  return {float(x - d[0]), float(y - d[1]), float(z - d[2])};
+}
+// The orientation part (0xc24430-0xc24458): BuildTransform(dq) with the up row and column
+// forced to e_up, Orthonormalized 0xd5140, FromMatrix. Only the heading of dq's forward axis
+// in the horizontal plane survives: the yaw about up, in radians (0 when that axis is
+// vertical). The rider's orientation becomes q_integrated * ZRotation(yaw) (0xc2446c).
+inline float CarryYaw(const Basis& r) {
+  const Vec3& f = r.c[0];
+  if (f.x == 0.f && f.y == 0.f) return 0.f;
+  return std::atan2(f.y, f.x);
+}
+
 // The carry term of PredictMotion: added whole (not scaled by t) while pending, and
-// consumed by the first MoveAlongGround pass's ApplyMotionState.
+// consumed by the first MoveAlongGround pass's ApplyMotionState. `carry` is the platform's
+// translation delta; a rotating platform adds the rotation term about its previous position
+// `pivot`, for the rider at `self`, and turns the rider by `yaw`.
 struct CarryTerm {
   Vec3 carry;
   bool pending = false;
+  bool rotates = false;
+  Basis rotation;
+  Vec3 pivot;
+  float yaw = 0.f;
 
-  Vec3 Apply(const Vec3& predicted) const {
+  Vec3 Translation(const Vec3& self) const {
+    if (!rotates) return carry;
+    const Vec3 r = RotationTerm(rotation, pivot, self);
+    return {carry.x + r.x, carry.y + r.y, carry.z + r.z};
+  }
+  Vec3 Apply(const Vec3& predicted, const Vec3& self = {}) const {
     if (!pending) {
       return predicted;
     }
-    return {predicted.x + carry.x, predicted.y + carry.y, predicted.z + carry.z};
+    const Vec3 c = Translation(self);
+    return {predicted.x + c.x, predicted.y + c.y, predicted.z + c.z};
   }
   void ConsumeAfterPass() { pending = false; }
 };
+
+// A platform pose: its translation and rotation.
+struct Pose {
+  Vec3 origin;
+  Basis basis;
+};
+
+// RiderCarry's choice of the two poses, with the rotation: the platform's pose at its
+// PreThink start, and now or at that PreThink's end (a deactivated platform). Pending when
+// it moves the rider at all.
+inline CarryTerm RiderCarryTerm(const Pose& start, const Pose& now, const Pose& end,
+                                std::uint32_t stampTick, std::uint32_t tick,
+                                bool platformActive, bool riderActive) {
+  CarryTerm term;
+  if (!riderActive) return term;
+  const Pose* to = nullptr;
+  if (stampTick == tick) {
+    to = &now;
+  } else if (!platformActive && stampTick + 1u == tick) {
+    to = &end;
+  } else {
+    return term;
+  }
+  term.carry = {to->origin.x - start.origin.x, to->origin.y - start.origin.y,
+                to->origin.z - start.origin.z};
+  term.rotates = !SameBasis(start.basis, to->basis);
+  if (term.rotates) {
+    term.rotation = RelativeRotation(start.basis, to->basis);
+    term.pivot = start.origin;
+    term.yaw = CarryYaw(term.rotation);
+  }
+  term.pending =
+      term.rotates || term.carry.x != 0.f || term.carry.y != 0.f || term.carry.z != 0.f;
+  return term;
+}
 
 // Exactly one carry per tick, whichever mover runs. Order inside a tick:
 // CStateManager::Update runs PreThinkObjects (CScriptPlatform::PreThink: pose snapshot,
