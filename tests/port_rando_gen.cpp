@@ -4,6 +4,7 @@
 #include "port_ap_metroidprime.h"
 #include "port_ap_world.h"
 #include "port_json.h"
+#include "port_test.h"
 
 #include <algorithm>
 #include <chrono>
@@ -12,14 +13,6 @@
 #include <set>
 
 namespace MP = PortAp::MetroidPrime;
-
-#define CHECK(cond)                                                                                \
-  do {                                                                                             \
-    if (!(cond)) {                                                                                 \
-      std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #cond);                \
-      std::abort();                                                                                \
-    }                                                                                              \
-  } while (0)
 
 namespace {
 
@@ -59,7 +52,7 @@ PortApLogic::Options OptionsFromSlotData(const PortJson::Value& root, PortApWorl
   options.preScanElevators = Int(root, "pre_scan_elevators", 1) != 0;
   for (const char* key : {"trick_allow_list", "trick_deny_list"}) {
     const PortJson::Value* list = root.Find(key);
-    CHECK(list != nullptr && list->IsArray());
+    REQUIRE(list != nullptr && list->IsArray());
     for (const PortJson::Value& name : list->AsArray())
       (key[6] == 'a' ? options.trickAllow : options.trickDeny).push_back(name.AsString());
   }
@@ -75,7 +68,7 @@ size_t Sweep(const Seed& seed, const PortApLogic::Options& options) {
   size_t count = 0;
   size_t checkCount = 0;
   const PortApLogic::Check* checks = PortApLogic::Checks(checkCount);
-  CHECK(checkCount == 100);
+  REQUIRE(checkCount == 100);
   std::vector< bool > taken(checkCount, false);
   for (bool changed = true; changed;) {
     changed = false;
@@ -87,7 +80,7 @@ size_t Sweep(const Seed& seed, const PortApLogic::Options& options) {
       changed = true;
       ++count;
       const auto it = seed.placements.find(checks[i].id);
-      CHECK(it != seed.placements.end());
+      REQUIRE(it != seed.placements.end());
       ++items[it->second];
     }
   }
@@ -105,24 +98,24 @@ std::map< int64_t, int64_t > Composition(const Seed& seed) {
 
 void CheckSeed(const Settings& settings, const std::string& text) {
   const Seed seed = Make(settings, text);
-  CHECK(seed.name == text);
-  CHECK(seed.placements.size() == 100);
+  REQUIRE(seed.name == text);
+  REQUIRE(seed.placements.size() == 100);
 
   PortJson::Value root;
   size_t offset = 0;
   const char* reason = nullptr;
-  CHECK(PortJson::Parse(seed.slotData, root, offset, &reason));
-  CHECK(root.IsObject());
+  REQUIRE(PortJson::Parse(seed.slotData, root, offset, &reason));
+  REQUIRE(root.IsObject());
   PortApWorld::Layout layout;
   const PortApLogic::Options options = OptionsFromSlotData(root, layout);
-  CHECK(Sweep(seed, options) == 100);
-  CHECK(Int(root, "required_artifacts", 0) == settings.requiredArtifacts);
-  CHECK(Int(root, "final_bosses", -1) == settings.finalBosses);
+  REQUIRE(Sweep(seed, options) == 100);
+  REQUIRE(Int(root, "required_artifacts", 0) == settings.requiredArtifacts);
+  REQUIRE(Int(root, "final_bosses", -1) == settings.finalBosses);
   if (settings.elevatorRandomization)
-    CHECK(layout.elevators != PortApWorld::Layout().elevators);
-  CHECK(layout.hasDoorColors == (settings.doorColorRandomization != 0));
-  CHECK(layout.etankCapacity == std::clamp(settings.etankCapacity, 10, 200));
-  CHECK(!seed.spoiler.empty());
+    REQUIRE(layout.elevators != PortApWorld::Layout().elevators);
+  REQUIRE(layout.hasDoorColors == (settings.doorColorRandomization != 0));
+  REQUIRE(layout.etankCapacity == std::clamp(settings.etankCapacity, 10, 200));
+  REQUIRE(!seed.spoiler.empty());
 
   // Pool: 12 artifacts, 100 locations, and the right beam family.
   const std::map< int64_t, int64_t > counts = Composition(seed);
@@ -130,37 +123,37 @@ void CheckSeed(const Settings& settings, const std::string& text) {
   for (const auto& entry : counts)
     total += entry.second;
   // Start items sit outside the 100 locations but are part of the pool.
-  CHECK(total == 100 + static_cast< int64_t >(seed.startItems.size()));
+  REQUIRE(total == 100 + static_cast< int64_t >(seed.startItems.size()));
   for (int a = 29; a <= 40; ++a)
-    CHECK(counts.at(a) == 1);
-  CHECK(counts.at(24) == 14);
-  CHECK(counts.at(settings.missileLauncher ? 43 : 4) >= 1);
-  CHECK(settings.missileLauncher ? counts.at(43) == 1 : counts.count(43) == 0);
-  CHECK(settings.mainPowerBomb ? counts.at(44) == 1 : counts.count(44) == 0);
+    REQUIRE(counts.at(a) == 1);
+  REQUIRE(counts.at(24) == 14);
+  REQUIRE(counts.at(settings.missileLauncher ? 43 : 4) >= 1);
+  REQUIRE(settings.missileLauncher ? counts.at(43) == 1 : counts.count(43) == 0);
+  REQUIRE(settings.mainPowerBomb ? counts.at(44) == 1 : counts.count(44) == 0);
   if (settings.progressiveBeams) {
     for (const int id : {49, 51, 52, 53})
-      CHECK(counts.at(id) == 3);
-    CHECK(counts.count(10) == 0);
+      REQUIRE(counts.at(id) == 3);
+    REQUIRE(counts.count(10) == 0);
   } else {
     for (const int id : {0, 1, 2, 3, 10, 11, 14, 28, 8})
-      CHECK(counts.at(id) == 1);
-    CHECK(counts.count(49) == 0);
+      REQUIRE(counts.at(id) == 1);
+    REQUIRE(counts.count(49) == 0);
   }
-  CHECK((counts.count(5) != 0 ? counts.at(5) : 0) == 1);
-  CHECK(counts.count(41) == (settings.shuffleUnlimitedMissiles ? 1u : 0u));
-  CHECK(counts.count(42) == (settings.shuffleUnlimitedPowerBombs ? 1u : 0u));
+  REQUIRE((counts.count(5) != 0 ? counts.at(5) : 0) == 1);
+  REQUIRE(counts.count(41) == (settings.shuffleUnlimitedMissiles ? 1u : 0u));
+  REQUIRE(counts.count(42) == (settings.shuffleUnlimitedPowerBombs ? 1u : 0u));
   if (settings.shuffleUnlimitedMissiles)
-    CHECK(counts.at(41) == 1);
+    REQUIRE(counts.at(41) == 1);
   if (settings.shuffleUnlimitedPowerBombs)
-    CHECK(counts.at(42) == 1);
+    REQUIRE(counts.at(42) == 1);
   // The beam, the start room's loadout, and the Scan Visor unless shuffled.
-  CHECK(seed.startItems.size() >= (settings.shuffleScanVisor ? 1u : 2u));
-  CHECK(std::set< int64_t >(seed.startItems.begin(), seed.startItems.end()).size() == seed.startItems.size());
+  REQUIRE(seed.startItems.size() >= (settings.shuffleScanVisor ? 1u : 2u));
+  REQUIRE(std::set< int64_t >(seed.startItems.begin(), seed.startItems.end()).size() == seed.startItems.size());
   PortApWorld::Place place;
-  CHECK(PortApWorld::StartRoom(layout, place));
+  REQUIRE(PortApWorld::StartRoom(layout, place));
   if (settings.startingRoom == 0)
-    CHECK(layout.startRoom == "Landing Site" || layout.startRoom == "Save Station 1");
-  CHECK(layout.hasShields == (settings.blastShieldRandomization != 0 || settings.lockedDoorCount > 0));
+    REQUIRE(layout.startRoom == "Landing Site" || layout.startRoom == "Save Station 1");
+  REQUIRE(layout.hasShields == (settings.blastShieldRandomization != 0 || settings.lockedDoorCount > 0));
   int locked = 0;
   const std::set< std::string > types = {"Bomb",       "Charge Beam", "Flamethrower",  "Ice Spreader",
                                          "Wavebuster", "Power Bomb",  "Super Missile", "Missile", "Disabled"};
@@ -168,38 +161,38 @@ void CheckSeed(const Settings& settings, const std::string& text) {
     int combos = 0;
     for (const auto& room : area.second) {
       for (const auto& entry : room.second) {
-        CHECK(types.count(entry.second) != 0);
+        REQUIRE(types.count(entry.second) != 0);
         locked += entry.second == "Disabled" ? 1 : 0;
         combos += entry.second == "Flamethrower" || entry.second == "Ice Spreader" || entry.second == "Wavebuster";
         // replace_existing turns the vanilla Missile shields into something else.
         if (settings.blastShieldRandomization == 1)
-          CHECK(entry.second != "Missile");
+          REQUIRE(entry.second != "Missile");
       }
     }
-    CHECK(combos <= 1);
+    REQUIRE(combos <= 1);
     if (settings.blastShieldAvailableTypes == 0)
-      CHECK(combos == 0);
+      REQUIRE(combos == 0);
   }
-  CHECK(locked == settings.lockedDoorCount);
+  REQUIRE(locked == settings.lockedDoorCount);
   if (settings.blastShieldRandomization != 0)
-    CHECK(!layout.shields.empty());
+    REQUIRE(!layout.shields.empty());
   const PortJson::Value* beam = root.Find("starting_beam");
   if (beam != nullptr)
-    CHECK(beam->IsString() && (beam->AsString() == "Power Beam" || beam->AsString() == "Wave Beam" ||
-                               beam->AsString() == "Ice Beam" || beam->AsString() == "Plasma Beam"));
+    REQUIRE(beam->IsString() && (beam->AsString() == "Power Beam" || beam->AsString() == "Wave Beam" ||
+                                 beam->AsString() == "Ice Beam" || beam->AsString() == "Plasma Beam"));
   if (!settings.randomizeStartingBeam && settings.doorColorRandomization == 0 && settings.startingRoom == 0)
-    CHECK(beam == nullptr);
+    REQUIRE(beam == nullptr);
 
   const PortJson::Value* hints = root.Find("artifact_locations");
   if (settings.artifactHints) {
-    CHECK(hints != nullptr && hints->IsObject() && hints->Size() == 12);
+    REQUIRE(hints != nullptr && hints->IsObject() && hints->Size() == 12);
     for (const auto& member : hints->AsObject()) {
-      CHECK(member.second.IsArray() && member.second.Size() == 2);
+      REQUIRE(member.second.IsArray() && member.second.Size() == 2);
       const int64_t location = member.second.AsArray()[0].AsInt();
-      CHECK(MP::ItemName(seed.placements.at(location)) == member.first);
+      REQUIRE(MP::ItemName(seed.placements.at(location)) == member.first);
     }
   } else {
-    CHECK(hints == nullptr);
+    REQUIRE(hints == nullptr);
   }
 }
 
@@ -207,9 +200,9 @@ void CheckSeed(const Settings& settings, const std::string& text) {
 
 int main() {
   // The port's item numbering is not the reference's.
-  CHECK(std::string(MP::ItemName(MP::kItemBase + 22)) == "Varia Suit");
-  CHECK(std::string(MP::ItemName(MP::kItemBase + 4)) == "Missile Expansion");
-  CHECK(std::string(MP::ItemName(MP::kItemBase + 29)) == "Artifact of Truth");
+  REQUIRE(std::string(MP::ItemName(MP::kItemBase + 22)) == "Varia Suit");
+  REQUIRE(std::string(MP::ItemName(MP::kItemBase + 4)) == "Missile Expansion");
+  REQUIRE(std::string(MP::ItemName(MP::kItemBase + 29)) == "Artifact of Truth");
 
   // Determinism.
   {
@@ -218,24 +211,24 @@ int main() {
     s.doorColorRandomization = 2;
     const Seed a = Make(s, "determinism");
     const Seed b = Make(s, "determinism");
-    CHECK(a.slotData == b.slotData && a.placements == b.placements && a.spoiler == b.spoiler &&
-          a.startItems == b.startItems);
+    REQUIRE(a.slotData == b.slotData && a.placements == b.placements && a.spoiler == b.spoiler &&
+            a.startItems == b.startItems);
     const Seed c = Make(s, "determinism2");
-    CHECK(c.placements != a.placements);
+    REQUIRE(c.placements != a.placements);
     Settings t = s;
     t.finalBosses = 1;
-    CHECK(Make(t, "determinism").placements != a.placements);
+    REQUIRE(Make(t, "determinism").placements != a.placements);
     // A changed tank capacity is its own seed; outside 10..200 it is clamped.
     Settings e = s;
     e.etankCapacity = 50;
-    CHECK(Make(e, "determinism").placements != a.placements);
+    REQUIRE(Make(e, "determinism").placements != a.placements);
     e.etankCapacity = 5;
-    CHECK(Make(e, "determinism").slotData.find("\"etank_capacity\":10,") != std::string::npos);
+    REQUIRE(Make(e, "determinism").slotData.find("\"etank_capacity\":10,") != std::string::npos);
     Settings u = s;
     u.shuffleUnlimitedMissiles = true;
-    CHECK(Make(u, "determinism").placements != a.placements);
+    REQUIRE(Make(u, "determinism").placements != a.placements);
     const Seed r = Make(Settings(), "");
-    CHECK(r.name.size() == 8);
+    REQUIRE(r.name.size() == 8);
   }
 
   // Pool composition per combination, then a spread of seeds.

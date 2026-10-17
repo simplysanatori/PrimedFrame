@@ -12,11 +12,8 @@
 #include "port_remastered_sphere_sweep.h"
 
 #include "port_remastered_ground_contacts.h"
+#include "port_test.h"
 
-#ifdef NDEBUG
-#undef NDEBUG // These standalone regression checks must run in release builds.
-#endif
-#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -85,9 +82,9 @@ bool SameImpacts(const std::vector< Impact >& a, const std::vector< Impact >& b)
 // Every rejection must leave BOTH outputs untouched, bit for bit.
 void CheckUntouched(int code, float t, const std::vector< Impact >& got,
                     const std::vector< Impact >& seed, float seededT) {
-  assert(code == kMiss);
-  assert(SameBits(t, seededT));
-  assert(SameImpacts(got, seed));
+  REQUIRE(code == kMiss);
+  REQUIRE(SameBits(t, seededT));
+  REQUIRE(SameImpacts(got, seed));
 }
 
 const Sphere kSelfOrigin{Rem(0.f, 0.f, 0.f), 1.f};
@@ -100,16 +97,16 @@ void Overlap() {
   {
     std::vector< Impact > impacts = Seeded();
     float t = 7.f;
-    assert(SphereSphereSwept(kSelfOrigin, {Rem(1.f, 0.f, 0.f), 1.f}, kDirX, true, t,
-                             impacts) == kOverlap);
-    assert(t == 0.f);
-    assert(impacts.size() == 1); // the seed is gone, nothing appended to it
+    REQUIRE(SphereSphereSwept(kSelfOrigin, {Rem(1.f, 0.f, 0.f), 1.f}, kDirX, true, t,
+                              impacts) == kOverlap);
+    REQUIRE(t == 0.f);
+    REQUIRE(impacts.size() == 1); // the seed is gone, nothing appended to it
     const Impact& i = impacts[0];
-    assert(Near(ToRem(i.selfNormal), {1.f, 0.f, 0.f}));
-    assert(Near(ToRem(i.otherNormal), {-1.f, 0.f, 0.f}));
-    assert(Near(ToRem(i.selfPoint), {1.f, 0.f, 0.f}));  // c0 + r0*n
-    assert(Near(ToRem(i.otherPoint), {0.f, 0.f, 0.f})); // c1 - r1*n
-    assert(Near(i.depth, 1.f));                         // (r0+r1) - |c1-c0| = 2 - 1
+    REQUIRE(Near(ToRem(i.selfNormal), {1.f, 0.f, 0.f}));
+    REQUIRE(Near(ToRem(i.otherNormal), {-1.f, 0.f, 0.f}));
+    REQUIRE(Near(ToRem(i.selfPoint), {1.f, 0.f, 0.f}));  // c0 + r0*n
+    REQUIRE(Near(ToRem(i.otherPoint), {0.f, 0.f, 0.f})); // c1 - r1*n
+    REQUIRE(Near(i.depth, 1.f));                         // (r0+r1) - |c1-c0| = 2 - 1
   }
   // Strict-boundary start: centres 2 apart with radii 1+1 makes 4 < 4 false, so this is
   // NOT an overlap (the spec's O2 cross-reference to S2 is wrong; these are O2's own
@@ -117,25 +114,25 @@ void Overlap() {
   {
     std::vector< Impact > impacts = Seeded();
     float t = 7.f;
-    assert(SphereSphereSwept(kSelfOrigin, {Rem(2.f, 0.f, 0.f), 1.f}, kDirX, true, t,
-                             impacts) == kSweep);
-    assert(Near(t, 0.f, kSqrt));
-    assert(impacts.size() == 1);
+    REQUIRE(SphereSphereSwept(kSelfOrigin, {Rem(2.f, 0.f, 0.f), 1.f}, kDirX, true, t,
+                              impacts) == kSweep);
+    REQUIRE(Near(t, 0.f, kSqrt));
+    REQUIRE(impacts.size() == 1);
     const Impact& i = impacts[0];
-    assert(Near(ToRem(i.selfNormal), {1.f, 0.f, 0.f}));
-    assert(Near(ToRem(i.selfPoint), {1.f, 0.f, 0.f}));
-    assert(Near(ToRem(i.otherPoint), {1.f, 0.f, 0.f})); // P0 and P1 coincide at r0*n
-    assert(Near(i.depth, 0.f, kEstimate));              // the exact-tangent start: s = 0
+    REQUIRE(Near(ToRem(i.selfNormal), {1.f, 0.f, 0.f}));
+    REQUIRE(Near(ToRem(i.selfPoint), {1.f, 0.f, 0.f}));
+    REQUIRE(Near(ToRem(i.otherPoint), {1.f, 0.f, 0.f})); // P0 and P1 coincide at r0*n
+    REQUIRE(Near(i.depth, 0.f, kEstimate));              // the exact-tangent start: s = 0
   }
   // S4 coincident centres, radii 1+1: the boolean is true, so the list is cleared and
   // t = 0, but IsNormalizable(delta = 0) fails and NO contact is emitted.
   {
     std::vector< Impact > impacts = Seeded();
     float t = 7.f;
-    assert(SphereSphereSwept(kSelfOrigin, {Rem(0.f, 0.f, 0.f), 1.f}, kDirX, true, t,
-                             impacts) == kOverlap);
-    assert(t == 0.f);
-    assert(impacts.empty()); // cleared unconditionally, not left holding the seed
+    REQUIRE(SphereSphereSwept(kSelfOrigin, {Rem(0.f, 0.f, 0.f), 1.f}, kDirX, true, t,
+                              impacts) == kOverlap);
+    REQUIRE(t == 0.f);
+    REQUIRE(impacts.empty()); // cleared unconditionally, not left holding the seed
   }
   // S5 coincident centres with radii 0+0: 0 < 0 is false, and the zero-radius ray has
   // b = 0 and disc = 0, so it misses. Nothing is touched.
@@ -167,25 +164,25 @@ void Sweep() {
   {
     std::vector< Impact > impacts = Seeded();
     float t = 10.f;
-    assert(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, t, impacts) == kSweep);
-    assert(Near(t, 3.f, kSqrt));
-    assert(impacts.size() == 1);
+    REQUIRE(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, t, impacts) == kSweep);
+    REQUIRE(Near(t, 3.f, kSqrt));
+    REQUIRE(impacts.size() == 1);
     const Impact& i = impacts[0];
-    assert(Near(ToRem(i.selfNormal), {1.f, 0.f, 0.f}, 1e-6f));
-    assert(Near(ToRem(i.otherNormal), {-1.f, 0.f, 0.f}, 1e-6f));
-    assert(Near(ToRem(i.selfPoint), {4.f, 0.f, 0.f}, 1e-6f));
-    assert(Near(ToRem(i.otherPoint), {4.f, 0.f, 0.f}, 1e-6f));
-    assert(Near(i.selfPoint, i.otherPoint, 1e-6f)); // structural: P0 == P1 here
-    assert(i.depth < 0.f);
-    assert(Near(i.depth, -3.f, kEstimate));
-    assert(Near(i.depth, 2.f - std::sqrt(5.f * 5.f), kEstimate));
+    REQUIRE(Near(ToRem(i.selfNormal), {1.f, 0.f, 0.f}, 1e-6f));
+    REQUIRE(Near(ToRem(i.otherNormal), {-1.f, 0.f, 0.f}, 1e-6f));
+    REQUIRE(Near(ToRem(i.selfPoint), {4.f, 0.f, 0.f}, 1e-6f));
+    REQUIRE(Near(ToRem(i.otherPoint), {4.f, 0.f, 0.f}, 1e-6f));
+    REQUIRE(Near(i.selfPoint, i.otherPoint, 1e-6f)); // structural: P0 == P1 here
+    REQUIRE(i.depth < 0.f);
+    REQUIRE(Near(i.depth, -3.f, kEstimate));
+    REQUIRE(Near(i.depth, 2.f - std::sqrt(5.f * 5.f), kEstimate));
     // Signed zeros: the negation is done on the Remastered normal (fneg, so every zero
     // lane becomes -0) and the conversion back negates x again, which is why the
     // otherNormal's zero lanes carry the sign bit while selfNormal's do not.
-    assert(Bits(i.selfNormal.x) == Bits(-1.f) && Bits(i.selfNormal.y) == 0u &&
-           Bits(i.selfNormal.z) == 0u);
-    assert(Bits(i.otherNormal.x) == Bits(1.f) && Bits(i.otherNormal.y) == 0x80000000u &&
-           Bits(i.otherNormal.z) == 0x80000000u);
+    REQUIRE(Bits(i.selfNormal.x) == Bits(-1.f) && Bits(i.selfNormal.y) == 0u &&
+            Bits(i.selfNormal.z) == 0u);
+    REQUIRE(Bits(i.otherNormal.x) == Bits(1.f) && Bits(i.otherNormal.y) == 0x80000000u &&
+            Bits(i.otherNormal.z) == 0x80000000u);
     gReferenceT = t;
     gReferenceDepth = i.depth;
   }
@@ -203,8 +200,8 @@ void Sweep() {
   {
     std::vector< Impact > impacts = Seeded();
     float t = gReferenceT + 1e-4f;
-    assert(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, t, impacts) == kSweep);
-    assert(SameBits(t, gReferenceT));
+    REQUIRE(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, t, impacts) == kSweep);
+    REQUIRE(SameBits(t, gReferenceT));
   }
   // S1c: tp > t (t = 2). Nothing touched.
   {
@@ -229,31 +226,31 @@ void Sweep() {
   {
     std::vector< Impact > impacts = Seeded();
     float t = 4.f;
-    assert(SphereSphereSwept({Rem(0.f, 0.f, 0.f), .5f}, {Rem(0.f, 2.f, 0.f), .5f},
-                             Rem(0.f, 1.f, 0.f), true, t, impacts) == kSweep);
-    assert(Near(t, 1.f, kSqrt));
-    assert(impacts.size() == 1);
+    REQUIRE(SphereSphereSwept({Rem(0.f, 0.f, 0.f), .5f}, {Rem(0.f, 2.f, 0.f), .5f},
+                              Rem(0.f, 1.f, 0.f), true, t, impacts) == kSweep);
+    REQUIRE(Near(t, 1.f, kSqrt));
+    REQUIRE(impacts.size() == 1);
     const Impact& i = impacts[0];
-    assert(Near(ToRem(i.selfNormal), {0.f, 1.f, 0.f}, 1e-6f));
-    assert(Near(ToRem(i.otherNormal), {0.f, -1.f, 0.f}, 1e-6f));
-    assert(Near(ToRem(i.selfPoint), {0.f, 1.5f, 0.f}, 1e-6f));
-    assert(Near(ToRem(i.otherPoint), {0.f, 1.5f, 0.f}, 1e-6f));
-    assert(Near(i.depth, -1.f, kEstimate));
+    REQUIRE(Near(ToRem(i.selfNormal), {0.f, 1.f, 0.f}, 1e-6f));
+    REQUIRE(Near(ToRem(i.otherNormal), {0.f, -1.f, 0.f}, 1e-6f));
+    REQUIRE(Near(ToRem(i.selfPoint), {0.f, 1.5f, 0.f}, 1e-6f));
+    REQUIRE(Near(ToRem(i.otherPoint), {0.f, 1.5f, 0.f}, 1e-6f));
+    REQUIRE(Near(i.depth, -1.f, kEstimate));
   }
   // S7 diagonal: b = 10 and disc = 4 are exact, tp = 8, m = 10, depth = -8, contact at
   // 8*d + n = (5.4, 7.2, 0).
   {
     std::vector< Impact > impacts = Seeded();
     float t = 20.f;
-    assert(SphereSphereSwept(kSelfOrigin, {Rem(6.f, 8.f, 0.f), 1.f}, Rem(.6f, .8f, 0.f),
-                             true, t, impacts) == kSweep);
-    assert(Near(t, 8.f, kSqrt));
-    assert(impacts.size() == 1);
+    REQUIRE(SphereSphereSwept(kSelfOrigin, {Rem(6.f, 8.f, 0.f), 1.f}, Rem(.6f, .8f, 0.f),
+                              true, t, impacts) == kSweep);
+    REQUIRE(Near(t, 8.f, kSqrt));
+    REQUIRE(impacts.size() == 1);
     const Impact& i = impacts[0];
-    assert(Near(ToRem(i.selfNormal), {.6f, .8f, 0.f}, 1e-6f));
-    assert(Near(ToRem(i.selfPoint), {5.4f, 7.2f, 0.f}, 1e-5f));
-    assert(Near(ToRem(i.otherPoint), {5.4f, 7.2f, 0.f}, 1e-5f));
-    assert(Near(i.depth, -8.f, kEstimate));
+    REQUIRE(Near(ToRem(i.selfNormal), {.6f, .8f, 0.f}, 1e-6f));
+    REQUIRE(Near(ToRem(i.selfPoint), {5.4f, 7.2f, 0.f}, 1e-5f));
+    REQUIRE(Near(ToRem(i.otherPoint), {5.4f, 7.2f, 0.f}, 1e-5f));
+    REQUIRE(Near(i.depth, -8.f, kEstimate));
   }
   // S3 start-centre normal (the TOI discriminator): the normal and the depth come from
   // delta = c1 - c0, never from c1 - (c0 + tp*d). tp = 5 - SqrtF(3.75) is irrational,
@@ -262,23 +259,23 @@ void Sweep() {
   {
     std::vector< Impact > impacts = Seeded();
     float t = 10.f;
-    assert(SphereSphereSwept(kSelfOrigin, {Rem(5.f, .5f, 0.f), 1.f}, kDirX, true, t,
-                             impacts) == kSweep);
-    assert(Near(t, 3.0635083f, kSqrt));
-    assert(impacts.size() == 1);
+    REQUIRE(SphereSphereSwept(kSelfOrigin, {Rem(5.f, .5f, 0.f), 1.f}, kDirX, true, t,
+                              impacts) == kSweep);
+    REQUIRE(Near(t, 3.0635083f, kSqrt));
+    REQUIRE(impacts.size() == 1);
     const Impact& i = impacts[0];
     const Vec3 n = ToRem(i.selfNormal);
-    assert(Near(n, {0.9950372f, 0.09950373f, 0.f}, 1e-6f));
-    assert(Near(ToRem(i.otherNormal), {-0.9950372f, -0.09950373f, 0.f}, 1e-6f));
+    REQUIRE(Near(n, {0.9950372f, 0.09950373f, 0.f}, 1e-6f));
+    REQUIRE(Near(ToRem(i.otherNormal), {-0.9950372f, -0.09950373f, 0.f}, 1e-6f));
     // What a TOI-based normal would have produced: unit(c1 - (c0 + tp*d)) =
     // (0.96824586, 0.25, 0). Orders apart from the correct answer, so a few ULP of
     // tolerance cannot hide such an implementation.
     const Vec3 toiNormal{0.96824586f, 0.25f, 0.f};
-    assert(std::fabs(n.x - toiNormal.x) > 1e-3f);
-    assert(std::fabs(n.y - toiNormal.y) > 1e-3f);
-    assert(Near(ToRem(i.selfPoint), {4.0585456f, 0.09950373f, 0.f}, kEstimate));
-    assert(Near(ToRem(i.otherPoint), {4.004963f, 0.40049627f, 0.f}, kEstimate));
-    assert(Near(i.depth, -3.0249376f, kEstimate));
+    REQUIRE(std::fabs(n.x - toiNormal.x) > 1e-3f);
+    REQUIRE(std::fabs(n.y - toiNormal.y) > 1e-3f);
+    REQUIRE(Near(ToRem(i.selfPoint), {4.0585456f, 0.09950373f, 0.f}, kEstimate));
+    REQUIRE(Near(ToRem(i.otherPoint), {4.004963f, 0.40049627f, 0.f}, kEstimate));
+    REQUIRE(Near(i.depth, -3.0249376f, kEstimate));
   }
   // Exact tangency on the swept target misses: 4 - (29 - 25) = 0, and 0 < disc is false.
   {
@@ -298,13 +295,13 @@ void Sweep() {
     const Vec3 c1{c0.x + step.x, c0.y + step.y, c0.z + step.z};
     std::vector< Impact > impacts = Seeded();
     float t = 10.f;
-    assert(SphereSphereSwept({c0, 1.f}, {c1, 1.f}, kDirX, true, t, impacts) == kSweep);
-    assert(SameBits(t, gReferenceT));
-    assert(impacts.size() == 1);
-    assert(SameBits(impacts[0].depth, gReferenceDepth));
-    assert(Near(ToRem(impacts[0].selfNormal), {1.f, 0.f, 0.f}, 1e-6f));
-    assert(Near(ToRem(impacts[0].selfPoint), {1004.f, -256.f, 7.f}, 1e-3f));
-    assert(Near(ToRem(impacts[0].otherPoint), {1004.f, -256.f, 7.f}, 1e-3f));
+    REQUIRE(SphereSphereSwept({c0, 1.f}, {c1, 1.f}, kDirX, true, t, impacts) == kSweep);
+    REQUIRE(SameBits(t, gReferenceT));
+    REQUIRE(impacts.size() == 1);
+    REQUIRE(SameBits(impacts[0].depth, gReferenceDepth));
+    REQUIRE(Near(ToRem(impacts[0].selfNormal), {1.f, 0.f, 0.f}, 1e-6f));
+    REQUIRE(Near(ToRem(impacts[0].selfPoint), {1004.f, -256.f, 7.f}, 1e-3f));
+    REQUIRE(Near(ToRem(impacts[0].otherPoint), {1004.f, -256.f, 7.f}, 1e-3f));
   }
   // Axis permutations and zero components: the same 5-apart radii 1+1 geometry along
   // each of the six port axes. The Remastered framing permutes which lanes the squared
@@ -319,21 +316,21 @@ void Sweep() {
       const Vec3 far{axis.x * 5.f, axis.y * 5.f, axis.z * 5.f};
       std::vector< Impact > impacts = Seeded();
       float t = 10.f;
-      assert(SphereSphereSwept({Rem(0.f, 0.f, 0.f), 1.f}, {far, 1.f}, axis, true, t,
-                               impacts) == kSweep);
-      assert(SameBits(t, gReferenceT));
-      assert(impacts.size() == 1);
+      REQUIRE(SphereSphereSwept({Rem(0.f, 0.f, 0.f), 1.f}, {far, 1.f}, axis, true, t,
+                                impacts) == kSweep);
+      REQUIRE(SameBits(t, gReferenceT));
+      REQUIRE(impacts.size() == 1);
       const Impact& i = impacts[0];
-      assert(SameBits(i.depth, gReferenceDepth));
-      assert(Near(i.selfNormal, axis, 1e-6f));
-      assert(Near(i.otherNormal, {-axis.x, -axis.y, -axis.z}, 1e-6f));
+      REQUIRE(SameBits(i.depth, gReferenceDepth));
+      REQUIRE(Near(i.selfNormal, axis, 1e-6f));
+      REQUIRE(Near(i.otherNormal, {-axis.x, -axis.y, -axis.z}, 1e-6f));
       const Vec3 point{axis.x * 4.f, axis.y * 4.f, axis.z * 4.f};
-      assert(Near(i.selfPoint, point, 1e-5f));
-      assert(Near(i.otherPoint, point, 1e-5f));
+      REQUIRE(Near(i.selfPoint, point, 1e-5f));
+      REQUIRE(Near(i.otherPoint, point, 1e-5f));
       // otherNormal is the component-wise negation of selfNormal, zeros included.
-      assert(Bits(i.otherNormal.x) == Bits(-i.selfNormal.x));
-      assert(Bits(i.otherNormal.y) == Bits(-i.selfNormal.y));
-      assert(Bits(i.otherNormal.z) == Bits(-i.selfNormal.z));
+      REQUIRE(Bits(i.otherNormal.x) == Bits(-i.selfNormal.x));
+      REQUIRE(Bits(i.otherNormal.y) == Bits(-i.selfNormal.y));
+      REQUIRE(Bits(i.otherNormal.z) == Bits(-i.selfNormal.z));
     }
   }
 }
@@ -343,38 +340,38 @@ void SharedList() {
   // REPLACES what was in it, a rejection leaves it exactly as it was.
   std::vector< Impact > shared = Seeded();
   float t = 10.f;
-  assert(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, t, shared) == kSweep);
-  assert(shared.size() == 1);
+  REQUIRE(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, t, shared) == kSweep);
+  REQUIRE(shared.size() == 1);
   const std::vector< Impact > closest = shared;
-  assert(SameBits(t, gReferenceT));
+  REQUIRE(SameBits(t, gReferenceT));
   // An equal-tie rejection keeps the earlier (first) contact, not a new one.
   {
     float tie = gReferenceT;
-    assert(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, tie, shared) == kMiss);
-    assert(SameBits(tie, gReferenceT));
-    assert(SameImpacts(shared, closest));
+    REQUIRE(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, tie, shared) == kMiss);
+    REQUIRE(SameBits(tie, gReferenceT));
+    REQUIRE(SameImpacts(shared, closest));
   }
   // A miss keeps it too: the list stays as the previous pair left it.
   {
     float miss = 10.f;
-    assert(SphereSphereSwept(kSelfOrigin, kOtherX5, Rem(-1.f, 0.f, 0.f), true, miss,
-                             shared) == kMiss);
-    assert(SameBits(miss, 10.f));
-    assert(SameImpacts(shared, closest));
+    REQUIRE(SphereSphereSwept(kSelfOrigin, kOtherX5, Rem(-1.f, 0.f, 0.f), true, miss,
+                              shared) == kMiss);
+    REQUIRE(SameBits(miss, 10.f));
+    REQUIRE(SameImpacts(shared, closest));
   }
   // A closer hit replaces it outright, with no prefix of the previous contact left.
   {
     std::vector< Impact > bigger = Seeded();
     float far = 10.f;
-    assert(SphereSphereSwept(kSelfOrigin, {Rem(9.f, 0.f, 0.f), 1.f}, kDirX, true, far,
-                             bigger) == kSweep);
-    assert(Near(far, 7.f, kSqrt)); // 9 - SqrtF(4)
-    assert(bigger.size() == 1);
+    REQUIRE(SphereSphereSwept(kSelfOrigin, {Rem(9.f, 0.f, 0.f), 1.f}, kDirX, true, far,
+                              bigger) == kSweep);
+    REQUIRE(Near(far, 7.f, kSqrt)); // 9 - SqrtF(4)
+    REQUIRE(bigger.size() == 1);
     float closer = far;
-    assert(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, closer, bigger) == kSweep);
-    assert(closer < far);
-    assert(bigger.size() == 1);
-    assert(Near(ToRem(bigger[0].selfPoint), {4.f, 0.f, 0.f}, 1e-6f));
+    REQUIRE(SphereSphereSwept(kSelfOrigin, kOtherX5, kDirX, true, closer, bigger) == kSweep);
+    REQUIRE(closer < far);
+    REQUIRE(bigger.size() == 1);
+    REQUIRE(Near(ToRem(bigger[0].selfPoint), {4.f, 0.f, 0.f}, 1e-6f));
   }
 }
 
@@ -389,15 +386,15 @@ void NormalizeHelper() {
       {0.f, -2.f, 0.f},  {5.f, .5f, 0.f}, {6.f, 8.f, 0.f},      {1000.f, 1.f, -7.f},
       {.001f, -.002f, .003f}, {1e-14f, 0.f, 0.f}};
   for (const GVec3 v : cases) {
-    assert(IsNormalizable(v));
+    REQUIRE(IsNormalizable(v));
     GVec3 n = v;
     const float m = NormalizeWithMagnitude(n);
     // 0x6b100 runs the same pairs sum, estimate and two frsqrts refinements as
     // 0x6b0b0/0x6b238, so the components are bit-identical to the port's Normalize.
     const GVec3 reference = Normalize(v);
-    assert(SameBits(n.x, reference.x));
-    assert(SameBits(n.y, reference.y));
-    assert(SameBits(n.z, reference.z));
+    REQUIRE(SameBits(n.x, reference.x));
+    REQUIRE(SameBits(n.y, reference.y));
+    REQUIRE(SameBits(n.z, reference.z));
     // The input is unit-length afterwards and m is that length. These are loose bounds
     // against host IEEE arithmetic - deliberately not an oracle: the recorded AArch64
     // values, magnitude included, are asserted bit-for-bit in the fixture block below,
@@ -405,14 +402,14 @@ void NormalizeHelper() {
     const double length =
         std::sqrt(double(reference.x) * reference.x + double(reference.y) * reference.y +
                   double(reference.z) * reference.z);
-    assert(std::fabs(length - 1.0) < 1e-5);
+    REQUIRE(std::fabs(length - 1.0) < 1e-5);
     const double sourceLength =
         std::sqrt(double(v.x) * v.x + double(v.y) * v.y + double(v.z) * v.z);
-    assert(std::fabs(double(m) - sourceLength) <= 1e-6 * std::fmax(sourceLength, 1.0));
+    REQUIRE(std::fabs(double(m) - sourceLength) <= 1e-6 * std::fmax(sourceLength, 1.0));
     if (sourceLength > 1e-3) { // tiny inputs have no meaningful relative direction check
-      assert(Near(n.x, v.x / float(sourceLength), 1e-5f));
-      assert(Near(n.y, v.y / float(sourceLength), 1e-5f));
-      assert(Near(n.z, v.z / float(sourceLength), 1e-5f));
+      REQUIRE(Near(n.x, v.x / float(sourceLength), 1e-5f));
+      REQUIRE(Near(n.y, v.y / float(sourceLength), 1e-5f));
+      REQUIRE(Near(n.z, v.z / float(sourceLength), 1e-5f));
     }
   }
   // 0x6b100 against recorded AArch64 results: 23 selected rows of an independently
@@ -488,10 +485,10 @@ void NormalizeHelper() {
     };
     for (const FixtureRow& row : kRows) {
       GVec3 v{FromBits(row.x), FromBits(row.y), FromBits(row.z)};
-      assert(IsNormalizable(v)); // the fixture's own in-domain tag
+      REQUIRE(IsNormalizable(v)); // the fixture's own in-domain tag
       const float m = NormalizeWithMagnitude(v);
-      assert(Bits(v.x) == row.nx && Bits(v.y) == row.ny && Bits(v.z) == row.nz);
-      assert(Bits(m) == row.magnitude);
+      REQUIRE(Bits(v.x) == row.nx && Bits(v.y) == row.ny && Bits(v.z) == row.nz);
+      REQUIRE(Bits(m) == row.magnitude);
     }
   }
   // The returned magnitude is `squared * the SAME final reciprocal` the components use
@@ -505,9 +502,9 @@ void NormalizeHelper() {
     const float my = NormalizeWithMagnitude(y);
     const float mz = NormalizeWithMagnitude(z);
     const float mxy = NormalizeWithMagnitude(xy);
-    assert(SameBits(mx, x.x) && SameBits(my, y.y) && SameBits(mz, z.z));
-    assert(SameBits(xy.x, xy.y));      // the pairs sum treats x and y alike
-    assert(SameBits(mxy, 2.f * xy.x)); // squared = 2, and doubling is exact
+    REQUIRE(SameBits(mx, x.x) && SameBits(my, y.y) && SameBits(mz, z.z));
+    REQUIRE(SameBits(xy.x, xy.y));      // the pairs sum treats x and y alike
+    REQUIRE(SameBits(mxy, 2.f * xy.x)); // squared = 2, and doubling is exact
   }
 }
 } // namespace

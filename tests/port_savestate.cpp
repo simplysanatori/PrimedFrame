@@ -1,22 +1,11 @@
 #include "port_savestate.h"
+#include "port_test.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 
 namespace {
-int sLine = 0;
-void Check(bool condition) {
-  if (!condition) {
-    std::fprintf(stderr, "savestate regression failed at line %d\n", sLine);
-    std::abort();
-  }
-}
-#define CHECK(cond)                                                                                \
-  do {                                                                                             \
-    sLine = __LINE__;                                                                              \
-    Check(cond);                                                                                   \
-  } while (0)
 
 using PortSaveState::Header;
 } // namespace
@@ -46,19 +35,19 @@ int main() {
   {
     Header out;
     std::vector< uint8_t > outBlob;
-    CHECK(PortSaveState::Decode(data, out, outBlob));
-    CHECK(out.worldId == in.worldId);
-    CHECK(out.areaId == in.areaId);
+    REQUIRE(PortSaveState::Decode(data, out, outBlob));
+    REQUIRE(out.worldId == in.worldId);
+    REQUIRE(out.areaId == in.areaId);
     for (int i = 0; i < 3; ++i) {
-      CHECK(out.position[i] == in.position[i]);
-      CHECK(out.forward[i] == in.forward[i]);
+      REQUIRE(out.position[i] == in.position[i]);
+      REQUIRE(out.forward[i] == in.forward[i]);
     }
-    CHECK(out.morphed);
-    CHECK(out.playTime == in.playTime);
-    CHECK(out.savedAt == in.savedAt);
-    CHECK(out.world == in.world);
-    CHECK(out.room == in.room);
-    CHECK(outBlob == blob);
+    REQUIRE(out.morphed);
+    REQUIRE(out.playTime == in.playTime);
+    REQUIRE(out.savedAt == in.savedAt);
+    REQUIRE(out.world == in.world);
+    REQUIRE(out.room == in.room);
+    REQUIRE(outBlob == blob);
   }
 
   // Every truncation fails and leaves the outputs alone.
@@ -66,23 +55,23 @@ int main() {
     Header out;
     out.worldId = 1;
     std::vector< uint8_t > outBlob{9};
-    CHECK(!PortSaveState::Decode(data.substr(0, len), out, outBlob));
-    CHECK(out.worldId == 1);
-    CHECK(outBlob.size() == 1);
+    REQUIRE(!PortSaveState::Decode(data.substr(0, len), out, outBlob));
+    REQUIRE(out.worldId == 1);
+    REQUIRE(outBlob.size() == 1);
   }
 
   // Trailing junk, a wrong magic, a wrong version and an empty blob fail.
   {
     Header out;
     std::vector< uint8_t > outBlob;
-    CHECK(!PortSaveState::Decode(data + "x", out, outBlob));
+    REQUIRE(!PortSaveState::Decode(data + "x", out, outBlob));
     std::string bad = data;
     bad[0] = 'X';
-    CHECK(!PortSaveState::Decode(bad, out, outBlob));
+    REQUIRE(!PortSaveState::Decode(bad, out, outBlob));
     bad = data;
     bad[4] = 2;
-    CHECK(!PortSaveState::Decode(bad, out, outBlob));
-    CHECK(!PortSaveState::Decode(PortSaveState::Encode(in, {}), out, outBlob));
+    REQUIRE(!PortSaveState::Decode(bad, out, outBlob));
+    REQUIRE(!PortSaveState::Decode(PortSaveState::Encode(in, {}), out, outBlob));
   }
 
   // A NaN position is refused (it would teleport Samus into nowhere).
@@ -91,7 +80,7 @@ int main() {
     nan.position[1] = std::numeric_limits< float >::quiet_NaN();
     Header out;
     std::vector< uint8_t > outBlob;
-    CHECK(!PortSaveState::Decode(PortSaveState::Encode(nan, blob), out, outBlob));
+    REQUIRE(!PortSaveState::Decode(PortSaveState::Encode(nan, blob), out, outBlob));
   }
 
   // Long labels are cut, not rejected.
@@ -100,8 +89,8 @@ int main() {
     longLabel.room.assign(1000, 'r');
     Header out;
     std::vector< uint8_t > outBlob;
-    CHECK(PortSaveState::Decode(PortSaveState::Encode(longLabel, blob), out, outBlob));
-    CHECK(out.room.size() == 256);
+    REQUIRE(PortSaveState::Decode(PortSaveState::Encode(longLabel, blob), out, outBlob));
+    REQUIRE(out.room.size() == 256);
   }
 
   // Room state: round trip, skipping of unknown tags and versions, old files.
@@ -139,77 +128,77 @@ int main() {
     const std::string file = Encode(withRoom, blob);
     Header out;
     std::vector< uint8_t > outBlob;
-    CHECK(Decode(file, out, outBlob));
-    CHECK(outBlob == blob);
-    CHECK(out.roomState.areas == withRoom.roomState.areas);
-    CHECK(out.roomState.present == withRoom.roomState.present);
-    CHECK(out.roomState.fingerprintsRecorded);
-    CHECK(out.roomState.fingerprints.size() == 2);
-    CHECK(out.roomState.fingerprints[0].area == 2 && out.roomState.fingerprints[0].known &&
-          out.roomState.fingerprints[0].hash == 0x1122334455667788ull);
-    CHECK(out.roomState.fingerprints[1].area == 5 && !out.roomState.fingerprints[1].known &&
-          out.roomState.fingerprints[1].hash == 0);
-    CHECK(out.roomState.objects.size() == 2);
+    REQUIRE(Decode(file, out, outBlob));
+    REQUIRE(outBlob == blob);
+    REQUIRE(out.roomState.areas == withRoom.roomState.areas);
+    REQUIRE(out.roomState.present == withRoom.roomState.present);
+    REQUIRE(out.roomState.fingerprintsRecorded);
+    REQUIRE(out.roomState.fingerprints.size() == 2);
+    REQUIRE(out.roomState.fingerprints[0].area == 2 && out.roomState.fingerprints[0].known &&
+            out.roomState.fingerprints[0].hash == 0x1122334455667788ull);
+    REQUIRE(out.roomState.fingerprints[1].area == 5 && !out.roomState.fingerprints[1].known &&
+            out.roomState.fingerprints[1].hash == 0);
+    REQUIRE(out.roomState.objects.size() == 2);
     const RoomObject& got = out.roomState.objects[0];
-    CHECK(got.editorId == 0x00020001 && got.active);
-    CHECK(out.roomState.objects[1].editorId == 0x00050007 && !out.roomState.objects[1].active);
+    REQUIRE(got.editorId == 0x00020001 && got.active);
+    REQUIRE(out.roomState.objects[1].editorId == 0x00050007 && !out.roomState.objects[1].active);
     // The door block came back byte for byte and still decodes as mid-close.
     {
       const RoomBlock* doorBlock = FindBlock(out.roomState.objects[1], 7);
-      CHECK(doorBlock != nullptr &&
-            doorBlock->data == EncodeDoorSaveState(DoorSaveState{false, true, false, true}));
+      REQUIRE(doorBlock != nullptr &&
+              doorBlock->data == EncodeDoorSaveState(DoorSaveState{false, true, false, true}));
       DoorSaveState restored;
-      CHECK(DecodeDoorSaveState(doorBlock->data, restored) && !restored.open &&
-            restored.pendingClose && !restored.refusedClosePending && restored.doClose);
+      REQUIRE(DecodeDoorSaveState(doorBlock->data, restored) && !restored.open &&
+              restored.pendingClose && !restored.refusedClosePending && restored.doClose);
     }
     // The file carries the fingerprinted section (RMST version 2).
     const size_t roomTrailer = data.size();
-    CHECK(file.compare(roomTrailer, 4, "RMST") == 0 &&
-          static_cast< uint8_t >(file[roomTrailer + 4]) == 2);
+    REQUIRE(file.compare(roomTrailer, 4, "RMST") == 0 &&
+            static_cast< uint8_t >(file[roomTrailer + 4]) == 2);
     const RoomBlock* b = FindBlock(got, 3);
-    CHECK(b != nullptr);
+    REQUIRE(b != nullptr);
     BlockReader hpIn(b->data);
-    CHECK(hpIn.F32() == 37.5f && hpIn.F32() == 0.25f && hpIn.ok);
+    REQUIRE(hpIn.F32() == 37.5f && hpIn.F32() == 0.25f && hpIn.ok);
     b = FindBlock(got, 4);
-    CHECK(b != nullptr);
+    REQUIRE(b != nullptr);
     BlockReader aiIn(b->data);
-    CHECK(aiIn.U8() == 1 && aiIn.Str() == "Patrol" && aiIn.F32() == 4.5f && aiIn.ok);
-    CHECK(FindBlock(got, 0xBE) != nullptr && FindBlock(got, 9) == nullptr);
+    REQUIRE(aiIn.U8() == 1 && aiIn.Str() == "Patrol" && aiIn.F32() == 4.5f && aiIn.ok);
+    REQUIRE(FindBlock(got, 0xBE) != nullptr && FindBlock(got, 9) == nullptr);
     BlockReader shortIn(b->data);
     shortIn.U32();
     shortIn.U32();
     shortIn.U32();
     shortIn.U32();
-    CHECK(!shortIn.ok);
+    REQUIRE(!shortIn.ok);
 
     // A file without the section (an old state) loads with an empty room state.
-    CHECK(Decode(data, out, outBlob) && out.roomState.empty());
+    REQUIRE(Decode(data, out, outBlob) && out.roomState.empty());
 
     // A newer version of the section is skipped, the state still loads.
     std::string newer = file;
     const size_t trailer = data.size();
-    CHECK(newer.compare(trailer, 4, "RMST") == 0);
+    REQUIRE(newer.compare(trailer, 4, "RMST") == 0);
     newer[trailer + 4] = 9;
-    CHECK(Decode(newer, out, outBlob) && out.roomState.empty() && outBlob == blob);
+    REQUIRE(Decode(newer, out, outBlob) && out.roomState.empty() && outBlob == blob);
 
     // A damaged section is dropped; the rest of the state is kept.
     for (size_t len = trailer + 1; len < file.size(); ++len) {
       Header cut;
-      CHECK(!Decode(file.substr(0, len), cut, outBlob) || cut.roomState.empty());
+      REQUIRE(!Decode(file.substr(0, len), cut, outBlob) || cut.roomState.empty());
     }
     std::string bogus = file;
     bogus[trailer + 12] = static_cast< char >(0xFF);  // area count absurd
     bogus[trailer + 15] = static_cast< char >(0x7F);
-    CHECK(Decode(bogus, out, outBlob) && out.roomState.empty());
-    CHECK(!Decode(data + "RMS", out, outBlob));
+    REQUIRE(Decode(bogus, out, outBlob) && out.roomState.empty());
+    REQUIRE(!Decode(data + "RMS", out, outBlob));
 
     // The resume wrapper carries it too.
     ResumeMeta meta;
     meta.fileIdx = 0;
     std::string backState;
     ResumeMeta backMeta;
-    CHECK(DecodeResume(EncodeResume(meta, file), backMeta, backState));
-    CHECK(Decode(backState, out, outBlob) && out.roomState.objects.size() == 2);
+    REQUIRE(DecodeResume(EncodeResume(meta, file), backMeta, backState));
+    REQUIRE(Decode(backState, out, outBlob) && out.roomState.objects.size() == 2);
   }
 
   // Room script fingerprints (RMST version 2): the hash and the per-area
@@ -222,20 +211,20 @@ int main() {
     for (size_t i = 0; i < script.size(); ++i)
       script[i] = static_cast< uint8_t >(i * 3 + 1);
     const uint64_t hash = FingerprintScriptData(script.data(), script.size());
-    CHECK(hash != 0);
-    CHECK(FingerprintScriptData(script.data(), script.size()) == hash);
-    CHECK(FingerprintScriptData(nullptr, 0) == 0);
-    CHECK(FingerprintScriptData(script.data(), 0) == 0);
+    REQUIRE(hash != 0);
+    REQUIRE(FingerprintScriptData(script.data(), script.size()) == hash);
+    REQUIRE(FingerprintScriptData(nullptr, 0) == 0);
+    REQUIRE(FingerprintScriptData(script.data(), 0) == 0);
     std::vector< uint8_t > changed = script;
     changed[script.size() - 1] ^= 0x80;
-    CHECK(FingerprintScriptData(changed.data(), changed.size()) != hash);
-    CHECK(FingerprintScriptData(script.data(), script.size() - 1) != hash);
+    REQUIRE(FingerprintScriptData(changed.data(), changed.size()) != hash);
+    REQUIRE(FingerprintScriptData(script.data(), script.size() - 1) != hash);
 
     // Nothing to read means no fingerprint: unknown, never a hash of its own.
     const AreaFingerprint none = MakeAreaFingerprint(5, nullptr, 0);
-    CHECK(none.area == 5 && !none.known && none.hash == 0);
+    REQUIRE(none.area == 5 && !none.known && none.hash == 0);
     const AreaFingerprint known = MakeAreaFingerprint(2, script.data(), script.size());
-    CHECK(known.area == 2 && known.known && known.hash == hash);
+    REQUIRE(known.area == 2 && known.known && known.hash == hash);
 
     // What ApplyRoomState decides per area, through the same helper: matching
     // accepted, changed and unreadable rejected (they are skipped whole), and a
@@ -244,15 +233,15 @@ int main() {
     saved.fingerprintsRecorded = true;
     saved.areas = {2, 5};
     saved.fingerprints = {known, none};
-    CHECK(DecideAreaRestore(saved, 2, script.data(), script.size()) == RoomAreaRestore::kRestore);
-    CHECK(DecideAreaRestore(saved, 2, changed.data(), changed.size()) == RoomAreaRestore::kSkipChanged);
-    CHECK(DecideAreaRestore(saved, 5, script.data(), script.size()) == RoomAreaRestore::kSkipUnreadable);
-    CHECK(DecideAreaRestore(saved, 9, script.data(), script.size()) == RoomAreaRestore::kSkipUnreadable);
-    CHECK(DecideAreaRestore(saved, 2, nullptr, 0) == RoomAreaRestore::kSkipUnreadable);
+    REQUIRE(DecideAreaRestore(saved, 2, script.data(), script.size()) == RoomAreaRestore::kRestore);
+    REQUIRE(DecideAreaRestore(saved, 2, changed.data(), changed.size()) == RoomAreaRestore::kSkipChanged);
+    REQUIRE(DecideAreaRestore(saved, 5, script.data(), script.size()) == RoomAreaRestore::kSkipUnreadable);
+    REQUIRE(DecideAreaRestore(saved, 9, script.data(), script.size()) == RoomAreaRestore::kSkipUnreadable);
+    REQUIRE(DecideAreaRestore(saved, 2, nullptr, 0) == RoomAreaRestore::kSkipUnreadable);
     RoomState legacy;
     legacy.areas = {2};
-    CHECK(DecideAreaRestore(legacy, 2, changed.data(), changed.size()) == RoomAreaRestore::kRestore);
-    CHECK(DecideAreaRestore(legacy, 2, nullptr, 0) == RoomAreaRestore::kRestore);
+    REQUIRE(DecideAreaRestore(legacy, 2, changed.data(), changed.size()) == RoomAreaRestore::kRestore);
+    REQUIRE(DecideAreaRestore(legacy, 2, nullptr, 0) == RoomAreaRestore::kRestore);
 
     // v2 round trip through the encoder: both fingerprints come back attached
     // to their own area.
@@ -261,17 +250,17 @@ int main() {
     Header out;
     std::vector< uint8_t > outBlob;
     const std::string file = Encode(withFp, blob);
-    CHECK(Decode(file, out, outBlob));
-    CHECK(out.roomState.fingerprintsRecorded);
-    CHECK(out.roomState.areas == saved.areas);
-    CHECK(out.roomState.fingerprints.size() == 2);
-    CHECK(out.roomState.fingerprints[0].area == 2 && out.roomState.fingerprints[0].known &&
-          out.roomState.fingerprints[0].hash == hash);
-    CHECK(out.roomState.fingerprints[1].area == 5 && !out.roomState.fingerprints[1].known &&
-          out.roomState.fingerprints[1].hash == 0);
-    CHECK(DecideAreaRestore(out.roomState, 2, script.data(), script.size()) == RoomAreaRestore::kRestore);
-    CHECK(DecideAreaRestore(out.roomState, 5, script.data(), script.size()) ==
-          RoomAreaRestore::kSkipUnreadable);
+    REQUIRE(Decode(file, out, outBlob));
+    REQUIRE(out.roomState.fingerprintsRecorded);
+    REQUIRE(out.roomState.areas == saved.areas);
+    REQUIRE(out.roomState.fingerprints.size() == 2);
+    REQUIRE(out.roomState.fingerprints[0].area == 2 && out.roomState.fingerprints[0].known &&
+            out.roomState.fingerprints[0].hash == hash);
+    REQUIRE(out.roomState.fingerprints[1].area == 5 && !out.roomState.fingerprints[1].known &&
+            out.roomState.fingerprints[1].hash == 0);
+    REQUIRE(DecideAreaRestore(out.roomState, 2, script.data(), script.size()) == RoomAreaRestore::kRestore);
+    REQUIRE(DecideAreaRestore(out.roomState, 5, script.data(), script.size()) ==
+            RoomAreaRestore::kSkipUnreadable);
 
     // Fingerprints that do not line up one per area fail closed: the writer
     // leaves out the whole optional room-state trailer, so the base game-state
@@ -282,10 +271,10 @@ int main() {
     unaligned.roomState.fingerprintsRecorded = true;
     unaligned.roomState.fingerprints = {known};  // one for two areas
     const std::string shortFile = Encode(unaligned, blob);
-    CHECK(shortFile.size() == data.size());  // no trailer at all
-    CHECK(Decode(shortFile, out, outBlob));
-    CHECK(outBlob == blob && out.worldId == in.worldId && out.room == in.room);
-    CHECK(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
+    REQUIRE(shortFile.size() == data.size());  // no trailer at all
+    REQUIRE(Decode(shortFile, out, outBlob));
+    REQUIRE(outBlob == blob && out.worldId == in.worldId && out.room == in.room);
+    REQUIRE(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
     // ... and the same for entries that line up in count but not in area.
     Header swapped = in;
     swapped.roomState.areas = {2, 5};
@@ -293,12 +282,12 @@ int main() {
     swapped.roomState.fingerprints = {MakeAreaFingerprint(5, script.data(), script.size()),
                                       MakeAreaFingerprint(2, script.data(), script.size())};
     const std::string swappedFile = Encode(swapped, blob);
-    CHECK(swappedFile.size() == data.size());
-    CHECK(Decode(swappedFile, out, outBlob));
-    CHECK(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
+    REQUIRE(swappedFile.size() == data.size());
+    REQUIRE(Decode(swappedFile, out, outBlob));
+    REQUIRE(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
     // A fingerprinted snapshot that lines up is RMST version 2 (the encoder's
     // own file), and a legacy one below stays version 1.
-    CHECK(static_cast< uint8_t >(file[data.size() + 4]) == 2);
+    REQUIRE(static_cast< uint8_t >(file[data.size() + 4]) == 2);
 
     // A state written before fingerprints existed (fingerprintsRecorded false)
     // still writes the legacy body and restores as it always did.
@@ -309,11 +298,11 @@ int main() {
     only.editorId = 0x00020001;
     legacyState.roomState.objects = {only};
     const std::string legacyFile = Encode(legacyState, blob);
-    CHECK(static_cast< uint8_t >(legacyFile[data.size() + 4]) == 1);
-    CHECK(Decode(legacyFile, out, outBlob));
-    CHECK(!out.roomState.fingerprintsRecorded && out.roomState.fingerprints.empty());
-    CHECK(out.roomState.areas.size() == 1 && out.roomState.objects.size() == 1);
-    CHECK(DecideAreaRestore(out.roomState, 2, changed.data(), changed.size()) == RoomAreaRestore::kRestore);
+    REQUIRE(static_cast< uint8_t >(legacyFile[data.size() + 4]) == 1);
+    REQUIRE(Decode(legacyFile, out, outBlob));
+    REQUIRE(!out.roomState.fingerprintsRecorded && out.roomState.fingerprints.empty());
+    REQUIRE(out.roomState.areas.size() == 1 && out.roomState.objects.size() == 1);
+    REQUIRE(DecideAreaRestore(out.roomState, 2, changed.data(), changed.size()) == RoomAreaRestore::kRestore);
 
     // A hash of 0 is a value a fingerprint may legitimately carry (the known
     // bit is what says an entry was hashed): it survives the round trip and
@@ -322,21 +311,21 @@ int main() {
     zeroHash.roomState.areas = {2};
     zeroHash.roomState.fingerprintsRecorded = true;
     zeroHash.roomState.fingerprints = {{2, true, 0}};
-    CHECK(Decode(Encode(zeroHash, blob), out, outBlob));
-    CHECK(out.roomState.fingerprintsRecorded && out.roomState.fingerprints.size() == 1);
-    CHECK(out.roomState.fingerprints[0].area == 2 && out.roomState.fingerprints[0].known &&
-          out.roomState.fingerprints[0].hash == 0);
-    CHECK(DecideAreaRestore(out.roomState, 2, script.data(), script.size()) ==
-          RoomAreaRestore::kSkipChanged);
+    REQUIRE(Decode(Encode(zeroHash, blob), out, outBlob));
+    REQUIRE(out.roomState.fingerprintsRecorded && out.roomState.fingerprints.size() == 1);
+    REQUIRE(out.roomState.fingerprints[0].area == 2 && out.roomState.fingerprints[0].known &&
+            out.roomState.fingerprints[0].hash == 0);
+    REQUIRE(DecideAreaRestore(out.roomState, 2, script.data(), script.size()) ==
+            RoomAreaRestore::kSkipChanged);
     // An entry that was never hashed carries no hash, and stays unknown.
     Header unknown = in;
     unknown.roomState.areas = {2};
     unknown.roomState.fingerprintsRecorded = true;
     unknown.roomState.fingerprints = {MakeAreaFingerprint(2, nullptr, 0)};
-    CHECK(Decode(Encode(unknown, blob), out, outBlob));
-    CHECK(out.roomState.fingerprints[0].area == 2 && !out.roomState.fingerprints[0].known);
-    CHECK(DecideAreaRestore(out.roomState, 2, script.data(), script.size()) ==
-          RoomAreaRestore::kSkipUnreadable);
+    REQUIRE(Decode(Encode(unknown, blob), out, outBlob));
+    REQUIRE(out.roomState.fingerprints[0].area == 2 && !out.roomState.fingerprints[0].known);
+    REQUIRE(DecideAreaRestore(out.roomState, 2, script.data(), script.size()) ==
+            RoomAreaRestore::kSkipUnreadable);
 
     // Little-endian builders, so a hand-written trailer can carry bodies the
     // writer never produces.
@@ -360,30 +349,30 @@ int main() {
     // no fingerprint section.
     const std::string v1body = le32(1) + le32(2) + le32(1) + std::string(1, 0x04) + std::string(1, 0x00);
     const std::string v1file = trailer(1, v1body);
-    CHECK(Decode(v1file, out, outBlob));
-    CHECK(out.roomState.fingerprintsRecorded == false && out.roomState.fingerprints.empty());
-    CHECK(out.roomState.areas.size() == 1 && out.roomState.areas[0] == 2);
-    CHECK(out.roomState.objects.size() == 1 && out.roomState.objects[0].editorId == 2);
-    CHECK(DecideAreaRestore(out.roomState, 2, changed.data(), changed.size()) == RoomAreaRestore::kRestore);
+    REQUIRE(Decode(v1file, out, outBlob));
+    REQUIRE(out.roomState.fingerprintsRecorded == false && out.roomState.fingerprints.empty());
+    REQUIRE(out.roomState.areas.size() == 1 && out.roomState.areas[0] == 2);
+    REQUIRE(out.roomState.objects.size() == 1 && out.roomState.objects[0].editorId == 2);
+    REQUIRE(DecideAreaRestore(out.roomState, 2, changed.data(), changed.size()) == RoomAreaRestore::kRestore);
 
     // A v2 body hand-written the way the writer writes it, next to the
     // encoder's own output: same fields, both areas with a fingerprint.
     const std::string v2body = le32(2) + le32(2) + le32(5) + std::string(1, 1) + le32(2) +
                                fpEntry(2, 1, 0x1111222233334444ull) + fpEntry(5, 1, 0x5555666677778888ull) +
                                le32(1) + std::string(1, 0x04) + std::string(1, 0x00);
-    CHECK(Decode(trailer(2, v2body), out, outBlob));
-    CHECK(out.roomState.fingerprintsRecorded && out.roomState.fingerprints.size() == 2);
-    CHECK((out.roomState.areas == std::vector< int32_t >{2, 5}));
-    CHECK(out.roomState.fingerprints[0].area == 2 && out.roomState.fingerprints[0].hash == 0x1111222233334444ull);
-    CHECK(out.roomState.fingerprints[1].area == 5 && out.roomState.fingerprints[1].hash == 0x5555666677778888ull);
-    CHECK(DecideAreaRestore(out.roomState, 5, script.data(), script.size()) ==
-          RoomAreaRestore::kSkipChanged);
+    REQUIRE(Decode(trailer(2, v2body), out, outBlob));
+    REQUIRE(out.roomState.fingerprintsRecorded && out.roomState.fingerprints.size() == 2);
+    REQUIRE((out.roomState.areas == std::vector< int32_t >{2, 5}));
+    REQUIRE(out.roomState.fingerprints[0].area == 2 && out.roomState.fingerprints[0].hash == 0x1111222233334444ull);
+    REQUIRE(out.roomState.fingerprints[1].area == 5 && out.roomState.fingerprints[1].hash == 0x5555666677778888ull);
+    REQUIRE(DecideAreaRestore(out.roomState, 5, script.data(), script.size()) ==
+            RoomAreaRestore::kSkipChanged);
 
     // A version this build does not know is skipped, as before v2 existed.
-    CHECK(Decode(trailer(3, v2body), out, outBlob));
-    CHECK(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
-    CHECK(Decode(trailer(0, v1body), out, outBlob));
-    CHECK(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
+    REQUIRE(Decode(trailer(3, v2body), out, outBlob));
+    REQUIRE(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
+    REQUIRE(Decode(trailer(0, v1body), out, outBlob));
+    REQUIRE(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
 
     // Malformed fingerprint associations: the whole room state is dropped (the
     // state itself still loads) rather than applied to areas it does not
@@ -404,34 +393,34 @@ int main() {
     };
     for (const std::string& body : bodies2) {
       const std::string bad = trailer(2, body);
-      CHECK(Decode(bad, out, outBlob));
-      CHECK(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
+      REQUIRE(Decode(bad, out, outBlob));
+      REQUIRE(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
       // ...and every truncation of one is dropped or refused too.
       for (size_t len = data.size() + 12; len < bad.size(); ++len) {
         Header cut;
-        CHECK(!Decode(bad.substr(0, len), cut, outBlob) || cut.roomState.empty());
+        REQUIRE(!Decode(bad.substr(0, len), cut, outBlob) || cut.roomState.empty());
       }
     }
     // A hand-written v2 body whose hashed entry carries a 0 hash is accepted:
     // the known bit, not the value, says the entry was hashed.
     const std::string zeroBody = le32(1) + le32(2) + std::string(1, 1) + le32(1) + fpEntry(2, 1, 0) +
                                  le32(1) + std::string(1, 0x04) + std::string(1, 0x00);
-    CHECK(Decode(trailer(2, zeroBody), out, outBlob));
-    CHECK(out.roomState.fingerprintsRecorded && out.roomState.fingerprints.size() == 1);
-    CHECK(out.roomState.fingerprints[0].known && out.roomState.fingerprints[0].hash == 0);
+    REQUIRE(Decode(trailer(2, zeroBody), out, outBlob));
+    REQUIRE(out.roomState.fingerprintsRecorded && out.roomState.fingerprints.size() == 1);
+    REQUIRE(out.roomState.fingerprints[0].known && out.roomState.fingerprints[0].hash == 0);
     // The v2 body cut short inside its last object, with the trailer length
     // still consistent: refused, not read past the end.
-    CHECK(Decode(trailer(2, v2body.substr(0, v2body.size() - 4)), out, outBlob));
-    CHECK(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
+    REQUIRE(Decode(trailer(2, v2body.substr(0, v2body.size() - 4)), out, outBlob));
+    REQUIRE(out.roomState.empty() && !out.roomState.fingerprintsRecorded);
 
     // A v2 body that says it carries no fingerprints restores as a legacy one
     // does (what an older writer produces, and the only remaining way to write
     // without fingerprints).
     const std::string v2NoFp =
         le32(1) + le32(2) + std::string(1, 0) + le32(1) + std::string(1, 0x04) + std::string(1, 0x00);
-    CHECK(Decode(trailer(2, v2NoFp), out, outBlob));
-    CHECK(!out.roomState.fingerprintsRecorded && out.roomState.areas.size() == 1);
-    CHECK(DecideAreaRestore(out.roomState, 2, changed.data(), changed.size()) == RoomAreaRestore::kRestore);
+    REQUIRE(Decode(trailer(2, v2NoFp), out, outBlob));
+    REQUIRE(!out.roomState.fingerprintsRecorded && out.roomState.areas.size() == 1);
+    REQUIRE(DecideAreaRestore(out.roomState, 2, changed.data(), changed.size()) == RoomAreaRestore::kRestore);
   }
 
   // Quick resume wrapper.
@@ -444,36 +433,36 @@ int main() {
     const std::string file = PortSaveState::EncodeResume(meta, state);
     PortSaveState::ResumeMeta back;
     std::string backState;
-    CHECK(PortSaveState::DecodeResume(file, back, backState));
-    CHECK(back.fileIdx == 1 && back.cardSerial == meta.cardSerial && back.identity == meta.identity);
-    CHECK(backState == state);
-    CHECK(!PortSaveState::DecodeResume(file.substr(0, file.size() - 1), back, backState));
-    CHECK(!PortSaveState::DecodeResume(file + "x", back, backState));
-    CHECK(!PortSaveState::DecodeResume("MPSS" + file.substr(4), back, backState));
-    CHECK(!PortSaveState::DecodeResume("", back, backState));
+    REQUIRE(PortSaveState::DecodeResume(file, back, backState));
+    REQUIRE(back.fileIdx == 1 && back.cardSerial == meta.cardSerial && back.identity == meta.identity);
+    REQUIRE(backState == state);
+    REQUIRE(!PortSaveState::DecodeResume(file.substr(0, file.size() - 1), back, backState));
+    REQUIRE(!PortSaveState::DecodeResume(file + "x", back, backState));
+    REQUIRE(!PortSaveState::DecodeResume("MPSS" + file.substr(4), back, backState));
+    REQUIRE(!PortSaveState::DecodeResume("", back, backState));
     PortSaveState::ResumeMeta badSlot = meta;
     badSlot.fileIdx = 7;
-    CHECK(!PortSaveState::DecodeResume(PortSaveState::EncodeResume(badSlot, state), back, backState));
+    REQUIRE(!PortSaveState::DecodeResume(PortSaveState::EncodeResume(badSlot, state), back, backState));
 
-    CHECK(PortSaveState::ResumeMatches(meta, meta));
+    REQUIRE(PortSaveState::ResumeMatches(meta, meta));
     PortSaveState::ResumeMeta other = meta;
     other.identity = "ap:seed43";
-    CHECK(!PortSaveState::ResumeMatches(meta, other));
+    REQUIRE(!PortSaveState::ResumeMatches(meta, other));
     other = meta;
     other.cardSerial = 1;
-    CHECK(!PortSaveState::ResumeMatches(meta, other));
+    REQUIRE(!PortSaveState::ResumeMatches(meta, other));
     other = meta;
     other.identity.clear();
-    CHECK(!PortSaveState::ResumeMatches(meta, other));
+    REQUIRE(!PortSaveState::ResumeMatches(meta, other));
   }
 
   // Quick resume skip rules.
   {
     PortSaveState::ResumeContext ctx;
-    CHECK(PortSaveState::ResumeSkipReason(ctx) != nullptr);  // not in game
+    REQUIRE(PortSaveState::ResumeSkipReason(ctx) != nullptr);  // not in game
     ctx.inGame = true;
     ctx.initialized = true;
-    CHECK(PortSaveState::ResumeSkipReason(ctx) == nullptr);
+    REQUIRE(PortSaveState::ResumeSkipReason(ctx) == nullptr);
     bool PortSaveState::ResumeContext::*flags[] = {
         &PortSaveState::ResumeContext::quitting, &PortSaveState::ResumeContext::dead,
         &PortSaveState::ResumeContext::cinematic, &PortSaveState::ResumeContext::transition,
@@ -481,19 +470,19 @@ int main() {
     for (auto flag : flags) {
       PortSaveState::ResumeContext c = ctx;
       c.*flag = true;
-      CHECK(PortSaveState::ResumeSkipReason(c) != nullptr);
+      REQUIRE(PortSaveState::ResumeSkipReason(c) != nullptr);
     }
     ctx.initialized = false;
-    CHECK(PortSaveState::ResumeSkipReason(ctx) != nullptr);
+    REQUIRE(PortSaveState::ResumeSkipReason(ctx) != nullptr);
   }
 
   // Snapshot selection at quit/background.
   {
     using PortSaveState::ResumeWriteChoice;
-    CHECK(PortSaveState::ChooseResumeWrite(true, false) == ResumeWriteChoice::kRefreshThenWrite);
-    CHECK(PortSaveState::ChooseResumeWrite(true, true) == ResumeWriteChoice::kRefreshThenWrite);
-    CHECK(PortSaveState::ChooseResumeWrite(false, true) == ResumeWriteChoice::kWriteSnapshot);
-    CHECK(PortSaveState::ChooseResumeWrite(false, false) == ResumeWriteChoice::kNothing);
+    REQUIRE(PortSaveState::ChooseResumeWrite(true, false) == ResumeWriteChoice::kRefreshThenWrite);
+    REQUIRE(PortSaveState::ChooseResumeWrite(true, true) == ResumeWriteChoice::kRefreshThenWrite);
+    REQUIRE(PortSaveState::ChooseResumeWrite(false, true) == ResumeWriteChoice::kWriteSnapshot);
+    REQUIRE(PortSaveState::ChooseResumeWrite(false, false) == ResumeWriteChoice::kNothing);
   }
   // The kTagDoor payload (issue #131): byte 0 is the door's mIsOpen and is the
   // whole old format; byte 1 is a flag byte for the close paths a door can be
@@ -522,25 +511,25 @@ int main() {
         {{false, false, false, true}, "\0\4"},   // only the block on opening again
     };
     for (const Case& c : cases)
-      CHECK(EncodeDoorSaveState(c.state) == std::string(c.bytes, 2));
+      REQUIRE(EncodeDoorSaveState(c.state) == std::string(c.bytes, 2));
     // Round trip of each, whole state compared.
     for (const Case& c : cases) {
       DoorSaveState got;
-      CHECK(DecodeDoorSaveState(EncodeDoorSaveState(c.state), got));
-      CHECK(got.open == c.state.open && got.pendingClose == c.state.pendingClose &&
-            got.refusedClosePending == c.state.refusedClosePending &&
-            got.doClose == c.state.doClose);
+      REQUIRE(DecodeDoorSaveState(EncodeDoorSaveState(c.state), got));
+      REQUIRE(got.open == c.state.open && got.pendingClose == c.state.pendingClose &&
+              got.refusedClosePending == c.state.refusedClosePending &&
+              got.doClose == c.state.doClose);
     }
     DoorSaveState out;
     // The mid-close payload an earlier build of this lane wrote (normal close, no
     // other flag) still decodes as exactly that.
-    CHECK(DecodeDoorSaveState(std::string("\0\1", 2), out) && !out.open && out.pendingClose &&
-          !out.refusedClosePending && !out.doClose);
+    REQUIRE(DecodeDoorSaveState(std::string("\0\1", 2), out) && !out.open && out.pendingClose &&
+            !out.refusedClosePending && !out.doClose);
     // Old snapshots: one byte, exactly the old behaviour (open flag alone).
-    CHECK(DecodeDoorSaveState(std::string("\0", 1), out) && !out.open && !out.pendingClose &&
-          !out.refusedClosePending && !out.doClose);
-    CHECK(DecodeDoorSaveState(std::string("\1", 1), out) && out.open && !out.pendingClose &&
-          !out.refusedClosePending && !out.doClose);
+    REQUIRE(DecodeDoorSaveState(std::string("\0", 1), out) && !out.open && !out.pendingClose &&
+            !out.refusedClosePending && !out.doClose);
+    REQUIRE(DecodeDoorSaveState(std::string("\1", 1), out) && out.open && !out.pendingClose &&
+            !out.refusedClosePending && !out.doClose);
 
     // Invalid payloads are refused, not applied (the door is left as loaded).
     // Each payload is refused on its own, and each is checked against four
@@ -566,10 +555,10 @@ int main() {
     for (const std::string& payload : invalid) {
       for (const DoorSaveState& sentinel : sentinels) {
         out = sentinel;
-        CHECK(!DecodeDoorSaveState(payload, out));
-        CHECK(out.open == sentinel.open && out.pendingClose == sentinel.pendingClose &&
-              out.refusedClosePending == sentinel.refusedClosePending &&
-              out.doClose == sentinel.doClose);
+        REQUIRE(!DecodeDoorSaveState(payload, out));
+        REQUIRE(out.open == sentinel.open && out.pendingClose == sentinel.pendingClose &&
+                out.refusedClosePending == sentinel.refusedClosePending &&
+                out.doClose == sentinel.doClose);
       }
     }
   }
@@ -579,28 +568,28 @@ int main() {
     const double stable = PortSaveState::kResumeStableSeconds;
     const double period = PortSaveState::kResumeRefreshSeconds;
     // Never while unsafe.
-    CHECK(!ResumeRefreshDue(false, true, true, 1000.0, 1000.0));
-    CHECK(!ResumeRefreshDue(false, false, false, 1000.0, 0.0));
+    REQUIRE(!ResumeRefreshDue(false, true, true, 1000.0, 1000.0));
+    REQUIRE(!ResumeRefreshDue(false, false, false, 1000.0, 0.0));
     // First snapshot, or a new room, waits for the room to be stable.
-    CHECK(!ResumeRefreshDue(true, false, false, stable - 0.1, 0.0));
-    CHECK(ResumeRefreshDue(true, false, false, stable, 0.0));
-    CHECK(!ResumeRefreshDue(true, true, false, stable - 0.1, 5.0));
-    CHECK(ResumeRefreshDue(true, true, false, stable, 5.0));
+    REQUIRE(!ResumeRefreshDue(true, false, false, stable - 0.1, 0.0));
+    REQUIRE(ResumeRefreshDue(true, false, false, stable, 0.0));
+    REQUIRE(!ResumeRefreshDue(true, true, false, stable - 0.1, 5.0));
+    REQUIRE(ResumeRefreshDue(true, true, false, stable, 5.0));
     // The same room refreshes on the period only.
-    CHECK(!ResumeRefreshDue(true, true, true, 100.0, period - 0.1));
-    CHECK(ResumeRefreshDue(true, true, true, 100.0, period));
+    REQUIRE(!ResumeRefreshDue(true, true, true, 100.0, period - 0.1));
+    REQUIRE(ResumeRefreshDue(true, true, true, 100.0, period));
   }
 
   // A label length over the cap is rejected, not read past.
   {
     std::string crafted = data;
     const size_t at = crafted.find("Main Plaza");
-    CHECK(at != std::string::npos && at >= 4);
+    REQUIRE(at != std::string::npos && at >= 4);
     crafted[at - 4] = 0x01;  // 257, little-endian
     crafted[at - 3] = 0x01;
     Header out;
     std::vector< uint8_t > outBlob;
-    CHECK(!PortSaveState::Decode(crafted, out, outBlob));
+    REQUIRE(!PortSaveState::Decode(crafted, out, outBlob));
   }
 
   // An object with more blocks than the decoder accepts keeps the first kMaxBlocks.
@@ -617,11 +606,11 @@ int main() {
     many.roomState.objects = {obj};
     Header out;
     std::vector< uint8_t > outBlob;
-    CHECK(Decode(Encode(many, blob), out, outBlob));
-    CHECK(out.roomState.objects.size() == 1);
+    REQUIRE(Decode(Encode(many, blob), out, outBlob));
+    REQUIRE(out.roomState.objects.size() == 1);
     const RoomObject& got = out.roomState.objects[0];
-    CHECK(got.active && got.blocks.size() == 64);
-    CHECK(got.blocks.back().tag == 63 && got.blocks.back().data == std::string(1, '\x3f'));
+    REQUIRE(got.active && got.blocks.size() == 64);
+    REQUIRE(got.blocks.back().tag == 63 && got.blocks.back().data == std::string(1, '\x3f'));
   }
 
   std::puts("savestate tests passed");
