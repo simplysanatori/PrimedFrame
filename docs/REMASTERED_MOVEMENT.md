@@ -86,13 +86,30 @@ starts active takes the pose stamp (start and end translation), and a rider on a
 platform stamped the previous tick carries that step's delta, never the pose now, so a warp
 while inactive is not carried.
 
-On the airborne mover the admitted platforms (active, DCLN, unrotated) are not native
+A platform without a DCLN tree (its `CCollidableAABox`) is admitted on the same terms
+(active, unrotated). Its box is translated with the platform and never turned
+(`GetTransformedAABox` 0xbf6064), and its pair with the player is `AABox_AABox` 0xbf61b4
+(boolean 0xbfce60: both filters, then the inclusive overlap). Each impact enters the same
+contact lists as a self/other contact pair. The self half carries the depth, the other half
+carries the platform's outward normal, the face-centre point and its owner. The pair sits
+in the platform's near-list place
+(`platform/include/port_remastered_ground_box.h`, unit-tested in
+`tests/port_ground_rider.cpp`), so the probe, OnWall, the snap, the response, the rider
+scan and the landing check read it unchanged. Touching boxes block the boolean queries but
+produce no contact. Box halves are classified by their translated material's orientation
+(`is_floor`, and the landing check's floor eligibility, as the box-actor landing does). The
+failsafe takes a box platform like the airborne failsafe's box actors (raw filter gates,
+the legacy impact list, one collided object per platform). A box platform that yaws is
+still refused, because the rotation carry is not ported.
+
+On the airborne mover the admitted platforms (active, DCLN or box, unrotated) are not native
 dynamic contacts: their triangles join the terrain's in the same producer (terrain first,
 then platforms by `id & 0xffff`, live material, secondary normals) for the step, the
 bisection test, the landing check and the post-step probe. The separation gate subtracts
 `get_rider_controller_offset` (0xc18f80: the rider's pose delta when unrotated) for the
 rider controller's own contacts only, and a platform (a `CCollidableOBBoxTree`, type 4)
-never takes the response's flat-floor early-out (0xc6d4e8). Other actors stay native.
+never takes the response's flat-floor early-out (0xc6d4e8); a box platform (a
+`CCollidableAABox`, type 0) does. Other actors stay native.
 
 The airborne integrator is split as in the source. Pre (0xc59814, called at 0xf9447c) folds
 the impulse into the momentum once, before the first step. The step predictions add no force
@@ -104,7 +121,7 @@ The one-tick carry after a platform deactivates (the stamp rule in `CScriptPlatf
 and `RiderCarry`) is unit-tested only (`tests/port_ground_rider.cpp`); no rig run deactivates
 a ridden platform, and the mapping of the source's update step to PreThink is inferred.
 
-Not ported: AABox platforms, rotating platforms (both fall back), the rotation and
+Not ported: rotating platforms (box or tree; they fall back), the rotation and
 rider-velocity terms of the carry (the airborne response's rider velocity is still the
 platform's velocity for the remaining native actors), and the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
 terrain-only. The deferred retail carry is applied after the player's angular step,
