@@ -134,7 +134,7 @@ in `assets/`, and no `.iso`, `.pak` or `.strg` is in the package. An earlier
 revision of this section recorded the signer as `d8814c79…` and six notices; both
 were wrong.
 
-The port targets `versionName "0.28.0"` and `versionCode 31`. A version bump
+The port targets `versionName "0.28.1"` and `versionCode 32`. A version bump
 also adds a `<release>` entry (newest first) to
 `packaging/io.github.odrannnn.metroidprimeport.metainfo.xml`, which is the
 version Flatpak reports; `tools/make_flatpak.sh` stops if the two differ.
