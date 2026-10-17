@@ -907,8 +907,9 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     // view position through the world. The back light is coloured like the ambient along world
     // (1, 1, -1) / sqrt(3). Its strengths are NRenderDebugDefaults' 4 (back) and 2 (top), times
     // the area's backlight hints (PortRoomEnv::Backlight, which gives these as the default).
-    // MP_REMASTERED_BACKLIGHT=0 turns it off.
-    static const bool sBacklightOff = !port::EnvFlag("MP_REMASTERED_BACKLIGHT", true);
+    // MP_REMASTERED_BACKLIGHT=0 turns it off; set but empty leaves it on, as it always has.
+    static const bool sBacklightOff =
+        !port::EnvFlag("MP_REMASTERED_BACKLIGHT", true) && *port::EnvString("MP_REMASTERED_BACKLIGHT") != '\0';
     if (sBacklightOff) {
       GXSetPBRBacklight(nullptr, nullptr, 0.f, 0.f, 0.f, 0.f);
     } else {
