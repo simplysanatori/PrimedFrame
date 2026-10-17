@@ -269,6 +269,8 @@ set(MP_PORT_SOURCES
     platform/port_remastered_effect_import.cpp
     platform/port_remastered_report.cpp
     platform/port_remastered_import.cpp
+    platform/port_remastered_import_retail.cpp
+    platform/port_remastered_import_remastered.cpp
     platform/port_remastered_jpeg.cpp
     platform/port_gallery.cpp
     platform/port_remastered_room.cpp
