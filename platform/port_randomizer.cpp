@@ -1,4 +1,5 @@
 #include "port_env.h"
+#include "port_strings.h"
 #include "port_json.h"
 #include "port_randomizer.h"
 #include "port_log.h"
@@ -73,7 +74,7 @@ std::string UserDirectory() {
 }
 
 std::string SeedPath() {
-  if (const char* env = std::getenv("MP_RANDO_SEED")) {
+  if (const char* env = port::EnvString("MP_RANDO_SEED")) {
     if (env[0] != '\0')
       return env;
   }
@@ -208,7 +209,7 @@ bool LoadSeed(State& state) {
   std::ifstream input(path, std::ios::binary);
   if (!input)
     return false;
-  const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  const std::string text = port::ReadAllText(input);
   if (input.bad()) {
     PortLog::Write( "randomizer: seed read error at byte offset 0: could not read file\n");
     return false;

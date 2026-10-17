@@ -127,7 +127,7 @@ using NormalPredicate = std::function< bool(const Vec3& otherNormal) >;
 // z; +1 side before -1) and returns true when any were appended. Every impact one call
 // appends belongs to the SAME pair contact: the append is flat and carries no end marker,
 // so the caller must snapshot out.size() before the call (or hand in a fresh contact's
-// vector) and group exactly the appended range as one contact, as CGameCollision.cpp does
+// vector) and group exactly the appended range as one contact, as port_remastered_movers.cpp does
 // for the legacy API below. A candidate rejected by the depth > 0 test or by `passes` is
 // dropped; when every primary candidate was dropped the minimum-difference fallback
 // candidate is tried (also gated by `passes`). Returns false (appending nothing) when the

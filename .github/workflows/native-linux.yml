@@ -51,16 +51,8 @@ jobs:
         run: |
           if [ "$COMPILER" = gcc ]; then export CC=gcc-14 CXX=g++-14; else export CC=clang-18 CXX=clang++-18; fi
           cmake -S . -B build/native -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAURORA_ENABLE_TESTS=ON -DMP_BUILD_TESTS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-      - name: Build
-        run: cmake --build build/native -j 4
-      - name: Test
-        run: ctest --test-dir build/native -L port --output-on-failure
-      # ctest only prints a test's output when it fails, so the wss:// evidence
-      # - the verified handshake and the rejections - would otherwise never
-      # appear in the log. Run it once more directly to record it.
-      - name: Show the TLS handshake result
-        run: ./build/native/port_ws_tests
-      - name: Build FIFO regressions
-        run: cmake --build build/native --target gx_fifo_tests -j 4
-      - name: Test FIFO regressions
-        run: ./build/native/extern/aurora/tests/gx_fifo_tests --gtest_brief=1
+      # Build, the port's tests, the TLS log and the GX FIFO regressions.
+      - uses: ./.github/actions/build-and-test
+        with:
+          build-dir: build/native
+          jobs: "-j 4"

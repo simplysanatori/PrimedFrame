@@ -6,6 +6,7 @@
 // changed, which must be refused or read, never crash.
 
 #include "port_remastered_nsp.h"
+#include "port_test.h"
 
 #include <openssl/evp.h>
 
@@ -21,14 +22,6 @@
 using namespace PortRemastered;
 
 namespace {
-int sFailures = 0;
-
-void Check(bool condition, const char* what) {
-  if (!condition) {
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++sFailures;
-  }
-}
 
 using Blob = std::vector<uint8_t>;
 constexpr uint32_t kEmpty = 0xFFFFFFFF;
@@ -244,24 +237,24 @@ int main() {
   std::string error;
   {
     Nsp nsp;
-    Check(OpenImage(image, Keys(true), nsp, error), "synthetic image opens");
+    CHECK_MSG(OpenImage(image, Keys(true), nsp, error), "synthetic image opens");
     if (!error.empty() && !nsp.IsOpen()) {
       std::fprintf(stderr, "  %s\n", error.c_str());
     }
-    Check(nsp.Files().size() == 2, "two files");
+    CHECK_MSG(nsp.Files().size() == 2, "two files");
     const RomfsFile* fileA = nsp.Find("a.bin");
     const RomfsFile* fileB = nsp.Find("dir/b.bin");
-    Check(fileA != nullptr && fileB != nullptr, "files are found by path");
+    CHECK_MSG(fileA != nullptr && fileB != nullptr, "files are found by path");
     if (fileA != nullptr && fileB != nullptr) {
       Blob out(a.size());
-      Check(nsp.Read(*fileA, 0, out.data(), out.size(), error) && out == a, "a.bin decrypts");
+      CHECK_MSG(nsp.Read(*fileA, 0, out.data(), out.size(), error) && out == a, "a.bin decrypts");
       // Unaligned, and across the 1 MB pieces the reader decrypts in.
       const size_t from = 77, size = b.size() - 100;
       out.assign(size, 0);
-      Check(nsp.Read(*fileB, from, out.data(), size, error) &&
-                std::equal(out.begin(), out.end(), b.begin() + long(from)),
-            "b.bin decrypts at an unaligned offset across pieces");
-      Check(!nsp.Read(*fileB, b.size() - 1, out.data(), 2, error), "a read past a file's end is refused");
+      CHECK_MSG(nsp.Read(*fileB, from, out.data(), size, error) &&
+                    std::equal(out.begin(), out.end(), b.begin() + long(from)),
+                "b.bin decrypts at an unaligned offset across pieces");
+      CHECK_MSG(!nsp.Read(*fileB, b.size() - 1, out.data(), 2, error), "a read past a file's end is refused");
     }
   }
   {
@@ -269,28 +262,28 @@ int main() {
     uint8_t wrong[32];
     std::memcpy(wrong, kHeaderKey, 32);
     wrong[0] ^= 1;
-    Check(!OpenImage(image, Keys(true, wrong), nsp, error) && Has(error, "wrong keys"), "a wrong header key says so");
-    Check(!OpenImage(image, Keys(false), nsp, error) && Has(error, "key_area_key_application_00"),
-          "a missing key area key is named");
+    CHECK_MSG(!OpenImage(image, Keys(true, wrong), nsp, error) && Has(error, "wrong keys"), "a wrong header key says so");
+    CHECK_MSG(!OpenImage(image, Keys(false), nsp, error) && Has(error, "key_area_key_application_00"),
+              "a missing key area key is named");
     const std::string titleKeys = "0100a1b2c3d4e5f60000000000000000 = 00112233445566778899aabbccddeeff\n";
-    Check(!OpenImage(image, titleKeys, nsp, error) && Has(error, "title.keys"), "a title.keys file is recognised");
+    CHECK_MSG(!OpenImage(image, titleKeys, nsp, error) && Has(error, "title.keys"), "a title.keys file is recognised");
   }
   {
     Nsp nsp;
     Breakage outside;
     outside.romfs = [](Blob& romfs) { Put64(romfs, 0x50 + 52 + 40 + 8, uint64_t(1) << 40); };
-    Check(!OpenImage(MakeImage(a, b, outside), Keys(true), nsp, error) && Has(error, "outside"),
-          "a file outside the RomFS is refused");
+    CHECK_MSG(!OpenImage(MakeImage(a, b, outside), Keys(true), nsp, error) && Has(error, "outside"),
+              "a file outside the RomFS is refused");
     Breakage wrap;
     wrap.romfs = [](Blob& romfs) { Put64(romfs, 0x50 + 52 + 40 + 8, ~uint64_t(0) - 10); };
-    Check(!OpenImage(MakeImage(a, b, wrap), Keys(true), nsp, error), "a wrapping file offset is refused");
+    CHECK_MSG(!OpenImage(MakeImage(a, b, wrap), Keys(true), nsp, error), "a wrapping file offset is refused");
     Breakage level;
     level.header = [](Blob& header) { Put64(header, 0x400 + 8 + 0x10, uint64_t(1) << 30); };
-    Check(!OpenImage(MakeImage(a, b, level), Keys(true), nsp, error) && Has(error, "outside its section"),
-          "a RomFS level outside its section is refused");
+    CHECK_MSG(!OpenImage(MakeImage(a, b, level), Keys(true), nsp, error) && Has(error, "outside its section"),
+              "a RomFS level outside its section is refused");
     Breakage tables;
     tables.romfs = [](Blob& romfs) { Put64(romfs, 0x38, uint64_t(1) << 33); };
-    Check(!OpenImage(MakeImage(a, b, tables), Keys(true), nsp, error), "tables outside the RomFS are refused");
+    CHECK_MSG(!OpenImage(MakeImage(a, b, tables), Keys(true), nsp, error), "tables outside the RomFS are refused");
   }
   {
     // Random bytes changed anywhere: the header, the tables, the data.
@@ -313,10 +306,8 @@ int main() {
   std::error_code ec;
   std::filesystem::remove(Temp("port_nsp_test.nsp"), ec);
   std::filesystem::remove(Temp("port_nsp_test.keys"), ec);
-  if (sFailures != 0) {
-    std::fprintf(stderr, "%d failure(s)\n", sFailures);
-    return 1;
+  if (port_test::Failures() == 0) {
+    std::printf("port_remastered_nsp: ok\n");
   }
-  std::printf("port_remastered_nsp: ok\n");
-  return 0;
+  return PORT_TEST_RESULT();
 }

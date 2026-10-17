@@ -21,16 +21,25 @@
   the whole screen on desktop, toggled with F11; on Android it hides the status
   and navigation bars (on by default there; a swipe from the edge shows them
   for a moment).
+- Vsync (F1 > Video > Display, persisted as `vsync`): presents in step with the
+  display's refresh. On by default on macOS, where Dawn's Metal backend has no
+  other tear-free mode, off elsewhere. The 60 FPS cap (F10, or F1 > Video > Frame
+  rate "60 FPS cap (target)", persisted as `frame_limit`, on by default, always on
+  under Original experience) holds presented frames to the game's 60 Hz; with it
+  off, `fps_cap` sets the limit.
 - Settings changed in the F1 overlay (aspect, vsync, render scale, frame limit,
   mouse aim/inversion/sensitivity, audio mutes) are saved to
   `port_settings.ini` in the user folder (`user/` beside the executable, see above) and restored on the next launch. The System page shows the
   path and has a **Save settings now** button. Environment variables still
   override the file for that run, and are written back into it if any setting is
   changed during that run. Each key is one row of `kSettingKeys` in
-  `platform/debug_ui/settings.inc`, which both reads and writes it, with two sample
+  `platform/debug_ui/settings.cpp`, which both reads and writes it, with two sample
   values; ctest `port_settings_roundtrip` (`metroid_prime_port
   --settings-selftest`) checks that every sampled key reads back as written and
-  that the whole file survives being read back. A new setting is a new row.
+  that the whole file survives being read back. A new setting is a new row (a
+  plain on/off one is `BoolKey< &variable >("key")`), and a mention of its key
+  in this file: ctest `port_settings_index` fails on a key not written here as
+  `` `key` `` or `` `key=...` ``.
 - F1 > System > Settings > **Reset configuration...** puts every port setting and
   control mapping back to its default: after a confirmation it saves the current
   settings, moves `port_settings.ini`, `controls.toml`, `imgui.ini`,
@@ -251,6 +260,10 @@
 - Swap the Scan and X-Ray visor buttons (Controls > Options, persisted as
   `swap_scan_xray`, off by default): each visor takes the other's D-pad
   direction, as in Remastered (D-pad right Scan, left X-Ray).
+- Button glyphs (Controls > Options, persisted as `prompt_glyphs`: `auto`, the
+  default, `xbox`, `playstation`, `switch`, `gamecube` or `keyboard`): which
+  buttons the game's prompts and tutorials show. Auto follows the keyboard,
+  controller or touch layout last used; `gamecube` shows the game's own art.
 - Fast Morph (Controls > Options and pause Options > Controller, persisted as
   `fast_morph`, off by default): morph ball transitions in the style of Metroid
   Prime 4. Morphing and unmorphing each take 0.2 s instead of 1 s; both
@@ -431,6 +444,12 @@
   On Windows this replaces asking for OpenGL ES: Dawn's Windows build has no GLES
   backend. Elsewhere the setting is ignored and Android's choice stays `opengles` /
   `MP_OPENGLES`.
+- Vulkan driver (Android, Video > Compatibility, persisted as `gpu_driver`: an
+  installed driver's id, empty for the phone's own, the default): a custom Vulkan
+  driver such as Mesa Turnip, installed from a driver zip with "Install driver
+  (.zip)...". Takes effect at the next start, and a start that crashes with it
+  goes back to the system driver. `MP_GPU_DRIVER=<id>` overrides it for one run.
+  Details in `NATIVE_PORT.md`, "Custom Vulkan drivers".
 - Adreno shader fix (Video > Compatibility, persisted as `storage_clamp`: -1 Auto,
   the default, 0 Off, 1 On): reads GPU buffers with a clamp instead of the
   bounds-check branch some Adreno Vulkan drivers miscompile (the world draws
@@ -463,6 +482,11 @@
     instead. The setting is left as it was, and so is the crash marker: a run on the
     override neither trips it nor clears it. After a start clears them, the marker
     stays until a start reaches frame 60, so repeated crashes keep them off.
+- Show shader compilation and Show F1 hint at launch (Video > Quality, persisted
+  as `show_shader_compilation` and `show_menu_hint`, both on by default): a small
+  progress bar while the shader cache compiles at startup (draws whose shader
+  isn't ready are skipped meanwhile), and a note in the top left corner for the
+  first seconds of each launch saying how to open the overlay.
 - HUD scale (Video > Display and pause Options > Display, persisted as `hud_scale`,
   50-100 percent, default 100): shrinks the combat HUD, radar, beam and visor
   menus and the minimap toward the screen centre, each frame as a whole so the
@@ -654,8 +678,28 @@
   current logo with its 0.5 s fade out; Off goes straight to the opening
   (which A or Start already skips to the title). Read at launch. The quick
   resume prompt takes A and Start first while it is up.
-- F1 > Debug > Audio holds the audio switches and the MusyX voice list (collapsed), and F1 > Debug > Cheats holds the
-  cheats: health, items, ammo, area and world teleport. The cheats stay hidden
+- Language (F1 > Game > Language, persisted as `text_language`, empty for
+  English, the default; `MP_LANGUAGE=<code>` for one run): the language of the
+  game's text, by its code (`EUFR`, `USFR`, `EUSP`, `USSP`, `EUGE`, `EUIT`,
+  `EUDU`). A USA disc has only English; a PAL disc adds French, German, Spanish
+  and Italian, and the Remastered import adds its languages (its text wins).
+  Text missing in a language stays English (`MODS.md`).
+- Settings other pages keep, described with them: F1 > Mods' "Load mods"
+  (`mods`, on by default) and per-mod boxes (`mods_disabled`, the names left
+  out, `/`-separated), read at startup (`MODS.md`); the Remastered import's "What
+  to import" (`remastered_skip`: the parts left out, comma-separated from
+  `geometry`, `effects`, `hud`, `text`, `movies` and `gallery`; `MODS.md`); the
+  Randomizer page's options (`rando_settings`, one line of JSON;
+  `RANDOMIZER.md`); and Archipelago's "Staggered suit damage" (`ap_suit_damage`:
+  0 Default, 1 Progressive, the default, 2 Additive), set by hand to match the
+  seed's YAML because the server doesn't send it (`ARCHIPELAGO.md`).
+- F1 > Debug > Audio holds the audio switches, "Streamed audio (music/movies)"
+  (`ai_audio`, on by default; `MP_DISABLE_AI_AUDIO=1` starts with it off) and
+  "MusyX audio (effects/streams)" (`musyx_audio`, on by default), and the MusyX
+  voice list (collapsed), whose mutes are kept as `voices_muted` (the muted
+  sample ids, comma-separated; no line when none is muted).
+- F1 > Debug > Cheats holds the cheats: health, items, ammo, area and world
+  teleport. The cheats stay hidden
   until Show cheats is ticked (`cheats`, off by default). Invulnerable
   (`invulnerable`, off by default) makes Samus take no damage; it stays on
   across runs until unticked, and `MP_GODMODE=<0|1>` overrides it for one run (see below).
@@ -1083,6 +1127,14 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   first-person gameplay. Needs a smoke build (`--build`, default
   `build/fm-smoke`) and `MP_ISO` or `--iso`. Do not use `MP_SMOKE_WORLD` for
   this: it starts a new game and only warps once the Frigate intro has played.
+- F1 > System > Overlay: "Overlay as a floating window" (desktop,
+  `overlay_windowed`, off by default) draws the overlay as the old floating
+  tabbed window instead of the full-screen page layout. "Menu theme" (`ui_theme`:
+  `auto`, the default, `prime`, `remastered` or `plain`) is its look: Auto uses
+  the Remastered style while the Remastered import is loaded and the Metroid
+  Prime pause-screen style otherwise; Plain is stock Dear ImGui. "Menu sounds"
+  (`ui_sounds`, on by default) plays the game's own menu sounds for opening,
+  choosing and moving through the overlay; none with the Plain theme.
 - `MP_TOUCH_UI=1`: force the page layout for the debug overlay even when
   System > Overlay > "Overlay as a floating window" is set. The page layout is the default
   everywhere (the only one on Android): a full-screen window inside the safe
@@ -1093,7 +1145,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   60 is console-accurate; higher values step the game logic at the display rate
   instead of interpolating the camera. `MP_SIM_ADAPTIVE=1` instead takes one
   step per frame with `dt` = the measured frame time (clamped 30–480 Hz), so a
-  variable frame rate is matched exactly. Both are also settable from F1 > Video > Frame rate and persisted. See `docs/HIGH_FPS_AUDIT.md` for what still
+  variable frame rate is matched exactly. Both are also settable from F1 > Video > Frame rate and persisted (`sim_rate`,
+  `sim_adaptive`). See `docs/HIGH_FPS_AUDIT.md` for what still
   assumes 60 Hz.
 
 The simulation uses a fixed-step accumulator (60 Hz by default) independently of
@@ -1148,15 +1201,18 @@ the flamethrower still step at 60 Hz.
 
 ## Diagnostics and test drivers
 
-For development only; none is saved. A variable marked "set" takes effect with
-any value, even `0`.
+For development only; none is saved. The on/off variables follow the rule above
+(`platform/include/port_env.h`): unset leaves the default, and empty, `0`,
+`false`, `off` or `no` mean off. Aurora, which cannot include the port's
+headers, applies the same rule to its own on/off variables (`MP_LOG_COPY_TEX`,
+`MP_LOG_TEX_INVALID`, and its half of `MP_ACTOR_SHADOW_DEBUG`).
 
 - `MP_WATCHDOG=0`: no stall watchdog. On by default: with no frame for 5, 15, 30
   and 60 s it logs where the main and render threads are, the main thread's stack
   at 5 and 30 s, and on Android a logcat dump. `MP_WATCHDOG_TEST_STALL=<frame>`
   sleeps 8 s on that frame and `MP_WATCHDOG_TEST_THROW=<frame>` throws an exception
   there, to test it and the crash report.
-- `MP_HEAP_CHECK=1` (not empty, not starting with `0`): deep checks of the game
+- `MP_HEAP_CHECK=1`: deep checks of the game
   heap's block links on every normal-heap free and of each frame's delayed deletions (queued
   twice, freed or reused before the flush); a fault logs `HEAP CHECK:` lines and aborts.
 - `MP_PIPELINE_SEED=0`: start from an empty pipeline cache instead of the shipped
@@ -1167,26 +1223,30 @@ any value, even `0`.
 - `MP_SKIN_LEGACY=1`: skin with the retail locked-cache path; `MP_SKIN_VERIFY=1`
   runs both paths and reports any difference; `MP_SKIN_STATS=1` logs skinning time
   every 5 s. `MP_SKIN_THREAD_MIN=<vertices>` (default 20000): models at least
-  that big are skinned across threads. (`1` here means not empty and not starting with `0`.)
-- `MP_LOG_HUD` (set): log HUD models and frames that are not loaded, HUD state
+  that big are skinned across threads.
+- `MP_LOG_HUD=1`: log HUD models and frames that are not loaded, HUD state
   transitions and visor/HUD visibility changes to stderr.
-- `MP_STREAM_TRACE` (set): per-chunk streamed-music refill tracing (`mpstream:`;
+- `MP_STREAM_TRACE=1`: per-chunk streamed-music refill tracing (`mpstream:`;
   logcat on Android); starts, stops and stale completions are always logged.
-- `MP_ELC2_LOG` (set): log Remastered electric effects (ELC2) as they are made,
+- `MP_ELC2_LOG=1`: log Remastered electric effects (ELC2) as they are made,
   and their bolt count every 30 frames.
-- `MP_ACTOR_SHADOW_DEBUG` (set): every 120 frames, log each projected actor
+- `MP_ACTOR_SHADOW_DEBUG=1`: every 120 frames, log each projected actor
   shadow's opacity, fade and map and receiver boxes.
 - `MP_SHADOW_ACTOR_CHECK=1`: log the first off-screen actor drawn into the sun
   shadow, and every 300 frames how many were eligible and drawn.
-- `MP_VISORMESH_LOG` (set): every 60 frames, log how many surfaces the visor and
+- `MP_VISORMESH_LOG=1`: every 60 frames, log how many surfaces the visor and
   shadow bits skipped.
+- `MP_SHADOW_SIZE=<256-8192>`: the sun shadow map's size in texels (1024 by
+  default; a value outside the range keeps the default).
+- `MP_LOG_COPY_TEX=1`: log each new texture an EFB copy makes
+  (`[copytex]`), with its size, format and how many are cached.
 - `MP_ROOMENV_TIMING=1`: log where a `.roomenv` load's time goes.
   `MP_ROOM_ENV_EXPOSURE_LOG=1`: log the room exposure state (area, hint values,
   EV, target) each time it is worked out.
 - Remastered import: `MP_REMASTERED_REUSE=0` makes every stage again instead of
   reusing the previous import's unchanged ones (`textures`: only the converted
   textures are reused); `MP_REMASTERED_JOINTS=1` logs the models' skin matching
-  (each joint's vote and the bones it got) to stderr; `MP_REMASTERED_MISS` (set)
+  (each joint's vote and the bones it got) to stderr; `MP_REMASTERED_MISS=1`
   lists each room's untraced script connections by kind in the import log.
 - `MP_RANDO_SWEEP_LAYERS=1`: with `MP_RANDO_SWEEP`, tour each area once per script
   layer (up to the world's widest area), with only that layer active.

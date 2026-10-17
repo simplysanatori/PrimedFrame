@@ -458,7 +458,7 @@ Remastered's are H.264; the game plays THP, a JPEG per frame, so each is decoded
 once and written again, by default as 1600x900 at 30 frames a second (the disc's
 own rate; the game's decoder does not keep up with 60 at that size), about
 550 MB for the sixteen. `MP_REMASTERED_MOVIES=1280x720@30` picks another size
-and rate, `MP_REMASTERED_MOVIES=0` leaves them out. A movie of any size is
+and rate, `MP_REMASTERED_MOVIES=0` (or `false`, `off`, `no`) leaves them out. A movie of any size is
 fitted to the view with its shape kept, so in 4:3 these have bars above and
 below.
 

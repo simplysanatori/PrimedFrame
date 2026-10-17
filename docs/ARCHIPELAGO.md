@@ -1,9 +1,10 @@
 # Archipelago client
 
 The port can join an Archipelago multiworld directly: a native client in
-`platform/port_apclient.cpp` speaks the AP protocol over a WebSocket and hands
-items to the player state, and collected pickups are reported back as location
-checks. All of it is opt-in; with no configuration the port is unaffected.
+`platform/port_apclient.cpp` (its socket thread in
+`platform/port_apclient_worker.cpp`) speaks the AP protocol over a WebSocket and
+hands items to the player state, and collected pickups are reported back as
+location checks. All of it is opt-in; with no configuration the port is unaffected.
 
 Seeds come from Archipelago's Metroid Prime world, maintained at
 `github.com/UltiNaruto/MetroidAPrime` (a fork of `Electro1512/MetroidAPrime`,
@@ -225,7 +226,7 @@ back to `/system/etc/security/cacerts`; the first directory with a certificate
 wins) and fails loudly, naming every directory tried, when none exist.
 
 Both halves are proven on the Android emulator; the recipe and the expected log
-lines are in [ANDROID_BUILD_PROBE.md](ANDROID_BUILD_PROBE.md#wss-on-android-proven-end-to-end).
+lines are in [ANDROID.md](ANDROID.md#wss-on-android-proven-end-to-end).
 
 ## Configuration
 
