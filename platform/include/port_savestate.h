@@ -142,6 +142,14 @@ RoomAreaRestore DecideAreaRestore(const RoomState& room, int32_t area, const uin
 // One line for the log, e.g. "the room script changed".
 const char* RoomAreaRestoreReason(RoomAreaRestore decision);
 
+// The order the saved platforms of a room are put back in. A platform carries its
+// slaves (effects, props, other platforms) by the distance it moves, so each one is
+// restored after every platform that carries it: the parent drags the child, then
+// the child's own saved pose wins. parents[i] lists the indices that carry platform
+// i. False, with `order` empty, for a cycle, which no room script builds.
+bool PlatformRestoreOrder(const std::vector< std::vector< size_t > >& parents,
+                          std::vector< size_t >& order);
+
 // The fixed header ahead of the game-state blob. Pure, for the unit test.
 struct Header {
   uint32_t worldId = 0;

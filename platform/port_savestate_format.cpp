@@ -400,6 +400,34 @@ RoomAreaRestore DecideAreaRestore(const RoomState& room, int32_t area, const uin
                                                          : RoomAreaRestore::kSkipChanged;
 }
 
+bool PlatformRestoreOrder(const std::vector< std::vector< size_t > >& parents,
+                          std::vector< size_t >& order) {
+  order.clear();
+  // 0 unvisited, 1 on the current path, 2 placed.
+  std::vector< uint8_t > mark(parents.size(), 0);
+  const auto visit = [&](const auto& self, size_t i) -> bool {
+    if (mark[i] == 2)
+      return true;
+    if (mark[i] == 1)
+      return false;
+    mark[i] = 1;
+    for (size_t parent : parents[i]) {
+      if (parent >= parents.size() || !self(self, parent))
+        return false;
+    }
+    mark[i] = 2;
+    order.push_back(i);
+    return true;
+  };
+  for (size_t i = 0; i < parents.size(); ++i) {
+    if (!visit(visit, i)) {
+      order.clear();
+      return false;
+    }
+  }
+  return true;
+}
+
 const char* RoomAreaRestoreReason(RoomAreaRestore decision) {
   switch (decision) {
   case RoomAreaRestore::kSkipChanged:

@@ -1,6 +1,7 @@
 #include "port_savestate.h"
 #include "port_test.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -611,6 +612,27 @@ int main() {
     const RoomObject& got = out.roomState.objects[0];
     REQUIRE(got.active && got.blocks.size() == 64);
     REQUIRE(got.blocks.back().tag == 63 && got.blocks.back().data == std::string(1, '\x3f'));
+  }
+
+  // Saved platforms are restored after every platform that carries them, whatever
+  // order the snapshot lists them in, and a cycle is refused.
+  {
+    using PortSaveState::PlatformRestoreOrder;
+    const auto before = [](const std::vector< size_t >& order, size_t a, size_t b) {
+      return std::find(order.begin(), order.end(), a) < std::find(order.begin(), order.end(), b);
+    };
+    std::vector< size_t > order;
+    REQUIRE(PlatformRestoreOrder({}, order) && order.empty());
+    // 2 carries 0, 0 carries 1, 3 is alone.
+    REQUIRE(PlatformRestoreOrder({{2}, {0}, {}, {}}, order));
+    REQUIRE(order.size() == 4);
+    REQUIRE(before(order, 2, 0) && before(order, 0, 1));
+    // Two parents of one child.
+    REQUIRE(PlatformRestoreOrder({{1, 2}, {}, {}}, order));
+    REQUIRE(order.size() == 3 && before(order, 1, 0) && before(order, 2, 0));
+    REQUIRE(!PlatformRestoreOrder({{1}, {2}, {0}}, order) && order.empty());
+    REQUIRE(!PlatformRestoreOrder({{0}}, order) && order.empty());
+    REQUIRE(!PlatformRestoreOrder({{5}}, order) && order.empty());
   }
 
   std::puts("savestate tests passed");

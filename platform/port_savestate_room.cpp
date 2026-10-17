@@ -83,6 +83,20 @@ struct PortRoomState {
     p.x25c_currentSpeed = speed;
     p.x260_moveDelay = delay;
   }
+  // Puts a platform at its saved pose and carries its slaves with it, by the path
+  // its own Think moves them (slaves keep only their offset from the room load, so
+  // a bare SetTransform leaves the flame jets of a piston where the room loaded
+  // them). A slave with a saved pose of its own gets it after this.
+  static void RestorePlatformPose(CStateManager& mgr, CScriptPlatform& p, const CTransform4f& xf) {
+    const CVector3f delta = xf.GetTranslation() - p.GetTranslation();
+    p.SetTransform(xf);
+    CScriptPlatform::TMovedList moved;
+    moved.push_back(p.GetUniqueId().Value());
+    p.DragSlaves(mgr, moved, delta);
+    // A delta PreThink worked out from the pose before this one would move the
+    // slaves again on the next Think.
+    p.x270_dragDelta = CVector3f::Zero();
+  }
 };
 
 namespace PortSaveState {
@@ -307,6 +321,47 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj) {
   }
 }
 
+// The saved platform poses of the areas applied now, each carrying its slaves,
+// parents ahead of the platforms they carry. ApplyObject then sets the same pose
+// again (a no-op) and the absolute pose of any saved slave.
+void RestorePlatforms(CStateManager& mgr, const RoomState& room, const std::set< int >& now) {
+  struct Saved {
+    CScriptPlatform* platform;
+    CTransform4f xf;
+  };
+  std::vector< Saved > saved;
+  for (const RoomObject& obj : room.objects) {
+    if (now.count(TEditorId(obj.editorId).AreaNum()) == 0)
+      continue;
+    const RoomBlock* b = FindBlock(obj, kTagTransform);
+    if (b == nullptr)
+      continue;
+    CEntity* ent = mgr.ObjectById(mgr.GetIdForScript(TEditorId(obj.editorId)));
+    CScriptPlatform* platform = ent != nullptr ? TCastToPtr< CScriptPlatform >(ent) : nullptr;
+    if (platform == nullptr || platform->IsInGraveyard())
+      continue;
+    BlockReader r(b->data);
+    Saved s = {platform, CTransform4f::Identity()};
+    if (GetTransform(r, s.xf))
+      saved.push_back(s);
+  }
+  std::vector< std::vector< size_t > > parents(saved.size());
+  for (size_t child = 0; child < saved.size(); ++child) {
+    for (size_t parent = 0; parent < saved.size(); ++parent) {
+      if (parent != child && saved[parent].platform->IsSlave(saved[child].platform->GetUniqueId()))
+        parents[child].push_back(parent);
+    }
+  }
+  std::vector< size_t > order;
+  if (!PlatformRestoreOrder(parents, order)) {
+    // Each platform still gets its saved pose from ApplyObject, without its slaves.
+    PortLog::Write("[savestate] platforms carry each other in a cycle; their slaves stay as loaded\n");
+    return;
+  }
+  for (size_t i : order)
+    PortRoomState::RestorePlatformPose(mgr, *saved[i].platform, saved[i].xf);
+}
+
 } // namespace
 
 void CaptureRoomState(CStateManager& mgr, RoomState& out) {
@@ -387,6 +442,7 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
     mgr.DeleteObjectRequest(uid);
     ++stats.removed;
   }
+  RestorePlatforms(mgr, room, now);
   for (const RoomObject& obj : room.objects) {
     if (now.count(TEditorId(obj.editorId).AreaNum()) == 0)
       continue;
