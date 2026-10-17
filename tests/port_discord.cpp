@@ -133,6 +133,33 @@ int main() {
     REQUIRE(value.Find("args")->Find("activity") == nullptr);
   }
 
+  // Golden payloads, byte for byte as the hand-assembled writer made them
+  // before port::JsonWriter replaced it.
+  {
+    REQUIRE(HandshakePayload("12\"34") == R"({"v":1,"client_id":"12\"34"})");
+    Presence p;
+    p.details = "Tallon \"Overworld\"";
+    REQUIRE(ActivityPayload(42, p, "n1") ==
+            R"({"cmd":"SET_ACTIVITY","args":{"pid":42,"activity":{"details":"Tallon \"Overworld\"",)"
+            R"("assets":{"large_image":"logo","large_text":"Metroid Prime native port"}}},"nonce":"n1"})");
+    p.state = "x";
+    p.start = 1790000000;
+    p.image = "world_tallon";
+    p.hover = "Landing Site\n";
+    REQUIRE(ActivityPayload(-1, p, "n\\2") ==
+            R"({"cmd":"SET_ACTIVITY","args":{"pid":-1,"activity":{"details":"Tallon \"Overworld\"",)"
+            R"("state":"x ","timestamps":{"start":1790000000},"assets":{"large_image":"world_tallon",)"
+            R"("large_text":"Landing Site\n","small_image":"logo","small_text":"Metroid Prime native port"}}},)"
+            R"("nonce":"n\\2"})");
+    p.hover.clear();
+    REQUIRE(ActivityPayload(7, p, "") ==
+            R"({"cmd":"SET_ACTIVITY","args":{"pid":7,"activity":{"details":"Tallon \"Overworld\"",)"
+            R"("state":"x ","timestamps":{"start":1790000000},"assets":{"large_image":"world_tallon",)"
+            R"("large_text":"Metroid Prime native port","small_image":"logo",)"
+            R"("small_text":"Metroid Prime native port"}}},"nonce":""})");
+    REQUIRE(ClearPayload(9, "n3") == R"({"cmd":"SET_ACTIVITY","args":{"pid":9},"nonce":"n3"})");
+  }
+
   // Socket search order.
 #if !defined(_WIN32)
   {
