@@ -58,6 +58,7 @@
 {"Controls", "Controller settings", "Sticks and triggers", "R click point", "trigger right r activation point"},
 {"Controls", "Controller settings", "Sticks and triggers", "Reset sticks and triggers", "default deadzone reset"},
 #if defined(__ANDROID__)
+{"Controls", "Touch & gyro", "Touch controls", "On-screen controls", "touch overlay hide disable off menu start pad buttons"},
 {"Controls", "Touch & gyro", "Touch controls", "Coloured buttons", "colour color gamecube pad touch buttons"},
 {"Controls", "Touch & gyro", "Touch controls", "Button descriptions", "labels text touch buttons help"},
 {"Controls", "Touch & gyro", "Touch controls", "Turbo fire button", "turbo rapid fire touch button"},
