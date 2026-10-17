@@ -639,6 +639,7 @@ void CmdHelp() {
   Out("hudscale <50..100>         HUD scale in percent, as the Options row does");
   Out("scanspread <0..100>        how far the widescreen HUD moves the scan panels out");
   Out("crosshair <25..100>        mouse/twin-stick crosshair size in percent");
+  Out("hudopacity <xray|thermal|scan|energy> <visor|0..100>  that HUD's opacity, or Visor Opacity's");
   Out("helmet <0|1>, visorfx <0|1> show (1) or hide (0) the helmet and visor effects");
   Out("interp [actor|pose|particle|all <0|1>]   frame interpolation settings (F1 Video > Frame rate)");
   Out("present <0..1|cycle|tick|off> force the presentation factor (also MP_PRESENT_T);");
@@ -2351,6 +2352,24 @@ void RunFrame() {
       return Finish("usage: scanspread <0..100>");
     }
     PortDebug::SetScanSpread(value);
+    Finish();
+  } else if (name == "hudopacity") {
+    static const char* const kParts[PortDebug::kHudOpacityPartCount] = {"xray", "thermal", "scan", "energy"};
+    int part = -1;
+    for (int i = 0; i < PortDebug::kHudOpacityPartCount; ++i) {
+      if (sCmd.args.size() > 1 && sCmd.args[1] == kParts[i]) {
+        part = i;
+      }
+    }
+    const std::string value = sCmd.args.size() > 2 ? sCmd.args[2] : "";
+    const bool numeric = !value.empty() && value.find_first_not_of("0123456789") == std::string::npos;
+    const int percent = value == "visor" ? PortDebug::kHudOpacityVisor : std::atoi(value.c_str());
+    if (part < 0 || (value != "visor" && !numeric) ||
+        (percent != PortDebug::kHudOpacityVisor &&
+         (percent < PortDebug::kHudOpacityMin || percent > PortDebug::kHudOpacityMax))) {
+      return Finish("usage: hudopacity <xray|thermal|scan|energy> <visor|0..100>");
+    }
+    PortDebug::SetHudOpacity(static_cast< PortDebug::HudOpacityPart >(part), percent);
     Finish();
   } else if (name == "crosshair") {
     const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : 0;

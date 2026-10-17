@@ -474,6 +474,16 @@
   near the centre, clear of a phone's touch controls; the rest of the HUD still
   spreads. No effect at 4:3, without the widescreen HUD, or under Original
   experience. Console: `scanspread <0..100>`.
+- Per-visor HUD opacity (Video > Display, issue #144, persisted as `hud_opacity_xray`,
+  `hud_opacity_thermal`, `hud_opacity_scan` and `hud_opacity_energy`, each `visor` or 0-100
+  percent): the game's Visor Opacity is one value for every visor. With a percent instead of
+  `visor` (the default), the X-Ray, Thermal or Scan HUD uses that, and so do the visor and beam
+  menus and the minimap while that visor is on; the Combat and Morph Ball HUDs keep Visor
+  Opacity. The energy readout (bar, tanks, digits, low-energy warning) is drawn at full strength
+  whatever Visor Opacity is, so `hud_opacity_energy` defaults to 100; `visor` makes it follow the
+  opacity of the HUD it is on. The ENERGY label and the frame around the readout are part of the
+  visor's HUD and follow that visor's opacity instead. In F1 the tick box beside each slider is `visor`. Original
+  experience ignores all four. Console: `hudopacity <xray|thermal|scan|energy> <visor|0..100>`.
 - Crosshair opacity and colour (Video > Display, persisted as `crosshair_opacity`,
   0-100 percent, default 100, and `crosshair_color`, `RRGGBB` or empty for the
   game's own colour): the centre crosshair of free aim, mouse aim and twin stick.

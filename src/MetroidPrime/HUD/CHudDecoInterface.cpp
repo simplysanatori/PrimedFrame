@@ -186,8 +186,13 @@ CHudDecoInterfaceXRay::CHudDecoInterfaceXRay(CGuiFrame& hud)
 }
 
 void CHudDecoInterfaceXRay::UpdateHudAlpha() {
+#ifdef TARGET_PC
+  xa4_basewidget_pivot->SetColor(
+      CColor::White().WithAlphaOf(gpGameState->GameOptions().GetHudAlpha(kHT_XRay)));
+#else
   xa4_basewidget_pivot->SetColor(
       CColor(uchar(255), uchar(255), uchar(255), uchar(gpGameState->GameOptions().GetHUDAlpha())));
+#endif
 }
 
 void CHudDecoInterfaceXRay::SetIsVisibleDebug(const bool visible) {
@@ -337,8 +342,13 @@ CHudDecoInterfaceScan::CHudDecoInterfaceScan(CGuiFrame& hud)
 }
 
 void CHudDecoInterfaceScan::UpdateHudAlpha() {
+#ifdef TARGET_PC
+  x248_basewidget_pivot->SetColor(
+      CColor::White().WithAlphaOf(gpGameState->GameOptions().GetHudAlpha(kHT_Scan)));
+#else
   x248_basewidget_pivot->SetColor(
       CColor::White().WithAlphaOf(gpGameState->GameOptions().GetHudAlpha()));
+#endif
 }
 
 void CHudDecoInterfaceScan::SetIsVisibleDebug(const bool visible) {
@@ -657,8 +667,13 @@ void CHudDecoInterfaceThermal::SetIsVisibleGame(bool visible) {
 }
 
 void CHudDecoInterfaceThermal::UpdateHudAlpha() {
+#ifdef TARGET_PC
+  x78_basewidget_pivot->SetColor(
+      CColor::White().WithAlphaOf(gpGameState->GameOptions().GetHudAlpha(kHT_Thermal)));
+#else
   x78_basewidget_pivot->SetColor(
       CColor(uchar(255), uchar(255), uchar(255), uchar(gpGameState->GameOptions().GetHUDAlpha())));
+#endif
 }
 
 void CHudDecoInterfaceThermal::UpdateVisibility() {}

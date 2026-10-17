@@ -217,6 +217,16 @@ const int kScanSpreadMin = 0;
 const int kScanSpreadMax = 100;
 int ScanSpread();
 void SetScanSpread(int percent);
+// HUD opacity per visor (issue #144), in percent, or kHudOpacityVisor for the game's Visor
+// Opacity. The X-Ray, Thermal and Scan HUDs default to Visor Opacity. The energy readout
+// defaults to 100, as in the game, where Visor Opacity never reaches it; set to
+// kHudOpacityVisor it follows the opacity of the HUD it is on. Stock under Original experience.
+enum HudOpacityPart { kHudOpacityXRay, kHudOpacityThermal, kHudOpacityScan, kHudOpacityEnergy, kHudOpacityPartCount };
+const int kHudOpacityVisor = -1;
+const int kHudOpacityMin = 0;
+const int kHudOpacityMax = 100;
+int HudOpacity(HudOpacityPart part);
+void SetHudOpacity(HudOpacityPart part, int percent);
 // The centre crosshair (free aim, mouse aim, twin stick): opacity in percent,
 // and an optional colour that replaces the game's (false = the game's own).
 const int kCrosshairOpacityMin = 0;
