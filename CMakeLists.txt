@@ -1075,7 +1075,7 @@ if(MP_BUILD_TESTS)
         DEFINITIONS TARGET_PC VERSION=0)
     mp_port_test(port_particle_math_tests
         SOURCES tests/port_particle_math.cpp src/Kyoto/Particles/CParticleGlobals.cpp
-            src/Kyoto/Math/CVector3f.cpp
+            src/Kyoto/Math/CVector3f.cpp src/Kyoto/Math/CTransform4f.cpp
         INCLUDES include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)

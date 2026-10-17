@@ -12,6 +12,7 @@
 #include "Kyoto/Math/CTransform4f.hpp"
 #include "Kyoto/Math/CVector3f.hpp"
 #include "Kyoto/Particles/CParticleGlobals.hpp"
+#include "Kyoto/Particles/PortParticleMath.hpp"
 #include "Kyoto/Particles/IElement.hpp"
 
 #include "aurora/vfx.hpp"
@@ -300,8 +301,10 @@ void CElementGen::PortRenderParticlesVfx() {
   const CTransform4f systemViewCopy(CGraphics::GetViewMatrix()); // the camera transform
   CTransform4f systemModelMatrix(systemViewCopy);
   systemModelMatrix.SetTranslation(CVector3f::Zero());
+  const bool followsEmitter = PortFollowsEmitter();
   const CTransform4f systemCameraCopy(systemModelMatrix.GetQuickInverse() *
                                       x22c_globalOrientation);
+  const CTransform4f cameraRotationInverse(systemModelMatrix.GetQuickInverse());
   systemModelMatrix = CTransform4f::Translate(xe8_globalTranslation) * x10c_globalScaleTransform *
                       systemModelMatrix * x178_localScaleTransform;
   CGraphics::SetModelMatrix(systemModelMatrix);
@@ -321,8 +324,10 @@ void CElementGen::PortRenderParticlesVfx() {
   order.reserve(particleCount);
   for (int i = 0; i < particleCount; ++i) {
     const CParticle& p = x30_particles[i];
-    const CVector3f pos = (p.x4_pos - p.x10_prevPos) * x80_timeDeltaScale + p.x10_prevPos;
-    order.emplace_back(static_cast< short >(i), systemCameraCopy * pos);
+    order.emplace_back(static_cast< short >(i),
+                       PortParticleMath::ParticlePositionForSort(
+                           cameraRotationInverse, systemCameraCopy, followsEmitter, p.x4_pos,
+                           p.x10_prevPos, x80_timeDeltaScale));
   }
   if (x28_loadedGenDesc->x30_28_SORT) {
     std::stable_sort(order.begin(), order.end(),
@@ -406,7 +411,7 @@ void CElementGen::PortRenderParticlesVfx() {
       if (dir.MagSquared() <= kEps) {
         dir = Normalised(p.x4_pos - p.x10_prevPos, CVector3f(0.f, 0.f, 1.f));
       }
-      const CVector3f a = systemCameraCopy.Rotate(dir);
+      const CVector3f a = PortParticleMath::ParticleDirectionInCamera(systemCameraCopy, dir);
       const CVector3f toCam = camFrame - vp;
       CVector3f b = Normalised(CVector3f::Cross(a, toCam), CVector3f::Zero());
       if (b.MagSquared() <= kEps) {

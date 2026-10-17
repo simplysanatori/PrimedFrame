@@ -6,7 +6,14 @@
 
 namespace {
 
-bool Near(float a, float b) { return a > b - 0.0001f && a < b + 0.0001f; }
+bool Near(float a, float b, float epsilon = 0.0001f) {
+  return a > b - epsilon && a < b + epsilon;
+}
+
+bool NearVector(const CVector3f& a, const CVector3f& b, float epsilon = 0.0001f) {
+  return Near(a.GetX(), b.GetX(), epsilon) && Near(a.GetY(), b.GetY(), epsilon) &&
+         Near(a.GetZ(), b.GetZ(), epsilon);
+}
 
 bool Color(const float* out, float r, float g, float b, float a) {
   return Near(out[0], r) && Near(out[1], g) && Near(out[2], b) && Near(out[3], a);
@@ -84,6 +91,67 @@ int main() {
   CHECK_MSG(irndUnit >= 0.f && irndUnit < 1.f &&
                 irndUnit == static_cast<float>(sample >> 8) * (1.f / 16777216.f),
             "IRND real sample is the stable unit hash in [0, 1)");
+
+  // Center/sort positions use the camera rotation inverse only for XFMD3 (which follows the
+  // emitter); the legacy system-camera transform remains the direction transform. These raw
+  // inputs are the held-frame records for 6E63E6B8 / 5ECDEEA2 in
+  // build/s-powercharge-native-20261017/upper-component/live-centers/probe-records.jsonl.
+  {
+    const CTransform4f cameraRotation(
+        1.f, 0.f, 2.82982082e-15f, 0.f,
+        9.31322575e-10f, 0.999898493f, -0.0142413424f, 0.f,
+        1.45490859e-11f, 0.0142413424f, 0.999898493f, 0.f);
+    const CTransform4f cameraRotationInverse(cameraRotation.GetQuickInverse());
+    const CTransform4f globalOrientation(
+        -0.999991f, -0.000940264261f, 0.00414450979f, 0.f,
+        0.00414583506f, -0.00141192845f, 0.999990404f, 0.f,
+        -0.000934403448f, 0.999998569f, 0.00141581392f, 0.f);
+    const CTransform4f systemCameraCopy(cameraRotationInverse * globalOrientation);
+    const CVector3f particle(0.000621676736f, 0.149998531f, 0.000212372004f);
+    const CVector3f previous(0.000621676736f, 0.149998531f, 0.000212372004f);
+    const CVector3f translation(0.00792796165f, 1.28630543f, 0.00187567004f);
+    const CTransform4f model = CTransform4f::Translate(translation) *
+                               CTransform4f::Scale(2.f, 2.f, 2.f) * cameraRotation *
+                               CTransform4f::Identity();
+
+    const CVector3f followFrame = ParticlePositionForSort(
+        cameraRotationInverse, systemCameraCopy, true, particle, previous, 1.f);
+    const CVector3f followWorld = model * followFrame;
+    CHECK_MSG(NearVector(followWorld, CVector3f(0.00917131547f, 1.5863024f, 0.00230041379f),
+                         0.00002f),
+              "XFMD3 center removes the extra Q and matches the captured mesh anchor");
+
+    const CVector3f xfmd2Frame = ParticlePositionForSort(
+        cameraRotationInverse, systemCameraCopy, false, particle, previous, 1.f);
+    const CVector3f xfmd2World = model * xfmd2Frame;
+    CHECK_MSG(NearVector(xfmd2World, CVector3f(0.00640430301f, 1.28631175f, 0.301871687f),
+                         0.00002f),
+              "XFMD2 keeps the original system-camera center path");
+    const CVector3f defaultFrame = ParticlePositionForSort(
+        cameraRotationInverse, systemCameraCopy, false, particle, previous, 1.f);
+    CHECK_MSG(NearVector(defaultFrame, systemCameraCopy * particle),
+              "default XFMD retains the original position transform");
+
+    // The actual position helper interpolates before transforming, and its returned camera-space
+    // Y is the same farthest-first sort key consumed by PortRenderParticlesVfx.
+    const CVector3f interpolated = ParticlePositionForSort(
+        cameraRotationInverse, systemCameraCopy, true, CVector3f(0.f, 0.8f, 0.f),
+        CVector3f(0.f, 0.4f, 0.f), 0.25f);
+    const CVector3f farther = ParticlePositionForSort(
+        cameraRotationInverse, systemCameraCopy, true, CVector3f(0.f, 0.7f, 0.f),
+        CVector3f(0.f, 0.7f, 0.f), 0.25f);
+    CHECK_MSG(Near(interpolated.GetY(), 0.5f, 0.0002f),
+              "XFMD3 sort position uses the current/previous interpolation");
+    CHECK_MSG(farther.GetY() > interpolated.GetY(),
+              "sort ordering uses transformed interpolated positions");
+
+    const CVector3f direction(0.25f, 0.5f, -0.75f);
+    const CVector3f directionFrame = ParticleDirectionInCamera(systemCameraCopy, direction);
+    CHECK_MSG(NearVector(directionFrame, systemCameraCopy.Rotate(direction)),
+              "oriented directions retain systemCameraCopy");
+    CHECK_MSG(!NearVector(directionFrame, cameraRotationInverse.Rotate(direction)),
+              "oriented directions still include global orientation Q");
+  }
 
   // No stops: Remastered returns 0.
   CHECK_MSG(!EvalGradient(inner, 0, 4, false, 1, out) && Color(out, 0.f, 0.f, 0.f, 0.f), "no stops yields zero");
