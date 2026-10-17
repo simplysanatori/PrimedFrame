@@ -359,8 +359,9 @@ void Golden(const std::filesystem::path& testDir, const PortRandoGen::Seed& base
     for (const std::string& packet : outgoing)
       all += (packet.rfind("{\"cmd\":\"LocationScouts\"", 0) == 0 ? std::string("scouts") : packet) + "\n";
     CHECK_GOLDEN(all,
-        "{\"cmd\":\"GetDataPackage\",\"games\":[\"Other \\\"Game\\\"\",\"Metroid Prime\","
-        "\"Zelda\"]}\n{\"cmd\":\"ConnectUpdate\",\"tags\":[\"DeathLink\"]}\nscouts\n"
+        "{\"cmd\":\"GetDataPackage\",\"games\":[\"Metroid Prime\"]}\n"
+        "{\"cmd\":\"GetDataPackage\",\"games\":[\"Other \\\"Game\\\"\",\"Zelda\"]}\n"
+        "{\"cmd\":\"ConnectUpdate\",\"tags\":[\"DeathLink\"]}\nscouts\n"
         "{\"cmd\":\"Get\",\"keys\":[\"_read_hints_2_3\"]}\n{\"cmd\":\"SetNotify\","
         "\"keys\":[\"_read_hints_2_3\"]}\n");
   }

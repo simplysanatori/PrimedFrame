@@ -146,6 +146,11 @@ struct State {
   // below nextItemIndex are skipped on reconnect, so the counts cannot be
   // rebuilt from what the server resends. Absent in older files: all zero.
   std::map< int64_t, int64_t > progressive;
+  // Whether the item ids in `progressive` are the built-in table's own numbering
+  // ("item_ids":"canonical" in the file). Files from before the session
+  // translated the server's ids hold the server's raw ids, which differ from
+  // the built-in ones on the official AP world; see Session::MigrateItemIds.
+  bool canonicalIds = false;
   // The seed's options that decide which checks are in logic ("logic", under
   // their slot_data names), kept so the tracker also works before the server
   // answers. hasLogic is false until a Metroid Prime slot has sent them.
@@ -201,6 +206,13 @@ public:
   using DataPackageNames = std::map< std::string, GameNames >;
   static DataPackageNames ParseDataPackage(const PortJson::Value& packet);
   void MergeDataPackage(DataPackageNames&& names);
+  // A server item id of this game's as the built-in table numbers it.
+  int64_t CanonicalItem(int64_t serverId) const;
+  // Whether `slot` plays this session's game, whose item ids CanonicalItem maps.
+  bool PlaysOwnGame(int64_t slot) const;
+  // Takes a loaded state without the canonical-ids marker over to the built-in
+  // numbering once the server's numbering is known; see the definition.
+  void MigrateItemIds();
 
   // Human-readable notifications for the HUD and overlay, oldest first: item
   // receipts ("Energy Tank from Bob") and PrintJSON text. Drained by whoever
@@ -309,6 +321,9 @@ public:
   // replayed from the start, granting only the items from `heldCount` on and
   // rebuilding the progressive counts from the ones before it.
   void RewindTo(int64_t heldCount);
+  // True once the server's full inventory (ReceivedItems from index 0) has been
+  // processed, so ReceivedCount is complete rather than a partial replay.
+  bool InventoryReceived() const { return mInventoryReceived; }
   // Swaps in another game's progress (a seed's own state file); no item it
   // replays counts as already held.
   void SetState(const State& state) {
@@ -340,6 +355,14 @@ private:
   State mState;
   bool mHandshakeComplete = false;
   bool mDesynced = false;
+  bool mInventoryReceived = false;
+  // Server item id -> the built-in table's id, for the ids of this game's items
+  // that the server numbers differently (empty when the numbering matches or
+  // the names have not arrived). Built from Metroid Prime's DataPackage names.
+  std::map< int64_t, int64_t > mItemIds;
+  // Games a GetDataPackage was sent for on this connection, so the one sent
+  // before Connect is not asked for again from Connected.
+  std::set< std::string > mPackageAsked;
   // Received items below this index are in the loaded game already; see RewindTo.
   int64_t mGrantFrom = 0;
   std::string mSlotDescription;

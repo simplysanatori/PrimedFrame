@@ -246,6 +246,8 @@ void ApplyBuiltinWorld(Runtime& runtime, CStateManager& mgr, CPlayerState& playe
   namespace Prime = MetroidPrime;
   bool unlimitedMissiles = false;
   bool unlimitedPowerBombs = false;
+  // Capacity wanted for missiles and power bombs, or -1 while not known.
+  int ammoTarget[2] = {-1, -1};
   // The disc's values outside a seed's game.
   static const PortApWorld::Layout kNoLayout;
   std::shared_ptr<const PortApWorld::Layout> seedLayout;
@@ -274,6 +276,16 @@ void ApplyBuiltinWorld(Runtime& runtime, CStateManager& mgr, CPlayerState& playe
         runtime.session->ReceivedCount(Prime::kItemBase + Prime::kUnlimitedMissiles) > 0;
     unlimitedPowerBombs =
         runtime.session->ReceivedCount(Prime::kItemBase + Prime::kUnlimitedPowerBombs) > 0;
+    // The capacity the received items add up to, once the whole inventory is in
+    // and nothing is queued for the game. Games that were played against the
+    // official AP world before its item ids were translated never got the
+    // Missile Launcher, and the save's applied index is already past it.
+    if (seedGame && runtime.session->InventoryReceived() && runtime.grants.empty()) {
+      const std::map<int64_t, int64_t>& counts = runtime.session->GetState().progressive;
+      const Protocol::SlotData& options = runtime.session->GetSlotData();
+      ammoTarget[0] = Prime::AmmoCapacity(counts, true, options.requireMissileLauncher);
+      ammoTarget[1] = Prime::AmmoCapacity(counts, false, options.requireMainPowerBomb);
+    }
     if (!runtime.goalWanted && gpGameState->CurrentWorldAssetId() == Prime::kEndOfGameWorld) {
       runtime.goalWanted = true;
       runtime.wake.notify_all();
@@ -284,6 +296,23 @@ void ApplyBuiltinWorld(Runtime& runtime, CStateManager& mgr, CPlayerState& playe
     if (missing > 0)
       player.IncrPickUp(type, missing);
   };
+  // Top-up only: a capacity above the received items' is never lowered.
+  const auto topUpCapacity = [&player](CPlayerState::EItemType type, int target, int limit) {
+    target = std::min(target, limit);
+    const int capacity = player.GetItemCapacity(type);
+    if (target <= capacity)
+      return;
+    const int amountBefore = player.GetItemAmount(type);
+    player.InitializePowerUp(type, target - capacity);
+    player.IncrPickUp(type, target - capacity);
+    PortLog::Write("archipelago: raised %s capacity %d -> %d (amount %d -> %d) to match the received items\n",
+                   PortRandomizer::ItemName(static_cast<int>(type)), capacity, player.GetItemCapacity(type), amountBefore,
+                   player.GetItemAmount(type));
+  };
+  if (ammoTarget[0] >= 0)
+    topUpCapacity(CPlayerState::kIT_Missiles, ammoTarget[0], 999);
+  if (ammoTarget[1] >= 0)
+    topUpCapacity(CPlayerState::kIT_PowerBombs, ammoTarget[1], 99);
   if (unlimitedMissiles)
     topOff(CPlayerState::kIT_Missiles);
   if (unlimitedPowerBombs)

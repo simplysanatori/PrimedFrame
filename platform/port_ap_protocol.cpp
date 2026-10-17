@@ -590,6 +590,8 @@ State LoadStateFile(const std::string& path) {
     const PortJson::Value* room = Member(root, "room");
     if (room != nullptr && room->IsString())
       state.room = room->AsString();
+    const PortJson::Value* itemIds = Member(root, "item_ids");
+    state.canonicalIds = itemIds != nullptr && itemIds->IsString() && itemIds->AsString() == "canonical";
     int64_t number = 0;
     if (IntegerMember(root, "next_item_index", number) && number >= 0)
       state.nextItemIndex = number;
@@ -635,6 +637,8 @@ bool SaveStateFile(const std::string& path, const State& state) {
     if (!state.room.empty())
       json.Key("room").String(state.room);
     json.Key("next_item_index").Number(state.nextItemIndex);
+    if (state.canonicalIds)
+      json.Key("item_ids").String("canonical");
     json.Key("checked_locations").BeginArray();
     for (const int64_t location : state.checkedLocations)
       json.Number(location);
@@ -834,8 +838,53 @@ void Session::MergeDataPackage(DataPackageNames&& names) {
       for (auto& [id, name] : tables.locations)
         found->second.locations[id] = std::move(name);
     }
+    // The official AP world numbers its items from 41 differently than the
+    // built-in table, but the names agree, so the server's ids are translated
+    // by name. Ids the table has no name for stay as they are.
+    const auto own = mGameNames.find(mConfig.game);
+    if (mConfig.builtin && own != mGameNames.end() && !own->second.items.empty()) {
+      mItemIds.clear();
+      for (const auto& [serverId, name] : own->second.items) {
+        int64_t canonical = 0;
+        if (MetroidPrime::CanonicalItemId(name, canonical) && canonical != serverId)
+          mItemIds[serverId] = canonical;
+      }
+      if (!mItemIds.empty())
+        Log("the server's Metroid Prime item ids differ from the built-in table (official AP world): " +
+            std::to_string(mItemIds.size()) + " remapped by name");
+    }
   } catch (...) {
     // An allocation failure keeps the names merged so far.
+  }
+}
+
+int64_t Session::CanonicalItem(int64_t serverId) const {
+  const auto found = mItemIds.find(serverId);
+  return found != mItemIds.end() ? found->second : serverId;
+}
+
+bool Session::PlaysOwnGame(int64_t slot) const {
+  if (mOwnSlot != 0 && slot == mOwnSlot)
+    return true;
+  const auto game = mSlotGames.find(slot);
+  return game != mSlotGames.end() && game->second == mConfig.game;
+}
+
+void Session::MigrateItemIds() {
+  // Without this game's names the server's numbering is unknown: the state
+  // stays unmarked so a later connection can still recount it.
+  if (mState.canonicalIds || !mConfig.builtin || mGameNames.find(mConfig.game) == mGameNames.end())
+    return;
+  mState.canonicalIds = true;
+  // A state from before the ids were translated counted the server's own ids.
+  // When those differ from the built-in ones the counts mean other items (the
+  // official world's Missile Launcher, 41, would read as Unlimited Missiles),
+  // so the replay recounts everything from the next full inventory. The loaded
+  // game already holds what the state said was received, so nothing is granted
+  // twice. A numbering that matches needs no recount.
+  if (!mItemIds.empty() && (mState.nextItemIndex > 0 || !mState.progressive.empty())) {
+    Log("the recorded item counts use the server's item ids, which differ from the built-in ones: recounting");
+    RewindTo(mState.nextItemIndex);
   }
 }
 
@@ -865,11 +914,24 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
         mState.nextItemIndex = 0;
         mState.checkedLocations.clear();
         mState.progressive.clear();
+        mState.canonicalIds = true;
         mState.room.clear();
         mGrantFrom = 0;
         mResetReason = "recorded for seed \"" + mState.seed + "\", server has \"" + mSeedName + "\"";
       }
       mState.seed = mSeedName;
+    }
+    // The server sends ReceivedItems right behind Connected, ahead of any reply
+    // to a request made from Connected, so the names that translate the ids
+    // are asked for here. The client sends this ahead of the Connect packet.
+    mInventoryReceived = false;
+    mPackageAsked.clear();
+    if (mConfig.builtin && mGameNames.find(mConfig.game) == mGameNames.end()) {
+      port::JsonWriter request;
+      request.BeginObject().Key("cmd").String("GetDataPackage").Key("games").BeginArray();
+      request.String(mConfig.game).EndArray().EndObject();
+      outgoing.push_back(request.Take());
+      mPackageAsked.insert(mConfig.game);
     }
   } else if (command == "ConnectionRefused") {
     mHandshakeComplete = false;
@@ -934,14 +996,17 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
           continue;
         mSlotGames[infoSlot] = game->AsString();
         if (std::find(games.begin(), games.end(), game->AsString()) == games.end() &&
-            mGameNames.find(game->AsString()) == mGameNames.end())
+            mGameNames.find(game->AsString()) == mGameNames.end() &&
+            mPackageAsked.find(game->AsString()) == mPackageAsked.end())
           games.push_back(game->AsString());
       }
       if (!games.empty()) {
         port::JsonWriter request;
         request.BeginObject().Key("cmd").String("GetDataPackage").Key("games").BeginArray();
-        for (const std::string& name : games)
+        for (const std::string& name : games) {
           request.String(name);
+          mPackageAsked.insert(name);
+        }
         request.EndArray().EndObject();
         outgoing.push_back(request.Take());
       }
@@ -1073,8 +1138,11 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
         if (ok && !Integer(&entry.AsArray()[3], flags))
           flags = 0;
       }
-      if (ok)
+      if (ok) {
+        if (PlaysOwnGame(player))
+          item = CanonicalItem(item);
         mScouts[location] = ScoutedItem{item, player, flags};
+      }
     }
   } else if (command == "ReceivedItems") {
     int64_t index = 0;
@@ -1083,14 +1151,17 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
     const PortJson::Value* items = Member(packet, "items");
     const PortJson::Value::Elements empty;
     const auto& itemList = items != nullptr && items->IsArray() ? items->AsArray() : empty;
+    MigrateItemIds();
     const int64_t expectedIndex = mState.nextItemIndex;
     Log("received " + std::to_string(itemList.size()) + " item(s) from #" + std::to_string(index) +
         " (next expected #" + std::to_string(expectedIndex) + ", the loaded game holds the first " +
         std::to_string(mGrantFrom) + ")");
     // Nothing processed yet: the server is starting a fresh inventory, so the
     // progressive counts start over and the replay rebuilds them.
-    if (index == 0 && expectedIndex == 0)
+    if (index == 0 && expectedIndex == 0) {
       mState.progressive.clear();
+      mState.canonicalIds = true;
+    }
     // Index 0 is the whole inventory (the reply to Connect or Sync), which
     // closes any gap; the loop below skips what was already processed.
     if (index == 0)
@@ -1118,6 +1189,7 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
       }
       if (itemValue == nullptr || !Integer(itemValue, itemId))
         continue;
+      itemId = CanonicalItem(itemId); // received items are always this game's
       if (position > static_cast<size_t>(std::numeric_limits<int64_t>::max()) ||
           index > std::numeric_limits<int64_t>::max() - static_cast<int64_t>(position))
         continue;
@@ -1237,6 +1309,8 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
         index <= std::numeric_limits<int64_t>::max() - static_cast<int64_t>(itemList.size()))
       endIndex = index + static_cast<int64_t>(itemList.size());
     mState.nextItemIndex = std::max(mState.nextItemIndex, endIndex);
+    if (index == 0)
+      mInventoryReceived = true;
   } else if (command == "PrintJSON") {
     std::string message;
     const PortJson::Value* data = Member(packet, "data");
@@ -1255,7 +1329,7 @@ void Session::HandlePacket(const PortJson::Value& packet, std::vector<std::strin
         if (isId && type == "player_id")
           message += PlayerName(id);
         else if (isId && hasOwner && type == "item_id")
-          message += ItemName(id, owner);
+          message += ItemName(PlaysOwnGame(owner) ? CanonicalItem(id) : id, owner);
         else if (isId && hasOwner && type == "location_id")
           message += LocationName(id, owner);
         else
@@ -1479,6 +1553,12 @@ std::string Session::ItemName(int64_t itemId, int64_t slot) const {
     const auto game = mSlotGames.find(slot);
     const std::string& gameName =
         game != mSlotGames.end() ? game->second : (slot == mOwnSlot ? mConfig.game : std::string());
+    // This game's ids reach here already translated to the built-in numbering.
+    if (gameName == mConfig.game && mConfig.builtin) {
+      const char* name = MetroidPrime::ItemName(itemId);
+      if (name != nullptr)
+        return name;
+    }
     const auto names = mGameNames.find(gameName);
     if (names != mGameNames.end()) {
       const auto name = names->second.items.find(itemId);
@@ -1486,11 +1566,6 @@ std::string Session::ItemName(int64_t itemId, int64_t slot) const {
         return name->second;
     }
     if (gameName == mConfig.game) {
-      if (mConfig.builtin) {
-        const char* name = MetroidPrime::ItemName(itemId);
-        if (name != nullptr)
-          return name;
-      }
       const auto entry = mConfig.items.find(itemId);
       if (entry != mConfig.items.end())
         return ItemDisplay(entry->second, 0);
@@ -1600,6 +1675,8 @@ void Session::ReadHints(const PortJson::Value& hints) {
         !IntegerMember(hint, "finding_player", finder) || !IntegerMember(hint, "location", location) ||
         !IntegerMember(hint, "item", item))
       continue;
+    if (PlaysOwnGame(receiver))
+      item = CanonicalItem(item);
     if (receiver == mOwnSlot && item >= MetroidPrime::kItemBase + MetroidPrime::kArtifactTruth &&
         item <= MetroidPrime::kItemBase + MetroidPrime::kArtifactNewborn)
       mArtifactHints[item] = HintedLocation{location, finder};
@@ -1681,6 +1758,8 @@ void Session::RewindTo(int64_t heldCount) {
       " item(s); the server's next resend grants the rest");
   mState.nextItemIndex = 0;
   mState.progressive.clear();
+  mState.canonicalIds = true; // the replay counts in the built-in numbering
+  mInventoryReceived = false;
   mTracked.clear();
   mGrantFrom = std::max<int64_t>(0, heldCount);
 }
