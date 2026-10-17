@@ -3,6 +3,7 @@
 // port_apclient_internal.h.
 
 #include "port_apclient_internal.h"
+#include "port_json_writer.h"
 
 namespace PortAp {
 namespace ClientDetail {
@@ -175,8 +176,13 @@ std::string BuildRoomClaim(const std::string& key) {
                          static_cast<uint64_t>(std::time(nullptr)));
   char name[17];
   std::snprintf(name, sizeof(name), "%016llx", static_cast<unsigned long long>(random()));
-  return "[{\"cmd\":\"Set\",\"key\":" + port::JsonQuote(key) + ",\"default\":\"" + name +
-         "\",\"want_reply\":true,\"operations\":[{\"operation\":\"default\",\"value\":null}]}]";
+  port::JsonWriter json;
+  json.BeginArray().BeginObject();
+  json.Key("cmd").String("Set").Key("key").String(key).Key("default").String(name);
+  json.Key("want_reply").Bool(true).Key("operations").BeginArray().BeginObject();
+  json.Key("operation").String("default").Key("value").Null();
+  json.EndObject().EndArray().EndObject().EndArray();
+  return json.Take();
 }
 
 // The server named the room (or could not; `room` is empty then). A new room
