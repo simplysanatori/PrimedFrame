@@ -102,6 +102,18 @@ void DrawControlsOptions() {
              "Remastered preset) springs too.");
   }
   EndOriginalLocked(locked);
+
+  // The game's own option, so it is the same switch as the pause menu's and is
+  // saved with the other game options; not locked by Original experience.
+  ImGui::SeparatorText("Rumble");
+  ImGui::BeginDisabled(gpGameState == nullptr);
+  bool rumble = gpGameState != nullptr && gpGameState->GameOptions().GetIsRumbleEnabled();
+  if (ImGui::Checkbox("Rumble", &rumble) && gpGameState != nullptr) {
+    gpGameState->GameOptions().SetIsRumbleEnabled(rumble);
+  }
+  ImGui::EndDisabled();
+  ItemHelp("Controller vibration, the same switch as Rumble in the pause menu's options. A controller "
+           "never rumbles while the keyboard or mouse was the last input used.");
 }
 
 void DrawControlsKeyboardMouse() {

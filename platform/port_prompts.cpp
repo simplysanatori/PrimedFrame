@@ -804,11 +804,12 @@ const char* ActiveDevice() {
 
 void Initialize(const char* textureRoot) {
   const bool embedded = textureRoot == nullptr && !PortEmbedded::Under("textures/bindings/").empty();
+  // Tracked even without generated icons, since the static set and rumble
+  // (KeyboardActive) follow it too.
+  SDL_AddEventWatch(active_input_watch, nullptr);
   if (!embedded && (textureRoot == nullptr || textureRoot[0] == '\0')) {
     return;
   }
-  // Tracked even without generated icons, since the static set follows it too.
-  SDL_AddEventWatch(active_input_watch, nullptr);
   if (embedded) {
     sBindingsDir = "textures/bindings";
     sEmbedded = true;
@@ -863,6 +864,8 @@ void Poll() {
     }
   }
 }
+bool KeyboardActive() { return sActiveInput.load(std::memory_order_relaxed) == ActiveInput::Keyboard; }
+
 void NoteTouchInput(bool xboxLayout) {
   sActiveInput.store(xboxLayout ? ActiveInput::TouchXbox : ActiveInput::TouchGameCube,
                      std::memory_order_relaxed);
