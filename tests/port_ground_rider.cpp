@@ -1,4 +1,5 @@
 #include "port_remastered_ground_rider.h"
+#include "port_remastered_ground_box.h"
 
 // These checks must also run when the enclosing build defines NDEBUG.
 #ifdef NDEBUG
@@ -177,13 +178,17 @@ int main() {
     assert(rider.count == 0);
   }
 
-  // 7. Gate: only an active, tree-collided, unrotated platform is admitted.
+  // 7. Gate: only an active, unrotated platform with a tree or a box is admitted.
   {
     assert(Admit({true, true, true, false}));
     assert(!Admit({false, true, true, false})); // not a platform (an actor, a door)
-    assert(!Admit({true, true, false, false})); // AABox platform
+    assert(!Admit({true, true, false, false})); // neither a tree nor a box
     assert(!Admit({true, true, true, true}));   // rotated this tick
     assert(!Admit({true, false, true, false})); // inactive
+    assert(Admit({true, true, false, false, true}));   // AABox platform
+    assert(!Admit({true, true, false, true, true}));   // AABox, rotated (carry not ported)
+    assert(!Admit({true, false, false, false, true})); // AABox, inactive
+    assert(!Admit({false, true, false, false, true})); // a box actor that is not a platform
   }
 
   // 8. A stale pose stamp (or no live rider) carries nothing.
@@ -313,6 +318,97 @@ int main() {
     carry.ConsumeAfterPass();
     const Vec3 retry = carry.Apply({1.f, 0.f, -.25f});
     assert(retry.z == -.25f);
+  }
+  // 9. Box platforms: the AABox_AABox pair as self/other contact pairs (issue #117, AABX).
+  {
+    namespace G = PortRemasteredGroundBox;
+    namespace M = PortRemasteredCollisionMaterial;
+    const std::uint64_t player =
+        M::Bit(M::List::Solid) | M::Bit(M::List::Player) | M::Bit(M::List::Character);
+    const std::uint64_t platform = M::Bit(M::List::Solid) | M::Bit(M::List::Platform);
+    const auto pairOf = [&](G::Box self, G::Box other) {
+      G::Pair p;
+      p.selfBox = self;
+      p.otherBox = other;
+      p.selfMaterialBits = player;
+      p.otherMaterialBits = platform;
+      return p; // both filters kFT_Always
+    };
+    const std::uint32_t owner = OwnerFromRaw(0x0412);
+    std::vector< W::Contact > out;
+    std::vector< PortCollisionFailsafe::PairedImpact > scratch;
+
+    // Standing 1 deep in the platform's top: one impact, self half first.
+    const G::Pair top = pairOf({{0, 0, 0}, {1, 1, 2}}, {{.2f, .2f, -.5f}, {.8f, .8f, 1}});
+    assert(G::Blocked(top));
+    assert(G::AppendContacts(top, owner, G::kBoxKeyBase + 8, out, scratch) == 1);
+    assert(out.size() == 2);
+    assert(out[0].self && out[0].ownerUid == kTerrainOwner && out[0].D == 1.f && out[0].H == 1.f);
+    assert(!out[1].self && out[1].ownerUid == owner && out[1].D == 1.f);
+    assert(out[0].triangle == G::kBoxKeyBase + 8 && out[1].triangle == out[0].triangle);
+    assert(G::IsBoxKey(out[1].triangle) && !G::IsBoxKey(G::kBoxKeyBase - 1));
+    assert(out[1].normalZ == 1.f && out[1].pointCount == 1 && out[1].points[0].z == 1.f);
+    assert(out[1].minVertical == 1.f && out[1].maxVertical == 1.f && !out[1].hasSecondary);
+    assert(out[0].normalZ == -1.f);
+    // The rider scan takes the platform half.
+    W::Result standing;
+    standing.contacts = out;
+    assert(PickRider(standing, [](std::uint32_t) { return true; }) == owner);
+
+    // Walking into its side: an other half facing the player along -x, with depth.
+    out.clear();
+    const G::Pair side = pairOf({{0, 0, 0}, {1, 1, 2}}, {{.9f, .2f, .5f}, {3, .8f, 1.5f}});
+    assert(G::AppendContacts(side, owner, G::kBoxKeyBase, out, scratch) >= 1);
+    bool wall = false;
+    for (const W::Contact& c : out) {
+      if (!c.self && c.normalX == -1.f && c.normalZ == 0.f && c.D > 0.f) wall = true;
+    }
+    assert(wall);
+
+    // Touching boxes: the boolean blocks, the pair produces nothing.
+    out.clear();
+    const G::Pair touch = pairOf({{0, 0, 0}, {1, 1, 1}}, {{0, 0, 1}, {1, 1, 2}});
+    assert(G::Blocked(touch));
+    assert(G::AppendContacts(touch, owner, G::kBoxKeyBase, out, scratch) == 0 && out.empty());
+
+    // Apart, or the platform's filter excludes the player: neither.
+    const G::Pair apart = pairOf({{0, 0, 0}, {1, 1, 1}}, {{0, 0, 1.5f}, {1, 1, 2}});
+    assert(!G::Blocked(apart));
+    G::Pair excluded = top;
+    excluded.otherFilter = M::MaterialFilter{~std::uint64_t{0}, M::Bit(M::List::Player), 2};
+    assert(!G::Blocked(excluded));
+    assert(G::AppendContacts(excluded, owner, G::kBoxKeyBase, out, scratch) == 0 && out.empty());
+
+    // Near-list order: a slot goes before the first triangle contact at or past its `at`.
+    W::Result tris;
+    for (std::size_t i = 0; i < 3; ++i) {
+      W::Contact self = Owned(kTerrainOwner, true), tri = Owned(kTerrainOwner);
+      self.triangle = tri.triangle = i;
+      tris.contacts.push_back(self);
+      tris.contacts.push_back(tri);
+    }
+    std::vector< G::Slot > slots(3);
+    slots[0].at = 0;
+    slots[1].at = 1;
+    slots[2].at = 3;
+    for (std::size_t s = 0; s < slots.size(); ++s) {
+      W::Contact a = Owned(kTerrainOwner, true), b = Owned(OwnerFromRaw(std::uint16_t(s)));
+      a.triangle = b.triangle = G::kBoxKeyBase + s * G::kBoxKeyStride;
+      slots[s].contacts = {a, b};
+    }
+    G::Merge(tris, slots);
+    const std::size_t want[] = {G::kBoxKeyBase, G::kBoxKeyBase, 0, 0,
+                                G::kBoxKeyBase + 8, G::kBoxKeyBase + 8, 1, 1, 2, 2,
+                                G::kBoxKeyBase + 16, G::kBoxKeyBase + 16};
+    assert(tris.contacts.size() == 12);
+    for (std::size_t i = 0; i < 12; ++i) assert(tris.contacts[i].triangle == want[i]);
+    assert(!G::AnyBlocked(slots) && G::AnyContacts(slots));
+    slots[1].blocked = true;
+    assert(G::AnyBlocked(slots));
+    // No slots: untouched.
+    W::Result same = standing;
+    G::Merge(same, {});
+    assert(same.contacts.size() == standing.contacts.size());
   }
   return 0;
 }

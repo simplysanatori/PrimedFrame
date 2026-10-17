@@ -914,7 +914,7 @@ if(MP_BUILD_TESTS)
     # walk, contact order, rider choice and decay, carry, admission and exactly-once carry.
     add_executable(port_ground_rider_tests tests/port_ground_rider.cpp
         src/Collision/CMaterialFilter.cpp platform/port_remastered_ground_contacts.cpp
-        platform/port_remastered_ground_world.cpp)
+        platform/port_remastered_ground_world.cpp platform/port_collision_failsafe.cpp)
     if(MSVC)
         target_compile_options(port_ground_rider_tests PRIVATE /fp:strict)
     elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

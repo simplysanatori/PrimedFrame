@@ -92,16 +92,22 @@ inline PortRemasteredGroundWorld::Triangle PlatformTriangle(
   return tri;
 }
 
-// Admission of one near-list collidable that overlaps the tick's query region. Slice 1
-// admits only an active CScriptPlatform with a DCLN tree whose orientation did not change
-// this tick; anything else sends the whole tick to the retail grounded mover.
+// Admission of one near-list collidable that overlaps the tick's query region: an active
+// CScriptPlatform with a DCLN tree (slice 1) or a box collidable (AABX, its contacts from
+// AABox_AABox 0xbf61b4, port_remastered_ground_box.h) whose orientation did not change this
+// tick. A box does not turn with its platform (GetTransformedAABox 0xbf6064 is translation
+// only), but PredictMotion's rotation carry is not ported, so a yawing box platform is
+// still refused. Anything else sends the whole tick to the retail grounded mover.
 struct Candidate {
   bool platform = false;
   bool active = false;
   bool hasTree = false;
   bool rotated = false;
+  bool box = false;
 };
-inline bool Admit(const Candidate& c) { return c.platform && c.active && c.hasTree && !c.rotated; }
+inline bool Admit(const Candidate& c) {
+  return c.platform && c.active && (c.hasTree || c.box) && !c.rotated;
+}
 
 // The rider controller (object +0x1220 side, SetRiderController 0xc1631c): set to 2 by a
 // grounded tick that picked a rider, decayed once at the end of every movement tick.
