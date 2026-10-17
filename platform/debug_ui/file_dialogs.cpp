@@ -25,6 +25,7 @@
 
 #if defined(__ANDROID__)
 #include "touch_pad.h"
+#include <unistd.h>
 #include <jni.h>
 #endif
 
