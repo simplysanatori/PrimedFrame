@@ -11,18 +11,10 @@
 
 #include "port_air_mover_contact.h"
 #include "port_remastered_ground_world.h"
+#include "port_test.h"
 
 #include <cmath>
 #include <cstdio>
-
-static int gFailures = 0;
-
-static void Check(bool ok, const char* what) {
-  if (!ok) {
-    ++gFailures;
-    std::printf("FAIL %s\n", what);
-  }
-}
 
 using PortAirMoverContact::Acts;
 using PortAirMoverContact::Vec3;
@@ -35,30 +27,30 @@ static void TestWorkingNormal() {
   const Vec3 secondary{0.f, 1.f, 0.f};
   const Vec3 zero{0.f, 0.f, 0.f};
   const Vec3 chosen = WorkingNormal(primary, true, secondary);
-  Check(chosen.x == secondary.x && chosen.y == secondary.y && chosen.z == secondary.z,
-        "presence selects the secondary");
+  CHECK_MSG(chosen.x == secondary.x && chosen.y == secondary.y && chosen.z == secondary.z,
+            "presence selects the secondary");
   const Vec3 without = WorkingNormal(primary, false, secondary);
-  Check(without.x == primary.x && without.y == primary.y && without.z == primary.z,
-        "absence keeps the primary");
+  CHECK_MSG(without.x == primary.x && without.y == primary.y && without.z == primary.z,
+            "absence keeps the primary");
   const Vec3 degenerate = WorkingNormal(primary, true, zero);
-  Check(degenerate.x == 0.f && degenerate.y == 0.f && degenerate.z == 0.f,
-        "a present zero secondary stays the working normal (no fallback to the primary)");
-  Check(WorkingNormal({0.f, 0.f, -1.f}, true, zero).z == 0.f,
-        "a ceiling primary does not win over a present zero secondary");
+  CHECK_MSG(degenerate.x == 0.f && degenerate.y == 0.f && degenerate.z == 0.f,
+            "a present zero secondary stays the working normal (no fallback to the primary)");
+  CHECK_MSG(WorkingNormal({0.f, 0.f, -1.f}, true, zero).z == 0.f,
+            "a ceiling primary does not win over a present zero secondary");
 }
 
 // (2) w25 only gates the force block: true for a wall pair, false for floor/ceiling pairs.
 static void TestW25() {
-  Check(W25(false, {0.f, 0.f, 1.f}, {0.f, 0.f, 0.f}), "no secondary -> w25 = 1");
-  Check(W25(true, {0.6f, 0.8f, 0.f}, {0.f, 1.f, 0.f}), "two walls -> w25 = 1");
-  Check(!W25(true, {0.f, 0.f, -1.f}, {0.6f, 0.8f, 0.f}), "ceiling primary -> w25 = 0");
-  Check(!W25(true, {0.6f, 0.8f, 0.f}, {0.f, 0.f, -1.f}), "ceiling secondary -> w25 = 0");
-  Check(!W25(true, {0.f, 0.f, 1.f}, {0.6f, 0.8f, 0.f}), "floor primary -> w25 = 0");
-  Check(!W25(true, {0.6f, 0.8f, 0.f}, {0.f, 0.f, 1.f}), "floor secondary -> w25 = 0");
+  CHECK_MSG(W25(false, {0.f, 0.f, 1.f}, {0.f, 0.f, 0.f}), "no secondary -> w25 = 1");
+  CHECK_MSG(W25(true, {0.6f, 0.8f, 0.f}, {0.f, 1.f, 0.f}), "two walls -> w25 = 1");
+  CHECK_MSG(!W25(true, {0.f, 0.f, -1.f}, {0.6f, 0.8f, 0.f}), "ceiling primary -> w25 = 0");
+  CHECK_MSG(!W25(true, {0.6f, 0.8f, 0.f}, {0.f, 0.f, -1.f}), "ceiling secondary -> w25 = 0");
+  CHECK_MSG(!W25(true, {0.f, 0.f, 1.f}, {0.6f, 0.8f, 0.f}), "floor primary -> w25 = 0");
+  CHECK_MSG(!W25(true, {0.6f, 0.8f, 0.f}, {0.f, 0.f, 1.f}), "floor secondary -> w25 = 0");
   // w25 must not touch the normal choice: the secondary is the working normal either way.
   const Vec3 work = WorkingNormal({0.6f, 0.8f, 0.f}, true, {0.f, 0.f, -1.f});
-  Check(work.z == -1.f && !W25(true, {0.6f, 0.8f, 0.f}, {0.f, 0.f, -1.f}),
-        "w25 = 0 does not restore the primary");
+  CHECK_MSG(work.z == -1.f && !W25(true, {0.6f, 0.8f, 0.f}, {0.f, 0.f, -1.f}),
+            "w25 = 0 does not restore the primary");
 }
 
 // (1) the separation gate is evaluated on the working normal: the review's example.
@@ -71,16 +63,16 @@ static void TestSeparationGate() {
   // Primary +X, secondary -Z, motion (+1,0,+1): the native velocity form against the primary is
   // separating (dot = +1 > 0) and would skip the blocking contact; the source's working-normal
   // form is dot = -1 and responds.
-  Check(!Acts(motion, noRider, primary), "primary alone would skip (the native form)");
-  Check(Acts(motion, noRider, work), "the working normal responds (0xf94ff0-0xf95028)");
+  CHECK_MSG(!Acts(motion, noRider, primary), "primary alone would skip (the native form)");
+  CHECK_MSG(Acts(motion, noRider, work), "the working normal responds (0xf94ff0-0xf95028)");
   // The converse: motion along -Z (into the -Z working normal) is separating.
-  Check(!Acts({0.f, 0.f, -1.f}, noRider, work), "separating along the working normal skips");
+  CHECK_MSG(!Acts({0.f, 0.f, -1.f}, noRider, work), "separating along the working normal skips");
   // A zero secondary never separates: dot = 0, so the contact is responded to (the guard is
   // `> 0`). Rejection never changes the bracket's reported time.
-  Check(Acts(motion, noRider, {0.f, 0.f, 0.f}), "zero working normal never separates");
+  CHECK_MSG(Acts(motion, noRider, {0.f, 0.f, 0.f}), "zero working normal never separates");
   // The rider offset is subtracted before the dot (0xf94ff0-0xf95020).
-  Check(!Acts({1.f, 0.f, 0.f}, {2.f, 0.f, 0.f}, {1.f, 0.f, 0.f}) == false,
-        "the rider offset is subtracted (dot -1, so the contact acts)");
+  CHECK_MSG(!Acts({1.f, 0.f, 0.f}, {2.f, 0.f, 0.f}, {1.f, 0.f, 0.f}) == false,
+            "the rider offset is subtracted (dot -1, so the contact acts)");
 }
 
 // (3) the static half is guarded exactly as the native static half is.
@@ -88,39 +80,39 @@ static void TestStaticGuard() {
   const CMaterialFilter excludesStatic =
       CMaterialFilter::MakeExclude(CMaterialList(kMT_NoStaticCollision));
   const CMaterialFilter open = CMaterialFilter::skPassEverything;
-  Check(excludesStatic.GetExcludeList().HasMaterial(kMT_NoStaticCollision),
-        "the exclusion list carries kMT_NoStaticCollision");
-  Check(!(!excludesStatic.GetExcludeList().HasMaterial(kMT_NoStaticCollision)),
-        "excluded static collision must not be queried");
-  Check(!open.GetExcludeList().HasMaterial(kMT_NoStaticCollision),
-        "an open filter queries the static half");
+  CHECK_MSG(excludesStatic.GetExcludeList().HasMaterial(kMT_NoStaticCollision),
+            "the exclusion list carries kMT_NoStaticCollision");
+  CHECK_MSG(!(!excludesStatic.GetExcludeList().HasMaterial(kMT_NoStaticCollision)),
+            "excluded static collision must not be queried");
+  CHECK_MSG(!open.GetExcludeList().HasMaterial(kMT_NoStaticCollision),
+            "an open filter queries the static half");
 }
 
 static void TestTargetAndBracket() {
   // The source applies its selected motion only at exit. Current remains 10,
   // not the accepted-lo position 10.5; target remains the full prediction 12.
   const Vec3 remain = PortAirMoverContact::RemainingDisplacement({12.f,0.f,0.f},{10.f,0.f,0.f});
-  Check(remain.x == 2.f, "F1 gate uses full target minus PRE-STEP current");
-  Check(!Acts(remain,{1.75f,0.f,0.f},{1.f,0.f,0.f}), "F1 rider is displacement, not velocity");
-  Check(Acts({1.5f,0.f,0.f},{1.75f,0.f,0.f},{1.f,0.f,0.f}),
-        "wrong target-minus-accepted-lo would act");
-  Check(Acts({.5f,0.f,0.f},{1.75f,0.f,0.f},{1.f,0.f,0.f}),
-        "wrong accepted-lo-minus-entry would act");
-  Check(!PortAirMoverContact::HasImpacts(0,0), "F2 SAT alone selects hi, not lo");
-  Check(PortAirMoverContact::HasImpacts(1,0), "F2 source impacts select lo without native entries");
-  Check(PortAirMoverContact::HasImpacts(0,1), "F2 actor impact independently selects lo");
+  CHECK_MSG(remain.x == 2.f, "F1 gate uses full target minus PRE-STEP current");
+  CHECK_MSG(!Acts(remain,{1.75f,0.f,0.f},{1.f,0.f,0.f}), "F1 rider is displacement, not velocity");
+  CHECK_MSG(Acts({1.5f,0.f,0.f},{1.75f,0.f,0.f},{1.f,0.f,0.f}),
+            "wrong target-minus-accepted-lo would act");
+  CHECK_MSG(Acts({.5f,0.f,0.f},{1.75f,0.f,0.f},{1.f,0.f,0.f}),
+            "wrong accepted-lo-minus-entry would act");
+  CHECK_MSG(!PortAirMoverContact::HasImpacts(0,0), "F2 SAT alone selects hi, not lo");
+  CHECK_MSG(PortAirMoverContact::HasImpacts(1,0), "F2 source impacts select lo without native entries");
+  CHECK_MSG(PortAirMoverContact::HasImpacts(0,1), "F2 actor impact independently selects lo");
 }
 
 static void TestFlag100Response() {
   using PortAirMoverContact::SkipFlatFloor;
   using PortAirMoverContact::PushDistance;
-  Check(SkipFlatFloor(1.f,1.f,2.f,1.f,false), "ordinary rising flat-floor contact skips");
-  Check(!SkipFlatFloor(1.f,1.f,2.f,1.f,true), "flag100 bypasses rising early-out");
-  Check(SkipFlatFloor(1.f,-1.f,1.f,1.f,false), "ordinary at-plane flat-floor contact skips");
-  Check(!SkipFlatFloor(1.f,-1.f,1.f,1.f,true), "flag100 bypasses at-plane early-out");
-  Check(!SkipFlatFloor(.5f,1.f,2.f,1.f,false), "non-flat normal does not take floor early-out");
-  Check(PushDistance(false) == .0025f, "ordinary push is 0.0025");
-  Check(PushDistance(true) == .025f, "flag100 push is 0.025");
+  CHECK_MSG(SkipFlatFloor(1.f,1.f,2.f,1.f,false), "ordinary rising flat-floor contact skips");
+  CHECK_MSG(!SkipFlatFloor(1.f,1.f,2.f,1.f,true), "flag100 bypasses rising early-out");
+  CHECK_MSG(SkipFlatFloor(1.f,-1.f,1.f,1.f,false), "ordinary at-plane flat-floor contact skips");
+  CHECK_MSG(!SkipFlatFloor(1.f,-1.f,1.f,1.f,true), "flag100 bypasses at-plane early-out");
+  CHECK_MSG(!SkipFlatFloor(.5f,1.f,2.f,1.f,false), "non-flat normal does not take floor early-out");
+  CHECK_MSG(PushDistance(false) == .0025f, "ordinary push is 0.0025");
+  CHECK_MSG(PushDistance(true) == .025f, "flag100 push is 0.025");
 }
 
 static void TestTerrainPredicates() {
@@ -133,16 +125,16 @@ static void TestTerrainPredicates() {
   tri.verts = {{{-.5f,-.5f,1.f},{.5f,-.5f,1.f},{0.f,.5f,1.f}}};
   tri.normal = {0.f,0.f,1.f};
   auto r = W::QueryTerrain(q,&tri,1,true);
-  Check(r.booleanHit, "inclusive SAT counts touching");
-  Check(r.impacts.contacts.empty(), "strict impact clipping does not count touching");
+  CHECK_MSG(r.booleanHit, "inclusive SAT counts touching");
+  CHECK_MSG(r.impacts.contacts.empty(), "strict impact clipping does not count touching");
   tri.verts[0].z = tri.verts[1].z = tri.verts[2].z = .9f;
   r = W::QueryTerrain(q,&tri,1,true);
-  Check(r.booleanHit && r.impacts.contacts.size() == 2, "penetrating triangle supplies both results");
+  CHECK_MSG(r.booleanHit && r.impacts.contacts.size() == 2, "penetrating triangle supplies both results");
   const auto b = W::QueryTerrain(q,&tri,1,false);
-  Check(b.booleanHit && b.impacts.contacts.empty(), "NoPostFilter does not produce impacts");
+  CHECK_MSG(b.booleanHit && b.impacts.contacts.empty(), "NoPostFilter does not produce impacts");
   tri.verts[0].z = tri.verts[1].z = tri.verts[2].z = 1.01f;
   r = W::QueryTerrain(q,&tri,1,true);
-  Check(!r.booleanHit && r.impacts.contacts.empty(), "separated triangle supplies neither result");
+  CHECK_MSG(!r.booleanHit && r.impacts.contacts.empty(), "separated triangle supplies neither result");
 }
 
 static void TestSATReference() {
@@ -180,7 +172,7 @@ static void TestSATReference() {
       if(lo>radius || hi < -radius) expected=false;
     }
     if (G::Intersects(box,t)!=expected) {
-      Check(false,"source SAT agrees with independent 13-axis reference (50,000 cases)");
+      CHECK_MSG(false,"source SAT agrees with independent 13-axis reference (50,000 cases)");
       return;
     }
   }
@@ -195,8 +187,8 @@ int main() {
   TestFlag100Response();
   TestTerrainPredicates();
   TestSATReference();
-  if (gFailures == 0) {
+  if (port_test::Failures() == 0) {
     std::printf("port_air_mover_contact_tests: all passed\n");
   }
-  return gFailures == 0 ? 0 : 1;
+  return PORT_TEST_RESULT();
 }

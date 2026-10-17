@@ -6,6 +6,7 @@
 #include "port_remastered_lzss.h"
 #include "port_remastered_pak.h"
 #include "port_remastered_txtr.h"
+#include "port_test.h"
 
 #include <algorithm>
 #include <array>
@@ -18,14 +19,6 @@
 using namespace PortRemastered;
 
 namespace {
-int sFailures = 0;
-
-void Check(bool condition, const char* what) {
-  if (!condition) {
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++sFailures;
-  }
-}
 
 using Blob = std::vector<uint8_t>;
 
@@ -112,13 +105,13 @@ void TestLzss() {
   for (uint32_t mode = 1; mode <= 3; ++mode) {
     const Blob plain = Sample(4096, mode);
     const Blob packed = LzssCompress(mode, plain);
-    Check(packed.size() < plain.size(), "the sample compresses");
+    CHECK_MSG(packed.size() < plain.size(), "the sample compresses");
     Blob out(plain.size());
-    Check(LzssDecompress(mode, packed.data(), packed.size(), out.data(), out.size()) && out == plain,
-          "LZSS round trip");
+    CHECK_MSG(LzssDecompress(mode, packed.data(), packed.size(), out.data(), out.size()) && out == plain,
+              "LZSS round trip");
     Blob shorter(plain.size() - 1);
-    Check(!LzssDecompress(mode, packed.data(), packed.size(), shorter.data(), shorter.size()),
-          "a size that does not match is refused");
+    CHECK_MSG(!LzssDecompress(mode, packed.data(), packed.size(), shorter.data(), shorter.size()),
+              "a size that does not match is refused");
     for (size_t cut = 0; cut < packed.size(); cut += 7) {
       LzssDecompress(mode, packed.data(), cut, out.data(), out.size());
     }
@@ -126,17 +119,17 @@ void TestLzss() {
   Blob out(16);
   // A reference before anything was written.
   const uint8_t early[] = {0x80, 0x00, 0x01};
-  Check(!LzssDecompress(3, early, sizeof early, out.data(), out.size()), "reference before the start is refused");
+  CHECK_MSG(!LzssDecompress(3, early, sizeof early, out.data(), out.size()), "reference before the start is refused");
   // One literal group of four, then a reference with distance 0.
   const uint8_t zero[] = {0x40, 1, 2, 3, 4, 0x00, 0x00};
-  Check(!LzssDecompress(3, zero, sizeof zero, out.data(), 8), "distance 0 is refused");
+  CHECK_MSG(!LzssDecompress(3, zero, sizeof zero, out.data(), 8), "distance 0 is refused");
   // One literal group, then a run of it: four groups at distance one.
   const uint8_t run[] = {0x40, 7, 8, 9, 10, 0x30, 0x01};
   Blob runOut(20);
-  Check(LzssDecompress(3, run, sizeof run, runOut.data(), runOut.size()) && runOut[16] == 7 && runOut[19] == 10,
-        "overlapping reference repeats a group");
-  Check(!LzssDecompress(0, run, sizeof run, runOut.data(), runOut.size()), "mode 0 is not LZSS");
-  Check(!LzssDecompress(4, run, sizeof run, runOut.data(), runOut.size()), "mode 4 is refused");
+  CHECK_MSG(LzssDecompress(3, run, sizeof run, runOut.data(), runOut.size()) && runOut[16] == 7 && runOut[19] == 10,
+            "overlapping reference repeats a group");
+  CHECK_MSG(!LzssDecompress(0, run, sizeof run, runOut.data(), runOut.size()), "mode 0 is not LZSS");
+  CHECK_MSG(!LzssDecompress(4, run, sizeof run, runOut.data(), runOut.size()), "mode 4 is refused");
 }
 
 // A form header: magic, size, unknown, id, reader version, writer version.
@@ -264,28 +257,28 @@ void TestPakRead() {
   const TestPak test = MakePak();
   Pak pak;
   std::string error;
-  Check(pak.Open(Reader(test.bytes), test.bytes.size(), error), "synthetic pak opens");
-  Check(pak.Assets().size() == 2, "two assets");
+  CHECK_MSG(pak.Open(Reader(test.bytes), test.bytes.size(), error), "synthetic pak opens");
+  CHECK_MSG(pak.Assets().size() == 2, "two assets");
   if (pak.Assets().size() == 2) {
     Blob out;
-    Check(pak.ReadAsset(pak.Assets()[0], out, error) && out.size() > test.stored.size() &&
-              std::equal(test.stored.begin(), test.stored.end(), out.begin()),
-          "stored asset reads back");
-    Check(pak.ReadAsset(pak.Assets()[1], out, error) && out.size() > test.compressed.size() &&
-              std::equal(test.compressed.begin(), test.compressed.end(), out.begin()),
-          "compressed asset reads back");
-    Check(pak.Assets()[1].hasMeta && pak.Assets()[0].names.size() == 1 && pak.Assets()[0].names[0] == "name0",
-          "metadata and names");
+    CHECK_MSG(pak.ReadAsset(pak.Assets()[0], out, error) && out.size() > test.stored.size() &&
+                  std::equal(test.stored.begin(), test.stored.end(), out.begin()),
+              "stored asset reads back");
+    CHECK_MSG(pak.ReadAsset(pak.Assets()[1], out, error) && out.size() > test.compressed.size() &&
+                  std::equal(test.compressed.begin(), test.compressed.end(), out.begin()),
+              "compressed asset reads back");
+    CHECK_MSG(pak.Assets()[1].hasMeta && pak.Assets()[0].names.size() == 1 && pak.Assets()[0].names[0] == "name0",
+              "metadata and names");
   }
 
   // A decompressed size no data could expand to is refused, not allocated.
   Blob huge = test.bytes;
   PutLittle64(huge, test.adirAt + 52 + 36, uint64_t(1) << 31);
   Pak hugePak;
-  Check(hugePak.Open(Reader(huge), huge.size(), error), "huge-size pak still opens");
+  CHECK_MSG(hugePak.Open(Reader(huge), huge.size(), error), "huge-size pak still opens");
   if (hugePak.Assets().size() == 2) {
     Blob out;
-    Check(!hugePak.ReadAsset(hugePak.Assets()[1], out, error), "impossible decompressed size is refused");
+    CHECK_MSG(!hugePak.ReadAsset(hugePak.Assets()[1], out, error), "impossible decompressed size is refused");
   }
 
   // A metadata entry pointing outside its table.
@@ -293,7 +286,7 @@ void TestPakRead() {
   const size_t metaEntryOffset = 32 + 32 + 24 + 4 + 2 * 52 + 24 + 4 + 16;
   badMeta[metaEntryOffset] = 0xF0;
   Pak badMetaPak;
-  Check(!badMetaPak.Open(Reader(badMeta), badMeta.size(), error), "metadata outside its table is refused");
+  CHECK_MSG(!badMetaPak.Open(Reader(badMeta), badMeta.size(), error), "metadata outside its table is refused");
 
   for (size_t cut = 0; cut < test.bytes.size(); ++cut) {
     Exercise(Blob(test.bytes.begin(), test.bytes.begin() + long(cut)));
@@ -326,7 +319,7 @@ void TestTxtrGarbage() {
     }
     DecodeTxtr(broken.data(), broken.size(), image, error);
   }
-  Check(!DecodeTxtr(form.data(), form.size(), image, error), "noise is not a texture");
+  CHECK_MSG(!DecodeTxtr(form.data(), form.size(), image, error), "noise is not a texture");
 }
 
 // A 16x16 RGBA8 texture whose 64 KB surface comes in two stored buffers: the
@@ -394,14 +387,14 @@ void TestTxtrTopMipOnly() {
   const Blob noSecond = Texture(first, broken, secondSize);
   TxtrImage a, b;
   std::string error;
-  Check(DecodeTxtr(good.data(), good.size(), a, error), "synthetic texture decodes");
-  Check(a.width == 16 && a.height == 16 && a.rgba.size() == 16 * 16 * 4, "its size");
+  CHECK_MSG(DecodeTxtr(good.data(), good.size(), a, error), "synthetic texture decodes");
+  CHECK_MSG(a.width == 16 && a.height == 16 && a.rgba.size() == 16 * 16 * 4, "its size");
   // Only the top mip is decoded, and only its buffer is decompressed: a broken buffer of the
   // smaller mips does not matter, and the image is the same.
-  Check(DecodeTxtr(noSecond.data(), noSecond.size(), b, error) && b.rgba == a.rgba,
-        "a buffer past the top mip is not decompressed");
+  CHECK_MSG(DecodeTxtr(noSecond.data(), noSecond.size(), b, error) && b.rgba == a.rgba,
+            "a buffer past the top mip is not decompressed");
   const Blob noFirst = Texture(broken, Stored(Sample(secondSize, 22)), 32768);
-  Check(!DecodeTxtr(noFirst.data(), noFirst.size(), b, error), "a broken top-mip buffer still fails");
+  CHECK_MSG(!DecodeTxtr(noFirst.data(), noFirst.size(), b, error), "a broken top-mip buffer still fails");
 }
 } // namespace
 
@@ -410,10 +403,8 @@ int main() {
   TestPakRead();
   TestTxtrGarbage();
   TestTxtrTopMipOnly();
-  if (sFailures != 0) {
-    std::fprintf(stderr, "%d failure(s)\n", sFailures);
-    return 1;
+  if (port_test::Failures() == 0) {
+    std::printf("port_remastered_parsers: ok\n");
   }
-  std::printf("port_remastered_parsers: ok\n");
-  return 0;
+  return PORT_TEST_RESULT();
 }
