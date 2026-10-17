@@ -63,12 +63,12 @@ shopt -u nullglob nocaseglob
 
 # Notices deeper inside a fetched package cover code it bundles (SDL's hidapi
 # and yuv2rgb, Tracy's libbacktrace, ...). They keep their path, under
-# <dep>/, since their names repeat. find rather than globstar: macOS ships
-# bash 3.2.
+# <dep>/, since their names repeat; a package's own build/ trees (copies made
+# while building it) are skipped. find rather than globstar: macOS ships bash 3.2.
 for src in "$BUILD"/_deps/*-src; do
     [[ -d "$src" ]] || continue
     dep=$(basename "$src")
-    (cd "$src" && find . -mindepth 2 -type f \
+    (cd "$src" && find . -mindepth 2 -type f -not -path '*/build/*' \
         \( -iname 'LICENSE*' -o -iname 'COPYING*' -o -iname 'NOTICE*' \) -print) |
         while IFS= read -r notice; do
             notice=${notice#./}
