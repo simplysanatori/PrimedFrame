@@ -190,6 +190,10 @@ bool ReadFile(const std::filesystem::path& path, uint64_t fingerprint, Data& dat
 // temporary is removed either way.
 bool WriteFile(const std::filesystem::path& path, uint64_t fingerprint, const Data& data);
 
+// Puts the temporary in place of the file, replacing one that is there, in one
+// step (also used by the beam door side files).
+bool ReplaceFile(const std::filesystem::path& temporary, const std::filesystem::path& path);
+
 // Removes the file of one slot; true when it is gone (also when it never was).
 bool RemoveFile(const std::filesystem::path& path);
 

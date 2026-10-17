@@ -3,6 +3,7 @@
 
 #include "port_apclient.h"
 #include "port_debug.h"
+#include "port_beam_doors.h"
 #include "port_gci.h"
 #include "port_log.h"
 #include "port_map_side.h"
@@ -218,6 +219,7 @@ bool PlayerCanSave(CStateManager& mgr, std::string& why) {
 
 // The map record of a captured blob; defined with the load side below.
 void StoreMapData(std::vector< uint8_t >& blob, size_t gameBits);
+void StoreBeamData(std::vector< uint8_t >& blob, size_t gameBits);
 
 bool Capture(CStateManager& mgr, Header& header, std::vector< uint8_t >& blob) {
   const CPlayer& player = *mgr.GetPlayer();
@@ -238,6 +240,7 @@ bool Capture(CStateManager& mgr, Header& header, std::vector< uint8_t >& blob) {
   }
   // After the stream is gone: it flushes its last byte at the destructor, and
   // the record's fingerprint has to cover the bytes as they are left here.
+  StoreBeamData(blob, gameBits);
   StoreMapData(blob, gameBits);
 
   const CTransform4f& xf = player.GetTransform();
@@ -351,6 +354,13 @@ bool DoLoad(CStateManager& mgr, int slot) {
 // bytes; its fingerprint covers everything before it, so a state written by an
 // older build (zeros there) or a damaged one is ignored and the trailers stand.
 constexpr size_t kMapOffset = kBlobSize - 256;
+// The open beam doorways (port_beam_doors.h) sit in the 64 bytes before it, the
+// same way: a length and the side file's bytes, fingerprinted over everything
+// before this offset. It is stored first, so the map record's fingerprint covers
+// it too.
+constexpr size_t kBeamOffset = kMapOffset - 64;
+static_assert(PortBeamDoors::kSideMaxBytes + 4 <= kMapOffset - kBeamOffset,
+              "the beam door record fits before the map record");
 static_assert(PortMapSide::kMaxBytes + 4 <= kBlobSize - kMapOffset,
               "the map record fits the tail of the blob");
 
@@ -358,7 +368,7 @@ void StoreMapData(std::vector< uint8_t >& blob, size_t gameBits) {
   if (blob.size() < kBlobSize || gpGameState == nullptr) {
     return;
   }
-  if (gameBits > kMapOffset * 8) {
+  if (gameBits > kBeamOffset * 8) {
     PortLog::Write("save state: the game state grew past the map record (%u bits); marks stay "
                    "in the trailers only\n",
                    static_cast< unsigned >(gameBits));
@@ -376,6 +386,43 @@ void StoreMapData(std::vector< uint8_t >& blob, size_t gameBits) {
     tail[i] = static_cast< uint8_t >(bytes.size() >> (8 * i));
   }
   std::memcpy(tail + 4, bytes.data(), bytes.size());
+}
+
+void StoreBeamData(std::vector< uint8_t >& blob, size_t gameBits) {
+  if (blob.size() < kBlobSize || gpGameState == nullptr || gameBits > kBeamOffset * 8) {
+    return;
+  }
+  const std::vector< uint8_t > bytes =
+      PortBeamDoors::Encode(PortMapSide::Fingerprint(blob.data(), kBeamOffset), gpGameState->PortBeamDoorBits());
+  uint8_t* tail = blob.data() + kBeamOffset;
+  for (int i = 0; i < 4; ++i) {
+    tail[i] = static_cast< uint8_t >(bytes.size() >> (8 * i));
+  }
+  std::memcpy(tail + 4, bytes.data(), bytes.size());
+}
+
+// The record back over the rebuilt game state; false (nothing changed) for a
+// state without one (written by an older build, zeros there) or a damaged one.
+bool LoadBeamData(const std::vector< uint8_t >& blob) {
+  if (gpGameState == nullptr || blob.size() < kMapOffset) {
+    return false;
+  }
+  const uint8_t* tail = blob.data() + kBeamOffset;
+  uint32_t size = 0;
+  for (int i = 0; i < 4; ++i) {
+    size |= static_cast< uint32_t >(tail[i]) << (8 * i);
+  }
+  if (size > PortBeamDoors::kSideMaxBytes || kBeamOffset + 4 + size > kMapOffset) {
+    return false;
+  }
+  uint32_t bits[PortBeamDoors::kWords] = {};
+  if (!PortBeamDoors::Decode(tail + 4, size, PortMapSide::Fingerprint(blob.data(), kBeamOffset), bits)) {
+    return false;
+  }
+  for (int i = 0; i < PortBeamDoors::kWords; ++i) {
+    gpGameState->PortBeamDoorBits()[i] = bits[i];
+  }
+  return true;
 }
 
 // Puts the record back over the game state the blob was just built into. False
@@ -746,7 +793,21 @@ void InstallPending() {
     return;
   sInstallPending = false;
   CMemoryInStream in(sPendingBlob.data(), sPendingBlob.size(), CMemoryInStream::kOS_NotOwned);
+  // A state from before the beam door record keeps the running game's open
+  // doorways (the usual case is loading a state of the same save) rather than
+  // dropping them; the rebuilt game state would have none.
+  uint32_t keptBeam[PortBeamDoors::kWords] = {};
+  if (gpGameState != nullptr) {
+    for (int i = 0; i < PortBeamDoors::kWords; ++i) {
+      keptBeam[i] = gpGameState->PortBeamDoorBits()[i];
+    }
+  }
   gpMain->PortLoadGameState(in);
+  if (!LoadBeamData(sPendingBlob) && gpGameState != nullptr) {
+    for (int i = 0; i < PortBeamDoors::kWords; ++i) {
+      gpGameState->PortBeamDoorBits()[i] = keptBeam[i];
+    }
+  }
   LoadMapData(sPendingBlob);
   sPlacePending = true;
 }

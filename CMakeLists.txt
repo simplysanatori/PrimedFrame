@@ -221,6 +221,7 @@ set(MP_PORT_SOURCES
     platform/port_livesplit.cpp
     platform/port_tracker.cpp
     platform/port_beam_doors.cpp
+    platform/port_beam_doors_side.cpp
     platform/port_map_pickups.cpp
     platform/port_map_marks.cpp
     platform/port_map_side.cpp
@@ -671,7 +672,7 @@ if(MP_BUILD_TESTS)
         DEFINITIONS TARGET_PC VERSION=0
         LIBRARIES ${AURORA_SDL3_TARGET})
     mp_port_test(port_beam_doors_tests
-        SOURCES tests/port_beam_doors.cpp
+        SOURCES tests/port_beam_doors.cpp platform/port_beam_doors_side.cpp platform/port_map_side.cpp
             platform/port_ap_world.cpp platform/port_json.cpp platform/port_randomizer.cpp
             platform/port_ap_logic.cpp platform/port_ap_metroidprime.cpp
         INCLUDES platform/include extern/aurora/include include

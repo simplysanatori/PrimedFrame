@@ -663,12 +663,18 @@
   shield's model, the map icons); other rooms load blue. Turning the setting on
   only affects doors you open afterwards; turning it off shows the original
   colours again in rooms loaded afterwards (the unlocks stay recorded). The
-  record is one bit per doorway (about 105, `PortApWorld::BeamDoorwayBit`, stable
-  for a build) in a "BDUL" trailer of the save, written after the room marks
-  (`port_beam_doors.h` has the format and the slot budget). A USA slot has room
-  for it unless the save also holds an Archipelago trailer; then it is skipped
-  (the unlocks last for the session and in savestates, and the log says so
-  once), and the room marks are cut back to leave it room. A savestate restore
+  record is one bit per doorway (111, `PortApWorld::BeamDoorwayBit`, stable for a
+  build). It is not in the save slot (nothing of the card changes): it is a small
+  file per slot beside the map side files,
+  `<user folder>/mapdata/beam-doors-<card key>-slot<N>.bin` (`port_beam_doors.h`
+  has the format). It is written after the card write succeeds, and only when a
+  doorway is open (also with the setting off: the unlocks are kept); a save with
+  none deletes a stale file. It belongs to the slot's exact bytes (a hash of
+  them), so a slot overwritten by a new save, an import or a conversion starts
+  with no unlocks, and so does a damaged or other-version file (logged once).
+  Copying only the card file to another install loses the unlocks; copy the
+  `mapdata` folder with it. Savestates carry the doorways. A state from an older
+  build keeps the running game's. A restore
   skips an area whose unlocked doors changed since the snapshot (its room patch
   differs), as for any patched room, and the doors come back blue from the game
   state. Console: `beamdoors`.

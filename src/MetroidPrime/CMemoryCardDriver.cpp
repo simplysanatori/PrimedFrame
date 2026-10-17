@@ -11,6 +11,7 @@
 #include "stdio.h"
 
 #ifdef TARGET_PC
+#include "port_beam_doors.h"
 #include "port_map_side.h"
 #endif
 
@@ -435,6 +436,13 @@ void CMemoryCardDriver::WriteBackupBuf() {
       }
     }
     PortMapSide::Flush(slots, 3);
+    // The open beam doorways' files follow the same write.
+    PortBeamDoors::SlotBytes beamSlots[3];
+    for (int i = 0; i < 3; ++i) {
+      beamSlots[i].bytes = slots[i].bytes;
+      beamSlots[i].size = slots[i].size;
+    }
+    PortBeamDoors::Flush(beamSlots, 3);
   }
 #endif
   gpGameState->WriteBackupBuf();
@@ -809,6 +817,7 @@ void CMemoryCardDriver::EraseFileSlot(int saveIdx) {
   xe4_fileSlots[saveIdx] = nullptr;
 #ifdef TARGET_PC
   PortMapSide::StageErase(saveIdx);
+  PortBeamDoors::StageErase(saveIdx);
 #endif
 }
 
@@ -912,6 +921,8 @@ void SGameFileSlot::InitializeFromGameState() {
       data.seen[i] = gpGameState->PortSeenPickups()[i];
     data.marks = gpGameState->PortMapMarkList();
     PortMapSide::Stage(gpGameState->GetFileIdx(), x0_saveBuffer.data(), x0_saveBuffer.size(), data);
+    PortBeamDoors::Stage(gpGameState->GetFileIdx(), x0_saveBuffer.data(), x0_saveBuffer.size(),
+                         gpGameState->PortBeamDoorBits());
   }
 #endif
   x944_fileInfo = CGameState::LoadGameFileState(x0_saveBuffer.data());
@@ -923,6 +934,7 @@ void SGameFileSlot::LoadGameState(int idx) {
 #ifdef TARGET_PC
   PortMapSide::Apply(idx, x0_saveBuffer.data(), x0_saveBuffer.size(), gpGameState->PortSeenPickups(),
                      gpGameState->PortMapMarkList());
+  PortBeamDoors::Apply(idx, x0_saveBuffer.data(), x0_saveBuffer.size(), gpGameState->PortBeamDoorBits());
 #endif
 }
 

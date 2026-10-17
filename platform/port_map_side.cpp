@@ -14,23 +14,6 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// Puts the temporary in place of the file, replacing one that is there. The C
-// rename replaces an existing destination on POSIX; on Windows it does not, and
-// removing the old file first would leave a moment with neither file (the same
-// as port_ap_protocol.cpp's writer): MoveFileExW replaces it in one step and
-// writes it through.
-bool ReplaceFile(const fs::path& temporary, const fs::path& path) {
-  if (std::rename(PathToUtf8(temporary).c_str(), PathToUtf8(path).c_str()) == 0) {
-    return true;
-  }
-#ifdef _WIN32
-  return MoveFileExW(temporary.c_str(), path.c_str(),
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-#else
-  return false;
-#endif
-}
-
 // What one card write should leave behind, held from the moment the slot's
 // buffer is rebuilt until the write finished: the card the buffer and the data
 // belong to, and the file to write for it. Both are taken at Stage, so a card
@@ -67,6 +50,23 @@ Staged StagedFor(int slot, bool erase) {
 }
 
 } // namespace
+
+// Puts the temporary in place of the file, replacing one that is there. The C
+// rename replaces an existing destination on POSIX; on Windows it does not, and
+// removing the old file first would leave a moment with neither file (the same
+// as port_ap_protocol.cpp's writer): MoveFileExW replaces it in one step and
+// writes it through.
+bool ReplaceFile(const fs::path& temporary, const fs::path& path) {
+  if (std::rename(PathToUtf8(temporary).c_str(), PathToUtf8(path).c_str()) == 0) {
+    return true;
+  }
+#ifdef _WIN32
+  return MoveFileExW(temporary.c_str(), path.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+  return false;
+#endif
+}
 
 bool ReadFile(const fs::path& path, uint64_t fingerprint, Data& data) {
   std::ifstream in(path, std::ios::binary);

@@ -2,37 +2,36 @@
 
 #include <cstddef>
 #include <cstdint>
-
-#include "port_map_marks.h"
+#include <string>
+#include <vector>
 
 // "Unlock beam doors once opened" (setting beam_doors_stay_unlocked): a door
 // locked to the Wave, Ice, Plasma or Power Beam stays a plain blue one, on both
 // sides, once its force field was broken. Which doorways are open is one bit
 // per beam doorway of the disc (PortApWorld::BeamDoorwayBit), kept per save in
-// CGameState and written as the "BDUL" trailer, the last one after the "RMMK"
-// room marks (CGameState::PutTo/ctor): the magic, an 8-bit length n and n
-// bits, bit 0 first, n being the highest set bit + 1 (so a game with few open
-// doors writes few bits). An older build reads past the trailer, as it does
-// for any magic it doesn't know.
+// CGameState (the memory card slot has no room for it next to an Archipelago
+// trailer, so nothing of it goes into the slot itself).
 //
-// Slot budget (USA, 940 bytes = 7520 bits; measured with
-// COutputStream::PortBitsWritten): retail 7084 bits, "APX4" 416, "PKSN" 160. A
-// game without Archipelago has 276 bits left after PKSN; the trailer takes
-// 40 + n (at most 168), and the room marks, which keep what is left, give way:
-// they are fitted into the slot minus this trailer. With an Archipelago
-// trailer the slot is already full: nothing fits, the trailer is skipped and
-// the unlocks are lost on a save to the card (they live on in the running
-// game and in savestates). The PAL slot (2687 bytes) holds every case. A
-// trailer that does not fit is skipped whole, never cut, and logged once.
+// Persistence is a small file per slot of the memory card in use, next to the
+// map side files (port_beam_doors_side.cpp):
+// <user folder>/mapdata/beam-doors-<card key>-slot<N>.bin. Layout, little
+// endian: "BDSF", version 1, a 64-bit fingerprint, the bit count n (the highest
+// set bit + 1) and ceil(n / 8) bytes of bits, bit 0 first.
+//
+// The fingerprint is FNV-1a over the slot buffer as written to the card (the
+// bytes SGameFileSlot::PutTo writes), the same one PortMapSide uses: the file is
+// used only when the slot read back hashes the same, so a slot overwritten by a
+// new save, an import, a conversion or another program's card write ignores the
+// file and starts with no unlocks. The slot bytes change with every save, which
+// is fine because the file is rewritten at the same moment, after the card
+// write succeeded. A copy of only the card file loses the unlocks (the sidecar
+// stays in the user folder); a copy of both keeps them.
 class CStateManager;
 
 namespace PortBeamDoors {
 
-constexpr uint32_t kMagic = 0x4244554C; // "BDUL"
-constexpr unsigned kLengthBits = 8;
 constexpr int kWords = 4;
 constexpr size_t kMaxBits = kWords * 32;
-static_assert(kMaxBits < (1u << kLengthBits), "the length field holds kMaxBits");
 
 inline bool Test(const uint32_t* words, int bit) {
   return bit >= 0 && static_cast< size_t >(bit) < kMaxBits && ((words[bit / 32] >> (bit % 32)) & 1);
@@ -52,78 +51,89 @@ inline size_t UsedBits(const uint32_t* words) {
   return 0;
 }
 
-inline size_t TrailerBits(size_t used) { return 32 + kLengthBits + used; }
+constexpr uint32_t kSideMagic = 0x46534442; // "BDSF" read as a little endian word
+constexpr uint32_t kSideVersion = 1;
+constexpr size_t kSideHeaderBytes = 20;
+constexpr size_t kSideMaxBytes = kSideHeaderBytes + kMaxBits / 8;
 
-// Whether the trailer for `used` bits fits a stream of capacityBits that has
-// written writtenBits. False for no bits (nothing to write).
-inline bool Fits(size_t used, size_t capacityBits, size_t writtenBits) {
-  return used != 0 && capacityBits >= writtenBits && capacityBits - writtenBits >= TrailerBits(used);
+inline void PutU32(std::vector< uint8_t >& out, uint32_t v) {
+  for (int i = 0; i < 4; ++i)
+    out.push_back(static_cast< uint8_t >(v >> (8 * i)));
 }
 
-// write(value, bits) puts bits of value, most significant first.
-template < typename Write >
-void Put(const uint32_t* words, Write&& write) {
+inline std::vector< uint8_t > Encode(uint64_t fingerprint, const uint32_t* words) {
   const size_t used = UsedBits(words);
-  write(kMagic, 32);
-  write(static_cast< uint32_t >(used), kLengthBits);
-  for (size_t bit = 0; bit < used; ++bit)
-    write(Test(words, static_cast< int >(bit)) ? 1u : 0u, 1);
+  std::vector< uint8_t > out;
+  out.reserve(kSideMaxBytes);
+  PutU32(out, kSideMagic);
+  PutU32(out, kSideVersion);
+  PutU32(out, static_cast< uint32_t >(fingerprint));
+  PutU32(out, static_cast< uint32_t >(fingerprint >> 32));
+  PutU32(out, static_cast< uint32_t >(used));
+  for (size_t byte = 0; byte < (used + 7) / 8; ++byte) {
+    uint8_t v = 0;
+    for (int b = 0; b < 8; ++b)
+      v |= Test(words, static_cast< int >(byte * 8 + b)) ? 1u << b : 0u;
+    out.push_back(v);
+  }
+  return out;
 }
 
-// After the magic matched: read(bits) returns the next bits. A length above
-// kMaxBits (garbage) yields no bits at all.
-template < typename Read >
-void Get(Read&& read, uint32_t* words) {
-  for (int i = 0; i < kWords; ++i)
-    words[i] = 0;
-  const uint32_t used = read(kLengthBits);
-  if (used > kMaxBits)
-    return;
+// False (words untouched) for a wrong magic or version, another fingerprint, a
+// bit count above kMaxBits or a truncated or longer file.
+inline bool Decode(const uint8_t* bytes, size_t size, uint64_t fingerprint, uint32_t* words) {
+  if (size < kSideHeaderBytes || size > kSideMaxBytes)
+    return false;
+  auto u32 = [bytes](size_t at) {
+    uint32_t v = 0;
+    for (int i = 0; i < 4; ++i)
+      v |= static_cast< uint32_t >(bytes[at + i]) << (8 * i);
+    return v;
+  };
+  if (u32(0) != kSideMagic || u32(4) != kSideVersion)
+    return false;
+  if ((static_cast< uint64_t >(u32(8)) | (static_cast< uint64_t >(u32(12)) << 32)) != fingerprint)
+    return false;
+  const uint32_t used = u32(16);
+  if (used > kMaxBits || size != kSideHeaderBytes + (used + 7) / 8)
+    return false;
+  uint32_t result[kWords] = {};
   for (uint32_t bit = 0; bit < used; ++bit) {
-    if (read(1) != 0)
-      Set(words, static_cast< int >(bit));
+    if ((bytes[kSideHeaderBytes + bit / 8] >> (bit % 8)) & 1)
+      Set(result, static_cast< int >(bit));
   }
+  for (int i = 0; i < kWords; ++i)
+    words[i] = result[i];
+  return true;
 }
 
-// What follows the "PKSN" trailer in a save slot, in one place for the game's
-// save code and its tests: the "RMMK" room marks, then this trailer, each
-// optional (an older save has neither, a full slot may have only one).
-//
-// PutTail: written(), the stream's bits so far, and write(value, bits). The
-// beam doorways are placed first and the marks fitted into what they leave; a
-// beam trailer that cannot fit is skipped whole (*skipped says so) and the
-// marks keep their room. Returns whether the beam trailer was written.
-template < typename Write, typename Written >
-bool PutTail(const PortMapMarks::List& marks, const uint32_t* beam, size_t capacityBits,
-             Written&& written, Write&& write, bool* skipped = nullptr) {
-  const size_t used = UsedBits(beam);
-  const bool fits = Fits(used, capacityBits, written());
-  if (skipped != nullptr)
-    *skipped = used != 0 && !fits;
-  const size_t reserve = fits ? TrailerBits(used) : 0;
-  const size_t fit =
-      PortMapMarks::Fit(marks.count, capacityBits > reserve ? capacityBits - reserve : 0, written());
-  if (fit != 0)
-    PortMapMarks::Put(marks, fit, write);
-  if (fits && Fits(used, capacityBits, written())) {
-    Put(beam, write);
-    return true;
-  }
-  return false;
-}
+#ifdef TARGET_PC
+// ---- The sidecar files (port_beam_doors_side.cpp) ----
 
-// read(bits) returns the next bits. `marks` and `beam` are left as they are
-// (empty) for a trailer the slot doesn't have.
-template < typename Read >
-void GetTail(Read&& read, PortMapMarks::List& marks, uint32_t* beam) {
-  uint32_t next = read(32);
-  if (next == PortMapMarks::kMagic) {
-    marks = PortMapMarks::Get(read);
-    next = read(32);
-  }
-  if (next == kMagic)
-    Get(read, beam);
-}
+struct SlotBytes {
+  const uint8_t* bytes = nullptr;
+  size_t size = 0;
+};
+
+// The path of a slot's file for a card identity (PortMapSide::CardIdentity) in a
+// user folder; empty when either is empty.
+std::string SidePath(const std::string& userFolder, const std::string& identity, int slot);
+
+// Where a slot's buffer is rebuilt from the live game (not yet on the card):
+// remembers the doorways to write for it. All-zero bits stage a delete of the
+// file instead (nothing is written for a save with no unlocks).
+void Stage(int slot, const uint8_t* slotBytes, size_t size, const uint32_t* bits);
+// The slot is being erased from the card.
+void StageErase(int slot);
+// After the card write succeeded: writes or deletes the file of each staged slot
+// whose bytes in the written file are the staged ones. An erase only deletes once
+// the written file really has no such slot. Returns the files touched.
+int Flush(const SlotBytes* slots, int slotCount);
+// After a slot was read back from the card and loaded: fills `bits` (kWords) from
+// the file when it matches the slot's bytes. A missing file is the usual case and
+// silent; an unreadable, wrong-version or mismatching one is logged once.
+bool Apply(int slot, const uint8_t* slotBytes, size_t size, uint32_t* bits);
+#endif
 
 // ---- The running game (port_beam_doors.cpp; not in the unit tests) ----
 
