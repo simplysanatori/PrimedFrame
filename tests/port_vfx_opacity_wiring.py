@@ -10,7 +10,7 @@ The C++ tests cannot see the table: tests/port_remastered_effect_convert.cpp pin
 one converted PowerBall material to the constant (it catches an edit of that recipe's own features)
 and tests/port_vfx_opacity.cpp checks the selection against a hand copy of today's six other fade
 words; a *new* row with the key's word fails neither. This reads the actual table (the same way
-tests/port_air_mover_wiring.py reads CGameCollision.cpp: no engine code runs) and asserts exactly
+tests/port_air_mover_wiring.py reads port_remastered_movers.cpp: no engine code runs) and asserts exactly
 one row carries the key, and that row is 0xe899b1df.
 
 It parses the recipe table's first two fields per row (shader, features), resolving the feature

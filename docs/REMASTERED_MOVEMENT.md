@@ -8,7 +8,8 @@ Addresses are Remastered 1.0.0 offsets, as elsewhere in these notes.
 ## What is implemented
 
 The grounded path is `CGameCollision::MoveGroundedRemastered`
-(`src/MetroidPrime/CGameCollision.cpp`): the port of
+(`platform/port_remastered_movers.cpp`, dispatched from
+`CGameCollision::MovePlayer`): the port of
 `CPhysicsGroundMoverColliderMP1::MoveObject` 0xf923d8 with its `MoveAlongGround`
 0xf92ccc and `SnapToGround` 0xf934ec passes, over **static terrain only**. The
 decisions are pure and header-only

@@ -127,6 +127,15 @@ list(FILTER MP_GAME_SOURCES EXCLUDE REGEX "^src/NESemu/")
 # The game entry is included now that it is adapted to Aurora (its `main` is
 # renamed to `metroid_main` and driven by platform/main.cpp).
 list(APPEND MP_GAME_SOURCES src/MetroidPrime/main.cpp)
+# Port code moved out of decomp files that must still compile exactly as the game
+# sources do (same flags, definitions and forced include as the file it came from).
+list(APPEND MP_GAME_SOURCES
+    platform/port_remastered_movers.cpp
+    platform/port_raster_font.cpp
+    platform/port_morph_ball.cpp
+    platform/port_automapper.cpp
+    platform/port_particle_vfx_read.cpp
+    platform/port_element_gen.cpp)
 # The port has an explicit source manifest, including registration-only and
 # shim-dependent translation units. Link those objects directly on both ELF and
 # COFF rather than relying on archive extraction or suppressing duplicate symbols.
@@ -1043,7 +1052,7 @@ if(MP_BUILD_TESTS)
         set_tests_properties(port_settings_index PROPERTIES TIMEOUT 15 LABELS port)
         add_test(NAME port_air_mover_wiring
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_air_mover_wiring.py
-                    ${CMAKE_CURRENT_SOURCE_DIR}/src/MetroidPrime/CGameCollision.cpp)
+                    ${CMAKE_CURRENT_SOURCE_DIR}/platform/port_remastered_movers.cpp)
         set_tests_properties(port_air_mover_wiring PROPERTIES TIMEOUT 15 LABELS port)
         # The door payload reaches its encoder and decoder from the capture
         # and the restore (issue #131).

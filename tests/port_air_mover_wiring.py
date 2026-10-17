@@ -1,7 +1,8 @@
 """Production wiring guards for AUDIT-3, alongside executable geometry tests.
 
-Accepts another revision's CGameCollision.cpp so the guards can be checked against
-018ee83ce without rebuilding or modifying that revision's worktree.
+Accepts another revision's mover source (platform/port_remastered_movers.cpp,
+formerly inline in src/MetroidPrime/CGameCollision.cpp) so the guards can be
+checked against 018ee83ce without rebuilding or modifying that revision's worktree.
 """
 import pathlib
 import sys
@@ -11,7 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from wiring_helpers import WiringCase, between, partition, root_argument  # noqa: E402
 
 source = root_argument().read_text()
-air = between(source, "void CGameCollision::MoveAirborneStepped(", "#endif", "CGameCollision.cpp")
+air = between(source, "void CGameCollision::MoveAirborneStepped(", "#endif", "port_remastered_movers.cpp")
 
 
 class Wiring(WiringCase):
