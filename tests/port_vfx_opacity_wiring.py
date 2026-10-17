@@ -203,7 +203,35 @@ class Wiring(unittest.TestCase):
 
     def test_header_points_at_this_guard(self):
         self.assertIn("tests/port_vfx_opacity_wiring.py", OPACITY_TEXT,
-                      "port_vfx_opacity.h must name the guard that counts the key's rows")
+                       "port_vfx_opacity.h must name the guard that counts the key's rows")
+
+    def test_vsmt_storage_and_bounds_use_shared_count(self):
+        constants = (root / "include/Kyoto/Particles/CPortVfxConstants.hpp").read_text()
+        self.assertIn("kPortVfxVsmtCount = 21", constants)
+        self.assertIn("kPortVfxOpacityGainTarget = 19", constants)
+        self.assertIn("kPortVfxOpacityBiasTarget = 20", constants)
+        for file, array in [
+            ("include/Kyoto/Particles/CElementGen.hpp", "xPortVsmt"),
+            ("src/Kyoto/Particles/CParticleSwoosh.cpp", "vsmt"),
+            ("src/Kyoto/Particles/CParticleElectric2Port.cpp", "vsmt"),
+            ("platform/port_vfx_particles.cpp", "vsmt"),
+        ]:
+            text = (root / file).read_text()
+            self.assertIn(array + "[kPortVfxVsmtCount]", text, file)
+            self.assertNotRegex(text, r"(?:vsmt|Vsmt)\[19\]")
+        runtime = (root / "platform/port_vfx_particles.cpp").read_text()
+        self.assertIn("e.a >= kPortVfxVsmtCount", runtime)
+        self.assertIn("desc.opacityGain = (vsmtMask & (1u << kPortVfxOpacityGainTarget))", runtime)
+        self.assertIn("desc.opacityBias = (vsmtMask & (1u << kPortVfxOpacityBiasTarget))", runtime)
+
+    def test_v3_is_only_the_audited_shader(self):
+        self.assertIn("const bool opacityGainBias = mati.shader == kPowerBallShader;", CONVERT_TEXT)
+        self.assertIn("AppendBE32(blob, opacityGainBias ? 3 : 2);", CONVERT_TEXT)
+        rows = [fields(row) for row in entries(CONVERT_TEXT)]
+        pinned = next(row for row in rows if int(row[0], 16) == PINNED_SHADER)
+        guarded = next(row for row in rows if int(row[0], 16) == 0x7D52BD6B)
+        self.assertEqual(pinned[-1], "false")
+        self.assertEqual(guarded[-1], "true")
 
 
 if __name__ == "__main__":

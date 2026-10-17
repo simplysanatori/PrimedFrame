@@ -167,6 +167,8 @@ Console `fx` (also in `docs/CONSOLE.md`) shows the live generators of the partic
 
 `fx list/tree/stats/mute/solo/timescale` run even while `hold 1`; spawning does not (a tick command).
 
+The port-only material versions and override targets are documented in [REMASTERED_VFX.md](REMASTERED_VFX.md).
+
 **Spawn and filmstrip an effect**
 
     $M start r --room 83F6FF6F:D5CDB809 --mods <dir with the import>

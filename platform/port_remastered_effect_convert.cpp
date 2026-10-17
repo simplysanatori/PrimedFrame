@@ -1,5 +1,6 @@
 #include "port_remastered_effect_convert.h"
 #include "port_bytes.h"
+#include "Kyoto/Particles/CPortVfxConstants.hpp"
 
 #include <algorithm>
 #include <array>
@@ -332,6 +333,11 @@ constexpr EffectGuid kPowerBallMati = {0x46, 0x2a, 0x75, 0x86, 0x33, 0xe7, 0x23,
 constexpr EffectGuid kPowerBallModel = {0x60, 0xae, 0xf6, 0x4b, 0xe5, 0x3b, 0x51, 0x4d,
                                         0x88, 0xbd, 0x50, 0xbb, 0xd1, 0xbd, 0xf6, 0x71};
 constexpr uint32_t kPowerBallShader = 0xe899b1df;
+// Power held-charge sphere: a different child/MATI, despite sharing the model and shader.
+constexpr EffectGuid kPowerChargeChild = {0xdf, 0x39, 0xe6, 0xa9, 0xfe, 0x9d, 0x41, 0x42,
+                                          0x84, 0x2e, 0x0b, 0x8f, 0x8a, 0x65, 0x48, 0xe2};
+constexpr EffectGuid kPowerChargeMati = {0x3c, 0x1c, 0x7d, 0x90, 0xc8, 0xcc, 0x9b, 0x4b,
+                                         0x87, 0x8f, 0xee, 0x8a, 0x41, 0xfc, 0x1e, 0x7f};
 
 enum class Role { Color, Opacity, Ramp, Ramp2, Threshold, Indirect, Palette };
 
@@ -375,7 +381,7 @@ struct Recipe {
   std::vector<TexSpec> textures;
   std::vector<SrcSpec> sources;
   int addRow = -1;         // PMTR row of the AddColor (rgb, scale); -1: none
-  bool unitCch0 = false;   // the shader also reads CCH0.z/.w (fade gain/bias): only the identity (1, 0) is expressible
+  bool unitCch0 = false;   // shaders without v3 gain/bias support require identity CCH0.z/.w
   bool frameBuffer = false; // a FrameBuffer_* shader (scene x vc.rgb, warped by CCH0.xy): drawn as a multiply
 };
 
@@ -556,7 +562,7 @@ const Recipe* RecipeOf(uint32_t shader) {
        {}},
       {0xe899b1df, kRamp | kIndirect | kDepthSoften | kOpacityFade,
        {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
-       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}, -1, true},
+       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}, -1, false},
       {0x3a867837, kRamp | kIndirect,
        {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
        {}},
@@ -1954,6 +1960,19 @@ public:
         constantIs(powerDvvn, 1, 4, false, true) && constantIs(powerPbdm, 1, 0, true, false) && !hasIexp) {
       features |= kAlreadyExposed;
     }
+    // Separately audited held-charge sphere: DVVN4 defaults inverse exposure on and PBDM2
+    // resolves additive usage. Its raw MATI also has header blend -1 (LE32 at 0x61).
+    // This fixes only HDR exposure cancellation; LDR appearance and full parity remain unproven.
+    // Do not change blend, recipe or the still-unrepresented SMTR alpha gain/bias here.
+    const bool exactChargeMatiProperty = powerMtin == &material && material.tag == 0 && material.value.size() == 2 &&
+                                         material.value[0].kind == EffectValue::Kind::Byte && material.value[0].word == 0 &&
+                                         material.value[1].kind == EffectValue::Kind::Guid &&
+                                         material.value[1].guid == kPowerChargeMati;
+    if (!swoosh && node.id == kPowerChargeChild && exactChargeMatiProperty && mati.shader == kPowerBallShader &&
+        mati.headerBlend == kNoHeaderBlend && guidIs(powerPmdl, kPowerBallModel) &&
+        constantIs(powerDvvn, 1, 4, false, true) && constantIs(powerPbdm, 1, 2, true, false) && !hasIexp) {
+      features |= kAlreadyExposed;
+    }
     if (recipe->frameBuffer) {
       if (cch0[0] != 0.0f || cch0[1] != 0.0f) {
         m_approximated.push_back(std::string("VMAT: shader ") + shaderText + "'s scene warp dropped (drawn as a multiply)");
@@ -1972,7 +1991,8 @@ public:
 
     // The blob.
     std::vector<uint8_t> blob;
-    AppendBE32(blob, 2);
+    const bool opacityGainBias = mati.shader == kPowerBallShader;
+    AppendBE32(blob, opacityGainBias ? 3 : 2);
     AppendBE32(blob, features);
     AppendBE32(blob, blend);
     AppendBE32(blob, uint32_t(slots.size()));
@@ -2022,6 +2042,10 @@ public:
     AppendBE32(blob, FloatBits(1.0f));  // modulate
     AppendBE32(blob, FloatBits(0.0f));  // depthSoften
     AppendBE32(blob, spriteCenter);
+    if (opacityGainBias) {
+      AppendBE32(blob, FloatBits(cch0[2]));
+      AppendBE32(blob, FloatBits(cch0[3]));
+    }
 
     AppendBE32(result.part, F("VMAT"));
     AppendBE32(result.part, F("CNST"));
@@ -2114,6 +2138,11 @@ public:
         }
         const int comp = int(item.args[1].word >> 8 & 0xff);
         std::vector<uint32_t> targets;
+        if (opacityGainBias && comp == 2) {
+          targets.push_back(kPortVfxOpacityGainTarget);
+        } else if (opacityGainBias && comp == 3) {
+          targets.push_back(kPortVfxOpacityBiasTarget);
+        }
         for (const SrcSpec& src : recipe->sources) {
           if (src.row < 0 && src.comp == comp) {
             targets.push_back(uint32_t(src.index));
