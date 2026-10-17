@@ -181,7 +181,7 @@ struct Job {
   size_t index = 0;    // of the cube or grid in the file
   const File* file = nullptr;
   bool raw = false; // Lightmap: the device takes its BC6H blocks as they are
-  std::shared_ptr<const VolumeInput> input; // Volume of a version 21 file
+  std::shared_ptr<const VolumeInput> input{}; // Volume of a version 21 file
   uint32_t gen = 0;                         // World::gen when it was made
 };
 
