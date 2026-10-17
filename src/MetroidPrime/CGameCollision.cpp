@@ -1075,7 +1075,7 @@ static PortRemasteredGroundBox::Slot PortBoxPlatformSlot(const CScriptPlatform& 
                                                         std::size_t index,
                                                         const CMaterialFilter& f,
                                                         const CAABox& box, std::uint64_t selfBits,
-                                                        std::size_t at) {
+                                                        std::size_t at, bool wantContacts) {
   PortRemasteredGroundBox::Slot slot;
   slot.at = at;
   PortRemasteredBoxLanding::Pair pair;
@@ -1088,7 +1088,7 @@ static PortRemasteredGroundBox::Slot PortBoxPlatformSlot(const CScriptPlatform& 
   pair.selfFilter = PortTranslatedFilter(f);
   pair.otherFilter = PortTranslatedFilter(platform.GetMaterialFilter());
   slot.blocked = PortRemasteredGroundBox::Blocked(pair);
-  if (slot.blocked) {
+  if (slot.blocked && wantContacts) {
     static std::vector< PortCollisionFailsafe::PairedImpact > scratch; // game thread
     PortRemasteredGroundBox::AppendContacts(
         pair, PortRemasteredGroundRider::OwnerFromRaw(platform.GetUniqueId().value),
@@ -1114,18 +1114,19 @@ static void PortSortPlatforms(std::vector< const CScriptPlatform* >& platforms) 
 // owner; `filter` stands for the player's side of SurfaceCollisionPasses (vt+0x18), as the
 // retail tree collider applies it per triangle. `ends` receives one end index per platform.
 // A box platform has no triangles: its slot goes to `boxes` (PortBoxPlatformSlot, the actor's
-// material `selfBits`) when given, and its `ends` entry closes an empty range.
+// material `selfBits`) when given, and its `ends` entry closes an empty range. Boolean probes
+// pass `wantContacts` false: only the slot's `blocked` flag is read.
 static void PortPlatformTriangles(const std::vector< const CScriptPlatform* >& platforms,
                                   const CMaterialFilter& f, const CAABox& box,
                                   std::vector< PortRemasteredGroundWorld::Triangle >& tris,
                                   std::vector< std::size_t >* ends,
                                   std::vector< PortRemasteredGroundBox::Slot >* boxes = NULL,
-                                  std::uint64_t selfBits = 0) {
+                                  std::uint64_t selfBits = 0, bool wantContacts = true) {
   for (std::size_t p = 0; p < platforms.size(); ++p) {
     const CScriptPlatform& platform = *platforms[p];
     if (!platform.HasComplexCollision()) {
       if (boxes != NULL) {
-        boxes->push_back(PortBoxPlatformSlot(platform, p, f, box, selfBits, tris.size()));
+        boxes->push_back(PortBoxPlatformSlot(platform, p, f, box, selfBits, tris.size(), wantContacts));
       }
       if (ends != NULL) ends->push_back(tris.size());
       continue;
@@ -2683,8 +2684,10 @@ struct GroundTick {
   void PlatformTriangles(const CMaterialFilter& f, const CAABox& box,
                          std::vector< PortRemasteredGroundWorld::Triangle >& tris,
                          std::vector< std::size_t >* ends,
-                         std::vector< PortRemasteredGroundBox::Slot >* boxes) const {
-    PortPlatformTriangles(platforms, f, box, tris, ends, boxes, actor.GetMaterialList().GetValue());
+                         std::vector< PortRemasteredGroundBox::Slot >* boxes,
+                         bool wantContacts = true) const {
+    PortPlatformTriangles(platforms, f, box, tris, ends, boxes, actor.GetMaterialList().GetValue(),
+                          wantContacts);
   }
 
   // The boolean twin (0xbfd2f0 / 0xbfd360 for trees, 0xbfce60 for boxes): the inclusive
@@ -2694,7 +2697,7 @@ struct GroundTick {
     std::vector< PortRemasteredGroundWorld::Triangle >& tris = blockedScratch;
     tris.clear();
     std::vector< PortRemasteredGroundBox::Slot > boxes;
-    PlatformTriangles(f, box, tris, NULL, &boxes);
+    PlatformTriangles(f, box, tris, NULL, &boxes, false);
     if (PortRemasteredGroundBox::AnyBlocked(boxes)) return true;
     if (tris.empty()) return false;
     return PortRemasteredGroundWorld::QueryTerrain(QueryFor(box, actor), tris.data(), tris.size(),
@@ -3092,6 +3095,12 @@ struct GroundTick {
     std::vector< PortRemasteredGroundWorld::Triangle > tris;
     std::vector< std::size_t > ends;
     FsCollect(f, pos - actor.GetTranslation(), query, tris, &ends);
+    // Nothing to collide: no triangles and no box platform (the common case, per tick).
+    bool anyBox = false;
+    for (std::size_t p = 0; p < platforms.size() && !anyBox; ++p) {
+      anyBox = !platforms[p]->HasComplexCollision();
+    }
+    if (tris.empty() && !anyBox) return false;
     const PortRemasteredGroundWorld::TerrainResult res =
         PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), true);
     std::vector< PortCollisionFailsafe::Contact > groups(ends.size());
