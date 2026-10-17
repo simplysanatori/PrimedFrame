@@ -1015,6 +1015,14 @@ void CPlayerGun::Update(float grappleSwingT, float cameraBobT, float dt, CStateM
     x350_shakeZ = chargeShakeTbl[static_cast< int >(mgr.Random()->Next()) % 3] * shakeFactor;
   }
 
+#ifdef TARGET_PC
+  // Port: a save state loaded in the ball morphs the player before the beam has loaded, and
+  // nothing touches the gun in the ball, so it never would and every bomb is skipped below.
+  if (!x72c_currentBeam->IsLoaded()
+      && player.GetMorphballTransitionState() == CPlayer::kMS_Morphed) {
+    x72c_currentBeam->Touch(mgr);
+  }
+#endif
   if (!x72c_currentBeam->IsLoaded()) {
     return;
   }
