@@ -2086,6 +2086,11 @@ struct PowerBallFields {
   bool bareModel = false;
   bool barePbdm = false;
   bool duplicateMaterial = false;
+  uint32_t duplicateProperty = 0;
+  uint32_t extraValueProperty = 0;
+  bool wordDvvn = false;
+  bool constantDvvn = false;
+  bool swoosh = false;
 };
 
 std::vector<uint8_t> PowerBallEffect(const PowerBallFields& fields) {
@@ -2156,7 +2161,7 @@ std::vector<uint8_t> PowerBallEffect(const PowerBallFields& fields) {
   return out;
 }
 
-uint32_t ConvertPowerBallFeatures(const PowerBallFields& fields) {
+uint32_t ConvertPowerBallFeatures(const PowerBallFields& fields, std::vector<uint8_t>* emitted = nullptr) {
   const std::vector<uint8_t> data = PowerBallEffect(fields);
   const std::vector<uint8_t> mati = PowerBallMati(fields.shader, fields.headerBlend);
   EffectNode effect;
@@ -2165,6 +2170,37 @@ uint32_t ConvertPowerBallFeatures(const PowerBallFields& fields) {
     std::fprintf(stderr, "FAIL: PowerBall fixture does not parse: %s\n", error.c_str());
     ++sFailures;
     return ~0u;
+  }
+  // AST mutations cover ambiguous properties and the other effect representation without
+  // depending on the source parser accepting duplicate field encodings.
+  EffectNode& child = effect.children.at(0);
+  for (EffectProperty& property : child.properties) {
+    if (property.fourcc == EffectFourCC("DVVN")) {
+      if (fields.wordDvvn) {
+        property.value[0].kind = EffectValue::Kind::Word;
+      }
+      if (fields.constantDvvn) {
+        const EffectValue value = property.value[0];
+        property.value[0].kind = EffectValue::Kind::Element;
+        property.value[0].fourcc = EffectFourCC("CNST");
+        property.value[0].args = {value};
+      }
+    }
+    if (property.fourcc == fields.extraValueProperty) {
+      property.value.push_back(property.value[0]);
+    }
+  }
+  if (fields.duplicateProperty != 0) {
+    for (const EffectProperty& property : child.properties) {
+      if (property.fourcc == fields.duplicateProperty) {
+        const EffectProperty copy = property;
+        child.properties.push_back(copy);
+        break;
+      }
+    }
+  }
+  if (fields.swoosh) {
+    child.form = EffectFourCC("SWSH");
   }
   EffectConvertIO io;
   io.assetId = [&fields](const EffectGuid& id, uint32_t type) {
@@ -2187,8 +2223,11 @@ uint32_t ConvertPowerBallFeatures(const PowerBallFields& fields) {
       continue;
     }
     std::vector<RetailPartProperty> properties;
-    if (!SplitRetailPart(part.part.data(), part.part.size(), properties, error)) {
+    if (!SplitRetailEffect(part.type, part.part.data(), part.part.size(), properties, error)) {
       return ~0u;
+    }
+    if (emitted != nullptr) {
+      *emitted = part.part;
     }
     for (const RetailPartProperty& property : properties) {
       if (property.fourcc == EffectFourCC("VMAT")) {
@@ -2241,6 +2280,84 @@ void TestPowerBallExposurePolicy() {
   Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.barePbdm = true})), "PBDM without CNST fails closed");
   Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.iexp = 0, .hasIexp = true})), "IEXP false present fails closed");
   Check(unflagged(ConvertPowerBallFeatures(PowerBallFields{.hasIexp = true})), "IEXP true present fails closed");
+}
+
+void TestPowerChargeExposurePolicy() {
+  // Exact audited held-charge GENP child, not the projectile fixture's child/MATI/PBDM.
+  const EffectGuid chargeChild = {0xdf, 0x39, 0xe6, 0xa9, 0xfe, 0x9d, 0x41, 0x42,
+                                  0x84, 0x2e, 0x0b, 0x8f, 0x8a, 0x65, 0x48, 0xe2};
+  const EffectGuid chargeMati = {0x3c, 0x1c, 0x7d, 0x90, 0xc8, 0xcc, 0x9b, 0x4b,
+                                 0x87, 0x8f, 0xee, 0x8a, 0x41, 0xfc, 0x1e, 0x7f};
+  PowerBallFields exact;
+  exact.child = chargeChild;
+  exact.material = chargeMati;
+  exact.pbdm = 2;
+  std::vector<uint8_t> flaggedBytes;
+  const uint32_t flagged = ConvertPowerBallFeatures(exact, &flaggedBytes);
+  Check(flagged == (kPortVfxModelOpacityFeatures | kAlreadyExposedBit),
+        "held charge exact child/MATI/header -1/model/DVVN4/PBDM2: AlreadyExposed");
+  auto plain = exact;
+  plain.hasIexp = true;
+  std::vector<uint8_t> plainBytes;
+  const uint32_t plainFeatures = ConvertPowerBallFeatures(plain, &plainBytes);
+  Check(plainFeatures == kPortVfxModelOpacityFeatures, "held charge explicit IEXP keeps room exposure");
+  // Identical render state and material: the only emitted byte delta is feature bit31.
+  size_t differences = 0;
+  bool onlyPolicyBit = flaggedBytes.size() == plainBytes.size();
+  for (size_t i = 0; i < std::min(flaggedBytes.size(), plainBytes.size()); ++i) {
+    if (flaggedBytes[i] != plainBytes[i]) {
+      ++differences;
+      onlyPolicyBit &= (flaggedBytes[i] ^ plainBytes[i]) == 0x80;
+    }
+  }
+  Check(onlyPolicyBit && differences == 1, "held charge emitted bytes change only exposure bit, not blend/recipe/alpha");
+  const auto reject = [](const PowerBallFields& fields, const char* message) {
+    const uint32_t features = ConvertPowerBallFeatures(fields);
+    Check(features != ~0u && (features & kAlreadyExposedBit) == 0, message);
+  };
+  // Every exact identity, state, representation and uniqueness guard must fail closed.
+  auto f = exact; f.child = Fresh(8); reject(f, "held charge: wrong child");
+  f = exact; f.child = kPowerBallChild; reject(f, "held charge: projectile child does not match");
+  f = exact; f.material = Fresh(7); reject(f, "held charge: wrong MATI");
+  f = exact; f.material = kPowerBallMati; reject(f, "held charge: projectile MATI does not match");
+  f = exact; f.shader = 0x461071b8; reject(f, "held charge: wrong shader");
+  for (uint32_t header : {0u, 1u, 2u}) {
+    f = exact; f.headerBlend = header; reject(f, "held charge: wrong MATI header blend");
+  }
+  f = exact; f.materialTag = 1; reject(f, "held charge: MTIN tag");
+  f = exact; f.materialSelector = 1; reject(f, "held charge: MTIN selector");
+  f = exact; f.duplicateMaterial = true; reject(f, "held charge: duplicate MTIN");
+  f = exact; f.hasModel = false; reject(f, "held charge: missing PMDL");
+  f = exact; f.model = Fresh(4); reject(f, "held charge: wrong PMDL");
+  f = exact; f.modelTag = 1; reject(f, "held charge: PMDL tag");
+  f = exact; f.unsupportedModel = true; reject(f, "held charge: PMDL expression");
+  f = exact; f.bareModel = true; reject(f, "held charge: bare PMDL");
+  for (uint32_t dvvn : {0u, 3u, 5u}) {
+    f = exact; f.dvvn = dvvn; reject(f, "held charge: wrong DVVN");
+  }
+  f = exact; f.dvvnTag = 3; reject(f, "held charge: DVVN tag");
+  f = exact; f.hasDvvn = false; reject(f, "held charge: missing DVVN");
+  f = exact; f.unsupportedDvvn = true; reject(f, "held charge: DVVN expression");
+  f = exact; f.wordDvvn = true; reject(f, "held charge: DVVN word instead of source byte");
+  f = exact; f.constantDvvn = true; reject(f, "held charge: DVVN CNST instead of source byte");
+  for (uint32_t pbdm : {0u, 1u, 3u}) {
+    f = exact; f.pbdm = pbdm; reject(f, "held charge: wrong PBDM");
+  }
+  f = exact; f.pbdmTag = 3; reject(f, "held charge: PBDM tag");
+  f = exact; f.hasPbdm = false; reject(f, "held charge: missing PBDM");
+  f = exact; f.unsupportedPbdm = true; reject(f, "held charge: PBDM expression");
+  f = exact; f.barePbdm = true; reject(f, "held charge: bare PBDM");
+  for (uint32_t iexp : {0u, 1u}) {
+    f = exact; f.hasIexp = true; f.iexp = iexp; reject(f, "held charge: explicit IEXP0/1");
+  }
+  for (uint32_t property : {EffectFourCC("PMDL"), EffectFourCC("DVVN"), EffectFourCC("PBDM")}) {
+    f = exact; f.duplicateProperty = property; reject(f, "held charge: duplicate state/model");
+    f = {}; f.duplicateProperty = property; reject(f, "projectile: duplicate state/model remains unexposed");
+  }
+  for (uint32_t property : {EffectFourCC("MTIN"), EffectFourCC("PMDL"), EffectFourCC("DVVN"), EffectFourCC("PBDM")}) {
+    f = exact; f.extraValueProperty = property; reject(f, "held charge: extra property values fail closed");
+  }
+  f = exact; f.swoosh = true; reject(f, "held charge: swoosh keeps room exposure");
 }
 
 // Only the wave orb's MATI, on a model particle, with header blend 1 takes Additive over PBDM.
@@ -2456,6 +2573,7 @@ int main() {
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();
   TestPowerBallExposurePolicy();
+  TestPowerChargeExposurePolicy();
   TestSmtrCch0Overrides();
   TestModelsOnly();
   TestFacingRotation();

@@ -332,6 +332,11 @@ constexpr EffectGuid kPowerBallMati = {0x46, 0x2a, 0x75, 0x86, 0x33, 0xe7, 0x23,
 constexpr EffectGuid kPowerBallModel = {0x60, 0xae, 0xf6, 0x4b, 0xe5, 0x3b, 0x51, 0x4d,
                                         0x88, 0xbd, 0x50, 0xbb, 0xd1, 0xbd, 0xf6, 0x71};
 constexpr uint32_t kPowerBallShader = 0xe899b1df;
+// Power held-charge sphere: a different child/MATI, despite sharing the model and shader.
+constexpr EffectGuid kPowerChargeChild = {0xdf, 0x39, 0xe6, 0xa9, 0xfe, 0x9d, 0x41, 0x42,
+                                          0x84, 0x2e, 0x0b, 0x8f, 0x8a, 0x65, 0x48, 0xe2};
+constexpr EffectGuid kPowerChargeMati = {0x3c, 0x1c, 0x7d, 0x90, 0xc8, 0xcc, 0x9b, 0x4b,
+                                         0x87, 0x8f, 0xee, 0x8a, 0x41, 0xfc, 0x1e, 0x7f};
 
 enum class Role { Color, Opacity, Ramp, Ramp2, Threshold, Indirect, Palette };
 
@@ -1952,6 +1957,19 @@ public:
     if (!swoosh && node.id == kPowerBallChild && exactMatiProperty && mati.shader == kPowerBallShader &&
         mati.headerBlend == kNoHeaderBlend && guidIs(powerPmdl, kPowerBallModel) &&
         constantIs(powerDvvn, 1, 4, false, true) && constantIs(powerPbdm, 1, 0, true, false) && !hasIexp) {
+      features |= kAlreadyExposed;
+    }
+    // Separately audited held-charge sphere: DVVN4 defaults inverse exposure on and PBDM2
+    // resolves additive usage. Its raw MATI also has header blend -1 (LE32 at 0x61).
+    // This fixes only HDR exposure cancellation; LDR appearance and full parity remain unproven.
+    // Do not change blend, recipe or the still-unrepresented SMTR alpha gain/bias here.
+    const bool exactChargeMatiProperty = powerMtin == &material && material.tag == 0 && material.value.size() == 2 &&
+                                         material.value[0].kind == EffectValue::Kind::Byte && material.value[0].word == 0 &&
+                                         material.value[1].kind == EffectValue::Kind::Guid &&
+                                         material.value[1].guid == kPowerChargeMati;
+    if (!swoosh && node.id == kPowerChargeChild && exactChargeMatiProperty && mati.shader == kPowerBallShader &&
+        mati.headerBlend == kNoHeaderBlend && guidIs(powerPmdl, kPowerBallModel) &&
+        constantIs(powerDvvn, 1, 4, false, true) && constantIs(powerPbdm, 1, 2, true, false) && !hasIexp) {
       features |= kAlreadyExposed;
     }
     if (recipe->frameBuffer) {
