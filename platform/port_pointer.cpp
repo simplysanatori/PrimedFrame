@@ -13,6 +13,7 @@ namespace PortPointer {
 namespace {
 
 bool sEnabled = true;
+bool sMapSwapFingers = false;
 Recognizer sGestures;
 SDL_WindowID sWindowId = 0;
 double sScreenActiveTime = -1.0;
@@ -103,6 +104,8 @@ bool SynthesizedMouse(SDL_MouseID which) { return which == SDL_TOUCH_MOUSEID || 
 } // namespace
 
 bool Enabled() { return sEnabled; }
+bool MapSwapFingers() { return sMapSwapFingers; }
+void SetMapSwapFingers(bool swap) { sMapSwapFingers = swap; }
 void SetEnabled(bool enabled) {
   if (sEnabled != enabled) {
     sGestures.Reset();

@@ -47,6 +47,7 @@
 
 #include <math.h>
 
+#include <utility>
 #include <vector>
 
 #include "port_debug.h"
@@ -954,10 +955,11 @@ void CAutoMapper::PortRecordPointerHits(const CStateManager& mgr, const CTransfo
   }
 }
 
-// Drag rotates (left mouse) or pans (right/middle, touch, two fingers), the
-// wheel and pinch zoom, a click picks an area or world and a click on the
-// picked one presses A, a right click presses B. Behind the gates of
-// ProcessMapScreenInput, so hints and leave rules are unchanged.
+// Drag rotates (left mouse, one finger) or pans (right/middle, two fingers; the
+// finger gestures swap with map_swap_fingers), the wheel and pinch zoom, a
+// click picks an area or world and a click on the picked one presses A, a right
+// click presses B. Behind the gates of ProcessMapScreenInput, so hints and leave
+// rules are unchanged.
 #ifdef TARGET_PC
 // Port: the map legend, the disc's text plus a line for each pickup shape in
 // use and the marked-room colour. Rebuilt when the settings behind it change.
@@ -1181,11 +1183,10 @@ void CAutoMapper::PortPointerInput(CFinalInput& input, const CStateManager& mgr)
     float panY = m.panY;
     float rotX = m.rotateX;
     float rotY = m.rotateY;
-    if (PortPointer::TouchIsLast()) {
-      // One finger pans on touch, as on the Android overlay.
-      panX += rotX;
-      panY += rotY;
-      rotX = rotY = 0.f;
+    const bool swapFingers = PortPointer::TouchIsLast() && PortPointer::MapSwapFingers();
+    if (swapFingers) {
+      std::swap(panX, rotX);
+      std::swap(panY, rotY);
     }
     if (panX != 0.f || panY != 0.f) {
       PortMapStopGlide();
@@ -1213,9 +1214,12 @@ void CAutoMapper::PortPointerInput(CFinalInput& input, const CStateManager& mgr)
       PortDebug::AddMapZoom(static_cast< float >(pow(2.0, 0.5 * m.zoom)));
     }
   }
-  // A held pan drag keeps the map from drifting back to its area.
+  // A held pan drag (right or middle button, two fingers) keeps the map from
+  // drifting back to its area. One finger rotates, as a left drag does (it pans
+  // and two fingers rotate with the swap setting on).
   PortPointer::Recognizer& g = PortPointer::Gestures();
-  if (g.Dragging() && (PortPointer::TouchIsLast() ||
+  const bool touchPan = PortPointer::MapSwapFingers() ? g.FingerCount() == 1 : g.FingerCount() >= 2;
+  if (g.Dragging() && (touchPan ||
                        (g.Buttons() & (PortPointer::kButtonRight | PortPointer::kButtonMiddle)))) {
     PortMapStopGlide();
     PortDebug::AddMapPan(0.f, 0.f, sPortMapViewPx, 250);

@@ -64,6 +64,8 @@ const SettingKey kSettingKeys[] = {
      [](std::ostream& out) { WriteBool(out, sMenuStandardButtons); }, false, "1", "0"},
     {"pointer_menus", [](const std::string& value) { PortPointer::SetEnabled(ParseBool(value)); },
      [](std::ostream& out) { WriteBool(out, PortPointer::Enabled()); }, false, "1", "0"},
+    {"map_swap_fingers", [](const std::string& value) { PortPointer::SetMapSwapFingers(ParseBool(value)); },
+     [](std::ostream& out) { WriteBool(out, PortPointer::MapSwapFingers()); }, false, "1", "0"},
     {"prompt_glyphs",
      [](const std::string& value) {
        for (int i = 0; i < int(std::size(kPromptGlyphs)); ++i) {
