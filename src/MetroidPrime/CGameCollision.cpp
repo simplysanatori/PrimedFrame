@@ -2761,6 +2761,14 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   // back and it never feeds a decision.
   player.PortNoteGroundMoverRun();
 
+  // The retail grounded mover clears the sliding-on-wall flag at the top of every tick
+  // (CGroundMovement.cpp MoveGroundCollider_New) and only its step-down sets it. This mover
+  // has no such step-down, so it clears it too: otherwise a value left by a retail tick (the
+  // dynamic-contact fallback above, a tick with the retained state invalid) outlives it, and
+  // ComputeDash then never sets the orbit velocity, so a lock-on keeps the player sliding
+  // at whatever velocity it had (issue #141).
+  player.SetPlayerIsSlidingOnWall(false);
+
   GroundTick tick{mgr,
                   player,
                   actor,
