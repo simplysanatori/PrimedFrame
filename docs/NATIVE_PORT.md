@@ -463,6 +463,14 @@ does not grow into tens or hundreds of inline lines in the decomp file. Keep
 retail behaviour the default path, so the hook reads as an exception to the
 original code, not a rewrite of it.
 
+Port code that was moved out of a decomp file but still defines members of
+decomp classes or depends on decomp headers the way game code does (for
+example `platform/port_remastered_movers.cpp`, which holds the Remastered
+player movers called from `CGameCollision::MovePlayer`) is appended to
+`MP_GAME_SOURCES` in `CMakeLists.txt` rather than `MP_PORT_SOURCES`. It is then
+compiled exactly as the file it came from (same flags, definitions and forced
+`platform/compat.h`), so moving it does not change the generated code.
+
 ## Ownership and threading rules
 
 - Use `rstl::auto_ptr<T[]>` / `single_ptr<T[]>` for host arrays and scalar owners

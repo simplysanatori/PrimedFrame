@@ -411,7 +411,7 @@ void Place(CStateManager& mgr) {
   // put back into a rebuilt world (both a slot load and quick resume reach here), so a value
   // from before the load is never carried across it. The next verified Remastered airborne
   // tick restores validity; until then the grounded Remastered mover stands aside (see
-  // CGameCollision.cpp).
+  // CGameCollision::MovePlayer).
   player.PortInvalidateRetainedObjectState();
   const Header& h = sPendingHeader;
   const CVector3f pos(h.position[0], h.position[1], h.position[2]);

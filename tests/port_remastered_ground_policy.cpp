@@ -557,8 +557,8 @@ int main() {
     REQUIRE(std::fabs(wall.velocityImpulse.x - expectedImpulse.x) < 1.e-5f);
     REQUIRE(std::fabs(wall.velocityImpulse.y - expectedImpulse.y) < 1.e-5f);
     REQUIRE(wall.velocityImpulse.z == 0.f);
-    // The caller adds the impulse to the velocity (CGameCollision.cpp:2315): the result is the
-    // tangential above, NOT zero.
+    // The caller adds the impulse to the velocity (MoveGroundedRemastered,
+    // platform/port_remastered_movers.cpp): the result is the tangential above, NOT zero.
     REQUIRE(std::fabs((v.x + wall.velocityImpulse.x) - tangential.x) < 1.e-5f);
     REQUIRE(std::fabs((v.y + wall.velocityImpulse.y) - tangential.y) < 1.e-5f);
     // momentumless seed: the flattened normal at mu = 0 (mass * 0.15), and no accumulator term

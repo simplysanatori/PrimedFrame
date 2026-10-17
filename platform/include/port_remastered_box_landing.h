@@ -30,7 +30,7 @@
 //    TRANSLATED material (CPhysicsActorMP1::MaterialListChanged 0xc53ccc ->
 //    NGamePhysicsUtilsMP1::TranslateMP1Material 0xc59b70), never against the
 //    port's raw CMaterialList masks.
-//    The SHIPPED failsafe query (CGameCollision.cpp, Failsafe::Other) has the same
+//    The SHIPPED failsafe query (port_remastered_movers.cpp, Failsafe::Other) has the same
 //    two steps in the same order, but it feeds them the port's retail raw-mask
 //    CMaterialFilter::Passes(CMaterialList); it is not a precedent for the
 //    translated-material form used here, and the raw-mask versus translated
