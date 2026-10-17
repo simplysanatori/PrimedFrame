@@ -54,6 +54,13 @@ struct SettingKey {
 
 void WriteBool(std::ostream& out, bool value) { out << (value ? 1 : 0); }
 
+// A key that is one bool: read with ParseBool, written as 1 or 0, sampled with both.
+template < bool* Flag >
+constexpr SettingKey BoolKey(const char* key) {
+  return {key, [](const std::string& value) { *Flag = ParseBool(value); },
+          [](std::ostream& out) { WriteBool(out, *Flag); }, false, "1", "0"};
+}
+
 const SettingKey kSettingKeys[] = {
     {"aspect",
      [](const std::string& value) {
@@ -71,14 +78,10 @@ const SettingKey kSettingKeys[] = {
                                                           : "4:3");
      },
      false, "16:9", "window"},
-    {"hud_wide", [](const std::string& value) { sHudWide = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sHudWide); }, false, "1", "0"},
-    {"cinema_bars", [](const std::string& value) { sCinemaBars = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sCinemaBars); }, false, "1", "0"},
-    {"sharp_scan_window", [](const std::string& value) { sSharpScanWindow = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sSharpScanWindow); }, false, "1", "0"},
-    {"auto_aim", [](const std::string& value) { sAutoAim = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sAutoAim); }, false, "1", "0"},
+    BoolKey< &sHudWide >("hud_wide"),
+    BoolKey< &sCinemaBars >("cinema_bars"),
+    BoolKey< &sSharpScanWindow >("sharp_scan_window"),
+    BoolKey< &sAutoAim >("auto_aim"),
     {"scan_speed",
      [](const std::string& value) {
        const int s = std::atoi(value.c_str());
@@ -87,10 +90,8 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sScanSpeed; }, false, "100", "500"},
-    {"secondary_crosshairs", [](const std::string& value) { sSecondaryCrosshairs = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sSecondaryCrosshairs); }, false, "1", "0"},
-    {"menu_standard_buttons", [](const std::string& value) { sMenuStandardButtons = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sMenuStandardButtons); }, false, "1", "0"},
+    BoolKey< &sSecondaryCrosshairs >("secondary_crosshairs"),
+    BoolKey< &sMenuStandardButtons >("menu_standard_buttons"),
     {"pointer_menus", [](const std::string& value) { PortPointer::SetEnabled(ParseBool(value)); },
      [](std::ostream& out) { WriteBool(out, PortPointer::Enabled()); }, false, "1", "0"},
     {"map_swap_fingers", [](const std::string& value) { PortPointer::SetMapSwapFingers(ParseBool(value)); },
@@ -105,10 +106,8 @@ const SettingKey kSettingKeys[] = {
      },
      [](std::ostream& out) { out << kPromptGlyphs[sPromptGlyphs.load(std::memory_order_relaxed)]; }, false,
      "playstation", "keyboard"},
-    {"show_shader_compilation", [](const std::string& value) { sShowShaderCompilation = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sShowShaderCompilation); }, false, "1", "0"},
-    {"show_menu_hint", [](const std::string& value) { sShowMenuHint = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sShowMenuHint); }, false, "1", "0"},
+    BoolKey< &sShowShaderCompilation >("show_shader_compilation"),
+    BoolKey< &sShowMenuHint >("show_menu_hint"),
     {"hud_scale",
      [](const std::string& value) {
        const int s = std::atoi(value.c_str());
@@ -156,12 +155,9 @@ const SettingKey kSettingKeys[] = {
        out << hex;
      },
      false, "ff8000", ""},
-    {"hide_helmet", [](const std::string& value) { sHideHelmet = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sHideHelmet); }, false, "1", "0"},
-    {"hide_visor_effects", [](const std::string& value) { sHideVisorEffects = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sHideVisorEffects); }, false, "1", "0"},
-    {"reveal_map", [](const std::string& value) { sRevealMap = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sRevealMap); }, false, "1", "0"},
+    BoolKey< &sHideHelmet >("hide_helmet"),
+    BoolKey< &sHideVisorEffects >("hide_visor_effects"),
+    BoolKey< &sRevealMap >("reveal_map"),
     {"map_pickups",
      [](const std::string& value) {
        // Old hand-edited on/true/yes meant the all-pickups dots.
@@ -171,29 +167,20 @@ const SettingKey kSettingKeys[] = {
                          : PortDebug::kMapPickups_Off;
      },
      [](std::ostream& out) { out << sMapPickups; }, false, "2", "3"},
-    {"tracker_progress", [](const std::string& value) { sTrackerProgress = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sTrackerProgress); }, false, "1", "0"},
-    {"map_logic_colors", [](const std::string& value) { sMapLogicColors = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sMapLogicColors); }, false, "1", "0"},
-    {"map_pickup_kinds", [](const std::string& value) { sMapPickupKinds = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sMapPickupKinds); }, false, "1", "0"},
-    {"map_station_pickups", [](const std::string& value) { sMapStationPickups = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sMapStationPickups); }, false, "1", "0"},
-    {"map_extra_ui", [](const std::string& value) { sMapExtraUi = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sMapExtraUi); }, false, "1", "0"},
+    BoolKey< &sTrackerProgress >("tracker_progress"),
+    BoolKey< &sMapLogicColors >("map_logic_colors"),
+    BoolKey< &sMapPickupKinds >("map_pickup_kinds"),
+    BoolKey< &sMapStationPickups >("map_station_pickups"),
+    BoolKey< &sMapExtraUi >("map_extra_ui"),
     {"ap_suit_damage",
      [](const std::string& value) {
        const int mode = std::atoi(value.c_str());
        sApSuitDamage = mode >= 0 && mode <= 2 ? mode : 1;
      },
      [](std::ostream& out) { out << sApSuitDamage; }, false, "0", "2"},
-    {"cheats", [](const std::string& value) { sCheats = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sCheats); }, false, "1", "0"},
-    {"skippable_cutscenes", [](const std::string& value) { sSkippableCutscenes = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sSkippableCutscenes); }, false, "1", "0"},
-    {"revision_100_compatibility",
-     [](const std::string& value) { sRevision100Compatibility = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sRevision100Compatibility); }, false, "1", "0"},
+    BoolKey< &sCheats >("cheats"),
+    BoolKey< &sSkippableCutscenes >("skippable_cutscenes"),
+    BoolKey< &sRevision100Compatibility >("revision_100_compatibility"),
     // Normalised on the way in (NormalizeEmulatorFolder), so not sampled.
     {"emulator_folder", [](const std::string& value) { PortGci::SetEmulatorFolder(value); },
      [](std::ostream& out) { out << PortGci::EmulatorFolder(); }, false, nullptr, nullptr},
@@ -217,12 +204,9 @@ const SettingKey kSettingKeys[] = {
                         : PortDebug::kBootLogos_Skippable;
      },
      [](std::ostream& out) { out << sBootLogos; }, false, "0", "2"},
-    {"savestate_hotkeys", [](const std::string& value) { sSaveStateHotkeys = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sSaveStateHotkeys); }, false, "1", "0"},
-    {"quick_resume", [](const std::string& value) { sQuickResume = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sQuickResume); }, false, "1", "0"},
-    {"savestate_room_state", [](const std::string& value) { sSaveStateRoomState = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sSaveStateRoomState); }, false, "1", "0"},
+    BoolKey< &sSaveStateHotkeys >("savestate_hotkeys"),
+    BoolKey< &sQuickResume >("quick_resume"),
+    BoolKey< &sSaveStateRoomState >("savestate_room_state"),
     {"fov",
      [](const std::string& value) {
        const float f = static_cast< float >(std::atof(value.c_str()));
@@ -277,18 +261,12 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sAnisotropy; }, false, "1", "16"},
-    {"per_pixel_lighting", [](const std::string& value) { sPerPixelLighting = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sPerPixelLighting); }, false, "1", "0"},
-    {"sun_shadows", [](const std::string& value) { sSunShadows = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sSunShadows); }, false, "1", "0"},
-    {"projected_shadows", [](const std::string& value) { sProjectedShadows = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sProjectedShadows); }, false, "1", "0"},
-    {"unlock_hard_mode", [](const std::string& value) { sUnlockHardMode = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sUnlockHardMode); }, false, "1", "0"},
-    {"unlock_fusion_suit", [](const std::string& value) { sUnlockFusionSuit = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sUnlockFusionSuit); }, false, "1", "0"},
-    {"unlock_galleries", [](const std::string& value) { sUnlockGalleries = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sUnlockGalleries); }, false, "1", "0"},
+    BoolKey< &sPerPixelLighting >("per_pixel_lighting"),
+    BoolKey< &sSunShadows >("sun_shadows"),
+    BoolKey< &sProjectedShadows >("projected_shadows"),
+    BoolKey< &sUnlockHardMode >("unlock_hard_mode"),
+    BoolKey< &sUnlockFusionSuit >("unlock_fusion_suit"),
+    BoolKey< &sUnlockGalleries >("unlock_galleries"),
     {"storage_clamp",
      [](const std::string& value) {
        const int v = std::atoi(value.c_str());
@@ -311,10 +289,8 @@ const SettingKey kSettingKeys[] = {
        }
      },
      true, "keep_depth", "unmonitored_fence,validation"},
-    {"speedrun_timer", [](const std::string& value) { sSpeedrunTimer = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sSpeedrunTimer); }, false, "1", "0"},
-    {"livesplit", [](const std::string& value) { sLiveSplit = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sLiveSplit); }, false, "1", "0"},
+    BoolKey< &sSpeedrunTimer >("speedrun_timer"),
+    BoolKey< &sLiveSplit >("livesplit"),
     {"livesplit_address",
      [](const std::string& value) {
        if (!value.empty()) {
@@ -322,25 +298,17 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sLiveSplitAddress; }, false, "127.0.0.1:16834", "localhost:1"},
-    {"livesplit_split_upgrades", [](const std::string& value) { sLiveSplitSplitUpgrades = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sLiveSplitSplitUpgrades); }, false, "1", "0"},
+    BoolKey< &sLiveSplitSplitUpgrades >("livesplit_split_upgrades"),
     // Not "discord": 0.16.0 saved discord=0 for everyone while it was opt-in.
-    {"discord_presence", [](const std::string& value) { sDiscord = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sDiscord); }, false, "1", "0"},
-    {"update_check", [](const std::string& value) { sUpdateCheck = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sUpdateCheck); }, false, "1", "0"},
-    {"mods", [](const std::string& value) { sModsEnabled = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sModsEnabled); }, false, "1", "0"},
-    {"original_experience", [](const std::string& value) { sOriginalExperience = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sOriginalExperience); }, false, "1", "0"},
+    BoolKey< &sDiscord >("discord_presence"),
+    BoolKey< &sUpdateCheck >("update_check"),
+    BoolKey< &sModsEnabled >("mods"),
+    BoolKey< &sOriginalExperience >("original_experience"),
     {"mods_disabled", [](const std::string& value) { sModsDisabled = value; },
      [](std::ostream& out) { out << sModsDisabled; }, false, "a,b", ""},
-    {"vsync", [](const std::string& value) { sVsyncEnabled = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sVsyncEnabled); }, false, "1", "0"},
-    {"fullscreen", [](const std::string& value) { sFullscreen = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sFullscreen); }, false, "1", "0"},
-    {"overlay_windowed", [](const std::string& value) { sOverlayWindowed = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sOverlayWindowed); }, false, "1", "0"},
+    BoolKey< &sVsyncEnabled >("vsync"),
+    BoolKey< &sFullscreen >("fullscreen"),
+    BoolKey< &sOverlayWindowed >("overlay_windowed"),
     {"ui_theme",
      [](const std::string& value) {
        sUiTheme = SDL_strcasecmp(value.c_str(), "prime") == 0        ? 1
@@ -352,8 +320,7 @@ const SettingKey kSettingKeys[] = {
        out << (sUiTheme == 1 ? "prime" : sUiTheme == 2 ? "remastered" : sUiTheme == 3 ? "plain" : "auto");
      },
      false, "remastered", "auto"},
-    {"ui_sounds", [](const std::string& value) { sUiSounds = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sUiSounds); }, false, "1", "0"},
+    BoolKey< &sUiSounds >("ui_sounds"),
     {"photo_supersample", [](const std::string& value) { PortPhoto::SetSupersample(std::atoi(value.c_str())); },
      [](std::ostream& out) { out << PortPhoto::Supersample(); }, false, "4", "1"},
     {"photo_speed",
@@ -372,8 +339,7 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sRenderScale; }, false, "0.5", "2"},
-    {"dynamic_res", [](const std::string& value) { sDynamicRes = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sDynamicRes); }, false, "1", "0"},
+    BoolKey< &sDynamicRes >("dynamic_res"),
     {"dynamic_res_target",
      [](const std::string& value) { sDynamicResTarget = std::clamp(std::atoi(value.c_str()), 0, 240); },
      [](std::ostream& out) { out << sDynamicResTarget; }, false, "0", "60"},
@@ -394,8 +360,7 @@ const SettingKey kSettingKeys[] = {
     {"upscale_sharpen_amount",
      [](const std::string& value) { sSharpenAmount = std::clamp(std::atoi(value.c_str()), 0, 100); },
      [](std::ostream& out) { out << sSharpenAmount; }, false, "0", "80"},
-    {"frame_limit", [](const std::string& value) { sFrameLimitEnabled = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sFrameLimitEnabled); }, false, "1", "0"},
+    BoolKey< &sFrameLimitEnabled >("frame_limit"),
     {"fps_cap", [](const std::string& value) { sFpsCap = ClampFpsCap(std::atoi(value.c_str())); },
      [](std::ostream& out) { out << sFpsCap; }, false, "0", "144"},
     {"sim_rate",
@@ -406,16 +371,14 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sSimRate; }, false, "30", "120"},
-    {"sim_adaptive", [](const std::string& value) { sSimAdaptive = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sSimAdaptive); }, false, "1", "0"},
+    BoolKey< &sSimAdaptive >("sim_adaptive"),
     {"smooth_frames",
      [](const std::string& value) {
        sSmoothFrames = ParseBool(value);
        sFrameInterpolation = sActorInterpolation = sPoseInterpolation = sParticleInterpolation = sSmoothFrames;
      },
      [](std::ostream& out) { WriteBool(out, sSmoothFrames); }, false, "1", "0"},
-    {"room_geo_gpu", [](const std::string& value) { sRoomGeoResident = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sRoomGeoResident); }, false, "1", "0"},
+    BoolKey< &sRoomGeoResident >("room_geo_gpu"),
     // The old key, saved as 0 by everyone while it was off by default: only an explicit 1 counts.
     {"room_geo_resident", [](const std::string& value) { sRoomGeoResident = sRoomGeoResident || ParseBool(value); },
      nullptr, false, nullptr, nullptr},
@@ -426,12 +389,10 @@ const SettingKey kSettingKeys[] = {
      [](const std::string& value) { PortRoomGeo::SetLodDistance(std::strtof(value.c_str(), nullptr)); },
      [](std::ostream& out) { out << PortRoomGeo::LodDistance(); }, false, "0.5", "2"},
     {nullptr, nullptr, [](std::ostream& out) { PortInput::WriteControlSettings(out); }, false, nullptr, nullptr},
-    {"invulnerable", [](const std::string& value) { sInvulnerable = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sInvulnerable); }, false, "1", "0"},
+    BoolKey< &sInvulnerable >("invulnerable"),
     // Not "log_file": builds from before the log was on by default wrote
     // log_file=0 into every settings file, which kept it off after an update.
-    {"logging", [](const std::string& value) { sLogFile = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sLogFile); }, false, "1", "0"},
+    BoolKey< &sLogFile >("logging"),
     {nullptr, nullptr, [](std::ostream& out) { PortInput::WriteGameplaySettings(out); }, false, nullptr, nullptr},
     // Its own JSON text (PortRandoGen::SettingsText), so not sampled here.
     {"rando_settings",
@@ -459,10 +420,8 @@ const SettingKey kSettingKeys[] = {
      [](std::ostream& out) { out << sRemasteredKeysPath; }, true, "/keys/prod.keys", "/k/p.keys"},
     {"remastered_skip", [](const std::string& value) { sRemasteredSkip = value; },
      [](std::ostream& out) { out << sRemasteredSkip; }, true, "geometry,movies", "hud"},
-    {"ai_audio", [](const std::string& value) { sAiAudioEnabled = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sAiAudioEnabled); }, false, "1", "0"},
-    {"musyx_audio", [](const std::string& value) { sMusyxAudioEnabled = ParseBool(value); },
-     [](std::ostream& out) { WriteBool(out, sMusyxAudioEnabled); }, false, "1", "0"},
+    BoolKey< &sAiAudioEnabled >("ai_audio"),
+    BoolKey< &sMusyxAudioEnabled >("musyx_audio"),
     {"voices_muted",
      [](const std::string& value) {
        MusyxPortClearSampleMutes();

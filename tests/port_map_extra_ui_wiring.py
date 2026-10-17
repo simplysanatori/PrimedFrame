@@ -36,7 +36,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from wiring_helpers import (  # noqa: E402
-    WiringCase, between, braced, count, index, joined, partition, root_argument, squash)
+    WiringCase, between, braced, count, index, joined, root_argument, squash)
 
 root = root_argument()
 DEBUG_UI = root / "platform/debug_ui.cpp"
@@ -66,12 +66,14 @@ class Wiring(WiringCase):
         self.assertIn("bool sMapExtraUi = false;", ui)
         self.assertNotIn("bool sMapExtraUi = true;", ui)
         settings = SETTINGS.read_text()
-        key = between(settings, '{"map_extra_ui",', "}, false,", SETTINGS)
-        self.assertIn("sMapExtraUi = ParseBool(value);", key)
-        self.assertIn("WriteBool(out, sMapExtraUi);", key)
+        # A plain bool key: BoolKey reads it with ParseBool and writes 1 or 0.
+        self.assertIn('BoolKey< &sMapExtraUi >("map_extra_ui")', settings)
+        bool_key = braced(settings, "constexpr SettingKey BoolKey(const char* key) {", SETTINGS)
+        self.assertIn("*Flag = ParseBool(value);", bool_key)
+        self.assertIn("WriteBool(out, *Flag);", bool_key)
         # Two sample values: the round-trip self-test applies each and expects it
         # back, so the key is covered by port_settings_roundtrip.
-        self.assertIn('false, "1", "0"}', partition(settings, '{"map_extra_ui",')[1])
+        self.assertIn('false, "1", "0"}', bool_key)
         self.assertIn("port_settings_roundtrip", CMAKE.read_text())
 
     def test_accessors_are_declared_and_save_the_setting(self):
