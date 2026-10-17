@@ -1,5 +1,6 @@
 #include "MetroidPrime/Player/CPlayerGun.hpp"
 #include "port_debug.h"
+#include "port_power_charge_release.h"
 #include "port_room_env.h"
 #include "port_shot_aim.h"
 #include "port_synthetic_effect.h"
@@ -1355,7 +1356,15 @@ void CPlayerGun::ResetCharged(float dt, CStateManager& mgr) {
     return;
   }
 
-  if (x32c_chargePhase >= kCP_FxGrowing) {
+#ifdef TARGET_PC
+  const bool powerRapidCharge = NPortPowerChargeRelease::IsScopedRapidCharge(
+      mPortRapidCharge, x310_currentBeam == CPlayerState::kBI_Power);
+#else
+  const bool powerRapidCharge = false;
+#endif
+  if (NPortPowerChargeRelease::IsChargedRelease(
+          x32c_chargePhase, kCP_FxGrowing, kCP_AnimAndSfx, x832_27_chargeAnimStarted,
+          powerRapidCharge)) {
     x833_30_canShowAuxMuzzleEffect = false;
     UpdateNormalShotCycle(dt, mgr);
     x832_24_coolingCharge = true;
@@ -1682,11 +1691,15 @@ void CPlayerGun::UpdateChargeState(float dt, CStateManager& mgr) {
   float fxStart = kChargeFxStart;
   float chargeSpeed = kChargeSpeed;
 #ifdef TARGET_PC
+  const bool powerRapidCharge = NPortPowerChargeRelease::IsScopedRapidCharge(
+      mPortRapidCharge, x310_currentBeam == CPlayerState::kBI_Power);
   if (const SPortRapidCharge* beam = mPortRapidCharge ? PortRapidChargeFor(x310_currentBeam) : nullptr) {
     animStart = float(beam->triggered) / float(beam->full);
     fxStart = float(beam->warmUp) / float(beam->full);
     chargeSpeed = 60.f / float(beam->full);
   }
+#else
+  const bool powerRapidCharge = false;
 #endif
 #ifdef TARGET_PC
   // Remastered (UpdateChargeRumbleTriggered 0xc9b41c): one rumble once the charge time passes warmUp.
@@ -1725,6 +1738,8 @@ void CPlayerGun::UpdateChargeState(float dt, CStateManager& mgr) {
               mgr.GetRumbleManager()->Rumble(mgr, kRFX_PlayerGunCharge, 1.f, kRP_Three);
         }
         x832_27_chargeAnimStarted = true;
+        x330_chargeState = NPortPowerChargeRelease::ChargeStageAtAnimationStart(
+            x330_chargeState, kCS_Charged, powerRapidCharge, x832_27_chargeAnimStarted);
       }
     } else if (x340_chargeBeamFactor >= fxStart && !IsWeaponStateSet(0x8)) {
       x832_25_chargeEffectVisible = true;
