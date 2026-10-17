@@ -144,8 +144,12 @@ bool Enabled();
 const uint32_t* Unlocked(uint32_t* copy);
 // A damageable trigger of area `mrea` with this editor id went down: when the
 // setting is on and it is a beam door's force field, record the doorway and
-// restyle it everywhere it is loaded.
+// restyle it everywhere it is loaded once the shield has faded (see OnForceFaded),
+// so the shield does not flip colour while it fades out.
 void OnForceBroken(CStateManager& mgr, uint32_t mrea, uint32_t editorId);
+// The broken force field finished fading (its trigger and shield just went
+// inactive): restyles the doorway that OnForceBroken recorded, if one is pending.
+void OnForceFaded(CStateManager& mgr, uint32_t mrea, uint32_t editorId);
 // Marks doorway `bit` open and restyles its loaded doors; false when it was
 // already open, the bit is out of range or no game is loaded.
 bool Unlock(CStateManager& mgr, int bit);

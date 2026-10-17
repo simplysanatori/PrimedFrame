@@ -1,5 +1,7 @@
 #include "port_beam_doors.h"
 
+#include <set>
+
 #include "port_ap_world.h"
 #include "port_apclient.h"
 #include "port_debug.h"
@@ -31,6 +33,9 @@ const uint32_t* Unlocked(uint32_t* copy) {
 }
 
 namespace {
+
+// Doorways broken for real whose restyle waits for the shield to finish fading.
+std::set< int > sPending;
 
 // The doors of a doorway that are loaded take the blue look and weaknesses now;
 // the ones in rooms not loaded get them from their room patch when they load.
@@ -96,7 +101,20 @@ void OnForceBroken(CStateManager& mgr, uint32_t mrea, uint32_t editorId) {
     return;
   if (!PortAp::BeamDoorUnlockable(mrea, door))
     return;
-  Unlock(mgr, bit);
+  // Recorded now (a save or a room change must keep it); the loaded objects are
+  // restyled when the shield has faded, not while it is still drawn.
+  Set(gpGameState->PortBeamDoorBits(), bit);
+  sPending.insert(bit);
+  PortLog::Write("beam doors: doorway %d stays unlocked\n", bit);
+}
+
+void OnForceFaded(CStateManager& mgr, uint32_t mrea, uint32_t editorId) {
+  if (sPending.empty() || gpGameState == nullptr)
+    return;
+  const int bit = PortApWorld::BeamDoorwayBit(PortApWorld::FindDoorByForce(mrea, editorId));
+  if (bit < 0 || sPending.erase(bit) == 0 || !Test(gpGameState->PortBeamDoorBits(), bit))
+    return;
+  Restyle(mgr, bit);
 }
 
 bool Reset() {
@@ -105,6 +123,7 @@ bool Reset() {
   uint* bits = gpGameState->PortBeamDoorBits();
   for (int i = 0; i < kWords; ++i)
     bits[i] = 0;
+  sPending.clear();
   return true;
 }
 

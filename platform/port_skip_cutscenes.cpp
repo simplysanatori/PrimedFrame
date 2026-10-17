@@ -9,6 +9,7 @@
 #include "port_revision_scripts.h"
 
 #include <algorithm>
+#include <set>
 
 namespace PortSkipCutscenes {
 namespace {
@@ -254,7 +255,10 @@ bool PatchDoors(uint32_t mreaId, const uint8_t* scly, size_t size, std::vector< 
   std::vector< uint8_t > doors;
   if (ApplyOps(patched ? out.data() : scly, patched ? out.size() : size, doorOps.data(),
                doorOps.size(), doors) != 0) {
-    PortLog::Write("archipelago: room %08X's door patch doesn't match, left as is\n", mreaId);
+    // Once per room: the room loads again on every visit.
+    static std::set< uint32_t > sWarned;
+    if (sWarned.insert(mreaId).second)
+      PortLog::Write("doors: room %08X's door patch doesn't match, left as is\n", mreaId);
     return false;
   }
   out.swap(doors);

@@ -167,6 +167,9 @@ void CScriptDamageableTrigger::Think(float dt, CStateManager& mgr) {
       }
       SetLinkedObjectAlpha(0.f, mgr);
       x300_25_alphaOut = false;
+#ifdef TARGET_PC
+      PortBeamDoors::OnForceFaded(mgr, area.GetAreaAssetId(), GetEditorId().Value());
+#endif
       return;
     }
   } else if (x16c_hInfo.GetHP() <= 0.f && GetActive()) {
@@ -192,6 +195,7 @@ void CScriptDamageableTrigger::PortRestyle(const CDamageVulnerability& vuln, CAs
                                            CAssetId patternTex2, CAssetId colorTex) {
   x174_dVuln = vuln;
   // The plane has no assignment of its own; build it again as the constructor does.
+  // Safe in place: this is only called outside rendering (from Think or the console).
   x254_fluidPlane.~CFluidPlaneDoor();
   new (&x254_fluidPlane) CFluidPlaneDoor(patternTex1, patternTex2, colorTex, 1.f, 2,
                                          CFluidPlane::kFT_NormalWater, 1.f,
