@@ -2177,6 +2177,26 @@ void CmdScanSpread() {
   Finish();
 }
 
+void CmdHudOpacity() {
+  static const char* const kParts[PortDebug::kHudOpacityPartCount] = {"xray", "thermal", "scan", "energy"};
+  int part = -1;
+  for (int i = 0; i < PortDebug::kHudOpacityPartCount; ++i) {
+    if (sCmd.args.size() > 1 && sCmd.args[1] == kParts[i]) {
+      part = i;
+    }
+  }
+  const std::string value = sCmd.args.size() > 2 ? sCmd.args[2] : "";
+  const bool numeric = !value.empty() && value.find_first_not_of("0123456789") == std::string::npos;
+  const int percent = value == "visor" ? PortDebug::kHudOpacityVisor : std::atoi(value.c_str());
+  if (part < 0 || (value != "visor" && !numeric) ||
+      (percent != PortDebug::kHudOpacityVisor &&
+       (percent < PortDebug::kHudOpacityMin || percent > PortDebug::kHudOpacityMax))) {
+    return Finish("usage: hudopacity <xray|thermal|scan|energy> <visor|0..100>");
+  }
+  PortDebug::SetHudOpacity(static_cast< PortDebug::HudOpacityPart >(part), percent);
+  Finish();
+}
+
 void CmdCrosshair() {
   const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : 0;
   if (value < PortDebug::kCrosshairSizeMin || value > PortDebug::kCrosshairSizeMax) {
@@ -3516,6 +3536,8 @@ const CommandSpec kCommands[] = {
      "scanspread <0..100>        how far the widescreen HUD moves the scan panels out"},
     {"crosshair", CmdCrosshair, nullptr,
      "crosshair <25..100>        mouse/twin-stick crosshair size in percent"},
+    {"hudopacity", CmdHudOpacity, nullptr,
+     "hudopacity <xray|thermal|scan|energy> <visor|0..100>  that HUD's opacity, or Visor Opacity's"},
     {"helmet", CmdHelmetVisorFx, nullptr,
      "helmet <0|1>, visorfx <0|1> show (1) or hide (0) the helmet and visor effects"},
     {"visorfx", CmdHelmetVisorFx, nullptr, ""},

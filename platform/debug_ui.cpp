@@ -98,6 +98,9 @@ int sScanSpread = PortDebug::kScanSpreadMin; // touch controls cover the screen 
 #else
 int sScanSpread = PortDebug::kScanSpreadMax;
 #endif
+// Indexed by PortDebug::HudOpacityPart.
+int sHudOpacity[PortDebug::kHudOpacityPartCount] = {PortDebug::kHudOpacityVisor, PortDebug::kHudOpacityVisor,
+                                                    PortDebug::kHudOpacityVisor, PortDebug::kHudOpacityMax};
 int sCrosshairOpacity = PortDebug::kCrosshairOpacityMax;
 bool sCrosshairCustomColor = false;
 float sCrosshairColor[3] = {1.f, 1.f, 1.f};

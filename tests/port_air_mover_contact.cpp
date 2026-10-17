@@ -178,6 +178,29 @@ static void TestSATReference() {
   }
 }
 
+// 0xc6d110's probe and band (issue #147): the probe reaches down to the hi state, at most
+// GetStepDownHeight() below the target, and never above target - 0.002.
+static void TestGroundCheckBand() {
+  using PortAirMoverContact::GroundCheckBand;
+  // A floor contact while falling in kMS_ApplyJump (step down 0.1): the bisection's blocked
+  // sample sits 0.0156 below the accepted one (the #147 descending piston). The probe goes to
+  // it and the band reaches 0.102 down, so the platform top between the two is found.
+  const auto fall = GroundCheckBand(23.668f, 0.1f, 23.6524f);
+  CHECK_MSG(fall.probeUp == 23.6524f, "the probe reaches the blocked hi sample");
+  CHECK_MSG(std::fabs(fall.low - (23.668f - 0.1f - 0.002f)) < 1e-6f, "the band starts step-down below");
+  // A hi sample further down than the step-down height is clamped to it.
+  const auto deep = GroundCheckBand(10.f, 0.1f, 9.5f);
+  CHECK_MSG(deep.probeUp == 10.f - 0.1f, "the probe stops at the step-down height");
+  // The post-step probe while rising: hi is the state moved 0.1 down.
+  const auto rise = GroundCheckBand(22.4181f, 0.1f, 22.4181f - 0.1f);
+  CHECK_MSG(std::fabs(rise.probeUp - (22.4181f - 0.1f)) < 1e-5f, "the rising probe is 0.1 down");
+  CHECK_MSG(rise.low < 22.4181f - 0.05f, "a floor 0.05 below the feet is inside the band");
+  // A hi sample above the target never lifts the probe above target - 0.002.
+  CHECK_MSG(GroundCheckBand(5.f, 0.1f, 6.f).probeUp == 5.f - .002f, "the probe is capped below");
+  // kMS_Jump's step down is -1: the band starts above the box bottom, so nothing lands.
+  CHECK_MSG(GroundCheckBand(5.f, -1.f, 4.9f).low > 5.f, "kMS_Jump has an empty band");
+}
+
 int main() {
   TestWorkingNormal();
   TestW25();
@@ -187,6 +210,7 @@ int main() {
   TestFlag100Response();
   TestTerrainPredicates();
   TestSATReference();
+  TestGroundCheckBand();
   if (port_test::Failures() == 0) {
     std::printf("port_air_mover_contact_tests: all passed\n");
   }
