@@ -6,13 +6,13 @@
 
 #include "port_custom_res.h"
 #include "port_json.h"
+#include "port_json_writer.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
-#include <sstream>
 
 namespace PortApWorld {
 namespace {
@@ -276,64 +276,53 @@ void Parse(const PortJson::Value& data, Layout& layout) {
 }
 
 std::string Text(const Layout& layout) {
-  std::ostringstream text;
-  text << "{\"starting_room_name\":" << port::JsonQuote(layout.startRoom)
-       << ",\"final_bosses\":" << layout.finalBosses
-       << ",\"required_artifacts\":" << layout.requiredArtifacts << ",\"elevator_mapping\":{";
-  bool firstArea = true;
-  for (const auto& area : layout.elevators) {
-    text << (firstArea ? "" : ",") << port::JsonQuote(area.first) << ":{";
-    firstArea = false;
-    bool first = true;
-    for (const auto& entry : area.second) {
-      text << (first ? "" : ",") << port::JsonQuote(entry.first) << ':' << port::JsonQuote(entry.second);
-      first = false;
-    }
-    text << '}';
+  port::JsonWriter json;
+  const auto mapping = [&json](const std::map< std::string, std::string >& entries) {
+    json.BeginObject();
+    for (const auto& [from, to] : entries)
+      json.Key(from).String(to);
+    json.EndObject();
+  };
+  json.BeginObject();
+  json.Key("starting_room_name").String(layout.startRoom);
+  json.Key("final_bosses").Number(layout.finalBosses);
+  json.Key("required_artifacts").Number(layout.requiredArtifacts);
+  json.Key("elevator_mapping").BeginObject();
+  for (const auto& [area, elevators] : layout.elevators) {
+    json.Key(area);
+    mapping(elevators);
   }
-  text << "},\"door_color_randomization\":" << (layout.doorColorRandomization ? 1 : 0)
-       << ",\"remove_hive_mecha\":" << (layout.removeHiveMecha ? 1 : 0)
-       << ",\"backwards_lower_mines\":" << (layout.backwardsLowerMines ? 1 : 0)
-       << ",\"flaahgra_power_bombs\":" << (layout.flaahgraPowerBombs ? 1 : 0)
-       << ",\"etank_capacity\":" << layout.etankCapacity;
+  json.EndObject();
+  json.Key("door_color_randomization").Number(layout.doorColorRandomization ? 1 : 0);
+  json.Key("remove_hive_mecha").Number(layout.removeHiveMecha ? 1 : 0);
+  json.Key("backwards_lower_mines").Number(layout.backwardsLowerMines ? 1 : 0);
+  json.Key("flaahgra_power_bombs").Number(layout.flaahgraPowerBombs ? 1 : 0);
+  json.Key("etank_capacity").Number(layout.etankCapacity);
   if (layout.hasDoorColors) {
-    text << ",\"door_color_mapping\":{";
-    firstArea = true;
-    for (const auto& area : layout.doorColors) {
-      text << (firstArea ? "" : ",") << port::JsonQuote(area.first) << ":{\"type_mapping\":{";
-      firstArea = false;
-      bool first = true;
-      for (const auto& entry : area.second) {
-        text << (first ? "" : ",") << port::JsonQuote(entry.first) << ':' << port::JsonQuote(entry.second);
-        first = false;
-      }
-      text << "}}";
+    json.Key("door_color_mapping").BeginObject();
+    for (const auto& [area, colors] : layout.doorColors) {
+      json.Key(area).BeginObject().Key("type_mapping");
+      mapping(colors);
+      json.EndObject();
     }
-    text << '}';
+    json.EndObject();
   }
   if (layout.hasShields) {
-    text << ",\"blast_shield_mapping\":{";
-    firstArea = true;
-    for (const auto& area : layout.shields) {
-      text << (firstArea ? "" : ",") << port::JsonQuote(area.first) << ":{\"type_mapping\":{";
-      firstArea = false;
-      bool firstRoom = true;
-      for (const auto& room : area.second) {
-        text << (firstRoom ? "" : ",") << port::JsonQuote(room.first) << ":{";
-        firstRoom = false;
-        bool first = true;
-        for (const auto& entry : room.second) {
-          text << (first ? "" : ",") << '"' << entry.first << "\":" << port::JsonQuote(entry.second);
-          first = false;
-        }
-        text << '}';
+    json.Key("blast_shield_mapping").BeginObject();
+    for (const auto& [area, rooms] : layout.shields) {
+      json.Key(area).BeginObject().Key("type_mapping").BeginObject();
+      for (const auto& [room, docks] : rooms) {
+        json.Key(room).BeginObject();
+        for (const auto& [dock, shield] : docks)
+          json.Key(std::to_string(dock)).String(shield);
+        json.EndObject();
       }
-      text << "}}";
+      json.EndObject().EndObject();
     }
-    text << '}';
+    json.EndObject();
   }
-  text << '}';
-  return text.str();
+  json.EndObject();
+  return json.Take();
 }
 
 int DockTo(const std::string& area, const std::string& room, const std::string& dest) {
