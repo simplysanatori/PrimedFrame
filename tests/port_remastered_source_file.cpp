@@ -4,6 +4,7 @@
 // and a read at or past the end must come back short instead of failing badly.
 
 #include "port_remastered_nsp.h"
+#include "port_test.h"
 
 #include <algorithm>
 #include <atomic>
@@ -18,14 +19,6 @@
 using namespace PortRemastered;
 
 namespace {
-int sFailures = 0;
-
-void Check(bool condition, const char* what) {
-  if (!condition) {
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++sFailures;
-  }
-}
 
 uint8_t ByteAt(uint64_t offset) { return uint8_t((offset * 2654435761u) >> 13); }
 } // namespace
@@ -46,7 +39,7 @@ int main() {
   }
   const std::u8string utf8 = path.u8string();
   SourceFile file;
-  Check(file.Open(std::string(utf8.begin(), utf8.end())), "opens a UTF-8 path");
+  CHECK_MSG(file.Open(std::string(utf8.begin(), utf8.end())), "opens a UTF-8 path");
 
   std::atomic<int> bad{0};
   std::vector<std::thread> threads;
@@ -74,25 +67,23 @@ int main() {
   for (std::thread& thread : threads) {
     thread.join();
   }
-  Check(bad == 0, "reads from eight threads at once return the file's bytes");
+  CHECK_MSG(bad == 0, "reads from eight threads at once return the file's bytes");
 
   uint8_t tail[64];
-  Check(file.ReadSome(kSize - 10, tail, sizeof tail) == 10, "a read over the end comes back short");
-  Check(tail[9] == ByteAt(kSize - 1), "the last byte");
-  Check(file.ReadSome(kSize, tail, sizeof tail) == 0, "a read at the end reads nothing");
-  Check(file.ReadSome(kSize + 4096, tail, sizeof tail) == 0, "a read past the end reads nothing");
-  Check(!file.ReadAt(kSize - 1, tail, 2), "ReadAt over the end fails");
+  CHECK_MSG(file.ReadSome(kSize - 10, tail, sizeof tail) == 10, "a read over the end comes back short");
+  CHECK_MSG(tail[9] == ByteAt(kSize - 1), "the last byte");
+  CHECK_MSG(file.ReadSome(kSize, tail, sizeof tail) == 0, "a read at the end reads nothing");
+  CHECK_MSG(file.ReadSome(kSize + 4096, tail, sizeof tail) == 0, "a read past the end reads nothing");
+  CHECK_MSG(!file.ReadAt(kSize - 1, tail, 2), "ReadAt over the end fails");
 
   file.Close();
   SourceFile missing;
-  Check(!missing.Open((fs::temp_directory_path() / "port_source_file_test_missing.bin").string()),
-        "a missing file does not open");
+  CHECK_MSG(!missing.Open((fs::temp_directory_path() / "port_source_file_test_missing.bin").string()),
+            "a missing file does not open");
   std::error_code ec;
   fs::remove(path, ec);
-  if (sFailures != 0) {
-    std::fprintf(stderr, "%d failure(s)\n", sFailures);
-    return 1;
+  if (port_test::Failures() == 0) {
+    std::printf("port_remastered_source_file: ok\n");
   }
-  std::printf("port_remastered_source_file: ok\n");
-  return 0;
+  return PORT_TEST_RESULT();
 }
