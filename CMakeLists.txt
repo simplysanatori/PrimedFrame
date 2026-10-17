@@ -1079,5 +1079,10 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_vfx_opacity_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_vfx_opacity_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # Every command in the console's table is documented in docs/CONSOLE.md.
+        add_test(NAME port_console_docs
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_console_docs.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_console_docs PROPERTIES TIMEOUT 15 LABELS port)
     endif()
 endif()

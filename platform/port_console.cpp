@@ -3374,7 +3374,7 @@ const CommandSpec kCommands[] = {
     {"beam", nullptr, CmdBeam, ""},
     {"heal", nullptr, CmdHeal, "heal                       refill health"},
     {"kill", nullptr, CmdKill,
-     "kill <id>                  kill an actor as with a last Power Beam shot (bosses too)"},
+     "kill <id> [damage]         kill an actor as with a last Power Beam shot (bosses too)"},
     {"phazongun", CmdPhazonGun, nullptr,
      "phazongun [off]            let the arm cannon fire the Phazon Beam (off: stop)"},
     {"hurt", nullptr, [](CStateManager&) { CmdHurt(sCmd.args.size() > 1 ? sCmd.args[1] : std::string()); },
