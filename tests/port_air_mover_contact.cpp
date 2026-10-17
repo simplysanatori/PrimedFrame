@@ -10,6 +10,7 @@
 #include "Collision/CMaterialFilter.hpp"
 
 #include "port_air_mover_contact.h"
+#include "port_remastered_ground_policy.h"
 #include "port_remastered_ground_world.h"
 #include "port_test.h"
 
@@ -201,6 +202,81 @@ static void TestGroundCheckBand() {
   CHECK_MSG(GroundCheckBand(5.f, -1.f, 4.9f).low > 5.f, "kMS_Jump has an empty band");
 }
 
+// The airborne platform contacts (issue #117 slice 2, B rework): the rider offset belongs to the
+// rider controller's own contacts only, and a DCLN platform (CCollidableOBBoxTree, type 4) never
+// takes the callback's flat-floor early-out.
+static void TestPlatformContacts() {
+  using PortAirMoverContact::RiderOffsetFor;
+  using PortAirMoverContact::FlatFloorEarlyOutApplies;
+  const Vec3 off{0.f, 0.f, 0.05f};
+  const std::uint32_t plat = 0x10000u | 0x42u;
+  const Vec3 own = RiderOffsetFor(plat, plat, true, off);
+  CHECK_MSG(own.z == 0.05f, "the rider's own contact gets its offset");
+  CHECK_MSG(RiderOffsetFor(plat, plat, false, off).z == 0.f, "an invalid controller gives none");
+  CHECK_MSG(RiderOffsetFor(0x10000u | 0x43u, plat, true, off).z == 0.f, "another platform gives none");
+  CHECK_MSG(RiderOffsetFor(0u, 0u, true, off).z == 0.f, "static terrain gives none");
+  // The rising-platform jump: own motion +0.0139 up against a +0.05 carry is approaching the
+  // platform top (dot < 0), so the contact acts; without the offset it separates.
+  const Vec3 up{0.f, 0.f, 1.f};
+  CHECK_MSG(Acts({0.f, 0.f, 0.0139f}, own, up), "rising platform top acts with the rider offset");
+  CHECK_MSG(!Acts({0.f, 0.f, 0.0139f}, {}, up), "and separates without it");
+  CHECK_MSG(FlatFloorEarlyOutApplies(0, false), "AABox takes the early-out");
+  CHECK_MSG(FlatFloorEarlyOutApplies(2, true) && !FlatFloorEarlyOutApplies(2, false),
+            "OBBox only when axis-aligned with up");
+  CHECK_MSG(!FlatFloorEarlyOutApplies(PortAirMoverContact::kCollidableOBBoxTree, true),
+            "an OBBox tree (DCLN platform) never does");
+  CHECK_MSG(!FlatFloorEarlyOutApplies(1, true) && !FlatFloorEarlyOutApplies(3, true) &&
+                !FlatFloorEarlyOutApplies(5, true),
+            "sphere, AABox tree, capsule never do");
+}
+
+// The stepped mover's split integrator (Pre 0xc59814 at 0xf9447c, Post 0xc5994c at 0xf94884):
+// the steps predict with the entry velocity and add no force, and the force is folded once per
+// tick after the failsafe, whatever the steps consumed. A tick whose steps are all blocked at
+// lo = 0 still gains the tick's force (the rising-piston jump-off stall, #117).
+static void TestSplitIntegrator() {
+  using PortRemasteredGround::PostMomentum;
+  using PortRemasteredGround::PreMomentum;
+  using PortRemasteredGround::PredictTranslation;
+  using V = PortRemasteredGround::Vec3;
+  const float m = 2.f, dt = 1.f / 60.f;
+  const V gravity{0.f, 0.f, -35.f * m};  // persistent
+  const V force{0.f, 0.f, 10.f * m};     // transient, this tick
+  // One tick with `steps` predictions of `consumed[i]` each; returns the end momentum.
+  auto tick = [&](V momentum, V impulse, const float* consumed, int steps, bool failsafeStops,
+                  float& movedZ) {
+    momentum = PreMomentum(momentum, impulse);
+    movedZ = 0.f;
+    for (int i = 0; i < steps; ++i) {
+      const V v{momentum.x / m, momentum.y / m, momentum.z / m};
+      movedZ += PredictTranslation(consumed[i], v, {}, 1.f / m).z;  // read-only on momentum
+    }
+    if (failsafeStops) momentum = {};
+    return PostMomentum(momentum, force, gravity, dt);
+  };
+  const V start{0.f, 0.f, 0.8333f * m};
+  const float whole[1] = {dt};
+  const float split[3] = {dt / 4.f, dt / 2.f, dt / 4.f};
+  const float blocked[3] = {0.f, 0.f, 0.f};
+  float z1 = 0.f, z3 = 0.f, z0 = 0.f;
+  const V a = tick(start, {}, whole, 1, false, z1);
+  const V b = tick(start, {}, split, 3, false, z3);
+  const V c = tick(start, {}, blocked, 3, false, z0);
+  const float want = start.z + dt * (force.z + gravity.z);
+  CHECK_MSG(std::fabs(a.z - want) < 1e-6f, "force folded once per tick");
+  CHECK_MSG(a.z == b.z && b.z == c.z, "independent of the step count and of lo = 0 steps");
+  CHECK_MSG(std::fabs(z1 - dt * 0.8333f) < 1e-6f && std::fabs(z3 - z1) < 1e-6f,
+            "the steps move with the entry velocity (no 0.5 a t^2)");
+  CHECK_MSG(z0 == 0.f, "blocked steps do not move");
+  float zf = 0.f;
+  const V d = tick(start, {}, blocked, 3, true, zf);
+  CHECK_MSG(std::fabs(d.z - dt * (force.z + gravity.z)) < 1e-6f,
+            "a failsafe stop happens before the force, which still applies");
+  const V e = tick(start, {0.f, 0.f, 3.f}, whole, 1, false, zf);
+  CHECK_MSG(std::fabs(e.z - (want + 3.f)) < 1e-5f && std::fabs(zf - dt * (start.z + 3.f) / m) < 1e-6f,
+            "the impulse is folded once, at entry, and moves this tick");
+}
+
 int main() {
   TestWorkingNormal();
   TestW25();
@@ -211,6 +287,8 @@ int main() {
   TestTerrainPredicates();
   TestSATReference();
   TestGroundCheckBand();
+  TestPlatformContacts();
+  TestSplitIntegrator();
   if (port_test::Failures() == 0) {
     std::printf("port_air_mover_contact_tests: all passed\n");
   }

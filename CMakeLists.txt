@@ -969,6 +969,14 @@ if(MP_BUILD_TESTS)
         SOURCES tests/port_remastered_ground_policy.cpp
         INCLUDES platform/include
         EXACT_IEEE)
+    # Moving platforms under the Remastered grounded mover (issue #117 slice 1): the tree
+    # walk, contact order, rider choice and decay, carry, admission and exactly-once carry.
+    mp_port_test(port_ground_rider_tests
+        SOURCES tests/port_ground_rider.cpp
+            src/Collision/CMaterialFilter.cpp platform/port_remastered_ground_contacts.cpp
+            platform/port_remastered_ground_world.cpp platform/port_collision_failsafe.cpp
+        INCLUDES platform/include include extern/sdk/include
+        EXACT_IEEE)
     # Remastered MP1 collision material translation and filter policy (header-only).
     mp_port_test(port_remastered_collision_material_tests
         SOURCES tests/port_remastered_collision_material.cpp

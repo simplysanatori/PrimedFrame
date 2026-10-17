@@ -41,6 +41,122 @@ The retained ground/air result — the Remastered persisted physics object state
 tracked in `CPlayer`, so a refused snap resends the previous message exactly as
 `PostPhysicsUpdate` 0xc545bc does.
 
+## Moving platforms (issue #117, slice 1)
+
+A grounded Remastered tick also admits moving `CScriptPlatform`s with a DCLN
+collision tree (`port_remastered_ground_rider.h`,
+unit-tested by `tests/port_ground_rider.cpp`). Every query appends their triangles
+after the terrain's, platforms ordered by object index (`FindOverlap` 0xc1a760); the
+tree walk is the source's (0xc0fce0: LIFO, root untested) and each triangle carries the
+surface material merged with the platform's current material list (read live, as
+0xc0fce0 reads the collidable's material that `MaterialListChanged` rewrites). After `Post` the first platform contact of
+the mover's result list (every `MoveAlongGround` pass's contacts, then the snap's,
+appended in that order: `copy_collision_info_list_into` 0xc18c00 never clears) becomes
+the rider (`SetRiderController`
+0xc1631c, count 2, decayed 2 → 1 → 0 at the end of each movement tick), and the next
+tick's prediction adds the platform's pose delta since its `PreThink`, whole, until the
+first `MoveAlongGround` pass applies it (`PredictMotion` 0xc23e40). The port also sends
+`kSM_AddPlatformRider` both ways for a floor contact on the rider, so the platform's
+retail rider list and scripting see the player as the retail mover would show it.
+
+Exactly one carry per tick, whichever mover runs. `CStateManager::Update` runs
+`PreThinkObjects` (the platform's `PreThink`: pose stamp, move, `MoveRiders`) before
+the player's `CGameCollision::Move`, so retail `MoveRiders` acts before the tick's mover
+is known. When the player's previous movement tick ran a Remastered mover that owns the
+carry (an admitted grounded tick or an airborne one) it defers the player's move instead
+of making it; a carry-owning Remastered tick drops it for the mover's own carry, and every
+other tick (the retail fallback, morph ball, gate off, a tick the player does not move)
+applies it before moving, or at the end of the tick. Otherwise `MoveRiders` moves the
+player as retail does and the Remastered mover adds no carry that tick. With Remastered
+movement off nothing is deferred.
+
+The airborne mover (slice 2) carries a live rider too: `PredictMotion` 0xc23e40 does not
+test the object state, so the first airborne tick after leaving a ridden platform (the
+rider is still at count 1) adds the platform's pose delta to every prediction of its
+first step (0xf94528 passes the carry mode to the first `DoMovementStep` only), and the
+second airborne tick has no rider. A step that lands writes its rider (`DoMovementStep`
+0xf948d4: the last rideable floor owner of that step's impacts, written on the landing
+branch only; the post-step probe landing writes none), and `MoveObject` sets it when valid.
+Retail `MoveRiders`' own carry of a player who left a platform (its rider list decays
+over 1/6 s) is dropped on those ticks.
+
+A platform deactivated since its last `PreThink` is carried once more: an inactive
+physics actor is not simulated, so the rider's pose delta still holds the platform's last
+step, and the rider set on that step is live for one more tick. Only a `PreThink` that
+starts active takes the pose stamp (start and end pose), and a rider on an inactive
+platform stamped the previous tick carries that step's delta, never the pose now, so a warp
+while inactive is not carried.
+
+A platform moved after its own step ended (its `PreThink`, then the physics move of
+`CStateManager::MovePlatforms`) but before the player's move was set there by a
+`SetTransform`: a teleport. Remastered teleports the physics object to the new pose before
+its step and resets the previous pose with it (`PrePhysicsUpdate` 0xc543b8,
+`TeleportObject` with `ERetainPrevious` 0), so the rider carries nothing that tick, as if
+the stamp were re-taken at the new pose.
+
+A platform without a DCLN tree (its `CCollidableAABox`) is admitted on the same terms.
+Its box is translated with the platform and never turned
+(`GetTransformedAABox` 0xbf6064), and its pair with the player is `AABox_AABox` 0xbf61b4
+(boolean 0xbfce60: both filters, then the inclusive overlap). Each impact enters the same
+contact lists as a self/other contact pair. The self half carries the depth, the other half
+carries the platform's outward normal, the face-centre point and its owner. The pair sits
+in the platform's near-list place
+(`platform/include/port_remastered_ground_box.h`, unit-tested in
+`tests/port_ground_rider.cpp`), so the probe, OnWall, the snap, the response, the rider
+scan and the landing check read it unchanged. Touching boxes block the boolean queries but
+produce no contact. Box halves are classified by their translated material's orientation
+(`is_floor`, and the landing check's floor eligibility, as the box-actor landing does). The
+failsafe takes a box platform like the airborne failsafe's box actors (raw filter gates,
+the legacy impact list, one collided object per platform).
+
+A platform that rotated this tick (slice 3; only the Ripper's platform does, through
+`CRipperControlledPlatform::Move`) is admitted by the grounded mover too, and its rider
+is carried as `PredictMotion` 0xc23e40 does. With `dq = qcur · conj(qprev)`, the platform's
+rotation since its `PreThink`, the prediction adds the translation delta plus
+`dq·d·dq⁻¹ − d`. The arm `d` is the rider's position at the prediction (before `v·dt`)
+minus the platform's previous position, and the rotation is full 3D, so a tilt moves the
+rider vertically. The rider also turns by `dq`'s heading about up: `BuildTransform(dq)` with
+the up row and column forced, `Orthonormalized` 0xd5140, then `q_integrated · yawq`. The
+port works with bases, not quaternions (`RelativeRotation`, `RotationTerm`, `CarryYaw`), and
+puts the yaw into the additive orientation delta so the snap's saved prediction keeps it.
+An exactly unchanged basis has no rotation term, as the source's quaternion compare.
+Retail `MoveRiders` defers its rotation with the translation, and an admitted tick drops
+both. Remastered movement runs only with mouse aim on, and the port's aim state sets the
+player's yaw again in `CPlayer::Update` after the move, so the mover notes the yaw it
+applied (`CPlayer::PortNoteCarriedYaw`: a pass applied the prediction, or the snap set the
+saved state) and `UpdateMouseAim` turns free look by it once before that: the view turns
+with the platform. Under a lock, or without mouse aim, the turn stays on the player's
+transform and is dropped from the aim state, and a zero yaw notes nothing. Retail's
+`MoveRiders` rotation (rm 0, or a fallback tick) is still overwritten under mouse aim.
+Whether Remastered's aim keeps the yaw is unknown.
+
+On the airborne mover the admitted platforms (active, DCLN or box, not rotated this tick) are not native
+dynamic contacts: their triangles join the terrain's in the same producer (terrain first,
+then platforms by `id & 0xffff`, live material, secondary normals) for the step, the
+bisection test, the landing check and the post-step probe. The separation gate subtracts
+`get_rider_controller_offset` (0xc18f80: the rider's pose delta when unrotated) for the
+rider controller's own contacts only, and a platform (a `CCollidableOBBoxTree`, type 4)
+never takes the response's flat-floor early-out (0xc6d4e8); a box platform (a
+`CCollidableAABox`, type 0) does. Other actors stay native, and so does a platform that
+rotated this tick: the controller offset for a rotated rider (0xc18f80 takes the farthest
+contact point) is not ported. The first step's predictions still carry its rotation and yaw.
+
+The airborne integrator is split as in the source. Pre (0xc59814, called at 0xf9447c) folds
+the impulse into the momentum once, before the first step. The step predictions add no force
+(`t * (v + J/m)` only), so a step blocked at t = 0 loses nothing. Post (0xc5994c, at 0xf94884)
+folds `dt * (force + persistent force)` once, after the failsafe and the tunnel check, so the
+result does not depend on the step count.
+
+The one-tick carry after a platform deactivates (the stamp rule in `CScriptPlatform::PreThink`
+and `RiderCarry`) is unit-tested only (`tests/port_ground_rider.cpp`); no rig run deactivates
+a ridden platform, and the mapping of the source's update step to PreThink is inferred.
+
+Not ported: rotated platforms in the airborne producer (they stay native), the
+rider-velocity term of the carry (the airborne response's rider velocity is still the
+platform's velocity for the remaining native actors), and the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
+terrain-only. The deferred retail carry is applied after the player's angular step,
+not before it as in `PreThink`, an rm1-only timing difference.
+
 ## What is not implemented or verified
 
 - **The retail path is untouched.** With Remastered movement off (`rm0`), in
@@ -49,8 +165,8 @@ tracked in `CPlayer`, so a refused snap resends the previous message exactly as
   `MoveGroundCollider_New` code. Nothing was changed inside it, and there is no
   switch on this path.
 - **Unsupported cases fall back to retail; they are not approximated.** The
-  Remastered mover does not run on a tick with dynamic contacts (there is no
-  Remastered producer for them), in morph ball, on a save-state load, or when the
+  Remastered mover does not run on a tick with dynamic contacts other than the
+  moving platforms below (there is no Remastered producer for them), in morph ball, on a save-state load, or when the
   mover gate in `CGameCollision::MovePlayer` is closed. Those ticks run the retail
   mover and mark the retained ground/air result invalid; it stays invalid until a
   verified Remastered airborne tick writes 0 again, so a stale entry state is never
@@ -67,8 +183,7 @@ tracked in `CPlayer`, so a refused snap resends the previous message exactly as
   its own octree cache (`TerrainContacts`), so the contact *traversal order* and the
   resulting per-contact sequence are the port's, not the source's tree walk — a tick
   with several terrain contacts is not proven to visit them in the source's order.
-  Platform riders and the angular integration are likewise still the port's existing
-  behaviour.
+  The angular integration is likewise still the port's existing behaviour.
 - **Resting pose.** The Remastered snap rests the box bottom at the selected
   contact height **+ 0.002**, where the retail mover's step-down snap ends at
   contact **+ 0.0005**. The 1.5 mm difference is each mover's own source constant

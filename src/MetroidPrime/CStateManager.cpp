@@ -65,6 +65,7 @@
 #include "MetroidPrime/ScriptObjects/CScriptEffect.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptMazeNode.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptPlayerActor.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptPlatform.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptRoomAcoustics.hpp"
 #include "MetroidPrime/ScriptObjects/CSnakeWeedSwarm.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptSpawnPoint.hpp"
@@ -1301,6 +1302,11 @@ void CStateManager::MovePlatforms(float dt) {
     if (CPlatformAndDoorList::IsPlatform(actor) && actor != nullptr && actor->GetActive() &&
         actor->GetMass() != 0.f) {
       CGameCollision::Move(*this, *actor, dt, 0);
+#ifdef TARGET_PC
+      if (CScriptPlatform* const platform = TCastToPtr< CScriptPlatform >(actor)) {
+        platform->PortNoteStepEnd(PortSimTick());
+      }
+#endif
     }
   }
 }
@@ -1431,6 +1437,9 @@ void CStateManager::Think(float dt) {
 }
 
 void CStateManager::PreThinkObjects(float dt) {
+#ifdef TARGET_PC
+  ++xPortSimTick;
+#endif
   const float deathTime = x84c_player->GetDeathTime();
   if (deathTime > 0.f) {
     x84c_player->DoPreThink(dt, *this);
@@ -1634,6 +1643,11 @@ void CStateManager::Update(float dt) {
     if (x904_gameState != kGS_SoftPaused) {
       CGameCollision::Move(*this, *x84c_player, dt, nullptr);
     }
+#ifdef TARGET_PC
+    // Platform riders (issue #117): a retail rider carry the player's mover did not consume
+    // is applied now, then the Remastered rider controller decays (PostSimulation).
+    x84c_player->PortEndMovementTick(xPortSimTick);
+#endif
 
     UpdateSortedLists();
 
