@@ -1,4 +1,5 @@
 #include "MetroidPrime/HUD/CHudEnergyInterface.hpp"
+#include "port_env.h"
 #include "MetroidPrime/HUD/CHudBossEnergyInterface.hpp"
 
 #include "MetroidPrime/Player/CPlayerState.hpp"
@@ -162,7 +163,7 @@ void CHudEnergyInterface::SetEnergyLow(bool low) {
 }
 
 void CHudEnergyInterface::Update(float dt, float energyLowPulse) {
-  if (std::getenv("MP_LOG_HUD") != nullptr && x2c_energybart01_energybar != nullptr) {
+  if (port::EnvFlag("MP_LOG_HUD") && x2c_energybart01_energybar != nullptr) {
     static int sLastKey = -1;
     const bool visible = x2c_energybart01_energybar->GetIsVisible();
     const int alpha = x2c_energybart01_energybar->GetModifiedColor().GetAlphau8();

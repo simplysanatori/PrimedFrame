@@ -38,8 +38,8 @@ int SettingsSelfTest() {
       const auto found = written.find(entry.key);
       const std::string got = found == written.end() ? std::string() : found->second;
       if (got != sample) {
-        std::fprintf(stderr, "settings self-test: %s=%s reads back as %s=%s\n", entry.key, sample, entry.key,
-                     got.c_str());
+        PortLog::Write("settings self-test: %s=%s reads back as %s=%s\n", entry.key, sample, entry.key,
+                       got.c_str());
         ++failures;
       }
     }
@@ -49,7 +49,7 @@ int SettingsSelfTest() {
   const std::string first = SettingsText();
   for (const auto& [key, value] : SettingsValues(first)) {
     if (!ApplySetting(key, value)) {
-      std::fprintf(stderr, "settings self-test: %s is written but nothing reads it\n", key.c_str());
+      PortLog::Write("settings self-test: %s is written but nothing reads it\n", key.c_str());
       ++failures;
     }
   }
@@ -57,12 +57,13 @@ int SettingsSelfTest() {
   ApplySettingsText(again);
   const std::string second = SettingsText();
   if (second != first) {
+    // Both whole files: past PortLog's 2048-byte line, so straight to stderr.
     std::fprintf(stderr, "settings self-test: the file changes when read back\n%s\n---\n%s\n", first.c_str(),
                  second.c_str());
     ++failures;
   }
-  std::fprintf(stderr, "settings self-test: %d keys sampled, %zu lines round-tripped, %d failure(s)\n", sampled,
-               SettingsValues(first).size(), failures);
+  PortLog::Write("settings self-test: %d keys sampled, %zu lines round-tripped, %d failure(s)\n", sampled,
+                 SettingsValues(first).size(), failures);
   return failures == 0 ? 0 : 1;
 }
 
@@ -74,7 +75,7 @@ bool FastBoot() {
 bool BootWorld(uint32_t& worldId, uint32_t& areaAssetId) {
   static uint32_t sWorld = 0, sArea = 0;
   static const bool sSet = [] {
-    const char* value = std::getenv("MP_BOOT_WORLD");
+    const char* value = port::EnvString("MP_BOOT_WORLD");
     if (value == nullptr) {
       return false;
     }
@@ -304,9 +305,8 @@ void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
     // whenever the cap or vsync left the loop idle.
     sActualTps = sTimingTicks / (wallSeconds > 0.0 ? wallSeconds : seconds);
     if (sTraceTiming) {
-      std::fprintf(stderr,
-                   "[timing] presented=%.1f FPS throughput=%.1f FPS simulation=%.1f ticks/s cap=%d\n",
-                   sActualFps, sThroughputFps, sActualTps, EffectiveFrameLimit() ? 60 : sFpsCap);
+      PortLog::Write("[timing] presented=%.1f FPS throughput=%.1f FPS simulation=%.1f ticks/s cap=%d\n",
+                     sActualFps, sThroughputFps, sActualTps, EffectiveFrameLimit() ? 60 : sFpsCap);
     }
     UpdateDynamicRes(sActualFps, sTimingFrames);
     sTimingNs = 0;
@@ -778,7 +778,7 @@ int Anisotropy() {
 }
 void ApplyStorageClamp() {
   EnsureInitialized();
-  if (sStorageClamp < 0 || std::getenv("MP_STORAGE_CLAMP") != nullptr) {
+  if (sStorageClamp < 0 || port::EnvString("MP_STORAGE_CLAMP") != nullptr) {
     return;
   }
 #ifdef _WIN32
@@ -802,7 +802,7 @@ void BeginDriverWorkarounds(const std::string& userFolder, std::string& enable, 
   std::error_code ec;
   unsigned bits = sDriverWorkarounds;
   bool keepMarker = false;
-  sDriverWorkaroundsEnv = std::getenv("MP_DRIVER_WORKAROUNDS");
+  sDriverWorkaroundsEnv = port::EnvString("MP_DRIVER_WORKAROUNDS");
   if (sDriverWorkaroundsEnv != nullptr) {
     // "0" (or anything that names none) starts without them, over the ticked boxes.
     bits = ParseDriverWorkarounds(sDriverWorkaroundsEnv);
@@ -1027,14 +1027,6 @@ int TurboBinding(int slot) {
     return -1;
   }
   return slot >= 0 && slot < 3 ? sInput.turboBindings[slot] : -1;
-}
-
-void SetTurboBinding(int slot, int code) {
-  EnsureInitialized();
-  if (slot >= 0 && slot < 3) {
-    sInput.turboBindings[slot] = code;
-    MarkDirty();
-  }
 }
 
 int ShiftBinding(int slot) {
@@ -1262,20 +1254,10 @@ void SetRemasteredMovement(bool enabled) {
   MarkDirty();
 }
 
-bool SpringBallFlick() {
-  EnsureInitialized();
-  return sInput.springFlick && !sOriginalExperience;
-}
-
 void SetSpringBallFlick(bool enabled) {
   EnsureInitialized();
   sInput.springFlick = enabled;
   MarkDirty();
-}
-
-float SpringBallFlickRate() {
-  EnsureInitialized();
-  return sInput.springFlickRate;
 }
 
 void SetSpringBallFlickRate(float radiansPerSecond) {

@@ -433,26 +433,6 @@ const CGuiWidget* Pick(const CGuiFrame* frame, float gx, float gy) {
   return static_cast< const CGuiWidget* >(static_cast< const CGuiObject* >(e->chain[0]));
 }
 
-const CGuiWidget* PickAtPointer(const CGuiFrame* frame) {
-  float gx = 0.f, gy = 0.f;
-  if (!PortPointer::Position(gx, gy)) {
-    return nullptr;
-  }
-  return Pick(frame, gx, gy);
-}
-
-bool IsUnder(const CGuiWidget* hit, const CGuiWidget* ancestor) {
-  if (hit == nullptr || ancestor == nullptr) {
-    return false;
-  }
-  for (const CGuiObject* o = hit; o != nullptr; o = o->GetParent()) {
-    if (o == ancestor) {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool Bounds(const CGuiWidget* widget, bool children, PortPointerMath::Rect& out) {
   return sHits.Bounds(CGraphics::GetFrameCounter(), Key(widget), children, out);
 }

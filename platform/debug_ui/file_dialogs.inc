@@ -355,7 +355,7 @@ std::string CardQueueExport(const std::filesystem::path& folder, const std::stri
   if (to == PortGci::NativeExport()) {
     for (const std::filesystem::path& file : PortGci::GameFiles(folder)) {
       std::ifstream in(file, std::ios::binary);
-      std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      std::vector<uint8_t> bytes = port::ReadAll(in);
       if (!in && !in.eof()) {
         sCardExportQueue.clear();
         return "Could not read " + PortGci::PathString(file.filename()) + ".";

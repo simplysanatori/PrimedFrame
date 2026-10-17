@@ -127,7 +127,7 @@ bool ReadFile(const std::filesystem::path& path, std::string& out) {
   std::ifstream file(path, std::ios::binary);
   if (!file)
     return false;
-  out.assign(std::istreambuf_iterator< char >(file), std::istreambuf_iterator< char >());
+  out = port::ReadAllText(file);
   return !file.bad();
 }
 

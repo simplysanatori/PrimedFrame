@@ -1,4 +1,5 @@
 #include "Kyoto/Graphics/CCubeModel.hpp"
+#include "port_env.h"
 #include "Kyoto/Basics/CBasics.hpp"
 #include <cstring>
 #include <stdexcept>
@@ -907,10 +908,7 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     // (1, 1, -1) / sqrt(3). Its strengths are NRenderDebugDefaults' 4 (back) and 2 (top), times
     // the area's backlight hints (PortRoomEnv::Backlight, which gives these as the default).
     // MP_REMASTERED_BACKLIGHT=0 turns it off.
-    static const bool sBacklightOff = [] {
-      const char* env = getenv("MP_REMASTERED_BACKLIGHT");
-      return env != nullptr && env[0] == '0';
-    }();
+    static const bool sBacklightOff = !port::EnvFlag("MP_REMASTERED_BACKLIGHT", true);
     if (sBacklightOff) {
       GXSetPBRBacklight(nullptr, nullptr, 0.f, 0.f, 0.f, 0.f);
     } else {

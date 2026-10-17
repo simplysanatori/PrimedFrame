@@ -30,9 +30,8 @@ namespace PortSaveConvert {
 enum class Layout { Usa, Pal, Wii };
 enum class Format { Unknown, UsaGci, PalGci, PalLegacyGci, WiiSave, WiiDataBin };
 
-const char* FormatName(Format format);
 // "USA", "PAL", "PAL (earlier port save)", "Wii".
-Layout LayoutOf(Format format);
+const char* FormatName(Format format);
 
 // One scan: its id and the category the game files it under. The Trilogy keys
 // scans by id alone and uses kAnyCategory.

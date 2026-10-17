@@ -18,11 +18,11 @@ PortTouchPad::Pad g_touchPad;
 PortTouchPad::Pad& TouchPad() {
   if (!g_touchPad.ok()) {
     g_touchPad = PortTouchPad::Attach();
-    __android_log_print(ANDROID_LOG_INFO, "touchpad", "attached id=%d gamepad=%d open=%d",
-                        g_touchPad.id, SDL_IsGamepad(g_touchPad.id) ? 1 : 0,
-                        g_touchPad.ok() ? 1 : 0);
+    PortLog::Write("touchpad: attached id=%d gamepad=%d open=%d\n",
+                   g_touchPad.id, SDL_IsGamepad(g_touchPad.id) ? 1 : 0,
+                   g_touchPad.ok() ? 1 : 0);
     if (!g_touchPad.ok())
-      __android_log_print(ANDROID_LOG_ERROR, "touchpad", "attach failed: %s", SDL_GetError());
+      PortLog::Write("touchpad: attach failed: %s\n", SDL_GetError());
   }
   return g_touchPad;
 }

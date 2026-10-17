@@ -1,4 +1,5 @@
 #include "port_strings.h"
+#include "port_bytes.h"
 #include "port_ap_world.h"
 
 #include <cstdio>
@@ -940,17 +941,8 @@ const DoorType* FindDoorType(const std::string& name) {
   return nullptr;
 }
 
-uint32_t Read32(const std::vector< uint8_t >& data, size_t at) {
-  return uint32_t(data[at]) << 24 | uint32_t(data[at + 1]) << 16 | uint32_t(data[at + 2]) << 8 |
-         data[at + 3];
-}
-
-float ReadFloat(const std::vector< uint8_t >& data, size_t at) {
-  const uint32_t bits = Read32(data, at);
-  float value;
-  std::memcpy(&value, &bits, sizeof(value));
-  return value;
-}
+using port::GetBE32;
+using port::GetBEFloat;
 
 // Where an object's properties start, after its name; 0 when it has none.
 size_t NameEnd(const std::vector< uint8_t >& props) {
@@ -1595,14 +1587,14 @@ std::vector< uint8_t > DoorOps(const std::vector< DoorChange >& doors,
         continue;
       bool shield = false;
       if (o.type == kActorType && o.props.size() >= start + kActorModel + 4)
-        shield = Read32(o.props, start + kActorModel) == kMissileShieldCmdl;
+        shield = GetBE32(o.props, start + kActorModel) == kMissileShieldCmdl;
       else if (o.type == kPointOfInterestType && o.props.size() >= start + 33)
-        shield = Read32(o.props, start + 29) == kDiscShieldScan;
+        shield = GetBE32(o.props, start + 29) == kDiscShieldScan;
       if (!shield)
         continue;
       bool close = true;
       for (int k = 0; k < 3; ++k) {
-        const float d = ReadFloat(o.props, start + 4 * k) - ReadFloat(doorObject.props, doorStart + 4 * k);
+        const float d = GetBEFloat(o.props, start + 4 * k) - GetBEFloat(doorObject.props, doorStart + 4 * k);
         close = close && d > -5.f && d < 5.f;
       }
       if (!close)
@@ -1631,7 +1623,7 @@ std::vector< uint8_t > DoorOps(const std::vector< DoorChange >& doors,
     if (shield == nullptr || object == nullptr || door.doorId == 0x002C0186 ||
         nextInstance + 8 > 0xFFFF)
       return;
-    if (Read32(object->props, NameEnd(object->props) + kDoorAnimSet) == kHatchAnimSet)
+    if (GetBE32(object->props, NameEnd(object->props) + kDoorAnimSet) == kHatchAnimSet)
       return;
     // Main Plaza's door to the Plaza Access ledge has its shield elsewhere.
     const uint32_t anchorId =
@@ -1642,8 +1634,8 @@ std::vector< uint8_t > DoorOps(const std::vector< DoorChange >& doors,
     float at[3], actorRotation[3];
     const size_t anchorStart = NameEnd(anchor->props);
     for (int k = 0; k < 3; ++k) {
-      at[k] = ReadFloat(anchor->props, anchorStart + 4 * k);
-      actorRotation[k] = ReadFloat(anchor->props, anchorStart + 12 + 4 * k);
+      at[k] = GetBEFloat(anchor->props, anchorStart + 4 * k);
+      actorRotation[k] = GetBEFloat(anchor->props, anchorStart + 12 + 4 * k);
     }
     ShieldPlace place;
     if (!PlaceShield(door, at, actorRotation, place))
@@ -1803,17 +1795,17 @@ std::vector< uint8_t > DoorOps(const std::vector< DoorChange >& doors,
       continue;
     const std::vector< uint8_t >& props = object->props;
     const size_t start = NameEnd(props);
-    const uint32_t count = Read32(props, 0);
-    if ((count != 13 && count != 14) || Read32(props, start + kDoorLightCount) != 14 ||
-        Read32(props, start + kDoorScanCount) != 1)
+    const uint32_t count = GetBE32(props, 0);
+    if ((count != 13 && count != 14) || GetBE32(props, start + kDoorLightCount) != 14 ||
+        GetBE32(props, start + kDoorScanCount) != 1)
       continue;
     const uint32_t id = scan(type->scan);
     if (id == 0)
       continue;
     std::vector< Run > runs{{kDoorScan, bytes({id})}};
     // Vertical and morph ball doors are looked at from the side they face.
-    const float pitch = ReadFloat(props, start + kDoorRotation);
-    const bool hatch = Read32(props, start + kDoorAnimSet) == kHatchAnimSet;
+    const float pitch = GetBEFloat(props, start + kDoorRotation);
+    const bool hatch = GetBE32(props, start + kDoorAnimSet) == kHatchAnimSet;
     float height = 0.f;
     if (hatch && pitch > -90.f && pitch < 90.f)
       height = -2.5f;

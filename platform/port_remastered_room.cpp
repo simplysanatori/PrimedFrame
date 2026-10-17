@@ -34,10 +34,7 @@ using Vec3 = std::array<double, 3>;
 using Mat34 = std::array<std::array<double, 4>, 3>;
 using Id16 = std::array<uint8_t, 16>;
 
-constexpr uint32_t Tag(const char (&s)[5]) {
-  return (uint32_t(uint8_t(s[0])) << 24) | (uint32_t(uint8_t(s[1])) << 16) | (uint32_t(uint8_t(s[2])) << 8) |
-         uint32_t(uint8_t(s[3]));
-}
+using port::FourCC;
 
 // Component type ids (retrotool's root.json).
 constexpr uint32_t kEntity = 0x749749f1;
@@ -284,12 +281,6 @@ using port::ReadLE16;
 using port::ReadLE32;
 using port::ReadLE64;
 using port::ReadLEFloat;
-float BeFloat(const uint8_t* p) {
-  const uint32_t bits = ReadBE32(p);
-  float v;
-  std::memcpy(&v, &bits, 4);
-  return v;
-}
 
 
 
@@ -595,8 +586,8 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
   }
   const size_t re = rs + size_t(rsz);
   std::vector<Span> sden, idta, layers, strp;
-  const uint32_t pSden[] = {Tag("SDTA"), Tag("SDEN")}, pIdta[] = {Tag("SDTA"), Tag("IDTA")},
-                 pLayr[] = {Tag("LYRS"), Tag("LAYR")}, pStrp[] = {Tag("STRP")};
+  const uint32_t pSden[] = {FourCC("SDTA"), FourCC("SDEN")}, pIdta[] = {FourCC("SDTA"), FourCC("IDTA")},
+                 pLayr[] = {FourCC("LYRS"), FourCC("LAYR")}, pStrp[] = {FourCC("STRP")};
   if (!Find(rs, re, pSden, 2, sden, error) || !Find(rs, re, pIdta, 2, idta, error) ||
       !Find(rs, re, pLayr, 2, layers, error) || !Find(rs, re, pStrp, 1, strp, error)) {
     return false;
@@ -608,7 +599,7 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
   }
   // LRES: u32 count, then that many 16-byte ids.
   std::vector<Span> lres;
-  const uint32_t pLres[] = {Tag("HEAD"), Tag("LUNT"), Tag("LRES")};
+  const uint32_t pLres[] = {FourCC("HEAD"), FourCC("LUNT"), FourCC("LRES")};
   if (!Find(rs, re, pLres, 3, lres, error)) {
     return false;
   }
@@ -621,7 +612,7 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
   // BLIT: u32 flags, the lightmap's guid, u32 n and n component guids, u32 n and n vec4
   // lookups (parallel to the guids), then an LTPB guid. One that does not fit is left out.
   std::vector<Span> blit;
-  const uint32_t pBlit[] = {Tag("HEAD"), Tag("BLIT")};
+  const uint32_t pBlit[] = {FourCC("HEAD"), FourCC("BLIT")};
   if (!Find(rs, re, pBlit, 2, blit, error)) {
     return false;
   }
@@ -657,7 +648,7 @@ bool Room::Parse(const std::vector<uint8_t>& data, std::string& error) {
     const uint8_t* const unit = std::search(head, headEnd, kUnit, kUnit + 3);
     const bool baseLayer = unit + 3 < headEnd && unit[3] == '_';
     std::vector<Span> comps;
-    const uint32_t pComp[] = {Tag("SRIP"), Tag("COMP")};
+    const uint32_t pComp[] = {FourCC("SRIP"), FourCC("COMP")};
     if (!Find(layers[li].start, layers[li].start + layers[li].size, pComp, 2, comps, error)) {
       return false;
     }
@@ -861,7 +852,7 @@ bool ReadMlvl(const std::vector<uint8_t>& d, std::vector<std::pair<uint32_t, Mat
     }
     Mat34 xf{};
     for (size_t k = 0; k < 12; ++k) {
-      xf[k / 4][k % 4] = BeFloat(&d[o + 4 + 4 * k]);
+      xf[k / 4][k % 4] = port::ReadBEFloat(&d[o + 4 + 4 * k]);
     }
     out.push_back({ReadBE32(&d[o + 76]), xf});
     o += 84;
@@ -955,7 +946,7 @@ bool ReadScly(const std::vector<uint8_t>& m, std::vector<ScriptObject>& objects)
       const size_t rest = size_t(zero - m.data()) + 1;
       if (objectEnd - rest >= 12) {
         object.hasPos = true;
-        object.pos = {BeFloat(&m[rest]), BeFloat(&m[rest + 4]), BeFloat(&m[rest + 8])};
+        object.pos = {port::ReadBEFloat(&m[rest]), port::ReadBEFloat(&m[rest + 4]), port::ReadBEFloat(&m[rest + 8])};
       } else if (type == 3) {
         return false;
       }
@@ -1382,8 +1373,7 @@ int DriverSlot(const std::vector<PortRemastered::ModelMaterial>& materials, cons
   for (const PortRemastered::ModelMaterial& m : materials) {
     if (m.name == d.set) {
       return PortRemastered::MaterialDriverSlot(
-          m, (uint32_t(uint8_t(d.variable[0])) << 24) | (uint32_t(uint8_t(d.variable[1])) << 16) |
-                 (uint32_t(uint8_t(d.variable[2])) << 8) | uint32_t(uint8_t(d.variable[3])));
+          m, port::FourCC(d.variable.c_str()));
     }
   }
   return -1;
@@ -1818,7 +1808,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     std::vector<PortRoomGeo::Link> links;
     size_t bad = 0;
     std::string how;
-    static const bool logMisses = std::getenv("MP_REMASTERED_MISS") != nullptr;
+    static const bool logMisses = port::EnvFlag("MP_REMASTERED_MISS");
     // One more connection not traced; a grade hint's are named in the import log.
     const auto miss = [&](const Component& sender, const Connection& c, uint32_t first, int depth) {
       ++bad;
@@ -2345,7 +2335,7 @@ bool Writer::ReadRoomFile(const RoomPak& rp, RoomData& out, std::string& error) 
     error = "no pak";
     return false;
   }
-  const PakAsset* asset = FirstOfType(*rp.pak, Tag("ROOM"));
+  const PakAsset* asset = FirstOfType(*rp.pak, FourCC("ROOM"));
   if (asset == nullptr) {
     error = "no ROOM";
     return false;
@@ -2361,7 +2351,7 @@ bool Writer::ReadRoomFile(const RoomPak& rp, RoomData& out, std::string& error) 
 
 bool Writer::LoadAreas(uint32_t mlvl, std::string& error) {
   std::vector<uint8_t> mlvlData;
-  if (!m_io.retail || !m_io.retail(Tag("MLVL"), mlvl, mlvlData)) {
+  if (!m_io.retail || !m_io.retail(FourCC("MLVL"), mlvl, mlvlData)) {
     error = "no retail MLVL";
     return false;
   }
@@ -2375,7 +2365,7 @@ bool Writer::LoadAreas(uint32_t mlvl, std::string& error) {
     a.mrea = mrea;
     a.xf = xf;
     std::vector<uint8_t> data;
-    if (!m_io.retail(Tag("MREA"), mrea, data) || !ReadScly(data, a.objects)) {
+    if (!m_io.retail(FourCC("MREA"), mrea, data) || !ReadScly(data, a.objects)) {
       Log("  retail area " + std::to_string(mrea) + ": doors unreadable");
       a.objects.clear();
     }
@@ -2402,7 +2392,7 @@ Writer::LightmapData& Writer::Lightmap(const RoomData& r) const {
   }
   std::vector<uint8_t> txtr;
   std::string error;
-  if (!FindResource(blit.lightmap.data(), Tag("TXTR"), RoomPak{r.name, r.pak}, txtr, nullptr, nullptr)) {
+  if (!FindResource(blit.lightmap.data(), FourCC("TXTR"), RoomPak{r.name, r.pak}, txtr, nullptr, nullptr)) {
     Log("  " + r.name + ": lightmap texture not found");
   } else if (!PortRemastered::ReadTxtrLayersBc6h(txtr.data(), txtr.size(), lm.tex, error)) {
     Log("  " + r.name + ": lightmap not used: " + error);
@@ -2658,7 +2648,7 @@ void Writer::ReadGrades(const RoomData& r, const Area* area, std::vector<GradeDa
     const auto lut = f.find(kPropGradeLut);
     std::vector<uint8_t> txtr;
     if (lut == f.end() || lut->second.size < 16 ||
-        !FindResource(r.room.Bytes(lut->second), Tag("TXTR"), home, txtr, nullptr, nullptr)) {
+        !FindResource(r.room.Bytes(lut->second), FourCC("TXTR"), home, txtr, nullptr, nullptr)) {
       Log("  " + r.name + ": colour grade LUT not found");
       continue;
     }
@@ -3438,7 +3428,7 @@ bool Writer::Grid(const RoomPak& rp, const Vec3& shift, const std::vector<Vec3>&
                   std::string& note) const {
   out.clear();
   std::vector<uint8_t> d;
-  const PakAsset* asset = rp.pak != nullptr ? FirstOfType(*rp.pak, Tag("LTPB")) : nullptr;
+  const PakAsset* asset = rp.pak != nullptr ? FirstOfType(*rp.pak, FourCC("LTPB")) : nullptr;
   if (asset == nullptr) {
     note = "no grid";
     return false;
@@ -3650,17 +3640,17 @@ struct Mcon {
 };
 
 bool ReadMcon(const std::vector<uint8_t>& d, Mcon& out) {
-  if (d.size() < 32 || ReadBE32(&d[0]) != Tag("RFRM") || ReadLE64(&d[4]) > d.size() - 32) {
+  if (d.size() < 32 || ReadBE32(&d[0]) != FourCC("RFRM") || ReadLE64(&d[4]) > d.size() - 32) {
     return false;
   }
   const size_t end = 32 + size_t(ReadLE64(&d[4]));
-  for (size_t o = 32; o + 24 <= end && ReadBE32(&d[o]) != Tag("PEEK");) {
+  for (size_t o = 32; o + 24 <= end && ReadBE32(&d[o]) != FourCC("PEEK");) {
     const uint64_t size = ReadLE64(&d[o + 4]);
     const size_t start = o + 24;
     if (size > end - start) {
       return false;
     }
-    if (ReadBE32(&d[o]) == Tag("MCVD")) {
+    if (ReadBE32(&d[o]) == FourCC("MCVD")) {
       size_t p = start;
       const size_t stop = start + size_t(size);
       // A counted vector of `width` byte items; null when it runs past the chunk.
@@ -3824,7 +3814,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     std::vector<uint8_t> data;
     Mcon mcon;
     if (prop == f.end() || prop->second.size < 16 ||
-        !FindResource(r.room.Bytes(prop->second), Tag("MCON"), home, data, nullptr, nullptr)) {
+        !FindResource(r.room.Bytes(prop->second), FourCC("MCON"), home, data, nullptr, nullptr)) {
       continue;
     }
     if (!ReadMcon(data, mcon)) {
@@ -3875,7 +3865,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     std::vector<uint8_t> data;
     uint32_t id = 0;
     if (r.room.NamedElsewhere(at) ||
-        !FindResource(r.room.Bytes({at, 16}), Tag("WMDL"), home, data, nullptr, nullptr)) {
+        !FindResource(r.room.Bytes({at, 16}), FourCC("WMDL"), home, data, nullptr, nullptr)) {
       continue;
     }
     if (m_io.cancelled && m_io.cancelled()) {
@@ -3970,7 +3960,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     std::vector<uint8_t> data;
     PortRemastered::Model smdl;
     std::string error;
-    if (!m_io.piece || !FindResource(ch.skinnedModel.data(), Tag("SMDL"), home, data, nullptr, nullptr) ||
+    if (!m_io.piece || !FindResource(ch.skinnedModel.data(), FourCC("SMDL"), home, data, nullptr, nullptr) ||
         !PortRemastered::ParseModel(data.data(), data.size(), smdl, error)) {
       Log("  " + r.name + ": an animated actor's skinned model did not read" + (error.empty() ? "" : ": " + error));
       return false;
@@ -4281,7 +4271,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     std::vector<uint8_t> data;
     PortRemastered::Model cmdl;
     std::string error;
-    if (!FindResource(id, Tag("CMDL"), home, data, nullptr, nullptr) ||
+    if (!FindResource(id, FourCC("CMDL"), home, data, nullptr, nullptr) ||
         !PortRemastered::ParseModel(data.data(), data.size(), cmdl, error)) {
       return false;
     }
@@ -4320,7 +4310,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
     std::vector<uint8_t> data;
     PortRemastered::Model cmdl;
     std::string error;
-    if (!FindResource(modelId, Tag("CMDL"), home, data, nullptr, nullptr) ||
+    if (!FindResource(modelId, FourCC("CMDL"), home, data, nullptr, nullptr) ||
         !PortRemastered::ParseModel(data.data(), data.size(), cmdl, error)) {
       return false;
     }
@@ -4370,7 +4360,7 @@ void Writer::WriteGeometry(const RoomData& r, uint32_t mrea, const Area& area) {
         std::vector<uint8_t> data;
         std::string error;
         auto character = std::make_unique<PortRemasteredAnim::Character>();
-        if (!FindResource(r.room.Bytes(chprProp), Tag("CHPR"), home, data, nullptr, nullptr) ||
+        if (!FindResource(r.room.Bytes(chprProp), FourCC("CHPR"), home, data, nullptr, nullptr) ||
             !PortRemasteredAnim::ReadCharacter(data, *character, error)) {
           Log("  " + r.name + ": a character did not read" + (error.empty() ? "" : ": " + error));
           character.reset();
@@ -4827,7 +4817,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     }
     const RoomPak home{r.name, r.pak};
     std::vector<uint8_t> refl;
-    if (!FindResource(r.room.Bytes(reflProp->second), Tag("REFL"), home, refl, nullptr, nullptr) ||
+    if (!FindResource(r.room.Bytes(reflProp->second), FourCC("REFL"), home, refl, nullptr, nullptr) ||
         refl.size() < 0x50) {
       continue;
     }
@@ -4835,7 +4825,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     const Pak* txtrPak = nullptr;
     Id16 txtrId;
     std::vector<uint8_t> txtr;
-    if (!FindResource(&refl[0x3c], Tag("TXTR"), home, txtr, &txtrPak, &txtrId)) {
+    if (!FindResource(&refl[0x3c], FourCC("TXTR"), home, txtr, &txtrPak, &txtrId)) {
       continue;
     }
     if (index.find(txtrId) == index.end()) {
@@ -5283,7 +5273,7 @@ bool Writer::Run(uint32_t mlvl, int& written, std::string& error) {
     }
     auto r = std::make_unique<RoomData>();
     std::string roomError;
-    if (rp.pak == nullptr || FirstOfType(*rp.pak, Tag("ROOM")) == nullptr) {
+    if (rp.pak == nullptr || FirstOfType(*rp.pak, FourCC("ROOM")) == nullptr) {
       Log(rp.name + ": no ROOM");
       continue;
     }

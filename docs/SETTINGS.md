@@ -1138,15 +1138,18 @@ the flamethrower still step at 60 Hz.
 
 ## Diagnostics and test drivers
 
-For development only; none is saved. A variable marked "set" takes effect with
-any value, even `0`.
+For development only; none is saved. The on/off variables follow the rule above
+(`platform/include/port_env.h`): unset leaves the default, and empty, `0`,
+`false`, `off` or `no` mean off. The two read by Aurora (`MP_LOG_COPY_TEX`,
+`MP_SHADOW_SIZE`) cannot include the port's headers: `MP_LOG_COPY_TEX` is on
+with any value, even `0`.
 
 - `MP_WATCHDOG=0`: no stall watchdog. On by default: with no frame for 5, 15, 30
   and 60 s it logs where the main and render threads are, the main thread's stack
   at 5 and 30 s, and on Android a logcat dump. `MP_WATCHDOG_TEST_STALL=<frame>`
   sleeps 8 s on that frame and `MP_WATCHDOG_TEST_THROW=<frame>` throws an exception
   there, to test it and the crash report.
-- `MP_HEAP_CHECK=1` (not empty, not starting with `0`): deep checks of the game
+- `MP_HEAP_CHECK=1`: deep checks of the game
   heap's block links on every normal-heap free and of each frame's delayed deletions (queued
   twice, freed or reused before the flush); a fault logs `HEAP CHECK:` lines and aborts.
 - `MP_PIPELINE_SEED=0`: start from an empty pipeline cache instead of the shipped
@@ -1157,26 +1160,30 @@ any value, even `0`.
 - `MP_SKIN_LEGACY=1`: skin with the retail locked-cache path; `MP_SKIN_VERIFY=1`
   runs both paths and reports any difference; `MP_SKIN_STATS=1` logs skinning time
   every 5 s. `MP_SKIN_THREAD_MIN=<vertices>` (default 20000): models at least
-  that big are skinned across threads. (`1` here means not empty and not starting with `0`.)
-- `MP_LOG_HUD` (set): log HUD models and frames that are not loaded, HUD state
+  that big are skinned across threads.
+- `MP_LOG_HUD=1`: log HUD models and frames that are not loaded, HUD state
   transitions and visor/HUD visibility changes to stderr.
-- `MP_STREAM_TRACE` (set): per-chunk streamed-music refill tracing (`mpstream:`;
+- `MP_STREAM_TRACE=1`: per-chunk streamed-music refill tracing (`mpstream:`;
   logcat on Android); starts, stops and stale completions are always logged.
-- `MP_ELC2_LOG` (set): log Remastered electric effects (ELC2) as they are made,
+- `MP_ELC2_LOG=1`: log Remastered electric effects (ELC2) as they are made,
   and their bolt count every 30 frames.
-- `MP_ACTOR_SHADOW_DEBUG` (set): every 120 frames, log each projected actor
+- `MP_ACTOR_SHADOW_DEBUG=1`: every 120 frames, log each projected actor
   shadow's opacity, fade and map and receiver boxes.
 - `MP_SHADOW_ACTOR_CHECK=1`: log the first off-screen actor drawn into the sun
   shadow, and every 300 frames how many were eligible and drawn.
-- `MP_VISORMESH_LOG` (set): every 60 frames, log how many surfaces the visor and
+- `MP_VISORMESH_LOG=1`: every 60 frames, log how many surfaces the visor and
   shadow bits skipped.
+- `MP_SHADOW_SIZE=<256-8192>`: the sun shadow map's size in texels (1024 by
+  default; a value outside the range keeps the default).
+- `MP_LOG_COPY_TEX` (any value): log each new texture an EFB copy makes
+  (`[copytex]`), with its size, format and how many are cached.
 - `MP_ROOMENV_TIMING=1`: log where a `.roomenv` load's time goes.
   `MP_ROOM_ENV_EXPOSURE_LOG=1`: log the room exposure state (area, hint values,
   EV, target) each time it is worked out.
 - Remastered import: `MP_REMASTERED_REUSE=0` makes every stage again instead of
   reusing the previous import's unchanged ones (`textures`: only the converted
   textures are reused); `MP_REMASTERED_JOINTS=1` logs the models' skin matching
-  (each joint's vote and the bones it got) to stderr; `MP_REMASTERED_MISS` (set)
+  (each joint's vote and the bones it got) to stderr; `MP_REMASTERED_MISS=1`
   lists each room's untraced script connections by kind in the import log.
 - `MP_RANDO_SWEEP_LAYERS=1`: with `MP_RANDO_SWEEP`, tour each area once per script
   layer (up to the world's widest area), with only that layer active.

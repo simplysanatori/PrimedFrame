@@ -1,4 +1,5 @@
 #include "port_input_remap_ui.h"
+#include "port_strings.h"
 
 #include "port_controls.h"
 #include "port_debug.h"
@@ -168,11 +169,7 @@ bool InputStartsAt(const std::string& s, size_t i) {
   return false;
 }
 
-std::string TrimSpaces(std::string s) {
-  s.erase(0, s.find_first_not_of(" \t"));
-  s.erase(s.find_last_not_of(" \t") + 1);
-  return s;
-}
+std::string TrimSpaces(const std::string& s) { return port::Trim(s, " \t"); }
 
 // "a + b + c" (or comma separated) into a binding's inputs.
 bool InputsFromText(const char* text, Binding& b) {

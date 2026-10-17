@@ -850,6 +850,7 @@ if(MP_BUILD_TESTS)
         SOURCES tests/port_custom_res.cpp platform/port_custom_res.cpp
         INCLUDES platform/include)
     mp_port_test(port_env_tests SOURCES tests/port_env.cpp INCLUDES platform/include)
+    mp_port_test(port_bytes_hash_tests SOURCES tests/port_bytes_hash.cpp INCLUDES platform/include)
     mp_port_test(port_air_mover_contact_tests
         SOURCES tests/port_air_mover_contact.cpp
             src/Collision/CMaterialFilter.cpp platform/port_remastered_ground_contacts.cpp

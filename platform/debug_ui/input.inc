@@ -83,11 +83,6 @@ bool sGyroHasAccel = false;
 PortGyro::Filter sGyroFilter;
 } // namespace
 
-int GyroMode() {
-  EnsureInitialized();
-  return sInput.gyroMode;
-}
-
 void SetGyroMode(int mode) {
   EnsureInitialized();
   if (mode < 0 || mode > 4) {
@@ -95,11 +90,6 @@ void SetGyroMode(int mode) {
   }
   sInput.gyroMode = mode;
   MarkDirty();
-}
-
-int GyroSource() {
-  EnsureInitialized();
-  return sInput.gyroSource;
 }
 
 void SetGyroSource(int source) {
@@ -111,22 +101,12 @@ void SetGyroSource(int source) {
   MarkDirty();
 }
 
-float GyroSensitivity() {
-  EnsureInitialized();
-  return sInput.gyroSensitivity;
-}
-
 void SetGyroSensitivity(float scale) {
   EnsureInitialized();
   if (std::isfinite(scale)) {
     sInput.gyroSensitivity = std::clamp(scale, PortInput::kGyroSensitivityMin, PortInput::kGyroSensitivityMax);
     MarkDirty();
   }
-}
-
-int GyroSpace() {
-  EnsureInitialized();
-  return sInput.gyroSpace;
 }
 
 void SetGyroSpace(int space) {
@@ -136,11 +116,6 @@ void SetGyroSpace(int space) {
   }
   sInput.gyroSpace = space;
   MarkDirty();
-}
-
-bool GyroAutoCalibrate() {
-  EnsureInitialized();
-  return sInput.gyroAutoCalibrate;
 }
 
 void SetGyroAutoCalibrate(bool on) {
@@ -889,11 +864,6 @@ bool ConsumeMapTapZ() {
   return false;
 }
 
-float TouchAimSpeed() {
-  EnsureInitialized();
-  return sInput.touchAimSpeed;
-}
-
 void SetTouchAimSpeed(float pixelsPerDp) {
   EnsureInitialized();
   if (std::isfinite(pixelsPerDp)) {
@@ -940,11 +910,6 @@ void BeginFrameMouse() {
   sStickFrameX = sStickFrameY = 0.f;
   sAimAppliedLastTick = false;
   sAimTick.BeginTick();
-}
-
-bool SpringBallSwipe() {
-  EnsureInitialized();
-  return sInput.springSwipe;
 }
 
 void SetSpringBallSwipe(bool enabled) {

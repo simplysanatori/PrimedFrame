@@ -114,7 +114,7 @@ bool Server::OpenSeed(const PortRandoGen::Seed& seed, const std::string& statePa
   std::string text;
   if (!mStatePath.empty()) {
     std::ifstream file(mStatePath, std::ios::binary);
-    text.assign(std::istreambuf_iterator< char >(file), std::istreambuf_iterator< char >());
+    text = port::ReadAllText(file);
   }
   PortJson::Value state;
   if (!text.empty() && PortJson::Parse(text, state, offset, &reason) && state.IsObject()) {

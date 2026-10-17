@@ -1,4 +1,5 @@
 #include "MetroidPrime/CGameArea.hpp"
+#include "port_env.h"
 
 #include "MetroidPrime/CMemoryDrawEnum.hpp"
 
@@ -36,7 +37,7 @@
 namespace {
 // MP_LOG_DOORS: when each area started streaming, and how long each load stage took.
 bool PortAreaLogEnabled() {
-  static const bool enabled = std::getenv("MP_LOG_DOORS") != nullptr;
+  static const bool enabled = port::EnvFlag("MP_LOG_DOORS");
   return enabled;
 }
 std::map< int, std::chrono::steady_clock::time_point > sPortAreaLoadStart;

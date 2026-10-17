@@ -525,7 +525,7 @@ void LoadSettings() {
   if (!file.is_open()) {
     return;
   }
-  std::fprintf(stderr, "metroid_prime_port: loaded settings from %s\n", path.c_str());
+  PortLog::Write("metroid_prime_port: loaded settings from %s\n", path.c_str());
   ApplySettingsText(file);
   PortInput::PostLoad();
 }
@@ -586,21 +586,21 @@ void SaveSettings() {
   const std::string path = SettingsFilePath();
   std::ofstream file(path, std::ios::trunc);
   if (!file.is_open()) {
-    std::fprintf(stderr, "metroid_prime_port: could not write settings to %s\n", path.c_str());
+    PortLog::Write("metroid_prime_port: could not write settings to %s\n", path.c_str());
     return;
   }
   file << text;
   file.flush();
   if (!file) {
-    std::fprintf(stderr, "metroid_prime_port: could not write settings to %s (write failed)\n", path.c_str());
+    PortLog::Write("metroid_prime_port: could not write settings to %s (write failed)\n", path.c_str());
     return;
   }
   file.close();
   if (file.fail()) {
-    std::fprintf(stderr, "metroid_prime_port: could not write settings to %s (close failed)\n", path.c_str());
+    PortLog::Write("metroid_prime_port: could not write settings to %s (close failed)\n", path.c_str());
     return;
   }
-  std::fprintf(stderr, "metroid_prime_port: saved settings to %s\n", path.c_str());
+  PortLog::Write("metroid_prime_port: saved settings to %s\n", path.c_str());
   sSettingsDirty = false;
 }
 

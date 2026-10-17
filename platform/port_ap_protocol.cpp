@@ -1,4 +1,5 @@
 #include "port_ap_protocol.h"
+#include "port_hash.h"
 #include "port_strings.h"
 
 #include "port_ap_metroidprime.h"
@@ -822,11 +823,7 @@ std::string GameDirectoryName(const std::string& slot, const std::string& seed) 
   };
   std::string name = clean(slot) + "-" + clean(seed);
   if (changed) {
-    uint32_t hash = 2166136261u; // FNV-1a over both, as they were
-    for (const char c : slot + std::string(1, '\0') + seed) {
-      hash ^= static_cast<uint8_t>(c);
-      hash *= 16777619u;
-    }
+    const uint32_t hash = port::Fnv1a32(slot + std::string(1, '\0') + seed); // over both, as they were
     char suffix[16];
     std::snprintf(suffix, sizeof(suffix), "-%08x", hash);
     name += suffix;
@@ -1455,14 +1452,6 @@ bool Session::TakeNotification(std::string& text) {
   }
 }
 
-void Session::CopyRecentTracked(std::vector< TrackedItem >& out, size_t cap) const {
-  out.clear();
-  if (cap == 0)
-    return;
-  const size_t count = std::min(cap, mTracked.size());
-  out.assign(mTracked.end() - static_cast< ptrdiff_t >(count), mTracked.end());
-}
-
 std::string Session::PlayerName(int64_t slot) const {
   try {
     const auto player = mPlayers.find(slot);
@@ -1704,10 +1693,6 @@ std::string Session::AnnounceLocation(int64_t locationId) {
 int64_t Session::ReceivedCount(int64_t itemId) const {
   const auto found = mState.progressive.find(itemId);
   return found != mState.progressive.end() ? found->second : 0;
-}
-
-bool Session::DeathLinkEnabled(const Config& config) {
-  return config.deathLink;
 }
 
 std::string Session::BuildBounce(const std::string& cause) const {

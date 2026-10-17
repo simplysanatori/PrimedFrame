@@ -5,6 +5,9 @@
 // the client. Commands that touch the game run inside the state manager's
 // tick, where every object pointer is live; the rest run once per frame.
 #include "port_apclient.h"
+#include "port_log.h"
+#include "port_env.h"
+#include "port_strings.h"
 #include "port_collision_view.h"
 #include "port_console_physics.h"
 #include "port_debug.h"
@@ -175,7 +178,7 @@ void SendRaw(unsigned generation, const std::string& text) {
       continue;
     }
     if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-      std::fprintf(stderr, "[console] client is not reading; disconnecting it\n");
+      PortLog::Write("[console] client is not reading; disconnecting it\n");
       shutdown(sClient, SHUT_RDWR);
     }
     return;
@@ -228,7 +231,7 @@ void ListenThread(int listener) {
       sClient = client;
       generation = ++sGeneration;
     }
-    std::fprintf(stderr, "[console] client connected\n");
+    PortLog::Write("[console] client connected\n");
     buffer.clear();
     bool firstLine = true;
     bool refused = false;
@@ -249,7 +252,7 @@ void ListenThread(int listener) {
         // A web page can POST to a loopback port; the request line and headers
         // would otherwise run as commands. No console client speaks HTTP.
         if (firstLine && LooksLikeHttp(line)) {
-          std::fprintf(stderr, "[console] HTTP request refused; disconnecting the client\n");
+          PortLog::Write("[console] HTTP request refused; disconnecting the client\n");
           refused = true;
           break;
         }
@@ -270,7 +273,7 @@ void ListenThread(int listener) {
         break;
       }
       if (buffer.size() > kMaxLine) {
-        std::fprintf(stderr, "[console] line too long; disconnecting the client\n");
+        PortLog::Write("[console] line too long; disconnecting the client\n");
         break;
       }
     }
@@ -279,19 +282,19 @@ void ListenThread(int listener) {
       close(sClient);
       sClient = -1;
     }
-    std::fprintf(stderr, "[console] client disconnected\n");
+    PortLog::Write("[console] client disconnected\n");
   }
 }
 #endif
 
 void Start() {
   sStarted = true;
-  const char* value = std::getenv("MP_CONSOLE");
+  const char* value = port::EnvString("MP_CONSOLE");
   if (value == nullptr || value[0] == '\0' || std::strcmp(value, "0") == 0) {
     return;
   }
 #ifdef _WIN32
-  std::fputs("[console] MP_CONSOLE is not supported on Windows\n", stderr);
+  PortLog::Write("[console] MP_CONSOLE is not supported on Windows\n");
 #else
   // MP_CONSOLE=1 (or any non-number) is the default port; a number names one.
   char* end = nullptr;
@@ -299,7 +302,7 @@ void Start() {
   int port = 4777;
   if (end != value && *end == '\0' && requested > 1) {
     if (requested > 65535) {
-      std::fprintf(stderr, "[console] MP_CONSOLE=%s is not a port (2-65535)\n", value);
+      PortLog::Write("[console] MP_CONSOLE=%s is not a port (2-65535)\n", value);
       return;
     }
     port = static_cast< int >(requested);
@@ -315,13 +318,13 @@ void Start() {
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   if (listener < 0 || bind(listener, reinterpret_cast< sockaddr* >(&addr), sizeof(addr)) != 0 ||
       listen(listener, 1) != 0) {
-    std::fprintf(stderr, "[console] cannot listen on 127.0.0.1:%d: %s\n", port, std::strerror(errno));
+    PortLog::Write("[console] cannot listen on 127.0.0.1:%d: %s\n", port, std::strerror(errno));
     if (listener >= 0) {
       close(listener);
     }
     return;
   }
-  std::fprintf(stderr, "[console] listening on 127.0.0.1:%d\n", port);
+  PortLog::Write("[console] listening on 127.0.0.1:%d\n", port);
   sEnabled = true;
   std::thread(ListenThread, listener).detach();
 #endif
@@ -379,12 +382,7 @@ void Finish(const char* error = nullptr) {
   sHasCommand = false;
 }
 
-std::string Lower(std::string s) {
-  for (char& c : s) {
-    c = static_cast< char >(std::tolower(static_cast< unsigned char >(c)));
-  }
-  return s;
-}
+using port::Lower;
 
 bool ParseHex(const std::string& s, uint32_t& value) {
   if (s.empty()) {
