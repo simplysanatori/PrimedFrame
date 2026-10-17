@@ -238,6 +238,26 @@ inline float CarryYaw(const Basis& r) {
   return std::atan2(f.y, f.x);
 }
 
+// The rider's yaw (0xc2446c, q_integrated * ZRotation(yaw)) folded into the port's additive
+// orientation delta. AddMotionState does q <- normalize(q + delta') (CNUQuaternion.cpp), so
+// the delta that lands on q_integrated * yawq = normalize(q + delta) * yawq (|yawq| = 1) is
+// delta' = (q + delta) * yawq - q; a saved prediction (SetMotionState normalizes too) carries
+// it the same way. The product is CNUQuaternion::operator* with yawq = (cos, 0, 0, sin)
+// written out, term for term. A zero yaw is the delta itself: going through the sum and
+// difference would only add rounding (fl(q + delta) - q != delta).
+inline PortRemasteredGround::Quat4 YawedOrientationDelta(const PortRemasteredGround::Quat4& q,
+                                                         const PortRemasteredGround::Quat4& delta,
+                                                         float yaw) {
+  if (yaw == 0.f) return delta;
+  const float w = q.w + delta.w, x = q.x + delta.x, y = q.y + delta.y, z = q.z + delta.z;
+  const float c = std::cos(0.5f * yaw), s = std::sin(0.5f * yaw);
+  const float tw = w * c - z * s;
+  const float tx = c * x + y * s;
+  const float ty = c * y - x * s;
+  const float tz = w * s + c * z;
+  return {tw - q.w, tx - q.x, ty - q.y, tz - q.z};
+}
+
 // The carry term of PredictMotion: added whole (not scaled by t) while pending, and
 // consumed by the first MoveAlongGround pass's ApplyMotionState. `carry` is the platform's
 // translation delta; a rotating platform adds the rotation term about its previous position

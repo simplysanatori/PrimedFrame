@@ -996,17 +996,17 @@ static PortRemasteredGroundRider::CarryTerm PortRiderCarry(CStateManager& mgr, C
   return PortRemasteredGroundRider::CarryTerm();
 }
 
-// The rider's yaw (0xc2446c, q_integrated * ZRotation(yaw)) folded into the port's additive
-// orientation delta: AddMotionState adds the delta and normalizes, so the delta that lands on
-// q_integrated * yawq is (q + delta) * yawq - q, and a saved prediction carries it as well.
+// The rider's yaw folded into the port's additive orientation delta
+// (PortRemasteredGroundRider::YawedOrientationDelta).
 static CNUQuaternion PortYawedOrientationDelta(const CPhysicsActor& actor,
                                                const CNUQuaternion& delta, float yaw) {
   const CNUQuaternion q = CNUQuaternion::BuildFromQuaternion(actor.GetRotation());
-  CNUQuaternion integrated = q;
-  integrated += delta;
-  const CNUQuaternion yawq(cosf(0.5f * yaw), CVector3f(0.f, 0.f, sinf(0.5f * yaw)));
-  const CNUQuaternion turned = integrated * yawq;
-  return CNUQuaternion(turned.GetScalar() - q.GetScalar(), turned.GetVector() - q.GetVector());
+  const CVector3f qv = q.GetVector();
+  const CVector3f dv = delta.GetVector();
+  const PortRemasteredGround::Quat4 r = PortRemasteredGroundRider::YawedOrientationDelta(
+      {q.GetScalar(), qv.GetX(), qv.GetY(), qv.GetZ()},
+      {delta.GetScalar(), dv.GetX(), dv.GetY(), dv.GetZ()}, yaw);
+  return CNUQuaternion(r.w, r.x, r.y, r.z);
 }
 
 static PortRemasteredGround::Vec3 PortVec(const CVector3f& v) {

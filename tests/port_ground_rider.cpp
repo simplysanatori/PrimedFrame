@@ -536,6 +536,72 @@ int main() {
       const Vec3 c = t.Translation({13.f, 0.f, 1.f});
       assert(Near(c.x, -0.0018f, 1e-4f) && Near(c.y, 0.1047f, 1e-4f) && c.z == 0.f);
     }
+    // Tilt and yaw together: the yaw is the heading of column 0's horizontal projection
+    // (Orthonormalized 0xd5140), not of row 0. R = RollX(15) * Yaw(20): column 0 is
+    // (cos 20, sin 20 cos 15, sin 20 sin 15), heading 19.37 degrees; row 0 would give -20.
+    {
+      const Basis roll = RollX(15.f), yaw = Yaw(20.f);
+      Basis r;
+      for (int j = 0; j < 3; ++j) r.c[j] = MulBasis(roll, yaw.c[j]);
+      const Pose s{{10.f, 0.f, 0.f}, Basis()}, n{{10.f, 0.f, 0.f}, r};
+      const CarryTerm t = RiderCarryTerm(s, n, n, 7, 7, true, true);
+      const float a = 20.f * kPi / 180.f, b = 15.f * kPi / 180.f;
+      assert(t.rotates && Near(t.yaw, std::atan2(std::sin(a) * std::cos(b), std::cos(a)), 1e-6f));
+      assert(Near(t.yaw, 19.37f * kPi / 180.f, 1e-4f));
+    }
+  }
+  // 11. The yaw in the additive orientation delta (YawedOrientationDelta): AddMotionState
+  // lands on normalize(q + delta'), which must be normalize(q + delta) * yawq.
+  {
+    using Q = PortRemasteredGround::Quat4;
+    const float kPi = 3.14159265358979f;
+    auto Mul = [](const Q& a, const Q& b) {
+      return Q{a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+               a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+               a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+               a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w};
+    };
+    auto Norm = [](const Q& a) {
+      const float l = std::sqrt(a.w * a.w + a.x * a.x + a.y * a.y + a.z * a.z);
+      return Q{a.w / l, a.x / l, a.y / l, a.z / l};
+    };
+    auto Add = [](const Q& a, const Q& b) { return Q{a.w + b.w, a.x + b.x, a.y + b.y, a.z + b.z}; };
+    auto Close = [](const Q& a, const Q& b, float eps) {
+      // q and -q are the same rotation.
+      const float sgn = a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z < 0.f ? -1.f : 1.f;
+      return std::fabs(a.w - sgn * b.w) <= eps && std::fabs(a.x - sgn * b.x) <= eps &&
+             std::fabs(a.y - sgn * b.y) <= eps && std::fabs(a.z - sgn * b.z) <= eps;
+    };
+    auto About = [](float deg, float x, float y, float z) {
+      const float h = 0.5f * deg * 3.14159265358979f / 180.f;
+      return Q{std::cos(h), x * std::sin(h), y * std::sin(h), z * std::sin(h)};
+    };
+    auto Heading = [&](const Q& q) {
+      // Body forward (+Y) rotated by q, in the horizontal plane.
+      const Q f = Mul(Mul(q, Q{0.f, 0.f, 1.f, 0.f}), Q{q.w, -q.x, -q.y, -q.z});
+      return std::atan2(-f.x, f.y);
+    };
+    const float yaw = 2.f * kPi / 180.f;
+    const Q yawq = About(2.f, 0.f, 0.f, 1.f);
+    // A tilted and yawed q (25 degrees about X, then 40 about Z) and a nonzero angular step.
+    const Q q = Norm(Mul(About(40.f, 0.f, 0.f, 1.f), About(25.f, 1.f, 0.f, 0.f)));
+    const Q d{-0.004f, 0.006f, -0.003f, 0.009f};
+    const Q landed = Norm(Add(q, YawedOrientationDelta(q, d, yaw)));
+    assert(Close(landed, Mul(Norm(Add(q, d)), yawq), 2e-6f));
+    // Not yawq * q: the yaw is about the body's up axis, which the tilt has moved.
+    assert(!Close(landed, Mul(yawq, Norm(Add(q, d))), 1e-3f));
+    // A larger turn and a zero step.
+    const Q big = About(-75.f, 0.f, 0.f, 1.f);
+    assert(Close(Norm(Add(q, YawedOrientationDelta(q, Q{0.f, 0.f, 0.f, 0.f}, -75.f * kPi / 180.f))),
+                 Mul(q, big), 2e-6f));
+    // Upright: the heading turns by exactly the yaw, after the step's own turn.
+    const Q up = About(30.f, 0.f, 0.f, 1.f);
+    const Q step = Add(About(31.f, 0.f, 0.f, 1.f), Q{-up.w, -up.x, -up.y, -up.z});
+    const float h = Heading(Norm(Add(up, YawedOrientationDelta(up, step, yaw))));
+    assert(std::fabs(h - 33.f * kPi / 180.f) <= 1e-5f);
+    // A zero yaw is the delta itself, bit for bit (no rounding from q + delta - q).
+    const Q same = YawedOrientationDelta(q, d, 0.f);
+    assert(same.w == d.w && same.x == d.x && same.y == d.y && same.z == d.z);
   }
   return 0;
 }
