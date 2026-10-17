@@ -647,11 +647,15 @@ bool PortSmokeMouseEnabled() {
 // (MP_CONSOLE press/stick) need the same,
 // since a press that is thrown away before it is read cannot test anything.
 bool PortSmokeScriptedInput() {
-  static const bool enabled = port::EnvString("MP_SMOKE_SCRIPT") != nullptr ||
-                              port::EnvString("MP_SMOKE_FRONTEND") != nullptr ||
-                              port::EnvFlag("MP_SMOKE_DASH") ||
-                              port::EnvFlag("MP_CONSOLE") ||
-                              PortSmokeContinueEnabled();
+  static const bool enabled = [] {
+    // MP_CONSOLE carries a port, so it is on by the console's own rule (PortConsole::Start):
+    // set, not empty and not 0.
+    const char* const console = port::EnvString("MP_CONSOLE");
+    return port::EnvString("MP_SMOKE_SCRIPT") != nullptr ||
+           port::EnvString("MP_SMOKE_FRONTEND") != nullptr || port::EnvFlag("MP_SMOKE_DASH") ||
+           (console != nullptr && console[0] != '\0' && std::strcmp(console, "0") != 0) ||
+           PortSmokeContinueEnabled();
+  }();
   return enabled;
 }
 
