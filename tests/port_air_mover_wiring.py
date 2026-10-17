@@ -40,6 +40,24 @@ class Wiring(unittest.TestCase):
         self.assertIn("PortAirMoverContact::PushDistance(flag100)", air)
         self.assertIn("tc.minVertical, mi, tc.flag100,", air)
 
+    def test_split_integrator(self):
+        # Pre 0xc59814 once before the first step, Post 0xc5994c once after the failsafe and
+        # the tunnel check; the step prediction folds no force.
+        pre = air.index("PortRemasteredGround::PreMomentum(")
+        first_step = air.index("float remaining = dt - stepper.Step(dt);")
+        failsafe = air.index("const bool resolved = failsafe.Collision();")
+        tunnel = air.index("failsafe.Tunnel(entryPos, actor.GetTranslation(), tunnelOut)")
+        post = air.index("PortRemasteredGround::PostMomentum(")
+        clear = air.rindex("actor.ClearForcesAndTorques();")
+        self.assertLess(pre, first_step)
+        self.assertLess(failsafe, tunnel)
+        self.assertLess(tunnel, post)
+        self.assertLess(post, clear)
+        self.assertEqual(air.count("PortRemasteredGround::PreMomentum("), 1)
+        self.assertEqual(air.count("PortRemasteredGround::PostMomentum("), 1)
+        self.assertIn("PortRemasteredGround::PredictTranslation(", air)
+        self.assertNotIn("CMotionState motion = actor.PredictMotion_Internal(t);", air)
+
     def test_platforms_through_the_producer(self):
         # Admitted platforms join the terrain query in every airborne query; the native
         # dynamic half only sees the remaining actors.

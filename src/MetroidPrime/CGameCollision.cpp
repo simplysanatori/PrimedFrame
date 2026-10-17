@@ -1548,16 +1548,26 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     std::uint32_t riderOwner;
     bool riderActive;
 
-    // The step's prediction (vt+0x20 -> PredictMotion 0xc23e40): the rider carry is added
-    // whole, unscaled by t, to every prediction of the step while it is pending: the full
-    // step, each bisection sample, hi and lo (lo at t = 0 too). Only the first step has it.
+    // The step's prediction (vt+0x20 -> PredictMotion 0xc23e40): read-only on the linear
+    // state. Every DoMovementStep call passes extra = w4 & 1 (0xf9492c, w3 = w26 at each
+    // vt+0x20 call), never 2, so the force branch (0xc23e88) is never taken: translation
+    // t * (v + moveImpulse / m), zero linear momentum delta. The force is folded once per
+    // tick by Post (IntegratePostForces below). The rider carry is added whole, unscaled by
+    // t, to every prediction of the step while it is pending: the full step, each bisection
+    // sample, hi and lo (lo at t = 0 too). Only the first step has it. The angular part keeps
+    // the port's existing prediction (unverified, as on the ground mover).
     CMotionState Predict(float t) const {
-      CMotionState motion = actor.PredictMotion_Internal(t);
+      const CMotionState base = actor.PredictMotion_Internal(t);
+      const CVector3f v = actor.GetVelocityWR();
+      const CVector3f jm = actor.GetMoveImpulseWR();
+      PortRemasteredGround::Vec3 d = PortRemasteredGround::PredictTranslation(
+          t, {v.GetX(), v.GetY(), v.GetZ()}, {jm.GetX(), jm.GetY(), jm.GetZ()},
+          1.f / actor.GetMass());
       if (carry.pending) {
-        motion.SetTranslation(motion.GetTranslation() +
-                              CVector3f(carry.carry.x, carry.carry.y, carry.carry.z));
+        d = {d.x + carry.carry.x, d.y + carry.carry.y, d.z + carry.carry.z};
       }
-      return motion;
+      return CMotionState(CVector3f(d.x, d.y, d.z), base.GetOrientation(), CVector3f::Zero(),
+                          base.GetAngularMomentum());
     }
 
     // 0xc6d460 ImpactResponseForOffGroundMoverCollider's per-contact response.
@@ -2190,6 +2200,18 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   // ball, the ground dynamic fallback, a save-state load).
   player.PortSetRetainedObjectState(PortRemasteredGround::RetainedAirborneEntry(
       player.PortRetainedObjectState()));
+  // Pre 0xc59814 (integrator vt+0x10, called at 0xf9447c), once per tick before the first
+  // step: momentum += impulse, no force and no dt (kb CPhysicsActorMP1-integrator-0xc59814).
+  // The impulse is spent; the steps never fold it again.
+  {
+    const CVector3f m = actor.GetConstantForceWR();
+    const CVector3f j = actor.GetImpulseWR();
+    const PortRemasteredGround::Vec3 r = PortRemasteredGround::PreMomentum(
+        {m.GetX(), m.GetY(), m.GetZ()}, {j.GetX(), j.GetY(), j.GetZ()});
+    actor.SetConstantForceWR(CVector3f(r.x, r.y, r.z));
+    actor.ComputeDerivedQuantities();
+    actor.ImpulseWR() = CVector3f::Zero();
+  }
   CVector3f prevVel = actor.GetVelocityWR();
   const CVector3f entryVel = prevVel;
   float remaining = dt - stepper.Step(dt);
@@ -2290,6 +2312,20 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   if (failsafe.Tunnel(entryPos, actor.GetTranslation(), tunnelOut)) {
     actor.SetTranslation(tunnelOut);
     actor.SetVelocityWR(CVector3f::Zero());
+  }
+  // Post 0xc5994c (integrator vt+0x18, called at 0xf94884), once per tick after the steps,
+  // the collision failsafe and the tunnel check, on every outcome: momentum += dt * (force +
+  // persistent), with the whole tick's dt whatever the steps consumed. A stopped actor
+  // (failsafe or tunnel zeroed its velocity) still gets this tick's force.
+  {
+    const CVector3f m = actor.GetConstantForceWR();
+    const CVector3f f = actor.GetForceWR();
+    const CVector3f pm = actor.GetMomentumWR();
+    const PortRemasteredGround::Vec3 r = PortRemasteredGround::PostMomentum(
+        {m.GetX(), m.GetY(), m.GetZ()}, {f.GetX(), f.GetY(), f.GetZ()},
+        {pm.GetX(), pm.GetY(), pm.GetZ()}, dt);
+    actor.SetConstantForceWR(CVector3f(r.x, r.y, r.z));
+    actor.ComputeDerivedQuantities();
   }
   actor.ClearForcesAndTorques();
   actor.MoveCollisionPrimitive(CVector3f::Zero());
