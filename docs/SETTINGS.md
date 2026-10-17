@@ -1073,6 +1073,18 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   applies to Remastered room-environment scenes with a valid tone curve in the Combat or Scan
   visor, outside visor transitions; Thermal/X-ray, HUD/UI, and inventory remain LDR. This is
   not full beam/effect parity: other legacy effects may still use inherited exposure.
+  Legacy non-PBR GX draws using exactly SRCALPHA/ONE additive blending convert their
+  alpha-weighted display colour into exposed light before blending, then divide RGB by the
+  locally clamped alpha (zero alpha emits zero RGB). With `a = clamp(alpha, 0, 1)`, the helper
+  obeys `postTone(a * H_add(c, alpha)) = clamp(c, 0, 1) * a`, within inverse-curve/target precision.
+  Hardware still applies the preserved TEV source alpha once. Its over-black display-colour
+  times alpha identity therefore assumes normalized alpha in [0,1] and an isolated, unfogged
+  contribution: TEV alpha can slightly exceed one, and subsequent volumetric fog attenuates light.
+  Other legacy SRCALPHA/ONE effects intentionally share this policy; this is not full visual
+  certification of those effects.
+  This is not exact LDR compositing over a nonblack background: the tone curve is nonlinear.
+  It does not claim Remastered parity or change other blend modes, native HDR writers, bloom,
+  room tone or exposure.
   The morph ball's light is Remastered's HDR one on PBR surfaces: a hotspot
   within 2.3 units of the ball, which brightens with boost and in water (see
   `docs/REMASTERED_EFFECTS.md`, "HDR dynamic lights").
