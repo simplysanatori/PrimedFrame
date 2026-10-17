@@ -539,6 +539,7 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   return applied;
 }
 void SynchronizeMouseAim(float x, float y, float z) { sMouseAimState.Synchronize(x, y, z); }
+void TurnMouseAim(float dyaw) { sMouseAimState.Turn(dyaw, 0.f); }
 
 float MouseSensitivity() {
   EnsureInitialized();

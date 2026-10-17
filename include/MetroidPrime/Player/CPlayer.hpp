@@ -355,6 +355,17 @@ public:
     xa3c_rider = PortRemasteredGroundRider::RiderController();
     xa44_lastTickRemasteredCarry = false;
     xa4c_deferredCarryCount = 0;
+    xad4_carriedYaw = 0.f;
+  }
+  // The yaw a Remastered mover's rider carry turned the player by this tick (a rotating
+  // platform, PredictMotion 0xc23e40), noted only when it reached the orientation.
+  // UpdateMouseAim takes it once, so free mouse look turns with the platform instead of
+  // setting the old heading back.
+  void PortNoteCarriedYaw(float yaw) { xad4_carriedYaw += yaw; }
+  float PortTakeCarriedYaw() {
+    const float yaw = xad4_carriedYaw;
+    xad4_carriedYaw = 0.f;
+    return yaw;
   }
   // After the player's move each running tick: a deferred carry no mover consumed (the
   // player did not move this tick) is applied, as retail would have, then the rider decays.
@@ -823,6 +834,7 @@ private:
   int xa4c_deferredCarryCount = 0;
   uint xa50_deferredCarryTick = ~0u;
   SPortDeferredCarry xa54_deferredCarry[4];
+  float xad4_carriedYaw = 0.f;
 #endif
 };
 NESTED_CHECK_SIZEOF(CPlayer, CPlayerStuckTracker, 0x2e0);

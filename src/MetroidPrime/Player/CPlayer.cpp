@@ -920,6 +920,14 @@ void CPlayer::UpdateMouseAim(CStateManager& mgr) {
   if (active) {
     forward = mgr.GetCameraManager()->GetFirstPersonCamera()->GetGunFollowTransform().GetForward();
   }
+  // A rotating platform's rider carry turned the player this tick (Remastered movers only).
+  // Free look turns with it, or the SetTransform below would put the old heading back. Taken
+  // every call, so a turn under a lock or without mouse aim (which keeps it on the player's
+  // transform) is never applied later.
+  const float carriedYaw = PortTakeCarriedYaw();
+  if (carriedYaw != 0.f && active && MouseLookIsFree(mgr)) {
+    PortDebug::TurnMouseAim(carriedYaw);
+  }
   if (PortDebug::UpdateMouseAim(active, !MouseLookIsFree(mgr),
                                forward.GetX(), forward.GetY(), forward.GetZ())) {
     SetTransform(CQuaternion::ZRotation(CRelAngle(PortDebug::AimYaw()))

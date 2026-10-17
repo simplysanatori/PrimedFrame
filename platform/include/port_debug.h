@@ -661,6 +661,9 @@ bool TapUpdateToast(float x, float y);
 // Called during simulation, using the effective unbobbed camera direction.
 bool UpdateMouseAim(bool active, bool locked, float x, float y, float z);
 void SynchronizeMouseAim(float x, float y, float z);
+// Turns the mouse-look yaw by dyaw radians (the game turned the player: a rotating
+// platform's rider carry). No effect until the aim is initialized.
+void TurnMouseAim(float dyaw);
 void ResetMouseAim();
 float MouseSensitivity();
 void SetMouseSensitivity(float radiansPerPixel);

@@ -2359,6 +2359,10 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   CVector3f prevVel = actor.GetVelocityWR();
   const CVector3f entryVel = prevVel;
   float remaining = dt - stepper.Step(dt);
+  // The first step applied its prediction, and the carried yaw with it.
+  if (carry.pending && carry.rotates && carry.yaw != 0.f) {
+    player.PortNoteCarriedYaw(carry.yaw);
+  }
   carry.ConsumeAfterPass();
   bool stalledFlag = false;
   if (remaining > 1e-5f) {
@@ -3509,6 +3513,13 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
       snap, frame, V3(tick.Up() * snapOffset));
   if (applied.moveActor) {
     actor.SetMotionState(Motion(applied.state));
+  }
+  // The carried yaw reached the orientation if a pass applied it, or if the snap set the saved
+  // state: every loop-top prediction had it until a pass consumed it, and after that the
+  // actor's state did. Only a refused snap with no pass leaves the player unturned.
+  if (carryPlan.remasteredCarry && riderCarry.pending && riderCarry.rotates &&
+      riderCarry.yaw != 0.f && (applied.moveActor || !tick.carry.pending)) {
+    player.PortNoteCarriedYaw(riderCarry.yaw);
   }
   // SnapToGround's own state write, which happens before any message (0xf93ae4 grounded 1 /
   // 0xf93af4 no floor 0; the refused epilogue 0xf93b04 writes nothing, so a refused tick

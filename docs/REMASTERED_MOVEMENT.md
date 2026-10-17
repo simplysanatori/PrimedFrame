@@ -121,9 +121,13 @@ puts the yaw into the additive orientation delta so the snap's saved prediction 
 An exactly unchanged basis has no rotation term, as the source's quaternion compare.
 Retail `MoveRiders` defers its rotation with the translation, and an admitted tick drops
 both. Remastered movement runs only with mouse aim on, and the port's aim state sets the
-player's yaw again in `CPlayer::Update` after the move, so the carried yaw does not last
-past the tick (retail's `MoveRiders` rotation under mouse aim does not either). Whether
-Remastered's aim keeps it is unknown.
+player's yaw again in `CPlayer::Update` after the move, so the mover notes the yaw it
+applied (`CPlayer::PortNoteCarriedYaw`: a pass applied the prediction, or the snap set the
+saved state) and `UpdateMouseAim` turns free look by it once before that: the view turns
+with the platform. Under a lock, or without mouse aim, the turn stays on the player's
+transform and is dropped from the aim state, and a zero yaw notes nothing. Retail's
+`MoveRiders` rotation (rm 0, or a fallback tick) is still overwritten under mouse aim.
+Whether Remastered's aim keeps the yaw is unknown.
 
 On the airborne mover the admitted platforms (active, DCLN or box, not rotated this tick) are not native
 dynamic contacts: their triangles join the terrain's in the same producer (terrain first,
