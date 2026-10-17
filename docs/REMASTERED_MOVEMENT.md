@@ -43,7 +43,7 @@ tracked in `CPlayer`, so a refused snap resends the previous message exactly as
 ## Moving platforms (issue #117, slice 1)
 
 A grounded Remastered tick also admits moving `CScriptPlatform`s with a DCLN
-collision tree that did not rotate this tick (`port_remastered_ground_rider.h`,
+collision tree (`port_remastered_ground_rider.h`,
 unit-tested by `tests/port_ground_rider.cpp`). Every query appends their triangles
 after the terrain's, platforms ordered by object index (`FindOverlap` 0xc1a760); the
 tree walk is the source's (0xc0fce0: LIFO, root untested) and each triangle carries the
@@ -82,12 +82,12 @@ over 1/6 s) is dropped on those ticks.
 A platform deactivated since its last `PreThink` is carried once more: an inactive
 physics actor is not simulated, so the rider's pose delta still holds the platform's last
 step, and the rider set on that step is live for one more tick. Only a `PreThink` that
-starts active takes the pose stamp (start and end translation), and a rider on an inactive
+starts active takes the pose stamp (start and end pose), and a rider on an inactive
 platform stamped the previous tick carries that step's delta, never the pose now, so a warp
 while inactive is not carried.
 
-A platform without a DCLN tree (its `CCollidableAABox`) is admitted on the same terms
-(active, unrotated). Its box is translated with the platform and never turned
+A platform without a DCLN tree (its `CCollidableAABox`) is admitted on the same terms.
+Its box is translated with the platform and never turned
 (`GetTransformedAABox` 0xbf6064), and its pair with the player is `AABox_AABox` 0xbf61b4
 (boolean 0xbfce60: both filters, then the inclusive overlap). Each impact enters the same
 contact lists as a self/other contact pair. The self half carries the depth, the other half
@@ -99,17 +99,35 @@ scan and the landing check read it unchanged. Touching boxes block the boolean q
 produce no contact. Box halves are classified by their translated material's orientation
 (`is_floor`, and the landing check's floor eligibility, as the box-actor landing does). The
 failsafe takes a box platform like the airborne failsafe's box actors (raw filter gates,
-the legacy impact list, one collided object per platform). A box platform that yaws is
-still refused, because the rotation carry is not ported.
+the legacy impact list, one collided object per platform).
 
-On the airborne mover the admitted platforms (active, DCLN or box, unrotated) are not native
+A platform that rotated this tick (slice 3; only the Ripper's platform does, through
+`CRipperControlledPlatform::Move`) is admitted by the grounded mover too, and its rider
+is carried as `PredictMotion` 0xc23e40 does. With `dq = qcur · conj(qprev)`, the platform's
+rotation since its `PreThink`, the prediction adds the translation delta plus
+`dq·d·dq⁻¹ − d`. The arm `d` is the rider's position at the prediction (before `v·dt`)
+minus the platform's previous position, and the rotation is full 3D, so a tilt moves the
+rider vertically. The rider also turns by `dq`'s heading about up: `BuildTransform(dq)` with
+the up row and column forced, `Orthonormalized` 0xd5140, then `q_integrated · yawq`. The
+port works with bases, not quaternions (`RelativeRotation`, `RotationTerm`, `CarryYaw`), and
+puts the yaw into the additive orientation delta so the snap's saved prediction keeps it.
+An exactly unchanged basis has no rotation term, as the source's quaternion compare.
+Retail `MoveRiders` defers its rotation with the translation, and an admitted tick drops
+both. Remastered movement runs only with mouse aim on, and the port's aim state sets the
+player's yaw again in `CPlayer::Update` after the move, so the carried yaw does not last
+past the tick (retail's `MoveRiders` rotation under mouse aim does not either). Whether
+Remastered's aim keeps it is unknown.
+
+On the airborne mover the admitted platforms (active, DCLN or box, not rotated this tick) are not native
 dynamic contacts: their triangles join the terrain's in the same producer (terrain first,
 then platforms by `id & 0xffff`, live material, secondary normals) for the step, the
 bisection test, the landing check and the post-step probe. The separation gate subtracts
 `get_rider_controller_offset` (0xc18f80: the rider's pose delta when unrotated) for the
 rider controller's own contacts only, and a platform (a `CCollidableOBBoxTree`, type 4)
 never takes the response's flat-floor early-out (0xc6d4e8); a box platform (a
-`CCollidableAABox`, type 0) does. Other actors stay native.
+`CCollidableAABox`, type 0) does. Other actors stay native, and so does a platform that
+rotated this tick: the controller offset for a rotated rider (0xc18f80 takes the farthest
+contact point) is not ported. The first step's predictions still carry its rotation and yaw.
 
 The airborne integrator is split as in the source. Pre (0xc59814, called at 0xf9447c) folds
 the impulse into the momentum once, before the first step. The step predictions add no force
@@ -121,8 +139,8 @@ The one-tick carry after a platform deactivates (the stamp rule in `CScriptPlatf
 and `RiderCarry`) is unit-tested only (`tests/port_ground_rider.cpp`); no rig run deactivates
 a ridden platform, and the mapping of the source's update step to PreThink is inferred.
 
-Not ported: rotating platforms (box or tree; they fall back), the rotation and
-rider-velocity terms of the carry (the airborne response's rider velocity is still the
+Not ported: rotated platforms in the airborne producer (they stay native), the
+rider-velocity term of the carry (the airborne response's rider velocity is still the
 platform's velocity for the remaining native actors), and the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
 terrain-only. The deferred retail carry is applied after the player's angular step,
 not before it as in `PreThink`, an rm1-only timing difference.
