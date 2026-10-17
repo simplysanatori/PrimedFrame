@@ -1,7 +1,10 @@
 #include "port_json.h"
+#include "port_json_writer.h"
+#include "port_strings.h"
 #include "port_test.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <limits>
 #include <string>
@@ -19,6 +22,146 @@ bool Parse(const std::string& text, PortJson::Value& value, size_t* offset = nul
   if (reason != nullptr)
     *reason = localReason;
   return parsed;
+}
+
+// port::JsonWriter: the commas, the escaping and the number rules every file
+// and packet the port writes depends on.
+void TestWriter() {
+  using port::JsonWriter;
+  using PortJson::Value;
+
+  // Structure and commas.
+  {
+    JsonWriter json;
+    json.BeginObject()
+        .Key("a").Number(1)
+        .Key("b").BeginArray().Number(1).String("x").Null().Bool(true).Bool(false).EndArray()
+        .Key("c").BeginObject().EndObject()
+        .Key("d").BeginArray().EndArray()
+        .Key("e").BeginArray().BeginObject().Key("f").BeginArray().BeginArray().EndArray().EndArray().EndObject()
+        .BeginObject().EndObject().EndArray()
+        .EndObject();
+    CHECK_EQ(json.Text(), std::string(R"({"a":1,"b":[1,"x",null,true,false],"c":{},"d":[],"e":[{"f":[[]]},{}]})"));
+    const std::string taken = json.Take();
+    CHECK_MSG(json.Text().empty(), "Take leaves the writer empty");
+    json.BeginArray().EndArray();
+    CHECK_EQ(json.Take(), std::string("[]"));
+    json.String("top");
+    CHECK_EQ(json.Take(), std::string("\"top\""));
+    json.Number(7);
+    CHECK_EQ(json.Take(), std::string("7"));
+    Value parsed;
+    CHECK_MSG(Parse(taken, parsed) && parsed.IsObject() && parsed.Size() == 5, "the writer's output parses");
+  }
+
+  // Strings and keys: RFC 8259 escaping, UTF-8 and '/' pass through.
+  {
+    JsonWriter json;
+    const std::string nasty = std::string("q\"b\\s/n\nr\rt\tb\bf\f") + '\x01' + '\x1f' + '\x7f' + "\xc3\xa9" +
+                              std::string(1, '\0') + "end";
+    json.BeginObject().Key(nasty).String(nasty).EndObject();
+    const std::string quoted = R"("q\"b\\s/n\nr\rt\tb\u0008f\u000c\u0001\u001f)" "\x7f\xc3\xa9" R"(\u0000end")";
+    CHECK_EQ(json.Text(), "{" + quoted + ":" + quoted + "}");
+    CHECK_EQ(port::JsonQuote(nasty), quoted);
+    Value parsed;
+    CHECK_MSG(Parse(json.Text(), parsed) && parsed.AsObject().size() == 1 && parsed.AsObject()[0].first == nasty &&
+                  parsed.AsObject()[0].second.AsString() == nasty,
+              "escaped strings and keys read back unchanged");
+    CHECK_EQ(port::JsonQuote(""), std::string("\"\""));
+  }
+
+  // Integers print exactly, whatever their type.
+  {
+    JsonWriter json;
+    json.BeginArray()
+        .Number(0)
+        .Number(-1)
+        .Number(std::numeric_limits< int64_t >::min())
+        .Number(std::numeric_limits< int64_t >::max())
+        .Number(std::numeric_limits< uint64_t >::max())
+        .Number(static_cast< size_t >(42))
+        .Number(static_cast< short >(-3))
+        .Number(static_cast< unsigned char >(200))
+        .Int(-5)
+        .UInt(5)
+        .EndArray();
+    CHECK_EQ(json.Text(), std::string("[0,-1,-9223372036854775808,9223372036854775807,18446744073709551615,42,-3,"
+                                      "200,-5,5]"));
+  }
+
+  // Doubles: whole numbers below 9e15 as integers, others with %.17g, and
+  // non-finite values as null.
+  {
+    const std::pair< double, const char* > cases[] = {
+        {0.0, "0"},
+        {-0.0, "0"},
+        {5031100.0, "5031100"},
+        {-42.0, "-42"},
+        {1.5, "1.5"},
+        {0.1, "0.10000000000000001"},
+        {-1e-7, "-9.9999999999999995e-08"},
+        {8999999999999999.0, "8999999999999999"},
+        {9e15, "9000000000000000"},
+        {12345678901234567.0, "12345678901234568"},
+        {1e300, "1.0000000000000001e+300"},
+        {std::numeric_limits< double >::infinity(), "null"},
+        {-std::numeric_limits< double >::infinity(), "null"},
+        {std::numeric_limits< double >::quiet_NaN(), "null"},
+    };
+    for (const auto& [number, text] : cases) {
+      JsonWriter json;
+      json.Number(number);
+      CHECK_EQ(json.Text(), std::string(text));
+      CHECK_EQ(JsonWriter::NumberText(number), std::string(text));
+      Value parsed;
+      CHECK_MSG(Parse(json.Text(), parsed), "a written double parses");
+      if (std::isfinite(number))
+        CHECK_MSG(parsed.AsNumber() == number, "a finite double reads back to the same value");
+    }
+    JsonWriter json;
+    json.Number(2.5f); // a float without Float() takes the double rule
+    CHECK_EQ(json.Take(), std::string("2.5"));
+  }
+
+  // Floats: %.9g, null when not finite.
+  {
+    const std::pair< float, const char* > cases[] = {
+        {1.0f, "1"},
+        {0.1f, "0.100000001"},
+        {-48.1011543f, "-48.1011543"},
+        {std::numeric_limits< float >::max(), "3.40282347e+38"},
+        {std::numeric_limits< float >::infinity(), "null"},
+        {std::numeric_limits< float >::quiet_NaN(), "null"},
+    };
+    for (const auto& [number, text] : cases) {
+      JsonWriter json;
+      json.Float(number);
+      CHECK_EQ(json.Text(), std::string(text));
+      CHECK_EQ(JsonWriter::FloatText(number), std::string(text));
+    }
+  }
+
+  // Raw text and parsed values.
+  {
+    JsonWriter json;
+    json.BeginObject().Key("time").Raw("1790000000.125").Key("slot_data").Raw("{\"a\":1}").EndObject();
+    CHECK_EQ(json.Take(), std::string(R"({"time":1790000000.125,"slot_data":{"a":1}})"));
+    json.BeginArray().Raw("1").Raw("2").EndArray();
+    CHECK_EQ(json.Take(), std::string("[1,2]"));
+
+    Value parsed;
+    REQUIRE(Parse(R"( { "z" : [ 1 , 2.5 , -0.0 , 1e2 , "sé\/" , true , null , { } , [ ] ] , "a" : { "b" : false } } )",
+                  parsed));
+    json.Value(parsed);
+    CHECK_EQ(json.Take(), std::string("{\"z\":[1,2.5,0,100,\"s\xc3\xa9/\",true,null,{},[]],\"a\":{\"b\":false}}"));
+    json.BeginArray().Value(parsed.AsObject()[1].second).Value(Value()).EndArray();
+    CHECK_EQ(json.Take(), std::string(R"([{"b":false},null])"));
+    // An out-of-range literal parses to infinity; it is written as null rather
+    // than as text no reader accepts.
+    REQUIRE(Parse("[1e400]", parsed));
+    json.Value(parsed);
+    CHECK_EQ(json.Take(), std::string("[null]"));
+  }
 }
 
 } // namespace
@@ -115,6 +258,8 @@ int main() {
   CHECK_MSG(PortJson::Parse("0", value, untouchedOffset, &untouchedReason) &&
                 untouchedOffset == 321 && untouchedReason == std::string("unchanged"),
             "success leaves error outputs untouched");
+
+  TestWriter();
 
   if (port_test::Failures() == 0) {
     std::puts("[json-tests] passed");

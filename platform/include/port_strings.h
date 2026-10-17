@@ -142,10 +142,14 @@ inline std::vector<uint8_t> ReadAll(std::ifstream& in) { return detail::ReadAllA
 // The same, as a string: for text, and for the formats kept in one.
 inline std::string ReadAllText(std::ifstream& in) { return detail::ReadAllAs<std::string>(in); }
 
-// text as a JSON string literal, quotes included. Bytes past ASCII pass
-// through (UTF-8 stays UTF-8); control characters are escaped.
-inline std::string JsonQuote(const std::string& text) {
-  std::string out = "\"";
+// Appends text as a JSON string literal, quotes included. This is the port's
+// one JSON string escaper (JsonQuote and port::JsonWriter both come here),
+// and it follows RFC 8259: '"' and '\' are escaped, control characters below
+// 0x20 become \n, \r, \t or \u00XX, and every other byte passes through, so
+// UTF-8 stays UTF-8 and '/' and DEL are left as they are. The text is not
+// checked for valid UTF-8.
+inline void AppendJsonQuoted(std::string& out, std::string_view text) {
+  out.push_back('"');
   for (const char c : text) {
     switch (c) {
     case '"': out += "\\\""; break;
@@ -164,6 +168,13 @@ inline std::string JsonQuote(const std::string& text) {
     }
   }
   out.push_back('"');
+}
+
+// text as a JSON string literal, quotes included (AppendJsonQuoted).
+inline std::string JsonQuote(std::string_view text) {
+  std::string out;
+  out.reserve(text.size() + 2);
+  AppendJsonQuoted(out, text);
   return out;
 }
 
