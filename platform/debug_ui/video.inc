@@ -79,8 +79,9 @@ void DrawVideoDisplay() {
     }
     ImGui::EndDisabled();
     ImGui::SetItemTooltip(part == kHudOpacityEnergy
-                              ? "The energy bar, tanks and digits. The game draws them at full\n"
-                                "strength whatever Visor Opacity is; tick the box to have them follow it."
+                              ? "The energy bar, tanks, digits and low-energy warning. The game draws\n"
+                                "them at full strength whatever Visor Opacity is; tick the box to have\n"
+                                "them follow it. The ENERGY label and its frame belong to the visor's HUD."
                               : "This visor's HUD, the visor and beam menus and the minimap while it is\n"
                                 "on. Tick the box to use the game's Visor Opacity, as the game does.");
     ImGui::PopID();

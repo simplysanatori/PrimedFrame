@@ -2362,8 +2362,9 @@ void RunFrame() {
       }
     }
     const std::string value = sCmd.args.size() > 2 ? sCmd.args[2] : "";
+    const bool numeric = !value.empty() && value.find_first_not_of("0123456789") == std::string::npos;
     const int percent = value == "visor" ? PortDebug::kHudOpacityVisor : std::atoi(value.c_str());
-    if (part < 0 || value.empty() ||
+    if (part < 0 || (value != "visor" && !numeric) ||
         (percent != PortDebug::kHudOpacityVisor &&
          (percent < PortDebug::kHudOpacityMin || percent > PortDebug::kHudOpacityMax))) {
       return Finish("usage: hudopacity <xray|thermal|scan|energy> <visor|0..100>");
