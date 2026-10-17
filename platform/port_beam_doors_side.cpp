@@ -67,7 +67,7 @@ bool WriteSide(const fs::path& path, uint64_t fingerprint, const uint32_t* bits)
       return false;
     }
   }
-  if (!PortMapSide::ReplaceFile(temp, path)) {
+  if (!PortMapSide::ReplaceWithTemporary(temp, path)) {
     PortLog::Write("beam doors: couldn't replace %s\n", path.string().c_str());
     fs::remove(temp, ec);
     return false;

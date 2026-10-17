@@ -56,7 +56,7 @@ Staged StagedFor(int slot, bool erase) {
 // removing the old file first would leave a moment with neither file (the same
 // as port_ap_protocol.cpp's writer): MoveFileExW replaces it in one step and
 // writes it through.
-bool ReplaceFile(const fs::path& temporary, const fs::path& path) {
+bool ReplaceWithTemporary(const fs::path& temporary, const fs::path& path) {
   if (std::rename(PathToUtf8(temporary).c_str(), PathToUtf8(path).c_str()) == 0) {
     return true;
   }
@@ -124,7 +124,7 @@ bool WriteFile(const fs::path& path, uint64_t fingerprint, const Data& data) {
       return false;
     }
   }
-  if (!ReplaceFile(temp, path)) {
+  if (!ReplaceWithTemporary(temp, path)) {
     PortLog::Write("map data: couldn't replace %s\n", path.string().c_str());
     fs::remove(temp, ec);
     return false;

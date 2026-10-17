@@ -118,7 +118,7 @@ class Wiring(WiringCase):
         # POSIX rename replaces; Windows needs MoveFileExW, which replaces an
         # existing file in one step - removing the old file first would leave a
         # moment with neither.
-        replace = between(side, "bool ReplaceFile(", "\n}", SIDE)
+        replace = between(side, "bool ReplaceWithTemporary(", "\n}", SIDE)
         self.assertIn("std::rename(", replace)
         self.assertIn("#ifdef _WIN32", replace)
         self.assertIn("MoveFileExW(", replace)
@@ -129,9 +129,9 @@ class Wiring(WiringCase):
         # The close is checked before the replacement, not only the flush.
         self.assertIn("out.close();", write)
         self.assertLess(index(write, "out.flush();"), index(write, "out.close();"))
-        self.assertLess(index(write, "out.close();"), index(write, "ReplaceFile(temp, path)"))
+        self.assertLess(index(write, "out.close();"), index(write, "ReplaceWithTemporary(temp, path)"))
         self.assertIn("if (!out)", write)
-        self.assertIn("ReplaceFile(temp, path)", write)
+        self.assertIn("ReplaceWithTemporary(temp, path)", write)
         # Nothing of ours is written into the card's own folder.
         self.assertIn('userFolder + "mapdata"', side)
 

@@ -183,7 +183,7 @@ inline bool Decode(const uint8_t* bytes, size_t size, uint64_t fingerprint, Data
 bool ReadFile(const std::filesystem::path& path, uint64_t fingerprint, Data& data);
 
 // Writes one file whole, through a temporary beside it and a rename that
-// replaces an existing file in one step (see ReplaceFile), so a crash, a full
+// replaces an existing file in one step (see ReplaceWithTemporary), so a crash, a full
 // disk or a failed rename leaves the previous file (or none) in place: the old
 // file is never removed first. False (and the previous file untouched) when the
 // temporary could not be written or closed or the replacement failed; the
@@ -192,7 +192,7 @@ bool WriteFile(const std::filesystem::path& path, uint64_t fingerprint, const Da
 
 // Puts the temporary in place of the file, replacing one that is there, in one
 // step (also used by the beam door side files).
-bool ReplaceFile(const std::filesystem::path& temporary, const std::filesystem::path& path);
+bool ReplaceWithTemporary(const std::filesystem::path& temporary, const std::filesystem::path& path);
 
 // Removes the file of one slot; true when it is gone (also when it never was).
 bool RemoveFile(const std::filesystem::path& path);
