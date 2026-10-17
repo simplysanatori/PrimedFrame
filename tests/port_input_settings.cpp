@@ -52,6 +52,11 @@ int main() {
   REQUIRE_MSG(Get().touchSideMargin.load() == 40.f, "touch_side_margin");
   ApplySetting("touch_side_margin", "400");
   REQUIRE_MSG(Get().touchSideMargin.load() == 40.f, "touch_side_margin range");
+  REQUIRE_MSG(Get().touchControls.load(), "touch_controls defaults on");
+  ApplySetting("touch_controls", "0");
+  REQUIRE_MSG(!Get().touchControls.load(), "touch_controls off");
+  ApplySetting("touch_controls", "1");
+  REQUIRE_MSG(Get().touchControls.load(), "touch_controls on");
   ApplySetting("touch_opacity", "50");
   REQUIRE_MSG(Get().touchOpacity.load() == 50.f, "touch_opacity");
   ApplySetting("touch_opacity", "400");

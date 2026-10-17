@@ -579,6 +579,7 @@ float TouchSideMarginDp() { return sInput.touchSideMargin.load(); }
 float TouchStickInsetDp() { return sInput.touchStickInset.load(); }
 float TouchButtonInsetDp() { return sInput.touchButtonInset.load(); }
 float TouchOpacity() { return sInput.touchOpacity.load(); }
+bool TouchControlsEnabled() { return sInput.touchControls.load(); }
 
 std::string TouchLayout() {
   return PortInput::TouchLayout();

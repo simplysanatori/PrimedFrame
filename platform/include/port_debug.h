@@ -792,6 +792,8 @@ float TouchStickInsetDp();
 float TouchButtonInsetDp();
 // The overlay's opacity in percent (10-100). Same rules.
 float TouchOpacity();
+// False when F1 turned the on-screen controls off: only MENU and START stay. Same rules.
+bool TouchControlsEnabled();
 // Per-control offset and size, an opaque `<id>:<dx>,<dy>,<scale>;...` string the
 // Android touch view owns. Setting it saves the config on the next frame.
 std::string TouchLayout();

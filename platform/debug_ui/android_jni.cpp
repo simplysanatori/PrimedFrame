@@ -318,6 +318,11 @@ Java_org_metroidprime_port_TouchControlsView_nativeTouchOpacity(JNIEnv*, jclass)
   return PortDebug::TouchOpacity();
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_metroidprime_port_TouchControlsView_nativeTouchControlsEnabled(JNIEnv*, jclass) {
+  return PortDebug::TouchControlsEnabled() ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT jstring JNICALL
 Java_org_metroidprime_port_TouchControlsView_nativeTouchLayout(JNIEnv* env, jclass) {
   return env->NewStringUTF(PortDebug::TouchLayout().c_str());

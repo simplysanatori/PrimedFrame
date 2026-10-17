@@ -273,6 +273,14 @@ void DrawControlsController() {
 void DrawControlsTouchGyro() {
 #if defined(__ANDROID__)
   ImGui::SeparatorText("Touch controls");
+  bool touchControls = sInput.touchControls.load();
+  if (ImGui::Checkbox("On-screen controls", &touchControls)) {
+    sInput.touchControls.store(touchControls);
+    MarkDirty();
+  }
+  ItemHelp("Off, only the MENU and START buttons stay on screen, so a pad player's stray touches "
+           "don't bring the controls back. The F1 menu is always reachable from MENU.");
+  ImGui::BeginDisabled(!touchControls);
   if (ImGui::Checkbox("Coloured buttons", &sInput.touchColors)) {
     MarkDirty();
   }
@@ -394,6 +402,7 @@ void DrawControlsTouchGyro() {
     sInput.touchButtonInset.store(kTouchButtonInsetDefault);
     MarkDirty();
   }
+  ImGui::EndDisabled();
   if (ImGui::Button("Edit layout")) {
     // The touch view takes the request and opens its editor over the game.
     sTouchEditRequested.store(true, std::memory_order_release);

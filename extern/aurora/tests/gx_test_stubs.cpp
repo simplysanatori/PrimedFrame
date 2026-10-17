@@ -145,8 +145,19 @@ bool per_pixel_lighting() noexcept { return false; }
 // The GPU self-test is not linked here; its blocking lookups stay off.
 bool blocking_pipelines() noexcept { return false; }
 GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept { return {}; }
-ShaderInfo build_shader_info(const ShaderConfig& config) noexcept { return {}; }
-gfx::Range build_uniform(const ShaderInfo& info) noexcept { return {.size = 1}; }
+ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
+  ShaderInfo info{};
+  info.usesHdrTone = config.sceneHdr && !config.pbr;
+  return info;
+}
+uint32_t g_testUniformBuildCount = 0;
+bool g_testUniformCompatSrcAlphaAdditive = false;
+gfx::Range build_uniform(const ShaderInfo& info) noexcept {
+  ++g_testUniformBuildCount;
+  g_testUniformCompatSrcAlphaAdditive = info.usesHdrTone && g_gxState.blendMode == GX_BM_BLEND &&
+                                        g_gxState.blendFacSrc == GX_BL_SRCALPHA && g_gxState.blendFacDst == GX_BL_ONE;
+  return {.offset = g_testUniformBuildCount, .size = 1};
+}
 void resolve_sampled_textures(const ShaderInfo& info) noexcept {}
 u32 dump_shaders(const char* dir) noexcept { return 0; }
 void set_shader_override_dir(const char* dir) noexcept {}

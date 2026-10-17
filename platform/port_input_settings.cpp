@@ -144,6 +144,8 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
                                     : s.touchButtonInset)
           .store(f);
     }
+  } else if (key == "touch_controls") {
+    s.touchControls.store(ParseBool(value));
   } else if (key == "touch_opacity") {
     const float f = ParseFloat(value);
     if (std::isfinite(f) && f >= kTouchOpacityMin && f <= kTouchOpacityMax) {
@@ -318,6 +320,7 @@ void WriteAimSettings(std::ostream& out) {
   out << "touch_side_margin=" << s.touchSideMargin.load() << '\n';
   out << "touch_stick_inset=" << s.touchStickInset.load() << '\n';
   out << "touch_button_inset=" << s.touchButtonInset.load() << '\n';
+  out << "touch_controls=" << (s.touchControls.load() ? 1 : 0) << '\n';
   out << "touch_opacity=" << s.touchOpacity.load() << '\n';
   out << "touch_layout=" << TouchLayout() << '\n';
   out << "touch_map_tap=" << (s.touchMapTap ? 1 : 0) << '\n';
