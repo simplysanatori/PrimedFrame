@@ -86,9 +86,23 @@ starts active takes the pose stamp (start and end translation), and a rider on a
 platform stamped the previous tick carries that step's delta, never the pose now, so a warp
 while inactive is not carried.
 
+On the airborne mover the admitted platforms (active, DCLN, unrotated) are not native
+dynamic contacts: their triangles join the terrain's in the same producer (terrain first,
+then platforms by `id & 0xffff`, live material, secondary normals) for the step, the
+bisection test, the landing check and the post-step probe. The separation gate subtracts
+`get_rider_controller_offset` (0xc18f80: the rider's pose delta when unrotated) for the
+rider controller's own contacts only, and a platform (a `CCollidableOBBoxTree`, type 4)
+never takes the response's flat-floor early-out (0xc6d4e8). Other actors stay native.
+
+Known gap: the airborne mover still integrates forces inside each step's prediction, where
+the source folds them once per tick (Pre 0xc59814 at 0xf9447c, Post 0xc5994c at 0xf94884).
+A step blocked at t = 0 therefore adds no force, so a jump off a platform rising faster
+than the jump's first ticks rides it with a frozen vertical speed until the jump state
+changes (about 10 ticks on the Monitor Tunnel piston).
+
 Not ported: AABox platforms, rotating platforms (both fall back), the rotation and
 rider-velocity terms of the carry (the airborne response's rider velocity is still the
-platform's velocity, not `get_rider_controller_offset`), and the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
+platform's velocity for the remaining native actors), and the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
 terrain-only. The deferred retail carry is applied after the player's angular step,
 not before it as in `PreThink`, an rm1-only timing difference.
 
