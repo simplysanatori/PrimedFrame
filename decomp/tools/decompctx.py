@@ -4,7 +4,7 @@
 # Generates a ctx.c file, usable for "Context" on https://decomp.me.
 #
 # Usage:
-#   python3 tools/decompctx.py src/file.cpp
+#   python3 decomp/tools/decompctx.py src/file.cpp
 #
 # If changes are made, please submit a PR to
 # https://github.com/encounter/dtk-template
@@ -17,7 +17,8 @@ import re
 from typing import List
 
 script_dir = os.path.dirname(os.path.realpath(__file__))
-root_dir = os.path.abspath(os.path.join(script_dir, ".."))
+# The repository root: this file is decomp/tools/decompctx.py.
+root_dir = os.path.abspath(os.path.join(script_dir, "..", ".."))
 src_dir = os.path.join(root_dir, "src")
 include_dirs: List[str] = []  # Set with -I flag
 exclude_globs: List[str] = []  # Set with -x flag

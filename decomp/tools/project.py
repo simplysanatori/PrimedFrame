@@ -4,7 +4,7 @@
 #
 # This generator is intentionally project-agnostic
 # and shared between multiple projects. Any configuration
-# specific to a project should be added to `configure.py`.
+# specific to a project should be added to `decomp/configure.py`.
 #
 # If changes are made, please submit a PR to
 # https://github.com/encounter/dtk-template

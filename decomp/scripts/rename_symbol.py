@@ -8,7 +8,10 @@ from typing import Iterable
 
 from symbols import Symbol, parse_symbols_file, write_symbols_file
 
-ROOT = Path(__file__).resolve().parent.parent
+# This file is decomp/scripts/rename_symbol.py: build.ninja is written to the
+# repository root, the symbol maps live under decomp/config.
+DECOMP = Path(__file__).resolve().parent.parent
+ROOT = DECOMP.parent
 
 
 def detect_version() -> str:
@@ -22,7 +25,7 @@ def detect_version() -> str:
         if match:
             return match.group(1)
 
-    config_dir = ROOT / "config"
+    config_dir = DECOMP / "config"
     configs: Iterable[Path] = sorted(p for p in config_dir.iterdir() if p.is_dir())
     configs_list = [p.name for p in configs]
     if len(configs_list) == 1:
@@ -32,7 +35,7 @@ def detect_version() -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Rename a symbol in config/{version}/symbols.txt")
+    parser = argparse.ArgumentParser(description="Rename a symbol in decomp/config/{version}/symbols.txt")
     parser.add_argument("old_name", help="Current name of the symbol to rename")
     parser.add_argument("new_name", help="New name to assign to the symbol")
     parser.add_argument(
@@ -58,7 +61,7 @@ def get_scope(symbol: Symbol) -> str:
 def main() -> None:
     args = parse_args()
     version = detect_version()
-    symbols_path = ROOT / "config" / version / "symbols.txt"
+    symbols_path = DECOMP / "config" / version / "symbols.txt"
 
     if not symbols_path.is_file():
         raise SystemExit(f"symbols.txt not found for version '{version}' at {symbols_path}")

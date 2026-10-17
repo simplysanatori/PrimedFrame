@@ -395,7 +395,7 @@ CGameGlobalObjects::CGameGlobalObjects(COsContext& osContext, CMemorySys& memory
 
 CRasterFont* CGameGlobalObjects::LoadDefaultFont() {
 #ifdef TARGET_PC
-  // Verified GM8E01_00 symbols; see config/GM8E01_00/symbols.txt. Other
+  // Verified GM8E01_00 symbols; see decomp/config/GM8E01_00/symbols.txt. Other
   // discs have them elsewhere: found by their first bytes (zlib streams).
   static const uint8_t kFontDataStart[] = {0x78, 0xda, 0x8d, 0x57, 0x5b, 0x6f, 0x54, 0x55,
                                            0x14, 0x5e, 0xa5, 0x74, 0x3a, 0x9d, 0x96, 0x82};

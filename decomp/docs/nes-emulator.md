@@ -24,7 +24,7 @@ orders:
 | PAL50 | `modwrapper`, `emusound`, `emu`, `ksNesAudio` |
 | PAL60 | `modwrapper`, `emusound`, `ksNesAudio`, `emu` |
 
-The PAL splits use module-specific object names while `configure.py` maps them
+The PAL splits use module-specific object names while `decomp/configure.py` maps them
 to the shared files in `src/NESemu`. The startup wrapper and `ksNesAudio` are
 matched and source-linked in both PAL modules. `emu` and `emusound` remain
 non-matching and are linked from extracted original objects.
@@ -85,15 +85,15 @@ in NTSC. These prevent source linkage of the complete sound unit.
 
 ## Verification
 
-With both original PAL RELs under `orig/GM8P01_00/files`:
+With both original PAL RELs under `decomp/orig/GM8P01_00/files`:
 
 ```sh
-python configure.py --version GM8P01_00
+python decomp/configure.py --version GM8P01_00
 ninja all_source
 ninja
 ```
 
-`config/GM8P01_00/build.sha1` checks **all three outputs**: the main DOL and both
+`decomp/config/GM8P01_00/build.sha1` checks **all three outputs**: the main DOL and both
 NES RELs. A successful DOL checksum alone does not validate a REL. Before the
 two-module configuration was recovered, the PAL checksum list omitted the REL
 and allowed the incorrect section alignment to go unnoticed.

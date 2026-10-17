@@ -4,7 +4,7 @@
 # Downloads various tools from GitHub releases.
 #
 # Usage:
-#   python3 tools/download_tool.py wibo build/tools/wibo --tag 1.0.0
+#   python3 decomp/tools/download_tool.py wibo build/tools/wibo --tag 1.0.0
 #
 # If changes are made, please submit a PR to
 # https://github.com/encounter/dtk-template

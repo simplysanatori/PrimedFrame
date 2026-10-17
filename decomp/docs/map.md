@@ -17,7 +17,7 @@ However, there are a few caveats:
 
 decomp-toolkit has a convenience command for querying the map file for information about a given symbol:
 ```
-$ build/tools/dtk map symbol orig/MetaforceCWD.MAP GetX__9CVector3fCFv
+$ build/tools/dtk map symbol decomp/orig/MetaforceCWD.MAP GetX__9CVector3fCFv
  INFO Processing map...
  INFO Done!
 Located symbol CVector3f::GetX() const (Function,Weak) @ .text:0x800C22EC [CStateManager.o]
@@ -37,7 +37,7 @@ Here, we can see that `CVector3f::GetX()` first appears used in `CGraphics::SetV
 
 decomp-toolkit also provides a convenience command to list all entries that appear for a given translation unit:
 ```
-$ build/tools/dtk map entries orig/MetaforceCWD.MAP 'CollisionCWD.a CMRay.cpp'
+$ build/tools/dtk map entries decomp/orig/MetaforceCWD.MAP 'CollisionCWD.a CMRay.cpp'
 Entries for CollisionCWD.a CMRay.cpp:
 >>> CBasics::GetFalseValue() # ignore this, it's a debug helper in every TU
 >>> CVector3f::GetZ() const

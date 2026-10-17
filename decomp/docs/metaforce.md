@@ -4,7 +4,7 @@ Metaforce is a non-matching decompilation, and often uses modern C++ features th
 
 ## Converting types
 
-The python script at `tools/metaforce_renames.py` automates many simple renames listed next, but not everything works perfectly.
+The python script at `decomp/tools/metaforce_renames.py` automates many simple renames listed next, but not everything works perfectly.
 
 Metaforce -> decomp
 

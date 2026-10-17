@@ -140,7 +140,7 @@ Nintendo and Retro Studios, and ships no game data.
 | `docs/ANDROID_BUILD_PROBE.md` | The Android port's status and build |
 | `docs/REMASTERED_EFFECTS.md` | Importing Remastered particle effects |
 | `docs/FRAME_INTERPOLATION.md`, `docs/HIGH_FPS_AUDIT.md` | High frame rate design notes |
-| `docs/decomp/` | Notes inherited from the decompilation project |
+| `decomp/` | The original decompilation's GameCube build and notes (not used by the port) |
 | `PORT_NOTES.md` | Open follow-ups and non-obvious facts |
 
 ## AI assistance

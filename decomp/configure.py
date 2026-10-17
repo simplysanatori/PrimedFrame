@@ -5,8 +5,9 @@
 # This file also includes the project configuration,
 # such as compiler flags and the object matching status.
 #
-# Usage:
-#   python3 configure.py
+# Usage, from the repository root (src/ and include/ stay there, and
+# build.ninja and build/ are written there):
+#   python3 decomp/configure.py
 #   ninja
 #
 # Append --help to see available options.
@@ -17,7 +18,13 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from tools.project import (
+# This file lives in decomp/, but every path it and project.py emit is
+# relative to the repository root, which must be the working directory.
+DECOMP_DIR = Path("decomp")
+if not (DECOMP_DIR / "configure.py").is_file():
+    sys.exit("error: run this from the repository root: python3 decomp/configure.py")
+
+from tools.project import (  # noqa: E402 (decomp/tools, next to this file)
     Object,
     ProgressCategory,
     ProjectConfig,
@@ -188,8 +195,9 @@ config.sjiswrap_tag = "v1.2.2"
 config.wibo_tag = "1.0.3"
 
 # Project
-config.config_path = Path("config") / config.version / "config.yml"
-config.check_sha_path = Path("config") / config.version / "build.sha1"
+config.tools_dir = DECOMP_DIR / "tools"
+config.config_path = DECOMP_DIR / "config" / config.version / "config.yml"
+config.check_sha_path = DECOMP_DIR / "config" / config.version / "build.sha1"
 config.asflags = [
     "-mgekko",
     "--strip-local-absolute",
