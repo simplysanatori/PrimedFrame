@@ -39,6 +39,7 @@
 #include "port_air_mover_contact.h"
 #include "port_collision_failsafe.h"
 #include "port_remastered_box_landing.h"
+#include "port_remastered_ground_box.h"
 #include "port_remastered_ground_policy.h"
 #include "port_remastered_ground_world.h"
 #include "port_remastered_ground_rider.h"
@@ -1001,15 +1002,72 @@ static CAABox PortWidenByCarry(const CAABox& volume, const PortRemasteredGround:
                           rstl::max_val(hi.GetZ(), hi.GetZ() + c.GetZ())));
 }
 
-// Slice 1's admission of a near-list platform to the Remastered producer: active, with a DCLN
-// tree, and not rotated this tick (a stale stamp is not a rotation). Both movers use it.
-static bool PortAdmitPlatform(const CScriptPlatform& platform, uint simTick) {
+// A platform without a DCLN tree collides as its CCollidableAABox (CScriptPlatform's ctor),
+// a box translated with the platform and never turned (GetTransformedAABox 0xbf6064).
+static bool PortIsBoxPlatform(const CScriptPlatform& platform) {
+  return !platform.HasComplexCollision() && platform.GetCollisionPrimitive() != NULL &&
+         platform.GetCollisionPrimitive()->GetPrimType() == 'AABX';
+}
+
+// The admission of a near-list platform to the Remastered producer: active, with a DCLN tree
+// or a box, and not rotated this tick (a stale stamp is not a rotation). Both movers use it.
+static PortRemasteredGroundRider::Candidate PortPlatformCandidate(const CScriptPlatform& platform,
+                                                                  uint simTick) {
   PortRemasteredGroundRider::Candidate candidate;
   candidate.platform = true;
   candidate.active = platform.GetActive();
   candidate.hasTree = platform.HasComplexCollision();
   candidate.rotated = platform.PortPoseTick() == simTick && platform.PortRotatedSinceStamp();
-  return PortRemasteredGroundRider::Admit(candidate);
+  candidate.box = PortIsBoxPlatform(platform);
+  return candidate;
+}
+static bool PortAdmitPlatform(const CScriptPlatform& platform, uint simTick) {
+  return PortRemasteredGroundRider::Admit(PortPlatformCandidate(platform, simTick));
+}
+
+// The port's filter as the source's CIncludeExcludeCollisionFilterMP1: the include/exclude
+// lists are MP1 material-list bits (the source's ctor 0xcb6f0c stores exactly these), the
+// mode is the filter's own.
+static PortRemasteredCollisionMaterial::MaterialFilter PortTranslatedFilter(
+    const CMaterialFilter& f) {
+  return {f.GetIncludeList().GetValue(), f.GetExcludeList().GetValue(),
+          static_cast< uint32_t >(f.GetFilterType())};
+}
+
+static PortCollisionFailsafe::Box PortFsBox(const CAABox& b) {
+  return {{b.GetMinPoint().GetX(), b.GetMinPoint().GetY(), b.GetMinPoint().GetZ()},
+          {b.GetMaxPoint().GetX(), b.GetMaxPoint().GetY(), b.GetMaxPoint().GetZ()}};
+}
+
+// An admitted box platform's place in a query for the self box `box` (the actor's material
+// `selfBits`, its filter `f`): AABox_AABox_Boolean 0xbfce60 for `blocked`, AABox_AABox
+// 0xbf61b4 for the contacts (PortRemasteredGroundBox). `index` is the platform's position in
+// the admitted list, which spaces the contact keys; `at` is the triangle count before it.
+static PortRemasteredGroundBox::Slot PortBoxPlatformSlot(const CScriptPlatform& platform,
+                                                        std::size_t index,
+                                                        const CMaterialFilter& f,
+                                                        const CAABox& box, std::uint64_t selfBits,
+                                                        std::size_t at) {
+  PortRemasteredGroundBox::Slot slot;
+  slot.at = at;
+  PortRemasteredBoxLanding::Pair pair;
+  pair.selfBox = PortFsBox(box);
+  pair.otherBox = PortFsBox(
+      platform.GetCollisionPrimitive()->CalculateAABox(platform.GetPrimitiveTransform()));
+  pair.selfMaterialBits = selfBits;
+  // Read live, as the tree platforms' object half (SetCollisionMaterial 0xc1536c).
+  pair.otherMaterialBits = platform.GetMaterialList().GetValue();
+  pair.selfFilter = PortTranslatedFilter(f);
+  pair.otherFilter = PortTranslatedFilter(platform.GetMaterialFilter());
+  slot.blocked = PortRemasteredGroundBox::Blocked(pair);
+  if (slot.blocked) {
+    static std::vector< PortCollisionFailsafe::PairedImpact > scratch; // game thread
+    PortRemasteredGroundBox::AppendContacts(
+        pair, PortRemasteredGroundRider::OwnerFromRaw(platform.GetUniqueId().value),
+        PortRemasteredGroundBox::kBoxKeyBase + index * PortRemasteredGroundBox::kBoxKeyStride,
+        slot.contacts, scratch);
+  }
+  return slot;
 }
 
 // FindOverlap 0xc1a760 orders actors by `id & 0xffff`.
@@ -1027,12 +1085,23 @@ static void PortSortPlatforms(std::vector< const CScriptPlatform* >& platforms) 
 // order). Each triangle carries the surface material merged with the object's and its
 // owner; `filter` stands for the player's side of SurfaceCollisionPasses (vt+0x18), as the
 // retail tree collider applies it per triangle. `ends` receives one end index per platform.
+// A box platform has no triangles: its slot goes to `boxes` (PortBoxPlatformSlot, the actor's
+// material `selfBits`) when given, and its `ends` entry closes an empty range.
 static void PortPlatformTriangles(const std::vector< const CScriptPlatform* >& platforms,
                                   const CMaterialFilter& f, const CAABox& box,
                                   std::vector< PortRemasteredGroundWorld::Triangle >& tris,
-                                  std::vector< std::size_t >* ends) {
+                                  std::vector< std::size_t >* ends,
+                                  std::vector< PortRemasteredGroundBox::Slot >* boxes = NULL,
+                                  std::uint64_t selfBits = 0) {
   for (std::size_t p = 0; p < platforms.size(); ++p) {
     const CScriptPlatform& platform = *platforms[p];
+    if (!platform.HasComplexCollision()) {
+      if (boxes != NULL) {
+        boxes->push_back(PortBoxPlatformSlot(platform, p, f, box, selfBits, tris.size()));
+      }
+      if (ends != NULL) ends->push_back(tris.size());
+      continue;
+    }
     const CCollidableOBBTreeGroup& group =
         static_cast< const CCollidableOBBTreeGroup& >(*platform.GetCollisionPrimitive());
     const CTransform4f xf = platform.GetPrimitiveTransform();
@@ -1114,7 +1183,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   CAreaCollisionCache cache(motionVolume);
   BuildAreaCollisionCache(mgr, cache);
 
-  // The platforms slice 1 admits (active, DCLN, unrotated) go through the source producer
+  // The admitted platforms (active, DCLN or box, unrotated) go through the source producer
   // with the terrain, as on the grounded mover; every other actor stays on the native path.
   std::vector< const CScriptPlatform* > platforms;
   TEntityList nativeList;
@@ -1178,7 +1247,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
                         PortRemasteredGroundWorld::Query& query,
                         std::vector< PortRemasteredGroundWorld::Triangle >& tris,
                         std::vector< std::size_t >* groupEnds = NULL,
-                        const std::vector< const CScriptPlatform* >* platforms = NULL) {
+                        const std::vector< const CScriptPlatform* >* platforms = NULL,
+                        std::vector< PortRemasteredGroundBox::Slot >* boxes = NULL) {
       actor.MoveCollisionPrimitive(delta);
       const CAABox box =
           actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform());
@@ -1225,7 +1295,10 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       }
       // The admitted platforms' contacts follow the terrain's (FindOverlap 0xc1a760: static
       // tree first, then actors by `id & 0xffff`), as on the grounded mover.
-      if (platforms != NULL) PortPlatformTriangles(*platforms, filter, box, tris, NULL);
+      if (platforms != NULL) {
+        PortPlatformTriangles(*platforms, filter, box, tris, NULL, boxes,
+                              actor.GetMaterialList().GetValue());
+      }
       query.box.min = {box.GetMinPoint().GetX(), box.GetMinPoint().GetY(),
                        box.GetMinPoint().GetZ()};
       query.box.max = {box.GetMaxPoint().GetX(), box.GetMaxPoint().GetY(),
@@ -1241,12 +1314,16 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       if (!StaticQuery::Allowed(filter) && (platforms == NULL || platforms->empty())) return false;
       PortRemasteredGroundWorld::Query query;
       std::vector< PortRemasteredGroundWorld::Triangle > tris;
-      Collect(mgr, cache, actor, filter, delta, query, tris, NULL, platforms);
-      if (tris.empty()) {
-        return false;
+      std::vector< PortRemasteredGroundBox::Slot > boxes;
+      Collect(mgr, cache, actor, filter, delta, query, tris, NULL, platforms, &boxes);
+      if (tris.empty() && !PortRemasteredGroundBox::AnyContacts(boxes)) {
+        return PortRemasteredGroundBox::AnyBlocked(boxes);
       }
-      const PortRemasteredGroundWorld::TerrainResult res =
+      PortRemasteredGroundWorld::TerrainResult res =
           PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), produceImpacts);
+      // The box platforms' pairs (AABox_AABox 0xbf61b4 / 0xbfce60) in near-list order.
+      res.booleanHit = res.booleanHit || PortRemasteredGroundBox::AnyBlocked(boxes);
+      if (produceImpacts) PortRemasteredGroundBox::Merge(res.impacts, boxes);
       std::vector< const PortRemasteredGroundWorld::Contact* > consumer;
       PortRemasteredGroundWorld::ConsumerContacts(res.impacts, consumer);
       out.reserve(consumer.size());
@@ -1458,8 +1535,17 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         for (std::size_t p=0; p<c.pointCount; ++p) {
           const float pz = c.pointVertical[p];
           if (pz > feet || pz <= low) continue;
-          result = Classify::IsFloor(CMaterialList(c.materialBits),
-                                     CVector3f(work.x,work.y,work.z));
+          if (PortRemasteredGroundBox::IsBoxKey(c.triangle)) {
+            // A box platform's half, as the box-actor landing walks it (0xc6d110 through
+            // PortRemasteredBoxLanding::Apply): the translated material's is_floor.
+            const PortRemasteredCollisionMaterial::CollisionMaterial m =
+                PortRemasteredCollisionMaterial::TranslateActor(c.materialBits);
+            result = PortRemasteredBoxLanding::FloorEligible(m) &&
+                     PortRemasteredCollisionMaterial::IsFloor(m.orientation, work.z);
+          } else {
+            result = Classify::IsFloor(CMaterialList(c.materialBits),
+                                       CVector3f(work.x,work.y,work.z));
+          }
           low = pz;
         }
       }
@@ -1824,7 +1910,14 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
                 gate)) {
           continue;
         }
-        const bool isFloor = Classify::IsFloor(material,CVector3f(gate.x,gate.y,gate.z)) && !tc.flag100;
+        // A box platform's half carries its translated material's orientation (the source
+        // classifies every contact by it); terrain and tree contacts keep the stand-in.
+        const bool boxContact = PortRemasteredGroundBox::IsBoxKey(tc.triangle);
+        const auto floorFor = [&](const CVector3f& n) {
+          return boxContact ? PortRemasteredCollisionMaterial::IsFloor(tc.orientation, n.GetZ())
+                            : Classify::IsFloor(material, n);
+        };
+        const bool isFloor = floorFor(CVector3f(gate.x,gate.y,gate.z)) && !tc.flag100;
         const CScriptPlatform* const owner = PlatformOf(tc.ownerUid);
         if (owner != NULL) {
           // The accepted platform contact is the step's collided actor for the native
@@ -1850,11 +1943,14 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         }
         if (isFloor) floorContact = true;
         hadCollision = true;
-        // A DCLN platform is a CCollidableOBBoxTree (type 4): no flat-floor early-out.
+        // A DCLN platform is a CCollidableOBBoxTree (type 4): no flat-floor early-out. A box
+        // platform is a CCollidableAABox (type 0), which has it.
         Respond(material, primary, working, w25,
-                Classify::IsFloor(material, primary) && !tc.flag100, tc.minVertical, mi, tc.flag100,
+                floorFor(primary) && !tc.flag100, tc.minVertical, mi, tc.flag100,
                 owner == NULL || PortAirMoverContact::FlatFloorEarlyOutApplies(
-                                     PortAirMoverContact::kCollidableOBBoxTree, false));
+                                     boxContact ? PortAirMoverContact::kCollidableAABox
+                                                : PortAirMoverContact::kCollidableOBBoxTree,
+                                     false));
       }
       // Preserve the port's terrain-then-near-list order. The source iterates
       // candidate/impact order (0xf94e40-0xf9521c), but does not establish a
@@ -2360,14 +2456,17 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
 // port's world traversal, physics state and script messages.
 //
 // NOT MODELLED, deliberately (see slopes/implementation/runtime/REPORT.md):
-//  - Dynamic/near-list contacts other than moving DCLN platforms. A CScriptPlatform with
+//  - Dynamic/near-list contacts other than moving platforms. A CScriptPlatform with
 //    a collision tree (DCLN) whose orientation did not change this tick is ADMITTED (issue
 //    #117 slice 1): its leaf triangles go through the same terrain producer 0xc0a180 with
 //    the surface material merged with the object's (AABox_OBBoxTree 0xc0fc18, traversal
 //    0xc0fce0), appended after the terrain contacts in near-list order (FindOverlap
 //    0xc1a760), in every query below except the tunnelling failsafe's ray, which stays
-//    terrain-only (whether the source ray sees platforms is UNKNOWN). For anything else
-//    (actors, doors, AABox platforms, rotating platforms) no Remastered producer is
+//    terrain-only (whether the source ray sees platforms is UNKNOWN). A platform without
+//    a tree (its CCollidableAABox) is admitted on the same terms: its box/box pair
+//    (AABox_AABox 0xbf61b4, boolean 0xbfce60) enters the same lists as self/other contact
+//    pairs (platform/include/port_remastered_ground_box.h). For anything else
+//    (actors, doors, rotating platforms) no Remastered producer is
 //    ported; the port's CCollisionInfo (clipped AABB + n/-n only) does not carry
 //    Remastered's penetration scalars or the optional secondary normal. Substituting
 //    retail contacts or inventing penetration values is refused; a tick whose query
@@ -2520,8 +2619,8 @@ struct GroundTick {
   // (the source's SnapToGround only sets its object state).
   std::uint64_t floorMaterial = 0;
   CVector3f floorNormal = CVector3f(0.f, 0.f, 1.f);
-  // The admitted moving platforms (slice 1), in near-list order: every query appends their
-  // contacts after the terrain's (FindOverlap 0xc1a760: static tree first, then actors).
+  // The admitted moving platforms (DCLN or box), in near-list order: every query appends
+  // their contacts after the terrain's (FindOverlap 0xc1a760: static tree first, then actors).
   std::vector< const CScriptPlatform* > platforms;
   // PredictMotion's rider carry, pending until the first MoveAlongGround pass.
   PortRemasteredGroundRider::CarryTerm carry;
@@ -2546,18 +2645,23 @@ struct GroundTick {
   // order). Each triangle carries the surface material merged with the object's and its
   // owner; `filter` stands for the player's side of SurfaceCollisionPasses (vt+0x18), as the
   // retail tree collider applies it per triangle. `ends` receives one end index per platform.
+  // Box platforms add their slots to `boxes` (PortPlatformTriangles).
   void PlatformTriangles(const CMaterialFilter& f, const CAABox& box,
                          std::vector< PortRemasteredGroundWorld::Triangle >& tris,
-                         std::vector< std::size_t >* ends) const {
-    PortPlatformTriangles(platforms, f, box, tris, ends);
+                         std::vector< std::size_t >* ends,
+                         std::vector< PortRemasteredGroundBox::Slot >* boxes) const {
+    PortPlatformTriangles(platforms, f, box, tris, ends, boxes, actor.GetMaterialList().GetValue());
   }
 
-  // The boolean twin (0xbfd2f0 / 0xbfd360): the inclusive SAT, first hit wins.
+  // The boolean twin (0xbfd2f0 / 0xbfd360 for trees, 0xbfce60 for boxes): the inclusive
+  // SAT, first hit wins.
   bool PlatformBlocked(const CMaterialFilter& f, const CAABox& box) const {
     if (platforms.empty()) return false;
     std::vector< PortRemasteredGroundWorld::Triangle >& tris = blockedScratch;
     tris.clear();
-    PlatformTriangles(f, box, tris, NULL);
+    std::vector< PortRemasteredGroundBox::Slot > boxes;
+    PlatformTriangles(f, box, tris, NULL, &boxes);
+    if (PortRemasteredGroundBox::AnyBlocked(boxes)) return true;
     if (tris.empty()) return false;
     return PortRemasteredGroundWorld::QueryTerrain(QueryFor(box, actor), tris.data(), tris.size(),
                                                    false)
@@ -2694,9 +2798,11 @@ struct GroundTick {
       tri.materialBits = t.x24_flags;
       tris.push_back(tri);
     }
-    // The admitted platforms' contacts follow the terrain's.
-    PlatformTriangles(filter, box, tris, NULL);
-    if (tris.empty()) {
+    // The admitted platforms' contacts follow the terrain's; box platforms' pairs are merged
+    // into the triangle result at their near-list place.
+    std::vector< PortRemasteredGroundBox::Slot > boxes;
+    PlatformTriangles(filter, box, tris, NULL, &boxes);
+    if (tris.empty() && !PortRemasteredGroundBox::AnyContacts(boxes)) {
       return false;
     }
     PortRemasteredGroundWorld::Query query;
@@ -2708,6 +2814,7 @@ struct GroundTick {
                                                      box.GetMaxPoint().GetZ()};
     query.actorMaterialBits = actor.GetMaterialList().GetValue();
     out = PortRemasteredGroundWorld::BuildContacts(query, tris.data(), tris.size());
+    PortRemasteredGroundBox::Merge(out, boxes);
     if (out.grewBeyondInlineCapacity) {
       // The adapter grew past its former fixed capacity. The shipped list grows on
       // the heap with no failure path, so this is only counted, never acted on.
@@ -2887,22 +2994,51 @@ struct GroundTick {
       tri.materialBits = t.x24_flags;
       tris.push_back(tri);
     }
-    // The admitted platforms, one collided object each, after the area trees.
-    PlatformTriangles(f, box, tris, ends);
+    // The admitted platforms, one collided object each, after the area trees. Box platforms
+    // have no triangles here (an empty range); FsBoxes collides them.
+    PlatformTriangles(f, box, tris, ends, NULL);
     query.box.min = {box.GetMinPoint().GetX(), box.GetMinPoint().GetY(), box.GetMinPoint().GetZ()};
     query.box.max = {box.GetMaxPoint().GetX(), box.GetMaxPoint().GetY(), box.GetMaxPoint().GetZ()};
     query.actorMaterialBits = actor.GetMaterialList().GetValue();
   }
 
-  // CheckGlobalCollision_Boolean_NoPostFilter 0xc1f240 (terrain): the inclusive SAT.
+  // The admitted box platforms as the airborne failsafe takes box actors (its Collide and
+  // Blocked): CheckCollision 0xc1ec60's visit test (the platform's filter passes us) and
+  // `f` on the platform's material, both on the raw lists, then the pair with the box at
+  // `delta`. `each(index, selfBox, platformBox, platform)` runs for every platform that
+  // passes, in near-list order.
+  template < class Each >
+  void FsBoxes(const CMaterialFilter& f, const CVector3f& delta, Each each) {
+    const CAABox self = BoxAt(delta);
+    for (std::size_t p = 0; p < platforms.size(); ++p) {
+      const CScriptPlatform& platform = *platforms[p];
+      if (platform.HasComplexCollision()) continue;
+      if (!platform.GetMaterialFilter().Passes(actor.GetMaterialList())) continue;
+      if (!f.Passes(platform.GetMaterialList())) continue;
+      each(p, self,
+           platform.GetCollisionPrimitive()->CalculateAABox(platform.GetPrimitiveTransform()),
+           platform);
+    }
+  }
+
+  // CheckGlobalCollision_Boolean_NoPostFilter 0xc1f240: the inclusive SAT, terrain and
+  // tree platforms through the producer, box platforms by their inclusive overlap.
   bool FsBlocked(const CMaterialFilter& f, const CVector3f& pos) {
     if (!StaticAllowed(f) && platforms.empty()) return false;
     PortRemasteredGroundWorld::Query query;
     std::vector< PortRemasteredGroundWorld::Triangle > tris;
     FsCollect(f, pos - actor.GetTranslation(), query, tris, NULL);
-    if (tris.empty()) return false;
-    return PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), false)
-        .booleanHit;
+    if (!tris.empty() &&
+        PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), false)
+            .booleanHit) {
+      return true;
+    }
+    bool hit = false;
+    FsBoxes(f, pos - actor.GetTranslation(),
+            [&hit](std::size_t, const CAABox& self, const CAABox& other, const CScriptPlatform&) {
+              hit = hit || PortRemasteredBoxLanding::BoxesOverlap(PortFsBox(self), PortFsBox(other));
+            });
+    return hit;
   }
 
   // CheckCollision 0xc1ec60's static half for the core: one {first,last} contact per
@@ -2916,10 +3052,30 @@ struct GroundTick {
     std::vector< PortRemasteredGroundWorld::Triangle > tris;
     std::vector< std::size_t > ends;
     FsCollect(f, pos - actor.GetTranslation(), query, tris, &ends);
-    if (tris.empty()) return false;
     const PortRemasteredGroundWorld::TerrainResult res =
         PortRemasteredGroundWorld::QueryTerrain(query, tris.data(), tris.size(), true);
     std::vector< PortCollisionFailsafe::Contact > groups(ends.size());
+    // Box platforms: AABox_AABox 0xbf61b4 into the platform's own group (FsCollect closes
+    // one per platform after the area trees), as the airborne failsafe's box actors.
+    const std::size_t areaGroups = ends.size() - platforms.size();
+    FsBoxes(f, pos - actor.GetTranslation(),
+            [&](std::size_t p, const CAABox& self, const CAABox& other,
+                const CScriptPlatform& platform) {
+              std::vector< PortCollisionFailsafe::Impact >& impacts =
+                  groups[areaGroups + p].impacts;
+              if (!PortCollisionFailsafe::BoxBoxImpacts(PortFsBox(self), PortFsBox(other),
+                                                        impacts)) {
+                return;
+              }
+              const CMaterialList& mat = platform.GetMaterialList();
+              const bool character =
+                  mat.HasMaterial(kMT_Character) || mat.HasMaterial(kMT_CollisionActor);
+              const CVector3f center = other.GetCenterPoint();
+              for (std::size_t i = 0; i < impacts.size(); ++i) {
+                impacts[i].otherCharacter = character;
+                impacts[i].otherCenter = FsV(center);
+              }
+            });
     for (std::size_t i = 0; i + 1 < res.impacts.contacts.size(); ++i) {
       const PortRemasteredGroundWorld::Contact& self = res.impacts.contacts[i];
       const PortRemasteredGroundWorld::Contact& tri = res.impacts.contacts[i + 1];
@@ -3119,8 +3275,8 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   BuildAreaCollisionCache(mgr, cache);
 
   // Dynamic contacts: everything in the near list that overlaps the whole query region.
-  // Slice 1 admits active DCLN platforms that did not rotate this tick (their triangles go
-  // through the terrain producer, after the terrain's); anything else has no Remastered
+  // Active DCLN and box platforms that did not rotate this tick are admitted (their triangles
+  // or box pairs go into the producer lists, after the terrain's); anything else has no Remastered
   // producer, and the tick goes to the port's existing grounded mover: no retail contact is
   // ever presented as a Remastered one.
   std::vector< const CScriptPlatform* > platforms;
@@ -3138,15 +3294,8 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
                                                      other->GetPrimitiveTransform()))) {
         continue;
       }
-      PortRemasteredGroundRider::Candidate candidate;
       if (const CScriptPlatform* platform = TCastToConstPtr< CScriptPlatform >(other)) {
-        candidate.platform = true;
-        candidate.active = platform->GetActive();
-        candidate.hasTree = platform->HasComplexCollision();
-        // A stale stamp (the platform did not think this tick) is not a rotation.
-        candidate.rotated =
-            platform->PortPoseTick() == simTick && platform->PortRotatedSinceStamp();
-        if (PortRemasteredGroundRider::Admit(candidate)) {
+        if (PortAdmitPlatform(*platform, simTick)) {
           platforms.push_back(platform);
           continue;
         }
