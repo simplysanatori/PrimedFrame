@@ -268,6 +268,9 @@ set(MP_PORT_SOURCES
     platform/port_remastered_jpeg.cpp
     platform/port_gallery.cpp
     platform/port_remastered_room.cpp
+    platform/port_remastered_room_file.cpp
+    platform/port_remastered_room_retail.cpp
+    platform/port_remastered_room_scripts.cpp
     platform/port_remastered_anim.cpp
     platform/port_remastered_text.cpp
     platform/port_custom_res.cpp
@@ -837,6 +840,8 @@ if(MP_BUILD_TESTS)
         LIBRARIES mp_test_remastered_convert)
     mp_port_test(port_remastered_driver_tests
         SOURCES tests/port_remastered_driver_tests.cpp
+            platform/port_remastered_room_file.cpp platform/port_remastered_room_retail.cpp
+            platform/port_remastered_room_scripts.cpp
             platform/port_remastered_anim.cpp platform/port_remastered_cmdl.cpp
             platform/port_remastered_txtr.cpp platform/port_room_env_file.cpp
             platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
