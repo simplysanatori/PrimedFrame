@@ -66,6 +66,9 @@ PortGyro::Activation sGyroActivation;
 // The last tick applied look input. A paused game or a cinematic skips the
 // player update, and would then drop what the frames between ticks showed.
 bool sAimAppliedLastTick = false;
+// The tick's first applied aim update: it keeps the twin stick turn it
+// recorded and makes the tick's only pointer edge turn (issue #140).
+PortMouse::TickAim sAimTick;
 // Gyro state: the phone's sensor is looked up once, so the sensor list is not
 // walked on every tick.
 bool sPhoneGyroSearched = false;
@@ -496,6 +499,8 @@ unsigned MouseHeldButtons() { return sMouseHeldButtons.Held(); }
 
 bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   SetMouseGameplayActive(active);
+  const PortMouse::AimState lastAim = sMouseAimState;
+  const PortMouse::PointerAim lastPointer = sPointerAim;
   const bool pointer = PointerAim();
   float dx = sMouseFrameX;
   float dy = sMouseFrameY;
@@ -516,7 +521,7 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   const bool applied = sMouseAimState.Update(active, locked, x, y, z, dx, dy, MouseSensitivity(),
                                             MouseInvertX(), MouseInvertY(), pointer ? 0.f : sStickFrameX,
                                             pointer ? 0.f : sStickFrameY);
-  if (applied && pointer) {
+  if (applied && pointer && sAimTick.First()) {
     float dyaw = 0.f, dpitch = 0.f;
     PortMouse::PointerAim::TurnAt(sPointerAim.x, sPointerAim.y, PointerAimBox() / 100.f,
                                   PointerAimTurn() * (PortMouse::kPi / 180.f), TickPeriod(), dyaw,
@@ -526,6 +531,7 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   sPointerAimFree = pointer && applied;
   if (!sPointerAimFree) sPointerAim.Center();
   if (applied) {
+    sAimTick.Applied(sMouseAimState, lastAim, sPointerAim, lastPointer, sPointerAimFree);
     sMouseFrameX = sMouseFrameY = sStickFrameX = sStickFrameY = 0.f;
     sGyroCameraFrameX = sGyroCameraFrameY = 0.f;
   }
@@ -933,6 +939,7 @@ void BeginFrameMouse() {
   // AddStickAim adds this tick's travel during its input update.
   sStickFrameX = sStickFrameY = 0.f;
   sAimAppliedLastTick = false;
+  sAimTick.BeginTick();
 }
 
 bool SpringBallSwipe() {
