@@ -37,6 +37,7 @@
 {"Controls", "Options", "Aiming", "Edge turn speed", "pointer aim edge turn speed rotate"},
 {"Controls", "Options", "Morph ball", "Fast Morph", "morph ball speed quick transform"},
 {"Controls", "Options", "Morph ball", "Spring Ball (C-stick up)", "spring ball jump c-stick"},
+{"Controls", "Options", "Rumble", "Rumble", "vibration vibrate force feedback controller shake"},
 {"Controls", "Mouse settings", "Mouse aim", "Mouse aim", "mouse aim look pointer"},
 {"Controls", "Mouse settings", "Mouse aim", "Sensitivity", "mouse speed sensitivity source quake apex dpi cm 360"},
 {"Controls", "Mouse settings", "Mouse aim", "Mouse DPI", "mouse dpi cpi cm 360 inch"},
