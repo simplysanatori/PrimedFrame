@@ -1203,9 +1203,9 @@ the flamethrower still step at 60 Hz.
 
 For development only; none is saved. The on/off variables follow the rule above
 (`platform/include/port_env.h`): unset leaves the default, and empty, `0`,
-`false`, `off` or `no` mean off. The two read by Aurora (`MP_LOG_COPY_TEX`,
-`MP_SHADOW_SIZE`) cannot include the port's headers: `MP_LOG_COPY_TEX` is on
-with any value, even `0`.
+`false`, `off` or `no` mean off. Aurora, which cannot include the port's
+headers, applies the same rule to its own on/off variables (`MP_LOG_COPY_TEX`,
+`MP_LOG_TEX_INVALID`, and its half of `MP_ACTOR_SHADOW_DEBUG`).
 
 - `MP_WATCHDOG=0`: no stall watchdog. On by default: with no frame for 5, 15, 30
   and 60 s it logs where the main and render threads are, the main thread's stack
@@ -1238,7 +1238,7 @@ with any value, even `0`.
   shadow bits skipped.
 - `MP_SHADOW_SIZE=<256-8192>`: the sun shadow map's size in texels (1024 by
   default; a value outside the range keeps the default).
-- `MP_LOG_COPY_TEX` (any value): log each new texture an EFB copy makes
+- `MP_LOG_COPY_TEX=1`: log each new texture an EFB copy makes
   (`[copytex]`), with its size, format and how many are cached.
 - `MP_ROOMENV_TIMING=1`: log where a `.roomenv` load's time goes.
   `MP_ROOM_ENV_EXPOSURE_LOG=1`: log the room exposure state (area, hint values,
