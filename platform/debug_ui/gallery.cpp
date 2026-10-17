@@ -1,7 +1,43 @@
-// Part of platform/debug_ui.cpp: The gallery window. Included by debug_ui.cpp at this point in the
-// file, not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: The gallery window. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_gyro_motion.h"
+#include "port_paths.h"
+#include "port_gci.h"
+#include "port_discord.h"
+#include "port_gallery.h"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+
+#include <algorithm>
+#include <fstream>
+#include <vector>
+
+namespace PortDebug {
+
+// The Remastered gallery (port_gallery.h): the concept art the Remastered import put in the mods, shown one picture at
+// a time in a window of its own. Only the current picture is decoded.
+bool sGalleryOpen = false;
+std::vector<std::string> sGalleryPaths;
+int sGalleryIndex = 0;
 
 namespace {
+int sGalleryLoaded = -1;      // the picture sGalleryTexture holds
+ImTextureID sGalleryTexture = 0;
+ImVec2 sGallerySize{0.0f, 0.0f};
+bool sGalleryFailed = false;
+// Textures no longer shown, freed once the frames that drew them are done with.
+struct RetiredTexture {
+  ImTextureID texture;
+  int frames;
+};
+std::vector<RetiredTexture> sGalleryRetired;
+} // namespace
 
 void ReleaseGalleryTexture() {
   if (sGalleryTexture != 0) {
@@ -30,6 +66,7 @@ void CloseGallery() {
   sGalleryPaths.clear();
 }
 
+namespace {
 void LoadGalleryPicture() {
   ReleaseGalleryTexture();
   sGalleryFailed = true;
@@ -46,6 +83,7 @@ void LoadGalleryPicture() {
   sGallerySize = ImVec2(float(width), float(height));
   sGalleryFailed = false;
 }
+} // namespace
 
 void DrawGalleryWindow() {
   FreeRetiredGalleryTextures(false);
@@ -97,4 +135,4 @@ void DrawGalleryWindow() {
   }
 }
 
-} // namespace
+} // namespace PortDebug

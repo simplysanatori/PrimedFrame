@@ -1,6 +1,42 @@
-// Part of platform/debug_ui.cpp: Gyro, mouse aim, touch aim and gestures, the visor/beam wheels and
-// the map gestures. Included by debug_ui.cpp at this point in the file, not compiled on its own: it
-// shares that file's state and namespaces.
+// F1 overlay: Gyro, mouse aim, touch aim and gestures, the visor/beam wheels and the map gestures.
+// State and helpers shared with the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_gyro_motion.h"
+#include "port_photo.h"
+#include "port_pointer.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_config_reset.h"
+#include "port_input_devices.h"
+#include "port_savestate.h"
+#include "port_mouse.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "Kyoto/Graphics/CModel.hpp"
+#include "GuiSys/CGuiModel.hpp"
+
+#include <aurora/gfx.h>
+#include <SDL3/SDL_dialog.h>
+#include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_timer.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <mutex>
+#include <utility>
+#include <vector>
+
+namespace PortDebug {
 
 // State only this part uses.
 namespace {
@@ -118,11 +154,7 @@ void SetGyroSpace(int space) {
   MarkDirty();
 }
 
-void SetGyroAutoCalibrate(bool on) {
-  EnsureInitialized();
-  sInput.gyroAutoCalibrate = on;
-  MarkDirty();
-}
+void SetGyroAutoCalibrate(bool on) { StoreSetting(sInput.gyroAutoCalibrate, on); }
 
 void ResetGyroCalibration() { sGyroMotion.Reset(); }
 
@@ -515,10 +547,7 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
 }
 void SynchronizeMouseAim(float x, float y, float z) { sMouseAimState.Synchronize(x, y, z); }
 
-float MouseSensitivity() {
-  EnsureInitialized();
-  return sInput.mouseSensitivity;
-}
+float MouseSensitivity() { return Loaded(sInput.mouseSensitivity); }
 
 void SetMouseSensitivity(float radiansPerPixel) {
   EnsureInitialized();
@@ -536,32 +565,13 @@ void AddMouseDelta(float dx, float dy) {
   sMousePendingY += dy;
 }
 
-bool TouchAim() {
-  EnsureInitialized();
-  return sInput.touchAim;
-}
+bool TouchAim() { return Loaded(sInput.touchAim); }
+void SetTouchAim(bool on) { StoreSetting(sInput.touchAim, on); }
 
-void SetTouchAim(bool on) {
-  EnsureInitialized();
-  sInput.touchAim = on;
-  MarkDirty();
-}
+bool TouchMapTap() { return Loaded(sInput.touchMapTap); }
+void SetTouchMapTap(bool on) { StoreSetting(sInput.touchMapTap, on); }
 
-bool TouchMapTap() {
-  EnsureInitialized();
-  return sInput.touchMapTap;
-}
-
-void SetTouchMapTap(bool on) {
-  EnsureInitialized();
-  sInput.touchMapTap = on;
-  MarkDirty();
-}
-
-bool TouchClassic() {
-  EnsureInitialized();
-  return sInput.touchClassic;
-}
+bool TouchClassic() { return Loaded(sInput.touchClassic); }
 
 void SetTouchClassic(bool on) {
   EnsureInitialized();
@@ -572,10 +582,7 @@ void SetTouchClassic(bool on) {
   MarkDirty();
 }
 
-bool TouchTwinStick() {
-  EnsureInitialized();
-  return sInput.touchTwinStick;
-}
+bool TouchTwinStick() { return Loaded(sInput.touchTwinStick); }
 
 void SetTouchTwinStick(bool on) {
   EnsureInitialized();
@@ -586,27 +593,11 @@ void SetTouchTwinStick(bool on) {
   MarkDirty();
 }
 
-bool TouchWheels() {
-  EnsureInitialized();
-  return sInput.touchWheels;
-}
+bool TouchWheels() { return Loaded(sInput.touchWheels); }
+void SetTouchWheels(bool on) { StoreSetting(sInput.touchWheels, on); }
 
-void SetTouchWheels(bool on) {
-  EnsureInitialized();
-  sInput.touchWheels = on;
-  MarkDirty();
-}
-
-bool TouchVisorTapScan() {
-  EnsureInitialized();
-  return sInput.touchVisorTapScan;
-}
-
-void SetTouchVisorTapScan(bool on) {
-  EnsureInitialized();
-  sInput.touchVisorTapScan = on;
-  MarkDirty();
-}
+bool TouchVisorTapScan() { return Loaded(sInput.touchVisorTapScan); }
+void SetTouchVisorTapScan(bool on) { StoreSetting(sInput.touchVisorTapScan, on); }
 
 // Game thread, once per frame from CPlayer::Think.
 void SetWheelState(uint32_t mask) {
@@ -912,11 +903,7 @@ void BeginFrameMouse() {
   sAimTick.BeginTick();
 }
 
-void SetSpringBallSwipe(bool enabled) {
-  EnsureInitialized();
-  sInput.springSwipe = enabled;
-  MarkDirty();
-}
+void SetSpringBallSwipe(bool enabled) { StoreSetting(sInput.springSwipe, enabled); }
 
 // CMorphBall springs on the request only on the ground in the ball with the
 // Spring Ball unlocked, so a swipe anywhere else just expires.
@@ -1000,3 +987,5 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
   dpitch = pitch - sMouseAimState.pitch;
   return dyaw != 0.f || dpitch != 0.f;
 }
+
+} // namespace PortDebug

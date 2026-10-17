@@ -1,6 +1,41 @@
-// Part of platform/debug_ui.cpp: The Video page: display, GPU driver, quality, compatibility and
-// textures. Included by debug_ui.cpp at this point in the file, not compiled on its own: it shares
-// that file's state and namespaces.
+// F1 overlay: The Video page: display, GPU driver, quality, compatibility and textures. State and
+// helpers shared with the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_graphics_backend.h"
+#include "port_gyro_motion.h"
+#include "port_dynamic_res.h"
+#include "port_pointer.h"
+#include "port_hd_font.h"
+#include "port_paths.h"
+#include "port_config_reset.h"
+#include "port_textures.h"
+#include "port_gpu_driver.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_dialog.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace PortDebug {
 
 void DrawVideoDisplay() {
   ImGui::SeparatorText("Display");
@@ -158,6 +193,8 @@ void OpenGpuDriverDialog() {
   SDL_ShowOpenFileDialog(done, nullptr, window, nullptr, 0, nullptr, false);
 }
 
+} // namespace
+
 void ProcessGpuDriverPick() {
   std::string path;
   {
@@ -185,6 +222,7 @@ void ProcessGpuDriverPick() {
   }
 }
 
+namespace {
 void DrawGpuDriver() {
   if (!PortGpuDriver::Supported() || aurora_get_backend() != BACKEND_VULKAN) {
     return;
@@ -564,6 +602,8 @@ void DrawVideoCompatibility() {
   }
 }
 
+void DrawTexturePack();
+
 // The HD texture set and the user's texture pack: the Mods page.
 void DrawTexturesSection() {
   ImGui::SeparatorText("Textures");
@@ -611,3 +651,5 @@ void DrawTexturePack() {
   }
 #endif
 }
+
+} // namespace PortDebug

@@ -1,6 +1,49 @@
-// Part of platform/debug_ui.cpp: Accessors for the settings and runtime switches the game and other
-// port code read, and the settings self-test. Included by debug_ui.cpp at this point in the file,
-// not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: Accessors for the settings and runtime switches the game and other port code read.
+// State and helpers shared with the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_graphics_backend.h"
+#include "port_gyro_motion.h"
+#include "port_dynamic_res.h"
+#include "port_photo.h"
+#include "port_pointer.h"
+#include "port_hd_font.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_mods.h"
+#include "port_remastered_text.h"
+#include "port_discord.h"
+#include "port_savestate.h"
+#include "port_mouse.h"
+
+#include "MetroidPrime/Player/CGameOptions.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
+
+#include <aurora/gfx.h>
+#include <dolphin/gx/GXExtra.h>
+#include <dolphin/vi.h>
+#include <SDL3/SDL_dialog.h>
+#include <SDL3/SDL_timer.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <sstream>
+#include <string>
+
+namespace PortDebug {
 
 // State only this part uses.
 namespace {
@@ -11,10 +54,7 @@ float sTickPeriod = 1.f / 60.f;
 uint64_t sTimingWallNs = 0;
 uint64_t sTimingWallLastNs = 0;
 unsigned sTimingFrames = 0, sTimingTicks = 0;
-// Dynamic resolution (port_dynamic_res.h); sDynScale, the scale it draws at, is shared.
-PortDynamicRes::Controller sDynController;
 bool sDynActive = false;
-double sDynGpuMs = -1.0; // the last GPU time it was given, for the Video page
 // GPU pass times (Aurora's gpu_prof) are wanted by dynamic resolution and by the
 // Remastered debug panel. Switching them on restarts their average, so only a change
 // in whether anyone wants them reaches Aurora.
@@ -22,55 +62,11 @@ unsigned sGpuTimesUsers = 0;
 float sTwinStickRightY = 0.f;
 } // namespace
 
-int SettingsSelfTest() {
-  int failures = 0;
-  int sampled = 0;
-  // Each sampled key, through the file reader: both values must come back as written.
-  for (const SettingKey& entry : kSettingKeys) {
-    if (entry.key == nullptr || entry.write == nullptr || entry.sampleA == nullptr) {
-      continue;
-    }
-    ++sampled;
-    for (const char* sample : {entry.sampleA, entry.sampleB}) {
-      std::istringstream line(std::string(entry.key) + "=" + sample + "\n");
-      ApplySettingsText(line);
-      const auto written = SettingsValues(SettingsText());
-      const auto found = written.find(entry.key);
-      const std::string got = found == written.end() ? std::string() : found->second;
-      if (got != sample) {
-        PortLog::Write("settings self-test: %s=%s reads back as %s=%s\n", entry.key, sample, entry.key,
-                       got.c_str());
-        ++failures;
-      }
-    }
-  }
-  // Every line written is a key something reads, and reading the whole file
-  // back writes it unchanged.
-  const std::string first = SettingsText();
-  for (const auto& [key, value] : SettingsValues(first)) {
-    if (!ApplySetting(key, value)) {
-      PortLog::Write("settings self-test: %s is written but nothing reads it\n", key.c_str());
-      ++failures;
-    }
-  }
-  std::istringstream again(first);
-  ApplySettingsText(again);
-  const std::string second = SettingsText();
-  if (second != first) {
-    // Both whole files: past PortLog's 2048-byte line, so straight to stderr.
-    std::fprintf(stderr, "settings self-test: the file changes when read back\n%s\n---\n%s\n", first.c_str(),
-                 second.c_str());
-    ++failures;
-  }
-  PortLog::Write("settings self-test: %d keys sampled, %zu lines round-tripped, %d failure(s)\n", sampled,
-                 SettingsValues(first).size(), failures);
-  return failures == 0 ? 0 : 1;
-}
+// Dynamic resolution (port_dynamic_res.h); sDynScale, the scale it draws at, is shared.
+PortDynamicRes::Controller sDynController;
+double sDynGpuMs = -1.0; // the last GPU time it was given, for the Video page
 
-bool FastBoot() {
-  EnsureInitialized();
-  return sFastBoot;
-}
+bool FastBoot() { return Loaded(sFastBoot); }
 
 bool BootWorld(uint32_t& worldId, uint32_t& areaAssetId) {
   static uint32_t sWorld = 0, sArea = 0;
@@ -91,15 +87,9 @@ bool BootWorld(uint32_t& worldId, uint32_t& areaAssetId) {
   return sSet;
 }
 
-bool SkipCutscenes() {
-  EnsureInitialized();
-  return sSkipCutscenes;
-}
+bool SkipCutscenes() { return Loaded(sSkipCutscenes); }
 
-float CutsceneSpeed() {
-  EnsureInitialized();
-  return sCutsceneSpeed;
-}
+float CutsceneSpeed() { return Loaded(sCutsceneSpeed); }
 
 unsigned SimRate() {
   EnsureInitialized();
@@ -122,26 +112,16 @@ bool SimAdaptive() {
   return sSimAdaptive && !sOriginalExperience;
 }
 
-bool Turbo() {
-  EnsureInitialized();
-  return sTurbo;
-}
+bool Turbo() { return Loaded(sTurbo); }
 
 unsigned TurboTicks() {
   EnsureInitialized();
   return sTurbo ? sTurboTicks : 1;
 }
 
-void SetSimAdaptive(bool enabled) {
-  EnsureInitialized();
-  sSimAdaptive = enabled;
-  MarkDirty();
-}
+void SetSimAdaptive(bool enabled) { StoreSetting(sSimAdaptive, enabled); }
 
-float TickPeriod() {
-  EnsureInitialized();
-  return sTickPeriod;
-}
+float TickPeriod() { return Loaded(sTickPeriod); }
 
 void SetTickPeriod(float dt) {
   if (std::isfinite(dt) && dt > 0.f) {
@@ -155,15 +135,15 @@ float TickFrames() { return sTickPeriod * 60.f; }
 static bool EffectiveFrameLimit() { return sFrameLimitEnabled || sOriginalExperience; }
 // Photo mode's supersampled capture holds the EFB at this scale for a few frames; never saved.
 static float sCaptureScale = 0.f;
-static float EffectiveRenderScale() {
+float EffectiveRenderScale() {
   return sCaptureScale > 0.f ? sCaptureScale : sOriginalExperience ? 1.f : sRenderScale;
 }
-static int EffectiveMsaa() { return sOriginalExperience ? 1 : sMsaa; }
+int EffectiveMsaa() { return sOriginalExperience ? 1 : sMsaa; }
 static int EffectiveAnisotropy() { return sOriginalExperience ? 1 : sAnisotropy; }
 
 // Sharpening for a frame stretched up to the window (Aurora's present resample); only
 // passed on when it changes.
-static void ApplyPresentSharpness() {
+void ApplyPresentSharpness() {
   float amount = 0.f;
   if (!sOriginalExperience && sSharpenAmount > 0) {
     const bool lowered = sDynScale > 0.f && sDynScale < EffectiveRenderScale();
@@ -196,7 +176,7 @@ int FrameRateCap() {
 }
 
 
-static double DynamicResTargetFps() {
+double DynamicResTargetFps() {
   double target = sDynamicResTarget;
   if (target <= 0.0) {
     const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
@@ -206,7 +186,6 @@ static double DynamicResTargetFps() {
   return cap > 0 ? std::min(target, static_cast< double >(cap)) : target;
 }
 
-enum : unsigned { kGpuTimesDynamicRes = 1, kGpuTimesPanel = 2 };
 void WantGpuTimes(unsigned user, bool on) {
   const unsigned before = sGpuTimesUsers;
   sGpuTimesUsers = on ? (before | user) : (before & ~user);
@@ -215,7 +194,7 @@ void WantGpuTimes(unsigned user, bool on) {
   }
 }
 
-static void ResetDynamicRes() {
+void ResetDynamicRes() {
   sDynController.Reset(EffectiveRenderScale());
   sDynGpuMs = -1.0;
   if (sDynScale > 0.f) {
@@ -327,10 +306,7 @@ void SetFrameLimitEnabled(bool enabled) {
   }
 }
 
-bool VsyncEnabled() {
-  EnsureInitialized();
-  return sVsyncEnabled;
-}
+bool VsyncEnabled() { return Loaded(sVsyncEnabled); }
 
 void SetVsyncEnabled(bool enabled) {
   EnsureInitialized();
@@ -341,10 +317,7 @@ void SetVsyncEnabled(bool enabled) {
   aurora_enable_vsync(enabled);
 }
 
-bool Fullscreen() {
-  EnsureInitialized();
-  return sFullscreen;
-}
+bool Fullscreen() { return Loaded(sFullscreen); }
 
 void SetFullscreen(bool enabled) {
   EnsureInitialized();
@@ -407,37 +380,23 @@ bool DynamicRes() {
   return sDynamicRes && !sOriginalExperience;
 }
 
-int DynamicResTarget() {
-  EnsureInitialized();
-  return sDynamicResTarget;
-}
+int DynamicResTarget() { return Loaded(sDynamicResTarget); }
 
-float DynamicResMin() {
-  EnsureInitialized();
-  return sDynamicResMin;
-}
+float DynamicResMin() { return Loaded(sDynamicResMin); }
 
 EAspectMode AspectMode() {
   EnsureInitialized();
   return sOriginalExperience ? kAspect_4_3 : sAspectMode;
 }
 
-void SetAspectMode(EAspectMode mode) {
-  EnsureInitialized();
-  sAspectMode = mode;
-  MarkDirty();
-}
+void SetAspectMode(EAspectMode mode) { StoreSetting(sAspectMode, mode); }
 
 bool HudWide() {
   EnsureInitialized();
   return sHudWide && !sOriginalExperience;
 }
 
-void SetHudWide(bool enabled) {
-  EnsureInitialized();
-  sHudWide = enabled;
-  MarkDirty();
-}
+void SetHudWide(bool enabled) { StoreSetting(sHudWide, enabled); }
 
 bool CinemaBars() {
   EnsureInitialized();
@@ -486,16 +445,8 @@ float ScanSpeed() {
   return sOriginalExperience ? 1.f : static_cast< float >(sScanSpeed) / 100.f;
 }
 
-bool MenuStandardButtons() {
-  EnsureInitialized();
-  return sMenuStandardButtons;
-}
-
-void SetMenuStandardButtons(bool enabled) {
-  EnsureInitialized();
-  sMenuStandardButtons = enabled;
-  MarkDirty();
-}
+bool MenuStandardButtons() { return Loaded(sMenuStandardButtons); }
+void SetMenuStandardButtons(bool enabled) { StoreSetting(sMenuStandardButtons, enabled); }
 
 void SetPointerMenus(bool enabled) {
   EnsureInitialized();
@@ -533,33 +484,21 @@ bool HideHelmet() {
   return (sHideHelmet || PortPhoto::Active()) && !sOriginalExperience;
 }
 
-void SetHideHelmet(bool enabled) {
-  EnsureInitialized();
-  sHideHelmet = enabled;
-  MarkDirty();
-}
+void SetHideHelmet(bool enabled) { StoreSetting(sHideHelmet, enabled); }
 
 bool HideVisorEffects() {
   EnsureInitialized();
   return (sHideVisorEffects || PortPhoto::Active()) && !sOriginalExperience;
 }
 
-void SetHideVisorEffects(bool enabled) {
-  EnsureInitialized();
-  sHideVisorEffects = enabled;
-  MarkDirty();
-}
+void SetHideVisorEffects(bool enabled) { StoreSetting(sHideVisorEffects, enabled); }
 
 bool RevealMap() {
   EnsureInitialized();
   return sRevealMap && !sOriginalExperience;
 }
 
-void SetRevealMap(bool enabled) {
-  EnsureInitialized();
-  sRevealMap = enabled;
-  MarkDirty();
-}
+void SetRevealMap(bool enabled) { StoreSetting(sRevealMap, enabled); }
 
 EMapPickups MapPickups() {
   EnsureInitialized();
@@ -572,54 +511,19 @@ void SetMapPickups(EMapPickups mode) {
   MarkDirty();
 }
 
-bool MapLogicColors() {
-  EnsureInitialized();
-  return sMapLogicColors;
-}
+bool MapLogicColors() { return Loaded(sMapLogicColors); }
+void SetMapLogicColors(bool enabled) { StoreSetting(sMapLogicColors, enabled); }
 
-void SetMapLogicColors(bool enabled) {
-  EnsureInitialized();
-  sMapLogicColors = enabled;
-  MarkDirty();
-}
+bool MapPickupKinds() { return Loaded(sMapPickupKinds); }
+void SetMapPickupKinds(bool enabled) { StoreSetting(sMapPickupKinds, enabled); }
 
-bool MapPickupKinds() {
-  EnsureInitialized();
-  return sMapPickupKinds;
-}
+bool MapStationPickups() { return Loaded(sMapStationPickups); }
+void SetMapStationPickups(bool enabled) { StoreSetting(sMapStationPickups, enabled); }
 
-void SetMapPickupKinds(bool enabled) {
-  EnsureInitialized();
-  sMapPickupKinds = enabled;
-  MarkDirty();
-}
+bool MapExtraUi() { return Loaded(sMapExtraUi); }
+void SetMapExtraUi(bool enabled) { StoreSetting(sMapExtraUi, enabled); }
 
-bool MapStationPickups() {
-  EnsureInitialized();
-  return sMapStationPickups;
-}
-
-void SetMapStationPickups(bool enabled) {
-  EnsureInitialized();
-  sMapStationPickups = enabled;
-  MarkDirty();
-}
-
-bool MapExtraUi() {
-  EnsureInitialized();
-  return sMapExtraUi;
-}
-
-void SetMapExtraUi(bool enabled) {
-  EnsureInitialized();
-  sMapExtraUi = enabled;
-  MarkDirty();
-}
-
-int ApSuitDamage() {
-  EnsureInitialized();
-  return sApSuitDamage;
-}
+int ApSuitDamage() { return Loaded(sApSuitDamage); }
 
 void SetApSuitDamage(int mode) {
   EnsureInitialized();
@@ -632,22 +536,10 @@ bool SkippableCutscenes() {
   return sSkippableCutscenes && !sOriginalExperience;
 }
 
-void SetSkippableCutscenes(bool enabled) {
-  EnsureInitialized();
-  sSkippableCutscenes = enabled;
-  MarkDirty();
-}
+void SetSkippableCutscenes(bool enabled) { StoreSetting(sSkippableCutscenes, enabled); }
 
-bool Revision100Compatibility() {
-  EnsureInitialized();
-  return sRevision100Compatibility;
-}
-
-void SetRevision100Compatibility(bool enabled) {
-  EnsureInitialized();
-  sRevision100Compatibility = enabled;
-  MarkDirty();
-}
+bool Revision100Compatibility() { return Loaded(sRevision100Compatibility); }
+void SetRevision100Compatibility(bool enabled) { StoreSetting(sRevision100Compatibility, enabled); }
 
 const char* TextLanguage() {
   EnsureInitialized();
@@ -659,11 +551,7 @@ const char* TextLanguage() {
   return "";
 }
 
-void SetTextLanguage(const char* code) {
-  EnsureInitialized();
-  sTextLanguage = code;
-  MarkDirty();
-}
+void SetTextLanguage(const char* code) { StoreSetting(sTextLanguage, code); }
 
 EElevatorRide ElevatorRide() {
   EnsureInitialized();
@@ -733,10 +621,7 @@ void SetMsaa(int samples) {
   }
 }
 
-bool OpenGles() {
-  EnsureInitialized();
-  return sOpenGles;
-}
+bool OpenGles() { return Loaded(sOpenGles); }
 
 void SetOpenGles(bool enabled) {
   EnsureInitialized();
@@ -746,10 +631,7 @@ void SetOpenGles(bool enabled) {
   }
 }
 
-PortDebug::EGraphicsBackend GraphicsBackend() {
-  EnsureInitialized();
-  return sGraphicsBackend;
-}
+PortDebug::EGraphicsBackend GraphicsBackend() { return Loaded(sGraphicsBackend); }
 
 void SetGraphicsBackend(PortDebug::EGraphicsBackend backend) {
   EnsureInitialized();
@@ -759,10 +641,7 @@ void SetGraphicsBackend(PortDebug::EGraphicsBackend backend) {
   }
 }
 
-const std::string& GpuDriver() {
-  EnsureInitialized();
-  return sGpuDriver;
-}
+const std::string& GpuDriver() { return Loaded(sGpuDriver); }
 
 void SetGpuDriver(const std::string& id) {
   EnsureInitialized();
@@ -879,10 +758,7 @@ void SetPerPixelLighting(bool enabled) {
   }
 }
 
-bool SunShadows() {
-  EnsureInitialized();
-  return sSunShadows;
-}
+bool SunShadows() { return Loaded(sSunShadows); }
 void SetSunShadows(bool enabled) {
   EnsureInitialized();
   if (sSunShadows != enabled) {
@@ -891,10 +767,7 @@ void SetSunShadows(bool enabled) {
   }
 }
 
-bool ProjectedShadows() {
-  EnsureInitialized();
-  return sProjectedShadows;
-}
+bool ProjectedShadows() { return Loaded(sProjectedShadows); }
 void SetProjectedShadows(bool enabled) {
   EnsureInitialized();
   if (sProjectedShadows != enabled) {
@@ -908,38 +781,23 @@ bool UnlockHardMode() {
   return sUnlockHardMode && !sOriginalExperience;
 }
 
-void SetUnlockHardMode(bool enabled) {
-  EnsureInitialized();
-  sUnlockHardMode = enabled;
-  MarkDirty();
-}
+void SetUnlockHardMode(bool enabled) { StoreSetting(sUnlockHardMode, enabled); }
 
 bool UnlockFusionSuit() {
   EnsureInitialized();
   return sUnlockFusionSuit && !sOriginalExperience;
 }
 
-void SetUnlockFusionSuit(bool enabled) {
-  EnsureInitialized();
-  sUnlockFusionSuit = enabled;
-  MarkDirty();
-}
+void SetUnlockFusionSuit(bool enabled) { StoreSetting(sUnlockFusionSuit, enabled); }
 
 bool UnlockGalleries() {
   EnsureInitialized();
   return sUnlockGalleries && !sOriginalExperience;
 }
 
-void SetUnlockGalleries(bool enabled) {
-  EnsureInitialized();
-  sUnlockGalleries = enabled;
-  MarkDirty();
-}
+void SetUnlockGalleries(bool enabled) { StoreSetting(sUnlockGalleries, enabled); }
 
-bool MouseAim() {
-  EnsureInitialized();
-  return sInput.mouseAim;
-}
+bool MouseAim() { return Loaded(sInput.mouseAim); }
 
 void SetMouseAim(bool enabled) {
   EnsureInitialized();
@@ -978,16 +836,9 @@ bool TwinStick() {
   return sInput.twinStick && !TouchActive();
 }
 
-bool PadTwinStick() {
-  EnsureInitialized();
-  return sInput.twinStick;
-}
+bool PadTwinStick() { return Loaded(sInput.twinStick); }
 
-void SetTwinStick(bool enabled) {
-  EnsureInitialized();
-  sInput.twinStick = enabled;
-  MarkDirty();
-}
+void SetTwinStick(bool enabled) { StoreSetting(sInput.twinStick, enabled); }
 
 float TwinStickRightY() { return sTwinStickRightY; }
 
@@ -1004,22 +855,14 @@ bool SpringBall() {
   return sInput.springBall && !sOriginalExperience;
 }
 
-void SetSpringBall(bool enabled) {
-  EnsureInitialized();
-  sInput.springBall = enabled;
-  MarkDirty();
-}
+void SetSpringBall(bool enabled) { StoreSetting(sInput.springBall, enabled); }
 
 bool SwapScanXray() {
   EnsureInitialized();
   return sInput.swapScanXray && !TouchActive() && !sOriginalExperience;
 }
 
-void SetSwapScanXray(bool enabled) {
-  EnsureInitialized();
-  sInput.swapScanXray = enabled;
-  MarkDirty();
-}
+void SetSwapScanXray(bool enabled) { StoreSetting(sInput.swapScanXray, enabled); }
 
 int TurboBinding(int slot) {
   EnsureInitialized();
@@ -1075,21 +918,10 @@ void SetMouseAction(int button, int action) {
   }
 }
 
-bool SpeedrunTimer() {
-  EnsureInitialized();
-  return sSpeedrunTimer;
-}
+bool SpeedrunTimer() { return Loaded(sSpeedrunTimer); }
+void SetSpeedrunTimer(bool enabled) { StoreSetting(sSpeedrunTimer, enabled); }
 
-void SetSpeedrunTimer(bool enabled) {
-  EnsureInitialized();
-  sSpeedrunTimer = enabled;
-  MarkDirty();
-}
-
-bool LiveSplit() {
-  EnsureInitialized();
-  return sLiveSplit;
-}
+bool LiveSplit() { return Loaded(sLiveSplit); }
 
 void SetLiveSplit(bool enabled) {
   EnsureInitialized();
@@ -1098,10 +930,7 @@ void SetLiveSplit(bool enabled) {
   MarkDirty();
 }
 
-bool DiscordPresence() {
-  EnsureInitialized();
-  return sDiscord;
-}
+bool DiscordPresence() { return Loaded(sDiscord); }
 
 void SetDiscordPresence(bool enabled) {
   EnsureInitialized();
@@ -1110,10 +939,7 @@ void SetDiscordPresence(bool enabled) {
   MarkDirty();
 }
 
-std::string LiveSplitAddress() {
-  EnsureInitialized();
-  return sLiveSplitAddress;
-}
+std::string LiveSplitAddress() { return Loaded(sLiveSplitAddress); }
 
 void SetLiveSplitAddress(const std::string& address) {
   EnsureInitialized();
@@ -1130,16 +956,9 @@ bool ModsEnabled() {
   return sModsEnabled && !sOriginalExperience;
 }
 
-void SetModsEnabled(bool enabled) {
-  EnsureInitialized();
-  sModsEnabled = enabled;
-  MarkDirty();
-}
+void SetModsEnabled(bool enabled) { StoreSetting(sModsEnabled, enabled); }
 
-bool OriginalExperience() {
-  EnsureInitialized();
-  return sOriginalExperience;
-}
+bool OriginalExperience() { return Loaded(sOriginalExperience); }
 
 void SetOriginalExperience(bool enabled) {
   EnsureInitialized();
@@ -1159,16 +978,8 @@ void SetOriginalExperience(bool enabled) {
   }
 }
 
-std::string ModsDisabled() {
-  EnsureInitialized();
-  return sModsDisabled;
-}
-
-void SetModsDisabled(const std::string& list) {
-  EnsureInitialized();
-  sModsDisabled = list;
-  MarkDirty();
-}
+std::string ModsDisabled() { return Loaded(sModsDisabled); }
+void SetModsDisabled(const std::string& list) { StoreSetting(sModsDisabled, list); }
 
 bool Invulnerable() {
   EnsureInitialized();
@@ -1182,49 +993,29 @@ void SetInvulnerable(bool enabled) {
   MarkDirty();
 }
 
-bool LogFile() {
-  EnsureInitialized();
-  return sLogFile;
-}
-
-void SetLogFile(bool enabled) {
-  EnsureInitialized();
-  sLogFile = enabled;
-  MarkDirty();
-}
+bool LogFile() { return Loaded(sLogFile); }
+void SetLogFile(bool enabled) { StoreSetting(sLogFile, enabled); }
 
 bool FastMorph() {
   EnsureInitialized();
   return sInput.fastMorph && !sOriginalExperience;
 }
 
-void SetFastMorph(bool enabled) {
-  EnsureInitialized();
-  sInput.fastMorph = enabled;
-  MarkDirty();
-}
+void SetFastMorph(bool enabled) { StoreSetting(sInput.fastMorph, enabled); }
 
 bool LockOnToggle() {
   EnsureInitialized();
   return sInput.lockOnToggle && !sOriginalExperience;
 }
 
-void SetLockOnToggle(bool enabled) {
-  EnsureInitialized();
-  sInput.lockOnToggle = enabled;
-  MarkDirty();
-}
+void SetLockOnToggle(bool enabled) { StoreSetting(sInput.lockOnToggle, enabled); }
 
 bool StickyCharge() {
   EnsureInitialized();
   return sInput.stickyCharge && !sOriginalExperience;
 }
 
-void SetStickyCharge(bool enabled) {
-  EnsureInitialized();
-  sInput.stickyCharge = enabled;
-  MarkDirty();
-}
+void SetStickyCharge(bool enabled) { StoreSetting(sInput.stickyCharge, enabled); }
 
 PortRandoGen::Settings RandoSettings() {
   EnsureInitialized();
@@ -1237,28 +1028,16 @@ bool RapidCharge() {
   return sInput.rapidCharge && !sOriginalExperience;
 }
 
-void SetRapidCharge(bool enabled) {
-  EnsureInitialized();
-  sInput.rapidCharge = enabled;
-  MarkDirty();
-}
+void SetRapidCharge(bool enabled) { StoreSetting(sInput.rapidCharge, enabled); }
 
 bool RemasteredMovement() {
   EnsureInitialized();
   return sInput.remasteredMovement && !sOriginalExperience;
 }
 
-void SetRemasteredMovement(bool enabled) {
-  EnsureInitialized();
-  sInput.remasteredMovement = enabled;
-  MarkDirty();
-}
+void SetRemasteredMovement(bool enabled) { StoreSetting(sInput.remasteredMovement, enabled); }
 
-void SetSpringBallFlick(bool enabled) {
-  EnsureInitialized();
-  sInput.springFlick = enabled;
-  MarkDirty();
-}
+void SetSpringBallFlick(bool enabled) { StoreSetting(sInput.springFlick, enabled); }
 
 void SetSpringBallFlickRate(float radiansPerSecond) {
   EnsureInitialized();
@@ -1278,10 +1057,7 @@ void SetGyroOverride(bool active, float pitch, float yaw) {
   sGyroOverrideYaw = yaw;
 }
 
-float StickAimRate() {
-  EnsureInitialized();
-  return sInput.stickAimRate;
-}
+float StickAimRate() { return Loaded(sInput.stickAimRate); }
 
 void SetStickAimRate(float pixelsPerSecond) {
   EnsureInitialized();
@@ -1310,3 +1086,5 @@ void AddStickAim(float x, float y, float dt) {
   sStickFrameX += travelX;
   sStickFrameY += travelY;
 }
+
+} // namespace PortDebug

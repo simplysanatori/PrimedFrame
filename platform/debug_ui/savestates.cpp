@@ -1,5 +1,20 @@
-// Part of platform/debug_ui.cpp: The Save states tab. Included by debug_ui.cpp at this point in the
-// file, not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: The Save states tab. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_debug.h"
+#include "port_input_devices.h"
+#include "port_input_remap_ui.h"
+#include "port_savestate.h"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+
+#include <cstdio>
+#include <string>
+
+namespace PortDebug {
 
 void DrawSaveStatesTab() {
   ImGui::TextDisabled("Save anywhere and load back to the same spot.");
@@ -108,3 +123,5 @@ void DrawSaveStatesTab() {
   }
   ImGui::TextDisabled("Folder: %s", PortSaveState::Folder().c_str());
 }
+
+} // namespace PortDebug

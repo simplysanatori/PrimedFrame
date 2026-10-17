@@ -1,7 +1,36 @@
-// Part of platform/debug_ui.cpp: Sections of the Game and System pages: cutscenes, unlocks,
-// speedrun, Discord, updates, the texture pack status and the overlay options. Included by
-// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
-// namespaces.
+// F1 overlay: Sections of the Game and System pages: cutscenes, unlocks, speedrun, Discord,
+// updates, the texture pack status and the overlay options. State and helpers shared with the other
+// parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_paths.h"
+#include "port_discord.h"
+#include "port_update_check.h"
+#include "port_livesplit.h"
+#include "port_skip_cutscenes.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_misc.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#include <jni.h>
+#endif
+
+#include <cstdio>
+#include <ctime>
+#include <mutex>
+#include <string>
+#include <utility>
+
+namespace PortDebug {
 
 void DrawCutscenesSection() {
   ImGui::SeparatorText("Cutscenes");
@@ -270,8 +299,6 @@ void PickTexturePack() {
 }
 #endif
 
-void DrawTexturePack();
-
 // The look of this overlay: the floating window, the theme and the menu sounds.
 void DrawOverlaySection() {
   ImGui::SeparatorText("Overlay");
@@ -295,3 +322,5 @@ void DrawOverlaySection() {
              "with the Plain theme.");
   }
 }
+
+} // namespace PortDebug

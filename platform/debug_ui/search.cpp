@@ -1,6 +1,107 @@
-// Part of platform/debug_ui.cpp: Pages and sub-tabs, and the settings search (index, jumps,
-// results). Included by debug_ui.cpp at this point in the file, not compiled on its own: it shares
-// that file's state and namespaces.
+// F1 overlay: Pages and sub-tabs, and the settings search (index, jumps, results). State and
+// helpers shared with the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_gyro_motion.h"
+#include "port_pointer.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_gci.h"
+#include "port_discord.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+
+#include <algorithm>
+#include <cstring>
+#include <sstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+// ImGui's item hooks, forwarded by extern/aurora/extern/imgui_item_hook.cpp.
+extern void (*gImGuiItemAddHook)(ImGuiContext* ctx, ImGuiID id, const ImRect& rect);
+extern void (*gImGuiItemInfoHook)(ImGuiContext* ctx, ImGuiID id, const char* label,
+                                  ImGuiItemStatusFlags flags);
+
+namespace PortDebug {
+
+const DebugPage kDebugPages[] = {
+    {"Game", DrawGameTab},
+    {"Controls", DrawControlsTab},
+    {"Video", DrawVideoTab},
+    {"Remastered", DrawRemasteredTab},
+    {"Mods", DrawModsTab},
+    {"Randomizer", DrawRandomizerTab},
+    {"Archipelago", DrawArchipelagoTab},
+    {"Tracker", DrawTrackerTab},
+    {"Save states", DrawSaveStatesTab},
+    {"System", DrawSystemTab},
+    {"Debug", DrawDebugTab},
+};
+const int kDebugPageCount = static_cast< int >(std::size(kDebugPages));
+
+// MP_DEBUG_TAB=<page>[/<sub-tab>], case-insensitive. The old page names are
+// kept: Input, Render, Performance, Extras, States, Session and Chat.
+const StartTarget& GetStartTarget() {
+  static const StartTarget target = [] {
+    StartTarget t;
+    const char* env = port::EnvString("MP_DEBUG_TAB");
+    if (env == nullptr || *env == '\0') {
+      return t;
+    }
+    std::string raw = env;
+    if (const size_t slash = raw.find('/'); slash != std::string::npos) {
+      t.sub = raw.substr(slash + 1);
+      raw.resize(slash);
+    }
+    struct Alias {
+      const char* from;
+      const char* page;
+      const char* sub;
+    };
+    static const Alias kAliases[] = {
+        {"Input", "Controls", ""},         {"Render", "Video", ""},
+        {"Performance", "Video", "Frame rate"}, {"Extras", "Game", ""},
+        {"States", "Save states", ""},     {"Session", "Archipelago", "Connection"},
+        {"Chat", "Archipelago", "Chat"},
+    };
+    t.page = raw;
+    for (const Alias& alias : kAliases) {
+      if (SDL_strcasecmp(raw.c_str(), alias.from) == 0) {
+        t.page = alias.page;
+        if (t.sub.empty()) {
+          t.sub = alias.sub;
+        }
+      }
+    }
+    return t;
+  }();
+  return target;
+}
+
+namespace {
+// A settings search result being opened (see JumpTo).
+struct SearchJump {
+  const SettingsIndexRow* row = nullptr;
+  int page = -1;      // kDebugPages index still to select
+  bool sub = false;   // the row's sub-tab is still to select
+  int occurrence = 0; // which of the items with this label on the page
+  int seen = 0;       // items with the label drawn so far this frame
+  bool found = false;
+  double start = 0.0;            // when the jump began, then when the widget was found
+  ImGuiID added = 0;             // the widget, when the item-add hook matched it
+  ImGuiWindow* window = nullptr; // where the widget was drawn this frame, to flash it
+  ImRect rect;
+  bool inPage = false; // inside a page's body, not the page list, tabs or results
+};
+SearchJump sJump;
+} // namespace
 
 int TakeJumpPage() {
   const int page = sJump.page;
@@ -39,14 +140,6 @@ bool SubTab(const char* page, const char* name) {
 // and picking one opens its page, sub-tab and collapsing header, scrolls to the
 // widget and flashes it. The widget is found by its label through ImGui's item
 // hook, which reports items only while a jump is under way.
-struct SettingsIndexRow {
-  const char* page;
-  const char* sub;
-  const char* section;
-  const char* label;
-  const char* keywords;
-};
-
 constexpr SettingsIndexRow kSettingsIndex[] = {
 #include "../port_settings_index.inc"
 };
@@ -335,3 +428,5 @@ ImGuiWindow* ScrollableWindowAt(ImGuiWindow* window) {
   }
   return nullptr;
 }
+
+} // namespace PortDebug

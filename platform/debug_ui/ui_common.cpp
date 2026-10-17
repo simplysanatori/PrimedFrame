@@ -1,7 +1,43 @@
-// Part of platform/debug_ui.cpp: Shared overlay plumbing: page layout, themes, menu sounds, UI
-// scale, the GPU self-test, controller navigation, the toggle and help markers. Included by
-// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
-// namespaces.
+// F1 overlay: Shared overlay plumbing: page layout, themes, menu sounds, UI scale, the GPU self-
+// test, controller navigation, the toggle and help markers. State and helpers shared with the other
+// parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_graphics_backend.h"
+#include "port_gyro_motion.h"
+#include "port_pointer.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_input_devices.h"
+#include "port_input_remap_ui.h"
+#include "port_mods.h"
+#include "port_discord.h"
+#include "port_savestate.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "Kyoto/Graphics/CGX.hpp"
+#include "Kyoto/Audio/CSfxManager.hpp"
+#include "MetroidPrime/SFX/UI.h"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_dialog.h>
+#include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_timer.h>
+#include <SDL3/SDL_events.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+
+namespace PortDebug {
 
 // State only this part uses.
 namespace {
@@ -241,7 +277,7 @@ void ApplyThemeIfChanged() {
 }
 
 // Status colours that stay legible on the current theme. Plain returns `plain`, the old values.
-ImVec4 ThemeWarnColor(const ImVec4& plain = ImVec4(1.f, 0.8f, 0.3f, 1.f)) {
+ImVec4 ThemeWarnColor(const ImVec4& plain) {
   switch (sThemeResolved) {
   case kThemePrime: return ImVec4(1.f, 0.88f, 0.32f, 1.f); // yellow, apart from the amber accent
   case kThemeRemastered: return ImVec4(1.f, 0.82f, 0.38f, 1.f);
@@ -249,7 +285,7 @@ ImVec4 ThemeWarnColor(const ImVec4& plain = ImVec4(1.f, 0.8f, 0.3f, 1.f)) {
   }
 }
 
-ImVec4 ThemeGoodColor(const ImVec4& plain = ImVec4(0.4f, 1.f, 0.4f, 1.f)) {
+ImVec4 ThemeGoodColor(const ImVec4& plain) {
   switch (sThemeResolved) {
   case kThemePrime: return ImVec4(0.45f, 0.95f, 0.55f, 1.f);
   case kThemeRemastered: return ImVec4(0.45f, 1.f, 0.80f, 1.f);
@@ -257,7 +293,7 @@ ImVec4 ThemeGoodColor(const ImVec4& plain = ImVec4(0.4f, 1.f, 0.4f, 1.f)) {
   }
 }
 
-ImVec4 ThemeBadColor(const ImVec4& plain = ImVec4(1.f, 0.5f, 0.3f, 1.f)) {
+ImVec4 ThemeBadColor(const ImVec4& plain) {
   switch (sThemeResolved) {
   case kThemePrime: return ImVec4(1.f, 0.42f, 0.35f, 1.f);
   case kThemeRemastered: return ImVec4(1.f, 0.45f, 0.52f, 1.f);
@@ -534,15 +570,7 @@ void Toggle() {
   }
 }
 
-namespace {
-// What a setting does. A tooltip on the desktop; a tap shows none, so Android
-// prints it, dimmed, under the setting instead.
-#if defined(__ANDROID__)
-constexpr bool kInlineHelp = true;
-#else
-constexpr bool kInlineHelp = false;
-#endif
-
+// What a setting does (kInlineHelp: printed under it on Android, a tooltip elsewhere).
 void ItemHelp(const char* text) {
   if (kInlineHelp) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
@@ -562,7 +590,6 @@ void SameLineAfterHelp() {
     ImGui::SameLine();
   }
 }
-} // namespace
 
 // Rows the Original experience overrides: shown with their saved values, which
 // come back when it's turned off.
@@ -580,3 +607,5 @@ void EndOriginalLocked(bool locked) {
     ImGui::EndDisabled();
   }
 }
+
+} // namespace PortDebug

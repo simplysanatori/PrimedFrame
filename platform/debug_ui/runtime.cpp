@@ -1,7 +1,55 @@
-// Part of platform/debug_ui.cpp: Frame interpolation switches, audio backends, reset, debug views,
-// teleports and the world sweep, overlay visibility, game options and the settings log. Included by
-// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
-// namespaces.
+// F1 overlay: Frame interpolation switches, audio backends, reset, debug views, teleports and the
+// world sweep, overlay visibility, game options and the settings log. State and helpers shared with
+// the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_gyro_motion.h"
+#include "port_freecam.h"
+#include "port_hd_font.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_input_devices.h"
+#include "port_discord.h"
+#include "port_tracker.h"
+#include "port_mouse.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "Kyoto/Graphics/CCubeModel.hpp"
+#include "MetroidPrime/CMapWorld.hpp"
+#include "MetroidPrime/CMemoryCard.hpp"
+#include "MetroidPrime/CWorld.hpp"
+#include "MetroidPrime/Player/CGameOptions.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
+#include "Kyoto/CResFactory.hpp"
+#include "Kyoto/Streams/CMemoryInStream.hpp"
+#include "Kyoto/Streams/CMemoryStreamOut.hpp"
+
+#include <aurora/imgui.h>
+#include <dolphin/gx/GXExtra.h>
+#include <imgui_internal.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <string>
+#include <utility>
+#include <vector>
+
+#if !defined(_WIN32)
+extern char** environ;
+#endif
+
+// Implemented by the AI and MusyX audio backends.
+extern "C" void AIPortSetOutputEnabled(int enabled);
+extern "C" int AIPortOutputEnabled(void);
+extern "C" void salSetMuted(int muted);
+
+namespace PortDebug {
 
 // State only this part uses.
 namespace {
@@ -76,11 +124,7 @@ void SetPoseInterpolation(bool enabled) {
   sPoseInterpolation = enabled;
 }
 
-void SetRoomGeoResident(bool enabled) {
-  EnsureInitialized();
-  sRoomGeoResident = enabled;
-  MarkDirty();
-}
+void SetRoomGeoResident(bool enabled) { StoreSetting(sRoomGeoResident, enabled); }
 
 bool RoomGeoResidentAtStartup() {
   std::ifstream file(SettingsFilePath());
@@ -137,10 +181,7 @@ void SetPresentOverride(float value) {
   sPresentCycleFrame = 0;
 }
 
-float PresentOverrideValue() {
-  EnsureInitialized();
-  return sPresentOverride;
-}
+float PresentOverrideValue() { return Loaded(sPresentOverride); }
 
 bool TickHold() { return sTickHold; }
 
@@ -526,10 +567,7 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
   return true;
 }
 
-bool Visible() {
-  EnsureInitialized();
-  return sVisible;
-}
+bool Visible() { return Loaded(sVisible); }
 
 bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); }
 
@@ -579,6 +617,7 @@ std::string GameOptionsHex(CGameOptions& options) {
   }
   return hex;
 }
+} // namespace
 
 // Records the game's options whenever they change, wherever from (pause menu,
 // front-end options, F1, a loaded save state).
@@ -596,7 +635,6 @@ void SyncGameOptions() {
     }
   }
 }
-} // namespace
 
 void RestoreGameOptions() {
   EnsureInitialized();
@@ -656,3 +694,5 @@ void LogSettings() {
 bool sDiscReadFailedLastSession = false;
 
 void NoteDiscReadFailedLastSession() { sDiscReadFailedLastSession = true; }
+
+} // namespace PortDebug

@@ -1,5 +1,19 @@
-// Part of platform/debug_ui.cpp: Audio and voice mutes. Included by debug_ui.cpp at this point in
-// the file, not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: Audio and voice mutes. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_debug.h"
+#include "port_pointer.h"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <musyx/port_voices.h>
+
+#include <algorithm>
+#include <vector>
+
+namespace PortDebug {
 
 void DrawAudio() {
   bool ai = AiAudioEnabled();
@@ -84,3 +98,5 @@ void DrawVoices() {
     MarkDirty();
   }
 }
+
+} // namespace PortDebug

@@ -1,8 +1,44 @@
-// Part of platform/debug_ui.cpp: Windows drawn over the game outside the overlay pages: toasts, the
-// photo mode bar, the resume prompt and alerts. Included by debug_ui.cpp at this point in the file,
-// not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: Windows drawn over the game outside the overlay pages: toasts, the photo mode bar,
+// the resume prompt and alerts. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
 
-namespace {
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_graphics_backend.h"
+#include "port_gyro_motion.h"
+#include "port_freecam.h"
+#include "port_photo.h"
+#include "port_pointer.h"
+#include "port_input_devices.h"
+#include "port_input_remap_ui.h"
+#include "port_mods.h"
+#include "port_discord.h"
+#include "port_update_check.h"
+#include "port_savestate.h"
+#include "port_build_info.h"
+
+#include <aurora/gfx.h>
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_misc.h>
+#include <SDL3/SDL_mouse.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <cstdio>
+#include <ctime>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace PortDebug {
 
 // Once per launch, a few seconds, no input taken: a Remastered import from an older importer.
 void DrawStaleImportToast() {
@@ -37,6 +73,7 @@ void DrawStaleImportToast() {
   ImGui::End();
 }
 
+namespace {
 // Once per launch, for 12 s: a newer release than this build is out.
 // Taps arrive on Android's UI thread (TouchControlsView), so the rect is shared under
 // a lock and a hit only sets a flag; the page opens on the game thread.
@@ -62,8 +99,12 @@ void OpenUpdateToastRelease() {
 // next free y and, once drawn, pushes it below itself. Reset at the start of every frame.
 float sTopToastNextY = 0.f;
 
+} // namespace
+
 void BeginTopToastStack() { sTopToastNextY = 16.f; }
 
+
+namespace {
 void PlaceTopToast(const ImGuiViewport* viewport) {
   ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f, viewport->Pos.y + sTopToastNextY),
                           ImGuiCond_Always, ImVec2(0.5f, 0.f));
@@ -74,6 +115,79 @@ void TopToastPlaced(const ImGuiViewport* viewport) {
   sTopToastNextY = ImGui::GetWindowPos().y - viewport->Pos.y + ImGui::GetWindowSize().y + 8.f;
 }
 
+// Photo mode on a touchscreen: the touch controls hide (nativeDebugOverlayVisible), a finger
+// put down on the left half is an invisible stick centred where it landed, and one on the right
+// half drags the view. Fingers that land on the photo windows are left to ImGui. Events arrive on
+// Android's UI thread, so the state is shared under a lock and the game thread takes it each frame.
+constexpr float kPhotoStickRadius = 0.12f; // of the screen height, for a full stick
+constexpr float kPhotoLookDegrees = 100.f; // per screen height dragged
+struct PhotoTouch {
+  bool stickDown = false, lookDown = false; // Android finger ids start at 0
+  SDL_FingerID stick = 0;
+  SDL_FingerID look = 0;
+  float stickX = 0.f, stickY = 0.f; // where the stick finger landed
+  float moveX = 0.f, moveY = 0.f;
+  float lookX = 0.f, lookY = 0.f; // the look finger's last place
+  float yaw = 0.f, pitch = 0.f;   // not taken yet
+  bool enabled = false;
+  float aspect = 1.f; // window width over height
+  std::vector<ImVec4> windows; // x0, y0, x1, y1 as fractions of the window
+};
+std::mutex sPhotoTouchMutex;
+PhotoTouch sPhotoTouch;
+} // namespace
+
+void PhotoTouchEvent(const SDL_Event& event) {
+  if (event.type != SDL_EVENT_FINGER_DOWN && event.type != SDL_EVENT_FINGER_MOTION &&
+      event.type != SDL_EVENT_FINGER_UP && event.type != SDL_EVENT_FINGER_CANCELED) {
+    return;
+  }
+  const SDL_TouchFingerEvent& f = event.tfinger;
+  std::lock_guard lock(sPhotoTouchMutex);
+  PhotoTouch& t = sPhotoTouch;
+  if (event.type == SDL_EVENT_FINGER_DOWN) {
+    if (!t.enabled) {
+      return;
+    }
+    for (const ImVec4& r : t.windows) {
+      if (f.x >= r.x && f.x <= r.z && f.y >= r.y && f.y <= r.w) {
+        return;
+      }
+    }
+    if (f.x < 0.5f && !t.stickDown) {
+      t.stickDown = true;
+      t.stick = f.fingerID;
+      t.stickX = f.x;
+      t.stickY = f.y;
+      t.moveX = t.moveY = 0.f;
+    } else if (f.x >= 0.5f && !t.lookDown) {
+      t.lookDown = true;
+      t.look = f.fingerID;
+      t.lookX = f.x;
+      t.lookY = f.y;
+    }
+  } else if (event.type == SDL_EVENT_FINGER_MOTION) {
+    if (t.stickDown && f.fingerID == t.stick) {
+      t.moveX = std::clamp((f.x - t.stickX) * t.aspect / kPhotoStickRadius, -1.f, 1.f);
+      t.moveY = std::clamp((t.stickY - f.y) / kPhotoStickRadius, -1.f, 1.f);
+    } else if (t.lookDown && f.fingerID == t.look) {
+      t.yaw -= (f.x - t.lookX) * t.aspect * kPhotoLookDegrees;
+      t.pitch -= (f.y - t.lookY) * kPhotoLookDegrees;
+      t.lookX = f.x;
+      t.lookY = f.y;
+    }
+  } else {
+    if (t.stickDown && f.fingerID == t.stick) {
+      t.stickDown = false;
+      t.moveX = t.moveY = 0.f;
+    }
+    if (t.lookDown && f.fingerID == t.look) {
+      t.lookDown = false;
+    }
+  }
+}
+
+namespace {
 // Once per frame on the game thread: hands the touches to the free camera, and records where the
 // photo windows are (`windows`) and whether fingers may fly the camera now.
 void PhotoTouchFrame(bool enabled, std::vector<ImVec4> windows) {
@@ -116,6 +230,7 @@ ImVec4 PhotoWindowRect(const ImGuiViewport* viewport) {
                 (pos.x + size.x - viewport->Pos.x) / viewport->Size.x,
                 (pos.y + size.y - viewport->Pos.y) / viewport->Size.y);
 }
+} // namespace
 
 // The photo mode panel (top right, compact) and its messages (a toast under the others).
 void DrawPhotoUI() {
@@ -397,7 +512,9 @@ void DrawUpdateToast() {
 // loads waited behind each build: a crawling title screen and file select for minutes
 // (issue #54: GTX 550 Ti, 0.2-1.7 s per shader). In game it loads little and runs smoothly.
 // Aurora starts them held under D3D11.
+namespace {
 bool sBackgroundShadersHeld = false;
+} // namespace
 
 void HoldBackgroundShadersOnFrontEnd() {
   // MP_HOLD_FRONTEND_SHADERS=1/0 forces it on/off on any backend.
@@ -554,4 +671,19 @@ void DrawDiscReadFailedAlert() {
   ImGui::PopStyleColor(3);
 }
 
-} // namespace
+bool UpdateToastShowing() {
+  std::lock_guard lock(sUpdateToastMutex);
+  return sUpdateToastShowing;
+}
+
+bool TapUpdateToast(float x, float y) {
+  std::lock_guard lock(sUpdateToastMutex);
+  const ImVec4& r = sUpdateToastRect;
+  if (!sUpdateToastShowing || x < r.x || x > r.z || y < r.y || y > r.w) {
+    return false;
+  }
+  sUpdateToastTapped.store(true);
+  return true;
+}
+
+} // namespace PortDebug

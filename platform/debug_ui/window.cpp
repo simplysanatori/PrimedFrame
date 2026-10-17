@@ -1,6 +1,37 @@
-// Part of platform/debug_ui.cpp: Touch scrolling, the page and desktop windows, and DrawUI.
-// Included by debug_ui.cpp at this point in the file, not compiled on its own: it shares that
-// file's state and namespaces.
+// F1 overlay: Touch scrolling, the page and desktop windows, and DrawUI. State and helpers shared
+// with the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_graphics_backend.h"
+#include "port_pointer.h"
+#include "port_paths.h"
+#include "port_config_reset.h"
+#include "port_importers.h"
+#include "port_discord.h"
+#include "port_build_info.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+
+#include <aurora/gfx.h>
+#include <aurora/imgui.h>
+#include <dolphin/vi.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_dialog.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <string>
+
+namespace PortDebug {
 
 // State only this part uses.
 namespace {
@@ -187,7 +218,7 @@ bool DrawPageWindow() {
     // MP_DEBUG_TAB=<name> opens on that page, for captures of the overlay.
     static bool sStartPending = true;
     if (sStartPending) {
-      for (int i = 0; i < static_cast< int >(ARRAY_SIZE(kDebugPages)); ++i) {
+      for (int i = 0; i < kDebugPageCount; ++i) {
         if (SDL_strcasecmp(GetStartTarget().page.c_str(), kDebugPages[i].name) == 0) {
           sPage = i;
         }
@@ -195,13 +226,13 @@ bool DrawPageWindow() {
       sStartPending = false;
     }
     float listWidth = 0.f;
-    for (const DebugPage& page : kDebugPages) {
-      listWidth = std::max(listWidth, ImGui::CalcTextSize(page.name).x);
+    for (int i = 0; i < kDebugPageCount; ++i) {
+      listWidth = std::max(listWidth, ImGui::CalcTextSize(kDebugPages[i].name).x);
     }
     listWidth += style.FramePadding.x * 2.f + style.WindowPadding.x * 2.f;
     const float rowHeight = ImGui::GetFrameHeight() * 1.2f;
     if (ImGui::BeginChild("##pages", ImVec2(listWidth, 0.f), ImGuiChildFlags_Borders)) {
-      for (int i = 0; i < static_cast< int >(ARRAY_SIZE(kDebugPages)); ++i) {
+      for (int i = 0; i < kDebugPageCount; ++i) {
         if (ImGui::Selectable(kDebugPages[i].name, sPage == i && !Searching(),
                               ImGuiSelectableFlags_None, ImVec2(0.f, rowHeight))) {
           sPage = i;
@@ -257,7 +288,7 @@ bool DrawDesktopWindow() {
       // MP_DEBUG_TAB=<name> opens on that tab, for captures of the overlay.
       static bool sStartPending = true;
       const int jumpPage = TakeJumpPage();
-      for (int i = 0; i < static_cast< int >(ARRAY_SIZE(kDebugPages)); ++i) {
+      for (int i = 0; i < kDebugPageCount; ++i) {
         const DebugPage& page = kDebugPages[i];
         const bool start =
             sStartPending && SDL_strcasecmp(GetStartTarget().page.c_str(), page.name) == 0;
@@ -361,3 +392,5 @@ void DrawUI() {
     SaveSettings();
   }
 }
+
+} // namespace PortDebug

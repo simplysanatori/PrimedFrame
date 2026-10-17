@@ -1,5 +1,13 @@
-// Part of platform/debug_ui.cpp: The Performance tab. Included by debug_ui.cpp at this point in the
-// file, not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: The Performance tab. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+
+
+namespace PortDebug {
 
 void DrawPerformanceTab() {
   ImGui::SeparatorText("Frame rate");
@@ -67,3 +75,5 @@ void DrawPerformanceTab() {
            "frames instead.");
   EndOriginalLocked(locked);
 }
+
+} // namespace PortDebug
