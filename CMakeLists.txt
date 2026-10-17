@@ -186,6 +186,7 @@ set(MP_PORT_SOURCES
     platform/port_ap_world.cpp
     platform/port_rando_gen.cpp
     platform/port_apclient.cpp
+    platform/port_apclient_worker.cpp
     platform/port_ap_solo.cpp
     platform/port_rando_seed.cpp
     platform/port_json.cpp
