@@ -490,24 +490,20 @@ for the `.nsp`/`.xci` and one for the key file. Neither file is copied: the impo
 reads them where they are. It runs on two threads there to keep its memory
 down. Not yet run on a device.
 
-Remastered authors a beam effect's child offsets in its LBEAM bone frame (X
-right, Y up, Z back down the barrel; in the source skeleton the bone's relative
-rotation is Ry(+90) to its tip_base parent, while `Rx(+90)` below is the
-port-side coordinate-basis correction between that frame and the retail
-locator's), where the retail locator the port samples has Y forward and Z up, so
-a converted charge effect drawn with it put its authored +Z offset - the Power
-charge disc's `(0,0,0.15)` at scale 2 - straight up (0.30 m) instead of back
-along the barrel, and the ball sat above the muzzle. The
-converted charge effect now takes `locator x Rx(+90 deg)`
-(`NPortChargeFxDetail::ConvertedChargeMuzzleFrame`). Scope, deliberately
-narrow: only the charge muzzle effect (slot 1 of the gun weapon's two) and only
-when its generator came from an import; its sampled translation, the global
-scale, the retail path (translation only, no orientation) and every other
-muzzle flash, combo-transfer and auxiliary-muzzle attachment are unchanged, and
-nothing else in this file follows from it. The frame change rests on the arm
-chain and bone labels of the Remastered gun skeleton, not on a captured
-comparison; a converted normal muzzle flash keeps the sampled locator because
-its own frame was not established.
+Converted **Power charge effects (slot 1 only)** take the sampled retail locator
+rotation times `B = [-1 0 0; 0 0 1; 0 1 0]`
+(`NPortChargeFxDetail::ConvertedPowerChargeMuzzleFrame`). Its columns are
+`(-col0, col2, col1)`, with determinant +1 and unchanged sampled translation.
+Native Power's effective LBEAM includes a legacy-wrapper rotation correction:
+raw/bind bone axes alone do not describe that attachment. The corrected native
+frame is X left, Y up, Z forward, while retail is X right, Y forward, Z up.
+Thus the authored `(0,0,0.15)` at scale 2 points 0.30 m forward in the sampled
+retail frame; the previous `Rx(+90)` policy pointed it backward. This is a
+source-contract correction, not native animation retargeting or matched-pose
+visual parity. It does not establish other beams' effective native frames:
+converted non-Power charges retain `locator x Rx(+90)` and converted normal
+flashes retain the full sampled locator. Retail effects remain translation-only;
+scale, timing, materials, combo-transfer and auxiliary attachments are unchanged.
 
 ### Collision stays on the disc's model
 
