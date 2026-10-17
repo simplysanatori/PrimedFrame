@@ -4,6 +4,7 @@
 #include "port_ap_metroidprime.h"
 #include "port_ap_world.h"
 #include "port_json.h"
+#include "port_json_writer.h"
 #include "port_test.h"
 
 #include <algorithm>
@@ -106,6 +107,11 @@ void CheckSeed(const Settings& settings, const std::string& text) {
   const char* reason = nullptr;
   REQUIRE(PortJson::Parse(seed.slotData, root, offset, &reason));
   REQUIRE(root.IsObject());
+  // The slot data is canonical compact JSON: what the seed file's writer
+  // makes of it again is the same text, so a saved seed reads back unchanged.
+  port::JsonWriter canonical;
+  canonical.Value(root);
+  REQUIRE(canonical.Take() == seed.slotData);
   PortApWorld::Layout layout;
   const PortApLogic::Options options = OptionsFromSlotData(root, layout);
   REQUIRE(Sweep(seed, options) == 100);
@@ -229,6 +235,35 @@ int main() {
     REQUIRE(Make(u, "determinism").placements != a.placements);
     const Seed r = Make(Settings(), "");
     REQUIRE(r.name.size() == 8);
+  }
+
+  // Golden output: the options at the head of slot_data, byte for byte, as
+  // the hand-assembled writer made them before port::JsonWriter replaced it
+  // (0/1 for toggles, the apworld's key order, escaped trick names).
+  {
+    Settings s;
+    s.randomizeStartingBeam = true;
+    s.trickDifficulty = 1;
+    s.trickAllow = {"Wallcrawl", "Say \"hi\"\n\\"};
+    s.trickDeny = {"Bomb Jump"};
+    s.blastShieldRandomization = 2;
+    s.etankCapacity = 37;
+    const std::string slotData = Make(s, "golden").slotData;
+    const std::string head = slotData.substr(0, slotData.find("\"starting_room_name\""));
+    REQUIRE(head ==
+        "{\"missile_launcher\":0,\"main_power_bomb\":0,\"progressive_beam_upgrades\":0,"
+        "\"shuffle_scan_visor\":0,\"pre_scan_elevators\":1,\"elevator_randomization\":0,"
+        "\"door_color_randomization\":0,\"trick_difficulty\":1,\"combat_logic_difficulty\":0,"
+        "\"remove_xray_requirements\":0,\"remove_thermal_requirements\":0,"
+        "\"flaahgra_power_bombs\":0,\"etank_capacity\":37,\"non_varia_heat_damage\":1,"
+        "\"staggered_suit_damage\":1,\"backwards_lower_mines\":0,\"remove_hive_mecha\":1,"
+        "\"spring_ball\":1,\"shuffle_unlimited_missiles\":0,\"shuffle_unlimited_power_bombs\":0,"
+        "\"required_artifacts\":12,\"final_bosses\":0,\"artifact_hints\":1,\"starting_room\":0,"
+        "\"randomize_starting_beam\":1,\"blast_shield_randomization\":2,"
+        "\"blast_shield_frequency\":4,\"blast_shield_available_types\":0,\"locked_door_count\":0,"
+        "\"include_power_beam_doors\":0,\"include_morph_ball_bomb_doors\":0,"
+        "\"starting_beam\":\"Ice Beam\",\"trick_allow_list\":[\"Wallcrawl\",\"Say \\\"hi\\\"\\n\\\\\"],"
+        "\"trick_deny_list\":[\"Bomb Jump\"],");
   }
 
   // Pool composition per combination, then a spread of seeds.
