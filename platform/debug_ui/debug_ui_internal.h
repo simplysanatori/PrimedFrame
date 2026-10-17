@@ -98,6 +98,7 @@ extern bool sTrackerProgress;
 extern int sApSuitDamage;
 extern bool sCheats;
 extern bool sSkippableCutscenes;
+extern bool sBeamDoorsStayUnlocked;
 extern bool sRevision100Compatibility;
 extern std::string sTextLanguage;
 extern int sElevatorRide;

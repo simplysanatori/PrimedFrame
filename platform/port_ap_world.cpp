@@ -745,9 +745,103 @@ std::vector< uint8_t > RoomOps(const Layout& layout, uint32_t mrea,
   return ops;
 }
 
-std::vector< DoorChange > Doors(const Layout& layout, uint32_t mrea, const uint32_t* broken) {
+namespace {
+
+// A door the "unlock beam doors once opened" setting may turn blue: its lock.
+bool BeamLock(int lock) { return lock == 1 || lock == 2 || lock == 3 || lock == 5; }
+bool BeamLockName(const std::string& type) {
+  return type == "Wave Beam" || type == "Ice Beam" || type == "Plasma Beam" ||
+         type == "Power Beam Only";
+}
+
+// Per door, the bit of its doorway in the unlock set, -1 for a door that
+// isn't a beam door on the disc. The two sides of a doorway share a bit, and
+// bits count up in table order, so they're stable for a build.
+struct UnlockTable {
+  std::vector< int > bit;
+  int count = 0;
+};
+const UnlockTable& Unlocks() {
+  static const UnlockTable table = [] {
+    UnlockTable t;
+    t.bit.assign(kDoorCount, -1);
+    for (int i = 0; i < kDoorCount; ++i) {
+      if (!BeamLock(kDoors[i].defaultLock))
+        continue;
+      const int pair = PairedDoor(i);
+      t.bit[i] = pair >= 0 && pair < i && t.bit[pair] >= 0 ? t.bit[pair] : t.count++;
+    }
+    return t;
+  }();
+  return table;
+}
+
+bool UnlockSet(const uint32_t* unlocked, int bit) {
+  return unlocked != nullptr && bit >= 0 && bit < kBeamDoorBits &&
+         ((unlocked[bit / 32] >> (bit % 32)) & 1) != 0;
+}
+
+} // namespace
+
+int BeamDoorwayCount() { return Unlocks().count; }
+
+int BeamDoorwayBit(int door) {
+  return door >= 0 && door < kDoorCount ? Unlocks().bit[door] : -1;
+}
+
+int FindDoorByForce(uint32_t mrea, uint32_t forceId) {
+  if (forceId == 0)
+    return -1;
+  for (int i = 0; i < kDoorCount; ++i) {
+    const Door& d = kDoors[i];
+    if (kRooms[d.room].mrea == mrea && (d.forces[0] == forceId || d.forces[1] == forceId))
+      return i;
+  }
+  return -1;
+}
+
+bool BeamDoorUnlockable(const Layout& layout, uint32_t mrea, int door, const uint32_t* broken) {
+  if (BeamDoorwayBit(door) < 0)
+    return false;
+  for (const DoorChange& change : Doors(layout, mrea, broken)) {
+    if (change.index != door)
+      continue;
+    return (change.shield.empty() || change.shield == "None") &&
+           (change.type.empty() || BeamLockName(change.type));
+  }
+  // The seed leaves it as the disc has it.
+  return true;
+}
+
+std::vector< DoorChange > BeamDoorway(int bit) {
   std::vector< DoorChange > out;
-  if (!layout.hasDoorColors && !layout.hasShields)
+  for (int i = 0; i < kDoorCount; ++i) {
+    const Door& d = kDoors[i];
+    if (Unlocks().bit[i] != bit || bit < 0 || d.doorId == 0)
+      continue;
+    DoorChange change;
+    change.index = i;
+    change.pair = PairedDoor(i);
+    change.mrea = kRooms[d.room].mrea;
+    change.dock = d.dock;
+    change.vertical = (d.flags & kDoorVertical) != 0;
+    change.doorId = d.doorId;
+    for (int k = 0; k < 2; ++k) {
+      change.forces[k] = d.forces[k];
+      change.shieldActors[k] = d.shields[k];
+    }
+    out.push_back(change);
+  }
+  return out;
+}
+
+std::vector< DoorChange > Doors(const Layout& layout, uint32_t mrea, const uint32_t* broken,
+                                const uint32_t* unlocked) {
+  std::vector< DoorChange > out;
+  // Without a seed's colours or shields the disc's doors stay as they are,
+  // bar the ones the player unlocked.
+  const bool seeded = layout.hasDoorColors || layout.hasShields;
+  if (!seeded && unlocked == nullptr)
     return out;
   // DoorShieldFromBlastShieldType: the door a blast shield sits on, per kShields.
   static const char* const kUnderShield[] = {"Bomb",       "Blue", "Plasma Beam",     "Ice Beam",
@@ -755,7 +849,13 @@ std::vector< DoorChange > Doors(const Layout& layout, uint32_t mrea, const uint3
                                              "Disabled",   "Blue"};
   const int kDisabled = NameIndex(kShields, "Disabled");
   const int kNoShield = NameIndex(kShields, "None");
-  const Resolved resolved = Resolve(layout);
+  Resolved resolved;
+  if (seeded) {
+    resolved = Resolve(layout);
+  } else {
+    resolved.lock.assign(kDoorCount, -1);
+    resolved.shield.assign(kDoorCount, -1);
+  }
   auto shielded = [&](int door) {
     return resolved.shield[door] >= 0 && resolved.shield[door] != kDisabled &&
            resolved.shield[door] != kNoShield;
@@ -800,6 +900,12 @@ std::vector< DoorChange > Doors(const Layout& layout, uint32_t mrea, const uint3
         }
       }
     }
+    // An unlocked doorway is a plain blue one, unless a blast shield still
+    // sits on it or the seed gave it a lock that isn't a beam's.
+    if (UnlockSet(unlocked, Unlocks().bit[i]) &&
+        (change.shield.empty() || change.shield == "None") &&
+        BeamLockName(change.type.empty() ? kLocks[d.defaultLock] : change.type))
+      change.type = "Blue";
     if (change.type.empty() && change.shield.empty())
       continue;
     change.index = i;
@@ -929,6 +1035,24 @@ const DoorType* FindDoorType(const std::string& name) {
       return &type;
   return nullptr;
 }
+
+} // namespace
+
+bool BlueDoorStyle(DoorStyle& out) {
+  const DoorType* type = FindDoorType("Blue");
+  if (type == nullptr)
+    return false;
+  out.cmdl = type->cmdl;
+  out.cmdlVertical = type->cmdlVertical;
+  out.pattern0 = type->pattern0;
+  out.pattern1 = type->pattern1;
+  out.color = type->color;
+  return true;
+}
+
+std::vector< uint8_t > BlueDoorVulnerability() { return Vulnerability("Blue"); }
+
+namespace {
 
 using port::GetBE32;
 using port::GetBEFloat;
@@ -1837,12 +1961,13 @@ bool IsDoorDependency(uint32_t id) {
   return false;
 }
 
-std::vector< MapDoor > MapDoors(const Layout& layout, uint32_t mapa, const uint32_t* broken) {
+std::vector< MapDoor > MapDoors(const Layout& layout, uint32_t mapa, const uint32_t* broken,
+                                const uint32_t* unlocked) {
   std::vector< MapDoor > out;
   for (const Room& room : kRooms) {
     if (room.mapa != mapa)
       continue;
-    for (const DoorChange& door : Doors(layout, room.mrea, broken)) {
+    for (const DoorChange& door : Doors(layout, room.mrea, broken, unlocked)) {
       const DoorType* type = FindDoorType(door.type);
       if (type == nullptr)
         continue;

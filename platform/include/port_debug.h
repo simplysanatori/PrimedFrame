@@ -296,6 +296,13 @@ void SetApSuitDamage(int mode);
 // (PortSkipCutscenes::Active).
 bool SkippableCutscenes();
 void SetSkippableCutscenes(bool enabled);
+// beam_doors_stay_unlocked (PortBeamDoors): a Wave, Ice, Plasma or Power Beam
+// door whose force field was broken is a plain blue door from then on, on both
+// sides, for the rest of the save. Off by default, and off in the Original
+// experience. Rooms load patched, so turning it on or off applies to rooms
+// loaded afterwards.
+bool BeamDoorsStayUnlocked();
+void SetBeamDoorsStayUnlocked(bool enabled);
 // The stored 1.00 sequence-break compatibility choice (raw, not the effective
 // policy). Randomizer and Archipelago games force it on at use.
 bool Revision100Compatibility();

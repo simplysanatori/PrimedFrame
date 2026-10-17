@@ -971,3 +971,16 @@ static Circle2 MinCircle(int count, const CVector2f* points) {
   result.Radius() = CMath::SqrtF(result.GetRadius());
   return result;
 }
+
+#ifdef TARGET_PC
+void CMapWorld::PortRefreshDoors() {
+  for (size_t i = 0; i < x0_areas.size(); ++i) {
+    CMapAreaData& data = x0_areas[i];
+    if (data.IsLoaded()) {
+      if (CMapArea* area = data.MapArea()) {
+        area->PortSetDoorTypes(data.PortAreaRes());
+      }
+    }
+  }
+}
+#endif

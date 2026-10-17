@@ -1,4 +1,5 @@
 #include "port_apclient_internal.h"
+#include "port_beam_doors.h"
 
 #include "MetroidPrime/CHealthInfo.hpp"
 #include "MetroidPrime/CScriptLayerManager.hpp"
@@ -1386,13 +1387,15 @@ bool DoorOps(uint32_t mrea, const uint8_t* scly, size_t size, std::vector< uint8
       std::lock_guard< std::mutex > lock(PlacedShieldsMutex());
       PlacedShields().erase(mrea);
     }
+    // Without a seed the layout is the disc's, and only the doorways the player
+    // unlocked (the beam doors setting) change.
     const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
-    if (seedLayout == nullptr)
-      return false;
-    const PortApWorld::Layout& layout = *seedLayout;
+    const PortApWorld::Layout disc;
+    const PortApWorld::Layout& layout = seedLayout != nullptr ? *seedLayout : disc;
     uint32_t broken[4];
-    const std::vector< PortApWorld::DoorChange > doors =
-        PortApWorld::Doors(layout, mrea, BrokenShields(broken));
+    uint32_t unlocked[PortApWorld::kBeamDoorWords];
+    const std::vector< PortApWorld::DoorChange > doors = PortApWorld::Doors(
+        layout, mrea, BrokenShields(broken), PortBeamDoors::Unlocked(unlocked));
     std::vector< PortSkipCutscenes::ScriptObject > objects;
     if (doors.empty() || !PortSkipCutscenes::ScanObjects(scly, size, objects))
       return false;
@@ -1419,14 +1422,26 @@ bool MapDoors(uint32_t mapa, std::vector< std::pair< uint32_t, int > >& doors) {
   try {
     doors.clear();
     const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
-    if (seedLayout == nullptr)
-      return false;
-    const PortApWorld::Layout& layout = *seedLayout;
+    const PortApWorld::Layout disc;
+    const PortApWorld::Layout& layout = seedLayout != nullptr ? *seedLayout : disc;
     uint32_t broken[4];
-    for (const PortApWorld::MapDoor& door :
-         PortApWorld::MapDoors(layout, mapa, BrokenShields(broken)))
+    uint32_t unlocked[PortApWorld::kBeamDoorWords];
+    for (const PortApWorld::MapDoor& door : PortApWorld::MapDoors(
+             layout, mapa, BrokenShields(broken), PortBeamDoors::Unlocked(unlocked)))
       doors.emplace_back(door.doorId, door.type);
     return !doors.empty();
+  } catch (...) {
+    return false;
+  }
+}
+
+bool BeamDoorUnlockable(uint32_t mrea, int door) {
+  try {
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    const PortApWorld::Layout disc;
+    uint32_t broken[4];
+    return PortApWorld::BeamDoorUnlockable(seedLayout != nullptr ? *seedLayout : disc, mrea, door,
+                                           BrokenShields(broken));
   } catch (...) {
     return false;
   }

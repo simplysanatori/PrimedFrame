@@ -648,6 +648,30 @@
   finish at once, a Reset ends a beetle's emergence, no skip without a
   cutscene camera). Rooms a mod replaced are left unpatched. Archipelago
   games also skip the Landing Site intro: Samus starts on top of her ship.
+- Unlock beam doors once opened (F1 > Game > Cutscenes, `beam_doors_stay_unlocked`,
+  off by default and off in the Original experience): a door locked to the Wave,
+  Ice, Plasma or Power Beam that you open by breaking its force field becomes a
+  plain blue door for good in that save, on both sides: the blue shield and
+  force-field textures, blue weaknesses (any beam opens it), the blue map icon
+  and the blue door's scan. Missile, Bomb and Disabled doors and blast shields
+  are out of scope, and a door that still has an unbroken Archipelago blast
+  shield stays as it is. It works with or without a randomizer or Archipelago
+  seed (a seed's colour mapping decides what a door is first; an unlocked beam
+  door is blue whatever the seed coloured it). A door only a seed's per-door lock
+  colours (blue on the disc) is not covered. The doors of the rooms already loaded
+  change at once (both sides, the force field's weaknesses and textures, the
+  shield's model, the map icons); other rooms load blue. Turning the setting on
+  only affects doors you open afterwards; turning it off shows the original
+  colours again in rooms loaded afterwards (the unlocks stay recorded). The
+  record is one bit per doorway (about 105, `PortApWorld::BeamDoorwayBit`, stable
+  for a build) in a "BDUL" trailer of the save, written after the room marks
+  (`port_beam_doors.h` has the format and the slot budget). A USA slot has room
+  for it unless the save also holds an Archipelago trailer; then it is skipped
+  (the unlocks last for the session and in savestates, and the log says so
+  once), and the room marks are cut back to leave it room. A savestate restore
+  skips an area whose unlocked doors changed since the snapshot (its room patch
+  differs), as for any patched room, and the doors come back blue from the game
+  state. Console: `beamdoors`.
 - 1.00 sequence-break compatibility (F1 > Game > Cutscenes > Revision
   compatibility, `revision_100_compatibility`, off by default; always on in
   randomizer and Archipelago games, where the box shows ticked and disabled)

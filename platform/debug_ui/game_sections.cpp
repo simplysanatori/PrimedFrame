@@ -66,6 +66,15 @@ void DrawCutscenesSection() {
   }
   ItemHelp("How fast the scan visor fills its progress bar. 100% is the original; 200% scans in "
            "half the time. What a scan records is unchanged.");
+  bool beamDoors = sBeamDoorsStayUnlocked;
+  if (ImGui::Checkbox("Unlock beam doors once opened", &beamDoors)) {
+    SetBeamDoorsStayUnlocked(beamDoors);
+  }
+  ItemHelp("A Wave, Ice, Plasma or Power Beam door you have opened by breaking its force field "
+           "stays a plain blue door, on both sides, for the rest of the save: blue look, any beam "
+           "opens it, blue map icon and scan. Missile, Bomb and Disabled doors and blast shields "
+           "are not affected. Takes effect from the next door you open; turning it off shows the "
+           "colours again in rooms loaded afterwards.");
   EndOriginalLocked(locked);
 
   // Not under the Original experience lock: the stored choice applies there too.

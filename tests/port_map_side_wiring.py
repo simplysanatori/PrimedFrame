@@ -190,8 +190,11 @@ class Wiring(WiringCase):
         # writer still writes only what fits.
         fit = between(marks, "inline size_t Fit(", "\n}", MARKS)
         self.assertIn("fit < kTrailerMarks ? fit : kTrailerMarks", fit)
-        self.assertIn("PortMapMarks::Fit(",
+        # CGameState writes through PortBeamDoors::PutTail, which calls Fit.
+        self.assertIn("PortBeamDoors::PutTail(",
                       (root / "src/MetroidPrime/Player/CGameState.cpp").read_text())
+        self.assertIn("PortMapMarks::Fit(",
+                      (root / "platform/include/port_beam_doors.h").read_text())
 
     def test_save_state_carries_the_whole_list(self):
         state = SAVESTATE.read_text()

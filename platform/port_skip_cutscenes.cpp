@@ -129,6 +129,7 @@ std::vector< uint8_t > TempleOps() {
 }
 
 bool PatchScripts(uint32_t mreaId, const uint8_t* scly, size_t size, std::vector< uint8_t >& out);
+bool PatchDoors(uint32_t mreaId, const uint8_t* scly, size_t size, std::vector< uint8_t >& out);
 
 } // namespace
 
@@ -140,6 +141,8 @@ bool PatchArea(uint32_t mreaId, const uint8_t* scly, size_t size, std::vector< u
   out.clear();
   if (Active())
     PatchScripts(mreaId, scly, size, out);
+  else
+    PatchDoors(mreaId, scly, size, out);
   // Revision compatibility (USA 1.00 behaviour on later discs), after the
   // patches above. Randomized games always want it; otherwise it's the
   // setting. A miss keeps what the patches above made.
@@ -236,18 +239,26 @@ bool PatchScripts(uint32_t mreaId, const uint8_t* scly, size_t size, std::vector
     else
       PortLog::Write("archipelago: room %08X's option patch doesn't match, left as is\n", mreaId);
   }
+  PatchDoors(mreaId, scly, size, out);
+  return !out.empty();
+}
+
+// The door types of a seed and of the doorways the player unlocked, on top of
+// `out` when that holds a patched script, else on `scly`. The only door pass
+// of a room load, run whether or not skippable cutscenes are on.
+bool PatchDoors(uint32_t mreaId, const uint8_t* scly, size_t size, std::vector< uint8_t >& out) {
   std::vector< uint8_t > doorOps;
   const bool patched = !out.empty();
-  if (PortAp::DoorOps(mreaId, patched ? out.data() : scly, patched ? out.size() : size, doorOps)) {
-    // The seed's door types.
-    std::vector< uint8_t > doors;
-    if (ApplyOps(patched ? out.data() : scly, patched ? out.size() : size, doorOps.data(),
-                 doorOps.size(), doors) == 0)
-      out.swap(doors);
-    else
-      PortLog::Write("archipelago: room %08X's door patch doesn't match, left as is\n", mreaId);
+  if (!PortAp::DoorOps(mreaId, patched ? out.data() : scly, patched ? out.size() : size, doorOps))
+    return false;
+  std::vector< uint8_t > doors;
+  if (ApplyOps(patched ? out.data() : scly, patched ? out.size() : size, doorOps.data(),
+               doorOps.size(), doors) != 0) {
+    PortLog::Write("archipelago: room %08X's door patch doesn't match, left as is\n", mreaId);
+    return false;
   }
-  return !out.empty();
+  out.swap(doors);
+  return true;
 }
 
 } // namespace
