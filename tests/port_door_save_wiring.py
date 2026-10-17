@@ -20,21 +20,17 @@ import pathlib
 import sys
 import unittest
 
-root = pathlib.Path(sys.argv.pop())
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from wiring_helpers import WiringCase, between, braced, count, root_argument  # noqa: E402
+
+root = root_argument()
 HEADER = root / "include/MetroidPrime/ScriptObjects/CScriptDoor.hpp"
 DOOR = root / "src/MetroidPrime/ScriptObjects/CScriptDoor.cpp"
 ROOM = root / "platform/port_savestate_room.cpp"
 FORMAT = root / "platform/port_savestate_format.cpp"
 
 
-def between(text, start, end, path):
-    assert start in text, f"{path}: no {start!r}"
-    body = text.split(start, 1)[1]
-    assert end in body, f"{path}: no {end!r} after {start!r}"
-    return body.split(end, 1)[0]
-
-
-class Wiring(unittest.TestCase):
+class Wiring(WiringCase):
     def test_capture_writes_every_flag(self):
         room = ROOM.read_text()
         block = between(room, "if (CScriptDoor* door = TCastToPtr< CScriptDoor >(&ent)) {",
@@ -96,7 +92,7 @@ class Wiring(unittest.TestCase):
         # The single-flag entry point is exactly the old behaviour, so a caller
         # that only knows open/closed cannot inherit a close in flight.
         header = HEADER.read_text()
-        wrapper = between(header, "void PortRestoreOpen(bool open) {", "\n", str(HEADER))
+        wrapper = braced(header, "void PortRestoreOpen(bool open)", str(HEADER))
         self.assertIn("PortRestoreDoorState(PortDoorFlags{open, false, false, false})", wrapper)
 
     def test_think_owes_one_message_per_close_path(self):
@@ -114,7 +110,7 @@ class Wiring(unittest.TestCase):
         self.assertIn("mClosing = false;", refused)
         self.assertNotIn("kSM_None", refused)
         # Two branches only: a restored door cannot produce a duplicate Closed.
-        self.assertEqual(door.count("SendScriptMsgs(kSS_Closed"), 5)
+        self.assertEqual(count(door, "SendScriptMsgs(kSS_Closed"), 5)
 
     def test_decoder_publishes_only_valid_payloads(self):
         fmt = FORMAT.read_text()

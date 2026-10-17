@@ -23,7 +23,10 @@ import re
 import sys
 import unittest
 
-root = pathlib.Path(sys.argv.pop())
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from wiring_helpers import WiringCase, between, partition, root_argument  # noqa: E402
+
+root = root_argument()
 CONVERT = root / "platform/port_remastered_effect_convert.cpp"
 OPACITY = root / "platform/include/port_vfx_opacity.h"
 VFX = root / "extern/aurora/include/aurora/vfx.hpp"
@@ -33,13 +36,6 @@ VFX = root / "extern/aurora/include/aurora/vfx.hpp"
 PINNED_SHADER = 0xE899B1DF
 PINNED_WORD = 0x838
 EXPOSED = 1 << 31
-
-
-def between(text, start, end, where):
-    assert start in text, f"{where}: no {start!r}"
-    body = text.split(start, 1)[1]
-    assert end in body, f"{where}: no {end!r} after {start!r}"
-    return body.split(end, 1)[0]
 
 
 def word_of(text):
@@ -114,7 +110,7 @@ def resolve(expression, where):
 
 def entries(text):
     """The top-level `{...}` entries of the recipe table (rows are multi-line)."""
-    body = text.split("static const std::vector<Recipe> table = {", 1)[1]
+    body = partition(text, "static const std::vector<Recipe> table = {")[1]
     depth, out, buffer = 0, [], None
     for character in body:
         if character == "{":
@@ -164,7 +160,7 @@ def table_rows():
 ROWS = table_rows()
 
 
-class Wiring(unittest.TestCase):
+class Wiring(WiringCase):
     def test_key_is_the_pinned_word(self):
         word = resolve(KEY_TEXT, "port_vfx_opacity.h")
         self.assertEqual(word, PINNED_WORD,
@@ -188,8 +184,9 @@ class Wiring(unittest.TestCase):
     def test_table_is_parsed_whole(self):
         # A parser that stops early or skips a row would make the count above vacuous: an
         # independent line count of the table's rows must agree with the parse.
-        body = CONVERT_TEXT.split("static const std::vector<Recipe> table = {", 1)[1]
-        body = body.split("\n  };\n", 1)[0]  # the table's own terminator
+        # "\n  };\n" is the table's own terminator.
+        body = between(CONVERT_TEXT, "static const std::vector<Recipe> table = {", "\n  };\n",
+                       str(CONVERT))
         row_lines = re.findall(r"^ *\{0x[0-9a-fA-F]{8},", body, re.M)
         self.assertEqual(len(row_lines), len(ROWS), "the row parse and the row count disagree")
         self.assertGreaterEqual(len(ROWS), 50, "the recipe table shrank unexpectedly")

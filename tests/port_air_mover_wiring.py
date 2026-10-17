@@ -7,12 +7,14 @@ import pathlib
 import sys
 import unittest
 
-source = pathlib.Path(sys.argv.pop()).read_text()
-air = source.split("void CGameCollision::MoveAirborneStepped(", 1)[1]
-air = air.split("#endif", 1)[0]
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from wiring_helpers import WiringCase, between, partition, root_argument  # noqa: E402
+
+source = root_argument().read_text()
+air = between(source, "void CGameCollision::MoveAirborneStepped(", "#endif", "CGameCollision.cpp")
 
 
-class Wiring(unittest.TestCase):
+class Wiring(WiringCase):
     def test_f1_full_target_gate(self):
         self.assertIn("fullTarget = startPos + motion.GetTranslation()", air)
         self.assertIn("PortAirMoverContact::RemainingDisplacement(", air)
@@ -29,8 +31,8 @@ class Wiring(unittest.TestCase):
         self.assertIn("QueryTerrain(query, tris.data(), tris.size(), produceImpacts)", air)
 
     def test_f3_dynamic_response_only_accepted(self):
-        response = air.split("for (int i = 0; i < acceptedDynamic.GetCount(); ++i)", 1)
-        self.assertEqual(len(response), 2, "response must iterate accepted actors, not raw contacts")
+        response = partition(air, "for (int i = 0; i < acceptedDynamic.GetCount(); ++i)")
+        self.assertIsNotNone(response, "response must iterate accepted actors, not raw contacts")
         self.assertIn("acceptedDynamic.Add(info, false)", response[0])
         self.assertIn("const CCollisionInfo& info = acceptedDynamic[i]", response[1])
         self.assertNotIn("for (int i = staticCount; i < list.GetCount(); ++i)", air)
@@ -42,19 +44,19 @@ class Wiring(unittest.TestCase):
 
     def test_landing_follows_mover_state(self):
         # Terrain events keep the retail convention: matLeft is the touched surface.
-        self.assertIn("actor.GetMaterialList(),\n                                     material, primary)", air)
+        self.assertIn("actor.GetMaterialList(), material, primary)", air)
         # 0xc545bc lands on the mover's grounded state; no second 0.85 IsFloor test.
         self.assertNotIn("SendScriptMessages(", air)
-        landing = air.split("  if (grounded) {\n    for (int i = 0; i < groundList.GetCount(); ++i)", 1)
-        self.assertEqual(len(landing), 2, "grounded must land the player")
+        landing = partition(air, "if (grounded) { for (int i = 0; i < groundList.GetCount(); ++i)")
+        self.assertIsNotNone(landing, "grounded must land the player")
         self.assertIn("mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_OnFloor)",
                       landing[1].split("kSM_Falling", 1)[0])
 
     def test_platform_rider_on_landing(self):
         # 0xcf1a2c: landing on the rider controller's platform adds the player as a
         # rider (0x1f to the platform) and records the platform (0x1f to the player).
-        landing = air.split("  if (grounded) {\n    for (int i = 0; i < groundList.GetCount(); ++i)", 1)
-        self.assertEqual(len(landing), 2, "grounded must land the player")
+        landing = partition(air, "if (grounded) { for (int i = 0; i < groundList.GetCount(); ++i)")
+        self.assertIsNotNone(landing, "grounded must land the player")
         grounded = landing[1].split("kSM_Falling", 1)[0]
         self.assertIn("TCastToPtr< CScriptPlatform >(mgr.ObjectById(riderId))", grounded)
         self.assertIn("mgr.DeliverScriptMsg(platform, actor.GetUniqueId(), kSM_AddPlatformRider)",
@@ -65,7 +67,7 @@ class Wiring(unittest.TestCase):
     def test_ground_check_reads_dynamic_contact_extent(self):
         # A native box contact's GetPoint() is its clipped polygon's low corner, which
         # sits on the probe's open lower bound; the high corner must be read too.
-        check = air.split("struct Ground {", 1)[1].split("struct Stepper {", 1)[0]
+        check = between(air, "struct Ground {", "struct Stepper {", "MoveAirborneStepped")
         self.assertIn("c.GetExtreme().GetZ()", check)
 
     def test_remastered_failsafe_replaces_last_free_state(self):
@@ -74,11 +76,11 @@ class Wiring(unittest.TestCase):
         self.assertNotIn("AirMoverIsFree", source)
         self.assertNotIn("SetLastNonCollidingState", air)
         self.assertNotIn("CollisionFailsafe(mgr, cache, actor", air)
-        tail = air.split("if (!(fabsf(remaining) < 1e-5f && !stalledFlag)) {", 1)
-        self.assertEqual(len(tail), 2, "failsafe gate must stay")
+        tail = partition(air, "if (!(fabsf(remaining) < 1e-5f && !stalledFlag)) {")
+        self.assertIsNotNone(tail, "failsafe gate must stay")
         self.assertIn("const bool resolved = failsafe.Collision();", tail[1])
-        tunnel = tail[1].split("failsafe.Tunnel(entryPos, actor.GetTranslation(), tunnelOut)", 1)
-        self.assertEqual(len(tunnel), 2, "tunneling must run after the gate")
+        tunnel = partition(tail[1], "failsafe.Tunnel(entryPos, actor.GetTranslation(), tunnelOut)")
+        self.assertIsNotNone(tunnel, "tunneling must run after the gate")
         self.assertIn("actor.ClearForcesAndTorques();", tunnel[1])
         self.assertIn("PortCollisionFailsafe::DoCollisionFailsafe(", air)
         self.assertIn("PortCollisionFailsafe::DoTunnelingFailsafe(", air)
