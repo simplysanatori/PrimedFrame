@@ -3032,9 +3032,14 @@ static void PortDrawVolumetricFog(const CStateManager& mgr, const CTransform4f& 
 
 void CStateManager::PortCaptureProbeFace() const {
   if (CCubeMaterial::sPortPBRProbeMode < 0) {
+    // off/on/mirror/window or 0-3, as docs/SETTINGS.md lists them.
     const char* const env = port::EnvString("MP_PBR_PROBE");
-    CCubeMaterial::sPortPBRProbeMode =
-        env == nullptr ? 1 : env[0] == '0' ? 0 : env[0] == 'm' ? 2 : env[0] == 'w' ? 3 : 1;
+    const std::string_view value = env == nullptr ? "1" : env;
+    const char c = value.empty() ? '1' : value[0];
+    CCubeMaterial::sPortPBRProbeMode = c == '0' || value == "off"            ? 0
+                                       : c == '2' || c == 'm'                  ? 2
+                                       : c == '3' || c == 'w'                  ? 3
+                                                                               : 1;
   }
   const bool enabled = CCubeMaterial::sPortPBRProbeMode != 0;
   // The room environments of the areas in memory (port_room_env.h).
