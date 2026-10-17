@@ -841,7 +841,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   drag moves the crosshair over the screen and shots leave along the ray through it;
   the gun model turns toward it, at most 25 degrees. Past the dead box (`pointer_aim_box`,
   20-95 percent of the half screen, default 70) the view turns toward that edge, up to
-  `pointer_aim_turn` degrees/second (30-720, default 180) at the edge itself. The mouse
+  `pointer_aim_turn` degrees/second (30-720, default 180) at the edge itself (0.28.0 and
+  earlier turned the view at twice the set speed). The mouse
   sensitivity slider scales the pointer speed for every input (the default follows the
   cursor), on top of the stick aim, gyro and touch aim speeds; Invert X/Y do not apply. The crosshair is always shown. Lock-on, scanning and grappling
   re-centre the pointer and aim as before; auto-aim does not bend pointer shots.

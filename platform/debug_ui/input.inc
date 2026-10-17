@@ -66,8 +66,9 @@ PortGyro::Activation sGyroActivation;
 // The last tick applied look input. A paused game or a cinematic skips the
 // player update, and would then drop what the frames between ticks showed.
 bool sAimAppliedLastTick = false;
-// Keeps the twin stick turn the tick's first aim update recorded (issue #140).
-PortMouse::TickLag sAimTickLag;
+// The tick's first applied aim update: it keeps the twin stick turn it
+// recorded and makes the tick's only pointer edge turn (issue #140).
+PortMouse::TickAim sAimTick;
 // Gyro state: the phone's sensor is looked up once, so the sensor list is not
 // walked on every tick.
 bool sPhoneGyroSearched = false;
@@ -520,7 +521,7 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   const bool applied = sMouseAimState.Update(active, locked, x, y, z, dx, dy, MouseSensitivity(),
                                             MouseInvertX(), MouseInvertY(), pointer ? 0.f : sStickFrameX,
                                             pointer ? 0.f : sStickFrameY);
-  if (applied && pointer) {
+  if (applied && pointer && sAimTick.First()) {
     float dyaw = 0.f, dpitch = 0.f;
     PortMouse::PointerAim::TurnAt(sPointerAim.x, sPointerAim.y, PointerAimBox() / 100.f,
                                   PointerAimTurn() * (PortMouse::kPi / 180.f), TickPeriod(), dyaw,
@@ -530,7 +531,7 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   sPointerAimFree = pointer && applied;
   if (!sPointerAimFree) sPointerAim.Center();
   if (applied) {
-    sAimTickLag.Applied(sMouseAimState, lastAim, sPointerAim, lastPointer, sPointerAimFree);
+    sAimTick.Applied(sMouseAimState, lastAim, sPointerAim, lastPointer, sPointerAimFree);
     sMouseFrameX = sMouseFrameY = sStickFrameX = sStickFrameY = 0.f;
     sGyroCameraFrameX = sGyroCameraFrameY = 0.f;
   }
@@ -938,7 +939,7 @@ void BeginFrameMouse() {
   // AddStickAim adds this tick's travel during its input update.
   sStickFrameX = sStickFrameY = 0.f;
   sAimAppliedLastTick = false;
-  sAimTickLag.BeginTick();
+  sAimTick.BeginTick();
 }
 
 bool SpringBallSwipe() {

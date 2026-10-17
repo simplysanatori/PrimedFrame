@@ -199,7 +199,7 @@ int main() {
   // (issue #140): the turn the stick made is still drawn after the tick, and the
   // next tick, with the stick released, draws none.
   {
-    PortMouse::TickLag tickLag;
+    PortMouse::TickAim tickLag;
     PortMouse::PointerAim noPointer;
     const auto apply = [&](float dx, float lagDx) {
       const PortMouse::AimState before = aim;
@@ -276,7 +276,7 @@ int main() {
   // Pointer aim keeps the stick's pointer travel over the tick's second aim
   // update too (issue #140).
   {
-    PortMouse::TickLag tickLag;
+    PortMouse::TickAim tickLag;
     PortMouse::AimState view;
     view.Synchronize(0.f, 1.f, 0.f);
     const auto apply = [&](float dx) {
@@ -287,7 +287,9 @@ int main() {
       tickLag.Applied(view, before, pointer, pointerBefore, true);
     };
     tickLag.BeginTick();
+    Check(tickLag.First());
     apply(0.25f);
+    Check(!tickLag.First()); // the second update makes no edge turn
     apply(0.f);
     Check(Near(pointer.x, 0.25f) && Near(pointer.lagX, 0.25f));
     tickLag.BeginTick();

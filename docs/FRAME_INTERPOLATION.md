@@ -261,8 +261,11 @@ the tick right before.
   The player applies the aim twice a tick (`CPlayer::ProcessInput` with the
   tick's travel, then `CPlayer::Update` to revalidate it with none left), so
   only the tick's first applied update records the lagged turn
-  (`PortMouse::TickLag`); the second used to clear it, and the stick turned the
-  view once a tick while everything else moved every frame (issue #140).
+  (`PortMouse::TickAim`); the second used to clear it, and the stick turned the
+  view once a tick while everything else moved every frame (issue #140). The
+  pointer dead box's edge turn is made by that first update only: the second
+  one doubled it, and the preview, which draws one tick's edge turn, fell
+  behind and jumped at every tick.
 - It is only active when the last tick applied free aim
   (`sAimAppliedLastTick`), so menus, morph ball and cinematics are untouched.
 - The arm cannon stays on the simulation camera, so it is fixed on screen while

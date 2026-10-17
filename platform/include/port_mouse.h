@@ -272,10 +272,15 @@ private:
 // travel, then CPlayer::Update to revalidate it with none left. Only the first
 // applied update of a tick records the turn drawn after it (AimState::lagYaw,
 // PointerAim::lagX); the second would clear it, and the twin stick would turn
-// the view once a tick between smooth frames (issue #140).
-class TickLag {
+// the view once a tick between smooth frames (issue #140). Only the first makes
+// the tick's pointer edge turn too: a second turned the view twice the set
+// speed, and the frames between ticks, which draw one tick's turn, jumped by
+// the other half at each tick.
+class TickAim {
 public:
   void BeginTick() { mRecorded = false; }
+  // No update has been applied yet this tick.
+  bool First() const { return !mRecorded; }
   // After an applied update; `aim` and `pointer` were `aimBefore` and
   // `pointerBefore` ahead of it. pointerFree: the update left pointer aim free.
   void Applied(AimState& aim, const AimState& aimBefore, PointerAim& pointer,
