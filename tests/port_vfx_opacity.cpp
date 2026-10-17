@@ -1,7 +1,7 @@
 // The model (mesh) opacity form of Remastered's "OpacityFresnel" recipes: which material selects it,
 // what it changes in the draw description and what alpha it produces. The formulas are the shader's
 // own (extern/aurora/lib/gfx/vfx.cpp: feature 2048 OpacityFade uses d = 0, feature 256 OpacityFresnel
-// d = |n.z|/|n|; both then clamp sat((d - A) / (B - A)) and smooth it), and the material is the
+// d = |n.z|/|n|; both then gain * sat(smooth3(sat((d - A) / (B - A))) - bias)), and the material is the
 // Power charge sphere's (build/s-powercharge-20261016/spheres/FADE-AUDIT.md).
 
 #include "port_vfx_opacity.h"
@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 
 using aurora::gfx::vfx::Blend;
 using aurora::gfx::vfx::DrawDesc;
@@ -53,7 +54,7 @@ float FadeFactor(const DrawDesc& desc, float d) {
   const float b = std::cos(AngleDegrees(y) * 0.0174532942f);
   const float term = fresnel ? d : 0.f;
   const float q = b - a;
-  return Smooth3(q != 0.f ? Sat((term - a) / q) : (term >= a ? 1.f : 0.f));
+  return desc.opacityGain * Sat(Smooth3(q != 0.f ? Sat((term - a) / q) : (term >= a ? 1.f : 0.f)) - desc.opacityBias);
 }
 
 // The Power charge sphere's VMAT, as the loader builds it: PMTR row 2 comps 0/1 are the fade angles
@@ -191,12 +192,59 @@ void TestBlendAndDepthUnchanged() {
     }
   }
 }
+void TestGainBias() {
+  DrawDesc sprite = PowerSphereDesc();
+  Check(sprite.opacityGain == 1.f && sprite.opacityBias == 0.f, "legacy defaults are neutral");
+  for (bool model : {false, true}) {
+    for (float x : {0.f, 45.f, 90.f, 180.f}) {
+      for (float y : {0.f, 45.f, 90.f, 180.f}) {
+        DrawDesc identity = sprite;
+        identity.fadeX.value = x;
+        identity.fadeY.value = y;
+        if (model) { PortVfxSelectModelOpacity(kPortVfxModelOpacityFeatures, identity); }
+        for (float d : {0.f, 0.25f, 0.5f, 0.75f, 1.f}) {
+          const float a = std::cos(x * 0.0174532942f);
+          const float b = std::cos(y * 0.0174532942f);
+          const float term = model ? d : 0.f;
+          const float legacy = Smooth3(b != a ? Sat((term - a) / (b - a)) : (term >= a ? 1.f : 0.f));
+          Check(FadeFactor(identity, d) == legacy, "identity exactly preserves legacy ascending/descending/equal angles");
+        }
+      }
+    }
+  }
+  for (float gain : {0.f, 0.5f, 1.f, 2.f, -1.f}) {
+    for (float bias : {-1.f, 0.f, 0.2f, 1.f, 2.f}) {
+      sprite.opacityGain = gain;
+      sprite.opacityBias = bias;
+      DrawDesc mesh = sprite;
+      PortVfxSelectModelOpacity(kPortVfxModelOpacityFeatures, mesh);
+      Check(mesh.opacityGain == gain && mesh.opacityBias == bias, "model selection preserves gain/bias");
+      for (float d : {0.f, 0.25f, 0.5f, 0.75f, 1.f}) {
+        const float expected = gain * Sat(Smooth3(d) - bias);
+        Check(std::fabs(FadeFactor(mesh, d) - expected) < kTiny, "mesh applies bias inside and gain outside clamp");
+        Check(std::fabs(FadeFactor(sprite, d) - gain * Sat(-bias)) < kTiny, "sprite uses the same gain/bias");
+      }
+    }
+  }
+  DrawDesc mesh = PowerSphereDesc();
+  PortVfxSelectModelOpacity(kPortVfxModelOpacityFeatures, mesh);
+  mesh.opacityGain = 2.f;
+  mesh.opacityBias = 0.2f;
+  Check(std::fabs(FadeFactor(mesh, 1.f) - 1.6f) < kTiny, "gain is not clamped to one");
+  mesh.opacityGain = 1.f;
+  Check(std::fabs(FadeFactor(mesh, 0.5f) - 0.3f) < kTiny, "held sphere bias is subtracted after smoothing");
+  // Degenerate angles retain the previous step boundary, then apply the new policy.
+  mesh.fresnelX.value = mesh.fresnelY.value = 0.f;
+  Check(FadeFactor(mesh, 0.5f) == 0.f && std::fabs(FadeFactor(mesh, 1.f) - 0.8f) < kTiny,
+        "equal-angle boundary remains defined");
+}
 } // namespace
 
 int main() {
   TestSelectionIsThePinnedRecipe();
   TestMeshVersusSprite();
   TestBlendAndDepthUnchanged();
+  TestGainBias();
   if (sFailures != 0) {
     std::fprintf(stderr, "%d failure(s)\n", sFailures);
     return 1;

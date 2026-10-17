@@ -4,6 +4,7 @@
 
 #ifdef TARGET_PC
 #include "aurora/vfx.hpp"
+#include "Kyoto/Particles/CPortVfxMat.hpp"
 #endif
 #include "Kyoto/CFactoryFnReturn.hpp"
 #include "Kyoto/CRandom16.hpp"
@@ -213,77 +214,6 @@ static CPortVfxData& PortVfxData(std::unique_ptr< CPortVfxData >& vfx) {
   return *vfx;
 }
 
-// The VMAT blob v2 (build/mpr/vfx/DESIGN.md section 1). An unknown version is skipped
-// (the material stays absent, so the PART draws as retail).
-static bool PortReadVfxMat(CPortVfxData& vfx, CInputStream& in, u32 nbytes, CSimplePool* pool) {
-  CPortVfxMat& m = vfx.mat;
-  m = CPortVfxMat();
-  u32 consumed = 0;
-  const auto skipRest = [&]() {
-    for (; consumed + 4 <= nbytes; consumed += 4) {
-      in.ReadLong();
-    }
-  };
-  if (nbytes < 16) {
-    skipRest();
-    return true;
-  }
-  const u32 version = in.ReadLong();
-  const u32 features = in.ReadLong();
-  const u32 blend = in.ReadLong();
-  const u32 ntex = in.ReadLong();
-  consumed = 16;
-  // Words after the header: 11 per texture, then 7 slots, 2 ramp rows, the add row, the 11 sources
-  // (3 each) and modulate, depthSoften and spriteCenter. Anything else is not a v2 blob this reader
-  // knows: it is skipped whole, before anything is built, and the PART draws as retail.
-  constexpr u32 kTexWords = 11;
-  constexpr u32 kTailWords = 7 + 2 + 1 + 3 * 11 + 3;
-  if (version != 2 || ntex > 4 || blend > aurora::gfx::vfx::MaxBlend || nbytes != (kTexWords * ntex + kTailWords) * 4 + 16) {
-    skipRest();
-    return true;
-  }
-  m.version = version;
-  m.features = features;
-  m.blend = blend;
-  for (u32 i = 0; i < ntex; ++i) {
-    const CAssetId id = in.ReadLong();
-    TToken< CTexture > tok = id == 0
-                                 ? TToken< CTexture >(CreateTexture(-1))
-                                 : TToken< CTexture >(pool->GetObj(SObjectTag(SBIG('TXTR'), id)));
-    // Built from the token: assigning into a default (null) token would release a null reference.
-    CPortVfxMat::Tex t{TCachedToken< CTexture >(tok)};
-    t.uvSet = in.ReadLong();
-    t.wrapS = in.ReadLong();
-    t.wrapT = in.ReadLong();
-    t.linear = in.ReadLong();
-    t.cols = in.ReadLong();
-    t.rows = in.ReadLong();
-    t.layers = in.ReadLong();
-    t.warped = in.ReadLong();
-    t.warpScale[0] = in.ReadFloat();
-    t.warpScale[1] = in.ReadFloat();
-    m.tex.push_back(t);
-  }
-  m.colorSlot = in.ReadInt32();
-  m.opacitySlot = in.ReadInt32();
-  m.rampSlot = in.ReadInt32();
-  m.ramp2Slot = in.ReadInt32();
-  m.thresholdSlot = in.ReadInt32();
-  m.indirectSlot = in.ReadInt32();
-  m.paletteSlot = in.ReadInt32();
-  m.rampRow[0] = in.ReadInt32();
-  m.rampRow[1] = in.ReadInt32();
-  m.addRow = in.ReadInt32();
-  for (CPortVfxMat::Src& s : m.src) {
-    s.row = in.ReadInt32();
-    s.comp = in.ReadInt32();
-    s.value = in.ReadFloat();
-  }
-  m.modulate = in.ReadFloat();
-  m.depthSoften = in.ReadFloat();
-  m.spriteCenter = in.ReadLong();
-  return true;
-}
 // The port-only material properties a converted PART or SWSH carries (VMAT, VMSH, VTMT, VPMT,
 // VSMT, SSZE, ITEN, VORN). False when the stream can't be resynchronised.
 bool CParticleDataFactory::PortReadVfxProperty(FourCC clsId, std::unique_ptr< CPortVfxData >& vfxPtr,

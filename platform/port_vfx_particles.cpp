@@ -169,10 +169,10 @@ void PortVfxSetLaunchDir(CElementGen::CParticle& particle) {
       m > kEps ? particle.x1c_vel * (1.f / std::sqrt(m)) : CVector3f::Zero();
 }
 
-uint PortVfxEvalVsmt(const CPortVfxData& vfx, int frame, float vsmt[19]) {
+uint PortVfxEvalVsmt(const CPortVfxData& vfx, int frame, float vsmt[kPortVfxVsmtCount]) {
   uint mask = 0;
   for (const CPortVfxElem& e : vfx.vsmt) {
-    if (e.a >= 19) {
+    if (e.a >= kPortVfxVsmtCount) {
       continue;
     }
     float v[4] = {};
@@ -241,6 +241,8 @@ bool PortVfxBuildDesc(const CPortVfxData& vfx, const float* vsmt, uint vsmtMask,
   desc.paletteSlot = static_cast< int8_t >(mat.paletteSlot);
   desc.modulate = mat.modulate;
   desc.depthSoften = mat.depthSoften;
+  desc.opacityGain = (vsmtMask & (1u << kPortVfxOpacityGainTarget)) ? vsmt[kPortVfxOpacityGainTarget] : mat.opacityGain;
+  desc.opacityBias = (vsmtMask & (1u << kPortVfxOpacityBiasTarget)) ? vsmt[kPortVfxOpacityBiasTarget] : mat.opacityBias;
   desc.rampRow[0] = static_cast< int8_t >(mat.rampRow[0]);
   desc.rampRow[1] = static_cast< int8_t >(mat.rampRow[1]);
   desc.addRow = static_cast< int8_t >(mat.addRow);

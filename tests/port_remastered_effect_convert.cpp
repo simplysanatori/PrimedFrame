@@ -2062,6 +2062,89 @@ std::vector<uint8_t> PowerBallMati(uint32_t shader = 0xe899b1df, uint32_t header
   return mati;
 }
 
+void TestPowerOpacityGainBias() {
+  // Non-unit MATI defaults must survive without any SMTR; no other recipe changes format.
+  const auto mati = MatiCch0(0xe899b1df, {{"TCH0", Fresh(8)}, {"TCH1", Fresh(8)}},
+                             0.5f, 0.5f, 2.f, 0.25f);
+  const auto base = ConvertVmat(mati);
+  const auto& blob = base.second;
+  Check(!blob.empty() && VmatWord(blob, 8) == 3, "e899b1df emits VMAT v3 with non-unit defaults");
+  Check(blob.size() >= 8 && VmatWord(blob, blob.size() - 8) == Bits(2.f) &&
+            VmatWord(blob, blob.size() - 4) == Bits(0.25f), "v3 appends BE CCH0.z/w gain/bias");
+  const auto neutral = ConvertVmat(MatiCch0(0xe899b1df, {{"TCH0", Fresh(8)}, {"TCH1", Fresh(8)}},
+                                           0.5f, 0.5f, 1.f, 0.f));
+  Check(blob.size() == neutral.second.size() && blob.size() >= 8 &&
+            std::equal(blob.begin(), blob.end() - 8, neutral.second.begin()),
+        "changing gain/bias leaves the entire v2 prefix, sources and warp scales alone");
+
+  size_t ignored = 0;
+  const auto data = SmtrVmatEffect(ignored);
+  EffectNode effect;
+  std::string error;
+  Check(ParseEffect(data.data(), data.size(), effect, error), "opacity SMTR fixture parses");
+  for (auto& prop : effect.properties) {
+    if (prop.fourcc == EffectFourCC("SMTR")) {
+      auto bias = prop.value[2];
+      bias.args[1].word = (bias.args[1].word & ~0xff00u) | (3u << 8);
+      bias.args[0].args[0].word = Bits(0.2f);
+      prop.value.push_back(bias);
+    }
+  }
+  EffectConvertIO io;
+  io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+  io.materialData = [&mati](const EffectGuid&) { return mati; };
+  io.vfxTexture = [](const EffectGuid&) { FlipbookAtlas a; a.id = 0x5EED0008; return a; };
+  const auto parts = ConvertEffect(effect, data.data(), io);
+  std::vector<RetailPartProperty> props;
+  Check(parts.size() == 1 && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), props, error),
+        "opacity overrides convert and split");
+  bool found = false;
+  for (const auto& prop : props) {
+    if (prop.fourcc == EffectFourCC("VMAT")) {
+      Check(prop.value == blob, "SMTR does not replace MATI defaults");
+    } else if (prop.fourcc == EffectFourCC("VSMT")) {
+      // Each real constant entry is target, kind, CNST, float (16 bytes).
+      found = true;
+      Check(VmatWord(prop.value, 4) == 4, "xy warp plus gain/bias produce four override targets");
+      const uint32_t targets[] = {11, 12, 19, 20};
+      const float values[] = {0.25f, 0.5f, 0.75f, 0.2f};
+      for (size_t i = 0; i < 4; ++i) {
+        Check(VmatWord(prop.value, 8 + i * 16) == targets[i] &&
+                  VmatWord(prop.value, 20 + i * 16) == Bits(values[i]), "VSMT numbering and CCH0 values preserved");
+      }
+    }
+  }
+  Check(found, "e899b1df gain/bias emit VSMT");
+  // A time-scaled real is not folded into the MATI default or discarded. The runtime
+  // must receive the complete element tree at the new target.
+  for (auto& prop : effect.properties) {
+    if (prop.fourcc == EffectFourCC("SMTR")) {
+      EffectValue scaled;
+      scaled.fourcc = EffectFourCC("SCAL");
+      scaled.args.push_back(prop.value[2].args[0]);
+      prop.value[2].args[0] = scaled;
+    }
+  }
+  const auto dynamic = ConvertEffect(effect, data.data(), io);
+  props.clear();
+  Check(dynamic.size() == 1 && SplitRetailPart(dynamic[0].part.data(), dynamic[0].part.size(), props, error),
+        "dynamic opacity overrides convert and split");
+  found = false;
+  for (const auto& prop : props) {
+    if (prop.fourcc == EffectFourCC("VSMT")) {
+      found = true;
+      Check(VmatWord(prop.value, 40) == 19 && VmatWord(prop.value, 48) == EffectFourCC("SCAL") &&
+                VmatWord(prop.value, 52) == EffectFourCC("CNST") && VmatWord(prop.value, 56) == Bits(0.75f) &&
+                VmatWord(prop.value, 60) == 20 && VmatWord(prop.value, 72) == Bits(0.2f),
+            "dynamic SMTR tree survives on gain target with bias target following it");
+    }
+  }
+  Check(found, "dynamic gain still emits VSMT");
+  const auto guarded = ConvertVmat(MatiCch0(0x7d52bd6b, {{"TCH0", Fresh(8)}, {"TCH1", Fresh(8)}},
+                                           0.5f, 0.5f, 2.f, 0.25f));
+  Check(guarded.second.empty(), "other recipes retain unitCch0 guard");
+}
+
 struct PowerBallFields {
   EffectGuid child = kPowerBallChild;
   EffectGuid material = kPowerBallMati;
@@ -2575,6 +2658,7 @@ int main() {
   TestPowerBallExposurePolicy();
   TestPowerChargeExposurePolicy();
   TestSmtrCch0Overrides();
+  TestPowerOpacityGainBias();
   TestModelsOnly();
   TestFacingRotation();
   if (sFailures != 0) {

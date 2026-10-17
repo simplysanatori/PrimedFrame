@@ -261,10 +261,10 @@ void CParticleElectric2Port::Render(int frame, const CTransform4f& view) {
     return;
   }
   const CPortVfxData& vfx = *mDesc->xPortVfx;
-  if (vfx.mat.version != 2) {
+  if (vfx.mat.version != 2 && vfx.mat.version != 3) {
     return;
   }
-  float vsmt[19] = {};
+  float vsmt[kPortVfxVsmtCount] = {};
   const uint vsmtMask = PortVfxEvalVsmt(vfx, frame, vsmt);
   aurora::gfx::vfx::DrawDesc desc;
   if (!PortVfxBuildDesc(vfx, vsmt, vsmtMask, desc)) {

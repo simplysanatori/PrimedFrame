@@ -1,5 +1,6 @@
 #include "port_remastered_effect_convert.h"
 #include "port_bytes.h"
+#include "Kyoto/Particles/CPortVfxConstants.hpp"
 
 #include <algorithm>
 #include <array>
@@ -380,7 +381,7 @@ struct Recipe {
   std::vector<TexSpec> textures;
   std::vector<SrcSpec> sources;
   int addRow = -1;         // PMTR row of the AddColor (rgb, scale); -1: none
-  bool unitCch0 = false;   // the shader also reads CCH0.z/.w (fade gain/bias): only the identity (1, 0) is expressible
+  bool unitCch0 = false;   // shaders without v3 gain/bias support require identity CCH0.z/.w
   bool frameBuffer = false; // a FrameBuffer_* shader (scene x vc.rgb, warped by CCH0.xy): drawn as a multiply
 };
 
@@ -561,7 +562,7 @@ const Recipe* RecipeOf(uint32_t shader) {
        {}},
       {0xe899b1df, kRamp | kIndirect | kDepthSoften | kOpacityFade,
        {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
-       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}, -1, true},
+       {{kSrcFadeX, 2, 0}, {kSrcFadeY, 2, 1}}, -1, false},
       {0x3a867837, kRamp | kIndirect,
        {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
        {}},
@@ -1990,7 +1991,8 @@ public:
 
     // The blob.
     std::vector<uint8_t> blob;
-    AppendBE32(blob, 2);
+    const bool opacityGainBias = mati.shader == kPowerBallShader;
+    AppendBE32(blob, opacityGainBias ? 3 : 2);
     AppendBE32(blob, features);
     AppendBE32(blob, blend);
     AppendBE32(blob, uint32_t(slots.size()));
@@ -2040,6 +2042,10 @@ public:
     AppendBE32(blob, FloatBits(1.0f));  // modulate
     AppendBE32(blob, FloatBits(0.0f));  // depthSoften
     AppendBE32(blob, spriteCenter);
+    if (opacityGainBias) {
+      AppendBE32(blob, FloatBits(cch0[2]));
+      AppendBE32(blob, FloatBits(cch0[3]));
+    }
 
     AppendBE32(result.part, F("VMAT"));
     AppendBE32(result.part, F("CNST"));
@@ -2132,6 +2138,11 @@ public:
         }
         const int comp = int(item.args[1].word >> 8 & 0xff);
         std::vector<uint32_t> targets;
+        if (opacityGainBias && comp == 2) {
+          targets.push_back(kPortVfxOpacityGainTarget);
+        } else if (opacityGainBias && comp == 3) {
+          targets.push_back(kPortVfxOpacityBiasTarget);
+        }
         for (const SrcSpec& src : recipe->sources) {
           if (src.row < 0 && src.comp == comp) {
             targets.push_back(uint32_t(src.index));

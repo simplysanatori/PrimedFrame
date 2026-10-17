@@ -3333,7 +3333,7 @@ void CElementGen::PortFxDescribe(PortFxInfo& out) const {
   const CGenDescription& desc = *x28_loadedGenDesc;
   char buf[64];
   if (const CPortVfxData* vfx = desc.xPortVfx.get()) {
-    out.vfx = vfx->mat.version == 2 ? "VMAT" : "VMAT(unsupported)";
+    out.vfx = (vfx->mat.version == 2 || vfx->mat.version == 3) ? "VMAT" : "VMAT(unsupported)";
     if (vfx->vtmtCount != 0) {
       std::snprintf(buf, sizeof(buf), " VTMT*%u", vfx->vtmtCount);
       out.vfx += buf;

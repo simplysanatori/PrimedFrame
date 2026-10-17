@@ -469,6 +469,21 @@ TEST(SceneHdrVfx, LdrSourcesAreUnchanged) {
   }
 }
 
+TEST(SceneHdrVfx, OpacityGainBiasUsesSpareUniformLanesInBothForms) {
+  DrawDesc desc;
+  EXPECT_EQ(desc.opacityGain, 1.f);
+  EXPECT_EQ(desc.opacityBias, 0.f);
+  for (bool hdr : {false, true}) {
+    auto config = vfxConfig(2, hdr);
+    config.features = OpacityFade | OpacityFresnel;
+    const std::string source = pipeline_source(config);
+    // Exercise the actual generated source, not a parallel CPU formula. The gain is OUTSIDE sat.
+    EXPECT_NE(source.find("x = x * u.misc2.y * sat(smooth3(select(select(0.0, 1.0, d >= fx), sat((d - fx) / q), q != 0.0)) - u.misc2.z);"), std::string::npos);
+    EXPECT_NE(source.find("x = x * u.misc2.y * sat(smooth3(select(select(0.0, 1.0, fx <= 0.0), sat(-fx / q), q != 0.0)) - u.misc2.z);"), std::string::npos);
+    EXPECT_NE(source.find("misc2: vec4f,"), std::string::npos);
+  }
+}
+
 TEST(SceneHdrVfx, HdrSourcesWriteExposedLinear) {
   for (uint32_t blend = 0; blend <= 5; ++blend) {
     SCOPED_TRACE(blend);

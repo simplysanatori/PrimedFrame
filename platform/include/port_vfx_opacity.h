@@ -11,7 +11,7 @@
 // draws nothing at all. Source formulas and the perm split:
 // build/s-powercharge-20261016/spheres/FADE-AUDIT.md sections 1-2.
 //
-// The VMAT blob v2 records a material's recipe as its feature word, not as its shader id, so the
+// VMAT v2/v3 records a material's recipe as its feature word, not as its shader id, so the
 // model form is selected by the exact feature word of the one recipe whose model permutation was
 // read against the shader: 0xe899b1df (VFX_ColorRamp_Indirect_OpacityFresnel_Unlit). Every other
 // recipe carrying OpacityFade keeps the sprite form it has today — their model permutations have not
@@ -23,8 +23,8 @@
 // that recipe's converted word to this constant and tests/port_vfx_opacity.cpp the selection and the
 // resulting alpha; neither of them would notice a new colliding row.
 //
-// The same fade still drops the shader's CCH0 gain/bias (FADE-AUDIT.md section 5), which is not
-// part of this selection.
+// VMAT v3 preserves this shader's CCH0 gain/bias, including SMTR overrides:
+// gain * clamp(smooth3(f) - bias, 0, 1). Both forms share these scalar values.
 
 #include <cstdint>
 
@@ -59,5 +59,6 @@ inline bool PortVfxSelectModelOpacity(uint32_t features, aurora::gfx::vfx::DrawD
                   uint32_t(aurora::gfx::vfx::OpacityFresnel);
   desc.fresnelX = desc.fadeX;
   desc.fresnelY = desc.fadeY;
+  // opacityGain/Bias are scalar material values shared by both forms; leave them untouched.
   return true;
 }
