@@ -196,6 +196,39 @@ int main() {
     assert(dead.z == 0.f);
   }
 
+  // The stale carry after a deactivation: the last active step, start to end of its PreThink,
+  // exactly once, never the pose now.
+  {
+    const Vec3 start = {0.f, 0.f, 1.f};
+    const Vec3 end = {0.f, 0.f, 1.25f};
+    const Vec3 warped = {5.f, 0.f, 9.f};
+    const Vec3 live = RiderCarry(start, end, end, 7, 7, true, true);
+    assert(live.z == .25f);
+    const Vec3 stale = RiderCarry(start, warped, end, 7, 8, false, true);
+    assert(stale.x == 0.f && stale.z == .25f);
+    const Vec3 older = RiderCarry(start, warped, end, 7, 9, false, true);
+    assert(older.x == 0.f && older.z == 0.f);
+    const Vec3 notThought = RiderCarry(start, end, end, 7, 8, true, true);
+    assert(notThought.z == 0.f);
+    const Vec3 noRider = RiderCarry(start, warped, end, 7, 8, false, false);
+    assert(noRider.z == 0.f);
+    // Deactivated after its PreThink this tick: it did move this tick.
+    const Vec3 sameTick = RiderCarry(start, end, end, 8, 8, false, true);
+    assert(sameTick.z == .25f);
+    // The rider set on the last active tick T is live at T+1 only: one stale carry.
+    RiderController rider;
+    rider.Set(OwnerFromRaw(0x0412));
+    rider.Decay();
+    int carries = 0;
+    for (std::uint32_t tick = 8; tick < 12; ++tick) {
+      if (RiderCarry(start, warped, end, 7, tick, false, rider.Active()).z != 0.f) {
+        ++carries;
+      }
+      rider.Decay();
+    }
+    assert(carries == 1);
+  }
+
   // Exactly one carry per tick, whichever mover runs. This models PlanCarry and
   // DeferRetailCarry over the tick order (MoveRiders in PreThink defers or moves, then the
   // tick's mover applies or drops); it re-implements the call sites' logic rather than

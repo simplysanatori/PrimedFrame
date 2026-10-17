@@ -956,8 +956,9 @@ void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float 
 // (0xf946ac) - never has dt == worldDt again. The base class has the same two flags
 // (0xc1cdd0, 0xc1ce7c). See build/s-issue117-20261015/airfix/REPORT.md.
 
-// The rider carry of PredictMotion 0xc23e40 for the tick: the ridden platform's pose delta
-// since its PreThink this tick, while the controller is live (set by an earlier tick). Both
+// The rider carry of PredictMotion 0xc23e40 for the tick, while the controller is live (set
+// by an earlier tick): the ridden platform's pose delta since its PreThink this tick, or its
+// last step once after a deactivation (PortRemasteredGroundRider::RiderCarry). Both
 // Remastered player movers read it.
 static PortRemasteredGround::Vec3 PortRiderCarry(CStateManager& mgr, CPlayer& player,
                                                  uint simTick) {
@@ -968,9 +969,11 @@ static PortRemasteredGround::Vec3 PortRiderCarry(CStateManager& mgr, CPlayer& pl
             mgr.GetObjectById(TUniqueId(raw >> 10, raw & 0x3ff)))) {
       const CVector3f was = platform->PortPreThinkTransform().GetTranslation();
       const CVector3f now = platform->GetTranslation();
-      return PortRemasteredGroundRider::PlatformCarry(
+      const CVector3f end = platform->PortPreThinkEndTranslation();
+      return PortRemasteredGroundRider::RiderCarry(
           {was.GetX(), was.GetY(), was.GetZ()}, {now.GetX(), now.GetY(), now.GetZ()},
-          platform->PortPoseTick(), simTick, true);
+          {end.GetX(), end.GetY(), end.GetZ()}, platform->PortPoseTick(), simTick,
+          platform->GetActive(), true);
     }
   }
   return {};

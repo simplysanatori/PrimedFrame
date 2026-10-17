@@ -263,8 +263,14 @@ void CScriptPlatform::MoveRiders(CStateManager& mgr, float dt, bool active,
 
 void CScriptPlatform::PreThink(float dt, CStateManager& mgr) {
 #ifdef TARGET_PC
-  xPortPreThinkXf = GetTransform();
-  xPortPoseTick = mgr.PortSimTick();
+  // Only an active platform takes the pose snapshot: an inactive physics actor is not
+  // simulated (its Previous is not refreshed), so its last active step stays the one a
+  // rider's stale carry reads (PortRemasteredGroundRider::RiderCarry).
+  const bool portStamp = GetActive();
+  if (portStamp) {
+    xPortPreThinkXf = GetTransform();
+    xPortPoseTick = mgr.PortSimTick();
+  }
 #endif
   DecayRiders(x318_riders, dt, mgr);
   x264_collisionRecoverDelay -= dt;
@@ -314,6 +320,11 @@ void CScriptPlatform::PreThink(float dt, CStateManager& mgr) {
       }
     }
   }
+#ifdef TARGET_PC
+  if (portStamp) {
+    xPortPreThinkEnd = GetTranslation();
+  }
+#endif
 }
 
 void CScriptPlatform::BuildSlaveList(CStateManager& mgr) {

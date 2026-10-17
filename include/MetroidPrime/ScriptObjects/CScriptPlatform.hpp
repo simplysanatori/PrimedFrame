@@ -97,10 +97,13 @@ public:
                          CQuaternion rotDelta);
 
 #ifdef TARGET_PC
-  // Port: the pose at the start of this platform's PreThink and the update it was taken in
-  // (CStateManager::PortSimTick), for the Remastered grounded mover's rider carry (issue
-  // #117). Not x270_dragDelta: that stays stale while x260_moveDelay > 0.
+  // Port: the pose at the start of this platform's PreThink, the translation at its end and
+  // the update they were taken in (CStateManager::PortSimTick), for the Remastered movers'
+  // rider carry (issue #117). Taken only by a PreThink that starts active: an inactive
+  // platform is not simulated, so its last active step stays the recorded one. Not
+  // x270_dragDelta: that stays stale while x260_moveDelay > 0.
   const CTransform4f& PortPreThinkTransform() const { return xPortPreThinkXf; }
+  const CVector3f& PortPreThinkEndTranslation() const { return xPortPreThinkEnd; }
   uint PortPoseTick() const { return xPortPoseTick; }
   // The orientation changed since the stamp (exact compare of the basis).
   bool PortRotatedSinceStamp() const;
@@ -145,6 +148,7 @@ private:
   bool x356_31_xrayFog : 1;
 #ifdef TARGET_PC
   CTransform4f xPortPreThinkXf = CTransform4f::Identity();
+  CVector3f xPortPreThinkEnd = CVector3f::Zero();
   uint xPortPoseTick = ~0u;
 #endif
 };

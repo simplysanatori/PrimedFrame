@@ -78,10 +78,16 @@ branch only; the post-step probe landing writes none), and `MoveObject` sets it 
 Retail `MoveRiders`' own carry of a player who left a platform (its rider list decays
 over 1/6 s) is dropped on those ticks.
 
+A platform deactivated since its last `PreThink` is carried once more: an inactive
+physics actor is not simulated, so the rider's pose delta still holds the platform's last
+step, and the rider set on that step is live for one more tick. Only a `PreThink` that
+starts active takes the pose stamp (start and end translation), and a rider on an inactive
+platform stamped the previous tick carries that step's delta, never the pose now, so a warp
+while inactive is not carried.
+
 Not ported: AABox platforms, rotating platforms (both fall back), the rotation and
 rider-velocity terms of the carry (the airborne response's rider velocity is still the
-platform's velocity, not `get_rider_controller_offset`), the source's extra carry tick
-after a deactivation, and the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
+platform's velocity, not `get_rider_controller_offset`), and the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
 terrain-only. The deferred retail carry is applied after the player's angular step,
 not before it as in `PreThink`, an rm1-only timing difference.
 

@@ -153,6 +153,29 @@ inline Vec3 PlatformCarry(const Vec3& previous, const Vec3& current, std::uint32
   return {current.x - previous.x, current.y - previous.y, current.z - previous.z};
 }
 
+// The rider carry for any platform state. A platform that thought this tick carries its pose
+// delta since that PreThink (PlatformCarry). One deactivated since its last PreThink (it was
+// active in the previous tick's, not in this one's) carries that last step's delta, start to
+// end of that PreThink, once: an inactive actor is not simulated, so PredictMotion's
+// R+0x1100 - R+0x1128 still holds its last step, and the rider set in that step decays at the
+// end of this one (platform-lifecycle ADDENDUM §1, §3). Never the pose now: a warp while
+// inactive is not carried. Any older stamp, or an active platform that did not think this
+// tick, carries nothing.
+inline Vec3 RiderCarry(const Vec3& start, const Vec3& now, const Vec3& end,
+                       std::uint32_t stampTick, std::uint32_t tick, bool platformActive,
+                       bool riderActive) {
+  if (!riderActive) {
+    return {};
+  }
+  if (stampTick == tick) {
+    return PlatformCarry(start, now, stampTick, tick, true);
+  }
+  if (!platformActive && stampTick + 1u == tick) {
+    return {end.x - start.x, end.y - start.y, end.z - start.z};
+  }
+  return {};
+}
+
 // The carry term of PredictMotion: added whole (not scaled by t) while pending, and
 // consumed by the first MoveAlongGround pass's ApplyMotionState.
 struct CarryTerm {
