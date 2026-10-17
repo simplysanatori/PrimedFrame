@@ -254,6 +254,23 @@ bool SDLCALL debug_event_watch(void*, SDL_Event* event);
 // Loads the settings file and the MP_* overrides on first use; every accessor calls it.
 void EnsureInitialized();
 
+// The bodies of the plain accessors, for a setting that is one variable and whose accessors do
+// nothing else: `bool FastBoot() { return Loaded(sFastBoot); }` reads it once the settings are
+// loaded, and `void SetX(bool on) { StoreSetting(sX, on); }` stores it and marks the file for
+// saving. Accessors that also clamp, check the Original experience or apply the value are
+// written out in full.
+template < typename T >
+const T& Loaded(const T& value) {
+  EnsureInitialized();
+  return value;
+}
+template < typename T, typename V >
+void StoreSetting(T& setting, const V& value) {
+  EnsureInitialized();
+  setting = value;
+  MarkDirty();
+}
+
 // settings.cpp: port_settings.ini.
 void LoadSettings();
 void SaveSettings();

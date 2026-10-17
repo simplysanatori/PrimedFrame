@@ -40,6 +40,7 @@ from wiring_helpers import (  # noqa: E402
 
 root = root_argument()
 DEBUG_UI = root / "platform/debug_ui.cpp"
+DEBUG_UI_INTERNAL = root / "platform/debug_ui/debug_ui_internal.h"
 SETTINGS = root / "platform/debug_ui/settings.cpp"
 OPTIONS = root / "platform/debug_ui/options.cpp"
 TRACKER = root / "platform/debug_ui/tracker.cpp"
@@ -82,10 +83,14 @@ class Wiring(WiringCase):
         self.assertIn("void SetMapExtraUi(bool enabled);", header)
         options = OPTIONS.read_text()
         getter = braced(options, "bool MapExtraUi() {", OPTIONS)
-        self.assertIn("return sMapExtraUi;", getter)
+        self.assertIn("return Loaded(sMapExtraUi);", getter)
         setter = braced(options, "void SetMapExtraUi(bool enabled) {", OPTIONS)
-        self.assertIn("sMapExtraUi = enabled;", setter)
-        self.assertIn("MarkDirty();", setter)
+        self.assertIn("StoreSetting(sMapExtraUi, enabled);", setter)
+        # StoreSetting is the plain setter's body: it marks the settings for saving.
+        store = braced(DEBUG_UI_INTERNAL.read_text(), "void StoreSetting(T& setting, const V& value) {",
+                       DEBUG_UI_INTERNAL)
+        self.assertIn("setting = value;", store)
+        self.assertIn("MarkDirty();", store)
 
     def test_f1_row_and_search_index(self):
         tracker = TRACKER.read_text()

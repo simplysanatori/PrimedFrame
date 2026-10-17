@@ -124,11 +124,7 @@ void SetPoseInterpolation(bool enabled) {
   sPoseInterpolation = enabled;
 }
 
-void SetRoomGeoResident(bool enabled) {
-  EnsureInitialized();
-  sRoomGeoResident = enabled;
-  MarkDirty();
-}
+void SetRoomGeoResident(bool enabled) { StoreSetting(sRoomGeoResident, enabled); }
 
 bool RoomGeoResidentAtStartup() {
   std::ifstream file(SettingsFilePath());
@@ -185,10 +181,7 @@ void SetPresentOverride(float value) {
   sPresentCycleFrame = 0;
 }
 
-float PresentOverrideValue() {
-  EnsureInitialized();
-  return sPresentOverride;
-}
+float PresentOverrideValue() { return Loaded(sPresentOverride); }
 
 bool TickHold() { return sTickHold; }
 
@@ -574,10 +567,7 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
   return true;
 }
 
-bool Visible() {
-  EnsureInitialized();
-  return sVisible;
-}
+bool Visible() { return Loaded(sVisible); }
 
 bool OverlayVisible() { return sOverlayVisible.load(std::memory_order_acquire); }
 
