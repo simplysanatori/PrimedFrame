@@ -1660,6 +1660,12 @@ bool CPlayerGun::PortRapidChargeShot(float dt, CStateManager& mgr) {
   if (beam == nullptr || mPortRapidShots >= beam->shots) {
     return false;
   }
+  // A held charge is requested again before the new beam's ToBeam animation ends.
+  // Wait for the switch to finish: firing here calls ExitMissile, which can replace
+  // ChangeWeapon/SetupBeam and leave the switching flag set, blocking every weapon.
+  if (IsWeaponStateSet(0x8)) {
+    return true;
+  }
   mPortRapidTimer += dt;
   if (mPortRapidTimer < float(beam->shotFrames[mPortRapidShots]) / 60.f) {
     return true;
