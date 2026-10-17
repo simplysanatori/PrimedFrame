@@ -5,7 +5,7 @@ Requires the normal mprig setup (disc image, Xvfb, and a built port). Uses only
 fresh rig user dirs and a disposable MPRIG_USER profile; it never touches the
 person's configured user settings or saves. Example:
 
-    python3 tools/test_game_options_persistence.py --disc /path/to/MetroidPrime.iso \
+    python3 tests/game_options_persistence_rig.py --disc /path/to/MetroidPrime.iso \
         --build build/port-i65
 """
 
