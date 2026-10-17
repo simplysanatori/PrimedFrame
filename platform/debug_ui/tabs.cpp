@@ -1,6 +1,38 @@
-// Part of platform/debug_ui.cpp: The pages assembled from their sections (Game, Controls, Video,
-// Mods, System), and the Game and System pages' own sections. Included by debug_ui.cpp at this
-// point in the file, not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: The pages assembled from their sections (Game, Controls, Video, Mods, System), and
+// the Game and System pages' own sections. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_debug.h"
+#include "port_graphics_backend.h"
+#include "port_photo.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_config_reset.h"
+#include "port_input_devices.h"
+#include "port_input_remap_ui.h"
+#include "port_data_folder.h"
+#include "port_build_info.h"
+
+#include "MetroidPrime/Player/CGameOptions.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_events.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <string>
+
+namespace aurora {
+void request_screenshot() noexcept;
+}
+
+namespace PortDebug {
 
 // Restart, screenshot and exit, plus the settings file; the top of the Game page (settings are on System).
 void DrawGameSection() {
@@ -240,7 +272,5 @@ void DrawSystemTab() {
   ImGui::TextDisabled("Version %s, build %s", MP_BUILD_VERSION, MP_BUILD_REVISION);
 }
 
-struct DebugPage {
-  const char* name;
-  void (*draw)();
-};
+
+} // namespace PortDebug

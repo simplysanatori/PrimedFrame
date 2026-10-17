@@ -1,6 +1,28 @@
-// Part of platform/debug_ui.cpp: The Android bridge: JNI entry points the Java side calls. Included
-// by debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state
-// and namespaces.
+// F1 overlay: The Android bridge: JNI entry points the Java side calls. State and helpers shared
+// with the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_debug.h"
+#include "port_photo.h"
+#include "port_pointer.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_input_devices.h"
+#include "port_prompts.h"
+#include "port_savestate.h"
+#include "port_textures.h"
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+
+#include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_joystick.h>
+#include <jni.h>
+#endif
+
+#include <atomic>
+#include <mutex>
 
 #if defined(__ANDROID__)
 // The touch overlay covers the display and consumes every touch before SDL

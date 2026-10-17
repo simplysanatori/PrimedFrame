@@ -27,7 +27,7 @@
   path and has a **Save settings now** button. Environment variables still
   override the file for that run, and are written back into it if any setting is
   changed during that run. Each key is one row of `kSettingKeys` in
-  `platform/debug_ui/settings.inc`, which both reads and writes it, with two sample
+  `platform/debug_ui/settings.cpp`, which both reads and writes it, with two sample
   values; ctest `port_settings_roundtrip` (`metroid_prime_port
   --settings-selftest`) checks that every sampled key reads back as written and
   that the whole file survives being read back. A new setting is a new row.

@@ -1,6 +1,45 @@
-// Part of platform/debug_ui.cpp: Memory card import and export (port_gci.h), picking the Remastered
-// image and keys, and the file dialogs both answer through. Included by debug_ui.cpp at this point
-// in the file, not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: Memory card import and export (port_gci.h), picking the Remastered image and keys,
+// and the file dialogs both answer through. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_graphics_backend.h"
+#include "port_gyro_motion.h"
+#include "port_pointer.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_gci.h"
+#include "port_mods.h"
+#include "port_remastered_import.h"
+#include "port_remastered_text.h"
+#include "port_discord.h"
+#include "port_savestate.h"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_dialog.h>
+#include <SDL3/SDL_misc.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#include <jni.h>
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace PortDebug {
 
 // Memory card transfer (port_gci.h). The work runs on the main thread; the
 // file dialogs answer on another one, so their picks wait in sCardPicks.
@@ -414,6 +453,7 @@ std::string CardSaveTo(const CardExportFile& source, const std::string& target) 
                   (source.note.empty() ? "" : ", " + source.note) + "."
             : "Could not save " + source.name + ": " + SDL_GetError();
 }
+} // namespace
 
 // Runs every frame, overlay open or not, so a dialog's answer is acted on.
 void ProcessCardPicks() {
@@ -465,6 +505,7 @@ void ProcessCardPicks() {
   }
 }
 
+namespace {
 #if !defined(__ANDROID__)
 // Emulator folder and card sharing (port_gci.h SharedCardBase).
 void DrawEmulatorCard() {
@@ -559,6 +600,7 @@ void DrawEmulatorCard() {
            "_replaced first.");
 }
 #endif
+} // namespace
 
 void DrawMemoryCard() {
   ImGui::SeparatorText("Memory card");
@@ -665,7 +707,6 @@ void DrawMemoryCard() {
 std::mutex sRemasteredPickMutex;
 std::vector<std::pair<int, std::string>> sRemasteredPicks;
 // Which 2 of the same picker: a PAL image for its languages (DrawLanguageSection).
-constexpr int kPalLanguagesPick = 2;
 std::string sPalLanguagesPick;
 
 #if defined(__ANDROID__)
@@ -781,13 +822,11 @@ void DrawModReloadMessage() {
   }
 }
 
-} // namespace
-
 // An import from the panel unloads the mods while it runs (on a tablet, the
 // game holding a room-geometry mod plus the import ran out of memory) and
 // loads them again when it ends, the new import in place of the old.
 static bool sImportWatched = false;
-static bool sImportUnloadedMods = false;
+bool sImportUnloadedMods = false;
 static bool sImportInstallStarted = false;
 // A reload is refused where the game can't save (a cutscene, say), so these
 // are asked again every two seconds until one runs.
@@ -823,7 +862,7 @@ bool StartRemasteredImport(const std::string& image, const std::string& keys) {
 }
 
 // Every frame, so the mods come back with the panel closed too.
-static void FinishRemasteredImport() {
+void FinishRemasteredImport() {
   if (sReloadAwaited >= 0) {
     if (PortSaveState::ModReloads() != sReloadAwaited) {
       sReloadAwaited = -1;
@@ -877,22 +916,4 @@ static void FinishRemasteredImport() {
   sImportUnloadedMods = false;
 }
 
-namespace {
-
-// The Remastered gallery (port_gallery.h): the concept art the Remastered import put in the mods, shown one picture at
-// a time in a window of its own. Only the current picture is decoded.
-bool sGalleryOpen = false;
-std::vector<std::string> sGalleryPaths;
-int sGalleryIndex = 0;
-int sGalleryLoaded = -1;      // the picture sGalleryTexture holds
-ImTextureID sGalleryTexture = 0;
-ImVec2 sGallerySize{0.0f, 0.0f};
-bool sGalleryFailed = false;
-// Textures no longer shown, freed once the frames that drew them are done with.
-struct RetiredTexture {
-  ImTextureID texture;
-  int frames;
-};
-std::vector<RetiredTexture> sGalleryRetired;
-
-} // namespace
+} // namespace PortDebug

@@ -1,6 +1,39 @@
-// Part of platform/debug_ui.cpp: The Remastered tab, PAL languages and Remastered debugging.
-// Included by debug_ui.cpp at this point in the file, not compiled on its own: it shares that
-// file's state and namespaces.
+// F1 overlay: The Remastered tab, PAL languages and Remastered debugging. State and helpers shared
+// with the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_gyro_motion.h"
+#include "port_pointer.h"
+#include "port_room_env.h"
+#include "port_room_geo.h"
+#include "port_paths.h"
+#include "port_mods.h"
+#include "port_remastered_import.h"
+#include "port_remastered_text.h"
+#include "port_savestate.h"
+#include "port_disc.h"
+#include "port_pal_languages.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "Kyoto/Graphics/CCubeMaterial.hpp"
+#include "MetroidPrime/Player/CGameOptions.hpp"
+
+#include <aurora/imgui.h>
+#include <dolphin/gx/GXExtra.h>
+#include <imgui_internal.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <vector>
+
+namespace PortDebug {
 
 void DrawRemasteredWarning() {
   {
@@ -439,3 +472,5 @@ void DrawRemasteredDebug() {
     }
   }
 }
+
+} // namespace PortDebug

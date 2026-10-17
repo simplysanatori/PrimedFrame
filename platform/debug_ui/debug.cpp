@@ -1,5 +1,18 @@
-// Part of platform/debug_ui.cpp: The Debug tab and log section. Included by debug_ui.cpp at this
-// point in the file, not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: The Debug tab and log section. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_debug.h"
+#include "port_log.h"
+#include "port_log_file.h"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+
+#include <string>
+
+namespace PortDebug {
 
 void DrawLogSection() {
   ImGui::SeparatorText("Log");
@@ -57,3 +70,5 @@ void DrawDebugTab() {
 
   DrawRemasteredDebug();
 }
+
+} // namespace PortDebug

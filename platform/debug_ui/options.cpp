@@ -1,6 +1,49 @@
-// Part of platform/debug_ui.cpp: Accessors for the settings and runtime switches the game and other
-// port code read, and the settings self-test. Included by debug_ui.cpp at this point in the file,
-// not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: Accessors for the settings and runtime switches the game and other port code read.
+// State and helpers shared with the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_graphics_backend.h"
+#include "port_gyro_motion.h"
+#include "port_dynamic_res.h"
+#include "port_photo.h"
+#include "port_pointer.h"
+#include "port_hd_font.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_mods.h"
+#include "port_remastered_text.h"
+#include "port_discord.h"
+#include "port_savestate.h"
+#include "port_mouse.h"
+
+#include "MetroidPrime/Player/CGameOptions.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
+
+#include <aurora/gfx.h>
+#include <dolphin/gx/GXExtra.h>
+#include <dolphin/vi.h>
+#include <SDL3/SDL_dialog.h>
+#include <SDL3/SDL_timer.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <sstream>
+#include <string>
+
+namespace PortDebug {
 
 // State only this part uses.
 namespace {
@@ -11,10 +54,7 @@ float sTickPeriod = 1.f / 60.f;
 uint64_t sTimingWallNs = 0;
 uint64_t sTimingWallLastNs = 0;
 unsigned sTimingFrames = 0, sTimingTicks = 0;
-// Dynamic resolution (port_dynamic_res.h); sDynScale, the scale it draws at, is shared.
-PortDynamicRes::Controller sDynController;
 bool sDynActive = false;
-double sDynGpuMs = -1.0; // the last GPU time it was given, for the Video page
 // GPU pass times (Aurora's gpu_prof) are wanted by dynamic resolution and by the
 // Remastered debug panel. Switching them on restarts their average, so only a change
 // in whether anyone wants them reaches Aurora.
@@ -22,50 +62,9 @@ unsigned sGpuTimesUsers = 0;
 float sTwinStickRightY = 0.f;
 } // namespace
 
-int SettingsSelfTest() {
-  int failures = 0;
-  int sampled = 0;
-  // Each sampled key, through the file reader: both values must come back as written.
-  for (const SettingKey& entry : kSettingKeys) {
-    if (entry.key == nullptr || entry.write == nullptr || entry.sampleA == nullptr) {
-      continue;
-    }
-    ++sampled;
-    for (const char* sample : {entry.sampleA, entry.sampleB}) {
-      std::istringstream line(std::string(entry.key) + "=" + sample + "\n");
-      ApplySettingsText(line);
-      const auto written = SettingsValues(SettingsText());
-      const auto found = written.find(entry.key);
-      const std::string got = found == written.end() ? std::string() : found->second;
-      if (got != sample) {
-        PortLog::Write("settings self-test: %s=%s reads back as %s=%s\n", entry.key, sample, entry.key,
-                       got.c_str());
-        ++failures;
-      }
-    }
-  }
-  // Every line written is a key something reads, and reading the whole file
-  // back writes it unchanged.
-  const std::string first = SettingsText();
-  for (const auto& [key, value] : SettingsValues(first)) {
-    if (!ApplySetting(key, value)) {
-      PortLog::Write("settings self-test: %s is written but nothing reads it\n", key.c_str());
-      ++failures;
-    }
-  }
-  std::istringstream again(first);
-  ApplySettingsText(again);
-  const std::string second = SettingsText();
-  if (second != first) {
-    // Both whole files: past PortLog's 2048-byte line, so straight to stderr.
-    std::fprintf(stderr, "settings self-test: the file changes when read back\n%s\n---\n%s\n", first.c_str(),
-                 second.c_str());
-    ++failures;
-  }
-  PortLog::Write("settings self-test: %d keys sampled, %zu lines round-tripped, %d failure(s)\n", sampled,
-                 SettingsValues(first).size(), failures);
-  return failures == 0 ? 0 : 1;
-}
+// Dynamic resolution (port_dynamic_res.h); sDynScale, the scale it draws at, is shared.
+PortDynamicRes::Controller sDynController;
+double sDynGpuMs = -1.0; // the last GPU time it was given, for the Video page
 
 bool FastBoot() {
   EnsureInitialized();
@@ -155,15 +154,15 @@ float TickFrames() { return sTickPeriod * 60.f; }
 static bool EffectiveFrameLimit() { return sFrameLimitEnabled || sOriginalExperience; }
 // Photo mode's supersampled capture holds the EFB at this scale for a few frames; never saved.
 static float sCaptureScale = 0.f;
-static float EffectiveRenderScale() {
+float EffectiveRenderScale() {
   return sCaptureScale > 0.f ? sCaptureScale : sOriginalExperience ? 1.f : sRenderScale;
 }
-static int EffectiveMsaa() { return sOriginalExperience ? 1 : sMsaa; }
+int EffectiveMsaa() { return sOriginalExperience ? 1 : sMsaa; }
 static int EffectiveAnisotropy() { return sOriginalExperience ? 1 : sAnisotropy; }
 
 // Sharpening for a frame stretched up to the window (Aurora's present resample); only
 // passed on when it changes.
-static void ApplyPresentSharpness() {
+void ApplyPresentSharpness() {
   float amount = 0.f;
   if (!sOriginalExperience && sSharpenAmount > 0) {
     const bool lowered = sDynScale > 0.f && sDynScale < EffectiveRenderScale();
@@ -196,7 +195,7 @@ int FrameRateCap() {
 }
 
 
-static double DynamicResTargetFps() {
+double DynamicResTargetFps() {
   double target = sDynamicResTarget;
   if (target <= 0.0) {
     const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
@@ -206,7 +205,6 @@ static double DynamicResTargetFps() {
   return cap > 0 ? std::min(target, static_cast< double >(cap)) : target;
 }
 
-enum : unsigned { kGpuTimesDynamicRes = 1, kGpuTimesPanel = 2 };
 void WantGpuTimes(unsigned user, bool on) {
   const unsigned before = sGpuTimesUsers;
   sGpuTimesUsers = on ? (before | user) : (before & ~user);
@@ -215,7 +213,7 @@ void WantGpuTimes(unsigned user, bool on) {
   }
 }
 
-static void ResetDynamicRes() {
+void ResetDynamicRes() {
   sDynController.Reset(EffectiveRenderScale());
   sDynGpuMs = -1.0;
   if (sDynScale > 0.f) {
@@ -1310,3 +1308,5 @@ void AddStickAim(float x, float y, float dt) {
   sStickFrameX += travelX;
   sStickFrameY += travelY;
 }
+
+} // namespace PortDebug

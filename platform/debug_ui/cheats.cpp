@@ -1,6 +1,34 @@
-// Part of platform/debug_ui.cpp: Cheats, the free camera and rendering debug. Included by
-// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
-// namespaces.
+// F1 overlay: Cheats, the free camera and rendering debug. State and helpers shared with the other
+// parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_collision_view.h"
+#include "port_debug.h"
+#include "port_freecam.h"
+#include "port_pointer.h"
+#include "port_room_geo.h"
+#include "port_paths.h"
+#include "port_tracker.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "Kyoto/Graphics/CCubeMaterial.hpp"
+#include "MetroidPrime/CHealthInfo.hpp"
+#include "MetroidPrime/CMemoryCard.hpp"
+#include "MetroidPrime/CWorld.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
+
+#include <aurora/gfx.h>
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace PortDebug {
 
 void GrantItem(CPlayerState& ps, CPlayerState::EItemType type, int amount, int capacity) {
   ps.SetPowerUp(type, capacity);
@@ -310,3 +338,5 @@ void DrawRendering() {
                 models, drawn, instances);
   }
 }
+
+} // namespace PortDebug

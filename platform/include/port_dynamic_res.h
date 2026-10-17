@@ -2,7 +2,7 @@
 
 // Dynamic resolution: picks the EFB scale once a second so the frame rate holds
 // its target. Kept apart from the overlay so it can be tested on recorded or
-// made-up seconds (tests/port_dynamic_res.cpp); platform/debug_ui/options.inc
+// made-up seconds (tests/port_dynamic_res.cpp); platform/debug_ui/options.cpp
 // feeds it and applies what it returns.
 //
 // With the GPU's own time per frame (timestamp queries, Aurora's gpu_prof) it

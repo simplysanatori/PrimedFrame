@@ -1,6 +1,27 @@
-// Part of platform/debug_ui.cpp: The Archipelago tab (connect, chat, session). Included by
-// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
-// namespaces.
+// F1 overlay: The Archipelago tab (connect, chat, session). State and helpers shared with the other
+// parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_paths.h"
+#include "port_apclient.h"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_timer.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <ctime>
+#include <string>
+#include <vector>
+
+namespace PortDebug {
 
 // Archipelago's Connect screen: the room's address, the slot name and the
 // room password, saved to archipelago.json. The built-in Metroid Prime tables
@@ -265,3 +286,5 @@ void DrawArchipelagoTab() {
   }
   ImGui::EndTabBar();
 }
+
+} // namespace PortDebug

@@ -166,6 +166,31 @@ endif()
 set(MP_PORT_SOURCES
     platform/main.cpp
     platform/debug_ui.cpp
+    platform/debug_ui/android_jni.cpp
+    platform/debug_ui/archipelago.cpp
+    platform/debug_ui/audio.cpp
+    platform/debug_ui/cheats.cpp
+    platform/debug_ui/controls.cpp
+    platform/debug_ui/debug.cpp
+    platform/debug_ui/file_dialogs.cpp
+    platform/debug_ui/gallery.cpp
+    platform/debug_ui/game_sections.cpp
+    platform/debug_ui/input.cpp
+    platform/debug_ui/mods.cpp
+    platform/debug_ui/options.cpp
+    platform/debug_ui/overlays.cpp
+    platform/debug_ui/performance.cpp
+    platform/debug_ui/randomizer.cpp
+    platform/debug_ui/remastered.cpp
+    platform/debug_ui/runtime.cpp
+    platform/debug_ui/savestates.cpp
+    platform/debug_ui/search.cpp
+    platform/debug_ui/settings.cpp
+    platform/debug_ui/tabs.cpp
+    platform/debug_ui/tracker.cpp
+    platform/debug_ui/ui_common.cpp
+    platform/debug_ui/video.cpp
+    platform/debug_ui/window.cpp
     platform/port_input_settings.cpp
     platform/port_gyro_motion.cpp
     platform/disc.cpp
@@ -1015,7 +1040,7 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0)
     mp_port_test(port_swoosh_ring_tests SOURCES tests/port_swoosh_ring.cpp INCLUDES platform/include)
-    # Every port_settings.ini key reads back as written (platform/debug_ui/settings.inc,
+    # Every port_settings.ini key reads back as written (platform/debug_ui/settings.cpp,
     # kSettingKeys); the game binary checks itself and exits before starting.
     add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)
     set_tests_properties(port_settings_roundtrip PROPERTIES TIMEOUT 30 LABELS port

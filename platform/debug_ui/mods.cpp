@@ -1,8 +1,28 @@
-// Part of platform/debug_ui.cpp: The Remastered import, importers and mods sections. Included by
-// debug_ui.cpp at this point in the file, not compiled on its own: it shares that file's state and
-// namespaces.
+// F1 overlay: The Remastered import, importers and mods sections. State and helpers shared with the
+// other parts are in debug_ui_internal.h.
 
-namespace {
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_pointer.h"
+#include "port_mods.h"
+#include "port_importers.h"
+#include "port_remastered_import.h"
+#include "port_remastered_text.h"
+#include "port_savestate.h"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_misc.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <mutex>
+#include <string>
+#include <vector>
+
+namespace PortDebug {
 
 void DrawRemasteredImport() {
   static char sImage[1024] = "";
@@ -215,6 +235,7 @@ void DrawRemasteredImport() {
   }
 }
 
+namespace {
 #if !defined(__ANDROID__)
 // Importers (port_importers.h): the user's own programs that build a mod.
 // Nothing is drawn until the importers folder holds one.
@@ -267,6 +288,7 @@ void DrawImporters() {
   }
 }
 #endif
+} // namespace
 
 void DrawMods() {
   ImGui::SeparatorText("Mods");
@@ -360,19 +382,4 @@ void DrawMods() {
   DrawImporters();
 #endif
 }
-} // namespace
-
-bool UpdateToastShowing() {
-  std::lock_guard lock(sUpdateToastMutex);
-  return sUpdateToastShowing;
-}
-
-bool TapUpdateToast(float x, float y) {
-  std::lock_guard lock(sUpdateToastMutex);
-  const ImVec4& r = sUpdateToastRect;
-  if (!sUpdateToastShowing || x < r.x || x > r.z || y < r.y || y > r.w) {
-    return false;
-  }
-  sUpdateToastTapped.store(true);
-  return true;
-}
+} // namespace PortDebug

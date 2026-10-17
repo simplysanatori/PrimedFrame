@@ -1,5 +1,23 @@
-// Part of platform/debug_ui.cpp: The Tracker tab. Included by debug_ui.cpp at this point in the
-// file, not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: The Tracker tab. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_apclient.h"
+#include "port_tracker.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+
+#include <cstdio>
+#include <cstring>
+#include <string>
+
+namespace PortDebug {
 
 void DrawTrackerCount(const char* label, const PortTracker::Count& count) {
   const bool done = count.total > 0 && count.have >= count.total;
@@ -236,3 +254,5 @@ void DrawTrackerTab() {
     }
   }
 }
+
+} // namespace PortDebug

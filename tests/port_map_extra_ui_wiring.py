@@ -40,9 +40,9 @@ from wiring_helpers import (  # noqa: E402
 
 root = root_argument()
 DEBUG_UI = root / "platform/debug_ui.cpp"
-SETTINGS = root / "platform/debug_ui/settings.inc"
-OPTIONS = root / "platform/debug_ui/options.inc"
-TRACKER = root / "platform/debug_ui/tracker.inc"
+SETTINGS = root / "platform/debug_ui/settings.cpp"
+OPTIONS = root / "platform/debug_ui/options.cpp"
+TRACKER = root / "platform/debug_ui/tracker.cpp"
 DEBUG_HEADER = root / "platform/include/port_debug.h"
 INDEX = root / "platform/port_settings_index.inc"
 MAPPER = root / "src/MetroidPrime/CAutoMapper.cpp"

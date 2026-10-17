@@ -5,10 +5,12 @@ Usage: check_settings_index.py <repo root>
 
 Checks, each problem printed on its own line:
   (a) every row parses, its page is a kDebugPages name and its sub-tab is a
-      SubTab("page", "sub") pair in debug_ui.cpp ("" when the page has none);
-  (b) every row's label appears as a string literal in platform/**/*.cpp
-      ("label" or "label##...");
-  (c) every ImGui widget in debug_ui.cpp whose label is a literal with visible
+      SubTab("page", "sub") pair in the overlay's sources ("" when the page
+      has none);
+  (b) every row's label appears as a string literal in platform/**/*.cpp or
+      the overlay's internal header ("label" or "label##...");
+  (c) every ImGui widget in the overlay's sources (platform/debug_ui.cpp and
+      platform/debug_ui/*.cpp) whose label is a literal with visible
       text (before "##") is a label in the index or listed in EXCLUDED.
 
 Duplicate (page, sub-tab, label) groups are reported as notes; they are legal
@@ -20,7 +22,7 @@ import pathlib
 import re
 import sys
 
-# Widgets in debug_ui.cpp that check (c) skips: they are not F1 settings.
+# Widgets in the overlay that check (c) skips: they are not F1 settings.
 EXCLUDED = {
     # Photo mode's floating panel (DrawPhotoUI), not an F1 page.
     "FOV": "photo mode panel, not an F1 page",
@@ -30,14 +32,14 @@ EXCLUDED = {
 
 INDEX = pathlib.Path("platform/port_settings_index.inc")
 DEBUG_UI = pathlib.Path("platform/debug_ui.cpp")
-# debug_ui.cpp #includes its parts from here, in place.
+# The overlay's other translation units.
 DEBUG_UI_PARTS = pathlib.Path("platform/debug_ui")
 
 
 def debug_ui_sources(root):
-    """debug_ui.cpp and its parts, as (path, text) in file order."""
+    """debug_ui.cpp and its parts, as (path, text)."""
     files = [(DEBUG_UI, (root / DEBUG_UI).read_text(encoding="utf-8"))]
-    for part in sorted((root / DEBUG_UI_PARTS).glob("*.inc")):
+    for part in sorted((root / DEBUG_UI_PARTS).glob("*.cpp")):
         files.append((part.relative_to(root), part.read_text(encoding="utf-8")))
     return files
 
@@ -90,12 +92,13 @@ def main(argv):
         if not label:
             problems.append(f"{INDEX}:{lineno}: empty label")
 
-    sources = "\n".join(
-        [p.read_text(encoding="utf-8", errors="replace")
-         for p in sorted((root / "platform").rglob("*.cpp"))] + [text for _path, text in debug_files[1:]])
+    sources = "\n".join(p.read_text(encoding="utf-8", errors="replace")
+                        for p in sorted((root / "platform").rglob("*.cpp"))
+                        + sorted((root / DEBUG_UI_PARTS).glob("*.h")))
     for lineno, _page, _sub, _section, label, _keywords in rows:
         if f'"{label}"' not in sources and f'"{label}##' not in sources:
-            problems.append(f"{INDEX}:{lineno}: label '{label}' is not a string literal in platform/**/*.cpp")
+            problems.append(f"{INDEX}:{lineno}: label '{label}' is not a string literal in platform/**/*.cpp "
+                            f"or {DEBUG_UI_PARTS}/*.h")
 
     index_labels = {row[4] for row in rows}
     for path, text in debug_files:

@@ -1,6 +1,42 @@
-// Part of platform/debug_ui.cpp: Gyro, mouse aim, touch aim and gestures, the visor/beam wheels and
-// the map gestures. Included by debug_ui.cpp at this point in the file, not compiled on its own: it
-// shares that file's state and namespaces.
+// F1 overlay: Gyro, mouse aim, touch aim and gestures, the visor/beam wheels and the map gestures.
+// State and helpers shared with the other parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_gyro_motion.h"
+#include "port_photo.h"
+#include "port_pointer.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_config_reset.h"
+#include "port_input_devices.h"
+#include "port_savestate.h"
+#include "port_mouse.h"
+
+#include "MetroidPrime/Cameras/CCameraManager.hpp"
+#include "Kyoto/Graphics/CModel.hpp"
+#include "GuiSys/CGuiModel.hpp"
+
+#include <aurora/gfx.h>
+#include <SDL3/SDL_dialog.h>
+#include <SDL3/SDL_gamepad.h>
+#include <SDL3/SDL_timer.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <mutex>
+#include <utility>
+#include <vector>
+
+namespace PortDebug {
 
 // State only this part uses.
 namespace {
@@ -1000,3 +1036,5 @@ bool PresentedAimDelta(float fraction, float& dyaw, float& dpitch) {
   dpitch = pitch - sMouseAimState.pitch;
   return dyaw != 0.f || dpitch != 0.f;
 }
+
+} // namespace PortDebug

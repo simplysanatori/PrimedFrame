@@ -1,6 +1,35 @@
-// Part of platform/debug_ui.cpp: The settings file: one table of keys (kSettingKeys) that reads and
-// writes port_settings.ini, and saving it. Included by debug_ui.cpp at this point in the file, not
-// compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: The settings file: one table of keys (kSettingKeys) that reads and writes
+// port_settings.ini, saving it, and the settings self-test. State and helpers shared with the other
+// parts are in debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_env.h"
+#include "port_debug.h"
+#include "port_gyro_motion.h"
+#include "port_photo.h"
+#include "port_pointer.h"
+#include "port_room_geo.h"
+#include "port_log.h"
+#include "port_paths.h"
+#include "port_input_devices.h"
+#include "port_gci.h"
+#include "port_discord.h"
+
+#include <musyx/port_voices.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <map>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <utility>
 
 namespace {
 
@@ -496,6 +525,24 @@ void ApplySettingsText(std::istream& text) {
   }
 }
 
+// key=value lines of a settings text, comments skipped.
+std::map< std::string, std::string > SettingsValues(const std::string& text) {
+  std::map< std::string, std::string > values;
+  std::istringstream lines(text);
+  std::string line;
+  while (std::getline(lines, line)) {
+    const size_t separator = line.find('=');
+    if (!line.empty() && line[0] != '#' && separator != std::string::npos) {
+      values[line.substr(0, separator)] = line.substr(separator + 1);
+    }
+  }
+  return values;
+}
+
+} // namespace
+
+namespace DebugUi {
+
 // The settings file's text, as written by SaveSettings and copied into the log.
 std::string SettingsText() {
   std::ostringstream file;
@@ -528,20 +575,6 @@ void LoadSettings() {
   PortLog::Write("metroid_prime_port: loaded settings from %s\n", path.c_str());
   ApplySettingsText(file);
   PortInput::PostLoad();
-}
-
-// key=value lines of a settings text, comments skipped.
-std::map< std::string, std::string > SettingsValues(const std::string& text) {
-  std::map< std::string, std::string > values;
-  std::istringstream lines(text);
-  std::string line;
-  while (std::getline(lines, line)) {
-    const size_t separator = line.find('=');
-    if (!line.empty() && line[0] != '#' && separator != std::string::npos) {
-      values[line.substr(0, separator)] = line.substr(separator + 1);
-    }
-  }
-  return values;
 }
 
 // Paths in the log keep only their file name: the folders say nothing about a bug.
@@ -604,4 +637,53 @@ void SaveSettings() {
   sSettingsDirty = false;
 }
 
-} // namespace
+} // namespace DebugUi
+
+namespace PortDebug {
+
+int SettingsSelfTest() {
+  int failures = 0;
+  int sampled = 0;
+  // Each sampled key, through the file reader: both values must come back as written.
+  for (const SettingKey& entry : kSettingKeys) {
+    if (entry.key == nullptr || entry.write == nullptr || entry.sampleA == nullptr) {
+      continue;
+    }
+    ++sampled;
+    for (const char* sample : {entry.sampleA, entry.sampleB}) {
+      std::istringstream line(std::string(entry.key) + "=" + sample + "\n");
+      ApplySettingsText(line);
+      const auto written = SettingsValues(SettingsText());
+      const auto found = written.find(entry.key);
+      const std::string got = found == written.end() ? std::string() : found->second;
+      if (got != sample) {
+        PortLog::Write("settings self-test: %s=%s reads back as %s=%s\n", entry.key, sample, entry.key,
+                       got.c_str());
+        ++failures;
+      }
+    }
+  }
+  // Every line written is a key something reads, and reading the whole file
+  // back writes it unchanged.
+  const std::string first = SettingsText();
+  for (const auto& [key, value] : SettingsValues(first)) {
+    if (!ApplySetting(key, value)) {
+      PortLog::Write("settings self-test: %s is written but nothing reads it\n", key.c_str());
+      ++failures;
+    }
+  }
+  std::istringstream again(first);
+  ApplySettingsText(again);
+  const std::string second = SettingsText();
+  if (second != first) {
+    // Both whole files: past PortLog's 2048-byte line, so straight to stderr.
+    std::fprintf(stderr, "settings self-test: the file changes when read back\n%s\n---\n%s\n", first.c_str(),
+                 second.c_str());
+    ++failures;
+  }
+  PortLog::Write("settings self-test: %d keys sampled, %zu lines round-tripped, %d failure(s)\n", sampled,
+                 SettingsValues(first).size(), failures);
+  return failures == 0 ? 0 : 1;
+}
+
+} // namespace PortDebug

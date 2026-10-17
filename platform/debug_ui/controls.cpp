@@ -1,5 +1,32 @@
-// Part of platform/debug_ui.cpp: The Controls page. Included by debug_ui.cpp at this point in the
-// file, not compiled on its own: it shares that file's state and namespaces.
+// F1 overlay: The Controls page. State and helpers shared with the other parts are in
+// debug_ui_internal.h.
+
+#include "debug_ui_internal.h"
+
+#include "port_debug.h"
+#include "port_gyro_motion.h"
+#include "port_pointer.h"
+#include "port_apclient.h"
+#include "port_controls.h"
+#include "port_input_devices.h"
+#include "port_mouse.h"
+
+#include "MetroidPrime/Player/CGameOptions.hpp"
+#include "MetroidPrime/Player/CGameState.hpp"
+
+#include <aurora/imgui.h>
+#include <imgui_internal.h>
+#include <SDL3/SDL_gamepad.h>
+
+#if defined(__ANDROID__)
+#include "touch_pad.h"
+#endif
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+
+namespace PortDebug {
 
 void DrawControlsOptions() {
   const bool locked = BeginOriginalLocked();
@@ -500,3 +527,5 @@ void DrawControlsTouchGyro() {
   }
   ImGui::EndDisabled();
 }
+
+} // namespace PortDebug
