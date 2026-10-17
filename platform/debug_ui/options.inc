@@ -514,6 +514,21 @@ bool SecondaryCrosshairs() {
   return sSecondaryCrosshairs || sOriginalExperience;
 }
 
+int HudOpacity(HudOpacityPart part) {
+  EnsureInitialized();
+  if (sOriginalExperience) {
+    return part == kHudOpacityEnergy ? kHudOpacityMax : kHudOpacityVisor;
+  }
+  return sHudOpacity[part];
+}
+
+void SetHudOpacity(HudOpacityPart part, int percent) {
+  EnsureInitialized();
+  sHudOpacity[part] = percent == kHudOpacityVisor ? kHudOpacityVisor
+                                                  : std::clamp(percent, kHudOpacityMin, kHudOpacityMax);
+  MarkDirty();
+}
+
 int CrosshairOpacity() {
   EnsureInitialized();
   return sOriginalExperience ? kCrosshairOpacityMax : sCrosshairOpacity;

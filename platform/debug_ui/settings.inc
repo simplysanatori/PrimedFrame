@@ -25,6 +25,26 @@ struct SettingKey {
 
 void WriteBool(std::ostream& out, bool value) { out << (value ? 1 : 0); }
 
+// hud_opacity_*: a percent, or "visor" to follow the game's Visor Opacity.
+void ReadHudOpacity(PortDebug::HudOpacityPart part, const std::string& value) {
+  if (value == "visor") {
+    sHudOpacity[part] = PortDebug::kHudOpacityVisor;
+    return;
+  }
+  const int s = std::atoi(value.c_str());
+  if (s >= PortDebug::kHudOpacityMin && s <= PortDebug::kHudOpacityMax) {
+    sHudOpacity[part] = s;
+  }
+}
+
+void WriteHudOpacity(std::ostream& out, PortDebug::HudOpacityPart part) {
+  if (sHudOpacity[part] == PortDebug::kHudOpacityVisor) {
+    out << "visor";
+  } else {
+    out << sHudOpacity[part];
+  }
+}
+
 const SettingKey kSettingKeys[] = {
     {"aspect",
      [](const std::string& value) {
@@ -104,6 +124,14 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sCrosshairOpacity; }, false, "0", "100"},
+    {"hud_opacity_xray", [](const std::string& value) { ReadHudOpacity(PortDebug::kHudOpacityXRay, value); },
+     [](std::ostream& out) { WriteHudOpacity(out, PortDebug::kHudOpacityXRay); }, false, "visor", "40"},
+    {"hud_opacity_thermal", [](const std::string& value) { ReadHudOpacity(PortDebug::kHudOpacityThermal, value); },
+     [](std::ostream& out) { WriteHudOpacity(out, PortDebug::kHudOpacityThermal); }, false, "visor", "40"},
+    {"hud_opacity_scan", [](const std::string& value) { ReadHudOpacity(PortDebug::kHudOpacityScan, value); },
+     [](std::ostream& out) { WriteHudOpacity(out, PortDebug::kHudOpacityScan); }, false, "visor", "40"},
+    {"hud_opacity_energy", [](const std::string& value) { ReadHudOpacity(PortDebug::kHudOpacityEnergy, value); },
+     [](std::ostream& out) { WriteHudOpacity(out, PortDebug::kHudOpacityEnergy); }, false, "visor", "40"},
     {"crosshair_color",
      [](const std::string& value) {
        // RRGGBB, or empty for the game's own colour.

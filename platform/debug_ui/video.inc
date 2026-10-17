@@ -58,6 +58,33 @@ void DrawVideoDisplay() {
   ImGui::SetItemTooltip("How far the widescreen HUD moves the scan visor's side panels and images\n"
                         "toward the screen edges. 0%% keeps them where they are at 4:3, clear of\n"
                         "touch controls; 100%% puts them at the edges with the rest of the HUD.");
+  // Issue #144: the game's Visor Opacity is one value for every visor and never reaches the
+  // energy readout.
+  static const char* const kHudOpacityLabels[kHudOpacityPartCount] = {
+      "X-Ray HUD opacity", "Thermal HUD opacity", "Scan HUD opacity", "Energy readout opacity"};
+  for (int i = 0; i < kHudOpacityPartCount; ++i) {
+    const HudOpacityPart part = static_cast< HudOpacityPart >(i);
+    ImGui::PushID(i);
+    bool followVisor = sHudOpacity[i] == kHudOpacityVisor;
+    if (ImGui::Checkbox("##follow", &followVisor)) {
+      SetHudOpacity(part, followVisor ? kHudOpacityVisor : kHudOpacityMax);
+    }
+    ImGui::SetItemTooltip("On: use the game's Visor Opacity (Options > Visor).");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(followVisor);
+    int percent = followVisor ? kHudOpacityMax : sHudOpacity[i];
+    if (ImGui::SliderInt(kHudOpacityLabels[i], &percent, kHudOpacityMin, kHudOpacityMax,
+                         followVisor ? "Visor Opacity" : "%d%%")) {
+      SetHudOpacity(part, percent);
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip(part == kHudOpacityEnergy
+                              ? "The energy bar, tanks and digits. The game draws them at full\n"
+                                "strength whatever Visor Opacity is; tick the box to have them follow it."
+                              : "This visor's HUD, the visor and beam menus and the minimap while it is\n"
+                                "on. Tick the box to use the game's Visor Opacity, as the game does.");
+    ImGui::PopID();
+  }
   if (ImGui::SliderInt("Crosshair opacity", &sCrosshairOpacity, kCrosshairOpacityMin,
                        kCrosshairOpacityMax, "%d%%")) {
     MarkDirty();

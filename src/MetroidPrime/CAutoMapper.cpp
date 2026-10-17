@@ -1680,7 +1680,12 @@ void CAutoMapper::ProcessMapPanInput(const CFinalInput& input, const CStateManag
 }
 
 void CAutoMapper::Draw(const CStateManager& mgr, const CTransform4f& xf, float alpha) const {
+#ifdef TARGET_PC
+  // The opacity of the visor in use (issue #144).
+  float drawAlpha = alpha * gpGameState->GameOptions().GetActiveHudAlpha(mgr);
+#else
   float drawAlpha = alpha * gpGameState->GameOptions().GetHudAlpha();
+#endif
   gpRender->SetBlendMode_AlphaBlended();
   CGraphics::SetCullMode(kCM_Front);
 
