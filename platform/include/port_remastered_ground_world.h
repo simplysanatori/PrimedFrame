@@ -36,6 +36,9 @@ struct Triangle {
   std::array< Vec3f, 3 > verts{};
   Vec3f normal{};                 // unit plane normal, port space
   std::uint64_t materialBits = 0; // CMaterialList value, surface merged with the object's
+  // The collided object: 0 for static terrain, else a platform
+  // (PortRemasteredGroundRider::OwnerFromRaw). Copied to the triangle's contact.
+  std::uint32_t ownerUid = 0;
 };
 
 // Remastered's CCollisionContact view of one contact, in Remastered's frame.
@@ -71,6 +74,9 @@ struct Contact {
   float D = 0.f;                  // +0x14
   float H = 0.f;                  // +0x18
   std::size_t triangle = 0;       // caller's triangle index
+  // +0x30 for the triangle's side: the collided object, 0 for static terrain. The box's own
+  // side (self) keeps 0; its owner is the queried actor.
+  std::uint32_t ownerUid = 0;
 };
 
 // The actor's box in port world space, plus the actor's own material list: the

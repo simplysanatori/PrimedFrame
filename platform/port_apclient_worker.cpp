@@ -436,6 +436,15 @@ void WorkerLoop(Runtime& runtime) {
         }
       }
 
+      // What the session queued goes first: RoomInfo asks for this game's
+      // DataPackage, which has to arrive before Connected and its ReceivedItems
+      // so the server's item ids can be read by name.
+      for (const std::string& packet : outgoing) {
+        if (!SendPacket(client, packet, connectionError)) {
+          connectionFailed = true;
+          return false;
+        }
+      }
       if (!connectPacket.empty() && !SendPacket(client, connectPacket, connectionError)) {
         connectionFailed = true;
         return false;
@@ -457,12 +466,6 @@ void WorkerLoop(Runtime& runtime) {
         }
         if (!sendAllChecks.empty())
           CountChecks(runtime, sendAllChecks.size());
-      }
-      for (const std::string& packet : outgoing) {
-        if (!SendPacket(client, packet, connectionError)) {
-          connectionFailed = true;
-          return false;
-        }
       }
       if (refused) {
         connectionFailed = true;

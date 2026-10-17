@@ -4,7 +4,9 @@
 // Every reply ends with a line `=> ok` or `=> err: <why>`. tools/mpcon.py is
 // the client. Commands that touch the game run inside the state manager's
 // tick, where every object pointer is live; the rest run once per frame.
+#include "port_ap_world.h"
 #include "port_apclient.h"
+#include "port_beam_doors.h"
 #include "port_log.h"
 #include "port_env.h"
 #include "port_strings.h"
@@ -2198,9 +2200,18 @@ void CmdHudOpacity() {
 }
 
 void CmdCrosshair() {
+  if (sCmd.args.size() > 1 && sCmd.args[1] == "style") {
+    const std::string style = sCmd.args.size() > 2 ? sCmd.args[2] : "";
+    if (style != "classic" && style != "remastered") {
+      return Finish("usage: crosshair style classic|remastered");
+    }
+    PortDebug::SetCrosshairStyle(style == "remastered" ? PortDebug::kCrosshairStyle_Remastered
+                                                       : PortDebug::kCrosshairStyle_Classic);
+    return Finish();
+  }
   const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : 0;
   if (value < PortDebug::kCrosshairSizeMin || value > PortDebug::kCrosshairSizeMax) {
-    return Finish("usage: crosshair <25..100>");
+    return Finish("usage: crosshair <25..100> | crosshair style classic|remastered");
   }
   PortDebug::SetCrosshairSize(value);
   Finish();
@@ -2315,6 +2326,71 @@ void CmdPickups() {
                   "       pickups collect <dot>      mark a dot's pickup collected (test aid)\n"
                   "       pickups station <on|off>   map stations show pickups in Seen");
   }
+  Finish();
+}
+
+void CmdBeamDoors(CStateManager& mgr) {
+  // beamdoors [status|list [here]|unlock <door index|all>|reset]: the beam
+  // doorways the player has opened (PortBeamDoors). Door indices are the ones
+  // `list` prints (PortApWorld's door table).
+  const std::string sub = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "status";
+  if (gpGameState == nullptr) {
+    return Finish("not in a game");
+  }
+  const uint* bits = gpGameState->PortBeamDoorBits();
+  const int count = PortApWorld::BeamDoorwayCount();
+  if (sub == "reset") {
+    PortBeamDoors::Reset();
+  } else if (sub == "unlock") {
+    if (sCmd.args.size() < 3) {
+      return Finish("usage: beamdoors unlock <door index|all>");
+    }
+    if (Lower(sCmd.args[2]) == "all") {
+      int changed = 0;
+      for (int bit = 0; bit < count; ++bit)
+        changed += PortBeamDoors::Unlock(mgr, bit) ? 1 : 0;
+      Out("unlocked %d doorways", changed);
+    } else {
+      char* end = nullptr;
+      const long door = std::strtol(sCmd.args[2].c_str(), &end, 10);
+      const int bit = end != sCmd.args[2].c_str() && *end == 0
+                          ? PortApWorld::BeamDoorwayBit(static_cast< int >(door))
+                          : -1;
+      if (bit < 0) {
+        return Finish("not a beam door (see beamdoors list)");
+      }
+      Out(PortBeamDoors::Unlock(mgr, bit) ? "doorway %d unlocked" : "doorway %d already unlocked",
+          bit);
+    }
+  } else if (sub == "list") {
+    const bool here = sCmd.args.size() > 2 && Lower(sCmd.args[2]) == "here";
+    uint32_t mrea = 0;
+    if (here) {
+      const CWorld* world = mgr.GetWorld();
+      mrea = static_cast< uint32_t >(world->GetAreaAlways(world->GetCurrentAreaId()).GetAreaAssetId());
+    }
+    for (int bit = 0; bit < count; ++bit) {
+      std::string doors;
+      bool inArea = !here;
+      for (const PortApWorld::DoorChange& door : PortApWorld::BeamDoorway(bit)) {
+        inArea = inArea || door.mrea == mrea;
+        doors += (doors.empty() ? "" : ", ") + std::to_string(door.index) + " (area " +
+                 [&] { char text[16]; std::snprintf(text, sizeof(text), "%08X", door.mrea); return std::string(text); }() +
+                 ", dock " + std::to_string(door.dock) + ")";
+      }
+      if (inArea) {
+        Out("%3d %s door %s", bit, PortBeamDoors::Test(bits, bit) ? "open  " : "locked",
+            doors.empty() ? "(no door object)" : doors.c_str());
+      }
+    }
+  } else if (sub != "status") {
+    return Finish("usage: beamdoors [status|list [here]|unlock <door index|all>|reset]");
+  }
+  int open = 0;
+  for (int bit = 0; bit < count; ++bit)
+    open += PortBeamDoors::Test(bits, bit) ? 1 : 0;
+  Out("beamdoors %s; %d of %d doorways unlocked", PortBeamDoors::Enabled() ? "on" : "off", open,
+      count);
   Finish();
 }
 
@@ -3535,7 +3611,7 @@ const CommandSpec kCommands[] = {
     {"scanspread", CmdScanSpread, nullptr,
      "scanspread <0..100>        how far the widescreen HUD moves the scan panels out"},
     {"crosshair", CmdCrosshair, nullptr,
-     "crosshair <25..100>        mouse/twin-stick crosshair size in percent"},
+     "crosshair <25..100> | style classic|remastered   mouse/twin-stick crosshair size in percent, or its style"},
     {"hudopacity", CmdHudOpacity, nullptr,
      "hudopacity <xray|thermal|scan|energy> <visor|0..100>  that HUD's opacity, or Visor Opacity's"},
     {"helmet", CmdHelmetVisorFx, nullptr,
@@ -3553,6 +3629,9 @@ const CommandSpec kCommands[] = {
      "reveal <0|1>               reveal every world's map, as the Options row does"},
     {"mapui", CmdMapUi, nullptr,
      "mapui [0|1]                 the map's extra legend entries and the Mark room prompt"},
+    {"beamdoors", nullptr, CmdBeamDoors,
+     "beamdoors [status|list [here]|unlock <door index|all>|reset]  the beam doors opened for good\n"
+     "                           (beam_doors_stay_unlocked; unlock restyles the loaded doors)"},
     {"mark", CmdMark, nullptr,
      "mark [list|clear|toggle <area>]  the map's room marks of the current world (world:area)"},
     {"pickups", CmdPickups, nullptr,

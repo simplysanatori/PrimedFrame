@@ -485,6 +485,17 @@ int CrosshairOpacity() {
   return sOriginalExperience ? kCrosshairOpacityMax : sCrosshairOpacity;
 }
 
+ECrosshairStyle CrosshairStyle() {
+  EnsureInitialized();
+  return sOriginalExperience ? kCrosshairStyle_Classic : sCrosshairStyle;
+}
+
+void SetCrosshairStyle(ECrosshairStyle style) {
+  EnsureInitialized();
+  sCrosshairStyle = style;
+  MarkDirty();
+}
+
 bool CrosshairColor(float rgb[3]) {
   EnsureInitialized();
   if (!sCrosshairCustomColor || sOriginalExperience) {
@@ -552,6 +563,13 @@ bool SkippableCutscenes() {
 }
 
 void SetSkippableCutscenes(bool enabled) { StoreSetting(sSkippableCutscenes, enabled); }
+
+bool BeamDoorsStayUnlocked() {
+  EnsureInitialized();
+  return sBeamDoorsStayUnlocked && !sOriginalExperience;
+}
+
+void SetBeamDoorsStayUnlocked(bool enabled) { StoreSetting(sBeamDoorsStayUnlocked, enabled); }
 
 bool Revision100Compatibility() { return Loaded(sRevision100Compatibility); }
 void SetRevision100Compatibility(bool enabled) { StoreSetting(sRevision100Compatibility, enabled); }

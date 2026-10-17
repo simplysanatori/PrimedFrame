@@ -84,6 +84,7 @@ extern int sHudScale;
 extern int sScanSpread;
 extern int sHudOpacity[PortDebug::kHudOpacityPartCount]; // indexed by PortDebug::HudOpacityPart
 extern int sCrosshairOpacity;
+extern PortDebug::ECrosshairStyle sCrosshairStyle;
 extern bool sCrosshairCustomColor;
 extern float sCrosshairColor[3];
 extern bool sHideHelmet;
@@ -98,6 +99,7 @@ extern bool sTrackerProgress;
 extern int sApSuitDamage;
 extern bool sCheats;
 extern bool sSkippableCutscenes;
+extern bool sBeamDoorsStayUnlocked;
 extern bool sRevision100Compatibility;
 extern std::string sTextLanguage;
 extern int sElevatorRide;

@@ -230,6 +230,11 @@ void SetHudOpacity(HudOpacityPart part, int percent);
 const int kCrosshairOpacityMin = 0;
 const int kCrosshairOpacityMax = 100;
 int CrosshairOpacity();
+// The centre crosshair's look: the game's model, or a procedural take on Remastered's design
+// (crosshair_style=, MP_CROSSHAIR_STYLE). Classic under Original experience.
+enum ECrosshairStyle { kCrosshairStyle_Classic, kCrosshairStyle_Remastered };
+ECrosshairStyle CrosshairStyle();
+void SetCrosshairStyle(ECrosshairStyle style);
 bool CrosshairColor(float rgb[3]);
 // Auto-aim: without Lock-On the gun picks the target nearest the screen centre
 // (CPlayer::UpdateAimTarget). Off = aim only at a locked target. On under Original experience.
@@ -296,6 +301,13 @@ void SetApSuitDamage(int mode);
 // (PortSkipCutscenes::Active).
 bool SkippableCutscenes();
 void SetSkippableCutscenes(bool enabled);
+// beam_doors_stay_unlocked (PortBeamDoors): a Wave, Ice, Plasma or Power Beam
+// door whose force field was broken is a plain blue door from then on, on both
+// sides, for the rest of the save. Off by default, and off in the Original
+// experience. Rooms load patched, so turning it on or off applies to rooms
+// loaded afterwards.
+bool BeamDoorsStayUnlocked();
+void SetBeamDoorsStayUnlocked(bool enabled);
 // The stored 1.00 sequence-break compatibility choice (raw, not the effective
 // policy). Randomizer and Archipelago games force it on at use.
 bool Revision100Compatibility();
@@ -651,6 +663,9 @@ bool TapUpdateToast(float x, float y);
 // Called during simulation, using the effective unbobbed camera direction.
 bool UpdateMouseAim(bool active, bool locked, float x, float y, float z);
 void SynchronizeMouseAim(float x, float y, float z);
+// Turns the mouse-look yaw by dyaw radians (the game turned the player: a rotating
+// platform's rider carry). No effect until the aim is initialized.
+void TurnMouseAim(float dyaw);
 void ResetMouseAim();
 float MouseSensitivity();
 void SetMouseSensitivity(float radiansPerPixel);

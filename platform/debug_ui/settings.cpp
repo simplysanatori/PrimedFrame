@@ -152,6 +152,18 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sCrosshairOpacity; }, false, "0", "100"},
+    {"crosshair_style",
+     [](const std::string& value) {
+       if (value == "classic") {
+         sCrosshairStyle = PortDebug::kCrosshairStyle_Classic;
+       } else if (value == "remastered") {
+         sCrosshairStyle = PortDebug::kCrosshairStyle_Remastered;
+       }
+     },
+     [](std::ostream& out) {
+       out << (sCrosshairStyle == PortDebug::kCrosshairStyle_Remastered ? "remastered" : "classic");
+     },
+     false, "remastered", "classic"},
     {"hud_opacity_xray", [](const std::string& value) { ReadHudOpacity(PortDebug::kHudOpacityXRay, value); },
      [](std::ostream& out) { WriteHudOpacity(out, PortDebug::kHudOpacityXRay); }, false, "visor", "40"},
     {"hud_opacity_thermal", [](const std::string& value) { ReadHudOpacity(PortDebug::kHudOpacityThermal, value); },
@@ -208,6 +220,7 @@ const SettingKey kSettingKeys[] = {
      [](std::ostream& out) { out << sApSuitDamage; }, false, "0", "2"},
     BoolKey< &sCheats >("cheats"),
     BoolKey< &sSkippableCutscenes >("skippable_cutscenes"),
+    BoolKey< &sBeamDoorsStayUnlocked >("beam_doors_stay_unlocked"),
     BoolKey< &sRevision100Compatibility >("revision_100_compatibility"),
     // Normalised on the way in (NormalizeEmulatorFolder), so not sampled.
     {"emulator_folder", [](const std::string& value) { PortGci::SetEmulatorFolder(value); },

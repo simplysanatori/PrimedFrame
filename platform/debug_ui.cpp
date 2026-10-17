@@ -102,6 +102,7 @@ int sScanSpread = PortDebug::kScanSpreadMax;
 int sHudOpacity[PortDebug::kHudOpacityPartCount] = {PortDebug::kHudOpacityVisor, PortDebug::kHudOpacityVisor,
                                                     PortDebug::kHudOpacityVisor, PortDebug::kHudOpacityMax};
 int sCrosshairOpacity = PortDebug::kCrosshairOpacityMax;
+PortDebug::ECrosshairStyle sCrosshairStyle = PortDebug::kCrosshairStyle_Classic;
 bool sCrosshairCustomColor = false;
 float sCrosshairColor[3] = {1.f, 1.f, 1.f};
 bool sHideHelmet = false;
@@ -122,6 +123,8 @@ bool sTrackerProgress = false;
 int sApSuitDamage = 1;
 bool sCheats = false;
 bool sSkippableCutscenes = false;
+// Off by default: a beam door that was opened stays blue (PortBeamDoors).
+bool sBeamDoorsStayUnlocked = false;
 // The stored choice only. Randomizer and Archipelago games force it on at use
 // (PortSkipCutscenes::Forced), which the getter does not fold in.
 bool sRevision100Compatibility = false;
@@ -473,6 +476,13 @@ void EnsureInitialized() {
   sScanSpeed = std::clamp(port::EnvInt("MP_SCAN_SPEED", sScanSpeed), PortDebug::kScanSpeedMin,
                           PortDebug::kScanSpeedMax);
   sSecondaryCrosshairs = port::EnvFlag("MP_SECONDARY_CROSSHAIRS", sSecondaryCrosshairs);
+  if (const char* style = std::getenv("MP_CROSSHAIR_STYLE")) {
+    if (std::strcmp(style, "classic") == 0) {
+      sCrosshairStyle = PortDebug::kCrosshairStyle_Classic;
+    } else if (std::strcmp(style, "remastered") == 0) {
+      sCrosshairStyle = PortDebug::kCrosshairStyle_Remastered;
+    }
+  }
   sMenuStandardButtons = port::EnvFlag("MP_MENU_STANDARD_BUTTONS", sMenuStandardButtons);
   PortPointer::SetEnabled(port::EnvFlag("MP_POINTER_MENUS", PortPointer::Enabled()));
   PortPointer::SetMapSwapFingers(port::EnvFlag("MP_MAP_SWAP_FINGERS", PortPointer::MapSwapFingers()));

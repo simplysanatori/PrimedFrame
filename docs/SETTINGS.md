@@ -521,6 +521,17 @@
   The opacity is the crosshair's alpha, so 100% draws it at full strength (the
   game's own alpha is 19%).
   Original experience ignores both.
+- Crosshair style (Video > Display, `crosshair_style`, `MP_CROSSHAIR_STYLE`, `classic`
+  or `remastered`, default `classic`; console `crosshair style ...`): `remastered` draws
+  Remastered's combat aiming cursor in place of the ring, built by the port (no Remastered
+  assets): a small soft centre dot and three tapered spikes turned 120 degrees apart (one up,
+  two down), tips toward the centre. Like Remastered's, the dot and spikes shrink with the
+  distance to what the aim ray meets (full size at 1 m, 0.45 and 0.33 at 50 m or more) and the
+  colour is cyan, orange in X-Ray, pale blue in Thermal, fading to red over a living, active,
+  targetable enemy (a `CPatterned`, or the owner of the collision actor hit). 100% crosshair
+  size is Remastered's size at a 55 degree vertical FOV (it scales with the screen height);
+  the size slider scales it. A custom crosshair colour replaces the idle colour, opacity
+  multiplies the alpha. Classic under Original experience.
 - Secondary crosshairs (Video > Display, `secondary_crosshairs`, `MP_SECONDARY_CROSSHAIRS`,
   default on): off hides the next-target reticles: the combat visor's seeker and the
   X-ray ring and thermal crosshair on the target Lock-On would pick. The lock-on
@@ -655,6 +666,36 @@
   finish at once, a Reset ends a beetle's emergence, no skip without a
   cutscene camera). Rooms a mod replaced are left unpatched. Archipelago
   games also skip the Landing Site intro: Samus starts on top of her ship.
+- Unlock beam doors once opened (F1 > Game > Cutscenes, `beam_doors_stay_unlocked`,
+  off by default and off in the Original experience): a door locked to the Wave,
+  Ice, Plasma or Power Beam that you open by breaking its force field becomes a
+  plain blue door for good in that save, on both sides: the blue shield and
+  force-field textures, blue weaknesses (any beam opens it), the blue map icon
+  and the blue door's scan. Missile, Bomb and Disabled doors and blast shields
+  are out of scope, and a door that still has an unbroken Archipelago blast
+  shield stays as it is. It works with or without a randomizer or Archipelago
+  seed (a seed's colour mapping decides what a door is first; an unlocked beam
+  door is blue whatever the seed coloured it). A door only a seed's per-door lock
+  colours (blue on the disc) is not covered. The doors of the rooms already loaded
+  change at once (both sides, the force field's weaknesses and textures, the
+  shield's model, the map icons); other rooms load blue. Turning the setting on
+  only affects doors you open afterwards; turning it off shows the original
+  colours again in rooms loaded afterwards (the unlocks stay recorded). The
+  record is one bit per doorway (111, `PortApWorld::BeamDoorwayBit`, stable for a
+  build). It is not in the save slot (nothing of the card changes): it is a small
+  file per slot beside the map side files,
+  `<user folder>/mapdata/beam-doors-<card key>-slot<N>.bin` (`port_beam_doors.h`
+  has the format). It is written after the card write succeeds, and only when a
+  doorway is open (also with the setting off: the unlocks are kept); a save with
+  none deletes a stale file. It belongs to the slot's exact bytes (a hash of
+  them), so a slot overwritten by a new save, an import or a conversion starts
+  with no unlocks, and so does a damaged or other-version file (logged once).
+  Copying only the card file to another install loses the unlocks; copy the
+  `mapdata` folder with it. Savestates carry the doorways. A state from an older
+  build keeps the running game's. A restore
+  skips an area whose unlocked doors changed since the snapshot (its room patch
+  differs), as for any patched room, and the doors come back blue from the game
+  state. Console: `beamdoors`.
 - 1.00 sequence-break compatibility (F1 > Game > Cutscenes > Revision
   compatibility, `revision_100_compatibility`, off by default; always on in
   randomizer and Archipelago games, where the box shows ticked and disabled)

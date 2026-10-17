@@ -826,30 +826,49 @@ void CGameCollision::Move(CStateManager& mgr, CPhysicsActor& actor, float dt,
 
 void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float dt,
                                 const TEntityList* colliderList) {
-  actor.SetApplyRotationWhenInCollision(true);
-  actor.AddMotionState(actor.PredictAngularMotion(dt));
-
 #ifdef TARGET_PC
   CPlayer* const player = TCastToPtr< CPlayer >(&actor);
   const PortRemasteredGround::MoverGate moverGate{
       player != nullptr && player->GetMorphballTransitionState() == CPlayer::kMS_Unmorphed,
       player != nullptr && player->MouseControlsAllowed(mgr), PortDebug::RemasteredMovement()};
   const bool remasteredMoverTick = PortRemasteredGround::UsesRemasteredMover(moverGate);
+  bool remasteredAirborneDispatch = false;
   if (player != nullptr) {
     player->PortSetRetainedObjectState(PortRemasteredGround::RetainedEntryForTick(
         moverGate, player->PortRetainedObjectState()));
+    // Platform riders (issue #117): exactly one carry per tick, decided by the mover this
+    // tick actually runs (PortRemasteredGroundRider::PlanCarry). Only the two dispatches
+    // below that enter MoveGroundedRemastered or MoveAirborneStepped can own the carry, and
+    // those functions settle it themselves; every other mover (retail ground, morph ball,
+    // gate off) takes the retail carry MoveRiders deferred, before it moves, where retail
+    // MoveRiders would have made it. Nothing is deferred unless the previous tick ran a
+    // carry-owning Remastered mover, so with Remastered movement off this is a no-op.
+    const bool remasteredGroundDispatch =
+        remasteredMoverTick && !actor.IsStandardCollider() &&
+        actor.GetMaterialList().HasMaterial(kMT_GroundCollider) &&
+        PortRemasteredGround::RetainedAllowsGroundMover(player->PortRetainedObjectState());
+    remasteredAirborneDispatch = remasteredMoverTick && !actor.IsStandardCollider() &&
+                                 !actor.GetMaterialList().HasMaterial(kMT_GroundCollider);
+    player->PortSetLastTickRemasteredCarry(false);
+    if (!remasteredGroundDispatch && !remasteredAirborneDispatch) {
+      player->PortApplyDeferredRiderCarry(mgr.PortSimTick());
+    }
   }
+#endif
+
+  actor.SetApplyRotationWhenInCollision(true);
+  actor.AddMotionState(actor.PredictAngularMotion(dt));
+
+#ifdef TARGET_PC
 
   // Remastered movement: Remastered's stepped mover (0xf943b4) caps a standing
   // player's rise before the move, scaling the whole velocity, where retail
   // caps it only after the move. Without the early cap the jump's first tick
-  // moves at the uncapped speed (issue #117).
-  if (remasteredMoverTick && player->GetPlayerMovementState() != NPlayer::kMS_OnGround) {
-    const float maxUp = player->GetMaximumPlayerPositiveVerticalVelocity(mgr);
-    const CVector3f velocity = player->GetVelocityWR();
-    if (velocity.GetZ() > maxUp) {
-      player->SetVelocityWR(velocity * (maxUp / velocity.GetZ()));
-    }
+  // moves at the uncapped speed (issue #117). The airborne mover caps itself, after
+  // its Pre impulse fold (0xf94480-0xf944b8); this copy serves the other dispatches.
+  if (remasteredMoverTick && !remasteredAirborneDispatch &&
+      player->GetPlayerMovementState() != NPlayer::kMS_OnGround) {
+    PortCapRise(mgr, *player);
   }
 #endif
 

@@ -17,6 +17,7 @@
 #include "dolphin/os.h"
 
 #ifdef TARGET_PC
+#include "port_beam_doors.h"
 #include "port_debug.h"
 
 #include <cstring>
@@ -334,6 +335,8 @@ CGameState::CGameState() : x0_(static_cast< uchar >(0))
   for (int i = 0; i < kPortSeenWords; ++i)
     xpc_seenPickups[i] = 0;
   xpc_mapMarks = PortMapMarks::List();
+  for (int i = 0; i < PortBeamDoors::kWords; ++i)
+    xpc_beamDoors[i] = 0;
 #endif
   if (gpMemoryCard != nullptr)
     InitializeMemoryStates();
@@ -378,6 +381,8 @@ CGameState::CGameState(CInputStream& in, int saveIdx) : x0_(static_cast< uchar >
   for (int i = 0; i < kPortSeenWords; ++i)
     xpc_seenPickups[i] = 0;
   xpc_mapMarks = PortMapMarks::List();
+  for (int i = 0; i < PortBeamDoors::kWords; ++i)
+    xpc_beamDoors[i] = 0;
   {
     // The first trailer had no checked locations, the second no shields.
     uint magic = in.ReadBits(32);

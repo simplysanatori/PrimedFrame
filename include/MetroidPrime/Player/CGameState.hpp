@@ -3,6 +3,7 @@
 
 #include "types.h"
 #ifdef TARGET_PC
+#include "port_beam_doors.h"
 #include "port_map_marks.h"
 #endif
 
@@ -104,6 +105,9 @@ public:
   // The rooms the player marked on the map (PortMapMarks), the "RMMK" trailer
   // after the "PKSN" one.
   PortMapMarks::List& PortMapMarkList() { return xpc_mapMarks; }
+  // The beam doorways this save has had opened (PortBeamDoors), one bit per
+  // PortApWorld::BeamDoorwayBit. The "BDUL" trailer after the "RMMK" one.
+  uint* PortBeamDoorBits() { return xpc_beamDoors; }
 #endif
 
 private:
@@ -127,6 +131,7 @@ private:
   ApProgress xpc_apProgress;
   uint xpc_seenPickups[kPortSeenWords];
   PortMapMarks::List xpc_mapMarks;
+  uint xpc_beamDoors[PortBeamDoors::kWords];
 #endif
 };
 CHECK_SIZEOF(CGameState, 0x230)

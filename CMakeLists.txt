@@ -220,6 +220,8 @@ set(MP_PORT_SOURCES
     platform/port_update_check.cpp
     platform/port_livesplit.cpp
     platform/port_tracker.cpp
+    platform/port_beam_doors.cpp
+    platform/port_beam_doors_side.cpp
     platform/port_map_pickups.cpp
     platform/port_map_marks.cpp
     platform/port_map_side.cpp
@@ -669,6 +671,13 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include extern/aurora/include include
         DEFINITIONS TARGET_PC VERSION=0
         LIBRARIES ${AURORA_SDL3_TARGET})
+    mp_port_test(port_beam_doors_tests
+        SOURCES tests/port_beam_doors.cpp platform/port_beam_doors_side.cpp platform/port_map_side.cpp
+            platform/port_ap_world.cpp platform/port_json.cpp platform/port_randomizer.cpp
+            platform/port_ap_logic.cpp platform/port_ap_metroidprime.cpp
+        INCLUDES platform/include extern/aurora/include include
+        DEFINITIONS TARGET_PC VERSION=0
+        LIBRARIES ${AURORA_SDL3_TARGET})
     mp_port_test(port_ap_solo_tests
         SOURCES tests/port_ap_solo.cpp
             platform/port_ap_solo.cpp platform/port_rando_seed.cpp
@@ -959,6 +968,14 @@ if(MP_BUILD_TESTS)
     mp_port_test(port_remastered_ground_policy_tests
         SOURCES tests/port_remastered_ground_policy.cpp
         INCLUDES platform/include
+        EXACT_IEEE)
+    # Moving platforms under the Remastered grounded mover (issue #117 slice 1): the tree
+    # walk, contact order, rider choice and decay, carry, admission and exactly-once carry.
+    mp_port_test(port_ground_rider_tests
+        SOURCES tests/port_ground_rider.cpp
+            src/Collision/CMaterialFilter.cpp platform/port_remastered_ground_contacts.cpp
+            platform/port_remastered_ground_world.cpp platform/port_collision_failsafe.cpp
+        INCLUDES platform/include include extern/sdk/include
         EXACT_IEEE)
     # Remastered MP1 collision material translation and filter policy (header-only).
     mp_port_test(port_remastered_collision_material_tests
