@@ -315,8 +315,8 @@
   button hint presses that button. The wheel or a drag pages the log book text, a press
   or drag sets a slider, and in the Samus doll view a drag turns the doll, a right drag
   or two fingers move it and the wheel or a pinch zooms.
-  On the map a left drag rotates (one finger pans), a right or middle drag or two
-  fingers pan, a two-finger twist turns it, the wheel or a pinch zooms, a click selects a world or room and a click
+  On the map a left drag or one finger rotates (yaw and pitch), a right or middle drag
+  or two fingers pan, a two-finger twist turns it, the wheel or a pinch zooms, a click selects a world or room and a click
   on the selected one opens it. While such a screen is up the mouse is released and the
   cursor shown; the button prompts show mouse glyphs after the mouse was last used; on
   Android the gameplay touch buttons hide, leaving a back button. Escape pauses, backs out
