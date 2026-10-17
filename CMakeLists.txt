@@ -910,6 +910,20 @@ if(MP_BUILD_TESTS)
     endif()
     add_test(NAME port_remastered_ground_policy_tests COMMAND port_remastered_ground_policy_tests)
     set_tests_properties(port_remastered_ground_policy_tests PROPERTIES TIMEOUT 15 LABELS port)
+    # Moving platforms under the Remastered grounded mover (issue #117 slice 1): the tree
+    # walk, contact order, rider choice and decay, carry, admission and exactly-once carry.
+    add_executable(port_ground_rider_tests tests/port_ground_rider.cpp
+        src/Collision/CMaterialFilter.cpp platform/port_remastered_ground_contacts.cpp
+        platform/port_remastered_ground_world.cpp)
+    if(MSVC)
+        target_compile_options(port_ground_rider_tests PRIVATE /fp:strict)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(port_ground_rider_tests PRIVATE -fno-fast-math -ffp-contract=off)
+    endif()
+    target_include_directories(port_ground_rider_tests PRIVATE platform/include include
+        extern/sdk/include)
+    add_test(NAME port_ground_rider_tests COMMAND port_ground_rider_tests)
+    set_tests_properties(port_ground_rider_tests PROPERTIES TIMEOUT 15 LABELS port)
     # Remastered MP1 collision material translation and filter policy (header-only).
     add_executable(port_remastered_collision_material_tests tests/port_remastered_collision_material.cpp)
     target_include_directories(port_remastered_collision_material_tests PRIVATE platform/include)

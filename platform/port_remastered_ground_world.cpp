@@ -113,6 +113,7 @@ bool BuildTriangleContacts(const Query& query, const Triangle& tri,
   // already merged into `materialBits`.
   contacts[count++] = FromGeometry(r.box, true, query.actorMaterialBits, boxLo, boxHi, 0);
   contacts[count++] = FromGeometry(r.triangle, false, tri.materialBits, triLo, triHi, 0);
+  contacts[count - 1].ownerUid = tri.ownerUid;
   for (std::size_t j = 0; j < count; ++j) {
     const auto& source = j == 0 ? r.box : r.triangle;
     for (std::size_t p = source.firstPoint; p <= source.lastPoint && p < r.pointCount; ++p) {

@@ -3468,3 +3468,51 @@ bool CPlayer::IsEnergyLow(const CStateManager& mgr) const {
 }
 
 bool CPlayer::IsTransparent() const { return x588_alpha < 1.f; }
+
+#ifdef TARGET_PC
+// CScriptPlatform::MoveRiders' player move, held until the tick's mover is known
+// (PortRemasteredGroundRider::PlanCarry). More platforms than slots: the extra carry is
+// applied at once, as retail does.
+void CPlayer::PortDeferRiderCarry(const CVector3f& delta, const CQuaternion& rotDelta, bool rotate,
+                                  uint tick) {
+  if (xa50_deferredCarryTick != tick) {
+    xa4c_deferredCarryCount = 0;
+    xa50_deferredCarryTick = tick;
+  }
+  if (xa4c_deferredCarryCount == int(sizeof(xa54_deferredCarry) / sizeof(xa54_deferredCarry[0]))) {
+    SetTranslation(GetTranslation() + delta);
+    if (rotate) {
+      SetRotation(TransformLocalToWorldRotation(rotDelta));
+    }
+    PortNoteRetailRiderCarry(tick);
+    return;
+  }
+  SPortDeferredCarry& carry = xa54_deferredCarry[xa4c_deferredCarryCount++];
+  carry.delta = delta;
+  carry.rotDelta = rotDelta;
+  carry.rotate = rotate;
+}
+
+// The deferred moves, in MoveRiders order, exactly as MoveRiders would have made them.
+void CPlayer::PortApplyDeferredRiderCarry(uint tick) {
+  if (xa50_deferredCarryTick == tick) {
+    for (int i = 0; i < xa4c_deferredCarryCount; ++i) {
+      const SPortDeferredCarry& carry = xa54_deferredCarry[i];
+      SetTranslation(GetTranslation() + carry.delta);
+      if (carry.rotate) {
+        SetRotation(TransformLocalToWorldRotation(carry.rotDelta));
+      }
+    }
+    if (xa4c_deferredCarryCount != 0) {
+      PortNoteRetailRiderCarry(tick);
+    }
+  }
+  xa4c_deferredCarryCount = 0;
+}
+
+void CPlayer::PortEndMovementTick(uint tick) {
+  PortApplyDeferredRiderCarry(tick);
+  // DecayRiderFrameCount (PostSimulation): a rider set this tick carries next tick.
+  xa3c_rider.Decay();
+}
+#endif

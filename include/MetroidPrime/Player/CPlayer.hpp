@@ -21,6 +21,7 @@
 // The port's retained Remastered physics object state (platform seam): see
 // RetainedResult in port_remastered_ground_policy.h for the source contract.
 #include "port_remastered_ground_policy.h"
+#include "port_remastered_ground_rider.h"
 #endif
 
 class CPlayerGun;
@@ -329,6 +330,28 @@ public:
   // morph-ball, dyn-fallback or paused ticks, and it must never be used as a clock.
   uint32_t PortGroundMoverRuns() const { return xa38_groundMoverRuns; }
   void PortNoteGroundMoverRun() { ++xa38_groundMoverRuns; }
+  // Remastered grounded mover on moving platforms (issue #117, slice 1). The rider
+  // controller the mover sets after its snap (SetRiderController 0xc1631c), decayed at the
+  // end of every movement tick (PortEndMovementTick). Port-only, never serialized: a
+  // save-state load rebuilds the player with no rider.
+  PortRemasteredGroundRider::RiderController& PortRider() { return xa3c_rider; }
+  // Exactly one platform carry per tick (PortRemasteredGroundRider::PlanCarry): retail
+  // CScriptPlatform::MoveRiders runs in PreThink, before the player's mover is chosen, so it
+  // defers the player's carry when the previous movement tick ran the Remastered grounded
+  // mover, and the tick's actual mover then applies or drops it.
+  bool PortDefersRiderCarry() const {
+    return PortRemasteredGroundRider::DeferRetailCarry(xa44_lastTickRemasteredGround);
+  }
+  void PortSetLastTickRemasteredGround(bool ran) { xa44_lastTickRemasteredGround = ran; }
+  void PortDeferRiderCarry(const CVector3f& delta, const CQuaternion& rotDelta, bool rotate,
+                           uint tick);
+  void PortNoteRetailRiderCarry(uint tick) { xa48_retailCarryTick = tick; }
+  bool PortRetailRiderCarried(uint tick) const { return xa48_retailCarryTick == tick; }
+  void PortApplyDeferredRiderCarry(uint tick);
+  void PortDropDeferredRiderCarry() { xa4c_deferredCarryCount = 0; }
+  // After the player's move each running tick: a deferred carry no mover consumed (the
+  // player did not move this tick) is applied, as retail would have, then the rider decays.
+  void PortEndMovementTick(uint tick);
 #endif
   const CTransform4f& GetFirstPersonCameraTransform(CStateManager& mgr) const;
   void UpdateDebugCamera(CStateManager& mgr);
@@ -781,6 +804,18 @@ private:
   // Port: the trial ground-mover run counter (see PortGroundMoverRuns above). Default 0;
   // the source layout is not affected (every check below is inert off-MWERKS).
   uint32_t xa38_groundMoverRuns = 0;
+  // Port: platform riders under the Remastered grounded mover (see PortRider above).
+  struct SPortDeferredCarry {
+    CVector3f delta;
+    CQuaternion rotDelta;
+    bool rotate;
+  };
+  PortRemasteredGroundRider::RiderController xa3c_rider;
+  bool xa44_lastTickRemasteredGround = false;
+  uint xa48_retailCarryTick = ~0u;
+  int xa4c_deferredCarryCount = 0;
+  uint xa50_deferredCarryTick = ~0u;
+  SPortDeferredCarry xa54_deferredCarry[4];
 #endif
 };
 NESTED_CHECK_SIZEOF(CPlayer, CPlayerStuckTracker, 0x2e0);

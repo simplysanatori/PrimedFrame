@@ -40,6 +40,38 @@ The retained ground/air result — the Remastered persisted physics object state
 tracked in `CPlayer`, so a refused snap resends the previous message exactly as
 `PostPhysicsUpdate` 0xc545bc does.
 
+## Moving platforms (issue #117, slice 1)
+
+A grounded Remastered tick also admits moving `CScriptPlatform`s with a DCLN
+collision tree that did not rotate this tick (`port_remastered_ground_rider.h`,
+unit-tested by `tests/port_ground_rider.cpp`). Every query appends their triangles
+after the terrain's, platforms ordered by object index (`FindOverlap` 0xc1a760); the
+tree walk is the source's (0xc0fce0: LIFO, root untested) and each triangle carries the
+surface material merged with the platform's. After `Post` the first platform contact of
+the snap's list (else the last pass's) becomes the rider (`SetRiderController`
+0xc1631c, count 2, decayed 2 → 1 → 0 at the end of each movement tick), and the next
+tick's prediction adds the platform's pose delta since its `PreThink`, whole, until the
+first `MoveAlongGround` pass applies it (`PredictMotion` 0xc23e40). The port also sends
+`kSM_AddPlatformRider` both ways for a floor contact on the rider, so the platform's
+retail rider list and scripting see the player as the retail mover would show it.
+
+Exactly one carry per tick, whichever mover runs. `CStateManager::Update` runs
+`PreThinkObjects` (the platform's `PreThink`: pose stamp, move, `MoveRiders`) before
+the player's `CGameCollision::Move`, so retail `MoveRiders` acts before the tick's mover
+is known. When the player's previous movement tick ran the Remastered grounded mover it
+defers the player's move instead of making it; an admitted Remastered tick drops it for
+the mover's own carry, and every other tick (the retail fallback, airborne, morph ball,
+gate off, a tick the player does not move) applies it before moving, or at the end of
+the tick. Otherwise `MoveRiders` moves the player as retail does and the Remastered
+mover adds no carry that tick. With Remastered movement off nothing is deferred.
+
+Not ported: AABox platforms, rotating platforms (both fall back), the rotation and
+rider-velocity terms of the carry, the airborne mover's rider (no carry on the first
+airborne tick after leaving), the source's extra carry tick after a deactivation, and
+the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
+terrain-only. The deferred retail carry is applied after the player's angular step,
+not before it as in `PreThink`, an rm1-only timing difference.
+
 ## What is not implemented or verified
 
 - **The retail path is untouched.** With Remastered movement off (`rm0`), in
@@ -48,8 +80,8 @@ tracked in `CPlayer`, so a refused snap resends the previous message exactly as
   `MoveGroundCollider_New` code. Nothing was changed inside it, and there is no
   switch on this path.
 - **Unsupported cases fall back to retail; they are not approximated.** The
-  Remastered mover does not run on a tick with dynamic contacts (there is no
-  Remastered producer for them), in morph ball, on a save-state load, or when the
+  Remastered mover does not run on a tick with dynamic contacts other than the
+  moving platforms below (there is no Remastered producer for them), in morph ball, on a save-state load, or when the
   mover gate in `CGameCollision::MovePlayer` is closed. Those ticks run the retail
   mover and mark the retained ground/air result invalid; it stays invalid until a
   verified Remastered airborne tick writes 0 again, so a stale entry state is never
@@ -66,8 +98,7 @@ tracked in `CPlayer`, so a refused snap resends the previous message exactly as
   its own octree cache (`TerrainContacts`), so the contact *traversal order* and the
   resulting per-contact sequence are the port's, not the source's tree walk — a tick
   with several terrain contacts is not proven to visit them in the source's order.
-  Platform riders and the angular integration are likewise still the port's existing
-  behaviour.
+  The angular integration is likewise still the port's existing behaviour.
 - **Resting pose.** The Remastered snap rests the box bottom at the selected
   contact height **+ 0.002**, where the retail mover's step-down snap ends at
   contact **+ 0.0005**. The 1.5 mm difference is each mover's own source constant

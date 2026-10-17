@@ -30,6 +30,9 @@
 #include <Collision/CRayCastResult.hpp>
 #include <WorldFormat/CCollidableOBBTreeGroup.hpp>
 #include <WorldFormat/COBBTree.hpp>
+#include <Collision/COBBox.hpp>
+#include <WorldFormat/CCollisionSurface.hpp>
+#include <algorithm>
 
 #ifdef TARGET_PC
 #include "port_debug.h"
@@ -38,6 +41,7 @@
 #include "port_remastered_box_landing.h"
 #include "port_remastered_ground_policy.h"
 #include "port_remastered_ground_world.h"
+#include "port_remastered_ground_rider.h"
 #endif
 
 static int gDebugPrintCount;
@@ -830,9 +834,6 @@ void CGameCollision::Move(CStateManager& mgr, CPhysicsActor& actor, float dt,
 
 void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float dt,
                                 const TEntityList* colliderList) {
-  actor.SetApplyRotationWhenInCollision(true);
-  actor.AddMotionState(actor.PredictAngularMotion(dt));
-
 #ifdef TARGET_PC
   CPlayer* const player = TCastToPtr< CPlayer >(&actor);
   const PortRemasteredGround::MoverGate moverGate{
@@ -842,7 +843,28 @@ void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float 
   if (player != nullptr) {
     player->PortSetRetainedObjectState(PortRemasteredGround::RetainedEntryForTick(
         moverGate, player->PortRetainedObjectState()));
+    // Platform riders (issue #117): exactly one carry per tick, decided by the mover this
+    // tick actually runs (PortRemasteredGroundRider::PlanCarry). Only the dispatch below
+    // that enters MoveGroundedRemastered can admit a Remastered grounded tick, and that
+    // function settles the carry itself; every other mover (retail ground, airborne, morph
+    // ball, gate off) takes the retail carry MoveRiders deferred, before it moves, where
+    // retail MoveRiders would have made it. Nothing is deferred unless the previous tick ran
+    // the Remastered grounded mover, so with Remastered movement off this is a no-op.
+    const bool remasteredGroundDispatch =
+        remasteredMoverTick && !actor.IsStandardCollider() &&
+        actor.GetMaterialList().HasMaterial(kMT_GroundCollider) &&
+        PortRemasteredGround::RetainedAllowsGroundMover(player->PortRetainedObjectState());
+    player->PortSetLastTickRemasteredGround(false);
+    if (!remasteredGroundDispatch) {
+      player->PortApplyDeferredRiderCarry(mgr.PortSimTick());
+    }
   }
+#endif
+
+  actor.SetApplyRotationWhenInCollision(true);
+  actor.AddMotionState(actor.PredictAngularMotion(dt));
+
+#ifdef TARGET_PC
 
   // Remastered movement: Remastered's stepped mover (0xf943b4) caps a standing
   // player's rise before the move, scaling the whole velocity, where retail
@@ -2059,16 +2081,21 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
 // port's world traversal, physics state and script messages.
 //
 // NOT MODELLED, deliberately (see slopes/implementation/runtime/REPORT.md):
-//  - Dynamic/near-list contacts. No Remastered producer is traced for the player's
-//    box against another collidable, and the port's CCollisionInfo (clipped AABB +
-//    n/-n only) does not carry Remastered's penetration scalars or the optional
-//    secondary normal. Substituting retail contacts or inventing penetration values
-//    is refused; a tick whose query region overlaps any near-list collidable is
-//    handed to the port's existing grounded mover instead (the single, named,
-//    counted UnsupportedDynamicContactsFallback below), so a platform ride or an
-//    actor touch cannot be silently ignored. Static terrain (the area octrees) is
-//    exact. That fallback also INVALIDATES the retained object state, because a
-//    retail mover's outcomes are not source mover outcomes.
+//  - Dynamic/near-list contacts other than moving DCLN platforms. A CScriptPlatform with
+//    a collision tree (DCLN) whose orientation did not change this tick is ADMITTED (issue
+//    #117 slice 1): its leaf triangles go through the same terrain producer 0xc0a180 with
+//    the surface material merged with the object's (AABox_OBBoxTree 0xc0fc18, traversal
+//    0xc0fce0), appended after the terrain contacts in near-list order (FindOverlap
+//    0xc1a760), in every query below except the tunnelling failsafe's ray, which stays
+//    terrain-only (whether the source ray sees platforms is UNKNOWN). For anything else
+//    (actors, doors, AABox platforms, rotating platforms) no Remastered producer is
+//    ported; the port's CCollisionInfo (clipped AABB + n/-n only) does not carry
+//    Remastered's penetration scalars or the optional secondary normal. Substituting
+//    retail contacts or inventing penetration values is refused; a tick whose query
+//    region overlaps such a collidable is handed to the port's existing grounded mover
+//    instead (the single, named, counted UnsupportedDynamicContactsFallback below), so an
+//    actor touch cannot be silently ignored. That fallback also INVALIDATES the retained
+//    object state, because a retail mover's outcomes are not source mover outcomes.
 //  - The morph ball's swept mover (0xc255fc) and its floor producers (0xc261a8,
 //    0xc26234). The ball is the retail standard collider, so MovePlayer's entry gate
 //    (the ball is never kMS_Unmorphed) invalidates the retained object state on every
@@ -2087,9 +2114,12 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
 //    and the only behavior bit any consumer reads is 0x100, whose object-level
 //    producers in the shipped image are DefaultCollisionMaterial (behavior 0,
 //    GROUND-INPUTS.md 2.3); its absence is therefore recorded, not replaced.
-//  - The integrator's extra-motion flag (platform rider velocity) and the rider
-//    controller: the port moves platform riders in CScriptPlatform, and a platform
-//    contact is a dynamic contact (the fallback above).
+//  - Rotation carry and the rider-velocity term of PredictMotion 0xc23e40. Slice 1 ports
+//    the rider scan after Post (0xf92808-0xf92860, SetRiderController 0xc1631c count 2),
+//    its decay (PostSimulation) and the translation carry (pose delta, unscaled, consumed
+//    by the first MoveAlongGround pass, 0xf9349c); a platform that rotates this tick is not
+//    admitted. Retail CScriptPlatform::MoveRiders' player move is deferred and dropped on
+//    an admitted tick, applied on every other (PortRemasteredGroundRider::PlanCarry).
 //  - DoCollisionFailsafe (0xf923d8:205-216, outer 0xc1fb88, inner 0xc1fc54): PORTED,
 //    TERRAIN ONLY, by RunFailsafe below over port_collision_failsafe.{h,cpp}
 //    (Core/DoCollisionFailsafe/DoTunnelingFailsafe 0xc20214, the 0xbf61b4 box routine and
@@ -2211,8 +2241,89 @@ struct GroundTick {
   // (the source's SnapToGround only sets its object state).
   std::uint64_t floorMaterial = 0;
   CVector3f floorNormal = CVector3f(0.f, 0.f, 1.f);
+  // The admitted moving platforms (slice 1), in near-list order: every query appends their
+  // contacts after the terrain's (FindOverlap 0xc1a760: static tree first, then actors).
+  std::vector< const CScriptPlatform* > platforms;
+  // PredictMotion's rider carry, pending until the first MoveAlongGround pass.
+  PortRemasteredGroundRider::CarryTerm carry;
+  // The lists the rider scan after Post reads (0xf92808): the last pass's collision list
+  // and, when the snap ran its CheckCollision, the snap's.
+  PortRemasteredGroundWorld::Result passContacts;
+  PortRemasteredGroundWorld::Result snapContacts;
+  bool snapRan = false;
 
   const CVector3f Up() const { return CVector3f(0.f, 0.f, 1.f); }
+
+  static PortRemasteredGroundWorld::Query QueryFor(const CAABox& box, const CPhysicsActor& a) {
+    PortRemasteredGroundWorld::Query query;
+    query.box.min = {box.GetMinPoint().GetX(), box.GetMinPoint().GetY(), box.GetMinPoint().GetZ()};
+    query.box.max = {box.GetMaxPoint().GetX(), box.GetMaxPoint().GetY(), box.GetMaxPoint().GetZ()};
+    query.actorMaterialBits = a.GetMaterialList().GetValue();
+    return query;
+  }
+
+  // The admitted platforms' triangles for `box`, appended to `tris` platform by platform
+  // (AABox_OBBoxTree 0xc0fc18 / traversal 0xc0fce0: LIFO, root untested, children in index
+  // order). Each triangle carries the surface material merged with the object's and its
+  // owner; `filter` stands for the player's side of SurfaceCollisionPasses (vt+0x18), as the
+  // retail tree collider applies it per triangle. `ends` receives one end index per platform.
+  void PlatformTriangles(const CMaterialFilter& f, const CAABox& box,
+                         std::vector< PortRemasteredGroundWorld::Triangle >& tris,
+                         std::vector< std::size_t >* ends) const {
+    for (std::size_t p = 0; p < platforms.size(); ++p) {
+      const CScriptPlatform& platform = *platforms[p];
+      const CCollidableOBBTreeGroup& group =
+          static_cast< const CCollidableOBBTreeGroup& >(*platform.GetCollisionPrimitive());
+      const CTransform4f xf = platform.GetPrimitiveTransform();
+      const COBBox local = COBBox::FromAABox(box, xf.GetQuickInverse());
+      const std::uint64_t objectBits = group.GetMaterial().GetValue();
+      const std::uint32_t owner =
+          PortRemasteredGroundRider::OwnerFromRaw(platform.GetUniqueId().value);
+      for (int t = 0; t < group.GetContainer()->NumTrees(); ++t) {
+        const COBBTree& tree = *group.GetOBBTreeAABox(t);
+        PortRemasteredGroundRider::WalkTreeLifo(
+            tree.GetRoot(), [](const COBBTree::CNode& n) { return n.IsLeaf(); },
+            [](const COBBTree::CNode& n) -> const COBBTree::CNode& { return n.GetLeftNode(); },
+            [](const COBBTree::CNode& n) -> const COBBTree::CNode& { return n.GetRightNode(); },
+            [&](const COBBTree::CNode& n) { return local.OBBIntersectsBox(n.GetOBB()); },
+            [&](const COBBTree::CNode& n) {
+              const rstl::vector< ushort >& surfaces = n.GetLeafData().GetSurfaceVector();
+              for (int i = 0; i < int(surfaces.size()); ++i) {
+                const CCollisionSurface surf = tree.GetTransformedSurface(surfaces[i], xf);
+                const std::uint64_t surfaceBits = surf.GetSurfaceFlags();
+                if (!f.Passes(CMaterialList(surfaceBits | objectBits))) {
+                  continue;
+                }
+                const CUnitVector3f nrm = surf.GetNormal();
+                tris.push_back(PortRemasteredGroundRider::PlatformTriangle(
+                    {PortRemasteredGroundWorld::Vec3f{surf.GetVert(0).GetX(),
+                                                      surf.GetVert(0).GetY(),
+                                                      surf.GetVert(0).GetZ()},
+                     PortRemasteredGroundWorld::Vec3f{surf.GetVert(1).GetX(),
+                                                      surf.GetVert(1).GetY(),
+                                                      surf.GetVert(1).GetZ()},
+                     PortRemasteredGroundWorld::Vec3f{surf.GetVert(2).GetX(),
+                                                      surf.GetVert(2).GetY(),
+                                                      surf.GetVert(2).GetZ()}},
+                    PortRemasteredGroundWorld::Vec3f{nrm.GetX(), nrm.GetY(), nrm.GetZ()},
+                    surfaceBits, objectBits, owner));
+              }
+            });
+      }
+      if (ends != NULL) ends->push_back(tris.size());
+    }
+  }
+
+  // The boolean twin (0xbfd2f0 / 0xbfd360): the inclusive SAT, first hit wins.
+  bool PlatformBlocked(const CMaterialFilter& f, const CAABox& box) const {
+    if (platforms.empty()) return false;
+    std::vector< PortRemasteredGroundWorld::Triangle > tris;
+    PlatformTriangles(f, box, tris, NULL);
+    if (tris.empty()) return false;
+    return PortRemasteredGroundWorld::QueryTerrain(QueryFor(box, actor), tris.data(), tris.size(),
+                                                   false)
+        .booleanHit;
+  }
 
   // The actor's collision box with its primitive placed `delta` from the actor.
   CAABox BoxAt(const CVector3f& delta) {
@@ -2237,7 +2348,9 @@ struct GroundTick {
     const PortRemasteredGround::Vec3 d = PortRemasteredGround::PredictTranslation(
         dt, {v.GetX(), v.GetY(), v.GetZ()}, {jm.GetX(), jm.GetY(), jm.GetZ()},
         1.f / actor.GetMass());
-    return CMotionState(CVector3f(d.x, d.y, d.z), base.GetOrientation(), CVector3f::Zero(),
+    // The rider carry (0xc23e40, mode 1/2), whole and unscaled, until the first pass applied it.
+    const PortRemasteredGround::Vec3 c = carry.Apply(d);
+    return CMotionState(CVector3f(c.x, c.y, c.z), base.GetOrientation(), CVector3f::Zero(),
                         base.GetAngularMomentum());
   }
 
@@ -2277,6 +2390,7 @@ struct GroundTick {
     }
   }
 
+  // Terrain first, then the admitted platforms (the near-list order).
   bool StaticBlocked(const CVector3f& delta) {
     const CAABox box = BoxAt(delta);
     if (cache.HasCacheOverflowed()) {
@@ -2287,7 +2401,7 @@ struct GroundTick {
           return true;
         }
       }
-      return false;
+      return PlatformBlocked(filter, box);
     }
     for (int i = 0; i < int(cache.GetNumCaches()); ++i) {
       if (CMetroidAreaCollider::AABoxCollisionCheckBoolean_Cached(cache.GetOctreeLeafCache(i), box,
@@ -2295,11 +2409,11 @@ struct GroundTick {
         return true;
       }
     }
-    return false;
+    return PlatformBlocked(filter, box);
   }
 
-  // CheckCollision_Boolean_NoPostFilter (0xf928c0 / 0xf934ec). Dynamic overlaps are
-  // already excluded for the whole tick by the caller.
+  // CheckCollision_Boolean_NoPostFilter (0xf928c0 / 0xf934ec). Dynamic overlaps other than
+  // the admitted platforms are already excluded for the whole tick by the caller.
   bool Blocked(const CVector3f& delta) { return StaticBlocked(delta); }
 
   // The terrain half of CheckCollision with Remastered's contact contract.
@@ -2321,13 +2435,13 @@ struct GroundTick {
                                                                    filter, src);
       }
     }
-    if (src.size() == 0) {
+    if (src.size() == 0 && platforms.empty()) {
       return false;
     }
     // The retail surface normal is the same unit normal the retail collision path
     // uses for this triangle (CCollisionSurface::GetNormal, cross(b-a, c-a)).
-    rstl::vector< PortRemasteredGroundWorld::Triangle > tris;
-    tris.reserve(src.size());
+    std::vector< PortRemasteredGroundWorld::Triangle > tris;
+    tris.reserve(size_t(src.size()));
     for (int i = 0; i < src.size(); ++i) {
       const CMetroidAreaCollider::CTerrainTriangle& t = src[i];
       PortRemasteredGroundWorld::Triangle tri;
@@ -2341,6 +2455,11 @@ struct GroundTick {
       tri.materialBits = t.x24_flags;
       tris.push_back(tri);
     }
+    // The admitted platforms' contacts follow the terrain's.
+    PlatformTriangles(filter, box, tris, NULL);
+    if (tris.empty()) {
+      return false;
+    }
     PortRemasteredGroundWorld::Query query;
     query.box.min = PortRemasteredGroundWorld::Vec3f{box.GetMinPoint().GetX(),
                                                      box.GetMinPoint().GetY(),
@@ -2349,7 +2468,7 @@ struct GroundTick {
                                                      box.GetMaxPoint().GetY(),
                                                      box.GetMaxPoint().GetZ()};
     query.actorMaterialBits = actor.GetMaterialList().GetValue();
-    out = PortRemasteredGroundWorld::BuildContacts(query, &tris[0], std::size_t(tris.size()));
+    out = PortRemasteredGroundWorld::BuildContacts(query, tris.data(), tris.size());
     if (out.grewBeyondInlineCapacity) {
       // The adapter grew past its former fixed capacity. The shipped list grows on
       // the heap with no failure path, so this is only counted, never acted on.
@@ -2412,6 +2531,8 @@ struct GroundTick {
     PortRemasteredGroundWorld::Result contacts;
     const bool blockedCollides =
         TerrainContacts(Predict(search.blockedSample).GetTranslation(), contacts);
+    // This pass's collision list, copied into the mover's result list (0xf923d8 ~L187).
+    passContacts = contacts;
     const PortRemasteredGround::GroundSample pick =
         PortRemasteredGround::DecideGroundSample(search.anyFree, blockedCollides, search.consumed);
 
@@ -2460,6 +2581,8 @@ struct GroundTick {
       state.SetTranslation(CVector3f::Zero());
     }
     actor.AddMotionState(state);
+    // 0xf9349c: the rider carry is in this applied state; later predicts leave it out.
+    carry.ConsumeAfterPass();
     wroteTarget = pick.applyResponse;
     if (pick.applyResponse) {
       actor.SetVelocityWR(actor.GetVelocityWR() + velocityImpulse);
@@ -2495,7 +2618,9 @@ struct GroundTick {
                  std::vector< std::size_t >* ends) {
     const CAABox box = BoxAt(delta);
     rstl::vector< CMetroidAreaCollider::CTerrainTriangle > src;
-    if (cache.HasCacheOverflowed() || !box.Inside(cache.GetCacheBounds())) {
+    if (!StaticAllowed(f)) {
+      // No terrain half; the admitted platforms below still collide.
+    } else if (cache.HasCacheOverflowed() || !box.Inside(cache.GetCacheBounds())) {
       const CWorld* world = mgr.GetWorld();
       for (CGameArea::CConstChainIterator it = world->GetChainHead(CWorld::kC_Alive);
            it != CWorld::skGlobalEnd; ++it) {
@@ -2523,6 +2648,8 @@ struct GroundTick {
       tri.materialBits = t.x24_flags;
       tris.push_back(tri);
     }
+    // The admitted platforms, one collided object each, after the area trees.
+    PlatformTriangles(f, box, tris, ends);
     query.box.min = {box.GetMinPoint().GetX(), box.GetMinPoint().GetY(), box.GetMinPoint().GetZ()};
     query.box.max = {box.GetMaxPoint().GetX(), box.GetMaxPoint().GetY(), box.GetMaxPoint().GetZ()};
     query.actorMaterialBits = actor.GetMaterialList().GetValue();
@@ -2530,7 +2657,7 @@ struct GroundTick {
 
   // CheckGlobalCollision_Boolean_NoPostFilter 0xc1f240 (terrain): the inclusive SAT.
   bool FsBlocked(const CMaterialFilter& f, const CVector3f& pos) {
-    if (!StaticAllowed(f)) return false;
+    if (!StaticAllowed(f) && platforms.empty()) return false;
     PortRemasteredGroundWorld::Query query;
     std::vector< PortRemasteredGroundWorld::Triangle > tris;
     FsCollect(f, pos - actor.GetTranslation(), query, tris, NULL);
@@ -2545,7 +2672,7 @@ struct GroundTick {
   bool FsCollide(const CMaterialFilter& f, const CVector3f& pos,
                  std::vector< PortCollisionFailsafe::Contact >& out) {
     out.clear();
-    if (!StaticAllowed(f)) return false;
+    if (!StaticAllowed(f) && platforms.empty()) return false;
     PortRemasteredGroundWorld::Query query;
     std::vector< PortRemasteredGroundWorld::Triangle > tris;
     std::vector< std::size_t > ends;
@@ -2687,7 +2814,11 @@ struct GroundTick {
 
     if (blockedDown) {
       PortRemasteredGroundWorld::Result contacts;
-      if (TerrainContacts(targetDelta - Up() * distance, contacts)) {
+      const bool collided = TerrainContacts(targetDelta - Up() * distance, contacts);
+      // The snap's single CheckCollision fills the mover's result list (0xf934ec L156).
+      snapRan = true;
+      snapContacts = contacts;
+      if (collided) {
         const CAABox targetBox = BoxAt(targetDelta);
         PairView view;
         view.Build(contacts);
@@ -2725,8 +2856,39 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   // dispatch takes the retail mover first), and is never written.
   const PortRemasteredGround::RetainedResult retainedAtEntry = player.PortRetainedObjectState();
 
+  // The rider carry (PredictMotion 0xc23e40): the ridden platform's pose delta since its
+  // PreThink this tick, while the controller is live (set by an earlier grounded tick).
+  const uint simTick = mgr.PortSimTick();
+  PortRemasteredGround::Vec3 riderCarry = {};
+  {
+    PortRemasteredGroundRider::RiderController& rider = player.PortRider();
+    if (rider.Active()) {
+      const ushort raw = PortRemasteredGroundRider::RawFromOwner(rider.owner);
+      if (const CScriptPlatform* platform = TCastToConstPtr< CScriptPlatform >(
+              mgr.GetObjectById(TUniqueId(raw >> 10, raw & 0x3ff)))) {
+        const CVector3f was = platform->PortPreThinkTransform().GetTranslation();
+        const CVector3f now = platform->GetTranslation();
+        riderCarry = PortRemasteredGroundRider::PlatformCarry(
+            {was.GetX(), was.GetY(), was.GetZ()}, {now.GetX(), now.GetY(), now.GetZ()},
+            platform->PortPoseTick(), simTick, true);
+      }
+    }
+  }
+
   TEntityList nearList;
   CAABox motionVolume = actor.GetMotionVolume(dt);
+  {
+    // The carry is part of the predicted motion, so the volume covers it (unchanged at 0).
+    const CVector3f c(riderCarry.x, riderCarry.y, riderCarry.z);
+    const CVector3f lo = motionVolume.GetMinPoint();
+    const CVector3f hi = motionVolume.GetMaxPoint();
+    motionVolume = CAABox(CVector3f(rstl::min_val(lo.GetX(), lo.GetX() + c.GetX()),
+                                    rstl::min_val(lo.GetY(), lo.GetY() + c.GetY()),
+                                    rstl::min_val(lo.GetZ(), lo.GetZ() + c.GetZ())),
+                          CVector3f(rstl::max_val(hi.GetX(), hi.GetX() + c.GetX()),
+                                    rstl::max_val(hi.GetY(), hi.GetY() + c.GetY()),
+                                    rstl::max_val(hi.GetZ(), hi.GetZ() + c.GetZ())));
+  }
   if (colliderList != NULL) {
     nearList = *colliderList;
   } else {
@@ -2743,22 +2905,66 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   CAreaCollisionCache cache(queryVolume);
   BuildAreaCollisionCache(mgr, cache);
 
-  // Unsupported: dynamic contacts have no Remastered producer. If anything in the
-  // near list overlaps the whole query region, the tick goes to the port's existing
-  // grounded mover: no retail contact is ever presented as a Remastered one.
+  // Dynamic contacts: everything in the near list that overlaps the whole query region.
+  // Slice 1 admits active DCLN platforms that did not rotate this tick (their triangles go
+  // through the terrain producer, after the terrain's); anything else has no Remastered
+  // producer, and the tick goes to the port's existing grounded mover: no retail contact is
+  // ever presented as a Remastered one.
+  std::vector< const CScriptPlatform* > platforms;
+  bool admitted = true;
   {
     const CCollidableAABox volumePrim(queryVolume, actor.GetMaterialList());
-    if (DetectDynamicCollisionBoolean(volumePrim, CTransform4f::Identity(), nearList, mgr)) {
-      ++gUnsupportedDynamicContactTicks;
-      // The retail grounded mover below cannot produce the source's retained state (its
-      // contacts are not Remastered mover outcomes), so the value is invalidated: the next
-      // ground tick falls back to the retail mover instead of entering this one with a
-      // stale entry state, until an airborne tick writes 0 and restores validity.
-      player.PortInvalidateRetainedObjectState();
-      CGroundMovement::MoveGroundCollider_New(mgr, actor, dt, colliderList);
-      return;
+    for (const TUniqueId* id = nearList.begin(); id != nearList.end() && admitted; ++id) {
+      const CPhysicsActor* other = TCastToConstPtr< CPhysicsActor >(mgr.GetObjectById(*id));
+      if (other == NULL ||
+          !CCollisionPrimitive::CollideBoolean(
+              CInternalCollisionStructure::CPrimDesc(volumePrim, CMaterialFilter::skPassEverything,
+                                                     CTransform4f::Identity()),
+              CInternalCollisionStructure::CPrimDesc(*other->GetCollisionPrimitive(),
+                                                     CMaterialFilter::skPassEverything,
+                                                     other->GetPrimitiveTransform()))) {
+        continue;
+      }
+      PortRemasteredGroundRider::Candidate candidate;
+      if (const CScriptPlatform* platform = TCastToConstPtr< CScriptPlatform >(other)) {
+        candidate.platform = true;
+        candidate.active = platform->GetActive();
+        candidate.hasTree = platform->HasComplexCollision();
+        // A stale stamp (the platform did not think this tick) is not a rotation.
+        candidate.rotated =
+            platform->PortPoseTick() == simTick && platform->PortRotatedSinceStamp();
+        if (PortRemasteredGroundRider::Admit(candidate)) {
+          platforms.push_back(platform);
+          continue;
+        }
+      }
+      admitted = false;
     }
   }
+  const PortRemasteredGroundRider::CarryPlan carryPlan =
+      PortRemasteredGroundRider::PlanCarry(admitted, player.PortRetailRiderCarried(simTick));
+  if (carryPlan.applyDeferredRetail) {
+    ++gUnsupportedDynamicContactTicks;
+    // The retail grounded mover takes the retail rider carry MoveRiders deferred.
+    player.PortApplyDeferredRiderCarry(simTick);
+    // The retail grounded mover below cannot produce the source's retained state (its
+    // contacts are not Remastered mover outcomes), so the value is invalidated: the next
+    // ground tick falls back to the retail mover instead of entering this one with a
+    // stale entry state, until an airborne tick writes 0 and restores validity.
+    player.PortInvalidateRetainedObjectState();
+    CGroundMovement::MoveGroundCollider_New(mgr, actor, dt, colliderList);
+    return;
+  }
+  // An admitted tick: the mover's own carry replaces the deferred retail one.
+  player.PortDropDeferredRiderCarry();
+  player.PortSetLastTickRemasteredGround(true);
+  // FindOverlap 0xc1a760 orders actors by `id & 0xffff`.
+  std::stable_sort(platforms.begin(), platforms.end(),
+                   [](const CScriptPlatform* a, const CScriptPlatform* b) {
+                     return PortRemasteredGroundRider::NearListBefore(
+                         PortRemasteredGroundRider::OwnerFromRaw(a->GetUniqueId().value),
+                         PortRemasteredGroundRider::OwnerFromRaw(b->GetUniqueId().value));
+                   });
   if (cache.HasCacheOverflowed()) {
     // Not a mover switch: the shipped mover has no leaf cache at all, so a full one
     // only costs the port's cached traversal (see StaticBlocked/TerrainContacts).
@@ -2791,6 +2997,11 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
                   nearList,
                   actor.CPhysicsActor::GetStepUpHeight(),
                   actor.CPhysicsActor::GetStepDownHeight()};
+  tick.platforms = platforms;
+  if (carryPlan.remasteredCarry) {
+    tick.carry.carry = riderCarry;
+    tick.carry.pending = riderCarry.x != 0.f || riderCarry.y != 0.f || riderCarry.z != 0.f;
+  }
 
   // 0xf923d8: up to five MoveAlongGround passes, stopping after four that consumed
   // no time, while time remains. The loop re-predicts at the top of every iteration
@@ -2899,6 +3110,15 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   actor.ImpulseWR() = CVector3f::Zero();
   actor.ClearForcesAndTorques();
 
+  // 0xf92808-0xf92860: the first non-static contact of the snap's list (or the last pass's)
+  // becomes the rider, count 2 (SetRiderController 0xc1631c). Every object here is an
+  // admitted platform, so all can be ridden.
+  const std::uint32_t riderOwner = PortRemasteredGroundRider::PickRider(
+      tick.snapRan, tick.snapContacts, tick.passContacts, [](std::uint32_t) { return true; });
+  if (riderOwner != PortRemasteredGroundRider::kTerrainOwner) {
+    player.PortRider().Set(riderOwner);
+  }
+
   // PostPhysicsUpdate 0xc545bc's messages, from the policy seam (G6/G6b).
   const PortRemasteredGround::StateActions act =
       PortRemasteredGround::DecideStateActions(snap, retainedAtEntry);
@@ -2921,6 +3141,28 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
     }
     if (act.clearFloorNormal) {
       actor.SetLastFloorPlaneNormal(rstl::optional_object_null());
+    }
+  }
+
+  // Port glue, not source: the retail rider list (kSM_AddPlatformRider, both ways) for a
+  // platform the player stands on, so the platform's retail state (x82e_ridingPlatform,
+  // x318_riders: the camera, the retail fallback's carry) matches the retail mover's.
+  if (riderOwner != PortRemasteredGroundRider::kTerrainOwner) {
+    const PortRemasteredGroundWorld::Result& list =
+        tick.snapRan ? tick.snapContacts : tick.passContacts;
+    bool floor = false;
+    for (const PortRemasteredGroundWorld::Contact& c : list.contacts) {
+      if (!c.self && c.ownerUid == riderOwner &&
+          PortRemasteredGround::IsFloor(c.orientation, c.normalZ)) {
+        floor = true;
+        break;
+      }
+    }
+    const ushort raw = PortRemasteredGroundRider::RawFromOwner(riderOwner);
+    CEntity* const platform = mgr.ObjectById(TUniqueId(raw >> 10, raw & 0x3ff));
+    if (floor && platform != NULL) {
+      mgr.DeliverScriptMsg(platform, actor.GetUniqueId(), kSM_AddPlatformRider);
+      mgr.DeliverScriptMsg(&actor, platform->GetUniqueId(), kSM_AddPlatformRider);
     }
   }
 }
