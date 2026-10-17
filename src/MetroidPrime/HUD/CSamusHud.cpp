@@ -1,4 +1,5 @@
 #include "MetroidPrime/HUD/CSamusHud.hpp"
+#include "port_env.h"
 
 #include "Collision/CollisionUtil.hpp"
 #include "GuiSys/CGuiCamera.hpp"
@@ -1250,7 +1251,7 @@ void CSamusHud::UpdateStateTransition(float dt, const CStateManager& mgr) {
     break;
   }
 
-  static bool sHudLog = std::getenv("MP_LOG_HUD") != nullptr;
+  static bool sHudLog = port::EnvFlag("MP_LOG_HUD");
   static int sLastActive = -1, sLastNext = -1, sLastSet = -1;
   if (sHudLog && (static_cast< int >(x2c4_activeTransState) != sLastActive ||
                   static_cast< int >(x2bc_nextState) != sLastNext ||

@@ -22,10 +22,7 @@
 namespace PortRemastered {
 namespace {
 
-constexpr uint32_t FourCC(char a, char b, char c, char d) {
-  return (uint32_t(uint8_t(a)) << 24) | (uint32_t(uint8_t(b)) << 16) | (uint32_t(uint8_t(c)) << 8) |
-         uint32_t(uint8_t(d));
-}
+using port::FourCC;
 
 constexpr uint32_t kFormRFRM = FourCC('R', 'F', 'R', 'M'); // the magic of every form
 constexpr uint32_t kFormPACK = FourCC('P', 'A', 'C', 'K');

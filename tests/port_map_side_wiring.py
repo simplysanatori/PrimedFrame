@@ -31,7 +31,10 @@ import pathlib
 import sys
 import unittest
 
-root = pathlib.Path(sys.argv.pop())
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from wiring_helpers import WiringCase, between, braced, count, index, root_argument  # noqa: E402
+
+root = root_argument()
 DRIVER = root / "src/MetroidPrime/CMemoryCardDriver.cpp"
 PATHS = root / "platform/port_map_side_paths.cpp"
 SIDE = root / "platform/port_map_side.cpp"
@@ -42,14 +45,7 @@ CARD_SYS = root / "src/Kyoto/DolphinCMemoryCardSys.cpp"
 CMAKE = root / "CMakeLists.txt"
 
 
-def between(text, start, end, path):
-    assert start in text, f"{path}: no {start!r}"
-    body = text.split(start, 1)[1]
-    assert end in body, f"{path}: no {end!r} after {start!r}"
-    return body.split(end, 1)[0]
-
-
-class Wiring(unittest.TestCase):
+class Wiring(WiringCase):
     def test_slot_stages_on_rebuild_and_applies_on_load(self):
         driver = DRIVER.read_text()
         stage = between(driver, "void SGameFileSlot::InitializeFromGameState() {",
@@ -76,13 +72,15 @@ class Wiring(unittest.TestCase):
         self.assertIn("x0_saveBuffer.data()", write)
         # Flush is only reached once the write finished: WriteBackupBuf is
         # called from the two completion paths, and from no failure handler.
-        self.assertEqual(driver.count("\n    WriteBackupBuf();"), 2, "one call per completion path")
+        # (The driver's own method; gpGameState->WriteBackupBuf() is another one.)
+        own_calls = count(driver, "WriteBackupBuf();") - count(driver, "->WriteBackupBuf();")
+        self.assertEqual(own_calls, 2, "one call per completion path")
         for failed in ("UpdateFileWrite(ECardResult result)",
                        "UpdateFileWriteTransactional(ECardResult result)"):
             body = between(driver, failed + " {", "\nvoid ", DRIVER)
             self.assertNotIn("WriteBackupBuf", body, failed)
             self.assertIn("Failed", body, failed)
-        self.assertEqual(driver.count("PortMapSide::Flush("), 1)
+        self.assertEqual(count(driver, "PortMapSide::Flush("), 1)
 
     def test_staging_is_scoped_to_the_card_it_was_taken_on(self):
         side = SIDE.read_text()
@@ -93,7 +91,7 @@ class Wiring(unittest.TestCase):
         self.assertIn("fs::path path;", staged)
         stage = between(side, "void Stage(int slot,", "\n}", SIDE)
         self.assertIn("StagedFor(slot, false)", stage)
-        erase = between(side, "void StageErase(int slot)", "\n", SIDE)
+        erase = braced(side, "void StageErase(int slot)", SIDE)
         self.assertIn("StagedFor(slot, true)", erase)
         flush = between(side, "int Flush(const SlotBytes* slots, int slotCount) {", "\n} // namespace",
                         SIDE)
@@ -106,8 +104,8 @@ class Wiring(unittest.TestCase):
         erase_branch = between(flush, "if (entry.second.erase) {", "continue;\n    }", SIDE)
         self.assertIn("if (inFile) {", erase_branch)
         self.assertIn("if (inFile) {\n        continue;\n      }", erase_branch)
-        self.assertLess(erase_branch.index("if (inFile) {"),
-                        erase_branch.index("RemoveFile("), "the absence is checked first")
+        self.assertLess(index(erase_branch, "if (inFile) {"),
+                        index(erase_branch, "RemoveFile("), "the absence is checked first")
         # A slot the written file does not hold is dropped, and the bytes have
         # to be the staged ones.
         self.assertIn("if (!inFile) {", flush)
@@ -130,8 +128,8 @@ class Wiring(unittest.TestCase):
         self.assertNotIn("fs::remove(path", write)
         # The close is checked before the replacement, not only the flush.
         self.assertIn("out.close();", write)
-        self.assertLess(write.index("out.flush();"), write.index("out.close();"))
-        self.assertLess(write.index("out.close();"), write.index("ReplaceFile(temp, path)"))
+        self.assertLess(index(write, "out.flush();"), index(write, "out.close();"))
+        self.assertLess(index(write, "out.close();"), index(write, "ReplaceFile(temp, path)"))
         self.assertIn("if (!out)", write)
         self.assertIn("ReplaceFile(temp, path)", write)
         # Nothing of ours is written into the card's own folder.

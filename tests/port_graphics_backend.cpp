@@ -17,6 +17,7 @@
 //     clears it, and an override does not hide a pending change.
 
 #include "port_graphics_backend.h"
+#include "port_test.h"
 
 #include <cstdio>
 #include <string>
@@ -27,15 +28,6 @@ using PortDebug::EGraphicsBackend;
 using PortGraphicsBackend::Request;
 using PortGraphicsBackend::Status;
 
-int sFailures = 0;
-
-void Check(bool ok, const char* what) {
-  if (!ok) {
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++sFailures;
-  }
-}
-
 const char* Name(EGraphicsBackend backend) { return PortDebug::GraphicsBackendConfigName(backend); }
 
 // A name is accepted and means that choice again.
@@ -43,12 +35,12 @@ void CheckRoundTrip(EGraphicsBackend backend) {
   EGraphicsBackend parsed = PortDebug::kGraphicsBackend_Auto;
   if (!PortDebug::ParseGraphicsBackend(Name(backend), parsed)) {
     std::fprintf(stderr, "FAIL: %s is not accepted\n", Name(backend));
-    ++sFailures;
+    port_test::CountFailure();
     return;
   }
   if (parsed != backend) {
     std::fprintf(stderr, "FAIL: %s reads back as %s\n", Name(backend), Name(parsed));
-    ++sFailures;
+    port_test::CountFailure();
   }
 }
 
@@ -57,12 +49,12 @@ void CheckRefused(const char* value) {
   EGraphicsBackend untouched = PortDebug::kGraphicsBackend_D3D11;
   if (PortDebug::ParseGraphicsBackend(value, untouched)) {
     std::fprintf(stderr, "FAIL: \"%s\" should not be accepted\n", value);
-    ++sFailures;
+    port_test::CountFailure();
     return;
   }
   if (untouched != PortDebug::kGraphicsBackend_D3D11) {
     std::fprintf(stderr, "FAIL: \"%s\" changed the choice it refused\n", value);
-    ++sFailures;
+    port_test::CountFailure();
   }
 }
 
@@ -74,7 +66,7 @@ void CheckResolve(EGraphicsBackend saved, const char* env, EGraphicsBackend expe
       request.rejected != expectRejected) {
     std::fprintf(stderr, "FAIL: %s: resolved %s overridden=%d rejected=%d\n", what, Name(request.backend),
                  request.overridden, request.rejected);
-    ++sFailures;
+    port_test::CountFailure();
   }
 }
 
@@ -87,11 +79,11 @@ void CheckStatus(EGraphicsBackend saved, EGraphicsBackend savedAtStart, const ch
       status.fellBack != expectFellBack) {
     std::fprintf(stderr, "FAIL: %s: restartPending=%d overridden=%d fellBack=%d\n", what, status.restartPending,
                  status.overridden, status.fellBack);
-    ++sFailures;
+    port_test::CountFailure();
   }
   if (status.requested != request.backend || status.actual != PortGraphicsBackend::FromAurora(actual)) {
     std::fprintf(stderr, "FAIL: %s: requested %s, actual %s\n", what, Name(status.requested), Name(status.actual));
-    ++sFailures;
+    port_test::CountFailure();
   }
 }
 
@@ -105,15 +97,15 @@ int main() {
 
   // The stored names, and their order in the Video page's list. Both are in the
   // config file: reordering or renaming them changes what a user's file means.
-  Check(std::string(Name(kAuto)) == "auto", "auto's name");
-  Check(std::string(Name(kD3D12)) == "d3d12", "d3d12's name");
-  Check(std::string(Name(kVulkan)) == "vulkan", "vulkan's name");
-  Check(std::string(Name(kD3D11)) == "d3d11", "d3d11's name");
-  Check(kAuto == 0, "auto is 0");
-  Check(kD3D12 == 1, "d3d12 is 1");
-  Check(kVulkan == 2, "vulkan is 2");
-  Check(kD3D11 == 3, "d3d11 is 3");
-  Check(PortDebug::kGraphicsBackendCount == 4, "four choices");
+  CHECK_MSG(std::string(Name(kAuto)) == "auto", "auto's name");
+  CHECK_MSG(std::string(Name(kD3D12)) == "d3d12", "d3d12's name");
+  CHECK_MSG(std::string(Name(kVulkan)) == "vulkan", "vulkan's name");
+  CHECK_MSG(std::string(Name(kD3D11)) == "d3d11", "d3d11's name");
+  CHECK_MSG(kAuto == 0, "auto is 0");
+  CHECK_MSG(kD3D12 == 1, "d3d12 is 1");
+  CHECK_MSG(kVulkan == 2, "vulkan is 2");
+  CHECK_MSG(kD3D11 == 3, "d3d11 is 3");
+  CHECK_MSG(PortDebug::kGraphicsBackendCount == 4, "four choices");
 
   for (const EGraphicsBackend backend : {kAuto, kD3D12, kVulkan, kD3D11}) {
     CheckRoundTrip(backend);
@@ -145,26 +137,26 @@ int main() {
 
   // A value from a newer build (an enum number this build doesn't know) still
   // writes something this build reads back, so a file is never left unreadable.
-  Check(std::string(Name(static_cast< EGraphicsBackend >(7))) == "auto", "an unknown number writes auto");
+  CHECK_MSG(std::string(Name(static_cast< EGraphicsBackend >(7))) == "auto", "an unknown number writes auto");
 
   // The selection -> Aurora mapping, and back. Nothing but the three named APIs can
   // read as "the request started", so an unnamed backend (Metal, WebGPU, OpenGL ES,
   // none) can never hide a fallback.
-  Check(PortGraphicsBackend::ToAurora(kAuto) == BACKEND_AUTO, "auto asks for nothing in particular");
-  Check(PortGraphicsBackend::ToAurora(kD3D12) == BACKEND_D3D12, "d3d12 asks for D3D12");
-  Check(PortGraphicsBackend::ToAurora(kVulkan) == BACKEND_VULKAN, "vulkan asks for Vulkan");
-  Check(PortGraphicsBackend::ToAurora(kD3D11) == BACKEND_D3D11, "d3d11 asks for D3D11");
+  CHECK_MSG(PortGraphicsBackend::ToAurora(kAuto) == BACKEND_AUTO, "auto asks for nothing in particular");
+  CHECK_MSG(PortGraphicsBackend::ToAurora(kD3D12) == BACKEND_D3D12, "d3d12 asks for D3D12");
+  CHECK_MSG(PortGraphicsBackend::ToAurora(kVulkan) == BACKEND_VULKAN, "vulkan asks for Vulkan");
+  CHECK_MSG(PortGraphicsBackend::ToAurora(kD3D11) == BACKEND_D3D11, "d3d11 asks for D3D11");
   for (const EGraphicsBackend backend : {kD3D12, kVulkan, kD3D11}) {
-    Check(PortGraphicsBackend::FromAurora(PortGraphicsBackend::ToAurora(backend)) == backend, "mapping round trip");
+    CHECK_MSG(PortGraphicsBackend::FromAurora(PortGraphicsBackend::ToAurora(backend)) == backend, "mapping round trip");
   }
-  Check(PortGraphicsBackend::FromAurora(BACKEND_METAL) == kAuto, "Metal is not a named choice");
-  Check(PortGraphicsBackend::FromAurora(BACKEND_WEBGPU) == kAuto, "WebGPU is not a named choice");
-  Check(PortGraphicsBackend::FromAurora(BACKEND_OPENGLES) == kAuto, "OpenGL ES is not a named choice");
-  Check(PortGraphicsBackend::FromAurora(BACKEND_NULL) == kAuto, "no device is not a named choice");
-  Check(std::string(PortGraphicsBackend::DisplayName(BACKEND_D3D12)) == "Direct3D 12", "d3d12's display name");
-  Check(std::string(PortGraphicsBackend::DisplayName(BACKEND_VULKAN)) == "Vulkan", "vulkan's display name");
-  Check(std::string(PortGraphicsBackend::DisplayName(BACKEND_D3D11)) == "Direct3D 11", "d3d11's display name");
-  Check(std::string(PortGraphicsBackend::DisplayName(BACKEND_NULL)) == "no graphics device", "no device's name");
+  CHECK_MSG(PortGraphicsBackend::FromAurora(BACKEND_METAL) == kAuto, "Metal is not a named choice");
+  CHECK_MSG(PortGraphicsBackend::FromAurora(BACKEND_WEBGPU) == kAuto, "WebGPU is not a named choice");
+  CHECK_MSG(PortGraphicsBackend::FromAurora(BACKEND_OPENGLES) == kAuto, "OpenGL ES is not a named choice");
+  CHECK_MSG(PortGraphicsBackend::FromAurora(BACKEND_NULL) == kAuto, "no device is not a named choice");
+  CHECK_MSG(std::string(PortGraphicsBackend::DisplayName(BACKEND_D3D12)) == "Direct3D 12", "d3d12's display name");
+  CHECK_MSG(std::string(PortGraphicsBackend::DisplayName(BACKEND_VULKAN)) == "Vulkan", "vulkan's display name");
+  CHECK_MSG(std::string(PortGraphicsBackend::DisplayName(BACKEND_D3D11)) == "Direct3D 11", "d3d11's display name");
+  CHECK_MSG(std::string(PortGraphicsBackend::DisplayName(BACKEND_NULL)) == "no graphics device", "no device's name");
 
   // MP_GRAPHICS_BACKEND precedence: the environment wins when it names a choice; a
   // value that names nothing is refused and leaves the saved selection in charge.
@@ -205,10 +197,8 @@ int main() {
   CheckStatus(kAuto, kAuto, nullptr, BACKEND_NULL, false, false, false, "auto cannot fall back");
   CheckStatus(kAuto, kAuto, "auto", BACKEND_METAL, false, true, false, "an explicit auto never falls back");
 
-  if (sFailures != 0) {
-    std::fprintf(stderr, "port_graphics_backend: %d failure(s)\n", sFailures);
-    return 1;
+  if (port_test::Failures() == 0) {
+    std::printf("port_graphics_backend: OK\n");
   }
-  std::printf("port_graphics_backend: OK\n");
-  return 0;
+  return PORT_TEST_RESULT();
 }

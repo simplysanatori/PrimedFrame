@@ -13,8 +13,9 @@
 // Protocol core of the Archipelago client: the configuration and its item and
 // location maps, the packet state machine, and the queues of outgoing packets
 // and incoming items. It deliberately knows nothing about sockets or game
-// state, so the tests drive it directly. port_apclient.cpp owns the socket
-// thread and the step that turns ItemGrants into player-state changes.
+// state, so the tests drive it directly. port_apclient_worker.cpp owns the socket
+// thread, and port_apclient.cpp the step that turns ItemGrants into player-state
+// changes.
 namespace PortAp {
 namespace Protocol {
 
@@ -135,7 +136,7 @@ struct State {
   std::string seed;
   // The room this progress belongs to. Rooms generated from one seed share its
   // seed name, so the client names each room in the server's data storage the
-  // first time it connects to it (port_apclient.cpp, EnterRoom). Empty until
+  // first time it connects to it (port_apclient_worker.cpp, EnterRoom). Empty until
   // then, and in files written before this existed.
   std::string room;
   int64_t nextItemIndex = 0;
@@ -285,9 +286,6 @@ public:
   // the configuration does not enable DeathLink. `cause` is the text other
   // players see; empty means "<slot> died".
   std::string BuildBounce(const std::string& cause = std::string()) const;
-  // Whether the configuration asked for DeathLink at all, which the world's
-  // RoomInfo is what actually agrees to; both must say yes.
-  static bool DeathLinkEnabled(const Config& config);
 
   // Records a collected location. False when the key has no id, or was already
   // checked; otherwise `id` is the AP location id to send.
@@ -336,10 +334,6 @@ public:
   // Why the loaded progress was thrown away on the last RoomInfo, empty when
   // nothing was. The state itself is already reset when this is set.
   const std::string& ResetReason() const { return mResetReason; }
-  // Copies the tail of the tracked receipts, newest last, into `out`, replacing
-  // its contents. The HUD only cares about the last few; the F1 tracker calls
-  // Tracked() directly for the whole session.
-  void CopyRecentTracked(std::vector< TrackedItem >& out, size_t cap) const;
 
 private:
   Config mConfig;

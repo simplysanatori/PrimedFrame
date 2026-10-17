@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "port_map_marks.h"
+#include "port_hash.h"
 #include "port_map_pickups.h"
 
 // The seen pickups and room marks of a save slot, kept in a small file in the
@@ -58,11 +59,7 @@ struct Data {
 };
 
 inline uint64_t Fingerprint(const uint8_t* bytes, size_t size) {
-  uint64_t hash = 0xcbf29ce484222325ull;
-  for (size_t i = 0; i < size; ++i) {
-    hash = (hash ^ bytes[i]) * 0x100000001b3ull;
-  }
-  return hash;
+  return port::Fnv1a64(bytes, size);
 }
 
 // UTF-8 text to and from paths (std::filesystem's u8 forms are char8_t), as

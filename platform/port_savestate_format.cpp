@@ -1,4 +1,5 @@
 #include "port_savestate.h"
+#include "port_hash.h"
 #include "port_bytes.h"
 
 #include <algorithm>
@@ -368,12 +369,7 @@ bool DecodeDoorSaveState(const std::string& data, DoorSaveState& out) {
 uint64_t FingerprintScriptData(const uint8_t* data, size_t size) {
   if (data == nullptr || size == 0)
     return 0;
-  uint64_t hash = 0xcbf29ce484222325ull;  // FNV-1a
-  for (size_t i = 0; i < size; ++i) {
-    hash ^= data[i];
-    hash *= 0x100000001b3ull;
-  }
-  return hash;
+  return port::Fnv1a64(data, size);
 }
 
 AreaFingerprint MakeAreaFingerprint(int32_t area, const uint8_t* data, size_t size) {

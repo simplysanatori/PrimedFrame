@@ -2,6 +2,7 @@
 #define METROID_PRIME_PORT_PORT_GRAPHICS_BACKEND_H
 
 #include "aurora/aurora.h"
+#include "port_env.h"
 #include "port_debug.h"
 
 // The Windows renderer choice (issue #135), in one place: the mapping from the
@@ -22,6 +23,10 @@ struct Request {
   // the caller warns about.
   bool rejected = false;
 };
+
+// MP_GRAPHICS_BACKEND, read here only, so the start-up choice and the Video page
+// describe the same request.
+inline const char* EnvRequest() { return port::EnvString("MP_GRAPHICS_BACKEND"); }
 
 inline Request Resolve(PortDebug::EGraphicsBackend saved, const char* env) {
   Request request;

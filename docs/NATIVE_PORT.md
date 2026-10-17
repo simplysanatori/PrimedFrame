@@ -32,6 +32,20 @@ For Windows, run from an MSVC developer shell and add
 `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl` to configure.
 Plain MSVC `cl.exe` and MinGW builds are not currently validated.
 
+CI builds and tests Linux (GCC 14 and Clang 18) on each push to `port` and
+each pull request; Windows (clang-cl) and macOS (arm64, experimental) run
+weekly and can be started by hand from the Actions tab (`.github/workflows/`).
+CI configures with `-DAURORA_ENABLE_TESTS=ON`, which adds Aurora's GPU-free
+FIFO/GX tests (`gx_fifo_tests`); turn it on to run the same suite locally.
+
+Configure downloads about a dozen pinned dependencies (checked by SHA-256). On
+a machine without access to GitHub, clone them yourself and point CMake at the
+copies with `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<dir>`, the way
+`flatpak/io.github.odrannnn.metroidprimeport.yml` does.
+
+Android builds through Gradle: `tools/make_android_keystore.sh` once, then
+`tools/android_apk.sh :app:assembleRelease`; see `docs/ANDROID.md`.
+
 macOS (Apple Silicon, macOS 13+) is experimental: `.github/workflows/macos.yml`
 builds it on `macos-15` with Homebrew's `ninja` and `openssl@3` and renders
 through Metal, but nobody has played it on a real Mac yet. Configure as that
@@ -57,7 +71,7 @@ One configuration takes about 0.5 GB of cache (`ccache -M` sets the limit).
 
 No disc or generated game-asset headers are needed to compile. The two embedded
 default-font resources are read from the mounted retail DOL at runtime, using
-the addresses in `config/GM8E01_00/symbols.txt`. Native builds do not depend on
+the addresses in `decomp/config/GM8E01_00/symbols.txt`. Native builds do not depend on
 `build/GM8E01_00/include` or distribute extracted font data.
 
 ### Linking and packaging
@@ -425,6 +439,38 @@ cutscene skipping is independent.
 ### Controls and settings
 
 Moved to `docs/SETTINGS.md`; the debug console now lives in `docs/CONSOLE.md`.
+## Where port code goes
+
+The game code under `src/` and `include/` is the decompilation and stays
+recognisably so: it is what upstream PrimeDecomp fixes are merged into (see
+`tools/upstream_screen.py`), and what reviewers compare against the original.
+Port behaviour therefore lives in `platform/`, and a decomp file gets only a
+short `#ifdef TARGET_PC` hook that calls into it, as in `CPlayer.cpp`:
+
+```cpp
+#ifdef TARGET_PC
+  if (const float hurt = PortConsoleTakePendingHurt(); hurt > 0.f) {
+    TakeDamage(true, GetTranslation(), hurt, kWT_AI, mgr);
+  }
+#endif
+```
+
+The `Port*` function or namespace (declared in `platform/include/port_*.h`,
+defined in `platform/port_*.cpp`) holds the logic, its state and its settings,
+and can be unit tested in `tests/` against that header, without the game.
+A hook passes in the game objects it needs and acts on what comes back; it
+does not grow into tens or hundreds of inline lines in the decomp file. Keep
+retail behaviour the default path, so the hook reads as an exception to the
+original code, not a rewrite of it.
+
+Port code that was moved out of a decomp file but still defines members of
+decomp classes or depends on decomp headers the way game code does (for
+example `platform/port_remastered_movers.cpp`, which holds the Remastered
+player movers called from `CGameCollision::MovePlayer`) is appended to
+`MP_GAME_SOURCES` in `CMakeLists.txt` rather than `MP_PORT_SOURCES`. It is then
+compiled exactly as the file it came from (same flags, definitions and forced
+`platform/compat.h`), so moving it does not change the generated code.
+
 ## Ownership and threading rules
 
 - Use `rstl::auto_ptr<T[]>` / `single_ptr<T[]>` for host arrays and scalar owners

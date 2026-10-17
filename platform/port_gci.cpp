@@ -1,4 +1,7 @@
 #include "port_gci.h"
+#include "port_env.h"
+#include "port_strings.h"
+#include "port_bytes.h"
 
 #include <aurora/card.h>
 
@@ -75,7 +78,7 @@ bool ReadAll(const fs::path& path, std::vector<uint8_t>& out, std::string& error
     error = "cannot open " + PathString(path);
     return false;
   }
-  out.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  out = port::ReadAll(in);
   if (in.bad()) {
     error = "cannot read " + PathString(path);
     return false;
@@ -393,7 +396,7 @@ bool Convert(const std::vector<uint8_t>& bytes, const std::vector<uint8_t>& art,
   out.note = ConversionNote(conversion);
   out.newest = conversion.newest;
   if (bytes.size() >= 0x2C) {
-    out.modTime = uint32_t(bytes[0x28]) << 24 | uint32_t(bytes[0x29]) << 16 | uint32_t(bytes[0x2A]) << 8 | bytes[0x2B];
+    out.modTime = port::GetBE32(bytes, 0x28);
   }
   return true;
 }
@@ -799,7 +802,7 @@ std::vector<fs::path> AutoDolphinRoots() {
   }
   CoTaskMemFree(documents);
 #else
-  const char* home = std::getenv("HOME");
+  const char* home = port::HomeFolder();
   const std::string homeDir = home != nullptr ? home : "";
 #if defined(__APPLE__)
   if (!homeDir.empty()) {

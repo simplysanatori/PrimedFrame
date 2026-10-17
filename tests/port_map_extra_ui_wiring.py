@@ -8,7 +8,8 @@ Pickup dots and their kinds, the saved marks, the cyan drawing of them and the
 physical X button are not part of it.
 
 What this checks, none of which a unit test can see (the legend fit and the
-prompt live in CAutoMapper.cpp behind the running map screen):
+prompt live in CAutoMapper.cpp and platform/port_automapper.cpp behind the
+running map screen):
 
   * the setting's default is false, and the key is in the settings table with
     two sample values, which is what the `port_settings_roundtrip` self-test
@@ -33,14 +34,20 @@ import re
 import sys
 import unittest
 
-root = pathlib.Path(sys.argv.pop())
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from wiring_helpers import (  # noqa: E402
+    WiringCase, between, braced, count, index, joined, root_argument, squash)
+
+root = root_argument()
 DEBUG_UI = root / "platform/debug_ui.cpp"
-SETTINGS = root / "platform/debug_ui/settings.inc"
-OPTIONS = root / "platform/debug_ui/options.inc"
-TRACKER = root / "platform/debug_ui/tracker.inc"
+DEBUG_UI_INTERNAL = root / "platform/debug_ui/debug_ui_internal.h"
+SETTINGS = root / "platform/debug_ui/settings.cpp"
+OPTIONS = root / "platform/debug_ui/options.cpp"
+TRACKER = root / "platform/debug_ui/tracker.cpp"
 DEBUG_HEADER = root / "platform/include/port_debug.h"
 INDEX = root / "platform/port_settings_index.inc"
 MAPPER = root / "src/MetroidPrime/CAutoMapper.cpp"
+MAPPER_PORT = root / "platform/port_automapper.cpp"
 CONSOLE = root / "platform/port_console.cpp"
 PICKUPS = root / "platform/port_map_pickups.cpp"
 MARKS = root / "platform/port_map_marks.cpp"
@@ -49,53 +56,25 @@ CONSOLE_DOC = root / "docs/CONSOLE.md"
 CMAKE = root / "CMakeLists.txt"
 
 
-def between(text, start, end, path):
-    assert start in text, f"{path}: no {start!r}"
-    body = text.split(start, 1)[1]
-    assert end in body, f"{path}: no {end!r} after {start!r}"
-    return body.split(end, 1)[0]
+def mapper_text():
+    """The map screen's code: the decomp file's hooks and the port file they call."""
+    return MAPPER.read_text() + "\n" + MAPPER_PORT.read_text()
 
 
-def body(text, signature, path):
-    """The braced body of the function at signature, nested blocks included."""
-    assert signature in text, f"{path}: no {signature!r}"
-    i = text.index("{", text.index(signature))
-    depth = 0
-    for j in range(i, len(text)):
-        if text[j] == "{":
-            depth += 1
-        elif text[j] == "}":
-            depth -= 1
-            if depth == 0:
-                return text[i:j + 1]
-    raise AssertionError(f"{path}: {signature!r} has no closing brace")
-
-
-def joined(text):
-    """Source with adjacent string literals put back together on one line."""
-    out = text
-    while True:
-        nxt = out.replace('"\n' + " " * 0, "")
-        # collapse: " ... " (newline, indent) " ... "
-        import re
-        out2 = re.sub(r'"\s*\n\s*"', "", out)
-        if out2 == out:
-            return out2
-        out = out2
-
-
-class Wiring(unittest.TestCase):
+class Wiring(WiringCase):
     def test_default_is_off_and_the_key_is_persisted(self):
         ui = DEBUG_UI.read_text()
         self.assertIn("bool sMapExtraUi = false;", ui)
         self.assertNotIn("bool sMapExtraUi = true;", ui)
         settings = SETTINGS.read_text()
-        key = between(settings, '{"map_extra_ui",', "}, false,", SETTINGS)
-        self.assertIn("sMapExtraUi = ParseBool(value);", key)
-        self.assertIn("WriteBool(out, sMapExtraUi);", key)
+        # A plain bool key: BoolKey reads it with ParseBool and writes 1 or 0.
+        self.assertIn('BoolKey< &sMapExtraUi >("map_extra_ui")', settings)
+        bool_key = braced(settings, "constexpr SettingKey BoolKey(const char* key) {", SETTINGS)
+        self.assertIn("*Flag = ParseBool(value);", bool_key)
+        self.assertIn("WriteBool(out, *Flag);", bool_key)
         # Two sample values: the round-trip self-test applies each and expects it
         # back, so the key is covered by port_settings_roundtrip.
-        self.assertIn('false, "1", "0"}', settings.split('{"map_extra_ui",', 1)[1])
+        self.assertIn('false, "1", "0"}', bool_key)
         self.assertIn("port_settings_roundtrip", CMAKE.read_text())
 
     def test_accessors_are_declared_and_save_the_setting(self):
@@ -103,11 +82,15 @@ class Wiring(unittest.TestCase):
         self.assertIn("bool MapExtraUi();", header)
         self.assertIn("void SetMapExtraUi(bool enabled);", header)
         options = OPTIONS.read_text()
-        getter = body(options, "bool MapExtraUi() {", OPTIONS)
-        self.assertIn("return sMapExtraUi;", getter)
-        setter = body(options, "void SetMapExtraUi(bool enabled) {", OPTIONS)
-        self.assertIn("sMapExtraUi = enabled;", setter)
-        self.assertIn("MarkDirty();", setter)
+        getter = braced(options, "bool MapExtraUi() {", OPTIONS)
+        self.assertIn("return Loaded(sMapExtraUi);", getter)
+        setter = braced(options, "void SetMapExtraUi(bool enabled) {", OPTIONS)
+        self.assertIn("StoreSetting(sMapExtraUi, enabled);", setter)
+        # StoreSetting is the plain setter's body: it marks the settings for saving.
+        store = braced(DEBUG_UI_INTERNAL.read_text(), "void StoreSetting(T& setting, const V& value) {",
+                       DEBUG_UI_INTERNAL)
+        self.assertIn("setting = value;", store)
+        self.assertIn("MarkDirty();", store)
 
     def test_f1_row_and_search_index(self):
         tracker = TRACKER.read_text()
@@ -124,8 +107,8 @@ class Wiring(unittest.TestCase):
         self.assertIn("Room marks still work with X", help_text)
 
     def test_the_legend_key_carries_the_setting(self):
-        mapper = MAPPER.read_text()
-        key = body(mapper, "static uint PortLegendKey() {", MAPPER)
+        mapper = mapper_text()
+        key = braced(mapper, "uint PortLegendKey() {", MAPPER)
         self.assertIn("PortDebug::MapPickupKinds() ? 8u : 0u", key)
         self.assertIn("PortDebug::MapExtraUi() ? 16u : 0u", key)
         # It is the only key of the legend's text, so switching the setting in an
@@ -133,37 +116,37 @@ class Wiring(unittest.TestCase):
         self.assertIn("sPortLegendKey != PortLegendKey()", mapper)
 
     def test_legend_text_and_assets_are_gated(self):
-        mapper = MAPPER.read_text()
-        text = body(mapper, "static rstl::wstring PortLegendText() {", MAPPER)
-        gate = text.index("if (!PortDebug::MapExtraUi()) {")
+        mapper = mapper_text()
+        text = braced(mapper, "rstl::wstring PortLegendText() {", MAPPER)
+        gate = index(text, "if (!PortDebug::MapExtraUi()) {")
         # Nothing is appended before the gate: the disc's own text alone.
-        self.assertLess(gate, text.index("entry("), "an entry is appended first")
-        ready = body(mapper, "static bool PortLegendReady() {", MAPPER)
-        gate = ready.index("if (!PortDebug::MapExtraUi()) {")
+        self.assertLess(gate, index(text, "entry("), "an entry is appended first")
+        ready = squash(braced(mapper, "bool PortLegendReady() {", MAPPER))
+        gate = index(ready, "if (!PortDebug::MapExtraUi()) {")
         self.assertIn("return true;", ready[gate:ready.index("}", gate) + 1])
         # The injected legend textures are not created before that early return.
-        self.assertLess(gate, ready.index("new TToken< CTexture >"), "textures loaded first")
+        self.assertLess(gate, index(ready, "new TToken< CTexture >"), "textures loaded first")
         # Off, the pane keeps the disc's own dimensions and pivot: the fit's
         # scale is 1 and the pivot compensation is a no-op.
-        fit = between(mapper, "static void PortSetLegend(", "legend->SetDimensions(", MAPPER)
+        fit = between(mapper, "void PortSetLegend(", "legend->SetDimensions(", MAPPER)
         self.assertIn("rows > base ? static_cast< float >(base) / static_cast< float >(rows) : 1.f",
                       fit)
 
     def test_prompt_and_click_are_gated_and_nothing_else_is(self):
-        mapper = MAPPER.read_text()
-        prompt = body(mapper, "bool CAutoMapper::PortShowsMarkPrompt() {", MAPPER)
+        mapper = mapper_text()
+        prompt = braced(mapper, "bool CAutoMapper::PortShowsMarkPrompt() {", MAPPER)
         self.assertTrue(prompt.lstrip().startswith("{"), prompt[:40])
-        self.assertTrue(prompt.lstrip("{ \n").startswith("if (!PortDebug::MapExtraUi()"),
+        self.assertTrue(squash(prompt).startswith(squash("{ if (!PortDebug::MapExtraUi()")),
                         "the prompt's first gate is the setting")
         self.assertIn("PortPlaceMarkHint(x2fc_textpane_hint, PortShowsMarkPrompt());", mapper)
         # The click on the hint pane is the prompt's alone: gated, and with the
         # glyph test that keeps the pane from being a wide invisible target.
-        self.assertEqual(mapper.count("PortPointerMenu::TakeClickOn(x2fc_textpane_hint)"), 1)
+        self.assertEqual(count(mapper, "PortPointerMenu::TakeClickOn(x2fc_textpane_hint)"), 1)
         click = between(mapper, "// A click on the mark prompt presses X",
                         "PortPointerMenu::TakeClickOn(x2fc_textpane_hint)", MAPPER)
         self.assertIn("PortShowsMarkPrompt() &&", click)
         self.assertIn("PortMarkPromptUnderPointer(x2fc_textpane_hint) &&", click)
-        under = body(mapper, "static bool PortMarkPromptUnderPointer(", MAPPER)
+        under = braced(mapper, "static bool PortMarkPromptUnderPointer(", MAPPER)
         self.assertIn("PortGuiHit::LastBounds(pane, glyphs)", under)
         # The marks and the dots are not part of the setting.
         self.assertIn("PortMapMarks::Toggle(", mapper)
@@ -175,15 +158,15 @@ class Wiring(unittest.TestCase):
         # pane can come back at the same address: a cache left over from the old
         # frame would keep the disc's geometry from being taken again, would skip
         # the fit on the reopened frame and would leave the prompt unplaced.
-        mapper = MAPPER.read_text()
-        forget = body(mapper, "static void PortForgetMapPanes() {", MAPPER)
+        mapper = mapper_text()
+        forget = braced(mapper, "void PortForgetMapPanes() {", MAPPER)
         for reset in ("sPortLegendFit.pane = nullptr;", "sPortLegendFit.rows = 0;",
                       "sPortLegendFit.retailRows = 0;", "sPortHintPane.pane = nullptr;",
                       "sPortHintPane.placed = false;"):
             self.assertIn(reset, forget)
         # Once when the frame is loaded and once when it is dropped, and the load
         # one comes before the frame's legend pane is read.
-        self.assertEqual(mapper.count("PortForgetMapPanes();"), 2, "one call each way")
+        self.assertEqual(count(mapper, "PortForgetMapPanes();"), 2, "one call each way")
         load = between(mapper, "if (x28_frmeMapScreen.get() != NULL && x2c_frmeInitialized == NULL) {",
                        'FindWidget("textpane_mapLegend")', MAPPER)
         self.assertIn("PortForgetMapPanes();", load)
@@ -197,8 +180,9 @@ class Wiring(unittest.TestCase):
         # disc's own: with the labels below the appended lines are 233 text px and
         # the row ratio (11/13) draws them 197 px wide against the disc's 198.
         # Longer labels would leave a tail on screen while the panel is away.
-        mapper = MAPPER.read_text()
-        labels = re.findall(r'entry\(PortCustomRes::kLegend\w+Txtr, L"([^"]+)"\)', mapper)
+        mapper = mapper_text()
+        labels = re.findall(r'entry\(\s*PortCustomRes::kLegend\w+Txtr\s*,\s*L"([^"]+)"\s*\)',
+                            mapper)
         self.assertEqual(sorted(labels), ["Collected", "Major", "Marked", "Minor", "Pickup"])
         self.assertLessEqual(max(len(l) for l in labels), 9, labels)
         paired = sorted((len(l) for l in labels), reverse=True)
@@ -206,7 +190,8 @@ class Wiring(unittest.TestCase):
 
     def test_console_docs_and_registration(self):
         console = CONSOLE.read_text()
-        cmd = between(console, '} else if (name == "mapui") {', "\n  } else if", CONSOLE)
+        cmd = braced(console, "void CmdMapUi()", CONSOLE)
+        self.assertIn('{"mapui", CmdMapUi,', console)
         self.assertIn("PortDebug::SetMapExtraUi(v == \"1\");", cmd)
         self.assertIn('Out(PortDebug::MapExtraUi() ? "mapui 1" : "mapui 0");', cmd)
         self.assertIn("mapui", CONSOLE_DOC.read_text())

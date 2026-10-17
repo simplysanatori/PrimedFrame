@@ -1,4 +1,5 @@
 #include "MetroidPrime/ScriptObjects/CScriptDoor.hpp"
+#include "port_env.h"
 
 #include "Collision/CMaterialList.hpp"
 #include "Kyoto/Math/CFrustumPlanes.hpp"
@@ -49,7 +50,7 @@ void PortPrintDoorWait(TUniqueId door, const char* what, const SPortDoorWait& wa
 }
 
 bool PortLogDoors() {
-  static const bool enabled = std::getenv("MP_LOG_DOORS") != nullptr;
+  static const bool enabled = port::EnvFlag("MP_LOG_DOORS");
   return enabled;
 }
 

@@ -50,35 +50,31 @@ float HalfToFloat(uint16_t bits) {
   return value;
 }
 
-constexpr uint32_t FourCc(char a, char b, char c, char d) {
-  return (uint32_t(uint8_t(a)) << 24) | (uint32_t(uint8_t(b)) << 16) | (uint32_t(uint8_t(c)) << 8) |
-         uint32_t(uint8_t(d));
-}
 
-const uint32_t kFormRFRM = FourCc('R', 'F', 'R', 'M');
-const uint32_t kFormFoot = FourCc('F', 'O', 'O', 'T');
-const uint32_t kChunkMeta = FourCc('M', 'E', 'T', 'A');
-const uint32_t kFormCmdl = FourCc('C', 'M', 'D', 'L');
-const uint32_t kFormSmdl = FourCc('S', 'M', 'D', 'L');
-const uint32_t kFormWmdl = FourCc('W', 'M', 'D', 'L');
-const uint32_t kChunkHead = FourCc('H', 'E', 'A', 'D');
-const uint32_t kChunkWdhd = FourCc('W', 'D', 'H', 'D');
-const uint32_t kChunkSkhd = FourCc('S', 'K', 'H', 'D');
-const uint32_t kChunkMtrl = FourCc('M', 'T', 'R', 'L');
-const uint32_t kChunkMesh = FourCc('M', 'E', 'S', 'H');
-const uint32_t kChunkVbuf = FourCc('V', 'B', 'U', 'F');
-const uint32_t kChunkIbuf = FourCc('I', 'B', 'U', 'F');
-const uint32_t kChunkGpu = FourCc('G', 'P', 'U', ' ');
+const uint32_t kFormRFRM = port::FourCC('R', 'F', 'R', 'M');
+const uint32_t kFormFoot = port::FourCC('F', 'O', 'O', 'T');
+const uint32_t kChunkMeta = port::FourCC('M', 'E', 'T', 'A');
+const uint32_t kFormCmdl = port::FourCC('C', 'M', 'D', 'L');
+const uint32_t kFormSmdl = port::FourCC('S', 'M', 'D', 'L');
+const uint32_t kFormWmdl = port::FourCC('W', 'M', 'D', 'L');
+const uint32_t kChunkHead = port::FourCC('H', 'E', 'A', 'D');
+const uint32_t kChunkWdhd = port::FourCC('W', 'D', 'H', 'D');
+const uint32_t kChunkSkhd = port::FourCC('S', 'K', 'H', 'D');
+const uint32_t kChunkMtrl = port::FourCC('M', 'T', 'R', 'L');
+const uint32_t kChunkMesh = port::FourCC('M', 'E', 'S', 'H');
+const uint32_t kChunkVbuf = port::FourCC('V', 'B', 'U', 'F');
+const uint32_t kChunkIbuf = port::FourCC('I', 'B', 'U', 'F');
+const uint32_t kChunkGpu = port::FourCC('G', 'P', 'U', ' ');
 
 // Material parameter types. The file stores these as FourCCs (binrw reads the Rust
 // enums by magic), so the discriminants in cmdl.rs are never on disc.
-const uint32_t kDataTexture = FourCc('T', 'X', 'T', 'R');
-const uint32_t kDataColor = FourCc('C', 'O', 'L', 'R');
-const uint32_t kDataScalar = FourCc('S', 'C', 'L', 'R');
-const uint32_t kDataInt1 = FourCc('I', 'N', 'T', '1');
-const uint32_t kDataInt4 = FourCc('I', 'N', 'T', '4');
-const uint32_t kDataMatrix4 = FourCc('M', 'A', 'T', '4');
-const uint32_t kDataComplex = FourCc('C', 'P', 'L', 'X');
+const uint32_t kDataTexture = port::FourCC('T', 'X', 'T', 'R');
+const uint32_t kDataColor = port::FourCC('C', 'O', 'L', 'R');
+const uint32_t kDataScalar = port::FourCC('S', 'C', 'L', 'R');
+const uint32_t kDataInt1 = port::FourCC('I', 'N', 'T', '1');
+const uint32_t kDataInt4 = port::FourCC('I', 'N', 'T', '4');
+const uint32_t kDataMatrix4 = port::FourCC('M', 'A', 'T', '4');
+const uint32_t kDataComplex = port::FourCC('C', 'P', 'L', 'X');
 
 // The EVertexComponent values the port names; the rest go to ModelAttribute.
 const uint32_t kComponentPosition = 0;
@@ -185,8 +181,7 @@ public:
 
   uint32_t FourCC() {
     const uint8_t* p = Bytes(4);
-    return p ? (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | uint32_t(p[3])
-             : 0;
+    return p ? port::ReadBE32(p) : 0;
   }
 
   // Records the first failure only; anything after it is a consequence.
@@ -225,8 +220,7 @@ bool ReadBlockHeader(Cursor& cursor, BlockHeader& out) {
   if (peek == nullptr) {
     return cursor.Fail("truncated block header");
   }
-  out.magic = (uint32_t(peek[0]) << 24) | (uint32_t(peek[1]) << 16) | (uint32_t(peek[2]) << 8) |
-              uint32_t(peek[3]);
+  out.magic = port::ReadBE32(peek);
   if (out.magic == kFormRFRM) {
     cursor.Skip(4);
     const uint64_t size = cursor.U64();
