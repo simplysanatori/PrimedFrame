@@ -1,4 +1,5 @@
 #include "port_actor_shadow.h"
+#include "port_env.h"
 
 #include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/CSimpleShadow.hpp"
@@ -49,7 +50,7 @@ void RenderFrame(const CStateManager& mgr, const CTransform4f& view) {
     }
     w2v[r][3] = -(axes[r][0] * eye.GetX() + axes[r][1] * eye.GetY() + axes[r][2] * eye.GetZ());
   }
-  static const bool debug = std::getenv("MP_ACTOR_SHADOW_DEBUG") != nullptr;
+  static const bool debug = port::EnvFlag("MP_ACTOR_SHADOW_DEBUG");
   static unsigned frame = 0;
   if (debug && (++frame % 120) == 0) {
     for (size_t i = 0; i < sActors.size(); ++i) {

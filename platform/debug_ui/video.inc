@@ -436,7 +436,7 @@ void DrawVideoCompatibility() {
     // What this run asked for is the resolution of the STARTUP selection, not the
     // setting: MP_GRAPHICS_BACKEND outranks the file, and changing the combo must not
     // pretend the API this run started on was the one asked for.
-    const char* const env = std::getenv("MP_GRAPHICS_BACKEND");
+    const char* const env = PortGraphicsBackend::EnvRequest();
     const PortGraphicsBackend::Request request = PortGraphicsBackend::Resolve(sGraphicsBackendAtStart, env);
     const AuroraBackend live = aurora_get_backend();
     const PortGraphicsBackend::Status status =

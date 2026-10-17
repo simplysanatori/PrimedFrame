@@ -192,7 +192,7 @@ std::string GeometryChoice() {
   if (!Parts().geometry) {
     return "none";
   }
-  const char* env = std::getenv("MP_REMASTERED_GEOMETRY");
+  const char* env = port::EnvString("MP_REMASTERED_GEOMETRY");
   return env == nullptr || env[0] == '\0' ? std::string("all") : std::string(env);
 }
 
@@ -306,16 +306,19 @@ bool WantsGallery() {
 
 // MP_REMASTERED_MOVIES=0 leaves the disc's movies alone; a size and rate
 // ("1280x720@30") is what they are written as.
+// Set to an off value (port_env.h's: 0, false, off, no); unset or empty keeps them.
+bool MoviesTurnedOff() {
+  const char* env = port::EnvString("MP_REMASTERED_MOVIES");
+  return env != nullptr && env[0] != '\0' && !port::EnvFlag("MP_REMASTERED_MOVIES");
+}
+
 bool WantsMovies(MovieFormat& format) {
-  if (!Parts().movies) {
+  if (!Parts().movies || MoviesTurnedOff()) {
     return false;
   }
-  const char* env = std::getenv("MP_REMASTERED_MOVIES");
+  const char* env = port::EnvString("MP_REMASTERED_MOVIES");
   if (env == nullptr || env[0] == '\0' || std::strcmp(env, "1") == 0) {
     return true;
-  }
-  if (std::strcmp(env, "0") == 0) {
-    return false;
   }
   if (!ParseMovieFormat(env, format)) {
     AddLine(std::string("MP_REMASTERED_MOVIES: \"") + env + "\" is not a size and rate like 1280x720@30");
@@ -3969,12 +3972,11 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
     const fs::path target = staging.parent_path() / kImportModName;
     const fs::space_info space = fs::space(staging.parent_path(), ec);
     if (!ec && !fs::exists(target, ec) && !fs::exists(HeldFolder(staging), ec)) {
-      const char* movies = std::getenv("MP_REMASTERED_MOVIES");
       const std::string geometry = GeometryChoice();
       const bool allGeometry = geometry == "all";
       double needGb = allGeometry ? 6.5 : geometry == "none" ? 1.0 : 2.0;
       // Not WantsMovies: it reports a bad value through the lock held here.
-      needGb += !Parts().movies || (movies != nullptr && std::strcmp(movies, "0") == 0) ? 0.0 : 0.6;
+      needGb += !Parts().movies || MoviesTurnedOff() ? 0.0 : 0.6;
       const double freeGb = double(space.available) / (1024.0 * 1024.0 * 1024.0);
       if (freeGb < needGb) {
         char text[256];

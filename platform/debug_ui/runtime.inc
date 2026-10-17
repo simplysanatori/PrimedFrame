@@ -340,7 +340,7 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
     // MP_RANDO_SWEEP_WORLDS=<hex id>[,<hex id>...] limits the tour to those
     // worlds, e.g. to redo one world without walking the seven before it.
     std::vector< uint32_t > only;
-    if (const char* list = std::getenv("MP_RANDO_SWEEP_WORLDS")) {
+    if (const char* list = port::EnvString("MP_RANDO_SWEEP_WORLDS")) {
       for (const char* p = list; *p != '\0';) {
         char* end = nullptr;
         const unsigned long id = std::strtoul(p, &end, 16);

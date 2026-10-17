@@ -1,6 +1,7 @@
 // Binding-aware button prompt icons; see port_prompts.h.
 
 #include "port_prompts.h"
+#include "port_env.h"
 
 #include "port_debug.h"
 #include "port_embedded.h"
@@ -778,7 +779,7 @@ namespace PortPrompts {
 // (GameCubeStemForButton).
 const char* ActiveDevice() {
   // Read once: it is asked every frame, and nothing sets it while the game runs.
-  static const char* const env = std::getenv("MP_TEXTURE_DEVICE");
+  static const char* const env = port::EnvString("MP_TEXTURE_DEVICE");
   if (env != nullptr && env[0] != '\0') {
     return env;
   }

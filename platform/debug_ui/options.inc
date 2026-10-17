@@ -74,7 +74,7 @@ bool FastBoot() {
 bool BootWorld(uint32_t& worldId, uint32_t& areaAssetId) {
   static uint32_t sWorld = 0, sArea = 0;
   static const bool sSet = [] {
-    const char* value = std::getenv("MP_BOOT_WORLD");
+    const char* value = port::EnvString("MP_BOOT_WORLD");
     if (value == nullptr) {
       return false;
     }
@@ -778,7 +778,7 @@ int Anisotropy() {
 }
 void ApplyStorageClamp() {
   EnsureInitialized();
-  if (sStorageClamp < 0 || std::getenv("MP_STORAGE_CLAMP") != nullptr) {
+  if (sStorageClamp < 0 || port::EnvString("MP_STORAGE_CLAMP") != nullptr) {
     return;
   }
 #ifdef _WIN32
@@ -802,7 +802,7 @@ void BeginDriverWorkarounds(const std::string& userFolder, std::string& enable, 
   std::error_code ec;
   unsigned bits = sDriverWorkarounds;
   bool keepMarker = false;
-  sDriverWorkaroundsEnv = std::getenv("MP_DRIVER_WORKAROUNDS");
+  sDriverWorkaroundsEnv = port::EnvString("MP_DRIVER_WORKAROUNDS");
   if (sDriverWorkaroundsEnv != nullptr) {
     // "0" (or anything that names none) starts without them, over the ticked boxes.
     bits = ParseDriverWorkarounds(sDriverWorkaroundsEnv);

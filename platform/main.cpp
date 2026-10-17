@@ -221,13 +221,19 @@ std::string FindDiscNextToExecutable() {
     return {};
 }
 
+// MP_DISC, or nullptr when it is unset or empty.
+const char* DiscFromEnvironment() {
+    const char* env = port::EnvString("MP_DISC");
+    return env != nullptr && env[0] != '\0' ? env : nullptr;
+}
+
 const char* ResolveDiscPath(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (argv[i][0] != '-' && argv[i][0] != '\0') {
             return argv[i];
         }
     }
-    if (const char* env = std::getenv("MP_DISC"); env != nullptr && env[0] != '\0') {
+    if (const char* env = DiscFromEnvironment()) {
         return env;
     }
     if (const char* saved = PortDebug::DiscPath(); saved != nullptr) {
@@ -309,8 +315,7 @@ bool ResolveDiscFromArgs(int argc, char** argv) {
             return true;
         }
     }
-    const char* env = std::getenv("MP_DISC");
-    return env != nullptr && env[0] != '\0';
+    return DiscFromEnvironment() != nullptr;
 }
 
 // The disc id's game name and maker as one six-character id.
@@ -809,7 +814,7 @@ AuroraBackend DesiredGraphicsBackend() {
     // one run; an unknown value warns and leaves the saved selection in charge.
     // port_graphics_backend.h owns the mapping and the same resolution the Video page
     // shows, so a request cannot be described one way and started another.
-    const char* const env = std::getenv("MP_GRAPHICS_BACKEND");
+    const char* const env = PortGraphicsBackend::EnvRequest();
     const PortGraphicsBackend::Request request = PortGraphicsBackend::Resolve(PortDebug::GraphicsBackend(), env);
     if (request.rejected) {
         PortLog::Write("port: MP_GRAPHICS_BACKEND=%s is not auto, d3d12, vulkan or d3d11; "
@@ -996,7 +1001,7 @@ int main(int argc, char** argv) {
     // Settings, mods, save states and the shader caches sit in user/ beside the
     // executable when that folder can be written to (port_paths.h).
     const std::string& userFolder = PortPaths::UserFolder();
-    const char* cacheEnv = std::getenv("MP_CACHE_PATH");
+    const char* cacheEnv = port::EnvString("MP_CACHE_PATH");
 #if defined(__ANDROID__)
     // The shader caches stay in app storage when the data moves to shared
     // storage: they are disposable, and SQLite is slow on the shared mount.
@@ -1172,7 +1177,7 @@ int main(int argc, char** argv) {
     const std::filesystem::path driverMarker =
         std::filesystem::path(userFolder.empty() ? "." : userFolder) / "gpu_driver_starting";
     static std::string vulkanLibraryDir;
-    const char* envDriver = std::getenv("MP_GPU_DRIVER");
+    const char* envDriver = port::EnvString("MP_GPU_DRIVER");
     {
         const std::string driver = envDriver != nullptr ? envDriver : PortDebug::GpuDriver();
         std::error_code ec;
@@ -1252,7 +1257,7 @@ int main(int argc, char** argv) {
     // passes no folder, so PortTextures/PortPrompts use the built-in copy and a stale
     // `textures` folder left in an old install is ignored; any other build reads the
     // folder next to the executable.
-    const char* textures = std::getenv("MP_TEXTURES");
+    const char* textures = port::EnvString("MP_TEXTURES");
     if (textures == nullptr || textures[0] == '\0') {
         textures = PortEmbedded::Under("textures/").empty() ? DefaultTexturesPath() : nullptr;
     }
@@ -1260,7 +1265,7 @@ int main(int argc, char** argv) {
     // a name updates never replace (the built-in set is read-only in an AppImage or
     // Flatpak, and re-copied on every Android launch).
     std::string userTextures;
-    if (const char* env = std::getenv("MP_USER_TEXTURES"); env != nullptr && env[0] != '\0') {
+    if (const char* env = port::EnvString("MP_USER_TEXTURES"); env != nullptr && env[0] != '\0') {
         userTextures = env;
     } else if (!PortPaths::UserFolder().empty()) {
         userTextures = PortPaths::UserFolder() + "user_textures";

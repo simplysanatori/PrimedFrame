@@ -3,6 +3,7 @@
 // result with Aurora's DVD overlays.
 
 #include "port_mods.h"
+#include "port_env.h"
 #include "port_strings.h"
 #include "port_paths.h"
 #include "port_remastered_storage.h"
@@ -260,7 +261,7 @@ bool HasRoomGeometryNow(const std::vector<PortRemasteredStorage::ModFolder>& mod
 
 std::string Folder() {
   std::string dir;
-  if (const char* env = std::getenv("MP_MODS"); env != nullptr && env[0] != '\0') {
+  if (const char* env = port::EnvString("MP_MODS"); env != nullptr && env[0] != '\0') {
     dir = env;
   } else {
     dir = PortPaths::UserFolder();

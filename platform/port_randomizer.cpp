@@ -74,7 +74,7 @@ std::string UserDirectory() {
 }
 
 std::string SeedPath() {
-  if (const char* env = std::getenv("MP_RANDO_SEED")) {
+  if (const char* env = port::EnvString("MP_RANDO_SEED")) {
     if (env[0] != '\0')
       return env;
   }

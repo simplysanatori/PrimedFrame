@@ -1,4 +1,5 @@
 #include "MetroidPrime/CActor.hpp"
+#include "port_env.h"
 #include "MetroidPrime/CMain.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/Player/CPlayer.hpp"
@@ -945,8 +946,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
 #ifdef MP_ENABLE_SMOKE_DRIVER
     const bool frameLogAll = true;
 #else
-    const char* frameLogEnv = getenv("MP_FRAME_LOG");
-    const bool frameLogAll = frameLogEnv != nullptr && frameLogEnv[0] != '\0' && frameLogEnv[0] != '0';
+    const bool frameLogAll = port::EnvFlag("MP_FRAME_LOG");
 #endif
     try {
     while (!x160_24_finished) {
@@ -1303,7 +1303,7 @@ int CMain::RsMain(int argc, const char* const* argv) {
       // all at once, since SDL and ImGui keep queueing events meanwhile. Say
       // where the time went; on Android this is the only trace a report has.
       {
-        static const bool sLogStalls = getenv("MP_NO_STALL_LOG") == nullptr;
+        static const bool sLogStalls = !port::EnvFlag("MP_NO_STALL_LOG");
         static uint32_t sSkipped = 0;
         static uint64_t sSkippedSinceNs = 0;
         const auto ms = [](uint64_t ns) { return static_cast< unsigned long long >(ns / 1000000ull); };

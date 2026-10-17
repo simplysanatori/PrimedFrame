@@ -421,7 +421,7 @@ struct StartTarget {
 const StartTarget& GetStartTarget() {
   static const StartTarget target = [] {
     StartTarget t;
-    const char* env = std::getenv("MP_DEBUG_TAB");
+    const char* env = port::EnvString("MP_DEBUG_TAB");
     if (env == nullptr || *env == '\0') {
       return t;
     }

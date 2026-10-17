@@ -241,7 +241,7 @@ inline void MigrateLooseData(const std::string& exe) {
 #endif
 
 inline std::string Resolve() {
-  if (const char* env = std::getenv("MP_USER_PATH"); env != nullptr && env[0] != '\0') {
+  if (const char* env = port::EnvString("MP_USER_PATH"); env != nullptr && env[0] != '\0') {
     return WithSeparator(env);
   }
 #if defined(__ANDROID__)
@@ -333,7 +333,7 @@ inline bool IsPortable() {
 // permission), or empty.
 inline std::string UnavailableFolder() {
   const std::string chosen = detail::ReadMarker();
-  if (chosen.empty() || chosen == UserFolder() || std::getenv("MP_USER_PATH") != nullptr) {
+  if (chosen.empty() || chosen == UserFolder() || port::EnvString("MP_USER_PATH") != nullptr) {
     return {};
   }
   return chosen;

@@ -1808,7 +1808,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
     std::vector<PortRoomGeo::Link> links;
     size_t bad = 0;
     std::string how;
-    static const bool logMisses = std::getenv("MP_REMASTERED_MISS") != nullptr;
+    static const bool logMisses = port::EnvFlag("MP_REMASTERED_MISS");
     // One more connection not traced; a grade hint's are named in the import log.
     const auto miss = [&](const Component& sender, const Connection& c, uint32_t first, int depth) {
       ++bad;

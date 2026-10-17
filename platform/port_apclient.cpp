@@ -62,7 +62,7 @@ std::string UserDirectory() {
 }
 
 std::string ConfigPath() {
-  if (const char* env = std::getenv("MP_AP_CONFIG")) {
+  if (const char* env = port::EnvString("MP_AP_CONFIG")) {
     if (env[0] != '\0')
       return env;
   }

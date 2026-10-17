@@ -662,7 +662,7 @@ void EnsureInitialized() {
   if (port::EnvFlag("MP_FAST_BOOT")) {
     sFastBoot = true;
   }
-  if (const char* language = std::getenv("MP_LANGUAGE")) {
+  if (const char* language = port::EnvString("MP_LANGUAGE")) {
     sTextLanguage = language;
   }
   if (port::EnvFlag("MP_TURBO")) {
@@ -672,7 +672,7 @@ void EnsureInitialized() {
       sTurboTicks = static_cast< unsigned >(ticks);
     }
   }
-  if (const char* present = std::getenv("MP_PRESENT_T")) {
+  if (const char* present = port::EnvString("MP_PRESENT_T")) {
     if (std::strcmp(present, "cycle") == 0) {
       sPresentOverride = PortDebug::kPresentCycle;
     } else if (std::strcmp(present, "tick") == 0) {
@@ -688,13 +688,13 @@ void EnsureInitialized() {
   if (port::EnvFlag("MP_SKIP_CUTSCENES")) {
     sSkipCutscenes = true;
   }
-  if (const char* god = std::getenv("MP_GODMODE")) {
-    sInvulnerableRun = ParseBool(god) ? 1 : 0;
+  if (port::EnvString("MP_GODMODE") != nullptr) {
+    sInvulnerableRun = port::EnvFlag("MP_GODMODE") ? 1 : 0;
   }
   if (port::EnvFlag("MP_SHOW_DEBUG_UI")) {
     sVisible = true;
   }
-  if (const char* aspect = std::getenv("MP_ASPECT")) {
+  if (const char* aspect = port::EnvString("MP_ASPECT")) {
     if (std::strcmp(aspect, "16:9") == 0) {
       sAspectMode = PortDebug::kAspect_16_9;
     } else if (std::strcmp(aspect, "window") == 0) {
@@ -733,7 +733,7 @@ void EnsureInitialized() {
     sSimAdaptive = true;
   }
   sOriginalExperience = port::EnvFlag("MP_ORIGINAL", sOriginalExperience);
-  if (std::getenv("MP_FPS_CAP") != nullptr) {
+  if (port::EnvString("MP_FPS_CAP") != nullptr) {
     sFpsCap = ClampFpsCap(port::EnvInt("MP_FPS_CAP", 0));
   }
 

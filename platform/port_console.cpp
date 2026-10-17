@@ -5,6 +5,7 @@
 // the client. Commands that touch the game run inside the state manager's
 // tick, where every object pointer is live; the rest run once per frame.
 #include "port_apclient.h"
+#include "port_env.h"
 #include "port_strings.h"
 #include "port_collision_view.h"
 #include "port_console_physics.h"
@@ -287,7 +288,7 @@ void ListenThread(int listener) {
 
 void Start() {
   sStarted = true;
-  const char* value = std::getenv("MP_CONSOLE");
+  const char* value = port::EnvString("MP_CONSOLE");
   if (value == nullptr || value[0] == '\0' || std::strcmp(value, "0") == 0) {
     return;
   }

@@ -2445,7 +2445,7 @@ Mode GetMode() {
     return Mode::Off;
   }
   if (sMode < 0) {
-    const char* const env = std::getenv("MP_ROOM_GEO");
+    const char* const env = port::EnvString("MP_ROOM_GEO");
     sMode = int(env == nullptr || env[0] == '\0' ? Mode::Replace
                 : env[0] == '0'                  ? Mode::Off
                 : env[0] == 'o'                  ? Mode::Overlay

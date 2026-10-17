@@ -62,7 +62,7 @@ void MouseCheck(bool valid, const char* message) {
 
 void PortSmokeAreaReload(CStateManager& mgr) {
   static const unsigned pauseAfterTicks = [] {
-    const char* value = std::getenv("MP_SMOKE_PAUSE");
+    const char* value = port::EnvString("MP_SMOKE_PAUSE");
     return value != nullptr ? static_cast<unsigned>(std::strtoul(value, nullptr, 10)) : 0;
   }();
   static unsigned sPauseTicks = 0;
@@ -77,7 +77,7 @@ void PortSmokeAreaReload(CStateManager& mgr) {
   // MP_SMOKE_MAP=<ticks>: press Z to open the map screen. Z opens the map from
   // gameplay; in the pause screen it does nothing.
   static const unsigned mapAfterTicks = [] {
-    const char* value = std::getenv("MP_SMOKE_MAP");
+    const char* value = port::EnvString("MP_SMOKE_MAP");
     return value != nullptr ? static_cast<unsigned>(std::strtoul(value, nullptr, 10)) : 0;
   }();
   if (mapAfterTicks != 0 && mgr.GetGameState() == CStateManager::kGS_Running &&
@@ -139,7 +139,7 @@ void PortSmokeAreaReload(CStateManager& mgr) {
 // in the destination room instead of spending itself at the opening spawn.
 static bool sWorldSmokeDone = false;
 static bool WorldSmokePending() {
-  static const bool requested = std::getenv("MP_SMOKE_WORLD") != nullptr;
+  static const bool requested = port::EnvString("MP_SMOKE_WORLD") != nullptr;
   return requested && !sWorldSmokeDone;
 }
 
@@ -147,7 +147,7 @@ void PortSmokeWorldTeleport(CStateManager& mgr) {
   static uint32_t sTargetWorld = 0;
   static bool sTargetResolved = false;
   if (!sTargetResolved) {
-    const char* value = std::getenv("MP_SMOKE_WORLD");
+    const char* value = port::EnvString("MP_SMOKE_WORLD");
     if (value == nullptr) {
       sTargetResolved = true;
       return;
@@ -174,20 +174,20 @@ void PortSmokeWorldTeleport(CStateManager& mgr) {
   // Repeat the exact overlay restart for lifetime regressions. Do not compare
   // manager/world addresses: their allocations can be reused after a restart.
   static const unsigned restartCount = [] {
-    const char* value = std::getenv("MP_SMOKE_WORLD_RESTARTS");
+    const char* value = port::EnvString("MP_SMOKE_WORLD_RESTARTS");
     return value != nullptr ? static_cast< unsigned >(std::strtoul(value, nullptr, 10)) : 1u;
   }();
   static const uint32_t targetArea = [] {
-    const char* value = std::getenv("MP_SMOKE_WORLD_AREA");
+    const char* value = port::EnvString("MP_SMOKE_WORLD_AREA");
     return value != nullptr ? static_cast< uint32_t >(std::strtoul(value, nullptr, 16)) : 0u;
   }();
   static const unsigned warmupTicks = [] {
-    const char* value = std::getenv("MP_SMOKE_WORLD_TICKS");
+    const char* value = port::EnvString("MP_SMOKE_WORLD_TICKS");
     return value != nullptr ? static_cast< unsigned >(std::strtoul(value, nullptr, 10)) : 120u;
   }();
   // An explicit tick delay also permits a restart during the opening camera,
   // including the first GUI tick before the mapper has locked its area STRG.
-  static const bool waitForCamera = std::getenv("MP_SMOKE_WORLD_TICKS") == nullptr;
+  static const bool waitForCamera = port::EnvString("MP_SMOKE_WORLD_TICKS") == nullptr;
   static unsigned sWarmupTicks = 0;
   static unsigned sRestarts = 0;
   static bool sWaiting = false;
@@ -241,7 +241,7 @@ void PortSmokeElevatorLoaded(TUniqueId uid, CAssetId worldId, CAssetId areaId) {
 
 void PortSmokeElevator(CStateManager& mgr) {
   static const unsigned delayTicks = [] {
-    const char* value = std::getenv("MP_SMOKE_ELEVATOR");
+    const char* value = port::EnvString("MP_SMOKE_ELEVATOR");
     return value != nullptr ? static_cast< unsigned >(std::strtoul(value, nullptr, 10)) : 0u;
   }();
   enum { kWaiting, kPlaying, kRiding, kDone };
@@ -333,7 +333,7 @@ void PortSmokeCurrentFrameSet(unsigned frame) { sSmokeFrame = frame; }
 // and only skips the walk to the trigger, which is the part that needs a player.
 void PortSmokeSave(CStateManager& mgr) {
   static const unsigned afterTicks = [] {
-    const char* value = std::getenv("MP_SMOKE_SAVE");
+    const char* value = port::EnvString("MP_SMOKE_SAVE");
     return value != nullptr ? static_cast<unsigned>(std::strtoul(value, nullptr, 10)) : 0;
   }();
   static unsigned sTicks = 0;
@@ -383,7 +383,7 @@ void PortSmokeSaveScreenUI(int saveCtx, int oldUiType, int uiType, int driverSta
   std::fprintf(stderr, "[card] save screen (%s) ui type %d -> %d, driver state %d\n",
                saveCtx == kSC_InGame ? "in game" : "front end", oldUiType,
                uiType, driverState);
-  if (saveCtx != kSC_InGame || std::getenv("MP_SMOKE_SAVE") == nullptr)
+  if (saveCtx != kSC_InGame || port::EnvString("MP_SMOKE_SAVE") == nullptr)
     return;
   static bool sCorruptAnswered = false;
   static bool sSaveConfirmed = false;
@@ -410,7 +410,7 @@ void PortSmokeSaveScreenUI(int saveCtx, int oldUiType, int uiType, int driverSta
 // A button set that is still held from an earlier step wins over a later
 // release, so overlapping steps are not a way to release a button early.
 void PortSmokeScript(unsigned frame) {
-  static const char* script = std::getenv("MP_SMOKE_SCRIPT");
+  static const char* script = port::EnvString("MP_SMOKE_SCRIPT");
   if (script == nullptr)
     return;
   static unsigned sHoldUntil = 0;
@@ -598,7 +598,7 @@ void PortSmokeStick(CStateManager& mgr) {
   std::fprintf(stderr, "[stick-smoke] passed: yaw %.4f -> %.4f\n", sStartYaw, PortDebug::AimYaw());
 }
 
-void PortSmokeVisor(CStateManager& mgr) {  static const bool enabled = std::getenv("MP_SMOKE_VISOR") != nullptr;
+void PortSmokeVisor(CStateManager& mgr) {  static const bool enabled = port::EnvFlag("MP_SMOKE_VISOR");
   if (!enabled) return;
   static unsigned sTicks = 0;
   static bool sRequested = false;
@@ -611,7 +611,7 @@ void PortSmokeVisor(CStateManager& mgr) {  static const bool enabled = std::gete
   CPlayerState* ps = mgr.PlayerState();
   if (ps == nullptr) return;
   // MP_SMOKE_VISOR=xray selects the X-ray visor; any other value, thermal.
-  static const bool xray = std::strcmp(std::getenv("MP_SMOKE_VISOR"), "xray") == 0;
+  static const bool xray = std::strcmp(port::EnvString("MP_SMOKE_VISOR"), "xray") == 0;
   const char* name = xray ? "x-ray" : "thermal";
   if (!sRequested) {
     if (++sTicks < 120) return;
@@ -646,10 +646,10 @@ bool PortSmokeMouseEnabled() {
 // (MP_CONSOLE press/stick) need the same,
 // since a press that is thrown away before it is read cannot test anything.
 bool PortSmokeScriptedInput() {
-  static const bool enabled = std::getenv("MP_SMOKE_SCRIPT") != nullptr ||
-                              std::getenv("MP_SMOKE_FRONTEND") != nullptr ||
-                              std::getenv("MP_SMOKE_DASH") != nullptr ||
-                              std::getenv("MP_CONSOLE") != nullptr ||
+  static const bool enabled = port::EnvString("MP_SMOKE_SCRIPT") != nullptr ||
+                              port::EnvString("MP_SMOKE_FRONTEND") != nullptr ||
+                              port::EnvFlag("MP_SMOKE_DASH") ||
+                              port::EnvFlag("MP_CONSOLE") ||
                               PortSmokeContinueEnabled();
   return enabled;
 }
@@ -820,10 +820,10 @@ bool PortSmokeFrame(unsigned frame) {
     }
   }
   static const unsigned limit = [] {
-    const char* value = std::getenv("MP_SMOKE_FRAMES");
+    const char* value = port::EnvString("MP_SMOKE_FRAMES");
     return value != nullptr ? static_cast<unsigned>(std::strtoul(value, nullptr, 10)) : 0;
   }();
-  static const char* resizeSpec = std::getenv("MP_SMOKE_RESIZE");
+  static const char* resizeSpec = port::EnvString("MP_SMOKE_RESIZE");
   if (resizeSpec != nullptr && frame == 300) {
     int rw = 0;
     int rh = 0;
@@ -837,7 +837,7 @@ bool PortSmokeFrame(unsigned frame) {
       SDL_free(windows);
     }
   }
-  static const char* shotList = std::getenv("MP_SMOKE_SHOT");
+  static const char* shotList = port::EnvString("MP_SMOKE_SHOT");
   if (shotList != nullptr) {
     for (const char* p = shotList; *p != '\0';) {
       char* end = nullptr;
@@ -856,7 +856,7 @@ bool PortSmokeFrame(unsigned frame) {
   // the front-end screens (and their button prompts) are reached without a
   // player. Start alone leaves dialogs such as the save check on screen.
   static const unsigned frontEndFrame = [] {
-    const char* value = std::getenv("MP_SMOKE_FRONTEND");
+    const char* value = port::EnvString("MP_SMOKE_FRONTEND");
     return value != nullptr ? static_cast<unsigned>(std::strtoul(value, nullptr, 10)) : 0;
   }();
   if (frontEndFrame != 0 && frame >= frontEndFrame) {
@@ -870,7 +870,7 @@ bool PortSmokeFrame(unsigned frame) {
   // MP_SMOKE_BIND_A=<scancode>: rebind the A action once, so the prompt's
   // binding-aware icon can be checked without going through the Controls tab.
   static const bool bindApplied = [] {
-    const char* value = std::getenv("MP_SMOKE_BIND_A");
+    const char* value = port::EnvString("MP_SMOKE_BIND_A");
     if (value == nullptr || value[0] == '\0') {
       return false;
     }
@@ -919,7 +919,7 @@ bool PortSmokeFrame(unsigned frame) {
 // speed, so a tick-rate change can be checked to stay real-time.
 void PortSmokeWalk(CStateManager& mgr) {
   static const unsigned walkTicks = [] {
-    const char* value = std::getenv("MP_SMOKE_WALK");
+    const char* value = port::EnvString("MP_SMOKE_WALK");
     return value != nullptr ? static_cast< unsigned >(std::strtoul(value, nullptr, 10)) : 0u;
   }();
   if (walkTicks == 0 || WorldSmokePending()) return;
@@ -962,7 +962,7 @@ void PortSmokeWalk(CStateManager& mgr) {
 // then hold the stick right and press B, and report whether a sideways dash
 // started. Run it with MP_MOUSE_AIM=1 or MP_TWIN_STICK=1 to cover those modes.
 void PortSmokeDash(CStateManager& mgr) {
-  static const bool enabled = std::getenv("MP_SMOKE_DASH") != nullptr;
+  static const bool enabled = port::EnvFlag("MP_SMOKE_DASH");
   if (!enabled || WorldSmokePending()) return;
   static unsigned sTicks = 0, sLockedTicks = 0, sDashTicks = 0, sTurnTicks = 0;
   static bool sFound = false, sDone = false;
@@ -976,7 +976,7 @@ void PortSmokeDash(CStateManager& mgr) {
   if (PortDebug::MouseAim()) PortDebug::SetMouseCaptured(true);
   ++sTicks;
   // MP_SMOKE_DASH=scan locks onto scan points instead, for rooms without enemies.
-  if (sTicks == 30 && std::strcmp(std::getenv("MP_SMOKE_DASH"), "scan") == 0) {
+  if (sTicks == 30 && std::strcmp(port::EnvString("MP_SMOKE_DASH"), "scan") == 0) {
     mgr.PlayerState()->StartTransitionToVisor(CPlayerState::kPV_Scan);
   }
   if (sTicks < 60) return;
@@ -1043,7 +1043,7 @@ void PortSmokeDash(CStateManager& mgr) {
 // them back out, and repeat, so enter/exit effects and damage can be checked.
 void PortSmokeWater(CStateManager& mgr) {
   static const unsigned cycles = [] {
-    const char* value = std::getenv("MP_SMOKE_WATER");
+    const char* value = port::EnvString("MP_SMOKE_WATER");
     return value != nullptr ? static_cast< unsigned >(std::strtoul(value, nullptr, 10)) : 0u;
   }();
   if (cycles == 0 || WorldSmokePending()) return;
