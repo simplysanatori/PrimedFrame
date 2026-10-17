@@ -789,7 +789,7 @@ void LoadDiscPath() {
       continue;
     }
     sDiscPath = Trim(line.substr(separator + 1));
-    std::fprintf(stderr, "metroid_prime_port: saved disc image %s\n", sDiscPath.c_str());
+    PortLog::Write("metroid_prime_port: saved disc image %s\n", sDiscPath.c_str());
     return;
   }
 }

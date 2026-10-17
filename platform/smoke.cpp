@@ -1,5 +1,6 @@
 // Opt-in lifecycle driver for real-disc regression runs (MP_ENABLE_SMOKE_DRIVER).
 #include "port_env.h"
+#include "port_log.h"
 #include "compat.h"
 #include "port_debug.h"
 #include "port_mouse.h"
@@ -54,7 +55,7 @@ CVector3f sLastLockedDirection(0.f, 1.f, 0.f);
 CVector3f sInitialDirection(0.f, 1.f, 0.f);
 void MouseCheck(bool valid, const char* message) {
   if (!valid) {
-    std::fprintf(stderr, "[mouse-smoke] failed at tick %u: %s\n", sMouseTicks, message);
+    PortLog::Write("[mouse-smoke] failed at tick %u: %s\n", sMouseTicks, message);
     std::abort();
   }
 }
@@ -70,7 +71,7 @@ void PortSmokeAreaReload(CStateManager& mgr) {
       mgr.GetCameraManager()->IsInFPCamera() &&
       !mgr.GetCameraManager()->IsInCinematicCamera()) {
     if (++sPauseTicks == pauseAfterTicks) {
-      std::fputs("[smoke] entering pause screen\n", stderr);
+      PortLog::Write("[smoke] entering pause screen\n");
       mgr.EnterPauseScreen();
     }
   }
@@ -85,7 +86,7 @@ void PortSmokeAreaReload(CStateManager& mgr) {
       !mgr.GetCameraManager()->IsInCinematicCamera()) {
     static unsigned sMapTicks = 0;
     if (++sMapTicks == mapAfterTicks) {
-      std::fputs("[smoke] pressing Z for the map screen\n", stderr);
+      PortLog::Write("[smoke] pressing Z for the map screen\n");
     }
     if (sMapTicks >= mapAfterTicks && sMapTicks < mapAfterTicks + 20) {
       PADStatus status{};
@@ -108,12 +109,12 @@ void PortSmokeAreaReload(CStateManager& mgr) {
     }
     PADSetVirtualStatus(0, &status);
     if (sMorphTicks == 1) {
-      std::fputs("[morph-smoke] begin\n", stderr);
+      PortLog::Write("[morph-smoke] begin\n");
     }
     if (sMorphTicks > 480) {
       sMorphDone = true;
       PADClearVirtualStatus(0);
-      std::fputs("[morph-smoke] done\n", stderr);
+      PortLog::Write("[morph-smoke] done\n");
     }
   }
   if (!AreaReloadEnabled() || sAreaReloads >= 3 || mgr.GetGameState() != CStateManager::kGS_Running ||
@@ -123,7 +124,7 @@ void PortSmokeAreaReload(CStateManager& mgr) {
   CGameArea* area = world->Area(world->GetCurrentAreaId());
   if (!area->IsLoaded() || area->GetOcclusionState() != CGameArea::kOS_Visible) return;
   GXDrawDone();
-  std::fprintf(stderr, "[area-smoke] evict/restore area %d cycle %u\n", area->GetId().Value(), sAreaReloads + 1);
+  PortLog::Write("[area-smoke] evict/restore area %d cycle %u\n", area->GetId().Value(), sAreaReloads + 1);
   area->SetOcclusionState(CGameArea::kOS_Occluded);
   const uint64_t deadline = SDL_GetTicksNS() + 5000000000ull;
   while (!area->TransferTokensToARAM()) {
@@ -132,7 +133,7 @@ void PortSmokeAreaReload(CStateManager& mgr) {
   }
   area->SetOcclusionState(CGameArea::kOS_Visible);
   ++sAreaReloads;
-  if (sAreaReloads == 3) std::fputs("[area-smoke] passed: three geometry eviction/reload cycles\n", stderr);
+  if (sAreaReloads == 3) PortLog::Write("[area-smoke] passed: three geometry eviction/reload cycles\n");
 }
 
 // Set once MP_SMOKE_WORLD has run all its restarts, so MP_SMOKE_WALK can start
@@ -200,8 +201,8 @@ void PortSmokeWorldTeleport(CStateManager& mgr) {
       return;
     }
     if (++sWarmupTicks < warmupTicks) return;
-    std::fprintf(stderr, "[world-smoke] requesting world %08X restart %u/%u\n", targetWorld,
-                 sRestarts + 1, restartCount);
+    PortLog::Write("[world-smoke] requesting world %08X restart %u/%u\n", targetWorld,
+                   sRestarts + 1, restartCount);
     PortDebug::RequestWorldTeleport(targetWorld, targetArea);
     sWaiting = true;
     sWarmupTicks = 0;
@@ -214,8 +215,8 @@ void PortSmokeWorldTeleport(CStateManager& mgr) {
   sWaiting = false;
   ++sRestarts;
   sWorldSmokeDone = sRestarts >= restartCount;
-  std::fprintf(stderr, "[world-smoke] passed: world %08X area %d restart %u/%u\n", targetWorld,
-               mgr.World()->GetCurrentAreaId().Value(), sRestarts, restartCount);
+  PortLog::Write("[world-smoke] passed: world %08X area %d restart %u/%u\n", targetWorld,
+                 mgr.World()->GetCurrentAreaId().Value(), sRestarts, restartCount);
 }
 
 // MP_SMOKE_ELEVATOR=<ticks>: ride the last elevator teleporter the current world
@@ -232,8 +233,8 @@ CAssetId sElevatorDestWorld = kInvalidAssetId;
 
 void PortSmokeElevatorLoaded(TUniqueId uid, CAssetId worldId, CAssetId areaId) {
   const CAssetId owner = gpGameState != nullptr ? gpGameState->CurrentWorldAssetId() : kInvalidAssetId;
-  std::fprintf(stderr, "[elevator-smoke] world %08X loaded elevator %04X -> world %08X area %08X\n",
-               owner, uid.value, worldId, areaId);
+  PortLog::Write("[elevator-smoke] world %08X loaded elevator %04X -> world %08X area %08X\n",
+                 owner, uid.value, worldId, areaId);
   sElevatorUid = uid;
   sElevatorOwnerWorld = owner;
   sElevatorDestWorld = worldId;
@@ -264,11 +265,11 @@ void PortSmokeElevator(CStateManager& mgr) {
     if (!playing || ++sTicks < delayTicks) return;
     if (sElevatorOwnerWorld != world || mgr.GetObjectById(sElevatorUid) == nullptr) {
       if (sTicks == delayTicks)
-        std::fputs("[elevator-smoke] no elevator in this world yet\n", stderr);
+        PortLog::Write("[elevator-smoke] no elevator in this world yet\n");
       return;
     }
-    std::fprintf(stderr, "[elevator-smoke] riding elevator %04X to world %08X\n",
-                 sElevatorUid.value, sElevatorDestWorld);
+    PortLog::Write("[elevator-smoke] riding elevator %04X to world %08X\n",
+                   sElevatorUid.value, sElevatorDestWorld);
     sDestWorld = sElevatorDestWorld;
     mgr.SendScriptMsgAlways(sElevatorUid, kInvalidUniqueId, kSM_Play);
     sPhase = kPlaying;
@@ -276,16 +277,16 @@ void PortSmokeElevator(CStateManager& mgr) {
     break;
   case kPlaying:
     if (++sTicks < 2) return;
-    std::fputs("[elevator-smoke] sending SetToZero\n", stderr);
+    PortLog::Write("[elevator-smoke] sending SetToZero\n");
     sRideStart = std::chrono::steady_clock::now();
     sPhase = kRiding;
     mgr.SendScriptMsgAlways(sElevatorUid, kInvalidUniqueId, kSM_SetToZero);
     break;
   case kRiding:
     if (world != sDestWorld || !playing) return;
-    std::fprintf(stderr, "[elevator-smoke] passed: world %08X area %d after %.2f s\n", world,
-                 mgr.World()->GetCurrentAreaId().Value(),
-                 std::chrono::duration< double >(std::chrono::steady_clock::now() - sRideStart).count());
+    PortLog::Write("[elevator-smoke] passed: world %08X area %d after %.2f s\n", world,
+                   mgr.World()->GetCurrentAreaId().Value(),
+                   std::chrono::duration< double >(std::chrono::steady_clock::now() - sRideStart).count());
     sPhase = kDone;
     break;
   }
@@ -306,11 +307,11 @@ unsigned sSaveConfirmQueued = 0;
 void PortSmokeSaveConfirm() {
   if (sSaveConfirmAt != 0) {
     ++sSaveConfirmQueued;
-    std::fputs("[save-smoke] will confirm again after the current press\n", stderr);
+    PortLog::Write("[save-smoke] will confirm again after the current press\n");
     return;
   }
   sSaveConfirmAt = PortSmokeCurrentFrame() + 90;
-  std::fputs("[save-smoke] will confirm the save screen shortly\n", stderr);
+  PortLog::Write("[save-smoke] will confirm the save screen shortly\n");
 }
 
 // The frame loop's counter, so a hook that is not handed a frame can still ask
@@ -359,11 +360,11 @@ void PortSmokeSave(CStateManager& mgr) {
     // one when it is 0, as it was for every card while the GCI folder had no
     // serial. Calling EnterSaveGameScreen() directly skips that check, so repeat it.
     if (gpGameState->CardSerial() == 0) {
-      std::fputs("[save-smoke] failed: card serial is 0, so a save station would close "
-                 "without a save screen\n", stderr);
+      PortLog::Write("[save-smoke] failed: card serial is 0, so a save station would close "
+                     "without a save screen\n");
       std::abort();
     }
-    std::fputs("[save-smoke] requesting the in-game save screen\n", stderr);
+    PortLog::Write("[save-smoke] requesting the in-game save screen\n");
     mgr.EnterSaveGameScreen();
     // The confirm is not scheduled here: a press at a fixed delay landed on the
     // card's "file corrupt" dialog instead of "Save", so the file was repaired
@@ -380,16 +381,16 @@ void PortSmokeSave(CStateManager& mgr) {
 // never wrote behind, so "file corrupt" is expected once and is answered with
 // its first choice (delete the bad file); "Save" is then confirmed once.
 void PortSmokeSaveScreenUI(int saveCtx, int oldUiType, int uiType, int driverState) {
-  std::fprintf(stderr, "[card] save screen (%s) ui type %d -> %d, driver state %d\n",
-               saveCtx == kSC_InGame ? "in game" : "front end", oldUiType,
-               uiType, driverState);
+  PortLog::Write("[card] save screen (%s) ui type %d -> %d, driver state %d\n",
+                 saveCtx == kSC_InGame ? "in game" : "front end", oldUiType,
+                 uiType, driverState);
   if (saveCtx != kSC_InGame || port::EnvString("MP_SMOKE_SAVE") == nullptr)
     return;
   static bool sCorruptAnswered = false;
   static bool sSaveConfirmed = false;
   if (uiType == CSaveGameScreen::kUIT_SaveCorrupt && !sCorruptAnswered) {
     sCorruptAnswered = true;
-    std::fputs("[save-smoke] deleting the unwritten file fast boot left behind\n", stderr);
+    PortLog::Write("[save-smoke] deleting the unwritten file fast boot left behind\n");
     PortSmokeSaveConfirm();
   } else if (uiType == CSaveGameScreen::kUIT_SaveReady && !sSaveConfirmed) {
     sSaveConfirmed = true;
@@ -481,8 +482,8 @@ void PortSmokeScript(unsigned frame) {
     }
     // Anything past the bound is dropped rather than half-applied.
     if (*p != '\0')
-      std::fprintf(stderr, "[smoke] script truncated at %d steps\n", kMaxSteps);
-    std::fprintf(stderr, "[smoke] script parsed %d step(s)\n", sCount);
+      PortLog::Write("[smoke] script truncated at %d steps\n", kMaxSteps);
+    PortLog::Write("[smoke] script parsed %d step(s)\n", sCount);
   }
   // Steps run in order and each fires once, at or after its frame. This has to
   // be straight-line rather than inside the parse block: with the loop guard
@@ -490,7 +491,7 @@ void PortSmokeScript(unsigned frame) {
   if (sNext < static_cast<unsigned>(sCount) && static_cast< int >(frame) >= sFrame[sNext]) {
     sHeld = sButtons[sNext];
     sHoldUntil = frame + sHold[sNext];
-    std::fprintf(stderr, "[smoke] frame %u: pressing 0x%04x for %u frame(s)\n", frame, sHeld, sHold[sNext]);
+    PortLog::Write("[smoke] frame %u: pressing 0x%04x for %u frame(s)\n", frame, sHeld, sHold[sNext]);
     ++sNext;
   }
   // The virtual status is sticky, so the release has to be written too; without
@@ -543,7 +544,7 @@ void PortSmokePress(unsigned buttons, unsigned hold) {
 
 void PortSmokeShotAfter(unsigned frames, const char* why) {
   const unsigned at = PortSmokeCurrentFrame() + frames;
-  std::fprintf(stderr, "[continue] screenshot at frame %u: %s\n", at, why);
+  PortLog::Write("[continue] screenshot at frame %u: %s\n", at, why);
   if (sPendingShotCount < kMaxPendingShots)
     sPendingShots[sPendingShotCount++] = at;
 }
@@ -562,7 +563,7 @@ static void ApplyContinuePressAndShots(unsigned frame) {
   for (int i = 0; i < sPendingShotCount;) {
     if (frame >= sPendingShots[i]) {
       aurora::request_screenshot();
-      std::fprintf(stderr, "[smoke] screenshot requested at frame %u\n", frame);
+      PortLog::Write("[smoke] screenshot requested at frame %u\n", frame);
       sPendingShots[i] = sPendingShots[--sPendingShotCount];
     } else {
       ++i;
@@ -595,7 +596,7 @@ void PortSmokeStick(CStateManager& mgr) {
   }
   PADClearVirtualStatus(0);
   sDone = true;
-  std::fprintf(stderr, "[stick-smoke] passed: yaw %.4f -> %.4f\n", sStartYaw, PortDebug::AimYaw());
+  PortLog::Write("[stick-smoke] passed: yaw %.4f -> %.4f\n", sStartYaw, PortDebug::AimYaw());
 }
 
 void PortSmokeVisor(CStateManager& mgr) {  static const bool enabled = port::EnvFlag("MP_SMOKE_VISOR");
@@ -619,14 +620,14 @@ void PortSmokeVisor(CStateManager& mgr) {  static const bool enabled = port::Env
         xray ? CPlayerState::kIT_XRayVisor : CPlayerState::kIT_ThermalVisor;
     ps->SetPowerUp(item, 1);
     ps->SetPickup(item, 1);
-    std::fprintf(stderr, "[visor-smoke] switching to the %s visor\n", name);
+    PortLog::Write("[visor-smoke] switching to the %s visor\n", name);
     ps->StartTransitionToVisor(xray ? CPlayerState::kPV_XRay : CPlayerState::kPV_Thermal);
     sRequested = true;
     return;
   }
   if (++sTicks > 900) {
     sPassed = true;
-    std::fprintf(stderr, "[visor-smoke] passed: %s visor stable\n", name);
+    PortLog::Write("[visor-smoke] passed: %s visor stable\n", name);
   }
 }
 
@@ -765,8 +766,8 @@ void PortSmokeMouseAfterUpdate(CStateManager& mgr) {
     MouseCheck(sStrafedBeforeUI && sStrafedAfterUI, "free strafe failed before/after F1");
     PADClearVirtualStatus(0);
     sMouseComplete = true;
-    std::fprintf(stderr, "[mouse-smoke] passed: shots=%u charged=%u missiles=%u lockedTicks=%u gunViews=%u jump=1 morph=1 bomb=1 strafe-before/after-F1=1\n",
-                 sMouseShots, sMouseChargedShots, sMouseMissiles, sMouseLocks, sGunViewChecks);
+    PortLog::Write("[mouse-smoke] passed: shots=%u charged=%u missiles=%u lockedTicks=%u gunViews=%u jump=1 morph=1 bomb=1 strafe-before/after-F1=1\n",
+                   sMouseShots, sMouseChargedShots, sMouseMissiles, sMouseLocks, sGunViewChecks);
   }
 }
 
@@ -801,7 +802,7 @@ bool PortSmokeFrame(unsigned frame) {
   // press rather than a tap it can miss.
   if (sSaveConfirmAt != 0 && frame >= sSaveConfirmAt) {
     if (frame == sSaveConfirmAt)
-      std::fputs("[save-smoke] confirming the save screen\n", stderr);
+      PortLog::Write("[save-smoke] confirming the save screen\n");
     if (frame < sSaveConfirmAt + 12) {
       PADStatus status{};
       status.err = PAD_ERR_NONE;
@@ -832,7 +833,7 @@ bool PortSmokeFrame(unsigned frame) {
       SDL_Window** windows = SDL_GetWindows(&count);
       if (windows != nullptr && count > 0) {
         SDL_SetWindowSize(windows[0], rw, rh);
-        std::fprintf(stderr, "[smoke] resized window to %dx%d\n", rw, rh);
+        PortLog::Write("[smoke] resized window to %dx%d\n", rw, rh);
       }
       SDL_free(windows);
     }
@@ -847,7 +848,7 @@ bool PortSmokeFrame(unsigned frame) {
       }
       if (frame == shotFrame) {
         aurora::request_screenshot();
-        std::fprintf(stderr, "[smoke] screenshot requested at frame %u\n", frame);
+        PortLog::Write("[smoke] screenshot requested at frame %u\n", frame);
       }
       p = *end == ',' ? end + 1 : end;
     }
@@ -878,7 +879,7 @@ bool PortSmokeFrame(unsigned frame) {
     binding.scancode = static_cast< s32 >(std::strtol(value, nullptr, 10));
     binding.padButton = PAD_BUTTON_A;
     const bool ok = PADSetKeyButtonBinding(PAD_CHAN0, binding) != FALSE;
-    std::fprintf(stderr, "[smoke] rebind A to scancode %d: %s\n", binding.scancode, ok ? "ok" : "failed");
+    PortLog::Write("[smoke] rebind A to scancode %d: %s\n", binding.scancode, ok ? "ok" : "failed");
     return ok;
   }();
   (void)bindApplied;
@@ -895,23 +896,23 @@ bool PortSmokeFrame(unsigned frame) {
       if (window != nullptr) SDL_HideWindow(window);
       PortDebug::SetAiAudioEnabled(false);
       PortDebug::SetMusyxAudioEnabled(false);
-      std::fputs("[smoke] hide and mute\n", stderr);
+      PortLog::Write("[smoke] hide and mute\n");
     } else if (frame == limit / 4 + 30) {
       if (window != nullptr) SDL_ShowWindow(window);
       PortDebug::SetAiAudioEnabled(true);
       PortDebug::SetMusyxAudioEnabled(true);
       PortDebug::SetFrameLimitEnabled(false);
-      std::fputs("[smoke] restore, unmute and uncap\n", stderr);
+      PortLog::Write("[smoke] restore, unmute and uncap\n");
     } else if (frame == limit / 2) {
       PortDebug::SetFrameLimitEnabled(true);
       PortDebug::RequestReset();
       PortDebug::ResetMouseAim();
-      std::fputs("[smoke] reset to menu\n", stderr);
+      PortLog::Write("[smoke] reset to menu\n");
     }
   }
   if (frame < limit || (PortSmokeMouseEnabled() && !sMouseComplete) ||
       (AreaReloadEnabled() && sAreaReloads < 3)) return false;
-  std::fputs("[smoke] clean exit requested\n", stderr);
+  PortLog::Write("[smoke] clean exit requested\n");
   return true;
 }
 
@@ -937,7 +938,7 @@ void PortSmokeWalk(CStateManager& mgr) {
   if (!sStarted) {
     sStarted = true;
     sStart = player->GetTranslation();
-    std::fprintf(stderr, "[walk-smoke] begin\n");
+    PortLog::Write("[walk-smoke] begin\n");
   }
   {
     const CVector3f vel = player->GetVelocityWR();
@@ -953,9 +954,8 @@ void PortSmokeWalk(CStateManager& mgr) {
   sDone = true;
   const float dist = (player->GetTranslation() - sStart).Magnitude();
   const double seconds = static_cast< double >(sTicks) * PortDebug::TickPeriod();
-  std::fprintf(stderr,
-               "[walk-smoke] passed: ticks=%u seconds=%.3f dist=%.3f maxFlatSpeed=%.4f speed=%.4f/s\n",
-               sTicks, seconds, dist, sMaxSpeed, seconds > 0.0 ? dist / seconds : 0.0);
+  PortLog::Write("[walk-smoke] passed: ticks=%u seconds=%.3f dist=%.3f maxFlatSpeed=%.4f speed=%.4f/s\n",
+                 sTicks, seconds, dist, sMaxSpeed, seconds > 0.0 ? dist / seconds : 0.0);
 }
 
 // MP_SMOKE_DASH=1: turn until the game offers an orbit target, lock on with L,
@@ -989,12 +989,12 @@ void PortSmokeDash(CStateManager& mgr) {
     }
     if (player->GetOrbitNextTargetId() != kInvalidUniqueId) {
       sFound = true;
-      std::fprintf(stderr, "[dash-smoke] target %04x after %u turn ticks\n",
-                   player->GetOrbitNextTargetId().Value(), sTurnTicks);
+      PortLog::Write("[dash-smoke] target %04x after %u turn ticks\n",
+                     player->GetOrbitNextTargetId().Value(), sTurnTicks);
     } else if (++sTurnTicks > 240) {
       PADClearVirtualStatus(0);
       sDone = true;
-      std::fprintf(stderr, "[dash-smoke] failed: no orbit target in a full turn\n");
+      PortLog::Write("[dash-smoke] failed: no orbit target in a full turn\n");
       return;
     } else {
       // A slow turn, so the camera keeps up and the orbit zone sees each yaw.
@@ -1014,8 +1014,8 @@ void PortSmokeDash(CStateManager& mgr) {
   const bool locked = player->GetOrbitState() == CPlayer::kOS_OrbitObject;
   if (locked) ++sLockedTicks;
   if (sLockedTicks == 0 && sTicks % 10 == 0) {
-    std::fprintf(stderr, "[dash-smoke] tick %u orbit %d next %04x\n", sTicks,
-                 static_cast< int >(player->GetOrbitState()), player->GetOrbitNextTargetId().Value());
+    PortLog::Write("[dash-smoke] tick %u orbit %d next %04x\n", sTicks,
+                   static_cast< int >(player->GetOrbitState()), player->GetOrbitNextTargetId().Value());
   }
   if (sLockedTicks >= 20) {
     status.stickX = 127;
@@ -1025,16 +1025,16 @@ void PortSmokeDash(CStateManager& mgr) {
   if (player->IsSidewaysDashing()) ++sDashTicks;
   if (sLockedTicks >= 20 && sLockedTicks < 40) {
     const CVector3f vel = player->GetVelocityWR();
-    std::fprintf(stderr, "[dash-smoke] tick %u orbit %d dashing %d vel %.2f %.2f %.2f\n",
-                 sLockedTicks, static_cast< int >(player->GetOrbitState()),
-                 player->IsSidewaysDashing() ? 1 : 0, vel.GetX(), vel.GetY(), vel.GetZ());
+    PortLog::Write("[dash-smoke] tick %u orbit %d dashing %d vel %.2f %.2f %.2f\n",
+                   sLockedTicks, static_cast< int >(player->GetOrbitState()),
+                   player->IsSidewaysDashing() ? 1 : 0, vel.GetX(), vel.GetY(), vel.GetZ());
   }
   if (sLockedTicks >= 60 || sTicks >= 600) {
     PADClearVirtualStatus(0);
     sDone = true;
-    std::fprintf(stderr, "[dash-smoke] %s: lockedTicks=%u dashTicks=%u orbit=%d\n",
-                 sDashTicks > 0 ? "passed" : "failed", sLockedTicks, sDashTicks,
-                 static_cast< int >(player->GetOrbitState()));
+    PortLog::Write("[dash-smoke] %s: lockedTicks=%u dashTicks=%u orbit=%d\n",
+                   sDashTicks > 0 ? "passed" : "failed", sLockedTicks, sDashTicks,
+                   static_cast< int >(player->GetOrbitState()));
   }
 }
 
@@ -1066,13 +1066,13 @@ void PortSmokeWater(CStateManager& mgr) {
       const CVector3f center = box.GetCenterPoint();
       sWet = CVector3f(center.GetX(), center.GetY(), box.GetMaxPoint().GetZ() - 1.5f);
       sHaveWater = true;
-      std::fprintf(stderr, "[water-smoke] water %04x type %d surface %.2f\n", water->GetUniqueId().Value(),
-                   static_cast< int >(water->GetFluidPlane().GetFluidType()), box.GetMaxPoint().GetZ());
+      PortLog::Write("[water-smoke] water %04x type %d surface %.2f\n", water->GetUniqueId().Value(),
+                     static_cast< int >(water->GetFluidPlane().GetFluidType()), box.GetMaxPoint().GetZ());
       break;
     }
     if (!sHaveWater) {
       sDone = true;
-      std::fprintf(stderr, "[water-smoke] failed: no active water in the area\n");
+      PortLog::Write("[water-smoke] failed: no active water in the area\n");
       return;
     }
     sDry = player->GetTranslation();
@@ -1084,12 +1084,12 @@ void PortSmokeWater(CStateManager& mgr) {
   if (phase == 0 || phase == 120) {
     const bool in = phase == 0;
     player->Teleport(CTransform4f::Translate(in ? sWet : sDry), mgr, true);
-    std::fprintf(stderr, "[water-smoke] cycle %u %s, health %.1f\n", sCycle, in ? "in" : "out",
-                 mgr.GetPlayerState()->GetHealthInfo().GetHP());
+    PortLog::Write("[water-smoke] cycle %u %s, health %.1f\n", sCycle, in ? "in" : "out",
+                   mgr.GetPlayerState()->GetHealthInfo().GetHP());
     if (!in && ++sCycle >= cycles) {
       PADClearVirtualStatus(0);
       sDone = true;
-      std::fprintf(stderr, "[water-smoke] passed: %u cycles\n", sCycle);
+      PortLog::Write("[water-smoke] passed: %u cycles\n", sCycle);
       return;
     }
   }

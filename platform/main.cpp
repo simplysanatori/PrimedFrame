@@ -820,10 +820,6 @@ AuroraBackend DesiredGraphicsBackend() {
         PortLog::Write("port: MP_GRAPHICS_BACKEND=%s is not auto, d3d12, vulkan or d3d11; "
                        "using graphics_backend=%s\n",
                        env, PortDebug::GraphicsBackendConfigName(request.backend));
-        std::fprintf(stderr,
-                     "metroid_prime_port: MP_GRAPHICS_BACKEND=%s is not auto, d3d12, vulkan or d3d11; "
-                     "using graphics_backend=%s\n",
-                     env, PortDebug::GraphicsBackendConfigName(request.backend));
     }
     return PortGraphicsBackend::ToAurora(request.backend);
 #else
@@ -861,7 +857,7 @@ int main(int argc, char** argv) {
             rest = space == std::string_view::npos ? std::string_view{} : rest.substr(space + 1);
             if (const size_t eq = pair.find('='); eq != std::string::npos && eq != 0) {
                 setenv(pair.substr(0, eq).c_str(), pair.c_str() + eq + 1, 1);
-                __android_log_print(ANDROID_LOG_INFO, "MetroidPrime", "%s: %s", prop, pair.c_str());
+                PortLog::Write("%s: %s\n", prop, pair.c_str());
             }
         }
     }
@@ -1339,7 +1335,7 @@ int main(int argc, char** argv) {
         }
         discPath = discImage.c_str();
     }
-    std::printf("metroid_prime_port: disc mounted: %s\n", discPath);
+    PortLog::Write("metroid_prime_port: disc mounted: %s\n", discPath);
     PortLog::Write("metroid_prime_port: disc is %s%s\n", PortDisc::Name(PortDisc::Current()),
                    PortDisc::Current() == PortDisc::Version::Pal ? " (experimental support)" : "");
     // Saves are the disc's region's (a PAL save's worlds are laid out

@@ -1,4 +1,5 @@
 #include "port_env.h"
+#include "port_log.h"
 #include "port_strings.h"
 #include "port_hash.h"
 #include "port_bytes.h"
@@ -1561,7 +1562,7 @@ int ImportGallery(const Remastered& remastered, const fs::path& target, int thre
   fs::remove_all(target, ec);
   fs::rename(folder, target, ec);
   if (ec) {
-    std::fprintf(stderr, "gallery: cannot move the new folder into place: %s\n", ec.message().c_str());
+    PortLog::Write("gallery: cannot move the new folder into place: %s\n", ec.message().c_str());
     fs::remove_all(folder, ec);
     return 0;
   }
@@ -2308,7 +2309,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     if (port::EnvFlag("MP_REMASTERED_JOINTS")) {
       io.log = [&](const std::string& line) {
         std::lock_guard<std::mutex> lock(reportMutex);
-        std::fprintf(stderr, "%s\n", line.c_str());
+        PortLog::Write("%s\n", line.c_str());
       };
     }
     io.texture = [&](const ModelUuid& id, Image& out, std::string& textureError) {
@@ -2839,7 +2840,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     effectIO.log = [](const std::string& line) {
       static std::mutex logMutex;
       std::lock_guard<std::mutex> lock(logMutex);
-      std::printf("remastered import: %s\n", line.c_str());
+      PortLog::Write("remastered import: %s\n", line.c_str());
     };
     effectIO.report = [&](const EffectReportRow& row) {
       const std::string text = FormatEffectRow(row);
@@ -2863,7 +2864,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
       effectTable.assign(table.begin(), table.end());
       for (const std::string& line : pairLines) {
-        std::printf("remastered import: projectile %s\n", line.c_str());
+        PortLog::Write("remastered import: projectile %s\n", line.c_str());
       }
       AddLine("effects: " + std::to_string(effectIO.pairings.size()) + " projectile effects paired");
     }
@@ -3160,7 +3161,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       io.log = [](const std::string& line) {
         static std::mutex logMutex;
         std::lock_guard<std::mutex> lock(logMutex);
-        std::printf("remastered import: %s\n", line.c_str());
+        PortLog::Write("remastered import: %s\n", line.c_str());
       };
       int written = 0;
       std::string worldError;
@@ -3748,8 +3749,8 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
     }
     if (missing != 0) {
-      std::fprintf(stderr, "remastered import: %zu listed file(s) are missing from the staging folder (first: %s)\n",
-                   missing, first.c_str());
+      PortLog::Write("remastered import: %zu listed file(s) are missing from the staging folder (first: %s)\n",
+                     missing, first.c_str());
       fail("The import is incomplete (" + std::to_string(missing) + " files missing, first " + first +
            "); the installed models are kept.");
       return;
@@ -3791,7 +3792,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     fs::remove_all(held, ec);
   }
   const int failed = int(count) - converted.load();
-  std::printf("remastered import: %s\n", textures.Summary().c_str());
+  PortLog::Write("remastered import: %s\n", textures.Summary().c_str());
   std::string message = std::to_string(converted.load()) + " models converted";
   if (failed != 0) {
     message += ", " + std::to_string(failed) + " failed";
@@ -4001,7 +4002,7 @@ bool StartImport(const std::string& nspPath, const std::string& keysPath, int th
   bool bc = false, astc = false;
   aurora_get_texture_support(&bc, &astc);
   SetGpuTextureSupport(bc, astc);
-  std::fprintf(stderr, "remastered: writing %s textures\n", TextureFormatName());
+  PortLog::Write("remastered: writing %s textures\n", TextureFormatName());
   sCancel = false;
   sState.running = true;
   sState.message = "Starting";
@@ -4062,21 +4063,21 @@ bool MoveIntoPlace(const fs::path& staging) {
     Discard(backup);
     fs::rename(target, backup, ec);
     if (ec) {
-      std::fprintf(stderr, "metroid_prime_port: could not set aside %s: %s\n", target.string().c_str(),
-                   ec.message().c_str());
+      PortLog::Write("metroid_prime_port: could not set aside %s: %s\n", target.string().c_str(),
+                     ec.message().c_str());
       return false;
     }
   }
   fs::rename(staging, target, ec);
   if (ec) {
-    std::fprintf(stderr, "metroid_prime_port: could not move the imported mod to %s: %s\n",
-                 target.string().c_str(), ec.message().c_str());
+    PortLog::Write("metroid_prime_port: could not move the imported mod to %s: %s\n",
+                   target.string().c_str(), ec.message().c_str());
     if (hadTarget) {
       std::error_code restoreError;
       fs::rename(backup, target, restoreError);
       if (restoreError) {
-        std::fprintf(stderr, "metroid_prime_port: could not restore %s: %s\n", target.string().c_str(),
-                     restoreError.message().c_str());
+        PortLog::Write("metroid_prime_port: could not restore %s: %s\n", target.string().c_str(),
+                       restoreError.message().c_str());
       }
     }
     return false;

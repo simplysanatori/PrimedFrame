@@ -1,6 +1,7 @@
 // Binding-aware button prompt icons; see port_prompts.h.
 
 #include "port_prompts.h"
+#include "port_log.h"
 #include "port_env.h"
 
 #include "port_debug.h"
@@ -860,8 +861,8 @@ void Poll() {
       ++applied;
     }
     if (applied != 0) {
-      std::fprintf(stderr, "metroid_prime_port: prompt %s %s\n", action.label,
-                   stem.empty() ? "(back to the static icon)" : stem.c_str());
+      PortLog::Write("metroid_prime_port: prompt %s %s\n", action.label,
+                     stem.empty() ? "(back to the static icon)" : stem.c_str());
     }
   }
 }

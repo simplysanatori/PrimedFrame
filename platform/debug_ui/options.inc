@@ -38,8 +38,8 @@ int SettingsSelfTest() {
       const auto found = written.find(entry.key);
       const std::string got = found == written.end() ? std::string() : found->second;
       if (got != sample) {
-        std::fprintf(stderr, "settings self-test: %s=%s reads back as %s=%s\n", entry.key, sample, entry.key,
-                     got.c_str());
+        PortLog::Write("settings self-test: %s=%s reads back as %s=%s\n", entry.key, sample, entry.key,
+                       got.c_str());
         ++failures;
       }
     }
@@ -49,7 +49,7 @@ int SettingsSelfTest() {
   const std::string first = SettingsText();
   for (const auto& [key, value] : SettingsValues(first)) {
     if (!ApplySetting(key, value)) {
-      std::fprintf(stderr, "settings self-test: %s is written but nothing reads it\n", key.c_str());
+      PortLog::Write("settings self-test: %s is written but nothing reads it\n", key.c_str());
       ++failures;
     }
   }
@@ -57,12 +57,13 @@ int SettingsSelfTest() {
   ApplySettingsText(again);
   const std::string second = SettingsText();
   if (second != first) {
+    // Both whole files: past PortLog's 2048-byte line, so straight to stderr.
     std::fprintf(stderr, "settings self-test: the file changes when read back\n%s\n---\n%s\n", first.c_str(),
                  second.c_str());
     ++failures;
   }
-  std::fprintf(stderr, "settings self-test: %d keys sampled, %zu lines round-tripped, %d failure(s)\n", sampled,
-               SettingsValues(first).size(), failures);
+  PortLog::Write("settings self-test: %d keys sampled, %zu lines round-tripped, %d failure(s)\n", sampled,
+                 SettingsValues(first).size(), failures);
   return failures == 0 ? 0 : 1;
 }
 
@@ -304,9 +305,8 @@ void RecordFrame(uint64_t durationNs, unsigned ticks, bool presented) {
     // whenever the cap or vsync left the loop idle.
     sActualTps = sTimingTicks / (wallSeconds > 0.0 ? wallSeconds : seconds);
     if (sTraceTiming) {
-      std::fprintf(stderr,
-                   "[timing] presented=%.1f FPS throughput=%.1f FPS simulation=%.1f ticks/s cap=%d\n",
-                   sActualFps, sThroughputFps, sActualTps, EffectiveFrameLimit() ? 60 : sFpsCap);
+      PortLog::Write("[timing] presented=%.1f FPS throughput=%.1f FPS simulation=%.1f ticks/s cap=%d\n",
+                     sActualFps, sThroughputFps, sActualTps, EffectiveFrameLimit() ? 60 : sFpsCap);
     }
     UpdateDynamicRes(sActualFps, sTimingFrames);
     sTimingNs = 0;

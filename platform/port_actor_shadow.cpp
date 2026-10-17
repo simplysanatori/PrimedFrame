@@ -1,4 +1,5 @@
 #include "port_actor_shadow.h"
+#include "port_log.h"
 #include "port_env.h"
 
 #include "MetroidPrime/CActor.hpp"
@@ -57,7 +58,7 @@ void RenderFrame(const CStateManager& mgr, const CTransform4f& view) {
       const CSimpleShadow& s = *sActors[i]->GetShadow();
       const float* m = s.PortMapBox();
       const float* r = s.PortReceiverBox();
-      fprintf(stderr,
+      PortLog::Write(
               "actorshadow[%zu] id=%x op=%.3f fade=%.3f map c=(%.2f %.2f %.2f) h=(%.2f %.2f %.2f) recv c=(%.2f %.2f %.2f) "
               "h=(%.2f %.2f %.2f) dyn=%d\n",
               i, sActors[i]->GetUniqueId().Value(), s.PortOpacity(), s.PortFadeStart(), m[0], m[1], m[2], m[3], m[4],

@@ -134,7 +134,7 @@ Clock::time_point sRoomSince;
 
 void SetMessage(const std::string& text) {
   sMessage = text;
-  std::fprintf(stderr, "[savestate] %s\n", text.c_str());
+  PortLog::Write("[savestate] %s\n", text.c_str());
 }
 
 std::string SlotName(int slot) { return slot == kUndoSlot ? "undo" : "slot " + std::to_string(slot); }
@@ -793,8 +793,8 @@ bool TakeSnapshot(CStateManager& mgr) {
   snap.taken = Clock::now();
   snap.valid = true;
   const double ms = std::chrono::duration< double, std::milli >(snap.taken - start).count();
-  std::fprintf(stderr, "[resume] snapshot %s - %s: %zu bytes in %.3f ms\n", snap.world.c_str(),
-               snap.room.c_str(), snap.bytes.size(), ms);
+  PortLog::Write("[resume] snapshot %s - %s: %zu bytes in %.3f ms\n", snap.world.c_str(),
+                 snap.room.c_str(), snap.bytes.size(), ms);
   {
     std::lock_guard< std::mutex > lock(sSnapMutex);
     snap.gen = sSnap.gen + 1;
@@ -874,8 +874,8 @@ bool FlushSnapshot(bool quiet) {
   sSnap.writtenGen = sSnap.gen;
   if (!quiet) {
     const double age = std::chrono::duration< double >(Clock::now() - sSnap.taken).count();
-    std::fprintf(stderr, "[resume] written: %s - %s (snapshot %.1f s old)\n", sSnap.world.c_str(),
-                 sSnap.room.c_str(), age);
+    PortLog::Write("[resume] written: %s - %s (snapshot %.1f s old)\n", sSnap.world.c_str(),
+                   sSnap.room.c_str(), age);
   }
   return true;
 }
@@ -893,8 +893,8 @@ void ResumeInstallEventWatch() {
     sLastRunCrashed = true;
     std::ifstream file(marker, std::ios::binary);
     std::getline(file, sLastRunMarker);
-    std::fprintf(stderr, "[resume] the last run did not quit cleanly%s\n",
-                 sLastRunMarker.empty() ? "" : (" (" + sLastRunMarker + ")").c_str());
+    PortLog::Write("[resume] the last run did not quit cleanly%s\n",
+                   sLastRunMarker.empty() ? "" : (" (" + sLastRunMarker + ")").c_str());
   }
   WriteMarker();
   // Returning from main or exit() is a clean quit too; a crash or a kill is not.
@@ -1000,7 +1000,7 @@ bool ResumeOffer(ResumeInfo& info) {
   const auto note = [](const std::string& reason) {
     if (reason != sLastReason) {
       sLastReason = reason;
-      fprintf(stderr, "[resume] %s\n", reason.c_str());
+      PortLog::Write("[resume] %s\n", reason.c_str());
     }
   };
   if (!ReadResume(meta, header, blob)) {
@@ -1038,9 +1038,9 @@ bool ResumeAccept(uint64_t cardSerial, uint32_t& fileIdx) {
   current.cardSerial = cardSerial;
   current.identity = CurrentIdentity();
   if (!ResumeMatches(meta, current)) {
-    fprintf(stderr, "[resume] mismatch: card %016llx/%016llx identity '%s'/'%s' file %u\n",
-            static_cast< unsigned long long >(meta.cardSerial), static_cast< unsigned long long >(current.cardSerial),
-            meta.identity.c_str(), current.identity.c_str(), meta.fileIdx);
+    PortLog::Write("[resume] mismatch: card %016llx/%016llx identity '%s'/'%s' file %u\n",
+                   static_cast< unsigned long long >(meta.cardSerial), static_cast< unsigned long long >(current.cardSerial),
+                   meta.identity.c_str(), current.identity.c_str(), meta.fileIdx);
     SetMessage("The resume state belongs to another game");
     return false;
   }

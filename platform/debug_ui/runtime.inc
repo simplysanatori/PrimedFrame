@@ -324,7 +324,7 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
   }
   if (sHasWorldTeleport || sPendingTeleport >= 0 || sResetRequested) {
     // A manual debug request wins; do not resume the tour behind the user's back.
-    if (sweep.active) std::fputs("[sweep] cancelled: another debug teleport/reset\n", stderr);
+    if (sweep.active) PortLog::Write("[sweep] cancelled: another debug teleport/reset\n");
     sweep = {};
     sWorldSweepRequested = false;
     return false;
@@ -367,13 +367,13 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
     }
     sWorldSweepRequested = false;
     if (sweep.worlds.empty()) {
-      std::fputs("[sweep] stopped: MP_RANDO_SWEEP_WORLDS matches no world\n", stderr);
+      PortLog::Write("[sweep] stopped: MP_RANDO_SWEEP_WORLDS matches no world\n");
       sweep = {};
       return false;
     }
     sweep.active = true;
-    std::fprintf(stderr, "[sweep] begin: %zu worlds (use MP_RANDO_DUMP=1 for pickups)\n",
-                 sweep.worlds.size());
+    PortLog::Write("[sweep] begin: %zu worlds (use MP_RANDO_DUMP=1 for pickups)\n",
+                   sweep.worlds.size());
     if (world->IGetWorldAssetId() != sweep.worlds[0]) {
       // The live world was filtered out: enter the first wanted world the same
       // way a finished world hands over to the next one.
@@ -383,7 +383,7 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
     }
   }
   if (world->IGetWorldAssetId() != sweep.worlds[sweep.world]) {
-    std::fputs("[sweep] cancelled: gameplay changed worlds\n", stderr);
+    PortLog::Write("[sweep] cancelled: gameplay changed worlds\n");
     sweep = {};
     return false;
   }
@@ -391,12 +391,12 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
     for (int i = 0; i < world->IGetAreaCount(); ++i)
       sweep.areas.push_back(world->IGetAreaAlways(TAreaId(i))->IGetAreaAssetId());
     if (sweep.areas.empty()) {
-      std::fputs("[sweep] stopped: world has no areas\n", stderr);
+      PortLog::Write("[sweep] stopped: world has no areas\n");
       sweep = {};
       return false;
     }
-    std::fprintf(stderr, "[sweep] world %zu/%zu: %08X, %zu areas\n", sweep.world + 1,
-                 sweep.worlds.size(), sweep.worlds[sweep.world], sweep.areas.size());
+    PortLog::Write("[sweep] world %zu/%zu: %08X, %zu areas\n", sweep.world + 1,
+                   sweep.worlds.size(), sweep.worlds[sweep.world], sweep.areas.size());
     if (SweepLayersEnabled()) {
       // How many layers the widest area has, so every area gets a pass per
       // layer even where its own count is lower. An area with fewer layers
@@ -410,7 +410,7 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
           widest = count;
       }
       sweep.layerCount = widest;
-      std::fprintf(stderr, "[sweep] layers: up to %d per area\n", widest);
+      PortLog::Write("[sweep] layers: up to %d per area\n", widest);
     }
   }
 
@@ -430,13 +430,12 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
     // progress, just frames. Say what is still outstanding, and how long it has
     // been that way, so the stall names itself instead of looking like work.
     if (sweep.settledTicks == 0) {
-      std::fprintf(stderr,
-                   "[sweep] waiting on area %d: %s%s%s%s%s (target %08X, pass %zu/%zu)\n",
-                   static_cast<int>(current.Value()), areaExists ? "" : "no-area ",
-                   areaValid ? "" : "unvalidated ", loadingIdle ? "" : "loading ",
-                   freeingIdle ? "" : "freeing ", mapIdle ? "" : "map-streaming ",
-                   sweep.areas.empty() ? 0u : sweep.areas[sweep.area], sweep.area + 1,
-                   sweep.areas.size());
+      PortLog::Write("[sweep] waiting on area %d: %s%s%s%s%s (target %08X, pass %zu/%zu)\n",
+                     static_cast<int>(current.Value()), areaExists ? "" : "no-area ",
+                     areaValid ? "" : "unvalidated ", loadingIdle ? "" : "loading ",
+                     freeingIdle ? "" : "freeing ", mapIdle ? "" : "map-streaming ",
+                     sweep.areas.empty() ? 0u : sweep.areas[sweep.area], sweep.area + 1,
+                     sweep.areas.size());
     }
     // 10 seconds of simulation. A pass that has not settled by then is not
     // going to: the loading chain stays put while the area is alive and
@@ -447,11 +446,11 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
       // the world is still worth dumping, and this area's objects were built on
       // the way in even if the settle check never agreed. Report it, skip the
       // pass, and carry on from the next one.
-      std::fprintf(stderr, "[sweep] giving up on %08X after 10s: %s%s%s%s%s\n",
-                   sweep.areas.empty() ? 0u : sweep.areas[sweep.area],
-                   areaExists ? "" : "no-area ", areaValid ? "" : "unvalidated ",
-                   loadingIdle ? "" : "loading ", freeingIdle ? "" : "freeing ",
-                   mapIdle ? "" : "map-streaming ");
+      PortLog::Write("[sweep] giving up on %08X after 10s: %s%s%s%s%s\n",
+                     sweep.areas.empty() ? 0u : sweep.areas[sweep.area],
+                     areaExists ? "" : "no-area ", areaValid ? "" : "unvalidated ",
+                     loadingIdle ? "" : "loading ", freeingIdle ? "" : "freeing ",
+                     mapIdle ? "" : "map-streaming ");
       sweep.stalledTicks = 0;
       sweep.settledTicks = 0;
       sweep.revisiting = false;
@@ -467,8 +466,8 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
         sweep.waiting = false;
       }
       if (sweep.area >= sweep.areas.size() || sweep.world >= sweep.worlds.size()) {
-        std::fprintf(stderr, "[sweep] complete: %zu worlds, %u areas\n", sweep.worlds.size(),
-                     sweep.completedAreas);
+        PortLog::Write("[sweep] complete: %zu worlds, %u areas\n", sweep.worlds.size(),
+                       sweep.completedAreas);
         sweep = {};
         return false;
       }
@@ -487,23 +486,23 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
       // been dumped, so all that matters is that it is gone by the time we go
       // back. Wait here, then return to it with the new layer active.
       sweep.revisiting = false;
-      std::fprintf(stderr, "[sweep] left %08X for layer %d; returning\n", settled,
-                   sweep.layer + 1);
+      PortLog::Write("[sweep] left %08X for layer %d; returning\n", settled,
+                     sweep.layer + 1);
       RequestWorldTeleport(sweep.worlds[sweep.world], sweep.areas[sweep.area]);
       return true;
     }
     if (settled != sweep.areas[sweep.area]) {
       // The destination's own scripts moved the player on (Impact Crater's
       // spawn points do). Its objects, and so its dump, were already built.
-      std::fprintf(stderr, "[sweep] note: %08X moved the player to %08X; continuing\n",
-                   sweep.areas[sweep.area], settled);
+      PortLog::Write("[sweep] note: %08X moved the player to %08X; continuing\n",
+                     sweep.areas[sweep.area], settled);
     }
     // One area, one layer: the count reports passes, not distinct areas, so a
     // multi-layered area is visibly a few.
     ++sweep.completedAreas;
-    std::fprintf(stderr, "[sweep] area %zu/%zu: %08X layer %d/%d (total %u)\n", sweep.area + 1,
-                 sweep.areas.size(), sweep.areas[sweep.area], sweep.layer + 1, sweep.layerCount,
-                 sweep.completedAreas);
+    PortLog::Write("[sweep] area %zu/%zu: %08X layer %d/%d (total %u)\n", sweep.area + 1,
+                   sweep.areas.size(), sweep.areas[sweep.area], sweep.layer + 1, sweep.layerCount,
+                   sweep.completedAreas);
     if (++sweep.layer < sweep.layerCount) {
       // Another layer of the area just built. The layer state has to be set
       // before the area is reconstructed, because CGameArea builds the objects
@@ -511,8 +510,8 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
       // pickup behind an inactive layer is not in the dump at all.
       ++sweep.layerPasses;
       SetSweepLayer(mgr, world, current, sweep.layer);
-      std::fprintf(stderr, "[sweep] re-entering %08X with layer %d active\n",
-                   sweep.areas[sweep.area], sweep.layer);
+      PortLog::Write("[sweep] re-entering %08X with layer %d active\n",
+                     sweep.areas[sweep.area], sweep.layer);
       // The area has to be unloaded before it is rebuilt: SetLayerActive is a
       // bit flip, and travelling straight back onto a live area re-enters it
       // without ever scheduling its load again, so the pass never settles. Two
@@ -525,8 +524,8 @@ bool ConsumeWorldSweepRequest(CStateManager& mgr) {
     sweep.layer = 0;
     if (++sweep.area == sweep.areas.size()) {
       if (++sweep.world == sweep.worlds.size()) {
-        std::fprintf(stderr, "[sweep] complete: %zu worlds, %u areas\n", sweep.worlds.size(),
-                     sweep.completedAreas);
+        PortLog::Write("[sweep] complete: %zu worlds, %u areas\n", sweep.worlds.size(),
+                       sweep.completedAreas);
         sweep = {};
         return false;
       }

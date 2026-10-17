@@ -177,12 +177,12 @@ void AuditSearchIndex(const SearchJump& jump, double now) {
   }
   if (jump.row != nullptr) {
     missed += jump.found ? 0 : 1;
-    std::fprintf(stderr, "metroid_prime_port: search audit: %s: %s > %s > %s > %s\n",
-                 jump.found ? "found" : "MISSED", jump.row->page, jump.row->sub, jump.row->section,
-                 jump.row->label);
+    PortLog::Write("metroid_prime_port: search audit: %s: %s > %s > %s > %s\n",
+                   jump.found ? "found" : "MISSED", jump.row->page, jump.row->sub, jump.row->section,
+                   jump.row->label);
   }
   if (next == static_cast< int >(ARRAY_SIZE(kSettingsIndex))) {
-    std::fprintf(stderr, "metroid_prime_port: search audit: done, %d of %d missed\n", missed, next);
+    PortLog::Write("metroid_prime_port: search audit: done, %d of %d missed\n", missed, next);
     next = -1;
     sJump = SearchJump{};
     return;
