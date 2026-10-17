@@ -17,7 +17,7 @@ using PortRemasteredGroundContacts::AABB;
 using GeometryResult = PortRemasteredGroundContacts::Result;
 
 // port -> Remastered canonical, and its own inverse: the change is symmetric.
-// See platform/port_remastered_room.cpp:277 (kR2G) and 359-363 (MulR2G).
+// See platform/port_remastered_room_internal.h (kR2G and MulR2G).
 inline float RemFromPortX(float x) { return -x; }
 
 inline Vec3 ToRemastered(const Vec3f& v) { return {RemFromPortX(v.x), v.z, v.y}; }

@@ -1,7 +1,8 @@
 // The Remastered float drivers of material variables (the Waterfalls' GRDU): the importer finds
 // the RealNumberDriver -> RealValueRelay -> MaterialVariableDriver -> actor chain in a room, and
 // binds the variable to a parameter the port drives only through the model's material.
-// port_remastered_room.cpp is included for its file-local helpers.
+// port_remastered_room.cpp is included for its file-local helpers; the rest of the writer's
+// internals (port_remastered_room_internal.h, in PortRemastered::RoomDetail) are linked in.
 
 #include "../platform/port_remastered_room.cpp"
 
@@ -11,6 +12,7 @@
 #include <cstdio>
 
 using namespace PortRemastered;
+using namespace PortRemastered::RoomDetail;
 
 namespace {
 

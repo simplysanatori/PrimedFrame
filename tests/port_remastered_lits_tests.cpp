@@ -381,7 +381,7 @@ void TestHoloKind() {
   CHECK_MSG(trailer, "a holo shader keeps kind 16 (PBR8 trailer) through the converter");
 }
 
-// The converter's shader ids, as port_remastered_convert.cpp reads them.
+// The converter's shader ids, as port_remastered_convert_material.cpp reads them.
 void SetShader(ModelMaterial& material, uint32_t shader) {
   material.shaderId[0] = uint8_t(shader >> 24);
   material.shaderId[1] = uint8_t(shader >> 16);

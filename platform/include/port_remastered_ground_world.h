@@ -13,7 +13,7 @@
 //
 // Frames: the port is Z-up (retail). Remastered's canonical frame is Y-up, and
 // the import's own frame change is `port = (-remX, remZ, remY)`
-// (platform/port_remastered_room.cpp:277,359-363). Contact geometry is therefore
+// (kR2G and MulR2G, platform/port_remastered_room_internal.h). Contact geometry is therefore
 // handed to the geometry producer in Remastered's frame and its results are
 // converted back, so the producer sees exactly the numbers the shipped routine
 // would (the conversion is a sign/permutation, not arithmetic). The change is

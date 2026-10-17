@@ -186,6 +186,7 @@ set(MP_PORT_SOURCES
     platform/port_ap_world.cpp
     platform/port_rando_gen.cpp
     platform/port_apclient.cpp
+    platform/port_apclient_worker.cpp
     platform/port_ap_solo.cpp
     platform/port_rando_seed.cpp
     platform/port_json.cpp
@@ -230,6 +231,9 @@ set(MP_PORT_SOURCES
     platform/port_remastered_nso.cpp
     platform/port_remastered_pak.cpp
     platform/port_remastered_txtr.cpp
+    platform/port_remastered_tegra_swizzle.cpp
+    platform/port_remastered_bcdec.cpp
+    platform/port_remastered_astc_decode.cpp
     platform/port_hd_font.cpp
     platform/port_hd_font_file.cpp
     platform/port_font_accent_file.cpp
@@ -241,6 +245,8 @@ set(MP_PORT_SOURCES
     platform/port_remastered_map.cpp
     platform/port_remastered_movie.cpp
     platform/port_room_env.cpp
+    platform/port_room_env_script.cpp
+    platform/port_room_env_load.cpp
     platform/port_room_env_file.cpp
     platform/port_room_env_tiles.cpp
     platform/port_room_geo.cpp
@@ -254,6 +260,10 @@ set(MP_PORT_SOURCES
     platform/port_remastered_image.cpp
     platform/port_remastered_table.cpp
     platform/port_remastered_convert.cpp
+    platform/port_remastered_convert_retail.cpp
+    platform/port_remastered_convert_material.cpp
+    platform/port_remastered_convert_pbr.cpp
+    platform/port_remastered_convert_skin.cpp
     platform/port_remastered_ball_light.cpp
     platform/port_remastered_effect.cpp
     platform/port_vfx_particles.cpp
@@ -262,9 +272,14 @@ set(MP_PORT_SOURCES
     platform/port_remastered_effect_import.cpp
     platform/port_remastered_report.cpp
     platform/port_remastered_import.cpp
+    platform/port_remastered_import_retail.cpp
+    platform/port_remastered_import_remastered.cpp
     platform/port_remastered_jpeg.cpp
     platform/port_gallery.cpp
     platform/port_remastered_room.cpp
+    platform/port_remastered_room_file.cpp
+    platform/port_remastered_room_retail.cpp
+    platform/port_remastered_room_scripts.cpp
     platform/port_remastered_anim.cpp
     platform/port_remastered_text.cpp
     platform/port_custom_res.cpp
@@ -333,7 +348,11 @@ if(NOT ANDROID)
         tests/port_remastered_effect_tool.cpp platform/port_remastered_effect.cpp
         platform/port_remastered_effect_convert.cpp platform/port_remastered_effect_import.cpp
         platform/port_remastered_image.cpp platform/port_remastered_txtr.cpp platform/port_remastered_pak.cpp
+        platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+        platform/port_remastered_astc_decode.cpp
         platform/port_remastered_convert.cpp platform/port_remastered_cmdl.cpp platform/port_remastered_anuv.cpp
+        platform/port_remastered_convert_retail.cpp platform/port_remastered_convert_material.cpp
+        platform/port_remastered_convert_pbr.cpp platform/port_remastered_convert_skin.cpp
         platform/port_remastered_report.cpp)
     target_include_directories(remastered_effect_tool PRIVATE platform/include)
     target_link_libraries(remastered_effect_tool PRIVATE astcenc ${CMAKE_THREAD_LIBS_INIT})
@@ -583,6 +602,10 @@ if(MP_BUILD_TESTS)
     # it listed these sources itself.
     add_library(mp_test_remastered_convert OBJECT
         platform/port_remastered_convert.cpp
+        platform/port_remastered_convert_retail.cpp
+        platform/port_remastered_convert_material.cpp
+        platform/port_remastered_convert_pbr.cpp
+        platform/port_remastered_convert_skin.cpp
         platform/port_remastered_anuv.cpp
         platform/port_remastered_image.cpp
         platform/port_remastered_pak.cpp)
@@ -814,6 +837,8 @@ if(MP_BUILD_TESTS)
     mp_port_test(port_remastered_parsers_tests
         SOURCES tests/port_remastered_parsers.cpp
             platform/port_remastered_pak.cpp platform/port_remastered_txtr.cpp
+            platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+            platform/port_remastered_astc_decode.cpp
         INCLUDES platform/include)
     mp_port_test(port_shot_aim_tests SOURCES tests/port_shot_aim.cpp INCLUDES platform/include)
     mp_port_test(port_remastered_report_tests
@@ -830,8 +855,12 @@ if(MP_BUILD_TESTS)
         LIBRARIES mp_test_remastered_convert)
     mp_port_test(port_remastered_driver_tests
         SOURCES tests/port_remastered_driver_tests.cpp
+            platform/port_remastered_room_file.cpp platform/port_remastered_room_retail.cpp
+            platform/port_remastered_room_scripts.cpp
             platform/port_remastered_anim.cpp platform/port_remastered_cmdl.cpp
             platform/port_remastered_txtr.cpp platform/port_room_env_file.cpp
+            platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
+            platform/port_remastered_astc_decode.cpp
             platform/port_room_env_tiles.cpp platform/port_room_geo_file.cpp
         INCLUDES platform/include include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
