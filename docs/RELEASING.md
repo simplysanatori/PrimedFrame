@@ -232,7 +232,7 @@ under GNOME unless the port's own X11 preference applies — see
 3. ~~**The AppImage only names the shared libraries it copies.**~~ It no longer
    copies any.
 4. **Android on-device behaviour is partly verified** — the release build runs on
-   a POCO F8 Ultra at a steady 60 FPS (see `docs/ANDROID_BUILD_PROBE.md`). Still
+   a POCO F8 Ultra at a steady 60 FPS (see `docs/ANDROID.md`). Still
    unverified: loading a save from the title screen's Continue, touch ergonomics
    and tap reliability, and performance on any other device.
 5. **~~`wss://` does not work on Android~~ — resolved.** OpenSSL 3.5.8 is built
@@ -244,8 +244,8 @@ under GNOME unless the port's own X11 preference applies — see
    enumerated by hand from `/apex/com.android.conscrypt/cacerts`, and zero
    certificates is a loud error naming the directories rather than an obscure
    verification failure later. Both halves are proven on the emulator — see
-   `docs/ANDROID_BUILD_PROBE.md`. Costs about 2 MB of APK — the measured numbers
-   are in `docs/ANDROID_BUILD_PROBE.md`.
+   `docs/ANDROID.md`. Costs about 2 MB of APK — the measured numbers
+   are in `docs/ANDROID.md`.
 6. **The Flatpak is not on Flathub.** `tools/make_flatpak.sh` builds a bundle
    from the committed `port` branch; the project's own install rules put a
    runnable tree in `/app`, and the notices are collected. Before it could be

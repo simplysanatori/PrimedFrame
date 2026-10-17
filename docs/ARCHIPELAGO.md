@@ -225,7 +225,7 @@ back to `/system/etc/security/cacerts`; the first directory with a certificate
 wins) and fails loudly, naming every directory tried, when none exist.
 
 Both halves are proven on the Android emulator; the recipe and the expected log
-lines are in [ANDROID_BUILD_PROBE.md](ANDROID_BUILD_PROBE.md#wss-on-android-proven-end-to-end).
+lines are in [ANDROID.md](ANDROID.md#wss-on-android-proven-end-to-end).
 
 ## Configuration
 

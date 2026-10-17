@@ -53,35 +53,12 @@ Remastered are not run as the base game. Press **F1** for every setting.
 
 ## Building
 
-Needs CMake 3.25+, Ninja and a C++20 toolchain. Aurora and MusyX are vendored, so
-a normal clone is enough; Aurora fetches its pinned dependencies on the first
-configure.
-
-```sh
-cmake -S . -B build/native -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DAURORA_ENABLE_TESTS=OFF -DMP_BUILD_TESTS=ON
-cmake --build build/native -j 4
-ctest --test-dir build/native -L port --output-on-failure
-```
-
-On Windows, run from an MSVC developer shell and add
-`-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl`. CI builds and tests
-Linux (GCC 14 and Clang 18) on each push to `port` and each pull request; Windows (clang-cl) and macOS (arm64,
-experimental) run weekly and can be started by hand from the Actions tab. See `.github/workflows/`.
-CI configures with `-DAURORA_ENABLE_TESTS=ON`, which adds Aurora's GPU-free
-FIFO/GX tests; turn it on to run the same suite locally.
-
-Configure downloads about a dozen pinned dependencies (checked by SHA-256). On
-a machine without access to GitHub, clone them yourself and point CMake at the
-copies with `-DFETCHCONTENT_SOURCE_DIR_<NAME>=<dir>`, the way
-`flatpak/io.github.odrannnn.metroidprimeport.yml` does.
-
-### Android
-
-```sh
-tools/make_android_keystore.sh          # once; writes android/keystore.properties
-tools/android_apk.sh :app:assembleRelease
-```
+CMake 3.25+, Ninja and a C++20 toolchain; a normal clone is enough. The
+requirements, the configure, build and test commands for Linux, Windows and
+macOS, the CMake options and what CI runs are in
+[`docs/NATIVE_PORT.md`](docs/NATIVE_PORT.md#build); the Android build is in
+[`docs/ANDROID.md`](docs/ANDROID.md). Before changing the game code, read
+[where port code goes](docs/NATIVE_PORT.md#where-port-code-goes).
 
 ## Running
 
@@ -136,8 +113,9 @@ Nintendo and Retro Studios, and ships no game data.
 | `docs/ARCHIPELAGO.md` | The Archipelago multiworld client |
 | `docs/CONSOLE.md` | The debug console (`MP_CONSOLE`) |
 | `docs/DEBUGGING.md` | Headless debugging with `tools/mprig.py` |
+| `tools/README.md` | What each script in `tools/` does and what runs it |
 | `docs/RELEASING.md` | What a release contains and must carry |
-| `docs/ANDROID_BUILD_PROBE.md` | The Android port's status and build |
+| `docs/ANDROID.md` | The Android port's status and build |
 | `docs/REMASTERED_EFFECTS.md` | Importing Remastered particle effects |
 | `docs/FRAME_INTERPOLATION.md`, `docs/HIGH_FPS_AUDIT.md` | High frame rate design notes |
 | `decomp/` | The original decompilation's GameCube build and notes (not used by the port) |
