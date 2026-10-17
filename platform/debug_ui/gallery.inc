@@ -35,7 +35,7 @@ void LoadGalleryPicture() {
   sGalleryFailed = true;
   sGalleryLoaded = sGalleryIndex;
   std::ifstream file(PortGci::PathFromString(sGalleryPaths[sGalleryIndex]), std::ios::binary);
-  const std::vector<uint8_t> jpeg((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+  const std::vector<uint8_t> jpeg = port::ReadAll(file);
   int width = 0;
   int height = 0;
   std::vector<uint8_t> rgba;

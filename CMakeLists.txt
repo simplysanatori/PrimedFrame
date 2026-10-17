@@ -835,6 +835,10 @@ if(MP_BUILD_TESTS)
     target_include_directories(port_custom_res_tests PRIVATE platform/include)
     add_executable(port_env_tests tests/port_env.cpp)
     target_include_directories(port_env_tests PRIVATE platform/include)
+    add_executable(port_bytes_hash_tests tests/port_bytes_hash.cpp)
+    target_include_directories(port_bytes_hash_tests PRIVATE platform/include)
+    add_test(NAME port_bytes_hash_tests COMMAND port_bytes_hash_tests)
+    set_tests_properties(port_bytes_hash_tests PROPERTIES TIMEOUT 15 LABELS port)
     add_executable(port_air_mover_contact_tests tests/port_air_mover_contact.cpp
         src/Collision/CMaterialFilter.cpp platform/port_remastered_ground_contacts.cpp
         platform/port_remastered_ground_world.cpp)

@@ -1,4 +1,5 @@
 #include "port_savestate.h"
+#include "port_strings.h"
 
 #include "port_apclient.h"
 #include "port_debug.h"
@@ -152,7 +153,7 @@ bool ReadSlot(int slot, Header& header, std::vector< uint8_t >& blob) {
   std::ifstream file(path, std::ios::binary);
   if (!file)
     return false;
-  const std::string data((std::istreambuf_iterator< char >(file)), std::istreambuf_iterator< char >());
+  const std::string data = port::ReadAllText(file);
   return Decode(data, header, blob);
 }
 
@@ -511,7 +512,7 @@ bool ReadResume(ResumeMeta& meta, Header& header, std::vector< uint8_t >& blob) 
   std::ifstream file(path, std::ios::binary);
   if (!file)
     return false;
-  const std::string data((std::istreambuf_iterator< char >(file)), std::istreambuf_iterator< char >());
+  const std::string data = port::ReadAllText(file);
   std::string state;
   return DecodeResume(data, meta, state) && Decode(state, header, blob);
 }

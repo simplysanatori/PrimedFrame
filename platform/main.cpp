@@ -14,6 +14,7 @@
 #include <dolphin/dvd.h>
 
 #include "port_env.h"
+#include "port_strings.h"
 #include "port_embedded.h"
 #include "port_crash.h"
 #include "port_disc.h"
@@ -502,7 +503,7 @@ bool DiscReadFailedLastTime(const std::string& path) {
     if (!in) {
         return false;
     }
-    const std::string failed((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string failed = port::ReadAllText(in);
     in.close();
     std::error_code ec;
     std::filesystem::remove(marker, ec);

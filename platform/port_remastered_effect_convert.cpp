@@ -31,8 +31,7 @@ using PropertyTable = std::unordered_map<uint32_t, PropertyType>;
 
 void AddProperties(PropertyTable& t, const char* names, Type type, uint32_t asset = 0) {
   for (const char* c = names; *c != 0;) {
-    const uint32_t fourcc = uint32_t(uint8_t(c[0])) << 24 | uint32_t(uint8_t(c[1])) << 16 |
-                            uint32_t(uint8_t(c[2])) << 8 | uint32_t(uint8_t(c[3]));
+    const uint32_t fourcc = port::FourCC(c);
     t[fourcc] = {type, asset};
     c += 4;
     while (*c == ' ') {
@@ -706,7 +705,7 @@ bool ParseMati(const std::vector<uint8_t>& d, Mati& out) {
   if (d.size() < 0x6d) {
     return false;
   }
-  out.shader = uint32_t(d[0x48]) << 24 | uint32_t(d[0x49]) << 16 | uint32_t(d[0x4a]) << 8 | d[0x4b];
+  out.shader = port::GetBE32(d, 0x48);
   out.headerBlend = ReadLE32(d.data() + 0x61);
   const uint32_t count = ReadLE32(d.data() + 0x69);
   size_t at = 0x6d;
@@ -2537,7 +2536,7 @@ public:
         texture = true;
       }
       if (fourcc == F("PMDL") && bytes.size() == 8) {
-        pmdl = uint32_t(bytes[4]) << 24 | uint32_t(bytes[5]) << 16 | uint32_t(bytes[6]) << 8 | bytes[7];
+        pmdl = port::GetBE32(bytes, 4);
       }
       written.insert(fourcc);
       AppendBE32(out, fourcc);
@@ -3041,7 +3040,7 @@ std::optional<uint32_t> EffectRetailId(const EffectGuid& id) {
   if (std::memcmp(id.data(), kPrefix, sizeof(kPrefix)) != 0) {
     return std::nullopt;
   }
-  return uint32_t(id[12]) << 24 | uint32_t(id[13]) << 16 | uint32_t(id[14]) << 8 | uint32_t(id[15]);
+  return port::ReadBE32(id.data() + 12);
 }
 
 std::vector<ConvertedPart> ConvertEffect(const EffectNode& effect, const uint8_t* data, const EffectConvertIO& io) {

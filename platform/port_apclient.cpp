@@ -1,4 +1,5 @@
 #include "port_env.h"
+#include "port_hash.h"
 #include "port_apclient.h"
 #include "port_log.h"
 #include "port_paths.h"
@@ -392,13 +393,8 @@ std::shared_ptr<const PortApWorld::Layout> SessionWorldLocked(Runtime& runtime) 
 // a game no session has given items to.
 uint32_t SessionIdentity(const std::string& seed, const std::string& slot,
                          const std::string& roomSuffix) {
-  uint32_t hash = 2166136261u;
-  const auto mix = [&hash](const std::string& text) {
-    for (const char c : text) {
-      hash ^= static_cast<uint8_t>(c);
-      hash *= 16777619u;
-    }
-  };
+  uint32_t hash = port::kFnv32Basis;
+  const auto mix = [&hash](const std::string& text) { hash = port::Fnv1a32(text, hash); };
   mix(seed);
   mix(std::string(1, '\0'));
   mix(slot);

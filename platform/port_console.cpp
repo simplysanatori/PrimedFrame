@@ -5,6 +5,7 @@
 // the client. Commands that touch the game run inside the state manager's
 // tick, where every object pointer is live; the rest run once per frame.
 #include "port_apclient.h"
+#include "port_strings.h"
 #include "port_collision_view.h"
 #include "port_console_physics.h"
 #include "port_debug.h"
@@ -379,12 +380,7 @@ void Finish(const char* error = nullptr) {
   sHasCommand = false;
 }
 
-std::string Lower(std::string s) {
-  for (char& c : s) {
-    c = static_cast< char >(std::tolower(static_cast< unsigned char >(c)));
-  }
-  return s;
-}
+using port::Lower;
 
 bool ParseHex(const std::string& s, uint32_t& value) {
   if (s.empty()) {

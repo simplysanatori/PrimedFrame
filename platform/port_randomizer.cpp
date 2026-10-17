@@ -1,4 +1,5 @@
 #include "port_env.h"
+#include "port_strings.h"
 #include "port_json.h"
 #include "port_randomizer.h"
 #include "port_log.h"
@@ -208,7 +209,7 @@ bool LoadSeed(State& state) {
   std::ifstream input(path, std::ios::binary);
   if (!input)
     return false;
-  const std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  const std::string text = port::ReadAllText(input);
   if (input.bad()) {
     PortLog::Write( "randomizer: seed read error at byte offset 0: could not read file\n");
     return false;

@@ -1,4 +1,7 @@
 #include "port_env.h"
+#include "port_strings.h"
+#include "port_hash.h"
+#include "port_bytes.h"
 #include "port_remastered_import.h"
 #include "port_remastered_storage.h"
 
@@ -342,13 +345,7 @@ using Manifest = std::map<std::string, StageRecord>;
 constexpr const char* kManifestName = ".import-manifest";
 constexpr const char* kManifestHeader = "remastered import manifest 1";
 
-uint64_t Hash64(const std::string& text) {
-  uint64_t hash = 0xCBF29CE484222325ull;  // FNV-1a
-  for (const char c : text) {
-    hash = (hash ^ uint8_t(c)) * 0x100000001B3ull;
-  }
-  return hash;
-}
+uint64_t Hash64(const std::string& text) { return port::Fnv1a64(text); }
 
 std::string Hex64(uint64_t value) {
   char text[24];
@@ -674,10 +671,7 @@ public:
       // The named resources (a pak's first section): the projectile weapons' names pair them
       // with Remastered's WPSMs. Kept out of m_resources, which the fingerprint covers.
       if (header.size() >= 12) {
-        const auto be32 = [&header](size_t at) {
-          return uint32_t(header[at]) << 24 | uint32_t(header[at + 1]) << 16 | uint32_t(header[at + 2]) << 8 |
-                 uint32_t(header[at + 3]);
-        };
+        const auto be32 = [&header](size_t at) { return port::GetBE32(header, at); };
         size_t at = 12;
         for (uint32_t n = be32(8); n > 0 && at + 12 <= header.size(); --n) {
           const uint32_t length = be32(at + 8);
@@ -795,8 +789,7 @@ public:
     if (raw.size() < 6) {
       return false;
     }
-    const auto byte = [&raw](size_t i) { return size_t(static_cast<uint8_t>(raw[i])); };
-    const size_t length = byte(0) << 24 | byte(1) << 16 | byte(2) << 8 | byte(3);
+    const size_t length = port::ReadBE32(reinterpret_cast<const uint8_t*>(raw.data()));
     raw.erase(0, 6);
     PortWs::Inflater inflater;
     inflater.SetKeepWindow(false);
@@ -1632,11 +1625,7 @@ EffectGuid ToStored(EffectGuid id) {
   return id;
 }
 
-std::string HexId(uint32_t id) {
-  char text[16];
-  std::snprintf(text, sizeof(text), "%08X", id);
-  return text;
-}
+using port::Hex8;
 
 // A retail effect id that two projectiles reference gives each its own Remastered effect: the
 // first claimant (in WPSM name, then field order) keeps the disc's id, any other with a different
@@ -1682,8 +1671,7 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
       uint32_t discId = 0;
       for (size_t i = 0; i + 12 <= weapon.size(); ++i) {
         if (std::memcmp(weapon.data() + i, field.tag, 4) == 0 && std::memcmp(weapon.data() + i + 4, "CNST", 4) == 0) {
-          discId = uint32_t(weapon[i + 8]) << 24 | uint32_t(weapon[i + 9]) << 16 | uint32_t(weapon[i + 10]) << 8 |
-                   uint32_t(weapon[i + 11]);
+          discId = port::GetBE32(weapon, i + 8);
           break;
         }
       }
@@ -1725,19 +1713,17 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
         }
         const uint32_t synthetic = SyntheticEffectId(effectName.c_str());
         if (retail.HasId(synthetic)) {
-          lines.push_back("WPSM " + who + ": " + HexId(discId) + " is shared with " + claim->second.who +
+          lines.push_back("WPSM " + who + ": " + Hex8(discId) + " is shared with " + claim->second.who +
                           ", no synthetic id for " + EffectGuidString(ToStored(guid)));
           continue;
         }
-        lines.push_back("WPSM " + who + ": " + HexId(discId) + " is shared with " + claim->second.who + ", so " +
-                        HexId(synthetic) + " (" + effectName + ")");
+        lines.push_back("WPSM " + who + ": " + Hex8(discId) + " is shared with " + claim->second.who + ", so " +
+                        Hex8(synthetic) + " (" + effectName + ")");
         target = synthetic;
-        remaps.push_back({wpsc, uint32_t(uint8_t(field.tag[0])) << 24 | uint32_t(uint8_t(field.tag[1])) << 16 |
-                                    uint32_t(uint8_t(field.tag[2])) << 8 | uint8_t(field.tag[3]),
-                          discId, synthetic});
+        remaps.push_back({wpsc, port::FourCC(field.tag), discId, synthetic});
       }
       pairings.push_back({guid, target, "wpsm " + who});
-      lines.push_back("WPSM " + who + ": " + EffectGuidString(ToStored(guid)) + " -> " + HexId(target));
+      lines.push_back("WPSM " + who + ": " + EffectGuidString(ToStored(guid)) + " -> " + Hex8(target));
     }
   }
   // Effects the disc's PARTs/SWHCs name the same (SamGunFx.pak), that no WPSC reaches.
@@ -1759,7 +1745,7 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
     ModelUuid id;
     if (named.retail != 0 && retail.HasId(named.retail) && remastered.EffectByName(named.name, id)) {
       pairings.push_back({id, named.retail, std::string("name ") + named.name});
-      lines.push_back(std::string("name ") + named.name + ": " + EffectGuidString(ToStored(id)) + " -> " + HexId(named.retail));
+      lines.push_back(std::string("name ") + named.name + ": " + EffectGuidString(ToStored(id)) + " -> " + Hex8(named.retail));
     }
   }
   // Effects the disc has no PART for are imported under an id from their name.
@@ -1768,7 +1754,7 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
     const uint32_t synthetic = SyntheticEffectId(name);
     if (!retail.HasId(synthetic) && remastered.EffectByName(name, id)) {
       pairings.push_back({id, synthetic, std::string("synthetic ") + name});
-      lines.push_back(std::string("synthetic ") + name + ": " + EffectGuidString(ToStored(id)) + " -> " + HexId(synthetic));
+      lines.push_back(std::string("synthetic ") + name + ": " + EffectGuidString(ToStored(id)) + " -> " + Hex8(synthetic));
     }
   }
 
@@ -1825,13 +1811,13 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
         } else if (have.id == candidate.genp || have.retail == candidate.retailPart) {
           conflict = true;
           lines.push_back("WPSM missile COLR/DEFS: conflict with " + have.method + " (" +
-                          EffectGuidString(ToStored(have.id)) + " -> " + HexId(have.retail) + "); no pair");
+                          EffectGuidString(ToStored(have.id)) + " -> " + Hex8(have.retail) + "); no pair");
         }
       }
       if (!conflict && !exact) {
         pairings.push_back({candidate.genp, candidate.retailPart, "wpsm missile COLR/DEFS default"});
         lines.push_back("WPSM missile COLR/DEFS default: " + EffectGuidString(ToStored(candidate.genp)) + " -> " +
-                        HexId(candidate.retailPart));
+                        Hex8(candidate.retailPart));
       }
     }
   }
@@ -1889,13 +1875,13 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
         } else if (ImportDetail::ConflictsWithPowerBallDefaultRolePair(candidate, have.id, have.retail)) {
           conflict = true;
           lines.push_back("WPSM powerball COLR/DEFS: conflict with " + have.method + " (" +
-                          EffectGuidString(ToStored(have.id)) + " -> " + HexId(have.retail) + "); no pair");
+                          EffectGuidString(ToStored(have.id)) + " -> " + Hex8(have.retail) + "); no pair");
         }
       }
       if (!conflict && !exact) {
         pairings.push_back({candidate.genp, candidate.retailPart, "wpsm powerball COLR/DEFS default"});
         lines.push_back("WPSM powerball COLR/DEFS default: " + EffectGuidString(ToStored(candidate.genp)) + " -> " +
-                        HexId(candidate.retailPart));
+                        Hex8(candidate.retailPart));
       }
     }
   }
@@ -1953,13 +1939,13 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
         } else if (ImportDetail::ConflictsWithPlasmaBeamDefaultRolePair(candidate, have.id, have.retail)) {
           conflict = true;
           lines.push_back("WPSM plasmabeam COLR/DEFS: conflict with " + have.method + " (" +
-                          EffectGuidString(ToStored(have.id)) + " -> " + HexId(have.retail) + "); no pair");
+                          EffectGuidString(ToStored(have.id)) + " -> " + Hex8(have.retail) + "); no pair");
         }
       }
       if (!conflict && !exact) {
         pairings.push_back({candidate.genp, candidate.retailPart, "wpsm plasmabeam COLR/DEFS default"});
         lines.push_back("WPSM plasmabeam COLR/DEFS default: " + EffectGuidString(ToStored(candidate.genp)) + " -> " +
-                        HexId(candidate.retailPart));
+                        Hex8(candidate.retailPart));
       }
     }
   }
@@ -2491,7 +2477,6 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     }
     return out;
   };
-  auto readU32 = [](const uint8_t* p) { return uint32_t(p[0]) << 24 | uint32_t(p[1]) << 16 | uint32_t(p[2]) << 8 | p[3]; };
   auto hex = [](uint32_t id) {
     char name[16];
     std::snprintf(name, sizeof(name), "%08X", id);
@@ -2528,9 +2513,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     // The new models and skins of the looks: hashed, then moved past every id
     // the disc or this import has.
     auto fresh = [&](uint32_t seed) {
-      uint32_t id = 0x811C9DC5u;  // FNV-1a
+      uint32_t id = port::kFnv32Basis;
       for (int i = 0; i < 4; ++i) {
-        id = (id ^ ((seed >> (i * 8)) & 0xFFu)) * 0x01000193u;
+        id = port::Fnv1a32Step(id, uint8_t(seed >> (i * 8)));
       }
       while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
         ++id;
@@ -2618,7 +2603,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
             const std::vector<uint8_t> pair = bytesOf({entry.retail, TableSkins(entry)[s]});
             for (auto it = std::search(data.begin(), data.end(), pair.begin(), pair.end()); data.end() - it >= 12;
                  it = std::search(it + 1, data.end(), pair.begin(), pair.end())) {
-              skeletons[{i, s}].insert(readU32(&*(it + 8)));
+              skeletons[{i, s}].insert(port::ReadBE32(&*(it + 8)));
               binds = true;
             }
           }
@@ -2947,10 +2932,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       id = known->second;
       return true;
     }
-    id = 0x811C9DC5u;  // FNV-1a
-    for (const uint8_t byte : uuid) {
-      id = (id ^ byte) * 0x01000193u;
-    }
+    id = port::Fnv1a32(uuid.data(), uuid.size());
     while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
       ++id;
     }
@@ -2967,10 +2949,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       id = known->second;
       return true;
     }
-    id = 0x811C9DC5u ^ uint32_t(joint + 1) * 0x85EBCA77u;
-    for (const uint8_t byte : uuid) {
-      id = (id ^ byte) * 0x01000193u;
-    }
+    id = port::Fnv1a32(uuid.data(), uuid.size(), port::kFnv32Basis ^ uint32_t(joint + 1) * 0x85EBCA77u);
     while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
       ++id;
     }
@@ -2994,10 +2973,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       id = known->second;
       return true;
     }
-    id = 0x811C9DC5u ^ 0x9E3779B1u;
-    for (const char byte : key) {
-      id = (id ^ uint8_t(byte)) * 0x01000193u;
-    }
+    id = port::Fnv1a32(key, port::kFnv32Basis ^ 0x9E3779B1u);
     while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
       ++id;
     }
@@ -3033,10 +3009,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     if (!makeIO(0, geometryFolder).texture(uuid, image, textureError)) {
       AddLine("water texture: " + textureError);
     } else {
-      uint32_t id = 0x811C9DC5u ^ 0x57A7E5u;
-      for (const uint8_t byte : uuid) {
-        id = (id ^ byte) * 0x01000193u;
-      }
+      uint32_t id = port::Fnv1a32(uuid.data(), uuid.size(), port::kFnv32Basis ^ 0x57A7E5u);
       {
         std::lock_guard<std::mutex> takenLock(takenMutex);
         while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
@@ -3301,10 +3274,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         continue;
       }
       for (int level = 1; level < PortRoomGeo::kLodLevels; ++level) {
-        uint32_t id = 0x811C9DC5u ^ uint32_t(level) * 0x9E3779B1u;
-        for (const uint8_t byte : g.uuid) {
-          id = (id ^ byte) * 0x01000193u;
-        }
+        uint32_t id = port::Fnv1a32(g.uuid.data(), g.uuid.size(), port::kFnv32Basis ^ uint32_t(level) * 0x9E3779B1u);
         while (id == 0 || id == 0xFFFFFFFFu || retail.HasId(id) || taken.count(id) != 0) {
           ++id;
         }
@@ -3734,7 +3704,7 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     const fs::path partFolder = staging / "reports" / "parts";
     auto slurp = [](const fs::path& path) {
       std::ifstream in(path, std::ios::binary);
-      return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+      return port::ReadAllText(in);
     };
     std::vector<std::string> materialRows;
     std::vector<std::string> effectRows;
@@ -3909,11 +3879,8 @@ std::string InstalledModFolder() {
 }
 
 std::string DefaultKeysPath() {
-  const char* home = std::getenv("HOME");
-  if (home == nullptr || home[0] == '\0') {
-    home = std::getenv("USERPROFILE");
-  }
-  if (home == nullptr || home[0] == '\0') {
+  const char* home = port::HomeFolder();
+  if (home == nullptr) {
     return {};
   }
   const fs::path path = PathFromString(home) / ".switch" / "prod.keys";

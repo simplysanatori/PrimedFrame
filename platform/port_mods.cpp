@@ -489,7 +489,7 @@ void Initialize() {
       const bool stamped = stamp.is_open();
       info.import = stamped || info.name == PortRemastered::kImportModName;
       if (info.import) {
-        const std::string text((std::istreambuf_iterator<char>(stamp)), std::istreambuf_iterator<char>());
+        const std::string text = port::ReadAllText(stamp);
         info.importStale = ImportStampStale(text, PortRemastered::kImportVersion);
       }
       if (info.importStale && sStatus.staleImport.empty()) {

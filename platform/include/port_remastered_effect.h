@@ -29,13 +29,12 @@
 #include <string>
 #include <vector>
 
+#include "port_bytes.h"
+
 namespace PortRemastered {
 
 // FourCCs here are packed big-endian, as written: 'CNST' = 0x434E5354.
-constexpr uint32_t EffectFourCC(const char (&text)[5]) {
-  return uint32_t(uint8_t(text[0])) << 24 | uint32_t(uint8_t(text[1])) << 16 | uint32_t(uint8_t(text[2])) << 8 |
-         uint32_t(uint8_t(text[3]));
-}
+constexpr uint32_t EffectFourCC(const char (&text)[5]) { return port::FourCC(text); }
 
 using EffectGuid = std::array<uint8_t, 16>;
 

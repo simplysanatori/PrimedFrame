@@ -1,4 +1,5 @@
 #include "port_strings.h"
+#include "port_hash.h"
 #include "port_rando_gen.h"
 
 #include "port_ap_logic.h"
@@ -134,11 +135,8 @@ public:
   uint64_t Value() const { return mHash; }
 
 private:
-  void Byte(uint8_t byte) {
-    mHash ^= byte;
-    mHash *= 0x100000001B3ull;
-  }
-  uint64_t mHash = 0xCBF29CE484222325ull;
+  void Byte(uint8_t byte) { mHash = port::Fnv1a64Step(mHash, byte); }
+  uint64_t mHash = port::kFnv64Basis;
 };
 
 uint64_t HashInput(const Settings& s, const std::string& seedText) {

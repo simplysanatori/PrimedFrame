@@ -56,13 +56,6 @@ constexpr double kFlashTime = 1.5;
 
 char sSearch[128] = "";
 
-std::string Lowercase(std::string text) {
-  for (char& c : text) {
-    c = static_cast< char >(std::tolower(static_cast< unsigned char >(c)));
-  }
-  return text;
-}
-
 // The label without its "##id" part is the text, which may go on with a key
 // hint ("Screenshot (F12)").
 bool LabelIs(const char* label, const char* text) {
@@ -264,7 +257,7 @@ bool Searching() { return sSearch[0] != '\0'; }
 void DrawSearchResults() {
   static std::string sQuery;
   static std::vector< const SettingsIndexRow* > sHits;
-  const std::string query = Lowercase(Trim(sSearch));
+  const std::string query = port::Lower(Trim(sSearch));
   if (query != sQuery) {
     sQuery = query;
     sHits.clear();
@@ -275,9 +268,9 @@ void DrawSearchResults() {
     }
     std::vector< std::pair< int, const SettingsIndexRow* > > scored;
     for (const SettingsIndexRow& row : kSettingsIndex) {
-      const std::string label = Lowercase(row.label);
-      const std::string all = label + ' ' + Lowercase(row.section) + ' ' + Lowercase(row.sub) + ' ' +
-                              Lowercase(row.page) + ' ' + Lowercase(row.keywords);
+      const std::string label = port::Lower(row.label);
+      const std::string all = label + ' ' + port::Lower(row.section) + ' ' + port::Lower(row.sub) + ' ' +
+                              port::Lower(row.page) + ' ' + port::Lower(row.keywords);
       bool match = true;
       bool inLabel = true;
       for (const std::string& word : words) {

@@ -7,6 +7,8 @@
 // the order of an addition, that is why.
 
 #include "port_env.h"
+#include "port_hash.h"
+#include "port_bytes.h"
 #include "port_remastered_convert.h"
 #include "port_strings.h"
 #include "port_remastered_anuv.h"
@@ -32,10 +34,7 @@ struct Fail {
   std::string what;
 };
 
-constexpr uint32_t FourCC(char a, char b, char c, char d) {
-  return (uint32_t(uint8_t(a)) << 24) | (uint32_t(uint8_t(b)) << 16) | (uint32_t(uint8_t(c)) << 8) |
-         uint32_t(uint8_t(d));
-}
+using port::FourCC;
 
 struct Span {
   const uint8_t* p = nullptr;
@@ -46,14 +45,14 @@ uint32_t R32(Span s, size_t o) {
   if (o > s.n || s.n - o < 4) {
     throw Fail{"a retail resource is truncated"};
   }
-  return (uint32_t(s.p[o]) << 24) | (uint32_t(s.p[o + 1]) << 16) | (uint32_t(s.p[o + 2]) << 8) | s.p[o + 3];
+  return port::ReadBE32(s.p + o);
 }
 
 uint16_t R16(Span s, size_t o) {
   if (o > s.n || s.n - o < 2) {
     throw Fail{"a retail resource is truncated"};
   }
-  return uint16_t((s.p[o] << 8) | s.p[o + 1]);
+  return port::ReadBE16(s.p + o);
 }
 
 uint8_t R8(Span s, size_t o) {
@@ -119,27 +118,7 @@ std::string FormatG(double v) {
 
 using port::Lower;
 
-// Built at compile time: Converter::Convert runs on several import threads at once.
-constexpr std::array< uint32_t, 256 > kCrc32Table = [] {
-  std::array< uint32_t, 256 > table{};
-  for (uint32_t i = 0; i < 256; ++i) {
-    uint32_t c = i;
-    for (int k = 0; k < 8; ++k) {
-      c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-    }
-    table[i] = c;
-  }
-  return table;
-}();
-
-uint32_t Crc32(const std::string& s) {
-  const auto& table = kCrc32Table;
-  uint32_t c = 0xFFFFFFFFu;
-  for (unsigned char ch : s) {
-    c = table[(c ^ ch) & 0xFF] ^ (c >> 8);
-  }
-  return c ^ 0xFFFFFFFFu;
-}
+using port::Crc32;
 
 // A material parameter as the reference reads it: the float's shortest decimal
 // form, read back as a double (it parses them out of a text table).
@@ -1769,7 +1748,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   out.blended = (mat.unk1 & kTransparentFlag) != 0 && !out.cutout;
   uint8_t sid[4];
   std::memcpy(sid, &mat.shaderId, 4);
-  const uint32_t rawShader = uint32_t(sid[0]) << 24 | uint32_t(sid[1]) << 16 | uint32_t(sid[2]) << 8 | sid[3];
+  const uint32_t rawShader = port::ReadBE32(sid);
   const uint32_t shader = ShaderFamily(rawShader);
   out.shader = rawShader;
   out.family = shader;

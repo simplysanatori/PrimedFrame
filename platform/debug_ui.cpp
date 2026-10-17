@@ -52,6 +52,7 @@
 #include "port_gpu_driver.h"
 #include "port_disc.h"
 #include "port_pal_languages.h"
+#include "port_strings.h"
 #if defined(__ANDROID__)
 #include "touch_pad.h"
 #endif
@@ -460,14 +461,7 @@ bool ParseBool(const std::string& value) {
   return value == "1" || value == "true" || value == "on" || value == "yes";
 }
 
-std::string Trim(const std::string& text) {
-  const size_t begin = text.find_first_not_of(" \t\r\n");
-  if (begin == std::string::npos) {
-    return std::string();
-  }
-  const size_t end = text.find_last_not_of(" \t\r\n");
-  return text.substr(begin, end - begin + 1);
-}
+using port::Trim;
 
 void MarkDirty() { sSettingsDirty = true; }
 
