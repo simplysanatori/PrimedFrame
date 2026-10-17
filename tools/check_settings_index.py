@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check platform/port_settings_index.inc against the F1 overlay sources.
+"""Check platform/port_settings_index.inc and docs/SETTINGS.md against the F1 overlay sources.
 
 Usage: check_settings_index.py <repo root>
 
@@ -11,7 +11,9 @@ Checks, each problem printed on its own line:
       the overlay's internal header ("label" or "label##...");
   (c) every ImGui widget in the overlay's sources (platform/debug_ui.cpp and
       platform/debug_ui/*.cpp) whose label is a literal with visible
-      text (before "##") is a label in the index or listed in EXCLUDED.
+      text (before "##") is a label in the index or listed in EXCLUDED;
+  (d) every port_settings.ini key in kSettingKeys (platform/debug_ui/settings.cpp)
+      is documented in docs/SETTINGS.md, written there as `key` or `key=...`.
 
 Duplicate (page, sub-tab, label) groups are reported as notes; they are legal
 when the same widget is drawn on two paths, so they do not fail the check.
@@ -34,6 +36,8 @@ INDEX = pathlib.Path("platform/port_settings_index.inc")
 DEBUG_UI = pathlib.Path("platform/debug_ui.cpp")
 # The overlay's other translation units.
 DEBUG_UI_PARTS = pathlib.Path("platform/debug_ui")
+SETTINGS_SRC = DEBUG_UI_PARTS / "settings.cpp"
+SETTINGS_DOC = pathlib.Path("docs/SETTINGS.md")
 
 
 def debug_ui_sources(root):
@@ -48,6 +52,8 @@ ROW_RE = re.compile(r"^\{\s*" + STR + r"\s*,\s*" + STR + r"\s*,\s*" + STR + r"\s
                     + r"\s*,\s*" + STR + r"\s*\},?\s*$")
 PAGE_RE = re.compile(r'\{\s*"([^"]+)"\s*,\s*Draw\w+\s*\}')
 SUBTAB_RE = re.compile(r'SubTab\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*\)')
+# A row of kSettingKeys starts at four spaces; the lambdas inside it are indented further.
+KEY_RE = re.compile(r'^    \{"([a-z0-9_]+)",|^    BoolKey< &\w+ >\("([a-z0-9_]+)"\)', re.M)
 WIDGET_RE = re.compile(
     r'ImGui::(Checkbox|SliderInt|SliderFloat\w*|DragInt\w*|DragFloat\w*|Combo|BeginCombo'
     r'|RadioButton|InputText\w*|ColorEdit\w*)\(\s*' + STR)
@@ -55,6 +61,15 @@ WIDGET_RE = re.compile(
 
 def visible(label):
     return label.split("##", 1)[0]
+
+
+def setting_keys(text):
+    """The keys of kSettingKeys, in table order: rows {"key", ...} and BoolKey< &var >("key")."""
+    start = text.find("const SettingKey kSettingKeys[] = {")
+    if start < 0:
+        return []
+    table = text[start:text.find("\n};\n", start)]
+    return [plain or flag for plain, flag in KEY_RE.findall(table)]
 
 
 def main(argv):
@@ -110,6 +125,15 @@ def main(argv):
             problems.append(f"{path}:{line}: ImGui::{m.group(1)} '{label}' is not in {INDEX} "
                             "and not in EXCLUDED")
 
+    keys = setting_keys((root / SETTINGS_SRC).read_text(encoding="utf-8"))
+    if not keys:
+        problems.append(f"{SETTINGS_SRC}: no kSettingKeys rows found")
+    doc = (root / SETTINGS_DOC).read_text(encoding="utf-8")
+    for key in keys:
+        if not re.search("`" + re.escape(key) + "[`=]", doc):
+            problems.append(f"{SETTINGS_SRC}: settings key '{key}' is not documented in {SETTINGS_DOC} "
+                            f"(as `{key}` or `{key}=...`)")
+
     groups = {}
     for lineno, page, sub, _section, label, _keywords in rows:
         groups.setdefault((page, sub, label), []).append(lineno)
@@ -123,7 +147,7 @@ def main(argv):
     if problems:
         print(f"FAIL: {len(problems)} problem(s) in {len(rows)} rows")
         return 1
-    print(f"OK: {len(rows)} rows, {len(EXCLUDED)} excluded labels")
+    print(f"OK: {len(rows)} rows, {len(EXCLUDED)} excluded labels, {len(keys)} documented settings keys")
     return 0
 
 
