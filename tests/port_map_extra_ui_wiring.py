@@ -183,7 +183,8 @@ class Wiring(WiringCase):
 
     def test_console_docs_and_registration(self):
         console = CONSOLE.read_text()
-        cmd = between(console, '} else if (name == "mapui") {', "\n  } else if", CONSOLE)
+        cmd = braced(console, "void CmdMapUi()", CONSOLE)
+        self.assertIn('{"mapui", CmdMapUi,', console)
         self.assertIn("PortDebug::SetMapExtraUi(v == \"1\");", cmd)
         self.assertIn('Out(PortDebug::MapExtraUi() ? "mapui 1" : "mapui 0");', cmd)
         self.assertIn("mapui", CONSOLE_DOC.read_text())
