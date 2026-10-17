@@ -573,6 +573,8 @@ bool TakeTouchEditRequested() { return sTouchEditRequested.exchange(false, std::
 
 void SaveSettingsNow() {
   EnsureInitialized();
+  // Callers change settings the overlay doesn't track (the console's gci share).
+  MarkDirty();
   SaveSettings();
 }
 
