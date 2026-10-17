@@ -65,6 +65,7 @@
 #include "MetroidPrime/ScriptObjects/CScriptEffect.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptMazeNode.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptPlayerActor.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptPlatform.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptRoomAcoustics.hpp"
 #include "MetroidPrime/ScriptObjects/CSnakeWeedSwarm.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptSpawnPoint.hpp"
@@ -1301,6 +1302,11 @@ void CStateManager::MovePlatforms(float dt) {
     if (CPlatformAndDoorList::IsPlatform(actor) && actor != nullptr && actor->GetActive() &&
         actor->GetMass() != 0.f) {
       CGameCollision::Move(*this, *actor, dt, 0);
+#ifdef TARGET_PC
+      if (CScriptPlatform* const platform = TCastToPtr< CScriptPlatform >(actor)) {
+        platform->PortNoteStepEnd(PortSimTick());
+      }
+#endif
     }
   }
 }

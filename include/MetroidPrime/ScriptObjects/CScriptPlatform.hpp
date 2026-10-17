@@ -105,6 +105,12 @@ public:
   const CTransform4f& PortPreThinkTransform() const { return xPortPreThinkXf; }
   const CTransform4f& PortPreThinkEndTransform() const { return xPortPreThinkEnd; }
   uint PortPoseTick() const { return xPortPoseTick; }
+  // CStateManager::MovePlatforms' physics move is part of the platform's own step, as in
+  // Remastered's physics step: the end pose follows it. Anything that moves the platform after
+  // that, before the player's move, is a teleport (PortRemasteredGroundRider::RiderCarryTerm).
+  void PortNoteStepEnd(uint tick) {
+    if (xPortPoseTick == tick) xPortPreThinkEnd = GetTransform();
+  }
   // The orientation changed since the stamp (exact compare of the basis).
   bool PortRotatedSinceStamp() const;
 #endif

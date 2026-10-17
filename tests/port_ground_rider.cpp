@@ -536,6 +536,21 @@ int main() {
       const Vec3 c = t.Translation({13.f, 0.f, 1.f});
       assert(Near(c.x, -0.0018f, 1e-4f) && Near(c.y, 0.1047f, 1e-4f) && c.z == 0.f);
     }
+    // Moved after its step ended (a SetTransform between the platform's PreThink and the
+    // player's move): a teleport, nothing carried, rotated or not. The step alone carries.
+    {
+      const Pose s{{10.f, 0.f, 0.f}, Basis()}, e{{10.1f, 0.f, 0.f}, Yaw(2.f)};
+      const Pose warped{{50.f, 0.f, 0.f}, Yaw(90.f)}, shifted{{10.1f, 0.f, .5f}, Yaw(2.f)};
+      const Pose turned{{10.1f, 0.f, 0.f}, Yaw(3.f)};
+      assert(!RiderCarryTerm(s, warped, e, 7, 7, true, true).pending);
+      assert(!RiderCarryTerm(s, shifted, e, 7, 7, true, true).pending);
+      assert(!RiderCarryTerm(s, turned, e, 7, 7, true, true).pending);
+      const CarryTerm t = RiderCarryTerm(s, e, e, 7, 7, true, true);
+      assert(t.pending && t.rotates && Near(t.carry.x, .1f, 1e-6f));
+      // Deactivated after its step and moved in the same tick: a teleport too.
+      assert(RiderCarryTerm(s, warped, e, 7, 7, false, true).pending == false);
+      assert(RiderCarryTerm(s, e, e, 7, 7, false, true).pending);
+    }
     // Tilt and yaw together: the yaw is the heading of column 0's horizontal projection
     // (Orthonormalized 0xd5140), not of row 0. R = RollX(15) * Yaw(20): column 0 is
     // (cos 20, sin 20 cos 15, sin 20 sin 15), heading 19.37 degrees; row 0 would give -20.

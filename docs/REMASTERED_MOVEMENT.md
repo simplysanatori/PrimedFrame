@@ -86,6 +86,13 @@ starts active takes the pose stamp (start and end pose), and a rider on an inact
 platform stamped the previous tick carries that step's delta, never the pose now, so a warp
 while inactive is not carried.
 
+A platform moved after its own step ended (its `PreThink`, then the physics move of
+`CStateManager::MovePlatforms`) but before the player's move was set there by a
+`SetTransform`: a teleport. Remastered teleports the physics object to the new pose before
+its step and resets the previous pose with it (`PrePhysicsUpdate` 0xc543b8,
+`TeleportObject` with `ERetainPrevious` 0), so the rider carries nothing that tick, as if
+the stamp were re-taken at the new pose.
+
 A platform without a DCLN tree (its `CCollidableAABox`) is admitted on the same terms.
 Its box is translated with the platform and never turned
 (`GetTransformedAABox` 0xbf6064), and its pair with the player is `AABox_AABox` 0xbf61b4

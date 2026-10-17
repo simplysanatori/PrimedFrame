@@ -291,6 +291,11 @@ struct Pose {
   Basis basis;
 };
 
+inline bool SamePose(const Pose& a, const Pose& b) {
+  return a.origin.x == b.origin.x && a.origin.y == b.origin.y && a.origin.z == b.origin.z &&
+         SameBasis(a.basis, b.basis);
+}
+
 // RiderCarry's choice of the two poses, with the rotation: the platform's pose at its
 // PreThink start, and now or at that PreThink's end (a deactivated platform). Pending when
 // it moves the rider at all.
@@ -301,6 +306,12 @@ inline CarryTerm RiderCarryTerm(const Pose& start, const Pose& now, const Pose& 
   if (!riderActive) return term;
   const Pose* to = nullptr;
   if (stampTick == tick) {
+    // Moved since its own step ended (`end`: its PreThink, then its physics move in
+    // MovePlatforms), so by a SetTransform: a teleport. Remastered teleports the physics
+    // object to the new pose before the step and resets Previous with it (PrePhysicsUpdate
+    // 0xc543b8, TeleportObject ERetainPrevious 0), so a teleport carries nothing. As if the
+    // stamp were re-taken at the new pose.
+    if (!SamePose(now, end)) return term;
     to = &now;
   } else if (!platformActive && stampTick + 1u == tick) {
     to = &end;
