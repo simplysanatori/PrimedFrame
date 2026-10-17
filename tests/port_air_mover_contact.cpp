@@ -209,6 +209,34 @@ static void TestGroundCheckBand() {
   Check(GroundCheckBand(5.f, -1.f, 4.9f).low > 5.f, "kMS_Jump has an empty band");
 }
 
+// The airborne platform contacts (issue #117 slice 2, B rework): the rider offset belongs to the
+// rider controller's own contacts only, and a DCLN platform (CCollidableOBBoxTree, type 4) never
+// takes the callback's flat-floor early-out.
+static void TestPlatformContacts() {
+  using PortAirMoverContact::RiderOffsetFor;
+  using PortAirMoverContact::FlatFloorEarlyOutApplies;
+  const Vec3 off{0.f, 0.f, 0.05f};
+  const std::uint32_t plat = 0x10000u | 0x42u;
+  const Vec3 own = RiderOffsetFor(plat, plat, true, off);
+  Check(own.z == 0.05f, "the rider's own contact gets its offset");
+  Check(RiderOffsetFor(plat, plat, false, off).z == 0.f, "an invalid controller gives none");
+  Check(RiderOffsetFor(0x10000u | 0x43u, plat, true, off).z == 0.f, "another platform gives none");
+  Check(RiderOffsetFor(0u, 0u, true, off).z == 0.f, "static terrain gives none");
+  // The rising-platform jump: own motion +0.0139 up against a +0.05 carry is approaching the
+  // platform top (dot < 0), so the contact acts; without the offset it separates.
+  const Vec3 up{0.f, 0.f, 1.f};
+  Check(Acts({0.f, 0.f, 0.0139f}, own, up), "rising platform top acts with the rider offset");
+  Check(!Acts({0.f, 0.f, 0.0139f}, {}, up), "and separates without it");
+  Check(FlatFloorEarlyOutApplies(0, false), "AABox takes the early-out");
+  Check(FlatFloorEarlyOutApplies(2, true) && !FlatFloorEarlyOutApplies(2, false),
+        "OBBox only when axis-aligned with up");
+  Check(!FlatFloorEarlyOutApplies(PortAirMoverContact::kCollidableOBBoxTree, true),
+        "an OBBox tree (DCLN platform) never does");
+  Check(!FlatFloorEarlyOutApplies(1, true) && !FlatFloorEarlyOutApplies(3, true) &&
+            !FlatFloorEarlyOutApplies(5, true),
+        "sphere, AABox tree, capsule never do");
+}
+
 int main() {
   TestWorkingNormal();
   TestW25();
@@ -219,6 +247,7 @@ int main() {
   TestTerrainPredicates();
   TestSATReference();
   TestGroundCheckBand();
+  TestPlatformContacts();
   if (gFailures == 0) {
     std::printf("port_air_mover_contact_tests: all passed\n");
   }

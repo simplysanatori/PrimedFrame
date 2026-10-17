@@ -992,6 +992,84 @@ static CAABox PortWidenByCarry(const CAABox& volume, const PortRemasteredGround:
                           rstl::max_val(hi.GetZ(), hi.GetZ() + c.GetZ())));
 }
 
+// Slice 1's admission of a near-list platform to the Remastered producer: active, with a DCLN
+// tree, and not rotated this tick (a stale stamp is not a rotation). Both movers use it.
+static bool PortAdmitPlatform(const CScriptPlatform& platform, uint simTick) {
+  PortRemasteredGroundRider::Candidate candidate;
+  candidate.platform = true;
+  candidate.active = platform.GetActive();
+  candidate.hasTree = platform.HasComplexCollision();
+  candidate.rotated = platform.PortPoseTick() == simTick && platform.PortRotatedSinceStamp();
+  return PortRemasteredGroundRider::Admit(candidate);
+}
+
+// FindOverlap 0xc1a760 orders actors by `id & 0xffff`.
+static void PortSortPlatforms(std::vector< const CScriptPlatform* >& platforms) {
+  std::stable_sort(platforms.begin(), platforms.end(),
+                   [](const CScriptPlatform* a, const CScriptPlatform* b) {
+                     return PortRemasteredGroundRider::NearListBefore(
+                         PortRemasteredGroundRider::OwnerFromRaw(a->GetUniqueId().value),
+                         PortRemasteredGroundRider::OwnerFromRaw(b->GetUniqueId().value));
+                   });
+}
+
+// The admitted platforms' triangles for `box`, appended to `tris` platform by platform
+// (AABox_OBBoxTree 0xc0fc18 / traversal 0xc0fce0: LIFO, root untested, children in index
+// order). Each triangle carries the surface material merged with the object's and its
+// owner; `filter` stands for the player's side of SurfaceCollisionPasses (vt+0x18), as the
+// retail tree collider applies it per triangle. `ends` receives one end index per platform.
+static void PortPlatformTriangles(const std::vector< const CScriptPlatform* >& platforms,
+                                  const CMaterialFilter& f, const CAABox& box,
+                                  std::vector< PortRemasteredGroundWorld::Triangle >& tris,
+                                  std::vector< std::size_t >* ends) {
+  for (std::size_t p = 0; p < platforms.size(); ++p) {
+    const CScriptPlatform& platform = *platforms[p];
+    const CCollidableOBBTreeGroup& group =
+        static_cast< const CCollidableOBBTreeGroup& >(*platform.GetCollisionPrimitive());
+    const CTransform4f xf = platform.GetPrimitiveTransform();
+    const COBBox local = COBBox::FromAABox(box, xf.GetQuickInverse());
+    // The object half is read live: 0xc0fce0 merges the collidable's material
+    // (+0x10..+0x24) at query time, and every MaterialListChanged rewrites it
+    // (CPhysicsState::SetCollisionMaterial 0xc1536c), so a material added since the
+    // constructor counts. The tree group's own copy is the constructor's list.
+    const std::uint64_t objectBits = platform.GetMaterialList().GetValue();
+    const std::uint32_t owner =
+        PortRemasteredGroundRider::OwnerFromRaw(platform.GetUniqueId().value);
+    for (int t = 0; t < group.GetContainer()->NumTrees(); ++t) {
+      const COBBTree& tree = *group.GetOBBTreeAABox(t);
+      PortRemasteredGroundRider::WalkTreeLifo(
+          tree.GetRoot(), [](const COBBTree::CNode& n) { return n.IsLeaf(); },
+          [](const COBBTree::CNode& n) -> const COBBTree::CNode& { return n.GetLeftNode(); },
+          [](const COBBTree::CNode& n) -> const COBBTree::CNode& { return n.GetRightNode(); },
+          [&](const COBBTree::CNode& n) { return local.OBBIntersectsBox(n.GetOBB()); },
+          [&](const COBBTree::CNode& n) {
+            const rstl::vector< ushort >& surfaces = n.GetLeafData().GetSurfaceVector();
+            for (int i = 0; i < int(surfaces.size()); ++i) {
+              const CCollisionSurface surf = tree.GetTransformedSurface(surfaces[i], xf);
+              const std::uint64_t surfaceBits = surf.GetSurfaceFlags();
+              if (!f.Passes(CMaterialList(surfaceBits | objectBits))) {
+                continue;
+              }
+              const CUnitVector3f nrm = surf.GetNormal();
+              tris.push_back(PortRemasteredGroundRider::PlatformTriangle(
+                  {PortRemasteredGroundWorld::Vec3f{surf.GetVert(0).GetX(),
+                                                    surf.GetVert(0).GetY(),
+                                                    surf.GetVert(0).GetZ()},
+                   PortRemasteredGroundWorld::Vec3f{surf.GetVert(1).GetX(),
+                                                    surf.GetVert(1).GetY(),
+                                                    surf.GetVert(1).GetZ()},
+                   PortRemasteredGroundWorld::Vec3f{surf.GetVert(2).GetX(),
+                                                    surf.GetVert(2).GetY(),
+                                                    surf.GetVert(2).GetZ()}},
+                  PortRemasteredGroundWorld::Vec3f{nrm.GetX(), nrm.GetY(), nrm.GetZ()},
+                  surfaceBits, objectBits, owner));
+            }
+          });
+    }
+    if (ends != NULL) ends->push_back(tris.size());
+  }
+}
+
 void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, float dt,
                                          const TEntityList* colliderList) {
   CPhysicsActor& actor = player;
@@ -1026,6 +1104,25 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   }
   CAreaCollisionCache cache(motionVolume);
   BuildAreaCollisionCache(mgr, cache);
+
+  // The platforms slice 1 admits (active, DCLN, unrotated) go through the source producer
+  // with the terrain, as on the grounded mover; every other actor stays on the native path.
+  std::vector< const CScriptPlatform* > platforms;
+  TEntityList nativeList;
+  for (const TUniqueId* id = nearList.begin(); id != nearList.end(); ++id) {
+    const CScriptPlatform* platform = TCastToConstPtr< CScriptPlatform >(mgr.GetObjectById(*id));
+    if (platform != NULL && platform != static_cast< const CActor* >(&actor) &&
+        platform->GetCollisionPrimitive() != NULL && PortAdmitPlatform(*platform, simTick)) {
+      platforms.push_back(platform);
+    } else {
+      nativeList.push_back(*id);
+    }
+  }
+  PortSortPlatforms(platforms);
+  // The rider controller's offset (0xc18f80): its pose delta, read every step whether or not
+  // this tick's carry is the Remastered one.
+  const PortRemasteredGround::Vec3 riderCarry = PortRiderCarry(mgr, player, simTick);
+  const PortAirMoverContact::Vec3 riderOffset = {riderCarry.x, riderCarry.y, riderCarry.z};
 
   // NCollisionUtils is_floor / is_wall (0xc7xxxx). Port contacts carry
   // DefaultCollisionMaterial's kind 0xffffffff; kMT_Floor stands in for kind 0
@@ -1071,7 +1168,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
                         const CMaterialFilter& filter, const CVector3f& delta,
                         PortRemasteredGroundWorld::Query& query,
                         std::vector< PortRemasteredGroundWorld::Triangle >& tris,
-                        std::vector< std::size_t >* groupEnds = NULL) {
+                        std::vector< std::size_t >* groupEnds = NULL,
+                        const std::vector< const CScriptPlatform* >* platforms = NULL) {
       actor.MoveCollisionPrimitive(delta);
       const CAABox box =
           actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform());
@@ -1085,7 +1183,9 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         BuildAreaCollisionCache(mgr, cache);
       }
       rstl::vector< CMetroidAreaCollider::CTerrainTriangle > src;
-      if (cache.HasCacheOverflowed()) {
+      if (!StaticQuery::Allowed(filter)) {
+        // No static half; the platforms below are actors.
+      } else if (cache.HasCacheOverflowed()) {
         const CWorld* world = mgr.GetWorld();
         for (CGameArea::CConstChainIterator it = world->GetChainHead(CWorld::kC_Alive);
              it != CWorld::skGlobalEnd; ++it) {
@@ -1114,6 +1214,9 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         tri.materialBits = t.x24_flags;
         tris.push_back(tri);
       }
+      // The admitted platforms' contacts follow the terrain's (FindOverlap 0xc1a760: static
+      // tree first, then actors by `id & 0xffff`), as on the grounded mover.
+      if (platforms != NULL) PortPlatformTriangles(*platforms, filter, box, tris, NULL);
       query.box.min = {box.GetMinPoint().GetX(), box.GetMinPoint().GetY(),
                        box.GetMinPoint().GetZ()};
       query.box.max = {box.GetMaxPoint().GetX(), box.GetMaxPoint().GetY(),
@@ -1124,12 +1227,12 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     static bool Build(CStateManager& mgr, CAreaCollisionCache& cache, CPhysicsActor& actor,
                       const CMaterialFilter& filter, const CVector3f& delta,
                        std::vector< PortRemasteredGroundWorld::Contact >& out,
-                       bool produceImpacts = true) {
+                       bool produceImpacts = true, const std::vector< const CScriptPlatform* >* platforms = NULL) {
       out.clear();
-      if (!StaticQuery::Allowed(filter)) return false;
+      if (!StaticQuery::Allowed(filter) && (platforms == NULL || platforms->empty())) return false;
       PortRemasteredGroundWorld::Query query;
       std::vector< PortRemasteredGroundWorld::Triangle > tris;
-      Collect(mgr, cache, actor, filter, delta, query, tris);
+      Collect(mgr, cache, actor, filter, delta, query, tris, NULL, platforms);
       if (tris.empty()) {
         return false;
       }
@@ -1195,10 +1298,13 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     CAreaCollisionCache& cache;
     CPhysicsActor& actor;
     const CMaterialFilter& filter;
-    const TEntityList& list;
+    const TEntityList& list; // the native (non-producer) actors
+    const std::vector< const CScriptPlatform* >& platforms;
     bool Blocked(const CVector3f& offset) const {
       std::vector<PortRemasteredGroundWorld::Contact> unused;
-      if (TerrainContacts::Build(mgr, cache, actor, filter, offset, unused, false)) return true;
+      if (TerrainContacts::Build(mgr, cache, actor, filter, offset, unused, false, &platforms)) {
+        return true;
+      }
       actor.MoveCollisionPrimitive(offset);
       const bool b = DetectDynamicCollisionBoolean(*actor.GetCollisionPrimitive(),
                                                     actor.GetPrimitiveTransform(), list, mgr);
@@ -1206,7 +1312,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       return b;
     }
   };
-  const Test test = {mgr, cache, actor, materialFilter, nearList};
+  const Test test = {mgr, cache, actor, materialFilter, nativeList, platforms};
 
   // 0xc6d110's dynamic half for a box (AABX) candidate. The source pair producer
   // (0xbf61b4) and its landing walk have only been proven for the one pair shape the
@@ -1320,8 +1426,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   // below the player was never found, so a moving platform was never landed on).
   struct Ground {
     static bool Check(CStateManager& mgr, CAreaCollisionCache& cache, CPlayer& player,
-                      const CMaterialFilter& filter, const TEntityList& list, float hiZ,
-                      float targetZ) {
+                      const CMaterialFilter& filter, const TEntityList& list,
+                      const std::vector< const CScriptPlatform* >& platforms, float hiZ, float targetZ) {
       CPhysicsActor& actor = player;
       if (player.GetPlayerMovementState() == NPlayer::kMS_OnGround) return true;
       if (player.GetFallingTime() <= .4f) return false;
@@ -1331,7 +1437,9 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
           PortAirMoverContact::GroundCheckBand(targetZ, player.GetStepDownHeight(), hiZ);
       const CVector3f delta(0.f, 0.f, band.probeUp - actor.GetTranslation().GetZ());
       std::vector<PortRemasteredGroundWorld::Contact> terrain;
-      TerrainContacts::Build(mgr, cache, actor, filter, delta, terrain);
+      // Terrain, then the admitted platforms through the same producer; `list` holds the
+      // remaining (native) actors for the dynamic half below.
+      TerrainContacts::Build(mgr, cache, actor, filter, delta, terrain, true, &platforms);
       bool result = false;
       float low = band.low;
       for (const auto& c : terrain) {
@@ -1433,6 +1541,12 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     TUniqueId& riderId;
     PortRemasteredGroundRider::CarryTerm& carry;
     PortRemasteredGroundRider::AirborneRider& airRider;
+    const std::vector< const CScriptPlatform* >& platforms;
+    // get_rider_controller_offset 0xc18f80 for the rider controller (+0x1210) and whether
+    // that controller is valid this tick.
+    PortAirMoverContact::Vec3 riderOffset;
+    std::uint32_t riderOwner;
+    bool riderActive;
 
     // The step's prediction (vt+0x20 -> PredictMotion 0xc23e40): the rider carry is added
     // whole, unscaled by t, to every prediction of the step while it is pending: the full
@@ -1454,9 +1568,10 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     // gravity-and-force block at 0xc6d7f4 (`cbz w25,#0xc6d908`); the wall vertical halving
     // at 0xc6d7cc-0xc6d7f0 runs before that test.
     void Respond(const CMaterialList& material, const CVector3f& primary, const CVector3f& working,
-                 bool w25, bool isFloor, float pointZ, CVector3f& mi, bool flag100 = false) {
+                 bool w25, bool isFloor, float pointZ, CVector3f& mi, bool flag100 = false,
+                 bool flatFloorEarlyOut = true) {
       CVector3f vel = actor.GetVelocityWR();
-      if (PortAirMoverContact::SkipFlatFloor(primary.GetZ(), vel.GetZ(),
+      if (flatFloorEarlyOut && PortAirMoverContact::SkipFlatFloor(primary.GetZ(), vel.GetZ(),
                                             actor.GetTranslation().GetZ(), pointZ, flag100)) {
         return;
       }
@@ -1509,9 +1624,20 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         return;
       }
       const CVector3f pos = actor.GetTranslation();
-      if (Ground::Check(mgr, cache, player, filter, nearList, pos.GetZ() - 0.1f, pos.GetZ())) {
+      if (Ground::Check(mgr, cache, player, filter, nearList, platforms, pos.GetZ() - 0.1f,
+                        pos.GetZ())) {
         grounded = true;
       }
+    }
+
+    const CScriptPlatform* PlatformOf(std::uint32_t owner) const {
+      if (owner == PortRemasteredGroundRider::kTerrainOwner) return NULL;
+      for (std::size_t p = 0; p < platforms.size(); ++p) {
+        if (PortRemasteredGroundRider::OwnerFromRaw(platforms[p]->GetUniqueId().value) == owner) {
+          return platforms[p];
+        }
+      }
+      return NULL;
     }
 
     float Step(float stepDt) {
@@ -1564,7 +1690,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       }
       actor.MoveCollisionPrimitive(CVector3f::Zero());
       std::vector< PortRemasteredGroundWorld::Contact > terrainContacts;
-      TerrainContacts::Build(mgr, cache, actor, filter, hiDelta, terrainContacts);
+      TerrainContacts::Build(mgr, cache, actor, filter, hiDelta, terrainContacts, true, &platforms);
 
       if (!PortAirMoverContact::HasImpacts(terrainContacts.size(), list.GetCount())) {
         // No contact list: the state becomes hi (no response).
@@ -1667,14 +1793,30 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         // has already applied lo to expose its predicted velocity to Respond,
         // so reading actor.GetTranslation() here would silently substitute
         // the accepted bisection sample (AUDIT-3 F1) for the source operand.
-        // For static terrain riderOffset is zero: no actor owns it.
+        // riderOffset is subtracted for the rider controller's own contacts only (0xf948d4
+        // 354-362); static terrain has no owner, so it is zero there.
         const auto disp = PortAirMoverContact::RemainingDisplacement(
             {fullTarget.GetX(),fullTarget.GetY(),fullTarget.GetZ()},
             {startPos.GetX(),startPos.GetY(),startPos.GetZ()});
-        if (!PortAirMoverContact::Acts(disp, {0.f,0.f,0.f}, gate)) {
+        if (!PortAirMoverContact::Acts(
+                disp,
+                PortAirMoverContact::RiderOffsetFor(tc.ownerUid, riderOwner, riderActive,
+                                                    riderOffset),
+                gate)) {
           continue;
         }
         const bool isFloor = Classify::IsFloor(material,CVector3f(gate.x,gate.y,gate.z)) && !tc.flag100;
+        const CScriptPlatform* const owner = PlatformOf(tc.ownerUid);
+        if (owner != NULL) {
+          // The accepted platform contact is the step's collided actor for the native
+          // messaging, as the native contact used to be (first collided actor wins).
+          if (id == kInvalidUniqueId) id = owner->GetUniqueId();
+          if (isFloor) {
+            // Not static and rideable (+0x1220): a CScriptPlatform (INFERRED, as below).
+            riderId = owner->GetUniqueId();
+            stepRider = tc.ownerUid;
+          }
+        }
         // Retain native game messaging, but derive its static entries ONLY
         // from accepted source impacts. Use an actual produced point, never
         // a native contact paired by index or a fabricated point.
@@ -1689,8 +1831,11 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         }
         if (isFloor) floorContact = true;
         hadCollision = true;
+        // A DCLN platform is a CCollidableOBBoxTree (type 4): no flat-floor early-out.
         Respond(material, primary, working, w25,
-                Classify::IsFloor(material, primary) && !tc.flag100, tc.minVertical, mi, tc.flag100);
+                Classify::IsFloor(material, primary) && !tc.flag100, tc.minVertical, mi, tc.flag100,
+                owner == NULL || PortAirMoverContact::FlatFloorEarlyOutApplies(
+                                     PortAirMoverContact::kCollidableOBBoxTree, false));
       }
       // Preserve the port's terrain-then-near-list order. The source iterates
       // candidate/impact order (0xf94e40-0xf9521c), but does not establish a
@@ -1716,7 +1861,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       if (floorContact && !grounded) {
         // The callback gets the bisection's last blocked (hi) sample and the accepted lo
         // state (0xf9524c: x4 = sp+0x100, x5 = sp+0xc8).
-        if (Ground::Check(mgr, cache, player, filter, nearList, startPos.GetZ() + hiDelta.GetZ(),
+        if (Ground::Check(mgr, cache, player, filter, nearList, platforms,
+                          startPos.GetZ() + hiDelta.GetZ(),
                           actor.GetTranslation().GetZ())) {
           grounded = true;
           airRider.Landed(stepRider); // `*param_7 = local_1108` (line 493)
@@ -1730,8 +1876,9 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     }
   };
   Stepper stepper = {mgr,  cache,       player,      actor,    materialFilter,
-                     nearList, test,    mass,        dt,       hadCollision,
-                     grounded, groundList, riderId, carry, airRider};
+                     nativeList, test,  mass,        dt,       hadCollision,
+                     grounded, groundList, riderId, carry, airRider, platforms,
+                     riderOffset, player.PortRider().owner, player.PortRider().Active()};
 
   // CPhysicsCollisionFailsafe (platform/port_collision_failsafe.cpp) over the mover's
   // near list. Filters (CPhysicsActorMP1::SetupPhysicsObject 0xc529f0): the collision
@@ -2353,52 +2500,7 @@ struct GroundTick {
   void PlatformTriangles(const CMaterialFilter& f, const CAABox& box,
                          std::vector< PortRemasteredGroundWorld::Triangle >& tris,
                          std::vector< std::size_t >* ends) const {
-    for (std::size_t p = 0; p < platforms.size(); ++p) {
-      const CScriptPlatform& platform = *platforms[p];
-      const CCollidableOBBTreeGroup& group =
-          static_cast< const CCollidableOBBTreeGroup& >(*platform.GetCollisionPrimitive());
-      const CTransform4f xf = platform.GetPrimitiveTransform();
-      const COBBox local = COBBox::FromAABox(box, xf.GetQuickInverse());
-      // The object half is read live: 0xc0fce0 merges the collidable's material
-      // (+0x10..+0x24) at query time, and every MaterialListChanged rewrites it
-      // (CPhysicsState::SetCollisionMaterial 0xc1536c), so a material added since the
-      // constructor counts. The tree group's own copy is the constructor's list.
-      const std::uint64_t objectBits = platform.GetMaterialList().GetValue();
-      const std::uint32_t owner =
-          PortRemasteredGroundRider::OwnerFromRaw(platform.GetUniqueId().value);
-      for (int t = 0; t < group.GetContainer()->NumTrees(); ++t) {
-        const COBBTree& tree = *group.GetOBBTreeAABox(t);
-        PortRemasteredGroundRider::WalkTreeLifo(
-            tree.GetRoot(), [](const COBBTree::CNode& n) { return n.IsLeaf(); },
-            [](const COBBTree::CNode& n) -> const COBBTree::CNode& { return n.GetLeftNode(); },
-            [](const COBBTree::CNode& n) -> const COBBTree::CNode& { return n.GetRightNode(); },
-            [&](const COBBTree::CNode& n) { return local.OBBIntersectsBox(n.GetOBB()); },
-            [&](const COBBTree::CNode& n) {
-              const rstl::vector< ushort >& surfaces = n.GetLeafData().GetSurfaceVector();
-              for (int i = 0; i < int(surfaces.size()); ++i) {
-                const CCollisionSurface surf = tree.GetTransformedSurface(surfaces[i], xf);
-                const std::uint64_t surfaceBits = surf.GetSurfaceFlags();
-                if (!f.Passes(CMaterialList(surfaceBits | objectBits))) {
-                  continue;
-                }
-                const CUnitVector3f nrm = surf.GetNormal();
-                tris.push_back(PortRemasteredGroundRider::PlatformTriangle(
-                    {PortRemasteredGroundWorld::Vec3f{surf.GetVert(0).GetX(),
-                                                      surf.GetVert(0).GetY(),
-                                                      surf.GetVert(0).GetZ()},
-                     PortRemasteredGroundWorld::Vec3f{surf.GetVert(1).GetX(),
-                                                      surf.GetVert(1).GetY(),
-                                                      surf.GetVert(1).GetZ()},
-                     PortRemasteredGroundWorld::Vec3f{surf.GetVert(2).GetX(),
-                                                      surf.GetVert(2).GetY(),
-                                                      surf.GetVert(2).GetZ()}},
-                    PortRemasteredGroundWorld::Vec3f{nrm.GetX(), nrm.GetY(), nrm.GetZ()},
-                    surfaceBits, objectBits, owner));
-              }
-            });
-      }
-      if (ends != NULL) ends->push_back(tris.size());
-    }
+    PortPlatformTriangles(platforms, f, box, tris, ends);
   }
 
   // The boolean twin (0xbfd2f0 / 0xbfd360): the inclusive SAT, first hit wins.
