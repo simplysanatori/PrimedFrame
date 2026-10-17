@@ -1235,21 +1235,28 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   };
 
   // 0xc6d110: landing checks consume impacts, not the NoPostFilter SAT result.
+  // `hiZ` and `targetZ` are the heights of the callback's two motion states (see
+  // PortAirMoverContact::GroundCheckBand): the probe reaches down to hiZ, at most
+  // GetStepDownHeight() below the target, and the band runs from there to the box bottom
+  // at the target (issue #147: with the band 0.002 deep and the probe 0.002 below the
+  // accepted lo state, a floor that the bisection left up to a sixteenth of the step
+  // below the player was never found, so a moving platform was never landed on).
   struct Ground {
     static bool Check(CStateManager& mgr, CAreaCollisionCache& cache, CPlayer& player,
-                      const CMaterialFilter& filter, const TEntityList& list,
-                      const CVector3f& from, float targetZ) {
+                      const CMaterialFilter& filter, const TEntityList& list, float hiZ,
+                      float targetZ) {
       CPhysicsActor& actor = player;
       if (player.GetPlayerMovementState() == NPlayer::kMS_OnGround) return true;
       if (player.GetFallingTime() <= .4f) return false;
       const float feet = actor.GetCollisionPrimitive()->CalculateAABox(actor.GetPrimitiveTransform())
                              .GetMinPoint().GetZ() + targetZ - actor.GetTranslation().GetZ();
-      const float probeZ = rstl::min_val(rstl::max_val(feet, from.GetZ()), targetZ - .002f);
-      const CVector3f delta(0.f, 0.f, probeZ - actor.GetTranslation().GetZ());
+      const PortAirMoverContact::GroundBand band =
+          PortAirMoverContact::GroundCheckBand(targetZ, player.GetStepDownHeight(), hiZ);
+      const CVector3f delta(0.f, 0.f, band.probeUp - actor.GetTranslation().GetZ());
       std::vector<PortRemasteredGroundWorld::Contact> terrain;
       TerrainContacts::Build(mgr, cache, actor, filter, delta, terrain);
       bool result = false;
-      float low = feet - .002f;
+      float low = band.low;
       for (const auto& c : terrain) {
         const auto work = PortAirMoverContact::WorkingNormal(
             {c.normalX,c.normalY,c.normalZ}, c.hasSecondary,
@@ -1403,13 +1410,15 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       actor.SetVelocityWR(vel);
     }
 
-    // 511-533: post-step 0.1 down probe while rising.
+    // 511-533: post-step 0.1 down probe while rising. The callback's first motion state is
+    // the step's state moved 0.1 down (built at 0xf95348-0xf953b0 from skDownVector * 0.1),
+    // the second the state itself (the call at 0xf953f4 passes them as x4 and x5).
     void PostProbe() {
       if (grounded || actor.GetVelocityWR().GetZ() <= 0.f) {
         return;
       }
       const CVector3f pos = actor.GetTranslation();
-      if (Ground::Check(mgr, cache, player, filter, nearList, pos, pos.GetZ() - 0.1f)) {
+      if (Ground::Check(mgr, cache, player, filter, nearList, pos.GetZ() - 0.1f, pos.GetZ())) {
         grounded = true;
       }
     }
@@ -1607,7 +1616,9 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         MakeCollisionCallbacks(mgr, actor, id, accepted);
       }
       if (floorContact && !grounded) {
-        if (Ground::Check(mgr, cache, player, filter, nearList, startPos,
+        // The callback gets the bisection's last blocked (hi) sample and the accepted lo
+        // state (0xf9524c: x4 = sp+0x100, x5 = sp+0xc8).
+        if (Ground::Check(mgr, cache, player, filter, nearList, startPos.GetZ() + hiDelta.GetZ(),
                           actor.GetTranslation().GetZ())) {
           grounded = true;
         }
@@ -1998,7 +2009,10 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       mgr.DeliverScriptMsg(&actor, platform->GetUniqueId(), kSM_AddPlatformRider);
     }
   }
-  if (!hadCollision) {
+  // 0xc545bc sends OnFloor for object state 1 and Falling only for state 0, never both. A
+  // landing found by the post-step probe has no collision, and Falling after the OnFloor
+  // above would put the player straight back into kMS_Falling for a tick.
+  if (!grounded && !hadCollision) {
     mgr.DeliverScriptMsg(&actor, kInvalidUniqueId, kSM_Falling);
   }
   if (!(fabsf(remaining) < 1e-5f && !stalledFlag)) {

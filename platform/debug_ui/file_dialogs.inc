@@ -437,6 +437,7 @@ void ProcessCardPicks() {
     case kCardPick_Emulator:
       PortGci::SetEmulatorFolder(path);
       sCardStatus = "Emulator folder: " + PortGci::EmulatorFolder();
+      MarkDirty();
       SaveSettings();
       break;
     case kCardPick_ExportFolder:
@@ -494,6 +495,7 @@ void DrawEmulatorCard() {
   ImGui::BeginDisabled(chosen.empty());
   if (ImGui::Button("Auto")) {
     PortGci::SetEmulatorFolder("");
+    MarkDirty();
     SaveSettings();
   }
   ImGui::EndDisabled();
@@ -511,6 +513,7 @@ void DrawEmulatorCard() {
         const std::string path = PortGci::PathString(root);
         if (ImGui::Selectable(label(root).c_str(), path == chosen)) {
           PortGci::SetEmulatorFolder(path);
+          MarkDirty();
           SaveSettings();
         }
       }
@@ -523,6 +526,7 @@ void DrawEmulatorCard() {
   ImGui::BeginDisabled(inGame);
   if (ImGui::Checkbox("Share memory card with emulator", &share)) {
     PortGci::SetShareEmulatorCard(share);
+    MarkDirty();
     SaveSettings();
   }
   ImGui::EndDisabled();

@@ -50,8 +50,9 @@
 //    `result = FloorEligible(other material) && is_floor(other material, other
 //    half's normal)` (NCollisionUtils::is_floor 0xbecb40) and `low = pz`. Both
 //    compares are ordered, so a tie keeps the earlier point, and an accepted point
-//    advances `low` even when the result is false. `low` starts at feet - 0.002
-//    (0xc6d110 computes `fVar13 = feet - 0.002` before the loop) and the caller
+//    advances `low` even when the result is false. `low` starts at
+//    target - GetStepDownHeight() - 0.002 (0xc6d110's `fVar13 - 0.002`, see
+//    PortAirMoverContact::GroundCheckBand) and the caller
 //    hands in whatever the terrain half already found, which is how terrain points
 //    keep priority over dynamic ones.
 //
