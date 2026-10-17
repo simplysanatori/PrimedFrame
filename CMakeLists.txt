@@ -257,6 +257,10 @@ set(MP_PORT_SOURCES
     platform/port_remastered_image.cpp
     platform/port_remastered_table.cpp
     platform/port_remastered_convert.cpp
+    platform/port_remastered_convert_retail.cpp
+    platform/port_remastered_convert_material.cpp
+    platform/port_remastered_convert_pbr.cpp
+    platform/port_remastered_convert_skin.cpp
     platform/port_remastered_ball_light.cpp
     platform/port_remastered_effect.cpp
     platform/port_vfx_particles.cpp
@@ -342,6 +346,8 @@ if(NOT ANDROID)
         platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
         platform/port_remastered_astc_decode.cpp
         platform/port_remastered_convert.cpp platform/port_remastered_cmdl.cpp platform/port_remastered_anuv.cpp
+        platform/port_remastered_convert_retail.cpp platform/port_remastered_convert_material.cpp
+        platform/port_remastered_convert_pbr.cpp platform/port_remastered_convert_skin.cpp
         platform/port_remastered_report.cpp)
     target_include_directories(remastered_effect_tool PRIVATE platform/include)
     target_link_libraries(remastered_effect_tool PRIVATE astcenc ${CMAKE_THREAD_LIBS_INIT})
@@ -591,6 +597,10 @@ if(MP_BUILD_TESTS)
     # it listed these sources itself.
     add_library(mp_test_remastered_convert OBJECT
         platform/port_remastered_convert.cpp
+        platform/port_remastered_convert_retail.cpp
+        platform/port_remastered_convert_material.cpp
+        platform/port_remastered_convert_pbr.cpp
+        platform/port_remastered_convert_skin.cpp
         platform/port_remastered_anuv.cpp
         platform/port_remastered_image.cpp
         platform/port_remastered_pak.cpp)
