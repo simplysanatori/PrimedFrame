@@ -60,17 +60,28 @@ retail rider list and scripting see the player as the retail mover would show it
 Exactly one carry per tick, whichever mover runs. `CStateManager::Update` runs
 `PreThinkObjects` (the platform's `PreThink`: pose stamp, move, `MoveRiders`) before
 the player's `CGameCollision::Move`, so retail `MoveRiders` acts before the tick's mover
-is known. When the player's previous movement tick ran the Remastered grounded mover it
-defers the player's move instead of making it; an admitted Remastered tick drops it for
-the mover's own carry, and every other tick (the retail fallback, airborne, morph ball,
-gate off, a tick the player does not move) applies it before moving, or at the end of
-the tick. Otherwise `MoveRiders` moves the player as retail does and the Remastered
-mover adds no carry that tick. With Remastered movement off nothing is deferred.
+is known. When the player's previous movement tick ran a Remastered mover that owns the
+carry (an admitted grounded tick or an airborne one) it defers the player's move instead
+of making it; a carry-owning Remastered tick drops it for the mover's own carry, and every
+other tick (the retail fallback, morph ball, gate off, a tick the player does not move)
+applies it before moving, or at the end of the tick. Otherwise `MoveRiders` moves the
+player as retail does and the Remastered mover adds no carry that tick. With Remastered
+movement off nothing is deferred.
+
+The airborne mover (slice 2) carries a live rider too: `PredictMotion` 0xc23e40 does not
+test the object state, so the first airborne tick after leaving a ridden platform (the
+rider is still at count 1) adds the platform's pose delta to every prediction of its
+first step (0xf94528 passes the carry mode to the first `DoMovementStep` only), and the
+second airborne tick has no rider. A step that lands writes its rider (`DoMovementStep`
+0xf948d4: the last rideable floor owner of that step's impacts, written on the landing
+branch only; the post-step probe landing writes none), and `MoveObject` sets it when valid.
+Retail `MoveRiders`' own carry of a player who left a platform (its rider list decays
+over 1/6 s) is dropped on those ticks.
 
 Not ported: AABox platforms, rotating platforms (both fall back), the rotation and
-rider-velocity terms of the carry, the airborne mover's rider (no carry on the first
-airborne tick after leaving), the source's extra carry tick after a deactivation, and
-the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
+rider-velocity terms of the carry (the airborne response's rider velocity is still the
+platform's velocity, not `get_rider_controller_offset`), the source's extra carry tick
+after a deactivation, and the not-rideable flag (every admitted platform can be ridden). The failsafe ray stays
 terrain-only. The deferred retail carry is applied after the player's angular step,
 not before it as in `PreThink`, an rm1-only timing difference.
 

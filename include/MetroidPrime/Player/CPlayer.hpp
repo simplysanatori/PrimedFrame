@@ -337,12 +337,12 @@ public:
   PortRemasteredGroundRider::RiderController& PortRider() { return xa3c_rider; }
   // Exactly one platform carry per tick (PortRemasteredGroundRider::PlanCarry): retail
   // CScriptPlatform::MoveRiders runs in PreThink, before the player's mover is chosen, so it
-  // defers the player's carry when the previous movement tick ran the Remastered grounded
-  // mover, and the tick's actual mover then applies or drops it.
+  // defers the player's carry when the previous movement tick ran a carry-owning Remastered
+  // mover (admitted grounded or airborne), and the tick's actual mover then applies or drops it.
   bool PortDefersRiderCarry() const {
-    return PortRemasteredGroundRider::DeferRetailCarry(xa44_lastTickRemasteredGround);
+    return PortRemasteredGroundRider::DeferRetailCarry(xa44_lastTickRemasteredCarry);
   }
-  void PortSetLastTickRemasteredGround(bool ran) { xa44_lastTickRemasteredGround = ran; }
+  void PortSetLastTickRemasteredCarry(bool ran) { xa44_lastTickRemasteredCarry = ran; }
   void PortDeferRiderCarry(const CVector3f& delta, const CQuaternion& rotDelta, bool rotate,
                            uint tick);
   void PortNoteRetailRiderCarry(uint tick) { xa48_retailCarryTick = tick; }
@@ -350,10 +350,10 @@ public:
   void PortApplyDeferredRiderCarry(uint tick);
   void PortDropDeferredRiderCarry() { xa4c_deferredCarryCount = 0; }
   // A save-state load (PortSaveState::Place): no rider, no deferred carry, and the next tick
-  // is not a Remastered grounded one, so nothing from before the load carries across it.
+  // is not a carry-owning Remastered one, so nothing from before the load carries across it.
   void PortResetRiderState() {
     xa3c_rider = PortRemasteredGroundRider::RiderController();
-    xa44_lastTickRemasteredGround = false;
+    xa44_lastTickRemasteredCarry = false;
     xa4c_deferredCarryCount = 0;
   }
   // After the player's move each running tick: a deferred carry no mover consumed (the
@@ -818,7 +818,7 @@ private:
     bool rotate;
   };
   PortRemasteredGroundRider::RiderController xa3c_rider;
-  bool xa44_lastTickRemasteredGround = false;
+  bool xa44_lastTickRemasteredCarry = false;
   uint xa48_retailCarryTick = ~0u;
   int xa4c_deferredCarryCount = 0;
   uint xa50_deferredCarryTick = ~0u;

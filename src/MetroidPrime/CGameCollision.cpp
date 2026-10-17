@@ -844,18 +844,21 @@ void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float 
     player->PortSetRetainedObjectState(PortRemasteredGround::RetainedEntryForTick(
         moverGate, player->PortRetainedObjectState()));
     // Platform riders (issue #117): exactly one carry per tick, decided by the mover this
-    // tick actually runs (PortRemasteredGroundRider::PlanCarry). Only the dispatch below
-    // that enters MoveGroundedRemastered can admit a Remastered grounded tick, and that
-    // function settles the carry itself; every other mover (retail ground, airborne, morph
-    // ball, gate off) takes the retail carry MoveRiders deferred, before it moves, where
-    // retail MoveRiders would have made it. Nothing is deferred unless the previous tick ran
-    // the Remastered grounded mover, so with Remastered movement off this is a no-op.
+    // tick actually runs (PortRemasteredGroundRider::PlanCarry). Only the two dispatches
+    // below that enter MoveGroundedRemastered or MoveAirborneStepped can own the carry, and
+    // those functions settle it themselves; every other mover (retail ground, morph ball,
+    // gate off) takes the retail carry MoveRiders deferred, before it moves, where retail
+    // MoveRiders would have made it. Nothing is deferred unless the previous tick ran a
+    // carry-owning Remastered mover, so with Remastered movement off this is a no-op.
     const bool remasteredGroundDispatch =
         remasteredMoverTick && !actor.IsStandardCollider() &&
         actor.GetMaterialList().HasMaterial(kMT_GroundCollider) &&
         PortRemasteredGround::RetainedAllowsGroundMover(player->PortRetainedObjectState());
-    player->PortSetLastTickRemasteredGround(false);
-    if (!remasteredGroundDispatch) {
+    const bool remasteredAirborneDispatch =
+        remasteredMoverTick && !actor.IsStandardCollider() &&
+        !actor.GetMaterialList().HasMaterial(kMT_GroundCollider);
+    player->PortSetLastTickRemasteredCarry(false);
+    if (!remasteredGroundDispatch && !remasteredAirborneDispatch) {
       player->PortApplyDeferredRiderCarry(mgr.PortSimTick());
     }
   }
@@ -953,6 +956,39 @@ void CGameCollision::MovePlayer(CStateManager& mgr, CPhysicsActor& actor, float 
 // (0xf946ac) - never has dt == worldDt again. The base class has the same two flags
 // (0xc1cdd0, 0xc1ce7c). See build/s-issue117-20261015/airfix/REPORT.md.
 
+// The rider carry of PredictMotion 0xc23e40 for the tick: the ridden platform's pose delta
+// since its PreThink this tick, while the controller is live (set by an earlier tick). Both
+// Remastered player movers read it.
+static PortRemasteredGround::Vec3 PortRiderCarry(CStateManager& mgr, CPlayer& player,
+                                                 uint simTick) {
+  PortRemasteredGroundRider::RiderController& rider = player.PortRider();
+  if (rider.Active()) {
+    const ushort raw = PortRemasteredGroundRider::RawFromOwner(rider.owner);
+    if (const CScriptPlatform* platform = TCastToConstPtr< CScriptPlatform >(
+            mgr.GetObjectById(TUniqueId(raw >> 10, raw & 0x3ff)))) {
+      const CVector3f was = platform->PortPreThinkTransform().GetTranslation();
+      const CVector3f now = platform->GetTranslation();
+      return PortRemasteredGroundRider::PlatformCarry(
+          {was.GetX(), was.GetY(), was.GetZ()}, {now.GetX(), now.GetY(), now.GetZ()},
+          platform->PortPoseTick(), simTick, true);
+    }
+  }
+  return {};
+}
+
+// The carry is part of the predicted motion, so the motion volume covers it (unchanged at 0).
+static CAABox PortWidenByCarry(const CAABox& volume, const PortRemasteredGround::Vec3& carry) {
+  const CVector3f c(carry.x, carry.y, carry.z);
+  const CVector3f lo = volume.GetMinPoint();
+  const CVector3f hi = volume.GetMaxPoint();
+  return CAABox(CVector3f(rstl::min_val(lo.GetX(), lo.GetX() + c.GetX()),
+                          rstl::min_val(lo.GetY(), lo.GetY() + c.GetY()),
+                          rstl::min_val(lo.GetZ(), lo.GetZ() + c.GetZ())),
+                CVector3f(rstl::max_val(hi.GetX(), hi.GetX() + c.GetX()),
+                          rstl::max_val(hi.GetY(), hi.GetY() + c.GetY()),
+                          rstl::max_val(hi.GetZ(), hi.GetZ() + c.GetZ())));
+}
+
 void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, float dt,
                                          const TEntityList* colliderList) {
   CPhysicsActor& actor = player;
@@ -960,7 +996,23 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   const float mass = actor.GetMass();
   const CVector3f entryPos = actor.GetTranslation();
 
-  CAABox motionVolume = actor.GetMotionVolume(dt);
+  // Platform riders (issue #117, slice 2): this mover owns the tick's carry. The retail
+  // carry MoveRiders deferred is dropped, and the rider's pose delta goes into the first
+  // step's predictions instead (0xf94528 passes the carry mode only to the first
+  // DoMovementStep; the retry loop passes 0), unless retail already moved the player.
+  const uint simTick = mgr.PortSimTick();
+  const PortRemasteredGroundRider::CarryPlan carryPlan =
+      PortRemasteredGroundRider::PlanCarry(true, player.PortRetailRiderCarried(simTick));
+  player.PortDropDeferredRiderCarry();
+  player.PortSetLastTickRemasteredCarry(true);
+  PortRemasteredGroundRider::CarryTerm carry;
+  if (carryPlan.remasteredCarry) {
+    carry.carry = PortRiderCarry(mgr, player, simTick);
+    carry.pending = carry.carry.x != 0.f || carry.carry.y != 0.f || carry.carry.z != 0.f;
+  }
+  PortRemasteredGroundRider::AirborneRider airRider;
+
+  CAABox motionVolume = PortWidenByCarry(actor.GetMotionVolume(dt), carry.carry);
   TEntityList nearList;
   if (colliderList != NULL) {
     nearList = *colliderList;
@@ -1376,6 +1428,20 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
     bool& grounded;
     CCollisionInfoList& groundList;
     TUniqueId& riderId;
+    PortRemasteredGroundRider::CarryTerm& carry;
+    PortRemasteredGroundRider::AirborneRider& airRider;
+
+    // The step's prediction (vt+0x20 -> PredictMotion 0xc23e40): the rider carry is added
+    // whole, unscaled by t, to every prediction of the step while it is pending: the full
+    // step, each bisection sample, hi and lo (lo at t = 0 too). Only the first step has it.
+    CMotionState Predict(float t) const {
+      CMotionState motion = actor.PredictMotion_Internal(t);
+      if (carry.pending) {
+        motion.SetTranslation(motion.GetTranslation() +
+                              CVector3f(carry.carry.x, carry.carry.y, carry.carry.z));
+      }
+      return motion;
+    }
 
     // 0xc6d460 ImpactResponseForOffGroundMoverCollider's per-contact response.
     // `primary` classifies (is_floor 0xc6d6b8/0xc6d6c0, is_wall 0xc6d7c4) and `working` is
@@ -1447,7 +1513,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
 
     float Step(float stepDt) {
       const CVector3f startPos = actor.GetTranslation();
-      CMotionState motion = actor.PredictMotion_Internal(stepDt);
+      CMotionState motion = Predict(stepDt);
       // Save the ORIGINAL full-step target before bisection overwrites its
       // candidates (0xf94b30-50, 0xf94f34-0xf94fe4). Prediction is a delta in
       // the port; the source target is relative to previousTranslation.
@@ -1468,7 +1534,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       float half = stepDt * 0.5f;
       float reported = t;
       while (stepDt * 0.05f < half) {
-        const bool blocked = test.Blocked(actor.PredictMotion_Internal(t).GetTranslation());
+        const bool blocked = test.Blocked(Predict(t).GetTranslation());
         half *= 0.5f;
         if (blocked) {
           hiT = t;
@@ -1485,7 +1551,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       // contacts or associate contacts produced by different clipping rules.
       CCollisionInfoList list;
       TUniqueId id = kInvalidUniqueId;
-      const CVector3f hiDelta = actor.PredictMotion_Internal(hiT).GetTranslation();
+      const CVector3f hiDelta = Predict(hiT).GetTranslation();
       actor.MoveCollisionPrimitive(hiDelta);
       TUniqueId dynamicId = kInvalidUniqueId;
       DetectDynamicCollision(*actor.GetCollisionPrimitive(), actor.GetPrimitiveTransform(),
@@ -1499,14 +1565,14 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
 
       if (!PortAirMoverContact::HasImpacts(terrainContacts.size(), list.GetCount())) {
         // No contact list: the state becomes hi (no response).
-        actor.AddMotionState(actor.PredictMotion_Internal(hiT));
+        actor.AddMotionState(Predict(hiT));
         actor.ImpulseWR() = CVector3f::Zero();
         PostProbe();
         return reported;
       }
 
       // Otherwise the state is lo; momentumless impulse seeded from 0x118c.
-      actor.AddMotionState(actor.PredictMotion_Internal(loT));
+      actor.AddMotionState(Predict(loT));
       actor.ImpulseWR() = CVector3f::Zero();
       CVector3f mi = actor.GetMoveImpulseWR();
       const CVector3f stateVel = actor.GetVelocityWR();
@@ -1521,6 +1587,8 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
       // (0xf952d4-0xf95324). SAT touching and impact production are deliberately
       // different predicates, not grounds for overriding the reported time.
       bool floorContact = false;
+      // 0xf948d4 local_1108: this step's rideable floor owner, reset per step (line 331).
+      std::uint32_t stepRider = PortRemasteredGroundRider::kTerrainOwner;
       CCollisionInfoList accepted;
       CCollisionInfoList acceptedDynamic;
       for (int i = 0; i < list.GetCount(); ++i) {
@@ -1560,6 +1628,11 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
           groundList.Add(info, false);
           if (other != NULL) {
             riderId = id;
+            // Not static and can be ridden (+0x1220): of the port's dynamic actors only a
+            // CScriptPlatform is ridden, so the rideable owner is a platform (INFERRED).
+            if (TCastToConstPtr< CScriptPlatform >(other) != NULL) {
+              stepRider = PortRemasteredGroundRider::OwnerFromRaw(id.value);
+            }
           }
         }
 
@@ -1643,6 +1716,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         if (Ground::Check(mgr, cache, player, filter, nearList, startPos.GetZ() + hiDelta.GetZ(),
                           actor.GetTranslation().GetZ())) {
           grounded = true;
+          airRider.Landed(stepRider); // `*param_7 = local_1108` (line 493)
         }
         return reported; // a floor contact skips the post-probe (line 509)
       }
@@ -1654,7 +1728,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   };
   Stepper stepper = {mgr,  cache,       player,      actor,    materialFilter,
                      nearList, test,    mass,        dt,       hadCollision,
-                     grounded, groundList, riderId};
+                     grounded, groundList, riderId, carry, airRider};
 
   // CPhysicsCollisionFailsafe (platform/port_collision_failsafe.cpp) over the mover's
   // near list. Filters (CPhysicsActorMP1::SetupPhysicsObject 0xc529f0): the collision
@@ -1969,6 +2043,7 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
   CVector3f prevVel = actor.GetVelocityWR();
   const CVector3f entryVel = prevVel;
   float remaining = dt - stepper.Step(dt);
+  carry.ConsumeAfterPass();
   bool stalledFlag = false;
   if (remaining > 1e-5f) {
     int iter = 0;
@@ -2001,6 +2076,11 @@ void CGameCollision::MoveAirborneStepped(CStateManager& mgr, CPlayer& player, fl
         break;
       }
     }
+  }
+
+  // 0xf94720: SetRiderController with the rider the landing step wrote, when valid.
+  if (airRider.Controller() != PortRemasteredGroundRider::kTerrainOwner) {
+    player.PortRider().Set(airRider.Controller());
   }
 
   // 0xc545bc CPhysicsActorMP1::PostPhysicsUpdate lands on the mover's object
@@ -2860,36 +2940,10 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   // The rider carry (PredictMotion 0xc23e40): the ridden platform's pose delta since its
   // PreThink this tick, while the controller is live (set by an earlier grounded tick).
   const uint simTick = mgr.PortSimTick();
-  PortRemasteredGround::Vec3 riderCarry = {};
-  {
-    PortRemasteredGroundRider::RiderController& rider = player.PortRider();
-    if (rider.Active()) {
-      const ushort raw = PortRemasteredGroundRider::RawFromOwner(rider.owner);
-      if (const CScriptPlatform* platform = TCastToConstPtr< CScriptPlatform >(
-              mgr.GetObjectById(TUniqueId(raw >> 10, raw & 0x3ff)))) {
-        const CVector3f was = platform->PortPreThinkTransform().GetTranslation();
-        const CVector3f now = platform->GetTranslation();
-        riderCarry = PortRemasteredGroundRider::PlatformCarry(
-            {was.GetX(), was.GetY(), was.GetZ()}, {now.GetX(), now.GetY(), now.GetZ()},
-            platform->PortPoseTick(), simTick, true);
-      }
-    }
-  }
+  const PortRemasteredGround::Vec3 riderCarry = PortRiderCarry(mgr, player, simTick);
 
   TEntityList nearList;
-  CAABox motionVolume = actor.GetMotionVolume(dt);
-  {
-    // The carry is part of the predicted motion, so the volume covers it (unchanged at 0).
-    const CVector3f c(riderCarry.x, riderCarry.y, riderCarry.z);
-    const CVector3f lo = motionVolume.GetMinPoint();
-    const CVector3f hi = motionVolume.GetMaxPoint();
-    motionVolume = CAABox(CVector3f(rstl::min_val(lo.GetX(), lo.GetX() + c.GetX()),
-                                    rstl::min_val(lo.GetY(), lo.GetY() + c.GetY()),
-                                    rstl::min_val(lo.GetZ(), lo.GetZ() + c.GetZ())),
-                          CVector3f(rstl::max_val(hi.GetX(), hi.GetX() + c.GetX()),
-                                    rstl::max_val(hi.GetY(), hi.GetY() + c.GetY()),
-                                    rstl::max_val(hi.GetZ(), hi.GetZ() + c.GetZ())));
-  }
+  const CAABox motionVolume = PortWidenByCarry(actor.GetMotionVolume(dt), riderCarry);
   if (colliderList != NULL) {
     nearList = *colliderList;
   } else {
@@ -2958,7 +3012,7 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   }
   // An admitted tick: the mover's own carry replaces the deferred retail one.
   player.PortDropDeferredRiderCarry();
-  player.PortSetLastTickRemasteredGround(true);
+  player.PortSetLastTickRemasteredCarry(true);
   // FindOverlap 0xc1a760 orders actors by `id & 0xffff`.
   std::stable_sort(platforms.begin(), platforms.end(),
                    [](const CScriptPlatform* a, const CScriptPlatform* b) {

@@ -236,9 +236,10 @@ void CScriptPlatform::MoveRiders(CStateManager& mgr, float dt, bool active,
       }
 #ifdef TARGET_PC
       // Issue #117: the player's carry waits for its mover. When the player's previous
-      // movement tick ran the Remastered grounded mover, the move is recorded instead of
-      // made; the player's tick then applies it or, on an admitted Remastered grounded tick,
-      // drops it for the mover's own carry (PortRemasteredGroundRider::PlanCarry). The
+      // movement tick ran a carry-owning Remastered mover (admitted grounded or airborne),
+      // the move is recorded instead of made; the player's tick then applies it or, on a
+      // carry-owning Remastered tick, drops it for the mover's own carry
+      // (PortRemasteredGroundRider::PlanCarry). The
       // probe, the collided list and the back-off above are unchanged.
       if (CPlayer* const rider = TCastToPtr< CPlayer >(act)) {
         const bool rotate = rider->GetOrbitState() == CPlayer::kOS_NoOrbit;

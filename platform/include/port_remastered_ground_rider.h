@@ -173,26 +173,49 @@ struct CarryTerm {
 // MovePlatform, MoveRiders) BEFORE the player's CGameCollision::Move, so retail MoveRiders
 // has to act before the player's mover is chosen.
 //  - MoveRiders defers the player's retail carry (instead of moving it) when the player's
-//    previous movement tick ran the Remastered grounded mover; otherwise it moves the player
-//    as retail does and the tick is marked as already carried.
-//  - Then, once the tick's mover is known: an admitted Remastered grounded tick drops the
-//    deferred retail carry and adds its own carry unless a retail carry already moved the
-//    player this tick; every other tick (retail fallback, airborne, morph ball, gate off,
-//    a tick whose mover never runs) applies the deferred retail carry and no Remastered one.
-inline bool DeferRetailCarry(bool lastTickRemasteredGround) { return lastTickRemasteredGround; }
+//    previous movement tick ran a Remastered mover that owns the carry: an admitted grounded
+//    tick (MoveObject 0xf923d8) or an airborne one (MoveObject 0xf943b4, slice 2); otherwise
+//    it moves the player as retail does and the tick is marked as already carried.
+//  - Then, once the tick's mover is known: a carry-owning Remastered tick drops the deferred
+//    retail carry and adds its own carry unless a retail carry already moved the player this
+//    tick; every other tick (retail grounded fallback, morph ball, gate off, a tick whose
+//    mover never runs) applies the deferred retail carry and no Remastered one.
+// Both Remastered movers own the carry because both predict through PredictMotion 0xc23e40,
+// which adds the rider's pose delta whenever the rider id is valid (state +0x128): nothing
+// in it tests the object state, so an airborne tick with a live rider is carried too.
+inline bool DeferRetailCarry(bool lastTickRemasteredCarry) { return lastTickRemasteredCarry; }
 
 struct CarryPlan {
   bool applyDeferredRetail = false;
   bool remasteredCarry = false;
 };
-inline CarryPlan PlanCarry(bool admittedRemasteredGround, bool retailCarriedThisTick) {
+inline CarryPlan PlanCarry(bool remasteredCarryMover, bool retailCarriedThisTick) {
   CarryPlan plan;
-  if (!admittedRemasteredGround) {
+  if (!remasteredCarryMover) {
     plan.applyDeferredRetail = true;
     return plan;
   }
   plan.remasteredCarry = !retailCarriedThisTick;
   return plan;
 }
+
+// The airborne mover's rider writer. DoMovementStep 0xf948d4 resets its candidate to the
+// invalid id at the top of each step's impact loop (local_1108, line 331), takes the owner of
+// every is_floor impact that is not flagged (contact+0x29 bit 0), not static
+// (`(type & ~1) != 2`) and can be ridden (+0x1220) (lines 395-412), and writes it out only on
+// the landing branch (`*param_7 = local_1108`, line 493), invalid or not. The post-step probe
+// landing (lines 511-533) writes nothing. MoveObject 0xf943b4 then calls SetRiderController
+// with it only when valid (0xf94720); a tick that does not land leaves the rider to decay.
+struct AirborneRider {
+  std::uint32_t written = kTerrainOwner;
+  bool any = false;
+
+  void Landed(std::uint32_t stepCandidate) {
+    written = stepCandidate;
+    any = true;
+  }
+  // The owner to pass to SetRiderController, or kTerrainOwner for none.
+  std::uint32_t Controller() const { return any ? written : kTerrainOwner; }
+};
 
 } // namespace PortRemasteredGroundRider

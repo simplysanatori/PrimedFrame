@@ -199,45 +199,87 @@ int main() {
   // Exactly one carry per tick, whichever mover runs. This models PlanCarry and
   // DeferRetailCarry over the tick order (MoveRiders in PreThink defers or moves, then the
   // tick's mover applies or drops); it re-implements the call sites' logic rather than
-  // exercising them, so a glue site in MovePlayer or MoveGroundedRemastered that diverges
-  // from this model is not caught here (the rig traces cover that).
+  // exercising them, so a glue site in MovePlayer, MoveGroundedRemastered or
+  // MoveAirborneStepped that diverges from this model is not caught here (the rig traces
+  // cover that). Both Remastered movers (admitted grounded, airborne) own the carry.
   {
     enum Mover { kAdmitted, kFallback, kAirborne, kMorph, kGateOff, kNoMove };
     const Mover script[] = {kGateOff,  kAdmitted, kAdmitted, kFallback, kAdmitted, kAirborne,
                             kAdmitted, kMorph,    kAdmitted, kNoMove,   kAdmitted, kAdmitted,
-                            kFallback, kFallback, kAdmitted, kGateOff,  kAdmitted};
-    bool lastTickRemasteredGround = false;
+                            kFallback, kFallback, kAdmitted, kGateOff,  kAdmitted, kAirborne,
+                            kAirborne, kFallback, kAirborne, kAdmitted, kAirborne, kMorph,
+                            kAirborne, kNoMove,   kAirborne, kGateOff,  kAirborne};
+    bool lastTickRemasteredCarry = false;
     for (Mover mover : script) {
       int carries = 0;
       bool deferred = false;
       bool retailCarried = false;
       // MoveRiders: the player is a retail rider every tick here.
-      if (DeferRetailCarry(lastTickRemasteredGround)) {
+      if (DeferRetailCarry(lastTickRemasteredCarry)) {
         deferred = true;
       } else {
         ++carries;
         retailCarried = true;
       }
-      lastTickRemasteredGround = false;
-      if (mover == kAdmitted) {
+      lastTickRemasteredCarry = false;
+      if (mover == kAdmitted || mover == kAirborne) {
         const CarryPlan plan = PlanCarry(true, retailCarried);
         assert(!plan.applyDeferredRetail);
         deferred = false; // dropped
         if (plan.remasteredCarry) {
           ++carries;
         }
-        lastTickRemasteredGround = true;
+        lastTickRemasteredCarry = true;
       } else if (mover == kFallback) {
         const CarryPlan plan = PlanCarry(false, retailCarried);
         assert(plan.applyDeferredRetail && !plan.remasteredCarry);
       }
-      // Every non-admitted mover applies the deferred carry; a tick whose mover did not run
-      // gets it at PortEndMovementTick.
+      // Every other mover applies the deferred carry; a tick whose mover did not run gets it
+      // at PortEndMovementTick.
       if (deferred) {
         ++carries;
       }
       assert(carries == 1);
     }
+  }
+
+  // The airborne rider writer (0xf948d4 line 493, 0xf94720): only a landing step writes,
+  // and it writes that step's candidate even when it is invalid.
+  {
+    AirborneRider none;
+    assert(none.Controller() == kTerrainOwner);
+    AirborneRider landed;
+    landed.Landed(OwnerFromRaw(0x0412));
+    assert(landed.Controller() == OwnerFromRaw(0x0412));
+    AirborneRider terrain;
+    terrain.Landed(kTerrainOwner);
+    assert(terrain.Controller() == kTerrainOwner);
+  }
+
+  // Jumping off a ridden platform: the landing tick sets the rider (count 2), the
+  // PostSimulation decay leaves it live for exactly one more tick, so the first airborne tick
+  // is carried once and the second is not.
+  {
+    RiderController rider;
+    rider.Set(OwnerFromRaw(0x0412)); // grounded tick T
+    rider.Decay();                   // end of T
+    assert(rider.Active());          // T+1: the jump tick, carried
+    rider.Decay();
+    assert(!rider.Active());         // T+2: airborne, not carried
+  }
+
+  // The airborne first step's carry: added unscaled to every prediction of that step, t = 0
+  // included, and gone once the step is done.
+  {
+    CarryTerm carry;
+    carry.carry = {0.f, 0.f, .5f};
+    carry.pending = true;
+    const Vec3 lo = carry.Apply({0.f, 0.f, 0.f});
+    const Vec3 hi = carry.Apply({1.f, 0.f, -.25f});
+    assert(lo.z == .5f && hi.x == 1.f && hi.z == .25f);
+    carry.ConsumeAfterPass();
+    const Vec3 retry = carry.Apply({1.f, 0.f, -.25f});
+    assert(retry.z == -.25f);
   }
   return 0;
 }
