@@ -521,6 +521,17 @@
   The opacity is the crosshair's alpha, so 100% draws it at full strength (the
   game's own alpha is 19%).
   Original experience ignores both.
+- Crosshair style (Video > Display, `crosshair_style`, `MP_CROSSHAIR_STYLE`, `classic`
+  or `remastered`, default `classic`; console `crosshair style ...`): `remastered` draws
+  Remastered's combat aiming cursor in place of the ring, built by the port (no Remastered
+  assets): a small soft centre dot and three tapered spikes turned 120 degrees apart (one up,
+  two down), tips toward the centre. Like Remastered's, the dot and spikes shrink with the
+  distance to what the aim ray meets (full size at 1 m, 0.45 and 0.33 at 50 m or more) and the
+  colour is cyan, orange in X-Ray, pale blue in Thermal, fading to red over a living, active,
+  targetable enemy (a `CPatterned`, or the owner of the collision actor hit). 100% crosshair
+  size is Remastered's size at a 55 degree vertical FOV (it scales with the screen height);
+  the size slider scales it. A custom crosshair colour replaces the idle colour, opacity
+  multiplies the alpha. Classic under Original experience.
 - Secondary crosshairs (Video > Display, `secondary_crosshairs`, `MP_SECONDARY_CROSSHAIRS`,
   default on): off hides the next-target reticles: the combat visor's seeker and the
   X-ray ring and thermal crosshair on the target Lock-On would pick. The lock-on

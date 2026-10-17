@@ -230,6 +230,11 @@ void SetHudOpacity(HudOpacityPart part, int percent);
 const int kCrosshairOpacityMin = 0;
 const int kCrosshairOpacityMax = 100;
 int CrosshairOpacity();
+// The centre crosshair's look: the game's model, or a procedural take on Remastered's design
+// (crosshair_style=, MP_CROSSHAIR_STYLE). Classic under Original experience.
+enum ECrosshairStyle { kCrosshairStyle_Classic, kCrosshairStyle_Remastered };
+ECrosshairStyle CrosshairStyle();
+void SetCrosshairStyle(ECrosshairStyle style);
 bool CrosshairColor(float rgb[3]);
 // Auto-aim: without Lock-On the gun picks the target nearest the screen centre
 // (CPlayer::UpdateAimTarget). Off = aim only at a locked target. On under Original experience.

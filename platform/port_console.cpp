@@ -2198,9 +2198,18 @@ void CmdHudOpacity() {
 }
 
 void CmdCrosshair() {
+  if (sCmd.args.size() > 1 && sCmd.args[1] == "style") {
+    const std::string style = sCmd.args.size() > 2 ? sCmd.args[2] : "";
+    if (style != "classic" && style != "remastered") {
+      return Finish("usage: crosshair style classic|remastered");
+    }
+    PortDebug::SetCrosshairStyle(style == "remastered" ? PortDebug::kCrosshairStyle_Remastered
+                                                       : PortDebug::kCrosshairStyle_Classic);
+    return Finish();
+  }
   const int value = sCmd.args.size() > 1 ? std::atoi(sCmd.args[1].c_str()) : 0;
   if (value < PortDebug::kCrosshairSizeMin || value > PortDebug::kCrosshairSizeMax) {
-    return Finish("usage: crosshair <25..100>");
+    return Finish("usage: crosshair <25..100> | crosshair style classic|remastered");
   }
   PortDebug::SetCrosshairSize(value);
   Finish();
@@ -3535,7 +3544,7 @@ const CommandSpec kCommands[] = {
     {"scanspread", CmdScanSpread, nullptr,
      "scanspread <0..100>        how far the widescreen HUD moves the scan panels out"},
     {"crosshair", CmdCrosshair, nullptr,
-     "crosshair <25..100>        mouse/twin-stick crosshair size in percent"},
+     "crosshair <25..100> | style classic|remastered   mouse/twin-stick crosshair size in percent, or its style"},
     {"hudopacity", CmdHudOpacity, nullptr,
      "hudopacity <xray|thermal|scan|energy> <visor|0..100>  that HUD's opacity, or Visor Opacity's"},
     {"helmet", CmdHelmetVisorFx, nullptr,

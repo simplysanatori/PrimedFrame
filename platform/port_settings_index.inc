@@ -120,6 +120,7 @@
 {"Video", "Display", "HUD and view", "Widescreen HUD (spread to edges)", "hud widescreen edges stretch"},
 {"Video", "Display", "HUD and view", "HUD scale", "hud size interface scale"},
 {"Video", "Display", "HUD and view", "Scan image spread", "scan images panels widescreen centre center edges touch"},
+{"Video", "Display", "HUD and view", "Crosshair style", "crosshair reticle classic remastered look"},
 {"Video", "Display", "HUD and view", "Crosshair opacity", "crosshair transparency alpha"},
 {"Video", "Display", "HUD and view", "Custom crosshair colour", "crosshair color reticle tint"},
 {"Video", "Display", "HUD and view", "Secondary crosshairs", "crosshair secondary extra"},

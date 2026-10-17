@@ -84,6 +84,7 @@ extern int sHudScale;
 extern int sScanSpread;
 extern int sHudOpacity[PortDebug::kHudOpacityPartCount]; // indexed by PortDebug::HudOpacityPart
 extern int sCrosshairOpacity;
+extern PortDebug::ECrosshairStyle sCrosshairStyle;
 extern bool sCrosshairCustomColor;
 extern float sCrosshairColor[3];
 extern bool sHideHelmet;

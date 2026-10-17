@@ -485,6 +485,17 @@ int CrosshairOpacity() {
   return sOriginalExperience ? kCrosshairOpacityMax : sCrosshairOpacity;
 }
 
+ECrosshairStyle CrosshairStyle() {
+  EnsureInitialized();
+  return sOriginalExperience ? kCrosshairStyle_Classic : sCrosshairStyle;
+}
+
+void SetCrosshairStyle(ECrosshairStyle style) {
+  EnsureInitialized();
+  sCrosshairStyle = style;
+  MarkDirty();
+}
+
 bool CrosshairColor(float rgb[3]) {
   EnsureInitialized();
   if (!sCrosshairCustomColor || sOriginalExperience) {
