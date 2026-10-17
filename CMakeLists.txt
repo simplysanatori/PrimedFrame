@@ -133,7 +133,8 @@ list(APPEND MP_GAME_SOURCES
     platform/port_remastered_movers.cpp
     platform/port_raster_font.cpp
     platform/port_morph_ball.cpp
-    platform/port_automapper.cpp)
+    platform/port_automapper.cpp
+    platform/port_particle_vfx_read.cpp)
 # The port has an explicit source manifest, including registration-only and
 # shim-dependent translation units. Link those objects directly on both ELF and
 # COFF rather than relying on archive extraction or suppressing duplicate symbols.
