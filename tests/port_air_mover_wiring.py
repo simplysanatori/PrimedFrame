@@ -56,7 +56,8 @@ class Wiring(unittest.TestCase):
         self.assertEqual(air.count("PortRemasteredGround::PreMomentum("), 1)
         self.assertEqual(air.count("PortRemasteredGround::PostMomentum("), 1)
         self.assertIn("PortRemasteredGround::PredictTranslation(", air)
-        self.assertNotIn("CMotionState motion = actor.PredictMotion_Internal(t);", air)
+        # The only PredictMotion_Internal left is the angular base inside Stepper::Predict.
+        self.assertEqual(air.count("PredictMotion_Internal("), 1)
 
     def test_platforms_through_the_producer(self):
         # Admitted platforms join the terrain query in every airborne query; the native

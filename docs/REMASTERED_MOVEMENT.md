@@ -94,11 +94,15 @@ bisection test, the landing check and the post-step probe. The separation gate s
 rider controller's own contacts only, and a platform (a `CCollidableOBBoxTree`, type 4)
 never takes the response's flat-floor early-out (0xc6d4e8). Other actors stay native.
 
-Known gap: the airborne mover still integrates forces inside each step's prediction, where
-the source folds them once per tick (Pre 0xc59814 at 0xf9447c, Post 0xc5994c at 0xf94884).
-A step blocked at t = 0 therefore adds no force, so a jump off a platform rising faster
-than the jump's first ticks rides it with a frozen vertical speed until the jump state
-changes (about 10 ticks on the Monitor Tunnel piston).
+The airborne integrator is split as in the source. Pre (0xc59814, called at 0xf9447c) folds
+the impulse into the momentum once, before the first step. The step predictions add no force
+(`t * (v + J/m)` only), so a step blocked at t = 0 loses nothing. Post (0xc5994c, at 0xf94884)
+folds `dt * (force + persistent force)` once, after the failsafe and the tunnel check, so the
+result does not depend on the step count.
+
+The one-tick carry after a platform deactivates (the stamp rule in `CScriptPlatform::PreThink`
+and `RiderCarry`) is unit-tested only (`tests/port_ground_rider.cpp`); no rig run deactivates
+a ridden platform, and the mapping of the source's update step to PreThink is inferred.
 
 Not ported: AABox platforms, rotating platforms (both fall back), the rotation and
 rider-velocity terms of the carry (the airborne response's rider velocity is still the
