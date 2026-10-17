@@ -5,6 +5,7 @@
 #undef NDEBUG
 #endif
 #include <cassert>
+#include <initializer_list>
 #include <vector>
 
 using namespace PortRemasteredGroundRider;
@@ -111,21 +112,52 @@ int main() {
     assert(none.Apply({1.f, 2.f, 3.f}).z == 3.f);
   }
 
-  // 5. Rider choice: the snap's list when the snap ran, else the pass's; the first non-self
-  // owned, rideable contact; no normal test.
+  // 5. Rider choice over the one result list: the first non-self owned, rideable contact; no
+  // normal test.
   {
-    W::Result snap, pass;
-    snap.contacts = {Owned(kTerrainOwner), Owned(0x10011, true), Owned(0x10022), Owned(0x10033)};
-    snap.contacts[2].normalZ = -1.f; // a ceiling still counts
-    pass.contacts = {Owned(0x10044)};
+    W::Result list;
+    list.contacts = {Owned(kTerrainOwner), Owned(0x10011, true), Owned(0x10022), Owned(0x10033)};
+    list.contacts[2].normalZ = -1.f; // a ceiling still counts
     auto all = [](std::uint32_t) { return true; };
-    assert(PickRider(true, snap, pass, all) == 0x10022u);
-    assert(PickRider(false, snap, pass, all) == 0x10044u);
-    assert(PickRider(true, snap, pass, [](std::uint32_t o) { return o != 0x10022u; }) ==
-           0x10033u);
+    assert(PickRider(list, all) == 0x10022u);
+    assert(PickRider(list, [](std::uint32_t o) { return o != 0x10022u; }) == 0x10033u);
     W::Result terrainOnly;
     terrainOnly.contacts = {Owned(kTerrainOwner)};
-    assert(PickRider(true, terrainOnly, pass, all) == kTerrainOwner);
+    assert(PickRider(terrainOnly, all) == kTerrainOwner);
+    assert(PickRider(W::Result(), all) == kTerrainOwner);
+  }
+
+  // 5b. The list is appended, never replaced (copy_collision_info_list_into 0xc18c00): every
+  // pass in order, then the snap, as 0xf923d8 builds it.
+  {
+    auto all = [](std::uint32_t) { return true; };
+    auto build = [](std::initializer_list< W::Result > parts) {
+      W::Result list;
+      for (const W::Result& part : parts) {
+        AppendContacts(list, part);
+      }
+      return list;
+    };
+    W::Result terrain, platA, platB;
+    terrain.contacts = {Owned(kTerrainOwner)};
+    platA.contacts = {Owned(kTerrainOwner), Owned(0x100AA)};
+    platB.contacts = {Owned(0x100BB)};
+    // The snap hit only terrain, but a pass touched platform A: A is the rider.
+    assert(PickRider(build({platA, terrain}), all) == 0x100AAu);
+    // Pass 1 terrain, pass 2 platform A, snap platform B: the first, A, wins.
+    assert(PickRider(build({terrain, platA, platB}), all) == 0x100AAu);
+    // Platforms across passes: the earlier pass's wins.
+    assert(PickRider(build({platB, platA}), all) == 0x100BBu);
+    // Standing on terrain and brushing a platform's wall in a pass: no normal test, it rides.
+    W::Result wall;
+    wall.contacts = {Owned(kTerrainOwner), Owned(0x100CC)};
+    wall.contacts[1].normalZ = 0.f;
+    wall.contacts[1].normalX = 1.f;
+    assert(PickRider(build({wall, terrain}), all) == 0x100CCu);
+    // Appending keeps each part's order and count.
+    const W::Result joined = build({terrain, platA, platB});
+    assert(joined.contacts.size() == 4 && joined.contacts[2].ownerUid == 0x100AAu &&
+           joined.contacts[3].ownerUid == 0x100BBu);
   }
 
   // 6. Decay 2 -> 1 -> 0 across contactless ticks; re-contact resets to 2.
@@ -164,8 +196,11 @@ int main() {
     assert(dead.z == 0.f);
   }
 
-  // Exactly one carry per tick, whichever mover runs. A simulation of the tick order:
-  // MoveRiders (PreThink) defers or moves, then the tick's mover applies or drops.
+  // Exactly one carry per tick, whichever mover runs. This models PlanCarry and
+  // DeferRetailCarry over the tick order (MoveRiders in PreThink defers or moves, then the
+  // tick's mover applies or drops); it re-implements the call sites' logic rather than
+  // exercising them, so a glue site in MovePlayer or MoveGroundedRemastered that diverges
+  // from this model is not caught here (the rig traces cover that).
   {
     enum Mover { kAdmitted, kFallback, kAirborne, kMorph, kGateOff, kNoMove };
     const Mover script[] = {kGateOff,  kAdmitted, kAdmitted, kFallback, kAdmitted, kAirborne,

@@ -121,13 +121,19 @@ struct RiderController {
   bool Active() const { return count > 0 && owner != kTerrainOwner; }
 };
 
-// The scan after Post: the snap's list when the snap ran its CheckCollision, else the last
-// MoveAlongGround pass's. The first non-static contact (the side whose owner is not the
-// mover) that can be ridden wins; no normal or floor test.
+// The mover's result list (0xf923d8 +0x12a0): cleared once when the tick starts, then every
+// MoveAlongGround pass's list and finally the snap's are appended to it, in that order
+// (copy_collision_info_list_into 0xc18c00 appends and never clears its destination).
+inline void AppendContacts(PortRemasteredGroundWorld::Result& into,
+                           const PortRemasteredGroundWorld::Result& from) {
+  into.contacts.insert(into.contacts.end(), from.contacts.begin(), from.contacts.end());
+}
+
+// The scan after Post (0xf92808-0xf92860) over that combined list: the first non-static
+// contact (the side whose owner is not the mover) that can be ridden wins, whichever pass or
+// the snap produced it; no normal or floor test, so a wall contact counts.
 template < class Rideable >
-std::uint32_t PickRider(bool snapRan, const PortRemasteredGroundWorld::Result& snapList,
-                        const PortRemasteredGroundWorld::Result& passList, Rideable rideable) {
-  const PortRemasteredGroundWorld::Result& list = snapRan ? snapList : passList;
+std::uint32_t PickRider(const PortRemasteredGroundWorld::Result& list, Rideable rideable) {
   for (const PortRemasteredGroundWorld::Contact& c : list.contacts) {
     if (!c.self && c.ownerUid != kTerrainOwner && rideable(c.ownerUid)) {
       return c.ownerUid;

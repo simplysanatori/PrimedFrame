@@ -2246,11 +2246,11 @@ struct GroundTick {
   std::vector< const CScriptPlatform* > platforms;
   // PredictMotion's rider carry, pending until the first MoveAlongGround pass.
   PortRemasteredGroundRider::CarryTerm carry;
-  // The lists the rider scan after Post reads (0xf92808): the last pass's collision list
-  // and, when the snap ran its CheckCollision, the snap's.
-  PortRemasteredGroundWorld::Result passContacts;
-  PortRemasteredGroundWorld::Result snapContacts;
-  bool snapRan = false;
+  // The mover's result list (+0x12a0) the rider scan after Post reads (0xf92808): empty
+  // when the tick starts, then every MoveAlongGround pass's list and the snap's appended.
+  PortRemasteredGroundWorld::Result riderContacts;
+  // PlatformBlocked's triangles, reused by every boolean query of the tick.
+  mutable std::vector< PortRemasteredGroundWorld::Triangle > blockedScratch;
 
   const CVector3f Up() const { return CVector3f(0.f, 0.f, 1.f); }
 
@@ -2317,7 +2317,8 @@ struct GroundTick {
   // The boolean twin (0xbfd2f0 / 0xbfd360): the inclusive SAT, first hit wins.
   bool PlatformBlocked(const CMaterialFilter& f, const CAABox& box) const {
     if (platforms.empty()) return false;
-    std::vector< PortRemasteredGroundWorld::Triangle > tris;
+    std::vector< PortRemasteredGroundWorld::Triangle >& tris = blockedScratch;
+    tris.clear();
     PlatformTriangles(f, box, tris, NULL);
     if (tris.empty()) return false;
     return PortRemasteredGroundWorld::QueryTerrain(QueryFor(box, actor), tris.data(), tris.size(),
@@ -2531,8 +2532,8 @@ struct GroundTick {
     PortRemasteredGroundWorld::Result contacts;
     const bool blockedCollides =
         TerrainContacts(Predict(search.blockedSample).GetTranslation(), contacts);
-    // This pass's collision list, copied into the mover's result list (0xf923d8 ~L187).
-    passContacts = contacts;
+    // This pass's collision list, appended to the mover's result list (0xf923d8 ~L187).
+    PortRemasteredGroundRider::AppendContacts(riderContacts, contacts);
     const PortRemasteredGround::GroundSample pick =
         PortRemasteredGround::DecideGroundSample(search.anyFree, blockedCollides, search.consumed);
 
@@ -2815,9 +2816,9 @@ struct GroundTick {
     if (blockedDown) {
       PortRemasteredGroundWorld::Result contacts;
       const bool collided = TerrainContacts(targetDelta - Up() * distance, contacts);
-      // The snap's single CheckCollision fills the mover's result list (0xf934ec L156).
-      snapRan = true;
-      snapContacts = contacts;
+      // The snap's single CheckCollision is appended to the mover's result list after the
+      // passes' (0xf934ec L156; 0xf923d8 L241-243).
+      PortRemasteredGroundRider::AppendContacts(riderContacts, contacts);
       if (collided) {
         const CAABox targetBox = BoxAt(targetDelta);
         PairView view;
@@ -3110,11 +3111,11 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   actor.ImpulseWR() = CVector3f::Zero();
   actor.ClearForcesAndTorques();
 
-  // 0xf92808-0xf92860: the first non-static contact of the snap's list (or the last pass's)
-  // becomes the rider, count 2 (SetRiderController 0xc1631c). Every object here is an
-  // admitted platform, so all can be ridden.
+  // 0xf92808-0xf92860: the first non-static contact of the result list (every pass, then
+  // the snap) becomes the rider, count 2 (SetRiderController 0xc1631c). Every object here
+  // is an admitted platform, so all can be ridden.
   const std::uint32_t riderOwner = PortRemasteredGroundRider::PickRider(
-      tick.snapRan, tick.snapContacts, tick.passContacts, [](std::uint32_t) { return true; });
+      tick.riderContacts, [](std::uint32_t) { return true; });
   if (riderOwner != PortRemasteredGroundRider::kTerrainOwner) {
     player.PortRider().Set(riderOwner);
   }
@@ -3148,8 +3149,7 @@ void CGameCollision::MoveGroundedRemastered(CStateManager& mgr, CPlayer& player,
   // platform the player stands on, so the platform's retail state (x82e_ridingPlatform,
   // x318_riders: the camera, the retail fallback's carry) matches the retail mover's.
   if (riderOwner != PortRemasteredGroundRider::kTerrainOwner) {
-    const PortRemasteredGroundWorld::Result& list =
-        tick.snapRan ? tick.snapContacts : tick.passContacts;
+    const PortRemasteredGroundWorld::Result& list = tick.riderContacts;
     bool floor = false;
     for (const PortRemasteredGroundWorld::Contact& c : list.contacts) {
       if (!c.self && c.ownerUid == riderOwner &&

@@ -333,7 +333,7 @@ public:
   // Remastered grounded mover on moving platforms (issue #117, slice 1). The rider
   // controller the mover sets after its snap (SetRiderController 0xc1631c), decayed at the
   // end of every movement tick (PortEndMovementTick). Port-only, never serialized: a
-  // save-state load rebuilds the player with no rider.
+  // save-state load clears it (PortResetRiderState).
   PortRemasteredGroundRider::RiderController& PortRider() { return xa3c_rider; }
   // Exactly one platform carry per tick (PortRemasteredGroundRider::PlanCarry): retail
   // CScriptPlatform::MoveRiders runs in PreThink, before the player's mover is chosen, so it
@@ -349,6 +349,13 @@ public:
   bool PortRetailRiderCarried(uint tick) const { return xa48_retailCarryTick == tick; }
   void PortApplyDeferredRiderCarry(uint tick);
   void PortDropDeferredRiderCarry() { xa4c_deferredCarryCount = 0; }
+  // A save-state load (PortSaveState::Place): no rider, no deferred carry, and the next tick
+  // is not a Remastered grounded one, so nothing from before the load carries across it.
+  void PortResetRiderState() {
+    xa3c_rider = PortRemasteredGroundRider::RiderController();
+    xa44_lastTickRemasteredGround = false;
+    xa4c_deferredCarryCount = 0;
+  }
   // After the player's move each running tick: a deferred carry no mover consumed (the
   // player did not move this tick) is applied, as retail would have, then the rider decays.
   void PortEndMovementTick(uint tick);

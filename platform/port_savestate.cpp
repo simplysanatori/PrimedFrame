@@ -413,6 +413,8 @@ void Place(CStateManager& mgr) {
   // tick restores validity; until then the grounded Remastered mover stands aside (see
   // CGameCollision.cpp).
   player.PortInvalidateRetainedObjectState();
+  // Same for the platform rider state (issue #117): no rider and no deferred carry survive.
+  player.PortResetRiderState();
   const Header& h = sPendingHeader;
   const CVector3f pos(h.position[0], h.position[1], h.position[2]);
   CVector3f look(h.forward[0], h.forward[1], 0.f);

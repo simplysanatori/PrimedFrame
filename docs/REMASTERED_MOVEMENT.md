@@ -48,7 +48,9 @@ unit-tested by `tests/port_ground_rider.cpp`). Every query appends their triangl
 after the terrain's, platforms ordered by object index (`FindOverlap` 0xc1a760); the
 tree walk is the source's (0xc0fce0: LIFO, root untested) and each triangle carries the
 surface material merged with the platform's. After `Post` the first platform contact of
-the snap's list (else the last pass's) becomes the rider (`SetRiderController`
+the mover's result list (every `MoveAlongGround` pass's contacts, then the snap's,
+appended in that order: `copy_collision_info_list_into` 0xc18c00 never clears) becomes
+the rider (`SetRiderController`
 0xc1631c, count 2, decayed 2 → 1 → 0 at the end of each movement tick), and the next
 tick's prediction adds the platform's pose delta since its `PreThink`, whole, until the
 first `MoveAlongGround` pass applies it (`PredictMotion` 0xc23e40). The port also sends
