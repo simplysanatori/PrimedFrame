@@ -29,6 +29,9 @@
 #include <vector>
 
 #include <SDL3/SDL_iostream.h>
+#if defined(__GLIBC__) || defined(__ANDROID__)
+#include <malloc.h>
+#endif
 #include <absl/container/flat_hash_map.h>
 #include <absl/container/flat_hash_set.h>
 #include <fmt/format.h>
@@ -1450,6 +1453,13 @@ static uint32_t evict_idle_pipelines(uint32_t minIdle, uint32_t* totalOut) {
 static void log_eviction(const char* reason, uint32_t minIdle) {
   uint32_t kept = 0;
   const uint32_t evicted = evict_idle_pipelines(minIdle, &kept);
+#if defined(__GLIBC__) || defined(__ANDROID__)
+  // Dawn and the driver free the pipelines' state into the malloc heap, which keeps the pages
+  // unless asked to give them back.
+  if (evicted != 0) {
+    malloc_trim(0);
+  }
+#endif
   Log.info("pipeline cache: evicted {} pipelines unused for {} frames ({}), {} kept", evicted, minIdle, reason, kept);
 }
 
