@@ -997,6 +997,10 @@ CIntElement* CParticleDataFactory::GetIntElement(CInputStream& in) {
     const bool loop = GetBool(in);
     return rs_new CIEFrameIndexFromAnimationTime(start, count, divisor, loop);
   }
+  case SBIG('PLPT'): {
+    const int offset = in.ReadLong();
+    return rs_new CIEPortLifetimePercent(offset, GetIntElement(in));
+  }
 #endif
   case SBIG('PULS'): {
     CIntElement* a = GetIntElement(in);

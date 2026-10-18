@@ -1068,6 +1068,13 @@ public:
     if (value.fourcc == F("GRAD") && type == Type::Color) {
       return Gradient(value, out, why);
     }
+    // ILPT(n) rounds n% of the lifetime as Remastered does: the port-only PLPT, where the
+    // property's lifetime context is known (LifetimeOffset); elsewhere retail's ILPT.
+    if (value.fourcc == F("ILPT") && type == Type::Int && value.args.size() == 1 && m_lifetimeOffset >= 0) {
+      AppendBE32(out, F("PLPT"));
+      AppendBE32(out, uint32_t(m_lifetimeOffset));
+      return Element(value.args[0], Type::Int, out, why);
+    }
     // KEWS: an LE u32 key count, then that many LE floats over a swoosh's
     // points (newest 0, oldest 1). Written as the port-only KEWS around percent
     // keyframes: CREPortSwooshNodeTime reads them at the point's node key
@@ -1335,12 +1342,10 @@ public:
   // GRAD: u8 stop count, per stop four halves (RGBA) and an f32 position,
   // then what the position runs over: ILPT(CNST(n)) (n% of the particle's
   // life) or CNST(n) (n frames), then a byte (1: the gradient repeats).
-  // A swoosh's gradient is written as the port-only PGRD element, which evaluates Remastered's
-  // CCEGradient exactly on the segment's age (Remastered feeds a swoosh COLR the age in frames,
-  // UpdateExisting 0x27d590). The period stays the source's own int element (ILPT(CNST n) or
-  // CNST n). A generator's gradient is written as retail's percent keyframes (KEYP, 101 keys over
-  // the life): its time base in Remastered is not verified (compiled var contexts), and KEYP
-  // reproduces the bake the importer shipped before.
+  // Written as the port-only PGRD element, which evaluates Remastered's CCEGradient (0x2c8d48)
+  // exactly on the age in frames Remastered feeds it: a particle's age (UpdateExistingParticles
+  // 0x24a26c) or a swoosh segment's (UpdateExisting 0x27d590). The period stays the source's own
+  // int element: CNST n, or ILPT(CNST n) as the port-only PLPT (Remastered's rounding).
   bool Gradient(const EffectValue& value, std::vector<uint8_t>& out, std::string& why) const {
     if (value.args.size() != 1 || value.args[0].kind != EffectValue::Kind::Raw) {
       why = "GRAD without its stops";
@@ -1354,96 +1359,53 @@ public:
       why = "GRAD without its stops";
       return false;
     }
-    if (m_swoosh) {
-      AppendBE32(out, F("PGRD"));
-      AppendBE32(out, uint32_t(stops));
-      for (size_t i = 0; i < stops; ++i) {
-        for (size_t c = 0; c < 4; ++c) {
-          AppendBE32(out, FloatBits(HalfToFloat(uint16_t(p[1 + 12 * i + 2 * c] | p[2 + 12 * i + 2 * c] << 8))));
-        }
-        AppendBE32(out, ReadLE32(p + 1 + 12 * i + 8));  // the f32 position, bits unchanged
+    AppendBE32(out, F("PGRD"));
+    AppendBE32(out, uint32_t(stops));
+    for (size_t i = 0; i < stops; ++i) {
+      for (size_t c = 0; c < 4; ++c) {
+        AppendBE32(out, FloatBits(HalfToFloat(uint16_t(p[1 + 12 * i + 2 * c] | p[2 + 12 * i + 2 * c] << 8))));
       }
-      if (at + 12 <= size && ReadLE32(p + at) == F("ILPT") && ReadLE32(p + at + 4) == F("CNST")) {
-        AppendBE32(out, F("ILPT"));
-        AppendBE32(out, F("CNST"));
-        AppendBE32(out, ReadLE32(p + at + 8));
-        at += 12;
-      } else if (at + 8 <= size && ReadLE32(p + at) == F("CNST")) {
-        AppendBE32(out, F("CNST"));
-        AppendBE32(out, ReadLE32(p + at + 4));
-        at += 8;
-      } else {
-        why = "GRAD over something other than the life or frames";
-        return false;
-      }
-      out.push_back(at < size && p[at] != 0 ? 1 : 0);
-      return true;
+      AppendBE32(out, ReadLE32(p + 1 + 12 * i + 8));  // the f32 position, bits unchanged
     }
-    // How many percent of the life one pass over the gradient takes.
-    float span = 0.0f;
     if (at + 12 <= size && ReadLE32(p + at) == F("ILPT") && ReadLE32(p + at + 4) == F("CNST")) {
-      span = float(int32_t(ReadLE32(p + at + 8)));
+      if (m_lifetimeOffset < 0) {
+        m_approximated.push_back("GRAD over the life taken over the port's lifetime (context unverified)");
+      }
+      AppendBE32(out, F("PLPT"));
+      AppendBE32(out, uint32_t(std::max(m_lifetimeOffset, 0)));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, ReadLE32(p + at + 8));
       at += 12;
     } else if (at + 8 <= size && ReadLE32(p + at) == F("CNST")) {
-      const float frames = float(int32_t(ReadLE32(p + at + 4)));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, ReadLE32(p + at + 4));
       at += 8;
-      if (m_lifetime > 0) {
-        span = frames * 100.0f / float(m_lifetime);
-      } else {
-        span = 100.0f;
-        m_approximated.push_back("GRAD over frames taken over the life (no constant lifetime)");
-      }
     } else {
       why = "GRAD over something other than the life or frames";
       return false;
     }
-    if (span <= 0.0f) {
-      why = "GRAD over no time";
-      return false;
-    }
-    const bool repeat = at < size && p[at] != 0;
-    auto colorAt = [p, stops](float t) {
-      std::array<float, 4> color{};
-      auto stop = [p](size_t i, size_t c) { return HalfToFloat(uint16_t(p[1 + 12 * i + 2 * c] | p[2 + 12 * i + 2 * c] << 8)); };
-      auto position = [p](size_t i) {
-        float v;
-        std::memcpy(&v, p + 1 + 12 * i + 8, 4);
-        return v;
-      };
-      size_t next = 0;
-      while (next < stops && position(next) < t) {
-        ++next;
-      }
-      for (size_t c = 0; c < 4; ++c) {
-        if (next == 0) {
-          color[c] = stop(0, c);
-        } else if (next == stops) {
-          color[c] = stop(stops - 1, c);
-        } else {
-          const float a = position(next - 1);
-          const float b = position(next);
-          const float f = b > a ? (t - a) / (b - a) : 1.0f;
-          color[c] = stop(next - 1, c) + (stop(next, c) - stop(next - 1, c)) * f;
-        }
-      }
-      return color;
-    };
-    AppendBE32(out, F("KEYP"));
-    AppendBE32(out, 1);   // percent of the particle's life
-    AppendBE32(out, 0);
-    out.push_back(0);  // no loop
-    out.push_back(0);
-    AppendBE32(out, 101);
-    AppendBE32(out, 0);
-    AppendBE32(out, 101);
-    for (int percent = 0; percent <= 100; ++percent) {
-      float t = float(percent) / span;
-      t = repeat ? t - std::floor(t) : std::min(t, 1.0f);
-      for (float c : colorAt(t)) {
-        AppendBE32(out, FloatBits(c));
-      }
-    }
+    out.push_back(at < size && p[at] != 0 ? 1 : 0);
     return true;
+  }
+
+  // What the port's particle lifetime needs added to be the one an ILPT in this property reads,
+  // or -1 where the port's evaluation context is unverified. Remastered's ILPT (CREParticleLifetime
+  // 0x29694c) reads the CVarContext slot the property's tag picks: tag -> EVarContextTime by the
+  // table at 0x1d129b4 (1 -> 0, 3 -> 2, 5 -> 4), then GetDefaultVarContextTime 0x2513dc (2 -> slot
+  // 1, 4 -> slot 2, else 0). Slot 0 is the system's PSLT (CElementGen ctor 0x244cfc), as the port's
+  // light update has it; slot 1 a particle's LTM2 (0x24c0dc), one above the port's LTME (Property),
+  // or a swoosh's life, which the port's swoosh lifetime equals.
+  static int LifetimeOffset(bool part, bool swoosh, const EffectProperty& property) {
+    if (part && property.tag == 3) {
+      return 1;
+    }
+    if (part && property.tag == 1 && property.fourcc == F("LCLR")) {
+      return 0;
+    }
+    if (swoosh && property.tag == 3 && property.fourcc == F("COLR")) {
+      return 0;
+    }
+    return -1;
   }
 
   // CNST's literal: retail reads an s32 for an int and a float for a real.
@@ -2414,9 +2376,11 @@ public:
     }
 
     // The node's properties by fourcc.
-    auto find = [&node](uint32_t fourcc) -> const EffectProperty* {
+    // Also takes the found property's lifetime context for the ILPTs written from it.
+    auto find = [this, &node, swoosh](uint32_t fourcc) -> const EffectProperty* {
       for (const EffectProperty& property : node.properties) {
         if (property.fourcc == fourcc) {
+          m_lifetimeOffset = LifetimeOffset(!swoosh, false, property);
           return &property;
         }
       }
@@ -2926,17 +2890,7 @@ public:
     for (const EffectProperty& property : node.properties) {
       additive = additive || property.fourcc == F("AALP");
     }
-    // A constant lifetime, for gradients timed in frames. Both count in
-    // Remastered's frames, so LTM2 is taken as it is (one above retail's).
     m_swoosh = node.form == F("SWSH");
-    m_lifetime = 0;
-    for (const EffectProperty& property : node.properties) {
-      if ((property.fourcc == F("LTM2") || property.fourcc == F("LTME")) && property.value.size() == 1 &&
-          IsElement(property.value[0], F("CNST")) && property.value[0].args.size() == 1 &&
-          property.value[0].args[0].kind == EffectValue::Kind::Word) {
-        m_lifetime = int32_t(property.value[0].args[0].word);
-      }
-    }
     m_vars.clear();
     for (const EffectProperty& property : node.properties) {
       if (property.fourcc == F("PVAR") && property.value.size() == 1 &&
@@ -3064,6 +3018,7 @@ public:
     const bool modelsOnly = part && !has(F("TEXR")) && !has(F("MTIN")) && has(F("PMDL"));
     for (const EffectProperty& property : node.properties) {
       uint32_t fourcc = property.fourcc;
+      m_lifetimeOffset = LifetimeOffset(part, swoosh, property);
       if (placeholder && fourcc == F("MTIN")) {
         result.dropped.push_back("MTIN: its colour texture is nil (the generator draws nothing)");
         continue;
@@ -3516,6 +3471,13 @@ public:
         out.insert(out.end(), item.element.begin(), item.element.end());
       }
     }
+    // Without a PSLT, Remastered's system lifetime is 0x1000000 (CElementGen ctor 0x244cfc), which
+    // an ILPT in a system property reads; retail's default is 0x7FFFFF.
+    if (part && written.count(F("PSLT")) == 0) {
+      AppendBE32(out, F("PSLT"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, 0x1000000u);
+    }
     if (part || swoosh) {
       // Port-only: nested IRND elements are evaluated once per particle and element, not at frame 0
       // only (xPortIrnd). Marks every converted PART; retail's own PARTs do not have it.
@@ -3570,7 +3532,7 @@ private:
   mutable std::vector<std::string> m_approximated;  // for the generator being written
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
   mutable bool m_mp1Space = false;                  // inside MPCB(mod vector): its vectors are retail's
-  mutable int32_t m_lifetime = 0;                   // its constant lifetime in frames, or 0
+  mutable int m_lifetimeOffset = -1;                // LifetimeOffset of the property being written
 };
 
 
@@ -3644,6 +3606,10 @@ public:
     if (fourcc == F("PGRD") && type == Type::Color) {
       uint32_t count;
       return Word(count) && count <= 0x10000 && Skip(size_t(count) * 20) && Element(Type::Int) && Skip(1);
+    }
+    // Port-only PLPT: the lifetime offset, then the percent as an int element.
+    if (fourcc == F("PLPT") && type == Type::Int) {
+      return Skip(4) && Element(Type::Int);
     }
     // Port-only SLCT: the index as an int element, the entry count, then the entries.
     if (fourcc == F("SLCT") && (type == Type::Real || type == Type::Vector || type == Type::Color)) {

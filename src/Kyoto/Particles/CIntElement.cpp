@@ -249,6 +249,33 @@ bool CIEFrameIndexFromAnimationTime::GetValue(int frame, int& valOut) const {
   valOut = index;
   return false;
 }
+
+CIEPortLifetimePercent::CIEPortLifetimePercent(int offset, CIntElement* a)
+: x4_percentVal(a), x8_offset(offset) {}
+
+CIEPortLifetimePercent::~CIEPortLifetimePercent() { delete x4_percentVal; }
+
+bool CIEPortLifetimePercent::GetValue(int frame, int& valOut) const {
+  int a = 0;
+  x4_percentVal->GetValue(frame, a);
+  // Separate statements: Remastered's fmul and fadd are not fused (CREMultiplyAddConstant
+  // 0x295368), and the percent is scaled by 0.01f first (GetIntAsReal 0x26d794).
+  const float percent = static_cast< float >(a) * 0.01f;
+  const float lifetime = static_cast< float >(CParticleGlobals::GetParticleLifetime() + x8_offset);
+  const float scaled = lifetime * percent;
+  const float rounded = scaled + 0.5f;
+  // CIERealToInt 0x2a9700: fcvtzs, which saturates and takes NaN to 0.
+  if (rounded != rounded) {
+    valOut = 0;
+  } else if (rounded >= 2147483648.0f) {
+    valOut = 0x7fffffff;
+  } else if (rounded <= -2147483648.0f) {
+    valOut = int(0x80000000u);
+  } else {
+    valOut = static_cast< int >(rounded);
+  }
+  return false;
+}
 #endif
 
 bool CIEClamp::GetValue(int frame, int& valOut) const {

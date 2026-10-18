@@ -92,14 +92,16 @@ struct Retail {
     bytes.insert(bytes.end(), text, text + 4);
     return *this;
   }
-  // The end of a converted PART: the port-only PIRN marker, then _END.
-  Retail& end() { return f("PIRN").f("CNST").w(1).f("_END"); }
-  // An embedded child's end: PIRN, then PGID with its GUID's first word read little-endian.
+  // The end of a converted PART: Remastered's default PSLT, the port-only PIRN marker, then _END.
+  Retail& end() { return pslt().f("PIRN").f("CNST").w(1).f("_END"); }
+  // An embedded child's end: PSLT, PIRN, then PGID with its GUID's first word read little-endian.
   Retail& end(const EffectGuid& id) {
-    return f("PIRN").f("CNST").w(1).f("PGID").f("CNST")
+    return pslt().f("PIRN").f("CNST").w(1).f("PGID").f("CNST")
         .w(uint32_t(id[0]) | uint32_t(id[1]) << 8 | uint32_t(id[2]) << 16 | uint32_t(id[3]) << 24)
         .f("_END");
   }
+  // Remastered's system lifetime without a PSLT (CElementGen ctor 0x244cfc).
+  Retail& pslt() { return f("PSLT").f("CNST").w(0x1000000u); }
   Retail& w(uint32_t value) {
     for (int i = 3; i >= 0; --i) {
       bytes.push_back(uint8_t(value >> (i * 8)));
@@ -456,7 +458,7 @@ void TestConvert() {
     CHECK_MSG(SplitRetailPart(part.part.data(), part.part.size(), properties, error), "converted PART reads as retail");
   }
   std::vector<RetailPartProperty> properties;
-  CHECK_MSG(SplitRetailPart(root.bytes.data(), root.bytes.size(), properties, error) && properties.size() == 10 &&
+  CHECK_MSG(SplitRetailPart(root.bytes.data(), root.bytes.size(), properties, error) && properties.size() == 11 &&
             properties[5].fourcc == EffectFourCC("COLR") && properties[5].value.size() == 4 + 22 + 32,
         "retail PART splits into its properties");
 }
@@ -747,11 +749,11 @@ void TestShapes() {
   want.f("CNST").w(Bits(90.0f)).f("CNST").w(0x80000000u);
   want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(180.0f)).f("CNST").w(Bits(0.25f)).f("CNST").w(Bits(0.1f));
   want.f("PSIV").f("BSIS").f("RNDV").f("CNST").w(Bits(0.5f));
-  want.f("COLR").f("KEYP").w(1).w(0).b(0).b(0).w(101).w(0).w(101);
-  for (int percent = 0; percent <= 100; ++percent) {
-    const float t = float(percent) / 100.0f;
-    want.w(Bits(1.0f - t)).w(Bits(0.0f)).w(Bits(t)).w(Bits(1.0f - t));
-  }
+  // A PART's COLR (tag 3) reads its particle's LTM2, one above the port's lifetime: PLPT offset 1.
+  want.f("COLR").f("PGRD").w(2);
+  want.w(Bits(1.0f)).w(Bits(0.0f)).w(Bits(0.0f)).w(Bits(1.0f)).w(Bits(0.0f));
+  want.w(Bits(0.0f)).w(Bits(0.0f)).w(Bits(1.0f)).w(Bits(0.0f)).w(Bits(1.0f));
+  want.f("PLPT").w(1).f("CNST").w(100).b(0);
   want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "ASPR, RNDV and GRAD map onto retail's");
   if (parts.size() == 1) {
@@ -764,8 +766,7 @@ void TestShapes() {
   }
 }
 
-// A gradient over as many frames as the particle lives (LTM2) ends with the
-// life: its last key is the last stop.
+// A gradient over a period in frames keeps it: PGRD runs Remastered's CCEGradient on the age.
 void TestGradientFrames() {
   std::vector<uint8_t> out(0x3c, 0);
   std::memcpy(out.data(), "RFRM", 4);
@@ -793,13 +794,10 @@ void TestGradientFrames() {
   CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "frame gradient parses");
   const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
   Retail want;
-  want.f("GPSM").f("LTME").f("CNST").w(19).f("COLR").f("KEYP").w(1).w(0).b(0).b(0).w(101).w(0).w(101);
-  for (int percent = 0; percent <= 100; ++percent) {
-    const float t = float(percent) / 100.0f;
-    for (int c = 0; c < 4; ++c) {
-      want.w(Bits(1.0f - t));
-    }
-  }
+  want.f("GPSM").f("LTME").f("CNST").w(19).f("COLR").f("PGRD").w(2);
+  want.w(Bits(1.0f)).w(Bits(1.0f)).w(Bits(1.0f)).w(Bits(1.0f)).w(Bits(0.0f));
+  want.w(Bits(0.0f)).w(Bits(0.0f)).w(Bits(0.0f)).w(Bits(0.0f)).w(Bits(1.0f));
+  want.f("CNST").w(20).b(0);
   want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "a gradient over the life in frames ends with it");
 }
@@ -1258,7 +1256,7 @@ void TestSpawnTable() {
   }
   CHECK_MSG(merged && selected && conditional, "merge, selector and condition noted");
   std::vector<RetailPartProperty> properties;
-  CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 8,
+  CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 9,
             "converted spawn table reads as retail");
 }
 
@@ -1341,7 +1339,7 @@ void TestPortSpawnTables() {
   CHECK_MSG(parts[0].part == root.bytes, "spawn tables kept whole as PKSM");
   CHECK_MSG(parts[0].approximated.empty() && parts[0].dropped.empty(), "PKSM leaves nothing out");
   std::vector<RetailPartProperty> properties;
-  CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 3,
+  CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 4,
             "PKSM reads back");  // PKSM, TEXR, PIRN
 }
 
@@ -1413,7 +1411,7 @@ void TestPortSpawnComponents() {
   CHECK_MSG(parts[0].part == root.bytes, "the component kept in PKSM");
   CHECK_MSG(parts[0].approximated.empty() && parts[0].dropped.empty(), "the component leaves nothing out");
   std::vector<RetailPartProperty> properties;
-  CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 3,
+  CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 4,
             "the component reads back");
 }
 
@@ -1587,7 +1585,7 @@ void TestPortMover() {
   CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty() && parts[0].dropped.empty(),
             "PSMV leaves nothing out");
   CHECK_MSG(parts.size() == 1 && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
-                properties.size() == 4,
+                properties.size() == 5,
             "PSMV reads back");  // SIZE, XFMD, PSMV, PIRN
 
   parts = ConvertOne(OneGenerator(xfmd4), {});
@@ -1626,7 +1624,7 @@ void TestAtlasTexture() {
   CHECK_MSG(parts.size() == 1 && parts[0].part == Patl(0x7E570006u, 4, 4, 16, 0, 0).bytes, "TXP2 becomes a random-tile PATL");
   CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "TXP2 drops nothing");
   CHECK_MSG(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
-                properties.size() == 2,
+                properties.size() == 3,
             "a PATL reads as retail");
   parts = ConvertOne(OneGenerator([](auto& o) { PutTxp2(o, 4, 2, 5); }), io);
   CHECK_MSG(parts.size() == 1 && parts[0].part == Patl(0x7E570006u, 4, 2, 6, 0, 0).bytes, "an int range is the last tile");
@@ -1685,7 +1683,7 @@ void TestColourChoice() {
   CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "SLCT of three colours keeps all three");
   CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "the colour choice drops nothing");
   CHECK_MSG(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
-                properties.size() == 3,
+                properties.size() == 4,
             "a colour SLCT reads as retail");
 
   Retail empty;
@@ -1723,7 +1721,7 @@ void TestRealChoice() {
   CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "SLCT of four reals keeps all four");
   CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "the real choice drops nothing");
   CHECK_MSG(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
-                properties.size() == 3,
+                properties.size() == 4,
             "a real SLCT reads as retail");
 }
 
@@ -1744,7 +1742,7 @@ void TestModelChoice() {
   CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "SLCT of four models is PMDL and PMDV");
   CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "the model choice drops nothing");
   CHECK_MSG(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
-                properties.size() == 4,
+                properties.size() == 5,
             "PMDL, PMDV and SIZE read as retail");
 
   // Remastered takes entry index % n: the PMDV lists IRND's h + 1 outcomes.
