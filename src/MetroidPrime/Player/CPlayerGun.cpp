@@ -1,7 +1,6 @@
 #include "MetroidPrime/Player/CPlayerGun.hpp"
 #include "port_debug.h"
 #include "port_power_charge_release.h"
-#include "port_power_flash_frame.h"
 #include "port_room_env.h"
 #include "port_shot_aim.h"
 #include "port_synthetic_effect.h"
@@ -2155,7 +2154,7 @@ void CPlayerGun::PortUpdateFlashes(float dt, const CVector3f& scale) {
     if (gen == nullptr) {
       continue;
     }
-    NPortPowerFlashFrame::SetGlobalLocator(*gen, x418_beamLocalXf, i);
+    gen->SetGlobalOrientAndTrans(x418_beamLocalXf);
     gen->SetGlobalScale(scale);
     gen->Update(dt);
     if (gen->IsSystemDeletable()) {

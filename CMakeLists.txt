@@ -1089,10 +1089,6 @@ if(MP_BUILD_TESTS)
         SOURCES tests/port_power_charge_release.cpp
         INCLUDES platform/include
         DEFINITIONS TARGET_PC VERSION=0)
-    mp_port_test(port_power_flash_frame_tests
-        SOURCES tests/port_power_flash_frame.cpp
-        INCLUDES platform/include include extern/aurora/include
-        DEFINITIONS TARGET_PC VERSION=0)
     mp_port_test(port_particle_math_tests
         SOURCES tests/port_particle_math.cpp src/Kyoto/Particles/CParticleGlobals.cpp src/Kyoto/CRandom16.cpp
             src/Kyoto/Math/CVector3f.cpp src/Kyoto/Math/CTransform4f.cpp

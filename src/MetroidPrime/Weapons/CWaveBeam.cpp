@@ -62,28 +62,14 @@ void CWaveBeam::UpdateGunFx(const bool shotSmoke, const float dt, const CStateMa
       x24c_effectTimer = 0.f;
       x258_25_effectTimerActive = false;
     } else {
-#ifdef TARGET_PC
-      // Converted effects are authored in Remastered gun space (X left, Y up, Z forward:
-      // Wave2nd's circle normal +Z is the barrel). CWaveBeamMP1::UpdateGunFx 0xd638f0 feeds
-      // them the native elbow frame; the retail elbow needs the same B as the Power charge.
-      const CTransform4f remXf = NPortChargeFxDetail::ConvertedPowerChargeMuzzleFrame(xf);
-      const bool fxRem = x254_chargeFx.get() && x254_chargeFx->PortIsRemastered();
-      const bool elecRem = x250_chargeElec.get() && x250_chargeElec->PortIsRemastered();
-#else
-      const CTransform4f& remXf = xf;
-      const bool fxRem = false;
-      const bool elecRem = false;
-#endif
       if (x254_chargeFx.get()) {
-        const CTransform4f& fxXf = fxRem ? remXf : xf;
-        x254_chargeFx->SetGlobalTranslation(fxXf.GetTranslation());
-        x254_chargeFx->SetGlobalOrientation(fxXf.GetRotation());
+        x254_chargeFx->SetGlobalTranslation(xf.GetTranslation());
+        x254_chargeFx->SetGlobalOrientation(xf.GetRotation());
         x254_chargeFx->Update(dt);
       }
       if (x250_chargeElec.get()) {
-        const CTransform4f& elecXf = elecRem ? remXf : xf;
-        x250_chargeElec->SetGlobalTranslation(elecXf.GetTranslation());
-        x250_chargeElec->SetGlobalOrientation(elecXf.GetRotation());
+        x250_chargeElec->SetGlobalTranslation(xf.GetTranslation());
+        x250_chargeElec->SetGlobalOrientation(xf.GetRotation());
         x250_chargeElec->Update(dt);
       }
     }

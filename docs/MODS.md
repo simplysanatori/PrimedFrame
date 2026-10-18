@@ -515,28 +515,13 @@ for the `.nsp`/`.xci` and one for the key file. Neither file is copied: the impo
 reads them where they are. It runs on two threads there to keep its memory
 down. Not yet run on a device.
 
-Converted **Power charge effects (slot 1 only)** take the sampled retail locator
-rotation times `B = [-1 0 0; 0 0 1; 0 1 0]`
-(`NPortChargeFxDetail::ConvertedPowerChargeMuzzleFrame`). Its columns are
-`(-col0, col2, col1)`, with determinant +1 and unchanged sampled translation.
-Native Power's effective LBEAM includes a legacy-wrapper rotation correction:
-raw/bind bone axes alone do not describe that attachment. The corrected native
-frame is X left, Y up, Z forward, while retail is X right, Y forward, Z up.
-Thus the authored `(0,0,0.15)` at scale 2 points 0.30 m forward in the sampled
-retail frame; the previous `Rx(+90)` policy pointed it backward. This is a
-source-contract correction, not native animation retargeting or matched-pose
-visual parity. It does not establish other beams' effective native frames:
-converted non-Power charges retain `locator x Rx(+90)` and converted normal
-flashes retain the full sampled locator. Retail effects remain translation-only;
-scale, timing, materials, combo-transfer and auxiliary attachments are unchanged.
-
-The separate converted **Power charged-release flash (PortUpdateFlashes slot 3
-only)** also right-composes this source-axis basis, retaining the exact sampled
-translation. Its authored child position `(0,0,+0.05)` at scale 2 therefore goes
-0.10 m along sampled forward, not sampled up; its zero-position child stays
-centered. Other flash slots and nonconverted flash generators keep their full
-raw locator. This is not a matched-pose or visual-parity claim; flash scale,
-lifetime, timing, geometry and materials are unchanged.
+Converted gun effects (charge effects, muzzle and charged-release flashes, the
+Wave charge's secondary effects) take the sampled retail locator in full, while
+retail ones take its translation only (`NPortChargeFxDetail::SetLocalLocator`).
+The importer already turns their vectors from Remastered's particle space (X
+left, Y up, Z forward) into the port's, so no extra frame goes on top: the Power
+charge disc's EMTR, Remastered `(0,0,0.15)`, becomes the port's `(0,0.15,0)` and
+at scale 2 sits 0.30 m forward of the barrel, as on native's LBEAM.
 
 ### Collision stays on the disc's model
 
