@@ -516,6 +516,21 @@ inline CVector3f QuatTransform(const Quat& q, const CVector3f& v) {
   return CVector3f(x2 + ye, y2 + zb, z2 + xc);
 }
 
+// CQuaternion::Multiply 0xd43d8: a * b, operation for operation.
+inline Quat QuatMultiply(const Quat& a, const Quat& b) {
+  const float xx = a.x * b.x, yy = a.y * b.y, zz = a.z * b.z;
+  const float dot = (xx + yy) + zz;
+  Quat q;
+  q.w = a.w * b.w - dot;
+  const float xw = a.x * b.w, wx = a.w * b.x, yz = a.y * b.z, zy = a.z * b.y;
+  q.x = ((xw + wx) + yz) - zy;
+  const float yw = a.y * b.w, wy = a.w * b.y, zx = a.z * b.x, xz = a.x * b.z;
+  q.y = (zx + (yw + wy)) - xz;
+  const float zw = a.z * b.w, wz = a.w * b.z, xy = a.x * b.y, yx = a.y * b.x;
+  q.z = (xy + (zw + wz)) - yx;
+  return q;
+}
+
 // FMULX: a product, except zero times infinity is 2 with the product's sign.
 inline float MultiplyExtended(float a, float b) {
   if ((a == 0.f && std::isinf(b)) || (b == 0.f && std::isinf(a))) {

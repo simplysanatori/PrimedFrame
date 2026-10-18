@@ -21,6 +21,9 @@
 #include "Kyoto/Particles/CParticleSwoosh.hpp"
 #include "Kyoto/Particles/CSpawnSystemKeyframeData.hpp"
 #include "Kyoto/Particles/CWarp.hpp"
+#ifdef TARGET_PC
+#include "Kyoto/Particles/PortParticleMath.hpp"
+#endif
 #include "Kyoto/Particles/IElement.hpp"
 #include "Kyoto/TToken.hpp"
 
@@ -1178,37 +1181,14 @@ void CElementGen::PortAddChild(CParticleGen* child) {
 // mover adds the velocity (GRAV adds its vector to the velocity first). The math below is the
 // Switch build's, operation for operation.
 namespace {
-const float kPortKssmPi = 3.1415927f;
+// CIRC's sine: the parabolic one of the wrapped angle.
+float PortKssmFastSin(float t) { return PortParticleMath::ParabolicSin(PortParticleMath::WrapAngle(t)); }
 
-// The angle wrap FastSinR/FastCosR and the CIRC sine share.
-float PortKssmWrap(float t) {
-  if (std::fabs(t) > kPortKssmPi) {
-    const float t2 = t + float(int(t * 0.15915494f)) * -6.2831855f;
-    t = t2 - kPortKssmPi < 0.f ? (-kPortKssmPi - t2 < 0.f ? t2 : t2 + 6.2831855f) : t2 - 6.2831855f;
-  }
-  return t;
-}
+CQuaternion PortKssmQuat(const PortParticleMath::Quat& q) { return CQuaternion(q.w, CVector3f(q.x, q.y, q.z)); }
 
-// CIRC's sine (parabolic, refined).
-float PortKssmFastSin(float t) {
-  t = PortKssmWrap(t);
-  const float y = t * 1.2732395f - 0.4052847f * t * std::fabs(t);
-  return y + (y * std::fabs(y) - y) * 0.225f;
-}
-
-float PortKssmFastSinR(float t) {
-  t = PortKssmWrap(t);
-  const float x2 = t * t;
-  const float x5 = x2 * t * x2;
-  return t * 0.99980587f + t * x2 * -0.16621658f + x5 * 0.008087108f + x2 * x5 * -0.000152977f;
-}
-
-float PortKssmFastCosR(float t) {
-  t = PortKssmWrap(t);
-  const float t2 = t * t;
-  const float t6 = t2 * t2 * t2;
-  return t2 * -0.49998003f + 1.f + t2 * t2 * 0.041620344f + t6 * -0.0013636103f +
-         t2 * t6 * 2.0169435e-05f;
+PortParticleMath::Quat PortKssmQuat(const CQuaternion& q) {
+  const CVector3f v = q.GetVector();
+  return {q.GetScalar(), v.GetX(), v.GetY(), v.GetZ()};
 }
 } // namespace
 
@@ -1307,8 +1287,9 @@ CVector3f CElementGen::PortKssmVector(PortKssmChild& state, u32 index) {
     return CVector3f(a.GetX() * b.GetX(), a.GetY() * b.GetY(), a.GetZ() * b.GetZ());
   }
   case 'ROTV': {
-    const CVector3f v = PortKssmVector(state, node.args[0]);
-    return PortKssmRotation(state, node.args[1]).Transform(v);
+    // CVERotateVector::GetValue 0x2a0328: the rotation first, then the vector.
+    const CQuaternion q = PortKssmRotation(state, node.args[1]);
+    return PortParticleMath::QuatTransform(PortKssmQuat(q), PortKssmVector(state, node.args[0]));
   }
   case 'CNST': {
     const float x = PortKssmReal(state, node.args[0]);
@@ -1322,13 +1303,31 @@ CVector3f CElementGen::PortKssmVector(PortKssmChild& state, u32 index) {
     const float angleConst = PortKssmReal(state, node.args[2]);
     const float angleLinear = PortKssmReal(state, node.args[3]);
     const float radius = PortKssmReal(state, node.args[4]);
-    const CVector3f n = normal.AsNormalized();
-    const CVector3f u = CVector3f::Cross(n, n.GetX() <= 0.8f ? CVector3f(1.f, 0.f, 0.f)
-                                                              : CVector3f(0.f, 1.f, 0.f));
-    const CVector3f v = CVector3f::Cross(n, u);
-    const float a = (angleLinear * float(state.frame) + angleConst) * 0.017453292f;
-    const float b = a + 1.5707964f;
-    return centre + radius * (u * PortKssmFastSin(b) + v * PortKssmFastSin(a));
+    // CVECircle: its ctor 0x2a05d8 builds u = n x (X or Y), v = n x u from AsNormalized 0x6b238
+    // (Normalize's math); GetValue 0x2a06b4 wraps a before b = a + pi/2, and sums
+    // c + (r u) sin b + sin a (r v) per axis.
+    const CVector3f n = PortParticleMath::NormalizeInPlace(normal);
+    const float nx = n.GetX(), ny = n.GetY(), nz = n.GetZ();
+    float u[3];
+    if (nx <= 0.8f) {
+      u[0] = ny * 0.f - nz * 0.f;
+      u[1] = nz - nx * 0.f;
+      u[2] = nx * 0.f - ny;
+    } else {
+      u[0] = ny * 0.f - nz;
+      u[1] = nz * 0.f - nx * 0.f;
+      u[2] = nx - ny * 0.f;
+    }
+    const float v[3] = {ny * u[2] - nz * u[1], nz * u[0] - nx * u[2], nx * u[1] - ny * u[0]};
+    const float a = PortParticleMath::WrapAngle((angleLinear * float(state.frame) + angleConst) * 0.017453292f);
+    const float sb = PortKssmFastSin(a + 1.5707964f);
+    const float sa = PortParticleMath::ParabolicSin(a);
+    const float c[3] = {centre.GetX(), centre.GetY(), centre.GetZ()};
+    float out[3];
+    for (int i = 0; i < 3; ++i) {
+      out[i] = (c[i] + (radius * u[i]) * sb) + sa * (radius * v[i]);
+    }
+    return CVector3f(out[0], out[1], out[2]);
   }
   default:
     return CVector3f::Zero();
@@ -1341,26 +1340,17 @@ CQuaternion CElementGen::PortKssmRotation(PortKssmChild& state, u32 index) {
   case 'EXTR':
     return PortBasis(PortExternalRotation());
   case 'REUL': {
-    // Order 0: R = Rz * Ry * Rx from each axis's normalised FastSinR/FastCosR pair.
-    float s[3], c[3];
-    for (int i = 0; i < 3; ++i) {
-      const float angle = PortKssmReal(state, node.args[i]) * 0.017453292f;
-      s[i] = PortKssmFastSinR(angle);
-      c[i] = PortKssmFastCosR(angle);
-      const float scale = 1.f / std::sqrt(s[i] * s[i] + c[i] * c[i]);
-      s[i] *= scale;
-      c[i] *= scale;
-    }
-    const float sx = s[0], sy = s[1], sz = s[2];
-    const float cx = c[0], cy = c[1], cz = c[2];
-    return CQuaternion::FromMatrixRows(
-        CVector3f(cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz),
-        CVector3f(cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz),
-        CVector3f(-sy, sx * cy, cx * cy));
+    // Order 0 (CERotationEuler::GetValue 0x29c944).
+    const float x = PortKssmReal(state, node.args[0]);
+    const float y = PortKssmReal(state, node.args[1]);
+    const float z = PortKssmReal(state, node.args[2]);
+    return PortKssmQuat(PortParticleMath::EulerQuat(x, y, z));
   }
   case 'RADD': {
+    // CERotationAdd::GetValue 0x29c370.
     const CQuaternion a = PortKssmRotation(state, node.args[0]);
-    return a * PortKssmRotation(state, node.args[1]);
+    const CQuaternion b = PortKssmRotation(state, node.args[1]);
+    return PortKssmQuat(PortParticleMath::QuatMultiply(PortKssmQuat(a), PortKssmQuat(b)));
   }
   default: // IDNT
     return CQuaternion::NoRotation();

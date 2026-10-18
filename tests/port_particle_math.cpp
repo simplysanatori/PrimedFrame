@@ -243,6 +243,12 @@ int main() {
     // u = 0 is the +range/2 edge: a = 45 degrees gives (0, -sin a, cos a).
     CHECK_MSG(NearVector(AngleCone(identity, 90.f, 0.f, 0.f, .5f, 1.f), CVector3f(0.f, -0.70710677f, 0.70710677f), 1e-2f),
               "ANCR's x range tilts toward -Y");
+    // RADD (CQuaternion::Multiply 0xd43d8): two quarter turns about Y make a half turn, and
+    // i * j = k.
+    const Quat half = QuatMultiply(yaw, yaw);
+    CHECK_MSG(std::fabs(half.w) < 1e-3f && std::fabs(half.y - 1.f) < 1e-3f, "RADD composes two yaws");
+    const Quat k = QuatMultiply(Quat{0.f, 1.f, 0.f, 0.f}, Quat{0.f, 0.f, 1.f, 0.f});
+    CHECK_MSG(k.w == 0.f && k.x == 0.f && k.y == 0.f && k.z == 1.f, "RADD is the Hamilton product a * b");
     const CVector3f sphere = AngleSphereDirection(identity, 90.f, 0.f, 0.f, .5f);
     const float length = std::sqrt(sphere.GetX() * sphere.GetX() + sphere.GetY() * sphere.GetY() +
                                    sphere.GetZ() * sphere.GetZ());
