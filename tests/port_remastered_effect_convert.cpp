@@ -829,9 +829,10 @@ void TestSwooshElectric() {
             "retail ELSC splits into its properties");
 }
 
-// Remastered's spawn tables merge into retail's one KSSM: generators by frame
-// with the 16-byte entries retail reads, the first swoosh and electric child
-// as SSWH/SSSD and SELC/SESD; further swooshes go to the port-only PSWX.
+// Spawn tables the port cannot run as Remastered does (here spawns placed by a
+// component) merge into retail's one KSSM: generators by frame with the 16-byte
+// entries retail reads, the first swoosh and electric child as SSWH/SSSD and
+// SELC/SESD; further swooshes go to the port-only PSWX.
 void TestSpawnTable() {
   std::vector<uint8_t> out(0x3c, 0);
   std::memcpy(out.data(), "RFRM", 4);
@@ -926,6 +927,161 @@ void TestSpawnTable() {
   std::vector<RetailPartProperty> properties;
   CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 8,
             "converted spawn table reads as retail");
+}
+
+// Remastered's spawn tables are kept whole as the port-only PKSM, which
+// CElementGen::PortSpawnTables runs as the Switch's CSpawnSystemKeyframeData does:
+// each table's start and period, every spawn's form and instance count.
+void TestPortSpawnTables() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "KSSM", 0);
+  PutFourCC(out, "CNST");
+  for (uint32_t word : {1u, 1u, 40u, 0u}) {  // header, end frame, no events
+    Put32(out, word);
+  }
+  Put32(out, 2);  // tables
+  const auto spawn = [&](uint32_t retail, const char* form, uint32_t instances) {
+    PutGuid(out, Legacy(retail));
+    PutFourCC(out, form);
+    Put32(out, ~0u);  // no component
+    if (instances != 0) {
+      PutConstant(out, instances);
+    } else {
+      PutFourCC(out, "NONE");
+    }
+  };
+  Put32(out, 0);  // start
+  PutConstant(out, 0);  // period
+  Put32(out, 1);  // frames
+  Put32(out, 3);
+  Put32(out, 2);
+  spawn(0x0000B001, "GENP", 0);
+  spawn(0x0000B002, "SWSH", 2);
+  Put32(out, 5);  // start
+  PutConstant(out, 10);  // period
+  Put32(out, 1);
+  Put32(out, 5);
+  Put32(out, 2);
+  spawn(0x0000B003, "ELSM", 0);
+  spawn(0x0000B001, "GENP", 0);
+  PutTexr(out, 0x1234ABCD);
+  PutProperty(out, "_END", 4);
+  Put32(out, 3);
+  PutGuid(out, Legacy(0x0000B001));
+  PutGenerator(out, false);
+  PutProperty(out, "MAXP", 1);
+  PutConstant(out, 2);
+  PutProperty(out, "_END", 4);
+  PutGuid(out, Legacy(0x0000B002));
+  PutFourCC(out, "SWSH");
+  PutProperty(out, "LENG", 1);
+  PutConstant(out, 8);
+  PutProperty(out, "_END", 4);
+  PutGuid(out, Legacy(0x0000B003));
+  PutFourCC(out, "ELSM");
+  PutProperty(out, "LWD1", 3);
+  PutConstant(out, Bits(2.0f));
+  PutProperty(out, "_END", 4);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "PKSM effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  CHECK_MSG(parts.size() == 4, "root and three children");
+  if (parts.size() != 4) {
+    std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
+    return;
+  }
+  Retail root;
+  root.f("GPSM").f("PKSM").f("CNST").w(40).w(2);
+  root.w(0).w(1).f("CNST").w(0).w(1);
+  root.w(3).w(2).f("PART").w(0x0000B001).f("NONE").w(~0u).f("SWHC").w(0x0000B002).f("CNST").w(2).w(~0u);
+  root.w(5).w(1).f("CNST").w(10).w(1);
+  root.w(5).w(2).f("ELSC").w(0x0000B003).f("NONE").w(~0u).f("PART").w(0x0000B001).f("NONE").w(~0u);
+  root.w(0);  // no components
+  root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
+  root.end();
+  CHECK_MSG(parts[0].part == root.bytes, "spawn tables kept whole as PKSM");
+  CHECK_MSG(parts[0].approximated.empty() && parts[0].dropped.empty(), "PKSM leaves nothing out");
+  std::vector<RetailPartProperty> properties;
+  CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 3,
+            "PKSM reads back");  // PKSM, TEXR, PIRN
+}
+
+// A spawn that places its child with an SEVT(SMOV) component carries the component's trees
+// in PKSM, after the tables, for CElementGen to run.
+void TestPortSpawnComponents() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "KSSM", 0);
+  PutFourCC(out, "CNST");
+  for (uint32_t word : {1u, 1u, 40u, 1u}) {  // header, end frame, one event
+    Put32(out, word);
+  }
+  PutFourCC(out, "SEVT");
+  PutFourCC(out, "SMOV");
+  PutFourCC(out, "ADD_");
+  PutFourCC(out, "EXTT");
+  PutFourCC(out, "CNST");
+  for (float each : {1.f, 2.f, 3.f}) {
+    PutConstant(out, Bits(each));
+  }
+  PutFourCC(out, "CNST");
+  for (float each : {0.f, 0.f, 0.5f}) {
+    PutConstant(out, Bits(each));
+  }
+  PutFourCC(out, "NONE");
+  PutFourCC(out, "NONE");
+  PutFourCC(out, "NONE");
+  Put32(out, 1);  // tables
+  Put32(out, 0);  // start
+  PutConstant(out, 0);  // period
+  Put32(out, 1);  // frames
+  Put32(out, 3);
+  Put32(out, 1);
+  PutGuid(out, Legacy(0x0000B001));
+  PutFourCC(out, "GENP");
+  Put32(out, 0);  // component 0
+  PutFourCC(out, "NONE");
+  PutTexr(out, 0x1234ABCD);
+  PutProperty(out, "_END", 4);
+  Put32(out, 1);
+  PutGuid(out, Legacy(0x0000B001));
+  PutGenerator(out, false);
+  PutProperty(out, "MAXP", 1);
+  PutConstant(out, 2);
+  PutProperty(out, "_END", 4);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "component effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  CHECK_MSG(parts.size() == 2, "root and its child");
+  if (parts.size() != 2) {
+    std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
+    return;
+  }
+  Retail root;
+  root.f("GPSM").f("PKSM").f("CNST").w(40).w(1);
+  root.w(0).w(1).f("CNST").w(0).w(1);
+  root.w(3).w(1).f("PART").w(0x0000B001).f("NONE").w(0);
+  root.w(1);  // components
+  root.f("ADD_").f("EXTT").f("CNST").f("CNST").w(Bits(1.f)).f("CNST").w(Bits(2.f)).f("CNST").w(Bits(3.f));
+  root.w(Bits(0.f)).w(Bits(0.f)).w(Bits(0.5f)).f("NONE").f("NONE");
+  root.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
+  root.end();
+  CHECK_MSG(parts[0].part == root.bytes, "the component kept in PKSM");
+  CHECK_MSG(parts[0].approximated.empty() && parts[0].dropped.empty(), "the component leaves nothing out");
+  std::vector<RetailPartProperty> properties;
+  CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) && properties.size() == 3,
+            "the component reads back");
 }
 
 // A one-generator effect whose body (properties) `body` writes.
@@ -2644,6 +2800,8 @@ int main() {
   TestShapes();
   TestGradientFrames();
   TestSpawnTable();
+  TestPortSpawnTables();
+  TestPortSpawnComponents();
   TestDrawsNothing();
   TestBlendMode();
   TestGpuAvailability();

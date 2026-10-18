@@ -39,6 +39,148 @@ rstl::list< CElementAllocationChunk > sElementAllocationChunks;
 CElementAllocationChunk* IElement::CElementAllocator::sCurrentChunk = nullptr;
 CElementAllocationChunk* IElement::CElementAllocator::sFreeChunk = nullptr;
 
+#ifdef TARGET_PC
+namespace {
+enum EPortKssmKind { kPKK_Real, kPKK_Vector, kPKK_Rotation };
+
+// One node of a PKSM component tree (the converter's Writer::Component*), appended to kssm.nodes
+// with its index in `out`; false on anything the converter does not write.
+bool PortReadKssmNode(CInputStream& in, CGenDescription::PortKssm& kssm,
+                      CGenDescription::PortKssmComponent& component, EPortKssmKind kind, int depth,
+                      u32& out, bool noneIsAbsent = false) {
+  if (depth > 64 || kssm.nodes.size() >= 100000) {
+    return false;
+  }
+  CGenDescription::PortKssmNode node;
+  node.op = in.ReadLong();
+  if (noneIsAbsent && node.op == SBIG('NONE')) {
+    out = ~0u;
+    return true;
+  }
+  EPortKssmKind args[5];
+  int argCount = 0;
+  if (kind == kPKK_Real) {
+    switch (node.op) {
+    case SBIG('CNST'):
+      node.value = in.ReadFloat();
+      break;
+    case SBIG('VARF'):
+      node.slot = in.ReadLong();
+      break;
+    case SBIG('KEYE'): {
+      const u32 percent = in.ReadLong();
+      in.ReadLong();
+      node.loop = in.ReadChar() != 0;
+      in.ReadChar();
+      in.ReadLong();
+      node.loopStart = in.ReadLong();
+      const u32 count = in.ReadLong();
+      if (percent != 0 || count == 0 || count > kPortVfxMaxElems) {
+        return false;
+      }
+      node.keys.resize(count);
+      for (u32 i = 0; i < count; ++i) {
+        node.keys[i] = in.ReadFloat();
+      }
+      break;
+    }
+    case SBIG('IRND'):
+      node.slot = component.latches;
+      component.latches += 1;
+      args[0] = args[1] = kPKK_Real;
+      argCount = 2;
+      break;
+    case SBIG('ADD_'):
+    case SBIG('MULT'):
+    case SBIG('RAND'):
+      args[0] = args[1] = kPKK_Real;
+      argCount = 2;
+      break;
+    default:
+      return false;
+    }
+  } else if (kind == kPKK_Vector) {
+    switch (node.op) {
+    case SBIG('EXTT'):
+    case SBIG('EXTS'):
+      break;
+    case SBIG('KPIN'):
+      node.slot = component.latches;
+      component.latches += 3;
+      args[0] = kPKK_Vector;
+      argCount = 1;
+      break;
+    case SBIG('ADD_'):
+    case SBIG('MULT'):
+      args[0] = args[1] = kPKK_Vector;
+      argCount = 2;
+      break;
+    case SBIG('ROTV'):
+      args[0] = kPKK_Vector;
+      args[1] = kPKK_Rotation;
+      argCount = 2;
+      break;
+    case SBIG('CNST'):
+      args[0] = args[1] = args[2] = kPKK_Real;
+      argCount = 3;
+      break;
+    case SBIG('CIRC'):
+      args[0] = args[1] = kPKK_Vector;
+      args[2] = args[3] = args[4] = kPKK_Real;
+      argCount = 5;
+      break;
+    default:
+      return false;
+    }
+  } else {
+    switch (node.op) {
+    case SBIG('EXTR'):
+    case SBIG('IDNT'):
+      break;
+    case SBIG('REUL'):
+      args[0] = args[1] = args[2] = kPKK_Real;
+      argCount = 3;
+      break;
+    case SBIG('RADD'):
+      args[0] = args[1] = kPKK_Rotation;
+      argCount = 2;
+      break;
+    default:
+      return false;
+    }
+  }
+  node.argCount = u32(argCount);
+  out = u32(kssm.nodes.size());
+  kssm.nodes.push_back(node);
+  for (int i = 0; i < argCount; ++i) {
+    u32 arg;
+    if (!PortReadKssmNode(in, kssm, component, args[i], depth + 1, arg)) {
+      return false;
+    }
+    kssm.nodes[out].args[i] = arg;
+  }
+  return true;
+}
+
+// Whether a vector tree reads EXTT outside any KPIN (KPIN keeps only its frame-0 value).
+bool PortKssmLiveExtt(const CGenDescription::PortKssm& kssm, u32 index) {
+  const CGenDescription::PortKssmNode& node = kssm.nodes[index];
+  if (node.op == SBIG('EXTT')) {
+    return true;
+  }
+  if (node.op == SBIG('KPIN')) {
+    return false;
+  }
+  for (u32 i = 0; i < node.argCount; ++i) {
+    if (PortKssmLiveExtt(kssm, node.args[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+} // namespace
+#endif
+
 void* IElement::CElementAllocator::Alloc(size_t size, const char*, const char*) {
   if (sCurrentChunk == nullptr || !sCurrentChunk->CanAllocate(size)) {
     sElementAllocationChunks.push_back(CElementAllocationChunk());
@@ -140,6 +282,19 @@ void CParticleDataFactory::LoadGPSMTokens(CGenDescription* desc) {
 #ifdef TARGET_PC
   for (auto& extra : desc->xPortExtraSwooshes) {
     extra.swoosh.ForceCache();
+  }
+  if (desc->xPortKssm) {
+    for (auto& table : desc->xPortKssm->tables) {
+      for (auto& entry : table.entries) {
+        for (auto& spawn : entry.spawns) {
+          if (spawn.type == SBIG('PART')) {
+            spawn.part->ForceCache();
+          } else if (spawn.type == SBIG('SWHC')) {
+            spawn.swoosh->ForceCache();
+          }
+        }
+      }
+    }
   }
 #endif
 }
@@ -342,6 +497,97 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
               {TCachedToken< CSwooshDescription >(TToken< CSwooshDescription >(pool->GetObj(SObjectTag(SBIG('SWHC'), id)))), frame});
         }
       }
+      break;
+    }
+    // Port-only: Remastered's spawn tables (xPortKssm): CNST, the end frame and the tables; per
+    // table its start, whether the period is constant, the period, and the entries; per entry
+    // its frame and spawns; per spawn the type, the asset and the instance count.
+    case SBIG('PKSM'): {
+      GetClassID(in);
+      std::unique_ptr< CGenDescription::PortKssm > kssm(new CGenDescription::PortKssm);
+      kssm->end = in.ReadLong();
+      const u32 tables = in.ReadLong();
+      if (tables > kPortVfxMaxElems) {
+        return false;
+      }
+      kssm->tables.resize(tables);
+      for (CGenDescription::PortKssmTable& table : kssm->tables) {
+        table.start = in.ReadLong();
+        table.periodConst = in.ReadLong() != 0;
+        table.periodElement = GetIntElement(in);
+        table.period = 0;
+        if (table.periodElement != nullptr) {
+          table.periodElement->GetValue(0, table.period);
+        }
+        const u32 entries = in.ReadLong();
+        if (entries > 1000) {
+          return false;
+        }
+        table.entries.resize(entries);
+        for (CGenDescription::PortKssmEntry& entry : table.entries) {
+          entry.frame = in.ReadLong();
+          const u32 spawns = in.ReadLong();
+          if (spawns > 100) {
+            return false;
+          }
+          entry.spawns.resize(spawns);
+          for (CGenDescription::PortKssmSpawn& spawn : entry.spawns) {
+            spawn.type = in.ReadLong();
+            const CAssetId id = in.Get< CAssetId >();
+            spawn.instances = GetIntElement(in);
+            spawn.component = in.ReadLong();
+            if (spawn.type == SBIG('PART')) {
+              spawn.part.emplace(
+                  TToken< CGenDescription >(pool->GetObj(SObjectTag(CParticleGen::ResType(), id))));
+            } else if (spawn.type == SBIG('SWHC')) {
+              spawn.swoosh.emplace(
+                  TToken< CSwooshDescription >(pool->GetObj(SObjectTag(SBIG('SWHC'), id))));
+            } else if (spawn.type == SBIG('ELSC')) {
+              spawn.electric.emplace(
+                  TToken< CElectricDescription >(pool->GetObj(SObjectTag(SBIG('ELSC'), id))));
+            } else {
+              return false;
+            }
+          }
+        }
+      }
+      // Then the SEVT components the spawns place their children with: per component its pos
+      // tree, the constant delta, the rot tree or NONE, and NONE or GRAV and its vector tree.
+      const u32 components = in.ReadLong();
+      if (components > 1000) {
+        return false;
+      }
+      kssm->components.resize(components);
+      for (CGenDescription::PortKssmComponent& component : kssm->components) {
+        if (!PortReadKssmNode(in, *kssm, component, kPKK_Vector, 0, component.pos)) {
+          return false;
+        }
+        component.liveExtt = PortKssmLiveExtt(*kssm, component.pos);
+        for (float& delta : component.delta) {
+          delta = in.ReadFloat();
+        }
+        if (!PortReadKssmNode(in, *kssm, component, kPKK_Rotation, 0, component.rot, true)) {
+          return false;
+        }
+        const u32 modifier = in.ReadLong();
+        if (modifier == SBIG('GRAV')) {
+          if (!PortReadKssmNode(in, *kssm, component, kPKK_Vector, 0, component.grav)) {
+            return false;
+          }
+        } else if (modifier != SBIG('NONE')) {
+          return false;
+        }
+      }
+      for (const CGenDescription::PortKssmTable& table : kssm->tables) {
+        for (const CGenDescription::PortKssmEntry& entry : table.entries) {
+          for (const CGenDescription::PortKssmSpawn& spawn : entry.spawns) {
+            if (spawn.component != ~0u && spawn.component >= components) {
+              return false;
+            }
+          }
+        }
+      }
+      desc->xPortKssm = std::move(kssm);
       break;
     }
     // Port-only: Remastered's sprite polygon (SSHP 3-6; xPortSpriteShape).

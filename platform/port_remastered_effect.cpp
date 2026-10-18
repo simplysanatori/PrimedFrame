@@ -77,8 +77,8 @@ constexpr ElementSig kElementSigs[] = {
     {"PSOR", "-"},     {"PSOU", "-"},          {"PSTR", "-"},       {"PULS", "eeee"},
     {"PVEL", "-"},     {"RADD", "ee"},         {"RAND", "ee"},      {"REUL", "eeeb"},
     {"RLPT", "e"},     {"RTOI", "ee"},         {"RTOV", "e"},       {"SCAL", "e"},
-    {"SEMR", "ee"},    {"SETR", "e"},          {"SEVT", "eeee"},    {"SINE", "eee"},
-    {"SMOV", "eeeee e"},     {"SPAC", "be"},         {"SPAF", "be"},      {"SPAH", "eee"},
+    {"SEMR", "ee"},    {"SETR", "e"},          {"SEVT", "e"},       {"SINE", "eee"},
+    {"SMOV", "eeeee"},       {"SPAC", "be"},         {"SPAF", "be"},      {"SPAH", "eee"},
     {"SPAI", "be"},    {"SPAV", "be"},         {"SPHE", "eee"},     {"SPOS", "e"},
     {"SUB_", "ee"},    {"SWRL", "eeee"},       {"TPVC", "ge"},      {"TPVF", "ge"},
     {"TPVI", "ge"},    {"TRSS", "eeeeee"},     {"TSCL", "e"},       {"VARC", "g"},
@@ -89,9 +89,10 @@ constexpr ElementSig kElementSigs[] = {
     // angles and a magnitude; MPRD is 2 or 4 elements; DFCP and DFCS 1 to 3.
     {"MPCB", "e ee"},  {"MPAC", "eeee"},       {"MPRD", "ee eeee"}, {"DFCP", "ee eee e"},
     {"DFCS", "ee eee e"},
-    // EXTT, EXTR and EXTS are leaves; SMOV is (translation, offset, rotation, and
-    // two more, NONE in most files); TRST is five reals and a raw word.
-    {"TRST", "eeeeew"}, {"EXTS", "-"},
+    // EXTT, EXTR and EXTS are leaves; SMOV is CSimpleMoverElement's (position,
+    // velocity, rotation, scale, modifier); ROTV a vector turned by a rotation;
+    // TRST is five reals and a raw word.
+    {"TRST", "eeeeew"}, {"EXTS", "-"}, {"ROTV", "ee"},
     // TEXR's texture elements besides ATEX: an id and three elements (TXP2),
     // or an id and one to four (TXFB, whose first is an LFTW).
     // ANTH is a property whose value is an ANTH element: an id, TRST, two keyframe
@@ -129,7 +130,7 @@ constexpr ElementSig kVectorSigs[] = {
     {"CIRC", "VVRRR"}, {"CCLU", "VVIR"}, {"ADD_", "VV"},  {"MULT", "VV"},  {"CHAN", "VVI"},   {"PULS", "IIVV"},
     {"RTOV", "R"},   {"PLOC", "-"},     {"PLCO", "-"},    {"PVEL", "-"},   {"PSOF", "-"},     {"PSOU", "-"},
     {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V VR"},  {"MPAC", "RRRR"},
-    {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
+    {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"ROTV", "Ve"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
 };
 constexpr ElementSig kModVectorSigs[] = {
     {"NONE", "-"},     {"CNST", "RRR"},   {"GRAV", "V"},     {"WIND", "VR"},   {"EXPL", "RR"},
@@ -176,7 +177,7 @@ constexpr PropertyType kPropertyTypes[] = {
 // Elements seen in the files whose arity is not pinned down; they parse with
 // whatever arity fits, like any unknown FourCC, but they are never properties.
 constexpr const char* kLooseElements =
-    "ARRY CMPS CODE EMRV GPUA GRAD KEWS MDAO PAFM PLNE PSA0 PSA1 PSA2 PSA3 RNDV ROTV SLCT";
+    "ARRY CMPS CODE EMRV GPUA GRAD KEWS MDAO PAFM PLNE PSA0 PSA1 PSA2 PSA3 RNDV SLCT";
 
 // Properties: retail's PART properties and the ones Remastered added. A FourCC
 // that is in neither list may still be a property (the grammar lets unknown
@@ -1056,7 +1057,10 @@ public:
     out.events = ReadLE32(m_data + at + 16);
     for (size_t pos : Sequence(at + 20, out.events)) {
       const std::optional<uint32_t> tables = U32(pos);
-      if (tables && *tables <= 16 && BuildSpawnTables(pos + 4, *tables, end, out.tables)) {
+      out.components.clear();
+      out.tables.clear();
+      if (tables && *tables <= 16 && BuildElements(at + 20, out.events, pos, out.components) &&
+          BuildSpawnTables(pos + 4, *tables, end, out.tables)) {
         return true;
       }
     }
@@ -1117,9 +1121,13 @@ public:
     EffectSpawnTable::Spawn spawn;
     std::memcpy(spawn.id.data(), m_data + at, 16);
     spawn.form = FourCCAt(at + 16);
+    spawn.component = ReadLE32(m_data + at + 20);
     spawn.conditional = FourCCAt(at + 24) != kNone;
     out.back().frames.back().spawns.push_back(spawn);
     for (size_t spawnEnd : Element(at + 24)) {
+      if (!BuildElement(at + 24, spawnEnd, out.back().frames.back().spawns.back().instances)) {
+        continue;
+      }
       if (BuildSpawns(spawnEnd, spawns - 1, frames, tables, end, out)) {
         return true;
       }
@@ -2102,6 +2110,12 @@ bool ParseMaterialTrack(const uint8_t* data, size_t size, const EffectProperty& 
   Parser parser(data, size);
   const size_t trailer = property.fourcc == kPmtr ? 3 : 6;
   return parser.BuildMaterialTrack(property.offset + 5, property.offset + property.size, trailer, out);
+}
+
+std::string DumpEffectValue(const EffectValue& value, const uint8_t* data) {
+  std::string out;
+  DumpValue(value, data, out);
+  return out;
 }
 
 std::string DumpEffect(const EffectNode& effect, const uint8_t* data) {

@@ -455,6 +455,11 @@ void CElementGen::SetTranslation(const CVector3f& translation) {
 #endif
   for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
     CParticleGen* ch = *it;
+#ifdef TARGET_PC
+    if (!xPortKssmChildren.empty() && PortFindKssmChild(ch) != nullptr) {
+      continue; // its component places it
+    }
+#endif
     if (ch->Get4CharId() == 'ELSC') {
       ch->SetTranslation(translation + x2c0_SEPO);
     } else if (ch->Get4CharId() == 'SWHC') {
@@ -477,6 +482,12 @@ void CElementGen::SetGlobalTranslation(const CVector3f& translation) {
   xe8_globalTranslation = translation;
   for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
     (*it)->SetGlobalTranslation(translation);
+#ifdef TARGET_PC
+    // A child its component places stays where it was put until its next update.
+    if (const PortKssmChild* state = xPortKssmChildren.empty() ? nullptr : PortFindKssmChild(*it)) {
+      (*it)->SetTranslation(state->pos - translation);
+    }
+#endif
   }
 }
 
@@ -553,6 +564,12 @@ void CElementGen::SetOrientation(const CTransform4f& orientation) {
   PortFollowEmitter(portBefore);
 #endif
   for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
+#ifdef TARGET_PC
+    const PortKssmChild* state = xPortKssmChildren.empty() ? nullptr : PortFindKssmChild(*it);
+    if (state != nullptr && state->hasRot) {
+      continue; // its component orients it
+    }
+#endif
     (*it)->SetOrientation(orientation);
   }
 }
@@ -567,6 +584,12 @@ void CElementGen::SetGlobalOrientation(const CTransform4f& orientation) {
 #endif
   for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
     (*it)->SetGlobalOrientation(x22c_globalOrientation);
+#ifdef TARGET_PC
+    const PortKssmChild* state = xPortKssmChildren.empty() ? nullptr : PortFindKssmChild(*it);
+    if (state != nullptr && state->hasRot) {
+      (*it)->SetOrientation(x22c_globalOrientation.GetQuickInverse() * state->rot);
+    }
+#endif
   }
 }
 
@@ -1091,6 +1114,423 @@ uint CElementGen::PortChildSeed(const CGenDescription& child) const {
   hash = (hash ^ uint(x74_curFrame)) * kPrime;
   return (hash ^ uint(x290_activePartChildren.size())) * kPrime;
 }
+
+// A swoosh or electric child: Remastered places every child it constructs alike
+// (ConstructChildSystemCoords 0x24c594, no per-type offset when no component is given).
+void CElementGen::PortAddChild(CParticleGen* child) {
+  child->SetGlobalTranslation(xe8_globalTranslation);
+  child->SetGlobalOrientation(x22c_globalOrientation);
+  child->SetGlobalScale(x100_globalScale);
+  child->SetLocalScale(x16c_localScale);
+  child->SetTranslation(xdc_translation);
+  child->SetOrientation(x1d8_orientation);
+  child->SetParticleEmission(x88_particleEmission);
+  child->SetModulationColor(x338_moduColor);
+  x290_activePartChildren.reserve(x290_activePartChildren.size() + 1);
+  x290_activePartChildren.push_back(child);
+}
+
+// Remastered's spawn-table components (SEVT(SMOV) placing a child), as its component update runs
+// them: the pos tree is evaluated (a top-level KPIN only at frame 0), then the rot tree, then the
+// mover adds the velocity (GRAV adds its vector to the velocity first). The math below is the
+// Switch build's, operation for operation.
+namespace {
+const float kPortKssmPi = 3.1415927f;
+
+// The angle wrap FastSinR/FastCosR and the CIRC sine share.
+float PortKssmWrap(float t) {
+  if (std::fabs(t) > kPortKssmPi) {
+    const float t2 = t + float(int(t * 0.15915494f)) * -6.2831855f;
+    t = t2 - kPortKssmPi < 0.f ? (-kPortKssmPi - t2 < 0.f ? t2 : t2 + 6.2831855f) : t2 - 6.2831855f;
+  }
+  return t;
+}
+
+// CIRC's sine (parabolic, refined).
+float PortKssmFastSin(float t) {
+  t = PortKssmWrap(t);
+  const float y = t * 1.2732395f - 0.4052847f * t * std::fabs(t);
+  return y + (y * std::fabs(y) - y) * 0.225f;
+}
+
+float PortKssmFastSinR(float t) {
+  t = PortKssmWrap(t);
+  const float x2 = t * t;
+  const float x5 = x2 * t * x2;
+  return t * 0.99980587f + t * x2 * -0.16621658f + x5 * 0.008087108f + x2 * x5 * -0.000152977f;
+}
+
+float PortKssmFastCosR(float t) {
+  t = PortKssmWrap(t);
+  const float t2 = t * t;
+  const float t6 = t2 * t2 * t2;
+  return t2 * -0.49998003f + 1.f + t2 * t2 * 0.041620344f + t6 * -0.0013636103f +
+         t2 * t6 * 2.0169435e-05f;
+}
+} // namespace
+
+CElementGen::PortKssmChild* CElementGen::PortFindKssmChild(const CParticleGen* child) {
+  for (PortKssmChild& state : xPortKssmChildren) {
+    if (state.child == child) {
+      return &state;
+    }
+  }
+  return nullptr;
+}
+
+float CElementGen::PortKssmReal(PortKssmChild& state, u32 index) {
+  const CGenDescription::PortKssmNode& node = x28_loadedGenDesc->xPortKssm->nodes[index];
+  switch (node.op) {
+  case 'CNST':
+    return node.value;
+  case 'VARF':
+    return CPortVarGlobals::sCurrent != nullptr ? CPortVarGlobals::sCurrent->Real(node.slot) : 0.f;
+  case 'KEYE': {
+    // GetAnimTime on the parent's frame.
+    const int end = int(node.keys.size()) - 1;
+    const int t = x74_curFrame;
+    int key = t;
+    if (node.loop) {
+      const int loopStart = int(node.loopStart);
+      if (t >= end && end != loopStart) {
+        key = (t - loopStart) % (end - loopStart) + loopStart;
+      }
+    } else if (t > end) {
+      key = end;
+    }
+    key = key < 0 ? 0 : key > end ? end : key;
+    return node.keys[key];
+  }
+  case 'ADD_': {
+    const float a = PortKssmReal(state, node.args[0]);
+    return a + PortKssmReal(state, node.args[1]);
+  }
+  case 'MULT': {
+    const float a = PortKssmReal(state, node.args[0]);
+    return a * PortKssmReal(state, node.args[1]);
+  }
+  case 'IRND':
+  case 'RAND': {
+    // IRND rolls once, at the instance's frame 0; RAND on every evaluation.
+    if (node.op == 'IRND' && state.frame != 0) {
+      return state.latches[node.slot];
+    }
+    const float min = PortKssmReal(state, node.args[0]);
+    const float max = PortKssmReal(state, node.args[1]);
+    const float value = (max - min) * CRandom16::GetRandomNumber()->Float() + min;
+    if (node.op == 'IRND') {
+      state.latches[node.slot] = value;
+    }
+    return value;
+  }
+  default:
+    return 0.f;
+  }
+}
+
+CVector3f CElementGen::PortKssmVector(PortKssmChild& state, u32 index) {
+  const CGenDescription::PortKssmNode& node = x28_loadedGenDesc->xPortKssm->nodes[index];
+  switch (node.op) {
+  case 'EXTT':
+    return xe8_globalTranslation + xdc_translation;
+  case 'EXTS':
+    return CVector3f(x100_globalScale.GetX() * x16c_localScale.GetX(),
+                     x100_globalScale.GetY() * x16c_localScale.GetY(),
+                     x100_globalScale.GetZ() * x16c_localScale.GetZ());
+  case 'KPIN': {
+    float* latch = &state.latches[node.slot];
+    if (state.frame == 0) {
+      const CVector3f v = PortKssmVector(state, node.args[0]);
+      latch[0] = v.GetX();
+      latch[1] = v.GetY();
+      latch[2] = v.GetZ();
+    }
+    return CVector3f(latch[0], latch[1], latch[2]);
+  }
+  case 'ADD_': {
+    const CVector3f a = PortKssmVector(state, node.args[0]);
+    return a + PortKssmVector(state, node.args[1]);
+  }
+  case 'MULT': {
+    const CVector3f a = PortKssmVector(state, node.args[0]);
+    const CVector3f b = PortKssmVector(state, node.args[1]);
+    return CVector3f(a.GetX() * b.GetX(), a.GetY() * b.GetY(), a.GetZ() * b.GetZ());
+  }
+  case 'ROTV': {
+    const CVector3f v = PortKssmVector(state, node.args[0]);
+    return PortKssmRotation(state, node.args[1]).Transform(v);
+  }
+  case 'CNST': {
+    const float x = PortKssmReal(state, node.args[0]);
+    const float y = PortKssmReal(state, node.args[1]);
+    const float z = PortKssmReal(state, node.args[2]);
+    return CVector3f(x, y, z);
+  }
+  case 'CIRC': {
+    const CVector3f centre = PortKssmVector(state, node.args[0]);
+    const CVector3f normal = PortKssmVector(state, node.args[1]);
+    const float angleConst = PortKssmReal(state, node.args[2]);
+    const float angleLinear = PortKssmReal(state, node.args[3]);
+    const float radius = PortKssmReal(state, node.args[4]);
+    const CVector3f n = normal.AsNormalized();
+    const CVector3f u = CVector3f::Cross(n, n.GetX() <= 0.8f ? CVector3f(1.f, 0.f, 0.f)
+                                                              : CVector3f(0.f, 1.f, 0.f));
+    const CVector3f v = CVector3f::Cross(n, u);
+    const float a = (angleLinear * float(state.frame) + angleConst) * 0.017453292f;
+    const float b = a + 1.5707964f;
+    return centre + radius * (u * PortKssmFastSin(b) + v * PortKssmFastSin(a));
+  }
+  default:
+    return CVector3f::Zero();
+  }
+}
+
+CQuaternion CElementGen::PortKssmRotation(PortKssmChild& state, u32 index) {
+  const CGenDescription::PortKssmNode& node = x28_loadedGenDesc->xPortKssm->nodes[index];
+  switch (node.op) {
+  case 'EXTR':
+    return CQuaternion::FromMatrix(x22c_globalOrientation * x1d8_orientation);
+  case 'REUL': {
+    // Order 0: R = Rz * Ry * Rx from each axis's normalised FastSinR/FastCosR pair.
+    float s[3], c[3];
+    for (int i = 0; i < 3; ++i) {
+      const float angle = PortKssmReal(state, node.args[i]) * 0.017453292f;
+      s[i] = PortKssmFastSinR(angle);
+      c[i] = PortKssmFastCosR(angle);
+      const float scale = 1.f / std::sqrt(s[i] * s[i] + c[i] * c[i]);
+      s[i] *= scale;
+      c[i] *= scale;
+    }
+    const float sx = s[0], sy = s[1], sz = s[2];
+    const float cx = c[0], cy = c[1], cz = c[2];
+    return CQuaternion::FromMatrixRows(
+        CVector3f(cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz),
+        CVector3f(cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz),
+        CVector3f(-sy, sx * cy, cx * cy));
+  }
+  case 'RADD': {
+    const CQuaternion a = PortKssmRotation(state, node.args[0]);
+    return a * PortKssmRotation(state, node.args[1]);
+  }
+  default: // IDNT
+    return CQuaternion::NoRotation();
+  }
+}
+
+void CElementGen::PortKssmEvaluate(PortKssmChild& state) {
+  const CGenDescription::PortKssm& kssm = *x28_loadedGenDesc->xPortKssm;
+  const CGenDescription::PortKssmComponent& component = kssm.components[state.component];
+  if (kssm.nodes[component.pos].op != 'KPIN' || state.frame == 0) {
+    state.pos = PortKssmVector(state, component.pos);
+  }
+  if (component.rot != ~0u) {
+    state.rot = PortKssmRotation(state, component.rot).BuildTransform4f();
+  }
+  if (component.grav != ~0u) {
+    state.vel = state.vel + PortKssmVector(state, component.grav);
+  }
+  state.pos = state.pos + state.vel;
+}
+
+// Holds the child where its component puts it: it keeps the parent's global translation and
+// orientation (ConstructChildParticleSystem/PortAddChild), so its local ones make up the rest.
+void CElementGen::PortKssmPlace(const PortKssmChild& state) {
+  state.child->SetTranslation(state.pos - xe8_globalTranslation);
+  if (state.hasRot) {
+    state.child->SetOrientation(x22c_globalOrientation.GetQuickInverse() * state.rot);
+  }
+}
+
+// The spawns of the first entry of table `table` at `frame`, as Remastered's callback (0x24dd5c) runs
+// them: a generator whose OPTS the parent enables is skipped, the rest start GetNumInstances
+// (0x2940fc) times.
+void CElementGen::PortSpawnTableEntry(size_t table, int frame) {
+  for (const CGenDescription::PortKssmEntry& entry : x28_loadedGenDesc->xPortKssm->tables[table].entries) {
+    if (int(entry.frame) != frame) {
+      continue;
+    }
+    for (const CGenDescription::PortKssmSpawn& spawn : entry.spawns) {
+      if (spawn.type == 'PART') {
+        TLockedToken< CGenDescription > token = spawn.part->GetToken();
+        if (x26d_27_enableOPTS && token->x32_25_OPTS) {
+          continue;
+        }
+      }
+      int instances = 1;
+      if (spawn.instances != nullptr) {
+        spawn.instances->GetValue(x74_curFrame, instances);
+      }
+      for (int i = 0; i < instances; ++i) {
+        // A component starts at its frame 0: evaluated once and moved one step.
+        PortKssmChild state;
+        if (spawn.component != ~0u) {
+          const CGenDescription::PortKssmComponent& component =
+              x28_loadedGenDesc->xPortKssm->components[spawn.component];
+          state.component = spawn.component;
+          state.vel = CVector3f(component.delta[0], component.delta[1], component.delta[2]);
+          state.hasRot = component.rot != ~0u;
+          state.latches.assign(component.latches, 0.f);
+          PortKssmEvaluate(state);
+        }
+        if (spawn.type == 'PART') {
+          TLockedToken< CGenDescription > token = spawn.part->GetToken();
+          state.child = ConstructChildParticleSystem(token);
+          x290_activePartChildren.reserve(x290_activePartChildren.size() + 1);
+          x290_activePartChildren.push_back(state.child);
+        } else if (spawn.type == 'SWHC') {
+          state.child = rs_new CParticleSwoosh(*spawn.swoosh, 0);
+          PortAddChild(state.child);
+        } else {
+          state.child = rs_new CParticleElectric(*spawn.electric);
+          PortAddChild(state.child);
+        }
+        if (spawn.component != ~0u) {
+          PortKssmPlace(state);
+          xPortKssmChildren.push_back(std::move(state));
+        }
+      }
+    }
+    return;
+  }
+}
+
+// CSpawnSystemKeyframeData::Update (0x293930) for each table at the current frame.
+void CElementGen::PortSpawnTables() {
+  const CGenDescription::PortKssm& kssm = *x28_loadedGenDesc->xPortKssm;
+  if (xPortKssmPeriods.size() != kssm.tables.size()) {
+    xPortKssmPeriods.assign(kssm.tables.size(), 0);
+  }
+  const int frame = x74_curFrame;
+  for (size_t i = 0; i < kssm.tables.size(); ++i) {
+    const CGenDescription::PortKssmTable& table = kssm.tables[i];
+    int& slot = xPortKssmPeriods[i];
+    if (frame == 0 && !table.periodConst) {
+      table.periodElement->GetValue(0, slot);
+    }
+    const int period = table.periodConst ? table.period : slot;
+    const bool runs = frame <= int(kssm.end) || !table.periodConst || table.period > 0;
+    if (!runs) {
+      continue;
+    }
+    const int start = int(table.start);
+    const int local = period > 0 && start <= frame ? (frame - start) % period + start : frame;
+    const bool wrapped = start < frame && local == start;
+    PortSpawnTableEntry(i, wrapped ? start + period : local);
+    if (wrapped) {
+      if (start <= int(kssm.end) || !table.periodConst || table.period > 0) {
+        PortSpawnTableEntry(i, start);
+      }
+      if (!table.periodConst) {
+        table.periodElement->GetValue(frame, slot);
+      }
+    }
+  }
+}
+
+// Remastered's CElementGen::SpawnChildSystems (0x249bd8): the death spawns first, nothing more
+// from the last frame on, then ICTS, IITS, the swoosh, the electric and the spawn tables.
+void CElementGen::PortSpawnChildSystems() {
+  if (x84_prevFrame == x74_curFrame) {
+    return;
+  }
+  // The children's components step before anything spawns (frame++, evaluate, move).
+  for (PortKssmChild& state : xPortKssmChildren) {
+    ++state.frame;
+    PortKssmEvaluate(state);
+    PortKssmPlace(state);
+  }
+  CGenDescription* desc = x28_loadedGenDesc;
+  if (desc->x90_IDTS && x74_curFrame == x268_PSLT) {
+    int ndsyVal = 1;
+    if (CIntElement* ndsy = desc->xa0_NDSY) {
+      ndsy->GetValue(0, ndsyVal);
+    }
+    for (int i = 0; i < ndsyVal; ++i) {
+      TLockedToken< CGenDescription > token = desc->x90_IDTS->GetToken();
+      if (x26d_27_enableOPTS && token->x32_25_OPTS) {
+        break;
+      }
+      x290_activePartChildren.reserve(x290_activePartChildren.size() + 1);
+      x290_activePartChildren.push_back(ConstructChildParticleSystem(token));
+    }
+  }
+  if (x268_PSLT <= x74_curFrame) {
+    return;
+  }
+  if (desc->x78_ICTS && x74_curFrame == x2a0_CSSD) {
+    int ncsyVal = 1;
+    if (CIntElement* ncsy = desc->x88_NCSY) {
+      ncsy->GetValue(x74_curFrame, ncsyVal);
+    }
+    for (int i = 0; i < ncsyVal; ++i) {
+      TLockedToken< CGenDescription > token = desc->x78_ICTS->GetToken();
+      if (x26d_27_enableOPTS && token->x32_25_OPTS) {
+        break;
+      }
+      x290_activePartChildren.reserve(x290_activePartChildren.size() + 1);
+      x290_activePartChildren.push_back(ConstructChildParticleSystem(token));
+    }
+  }
+  if (desc->xa4_IITS && x88_particleEmission && x74_curFrame >= x2a4_SISY &&
+      ((x74_curFrame - x2a4_SISY) % x2a8_PISY) == 0) {
+    TLockedToken< CGenDescription > token = desc->xa4_IITS->GetToken();
+    if (!(x26d_27_enableOPTS && token->x32_25_OPTS)) {
+      x290_activePartChildren.reserve(x290_activePartChildren.size() + 1);
+      x290_activePartChildren.push_back(ConstructChildParticleSystem(token));
+    }
+  }
+  if (desc->xc0_SSWH && x74_curFrame == x2ac_SSSD) {
+    CParticleSwoosh* swoosh = rs_new CParticleSwoosh(*desc->xc0_SSWH, 0);
+    swoosh->SetGlobalTranslation(xe8_globalTranslation);
+    swoosh->SetGlobalScale(x100_globalScale);
+    swoosh->SetLocalScale(x16c_localScale);
+    swoosh->SetTranslation(xdc_translation + x2b0_SSPO);
+    swoosh->SetOrientation(x1d8_orientation);
+    swoosh->SetParticleEmission(x88_particleEmission);
+    x290_activePartChildren.reserve(x290_activePartChildren.size() + 1);
+    x290_activePartChildren.push_back(swoosh);
+  }
+  for (auto& extra : desc->xPortExtraSwooshes) {
+    if (x74_curFrame != extra.frame) {
+      continue;
+    }
+    CParticleSwoosh* swoosh = rs_new CParticleSwoosh(extra.swoosh, 0);
+    swoosh->SetGlobalTranslation(xe8_globalTranslation);
+    swoosh->SetGlobalScale(x100_globalScale);
+    swoosh->SetLocalScale(x16c_localScale);
+    swoosh->SetTranslation(xdc_translation + x2b0_SSPO);
+    swoosh->SetOrientation(x1d8_orientation);
+    swoosh->SetParticleEmission(x88_particleEmission);
+    x290_activePartChildren.reserve(x290_activePartChildren.size() + 1);
+    x290_activePartChildren.push_back(swoosh);
+  }
+  if (desc->xd8_SELC && x74_curFrame == x2bc_SESD) {
+    CParticleElectric* electric = rs_new CParticleElectric(*desc->xd8_SELC);
+    electric->SetGlobalTranslation(xe8_globalTranslation);
+    electric->SetGlobalScale(x100_globalScale);
+    electric->SetLocalScale(x16c_localScale);
+    electric->SetTranslation(xdc_translation + x2c0_SEPO);
+    electric->SetOrientation(x1d8_orientation);
+    electric->SetParticleEmission(x88_particleEmission);
+    x290_activePartChildren.reserve(x290_activePartChildren.size() + 1);
+    x290_activePartChildren.push_back(electric);
+  }
+  if (desc->xPortKssm) {
+    PortSpawnTables();
+  } else if (desc->xbc_KSSM.get() != nullptr) {
+    // A spawn table the converter could not carry exactly: retail's reading of it.
+    rstl::vector< CSpawnSystemKeyframeData::CSpawnSystemKeyframeInfo >& spawns =
+        desc->xbc_KSSM->GetSpawnedSystemsAtFrame(x74_curFrame);
+    for (int i = 0; i < spawns.size(); ++i) {
+      TLockedToken< CGenDescription > token = *spawns[i].GetToken();
+      if (x26d_27_enableOPTS && token->x32_25_OPTS) {
+        continue;
+      }
+      x290_activePartChildren.reserve(x290_activePartChildren.size() + 1);
+      x290_activePartChildren.push_back(ConstructChildParticleSystem(token));
+    }
+  }
+}
 #endif
 
 CElementGen* CElementGen::ConstructChildParticleSystem(TToken< CGenDescription > desc) const {
@@ -1120,6 +1560,13 @@ void CElementGen::UpdateChildParticleSystems(double dt) {
   }
 
   CGlobalRandom gr(x27c_randState);
+
+#ifdef TARGET_PC
+  if (x28_loadedGenDesc->xPortIrnd) {
+    PortSpawnChildSystems();
+    goto update_children;
+  }
+#endif
 
   // ICTS - child particle systems spawned at CSSD frame
   if (x28_loadedGenDesc->x78_ICTS && x84_prevFrame != x74_curFrame && x74_curFrame == x2a0_CSSD) {
@@ -1233,12 +1680,28 @@ void CElementGen::UpdateChildParticleSystems(double dt) {
     x290_activePartChildren.push_back(electric);
   }
 
+#ifdef TARGET_PC
+update_children:
+#endif
   // Update all child particle systems
   AUTO(it, x290_activePartChildren.begin());
   while (it != x290_activePartChildren.end()) {
     CParticleGen* child = *it;
     child->Update(dt);
+#ifdef TARGET_PC
+    PortKssmChild* placed = xPortKssmChildren.empty() ? nullptr : PortFindKssmChild(child);
+    // A child its component holds still in the world was not carried by the parent's move.
+    if (placed != nullptr && child->Get4CharId() == 'PART' &&
+        !x28_loadedGenDesc->xPortKssm->components[placed->component].liveExtt) {
+      static_cast< CElementGen* >(child)->PortGlobalIsPresented();
+    }
+#endif
     if (child->IsSystemDeletable() == true) {
+#ifdef TARGET_PC
+      if (placed != nullptr) {
+        xPortKssmChildren.erase(xPortKssmChildren.begin() + (placed - xPortKssmChildren.data()));
+      }
+#endif
       delete child;
       it = x290_activePartChildren.erase(it);
     } else {

@@ -9,6 +9,7 @@
 #include "Kyoto/Graphics/CLight.hpp"
 #include "Kyoto/Math/CAABox.hpp"
 #include "Kyoto/Math/CMatrix3f.hpp"
+#include "Kyoto/Math/CQuaternion.hpp"
 #include "Kyoto/Math/CTransform4f.hpp"
 #include "Kyoto/Math/CVector3f.hpp"
 #include "Kyoto/Particles/CParticleGen.hpp"
@@ -386,6 +387,34 @@ private:
   static uint sPortChildSeed;
   static bool sPortChildSeedSet;
   uint PortChildSeed(const CGenDescription& child) const;
+  // Remastered's CElementGen::SpawnChildSystems (0x249bd8) for a converted effect, and its
+  // spawn tables (PKSM); xPortKssmPeriods are the tables' period slots (their CVars).
+  std::vector< int > xPortKssmPeriods;
+  void PortSpawnChildSystems();
+  void PortSpawnTables();
+  void PortSpawnTableEntry(size_t table, int frame);
+  void PortAddChild(CParticleGen* child);
+  // A child a spawn table placed with an SEVT(SMOV) component: its own frame, the pos slot and
+  // the mover's velocity, the rot it ended on, and the KPIN/IRND latches. `placed` is the world
+  // position the child is held at (child T = placed - its GT); with hasRot its orientation is
+  // held at `rot` the same way. The parent's propagation leaves what the component holds alone.
+  struct PortKssmChild {
+    CParticleGen* child = nullptr;
+    u32 component = 0;
+    int frame = 0;
+    CVector3f pos = CVector3f::Zero();
+    CVector3f vel = CVector3f::Zero();
+    CTransform4f rot = CTransform4f::Identity();
+    bool hasRot = false;
+    std::vector< float > latches;
+  };
+  std::vector< PortKssmChild > xPortKssmChildren;
+  PortKssmChild* PortFindKssmChild(const CParticleGen* child);
+  float PortKssmReal(PortKssmChild& state, u32 node);
+  CVector3f PortKssmVector(PortKssmChild& state, u32 node);
+  CQuaternion PortKssmRotation(PortKssmChild& state, u32 node);
+  void PortKssmEvaluate(PortKssmChild& state);
+  void PortKssmPlace(const PortKssmChild& state);
   void PortVfxUpdateSystem();
   // XFMD 3/4: the spawn-baked part of the emitter's transform, and moving the live particles from
   // one such frame to the next.

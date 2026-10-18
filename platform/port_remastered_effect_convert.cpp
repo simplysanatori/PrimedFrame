@@ -1714,6 +1714,261 @@ public:
     return true;
   }
 
+  // Port-only PKSM after its FourCC: Remastered's spawn tables as its
+  // CSpawnSystemKeyframeData reads them (0x293350), for CElementGen::PortSpawnTables.
+  // CNST, the end frame, the table count; per table its start, 1 if the period is a
+  // constant, the period (an int element) and the entry count; per entry its frame and
+  // spawn count; per spawn its type, asset id, instance count (an int element) and the
+  // index of the component that places it (~0 for none); then the component count and
+  // each component (Component()). `node` is the generator, for RSYX.
+  // False with `why` set when a table holds what the port cannot run as Remastered does.
+  bool SpawnTables(const EffectProperty& property, const EffectNode& node, std::vector<uint8_t>& out,
+                   std::string& why) const {
+    EffectSpawnTable table;
+    if (!ParseSpawnTable(m_data, property.offset + property.size, property, table)) {
+      why = "spawn table does not parse";
+      return false;
+    }
+    if (table.components.size() != table.events) {
+      why = std::to_string(table.events) + " SEVT events, " + std::to_string(table.components.size()) + " parsed";
+      return false;
+    }
+    if (table.tables.empty()) {
+      return true;
+    }
+    std::vector<uint8_t> bytes;
+    size_t unresolved = 0;
+    AppendBE32(bytes, F("CNST"));
+    AppendBE32(bytes, table.header[2]);
+    AppendBE32(bytes, uint32_t(table.tables.size()));
+    for (const EffectSpawnTable::Table& each : table.tables) {
+      AppendBE32(bytes, each.word);
+      AppendBE32(bytes, IsElement(each.selector, F("CNST")) ? 1u : 0u);
+      if (!Element(each.selector, Type::Int, bytes, why)) {
+        why = "period: " + why;
+        return false;
+      }
+      AppendBE32(bytes, uint32_t(each.frames.size()));
+      for (const EffectSpawnTable::Frame& frame : each.frames) {
+        std::vector<uint8_t> spawns;
+        uint32_t count = 0;
+        for (const EffectSpawnTable::Spawn& spawn : frame.spawns) {
+          const uint32_t type = spawn.form == F("GENP")   ? F("PART")
+                                : spawn.form == F("SWSH") ? F("SWHC")
+                                : spawn.form == F("ELC2") || spawn.form == F("ELSM") ? F("ELSC")
+                                                                                     : 0;
+          const uint32_t id = type != 0 ? AssetId(spawn.id, type) : 0;
+          if (id == 0) {
+            ++unresolved;
+            continue;
+          }
+          if (spawn.component != ~0u && spawn.component >= table.components.size()) {
+            why = "a spawn placed by missing component " + std::to_string(spawn.component);
+            return false;
+          }
+          if (!IsElement(spawn.instances, F("NONE")) && !IsElement(spawn.instances, F("CNST"))) {
+            why = "instance count " + EffectFourCCString(spawn.instances.fourcc) + " is not a constant";
+            return false;
+          }
+          AppendBE32(spawns, type);
+          AppendBE32(spawns, id);
+          if (IsElement(spawn.instances, F("NONE"))) {
+            AppendBE32(spawns, F("NONE"));
+          } else if (!Element(spawn.instances, Type::Int, spawns, why)) {
+            why = "instance count: " + why;
+            return false;
+          }
+          AppendBE32(spawns, spawn.component);
+          ++count;
+        }
+        AppendBE32(bytes, frame.frame);
+        AppendBE32(bytes, count);
+        bytes.insert(bytes.end(), spawns.begin(), spawns.end());
+      }
+    }
+    AppendBE32(bytes, uint32_t(table.components.size()));
+    for (size_t i = 0; i < table.components.size(); ++i) {
+      if (!Component(table.components[i], node, bytes, why)) {
+        why = "component " + std::to_string(i) + ": " + why;
+        return false;
+      }
+    }
+    if (unresolved != 0) {
+      m_approximated.push_back("KSSM: " + std::to_string(unresolved) + " spawns unresolved");
+    }
+    out.insert(out.end(), bytes.begin(), bytes.end());
+    return true;
+  }
+
+  // A spawn component, SEVT(SMOV(position, delta, rotation, scale, modifier)), for the
+  // evaluator in CElementGen (Remastered's CSpawnComponent, build/mpr/kb). Written as
+  // the position (a vector node), the delta's three floats (it must be a constant: the
+  // mover keeps its first value), the rotation (NONE or a rotation node) and the
+  // modifier: NONE, or GRAV and its vector. The scale must be NONE.
+  bool Component(const EffectValue& value, const EffectNode& node, std::vector<uint8_t>& out,
+                 std::string& why) const {
+    if (!IsElement(value, F("SEVT")) || value.args.size() != 1 || !IsElement(value.args[0], F("SMOV")) ||
+        value.args[0].args.size() != 5) {
+      why = "not SEVT(SMOV)";
+      return false;
+    }
+    const std::vector<EffectValue>& args = value.args[0].args;
+    if (!ComponentVector(args[0], node, out, why)) {
+      return false;
+    }
+    const EffectValue& delta = args[1];
+    if (!IsElement(delta, F("CNST")) || delta.args.size() != 3) {
+      why = "delta " + EffectFourCCString(delta.fourcc) + " is not a constant";
+      return false;
+    }
+    for (const EffectValue& each : delta.args) {
+      std::vector<uint8_t> word;
+      if (!IsElement(each, F("CNST")) || !Literal(each, Type::Real, word, why)) {
+        why = "delta is not a constant";
+        return false;
+      }
+      out.insert(out.end(), word.begin(), word.end());
+    }
+    if (IsElement(args[2], F("NONE"))) {
+      AppendBE32(out, F("NONE"));
+    } else if (!ComponentRotation(args[2], node, out, why)) {
+      return false;
+    }
+    if (!IsElement(args[3], F("NONE"))) {
+      why = "scale " + EffectFourCCString(args[3].fourcc);
+      return false;
+    }
+    const EffectValue& modifier = args[4];
+    if (IsElement(modifier, F("NONE"))) {
+      AppendBE32(out, F("NONE"));
+      return true;
+    }
+    // GRAV(acceleration, flag, next): the flag set and a chained modifier are unseen.
+    if (!IsElement(modifier, F("GRAV")) || modifier.args.size() != 3 ||
+        (modifier.args[1].kind != EffectValue::Kind::Byte && modifier.args[1].kind != EffectValue::Kind::Word) ||
+        modifier.args[1].word != 0 || !IsElement(modifier.args[2], F("NONE"))) {
+      why = "modifier " + EffectFourCCString(modifier.fourcc);
+      return false;
+    }
+    AppendBE32(out, F("GRAV"));
+    return ComponentVector(modifier.args[0], node, out, why);
+  }
+
+  // A component's real: CNST, ADD_, MULT, IRND, RAND, VARF, or KEYE on the emitter frame.
+  bool ComponentReal(const EffectValue& value, std::vector<uint8_t>& out, std::string& why) const {
+    const uint32_t fourcc = value.kind == EffectValue::Kind::Element ? value.fourcc : 0;
+    if (fourcc == F("CNST")) {
+      AppendBE32(out, fourcc);
+      return Literal(value, Type::Real, out, why);
+    }
+    if (fourcc == F("VARF")) {
+      return Element(value, Type::Real, out, why);
+    }
+    if (fourcc == F("KEYE") && value.args.size() == 1) {
+      const EffectValue& keys = value.args[0];
+      if (keys.kind != EffectValue::Kind::Keys || keys.size < 22 || ReadLE32(m_data + keys.offset) != 0 ||
+          ReadLE32(m_data + keys.offset + 18) == 0) {
+        why = "KEYE on the particle's lifetime or with no keys";
+        return false;
+      }
+      AppendBE32(out, fourcc);
+      return Keyframes(keys, Type::Real, out, why);
+    }
+    if ((fourcc == F("ADD_") || fourcc == F("MULT") || fourcc == F("IRND") || fourcc == F("RAND")) &&
+        value.args.size() == 2) {
+      AppendBE32(out, fourcc);
+      return ComponentReal(value.args[0], out, why) && ComponentReal(value.args[1], out, why);
+    }
+    why = "real " + EffectFourCCString(value.fourcc);
+    return false;
+  }
+
+  // A component's vector: CNST(x, y, z), EXTT, EXTS, ADD_, MULT, ROTV(vector, rotation),
+  // KPIN, or CIRC(centre, normal, angle, angle per frame, radius).
+  bool ComponentVector(const EffectValue& value, const EffectNode& node, std::vector<uint8_t>& out,
+                       std::string& why) const {
+    const uint32_t fourcc = value.kind == EffectValue::Kind::Element ? value.fourcc : 0;
+    if ((fourcc == F("EXTT") || fourcc == F("EXTS")) && value.args.empty()) {
+      AppendBE32(out, fourcc);
+      return true;
+    }
+    if (fourcc == F("KPIN") && value.args.size() == 1) {
+      AppendBE32(out, fourcc);
+      return ComponentVector(value.args[0], node, out, why);
+    }
+    if ((fourcc == F("ADD_") || fourcc == F("MULT")) && value.args.size() == 2) {
+      AppendBE32(out, fourcc);
+      return ComponentVector(value.args[0], node, out, why) && ComponentVector(value.args[1], node, out, why);
+    }
+    if (fourcc == F("ROTV") && value.args.size() == 2) {
+      AppendBE32(out, fourcc);
+      return ComponentVector(value.args[0], node, out, why) && ComponentRotation(value.args[1], node, out, why);
+    }
+    if (fourcc == F("CNST") && value.args.size() == 3) {
+      AppendBE32(out, fourcc);
+      return ComponentReal(value.args[0], out, why) && ComponentReal(value.args[1], out, why) &&
+             ComponentReal(value.args[2], out, why);
+    }
+    if (fourcc == F("CIRC") && value.args.size() == 5) {
+      AppendBE32(out, fourcc);
+      return ComponentVector(value.args[0], node, out, why) && ComponentVector(value.args[1], node, out, why) &&
+             ComponentReal(value.args[2], out, why) && ComponentReal(value.args[3], out, why) &&
+             ComponentReal(value.args[4], out, why);
+    }
+    why = "vector " + EffectFourCCString(value.fourcc);
+    return false;
+  }
+
+  // A component's rotation: EXTR, REUL(x, y, z, order 0) in degrees, RADD(a, b) = a * b,
+  // or RSYX, the generator's own system rotation: with XFMD 4 and an identity SMVR the
+  // emitter's (EXTR), with XFMD 0 or 2 none (written IDNT).
+  bool ComponentRotation(const EffectValue& value, const EffectNode& node, std::vector<uint8_t>& out,
+                         std::string& why) const {
+    const uint32_t fourcc = value.kind == EffectValue::Kind::Element ? value.fourcc : 0;
+    if (fourcc == F("EXTR") && value.args.empty()) {
+      AppendBE32(out, fourcc);
+      return true;
+    }
+    if (fourcc == F("RADD") && value.args.size() == 2) {
+      AppendBE32(out, fourcc);
+      return ComponentRotation(value.args[0], node, out, why) && ComponentRotation(value.args[1], node, out, why);
+    }
+    if (fourcc == F("REUL") && value.args.size() == 4) {
+      const EffectValue& order = value.args[3];
+      if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
+        why = "REUL in an unseen axis order";
+        return false;
+      }
+      AppendBE32(out, fourcc);
+      return ComponentReal(value.args[0], out, why) && ComponentReal(value.args[1], out, why) &&
+             ComponentReal(value.args[2], out, why);
+    }
+    if (fourcc == F("RSYX") && value.args.empty()) {
+      const EffectProperty* xfmd = nullptr;
+      const EffectProperty* mover = nullptr;
+      for (const EffectProperty& property : node.properties) {
+        if (property.fourcc == F("XFMD")) {
+          xfmd = &property;
+        } else if (property.fourcc == F("SMVR")) {
+          mover = &property;
+        }
+      }
+      uint32_t mode = ~0u;
+      if (xfmd != nullptr && SmallConst(*xfmd, mode) && mode == 4 && mover != nullptr && IdentityMover(*mover)) {
+        AppendBE32(out, F("EXTR"));
+        return true;
+      }
+      if (xfmd != nullptr && (mode == 0 || mode == 2)) {
+        AppendBE32(out, F("IDNT"));
+        return true;
+      }
+      why = "RSYX under XFMD " + (xfmd != nullptr ? std::to_string(mode) : std::string("none"));
+      return false;
+    }
+    why = "rotation " + EffectFourCCString(value.fourcc);
+    return false;
+  }
+
   // A one-byte or one-word CNST property (PBDM, ORNT, SCTR).
   static bool SmallConst(const EffectProperty& property, uint32_t& word) {
     if (property.value.size() != 1 || !IsElement(property.value[0], F("CNST")) || property.value[0].args.size() != 1) {
@@ -2441,6 +2696,15 @@ public:
       if (part && fourcc == F("KSSM")) {
         std::vector<uint8_t> bytes;
         std::string why;
+        if (SpawnTables(property, node, bytes, why)) {
+          if (!bytes.empty()) {
+            AppendBE32(out, F("PKSM"));
+            out.insert(out.end(), bytes.begin(), bytes.end());
+          }
+          continue;
+        }
+        m_approximated.push_back("KSSM: read as retail's table (" + why + ")");
+        why.clear();
         if (!SpawnTable(property, bytes, started, why)) {
           result.dropped.push_back("KSSM: " + why);
           ++result.droppedRetail;
@@ -2965,6 +3229,121 @@ public:
     return Word(fourcc) && fourcc == F("CNST") && Word(count) && count <= 64 && Skip(size_t(count) * 8);
   }
 
+  // PKSM (Writer::SpawnTables): CNST, end, tables; per table start, const flag, period
+  // element, entries; per entry frame, spawns; per spawn type, id, instance element and
+  // component index; then the components.
+  bool PortSpawnTables() {
+    uint32_t fourcc, tables;
+    if (!Word(fourcc) || fourcc != F("CNST") || !Skip(4) || !Word(tables) || tables > 64) {
+      return false;
+    }
+    uint32_t used = 0;
+    for (uint32_t t = 0; t < tables; ++t) {
+      uint32_t entries;
+      if (!Skip(8) || !Element(Type::Int) || !Word(entries) || entries > 1000) {
+        return false;
+      }
+      for (uint32_t e = 0; e < entries; ++e) {
+        uint32_t spawns;
+        if (!Skip(4) || !Word(spawns) || spawns > 100) {
+          return false;
+        }
+        for (uint32_t s = 0; s < spawns; ++s) {
+          uint32_t component;
+          if (!Skip(8) || !Element(Type::Int) || !Word(component)) {
+            return false;
+          }
+          if (component != ~0u) {
+            used = std::max(used, component + 1);
+          }
+        }
+      }
+    }
+    uint32_t components;
+    if (!Word(components) || components > 1000 || used > components) {
+      m_error = "spawn component out of range";
+      return false;
+    }
+    for (uint32_t c = 0; c < components; ++c) {
+      uint32_t word;
+      if (!ComponentVector(0) || !Skip(12) || !Word(word) || (word != F("NONE") && !ComponentRotation(word, 0)) ||
+          !Word(word) || (word != F("NONE") && (word != F("GRAV") || !ComponentVector(0)))) {
+        if (m_error.empty()) {
+          m_error = "bad spawn component";
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
+  // Writer::ComponentReal/Vector/Rotation's nodes.
+  bool ComponentReal(int depth) {
+    uint32_t fourcc, count;
+    if (depth > 64 || !Word(fourcc)) {
+      return false;
+    }
+    if (fourcc == F("CNST") || fourcc == F("VARF")) {
+      return Skip(4);
+    }
+    if (fourcc == F("KEYE")) {
+      return Skip(18) && Word(count) && count != 0 && count <= 0x100000 && Skip(size_t(count) * 4);
+    }
+    if (fourcc == F("ADD_") || fourcc == F("MULT") || fourcc == F("IRND") || fourcc == F("RAND")) {
+      return ComponentReal(depth + 1) && ComponentReal(depth + 1);
+    }
+    m_error = "component real " + EffectFourCCString(fourcc);
+    return false;
+  }
+
+  bool ComponentVector(int depth) {
+    uint32_t fourcc;
+    if (depth > 64 || !Word(fourcc)) {
+      return false;
+    }
+    if (fourcc == F("EXTT") || fourcc == F("EXTS")) {
+      return true;
+    }
+    if (fourcc == F("KPIN")) {
+      return ComponentVector(depth + 1);
+    }
+    if (fourcc == F("ADD_") || fourcc == F("MULT")) {
+      return ComponentVector(depth + 1) && ComponentVector(depth + 1);
+    }
+    if (fourcc == F("ROTV")) {
+      uint32_t rotation;
+      return ComponentVector(depth + 1) && Word(rotation) && ComponentRotation(rotation, depth + 1);
+    }
+    if (fourcc == F("CNST")) {
+      return ComponentReal(depth + 1) && ComponentReal(depth + 1) && ComponentReal(depth + 1);
+    }
+    if (fourcc == F("CIRC")) {
+      return ComponentVector(depth + 1) && ComponentVector(depth + 1) && ComponentReal(depth + 1) &&
+             ComponentReal(depth + 1) && ComponentReal(depth + 1);
+    }
+    m_error = "component vector " + EffectFourCCString(fourcc);
+    return false;
+  }
+
+  // A rotation node whose fourcc has been read.
+  bool ComponentRotation(uint32_t fourcc, int depth) {
+    if (depth > 64) {
+      return false;
+    }
+    if (fourcc == F("EXTR") || fourcc == F("IDNT")) {
+      return true;
+    }
+    if (fourcc == F("REUL")) {
+      return ComponentReal(depth + 1) && ComponentReal(depth + 1) && ComponentReal(depth + 1);
+    }
+    uint32_t a, b;
+    if (fourcc == F("RADD")) {
+      return Word(a) && ComponentRotation(a, depth + 1) && Word(b) && ComponentRotation(b, depth + 1);
+    }
+    m_error = "component rotation " + EffectFourCCString(fourcc);
+    return false;
+  }
+
   const std::string& Error() const { return m_error; }
 
 private:
@@ -3037,6 +3416,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortVariables();
     } else if (part && fourcc == F("PSWX")) {
       ok = reader.PortExtraSwooshes();
+    } else if (part && fourcc == F("PKSM")) {
+      ok = reader.PortSpawnTables();
     } else if (!part && vfx && fourcc == F("PSRO")) {
       ok = reader.PortWord();
     } else if (electric && fourcc == F("PEL2")) {
