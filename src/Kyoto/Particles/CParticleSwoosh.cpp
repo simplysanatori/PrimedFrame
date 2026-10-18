@@ -218,6 +218,9 @@ const bool CParticleSwoosh::Update(double dt) {
       if (x1c_desc->xPortRazyAxis) {
         x15c_swooshes[x158_curParticle].mOrientation = PortRazyOrientation(razyMotion);
       }
+      if (x1c_desc->xPortRotZ) {
+        x15c_swooshes[x158_curParticle].mOrientation = PortRotZOrientation();
+      }
 #endif
       if (x1c_desc->x28_IVEL) {
         x1c_desc->x28_IVEL->GetValue(x28_curFrame, x15c_swooshes[x158_curParticle].mVelocity);
@@ -247,6 +250,16 @@ const bool CParticleSwoosh::Update(double dt) {
       x1ac_particleCount = rstl::max_val(0, x1ac_particleCount - 1);
       x15c_swooshes[x158_curParticle].mActive = false;
     }
+#ifdef TARGET_PC
+    // A PROT not kept from birth runs again for every live point each frame (UpdateExisting 0x27d590).
+    if (x1c_desc->xPortRotZ && !x1c_desc->xPortRotKeep) {
+      for (SSwooshData& swoosh : x15c_swooshes) {
+        if (swoosh.mActive) {
+          swoosh.mOrientation = PortRotZOrientation();
+        }
+      }
+    }
+#endif
     UpdateTranslationAndOrientation();
     evalTime += kFrameTime;
     ++x28_curFrame;
@@ -259,8 +272,8 @@ void CParticleSwoosh::SetOrientation(const CTransform4f& orientation) {
   x44_orientation = orientation;
   x74_invOrientation = x44_orientation.GetQuickInverse();
 #ifdef TARGET_PC
-  // KPIN freezes a PRAZ point's rotation at its birth.
-  if (x1c_desc->xPortRazyAxis) {
+  // KPIN freezes a PRAZ point's rotation at its birth; PROZ sets its own.
+  if (x1c_desc->xPortRazyAxis || x1c_desc->xPortRotZ) {
     return;
   }
 #endif
@@ -297,6 +310,19 @@ CTransform4f CParticleSwoosh::PortRazyOrientation(const CVector3f& motion) const
     }
   }
   return CTransform4f::FromColumns(x, -z, y, CVector3f(0.f, 0.f, 0.f));
+}
+
+// Remastered's PROT of [KPIN]([RADD(EXTR, ]REUL(0, 0, z, #00))): q = orientation (or identity) * Rz(z
+// degrees) (CERotationEuler 0x29c944, RADD = a * b), drawn as m = q * Rx(-90) like PortRazyOrientation.
+CTransform4f CParticleSwoosh::PortRotZOrientation() const {
+  float degrees = 0.f;
+  x1c_desc->xPortRotZ->GetValue(x28_curFrame, degrees);
+  CTransform4f q = CTransform4f::RotateZ(CRelAngle::FromDegrees(degrees));
+  if (x1c_desc->xPortRotOriented) {
+    q = x44_orientation.GetRotation() * q;
+  }
+  return CTransform4f::FromColumns(q.GetColumn(kDX), -q.GetColumn(kDZ), q.GetColumn(kDY),
+                                   CVector3f(0.f, 0.f, 0.f));
 }
 #endif
 

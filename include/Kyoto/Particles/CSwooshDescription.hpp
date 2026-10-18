@@ -54,6 +54,11 @@ public:
   // fallback the orientation (PRAF 1) or identity
   std::unique_ptr< CVectorElement > xPortRazyAxis;
   bool xPortRazyFallbackLocal = false;
+  // port-only PROZ: Remastered's PROT of [KPIN]([RADD(EXTR, ]REUL(0, 0, z))), z in degrees,
+  // kept from each point's birth or else re-evaluated for every live point each frame
+  std::unique_ptr< CRealElement > xPortRotZ;
+  bool xPortRotKeep = false;
+  bool xPortRotOriented = false;
   // port-only PIRN: a converted Remastered swoosh, whose COLR runs over the live points
   bool xPortIrnd = false;
   // port-only PVRT: Remastered particle variables (names, types, defaults)

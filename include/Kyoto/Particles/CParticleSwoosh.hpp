@@ -219,6 +219,7 @@ private:
   // Remastered's EMRV (CVEVelocityCalc 0x2a288c): the translation one step back, for PRAZ.
   CVector3f xPortRazyPrev = CVector3f(0.f, 0.f, 0.f);
   CTransform4f PortRazyOrientation(const CVector3f& motion) const;
+  CTransform4f PortRotZOrientation() const;
   bool PortVfxSwoosh() const;
   void PortRenderVfx();
   int PortSplineRef(int curIdx, int j);

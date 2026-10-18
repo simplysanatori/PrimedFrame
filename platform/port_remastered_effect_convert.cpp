@@ -2019,6 +2019,102 @@ public:
     return false;
   }
 
+  // A swoosh PROT turning about Z only: [KPIN](REUL(0, 0, z, #00)) or [KPIN](RADD(EXTR or INTR,
+  // REUL(0, 0, z, #00))), as port-only PROZ flags (bit 0 keep the birth value, bit 1 start from the
+  // orientation) and z in degrees. Remastered evaluates PROT at every point's birth and, unless it is
+  // initial-only, again every frame for every live point (UpdateExisting 0x27d590). KPIN keeps its
+  // child's value at birth (CREKeepInitial 0x297478, CElementDep::Finish 0x24f9a4); a z whose every
+  // varying part sits under KPIN is therefore kept whole. SUST evaluates on the system's frame
+  // (CRESolveUsingSystemTime 0x298ef8), the frame the port evaluates swoosh elements on, so it is
+  // dropped; a timed SINE outside it would run on the point's age and is left out. EXTR and INTR are
+  // both the orientation SetOrientation gives under XFMD 2.
+  bool SwooshZRotation(const EffectValue& prot, uint32_t& flags, std::vector<uint8_t>& out, std::string& why) const {
+    const EffectValue* value = &prot;
+    flags = 0;
+    if (IsElement(*value, F("KPIN")) && value->args.size() == 1) {
+      flags |= 1;
+      value = &value->args[0];
+    }
+    if (IsElement(*value, F("RADD")) && value->args.size() == 2 &&
+        (IsElement(value->args[0], F("EXTR")) || IsElement(value->args[0], F("INTR"))) &&
+        value->args[0].args.empty()) {
+      flags |= 2;
+      value = &value->args[1];
+    }
+    uint32_t word = 0;
+    if (!IsElement(*value, F("REUL")) || value->args.size() != 4 || !ConstWord(value->args[0], word) ||
+        (word & 0x7fffffffu) != 0 || !ConstWord(value->args[1], word) || (word & 0x7fffffffu) != 0) {
+      why = "not [KPIN]([RADD(EXTR or INTR, ]REUL(0, 0, z))";
+      return false;
+    }
+    const EffectValue& order = value->args[3];
+    if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
+      why = "REUL in an unseen axis order";
+      return false;
+    }
+    bool kept = false;
+    bool live = false;
+    std::vector<uint8_t> angle;
+    if (!SwooshAngle(value->args[2], false, false, kept, live, angle, why)) {
+      return false;
+    }
+    if (kept && live && (flags & 1) == 0) {
+      why = "z mixes kept and per-frame parts";
+      return false;
+    }
+    if (kept) {
+      flags |= 1;
+    }
+    out.insert(out.end(), angle.begin(), angle.end());
+    return true;
+  }
+
+  // A swoosh PROT's z angle as a retail real with KPIN and SUST taken out (see SwooshZRotation).
+  // `kept` reports a KPIN, `live` a part varying outside one.
+  bool SwooshAngle(const EffectValue& value, bool underKpin, bool underSust, bool& kept, bool& live,
+                   std::vector<uint8_t>& out, std::string& why) const {
+    const uint32_t fourcc = value.kind == EffectValue::Kind::Element ? value.fourcc : 0;
+    if (fourcc == F("KPIN") && value.args.size() == 1) {
+      kept = true;
+      return SwooshAngle(value.args[0], true, underSust, kept, live, out, why);
+    }
+    if (fourcc == F("SUST") && value.args.size() == 1) {
+      return SwooshAngle(value.args[0], underKpin, true, kept, live, out, why);
+    }
+    if (fourcc == F("CNST")) {
+      return Element(value, Type::Real, out, why);
+    }
+    if (fourcc == F("KEYE") && value.args.size() == 1) {
+      const EffectValue& keys = value.args[0];
+      if (keys.kind != EffectValue::Kind::Keys || keys.size < 22 || ReadLE32(m_data + keys.offset) != 0) {
+        why = "z KEYE on the particle's lifetime";
+        return false;
+      }
+      live = live || !underKpin;
+      return Element(value, Type::Real, out, why);
+    }
+    if ((fourcc == F("RAND") || fourcc == F("IRND")) && value.args.size() == 2) {
+      live = live || !underKpin;
+      AppendBE32(out, fourcc);
+      return SwooshAngle(value.args[0], underKpin, underSust, kept, live, out, why) &&
+             SwooshAngle(value.args[1], underKpin, underSust, kept, live, out, why);
+    }
+    if (fourcc == F("SINE") && value.args.size() == 3 && underSust) {
+      live = live || !underKpin;
+      AppendBE32(out, fourcc);
+      return SwooshAngle(value.args[0], underKpin, underSust, kept, live, out, why) &&
+             SwooshAngle(value.args[1], underKpin, underSust, kept, live, out, why) &&
+             SwooshAngle(value.args[2], underKpin, underSust, kept, live, out, why);
+    }
+    if ((fourcc == F("ADD_") || fourcc == F("SUB_") || fourcc == F("MULT")) && value.args.size() == 2) {
+      AppendBE32(out, fourcc);
+      return SwooshAngle(value.args[0], underKpin, underSust, kept, live, out, why) &&
+             SwooshAngle(value.args[1], underKpin, underSust, kept, live, out, why);
+    }
+    why = "z " + EffectFourCCString(value.fourcc) + (fourcc == F("SINE") ? " on the point's age" : "");
+    return false;
+  }
+
   // A one-byte or one-word CNST property (PBDM, ORNT, SCTR).
   static bool SmallConst(const EffectProperty& property, uint32_t& word) {
     if (property.value.size() != 1 || !IsElement(property.value[0], F("CNST")) || property.value[0].args.size() != 1) {
@@ -2845,7 +2941,8 @@ public:
       // Port-only PRAZ/PRAF: a swoosh's PROT of KPIN(RAZY(EMRV, ROTV(v, RLCL), fallback)), the ring
       // frozen at each point's birth facing the emitter's motion (CERotationFromAxis 0x29d298). Only
       // under XFMD 2, where EMRV is the system-space translation delta; ORNT with SIDE 2 replaces
-      // PROT (SetupOrientToView 0x29bdbc), so it is left out there.
+      // PROT (SetupOrientToView 0x29bdbc), so it is left out there. A PROT turning about Z only
+      // becomes port-only PROZ (SwooshZRotation).
       if (swoosh && fourcc == F("PROT")) {
         auto nodeWord = [&node](uint32_t tag, uint32_t fallback) {
           uint32_t word = fallback;
@@ -2888,8 +2985,21 @@ public:
         }
         std::vector<uint8_t> bytes;
         std::string why;
-        if (fallback == UINT32_MAX) {
+        if (fallback == UINT32_MAX && property.value.size() == 1 && !IsElement(property.value[0], F("KPIN")) &&
+            !IsElement(property.value[0], F("RADD")) && !IsElement(property.value[0], F("REUL"))) {
           result.dropped.push_back("PROT: not KPIN(RAZY(EMRV, ROTV(v, RLCL), RLCL or zero REUL))");
+        } else if (fallback == UINT32_MAX) {
+          uint32_t flags = 0;
+          if (xfmdMode != 2) {
+            result.dropped.push_back("PROT: turned about Z under XFMD " + std::to_string(int32_t(xfmdMode)));
+          } else if (!SwooshZRotation(property.value[0], flags, bytes, why)) {
+            result.dropped.push_back("PROT: " + why);
+          } else {
+            AppendBE32(out, F("PROZ"));
+            AppendBE32(out, F("CNST"));
+            AppendBE32(out, flags);
+            out.insert(out.end(), bytes.begin(), bytes.end());
+          }
         } else if (xfmdMode != 2) {
           result.dropped.push_back("PROT: RAZY under XFMD " + std::to_string(int32_t(xfmdMode)));
         } else if (!Element(rotv->args[0], Type::Vector, bytes, why)) {
@@ -3550,6 +3660,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortWord();
     } else if (!part && vfx && fourcc == F("PRAZ")) {
       ok = reader.Element(Type::Vector);
+    } else if (!part && vfx && fourcc == F("PROZ")) {
+      ok = reader.PortWord() && reader.Element(Type::Real);
     } else if (electric && fourcc == F("PEL2")) {
       ok = reader.PortWord();
     } else if (electric && Elc2Properties().count(fourcc) != 0) {

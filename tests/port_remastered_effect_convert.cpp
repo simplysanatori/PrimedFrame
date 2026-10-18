@@ -932,6 +932,82 @@ void TestSwooshRazyProt() {
   CHECK_MSG(xfmd, "a RAZY PROT under XFMD 3 is dropped");
 }
 
+void PutZReul(std::vector<uint8_t>& out) {
+  PutFourCC(out, "REUL");
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+}
+
+// A swoosh PROT turning about Z only becomes the port-only PROZ: flags (bit 0 kept from
+// birth, bit 1 from the orientation) and z with KPIN and SUST taken out.
+void TestSwooshZProt() {
+  ConvertedPart part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "PROT", 3);
+    PutFourCC(o, "KPIN");
+    PutFourCC(o, "RADD");
+    PutFourCC(o, "EXTR");
+    PutZReul(o);
+    PutConstant(o, Bits(90.0f));
+    o.push_back(0);
+  });
+  Retail want;
+  want.f("SWSH").f("PROZ").f("CNST").w(3).f("CNST").w(Bits(90.0f)).f("PIRN").f("CNST").w(1).f("_END");
+  CHECK_MSG(part.part == want.bytes, "KPIN(RADD(EXTR, REUL(0, 0, 90))) becomes PROZ 3");
+  CHECK_MSG(part.dropped.empty(), "a Z PROT drops nothing");
+
+  // REUL(0, 0, MULT(ADD_(KPIN(SUST(SINE(30, 100, 0))), 0), -1)): kept, as its only varying part is.
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "PROT", 3);
+    PutZReul(o);
+    PutFourCC(o, "MULT");
+    PutFourCC(o, "ADD_");
+    PutFourCC(o, "KPIN");
+    PutFourCC(o, "SUST");
+    PutFourCC(o, "SINE");
+    PutConstant(o, Bits(30.0f));
+    PutConstant(o, Bits(100.0f));
+    PutConstant(o, 0);
+    PutConstant(o, 0);
+    PutConstant(o, Bits(-1.0f));
+    o.push_back(0);
+  });
+  Retail sine;
+  sine.f("SWSH").f("PROZ").f("CNST").w(1).f("MULT").f("ADD_").f("SINE").f("CNST").w(Bits(30.0f));
+  sine.f("CNST").w(Bits(100.0f)).f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(-1.0f));
+  sine.f("PIRN").f("CNST").w(1).f("_END");
+  CHECK_MSG(part.part == sine.bytes, "a z kept under KPIN becomes PROZ 1");
+
+  // REUL(0, 0, MULT(SUST(RAND(0, 360)), -1)): a new angle every frame.
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "PROT", 3);
+    PutZReul(o);
+    PutFourCC(o, "MULT");
+    PutFourCC(o, "SUST");
+    PutFourCC(o, "RAND");
+    PutConstant(o, 0);
+    PutConstant(o, Bits(360.0f));
+    PutConstant(o, Bits(-1.0f));
+    o.push_back(0);
+  });
+  Retail rand;
+  rand.f("SWSH").f("PROZ").f("CNST").w(0).f("MULT").f("RAND").f("CNST").w(0).f("CNST").w(Bits(360.0f));
+  rand.f("CNST").w(Bits(-1.0f)).f("PIRN").f("CNST").w(1).f("_END");
+  CHECK_MSG(part.part == rand.bytes, "a per-frame z becomes PROZ 0");
+
+  // A SINE outside SUST runs on the point's age, which the port does not evaluate on.
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "PROT", 3);
+    PutZReul(o);
+    PutFourCC(o, "SINE");
+    PutConstant(o, Bits(30.0f));
+    PutConstant(o, Bits(100.0f));
+    PutConstant(o, 0);
+    o.push_back(0);
+  });
+  CHECK_MSG(part.dropped.size() == 1 && part.dropped[0] == "PROT: z SINE on the point's age",
+            "a z SINE on the point's age is dropped");
+}
+
 // Spawn tables the port cannot run as Remastered does (here spawns placed by a
 // component) merge into retail's one KSSM: generators by frame with the 16-byte
 // entries retail reads, the first swoosh and electric child as SSWH/SSSD and
@@ -3015,6 +3091,7 @@ int main() {
   TestPlasmaNestedHdrLight();
   TestSwooshElectric();
   TestSwooshRazyProt();
+  TestSwooshZProt();
   TestConvert();
   TestRejects();
   TestSingleNode();

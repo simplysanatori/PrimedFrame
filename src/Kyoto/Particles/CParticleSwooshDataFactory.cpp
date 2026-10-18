@@ -148,6 +148,17 @@ bool CParticleSwooshDataFactory::CreateWPSM(CSwooshDescription* swoosh, CInputSt
       CParticleDataFactory::GetClassID(in);
       swoosh->xPortRazyFallbackLocal = in.ReadLong() != 0;
       break;
+    // Port-only: PROT of [KPIN]([RADD(EXTR, ]REUL(0, 0, z))), flags bit 0 kept from birth,
+    // bit 1 from the orientation.
+    case 'PROZ':
+      CParticleDataFactory::GetClassID(in);
+      {
+        const int flags = in.ReadLong();
+        swoosh->xPortRotKeep = (flags & 1) != 0;
+        swoosh->xPortRotOriented = (flags & 2) != 0;
+      }
+      swoosh->xPortRotZ.reset(CParticleDataFactory::GetRealElement(in));
+      break;
     // Port-only Remastered particle variables (PVRT).
     case 'PVRT':
       CParticleDataFactory::GetClassID(in);
