@@ -174,6 +174,8 @@ const Signatures& ElementsOf(Type type) {
       {F("EXTS"), ""},      {F("EXTR"), ""},      {F("PRZY"), "vvv"},
       // Port-only CVEPortBasis: Remastered's particle space to retail's and back.
       {F("BSIS"), "v"},     {F("BSSC"), "v"},
+      // Port-only CVEPortAngleCone: Remastered's ANCR with its REUL as three angles.
+      {F("ANCR"), "rrrrrr"},
   };
   static const Signatures modVectorElements = {
       {F("NONE"), ""},     {F("CNST"), "rrr"},  {F("GRAV"), "v"},    {F("WIND"), "vr"},  {F("EXPL"), "rr"},
@@ -189,6 +191,8 @@ const Signatures& ElementsOf(Type type) {
   // SETR is left out: Remastered writes SEMR, which retail reads too.
   static const Signatures emitterElements = {
       {F("NONE"), ""}, {F("SEMR"), "vv"}, {F("SPHE"), "vrr"}, {F("ASPH"), "vrrrrrr"},
+      // Port-only CEEPortAngleSphere: Remastered's ASPR with its REUL as three angles.
+      {F("ASPR"), "vrrrrrrr"},
   };
   static const Signatures none;
   switch (type) {
@@ -1011,47 +1015,29 @@ public:
       return NegatedReal(value.args[0], out, why) && Element(value.args[2], Type::Real, out, why) &&
              Element(value.args[1], Type::Real, out, why);
     }
-    // ANCR(REUL(x, y, z, #00), x range, y range, magnitude) is retail's ANGC.
-    // Unrotated, the biases are 0 (the disc writes -0). A cone turned about X
-    // only is taken as ANGC's X bias (-x: REUL(-90) points the cone's +Z axis
-    // at +Y, as ANGC's X bias of 90 does); that is exact along the cone's
-    // centre line and approximate across it.
+    // ANCR(REUL(x, y, z, #00), x range, y range, magnitude): the port-only ANCR
+    // (x, y, z, x range, y range, magnitude) runs CVEAngleCone 0x29eebc as is, in
+    // Remastered's space like the tree around it.
     if (value.fourcc == F("ANCR") && type == Type::Vector && value.args.size() == 4) {
-      uint32_t xBias;
-      if (!ConeBias(value.args[0], xBias, why)) {
+      AppendBE32(out, F("ANCR"));
+      if (!ConeRotation(value.args[0], out, why)) {
         return false;
       }
-      // The ANGC is in retail's space; the tree around it is in Remastered's.
-      std::vector<uint8_t> angc;
-      AppendBE32(angc, F("ANGC"));
-      AppendBE32(angc, F("CNST"));
-      AppendBE32(angc, xBias);
-      AppendBE32(angc, F("CNST"));
-      AppendBE32(angc, 0x80000000u);
       for (size_t i = 1; i < 4; ++i) {
-        if (!Element(value.args[i], Type::Real, angc, why)) {
+        if (!Element(value.args[i], Type::Real, out, why)) {
           return false;
         }
       }
-      Basis(F("BSIS"), angc, out);
       return true;
     }
-    // ASPR(origin, REUL, x range, y range, radius, speed) is retail's ASPH
-    // (origin, x bias, y bias, x range, y range, radius, speed), with the
-    // rotation taken as ANCR's is.
+    // ASPR(origin, REUL, range 1, range 2, radius, speed): the port-only ASPR
+    // (origin, x, y, z, range 1, range 2, radius, speed) runs CVEAngleSphere
+    // 0x2cb100 as is and hands the port its position and velocity.
     if (value.fourcc == F("ASPR") && type == Type::Emitter && value.args.size() == 6) {
-      uint32_t xBias;
-      if (!ConeBias(value.args[1], xBias, why)) {
+      AppendBE32(out, F("ASPR"));
+      if (!PortVector(value.args[0], out, why) || !ConeRotation(value.args[1], out, why)) {
         return false;
       }
-      AppendBE32(out, F("ASPH"));
-      if (!PortVector(value.args[0], out, why)) {
-        return false;
-      }
-      AppendBE32(out, F("CNST"));
-      AppendBE32(out, xBias);
-      AppendBE32(out, F("CNST"));
-      AppendBE32(out, 0x80000000u);
       for (size_t i = 2; i < 6; ++i) {
         if (!Element(value.args[i], Type::Real, out, why)) {
           return false;
@@ -1227,30 +1213,22 @@ public:
     return true;
   }
 
-  // REUL(x, y, z, #00) as ANGC's X bias (-x), for a rotation about X only.
-  bool ConeBias(const EffectValue& reul, uint32_t& xBias, std::string& why) const {
+  // A cone's REUL(x, y, z, #00) as its three angle reals, which the port's ANCR and ASPR turn
+  // into Remastered's order-0 quaternion themselves.
+  bool ConeRotation(const EffectValue& reul, std::vector<uint8_t>& out, std::string& why) const {
     if (!IsElement(reul, F("REUL")) || reul.args.size() != 4) {
       why = "a cone rotation that is not REUL";
       return false;
     }
-    uint32_t angles[3];
-    for (size_t i = 0; i < 3; ++i) {
-      const EffectValue& angle = reul.args[i];
-      if (!IsElement(angle, F("CNST")) || angle.args.size() != 1 || angle.args[0].kind != EffectValue::Kind::Word) {
-        why = "a cone rotation that is not constant";
-        return false;
-      }
-      angles[i] = angle.args[0].word;
-    }
-    if ((angles[1] & 0x7fffffffu) != 0 || (angles[2] & 0x7fffffffu) != 0) {
-      why = "a cone rotated about Y or Z";
+    const EffectValue& order = reul.args[3];
+    if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
+      why = "REUL in an unseen axis order";
       return false;
     }
-    if ((angles[0] & 0x7fffffffu) == 0) {
-      xBias = 0x80000000u;
-    } else {
-      xBias = angles[0] ^ 0x80000000u;
-      m_approximated.push_back("rotated cone taken as an X bias");
+    for (size_t i = 0; i < 3; ++i) {
+      if (!Element(reul.args[i], Type::Real, out, why)) {
+        return false;
+      }
     }
     return true;
   }

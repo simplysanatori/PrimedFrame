@@ -315,6 +315,267 @@ inline CVector3f CameraPositionInSystemSpace(const CVector3f& camera, const CVec
                    InverseScale(s.GetZ()) * outZ);
 }
 
+// FCVTZS to 32 bits: toward zero, saturating, NaN to 0.
+inline int32_t ConvertToInt32(float v) {
+  if (std::isnan(v)) {
+    return 0;
+  }
+  if (v >= 2147483648.f) {
+    return INT32_MAX;
+  }
+  if (v <= -2147483648.f) {
+    return INT32_MIN;
+  }
+  return int32_t(v);
+}
+
+// The angle wrap CMath::FastSinR 0x691a0 and FastCosR 0x69280 open with, which
+// CVEAngleCone::GetValue 0x29eebc and CVEAngleSphere::GetValue 0x2cb100 inline: t when
+// |t| <= pi, else t less its whole turns, then moved by a turn when outside [-pi, pi].
+inline float WrapAngle(float t) {
+  const float pi = BitsFloat(0x40490fdb);
+  const float negPi = BitsFloat(0xc0490fdb);
+  const float turn = BitsFloat(0x40c90fdb);
+  const float negTurn = BitsFloat(0xc0c90fdb);
+  if (std::fabs(t) <= pi) {
+    return t;
+  }
+  const float turns = t * BitsFloat(0x3e22f983);
+  const float back = float(ConvertToInt32(turns)) * negTurn;
+  const float r = t + back;
+  const float minus = r + negTurn;
+  const float plus = r + turn;
+  const float above = r + negPi;
+  const float below = negPi - r;
+  const float low = below >= 0.f ? plus : r;
+  return above >= 0.f ? minus : low;
+}
+
+// CMath::FastSinR 0x691a0: odd degree-7 polynomial of the wrapped angle.
+inline float FastSinR(float t) {
+  t = WrapAngle(t);
+  const float x2 = t * t;
+  const float t1 = t * BitsFloat(0x3f7ff347);
+  const float x3 = t * x2;
+  const float t3 = x3 * BitsFloat(0xbe2a34ae);
+  const float x5 = x2 * x3;
+  const float s3 = t1 + t3;
+  const float t5 = x5 * BitsFloat(0x3c047fca);
+  const float x7 = x2 * x5;
+  const float s5 = s3 + t5;
+  const float t7 = x7 * BitsFloat(0xb9206873);
+  return s5 + t7;
+}
+
+// CMath::FastCosR 0x69280: even degree-8 polynomial of the wrapped angle.
+inline float FastCosR(float t) {
+  t = WrapAngle(t);
+  const float x2 = t * t;
+  const float t2 = x2 * BitsFloat(0xbefffd62);
+  const float s2 = t2 + 1.f;
+  const float x4 = x2 * x2;
+  const float t4 = x4 * BitsFloat(0x3d2a7a18);
+  const float s4 = s2 + t4;
+  const float x6 = x2 * x4;
+  const float t6 = x6 * BitsFloat(0xbab2bb2b);
+  const float s6 = s4 + t6;
+  const float x8 = x2 * x6;
+  const float t8 = x8 * BitsFloat(0x37a93188);
+  return s6 + t8;
+}
+
+// The parabolic sine CVEAngleCone/CVEAngleSphere inline, of an already wrapped angle:
+// h = 4/pi t - 4/pi^2 t|t|, then h + .225 (h|h| - h).
+inline float ParabolicSin(float t) {
+  const float m = t * BitsFloat(0x3fa2f983);
+  const float tb = t * BitsFloat(0x3ecf817a);
+  const float n = tb * std::fabs(t);
+  const float h = m - n;
+  const float ah = std::fabs(h);
+  const float hh = h * ah;
+  const float d = hh - h;
+  const float p = d * BitsFloat(0x3e666666);
+  return h + p;
+}
+
+struct Quat {
+  float w, x, y, z;
+};
+
+// CQuaternion::FromMatrix 0xd2de4 of nine row-major floats.
+inline Quat QuatFromMatrix(const float m[9]) {
+  const float d01 = m[0] + m[4];
+  const float trace = d01 + m[8];
+  Quat q;
+  if (trace > 0.f) {
+    const float s = trace + 1.f;
+    const float inv = InvSqrtF(s);
+    const float root = s * inv;
+    const float k = inv * .5f;
+    q.w = root * .5f;
+    const float dx = m[7] - m[5];
+    const float dy = m[2] - m[6];
+    const float dz = m[3] - m[1];
+    q.x = k * dx;
+    q.y = k * dy;
+    q.z = k * dz;
+    return q;
+  }
+  int i = m[4] > m[0] ? 1 : 0;
+  if (m[8] > m[4 * i]) {
+    i = 2;
+  }
+  static const int kNext[3] = {1, 2, 0};
+  const int j = kNext[i];
+  const int k = kNext[j];
+  const float jk = m[4 * j] + m[4 * k];
+  const float d = m[4 * i] - jk;
+  const float s = d + 1.f;
+  const float inv = InvSqrtF(s);
+  const float root = inv * s;
+  const float half = inv * .5f;
+  float v[3];
+  v[i] = root * .5f;
+  const float sj = m[3 * j + i] + m[3 * i + j];
+  v[j] = half * sj;
+  const float sk = m[3 * k + i] + m[3 * i + k];
+  v[k] = half * sk;
+  const float sw = m[3 * k + j] - m[3 * j + k];
+  q.w = half * sw;
+  q.x = v[0];
+  q.y = v[1];
+  q.z = v[2];
+  return q;
+}
+
+// REUL in axis order 0 (CERotationEuler::GetValue 0x29c944, QuatGeneric 0x29ca18): the angles in
+// degrees, each axis's FastSinR/FastCosR pair scaled by one refined FRSQRTE of s^2 + c^2, the
+// matrix Rz * Ry * Rx built term by term, then FromMatrix.
+inline Quat EulerQuat(float xDegrees, float yDegrees, float zDegrees) {
+  const float degrees = BitsFloat(0x3c8efa35);
+  const float angles[3] = {xDegrees * degrees, yDegrees * degrees, zDegrees * degrees};
+  float s[3], c[3];
+  for (int i = 0; i < 3; ++i) {
+    s[i] = FastSinR(angles[i]);
+    c[i] = FastCosR(angles[i]);
+  }
+  for (int i = 0; i < 3; ++i) {
+    const float ss = s[i] * s[i];
+    const float cc = c[i] * c[i];
+    const float n = ss + cc;
+    const float e = ReciprocalSqrtEstimate(n);
+    const float r = e * ReciprocalSqrtStep(n, e * e);
+    s[i] = s[i] * r;
+    c[i] = c[i] * r;
+  }
+  const float sx = s[0], sy = s[1], sz = s[2];
+  const float cx = c[0], cy = c[1], cz = c[2];
+  const float sxsy = sx * sy;
+  const float cxsy = cx * sy;
+  float m[9];
+  m[0] = cy * cz;
+  const float sxsycz = sxsy * cz, cxsz = cx * sz;
+  m[1] = sxsycz - cxsz;
+  const float cxsycz = cxsy * cz, sxsz = sx * sz;
+  m[2] = cxsycz + sxsz;
+  m[3] = cy * sz;
+  const float sxsysz = sxsy * sz, cxcz = cx * cz;
+  m[4] = sxsysz + cxcz;
+  const float cxsysz = cxsy * sz, sxcz = sx * cz;
+  m[5] = cxsysz - sxcz;
+  m[6] = -sy;
+  m[7] = sx * cy;
+  m[8] = cx * cy;
+  return QuatFromMatrix(m);
+}
+
+// CQuaternion::Transform 0xd3f2c: v turned by q (unnormalised), operation for operation.
+inline CVector3f QuatTransform(const Quat& q, const CVector3f& v) {
+  const float vx = v.GetX(), vy = v.GetY(), vz = v.GetZ();
+  const float vxx = vx * q.x, vyy = vy * q.y, vzz = vz * q.z;
+  const float dot2 = vxx + vyy;
+  const float dot = dot2 + vzz;
+  const float vzy = vz * q.y, vxw = vx * q.w, vyz = vy * q.z;
+  const float b2 = vzy + vxw;
+  const float b = b2 - vyz;
+  const float vxz = vx * q.z, vyw = vy * q.w, vzx = vz * q.x;
+  const float c2 = vxz + vyw;
+  const float c = c2 - vzx;
+  const float vyx = vy * q.x, vzw = vz * q.w, vxy = vx * q.y;
+  const float e2 = vyx + vzw;
+  const float e = e2 - vxy;
+  const float xd = q.x * dot, wb = q.w * b, zc = q.z * c, ye = q.y * e;
+  const float x1 = xd + wb;
+  const float x2 = x1 - zc;
+  const float yd = q.y * dot, wc = q.w * c, xe = q.x * e, zb = q.z * b;
+  const float y1 = yd + wc;
+  const float y2 = y1 - xe;
+  const float zd = q.z * dot, we = q.w * e, yb = q.y * b, xc = q.x * c;
+  const float z1 = zd + we;
+  const float z2 = z1 - yb;
+  return CVector3f(x2 + ye, y2 + zb, z2 + xc);
+}
+
+// FMULX: a product, except zero times infinity is 2 with the product's sign.
+inline float MultiplyExtended(float a, float b) {
+  if ((a == 0.f && std::isinf(b)) || (b == 0.f && std::isinf(a))) {
+    return std::signbit(a) != std::signbit(b) ? -2.f : 2.f;
+  }
+  return a * b;
+}
+
+// CVector3f::Normalize 0x6b0b0: scaled by twice-refined FRSQRTE of (z*z + x*x) + y*y, no
+// guard (a zero vector becomes (2, 2, 2) with its signs).
+inline CVector3f NormalizeInPlace(const CVector3f& v) {
+  const float xx = v.GetX() * v.GetX();
+  const float yy = v.GetY() * v.GetY();
+  const float zz = v.GetZ() * v.GetZ();
+  const float zx = zz + xx;
+  const float n = zx + yy;
+  float e = ReciprocalSqrtEstimate(n);
+  e = e * ReciprocalSqrtStep(n, e * e);
+  e = e * ReciprocalSqrtStep(n, e * e);
+  return CVector3f(MultiplyExtended(v.GetX(), e), MultiplyExtended(v.GetY(), e),
+                   MultiplyExtended(v.GetZ(), e));
+}
+
+// An ANCR/ASPR angle in radians: ((range/2 - range*u) + 0) in degrees, wrapped.
+inline float ConeAngle(float range, float u) {
+  const float half = range * .5f;
+  const float drawn = range * u;
+  const float centred = half - drawn;
+  const float biased = centred + 0.f;
+  return WrapAngle(biased * BitsFloat(0x3c8efa35));
+}
+
+// The unrotated ANCR/ASPR direction (sin b cos a, -sin a, cos b cos a) by the parabolic law,
+// the cosines as sines of the wrapped angle plus pi/2.
+inline CVector3f ConeDirection(float a, float b) {
+  const float halfPi = BitsFloat(0x3fc90fdb);
+  const float sb = ParabolicSin(b);
+  const float cb = ParabolicSin(WrapAngle(b + halfPi));
+  const float sa = ParabolicSin(a);
+  const float ca = ParabolicSin(WrapAngle(a + halfPi));
+  const float x = sb * ca;
+  const float z = cb * ca;
+  return CVector3f(x, -sa, z);
+}
+
+// ANCR (CVEAngleCone::GetValue 0x29eebc): the direction for draws u, v turned by q and scaled
+// by the magnitude, not normalised.
+inline CVector3f AngleCone(const Quat& q, float xRange, float yRange, float u, float v,
+                           float magnitude) {
+  const CVector3f d = QuatTransform(q, ConeDirection(ConeAngle(xRange, u), ConeAngle(yRange, v)));
+  return CVector3f(d.GetX() * magnitude, d.GetY() * magnitude, d.GetZ() * magnitude);
+}
+
+// ASPR's direction (CVEAngleSphere::GetValue 0x2cb100): turned by q, then Normalize 0x6b0b0.
+inline CVector3f AngleSphereDirection(const Quat& q, float range1, float range2, float u,
+                                      float v) {
+  return NormalizeInPlace(
+      QuatTransform(q, ConeDirection(ConeAngle(range1, u), ConeAngle(range2, v))));
+}
+
 } // namespace PortParticleMath
 
 #endif

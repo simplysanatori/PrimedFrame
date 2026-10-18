@@ -1276,6 +1276,16 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
   case SBIG('RNDV'):
     ret = rs_new CVEPortRandomVector(GetRealElement(in));
     break;
+  case SBIG('ANCR'): {
+    CRealElement* rotateX = GetRealElement(in);
+    CRealElement* rotateY = GetRealElement(in);
+    CRealElement* rotateZ = GetRealElement(in);
+    CRealElement* xRange = GetRealElement(in);
+    CRealElement* yRange = GetRealElement(in);
+    CRealElement* magnitude = GetRealElement(in);
+    ret = rs_new CVEPortAngleCone(rotateX, rotateY, rotateZ, xRange, yRange, magnitude);
+    break;
+  }
   case SBIG('NORM'):
     ret = rs_new CVEPortNormalize(GetVectorElement(in));
     break;
@@ -1501,6 +1511,21 @@ CEmitterElement* CParticleDataFactory::GetEmitterElement(CInputStream& in) {
                                 angleYRange);
     break;
   }
+#ifdef TARGET_PC
+  case SBIG('ASPR'): {
+    CVectorElement* origin = GetVectorElement(in);
+    CRealElement* rotateX = GetRealElement(in);
+    CRealElement* rotateY = GetRealElement(in);
+    CRealElement* rotateZ = GetRealElement(in);
+    CRealElement* range1 = GetRealElement(in);
+    CRealElement* range2 = GetRealElement(in);
+    CRealElement* radius = GetRealElement(in);
+    CRealElement* speed = GetRealElement(in);
+    ret = rs_new CEEPortAngleSphere(origin, rotateX, rotateY, rotateZ, range1, range2, radius,
+                                    speed);
+    break;
+  }
+#endif
   default:
     ret = nullptr;
     break;

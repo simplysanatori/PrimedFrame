@@ -610,4 +610,39 @@ bool CVEPortRandomVector::GetValue(int frame, CVector3f& valOut) const {
   valOut = PortParticleMath::RandomVector(u0, u1, u2, magnitude);
   return false;
 }
+
+CVEPortAngleCone::CVEPortAngleCone(CRealElement* rotateX, CRealElement* rotateY,
+                                   CRealElement* rotateZ, CRealElement* xRange,
+                                   CRealElement* yRange, CRealElement* magnitude)
+: mRotate{rotateX, rotateY, rotateZ}, mXRange(xRange), mYRange(yRange), mMagnitude(magnitude) {}
+
+CVEPortAngleCone::~CVEPortAngleCone() {
+  for (CRealElement* angle : mRotate) {
+    delete angle;
+  }
+  delete mXRange;
+  delete mYRange;
+  delete mMagnitude;
+}
+
+// Children in Remastered's order (rotation, x range, y range, magnitude), each from 0, then
+// the two draws.
+bool CVEPortAngleCone::GetValue(int frame, CVector3f& valOut) const {
+  float angles[3] = {0.f, 0.f, 0.f};
+  for (int i = 0; i < 3; ++i) {
+    mRotate[i]->GetValue(frame, angles[i]);
+  }
+  const PortParticleMath::Quat q = PortParticleMath::EulerQuat(angles[0], angles[1], angles[2]);
+  float xRange = 0.f;
+  float yRange = 0.f;
+  float magnitude = 0.f;
+  mXRange->GetValue(frame, xRange);
+  mYRange->GetValue(frame, yRange);
+  mMagnitude->GetValue(frame, magnitude);
+  CRandom16* random = CRandom16::GetRandomNumber();
+  const float u = random->PortFloat28();
+  const float v = random->PortFloat28();
+  valOut = PortParticleMath::AngleCone(q, xRange, yRange, u, v, magnitude);
+  return false;
+}
 #endif

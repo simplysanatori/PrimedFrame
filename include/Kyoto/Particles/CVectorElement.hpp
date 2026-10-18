@@ -264,6 +264,23 @@ private:
   CRealElement* mMagnitude;
 };
 
+// Remastered ANCR (CVEAngleCone::GetValue 0x29eebc) with its REUL rotation (axis order 0)
+// given as the three angles: a direction in Remastered's space.
+class CVEPortAngleCone : public CVectorElement {
+public:
+  CVEPortAngleCone(CRealElement* rotateX, CRealElement* rotateY, CRealElement* rotateZ,
+                   CRealElement* xRange, CRealElement* yRange, CRealElement* magnitude);
+  ~CVEPortAngleCone() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CRealElement* mRotate[3];
+  CRealElement* mXRange;
+  CRealElement* mYRange;
+  CRealElement* mMagnitude;
+};
+
 // Remastered NORM (CVENormalizeVector::GetValue 0x29e620): the child scaled to unit length,
 // unchanged when its length is at most 2^-23.
 class CVEPortNormalize : public CVectorElement {

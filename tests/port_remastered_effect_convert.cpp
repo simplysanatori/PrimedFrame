@@ -515,10 +515,9 @@ void TestSingleNode() {
   CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), "an empty KSSM is nothing left out");
 }
 
-// Remastered's new elements that have a retail equivalent: MPCB's angle form
-// and an unrotated ANCR become ANGC, MPRD becomes RAND (and a random LTM2
-// comes down by one at both ends), DFCP is kept as the port's element; a vector of nested
-// constants is not read as an id.
+// Remastered's new elements: MPCB's angle form becomes ANGC, MPRD becomes RAND
+// (and a random LTM2 comes down by one at both ends), DFCP and ANCR are kept as
+// the port's elements; a vector of nested constants is not read as an id.
 void TestMappedElements() {
   std::vector<uint8_t> out(0x3c, 0);
   std::memcpy(out.data(), "RFRM", 4);
@@ -570,7 +569,8 @@ void TestMappedElements() {
   want.f("ANGC").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(0.1f));
   want.f("LTME").f("RAND").f("CNST").w(16).f("CNST").w(32);
   want.f("SIZE").f("MULT").f("CNST").w(Bits(2.0f)).f("DFCP").f("CNST").w(Bits(2.0f)).f("CNST").w(0);
-  want.f("POFS").f("ANGC").f("CNST").w(0x80000000u).f("CNST").w(0x80000000u);
+  // The port's ANCR runs in Remastered's space, so the property boundary turns it.
+  want.f("POFS").f("BSIS").f("ANCR").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
   want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(0.5f));
   want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "new elements map onto retail's");
@@ -699,9 +699,9 @@ void TestParticleSpace() {
   CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), "particle-space conversion drops nothing");
 }
 
-// Remastered's shapes with no retail element of their own: ASPR becomes ASPH
-// and a cone turned about X an X bias, RNDV the port-only RNDV, and a GRAD
-// colour gradient over the life 101 percent keys.
+// Remastered's shapes with no retail element of their own: ASPR (its REUL as
+// three angles) and RNDV become the port-only elements, and a GRAD colour
+// gradient over the life a PGRD.
 void TestShapes() {
   std::vector<uint8_t> out(0x3c, 0);
   std::memcpy(out.data(), "RFRM", 4);
@@ -745,8 +745,8 @@ void TestShapes() {
   const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
   Retail want;
   want.f("GPSM");
-  want.f("EMTR").f("ASPH").f("CNST").f("CNST").w(0x80000000u).f("CNST").w(0).f("CNST").w(0);
-  want.f("CNST").w(Bits(90.0f)).f("CNST").w(0x80000000u);
+  want.f("EMTR").f("ASPR").f("CNST").f("CNST").w(0x80000000u).f("CNST").w(0).f("CNST").w(0);
+  want.f("CNST").w(Bits(-90.0f)).f("CNST").w(0).f("CNST").w(0);
   want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(180.0f)).f("CNST").w(Bits(0.25f)).f("CNST").w(Bits(0.1f));
   want.f("PSIV").f("BSIS").f("RNDV").f("CNST").w(Bits(0.5f));
   // A PART's COLR (tag 3) reads its particle's LTM2, one above the port's lifetime: PLPT offset 1.
@@ -762,7 +762,7 @@ void TestShapes() {
     }
     std::vector<RetailPartProperty> split;
     CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), split, error), "shapes PART reads as retail");
-    CHECK_MSG(parts[0].approximated.size() == 1, "only the rotated cone listed as approximated");
+    CHECK_MSG(parts[0].approximated.empty(), "a rotated cone is exact");
   }
 }
 

@@ -3,6 +3,7 @@
 #include "Kyoto/CRandom16.hpp"
 #include "port_test.h"
 
+#include <cmath>
 #include <cstdio>
 
 namespace {
@@ -222,6 +223,33 @@ int main() {
     CRandom16 random(0);
     CHECK_MSG(random.PortFloat28() == 12345.f / 268435456.f, "Remastered draw is the low 28 bits");
     CHECK_MSG(random.GetSeed() == 0x3039u, "one LCG step per draw");
+  }
+  // ANCR/ASPR (CVEAngleCone 0x29eebc, CVEAngleSphere 0x2cb100) and their REUL order 0.
+  {
+    CHECK_MSG(WrapAngle(1.f) == 1.f, "an angle within pi is not wrapped");
+    CHECK_MSG(std::fabs(WrapAngle(4.f) - (4.f - 6.2831853f)) < 1e-5f, "an angle past pi comes back a turn");
+    CHECK_MSG(FastSinR(0.f) == 0.f && FastCosR(0.f) == 1.f, "FastSinR/FastCosR at 0");
+    const Quat identity = EulerQuat(0.f, 0.f, 0.f);
+    CHECK_MSG(std::fabs(identity.w - 1.f) < 1e-4f && identity.x == 0.f && identity.y == 0.f && identity.z == 0.f,
+              "REUL(0, 0, 0) is the identity");
+    const Quat yaw = EulerQuat(0.f, 90.f, 0.f);
+    CHECK_MSG(std::fabs(yaw.w - 0.70710677f) < 1e-3f && std::fabs(yaw.y - 0.70710677f) < 1e-3f &&
+                  std::fabs(yaw.x) < 1e-6f && std::fabs(yaw.z) < 1e-6f,
+              "REUL(0, 90, 0) turns about Y");
+    CHECK_MSG(NearVector(AngleCone(identity, 90.f, 90.f, .5f, .5f, 2.f), CVector3f(0.f, 0.f, 2.f), 1e-4f),
+              "a centred ANCR draw points down +Z at the magnitude");
+    CHECK_MSG(NearVector(AngleCone(yaw, 90.f, 90.f, .5f, .5f, 1.f), CVector3f(1.f, 0.f, 0.f), 1e-3f),
+              "a REUL(0, 90, 0) cone points down +X");
+    // u = 0 is the +range/2 edge: a = 45 degrees gives (0, -sin a, cos a).
+    CHECK_MSG(NearVector(AngleCone(identity, 90.f, 0.f, 0.f, .5f, 1.f), CVector3f(0.f, -0.70710677f, 0.70710677f), 1e-2f),
+              "ANCR's x range tilts toward -Y");
+    const CVector3f sphere = AngleSphereDirection(identity, 90.f, 0.f, 0.f, .5f);
+    const float length = std::sqrt(sphere.GetX() * sphere.GetX() + sphere.GetY() * sphere.GetY() +
+                                   sphere.GetZ() * sphere.GetZ());
+    CHECK_MSG(std::fabs(length - 1.f) < 1e-5f, "ASPR's direction is normalised");
+    const CVector3f zero = NormalizeInPlace(CVector3f(0.f, 0.f, 0.f));
+    CHECK_MSG(zero.GetX() == 2.f && zero.GetY() == 2.f && zero.GetZ() == 2.f,
+              "Normalize 0x6b0b0 takes zero to (2, 2, 2)");
   }
 
   if (port_test::Failures() == 0) {
