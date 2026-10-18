@@ -16,6 +16,7 @@
 #include "Kyoto/CResFactory.hpp"
 #include "Kyoto/Streams/CMemoryInStream.hpp"
 #include "Kyoto/Streams/CMemoryStreamOut.hpp"
+#include "MetroidPrime/CInGameGuiManager.hpp"
 #include "MetroidPrime/CMain.hpp"
 #include "MetroidPrime/CMemoryCard.hpp"
 #include "MetroidPrime/CStateManager.hpp"
@@ -582,7 +583,10 @@ ResumeContext GatherResumeContext() {
   ctx.cinematic = mgr->GetCameraManager() != nullptr && mgr->GetCameraManager()->IsInCinematicCamera();
   ctx.transition = mgr->GetWorldTransManager() != nullptr &&
                    mgr->GetWorldTransManager()->GetTransType() != CWorldTransManager::kTT_Disabled;
-  ctx.saveUi = mgr->GetInSaveUI();
+  // Not CStateManager::GetInSaveUI: that flag goes true at the first pause or message screen and only
+  // a save station clears it (ThinkSaveStation reads it as "the save UI was exited").
+  const CInGameGuiManager* gui = CInGameGuiManager::PortCurrent();
+  ctx.saveUi = gui != nullptr && gui->IsInOrTransitioningToOrFromState(kIGGS_PauseSaveGame);
   return ctx;
 }
 
