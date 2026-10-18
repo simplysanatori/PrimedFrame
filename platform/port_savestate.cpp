@@ -284,6 +284,7 @@ void DoSave(CStateManager& mgr, int slot) {
 }
 
 void QuitToPending(CStateManager& mgr) {
+  DisarmSpawnLayers();
   sInstallPending = true;
   sPlacePending = false;
   sRoomPending = false;
@@ -492,6 +493,7 @@ void TickRoomState(CStateManager& mgr) {
   if (waiting > 0 && ++sRoomFrames < kRoomApplyFrames)
     return;
   sRoomPending = false;
+  DisarmSpawnLayers();
   PortLog::Write("[savestate] room state: %d applied, %d removed, %d unmatched, %d areas skipped\n",
                  sRoomStats.applied, sRoomStats.removed, sRoomStats.unmatched, sRoomStats.skipped);
 }
@@ -815,6 +817,10 @@ void InstallPending() {
     }
   }
   LoadMapData(sPendingBlob);
+  // Rebuild the areas with the layers their objects were spawned with (#161); each area puts
+  // the saved live bits back as its objects are spawned.
+  if (PortDebug::SaveStateRoomState())
+    ArmSpawnLayers(sPendingHeader.roomState, sPendingHeader.worldId);
   sPlacePending = true;
 }
 
