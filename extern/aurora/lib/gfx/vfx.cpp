@@ -105,6 +105,8 @@ struct State_ {
   wgpu::PipelineLayout pipelineLayout;
   std::map<std::array<uint64_t, 7>, wgpu::RenderPipeline> pipelines;
   std::map<std::array<const void*, 1 + 2 * SlotCount>, wgpu::BindGroup> groups;
+  // Set when an atlas is evicted: the cached bind groups still hold its views, so the render thread drops them.
+  std::atomic<bool> groupsStale{false};
   wgpu::Texture dummyTexture;
   wgpu::TextureView dummyView;
 };
@@ -780,6 +782,9 @@ bool ensure_registered() {
             groupKey[SlotCount + i] = samplers[i].Get();
           }
           groupKey[2 * SlotCount] = ctx.uniformBuffer.Get();
+          if (g_state.groupsStale.exchange(false, std::memory_order_acq_rel)) {
+            g_state.groups.clear();
+          }
           auto group = g_state.groups.find(groupKey);
           if (group == g_state.groups.end()) {
             if (g_state.groups.size() > 512) {
@@ -869,6 +874,7 @@ void evict_idle() {
     if (now - it->second->lastUse > EvictAfter && it->second->state.load() != State::Requested) {
       g_state.byId.erase(it->second->id);
       it = g_state.byKey.erase(it);
+      g_state.groupsStale.store(true, std::memory_order_release);
     } else {
       ++it;
     }
