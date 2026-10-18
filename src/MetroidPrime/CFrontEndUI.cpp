@@ -907,6 +907,22 @@ void CFrontEndUI::SNewFileSelectFrame::FinishedLoading() {
   x104_rowPitch = (x64_fileSelections[1].x0_base->GetLocalPosition() -
                    x64_fileSelections[0].x0_base->GetLocalPosition())
                       .GetZ();
+#ifdef TARGET_PC
+  // Port: a PAL disc's FRME_NewFileSelect has an extra, empty row after Erase
+  // (issue #152), which moves Fusion and the gallery down one. Rows past the
+  // files are told apart by widget, and a row the code doesn't know is never
+  // selected, by a tap or the pad.
+  for (int i = 3;; ++i) {
+    CGuiWidget* worker = x20_tablegroup_fileselect->GetWorkerWidget(i);
+    if (worker == nullptr) {
+      break;
+    }
+    if (worker != x28_textpane_erase.x0_textPane && worker != x38_textpane_gba.x0_textPane &&
+        worker != x30_textpane_cheats.x0_textPane) {
+      worker->SetIsSelectable(false);
+    }
+  }
+#endif
 }
 
 uint CFrontEndUI::SNewFileSelectFrame::GetUserFileSelection() const {
@@ -1025,6 +1041,19 @@ void CFrontEndUI::SNewFileSelectFrame::HandleActiveChange(CGuiWidget* active) {
 
 void CFrontEndUI::SNewFileSelectFrame::DoFileselectAdvance(CGuiTableGroup* caller) {
   int userSel = x20_tablegroup_fileselect->GetUserSelection();
+#ifdef TARGET_PC
+  // Port: the PAL frame's extra row shifts these (see FinishedLoading).
+  if (userSel >= 3) {
+    const CGuiWidget* worker = x20_tablegroup_fileselect->GetWorkerWidget(userSel);
+    userSel = worker == x28_textpane_erase.x0_textPane ? 3
+              : worker == x38_textpane_gba.x0_textPane ? 4
+              : worker == x30_textpane_cheats.x0_textPane ? 5
+                                                         : -1;
+    if (userSel < 0) {
+      return;
+    }
+  }
+#endif
   if (userSel < 3) {
     if (x8_subMenu == kSM_EraseGame) {
       if (x4_saveUI->GetGameData(userSel) != nullptr) {
@@ -1167,8 +1196,13 @@ void CFrontEndUI::SNewFileSelectFrame::ClearFrameContents() {
   }
 
   x20_tablegroup_fileselect->SetUserSelection(0);
+#ifdef TARGET_PC
+  // Port: by widget, not row 5 (the PAL frame's extra row; see FinishedLoading).
+  CGuiTextPane* cheats = x30_textpane_cheats.x0_textPane;
+#else
   CGuiTextPane* cheats =
       static_cast< CGuiTextPane* >(x20_tablegroup_fileselect->GetWorkerWidget(5));
+#endif
   if (CSlideShow::SlideShowGalleryFlags()) {
     cheats->SetIsSelectable(true);
     x30_textpane_cheats.x0_textPane->TextSupport().SetFontColor(CColor::White());
