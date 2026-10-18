@@ -218,6 +218,7 @@ private:
   std::vector< SPortVfxPoint > xPortVfxPts;
   bool PortVfxSwoosh() const;
   void PortRenderVfx();
+  int PortSplineRef(int curIdx, int j);
 #endif
 
   static uint mSwooshAliveCount;

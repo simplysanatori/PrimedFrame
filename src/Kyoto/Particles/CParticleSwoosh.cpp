@@ -596,6 +596,35 @@ bool CParticleSwoosh::PortVfxSwoosh() const {
 // retail's (u along the trail, TSPN segments per repeat; v 0..1 across), run through VTMT.
 // Colour, ITEN and the VPMT rows run from the segment's point to the next older one, as
 // Remastered evaluates them per point.
+// The four spline control points of the segment curIdx -> curIdx - 1, as UpdateRenderData_Swoosh
+// 0x2b52e0 picks them: the outer neighbours only when alive and emitted one tick apart (+0x58),
+// else the segment's own end. Retail's RenderNSidedSpline also pulls buffer slot 0 in for the
+// second-oldest segment, which bends that segment toward an arbitrary trail point; Remastered
+// has no such case.
+int CParticleSwoosh::PortSplineRef(int curIdx, int j) {
+  const int cur = WrapIndex(curIdx);
+  const int prev = WrapIndex(curIdx - 1);
+  auto adjacent = [&](int idx, int to) {
+    const SSwooshData& s = x15c_swooshes.data()[idx];
+    const int gap = s.mStartFrame - x15c_swooshes.data()[to].mStartFrame;
+    return s.mActive && (gap == 1 || gap == -1);
+  };
+  switch (j) {
+  case 0: {
+    const int next = WrapIndex(curIdx + 1);
+    return adjacent(next, cur) ? next : cur;
+  }
+  case 1:
+    return cur;
+  case 2:
+    return prev;
+  default: {
+    const int older = WrapIndex(curIdx - 2);
+    return adjacent(older, prev) ? older : prev;
+  }
+  }
+}
+
 void CParticleSwoosh::PortRenderVfx() {
   const CPortVfxData& vfx = *x1c_desc->xPortVfx;
   float vsmt[kPortVfxVsmtCount] = {};
@@ -665,37 +694,8 @@ void CParticleSwoosh::PortRenderVfx() {
       }
       continue;
     }
-    // The four ring points, picked as RenderNSidedSpline does.
     for (int j = 0; j < 4; ++j) {
-      int refIdx = 0;
-      if (j == 0) {
-        refIdx = WrapIndex(curIdx + 1);
-        if (!x15c_swooshes.data()[refIdx].mActive) {
-          refIdx = curIdx;
-        }
-      } else if (j == 1) {
-        refIdx = WrapIndex(curIdx);
-      } else if (j == 2) {
-        refIdx = prevIdx;
-      } else {
-        refIdx = WrapIndex(curIdx - 2);
-        if (!x15c_swooshes.data()[refIdx].mActive) {
-          refIdx = prevIdx;
-        }
-      }
-      if (x1b4_LENG == 2) {
-        if (j == 0) {
-          refIdx = WrapIndex(curIdx);
-        } else if (j == 3) {
-          refIdx = prevIdx;
-        }
-      } else if (curIdx == x158_curParticle && j == 0) {
-        refIdx = x158_curParticle;
-      } else if (WrapIndex(x158_curParticle + 2) == curIdx && j == 3) {
-        refIdx = WrapIndex(x158_curParticle + 1);
-      } else if (i == x1ac_particleCount - 2 && j == 3) {
-        refIdx = 0;
-      }
+      const int refIdx = PortSplineRef(curIdx, j);
       const SSwooshData& swoosh = x15c_swooshes.data()[refIdx];
       if (orntView) {
         const int age = WrapIndex(x158_curParticle - refIdx);
@@ -1335,6 +1335,11 @@ void CParticleSwoosh::RenderNSidedSpline() {
       } else if (i == x1ac_particleCount - 2 && j == 3) {
         refIdx = 0;
       }
+#ifdef TARGET_PC
+      if (PortIsRemastered()) {
+        refIdx = PortSplineRef(curIdx, j);
+      }
+#endif
       int k;
       const SSwooshData& swoosh = x15c_swooshes.data()[refIdx];
       const CTransform4f& orientation = swoosh.mOrientation;
