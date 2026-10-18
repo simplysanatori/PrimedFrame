@@ -475,10 +475,25 @@ void CParticleSwoosh::SetTranslation(const CVector3f& translation) {
 }
 
 void CParticleSwoosh::SetGlobalTranslation(const CVector3f& translation) {
+#ifdef TARGET_PC
+  // XFMD 4: MPT_SetGlobalTranslation 0x27faa4 also writes the external translation, which the
+  // EMVR's EXTT gives var b8, the position a point is born at; the global translation stays zero.
+  if (x1c_desc->xPortXfmdMover) {
+    SetTranslation(translation);
+    return;
+  }
+#endif
   xa4_globalTranslation = translation;
 }
 
 void CParticleSwoosh::SetGlobalOrientation(const CTransform4f& orientation) {
+#ifdef TARGET_PC
+  // XFMD 4: MPT_SetGlobalOrientation 0x27fa24 writes the external rotation (EXTR, var bc).
+  if (x1c_desc->xPortXfmdMover) {
+    SetOrientation(orientation);
+    return;
+  }
+#endif
   xb0_globalOrientation = orientation.GetRotation();
 }
 
@@ -1667,6 +1682,12 @@ void CParticleSwoosh::UpdateSwooshTranslation(const CVector3f& translation) {
 }
 
 void CParticleSwoosh::SetGlobalScale(const CVector3f& scale) {
+#ifdef TARGET_PC
+  // XFMD 4: the external scale is read by no mover, so the draw keeps unit scale (var b0 = one).
+  if (x1c_desc->xPortXfmdMover) {
+    return;
+  }
+#endif
   xe0_globalScale = scale;
   xec_scaleXf = CTransform4f::Scale(scale);
   x11c_invScaleXf = CTransform4f::Scale(1.f / scale.GetX(), 1.f / scale.GetY(), 1.f / scale.GetZ());

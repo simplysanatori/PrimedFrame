@@ -1048,6 +1048,40 @@ void TestSwooshZProt() {
   });
   CHECK_MSG(part.dropped.size() == 1 && part.dropped[0] == "PROT: EXTR or INTR under XFMD 3",
             "RADD(EXTR, REUL) under XFMD 3 is dropped");
+
+  // XFMD 4 with the identity EMVR (the ice beam's swooshes) is written and consumes the EMVR.
+  auto putMover = [](std::vector<uint8_t>& o, float x) {
+    PutProperty(o, "EMVR", 1);
+    PutFourCC(o, "SMOV");
+    PutFourCC(o, "EXTT");
+    PutFourCC(o, "CNST");
+    for (float each : {x, 0.f, 0.f}) {
+      PutConstant(o, Bits(each));
+    }
+    PutFourCC(o, "EXTR");
+    PutFourCC(o, "NONE");
+    PutFourCC(o, "NONE");
+  };
+  part = ConvertSwoosh([&putMover](auto& o) {
+    PutProperty(o, "XFMD", 0);
+    PutConstant(o, 4);
+    putMover(o, 0.f);
+  });
+  Retail mover;
+  mover.f("SWSH").f("XFMD").f("CNST").w(4).f("PIRN").f("CNST").w(1).f("_END");
+  CHECK_MSG(part.part == mover.bytes && part.dropped.empty(), "XFMD 4 with SMOV(EXTT, 0, EXTR) becomes XFMD 4");
+
+  // An EMVR with an offset is not the emitter's transform.
+  part = ConvertSwoosh([&putMover](auto& o) {
+    PutProperty(o, "XFMD", 0);
+    PutConstant(o, 4);
+    putMover(o, 1.f);
+  });
+  bool offsetDropped = false;
+  for (const std::string& reason : part.dropped) {
+    offsetDropped = offsetDropped || reason == "XFMD 4: EMVR not SMOV(EXTT, 0, EXTR)";
+  }
+  CHECK_MSG(offsetDropped, "XFMD 4 with an offset EMVR is dropped");
 }
 
 // Spawn tables the port cannot run as Remastered does (here spawns placed by a

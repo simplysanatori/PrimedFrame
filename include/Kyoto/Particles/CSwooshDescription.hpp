@@ -62,6 +62,9 @@ public:
   // port-only XFMD 3: Remastered draws the points in the emitter's frame (SetupTransformMode
   // 0x2887d8: global T/Q/S alias the system vars, local orientation identity, point position zero)
   bool xPortXfmdFollow = false;
+  // port-only XFMD 4 with an EMVR of SMOV(EXTT, 0, EXTR) and no SMVR: points are born at the
+  // external translation and rotation (vars b8/bc), drawn at identity and unit scale (a8/ac/b0)
+  bool xPortXfmdMover = false;
   // port-only PIRN: a converted Remastered swoosh, whose COLR runs over the live points
   bool xPortIrnd = false;
   // port-only PVRT: Remastered particle variables (names, types, defaults)

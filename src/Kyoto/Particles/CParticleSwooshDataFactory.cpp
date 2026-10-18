@@ -159,11 +159,14 @@ bool CParticleSwooshDataFactory::CreateWPSM(CSwooshDescription* swoosh, CInputSt
       }
       swoosh->xPortRotZ.reset(CParticleDataFactory::GetRealElement(in));
       break;
-    // Port-only Remastered transform mode; only 3 (xPortXfmdFollow) is written.
-    case 'XFMD':
+    // Port-only Remastered transform mode; only 3 (xPortXfmdFollow) and 4 (xPortXfmdMover) are written.
+    case 'XFMD': {
       CParticleDataFactory::GetClassID(in);
-      swoosh->xPortXfmdFollow = in.ReadLong() == 3;
+      const int mode = in.ReadLong();
+      swoosh->xPortXfmdFollow = mode == 3;
+      swoosh->xPortXfmdMover = mode == 4;
       break;
+    }
     // Port-only Remastered particle variables (PVRT).
     case 'PVRT':
       CParticleDataFactory::GetClassID(in);

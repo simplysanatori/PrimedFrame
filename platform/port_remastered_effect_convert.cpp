@@ -2884,12 +2884,24 @@ public:
         continue;
       }
       // A swoosh's XFMD 3 draws its points in the emitter's frame (CParticleSwoosh xPortXfmdFollow);
-      // 2 and 5 keep local and global apart as retail does (build/mpr/vfx/RESOLVED-xfmd.md).
+      // 2 and 5 keep local and global apart as retail does (build/mpr/vfx/RESOLVED-xfmd.md). 4 with
+      // an identity EMVR and no SMVR births points at the emitter's transform and draws them at
+      // identity and unit scale (xPortXfmdMover); the EMVR is consumed by it.
       if (swoosh && fourcc == F("XFMD")) {
         uint32_t mode = 2;
+        const EffectProperty* emvr = nullptr;
+        bool smvr = false;
+        for (const EffectProperty& other : node.properties) {
+          emvr = other.fourcc == F("EMVR") ? &other : emvr;
+          smvr = smvr || other.fourcc == F("SMVR");
+        }
         if (!SmallConst(property, mode)) {
           result.dropped.push_back("XFMD: not a constant");
-        } else if (mode == 3) {
+        } else if (mode == 4 && (smvr || emvr == nullptr || !IdentityMover(*emvr))) {
+          result.dropped.push_back(smvr              ? "XFMD 4 with an SMVR"
+                                   : emvr == nullptr ? "XFMD 4 with no EMVR"
+                                                     : "XFMD 4: EMVR not SMOV(EXTT, 0, EXTR)");
+        } else if (mode == 3 || mode == 4) {
           AppendBE32(out, F("XFMD"));
           AppendBE32(out, F("CNST"));
           AppendBE32(out, mode);
@@ -2897,6 +2909,19 @@ public:
           result.dropped.push_back("XFMD " + std::to_string(mode));
         }
         continue;
+      }
+      if (swoosh && fourcc == F("EMVR") && IdentityMover(property)) {
+        uint32_t mode = 2;
+        bool smvr = false;
+        for (const EffectProperty& other : node.properties) {
+          if (other.fourcc == F("XFMD") && !SmallConst(other, mode)) {
+            mode = UINT32_MAX;
+          }
+          smvr = smvr || other.fourcc == F("SMVR");
+        }
+        if (mode == 4 && !smvr) {
+          continue;
+        }
       }
       if (part && fourcc == F("SMVR")) {
         mover = &property;
@@ -3007,9 +3032,10 @@ public:
           uint32_t flags = 0;
           // CreateNewParticle 0x27cdc8 sets the point's orientation from var bc and then PROT's: a
           // plain REUL is the same under XFMD 3 (bc identity, the emitter's turn drawn globally) and 5
-          // (bc set by SetOrientation, as retail's). EXTR/INTR there are not the orientation a point
-          // starts from (XFMD 3 draws it again globally), so those stay dropped.
-          if (xfmdMode != 2 && xfmdMode != 3 && xfmdMode != 5) {
+          // (bc set by SetOrientation, as retail's), and 4 (bc the EMVR's EXTR, set by both orientation
+          // setters). EXTR/INTR there are not the orientation a point starts from (XFMD 3 draws it
+          // again globally), so those stay dropped.
+          if (xfmdMode != 2 && xfmdMode != 3 && xfmdMode != 4 && xfmdMode != 5) {
             result.dropped.push_back("PROT: turned about Z under XFMD " + std::to_string(int32_t(xfmdMode)));
           } else if (!SwooshZRotation(property.value[0], flags, bytes, why)) {
             result.dropped.push_back("PROT: " + why);
