@@ -600,9 +600,18 @@ void SetGyroSensitivity(float scale);
 // still; the confidence is 0..1, or negative when the source has no
 // accelerometer (no calibration or gravity then).
 void SetGyroSpace(int space);
-void SetGyroAutoCalibrate(bool on);
+void SetGyroAutoCalibrate(int mode); // 0 off, 1 always, 2 only in menus
+// Manual recalibration: a 5 s countdown (put the pad down), then a reset. Cancel
+// drops a pending one. The state is for the F1 button's label.
+void StartGyroRecalibration();
+void CancelGyroRecalibration();
+float GyroRecalibrationCountdown(); // seconds left, or negative when none pending
+bool GyroCalibrating();             // auto calibration is learning right now
 void ResetGyroCalibration();
 float GyroCalibrationConfidence();
+// Recentres the pointer-aim cursor and levels the camera pitch (the "Reset aim"
+// action; thread-safe, applied on the next aim tick).
+void RequestResetAim();
 // The input engine's "Gyro aim" action, set each frame before PollGyro.
 void SetGyroButton(bool held);
 // Reads the gyro, feeds the aim and spots Spring Ball flicks. Call once per

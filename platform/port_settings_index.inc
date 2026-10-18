@@ -82,7 +82,7 @@
 {"Controls", "Touch & gyro", "Gyro aim", "Source", "gyro device pad phone motion sensor"},
 {"Controls", "Touch & gyro", "Gyro aim", "Sensitivity", "gyro speed sensitivity aim natural real world scale"},
 {"Controls", "Touch & gyro", "Gyro aim", "Space", "gyro space local player world yaw roll lean gravity"},
-{"Controls", "Touch & gyro", "Gyro aim", "Auto calibrate", "gyro calibration drift recalibrate accelerometer"},
+{"Controls", "Touch & gyro", "Gyro aim", "Auto calibrate", "gyro calibration drift recalibrate countdown menus accelerometer"},
 {"Controls", "Touch & gyro", "Gyro aim", "Pointer speed", "gyro pointer aim cursor speed sensitivity trilogy"},
 {"Controls", "Touch & gyro", "Gyro aim", "Gyro also turns the camera", "gyro pointer aim cursor camera trilogy"},
 {"Controls", "Touch & gyro", "Gyro aim", "Smoothing", "gyro smoothing jitter noise average"},

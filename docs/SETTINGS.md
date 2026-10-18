@@ -129,6 +129,11 @@
   again to disable). Changing modes resets the toggle. "Gyro aim" is right
   stick click and left ctrl by default and can be remapped on the Remap page
   ("Gyro" group). With toggle mode, leave the binding itself as a normal press.
+  The "Reset aim" action (`reset_aim`, unbound by default, same group) recentres
+  the pointer-aim cursor and levels the camera pitch (yaw is kept), so lock-on
+  isn't needed as a reset. With pointer aim and gyro on, the twin-stick look
+  stick and keyboard look keys turn the camera as without pointer aim while the
+  gyro moves the pointer.
   `gyro_source` is 0 auto, 1 controller, 2 phone. `gyro_sensitivity` (0.1-10,
   default 2) is camera angle per pad angle: 1 turns the camera as far as the pad
   turned. It ignores the mouse sensitivity and invert. An older `gyro_rate` (aim
@@ -139,9 +144,12 @@
   the real vertical only), 0 local yaw (the pad's flat turn), 3 local roll (the
   turn of a pad held upright) or 4 local yaw and roll (both, Overwatch-style).
   Player and world use the accelerometer; without one they act as local yaw.
-  `gyro_auto_calibrate` (default on) learns the gyro's drift while the pad is
-  still; F1 shows the calibration confidence and has a Recalibrate button. Both
-  use GamepadMotionHelpers (`extern/GamepadMotionHelpers`).
+  `gyro_auto_calibrate` (0 off, 1 always = default, 2 only in menus) learns the
+  gyro's drift while the pad is still; "only in menus" learns while the game is
+  paused, on a menu screen or with F1 open, and keeps the result in play. The old
+  on/off values 0/1 load as off/always. F1 shows the calibration confidence and
+  has a Recalibrate button, which counts down 5 s (Cancel stops it) so the pad can
+  be put down, then relearns. Both use GamepadMotionHelpers (`extern/GamepadMotionHelpers`).
   `gyro_smoothing` and `gyro_tightening` (deg/s, 0-50, both 0 = off by default)
   are JoyShockMapper-style: turns below the smoothing threshold are averaged over
   0.125 s, fading to direct by twice it; turns below the tightening threshold are
