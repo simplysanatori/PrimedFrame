@@ -251,6 +251,8 @@ set(MP_PORT_SOURCES
     platform/port_mods_pak.cpp
     platform/port_pal_languages.cpp
     platform/port_pal_languages_import.cpp
+    platform/port_flaahgra_music.cpp
+    platform/port_flaahgra_music_import.cpp
     platform/port_actor_collision_bounds.cpp
     platform/port_importers.cpp
     platform/port_importers_lines.cpp
@@ -752,6 +754,9 @@ if(MP_BUILD_TESTS)
             platform/port_mods_pak.cpp
         INCLUDES platform/include
         LIBRARIES ZLIB::ZLIB)
+    mp_port_test(port_flaahgra_music_tests
+        SOURCES tests/port_flaahgra_music.cpp platform/port_flaahgra_music.cpp
+        INCLUDES platform/include)
     mp_port_test(port_mods_tests
         SOURCES tests/port_mods.cpp platform/port_mods_pak.cpp
         INCLUDES platform/include)

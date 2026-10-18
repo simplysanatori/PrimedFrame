@@ -33,6 +33,7 @@
 #include "port_memory_log.h"
 #include "port_mods.h"
 #include "port_pal_languages.h"
+#include "port_flaahgra_music.h"
 #include "port_room_geo.h"
 #include "port_importers.h"
 #include "port_remastered_import.h"
@@ -901,6 +902,15 @@ int main(int argc, char** argv) {
             return 2;
         }
         return PortPalLanguages::RunFromCommandLine(argv[2]);
+    }
+    // --import-flaahgra-music <image>: add the full Flaahgra theme from a PAL/JP
+    // GameCube or Trilogy image to the mods folder (port_flaahgra_music.h).
+    if (argc >= 2 && std::strcmp(argv[1], "--import-flaahgra-music") == 0) {
+        if (argc != 3) {
+            std::fprintf(stderr, "usage: %s %s <PAL/JP GameCube or Trilogy image>\n", argv[0], argv[1]);
+            return 2;
+        }
+        return PortFlaahgraMusic::RunFromCommandLine(argv[2]);
     }
 #endif
     // The file log starts first so it holds everything after it, build id included.

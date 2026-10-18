@@ -263,6 +263,27 @@ so unpause first; pressed in the menus, it happens when a game starts. Change
 the folder first, then reload: until then the game still reads the old files,
 so don't delete a loaded mod and keep playing.
 
+### Full Flaahgra theme (NTSC discs)
+
+The NTSC GameCube discs (USA 1.00, 1.01 and 1.02) ship the Flaahgra boss theme
+(`Audio/rui_flaaghraL.dsp` and `R.dsp`) cut to its first 36.2 s (1,159,268
+samples), so the fight loops that short piece. The PAL and Japanese GameCube
+discs and Metroid Prime Trilogy (`MP1/Audio/` in its data partition) have the
+whole 114.7 s track in the same format. The port cannot ship it, so F1 > Settings
+> Audio > Flaahgra boss theme > "Full Flaahgra theme..." (USA discs only; a PAL
+disc already has it) takes your own such image and copies those two files into
+the mod `flaahgra-full-theme` of the mods folder, where the loader serves them
+in place of the disc's. Nothing else is read from the image. Each file is
+checked first (DSP ADPCM, 32 kHz, looping, a whole file, longer than the NTSC
+copy, the two channels the same length) and written to a temporary name, then
+renamed. Remove deletes the mod.
+
+It is an ordinary mod: Reload mods (F1 > Mods) or a restart makes the game play
+it, and turning mods off (or `MP_MODS` pointing elsewhere) turns it off.
+`metroid_prime_port --import-flaahgra-music <image>` imports without starting
+the game. On Android the picked file is opened through the system (no copy of
+the disc); this path is untested on a device.
+
 ### Importers
 
 An importer is a program of your own that builds a mod from files you have (a
