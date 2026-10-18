@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline_cache.hpp"
+#include "resources.hpp"
 #include "types.hpp"
 #include "tex_copy_conv.hpp"
 #include "tex_palette_conv.hpp"
@@ -29,7 +30,8 @@ struct StagingHighWater {
 // A copy into a shared buffer's resident region (queue_resident_upload).
 struct BufferUpload {
   wgpu::Buffer src;
-  wgpu::Buffer dst;
+  // Which buffer is looked up when it is encoded, as a frame can grow it (grow_frame_buffer).
+  ResidentBuffer dst = ResidentBuffer::Vertex;
   uint64_t dstOffset = 0;
   uint64_t size = 0;
 };

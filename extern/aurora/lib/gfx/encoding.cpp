@@ -372,9 +372,10 @@ constexpr uint32_t align_down_copy_offset(uint32_t value) noexcept { return valu
 // Copies what the frame wrote since `copied`: from the staging buffer up to stagingSize, and
 // the rest (the frame's spill, which the staging buffer was too small for) through a transient
 // buffer. Only bytes below highWater are read, so the recording thread may still be appending.
+// The frame's data starts at dstBase in dst, after the resident region.
 void copy_staging_buffer_range(wgpu::CommandEncoder& cmd, const FramePacket& frame, uint32_t& copied,
                                uint32_t highWater, uint64_t stagingOffset, uint64_t stagingSize,
-                               const SpillBuffer& spill, const wgpu::Buffer& dst) {
+                               const SpillBuffer& spill, const wgpu::Buffer& dst, uint64_t dstBase) {
   if (highWater <= copied) {
     return;
   }
@@ -382,8 +383,8 @@ void copy_staging_buffer_range(wgpu::CommandEncoder& cmd, const FramePacket& fra
   const uint32_t copyEnd = AURORA_ALIGN(highWater, 4);
   if (copyStart < stagingSize) {
     const uint64_t end = std::min<uint64_t>(copyEnd, stagingSize);
-    cmd.CopyBufferToBuffer(staging_buffer(frame.stagingBuffer), stagingOffset + copyStart, dst, copyStart,
-                           end - copyStart);
+    cmd.CopyBufferToBuffer(staging_buffer(frame.stagingBuffer), stagingOffset + copyStart, dst,
+                           dstBase + copyStart, end - copyStart);
   }
   if (copyEnd > stagingSize) {
     const uint64_t start = std::max<uint64_t>(copyStart, stagingSize);
@@ -403,7 +404,7 @@ void copy_staging_buffer_range(wgpu::CommandEncoder& cmd, const FramePacket& fra
     }
     buffer.Unmap();
     // The command buffer keeps the buffer alive until the GPU is done with the copy.
-    cmd.CopyBufferToBuffer(buffer, 0, dst, start, size);
+    cmd.CopyBufferToBuffer(buffer, 0, dst, dstBase + start, size);
   }
   copied = highWater;
 }
@@ -435,16 +436,19 @@ void copy_staging_to_high_water(wgpu::CommandEncoder& cmd, FramePacket& frame, c
   const uint64_t StorageStagingOffset = IndexStagingOffset + sizes.index;
   const uint64_t TextureUploadStagingOffset = StorageStagingOffset + sizes.storage;
   copy_staging_buffer_range(cmd, frame, frame.copied.verts, highWater.verts, VertexStagingOffset, sizes.vertex,
-                            frame.spillVerts, res.vertexBuffer);
+                            frame.spillVerts, res.vertexBuffer, sizes.base(StagingKind::Vertex));
   copy_staging_buffer_range(cmd, frame, frame.copied.uniforms, highWater.uniforms, UniformStagingOffset,
-                            sizes.uniform, frame.spillUniforms, res.uniformBuffer);
+                            sizes.uniform, frame.spillUniforms, res.uniformBuffer, sizes.base(StagingKind::Uniform));
   copy_staging_buffer_range(cmd, frame, frame.copied.indices, highWater.indices, IndexStagingOffset, sizes.index,
-                            frame.spillIndices, res.indexBuffer);
+                            frame.spillIndices, res.indexBuffer, sizes.base(StagingKind::Index));
   copy_staging_buffer_range(cmd, frame, frame.copied.storage, highWater.storage, StorageStagingOffset,
-                            sizes.storage, frame.spillStorage, res.storageBuffer);
+                            sizes.storage, frame.spillStorage, res.storageBuffer, sizes.base(StagingKind::Storage));
   for (size_t i = frame.copied.bufferUploadCount; i < op.bufferUploads.size(); ++i) {
     const auto& item = *op.bufferUploads[i];
-    cmd.CopyBufferToBuffer(item.src, 0, item.dst, item.dstOffset, item.size);
+    const wgpu::Buffer& dst = item.dst == ResidentBuffer::Vertex  ? res.vertexBuffer
+                              : item.dst == ResidentBuffer::Index ? res.indexBuffer
+                                                                  : res.storageBuffer;
+    cmd.CopyBufferToBuffer(item.src, 0, dst, item.dstOffset, item.size);
   }
   frame.copied.bufferUploadCount = op.bufferUploads.size();
 

@@ -69,6 +69,68 @@ uint64_t g_nextFrameId = 1;
 render_worker::FrameSlotPool g_frameSlots{FrameSlotCount};
 render_worker::FrameSlotPool g_stagingSlots{StagingBufferCount};
 
+// The uniform buffer is bound as a MaxUniformSize window, and some passes bind more of it.
+constexpr uint64_t MinDeviceUniformSize = 64u << 10;
+
+struct SharedBuffer {
+  StagingKind kind;
+  wgpu::Buffer Resources::*member;
+  wgpu::BufferUsage usage;
+  const char* label;
+  const char* name;
+};
+const std::array<SharedBuffer, 4> SharedBuffers{{
+    {StagingKind::Vertex, &Resources::vertexBuffer,
+     wgpu::BufferUsage::Storage | wgpu::BufferUsage::Vertex | wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc,
+     "Shared Vertex Buffer", "vertex"},
+    {StagingKind::Uniform, &Resources::uniformBuffer,
+     wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc, "Shared Uniform Buffer",
+     "uniform"},
+    {StagingKind::Index, &Resources::indexBuffer,
+     wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc, "Shared Index Buffer",
+     "index"},
+    {StagingKind::Storage, &Resources::storageBuffer,
+     wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst | wgpu::BufferUsage::CopySrc, "Shared Storage Buffer",
+     "storage"},
+}};
+
+void create_static_bind_group() {
+  const std::array entries{
+      wgpu::BindGroupEntry{
+          .binding = 0,
+          .buffer = g_resources.vertexBuffer,
+      },
+      wgpu::BindGroupEntry{
+          .binding = 1,
+          .buffer = g_resources.storageBuffer,
+      },
+  };
+  const wgpu::BindGroupDescriptor bindGroupDescriptor{
+      .label = "Static bind group",
+      .layout = g_resources.staticBindGroupLayout,
+      .entryCount = entries.size(),
+      .entries = entries.data(),
+  };
+  g_resources.staticBindGroup = g_device.CreateBindGroup(&bindGroupDescriptor);
+}
+
+void create_uniform_bind_group() {
+  const std::array entries{
+      wgpu::BindGroupEntry{
+          .binding = 0,
+          .buffer = g_resources.uniformBuffer,
+          .size = gx::MaxUniformSize,
+      },
+  };
+  const wgpu::BindGroupDescriptor bindGroupDescriptor{
+      .label = "Uniform bind group",
+      .layout = g_resources.uniformBindGroupLayout,
+      .entryCount = entries.size(),
+      .entries = entries.data(),
+  };
+  g_resources.uniformBindGroup = g_device.CreateBindGroup(&bindGroupDescriptor);
+}
+
 struct RuntimeDrawType {
   std::string label;
   DrawCallback draw = nullptr;
@@ -259,11 +321,11 @@ const FrameBufferSizes& frame_buffer_sizes() noexcept { return g_bufferSizes; }
 Range resident_region(ResidentBuffer kind) noexcept {
   switch (kind) {
   case ResidentBuffer::Vertex:
-    return {uint32_t(g_bufferSizes.maxVertex), uint32_t(g_bufferSizes.residentVertex)};
+    return {0, uint32_t(g_bufferSizes.residentVertex)};
   case ResidentBuffer::Index:
-    return {uint32_t(g_bufferSizes.maxIndex), uint32_t(g_bufferSizes.residentIndex)};
+    return {0, uint32_t(g_bufferSizes.residentIndex)};
   case ResidentBuffer::Storage:
-    return {uint32_t(g_bufferSizes.storageReserve), uint32_t(g_bufferSizes.residentStorage)};
+    return {0, uint32_t(g_bufferSizes.residentStorage)};
   }
   return {};
 }
@@ -549,11 +611,28 @@ void initialize() {
     if (g_bufferSizes.storageCap != 0 && g_bufferSizes.storageCap <= g_bufferSizes.storage) {
       g_bufferSizes.storageCap = 0;
     }
-    Log.info("Frame buffers: staging {}/{}/{}/{}+{} MiB (vertex/uniform/index/storage+textures), frame limit "
-             "{}/{}/{}/{} MiB",
+    // The device buffers' per-frame part starts where staging does, unless the scale was pinned,
+    // and grows like it when a frame needs more (grow_frame_buffer). The uniform one holds at
+    // least the bound window.
+    if (g_config.frameBuffersPinned) {
+      g_bufferSizes.deviceVertex = g_bufferSizes.maxVertex;
+      g_bufferSizes.deviceUniform = g_bufferSizes.maxUniform;
+      g_bufferSizes.deviceIndex = g_bufferSizes.maxIndex;
+      g_bufferSizes.deviceStorage = g_bufferSizes.maxStorage;
+    } else {
+      g_bufferSizes.deviceVertex = g_bufferSizes.vertex;
+      g_bufferSizes.deviceUniform =
+          std::min(g_bufferSizes.maxUniform, std::max<uint64_t>(g_bufferSizes.uniform, MinDeviceUniformSize));
+      g_bufferSizes.deviceIndex = g_bufferSizes.index;
+      g_bufferSizes.deviceStorage = g_bufferSizes.storage;
+    }
+    Log.info("Frame buffers: staging {}/{}/{}/{}+{} MiB (vertex/uniform/index/storage+textures), device {}/{}/{}/{} "
+             "KiB, frame limit {}/{}/{}/{} MiB",
              g_bufferSizes.vertex >> 20, g_bufferSizes.uniform >> 20, g_bufferSizes.index >> 20,
-             g_bufferSizes.storage >> 20, g_bufferSizes.textureUpload >> 20, g_bufferSizes.maxVertex >> 20,
-             g_bufferSizes.maxUniform >> 20, g_bufferSizes.maxIndex >> 20, g_bufferSizes.maxStorage >> 20);
+             g_bufferSizes.storage >> 20, g_bufferSizes.textureUpload >> 20, g_bufferSizes.deviceVertex >> 10,
+             g_bufferSizes.deviceUniform >> 10, g_bufferSizes.deviceIndex >> 10, g_bufferSizes.deviceStorage >> 10,
+             g_bufferSizes.maxVertex >> 20, g_bufferSizes.maxUniform >> 20, g_bufferSizes.maxIndex >> 20,
+             g_bufferSizes.maxStorage >> 20);
   }
 
   const auto createBuffer = [](wgpu::Buffer& out, wgpu::BufferUsage usage, uint64_t size, const char* label) {
@@ -567,16 +646,10 @@ void initialize() {
     };
     out = g_device.CreateBuffer(&descriptor);
   };
-  createBuffer(g_resources.uniformBuffer, wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst, g_bufferSizes.maxUniform,
-               "Shared Uniform Buffer");
-  createBuffer(g_resources.vertexBuffer,
-               wgpu::BufferUsage::Storage | wgpu::BufferUsage::Vertex | wgpu::BufferUsage::CopyDst,
-               g_bufferSizes.maxVertex + g_bufferSizes.residentVertex, "Shared Vertex Buffer");
-  createBuffer(g_resources.indexBuffer, wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst,
-               g_bufferSizes.maxIndex + g_bufferSizes.residentIndex,
-               "Shared Index Buffer");
-  createBuffer(g_resources.storageBuffer, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-               g_bufferSizes.maxStorage + g_bufferSizes.residentStorage, "Shared Storage Buffer");
+  for (const auto& buffer : SharedBuffers) {
+    createBuffer(g_resources.*buffer.member, buffer.usage,
+                 g_bufferSizes.base(buffer.kind) + g_bufferSizes.device(buffer.kind), buffer.label);
+  }
   for (size_t i = 0; i < g_stagingBuffers.size(); ++i) {
     const auto label = fmt::format("Staging Buffer {}", i);
     createBuffer(g_stagingBuffers[i], wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc, g_bufferSizes.staging(),
@@ -616,23 +689,7 @@ void initialize() {
         .entries = layoutEntries.data(),
     };
     g_resources.staticBindGroupLayout = g_device.CreateBindGroupLayout(&layoutDesc);
-    const std::array entries{
-        wgpu::BindGroupEntry{
-            .binding = 0,
-            .buffer = g_resources.vertexBuffer,
-        },
-        wgpu::BindGroupEntry{
-            .binding = 1,
-            .buffer = g_resources.storageBuffer,
-        },
-    };
-    const wgpu::BindGroupDescriptor bindGroupDescriptor{
-        .label = "Static bind group",
-        .layout = g_resources.staticBindGroupLayout,
-        .entryCount = entries.size(),
-        .entries = entries.data(),
-    };
-    g_resources.staticBindGroup = g_device.CreateBindGroup(&bindGroupDescriptor);
+    create_static_bind_group();
   }
 
   {
@@ -654,20 +711,7 @@ void initialize() {
         .entries = layoutEntries.data(),
     };
     g_resources.uniformBindGroupLayout = g_device.CreateBindGroupLayout(&layoutDesc);
-    const std::array entries{
-        wgpu::BindGroupEntry{
-            .binding = 0,
-            .buffer = g_resources.uniformBuffer,
-            .size = gx::MaxUniformSize,
-        },
-    };
-    const wgpu::BindGroupDescriptor bindGroupDescriptor{
-        .label = "Uniform bind group",
-        .layout = g_resources.uniformBindGroupLayout,
-        .entryCount = entries.size(),
-        .entries = entries.data(),
-    };
-    g_resources.uniformBindGroup = g_device.CreateBindGroup(&bindGroupDescriptor);
+    create_uniform_bind_group();
   }
 
   gx::initialize();
@@ -785,6 +829,46 @@ void request_staging_growth(StagingKind kind, uint64_t peak) noexcept {
   uint64_t seen = want.load(std::memory_order_relaxed);
   while (peak > seen && !want.compare_exchange_weak(seen, peak, std::memory_order_acq_rel)) {
   }
+}
+
+void grow_frame_buffer(StagingKind kind, uint64_t need, const wgpu::CommandEncoder& encoder) {
+  ZoneScopedN("Grow frame buffer");
+  // On the render worker, after everything queued before: what this frame encoded so far reads
+  // the old buffer, then the copy makes the new one hold all of it (resident region included,
+  // which stays at the same offsets) before anything encoded later reads or writes it.
+  render_worker::enqueue_work([kind, need, &encoder] {
+    const auto& shared = SharedBuffers[static_cast<size_t>(kind)];
+    uint64_t& device = kind == StagingKind::Vertex    ? g_bufferSizes.deviceVertex
+                       : kind == StagingKind::Uniform ? g_bufferSizes.deviceUniform
+                       : kind == StagingKind::Index   ? g_bufferSizes.deviceIndex
+                                                      : g_bufferSizes.deviceStorage;
+    if (need <= device) {
+      return;
+    }
+    const uint64_t base = g_bufferSizes.base(kind);
+    const uint64_t grown = std::min(std::bit_ceil(need), g_bufferSizes.limit(kind));
+    const wgpu::BufferDescriptor descriptor{
+        .label = shared.label,
+        .usage = shared.usage,
+        .size = base + grown,
+    };
+    wgpu::Buffer buffer = g_device.CreateBuffer(&descriptor);
+    wgpu::Buffer& current = g_resources.*shared.member;
+    encoder.CopyBufferToBuffer(current, 0, buffer, 0, base + device);
+    Log.info("frame {} device buffer grown from {} to {} KiB during frame {} (needed {} KiB)", shared.name,
+             device >> 10, grown >> 10, g_frameIndex, need >> 10);
+    current = std::move(buffer);
+    device = grown;
+    if (kind == StagingKind::Uniform) {
+      create_uniform_bind_group();
+    } else if (kind != StagingKind::Index) {
+      create_static_bind_group();
+    }
+    // Cached bind groups that hold the old buffer are no longer looked up; drop them soon so
+    // the old buffer goes too.
+    expire_unused_bind_groups_soon();
+  });
+  render_worker::synchronize();
 }
 
 namespace {
