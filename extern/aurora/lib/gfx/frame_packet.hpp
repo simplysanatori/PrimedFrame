@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -200,6 +201,21 @@ struct FrameOp {
 
 using RenderPassList = std::deque<RenderPass>;
 
+// Where a frame's vertex, uniform, index or storage data goes once its staging buffer is full:
+// memory allocated at the first overflow (address-space only until written), laid out after
+// the staging part so offsets stay contiguous, and copied to the device buffer through a
+// transient buffer. The ByteBuffer then reads as full (size() == capacity()).
+struct SpillBuffer {
+  std::unique_ptr<uint8_t[]> data;
+  size_t capacity = 0;
+  size_t length = 0;
+};
+
+// Bytes a frame has written to a kind of buffer, staging and spill together.
+inline size_t logical_size(const ByteBuffer& staging, const SpillBuffer& spill) noexcept {
+  return staging.size() + spill.length;
+}
+
 struct FramePacket {
   RenderPassList renderPasses;
   std::deque<TextureCopy> textureCopies;
@@ -215,6 +231,10 @@ struct FramePacket {
   ByteBuffer indices;
   ByteBuffer storage;
   ByteBuffer textureUpload;
+  SpillBuffer spillVerts;
+  SpillBuffer spillUniforms;
+  SpillBuffer spillIndices;
+  SpillBuffer spillStorage;
   wgpu::CommandEncoder encoder;
   std::vector<AfterSubmitCallback> afterSubmitCallbacks;
   uint64_t frameId = 0;

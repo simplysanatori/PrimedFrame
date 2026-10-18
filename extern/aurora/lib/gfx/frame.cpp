@@ -258,9 +258,9 @@ const FrameBufferSizes& frame_buffer_sizes() noexcept { return g_bufferSizes; }
 Range resident_region(ResidentBuffer kind) noexcept {
   switch (kind) {
   case ResidentBuffer::Vertex:
-    return {uint32_t(g_bufferSizes.vertex), uint32_t(g_bufferSizes.residentVertex)};
+    return {uint32_t(g_bufferSizes.maxVertex), uint32_t(g_bufferSizes.residentVertex)};
   case ResidentBuffer::Index:
-    return {uint32_t(g_bufferSizes.index), uint32_t(g_bufferSizes.residentIndex)};
+    return {uint32_t(g_bufferSizes.maxIndex), uint32_t(g_bufferSizes.residentIndex)};
   case ResidentBuffer::Storage:
     return {uint32_t(g_bufferSizes.storageReserve), uint32_t(g_bufferSizes.residentStorage)};
   }
@@ -513,6 +513,44 @@ void initialize() {
                g_bufferSizes.residentVertex >> 20, g_bufferSizes.residentStorage >> 20,
                g_bufferSizes.residentIndex >> 20);
     }
+    // What a frame can hold is what is sized above (the device buffers' per-frame part). The
+    // staging buffers, which there are StagingBufferCount of, start smaller unless the scale
+    // was pinned: a frame that needs more spills (see SpillBuffer), and the arrays' staging
+    // storage grows after an overflow where it can.
+    g_bufferSizes.maxVertex = g_bufferSizes.vertex;
+    g_bufferSizes.maxUniform = g_bufferSizes.uniform;
+    g_bufferSizes.maxIndex = g_bufferSizes.index;
+    g_bufferSizes.maxStorage = g_bufferSizes.storageReserve;
+    g_bufferSizes.scaledStorage = g_bufferSizes.storage;
+    g_bufferSizes.textureUpload = TextureUploadSize;
+    if (!g_config.frameBuffersPinned) {
+      g_bufferSizes.vertex = std::min(g_bufferSizes.vertex, StartVertexSize);
+      g_bufferSizes.uniform = std::min(g_bufferSizes.uniform, StartUniformSize);
+      g_bufferSizes.index = std::min(g_bufferSizes.index, StartIndexSize);
+      g_bufferSizes.storage = std::min(g_bufferSizes.storage, StartStorageSize);
+      g_bufferSizes.textureUpload = StartTextureUploadSize;
+    }
+    // Test hook: AURORA_STAGING_START_KIB=<n> sets the vertex, uniform, index and storage
+    // staging buffers to n KiB (at most their frame limit) to force the spill path.
+    if (const char* kib = std::getenv("AURORA_STAGING_START_KIB")) {
+      const uint64_t size = std::max<uint64_t>(256, (std::strtoull(kib, nullptr, 10) << 10) & ~uint64_t(255));
+      const char* maskEnv = std::getenv("AURORA_STAGING_START_MASK"); // bits: 1 vertex, 2 uniform, 4 index, 8 storage
+      const unsigned mask = maskEnv != nullptr ? unsigned(std::strtoul(maskEnv, nullptr, 0)) : 0xFu;
+      if (mask & 1u) g_bufferSizes.vertex = std::min(g_bufferSizes.maxVertex, size);
+      if (mask & 2u) g_bufferSizes.uniform = std::min(g_bufferSizes.maxUniform, size);
+      if (mask & 4u) g_bufferSizes.index = std::min(g_bufferSizes.maxIndex, size);
+      if (mask & 8u) g_bufferSizes.storage = std::min(g_bufferSizes.maxStorage, size);
+    }
+    // The growable cap is relative to the staging size, so it keeps its meaning; but a cap the
+    // staging storage already has is no cap.
+    if (g_bufferSizes.storageCap != 0 && g_bufferSizes.storageCap <= g_bufferSizes.storage) {
+      g_bufferSizes.storageCap = 0;
+    }
+    Log.info("Frame buffers: staging {}/{}/{}/{}+{} MiB (vertex/uniform/index/storage+textures), frame limit "
+             "{}/{}/{}/{} MiB",
+             g_bufferSizes.vertex >> 20, g_bufferSizes.uniform >> 20, g_bufferSizes.index >> 20,
+             g_bufferSizes.storage >> 20, g_bufferSizes.textureUpload >> 20, g_bufferSizes.maxVertex >> 20,
+             g_bufferSizes.maxUniform >> 20, g_bufferSizes.maxIndex >> 20, g_bufferSizes.maxStorage >> 20);
   }
 
   const auto createBuffer = [](wgpu::Buffer& out, wgpu::BufferUsage usage, uint64_t size, const char* label) {
@@ -526,16 +564,16 @@ void initialize() {
     };
     out = g_device.CreateBuffer(&descriptor);
   };
-  createBuffer(g_resources.uniformBuffer, wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst, g_bufferSizes.uniform,
+  createBuffer(g_resources.uniformBuffer, wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst, g_bufferSizes.maxUniform,
                "Shared Uniform Buffer");
   createBuffer(g_resources.vertexBuffer,
                wgpu::BufferUsage::Storage | wgpu::BufferUsage::Vertex | wgpu::BufferUsage::CopyDst,
-               g_bufferSizes.vertex + g_bufferSizes.residentVertex, "Shared Vertex Buffer");
+               g_bufferSizes.maxVertex + g_bufferSizes.residentVertex, "Shared Vertex Buffer");
   createBuffer(g_resources.indexBuffer, wgpu::BufferUsage::Index | wgpu::BufferUsage::CopyDst,
-               g_bufferSizes.index + g_bufferSizes.residentIndex,
+               g_bufferSizes.maxIndex + g_bufferSizes.residentIndex,
                "Shared Index Buffer");
   createBuffer(g_resources.storageBuffer, wgpu::BufferUsage::Storage | wgpu::BufferUsage::CopyDst,
-               g_bufferSizes.storageReserve + g_bufferSizes.residentStorage, "Shared Storage Buffer");
+               g_bufferSizes.maxStorage + g_bufferSizes.residentStorage, "Shared Storage Buffer");
   for (size_t i = 0; i < g_stagingBuffers.size(); ++i) {
     const auto label = fmt::format("Staging Buffer {}", i);
     createBuffer(g_stagingBuffers[i], wgpu::BufferUsage::MapWrite | wgpu::BufferUsage::CopySrc, g_bufferSizes.staging(),
@@ -817,7 +855,7 @@ bool begin_frame() {
   mapBuffer(frame.indices, g_bufferSizes.index);
   mapBuffer(frame.storage, g_bufferSizes.storage);
   if constexpr (UseTextureBuffer) {
-    mapBuffer(frame.textureUpload, TextureUploadSize);
+    mapBuffer(frame.textureUpload, g_bufferSizes.textureUpload);
   }
 
   begin_recording(frame, frameSlot);
@@ -918,10 +956,10 @@ float calculate_fps() noexcept {
 const AuroraStats* aurora_get_stats() { return &aurora::gfx::detail::resources().stats; }
 
 uint32_t aurora_get_frame_buffer_scale() {
-  return static_cast<uint32_t>(aurora::gfx::frame_buffer_sizes().vertex / aurora::gfx::VertexBufferSize);
+  return static_cast<uint32_t>(aurora::gfx::frame_buffer_sizes().maxVertex / aurora::gfx::VertexBufferSize);
 }
 uint32_t aurora_get_frame_storage_scale() {
-  return static_cast<uint32_t>(aurora::gfx::frame_buffer_sizes().storage / aurora::gfx::StorageBufferSize);
+  return static_cast<uint32_t>(aurora::gfx::frame_buffer_sizes().scaledStorage / aurora::gfx::StorageBufferSize);
 }
 uint32_t aurora_get_resident_geometry_mib() {
   const auto& sizes = aurora::gfx::frame_buffer_sizes();

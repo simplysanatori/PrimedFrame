@@ -1133,6 +1133,8 @@ int main(int argc, char** argv) {
         // Set below from the Driver workarounds settings.
         .dawnEnableToggles = nullptr,
         .dawnDisableToggles = nullptr,
+        // Explicit MP_FRAME_BUFFERS / MP_STORAGE_BUFFERS keep the staging buffers at full size.
+        .frameBuffersPinned = envFrameBuffers >= 0 || envStorageBuffers >= 0,
         // Aurora's Null backend draws nothing: the game would play its sound behind
         // a black window (issue #33). Scripted runs, which can't answer a box, keep it.
         .noGraphicsMessage = port::EnvFlag("MP_NO_DISC_DIALOG")

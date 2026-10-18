@@ -120,7 +120,8 @@ typedef struct {
   /*
    * Multiplies what one frame can hold of vertex, index and array data (5, 2 and 8 MiB at 1),
    * and doubles the 24 MiB of uniforms when above 1. 0 means 1. A frame that outgrows
-   * its buffers aborts, so raise this for content denser than the original game's.
+   * these limits drops the draws that no longer fit and logs a warning once, so raise this for
+   * content denser than the original game's.
    */
   uint32_t frameBufferScale;
 
@@ -173,6 +174,14 @@ typedef struct {
    */
   const char* dawnEnableToggles;
   const char* dawnDisableToggles;
+
+  /*
+   * The per-frame staging buffers hold the full frameBufferScale/frameStorageScale sizes. When
+   * false they start smaller (4, 8, 2 and 8 MiB of vertices, uniforms, indices and arrays, 8
+   * of texture uploads), and a frame that needs more spills into memory allocated for that
+   * frame, up to the scaled sizes.
+   */
+  bool frameBuffersPinned;
 
   /*
    * When set and only the Null backend started (no GPU and no software adapter), this message is
