@@ -41,7 +41,7 @@
 #include "port_apclient.h"
 #include "port_debug.h"
 #include "port_model_variant.h"
-#include "port_power_spider_ball.h"
+#include "port_ball_looks.h"
 #include "port_remastered_ball_light.h"
 #include "port_synthetic_effect.h"
 #include "Kyoto/Math/CPlane.hpp"
@@ -2901,12 +2901,10 @@ void CMorphBall::LoadMorphBallModel(CStateManager& mgr) {
         x60_spiderBallGlassModel = nullptr;
         x64_spiderBallGlassModelShader = 0;
       }
-      x8_ballGlowColorIdx = skSpiderBallGlowColorIdx[modelIdx];
 #ifdef TARGET_PC
-      // The generated Power Suit spider ball is Varia's look, so it takes Varia's glow.
-      if (modelIdx == CPlayerState::kPS_Power && PortPowerSpiderBall::Active()) {
-        x8_ballGlowColorIdx = skSpiderBallGlowColorIdx[CPlayerState::kPS_Varia];
-      }
+      x8_ballGlowColorIdx = PortBallGlowColorIdx(modelIdx, true);
+#else
+      x8_ballGlowColorIdx = skSpiderBallGlowColorIdx[modelIdx];
 #endif
     } else {
       x58_ballModel =
@@ -2925,7 +2923,11 @@ void CMorphBall::LoadMorphBallModel(CStateManager& mgr) {
 #endif
           );
       x6c_lowPolyBallModelShader = skBallLowPoly[modelIdx].x4_shader;
+#ifdef TARGET_PC
+      x8_ballGlowColorIdx = PortBallGlowColorIdx(modelIdx, false);
+#else
       x8_ballGlowColorIdx = skBallGlowColorIdx[modelIdx];
+#endif
     }
 
     const float scale = 2.f * gpTweakPlayer->GetPlayerBallHalfExtent();
@@ -2934,6 +2936,23 @@ void CMorphBall::LoadMorphBallModel(CStateManager& mgr) {
 }
 
 #ifdef TARGET_PC
+uint CMorphBall::PortBallGlowColorIdx(int suit, bool spiderBall) {
+  if (spiderBall) {
+    // The generated Power Suit spider ball is Varia's look, so it takes Varia's glow.
+    if (suit == CPlayerState::kPS_Power && PortBallLooks::Active(PortBallLooks::Look::PowerSpider)) {
+      return skSpiderBallGlowColorIdx[CPlayerState::kPS_Varia];
+    }
+    return skSpiderBallGlowColorIdx[suit];
+  }
+  // The generated Gravity and Phazon balls take their suit's spider ball glow,
+  // not the Power Suit's ball's.
+  if ((suit == CPlayerState::kPS_Gravity && PortBallLooks::Active(PortBallLooks::Look::Gravity)) ||
+      (suit == CPlayerState::kPS_Phazon && PortBallLooks::Active(PortBallLooks::Look::Phazon))) {
+    return skSpiderBallGlowColorIdx[suit];
+  }
+  return skBallGlowColorIdx[suit];
+}
+
 CAssetId CMorphBall::PortSuitVariant(CAssetId id, FourCC type, int suit) {
   const CAssetId variant = PortModelVariant::Id(id, suit);
   return gpResourceFactory->GetResourceTypeById(variant) == type ? variant : id;

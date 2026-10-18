@@ -1,8 +1,8 @@
-// The Power Suit spider ball's image work: CMPR decoding, the HSV fit and
-// recolour, and the CMDL material set copy (port_power_spider_ball.h). The
-// disc reading and the cache are in port_power_spider_ball_disc.cpp.
+// The generated ball looks' image work: CMPR decoding, the HSV fits and
+// recolour, and the CMDL material set copy (port_ball_looks.h). The disc
+// reading and the cache are in port_ball_looks_disc.cpp.
 
-#include "port_power_spider_ball.h"
+#include "port_ball_looks.h"
 
 #include "port_bytes.h"
 #include "port_model_variant.h"
@@ -13,7 +13,7 @@
 #include <cmath>
 #include <cstdlib>
 
-namespace PortPowerSpiderBall {
+namespace PortBallLooks {
 namespace {
 
 constexpr uint32_t kTXTR = 0x54585452;
@@ -24,9 +24,11 @@ constexpr uint32_t kANCS = 0x414E4353;
 constexpr double kMinSaturation = 0.2;
 constexpr double kMinValue = 0.15;
 
+constexpr double kPi = 3.14159265358979323846;  // MSVC has no M_PI
+
 // Written by PortMods::Initialize, read by the game and the settings UI.
 std::atomic<bool> sRequested{false};
-std::atomic<bool> sActive{false};
+std::atomic<unsigned> sActive{0};
 
 uint8_t Expand5(uint32_t n) { return uint8_t((n << 3) | (n >> 2)); }
 uint8_t Expand6(uint32_t n) { return uint8_t((n << 2) | (n >> 4)); }
@@ -97,6 +99,24 @@ double Median(std::vector<double>& values) {
 }
 
 }  // namespace
+
+const char* Name(Look look) {
+  switch (look) {
+  case Look::PowerSpider: return "power spider ball";
+  case Look::Gravity: return "gravity ball";
+  case Look::Phazon: return "phazon ball";
+  }
+  return "";
+}
+
+int Suit(Look look) {
+  switch (look) {
+  case Look::PowerSpider: return 0;
+  case Look::Gravity: return 1;
+  case Look::Phazon: return 3;
+  }
+  return 0;
+}
 
 bool DecodeCmprTxtr(const std::vector<uint8_t>& txtr, PortRemastered::Image& out) {
   // Header: u32 format, u16 width, u16 height, u32 mip count; then the levels.
@@ -183,6 +203,66 @@ Shift FitShift(const PortRemastered::Image& from, const PortRemastered::Image& t
   return shift;
 }
 
+Stats ColourStats(const PortRemastered::Image& image, const PortRemastered::Image* other, int threshold) {
+  Stats stats;
+  if (other != nullptr &&
+      (image.width != other->width || image.height != other->height || image.rgba.size() != other->rgba.size())) {
+    return stats;
+  }
+  std::vector<double> hues, saturations, values;
+  double sine = 0.0, cosine = 0.0;
+  for (size_t at = 0; at + 4 <= image.rgba.size(); at += 4) {
+    const uint8_t* texel = &image.rgba[at];
+    if (!Opaque(texel) ||
+        (other != nullptr && (!Opaque(&other->rgba[at]) || !Differ(texel, &other->rgba[at], threshold)))) {
+      continue;
+    }
+    const Hsv hsv = ToHsv(texel);
+    if (hsv.v < kMinValue) {
+      continue;
+    }
+    saturations.push_back(hsv.s);
+    values.push_back(hsv.v);
+    if (hsv.s >= kMinSaturation) {
+      hues.push_back(hsv.h);
+      sine += std::sin(hsv.h * kPi / 180.0);
+      cosine += std::cos(hsv.h * kPi / 180.0);
+    }
+  }
+  if (values.empty()) {
+    return stats;
+  }
+  stats.saturation = Median(saturations);
+  stats.value = Median(values);
+  stats.samples = values.size();
+  if (!hues.empty()) {
+    // The median of the offsets from the mean direction, so a region round
+    // red (350 and 10) is not taken for cyan.
+    const double mean = std::atan2(sine, cosine) * 180.0 / kPi;
+    for (double& hue : hues) {
+      hue = std::remainder(hue - mean, 360.0);
+    }
+    stats.hue = std::fmod(mean + Median(hues) + 720.0, 360.0);
+    stats.hueSamples = hues.size();
+  }
+  return stats;
+}
+
+Shift StatsShift(const Stats& from, const Stats& to) {
+  Shift shift;
+  if (from.samples == 0 || to.samples == 0) {
+    return shift;
+  }
+  // Without coloured texels on both sides a hue means nothing: keep it.
+  if (from.hueSamples != 0 && to.hueSamples != 0) {
+    shift.hue = std::remainder(to.hue - from.hue, 360.0);
+  }
+  shift.saturation = to.saturation - from.saturation;
+  shift.value = to.value - from.value;
+  shift.samples = std::min(from.samples, to.samples);
+  return shift;
+}
+
 size_t Recolour(PortRemastered::Image& image, const PortRemastered::Image& other, const Shift& shift,
                 int threshold) {
   if (image.width != other.width || image.height != other.height || image.rgba.size() != other.rgba.size()) {
@@ -252,24 +332,34 @@ bool CopyMaterialSet(std::vector<uint8_t>& cmdl, uint32_t from, uint32_t to, con
   return true;
 }
 
-std::vector<std::pair<uint32_t, uint32_t>> ModelKeys() {
+std::vector<std::pair<uint32_t, uint32_t>> ModelKeys(Look look) {
+  const uint32_t suit = uint32_t(Suit(look));
   std::vector<std::pair<uint32_t, uint32_t>> keys;
-  for (const auto& [type, id] : {std::pair{kANCS, kSpiderAncs}, std::pair{kCMDL, kSpiderCmdl},
-                                 std::pair{kCMDL, kLowPolyCmdl}, std::pair{kCMDL, kGlassCmdl}}) {
-    keys.emplace_back(type, id);
-    keys.emplace_back(type, PortModelVariant::Id(id, 0));
+  if (look == Look::PowerSpider) {
+    for (const auto& [type, id] : {std::pair{kANCS, kSpiderAncs}, std::pair{kCMDL, kSpiderCmdl},
+                                   std::pair{kCMDL, kLowPolyCmdl}, std::pair{kCMDL, kGlassCmdl}}) {
+      keys.emplace_back(type, id);
+      keys.emplace_back(type, PortModelVariant::Id(id, suit));
+    }
+    keys.emplace_back(kTXTR, PortModelVariant::Id(kSpiderVaria, suit));
+    keys.emplace_back(kTXTR, PortModelVariant::Id(kLowPolyVaria, suit));
+  } else {
+    for (const auto& [type, id] :
+         {std::pair{kANCS, kBallAncs}, std::pair{kCMDL, kBallCmdl}, std::pair{kCMDL, kBallLowPolyCmdl}}) {
+      keys.emplace_back(type, id);
+      keys.emplace_back(type, PortModelVariant::Id(id, suit));
+    }
+    keys.emplace_back(kTXTR, PortModelVariant::Id(kBallVaria, suit));
   }
-  keys.emplace_back(kTXTR, PortModelVariant::Id(kSpiderVaria, 0));
-  keys.emplace_back(kTXTR, PortModelVariant::Id(kLowPolyVaria, 0));
   return keys;
 }
 
-void SetState(bool requested, bool active) {
+void SetState(bool requested, unsigned activeLooks) {
   sRequested.store(requested);
-  sActive.store(active);
+  sActive.store(activeLooks);
 }
 
 bool Requested() { return sRequested.load(); }
-bool Active() { return sActive.load(); }
+bool Active(Look look) { return (sActive.load() >> unsigned(look)) & 1u; }
 
-}  // namespace PortPowerSpiderBall
+}  // namespace PortBallLooks

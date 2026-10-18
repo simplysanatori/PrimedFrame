@@ -384,14 +384,23 @@
   stretching a copy of the screen centre, so it stays sharp at high resolution and with
   HD textures. Costs a second world render while the scan visor is up; the faceplate
   decor isn't magnified.
-- `MP_POWER_SPIDER_BALL=0|1` (Video > Display "Power Suit spider ball", persisted as
-  `power_spider_ball`, default on; off under Original experience): the Power Suit gets a
-  spider ball of its own instead of the Gravity Suit's. It is Varia's, with Varia's colours
-  moved to the Power Suit's by the shift between the two suits' normal balls (fitted from
-  the disc, not stored), and the Varia ball's glow colour. It is made from your disc on the
-  first boot and kept in `generated/power-spider/` in the user folder (remade when the
-  port's generator or the disc changes), and served with mods on or off, under every mod;
-  a mod with its own spider ball, such as the Remastered import, keeps its own.
+- `MP_POWER_SPIDER_BALL=0|1` (Video > Display "Suit-coloured morph balls", persisted as
+  `power_spider_ball`, default on; off under Original experience): morph ball looks retail
+  lacks, each Varia's with Varia's colours moved to the suit's (shifts fitted from the
+  disc, not stored):
+  - the Power Suit gets a spider ball of its own instead of the Gravity Suit's (the shift
+    between the Power and Varia normal balls), with the Varia ball's glow colour;
+  - before the Spider Ball, the Gravity and Phazon Suits get balls of their own instead of
+    the Power Suit's: Gravity's shift is fitted texel by texel between the Varia and
+    Gravity spider balls, Phazon's from the colour statistics of the Varia spider ball's
+    suit-coloured parts and the Phazon ball's shell. They take their suit's spider ball
+    glow colour.
+
+  They are made from your disc on the first boot and kept in `generated/power-spider/`,
+  `generated/gravity-ball/` and `generated/phazon-ball/` in the user folder (remade when
+  the port's generator or the disc changes), and served with mods on or off, under every
+  mod. A mod with its own look of a ball, such as the Remastered import (both balls), keeps
+  its own; the other looks are still made.
 - `MP_HUD_WIDE=0|1` (Video > Display, persisted as `hud_wide`, default on): widescreen HUD. The
   aspect-matched in-game HUD frames keep each element's shape but move it away
   from the screen centre, so edge elements (scan panels, energy bar, map) reach

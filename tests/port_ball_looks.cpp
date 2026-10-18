@@ -1,7 +1,8 @@
-// The Power Suit spider ball's image work on synthetic data: the CMPR decode,
-// the HSV fit and the masked recolour, and the CMDL material set copy.
+// The generated ball looks' image work on synthetic data: the CMPR decode,
+// the HSV fit, the colour statistics and the masked recolour, the CMDL
+// material set copy, and each look's keys.
 
-#include "port_power_spider_ball.h"
+#include "port_ball_looks.h"
 #include "port_test.h"
 
 #include <algorithm>
@@ -15,7 +16,7 @@
 namespace {
 
 using PortRemastered::Image;
-namespace PSB = PortPowerSpiderBall;
+namespace PSB = PortBallLooks;
 
 void PutBE16(std::vector<uint8_t>& out, uint32_t value) {
   out.push_back(uint8_t(value >> 8));
@@ -287,14 +288,117 @@ void TestCopyMaterialSet() {
   CHECK(overrun == before);
 }
 
+// Hue taken round the circle, the grey and dark texels where they belong,
+// and the mask.
+void TestColourStats() {
+  Image image;
+  image.width = 9;
+  image.height = 1;
+  image.rgba = {
+      255, 0,   43,  255,  // hue 349.9
+      255, 0,   43,  255,  //
+      255, 0,   0,   255,  // 0
+      255, 43,  0,   255,  // 10.1
+      255, 43,  0,   255,  //
+      128, 128, 128, 255,  // grey: saturation and value, no hue
+      10,  0,   0,   255,  // dark: left out
+      0,   255, 0,   0,    // transparent: left out
+      255, 0,   0,   255,  // 0
+  };
+  PSB::Stats stats = PSB::ColourStats(image);
+  CHECK_EQ(stats.samples, size_t(7));
+  CHECK_EQ(stats.hueSamples, size_t(6));
+  // The mean sits near 0, so the median is red, not the linear median of
+  // 0..360 (10).
+  CHECK_MSG(std::min(stats.hue, 360.0 - stats.hue) < 1.0, Format("hue %.2f", stats.hue).c_str());
+  CHECK(std::fabs(stats.saturation - 1.0) < 1e-9);
+  CHECK(std::fabs(stats.value - 1.0) < 1e-9);
+
+  // Masked: only the texels that differ from `other`.
+  Image other = image;
+  for (int x : {3, 4}) {
+    uint8_t* t = &other.rgba[size_t(x) * 4];
+    t[0] = 0, t[1] = 0, t[2] = 255;
+  }
+  stats = PSB::ColourStats(image, &other);
+  CHECK_EQ(stats.samples, size_t(2));
+  CHECK_EQ(stats.hueSamples, size_t(2));
+  CHECK(std::fabs(stats.hue - 10.12) < 0.1);
+
+  Image smaller = image;
+  smaller.width = 8;
+  smaller.rgba.resize(32);
+  CHECK_EQ(PSB::ColourStats(image, &smaller).samples, size_t(0));
+  Image dark;
+  dark.width = 8;
+  dark.height = 1;
+  dark.rgba.assign(32, 0);
+  stats = PSB::ColourStats(dark);
+  CHECK_EQ(stats.samples, size_t(0));
+  CHECK_EQ(stats.hueSamples, size_t(0));
+}
+
+void TestStatsShift() {
+  PSB::Stats from;
+  from.hue = 350.0, from.saturation = 0.9, from.value = 0.9, from.samples = 10, from.hueSamples = 10;
+  PSB::Stats to;
+  to.hue = 10.0, to.saturation = 0.5, to.value = 0.3, to.samples = 5, to.hueSamples = 5;
+  PSB::Shift shift = PSB::StatsShift(from, to);
+  CHECK(std::fabs(shift.hue - 20.0) < 1e-9);  // the short way round
+  CHECK(std::fabs(shift.saturation + 0.4) < 1e-9);
+  CHECK(std::fabs(shift.value + 0.6) < 1e-9);
+  CHECK_EQ(shift.samples, size_t(5));
+  CHECK(std::fabs(PSB::StatsShift(to, from).hue + 20.0) < 1e-9);
+
+  // No coloured texels on one side: the hue is kept.
+  to.hueSamples = 0;
+  shift = PSB::StatsShift(from, to);
+  CHECK_EQ(shift.hue, 0.0);
+  CHECK(std::fabs(shift.value + 0.6) < 1e-9);
+  // No texels at all: nothing to apply.
+  to.samples = 0;
+  CHECK_EQ(PSB::StatsShift(from, to).samples, size_t(0));
+}
+
 void TestKeys() {
-  const auto keys = PSB::ModelKeys();
-  CHECK_EQ(keys.size(), size_t(10));
-  for (size_t i = 0; i < keys.size(); ++i) {
-    for (size_t j = i + 1; j < keys.size(); ++j) {
-      CHECK(keys[i] != keys[j]);
+  CHECK_EQ(PSB::ModelKeys(PSB::Look::PowerSpider).size(), size_t(10));
+  CHECK_EQ(PSB::ModelKeys(PSB::Look::Gravity).size(), size_t(7));
+  CHECK_EQ(PSB::ModelKeys(PSB::Look::Phazon).size(), size_t(7));
+  for (const PSB::Look look : PSB::kLooks) {
+    const auto keys = PSB::ModelKeys(look);
+    for (size_t i = 0; i < keys.size(); ++i) {
+      for (size_t j = i + 1; j < keys.size(); ++j) {
+        CHECK(keys[i] != keys[j]);
+      }
     }
   }
+  // The Gravity and Phazon balls share the retail ball they are made from,
+  // never a generated id.
+  const auto gravity = PSB::ModelKeys(PSB::Look::Gravity);
+  const auto phazon = PSB::ModelKeys(PSB::Look::Phazon);
+  const auto spider = PSB::ModelKeys(PSB::Look::PowerSpider);
+  size_t shared = 0;
+  for (const auto& key : gravity) {
+    shared += std::count(phazon.begin(), phazon.end(), key);
+    CHECK(std::count(spider.begin(), spider.end(), key) == 0);
+  }
+  CHECK_EQ(shared, size_t(3));
+  for (const auto& key : phazon) {
+    CHECK(std::count(spider.begin(), spider.end(), key) == 0);
+  }
+  CHECK_EQ(PSB::Suit(PSB::Look::Gravity), 1);
+  CHECK_EQ(PSB::Suit(PSB::Look::Phazon), 3);
+}
+
+void TestState() {
+  PSB::SetState(true, 1u << unsigned(PSB::Look::Phazon));
+  CHECK(PSB::Requested());
+  CHECK(PSB::Active(PSB::Look::Phazon));
+  CHECK(!PSB::Active(PSB::Look::Gravity));
+  CHECK(!PSB::Active(PSB::Look::PowerSpider));
+  PSB::SetState(false, 0);
+  CHECK(!PSB::Requested());
+  CHECK(!PSB::Active(PSB::Look::Phazon));
 }
 
 }  // namespace
@@ -305,9 +409,12 @@ int main() {
   TestFit();
   TestRecolourMask();
   TestCopyMaterialSet();
+  TestColourStats();
+  TestStatsShift();
   TestKeys();
+  TestState();
   if (port_test::Failures() == 0) {
-    std::printf("port_power_spider_ball: all passed\n");
+    std::printf("port_ball_looks: all passed\n");
   }
   return PORT_TEST_RESULT();
 }

@@ -14,7 +14,7 @@
 #include "port_log.h"
 #include "port_paths.h"
 #include "port_mods.h"
-#include "port_power_spider_ball.h"
+#include "port_ball_looks.h"
 #include "port_remastered_text.h"
 #include "port_discord.h"
 #include "port_savestate.h"
@@ -409,19 +409,19 @@ bool SharpScanWindow() {
   return sSharpScanWindow && !sOriginalExperience;
 }
 
-bool PowerSpiderBall() {
+bool GeneratedBallLooks() {
   EnsureInitialized();
-  return sPowerSpiderBall && !sOriginalExperience;
+  return sGeneratedBallLooks && !sOriginalExperience;
 }
 
-void SetPowerSpiderBall(bool enabled) {
+void SetGeneratedBallLooks(bool enabled) {
   EnsureInitialized();
-  if (sPowerSpiderBall == enabled) {
+  if (sGeneratedBallLooks == enabled) {
     return;
   }
-  sPowerSpiderBall = enabled;
+  sGeneratedBallLooks = enabled;
   MarkDirty();
-  if (PortPowerSpiderBall::Requested() != PowerSpiderBall() && !PortMods::Suspended()) {
+  if (PortBallLooks::Requested() != GeneratedBallLooks() && !PortMods::Suspended()) {
     PortSaveState::RequestModReload();
   }
 }
@@ -1032,7 +1032,7 @@ void SetOriginalExperience(bool enabled) {
   VISetFrameBufferScale(EffectiveRenderScale());
   ApplyGraphicsQuality();
   if ((PortMods::CurrentStatus().active != ModsEnabled() ||
-       PortPowerSpiderBall::Requested() != PowerSpiderBall()) &&
+       PortBallLooks::Requested() != GeneratedBallLooks()) &&
       !PortMods::Suspended()) {
     PortSaveState::RequestModReload();
   }
