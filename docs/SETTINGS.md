@@ -1345,8 +1345,9 @@ headers, applies the same rule to its own on/off variables (`MP_LOG_COPY_TEX`,
   `MP_ROOM_ENV_EXPOSURE_LOG=1`: log the room exposure state (area, hint values,
   EV, target) each time it is worked out.
 - Remastered import: `MP_REMASTERED_REUSE=0` makes every stage again instead of
-  reusing the previous import's unchanged ones (`textures`: only the converted
-  textures are reused); `MP_REMASTERED_JOINTS=1` logs the models' skin matching
+  reusing the previous import's unchanged ones, as the Mods panel's "Full import
+  (no reuse)" does (`textures`: only the converted textures are reused);
+  `MP_REMASTERED_JOINTS=1` logs the models' skin matching
   (each joint's vote and the bones it got) to stderr; `MP_REMASTERED_MISS=1`
   lists each room's untraced script connections by kind in the import log.
 - `MP_RANDO_SWEEP_LAYERS=1`: with `MP_RANDO_SWEEP`, tour each area once per script

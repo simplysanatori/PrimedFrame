@@ -460,6 +460,10 @@ bool StartMovieImport(const std::string& nspPath, const std::string& keysPath);
 ImportState ImportStatus();
 // Asks the running import to stop; it ends at the next model.
 void CancelImport();
+// The next imports make every stage again instead of reusing the previous import's unchanged
+// ones (as MP_REMASTERED_REUSE=0). Not saved: it lasts until the game is closed.
+void SetRemakeAll(bool remake);
+bool RemakeAll();
 // Cancels and waits. Call before the disc is closed.
 void StopImport();
 
