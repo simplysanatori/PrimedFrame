@@ -6,6 +6,7 @@
 #include "port_env.h"
 #include "port_strings.h"
 #include "port_paths.h"
+#include "port_power_spider_ball.h"
 #include "port_remastered_storage.h"
 
 #include "port_debug.h"
@@ -464,6 +465,8 @@ void Initialize() {
   // port_remastered_storage.h): it loads as a mod either way.
   const std::vector<PortRemasteredStorage::ModFolder> scan = ScanModFolders(sStatus.folder);
   if (sStatus.folder.empty() && scan.empty()) {
+    // No user folder: the generated layer has nowhere to keep its cache either.
+    PortPowerSpiderBall::SetState(false, false);
     return;
   }
   const std::vector<std::string> disabled = SplitDisabled(PortDebug::ModsDisabled());
@@ -618,6 +621,27 @@ void Initialize() {
     }
   }
 
+  // The generated Power Suit spider ball (port_power_spider_ball.h): with mods on
+  // or off, under every mod. A mod with a spider ball of its own (the Remastered
+  // import) keeps all of it.
+  {
+    const bool wanted = PortDebug::PowerSpiderBall() && !sSuspended;
+    bool active = false;
+    if (wanted) {
+      const std::vector<std::pair<uint32_t, uint32_t>> keys = PortPowerSpiderBall::ModelKeys();
+      const bool replaced = std::any_of(keys.begin(), keys.end(), [&](const auto& key) { return loose.count(key) != 0; });
+      if (replaced) {
+        PortLog::Write("mods: a mod has its own spider ball; the generated Power Suit one is left out\n");
+      } else {
+        for (PortMods::LooseResource& resource : PortPowerSpiderBall::Collect()) {
+          loose.emplace(std::pair{resource.type, resource.id}, std::move(resource));
+          active = true;
+        }
+      }
+    }
+    PortPowerSpiderBall::SetState(wanted, active);
+  }
+
   // Which loose resources each PAK takes. Ids no PAK holds are added to
   // NoARAM.pak, which the game keeps loaded from boot.
   std::set<std::pair<uint32_t, uint32_t>> used;
@@ -714,8 +738,9 @@ void Initialize() {
       extra.push_back(std::move(file));
     }
     for (const auto& [key, resource] : loose) {
-      if (used.count(key) != 0) {
-        ++sStatus.mods[looseMod[key]].resources;
+      const auto mod = looseMod.find(key);
+      if (used.count(key) != 0 && mod != looseMod.end()) {
+        ++sStatus.mods[mod->second].resources;
       }
     }
   }

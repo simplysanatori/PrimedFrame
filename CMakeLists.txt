@@ -312,6 +312,8 @@ set(MP_PORT_SOURCES
     platform/port_remastered_anim.cpp
     platform/port_remastered_text.cpp
     platform/port_custom_res.cpp
+    platform/port_power_spider_ball.cpp
+    platform/port_power_spider_ball_disc.cpp
     platform/port_hints.cpp
     platform/port_ws.cpp
     platform/touch_pad.cpp
@@ -923,6 +925,11 @@ if(MP_BUILD_TESTS)
     mp_port_test(port_importers_tests
         SOURCES tests/port_importers.cpp platform/port_importers_lines.cpp
         INCLUDES platform/include)
+    mp_port_test(port_power_spider_ball_tests
+        SOURCES tests/port_power_spider_ball.cpp platform/port_power_spider_ball.cpp
+            platform/port_remastered_image.cpp
+        INCLUDES platform/include
+        LIBRARIES astcenc)
     mp_port_test(port_custom_res_tests
         SOURCES tests/port_custom_res.cpp platform/port_custom_res.cpp
         INCLUDES platform/include)

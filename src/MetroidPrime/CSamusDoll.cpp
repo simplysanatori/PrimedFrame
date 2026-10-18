@@ -44,11 +44,21 @@ static const CVector3f skDefaultScale(1.f, 1.f, 1.f);
 static const CVector3f skInitialOffset(0.f, 0.f, 0.8f);
 
 #ifdef TARGET_PC
+#include "port_power_spider_ball.h"
+
 // The named ball model, or a mod's look of it for this suit (as in game).
 static SObjectTag PortSuitVariantTag(const char* name, int suit) {
   const SObjectTag* tag = gpResourceFactory->GetResourceIdByName(name);
   return SObjectTag(tag->GetType(),
                     CMorphBall::PortSuitVariant(tag->GetId(), tag->GetType(), suit));
+}
+
+// The spider ball's glow colour: the generated Power Suit one takes Varia's (as in game).
+static int PortSpiderBallGlowColorIdx(CPlayerState::EPlayerSuit suit) {
+  if (suit == CPlayerState::kPS_Power && PortPowerSpiderBall::Active()) {
+    return CMorphBall::skSpiderBallGlowColorIdx[CPlayerState::kPS_Varia];
+  }
+  return CMorphBall::skSpiderBallGlowColorIdx[suit];
 }
 #endif
 
@@ -87,8 +97,13 @@ CSamusDoll::CSamusDoll(const CDependencyGroup& suitDgrp, const CDependencyGroup&
 , x1e0_ballMatIdx(hasSpiderBall ? CMorphBall::skSpiderBallCharacter[suit].x4_shader
                                 : CMorphBall::skBallCharacter[suit].x4_shader)
 , x1e4_glassMatIdx(CMorphBall::skSpiderBallGlass[suit].x4_shader)
+#ifdef TARGET_PC
+, x1e8_ballGlowColorIdx(hasSpiderBall ? PortSpiderBallGlowColorIdx(suit)
+                                      : CMorphBall::skBallGlowColorIdx[suit])
+#else
 , x1e8_ballGlowColorIdx(hasSpiderBall ? CMorphBall::skSpiderBallGlowColorIdx[suit]
                                       : CMorphBall::skBallGlowColorIdx[suit])
+#endif
 , x1ec_itemScreenSamus(gpSimplePool->GetObj("ANCS_ItemScreenSamus"))
 , x1f4_invBeam(gpSimplePool->GetObj(skBeamModels[beam]))
 , x200_invVisor(gpSimplePool->GetObj(skVisorModels[suit]))

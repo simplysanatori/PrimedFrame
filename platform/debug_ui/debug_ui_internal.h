@@ -71,6 +71,7 @@ extern PortDebug::EAspectMode sAspectMode;
 extern bool sHudWide;
 extern bool sCinemaBars;
 extern bool sSharpScanWindow;
+extern bool sPowerSpiderBall;
 extern bool sAutoAim;
 extern int sScanSpeed;
 extern bool sSecondaryCrosshairs;

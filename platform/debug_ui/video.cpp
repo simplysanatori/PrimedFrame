@@ -73,6 +73,14 @@ void DrawVideoDisplay() {
                         "Costs a second world render while the scan visor is up.\n"
                         "Off: the original magnified copy of the screen.");
 
+  bool powerSpiderBall = sPowerSpiderBall;
+  if (ImGui::Checkbox("Power Suit spider ball", &powerSpiderBall)) {
+    SetPowerSpiderBall(powerSpiderBall);
+  }
+  ImGui::SetItemTooltip("On: the Power Suit's spider ball is Varia's, recoloured to the Power Suit's\n"
+                        "colours from your disc at boot.\n"
+                        "Off: the original, which reuses the Gravity Suit's.");
+
   ImGui::SeparatorText("HUD and view");
   bool hudWide = sHudWide;
   if (ImGui::Checkbox("Widescreen HUD (spread to edges)", &hudWide)) {
