@@ -243,10 +243,10 @@ RenderPassList& current_render_passes() { return g_recorder.passes(); }
 
 StagingHighWater current_high_water(const FramePacket& frame) noexcept {
   return {
-      .verts = static_cast<uint32_t>(frame.verts.size()),
-      .uniforms = static_cast<uint32_t>(frame.uniforms.size()),
-      .indices = static_cast<uint32_t>(frame.indices.size()),
-      .storage = static_cast<uint32_t>(frame.storage.size()),
+      .verts = static_cast<uint32_t>(logical_size(frame.verts, frame.spillVerts)),
+      .uniforms = static_cast<uint32_t>(logical_size(frame.uniforms, frame.spillUniforms)),
+      .indices = static_cast<uint32_t>(logical_size(frame.indices, frame.spillIndices)),
+      .storage = static_cast<uint32_t>(logical_size(frame.storage, frame.spillStorage)),
       .textureUpload = static_cast<uint32_t>(frame.textureUpload.size()),
       .textureUploadCount = frame.textureUploads.size(),
       .bufferUploadCount = frame.bufferUploads.size(),
@@ -301,24 +301,6 @@ static bool fits(const ByteBuffer& target, size_t length, size_t alignment) {
   return false;
 }
 
-Range push(ByteBuffer& target, const uint8_t* data, size_t length, size_t alignment) {
-  if (!fits(target, length, alignment)) {
-    return OverflowRange;
-  }
-  if (alignment != 0) {
-    const size_t begin = target.size();
-    const size_t alignedBegin = AURORA_ALIGN(begin, alignment);
-    if (alignedBegin > begin) {
-      target.append_zeroes(alignedBegin - begin);
-    }
-  }
-  const auto begin = target.size();
-  if (length > 0) {
-    target.append(data, length);
-  }
-  return {static_cast<uint32_t>(begin), static_cast<uint32_t>(length)};
-}
-
 Range map(ByteBuffer& target, size_t length, size_t alignment) {
   if (!fits(target, length, alignment)) {
     return OverflowRange;
@@ -335,6 +317,80 @@ Range map(ByteBuffer& target, size_t length, size_t alignment) {
     target.append_zeroes(length);
   }
   return {static_cast<uint32_t>(begin), static_cast<uint32_t>(length)};
+}
+
+// Space for length bytes at the next alignment in a frame buffer: in its staging buffer while
+// that has room, else (the first time is logged) in the spill, as far as the device buffer
+// holds (limit). The offset is where the data lands in the device buffer. `window` is
+// extra room the device buffer must have after it (a uniform's bound window), not written.
+// Null, and no space taken, when the frame outgrows even the device buffer.
+static uint8_t* reserve_frame_bytes(ByteBuffer& target, SpillBuffer& spill, uint64_t limit, size_t length,
+                                    size_t alignment, size_t window, const char* what, uint32_t& offset) {
+  const size_t cap = target.capacity();
+  size_t begin = alignment != 0 ? AURORA_ALIGN(target.size() + spill.length, alignment) : target.size() + spill.length;
+  if (spill.length == 0 && begin + length <= cap && begin + length + window <= limit) {
+    if (begin > target.size()) {
+      target.append_zeroes(begin - target.size());
+    }
+    offset = static_cast<uint32_t>(begin);
+    return length > 0 ? target.append_uninit(length) : target.data() + begin;
+  }
+  begin = std::max(begin, cap);
+  if (begin + length + window > limit) {
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      Log.warn("frame {} buffer full at {} bytes: dropping a {}-byte push (warned once)", what, begin, length);
+    }
+    return nullptr;
+  }
+  if (!spill.data) {
+    spill.capacity = static_cast<size_t>(limit - cap);
+    spill.data = std::unique_ptr<uint8_t[]>(new uint8_t[spill.capacity]);
+    Log.info("frame {} data outgrew its {} MiB staging buffer: spilling into a transient buffer (up to {} MiB)",
+             what, cap >> 20, limit >> 20);
+  }
+  target.fill_to_capacity();
+  const size_t at = begin - cap;
+  if (at > spill.length) {
+    memset(spill.data.get() + spill.length, 0, at - spill.length);
+  }
+  spill.length = at + length;
+  offset = static_cast<uint32_t>(begin);
+  return spill.data.get() + at;
+}
+
+static Range push(ByteBuffer& target, SpillBuffer& spill, uint64_t limit, const uint8_t* data, size_t length,
+                  size_t alignment, size_t window, const char* what) {
+  uint32_t offset = 0;
+  // An unaligned push is meant to continue the previous one (merged draws), so one that crosses the
+  // end of the staging buffer is split across it and the spill instead of moving to the spill.
+  const size_t cap = target.capacity();
+  const size_t used = target.size() + spill.length;
+  if (alignment == 0 && window == 0 && spill.length == 0 && used < cap && used + length > cap &&
+      used + length <= limit) {
+    const size_t head = cap - used;
+    uint8_t* first = reserve_frame_bytes(target, spill, limit, head, 0, 0, what, offset);
+    if (first == nullptr) {
+      return OverflowRange;
+    }
+    memcpy(first, data, head);
+    uint32_t tailOffset = 0;
+    uint8_t* tail = reserve_frame_bytes(target, spill, limit, length - head, 0, 0, what, tailOffset);
+    if (tail == nullptr) {
+      return OverflowRange;
+    }
+    memcpy(tail, data + head, length - head);
+    return {offset, static_cast<uint32_t>(length)};
+  }
+  uint8_t* dst = reserve_frame_bytes(target, spill, limit, length, alignment, window, what, offset);
+  if (dst == nullptr) {
+    return OverflowRange;
+  }
+  if (length > 0) {
+    memcpy(dst, data, length);
+  }
+  return {offset, static_cast<uint32_t>(length)};
 }
 
 // For our public API, warn instead of fatal-ing when called outside an active recording frame.
@@ -738,21 +794,37 @@ RecordedFrame end_recording() {
   frame.stats.drawCallCount = g_recorder.drawCallCount;
   frame.stats.mergedDrawCallCount = g_recorder.mergedDrawCallCount;
   frame.stats.renderPassCount = g_recorder.renderPassCount;
-  frame.stats.lastVertSize = frame.verts.size();
-  frame.stats.lastUniformSize = frame.uniforms.size();
-  frame.stats.lastIndexSize = frame.indices.size();
-  frame.stats.lastStorageSize = frame.storage.size();
+  const size_t vertSize = logical_size(frame.verts, frame.spillVerts);
+  const size_t uniformSize = logical_size(frame.uniforms, frame.spillUniforms);
+  const size_t indexSize = logical_size(frame.indices, frame.spillIndices);
+  const size_t storageSize = logical_size(frame.storage, frame.spillStorage);
+  frame.stats.lastVertSize = vertSize;
+  frame.stats.lastUniformSize = uniformSize;
+  frame.stats.lastIndexSize = indexSize;
+  frame.stats.lastStorageSize = storageSize;
   frame.stats.lastTextureUploadSize = frame.textureUpload.size();
+  if (frame.spillVerts.length != 0) {
+    request_staging_growth(StagingKind::Vertex, vertSize);
+  }
+  if (frame.spillUniforms.length != 0) {
+    request_staging_growth(StagingKind::Uniform, uniformSize);
+  }
+  if (frame.spillIndices.length != 0) {
+    request_staging_growth(StagingKind::Index, indexSize);
+  }
+  if (frame.spillStorage.length != 0) {
+    request_staging_growth(StagingKind::Storage, storageSize);
+  }
   {
     // AURORA_FRAME_PEAKS=1 logs each new high-water mark of a frame's buffer use.
     static const bool enabled = std::getenv("AURORA_FRAME_PEAKS") != nullptr;
     static uint64_t peakVert, peakUniform, peakIndex, peakStorage;
-    if (enabled && (frame.verts.size() > peakVert || frame.uniforms.size() > peakUniform ||
-                    frame.indices.size() > peakIndex || frame.storage.size() > peakStorage)) {
-      peakVert = std::max<uint64_t>(peakVert, frame.verts.size());
-      peakUniform = std::max<uint64_t>(peakUniform, frame.uniforms.size());
-      peakIndex = std::max<uint64_t>(peakIndex, frame.indices.size());
-      peakStorage = std::max<uint64_t>(peakStorage, frame.storage.size());
+    if (enabled && (vertSize > peakVert || uniformSize > peakUniform || indexSize > peakIndex ||
+                    storageSize > peakStorage)) {
+      peakVert = std::max<uint64_t>(peakVert, vertSize);
+      peakUniform = std::max<uint64_t>(peakUniform, uniformSize);
+      peakIndex = std::max<uint64_t>(peakIndex, indexSize);
+      peakStorage = std::max<uint64_t>(peakStorage, storageSize);
       Log.info("frame peaks: vertex {} uniform {} index {} storage {} (bytes)", peakVert, peakUniform, peakIndex,
                peakStorage);
     }
@@ -831,7 +903,7 @@ void queue_texture_upload_data(const uint8_t* data, uint32_t bytesPerRow, uint32
                                wgpu::TexelCopyTextureInfo tex, wgpu::Extent3D size) {
   const auto copyBytesPerRow = AURORA_ALIGN(bytesPerRow, 256);
   auto& frame = current_frame_packet();
-  if (frame.textureUpload.size() + copyBytesPerRow * rowsPerImage <= TextureUploadSize) {
+  if (frame.textureUpload.size() + copyBytesPerRow * rowsPerImage <= frame_buffer_sizes().textureUpload) {
     const auto range = push_texture_data(data, bytesPerRow, rowsPerImage);
     const wgpu::TexelCopyBufferLayout layout{
         .offset = range.offset,
@@ -1502,8 +1574,10 @@ void finish() {
   AURORA_ASSERT(!g_recorder.inOffscreen, "finish called while offscreen rendering is active");
   if (g_recorder.currentRenderPass != UINT32_MAX) {
     auto& frame = current_frame_packet();
-    if (frame.uniforms.can_append(gx::MaxUniformSize)) {
-      frame.uniforms.append_zeroes(gx::MaxUniformSize);
+    uint32_t padOffset = 0;
+    if (uint8_t* pad = reserve_frame_bytes(frame.uniforms, frame.spillUniforms, frame_buffer_sizes().maxUniform,
+                                           gx::MaxUniformSize, 0, 0, "uniform", padOffset)) {
+      memset(pad, 0, gx::MaxUniformSize);
     }
     auto& pass = frame.renderPasses[g_recorder.currentRenderPass];
     // Only when a peek waits for it: the snapshot needs the depth stored, which a tile-based GPU
@@ -1525,7 +1599,8 @@ Range push_verts(const uint8_t* data, size_t length, size_t alignment) {
   if (!check_recording("push_verts")) {
     return {};
   }
-  return push(current_frame_packet().verts, data, length, alignment);
+  auto& frame = current_frame_packet();
+  return push(frame.verts, frame.spillVerts, frame_buffer_sizes().maxVertex, data, length, alignment, 0, "vertex");
 }
 
 Range push_indices(const uint8_t* data, size_t length, size_t alignment) {
@@ -1533,7 +1608,8 @@ Range push_indices(const uint8_t* data, size_t length, size_t alignment) {
   if (!check_recording("push_indices")) {
     return {};
   }
-  return push(current_frame_packet().indices, data, length, alignment);
+  auto& frame = current_frame_packet();
+  return push(frame.indices, frame.spillIndices, frame_buffer_sizes().maxIndex, data, length, alignment, 0, "index");
 }
 
 Range push_uniform(const uint8_t* data, size_t length) {
@@ -1541,13 +1617,11 @@ Range push_uniform(const uint8_t* data, size_t length) {
   if (!check_recording("push_uniform")) {
     return {};
   }
-  auto& uniforms = current_frame_packet().uniforms;
+  auto& frame = current_frame_packet();
   const auto alignment = resources().limits.minUniformBufferOffsetAlignment;
   // A uniform is bound as a MaxUniformSize window, which must stay inside the buffer.
-  if (!fits(uniforms, length + gx::MaxUniformSize, alignment)) {
-    return OverflowRange;
-  }
-  return push(uniforms, data, length, alignment);
+  return push(frame.uniforms, frame.spillUniforms, frame_buffer_sizes().maxUniform, data, length, alignment,
+              gx::MaxUniformSize, "uniform");
 }
 
 Range map_uniform(uint8_t*& out) {
@@ -1555,21 +1629,26 @@ Range map_uniform(uint8_t*& out) {
   if (!check_recording("map_uniform")) {
     return {};
   }
-  auto& uniforms = current_frame_packet().uniforms;
+  auto& frame = current_frame_packet();
   const auto alignment = resources().limits.minUniformBufferOffsetAlignment;
-  if (!fits(uniforms, gx::MaxUniformSize, alignment)) {
+  uint32_t offset = 0;
+  out = reserve_frame_bytes(frame.uniforms, frame.spillUniforms, frame_buffer_sizes().maxUniform, gx::MaxUniformSize,
+                            alignment, 0, "uniform", offset);
+  if (out == nullptr) {
     return OverflowRange;
   }
-  const size_t alignedBegin = AURORA_ALIGN(uniforms.size(), alignment);
-  if (alignedBegin > uniforms.size()) {
-    uniforms.append_zeroes(alignedBegin - uniforms.size());
-  }
-  out = uniforms.append_uninit(gx::MaxUniformSize);
-  return {static_cast<uint32_t>(alignedBegin), gx::MaxUniformSize};
+  return {offset, gx::MaxUniformSize};
 }
 
 void unmap_uniform(Range& range, size_t length) {
-  current_frame_packet().uniforms.truncate(range.offset + length);
+  auto& frame = current_frame_packet();
+  const size_t end = range.offset + length;
+  const size_t cap = frame.uniforms.capacity();
+  if (end >= cap && frame.spillUniforms.length != 0) {
+    frame.spillUniforms.length = end - cap;
+  } else {
+    frame.uniforms.truncate(end);
+  }
   range.size = static_cast<uint32_t>(length);
 }
 
@@ -1578,12 +1657,9 @@ Range push_storage(const uint8_t* data, size_t length) {
   if (!check_recording("push_storage")) {
     return {};
   }
-  const auto range =
-      push(current_frame_packet().storage, data, length, resources().limits.minStorageBufferOffsetAlignment);
-  if (overflowed(range)) {
-    request_storage_growth();
-  }
-  return range;
+  auto& frame = current_frame_packet();
+  return push(frame.storage, frame.spillStorage, frame_buffer_sizes().maxStorage, data, length,
+              resources().limits.minStorageBufferOffsetAlignment, 0, "storage");
 }
 
 Range push_texture_data(const uint8_t* data, u32 bytesPerRow, u32 rowsPerImage) {

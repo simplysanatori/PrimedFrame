@@ -1078,7 +1078,12 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   arrays and uniforms are streamed through (1 = 5 + 2 + 8 + 24 MiB); it is 12
   when a mod has room geometry and `MP_ROOM_GEO_RESIDENT` is off (6 on Android),
   and 2 with it on (the default).
-  A frame that outgrows them aborts with a buffer overflow.
+  Those sizes are what a frame can hold; unless `MP_FRAME_BUFFERS` or
+  `MP_STORAGE_BUFFERS` is set, the staging buffers start at 4 + 8 + 2 + 8 MiB
+  (plus 8 MiB for texture uploads) and a frame that needs more spills into a
+  transient buffer, logged once as "spilling into a transient buffer". A frame
+  that outgrows the limits drops the draws that no longer fit, with a warning.
+  `AURORA_STAGING_START_KIB=<n>` (test hook) shrinks the starts to force that.
   `MP_STORAGE_BUFFERS=<1..16>` pins the storage buffers' scale, which otherwise
   follows it and, with `MP_ROOM_GEO_RESIDENT` on, grows after an overflow (up to 6x).
 - `MP_ROOM_GEO_RESIDENT=<0|1>` (setting `room_geo_gpu`, F1 > Debug >

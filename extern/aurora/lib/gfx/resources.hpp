@@ -9,6 +9,14 @@ inline constexpr uint64_t VertexBufferSize = 5242880;   // 5 MiB
 inline constexpr uint64_t IndexBufferSize = 2097152;    // 2 MiB
 inline constexpr uint64_t StorageBufferSize = 8388608;  // 8 MiB
 inline constexpr uint64_t TextureUploadSize = 25165824; // 24 MiB
+// What a staging buffer holds per kind at the start (unpinned scale): about twice the
+// per-frame peaks measured over a tour of the game's rooms. A frame that needs more spills
+// into memory it allocates for that frame (see SpillBuffer), up to the sizes above.
+inline constexpr uint64_t StartVertexSize = 4u << 20;
+inline constexpr uint64_t StartUniformSize = 8u << 20;
+inline constexpr uint64_t StartIndexSize = 2u << 20;
+inline constexpr uint64_t StartStorageSize = 8u << 20;
+inline constexpr uint64_t StartTextureUploadSize = 8u << 20;
 
 // What a frame can hold of each kind of data. The constants above are the sizes at
 // AuroraConfig::frameBufferScale 1; initialize() fixes the sizes in use for the run.
@@ -17,6 +25,16 @@ struct FrameBufferSizes {
   uint64_t uniform = UniformBufferSize;
   uint64_t index = IndexBufferSize;
   uint64_t storage = StorageBufferSize;
+  uint64_t textureUpload = TextureUploadSize;
+  // What a frame can hold of each kind, staging and spill together: the size of the device
+  // buffers' per-frame part (storage: storageReserve). The four above are what the staging
+  // buffers hold, the same at a pinned scale and smaller otherwise.
+  uint64_t maxVertex = VertexBufferSize;
+  uint64_t maxUniform = UniformBufferSize;
+  uint64_t maxIndex = IndexBufferSize;
+  uint64_t maxStorage = StorageBufferSize;
+  // The arrays' scaled size (frameStorageScale in use), before staging starts smaller.
+  uint64_t scaledStorage = StorageBufferSize;
   // What the device storage buffer sets aside for a frame's arrays before the resident
   // region: the most `storage` can grow to, so resident offsets never move.
   uint64_t storageReserve = StorageBufferSize;
@@ -30,13 +48,15 @@ struct FrameBufferSizes {
   uint64_t residentStorage = 0;
 
   uint64_t staging() const noexcept {
-    return vertex + uniform + index + storage + (UseTextureBuffer ? TextureUploadSize : 0);
+    return vertex + uniform + index + storage + (UseTextureBuffer ? textureUpload : 0);
   }
 };
 const FrameBufferSizes& frame_buffer_sizes() noexcept;
-// Asks for the arrays' staging storage to double (up to storageCap) at the next frame
-// start; the frame that overflowed still drops its draws. No-op when it is fixed.
-void request_storage_growth() noexcept;
+enum class StagingKind : uint8_t { Vertex, Uniform, Index, Storage };
+// A frame spilled (see SpillBuffer) after using `peak` bytes of this kind. At the next frame
+// start the staging buffers grow to the next power of two >= peak, capped at what a frame can
+// hold, so a scene that outgrows the starting size spills once and not every frame.
+void request_staging_growth(StagingKind kind, uint64_t peak) noexcept;
 
 enum class ResidentBuffer : uint8_t { Vertex, Index, Storage };
 // The part of a shared buffer kept across frames, as offsets into that buffer; size 0

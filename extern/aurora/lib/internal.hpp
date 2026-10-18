@@ -284,6 +284,9 @@ public:
   [[nodiscard]] uint8_t* data() noexcept { return m_data; }
   [[nodiscard]] const uint8_t* data() const noexcept { return m_data; }
   [[nodiscard]] size_t size() const noexcept { return m_length; }
+  [[nodiscard]] size_t capacity() const noexcept { return m_capacity; }
+  // Marks the whole capacity used, for memory the buffer wraps.
+  void fill_to_capacity() noexcept { m_length = m_capacity; }
   [[nodiscard]] bool empty() const noexcept { return m_length == 0; }
   // False when appending size bytes would grow a buffer that wraps memory it doesn't own,
   // which aborts.
