@@ -158,6 +158,8 @@ const Signatures& ElementsOf(Type type) {
       {F("DFCS"), "rr"},  {F("DFCP"), "rr"},
       // Port-only: a converted KEWS, its KEYP read at the swoosh node key.
       {F("KEWS"), "r"},
+      // Port-only (CParticleDataFactory under TARGET_PC).
+      {F("DIVD"), "rr"},
   };
   static const Signatures vectorElements = {
       {F("NONE"), ""},      {F("CNST"), "rrr"}, {F("KEYE"), "k"},  {F("KEYP"), "k"},   {F("ANGC"), "rrrrr"},
@@ -165,6 +167,9 @@ const Signatures& ElementsOf(Type type) {
       {F("CHAN"), "vvi"},   {F("PULS"), "iivv"}, {F("RTOV"), "r"},  {F("PLOC"), ""},    {F("PLCO"), ""},
       {F("PVEL"), ""},      {F("PSOF"), ""},    {F("PSOU"), ""},   {F("PSOR"), ""},    {F("PSTR"), ""},
       {F("SUB_"), "vv"},    {F("CTVC"), "c"},     {F("PQAD"), "vv"},
+      // Port-only (CParticleDataFactory under TARGET_PC): NORM, and the generator's system
+      // vectors (camera in system space, external translation and scale).
+      {F("NORM"), "v"},     {F("CMPS"), ""},      {F("EXTT"), ""},      {F("EXTS"), ""},
   };
   static const Signatures modVectorElements = {
       {F("NONE"), ""},     {F("CNST"), "rrr"},  {F("GRAV"), "v"},    {F("WIND"), "vr"},  {F("EXPL"), "rr"},

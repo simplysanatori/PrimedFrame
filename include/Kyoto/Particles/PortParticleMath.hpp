@@ -163,6 +163,110 @@ inline CVector3f RandomVector(float u0, float u1, float u2, float magnitude) {
   return CVector3f(x * scale, y * scale, z * scale);
 }
 
+// FRECPE as the Switch runs it: ARM RecipEstimate's 8-fraction-bit integer construction (no
+// FEAT_RPRES), round to nearest, denormals not flushed.
+inline float ReciprocalEstimate(float v) {
+  const uint32_t bits = FloatBits(v);
+  const uint32_t sign = bits & 0x80000000;
+  int exponent = int((bits >> 23) & 255);
+  uint32_t fraction = bits & 0x7fffff;
+  if (exponent == 255) {
+    return fraction ? BitsFloat(bits | 0x400000) : BitsFloat(sign);
+  }
+  // Zero, and anything below 2^-128, overflows to infinity.
+  if ((bits & 0x7fffffff) < 0x200000) {
+    return BitsFloat(sign | 0x7f800000);
+  }
+  if (exponent == 0) {
+    if ((fraction & 0x400000) == 0) {
+      exponent = -1;
+      fraction = (fraction << 2) & 0x7fffff;
+    } else {
+      fraction = (fraction << 1) & 0x7fffff;
+    }
+  }
+  const uint32_t scaled = 256 | (fraction >> 15);
+  const uint32_t estimate = ((1u << 19) / (scaled * 2 + 1) + 1) / 2;
+  int resultExponent = 253 - exponent;
+  uint32_t resultFraction = (estimate & 255) << 15;
+  if (resultExponent == 0) {
+    resultFraction = 0x400000 | (resultFraction >> 1);
+  } else if (resultExponent == -1) {
+    resultFraction = 0x200000 | (resultFraction >> 2);
+    resultExponent = 0;
+  }
+  return BitsFloat(sign | (uint32_t(resultExponent) << 23) | resultFraction);
+}
+
+// FRECPS: fused 2 - a*b; zero times infinity gives 2.
+inline float ReciprocalStep(float a, float b) {
+  if ((a == 0.f && std::isinf(b)) || (b == 0.f && std::isinf(a))) {
+    return 2.f;
+  }
+  return std::fma(-a, b, 2.f);
+}
+
+// One component of CCoordsExt::UpdateInverseScale 0x2a6390: FRECPE and two FRECPS refinements.
+inline float InverseScale(float s) {
+  float e = ReciprocalEstimate(s);
+  e *= ReciprocalStep(e, s);
+  return e * ReciprocalStep(e, s);
+}
+
+// CMath::SqrtF 0x65f70: 0 for v <= 0, else v times twice-refined FRSQRTE of max(v, 1e-35).
+inline float SqrtF(float v) {
+  if (!(v > 0.f)) {
+    return 0.f;
+  }
+  const float m = std::fmax(v, BitsFloat(0x554ad2e));
+  float e = ReciprocalSqrtEstimate(m);
+  e *= ReciprocalSqrtStep(m, e * e);
+  e *= ReciprocalSqrtStep(m, e * e);
+  return v * e;
+}
+
+// NORM (CVENormalizeVector::GetValue 0x29e620): scaled by 1/|v| (CVector3f::Magnitude 0x6b218,
+// (x*x + y*y) + z*z through SqrtF) when |v| > 2^-23, else unchanged.
+inline CVector3f NormalizeVector(const CVector3f& v) {
+  const float xx = v.GetX() * v.GetX();
+  const float yy = v.GetY() * v.GetY();
+  const float zz = v.GetZ() * v.GetZ();
+  const float xy = xx + yy;
+  const float magnitude = SqrtF(xy + zz);
+  if (!(magnitude > BitsFloat(0x34000000))) {
+    return v;
+  }
+  const float inverse = 1.f / magnitude;
+  return CVector3f(inverse * v.GetX(), inverse * v.GetY(), inverse * v.GetZ());
+}
+
+// CMPS (CVECameraPositionInSystemSpace::GetValue 0x2a24fc): the camera position in the system's
+// global frame, conj(q) * (camera - t) * q with q = (w, x, y, z) unnormalised, then times
+// InverseScale(s) per axis. Separate statements: Remastered uses unfused fmul/fadd/fsub.
+inline CVector3f CameraPositionInSystemSpace(const CVector3f& camera, const CVector3f& t,
+                                             float w, float x, float y, float z,
+                                             const CVector3f& s) {
+  const float d0 = camera.GetX() - t.GetX();
+  const float d1 = camera.GetY() - t.GetY();
+  const float d2 = camera.GetZ() - t.GetZ();
+  const float d0x = d0 * x, d1y = d1 * y, d2z = d2 * z;
+  const float dot = (d0x + d1y) + d2z;
+  const float d0w = d0 * w, d2y = d2 * y, d1z = d1 * z;
+  const float b = d1z + (d0w - d2y);
+  const float d1w = d1 * w, d0z = d0 * z, d2x = d2 * x;
+  const float c = d2x + (d1w - d0z);
+  const float d2w = d2 * w, d1x = d1 * x, d0y = d0 * y;
+  const float e = d0y + (d2w - d1x);
+  const float wb = w * b, xa = x * dot, zc = z * c, ye = y * e;
+  const float ya = y * dot, za = z * dot, zb = z * b, yb = y * b;
+  const float we = w * e, wc = w * c, xe = x * e, xc = x * c;
+  const float outX = (zc + (xa + wb)) - ye;
+  const float outY = (xe + (ya + wc)) - zb;
+  const float outZ = (yb + (za + we)) - xc;
+  return CVector3f(InverseScale(s.GetX()) * outX, InverseScale(s.GetY()) * outY,
+                   InverseScale(s.GetZ()) * outZ);
+}
+
 } // namespace PortParticleMath
 
 #endif

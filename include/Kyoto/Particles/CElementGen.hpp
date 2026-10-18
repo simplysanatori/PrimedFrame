@@ -229,6 +229,22 @@ public:
     light.SetPortHdrBoundsRadius(outerRadius);
   }
   CVector3f PortSystemOrigin() const { return PortWorldFromLocal(xdc_translation); }
+  // Remastered's external translation/rotation/scale (EXTT/EXTR/EXTS, system vars 0xb/0xc/0xa):
+  // what the owner hands CParticleGen::SetExternalDataSet 0x27b3d8. Remastered has one translation,
+  // one rotation and no local scale; the port's retail split is folded into them.
+  CVector3f PortExternalTranslation() const { return xe8_globalTranslation + xdc_translation; }
+  CQuaternion PortExternalRotation() const {
+    return CQuaternion::FromMatrix(x22c_globalOrientation * x1d8_orientation);
+  }
+  CVector3f PortExternalScale() const {
+    return CVector3f(x100_globalScale.GetX() * x16c_localScale.GetX(),
+                     x100_globalScale.GetY() * x16c_localScale.GetY(),
+                     x100_globalScale.GetZ() * x16c_localScale.GetZ());
+  }
+  // The global frame T_g/Q_g/S_g (desc +0xa8/+0xac/+0xb0, SetupTransformMode 0x2887d8) for the
+  // XFMD mode: 2 = zero/identity/external scale, 3 = the external T/Q/S, 4 = the mover's
+  // position and rotation (the external T/Q for the identity SMVR the converter drops) at unit scale.
+  void PortGlobalFrame(CVector3f& t, CQuaternion& q, CVector3f& s) const;
   // True for a converted Remastered PART (its PIRN marker).
   bool PortIsRemastered() const;
   // Remastered particle variables (PVRT): a handle is looked up once and then binds are cheap.
@@ -407,6 +423,7 @@ private:
     CVector3f pos = CVector3f::Zero();
     CVector3f vel = CVector3f::Zero();
     CTransform4f rot = CTransform4f::Identity();
+    CQuaternion rotQuat = CQuaternion::NoRotation();
     bool hasRot = false;
     std::vector< float > latches;
   };

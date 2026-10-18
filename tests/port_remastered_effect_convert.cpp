@@ -618,6 +618,45 @@ void PutReul(std::vector<uint8_t>& out, float x) {
   out.push_back(0);
 }
 
+// DIVD, NORM, CMPS, EXTT and EXTS (GPSM SVR0/SVV0, PMSC, VEL1) keep their Remastered element
+// as the port-only one of the same FourCC.
+void TestSystemVectors() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "SIZE", 3);
+  PutFourCC(out, "DIVD");
+  PutConstant(out, Bits(1.0f));
+  PutConstant(out, Bits(4.0f));
+  PutProperty(out, "POFS", 3);
+  PutFourCC(out, "NORM");
+  PutFourCC(out, "CMPS");
+  PutProperty(out, "PSIV", 3);
+  PutFourCC(out, "SUB_");
+  PutFourCC(out, "EXTT");
+  PutFourCC(out, "EXTS");
+  PutTexr(out, 0x1234ABCD);
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "system-vector effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Retail want;
+  want.f("GPSM");
+  want.f("SIZE").f("DIVD").f("CNST").w(Bits(1.0f)).f("CNST").w(Bits(4.0f));
+  want.f("POFS").f("NORM").f("CMPS");
+  want.f("PSIV").f("SUB_").f("EXTT").f("EXTS");
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "DIVD, NORM, CMPS, EXTT and EXTS carry over");
+  if (parts.size() == 1 && parts[0].part != want.bytes) {
+    std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
+    for (const std::string& d : parts[0].dropped) {
+      std::fprintf(stderr, "  dropped %s\n", d.c_str());
+    }
+  }
+}
+
 // Remastered's shapes with no retail element of their own: ASPR becomes ASPH
 // and a cone turned about X an X bias, RNDV the port-only RNDV, and a GRAD
 // colour gradient over the life 101 percent keys.
@@ -3260,6 +3299,7 @@ int main() {
   TestMappedElements();
   TestSplitRejects();
   TestShapes();
+  TestSystemVectors();
   TestGradientFrames();
   TestSpawnTable();
   TestPortSpawnTables();

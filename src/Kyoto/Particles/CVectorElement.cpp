@@ -9,6 +9,8 @@
 #include "Kyoto/Math/CMatrix3f.hpp"
 #include "Kyoto/Math/CQuaternion.hpp"
 #include "Kyoto/Math/CVector3f.hpp"
+#include "Kyoto/Graphics/CGraphics.hpp"
+#include "Kyoto/Particles/CElementGen.hpp"
 #include "Kyoto/Particles/CParticleGlobals.hpp"
 #include "Kyoto/Particles/IElement.hpp"
 #include "rstl/math.hpp"
@@ -495,6 +497,43 @@ bool CVEOrderedEulerProduct::GetValue(int frame, CVector3f& valOut) const {
 
 bool CVEOrderedEulerProduct::IsFastConstant() const {
   return mFirst->IsFastConstant() && mSecond->IsFastConstant();
+}
+
+CVEPortNormalize::CVEPortNormalize(CVectorElement* a) : mA(a) {}
+
+CVEPortNormalize::~CVEPortNormalize() { delete mA; }
+
+bool CVEPortNormalize::GetValue(int frame, CVector3f& valOut) const {
+  mA->GetValue(frame, valOut);
+  valOut = PortParticleMath::NormalizeVector(valOut);
+  return false;
+}
+
+bool CVEPortSystemVector::GetValue(int, CVector3f& valOut) const {
+  valOut = CVector3f::Zero();
+  CParticleGlobals::SParticleSystem* sys = CParticleGlobals::GetCurrentParticleSystem();
+  if (CParticleGlobals::xPortSwooshEval != nullptr || sys == nullptr || sys->x4_system == nullptr) {
+    return false;
+  }
+  const CElementGen& gen = *sys->x4_system;
+  switch (mKind) {
+  case 'EXTT':
+    valOut = gen.PortExternalTranslation();
+    break;
+  case 'EXTS':
+    valOut = gen.PortExternalScale();
+    break;
+  default: {
+    // CMPS: GetCameraTransform 0x27b304's translation; the view matrix is camera-to-world.
+    CVector3f t, s;
+    CQuaternion q;
+    gen.PortGlobalFrame(t, q, s);
+    valOut = PortParticleMath::CameraPositionInSystemSpace(
+        CGraphics::GetViewMatrix().GetTranslation(), t, q.GetScalar(), q.AxisX(), q.AxisY(),
+        q.AxisZ(), s);
+  } break;
+  }
+  return false;
 }
 
 CVEPortRandomVector::CVEPortRandomVector(CRealElement* magnitude) : mMagnitude(magnitude) {}

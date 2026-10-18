@@ -170,6 +170,38 @@ int main() {
     const CVector3f corner = RandomVector(0.f, 0.f, 0.f, 1.f);
     CHECK_MSG(NearVector(corner, CVector3f(-0.57735f, -0.57735f, -0.57735f)), "RNDV corner normalised");
   }
+  // FRECPE/FRECPS (UpdateInverseScale 0x2a6390), SqrtF 0x65f70, NORM and CMPS.
+  CHECK_MSG(ReciprocalEstimate(1.f) == 0.998046875f, "FRECPE(1)");
+  CHECK_MSG(ReciprocalEstimate(-2.f) == -0.4990234375f, "FRECPE(-2)");
+  CHECK_MSG(std::isinf(ReciprocalEstimate(0.f)) && ReciprocalEstimate(INFINITY) == 0.f, "FRECPE 0 and inf");
+  CHECK_MSG(ReciprocalStep(0.f, INFINITY) == 2.f, "FRECPS 0*inf");
+  CHECK_MSG(Near(InverseScale(1.f), 1.f, 1e-7f) && Near(InverseScale(4.f), 0.25f, 1e-7f), "inverse scale");
+  CHECK_MSG(SqrtF(0.f) == 0.f && SqrtF(-1.f) == 0.f && SqrtF(NAN) == 0.f, "SqrtF of v <= 0 is 0");
+  CHECK_MSG(Near(SqrtF(9.f), 3.f, 1e-6f), "SqrtF(9)");
+  {
+    const CVector3f unit = NormalizeVector(CVector3f(3.f, 0.f, 4.f));
+    CHECK_MSG(NearVector(unit, CVector3f(0.6f, 0.f, 0.8f), 1e-6f), "NORM scales to unit length");
+    const CVector3f tiny(1e-8f, 0.f, 0.f);
+    CHECK_MSG(NormalizeVector(tiny).GetX() == 1e-8f, "NORM keeps |v| <= 2^-23");
+    CHECK_MSG(NormalizeVector(CVector3f(0.f, 0.f, 0.f)).GetX() == 0.f, "NORM keeps zero");
+  }
+  {
+    const CVector3f camera(5.f, 2.f, 1.f);
+    const CVector3f one(1.f, 1.f, 1.f);
+    CHECK_MSG(NearVector(CameraPositionInSystemSpace(camera, CVector3f(1.f, 1.f, 1.f), 1.f, 0.f, 0.f, 0.f, one),
+                         CVector3f(4.f, 1.f, 0.f), 1e-6f),
+              "CMPS identity frame is camera - t");
+    // 90 degrees about Z: world +X is the system's -Y.
+    const float h = 0.70710678f;
+    CHECK_MSG(NearVector(CameraPositionInSystemSpace(CVector3f(1.f, 0.f, 0.f), CVector3f(0.f, 0.f, 0.f), h, 0.f,
+                                                     0.f, h, one),
+                         CVector3f(0.f, -1.f, 0.f), 1e-6f),
+              "CMPS turns into the system's frame");
+    CHECK_MSG(NearVector(CameraPositionInSystemSpace(camera, CVector3f(0.f, 0.f, 0.f), 1.f, 0.f, 0.f, 0.f,
+                                                     CVector3f(2.f, 4.f, 0.5f)),
+                         CVector3f(2.5f, 0.5f, 2.f), 1e-6f),
+              "CMPS divides by the system scale");
+  }
   {
     CRandom16 random(0);
     CHECK_MSG(random.PortFloat28() == 12345.f / 268435456.f, "Remastered draw is the low 28 bits");

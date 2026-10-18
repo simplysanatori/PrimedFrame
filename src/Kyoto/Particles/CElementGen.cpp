@@ -1266,11 +1266,9 @@ CVector3f CElementGen::PortKssmVector(PortKssmChild& state, u32 index) {
   const CGenDescription::PortKssmNode& node = state.kssm->nodes[index];
   switch (node.op) {
   case 'EXTT':
-    return xe8_globalTranslation + xdc_translation;
+    return PortExternalTranslation();
   case 'EXTS':
-    return CVector3f(x100_globalScale.GetX() * x16c_localScale.GetX(),
-                     x100_globalScale.GetY() * x16c_localScale.GetY(),
-                     x100_globalScale.GetZ() * x16c_localScale.GetZ());
+    return PortExternalScale();
   case 'KPIN': {
     float* latch = &state.latches[node.slot];
     if (state.frame == 0) {
@@ -1323,7 +1321,7 @@ CQuaternion CElementGen::PortKssmRotation(PortKssmChild& state, u32 index) {
   const CGenDescription::PortKssmNode& node = state.kssm->nodes[index];
   switch (node.op) {
   case 'EXTR':
-    return CQuaternion::FromMatrix(x22c_globalOrientation * x1d8_orientation);
+    return PortExternalRotation();
   case 'REUL': {
     // Order 0: R = Rz * Ry * Rx from each axis's normalised FastSinR/FastCosR pair.
     float s[3], c[3];
@@ -1358,12 +1356,39 @@ void CElementGen::PortKssmEvaluate(PortKssmChild& state) {
     state.pos = PortKssmVector(state, component.pos);
   }
   if (component.rot != ~0u) {
-    state.rot = PortKssmRotation(state, component.rot).BuildTransform4f();
+    state.rotQuat = PortKssmRotation(state, component.rot);
+    state.rot = state.rotQuat.BuildTransform4f();
   }
   if (component.grav != ~0u) {
     state.vel = state.vel + PortKssmVector(state, component.grav);
   }
   state.pos = state.pos + state.vel;
+}
+
+void CElementGen::PortGlobalFrame(CVector3f& t, CQuaternion& q, CVector3f& s) const {
+  switch (x28_loadedGenDesc->xPortXfmd) {
+  case kPortXfmdFollow:
+    t = PortExternalTranslation();
+    q = PortExternalRotation();
+    s = PortExternalScale();
+    break;
+  case kPortXfmdFollowUnscaled:
+    if (PortHasMover()) {
+      // Zero and identity until the mover is initialised, and with no SMVR.
+      t = xPortMover.pos;
+      q = xPortMover.hasRot ? xPortMover.rotQuat : CQuaternion::NoRotation();
+    } else {
+      t = PortExternalTranslation();
+      q = PortExternalRotation();
+    }
+    s = CVector3f(1.f, 1.f, 1.f);
+    break;
+  default:
+    t = CVector3f::Zero();
+    q = CQuaternion::NoRotation();
+    s = PortExternalScale();
+    break;
+  }
 }
 
 bool CElementGen::PortHasMover() const {

@@ -263,5 +263,31 @@ public:
 private:
   CRealElement* mMagnitude;
 };
+
+// Remastered NORM (CVENormalizeVector::GetValue 0x29e620): the child scaled to unit length,
+// unchanged when its length is at most 2^-23.
+class CVEPortNormalize : public CVectorElement {
+public:
+  explicit CVEPortNormalize(CVectorElement* a);
+  ~CVEPortNormalize() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CVectorElement* mA;
+};
+
+// Remastered system vectors of the generator being evaluated: CMPS (the camera position in the
+// system's global frame, CVECameraPositionInSystemSpace 0x2a24fc), EXTT and EXTS (the external
+// translation and scale, CVEExternalValue 0x2a2774). Zero outside a generator evaluation (swooshes).
+class CVEPortSystemVector : public CVectorElement {
+public:
+  explicit CVEPortSystemVector(FourCC kind) : mKind(kind) {}
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  FourCC mKind;
+};
 #endif
 #endif // _CVECTORELEMENT

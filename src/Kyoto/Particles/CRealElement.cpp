@@ -389,6 +389,26 @@ float CREDistanceFromCameraBlend::DistanceBlend(float d, float a, float b) {
   return PortParticleMath::DistanceBlend(d, a, b);
 }
 
+CREPortDivide::CREPortDivide(CRealElement* a, CRealElement* b) : x4_a(a), x8_b(b) {}
+
+CREPortDivide::~CREPortDivide() {
+  delete x4_a;
+  delete x8_b;
+}
+
+bool CREPortDivide::GetValue(int frame, float& valOut) const {
+  // Both operands start at 0 (a missing child leaves them so).
+  float a = 0.f, b = 0.f;
+  if (x4_a) {
+    x4_a->GetValue(frame, a);
+  }
+  if (x8_b) {
+    x8_b->GetValue(frame, b);
+  }
+  valOut = a / b;
+  return false;
+}
+
 CREPortSwooshNodeTime::CREPortSwooshNodeTime(CRealElement* a) : x4_a(a) {}
 
 CREPortSwooshNodeTime::~CREPortSwooshNodeTime() { delete x4_a; }

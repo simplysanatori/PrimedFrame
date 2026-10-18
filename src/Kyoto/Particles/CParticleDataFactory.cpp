@@ -1140,6 +1140,11 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
   case SBIG('KEWS'): {
     return rs_new CREPortSwooshNodeTime(GetRealElement(in));
   }
+  case SBIG('DIVD'): {
+    CRealElement* a = GetRealElement(in);
+    CRealElement* b = GetRealElement(in);
+    return rs_new CREPortDivide(a, b);
+  }
 #endif
   case SBIG('PAP1'): {
     return rs_new CREParticleAccessParameter1();
@@ -1260,6 +1265,14 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     return PortReadSelect< CVEPortSelect >(in, &CParticleDataFactory::GetVectorElement);
   case SBIG('RNDV'):
     ret = rs_new CVEPortRandomVector(GetRealElement(in));
+    break;
+  case SBIG('NORM'):
+    ret = rs_new CVEPortNormalize(GetVectorElement(in));
+    break;
+  case SBIG('CMPS'):
+  case SBIG('EXTT'):
+  case SBIG('EXTS'):
+    ret = rs_new CVEPortSystemVector(clsId);
     break;
 #endif
   case SBIG('NONE'):

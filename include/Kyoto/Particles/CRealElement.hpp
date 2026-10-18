@@ -244,6 +244,17 @@ public:
   ~CREPortSwooshNodeTime() override;
   bool GetValue(int frame, float& valOut) const override;
 };
+
+// Port-only DIVD (CREDivide::GetValue 0x294e0c): a / b, a plain fdiv with no zero guard.
+class CREPortDivide : public CRealElement {
+  CRealElement* x4_a;
+  CRealElement* x8_b;
+
+public:
+  CREPortDivide(CRealElement* a, CRealElement* b);
+  ~CREPortDivide() override;
+  bool GetValue(int frame, float& valOut) const override;
+};
 #endif
 
 class CREParticleRotationOrLineWidth : public CRealElement {
