@@ -712,6 +712,11 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortSpriteShape = u8(in.ReadLong());
       break;
+    // Port-only: Remastered's PBDM 1 or 3 (xPortBlend).
+    case SBIG('PBDM'):
+      GetClassID(in);
+      desc->xPortBlend = u8(in.ReadLong());
+      break;
     // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
     case SBIG('VMAT'):
     case SBIG('VMSH'):

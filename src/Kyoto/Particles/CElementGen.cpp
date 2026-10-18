@@ -64,6 +64,17 @@ static uint PortNextParticleSeed() {
   h ^= h >> 16;
   return h;
 }
+
+// The factors of Remastered's PBDM row (CParticleStaticRenderState ctor 0x28bfc4 copies the row
+// the table at 0x28a600 fills) where retail draws its alpha blend: row 1 premultiplied
+// (One, InvSrcAlpha), row 3 opaque (One, Zero); any other keeps retail's (SrcAlpha, InvSrcAlpha).
+static ERglBlendFactor PortBlendSrc(const CGenDescription* desc) {
+  return desc->xPortBlend == 1 || desc->xPortBlend == 3 ? kBF_One : kBF_SrcAlpha;
+}
+
+static ERglBlendFactor PortBlendDst(const CGenDescription* desc) {
+  return desc->xPortBlend == 3 ? kBF_Zero : kBF_InvSrcAlpha;
+}
 #endif
 
 #pragma inline_max_size(250)
@@ -2250,7 +2261,11 @@ void CElementGen::RenderParticles() {
     CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_One, kLO_Clear);
   } else {
     CGraphics::SetDepthWriteMode(x26c_28_zTest, kE_LEqual, x26c_27_ZBUF);
+#ifdef TARGET_PC
+    CGraphics::SetBlendMode(kBM_Blend, PortBlendSrc(x28_loadedGenDesc), PortBlendDst(x28_loadedGenDesc), kLO_Clear);
+#else
     CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_InvSrcAlpha, kLO_Clear);
+#endif
   }
 
   CGX::SetNumTevStages(static_cast< uchar >(nextStage));
@@ -2847,7 +2862,11 @@ void CElementGen::RenderParticlesFlameThrower(CElementGen* const* gens, int coun
         if (desc->x30_26_AAPH) {
           CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_One, kLO_Clear);
         } else {
+#ifdef TARGET_PC
+          CGraphics::SetBlendMode(kBM_Blend, PortBlendSrc(desc), PortBlendDst(desc), kLO_Clear);
+#else
           CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_InvSrcAlpha, kLO_Clear);
+#endif
         }
       } else {
         CGX::SetTevOrder(stage, GX_TEXCOORD0, static_cast< GXTexMapID >(map), GX_COLOR_NULL);
@@ -2929,7 +2948,12 @@ void CElementGen::RenderParticlesIndirectTexture() {
     CGX::SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_CLEAR);
   } else {
     CGX::SetZMode(true, GX_LEQUAL, x26c_27_ZBUF);
+#ifdef TARGET_PC
+    CGX::SetBlendMode(GX_BM_BLEND, GXBlendFactor(PortBlendSrc(x28_loadedGenDesc)), GXBlendFactor(PortBlendDst(x28_loadedGenDesc)),
+                      GX_LO_CLEAR);
+#else
     CGX::SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
+#endif
   }
 
   SUVElementSet uvs;
@@ -3007,7 +3031,12 @@ void CElementGen::RenderParticlesIndirectTexture() {
   CGX::SetStandardTevColorAlphaOp(GX_TEVSTAGE1);
   CGX::SetTevAlphaIn(GX_TEVSTAGE1, GX_CA_ZERO, GX_CA_APREV, GX_CA_RASA, GX_CA_ZERO);
 
+#ifdef TARGET_PC
+  CGX::SetBlendMode(GX_BM_BLEND, GXBlendFactor(PortBlendSrc(x28_loadedGenDesc)), GXBlendFactor(PortBlendDst(x28_loadedGenDesc)),
+                    GX_LO_CLEAR);
+#else
   CGX::SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
+#endif
   CGX::SetNumChans(1);
   CGX::SetChanCtrl(CGX::Channel0, false, GX_SRC_REG, GX_SRC_VTX, GX_LIGHT_NULL, GX_DF_NONE,
                    GX_AF_NONE);
@@ -3218,7 +3247,11 @@ void CElementGen::RenderLines() {
     CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_One, kLO_Clear);
   } else {
     CGraphics::SetDepthWriteMode(true, kE_LEqual, true);
+#ifdef TARGET_PC
+    CGraphics::SetBlendMode(kBM_Blend, PortBlendSrc(x28_loadedGenDesc), PortBlendDst(x28_loadedGenDesc), kLO_Clear);
+#else
     CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_InvSrcAlpha, kLO_Clear);
+#endif
   }
 
   bool constUVs = true;
@@ -3400,7 +3433,11 @@ void CElementGen::RenderModels() {
       }
     } else {
       CGraphics::SetDepthWriteMode(true, kE_LEqual, true);
+#ifdef TARGET_PC
+      CGraphics::SetBlendMode(kBM_Blend, PortBlendSrc(x28_loadedGenDesc), PortBlendDst(x28_loadedGenDesc), kLO_Clear);
+#else
       CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_InvSrcAlpha, kLO_Clear);
+#endif
       CGraphics::SetAlphaCompare(kAF_Greater, 0, kAO_And, kAF_Always, 0);
     }
 

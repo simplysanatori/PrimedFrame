@@ -1832,8 +1832,8 @@ void TestDrawsNothing() {
   CHECK_MSG(!parts.empty() && parts[0].dropped.empty(), "nothing dropped with a TEXR");
 }
 
-// PBDM is Remastered's blend mode: 2 is retail's additive AAPH, anything else
-// alpha (1 and 3 noted as approximated).
+// PBDM is Remastered's blend mode: 2 is retail's additive AAPH, 1 (premultiplied) and
+// 3 (opaque) the port-only PBDM, 4 and up alpha (noted as approximated).
 void TestBlendMode() {
   auto parts = ConvertOne(OneGenerator([](auto& o) {
                  PutProperty(o, "PBDM", 0);
@@ -1848,19 +1848,33 @@ void TestBlendMode() {
   CHECK_MSG(!parts.empty() && parts[0].approximated.empty(), "PBDM 2 is exact");
   CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "PBDM 2 drops nothing");
 
+  for (uint8_t mode : {uint8_t(1), uint8_t(3)}) {
+    parts = ConvertOne(OneGenerator([mode](auto& o) {
+                   PutProperty(o, "PBDM", 0);
+                   o.push_back(mode);
+                   PutTexr(o, 0x1234ABCD);
+                 }),
+                 {});
+    Retail port;
+    port.f("GPSM").f("PBDM").f("CNST").w(mode);
+    port.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+    CHECK_MSG(parts.size() == 1 && parts[0].part == port.bytes, "PBDM 1 and 3 become the port's PBDM");
+    CHECK_MSG(!parts.empty() && parts[0].approximated.empty(), "PBDM 1 and 3 are exact");
+    CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "PBDM 1 and 3 drop nothing");
+  }
+
   parts = ConvertOne(OneGenerator([](auto& o) {
                  PutProperty(o, "PBDM", 0);
-                 o.push_back(1);
+                 o.push_back(4);
                  PutTexr(o, 0x1234ABCD);
                }),
                {});
   Retail alpha;
   alpha.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
-  CHECK_MSG(parts.size() == 1 && parts[0].part == alpha.bytes, "PBDM 1 writes nothing");
+  CHECK_MSG(parts.size() == 1 && parts[0].part == alpha.bytes, "PBDM 4 writes nothing");
   CHECK_MSG(!parts.empty() && parts[0].approximated.size() == 1 &&
-                parts[0].approximated[0] == "PBDM 1 taken as alpha blending",
-            "PBDM 1 is listed as approximated");
-  CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "PBDM 1 drops nothing");
+                parts[0].approximated[0] == "PBDM 4 taken as alpha blending",
+            "PBDM 4 is listed as approximated");
 }
 
 // GPUA (how much GPU time is free) is taken as 1.

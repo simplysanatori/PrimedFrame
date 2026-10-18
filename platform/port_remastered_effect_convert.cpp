@@ -3030,7 +3030,8 @@ public:
       // PBDM is Remastered's blend mode, from the table CParticleStaticRenderState
       // reads: 0 alpha (src alpha, 1 - src alpha), 1 premultiplied (1, 1 - src
       // alpha), 2 additive (src alpha, 1) and 3 opaque (1, 0). Retail has only
-      // alpha and AAPH (additive), so 2 is AAPH and the rest are alpha.
+      // alpha and AAPH (additive), so 2 is AAPH and 1 and 3 go to the port-only PBDM,
+      // whose factors the generator's alpha blend takes (CElementGen::PortBlendSrc/Dst).
       if (part && fourcc == F("PBDM")) {
         const EffectValue* mode = property.value.size() == 1 ? &property.value[0] : nullptr;
         if (mode != nullptr && IsElement(*mode, F("CNST")) && mode->args.size() == 1) {
@@ -3042,6 +3043,10 @@ public:
           AppendBE32(out, F("AAPH"));
           AppendBE32(out, F("CNST"));
           out.push_back(1);
+        } else if (mode->word == 1 || mode->word == 3) {
+          AppendBE32(out, F("PBDM"));
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, mode->word);
         } else if (mode->word != 0) {
           m_approximated.push_back("PBDM " + std::to_string(mode->word) + " taken as alpha blending");
         }
@@ -4009,7 +4014,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
                (vfx && fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
-                         fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID") ||
+                         fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID") || fourcc == F("PBDM") ||
                          fourcc == F("PMRF"))) ||
                (vfx && fourcc == F("PIRN"))) {
       ok = reader.PortWord();
