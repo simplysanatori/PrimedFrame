@@ -30,6 +30,8 @@ struct TextureFormatInfo {
 };
 TextureFormatInfo format_info(wgpu::TextureFormat format) noexcept;
 uint64_t calc_texture_size(wgpu::TextureFormat format, uint32_t width, uint32_t height, uint32_t mips) noexcept;
+// Refresh the cached Dawn memory totals (at most once a second); call from the thread that submits to Dawn.
+void sample_dawn_memory() noexcept;
 bool is_block_aligned(wgpu::TextureFormat format, uint32_t width, uint32_t height) noexcept;
 
 constexpr u32 InvalidTextureFormat = -1;

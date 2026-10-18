@@ -33,6 +33,7 @@
 #ifdef WEBGPU_DAWN
 #include "../dawn/TracyPlatform.hpp"
 #include <dawn/native/DawnNative.h>
+#include "../gfx/texture_sites.hpp"
 #endif
 
 namespace aurora::gx {
@@ -330,6 +331,7 @@ TextureWithSampler create_render_texture(uint32_t width, uint32_t height, bool m
       .mipLevelCount = 1,
       .sampleCount = sampleCount,
   };
+  AURORA_NOTE_TEXTURE(&textureDescriptor);
   auto texture = g_device.CreateTexture(&textureDescriptor);
 
   constexpr wgpu::TextureViewDescriptor viewDescriptor{
@@ -571,6 +573,7 @@ static TextureWithSampler create_depth_texture(uint32_t width, uint32_t height) 
       .mipLevelCount = 1,
       .sampleCount = g_graphicsConfig.msaaSamples,
   };
+  AURORA_NOTE_TEXTURE(&textureDescriptor);
   auto texture = g_device.CreateTexture(&textureDescriptor);
 
   const wgpu::TextureViewDescriptor viewDescriptor{

@@ -28,6 +28,7 @@
 #include <utility>
 #include <unordered_map>
 #include <vector>
+#include "texture_sites.hpp"
 
 // Remastered's VFX particle materials, drawn natively (see aurora/vfx.hpp). The formulas are the
 // ones recovered from the Remastered shaders (build/mpr/vfx/SPEC.md section 2); the tone curve,
@@ -628,6 +629,7 @@ void ensure_dummy(const DrawContext& ctx) {
       .size = {1, 1, 1},
       .format = wgpu::TextureFormat::RGBA8Unorm,
   };
+  AURORA_NOTE_TEXTURE(&descriptor);
   g_state.dummyTexture = ctx.device.CreateTexture(&descriptor);
   const uint8_t white[4] = {255, 255, 255, 255};
   const wgpu::TexelCopyTextureInfo dst{.texture = g_state.dummyTexture};
@@ -699,6 +701,7 @@ void build_array(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd,
       .format = src.format,
       .mipLevelCount = mips,
   };
+  AURORA_NOTE_TEXTURE(&descriptor);
   entry->texture = ctx.device.CreateTexture(&descriptor);
   for (uint32_t layer = 0; layer < entry->layers; ++layer) {
     const uint32_t col = layer % entry->cols;

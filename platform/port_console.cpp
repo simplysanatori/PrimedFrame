@@ -1399,6 +1399,13 @@ void CmdStatsTextures() {
     Out("%5u x %4ux%-4u mips %2u %-18s %8.2f MiB  %s", g.count, g.width, g.height, g.mips, g.format,
         g.bytes / 1048576.0, g.label);
   }
+  std::vector<AuroraTextureSite> sites(64);
+  const uint32_t siteCount = aurora_get_texture_sites(sites.data(), static_cast<uint32_t>(sites.size()));
+  Out("direct CreateTexture sites (made so far, not live): %u", siteCount);
+  for (uint32_t i = 0; i < std::min<uint32_t>(siteCount, static_cast<uint32_t>(sites.size())); ++i) {
+    Out("%7llu made %9.2f MiB  %s", static_cast<unsigned long long>(sites[i].count), sites[i].bytes / 1048576.0,
+        sites[i].site);
+  }
   Finish();
 }
 

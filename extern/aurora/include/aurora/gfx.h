@@ -56,6 +56,14 @@ typedef struct {
   uint64_t bytes; // all of the group's textures together
 } AuroraTextureGroup;
 uint32_t aurora_get_texture_groups(AuroraTextureGroup* out, uint32_t cap);
+// Textures made by each direct CreateTexture call site that is not a TextureRef (cumulative, not live).
+typedef struct AuroraTextureSite {
+  const char* site; // file:line under extern/aurora/lib
+  uint64_t count;
+  uint64_t bytes;
+} AuroraTextureSite;
+// Returns the number of sites; fills up to `cap`.
+uint32_t aurora_get_texture_sites(AuroraTextureSite* out, uint32_t cap);
 // The AuroraConfig::frameBufferScale in use: the device may allow less than was asked for.
 uint32_t aurora_get_frame_buffer_scale();
 // The AuroraConfig::frameStorageScale in use (the array buffer's, in units of its 8 MiB at 1).

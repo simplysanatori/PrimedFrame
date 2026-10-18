@@ -37,6 +37,7 @@
 #include <absl/container/flat_hash_map.h>
 #include <magic_enum.hpp>
 #include <tracy/Tracy.hpp>
+#include "texture_sites.hpp"
 
 namespace aurora::gfx {
 using namespace detail;
@@ -203,6 +204,7 @@ PassSnapshotEntry& acquire_pass_snapshot(uint32_t width, uint32_t height, wgpu::
         .mipLevelCount = 1,
         .sampleCount = 1,
     };
+    AURORA_NOTE_TEXTURE(&desc);
     auto texture = webgpu::g_device.CreateTexture(&desc);
     auto view = texture.CreateView();
     entry.color = webgpu::TextureWithSampler{
@@ -222,6 +224,7 @@ PassSnapshotEntry& acquire_pass_snapshot(uint32_t width, uint32_t height, wgpu::
         .mipLevelCount = 1,
         .sampleCount = 1,
     };
+    AURORA_NOTE_TEXTURE(&desc);
     auto texture = webgpu::g_device.CreateTexture(&desc);
     auto view = texture.CreateView();
     entry.depth = webgpu::TextureWithSampler{
@@ -438,6 +441,7 @@ OffscreenCacheEntry get_offscreen_textures(uint32_t width, uint32_t height) {
       .mipLevelCount = 1,
       .sampleCount = 1,
   };
+  AURORA_NOTE_TEXTURE(&colorDesc);
   auto colorTexture = webgpu::g_device.CreateTexture(&colorDesc);
   auto colorView = colorTexture.CreateView();
   webgpu::TextureWithSampler color{
@@ -456,6 +460,7 @@ OffscreenCacheEntry get_offscreen_textures(uint32_t width, uint32_t height) {
       .mipLevelCount = 1,
       .sampleCount = 1,
   };
+  AURORA_NOTE_TEXTURE(&depthDesc);
   auto depthTexture = webgpu::g_device.CreateTexture(&depthDesc);
   auto depthView = depthTexture.CreateView();
   webgpu::TextureWithSampler depth{

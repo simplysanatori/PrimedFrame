@@ -7,6 +7,7 @@
 #include "gfx/frame.hpp"
 #include "gfx/pipeline_cache.hpp"
 #include "gfx/recording.hpp"
+#include "gfx/texture.hpp"
 #include "gfx/render_worker.hpp"
 #include "gx/command_processor.hpp"
 #include "gx/fifo.hpp"
@@ -567,6 +568,7 @@ void end_frame() noexcept {
       phase::set(phase::Render, "queue submit");
       g_queue.Submit(1, &buffer);
     }
+    gfx::sample_dawn_memory();
     phase::set(phase::Render, "after submit");
     webgpu::gpu_prof::after_submit();
     if (canPresent && g_surface) {

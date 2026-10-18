@@ -6,16 +6,21 @@
 #include "aurora/aurora.h"
 #include "aurora/gfx.h"
 #include "texture.hpp"
+#include "texture_sites.hpp"
 #include "texture_convert.hpp"
 #include "probe.hpp"
 #include "../gx/gx_fmt.hpp"
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <cstdlib>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -396,6 +401,78 @@ wgpu::SamplerDescriptor TextureBind::get_descriptor() const noexcept {
 }
 } // namespace aurora::gfx
 
+namespace aurora::gfx {
+namespace {
+std::mutex s_dawnMutex;
+AuroraDawnMemory s_dawnMemory;
+bool s_dawnSampled = false;
+std::atomic<int64_t> s_dawnSampleNs = 0;
+std::atomic<texture_sites::Site*> s_sites = nullptr;
+} // namespace
+
+// Dawn's memory queries are not synchronized with its other calls (the device has no implicit synchronization), so
+// they run here, on the thread that submits, and the game thread reads the copy.
+void sample_dawn_memory() noexcept {
+  const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch())
+                          .count();
+  const int64_t last = s_dawnSampleNs.load(std::memory_order_relaxed);
+  if ((last != 0 && now - last < 1'000'000'000) || !webgpu::g_device) {
+    return;
+  }
+  s_dawnSampleNs.store(now, std::memory_order_relaxed);
+  const WGPUDevice device = webgpu::g_device.Get();
+  const auto usage = dawn::native::ComputeEstimatedMemoryUsageInfo(device);
+  const auto allocator = dawn::native::GetAllocatorMemoryInfo(device);
+  std::lock_guard lock(s_dawnMutex);
+  s_dawnMemory = {usage.totalUsage, usage.texturesUsage, usage.buffersUsage, allocator.totalUsedMemory,
+                  allocator.totalAllocatedMemory};
+  s_dawnSampled = true;
+}
+
+void texture_sites::note(Site& site, const wgpu::TextureDescriptor* descriptor) noexcept {
+  if (!site.registered.exchange(true, std::memory_order_acq_rel)) {
+    site.next = s_sites.load(std::memory_order_relaxed);
+    while (!s_sites.compare_exchange_weak(site.next, &site, std::memory_order_release, std::memory_order_relaxed)) {
+    }
+  }
+  // calc_texture_size is fatal for formats the port does not know; count the rest by their name.
+  uint64_t bytes = 0;
+  const std::string_view name = magic_enum::enum_name(descriptor->format);
+  if (name.starts_with("BC") || name.starts_with("ASTC") || name.starts_with("ETC2") || name.starts_with("EAC")) {
+    bytes = calc_texture_size(descriptor->format, descriptor->size.width, descriptor->size.height,
+                              descriptor->mipLevelCount);
+  } else {
+    uint32_t texelBytes = 4;
+    size_t channels = 0;
+    while (channels < name.size() && std::string_view("RGBA").find(name[channels]) != std::string_view::npos) {
+      ++channels;
+    }
+    if (name.starts_with("BGRA")) {
+      channels = 4;
+    }
+    if (name.starts_with("Depth16")) {
+      texelBytes = 2;
+    } else if (name.starts_with("Stencil8")) {
+      texelBytes = 1;
+    } else if (name.starts_with("Depth32FloatStencil8")) {
+      texelBytes = 8;
+    } else if (channels != 0 && channels < name.size() && name[channels] >= '0' && name[channels] <= '9' &&
+               !name.starts_with("RGB10") && !name.starts_with("RGB9")) {
+      const uint32_t bits = static_cast<uint32_t>(std::atoi(name.data() + channels));
+      texelBytes = std::max<uint32_t>(static_cast<uint32_t>(channels) * bits / 8, 1);
+    }
+    bytes = uint64_t{descriptor->size.width} * descriptor->size.height * texelBytes;
+    if (descriptor->mipLevelCount > 1) {
+      bytes += bytes / 3;
+    }
+  }
+  bytes *= std::max<uint32_t>(descriptor->size.depthOrArrayLayers, 1) * std::max<uint32_t>(descriptor->sampleCount, 1);
+  site.count.fetch_add(1, std::memory_order_relaxed);
+  site.bytes.fetch_add(bytes, std::memory_order_relaxed);
+}
+} // namespace aurora::gfx
+
 void aurora_get_texture_stats(AuroraTextureStats* out) {
   using namespace aurora::gfx;
   for (int kind = 0; kind < 2; ++kind) {
@@ -406,19 +483,25 @@ void aurora_get_texture_stats(AuroraTextureStats* out) {
 }
 
 bool aurora_get_dawn_memory(AuroraDawnMemory* out) {
-  *out = {};
-  if (!aurora::webgpu::g_device) {
-    return false;
+  std::lock_guard lock(aurora::gfx::s_dawnMutex);
+  *out = aurora::gfx::s_dawnMemory;
+  return aurora::gfx::s_dawnSampled;
+}
+
+uint32_t aurora_get_texture_sites(AuroraTextureSite* out, uint32_t cap) {
+  using namespace aurora::gfx;
+  uint32_t n = 0;
+  for (const texture_sites::Site* site = s_sites.load(std::memory_order_acquire); site != nullptr; site = site->next) {
+    if (n < cap) {
+      const char* name = site->name;
+      if (const char* lib = std::strstr(name, "lib/")) {
+        name = lib + 4;
+      }
+      out[n] = {name, site->count.load(std::memory_order_relaxed), site->bytes.load(std::memory_order_relaxed)};
+    }
+    ++n;
   }
-  const WGPUDevice device = aurora::webgpu::g_device.Get();
-  const auto usage = dawn::native::ComputeEstimatedMemoryUsageInfo(device);
-  const auto allocator = dawn::native::GetAllocatorMemoryInfo(device);
-  out->total = usage.totalUsage;
-  out->textures = usage.texturesUsage;
-  out->buffers = usage.buffersUsage;
-  out->allocatorUsed = allocator.totalUsedMemory;
-  out->allocatorAllocated = allocator.totalAllocatedMemory;
-  return true;
+  return n;
 }
 
 uint32_t aurora_get_texture_groups(AuroraTextureGroup* out, uint32_t cap) {

@@ -30,6 +30,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <utility>
+#include "../gfx/texture_sites.hpp"
 
 static aurora::Module Log("aurora::gx");
 
@@ -864,6 +865,7 @@ void initialize() noexcept {
         .size = {1, 1},
         .format = wgpu::TextureFormat::RGBA8Unorm,
     };
+    AURORA_NOTE_TEXTURE(&descriptor);
     sEmptyTexture = g_device.CreateTexture(&descriptor);
     sEmptyTextureView = sEmptyTexture.CreateView();
   }
