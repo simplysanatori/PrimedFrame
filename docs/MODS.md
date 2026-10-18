@@ -505,6 +505,14 @@ converted non-Power charges retain `locator x Rx(+90)` and converted normal
 flashes retain the full sampled locator. Retail effects remain translation-only;
 scale, timing, materials, combo-transfer and auxiliary attachments are unchanged.
 
+The separate converted **Power charged-release flash (PortUpdateFlashes slot 3
+only)** also right-composes this source-axis basis, retaining the exact sampled
+translation. Its authored child position `(0,0,+0.05)` at scale 2 therefore goes
+0.10 m along sampled forward, not sampled up; its zero-position child stays
+centered. Other flash slots and nonconverted flash generators keep their full
+raw locator. This is not a matched-pose or visual-parity claim; flash scale,
+lifetime, timing, geometry and materials are unchanged.
+
 ### Collision stays on the disc's model
 
 A solid static actor with no authored collision extent (zero or negative) takes
