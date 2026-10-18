@@ -1476,6 +1476,19 @@ bool BeamDoorUnlockable(uint32_t mrea, int door) {
   }
 }
 
+bool LockedDoorStyle(int door, PortApWorld::DoorStyle& style,
+                     std::vector< uint8_t >& vulnerability) {
+  try {
+    const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();
+    const PortApWorld::Layout disc;
+    uint32_t broken[4];
+    return PortApWorld::LockedDoorStyle(seedLayout != nullptr ? *seedLayout : disc, door,
+                                        BrokenShields(broken), style, vulnerability);
+  } catch (...) {
+    return false;
+  }
+}
+
 int RequiredArtifacts() {
   try {
     const std::shared_ptr<const PortApWorld::Layout> seedLayout = SeedLayout();

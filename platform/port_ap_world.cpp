@@ -1038,15 +1038,47 @@ const DoorType* FindDoorType(const std::string& name) {
 
 } // namespace
 
+namespace {
+
+DoorStyle StyleOf(const DoorType& type) {
+  DoorStyle out;
+  out.cmdl = type.cmdl;
+  out.cmdlVertical = type.cmdlVertical;
+  out.pattern0 = type.pattern0;
+  out.pattern1 = type.pattern1;
+  out.color = type.color;
+  return out;
+}
+
+} // namespace
+
 bool BlueDoorStyle(DoorStyle& out) {
   const DoorType* type = FindDoorType("Blue");
   if (type == nullptr)
     return false;
-  out.cmdl = type->cmdl;
-  out.cmdlVertical = type->cmdlVertical;
-  out.pattern0 = type->pattern0;
-  out.pattern1 = type->pattern1;
-  out.color = type->color;
+  out = StyleOf(*type);
+  return true;
+}
+
+bool LockedDoorStyle(const Layout& layout, int door, const uint32_t* broken, DoorStyle& style,
+                     std::vector< uint8_t >& vulnerability) {
+  if (door < 0 || door >= kDoorCount)
+    return false;
+  // The type the room patch gives the door with nothing unlocked: the seed's,
+  // else the disc's lock.
+  std::string name = kLocks[kDoors[door].defaultLock];
+  for (const DoorChange& change : Doors(layout, kRooms[kDoors[door].room].mrea, broken, nullptr)) {
+    if (change.index == door) {
+      if (!change.type.empty())
+        name = change.type;
+      break;
+    }
+  }
+  const DoorType* type = FindDoorType(name);
+  if (type == nullptr)
+    return false;
+  style = StyleOf(*type);
+  vulnerability = Vulnerability(name);
   return true;
 }
 

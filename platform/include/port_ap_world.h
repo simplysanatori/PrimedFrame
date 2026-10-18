@@ -218,6 +218,10 @@ struct DoorStyle {
 bool BlueDoorStyle(DoorStyle& out);
 // The force field's weaknesses as a script stores them (a CDamageVulnerability).
 std::vector< uint8_t > BlueDoorVulnerability();
+// The look and weaknesses door table index `door` has with nothing unlocked:
+// the seed's type for it, else the disc's lock. False for an unknown door or type.
+bool LockedDoorStyle(const Layout& layout, int door, const uint32_t* broken, DoorStyle& style,
+                     std::vector< uint8_t >& vulnerability);
 
 // The script patch (PortSkipCutscenes::ApplyOps) that gives a room's doors
 // their types, as randomprime's patch_door does: the door's force field
