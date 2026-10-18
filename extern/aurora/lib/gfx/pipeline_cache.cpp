@@ -1155,6 +1155,7 @@ static size_t load_pipeline_cache_entries(ShaderType type, uint32_t configVersio
 
   size_t acceptedRows = 0;
   size_t skippedIncompatibleRows = 0;
+  size_t skippedPbrRows = 0;
   while ((ret = sqlite3_step(g_pipelineCacheLoadStmt)) == SQLITE_ROW) {
     const auto* configBlob = static_cast<const uint8_t*>(sqlite3_column_blob(g_pipelineCacheLoadStmt, 0));
     const auto configSize = sqlite3_column_bytes(g_pipelineCacheLoadStmt, 0);
@@ -1174,6 +1175,11 @@ static size_t load_pipeline_cache_entries(ShaderType type, uint32_t configVersio
         ++skippedIncompatibleRows;
         continue;
       }
+      // Left in the database, and built by find_pipeline on the first draw that wants it.
+      if (g_config.pipelineCacheSkipPbr && config.shaderConfig.pbr != 0) {
+        ++skippedPbrRows;
+        continue;
+      }
     }
 
     find_pipeline_impl(type, config, [=] { return create(config); }, PipelinePriority::Background, firstFrameUsed);
@@ -1189,6 +1195,10 @@ static size_t load_pipeline_cache_entries(ShaderType type, uint32_t configVersio
   sqlite3_clear_bindings(g_pipelineCacheLoadStmt);
   if constexpr (std::is_same_v<PipelineConfig, gx::PipelineConfig>) {
     Log.info("pipeline cache: skipped {} incompatible GX rows", skippedIncompatibleRows);
+    if (g_config.pipelineCacheSkipPbr) {
+      Log.info("pipeline cache: {} PBR rows skipped ({})", skippedPbrRows,
+               g_config.pipelineCacheSkipPbrReason != nullptr ? g_config.pipelineCacheSkipPbrReason : "no PBR");
+    }
   }
   return acceptedRows;
 }
@@ -1199,6 +1209,13 @@ static size_t load_pipeline_cache() {
   }
   prune_old_pipeline_cache_versions();
   if (g_pipelineCacheBroken) {
+    return 0;
+  }
+
+  if (g_config.pipelineCacheLazy) {
+    // The rows stay in the database (and keep recording what is used); nothing is queued, so
+    // queuedPipelines stays 0 and nothing waits on a startup compile.
+    Log.info("pipeline cache: lazy, rows not compiled at startup");
     return 0;
   }
 

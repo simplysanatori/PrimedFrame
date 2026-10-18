@@ -147,6 +147,19 @@ typedef struct {
   size_t pipelineCacheSeedSize;
   /* Merge no initial pipeline cache at all (recording a new seed from an empty cache). */
   bool pipelineCacheNoSeed;
+  /*
+   * Keep the pipeline cache (and the merged seed) but do not compile its rows at startup:
+   * pipelines are built on first use. For devices that cannot spare the memory the startup
+   * compile takes (Dawn/driver state per pipeline).
+   */
+  bool pipelineCacheLazy;
+  /*
+   * Do not compile the cached rows whose shader is PBR at startup: the caller knows nothing
+   * can draw PBR (no mod brings a PBR material). The rows stay in the database, and a PBR
+   * draw still builds its pipeline on first use. pipelineCacheSkipPbrReason is the log text.
+   */
+  bool pipelineCacheSkipPbr;
+  const char* pipelineCacheSkipPbrReason;
 
   /*
    * A directory (with a trailing slash) Dawn searches first for the Vulkan library, e.g. a shim
