@@ -453,6 +453,13 @@ void DisarmSpawnLayers() {
   sOverrides.clear();
 }
 
+void SetSpawnLayersLive(bool live) {
+  for (const SpawnOverride& o : sOverrides) {
+    if (CScriptLayerManager* layers = WorldLayers(o.world, o.area))
+      SetLayerMask(*layers, o.area, live ? o.live : o.spawn);
+  }
+}
+
 void CaptureRoomState(CStateManager& mgr, RoomState& out) {
   out = {};
   const CWorld* world = mgr.GetWorld();

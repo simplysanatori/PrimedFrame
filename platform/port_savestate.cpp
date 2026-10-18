@@ -235,9 +235,13 @@ bool Capture(CStateManager& mgr, Header& header, std::vector< uint8_t >& blob) {
   blob.assign(kBlobSize, 0);
   size_t gameBits = 0;
   {
+    // During a state load's restore, areas not yet spawned carry the state's spawn bits
+    // (#161): write their live bits.
+    SetSpawnLayersLive(true);
     CMemoryStreamOut out(blob.data(), blob.size());
     gpGameState->PutTo(out);
     gameBits = out.PortBitsWritten();
+    SetSpawnLayersLive(false);
   }
   // After the stream is gone: it flushes its last byte at the destructor, and
   // the record's fingerprint has to cover the bytes as they are left here.
@@ -480,6 +484,8 @@ void Place(CStateManager& mgr) {
   mgr.CameraManager()->ResetCameras(mgr);
   sPendingBlob.clear();
   sRoomPending = PortDebug::SaveStateRoomState() && !h.roomState.empty();
+  if (!sRoomPending)
+    DisarmSpawnLayers();  // no restore will run to the end that disarms them
   sRoomFrames = 0;
   sRoomDone.clear();
   sRoomStats = {};
@@ -721,6 +727,8 @@ bool Tick(CStateManager& mgr) {
     sPlacePending = false;
     if (static_cast< uint32_t >(mgr.GetWorld()->IGetWorldAssetId()) == sPendingHeader.worldId) {
       Place(mgr);
+    } else {
+      DisarmSpawnLayers();
     }
     if (sResumeLoading) {
       // The file stays until the next snapshot replaces it: a crash before
@@ -772,7 +780,10 @@ void ReloadModsNow() {
 void SetInFrontEnd(bool inFrontEnd) {
   sInFrontEnd = inFrontEnd;
   if (inFrontEnd) {
-    // Back at the title: the snapshot belongs to a game that was left.
+    // Back at the title: the snapshot, a room restore still running and the layers
+    // armed for it belong to a game that was left.
+    sRoomPending = false;
+    DisarmSpawnLayers();
     std::lock_guard< std::mutex > lock(sSnapMutex);
     sSnap.valid = false;
     sSnap.bytes.clear();

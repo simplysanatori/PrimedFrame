@@ -205,11 +205,14 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
 // state's game state is installed: it makes each recorded area of world `worldId`
 // spawn with its recorded bits, remembering the live bits it replaced. Disarm
 // restores any live bits still replaced (an area that never finished loading) and
-// forgets the override.
+// forgets the override. SetSpawnLayersLive(true) puts the live bits back for the
+// areas still armed without forgetting them, so a save taken meanwhile writes the
+// live bits; SetSpawnLayersLive(false) arms them again.
 void NoteAreaSpawnBegin(CStateManager& mgr, int area);
 void NoteAreaSpawnEnd(CStateManager& mgr, int area);
 void ArmSpawnLayers(const RoomState& room, uint32_t worldId);
 void DisarmSpawnLayers();
+void SetSpawnLayersLive(bool live);
 
 // Quick resume: one extra state (resume.mpss, outside the slots) written when
 // the app goes to the background or quits, with which memory card file it
