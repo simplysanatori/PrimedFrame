@@ -655,6 +655,39 @@ bool CFrontEndUI::SFrontEndFrame::PumpLoad() {
   return false;
 }
 
+#ifdef TARGET_PC
+// Port: a PAL disc's front-end menus add a language row (`textpane_lang`) the
+// code doesn't handle (issue #152), which moves the rows after it down one. The
+// no-card menu's rows, in the order DoAdvance numbers them, by the text pane
+// each holds.
+static const char* const kPortMainMenuPanes[] = {"textpane_start", "textpane_gba",
+                                                 "textpane_options", "textpane_cheats"};
+
+// The row of `table` that is `pane` or holds it, or -1.
+static int PortRowOf(CGuiTableGroup* table, const CGuiWidget* pane) {
+  for (int i = 0; pane != nullptr; ++i) {
+    const CGuiWidget* worker = table->GetWorkerWidget(i);
+    if (worker == nullptr) {
+      break;
+    }
+    if (worker == pane || worker == pane->GetParent()) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+// The DoAdvance number of the no-card menu's row `row`, or -1 for a row it doesn't know.
+static int PortMainMenuRow(CGuiFrame* frame, CGuiTableGroup* table, int row) {
+  for (int k = 0; k < 4; ++k) {
+    if (PortRowOf(table, frame->FindWidget(kPortMainMenuPanes[k])) == row) {
+      return k;
+    }
+  }
+  return -1;
+}
+#endif
+
 void CFrontEndUI::SFrontEndFrame::FinishedLoading() {
   x18_tablegroup_mainmenu =
       static_cast< CGuiTableGroup* >(x14_loadedFrme->FindWidget("tablegroup_mainmenu"));
@@ -685,11 +718,25 @@ void CFrontEndUI::SFrontEndFrame::FinishedLoading() {
       TFunctor1FromMethod< SFrontEndFrame, CGuiTableGroup* const >::Make(
           *this, &SFrontEndFrame::DoCancel));
 
+#ifdef TARGET_PC
+  for (int i = 0; x18_tablegroup_mainmenu->GetWorkerWidget(i) != nullptr; ++i) {
+    if (PortMainMenuRow(x14_loadedFrme, x18_tablegroup_mainmenu, i) < 0) {
+      x18_tablegroup_mainmenu->GetWorkerWidget(i)->SetIsSelectable(false);
+    }
+  }
+#endif
+
   HandleActiveChange(x18_tablegroup_mainmenu);
 }
 
 void CFrontEndUI::SFrontEndFrame::Update(float dt) {
+#ifdef TARGET_PC
+  int galleryRow = PortRowOf(x18_tablegroup_mainmenu, x24_cheatPair.x0_textPane);
+  CGuiWidget* imageGallery =
+      x18_tablegroup_mainmenu->GetWorkerWidget(galleryRow < 0 ? 3 : galleryRow);
+#else
   CGuiWidget* imageGallery = x18_tablegroup_mainmenu->GetWorkerWidget(3);
+#endif
 
   if (CSlideShow::SlideShowGalleryFlags()) {
     imageGallery->SetIsSelectable(true);
@@ -729,7 +776,12 @@ void CFrontEndUI::SFrontEndFrame::Draw() {
 }
 
 void CFrontEndUI::SFrontEndFrame::DoAdvance(CGuiTableGroup* caller) {
+#ifdef TARGET_PC
+  switch (PortMainMenuRow(x14_loadedFrme, x18_tablegroup_mainmenu,
+                          x18_tablegroup_mainmenu->GetUserSelection())) {
+#else
   switch (x18_tablegroup_mainmenu->GetUserSelection()) {
+#endif
   case 0:
     CSfxManager::SfxStart(FETransitionForwardSFX[x0_rnd][0], 0x7f, 0x40, false,
                           CSfxManager::kMedPriority, false, CSfxManager::kAllAreas);
@@ -908,10 +960,10 @@ void CFrontEndUI::SNewFileSelectFrame::FinishedLoading() {
                    x64_fileSelections[0].x0_base->GetLocalPosition())
                       .GetZ();
 #ifdef TARGET_PC
-  // Port: a PAL disc's FRME_NewFileSelect has an extra, empty row after Erase
-  // (issue #152), which moves Fusion and the gallery down one. Rows past the
-  // files are told apart by widget, and a row the code doesn't know is never
-  // selected, by a tap or the pad.
+  // Port: a PAL disc's FRME_NewFileSelect has a language row (`textpane_lang`,
+  // never filled in) after Erase (issue #152), which moves Fusion and the
+  // gallery down one. Rows past the files are told apart by widget, and a row
+  // the code doesn't know is never selected, by a tap or the pad.
   for (int i = 3;; ++i) {
     CGuiWidget* worker = x20_tablegroup_fileselect->GetWorkerWidget(i);
     if (worker == nullptr) {
