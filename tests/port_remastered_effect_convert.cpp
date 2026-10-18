@@ -1006,6 +1006,48 @@ void TestSwooshZProt() {
   });
   CHECK_MSG(part.dropped.size() == 1 && part.dropped[0] == "PROT: z SINE on the point's age",
             "a z SINE on the point's age is dropped");
+
+  // XFMD 3 is written for the swoosh, and a plain REUL turns its points there too.
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "XFMD", 0);
+    PutConstant(o, 3);
+    PutProperty(o, "PROT", 3);
+    PutZReul(o);
+    PutConstant(o, Bits(90.0f));
+    o.push_back(0);
+  });
+  Retail follow;
+  follow.f("SWSH").f("XFMD").f("CNST").w(3).f("PROZ").f("CNST").w(0).f("CNST").w(Bits(90.0f));
+  follow.f("PIRN").f("CNST").w(1).f("_END");
+  CHECK_MSG(part.part == follow.bytes, "XFMD 3 with REUL(0, 0, 90) becomes XFMD 3 and PROZ 0");
+  CHECK_MSG(part.dropped.empty(), "XFMD 3 with a plain Z PROT drops nothing");
+
+  // XFMD 5 keeps local and global apart as retail: no XFMD, the same PROZ.
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "XFMD", 0);
+    PutConstant(o, 5);
+    PutProperty(o, "PROT", 3);
+    PutZReul(o);
+    PutConstant(o, Bits(90.0f));
+    o.push_back(0);
+  });
+  Retail split;
+  split.f("SWSH").f("PROZ").f("CNST").w(0).f("CNST").w(Bits(90.0f)).f("PIRN").f("CNST").w(1).f("_END");
+  CHECK_MSG(part.part == split.bytes && part.dropped.empty(), "XFMD 5 with REUL(0, 0, 90) becomes PROZ 0");
+
+  // EXTR under XFMD 3 is the emitter's turn, which XFMD 3 draws again globally.
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "XFMD", 0);
+    PutConstant(o, 3);
+    PutProperty(o, "PROT", 3);
+    PutFourCC(o, "RADD");
+    PutFourCC(o, "EXTR");
+    PutZReul(o);
+    PutConstant(o, Bits(90.0f));
+    o.push_back(0);
+  });
+  CHECK_MSG(part.dropped.size() == 1 && part.dropped[0] == "PROT: EXTR or INTR under XFMD 3",
+            "RADD(EXTR, REUL) under XFMD 3 is dropped");
 }
 
 // Spawn tables the port cannot run as Remastered does (here spawns placed by a

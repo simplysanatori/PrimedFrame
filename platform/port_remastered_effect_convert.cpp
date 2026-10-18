@@ -2883,6 +2883,21 @@ public:
         xfmd = &property;
         continue;
       }
+      // A swoosh's XFMD 3 draws its points in the emitter's frame (CParticleSwoosh xPortXfmdFollow);
+      // 2 and 5 keep local and global apart as retail does (build/mpr/vfx/RESOLVED-xfmd.md).
+      if (swoosh && fourcc == F("XFMD")) {
+        uint32_t mode = 2;
+        if (!SmallConst(property, mode)) {
+          result.dropped.push_back("XFMD: not a constant");
+        } else if (mode == 3) {
+          AppendBE32(out, F("XFMD"));
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, mode);
+        } else if (mode != 2 && mode != 5) {
+          result.dropped.push_back("XFMD " + std::to_string(mode));
+        }
+        continue;
+      }
       if (part && fourcc == F("SMVR")) {
         mover = &property;
         continue;
@@ -2990,10 +3005,16 @@ public:
           result.dropped.push_back("PROT: not KPIN(RAZY(EMRV, ROTV(v, RLCL), RLCL or zero REUL))");
         } else if (fallback == UINT32_MAX) {
           uint32_t flags = 0;
-          if (xfmdMode != 2) {
+          // CreateNewParticle 0x27cdc8 sets the point's orientation from var bc and then PROT's: a
+          // plain REUL is the same under XFMD 3 (bc identity, the emitter's turn drawn globally) and 5
+          // (bc set by SetOrientation, as retail's). EXTR/INTR there are not the orientation a point
+          // starts from (XFMD 3 draws it again globally), so those stay dropped.
+          if (xfmdMode != 2 && xfmdMode != 3 && xfmdMode != 5) {
             result.dropped.push_back("PROT: turned about Z under XFMD " + std::to_string(int32_t(xfmdMode)));
           } else if (!SwooshZRotation(property.value[0], flags, bytes, why)) {
             result.dropped.push_back("PROT: " + why);
+          } else if ((flags & 2) != 0 && xfmdMode != 2) {
+            result.dropped.push_back("PROT: EXTR or INTR under XFMD " + std::to_string(int32_t(xfmdMode)));
           } else {
             AppendBE32(out, F("PROZ"));
             AppendBE32(out, F("CNST"));
@@ -3656,7 +3677,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortExtraSwooshes();
     } else if (part && fourcc == F("PKSM")) {
       ok = reader.PortSpawnTables();
-    } else if (!part && vfx && (fourcc == F("PSRO") || fourcc == F("PRAF"))) {
+    } else if (!part && vfx && (fourcc == F("PSRO") || fourcc == F("PRAF") || fourcc == F("XFMD"))) {
       ok = reader.PortWord();
     } else if (!part && vfx && fourcc == F("PRAZ")) {
       ok = reader.Element(Type::Vector);

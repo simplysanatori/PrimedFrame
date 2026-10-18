@@ -59,6 +59,9 @@ public:
   std::unique_ptr< CRealElement > xPortRotZ;
   bool xPortRotKeep = false;
   bool xPortRotOriented = false;
+  // port-only XFMD 3: Remastered draws the points in the emitter's frame (SetupTransformMode
+  // 0x2887d8: global T/Q/S alias the system vars, local orientation identity, point position zero)
+  bool xPortXfmdFollow = false;
   // port-only PIRN: a converted Remastered swoosh, whose COLR runs over the live points
   bool xPortIrnd = false;
   // port-only PVRT: Remastered particle variables (names, types, defaults)

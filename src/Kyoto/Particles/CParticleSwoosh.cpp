@@ -269,6 +269,14 @@ const bool CParticleSwoosh::Update(double dt) {
 }
 
 void CParticleSwoosh::SetOrientation(const CTransform4f& orientation) {
+#ifdef TARGET_PC
+  // XFMD 3: Remastered's setters all write the one system var (MPT_SetOrientation 0x27f92c ->
+  // SetExternalRotation), which the draw uses as the global orientation; the local one stays identity.
+  if (x1c_desc->xPortXfmdFollow) {
+    xb0_globalOrientation = orientation.GetRotation();
+    return;
+  }
+#endif
   x44_orientation = orientation;
   x74_invOrientation = x44_orientation.GetQuickInverse();
 #ifdef TARGET_PC
@@ -454,6 +462,14 @@ void CParticleSwoosh::UpdateTranslationAndOrientation() {
 }
 
 void CParticleSwoosh::SetTranslation(const CVector3f& translation) {
+#ifdef TARGET_PC
+  // XFMD 3: the one system translation (MPT_SetTranslation 0x27f9c4 -> SetExternalTranslation
+  // 0x27b45c), drawn as the global translation; points are born at zero and the head is not moved.
+  if (x1c_desc->xPortXfmdFollow) {
+    xa4_globalTranslation = translation;
+    return;
+  }
+#endif
   x38_translation = translation;
   UpdateSwooshTranslation(x38_translation);
 }
@@ -1659,11 +1675,24 @@ void CParticleSwoosh::SetGlobalScale(const CVector3f& scale) {
 bool CParticleSwoosh::SystemHasLight() const { return false; }
 void CParticleSwoosh::DestroyParticles() {}
 bool CParticleSwoosh::GetParticleEmission() const { return x1d0_24_emitting; }
+#ifdef TARGET_PC
+// XFMD 3: the getters read the one system var too (MPT_GetTranslation 0x27fb54).
+const CTransform4f& CParticleSwoosh::GetOrientation() const {
+  return x1c_desc->xPortXfmdFollow ? xb0_globalOrientation : x44_orientation;
+}
+#else
 const CTransform4f& CParticleSwoosh::GetOrientation() const { return x44_orientation; }
+#endif
 const CVector3f& CParticleSwoosh::GetGlobalScale() const { return xe0_globalScale; }
 const CTransform4f& CParticleSwoosh::GetGlobalOrientation() const { return xb0_globalOrientation; }
 const CVector3f& CParticleSwoosh::GetGlobalTranslation() const { return xa4_globalTranslation; }
+#ifdef TARGET_PC
+const CVector3f& CParticleSwoosh::GetTranslation() const {
+  return x1c_desc->xPortXfmdFollow ? xa4_globalTranslation : x38_translation;
+}
+#else
 const CVector3f& CParticleSwoosh::GetTranslation() const { return x38_translation; }
+#endif
 
 #ifdef TARGET_PC
 bool CParticleSwoosh::PortIsRemastered() const { return x1c_desc->xPortIrnd; }
