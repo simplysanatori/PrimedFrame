@@ -1477,22 +1477,32 @@ public:
     return true;
   }
 
-  // PMDL's SLCT(IRND(0, n - 1), ARRY of n CNST ids), as the model ids.
+  // PMDL's SLCT(index, ARRY of n CNST ids), as the model ids a particle picks from by its seed.
+  // Remastered takes entry index % n; IRND(0, h) is latched per particle, so the list is
+  // expanded to h + 1 entries (entry i = model i % n) to keep its odds, and CNST(k) is one model.
   bool Variants(const std::vector<EffectValue>& value, std::vector<uint32_t>& ids, std::string& why) const {
-    uint32_t high;
+    uint32_t high = 0, constant = 0;
+    bool fixed = false;
     if (value.size() != 1 || !IsElement(value[0], F("SLCT")) || value[0].args.size() != 2 ||
-        !RangeFromZero(value[0].args[0], F("IRND"), high) || !IsElement(value[0].args[1], F("ARRY")) ||
-        value[0].args[1].args.empty() || value[0].args[1].args[0].kind != EffectValue::Kind::Raw) {
-      why = "a model choice that is not SLCT(IRND(0, n - 1), ARRY)";
+        !IsElement(value[0].args[1], F("ARRY")) || value[0].args[1].args.empty() ||
+        value[0].args[1].args[0].kind != EffectValue::Kind::Raw) {
+      why = "a model choice that is not SLCT(index, ARRY)";
+      return false;
+    }
+    if (ConstWord(value[0].args[0], constant)) {
+      fixed = true;
+    } else if (!RangeFromZero(value[0].args[0], F("IRND"), high) || int32_t(high) < 0 || high >= 64) {
+      why = "a model choice indexed by neither CNST nor IRND(0, h < 64)";
       return false;
     }
     const EffectValue& array = value[0].args[1].args[0];
     const uint8_t* p = m_data + array.offset;
     const uint32_t count = array.size >= 4 ? ReadLE32(p) : 0;
-    if (count == 0 || count != high + 1 || array.size != 4 + size_t(count) * 20) {
-      why = "SLCT over " + std::to_string(count) + " models with a range of " + std::to_string(high);
+    if (count == 0 || count > 256 || array.size != 4 + size_t(count) * 20) {
+      why = "SLCT ARRY of " + std::to_string(count) + " models in " + std::to_string(array.size) + " bytes";
       return false;
     }
+    std::vector<uint32_t> models;
     for (uint32_t i = 0; i < count; ++i) {
       const uint8_t* entry = p + 4 + size_t(i) * 20;
       EffectGuid guid;
@@ -1506,7 +1516,20 @@ public:
         why = "CMDL " + EffectGuidString(guid) + " has no retail id";
         return false;
       }
-      ids.push_back(id);
+      models.push_back(id);
+    }
+    if (fixed) {
+      // C remainder, as CElementArray::GetValue: a negative index stays negative.
+      const int32_t index = int32_t(constant) % int32_t(count);
+      if (index < 0) {
+        why = "SLCT model index " + std::to_string(int32_t(constant)) + " is negative";
+        return false;
+      }
+      ids.push_back(models[size_t(index)]);
+      return true;
+    }
+    for (uint32_t i = 0; i <= high; ++i) {
+      ids.push_back(models[i % count]);
     }
     return true;
   }
@@ -2834,10 +2857,14 @@ public:
           ++result.droppedRetail;
           continue;
         }
-        pmdlVariants = true;
         AppendBE32(out, F("PMDL"));
         AppendBE32(out, F("CNST"));
         AppendBE32(out, ids[0]);
+        if (std::all_of(ids.begin(), ids.end(), [&](uint32_t id) { return id == ids[0]; })) {
+          pmdl = ids[0];  // one model, as a constant PMDL
+          continue;
+        }
+        pmdlVariants = true;
         AppendBE32(out, F("PMDV"));
         AppendBE32(out, F("CNST"));
         AppendBE32(out, uint32_t(ids.size()));

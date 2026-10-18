@@ -1362,8 +1362,43 @@ void TestModelChoice() {
                 properties.size() == 4,
             "PMDL, PMDV and SIZE read as retail");
 
+  // Remastered takes entry index % n: the PMDV lists IRND's h + 1 outcomes.
+  const auto variants = [](std::initializer_list<uint32_t> picks) {
+    Retail out;
+    out.f("GPSM").f("PMDL").f("CNST").w(0xC0DE000A + *picks.begin());
+    if (picks.size() > 1) {
+      out.f("PMDV").f("CNST").w(uint32_t(picks.size()));
+      for (const uint32_t pick : picks) {
+        out.f("CNST").w(0xC0DE000A + pick);
+      }
+    }
+    out.f("SIZE").f("CNST").w(Bits(0.0f));
+    out.end();
+    return out.bytes;
+  };
   parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 4, 2); }), io);
-  CHECK_MSG(parts.size() == 1 && parts[0].droppedRetail == 1, "a range short of the array is refused");
+  CHECK_MSG(parts.size() == 1 && parts[0].droppedRetail == 0 && parts[0].part == variants({0, 1, 2}),
+            "a range short of the array picks the first three");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 2, 4); }), io);
+  CHECK_MSG(parts.size() == 1 && parts[0].droppedRetail == 0 && parts[0].part == variants({0, 1, 0, 1, 0}),
+            "a range past the array wraps as index % n");
+  parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 1, 8); }), io);
+  CHECK_MSG(parts.size() == 1 && parts[0].droppedRetail == 0 && parts[0].part == variants({0}),
+            "one model under any range is a constant PMDL");
+  parts = ConvertOne(OneGenerator([](auto& o) {
+                       PutProperty(o, "PMDL", 0);
+                       PutFourCC(o, "SLCT");
+                       PutConstant(o, 5);
+                       PutFourCC(o, "ARRY");
+                       Put32(o, 2);
+                       for (uint8_t i = 0; i < 2; ++i) {
+                         PutFourCC(o, "CNST");
+                         PutGuid(o, Fresh(uint8_t(10 + i)));
+                       }
+                     }),
+                     io);
+  CHECK_MSG(parts.size() == 1 && parts[0].droppedRetail == 0 && parts[0].part == variants({1}),
+            "a constant index picks entry index % n");
   parts = ConvertOne(OneGenerator([](auto& o) { PutModels(o, 0, 0); }), io);
   CHECK_MSG(parts.size() == 1 && parts[0].droppedRetail == 1, "an empty array is refused");
   EffectConvertIO none;
