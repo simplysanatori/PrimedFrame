@@ -176,6 +176,7 @@
 {"Remastered", "", "Metroid Prime Remastered models", "Browse...", "remastered browse keys prod.keys path decryption"},
 #endif
 {"Remastered", "", "Metroid Prime Remastered models", "Import", "remastered start import run room geometry particles effects movies"},
+{"Remastered", "", "Metroid Prime Remastered models", "Full import (no reuse)", "remastered full import again remake reuse convert everything"},
 {"Remastered", "", "Metroid Prime Remastered models", "Load it again", "remastered reload again import"},
 {"Remastered", "", "Metroid Prime Remastered models > What to import", "Room geometry", "remastered import parts room geometry models skip size"},
 {"Remastered", "", "Metroid Prime Remastered models > What to import", "Particle effects", "remastered import parts particle effects skip"},
