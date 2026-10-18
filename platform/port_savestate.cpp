@@ -816,11 +816,27 @@ void InstallPending() {
 
 namespace {
 
-bool SafeNow(CStateManager& mgr) {
-  const ResumeContext ctx = GatherResumeContext();
-  std::string why;
-  return ResumeSkipReason(ctx) == nullptr && PlayerCanSave(mgr, why);
+// Logs why quick resume is (not) taking snapshots, once per change of reason.
+void ResumeNote(const std::string& reason) {
+  static std::string sLast;
+  if (reason == sLast)
+    return;
+  sLast = reason;
+  PortLog::Write("[resume] snapshots: %s\n", reason.c_str());
 }
+
+// The reason a snapshot can't be taken now, or empty when it can.
+std::string UnsafeReason(CStateManager& mgr) {
+  const ResumeContext ctx = GatherResumeContext();
+  if (const char* skip = ResumeSkipReason(ctx))
+    return skip;
+  std::string why;
+  if (!PlayerCanSave(mgr, why))
+    return why;
+  return {};
+}
+
+bool SafeNow(CStateManager& mgr) { return UnsafeReason(mgr).empty(); }
 
 uint64_t RoomKey(const CStateManager& mgr) {
   return (static_cast< uint64_t >(static_cast< uint32_t >(mgr.GetWorld()->IGetWorldAssetId())) << 32) |
@@ -843,11 +859,15 @@ bool TakeSnapshot(CStateManager& mgr) {
   Capture(mgr, header, blob);
   ResumeSnapshot snap;
   snap.meta = CurrentMeta();
-  if (snap.meta.fileIdx > 2)
+  if (snap.meta.fileIdx > 2) {
+    ResumeNote("blocked: no card file selected (file " + std::to_string(snap.meta.fileIdx) + ")");
     return false;
+  }
   snap.path = ResumePath();
-  if (snap.path.empty())
+  if (snap.path.empty()) {
+    ResumeNote("blocked: no resume path (no user folder)");
     return false;
+  }
   snap.bytes = EncodeResume(snap.meta, Encode(header, blob));
   snap.world = header.world;
   snap.room = header.room;
@@ -977,6 +997,7 @@ void ResumeTick(CStateManager& mgr) {
     return;
   }
   if (sInFrontEnd || mgr.GetPlayer() == nullptr || mgr.GetWorld() == nullptr || gpGameState == nullptr) {
+    ResumeNote(sInFrontEnd ? "paused: in the front end" : "paused: no player or world");
     return;
   }
   const auto now = Clock::now();
@@ -998,18 +1019,27 @@ void ResumeTick(CStateManager& mgr) {
         sSnap.valid = false;
         sSnap.gen++;
         haveSnap = false;
+        PortLog::Write("[resume] snapshot dropped: another card file or game (file %u -> %u)\n",
+                       static_cast< unsigned >(sSnap.meta.fileIdx), static_cast< unsigned >(meta.fileIdx));
       } else {
         sameRoom = ((static_cast< uint64_t >(sSnap.worldId) << 32) | sSnap.areaId) == key;
         sinceSnap = std::chrono::duration< double >(now - sSnap.taken).count();
       }
     }
   }
-  const bool safe = SafeNow(mgr);
+  const std::string unsafe = UnsafeReason(mgr);
+  const bool safe = unsafe.empty();
+  if (!safe)
+    ResumeNote("blocked: " + unsafe);
+  else
+    ResumeNote("safe");
   if (ResumeRefreshDue(safe, haveSnap, sameRoom, std::chrono::duration< double >(now - sRoomSince).count(),
                        sinceSnap)) {
     // Written at once (a few KB): a crash leaves this snapshot to resume from.
-    if (TakeSnapshot(mgr))
-      FlushSnapshot(true);
+    if (TakeSnapshot(mgr)) {
+      if (!FlushSnapshot(true))
+        ResumeNote("blocked: writing the snapshot failed");
+    }
   }
 }
 
