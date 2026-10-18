@@ -1020,6 +1020,9 @@ int main(int argc, char** argv) {
                            reason);
         }
     }
+    // PBR pipelines are only drawn with a mod's converted materials (issue #162): without an
+    // enabled mod their cached rows are not compiled at startup. MP_PIPELINE_PBR=0|1 overrides.
+    const bool pipelineSkipPbr = !port::EnvFlag("MP_PIPELINE_PBR", PortMods::AnyModEnabled());
     // Settings, mods, save states and the shader caches sit in user/ beside the
     // executable when that folder can be written to (port_paths.h).
     const std::string& userFolder = PortPaths::UserFolder();
@@ -1123,6 +1126,8 @@ int main(int argc, char** argv) {
         .pipelineCacheNoSeed = !port::EnvFlag("MP_PIPELINE_SEED", true),
         // Low-RAM Android builds pipelines on first use (issue #162); MP_PIPELINE_LAZY=0|1 overrides.
         .pipelineCacheLazy = pipelineLazy,
+        .pipelineCacheSkipPbr = pipelineSkipPbr,
+        .pipelineCacheSkipPbrReason = "no mod enabled",
         // Set below when a custom Vulkan driver (port_gpu_driver.h) is loaded.
         .vulkanLibraryDir = nullptr,
         // Set below from the Driver workarounds settings.

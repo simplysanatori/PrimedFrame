@@ -282,6 +282,20 @@ bool HasRoomGeometry() {
   return HasRoomGeometryNow(ScanModFolders(Folder()));
 }
 
+bool AnyModEnabled() {
+  if (!PortDebug::ModsEnabled()) {
+    return false;
+  }
+  const std::vector<std::string> disabled = SplitDisabled(PortDebug::ModsDisabled());
+  for (const PortRemasteredStorage::ModFolder& mod : ScanModFolders(Folder())) {
+    const std::string name = PathString(PathFromString(mod.path).filename());
+    if (std::find(disabled.begin(), disabled.end(), name) == disabled.end()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const Status& CurrentStatus() { return sStatus; }
 
 const char* StaleRemasteredImport() { return sStatus.staleImport.empty() ? nullptr : sStatus.staleImport.c_str(); }
