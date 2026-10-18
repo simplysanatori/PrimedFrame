@@ -1004,6 +1004,22 @@ int main(int argc, char** argv) {
                        envFrameBuffers >= 0 || envStorageBuffers >= 0 ? "MP_FRAME_BUFFERS/MP_STORAGE_BUFFERS"
                                                                       : "room geometry");
     }
+    // The startup compile of the cached and seeded pipelines costs ~950 MiB of process memory
+    // (issue #162): a device short on RAM builds them on first use instead.
+    bool pipelineLazy = false;
+    {
+        char why[96] = "";
+        pipelineLazy = PortMemoryLog::LowRamDevice(why, sizeof(why));
+        const char* reason = why;
+        if (const char* env = port::EnvString("MP_PIPELINE_LAZY"); env != nullptr && env[0] != '\0') {
+            pipelineLazy = port::EnvFlag("MP_PIPELINE_LAZY", pipelineLazy);
+            reason = "MP_PIPELINE_LAZY";
+        }
+        if (pipelineLazy || why[0] != '\0' || reason != why) {
+            PortLog::Write("port: pipelines %s at startup (%s)\n", pipelineLazy ? "built on first use" : "precompiled",
+                           reason);
+        }
+    }
     // Settings, mods, save states and the shader caches sit in user/ beside the
     // executable when that folder can be written to (port_paths.h).
     const std::string& userFolder = PortPaths::UserFolder();
@@ -1105,6 +1121,8 @@ int main(int argc, char** argv) {
         .pipelineCacheSeedSize = embeddedSeed.size(),
         // MP_PIPELINE_SEED=0: start from an empty cache (tools/pipeline_seed.py tour records with it).
         .pipelineCacheNoSeed = !port::EnvFlag("MP_PIPELINE_SEED", true),
+        // Low-RAM Android builds pipelines on first use (issue #162); MP_PIPELINE_LAZY=0|1 overrides.
+        .pipelineCacheLazy = pipelineLazy,
         // Set below when a custom Vulkan driver (port_gpu_driver.h) is loaded.
         .vulkanLibraryDir = nullptr,
         // Set below from the Driver workarounds settings.

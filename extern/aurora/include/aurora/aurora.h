@@ -147,6 +147,12 @@ typedef struct {
   size_t pipelineCacheSeedSize;
   /* Merge no initial pipeline cache at all (recording a new seed from an empty cache). */
   bool pipelineCacheNoSeed;
+  /*
+   * Keep the pipeline cache (and the merged seed) but do not compile its rows at startup:
+   * pipelines are built on first use. For devices that cannot spare the memory the startup
+   * compile takes (Dawn/driver state per pipeline).
+   */
+  bool pipelineCacheLazy;
 
   /*
    * A directory (with a trailing slash) Dawn searches first for the Vulkan library, e.g. a shim

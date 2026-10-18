@@ -70,6 +70,14 @@ public final class MetroidPrimeActivity extends SDLActivity {
         return exitReport;
     }
 
+    // ActivityManager.isLowRamDevice() (Android Go and the like), read by
+    // port_memory_log.cpp to build pipelines on first use instead of at startup.
+    private static volatile boolean lowRamDevice = false;
+
+    static boolean lowRamDevice() {
+        return lowRamDevice;
+    }
+
     private String buildExitReport() {
         StringBuilder report = new StringBuilder();
         ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
@@ -78,6 +86,7 @@ public final class MetroidPrimeActivity extends SDLActivity {
         }
         ActivityManager.MemoryInfo memory = new ActivityManager.MemoryInfo();
         manager.getMemoryInfo(memory);
+        lowRamDevice = manager.isLowRamDevice();
         report.append(String.format(Locale.ROOT,
             "port: device memory: %d MiB, %d MiB available, low-memory threshold %d MiB, app heap class %d MiB",
             memory.totalMem >> 20, memory.availMem >> 20, memory.threshold >> 20, manager.getMemoryClass()));

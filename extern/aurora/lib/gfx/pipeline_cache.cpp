@@ -1202,6 +1202,13 @@ static size_t load_pipeline_cache() {
     return 0;
   }
 
+  if (g_config.pipelineCacheLazy) {
+    // The rows stay in the database (and keep recording what is used); nothing is queued, so
+    // queuedPipelines stays 0 and nothing waits on a startup compile.
+    Log.info("pipeline cache: lazy, rows not compiled at startup");
+    return 0;
+  }
+
   size_t acceptedRows = 0;
 #ifdef AURORA_ENABLE_RMLUI
   acceptedRows += load_pipeline_cache_entries<rmlui::PipelineConfig>(ShaderType::Rml, rmlui::RmlPipelineConfigVersion,
