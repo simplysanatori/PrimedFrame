@@ -619,7 +619,7 @@ void PutReul(std::vector<uint8_t>& out, float x) {
 }
 
 // Remastered's shapes with no retail element of their own: ASPR becomes ASPH
-// and a cone turned about X an X bias, RNDV a whole-sphere ANGC, and a GRAD
+// and a cone turned about X an X bias, RNDV the port-only RNDV, and a GRAD
 // colour gradient over the life 101 percent keys.
 void TestShapes() {
   std::vector<uint8_t> out(0x3c, 0);
@@ -667,8 +667,7 @@ void TestShapes() {
   want.f("EMTR").f("ASPH").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
   want.f("CNST").w(Bits(90.0f)).f("CNST").w(0x80000000u);
   want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(180.0f)).f("CNST").w(Bits(0.25f)).f("CNST").w(Bits(0.1f));
-  want.f("PSIV").f("ANGC").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(360.0f));
-  want.f("CNST").w(Bits(0.5f));
+  want.f("PSIV").f("RNDV").f("CNST").w(Bits(0.5f));
   want.f("COLR").f("KEYP").w(1).w(0).b(0).b(0).w(101).w(0).w(101);
   for (int percent = 0; percent <= 100; ++percent) {
     const float t = float(percent) / 100.0f;
@@ -682,7 +681,7 @@ void TestShapes() {
     }
     std::vector<RetailPartProperty> split;
     CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), split, error), "shapes PART reads as retail");
-    CHECK_MSG(parts[0].approximated.size() == 2, "rotated cone and RNDV listed as approximated");
+    CHECK_MSG(parts[0].approximated.size() == 1, "only the rotated cone listed as approximated");
   }
 }
 

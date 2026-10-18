@@ -12,6 +12,9 @@
 #include "Kyoto/Particles/CParticleGlobals.hpp"
 #include "Kyoto/Particles/IElement.hpp"
 #include "rstl/math.hpp"
+#ifdef TARGET_PC
+#include "Kyoto/Particles/PortParticleMath.hpp"
+#endif
 
 CVEConstant::CVEConstant(CRealElement* x, CRealElement* y, CRealElement* z)
 : x4_x(x), x8_y(y), xc_z(z) {}
@@ -492,5 +495,22 @@ bool CVEOrderedEulerProduct::GetValue(int frame, CVector3f& valOut) const {
 
 bool CVEOrderedEulerProduct::IsFastConstant() const {
   return mFirst->IsFastConstant() && mSecond->IsFastConstant();
+}
+
+CVEPortRandomVector::CVEPortRandomVector(CRealElement* magnitude) : mMagnitude(magnitude) {}
+
+CVEPortRandomVector::~CVEPortRandomVector() { delete mMagnitude; }
+
+bool CVEPortRandomVector::GetValue(int frame, CVector3f& valOut) const {
+  float magnitude = 1.f;
+  if (mMagnitude) {
+    mMagnitude->GetValue(frame, magnitude);
+  }
+  CRandom16* random = CRandom16::GetRandomNumber();
+  const float u0 = random->PortFloat28();
+  const float u1 = random->PortFloat28();
+  const float u2 = random->PortFloat28();
+  valOut = PortParticleMath::RandomVector(u0, u1, u2, magnitude);
+  return false;
 }
 #endif

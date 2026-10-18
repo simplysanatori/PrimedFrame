@@ -250,5 +250,18 @@ private:
   CVectorElement* mFirst;
   CVectorElement* mSecond;
 };
+
+// Remastered RNDV (CVERandomVector::GetValue 0x29e954): a cube point from the
+// current RNG scaled to the magnitude (1 when absent) by an ARM rsqrt estimate.
+class CVEPortRandomVector : public CVectorElement {
+public:
+  explicit CVEPortRandomVector(CRealElement* magnitude);
+  ~CVEPortRandomVector() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CRealElement* mMagnitude;
+};
 #endif
 #endif // _CVECTORELEMENT

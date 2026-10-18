@@ -849,15 +849,10 @@ public:
       }
       return true;
     }
-    // RNDV(magnitude): a random direction of that length, as a whole-sphere
-    // ANGC. Its spread is not uniform over the sphere as Remastered's may be.
+    // RNDV(magnitude): the port-only RNDV runs CVERandomVector 0x29e954 as is
+    // (a cube point normalised by the ARM rsqrt estimate, so not uniform).
     if (value.fourcc == F("RNDV") && type == Type::Vector && value.args.size() == 1) {
-      m_approximated.push_back("RNDV taken as a whole-sphere ANGC");
-      AppendBE32(out, F("ANGC"));
-      for (float angle : {0.0f, 0.0f, 360.0f, 360.0f}) {
-        AppendBE32(out, F("CNST"));
-        AppendBE32(out, FloatBits(angle));
-      }
+      AppendBE32(out, F("RNDV"));
       return Element(value.args[0], Type::Real, out, why);
     }
     if (value.fourcc == F("GRAD") && type == Type::Color) {
@@ -3324,6 +3319,10 @@ public:
     if ((fourcc == F("VARF") && type == Type::Real) || (fourcc == F("VARI") && type == Type::Int) ||
         (fourcc == F("VARV") && type == Type::Vector) || (fourcc == F("VARC") && type == Type::Color)) {
       return Skip(4);
+    }
+    // Port-only RNDV: the magnitude as a real element.
+    if (fourcc == F("RNDV") && type == Type::Vector) {
+      return Element(Type::Real);
     }
     // Port-only PGRD (a swoosh's gradient): stop count, five floats per stop, the period as an
     // int element, then the repeat byte.

@@ -1,5 +1,6 @@
 #include "Kyoto/Particles/PortParticleMath.hpp"
 #include "Kyoto/Particles/CParticleGlobals.hpp"
+#include "Kyoto/CRandom16.hpp"
 #include "port_test.h"
 
 #include <cstdio>
@@ -155,6 +156,25 @@ int main() {
 
   // No stops: Remastered returns 0.
   CHECK_MSG(!EvalGradient(inner, 0, 4, false, 1, out) && Color(out, 0.f, 0.f, 0.f, 0.f), "no stops yields zero");
+
+  // RNDV: ARM FRSQRTE estimates (8 bits), one FRSQRTS step, so a unit-length
+  // cube point comes out just short of the magnitude.
+  CHECK_MSG(ReciprocalSqrtEstimate(1.f) == 0.998046875f, "FRSQRTE(1)");
+  CHECK_MSG(ReciprocalSqrtEstimate(4.f) == 0.4990234375f, "FRSQRTE(4)");
+  CHECK_MSG(ReciprocalSqrtEstimate(0.25f) == 1.99609375f, "FRSQRTE(0.25)");
+  {
+    const CVector3f axis = RandomVector(1.f, 0.5f, 0.5f, 2.f);
+    CHECK_MSG(Near(axis.GetX(), 1.99998856f, 1e-6f) && axis.GetX() != 2.f && axis.GetY() == 0.f &&
+                  axis.GetZ() == 0.f,
+              "RNDV axis point carries the estimate's error");
+    const CVector3f corner = RandomVector(0.f, 0.f, 0.f, 1.f);
+    CHECK_MSG(NearVector(corner, CVector3f(-0.57735f, -0.57735f, -0.57735f)), "RNDV corner normalised");
+  }
+  {
+    CRandom16 random(0);
+    CHECK_MSG(random.PortFloat28() == 12345.f / 268435456.f, "Remastered draw is the low 28 bits");
+    CHECK_MSG(random.GetSeed() == 0x3039u, "one LCG step per draw");
+  }
 
   if (port_test::Failures() == 0) {
     std::puts("port_particle_math: OK");

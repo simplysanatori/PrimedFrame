@@ -1148,6 +1148,9 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     break;
   case SBIG('SLCT'):
     return PortReadSelect< CVEPortSelect >(in, &CParticleDataFactory::GetVectorElement);
+  case SBIG('RNDV'):
+    ret = rs_new CVEPortRandomVector(GetRealElement(in));
+    break;
 #endif
   case SBIG('NONE'):
     ret = nullptr;
