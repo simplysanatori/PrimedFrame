@@ -1472,6 +1472,25 @@ CColorElement* CParticleDataFactory::GetColorElement(CInputStream& in) {
     ret = rs_new CCEPortModifyAlpha(c, a);
     break;
   }
+  case SBIG('SLCT'): {
+    CIntElement* index = GetIntElement(in);
+    const uint count = in.ReadLong();
+    std::vector< CColorElement* > entries;
+    bool ok = index != nullptr && count != 0 && count <= 256;
+    for (uint i = 0; ok && i < count; ++i) {
+      entries.push_back(GetColorElement(in));
+      ok = entries.back() != nullptr;
+    }
+    if (!ok) {
+      delete index;
+      for (CColorElement* entry : entries) {
+        delete entry;
+      }
+      return nullptr;
+    }
+    ret = rs_new CCEPortSelect(index, std::move(entries));
+    break;
+  }
 #endif
   case SBIG('CNST'): {
     CElementAllocationChunk* allocationContext = IElement::CElementAllocator::GetCurrentChunk();

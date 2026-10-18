@@ -1855,6 +1855,14 @@ private:
       raw.offset = at + 4;
       raw.size = end - at - 4;
       value.args.push_back(std::move(raw));
+      // An ARRY's entries are elements too: they follow the raw bytes when
+      // they parse as exactly that many.
+      const std::optional<uint32_t> count = U32(at + 4);
+      std::vector<EffectValue> entries;
+      if (value.fourcc == kArry && count && *count != 0 && BuildElements(at + 8, *count, end, entries)) {
+        value.args.insert(value.args.end(), std::make_move_iterator(entries.begin()),
+                          std::make_move_iterator(entries.end()));
+      }
       return true;
     }
     for (const std::string& sig : m_grammar.ElementSigs(value.fourcc)) {
@@ -1911,9 +1919,11 @@ void DumpValue(const EffectValue& value, const uint8_t* data, std::string& out) 
   case EffectValue::Kind::Element:
     out += EffectFourCCString(value.fourcc);
     if (!value.args.empty()) {
+      // An ARRY whose entries parsed shows them instead of its raw bytes.
+      const size_t first = value.fourcc == kArry && value.args.size() > 1 ? 1 : 0;
       out += '(';
-      for (size_t i = 0; i < value.args.size(); ++i) {
-        if (i > 0) {
+      for (size_t i = first; i < value.args.size(); ++i) {
+        if (i > first) {
           out += ", ";
         }
         DumpValue(value.args[i], data, out);

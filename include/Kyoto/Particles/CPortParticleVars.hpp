@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 // Port-only Remastered particle variables (PVAR). A converted generator or swoosh description
@@ -255,6 +256,35 @@ public:
     }
     out[3] = alpha < 0.f ? 0.f : alpha;
     return false;
+  }
+};
+
+// SLCT: CElementArray<CColor4f16>::GetValue 0x271ee4, the entry at index % count (C remainder),
+// the index evaluated on every read. IRND indices are latched per particle (CIEInitialRandom).
+class CCEPortSelect : public CColorElement {
+  CIntElement* x4_index;
+  std::vector< CColorElement* > x8_entries;
+
+  const CColorElement* Entry(int frame) const {
+    int index = 0;
+    x4_index->GetValue(frame, index);
+    const int count = static_cast< int >(x8_entries.size());
+    index %= count;
+    return x8_entries[index < 0 ? index + count : index];
+  }
+
+public:
+  CCEPortSelect(CIntElement* index, std::vector< CColorElement* > entries)
+  : x4_index(index), x8_entries(std::move(entries)) {}
+  ~CCEPortSelect() override {
+    delete x4_index;
+    for (size_t i = 0; i < x8_entries.size(); ++i) {
+      delete x8_entries[i];
+    }
+  }
+  bool GetValue(int frame, CColor& out) const override { return Entry(frame)->GetValue(frame, out); }
+  bool GetValueHdr(int frame, float out[4]) const override {
+    return Entry(frame)->GetValueHdr(frame, out);
   }
 };
 

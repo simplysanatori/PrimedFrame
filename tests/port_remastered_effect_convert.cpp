@@ -1165,6 +1165,26 @@ void PutModels(std::vector<uint8_t>& out, uint32_t count, uint32_t high) {
   }
 }
 
+void PutColour(std::vector<uint8_t>& out, float r, float g, float b, float a) {
+  PutFourCC(out, "CNST");
+  for (const float c : {r, g, b, a}) {
+    PutConstant(out, Bits(c));
+  }
+}
+
+void PutColourChoice(std::vector<uint8_t>& out, uint32_t count) {
+  PutProperty(out, "COLR", 3);
+  PutFourCC(out, "SLCT");
+  PutFourCC(out, "IRND");
+  PutConstant(out, 0);
+  PutConstant(out, 2);
+  PutFourCC(out, "ARRY");
+  Put32(out, count);
+  for (uint32_t i = 0; i < count; ++i) {
+    PutColour(out, 0.25f * float(i), 1.0f, 2.0f, 1.0f);
+  }
+}
+
 EffectConvertIO AtlasIO() {
   EffectConvertIO io;
   io.assetId = [](const EffectGuid& id, uint32_t type) -> uint32_t {
@@ -1258,6 +1278,34 @@ void TestAtlasTexture() {
   Retail badCount;
   badCount.f("GPSM").f("TEXR").f("PATL").f("CNST").w(1).f("CNST").w(4).f("CNST").w(4).f("_END");
   CHECK_MSG(!SplitRetailPart(badCount.bytes.data(), badCount.bytes.size(), properties, error), "a short PATL is refused");
+}
+
+// COLR's SLCT over an ARRY of colours is kept whole: the index element, the
+// entry count and each entry (CElementArray<CColor4f16>::GetValue, 0x271ee4).
+void TestColourChoice() {
+  std::string error;
+  std::vector<RetailPartProperty> properties;
+  auto parts = ConvertOne(OneGenerator([](auto& o) { PutColourChoice(o, 3); }), EffectConvertIO{});
+  Retail want;
+  want.f("GPSM").f("COLR").f("SLCT").f("IRND").f("CNST").w(0).f("CNST").w(2).w(3);
+  for (uint32_t i = 0; i < 3; ++i) {
+    want.f("CNST");
+    for (const float c : {0.25f * float(i), 1.0f, 2.0f, 1.0f}) {
+      want.f("CNST").w(Bits(c));
+    }
+  }
+  // An untextured generator draws no quads: SIZE 0 is written for it.
+  want.f("SIZE").f("CNST").w(Bits(0.0f));
+  want.end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "SLCT of three colours keeps all three");
+  CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "the colour choice drops nothing");
+  CHECK_MSG(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
+                properties.size() == 3,
+            "a colour SLCT reads as retail");
+
+  Retail empty;
+  empty.f("GPSM").f("COLR").f("SLCT").f("IRND").f("CNST").w(0).f("CNST").w(0).w(0).f("_END");
+  CHECK_MSG(!SplitRetailPart(empty.bytes.data(), empty.bytes.size(), properties, error), "a colour SLCT of no entries is refused");
 }
 
 // PMDL's random choice of four models becomes the first as PMDL and all as PMDV.
@@ -2789,6 +2837,7 @@ int main() {
   TestVmsh();
   TestAtlasTexture();
   TestModelChoice();
+  TestColourChoice();
   TestRetailId();
   TestPlasmaNestedHdrLight();
   TestSwooshElectric();

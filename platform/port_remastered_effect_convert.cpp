@@ -895,6 +895,30 @@ public:
       }
       return true;
     }
+    // SLCT(index, ARRY(entries)): Remastered's CElementArray<CColor4f16>::GetValue
+    // (0x271ee4) evaluates the index, takes the entry at index % count (C
+    // remainder) and evaluates it, each time the colour is read (per particle
+    // per frame for COLR). Written as the port-only SLCT: the index element,
+    // the count, then the entries.
+    if (value.fourcc == F("SLCT") && type == Type::Color && value.args.size() == 2 &&
+        IsElement(value.args[1], F("ARRY"))) {
+      const std::vector<EffectValue>& array = value.args[1].args;
+      if (array.size() < 2) {
+        why = "SLCT over an ARRY whose entries do not parse";
+        return false;
+      }
+      AppendBE32(out, F("SLCT"));
+      if (!Element(value.args[0], Type::Int, out, why)) {
+        return false;
+      }
+      AppendBE32(out, uint32_t(array.size() - 1));
+      for (size_t i = 1; i < array.size(); ++i) {
+        if (!Element(array[i], type, out, why)) {
+          return false;
+        }
+      }
+      return true;
+    }
     // MPRD(a, b): a random int between two, as RAND.
     if (value.fourcc == F("MPRD") && value.args.size() == 2 && (type == Type::Int || type == Type::Real)) {
       AppendBE32(out, F("RAND"));
@@ -1458,7 +1482,7 @@ public:
     uint32_t high;
     if (value.size() != 1 || !IsElement(value[0], F("SLCT")) || value[0].args.size() != 2 ||
         !RangeFromZero(value[0].args[0], F("IRND"), high) || !IsElement(value[0].args[1], F("ARRY")) ||
-        value[0].args[1].args.size() != 1 || value[0].args[1].args[0].kind != EffectValue::Kind::Raw) {
+        value[0].args[1].args.empty() || value[0].args[1].args[0].kind != EffectValue::Kind::Raw) {
       why = "a model choice that is not SLCT(IRND(0, n - 1), ARRY)";
       return false;
     }
@@ -3061,6 +3085,19 @@ public:
     if (fourcc == F("PGRD") && type == Type::Color) {
       uint32_t count;
       return Word(count) && count <= 0x10000 && Skip(size_t(count) * 20) && Element(Type::Int) && Skip(1);
+    }
+    // Port-only SLCT: the index as an int element, the entry count, then the entries.
+    if (fourcc == F("SLCT") && type == Type::Color) {
+      uint32_t count;
+      if (!Element(Type::Int) || !Word(count) || count == 0 || count > 256) {
+        return false;
+      }
+      for (uint32_t i = 0; i < count; ++i) {
+        if (!Element(type)) {
+          return false;
+        }
+      }
+      return true;
     }
     const Signatures& elements = ElementsOf(type);
     const auto found = elements.find(fourcc);
