@@ -66,13 +66,22 @@ SystemMemory ReadSystem() {
 long long Mib(int64_t kb) { return kb < 0 ? -1 : static_cast< long long >(kb / 1024); }
 
 void WriteLine(int64_t processKb, const SystemMemory& system, bool textures) {
-  char gpu[128] = "";
+  char gpu[320] = "";
   if (textures) {
     AuroraTextureStats stats{};
     aurora_get_texture_stats(&stats);
-    std::snprintf(gpu, sizeof(gpu), ", textures %u (%llu MiB), targets %u (%llu MiB)", stats.count[0],
-                  static_cast< unsigned long long >(stats.bytes[0] >> 20), stats.count[1],
-                  static_cast< unsigned long long >(stats.bytes[1] >> 20));
+    int n = std::snprintf(gpu, sizeof(gpu), ", textures %u (%llu MiB), targets %u (%llu MiB), lighting %u (%llu MiB)",
+                          stats.count[0], static_cast< unsigned long long >(stats.bytes[0] >> 20), stats.count[1],
+                          static_cast< unsigned long long >(stats.bytes[1] >> 20), stats.count[2],
+                          static_cast< unsigned long long >(stats.bytes[2] >> 20));
+    AuroraDawnMemory dawn{};
+    if (n > 0 && static_cast< size_t >(n) < sizeof(gpu) && aurora_get_dawn_memory(&dawn)) {
+      std::snprintf(gpu + n, sizeof(gpu) - n, ", dawn %llu MiB (textures %llu, buffers %llu, allocated %llu)",
+                    static_cast< unsigned long long >(dawn.total >> 20),
+                    static_cast< unsigned long long >(dawn.textures >> 20),
+                    static_cast< unsigned long long >(dawn.buffers >> 20),
+                    static_cast< unsigned long long >(dawn.allocatorAllocated >> 20));
+    }
   }
   PortLog::Write("port: memory: process %lld MiB, system %lld of %lld MiB available%s\n", Mib(processKb),
                  Mib(system.availableKb), Mib(system.totalKb), gpu);

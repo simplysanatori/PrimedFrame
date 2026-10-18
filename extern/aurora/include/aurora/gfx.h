@@ -32,12 +32,30 @@ typedef struct {
 } AuroraStats;
 
 const AuroraStats* aurora_get_stats();
-// Live GPU textures: [0] sampled only, [1] render targets/copies. Bytes are the mip chain's size.
+// Live GPU textures: [0] sampled only, [1] render targets/copies, [2] Remastered lighting (room cubes,
+// ambient volumes, baked lightmaps and the fixed BRDF/empty ones). Bytes are the mip chain's size.
 typedef struct {
-  uint32_t count[2];
-  uint64_t bytes[2];
+  uint32_t count[3];
+  uint64_t bytes[3];
 } AuroraTextureStats;
 void aurora_get_texture_stats(AuroraTextureStats* out);
+// Dawn's own estimate of the device's GPU memory (all textures and buffers, whoever made them) and what its
+// backend allocator holds. false until the device exists.
+typedef struct {
+  uint64_t total, textures, buffers; // ComputeEstimatedMemoryUsageInfo
+  uint64_t allocatorUsed, allocatorAllocated; // GetAllocatorMemoryInfo
+} AuroraDawnMemory;
+bool aurora_get_dawn_memory(AuroraDawnMemory* out);
+// Live sampled/target TextureRefs grouped by creation label, size and format, most numerous first. Fills up to
+// `cap` groups and returns how many exist; `totals` (optional) gets the count and bytes over all of them.
+typedef struct {
+  const char* label;
+  char format[24];
+  uint32_t width, height, mips;
+  uint32_t count;
+  uint64_t bytes; // all of the group's textures together
+} AuroraTextureGroup;
+uint32_t aurora_get_texture_groups(AuroraTextureGroup* out, uint32_t cap);
 // The AuroraConfig::frameBufferScale in use: the device may allow less than was asked for.
 uint32_t aurora_get_frame_buffer_scale();
 // The AuroraConfig::frameStorageScale in use (the array buffer's, in units of its 8 MiB at 1).

@@ -1380,7 +1380,33 @@ bool ParseMaterialField(const std::string& s, int& field, int& count) {
 }
 
 // stats: what the last frame cost, and the game's heap.
+// stats textures [n]: the live sampled textures and render targets grouped by creation label, size and
+// format, the n (default 25) most numerous groups first.
+void CmdStatsTextures() {
+  int top = 25;
+  if (sCmd.args.size() > 2) {
+    top = std::clamp(std::atoi(sCmd.args[2].c_str()), 1, 500);
+  }
+  std::vector<AuroraTextureGroup> groups(static_cast<size_t>(top));
+  const uint32_t total = aurora_get_texture_groups(groups.data(), static_cast<uint32_t>(top));
+  uint32_t shown = std::min<uint32_t>(total, static_cast<uint32_t>(top));
+  AuroraTextureStats stats{};
+  aurora_get_texture_stats(&stats);
+  Out("texture groups: %u (textures %u + targets %u live); top %u by count", total, stats.count[0], stats.count[1],
+      shown);
+  for (uint32_t i = 0; i < shown; ++i) {
+    const AuroraTextureGroup& g = groups[i];
+    Out("%5u x %4ux%-4u mips %2u %-18s %8.2f MiB  %s", g.count, g.width, g.height, g.mips, g.format,
+        g.bytes / 1048576.0, g.label);
+  }
+  Finish();
+}
+
 void CmdStats() {
+  if (sCmd.args.size() > 1 && sCmd.args[1] == "textures") {
+    CmdStatsTextures();
+    return;
+  }
   if (const AuroraStats* stats = aurora_get_stats()) {
     Out("frame: %.0f fps, %u draws (%u merged), %u PBR, %u passes, pipelines %u made %u waiting", aurora_get_fps(),
         stats->drawCallCount, stats->mergedDrawCallCount, CCubeMaterial::sPortPBRDraws, stats->renderPassCount,
@@ -1396,8 +1422,15 @@ void CmdStats() {
   {
     AuroraTextureStats textures{};
     aurora_get_texture_stats(&textures);
-    Out("textures: %u, %.1f MiB; render targets %u, %.1f MiB", textures.count[0], textures.bytes[0] / 1048576.f,
-        textures.count[1], textures.bytes[1] / 1048576.f);
+    Out("textures: %u, %.1f MiB; render targets %u, %.1f MiB; lighting %u, %.1f MiB", textures.count[0],
+        textures.bytes[0] / 1048576.f, textures.count[1], textures.bytes[1] / 1048576.f, textures.count[2],
+        textures.bytes[2] / 1048576.f);
+    AuroraDawnMemory dawn{};
+    if (aurora_get_dawn_memory(&dawn)) {
+      Out("dawn: %.1f MiB estimated (textures %.1f, buffers %.1f); allocator %.1f MiB used of %.1f allocated",
+          dawn.total / 1048576.f, dawn.textures / 1048576.f, dawn.buffers / 1048576.f,
+          dawn.allocatorUsed / 1048576.f, dawn.allocatorAllocated / 1048576.f);
+    }
   }
   {
     const IAllocator::SMetrics m = CMemorySys::GetGameAllocator().GetMetrics();
@@ -3547,7 +3580,7 @@ const CommandSpec kCommands[] = {
      "shader override <dir>|off  compile <hash>.wgsl files from a dir in place of the generated ones, then reload\n"
      "shader reload              drop the shader and pipeline caches so edited overrides compile (MP_WGSL_OVERRIDE)"},
     {"stats", CmdStats, nullptr,
-     "stats                      the last frame's draws and buffers, the heap, room geometry and environments"},
+     "stats [textures [n]]       the last frame's draws and buffers, texture and lighting totals, Dawn's GPU memory, the heap, room geometry and environments; `textures` lists the n (25) most numerous live texture groups by label, size and format"},
     {"roomenv", nullptr, nullptr,
      "roomenv [on|off|exposure on|off]  the room environments mods supply; exposure: by room, not by cube\n"
      "roomenv grades | state <id> <state>  the colour grades; as if script object <id> (hex) sent <state>\n"

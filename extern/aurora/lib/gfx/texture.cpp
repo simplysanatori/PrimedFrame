@@ -7,15 +7,25 @@
 #include "aurora/gfx.h"
 #include "texture.hpp"
 #include "texture_convert.hpp"
+#include "probe.hpp"
 #include "../gx/gx_fmt.hpp"
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
+#include <cstdio>
+#include <vector>
+
+#include <dawn/native/DawnNative.h>
 #include <fmt/format.h>
+#include <magic_enum.hpp>
 #include <tracy/Tracy.hpp>
 #include <webgpu/webgpu_cpp.h>
 
@@ -34,6 +44,19 @@ wgpu::Extent3D physical_size(wgpu::Extent3D size, TextureFormatInfo info) {
 
 std::atomic<int64_t> s_liveCount[2];
 std::atomic<int64_t> s_liveBytes[2];
+// Every live TextureRef, for the breakdown (aurora_get_texture_groups).
+std::mutex s_liveMutex;
+// Leaked: texture handles may outlive static destruction.
+auto& s_liveRefs = *new std::unordered_set<const TextureRef*>;
+auto& s_labels = *new std::unordered_set<std::string>;
+
+const char* intern_label(const char* label) {
+  if (label == nullptr) {
+    return nullptr;
+  }
+  std::lock_guard lock(s_liveMutex);
+  return s_labels.emplace(label).first->c_str();
+}
 
 bool setup_swizzle(wgpu::TextureComponentSwizzleDescriptor& swizzle, u32 format) noexcept {
   if (!webgpu::g_textureComponentSwizzleSupported) {
@@ -168,6 +191,12 @@ void TextureRef::count_live(int sign) noexcept {
                                    std::max<uint32_t>(size.depthOrArrayLayers, 1);
   s_liveCount[kind] += sign;
   s_liveBytes[kind] += sign * static_cast<int64_t>(bytes);
+  std::lock_guard lock(s_liveMutex);
+  if (sign > 0) {
+    s_liveRefs.insert(this);
+  } else {
+    s_liveRefs.erase(this);
+  }
 }
 
 TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
@@ -202,7 +231,7 @@ TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t m
   }
   auto textureView = texture.CreateView(&textureViewDescriptor);
   return std::make_shared<TextureRef>(std::move(texture), std::move(textureView), wgpu::TextureView{}, size, wgpuFormat,
-                                      mips, gxFormat);
+                                      mips, gxFormat, intern_label(label));
 }
 
 TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label,
@@ -243,7 +272,8 @@ TextureHandle new_render_texture(uint32_t width, uint32_t height, u32 gxFormat, 
     sampleTextureView = texture.CreateView(&textureViewDescriptor);
   }
   return std::make_shared<TextureRef>(std::move(texture), std::move(sampleTextureView),
-                                      std::move(attachmentTextureView), size, wgpuFormat, mips, gxFormat);
+                                      std::move(attachmentTextureView), size, wgpuFormat, mips, gxFormat,
+                                      intern_label(label));
 }
 
 TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, const char* label) noexcept {
@@ -276,7 +306,8 @@ TextureHandle new_conv_texture(uint32_t width, uint32_t height, u32 gxFormat, co
   auto attachmentTextureView = texture.CreateView(&textureViewDescriptor);
   wgpu::TextureView sampleTextureView = attachmentTextureView;
   return std::make_shared<TextureRef>(std::move(texture), std::move(sampleTextureView),
-                                      std::move(attachmentTextureView), size, wgpuFormat, 1, gxFormat);
+                                      std::move(attachmentTextureView), size, wgpuFormat, 1, gxFormat,
+                                      intern_label(label));
 }
 
 void write_texture(TextureRef& ref, ArrayRef<uint8_t> data) noexcept {
@@ -371,4 +402,74 @@ void aurora_get_texture_stats(AuroraTextureStats* out) {
     out->count[kind] = static_cast<uint32_t>(std::max<int64_t>(s_liveCount[kind].load(), 0));
     out->bytes[kind] = static_cast<uint64_t>(std::max<int64_t>(s_liveBytes[kind].load(), 0));
   }
+  probe::live_stats(out->count[2], out->bytes[2]);
+}
+
+bool aurora_get_dawn_memory(AuroraDawnMemory* out) {
+  *out = {};
+  if (!aurora::webgpu::g_device) {
+    return false;
+  }
+  const WGPUDevice device = aurora::webgpu::g_device.Get();
+  const auto usage = dawn::native::ComputeEstimatedMemoryUsageInfo(device);
+  const auto allocator = dawn::native::GetAllocatorMemoryInfo(device);
+  out->total = usage.totalUsage;
+  out->textures = usage.texturesUsage;
+  out->buffers = usage.buffersUsage;
+  out->allocatorUsed = allocator.totalUsedMemory;
+  out->allocatorAllocated = allocator.totalAllocatedMemory;
+  return true;
+}
+
+uint32_t aurora_get_texture_groups(AuroraTextureGroup* out, uint32_t cap) {
+  using namespace aurora::gfx;
+  std::vector<AuroraTextureGroup> groups;
+  {
+    struct Key {
+      const char* label;
+      uint32_t width, height, mips, format, depth;
+      bool operator==(const Key& o) const noexcept {
+        return label == o.label && width == o.width && height == o.height && mips == o.mips && format == o.format &&
+               depth == o.depth;
+      }
+    };
+    struct KeyHash {
+      size_t operator()(const Key& k) const noexcept {
+        size_t h = std::hash<const void*>()(k.label);
+        for (const uint32_t v : {k.width, k.height, k.mips, k.format, k.depth}) {
+          h = h * 1000003u ^ v;
+        }
+        return h;
+      }
+    };
+    std::unordered_map<Key, size_t, KeyHash> index;
+    std::lock_guard lock(s_liveMutex);
+    for (const TextureRef* ref : s_liveRefs) {
+      const Key key{ref->label, ref->size.width, ref->size.height, ref->mipCount,
+                    static_cast<uint32_t>(ref->format), ref->size.depthOrArrayLayers};
+      const auto [it, added] = index.try_emplace(key, groups.size());
+      if (added) {
+        AuroraTextureGroup g{};
+        g.label = ref->label != nullptr ? ref->label : "(none)";
+        const auto name = magic_enum::enum_name(ref->format);
+        std::snprintf(g.format, sizeof(g.format), "%.*s", static_cast<int>(name.size()), name.data());
+        g.width = ref->size.width;
+        g.height = ref->size.height;
+        g.mips = ref->mipCount;
+        groups.push_back(g);
+      }
+      AuroraTextureGroup& g = groups[it->second];
+      ++g.count;
+      g.bytes += ref->format == wgpu::TextureFormat::Undefined
+                     ? 0
+                     : calc_texture_size(ref->format, ref->size.width, ref->size.height, ref->mipCount) *
+                           std::max<uint32_t>(ref->size.depthOrArrayLayers, 1);
+    }
+  }
+  std::sort(groups.begin(), groups.end(), [](const AuroraTextureGroup& a, const AuroraTextureGroup& b) {
+    return a.count != b.count ? a.count > b.count : a.bytes > b.bytes;
+  });
+  const uint32_t n = std::min<uint32_t>(cap, static_cast<uint32_t>(groups.size()));
+  std::copy_n(groups.begin(), n, out);
+  return static_cast<uint32_t>(groups.size());
 }

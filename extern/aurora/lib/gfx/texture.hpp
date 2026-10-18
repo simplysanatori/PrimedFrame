@@ -43,16 +43,20 @@ struct TextureRef {
   u32 gxFormat;
   bool hasArbitraryMips = false;
   bool isReplacement = false;
+  // The creation label (interned, so it outlives the texture), for the live-texture breakdown.
+  const char* label = nullptr;
 
   TextureRef(wgpu::Texture texture, wgpu::TextureView sampleTextureView, wgpu::TextureView attachmentTextureView,
-             wgpu::Extent3D size, wgpu::TextureFormat format, uint32_t mipCount, u32 gxFormat)
+             wgpu::Extent3D size, wgpu::TextureFormat format, uint32_t mipCount, u32 gxFormat,
+             const char* label = nullptr)
   : texture(std::move(texture))
   , sampleTextureView(std::move(sampleTextureView))
   , attachmentTextureView(std::move(attachmentTextureView))
   , size(size)
   , format(format)
   , mipCount(mipCount)
-  , gxFormat(gxFormat) {
+  , gxFormat(gxFormat)
+  , label(label) {
     count_live(1);
   }
   TextureRef(const TextureRef&) = delete;
