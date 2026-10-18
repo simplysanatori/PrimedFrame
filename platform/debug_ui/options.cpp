@@ -14,6 +14,7 @@
 #include "port_log.h"
 #include "port_paths.h"
 #include "port_mods.h"
+#include "port_power_spider_ball.h"
 #include "port_remastered_text.h"
 #include "port_discord.h"
 #include "port_savestate.h"
@@ -406,6 +407,23 @@ bool CinemaBars() {
 bool SharpScanWindow() {
   EnsureInitialized();
   return sSharpScanWindow && !sOriginalExperience;
+}
+
+bool PowerSpiderBall() {
+  EnsureInitialized();
+  return sPowerSpiderBall && !sOriginalExperience;
+}
+
+void SetPowerSpiderBall(bool enabled) {
+  EnsureInitialized();
+  if (sPowerSpiderBall == enabled) {
+    return;
+  }
+  sPowerSpiderBall = enabled;
+  MarkDirty();
+  if (PortPowerSpiderBall::Requested() != PowerSpiderBall() && !PortMods::Suspended()) {
+    PortSaveState::RequestModReload();
+  }
 }
 
 const char* PromptGlyphs() {
@@ -1013,7 +1031,9 @@ void SetOriginalExperience(bool enabled) {
   ResetDynamicRes();
   VISetFrameBufferScale(EffectiveRenderScale());
   ApplyGraphicsQuality();
-  if (PortMods::CurrentStatus().active != ModsEnabled() && !PortMods::Suspended()) {
+  if ((PortMods::CurrentStatus().active != ModsEnabled() ||
+       PortPowerSpiderBall::Requested() != PowerSpiderBall()) &&
+      !PortMods::Suspended()) {
     PortSaveState::RequestModReload();
   }
 }

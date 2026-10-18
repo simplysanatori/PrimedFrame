@@ -119,6 +119,7 @@
 {"Video", "Display", "Display", "Aspect ratio", "widescreen 4:3 16:9 stretch shape"},
 {"Video", "Display", "Display", "Cutscene black bars", "letterbox cinematic bars"},
 {"Video", "Display", "Display", "Sharp scan window", "scan visor window sharp pixel"},
+{"Video", "Display", "Display", "Power Suit spider ball", "spider ball morph ball power suit colour color look gold"},
 {"Video", "Display", "HUD and view", "Widescreen HUD (spread to edges)", "hud widescreen edges stretch"},
 {"Video", "Display", "HUD and view", "HUD scale", "hud size interface scale"},
 {"Video", "Display", "HUD and view", "Scan image spread", "scan images panels widescreen centre center edges touch"},

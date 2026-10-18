@@ -41,6 +41,7 @@
 #include "port_apclient.h"
 #include "port_debug.h"
 #include "port_model_variant.h"
+#include "port_power_spider_ball.h"
 #include "port_remastered_ball_light.h"
 #include "port_synthetic_effect.h"
 #include "Kyoto/Math/CPlane.hpp"
@@ -2901,6 +2902,12 @@ void CMorphBall::LoadMorphBallModel(CStateManager& mgr) {
         x64_spiderBallGlassModelShader = 0;
       }
       x8_ballGlowColorIdx = skSpiderBallGlowColorIdx[modelIdx];
+#ifdef TARGET_PC
+      // The generated Power Suit spider ball is Varia's look, so it takes Varia's glow.
+      if (modelIdx == CPlayerState::kPS_Power && PortPowerSpiderBall::Active()) {
+        x8_ballGlowColorIdx = skSpiderBallGlowColorIdx[CPlayerState::kPS_Varia];
+      }
+#endif
     } else {
       x58_ballModel =
           GetMorphBallModel(rstl::string_l(skBallCharacter[modelIdx].x0_name), xc_radius

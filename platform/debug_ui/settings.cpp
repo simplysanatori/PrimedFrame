@@ -101,6 +101,7 @@ const SettingKey kSettingKeys[] = {
     BoolKey< &sHudWide >("hud_wide"),
     BoolKey< &sCinemaBars >("cinema_bars"),
     BoolKey< &sSharpScanWindow >("sharp_scan_window"),
+    BoolKey< &sPowerSpiderBall >("power_spider_ball"),
     BoolKey< &sAutoAim >("auto_aim"),
     {"scan_speed",
      [](const std::string& value) {
