@@ -2692,6 +2692,15 @@ public:
       AppendBE32(out, F("CNST"));
       AppendBE32(out, 1);
     }
+    const uint32_t guidWord = uint32_t(node.id[0]) | uint32_t(node.id[1]) << 8 |
+                              uint32_t(node.id[2]) << 16 | uint32_t(node.id[3]) << 24;
+    if (part && guidWord != 0) {
+      // Port-only: the first word of the effect's GUID (little-endian, as the Switch reads it). A
+      // Remastered child's seed hashes it in (CElementGen::PortChildSeed); absent means 0.
+      AppendBE32(out, F("PGID"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, guidWord);
+    }
     if (nestedHdrLight) {
       AppendBE32(out, F("PHDR"));
       AppendBE32(out, F("CNST"));
@@ -3021,7 +3030,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
                (vfx && fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") || fourcc == F("PFCM") ||
-                         fourcc == F("PSHP") || fourcc == F("PHDR"))) ||
+                         fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID"))) ||
                (vfx && fourcc == F("PIRN"))) {
       ok = reader.PortWord();
     } else if (vfx && fourcc == F("PVRT")) {

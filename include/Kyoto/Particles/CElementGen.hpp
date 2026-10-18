@@ -379,6 +379,13 @@ private:
   float xPortNestedHdrColor[4];
   float xPortNestedHdrInnerRadius, xPortNestedHdrOuterRadius;
   bool xPortNestedHdrRadiiValid;
+  // A converted Remastered system keeps its seed as 32 bits (x94 is 16): the SEED value, else the
+  // seed it was built with (sPortChildSeed for a Remastered child, else sSeed).
+  uint xPortSeed;
+  // The seed a Remastered parent gives the child it constructs next; consumed by that ctor.
+  static uint sPortChildSeed;
+  static bool sPortChildSeedSet;
+  uint PortChildSeed(const CGenDescription& child) const;
   void PortVfxUpdateSystem();
   // XFMD 3/4: the spawn-baked part of the emitter's transform, and moving the live particles from
   // one such frame to the next.

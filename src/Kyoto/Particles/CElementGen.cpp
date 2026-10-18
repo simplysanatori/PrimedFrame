@@ -91,6 +91,10 @@ int CElementGen::mParticleSystemAliveCount;
 
 double CElementGen::kTickTime = 1 / 60.0;
 ushort CElementGen::sSeed = 99;
+#ifdef TARGET_PC
+uint CElementGen::sPortChildSeed = 0;
+bool CElementGen::sPortChildSeedSet = false;
+#endif
 static bool sStaticListInitialized;
 
 struct CParticleListItemViewPointComp {
@@ -187,11 +191,20 @@ CElementGen::CElementGen(TToken< CGenDescription > gen, EModelOrientationType or
 , xPortNestedHdrInnerRadius(0.f)
 , xPortNestedHdrOuterRadius(0.f)
 , xPortNestedHdrRadiiValid(false)
+, xPortSeed(sSeed)
 #endif
 {
 #ifdef TARGET_PC
   xPortVars.Init(x28_loadedGenDesc->xPortVars.get());
   CPortVarScope portVarScope(&xPortVars);
+  const bool portChildSeed = sPortChildSeedSet;
+  sPortChildSeedSet = false;
+  if (x28_loadedGenDesc->xPortIrnd) {
+    if (portChildSeed) {
+      xPortSeed = sPortChildSeed;
+    }
+    x27c_randState.SetSeed(xPortSeed);
+  }
 #endif
   CGlobalRandom gr(x27c_randState);
 
@@ -199,8 +212,16 @@ CElementGen::CElementGen(TToken< CGenDescription > gen, EModelOrientationType or
     int seedVal;
     seed->GetValue(x74_curFrame, seedVal);
     x94_randomSeed = seedVal;
+#ifdef TARGET_PC
+    xPortSeed = seedVal;
+#endif
   }
+#ifdef TARGET_PC
+  // Remastered keeps the seed as 32 bits (CElementGen ctor: +0x24, copied to the CRandom16 at +0x28).
+  x27c_randState.SetSeed(x28_loadedGenDesc->xPortIrnd ? xPortSeed : uint(x94_randomSeed));
+#else
   x27c_randState.SetSeed(x94_randomSeed);
+#endif
   ++mParticleSystemAliveCount;
 
   x26c_25_LIT_ = x28_loadedGenDesc->x30_29_LIT_;
@@ -1059,7 +1080,26 @@ void CElementGen::UpdatePSTranslationAndOrientation() {
   }
 }
 
+#ifdef TARGET_PC
+// Remastered's child seed (0x2c59e0, called from 0x27b014 for every child a generator constructs):
+// FNV-1a over 32-bit words of the parent's seed, the child description's GUID word 0, the parent's
+// frame and the parent's live child count before the push.
+uint CElementGen::PortChildSeed(const CGenDescription& child) const {
+  const uint kPrime = 0x01000193;
+  uint hash = (xPortSeed ^ 0x811c9dc5u) * kPrime;
+  hash = (hash ^ child.xPortGuidWord) * kPrime;
+  hash = (hash ^ uint(x74_curFrame)) * kPrime;
+  return (hash ^ uint(x290_activePartChildren.size())) * kPrime;
+}
+#endif
+
 CElementGen* CElementGen::ConstructChildParticleSystem(TToken< CGenDescription > desc) const {
+#ifdef TARGET_PC
+  if (x28_loadedGenDesc->xPortIrnd && desc->xPortIrnd) {
+    sPortChildSeed = PortChildSeed(**desc);
+    sPortChildSeedSet = true;
+  }
+#endif
   CElementGen* child =
       rs_new CElementGen(desc, kMOT_Normal, x26d_27_enableOPTS ? kOSF_Two : kOSF_One);
   child->x26d_26_modelsUseLights = x26d_26_modelsUseLights;

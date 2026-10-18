@@ -94,6 +94,12 @@ struct Retail {
   }
   // The end of a converted PART: the port-only PIRN marker, then _END.
   Retail& end() { return f("PIRN").f("CNST").w(1).f("_END"); }
+  // An embedded child's end: PIRN, then PGID with its GUID's first word read little-endian.
+  Retail& end(const EffectGuid& id) {
+    return f("PIRN").f("CNST").w(1).f("PGID").f("CNST")
+        .w(uint32_t(id[0]) | uint32_t(id[1]) << 8 | uint32_t(id[2]) << 16 | uint32_t(id[3]) << 24)
+        .f("_END");
+  }
   Retail& w(uint32_t value) {
     for (int i = 3; i >= 0; --i) {
       bytes.push_back(uint8_t(value >> (i * 8)));
@@ -439,7 +445,7 @@ void TestConvert() {
   child.f("GPSM");
   child.f("MAXP").f("CNST").w(5);
   child.f("TEXR").f("CNST").f("CNST").w(0x5EED0001);
-  child.end();
+  child.end(Legacy(0x0BADF00D));
   CHECK_MSG(!parts[1].root && parts[1].id == Legacy(0x0BADF00D), "child keeps its id");
   CHECK_MSG(parts[1].part == child.bytes, "MTIN becomes the child's TEXR");
   CHECK_MSG(parts[1].droppedRetail == 0, "child drops nothing");

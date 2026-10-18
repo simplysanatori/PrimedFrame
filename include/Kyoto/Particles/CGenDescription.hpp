@@ -139,6 +139,8 @@ public:
   u8 xPortXfmd = kPortXfmdRetail;
   // port-only PIRN: a converted Remastered effect, whose nested IRND elements are stable per particle
   bool xPortIrnd = false;
+  // port-only PGID: the first word of a converted Remastered PART's GUID (CElementGen::PortChildSeed)
+  u32 xPortGuidWord = 0;
   // Exact-source nested Remastered point-light metadata (PHDR/PIR0/POR0). The
   // radius elements are owned here and evaluated by the live generator.
   bool xPortNestedHdrLight = false;

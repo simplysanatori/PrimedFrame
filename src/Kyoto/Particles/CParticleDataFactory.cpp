@@ -309,6 +309,11 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortIrnd = in.ReadLong() != 0;
       break;
+    // Port-only first word of a converted Remastered PART's GUID (the child seed hashes it).
+    case SBIG('PGID'):
+      GetClassID(in);
+      desc->xPortGuidWord = in.ReadLong();
+      break;
     // Port-only metadata for the one source-proven nested smooth point light.
     case SBIG('PHDR'):
       GetClassID(in);
