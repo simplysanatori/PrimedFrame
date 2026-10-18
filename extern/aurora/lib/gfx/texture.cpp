@@ -130,26 +130,29 @@ u16 wgpu_aniso(GXAnisotropy aniso) {
 }
 } // namespace
 
+static TextureHandle new_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
+                                    wgpu::TextureFormat wgpuFormat, const char* label) noexcept;
+
 TextureHandle new_static_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 format, ArrayRef<uint8_t> data,
                                     bool tlut, const char* label) noexcept {
   ZoneScoped;
 
-  auto handle = new_dynamic_texture_2d(width, height, mips, format, label);
-  auto& ref = *handle;
-
   ConvertedTexture converted;
-  if (ref.gxFormat != InvalidTextureFormat) {
+  if (format != InvalidTextureFormat) {
     if (tlut) {
-      CHECK(ref.size.height == 1, "new_static_texture_2d[{}]: expected tlut height 1, got {}", label, ref.size.height);
-      CHECK(ref.mipCount == 1, "new_static_texture_2d[{}]: expected tlut mipCount 1, got {}", label, ref.mipCount);
-      converted = convert_tlut(ref.gxFormat, ref.size.width, data);
+      CHECK(height == 1, "new_static_texture_2d[{}]: expected tlut height 1, got {}", label, height);
+      CHECK(mips == 1, "new_static_texture_2d[{}]: expected tlut mipCount 1, got {}", label, mips);
+      converted = convert_tlut(format, width, data);
     } else {
-      converted = convert_texture(ref.gxFormat, ref.size.width, ref.size.height, ref.mipCount, data);
+      converted = convert_texture(format, width, height, mips, data, true);
     }
-    if (!converted.data.empty()) {
-      data = converted.data;
-      ref.hasArbitraryMips = converted.hasArbitraryMips;
-    }
+  }
+  const auto wgpuFormat = converted.data.empty() ? to_wgpu(format) : converted.format;
+  auto handle = new_texture_2d(width, height, mips, format, wgpuFormat, label);
+  auto& ref = *handle;
+  if (!converted.data.empty()) {
+    data = converted.data;
+    ref.hasArbitraryMips = converted.hasArbitraryMips;
   }
 
   uint32_t offset = 0;
@@ -206,8 +209,12 @@ void TextureRef::count_live(int sign) noexcept {
 
 TextureHandle new_dynamic_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
                                      const char* label) noexcept {
+  return new_texture_2d(width, height, mips, gxFormat, to_wgpu(gxFormat), label);
+}
+
+static TextureHandle new_texture_2d(uint32_t width, uint32_t height, uint32_t mips, u32 gxFormat,
+                                    wgpu::TextureFormat wgpuFormat, const char* label) noexcept {
   ZoneScopedS(3);
-  const auto wgpuFormat = to_wgpu(gxFormat);
   const wgpu::Extent3D size{
       .width = width,
       .height = height,
