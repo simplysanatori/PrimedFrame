@@ -277,6 +277,23 @@ private:
   CVectorElement* mA;
 };
 
+// Port-only change of basis between Remastered's particle space (X left, Y up, Z forward) and
+// retail's (Z up): BSIS takes a direction or position, (x, y, z) to (-x, z, y), as
+// MPT_CVEConvertToXLeftYUpZForward 0x2a3020; BSSC a scale, (x, y, z) to (x, z, y), as
+// MPT_CVEConvertScaleToXLeftYUpZForward 0x2a30f8. Each is its own inverse.
+class CVEPortBasis : public CVectorElement {
+public:
+  CVEPortBasis(CVectorElement* a, bool scale);
+  ~CVEPortBasis() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+  bool IsFastConstant() const override;
+
+private:
+  CVectorElement* mA;
+  bool mScale;
+};
+
 // Remastered system vectors of the generator being evaluated: CMPS (the camera position in the
 // system's global frame, CVECameraPositionInSystemSpace 0x2a24fc), EXTT and EXTS (the external
 // translation and scale, CVEExternalValue 0x2a2774). Zero outside a generator evaluation (swooshes).

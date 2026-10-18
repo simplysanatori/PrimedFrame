@@ -133,6 +133,9 @@ constexpr ElementSig kVectorSigs[] = {
     {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V VR"},  {"MPAC", "RRRR"},
     {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"ROTV", "Ve"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
     {"SLCT", "Re"},  {"NORM", "V"},     {"CMPS", "-"},    {"EXTT", "-"},   {"EXTS", "-"},
+    {"CPSS", "-"},
+    // MCBS is MPCB's scale form (MPT_CVEConvertScaleToXLeftYUpZForward 0x2a30f8).
+    {"MCBS", "V"},
 };
 constexpr ElementSig kModVectorSigs[] = {
     {"NONE", "-"},     {"CNST", "RRR"},   {"GRAV", "V"},     {"WIND", "VR"},   {"EXPL", "RR"},
@@ -149,8 +152,20 @@ constexpr ElementSig kEmitterSigs[] = {
     {"PLNE", "VVVRRR"}, {"ELPS", "VVVRe"}, {"PLNV", "VVRRRRRRRRb"}, {"SPEV", "VRRRRRRb"},
 };
 
-constexpr char kTypeLetters[] = "IRVMCE";
-constexpr int kTypeCount = 6;
+// Remastered's rotations (GetRotationElement); retail has none. CNST is a raw
+// quaternion.
+constexpr ElementSig kRotationSigs[] = {
+    {"CNST", "wwww"}, {"REUL", "RRRb"}, {"MPRE", "RRR"},  {"RADD", "QQ"},   {"RADN", "QQ"},   {"RSUB", "QQ"},
+    {"RSBN", "QQ"},   {"ISWT", "QQ"},   {"CROT", "eQQ"},  {"KPIN", "Q"},    {"MPCB", "Q"},    {"RINV", "Q"},
+    {"RAXY", "VVQ"},  {"RAXZ", "VVQ"},  {"RAYX", "VVQ"},  {"RAYZ", "VVQ"},  {"RAZX", "VVQ"},  {"RAZY", "VVQ"},
+    {"CMRT", "-"},    {"EXTR", "-"},    {"INTR", "-"},    {"RSYS", "-"},    {"RSYX", "-"},    {"SPNR", "-"},    {"RLCL", "-"},
+    {"PAP0", "-"},    {"PAP1", "-"},    {"PAP2", "-"},    {"PAP3", "-"},    {"PAP4", "-"},    {"PAP5", "-"},
+    {"PAP6", "-"},    {"PAP7", "-"},    {"PAP8", "-"},    {"PAP9", "-"},    {"PTAV", "b"},    {"SBAV", "b"},
+    {"SYAV", "b"},    {"SPAR", "bQ"},   {"VARR", "g"},    {"PEXT", "IQ"},   {"VEXT", "IQ"},   {"BNRT", "I"},
+};
+
+constexpr char kTypeLetters[] = "IRVMCEQ";
+constexpr int kTypeCount = 7;
 
 int TypeIndex(char letter) {
   for (int i = 0; i < kTypeCount; ++i) {
@@ -174,6 +189,7 @@ constexpr PropertyType kPropertyTypes[] = {
     {'M', "PSVM VEL1 VEL2 VEL3 VEL4"},
     {'C', "COLR PMCL LCLR"},
     {'E', "EMTR"},
+    {'Q', "PMRQ"},
 };
 
 // Elements seen in the files whose arity is not pinned down; they parse with
@@ -444,7 +460,11 @@ struct Grammar {
     auto addTyped = [this](char type, const ElementSig* sigs, size_t count) {
       for (size_t i = 0; i < count; ++i) {
         typed[TypeIndex(type)][FourCC(sigs[i].fourcc)] = SplitSigs(sigs[i].sigs);
-        elementNames.insert(FourCC(sigs[i].fourcc));
+        // Rotations share names with properties (INTR): a rotation is only an
+        // element where a rotation is read, never where a property may start.
+        if (type != 'Q') {
+          elementNames.insert(FourCC(sigs[i].fourcc));
+        }
       }
     };
     addTyped('I', kIntSigs, std::size(kIntSigs));
@@ -453,6 +473,7 @@ struct Grammar {
     addTyped('M', kModVectorSigs, std::size(kModVectorSigs));
     addTyped('C', kColorSigs, std::size(kColorSigs));
     addTyped('E', kEmitterSigs, std::size(kEmitterSigs));
+    addTyped('Q', kRotationSigs, std::size(kRotationSigs));
     // A typed property is read as its type first, then any way an untyped one
     // can be (Remastered stores some as a byte).
     for (const PropertyType& property : kPropertyTypes) {

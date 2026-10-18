@@ -645,8 +645,8 @@ void TestSystemVectors() {
   Retail want;
   want.f("GPSM");
   want.f("SIZE").f("DIVD").f("CNST").w(Bits(1.0f)).f("CNST").w(Bits(4.0f));
-  want.f("POFS").f("NORM").f("CMPS");
-  want.f("PSIV").f("SUB_").f("EXTT").f("EXTS");
+  want.f("POFS").f("BSIS").f("NORM").f("BSIS").f("CMPS");
+  want.f("PSIV").f("BSIS").f("SUB_").f("BSIS").f("EXTT").f("BSSC").f("EXTS");
   want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "DIVD, NORM, CMPS, EXTT and EXTS carry over");
   if (parts.size() == 1 && parts[0].part != want.bytes) {
@@ -655,6 +655,46 @@ void TestSystemVectors() {
       std::fprintf(stderr, "  dropped %s\n", d.c_str());
     }
   }
+}
+
+// Remastered's particle space is X left, Y up, Z forward: a mod vector's CNST
+// becomes (-x, z, y), MPCB(v) is B(v), MCBS(v) the scale form (x, z, y), and a
+// vector property gets B at the boundary, folded into a constant.
+void TestParticleSpace() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "PMSC", 3);
+  PutFourCC(out, "MCBS");
+  PutFourCC(out, "CNST");
+  PutConstant(out, Bits(1.0f));
+  PutConstant(out, Bits(2.0f));
+  PutConstant(out, Bits(3.0f));
+  PutProperty(out, "POFS", 3);
+  PutFourCC(out, "MPCB");
+  PutFourCC(out, "PLOC");
+  PutProperty(out, "VEL1", 3);
+  PutFourCC(out, "CNST");
+  PutConstant(out, Bits(1.0f));
+  PutConstant(out, Bits(2.0f));
+  PutConstant(out, Bits(3.0f));
+  PutTexr(out, 0x1234ABCD);
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "particle-space effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Retail want;
+  want.f("GPSM");
+  // MCBS then the boundary BSSC: P(P(v)) is v.
+  want.f("PMSC").f("CNST").f("CNST").w(Bits(1.0f)).f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(3.0f));
+  // MPCB(BSIS(PLOC)) then the boundary BSIS: all three cancel to one.
+  want.f("POFS").f("BSIS").f("PLOC");
+  want.f("VEL1").f("CNST").f("CNST").w(Bits(-1.0f)).f("CNST").w(Bits(3.0f)).f("CNST").w(Bits(2.0f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "Remastered vectors convert to the port's space");
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), "particle-space conversion drops nothing");
 }
 
 // Remastered's shapes with no retail element of their own: ASPR becomes ASPH
@@ -703,10 +743,10 @@ void TestShapes() {
   const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
   Retail want;
   want.f("GPSM");
-  want.f("EMTR").f("ASPH").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
+  want.f("EMTR").f("ASPH").f("CNST").f("CNST").w(0x80000000u).f("CNST").w(0).f("CNST").w(0);
   want.f("CNST").w(Bits(90.0f)).f("CNST").w(0x80000000u);
   want.f("CNST").w(Bits(360.0f)).f("CNST").w(Bits(180.0f)).f("CNST").w(Bits(0.25f)).f("CNST").w(Bits(0.1f));
-  want.f("PSIV").f("RNDV").f("CNST").w(Bits(0.5f));
+  want.f("PSIV").f("BSIS").f("RNDV").f("CNST").w(Bits(0.5f));
   want.f("COLR").f("KEYP").w(1).w(0).b(0).b(0).w(101).w(0).w(101);
   for (int percent = 0; percent <= 100; ++percent) {
     const float t = float(percent) / 100.0f;
@@ -929,14 +969,14 @@ void TestSwooshRazyProt() {
   });
   Retail want;
   want.f("SWSH").f("LENG").f("CNST").w(8);
-  want.f("PRAZ").f("CNST").f("CNST").w(0).f("CNST").w(Bits(1.0f)).f("CNST").w(0);
+  want.f("PRAZ").f("CNST").f("CNST").w(0x80000000u).f("CNST").w(0).f("CNST").w(Bits(1.0f));
   want.f("PRAF").f("CNST").w(0).f("PIRN").f("CNST").w(1).f("_END");
   CHECK_MSG(part.part == want.bytes, "a RAZY PROT becomes PRAZ with an identity PRAF");
   CHECK_MSG(part.dropped.empty() && part.droppedRetail == 0, "a RAZY PROT drops nothing");
 
   part = ConvertSwoosh([](auto& o) { PutRazyProt(o, [](auto& o) { PutFourCC(o, "RLCL"); }); });
   Retail local;
-  local.f("SWSH").f("PRAZ").f("CNST").f("CNST").w(0).f("CNST").w(Bits(1.0f)).f("CNST").w(0);
+  local.f("SWSH").f("PRAZ").f("CNST").f("CNST").w(0x80000000u).f("CNST").w(0).f("CNST").w(Bits(1.0f));
   local.f("PRAF").f("CNST").w(1).f("PIRN").f("CNST").w(1).f("_END");
   CHECK_MSG(part.part == local.bytes, "an RLCL fallback becomes PRAF 1");
 
@@ -3300,6 +3340,7 @@ int main() {
   TestSplitRejects();
   TestShapes();
   TestSystemVectors();
+  TestParticleSpace();
   TestGradientFrames();
   TestSpawnTable();
   TestPortSpawnTables();

@@ -170,6 +170,8 @@ const Signatures& ElementsOf(Type type) {
       // Port-only (CParticleDataFactory under TARGET_PC): NORM, and the generator's system
       // vectors (camera in system space, external translation and scale).
       {F("NORM"), "v"},     {F("CMPS"), ""},      {F("EXTT"), ""},      {F("EXTS"), ""},
+      // Port-only CVEPortBasis: Remastered's particle space to retail's and back.
+      {F("BSIS"), "v"},     {F("BSSC"), "v"},
   };
   static const Signatures modVectorElements = {
       {F("NONE"), ""},     {F("CNST"), "rrr"},  {F("GRAV"), "v"},    {F("WIND"), "vr"},  {F("EXPL"), "rr"},
@@ -857,7 +859,64 @@ public:
     return EffectRetailId(id).value_or(0);
   }
 
+  // A written vector element taken through the port-only BSIS or BSSC (CVEPortBasis): (x, y, z) to
+  // (-x, z, y) or (x, z, y). Each is its own inverse, so BSIS(BSIS(v)) is written as v, and a
+  // constant is turned here.
+  static void Basis(uint32_t op, const std::vector<uint8_t>& inner, std::vector<uint8_t>& out) {
+    const auto word = [&inner](size_t at) { return port::ReadBE32(inner.data() + at); };
+    if (inner.size() >= 4 && word(0) == op) {
+      out.insert(out.end(), inner.begin() + 4, inner.end());
+      return;
+    }
+    const uint32_t cnst = F("CNST");
+    if (inner.size() == 28 && word(0) == cnst && word(4) == cnst && word(12) == cnst && word(20) == cnst) {
+      AppendBE32(out, cnst);
+      AppendBE32(out, cnst);
+      AppendBE32(out, op == F("BSIS") ? word(8) ^ 0x80000000u : word(8));
+      AppendBE32(out, cnst);
+      AppendBE32(out, word(24));
+      AppendBE32(out, cnst);
+      AppendBE32(out, word(16));
+      return;
+    }
+    AppendBE32(out, op);
+    out.insert(out.end(), inner.begin(), inner.end());
+  }
+
+  // A vector element in Remastered's numbers, written as the port's (BSIS around it).
+  bool PortVector(const EffectValue& value, std::vector<uint8_t>& out, std::string& why) const {
+    std::vector<uint8_t> inner;
+    if (!Element(value, Type::Vector, inner, why)) {
+      return false;
+    }
+    Basis(F("BSIS"), inner, out);
+    return true;
+  }
+
+  // -x for a real element: a constant's sign flipped, anything else MULT(x, CNST -1).
+  bool NegatedReal(const EffectValue& value, std::vector<uint8_t>& out, std::string& why) const {
+    std::vector<uint8_t> inner;
+    if (!Element(value, Type::Real, inner, why)) {
+      return false;
+    }
+    if (inner.size() == 8 && port::ReadBE32(inner.data()) == F("CNST")) {
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, port::ReadBE32(inner.data() + 4) ^ 0x80000000u);
+      return true;
+    }
+    AppendBE32(out, F("MULT"));
+    out.insert(out.end(), inner.begin(), inner.end());
+    AppendBE32(out, F("CNST"));
+    AppendBE32(out, FloatBits(-1.0f));
+    return true;
+  }
+
   // One element of `type` into `out`, or false with `why` set.
+  //
+  // Remastered's particle space is X left, Y up, Z forward; retail's is Z up. A vector tree is
+  // written to give Remastered's numbers: reads of the port's state are taken into its space
+  // (BSIS, BSSC for EXTS), MPCB(v) is BSIS(v), and the port turns the result back where it is
+  // used (a vector property, a mod vector's or emitter's vector argument).
   bool Element(const EffectValue& value, Type type, std::vector<uint8_t>& out, std::string& why) const {
     if (value.kind != EffectValue::Kind::Element) {
       why = "a bare value where retail reads an element";
@@ -890,31 +949,64 @@ public:
       AppendBE32(out, uint32_t(SystemRealRead(value.fourcc)));
       return true;
     }
-    // MPCB wraps Remastered's vectors; its cartesian form is the vector itself,
-    // and MPCB(MPAC(x bias, y bias, x range, y range), magnitude) is retail's
-    // ANGC with the same five arguments (checked against the disc's pairs).
-    if (value.fourcc == F("MPCB") && type == Type::Vector) {
+    // Reads of the port's state, in retail's space, taken into Remastered's.
+    if (type == Type::Vector && value.args.empty() &&
+        (value.fourcc == F("PLOC") || value.fourcc == F("PLCO") || value.fourcc == F("PVEL") ||
+         value.fourcc == F("PSOF") || value.fourcc == F("PSOU") || value.fourcc == F("PSOR") ||
+         value.fourcc == F("PSTR") || value.fourcc == F("CMPS") || value.fourcc == F("EXTT") ||
+         value.fourcc == F("EXTS"))) {
+      AppendBE32(out, value.fourcc == F("EXTS") ? F("BSSC") : F("BSIS"));
+      AppendBE32(out, value.fourcc);
+      return true;
+    }
+    // MPCB(v) is MPT_CVEConvertToXLeftYUpZForward 0x2a3020, (-x, z, y) of a vector in
+    // retail's space: BSIS(v). MCBS(v) is its scale form (0x2a30f8, (x, z, y)): BSSC(v).
+    // MPCB(MPAC(x bias, y bias, x range, y range), magnitude) is retail's ANGC with the same five
+    // arguments (checked against the disc's pairs), a direction in retail's space.
+    if ((value.fourcc == F("MPCB") || value.fourcc == F("MCBS")) && type == Type::Vector) {
+      std::vector<uint8_t> inner;
       if (value.args.size() == 1) {
-        return Element(value.args[0], type, out, why);
+        if (!Element(value.args[0], type, inner, why)) {
+          return false;
+        }
+        Basis(value.fourcc == F("MCBS") ? F("BSSC") : F("BSIS"), inner, out);
+        return true;
       }
-      if (value.args.size() == 2 && IsElement(value.args[0], F("MPAC")) && value.args[0].args.size() == 4) {
-        AppendBE32(out, F("ANGC"));
+      if (value.fourcc == F("MPCB") && value.args.size() == 2 && IsElement(value.args[0], F("MPAC")) &&
+          value.args[0].args.size() == 4) {
+        AppendBE32(inner, F("ANGC"));
         for (const EffectValue& arg : value.args[0].args) {
-          if (!Element(arg, Type::Real, out, why)) {
+          if (!Element(arg, Type::Real, inner, why)) {
             return false;
           }
         }
-        return Element(value.args[1], Type::Real, out, why);
+        if (!Element(value.args[1], Type::Real, inner, why)) {
+          return false;
+        }
+        Basis(F("BSIS"), inner, out);
+        return true;
       }
-      why = "MPCB in a form retail has no element for";
+      why = EffectFourCCString(value.fourcc) + " in a form retail has no element for";
       return false;
     }
+    // MPCB(m) on a mod vector runs m in retail's space on the particle's position and velocity,
+    // so m's vectors are not turned.
     if (value.fourcc == F("MPCB") && type == Type::ModVector) {
       if (value.args.size() != 1) {
         why = "MPCB in its angle form where retail reads a mod vector";
         return false;
       }
-      return Element(value.args[0], type, out, why);
+      const bool outer = m_mp1Space;
+      m_mp1Space = true;
+      const bool ok = Element(value.args[0], type, out, why);
+      m_mp1Space = outer;
+      return ok;
+    }
+    // A mod vector's CNST sets the velocity, (-x, z, y) of Remastered's.
+    if (value.fourcc == F("CNST") && type == Type::ModVector && value.args.size() == 3 && !m_mp1Space) {
+      AppendBE32(out, F("CNST"));
+      return NegatedReal(value.args[0], out, why) && Element(value.args[2], Type::Real, out, why) &&
+             Element(value.args[1], Type::Real, out, why);
     }
     // ANCR(REUL(x, y, z, #00), x range, y range, magnitude) is retail's ANGC.
     // Unrotated, the biases are 0 (the disc writes -0). A cone turned about X
@@ -926,16 +1018,19 @@ public:
       if (!ConeBias(value.args[0], xBias, why)) {
         return false;
       }
-      AppendBE32(out, F("ANGC"));
-      AppendBE32(out, F("CNST"));
-      AppendBE32(out, xBias);
-      AppendBE32(out, F("CNST"));
-      AppendBE32(out, 0x80000000u);
+      // The ANGC is in retail's space; the tree around it is in Remastered's.
+      std::vector<uint8_t> angc;
+      AppendBE32(angc, F("ANGC"));
+      AppendBE32(angc, F("CNST"));
+      AppendBE32(angc, xBias);
+      AppendBE32(angc, F("CNST"));
+      AppendBE32(angc, 0x80000000u);
       for (size_t i = 1; i < 4; ++i) {
-        if (!Element(value.args[i], Type::Real, out, why)) {
+        if (!Element(value.args[i], Type::Real, angc, why)) {
           return false;
         }
       }
+      Basis(F("BSIS"), angc, out);
       return true;
     }
     // ASPR(origin, REUL, x range, y range, radius, speed) is retail's ASPH
@@ -947,7 +1042,7 @@ public:
         return false;
       }
       AppendBE32(out, F("ASPH"));
-      if (!Element(value.args[0], Type::Vector, out, why)) {
+      if (!PortVector(value.args[0], out, why)) {
         return false;
       }
       AppendBE32(out, F("CNST"));
@@ -1109,8 +1204,12 @@ public:
             std::to_string(sig.size());
       return false;
     }
+    // A mod vector's or emitter's vectors are used in the port's space.
+    const bool portVectors = (type == Type::ModVector && !m_mp1Space) || type == Type::Emitter;
     for (size_t i = 0; i < sig.size(); ++i) {
-      const bool ok = sig[i] == 'B' ? Bool(value.args[i], out, why) : Element(value.args[i], TypeOfLetter(sig[i]), out, why);
+      const bool ok = sig[i] == 'B'                   ? Bool(value.args[i], out, why)
+                      : sig[i] == 'v' && portVectors ? PortVector(value.args[i], out, why)
+                                                      : Element(value.args[i], TypeOfLetter(sig[i]), out, why);
       if (!ok) {
         return false;
       }
@@ -1147,34 +1246,34 @@ public:
   }
 
   // Remastered's camera-facing model rotation,
-  // RADD(RAZY, SUB_(CPSS(PLOC, CNST(0, 1, 0), REUL(0, 0, 0, #00)), REUL(x, y, z, #00))): the model
+  // RADD(RAZY(SUB_(CPSS, PLOC), CNST(0, 1, 0), REUL(0, 0, 0, #00)), REUL(x, y, z, #00)): the model
   // turned to face the camera, then by the inverse of REUL. Written as PMRT CNST(-x, -y, -z), which
   // is that inverse when at most one angle is nonzero, plus the port-only PFCM flag (CElementGen
   // turns each particle to the camera). An IRND angle (a random spin) is taken as 0.
   bool FacingRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out) const {
-    if (value.size() != 1 || !IsElement(value[0], F("RADD")) || value[0].args.size() != 2 ||
-        !IsElement(value[0].args[0], F("RAZY"))) {
+    if (value.size() != 1 || !IsElement(value[0], F("RADD")) || value[0].args.size() != 2) {
       return false;
     }
-    const EffectValue& sub = value[0].args[1];
-    if (!IsElement(sub, F("SUB_")) || sub.args.size() != 2) {
+    const EffectValue& razy = value[0].args[0];
+    if (!IsElement(razy, F("RAZY")) || razy.args.size() != 3) {
       return false;
     }
-    const EffectValue& look = sub.args[0];
-    if (!IsElement(look, F("CPSS")) || look.args.size() != 3 || !IsElement(look.args[0], F("PLOC"))) {
+    const EffectValue& look = razy.args[0];
+    if (!IsElement(look, F("SUB_")) || look.args.size() != 2 || !IsElement(look.args[0], F("CPSS")) ||
+        !IsElement(look.args[1], F("PLOC"))) {
       return false;
     }
-    const EffectValue& up = look.args[1];
+    const EffectValue& up = razy.args[1];
     if (!IsElement(up, F("CNST")) || up.args.size() != 3 || !ConstIs(up.args[0], 0) ||
         !ConstIs(up.args[1], 0x3f800000u) || !ConstIs(up.args[2], 0)) {
       return false;
     }
     uint32_t angles[3];
-    if (!ReulAngles(look.args[2], angles, nullptr) || ((angles[0] | angles[1] | angles[2]) & 0x7fffffffu) != 0) {
+    if (!ReulAngles(razy.args[2], angles, nullptr) || ((angles[0] | angles[1] | angles[2]) & 0x7fffffffu) != 0) {
       return false;
     }
     bool spin = false;
-    if (!ReulAngles(sub.args[1], angles, &spin)) {
+    if (!ReulAngles(value[0].args[1], angles, &spin)) {
       return false;
     }
     int nonzero = 0;
@@ -1793,6 +1892,16 @@ public:
       }
       AppendBE32(out, F("CNST"));
       AppendBE32(out, FloatBits(-1.0f));
+      return true;
+    }
+    // A vector property is Remastered's numbers, used in the port's space: BSIS, or BSSC for
+    // PMSC's scale. PMRT is turned as a rotation (ModelRotation), and PSOV is never written.
+    if (type.type == Type::Vector && fourcc != F("PMRT") && fourcc != F("PSOV")) {
+      std::vector<uint8_t> inner;
+      if (!Element(value[0], type.type, inner, why)) {
+        return false;
+      }
+      Basis(fourcc == F("PMSC") ? F("BSSC") : F("BSIS"), inner, out);
       return true;
     }
     return Element(value[0], type.type, out, why);
@@ -3266,7 +3375,7 @@ public:
           }
         } else if (xfmdMode != 2) {
           result.dropped.push_back("PROT: RAZY under XFMD " + std::to_string(int32_t(xfmdMode)));
-        } else if (!Element(rotv->args[0], Type::Vector, bytes, why)) {
+        } else if (!PortVector(rotv->args[0], bytes, why)) {
           result.dropped.push_back("PROT: " + why);
         } else {
           AppendBE32(out, F("PRAZ"));
@@ -3505,6 +3614,7 @@ private:
   mutable uint32_t m_sysNextHidden = 10;            // the next hidden init-only real
   mutable std::vector<std::string> m_approximated;  // for the generator being written
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
+  mutable bool m_mp1Space = false;                  // inside MPCB(mod vector): its vectors are retail's
   mutable int32_t m_lifetime = 0;                   // its constant lifetime in frames, or 0
 };
 

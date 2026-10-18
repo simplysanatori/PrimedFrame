@@ -415,11 +415,14 @@ private:
   // the mover's velocity, the rot it ended on, and the KPIN/IRND latches. `placed` is the world
   // position the child is held at (child T = placed - its GT); with hasRot its orientation is
   // held at `rot` the same way. The parent's propagation leaves what the component holds alone.
+  // The tree runs in Remastered's particle space (CVEPortBasis): remPos and vel are in it, pos,
+  // rot and rotQuat are remPos and the tree's rotation taken to the port's.
   struct PortKssmChild {
     const CGenDescription::PortKssm* kssm = nullptr; // holds its component and nodes
     CParticleGen* child = nullptr;
     u32 component = 0;
     int frame = 0;
+    CVector3f remPos = CVector3f::Zero();
     CVector3f pos = CVector3f::Zero();
     CVector3f vel = CVector3f::Zero();
     CTransform4f rot = CTransform4f::Identity();

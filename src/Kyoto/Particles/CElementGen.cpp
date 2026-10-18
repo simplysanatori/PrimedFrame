@@ -1262,13 +1262,20 @@ float CElementGen::PortKssmReal(PortKssmChild& state, u32 index) {
   }
 }
 
+// Between Remastered's particle space and the port's (CVEPortBasis): a point or direction, a
+// scale, and a rotation (conjugated by the basis change, a proper rotation, so its vector part
+// moves as a direction does). Each is its own inverse.
+static CVector3f PortBasis(const CVector3f& v) { return CVector3f(-v.GetX(), v.GetZ(), v.GetY()); }
+static CVector3f PortBasisScale(const CVector3f& v) { return CVector3f(v.GetX(), v.GetZ(), v.GetY()); }
+static CQuaternion PortBasis(const CQuaternion& q) { return CQuaternion(q.GetScalar(), PortBasis(q.GetVector())); }
+
 CVector3f CElementGen::PortKssmVector(PortKssmChild& state, u32 index) {
   const CGenDescription::PortKssmNode& node = state.kssm->nodes[index];
   switch (node.op) {
   case 'EXTT':
-    return PortExternalTranslation();
+    return PortBasis(PortExternalTranslation());
   case 'EXTS':
-    return PortExternalScale();
+    return PortBasisScale(PortExternalScale());
   case 'KPIN': {
     float* latch = &state.latches[node.slot];
     if (state.frame == 0) {
@@ -1321,7 +1328,7 @@ CQuaternion CElementGen::PortKssmRotation(PortKssmChild& state, u32 index) {
   const CGenDescription::PortKssmNode& node = state.kssm->nodes[index];
   switch (node.op) {
   case 'EXTR':
-    return PortExternalRotation();
+    return PortBasis(PortExternalRotation());
   case 'REUL': {
     // Order 0: R = Rz * Ry * Rx from each axis's normalised FastSinR/FastCosR pair.
     float s[3], c[3];
@@ -1353,16 +1360,17 @@ void CElementGen::PortKssmEvaluate(PortKssmChild& state) {
   const CGenDescription::PortKssm& kssm = *state.kssm;
   const CGenDescription::PortKssmComponent& component = kssm.components[state.component];
   if (kssm.nodes[component.pos].op != 'KPIN' || state.frame == 0) {
-    state.pos = PortKssmVector(state, component.pos);
+    state.remPos = PortKssmVector(state, component.pos);
   }
   if (component.rot != ~0u) {
-    state.rotQuat = PortKssmRotation(state, component.rot);
+    state.rotQuat = PortBasis(PortKssmRotation(state, component.rot));
     state.rot = state.rotQuat.BuildTransform4f();
   }
   if (component.grav != ~0u) {
     state.vel = state.vel + PortKssmVector(state, component.grav);
   }
-  state.pos = state.pos + state.vel;
+  state.remPos = state.remPos + state.vel;
+  state.pos = PortBasis(state.remPos);
 }
 
 void CElementGen::PortGlobalFrame(CVector3f& t, CQuaternion& q, CVector3f& s) const {

@@ -1269,6 +1269,10 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
   case SBIG('NORM'):
     ret = rs_new CVEPortNormalize(GetVectorElement(in));
     break;
+  case SBIG('BSIS'):
+  case SBIG('BSSC'):
+    ret = rs_new CVEPortBasis(GetVectorElement(in), clsId == SBIG('BSSC'));
+    break;
   case SBIG('CMPS'):
   case SBIG('EXTT'):
   case SBIG('EXTS'):

@@ -295,16 +295,20 @@ void CParticleSwoosh::SetOrientation(const CTransform4f& orientation) {
 // (CreateNewParticle 0x27cdc8, CERotationFromAxis::GetValue 0x29d298): Z = the motion, X = F x Z
 // for F the axis turned by the orientation, Y = Z x X, each falling back (orientation or identity)
 // under CParticleValues::skMinNormalizableMagSqd. Remastered draws its ring as q * (r cos, r sin, 0)
-// (UpdateRenderData_Swoosh 0x2b52e0) and the port as m * (r cos, 0, r sin), so m = q * Rx(-90).
+// (UpdateRenderData_Swoosh 0x2b52e0) and the port as m * (r cos, 0, r sin), so m = Q * Rx(-90).
+// q is in Remastered's particle space (X left, Y up, Z forward), so Q = B * q in the port's, for
+// B (x, y, z) to (-x, z, y), and its orientation is B R B: Q's identity fallback is B and its
+// orientation fallback R * B. The motion and the axis (the converter's BSIS) are the port's, and
+// B keeps cross products, so the frame built from them is Q's own.
 CTransform4f CParticleSwoosh::PortRazyOrientation(const CVector3f& motion) const {
   static const float kMinMagSqd = 1.4210854715202004e-14f;
-  CVector3f x(1.f, 0.f, 0.f);
-  CVector3f y(0.f, 1.f, 0.f);
-  CVector3f z(0.f, 0.f, 1.f);
+  CVector3f x(-1.f, 0.f, 0.f);
+  CVector3f y(0.f, 0.f, 1.f);
+  CVector3f z(0.f, 1.f, 0.f);
   if (x1c_desc->xPortRazyFallbackLocal) {
-    x = x44_orientation.GetColumn(kDX);
-    y = x44_orientation.GetColumn(kDY);
-    z = x44_orientation.GetColumn(kDZ);
+    x = -x44_orientation.GetColumn(kDX);
+    y = x44_orientation.GetColumn(kDZ);
+    z = x44_orientation.GetColumn(kDY);
   }
   CVector3f axis(0.f, 1.f, 0.f);
   x1c_desc->xPortRazyAxis->GetValue(x28_curFrame, axis);
@@ -323,16 +327,21 @@ CTransform4f CParticleSwoosh::PortRazyOrientation(const CVector3f& motion) const
 }
 
 // Remastered's PROT of [KPIN]([RADD(EXTR, ]REUL(0, 0, z, #00))): q = orientation (or identity) * Rz(z
-// degrees) (CERotationEuler 0x29c944, RADD = a * b), drawn as m = q * Rx(-90) like PortRazyOrientation.
+// degrees) (CERotationEuler 0x29c944, RADD = a * b), drawn as m = Q * Rx(-90) like PortRazyOrientation,
+// Q = B * q: [R *] B * Rz(z) in the port's space.
 CTransform4f CParticleSwoosh::PortRotZOrientation() const {
   float degrees = 0.f;
   x1c_desc->xPortRotZ->GetValue(x28_curFrame, degrees);
-  CTransform4f q = CTransform4f::RotateZ(CRelAngle::FromDegrees(degrees));
-  if (x1c_desc->xPortRotOriented) {
-    q = x44_orientation.GetRotation() * q;
+  const CTransform4f q = CTransform4f::RotateZ(CRelAngle::FromDegrees(degrees));
+  CVector3f columns[3];
+  for (int i = 0; i < 3; ++i) {
+    const CVector3f c = q.GetColumn(i);
+    columns[i] = CVector3f(-c.GetX(), c.GetZ(), c.GetY());
+    if (x1c_desc->xPortRotOriented) {
+      columns[i] = x44_orientation.Rotate(columns[i]);
+    }
   }
-  return CTransform4f::FromColumns(q.GetColumn(kDX), -q.GetColumn(kDZ), q.GetColumn(kDY),
-                                   CVector3f(0.f, 0.f, 0.f));
+  return CTransform4f::FromColumns(columns[0], -columns[2], columns[1], CVector3f(0.f, 0.f, 0.f));
 }
 #endif
 

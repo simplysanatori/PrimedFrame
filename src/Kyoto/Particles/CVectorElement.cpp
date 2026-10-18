@@ -509,6 +509,19 @@ bool CVEPortNormalize::GetValue(int frame, CVector3f& valOut) const {
   return false;
 }
 
+CVEPortBasis::CVEPortBasis(CVectorElement* a, bool scale) : mA(a), mScale(scale) {}
+
+CVEPortBasis::~CVEPortBasis() { delete mA; }
+
+bool CVEPortBasis::GetValue(int frame, CVector3f& valOut) const {
+  CVector3f v = CVector3f::Zero();
+  const bool ret = mA ? mA->GetValue(frame, v) : false;
+  valOut = CVector3f(mScale ? v.GetX() : -v.GetX(), v.GetZ(), v.GetY());
+  return ret;
+}
+
+bool CVEPortBasis::IsFastConstant() const { return mA != nullptr && mA->IsFastConstant(); }
+
 bool CVEPortSystemVector::GetValue(int, CVector3f& valOut) const {
   valOut = CVector3f::Zero();
   CParticleGlobals::SParticleSystem* sys = CParticleGlobals::GetCurrentParticleSystem();
