@@ -63,6 +63,66 @@ Select* PortReadSelect(CInputStream& in, Element* (*readEntry)(CInputStream&)) {
   return rs_new Select(index, std::move(entries));
 }
 
+// SPA*/DPV*/TPV* (the converter's parent reads): n or a PVAR guid, then the fallback.
+template < class Read, class Element >
+Element* PortReadParentVar(CInputStream& in, EPortParentRead kind, Element* (*get)(CInputStream&)) {
+  SPortParentRead read;
+  read.kind = kind;
+  if (kind == EPortParentRead::System) {
+    read.n = in.ReadLong();
+  } else {
+    in.ReadBytes(read.guid.bytes.data(), 16);
+  }
+  Element* fallback = get(in);
+  if (fallback == nullptr) {
+    return nullptr;
+  }
+  return rs_new Read(read, fallback);
+}
+
+// A PSYS body (after the CNST class id): u32 count, then per item u32 type, slot and
+// init-only flag and the element. Null on a malformed one.
+CPortSys* PortReadSys(CInputStream& in) {
+  const u32 count = in.ReadLong();
+  if (count > 256) {
+    return nullptr;
+  }
+  std::unique_ptr< CPortSys > sys(new CPortSys());
+  sys->items.resize(count);
+  for (SPortSysItem& item : sys->items) {
+    const u32 type = in.ReadLong();
+    item.slot = in.ReadLong();
+    item.initOnly = in.ReadLong() != 0;
+    if (type > static_cast< u32 >(EPortVarType::Vector) || item.slot > 255) {
+      return nullptr;
+    }
+    item.type = static_cast< EPortVarType >(type);
+    bool ok = false;
+    switch (item.type) {
+    case EPortVarType::Real:
+      ok = (item.real = CParticleDataFactory::GetRealElement(in)) != nullptr;
+      break;
+    case EPortVarType::Int:
+      ok = (item.intE = CParticleDataFactory::GetIntElement(in)) != nullptr;
+      break;
+    case EPortVarType::Color:
+      ok = (item.color = CParticleDataFactory::GetColorElement(in)) != nullptr;
+      break;
+    default:
+      ok = (item.vec = CParticleDataFactory::GetVectorElement(in)) != nullptr;
+      break;
+    }
+    if (!ok) {
+      return nullptr;
+    }
+    sys->counts[type] = std::max(sys->counts[type], item.slot + 1);
+    if (!item.initOnly && item.slot < 10) {
+      sys->defined[type] |= 1u << item.slot;
+    }
+  }
+  return sys.release();
+}
+
 enum EPortKssmKind { kPKK_Real, kPKK_Vector, kPKK_Rotation };
 
 // One node of a PKSM component tree (the converter's Writer::Component*), appended to kssm.nodes
@@ -87,6 +147,7 @@ bool PortReadKssmNode(CInputStream& in, CGenDescription::PortKssm& kssm,
       node.value = in.ReadFloat();
       break;
     case SBIG('VARF'):
+    case SBIG('PSYR'):
       node.slot = in.ReadLong();
       break;
     case SBIG('KEYE'): {
@@ -501,6 +562,11 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortVars.reset(PortReadVarTable(in));
       break;
+    // Port-only Remastered system variables (PSYS); a malformed one leaves none.
+    case SBIG('PSYS'):
+      GetClassID(in);
+      desc->xPortSys.reset(PortReadSys(in));
+      break;
     // Port-only marker of a converted Remastered PART (xPortIrnd).
     case SBIG('PIRN'):
       GetClassID(in);
@@ -851,6 +917,12 @@ CIntElement* CParticleDataFactory::GetIntElement(CInputStream& in) {
   // Port-only VARI: a Remastered particle variable of the system being evaluated (PVRT index).
   case SBIG('VARI'):
     return rs_new CIEPortVar(in.ReadLong());
+  case SBIG('SPAI'):
+    return PortReadParentVar< CIEPortParentVar >(in, EPortParentRead::System, &GetIntElement);
+  case SBIG('DPVI'):
+    return PortReadParentVar< CIEPortParentVar >(in, EPortParentRead::Direct, &GetIntElement);
+  case SBIG('TPVI'):
+    return PortReadParentVar< CIEPortParentVar >(in, EPortParentRead::Topmost, &GetIntElement);
 #endif
   case SBIG('CNST'): {
     return rs_new CIEConstant(GetInt(in));
@@ -965,6 +1037,15 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
   // Port-only VARF: a Remastered particle variable of the system being evaluated (PVRT index).
   case SBIG('VARF'):
     return rs_new CREPortVar(in.ReadLong());
+  // Port-only PSYR: a PSYS real slot of the system being evaluated.
+  case SBIG('PSYR'):
+    return rs_new CREPortSysVar(in.ReadLong());
+  case SBIG('SPAF'):
+    return PortReadParentVar< CREPortParentVar >(in, EPortParentRead::System, &GetRealElement);
+  case SBIG('DPVF'):
+    return PortReadParentVar< CREPortParentVar >(in, EPortParentRead::Direct, &GetRealElement);
+  case SBIG('TPVF'):
+    return PortReadParentVar< CREPortParentVar >(in, EPortParentRead::Topmost, &GetRealElement);
   case SBIG('SLCT'):
     return PortReadSelect< CREPortSelect >(in, &CParticleDataFactory::GetRealElement);
 #endif
@@ -1169,6 +1250,12 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
   case SBIG('VARV'):
     ret = rs_new CVEPortVar(in.ReadLong());
     break;
+  case SBIG('SPAV'):
+    return PortReadParentVar< CVEPortParentVar >(in, EPortParentRead::System, &GetVectorElement);
+  case SBIG('DPVV'):
+    return PortReadParentVar< CVEPortParentVar >(in, EPortParentRead::Direct, &GetVectorElement);
+  case SBIG('TPVV'):
+    return PortReadParentVar< CVEPortParentVar >(in, EPortParentRead::Topmost, &GetVectorElement);
   case SBIG('SLCT'):
     return PortReadSelect< CVEPortSelect >(in, &CParticleDataFactory::GetVectorElement);
   case SBIG('RNDV'):
@@ -1512,6 +1599,12 @@ CColorElement* CParticleDataFactory::GetColorElement(CInputStream& in) {
   case SBIG('VARC'):
     ret = rs_new CCEPortVar(in.ReadLong());
     break;
+  case SBIG('SPAC'):
+    return PortReadParentVar< CCEPortParentVar >(in, EPortParentRead::System, &GetColorElement);
+  case SBIG('DPVC'):
+    return PortReadParentVar< CCEPortParentVar >(in, EPortParentRead::Direct, &GetColorElement);
+  case SBIG('TPVC'):
+    return PortReadParentVar< CCEPortParentVar >(in, EPortParentRead::Topmost, &GetColorElement);
   case SBIG('MULT'): {
     CColorElement* a = GetColorElement(in);
     CColorElement* b = GetColorElement(in);

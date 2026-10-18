@@ -72,6 +72,8 @@ CParticleSwoosh::CParticleSwoosh(const TToken< CSwooshDescription > desc, const 
   int i = 0;
 #ifdef TARGET_PC
   xPortVars.Init(x1c_desc->xPortVars.get());
+  // The generator that builds this swoosh, for SPA*/DPV*/TPV*.
+  xPortVars.SetParent(CPortVarGlobals::sCurrent);
   CPortVarScope portVarScope(&xPortVars);
 #endif
   CGlobalRandom _(x1c0_rand);

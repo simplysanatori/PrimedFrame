@@ -149,6 +149,8 @@ public:
   CRealElement* xPortNestedLightOuterRadius = nullptr;
   // port-only PVRT: Remastered particle variables (names, types, defaults)
   std::unique_ptr< CPortVarTable > xPortVars;
+  // Port-only PSYS: the system variables (CElementGen::PortEvalSys).
+  std::unique_ptr< CPortSys > xPortSys;
   // port-only PFCM: each model particle is turned to face the camera before PMRT
   bool xPortFaceCamera = false;
   // port-only PSHP: Remastered SSHP sprite mesh (0 quad; 3 triangle, 4 pentagon, 5 hexagon, 6 octagon)

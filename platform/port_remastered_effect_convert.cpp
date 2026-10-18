@@ -257,13 +257,71 @@ bool IsElement(const EffectValue& value, uint32_t fourcc) {
   return value.kind == EffectValue::Kind::Element && value.fourcc == fourcc;
 }
 
-bool IsParameterRead(uint32_t fourcc) {
-  for (uint32_t read : {F("SPAF"), F("SPAC"), F("SPAV"), F("TPVF"), F("TPVC"), F("TPVV"), F("DPVF"), F("DPVC"), F("DPVV")}) {
-    if (fourcc == read) {
-      return true;
+// SPAF/SPAI/SPAC/SPAV(#n, fallback): the parent system's additional variable n
+// (GetRealElement 0x260de4: CElementParentAddlVar over SAddVarAddress(ctx 0, n),
+// AddParentAddlVarRef). DPV*/TPV*(guid, fallback): the direct or topmost parent's
+// PVAR variable (AddDirectParentExtVarRef 0x25584c, AddTopmostParentExtVarRef
+// 0x255bf4). Each of the type it is read as.
+bool IsParentRead(uint32_t fourcc, Type type) {
+  switch (type) {
+  case Type::Real:
+    return fourcc == F("SPAF") || fourcc == F("DPVF") || fourcc == F("TPVF");
+  case Type::Int:
+    return fourcc == F("SPAI") || fourcc == F("DPVI") || fourcc == F("TPVI");
+  case Type::Color:
+    return fourcc == F("SPAC") || fourcc == F("DPVC") || fourcc == F("TPVC");
+  case Type::Vector:
+    return fourcc == F("SPAV") || fourcc == F("DPVV") || fourcc == F("TPVV");
+  default:
+    return false;
+  }
+}
+
+// PSA0..PSA9: the system's own additional real n, or -1.
+int SystemRealRead(uint32_t fourcc) {
+  return fourcc >= F("PSA0") && fourcc <= F("PSA9") ? int(fourcc - F("PSA0")) : -1;
+}
+
+// SVR0..9, SVI0..9, SVC0..9, SVV0..9: the system's additional variables, as
+// (EPortVarType, n), or type ~0u.
+std::pair<uint32_t, uint32_t> SystemVarWrite(uint32_t fourcc) {
+  const uint32_t prefix = fourcc & 0xffffff00u;
+  const uint32_t digit = fourcc & 0xffu;
+  if (digit < '0' || digit > '9') {
+    return {~0u, 0};
+  }
+  const uint32_t type = prefix == (F("SVR0") & 0xffffff00u)   ? 0
+                        : prefix == (F("SVI0") & 0xffffff00u) ? 1
+                        : prefix == (F("SVC0") & 0xffffff00u) ? 2
+                        : prefix == (F("SVV0") & 0xffffff00u) ? 3
+                                                               : ~0u;
+  return {type, digit - '0'};
+}
+
+// The PSAn the value reads anywhere, as a bit mask.
+uint32_t SystemReadsOf(const EffectValue& value) {
+  uint32_t mask = 0;
+  if (value.kind == EffectValue::Kind::Element) {
+    const int n = SystemRealRead(value.fourcc);
+    if (n >= 0 && value.args.empty()) {
+      mask |= 1u << n;
     }
   }
-  return false;
+  for (const EffectValue& arg : value.args) {
+    mask |= SystemReadsOf(arg);
+  }
+  return mask;
+}
+
+// Whether IElement::IsConstant holds: a CNST of words or of constants.
+bool IsConstantValue(const EffectValue& value) {
+  if (value.kind == EffectValue::Kind::Word || value.kind == EffectValue::Kind::Byte) {
+    return true;
+  }
+  if (!IsElement(value, F("CNST")) || value.args.empty()) {
+    return false;
+  }
+  return std::all_of(value.args.begin(), value.args.end(), IsConstantValue);
 }
 
 // CNST holding one word (an int, or a real's bits).
@@ -757,6 +815,28 @@ struct PvarEntry {
   float def[4];
 };
 
+// One item of the port-only PSYS: the variable's EPortVarType and slot, whether
+// only CAddVarSystem::Init evaluates it, and its element.
+struct SystemItem {
+  uint32_t type;
+  uint32_t slot;
+  uint32_t initOnly;
+  std::vector<uint8_t> element;
+};
+
+// A zero of `type` as a retail CNST.
+void Zero(Type type, std::vector<uint8_t>& out) {
+  AppendBE32(out, F("CNST"));
+  const int reals = type == Type::Vector ? 3 : type == Type::Color ? 4 : 0;
+  if (reals == 0) {
+    AppendBE32(out, 0);  // an int's 0 and a real's bits
+  }
+  for (int i = 0; i < reals; ++i) {
+    AppendBE32(out, F("CNST"));
+    AppendBE32(out, 0);
+  }
+}
+
 uint32_t VarTypeOf(uint32_t fourcc) {
   return fourcc == F("VARF") ? 0 : fourcc == F("VARI") ? 1 : fourcc == F("VARC") ? 2 : 3;
 }
@@ -777,6 +857,33 @@ public:
     if (value.kind != EffectValue::Kind::Element) {
       why = "a bare value where retail reads an element";
       return false;
+    }
+    // In a system variable, KPIN(x) and IRND(a, b) are evaluated once, by
+    // CAddVarSystem::Init (CComplexKeepInitial::RebaseComplexOp; IRND is
+    // CRERandomConstant): each becomes a hidden init-only real the tree reads.
+    if (m_sysItems != nullptr && type == Type::Real &&
+        ((value.fourcc == F("KPIN") && value.args.size() == 1) ||
+         (value.fourcc == F("IRND") && value.args.size() == 2))) {
+      SystemItem hidden{0, m_sysNextHidden++, 1, {}};
+      if (value.fourcc == F("IRND")) {
+        AppendBE32(hidden.element, F("RAND"));
+        if (!Element(value.args[0], type, hidden.element, why) || !Element(value.args[1], type, hidden.element, why)) {
+          return false;
+        }
+      } else if (!Element(value.args[0], type, hidden.element, why)) {
+        return false;
+      }
+      AppendBE32(out, F("PSYR"));
+      AppendBE32(out, hidden.slot);
+      m_sysItems->push_back(std::move(hidden));
+      return true;
+    }
+    // PSA0..PSA9: the system's own additional real n (GetRealElement 0x260de4:
+    // AddRefVar(ctx 0, real, n)), which its SVRn sets. The port-only PSYR and n.
+    if (type == Type::Real && value.args.empty() && SystemRealRead(value.fourcc) >= 0) {
+      AppendBE32(out, F("PSYR"));
+      AppendBE32(out, uint32_t(SystemRealRead(value.fourcc)));
+      return true;
     }
     // MPCB wraps Remastered's vectors; its cartesian form is the vector itself,
     // and MPCB(MPAC(x bias, y bias, x range, y range), magnitude) is retail's
@@ -934,12 +1041,29 @@ public:
       AppendBE32(out, FloatBits(1.0f));
       return true;
     }
-    // SPAF/SPAC/SPAV(#n, default) read an effect parameter the game passes in,
-    // TPVF/TPVC/TPVV and DPVF/DPVC/DPVV(guid, default) a named one; retail
-    // passes none, so they are taken as their default.
-    if (value.args.size() == 2 && IsParameterRead(value.fourcc)) {
-      m_approximated.push_back(EffectFourCCString(value.fourcc) + " taken as its default");
-      return Element(value.args[1], type, out, why);
+    // A parent's variable (IsParentRead), as the port-only element of the same
+    // fourcc: n (SPA*) or the guid (DPV*/TPV*), then the fallback. The fallback
+    // is read only when the parent has no such variable, and only a constant
+    // one (CREParentAdditionalValue::GetValue 0x296824); any other reads 0. An
+    // n above 9 is never a variable (0xff).
+    if (value.args.size() == 2 && IsParentRead(value.fourcc, type)) {
+      const bool slot = (value.fourcc & 0xffffff00u) == (F("SPAF") & 0xffffff00u);
+      if (slot ? (value.args[0].kind != EffectValue::Kind::Byte && value.args[0].kind != EffectValue::Kind::Word)
+               : value.args[0].kind != EffectValue::Kind::Guid) {
+        why = EffectFourCCString(value.fourcc) + " without its variable";
+        return false;
+      }
+      AppendBE32(out, value.fourcc);
+      if (slot) {
+        AppendBE32(out, value.args[0].word > 9 ? 0xffu : value.args[0].word);
+      } else {
+        out.insert(out.end(), value.args[0].guid.begin(), value.args[0].guid.end());
+      }
+      if (IsConstantValue(value.args[1])) {
+        return Element(value.args[1], type, out, why);
+      }
+      Zero(type, out);
+      return true;
     }
     // VARF/VARI/VARV/VARC(guid): the generator's own variable. Port-only elements, written as
     // the fourcc and the variable's index in the PVRT table (PVAR guid order).
@@ -1915,7 +2039,7 @@ public:
       AppendBE32(out, fourcc);
       return Literal(value, Type::Real, out, why);
     }
-    if (fourcc == F("VARF")) {
+    if (fourcc == F("VARF") || (value.args.empty() && SystemRealRead(fourcc) >= 0)) {
       return Element(value, Type::Real, out, why);
     }
     if (fourcc == F("KEYE") && value.args.size() == 1) {
@@ -2768,6 +2892,77 @@ public:
         ReadVariables(property.value[0]);
       }
     }
+    // A generator's SVRn/SVIn/SVCn/SVVn: CAddVarSystem's own variables, which
+    // PSAn and children's SPA* read. Written as the port-only PSYS, in the order
+    // CElementGen evaluates them: an item after the reals it reads (PSAn of
+    // another SVRn), else by property order, each after its hidden init-only
+    // reals. [I] the order of RAND draws among items is not proven.
+    std::vector<SystemItem> sysItems;
+    if (part) {
+      struct Pending {
+        const EffectProperty* property;
+        uint32_t type;
+        uint32_t n;
+        uint32_t reads;
+      };
+      std::vector<Pending> pending;
+      uint32_t writtenReals = 0;
+      for (const EffectProperty& property : node.properties) {
+        const auto [varType, n] = SystemVarWrite(property.fourcc);
+        if (varType == ~0u) {
+          continue;
+        }
+        uint32_t reads = 0;
+        for (const EffectValue& value : property.value) {
+          reads |= SystemReadsOf(value);
+        }
+        pending.push_back({&property, varType, n, reads});
+        if (varType == 0) {
+          writtenReals |= 1u << n;
+        }
+      }
+      m_sysNextHidden = 10;
+      uint32_t doneReals = 0;
+      std::vector<bool> done(pending.size(), false);
+      for (size_t emitted = 0; emitted < pending.size(); ++emitted) {
+        size_t pick = pending.size();
+        for (size_t i = 0; i < pending.size() && pick == pending.size(); ++i) {
+          const uint32_t self = pending[i].type == 0 ? 1u << pending[i].n : 0;
+          if (!done[i] && (pending[i].reads & writtenReals & ~doneReals & ~self) == 0) {
+            pick = i;
+          }
+        }
+        for (size_t i = 0; i < pending.size() && pick == pending.size(); ++i) {
+          if (!done[i]) {
+            pick = i;  // a cycle: property order
+          }
+        }
+        done[pick] = true;
+        const Pending& item = pending[pick];
+        if (item.type == 0) {
+          doneReals |= 1u << item.n;
+        }
+        static constexpr Type kTypes[4] = {Type::Real, Type::Int, Type::Color, Type::Vector};
+        const std::string name = EffectFourCCString(item.property->fourcc);
+        std::vector<SystemItem> items;
+        SystemItem visible{item.type, item.n, 0, {}};
+        std::string why;
+        const uint32_t hidden = m_sysNextHidden;
+        m_sysItems = &items;
+        const bool ok = item.property->value.size() == 1 &&
+                        Element(item.property->value[0], kTypes[item.type], visible.element, why);
+        m_sysItems = nullptr;
+        if (!ok) {
+          m_sysNextHidden = hidden;
+          result.dropped.push_back(name + ": " + (why.empty() ? "not one element" : why));
+          continue;
+        }
+        items.push_back(std::move(visible));
+        for (SystemItem& sys : items) {
+          sysItems.push_back(std::move(sys));
+        }
+      }
+    }
     bool texture = false;
     uint32_t pmdl = 0;          // the PMDL's id, when it is one constant
     bool pmdlVariants = false;  // a PMDV was written (a mesh would cover only one model)
@@ -3077,6 +3272,9 @@ public:
         }
         continue;
       }
+      if (part && SystemVarWrite(property.fourcc).first != ~0u) {
+        continue;  // written as PSYS
+      }
       const auto found = retail.find(fourcc);
       if (found == retail.end()) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": Remastered only");
@@ -3236,6 +3434,19 @@ public:
         }
       }
     }
+    if (!sysItems.empty()) {
+      // Port-only: the system variables in evaluation order; each is its
+      // EPortVarType, slot, init-only flag and element (CPortSysItem).
+      AppendBE32(out, F("PSYS"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, uint32_t(sysItems.size()));
+      for (const SystemItem& item : sysItems) {
+        AppendBE32(out, item.type);
+        AppendBE32(out, item.slot);
+        AppendBE32(out, item.initOnly);
+        out.insert(out.end(), item.element.begin(), item.element.end());
+      }
+    }
     if (part || swoosh) {
       // Port-only: nested IRND elements are evaluated once per particle and element, not at frame 0
       // only (xPortIrnd). Marks every converted PART; retail's own PARTs do not have it.
@@ -3285,6 +3496,8 @@ private:
   const uint8_t* m_data;
   const EffectConvertIO& m_io;
   mutable std::vector<PvarEntry> m_vars;            // the PVAR of the generator being written
+  mutable std::vector<SystemItem>* m_sysItems = nullptr;  // set while an SVR/SVI/SVC/SVV is written
+  mutable uint32_t m_sysNextHidden = 10;            // the next hidden init-only real
   mutable std::vector<std::string> m_approximated;  // for the generator being written
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
   mutable int32_t m_lifetime = 0;                   // its constant lifetime in frames, or 0
@@ -3341,6 +3554,16 @@ public:
     if ((fourcc == F("VARF") && type == Type::Real) || (fourcc == F("VARI") && type == Type::Int) ||
         (fourcc == F("VARV") && type == Type::Vector) || (fourcc == F("VARC") && type == Type::Color)) {
       return Skip(4);
+    }
+    // Port-only PSYR: a PSYS slot.
+    if (fourcc == F("PSYR") && type == Type::Real) {
+      return Skip(4);
+    }
+    // SPA*: the parent's system variable n, then the fallback; DPV*/TPV*: a
+    // PVAR guid, then the fallback.
+    if (IsParentRead(fourcc, type)) {
+      const bool guid = (fourcc >> 24) != 'S';
+      return Skip(guid ? 16 : 4) && Element(type);
     }
     // Port-only RNDV: the magnitude as a real element.
     if (fourcc == F("RNDV") && type == Type::Vector) {
@@ -3529,6 +3752,27 @@ public:
     return Word(fourcc) && fourcc == F("CNST") && Word(count) && count <= 4096 && Skip(size_t(count) * 36);
   }
 
+  // The port-only PSYS property: CNST, a count, then per item its type, slot,
+  // init-only flag and element.
+  bool PortSystemVars() {
+    static constexpr Type kTypes[4] = {Type::Real, Type::Int, Type::Color, Type::Vector};
+    uint32_t fourcc, count;
+    if (!Word(fourcc) || fourcc != F("CNST") || !Word(count) || count > 256) {
+      return false;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+      uint32_t type, slot, initOnly;
+      if (!Word(type) || type > 3 || !Word(slot) || slot > 255 || !Word(initOnly) || initOnly > 1 ||
+          !Element(kTypes[type])) {
+        if (m_error.empty()) {
+          m_error = "bad PSYS";
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
   // The port-only PSWX property: CNST, a count, then an id and a frame each.
   bool PortExtraSwooshes() {
     uint32_t fourcc, count;
@@ -3603,7 +3847,7 @@ public:
     if (depth > 64 || !Word(fourcc)) {
       return false;
     }
-    if (fourcc == F("CNST") || fourcc == F("VARF")) {
+    if (fourcc == F("CNST") || fourcc == F("VARF") || fourcc == F("PSYR")) {
       return Skip(4);
     }
     if (fourcc == F("KEYE")) {
@@ -3734,6 +3978,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortWord();
     } else if (vfx && fourcc == F("PVRT")) {
       ok = reader.PortVariables();
+    } else if (part && fourcc == F("PSYS")) {
+      ok = reader.PortSystemVars();
     } else if (part && fourcc == F("PSWX")) {
       ok = reader.PortExtraSwooshes();
     } else if (part && fourcc == F("PKSM")) {

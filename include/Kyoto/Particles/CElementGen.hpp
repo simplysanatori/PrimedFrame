@@ -423,6 +423,7 @@ private:
   bool xPortMoverInit = false;
   bool PortHasMover() const;
   void PortInitMover();
+  void PortEvalSys(bool init);
   void PortStepMover();
   void PortVfxUpdateSystem();
   // XFMD 3/4: the spawn-baked part of the emitter's transform, and moving the live particles from

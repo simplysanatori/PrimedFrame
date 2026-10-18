@@ -196,6 +196,9 @@ CElementGen::CElementGen(TToken< CGenDescription > gen, EModelOrientationType or
 {
 #ifdef TARGET_PC
   xPortVars.Init(x28_loadedGenDesc->xPortVars.get());
+  xPortVars.InitSys(x28_loadedGenDesc->xPortSys.get());
+  // A child is built inside its parent's update (or constructor), whose memory is current.
+  xPortVars.SetParent(CPortVarGlobals::sCurrent);
   CPortVarScope portVarScope(&xPortVars);
   const bool portChildSeed = sPortChildSeedSet;
   sPortChildSeedSet = false;
@@ -622,6 +625,10 @@ const bool CElementGen::Update(double dt) {
 #ifdef TARGET_PC
   CPortVarScope portVarScope(&xPortVars);
   if (!xPortMoverInit) {
+    // CAddVarSystem::Init 0x278438: every system variable once, on the generator's random.
+    CGlobalRandom gr(x27c_randState);
+    CParticleGlobals::SetEmitterTime(x74_curFrame);
+    PortEvalSys(true);
     PortInitMover();
   }
 #endif
@@ -1210,6 +1217,8 @@ float CElementGen::PortKssmReal(PortKssmChild& state, u32 index) {
     return node.value;
   case 'VARF':
     return CPortVarGlobals::sCurrent != nullptr ? CPortVarGlobals::sCurrent->Real(node.slot) : 0.f;
+  case 'PSYR':
+    return xPortVars.SysReal(node.slot);
   case 'KEYE': {
     // GetAnimTime on the parent's frame.
     const int end = int(node.keys.size()) - 1;
@@ -1378,9 +1387,46 @@ void CElementGen::PortInitMover() {
   PortKssmEvaluate(xPortMover);
 }
 
+// The system variables in PSYS order, at the emitter's frame: all of them (CAddVarSystem::Init
+// 0x278438) or those that are not init-only (CAddVarSystem::Update 0x278638). [I] Remastered
+// keeps separate Init and Update lists; their order is taken as PSYS's.
+void CElementGen::PortEvalSys(bool init) {
+  const CPortSys* sys = x28_loadedGenDesc->xPortSys.get();
+  if (sys == nullptr) {
+    return;
+  }
+  const int frame = x74_curFrame;
+  for (const SPortSysItem& item : sys->items) {
+    if (item.initOnly && !init) {
+      continue;
+    }
+    std::array< float, 4 > v{};
+    switch (item.type) {
+    case EPortVarType::Real:
+      item.real->GetValue(frame, v[0]);
+      break;
+    case EPortVarType::Int: {
+      int i = 0;
+      item.intE->GetValue(frame, i);
+      v[0] = static_cast< float >(i);
+    } break;
+    case EPortVarType::Color:
+      item.color->GetValueHdr(frame, v.data());
+      break;
+    default: {
+      CVector3f vec;
+      item.vec->GetValue(frame, vec);
+      v = {vec.GetX(), vec.GetY(), vec.GetZ(), 0.f};
+    } break;
+    }
+    xPortVars.SetSys(item.type, item.slot, v);
+  }
+}
+
 // CAddVarSystem::Update at the start of each tick (TickSystem_Complete 0x24ac98), before the
 // particles update and spawn. The live particles stay put in the mover's frame.
 void CElementGen::PortStepMover() {
+  PortEvalSys(false);
   if (xPortMover.kssm == nullptr) {
     return;
   }

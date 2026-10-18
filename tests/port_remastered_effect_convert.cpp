@@ -1802,24 +1802,59 @@ void TestGpuAvailability() {
             "GPUA is listed as approximated");
 }
 
-// SPAF(index, default) reads an effect parameter the game passes in; retail
-// passes none, so it is its default.
-void TestParameterDefault() {
+// SPAF(n, fallback) reads the parent system's variable n (CElementParentAddlVar):
+// kept as SPAF, n and the fallback, which only a constant keeps; n above 9 is 0xff.
+void TestParentRead() {
   auto parts = ConvertOne(OneGenerator([](auto& o) {
                  PutProperty(o, "SIZE", 3);
                  PutFourCC(o, "SPAF");
                  o.push_back(5);
                  PutConstant(o, Bits(2.5f));
+                 PutProperty(o, "ROTA", 3);
+                 PutFourCC(o, "SPAF");
+                 o.push_back(12);
+                 PutFourCC(o, "RAND");
+                 PutConstant(o, Bits(1.f));
+                 PutConstant(o, Bits(2.f));
                  PutTexr(o, 0x1234ABCD);
                }),
                {});
   Retail want;
-  want.f("GPSM").f("SIZE").f("CNST").w(Bits(2.5f));
+  want.f("GPSM").f("SIZE").f("SPAF").w(5).f("CNST").w(Bits(2.5f));
+  want.f("ROTA").f("MULT").f("SPAF").w(0xff).f("CNST").w(0).f("CNST").w(Bits(-1.f));  // ROTA is negated
   want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
-  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "SPAF becomes its default");
-  CHECK_MSG(!parts.empty() && parts[0].approximated.size() == 1 &&
-                parts[0].approximated[0] == "SPAF taken as its default",
-            "SPAF is listed as approximated");
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "SPAF keeps n and a constant fallback");
+  CHECK_MSG(!parts.empty() && parts[0].approximated.empty() && parts[0].dropped.empty(),
+            "SPAF is exact");
+}
+
+// SVRn is the system's own variable n, which PSAn reads: the port-only PSYS, in
+// dependency order, with IRND/KPIN hoisted into hidden init-only reals (slot 10 up).
+void TestSystemVars() {
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "SVR4", 3);
+                 PutFourCC(o, "MULT");
+                 PutFourCC(o, "PSA3");
+                 PutConstant(o, Bits(2.f));
+                 PutProperty(o, "SVR3", 3);
+                 PutFourCC(o, "IRND");
+                 PutConstant(o, Bits(1.f));
+                 PutConstant(o, Bits(3.f));
+                 PutProperty(o, "SIZE", 3);
+                 PutFourCC(o, "PSA4");
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail want;
+  want.f("GPSM").f("SIZE").f("PSYR").w(4);
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
+  want.f("PSYS").f("CNST").w(3);
+  want.w(0).w(10).w(1).f("RAND").f("CNST").w(Bits(1.f)).f("CNST").w(Bits(3.f));
+  want.w(0).w(3).w(0).f("PSYR").w(10);
+  want.w(0).w(4).w(0).f("MULT").f("PSYR").w(3).f("CNST").w(Bits(2.f));
+  want.end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "SVR3/SVR4 become PSYS in dependency order");
+  CHECK_MSG(!parts.empty() && parts[0].dropped.empty(), "nothing dropped");
 }
 
 // An order-0 PMRQ REUL is one PMRT Euler vector. Preserve its angle expressions,
@@ -3233,7 +3268,8 @@ int main() {
   TestDrawsNothing();
   TestBlendMode();
   TestGpuAvailability();
-  TestParameterDefault();
+  TestParentRead();
+  TestSystemVars();
   TestModelRotation();
   TestComposedModelRotation();
   TestModelRotationBasisEvaluation();
