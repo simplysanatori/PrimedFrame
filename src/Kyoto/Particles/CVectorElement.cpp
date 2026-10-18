@@ -567,6 +567,14 @@ bool CVEPortSystemVector::GetValue(int, CVector3f& valOut) const {
   case 'EXTS':
     valOut = gen.PortExternalScale();
     break;
+  case 'EXTR': {
+    // The rotation element EXTR (AddRefVar(0, 4, 10), GetRotationElement 0x25d59c) reads the system
+    // orientation; inside a PMRQ tree it is an Euler vector in Remastered's particle space, where
+    // the quaternion's axis is (-x, z, y).
+    const CQuaternion q = gen.PortExternalRotation();
+    valOut = EulerDegreesFromQuaternion(
+        CQuaternion(q.GetScalar(), CVector3f(-q.AxisX(), q.AxisZ(), q.AxisY())));
+  } break;
   case 'CMPS':
     // CVECameraPositionInWorldSpace 0x2a23ec: GetCameraTransform 0x27b304's translation; the view
     // matrix is camera-to-world.

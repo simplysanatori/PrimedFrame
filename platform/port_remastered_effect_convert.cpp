@@ -168,9 +168,10 @@ const Signatures& ElementsOf(Type type) {
       {F("PVEL"), ""},      {F("PSOF"), ""},    {F("PSOU"), ""},   {F("PSOR"), ""},    {F("PSTR"), ""},
       {F("SUB_"), "vv"},    {F("CTVC"), "c"},     {F("PQAD"), "vv"},
       // Port-only (CParticleDataFactory under TARGET_PC): NORM, and the generator's system
-      // vectors (camera in world and in system space, external translation and scale), and PRZY.
+      // vectors (camera in world and in system space, external translation, scale and rotation as
+      // Euler degrees), and PRZY.
       {F("NORM"), "v"},     {F("CMPS"), ""},      {F("CPSS"), ""},      {F("EXTT"), ""},
-      {F("EXTS"), ""},      {F("PRZY"), "vvv"},
+      {F("EXTS"), ""},      {F("EXTR"), ""},      {F("PRZY"), "vvv"},
       // Port-only CVEPortBasis: Remastered's particle space to retail's and back.
       {F("BSIS"), "v"},     {F("BSSC"), "v"},
   };
@@ -1247,32 +1248,38 @@ public:
     return true;
   }
 
+  // The Remastered particle basis B = (90, 0, 180) in PMRT's Euler convention: (-x, z, y), the
+  // model converter's default basis. B is self-inverse.
+  static void AppendRotationBasis(std::vector<uint8_t>& out) {
+    AppendBE32(out, F("CNST"));
+    for (const float angle : {90.f, 0.f, 180.f}) {
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, FloatBits(angle));
+    }
+  }
+
   // PMDL meshes are converted from Remastered coordinates with the model
-  // converter's default basis B = (90, 0, 180) in PMRT's Euler convention.
-  // Conjugate the source rotation by B so it remains in the converted model's
-  // frame: PQAD(B, PQAD(R, B)) is B * R * B^-1 (B is self-inverse). R is
+  // converter's basis B. Conjugate the source rotation by B so it remains in the
+  // converted model's frame: PQAD(B, PQAD(R, B)) is B * R * B^-1. R is
   // written as an Euler vector by SourceRotation; Element() preserves each real
   // expression, including nested IRND, and the PART's PIRN marker keeps those
-  // samples stable per particle.
+  // samples stable per particle. A top-level MPCB(R) is B * R * B already
+  // (0x29d69c), so it conjugates back to R.
   bool ModelRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
     if (value.size() != 1) {
-      why = "a rotation that is not REUL/RADD/RAZY";
+      why = "a rotation that is not REUL/RADD/RAZY/MPCB/EXTR";
       return false;
     }
-    const auto appendBasis = [&]() {
-      AppendBE32(out, F("CNST"));
-      for (const float angle : {90.f, 0.f, 180.f}) {
-        AppendBE32(out, F("CNST"));
-        AppendBE32(out, FloatBits(angle));
-      }
-    };
+    if (IsElement(value[0], F("MPCB")) && value[0].args.size() == 1) {
+      return SourceRotation(value[0].args[0], out, why);
+    }
     AppendBE32(out, F("PQAD"));
-    appendBasis();
+    AppendRotationBasis(out);
     AppendBE32(out, F("PQAD"));
     if (!SourceRotation(value[0], out, why)) {
       return false;
     }
-    appendBasis();
+    AppendRotationBasis(out);
     return true;
   }
 
@@ -1281,6 +1288,8 @@ public:
   // RAZY(first, second, fallback) -> the port-only PRZY (CERotationFromAxis 0x29d1bc as
   // GetRotationElement 0x25e418 builds it: Z = first, X = second x Z, Y = Z x X, or the
   // fallback when either is degenerate). PRZY's vectors stay in Remastered's space.
+  // MPCB(r) -> PQAD(B, PQAD(r, B)) (qB * r * qB, 0x29d69c); EXTR (AddRefVar(0, 4, 10),
+  // GetRotationElement 0x25d59c) -> the port-only EXTR vector, the system orientation.
   bool SourceRotation(const EffectValue& rot, std::vector<uint8_t>& out, std::string& why) const {
     if (IsElement(rot, F("REUL")) && rot.args.size() == 4) {
       const EffectValue& order = rot.args[3];
@@ -1305,7 +1314,21 @@ public:
       return Element(rot.args[0], Type::Vector, out, why) && Element(rot.args[1], Type::Vector, out, why) &&
              SourceRotation(rot.args[2], out, why);
     }
-    why = "a rotation that is not REUL/RADD/RAZY";
+    if (IsElement(rot, F("MPCB")) && rot.args.size() == 1) {
+      AppendBE32(out, F("PQAD"));
+      AppendRotationBasis(out);
+      AppendBE32(out, F("PQAD"));
+      if (!SourceRotation(rot.args[0], out, why)) {
+        return false;
+      }
+      AppendRotationBasis(out);
+      return true;
+    }
+    if (IsElement(rot, F("EXTR")) && rot.args.empty()) {
+      AppendBE32(out, F("EXTR"));
+      return true;
+    }
+    why = "a rotation that is not REUL/RADD/RAZY/MPCB/EXTR";
     return false;
   }
 
@@ -3105,11 +3128,40 @@ public:
         std::string why;
         if (!ModelRotation(property.value, bytes, why)) {
           result.dropped.push_back("PMRQ: " + why);
-        } else {
-          written.insert(F("PMRT"));
-          AppendBE32(out, F("PMRT"));
-          out.insert(out.end(), bytes.begin(), bytes.end());
+          continue;
         }
+        written.insert(F("PMRT"));
+        AppendBE32(out, F("PMRT"));
+        out.insert(out.end(), bytes.begin(), bytes.end());
+        // PMRB and PMCF (flag bits 0 and 5, CreateGPSM 0x256b7c) make the PMRQ the particle's base
+        // rotation (Fixup 0x28ec98, SolveParticleTransform 0x246f14): PMOP turns with it, and the
+        // system orientation is left out, except that PMCF still applies the global frame, whose
+        // rotation is the system's under XFMD 3 and 4 and identity under 2. Port-only PMRF: 1 =
+        // the PMRQ alone, 2 = the orientation times the PMRQ, PMOP turned by both.
+        uint32_t pmrb = 0, pmcf = 0, mode = 2;
+        for (const EffectProperty& other : node.properties) {
+          if (other.fourcc == F("PMRB") || other.fourcc == F("PMCF") || other.fourcc == F("XFMD")) {
+            uint32_t word = 0;
+            if (!SmallConst(other, word)) {
+              result.dropped.push_back(EffectFourCCString(other.fourcc) + ": not a constant (PMRQ frame)");
+              continue;
+            }
+            (other.fourcc == F("PMRB") ? pmrb : other.fourcc == F("PMCF") ? pmcf : mode) = word;
+          }
+        }
+        if (pmrb != 0 || pmcf != 0) {
+          if (mode != 2 && mode != 3 && mode != 4) {
+            result.dropped.push_back("PMRQ: PMRB or PMCF under XFMD " + std::to_string(int32_t(mode)));
+          } else {
+            AppendBE32(out, F("PMRF"));
+            AppendBE32(out, F("CNST"));
+            AppendBE32(out, pmcf != 0 && mode != 2 ? 2u : 1u);
+          }
+        }
+        continue;
+      }
+      // Read with the PMRQ above; without a PMRQ, Fixup clears both.
+      if (part && (fourcc == F("PMRB") || fourcc == F("PMCF"))) {
         continue;
       }
       // Port-only: XFMD and its mover are written after the loop, and the
@@ -3991,7 +4043,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
                (vfx && fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
-                         fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID"))) ||
+                         fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID") ||
+                         fourcc == F("PMRF"))) ||
                (vfx && fourcc == F("PIRN"))) {
       ok = reader.PortWord();
     } else if (vfx && fourcc == F("PVRT")) {

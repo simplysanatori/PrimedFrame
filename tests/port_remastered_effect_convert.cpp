@@ -2162,8 +2162,90 @@ void TestComposedModelRotation() {
               }),
               {});
   CHECK_MSG(!parts.empty() && parts[0].dropped.size() == 1 &&
-                parts[0].dropped[0] == "PMRQ: a rotation that is not REUL/RADD/RAZY",
+                parts[0].dropped[0] == "PMRQ: a rotation that is not REUL/RADD/RAZY/MPCB/EXTR",
             "ordered PMRQ refuses a non-REUL operand rather than adding Euler components");
+}
+
+bool HasPmrf(const ConvertedPart& part, uint32_t frame) {
+  Retail pmrf;
+  pmrf.f("PMRF").f("CNST").w(frame);
+  return std::search(part.part.begin(), part.part.end(), pmrf.bytes.begin(), pmrf.bytes.end()) != part.part.end();
+}
+
+// MPCB(R) is qB * R * qB (0x29d69c): at the top level it cancels the B conjugation, nested it
+// keeps one. EXTR is the system orientation. PMRB and PMCF pick the PMRQ frame (PMRF).
+void TestModelRotationFrames() {
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "PMRQ", 3);
+                 PutFourCC(o, "MPCB");
+                 PutStaticEuler(o, 10.f, 20.f, 30.f);
+                 PutTexr(o, 0x1234ABCD);
+               }),
+               {});
+  Retail top;
+  top.f("GPSM").f("PMRT");
+  RetailVector(top, 10.f, 20.f, 30.f);
+  top.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == top.bytes, "a top-level MPCB PMRQ is its rotation, unconjugated");
+  CHECK_MSG(!parts.empty() && parts[0].dropped.empty(), "a top-level MPCB PMRQ is exact");
+
+  parts = ConvertOne(OneGenerator([](auto& o) {
+            PutProperty(o, "PMRQ", 3);
+            PutFourCC(o, "RADD");
+            PutFourCC(o, "EXTR");
+            PutFourCC(o, "MPCB");
+            PutStaticEuler(o, 10.f, 20.f, 30.f);
+            PutTexr(o, 0x1234ABCD);
+          }),
+          {});
+  Retail nested;
+  nested.f("GPSM").f("PMRT").f("PQAD");
+  RetailVector(nested, 90.f, 0.f, 180.f);
+  nested.f("PQAD").f("PQAD").f("EXTR").f("PQAD");
+  RetailVector(nested, 90.f, 0.f, 180.f);
+  nested.f("PQAD");
+  RetailVector(nested, 10.f, 20.f, 30.f);
+  RetailVector(nested, 90.f, 0.f, 180.f);
+  RetailVector(nested, 90.f, 0.f, 180.f);
+  nested.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == nested.bytes, "RADD(EXTR, MPCB(R)) keeps the nested MPCB's B conjugation");
+  CHECK_MSG(!parts.empty() && parts[0].dropped.empty(), "RADD(EXTR, MPCB(R)) is exact");
+
+  const auto framed = [](const char* flag, int mode) {
+    return ConvertOne(OneGenerator([&](auto& o) {
+                        PutProperty(o, "PMRQ", 3);
+                        PutStaticEuler(o, 10.f, 20.f, 30.f);
+                        if (flag != nullptr) {
+                          PutProperty(o, flag, 0);
+                          PutConstant(o, 1);
+                        }
+                        if (mode != 0) {
+                          PutProperty(o, "XFMD", 0);
+                          PutConstant(o, mode);
+                        }
+                        PutTexr(o, 0x1234ABCD);
+                      }),
+                      {});
+  };
+  parts = framed(nullptr, 3);
+  CHECK_MSG(parts.size() == 1 && !HasPmrf(parts[0], 1) && !HasPmrf(parts[0], 2), "no PMRB/PMCF writes no PMRF");
+  parts = framed("PMRB", 3);
+  CHECK_MSG(parts.size() == 1 && HasPmrf(parts[0], 1) && parts[0].dropped.empty(), "PMRB is the PMRQ alone in any mode");
+  parts = framed("PMCF", 0);
+  CHECK_MSG(parts.size() == 1 && HasPmrf(parts[0], 1) && parts[0].dropped.empty(), "PMCF under XFMD 2 is the PMRQ alone");
+  parts = framed("PMCF", 4);
+  CHECK_MSG(parts.size() == 1 && HasPmrf(parts[0], 2) && parts[0].dropped.empty(),
+            "PMCF under XFMD 4 keeps the system orientation");
+  if (!parts.empty()) {
+    std::vector<RetailPartProperty> properties;
+    std::string error;
+    CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
+              "a PART with PMRF passes the retail element reader");
+  }
+  parts = framed("PMCF", 5);
+  CHECK_MSG(parts.size() == 1 && !HasPmrf(parts[0], 1) && !HasPmrf(parts[0], 2) && !parts[0].dropped.empty() &&
+                parts[0].dropped[0] == "PMRQ: PMRB or PMCF under XFMD 5",
+            "PMCF under XFMD 5 is dropped");
 }
 
 ConvertedPart ConvertStaticModelRotation(const std::vector<CVector3f>& eulers) {
@@ -3315,7 +3397,7 @@ void TestFacingRotation() {
   plain.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   CHECK_MSG(parts.size() == 1 && parts[0].part == plain.bytes, "a RAZY with a vector fallback writes nothing");
   CHECK_MSG(!parts.empty() && parts[0].dropped.size() == 1 &&
-                parts[0].dropped[0] == "PMRQ: a rotation that is not REUL/RADD/RAZY",
+                parts[0].dropped[0] == "PMRQ: a rotation that is not REUL/RADD/RAZY/MPCB/EXTR",
             "a RAZY with a vector fallback is dropped");
 }
 
@@ -3361,6 +3443,7 @@ int main() {
   TestPowerOpacityGainBias();
   TestModelsOnly();
   TestFacingRotation();
+  TestModelRotationFrames();
   if (port_test::Failures() == 0) {
     std::printf("port_remastered_effect_convert: ok\n");
   }

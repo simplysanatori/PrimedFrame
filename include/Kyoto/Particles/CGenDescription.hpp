@@ -138,6 +138,9 @@ public:
   std::unique_ptr< CPortVfxData > xPortVfx;
   // port-only XFMD (EPortXfmd); kept outside xPortVfx, which a bad VMAT block drops
   u8 xPortXfmd = kPortXfmdRetail;
+  // port-only PMRF: Remastered PMRB/PMCF. 0 = retail (orientation * PMRT, PMOP turned by the
+  // orientation), 1 = PMRT alone, 2 = orientation * PMRT; for 1 and 2 PMOP turns with the model.
+  u8 xPortPmrqFrame = 0;
   // port-only PIRN: a converted Remastered effect, whose nested IRND elements are stable per particle
   bool xPortIrnd = false;
   // port-only PGID: the first word of a converted Remastered PART's GUID (CElementGen::PortChildSeed)

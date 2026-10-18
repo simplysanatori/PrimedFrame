@@ -557,6 +557,12 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
                             ? static_cast< u8 >(mode)
                             : static_cast< u8 >(kPortXfmdRetail);
     } break;
+    // Port-only Remastered PMRB/PMCF model rotation frame (CGenDescription::xPortPmrqFrame).
+    case SBIG('PMRF'): {
+      GetClassID(in);
+      const u32 frame = in.ReadLong();
+      desc->xPortPmrqFrame = frame <= 2 ? static_cast< u8 >(frame) : 0;
+    } break;
     // Port-only Remastered particle variables (PVRT); a malformed table leaves none.
     case SBIG('PVRT'):
       GetClassID(in);
@@ -1279,6 +1285,7 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
   case SBIG('CPSS'):
   case SBIG('EXTT'):
   case SBIG('EXTS'):
+  case SBIG('EXTR'):
     ret = rs_new CVEPortSystemVector(clsId);
     break;
 #endif

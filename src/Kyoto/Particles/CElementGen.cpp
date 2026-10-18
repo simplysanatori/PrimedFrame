@@ -3480,7 +3480,10 @@ void CElementGen::RenderModels() {
     rot.RotateLocalY(CRelAngle::FromDegrees(pmrtVal.GetY()));
     rot.RotateLocalX(CRelAngle::FromDegrees(pmrtVal.GetX()));
   }
-  rot = orient * rot;
+  // PMRF 1 (Remastered PMRB/PMCF without a global rotation) leaves the orientation out of the model.
+  const u8 pmrqFrame = x28_loadedGenDesc->xPortPmrqFrame;
+  const CTransform4f modelOrient = pmrqFrame == 1 ? CTransform4f::Identity() : orient;
+  rot = modelOrient * rot;
 
   CParticleGlobals::SetEmitterTime(x74_curFrame);
   CColor col = x338_moduColor;
@@ -3511,9 +3514,11 @@ void CElementGen::RenderModels() {
 
       if (x2c_orientType == kMOT_One) {
         CTransform4f partRot(x50_parentMatrices[i], CVector3f::Zero());
-        partTrans.AddTranslation((orient * partRot) * pmopVec);
+        if (pmrqFrame == 0) {
+          partTrans.AddTranslation((orient * partRot) * pmopVec);
+        }
         partTrans *= partRot;
-      } else {
+      } else if (pmrqFrame == 0) {
         partTrans.AddTranslation(orient * pmopVec);
       }
 
@@ -3525,9 +3530,13 @@ void CElementGen::RenderModels() {
         rot = CTransform4f::RotateZ(CRelAngle::FromDegrees(pmrtVal.GetZ()));
         rot.RotateLocalY(CRelAngle::FromDegrees(pmrtVal.GetY()));
         rot.RotateLocalX(CRelAngle::FromDegrees(pmrtVal.GetX()));
-        partTrans *= (orient * rot);
+        partTrans *= (modelOrient * rot);
       } else {
         partTrans *= rot;
+      }
+      if (pmrqFrame != 0) {
+        // Remastered turns PMOP by the PMRQ base rotation (SolveParticleTransform 0x246f14).
+        partTrans.AddTranslation(partTrans.Rotate(pmopVec));
       }
 
       if (x28_loadedGenDesc->x60_PMSC != NULL) {
