@@ -1448,6 +1448,22 @@ void CPlayerGun::PortFireStackedBeams(float dt, CStateManager& mgr, const CTrans
   }
 }
 
+// The selected beam's shot cool down, or with stack_beams the slowest owned beam's.
+float CPlayerGun::PortShotCoolDown(const CStateManager& mgr) const {
+  float coolDown = x72c_currentBeam->GetWeaponInfo().x0_coolDown;
+  if (!PortDebug::StackBeams() || x833_28_phazonBeamActive) {
+    return coolDown;
+  }
+  const CPlayerState& playerState = *mgr.GetPlayerState();
+  for (int i = 0; i < 4; ++i) {
+    const CGunWeapon* beam = x760_selectableBeams[i];
+    if (beam != nullptr && playerState.HasPowerUp(mBeamArr[i])) {
+      coolDown = rstl::max_val(coolDown, beam->GetWeaponInfo().x0_coolDown);
+    }
+  }
+  return coolDown;
+}
+
 // Releases the stacked beams' projectile tokens once the setting is off.
 void CPlayerGun::PortReleaseStackedBeams() {
   for (int i = 0; i < 4; ++i) {
@@ -2290,7 +2306,11 @@ void CPlayerGun::UpdateWeaponFire(float dt, CPlayerState& playerState, CStateMan
   CPlayer& player = *mgr.Player();
 
   if (!x832_24_coolingCharge && !x834_30_inBigStrike) {
+#ifdef TARGET_PC
+    float coolDown = PortShotCoolDown(mgr);
+#else
     float coolDown = x72c_currentBeam->GetWeaponInfo().x0_coolDown;
+#endif
     if ((pressedStates & 0x1) == 0) {
       if (x390_cooldown >= coolDown) {
         x390_cooldown = coolDown;
