@@ -153,6 +153,8 @@ typedef struct {
    * compile takes (Dawn/driver state per pipeline).
    */
   bool pipelineCacheLazy;
+  /* Release built pipelines unused for this many frames (0 = never); see aurora_set_pipeline_eviction. */
+  uint32_t pipelineEvictFrames;
   /*
    * Do not compile the cached rows whose shader is PBR at startup: the caller knows nothing
    * can draw PBR (no mod brings a PBR material). The rows stay in the database, and a PBR

@@ -1020,6 +1020,11 @@ int main(int argc, char** argv) {
                            reason);
         }
     }
+    uint32_t pipelineEvictFrames = pipelineLazy ? 7200 : 0;
+    if (const char* env = port::EnvString("MP_PIPELINE_EVICT"); env != nullptr && env[0] != '\0') {
+        pipelineEvictFrames = static_cast<uint32_t>(std::strtoul(env, nullptr, 10));
+        PortLog::Write("port: pipeline eviction %u frames (MP_PIPELINE_EVICT)\n", pipelineEvictFrames);
+    }
     // PBR pipelines are only drawn with a mod's converted materials (issue #162): without an
     // enabled mod their cached rows are not compiled at startup. MP_PIPELINE_PBR=0|1 overrides.
     const bool pipelineSkipPbr = !port::EnvFlag("MP_PIPELINE_PBR", PortMods::AnyModEnabled());
@@ -1126,6 +1131,9 @@ int main(int argc, char** argv) {
         .pipelineCacheNoSeed = !port::EnvFlag("MP_PIPELINE_SEED", true),
         // Low-RAM Android builds pipelines on first use (issue #162); MP_PIPELINE_LAZY=0|1 overrides.
         .pipelineCacheLazy = pipelineLazy,
+        // Idle pipelines are released after ~2 min at 60 fps when pipelines are built on first use;
+        // MP_PIPELINE_EVICT=0|<frames> overrides (issue #162).
+        .pipelineEvictFrames = pipelineEvictFrames,
         .pipelineCacheSkipPbr = pipelineSkipPbr,
         .pipelineCacheSkipPbrReason = "no mod enabled",
         // Set below when a custom Vulkan driver (port_gpu_driver.h) is loaded.

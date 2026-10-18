@@ -14,6 +14,7 @@ morph, visor, beam, first_person, cinematic, freecam, `physics` (see below) and
 `fade`, true while the in-game fade-in filter after a cinematic skip or world
 load is still black or lifting, i.e. the screen is not fully visible;
 `tools/mprig.py` waits on it),
+`pipetrim [frames]` (releases built pipelines unused for that many frames, 16 minimum, as Android's onTrimMemory does; the log says how many),
 `worlds`, `areas`, `warp <world id or name prefix> [mrea]` (replies once the
 new world runs), `tp x y z`, `enter <area>` (makes an area of the current
 world the current one, as walking into it would; `tp` alone does not),

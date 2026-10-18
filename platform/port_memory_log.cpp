@@ -243,5 +243,10 @@ extern "C" JNIEXPORT void JNICALL Java_org_metroidprime_port_MetroidPrimeActivit
                  name, static_cast< int >(level), PortMemoryLog::Mib(PortMemoryLog::ProcessKb()),
                  static_cast< long long >(availableKb / 1024), static_cast< long long >(thresholdKb / 1024),
                  low ? " (system is low on memory)" : "");
+  // Running low or critical, or the app is in the background: release built pipelines no recent frame
+  // drew with (issue #162). The frame loop does it at the next frame start; they rebuild on demand.
+  if (level == -1 || level >= 10) {
+    aurora_trim_pipelines(16);
+  }
 }
 #endif

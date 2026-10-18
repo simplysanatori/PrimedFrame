@@ -169,6 +169,11 @@ bool shader_overridden(u64 hash) noexcept { return false; }
 namespace aurora::gfx {
 void drop_pipelines() {}
 } // namespace aurora::gfx
+extern "C" {
+void aurora_set_pipeline_eviction(uint32_t) {}
+void aurora_trim_pipelines(uint32_t) {}
+uint32_t aurora_get_pipeline_count(void) { return 0; }
+}
 
 // --- Buffer push stubs ---
 namespace aurora::gfx {
