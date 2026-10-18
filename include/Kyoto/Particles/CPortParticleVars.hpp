@@ -259,13 +259,17 @@ public:
   }
 };
 
-// SLCT: CElementArray<CColor4f16>::GetValue 0x271ee4, the entry at index % count (C remainder),
-// the index evaluated on every read. IRND indices are latched per particle (CIEInitialRandom).
-class CCEPortSelect : public CColorElement {
+// SLCT: CElementArray<T>::GetValue (float 0x27121c, CVector3f 0x27186c, CColor4f16 0x271ee4),
+// the entry at index % count (C remainder), the index evaluated on every read. IRND indices
+// are latched per particle (CIEInitialRandom). Remastered does not wrap a negative index; the
+// port does rather than read outside the array.
+template < class Element >
+class TPortSelect : public Element {
   CIntElement* x4_index;
-  std::vector< CColorElement* > x8_entries;
+  std::vector< Element* > x8_entries;
 
-  const CColorElement* Entry(int frame) const {
+protected:
+  const Element* Entry(int frame) const {
     int index = 0;
     x4_index->GetValue(frame, index);
     const int count = static_cast< int >(x8_entries.size());
@@ -274,14 +278,31 @@ class CCEPortSelect : public CColorElement {
   }
 
 public:
-  CCEPortSelect(CIntElement* index, std::vector< CColorElement* > entries)
+  TPortSelect(CIntElement* index, std::vector< Element* > entries)
   : x4_index(index), x8_entries(std::move(entries)) {}
-  ~CCEPortSelect() override {
+  ~TPortSelect() override {
     delete x4_index;
     for (size_t i = 0; i < x8_entries.size(); ++i) {
       delete x8_entries[i];
     }
   }
+};
+
+class CREPortSelect : public TPortSelect< CRealElement > {
+public:
+  using TPortSelect::TPortSelect;
+  bool GetValue(int frame, float& out) const override { return Entry(frame)->GetValue(frame, out); }
+};
+
+class CVEPortSelect : public TPortSelect< CVectorElement > {
+public:
+  using TPortSelect::TPortSelect;
+  bool GetValue(int frame, CVector3f& out) const override { return Entry(frame)->GetValue(frame, out); }
+};
+
+class CCEPortSelect : public TPortSelect< CColorElement > {
+public:
+  using TPortSelect::TPortSelect;
   bool GetValue(int frame, CColor& out) const override { return Entry(frame)->GetValue(frame, out); }
   bool GetValueHdr(int frame, float out[4]) const override {
     return Entry(frame)->GetValueHdr(frame, out);

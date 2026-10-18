@@ -1308,6 +1308,40 @@ void TestColourChoice() {
   CHECK_MSG(!SplitRetailPart(empty.bytes.data(), empty.bytes.size(), properties, error), "a colour SLCT of no entries is refused");
 }
 
+// ROTA's SLCT(IRND(0, 3), ARRY(-1, 1, -0.5, 0.5)) (GENP 445c8f18) becomes the port SLCT of reals.
+void TestRealChoice() {
+  const float entries[] = {-1.0f, 1.0f, -0.5f, 0.5f};
+  std::string error;
+  std::vector<RetailPartProperty> properties;
+  auto parts = ConvertOne(OneGenerator([&](auto& o) {
+                            PutProperty(o, "ROTA", 3);
+                            PutFourCC(o, "SLCT");
+                            PutFourCC(o, "IRND");
+                            PutConstant(o, 0);
+                            PutConstant(o, 3);
+                            PutFourCC(o, "ARRY");
+                            Put32(o, 4);
+                            for (const float e : entries) {
+                              PutConstant(o, Bits(e));
+                            }
+                          }),
+                          EffectConvertIO{});
+  Retail want;
+  // Remastered turns the other way: the converter negates ROTA.
+  want.f("GPSM").f("ROTA").f("MULT").f("SLCT").f("IRND").f("CNST").w(0).f("CNST").w(3).w(4);
+  for (const float e : entries) {
+    want.f("CNST").w(Bits(e));
+  }
+  want.f("CNST").w(Bits(-1.0f));
+  want.f("SIZE").f("CNST").w(Bits(0.0f));
+  want.end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "SLCT of four reals keeps all four");
+  CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "the real choice drops nothing");
+  CHECK_MSG(!parts.empty() && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
+                properties.size() == 3,
+            "a real SLCT reads as retail");
+}
+
 // PMDL's random choice of four models becomes the first as PMDL and all as PMDV.
 void TestModelChoice() {
   const EffectConvertIO io = AtlasIO();
@@ -2838,6 +2872,7 @@ int main() {
   TestAtlasTexture();
   TestModelChoice();
   TestColourChoice();
+  TestRealChoice();
   TestRetailId();
   TestPlasmaNestedHdrLight();
   TestSwooshElectric();

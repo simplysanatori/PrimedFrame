@@ -124,6 +124,7 @@ constexpr ElementSig kRealSigs[] = {
     {"ISWT", "RR"},   {"CLTN", "RRRR"}, {"CEQL", "RRRR"}, {"CRNG", "RRRRR"}, {"CEXT", "I"},    {"ITRL", "IR"},
     {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR"},
     {"DFCS", "RR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
+    {"SLCT", "Re"},
 };
 constexpr ElementSig kVectorSigs[] = {
     {"NONE", "-"},   {"CNST", "RRR"},   {"KEYE", "k"},    {"KEYP", "k"},   {"ANGC", "RRRRR"}, {"CONE", "VR"},
@@ -131,6 +132,7 @@ constexpr ElementSig kVectorSigs[] = {
     {"RTOV", "R"},   {"PLOC", "-"},     {"PLCO", "-"},    {"PVEL", "-"},   {"PSOF", "-"},     {"PSOU", "-"},
     {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V VR"},  {"MPAC", "RRRR"},
     {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"ROTV", "Ve"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
+    {"SLCT", "Re"},
 };
 constexpr ElementSig kModVectorSigs[] = {
     {"NONE", "-"},     {"CNST", "RRR"},   {"GRAV", "V"},     {"WIND", "VR"},   {"EXPL", "RR"},
@@ -958,7 +960,7 @@ public:
         for (uint8_t i = 0; i < m_data[pos]; ++i) {
           Ends after;
           for (size_t item : items) {
-            for (size_t end : Element(item)) {
+            for (size_t end : ModifierItem(item, group)) {
               AddEnd(after, end + trailer);
             }
           }
@@ -969,6 +971,16 @@ public:
       current = std::move(next);
     }
     return current;
+  }
+
+  // A PMTR/SMTR item's group is the type it is read as: 0 an int, 1 a real, 2 a
+  // vector, 4 a colour (group 3 is untyped). Untyped, a colour SLCT's ARRY could
+  // split CNST(r, g, b, a) into CNST(r, g, b) and CNST(a).
+  static int ModifierType(int group) { return group == 3 ? -1 : group; }
+
+  Ends ModifierItem(size_t at, int group) {
+    const int type = ModifierType(group);
+    return type < 0 ? Element(at) : Typed(at, type);
   }
 
   // KSSM: NONE, or CNST with four u32 (retail's three header words and the
@@ -1651,7 +1663,8 @@ private:
     if (left == 0) {
       return BuildGroups(at, group + 1, trailer, end, out);
     }
-    for (size_t next : Element(at)) {
+    const int type = ModifierType(group);
+    for (size_t next : ModifierItem(at, group)) {
       if (next + trailer > end) {
         continue;
       }
@@ -1661,7 +1674,7 @@ private:
       item.offset = at;
       item.size = next + trailer - at;
       EffectValue element;
-      if (!BuildElement(at, next, element)) {
+      if (!(type < 0 ? BuildElement(at, next, element) : BuildTyped(at, next, type, element))) {
         continue;
       }
       item.args.push_back(std::move(element));
@@ -1825,14 +1838,15 @@ private:
     if (left == 0) {
       return BuildMaterialGroup(at, end, trailer, group + 1, out);
     }
-    for (size_t elementEnd : Element(at)) {
+    const int type = ModifierType(group);
+    for (size_t elementEnd : ModifierItem(at, group)) {
       if (elementEnd + trailer > end) {
         continue;
       }
       EffectMaterialTrack::Item item;
       item.group = group;
       std::copy_n(m_data + elementEnd, trailer, item.trailer.begin());
-      if (!BuildElement(at, elementEnd, item.value)) {
+      if (!(type < 0 ? BuildElement(at, elementEnd, item.value) : BuildTyped(at, elementEnd, type, item.value))) {
         continue;
       }
       out.items.push_back(std::move(item));

@@ -895,13 +895,13 @@ public:
       }
       return true;
     }
-    // SLCT(index, ARRY(entries)): Remastered's CElementArray<CColor4f16>::GetValue
-    // (0x271ee4) evaluates the index, takes the entry at index % count (C
-    // remainder) and evaluates it, each time the colour is read (per particle
-    // per frame for COLR). Written as the port-only SLCT: the index element,
-    // the count, then the entries.
-    if (value.fourcc == F("SLCT") && type == Type::Color && value.args.size() == 2 &&
-        IsElement(value.args[1], F("ARRY"))) {
+    // SLCT(index, ARRY(entries)): Remastered's CElementArray<T>::GetValue (float
+    // 0x27121c, CVector3f 0x27186c, CColor4f16 0x271ee4) evaluates the index,
+    // takes the entry at index % count (C remainder) and evaluates it, each time
+    // the value is read (per particle per frame for COLR). Written as the
+    // port-only SLCT: the index element, the count, then the entries.
+    if (value.fourcc == F("SLCT") && (type == Type::Real || type == Type::Vector || type == Type::Color) &&
+        value.args.size() == 2 && IsElement(value.args[1], F("ARRY"))) {
       const std::vector<EffectValue>& array = value.args[1].args;
       if (array.size() < 2) {
         why = "SLCT over an ARRY whose entries do not parse";
@@ -3087,7 +3087,7 @@ public:
       return Word(count) && count <= 0x10000 && Skip(size_t(count) * 20) && Element(Type::Int) && Skip(1);
     }
     // Port-only SLCT: the index as an int element, the entry count, then the entries.
-    if (fourcc == F("SLCT") && type == Type::Color) {
+    if (fourcc == F("SLCT") && (type == Type::Real || type == Type::Vector || type == Type::Color)) {
       uint32_t count;
       if (!Element(Type::Int) || !Word(count) || count == 0 || count > 256) {
         return false;

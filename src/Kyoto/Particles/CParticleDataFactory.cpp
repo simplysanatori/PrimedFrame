@@ -41,6 +41,28 @@ CElementAllocationChunk* IElement::CElementAllocator::sFreeChunk = nullptr;
 
 #ifdef TARGET_PC
 namespace {
+// Port-only SLCT (the converter's Writer::Element): an int index, a count word, then count
+// entries of the selecting element's own type.
+template < class Select, class Element >
+Select* PortReadSelect(CInputStream& in, Element* (*readEntry)(CInputStream&)) {
+  CIntElement* index = CParticleDataFactory::GetIntElement(in);
+  const uint count = in.ReadLong();
+  std::vector< Element* > entries;
+  bool ok = index != nullptr && count != 0 && count <= 256;
+  for (uint i = 0; ok && i < count; ++i) {
+    entries.push_back(readEntry(in));
+    ok = entries.back() != nullptr;
+  }
+  if (!ok) {
+    delete index;
+    for (Element* entry : entries) {
+      delete entry;
+    }
+    return nullptr;
+  }
+  return rs_new Select(index, std::move(entries));
+}
+
 enum EPortKssmKind { kPKK_Real, kPKK_Vector, kPKK_Rotation };
 
 // One node of a PKSM component tree (the converter's Writer::Component*), appended to kssm.nodes
@@ -920,6 +942,8 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
   // Port-only VARF: a Remastered particle variable of the system being evaluated (PVRT index).
   case SBIG('VARF'):
     return rs_new CREPortVar(in.ReadLong());
+  case SBIG('SLCT'):
+    return PortReadSelect< CREPortSelect >(in, &CParticleDataFactory::GetRealElement);
 #endif
   case SBIG('CNST'): {
     return rs_new CREConstant(GetReal(in));
@@ -1122,6 +1146,8 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
   case SBIG('VARV'):
     ret = rs_new CVEPortVar(in.ReadLong());
     break;
+  case SBIG('SLCT'):
+    return PortReadSelect< CVEPortSelect >(in, &CParticleDataFactory::GetVectorElement);
 #endif
   case SBIG('NONE'):
     ret = nullptr;
@@ -1472,25 +1498,8 @@ CColorElement* CParticleDataFactory::GetColorElement(CInputStream& in) {
     ret = rs_new CCEPortModifyAlpha(c, a);
     break;
   }
-  case SBIG('SLCT'): {
-    CIntElement* index = GetIntElement(in);
-    const uint count = in.ReadLong();
-    std::vector< CColorElement* > entries;
-    bool ok = index != nullptr && count != 0 && count <= 256;
-    for (uint i = 0; ok && i < count; ++i) {
-      entries.push_back(GetColorElement(in));
-      ok = entries.back() != nullptr;
-    }
-    if (!ok) {
-      delete index;
-      for (CColorElement* entry : entries) {
-        delete entry;
-      }
-      return nullptr;
-    }
-    ret = rs_new CCEPortSelect(index, std::move(entries));
-    break;
-  }
+  case SBIG('SLCT'):
+    return PortReadSelect< CCEPortSelect >(in, &CParticleDataFactory::GetColorElement);
 #endif
   case SBIG('CNST'): {
     CElementAllocationChunk* allocationContext = IElement::CElementAllocator::GetCurrentChunk();
