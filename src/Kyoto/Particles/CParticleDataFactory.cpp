@@ -1009,6 +1009,9 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
     CRealElement* b = GetRealElement(in);
     return rs_new CREDistanceFromCameraBlend(a, b, clsId == SBIG('DFCP'));
   }
+  case SBIG('KEWS'): {
+    return rs_new CREPortSwooshNodeTime(GetRealElement(in));
+  }
 #endif
   case SBIG('PAP1'): {
     return rs_new CREParticleAccessParameter1();

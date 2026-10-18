@@ -156,6 +156,8 @@ const Signatures& ElementsOf(Type type) {
       {F("ITRL"), "ir"},  {F("PSSZ"), ""},    {F("SUB_"), "rr"},  {F("GTCR"), "c"},    {F("GTCG"), "c"},   {F("GTCB"), "c"},
       {F("GTCA"), "c"},
       {F("DFCS"), "rr"},  {F("DFCP"), "rr"},
+      // Port-only: a converted KEWS, its KEYP read at the swoosh node key.
+      {F("KEWS"), "r"},
   };
   static const Signatures vectorElements = {
       {F("NONE"), ""},      {F("CNST"), "rrr"}, {F("KEYE"), "k"},  {F("KEYP"), "k"},   {F("ANGC"), "rrrrr"},
@@ -862,9 +864,9 @@ public:
       return Gradient(value, out, why);
     }
     // KEWS: an LE u32 key count, then that many LE floats over a swoosh's
-    // points (newest 0, oldest 1). Retail reads a swoosh's COLR at a point's
-    // age over the life, so this is percent keyframes (the swoosh's PIRN path
-    // makes the life the point count).
+    // points (newest 0, oldest 1). Written as the port-only KEWS around percent
+    // keyframes: CREPortSwooshNodeTime reads them at the point's node key
+    // (Remastered 0x24f00c), while true KEYPs keep the point's age.
     if (value.fourcc == F("KEWS") && type == Type::Real && value.args.size() == 1 &&
         value.args[0].kind == EffectValue::Kind::Raw) {
       const uint8_t* p = m_data + value.args[0].offset;
@@ -874,6 +876,7 @@ public:
         why = "KEWS without its keys";
         return false;
       }
+      AppendBE32(out, F("KEWS"));
       AppendBE32(out, F("KEYP"));
       AppendBE32(out, 1);
       AppendBE32(out, 0);

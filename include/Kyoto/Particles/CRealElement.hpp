@@ -232,6 +232,18 @@ public:
   // The blend for a camera depth d and the two child values.
   static float DistanceBlend(float d, float a, float b);
 };
+
+// Port-only KEWS wrapper: evaluates its child (the converted KEYP) at the swoosh node key, the
+// point's place along the live trail (Remastered 0x24f00c), instead of its age over the life.
+// Outside a swoosh point evaluation it is the child unchanged.
+class CREPortSwooshNodeTime : public CRealElement {
+  CRealElement* x4_a;
+
+public:
+  explicit CREPortSwooshNodeTime(CRealElement* a);
+  ~CREPortSwooshNodeTime() override;
+  bool GetValue(int frame, float& valOut) const override;
+};
 #endif
 
 class CREParticleRotationOrLineWidth : public CRealElement {

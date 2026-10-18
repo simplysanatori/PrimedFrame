@@ -20,6 +20,7 @@
 #include "MetroidPrime/CActor.hpp"
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "port_debug.h"
+#include <climits>
 #include "port_fx_debug.h"
 #include "port_swoosh_ring.h"
 #include "port_vfx_particles.h"
@@ -256,9 +257,23 @@ void CParticleSwoosh::UpdateTranslationAndOrientation() {
   x1f0_aabbMin = CVector3f(FLT_MAX, FLT_MAX, FLT_MAX);
   x1fc_aabbMax = CVector3f(-FLT_MAX, -FLT_MAX, -FLT_MAX);
 #ifdef TARGET_PC
-  // Remastered runs a swoosh point's KEWS over the live points (newest 0, oldest 1).
-  CParticleGlobals::SetParticleLifetime(x1c_desc->xPortIrnd ? rstl::max_val(x1ac_particleCount - 1, 1)
-                                                            : x1b4_LENG);
+  // Remastered reads a point's keyframes at its age over the ring size less one (CreateNewParticle
+  // 0x27cdc8: life = this+0x180 - 1, the LENG the constructor 0x27c4f8 sizes the ring with), and
+  // its KEWS at the node key (0x24f00c): (age - base) / (count - 1), where InternalUpdate 0x27d1b4
+  // counts the live points (the new one included) and takes the youngest age as the base (0 while
+  // emitting).
+  const bool portRemastered = x1c_desc->xPortIrnd;
+  CParticleGlobals::SetParticleLifetime(portRemastered ? rstl::max_val(x1b4_LENG - 1, 1) : x1b4_LENG);
+  const int nodeCount = x1ac_particleCount;
+  int nodeBase = 0;
+  if (portRemastered && !(x1d0_24_emitting && x28_curFrame < x2c_PSLT)) {
+    nodeBase = INT_MAX;
+    for (int k = 0; k < x15c_swooshes.capacity(); ++k) {
+      if (x15c_swooshes.data()[k].mActive) {
+        nodeBase = rstl::min_val(nodeBase, x28_curFrame - x15c_swooshes.data()[k].mStartFrame);
+      }
+    }
+  }
   const bool portVfx = PortVfxSwoosh();
   if (portVfx && xPortVfxPts.size() != size_t(x15c_swooshes.capacity())) {
     xPortVfxPts.assign(x15c_swooshes.capacity(), SPortVfxPoint());
@@ -279,9 +294,21 @@ void CParticleSwoosh::UpdateTranslationAndOrientation() {
     swoosh.mFrame = x28_curFrame - swoosh.mStartFrame;
     CParticleGlobals::UpdateParticleLifetimeTweenValues(swoosh.mFrame);
 #ifdef TARGET_PC
-    const CParticleGlobals::SPortSwooshEval segEval = PortSwooshEvalFor(
+    CParticleGlobals::SPortSwooshEval segEval = PortSwooshEvalFor(
         CTransform4f::Translate(xa4_globalTranslation) * xb0_globalOrientation * xec_scaleXf,
         x38_translation, &swoosh.mTranslation);
+    if (portRemastered) {
+      segEval.hasNode = true;
+      if (nodeCount > 1) {
+        const float key = float(swoosh.mFrame - nodeBase) / float(nodeCount - 1) * 100.f;
+        segEval.nodePercentage = int(key);
+        segEval.nodeRemainder = key - float(segEval.nodePercentage);
+        if (segEval.nodePercentage > 99) {
+          segEval.nodePercentage = 100;
+          segEval.nodeRemainder = 0.f;
+        }
+      }
+    }
     CParticleGlobals::PortSwooshEvalScope segEvalScope(&segEval);
 #endif
     if (x1c_desc->x44_28_SROT == true) {
