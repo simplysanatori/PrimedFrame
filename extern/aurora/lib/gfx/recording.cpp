@@ -803,6 +803,18 @@ RecordedFrame end_recording() {
   frame.stats.lastIndexSize = indexSize;
   frame.stats.lastStorageSize = storageSize;
   frame.stats.lastTextureUploadSize = frame.textureUpload.size();
+  if (frame.spillVerts.length != 0) {
+    request_staging_growth(StagingKind::Vertex, vertSize);
+  }
+  if (frame.spillUniforms.length != 0) {
+    request_staging_growth(StagingKind::Uniform, uniformSize);
+  }
+  if (frame.spillIndices.length != 0) {
+    request_staging_growth(StagingKind::Index, indexSize);
+  }
+  if (frame.spillStorage.length != 0) {
+    request_staging_growth(StagingKind::Storage, storageSize);
+  }
   {
     // AURORA_FRAME_PEAKS=1 logs each new high-water mark of a frame's buffer use.
     static const bool enabled = std::getenv("AURORA_FRAME_PEAKS") != nullptr;
@@ -1646,13 +1658,8 @@ Range push_storage(const uint8_t* data, size_t length) {
     return {};
   }
   auto& frame = current_frame_packet();
-  const bool spilled = frame.spillStorage.length != 0;
-  const auto range = push(frame.storage, frame.spillStorage, frame_buffer_sizes().maxStorage, data, length,
-                          resources().limits.minStorageBufferOffsetAlignment, 0, "storage");
-  if (overflowed(range) || (!spilled && frame.spillStorage.length != 0)) {
-    request_storage_growth();
-  }
-  return range;
+  return push(frame.storage, frame.spillStorage, frame_buffer_sizes().maxStorage, data, length,
+              resources().limits.minStorageBufferOffsetAlignment, 0, "storage");
 }
 
 Range push_texture_data(const uint8_t* data, u32 bytesPerRow, u32 rowsPerImage) {

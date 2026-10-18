@@ -52,9 +52,11 @@ struct FrameBufferSizes {
   }
 };
 const FrameBufferSizes& frame_buffer_sizes() noexcept;
-// Asks for the arrays' staging storage to double (up to storageCap) at the next frame
-// start; the frame that overflowed spills into a transient buffer meanwhile. No-op when it is fixed.
-void request_storage_growth() noexcept;
+enum class StagingKind : uint8_t { Vertex, Uniform, Index, Storage };
+// A frame spilled (see SpillBuffer) after using `peak` bytes of this kind. At the next frame
+// start the staging buffers grow to the next power of two >= peak, capped at what a frame can
+// hold, so a scene that outgrows the starting size spills once and not every frame.
+void request_staging_growth(StagingKind kind, uint64_t peak) noexcept;
 
 enum class ResidentBuffer : uint8_t { Vertex, Index, Storage };
 // The part of a shared buffer kept across frames, as offsets into that buffer; size 0

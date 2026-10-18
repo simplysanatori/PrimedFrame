@@ -8,6 +8,7 @@
 #include "volfog.hpp"
 #include "thermal.hpp"
 #include "xray.hpp"
+#include <bit>
 #include <aurora/vfx.hpp>
 #include <aurora/water.hpp>
 #include "probe.hpp"
@@ -57,7 +58,7 @@ enum class BufferMapState {
 };
 
 FrameBufferSizes g_bufferSizes;
-std::atomic<bool> g_storageGrowthRequested{false};
+std::array<std::atomic<uint64_t>, 4> g_stagingGrowthWant{};
 constexpr uint32_t StorageGrowthCapScale = 6;
 std::array<wgpu::Buffer, StagingBufferCount> g_stagingBuffers;
 std::array<std::atomic<BufferMapState>, StagingBufferCount> g_mappingStates;
@@ -494,7 +495,9 @@ void initialize() {
         g_bufferSizes.storageReserve = g_bufferSizes.storageCap;
       }
     }
-    g_storageGrowthRequested.store(false, std::memory_order_release);
+    for (auto& want : g_stagingGrowthWant) {
+      want.store(0, std::memory_order_release);
+    }
     // The resident regions follow a frame's data in the device buffers, which are bound
     // whole, so they take what the device leaves after it: two fifths each to vertices and
     // arrays, a fifth to indices.
@@ -777,16 +780,17 @@ std::optional<size_t> acquire_mapped_staging_buffer() {
   }
 }
 
-void request_storage_growth() noexcept {
-  if (g_bufferSizes.storageCap > g_bufferSizes.storage) {
-    g_storageGrowthRequested.store(true, std::memory_order_release);
+void request_staging_growth(StagingKind kind, uint64_t peak) noexcept {
+  auto& want = g_stagingGrowthWant[static_cast<size_t>(kind)];
+  uint64_t seen = want.load(std::memory_order_relaxed);
+  while (peak > seen && !want.compare_exchange_weak(seen, peak, std::memory_order_acq_rel)) {
   }
 }
 
 namespace {
-// Doubles the staging storage once every frame in flight is done with the staging buffers.
-void grow_storage() {
-  ZoneScopedN("Grow storage");
+// Grows the staging buffers a frame spilled out of, once every frame in flight is done with them.
+void grow_staging(const std::array<uint64_t, 4>& want) {
+  ZoneScopedN("Grow staging");
   render_worker::synchronize();
   // Holding every staging slot means no frame or pending map uses a buffer.
   for (size_t n = 0; n < StagingBufferCount; ++n) {
@@ -798,7 +802,26 @@ void grow_storage() {
       wait_for_gpu_progress(std::chrono::microseconds{100});
     }
   }
-  g_bufferSizes.storage = std::min(g_bufferSizes.storage * 2, g_bufferSizes.storageCap);
+  struct Kind {
+    const char* name;
+    uint64_t& size;
+    uint64_t limit;
+  };
+  const Kind kinds[] = {
+      {"vertex", g_bufferSizes.vertex, g_bufferSizes.maxVertex},
+      {"uniform", g_bufferSizes.uniform, g_bufferSizes.maxUniform},
+      {"index", g_bufferSizes.index, g_bufferSizes.maxIndex},
+      {"storage", g_bufferSizes.storage, g_bufferSizes.maxStorage},
+  };
+  for (size_t k = 0; k < 4; ++k) {
+    if (want[k] <= kinds[k].size) {
+      continue;
+    }
+    const uint64_t grown = std::min(std::bit_ceil(want[k]), kinds[k].limit);
+    Log.info("frame {} staging buffers grown from {} to {} KiB after a frame spilled out of them (peak {} KiB)",
+             kinds[k].name, kinds[k].size >> 10, grown >> 10, want[k] >> 10);
+    kinds[k].size = grown;
+  }
   for (size_t i = 0; i < g_stagingBuffers.size(); ++i) {
     // A buffer still mapping completes with an error; wait it out before replacing it.
     while (g_mappingStates[i].load(std::memory_order_acquire) == BufferMapState::Mapping) {
@@ -818,15 +841,22 @@ void grow_storage() {
   for (size_t i = 0; i < g_stagingBuffers.size(); ++i) {
     g_stagingSlots.release(i);
   }
-  Log.info("storage buffer grown to {} MiB after an overflow", g_bufferSizes.storage >> 20);
 }
 } // namespace
 
 bool begin_frame() {
   ZoneScoped;
-  if (g_storageGrowthRequested.exchange(false, std::memory_order_acq_rel) &&
-      g_bufferSizes.storage < g_bufferSizes.storageCap) {
-    grow_storage();
+  {
+    std::array<uint64_t, 4> want{};
+    bool grow = false;
+    const uint64_t sizes[] = {g_bufferSizes.vertex, g_bufferSizes.uniform, g_bufferSizes.index, g_bufferSizes.storage};
+    for (size_t k = 0; k < 4; ++k) {
+      want[k] = g_stagingGrowthWant[k].exchange(0, std::memory_order_acq_rel);
+      grow = grow || want[k] > sizes[k];
+    }
+    if (grow) {
+      grow_staging(want);
+    }
   }
   // pace_frame_start();
   const size_t frameSlot = acquire_frame_slot();
