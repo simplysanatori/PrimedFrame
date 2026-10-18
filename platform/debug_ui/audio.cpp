@@ -75,7 +75,8 @@ void DrawFlaahgraTheme() {
   ItemHelp("The NTSC discs have the Flaahgra theme cut to its first 36 s, so the fight loops that. "
            "Pick your own PAL or Japanese GameCube disc, or Metroid Prime Trilogy (Wii), to add its whole "
            "114 s track as a mod (flaahgra-full-theme). Use Reload mods (F1 > Mods) or restart to hear it. "
-           "Only these two audio files are taken.");
+           "Only these two audio files are taken. Adding a PAL disc's languages (F1 > Game > Language) "
+           "adds this too.");
   if (installed && !state.running) {
     ImGui::SameLine();
     if (ImGui::Button("Remove##flaahgra")) {

@@ -276,7 +276,8 @@ the mod `flaahgra-full-theme` of the mods folder, where the loader serves them
 in place of the disc's. Nothing else is read from the image. Each file is
 checked first (DSP ADPCM, 32 kHz, looping, a whole file, longer than the NTSC
 copy, the two channels the same length) and written to a temporary name, then
-renamed. Remove deletes the mod.
+renamed. Remove deletes the mod. Adding a PAL disc's languages (below) does the
+same import from that image, so one PAL import brings both.
 
 It is an ordinary mod: Reload mods (F1 > Mods) or a restart makes the game play
 it, and turning mods off (or `MP_MODS` pointing elsewhere) turns it off.
@@ -443,6 +444,9 @@ from a PAL disc..." (or `--import-pal-languages <image>` on the command line)
 reads the PAL image once and copies its French, German, Spanish and Italian
 text tables and fonts to `<user>/languages/`. The game keeps running from the
 USA disc, and the PAL image isn't needed afterwards. "Remove" deletes the copy.
+The same pass adds the PAL disc's full Flaahgra theme (the mod
+`flaahgra-full-theme`, see "Full Flaahgra theme"); if that part fails the
+languages are still added and the message says why.
 The USA disc's fonts are ASCII only, so each accented letter is drawn as its base
 letter, unless the PAL fonts were added (they take effect after a restart) or
 the mod's typeface (`font/deface.sdfont`) is loaded; either one draws the real letter.
