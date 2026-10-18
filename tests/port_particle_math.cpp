@@ -170,7 +170,7 @@ int main() {
     const CVector3f corner = RandomVector(0.f, 0.f, 0.f, 1.f);
     CHECK_MSG(NearVector(corner, CVector3f(-0.57735f, -0.57735f, -0.57735f)), "RNDV corner normalised");
   }
-  // FRECPE/FRECPS (UpdateInverseScale 0x2a6390), SqrtF 0x65f70, NORM and CMPS.
+  // FRECPE/FRECPS (UpdateInverseScale 0x2a6390), SqrtF 0x65f70, NORM and CPSS.
   CHECK_MSG(ReciprocalEstimate(1.f) == 0.998046875f, "FRECPE(1)");
   CHECK_MSG(ReciprocalEstimate(-2.f) == -0.4990234375f, "FRECPE(-2)");
   CHECK_MSG(std::isinf(ReciprocalEstimate(0.f)) && ReciprocalEstimate(INFINITY) == 0.f, "FRECPE 0 and inf");
@@ -190,17 +190,33 @@ int main() {
     const CVector3f one(1.f, 1.f, 1.f);
     CHECK_MSG(NearVector(CameraPositionInSystemSpace(camera, CVector3f(1.f, 1.f, 1.f), 1.f, 0.f, 0.f, 0.f, one),
                          CVector3f(4.f, 1.f, 0.f), 1e-6f),
-              "CMPS identity frame is camera - t");
+              "CPSS identity frame is camera - t");
     // 90 degrees about Z: world +X is the system's -Y.
     const float h = 0.70710678f;
     CHECK_MSG(NearVector(CameraPositionInSystemSpace(CVector3f(1.f, 0.f, 0.f), CVector3f(0.f, 0.f, 0.f), h, 0.f,
                                                      0.f, h, one),
                          CVector3f(0.f, -1.f, 0.f), 1e-6f),
-              "CMPS turns into the system's frame");
+              "CPSS turns into the system's frame");
     CHECK_MSG(NearVector(CameraPositionInSystemSpace(camera, CVector3f(0.f, 0.f, 0.f), 1.f, 0.f, 0.f, 0.f,
                                                      CVector3f(2.f, 4.f, 0.5f)),
                          CVector3f(2.5f, 0.5f, 2.f), 1e-6f),
-              "CMPS divides by the system scale");
+              "CPSS divides by the system scale");
+  }
+  // RAZY (CERotationFromAxis 0x29d1bc): Z = first, X = second x Z, Y = Z x X.
+  {
+    CVector3f x, y, z;
+    CHECK_MSG(RotationFromAxisZY(CVector3f(0.f, 0.f, 2.f), CVector3f(0.f, 3.f, 0.f), x, y, z) &&
+                  NearVector(x, CVector3f(1.f, 0.f, 0.f), 1e-6f) && NearVector(y, CVector3f(0.f, 1.f, 0.f), 1e-6f) &&
+                  NearVector(z, CVector3f(0.f, 0.f, 1.f), 1e-6f),
+              "RAZY Z up, Y second is the identity");
+    CHECK_MSG(RotationFromAxisZY(CVector3f(1.f, 0.f, 0.f), CVector3f(0.f, 0.f, 1.f), x, y, z) &&
+                  NearVector(x, CVector3f(0.f, 1.f, 0.f), 1e-6f) && NearVector(y, CVector3f(0.f, 0.f, 1.f), 1e-6f) &&
+                  NearVector(z, CVector3f(1.f, 0.f, 0.f), 1e-6f),
+              "RAZY rows follow first, then second x first");
+    CHECK_MSG(!RotationFromAxisZY(CVector3f(0.f, 0.f, 0.f), CVector3f(0.f, 1.f, 0.f), x, y, z),
+              "RAZY refuses a zero first vector");
+    CHECK_MSG(!RotationFromAxisZY(CVector3f(0.f, 2.f, 0.f), CVector3f(0.f, 1.f, 0.f), x, y, z),
+              "RAZY refuses parallel vectors");
   }
   {
     CRandom16 random(0);

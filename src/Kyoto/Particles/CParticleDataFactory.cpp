@@ -706,11 +706,6 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortSpriteShape = u8(in.ReadLong());
       break;
-    // Port-only: converted Remastered model particles that face the camera (xPortFaceCamera).
-    case SBIG('PFCM'):
-      GetClassID(in);
-      desc->xPortFaceCamera = in.ReadLong() != 0;
-      break;
     // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
     case SBIG('VMAT'):
     case SBIG('VMSH'):
@@ -1273,7 +1268,15 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
   case SBIG('BSSC'):
     ret = rs_new CVEPortBasis(GetVectorElement(in), clsId == SBIG('BSSC'));
     break;
+  case SBIG('PRZY'): {
+    CVectorElement* first = GetVectorElement(in);
+    CVectorElement* second = GetVectorElement(in);
+    CVectorElement* fallback = GetVectorElement(in);
+    ret = rs_new CVEPortRotationFromAxis(first, second, fallback);
+    break;
+  }
   case SBIG('CMPS'):
+  case SBIG('CPSS'):
   case SBIG('EXTT'):
   case SBIG('EXTS'):
     ret = rs_new CVEPortSystemVector(clsId);

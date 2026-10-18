@@ -168,8 +168,9 @@ const Signatures& ElementsOf(Type type) {
       {F("PVEL"), ""},      {F("PSOF"), ""},    {F("PSOU"), ""},   {F("PSOR"), ""},    {F("PSTR"), ""},
       {F("SUB_"), "vv"},    {F("CTVC"), "c"},     {F("PQAD"), "vv"},
       // Port-only (CParticleDataFactory under TARGET_PC): NORM, and the generator's system
-      // vectors (camera in system space, external translation and scale).
-      {F("NORM"), "v"},     {F("CMPS"), ""},      {F("EXTT"), ""},      {F("EXTS"), ""},
+      // vectors (camera in world and in system space, external translation and scale), and PRZY.
+      {F("NORM"), "v"},     {F("CMPS"), ""},      {F("CPSS"), ""},      {F("EXTT"), ""},
+      {F("EXTS"), ""},      {F("PRZY"), "vvv"},
       // Port-only CVEPortBasis: Remastered's particle space to retail's and back.
       {F("BSIS"), "v"},     {F("BSSC"), "v"},
   };
@@ -953,7 +954,8 @@ public:
     if (type == Type::Vector && value.args.empty() &&
         (value.fourcc == F("PLOC") || value.fourcc == F("PLCO") || value.fourcc == F("PVEL") ||
          value.fourcc == F("PSOF") || value.fourcc == F("PSOU") || value.fourcc == F("PSOR") ||
-         value.fourcc == F("PSTR") || value.fourcc == F("CMPS") || value.fourcc == F("EXTT") ||
+         value.fourcc == F("PSTR") || value.fourcc == F("CMPS") || value.fourcc == F("CPSS") ||
+         value.fourcc == F("EXTT") ||
          value.fourcc == F("EXTS"))) {
       AppendBE32(out, value.fourcc == F("EXTS") ? F("BSSC") : F("BSIS"));
       AppendBE32(out, value.fourcc);
@@ -1245,89 +1247,18 @@ public:
     return true;
   }
 
-  // Remastered's camera-facing model rotation,
-  // RADD(RAZY(SUB_(CPSS, PLOC), CNST(0, 1, 0), REUL(0, 0, 0, #00)), REUL(x, y, z, #00)): the model
-  // turned to face the camera, then by the inverse of REUL. Written as PMRT CNST(-x, -y, -z), which
-  // is that inverse when at most one angle is nonzero, plus the port-only PFCM flag (CElementGen
-  // turns each particle to the camera). An IRND angle (a random spin) is taken as 0.
-  bool FacingRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out) const {
-    if (value.size() != 1 || !IsElement(value[0], F("RADD")) || value[0].args.size() != 2) {
-      return false;
-    }
-    const EffectValue& razy = value[0].args[0];
-    if (!IsElement(razy, F("RAZY")) || razy.args.size() != 3) {
-      return false;
-    }
-    const EffectValue& look = razy.args[0];
-    if (!IsElement(look, F("SUB_")) || look.args.size() != 2 || !IsElement(look.args[0], F("CPSS")) ||
-        !IsElement(look.args[1], F("PLOC"))) {
-      return false;
-    }
-    const EffectValue& up = razy.args[1];
-    if (!IsElement(up, F("CNST")) || up.args.size() != 3 || !ConstIs(up.args[0], 0) ||
-        !ConstIs(up.args[1], 0x3f800000u) || !ConstIs(up.args[2], 0)) {
-      return false;
-    }
-    uint32_t angles[3];
-    if (!ReulAngles(razy.args[2], angles, nullptr) || ((angles[0] | angles[1] | angles[2]) & 0x7fffffffu) != 0) {
-      return false;
-    }
-    bool spin = false;
-    if (!ReulAngles(value[0].args[1], angles, &spin)) {
-      return false;
-    }
-    int nonzero = 0;
-    for (uint32_t angle : angles) {
-      nonzero += (angle & 0x7fffffffu) != 0;
-    }
-    if (nonzero > 1) {
-      return false;
-    }
-    if (spin) {
-      m_approximated.push_back("PMRQ: a camera-facing model's random spin left out");
-    }
-    AppendBE32(out, F("CNST"));
-    for (uint32_t angle : angles) {
-      AppendBE32(out, F("CNST"));
-      AppendBE32(out, (angle & 0x7fffffffu) != 0 ? angle ^ 0x80000000u : 0);
-    }
-    return true;
-  }
-
-  // REUL(CNST x, CNST y, CNST z, #00)'s angle bits. With `irnd`, an angle using IRND reads as 0.
-  static bool ReulAngles(const EffectValue& reul, uint32_t (&angles)[3], bool* irnd) {
-    if (!IsElement(reul, F("REUL")) || reul.args.size() != 4 ||
-        (reul.args[3].kind != EffectValue::Kind::Byte && reul.args[3].kind != EffectValue::Kind::Word) ||
-        reul.args[3].word != 0) {
-      return false;
-    }
-    for (size_t i = 0; i < 3; ++i) {
-      if (irnd != nullptr && UsesElement(reul.args[i], F("IRND"))) {
-        angles[i] = 0;
-        *irnd = true;
-      } else if (!ConstWord(reul.args[i], angles[i])) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  static bool UsesElement(const EffectValue& value, uint32_t fourcc) {
-    if (value.kind == EffectValue::Kind::Element && value.fourcc == fourcc) {
-      return true;
-    }
-    return std::any_of(value.args.begin(), value.args.end(),
-                       [fourcc](const EffectValue& arg) { return UsesElement(arg, fourcc); });
-  }
-
   // PMDL meshes are converted from Remastered coordinates with the model
   // converter's default basis B = (90, 0, 180) in PMRT's Euler convention.
   // Conjugate the source rotation by B so it remains in the converted model's
-  // frame. Element() preserves each real expression, including nested IRND;
-  // the PART's PIRN marker keeps those samples stable per particle. For a
-  // source RADD(REUL, REUL), preserve the ordered source product before
-  // conjugating it. RTOV cannot carry three independent angle expressions.
+  // frame: PQAD(B, PQAD(R, B)) is B * R * B^-1 (B is self-inverse). R is
+  // written as an Euler vector by SourceRotation; Element() preserves each real
+  // expression, including nested IRND, and the PART's PIRN marker keeps those
+  // samples stable per particle.
   bool ModelRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
+    if (value.size() != 1) {
+      why = "a rotation that is not REUL/RADD/RAZY";
+      return false;
+    }
     const auto appendBasis = [&]() {
       AppendBE32(out, F("CNST"));
       for (const float angle : {90.f, 0.f, 180.f}) {
@@ -1335,63 +1266,47 @@ public:
         AppendBE32(out, FloatBits(angle));
       }
     };
-    const auto appendSourceEuler = [&](const EffectValue& reul) {
-      AppendBE32(out, F("CNST"));
-      for (size_t i = 0; i < 3; ++i) {
-        if (!Element(reul.args[i], Type::Real, out, why)) {
-          return false;
-        }
-      }
-      return true;
-    };
+    AppendBE32(out, F("PQAD"));
+    appendBasis();
+    AppendBE32(out, F("PQAD"));
+    if (!SourceRotation(value[0], out, why)) {
+      return false;
+    }
+    appendBasis();
+    return true;
+  }
 
-    const EffectValue* reul = value.size() == 1 ? &value[0] : nullptr;
-    if (reul != nullptr && IsElement(*reul, F("REUL")) && reul->args.size() == 4) {
-      const EffectValue& order = reul->args[3];
+  // A Remastered rotation element in Remastered's particle space, as a port Euler vector:
+  // REUL(x, y, z, #00) -> CNST(x, y, z); RADD(a, b) -> PQAD(a, b) (the ordered product);
+  // RAZY(first, second, fallback) -> the port-only PRZY (CERotationFromAxis 0x29d1bc as
+  // GetRotationElement 0x25e418 builds it: Z = first, X = second x Z, Y = Z x X, or the
+  // fallback when either is degenerate). PRZY's vectors stay in Remastered's space.
+  bool SourceRotation(const EffectValue& rot, std::vector<uint8_t>& out, std::string& why) const {
+    if (IsElement(rot, F("REUL")) && rot.args.size() == 4) {
+      const EffectValue& order = rot.args[3];
       if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
         why = "a rotation order other than 0 (XYZ)";
         return false;
       }
-      // B is self-inverse: PQAD(B, PQAD(R, B)) evaluates to B * R * B^-1.
-      AppendBE32(out, F("PQAD"));
-      appendBasis();
-      AppendBE32(out, F("PQAD"));
-      if (!appendSourceEuler(*reul)) {
-        return false;
+      AppendBE32(out, F("CNST"));
+      for (size_t i = 0; i < 3; ++i) {
+        if (!Element(rot.args[i], Type::Real, out, why)) {
+          return false;
+        }
       }
-      appendBasis();
       return true;
     }
-
-    const EffectValue* add = value.size() == 1 && IsElement(value[0], F("RADD")) ? &value[0] : nullptr;
-    if (add == nullptr || add->args.size() != 2) {
-      why = "a rotation that is not REUL";
-      return false;
+    if (IsElement(rot, F("RADD")) && rot.args.size() == 2) {
+      AppendBE32(out, F("PQAD"));
+      return SourceRotation(rot.args[0], out, why) && SourceRotation(rot.args[1], out, why);
     }
-    for (const EffectValue& operand : add->args) {
-      if (!IsElement(operand, F("REUL")) || operand.args.size() != 4) {
-        why = "a rotation that is not REUL";
-        return false;
-      }
-      const EffectValue& order = operand.args[3];
-      if (order.kind != EffectValue::Kind::Byte || order.word != 0) {
-        why = "a rotation order other than 0 (XYZ)";
-        return false;
-      }
+    if (IsElement(rot, F("RAZY")) && rot.args.size() == 3) {
+      AppendBE32(out, F("PRZY"));
+      return Element(rot.args[0], Type::Vector, out, why) && Element(rot.args[1], Type::Vector, out, why) &&
+             SourceRotation(rot.args[2], out, why);
     }
-
-    // Preserve RADD's source order inside the conjugation: B * (R1 * R2) * B^-1.
-    AppendBE32(out, F("PQAD"));
-    appendBasis();
-    AppendBE32(out, F("PQAD"));
-    AppendBE32(out, F("PQAD"));
-    for (const EffectValue& operand : add->args) {
-      if (!appendSourceEuler(operand)) {
-        return false;
-      }
-    }
-    appendBasis();
-    return true;
+    why = "a rotation that is not REUL/RADD/RAZY";
+    return false;
   }
 
   // GRAD: u8 stop count, per stop four halves (RGBA) and an f32 position,
@@ -3084,7 +2999,6 @@ public:
     std::set<uint32_t> written;    // retail properties
     const EffectProperty* material = nullptr;
     const EffectProperty* xfmd = nullptr;
-    bool faceCamera = false;
     uint32_t spriteShape = 0;
     const EffectProperty* mover = nullptr;
     std::vector<uint32_t> portOnly;  // material data, written only with a VMAT
@@ -3189,12 +3103,7 @@ public:
       if (part && fourcc == F("PMRQ")) {
         std::vector<uint8_t> bytes;
         std::string why;
-        if (FacingRotation(property.value, bytes)) {
-          faceCamera = true;
-          written.insert(F("PMRT"));
-          AppendBE32(out, F("PMRT"));
-          out.insert(out.end(), bytes.begin(), bytes.end());
-        } else if (!ModelRotation(property.value, bytes, why)) {
+        if (!ModelRotation(property.value, bytes, why)) {
           result.dropped.push_back("PMRQ: " + why);
         } else {
           written.insert(F("PMRT"));
@@ -3529,12 +3438,6 @@ public:
       AppendBE32(out, F("CNST"));
       AppendBE32(out, spriteShape);
     }
-    if (faceCamera) {
-      // Port-only: the model particles face the camera (xPortFaceCamera; see FacingRotation).
-      AppendBE32(out, F("PFCM"));
-      AppendBE32(out, F("CNST"));
-      AppendBE32(out, 1);
-    }
     if ((part || swoosh) && !m_vars.empty()) {
       // Port-only: the effect's PVAR table (names, kinds, defaults) for VARF/VARI/VARV/VARC.
       AppendBE32(out, F("PVRT"));
@@ -3855,7 +3758,7 @@ public:
     return true;
   }
 
-  // A port-only `CNST <word>` property (VORN, XFMD, PIRN, PFCM).
+  // A port-only `CNST <word>` property (VORN, XFMD, PIRN).
   bool PortWord() {
     uint32_t fourcc;
     return Word(fourcc) && fourcc == F("CNST") && Skip(4);
@@ -4087,7 +3990,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if ((part && (fourcc == F("SSZE") || fourcc == F("PIR0") || fourcc == F("POR0"))) ||
                (vfx && fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
-    } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") || fourcc == F("PFCM") ||
+    } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
                          fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID"))) ||
                (vfx && fourcc == F("PIRN"))) {
       ok = reader.PortWord();

@@ -240,7 +240,55 @@ inline CVector3f NormalizeVector(const CVector3f& v) {
   return CVector3f(inverse * v.GetX(), inverse * v.GetY(), inverse * v.GetZ());
 }
 
-// CMPS (CVECameraPositionInSystemSpace::GetValue 0x2a24fc): the camera position in the system's
+// CMath::InvSqrtF 0x66090: twice-refined FRSQRTE of max(v, 1e-35).
+inline float InvSqrtF(float v) {
+  const float m = std::fmax(v, BitsFloat(0x554ad2e));
+  float e = ReciprocalSqrtEstimate(m);
+  e *= ReciprocalSqrtStep(m, e * e);
+  return e * ReciprocalSqrtStep(m, e * e);
+}
+
+// CParticleValues::skMinNormalizableMagSqd (0x21109c8).
+constexpr float kMinNormalizableMagSqd = 1.4210854715202004e-14f;
+
+// CParticleMath::CrossIntoMatrixRow 0x286d70: a x b scaled by InvSqrtF of its squared length;
+// false (out untouched) when that is below kMinNormalizableMagSqd.
+inline bool NormalizedCross(const CVector3f& a, const CVector3f& b, CVector3f& out) {
+  const float a1b2 = a.GetY() * b.GetZ(), a2b1 = a.GetZ() * b.GetY();
+  const float a2b0 = a.GetZ() * b.GetX(), a0b2 = a.GetX() * b.GetZ();
+  const float a0b1 = a.GetX() * b.GetY(), a1b0 = a.GetY() * b.GetX();
+  const float cx = a1b2 - a2b1, cy = a2b0 - a0b2, cz = a0b1 - a1b0;
+  const float xx = cx * cx, yy = cy * cy, zz = cz * cz;
+  const float xy = xx + yy;
+  const float squared = zz + xy;
+  if (squared < kMinNormalizableMagSqd) {
+    return false;
+  }
+  const float s = InvSqrtF(squared);
+  out = CVector3f(cx * s, cy * s, cz * s);
+  return true;
+}
+
+// RAZY (CERotationFromAxis::GetValue 0x29d298 as GetRotationElement 0x25e418 builds it: axis pair
+// 1, normalised row 2, second pair 1): Z = the first vector normalised, X = normalize(second x Z),
+// Y = normalize(Z x X), each under kMinNormalizableMagSqd or false (the caller's fallback). The
+// rotation is conj(FromMatrix(rows X, Y, Z)), the one whose columns are X, Y, Z.
+inline bool RotationFromAxisZY(const CVector3f& first, const CVector3f& second, CVector3f& x,
+                               CVector3f& y, CVector3f& z) {
+  const float xx = first.GetX() * first.GetX();
+  const float yy = first.GetY() * first.GetY();
+  const float zz = first.GetZ() * first.GetZ();
+  const float xy = xx + yy;
+  const float squared = xy + zz;
+  if (squared < kMinNormalizableMagSqd) {
+    return false;
+  }
+  const float s = InvSqrtF(squared);
+  z = CVector3f(s * first.GetX(), s * first.GetY(), s * first.GetZ());
+  return NormalizedCross(second, z, x) && NormalizedCross(z, x, y);
+}
+
+// CPSS (CVECameraPositionInSystemSpace::GetValue 0x2a24fc): the camera position in the system's
 // global frame, conj(q) * (camera - t) * q with q = (w, x, y, z) unnormalised, then times
 // InverseScale(s) per axis. Separate statements: Remastered uses unfused fmul/fadd/fsub.
 inline CVector3f CameraPositionInSystemSpace(const CVector3f& camera, const CVector3f& t,

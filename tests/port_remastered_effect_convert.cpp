@@ -2162,7 +2162,7 @@ void TestComposedModelRotation() {
               }),
               {});
   CHECK_MSG(!parts.empty() && parts[0].dropped.size() == 1 &&
-                parts[0].dropped[0] == "PMRQ: a rotation that is not REUL",
+                parts[0].dropped[0] == "PMRQ: a rotation that is not REUL/RADD/RAZY",
             "ordered PMRQ refuses a non-REUL operand rather than adding Euler components");
 }
 
@@ -3228,8 +3228,8 @@ void TestModelsOnly() {
   CHECK_MSG(!parts.empty() && parts[0].droppedRetail == 0, "models only drops no retail property");
 }
 
-// PMRQ's camera-facing form: RADD(RAZY, SUB_(CPSS(PLOC, up, REUL(0, 0, 0)),
-// REUL(x, y, z))). `angles` writes the second REUL's three angle arguments.
+// PMRQ's camera-facing form: RADD(RAZY(SUB_(CPSS, PLOC), CNST(0, 1, 0), REUL(0, 0, 0, #00)),
+// REUL(x, y, z, #00)). `angles` writes the second REUL's three angle arguments.
 template <typename Angles>
 void PutFacingPmrq(std::vector<uint8_t>& out, Angles angles) {
   PutProperty(out, "PMRQ", 3);
@@ -3242,18 +3242,15 @@ void PutFacingPmrq(std::vector<uint8_t>& out, Angles angles) {
   PutConstant(out, 0);
   PutConstant(out, Bits(1.0f));
   PutConstant(out, 0);
-  PutFourCC(out, "REUL");
-  PutConstant(out, 0);
-  PutConstant(out, 0);
-  PutConstant(out, 0);
-  out.push_back(0);
+  PutStaticEuler(out, 0.f, 0.f, 0.f);
   PutFourCC(out, "REUL");
   angles(out);
   out.push_back(0);
 }
 
 void TestFacingRotation() {
-  // One nonzero angle: PMRT is the negated angles, and PFCM faces the camera.
+  // RAZY becomes the port-only PRZY on Remastered-space vectors (port state read through BSIS),
+  // inside the same B conjugation as any other PMRQ.
   auto parts = ConvertOne(OneGenerator([](auto& o) {
                  PutFacingPmrq(o, [](auto& o) {
                    PutConstant(o, 0);
@@ -3264,14 +3261,19 @@ void TestFacingRotation() {
                }),
                {});
   Retail want;
-  want.f("GPSM").f("PMRT").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(-90.0f));
-  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
-  want.f("PFCM").f("CNST").w(1).end();
-  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "a facing PMRQ becomes a negated PMRT with PFCM");
+  want.f("GPSM").f("PMRT").f("PQAD");
+  RetailVector(want, 90.f, 0.f, 180.f).f("PQAD").f("PQAD");
+  want.f("PRZY").f("SUB_").f("BSIS").f("CPSS").f("BSIS").f("PLOC");
+  want.f("CNST").f("CNST").w(0).f("CNST").w(Bits(1.0f)).f("CNST").w(0);
+  RetailVector(want, 0.f, 0.f, 0.f);
+  want.f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(90.0f));
+  RetailVector(want, 90.f, 0.f, 180.f);
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "a facing PMRQ becomes PMRT with PRZY");
   CHECK_MSG(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(),
             "a facing PMRQ is exact");
 
-  // An IRND angle is a random spin: taken as 0, and noted.
+  // An IRND spin is kept as a real expression (PIRN samples it once per particle).
   parts = ConvertOne(OneGenerator([](auto& o) {
               PutFacingPmrq(o, [](auto& o) {
                 PutFourCC(o, "IRND");
@@ -3283,42 +3285,38 @@ void TestFacingRotation() {
               PutTexr(o, 0x1234ABCD);
             }),
             {});
-  Retail still;
-  still.f("GPSM").f("PMRT").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
-  still.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
-  still.f("PFCM").f("CNST").w(1).end();
-  CHECK_MSG(parts.size() == 1 && parts[0].part == still.bytes, "a facing PMRQ with IRND spins nothing");
-  CHECK_MSG(!parts.empty() && parts[0].approximated.size() == 1 &&
-                parts[0].approximated[0] == "PMRQ: a camera-facing model's random spin left out",
-            "a facing PMRQ with IRND is listed as approximated");
+  bool pmrt = false;
+  if (!parts.empty()) {
+    std::string error;
+    std::vector<RetailPartProperty> properties;
+    if (SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error)) {
+      for (const RetailPartProperty& property : properties) {
+        pmrt = pmrt || property.fourcc == EffectFourCC("PMRT");
+      }
+    }
+  }
+  CHECK_MSG(pmrt && parts[0].dropped.empty() && parts[0].approximated.empty(),
+            "a facing PMRQ with an IRND spin is converted exactly");
 
-  // Two nonzero angles are not a single negation: the PMRQ is dropped as before.
+  // A RAZY fallback that is not a rotation element is refused.
   parts = ConvertOne(OneGenerator([](auto& o) {
-              PutFacingPmrq(o, [](auto& o) {
-                PutConstant(o, Bits(45.0f));
-                PutConstant(o, Bits(30.0f));
-                PutConstant(o, 0);
-              });
+              PutProperty(o, "PMRQ", 3);
+              PutFourCC(o, "RAZY");
+              PutFourCC(o, "PLOC");
+              PutFourCC(o, "PVEL");
+              PutFourCC(o, "CNST");
+              PutConstant(o, 0);
+              PutConstant(o, 0);
+              PutConstant(o, 0);
               PutTexr(o, 0x1234ABCD);
             }),
             {});
   Retail plain;
   plain.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
-  CHECK_MSG(parts.size() == 1 && parts[0].part == plain.bytes, "a facing PMRQ with two angles writes nothing");
+  CHECK_MSG(parts.size() == 1 && parts[0].part == plain.bytes, "a RAZY with a vector fallback writes nothing");
   CHECK_MSG(!parts.empty() && parts[0].dropped.size() == 1 &&
-                parts[0].dropped[0] == "PMRQ: a rotation that is not REUL",
-            "a facing PMRQ with two angles is dropped as before");
-  if (!parts.empty()) {
-    std::string error;
-    std::vector<RetailPartProperty> properties;
-    bool pfcm = false;
-    if (SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error)) {
-      for (const RetailPartProperty& property : properties) {
-        pfcm = pfcm || property.fourcc == EffectFourCC("PFCM");
-      }
-    }
-    CHECK_MSG(!pfcm, "no PFCM when the facing rotation is refused");
-  }
+                parts[0].dropped[0] == "PMRQ: a rotation that is not REUL/RADD/RAZY",
+            "a RAZY with a vector fallback is dropped");
 }
 
 int main() {

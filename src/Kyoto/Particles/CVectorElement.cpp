@@ -448,10 +448,9 @@ CQuaternion EulerQuaternion(const CVector3f& degrees) {
   return qz * qy * qx;
 }
 
-CVector3f EulerDegreesFromQuaternion(const CQuaternion& rotation) {
+CVector3f EulerDegreesFromMatrix(const CMatrix3f& matrix) {
   constexpr float kRadiansToDegrees = 57.295779513082320876f;
   constexpr float kGimbalCosineThreshold = 1.e-5f;
-  const CMatrix3f matrix = rotation.BuildTransform();
   const float sineY = std::clamp(-matrix.Get20(), -1.f, 1.f);
   const float cosineY = std::hypot(matrix.Get00(), matrix.Get10());
   const float y = std::atan2(sineY, cosineY);
@@ -469,7 +468,39 @@ CVector3f EulerDegreesFromQuaternion(const CQuaternion& rotation) {
   }
   return CVector3f(x * kRadiansToDegrees, y * kRadiansToDegrees, z * kRadiansToDegrees);
 }
+
+CVector3f EulerDegreesFromQuaternion(const CQuaternion& rotation) {
+  return EulerDegreesFromMatrix(rotation.BuildTransform());
+}
 } // namespace
+
+CVEPortRotationFromAxis::CVEPortRotationFromAxis(CVectorElement* first, CVectorElement* second,
+                                                 CVectorElement* fallback)
+: mFirst(first), mSecond(second), mFallback(fallback) {}
+
+CVEPortRotationFromAxis::~CVEPortRotationFromAxis() {
+  delete mFirst;
+  delete mSecond;
+  delete mFallback;
+}
+
+bool CVEPortRotationFromAxis::GetValue(int frame, CVector3f& valOut) const {
+  CVector3f first = CVector3f::Zero();
+  CVector3f second = CVector3f::Zero();
+  mFirst->GetValue(frame, first);
+  mSecond->GetValue(frame, second);
+  CVector3f x, y, z;
+  if (PortParticleMath::RotationFromAxisZY(first, second, x, y, z)) {
+    valOut = EulerDegreesFromMatrix(CMatrix3f(x.GetX(), y.GetX(), z.GetX(), x.GetY(), y.GetY(),
+                                              z.GetY(), x.GetZ(), y.GetZ(), z.GetZ()));
+    return false;
+  }
+  valOut = CVector3f::Zero();
+  if (mFallback) {
+    mFallback->GetValue(frame, valOut);
+  }
+  return false;
+}
 
 CVEOrderedEulerProduct::CVEOrderedEulerProduct(CVectorElement* first, CVectorElement* second)
 : mFirst(first), mSecond(second) {}
@@ -536,8 +567,14 @@ bool CVEPortSystemVector::GetValue(int, CVector3f& valOut) const {
   case 'EXTS':
     valOut = gen.PortExternalScale();
     break;
+  case 'CMPS':
+    // CVECameraPositionInWorldSpace 0x2a23ec: GetCameraTransform 0x27b304's translation; the view
+    // matrix is camera-to-world.
+    valOut = CGraphics::GetViewMatrix().GetTranslation();
+    break;
   default: {
-    // CMPS: GetCameraTransform 0x27b304's translation; the view matrix is camera-to-world.
+    // CPSS: CVECameraPositionInSystemSpace 0x2a24fc, the world camera position taken into the
+    // system's translation, orientation and scale (Compile 0x2a246c).
     CVector3f t, s;
     CQuaternion q;
     gen.PortGlobalFrame(t, q, s);

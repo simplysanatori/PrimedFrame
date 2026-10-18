@@ -294,9 +294,26 @@ private:
   bool mScale;
 };
 
-// Remastered system vectors of the generator being evaluated: CMPS (the camera position in the
-// system's global frame, CVECameraPositionInSystemSpace 0x2a24fc), EXTT and EXTS (the external
-// translation and scale, CVEExternalValue 0x2a2774). Zero outside a generator evaluation (swooshes).
+// Port-only PRZY: Remastered's rotation RAZY(first, second, fallback) (CERotationFromAxis 0x29d298,
+// PortParticleMath::RotationFromAxisZY) as the Euler degrees PQAD and REUL use, all in
+// Remastered's particle space; the fallback is Euler degrees too.
+class CVEPortRotationFromAxis : public CVectorElement {
+public:
+  CVEPortRotationFromAxis(CVectorElement* first, CVectorElement* second, CVectorElement* fallback);
+  ~CVEPortRotationFromAxis() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CVectorElement* mFirst;
+  CVectorElement* mSecond;
+  CVectorElement* mFallback;
+};
+
+// Remastered system vectors of the generator being evaluated: CMPS (the camera position in world
+// space, CVECameraPositionInWorldSpace 0x2a23ec), CPSS (the camera position in the system's global
+// frame, CVECameraPositionInSystemSpace 0x2a24fc), EXTT and EXTS (the external translation and
+// scale, CVEExternalValue 0x2a2774). Zero outside a generator evaluation (swooshes).
 class CVEPortSystemVector : public CVectorElement {
 public:
   explicit CVEPortSystemVector(FourCC kind) : mKind(kind) {}
