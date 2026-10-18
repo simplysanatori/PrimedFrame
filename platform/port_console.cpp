@@ -2022,7 +2022,7 @@ void CmdFov() {
   const float fov =
       sCmd.args.size() > 1 ? static_cast< float >(std::atof(sCmd.args[1].c_str())) : 0.f;
   if (!(fov >= PortDebug::kFovMin && fov <= PortDebug::kFovMax)) {
-    return Finish("usage: fov <45..90>   first-person vertical FOV (retail 55)");
+    return Finish("usage: fov <45..120>   first-person vertical FOV (retail 55)");
   }
   PortDebug::SetFirstPersonFov(fov);
   Finish();
@@ -3642,7 +3642,7 @@ const CommandSpec kCommands[] = {
      "keypreset classic|mouse   apply a keyboard preset (Controls > Remap), as its button"},
     {"padpreset", CmdPadPreset, nullptr,
      "padpreset gamecube|remastered|modern|southpaw   apply a controller preset to pad 1"},
-    {"fov", CmdFov, nullptr, "fov <45..90>               first-person vertical FOV, as the Options row does"},
+    {"fov", CmdFov, nullptr, "fov <45..120>              first-person vertical FOV, as the Options row does"},
     {"gunoffset", CmdGunOffset, nullptr,
      "gunoffset <r> <f> <u>      arm cannon offset in metres (+-1), as the Video row does"},
     {"pointeraim", CmdPointerAim, nullptr,

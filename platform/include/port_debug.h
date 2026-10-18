@@ -340,7 +340,7 @@ void SetBootLogos(EBootLogos mode);
 // drawn at the retail FOV whatever this is, like a view-model FOV.
 const float kFovRetail = 55.f;
 const float kFovMin = 45.f;
-const float kFovMax = 90.f;
+const float kFovMax = 120.f;
 float FirstPersonFov();
 void SetFirstPersonFov(float degrees);
 // Arm cannon offset from its retail place, in metres along the camera's right,

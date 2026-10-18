@@ -394,7 +394,7 @@
   derived from the aspect ratio, so it holds at any aspect rather than only
   16:9. Menus, the credits and other non-aspect-matched frames are unaffected.
 - Field of view (Video > Display and pause Options > Display, persisted as `fov`,
-  45-90, retail 55): the first-person camera's vertical FOV. The overlay also
+  45-120, retail 55): the first-person camera's vertical FOV. The overlay also
   shows the horizontal FOV it gives at the current aspect. The arm cannon is
   drawn at the retail FOV whatever the setting (a view-model FOV), so it keeps
   its size and place. Shots start where the cannon is drawn and are aimed at
