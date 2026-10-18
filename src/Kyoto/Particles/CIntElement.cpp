@@ -250,6 +250,24 @@ bool CIEFrameIndexFromAnimationTime::GetValue(int frame, int& valOut) const {
   return false;
 }
 
+CIEPortRandom::CIEPortRandom(CIntElement* min, CIntElement* max) : x4_min(min), x8_max(max) {}
+
+CIEPortRandom::~CIEPortRandom() {
+  delete x4_min;
+  delete x8_max;
+}
+
+bool CIEPortRandom::GetValue(int frame, int& valOut) const {
+  int min = 0, max = 0;
+  x4_min->GetValue(frame, min);
+  x8_max->GetValue(frame, max);
+  const u32 v = static_cast< u32 >(CRandom16::GetRandomNumber()->Next());
+  const u32 range = static_cast< u32 >(max - min) + 1;
+  // An ARM udiv by 0 gives 0, so an empty range leaves v whole.
+  valOut = static_cast< int >((range != 0 ? v % range : v) + static_cast< u32 >(min));
+  return false;
+}
+
 CIEPortLifetimePercent::CIEPortLifetimePercent(int offset, CIntElement* a)
 : x4_percentVal(a), x8_offset(offset) {}
 

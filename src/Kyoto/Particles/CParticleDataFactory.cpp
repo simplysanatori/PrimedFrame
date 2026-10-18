@@ -1006,6 +1006,14 @@ CIntElement* CParticleDataFactory::GetIntElement(CInputStream& in) {
     const int offset = in.ReadLong();
     return rs_new CIEPortLifetimePercent(offset, GetIntElement(in));
   }
+  case SBIG('PRAN'): {
+    CIntElement* a = GetIntElement(in);
+    CIntElement* b = GetIntElement(in);
+    return rs_new CIEPortRandom(a, b);
+  }
+  // Port-only PSYI: a PSYS int slot of the system being evaluated.
+  case SBIG('PSYI'):
+    return rs_new CIEPortSysVar(in.ReadLong());
 #endif
   case SBIG('PULS'): {
     CIntElement* a = GetIntElement(in);

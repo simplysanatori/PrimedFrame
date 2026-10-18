@@ -136,6 +136,19 @@ public:
   ~CIEPortLifetimePercent() override;
   bool GetValue(int frame, int& valOut) const override;
 };
+
+// port-only PRAN(min, max): Remastered's int RAND (CIERandom 0x2a88a8, CIERandomConstant
+// 0x2a895c) and constant IRND (CIEInitialRandomConstant 0x2a8c40): min + Next() % (max - min + 1),
+// unsigned (min + Next() when the range wraps to 0), whatever min's sign. Retail's RAND takes Next() for min <= 0.
+class CIEPortRandom : public CIntElement {
+  CIntElement* x4_min;
+  CIntElement* x8_max;
+
+public:
+  CIEPortRandom(CIntElement* min, CIntElement* max);
+  ~CIEPortRandom() override;
+  bool GetValue(int frame, int& valOut) const override;
+};
 #endif
 
 class CIETimeChain : public CIntElement {

@@ -107,6 +107,9 @@ public:
     return &x_sys[t][n];
   }
   float SysReal(u32 slot) const { return slot < x_sys[0].size() ? x_sys[0][slot][0] : 0.f; }
+  int SysInt(u32 slot) const {
+    return slot < x_sys[1].size() ? static_cast< int >(x_sys[1][slot][0]) : 0;
+  }
   // The system that built this one (CVarContext 0x24f06c: ctx+0x48 = the parent's), or null.
   void SetParent(const CPortVarMemory* parent) { x_parent = parent != this ? parent : nullptr; }
   const CPortVarMemory* Parent() const { return x_parent; }
@@ -271,6 +274,19 @@ public:
   ~CREPortSysVar() override {}
   bool GetValue(int, float& out) const override {
     out = CPortVarGlobals::sCurrent != nullptr ? CPortVarGlobals::sCurrent->SysReal(x4_slot) : 0.f;
+    return false;
+  }
+};
+
+// PSYI (port-only; a hidden init-only int, such as a PEOD IRND): the current system's int slot.
+class CIEPortSysVar : public CIntElement {
+  u32 x4_slot;
+
+public:
+  explicit CIEPortSysVar(u32 slot) : x4_slot(slot) {}
+  ~CIEPortSysVar() override {}
+  bool GetValue(int, int& out) const override {
+    out = CPortVarGlobals::sCurrent != nullptr ? CPortVarGlobals::sCurrent->SysInt(x4_slot) : 0;
     return false;
   }
 };

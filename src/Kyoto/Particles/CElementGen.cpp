@@ -1496,6 +1496,8 @@ void CElementGen::PortSpawnTableEntry(size_t table, int frame) {
       }
       int instances = 1;
       if (spawn.instances != nullptr) {
+        // Once per spawn (GetNumInstances 0x2940fc); a PSYI count reads this system's slots.
+        CPortVarScope portVarScope(&xPortVars);
         spawn.instances->GetValue(x74_curFrame, instances);
       }
       for (int i = 0; i < instances; ++i) {

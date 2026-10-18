@@ -144,6 +144,8 @@ const Signatures& ElementsOf(Type type) {
       {F("GAPC"), ""},   {F("GEMT"), ""},
       // Port-only (CParticleDataFactory under TARGET_PC): FIAT start, count, divisor, loop.
       {F("FIAT"), "iiiB"},
+      // Port-only PRAN: Remastered's int RAND (CIEPortRandom), min and max.
+      {F("PRAN"), "ii"},
   };
   static const Signatures realElements = {
       {F("CNST"), "#"},   {F("NONE"), ""},    {F("KEYE"), "k"},    {F("KEYP"), "k"},   {F("SCAL"), "r"},
@@ -268,6 +270,37 @@ float HalfToFloat(uint16_t half) {
 
 bool IsElement(const EffectValue& value, uint32_t fourcc) {
   return value.kind == EffectValue::Kind::Element && value.fourcc == fourcc;
+}
+
+// Whether an element or any element under it is `fourcc`.
+bool ContainsElement(const EffectValue& value, uint32_t fourcc) {
+  if (IsElement(value, fourcc)) {
+    return true;
+  }
+  for (const EffectValue& arg : value.args) {
+    if (ContainsElement(arg, fourcc)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether every leaf of an element is literal data, so Remastered might fold it to a constant
+// (over-reports: a RAND of constants counts too). A keyframe never is: CIEKeyframeEmitter and
+// CIEKeyframeInput::GetConstOverride (0x2aa748, 0x2aa764) answer false.
+bool ConstantLeaves(const EffectValue& value) {
+  if (value.kind != EffectValue::Kind::Element) {
+    return true;
+  }
+  if (value.args.empty() || (value.fourcc >> 8) == (F("KEYE") >> 8)) {
+    return false;
+  }
+  for (const EffectValue& arg : value.args) {
+    if (!ConstantLeaves(arg)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // SPAF/SPAI/SPAC/SPAV(#n, fallback): the parent system's additional variable n
@@ -1122,6 +1155,26 @@ public:
       AppendBE32(out, F("RAND"));
       return Element(value.args[0], type, out, why) && Element(value.args[1], type, out, why);
     }
+    // Int RAND(min, max) (FUN_002709a4): min + Next() % (max - min + 1) (CIERandom 0x2a88a8,
+    // CIERandomConstant 0x2a895c), the port-only PRAN; but with both constant and min < 0, raw
+    // Next() (CIERandom2 0x2a89a0), which retail's RAND gives for a constant min <= 0.
+    if (value.fourcc == F("RAND") && type == Type::Int && value.args.size() == 2) {
+      auto literal = [](const EffectValue& c) {
+        return IsElement(c, F("CNST")) && c.args.size() == 1 &&
+               (c.args[0].kind == EffectValue::Kind::Word || c.args[0].kind == EffectValue::Kind::Byte);
+      };
+      const EffectValue& min = value.args[0];
+      const EffectValue& max = value.args[1];
+      const bool negative =
+          literal(min) && min.args[0].kind == EffectValue::Kind::Word && int32_t(min.args[0].word) < 0;
+      if ((!literal(min) && ConstantLeaves(min)) || (negative && !literal(max) && ConstantLeaves(max))) {
+        why = "int RAND whose arguments may fold to constants";
+        return false;
+      }
+      const bool rawNext = negative && literal(max);
+      AppendBE32(out, rawNext ? F("RAND") : F("PRAN"));
+      return Element(value.args[0], type, out, why) && Element(value.args[1], type, out, why);
+    }
     // DFCS/DFCP(a, b): a ramp of the depth from the camera, a port-only real element.
     if ((value.fourcc == F("DFCP") || value.fourcc == F("DFCS")) && value.args.size() == 2 &&
         type == Type::Real) {
@@ -1740,7 +1793,9 @@ public:
       }
       if ((IsElement(v, F("IRND")) || IsElement(v, F("RAND")) || IsElement(v, F("MPRD"))) && v.args.size() == 2 &&
           constant(v.args[0]) && constant(v.args[1])) {
-        AppendBE32(out, v.fourcc == F("MPRD") ? F("RAND") : v.fourcc);
+        // Int RAND of constants is PRAN for min >= 0, retail's RAND (raw Next()) below, as in Element.
+        const bool pran = v.fourcc == F("RAND") && int32_t(v.args[0].args[0].word) >= 0;
+        AppendBE32(out, v.fourcc == F("MPRD") ? F("RAND") : pran ? F("PRAN") : v.fourcc);
         putLess(v.args[0]);
         putLess(v.args[1]);
         return true;
@@ -1927,16 +1982,42 @@ public:
             why = "a spawn placed by missing component " + std::to_string(spawn.component);
             return false;
           }
-          if (!IsElement(spawn.instances, F("NONE")) && !IsElement(spawn.instances, F("CNST"))) {
-            why = "instance count " + EffectFourCCString(spawn.instances.fourcc) + " is not a constant";
+          // PEOD: GetNumInstances 0x2940fc evaluates the count per spawn. A tree that needs
+          // storage (CElementDep::Finish 0x24f9a4: IRND of constants is initial-only, and so is
+          // a node whose inputs all are) is a ctx-0 variable CAddVarSystem::Init sets once: a
+          // hidden init-only PSYS int the port-only PSYI reads. Other initial-only trees are not
+          // proven.
+          // Shipped counts are PEOD(e) or NONE (count 1).
+          const EffectValue& instances = IsElement(spawn.instances, F("PEOD")) && spawn.instances.args.size() == 1
+                                         ? spawn.instances.args[0]
+                                         : spawn.instances;
+          const bool latched = IsElement(instances, F("IRND")) && instances.args.size() == 2 &&
+                               IsElement(instances.args[0], F("CNST")) &&
+                               IsElement(instances.args[1], F("CNST"));
+          if (!latched && (ContainsElement(instances, F("IRND")) || ContainsElement(instances, F("KPIN")))) {
+            why = "instance instances with an initial-only " + EffectFourCCString(instances.fourcc);
             return false;
           }
           AppendBE32(spawns, type);
           AppendBE32(spawns, id);
-          if (IsElement(spawn.instances, F("NONE"))) {
+          if (latched) {
+            if (m_spawnSysItems == nullptr) {
+              why = "an IRND instance instances outside a generator";
+              return false;
+            }
+            SystemItem hidden{1, m_sysNextHiddenInt++, 1, {}};
+            AppendBE32(hidden.element, F("PRAN"));
+            if (!Element(instances.args[0], Type::Int, hidden.element, why) ||
+                !Element(instances.args[1], Type::Int, hidden.element, why)) {
+              return false;
+            }
+            AppendBE32(spawns, F("PSYI"));
+            AppendBE32(spawns, hidden.slot);
+            m_spawnSysItems->push_back(std::move(hidden));
+          } else if (IsElement(instances, F("NONE"))) {
             AppendBE32(spawns, F("NONE"));
-          } else if (!Element(spawn.instances, Type::Int, spawns, why)) {
-            why = "instance count: " + why;
+          } else if (!Element(instances, Type::Int, spawns, why)) {
+            why = "instance instances: " + why;
             return false;
           }
           AppendBE32(spawns, spawn.component);
@@ -2906,6 +2987,7 @@ public:
         }
       }
       m_sysNextHidden = 10;
+      m_sysNextHiddenInt = 10;
       uint32_t doneReals = 0;
       std::vector<bool> done(pending.size(), false);
       for (size_t emitted = 0; emitted < pending.size(); ++emitted) {
@@ -3043,7 +3125,19 @@ public:
       if (part && fourcc == F("KSSM")) {
         std::vector<uint8_t> bytes;
         std::string why;
-        if (SpawnTables(property, node, bytes, why)) {
+        // The hidden PEOD ints follow the system variables in PSYS, in table order
+        // (CAddVarBuilder::AddDefinedVar 0x275188 appends as KSSM is read). [I] their draw
+        // order against RAND-drawing system variables is not proven; no shipped effect has both.
+        const size_t sysCount = sysItems.size();
+        const uint32_t hiddenInt = m_sysNextHiddenInt;
+        m_spawnSysItems = &sysItems;
+        const bool exact = SpawnTables(property, node, bytes, why);
+        m_spawnSysItems = nullptr;
+        if (!exact) {
+          sysItems.resize(sysCount);
+          m_sysNextHiddenInt = hiddenInt;
+        }
+        if (exact) {
           if (!bytes.empty()) {
             AppendBE32(out, F("PKSM"));
             out.insert(out.end(), bytes.begin(), bytes.end());
@@ -3512,6 +3606,8 @@ private:
   mutable std::vector<PvarEntry> m_vars;            // the PVAR of the generator being written
   mutable std::vector<SystemItem>* m_sysItems = nullptr;  // set while an SVR/SVI/SVC/SVV is written
   mutable uint32_t m_sysNextHidden = 10;            // the next hidden init-only real
+  mutable std::vector<SystemItem>* m_spawnSysItems = nullptr;  // set while a KSSM is written
+  mutable uint32_t m_sysNextHiddenInt = 10;                   // the next hidden init-only int
   mutable std::vector<std::string> m_approximated;  // for the generator being written
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
   mutable bool m_mp1Space = false;                  // inside MPCB(mod vector): its vectors are retail's
@@ -3570,8 +3666,8 @@ public:
         (fourcc == F("VARV") && type == Type::Vector) || (fourcc == F("VARC") && type == Type::Color)) {
       return Skip(4);
     }
-    // Port-only PSYR: a PSYS slot.
-    if (fourcc == F("PSYR") && type == Type::Real) {
+    // Port-only PSYR/PSYI: a PSYS slot.
+    if ((fourcc == F("PSYR") && type == Type::Real) || (fourcc == F("PSYI") && type == Type::Int)) {
       return Skip(4);
     }
     // SPA*: the parent's system variable n, then the fallback; DPV*/TPV*: a
