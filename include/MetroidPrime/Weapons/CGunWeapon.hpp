@@ -134,6 +134,19 @@ public:
                     const CPlayerState::EChargeStage chargeState, const CTransform4f& xf,
                     CStateManager& mgr, const TUniqueId homingTarget, const float chargeFactor1,
                     const float chargeFactor2);
+#ifdef TARGET_PC
+  // Port (stack_beams): only the projectile(s) a Fire would spawn, no animation, shake,
+  // charge state or sound. Skips when this beam's shot data is not loaded.
+  virtual void PortFireStackedProjectile(const bool underwater, const float dt,
+                                         const CPlayerState::EChargeStage chargeState,
+                                         const CTransform4f& xf, CStateManager& mgr,
+                                         const TUniqueId homingTarget, const float chargeFactor1,
+                                         const float chargeFactor2);
+  // Locks this beam's projectile descriptions independently of Load/Unload (idempotent).
+  void PortLockStackTokens();
+  void PortUnlockStackTokens();
+  bool PortStackTokensLocked() const { return mPortStackWeapons.size() != 0; }
+#endif
   virtual void EnableFx(const bool enable) {}
   virtual void EnableSecondaryFx(const ESecondaryFxType type) {
     x1cc_enabledSecondaryEffect = type;
@@ -252,6 +265,19 @@ protected:
   void UnlockTokens();
 
   static void PointGenerator(void*, const CVector3f*, const CVector3f*, int);
+
+  // The projectile part of Fire, for the shot's `weapon` description.
+  void SpawnProjectile(const TToken< CWeaponDescription >& weapon, bool underwater, float dt,
+                       CPlayerState::EChargeStage chargeState, const CTransform4f& xf,
+                       CStateManager& mgr, TUniqueId homingTarget, float chargeFactor1,
+                       float chargeFactor2);
+#ifdef TARGET_PC
+  // The stacked copy of x144_weapons[chargeState], null unless locked and loaded.
+  const TToken< CWeaponDescription >* PortStackedWeapon(int chargeState);
+
+  // Locked copies of x144_weapons; empty while stacking is off.
+  rstl::reserved_vector< TCachedToken< CWeaponDescription >, 2 > mPortStackWeapons;
+#endif
 };
 CHECK_SIZEOF(CGunWeapon, 0x21c)
 

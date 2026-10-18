@@ -901,6 +901,11 @@ inline bool just_froze(bool frozen, bool playerFrozen) {
 }
 
 void CPlayerGun::Update(float grappleSwingT, float cameraBobT, float dt, CStateManager& mgr) {
+#ifdef TARGET_PC
+  if (!PortDebug::StackBeams()) {
+    PortReleaseStackedBeams();
+  }
+#endif
   CPlayer& player = *mgr.Player();
   const CGunMorph::EGunState gunState = x678_morph.GetGunState();
   CPlayerState& playerState = *mgr.PlayerState();
@@ -1419,6 +1424,40 @@ bool CPlayerGun::ExitMissile() {
   return true;
 }
 
+#ifdef TARGET_PC
+// Port (stack_beams): the projectiles of every other owned beam, from the shot just fired.
+void CPlayerGun::PortFireStackedBeams(float dt, CStateManager& mgr, const CTransform4f& xf,
+                                      uint targetHoming) {
+  const bool enabled = PortDebug::StackBeams() && !x833_28_phazonBeamActive;
+  if (!enabled) {
+    PortReleaseStackedBeams();
+    return;
+  }
+  const CPlayerState& playerState = *mgr.GetPlayerState();
+  for (int i = 0; i < 4; ++i) {
+    CGunWeapon* beam = x760_selectableBeams[i];
+    if (i == x310_currentBeam || beam == nullptr || beam == x72c_currentBeam ||
+        !playerState.HasPowerUp(mBeamArr[i])) {
+      continue;
+    }
+    beam->PortLockStackTokens();
+    beam->PortFireStackedProjectile(
+        x834_27_underwater, dt, CPlayerState::EChargeStage(x330_chargeState), xf, mgr,
+        static_cast< const TUniqueId& >(targetHoming ? GetTargetId(mgr) : kInvalidUniqueId),
+        x340_chargeBeamFactor, x340_chargeBeamFactor);
+  }
+}
+
+// Releases the stacked beams' projectile tokens once the setting is off.
+void CPlayerGun::PortReleaseStackedBeams() {
+  for (int i = 0; i < 4; ++i) {
+    if (x760_selectableBeams[i] != nullptr) {
+      x760_selectableBeams[i]->PortUnlockStackTokens();
+    }
+  }
+}
+#endif
+
 void CPlayerGun::UpdateNormalShotCycle(float dt, CStateManager& mgr) {
   if (!ExitMissile() || mgr.GetCameraManager()->IsInCinematicCamera()) {
     return;
@@ -1462,6 +1501,9 @@ void CPlayerGun::UpdateNormalShotCycle(float dt, CStateManager& mgr) {
       x834_27_underwater, dt, CPlayerState::EChargeStage(x330_chargeState), xf, mgr,
       static_cast< const TUniqueId& >(targetHoming ? GetTargetId(mgr) : kInvalidUniqueId),
       x340_chargeBeamFactor, x340_chargeBeamFactor);
+#ifdef TARGET_PC
+  PortFireStackedBeams(dt, mgr, xf, targetHoming);
+#endif
 
   mgr.InformListeners(GetGunMotionTransform().GetTranslation(), kLNT_PlayerFire);
 }

@@ -2177,6 +2177,18 @@ void CmdMapUi() {
   Finish();
 }
 
+void CmdStackBeams() {
+  if (sCmd.args.size() > 1) {
+    const std::string& v = sCmd.args[1];
+    if (v != "0" && v != "1") {
+      return Finish("usage: stackbeams [0|1]");
+    }
+    PortDebug::SetStackBeams(v == "1");
+  }
+  Out(PortDebug::StackBeams() ? "stackbeams 1" : "stackbeams 0");
+  Finish();
+}
+
 void CmdSunShadow() {
   if (sCmd.args.size() > 1) {
     const std::string& v = sCmd.args[1];
@@ -3669,6 +3681,8 @@ const CommandSpec kCommands[] = {
      "reveal <0|1>               reveal every world's map, as the Options row does"},
     {"mapui", CmdMapUi, nullptr,
      "mapui [0|1]                 the map's extra legend entries and the Mark room prompt"},
+    {"stackbeams", CmdStackBeams, nullptr,
+     "stackbeams [0|1]           every shot also fires the other owned beams' projectiles (stack_beams)"},
     {"beamdoors", nullptr, CmdBeamDoors,
      "beamdoors [status|list [here]|unlock <door index|all>|reset]  the beam doors opened for good\n"
      "                           (beam_doors_stay_unlocked; unlock restyles the loaded doors)"},

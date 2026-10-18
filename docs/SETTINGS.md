@@ -62,7 +62,7 @@
   them. It forces 640x480 (EFB scale 1x, no dynamic resolution, MSAA and
   anisotropy off), 4:3 without the widescreen HUD or Vert+, FOV 55, HUD scale
   100, the game's crosshair, the helmet and visor effects, cutscene bars, unskippable cutscenes and
-  elevator rides, a 60 Hz simulation with the frame cap and no interpolation,
+  elevator rides, no stacked beams, a 60 Hz simulation with the frame cap and no interpolation,
   the disc's font and GameCube button prompts, no mods, unlocks or revealed map,
   and retail controls (no spring ball, fast morph, sticky or rapid charge,
   lock-on toggle, turbo fire or scan/X-ray swap). Mouse aim, gyro, twin stick,
@@ -674,6 +674,17 @@
   finish at once, a Reset ends a beetle's emergence, no skip without a
   cutscene camera). Rooms a mod replaced are left unpatched. Archipelago
   games also skip the Landing Site intro: Samus starts on top of her ship.
+- Stack beams (F1 > Game > Cutscenes, `stack_beams`, off by default and off in the Original
+  experience): every normal or charged arm-cannon shot also fires the projectiles
+  of each other beam you own (Power, Ice, Wave, Plasma), from the same spot, at
+  the same time, with the same charge, aim and homing target. Only projectiles
+  are added: the extra beams play no animation, sound or camera shake and don't
+  change the gun. Charge combos, missiles and the Phazon Beam are unchanged (the
+  setting does nothing while the Phazon Beam is active), unowned beams never
+  fire, and a beam whose projectile data isn't loaded yet is skipped for that
+  shot (nothing blocks). The other beams' projectile data is kept loaded while
+  the setting is on and released when it is turned off. Fire rate follows the
+  selected beam.
 - Unlock beam doors once opened (F1 > Game > Cutscenes, `beam_doors_stay_unlocked`,
   off by default and off in the Original experience): a door locked to the Wave,
   Ice, Plasma or Power Beam that you open by breaking its force field becomes a

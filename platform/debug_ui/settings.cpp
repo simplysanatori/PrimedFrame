@@ -221,6 +221,7 @@ const SettingKey kSettingKeys[] = {
     BoolKey< &sCheats >("cheats"),
     BoolKey< &sSkippableCutscenes >("skippable_cutscenes"),
     BoolKey< &sBeamDoorsStayUnlocked >("beam_doors_stay_unlocked"),
+    BoolKey< &sStackBeams >("stack_beams"),
     BoolKey< &sRevision100Compatibility >("revision_100_compatibility"),
     // Normalised on the way in (NormalizeEmulatorFolder), so not sampled.
     {"emulator_folder", [](const std::string& value) { PortGci::SetEmulatorFolder(value); },

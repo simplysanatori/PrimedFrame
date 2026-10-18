@@ -125,6 +125,7 @@ bool sCheats = false;
 bool sSkippableCutscenes = false;
 // Off by default: a beam door that was opened stays blue (PortBeamDoors).
 bool sBeamDoorsStayUnlocked = false;
+bool sStackBeams = false;
 // The stored choice only. Randomizer and Archipelago games force it on at use
 // (PortSkipCutscenes::Forced), which the getter does not fold in.
 bool sRevision100Compatibility = false;

@@ -308,6 +308,12 @@ void SetSkippableCutscenes(bool enabled);
 // loaded afterwards.
 bool BeamDoorsStayUnlocked();
 void SetBeamDoorsStayUnlocked(bool enabled);
+// stack_beams (CPlayerGun::UpdateNormalShotCycle): every normal or charged arm-cannon
+// shot also fires the projectiles of every other beam owned, from the same transform.
+// Projectiles only (no animation, sound or shake of the extra beams); combos, missiles
+// and the Phazon Beam are unchanged. Off by default, and off in the Original experience.
+bool StackBeams();
+void SetStackBeams(bool enabled);
 // The stored 1.00 sequence-break compatibility choice (raw, not the effective
 // policy). Randomizer and Archipelago games force it on at use.
 bool Revision100Compatibility();

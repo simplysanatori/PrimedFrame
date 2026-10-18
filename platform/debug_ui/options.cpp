@@ -571,6 +571,13 @@ bool BeamDoorsStayUnlocked() {
 
 void SetBeamDoorsStayUnlocked(bool enabled) { StoreSetting(sBeamDoorsStayUnlocked, enabled); }
 
+bool StackBeams() {
+  EnsureInitialized();
+  return sStackBeams && !sOriginalExperience;
+}
+
+void SetStackBeams(bool enabled) { StoreSetting(sStackBeams, enabled); }
+
 bool Revision100Compatibility() { return Loaded(sRevision100Compatibility); }
 void SetRevision100Compatibility(bool enabled) { StoreSetting(sRevision100Compatibility, enabled); }
 
