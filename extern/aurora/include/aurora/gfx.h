@@ -46,6 +46,14 @@ typedef struct {
   uint64_t allocatorUsed, allocatorAllocated; // GetAllocatorMemoryInfo
 } AuroraDawnMemory;
 bool aurora_get_dawn_memory(AuroraDawnMemory* out);
+// Pipeline eviction (the pipeline cache keeps its rows, so an evicted pipeline rebuilds on its next draw).
+// Idle eviction: built pipelines no draw used for `idleFrames` frames are released; 0 turns it off.
+void aurora_set_pipeline_eviction(uint32_t idleFrames);
+// Any thread: at the next frame start, release the built pipelines unused for `idleFrames` frames
+// (at least 16 are always kept). Android onTrimMemory and the console use it.
+void aurora_trim_pipelines(uint32_t idleFrames);
+// Built pipelines held now.
+uint32_t aurora_get_pipeline_count(void);
 // Live sampled/target TextureRefs grouped by creation label, size and format, most numerous first. Fills up to
 // `cap` groups and returns how many exist; `totals` (optional) gets the count and bytes over all of them.
 typedef struct {

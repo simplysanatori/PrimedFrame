@@ -1409,6 +1409,19 @@ void CmdStatsTextures() {
   Finish();
 }
 
+// pipetrim [frames]: releases the built pipelines unused for the last `frames` (16, the minimum) frames at
+// the next frame start, as Android's onTrimMemory does. Prints the count before; the log has the result.
+void CmdPipeTrim() {
+  uint32_t frames = 16;
+  if (sCmd.args.size() > 1) {
+    frames = static_cast<uint32_t>(std::strtoul(sCmd.args[1].c_str(), nullptr, 10));
+  }
+  Out("pipelines built: %u; evicting those unused for %u frames at the next frame (see the log)",
+      aurora_get_pipeline_count(), std::max<uint32_t>(frames, 16));
+  aurora_trim_pipelines(frames);
+  Finish();
+}
+
 void CmdStats() {
   if (sCmd.args.size() > 1 && sCmd.args[1] == "textures") {
     CmdStatsTextures();
@@ -3601,6 +3614,8 @@ const CommandSpec kCommands[] = {
      "shader dump <dir>          write every WGSL module made, as <hash>.wgsl, with index.tsv (also MP_WGSL_DUMP)\n"
      "shader override <dir>|off  compile <hash>.wgsl files from a dir in place of the generated ones, then reload\n"
      "shader reload              drop the shader and pipeline caches so edited overrides compile (MP_WGSL_OVERRIDE)"},
+    {"pipetrim", CmdPipeTrim, nullptr,
+     "pipetrim [frames]          release built pipelines unused for `frames` (min 16, default 16) frames; they rebuild on demand"},
     {"stats", CmdStats, nullptr,
      "stats [textures [n]]       the last frame's draws and buffers, texture and lighting totals, Dawn's GPU memory, the heap, room geometry and environments; `textures` lists the n (25) most numerous live texture groups by label, size and format"},
     {"roomenv", nullptr, nullptr,
