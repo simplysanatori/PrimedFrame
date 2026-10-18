@@ -123,6 +123,14 @@ std::vector< uint8_t > TempleOps(const Layout& layout);
 std::vector< uint8_t > RoomOps(const Layout& layout, uint32_t mrea,
                                const std::vector< PortSkipCutscenes::ScriptObject >& objects);
 
+// The checked pickups `taken` (editor ids) of a room to leave out of its
+// script, as DELETE ops for PortSkipCutscenes::ApplyOps: only those whose
+// collection sets off nothing but sounds, music and HUD memos, so the room
+// works the same without them. A death reloads the last save, which brings
+// the pickups back, while the server keeps their items given.
+std::vector< uint8_t > TakenPickupOps(const std::vector< PortSkipCutscenes::ScriptObject >& objects,
+                                      const std::vector< uint32_t >& taken);
+
 // Gives the logic tracker the seed's layout: where the game starts, where the
 // elevators lead, and every door's lock and blast shield as Doors() leaves them.
 void FillLogic(const Layout& layout, PortApLogic::Options& options);

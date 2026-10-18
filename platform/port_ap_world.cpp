@@ -745,6 +745,56 @@ std::vector< uint8_t > RoomOps(const Layout& layout, uint32_t mrea,
   return ops;
 }
 
+std::vector< uint8_t > TakenPickupOps(const std::vector< PortSkipCutscenes::ScriptObject >& objects,
+                                      const std::vector< uint32_t >& taken) {
+  enum { kTimer = 0x05, kSound = 0x09, kMemoryRelay = 0x13, kRelay = 0x15, kHUDMemo = 0x17,
+         kStreamedAudio = 0x61 };
+  // Editor ids without their layer bits, which connections and the location
+  // table don't always carry.
+  constexpr uint32_t kIdMask = 0x3FFFFFFu;
+  auto find = [&](uint32_t id) -> const PortSkipCutscenes::ScriptObject* {
+    for (const PortSkipCutscenes::ScriptObject& o : objects) {
+      if ((o.id & kIdMask) == (id & kIdMask))
+        return &o;
+    }
+    return nullptr;
+  };
+  // Whether all the pickup sets off, through relays and timers, is sounds,
+  // music, HUD memos and the pickup itself: without it the room's script is
+  // still whole. A target the room no longer holds does nothing.
+  auto selfContained = [&](const PortSkipCutscenes::ScriptObject& pickup) {
+    std::vector< const PortSkipCutscenes::ScriptObject* > open{&pickup};
+    std::vector< uint32_t > seen{pickup.id & kIdMask};
+    while (!open.empty()) {
+      const PortSkipCutscenes::ScriptObject* object = open.back();
+      open.pop_back();
+      for (const PortSkipCutscenes::ScriptObject::Connection& c : object->connections) {
+        if (std::find(seen.begin(), seen.end(), c.target & kIdMask) != seen.end())
+          continue;
+        seen.push_back(c.target & kIdMask);
+        const PortSkipCutscenes::ScriptObject* target = find(c.target);
+        if (target == nullptr || target->type == kSound || target->type == kHUDMemo ||
+            target->type == kStreamedAudio)
+          continue;
+        if (target->type != kTimer && target->type != kMemoryRelay && target->type != kRelay)
+          return false;
+        open.push_back(target);
+      }
+    }
+    return true;
+  };
+  std::vector< uint8_t > ops;
+  for (const uint32_t id : taken) {
+    const PortSkipCutscenes::ScriptObject* pickup = find(id);
+    if (pickup == nullptr || !selfContained(*pickup))
+      continue;
+    ops.push_back(6); // DELETE
+    for (int shift = 24; shift >= 0; shift -= 8)
+      ops.push_back(uint8_t(pickup->id >> shift));
+  }
+  return ops;
+}
+
 namespace {
 
 // A door the "unlock beam doors once opened" setting may turn blue: its lock.
