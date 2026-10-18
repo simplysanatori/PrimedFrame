@@ -1845,19 +1845,28 @@ public:
     return true;
   }
 
-  // A spawn component, SEVT(SMOV(position, delta, rotation, scale, modifier)), for the
-  // evaluator in CElementGen (Remastered's CSpawnComponent, build/mpr/kb). Written as
-  // the position (a vector node), the delta's three floats (it must be a constant: the
-  // mover keeps its first value), the rotation (NONE or a rotation node) and the
-  // modifier: NONE, or GRAV and its vector. The scale must be NONE.
+  // A spawn component, SEVT(SMOV(...)), for the evaluator in CElementGen
+  // (Remastered's CSpawnComponent, build/mpr/kb): its SMOV as Mover() writes it.
   bool Component(const EffectValue& value, const EffectNode& node, std::vector<uint8_t>& out,
                  std::string& why) const {
-    if (!IsElement(value, F("SEVT")) || value.args.size() != 1 || !IsElement(value.args[0], F("SMOV")) ||
-        value.args[0].args.size() != 5) {
+    if (!IsElement(value, F("SEVT")) || value.args.size() != 1) {
       why = "not SEVT(SMOV)";
       return false;
     }
-    const std::vector<EffectValue>& args = value.args[0].args;
+    return Mover(value.args[0], node, out, why);
+  }
+
+  // A mover, SMOV(position, delta, rotation, scale, modifier) (CSimpleMoverElement),
+  // written as the position (a vector node), the delta's three floats (it must be a
+  // constant: the mover keeps its first value), the rotation (NONE or a rotation node)
+  // and the modifier: NONE, or GRAV and its vector. The scale must be NONE.
+  bool Mover(const EffectValue& value, const EffectNode& node, std::vector<uint8_t>& out,
+             std::string& why) const {
+    if (!IsElement(value, F("SMOV")) || value.args.size() != 5) {
+      why = "not SMOV";
+      return false;
+    }
+    const std::vector<EffectValue>& args = value.args;
     if (!ComponentVector(args[0], node, out, why)) {
       return false;
     }
@@ -2154,8 +2163,11 @@ public:
 
   // XFMD, Remastered's transform mode (build/mpr/vfx/RESOLVED-xfmd.md): 3 keeps
   // the particles in emitter space, 4 does too at unit scale with SMVR as the
-  // mover. Written only for those two; 1, 2 and 5 draw as retail does.
-  void Transform(const EffectProperty& xfmd, const EffectProperty* mover, std::vector<uint8_t>& out) const {
+  // mover. Written only for those two; 1, 2 and 5 draw as retail does. With 4,
+  // PSMV carries the mover (none: the particles sit at the origin, unrotated),
+  // except for the identity SMVR, which is the emitter's transform as it stands.
+  void Transform(const EffectProperty& xfmd, const EffectProperty* mover, const EffectNode& node,
+                 std::vector<uint8_t>& out) const {
     uint32_t mode = 2;
     if (!SmallConst(xfmd, mode)) {
       m_approximated.push_back("XFMD: not a constant, drawn as retail");
@@ -2168,10 +2180,20 @@ public:
     } else if (mode != 1 && mode != 2 && mode != 5) {
       m_approximated.push_back("XFMD " + std::to_string(mode) + " drawn as retail");
     }
-    if (mode == 4 && (mover == nullptr || !IdentityMover(*mover))) {
-      m_approximated.push_back(mover == nullptr ? "XFMD 4 with no SMVR taken as the emitter's transform"
-                                                : "SMVR taken as the emitter's transform");
+    if (mode != 4 || (mover != nullptr && IdentityMover(*mover))) {
+      return;
     }
+    if (mover == nullptr) {
+      PutList(out, F("PSMV"), 0, {});
+      return;
+    }
+    std::vector<uint8_t> items;
+    std::string why;
+    if (mover->value.size() != 1 || !Mover(mover->value[0], node, items, why)) {
+      m_approximated.push_back("SMVR taken as the emitter's transform: " + (why.empty() ? "not SMOV" : why));
+      return;
+    }
+    PutList(out, F("PSMV"), 1, items);
   }
 
   // The count-prefixed list `CNST n, items` of a port-only property.
@@ -3136,7 +3158,7 @@ public:
       }
     }
     if (xfmd != nullptr) {
-      Transform(*xfmd, mover, out);
+      Transform(*xfmd, mover, node, out);
     } else if (mover != nullptr) {
       result.dropped.push_back("SMVR: no XFMD");
     }
@@ -3549,14 +3571,28 @@ public:
       return false;
     }
     for (uint32_t c = 0; c < components; ++c) {
-      uint32_t word;
-      if (!ComponentVector(0) || !Skip(12) || !Word(word) || (word != F("NONE") && !ComponentRotation(word, 0)) ||
-          !Word(word) || (word != F("NONE") && (word != F("GRAV") || !ComponentVector(0)))) {
-        if (m_error.empty()) {
-          m_error = "bad spawn component";
-        }
+      if (!Mover()) {
         return false;
       }
+    }
+    return true;
+  }
+
+  // PSMV (Writer::Transform): CNST, a count of 0 or 1, then the mover.
+  bool PortMover() {
+    uint32_t fourcc, count;
+    return Word(fourcc) && fourcc == F("CNST") && Word(count) && count <= 1 && (count == 0 || Mover());
+  }
+
+  // Writer::Mover's SMOV: position, delta, rotation (or NONE), modifier (NONE or GRAV).
+  bool Mover() {
+    uint32_t word;
+    if (!ComponentVector(0) || !Skip(12) || !Word(word) || (word != F("NONE") && !ComponentRotation(word, 0)) ||
+        !Word(word) || (word != F("NONE") && (word != F("GRAV") || !ComponentVector(0)))) {
+      if (m_error.empty()) {
+        m_error = "bad mover";
+      }
+      return false;
     }
     return true;
   }
@@ -3702,6 +3738,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortExtraSwooshes();
     } else if (part && fourcc == F("PKSM")) {
       ok = reader.PortSpawnTables();
+    } else if (part && fourcc == F("PSMV")) {
+      ok = reader.PortMover();
     } else if (!part && vfx && (fourcc == F("PSRO") || fourcc == F("PRAF") || fourcc == F("XFMD"))) {
       ok = reader.PortWord();
     } else if (!part && vfx && fourcc == F("PRAZ")) {

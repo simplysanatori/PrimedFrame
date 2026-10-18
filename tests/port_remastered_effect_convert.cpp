@@ -1473,6 +1473,58 @@ std::vector<ConvertedPart> ConvertOne(const std::vector<uint8_t>& data, const Ef
   return ConvertEffect(effect, data.data(), io);
 }
 
+// XFMD 4's SMVR is the particles' frame (CSimpleMoverElement): kept as the port-only
+// PSMV, one mover in the PKSM component format; with no SMVR, PSMV holds none. The
+// identity SMOV(EXTT, 0, EXTR) is the emitter's transform and needs no PSMV.
+void TestPortMover() {
+  const auto putSmvr = [](std::vector<uint8_t>& o, float dz, bool identity) {
+    PutProperty(o, "SMVR", 1);
+    PutFourCC(o, "SMOV");
+    PutFourCC(o, "EXTT");
+    PutFourCC(o, "CNST");
+    for (float each : {0.f, 0.f, dz}) {
+      PutConstant(o, Bits(each));
+    }
+    PutFourCC(o, identity ? "EXTR" : "NONE");
+    PutFourCC(o, "NONE");
+    PutFourCC(o, "NONE");
+  };
+  const auto xfmd4 = [](std::vector<uint8_t>& o) {
+    PutProperty(o, "XFMD", 0);
+    PutConstant(o, 4);
+  };
+  std::vector<RetailPartProperty> properties;
+  std::string error;
+
+  auto parts = ConvertOne(OneGenerator([&](auto& o) {
+    xfmd4(o);
+    putSmvr(o, 0.5f, false);
+  }), {});
+  Retail want;
+  want.f("GPSM").f("SIZE").f("CNST").w(0).f("XFMD").f("CNST").w(4).f("PSMV").f("CNST").w(1);
+  want.f("EXTT").w(Bits(0.f)).w(Bits(0.f)).w(Bits(0.5f)).f("NONE").f("NONE");
+  want.end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "an SMVR under XFMD 4 becomes PSMV");
+  CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty() && parts[0].dropped.empty(),
+            "PSMV leaves nothing out");
+  CHECK_MSG(parts.size() == 1 && SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error) &&
+                properties.size() == 4,
+            "PSMV reads back");  // SIZE, XFMD, PSMV, PIRN
+
+  parts = ConvertOne(OneGenerator(xfmd4), {});
+  Retail none;
+  none.f("GPSM").f("SIZE").f("CNST").w(0).f("XFMD").f("CNST").w(4).f("PSMV").f("CNST").w(0).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == none.bytes, "XFMD 4 with no SMVR writes an empty PSMV");
+
+  parts = ConvertOne(OneGenerator([&](auto& o) {
+    xfmd4(o);
+    putSmvr(o, 0.f, true);
+  }), {});
+  Retail identity;
+  identity.f("GPSM").f("SIZE").f("CNST").w(0).f("XFMD").f("CNST").w(4).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == identity.bytes, "the identity SMVR writes no PSMV");
+}
+
 Retail Patl(uint32_t id, int cols, int rows, int count, int mode, int flip) {
   Retail want;
   want.f("GPSM").f("TEXR").f("PATL").f("CNST").w(id);
@@ -3177,6 +3229,7 @@ int main() {
   TestSpawnTable();
   TestPortSpawnTables();
   TestPortSpawnComponents();
+  TestPortMover();
   TestDrawsNothing();
   TestBlendMode();
   TestGpuAvailability();

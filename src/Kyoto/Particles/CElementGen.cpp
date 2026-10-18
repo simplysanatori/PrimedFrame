@@ -421,6 +421,11 @@ bool CElementGen::PortFollowsEmitter() const {
 }
 
 CTransform4f CElementGen::PortEmitterFrame() const {
+  if (PortHasMover()) {
+    // XFMD 4: T_g/Q_g are the mover's output (zero and identity with no SMVR) at unit scale; the
+    // render adds the global translation.
+    return CTransform4f::Translate(xPortMover.pos - xe8_globalTranslation) * xPortMover.rot;
+  }
   const CTransform4f rotation =
       CTransform4f(x22c_globalOrientation.BuildMatrix3f(), CVector3f::Zero()) *
       CTransform4f(x1d8_orientation.BuildMatrix3f(), CVector3f::Zero());
@@ -478,8 +483,15 @@ void CElementGen::SetGlobalTranslation(const CVector3f& translation) {
     xPortPrevGlobalTranslation = xPortGlobalGeneration == 0 ? translation : xe8_globalTranslation;
     xPortGlobalGeneration = gen;
   }
+  // A mover's frame is held in world space (PortEmitterFrame), so it does not move with GT.
+  const CTransform4f portBefore = PortHasMover() ? PortEmitterFrame() : CTransform4f::Identity();
 #endif
   xe8_globalTranslation = translation;
+#ifdef TARGET_PC
+  if (PortHasMover()) {
+    PortFollowEmitter(portBefore);
+  }
+#endif
   for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
     (*it)->SetGlobalTranslation(translation);
 #ifdef TARGET_PC
@@ -609,6 +621,9 @@ const bool CElementGen::Update(double dt) {
   CParticleGlobals::SParticleSystem thisSystem('PART', this);
 #ifdef TARGET_PC
   CPortVarScope portVarScope(&xPortVars);
+  if (!xPortMoverInit) {
+    PortInitMover();
+  }
 #endif
 
   if (x28_loadedGenDesc->x4_PSWT && !x26d_25_warmedUp) {
@@ -652,6 +667,9 @@ bool CElementGen::InternalUpdate(double dt) {
     x2ec_maxSize = 0.0f;
 
     CParticleGlobals::SetEmitterTime(x74_curFrame);
+#ifdef TARGET_PC
+    PortStepMover();
+#endif
     UpdateExistingParticles();
     CParticleGlobals::SetParticleLifetime(x268_PSLT);
 
@@ -1041,8 +1059,15 @@ void CElementGen::CreateNewParticles(int count) {
         particle.x1c_vel = x1d8_orientation.Rotate(particle.x1c_vel);
       }
     } else {
+#ifdef TARGET_PC
+      const CVector3f compPos =
+          PortFollowsEmitter() ? PortEmitterFrame().GetTranslation()
+                               : (x13c_globalScaleTransformInverse * x1a8_localScaleTransformInverse) *
+                                     xdc_translation;
+#else
       const CVector3f& compPos =
           (x13c_globalScaleTransformInverse * x1a8_localScaleTransformInverse) * xdc_translation;
+#endif
       particle.x4_pos = compPos + xf4_POFS;
       particle.x1c_vel = CVector3f::Zero();
     }
@@ -1179,7 +1204,7 @@ CElementGen::PortKssmChild* CElementGen::PortFindKssmChild(const CParticleGen* c
 }
 
 float CElementGen::PortKssmReal(PortKssmChild& state, u32 index) {
-  const CGenDescription::PortKssmNode& node = x28_loadedGenDesc->xPortKssm->nodes[index];
+  const CGenDescription::PortKssmNode& node = state.kssm->nodes[index];
   switch (node.op) {
   case 'CNST':
     return node.value;
@@ -1229,7 +1254,7 @@ float CElementGen::PortKssmReal(PortKssmChild& state, u32 index) {
 }
 
 CVector3f CElementGen::PortKssmVector(PortKssmChild& state, u32 index) {
-  const CGenDescription::PortKssmNode& node = x28_loadedGenDesc->xPortKssm->nodes[index];
+  const CGenDescription::PortKssmNode& node = state.kssm->nodes[index];
   switch (node.op) {
   case 'EXTT':
     return xe8_globalTranslation + xdc_translation;
@@ -1286,7 +1311,7 @@ CVector3f CElementGen::PortKssmVector(PortKssmChild& state, u32 index) {
 }
 
 CQuaternion CElementGen::PortKssmRotation(PortKssmChild& state, u32 index) {
-  const CGenDescription::PortKssmNode& node = x28_loadedGenDesc->xPortKssm->nodes[index];
+  const CGenDescription::PortKssmNode& node = state.kssm->nodes[index];
   switch (node.op) {
   case 'EXTR':
     return CQuaternion::FromMatrix(x22c_globalOrientation * x1d8_orientation);
@@ -1318,7 +1343,7 @@ CQuaternion CElementGen::PortKssmRotation(PortKssmChild& state, u32 index) {
 }
 
 void CElementGen::PortKssmEvaluate(PortKssmChild& state) {
-  const CGenDescription::PortKssm& kssm = *x28_loadedGenDesc->xPortKssm;
+  const CGenDescription::PortKssm& kssm = *state.kssm;
   const CGenDescription::PortKssmComponent& component = kssm.components[state.component];
   if (kssm.nodes[component.pos].op != 'KPIN' || state.frame == 0) {
     state.pos = PortKssmVector(state, component.pos);
@@ -1330,6 +1355,39 @@ void CElementGen::PortKssmEvaluate(PortKssmChild& state) {
     state.vel = state.vel + PortKssmVector(state, component.grav);
   }
   state.pos = state.pos + state.vel;
+}
+
+bool CElementGen::PortHasMover() const {
+  return x28_loadedGenDesc->xPortMover && x28_loadedGenDesc->xPortXfmd == kPortXfmdFollowUnscaled;
+}
+
+// CAddVarSystem::Init at the first Update (CElementGen::Update 0x2460e0, before the PSWT warm-up):
+// the mover starts at frame 0, evaluated once and moved one step.
+void CElementGen::PortInitMover() {
+  xPortMoverInit = true;
+  const CGenDescription::PortKssm* mover = x28_loadedGenDesc->xPortMover.get();
+  if (!PortHasMover() || mover->components.empty()) {
+    return;
+  }
+  const CGenDescription::PortKssmComponent& component = mover->components[0];
+  xPortMover.kssm = mover;
+  xPortMover.component = 0;
+  xPortMover.vel = CVector3f(component.delta[0], component.delta[1], component.delta[2]);
+  xPortMover.hasRot = component.rot != ~0u;
+  xPortMover.latches.assign(component.latches, 0.f);
+  PortKssmEvaluate(xPortMover);
+}
+
+// CAddVarSystem::Update at the start of each tick (TickSystem_Complete 0x24ac98), before the
+// particles update and spawn. The live particles stay put in the mover's frame.
+void CElementGen::PortStepMover() {
+  if (xPortMover.kssm == nullptr) {
+    return;
+  }
+  const CTransform4f before = PortEmitterFrame();
+  ++xPortMover.frame;
+  PortKssmEvaluate(xPortMover);
+  PortFollowEmitter(before);
 }
 
 // Holds the child where its component puts it: it keeps the parent's global translation and
@@ -1363,6 +1421,7 @@ void CElementGen::PortSpawnTableEntry(size_t table, int frame) {
       for (int i = 0; i < instances; ++i) {
         // A component starts at its frame 0: evaluated once and moved one step.
         PortKssmChild state;
+        state.kssm = x28_loadedGenDesc->xPortKssm.get();
         if (spawn.component != ~0u) {
           const CGenDescription::PortKssmComponent& component =
               x28_loadedGenDesc->xPortKssm->components[spawn.component];

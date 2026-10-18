@@ -200,6 +200,26 @@ bool PortKssmLiveExtt(const CGenDescription::PortKssm& kssm, u32 index) {
   }
   return false;
 }
+
+// One KSSM SMOV component: pos vector, delta, rot (NONE = absent), modifier (GRAV or NONE).
+bool PortReadKssmComponent(CInputStream& in, CGenDescription::PortKssm& kssm,
+                           CGenDescription::PortKssmComponent& component) {
+  if (!PortReadKssmNode(in, kssm, component, kPKK_Vector, 0, component.pos)) {
+    return false;
+  }
+  component.liveExtt = PortKssmLiveExtt(kssm, component.pos);
+  for (float& delta : component.delta) {
+    delta = in.ReadFloat();
+  }
+  if (!PortReadKssmNode(in, kssm, component, kPKK_Rotation, 0, component.rot, true)) {
+    return false;
+  }
+  const u32 modifier = in.ReadLong();
+  if (modifier == SBIG('GRAV')) {
+    return PortReadKssmNode(in, kssm, component, kPKK_Vector, 0, component.grav);
+  }
+  return modifier == SBIG('NONE');
+}
 } // namespace
 #endif
 
@@ -581,22 +601,7 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       }
       kssm->components.resize(components);
       for (CGenDescription::PortKssmComponent& component : kssm->components) {
-        if (!PortReadKssmNode(in, *kssm, component, kPKK_Vector, 0, component.pos)) {
-          return false;
-        }
-        component.liveExtt = PortKssmLiveExtt(*kssm, component.pos);
-        for (float& delta : component.delta) {
-          delta = in.ReadFloat();
-        }
-        if (!PortReadKssmNode(in, *kssm, component, kPKK_Rotation, 0, component.rot, true)) {
-          return false;
-        }
-        const u32 modifier = in.ReadLong();
-        if (modifier == SBIG('GRAV')) {
-          if (!PortReadKssmNode(in, *kssm, component, kPKK_Vector, 0, component.grav)) {
-            return false;
-          }
-        } else if (modifier != SBIG('NONE')) {
+        if (!PortReadKssmComponent(in, *kssm, component)) {
           return false;
         }
       }
@@ -610,6 +615,24 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
         }
       }
       desc->xPortKssm = std::move(kssm);
+      break;
+    }
+    // Port-only: XFMD 4's mover (xPortMover): CNST, the component count (0 or 1), then the
+    // component as in PKSM.
+    case SBIG('PSMV'): {
+      GetClassID(in);
+      std::unique_ptr< CGenDescription::PortKssm > mover(new CGenDescription::PortKssm);
+      const u32 components = in.ReadLong();
+      if (components > 1) {
+        return false;
+      }
+      mover->components.resize(components);
+      for (CGenDescription::PortKssmComponent& component : mover->components) {
+        if (!PortReadKssmComponent(in, *mover, component)) {
+          return false;
+        }
+      }
+      desc->xPortMover = std::move(mover);
       break;
     }
     // Port-only: Remastered's sprite polygon (SSHP 3-6; xPortSpriteShape).

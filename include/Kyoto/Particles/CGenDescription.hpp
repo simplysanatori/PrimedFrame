@@ -217,6 +217,11 @@ public:
     ~PortKssm();
   };
   std::unique_ptr< PortKssm > xPortKssm;
+  // port-only PSMV: XFMD 4's SMVR mover (CSimpleMoverElement, build/mpr/vfx/RESOLVED-xfmd.md)
+  // as one component in the PKSM node format, or no component for an XFMD 4 with no SMVR (the
+  // emitter's transform unused). Absent for the identity SMOV(EXTT, 0, EXTR), which is the
+  // emitter's own frame.
+  std::unique_ptr< PortKssm > xPortMover;
 #endif
   CVectorElement* x58_PMOP;
   CVectorElement* x5c_PMRT;

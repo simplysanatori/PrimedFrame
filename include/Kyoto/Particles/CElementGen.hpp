@@ -20,6 +20,7 @@ class CModVectorElement;
 
 #pragma cpp_extensions on
 #ifdef TARGET_PC
+#include "Kyoto/Particles/CGenDescription.hpp" // PortKssmChild points at a CGenDescription::PortKssm
 #include "Kyoto/Particles/CPortVfxConstants.hpp"
 #include <vector>
 struct CPortVfxMeshBatch;
@@ -399,6 +400,7 @@ private:
   // position the child is held at (child T = placed - its GT); with hasRot its orientation is
   // held at `rot` the same way. The parent's propagation leaves what the component holds alone.
   struct PortKssmChild {
+    const CGenDescription::PortKssm* kssm = nullptr; // holds its component and nodes
     CParticleGen* child = nullptr;
     u32 component = 0;
     int frame = 0;
@@ -415,6 +417,13 @@ private:
   CQuaternion PortKssmRotation(PortKssmChild& state, u32 node);
   void PortKssmEvaluate(PortKssmChild& state);
   void PortKssmPlace(const PortKssmChild& state);
+  // XFMD 4's SMVR (CGenDescription::xPortMover), a system-scoped mover: initialised by the first
+  // Update, stepped at the start of each tick. Its pos/rot are T_g/Q_g.
+  PortKssmChild xPortMover;
+  bool xPortMoverInit = false;
+  bool PortHasMover() const;
+  void PortInitMover();
+  void PortStepMover();
   void PortVfxUpdateSystem();
   // XFMD 3/4: the spawn-baked part of the emitter's transform, and moving the live particles from
   // one such frame to the next.
