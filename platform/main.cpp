@@ -1005,11 +1005,18 @@ int main(int argc, char** argv) {
                                                                       : "room geometry");
     }
     // The startup compile of the cached and seeded pipelines costs ~950 MiB of process memory
-    // (issue #162): a device short on RAM builds them on first use instead.
+    // (issue #162): Android, and any device short on RAM, builds them on first use instead. An 8 GB
+    // tablet held ~900 MiB of driver pipeline state from them and swapped all session.
     bool pipelineLazy = false;
     {
         char why[96] = "";
         pipelineLazy = PortMemoryLog::LowRamDevice(why, sizeof(why));
+#if defined(__ANDROID__)
+        if (!pipelineLazy) {
+            pipelineLazy = true;
+            std::strncat(why, ", Android", sizeof(why) - std::strlen(why) - 1);
+        }
+#endif
         const char* reason = why;
         if (const char* env = port::EnvString("MP_PIPELINE_LAZY"); env != nullptr && env[0] != '\0') {
             pipelineLazy = port::EnvFlag("MP_PIPELINE_LAZY", pipelineLazy);

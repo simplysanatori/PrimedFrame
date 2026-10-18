@@ -46,6 +46,9 @@ typedef struct {
   uint64_t allocatorUsed, allocatorAllocated; // GetAllocatorMemoryInfo
 } AuroraDawnMemory;
 bool aurora_get_dawn_memory(AuroraDawnMemory* out);
+// Any thread: within a second, hand the GPU memory Dawn keeps for reuse back to the driver. The submit
+// thread also does it on its own once that memory grows by 64 MiB.
+void aurora_reduce_gpu_memory(void);
 // Pipeline eviction (the pipeline cache keeps its rows, so an evicted pipeline rebuilds on its next draw).
 // Idle eviction: built pipelines no draw used for `idleFrames` frames are released; 0 turns it off.
 void aurora_set_pipeline_eviction(uint32_t idleFrames);

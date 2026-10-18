@@ -408,6 +408,32 @@ AuroraDawnMemory s_dawnMemory;
 bool s_dawnSampled = false;
 std::atomic<int64_t> s_dawnSampleNs = 0;
 std::atomic<texture_sites::Site*> s_sites = nullptr;
+std::atomic_bool s_dawnReduceRequested = false;
+// Allocator slack (allocated - used) above which the recycled memory is handed back, and the slack a
+// release left behind: what ReduceMemoryUsage cannot free (partly used heaps) is not retried until the
+// slack grows past it by the threshold again.
+constexpr uint64_t kDawnReduceSlack = 64ull << 20;
+uint64_t s_dawnSlackFloor = 0;
+bool s_dawnReducePending = false;
+
+void reduce_dawn_memory(WGPUDevice device, const dawn::native::AllocatorMemoryInfo& before) {
+  const bool requested = s_dawnReduceRequested.exchange(false, std::memory_order_relaxed);
+  const uint64_t slack = before.totalAllocatedMemory - std::min(before.totalUsedMemory, before.totalAllocatedMemory);
+  s_dawnSlackFloor = std::min(s_dawnSlackFloor, slack);
+  if (!requested && !s_dawnReducePending && slack < s_dawnSlackFloor + kDawnReduceSlack) {
+    return;
+  }
+  // Dawn's allocators keep freed GPU heaps for reuse and never return them on their own (issue #162).
+  s_dawnReducePending = dawn::native::ReduceMemoryUsage(device);
+  const auto after = dawn::native::GetAllocatorMemoryInfo(device);
+  s_dawnSlackFloor = after.totalAllocatedMemory - std::min(after.totalUsedMemory, after.totalAllocatedMemory);
+  if (!requested && after.totalAllocatedMemory == before.totalAllocatedMemory) {
+    return; // a pending retry that freed nothing yet
+  }
+  Log.info("dawn: released recycled GPU memory ({}): allocated {} -> {} MiB, used {} MiB{}",
+           requested ? "requested" : "slack", before.totalAllocatedMemory >> 20, after.totalAllocatedMemory >> 20,
+           after.totalUsedMemory >> 20, s_dawnReducePending ? ", more after in-flight work" : "");
+}
 } // namespace
 
 // Dawn's memory queries are not synchronized with its other calls (the device has no implicit synchronization), so
@@ -423,7 +449,9 @@ void sample_dawn_memory() noexcept {
   s_dawnSampleNs.store(now, std::memory_order_relaxed);
   const WGPUDevice device = webgpu::g_device.Get();
   const auto usage = dawn::native::ComputeEstimatedMemoryUsageInfo(device);
-  const auto allocator = dawn::native::GetAllocatorMemoryInfo(device);
+  auto allocator = dawn::native::GetAllocatorMemoryInfo(device);
+  reduce_dawn_memory(device, allocator);
+  allocator = dawn::native::GetAllocatorMemoryInfo(device);
   std::lock_guard lock(s_dawnMutex);
   s_dawnMemory = {usage.totalUsage, usage.texturesUsage, usage.buffersUsage, allocator.totalUsedMemory,
                   allocator.totalAllocatedMemory};
@@ -481,6 +509,8 @@ void aurora_get_texture_stats(AuroraTextureStats* out) {
   }
   probe::live_stats(out->count[2], out->bytes[2]);
 }
+
+void aurora_reduce_gpu_memory(void) { aurora::gfx::s_dawnReduceRequested.store(true, std::memory_order_relaxed); }
 
 bool aurora_get_dawn_memory(AuroraDawnMemory* out) {
   std::lock_guard lock(aurora::gfx::s_dawnMutex);

@@ -247,6 +247,7 @@ extern "C" JNIEXPORT void JNICALL Java_org_metroidprime_port_MetroidPrimeActivit
   // drew with (issue #162). The frame loop does it at the next frame start; they rebuild on demand.
   if (level == -1 || level >= 10) {
     aurora_trim_pipelines(16);
+    aurora_reduce_gpu_memory();
   }
 }
 #endif

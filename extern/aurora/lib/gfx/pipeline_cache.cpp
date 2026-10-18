@@ -1457,7 +1457,11 @@ static void log_eviction(const char* reason, uint32_t minIdle) {
   // Dawn and the driver free the pipelines' state into the malloc heap, which keeps the pages
   // unless asked to give them back.
   if (evicted != 0) {
+#if defined(__ANDROID__)
+    mallopt(M_PURGE, 0); // bionic has no malloc_trim
+#else
     malloc_trim(0);
+#endif
   }
 #endif
   Log.info("pipeline cache: evicted {} pipelines unused for {} frames ({}), {} kept", evicted, minIdle, reason, kept);
