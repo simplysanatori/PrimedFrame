@@ -2382,7 +2382,7 @@ void CmdPickups() {
 }
 
 void CmdBeamDoors(CStateManager& mgr) {
-  // beamdoors [status|list [here]|unlock <door index|all>|reset]: the beam
+  // beamdoors [status|on|off|list [here]|unlock <door index|all>|reset]: the beam
   // doorways the player has opened (PortBeamDoors). Door indices are the ones
   // `list` prints (PortApWorld's door table).
   const std::string sub = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "status";
@@ -2393,6 +2393,9 @@ void CmdBeamDoors(CStateManager& mgr) {
   const int count = PortApWorld::BeamDoorwayCount();
   if (sub == "reset") {
     PortBeamDoors::Reset();
+  } else if (sub == "on" || sub == "off") {
+    // The loaded doors follow on the next game tick (PortBeamDoors::Tick).
+    PortDebug::SetBeamDoorsStayUnlocked(sub == "on");
   } else if (sub == "unlock") {
     if (sCmd.args.size() < 3) {
       return Finish("usage: beamdoors unlock <door index|all>");
@@ -2436,7 +2439,7 @@ void CmdBeamDoors(CStateManager& mgr) {
       }
     }
   } else if (sub != "status") {
-    return Finish("usage: beamdoors [status|list [here]|unlock <door index|all>|reset]");
+    return Finish("usage: beamdoors [status|on|off|list [here]|unlock <door index|all>|reset]");
   }
   int open = 0;
   for (int bit = 0; bit < count; ++bit)
@@ -3684,8 +3687,8 @@ const CommandSpec kCommands[] = {
     {"stackbeams", CmdStackBeams, nullptr,
      "stackbeams [0|1]           every shot also fires the other owned beams' projectiles (stack_beams)"},
     {"beamdoors", nullptr, CmdBeamDoors,
-     "beamdoors [status|list [here]|unlock <door index|all>|reset]  the beam doors opened for good\n"
-     "                           (beam_doors_stay_unlocked; unlock restyles the loaded doors)"},
+     "beamdoors [status|on|off|list [here]|unlock <door index|all>|reset]  the beam doors opened for good\n"
+     "                           (beam_doors_stay_unlocked; on/off, unlock restyle the loaded doors)"},
     {"mark", CmdMark, nullptr,
      "mark [list|clear|toggle <area>]  the map's room marks of the current world (world:area)"},
     {"pickups", CmdPickups, nullptr,
