@@ -198,11 +198,12 @@ bool CinemaBars();
 // window's magnification (CMFGame::Draw), instead of stretching a copy of the screen. Off by
 // default and under Original experience.
 bool SharpScanWindow();
-// The Power Suit's spider ball is one made from Varia's at boot (port_power_spider_ball.h)
-// instead of the Gravity Suit's. On by default, off under Original experience. Setting it
-// reloads the mods, which serve the look.
-bool PowerSpiderBall();
-void SetPowerSpiderBall(bool enabled);
+// The morph ball looks retail lacks, made from Varia's at boot (port_ball_looks.h): a Power
+// Suit spider ball instead of the Gravity Suit's, and Gravity and Phazon Suit balls instead
+// of the Power Suit's. On by default, off under Original experience. Setting it reloads the
+// mods, which serve the looks.
+bool GeneratedBallLooks();
+void SetGeneratedBallLooks(bool enabled);
 // The glyph set the on-screen prompts are forced to ("xbox", "playstation", "switch", "gamecube",
 // "keyboard"), or nullptr to follow the input in use. Thread-safe.
 const char* PromptGlyphs();

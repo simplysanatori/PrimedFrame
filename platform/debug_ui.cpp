@@ -83,7 +83,7 @@ PortDebug::EAspectMode sAspectMode = PortDebug::kAspect_Window;
 bool sHudWide = true;
 bool sCinemaBars = false;
 bool sSharpScanWindow = false;
-bool sPowerSpiderBall = true;
+bool sGeneratedBallLooks = true;
 bool sAutoAim = true;
 int sScanSpeed = 100;
 bool sSecondaryCrosshairs = true;
@@ -474,7 +474,7 @@ void EnsureInitialized() {
   sHudWide = port::EnvFlag("MP_HUD_WIDE", sHudWide);
   sCinemaBars = port::EnvFlag("MP_CINEMA_BARS", sCinemaBars);
   sSharpScanWindow = port::EnvFlag("MP_SHARP_SCAN_WINDOW", sSharpScanWindow);
-  sPowerSpiderBall = port::EnvFlag("MP_POWER_SPIDER_BALL", sPowerSpiderBall);
+  sGeneratedBallLooks = port::EnvFlag("MP_POWER_SPIDER_BALL", sGeneratedBallLooks);
   sAutoAim = port::EnvFlag("MP_AUTO_AIM", sAutoAim);
   sScanSpeed = std::clamp(port::EnvInt("MP_SCAN_SPEED", sScanSpeed), PortDebug::kScanSpeedMin,
                           PortDebug::kScanSpeedMax);
