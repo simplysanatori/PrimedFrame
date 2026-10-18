@@ -140,6 +140,14 @@ bool CParticleSwooshDataFactory::CreateWPSM(CSwooshDescription* swoosh, CInputSt
       CParticleDataFactory::GetClassID(in);
       swoosh->xPortRotateOffset = in.ReadLong() != 0;
       break;
+    // Port-only: PROT of KPIN(RAZY(EMRV, ROTV(PRAZ, RLCL), PRAF ? RLCL : identity)).
+    case 'PRAZ':
+      swoosh->xPortRazyAxis.reset(CParticleDataFactory::GetVectorElement(in));
+      break;
+    case 'PRAF':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortRazyFallbackLocal = in.ReadLong() != 0;
+      break;
     // Port-only Remastered particle variables (PVRT).
     case 'PVRT':
       CParticleDataFactory::GetClassID(in);

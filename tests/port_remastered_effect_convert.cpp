@@ -829,6 +829,109 @@ void TestSwooshElectric() {
             "retail ELSC splits into its properties");
 }
 
+// A root generator holding one swoosh child, whose properties `body` writes;
+// returns the converted swoosh.
+template <typename Body>
+ConvertedPart ConvertSwoosh(Body body) {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "SSWH", 0);
+  PutGuid(out, Legacy(0x0000AAAA));
+  PutProperty(out, "_END", 4);
+  Put32(out, 1);
+  PutGuid(out, Legacy(0x0000AAAA));
+  PutFourCC(out, "SWSH");
+  body(out);
+  PutProperty(out, "_END", 4);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  EffectNode effect;
+  std::string error;
+  if (!ParseEffect(out.data(), out.size(), effect, error)) {
+    std::fprintf(stderr, "  %s\n", error.c_str());
+    return {};
+  }
+  std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  return parts.size() == 2 ? parts[1] : ConvertedPart{};
+}
+
+// KPIN(RAZY(EMRV, ROTV((0, 1, 0), RLCL), fallback)). `fallback` writes RAZY's third argument.
+template <typename Fallback>
+void PutRazyProt(std::vector<uint8_t>& out, Fallback fallback) {
+  PutProperty(out, "PROT", 3);
+  PutFourCC(out, "KPIN");
+  PutFourCC(out, "RAZY");
+  PutFourCC(out, "EMRV");
+  PutFourCC(out, "ROTV");
+  PutFourCC(out, "CNST");
+  PutConstant(out, 0);
+  PutConstant(out, Bits(1.0f));
+  PutConstant(out, 0);
+  PutFourCC(out, "RLCL");
+  fallback(out);
+}
+
+void PutZeroReul(std::vector<uint8_t>& out) {
+  PutFourCC(out, "REUL");
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  out.push_back(0);
+}
+
+// A swoosh PROT aligning each point to the system's motion becomes the port-only PRAZ
+// (the axis) and PRAF (fallback to the orientation, else identity); a view-oriented
+// swoosh (ORNT 1, SIDE 2) faces the camera instead and drops PROT silently.
+void TestSwooshRazyProt() {
+  ConvertedPart part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "LENG", 1);
+    PutConstant(o, 8);
+    PutRazyProt(o, PutZeroReul);
+  });
+  Retail want;
+  want.f("SWSH").f("LENG").f("CNST").w(8);
+  want.f("PRAZ").f("CNST").f("CNST").w(0).f("CNST").w(Bits(1.0f)).f("CNST").w(0);
+  want.f("PRAF").f("CNST").w(0).f("PIRN").f("CNST").w(1).f("_END");
+  CHECK_MSG(part.part == want.bytes, "a RAZY PROT becomes PRAZ with an identity PRAF");
+  CHECK_MSG(part.dropped.empty() && part.droppedRetail == 0, "a RAZY PROT drops nothing");
+
+  part = ConvertSwoosh([](auto& o) { PutRazyProt(o, [](auto& o) { PutFourCC(o, "RLCL"); }); });
+  Retail local;
+  local.f("SWSH").f("PRAZ").f("CNST").f("CNST").w(0).f("CNST").w(Bits(1.0f)).f("CNST").w(0);
+  local.f("PRAF").f("CNST").w(1).f("PIRN").f("CNST").w(1).f("_END");
+  CHECK_MSG(part.part == local.bytes, "an RLCL fallback becomes PRAF 1");
+
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "ORNT", 0);
+    PutConstant(o, 1);
+    PutProperty(o, "SIDE", 0);
+    PutConstant(o, 2);
+    PutRazyProt(o, PutZeroReul);
+  });
+  CHECK_MSG(part.dropped.empty(), "a view-oriented swoosh drops PROT silently");
+  std::vector<RetailPartProperty> properties;
+  std::string error;
+  bool praz = false;
+  if (SplitRetailEffect(EffectFourCC("SWHC"), part.part.data(), part.part.size(), properties, error)) {
+    for (const RetailPartProperty& property : properties) {
+      praz = praz || property.fourcc == EffectFourCC("PRAZ");
+    }
+  }
+  CHECK_MSG(!properties.empty() && !praz, "a view-oriented swoosh writes no PRAZ");
+
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "XFMD", 0);
+    PutConstant(o, 3);
+    PutRazyProt(o, PutZeroReul);
+  });
+  bool xfmd = false;
+  for (const std::string& reason : part.dropped) {
+    xfmd = xfmd || reason == "PROT: RAZY under XFMD 3";
+  }
+  CHECK_MSG(xfmd, "a RAZY PROT under XFMD 3 is dropped");
+}
+
 // Spawn tables the port cannot run as Remastered does (here spawns placed by a
 // component) merge into retail's one KSSM: generators by frame with the 16-byte
 // entries retail reads, the first swoosh and electric child as SSWH/SSSD and
@@ -2911,6 +3014,7 @@ int main() {
   TestRetailId();
   TestPlasmaNestedHdrLight();
   TestSwooshElectric();
+  TestSwooshRazyProt();
   TestConvert();
   TestRejects();
   TestSingleNode();

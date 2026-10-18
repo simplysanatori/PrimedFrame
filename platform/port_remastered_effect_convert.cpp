@@ -2842,6 +2842,67 @@ public:
         }
         continue;
       }
+      // Port-only PRAZ/PRAF: a swoosh's PROT of KPIN(RAZY(EMRV, ROTV(v, RLCL), fallback)), the ring
+      // frozen at each point's birth facing the emitter's motion (CERotationFromAxis 0x29d298). Only
+      // under XFMD 2, where EMRV is the system-space translation delta; ORNT with SIDE 2 replaces
+      // PROT (SetupOrientToView 0x29bdbc), so it is left out there.
+      if (swoosh && fourcc == F("PROT")) {
+        auto nodeWord = [&node](uint32_t tag, uint32_t fallback) {
+          uint32_t word = fallback;
+          for (const EffectProperty& other : node.properties) {
+            if (other.fourcc == tag && !SmallConst(other, word)) {
+              word = UINT32_MAX;
+            }
+          }
+          return word;
+        };
+        const uint32_t xfmdMode = nodeWord(F("XFMD"), 2);
+        const bool orntView = nodeWord(F("ORNT"), 0) == 1 && nodeWord(F("SIDE"), 0) == 2;
+        if (orntView) {
+          continue;
+        }
+        auto zeroReal = [](const EffectValue& value) {
+          uint32_t word = 0;
+          return ConstWord(value, word) && (word & 0x7fffffffu) == 0;
+        };
+        const EffectValue* razy = property.value.size() == 1 && IsElement(property.value[0], F("KPIN")) &&
+                                          property.value[0].args.size() == 1 &&
+                                          IsElement(property.value[0].args[0], F("RAZY")) &&
+                                          property.value[0].args[0].args.size() == 3
+                                      ? &property.value[0].args[0]
+                                      : nullptr;
+        const EffectValue* rotv = razy != nullptr && IsElement(razy->args[0], F("EMRV")) &&
+                                          IsElement(razy->args[1], F("ROTV")) && razy->args[1].args.size() == 2 &&
+                                          IsElement(razy->args[1].args[1], F("RLCL"))
+                                      ? &razy->args[1]
+                                      : nullptr;
+        uint32_t fallback = UINT32_MAX;
+        if (rotv != nullptr) {
+          const EffectValue& fb = razy->args[2];
+          if (IsElement(fb, F("RLCL"))) {
+            fallback = 1;
+          } else if (IsElement(fb, F("REUL")) && fb.args.size() == 4 && zeroReal(fb.args[0]) && zeroReal(fb.args[1]) &&
+                     zeroReal(fb.args[2])) {
+            fallback = 0;
+          }
+        }
+        std::vector<uint8_t> bytes;
+        std::string why;
+        if (fallback == UINT32_MAX) {
+          result.dropped.push_back("PROT: not KPIN(RAZY(EMRV, ROTV(v, RLCL), RLCL or zero REUL))");
+        } else if (xfmdMode != 2) {
+          result.dropped.push_back("PROT: RAZY under XFMD " + std::to_string(int32_t(xfmdMode)));
+        } else if (!Element(rotv->args[0], Type::Vector, bytes, why)) {
+          result.dropped.push_back("PROT: " + why);
+        } else {
+          AppendBE32(out, F("PRAZ"));
+          out.insert(out.end(), bytes.begin(), bytes.end());
+          AppendBE32(out, F("PRAF"));
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, fallback);
+        }
+        continue;
+      }
       const auto found = retail.find(fourcc);
       if (found == retail.end()) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": Remastered only");
@@ -3485,8 +3546,10 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortExtraSwooshes();
     } else if (part && fourcc == F("PKSM")) {
       ok = reader.PortSpawnTables();
-    } else if (!part && vfx && fourcc == F("PSRO")) {
+    } else if (!part && vfx && (fourcc == F("PSRO") || fourcc == F("PRAF"))) {
       ok = reader.PortWord();
+    } else if (!part && vfx && fourcc == F("PRAZ")) {
+      ok = reader.Element(Type::Vector);
     } else if (electric && fourcc == F("PEL2")) {
       ok = reader.PortWord();
     } else if (electric && Elc2Properties().count(fourcc) != 0) {

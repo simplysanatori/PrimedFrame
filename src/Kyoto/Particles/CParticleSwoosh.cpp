@@ -187,6 +187,13 @@ const bool CParticleSwoosh::Update(double dt) {
     if (++x158_curParticle >= x15c_swooshes.capacity()) {
       x158_curParticle = 0;
     }
+#ifdef TARGET_PC
+    // EMRV is a system-level defined var: the translation since the last step, zero on the
+    // system's first, its previous value kept every step.
+    const CVector3f razyMotion =
+        x28_curFrame == 0 ? CVector3f(0.f, 0.f, 0.f) : x38_translation - xPortRazyPrev;
+    xPortRazyPrev = x38_translation;
+#endif
     if (x1d0_24_emitting && x28_curFrame < x2c_PSLT) {
       UpdateSwooshTranslation(x38_translation);
 #ifdef TARGET_PC
@@ -207,6 +214,11 @@ const bool CParticleSwoosh::Update(double dt) {
         x15c_swooshes[x158_curParticle].mActive = true;
       }
       x15c_swooshes[x158_curParticle].mOrientation = x44_orientation;
+#ifdef TARGET_PC
+      if (x1c_desc->xPortRazyAxis) {
+        x15c_swooshes[x158_curParticle].mOrientation = PortRazyOrientation(razyMotion);
+      }
+#endif
       if (x1c_desc->x28_IVEL) {
         x1c_desc->x28_IVEL->GetValue(x28_curFrame, x15c_swooshes[x158_curParticle].mVelocity);
         x15c_swooshes[x158_curParticle].mVelocity =
@@ -246,8 +258,47 @@ const bool CParticleSwoosh::Update(double dt) {
 void CParticleSwoosh::SetOrientation(const CTransform4f& orientation) {
   x44_orientation = orientation;
   x74_invOrientation = x44_orientation.GetQuickInverse();
+#ifdef TARGET_PC
+  // KPIN freezes a PRAZ point's rotation at its birth.
+  if (x1c_desc->xPortRazyAxis) {
+    return;
+  }
+#endif
   x15c_swooshes[x158_curParticle].mOrientation = x44_orientation;
 }
+
+#ifdef TARGET_PC
+// Remastered's PROT KPIN(RAZY(EMRV, ROTV(axis, RLCL), fallback)) at a point's birth
+// (CreateNewParticle 0x27cdc8, CERotationFromAxis::GetValue 0x29d298): Z = the motion, X = F x Z
+// for F the axis turned by the orientation, Y = Z x X, each falling back (orientation or identity)
+// under CParticleValues::skMinNormalizableMagSqd. Remastered draws its ring as q * (r cos, r sin, 0)
+// (UpdateRenderData_Swoosh 0x2b52e0) and the port as m * (r cos, 0, r sin), so m = q * Rx(-90).
+CTransform4f CParticleSwoosh::PortRazyOrientation(const CVector3f& motion) const {
+  static const float kMinMagSqd = 1.4210854715202004e-14f;
+  CVector3f x(1.f, 0.f, 0.f);
+  CVector3f y(0.f, 1.f, 0.f);
+  CVector3f z(0.f, 0.f, 1.f);
+  if (x1c_desc->xPortRazyFallbackLocal) {
+    x = x44_orientation.GetColumn(kDX);
+    y = x44_orientation.GetColumn(kDY);
+    z = x44_orientation.GetColumn(kDZ);
+  }
+  CVector3f axis(0.f, 1.f, 0.f);
+  x1c_desc->xPortRazyAxis->GetValue(x28_curFrame, axis);
+  const float motionMag = motion.MagSquared();
+  if (motionMag >= kMinMagSqd) {
+    const CVector3f rowZ = motion * (1.f / CMath::SqrtF(motionMag));
+    const CVector3f cross = CVector3f::Cross(x44_orientation.Rotate(axis), rowZ);
+    const float crossMag = cross.MagSquared();
+    if (crossMag >= kMinMagSqd) {
+      x = cross * (1.f / CMath::SqrtF(crossMag));
+      z = rowZ;
+      y = CVector3f::Cross(z, x);
+    }
+  }
+  return CTransform4f::FromColumns(x, -z, y, CVector3f(0.f, 0.f, 0.f));
+}
+#endif
 
 void CParticleSwoosh::UpdateTranslationAndOrientation() {
   if (x1ac_particleCount <= 0) {
