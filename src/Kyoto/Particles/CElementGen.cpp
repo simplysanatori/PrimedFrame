@@ -2441,6 +2441,11 @@ void CElementGen::RenderParticles() {
           CParticleGlobals::SetParticleLifetime(particle.x0_endFrame - particle.x28_startFrame);
           CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
 #ifdef TARGET_PC
+          // Remastered evaluates COLR in UpdateExistingParticles 0x24a26c with ctx+0x38 = this particle
+          // and ctx+0x20 = its own var block (this+0x170 + stride * index), after _Update_Particle.
+          // TMTR is read from that same block by FillInParticleTextureTransformMaterialData
+          // 0x2acfc0 (ctx+0x20 = block + index * stride; the _WithParticleIndices form 0x2ad058
+          // does the same per index). Binding the particle's x60_advValues here matches.
           if (x26d_28_enableADV) {
             CParticleGlobals::mParticleAccessParameters = x60_advValues[&particle - &x30_particles[0]].values;
           }
