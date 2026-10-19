@@ -1,5 +1,5 @@
 // PSLW (Remastered's SLTW): a + tween * (b - a) by the system tween, clamp(frame / lifetime, 0, 1)
-// (UpdateLifetimeTweenValues 0x24ef38 on time slot 0).
+// (UpdateLifetimeTweenValues 0x24ef38 on time slot 0), the reciprocal bit-exact.
 #include "Kyoto/Particles/CPortSystemTween.hpp"
 #include "port_test.h"
 
@@ -42,6 +42,19 @@ void TestTween() {
   CHECK(CParticleGlobals::xPortSystemTween == 0.f);
 }
 
+// The reciprocal is FRECPE and two FRECPS refinements (0x24ef38), not a division: these differ
+// from frame * (1 / lifetime) and from frame / lifetime in the last bit.
+void TestReciprocalBits() {
+  CParticleGlobals::PortSetSystemTime(1, 13);
+  CHECK(CParticleGlobals::xPortSystemTween == 0x1.3b13bp-4f);
+  CHECK(CParticleGlobals::xPortSystemTween != 1.f * (1.f / 13.f));
+  CParticleGlobals::PortSetSystemTime(1, 15);
+  CHECK(CParticleGlobals::xPortSystemTween == 0x1.11111p-4f);
+  CHECK(CParticleGlobals::xPortSystemTween != 1.f * (1.f / 15.f));
+  CParticleGlobals::PortSetSystemTime(1, 21);
+  CHECK(CParticleGlobals::xPortSystemTween == 0x1.86186p-5f);
+}
+
 // SLTW(0, 1) is the tween itself, the form both PMSC users have.
 void TestUnitBlend() {
   CParticleGlobals::PortSetSystemTime(48, 64);
@@ -62,6 +75,7 @@ void IElement::operator delete(void* ptr, size_t size) { CElementAllocator::Free
 
 int main() {
   TestTween();
+  TestReciprocalBits();
   TestUnitBlend();
   return PORT_TEST_RESULT();
 }
