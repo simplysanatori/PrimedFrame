@@ -65,8 +65,13 @@ struct CPortVfxUvXf {
 };
 
 // IceChargeBeam's feed needs VMSH v2 with a real tangent and colour, and VPRM's NMAP slot and
-// CCH0..2; without them the PART keeps the retail model path.
+// CCH0..2; IceChargeCollision's a real tangent, VPRM v2's NMAP and TCH0 slots and CCH0..6. Without
+// them the PART keeps the retail model path.
 inline bool PortVfxIceReady(const CPortVfxData& vfx) {
+  if ((vfx.mat.features & aurora::gfx::vfx::IceChargeCollision) != 0) {
+    return vfx.meshStride == 16 && (vfx.meshFlags & 1) == 1 && vfx.normalSlot >= 0 && vfx.envSlot >= 0 &&
+           vfx.paramCount >= 7;
+  }
   return (vfx.mat.features & aurora::gfx::vfx::IceChargeBeam) == 0 ||
          (vfx.meshStride == 16 && (vfx.meshFlags & 3) == 3 && vfx.normalSlot >= 0 && vfx.paramCount >= 3);
 }

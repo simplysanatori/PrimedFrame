@@ -503,7 +503,8 @@ bool FlipbookTransform(const EffectValue& value, bool& flip) {
 constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kIndirect = 16, kDepthSoften = 32,
                    kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256, kColorIndexing = 512, kAddColor = 1024,
                    kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192, kDisintegration = 16384,
-                   kSceneWarp = 32768, kVisorSplat = 65536, kIceChargeBeam = 1u << 20;
+                   kSceneWarp = 32768, kVisorSplat = 65536, kIceChargeBeam = 1u << 20,
+                   kIceChargeCollision = 1u << 21, kUnfogged = 1u << 22;
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders without a SceneWarp recipe.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
@@ -529,8 +530,8 @@ constexpr EffectGuid kPowerChargeChild = {0xdf, 0x39, 0xe6, 0xa9, 0xfe, 0x9d, 0x
 constexpr EffectGuid kPowerChargeMati = {0x3c, 0x1c, 0x7d, 0x90, 0xc8, 0xcc, 0x9b, 0x4b,
                                          0x87, 0x8f, 0xee, 0x8a, 0x41, 0xfc, 0x1e, 0x7f};
 
-// Normal (an NMAP) is not a VMAT slot: VPRM carries it.
-enum class Role { Color, Opacity, Ramp, Ramp2, Threshold, Indirect, Palette, Normal };
+// Normal (an NMAP) and Env (IceChargeCollision's TCH0) are not VMAT roles: VPRM carries their slots.
+enum class Role { Color, Opacity, Ramp, Ramp2, Threshold, Indirect, Palette, Normal, Env };
 
 // A MATI texture parameter (`tag`) in the role it plays, and which CCH0
 // components scale the indirect warp of its u and v (-1: not warped).
@@ -575,6 +576,7 @@ struct Recipe {
   bool unitCch0 = false;   // shaders without v3 gain/bias support require identity CCH0.z/.w
   bool frameBuffer = false; // a FrameBuffer_* shader (scene x vc.rgb, warped by CCH0.xy): drawn as a multiply
   int params = 0;           // CCH0..params-1 go out whole in VPRM (with the NMAP slot), and SMTR overrides them
+  bool fogPerm = false;     // its fog perm (001) is decoded too: drawn fogged without DFOG 1, unfogged (kUnfogged) with
 };
 
 // RECIPES.md "(b) Per shader" and RECIPES-all.md. Derived from each shader's
@@ -603,6 +605,13 @@ const Recipe* RecipeOf(uint32_t shader) {
       {0x9e0605cd, kIceChargeBeam,
        {{"BCLR", Role::Color, -1, -1}, {"NMAP", Role::Normal, -1, -1}},
        {}, -1, false, false, 3},
+      // VFX_IceChargeCollision_Unlit (perms 000_1/000_0, fog perm 001; ICECHARGE.md): the NMAP-bumped refraction
+      // of the scene copy, desaturated, plus the BCLR-driven colour ramp CCH0..1, the TCH0 reflection and the
+      // CCH6 rim, x (CCH5.z / exposure + vc.rgb); alpha vc.a. The VS's tangent frame runs in
+      // CPortVfxMeshBatch::Add. CCH0..6 in VPRM v2 with the NMAP and TCH0 slots.
+      {0x1c651f97, kIceChargeCollision,
+       {{"BCLR", Role::Color, -1, -1}, {"NMAP", Role::Normal, -1, -1}, {"TCH0", Role::Env, -1, -1}},
+       {}, -1, false, false, 7, true},
       {0x84e0fe6c, kOpacityTex,
        {{"TCH0", Role::Opacity, -1, -1}},
        {}},
@@ -940,8 +949,10 @@ struct Mati {
 using port::ReadLEFloat;
 
 // The header's shader and the parameter entries (u8 type + four tag bytes +
-// payload): 6 texture (guid, texCoord, filter, wrap x/y/z; 36 bytes), 3 vec4,
-// 1 float, 0 int. An unknown type ends the list.
+// payload): 6 and 5 texture (guid, texCoord, filter, wrap x/y/z; 36 bytes), 3
+// and 4 vec4, 1 float, 0 int. An unknown type ends the list. Types 5 and 4 are
+// the 2D textures and the colours of a few shaders (1c651f97's NMAP, TCH0 and
+// CCH0/1/4/6); every disc MATI with them parses to its end with these sizes.
 bool ParseMati(const std::vector<uint8_t>& d, Mati& out) {
   if (d.size() < 0x6d) {
     return false;
@@ -954,11 +965,11 @@ bool ParseMati(const std::vector<uint8_t>& d, Mati& out) {
     const uint8_t type = d[at];
     const std::string tag(reinterpret_cast<const char*>(d.data() + at + 1), 4);
     at += 5;
-    const size_t size = type == 6 ? 36 : type == 3 ? 16 : type == 1 || type == 0 ? 4 : 0;
+    const size_t size = type == 6 || type == 5 ? 36 : type == 3 || type == 4 ? 16 : type == 1 || type == 0 ? 4 : 0;
     if (size == 0 || at + size > d.size()) {
       break;
     }
-    if (type == 6) {
+    if (type == 6 || type == 5) {
       MatiTexture texture;
       std::memcpy(texture.guid.data(), d.data() + at, 16);
       texture.texCoord = ReadLE32(d.data() + at + 16);
@@ -966,7 +977,7 @@ bool ParseMati(const std::vector<uint8_t>& d, Mati& out) {
       texture.wrapX = int32_t(ReadLE32(d.data() + at + 24));
       texture.wrapY = int32_t(ReadLE32(d.data() + at + 28));
       out.textures[tag] = texture;
-    } else if (type == 3) {
+    } else if (type == 3 || type == 4) {
       std::array<float, 4> value;
       for (int c = 0; c < 4; ++c) {
         value[size_t(c)] = ReadLEFloat(d.data() + at + 4 * size_t(c));
@@ -3382,8 +3393,8 @@ public:
       }
     }
 
-    // VPRM: the recipe's CCH rows whole. The IceCharge shaders are drawn unfogged (perm 000), which
-    // is only Remastered's draw where DFOG is a constant 1.
+    // VPRM: the recipe's CCH rows whole. Perm 000 (unfogged) is Remastered's draw where DFOG is a
+    // constant 1; anywhere else it draws the fog perm (001), which only a fogPerm recipe has.
     std::vector<std::array<float, 4>> params;
     if (recipe->params > 0) {
       const EffectProperty* dfog = findUnique(F("DFOG"));
@@ -3391,7 +3402,9 @@ public:
       const bool unfogged = dfog != nullptr && dfog->value.size() == 1 &&
                             ((dfog->value[0].kind == EffectValue::Kind::Byte && dfog->value[0].word == 1) ||
                              (SmallConst(*dfog, fogOff) && fogOff == 1));
-      if (!unfogged) {
+      if (unfogged && recipe->fogPerm) {
+        features |= kUnfogged;
+      } else if (!unfogged && !recipe->fogPerm) {
         m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " is drawn fogged (no DFOG 1), which its recipe lacks");
         return false;
       }
@@ -3413,7 +3426,7 @@ public:
     AppendBE32(blob, features);
     AppendBE32(blob, blend);
     AppendBE32(blob, uint32_t(slots.size()));
-    int32_t slotOf[8] = {-1, -1, -1, -1, -1, -1, -1, -1};
+    int32_t slotOf[9] = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
     for (size_t i = 0; i < slots.size(); ++i) {
       const Slot& slot = slots[i];
       slotOf[size_t(slot.spec->role)] = int32_t(i);
@@ -3484,9 +3497,14 @@ public:
     AppendBE32(result.part, uint32_t(blob.size()));
     result.part.insert(result.part.end(), blob.begin(), blob.end());
     if (recipe->params > 0) {
+      // v1: version, the NMAP slot, n, rows; v2 (a recipe with a TCH0 env map) adds the env slot after it.
+      const bool env = slotOf[size_t(Role::Env)] >= 0;
       std::vector<uint8_t> prm;
-      AppendBE32(prm, 1);
+      AppendBE32(prm, env ? 2 : 1);
       AppendBE32(prm, uint32_t(slotOf[size_t(Role::Normal)]));
+      if (env) {
+        AppendBE32(prm, uint32_t(slotOf[size_t(Role::Env)]));
+      }
       AppendBE32(prm, uint32_t(params.size()));
       for (const std::array<float, 4>& row : params) {
         for (const float f : row) {
@@ -3580,6 +3598,27 @@ public:
       for (const EffectValue& item : smtr->value) {
         // A VPRM row's component: its own target (kPortVfxParamTarget + 4 n + component).
         const uint32_t cch = item.word - kCch0;
+        // A colour (group 4) entry sets the whole row: a CNST of four reals, one target each.
+        if (cch < uint32_t(recipe->params) && item.fourcc == 4 && item.args.size() == 2) {
+          const EffectValue& vec = item.args[0];
+          if (vec.kind != EffectValue::Kind::Element || vec.fourcc != F("CNST") || vec.args.size() != 4) {
+            result.dropped.push_back("SMTR: CCH" + std::to_string(cch) + " colour not four constants");
+            continue;
+          }
+          for (uint32_t c = 0; c < 4; ++c) {
+            std::vector<uint8_t> element;
+            std::string why;
+            if (!Element(vec.args[c], Type::Real, element, why)) {
+              result.dropped.push_back("SMTR: " + why);
+              continue;
+            }
+            AppendBE32(items, kPortVfxParamTarget + 4 * cch + c);
+            AppendBE32(items, 0);
+            items.insert(items.end(), element.begin(), element.end());
+            ++count;
+          }
+          continue;
+        }
         if (cch < uint32_t(recipe->params) && item.args.size() == 2) {
           const uint32_t comp = item.args[1].word >> 8 & 0xff;
           std::vector<uint8_t> element;

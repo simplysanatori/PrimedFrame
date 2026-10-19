@@ -89,9 +89,10 @@ struct CPortVfxData {
   u32 meshStride = 8, meshFlags = 0;
   float meshOrient[9] = {1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f};
   float meshOffset[3] = {0.f, 0.f, 0.f};
-  // VPRM: the shader's NMAP slot and its CCHn uniforms (the MATI's), which VSMT targets
-  // kPortVfxParamTarget.. override.
+  // VPRM: the shader's NMAP slot (v2: and TCH0 env slot) and its CCHn uniforms (the MATI's), which
+  // VSMT targets kPortVfxParamTarget.. override.
   s32 normalSlot = -1;
+  s32 envSlot = -1;
   u32 paramCount = 0;
   float params[7][4] = {};
   CPortVfxData() = default;

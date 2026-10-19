@@ -686,6 +686,68 @@ static void AddIce(const CPortVfxData& vfx, const CTransform4f& model, const CEl
   }
 }
 
+// IceChargeCollision's vertices into `world`: its VS (1c651f97 perm 000_1) on the CPU. No hash or
+// shake: the position is the model's; the view normal and tangent are the instance matrix's (model x
+// orient) inverse transpose of the Remastered-space ones, unnormalised, and the handedness takes the
+// model's mirror, as AddIce. The instance colour is in `color`.
+static void AddIceCollision(const CPortVfxData& vfx, const CTransform4f& model, const CElementGen::CParticle& p,
+                            const Tm (&tm)[3], const float (&color)[4],
+                            std::vector< aurora::gfx::vfx::Vertex >& world) {
+  const CTransform4f view(CGraphics::GetViewMatrix());
+  Mat3 orient;
+  for (int i = 0; i < 9; ++i) {
+    orient.m[i / 3][i % 3] = vfx.meshOrient[i];
+  }
+  const Mat3 unorient = orient.InverseTranspose().Transposed();
+  const CVector3f cols[3] = {model.Rotate(CVector3f(1.f, 0.f, 0.f)), model.Rotate(CVector3f(0.f, 1.f, 0.f)),
+                             model.Rotate(CVector3f(0.f, 0.f, 1.f))};
+  Mat3 m3;
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      m3.m[r][c] = r == 0 ? cols[c].GetX() : r == 1 ? cols[c].GetY() : cols[c].GetZ();
+    }
+  }
+  Mat3 inst;
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      inst.m[r][c] = m3.m[r][0] * orient.m[0][c] + m3.m[r][1] * orient.m[1][c] + m3.m[r][2] * orient.m[2][c];
+    }
+  }
+  const Mat3 invT = inst.InverseTranspose();
+  const float mirror = m3.Det() < 0.f ? -1.f : 1.f;
+  for (u32 i = 0; i < vfx.meshVerts; ++i) {
+    const float* m = &vfx.meshV[size_t(i) * 16];
+    const CVector3f pos = model * CVector3f(m[0], m[1], m[2]);
+    const CVector3f nl = view.TransposeRotate(invT * (unorient * CVector3f(m[3], m[4], m[5])));
+    const CVector3f tl = view.TransposeRotate(invT * (unorient * CVector3f(m[8], m[9], m[10])));
+    aurora::gfx::vfx::Vertex& v = world[i];
+    v.pos[0] = pos.GetX();
+    v.pos[1] = pos.GetY();
+    v.pos[2] = pos.GetZ();
+    for (int st = 0; st < 3; ++st) {
+      const Tm& t = tm[st];
+      const float dx = (m[6] - 0.5f) * t.c;
+      const float dy = (m[7] - 0.5f) * t.d;
+      v.uv[st][0] = t.a + 0.5f + t.cosE * dx - t.sinE * dy;
+      v.uv[st][1] = t.b + 0.5f + t.sinE * dx + t.cosE * dy;
+      v.uv[st][2] = t.f;
+    }
+    for (int k = 0; k < 4; ++k) {
+      v.color[k] = color[k];
+      for (int j = 0; j < 4; ++j) {
+        v.extra[k][j] = p.xPortVpmt[k][j];
+      }
+    }
+    v.vec[0] = nl.GetX();
+    v.vec[1] = nl.GetZ();
+    v.vec[2] = nl.GetY();
+    v.tan[0] = tl.GetX();
+    v.tan[1] = tl.GetZ();
+    v.tan[2] = tl.GetY();
+    v.tan[3] = mirror * m[11];
+  }
+}
+
 void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
                             const CElementGen::CParticle& p, int partFrame,
                             const CColor& modulate) {
@@ -714,8 +776,11 @@ void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
   // particle (the render thread is the only caller), so a frame allocates nothing per particle.
   static std::vector< aurora::gfx::vfx::Vertex > world;
   world.resize(nv);
-  const bool ice = (vfx.mat.features & aurora::gfx::vfx::IceChargeBeam) != 0;
-  if (ice) {
+  const bool collision = (vfx.mat.features & aurora::gfx::vfx::IceChargeCollision) != 0;
+  const bool ice = collision || (vfx.mat.features & aurora::gfx::vfx::IceChargeBeam) != 0;
+  if (collision) {
+    AddIceCollision(vfx, model, p, tm, color, world);
+  } else if (ice) {
     AddIce(vfx, model, p, tm, color, world);
   }
   for (u32 i = 0; !ice && i < nv; ++i) {
@@ -762,8 +827,9 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
     return;
   }
   const CPortVfxData& vfx = *x28_loadedGenDesc->xPortVfx;
-  if ((vfx.mat.features & aurora::gfx::vfx::IceChargeBeam) != 0) {
+  if ((vfx.mat.features & (aurora::gfx::vfx::IceChargeBeam | aurora::gfx::vfx::IceChargeCollision)) != 0) {
     desc.normalSlot = static_cast< int8_t >(vfx.normalSlot);
+    desc.envSlot = static_cast< int8_t >(vfx.envSlot);
     PortVfxEvalParams(vfx, x74_curFrame, desc.params);
     desc.time = CGraphics::GetSimTime();
   }

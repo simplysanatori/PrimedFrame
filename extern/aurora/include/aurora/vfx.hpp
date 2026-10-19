@@ -45,6 +45,14 @@ enum Feature : uint32_t {
   // turned and shaken the mesh by the shader's hash and filled tan. colorSlot = BCLR, normalSlot = NMAP, params =
   // CCH0..2, uv[1].x = the mesh's COLOR.z, extra rows 0..2 = PMTR A, B, C. Unfogged (DFOG 1: perm 000).
   IceChargeBeam = 1u << 20,
+  // VFX_IceChargeCollision_Unlit (1c651f97, perms 000_1/000_0 and fog perm 001): a model particle whose CPU feed
+  // fills the view normal, tangent and handedness. colorSlot = BCLR, normalSlot = NMAP, envSlot = TCH0, params =
+  // CCH0..6: the BCLR-wobbled NMAP bump refracts the scene copy (capture_scene, half-res, lod 0) by
+  // (facing + BCLR.y) x min(|near / view z|, 0.2) x CCH2.w, desaturated by CCH3.x, plus the colour ramp, the TCH0
+  // reflection and the CCH6 rim, x (CCH5.z / exposure + vc.rgb) x PCMD; alpha vc.a. Fogged unless Unfogged.
+  IceChargeCollision = 1u << 21,
+  // With IceChargeCollision: the draw is Remastered's perm 000 (DFOG 1), so the port's fog is not mixed in.
+  Unfogged = 1u << 22,
   // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
   // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
   AlreadyExposed = 1u << 31
@@ -127,6 +135,7 @@ struct DrawDesc {
   // IceCharge*: the NMAP slot, Remastered's CCHn uniforms (MATI with the SMTR overrides) and its modular
   // simulation time (CScene::GetModularSimulationTime, the port's CGraphics::GetSimTime).
   int8_t normalSlot = -1;
+  int8_t envSlot = -1; // IceChargeCollision: TCH0, the reflection map
   float params[7][4] = {};
   float time = 0.f;
 };

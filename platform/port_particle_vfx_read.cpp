@@ -126,18 +126,26 @@ static bool PortReadVfxMesh(CPortVfxData& vfx, CInputStream& in, u32 nbytes) {
   return true;
 }
 
-// VPRM v1: version, the NMAP slot, n, then n CCH rows of four floats. Anything else is skipped
-// and leaves no parameters (an IceCharge material then has no mesh to draw, see PortVfxHasMesh).
+// VPRM v1: version, the NMAP slot, n, then n CCH rows of four floats; v2 has the TCH0 env slot
+// after the NMAP slot. Anything else is skipped and leaves no parameters (an IceCharge material then
+// has no mesh to draw, see PortVfxHasMesh).
 static bool PortReadVfxParams(CPortVfxData& vfx, CInputStream& in, u32 nbytes) {
   u32 consumed = 0;
   vfx.normalSlot = -1;
+  vfx.envSlot = -1;
   vfx.paramCount = 0;
   if (nbytes >= 12) {
     const u32 version = in.ReadLong();
     const s32 normalSlot = s32(in.ReadLong());
+    consumed = 8;
+    s32 envSlot = -1;
+    if (version == 2 && nbytes >= 16) {
+      envSlot = s32(in.ReadLong());
+      consumed += 4;
+    }
     const u32 n = in.ReadLong();
-    consumed = 12;
-    if (version == 1 && n <= kPortVfxParamCount && nbytes == 12 + n * 16) {
+    consumed += 4;
+    if ((version == 1 || version == 2) && n <= kPortVfxParamCount && nbytes == consumed + n * 16) {
       for (u32 r = 0; r < n; ++r) {
         for (float& f : vfx.params[r]) {
           f = in.ReadFloat();
@@ -145,6 +153,7 @@ static bool PortReadVfxParams(CPortVfxData& vfx, CInputStream& in, u32 nbytes) {
       }
       consumed = nbytes;
       vfx.normalSlot = normalSlot;
+      vfx.envSlot = envSlot;
       vfx.paramCount = n;
     }
   }

@@ -39,7 +39,7 @@ namespace {
 Module Log("aurora::gfx::vfx");
 
 constexpr uint32_t MaxQuads = 1u << 14; // 65536 vertices
-constexpr uint32_t UniformSize = 512;
+constexpr uint32_t UniformSize = 768;
 constexpr uint32_t SlotCount = 4;
 constexpr auto EvictAfter = std::chrono::seconds(10);
 
@@ -74,8 +74,8 @@ struct Uniform {
   float warp[2][4]; // per slot (x, y): slots 0, 1 in warp[0], slots 2, 3 in warp[1]
   float soft[4];    // DepthSoften: the viewport's depth range (min, max) and whether the scene depth is bound
   float scene[4];   // SceneWarp: 1 / the copied target's size (x, y), the camera's near plane, whether the colour is bound
-  float ice[4][4];  // IceChargeBeam: CCH0..2, then (modular simulation time, 0, 0, 0)
-  float pad[8];
+  float ice[8][4];  // IceCharge*: CCH0..6 (IceChargeBeam: 0..2), then (modular simulation time, 0, 0, 0)
+  float pad[56];
 };
 static_assert(sizeof(Uniform) == UniformSize);
 static_assert(offsetof(Uniform, misc2) == 208 && offsetof(Uniform, srcs) == 224 && offsetof(Uniform, soft) == 384 &&
@@ -172,6 +172,10 @@ struct U {
   ice1: vec4f,
   ice2: vec4f,
   ice3: vec4f,
+  ice4: vec4f,
+  ice5: vec4f,
+  ice6: vec4f,
+  ice7: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var t0: texture_2d_array<f32>;
@@ -237,6 +241,10 @@ fn vs_main(in: VIn) -> VOut {
   if ((FEAT & 32768u) != 0u) {
     // SceneWarp: the warp's perspective scale, near / view distance (the VS's o3.x = vp_c4[0].w / -viewZ).
     out.sw = u.scene.z / -mv.z;
+  }
+  if ((FEAT & 2097152u) != 0u) {
+    // IceChargeCollision: the refraction's perspective scale, min(|INDP.w / -viewZ|, 0.2) (VS o5.x / o6.x).
+    out.sw = min(abs(u.scene.z / -mv.z), 0.2);
   }
   return out;
 }
@@ -376,7 +384,7 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let c0 = u.ice0;
     let c1 = u.ice1;
     let c2 = u.ice2;
-    let tm = u.ice3.x;
+    let tm = u.ice7.x;
     let uv = in.uv0.xy;
     let d = c1.y * 0.1 * ((sample_raw(S_COLOR, uv, 0).w - 0.5) * sin(tm));
     let uv2 = vec2f(fma(tm, c1.z, fma(d, 2.0, uv.x)), fma(d, 2.0, uv.y));
@@ -396,6 +404,53 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let m = nm.x * tc.x;
     let ka = sat(max(tc.w, 0.25));
     rgb = (c0.x * in.e2.rgb * in.uv1.x * c2.x + mix(in.e0.rgb, in.e1.rgb, m) * ka * c1.x + fr * tc.rgb) * vc.rgb * M;
+  } else if ((FEAT & 2097152u) != 0u) {
+    // VFX_IceChargeCollision_Unlit (1c651f97, FS perm 000_0; ICECHARGE.md). BCLR.y at the mesh uv wobbles
+    // both uvs by CCH2.x x 0.01 x sin(tm) x 2 (tm = CCH2.z x time x 0.01, which also scrolls u); NMAP there
+    // bumps the view normal in the tangent frame. R1 (bump x CCH3.w) gives the facing term g and the
+    // TCH0 reflection; R2 (bump x CCH3.z) the rim. The scene copy at the fragment, offset by
+    // (g + BCLR.y) x sw x CCH2.w (v down), is desaturated by CCH3.x. The copy is exposed, so x the
+    // inverse exposure (no copy bound: no scene term). Alpha is the instance alpha alone.
+    let c0 = u.ice0;
+    let c1 = u.ice1;
+    let c2 = u.ice2;
+    let c3 = u.ice3;
+    let c5 = u.ice5;
+    let tm = c2.z * u.ice7.x * 0.01;
+    let uv = in.uv0.xy;
+    let d = c2.x * 0.01 * (sin(tm) * (sample_raw(S_COLOR, uv, 0).y - 0.5));
+    let uv2 = vec2f(tm + fma(d, 2.0, uv.x), fma(d, 2.0, uv.y));
+    let nm = sample_raw(S_NORMAL, uv2, 0).xy;
+    let b = sample_raw(S_COLOR, uv2, 0).xy;
+    // vec and tan are camera-local in (x, z, y) order; Remastered's view space is (x, y, -z) of that.
+    let N = normalize(vec3f(in.nrm.x, in.nrm.y, -in.nrm.z));
+    let T = normalize(vec3f(in.tan.x, in.tan.y, -in.tan.z));
+    let B = cross(N, T) * in.tan.w;
+    let bx = fma(nm.x, 1.9921875, -1.0);
+    let by = fma(nm.y, 1.9921875, -1.0);
+    let bz = sqrt(1.0 - sat(bx * bx + by * by));
+    let D = N * bz + T * bx + B * by - N;
+    let V = normalize(in.vp);
+    let R1 = normalize(N + D * c3.w);
+    let fp = sat(pow(max(0.0, dot(R1, -V)), 2.0));
+    let g = 1.0 - smooth3(fp);
+    let ofs = (g + b.y) * in.sw * c2.w;
+    var ie = 1.0;
+    if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { ie = 1.0 / u.tone0.w; }
+    var sc = vec3f(0.0);
+    if (u.scene.w > 0.5) {
+      let fbuv = vec2f(in.pos.x * u.scene.x + ofs, in.pos.y * u.scene.y - ofs);
+      sc = scene_light(textureSampleLevel(sceneColor, sceneSampler, fbuv, 0.0).rgb) * ie;
+    }
+    let env = sample_raw(S_ENV, fma(R1.xy, vec2f(0.5), vec2f(0.5)), 0).rgb;
+    let R2 = N + D * c3.z;
+    let f = sat(1.0 - pow(max(0.0, -dot(V, normalize(R2))), c3.y));
+    let fs = smooth3(f);
+    let sum = sc.r + sc.g + sc.b;
+    let desat = (sc - vec3f(sum * 0.33)) * c3.x + vec3f(sum * 0.33);
+    let col = b.x * b.x * (c1.rgb - c0.rgb) + c0.rgb;
+    let base = desat + b.y * c5.x * col + b.x * g * env * c2.y * u.ice4.rgb;
+    rgb = (fs * u.ice6.rgb * c5.y + base) * (c5.z * ie + vc.rgb) * M;
   } else if ((FEAT & 16384u) != 0u) {
     // VFX_Disintegration (d749057f, perm 000_0): the mask's x squared, PMTR rows 0..2 as the colours at
     // s = 0 and 1 and the edge colour, row 3 as (threshold, edge width, alpha lo, alpha hi). ceil(e)
@@ -527,8 +582,8 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   // BLEND 5 (AdditiveOne) takes no alpha compensation above and no fog below, as Additive; its tone is unchanged.
   // Remastered sets a no-fog bit for every particle blend but alpha and opaque
   // (SetupFogFromBlendMode), so additive and premultiplied draws are not fogged at all.
-  // IceChargeBeam: DFOG 1 (perm 000), so unfogged in either blend.
-  if ((BLEND == 0u || BLEND == 3u) && (FEAT & 1048576u) == 0u) {
+  // IceChargeBeam: DFOG 1 (perm 000), so unfogged in either blend; IceChargeCollision too where Unfogged.
+  if ((BLEND == 0u || BLEND == 3u) && (FEAT & 1048576u) == 0u && (FEAT & 4194304u) == 0u) {
     col = mix(col, u.fogColor.rgb, fog_factor(in.pos.z));
   }
   return vec4f(col, alpha);
@@ -1094,7 +1149,8 @@ std::string pipeline_source(const PipelineConfig& p) {
   const bool hdr = (p.blend & BlendSceneHdr) != 0;
   // The slot a feature reads is a pipeline constant (3 bits each, 7 = none).
   static constexpr const char* SlotNames[] = {"S_COLOR",  "S_OPACITY",   "S_RAMP",   "S_RAMP2",
-                                              "S_THRESHOLD", "S_INDIRECT", "S_PALETTE", "S_NORMAL"};
+                                              "S_THRESHOLD", "S_INDIRECT", "S_PALETTE", "S_NORMAL",
+                                              "S_ENV"};
   std::string source = "const FEAT: u32 = " + std::to_string(p.features) + "u;\nconst BLEND: u32 = " +
                        std::to_string(p.blend & ~BlendSceneHdr) + "u;\n";
   for (uint32_t i = 0; i < std::size(SlotNames); ++i) {
@@ -1109,7 +1165,7 @@ std::string pipeline_source(const PipelineConfig& p) {
   if (!hdr) {
     // LDR: the source as it always was, and the curve's inverse only where SceneWarp reads it.
     source += ShaderSource;
-    if ((p.features & SceneWarp) != 0) {
+    if ((p.features & (SceneWarp | IceChargeCollision)) != 0) {
       source += SceneLightDisplay;
       source += hdr::ToneWgsl;
     } else {
@@ -1128,7 +1184,7 @@ std::string pipeline_source(const PipelineConfig& p) {
   static constexpr std::string_view HdrTail = R"(  if (HDR) {
     var lin = max(rgb, vec3f(0.0));
     if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { lin = lin * u.tone0.w; }
-    if ((BLEND == 0u || BLEND == 3u) && (FEAT & 1048576u) == 0u) {
+    if ((BLEND == 0u || BLEND == 3u) && (FEAT & 1048576u) == 0u && (FEAT & 4194304u) == 0u) {
       lin = mix(lin, hdr_exposed(u.fogColor.rgb, u.tone0, u.tone1, u.tone2), fog_factor(in.pos.z));
     }
     return vec4f(lin, alpha);
@@ -1154,14 +1210,16 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   const uint32_t features = shader_features(desc.features);
   // The slots each enabled feature reads; a slot nothing reads is left unbound (the dummy).
   const std::pair<uint32_t, int8_t> reads[] = {
-      {ColorTex | ColorIndexing | Pyro | Disintegration | VisorSplat | IceChargeBeam, desc.colorSlot},
+      {ColorTex | ColorIndexing | Pyro | Disintegration | VisorSplat | IceChargeBeam | IceChargeCollision,
+       desc.colorSlot},
       {OpacityTex, desc.opacitySlot},
       {Ramp | Pyro, desc.rampSlot},
       {Ramp | DualMod, desc.ramp2Slot},
       {Thresholding, desc.thresholdSlot},
       {Indirect | SceneWarp | VisorSplat, desc.indirectSlot},
       {ColorIndexing, desc.paletteSlot},
-      {IceChargeBeam, desc.normalSlot},
+      {IceChargeBeam | IceChargeCollision, desc.normalSlot},
+      {IceChargeCollision, desc.envSlot},
   };
   uint32_t slotKey = 0;
   bool used[SlotCount]{};
@@ -1232,19 +1290,20 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
     u.soft[1] = gx::UseReversedZ ? 1.f - vp.znear : vp.zfar;
     u.soft[2] = u.soft[1] > u.soft[0] ? 1.f : 0.f;
   }
-  // SceneWarp: the copy of this pass's scene (HDR or display), under a perspective camera, whose near
-  // plane GX's projection gives as m23 / (m22 - 1).
+  // SceneWarp, IceChargeCollision: the copy of this pass's scene (HDR or display), under a perspective
+  // camera, whose near plane GX's projection gives as m23 / (m22 - 1).
   if (sceneValid && scene.color && scene.hdr == hdr && gx.projType == GX_PERSPECTIVE && gx.proj.m2[2] != 1.f) {
     u.scene[0] = 1.f / float(scene.width);
     u.scene[1] = 1.f / float(scene.height);
     u.scene[2] = gx.proj.m2[3] / (gx.proj.m2[2] - 1.f);
     u.scene[3] = 1.f;
   }
-  if ((features & IceChargeBeam) != 0) {
-    for (uint32_t i = 0; i < 3; ++i) {
+  if ((features & (IceChargeBeam | IceChargeCollision)) != 0) {
+    const uint32_t rows = (features & IceChargeCollision) != 0 ? 7 : 3;
+    for (uint32_t i = 0; i < rows; ++i) {
       std::memcpy(u.ice[i], desc.params[i], sizeof(u.ice[i]));
     }
-    u.ice[3][0] = desc.time;
+    u.ice[7][0] = desc.time;
   }
   const Src* srcs[SrcCount] = {&desc.erosion,   &desc.thrX,      &desc.thrY,        &desc.thrW,
                                &desc.fresnelX,  &desc.fresnelY,  &desc.fadeX,       &desc.fadeY,
