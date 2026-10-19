@@ -2,6 +2,7 @@
 // with each one's constant-after-start flag), the PAP0 and PAP9 leaves, and no PPVR for a generator
 // that only has ADV1..8.
 #include "port_remastered_effect_convert.h"
+#include "port_retail_check.h"
 #include "port_test.h"
 
 #include <cstdio>
@@ -75,7 +76,7 @@ std::vector<ConvertedPart> Convert(std::vector<uint8_t>& data) {
   EffectNode effect;
   std::string error;
   CHECK_MSG(ParseEffect(data.data(), data.size(), effect, error), "effect parses");
-  return ConvertEffect(effect, data.data(), {});
+  return PortRemastered::CheckedConvert(effect, data.data());
 }
 
 

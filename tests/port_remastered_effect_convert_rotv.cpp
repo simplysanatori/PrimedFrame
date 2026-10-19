@@ -1,6 +1,7 @@
 // ROTV (regular) and PNCV in a component vector: ROTV by REUL (axis order 0), EXTR or CMRT is the
 // port-only PRTV, PNCV is the port-only PNCV, and anything else is dropped with a reason.
 #include "port_remastered_effect_convert.h"
+#include "port_retail_check.h"
 #include "port_test.h"
 
 #include <cstdio>
@@ -74,7 +75,7 @@ std::vector<ConvertedPart> Convert(std::vector<uint8_t>& data) {
   EffectNode effect;
   std::string error;
   CHECK_MSG(ParseEffect(data.data(), data.size(), effect, error), "effect parses");
-  return ConvertEffect(effect, data.data(), {});
+  return PortRemastered::CheckedConvert(effect, data.data());
 }
 
 void PutVec(std::vector<uint8_t>& out, float x, float y, float z) {

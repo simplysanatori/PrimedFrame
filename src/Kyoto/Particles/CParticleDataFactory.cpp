@@ -1339,7 +1339,7 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
     const float rate = in.ReadFloat();
     // A zero or implausible key count has no keys to read at the input (the original indexes
     // key 0 regardless): the element evaluates to 0.
-    if (count <= 0 || count > 0xffff) {
+    if (count <= 0 || count > 0x100000) {
       PortLog::Write("particles: PKYF with key count %d, evaluating to 0\n", count);
       count = 0;
     }

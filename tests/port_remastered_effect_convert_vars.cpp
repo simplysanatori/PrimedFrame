@@ -2,6 +2,7 @@
 // KESP (KEYP on the always-zero time slot 2) is its first key, and NCLR is typed as a colour so
 // MDAO takes its two arguments.
 #include "port_remastered_effect_convert.h"
+#include "port_retail_check.h"
 #include "port_test.h"
 
 #include <cstdio>
@@ -75,7 +76,7 @@ std::vector<ConvertedPart> Convert(std::vector<uint8_t>& data) {
   EffectNode effect;
   std::string error;
   CHECK_MSG(ParseEffect(data.data(), data.size(), effect, error), "effect parses");
-  return ConvertEffect(effect, data.data(), {});
+  return PortRemastered::CheckedConvert(effect, data.data());
 }
 
 // GRAD with one stop and no tail: 0x3c00 = 1.0, 0x3800 = 0.5, 0x3400 = 0.25, 0x4000 = 2.0.

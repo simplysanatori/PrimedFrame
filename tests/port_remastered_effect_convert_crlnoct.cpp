@@ -1,6 +1,7 @@
 // CRLN with octaves: a mod-vector CRLN whose octave slot is set is the port-only PCRM around PCRO
 // (P, frequency, octaves, gain, A).
 #include "port_remastered_effect_convert.h"
+#include "port_retail_check.h"
 #include "port_test.h"
 
 #include <cstdio>
@@ -74,7 +75,7 @@ std::vector<ConvertedPart> Convert(std::vector<uint8_t>& data) {
   EffectNode effect;
   std::string error;
   CHECK_MSG(ParseEffect(data.data(), data.size(), effect, error), "effect parses");
-  return ConvertEffect(effect, data.data(), {});
+  return PortRemastered::CheckedConvert(effect, data.data());
 }
 
 void PutCnst(std::vector<uint8_t>& out, float value) {

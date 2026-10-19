@@ -1,6 +1,7 @@
 // KEYF (version 2) in a component real: the port-only PKYF with the loop byte, N, A, B, R, the keys
 // and the input element; another version, or a key count that differs from N, is dropped.
 #include "port_remastered_effect_convert.h"
+#include "port_retail_check.h"
 #include "port_test.h"
 
 #include <cstdio>
@@ -74,7 +75,7 @@ std::vector<ConvertedPart> Convert(std::vector<uint8_t>& data) {
   EffectNode effect;
   std::string error;
   CHECK_MSG(ParseEffect(data.data(), data.size(), effect, error), "effect parses");
-  return ConvertEffect(effect, data.data(), {});
+  return PortRemastered::CheckedConvert(effect, data.data());
 }
 
 // A KEYF block: header (version, loop, N, A, B, R, count) and the keys, then SCAL-less CNST input.

@@ -1,4 +1,5 @@
 #include "port_remastered_effect_convert.h"
+#include "port_retail_check.h"
 #include "port_vfx_opacity.h"
 #include "Kyoto/Math/CMatrix3f.hpp"
 #include "Kyoto/Math/CQuaternion.hpp"
@@ -134,7 +135,7 @@ std::vector<ConvertedPart> ConvertGen(const std::function<void(std::vector<uint8
   PutProperty(out, "_END", 4);
   std::string error;
   CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "effect parses");
-  return ConvertEffect(effect, out.data(), {});
+  return PortRemastered::CheckedConvert(effect, out.data());
 }
 
 bool Contains(const std::vector<uint8_t>& bytes, const std::vector<uint8_t>& what) {
