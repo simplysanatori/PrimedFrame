@@ -16,7 +16,7 @@
 namespace {
 
 std::filesystem::path sDirectory;
-const std::string sIdentity = "card-a|GM8E01|0";
+std::string sIdentity = "card-a|GM8E01|0";
 
 std::vector< uint8_t > SlotData(uint8_t seed) {
   std::vector< uint8_t > bytes(940);
@@ -115,6 +115,32 @@ void TestSidecar() {
   uint32_t stale[kWords] = {5, 5, 5, 5};
   CHECK_MSG(!Apply(1, other.data(), other.size(), stale) && stale[0] == 5, "another save ignores the file");
   CHECK_MSG(!Apply(0, slot.data(), slot.size(), stale), "another slot has no file");
+
+  // A moved user folder changes the card key: the file left under the old key is
+  // still used for the same slot bytes, and only for those.
+  const std::string home = sIdentity;
+  sIdentity = "card-b|GM8E01|0";
+  uint32_t moved[kWords] = {};
+  CHECK_MSG(Apply(1, slot.data(), slot.size(), moved) && Same(moved, some),
+            "a file under another card key is adopted");
+  uint32_t kept[kWords] = {5, 5, 5, 5};
+  CHECK_MSG(!Apply(1, other.data(), other.size(), kept) && kept[0] == 5,
+            "another save does not adopt it");
+  CHECK_MSG(!Apply(0, slot.data(), slot.size(), kept), "nor does another slot");
+  // Names that are not this slot's pattern are not adopted: a short key, an upper
+  // case key, a temporary and the map side file of the same slot.
+  const fs::path folder = file.parent_path();
+  const std::vector< uint8_t > blob = ReadAll(file);
+  WriteAll(folder / "beam-doors-0123456789abcde-slot2.bin", blob);
+  WriteAll(folder / "beam-doors-0123456789ABCDEF-slot2.bin", blob);
+  WriteAll(folder / "beam-doors-0123456789abcdef-slot2.bin.tmp", blob);
+  WriteAll(folder / "0123456789abcdef-2.bin", blob);
+  CHECK_MSG(!Apply(2, slot.data(), slot.size(), kept), "unrelated names are not adopted");
+  fs::remove(folder / "beam-doors-0123456789abcde-slot2.bin");
+  fs::remove(folder / "beam-doors-0123456789ABCDEF-slot2.bin");
+  fs::remove(folder / "beam-doors-0123456789abcdef-slot2.bin.tmp");
+  fs::remove(folder / "0123456789abcdef-2.bin");
+  sIdentity = home;
 
   // Staged but the card holds different bytes, or no such slot: nothing happens.
   Stage(1, other.data(), other.size(), none);
