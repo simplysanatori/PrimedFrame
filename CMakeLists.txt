@@ -824,6 +824,14 @@ if(MP_BUILD_TESTS)
         INCLUDES include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
+    # MPAC, MPCN and ANCM (Remastered's vector elements).
+    mp_port_test(port_vector_elements_tests
+        SOURCES tests/port_vector_elements.cpp src/Kyoto/Particles/CParticleGlobals.cpp src/Kyoto/CRandom16.cpp
+            src/Kyoto/Particles/CVectorElement.cpp src/Kyoto/Math/CQuaternion.cpp
+            src/Kyoto/Math/CVector3f.cpp src/Kyoto/Math/CMatrix3f.cpp
+        INCLUDES include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
     mp_port_test(port_ice_rotation_element_tests
         SOURCES tests/port_ice_rotation_element.cpp
             src/Kyoto/Particles/CVectorElement.cpp src/Kyoto/Math/CQuaternion.cpp

@@ -645,4 +645,112 @@ bool CVEPortAngleCone::GetValue(int frame, CVector3f& valOut) const {
   valOut = PortParticleMath::AngleCone(q, xRange, yRange, u, v, magnitude);
   return false;
 }
+CVEPortMpac::CVEPortMpac(CRealElement* xCentre, CRealElement* yCentre, CRealElement* xRange, CRealElement* yRange,
+                         CRealElement* magnitude)
+: mXCentre(xCentre), mYCentre(yCentre), mXRange(xRange), mYRange(yRange), mMagnitude(magnitude) {}
+
+CVEPortMpac::~CVEPortMpac() {
+  delete mXCentre;
+  delete mYCentre;
+  delete mXRange;
+  delete mYRange;
+  delete mMagnitude;
+}
+
+// Children in order, each from 0, then the two draws (u for x, v for y).
+bool CVEPortMpac::GetValue(int frame, CVector3f& valOut) const {
+  float xCentre = 0.f;
+  float yCentre = 0.f;
+  float xRange = 0.f;
+  float yRange = 0.f;
+  float magnitude = 0.f;
+  mXCentre->GetValue(frame, xCentre);
+  mYCentre->GetValue(frame, yCentre);
+  mXRange->GetValue(frame, xRange);
+  mYRange->GetValue(frame, yRange);
+  mMagnitude->GetValue(frame, magnitude);
+  CRandom16* random = CRandom16::GetRandomNumber();
+  const float u = random->PortFloat28();
+  const float v = random->PortFloat28();
+  const float ax = PortParticleMath::MpacAngle(xCentre, xRange, u);
+  const float ay = PortParticleMath::MpacAngle(yCentre, yRange, v);
+  valOut = PortParticleMath::MpacDirection(ax, ay, magnitude);
+  return false;
+}
+
+CVEPortCone::CVEPortCone(CVectorElement* direction, CRealElement* radius)
+: mDirection(direction), mRadius(radius), mU(0.f, 0.f, 0.f), mV(0.f, 0.f, 0.f) {}
+
+CVEPortCone::~CVEPortCone() {
+  delete mDirection;
+  delete mRadius;
+}
+
+bool CVEPortCone::GetValue(int frame, CVector3f& valOut) const {
+  if (frame == 0 && !mCached) {
+    CVector3f direction(0.f, 0.f, 0.f);
+    mDirection->GetValue(0, direction);
+    const PortParticleMath::ConeFrame cone = PortParticleMath::MakeConeFrame(direction);
+    mCached = true;
+    mU = cone.u;
+    mV = cone.v;
+  }
+  CVector3f position(0.f, 0.f, 0.f);
+  mDirection->GetValue(frame, position);
+  float radius = 0.f;
+  mRadius->GetValue(frame, radius);
+  if (1.f < radius) {
+    radius = 1.f;
+  }
+  CRandom16* random = CRandom16::GetRandomNumber();
+  float x;
+  float y;
+  do {
+    const float a = random->PortFloat28();
+    const float b = random->PortFloat28();
+    x = PortParticleMath::ConeOffset(radius, a);
+    y = PortParticleMath::ConeOffset(radius, b);
+    const float xx = x * x;
+    const float yy = y * y;
+    if (!(1.f < xx + yy)) {
+      break;
+    }
+  } while (true);
+  valOut = PortParticleMath::ConePoint(PortParticleMath::ConeFrame{mU, mV}, position, x, y);
+  return false;
+}
+
+CVEPortAngleConeMinMax::CVEPortAngleConeMinMax(CRealElement* rotateX, CRealElement* rotateY, CRealElement* rotateZ,
+                                               CRealElement* minAngle, CRealElement* maxAngle, CRealElement* magnitude)
+: mRotate{rotateX, rotateY, rotateZ}, mMinAngle(minAngle), mMaxAngle(maxAngle), mMagnitude(magnitude) {}
+
+CVEPortAngleConeMinMax::~CVEPortAngleConeMinMax() {
+  for (CRealElement* angle : mRotate) {
+    delete angle;
+  }
+  delete mMinAngle;
+  delete mMaxAngle;
+  delete mMagnitude;
+}
+
+// Children in Remastered's order (rotation, A, B, magnitude), each from 0, then the polar and
+// azimuth draws.
+bool CVEPortAngleConeMinMax::GetValue(int frame, CVector3f& valOut) const {
+  float angles[3] = {0.f, 0.f, 0.f};
+  for (int i = 0; i < 3; ++i) {
+    mRotate[i]->GetValue(frame, angles[i]);
+  }
+  const PortParticleMath::Quat q = PortParticleMath::EulerQuat(angles[0], angles[1], angles[2]);
+  float minAngle = 0.f;
+  float maxAngle = 0.f;
+  float magnitude = 0.f;
+  mMinAngle->GetValue(frame, minAngle);
+  mMaxAngle->GetValue(frame, maxAngle);
+  mMagnitude->GetValue(frame, magnitude);
+  CRandom16* random = CRandom16::GetRandomNumber();
+  const float u0 = random->PortFloat28();
+  const float u1 = random->PortFloat28();
+  valOut = PortParticleMath::AngleConeMinMax(q, minAngle, maxAngle, magnitude, u0, u1);
+  return false;
+}
 #endif

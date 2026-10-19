@@ -1419,6 +1419,31 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     ret = rs_new CVEPortAngleCone(rotateX, rotateY, rotateZ, xRange, yRange, magnitude);
     break;
   }
+  case SBIG('PANM'): {
+    CRealElement* rotateX = GetRealElement(in);
+    CRealElement* rotateY = GetRealElement(in);
+    CRealElement* rotateZ = GetRealElement(in);
+    CRealElement* minAngle = GetRealElement(in);
+    CRealElement* maxAngle = GetRealElement(in);
+    CRealElement* magnitude = GetRealElement(in);
+    ret = rs_new CVEPortAngleConeMinMax(rotateX, rotateY, rotateZ, minAngle, maxAngle, magnitude);
+    break;
+  }
+  case SBIG('PMAC'): {
+    CRealElement* xCentre = GetRealElement(in);
+    CRealElement* yCentre = GetRealElement(in);
+    CRealElement* xRange = GetRealElement(in);
+    CRealElement* yRange = GetRealElement(in);
+    CRealElement* magnitude = GetRealElement(in);
+    ret = rs_new CVEPortMpac(xCentre, yCentre, xRange, yRange, magnitude);
+    break;
+  }
+  case SBIG('PMCN'): {
+    CVectorElement* direction = GetVectorElement(in);
+    CRealElement* radius = GetRealElement(in);
+    ret = rs_new CVEPortCone(direction, radius);
+    break;
+  }
   case SBIG('NORM'):
     ret = rs_new CVEPortNormalize(GetVectorElement(in));
     break;

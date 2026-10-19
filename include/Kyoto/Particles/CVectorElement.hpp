@@ -281,6 +281,59 @@ private:
   CRealElement* mMagnitude;
 };
 
+// Remastered MPAC (0x29fec0): the angle cone of a centre and a spread per axis, five reals
+// (x centre, y centre, x range, y range, magnitude), drawing u for x and v for y.
+class CVEPortMpac : public CVectorElement {
+public:
+  CVEPortMpac(CRealElement* xCentre, CRealElement* yCentre, CRealElement* xRange, CRealElement* yRange,
+              CRealElement* magnitude);
+  ~CVEPortMpac() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CRealElement* mXCentre;
+  CRealElement* mYCentre;
+  CRealElement* mXRange;
+  CRealElement* mYRange;
+  CRealElement* mMagnitude;
+};
+
+// Remastered MPCN (MPT_CVECone::GetValue 0x29eca0): a point of the disc of the given radius
+// (at most 1) around the position, in the plane perpendicular to the direction, whose frame is
+// cached on the first call at frame 0 (zero until then).
+class CVEPortCone : public CVectorElement {
+public:
+  CVEPortCone(CVectorElement* direction, CRealElement* radius);
+  ~CVEPortCone() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CVectorElement* mDirection;
+  CRealElement* mRadius;
+  mutable bool mCached = false;
+  mutable CVector3f mU;
+  mutable CVector3f mV;
+};
+
+// Remastered ANCM (CVEAngleConeMinMax::GetValue 0x29f304) with its REUL rotation (axis order 0)
+// given as the three angles: a direction between two cone angles in Remastered's space.
+class CVEPortAngleConeMinMax : public CVectorElement {
+public:
+  CVEPortAngleConeMinMax(CRealElement* rotateX, CRealElement* rotateY, CRealElement* rotateZ, CRealElement* minAngle,
+                         CRealElement* maxAngle, CRealElement* magnitude);
+  ~CVEPortAngleConeMinMax() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CRealElement* mRotate[3];
+  CRealElement* mMinAngle;
+  CRealElement* mMaxAngle;
+  CRealElement* mMagnitude;
+};
+
 // Remastered NORM (CVENormalizeVector::GetValue 0x29e620): the child scaled to unit length,
 // unchanged when its length is at most 2^-23.
 class CVEPortNormalize : public CVectorElement {

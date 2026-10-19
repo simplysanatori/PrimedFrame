@@ -515,7 +515,7 @@ void TestSingleNode() {
   CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), "an empty KSSM is nothing left out");
 }
 
-// Remastered's new elements: MPCB's angle form becomes ANGC, MPRD becomes RAND
+// Remastered's new elements: MPCB(ADD_(v, MPAC)) becomes BSIS with the port-only PMAC, MPRD becomes RAND
 // (and a random LTM2 comes down by one at both ends), DFCP and ANCR are kept as
 // the port's elements; a vector of nested constants is not read as an id.
 void TestMappedElements() {
@@ -531,6 +531,11 @@ void TestMappedElements() {
   PutConstant(out, 0);
   PutConstant(out, 0);
   PutFourCC(out, "MPCB");
+  PutFourCC(out, "ADD_");
+  PutFourCC(out, "CNST");
+  PutConstant(out, 0);
+  PutConstant(out, 0);
+  PutConstant(out, 0);
   PutFourCC(out, "MPAC");
   PutConstant(out, 0);
   PutConstant(out, 0);
@@ -566,7 +571,9 @@ void TestMappedElements() {
   Retail want;
   want.f("GPSM");
   want.f("EMTR").f("SEMR").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
-  want.f("ANGC").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(0.1f));
+  // MPCB's BSIS and the SEMR boundary's turn cancel out.
+  want.f("ADD_").f("CNST").f("CNST").w(0).f("CNST").w(0).f("CNST").w(0);
+  want.f("PMAC").f("CNST").w(0).f("CNST").w(0).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(720.0f)).f("CNST").w(Bits(0.1f));
   want.f("LTME").f("RAND").f("CNST").w(16).f("CNST").w(32);
   want.f("SIZE").f("MULT").f("CNST").w(Bits(2.0f)).f("DFCP").f("CNST").w(Bits(2.0f)).f("CNST").w(0);
   // The port's ANCR runs in Remastered's space, so the property boundary turns it.
@@ -579,8 +586,107 @@ void TestMappedElements() {
     for (const std::string& d : parts[0].dropped) {
       std::fprintf(stderr, "  dropped %s\n", d.c_str());
     }
+    std::string got, exp;
+    for (uint8_t c : parts[0].part) got += (c >= 32 && c < 127) ? char(c) : '.';
+    for (uint8_t c : want.bytes) exp += (c >= 32 && c < 127) ? char(c) : '.';
+    std::fprintf(stderr, "  got  %s\n  want %s\n", got.c_str(), exp.c_str());
   }
   CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty(), "DFCP is kept, not approximated");
+}
+
+// CREL(LTHN(a, b), A, B) is retail's CLTN(a, b, B, A); MPCN, ANCM (with a REUL) and MPAC become the
+// port-only PMCN, PANM and PMAC. A CREL on another condition and an ANCM on another rotation are
+// dropped with the reason.
+void TestPortVectors() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "SIZE", 3);
+  PutFourCC(out, "CREL");
+  PutFourCC(out, "LTHN");
+  PutConstant(out, Bits(1.0f));
+  PutConstant(out, Bits(2.0f));
+  PutConstant(out, Bits(3.0f));
+  PutConstant(out, Bits(4.0f));
+  PutProperty(out, "POFS", 0);
+  PutFourCC(out, "MPCN");
+  PutFourCC(out, "CNST");
+  PutConstant(out, Bits(0.0f));
+  PutConstant(out, Bits(1.0f));
+  PutConstant(out, Bits(0.0f));
+  PutConstant(out, Bits(0.5f));
+  PutProperty(out, "PSOV", 0);
+  PutFourCC(out, "ANCM");
+  PutFourCC(out, "REUL");
+  PutConstant(out, 0);
+  PutConstant(out, Bits(90.0f));
+  PutConstant(out, 0);
+  out.push_back(0);
+  PutConstant(out, Bits(10.0f));
+  PutConstant(out, Bits(20.0f));
+  PutConstant(out, Bits(2.0f));
+  PutTexr(out, 0x1234ABCD);
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "port-vector effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Retail want;
+  want.f("GPSM");
+  want.f("SIZE").f("CLTN").f("CNST").w(Bits(1.0f)).f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(4.0f)).f("CNST").w(Bits(3.0f));
+  want.f("POFS").f("BSIS").f("PMCN").f("CNST").f("CNST").w(Bits(0.0f)).f("CNST").w(Bits(1.0f)).f("CNST").w(Bits(0.0f));
+  want.f("CNST").w(Bits(0.5f));
+  want.f("PSOV").f("PANM").f("CNST").w(0).f("CNST").w(Bits(90.0f)).f("CNST").w(0);
+  want.f("CNST").w(Bits(10.0f)).f("CNST").w(Bits(20.0f)).f("CNST").w(Bits(2.0f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "CREL, MPCN and ANCM map onto CLTN, PMCN and PANM");
+  if (parts.size() == 1 && parts[0].part != want.bytes) {
+    std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
+    std::string got;
+    for (uint8_t c : parts[0].part) {
+      got += (c >= 32 && c < 127) ? char(c) : '.';
+    }
+    std::string exp;
+    for (uint8_t c : want.bytes) exp += (c >= 32 && c < 127) ? char(c) : '.';
+    std::fprintf(stderr, "  got  %s\n  want %s\n", got.c_str(), exp.c_str());
+  }
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), "nothing dropped");
+
+  // Another condition and another rotation.
+  std::vector<uint8_t> bad(0x3c, 0);
+  std::memcpy(bad.data(), "RFRM", 4);
+  std::memcpy(bad.data() + 0x14, "GENP", 4);
+  PutGenerator(bad, false);
+  PutProperty(bad, "SIZE", 3);
+  PutFourCC(bad, "CREL");
+  PutFourCC(bad, "EQAL");
+  PutConstant(bad, Bits(1.0f));
+  PutConstant(bad, Bits(2.0f));
+  PutConstant(bad, Bits(3.0f));
+  PutConstant(bad, Bits(4.0f));
+  PutProperty(bad, "PSOV", 0);
+  PutFourCC(bad, "ANCM");
+  PutFourCC(bad, "EXTR");
+  PutConstant(bad, Bits(10.0f));
+  PutConstant(bad, Bits(20.0f));
+  PutConstant(bad, Bits(2.0f));
+  PutTexr(bad, 0x1234ABCD);
+  PutProperty(bad, "_END", 4);
+  EffectNode badEffect;
+  CHECK_MSG(ParseEffect(bad.data(), bad.size(), badEffect, error), "bad port-vector effect parses");
+  const std::vector<ConvertedPart> badParts = ConvertEffect(badEffect, bad.data(), {});
+  bool crel = false;
+  bool ancm = false;
+  if (badParts.size() == 1) {
+    for (const std::string& d : badParts[0].dropped) {
+      crel = crel || (d.find("CREL") != std::string::npos && d.find("EQAL") != std::string::npos);
+      ancm = ancm || (d.find("PSOV") != std::string::npos && d.find("not REUL") != std::string::npos);
+      std::fprintf(stderr, "  dropped %s\n", d.c_str());
+    }
+  }
+  CHECK_MSG(crel, "a CREL on EQAL is dropped, naming it");
+  CHECK_MSG(ancm, "an ANCM on a non-REUL rotation is dropped, naming it");
 }
 
 // ABS_, COSE, RSGN, IRSN (the port-only PIRS) and an EMTR CODE are converted, not dropped.
@@ -3611,6 +3717,7 @@ int main() {
   TestSingleNode();
   TestMappedElements();
   TestScalarElements();
+  TestPortVectors();
   TestExternalValue();
   TestSplitRejects();
   TestShapes();

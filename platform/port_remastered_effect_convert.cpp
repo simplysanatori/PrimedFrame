@@ -186,6 +186,9 @@ const Signatures& ElementsOf(Type type) {
       {F("BSIS"), "v"},     {F("BSSC"), "v"},
       // Port-only CVEPortAngleCone: Remastered's ANCR with its REUL as three angles.
       {F("ANCR"), "rrrrrr"},
+      // Port-only: Remastered's ANCM with its REUL as three angles, MPAC (x and y centre, x and
+      // y range, magnitude) and MPCN (direction, radius).
+      {F("PANM"), "rrrrrr"}, {F("PMAC"), "rrrrr"}, {F("PMCN"), "vr"},
       // Port-only CVEPortAbs: Remastered's CVEAbsoluteValue, in whatever space the child is in.
       {F("ABS_"), "v"},
   };
@@ -419,17 +422,17 @@ bool RangeFromZero(const EffectValue& value, uint32_t fourcc, uint32_t& high) {
          ConstWord(value.args[1], high);
 }
 
-// TRST's x scale of a particle that is mirrored half the time: KPIN(CREL(LTHN(RAND(0, 1)), 0.5, 1, -1)).
+// TRST's x scale of a particle that is mirrored half the time: KPIN(CREL(LTHN(RAND(0, 1), 0.5), 1, -1)).
 bool RandomMirror(const EffectValue& value) {
   uint32_t high;
   if (!IsElement(value, F("KPIN")) || value.args.size() != 1 || !IsElement(value.args[0], F("CREL"))) {
     return false;
   }
   const EffectValue& rel = value.args[0];
-  return rel.args.size() == 4 && IsElement(rel.args[0], F("LTHN")) && rel.args[0].args.size() == 1 &&
+  return rel.args.size() == 3 && IsElement(rel.args[0], F("LTHN")) && rel.args[0].args.size() == 2 &&
          RangeFromZero(rel.args[0].args[0], F("RAND"), high) && high == FloatBits(1.0f) &&
-         ConstIs(rel.args[1], FloatBits(0.5f)) && ConstIs(rel.args[2], FloatBits(1.0f)) &&
-         ConstIs(rel.args[3], FloatBits(-1.0f));
+         ConstIs(rel.args[0].args[1], FloatBits(0.5f)) && ConstIs(rel.args[1], FloatBits(1.0f)) &&
+         ConstIs(rel.args[2], FloatBits(-1.0f));
 }
 
 // TXFB's transform: TRST(0, 0, x scale, 1, 0, raw) with the scale 1 or a random mirror.
@@ -1081,8 +1084,7 @@ public:
     }
     // MPCB(v) is MPT_CVEConvertToXLeftYUpZForward 0x2a3020, (-x, z, y) of a vector in
     // retail's space: BSIS(v). MCBS(v) is its scale form (0x2a30f8, (x, z, y)): BSSC(v).
-    // MPCB(MPAC(x bias, y bias, x range, y range), magnitude) is retail's ANGC with the same five
-    // arguments (checked against the disc's pairs), a direction in retail's space.
+    // MPAC inside is the port-only PMAC (exact, below).
     if ((value.fourcc == F("MPCB") || value.fourcc == F("MCBS")) && type == Type::Vector) {
       std::vector<uint8_t> inner;
       if (value.args.size() == 1) {
@@ -1090,20 +1092,6 @@ public:
           return false;
         }
         Basis(value.fourcc == F("MCBS") ? F("BSSC") : F("BSIS"), inner, out);
-        return true;
-      }
-      if (value.fourcc == F("MPCB") && value.args.size() == 2 && IsElement(value.args[0], F("MPAC")) &&
-          value.args[0].args.size() == 4) {
-        AppendBE32(inner, F("ANGC"));
-        for (const EffectValue& arg : value.args[0].args) {
-          if (!Element(arg, Type::Real, inner, why)) {
-            return false;
-          }
-        }
-        if (!Element(value.args[1], Type::Real, inner, why)) {
-          return false;
-        }
-        Basis(F("BSIS"), inner, out);
         return true;
       }
       why = EffectFourCCString(value.fourcc) + " in a form retail has no element for";
@@ -1157,6 +1145,52 @@ public:
         }
       }
       return true;
+    }
+    // MPAC(x centre, y centre, x range, y range, magnitude): the port-only PMAC runs
+    // MPT_CVEAngleCone-like 0x29fec0 as is, a direction in retail's space (the MPCB around it
+    // turns it to Remastered's).
+    if (value.fourcc == F("MPAC") && type == Type::Vector && value.args.size() == 5) {
+      AppendBE32(out, F("PMAC"));
+      for (const EffectValue& arg : value.args) {
+        if (!Element(arg, Type::Real, out, why)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    // MPCN(direction, radius): the port-only PMCN runs MPT_CVECone 0x29eca0 as is.
+    if (value.fourcc == F("MPCN") && type == Type::Vector && value.args.size() == 2) {
+      AppendBE32(out, F("PMCN"));
+      return Element(value.args[0], Type::Vector, out, why) && Element(value.args[1], Type::Real, out, why);
+    }
+    // ANCM(REUL, A, B, magnitude): the port-only PANM runs CVEAngleConeMinMax 0x29f304 as is,
+    // the rotation as its three angles like ANCR's.
+    if (value.fourcc == F("ANCM") && type == Type::Vector && value.args.size() == 4) {
+      AppendBE32(out, F("PANM"));
+      if (!ConeRotation(value.args[0], out, why)) {
+        return false;
+      }
+      for (size_t i = 1; i < 4; ++i) {
+        if (!Element(value.args[i], Type::Real, out, why)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    // CREL(LTHN(a, b), A, B) is a < b ? B : A, the real that is chosen read alone, as retail's
+    // CLTN(a, b, B, A) (CRealElement.cpp CRECompareLessThan) does.
+    if (value.fourcc == F("CREL") && type == Type::Real && value.args.size() == 3) {
+      const EffectValue& condition = value.args[0];
+      if (!IsElement(condition, F("LTHN")) || condition.args.size() != 2) {
+        why = "CREL on a condition that is not LTHN (" +
+              (condition.kind == EffectValue::Kind::Element ? EffectFourCCString(condition.fourcc)
+                                                           : std::string("a raw value")) +
+              ")";
+        return false;
+      }
+      AppendBE32(out, F("CLTN"));
+      return Element(condition.args[0], Type::Real, out, why) && Element(condition.args[1], Type::Real, out, why) &&
+             Element(value.args[2], Type::Real, out, why) && Element(value.args[1], Type::Real, out, why);
     }
     // RNDV(magnitude): the port-only RNDV runs CVERandomVector 0x29e954 as is
     // (a cube point normalised by the ARM rsqrt estimate, so not uniform).
@@ -3886,6 +3920,18 @@ public:
     if (IsParentRead(fourcc, type)) {
       const bool guid = (fourcc >> 24) != 'S';
       return Skip(guid ? 16 : 4) && Element(type);
+    }
+    // Port-only PMAC: five real elements. PANM: six. PMCN: a vector element and a real one.
+    if (fourcc == F("PMAC") && type == Type::Vector) {
+      return Element(Type::Real) && Element(Type::Real) && Element(Type::Real) && Element(Type::Real) &&
+             Element(Type::Real);
+    }
+    if (fourcc == F("PANM") && type == Type::Vector) {
+      return Element(Type::Real) && Element(Type::Real) && Element(Type::Real) && Element(Type::Real) &&
+             Element(Type::Real) && Element(Type::Real);
+    }
+    if (fourcc == F("PMCN") && type == Type::Vector) {
+      return Element(Type::Vector) && Element(Type::Real);
     }
     // Port-only RNDV: the magnitude as a real element.
     if (fourcc == F("RNDV") && type == Type::Vector) {

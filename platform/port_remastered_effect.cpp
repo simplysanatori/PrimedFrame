@@ -86,9 +86,9 @@ constexpr ElementSig kElementSigs[] = {
     {"VARF", "g"},     {"VARI", "g"},          {"VARV", "g"},       {"VECF", "g"},
     {"VMAG", "e"},     {"VXTR", "e"},          {"VYTR", "e"},       {"VZTR", "e"},
     {"WIND", "ee"},
-    // Pinned down against the shipped files: MPCB wraps a vector, or MPAC
-    // angles and a magnitude; MPRD is 2 or 4 elements; DFCP and DFCS 1 to 3.
-    {"MPCB", "e ee"},  {"MPAC", "eeee"},       {"MPRD", "ee eeee"}, {"DFCP", "ee eee e"},
+    // Pinned down against the shipped files: MPCB wraps a vector; MPAC is five
+    // reals, MPCN a vector and a radius; CREL a bool and two reals, LTHN two reals; MPRD is 2 or 4 elements; DFCP and DFCS 1 to 3.
+    {"MPCB", "e"},     {"MPAC", "eeeee"}, {"CREL", "eee"},   {"LTHN", "ee"},   {"MPCN", "ee"},       {"MPRD", "ee eeee"}, {"DFCP", "ee eee e"},
     {"DFCS", "ee eee e"},
     // EXTT, EXTR and EXTS are leaves; SMOV is CSimpleMoverElement's (position,
     // velocity, rotation, scale, modifier); ROTV a vector turned by a rotation;
@@ -124,14 +124,14 @@ constexpr ElementSig kRealSigs[] = {
     {"PAP7", "-"},    {"PAP8", "-"},    {"VXTR", "V"},    {"VYTR", "V"},     {"VZTR", "V"},    {"VMAG", "V"},
     {"ISWT", "RR"},   {"CLTN", "RRRR"}, {"CEQL", "RRRR"}, {"CRNG", "RRRRR"}, {"CEXT", "I"},    {"ITRL", "IR"},
     {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR"},
-    {"DFCS", "RR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
+    {"CREL", "BRR"}, {"DFCS", "RR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
     {"SLCT", "Re"},   {"DIVD", "RR"},   {"ABS_", "R"},    {"MPXV", "IR"},   {"COSE", "RRR"},  {"RSGN", "R"},     {"IRSN", "R"},
 };
 constexpr ElementSig kVectorSigs[] = {
     {"NONE", "-"},   {"CNST", "RRR"},   {"KEYE", "k"},    {"KEYP", "k"},   {"ANGC", "RRRRR"}, {"CONE", "VR"},
     {"CIRC", "VVRRR"}, {"CCLU", "VVIR"}, {"ADD_", "VV"},  {"MULT", "VV"},  {"CHAN", "VVI"},   {"PULS", "IIVV"},
     {"RTOV", "R"},   {"PLOC", "-"},     {"PLCO", "-"},    {"PVEL", "-"},   {"PSOF", "-"},     {"PSOU", "-"},
-    {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V VR"},  {"MPAC", "RRRR"},
+    {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V"},     {"MPAC", "RRRRR"}, {"MPCN", "VR"},
     {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"ROTV", "Ve"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
     {"SLCT", "Re"},  {"NORM", "V"},     {"CMPS", "-"},    {"EXTT", "-"},   {"EXTS", "-"},
     {"CPSS", "-"},  {"ABS_", "V"},
@@ -148,6 +148,10 @@ constexpr ElementSig kColorSigs[] = {
     {"PULS", "IICC"},     {"PCOL", "-"},   {"NONE", "-"},  {"TPVC", "gC"},  {"DPVC", "gC"},   {"SPAC", "bC"},
     {"MDAO", "CR"},       {"SLCT", "Re"},       {"MULT", "CC"},       {"MUL2", "CC"},
 };
+// Remastered's booleans (CBE...): LTHN is a bool of two reals. CREL (a real) picks
+// between two reals by one. A bool the table lacks reads untyped.
+constexpr ElementSig kBoolSigs[] = {{"LTHN", "RR"}};
+
 constexpr ElementSig kEmitterSigs[] = {
     {"NONE", "-"}, {"SEMR", "VV"}, {"SPHE", "VRR"}, {"ASPH", "VRRRRRR"}, {"ASPR", "VeRRRR"},
     {"CODE", "-"}, {"PLNE", "VVVRRR"}, {"ELPS", "VVVRe"}, {"PLNV", "VVRRRRRRRRb"}, {"SPEV", "VRRRRRRb"},
@@ -165,8 +169,8 @@ constexpr ElementSig kRotationSigs[] = {
     {"SYAV", "b"},    {"SPAR", "bQ"},   {"VARR", "g"},    {"PEXT", "IQ"},   {"VEXT", "IQ"},   {"BNRT", "I"},
 };
 
-constexpr char kTypeLetters[] = "IRVMCEQ";
-constexpr int kTypeCount = 7;
+constexpr char kTypeLetters[] = "IRVMCEQB";
+constexpr int kTypeCount = 8;
 
 int TypeIndex(char letter) {
   for (int i = 0; i < kTypeCount; ++i) {
@@ -475,6 +479,7 @@ struct Grammar {
     addTyped('C', kColorSigs, std::size(kColorSigs));
     addTyped('E', kEmitterSigs, std::size(kEmitterSigs));
     addTyped('Q', kRotationSigs, std::size(kRotationSigs));
+    addTyped('B', kBoolSigs, std::size(kBoolSigs));
     // A typed property is read as its type first, then any way an untyped one
     // can be (Remastered stores some as a byte).
     for (const PropertyType& property : kPropertyTypes) {

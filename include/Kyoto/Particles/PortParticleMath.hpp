@@ -591,6 +591,115 @@ inline CVector3f AngleSphereDirection(const Quat& q, float range1, float range2,
       QuatTransform(q, ConeDirection(ConeAngle(range1, u), ConeAngle(range2, v))));
 }
 
+// MPAC (CVEAngleCone-like MPT element 0x29fec0): an angle in radians, ((range/2 - range*u) added
+// to the centre) in degrees, wrapped.
+inline float MpacAngle(float centre, float range, float u) {
+  const float half = range * .5f;
+  const float drawn = range * u;
+  const float spread = half - drawn;
+  const float biased = centre + spread;
+  return WrapAngle(biased * BitsFloat(0x3c8efa35));
+}
+
+// MPAC's direction for the angles ax, ay: (cos ax * -sin ay, sin ax, cos ay * cos ax), each lane
+// scaled by the magnitude as the asm orders it (mag * (cos ax * -sin ay), sin ax * mag,
+// mag * (cos ay * cos ax)).
+inline CVector3f MpacDirection(float ax, float ay, float magnitude) {
+  const float halfPi = BitsFloat(0x3fc90fdb);
+  const float sax = ParabolicSin(ax);
+  const float cax = ParabolicSin(WrapAngle(ax + halfPi));
+  const float say = ParabolicSin(ay);
+  const float cay = ParabolicSin(WrapAngle(ay + halfPi));
+  const float negSay = -say;
+  const float xl = cax * negSay;
+  const float zl = cay * cax;
+  return CVector3f(magnitude * xl, sax * magnitude, magnitude * zl);
+}
+
+// MPCN's cached frame (MPT_CVECone::GetValue 0x29eca0, first call at frame 0): u and v = n x u
+// for the direction d and its normalisation n (NormalizeInPlace). The zero multiplies are
+// literal, as the asm has them.
+struct ConeFrame {
+  CVector3f u;
+  CVector3f v;
+};
+inline ConeFrame MakeConeFrame(const CVector3f& d) {
+  const CVector3f n = NormalizeInPlace(d);
+  const float dx = d.GetX();
+  const float dy = d.GetY();
+  const float dz = d.GetZ();
+  float ux;
+  float uy;
+  float uz;
+  if (!(n.GetX() <= 0.8f)) {
+    const float a = dz * 0.f;
+    const float b = dx * 0.f;
+    const float c = dy * 0.f;
+    uy = a - b;
+    ux = c - dz;
+    uz = dx - c;
+  } else {
+    const float a = dz * 0.f;
+    const float b = dx * 0.f;
+    const float c = dy * 0.f;
+    uy = dz - b;
+    ux = c - a;
+    uz = b - dy;
+  }
+  const float vx0 = n.GetY() * uz;
+  const float vx1 = n.GetZ() * uy;
+  const float vy0 = n.GetZ() * ux;
+  const float vy1 = n.GetX() * uz;
+  const float vz0 = n.GetX() * uy;
+  const float vz1 = n.GetY() * ux;
+  return {CVector3f(ux, uy, uz), CVector3f(vx0 - vx1, vy0 - vy1, vz0 - vz1)};
+}
+
+// MPCN's point for the centre p, radius r (already at most 1) and the accepted draws a, b:
+// X = (r+r)*(a + -0.5), Y = (r+r)*(b + -0.5); lane k is (X*u.k + p.k) + Y*v.k.
+inline float ConeOffset(float r, float draw) {
+  const float twice = r + r;
+  return twice * (draw + -0.5f);
+}
+inline CVector3f ConePoint(const ConeFrame& frame, const CVector3f& p, float x, float y) {
+  const float px = x * frame.u.GetX();
+  const float py = x * frame.u.GetY();
+  const float pz = x * frame.u.GetZ();
+  const float qx = px + p.GetX();
+  const float qy = py + p.GetY();
+  const float qz = pz + p.GetZ();
+  return CVector3f(qx + y * frame.v.GetX(), qy + y * frame.v.GetY(), qz + y * frame.v.GetZ());
+}
+
+// ANCM (CVEAngleConeMinMax::GetValue 0x29f304): the cosine c between cos(A) and cos(B) by the
+// first draw, s = x * e (x = 1 - c*c) with e one FRSQRTS step from FRSQRTE (0 when x <= 0), the
+// azimuth phi by the second, the direction (s cos phi, s sin phi, c) turned by q and scaled.
+inline CVector3f AngleConeMinMax(const Quat& q, float aDegrees, float bDegrees, float magnitude,
+                                 float u0, float u1) {
+  const float deg = BitsFloat(0x3c8efa35);
+  const float cA = FastCosR(aDegrees * deg);
+  const float cB = FastCosR(bDegrees * deg);
+  const float diff = cB - cA;
+  const float scaled = diff * u0;
+  const float c = cA + scaled;
+  const float cc = c * c;
+  const float x = 1.f - cc;
+  const float e0 = ReciprocalSqrtEstimate(x);
+  const float step = ReciprocalSqrtStep(x, e0 * e0);
+  float e1 = e0 * step;
+  if (x <= 0.f) {
+    e1 = 0.f;
+  }
+  const float s = x * e1;
+  const float turn = u1 * BitsFloat(0x40c90fdb);
+  const float phi = turn + -BitsFloat(0x40490fdb);
+  const float halfPi = BitsFloat(0x3fc90fdb);
+  const float cosPhi = ParabolicSin(WrapAngle(phi + halfPi));
+  const float sinPhi = ParabolicSin(phi);
+  const CVector3f d = QuatTransform(q, CVector3f(s * cosPhi, s * sinPhi, c));
+  return CVector3f(d.GetX() * magnitude, d.GetY() * magnitude, d.GetZ() * magnitude);
+}
+
 } // namespace PortParticleMath
 
 #endif
