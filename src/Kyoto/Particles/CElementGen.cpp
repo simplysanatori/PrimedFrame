@@ -2066,6 +2066,7 @@ void CElementGen::Render() {
   }
 
 #ifdef TARGET_PC
+  CParticleGlobals::mParticleAccessParameters = nullptr;
   if (xPortPresenting) {
     PortRestoreNewborns();
     xe8_globalTranslation = portSavedGlobal;
@@ -2440,6 +2441,11 @@ void CElementGen::RenderParticles() {
           CParticleGlobals::SetParticleLifetime(particle.x0_endFrame - particle.x28_startFrame);
           CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
 #ifdef TARGET_PC
+          if (x26d_28_enableADV) {
+            CParticleGlobals::mParticleAccessParameters = x60_advValues[&particle - &x30_particles[0]].values;
+          }
+#endif
+#ifdef TARGET_PC
           PortGetValueUV(x28_loadedGenDesc->x40_TEXR, partFrame, &particle, uvs);
 #else
           x28_loadedGenDesc->x40_TEXR->GetValueUV(partFrame, uvs);
@@ -2619,6 +2625,11 @@ void CElementGen::RenderParticles() {
           CParticleGlobals::SetParticleLifetime(particle->x0_endFrame - particle->x28_startFrame);
           CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
 #ifdef TARGET_PC
+          if (x26d_28_enableADV) {
+            CParticleGlobals::mParticleAccessParameters = x60_advValues[particle - &x30_particles[0]].values;
+          }
+#endif
+#ifdef TARGET_PC
           PortGetValueUV(x28_loadedGenDesc->x40_TEXR, partFrame, particle, uvs);
 #else
           x28_loadedGenDesc->x40_TEXR->GetValueUV(partFrame, uvs);
@@ -2692,6 +2703,11 @@ void CElementGen::RenderParticles() {
         int partFrame = x74_curFrame - particle->x28_startFrame - 1;
         CParticleGlobals::SetParticleLifetime(particle->x0_endFrame - particle->x28_startFrame);
         CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
+#ifdef TARGET_PC
+        if (x26d_28_enableADV) {
+          CParticleGlobals::mParticleAccessParameters = x60_advValues[particle - &x30_particles[0]].values;
+        }
+#endif
 #ifdef TARGET_PC
         PortGetValueUV(x28_loadedGenDesc->x40_TEXR, partFrame, particle, uvs);
 #else
@@ -2980,6 +2996,11 @@ void CElementGen::RenderParticlesFlameThrower(CElementGen* const* gens, int coun
     CParticleGlobals::SetParticleLifetime(particle.x0_endFrame - particle.x28_startFrame);
     CParticleGlobals::UpdateParticleLifetimeTweenValues(elapsed);
 
+#ifdef TARGET_PC
+    if (gen->x26d_28_enableADV) {
+      CParticleGlobals::mParticleAccessParameters = gen->x60_advValues[&particle - &gen->x30_particles[0]].values;
+    }
+#endif
 #ifdef TARGET_PC
     PortGetValueUV(genDesc->x40_TEXR, elapsed, &particle, uvs);
 #else
