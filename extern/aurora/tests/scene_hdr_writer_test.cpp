@@ -603,7 +603,7 @@ TEST(SceneHdrVfx, HdrSourcesWriteExposedLinear) {
     const std::string body = hdr.substr(tail, tone - tail);
     EXPECT_NE(body.find("var lin = max(rgb, vec3f(0.0));"), std::string::npos);
     EXPECT_NE(body.find("if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { lin = lin * u.tone0.w; }"), std::string::npos);
-    EXPECT_NE(body.find("if (BLEND == 0u || BLEND == 3u) {"), std::string::npos);
+    EXPECT_NE(body.find("if ((BLEND == 0u || BLEND == 3u) && (FEAT & 1048576u) == 0u) {"), std::string::npos);
     EXPECT_NE(body.find("hdr_exposed(u.fogColor.rgb, u.tone0, u.tone1, u.tone2)"), std::string::npos);
     EXPECT_NE(body.find("return vec4f(lin, alpha);"), std::string::npos);
     EXPECT_EQ(body.find("tone("), std::string::npos);

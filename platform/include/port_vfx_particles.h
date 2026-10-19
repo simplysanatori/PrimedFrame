@@ -64,6 +64,17 @@ struct CPortVfxUvXf {
   void Apply(float qx, float qy, float uv[3][3]) const;
 };
 
-inline bool PortVfxHasMesh(const CGenDescription& desc) {
-  return PortVfxActive(desc) && desc.xPortVfx->meshTris != 0 && desc.xPortPMDV.empty();
+// IceChargeBeam's feed needs VMSH v2 with a real tangent and colour, and VPRM's NMAP slot and
+// CCH0..2; without them the PART keeps the retail model path.
+inline bool PortVfxIceReady(const CPortVfxData& vfx) {
+  return (vfx.mat.features & aurora::gfx::vfx::IceChargeBeam) == 0 ||
+         (vfx.meshStride == 16 && (vfx.meshFlags & 3) == 3 && vfx.normalSlot >= 0 && vfx.paramCount >= 3);
 }
+
+inline bool PortVfxHasMesh(const CGenDescription& desc) {
+  return PortVfxActive(desc) && desc.xPortVfx->meshTris != 0 && desc.xPortPMDV.empty() &&
+         PortVfxIceReady(*desc.xPortVfx);
+}
+
+// VPRM's CCHn rows with the VSMT overrides (targets kPortVfxParamTarget..) at `frame`.
+void PortVfxEvalParams(const CPortVfxData& vfx, int frame, float params[7][4]);

@@ -1,5 +1,6 @@
 #include "port_remastered_effect_convert.h"
 #include "port_vfx_opacity.h"
+#include "Kyoto/Particles/CPortVfxConstants.hpp"
 #include "Kyoto/Math/CMatrix3f.hpp"
 #include "Kyoto/Math/CQuaternion.hpp"
 #include "Kyoto/Particles/CVectorElement.hpp"
@@ -3675,16 +3676,108 @@ void TestVmatNewRecipes() {
                     "VMAT: shader 3db95827's scene warp dropped (drawn as a multiply)",
             "a warped 3db95827 notes its scene warp dropped");
 
-  // VFX_IceChargeBeam: BCLR as the colour texture, rgb only.
+  // VFX_IceChargeBeam without its NMAP, and so without the bumped facing term, has no recipe.
   auto ice = ConvertVmat(Mati(0x9e0605cd, {{"BCLR", Fresh(8)}}));
-  CHECK_MSG(ice.first.size() == 1 && !ice.second.empty(), "a 9e0605cd material writes VMAT");
-  if (!ice.second.empty()) {
-    CHECK_MSG(VmatWord(ice.second, 8) == 2 && VmatWord(ice.second, 12) == (1 | 4096) &&
-                  VmatWord(ice.second, 16) == 2 && VmatWord(ice.second, 20) == 1,
-              "9e0605cd VMAT v2, ColorTex|ColorRgbOnly, blend 2, one texture");
-    CHECK_MSG(VmatWord(ice.second, 24) == 0x5EED0008, "9e0605cd reads the BCLR texture");
-  }
-  CHECK_MSG(ice.first.size() == 1 && ice.first[0].approximated.empty(), "9e0605cd approximates nothing");
+  CHECK_MSG(ice.first.size() == 1 && ice.second.empty(), "a 9e0605cd material without NMAP writes no VMAT");
+}
+
+// VFX_IceChargeBeam (9e0605cd): the IceChargeBeam feature on BCLR and NMAP, PBDM 3 opaque, CCH0..2
+// whole in VPRM (the NMAP slot first), an SMTR CCHn component to its own VSMT target, and only under
+// DFOG 1 (perm 000 is unfogged).
+void TestVmatIceChargeBeamRecipe() {
+  constexpr uint32_t kIceChargeBeam = 1u << 20;
+  const auto withVectors = [](std::vector<uint8_t> mati, const std::vector<std::array<float, 4>>& rows) {
+    for (size_t n = 0; n < rows.size(); ++n) {
+      mati[0x69] += 1;
+      mati.push_back(3);
+      mati.insert(mati.end(), {'C', 'C', 'H', char('0' + n)});
+      for (const float f : rows[n]) {
+        Put32(mati, Bits(f));
+      }
+    }
+    return mati;
+  };
+  const std::vector<uint8_t> mati = withVectors(Mati(0x9e0605cd, {{"BCLR", Fresh(8)}, {"NMAP", Fresh(8)}}),
+                                                {{50.f, 0.5f, 1.5f, 10.f}, {1.f, 0.2f, 0.1f, 2.f}, {0.f, 0.f, 0.f, 0.f}});
+  const auto effect = [](bool dfog) {
+    std::vector<uint8_t> data = VmatEffect(true, Fresh(7), 3);
+    std::vector<uint8_t> extra;
+    if (dfog) {
+      PutProperty(extra, "DFOG", 1);
+      PutConstant(extra, 1);
+    }
+    const std::vector<SmtrTestEntry> entries = {{"CCH2", 0, 0.75f}, {"CCH1", 3, 2.5f}};
+    PutProperty(extra, "SMTR", 0);
+    extra.push_back(0);
+    extra.push_back(uint8_t(entries.size()));
+    extra.push_back(uint8_t(entries.size()));
+    for (const SmtrTestEntry& entry : entries) {
+      PutSmtrItem(extra, entry);
+    }
+    for (int group = 1; group < 5; ++group) {
+      extra.push_back(0);
+    }
+    data.insert(data.end() - 13, extra.begin(), extra.end());
+    return data;
+  };
+  const auto convert = [&mati](const std::vector<uint8_t>& data, std::vector<RetailPartProperty>& properties) {
+    EffectNode node;
+    std::string error;
+    CHECK_MSG(ParseEffect(data.data(), data.size(), node, error), "the ice effect parses");
+    EffectConvertIO io;
+    io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+    io.materialData = [&mati](const EffectGuid& material) {
+      return material == Fresh(7) ? mati : std::vector<uint8_t>();
+    };
+    io.vfxTexture = [](const EffectGuid& texture) {
+      FlipbookAtlas atlas;
+      atlas.id = texture == Fresh(8) ? 0x5EED0008 : 0;
+      return atlas;
+    };
+    io.modelMesh = [](uint32_t) { return std::vector<uint8_t>{0, 0, 0, 2}; };
+    std::vector<ConvertedPart> parts = ConvertEffect(node, data.data(), io);
+    if (parts.size() == 1) {
+      SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error);
+    }
+    return parts;
+  };
+  const auto value = [](const std::vector<RetailPartProperty>& properties, uint32_t fourcc) {
+    for (const RetailPartProperty& property : properties) {
+      if (property.fourcc == fourcc) {
+        return property.value;
+      }
+    }
+    return std::vector<uint8_t>();
+  };
+  std::vector<RetailPartProperty> properties;
+  std::vector<ConvertedPart> parts = convert(effect(true), properties);
+  CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty(), "9e0605cd under DFOG 1 approximates nothing");
+  const std::vector<uint8_t> vmat = value(properties, EffectFourCC("VMAT"));
+  CHECK_MSG(VmatWord(vmat, 12) == kIceChargeBeam && VmatWord(vmat, 16) == 3 && VmatWord(vmat, 20) == 2,
+            "9e0605cd VMAT: IceChargeBeam, blend 3 (PBDM), two textures");
+  // Role slots after the two 11-word texture records: BCLR is the colour slot (0).
+  CHECK_MSG(VmatWord(vmat, 112) == 0, "9e0605cd's BCLR is the colour slot");
+  const std::vector<uint8_t> vprm = value(properties, EffectFourCC("VPRM"));
+  CHECK_MSG(vprm.size() == 8 + 12 + 3 * 16 && VmatWord(vprm, 8) == 1 && VmatWord(vprm, 12) == 1 &&
+                VmatWord(vprm, 16) == 3,
+            "VPRM v1: the NMAP slot 1 and three CCH rows");
+  CHECK_MSG(VmatWord(vprm, 20) == Bits(50.f) && VmatWord(vprm, 20 + 12) == Bits(10.f) &&
+                VmatWord(vprm, 36 + 4) == Bits(0.2f) && VmatWord(vprm, 52) == Bits(0.f),
+            "VPRM carries the MATI's CCH0..2");
+  const std::vector<uint8_t> vsmt = value(properties, EffectFourCC("VSMT"));
+  // The class, the count, then {target, kind, element (CNST value)}.
+  CHECK_MSG(VmatWord(vsmt, 4) == 2 && VmatWord(vsmt, 8) == kPortVfxParamTarget + 8 &&
+                VmatWord(vsmt, 8 + 16) == kPortVfxParamTarget + 4 + 3,
+            "SMTR CCH2.x and CCH1.w go to their VPRM targets");
+  CHECK_MSG(!value(properties, EffectFourCC("VMSH")).empty(), "the ice model keeps its VMSH");
+
+  properties.clear();
+  parts = convert(effect(false), properties);
+  CHECK_MSG(parts.size() == 1 && value(properties, EffectFourCC("VMAT")).empty() && value(properties, EffectFourCC("VPRM")).empty(),
+            "9e0605cd without DFOG 1 writes no VMAT");
+  CHECK_MSG(parts.size() == 1 && !parts[0].approximated.empty() &&
+                parts[0].approximated[0].find("drawn fogged") != std::string::npos,
+            "9e0605cd without DFOG 1 notes the fog it lacks");
 }
 
 bool Contains(const std::vector<uint8_t>& bytes, const std::vector<uint8_t>& what) {
@@ -4038,6 +4131,7 @@ int main() {
   TestVmatDisintegrationRecipe();
   TestVmatVisorSplatRecipe();
   TestVmatSceneWarpRecipes();
+  TestVmatIceChargeBeamRecipe();
   TestElc2BlendAndLifetime();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();

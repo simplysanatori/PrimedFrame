@@ -107,6 +107,73 @@ int EvalElem(const CPortVfxElem& e, int frame, float out[4]) {
   return 0;
 }
 
+// 3x3 helpers for the IceChargeBeam feed (row-major, float as the GPU computes them).
+struct Mat3 {
+  float m[3][3];
+  CVector3f operator*(const CVector3f& v) const {
+    return CVector3f(m[0][0] * v.GetX() + m[0][1] * v.GetY() + m[0][2] * v.GetZ(),
+                     m[1][0] * v.GetX() + m[1][1] * v.GetY() + m[1][2] * v.GetZ(),
+                     m[2][0] * v.GetX() + m[2][1] * v.GetY() + m[2][2] * v.GetZ());
+  }
+  float Det() const {
+    return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+           m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+  }
+  // The cofactor matrix over the determinant: the inverse transpose.
+  Mat3 InverseTranspose() const {
+    Mat3 r;
+    const float k = 1.f / Det();
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        const int i1 = (i + 1) % 3, i2 = (i + 2) % 3, j1 = (j + 1) % 3, j2 = (j + 2) % 3;
+        r.m[i][j] = (m[i1][j1] * m[i2][j2] - m[i1][j2] * m[i2][j1]) * k;
+      }
+    }
+    return r;
+  }
+  Mat3 Transposed() const {
+    Mat3 r;
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        r.m[i][j] = m[j][i];
+      }
+    }
+    return r;
+  }
+};
+
+// VFX_IceChargeBeam's VS (9e0605cd perm 000_1, ICECHARGE.md section 2): one rotation per whole
+// step of t4 = time x CCH0.w + CCH2.x, from three hashes of floor(t4), and the shake amplitude
+// mix(CCH0.y, CCH0.z, a fourth hash) x 0.1.
+struct IceHash {
+  Mat3 r;
+  float amp;
+};
+float IceH(float x) {
+  const float v = std::sin(x) * 43758.5469f;
+  return v - std::floor(v);
+}
+IceHash IceHashAt(float time, const float params[7][4]) {
+  constexpr float kPi = 3.14159012f;
+  const float t4 = time * params[0][3] + params[2][0];
+  const float t7 = std::floor(t4);
+  const float s7 = std::sin(t7), c7 = std::cos(t7), k = t7 * 12.9898f;
+  const float a = IceH(s7 * 78.233f + k) * kPi;
+  const float b = IceH(c7 * 78.233f + k) * kPi;
+  const float c = IceH(s7 * -78.233f + k) * kPi;
+  const float h3 = IceH((t7 + 10.f) * 78.233f + k);
+  const float ca = std::cos(a), sa = std::sin(a), cb = std::cos(b), sb = std::sin(b), cc = std::cos(c),
+              sc = std::sin(c);
+  IceHash h;
+  h.r = {{{cc * cb, sb * sa - sc * ca * cb, sb * ca + sa * sc * cb},
+          {sc, ca * cc, -sa * cc},
+          {-sb * cc, sa * cb + sc * sb * ca, ca * cb - sa * sc * sb}}};
+  const float lo = params[0][1] * 0.1f, hi = params[0][2] * 0.1f;
+  h.amp = lo + (hi - lo) * h3;
+  return h;
+}
+float IceSat(float x) { return std::min(std::max(x, 0.f), 1.f); }
+
 CVector3f Normalised(const CVector3f& v, const CVector3f& fallback) {
   float m = v.MagSquared();
   if (m > kEps) {
@@ -178,6 +245,23 @@ uint PortVfxEvalVsmt(const CPortVfxData& vfx, int frame, float vsmt[kPortVfxVsmt
     }
   }
   return mask;
+}
+
+void PortVfxEvalParams(const CPortVfxData& vfx, int frame, float params[7][4]) {
+  for (u32 r = 0; r < kPortVfxParamCount; ++r) {
+    for (int c = 0; c < 4; ++c) {
+      params[r][c] = r < vfx.paramCount ? vfx.params[r][c] : 0.f;
+    }
+  }
+  for (const CPortVfxElem& e : vfx.vsmt) {
+    if (e.a < kPortVfxParamTarget || e.a >= kPortVfxParamTarget + 4 * kPortVfxParamCount) {
+      continue;
+    }
+    float v[4] = {};
+    if (EvalElem(e, frame, v) > 0) {
+      params[(e.a - kPortVfxParamTarget) / 4][(e.a - kPortVfxParamTarget) % 4] = v[0];
+    }
+  }
 }
 
 void PortVfxEvalPoint(const CPortVfxData& vfx, int frame, float& iten, float vpmt[4][4]) {
@@ -523,6 +607,85 @@ void CElementGen::PortRenderParticlesVfx() {
   CGraphics::SetAlphaCompare(kAF_Always, 0, kAO_And, kAF_Always, 0);
 }
 
+// IceChargeBeam's vertices into `world` (Add's scratch): the shader's VS on the CPU. In the
+// Remastered mesh's own space (port = orient x Remastered + offset), the position and normal turn by
+// the step's hash rotation R and the position moves along the turned normal by amp x CCH2.x x the
+// shake of time - 1000 x COLOR.x. The instance matrix is the particle's model times orient; its
+// inverse transpose carries the turned normal and the unturned tangent, both unnormalised, and the
+// handedness takes the model's mirror. COLOR.z rides in uv[1].x.
+static void AddIce(const CPortVfxData& vfx, const CTransform4f& model, const CElementGen::CParticle& p,
+                   const Tm (&tm)[3], const float (&color)[4], std::vector< aurora::gfx::vfx::Vertex >& world) {
+  const CTransform4f view(CGraphics::GetViewMatrix());
+  float params[7][4];
+  PortVfxEvalParams(vfx, CParticleGlobals::GetEmitterTime(), params);
+  const float time = CGraphics::GetSimTime();
+  const IceHash h = IceHashAt(time, params);
+  Mat3 orient;
+  for (int i = 0; i < 9; ++i) {
+    orient.m[i / 3][i % 3] = vfx.meshOrient[i];
+  }
+  // Remastered = orient^-1 (port - offset); orient^-1 = the inverse transpose, transposed.
+  const Mat3 unorient = orient.InverseTranspose().Transposed();
+  const CVector3f offset(vfx.meshOffset[0], vfx.meshOffset[1], vfx.meshOffset[2]);
+  Mat3 inst;
+  const CVector3f cols[3] = {model.Rotate(CVector3f(1.f, 0.f, 0.f)), model.Rotate(CVector3f(0.f, 1.f, 0.f)),
+                             model.Rotate(CVector3f(0.f, 0.f, 1.f))};
+  Mat3 m3;
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      m3.m[r][c] = r == 0 ? cols[c].GetX() : r == 1 ? cols[c].GetY() : cols[c].GetZ();
+    }
+  }
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      inst.m[r][c] = m3.m[r][0] * orient.m[0][c] + m3.m[r][1] * orient.m[1][c] + m3.m[r][2] * orient.m[2][c];
+    }
+  }
+  const Mat3 invT = inst.InverseTranspose();
+  const float mirror = m3.Det() < 0.f ? -1.f : 1.f;
+  const float cch2x = params[2][0];
+  for (u32 i = 0; i < vfx.meshVerts; ++i) {
+    const float* m = &vfx.meshV[size_t(i) * 16];
+    const CVector3f pr = unorient * (CVector3f(m[0], m[1], m[2]) - offset);
+    const CVector3f nr = unorient * CVector3f(m[3], m[4], m[5]);
+    const CVector3f tr = unorient * CVector3f(m[8], m[9], m[10]);
+    const float s = time - 1000.f * m[12];
+    const float shake = 2.f * IceSat(20.f * std::sin((s + 8.f) * 50.f)) +
+                        0.5f * IceSat(20.f * std::sin((s + 2.f) * 150.f)) + IceSat(20.f * std::sin((s + 4.f) * 100.f));
+    const CVector3f n2 = h.r * nr;
+    const CVector3f p2 = h.r * pr + n2 * (h.amp * shake * cch2x);
+    const CVector3f pos = model * (orient * p2 + offset);
+    const CVector3f nl = view.TransposeRotate(invT * n2);
+    const CVector3f tl = view.TransposeRotate(invT * tr);
+    aurora::gfx::vfx::Vertex& v = world[i];
+    v.pos[0] = pos.GetX();
+    v.pos[1] = pos.GetY();
+    v.pos[2] = pos.GetZ();
+    for (int st = 0; st < 3; ++st) {
+      const Tm& t = tm[st];
+      const float dx = (m[6] - 0.5f) * t.c;
+      const float dy = (m[7] - 0.5f) * t.d;
+      v.uv[st][0] = t.a + 0.5f + t.cosE * dx - t.sinE * dy;
+      v.uv[st][1] = t.b + 0.5f + t.sinE * dx + t.cosE * dy;
+      v.uv[st][2] = t.f;
+    }
+    v.uv[1][0] = m[14];
+    for (int k = 0; k < 4; ++k) {
+      v.color[k] = color[k];
+      for (int j = 0; j < 4; ++j) {
+        v.extra[k][j] = p.xPortVpmt[k][j];
+      }
+    }
+    v.vec[0] = nl.GetX();
+    v.vec[1] = nl.GetZ();
+    v.vec[2] = nl.GetY();
+    v.tan[0] = tl.GetX();
+    v.tan[1] = tl.GetZ();
+    v.tan[2] = tl.GetY();
+    v.tan[3] = mirror * m[11];
+  }
+}
+
 void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
                             const CElementGen::CParticle& p, int partFrame,
                             const CColor& modulate) {
@@ -551,8 +714,12 @@ void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
   // particle (the render thread is the only caller), so a frame allocates nothing per particle.
   static std::vector< aurora::gfx::vfx::Vertex > world;
   world.resize(nv);
-  for (u32 i = 0; i < nv; ++i) {
-    const float* m = &vfx.meshV[size_t(i) * 8];
+  const bool ice = (vfx.mat.features & aurora::gfx::vfx::IceChargeBeam) != 0;
+  if (ice) {
+    AddIce(vfx, model, p, tm, color, world);
+  }
+  for (u32 i = 0; !ice && i < nv; ++i) {
+    const float* m = &vfx.meshV[size_t(i) * vfx.meshStride];
     const CVector3f pos = model * CVector3f(m[0], m[1], m[2]);
     const CVector3f nw = Normalised(model.Rotate(CVector3f(m[3], m[4], m[5])), CVector3f(0.f, 0.f, 1.f));
     const CVector3f nv3 = Normalised(view.TransposeRotate(nw), CVector3f(0.f, 1.f, 0.f));
@@ -593,6 +760,12 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
   if (!PortVfxBuildDesc(*x28_loadedGenDesc->xPortVfx, xPortVsmt, xPortVsmtMask, desc)) {
     batch.verts.clear();
     return;
+  }
+  const CPortVfxData& vfx = *x28_loadedGenDesc->xPortVfx;
+  if ((vfx.mat.features & aurora::gfx::vfx::IceChargeBeam) != 0) {
+    desc.normalSlot = static_cast< int8_t >(vfx.normalSlot);
+    PortVfxEvalParams(vfx, x74_curFrame, desc.params);
+    desc.time = CGraphics::GetSimTime();
   }
   // This is a model draw, so a material whose mesh permutation was read against the shader takes its
   // fade from the view-space normal (aurora's OpacityFresnel); every other material keeps the form

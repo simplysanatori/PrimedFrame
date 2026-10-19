@@ -83,6 +83,17 @@ struct CPortVfxData {
   std::vector< float > meshV;
   std::vector< u16 > meshIdx16;
   std::vector< u32 > meshIdx32;
+  // VMSH v2: 16 floats per vertex (pos, normal, uv, tangent, colour; normal and tangent raw, the
+  // tangent's w the handedness with the conversion's mirror folded in), meshFlags bit 0 a real
+  // tangent, bit 1 a real colour, and the conversion port = meshOrient x Remastered + meshOffset.
+  u32 meshStride = 8, meshFlags = 0;
+  float meshOrient[9] = {1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f};
+  float meshOffset[3] = {0.f, 0.f, 0.f};
+  // VPRM: the shader's NMAP slot and its CCHn uniforms (the MATI's), which VSMT targets
+  // kPortVfxParamTarget.. override.
+  s32 normalSlot = -1;
+  u32 paramCount = 0;
+  float params[7][4] = {};
   CPortVfxData() = default;
   CPortVfxData(const CPortVfxData&) = delete;
   CPortVfxData& operator=(const CPortVfxData&) = delete;

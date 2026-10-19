@@ -817,6 +817,7 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
     // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
     case SBIG('VMAT'):
     case SBIG('VMSH'):
+    case SBIG('VPRM'):
     case SBIG('VTMT'):
     case SBIG('VPMT'):
     case SBIG('VSMT'):

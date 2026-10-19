@@ -74,11 +74,13 @@ struct Uniform {
   float warp[2][4]; // per slot (x, y): slots 0, 1 in warp[0], slots 2, 3 in warp[1]
   float soft[4];    // DepthSoften: the viewport's depth range (min, max) and whether the scene depth is bound
   float scene[4];   // SceneWarp: 1 / the copied target's size (x, y), the camera's near plane, whether the colour is bound
-  float pad[24];
+  float ice[4][4];  // IceChargeBeam: CCH0..2, then (modular simulation time, 0, 0, 0)
+  float pad[8];
 };
 static_assert(sizeof(Uniform) == UniformSize);
 static_assert(offsetof(Uniform, misc2) == 208 && offsetof(Uniform, srcs) == 224 && offsetof(Uniform, soft) == 384 &&
               offsetof(Uniform, scene) == 400);
+static_assert(offsetof(Uniform, ice) == 416);
 
 // ---- Array textures ----
 // A slot's texture as a texture_2d_array: a 1-layer view of the GX texture itself, or, for an atlas,
@@ -166,6 +168,10 @@ struct U {
   warp23: vec4f,
   soft: vec4f,
   scene: vec4f,
+  ice0: vec4f,
+  ice1: vec4f,
+  ice2: vec4f,
+  ice3: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var t0: texture_2d_array<f32>;
@@ -192,6 +198,7 @@ struct VIn {
   @location(7) e3: vec4f,
   @location(8) nrm: vec3f,
   @location(9) uv2: vec3f,
+  @location(10) tan: vec4f,
 }
 struct VOut {
   @builtin(position) pos: vec4f,
@@ -206,6 +213,8 @@ struct VOut {
   @location(8) uv2: vec3f,
   @location(9) vz: f32,
   @location(10) sw: f32,
+  @location(11) tan: vec4f,
+  @location(12) vp: vec3f,
 }
 
 @vertex
@@ -223,6 +232,8 @@ fn vs_main(in: VIn) -> VOut {
   out.e3 = in.e3;
   out.nrm = in.nrm;
   out.vz = mv.z;
+  out.tan = in.tan;
+  out.vp = mv;
   if ((FEAT & 32768u) != 0u) {
     // SceneWarp: the warp's perspective scale, near / view distance (the VS's o3.x = vp_c4[0].w / -viewZ).
     out.sw = u.scene.z / -mv.z;
@@ -354,6 +365,37 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let t = sample_raw(S_COLOR, uvw, layer(uvs.z, u.layers[max(S_COLOR, 0)]));
     rgb = t.rgb * vc.rgb * M;
     x = max(0.0, t.w + in.e1.z - 1.0);
+  } else if ((FEAT & 1048576u) != 0u) {
+    // VFX_IceChargeBeam (9e0605cd, FS perm 000_0; ICECHARGE.md section 2). The VS half (the hash
+    // rotation and shake) ran on the CPU. BCLR at layer 0 is read twice: its w at the mesh uv
+    // offsets both uvs by CCH1.y x 0.1 x (w - 0.5) x sin(time) x 2, and u also scrolls by time x CCH1.z.
+    // NMAP bumps the view normal in the tangent frame (N, T, cross(N, T) x handedness); the facing
+    // term is smoothstep(sat(dot(N', -V)^2)) x CCH1.w. Colour: PMTR C x CCH0.x x COLOR.z x CCH2.x,
+    // plus mix(PMTR A, B, NMAP.x x BCLR.x) x sat(max(BCLR.a, 0.25)) x CCH1.x, plus the facing term
+    // x BCLR.rgb, all x the instance colour and PCMD.x (M). Alpha is the instance alpha alone.
+    let c0 = u.ice0;
+    let c1 = u.ice1;
+    let c2 = u.ice2;
+    let tm = u.ice3.x;
+    let uv = in.uv0.xy;
+    let d = c1.y * 0.1 * ((sample_raw(S_COLOR, uv, 0).w - 0.5) * sin(tm));
+    let uv2 = vec2f(fma(tm, c1.z, fma(d, 2.0, uv.x)), fma(d, 2.0, uv.y));
+    let nm = sample_raw(S_NORMAL, uv2, 0).xy;
+    let tc = sample_raw(S_COLOR, uv2, 0);
+    // vec and tan are camera-local in (x, z, y) order; Remastered's view space is (x, y, -z) of that.
+    let N = normalize(vec3f(in.nrm.x, in.nrm.y, -in.nrm.z));
+    let T = normalize(vec3f(in.tan.x, in.tan.y, -in.tan.z));
+    let B = cross(N, T) * in.tan.w;
+    let bx = fma(nm.x, 1.9921875, -1.0);
+    let by = fma(nm.y, 1.9921875, -1.0);
+    let bz = sqrt(1.0 - sat(bx * bx + by * by));
+    let pn = N * bz + T * bx + B * by;
+    let dif = max(0.0, dot(pn, -normalize(in.vp)));
+    let fp = sat(dif * dif);
+    let fr = smooth3(fp) * c1.w;
+    let m = nm.x * tc.x;
+    let ka = sat(max(tc.w, 0.25));
+    rgb = (c0.x * in.e2.rgb * in.uv1.x * c2.x + mix(in.e0.rgb, in.e1.rgb, m) * ka * c1.x + fr * tc.rgb) * vc.rgb * M;
   } else if ((FEAT & 16384u) != 0u) {
     // VFX_Disintegration (d749057f, perm 000_0): the mask's x squared, PMTR rows 0..2 as the colours at
     // s = 0 and 1 and the edge colour, row 3 as (threshold, edge width, alpha lo, alpha hi). ceil(e)
@@ -485,7 +527,8 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   // BLEND 5 (AdditiveOne) takes no alpha compensation above and no fog below, as Additive; its tone is unchanged.
   // Remastered sets a no-fog bit for every particle blend but alpha and opaque
   // (SetupFogFromBlendMode), so additive and premultiplied draws are not fogged at all.
-  if (BLEND == 0u || BLEND == 3u) {
+  // IceChargeBeam: DFOG 1 (perm 000), so unfogged in either blend.
+  if ((BLEND == 0u || BLEND == 3u) && (FEAT & 1048576u) == 0u) {
     col = mix(col, u.fogColor.rgb, fog_factor(in.pos.z));
   }
   return vec4f(col, alpha);
@@ -682,7 +725,7 @@ wgpu::RenderPipeline make_pipeline(const PipelineConfig& p) {
   const wgpu::ShaderModuleDescriptor moduleDescriptor{.nextInChain = &wgsl, .label = "VFX Module"};
   const wgpu::ShaderModule module = device.CreateShaderModule(&moduleDescriptor);
 
-  static constexpr std::array<wgpu::VertexAttribute, 10> attributes{{
+  static constexpr std::array<wgpu::VertexAttribute, 11> attributes{{
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, pos), .shaderLocation = 0},
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, uv[0]), .shaderLocation = 1},
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, uv[1]), .shaderLocation = 2},
@@ -693,6 +736,7 @@ wgpu::RenderPipeline make_pipeline(const PipelineConfig& p) {
       {.format = wgpu::VertexFormat::Float32x4, .offset = offsetof(Vertex, extra[3]), .shaderLocation = 7},
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, vec), .shaderLocation = 8},
       {.format = wgpu::VertexFormat::Float32x3, .offset = offsetof(Vertex, uv[2]), .shaderLocation = 9},
+      {.format = wgpu::VertexFormat::Float32x4, .offset = offsetof(Vertex, tan), .shaderLocation = 10},
   }};
   const wgpu::VertexBufferLayout vertexLayout{
       .stepMode = wgpu::VertexStepMode::Vertex,
@@ -1050,7 +1094,7 @@ std::string pipeline_source(const PipelineConfig& p) {
   const bool hdr = (p.blend & BlendSceneHdr) != 0;
   // The slot a feature reads is a pipeline constant (3 bits each, 7 = none).
   static constexpr const char* SlotNames[] = {"S_COLOR",  "S_OPACITY",   "S_RAMP",   "S_RAMP2",
-                                              "S_THRESHOLD", "S_INDIRECT", "S_PALETTE"};
+                                              "S_THRESHOLD", "S_INDIRECT", "S_PALETTE", "S_NORMAL"};
   std::string source = "const FEAT: u32 = " + std::to_string(p.features) + "u;\nconst BLEND: u32 = " +
                        std::to_string(p.blend & ~BlendSceneHdr) + "u;\n";
   for (uint32_t i = 0; i < std::size(SlotNames); ++i) {
@@ -1084,7 +1128,7 @@ std::string pipeline_source(const PipelineConfig& p) {
   static constexpr std::string_view HdrTail = R"(  if (HDR) {
     var lin = max(rgb, vec3f(0.0));
     if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { lin = lin * u.tone0.w; }
-    if (BLEND == 0u || BLEND == 3u) {
+    if ((BLEND == 0u || BLEND == 3u) && (FEAT & 1048576u) == 0u) {
       lin = mix(lin, hdr_exposed(u.fogColor.rgb, u.tone0, u.tone1, u.tone2), fog_factor(in.pos.z));
     }
     return vec4f(lin, alpha);
@@ -1110,13 +1154,14 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   const uint32_t features = shader_features(desc.features);
   // The slots each enabled feature reads; a slot nothing reads is left unbound (the dummy).
   const std::pair<uint32_t, int8_t> reads[] = {
-      {ColorTex | ColorIndexing | Pyro | Disintegration | VisorSplat, desc.colorSlot},
+      {ColorTex | ColorIndexing | Pyro | Disintegration | VisorSplat | IceChargeBeam, desc.colorSlot},
       {OpacityTex, desc.opacitySlot},
       {Ramp | Pyro, desc.rampSlot},
       {Ramp | DualMod, desc.ramp2Slot},
       {Thresholding, desc.thresholdSlot},
       {Indirect | SceneWarp | VisorSplat, desc.indirectSlot},
       {ColorIndexing, desc.paletteSlot},
+      {IceChargeBeam, desc.normalSlot},
   };
   uint32_t slotKey = 0;
   bool used[SlotCount]{};
@@ -1194,6 +1239,12 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
     u.scene[1] = 1.f / float(scene.height);
     u.scene[2] = gx.proj.m2[3] / (gx.proj.m2[2] - 1.f);
     u.scene[3] = 1.f;
+  }
+  if ((features & IceChargeBeam) != 0) {
+    for (uint32_t i = 0; i < 3; ++i) {
+      std::memcpy(u.ice[i], desc.params[i], sizeof(u.ice[i]));
+    }
+    u.ice[3][0] = desc.time;
   }
   const Src* srcs[SrcCount] = {&desc.erosion,   &desc.thrX,      &desc.thrY,        &desc.thrW,
                                &desc.fresnelX,  &desc.fresnelY,  &desc.fadeX,       &desc.fadeY,
