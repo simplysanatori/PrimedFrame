@@ -45,6 +45,24 @@ CParticleGlobals::SParticleSystem* CParticleGlobals::mCurrentParticleSystem = nu
 CElementGen::CParticle* CParticleGlobals::xPortUVParticle = nullptr;
 const CElementGen::CParticle* CParticleGlobals::xPortIrndParticle = nullptr;
 const CParticleGlobals::SPortSwooshEval* CParticleGlobals::xPortSwooshEval = nullptr;
+float CParticleGlobals::xPortSystemTween = 0.f;
+
+void CParticleGlobals::PortSetSystemTime(int frame, int lifetime) {
+  if (lifetime >= 0x7FFFFF) {
+    xPortSystemTween = 0.f;
+    return;
+  }
+  const float lifeF = lifetime != 0 ? static_cast< float >(lifetime) : 1.f;
+  const float recip = 1.f / lifeF;
+  float tween = static_cast< float >(frame) * recip;
+  if (tween < 0.f) {
+    tween = 0.f;
+  }
+  if (tween > 1.f) {
+    tween = 1.f;
+  }
+  xPortSystemTween = tween;
+}
 
 // splitmix64 of (seed, element address): the same pair always gives the same bits.
 u32 CParticleGlobals::PortIrndBits(const CElementGen::CParticle* particle, const void* element) {

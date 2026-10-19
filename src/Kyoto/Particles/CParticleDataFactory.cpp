@@ -22,6 +22,7 @@
 #include "Kyoto/Particles/CParticleGen.hpp"
 #include "Kyoto/Particles/CPortKeyframeInput.hpp"
 #include "Kyoto/Particles/CPortParticleVars.hpp"
+#include "Kyoto/Particles/CPortSystemTween.hpp"
 #include "Kyoto/Particles/CRealElement.hpp"
 #include "Kyoto/Particles/CSpawnSystemKeyframeData.hpp"
 #include "Kyoto/Particles/CSwooshDescription.hpp"
@@ -1286,6 +1287,11 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
     }
     return rs_new CREPortKeyframeInput(loop, count, loopStart, start, rate, std::move(keys),
                                        GetRealElement(in));
+  }
+  case SBIG('PSLW'): {
+    CRealElement* a = GetRealElement(in);
+    CRealElement* b = GetRealElement(in);
+    return rs_new CREPortSystemTween(a, b);
   }
   case SBIG('DIVD'): {
     CRealElement* a = GetRealElement(in);

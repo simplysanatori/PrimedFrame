@@ -650,6 +650,9 @@ const bool CElementGen::Update(double dt) {
     // CAddVarSystem::Init 0x278438: every system variable once, on the generator's random.
     CGlobalRandom gr(x27c_randState);
     CParticleGlobals::SetEmitterTime(x74_curFrame);
+#ifdef TARGET_PC
+    CParticleGlobals::PortSetSystemTime(x74_curFrame, x268_PSLT);
+#endif
     PortEvalSys(true);
     PortInitMover();
   }
@@ -674,6 +677,9 @@ bool CElementGen::InternalUpdate(double dt) {
   double dt1 = close_enough(dt, kTickTime) ? kTickTime : dt;
 
   CParticleGlobals::SetEmitterTime(x74_curFrame);
+#ifdef TARGET_PC
+  CParticleGlobals::PortSetSystemTime(x74_curFrame, x268_PSLT);
+#endif
 
   if (x28_loadedGenDesc->x8_PSTS) {
     float psts = 1.0f;
@@ -696,6 +702,9 @@ bool CElementGen::InternalUpdate(double dt) {
     x2ec_maxSize = 0.0f;
 
     CParticleGlobals::SetEmitterTime(x74_curFrame);
+#ifdef TARGET_PC
+    CParticleGlobals::PortSetSystemTime(x74_curFrame, x268_PSLT);
+#endif
 #ifdef TARGET_PC
     PortStepMover();
     PortStepPemv();
@@ -914,6 +923,9 @@ void CElementGen::UpdateExistingParticles() {
   AUTO(p, x30_particles.begin());
   x25c_activeParticleCount = 0;
   CParticleGlobals::SetEmitterTime(x74_curFrame);
+#ifdef TARGET_PC
+  CParticleGlobals::PortSetSystemTime(x74_curFrame, x268_PSLT);
+#endif
   CParticleGlobals::mParticleAccessParameters = NULL;
 
   while (p != x30_particles.end()) {
@@ -1940,6 +1952,9 @@ void CElementGen::ForceParticleCreation(int amount) {
   CPortVarScope portVarScope(&xPortVars);
 #endif
   CParticleGlobals::SetEmitterTime(x74_curFrame);
+#ifdef TARGET_PC
+  CParticleGlobals::PortSetSystemTime(x74_curFrame, x268_PSLT);
+#endif
   CreateNewParticles(amount);
 }
 
@@ -2377,6 +2392,9 @@ void CElementGen::RenderParticles() {
   }
 
   CParticleGlobals::SetEmitterTime(x74_curFrame);
+#ifdef TARGET_PC
+  CParticleGlobals::PortSetSystemTime(x74_curFrame, x268_PSLT);
+#endif
 
   if (!x26c_30_MBLR) {
     if (!SORT && constUVs && !x26c_29_ORNT) {
@@ -3589,6 +3607,9 @@ void CElementGen::RenderModels() {
   rot = modelOrient * rot;
 
   CParticleGlobals::SetEmitterTime(x74_curFrame);
+#ifdef TARGET_PC
+  CParticleGlobals::PortSetSystemTime(x74_curFrame, x268_PSLT);
+#endif
   CColor col = x338_moduColor;
 
   for (int i = 0; i < x30_particles.size(); ++i) {

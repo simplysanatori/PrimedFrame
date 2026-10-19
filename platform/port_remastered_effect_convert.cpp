@@ -1356,6 +1356,12 @@ public:
       why = "ROTV by a rotation that is not REUL/EXTR/CMRT";
       return false;
     }
+    // SLTW(a, b) (GetLifetimeTweenElement 0x26a640, time slot 0) is the port-only PSLW: the two
+    // reals, blended by the system tween.
+    if (value.fourcc == F("SLTW") && type == Type::Real && value.args.size() == 2) {
+      AppendBE32(out, F("PSLW"));
+      return Element(value.args[0], Type::Real, out, why) && Element(value.args[1], Type::Real, out, why);
+    }
     // KEYF (version 2) is CREKeyframeInput 0x296490: the 30-byte header (version, an unused word,
     // loop and an unused byte, N at +10, loop start A, start B and rate R as floats, then the key
     // count) with N keys, and an input element. The port-only PKYF: the loop byte, N, A, B, R, the
@@ -4166,6 +4172,10 @@ public:
         return false;
       }
       return field == F("NONE") || (field == F("CNST") && Skip(4));
+    }
+    // Port-only PSLW: the two reals.
+    if (fourcc == F("PSLW") && type == Type::Real) {
+      return Element(Type::Real) && Element(Type::Real);
     }
     // Port-only PKYF: the loop byte, N, the loop start, start and rate, N keys, then the input.
     if (fourcc == F("PKYF") && type == Type::Real) {

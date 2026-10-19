@@ -1,0 +1,67 @@
+// PSLW (Remastered's SLTW): a + tween * (b - a) by the system tween, clamp(frame / lifetime, 0, 1)
+// (UpdateLifetimeTweenValues 0x24ef38 on time slot 0).
+#include "Kyoto/Particles/CPortSystemTween.hpp"
+#include "port_test.h"
+
+namespace {
+
+class ConstReal : public CRealElement {
+  float m_value;
+
+public:
+  explicit ConstReal(float value) : m_value(value) {}
+  bool GetValue(int, float& out) const override {
+    out = m_value;
+    return true;
+  }
+};
+
+void TestTween() {
+  // 16 / 64 = 0.25 exactly: 2 + 0.25 * (10 - 2) = 4.
+  CParticleGlobals::PortSetSystemTime(16, 64);
+  CHECK(CParticleGlobals::xPortSystemTween == 0.25f);
+  float out = -1.f;
+  CHECK(!CREPortSystemTween(new ConstReal(2.f), new ConstReal(10.f)).GetValue(0, out) && out == 4.f);
+
+  // The tween clamps to [0, 1].
+  CParticleGlobals::PortSetSystemTime(200, 64);
+  CHECK(CParticleGlobals::xPortSystemTween == 1.f);
+  CParticleGlobals::PortSetSystemTime(-5, 64);
+  CHECK(CParticleGlobals::xPortSystemTween == 0.f);
+
+  // A lifetime of 0 reads as 1: frame 1 is the full tween, frame 0 none.
+  CParticleGlobals::PortSetSystemTime(1, 0);
+  CHECK(CParticleGlobals::xPortSystemTween == 1.f);
+  CParticleGlobals::PortSetSystemTime(0, 0);
+  CHECK(CParticleGlobals::xPortSystemTween == 0.f);
+
+  // The infinite lifetime (the port's default and retail's sentinel) gives 0.
+  CParticleGlobals::PortSetSystemTime(100, 0x7FFFFF);
+  CHECK(CParticleGlobals::xPortSystemTween == 0.f);
+  CParticleGlobals::PortSetSystemTime(100, 0x1000000);
+  CHECK(CParticleGlobals::xPortSystemTween == 0.f);
+}
+
+// SLTW(0, 1) is the tween itself, the form both PMSC users have.
+void TestUnitBlend() {
+  CParticleGlobals::PortSetSystemTime(48, 64);
+  float out = -1.f;
+  CREPortSystemTween(new ConstReal(0.f), new ConstReal(1.f)).GetValue(0, out);
+  CHECK(out == 0.75f);
+}
+
+}  // namespace
+
+// Heap storage for elements.
+void* IElement::CElementAllocator::Alloc(size_t size, const char*, const char*) { return ::operator new(size); }
+void IElement::CElementAllocator::Free(void* ptr, size_t) { ::operator delete(ptr); }
+void* IElement::operator new(size_t size, const char* file, const char* type) {
+  return CElementAllocator::Alloc(size, file, type);
+}
+void IElement::operator delete(void* ptr, size_t size) { CElementAllocator::Free(ptr, size); }
+
+int main() {
+  TestTween();
+  TestUnitBlend();
+  return PORT_TEST_RESULT();
+}
