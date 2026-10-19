@@ -4796,16 +4796,19 @@ public:
     if (!Word(fourcc) || fourcc != F("CNST") || !Word(count) || count > 13) {
       return false;
     }
+    uint32_t seen = 0;
     for (uint32_t i = 0; i < count; ++i) {
       uint32_t kind, slot, flag;
       if (!Word(kind) || kind > 2 || !Word(slot) || slot >= (kind == 2 ? 4u : kind == 1 ? 9u : 8u) ||
           (kind == 1 && slot != 8) || !Word(flag) || flag > 1 ||
+          (seen & (1u << (kind == 2 ? 9 + slot : slot))) != 0 ||  // the factory rejects a duplicate
           (kind != 0 && !Element(kind == 1 ? Type::Real : Type::Int))) {
         if (m_error.empty()) {
           m_error = "bad PPVR";
         }
         return false;
       }
+      seen |= 1u << (kind == 2 ? 9 + slot : slot);
     }
     return true;
   }

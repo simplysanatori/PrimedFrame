@@ -4,6 +4,7 @@
 
 #ifdef TARGET_PC
 #include "aurora/vfx.hpp"
+#include "port_log.h"
 #include "port_vfx_read.h"
 #endif
 #include "Kyoto/CFactoryFnReturn.hpp"
@@ -143,19 +144,23 @@ CPortPartVars* PortReadPartVars(CInputStream& in) {
   std::unique_ptr< CPortPartVars > vars(new CPortPartVars());
   vars->items.resize(count);
   u32 seen = 0;
+  bool bad = false;
   for (SPortPartVarItem& item : vars->items) {
     const u32 kind = in.ReadLong();
     const u32 slot = in.ReadLong();
     item.constAfterStart = in.ReadLong() != 0;
-    if (kind > 2 || slot >= (kind == 2 ? 4u : kind == 1 ? 9u : 8u) || (kind == 1 && slot != 8)) {
-      return nullptr;
+    if (kind > 2) {
+      return nullptr;  // the item's body length is unknown: the stream cannot be resynced
     }
-    // Each variable at most once: a duplicate would evaluate it twice.
-    const u32 bit = 1u << (kind == 2 ? 9 + slot : slot);
-    if ((seen & bit) != 0) {
-      return nullptr;
+    // A bad slot or a duplicate (it would evaluate the variable twice) still reads its element,
+    // so the rest of the property is consumed and the stream stays in sync; the table is dropped.
+    if (slot >= (kind == 2 ? 4u : kind == 1 ? 9u : 8u) || (kind == 1 && slot != 8)) {
+      bad = true;
+    } else {
+      const u32 bit = 1u << (kind == 2 ? 9 + slot : slot);
+      bad = bad || (seen & bit) != 0;
+      seen |= bit;
     }
-    seen |= bit;
     item.kind = static_cast< EPortPartVarKind >(kind);
     item.slot = slot;
     if (kind == 1 && (item.real = CParticleDataFactory::GetRealElement(in)) == nullptr) {
@@ -165,7 +170,7 @@ CPortPartVars* PortReadPartVars(CInputStream& in) {
       return nullptr;
     }
   }
-  return vars.release();
+  return bad ? nullptr : vars.release();
 }
 
 enum EPortKssmKind { kPKK_Real, kPKK_Vector, kPKK_Rotation };
@@ -661,6 +666,9 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
     case SBIG('PPVR'):
       GetClassID(in);
       desc->xPortPartVars.reset(PortReadPartVars(in));
+      if (!desc->xPortPartVars) {
+        PortLog::Write("particles: malformed PPVR, falling back to the retail ADV path\n");
+      }
       break;
     // Port-only marker of a converted Remastered PART (xPortIrnd).
     case SBIG('PIRN'):
