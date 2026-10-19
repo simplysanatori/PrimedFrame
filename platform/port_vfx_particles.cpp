@@ -430,6 +430,29 @@ void CElementGen::PortRenderParticlesVfx() {
       vec[2] = n.GetY();
     }
 
+    // VisorSplat: rows 0 and 1 of the inverse of the quad's axes in view space (the VS's o5, o6: a view
+    // offset in units of the corner extents). A, B are the corner's derivatives; C = A x B stands in for
+    // the instance's third axis, which leaves the rows exact while A and B lie in the view plane (sprites).
+    float splatInv[4] = {};
+    if ((desc.features & aurora::gfx::vfx::VisorSplat) != 0) {
+      const auto toView = [&](const CVector3f& f) {
+        const CVector3f c = systemViewCopy.TransposeRotate(systemModelMatrix.Rotate(f));
+        return CVector3f(c.GetX(), c.GetZ(), -c.GetY()); // retail camera (x right, y forward, z up) -> view
+      };
+      const CVector3f a = toView((axisU * cosT + axisW * sinT) * sx);
+      const CVector3f b = toView((axisW * cosT - axisU * sinT) * sy);
+      const CVector3f c = CVector3f::Cross(a, b);
+      const CVector3f bc = CVector3f::Cross(b, c);
+      const CVector3f ca = CVector3f::Cross(c, a);
+      const float det = CVector3f::Dot(a, bc);
+      if (std::fabs(det) > 1e-20f) {
+        splatInv[0] = bc.GetX() / det;
+        splatInv[1] = bc.GetY() / det;
+        splatInv[2] = ca.GetX() / det;
+        splatInv[3] = ca.GetY() / det;
+      }
+    }
+
     const u8 shapeId = x28_loadedGenDesc->xPortSpriteShape;
     const PortSpriteShape* const shape = shapeId >= 3 && shapeId <= 6 ? &kShapes[shapeId - 3] : nullptr;
     const int polyQuads = shape != nullptr ? shape->triangles : 1;
@@ -468,6 +491,17 @@ void CElementGen::PortRenderParticlesVfx() {
         v.color[i] = color[i];
         for (int j = 0; j < 4; ++j) {
           v.extra[i][j] = p.xPortVpmt[i][j];
+        }
+      }
+      if ((desc.features & aurora::gfx::vfx::VisorSplat) != 0) {
+        // The shader reads PMTR rows 0 and 1 only; rows 2 and 3 carry the world position and the axes.
+        const CVector3f world = systemModelMatrix * pos;
+        v.extra[2][0] = world.GetX();
+        v.extra[2][1] = world.GetY();
+        v.extra[2][2] = world.GetZ();
+        v.extra[2][3] = 0.f;
+        for (int j = 0; j < 4; ++j) {
+          v.extra[3][j] = splatInv[j];
         }
       }
       v.vec[0] = vec[0];

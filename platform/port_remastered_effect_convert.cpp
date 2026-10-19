@@ -503,7 +503,7 @@ bool FlipbookTransform(const EffectValue& value, bool& flip) {
 constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kIndirect = 16, kDepthSoften = 32,
                    kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256, kColorIndexing = 512, kAddColor = 1024,
                    kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192, kDisintegration = 16384,
-                   kSceneWarp = 32768;
+                   kSceneWarp = 32768, kVisorSplat = 65536;
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders without a SceneWarp recipe.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
@@ -904,6 +904,10 @@ const Recipe* RecipeOf(uint32_t shader) {
       // VFX_Disintegration (perm 000_0, SPEC-disint-ice.md): TCH0 the mask, PMTR rows 0..3 (the VS
       // passes them as v2..v5). Perm 000 does no depth soften, so SFTD is not read.
       {0xd749057f, kDisintegration, {{"TCH0", Role::Color, -1, -1}}, {}},
+      // VFX_VisorSplat (perm 000_0): BCLR at its uv plus the TCH1 warp, which is read at the world position
+      // (x, y) x PMTR row 1.xy + row 0.zw, scaled by row 0.xy and taken to the quad's axes; alpha
+      // max(0, BCLR.a + row 1.z - 1) x vc.a. The runtime supplies the world position and the axes.
+      {0x9e2cbd46, kVisorSplat, {{"BCLR", Role::Color, -1, -1}, {"TCH1", Role::Indirect, -1, -1}}, {}},
   };
   for (const Recipe& recipe : table) {
     if (recipe.shader == shader) {

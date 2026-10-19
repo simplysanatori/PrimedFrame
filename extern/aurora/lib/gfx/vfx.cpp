@@ -342,7 +342,19 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   }
   var rgb = vc.rgb * M;
   var x = 1.0;
-  if ((FEAT & 16384u) != 0u) {
+  if ((FEAT & 65536u) != 0u) {
+    // VFX_VisorSplat (9e2cbd46, perm 000_0): the warp map read at the world position's x, y times PMTR
+    // row 1.xy plus row 0.zw, (d * 0.99609375 - 0.5) x row 0.xy as a view-space offset, taken to the
+    // quad's axes by the inverse basis rows (VS o5, o6) and added to the colour map's uv. The alpha
+    // threshold is t.w + row 1.z - 1. M is PCMD.x.
+    let m = sample_raw(S_INDIRECT, in.e2.xy * in.e1.xy + in.e0.zw, 0).xy;
+    let wv = (m * 0.99609375 - vec2f(0.5)) * in.e0.xy;
+    let uvs = uv_of(in, u.uvSets[max(S_COLOR, 0)]);
+    let uvw = uvs.xy + vec2f(dot(in.e3.xy, wv), dot(in.e3.zw, wv));
+    let t = sample_raw(S_COLOR, uvw, layer(uvs.z, u.layers[max(S_COLOR, 0)]));
+    rgb = t.rgb * vc.rgb * M;
+    x = max(0.0, t.w + in.e1.z - 1.0);
+  } else if ((FEAT & 16384u) != 0u) {
     // VFX_Disintegration (d749057f, perm 000_0): the mask's x squared, PMTR rows 0..2 as the colours at
     // s = 0 and 1 and the edge colour, row 3 as (threshold, edge width, alpha lo, alpha hi). ceil(e)
     // picks the alpha scale: hi on the burning edge (e > 0), lo elsewhere. M is PCMD.x.
@@ -1098,12 +1110,12 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   const uint32_t features = shader_features(desc.features);
   // The slots each enabled feature reads; a slot nothing reads is left unbound (the dummy).
   const std::pair<uint32_t, int8_t> reads[] = {
-      {ColorTex | ColorIndexing | Pyro | Disintegration, desc.colorSlot},
+      {ColorTex | ColorIndexing | Pyro | Disintegration | VisorSplat, desc.colorSlot},
       {OpacityTex, desc.opacitySlot},
       {Ramp | Pyro, desc.rampSlot},
       {Ramp | DualMod, desc.ramp2Slot},
       {Thresholding, desc.thresholdSlot},
-      {Indirect | SceneWarp, desc.indirectSlot},
+      {Indirect | SceneWarp | VisorSplat, desc.indirectSlot},
       {ColorIndexing, desc.paletteSlot},
   };
   uint32_t slotKey = 0;

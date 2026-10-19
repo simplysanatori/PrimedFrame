@@ -92,7 +92,8 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 67: recipes 8278c22d/7498e54a (VFX_Pyro, the vfx Pyro feature).
 // 68: recipe d749057f (VFX_Disintegration, the vfx Disintegration feature).
 // 69: recipes cc155f99/04276ae1/d955396d (VFX_FrameBuffer_Indirect_*, the vfx SceneWarp feature).
-inline constexpr int kEffects = 69;    // port_remastered_effect_import and the particle converters
+// 70: recipe 9e2cbd46 (VFX_VisorSplat, the vfx VisorSplat feature).
+inline constexpr int kEffects = 70;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 inline constexpr int kRooms = 20;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail

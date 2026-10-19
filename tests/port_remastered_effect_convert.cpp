@@ -3741,6 +3741,19 @@ void TestVmatDisintegrationRecipe() {
             "d749057f is VFX_Disintegration on TCH0");
 }
 
+void TestVmatVisorSplatRecipe() {
+  auto result = ConvertVmat(Mati(0x9e2cbd46, {{"BCLR", Fresh(8)}, {"TCH1", Fresh(8)}}));
+  CHECK_MSG(result.first.size() == 1 && !result.second.empty() && result.first[0].approximated.empty(),
+            "the VFX_VisorSplat shader writes an exact VMAT");
+  // aurora::gfx::vfx::Feature::VisorSplat, on BCLR and the TCH1 warp map, neither warped by CCH0.
+  CHECK_MSG(VmatWord(result.second, 12) == 65536 && VmatWord(result.second, 20) == 2,
+            "9e2cbd46 is VFX_VisorSplat on BCLR and TCH1");
+  if (result.second.size() >= 24 + 2 * 44) {
+    CHECK_MSG(VmatWord(result.second, 24 + 32) == 0 && VmatWord(result.second, 68 + 32) == 0,
+              "VisorSplat's warp scale is per particle (PMTR row 0), not the slot's");
+  }
+}
+
 // VFX_FrameBuffer_Indirect_*: the SceneWarp feature, the warp scale CCH0.xy on the warp map's slot, the
 // blend the generator's (no multiply) and nothing approximated.
 void TestVmatSceneWarpRecipes() {
@@ -4023,6 +4036,7 @@ int main() {
   TestVmatBatch4Recipes();
   TestVmatPyroRecipes();
   TestVmatDisintegrationRecipe();
+  TestVmatVisorSplatRecipe();
   TestVmatSceneWarpRecipes();
   TestElc2BlendAndLifetime();
   TestWaveOrbHeaderBlend();

@@ -37,6 +37,10 @@ enum Feature : uint32_t {
   SceneWarp = 32768,    // VFX_FrameBuffer_Indirect_*: rgb *= the scene copy (capture_scene) at the fragment, offset by
                         // the indirectSlot map d: uv = frag / size + s * k * (d.x * 0.99609375 - 0.5, 0.5 - d.y * 0.99609375),
                         // k = the indirect slot's warpScale (CCH0.xy), s = near / view depth (per vertex)
+  VisorSplat = 65536,   // VFX_VisorSplat: the indirectSlot map read at the world position (extra[2].xy) x PMTR row 1.xy
+                        // + row 0.zw gives w = (d * 0.99609375 - 0.5) * row 0.xy, a view-space offset taken to the quad's
+                        // own axes by extra[3] = the inverse basis's rows 0, 1 (xy each): t = colorSlot at uv + that,
+                        // rgb = t.rgb * vc.rgb, a = max(0, t.w + row 1.z - 1). The runtime fills extra[2..3] (sprites)
   // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
   // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
   AlreadyExposed = 1u << 31
