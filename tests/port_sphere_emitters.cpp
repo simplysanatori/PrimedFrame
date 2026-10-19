@@ -150,6 +150,26 @@ void TestEllipsoid() {
     CHECK_MSG(p.velocity.GetX() == 0.f && p.velocity.GetY() == 0.f && p.velocity.GetZ() == 0.f,
               "and the velocity is zero");
   }
+  // IsNormalizable 0x6b030: threshold 1e-28 (0x10fd87b5) with >=, not 1.42e-14, and non-finite
+  // lanes fail. A tiny d (draws 0.5 + 5e-15 lanes cannot be formed), so probe the predicate
+  // directly at, below and above the threshold, and through the size scaling in the element.
+  {
+    const float t = BitsFloat(0x10fd87b5);
+    CHECK(IsNormalizableVec(CVector3f(std::sqrt(t) * 1.0001f, 0.f, 0.f)));
+    CHECK(!IsNormalizableVec(CVector3f(std::sqrt(t) * .9999f, 0.f, 0.f)));
+    CHECK_MSG(IsNormalizableVec(CVector3f(1.e-10f, 0.f, 0.f)), "1e-20 is normalizable (it is below the old 1.42e-14)");
+    CHECK(!IsNormalizableVec(CVector3f(0.f, 0.f, 0.f)));
+    CHECK(!IsNormalizableVec(CVector3f(INFINITY, 0.f, 0.f)));
+    CHECK(!IsNormalizableVec(CVector3f(1.f, NAN, 0.f)));
+    // A direction with magnitude 1e-10 (squared 1e-20) must be normalized in the point scaling:
+    // size (1e-10, 0, 0) with d = (1,0,0) gives q = (1e-10,0,0), whose velocity is the unit x.
+    const float draw[3] = {1.f, 0.5f, 0.5f};
+    const SpherePoint p = EllipsoidPoint(CVector3f(0.f, 0.f, 0.f), CVector3f(1.e-10f, 0.f, 0.f), 2.f, draw);
+    CHECK_MSG(Near(p.velocity.GetX(), 2.0, 1.e-4), "a 1e-10 point still gets a unit direction");
+    // Below 1e-28 the point is left as is.
+    const SpherePoint r = EllipsoidPoint(CVector3f(0.f, 0.f, 0.f), CVector3f(1.e-15f, 0.f, 0.f), 2.f, draw);
+    CHECK_MSG(Near(r.velocity.GetX(), 2.0e-15, 1.e-18), "a point under 1e-28 squared keeps its length");
+  }
   // The element: surface-only takes 3 draws, otherwise 6, and the output is turned by B.
   {
     CRandom16 rnd(21);

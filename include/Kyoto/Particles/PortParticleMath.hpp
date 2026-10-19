@@ -958,19 +958,29 @@ inline SpherePoint SphereWithVariance(const CVector3f& p, float radius, float sp
                      CVector3f(dx * speed, c * speed, dz * speed)};
 }
 
+// CVector3f::IsNormalizable 0x6b030: false when any lane is inf/NaN (exponent all ones), else
+// (x*x + y*y) + z*z >= 1e-28 (0x10fd87b5; not CParticleValues::skMinNormalizableMagSqd).
+inline bool IsNormalizableVec(const CVector3f& v) {
+  if (!std::isfinite(v.GetX()) || !std::isfinite(v.GetY()) || !std::isfinite(v.GetZ())) {
+    return false;
+  }
+  const float squared = (v.GetX() * v.GetX() + v.GetY() * v.GetY()) + v.GetZ() * v.GetZ();
+  return squared >= BitsFloat(0x10fd87b5);
+}
+
 // ELPS GetValue 0x2ca73c with a zero euler: d is the three draws mapped to (-1, 1) and
-// normalized when it can be, scaled by the size (itself scaled by three more draws unless
-// surface-only), and the velocity is that point's direction times the speed.
+// normalized (Normalize 0x6b0b0) when IsNormalizable, scaled by the size (itself scaled by three
+// more draws unless surface-only); the velocity is that point (the rotation is the identity)
+// through AsNormalized 0x6b238 (same math as Normalize) when IsNormalizable, else as is, times
+// the speed.
 inline SpherePoint EllipsoidPoint(const CVector3f& centre, const CVector3f& size, float speed, const float draw[3]) {
   CVector3f d((draw[0] * 200.f + -100.f) * .01f, (draw[1] * 200.f + -100.f) * .01f,
               (draw[2] * 200.f + -100.f) * .01f);
-  const float squared = (d.GetX() * d.GetX() + d.GetY() * d.GetY()) + d.GetZ() * d.GetZ();
-  if (squared >= kMinNormalizableMagSqd) {
+  if (IsNormalizableVec(d)) {
     d = NormalizeInPlace(d);
   }
   const CVector3f q(d.GetX() * size.GetX(), d.GetY() * size.GetY(), d.GetZ() * size.GetZ());
-  const float qq = (q.GetX() * q.GetX() + q.GetY() * q.GetY()) + q.GetZ() * q.GetZ();
-  const CVector3f dir = qq >= kMinNormalizableMagSqd ? NormalizeInPlace(q) : q;
+  const CVector3f dir = IsNormalizableVec(q) ? NormalizeInPlace(q) : q;
   return SpherePoint{CVector3f(q.GetX() + centre.GetX(), q.GetY() + centre.GetY(), q.GetZ() + centre.GetZ()),
                      CVector3f(dir.GetX() * speed, dir.GetY() * speed, dir.GetZ() * speed)};
 }
