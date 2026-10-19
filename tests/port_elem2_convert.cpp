@@ -402,6 +402,64 @@ bool Dropped(const std::vector<ConvertedPart>& parts, const char* what) {
   return false;
 }
 
+// A PLNV shuffler needs a constant count; CRCV's 0 count means MAXP only as a SEMR's position.
+void TestNonConstantCounts() {
+  EffectNode effect;
+  std::vector<uint8_t> out;
+  auto vec = [](std::vector<uint8_t>& o, float x, float y, float z) {
+    PutFourCC(o, "CNST");
+    PutConstant(o, Bits(x));
+    PutConstant(o, Bits(y));
+    PutConstant(o, Bits(z));
+  };
+  auto plnv = [&](int flag) {
+    return ConvertGen(
+        [&](std::vector<uint8_t>& o) {
+          PutProperty(o, "MAXP", 3);
+          PutConstant(o, 9);
+          PutProperty(o, "EMTR", 3);
+          PutFourCC(o, "PLNV");
+          vec(o, 0, 0, 0);
+          vec(o, 0, 0, 0);
+          PutConstant(o, Bits(5.0f));
+          PutConstant(o, Bits(2.0f));
+          PutConstant(o, Bits(3.0f));
+          PutConstant(o, Bits(0.0f));
+          PutFourCC(o, "ABS_");
+          PutConstant(o, 4);
+          PutConstant(o, Bits(1.0f));
+          PutConstant(o, 3);
+          PutConstant(o, Bits(0.0f));
+          o.push_back(uint8_t(flag));
+        },
+        effect, out);
+  };
+  CHECK_MSG(Dropped(plnv(1), "PLNV with a shuffler and a count that is not a constant"),
+            "PLNV shuffler with a variable count is dropped");
+  CHECK_MSG(!Dropped(plnv(0), "PLNV with a shuffler and a count that is not a constant"),
+            "without the shuffler flag the variable count stands");
+  // CRCV as the velocity (not the position) has no MAXP to resolve a 0 count from.
+  auto parts = ConvertGen(
+      [&](std::vector<uint8_t>& o) {
+        PutProperty(o, "MAXP", 3);
+        PutConstant(o, 3);
+        PutProperty(o, "EMTR", 3);
+        PutFourCC(o, "SEMR");
+        vec(o, 0, 0, 0);
+        PutFourCC(o, "CRCV");
+        vec(o, 0, 0, 0);
+        vec(o, 0, 1, 0);
+        PutConstant(o, Bits(0.0f));
+        PutConstant(o, 0);
+        PutConstant(o, Bits(1.0f));
+        PutConstant(o, Bits(2.0f));
+        o.push_back(1);
+      },
+      effect, out);
+  CHECK_MSG(Dropped(parts, "CRCV with a constant 0 count that is not a SEMR's position"),
+            "CRCV count 0 outside SEMR's position is dropped");
+}
+
 void TestCircleConvert() {
   std::vector<uint8_t> out;
   // A 0 count is the generator's MAXP (clamped 1 to 128), 126ebc84 (3), 900b2baa (4), 3d8d5854 (1024).
@@ -519,6 +577,7 @@ int main() {
   TestNegate();
   TestPlnvCounts();
   TestCircleConvert();
+  TestNonConstantCounts();
   TestSphereConvert();
   TestEllipsoidConvert();
   if (port_test::Failures() == 0) {

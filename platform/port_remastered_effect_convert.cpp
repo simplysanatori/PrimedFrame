@@ -1043,6 +1043,9 @@ public:
       why = "a bare value where retail reads an element";
       return false;
     }
+    if (value.fourcc == F("SEMR") && value.args.size() == 2) {
+      m_semrPos = &value.args[0];
+    }
     // The particle variables a tree reads (m_varReads): real ids 0..8 are PAP1..9, int ids 9..12
     // PAP0..3.
     if (value.args.empty()) {
@@ -1300,11 +1303,15 @@ public:
           }
         }
       } else if (flag.word != 0) {
+        // Init 0x2a68dc sizes the shuffler from the count's value, which a count that is not a
+        // constant does not give it (the size is not reproduced).
+        if (!known[0] || !known[1]) {
+          why = "PLNV with a shuffler and a count that is not a constant";
+          return false;
+        }
         uint64_t size = 1;
         for (int i = 0; i < 2; ++i) {
-          if (known[i]) {
-            size *= counts[i];
-          }
+          size *= counts[i];
         }
         shuffle = uint32_t(std::max<uint64_t>(size, 1) & 0xff);
         if (shuffle == 0) {
@@ -1372,11 +1379,15 @@ public:
           }
         }
       } else if (flag.word != 0) {
+        // Init 0x2a68dc sizes the shuffler from the count's value, which a count that is not a
+        // constant does not give it (the size is not reproduced).
+        if (!known[0] || !known[1]) {
+          why = "SPEV with a shuffler and a count that is not a constant";
+          return false;
+        }
         uint64_t size = 1;
         for (int i = 0; i < 2; ++i) {
-          if (known[i]) {
-            size *= counts[i];
-          }
+          size *= counts[i];
         }
         shuffle = uint32_t(std::max<uint64_t>(size, 1) & 0xff);
         if (shuffle == 0) {
@@ -1475,6 +1486,12 @@ public:
       bool resolved = false;
       uint32_t shuffle = 0;
       if (known && count == 0) {
+        // Compile1d runs only for the vector SEmitter::CompileSystem 0x28e00c compiles
+        // (vt[0x130] on the SEMR's position child; IElement::Compile 0x250830 does not recurse).
+        if (&value != m_semrPos) {
+          why = "CRCV with a constant 0 count that is not a SEMR's position";
+          return false;
+        }
         if (m_maxp < 0) {
           why = "CRCV with a constant 0 count and a MAXP that is not a constant";
           return false;
@@ -4466,6 +4483,7 @@ private:
   mutable uint32_t m_varReads = 0;                  // the particle variables Element() has read
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
   mutable uint32_t m_xfmd = 2;                      // its XFMD mode, 2 without one
+  mutable const EffectValue* m_semrPos = nullptr;   // the position child of the SEMR being written
   mutable int64_t m_maxp = -1;                      // its MAXP when a constant, else -1
   mutable uint32_t m_pofs = 0;                      // its POFS: 0 none, 1 constant, 2 anything else
   mutable bool m_mp1Space = false;                  // inside MPCB(mod vector): its vectors are retail's
