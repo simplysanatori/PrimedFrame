@@ -55,6 +55,7 @@ struct ElementSig {
   const char* sigs;
 };
 constexpr ElementSig kElementSigs[] = {
+    {"ABS_", "e"},     {"COSE", "eee"},   {"MPXV", "ee"},        {"CODE", "-"},       {"IRSN", "e"},       {"RSGN", "e"},
     {"ADD_", "ee"},    {"ANCR", "eeee ebeee"}, {"ANGC", "eeeee"},   {"ASPH", "eeeeeee"},
     {"ASPR", "eeeeee"}, {"ATEX", "geeeeee geeeeeb"}, {"ATX2", "geeee"}, {"BNCE", "eeeeb"}, {"CCLU", "eeee"},
     {"CEQL", "eeee"},  {"CEXT", "e"},          {"CFDE", "eeee"},    {"CHAN", "eee"},
@@ -111,7 +112,7 @@ constexpr ElementSig kElementSigs[] = {
 constexpr ElementSig kIntSigs[] = {
     {"CNST", "w"},   {"KEYE", "k"},   {"KEYP", "k"},   {"TSCL", "R"},    {"DETH", "II"},  {"CHAN", "III"},
     {"ADD_", "II"},  {"MULT", "II"},  {"MODU", "II"},  {"RAND", "II"},   {"IMPL", "I"},   {"ILPT", "I"},
-    {"SPAH", "III"}, {"IRND", "II"},  {"CLMP", "III"}, {"PULS", "IIII"}, {"NONE", "-"},   {"RTOI", "RR"},
+    {"ABS_", "I"},   {"SPAH", "III"}, {"IRND", "II"},  {"CLMP", "III"}, {"PULS", "IIII"}, {"NONE", "-"},   {"RTOI", "RR"},
     {"SUB_", "II"},  {"GTCP", "-"},   {"GAPC", "-"},   {"GEMT", "-"},    {"MPRD", "II eeee"},
     {"TPVI", "gI"},  {"DPVI", "gI"},  {"SPAI", "bI"},
 };
@@ -124,7 +125,7 @@ constexpr ElementSig kRealSigs[] = {
     {"ISWT", "RR"},   {"CLTN", "RRRR"}, {"CEQL", "RRRR"}, {"CRNG", "RRRRR"}, {"CEXT", "I"},    {"ITRL", "IR"},
     {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR"},
     {"DFCS", "RR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
-    {"SLCT", "Re"},   {"DIVD", "RR"},
+    {"SLCT", "Re"},   {"DIVD", "RR"},   {"ABS_", "R"},    {"MPXV", "IR"},   {"COSE", "RRR"},  {"RSGN", "R"},     {"IRSN", "R"},
 };
 constexpr ElementSig kVectorSigs[] = {
     {"NONE", "-"},   {"CNST", "RRR"},   {"KEYE", "k"},    {"KEYP", "k"},   {"ANGC", "RRRRR"}, {"CONE", "VR"},
@@ -133,7 +134,7 @@ constexpr ElementSig kVectorSigs[] = {
     {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V VR"},  {"MPAC", "RRRR"},
     {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"ROTV", "Ve"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
     {"SLCT", "Re"},  {"NORM", "V"},     {"CMPS", "-"},    {"EXTT", "-"},   {"EXTS", "-"},
-    {"CPSS", "-"},
+    {"CPSS", "-"},  {"ABS_", "V"},
     // MCBS is MPCB's scale form (MPT_CVEConvertScaleToXLeftYUpZForward 0x2a30f8).
     {"MCBS", "V"},
 };
@@ -149,7 +150,7 @@ constexpr ElementSig kColorSigs[] = {
 };
 constexpr ElementSig kEmitterSigs[] = {
     {"NONE", "-"}, {"SEMR", "VV"}, {"SPHE", "VRR"}, {"ASPH", "VRRRRRR"}, {"ASPR", "VeRRRR"},
-    {"PLNE", "VVVRRR"}, {"ELPS", "VVVRe"}, {"PLNV", "VVRRRRRRRRb"}, {"SPEV", "VRRRRRRb"},
+    {"CODE", "-"}, {"PLNE", "VVVRRR"}, {"ELPS", "VVVRe"}, {"PLNV", "VVRRRRRRRRb"}, {"SPEV", "VRRRRRRb"},
 };
 
 // Remastered's rotations (GetRotationElement); retail has none. CNST is a raw
@@ -195,7 +196,7 @@ constexpr PropertyType kPropertyTypes[] = {
 // Elements seen in the files whose arity is not pinned down; they parse with
 // whatever arity fits, like any unknown FourCC, but they are never properties.
 constexpr const char* kLooseElements =
-    "ARRY CMPS CODE EMRV GPUA GRAD KEWS MDAO PAFM PLNE PSA0 PSA1 PSA2 PSA3 PSA4 PSA5 PSA6 PSA7 PSA8 PSA9 RNDV SLCT";
+    "ARRY CMPS EMRV GPUA GRAD KEWS MDAO PAFM PLNE PSA0 PSA1 PSA2 PSA3 PSA4 PSA5 PSA6 PSA7 PSA8 PSA9 RNDV SLCT";
 
 // Properties: retail's PART properties and the ones Remastered added. A FourCC
 // that is in neither list may still be a property (the grammar lets unknown

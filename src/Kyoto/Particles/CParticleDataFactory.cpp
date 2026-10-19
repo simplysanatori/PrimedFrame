@@ -43,6 +43,9 @@ CElementAllocationChunk* IElement::CElementAllocator::sCurrentChunk = nullptr;
 CElementAllocationChunk* IElement::CElementAllocator::sFreeChunk = nullptr;
 
 #ifdef TARGET_PC
+// Set by a CODE emitter (GetEmitterElement 0x264bc4 sets its bool&), read by the EMTR property.
+static bool sPortCodeEmitter = false;
+
 namespace {
 // Port-only SLCT (the converter's Writer::Element): an int index, a count word, then count
 // entries of the selecting element's own type.
@@ -480,7 +483,13 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       delete GetVectorElement(in);
       break;
     case SBIG('EMTR'):
+#ifdef TARGET_PC
+      sPortCodeEmitter = false;
+#endif
       desc->x2c_EMTR = GetEmitterElement(in);
+#ifdef TARGET_PC
+      desc->xPortCodeSpawn = sPortCodeEmitter;
+#endif
       break;
     case SBIG('SIZE'):
       desc->x38_SIZE = GetRealElement(in);
@@ -1043,6 +1052,14 @@ CIntElement* CParticleDataFactory::GetIntElement(CInputStream& in) {
     CIntElement* b = GetIntElement(in);
     return rs_new CIEPortRandom(a, b);
   }
+  // ABS_ (CIEAbsoluteValue 0x2a86b0): one int child.
+  case SBIG('ABS_'): {
+    CIntElement* value = GetIntElement(in);
+    if (value == nullptr) {
+      return nullptr;
+    }
+    return rs_new CIEPortAbs(value);
+  }
   // Port-only PSYI: a PSYS int slot of the system being evaluated.
   case SBIG('PSYI'):
     return rs_new CIEPortSysVar(in.ReadLong());
@@ -1099,6 +1116,54 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
       return nullptr;
     }
     return rs_new CREPortKeep(slot, value);
+  }
+  // Port-only PIRS: Remastered's IRSN, a PKPR-counter slot (or kNoSlot), then its real.
+  case SBIG('PIRS'): {
+    const u32 slot = in.ReadLong();
+    CRealElement* value = GetRealElement(in);
+    if (value == nullptr) {
+      return nullptr;
+    }
+    return rs_new CREPortInitialRandomSign(slot, value);
+  }
+  // MPXV (MPT_CREExternalValue 0x29715c): the index, then the fallback real.
+  case SBIG('MPXV'): {
+    CIntElement* index = GetIntElement(in);
+    CRealElement* fallback = GetRealElement(in);
+    if (index == nullptr || fallback == nullptr) {
+      delete index;
+      delete fallback;
+      return nullptr;
+    }
+    return rs_new CREPortExternalVar(index, fallback);
+  }
+  // ABS_ (CREAbsoluteValue 0x295094), RSGN (CRERandomSign 0x299318): one real child.
+  case SBIG('ABS_'): {
+    CRealElement* value = GetRealElement(in);
+    if (value == nullptr) {
+      return nullptr;
+    }
+    return rs_new CREPortAbs(value);
+  }
+  case SBIG('RSGN'): {
+    CRealElement* value = GetRealElement(in);
+    if (value == nullptr) {
+      return nullptr;
+    }
+    return rs_new CREPortRandomSign(value);
+  }
+  // COSE (CRECosineWave 0x298788): frequency, amplitude, phase, as SINE.
+  case SBIG('COSE'): {
+    CRealElement* frequency = GetRealElement(in);
+    CRealElement* amplitude = GetRealElement(in);
+    CRealElement* phase = GetRealElement(in);
+    if (frequency == nullptr || amplitude == nullptr || phase == nullptr) {
+      delete frequency;
+      delete amplitude;
+      delete phase;
+      return nullptr;
+    }
+    return rs_new CREPortCosineWave(frequency, amplitude, phase);
   }
   case SBIG('SPAF'):
     return PortReadParentVar< CREPortParentVar >(in, EPortParentRead::System, &GetRealElement);
@@ -1315,6 +1380,12 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
   case SBIG('VARV'):
     ret = rs_new CVEPortVar(in.ReadLong());
     break;
+  // ABS_ (CVEAbsoluteValue 0x29e254): one vector child.
+  case SBIG('ABS_'): {
+    CVectorElement* value = GetVectorElement(in);
+    ret = value != nullptr ? rs_new CVEPortAbs(value) : nullptr;
+    break;
+  }
   case SBIG('SPAV'):
     return PortReadParentVar< CVEPortParentVar >(in, EPortParentRead::System, &GetVectorElement);
   case SBIG('DPVV'):
@@ -1529,6 +1600,13 @@ CEmitterElement* CParticleDataFactory::GetEmitterElement(CInputStream& in) {
   CEmitterElement* ret;
   FourCC clsId = GetClassID(in);
   switch (clsId) {
+#ifdef TARGET_PC
+  // CODE: a null emitter, and the generator spawns only from code (desc[0x2fa] bit 4).
+  case SBIG('CODE'):
+    sPortCodeEmitter = true;
+    ret = nullptr;
+    break;
+#endif
   case SBIG('NONE'):
     ret = nullptr;
     break;

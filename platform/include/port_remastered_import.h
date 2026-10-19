@@ -78,8 +78,10 @@ inline constexpr int kConverter = 52;
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 3;
 inline constexpr int kModels = 8;      // the table's models, their looks and the ANCS copies
+// 27: MPXV is converted as the port-only PMXV, no longer dropped.
+// 26: ABS_, COSE, RSGN, IRSN (PIRS) and CODE are converted, no longer dropped.
 // 25: swoosh GRAD is the exact PGRD element, no longer a 101-key KEYP bake.
-inline constexpr int kEffects = 55;    // port_remastered_effect_import and the particle converters
+inline constexpr int kEffects = 57;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 inline constexpr int kRooms = 20;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail

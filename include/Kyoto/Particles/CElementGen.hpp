@@ -173,6 +173,9 @@ public:
   bool IsIndirectTextured()
       const; // { return x28_loadedGenDesc->x54_x40_TEXR && x28_loadedGenDesc->x58_x44_TIND; }
   void SetExternalVar(int index, float val);
+#ifdef TARGET_PC
+  const float* PortExternalVars() const { return xPortExternalSet ? x9c_externalVars : nullptr; }
+#endif
   float GetExternalVar(int index) const;
 
   static void Initialize();
@@ -295,6 +298,11 @@ private:
   short x94_randomSeed;
   float x98_generatorRate;
   float x9c_externalVars[16];
+#ifdef TARGET_PC
+  // port-only: SetExternalVar was called (Remastered's external data block exists); a PMXV reads
+  // x9c_externalVars then, else its fallback
+  bool xPortExternalSet = false;
+#endif
   CVector3f xdc_translation;
   CVector3f xe8_globalTranslation;
   CVector3f xf4_POFS;

@@ -30,6 +30,8 @@
 #include "rstl/algorithm.hpp"
 #include "rstl/math.hpp"
 
+#include <cstring>
+
 #include "alloca.h"
 #include "math.h"
 
@@ -700,7 +702,13 @@ bool CElementGen::InternalUpdate(double dt) {
     UpdateExistingParticles();
     CParticleGlobals::SetParticleLifetime(x268_PSLT);
 
+#ifdef TARGET_PC
+    // CODE emitter: no automatic rate-driven spawn (TickSystem_Node 0x24a16c skips the rate
+    // element and its remainder when desc[0x2fa] bit 4 is set).
+    if (x74_curFrame < x268_PSLT && x88_particleEmission && !x28_loadedGenDesc->xPortCodeSpawn) {
+#else
     if (x74_curFrame < x268_PSLT && x88_particleEmission) {
+#endif
       float grte = 0.0f;
 #ifdef TARGET_PC
       // Retail data always has a GRTE; a mod's PART may not (no particles then).
@@ -1062,6 +1070,7 @@ void CElementGen::CreateNewParticles(int count) {
 #ifdef TARGET_PC
     particle.xPortSeed = PortNextParticleSeed();
     particle.xPortKeep.latched = 0;
+    std::memset(particle.xPortKeep.values, 0, sizeof(particle.xPortKeep.values));
 #endif
 
     if (CIntElement* ltme = x28_loadedGenDesc->x28_LTME) {
@@ -3861,7 +3870,19 @@ CParticleGen* CElementGen::GetActiveChildParticle(int index) const {
   return x290_activePartChildren[index];
 }
 
-void CElementGen::SetExternalVar(int index, float val) { x9c_externalVars[index] = val; }
+void CElementGen::SetExternalVar(int index, float val) {
+  x9c_externalVars[index] = val;
+#ifdef TARGET_PC
+  xPortExternalSet = true;
+#endif
+}
+
+#ifdef TARGET_PC
+const float* PortCurrentExternalVars() {
+  const CParticleGlobals::SParticleSystem* system = CParticleGlobals::GetCurrentParticleSystem();
+  return system != nullptr && system->x4_system != nullptr ? system->x4_system->PortExternalVars() : nullptr;
+}
+#endif
 
 float CElementGen::GetExternalVar(int index) const { return x9c_externalVars[index]; }
 

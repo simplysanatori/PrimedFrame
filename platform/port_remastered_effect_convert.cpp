@@ -149,6 +149,8 @@ const Signatures& ElementsOf(Type type) {
       {F("FIAT"), "iiiB"},
       // Port-only PRAN: Remastered's int RAND (CIEPortRandom), min and max.
       {F("PRAN"), "ii"},
+      // Port-only ABS_ (CIEPortAbs): Remastered's CIEAbsoluteValue.
+      {F("ABS_"), "i"},
   };
   static const Signatures realElements = {
       {F("CNST"), "#"},   {F("NONE"), ""},    {F("KEYE"), "k"},    {F("KEYP"), "k"},   {F("SCAL"), "r"},
@@ -165,6 +167,9 @@ const Signatures& ElementsOf(Type type) {
       {F("KEWS"), "r"},
       // Port-only (CParticleDataFactory under TARGET_PC).
       {F("DIVD"), "rr"},
+      // Port-only: Remastered's CREAbsoluteValue, CRECosineWave (frequency, amplitude, phase)
+      // and CRERandomSign. Its CREInitialRandomSign is the port-only PIRS (see Element).
+      {F("ABS_"), "r"},   {F("COSE"), "rrr"}, {F("RSGN"), "r"},
   };
   static const Signatures vectorElements = {
       {F("NONE"), ""},      {F("CNST"), "rrr"}, {F("KEYE"), "k"},  {F("KEYP"), "k"},   {F("ANGC"), "rrrrr"},
@@ -181,6 +186,8 @@ const Signatures& ElementsOf(Type type) {
       {F("BSIS"), "v"},     {F("BSSC"), "v"},
       // Port-only CVEPortAngleCone: Remastered's ANCR with its REUL as three angles.
       {F("ANCR"), "rrrrrr"},
+      // Port-only CVEPortAbs: Remastered's CVEAbsoluteValue, in whatever space the child is in.
+      {F("ABS_"), "v"},
   };
   static const Signatures modVectorElements = {
       {F("NONE"), ""},     {F("CNST"), "rrr"},  {F("GRAV"), "v"},    {F("WIND"), "vr"},  {F("EXPL"), "rr"},
@@ -198,6 +205,8 @@ const Signatures& ElementsOf(Type type) {
       {F("NONE"), ""}, {F("SEMR"), "vv"}, {F("SPHE"), "vrr"}, {F("ASPH"), "vrrrrrr"},
       // Port-only CEEPortAngleSphere: Remastered's ASPR with its REUL as three angles.
       {F("ASPR"), "vrrrrrrr"},
+      // Port-only CODE: a null emitter, the generator spawns only from code.
+      {F("CODE"), ""},
   };
   static const Signatures none;
   switch (type) {
@@ -1021,6 +1030,36 @@ public:
       AppendBE32(out, m_keepNext++);
       out.insert(out.end(), kept.begin(), kept.end());
       return true;
+    }
+    // IRSN(x) is CREInitialRandomSign: a sign drawn once at frame 0 and kept in the particle's
+    // variable memory, which the port-only PIRS keeps in a PKPR-counter slot (never latched by
+    // PKPR's birth latch: it draws at frame 0). With no per-particle slots (a system's own
+    // elements) it takes kNoSlot and a per-element sign.
+    if (type == Type::Real && value.fourcc == F("IRSN") && value.args.size() == 1) {
+      const uint32_t first = m_keepNext;
+      std::vector<uint8_t> kept;
+      if (!Element(value.args[0], type, kept, why)) {
+        m_keepNext = first;
+        return false;
+      }
+      uint32_t slot = 0xffffffffu;
+      if (m_keeps && m_spawnSysItems == nullptr) {
+        if (m_keepNext == kKeepSlots) {
+          m_keepNext = first;
+          why = "more than " + std::to_string(kKeepSlots) + " per-particle KPINs and IRSNs";
+          return false;
+        }
+        slot = m_keepNext++;
+      }
+      AppendBE32(out, F("PIRS"));
+      AppendBE32(out, slot);
+      out.insert(out.end(), kept.begin(), kept.end());
+      return true;
+    }
+    // MPXV(i, fallback) is MPT_CREExternalValue 0x29715c: the port-only PMXV, the int then the real.
+    if (type == Type::Real && value.fourcc == F("MPXV") && value.args.size() == 2) {
+      AppendBE32(out, F("PMXV"));
+      return Element(value.args[0], Type::Int, out, why) && Element(value.args[1], Type::Real, out, why);
     }
     // PSA0..PSA9: the system's own additional real n (GetRealElement 0x260de4:
     // AddRefVar(ctx 0, real, n)), which its SVRn sets. The port-only PSYR and n.
@@ -3832,6 +3871,15 @@ public:
     if (fourcc == F("PKPR") && type == Type::Real) {
       uint32_t slot;
       return Word(slot) && slot < kKeepSlots && Element(Type::Real);
+    }
+    // Port-only PIRS: a per-particle slot (or all ones with none), then the element.
+    if (fourcc == F("PIRS") && type == Type::Real) {
+      uint32_t slot;
+      return Word(slot) && (slot < kKeepSlots || slot == 0xffffffffu) && Element(Type::Real);
+    }
+    // Port-only PMXV: the index as an int element, then the fallback real.
+    if (fourcc == F("PMXV") && type == Type::Real) {
+      return Element(Type::Int) && Element(Type::Real);
     }
     // SPA*: the parent's system variable n, then the fallback; DPV*/TPV*: a
     // PVAR guid, then the fallback.

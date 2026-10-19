@@ -155,6 +155,9 @@ public:
   // port-only: the PKPR elements (per-particle KPIN latches), latched at birth in this order;
   // owned by the element trees
   std::vector< const CREPortKeep* > xPortKeeps;
+  // port-only: an EMTR CODE (desc[0x2fa] bit 4): the rate-driven spawn (GRTE) is skipped, particles
+  // come only from code (CElementGen::TickSystem_Node 0x24a16c)
+  bool xPortCodeSpawn = false;
   // port-only PADO: the order ADV1..8 are evaluated in (0-based), when it is not 1..8
   std::vector< u8 > xPortAdvOrder;
   // Port-only PSYS: the system variables (CElementGen::PortEvalSys).

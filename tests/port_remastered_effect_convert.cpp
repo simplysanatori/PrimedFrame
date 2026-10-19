@@ -583,6 +583,98 @@ void TestMappedElements() {
   CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty(), "DFCP is kept, not approximated");
 }
 
+// ABS_, COSE, RSGN, IRSN (the port-only PIRS) and an EMTR CODE are converted, not dropped.
+void TestScalarElements() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "EMTR", 3);
+  PutFourCC(out, "CODE");
+  PutProperty(out, "MAXP", 3);
+  PutFourCC(out, "ABS_");
+  PutConstant(out, uint32_t(-5));
+  PutProperty(out, "SIZE", 3);
+  PutFourCC(out, "ADD_");
+  PutFourCC(out, "ABS_");
+  PutFourCC(out, "RSGN");
+  PutConstant(out, Bits(-2.0f));
+  PutFourCC(out, "COSE");
+  PutConstant(out, Bits(10.0f));
+  PutConstant(out, Bits(2.0f));
+  PutConstant(out, Bits(30.0f));
+  PutProperty(out, "LINT", 3);
+  PutFourCC(out, "IRSN");
+  PutConstant(out, Bits(4.0f));
+  PutProperty(out, "POFS", 0);
+  PutFourCC(out, "ABS_");
+  PutFourCC(out, "CNST");
+  PutConstant(out, Bits(-1.0f));
+  PutConstant(out, Bits(2.0f));
+  PutConstant(out, Bits(-3.0f));
+  PutTexr(out, 0x1234ABCD);
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "scalar-element effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Retail want;
+  want.f("GPSM");
+  want.f("EMTR").f("CODE");
+  want.f("MAXP").f("ABS_").f("CNST").w(uint32_t(-5));
+  want.f("SIZE").f("ADD_").f("ABS_").f("RSGN").f("CNST").w(Bits(-2.0f));
+  want.f("COSE").f("CNST").w(Bits(10.0f)).f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(30.0f));
+  // The slot is the generator's first per-particle one.
+  want.f("LINT").f("PIRS").w(0).f("CNST").w(Bits(4.0f));
+  want.f("POFS").f("BSIS").f("ABS_").f("CNST").f("CNST").w(Bits(-1.0f)).f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(-3.0f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "ABS_, COSE, RSGN, IRSN and CODE are converted");
+  if (parts.size() == 1 && parts[0].part != want.bytes) {
+    std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
+    for (const std::string& d : parts[0].dropped) {
+      std::fprintf(stderr, "  dropped %s\n", d.c_str());
+    }
+    std::string got;
+    for (uint8_t c : parts[0].part) {
+      got += (c >= 32 && c < 127) ? char(c) : '.';
+    }
+    std::fprintf(stderr, "  got  %s\n", got.c_str());
+  }
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), "nothing dropped");
+}
+
+// MPXV(index, fallback) is converted as the port-only PMXV and kept by the retail reader.
+void TestExternalValue() {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, false);
+  PutProperty(out, "ADV2", 3);
+  PutFourCC(out, "MPXV");
+  PutConstant(out, 1);
+  PutConstant(out, Bits(0.1f));
+  PutTexr(out, 0x1234ABCD);
+  PutProperty(out, "_END", 4);
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "MPXV effect parses");
+  const std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), {});
+  Retail want;
+  want.f("GPSM");
+  want.f("ADV2").f("PMXV").f("CNST").w(1).f("CNST").w(Bits(0.1f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "MPXV becomes PMXV");
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), "MPXV is not dropped");
+  if (parts.size() == 1 && parts[0].part != want.bytes) {
+    std::fprintf(stderr, "%s", DumpEffect(effect, out.data()).c_str());
+    std::string got;
+    for (uint8_t c : parts[0].part) {
+      got += (c >= 32 && c < 127) ? char(c) : '.';
+    }
+    std::fprintf(stderr, "  got  %s\n", got.c_str());
+  }
+}
+
 // Properties retail reads as something else than Remastered wrote are left out.
 void TestRejects() {
   std::vector<uint8_t> out(0x3c, 0);
@@ -3518,6 +3610,8 @@ int main() {
   TestRejects();
   TestSingleNode();
   TestMappedElements();
+  TestScalarElements();
+  TestExternalValue();
   TestSplitRejects();
   TestShapes();
   TestSystemVectors();
