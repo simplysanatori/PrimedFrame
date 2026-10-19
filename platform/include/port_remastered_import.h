@@ -90,7 +90,8 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 64: DIVD/T2S_/SCLE/SDTR parse, T2S_ and SCLE convert, swoosh SUST, ELC2 NFOM byte.
 // 65: EBDM read as a byte, GPUA exact, ELC2 COLR GRAD lifetime, recipes 20a05041/3fe57e12/f0e276eb/a0482072.
 // 67: recipes 8278c22d/7498e54a (VFX_Pyro, the vfx Pyro feature).
-inline constexpr int kEffects = 67;    // port_remastered_effect_import and the particle converters
+// 68: recipe d749057f (VFX_Disintegration, the vfx Disintegration feature).
+inline constexpr int kEffects = 68;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 inline constexpr int kRooms = 20;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail

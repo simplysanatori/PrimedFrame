@@ -502,7 +502,7 @@ bool FlipbookTransform(const EffectValue& value, bool& flip) {
 // aurora::gfx::vfx::Feature.
 constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kIndirect = 16, kDepthSoften = 32,
                    kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256, kColorIndexing = 512, kAddColor = 1024,
-                   kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192;
+                   kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192, kDisintegration = 16384;
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
@@ -891,6 +891,9 @@ const Recipe* RecipeOf(uint32_t shader) {
       {0x7498e54a, kPyro | kDepthSoften,
        {{"TCH0", Role::Color, -1, -1}, {"TCH2", Role::Ramp, -1, -1}},
        {}},
+      // VFX_Disintegration (perm 000_0, SPEC-disint-ice.md): TCH0 the mask, PMTR rows 0..3 (the VS
+      // passes them as v2..v5). Perm 000 does no depth soften, so SFTD is not read.
+      {0xd749057f, kDisintegration, {{"TCH0", Role::Color, -1, -1}}, {}},
   };
   for (const Recipe& recipe : table) {
     if (recipe.shader == shader) {

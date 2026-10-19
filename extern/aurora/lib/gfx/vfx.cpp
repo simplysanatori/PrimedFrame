@@ -334,7 +334,20 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   }
   var rgb = vc.rgb * M;
   var x = 1.0;
-  if ((FEAT & 8192u) != 0u) {
+  if ((FEAT & 16384u) != 0u) {
+    // VFX_Disintegration (d749057f, perm 000_0): the mask's x squared, PMTR rows 0..2 as the colours at
+    // s = 0 and 1 and the edge colour, row 3 as (threshold, edge width, alpha lo, alpha hi). ceil(e)
+    // picks the alpha scale: hi on the burning edge (e > 0), lo elsewhere. M is PCMD.x.
+    let uvd = uv_of(in, u.uvSets[max(S_COLOR, 0)]);
+    let t = sample_raw(S_COLOR, uvd.xy, layer(uvd.z, u.layers[max(S_COLOR, 0)])).x;
+    let s = t * t;
+    let p = in.e3;
+    let m = sat(s - p.x);
+    let q = sat(1.0 - m - p.y);
+    let e = fma(q, -q, q);
+    x = sat(m * fma(p.w - p.z, ceil(e), p.z));
+    rgb = fma(fma(vec3f(s), in.e1.rgb - in.e0.rgb, in.e0.rgb), vc.rgb, e * in.e2.rgb) * M;
+  } else if ((FEAT & 8192u) != 0u) {
     // VFX_Pyro (8278c22d, and 7498e54a with DepthSoften; perm 060_0): the Pyro map P at the frame's
     // layer, the gradient LUT read at (P.r, 0) and (P.g, 0) in the same layer, PMTR row 1 as
     // (scale r, scale g, opacity, threshold). The shader's lit term (Light map weighted by the
@@ -1052,7 +1065,7 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   const uint32_t features = shader_features(desc.features);
   // The slots each enabled feature reads; a slot nothing reads is left unbound (the dummy).
   const std::pair<uint32_t, int8_t> reads[] = {
-      {ColorTex | ColorIndexing | Pyro, desc.colorSlot},
+      {ColorTex | ColorIndexing | Pyro | Disintegration, desc.colorSlot},
       {OpacityTex, desc.opacitySlot},
       {Ramp | Pyro, desc.rampSlot},
       {Ramp | DualMod, desc.ramp2Slot},

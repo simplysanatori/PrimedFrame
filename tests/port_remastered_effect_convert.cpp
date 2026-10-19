@@ -3742,6 +3742,16 @@ void TestVmatPyroRecipes() {
             "7498e54a is VFX_Pyro with DepthSoften");
 }
 
+void TestVmatDisintegrationRecipe() {
+  const EffectGuid t = Fresh(8);
+  auto result = ConvertVmat(Mati(0xd749057f, {{"TCH0", t}}));
+  CHECK_MSG(result.first.size() == 1 && !result.second.empty() && result.first[0].approximated.empty(),
+            "the VFX_Disintegration shader writes an exact VMAT");
+  // aurora::gfx::vfx::Feature::Disintegration, on the TCH0 mask only.
+  CHECK_MSG(VmatWord(result.second, 12) == 16384 && VmatWord(result.second, 20) == 1,
+            "d749057f is VFX_Disintegration on TCH0");
+}
+
 // An ELC2 child of a root, with `body` writing its properties.
 template <typename Body>
 std::vector<ConvertedPart> ConvertElc2(Body body) {
@@ -3993,6 +4003,7 @@ int main() {
   TestVmatNewRecipes();
   TestVmatBatch4Recipes();
   TestVmatPyroRecipes();
+  TestVmatDisintegrationRecipe();
   TestElc2BlendAndLifetime();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();
