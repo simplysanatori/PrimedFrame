@@ -55,9 +55,9 @@
        android/app/build.gradle; tools/make_flatpak.sh refuses to build when the
        two differ, since Flatpak reports the newest entry as the app's version. -->
   <releases>
-    <release version="0.30.1" date="2026-10-19">
+    <release version="0.30.1" date="2026-10-20">
       <description>
-        <p>More Remastered effects drawn with their own shaders (Ice Beam charge and impact shards, missile and fire sprites, disintegration, visor goo splats, refraction warps), soft particles, the Plasma Beam's swooshes, resuming boss fights from savestates, charged and combo shots ricocheting off reflective enemies as in the original, real manual gyro calibration, unlocked beam doors kept after copying user data into a new release folder, and lower storage use on Android.</p>
+        <p>More Remastered effects drawn with their own shaders (Ice Beam charge and impact shards, missile and fire sprites, disintegration, visor goo splats that now actually draw, visor rain runoff, refraction warps), soft particles, the Plasma Beam's swooshes, resuming boss fights from savestates, charged and combo shots ricocheting off reflective enemies as in the original, real manual gyro calibration, unlocked beam doors kept after copying user data into a new release folder, lower storage use on Android, and a fix for mouse clicks wrongly accepting the resume prompt.</p>
       </description>
       <url type="details">https://github.com/Odrannnn/MetroidPrimePort/releases/tag/v0.30.1</url>
     </release>
