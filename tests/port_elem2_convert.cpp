@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <functional>
+#include "Kyoto/Particles/PortParticleMath.hpp"
 #include <memory>
 #include <string>
 #include <utility>
@@ -170,10 +171,185 @@ void TestNegate() {
   }
 }
 
+
+// PLNV: Remastered's Compile2d grid and shuffler from the owning generator's MAXP.
+struct PlnvRow {
+  uint32_t maxp, nx, nz;
+  int flag;
+  uint32_t gx, gz;  // the grid GetValue reads (each count at least 1)
+  uint32_t shuffle; // the shuffler's cells, 0 for none
+};
+
+// One PLNV generator; `maxpFirst` puts MAXP before the EMTR.
+std::vector<ConvertedPart> ConvertPlnv(uint32_t maxp, bool maxpConst, uint32_t nx, uint32_t nz, int flag,
+                                       bool maxpFirst, std::vector<uint8_t>& out) {
+  EffectNode effect;
+  auto vec = [](std::vector<uint8_t>& o, float x, float y, float z) {
+    PutFourCC(o, "CNST");
+    PutConstant(o, Bits(x));
+    PutConstant(o, Bits(y));
+    PutConstant(o, Bits(z));
+  };
+  auto putMaxp = [&](std::vector<uint8_t>& o) {
+    PutProperty(o, "MAXP", 3);
+    if (maxpConst) {
+      PutConstant(o, maxp);
+    } else {
+      PutFourCC(o, "ABS_");
+      PutConstant(o, maxp);
+    }
+  };
+  return ConvertGen(
+      [&](std::vector<uint8_t>& o) {
+        if (maxpFirst) {
+          putMaxp(o);
+        }
+        PutProperty(o, "EMTR", 3);
+        PutFourCC(o, "PLNV");
+        vec(o, 0, 0, 0);
+        vec(o, 0, 0, 0);
+        PutConstant(o, Bits(5.0f));
+        PutConstant(o, Bits(2.0f));
+        PutConstant(o, Bits(3.0f));
+        PutConstant(o, Bits(0.0f));
+        PutConstant(o, nx);
+        PutConstant(o, Bits(1.0f));
+        PutConstant(o, nz);
+        PutConstant(o, Bits(0.0f));
+        o.push_back(uint8_t(flag));
+        if (!maxpFirst) {
+          putMaxp(o);
+        }
+      },
+      effect, out);
+}
+
+// The bytes PLNV ends with: n1, x variance, n2, z variance, shuffler size.
+std::vector<uint8_t> PlnvTail(uint32_t n1, uint32_t n2, uint32_t shuffle) {
+  Retail t;
+  t.f("CNST").w(n1).f("CNST").w(Bits(1.0f)).f("CNST").w(n2).f("CNST").w(Bits(0.0f)).b(uint8_t(shuffle));
+  return t.bytes;
+}
+
+void TestPlnvCounts() {
+  // Every use in the Switch dumps (build/s-elemdrops2-20261019/plnv_cmp.txt, Remastered column).
+  static const PlnvRow kRows[] = {
+    {2, 0, 0, 1, 2, 1, 2},  // 01efdc65:13
+    {32, 4, 0, 1, 4, 8, 32},  // 01efdc65:67
+    {10, 0, 0, 1, 3, 3, 9},  // 2170745a:87
+    {10, 0, 0, 1, 3, 3, 9},  // 2170745a:109
+    {10, 0, 0, 1, 3, 3, 9},  // 2170745a:131
+    {10, 0, 0, 1, 3, 3, 9},  // 2170745a:153
+    {1, 0, 0, 0, 1, 1, 0},  // 2896ee18:41
+    {1, 0, 0, 0, 1, 1, 0},  // 2fab93e3:26
+    {60, 0, 0, 1, 8, 7, 56},  // 37e5393c:14
+    {100, 0, 0, 1, 10, 9, 90},  // 37e5393c:38
+    {4, 0, 0, 1, 2, 1, 2},  // 39597d19:13
+    {15, 0, 0, 1, 4, 3, 12},  // 3de2bff3:47
+    {9, 0, 0, 0, 3, 2, 0},  // 3f89d502:143
+    {15, 0, 0, 1, 4, 3, 12},  // 40b89419:48
+    {6, 0, 0, 1, 3, 2, 6},  // 48fd54ed:30
+    {1, 0, 0, 1, 1, 1, 1},  // 49214922:13
+    {3, 0, 0, 1, 2, 1, 2},  // 4ed39df9:13
+    {4, 1, 0, 1, 1, 4, 4},  // 58488d63:36
+    {1, 0, 0, 1, 1, 1, 1},  // 58488d63:81
+    {1, 0, 0, 0, 1, 1, 0},  // 5de5a938:72
+    {4, 0, 0, 1, 2, 1, 2},  // 6bc93d36:13
+    {24, 4, 0, 1, 4, 6, 24},  // 6bc93d36:67
+    {6, 0, 0, 0, 3, 2, 0},  // 6bd19865:12
+    {25, 0, 0, 1, 5, 4, 20},  // 6bd19865:31
+    {30, 0, 0, 0, 6, 5, 0},  // 6bd19865:72
+    {2, 0, 0, 1, 2, 1, 2},  // 6ffcb3be:13
+    {5, 0, 0, 1, 2, 2, 4},  // 73f748b3:12
+    {5, 0, 0, 1, 2, 2, 4},  // 73f748b3:42
+    {25, 0, 0, 1, 5, 4, 20},  // 73f748b3:70
+    {2, 0, 0, 1, 2, 1, 2},  // 7708be79:13
+    {20, 4, 0, 1, 4, 5, 20},  // 7708be79:67
+    {8, 0, 0, 1, 3, 2, 6},  // 78319d52:56
+    {4, 0, 0, 1, 2, 1, 2},  // 7c758b24:87
+    {12, 0, 0, 1, 4, 3, 12},  // 80711a86:32
+    {2, 0, 0, 1, 2, 1, 2},  // 84fcbc0f:13
+    {20, 4, 0, 1, 4, 5, 20},  // 84fcbc0f:67
+    {6, 0, 0, 0, 3, 2, 0},  // 896c4450:15
+    {6, 0, 0, 1, 3, 2, 6},  // 896c4450:35
+    {128, 0, 0, 1, 11, 11, 121},  // 896c4450:58
+    {25, 0, 0, 1, 5, 4, 20},  // 92838da2:68
+    {6, 0, 0, 0, 3, 2, 0},  // 92838da2:83
+    {1, 0, 0, 0, 1, 1, 0},  // 948965e4:72
+    {4, 0, 0, 1, 2, 1, 2},  // 97da18f8:13
+    {25, 0, 0, 1, 5, 4, 20},  // 97da18f8:50
+    {60, 0, 0, 1, 8, 7, 56},  // ace2a1a4:12
+    {4, 0, 0, 1, 2, 1, 2},  // d02728d2:13
+    {120, 0, 0, 1, 11, 10, 110},  // d02728d2:60
+    {2, 0, 0, 1, 2, 1, 2},  // f524d88f:13
+  };
+  int bad = 0;
+  for (const PlnvRow& row : kRows) {
+    std::vector<uint8_t> out;
+    const auto parts = ConvertPlnv(row.maxp, true, row.nx, row.nz, row.flag, row.maxp & 1, out);
+    bool ok = parts.size() == 1 && parts[0].dropped.empty();
+    if (ok) {
+      // The converter writes n2 = 0 where Remastered's total / n1 is 0 (GetValue reads it as 1), so
+      // accept either of the two and require the clamped grid to match.
+      ok = false;
+      for (uint32_t n1 = row.gx == 1 ? 0u : row.gx; n1 <= row.gx + 1; ++n1) {
+        for (uint32_t n2 = row.gz == 1 ? 0u : row.gz; n2 <= row.gz; ++n2) {
+          if (std::max(n1, 1u) == row.gx && std::max(n2, 1u) == row.gz &&
+              Contains(parts[0].part, PlnvTail(n1, n2, row.shuffle))) {
+            ok = true;
+          }
+        }
+      }
+    }
+    if (!ok) {
+      ++bad;
+      std::fprintf(stderr, "PLNV row MAXP=%u nx=%u nz=%u flag=%d: want %ux%u shuffler %u\n", row.maxp, row.nx,
+                   row.nz, row.flag, row.gx, row.gz, row.shuffle);
+      if (parts.size() == 1) {
+        Show(parts[0]);
+      }
+    }
+  }
+  CHECK_MSG(bad == 0, "every PLNV use in the dumps gets Remastered's grid and shuffler");
+
+  // The exact tails, by hand: MAXP 10 gives 3x3 with 9 cells; MAXP 1 gives 1x0 and a one-cell
+  // shuffler (its draw still happens); no flag gives no shuffler; MAXP 4 (a perfect square) 2x1.
+  std::vector<uint8_t> out;
+  auto parts = ConvertPlnv(10, true, 0, 0, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, PlnvTail(3, 3, 9)), "MAXP 10: 3x3, 9 cells");
+  parts = ConvertPlnv(1, true, 0, 0, 1, false, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, PlnvTail(1, 0, 1)), "MAXP 1: 1x0, one-cell shuffler");
+  parts = ConvertPlnv(9, true, 0, 0, 0, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, PlnvTail(3, 2, 0)), "MAXP 9, no flag: 3x2, no shuffler");
+  parts = ConvertPlnv(4, true, 0, 0, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, PlnvTail(2, 1, 2)), "MAXP 4: 2x1, 2 cells (perfect square gives s-1)");
+  parts = ConvertPlnv(4, true, 4, 0, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, PlnvTail(4, 1, 4)), "nx 4, MAXP 4: 4x1");
+  parts = ConvertPlnv(500, true, 0, 0, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, PlnvTail(11, 11, 121)),
+            "MAXP over 128 is 128: 11x11");
+  // Counts that are not zero stand as they are, with Init's shuffler.
+  parts = ConvertPlnv(100, true, 4, 3, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, PlnvTail(4, 3, 12)), "no zero count: Init's counts and shuffler");
+  // A MAXP that is not a constant keeps a zero count dropped, naming it.
+  parts = ConvertPlnv(10, false, 0, 0, 1, true, out);
+  bool named = false;
+  if (parts.size() == 1) {
+    for (const std::string& d : parts[0].dropped) {
+      named = named || d.find("PLNV with a constant 0 count and a MAXP that is not a constant") != std::string::npos;
+    }
+  }
+  CHECK_MSG(named, "a zero count with a variable MAXP is dropped, naming it");
+  // And a nonzero count does not need MAXP.
+  parts = ConvertPlnv(10, false, 2, 2, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, PlnvTail(2, 2, 4)), "constant counts ignore MAXP");
+}
+
 }  // namespace
 
 int main() {
   TestNegate();
+  TestPlnvCounts();
   if (port_test::Failures() == 0) {
     std::printf("port_elem2_convert: ok\n");
   }

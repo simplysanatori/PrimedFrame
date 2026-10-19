@@ -385,7 +385,8 @@ if(NOT ANDROID)
         platform/port_remastered_convert_retail.cpp platform/port_remastered_convert_material.cpp
         platform/port_remastered_convert_pbr.cpp platform/port_remastered_convert_skin.cpp
         platform/port_remastered_report.cpp)
-    target_include_directories(remastered_effect_tool PRIVATE platform/include include)
+    target_include_directories(remastered_effect_tool PRIVATE platform/include include extern/aurora/include)
+    target_compile_definitions(remastered_effect_tool PRIVATE TARGET_PC VERSION=0)
     target_link_libraries(remastered_effect_tool PRIVATE astcenc ${CMAKE_THREAD_LIBS_INIT})
     set_target_properties(remastered_effect_tool PROPERTIES EXCLUDE_FROM_ALL ON)
 endif()
@@ -870,7 +871,8 @@ if(MP_BUILD_TESTS)
         SOURCES tests/port_remastered_effect_import.cpp
             platform/port_remastered_effect_import.cpp platform/port_remastered_effect_convert.cpp
             platform/port_remastered_effect.cpp platform/port_remastered_image.cpp
-        INCLUDES platform/include include
+        INCLUDES platform/include include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
         LIBRARIES astcenc)
     mp_port_test(port_remastered_import_tests
         SOURCES tests/port_remastered_import.cpp platform/port_remastered_effect.cpp

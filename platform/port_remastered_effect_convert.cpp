@@ -1,6 +1,7 @@
 #include "port_remastered_effect_convert.h"
 #include "port_bytes.h"
 #include "Kyoto/Particles/CPortVfxConstants.hpp"
+#include "Kyoto/Particles/PortParticleMath.hpp"
 
 #include <algorithm>
 #include <array>
@@ -1187,11 +1188,16 @@ public:
     }
     // PLNV(position, euler, velocity y, wx, wz, spread, x count, x variance, z count, z variance,
     // shuffle): the port-only PLNV, the same way. The last byte is the size of Remastered's index
-    // shuffler, 0 for none. CSectionedElementData::Init 0x2a69b8 allocates one when the flag is set
-    // and no constant count is 0 (a count that is not constant does not stop it), sized by the
-    // product of the constant counts (a count that is not constant is 1) through
-    // SetUpShuffledIndexing 0x26ffe4: below 2 it is 1, and the size is kept in a byte. Without one
-    // the index is the creation count modulo the grid.
+    // shuffler, 0 for none. The grid is what CSectionedElementData::Compile2d 0x2a6b90 leaves
+    // after Init 0x2a69b8, which runs at the generator's _END:
+    // - no count a constant 0: Init's counts stand, and a shuffler exists when the flag is set
+    //   (a count that is not constant does not stop it), sized by the product of the constant
+    //   counts (a count that is not constant is 1) through SetUpShuffledIndexing 0x26ffe4: below
+    //   2 it is 1, and the size is kept in a byte;
+    // - a constant 0 count: the counts come from the owning generator's MAXP (SectionCompile2d),
+    //   written as constants, and the flag sets a shuffler of max(n1 * n2, 1) cells even at 1
+    //   (it still draws). A MAXP or a second count that is not a constant stays dropped.
+    // Without a shuffler the index is the creation count modulo the grid.
     if (value.fourcc == F("PLNV") && type == Type::Emitter && value.args.size() == 11) {
       if (!IsConstantValue(value.args[1]) || !IsConstantValue(value.args[5])) {
         why = "PLNV with a euler or spread that is not a constant";
@@ -1202,35 +1208,62 @@ public:
         why = "PLNV with a shuffle flag that is not a byte";
         return false;
       }
-      uint32_t shuffle = 0;
-      if (flag.word != 0) {
-        bool allocated = true;
-        uint64_t size = 1;
-        for (size_t at : {size_t(6), size_t(8)}) {
-          uint32_t count;
-          if (!ConstWord(value.args[at], count)) {
-            continue;
-          }
-          if (count == 0) {
-            allocated = false;
-          } else if (count > 255) {
-            why = "PLNV with a constant count over 255 (Remastered keeps it in a byte)";
-            return false;
-          }
-          size *= count;
+      uint32_t counts[2] = {1, 1};
+      bool known[2] = {false, false};
+      bool anyZero = false;
+      for (int i = 0; i < 2; ++i) {
+        known[i] = ConstWord(value.args[i == 0 ? 6 : 8], counts[i]);
+        if (known[i] && counts[i] > 255) {
+          why = "PLNV with a constant count over 255 (Remastered keeps it in a byte)";
+          return false;
         }
-        if (allocated) {
-          shuffle = uint32_t(std::max<uint64_t>(size, 1) & 0xff);
+        anyZero = anyZero || (known[i] && counts[i] == 0);
+      }
+      uint32_t shuffle = 0;
+      bool resolved = false;
+      if (anyZero) {
+        if (!known[0] || !known[1]) {
+          why = "PLNV with a constant 0 count and a count that is not a constant";
+          return false;
+        }
+        if (m_maxp < 0) {
+          why = "PLNV with a constant 0 count and a MAXP that is not a constant";
+          return false;
+        }
+        const PortParticleMath::SectionCounts grid = PortParticleMath::SectionCompile2d(
+            int(counts[0]), int(counts[1]), counts[0] == 0, counts[1] == 0, PortParticleMath::SectionTotal(int32_t(uint32_t(m_maxp))));
+        counts[0] = uint32_t(grid.n1);
+        counts[1] = uint32_t(grid.n2);
+        resolved = true;
+        if (flag.word != 0) {
+          shuffle = uint32_t(std::max<uint64_t>(uint64_t(counts[0]) * counts[1], 1) & 0xff);
           if (shuffle == 0) {
             why = "PLNV with a shuffler of a multiple of 256 cells";
             return false;
           }
+        }
+      } else if (flag.word != 0) {
+        uint64_t size = 1;
+        for (int i = 0; i < 2; ++i) {
+          if (known[i]) {
+            size *= counts[i];
+          }
+        }
+        shuffle = uint32_t(std::max<uint64_t>(size, 1) & 0xff);
+        if (shuffle == 0) {
+          why = "PLNV with a shuffler of a multiple of 256 cells";
+          return false;
         }
       }
       AppendBE32(out, F("PLNV"));
       static const Type kTypes[] = {Type::Vector, Type::Vector, Type::Real, Type::Real, Type::Real, Type::Real,
                                     Type::Int,    Type::Real,   Type::Int,  Type::Real};
       for (size_t i = 0; i < 10; ++i) {
+        if (resolved && (i == 6 || i == 8)) {
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, counts[i == 6 ? 0 : 1]);
+          continue;
+        }
         if (!Element(value.args[i], kTypes[i], out, why)) {
           return false;
         }
@@ -3256,6 +3289,13 @@ public:
     m_swoosh = node.form == F("SWSH");
     m_xfmd = 2;
     m_pofs = 0;
+    m_maxp = -1;
+    for (const EffectProperty& property : node.properties) {
+      uint32_t maxp;
+      if (property.fourcc == F("MAXP") && property.value.size() == 1 && ConstWord(property.value[0], maxp)) {
+        m_maxp = int64_t(maxp);
+      }
+    }
     for (const EffectProperty& property : node.properties) {
       uint32_t mode;
       if (property.fourcc == F("XFMD") && SmallConst(property, mode)) {
@@ -3978,6 +4018,7 @@ private:
   mutable uint32_t m_keepNext = 0;                  // the next PKPR slot
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
   mutable uint32_t m_xfmd = 2;                      // its XFMD mode, 2 without one
+  mutable int64_t m_maxp = -1;                      // its MAXP when a constant, else -1
   mutable uint32_t m_pofs = 0;                      // its POFS: 0 none, 1 constant, 2 anything else
   mutable bool m_mp1Space = false;                  // inside MPCB(mod vector): its vectors are retail's
   mutable int m_lifetimeOffset = -1;                // LifetimeOffset of the property being written

@@ -248,6 +248,49 @@ inline float InvSqrtF(float v) {
   return e * ReciprocalSqrtStep(m, e * e);
 }
 
+// The MAXP a CSectionedElementData::Compile1d/Compile2d (0x2a6ae4, 0x2a6b90) reads from the
+// generator that owns the element: (short) value, 128 from 128 up, 1 below 2.
+inline int SectionTotal(int32_t maxp) {
+  const int total = int16_t(maxp);
+  return total >= 128 ? 128 : total < 2 ? 1 : total;
+}
+
+// Compile2d's both-zero root: (uint)(total * rsqrt(total)), the rsqrt one FRSQRTS step from
+// FRSQRTE. The estimate is a little below 1/sqrt, so a perfect square truncates to one less.
+inline int SectionRoot(int total) {
+  if (total <= 0) {
+    return 0;
+  }
+  const float d = float(total);
+  const float e = ReciprocalSqrtEstimate(d);
+  const float r = e * ReciprocalSqrtStep(d * e, e);
+  return int(uint32_t(d * r));
+}
+
+struct SectionCounts {
+  int n1;
+  int n2;
+};
+
+// CSectionedElementData::Compile2d: `n1` and `n2` are the constant counts (0 when the count is a
+// constant 0), `total` is SectionTotal of the owning generator's MAXP. A count that is not a
+// constant 0 stands as it is when the other is not either (the caller does not call then).
+inline SectionCounts SectionCompile2d(int n1, int n2, bool n1Zero, bool n2Zero, int total) {
+  if (n2Zero && !n1Zero) {
+    n1 = n1 < 1 ? 1 : n1;
+    return {n1, (total & 0xff) / n1};
+  }
+  if (n1Zero && !n2Zero) {
+    n2 = n2 < 1 ? 1 : n2;
+    return {(total & 0xff) / n2, n2};
+  }
+  if (!n1Zero) {
+    return {n1, n2};
+  }
+  const int s = SectionRoot(total);
+  return (total & 0xffff) >= (s + 1) * s ? SectionCounts{s + 1, s} : SectionCounts{s, s};
+}
+
 // CParticleValues::skMinNormalizableMagSqd (0x21109c8).
 constexpr float kMinNormalizableMagSqd = 1.4210854715202004e-14f;
 
