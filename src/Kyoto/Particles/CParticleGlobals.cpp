@@ -48,7 +48,9 @@ const CParticleGlobals::SPortSwooshEval* CParticleGlobals::xPortSwooshEval = nul
 float CParticleGlobals::xPortSystemTween = 0.f;
 
 void CParticleGlobals::PortSetSystemTime(int frame, int lifetime) {
-  if (lifetime >= 0x7FFFFF) {
+  // Only the 0x1000000 cap (PSLT is min(0x1000000, ..), the no-PSLT default) gives 0; every other
+  // lifetime, 0x7FFFFF included, is divided through like the shipped code.
+  if (lifetime >= 0x1000000) {
     xPortSystemTween = 0.f;
     return;
   }

@@ -35,9 +35,10 @@ void TestTween() {
   CParticleGlobals::PortSetSystemTime(0, 0);
   CHECK(CParticleGlobals::xPortSystemTween == 0.f);
 
-  // The infinite lifetime (the port's default and retail's sentinel) gives 0.
+  // Remastered's no-PSLT lifetime is 0x1000000, the only one that gives 0 (0x24ef38 compares for
+  // exactly that); a lifetime just under it divides through to a small tween.
   CParticleGlobals::PortSetSystemTime(100, 0x7FFFFF);
-  CHECK(CParticleGlobals::xPortSystemTween == 0.f);
+  CHECK(CParticleGlobals::xPortSystemTween > 0.f && CParticleGlobals::xPortSystemTween < 1e-4f);
   CParticleGlobals::PortSetSystemTime(100, 0x1000000);
   CHECK(CParticleGlobals::xPortSystemTween == 0.f);
 }
