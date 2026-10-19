@@ -782,10 +782,11 @@
   0 Default, 1 Progressive, the default, 2 Additive), set by hand to match the
   seed's YAML because the server doesn't send it (`ARCHIPELAGO.md`).
 - F1 > Debug > Audio holds the audio switches, "Streamed audio (music/movies)"
-  (`ai_audio`, on by default; `MP_DISABLE_AI_AUDIO=1` starts with it off) and
-  "MusyX audio (effects/streams)" (`musyx_audio`, on by default), and the MusyX
-  voice list (collapsed), whose mutes are kept as `voices_muted` (the muted
-  sample ids, comma-separated; no line when none is muted).
+  (`MP_DISABLE_AI_AUDIO=1` starts with it off) and "MusyX audio
+  (effects/streams)", and the MusyX voice list (collapsed) with per-sample mutes
+  and "Unmute all" (which also turns both switches back on). None of these is
+  saved: every launch starts with full sound, and old `ai_audio`,
+  `musyx_audio` and `voices_muted` lines are ignored.
 - F1 > Debug > Cheats holds the cheats: health, items, ammo, area and world
   teleport. The cheats stay hidden
   until Show cheats is ticked (`cheats`, off by default). Invulnerable
