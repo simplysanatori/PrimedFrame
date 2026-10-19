@@ -1972,6 +1972,126 @@ void CElementGen::ForceParticleCreation(int amount) {
   CreateNewParticles(amount);
 }
 
+#ifdef TARGET_PC
+// Remastered CElementGen::_CreateNewParticleAtPositionsIncludingChildren 0x24bfd0: the PART
+// children first, each one's new particles added to this generator's recursive count, then this
+// generator's own (the visor goo splat manager spawns one splat into the whole effect).
+void CElementGen::PortCreateParticlesAtPositionsIncludingChildren(int n, const CVector3f* pos) {
+  for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
+    if (*it == nullptr || (*it)->Get4CharId() != 'PART') {
+      continue;
+    }
+    CElementGen& child = static_cast< CElementGen& >(**it);
+    const uint before = child.x264_recursiveParticleCount;
+    child.PortCreateParticlesAtPositionsIncludingChildren(n, pos);
+    const uint after = child.x264_recursiveParticleCount;
+    if (after != before && before <= after) {
+      x264_recursiveParticleCount += after - before;
+    }
+  }
+  CParticleGlobals::SParticleSystem thisSystem('PART', this);
+  CPortVarScope portVarScope(&xPortVars);
+  CParticleGlobals::SetEmitterTime(x74_curFrame);
+  CParticleGlobals::PortSetSystemTime(x74_curFrame, x268_PSLT);
+  PortCreateParticlesAtPositions(n, pos);
+}
+
+// Remastered CElementGen::_CreateNewParticlesAtPositions 0x24c0dc: up to MAXP particles at the
+// given positions, raw (no POFS, orientation or translation), at rest, without the EMTR. The
+// order is ADV, COLR, SIZE, then ROTA; there is no 0xa00 cap and no LINE case.
+void CElementGen::PortCreateParticlesAtPositions(int n, const CVector3f* pos) {
+  if (!sStaticListInitialized) {
+    Initialize();
+  }
+  const int room = x90_MAXP - static_cast< int >(x30_particles.size());
+  const int newCount = n <= room ? n : room;
+  if (newCount <= 0) {
+    return;
+  }
+
+  CGlobalRandom gr(x27c_randState);
+  x30_particles.reserve(newCount + x30_particles.size());
+
+  if (x26d_28_enableADV && x60_advValues.capacity() < newCount + x30_particles.size()) {
+    int newCap = x60_advValues.capacity() * 2;
+    x60_advValues.reserve(rstl::min_val(x90_MAXP, newCap));
+    while (x60_advValues.size() < x60_advValues.capacity()) {
+      x60_advValues.push_back(CAdvancedValues());
+    }
+  }
+
+  CParticleGlobals::mParticleAccessParameters = NULL;
+
+  for (int i = 0; i < newCount; ++i) {
+    x30_particles.push_back(CParticle());
+    const int particleIndex = x30_particles.size() - 1;
+
+    if (x2c_orientType == kMOT_One) {
+      x50_parentMatrices[particleIndex] = x1d8_orientation.BuildMatrix3f();
+    }
+
+    CParticle& particle = x30_particles[particleIndex];
+    particle.x28_startFrame = x74_curFrame;
+    particle.xPortSeed = PortNextParticleSeed();
+    particle.xPortKeep.latched = 0;
+    std::memset(particle.xPortKeep.values, 0, sizeof(particle.xPortKeep.values));
+
+    if (CIntElement* ltme = x28_loadedGenDesc->x28_LTME) {
+      ltme->GetValue(0, particle.x0_endFrame);
+    }
+    CParticleGlobals::SetParticleLifetime(particle.x0_endFrame);
+    CParticleGlobals::UpdateParticleLifetimeTweenValues(0);
+    CParticleGlobals::mCurrentParticle = &particle;
+    CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &particle : nullptr;
+    CPortKeepGlobals::sCurrent = x28_loadedGenDesc->xPortIrnd ? &particle.xPortKeep : nullptr;
+    particle.x0_endFrame += x74_curFrame;
+
+    particle.x4_pos = pos[i];
+    particle.x10_prevPos = pos[i];
+    particle.x1c_vel = CVector3f::Zero();
+    particle.x34_color = CColor(0xFFFFFFFF);
+
+    if (x26d_28_enableADV) {
+      UpdateAdvanceAccessParameters(particleIndex, 0, true);
+    }
+    for (const CREPortKeep* keep : x28_loadedGenDesc->xPortKeeps) {
+      keep->Latch(0);
+    }
+
+    if (CColorElement* colr = x28_loadedGenDesc->x24_COLR) {
+      colr->GetValue(0, particle.x34_color);
+      if (x28_loadedGenDesc->xPortVfx) {
+        colr->GetValueHdr(0, particle.xPortColor);
+      }
+    }
+    PortVfxSetLaunchDir(particle);
+
+    if (CRealElement* size = x28_loadedGenDesc->x38_SIZE) {
+      size->GetValue(0, particle.x2c_lineLengthOrSize);
+    } else {
+      particle.x2c_lineLengthOrSize = 0.1f;
+    }
+    if (CRealElement* rota = x28_loadedGenDesc->x3c_ROTA) {
+      rota->GetValue(0, particle.x30_lineWidthOrRota);
+    } else {
+      particle.x30_lineWidthOrRota = 0.f;
+    }
+
+    if (x28_loadedGenDesc->xPortVfx) {
+      PortVfxEvalParticle(*x28_loadedGenDesc, particle, 0);
+    }
+    AccumulateBounds(particle.x4_pos, particle.x2c_lineLengthOrSize);
+
+    ++mParticleAliveCount;
+    ++x25c_activeParticleCount;
+    ++x260_cumulativeParticles;
+    ++x264_recursiveParticleCount;
+  }
+  CParticleGlobals::xPortIrndParticle = nullptr;
+  CPortKeepGlobals::sCurrent = nullptr;
+}
+#endif
+
 void CElementGen::EndLifetime() {
   x268_PSLT = 0;
   for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {

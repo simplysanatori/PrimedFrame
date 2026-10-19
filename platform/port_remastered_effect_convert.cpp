@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -3934,6 +3935,11 @@ public:
     bool pmdlVariants = false;  // a PMDV was written (a mesh would cover only one model)
     std::vector<Started> started;  // by the spawn table
     std::set<uint32_t> written;    // retail properties
+    // Remastered's visor effect data (CGenDescription::Compile 0x2a7d0c): any VE* property marks
+    // it present; the VisorGoo splat manager reads the size range VESN/VESM.
+    bool visorData = false;
+    std::optional<uint32_t> visorMinScale;
+    std::optional<uint32_t> visorMaxScale;
     const EffectProperty* material = nullptr;
     const EffectProperty* xfmd = nullptr;
     uint32_t spriteShape = 0;
@@ -4315,6 +4321,18 @@ public:
         partVars.push_back(std::move(var));
         continue;
       }
+      if (part && (fourcc == F("VESC") || fourcc == F("VEMC") || fourcc == F("VETC") || fourcc == F("VEBS") ||
+                   fourcc == F("VESN") || fourcc == F("VESM") || fourcc == F("VEDT"))) {
+        visorData = true;
+        uint32_t bits = 0;
+        if ((fourcc == F("VESN") || fourcc == F("VESM")) && property.value.size() == 1 &&
+            ConstWord(property.value[0], bits)) {
+          (fourcc == F("VESN") ? visorMinScale : visorMaxScale) = bits;
+        } else {
+          result.dropped.push_back(EffectFourCCString(property.fourcc) + ": visor effect data the port does not read");
+        }
+        continue;
+      }
       const auto found = retail.find(fourcc);
       if (found == retail.end()) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": Remastered only");
@@ -4625,6 +4643,22 @@ public:
       AppendBE32(out, F("PIRN"));
       AppendBE32(out, F("CNST"));
       AppendBE32(out, 1);
+    }
+    if (part && visorData) {
+      // Port-only: the visor effect data is present (PVSD), with its size range as float bits.
+      AppendBE32(out, F("PVSD"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, 1);
+      if (visorMinScale) {
+        AppendBE32(out, F("PVSN"));
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, *visorMinScale);
+      }
+      if (visorMaxScale) {
+        AppendBE32(out, F("PVSM"));
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, *visorMaxScale);
+      }
     }
     const uint32_t guidWord = uint32_t(node.id[0]) | uint32_t(node.id[1]) << 8 |
                               uint32_t(node.id[2]) << 16 | uint32_t(node.id[3]) << 24;
@@ -5262,7 +5296,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.Element(Type::Real);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
                          fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID") || fourcc == F("PBDM") ||
-                         fourcc == F("PMRF"))) ||
+                         fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||
+                         fourcc == F("PVSM"))) ||
                (vfx && fourcc == F("PIRN"))) {
       ok = reader.PortWord();
     } else if (vfx && fourcc == F("PVRT")) {

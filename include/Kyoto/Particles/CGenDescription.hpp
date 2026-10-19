@@ -157,6 +157,11 @@ public:
   u8 xPortPemv = 0;
   // port-only PIRN: a converted Remastered effect, whose nested IRND elements are stable per particle
   bool xPortIrnd = false;
+  // port-only PVSD/PVSN/PVSM: Remastered's visor effect data (any VE* property) and its splat
+  // size range VESN/VESM, read by the VisorGoo splat manager (PortVisorGoo).
+  bool xPortVisorData = false;
+  float xPortVisorMinScale = 1.4f;
+  float xPortVisorMaxScale = 2.1f;
   // port-only PGID: the first word of a converted Remastered PART's GUID (CElementGen::PortChildSeed)
   u32 xPortGuidWord = 0;
   // Exact-source nested Remastered point-light metadata (PHDR/PIR0/POR0). The

@@ -36,6 +36,11 @@ extern const int gkPVSEnabled;
 #include "rstl/single_ptr.hpp"
 #include "rstl/string.hpp"
 
+#ifdef TARGET_PC
+#include "Kyoto/Particles/CPortParticleVars.hpp"
+#include "MetroidPrime/PortVisorGoo.hpp"
+#endif
+
 class CAABox;
 class CActor;
 class CProjectedShadow;
@@ -527,9 +532,18 @@ public:
   // delta is only used in the update that produced it (issue #117 platform riders).
   // x8d8_updateFrameIdx is not usable: it advances by 0.5 per update at 120 Hz.
   uint PortSimTick() const { return xPortSimTick; }
+  // Port: Remastered's visor goo splat manager (CVisorEffectManagerMP1, managed effect type 4):
+  // the one HUD billboard every VisorGoo splats into, and the ring of its last splats.
+  struct PortVisorGooState {
+    TUniqueId effect = kInvalidUniqueId;
+    PortVisorGoo::Ring ring;
+    u16 sizeHandle = kPortNoVar;
+  };
+  PortVisorGooState& PortVisorGooManager() { return xPortVisorGoo; }
 
 private:
   uint xPortSimTick = 0;
+  PortVisorGooState xPortVisorGoo;
 #endif
 };
 CHECK_SIZEOF(CStateManager, 0xf98)

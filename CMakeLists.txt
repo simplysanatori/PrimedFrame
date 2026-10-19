@@ -1267,6 +1267,12 @@ if(MP_BUILD_TESTS)
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
     mp_port_test(port_swoosh_ring_tests SOURCES tests/port_swoosh_ring.cpp INCLUDES platform/include)
+    # Remastered's visor goo splat manager maths (include/MetroidPrime/PortVisorGoo.hpp).
+    mp_port_test(port_visor_goo_tests
+        SOURCES tests/port_visor_goo_tests.cpp src/Kyoto/CRandom16.cpp src/Kyoto/Math/CVector3f.cpp
+        INCLUDES include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
     # Every port_settings.ini key reads back as written (platform/debug_ui/settings.cpp,
     # kSettingKeys); the game binary checks itself and exits before starting.
     add_test(NAME port_settings_roundtrip COMMAND metroid_prime_port --settings-selftest)
