@@ -45,6 +45,9 @@ public:
   // The value for the input t. Each product and sum is its own statement: the original does not
   // fuse them.
   float Evaluate(float t) const {
+    if (x8_count <= 0 || x1c_keys.size() < static_cast< size_t >(x8_count)) {
+      return 0.f;
+    }
     const int last = x8_count - 1;
     if (x4_loop) {
       const float lastStep = x18_step * static_cast< float >(last);

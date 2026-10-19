@@ -1333,10 +1333,16 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
     // Remastered's KEYF: the loop byte, the key count, the loop start, start and rate, the keys,
     // then the input element.
     const bool loop = in.ReadBool();
-    const int count = static_cast< int >(in.ReadLong());
+    int count = static_cast< int >(in.ReadLong());
     const float loopStart = in.ReadFloat();
     const float start = in.ReadFloat();
     const float rate = in.ReadFloat();
+    // A zero or implausible key count has no keys to read at the input (the original indexes
+    // key 0 regardless): the element evaluates to 0.
+    if (count <= 0 || count > 0xffff) {
+      PortLog::Write("particles: PKYF with key count %d, evaluating to 0\n", count);
+      count = 0;
+    }
     std::vector< float > keys;
     for (int i = 0; i < count; ++i) {
       keys.push_back(in.ReadFloat());
@@ -1579,6 +1585,16 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     CRealElement* variance = GetRealElement(in);
     CRealElement* radius = GetRealElement(in);
     const u8 shuffle = u8(in.ReadChar());
+    if (centre == nullptr || axis == nullptr || start == nullptr || count == nullptr || variance == nullptr ||
+        radius == nullptr) {
+      delete centre;
+      delete axis;
+      delete start;
+      delete count;
+      delete variance;
+      delete radius;
+      return nullptr;
+    }
     ret = rs_new CVEPortCircle(centre, axis, start, count, variance, radius, shuffle);
     break;
   }
