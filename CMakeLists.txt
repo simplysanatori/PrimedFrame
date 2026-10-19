@@ -809,6 +809,15 @@ if(MP_BUILD_TESTS)
     mp_port_test(port_electric2_bolt_tests
         SOURCES tests/port_electric2_bolt.cpp
         INCLUDES platform/include)
+    # Curl noise math, the VECF field and PCRM; the token half (CPortCurlNoiseField.cpp) is
+    # left out and GC_SECTIONS drops what refers to it.
+    mp_port_test(port_curl_noise_tests
+        SOURCES tests/port_curl_noise.cpp src/Kyoto/Particles/CPortCurlNoise.cpp
+            src/Kyoto/Streams/CInputStream.cpp src/Kyoto/Streams/CMemoryInStream.cpp
+            src/Kyoto/Math/CVector3f.cpp
+        INCLUDES include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
     mp_port_test(port_ice_rotation_element_tests
         SOURCES tests/port_ice_rotation_element.cpp
             src/Kyoto/Particles/CVectorElement.cpp src/Kyoto/Math/CQuaternion.cpp

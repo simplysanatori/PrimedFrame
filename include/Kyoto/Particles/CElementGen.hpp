@@ -335,6 +335,9 @@ private:
   };
   CRandom16 x27c_randState;
   CModVectorElement* x280_VELSources[4];
+#ifdef TARGET_PC
+  bool xPortVelFinalizes = false;
+#endif
   rstl::vector< CParticleGen* > x290_activePartChildren;
   int x2a0_CSSD;
   int x2a4_SISY;

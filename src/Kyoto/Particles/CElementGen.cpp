@@ -275,6 +275,12 @@ CElementGen::CElementGen(TToken< CGenDescription > gen, EModelOrientationType or
   for (int i = idx; i < 4; ++i) {
     x280_VELSources[i] = nullptr;
   }
+#ifdef TARGET_PC
+  xPortVelFinalizes = false;
+  for (int i = 0; i < idx; ++i) {
+    xPortVelFinalizes = xPortVelFinalizes || x280_VELSources[i]->PortFinalizesPosition();
+  }
+#endif
 
   if (x28_loadedGenDesc->x10c_ADV1 || x28_loadedGenDesc->x110_ADV2 ||
       x28_loadedGenDesc->x114_ADV3 || x28_loadedGenDesc->x118_ADV4 ||
@@ -923,7 +929,14 @@ void CElementGen::UpdateExistingParticles() {
       }
     }
     p->x10_prevPos = p->x4_pos;
+#ifdef TARGET_PC
+    // Remastered omits `pos += vel` when a VEL source finalizes the position (0x291b90).
+    if (!xPortVelFinalizes) {
+      p->x4_pos += p->x1c_vel;
+    }
+#else
     p->x4_pos += p->x1c_vel;
+#endif
     int particleFrame = x74_curFrame - p->x28_startFrame;
     CParticleGlobals::mCurrentParticle = &*p;
 #ifdef TARGET_PC

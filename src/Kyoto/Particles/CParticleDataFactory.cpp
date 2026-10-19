@@ -16,6 +16,9 @@
 #include "Kyoto/Particles/CGenDescription.hpp"
 #include "Kyoto/Particles/CIntElement.hpp"
 #include "Kyoto/Particles/CModVectorElement.hpp"
+#ifdef TARGET_PC
+#include "Kyoto/Particles/CPortCurlNoise.hpp"
+#endif
 #include "Kyoto/Particles/CParticleGen.hpp"
 #include "Kyoto/Particles/CPortParticleVars.hpp"
 #include "Kyoto/Particles/CRealElement.hpp"
@@ -1323,6 +1326,18 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
   case SBIG('RNDV'):
     ret = rs_new CVEPortRandomVector(GetRealElement(in));
     break;
+  case SBIG('PCRN'): {
+    // CVECurlNoise_Perlin3d: P, F, A, then the optional field (NONE | CNST + asset id).
+    CVectorElement* pos = GetVectorElement(in);
+    CRealElement* freq = GetRealElement(in);
+    CVectorElement* amp = GetVectorElement(in);
+    CVEPortCurlNoise::FieldHandle* handle = nullptr;
+    if (GetClassID(in) == SBIG('CNST')) {
+      handle = CVEPortCurlNoise::MakeHandle(in.ReadLong());
+    }
+    ret = rs_new CVEPortCurlNoise(pos, freq, amp, handle);
+    break;
+  }
   case SBIG('ANCR'): {
     CRealElement* rotateX = GetRealElement(in);
     CRealElement* rotateY = GetRealElement(in);
@@ -1613,6 +1628,16 @@ CModVectorElement* CParticleDataFactory::GetModVectorElement(CInputStream& in) {
     }
     break;
   }
+#ifdef TARGET_PC
+  case SBIG('PCRM'): {
+    // CMVECurlNoise: raw u32 mode, V, t.
+    const uint mode = in.ReadLong();
+    CVectorElement* v = GetVectorElement(in);
+    CRealElement* t = GetRealElement(in);
+    ret = rs_new CMVEPortCurlNoise(mode, v, t);
+    break;
+  }
+#endif
   case SBIG('GRAV'): {
     ret = rs_new CMVEGravity(GetVectorElement(in));
     break;

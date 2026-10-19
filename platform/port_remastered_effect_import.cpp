@@ -29,6 +29,7 @@ constexpr uint32_t kSwsh = EffectFourCC("SWSH");
 constexpr uint32_t kSwhc = EffectFourCC("SWHC");
 constexpr uint32_t kTxtr = EffectFourCC("TXTR");
 constexpr uint32_t kCmdl = EffectFourCC("CMDL");
+constexpr uint32_t kVecf = EffectFourCC("VECF");
 constexpr uint32_t kExternalSwooshSalt = 0x53535748u;
 constexpr size_t kMaxExternalSwooshes = 16;
 
@@ -1041,6 +1042,61 @@ public:
     return out;
   }
 
+  // A Remastered vector field (VECF, the curl noise's lookup grid) as a port VECF file under a
+  // fresh id, written once; 0 when it cannot be read. Remastered's file is little-endian:
+  // 'RFRM', u64 size, 8 zero bytes, 'VECF', u32 version (4), u32 (5), s32 x3 dims, f32 x3 min,
+  // f32 x3 max, u32 count, then count float3 cells. The port file is big-endian: 'VECF', u32 1,
+  // the dims, min, max, count and the cells, in the same order.
+  uint32_t VectorField(const EffectGuid& stored) {
+    const auto known = m_vectorFields.find(stored);
+    if (known != m_vectorFields.end()) {
+      return known->second;
+    }
+    uint32_t out = 0;
+    std::vector<uint8_t> data;
+    std::string error;
+    constexpr size_t kHeader = 0x48;
+    if (!m_io.read(kVecf, Swap(stored), data, error)) {
+      Log("effect vector field " + EffectGuidString(Swap(stored)) + ": " + (error.empty() ? "unreadable" : error));
+    } else if (data.size() < kHeader || std::memcmp(data.data(), "RFRM", 4) != 0 ||
+               std::memcmp(data.data() + 0x14, "VECF", 4) != 0) {
+      Log("effect vector field " + EffectGuidString(Swap(stored)) + ": not a VECF file");
+    } else {
+      const uint8_t* d = data.data();
+      const int64_t x = int32_t(port::ReadLE32(d + 0x20));
+      const int64_t y = int32_t(port::ReadLE32(d + 0x24));
+      const int64_t z = int32_t(port::ReadLE32(d + 0x28));
+      const uint32_t count = port::ReadLE32(d + 0x44);
+      if (x < 1 || y < 1 || z < 1 || x > 1024 || y > 1024 || z > 1024 || uint64_t(x * y * z) != count ||
+          kHeader + size_t(count) * 12 > data.size()) {
+        Log("effect vector field " + EffectGuidString(Swap(stored)) + ": bad dimensions");
+      } else {
+        std::vector<uint8_t> file;
+        file.reserve(52 + size_t(count) * 12);
+        const auto put = [&file](uint32_t v) {
+          file.push_back(uint8_t(v >> 24));
+          file.push_back(uint8_t(v >> 16));
+          file.push_back(uint8_t(v >> 8));
+          file.push_back(uint8_t(v));
+        };
+        put(kVecf);
+        put(1);
+        for (size_t at = 0x20; at < kHeader; at += 4) {
+          put(port::ReadLE32(d + at));
+        }
+        for (size_t at = kHeader; at < kHeader + size_t(count) * 12; at += 4) {
+          put(port::ReadLE32(d + at));
+        }
+        out = m_io.freshId(Hash(Swap(stored), kVecf));
+        if (!m_io.write(Hex8(out) + ".VECF", file)) {
+          out = 0;
+        }
+      }
+    }
+    m_vectorFields.emplace(stored, out);
+    return out;
+  }
+
   // The retail id for an id as an effect stores it: the disc's own when it
   // was carried over from retail, else a converted texture's or model's.
   uint32_t Stored(const EffectGuid& stored, uint32_t type) {
@@ -1159,6 +1215,9 @@ public:
                             const std::map<EffectGuid, ExternalSwoosh>& externalSwooshes) {
     EffectConvertIO io;
     io.assetId = [&](const EffectGuid& stored, uint32_t type) -> uint32_t {
+      if (type == kVecf) {
+        return VectorField(stored);
+      }
       const auto child = children.find(stored);
       if (child != children.end() && child->second.type == type) {
         return child->second.id;
@@ -1564,6 +1623,7 @@ private:
   std::map<EffectGuid, FlipbookAtlas> m_vfxFlipbooks; // linear-light copies for VFX materials
   uint32_t m_black = 0;                                // VfxTexture()'s black texture, once written
   std::map<EffectGuid, uint32_t> m_models;
+  std::map<EffectGuid, uint32_t> m_vectorFields;  // port VECF ids, 0 for one that failed
   EffectImportResult m_result;
 };
 

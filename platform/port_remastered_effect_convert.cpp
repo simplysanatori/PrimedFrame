@@ -1275,6 +1275,11 @@ public:
         return false;
       }
     }
+    // A mod vector's CRLN: the parse reads the V child's own CRLN header as the first argument
+    // and its fields as siblings (header, VECF, P, F, octaves, octave real, A, mode, t).
+    if (value.fourcc == F("CRLN") && type == Type::ModVector) {
+      return CurlNoise(value, out, why);
+    }
     const Signatures& elements = ElementsOf(type);
     const auto found = elements.find(value.fourcc);
     if (found == elements.end()) {
@@ -1305,6 +1310,58 @@ public:
       }
     }
     return true;
+  }
+
+  // CMVECurlNoise(V, mode, t) as the port-only PCRM (mode, V, t) around V's curl-noise evaluator
+  // as the port-only PCRN (P, F, A, then the field: NONE, or CNST and the VECF's id), Remastered's
+  // CVECurlNoise_Perlin3d (slice 0, no octaves). The other slices and the octave classes are not
+  // ported. PCRN's vectors are in Remastered's numbers; V, like any mod-vector argument, is
+  // turned into the port's space around PCRN.
+  bool CurlNoise(const EffectValue& value, std::vector<uint8_t>& out, std::string& why) const {
+    const std::vector<EffectValue>& a = value.args;
+    const auto isByte = [](const EffectValue& v) {
+      return v.kind == EffectValue::Kind::Byte || v.kind == EffectValue::Kind::Word;
+    };
+    if (a.size() != 9 || !IsElement(a[0], F("CRLN")) || a[0].args.size() != 2 || !isByte(a[0].args[1]) ||
+        !IsElement(a[1], F("VECF")) || a[1].args.size() != 1 || a[1].args[0].kind != EffectValue::Kind::Guid ||
+        !isByte(a[7])) {
+      why = "CRLN in a form not ported";
+      return false;
+    }
+    if (a[0].args[1].word != 0) {
+      why = "CRLN slice " + std::to_string(a[0].args[1].word) + " not ported";
+      return false;
+    }
+    if (!IsElement(a[4], F("NONE"))) {
+      why = "CRLN octaves not ported";
+      return false;
+    }
+    std::vector<uint8_t> noise;
+    AppendBE32(noise, F("PCRN"));
+    if (!Element(a[2], Type::Vector, noise, why) || !Element(a[3], Type::Real, noise, why) ||
+        !Element(a[6], Type::Vector, noise, why)) {
+      return false;
+    }
+    const EffectGuid& field = a[1].args[0].guid;
+    if (field == EffectGuid{}) {
+      AppendBE32(noise, F("NONE"));
+    } else {
+      const uint32_t id = AssetId(field, F("VECF"));
+      if (id == 0) {
+        why = "CRLN vector field " + EffectGuidString(field) + " not imported";
+        return false;
+      }
+      AppendBE32(noise, F("CNST"));
+      AppendBE32(noise, id);
+    }
+    AppendBE32(out, F("PCRM"));
+    AppendBE32(out, a[7].word);
+    if (m_mp1Space) {
+      out.insert(out.end(), noise.begin(), noise.end());
+    } else {
+      Basis(F("BSIS"), noise, out);
+    }
+    return Element(a[8], Type::Real, out, why);
   }
 
   // A cone's REUL(x, y, z, #00) as its three angle reals, which the port's ANCR and ASPR turn
@@ -3785,6 +3842,18 @@ public:
     // Port-only RNDV: the magnitude as a real element.
     if (fourcc == F("RNDV") && type == Type::Vector) {
       return Element(Type::Real);
+    }
+    // Port-only PCRM: the raw u32 mode, the V vector, then t as a real element.
+    if (fourcc == F("PCRM") && type == Type::ModVector) {
+      return Skip(4) && Element(Type::Vector) && Element(Type::Real);
+    }
+    // Port-only PCRN: P and F, the amplitude A, then NONE or CNST and a VECF id.
+    if (fourcc == F("PCRN") && type == Type::Vector) {
+      uint32_t field;
+      if (!Element(Type::Vector) || !Element(Type::Real) || !Element(Type::Vector) || !Word(field)) {
+        return false;
+      }
+      return field == F("NONE") || (field == F("CNST") && Skip(4));
     }
     // Port-only PGRD (a swoosh's gradient): stop count, five floats per stop, the period as an
     // int element, then the repeat byte.

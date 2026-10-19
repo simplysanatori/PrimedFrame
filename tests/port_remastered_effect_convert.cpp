@@ -1893,6 +1893,95 @@ void TestGpuAvailability() {
             "GPUA is listed as approximated");
 }
 
+// A mod-vector CRLN (CMVECurlNoise) is the port-only PCRM (mode, V, t) around its V child's
+// curl-noise evaluator, the port-only PCRN (P, F, A, field). V is turned into the port's
+// space by BSIS like any mod-vector argument; the field is NONE or CNST and the VECF's id.
+void PutCurlNoise(std::vector<uint8_t>& out, uint8_t slice, const EffectGuid& field, bool octaves, uint8_t mode,
+                  float t) {
+  PutProperty(out, "VEL1", 3);
+  PutFourCC(out, "CRLN");
+  PutFourCC(out, "CRLN");
+  out.push_back(0);
+  out.push_back(slice);
+  PutFourCC(out, "VECF");
+  PutGuid(out, field);
+  PutFourCC(out, "PLOC");
+  PutConstant(out, Bits(1.0f));
+  if (octaves) {
+    PutFourCC(out, "CNST");
+    Put32(out, 3);
+  } else {
+    PutFourCC(out, "NONE");
+  }
+  PutFourCC(out, "NONE");
+  PutFourCC(out, "CNST");
+  PutConstant(out, Bits(0.5f));
+  PutConstant(out, Bits(0.25f));
+  PutConstant(out, Bits(2.0f));
+  out.push_back(mode);
+  PutConstant(out, Bits(t));
+}
+
+void TestCurlNoise() {
+  const EffectGuid field = {0x51, 0, 0x75, 0x16, 0xf3, 0xaa, 0xd4, 0x4e, 0xb4, 0xcb, 0xdb, 0x5b, 0x76, 0xd8, 0xc4, 0x7f};
+  EffectConvertIO io;
+  io.assetId = [&](const EffectGuid& id, uint32_t type) -> uint32_t {
+    if (type != EffectFourCC("VECF")) {
+      return EffectRetailId(id).value_or(0);
+    }
+    return id == field ? 0xCAFE0001u : 0;
+  };
+  const auto convert = [&](uint8_t slice, const EffectGuid& id, bool octaves, uint8_t mode, float t) {
+    return ConvertOne(OneGenerator([&](auto& o) {
+                        PutCurlNoise(o, slice, id, octaves, mode, t);
+                        PutTexr(o, 0x1234ABCD);
+                      }),
+                      io);
+  };
+  const auto noise = [](Retail& r, bool withField) {
+    r.f("PCRN").f("BSIS").f("PLOC").f("CNST").w(Bits(1.0f));
+    RetailVector(r, 0.5f, 0.25f, 2.0f);
+    if (withField) {
+      r.f("CNST").w(0xCAFE0001u);
+    } else {
+      r.f("NONE");
+    }
+  };
+  {
+    auto parts = convert(0, field, false, 0, 0.0f);
+    Retail want;
+    want.f("GPSM").f("VEL1").f("PCRM").w(0).f("BSIS");
+    noise(want, true);
+    want.f("CNST").w(Bits(0.0f));
+    want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+    CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "mod-vector CRLN mode 0 is PCRM around PCRN with a field");
+    CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), "CRLN slice 0 drops nothing");
+  }
+  {
+    auto parts = convert(0, EffectGuid{}, false, 1, 0.3f);
+    Retail want;
+    want.f("GPSM").f("VEL1").f("PCRM").w(1).f("BSIS");
+    noise(want, false);
+    want.f("CNST").w(Bits(0.3f));
+    want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+    CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "mod-vector CRLN mode 1 with a zero field is NONE");
+  }
+  {
+    auto parts = convert(2, field, false, 0, 0.0f);
+    CHECK_MSG(parts.size() == 1 && parts[0].dropped.size() == 1 &&
+                  parts[0].dropped[0].find("CRLN slice 2 not ported") != std::string::npos,
+              "CRLN slice 2 drops with a reason");
+    auto octaves = convert(0, field, true, 0, 0.0f);
+    CHECK_MSG(octaves.size() == 1 && octaves[0].dropped.size() == 1 &&
+                  octaves[0].dropped[0].find("CRLN octaves not ported") != std::string::npos,
+              "CRLN octaves drop with a reason");
+    auto unknown = convert(0, EffectGuid{0x11}, false, 0, 0.0f);
+    CHECK_MSG(unknown.size() == 1 && unknown[0].dropped.size() == 1 &&
+                  unknown[0].dropped[0].find("not imported") != std::string::npos,
+              "CRLN with an unimported field drops with a reason");
+  }
+}
+
 // SPAF(n, fallback) reads the parent system's variable n (CElementParentAddlVar):
 // kept as SPAF, n and the fallback, which only a constant keeps; n above 9 is 0xff.
 void TestParentRead() {
@@ -3441,6 +3530,7 @@ int main() {
   TestDrawsNothing();
   TestBlendMode();
   TestGpuAvailability();
+  TestCurlNoise();
   TestParentRead();
   TestSystemVars();
   TestModelRotation();

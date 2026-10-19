@@ -118,6 +118,10 @@ const CFactoryFnReturn FParticleElectricDataFactory(const SObjectTag&, CInputStr
                                                     const CVParamTransfer&);
 const CFactoryFnReturn FProjectileWeaponDataFactory(const SObjectTag&, CInputStream&,
                                                     const CVParamTransfer&);
+#ifdef TARGET_PC
+const CFactoryFnReturn FVectorFieldFactory(const SObjectTag&, CInputStream&,
+                                           const CVParamTransfer&);
+#endif
 const CFactoryFnReturn RGuiFrameFactoryInGame(const SObjectTag&, CInputStream&,
                                               const CVParamTransfer&);
 const CFactoryFnReturn FRasterFontFactory(const SObjectTag&, CInputStream&, const CVParamTransfer&);
@@ -764,6 +768,9 @@ void CGameGlobalObjects::AddPaksAndFactories() {
   factory.GetFactoryMgr().AddFactory('DGRP', FDependencyGroupFactory);
   factory.GetFactoryMgr().AddFactory('SAVW', FSaveWorldFactory);
   factory.GetFactoryMgr().AddFactory('HINT', FHintFactory);
+#ifdef TARGET_PC
+  factory.GetFactoryMgr().AddFactory('VECF', FVectorFieldFactory);
+#endif
 }
 
 void CMain::FillInAssetIDs() {
