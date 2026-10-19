@@ -28,7 +28,14 @@ CSwooshDescription* CParticleSwooshDataFactory::CreateGeneratorDescription(CInpu
   }
   CSwooshDescription* desc = rs_new CSwooshDescription();
 
+#ifdef TARGET_PC
+  std::vector< const CREPortKeep* >* const outerKeeps = CPortKeepGlobals::sCollect;
+  CPortKeepGlobals::sCollect = &desc->xPortKeeps;
+#endif
   CreateWPSM(desc, in, pool);
+#ifdef TARGET_PC
+  CPortKeepGlobals::sCollect = outerKeeps;
+#endif
 #ifdef TARGET_PC
   if (desc->xPortVfx) {
     for (CPortVfxMat::Tex& t : desc->xPortVfx->mat.tex) {

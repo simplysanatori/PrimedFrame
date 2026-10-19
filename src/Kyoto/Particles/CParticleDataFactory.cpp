@@ -351,7 +351,14 @@ CGenDescription* CParticleDataFactory::CreateGeneratorDescription(CInputStream& 
     return nullptr;
   }
   CGenDescription* desc = rs_new CGenDescription;
+#ifdef TARGET_PC
+  std::vector< const CREPortKeep* >* const outerKeeps = CPortKeepGlobals::sCollect;
+  CPortKeepGlobals::sCollect = &desc->xPortKeeps;
+#endif
   CreateGPSM(desc, in, assets, pool);
+#ifdef TARGET_PC
+  CPortKeepGlobals::sCollect = outerKeeps;
+#endif
   LoadGPSMTokens(desc);
   return desc;
 }
@@ -573,6 +580,28 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortSys.reset(PortReadSys(in));
       break;
+    // Port-only PADO: the order ADV1..8 are evaluated in, a count and 0-based indices.
+    case SBIG('PADO'): {
+      GetClassID(in);
+      const u32 count = in.ReadLong();
+      desc->xPortAdvOrder.clear();
+      if (count > 8) {
+        break;
+      }
+      // Each index at most once: a duplicate would run one ADV twice and skip another.
+      u32 seen = 0;
+      for (u32 i = 0; i < count; ++i) {
+        const u32 n = in.ReadLong();
+        if (n < 8 && (seen & (1u << n)) == 0) {
+          seen |= 1u << n;
+          desc->xPortAdvOrder.push_back(static_cast< u8 >(n));
+        }
+      }
+      if (desc->xPortAdvOrder.size() != count) {
+        desc->xPortAdvOrder.clear();
+      }
+      break;
+    }
     // Port-only marker of a converted Remastered PART (xPortIrnd).
     case SBIG('PIRN'):
       GetClassID(in);
@@ -1058,6 +1087,16 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
   // Port-only PSYR: a PSYS real slot of the system being evaluated.
   case SBIG('PSYR'):
     return rs_new CREPortSysVar(in.ReadLong());
+  // Port-only PKPR: a per-particle KPIN latch (slot), then its element.
+  case SBIG('PKPR'): {
+    const u32 slot = in.ReadLong();
+    CRealElement* value = GetRealElement(in);
+    if (value == nullptr || slot >= SPortKeep::kMax) {
+      delete value;
+      return nullptr;
+    }
+    return rs_new CREPortKeep(slot, value);
+  }
   case SBIG('SPAF'):
     return PortReadParentVar< CREPortParentVar >(in, EPortParentRead::System, &GetRealElement);
   case SBIG('DPVF'):

@@ -825,6 +825,21 @@ void CElementGen::UpdateLightParameters() {
 void CElementGen::UpdateAdvanceAccessParameters(int particleFrame, int particleIndex) {
   float* params = x60_advValues[particleFrame].values;
   CParticleGlobals::mParticleAccessParameters = params;
+#ifdef TARGET_PC
+  // Remastered sorts its variables so one is evaluated after those it reads (SortVars 0x276188).
+  if (!x28_loadedGenDesc->xPortAdvOrder.empty()) {
+    CRealElement* const advs[8] = {
+        x28_loadedGenDesc->x10c_ADV1, x28_loadedGenDesc->x110_ADV2, x28_loadedGenDesc->x114_ADV3,
+        x28_loadedGenDesc->x118_ADV4, x28_loadedGenDesc->x11c_ADV5, x28_loadedGenDesc->x120_ADV6,
+        x28_loadedGenDesc->x124_ADV7, x28_loadedGenDesc->x128_ADV8};
+    for (const u8 n : x28_loadedGenDesc->xPortAdvOrder) {
+      if (advs[n] != nullptr) {
+        advs[n]->GetValue(particleIndex, params[n]);
+      }
+    }
+    return;
+  }
+#endif
   if (x28_loadedGenDesc->x10c_ADV1) {
     x28_loadedGenDesc->x10c_ADV1->GetValue(particleIndex, params[0]);
   }
@@ -913,6 +928,7 @@ void CElementGen::UpdateExistingParticles() {
     CParticleGlobals::mCurrentParticle = &*p;
 #ifdef TARGET_PC
     CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &*p : nullptr;
+    CPortKeepGlobals::sCurrent = x28_loadedGenDesc->xPortIrnd ? &p->xPortKeep : nullptr;
 #endif
     CParticleGlobals::SetParticleLifetime(p->x0_endFrame - p->x28_startFrame);
     CParticleGlobals::UpdateParticleLifetimeTweenValues(particleFrame);
@@ -965,6 +981,7 @@ void CElementGen::UpdateExistingParticles() {
   }
 #ifdef TARGET_PC
   CParticleGlobals::xPortIrndParticle = nullptr;
+  CPortKeepGlobals::sCurrent = nullptr;
 #endif
 
   if (x30_particles.size() > 0) {
@@ -1031,6 +1048,7 @@ void CElementGen::CreateNewParticles(int count) {
     particle.x28_startFrame = x74_curFrame;
 #ifdef TARGET_PC
     particle.xPortSeed = PortNextParticleSeed();
+    particle.xPortKeep.latched = 0;
 #endif
 
     if (CIntElement* ltme = x28_loadedGenDesc->x28_LTME) {
@@ -1042,6 +1060,7 @@ void CElementGen::CreateNewParticles(int count) {
     CParticleGlobals::mCurrentParticle = &particle;
 #ifdef TARGET_PC
     CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &particle : nullptr;
+    CPortKeepGlobals::sCurrent = x28_loadedGenDesc->xPortIrnd ? &particle.xPortKeep : nullptr;
 #endif
 
     if (x26d_28_enableADV) {
@@ -1049,6 +1068,12 @@ void CElementGen::CreateNewParticles(int count) {
     }
 
     particle.x0_endFrame += x74_curFrame;
+#ifdef TARGET_PC
+    // _Init_Particle: the KPIN latches the ADVs did not already read.
+    for (const CREPortKeep* keep : x28_loadedGenDesc->xPortKeeps) {
+      keep->Latch(0);
+    }
+#endif
 
     if (CColorElement* colr = x28_loadedGenDesc->x24_COLR) {
       colr->GetValue(0, particle.x34_color);
@@ -1131,6 +1156,7 @@ void CElementGen::CreateNewParticles(int count) {
   }
 #ifdef TARGET_PC
   CParticleGlobals::xPortIrndParticle = nullptr;
+  CPortKeepGlobals::sCurrent = nullptr;
 #endif
 }
 
@@ -3527,6 +3553,7 @@ void CElementGen::RenderModels() {
       CParticleGlobals::mCurrentParticle = &particle;
 #ifdef TARGET_PC
       CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &particle : nullptr;
+      CPortKeepGlobals::sCurrent = x28_loadedGenDesc->xPortIrnd ? &particle.xPortKeep : nullptr;
 #endif
 
       if (x26d_28_enableADV) {
@@ -3653,6 +3680,7 @@ void CElementGen::RenderModels() {
 
 #ifdef TARGET_PC
   CParticleGlobals::xPortIrndParticle = nullptr;
+  CPortKeepGlobals::sCurrent = nullptr;
   if (vfxMesh) {
     PortRenderMeshesVfx(vfxMeshes);
   }

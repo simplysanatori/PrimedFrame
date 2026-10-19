@@ -77,6 +77,7 @@ public:
     float xPortColor[4];   // COLR unclamped (HDR), for the VFX paths; x34_color is the clamped one
     float xPortVpmt[4][4]; // VPMT rows
     CVector3f xPortLaunchDir; // unit launch velocity (zero if it launched at rest), for VORN 1
+    SPortKeep xPortKeep;      // KPIN values latched at birth (CREPortKeep)
 #endif
 
     CParticle()
@@ -91,6 +92,7 @@ public:
     , xPortColor{1.f, 1.f, 1.f, 1.f}
     , xPortVpmt{}
     , xPortLaunchDir(CVector3f::Zero())
+    , xPortKeep{}
 #endif
     {}
   };

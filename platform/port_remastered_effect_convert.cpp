@@ -18,6 +18,9 @@ namespace {
 
 constexpr uint32_t F(const char (&text)[5]) { return EffectFourCC(text); }
 
+// The per-particle KPIN latches a generator or swoosh can carry (SPortKeep::kMax).
+constexpr uint32_t kKeepSlots = 8;
+
 // The types CParticleDataFactory reads a value as.
 enum class Type : uint8_t { Int, Real, Vector, ModVector, Color, Emitter, Texture, Bool, Asset };
 
@@ -355,6 +358,23 @@ uint32_t SystemReadsOf(const EffectValue& value) {
   }
   for (const EffectValue& arg : value.args) {
     mask |= SystemReadsOf(arg);
+  }
+  return mask;
+}
+
+// The ADVn (bit n - 1) a tree reads through PAP1..PAP8.
+uint32_t AdvReadsOf(const EffectValue& value) {
+  uint32_t mask = 0;
+  if (value.kind == EffectValue::Kind::Element && value.args.empty()) {
+    for (uint32_t n = 0; n < 8; ++n) {
+      const char name[5] = {'P', 'A', 'P', char('1' + n), 0};
+      if (value.fourcc == F(name)) {
+        mask |= 1u << n;
+      }
+    }
+  }
+  for (const EffectValue& arg : value.args) {
+    mask |= AdvReadsOf(arg);
   }
   return mask;
 }
@@ -979,6 +999,27 @@ public:
       AppendBE32(out, F("PSYR"));
       AppendBE32(out, hidden.slot);
       m_sysItems->push_back(std::move(hidden));
+      return true;
+    }
+    // Elsewhere in a generator or swoosh KPIN(x) is a hidden per-particle variable
+    // (CComplexKeepInitial::RebaseComplexOp 0x2d8fac), evaluated once as the particle or point
+    // is born (_Init_Particle 0x2784b8): the port-only PKPR latches it per particle.
+    if (m_keeps && m_spawnSysItems == nullptr && type == Type::Real && value.fourcc == F("KPIN") &&
+        value.args.size() == 1) {
+      const uint32_t first = m_keepNext;
+      std::vector<uint8_t> kept;
+      if (!Element(value.args[0], type, kept, why)) {
+        m_keepNext = first;
+        return false;
+      }
+      if (m_keepNext == kKeepSlots) {
+        m_keepNext = first;
+        why = "more than " + std::to_string(kKeepSlots) + " per-particle KPINs";
+        return false;
+      }
+      AppendBE32(out, F("PKPR"));
+      AppendBE32(out, m_keepNext++);
+      out.insert(out.end(), kept.begin(), kept.end());
       return true;
     }
     // PSA0..PSA9: the system's own additional real n (GetRealElement 0x260de4:
@@ -2002,7 +2043,7 @@ public:
           AppendBE32(spawns, id);
           if (latched) {
             if (m_spawnSysItems == nullptr) {
-              why = "an IRND instance instances outside a generator";
+              why = "an IRND instance count outside a generator";
               return false;
             }
             SystemItem hidden{1, m_sysNextHiddenInt++, 1, {}};
@@ -2896,6 +2937,14 @@ public:
     // An ELC2 (CParticleElectric2) is written as an ELSC stream that starts with the port-only PEL2
     // marker and carries the ELC2 fields; it draws through its VMAT like a swoosh.
     const bool electric = type == F("ELSC") && node.form == F("ELC2");
+    struct KeepScope {
+      const Writer& writer;
+      KeepScope(const Writer& w, bool on) : writer(w) {
+        writer.m_keeps = on;
+        writer.m_keepNext = 0;
+      }
+      ~KeepScope() { writer.m_keeps = false; }
+    } keepScope(*this, part || swoosh);
     if (electric) {
       AppendBE32(out, F("PEL2"));
       AppendBE32(out, F("CNST"));
@@ -3027,6 +3076,48 @@ public:
         for (SystemItem& sys : items) {
           sysItems.push_back(std::move(sys));
         }
+      }
+    }
+    // ADV1..8 in the order Remastered evaluates them (SortVars 0x276188 orders its variables so
+    // that each comes after those it reads, otherwise by index): ADV1 = KPIN(PAP2 + ..) reads
+    // ADV2 = 0.5 of the same particle. Written as the port-only PADO when it is not 1..8.
+    std::vector<uint32_t> advOrder;
+    if (part) {
+      uint32_t reads[8] = {};
+      uint32_t present = 0;
+      for (const EffectProperty& property : node.properties) {
+        for (uint32_t n = 0; n < 8; ++n) {
+          const char name[5] = {'A', 'D', 'V', char('1' + n), 0};
+          if (property.fourcc == F(name)) {
+            present |= 1u << n;
+            for (const EffectValue& value : property.value) {
+              reads[n] |= AdvReadsOf(value);
+            }
+          }
+        }
+      }
+      uint32_t done = 0;
+      while (advOrder.size() < 8) {
+        uint32_t pick = 8;
+        for (uint32_t n = 0; n < 8 && pick == 8; ++n) {
+          if ((done & 1u << n) == 0 && (reads[n] & present & ~done & ~(1u << n)) == 0) {
+            pick = n;
+          }
+        }
+        for (uint32_t n = 0; n < 8 && pick == 8; ++n) {
+          if ((done & 1u << n) == 0) {
+            pick = n;  // a cycle: index order
+          }
+        }
+        done |= 1u << pick;
+        advOrder.push_back(pick);
+      }
+      bool identity = true;
+      for (uint32_t n = 0; n < 8; ++n) {
+        identity = identity && advOrder[n] == n;
+      }
+      if (identity) {
+        advOrder.clear();
       }
     }
     bool texture = false;
@@ -3548,6 +3639,14 @@ public:
         out.insert(out.end(), item.element.begin(), item.element.end());
       }
     }
+    if (!advOrder.empty()) {
+      AppendBE32(out, F("PADO"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, uint32_t(advOrder.size()));
+      for (const uint32_t n : advOrder) {
+        AppendBE32(out, n);
+      }
+    }
     // Without a PSLT, Remastered's system lifetime is 0x1000000 (CElementGen ctor 0x244cfc), which
     // an ILPT in a system property reads; retail's default is 0x7FFFFF.
     if (part && written.count(F("PSLT")) == 0) {
@@ -3609,6 +3708,8 @@ private:
   mutable std::vector<SystemItem>* m_spawnSysItems = nullptr;  // set while a KSSM is written
   mutable uint32_t m_sysNextHiddenInt = 10;                   // the next hidden init-only int
   mutable std::vector<std::string> m_approximated;  // for the generator being written
+  mutable bool m_keeps = false;                     // a KPIN may be a per-particle PKPR
+  mutable uint32_t m_keepNext = 0;                  // the next PKPR slot
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
   mutable bool m_mp1Space = false;                  // inside MPCB(mod vector): its vectors are retail's
   mutable int m_lifetimeOffset = -1;                // LifetimeOffset of the property being written
@@ -3669,6 +3770,11 @@ public:
     // Port-only PSYR/PSYI: a PSYS slot.
     if ((fourcc == F("PSYR") && type == Type::Real) || (fourcc == F("PSYI") && type == Type::Int)) {
       return Skip(4);
+    }
+    // Port-only PKPR: a per-particle latch slot, then the element latched.
+    if (fourcc == F("PKPR") && type == Type::Real) {
+      uint32_t slot;
+      return Word(slot) && slot < kKeepSlots && Element(Type::Real);
     }
     // SPA*: the parent's system variable n, then the fallback; DPV*/TPV*: a
     // PVAR guid, then the fallback.
@@ -3859,6 +3965,12 @@ public:
   bool PortWord() {
     uint32_t fourcc;
     return Word(fourcc) && fourcc == F("CNST") && Skip(4);
+  }
+
+  // The port-only PADO property: CNST, a count up to 8, then that many words.
+  bool PortWords() {
+    uint32_t fourcc, count;
+    return Word(fourcc) && fourcc == F("CNST") && Word(count) && count <= 8 && Skip(size_t(count) * 4);
   }
 
   // The port-only PVRT property: CNST, a count, then 36 bytes a variable.
@@ -4096,6 +4208,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortVariables();
     } else if (part && fourcc == F("PSYS")) {
       ok = reader.PortSystemVars();
+    } else if (part && fourcc == F("PADO")) {
+      ok = reader.PortWords();
     } else if (part && fourcc == F("PSWX")) {
       ok = reader.PortExtraSwooshes();
     } else if (part && fourcc == F("PKSM")) {

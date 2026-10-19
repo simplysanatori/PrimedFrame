@@ -152,6 +152,11 @@ public:
   CRealElement* xPortNestedLightOuterRadius = nullptr;
   // port-only PVRT: Remastered particle variables (names, types, defaults)
   std::unique_ptr< CPortVarTable > xPortVars;
+  // port-only: the PKPR elements (per-particle KPIN latches), latched at birth in this order;
+  // owned by the element trees
+  std::vector< const CREPortKeep* > xPortKeeps;
+  // port-only PADO: the order ADV1..8 are evaluated in (0-based), when it is not 1..8
+  std::vector< u8 > xPortAdvOrder;
   // Port-only PSYS: the system variables (CElementGen::PortEvalSys).
   std::unique_ptr< CPortSys > xPortSys;
   // port-only PSHP: Remastered SSHP sprite mesh (0 quad; 3 triangle, 4 pentagon, 5 hexagon, 6 octagon)

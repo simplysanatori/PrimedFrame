@@ -5,6 +5,8 @@
 #include "Kyoto/Streams/CInputStream.hpp"
 
 const CPortVarMemory* CPortVarGlobals::sCurrent = nullptr;
+SPortKeep* CPortKeepGlobals::sCurrent = nullptr;
+std::vector< const CREPortKeep* >* CPortKeepGlobals::sCollect = nullptr;
 
 CPortVarTable* PortReadVarTable(CInputStream& in) {
   const u32 count = in.ReadLong();

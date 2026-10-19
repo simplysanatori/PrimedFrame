@@ -9,6 +9,7 @@
 #include "Kyoto/Math/CVector3f.hpp"
 #include "Kyoto/Particles/IElement.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <utility>
@@ -288,6 +289,72 @@ public:
   bool GetValue(int, int& out) const override {
     out = CPortVarGlobals::sCurrent != nullptr ? CPortVarGlobals::sCurrent->SysInt(x4_slot) : 0;
     return false;
+  }
+};
+
+// A Remastered KPIN outside a system variable becomes a hidden per-particle variable
+// (CComplexKeepInitial::RebaseComplexOp 0x2d8fac): evaluated once when the particle or swoosh
+// point is born (_Init_Particle 0x2784b8, which CreateNewParticles 0x24a4cc runs before EMTR and
+// the properties) and read unchanged after. These are the latched values of one particle or point.
+struct SPortKeep {
+  static constexpr u32 kMax = 8;
+  float values[kMax];
+  u32 latched; // a bit per slot
+};
+
+class CREPortKeep;
+
+struct CPortKeepGlobals {
+  // The particle or swoosh point being evaluated, or null (a KPIN then reads its child).
+  static SPortKeep* sCurrent;
+  // While a description is read: where its PKPR elements are listed.
+  static std::vector< const CREPortKeep* >* sCollect;
+};
+
+// Sets the latches being evaluated for its lifetime.
+struct CPortKeepScope {
+  SPortKeep* prev;
+  explicit CPortKeepScope(SPortKeep* keep) : prev(CPortKeepGlobals::sCurrent) {
+    CPortKeepGlobals::sCurrent = keep;
+  }
+  ~CPortKeepScope() { CPortKeepGlobals::sCurrent = prev; }
+};
+
+// PKPR (port-only): slot, then the KPIN's element. The first read for a particle or point latches
+// the element's value; the description latches every slot at birth (Latch), in reading order.
+class CREPortKeep : public CRealElement {
+  u32 x4_slot;
+  CRealElement* x8_value;
+
+public:
+  CREPortKeep(u32 slot, CRealElement* value) : x4_slot(slot), x8_value(value) {
+    if (CPortKeepGlobals::sCollect != nullptr) {
+      CPortKeepGlobals::sCollect->push_back(this);
+    }
+  }
+  ~CREPortKeep() override {
+    // A parse that fails after this element was built deletes it while still collecting.
+    if (std::vector< const CREPortKeep* >* list = CPortKeepGlobals::sCollect) {
+      list->erase(std::remove(list->begin(), list->end(), this), list->end());
+    }
+    delete x8_value;
+  }
+  bool GetValue(int frame, float& out) const override {
+    SPortKeep* keep = CPortKeepGlobals::sCurrent;
+    if (keep == nullptr) {
+      return x8_value->GetValue(frame, out);
+    }
+    const u32 bit = 1u << x4_slot;
+    if ((keep->latched & bit) == 0) {
+      x8_value->GetValue(frame, keep->values[x4_slot]);
+      keep->latched |= bit;
+    }
+    out = keep->values[x4_slot];
+    return false;
+  }
+  void Latch(int frame) const {
+    float value;
+    GetValue(frame, value);
   }
 };
 

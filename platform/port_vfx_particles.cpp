@@ -358,6 +358,7 @@ void CElementGen::PortRenderParticlesVfx() {
     const int partFrame = x74_curFrame - p.x28_startFrame - 1;
     CParticleGlobals::mCurrentParticle = &p;
     CParticleGlobals::xPortIrndParticle = x28_loadedGenDesc->xPortIrnd ? &p : nullptr;
+    CPortKeepGlobals::sCurrent = x28_loadedGenDesc->xPortIrnd ? &p.xPortKeep : nullptr;
     CParticleGlobals::SetParticleLifetime(p.x0_endFrame - p.x28_startFrame);
     CParticleGlobals::UpdateParticleLifetimeTweenValues(partFrame);
     // As RenderModels: PAP1..8 read this particle's ADV values (NULL outside the update loop).
@@ -481,6 +482,7 @@ void CElementGen::PortRenderParticlesVfx() {
   flush();
 
   CParticleGlobals::xPortIrndParticle = nullptr;
+  CPortKeepGlobals::sCurrent = nullptr;
   CParticleGlobals::mCurrentParticle = savedParticle;
   CParticleGlobals::mParticleAccessParameters = nullptr;
   CGraphics::SetCullMode(kCM_Front);

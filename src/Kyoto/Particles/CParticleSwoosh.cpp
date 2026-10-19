@@ -203,6 +203,12 @@ const bool CParticleSwoosh::Update(double dt) {
           CTransform4f::Translate(xa4_globalTranslation) * xb0_globalOrientation * xec_scaleXf,
           x38_translation, &x15c_swooshes[x158_curParticle].mTranslation);
       CParticleGlobals::PortSwooshEvalScope spawnEvalScope(&spawnEval);
+      SPortKeep& spawnKeep = x15c_swooshes[x158_curParticle].mPortKeep;
+      spawnKeep.latched = 0;
+      CPortKeepScope spawnKeepScope(&spawnKeep);
+      for (const CREPortKeep* keep : x1c_desc->xPortKeeps) {
+        keep->Latch(0);
+      }
 #endif
       if (x1c_desc->x1c_IROT) {
         x1c_desc->x1c_IROT->GetValue(x28_curFrame, x15c_swooshes[x158_curParticle].mInitialRot);
@@ -406,6 +412,7 @@ void CParticleSwoosh::UpdateTranslationAndOrientation() {
       }
     }
     CParticleGlobals::PortSwooshEvalScope segEvalScope(&segEval);
+    CPortKeepScope segKeepScope(&swoosh.mPortKeep);
 #endif
     if (x1c_desc->x44_28_SROT == true) {
       if (x1c_desc->x1c_IROT) {
@@ -1628,6 +1635,7 @@ int CParticleSwoosh::WrapIndex(int index) {
 float CParticleSwoosh::GetLeftRadius(int index) {
   float ret = 0.f;
   if (x1c_desc->x8_LRAD) {
+    CPortKeepScope scope(&x15c_swooshes[index].mPortKeep);
     x1c_desc->x8_LRAD->GetValue(x15c_swooshes[index].mFrame, ret);
   }
 
@@ -1636,6 +1644,7 @@ float CParticleSwoosh::GetLeftRadius(int index) {
 float CParticleSwoosh::GetRightRadius(int index) {
   float ret = 0.f;
   if (x1c_desc->xc_RRAD) {
+    CPortKeepScope scope(&x15c_swooshes[index].mPortKeep);
     x1c_desc->xc_RRAD->GetValue(x15c_swooshes[index].mFrame, ret);
   }
 
