@@ -1559,12 +1559,14 @@ public:
     // Children first, so the root never names a child that was not written.
     for (size_t i = 1; i < parts.size(); ++i) {
       const auto child = children.find(parts[i].id);
+      error.clear();
       if (child == children.end() || child->second.type != parts[i].type ||
           !SplitRetailEffect(parts[i].type, parts[i].part.data(), parts[i].part.size(), check, error) ||
           !m_io.write(Hex8(child->second.id) + "." + EffectFourCCString(parts[i].type), parts[i].part)) {
         // The root would name a missing child: leave the disc's PART in place.
         ++m_result.failed;
-        Log(name + ": child " + EffectGuidString(parts[i].id) + " not written");
+        Log(name + ": child " + EffectGuidString(parts[i].id) + " not written" +
+            (error.empty() ? std::string() : ": " + error));
         Report(row, "failed", "child " + EffectGuidString(parts[i].id) + " not written");
         return;
       }

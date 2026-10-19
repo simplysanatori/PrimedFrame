@@ -2069,10 +2069,11 @@ public:
       return false;
     }
     // One stop and no period (CCEFastConstant: 13 bytes, no tail) is that stop's colour, whatever
-    // the age: a constant colour, the halves decoded exactly.
+    // the age: a constant colour (CCEConstant, four real CNSTs), the halves decoded exactly.
     if (stops == 1 && size == 13) {
       AppendBE32(out, F("CNST"));
       for (size_t c = 0; c < 4; ++c) {
+        AppendBE32(out, F("CNST"));
         AppendBE32(out, FloatBits(HalfToFloat(uint16_t(p[1 + 2 * c] | p[2 + 2 * c] << 8))));
       }
       return true;
