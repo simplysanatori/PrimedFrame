@@ -16,6 +16,7 @@
 #include "port_room_geo.h"
 #include "port_room_liquid.h"
 #include "port_savestate.h"
+#include "port_scene_copy.h"
 #include "port_skip_cutscenes.h"
 #include "port_viewmodel.h"
 #include "port_console.h"
@@ -3333,6 +3334,8 @@ void CStateManager::DrawWorld() const {
   gpRender->SetThermalColdScale(xf28_thermColdScale2 + xf24_thermColdScale1);
 #ifdef TARGET_PC
   bool portRoomGeo[10] = {};
+  // The draw token each area's sorted pass ran with (pass B).
+  uint portDrawToken[10] = {};
   // Collision view "only": the world draws nothing but Samus (port_collision_view.h).
   const bool portCollisionOnly = !thermal && PortCollisionView::Only();
   const CGameArea* portVisArea = nullptr;
@@ -3527,12 +3530,15 @@ void CStateManager::DrawWorld() const {
       PortRoomGeo::AddSorted(area);
     }
     if (isVisArea && !thermal && !portCollisionOnly) {
+      // The decals are queued after the stash below, to draw with the opaque world.
+      x884_actorModelParticles->AddStragglersToRenderer(*this);
+    }
 #else
     if (isVisArea && !thermal) {
-#endif
       CDecalManager::AddToRenderer(frustum, *this);
       x884_actorModelParticles->AddStragglersToRenderer(*this);
     }
+#endif
     ++x8dc_objectDrawToken;
     x84c_player->MorphBall()->DrawBallShadow(const_cast< CStateManager& >(*this));
 #if VERSION >= VERSION_GM8P_00 && VERSION != VERSION_GM8E_02
@@ -3552,14 +3558,38 @@ void CStateManager::DrawWorld() const {
 #endif
     gpRender->EnablePVS(&set, area.GetId().Value());
 #ifdef TARGET_PC
-    // The actors still go through the buckets; only the area's own surfaces stay out.
-    PortRoomGeo::sReplacingArea = portRoomGeo[i];
-#endif
+    // Pass A of Remastered's order (RenderPrimaryPass): opaque world and models, then decals,
+    // for every area before any area's transparents. The area's sorted drawables wait in a
+    // stash for pass B; its decals and simple shadows draw now, sorted among themselves.
+    portDrawToken[i] = x8dc_objectDrawToken;
+    gpRender->PortStashBuckets(i);
+    if (isVisArea && !thermal && !portCollisionOnly) {
+      CDecalManager::AddToRenderer(frustum, *this);
+    }
+    gpRender->PortDrawSortedDrawables(area.GetId().Value());
+#else
     gpRender->DrawSortedGeometry(area.GetId().Value(), mask, targetMask);
-#ifdef TARGET_PC
-    PortRoomGeo::sReplacingArea = false;
 #endif
   }
+
+#ifdef TARGET_PC
+  // Opaque world, opaque models, sky and decals are all down (port_scene_copy.h).
+  PortSceneCopyPoint();
+  // Pass B: each area's sorted drawables and world surfaces, in the same order and with the
+  // fog, light fade, PVS, draw token and room-geometry state pass A had for that area.
+  for (int i = 0; i < areas.size(); ++i) {
+    const CGameArea& area = *areas[i];
+    SetupFogForArea(area);
+    gpRender->SetWorldLightFadeLevel(area.GetPostConstructed()->x1128_worldLightingLevel);
+    gpRender->EnablePVS(&visibility[i], area.GetId().Value());
+    x8dc_objectDrawToken = portDrawToken[i];
+    gpRender->PortRestoreBuckets(i);
+    // The actors still go through the buckets; only the area's own surfaces stay out.
+    PortRoomGeo::sReplacingArea = portRoomGeo[i];
+    gpRender->DrawSortedGeometry(area.GetId().Value(), mask, targetMask);
+    PortRoomGeo::sReplacingArea = false;
+  }
+#endif
 
 #ifdef TARGET_PC
   if (sShadowCheck && portShadow && CGraphics::GetFrameCounter() % 300 == 0) {
