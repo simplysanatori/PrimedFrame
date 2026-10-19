@@ -1304,6 +1304,59 @@ public:
       AppendBE32(out, m_xfmd == 5 ? (m_pofs == 1 ? 2 : 1) : 0);
       return true;
     }
+    // CRCV(centre, axis, start degrees, count, variance, radius, shuffle): the port-only PCRC. The
+    // last byte is the size of Remastered's index shuffler, 0 for none. The axis is read once, so it
+    // must be a constant. CSectionedElementData::Init 0x2a68dc builds a shuffler only for a constant
+    // nonzero count (a count that is not a constant has none), sized by it (below 2 it is 1, kept in
+    // a byte); a constant 0 count is Compile1d 0x2a6ae4's: the count becomes the owning generator's
+    // MAXP (clamped 1 to 128) and the flag sets a shuffler of that many cells. A MAXP that is not a
+    // constant there stays dropped.
+    if (value.fourcc == F("CRCV") && type == Type::Vector && value.args.size() == 7) {
+      if (!IsConstantValue(value.args[1])) {
+        why = "CRCV with an axis that is not a constant";
+        return false;
+      }
+      const EffectValue& flag = value.args[6];
+      if (flag.kind != EffectValue::Kind::Byte && flag.kind != EffectValue::Kind::Word) {
+        why = "CRCV with a shuffle flag that is not a byte";
+        return false;
+      }
+      uint32_t count = 0;
+      const bool known = ConstWord(value.args[3], count);
+      bool resolved = false;
+      uint32_t shuffle = 0;
+      if (known && count == 0) {
+        if (m_maxp < 0) {
+          why = "CRCV with a constant 0 count and a MAXP that is not a constant";
+          return false;
+        }
+        count = uint32_t(PortParticleMath::SectionTotal(int32_t(uint32_t(m_maxp))));
+        resolved = true;
+        shuffle = flag.word != 0 ? count & 0xff : 0;
+      } else if (known) {
+        if (count > 255) {
+          why = "CRCV with a constant count over 255 (Remastered keeps it in a byte)";
+          return false;
+        }
+        if (flag.word != 0) {
+          shuffle = std::max<uint32_t>(count, 1) & 0xff;
+        }
+      }
+      AppendBE32(out, F("PCRC"));
+      static const Type kTypes[] = {Type::Vector, Type::Vector, Type::Real, Type::Int, Type::Real, Type::Real};
+      for (size_t i = 0; i < 6; ++i) {
+        if (resolved && i == 3) {
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, count);
+          continue;
+        }
+        if (!Element(value.args[i], kTypes[i], out, why)) {
+          return false;
+        }
+      }
+      out.push_back(uint8_t(shuffle));
+      return true;
+    }
     // MPAC(x centre, y centre, x range, y range, magnitude): the port-only PMAC runs
     // MPT_CVEAngleCone-like 0x29fec0 as is, a direction in retail's space (the MPCB around it
     // turns it to Remastered's).
@@ -4108,6 +4161,10 @@ public:
     if (fourcc == F("PANM") && type == Type::Vector) {
       return Element(Type::Real) && Element(Type::Real) && Element(Type::Real) && Element(Type::Real) &&
              Element(Type::Real) && Element(Type::Real);
+    }
+    if (fourcc == F("PCRC") && type == Type::Vector) {
+      return Element(Type::Vector) && Element(Type::Vector) && Element(Type::Real) && Element(Type::Int) &&
+             Element(Type::Real) && Element(Type::Real) && Skip(1);
     }
     if (fourcc == F("PMCN") && type == Type::Vector) {
       return Element(Type::Vector) && Element(Type::Real);

@@ -345,11 +345,94 @@ void TestPlnvCounts() {
   CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, PlnvTail(2, 2, 4)), "constant counts ignore MAXP");
 }
 
+// CRCV: SEMR(CRCV(centre, axis, 0, n, 1, 2, flag), velocity) in an EMTR; MAXP 3rd.
+std::vector<ConvertedPart> ConvertCrcv(uint32_t maxp, bool maxpConst, uint32_t n, int flag, bool axisConst,
+                                       std::vector<uint8_t>& out) {
+  EffectNode effect;
+  auto vec = [](std::vector<uint8_t>& o, float x, float y, float z) {
+    PutFourCC(o, "CNST");
+    PutConstant(o, Bits(x));
+    PutConstant(o, Bits(y));
+    PutConstant(o, Bits(z));
+  };
+  return ConvertGen(
+      [&](std::vector<uint8_t>& o) {
+        PutProperty(o, "MAXP", 3);
+        if (maxpConst) {
+          PutConstant(o, maxp);
+        } else {
+          PutFourCC(o, "ABS_");
+          PutConstant(o, maxp);
+        }
+        PutProperty(o, "EMTR", 3);
+        PutFourCC(o, "SEMR");
+        PutFourCC(o, "CRCV");
+        vec(o, 0, 0, 0);
+        if (axisConst) {
+          vec(o, 0, 1, 0);
+        } else {
+          PutFourCC(o, "PLOC");
+        }
+        PutConstant(o, Bits(0.0f));
+        PutConstant(o, n);
+        PutConstant(o, Bits(1.0f));
+        PutConstant(o, Bits(2.0f));
+        o.push_back(uint8_t(flag));
+        vec(o, 0, 0, 0);
+      },
+      effect, out);
+}
+
+// The bytes PCRC ends with: the count, variance, radius, shuffler size.
+std::vector<uint8_t> CrcvTail(uint32_t n, uint32_t shuffle) {
+  Retail t;
+  t.f("CNST").w(n).f("CNST").w(Bits(1.0f)).f("CNST").w(Bits(2.0f)).b(uint8_t(shuffle));
+  return t.bytes;
+}
+
+bool Dropped(const std::vector<ConvertedPart>& parts, const char* what) {
+  if (parts.size() != 1) {
+    return false;
+  }
+  for (const std::string& d : parts[0].dropped) {
+    if (d.find(what) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void TestCircleConvert() {
+  std::vector<uint8_t> out;
+  // A 0 count is the generator's MAXP (clamped 1 to 128), 126ebc84 (3), 900b2baa (4), 3d8d5854 (1024).
+  auto parts = ConvertCrcv(3, true, 0, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() && Contains(parts[0].part, CrcvTail(3, 3)),
+            "MAXP 3, flag: count 3, 3-cell shuffler");
+  parts = ConvertCrcv(60, true, 0, 0, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, CrcvTail(60, 0)), "MAXP 60, no flag: count 60, none");
+  parts = ConvertCrcv(1024, true, 0, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, CrcvTail(128, 128)), "MAXP 1024: 128");
+  parts = ConvertCrcv(0, true, 0, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, CrcvTail(1, 1)), "MAXP 0: 1");
+  // A nonzero count stands, with Init's shuffler; no MAXP needed.
+  parts = ConvertCrcv(10, false, 6, 1, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, CrcvTail(6, 6)), "count 6 and the flag: 6 cells");
+  parts = ConvertCrcv(10, false, 6, 0, true, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, CrcvTail(6, 0)), "count 6, no flag: no shuffler");
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, Retail().f("PCRC").bytes), "it is the port-only PCRC");
+  parts = ConvertCrcv(10, false, 0, 1, true, out);
+  CHECK_MSG(Dropped(parts, "CRCV with a constant 0 count and a MAXP that is not a constant"),
+            "a zero count with a variable MAXP is dropped, naming it");
+  parts = ConvertCrcv(10, true, 4, 1, false, out);
+  CHECK_MSG(Dropped(parts, "CRCV with an axis that is not a constant"), "a variable axis is dropped, naming it");
+}
+
 }  // namespace
 
 int main() {
   TestNegate();
   TestPlnvCounts();
+  TestCircleConvert();
   if (port_test::Failures() == 0) {
     std::printf("port_elem2_convert: ok\n");
   }

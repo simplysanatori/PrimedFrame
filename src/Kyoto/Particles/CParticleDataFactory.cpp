@@ -1461,6 +1461,17 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     ret = rs_new CVEPortMpac(xCentre, yCentre, xRange, yRange, magnitude);
     break;
   }
+  case SBIG('PCRC'): {
+    CVectorElement* centre = GetVectorElement(in);
+    CVectorElement* axis = GetVectorElement(in);
+    CRealElement* start = GetRealElement(in);
+    CIntElement* count = GetIntElement(in);
+    CRealElement* variance = GetRealElement(in);
+    CRealElement* radius = GetRealElement(in);
+    const u8 shuffle = u8(in.ReadChar());
+    ret = rs_new CVEPortCircle(centre, axis, start, count, variance, radius, shuffle);
+    break;
+  }
   case SBIG('PMCN'): {
     CVectorElement* direction = GetVectorElement(in);
     CRealElement* radius = GetRealElement(in);

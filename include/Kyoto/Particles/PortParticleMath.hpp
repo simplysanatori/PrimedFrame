@@ -894,6 +894,43 @@ inline CVector3f AngleConeMinMax(const Quat& q, float aDegrees, float bDegrees, 
   return CVector3f(d.GetX() * magnitude, d.GetY() * magnitude, d.GetZ() * magnitude);
 }
 
+// CRCV (CVECircleWithVariance ctor 0x2a0988): the unit axis's two in-plane vectors. u is
+// (-z, 0, x) when x > 0.8, else (0, z, -y), not renormalized; v is axis x u.
+struct CircleFrame {
+  CVector3f u;
+  CVector3f v;
+};
+
+inline CircleFrame MakeCircleFrame(const CVector3f& axis) {
+  const CVector3f n = NormalizeInPlace(axis);
+  const CVector3f u = n.GetX() > 0.8f ? CVector3f(-n.GetZ(), 0.f, n.GetX()) : CVector3f(0.f, n.GetZ(), -n.GetY());
+  const float vx = n.GetY() * u.GetZ() - n.GetZ() * u.GetY();
+  const float vy = n.GetZ() * u.GetX() - n.GetX() * u.GetZ();
+  const float vz = n.GetX() * u.GetY() - n.GetY() * u.GetX();
+  return CircleFrame{u, CVector3f(vx, vy, vz)};
+}
+
+// CRCV GetValue 0x2a0a7c: the angle in radians, wrapped. The step is 360 / n degrees, the
+// jitter (var * step / 2) spread over two halves by the draw d (Remastered's Float()).
+inline float CircleAngle(float startDegrees, int n, float variance, int index, float d) {
+  const float step = 360.f / float(n);
+  const float vs = variance * step;
+  const float h = vs * .5f;
+  const float placed = startDegrees + step * float(index);
+  const float jitter = (h + h) * d - h;
+  return WrapAngle((placed + jitter) * BitsFloat(0x3c8efa35));
+}
+
+// center + radius * (u cos + v sin), each lane as ((r u) cos) then ((sin r) v) added.
+inline CVector3f CirclePoint(const CVector3f& centre, const CircleFrame& frame, float radius, float angle) {
+  const float sn = ParabolicSin(angle);
+  const float cs = ParabolicSin(WrapAngle(angle + BitsFloat(0x3fc90fdb)));
+  const float sr = sn * radius;
+  return CVector3f(centre.GetX() + radius * frame.u.GetX() * cs + sr * frame.v.GetX(),
+                   centre.GetY() + radius * frame.u.GetY() * cs + sr * frame.v.GetY(),
+                   centre.GetZ() + radius * frame.u.GetZ() * cs + sr * frame.v.GetZ());
+}
+
 } // namespace PortParticleMath
 
 #endif

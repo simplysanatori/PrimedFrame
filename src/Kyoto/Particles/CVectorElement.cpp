@@ -687,6 +687,61 @@ bool CVEPortMpac::GetValue(int frame, CVector3f& valOut) const {
   return false;
 }
 
+CVEPortCircle::CVEPortCircle(CVectorElement* centre, CVectorElement* axis, CRealElement* startDegrees,
+                             CIntElement* count, CRealElement* variance, CRealElement* radius, u8 shuffle)
+: mCentre(centre)
+, mAxis(axis)
+, mStartDegrees(startDegrees)
+, mCount(count)
+, mVariance(variance)
+, mRadius(radius)
+, mShuffle(shuffle) {}
+
+CVEPortCircle::~CVEPortCircle() {
+  delete mCentre;
+  delete mAxis;
+  delete mStartDegrees;
+  delete mCount;
+  delete mVariance;
+  delete mRadius;
+}
+
+// Children in order (centre, start, count, variance, radius), the index (the creation count, or the
+// shuffler's pick) before the one draw.
+bool CVEPortCircle::GetValue(int frame, CVector3f& valOut) const {
+  CVector3f centre = CVector3f::Zero();
+  CVector3f axis = CVector3f::Zero();
+  float start = 0.f;
+  int count = 0;
+  float variance = 0.f;
+  float radius = 0.f;
+  mCentre->GetValue(frame, centre);
+  mAxis->GetValue(0, axis);
+  mStartDegrees->GetValue(frame, start);
+  mCount->GetValue(frame, count);
+  mVariance->GetValue(frame, variance);
+  mRadius->GetValue(frame, radius);
+  CRandom16* random = CRandom16::GetRandomNumber();
+  CElementGen* generator = nullptr;
+  const CParticleGlobals::SParticleSystem* system = CParticleGlobals::GetCurrentParticleSystem();
+  if (system != nullptr && CParticleGlobals::xPortSwooshEval == nullptr) {
+    generator = system->x4_system;
+  }
+  int index;
+  if (mShuffle != 0) {
+    PortParticleMath::IndexShuffler& shuffler =
+        generator != nullptr ? generator->PortShuffler(this) : mFallbackShuffler;
+    index = shuffler.Next(mShuffle, [random] { return uint32_t(random->Next()); }) & 0xff;
+  } else {
+    // Retail counts a particle before its emitter runs; Remastered's total is one less.
+    index = generator != nullptr ? std::max(generator->GetCumulativeParticleCount() - 1, 0) : 0;
+  }
+  const float d = random->PortFloat28();
+  const float angle = PortParticleMath::CircleAngle(start, count, variance, index, d);
+  valOut = PortParticleMath::CirclePoint(centre, PortParticleMath::MakeCircleFrame(axis), radius, angle);
+  return false;
+}
+
 CVEPortCone::CVEPortCone(CVectorElement* direction, CRealElement* radius)
 : mDirection(direction), mRadius(radius), mU(0.f, 0.f, 0.f), mV(0.f, 0.f, 0.f) {}
 

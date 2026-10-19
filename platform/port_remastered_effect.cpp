@@ -133,6 +133,7 @@ constexpr ElementSig kVectorSigs[] = {
     {"CIRC", "VVRRR"}, {"CCLU", "VVIR"}, {"ADD_", "VV"},  {"MULT", "VV"},  {"CHAN", "VVI"},   {"PULS", "IIVV"},
     {"RTOV", "R"},   {"PLOC", "-"},     {"PLCO", "-"},    {"PVEL", "-"},   {"PSOF", "-"},     {"PSOU", "-"},
     {"PSOR", "-"},   {"PSTR", "-"},     {"SUB_", "VV"},   {"CTVC", "C"},   {"MPCB", "V"},     {"MPAC", "RRRRR"}, {"MPCN", "VR"},
+    {"CRCV", "VVRIRRb"},
     {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"ROTV", "Ve"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
     {"SLCT", "Re"},  {"NORM", "V"},     {"CMPS", "-"},    {"EXTT", "-"},   {"EXTS", "-"},
     {"CPSS", "-"},  {"ABS_", "V"},
@@ -155,7 +156,7 @@ constexpr ElementSig kBoolSigs[] = {{"LTHN", "RR"}};
 
 constexpr ElementSig kEmitterSigs[] = {
     {"NONE", "-"}, {"SEMR", "VV"}, {"SPHE", "VRR"}, {"ASPH", "VRRRRRR"}, {"ASPR", "VeRRRR"},
-    {"CODE", "-"}, {"PLNE", "VVVRRR"}, {"ELPS", "VVVRe"}, {"PLNV", "VVRRRRIRIRb"}, {"SPEV", "VRRRRRRb"},
+    {"CODE", "-"}, {"PLNE", "VVVRRR"}, {"ELPS", "VVVRb"}, {"PLNV", "VVRRRRIRIRb"}, {"SPEV", "VRRRRRRb"},
 };
 
 // Remastered's rotations (GetRotationElement); retail has none. CNST is a raw

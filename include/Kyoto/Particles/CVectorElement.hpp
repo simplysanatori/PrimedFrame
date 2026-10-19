@@ -6,6 +6,9 @@
 
 #include "Kyoto/Math/CVector3f.hpp"
 #include "Kyoto/Particles/IElement.hpp"
+#ifdef TARGET_PC
+#include "Kyoto/Particles/PortParticleMath.hpp"
+#endif
 
 #include "rstl/single_ptr.hpp"
 
@@ -332,6 +335,28 @@ private:
   CRealElement* mMinAngle;
   CRealElement* mMaxAngle;
   CRealElement* mMagnitude;
+};
+
+// Remastered CRCV (CVECircleWithVariance::GetValue 0x2a0a7c), in Remastered's numbers: a point of
+// the circle around the centre in the plane of the axis (constant, read at frame 0), the ring
+// divided into n steps visited in creation order or, with a shuffler of n cells, a random one.
+class CVEPortCircle : public CVectorElement {
+public:
+  CVEPortCircle(CVectorElement* centre, CVectorElement* axis, CRealElement* startDegrees, CIntElement* count,
+                CRealElement* variance, CRealElement* radius, u8 shuffle);
+  ~CVEPortCircle() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CVectorElement* mCentre;
+  CVectorElement* mAxis;
+  CRealElement* mStartDegrees;
+  CIntElement* mCount;
+  CRealElement* mVariance;
+  CRealElement* mRadius;
+  u8 mShuffle; // the size of Remastered's index shuffler, 0 for none
+  mutable PortParticleMath::IndexShuffler mFallbackShuffler;
 };
 
 // Remastered NORM (CVENormalizeVector::GetValue 0x29e620): the child scaled to unit length,
