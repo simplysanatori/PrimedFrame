@@ -1140,6 +1140,9 @@ void CStateManager::RemoveObject(TUniqueId id) {
   for (int i = 0; i < x808_objectLists.size(); ++i) {
     x808_objectLists[i]->RemoveObject(id);
   }
+#ifdef TARGET_PC
+  PortSaveState::NoteRemoved(*this, id.value);
+#endif
 }
 
 void CStateManager::CreateStandardGameObjects() {
@@ -2387,7 +2390,17 @@ rstl::pair< TEditorId, TUniqueId > CStateManager::GenerateObject(const TEditorId
     const rstl::pair< const uchar*, int > layerBuf =
         area->GetLayerScriptBuffer(TLayerId(build.second.value >> 26));
     CMemoryInStream stream(layerBuf.first + build.first->x4_position, build.first->x8_length);
+#ifdef TARGET_PC
+    // Only script generators set the generating flag (a boss's own spawns do not):
+    // a save state brings such a copy back from the template it was made from.
+    const rstl::pair< TEditorId, TUniqueId > made =
+        LoadScriptObject(TAreaId(areaId), build.first->x0_type, build.first->x8_length, stream);
+    if (xf94_26_generatingObject && made.second != kInvalidUniqueId)
+      PortSaveState::NoteGenerated(*this, made.second.value);
+    return made;
+#else
     return LoadScriptObject(TAreaId(areaId), build.first->x0_type, build.first->x8_length, stream);
+#endif
   }
 
   return rstl::pair< TEditorId, TUniqueId >(kInvalidEditorId, kInvalidUniqueId);
@@ -2510,6 +2523,10 @@ void CStateManager::SendScriptMsg(TUniqueId uid, TEditorId target, EScriptObject
   TIdList::const_iterator it = search.first;
   for (; it != search.second; ++it) {
     CEntity* ent = allList->GetObjectById(it->second);
+#ifdef TARGET_PC
+    if (ent != nullptr && !ent->IsScriptingBlocked())
+      PortSaveState::NoteScriptMsg(*this, ent->GetUniqueId().value, uid.value, msg);
+#endif
     DeliverScriptMsg(ent, uid, msg);
   }
 }

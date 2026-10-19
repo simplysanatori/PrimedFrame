@@ -9,12 +9,19 @@
 #include "MetroidPrime/CScriptLayerManager.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/CWorld.hpp"
+#include "MetroidPrime/Cameras/CCinematicCamera.hpp"
 #include "MetroidPrime/Enemies/CPatterned.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
 #include "MetroidPrime/Player/CWorldState.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptCounter.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptDoor.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptEMPulse.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptHUDMemo.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptMazeNode.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptMemoryRelay.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptMidi.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptPlatform.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptStreamedMusic.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptTimer.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 
@@ -35,6 +42,8 @@ enum RoomTag : uint32_t {
   kTagCounter = 6,    // current
   kTagDoor = 7,       // open
   kTagPlatform = 8,   // current and target waypoint (editor ids), speed, move delay
+  kTagGenerated = 9,  // empty: a script generator's copy of the enemy with this editor id
+  kTagMessages = 10,  // the script messages the enemy was sent (EncodeScriptMsgs)
 };
 
 // Friend of the script classes whose state is private.
@@ -183,14 +192,57 @@ uint32_t ScriptId(const CEntity& ent) {
   return ent.GetEditorId().Value();
 }
 
+// What the CStateManager hooks noted per object (raw TUniqueId value), tagged with
+// the manager it belongs to so a world being torn down never touches the next one's.
+struct Noted {
+  const CStateManager* mgr = nullptr;
+  bool generated = false;
+  std::vector< ScriptMsgEntry > msgs;
+};
+std::map< uint16_t, Noted > sNoted;
+
+const Noted* FindNoted(const CStateManager& mgr, TUniqueId uid) {
+  const auto it = sNoted.find(uid.value);
+  return it != sNoted.end() && it->second.mgr == &mgr ? &it->second : nullptr;
+}
+
+Noted& NoteFor(const CStateManager& mgr, TUniqueId uid) {
+  Noted& n = sNoted[uid.value];
+  if (n.mgr != &mgr) {
+    n = Noted();
+    n.mgr = &mgr;
+  }
+  return n;
+}
+
+TUniqueId RawId(uint16_t value) {
+  TUniqueId uid;
+  uid.value = value;
+  return uid;
+}
+
 bool IsGone(const CEntity& ent) {
   const CPatterned* patterned = TCastToConstPtr< CPatterned >(const_cast< CEntity* >(&ent));
   return patterned != nullptr && !patterned->IsAlive();
 }
 
+// A script generator's copy carries its template's editor id. Enemy copies are saved
+// as copies (fights count their deaths); other copies (pickups, maze walls) are not
+// saved at all, as before, but no longer overwrite their template's record.
+bool IsGeneratedCopy(const CStateManager& mgr, CEntity& ent) {
+  const Noted* n = FindNoted(mgr, ent.GetUniqueId());
+  return n != nullptr && n->generated;
+}
+
 void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
   obj.editorId = ent.GetEditorId().Value();
   obj.active = ent.GetActive();
+  if (const Noted* n = FindNoted(mgr, ent.GetUniqueId())) {
+    if (n->generated)
+      obj.blocks.push_back({kTagGenerated, std::string()});
+    if (!n->msgs.empty())
+      obj.blocks.push_back({kTagMessages, EncodeScriptMsgs(n->msgs)});
+  }
 
   CActor* actor = TCastToPtr< CActor >(&ent);
   if (actor != nullptr) {
@@ -249,9 +301,67 @@ void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
   }
 }
 
-void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj) {
-  if (ent.GetActive() != obj.active)
-    ent.SetActive(obj.active);
+// Delivers `msg` with the entity's links cleared: the handler's own sends (kSS_Active
+// and the like) are dropped, since their targets are restored from the save themselves.
+void DeliverUnlinked(CStateManager& mgr, CEntity& ent, TUniqueId sender, EScriptObjectMessage msg) {
+  const rstl::vector< SConnection > conns = ent.ConnectionList();
+  ent.ConnectionList().clear();
+  mgr.DeliverScriptMsg(&ent, sender, msg);
+  ent.ConnectionList() = conns;
+}
+
+// Many classes do their setup in the kSM_Activate/kSM_Deactivate handler (Flaahgra builds
+// its body controller there, bosses and turrets switch their collision actors, drones their
+// lights), and the script that sent it never runs again after a state load, so a bare
+// SetActive leaves them half set up (a mid-fight Flaahgra crashed in Think on a null body
+// controller). A cinematic camera's handler starts the cinematic, so it only gets the flag.
+// Same for handlers with one-shot side effects: memory relays (mailbox), HUD memos, streamed
+// music/MIDI stop, EMP pulses (static interference) and maze nodes (barrier delete).
+void RestoreActive(CStateManager& mgr, CEntity& ent, bool active) {
+  if (ent.GetActive() == active)
+    return;
+  if (dynamic_cast< CCinematicCamera* >(&ent) != nullptr ||
+      dynamic_cast< CScriptMemoryRelay* >(&ent) != nullptr ||
+      dynamic_cast< CScriptHUDMemo* >(&ent) != nullptr ||
+      dynamic_cast< CScriptStreamedMusic* >(&ent) != nullptr ||
+      dynamic_cast< CScriptMidi* >(&ent) != nullptr ||
+      dynamic_cast< CScriptEMPulse* >(&ent) != nullptr ||
+      dynamic_cast< CScriptMazeNode* >(&ent) != nullptr) {
+    ent.SetActive(active);
+    return;
+  }
+  DeliverUnlinked(mgr, ent, kInvalidUniqueId, active ? kSM_Activate : kSM_Deactivate);
+  if (ent.GetActive() != active)
+    ent.SetActive(active);
+}
+
+// Sends the enemy the script messages it had been sent before the save, in order (what
+// woke a boss: a trigger's Action to Thardus), and keeps them for the next save.
+// Senders are the objects of the rebuilt room with the saved editor ids.
+int ReplayScriptMsgs(CStateManager& mgr, CEntity& ent, const RoomObject& obj) {
+  const RoomBlock* b = FindBlock(obj, kTagMessages);
+  std::vector< ScriptMsgEntry > journal;
+  if (b == nullptr || !DecodeScriptMsgs(b->data, journal) || journal.empty())
+    return 0;
+  const TUniqueId uid = ent.GetUniqueId();
+  for (const ScriptMsgEntry& e : journal) {
+    const TUniqueId sender =
+        e.sender == kNoEditorId ? kInvalidUniqueId : mgr.GetIdForScript(TEditorId(e.sender));
+    DeliverUnlinked(mgr, ent, sender, static_cast< EScriptObjectMessage >(e.msg));
+    // A handler may delete the object (an enemy told to go away).
+    if (mgr.ObjectById(uid) != &ent || ent.IsInGraveyard())
+      break;
+  }
+  NoteFor(mgr, uid).msgs = journal;
+  return static_cast< int >(journal.size());
+}
+
+void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomApplyStats& stats) {
+  RestoreActive(mgr, ent, obj.active);
+  // Before the saved health and pose, which then win over whatever a message reset.
+  stats.replayed += ReplayScriptMsgs(mgr, ent, obj);
+  if (ent.IsInGraveyard())
+    return;
 
   CActor* actor = TCastToPtr< CActor >(&ent);
   if (actor != nullptr) {
@@ -410,6 +520,31 @@ void RestoreOverride(const SpawnOverride& o) {
 
 } // namespace
 
+void NoteScriptMsg(CStateManager& mgr, uint16_t dest, uint16_t sender, int msg) {
+  if (!JournalsScriptMsg(msg))
+    return;
+  CEntity* ent = mgr.ObjectById(RawId(dest));
+  if (ent == nullptr || TCastToPtr< CPatterned >(ent) == nullptr || ScriptId(*ent) == kNoEditorId)
+    return;
+  ScriptMsgEntry e;
+  e.msg = static_cast< uint8_t >(msg);
+  const TUniqueId from = RawId(sender);
+  if (from != kInvalidUniqueId && mgr.ObjectById(from) != nullptr) {
+    const TEditorId eid = mgr.GetEditorIdForUniqueId(from);
+    if (eid != kInvalidEditorId)
+      e.sender = eid.Value();
+  }
+  AppendScriptMsg(NoteFor(mgr, ent->GetUniqueId()).msgs, e);
+}
+
+void NoteGenerated(CStateManager& mgr, uint16_t uid) { NoteFor(mgr, RawId(uid)).generated = true; }
+
+void NoteRemoved(CStateManager& mgr, uint16_t uid) {
+  const auto it = sNoted.find(uid);
+  if (it != sNoted.end() && it->second.mgr == &mgr)
+    sNoted.erase(it);
+}
+
 void NoteAreaSpawnBegin(CStateManager& mgr, int area) {
   const CScriptLayerManager* layers = mgr.WorldLayerState().GetPtr();
   if (layers == nullptr || area < 0 || area >= static_cast< int >(layers->GetAreaLayers().size()))
@@ -492,7 +627,12 @@ void CaptureRoomState(CStateManager& mgr, RoomState& out) {
     const uint32_t id = ScriptId(ent);
     if (id == kNoEditorId || areas.count(ent.GetEditorId().AreaNum()) == 0 || IsGone(ent))
       return;
-    out.present.push_back(id);
+    const bool generated = IsGeneratedCopy(mgr, ent);
+    if (generated && TCastToPtr< CPatterned >(&ent) == nullptr)
+      return;
+    // A copy's editor id is its template's: the template decides whether that id is present.
+    if (!generated)
+      out.present.push_back(id);
     RoomObject obj;
     CaptureObject(mgr, ent, obj);
     out.objects.push_back(std::move(obj));
@@ -548,16 +688,38 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
     ++stats.removed;
   }
   RestorePlatforms(mgr, room, now);
+  std::vector< const RoomObject* > copies;
   for (const RoomObject& obj : room.objects) {
     if (now.count(TEditorId(obj.editorId).AreaNum()) == 0)
       continue;
+    if (FindBlock(obj, kTagGenerated) != nullptr) {
+      copies.push_back(&obj);
+      continue;
+    }
     CEntity* ent = mgr.ObjectById(mgr.GetIdForScript(TEditorId(obj.editorId)));
     if (ent == nullptr || ent->IsInGraveyard()) {
       ++stats.unmatched;
       continue;
     }
-    ApplyObject(mgr, *ent, obj);
+    ApplyObject(mgr, *ent, obj, stats);
     ++stats.applied;
+  }
+  // The enemies a script generator made (Hive Totem's wasps): the rebuilt room has
+  // only their templates, and a fight counting their deaths would wait forever.
+  // Made again from the template the way CScriptGenerator does, then given the
+  // copy's saved state (ApplyObject sends the Activate the generator sent).
+  for (const RoomObject* obj : copies) {
+    const bool wasGenerating = mgr.IsGeneratingObject();
+    mgr.SetIsGeneratingObject(true);
+    const TUniqueId uid = mgr.GenerateObject(TEditorId(obj->editorId)).second;
+    mgr.SetIsGeneratingObject(wasGenerating);
+    CEntity* ent = uid != kInvalidUniqueId ? mgr.ObjectById(uid) : nullptr;
+    if (ent == nullptr) {
+      ++stats.unmatched;
+      continue;
+    }
+    ApplyObject(mgr, *ent, *obj, stats);
+    ++stats.generated;
   }
   done.insert(done.end(), now.begin(), now.end());
   return waiting;

@@ -838,9 +838,13 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   enemies stay dead, enemies, platforms and moving objects keep position,
   velocity and health, doors keep open or closed (set directly, without firing their connections), timers and counters keep
   their count (about 5 KB, 0.2 ms to capture). Enemy AI state is not kept
-  (they resume from their start behaviour), nor are projectiles, cutscene or
-  boss-fight progress. States without the section, or with the setting off,
-  bring the room back as if just entered.
+  (they resume from their start behaviour), nor are projectiles or cutscene
+  progress. A state saved in a boss fight resumes the fight: objects the script
+  had switched on or off get the same activation they had then, the enemies a
+  script generator had spawned (Hive Totem's War Wasps) are spawned again, and
+  each enemy is sent again the script commands it had been sent (what woke
+  Thardus), before its health and position are put back. States without the
+  section, or with the setting off, bring the room back as if just entered.
   A door saved while it was closing comes back closed with that close still owed:
   the door finishes closing, the messages a live close sends still go out (its
   shield rearms) and it opens again as usual. Its close animation replays from the
