@@ -1399,6 +1399,7 @@ int main(int argc, char** argv) {
     if (PortRemastered::ApplyPendingImport()) {
         PortLog::Write("metroid_prime_port: installed the imported Remastered models\n");
     }
+    PortRemastered::RemoveLegacyImport();
     PortStorageReport::StartLogging();
     PortMods::Initialize();
     // Video-relevant settings in one line, so GPU-driver triage (issues #7,

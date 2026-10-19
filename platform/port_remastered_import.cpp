@@ -3428,6 +3428,45 @@ bool ApplyPendingImport() {
   return MoveIntoPlace(staging);
 }
 
+void RemoveLegacyImport() {
+#if defined(__ANDROID__)
+  std::string rootError;
+  const std::string root = ImportRootFolder(&rootError);
+  const std::string mods = PortMods::Folder();
+  if (root.empty() || mods.empty()) {
+    return;
+  }
+  const fs::path modsPath = PathFromString(mods);
+  // A deletion a kill interrupted resumes here.
+  SweepTrash(modsPath);
+  if (ImportStatus().running) {
+    return;
+  }
+  std::error_code ec;
+  const fs::path installed = PathFromString(root) / kImportModName;
+  const bool installedUsable = fs::is_regular_file(installed / kManifestName, ec) &&
+                               !fs::exists(installed / kMarkerName, ec);
+  const fs::path legacy = modsPath / kImportModName;
+  const fs::file_status legacyStatus = fs::symlink_status(legacy, ec);
+  const bool legacyIsRealDir = !ec && fs::is_directory(legacyStatus);
+  bool samePath = false;
+  if (legacyIsRealDir) {
+    std::error_code a;
+    std::error_code b;
+    const fs::path canonLegacy = fs::canonical(legacy, a);
+    const fs::path canonInstalled = fs::canonical(installed, b);
+    samePath = a || b || canonLegacy == canonInstalled;
+  }
+  if (!PortRemasteredStorage::ShouldDeleteLegacy(true, installedUsable, legacyIsRealDir, samePath)) {
+    return;
+  }
+  PortLog::Write("metroid_prime_port: deleting the old Remastered import in the mods folder (%s), replaced by "
+                 "the app's own copy\n",
+                 legacy.string().c_str());
+  Discard(legacy);
+#endif
+}
+
 int RunImportFromCommandLine(const std::string& nspPath, const std::string& keysPath, bool moviesOnly) {
   std::string keys = keysPath.empty() ? DefaultKeysPath() : keysPath;
   if (keys.empty()) {

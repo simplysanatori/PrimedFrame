@@ -496,6 +496,10 @@ std::string InstalledModFolder();
 // Moves a finished import into place. Call before PortMods::Initialize().
 // True if a mod was installed.
 bool ApplyPendingImport();
+// Android only (a no-op elsewhere): deletes the legacy <mods>/remastered-models once the app's own
+// import is installed and usable (PortRemasteredStorage::ShouldDeleteLegacy), and resumes an
+// interrupted deletion. Call after ApplyPendingImport(), before PortMods::Initialize().
+void RemoveLegacyImport();
 // The same on the import's thread, reported as running with `installing` set, after which the state
 // is the import's result again. Nothing may have a file of the installed mod open (unload the mods
 // first); inside the root that is one rename, where the mods folder was shared storage it was a
