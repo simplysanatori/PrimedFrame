@@ -216,6 +216,10 @@ const Signatures& ElementsOf(Type type) {
       // and variance, then the shuffle byte): Remastered's plane emitters, all in its axes.
       {F("PLNE"), "vvvrrr"},
       {F("PLNV"), "vvrrrrirird"},
+      // The port-only PSPV (position, radius, speed, polar count and variance, azimuth count and
+      // variance, shuffle byte) and PELP (centre, size, speed, surface-only byte).
+      {F("PSPV"), "vrrirird"},
+      {F("PELP"), "vvrd"},
       // Port-only CODE: a null emitter, the generator spawns only from code.
       {F("CODE"), ""},
   };
@@ -422,6 +426,12 @@ bool ConstWord(const EffectValue& value, uint32_t& word) {
 bool ConstIs(const EffectValue& value, uint32_t word) {
   uint32_t have;
   return ConstWord(value, have) && have == word;
+}
+
+// A constant vector of three zeros (CNST of three CNST 0).
+bool IsZeroVector(const EffectValue& value) {
+  return IsElement(value, F("CNST")) && value.args.size() == 3 &&
+         std::all_of(value.args.begin(), value.args.end(), [](const EffectValue& a) { return ConstIs(a, 0); });
 }
 
 // RAND or IRND of CNST 0 and CNST `high` (a real's bits or an int).
@@ -1269,6 +1279,98 @@ public:
         }
       }
       out.push_back(uint8_t(shuffle));
+      return true;
+    }
+    // SPEV(position, radius, speed, n1, variance 1, n2, variance 2, shuffle): the port-only PSPV,
+    // counts and shuffler as for PLNV (Compile2d 0x2a6b90 after Init 0x2a69b8), the position
+    // given in Remastered's axes.
+    if (value.fourcc == F("SPEV") && type == Type::Emitter && value.args.size() == 8) {
+      const EffectValue& flag = value.args[7];
+      if (flag.kind != EffectValue::Kind::Byte && flag.kind != EffectValue::Kind::Word) {
+        why = "SPEV with a shuffle flag that is not a byte";
+        return false;
+      }
+      uint32_t counts[2] = {1, 1};
+      bool known[2] = {false, false};
+      bool anyZero = false;
+      for (int i = 0; i < 2; ++i) {
+        known[i] = ConstWord(value.args[i == 0 ? 3 : 5], counts[i]);
+        if (known[i] && counts[i] > 255) {
+          why = "SPEV with a constant count over 255 (Remastered keeps it in a byte)";
+          return false;
+        }
+        anyZero = anyZero || (known[i] && counts[i] == 0);
+      }
+      uint32_t shuffle = 0;
+      bool resolved = false;
+      if (anyZero) {
+        if (!known[0] || !known[1]) {
+          why = "SPEV with a constant 0 count and a count that is not a constant";
+          return false;
+        }
+        if (m_maxp < 0) {
+          why = "SPEV with a constant 0 count and a MAXP that is not a constant";
+          return false;
+        }
+        const PortParticleMath::SectionCounts grid = PortParticleMath::SectionCompile2d(
+            int(counts[0]), int(counts[1]), counts[0] == 0, counts[1] == 0, PortParticleMath::SectionTotal(int32_t(uint32_t(m_maxp))));
+        counts[0] = uint32_t(grid.n1);
+        counts[1] = uint32_t(grid.n2);
+        resolved = true;
+        if (flag.word != 0) {
+          shuffle = uint32_t(std::max<uint64_t>(uint64_t(counts[0]) * counts[1], 1) & 0xff);
+          if (shuffle == 0) {
+            why = "SPEV with a shuffler of a multiple of 256 cells";
+            return false;
+          }
+        }
+      } else if (flag.word != 0) {
+        uint64_t size = 1;
+        for (int i = 0; i < 2; ++i) {
+          if (known[i]) {
+            size *= counts[i];
+          }
+        }
+        shuffle = uint32_t(std::max<uint64_t>(size, 1) & 0xff);
+        if (shuffle == 0) {
+          why = "SPEV with a shuffler of a multiple of 256 cells";
+          return false;
+        }
+      }
+      AppendBE32(out, F("PSPV"));
+      static const Type kTypes[] = {Type::Vector, Type::Real, Type::Real, Type::Int,
+                                    Type::Real,   Type::Int,  Type::Real};
+      for (size_t i = 0; i < 7; ++i) {
+        if (resolved && (i == 3 || i == 5)) {
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, counts[i == 3 ? 0 : 1]);
+          continue;
+        }
+        if (!Element(value.args[i], kTypes[i], out, why)) {
+          return false;
+        }
+      }
+      out.push_back(uint8_t(shuffle));
+      return true;
+    }
+    // ELPS(centre, size, euler, speed, surface only): the port-only PELP, which has no rotation,
+    // so the euler must be a constant (0, 0, 0). Only the surface-only byte follows.
+    if (value.fourcc == F("ELPS") && type == Type::Emitter && value.args.size() == 5) {
+      const EffectValue& flag = value.args[4];
+      if (flag.kind != EffectValue::Kind::Byte && flag.kind != EffectValue::Kind::Word) {
+        why = "ELPS with a surface-only flag that is not a byte";
+        return false;
+      }
+      if (!IsZeroVector(value.args[2])) {
+        why = "ELPS with a euler that is not a constant (0, 0, 0)";
+        return false;
+      }
+      AppendBE32(out, F("PELP"));
+      if (!Element(value.args[0], Type::Vector, out, why) || !Element(value.args[1], Type::Vector, out, why) ||
+          !Element(value.args[3], Type::Real, out, why)) {
+        return false;
+      }
+      out.push_back(flag.word != 0 ? 1 : 0);
       return true;
     }
     // EMRV: the per-tick change of the system's translation (CVEVelocityCalc), in Remastered's

@@ -427,12 +427,100 @@ void TestCircleConvert() {
   CHECK_MSG(Dropped(parts, "CRCV with an axis that is not a constant"), "a variable axis is dropped, naming it");
 }
 
+// SPEV(0, r, spd, n1, 1, n2, 1, flag) in an EMTR with a MAXP.
+std::vector<ConvertedPart> ConvertSpev(uint32_t maxp, bool maxpConst, uint32_t n1, uint32_t n2, int flag,
+                                       std::vector<uint8_t>& out) {
+  EffectNode effect;
+  return ConvertGen(
+      [&](std::vector<uint8_t>& o) {
+        PutProperty(o, "MAXP", 3);
+        if (maxpConst) {
+          PutConstant(o, maxp);
+        } else {
+          PutFourCC(o, "ABS_");
+          PutConstant(o, maxp);
+        }
+        PutProperty(o, "EMTR", 3);
+        PutFourCC(o, "SPEV");
+        PutFourCC(o, "CNST");
+        PutConstant(o, Bits(0.0f));
+        PutConstant(o, Bits(0.0f));
+        PutConstant(o, Bits(0.0f));
+        PutConstant(o, Bits(0.1f));
+        PutConstant(o, Bits(0.5f));
+        PutConstant(o, n1);
+        PutConstant(o, Bits(1.0f));
+        PutConstant(o, n2);
+        PutConstant(o, Bits(1.0f));
+        o.push_back(uint8_t(flag));
+      },
+      effect, out);
+}
+
+std::vector<uint8_t> SpevTail(uint32_t n1, uint32_t n2, uint32_t shuffle) {
+  Retail t;
+  t.f("CNST").w(n1).f("CNST").w(Bits(1.0f)).f("CNST").w(n2).f("CNST").w(Bits(1.0f)).b(uint8_t(shuffle));
+  return t.bytes;
+}
+
+void TestSphereConvert() {
+  std::vector<uint8_t> out;
+  // 633c258f and 6e839072: MAXP 10 with both counts 0 and the flag: a 3 x 3 grid, 9 cells.
+  auto parts = ConvertSpev(10, true, 0, 0, 1, out);
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() && Contains(parts[0].part, SpevTail(3, 3, 9)) &&
+                Contains(parts[0].part, Retail().f("PSPV").bytes),
+            "SPEV with MAXP 10: PSPV 3 x 3, 9-cell shuffler");
+  parts = ConvertSpev(10, true, 0, 0, 0, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, SpevTail(3, 3, 0)), "no flag: no shuffler");
+  parts = ConvertSpev(10, true, 4, 2, 1, out);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, SpevTail(4, 2, 8)), "constant counts stand, 8 cells");
+  parts = ConvertSpev(10, false, 0, 0, 1, out);
+  CHECK_MSG(Dropped(parts, "SPEV with a constant 0 count and a MAXP that is not a constant"),
+            "a zero count with a variable MAXP is dropped, naming it");
+}
+
+// ELPS(centre, size, euler, speed, flag).
+std::vector<ConvertedPart> ConvertElps(bool zeroEuler, int flag, std::vector<uint8_t>& out) {
+  EffectNode effect;
+  auto vec = [](std::vector<uint8_t>& o, float x, float y, float z) {
+    PutFourCC(o, "CNST");
+    PutConstant(o, Bits(x));
+    PutConstant(o, Bits(y));
+    PutConstant(o, Bits(z));
+  };
+  return ConvertGen(
+      [&](std::vector<uint8_t>& o) {
+        PutProperty(o, "EMTR", 3);
+        PutFourCC(o, "ELPS");
+        vec(o, 1, 2, 3);
+        vec(o, 2, 0.25f, 2);
+        vec(o, 0, zeroEuler ? 0.f : 90.f, 0);
+        PutConstant(o, Bits(0.025f));
+        o.push_back(uint8_t(flag));
+      },
+      effect, out);
+}
+
+void TestEllipsoidConvert() {
+  std::vector<uint8_t> out;
+  auto parts = ConvertElps(true, 1, out);
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() && Contains(parts[0].part, Retail().f("PELP").bytes),
+            "ELPS with a zero euler is the port-only PELP");
+  Retail tail;
+  tail.f("CNST").w(Bits(0.025f)).b(1);
+  CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, tail.bytes), "PELP ends with the speed and surface-only byte");
+  parts = ConvertElps(false, 1, out);
+  CHECK_MSG(Dropped(parts, "ELPS with a euler that is not a constant (0, 0, 0)"), "a rotated ELPS is dropped, naming it");
+}
+
 }  // namespace
 
 int main() {
   TestNegate();
   TestPlnvCounts();
   TestCircleConvert();
+  TestSphereConvert();
+  TestEllipsoidConvert();
   if (port_test::Failures() == 0) {
     std::printf("port_elem2_convert: ok\n");
   }

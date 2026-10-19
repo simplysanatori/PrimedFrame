@@ -359,4 +359,127 @@ bool CEEPortPlaneVariance::GetValue(int frame, CVector3f& pPos, CVector3f& pVel)
   pVel = PortPlaneBasis(vel);
   return false;
 }
+
+CEEPortSphereVariance::CEEPortSphereVariance(CVectorElement* position, CRealElement* radius, CRealElement* speed,
+                                             CIntElement* count1, CRealElement* variance1, CIntElement* count2,
+                                             CRealElement* variance2, u8 shuffle)
+: mPosition(position)
+, mRadius(radius)
+, mSpeed(speed)
+, mCount1(count1)
+, mVariance1(variance1)
+, mCount2(count2)
+, mVariance2(variance2)
+, mShuffle(shuffle) {}
+
+CEEPortSphereVariance::~CEEPortSphereVariance() {
+  delete mPosition;
+  delete mRadius;
+  delete mSpeed;
+  delete mCount1;
+  delete mVariance1;
+  delete mCount2;
+  delete mVariance2;
+}
+
+// SPEV GetValue 0x2ca1c4: children in order (position, radius, speed, n1, variance 1, n2,
+// variance 2; a count below 2 is 1), the cell index (the creation count modulo n1 * n2, or the
+// shuffler's pick) taken before the two draws, polar first.
+bool CEEPortSphereVariance::GetValue(int frame, CVector3f& pPos, CVector3f& pVel) const {
+  CVector3f position = CVector3f::Zero();
+  float radius = 0.f;
+  float speed = 0.f;
+  int count1 = 0;
+  int count2 = 0;
+  float variance1 = 0.f;
+  float variance2 = 0.f;
+  if (mPosition != nullptr) {
+    mPosition->GetValue(frame, position);
+  }
+  if (mRadius != nullptr) {
+    mRadius->GetValue(frame, radius);
+  }
+  if (mSpeed != nullptr) {
+    mSpeed->GetValue(frame, speed);
+  }
+  if (mCount1 != nullptr) {
+    mCount1->GetValue(frame, count1);
+  }
+  if (mVariance1 != nullptr) {
+    mVariance1->GetValue(frame, variance1);
+  }
+  if (mCount2 != nullptr) {
+    mCount2->GetValue(frame, count2);
+  }
+  if (mVariance2 != nullptr) {
+    mVariance2->GetValue(frame, variance2);
+  }
+  count1 = count1 < 2 ? 1 : count1;
+  count2 = count2 < 2 ? 1 : count2;
+  CRandom16* random = CRandom16::GetRandomNumber();
+  CElementGen* generator = nullptr;
+  const CParticleGlobals::SParticleSystem* system = CParticleGlobals::GetCurrentParticleSystem();
+  if (system != nullptr && CParticleGlobals::xPortSwooshEval == nullptr) {
+    generator = system->x4_system;
+  }
+  int index;
+  if (mShuffle != 0) {
+    PortParticleMath::IndexShuffler& shuffler =
+        generator != nullptr ? generator->PortShuffler(this) : mFallbackShuffler;
+    index = shuffler.Next(mShuffle, [random] { return uint32_t(random->Next()); }) & 0xff;
+  } else {
+    // Retail counts a particle before its emitter runs; Remastered's total is one less.
+    const int total = generator != nullptr ? std::max(generator->GetCumulativeParticleCount() - 1, 0) : 0;
+    index = total % (count1 * count2);
+  }
+  const float d1 = random->PortFloat28();
+  const float d2 = random->PortFloat28();
+  const PortParticleMath::SpherePoint point = PortParticleMath::SphereWithVariance(
+      position, radius, speed, count1, variance1, count2, variance2, index, d1, d2);
+  pPos = PortPlaneBasis(point.position);
+  pVel = PortPlaneBasis(point.velocity);
+  return false;
+}
+
+CEEPortEllipsoid::CEEPortEllipsoid(CVectorElement* centre, CVectorElement* size, CRealElement* speed,
+                                   bool surfaceOnly)
+: mCentre(centre), mSize(size), mSpeed(speed), mSurfaceOnly(surfaceOnly) {}
+
+CEEPortEllipsoid::~CEEPortEllipsoid() {
+  delete mCentre;
+  delete mSize;
+  delete mSpeed;
+}
+
+// ELPS GetValue 0x2ca73c: centre, size, speed, then three draws (x, y, z) for the direction and,
+// unless surface-only, three more that scale the size.
+bool CEEPortEllipsoid::GetValue(int frame, CVector3f& pPos, CVector3f& pVel) const {
+  CVector3f centre = CVector3f::Zero();
+  CVector3f size = CVector3f::Zero();
+  float speed = 0.f;
+  if (mCentre != nullptr) {
+    mCentre->GetValue(frame, centre);
+  }
+  if (mSize != nullptr) {
+    mSize->GetValue(frame, size);
+  }
+  if (mSpeed != nullptr) {
+    mSpeed->GetValue(frame, speed);
+  }
+  CRandom16* random = CRandom16::GetRandomNumber();
+  float draw[3];
+  for (float& d : draw) {
+    d = random->PortFloat28();
+  }
+  if (!mSurfaceOnly) {
+    const float x = size.GetX() * random->PortFloat28() + 0.f;
+    const float y = size.GetY() * random->PortFloat28() + 0.f;
+    const float z = size.GetZ() * random->PortFloat28() + 0.f;
+    size = CVector3f(x, y, z);
+  }
+  const PortParticleMath::SpherePoint point = PortParticleMath::EllipsoidPoint(centre, size, speed, draw);
+  pPos = PortPlaneBasis(point.position);
+  pVel = PortPlaneBasis(point.velocity);
+  return false;
+}
 #endif

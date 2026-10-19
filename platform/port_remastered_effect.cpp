@@ -156,7 +156,7 @@ constexpr ElementSig kBoolSigs[] = {{"LTHN", "RR"}};
 
 constexpr ElementSig kEmitterSigs[] = {
     {"NONE", "-"}, {"SEMR", "VV"}, {"SPHE", "VRR"}, {"ASPH", "VRRRRRR"}, {"ASPR", "VeRRRR"},
-    {"CODE", "-"}, {"PLNE", "VVVRRR"}, {"ELPS", "VVVRb"}, {"PLNV", "VVRRRRIRIRb"}, {"SPEV", "VRRRRRRb"},
+    {"CODE", "-"}, {"PLNE", "VVVRRR"}, {"ELPS", "VVVRb"}, {"PLNV", "VVRRRRIRIRb"}, {"SPEV", "VRRIRIRb"},
 };
 
 // Remastered's rotations (GetRotationElement); retail has none. CNST is a raw

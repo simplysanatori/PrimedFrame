@@ -1763,6 +1763,26 @@ CEmitterElement* CParticleDataFactory::GetEmitterElement(CInputStream& in) {
                                       varianceX, countZ, varianceZ, shuffle);
     break;
   }
+  case SBIG('PSPV'): {
+    CVectorElement* position = GetVectorElement(in);
+    CRealElement* radius = GetRealElement(in);
+    CRealElement* speed = GetRealElement(in);
+    CIntElement* count1 = GetIntElement(in);
+    CRealElement* variance1 = GetRealElement(in);
+    CIntElement* count2 = GetIntElement(in);
+    CRealElement* variance2 = GetRealElement(in);
+    const u8 shuffle = u8(in.ReadChar());
+    ret = rs_new CEEPortSphereVariance(position, radius, speed, count1, variance1, count2, variance2, shuffle);
+    break;
+  }
+  case SBIG('PELP'): {
+    CVectorElement* centre = GetVectorElement(in);
+    CVectorElement* size = GetVectorElement(in);
+    CRealElement* speed = GetRealElement(in);
+    const bool surfaceOnly = in.ReadChar() != 0;
+    ret = rs_new CEEPortEllipsoid(centre, size, speed, surfaceOnly);
+    break;
+  }
 #endif
   default:
     ret = nullptr;

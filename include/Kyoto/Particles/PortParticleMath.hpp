@@ -931,6 +931,50 @@ inline CVector3f CirclePoint(const CVector3f& centre, const CircleFrame& frame, 
                    centre.GetZ() + radius * frame.u.GetZ() * cs + sr * frame.v.GetZ());
 }
 
+// SPEV GetValue 0x2ca1c4: a sphere of n1 polar bands by n2 azimuth sectors around p, the cell
+// `index` (index / n2 is the band) jittered by the two draws (d1 polar, d2 azimuth). The polar
+// bands start at FastCosR(pi), 0xbf7fff2e, not -1. All in Remastered's axes.
+struct SpherePoint {
+  CVector3f position;
+  CVector3f velocity;
+};
+
+inline SpherePoint SphereWithVariance(const CVector3f& p, float radius, float speed, int n1, float variance1,
+                                      int n2, float variance2, int index, float d1, float d2) {
+  const float cp = BitsFloat(0xbf7fff2e);
+  const int i1 = index / n2;
+  const int i2 = index - i1 * n2;
+  const float st1 = (1.f - cp) / float(n1);
+  const float h1 = variance1 * (st1 * .5f);
+  const float st2 = 360.f / float(n2);
+  const float h2 = variance2 * (st2 * .5f);
+  const float degrees = BitsFloat(0x3c8efa35);
+  const float a = WrapAngle(((st2 * float(i2) + st2 * .5f) + ((h2 + h2) * d2 - h2) + -180.f) * degrees);
+  const float c = ((st1 * .5f + cp) + st1 * float(i1)) + ((h1 + h1) * d1 - h1);
+  const float s = SqrtF(1.f - c * c);
+  const float dx = s * ParabolicSin(a);
+  const float dz = s * ParabolicSin(WrapAngle(a + BitsFloat(0x3fc90fdb)));
+  return SpherePoint{CVector3f(p.GetX() + dx * radius, c * radius + p.GetY(), p.GetZ() + radius * dz),
+                     CVector3f(dx * speed, c * speed, dz * speed)};
+}
+
+// ELPS GetValue 0x2ca73c with a zero euler: d is the three draws mapped to (-1, 1) and
+// normalized when it can be, scaled by the size (itself scaled by three more draws unless
+// surface-only), and the velocity is that point's direction times the speed.
+inline SpherePoint EllipsoidPoint(const CVector3f& centre, const CVector3f& size, float speed, const float draw[3]) {
+  CVector3f d((draw[0] * 200.f + -100.f) * .01f, (draw[1] * 200.f + -100.f) * .01f,
+              (draw[2] * 200.f + -100.f) * .01f);
+  const float squared = (d.GetX() * d.GetX() + d.GetY() * d.GetY()) + d.GetZ() * d.GetZ();
+  if (squared >= kMinNormalizableMagSqd) {
+    d = NormalizeInPlace(d);
+  }
+  const CVector3f q(d.GetX() * size.GetX(), d.GetY() * size.GetY(), d.GetZ() * size.GetZ());
+  const float qq = (q.GetX() * q.GetX() + q.GetY() * q.GetY()) + q.GetZ() * q.GetZ();
+  const CVector3f dir = qq >= kMinNormalizableMagSqd ? NormalizeInPlace(q) : q;
+  return SpherePoint{CVector3f(q.GetX() + centre.GetX(), q.GetY() + centre.GetY(), q.GetZ() + centre.GetZ()),
+                     CVector3f(dir.GetX() * speed, dir.GetY() * speed, dir.GetZ() * speed)};
+}
+
 } // namespace PortParticleMath
 
 #endif

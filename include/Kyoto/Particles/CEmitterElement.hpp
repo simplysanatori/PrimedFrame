@@ -119,6 +119,44 @@ private:
   // The shuffler when there is no current generator.
   mutable PortParticleMath::IndexShuffler mFallbackShuffler;
 };
+
+// Port-only SPEV (Remastered's sphere with variance, GetValue 0x2ca1c4): n1 polar bands by n2
+// azimuth sectors, walked by the creation count (or shuffled), jittered by the variances.
+class CEEPortSphereVariance : public CEmitterElement {
+public:
+  CEEPortSphereVariance(CVectorElement* position, CRealElement* radius, CRealElement* speed, CIntElement* count1,
+                        CRealElement* variance1, CIntElement* count2, CRealElement* variance2, u8 shuffle);
+  ~CEEPortSphereVariance();
+
+  bool GetValue(int frame, CVector3f& pPos, CVector3f& pVel) const;
+
+private:
+  CVectorElement* mPosition;
+  CRealElement* mRadius;
+  CRealElement* mSpeed;
+  CIntElement* mCount1;
+  CRealElement* mVariance1;
+  CIntElement* mCount2;
+  CRealElement* mVariance2;
+  u8 mShuffle; // the size of Remastered's index shuffler, 0 for none
+  mutable PortParticleMath::IndexShuffler mFallbackShuffler;
+};
+
+// Port-only ELPS (Remastered's ellipsoid, GetValue 0x2ca73c) with a zero euler: three draws pick
+// a direction, which the size stretches (three more draws unless surface-only).
+class CEEPortEllipsoid : public CEmitterElement {
+public:
+  CEEPortEllipsoid(CVectorElement* centre, CVectorElement* size, CRealElement* speed, bool surfaceOnly);
+  ~CEEPortEllipsoid();
+
+  bool GetValue(int frame, CVector3f& pPos, CVector3f& pVel) const;
+
+private:
+  CVectorElement* mCentre;
+  CVectorElement* mSize;
+  CRealElement* mSpeed;
+  bool mSurfaceOnly;
+};
 #endif
 
 #endif // _CEMITTERELEMENT
