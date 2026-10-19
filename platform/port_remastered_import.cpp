@@ -588,7 +588,14 @@ void SweepTrash(const fs::path& mods) {
         }
       }
       for (const fs::path& dir : trash) {
-        fs::remove_all(dir, ec);
+        std::error_code removeError;
+        fs::remove_all(dir, removeError);
+        if (removeError) {
+          PortLog::Write("metroid_prime_port: could not delete trash %s: %s\n", dir.string().c_str(),
+                         removeError.message().c_str());
+        } else {
+          PortLog::Write("metroid_prime_port: deleted trash %s\n", dir.filename().string().c_str());
+        }
       }
       std::lock_guard<std::mutex> lock(sTrashMutex);
       if (!sTrashAgain) {
@@ -613,7 +620,13 @@ void Discard(const fs::path& dir) {
       dir.parent_path() / (kTrashPrefix + std::to_string(stamp) + "-" + std::to_string(sCount++));
   fs::rename(dir, trash, ec);
   if (ec) {
+    PortLog::Write("metroid_prime_port: could not set aside %s for deletion: %s\n",
+                   dir.string().c_str(), ec.message().c_str());
     fs::remove_all(dir, ec);
+    if (ec) {
+      PortLog::Write("metroid_prime_port: could not delete %s: %s\n", dir.string().c_str(),
+                     ec.message().c_str());
+    }
     return;
   }
   SweepTrash(dir.parent_path());
@@ -3310,11 +3323,18 @@ bool MoveIntoPlace(const fs::path& staging) {
   const fs::path held = HeldFolder(staging);
   if (fs::exists(staging / kMarkerName, ec)) {
     // An older import the finished one was made from, left if the game quit just after it.
+    if (fs::exists(held, ec)) {
+      PortLog::Write("metroid_prime_port: discarding held import %s\n", held.string().c_str());
+    }
     Discard(held);
   } else {
     Discard(staging);
     // A finished import held aside by one that never finished (the game quit during it).
     if (!fs::exists(held / kMarkerName, ec)) {
+      if (fs::exists(held, ec)) {
+        PortLog::Write("metroid_prime_port: discarding unfinished held import %s\n",
+                       held.string().c_str());
+      }
       Discard(held);
       return false;
     }
@@ -3329,6 +3349,9 @@ bool MoveIntoPlace(const fs::path& staging) {
   const fs::path backup = staging.parent_path() / PortRemasteredStorage::kBackupName;
   const bool hadTarget = fs::exists(target, ec);
   if (hadTarget) {
+    if (fs::exists(backup, ec)) {
+      PortLog::Write("metroid_prime_port: discarding old backup %s\n", backup.string().c_str());
+    }
     Discard(backup);
     fs::rename(target, backup, ec);
     if (ec) {
