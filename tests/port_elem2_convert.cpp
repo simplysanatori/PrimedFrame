@@ -555,6 +555,7 @@ std::vector<ConvertedPart> ConvertElps(bool zeroEuler, int flag, std::vector<uin
         vec(o, 2, 0.25f, 2);
         vec(o, 0, zeroEuler ? 0.f : 90.f, 0);
         PutConstant(o, Bits(0.025f));
+        PutFourCC(o, "CNST");  // the files give the flag as a GetBool: CNST and a byte
         o.push_back(uint8_t(flag));
       },
       effect, out);

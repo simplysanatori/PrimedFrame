@@ -1425,7 +1425,9 @@ public:
     // ELPS(centre, size, euler, speed, surface only): the port-only PELP, which has no rotation,
     // so the euler must be a constant (0, 0, 0). Only the surface-only byte follows.
     if (value.fourcc == F("ELPS") && type == Type::Emitter && value.args.size() == 5) {
-      const EffectValue& flag = value.args[4];
+      // The surface-only flag is a GetBool: the files give it as CNST(byte), so unwrap that.
+      const EffectValue& flag =
+          IsElement(value.args[4], F("CNST")) && value.args[4].args.size() == 1 ? value.args[4].args[0] : value.args[4];
       if (flag.kind != EffectValue::Kind::Byte && flag.kind != EffectValue::Kind::Word) {
         why = "ELPS with a surface-only flag that is not a byte";
         return false;
