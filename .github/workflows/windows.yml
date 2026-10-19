@@ -98,6 +98,8 @@ jobs:
             build-win/_deps/*-subbuild
           key: deps-windows${{ matrix.suffix }}-${{ hashFiles('CMakeLists.txt', 'extern/aurora/**/CMakeLists.txt', 'extern/aurora/**/*.cmake') }}
 
+      # No precompiled headers: ccache can hand back a .pch from an earlier run,
+      # which clang then rejects because cmake_pch.c is newer than it.
       - name: Configure
         run: >
           cmake -S . -B build-win -G Ninja
@@ -108,6 +110,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_TARGET=${{ matrix.target }}
           -DCMAKE_C_COMPILER_LAUNCHER=ccache
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
           -DAURORA_ENABLE_TESTS=ON
           -DMP_BUILD_TESTS=ON
           -DBUILD_SHARED_LIBS=OFF
