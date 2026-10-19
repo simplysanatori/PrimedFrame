@@ -1046,6 +1046,17 @@ public:
     if (value.fourcc == F("SEMR") && value.args.size() == 2) {
       m_semrPos = &value.args[0];
     }
+    // A swoosh evaluates no per-particle variables of its own: its PAP0..3 and PAP9 reads (the
+    // port-only ADV9 and IAVn slots) have nothing behind them.
+    if (m_swoosh && value.args.empty() && (type == Type::Real || type == Type::Int)) {
+      static constexpr uint32_t kRead[] = {F("PAP0"), F("PAP1"), F("PAP2"), F("PAP3"), F("PAP9")};
+      for (const uint32_t read : kRead) {
+        if (value.fourcc == read && (type == Type::Int || read == F("PAP9"))) {
+          why = EffectFourCCString(read) + " in a swoosh";
+          return false;
+        }
+      }
+    }
     // The particle variables a tree reads (m_varReads): real ids 0..8 are PAP1..9, int ids 9..12
     // PAP0..3.
     if (value.args.empty()) {
@@ -3806,6 +3817,10 @@ public:
     for (const EffectProperty& property : node.properties) {
       uint32_t fourcc = property.fourcc;
       m_lifetimeOffset = LifetimeOffset(part, swoosh, property);
+      if (swoosh && (fourcc == F("ADV9") || (partVarId(fourcc) >= 9))) {
+        result.dropped.push_back(EffectFourCCString(fourcc) + ": a swoosh has no per-particle variables");
+        continue;
+      }
       if (placeholder && fourcc == F("MTIN")) {
         result.dropped.push_back("MTIN: its colour texture is nil (the generator draws nothing)");
         continue;

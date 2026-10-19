@@ -1219,6 +1219,33 @@ ConvertedPart ConvertSwoosh(Body body) {
   return parts.size() == 2 ? parts[1] : ConvertedPart{};
 }
 
+// A swoosh has no per-particle variables: PAP9, PAP0..3 reads and ADV9/IAVn are dropped.
+void TestSwooshParticleVars() {
+  const auto dropped = [](const ConvertedPart& part, const char* what) {
+    for (const std::string& d : part.dropped) {
+      if (d.find(what) != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  };
+  ConvertedPart part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "LRAD", 3);
+    PutFourCC(o, "PAP9");
+  });
+  CHECK_MSG(dropped(part, "PAP9 in a swoosh"), "PAP9 in a swoosh is dropped");
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "ADV9", 3);
+    PutConstant(o, Bits(1.0f));
+  });
+  CHECK_MSG(dropped(part, "ADV9: a swoosh has no per-particle variables"), "ADV9 in a swoosh is dropped");
+  part = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "IAV1", 3);
+    PutConstant(o, 1);
+  });
+  CHECK_MSG(dropped(part, "IAV1: a swoosh has no per-particle variables"), "IAV1 in a swoosh is dropped");
+}
+
 // KPIN(RAZY(EMRV, ROTV((0, 1, 0), RLCL), fallback)). `fallback` writes RAZY's third argument.
 template <typename Fallback>
 void PutRazyProt(std::vector<uint8_t>& out, Fallback fallback) {
@@ -3796,6 +3823,7 @@ int main() {
   TestRetailId();
   TestPlasmaNestedHdrLight();
   TestSwooshElectric();
+  TestSwooshParticleVars();
   TestSwooshRazyProt();
   TestSwooshZProt();
   TestConvert();
