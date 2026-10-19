@@ -131,6 +131,41 @@ CPortSys* PortReadSys(CInputStream& in) {
   return sys.release();
 }
 
+// A PPVR body (after the CNST class id): u32 count, then per item u32 kind, slot and
+// constant-after-start flag, and for kinds 1 and 2 the element. Null on a malformed one.
+CPortPartVars* PortReadPartVars(CInputStream& in) {
+  const u32 count = in.ReadLong();
+  if (count > 13) {
+    return nullptr;
+  }
+  std::unique_ptr< CPortPartVars > vars(new CPortPartVars());
+  vars->items.resize(count);
+  u32 seen = 0;
+  for (SPortPartVarItem& item : vars->items) {
+    const u32 kind = in.ReadLong();
+    const u32 slot = in.ReadLong();
+    item.constAfterStart = in.ReadLong() != 0;
+    if (kind > 2 || slot >= (kind == 2 ? 4u : kind == 1 ? 9u : 8u) || (kind == 1 && slot != 8)) {
+      return nullptr;
+    }
+    // Each variable at most once: a duplicate would evaluate it twice.
+    const u32 bit = 1u << (kind == 2 ? 9 + slot : slot);
+    if ((seen & bit) != 0) {
+      return nullptr;
+    }
+    seen |= bit;
+    item.kind = static_cast< EPortPartVarKind >(kind);
+    item.slot = slot;
+    if (kind == 1 && (item.real = CParticleDataFactory::GetRealElement(in)) == nullptr) {
+      return nullptr;
+    }
+    if (kind == 2 && (item.intE = CParticleDataFactory::GetIntElement(in)) == nullptr) {
+      return nullptr;
+    }
+  }
+  return vars.release();
+}
+
 enum EPortKssmKind { kPKK_Real, kPKK_Vector, kPKK_Rotation };
 
 // One node of a PKSM component tree (the converter's Writer::Component*), appended to kssm.nodes
@@ -620,6 +655,11 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       }
       break;
     }
+    // Port-only PPVR: Remastered's variables ADV1..9 and IAV0..3 in SortVars order (PortReadPartVars).
+    case SBIG('PPVR'):
+      GetClassID(in);
+      desc->xPortPartVars.reset(PortReadPartVars(in));
+      break;
     // Port-only marker of a converted Remastered PART (xPortIrnd).
     case SBIG('PIRN'):
       GetClassID(in);
@@ -1053,6 +1093,14 @@ CIntElement* CParticleDataFactory::GetIntElement(CInputStream& in) {
     const int offset = in.ReadLong();
     return rs_new CIEPortLifetimePercent(offset, GetIntElement(in));
   }
+  case SBIG('PAP0'):
+    return rs_new CIEPortParticleVar(0);
+  case SBIG('PAP1'):
+    return rs_new CIEPortParticleVar(1);
+  case SBIG('PAP2'):
+    return rs_new CIEPortParticleVar(2);
+  case SBIG('PAP3'):
+    return rs_new CIEPortParticleVar(3);
   case SBIG('PRAN'): {
     CIntElement* a = GetIntElement(in);
     CIntElement* b = GetIntElement(in);
@@ -1301,6 +1349,10 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
   case SBIG('PAP8'): {
     return rs_new CREParticleAccessParameter8();
   }
+#ifdef TARGET_PC
+  case SBIG('PAP9'):
+    return rs_new CREParticleAccessParameter9();
+#endif
   case SBIG('VXTR'): {
     CVectorElement* a = GetVectorElement(in);
     return rs_new CREVectorXToReal(a);

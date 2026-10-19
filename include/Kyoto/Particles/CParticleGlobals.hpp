@@ -1,6 +1,8 @@
 #ifndef _CPARTICLEGLOBALS
 #define _CPARTICLEGLOBALS
 
+#include <cstring>
+
 #include "types.h"
 
 #include "Kyoto/SObjectTag.hpp"
@@ -39,8 +41,18 @@ public:
 #ifdef TARGET_PC
   // GC reads address 0 harmlessly when no ADV values are bound; read zeros instead.
   static float* GetParticleAccessParameters() {
-    static float sZeros[8] = {};
+    static float sZeros[13] = {};
     return mParticleAccessParameters != nullptr ? mParticleAccessParameters : sZeros;
+  }
+  // port-only: Remastered's per-particle int variables IAV0..3 (PAP0..3), stored as their bits in
+  // the four floats after ADV1..9 (CElementGen::CAdvancedValues).
+  static int GetParticleAccessInt(int n) {
+    int v;
+    std::memcpy(&v, &GetParticleAccessParameters()[9 + n], sizeof(v));
+    return v;
+  }
+  static void SetParticleAccessInt(float* params, int n, int v) {
+    std::memcpy(&params[9 + n], &v, sizeof(v));
   }
 #else
   static float* GetParticleAccessParameters() { return mParticleAccessParameters; }

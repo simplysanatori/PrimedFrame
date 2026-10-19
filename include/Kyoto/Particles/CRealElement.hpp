@@ -204,6 +204,15 @@ public:
   bool GetValue(int frame, float& valOut) const override;
 };
 
+#ifdef TARGET_PC
+// port-only: Remastered's PAP9, the ninth real variable (ADV9).
+class CREParticleAccessParameter9 : public CRealElement {
+public:
+  ~CREParticleAccessParameter9() override {}
+  bool GetValue(int frame, float& valOut) const override;
+};
+#endif
+
 class CREParticleSizeOrLineLength : public CRealElement {
 public:
   ~CREParticleSizeOrLineLength() override {}

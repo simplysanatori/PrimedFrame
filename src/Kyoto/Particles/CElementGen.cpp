@@ -290,6 +290,11 @@ CElementGen::CElementGen(TToken< CGenDescription > gen, EModelOrientationType or
       x28_loadedGenDesc->x124_ADV7 || x28_loadedGenDesc->x128_ADV8) {
     x26d_28_enableADV = true;
   }
+#ifdef TARGET_PC
+  if (x28_loadedGenDesc->xPortPartVars) {
+    x26d_28_enableADV = true;
+  }
+#endif
 
   for (int i = 0; i < 16; ++i) {
     x9c_externalVars[i] = 0.f;
@@ -837,10 +842,19 @@ void CElementGen::UpdateLightParameters() {
 #endif
 }
 
-void CElementGen::UpdateAdvanceAccessParameters(int particleFrame, int particleIndex) {
+void CElementGen::UpdateAdvanceAccessParameters(int particleFrame, int particleIndex, bool spawn) {
   float* params = x60_advValues[particleFrame].values;
   CParticleGlobals::mParticleAccessParameters = params;
 #ifdef TARGET_PC
+  // PPVR: Remastered's ADV1..9 / IAV0..3 with its constant-after-start rule.
+  if (x28_loadedGenDesc->xPortPartVars) {
+    CRealElement* const advs[8] = {
+        x28_loadedGenDesc->x10c_ADV1, x28_loadedGenDesc->x110_ADV2, x28_loadedGenDesc->x114_ADV3,
+        x28_loadedGenDesc->x118_ADV4, x28_loadedGenDesc->x11c_ADV5, x28_loadedGenDesc->x120_ADV6,
+        x28_loadedGenDesc->x124_ADV7, x28_loadedGenDesc->x128_ADV8};
+    x28_loadedGenDesc->xPortPartVars->Eval(advs, spawn, particleIndex, params);
+    return;
+  }
   // Remastered sorts its variables so one is evaluated after those it reads (SortVars 0x276188).
   if (!x28_loadedGenDesc->xPortAdvOrder.empty()) {
     CRealElement* const advs[8] = {
@@ -1087,7 +1101,7 @@ void CElementGen::CreateNewParticles(int count) {
 #endif
 
     if (x26d_28_enableADV) {
-      UpdateAdvanceAccessParameters(particleIndex, 0);
+      UpdateAdvanceAccessParameters(particleIndex, 0, true);
     }
 
     particle.x0_endFrame += x74_curFrame;
