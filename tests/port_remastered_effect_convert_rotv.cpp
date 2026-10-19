@@ -168,6 +168,36 @@ void TestPncv() {
   CHECK_MSG(Contains(part.part, want) && part.dropped.empty(), "PNCV maps onto the port-only PNCV");
 }
 
+// MPCB(GRAV(v)) runs v in retail's space, so Remastered's PNCV and PRTV get a BSIS there.
+void TestSpaceInMpcb() {
+  for (bool prtv : {false, true}) {
+    std::vector<uint8_t> out = Header();
+    PutProperty(out, "VEL1", 3);
+    PutFourCC(out, "MPCB");
+    PutFourCC(out, "GRAV");
+    if (prtv) {
+      PutRotv(out, "EXTR");
+    } else {
+      PutFourCC(out, "PNCV");
+    }
+    PutProperty(out, "_END", 4);
+    const std::vector<ConvertedPart> parts = Convert(out);
+    std::vector<uint8_t> want = Be("GRAV");
+    Append(want, Be("BSIS"));
+    Append(want, Be(prtv ? "PRTV" : "PNCV"));
+    CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, want),
+              "a PNCV/PRTV inside MPCB(mod vector) is turned into retail's space by BSIS");
+  }
+}
+
+// INTR and RLCL rotations are not decoded: dropped with a reason.
+void TestRotvUnknownKind() {
+  for (const char* kind : {"INTR", "RLCL"}) {
+    const ConvertedPart part = ConvertPofs([&](auto& o) { PutRotv(o, kind); });
+    CHECK_MSG(!Contains(part.part, Be("PRTV")) && !part.dropped.empty(), "ROTV by INTR/RLCL is dropped");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -175,5 +205,7 @@ int main() {
   TestRotvExternal();
   TestRotvDropped();
   TestPncv();
+  TestSpaceInMpcb();
+  TestRotvUnknownKind();
   return PORT_TEST_RESULT();
 }

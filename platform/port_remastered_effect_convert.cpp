@@ -1576,8 +1576,13 @@ public:
       return Element(value.args[0], Type::Real, out, why);
     }
     // PNCV: the port-only PNCV, the particle's velocity normalised by CVENormalizedCompensatedVelocity
-    // 0x2a2800 (one refined FRSQRTE step, up vector below 2^-46). It yields Remastered's numbers.
+    // 0x2a2800 (one refined FRSQRTE step, up vector below 2^-46). It yields Remastered's numbers, so
+    // inside an MPCB mod vector (retail's space) BSIS turns them; elsewhere the consumer is in
+    // Remastered's space or wraps the property in BSIS.
     if (value.fourcc == F("PNCV") && type == Type::Vector && value.args.empty()) {
+      if (m_mp1Space) {
+        AppendBE32(out, F("BSIS"));
+      }
       AppendBE32(out, F("PNCV"));
       return true;
     }
@@ -1586,38 +1591,49 @@ public:
     // REUL (order 0), EXTR and CMRT; EXTR and CMRT read the generator, which a swoosh has not.
     if (value.fourcc == F("ROTV") && type == Type::Vector && value.args.size() == 2) {
       const EffectValue& rot = value.args[1];
+      std::vector<uint8_t> prtv;
+      bool ok = false;
+      // PRTV evaluates in Remastered's space, so its vector is not retail's even inside an MPCB.
+      const bool outer = m_mp1Space;
+      m_mp1Space = false;
       if (IsElement(rot, F("REUL")) && rot.args.size() == 4) {
         const EffectValue& order = rot.args[3];
         if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
           why = "ROTV by a REUL in an axis order other than 0";
-          return false;
-        }
-        AppendBE32(out, F("PRTV"));
-        if (!Element(value.args[0], Type::Vector, out, why)) {
-          return false;
-        }
-        AppendBE32(out, F("REUL"));
-        for (size_t i = 0; i < 3; ++i) {
-          if (!Element(rot.args[i], Type::Real, out, why)) {
-            return false;
+        } else {
+          AppendBE32(prtv, F("PRTV"));
+          ok = Element(value.args[0], Type::Vector, prtv, why);
+          if (ok) {
+            AppendBE32(prtv, F("REUL"));
+            for (size_t i = 0; ok && i < 3; ++i) {
+              ok = Element(rot.args[i], Type::Real, prtv, why);
+            }
           }
         }
-        return true;
-      }
-      if ((IsElement(rot, F("EXTR")) || IsElement(rot, F("CMRT"))) && rot.args.empty()) {
+      } else if ((IsElement(rot, F("EXTR")) || IsElement(rot, F("CMRT"))) && rot.args.empty()) {
         if (m_swoosh) {
           why = "ROTV by " + EffectFourCCString(rot.fourcc) + " in a swoosh";
-          return false;
+        } else {
+          AppendBE32(prtv, F("PRTV"));
+          ok = Element(value.args[0], Type::Vector, prtv, why);
+          if (ok) {
+            AppendBE32(prtv, rot.fourcc);
+          }
         }
-        AppendBE32(out, F("PRTV"));
-        if (!Element(value.args[0], Type::Vector, out, why)) {
-          return false;
-        }
-        AppendBE32(out, rot.fourcc);
-        return true;
+      } else if (IsElement(rot, F("INTR")) || IsElement(rot, F("RLCL"))) {
+        why = "ROTV by " + EffectFourCCString(rot.fourcc) + " (its PRTV rotation is not decoded)";
+      } else {
+        why = "ROTV by a rotation that is not REUL/EXTR/CMRT";
       }
-      why = "ROTV by a rotation that is not REUL/EXTR/CMRT";
-      return false;
+      m_mp1Space = outer;
+      if (!ok) {
+        return false;
+      }
+      if (outer) {
+        AppendBE32(out, F("BSIS"));
+      }
+      out.insert(out.end(), prtv.begin(), prtv.end());
+      return true;
     }
     // SLTW(a, b) (GetLifetimeTweenElement 0x26a640, time slot 0) is the port-only PSLW: the two
     // reals, blended by the system tween.
