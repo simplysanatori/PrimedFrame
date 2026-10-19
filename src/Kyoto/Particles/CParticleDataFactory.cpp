@@ -1415,6 +1415,24 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     ret = rs_new CVEPortCurlNoise(pos, freq, amp, handle);
     break;
   }
+  case SBIG('PRTV'): {
+    // Port-only ROTV: the vector, the rotation kind, and REUL's three angles.
+    CVectorElement* vec = GetVectorElement(in);
+    const FourCC kind = GetClassID(in);
+    CRealElement* x = nullptr;
+    CRealElement* y = nullptr;
+    CRealElement* z = nullptr;
+    if (kind == SBIG('REUL')) {
+      x = GetRealElement(in);
+      y = GetRealElement(in);
+      z = GetRealElement(in);
+    }
+    ret = rs_new CVEPortRotateVector(vec, kind, x, y, z);
+    break;
+  }
+  case SBIG('PNCV'):
+    ret = rs_new CVEPortNormalizedVelocity();
+    break;
   case SBIG('ANCR'): {
     CRealElement* rotateX = GetRealElement(in);
     CRealElement* rotateY = GetRealElement(in);

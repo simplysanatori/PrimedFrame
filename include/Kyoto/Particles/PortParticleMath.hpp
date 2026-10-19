@@ -163,6 +163,24 @@ inline CVector3f RandomVector(float u0, float u1, float u2, float magnitude) {
   return CVector3f(x * scale, y * scale, z * scale);
 }
 
+// PNCV (CVENormalizedCompensatedVelocity::GetValue 0x2a2800) of a velocity in Remastered's
+// particle space: the velocity times one refined FRSQRTE of (x*x + y*y) + z*z when that is
+// above CParticleValues::skMinNormalizableMagSqd (2^-46), else the up vector (0, 1, 0).
+inline CVector3f NormalizedVelocity(const CVector3f& v) {
+  const float x = v.GetX(), y = v.GetY(), z = v.GetZ();
+  const float xx = x * x;
+  const float yy = y * y;
+  const float zz = z * z;
+  const float xy = xx + yy;
+  const float squared = xy + zz;
+  if (!(squared > 1.4210855e-14f)) {
+    return CVector3f(0.f, 1.f, 0.f);
+  }
+  float reciprocal = ReciprocalSqrtEstimate(squared);
+  reciprocal *= ReciprocalSqrtStep(squared, reciprocal * reciprocal);
+  return CVector3f(x * reciprocal, y * reciprocal, z * reciprocal);
+}
+
 // FRECPE as the Switch runs it: ARM RecipEstimate's 8-fraction-bit integer construction (no
 // FEAT_RPRES), round to nearest, denormals not flushed.
 inline float ReciprocalEstimate(float v) {

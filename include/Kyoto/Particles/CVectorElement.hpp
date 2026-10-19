@@ -400,5 +400,30 @@ public:
 private:
   FourCC mKind;
 };
+
+// Port-only PRTV: Remastered's ROTV (CVERotateVector::GetValue 0x2a0328) outside a component
+// tree: the rotation first, then the vector, then CQuaternion::Transform, all in Remastered's
+// particle space. The rotation is EXTR (the system orientation), CMRT (the camera's rotation,
+// CERotationFromCamera 0x29d180) or REUL(x, y, z) in degrees, order 0.
+class CVEPortRotateVector : public CVectorElement {
+public:
+  CVEPortRotateVector(CVectorElement* vector, FourCC rotation, CRealElement* x, CRealElement* y,
+                      CRealElement* z);
+  ~CVEPortRotateVector() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CVectorElement* mVector;
+  FourCC mRotation;
+  CRealElement* mAngles[3];
+};
+
+// Port-only PNCV: Remastered's PNCV (0x2a2800), the particle's velocity normalised by one
+// refined FRSQRTE step (PortParticleMath::NormalizedVelocity), in Remastered's particle space.
+class CVEPortNormalizedVelocity : public CVectorElement {
+public:
+  bool GetValue(int frame, CVector3f& valOut) const override;
+};
 #endif
 #endif // _CVECTORELEMENT

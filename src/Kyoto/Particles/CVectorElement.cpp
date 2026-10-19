@@ -762,4 +762,59 @@ bool CVEPortAngleConeMinMax::GetValue(int frame, CVector3f& valOut) const {
   valOut = PortParticleMath::AngleConeMinMax(q, minAngle, maxAngle, magnitude, u0, u1);
   return false;
 }
+CVEPortRotateVector::CVEPortRotateVector(CVectorElement* vector, FourCC rotation, CRealElement* x,
+                                         CRealElement* y, CRealElement* z)
+: mVector(vector), mRotation(rotation), mAngles{x, y, z} {}
+
+CVEPortRotateVector::~CVEPortRotateVector() {
+  delete mVector;
+  for (CRealElement* angle : mAngles) {
+    delete angle;
+  }
+}
+
+// The rotation first (REUL's angles draw before the vector), then the vector, as 0x2a0328; a
+// child that fails leaves its identity / zero default and the result is still the transform.
+bool CVEPortRotateVector::GetValue(int frame, CVector3f& valOut) const {
+  PortParticleMath::Quat q{1.f, 0.f, 0.f, 0.f};
+  switch (mRotation) {
+  case 'REUL': {
+    float angles[3] = {0.f, 0.f, 0.f};
+    for (int i = 0; i < 3; ++i) {
+      if (mAngles[i]) {
+        mAngles[i]->GetValue(frame, angles[i]);
+      }
+    }
+    q = PortParticleMath::EulerQuat(angles[0], angles[1], angles[2]);
+  } break;
+  case 'EXTR': {
+    // The system orientation, taken into Remastered's particle space (the basis conjugation).
+    CParticleGlobals::SParticleSystem* sys = CParticleGlobals::GetCurrentParticleSystem();
+    if (CParticleGlobals::xPortSwooshEval == nullptr && sys != nullptr && sys->x4_system != nullptr) {
+      const CQuaternion r = sys->x4_system->PortExternalRotation();
+      q = {r.GetScalar(), -r.AxisX(), r.AxisZ(), r.AxisY()};
+    }
+  } break;
+  default: {
+    // CMRT: CERotationFromCamera 0x29d180, CQuaternion::FromMatrix of the camera transform
+    // (CVECameraPositionInWorldSpace's matrix, the view matrix), in Remastered's space.
+    const CQuaternion r = CQuaternion::FromMatrix(CGraphics::GetViewMatrix());
+    q = {r.GetScalar(), -r.AxisX(), r.AxisZ(), r.AxisY()};
+  } break;
+  }
+  CVector3f v = CVector3f::Zero();
+  if (mVector) {
+    mVector->GetValue(frame, v);
+  }
+  valOut = PortParticleMath::QuatTransform(q, v);
+  return false;
+}
+
+bool CVEPortNormalizedVelocity::GetValue(int, CVector3f& valOut) const {
+  // The velocity in Remastered's axes, (-x, z, y) of the port's, so the sum of squares runs in
+  // Remastered's order.
+  const CVector3f& vel = CParticleGlobals::GetCurrentParticle()->x1c_vel;
+  valOut = PortParticleMath::NormalizedVelocity(CVector3f(-vel.GetX(), vel.GetZ(), vel.GetY()));
+  return false;
+}
 #endif

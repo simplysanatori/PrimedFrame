@@ -1312,6 +1312,50 @@ public:
       AppendBE32(out, F("RNDV"));
       return Element(value.args[0], Type::Real, out, why);
     }
+    // PNCV: the port-only PNCV, the particle's velocity normalised by CVENormalizedCompensatedVelocity
+    // 0x2a2800 (one refined FRSQRTE step, up vector below 2^-46). It yields Remastered's numbers.
+    if (value.fourcc == F("PNCV") && type == Type::Vector && value.args.empty()) {
+      AppendBE32(out, F("PNCV"));
+      return true;
+    }
+    // ROTV(v, rotation) outside a component: the port-only PRTV (the vector, the rotation kind and
+    // REUL's angles), CVERotateVector 0x2a0328 in Remastered's space. The rotations it carries are
+    // REUL (order 0), EXTR and CMRT; EXTR and CMRT read the generator, which a swoosh has not.
+    if (value.fourcc == F("ROTV") && type == Type::Vector && value.args.size() == 2) {
+      const EffectValue& rot = value.args[1];
+      if (IsElement(rot, F("REUL")) && rot.args.size() == 4) {
+        const EffectValue& order = rot.args[3];
+        if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
+          why = "ROTV by a REUL in an axis order other than 0";
+          return false;
+        }
+        AppendBE32(out, F("PRTV"));
+        if (!Element(value.args[0], Type::Vector, out, why)) {
+          return false;
+        }
+        AppendBE32(out, F("REUL"));
+        for (size_t i = 0; i < 3; ++i) {
+          if (!Element(rot.args[i], Type::Real, out, why)) {
+            return false;
+          }
+        }
+        return true;
+      }
+      if ((IsElement(rot, F("EXTR")) || IsElement(rot, F("CMRT"))) && rot.args.empty()) {
+        if (m_swoosh) {
+          why = "ROTV by " + EffectFourCCString(rot.fourcc) + " in a swoosh";
+          return false;
+        }
+        AppendBE32(out, F("PRTV"));
+        if (!Element(value.args[0], Type::Vector, out, why)) {
+          return false;
+        }
+        AppendBE32(out, rot.fourcc);
+        return true;
+      }
+      why = "ROTV by a rotation that is not REUL/EXTR/CMRT";
+      return false;
+    }
     // KESP is KEYP on time slot 2, which is always zero (CREKeyframeEmitterSpecific), so it
     // is its first key: CNST(keys[0]).
     if (value.fourcc == F("KESP") && type == Type::Real && value.args.size() == 1 &&
@@ -4094,6 +4138,20 @@ public:
         return false;
       }
       return field == F("NONE") || (field == F("CNST") && Skip(4));
+    }
+    // Port-only PRTV: the vector, then EXTR, CMRT or REUL and its three angles. PNCV has none.
+    if (fourcc == F("PNCV") && type == Type::Vector) {
+      return true;
+    }
+    if (fourcc == F("PRTV") && type == Type::Vector) {
+      uint32_t rotation;
+      if (!Element(Type::Vector) || !Word(rotation)) {
+        return false;
+      }
+      if (rotation == F("REUL")) {
+        return Element(Type::Real) && Element(Type::Real) && Element(Type::Real);
+      }
+      return rotation == F("EXTR") || rotation == F("CMRT");
     }
     // Port-only PGRD (a swoosh's gradient): stop count, five floats per stop, the period as an
     // int element, then the repeat byte.
