@@ -14,14 +14,29 @@ public:
     FourCC x0_type;
     CElementGen* x4_system;
     SParticleSystem* x8_prev;
+#ifdef TARGET_PC
+    // Remastered keeps the lifetime tween (UpdateLifetimeTweenValues 0x24ef38) in the system's own
+    // context; the port's global is saved here so a child generator that updates or renders
+    // inside this system leaves it as it was.
+    float xPortSavedTween;
+#endif
 
     SParticleSystem(FourCC type, CElementGen* system)
     : x0_type(type)
     , x4_system(system)
-    , x8_prev(mCurrentParticleSystem) {
+    , x8_prev(mCurrentParticleSystem)
+#ifdef TARGET_PC
+    , xPortSavedTween(xPortSystemTween)
+#endif
+    {
       mCurrentParticleSystem = this;
     }
-    ~SParticleSystem() { mCurrentParticleSystem = x8_prev; }
+    ~SParticleSystem() {
+      mCurrentParticleSystem = x8_prev;
+#ifdef TARGET_PC
+      xPortSystemTween = xPortSavedTween;
+#endif
+    }
   };
 
   static void SetEmitterTime(int time);
