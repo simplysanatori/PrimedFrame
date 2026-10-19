@@ -78,6 +78,7 @@ inline constexpr int kConverter = 52;
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 3;
 inline constexpr int kModels = 8;      // the table's models, their looks and the ANCS copies
+// 63: ELPS reads its CNST surface flag; the system tween is 0 only at a 0x1000000 lifetime.
 // 62: NEGT, CRCV, SPEV, ELPS, ROTV, PNCV, KEYF, SLTW, CRLN octaves, KESP, one-stop GRAD, PAP0/9,
 //     ADV9 and IAV0..3 are converted; PLNV counts come from MAXP.
 // 30: PLNV writes its shuffler size (0 none), EMRV under XFMD 5 with a constant POFS is PEMV mode 2.
@@ -86,7 +87,7 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 27: MPXV is converted as the port-only PMXV, no longer dropped.
 // 26: ABS_, COSE, RSGN, IRSN (PIRS) and CODE are converted, no longer dropped.
 // 25: swoosh GRAD is the exact PGRD element, no longer a 101-key KEYP bake.
-inline constexpr int kEffects = 62;    // port_remastered_effect_import and the particle converters
+inline constexpr int kEffects = 63;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 inline constexpr int kRooms = 20;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
