@@ -119,14 +119,24 @@ struct Mat3 {
     return m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
            m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
   }
-  // The cofactor matrix over the determinant: the inverse transpose.
-  Mat3 InverseTranspose() const {
+  // The cofactor matrix: det x the inverse transpose.
+  Mat3 Cofactor() const {
     Mat3 r;
-    const float k = 1.f / Det();
     for (int i = 0; i < 3; ++i) {
       for (int j = 0; j < 3; ++j) {
         const int i1 = (i + 1) % 3, i2 = (i + 2) % 3, j1 = (j + 1) % 3, j2 = (j + 2) % 3;
-        r.m[i][j] = (m[i1][j1] * m[i2][j2] - m[i1][j2] * m[i2][j1]) * k;
+        r.m[i][j] = m[i1][j1] * m[i2][j2] - m[i1][j2] * m[i2][j1];
+      }
+    }
+    return r;
+  }
+  // The cofactor matrix over the determinant: the inverse transpose.
+  Mat3 InverseTranspose() const {
+    Mat3 r = Cofactor();
+    const float k = 1.f / Det();
+    for (int i = 0; i < 3; ++i) {
+      for (int j = 0; j < 3; ++j) {
+        r.m[i][j] *= k;
       }
     }
     return r;
@@ -688,8 +698,10 @@ static void AddIce(const CPortVfxData& vfx, const CTransform4f& model, const CEl
 
 // IceChargeCollision's vertices into `world`: its VS (1c651f97 perm 000_1) on the CPU. No hash or
 // shake: the position is the model's; the view normal and tangent are the instance matrix's (model x
-// orient) inverse transpose of the Remastered-space ones, unnormalised, and the handedness takes the
-// model's mirror, as AddIce. The instance colour is in `color`.
+// orient) cofactor times the Remastered-space ones, unnormalised (det x the inverse transpose: the FS
+// normalises, but a mirrored instance flips both), and the handedness is sign(det inst) x v3.w, as
+// ICECHARGE.md has it. det inst = det model x det orient, so the sign is the instance's, not the
+// model's. The instance colour is in `color`.
 static void AddIceCollision(const CPortVfxData& vfx, const CTransform4f& model, const CElementGen::CParticle& p,
                             const Tm (&tm)[3], const float (&color)[4],
                             std::vector< aurora::gfx::vfx::Vertex >& world) {
@@ -713,13 +725,13 @@ static void AddIceCollision(const CPortVfxData& vfx, const CTransform4f& model, 
       inst.m[r][c] = m3.m[r][0] * orient.m[0][c] + m3.m[r][1] * orient.m[1][c] + m3.m[r][2] * orient.m[2][c];
     }
   }
-  const Mat3 invT = inst.InverseTranspose();
-  const float mirror = m3.Det() < 0.f ? -1.f : 1.f;
+  const Mat3 cof = inst.Cofactor();
+  const float mirror = inst.Det() < 0.f ? -1.f : 1.f;
   for (u32 i = 0; i < vfx.meshVerts; ++i) {
     const float* m = &vfx.meshV[size_t(i) * 16];
     const CVector3f pos = model * CVector3f(m[0], m[1], m[2]);
-    const CVector3f nl = view.TransposeRotate(invT * (unorient * CVector3f(m[3], m[4], m[5])));
-    const CVector3f tl = view.TransposeRotate(invT * (unorient * CVector3f(m[8], m[9], m[10])));
+    const CVector3f nl = view.TransposeRotate(cof * (unorient * CVector3f(m[3], m[4], m[5])));
+    const CVector3f tl = view.TransposeRotate(cof * (unorient * CVector3f(m[8], m[9], m[10])));
     aurora::gfx::vfx::Vertex& v = world[i];
     v.pos[0] = pos.GetX();
     v.pos[1] = pos.GetY();
