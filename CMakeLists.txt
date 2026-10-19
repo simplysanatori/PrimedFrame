@@ -858,6 +858,20 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
+    # KEYF (Remastered's CREKeyframeInput): header-only, and its converter output.
+    mp_port_test(port_keyf_tests
+        SOURCES tests/port_keyf.cpp
+        INCLUDES include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
+    mp_port_test(port_remastered_effect_convert_keyf_tests
+        SOURCES tests/port_remastered_effect_convert_keyf.cpp
+            platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp
+            src/Kyoto/Particles/CVectorElement.cpp src/Kyoto/Math/CQuaternion.cpp
+            src/Kyoto/Math/CVector3f.cpp src/Kyoto/Math/CMatrix3f.cpp
+        INCLUDES platform/include include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
     # PLNE and PLNV (Remastered's plane emitters), their spread and PLNV's shuffler.
     mp_port_test(port_plane_emitters_tests
         SOURCES tests/port_plane_emitters.cpp src/Kyoto/Particles/CParticleGlobals.cpp src/Kyoto/CRandom16.cpp

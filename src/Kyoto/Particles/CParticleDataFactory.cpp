@@ -20,6 +20,7 @@
 #include "Kyoto/Particles/CPortCurlNoise.hpp"
 #endif
 #include "Kyoto/Particles/CParticleGen.hpp"
+#include "Kyoto/Particles/CPortKeyframeInput.hpp"
 #include "Kyoto/Particles/CPortParticleVars.hpp"
 #include "Kyoto/Particles/CRealElement.hpp"
 #include "Kyoto/Particles/CSpawnSystemKeyframeData.hpp"
@@ -1270,6 +1271,21 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
   }
   case SBIG('KEWS'): {
     return rs_new CREPortSwooshNodeTime(GetRealElement(in));
+  }
+  case SBIG('PKYF'): {
+    // Remastered's KEYF: the loop byte, the key count, the loop start, start and rate, the keys,
+    // then the input element.
+    const bool loop = in.ReadBool();
+    const int count = static_cast< int >(in.ReadLong());
+    const float loopStart = in.ReadFloat();
+    const float start = in.ReadFloat();
+    const float rate = in.ReadFloat();
+    std::vector< float > keys;
+    for (int i = 0; i < count; ++i) {
+      keys.push_back(in.ReadFloat());
+    }
+    return rs_new CREPortKeyframeInput(loop, count, loopStart, start, rate, std::move(keys),
+                                       GetRealElement(in));
   }
   case SBIG('DIVD'): {
     CRealElement* a = GetRealElement(in);
