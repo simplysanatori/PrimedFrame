@@ -505,7 +505,8 @@ constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kInd
                    kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256, kColorIndexing = 512, kAddColor = 1024,
                    kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192, kDisintegration = 16384,
                    kSceneWarp = 32768, kVisorSplat = 65536, kIceChargeBeam = 1u << 20,
-                   kIceChargeCollision = 1u << 21, kUnfogged = 1u << 22;
+                   kIceChargeCollision = 1u << 21, kUnfogged = 1u << 22, kVisorRunOff = 1u << 23,
+                   kVisorRunOffLit = 1u << 24;
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders without a SceneWarp recipe.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
@@ -578,6 +579,9 @@ struct Recipe {
   bool frameBuffer = false; // a FrameBuffer_* shader (scene x vc.rgb, warped by CCH0.xy): drawn as a multiply
   int params = 0;           // CCH0..params-1 go out whole in VPRM (with the NMAP slot), and SMTR overrides them
   bool fogPerm = false;     // its fog perm (001) is decoded too: drawn fogged without DFOG 1, unfogged (kUnfogged) with
+  // Always drawn unfogged, and no DFOG 1 needed: the visor composite shaders never see the room's fog,
+  // and their effect data carries no DFOG to read.
+  bool alwaysUnfogged = false;
 };
 
 // RECIPES.md "(b) Per shader" and RECIPES-all.md. Derived from each shader's
@@ -613,6 +617,13 @@ const Recipe* RecipeOf(uint32_t shader) {
       {0x1c651f97, kIceChargeCollision,
        {{"BCLR", Role::Color, -1, -1}, {"NMAP", Role::Normal, -1, -1}, {"TCH0", Role::Env, -1, -1}},
        {}, -1, false, false, 7, true},
+      // VFX_VisorRunOff (b5e12668 unlit, d85d4169 lit; FS perm 000; SPEC-fb-visor.md sections 5/6): the
+      // TCH0 flow map scrolled by CCH1 drives a mask m and a glow; the scene copy at the fragment,
+      // offset by CCH0.x x CCH1.z x the map x 0.01, is tinted between CCH3.rgb and CCH4.rgb by m, x the
+      // fade and vc.rgb. CCH0..4 in VPRM, animated by SMTR; alpha vc.a. The visor composite pass has no
+      // fog, so both are Unfogged whatever the effect's DFOG says.
+      {0xb5e12668, kVisorRunOff, {{"TCH0", Role::Color, -1, -1}}, {}, -1, false, false, 5, false, true},
+      {0xd85d4169, kVisorRunOffLit, {{"TCH0", Role::Color, -1, -1}}, {}, -1, false, false, 5, false, true},
       {0x84e0fe6c, kOpacityTex,
        {{"TCH0", Role::Opacity, -1, -1}},
        {}},
@@ -3403,7 +3414,9 @@ public:
       const bool unfogged = dfog != nullptr && dfog->value.size() == 1 &&
                             ((dfog->value[0].kind == EffectValue::Kind::Byte && dfog->value[0].word == 1) ||
                              (SmallConst(*dfog, fogOff) && fogOff == 1));
-      if (unfogged && recipe->fogPerm) {
+      if (recipe->alwaysUnfogged) {
+        features |= kUnfogged;
+      } else if (unfogged && recipe->fogPerm) {
         features |= kUnfogged;
       } else if (!unfogged && !recipe->fogPerm) {
         m_approximated.push_back(std::string("VMAT: shader ") + shaderText + " is drawn fogged (no DFOG 1), which its recipe lacks");

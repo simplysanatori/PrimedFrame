@@ -387,6 +387,11 @@ void CElementGen::PortRenderParticlesVfx() {
   if (!PortVfxBuildDesc(vfx, xPortVsmt, xPortVsmtMask, desc)) {
     return; // a texture is not streamed in yet
   }
+  // VisorRunOff is a PMDL model particle (the mesh path below), but a sprite generator sharing its
+  // material still reads CCH0..4: evaluate them rather than draw from zeroed uniforms.
+  if ((desc.features & (aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit)) != 0) {
+    PortVfxEvalParams(vfx, x74_curFrame, desc.params);
+  }
 
   // The retail frame: the same model matrix as the non-ORNT path. Particles are placed in a
   // camera-aligned "frame space" (x right, y forward, z up) and the model matrix carries them to
@@ -839,11 +844,16 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
     return;
   }
   const CPortVfxData& vfx = *x28_loadedGenDesc->xPortVfx;
-  if ((vfx.mat.features & (aurora::gfx::vfx::IceChargeBeam | aurora::gfx::vfx::IceChargeCollision)) != 0) {
+  const uint32_t features = vfx.mat.features;
+  if ((features & (aurora::gfx::vfx::IceChargeBeam | aurora::gfx::vfx::IceChargeCollision)) != 0) {
     desc.normalSlot = static_cast< int8_t >(vfx.normalSlot);
     desc.envSlot = static_cast< int8_t >(vfx.envSlot);
-    PortVfxEvalParams(vfx, x74_curFrame, desc.params);
     desc.time = CGraphics::GetSimTime();
+  }
+  // VPRM's CCHn rows, with the VSMT overrides, at this frame: IceCharge* and VisorRunOff's 5 rows.
+  if ((features & (aurora::gfx::vfx::IceChargeBeam | aurora::gfx::vfx::IceChargeCollision |
+                   aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit)) != 0) {
+    PortVfxEvalParams(vfx, x74_curFrame, desc.params);
   }
   // This is a model draw, so a material whose mesh permutation was read against the shader takes its
   // fade from the view-space normal (aurora's OpacityFresnel); every other material keeps the form

@@ -2922,6 +2922,21 @@ std::vector<uint8_t> MatiCch0(uint32_t shader, const std::vector<std::pair<const
   return out;
 }
 
+// A MATI with `cch` as its CCH0..n-1 vec4s (type 4) after its textures.
+std::vector<uint8_t> MatiCchN(uint32_t shader, const std::vector<std::pair<const char*, EffectGuid>>& textures,
+                              const std::vector<std::array<float, 4>>& cch) {
+  std::vector<uint8_t> out = Mati(shader, textures);
+  out[0x69] += uint8_t(cch.size());  // the counts here are small: the first byte is the whole count
+  for (size_t n = 0; n < cch.size(); ++n) {
+    out.push_back(4);
+    out.insert(out.end(), {'C', 'C', 'H', uint8_t('0' + n)});
+    for (int c = 0; c < 4; ++c) {
+      Put32(out, Bits(cch[n][size_t(c)]));
+    }
+  }
+  return out;
+}
+
 // Converts VmatEffect with `mati` as its material, returning the parts and the
 // VMAT value (empty when no VMAT was written).
 std::pair<std::vector<ConvertedPart>, std::vector<uint8_t>> ConvertVmat(const std::vector<uint8_t>& mati) {
@@ -3884,6 +3899,101 @@ void TestVmatIceChargeCollisionRecipe() {
             "1c651f97 under DFOG 1 is Unfogged");
 }
 
+// VFX_VisorRunOff (b5e12668 / d85d4169): one TCH0 flow map as the colour slot, CCH0..4 whole in VPRM
+// v1 and SMTR overrides of any of them to their VPRM targets, Unfogged without a DFOG 1 (the visor
+// composite pass has no fog), and the second shader on its own feature bit.
+void TestVmatVisorRunOffRecipes() {
+  constexpr uint32_t kVisorRunOff = 1u << 23, kVisorRunOffLit = 1u << 24, kUnfogged = 1u << 22;
+  // The visor runoff base values (SPEC-fb-visor.md section 5).
+  const std::vector<std::array<float, 4>> cch = {{0.1f, 0.5f, 0.1f, 0.2f},
+                                                 {0.f, 8.f, 0.f, 0.f},
+                                                 {0.1f, 0.1f, 0.25f, 64.f},
+                                                 {0.75f, 0.85f, 0.9f, 4.f},
+                                                 {0.4f, 0.5f, 0.75f, 1.f}};
+  // One real entry (CCH1.w, the u scroll) and one colour entry (CCH4, the tint), no DFOG.
+  const std::vector<uint8_t> data = [] {
+    std::vector<uint8_t> out = VmatEffect(true, Fresh(7), 0);
+    std::vector<uint8_t> extra;
+    PutProperty(extra, "SMTR", 0);
+    extra.push_back(0);
+    extra.push_back(2);
+    extra.push_back(1);
+    PutSmtrItem(extra, {"CCH1", 3, 0.25f});
+    for (int group = 1; group < 4; ++group) {
+      extra.push_back(0);
+    }
+    extra.push_back(1);
+    PutColour(extra, 0.5f, 0.25f, 0.75f, 1.f);
+    PutFourCC(extra, "CCH4");
+    extra.push_back(0);
+    extra.push_back(0);
+    out.insert(out.end() - 13, extra.begin(), extra.end());
+    return out;
+  }();
+  const auto convert = [&](uint32_t shader, std::vector<RetailPartProperty>& properties) {
+    const std::vector<uint8_t> mati = MatiCchN(shader, {{"TCH0", Fresh(8)}}, cch);
+    EffectNode node;
+    std::string error;
+    CHECK_MSG(ParseEffect(data.data(), data.size(), node, error), "the visor runoff effect parses");
+    EffectConvertIO io;
+    io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+    io.materialData = [&mati](const EffectGuid& material) {
+      return material == Fresh(7) ? mati : std::vector<uint8_t>();
+    };
+    io.vfxTexture = [](const EffectGuid& texture) {
+      FlipbookAtlas atlas;
+      atlas.id = texture == Fresh(8) ? 0x5EED0008 : 0;
+      return atlas;
+    };
+    io.modelMesh = [](uint32_t) { return std::vector<uint8_t>{0, 0, 0, 2}; };
+    std::vector<ConvertedPart> parts = ConvertEffect(node, data.data(), io);
+    if (parts.size() == 1) {
+      SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error);
+    }
+    return parts;
+  };
+  const auto value = [](const std::vector<RetailPartProperty>& properties, uint32_t fourcc) {
+    for (const RetailPartProperty& property : properties) {
+      if (property.fourcc == fourcc) {
+        return property.value;
+      }
+    }
+    return std::vector<uint8_t>();
+  };
+  std::vector<RetailPartProperty> properties;
+  std::vector<ConvertedPart> parts = convert(0xb5e12668, properties);
+  CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty(),
+            "b5e12668 without DFOG writes an exact VMAT");
+  const std::vector<uint8_t> vmat = value(properties, EffectFourCC("VMAT"));
+  CHECK_MSG(VmatWord(vmat, 12) == (kVisorRunOff | kUnfogged) && VmatWord(vmat, 16) == 0 &&
+                VmatWord(vmat, 20) == 1,
+            "b5e12668 VMAT: VisorRunOff, Unfogged, blend 0 (PBDM), one texture");
+  CHECK_MSG(VmatWord(vmat, 24 + 32) == 0, "b5e12668's TCH0 is the colour slot");
+  const std::vector<uint8_t> vprm = value(properties, EffectFourCC("VPRM"));
+  CHECK_MSG(vprm.size() == 8 + 12 + 5 * 16 && VmatWord(vprm, 8) == 1 && VmatWord(vprm, 16) == 5,
+            "VPRM v1: no NMAP slot and five CCH rows");
+  CHECK_MSG(VmatWord(vprm, 20) == Bits(0.1f) && VmatWord(vprm, 20 + 16 + 12) == Bits(0.f) &&
+                VmatWord(vprm, 20 + 4 * 16 + 12) == Bits(1.f),
+            "VPRM carries the MATI's CCH0..4");
+  const std::vector<uint8_t> vsmt = value(properties, EffectFourCC("VSMT"));
+  CHECK_MSG(VmatWord(vsmt, 4) == 5 && VmatWord(vsmt, 8) == kPortVfxParamTarget + 4 + 3,
+            "SMTR CCH1.w goes to its VPRM target");
+  bool row = VmatWord(vsmt, 4) == 5;
+  for (uint32_t c = 0; row && c < 4; ++c) {
+    row = VmatWord(vsmt, 8 + 16 * (1 + c)) == kPortVfxParamTarget + 4 * 4 + c;
+  }
+  CHECK_MSG(row && VmatWord(vsmt, 8 + 16 + 12) == Bits(0.5f) &&
+                VmatWord(vsmt, 8 + 64 + 12) == Bits(1.f),
+            "the colour SMTR CCH4 sets the whole row, one target per component");
+
+  properties.clear();
+  parts = convert(0xd85d4169, properties);
+  CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty(),
+            "d85d4169 without DFOG writes an exact VMAT");
+  CHECK_MSG(VmatWord(value(properties, EffectFourCC("VMAT")), 12) == (kVisorRunOffLit | kUnfogged),
+            "d85d4169 is VisorRunOffLit, Unfogged");
+}
+
 bool Contains(const std::vector<uint8_t>& bytes, const std::vector<uint8_t>& what) {
   return std::search(bytes.begin(), bytes.end(), what.begin(), what.end()) != bytes.end();
 }
@@ -4233,6 +4343,7 @@ int main() {
   TestVmatBatch4Recipes();
   TestVmatPyroRecipes();
   TestVmatDisintegrationRecipe();
+  TestVmatVisorRunOffRecipes();
   TestVmatVisorSplatRecipe();
   TestVmatSceneWarpRecipes();
   TestVmatIceChargeBeamRecipe();
