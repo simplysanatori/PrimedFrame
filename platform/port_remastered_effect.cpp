@@ -126,7 +126,7 @@ constexpr ElementSig kRealSigs[] = {
     {"ISWT", "RR"},   {"CLTN", "RRRR"}, {"CEQL", "RRRR"}, {"CRNG", "RRRRR"}, {"CEXT", "I"},    {"ITRL", "IR"},
     {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR"},
     {"CREL", "BRR"}, {"DFCS", "RR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
-    {"SLCT", "Re"},   {"DIVD", "RR"},   {"ABS_", "R"},    {"MPXV", "IR"},   {"COSE", "RRR"},  {"RSGN", "R"},     {"IRSN", "R"},
+    {"SLCT", "Re"},   {"DIVD", "RR"},   {"SLTW", "RR"},   {"ABS_", "R"},    {"MPXV", "IR"},   {"COSE", "RRR"},  {"RSGN", "R"},     {"IRSN", "R"},
     {"NEGT", "R"},
 };
 constexpr ElementSig kVectorSigs[] = {
@@ -137,7 +137,7 @@ constexpr ElementSig kVectorSigs[] = {
     {"CRCV", "VVRIRRb"},
     {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"ROTV", "Ve"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
     {"SLCT", "Re"},  {"NORM", "V"},     {"CMPS", "-"},    {"EXTT", "-"},   {"EXTS", "-"},
-    {"CPSS", "-"},  {"ABS_", "V"},
+    {"CPSS", "-"},  {"ABS_", "V"}, {"PNCV", "-"},
     // MCBS is MPCB's scale form (MPT_CVEConvertScaleToXLeftYUpZForward 0x2a30f8).
     {"MCBS", "V"},
 };

@@ -8,6 +8,7 @@
 
 #include "Kyoto/CFactoryFnReturn.hpp"
 #include "Kyoto/Math/CVector3f.hpp"
+#include "Kyoto/Particles/CIntElement.hpp"
 #include "Kyoto/Particles/IElement.hpp"
 
 class CInputStream;
@@ -21,6 +22,11 @@ namespace PortCurlNoise {
 float PerlinNoise(float x, float y, float z, int period);
 // 0x68700: (dy - dz, dz - dx, dx - dy) of central differences of the noise.
 CVector3f CurlNoise3d(float x, float y, float z, float epsilon, int period);
+// 0x28708c, CParticleMath::CurlNoise_PerlinOctave3d: the curl of the octave sum
+// S = sum_k gain^k * noise(p * freq * 2^k), period 256. The step is added to a coordinate before
+// the frequency multiplies it. octaves < 1 gives zero.
+CVector3f CurlNoiseOctave3d(int octaves, float x, float y, float z, float freq, float gain,
+                            float epsilon);
 } // namespace PortCurlNoise
 
 // CVectorField 0x2a72e0 / ComputeFieldVector 0x2a7390, loaded from the port VECF asset: a
@@ -69,6 +75,25 @@ private:
   CVectorElement* mA;
   FieldHandle* mHandle;
   mutable const CVectorField* mField = nullptr;
+};
+
+// PCRO: the vector element CVECurlNoise_PerlinOctave3d (slice 0, 0x2a33c0). Reads P, the
+// frequency, the octave count (int), the gain and the amplitude A; a missing frequency or gain is
+// 1 and a missing octave count is 1. No field.
+class CVEPortCurlNoiseOctave : public CVectorElement {
+public:
+  CVEPortCurlNoiseOctave(CVectorElement* p, CRealElement* freq, CIntElement* octaves,
+                         CRealElement* gain, CVectorElement* a);
+  ~CVEPortCurlNoiseOctave() override;
+
+  bool GetValue(int frame, CVector3f& valOut) const override;
+
+private:
+  CVectorElement* mP;
+  CRealElement* mFreq;
+  CIntElement* mOctaves;
+  CRealElement* mGain;
+  CVectorElement* mA;
 };
 
 // PCRM: the mod-vector element CMVECurlNoise. Reads mode (raw u32), V, t. Mode 1 blends the

@@ -20,7 +20,9 @@
 #include "Kyoto/Particles/CPortCurlNoise.hpp"
 #endif
 #include "Kyoto/Particles/CParticleGen.hpp"
+#include "Kyoto/Particles/CPortKeyframeInput.hpp"
 #include "Kyoto/Particles/CPortParticleVars.hpp"
+#include "Kyoto/Particles/CPortSystemTween.hpp"
 #include "Kyoto/Particles/CRealElement.hpp"
 #include "Kyoto/Particles/CSpawnSystemKeyframeData.hpp"
 #include "Kyoto/Particles/CSwooshDescription.hpp"
@@ -1319,6 +1321,26 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
   case SBIG('KEWS'): {
     return rs_new CREPortSwooshNodeTime(GetRealElement(in));
   }
+  case SBIG('PKYF'): {
+    // Remastered's KEYF: the loop byte, the key count, the loop start, start and rate, the keys,
+    // then the input element.
+    const bool loop = in.ReadBool();
+    const int count = static_cast< int >(in.ReadLong());
+    const float loopStart = in.ReadFloat();
+    const float start = in.ReadFloat();
+    const float rate = in.ReadFloat();
+    std::vector< float > keys;
+    for (int i = 0; i < count; ++i) {
+      keys.push_back(in.ReadFloat());
+    }
+    return rs_new CREPortKeyframeInput(loop, count, loopStart, start, rate, std::move(keys),
+                                       GetRealElement(in));
+  }
+  case SBIG('PSLW'): {
+    CRealElement* a = GetRealElement(in);
+    CRealElement* b = GetRealElement(in);
+    return rs_new CREPortSystemTween(a, b);
+  }
   case SBIG('DIVD'): {
     CRealElement* a = GetRealElement(in);
     CRealElement* b = GetRealElement(in);
@@ -1467,6 +1489,34 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     ret = rs_new CVEPortCurlNoise(pos, freq, amp, handle);
     break;
   }
+  case SBIG('PCRO'): {
+    // CVECurlNoise_PerlinOctave3d: P, the frequency, the octave count, the gain, A.
+    CVectorElement* pos = GetVectorElement(in);
+    CRealElement* freq = GetRealElement(in);
+    CIntElement* octaves = GetIntElement(in);
+    CRealElement* gain = GetRealElement(in);
+    CVectorElement* amp = GetVectorElement(in);
+    ret = rs_new CVEPortCurlNoiseOctave(pos, freq, octaves, gain, amp);
+    break;
+  }
+  case SBIG('PRTV'): {
+    // Port-only ROTV: the vector, the rotation kind, and REUL's three angles.
+    CVectorElement* vec = GetVectorElement(in);
+    const FourCC kind = GetClassID(in);
+    CRealElement* x = nullptr;
+    CRealElement* y = nullptr;
+    CRealElement* z = nullptr;
+    if (kind == SBIG('REUL')) {
+      x = GetRealElement(in);
+      y = GetRealElement(in);
+      z = GetRealElement(in);
+    }
+    ret = rs_new CVEPortRotateVector(vec, kind, x, y, z);
+    break;
+  }
+  case SBIG('PNCV'):
+    ret = rs_new CVEPortNormalizedVelocity();
+    break;
   case SBIG('ANCR'): {
     CRealElement* rotateX = GetRealElement(in);
     CRealElement* rotateY = GetRealElement(in);

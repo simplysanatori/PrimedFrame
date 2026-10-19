@@ -1543,6 +1543,84 @@ public:
       AppendBE32(out, F("RNDV"));
       return Element(value.args[0], Type::Real, out, why);
     }
+    // PNCV: the port-only PNCV, the particle's velocity normalised by CVENormalizedCompensatedVelocity
+    // 0x2a2800 (one refined FRSQRTE step, up vector below 2^-46). It yields Remastered's numbers.
+    if (value.fourcc == F("PNCV") && type == Type::Vector && value.args.empty()) {
+      AppendBE32(out, F("PNCV"));
+      return true;
+    }
+    // ROTV(v, rotation) outside a component: the port-only PRTV (the vector, the rotation kind and
+    // REUL's angles), CVERotateVector 0x2a0328 in Remastered's space. The rotations it carries are
+    // REUL (order 0), EXTR and CMRT; EXTR and CMRT read the generator, which a swoosh has not.
+    if (value.fourcc == F("ROTV") && type == Type::Vector && value.args.size() == 2) {
+      const EffectValue& rot = value.args[1];
+      if (IsElement(rot, F("REUL")) && rot.args.size() == 4) {
+        const EffectValue& order = rot.args[3];
+        if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
+          why = "ROTV by a REUL in an axis order other than 0";
+          return false;
+        }
+        AppendBE32(out, F("PRTV"));
+        if (!Element(value.args[0], Type::Vector, out, why)) {
+          return false;
+        }
+        AppendBE32(out, F("REUL"));
+        for (size_t i = 0; i < 3; ++i) {
+          if (!Element(rot.args[i], Type::Real, out, why)) {
+            return false;
+          }
+        }
+        return true;
+      }
+      if ((IsElement(rot, F("EXTR")) || IsElement(rot, F("CMRT"))) && rot.args.empty()) {
+        if (m_swoosh) {
+          why = "ROTV by " + EffectFourCCString(rot.fourcc) + " in a swoosh";
+          return false;
+        }
+        AppendBE32(out, F("PRTV"));
+        if (!Element(value.args[0], Type::Vector, out, why)) {
+          return false;
+        }
+        AppendBE32(out, rot.fourcc);
+        return true;
+      }
+      why = "ROTV by a rotation that is not REUL/EXTR/CMRT";
+      return false;
+    }
+    // SLTW(a, b) (GetLifetimeTweenElement 0x26a640, time slot 0) is the port-only PSLW: the two
+    // reals, blended by the system tween.
+    if (value.fourcc == F("SLTW") && type == Type::Real && value.args.size() == 2) {
+      AppendBE32(out, F("PSLW"));
+      return Element(value.args[0], Type::Real, out, why) && Element(value.args[1], Type::Real, out, why);
+    }
+    // KEYF (version 2) is CREKeyframeInput 0x296490: the 30-byte header (version, an unused word,
+    // loop and an unused byte, N at +10, loop start A, start B and rate R as floats, then the key
+    // count) with N keys, and an input element. The port-only PKYF: the loop byte, N, A, B, R, the
+    // N keys, then the input. Another version builds no element in Remastered.
+    if (value.fourcc == F("KEYF") && type == Type::Real && value.args.size() == 2 &&
+        value.args[0].kind == EffectValue::Kind::Keys) {
+      const uint8_t* p = m_data + value.args[0].offset;
+      const size_t size = value.args[0].size;
+      if (size < 30 || ReadLE32(p) != 2) {
+        why = "KEYF of a version other than 2";
+        return false;
+      }
+      const uint32_t n = ReadLE32(p + 10);
+      if (n < 1 || n != ReadLE32(p + 26) || size - 30 != size_t(n) * 4) {
+        why = "KEYF whose key count differs from N";
+        return false;
+      }
+      AppendBE32(out, F("PKYF"));
+      out.push_back(p[8] & 1);
+      AppendBE32(out, n);
+      AppendBE32(out, ReadLE32(p + 14));
+      AppendBE32(out, ReadLE32(p + 18));
+      AppendBE32(out, ReadLE32(p + 22));
+      for (uint32_t i = 0; i < n; ++i) {
+        AppendBE32(out, ReadLE32(p + 30 + size_t(i) * 4));
+      }
+      return Element(value.args[1], Type::Real, out, why);
+    }
     // KESP is KEYP on time slot 2, which is always zero (CREKeyframeEmitterSpecific), so it
     // is its first key: CNST(keys[0]).
     if (value.fourcc == F("KESP") && type == Type::Real && value.args.size() == 1 &&
@@ -1761,8 +1839,23 @@ public:
       return false;
     }
     if (!IsElement(a[4], F("NONE"))) {
-      why = "CRLN octaves not ported";
-      return false;
+      // Octaves: the port-only PCRO (P, freq, octaves, gain, A). The VECF is released in
+      // Remastered's octave class, so it is not carried.
+      std::vector<uint8_t> octave;
+      AppendBE32(octave, F("PCRO"));
+      if (!Element(a[2], Type::Vector, octave, why) || !Element(a[3], Type::Real, octave, why) ||
+          !Element(a[4], Type::Int, octave, why) || !Element(a[5], Type::Real, octave, why) ||
+          !Element(a[6], Type::Vector, octave, why)) {
+        return false;
+      }
+      AppendBE32(out, F("PCRM"));
+      AppendBE32(out, a[7].word);
+      if (m_mp1Space) {
+        out.insert(out.end(), octave.begin(), octave.end());
+      } else {
+        Basis(F("BSIS"), octave, out);
+      }
+      return Element(a[8], Type::Real, out, why);
     }
     std::vector<uint8_t> noise;
     AppendBE32(noise, F("PCRN"));
@@ -4426,6 +4519,11 @@ public:
     if (fourcc == F("PCRM") && type == Type::ModVector) {
       return Skip(4) && Element(Type::Vector) && Element(Type::Real);
     }
+    // Port-only PCRO: P, the frequency, the octave count, the gain, then the amplitude A.
+    if (fourcc == F("PCRO") && type == Type::Vector) {
+      return Element(Type::Vector) && Element(Type::Real) && Element(Type::Int) &&
+             Element(Type::Real) && Element(Type::Vector);
+    }
     // Port-only PCRN: P and F, the amplitude A, then NONE or CNST and a VECF id.
     if (fourcc == F("PCRN") && type == Type::Vector) {
       uint32_t field;
@@ -4433,6 +4531,30 @@ public:
         return false;
       }
       return field == F("NONE") || (field == F("CNST") && Skip(4));
+    }
+    // Port-only PSLW: the two reals.
+    if (fourcc == F("PSLW") && type == Type::Real) {
+      return Element(Type::Real) && Element(Type::Real);
+    }
+    // Port-only PKYF: the loop byte, N, the loop start, start and rate, N keys, then the input.
+    if (fourcc == F("PKYF") && type == Type::Real) {
+      uint32_t count;
+      return Skip(1) && Word(count) && count >= 1 && count <= 0x100000 && Skip(12) &&
+             Skip(size_t(count) * 4) && Element(Type::Real);
+    }
+    // Port-only PRTV: the vector, then EXTR, CMRT or REUL and its three angles. PNCV has none.
+    if (fourcc == F("PNCV") && type == Type::Vector) {
+      return true;
+    }
+    if (fourcc == F("PRTV") && type == Type::Vector) {
+      uint32_t rotation;
+      if (!Element(Type::Vector) || !Word(rotation)) {
+        return false;
+      }
+      if (rotation == F("REUL")) {
+        return Element(Type::Real) && Element(Type::Real) && Element(Type::Real);
+      }
+      return rotation == F("EXTR") || rotation == F("CMRT");
     }
     // Port-only PGRD (a swoosh's gradient): stop count, five floats per stop, the period as an
     // int element, then the repeat byte.

@@ -92,6 +92,13 @@ public:
     float nodeRemainder = 0.f;
   };
   static const SPortSwooshEval* xPortSwooshEval;
+  // port-only: the system tween Remastered keeps at ctx+0x60 (UpdateLifetimeTweenValues 0x24ef38 on
+  // time slot 0, written by every system tick): clamp(system frame / system lifetime, 0, 1). A
+  // lifetime of 0 reads as 1, and the infinite one (the port's PSLT default 0x7FFFFF, retail's
+  // 0x1000000) gives 0. The reciprocal is a plain 1 / lifetime; the original's estimate is within
+  // an ulp of it.
+  static float xPortSystemTween;
+  static void PortSetSystemTime(int frame, int lifetime);
   struct PortSwooshEvalScope {
     const SPortSwooshEval* prev;
     explicit PortSwooshEvalScope(const SPortSwooshEval* eval) : prev(xPortSwooshEval) {
