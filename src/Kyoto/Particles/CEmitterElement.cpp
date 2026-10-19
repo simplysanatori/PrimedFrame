@@ -332,7 +332,7 @@ bool CEEPortPlaneVariance::GetValue(int frame, CVector3f& pPos, CVector3f& pVel)
     index = shuffler.Next(mShuffle, [random] { return uint32_t(random->Next()); }) & 0xff;
   } else {
     // Retail counts a particle before its emitter runs; Remastered's total is one less.
-    const int total = generator != nullptr ? generator->GetCumulativeParticleCount() - 1 : 0;
+    const int total = generator != nullptr ? std::max(generator->GetCumulativeParticleCount() - 1, 0) : 0;
     index = total % cells;
   }
   const int ix = index % countX;

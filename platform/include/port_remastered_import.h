@@ -78,8 +78,8 @@ inline constexpr int kConverter = 52;
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 3;
 inline constexpr int kModels = 8;      // the table's models, their looks and the ANCS copies
-// 60: PLNV writes its shuffler size (0 none), EMRV under XFMD 5 with a constant POFS is PEMV mode 2.
-// 59: PLNE, PLNV (plane emitters) and EMRV (PEMV) are converted, no longer dropped.
+// 30: PLNV writes its shuffler size (0 none), EMRV under XFMD 5 with a constant POFS is PEMV mode 2.
+// 29: PLNE, PLNV (plane emitters) and EMRV (PEMV) are converted, no longer dropped.
 // 28: CREL(LTHN) is retail's CLTN; MPAC, MPCN and ANCM are the exact port-only PMAC, PMCN and PANM.
 // 27: MPXV is converted as the port-only PMXV, no longer dropped.
 // 26: ABS_, COSE, RSGN, IRSN (PIRS) and CODE are converted, no longer dropped.

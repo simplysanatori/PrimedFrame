@@ -1432,6 +1432,15 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     CRealElement* minAngle = GetRealElement(in);
     CRealElement* maxAngle = GetRealElement(in);
     CRealElement* magnitude = GetRealElement(in);
+    if (rotateX == nullptr || rotateY == nullptr || rotateZ == nullptr || minAngle == nullptr || maxAngle == nullptr || magnitude == nullptr) {
+      delete rotateX;
+      delete rotateY;
+      delete rotateZ;
+      delete minAngle;
+      delete maxAngle;
+      delete magnitude;
+      return nullptr;
+    }
     ret = rs_new CVEPortAngleConeMinMax(rotateX, rotateY, rotateZ, minAngle, maxAngle, magnitude);
     break;
   }
@@ -1441,12 +1450,25 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     CRealElement* xRange = GetRealElement(in);
     CRealElement* yRange = GetRealElement(in);
     CRealElement* magnitude = GetRealElement(in);
+    if (xCentre == nullptr || yCentre == nullptr || xRange == nullptr || yRange == nullptr || magnitude == nullptr) {
+      delete xCentre;
+      delete yCentre;
+      delete xRange;
+      delete yRange;
+      delete magnitude;
+      return nullptr;
+    }
     ret = rs_new CVEPortMpac(xCentre, yCentre, xRange, yRange, magnitude);
     break;
   }
   case SBIG('PMCN'): {
     CVectorElement* direction = GetVectorElement(in);
     CRealElement* radius = GetRealElement(in);
+    if (direction == nullptr || radius == nullptr) {
+      delete direction;
+      delete radius;
+      return nullptr;
+    }
     ret = rs_new CVEPortCone(direction, radius);
     break;
   }
