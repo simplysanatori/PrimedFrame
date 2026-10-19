@@ -1499,12 +1499,22 @@ void CElementGen::PortInitMover() {
 // The system variables in PSYS order, at the emitter's frame: all of them (CAddVarSystem::Init
 // 0x278438) or those that are not init-only (CAddVarSystem::Update 0x278638). [I] Remastered
 // keeps separate Init and Update lists; their order is taken as PSYS's.
+// They are evaluated on the generator's own time context, whose slot 0 is the system's PSLT (a
+// tag-1 ILPT in one of them is the port's PLPT offset 0), so the port's lifetime globals are the
+// system's while they run; the rest of the update reads a particle's own life.
 void CElementGen::PortEvalSys(bool init) {
   const CPortSys* sys = x28_loadedGenDesc->xPortSys.get();
   if (sys == nullptr) {
     return;
   }
   const int frame = x74_curFrame;
+  const int lifetime = CParticleGlobals::mParticleLifetime;
+  const float lifetimeReal = CParticleGlobals::mParticleLifetimeReal;
+  const int percentage = CParticleGlobals::mParticleLifetimePercentage;
+  const float percentageReal = CParticleGlobals::mParticleLifetimePercentageReal;
+  const float percentageRemainder = CParticleGlobals::mParticleLifetimePercentageRemainder;
+  CParticleGlobals::SetParticleLifetime(x268_PSLT);
+  CParticleGlobals::UpdateParticleLifetimeTweenValues(frame);
   for (const SPortSysItem& item : sys->items) {
     if (item.initOnly && !init) {
       continue;
@@ -1530,6 +1540,11 @@ void CElementGen::PortEvalSys(bool init) {
     }
     xPortVars.SetSys(item.type, item.slot, v);
   }
+  CParticleGlobals::mParticleLifetime = lifetime;
+  CParticleGlobals::mParticleLifetimeReal = lifetimeReal;
+  CParticleGlobals::mParticleLifetimePercentage = percentage;
+  CParticleGlobals::mParticleLifetimePercentageReal = percentageReal;
+  CParticleGlobals::mParticleLifetimePercentageRemainder = percentageRemainder;
 }
 
 // CAddVarSystem::Update at the start of each tick (TickSystem_Complete 0x24ac98), before the

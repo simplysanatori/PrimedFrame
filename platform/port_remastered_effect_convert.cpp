@@ -2211,8 +2211,14 @@ public:
   // An ELC2's COLR (tag 3) reads slot 1 = the bolt's end - start (UpdateBolt 0xb77638 sets ctx+0x70
   // = param_2[3] - param_2[2] and calls the colour element with the bolt's age), the lifetime the
   // port's bolt sets, so its offset is 0.
+  // A generator's own SVCn/SVRn/SVIn/SVVn (CAddVarSystem's variables) is evaluated by CAddVarSystem
+  // ::Init/Update 0x278438/0x278638 on the generator's context, so its tag 1 is slot 0 = the system's
+  // PSLT, which CElementGen::PortEvalSys puts in CParticleGlobals: offset 0.
   static int LifetimeOffset(bool part, bool swoosh, bool electric, const EffectProperty& property) {
     if (electric && property.tag == 3 && property.fourcc == F("COLR")) {
+      return 0;
+    }
+    if (part && property.tag == 1 && SystemVarWrite(property.fourcc).first != ~0u) {
       return 0;
     }
     if (part && property.tag == 3) {
@@ -3943,8 +3949,11 @@ public:
         std::string why;
         const uint32_t hidden = m_sysNextHidden;
         m_sysItems = &items;
+        const int lifetimeOffset = m_lifetimeOffset;
+        m_lifetimeOffset = LifetimeOffset(true, swoosh, electric, *item.property);
         const bool ok = item.property->value.size() == 1 &&
                         Element(item.property->value[0], kTypes[item.type], visible.element, why);
+        m_lifetimeOffset = lifetimeOffset;
         m_sysItems = nullptr;
         if (!ok) {
           m_sysNextHidden = hidden;

@@ -4126,6 +4126,39 @@ std::vector<ConvertedPart> ConvertElc2(Body body) {
   return parts.size() == 2 ? std::vector<ConvertedPart>{parts[1]} : std::vector<ConvertedPart>{};
 }
 
+// A generator's SVC0 with tag 1 reads slot 0, the system's PSLT, which CElementGen::PortEvalSys
+// holds in CParticleGlobals while it evaluates PSYS: its GRAD over ILPT is the port-only PLPT with
+// offset 0, not retail's ILPT over the particle's life (cef0b80d).
+void TestSystemVarGradLifetime() {
+  auto parts = ConvertOne(OneGenerator([](auto& o) {
+                 PutProperty(o, "SVC0", 1);
+                 PutFourCC(o, "GRAD");
+                 o.push_back(2);
+                 for (uint16_t half : {0x3c00, 0x0000, 0x0000, 0x3c00}) {
+                   o.push_back(uint8_t(half));
+                   o.push_back(uint8_t(half >> 8));
+                 }
+                 Put32(o, Bits(0.0f));
+                 for (uint16_t half : {0x0000, 0x0000, 0x3c00, 0x0000}) {
+                   o.push_back(uint8_t(half));
+                   o.push_back(uint8_t(half >> 8));
+                 }
+                 Put32(o, Bits(1.0f));
+                 PutFourCC(o, "ILPT");
+                 PutConstant(o, 100);
+                 o.push_back(0);
+               }),
+               {});
+  CHECK_MSG(parts.size() == 1, "SVC0 with a GRAD converts");
+  if (parts.size() == 1) {
+    Retail plpt;
+    plpt.f("PLPT").w(0).f("CNST").w(100).b(0);
+    CHECK_MSG(Contains(parts[0].part, plpt.bytes), "an SVC0 tag-1 GRAD over ILPT is PLPT offset 0");
+    CHECK_MSG(parts[0].approximated.empty(), "the SVC0 tag-1 GRAD lifetime is exact");
+    CHECK_MSG(parts[0].dropped.empty(), "nothing dropped");
+  }
+}
+
 // An ELC2's EBDM is a raw byte (0 alpha, 1 additive, 2 premultiplied), and its COLR GRAD over ILPT
 // reads the bolt's life, offset 0.
 void TestElc2BlendAndLifetime() {
@@ -4336,6 +4369,7 @@ int main() {
   TestCurlNoise();
   TestParentRead();
   TestSystemVars();
+  TestSystemVarGradLifetime();
   TestModelRotation();
   TestComposedModelRotation();
   TestModelRotationBasisEvaluation();
