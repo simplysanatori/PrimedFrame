@@ -1360,6 +1360,13 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
     CRealElement* b = GetRealElement(in);
     return rs_new CREPortDivide(a, b);
   }
+  case SBIG('T2S_'): {
+    CIntElement* a = GetIntElement(in);
+    if (a == nullptr) {
+      return nullptr;
+    }
+    return rs_new CREPortTicksToSeconds(a);
+  }
 #endif
   case SBIG('PAP1'): {
     return rs_new CREParticleAccessParameter1();

@@ -170,6 +170,8 @@ const Signatures& ElementsOf(Type type) {
       {F("KEWS"), "r"},
       // Port-only (CParticleDataFactory under TARGET_PC).
       {F("DIVD"), "rr"},
+      // Port-only CREPortTicksToSeconds: Remastered's T2S_, an int element (ticks) as seconds.
+      {F("T2S_"), "i"},
       // Port-only: Remastered's CREAbsoluteValue, CRECosineWave (frequency, amplitude, phase)
       // and CRERandomSign. Its CREInitialRandomSign is the port-only PIRS (see Element).
       {F("ABS_"), "r"},   {F("COSE"), "rrr"}, {F("RSGN"), "r"},
@@ -1847,6 +1849,27 @@ public:
     if (value.fourcc == F("CRLN") && type == Type::ModVector) {
       return CurlNoise(value, out, why);
     }
+    // SCLE(v, r) is CVEScale 0x29e374: v, then r, out = (v.x * r, r * v.y, r * v.z). Retail's
+    // MULT(v, RTOV(r)) is the same products in the same order (v then r drawn), and a uniform
+    // scale commutes with the particle-space change, so v stays in Remastered's numbers here.
+    if (value.fourcc == F("SCLE") && type == Type::Vector && value.args.size() == 2) {
+      AppendBE32(out, F("MULT"));
+      if (!Element(value.args[0], Type::Vector, out, why)) {
+        return false;
+      }
+      AppendBE32(out, F("RTOV"));
+      return Element(value.args[1], Type::Real, out, why);
+    }
+    // A swoosh's elements run on the swoosh's own frame, which SUST (0x298ef8) selects for the
+    // system frame's child anyway, so SUST(x) is x there.
+    if (value.fourcc == F("SUST") && type == Type::Real && value.args.size() == 1 && m_swoosh) {
+      return Element(value.args[0], type, out, why);
+    }
+    // SDTR (CREShutdownTimeRemaining 0x2999e0) is the shutdown countdown's remaining over total.
+    if (value.fourcc == F("SDTR") && type == Type::Real) {
+      why = "SDTR needs Remastered's shutdown countdown (SHTT)";
+      return false;
+    }
     const Signatures& elements = ElementsOf(type);
     const auto found = elements.find(value.fourcc);
     if (found == elements.end()) {
@@ -2440,6 +2463,17 @@ public:
       return Asset(value, type.asset, out, why);
     default:
       break;
+    }
+    // NFOM: ELC2's tangent mode, one raw byte (0xb70734 reads it with CInputStream::Get, no
+    // element), written as CNST and an s32 of it. The other ELC2 fields are element reads
+    // (GetIntElement, GetIntElementAsConst for LWQD) or flags (GetBool).
+    if (fourcc == F("NFOM")) {
+      const EffectValue* byte = value.size() == 1 ? &value[0] : nullptr;
+      if (byte != nullptr && byte->kind == EffectValue::Kind::Byte) {
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, byte->word);
+        return true;
+      }
     }
     // LFOT and LTYP: Remastered writes the enum as a byte. The exe maps it to retail's
     // int as LFOT 0-3 unchanged and LTYP 0, 2, 1, 3 (its point and spot are swapped).

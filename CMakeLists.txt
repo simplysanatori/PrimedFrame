@@ -816,6 +816,16 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
+    # Element batch 3 (T2S_, SCLE, NFOM, DIVD, swoosh SUST): converter output.
+    mp_port_test(port_elem3_convert_tests
+        SOURCES tests/port_elem3_convert.cpp
+            platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp
+            src/Kyoto/Particles/CVectorElement.cpp src/Kyoto/Particles/CRealElement.cpp
+            src/Kyoto/Particles/CIntElement.cpp src/Kyoto/Math/CQuaternion.cpp
+            src/Kyoto/Math/CVector3f.cpp src/Kyoto/Math/CMatrix3f.cpp
+        INCLUDES platform/include include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
     mp_port_test(port_remastered_effect_convert_vars_tests
         SOURCES tests/port_remastered_effect_convert_vars.cpp
             platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp

@@ -416,6 +416,20 @@ bool CREPortDivide::GetValue(int frame, float& valOut) const {
   return false;
 }
 
+CREPortTicksToSeconds::CREPortTicksToSeconds(CIntElement* a) : x4_a(a) {}
+
+CREPortTicksToSeconds::~CREPortTicksToSeconds() { delete x4_a; }
+
+bool CREPortTicksToSeconds::GetValue(int frame, float& valOut) const {
+  int n = 0;
+  if (x4_a) {
+    x4_a->GetValue(frame, n);
+  }
+  // skTickPerSecondInv is the double 0x3F91111111111111, 1/60 rounded once.
+  valOut = static_cast< float >(0.016666666666666666 * static_cast< double >(n));
+  return false;
+}
+
 CREPortSwooshNodeTime::CREPortSwooshNodeTime(CRealElement* a) : x4_a(a) {}
 
 CREPortSwooshNodeTime::~CREPortSwooshNodeTime() { delete x4_a; }

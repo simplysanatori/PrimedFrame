@@ -264,6 +264,18 @@ public:
   ~CREPortDivide() override;
   bool GetValue(int frame, float& valOut) const override;
 };
+
+// Port-only T2S_ (CRETicksToSeconds::GetValue 0x299910): (float)(1/60 * (double)n) for the int
+// child n, the double product narrowed once (not n / 60.f).
+class CIntElement;
+class CREPortTicksToSeconds : public CRealElement {
+  CIntElement* x4_a;
+
+public:
+  explicit CREPortTicksToSeconds(CIntElement* a);
+  ~CREPortTicksToSeconds() override;
+  bool GetValue(int frame, float& valOut) const override;
+};
 #endif
 
 class CREParticleRotationOrLineWidth : public CRealElement {

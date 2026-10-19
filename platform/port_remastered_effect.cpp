@@ -60,7 +60,7 @@ constexpr ElementSig kElementSigs[] = {
     {"ASPR", "eeeeee"}, {"ATEX", "geeeeee geeeeeb"}, {"ATX2", "geeee"}, {"BNCE", "eeeeb"}, {"CCLU", "eeee"},
     {"CEQL", "eeee"},  {"CEXT", "e"},          {"CFDE", "eeee"},    {"CHAN", "eee"},
     {"CIRC", "eeeee"}, {"CLMP", "eee"},        {"CLTN", "eeee"},    {"CNST", "w eee eeee b g"},
-    {"CONE", "ee"},    {"CRCV", "eeeeeeb"},    {"CRLN", "bb eeeeeeebe eeeeeebe"},
+    {"CONE", "ee"},    {"CRCV", "eeeeeeb"},    {"DIVD", "ee"},    {"T2S_", "e"},    {"SCLE", "ee"},    {"SDTR", "-"},    {"CRLN", "bb eeeeeeebe eeeeeebe"},
     {"CRNG", "eeeee"}, {"CTVC", "e"},          {"DETH", "ee"},      {"DOTP", "ee"},
     {"DPVC", "ge"},    {"DPVF", "ge"},         {"DPVI", "ge"},      {"DPVV", "ge"},
     {"EMPL", "eeeeb"}, {"EXPL", "ee"},         {"EXTR", "-"},         {"EXTT", "-"},
@@ -127,7 +127,7 @@ constexpr ElementSig kRealSigs[] = {
     {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR"},
     {"CREL", "BRR"}, {"DFCS", "RR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
     {"SLCT", "Re"},   {"DIVD", "RR"},   {"SLTW", "RR"},   {"ABS_", "R"},    {"MPXV", "IR"},   {"COSE", "RRR"},  {"RSGN", "R"},     {"IRSN", "R"},
-    {"NEGT", "R"},
+    {"NEGT", "R"},    {"T2S_", "I"},    {"SDTR", "-"},
 };
 constexpr ElementSig kVectorSigs[] = {
     {"NONE", "-"},   {"CNST", "RRR"},   {"KEYE", "k"},    {"KEYP", "k"},   {"ANGC", "RRRRR"}, {"CONE", "VR"},
@@ -137,7 +137,7 @@ constexpr ElementSig kVectorSigs[] = {
     {"CRCV", "VVRIRRb"},
     {"ANCR", "eRRR ebeee"}, {"ANCM", "eRRR"}, {"ANCV", "eRRRRRRRb"}, {"RNDV", "R"}, {"ROTV", "Ve"}, {"TPVV", "gV"}, {"DPVV", "gV"}, {"SPAV", "bV"},
     {"SLCT", "Re"},  {"NORM", "V"},     {"CMPS", "-"},    {"EXTT", "-"},   {"EXTS", "-"},
-    {"CPSS", "-"},  {"ABS_", "V"}, {"PNCV", "-"},
+    {"CPSS", "-"},  {"ABS_", "V"}, {"PNCV", "-"}, {"SCLE", "VR"},
     // MCBS is MPCB's scale form (MPT_CVEConvertScaleToXLeftYUpZForward 0x2a30f8).
     {"MCBS", "V"},
 };
