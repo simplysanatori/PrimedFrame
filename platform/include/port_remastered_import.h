@@ -22,6 +22,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -94,7 +95,9 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 69: recipes cc155f99/04276ae1/d955396d (VFX_FrameBuffer_Indirect_*, the vfx SceneWarp feature).
 // 70: recipe 9e2cbd46 (VFX_VisorSplat, the vfx VisorSplat feature).
 // 71: recipe 9e0605cd (VFX_IceChargeBeam, the vfx IceChargeBeam feature; VMSH v2, VPRM).
-inline constexpr int kEffects = 71;    // port_remastered_effect_import and the particle converters
+// 72: Remastered's swooshes the disc's WPSC has no field for (plasma ASW1/ASW2) are imported under synthetic ids,
+//     and the WPSC is written into the mod with the field added (AddRetailLink).
+inline constexpr int kEffects = 72;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 inline constexpr int kRooms = 20;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
@@ -280,6 +283,59 @@ inline bool ReadUniqueReversedGuidLink(const uint8_t* data, size_t size, const c
   return true;
 }
 }  // namespace detail
+
+// A retail WPSC (class WPSM, tagged fields, _END) with the asset field `field` (ASW1...) set to `id`:
+// a NONE field takes the id, a missing one is added before _END. The result must read back with that
+// id as the field's one top-level link, else the WPSC is unusual (padding, an unknown field) and is
+// left alone. A WPSC that already links the field is not changed.
+inline bool AddRetailLink(const std::vector<uint8_t>& wpsc, const char (&field)[5], uint32_t id,
+                          std::vector<uint8_t>& out, std::string* error = nullptr) {
+  auto fail = [error](std::string message) {
+    if (error != nullptr) {
+      *error = std::move(message);
+    }
+    return false;
+  };
+  const uint32_t wpscClass = PortRemastered::EffectFourCC("WPSM");
+  const uint32_t fieldTag = PortRemastered::EffectFourCC(field);
+  uint32_t have = 0;
+  if (PortRemastered::ReadRetailRoleAssetId(wpsc.data(), wpsc.size(), wpscClass, fieldTag, have)) {
+    return fail("the WPSC already links " + std::string(field));
+  }
+  const uint8_t link[] = {'C', 'N', 'S', 'T', uint8_t(id >> 24), uint8_t(id >> 16), uint8_t(id >> 8), uint8_t(id)};
+  size_t at = std::string::npos;  // where the field's value starts, and how much of it is replaced
+  size_t replaced = 0;
+  for (size_t i = 4; i + 12 <= wpsc.size() && at == std::string::npos; ++i) {
+    if (std::memcmp(wpsc.data() + i, field, 4) == 0 && std::memcmp(wpsc.data() + i + 4, "NONE", 4) == 0) {
+      at = i + 4;
+      replaced = 4;
+    }
+  }
+  std::vector<uint8_t> candidate = wpsc;
+  if (at != std::string::npos) {
+    candidate.erase(candidate.begin() + std::ptrdiff_t(at), candidate.begin() + std::ptrdiff_t(at + replaced));
+    candidate.insert(candidate.begin() + std::ptrdiff_t(at), link, link + sizeof(link));
+  } else {
+    for (size_t i = wpsc.size(); i >= 4 + 4 && at == std::string::npos; --i) {
+      if (std::memcmp(wpsc.data() + i - 4, "_END", 4) == 0) {
+        at = i - 4;
+      }
+    }
+    if (at == std::string::npos) {
+      return fail("the WPSC has no _END");
+    }
+    candidate.insert(candidate.begin() + std::ptrdiff_t(at), field, field + 4);
+    candidate.insert(candidate.begin() + std::ptrdiff_t(at + 4), link, link + sizeof(link));
+  }
+  std::string readError;
+  if (!PortRemastered::ReadRetailRoleAssetId(candidate.data(), candidate.size(), wpscClass, fieldTag, have,
+                                             &readError) ||
+      have != id) {
+    return fail("the WPSC with " + std::string(field) + " added does not read back (" + readError + ")");
+  }
+  out = std::move(candidate);
+  return true;
+}
 
 // Returns a pair only for the exact, uniquely identified USA default-role
 // chain. The RFRM and retail class ids, field tags/kinds, complete GUIDs, and

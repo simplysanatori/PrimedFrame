@@ -919,9 +919,20 @@ struct EffectIdRemap {
   uint32_t synthetic;
 };
 
+// A swoosh Remastered's WPSM has in a field the disc's WPSC lacks (the plasma shots' ASW1/ASW2): the
+// SWSH is imported under `synthetic` (SyntheticEffectId of "<name> <field>", lower case) and the WPSC
+// is written into the mod with the field set to it (AddRetailLink), once the SWHC is written.
+struct WpscSwoosh {
+  uint32_t wpsc;
+  char field[5];
+  uint32_t synthetic;
+  std::string who;
+};
+
 std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Retail& retail,
                                               std::vector<std::string>& lines,
-                                              std::vector<EffectIdRemap>& remaps) {
+                                              std::vector<EffectIdRemap>& remaps,
+                                              std::vector<WpscSwoosh>& additions) {
   struct Claim {
     uint32_t owner;
     EffectGuid guid;
@@ -972,8 +983,29 @@ std::vector<EffectPairing> ProjectilePairings(const Remastered& remastered, Reta
         std::swap(guid[6], guid[7]);
         found = remastered.EffectAssetType(guid) == field.type;
       }
-      if (!found || discId == 0 || discId == 0xFFFFFFFFu || !retail.HasId(discId)) {
-        if (found != (discId != 0 && discId != 0xFFFFFFFFu)) {
+      const bool discNone = discId == 0 || discId == 0xFFFFFFFFu;
+      if (found && discNone && field.type == kSWSH) {
+        std::string who = name + " " + field.tag;
+        for (char& c : who) {
+          c = char(std::tolower(static_cast<unsigned char>(c)));
+        }
+        const uint32_t synthetic = SyntheticEffectId(who.c_str());
+        if (retail.HasId(synthetic)) {
+          lines.push_back("WPSM " + name + " " + field.tag + ": the disc has no such field, and " + Hex8(synthetic) +
+                          " is a disc id");
+          continue;
+        }
+        WpscSwoosh addition{wpsc, {}, synthetic, name + " " + field.tag};
+        std::memcpy(addition.field, field.tag, 4);
+        additions.push_back(std::move(addition));
+        pairings.push_back({guid, synthetic, "wpsm " + name + " " + field.tag + " (added)"});
+        lines.push_back("WPSM " + name + " " + field.tag + ": the disc has no such field; " +
+                        EffectGuidString(ToStored(guid)) + " -> " + Hex8(synthetic) + " (" + who + "), added to the WPSC " +
+                        Hex8(wpsc));
+        continue;
+      }
+      if (!found || discNone || !retail.HasId(discId)) {
+        if (found != !discNone) {
           lines.push_back("WPSM " + name + " " + field.tag + (found ? ": the disc has no such field" : ": the WPSM has no such field"));
         }
         continue;
@@ -2125,10 +2157,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       effectRows.push_back(text);
     };
     std::vector<uint8_t> effectTable;  // effectids.map
+    std::vector<WpscSwoosh> wpscSwooshes;
     {
       std::vector<std::string> pairLines;
       std::vector<EffectIdRemap> remaps;
-      effectIO.pairings = ProjectilePairings(remastered, retail, pairLines, remaps);
+      effectIO.pairings = ProjectilePairings(remastered, retail, pairLines, remaps, wpscSwooshes);
       std::sort(remaps.begin(), remaps.end(), [](const EffectIdRemap& a, const EffectIdRemap& b) {
         return std::tie(a.owner, a.field, a.retail) < std::tie(b.owner, b.field, b.retail);
       });
@@ -2145,9 +2178,49 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
       AddLine("effects: " + std::to_string(effectIO.pairings.size()) + " projectile effects paired");
     }
+    std::set<std::string> effectWritten;  // the files the effects wrote (the converters write on every thread)
+    {
+      static std::mutex writtenMutex;
+      const auto write = effectIO.write;
+      effectIO.write = [&effectWritten, write](const std::string& file, const std::vector<uint8_t>& data) {
+        const bool ok = write(file, data);
+        if (ok) {
+          std::lock_guard<std::mutex> lock(writtenMutex);
+          effectWritten.insert(file);
+        }
+        return ok;
+      };
+    }
     const EffectImportResult effects = ImportEffects(effectIO);
     if (!effectTable.empty()) {
       effectIO.write("effectids.map", effectTable);
+    }
+    // The WPSCs that name the added swooshes, those whose SWHC was written. Each WPSC gets all its fields.
+    std::map<uint32_t, std::vector<uint8_t>> wpscs;
+    for (const WpscSwoosh& addition : wpscSwooshes) {
+      if (effectWritten.count(Hex8(addition.synthetic) + ".SWHC") == 0) {
+        PortLog::Write("remastered import: projectile WPSM %s: the swoosh did not convert, the WPSC keeps no field\n",
+                       addition.who.c_str());
+        continue;
+      }
+      auto it = wpscs.find(addition.wpsc);
+      if (it == wpscs.end()) {
+        std::vector<uint8_t> weapon;
+        if (!retail.Read(kWPSC, addition.wpsc, weapon)) {
+          continue;
+        }
+        it = wpscs.emplace(addition.wpsc, std::move(weapon)).first;
+      }
+      std::string error;
+      if (!AddRetailLink(it->second, addition.field, addition.synthetic, it->second, &error)) {
+        PortLog::Write("remastered import: projectile WPSM %s: %s\n", addition.who.c_str(), error.c_str());
+      } else {
+        PortLog::Write("remastered import: projectile WPSM %s: %s -> %s in the WPSC %s\n", addition.who.c_str(),
+                       addition.field, Hex8(addition.synthetic).c_str(), Hex8(addition.wpsc).c_str());
+      }
+    }
+    for (const auto& [wpsc, data] : wpscs) {
+      effectIO.write(Hex8(wpsc) + ".WPSC", data);
     }
     AddLine("effects: " + std::to_string(effects.written) + " of " + std::to_string(effects.candidates) + " written (" +
             std::to_string(effects.parts) + " PARTs, " + std::to_string(effects.textures) + " textures, " +
