@@ -93,10 +93,15 @@ void TestOneStopGradient() {
   const std::vector<ConvertedPart> parts = Convert(out);
   std::vector<uint8_t> want = {'C', 'O', 'L', 'R', 'C', 'N', 'S', 'T'};
   for (float f : {1.0f, 0.5f, 0.25f, 2.0f}) {
+    Append(want, {'C', 'N', 'S', 'T'});
     Append(want, BE(Bits(f)));
   }
   CHECK_MSG(parts.size() == 1 && Contains(parts[0].part, want), "a one-stop GRAD is a constant colour");
   if (parts.size() == 1) {
+    std::vector<RetailPartProperty> properties;
+    std::string error;
+    CHECK_MSG(SplitRetailEffect(parts[0].type, parts[0].part.data(), parts[0].part.size(), properties, error),
+              "the one-stop GRAD's PART reads as retail");
     CHECK_MSG(!Contains(parts[0].part, {'P', 'G', 'R', 'D'}), "no PGRD for a one-stop GRAD");
   }
 }
