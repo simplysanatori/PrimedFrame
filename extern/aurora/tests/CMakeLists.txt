@@ -12,6 +12,13 @@ if (NOT TARGET gtest)
     EXCLUDE_FROM_ALL
   )
   FetchContent_MakeAvailable(googletest)
+  # googletest builds itself with -Werror, and newer clang flags its own
+  # char8_t printers (-Wcharacter-conversion)
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    foreach (target gtest gtest_main)
+      target_compile_options(${target} PRIVATE -Wno-error)
+    endforeach ()
+  endif ()
 endif ()
 
 add_executable(io_tests
