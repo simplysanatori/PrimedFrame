@@ -334,7 +334,24 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   }
   var rgb = vc.rgb * M;
   var x = 1.0;
-  if ((FEAT & 8u) != 0u) {
+  if ((FEAT & 8192u) != 0u) {
+    // VFX_Pyro (8278c22d, and 7498e54a with DepthSoften; perm 060_0): the Pyro map P at the frame's
+    // layer, the gradient LUT read at (P.r, 0) and (P.g, 0) in the same layer, PMTR row 1 as
+    // (scale r, scale g, opacity, threshold). The shader's lit term (Light map weighted by the
+    // normal, x vc.rgb) is dropped: its vertex colour is the scene's flat ambient (AMBS), zero here.
+    // max(.., 0): a constant index of -1 fails to compile even in a branch FEAT never takes.
+    let uvp = uv_of(in, u.uvSets[max(S_COLOR, 0)]);
+    let P = sample_raw(S_COLOR, uvp.xy, layer(uvp.z, u.layers[max(S_COLOR, 0)]));
+    let gl = layer(uvp.z, u.layers[max(S_RAMP, 0)]);
+    let G0 = sample_raw(S_RAMP, vec2f(P.x, 0.0), gl).rgb;
+    let G1 = sample_raw(S_RAMP, vec2f(P.y, 0.0), gl).rgb;
+    let e1 = in.e1;
+    // x the inverse exposure (GlobalSystemValues.z): the light is unexposed, the tone's exposure cancels it.
+    var ie = 1.0;
+    if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { ie = 1.0 / u.tone0.w; }
+    rgb = P.z * (P.x * e1.x * G0 + P.y * e1.y * G1) * ie * M;
+    x = smooth3(sat((P.w - e1.w) / (1.0 - e1.w))) * e1.z;
+  } else if ((FEAT & 8u) != 0u) {
     // ramp (DualMod: the product of two ramp maps picks the colour)
     let r = sample_slot(in, S_RAMP, w);
     var k = r.x;
@@ -1035,9 +1052,9 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   const uint32_t features = shader_features(desc.features);
   // The slots each enabled feature reads; a slot nothing reads is left unbound (the dummy).
   const std::pair<uint32_t, int8_t> reads[] = {
-      {ColorTex | ColorIndexing, desc.colorSlot},
+      {ColorTex | ColorIndexing | Pyro, desc.colorSlot},
       {OpacityTex, desc.opacitySlot},
-      {Ramp, desc.rampSlot},
+      {Ramp | Pyro, desc.rampSlot},
       {Ramp | DualMod, desc.ramp2Slot},
       {Thresholding, desc.thresholdSlot},
       {Indirect, desc.indirectSlot},

@@ -502,7 +502,7 @@ bool FlipbookTransform(const EffectValue& value, bool& flip) {
 // aurora::gfx::vfx::Feature.
 constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kIndirect = 16, kDepthSoften = 32,
                    kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256, kColorIndexing = 512, kAddColor = 1024,
-                   kOpacityFade = 2048, kColorRgbOnly = 4096;
+                   kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192;
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
@@ -881,6 +881,15 @@ const Recipe* RecipeOf(uint32_t shader) {
        {{kSrcThrX, 0, 0}, {kSrcThrY, 0, 1}, {kSrcThrW, -1, 0}}},
       {0xb32b6148, kRamp | kIndirect | kDepthSoften | kDualMod,
        {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Ramp2, 2, 3}, {"TCH2", Role::Indirect, -1, -1}},
+       {}},
+      // VFX_Pyro (perm 060_0, SPEC-pyro.md): TCH0 the Pyro map, TCH2 the gradient LUT, PMTR row 1;
+      // 7498e54a is 8278c22d with the scene-depth soften. TCH1 (Light) feeds only the lit term,
+      // which the zero flat ambient (AMBS) removes, so it is not read.
+      {0x8278c22d, kPyro,
+       {{"TCH0", Role::Color, -1, -1}, {"TCH2", Role::Ramp, -1, -1}},
+       {}},
+      {0x7498e54a, kPyro | kDepthSoften,
+       {{"TCH0", Role::Color, -1, -1}, {"TCH2", Role::Ramp, -1, -1}},
        {}},
   };
   for (const Recipe& recipe : table) {

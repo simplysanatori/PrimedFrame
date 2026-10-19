@@ -3725,6 +3725,23 @@ void TestVmatBatch4Recipes() {
             "a0482072 is 28bf8533's without the opacity texture");
 }
 
+void TestVmatPyroRecipes() {
+  auto features = [](uint32_t shader, uint32_t& count) {
+    const EffectGuid t = Fresh(8);
+    auto result = ConvertVmat(Mati(shader, {{"TCH0", t}, {"TCH1", t}, {"TCH2", t}}));
+    count = VmatWord(result.second, 20);
+    CHECK_MSG(result.first.size() == 1 && !result.second.empty() && result.first[0].approximated.empty(),
+              "the VFX_Pyro shader writes an exact VMAT");
+    return VmatWord(result.second, 12);
+  };
+  // aurora::gfx::vfx::Feature bits.
+  constexpr uint32_t kDepthSoften = 32, kPyro = 8192;
+  uint32_t count = 0;
+  CHECK_MSG(features(0x8278c22d, count) == kPyro && count == 2, "8278c22d is VFX_Pyro on TCH0 and TCH2");
+  CHECK_MSG(features(0x7498e54a, count) == (kPyro | kDepthSoften) && count == 2,
+            "7498e54a is VFX_Pyro with DepthSoften");
+}
+
 // An ELC2 child of a root, with `body` writing its properties.
 template <typename Body>
 std::vector<ConvertedPart> ConvertElc2(Body body) {
@@ -3975,6 +3992,7 @@ int main() {
   TestModelRotationBasisEvaluation();
   TestVmatNewRecipes();
   TestVmatBatch4Recipes();
+  TestVmatPyroRecipes();
   TestElc2BlendAndLifetime();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();
