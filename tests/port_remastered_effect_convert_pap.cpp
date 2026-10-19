@@ -194,6 +194,41 @@ void TestConstantFlag() {
   }
 }
 
+// ADV9 is dropped (a vector element where a real is read), ADV1 = PAP9 + 1 reads it and ADV2 = PAP1 + 1 reads ADV1: both
+// readers are dropped with it, and their retail properties are not written.
+void TestDroppedReader() {
+  std::vector<uint8_t> out = Header();
+  PutProperty(out, "ADV9", 0);
+  PutFourCC(out, "PLNV");  // a vector element where a real is read
+  PutProperty(out, "ADV1", 0);
+  PutFourCC(out, "ADD_");
+  PutFourCC(out, "PAP9");
+  PutCnst(out, Bits(1.0f));
+  PutProperty(out, "ADV2", 0);
+  PutFourCC(out, "ADD_");
+  PutFourCC(out, "PAP1");
+  PutCnst(out, Bits(1.0f));
+  PutProperty(out, "ADV3", 0);
+  PutCnst(out, Bits(3.0f));
+  PutTexr(out, 0x1234ABCD);
+  PutProperty(out, "_END", 4);
+  const std::vector<ConvertedPart> parts = Convert(out);
+  CHECK_MSG(parts.size() == 1, "one part");
+  if (parts.size() != 1) {
+    return;
+  }
+  bool adv9 = false, adv1 = false, adv2 = false;
+  for (const std::string& d : parts[0].dropped) {
+    adv9 = adv9 || d.rfind("ADV9", 0) == 0;
+    adv1 = adv1 || d == "ADV1: reads a dropped variable";
+    adv2 = adv2 || d == "ADV2: reads a dropped variable";
+  }
+  CHECK_MSG(adv9 && adv1 && adv2, "ADV9 and its readers ADV1, ADV2 are dropped");
+  CHECK_MSG(!Contains(parts[0].part, Four("ADV1")) && !Contains(parts[0].part, Four("ADV2")),
+            "the readers' properties are not written");
+  CHECK_MSG(Contains(parts[0].part, Four("ADV3")), "an unrelated ADV3 stays");
+}
+
 // ADV1..8 only: no PPVR, and the identity order writes no PADO either.
 void TestNoPpvr() {
   std::vector<uint8_t> out = Header();
@@ -216,5 +251,6 @@ int main() {
   TestPap9Leaf();
   TestNoPpvr();
   TestConstantFlag();
+  TestDroppedReader();
   return PORT_TEST_RESULT();
 }

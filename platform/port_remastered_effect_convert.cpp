@@ -3704,6 +3704,7 @@ public:
       uint32_t reads = 0;    // the variables its tree reads (m_varReads)
       uint32_t flags = 0;    // ConstantFlags
       bool converted = false;
+      size_t begin = 0, end = 0;     // ADV1..8: its retail property in `out` (to take back out)
       std::vector<uint8_t> element;  // ADV9 and IAVn: the converted tree
     };
     std::vector<PartVar> partVars;
@@ -4157,8 +4158,44 @@ public:
         pmdl = port::GetBE32(bytes, 4);
       }
       written.insert(fourcc);
+      const size_t begin = out.size();
       AppendBE32(out, fourcc);
       out.insert(out.end(), bytes.begin(), bytes.end());
+      if (varId >= 0) {
+        partVars.back().begin = begin;
+        partVars.back().end = out.size();
+      }
+    }
+    // A variable that reads a dropped one would evaluate it as zero, which Remastered does not:
+    // drop the reader too, transitively (the retail ADV1..8 properties are taken back out).
+    if (part) {
+      uint32_t lost = 0;
+      for (const PartVar& v : partVars) {
+        lost |= v.converted ? 0u : 1u << v.id;
+      }
+      for (bool again = true; again;) {
+        again = false;
+        for (PartVar& v : partVars) {
+          if (v.converted && (v.reads & lost) != 0) {
+            v.converted = false;
+            lost |= 1u << v.id;
+            again = true;
+            const char* names[] = {"ADV1", "ADV2", "ADV3", "ADV4", "ADV5", "ADV6", "ADV7", "ADV8", "ADV9",
+                                   "IAV0", "IAV1", "IAV2", "IAV3"};
+            result.dropped.push_back(std::string(names[v.id]) + ": reads a dropped variable");
+          }
+        }
+      }
+      std::vector<const PartVar*> taken;
+      for (const PartVar& v : partVars) {
+        if (!v.converted && v.end > v.begin) {
+          taken.push_back(&v);
+        }
+      }
+      std::sort(taken.begin(), taken.end(), [](const PartVar* a, const PartVar* b) { return a->begin > b->begin; });
+      for (const PartVar* v : taken) {
+        out.erase(out.begin() + v->begin, out.begin() + v->end);
+      }
     }
     if (drawsNothing || modelsOnly) {
       AppendBE32(out, F("SIZE"));
