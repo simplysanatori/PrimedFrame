@@ -380,6 +380,13 @@ private:
   CVectorElement* mFallback;
 };
 
+// Port-only PEMV: Remastered's EMRV, the generator's per-tick change of its translation over its
+// scale (CElementGen::PortStepPemv), in the port's axes. Zero outside a generator.
+class CVEPortEmitterVelocity : public CVectorElement {
+public:
+  bool GetValue(int frame, CVector3f& valOut) const override;
+};
+
 // Remastered system vectors of the generator being evaluated: CMPS (the camera position in world
 // space, CVECameraPositionInWorldSpace 0x2a23ec), CPSS (the camera position in the system's global
 // frame, CVECameraPositionInSystemSpace 0x2a24fc), EXTT and EXTS (the external translation and

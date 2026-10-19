@@ -45,6 +45,8 @@ CElementAllocationChunk* IElement::CElementAllocator::sFreeChunk = nullptr;
 #ifdef TARGET_PC
 // Set by a CODE emitter (GetEmitterElement 0x264bc4 sets its bool&), read by the EMTR property.
 static bool sPortCodeEmitter = false;
+// Set by a PEMV vector (CGenDescription::xPortPemv), collected per description in GetGPSM.
+static u8 sPortPemv = 0;
 
 namespace {
 // Port-only SLCT (the converter's Writer::Element): an int index, a count word, then count
@@ -360,10 +362,14 @@ CGenDescription* CParticleDataFactory::CreateGeneratorDescription(CInputStream& 
 #ifdef TARGET_PC
   std::vector< const CREPortKeep* >* const outerKeeps = CPortKeepGlobals::sCollect;
   CPortKeepGlobals::sCollect = &desc->xPortKeeps;
+  const u8 outerPemv = sPortPemv;
+  sPortPemv = 0;
 #endif
   CreateGPSM(desc, in, assets, pool);
 #ifdef TARGET_PC
   CPortKeepGlobals::sCollect = outerKeeps;
+  desc->xPortPemv = sPortPemv;
+  sPortPemv = outerPemv;
 #endif
   LoadGPSMTokens(desc);
   return desc;
@@ -1458,6 +1464,14 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     ret = rs_new CVEPortRotationFromAxis(first, second, fallback);
     break;
   }
+  case SBIG('PEMV'): {
+    // The mode word: 0 the external translation, 1 the local one, 2 the local one plus the
+    // description's constant POFS (XFMD 5).
+    const u32 mode = in.ReadLong();
+    sPortPemv = u8(mode + 1);
+    ret = rs_new CVEPortEmitterVelocity();
+    break;
+  }
   case SBIG('CMPS'):
   case SBIG('CPSS'):
   case SBIG('EXTT'):
@@ -1688,6 +1702,32 @@ CEmitterElement* CParticleDataFactory::GetEmitterElement(CInputStream& in) {
     CRealElement* speed = GetRealElement(in);
     ret = rs_new CEEPortAngleSphere(origin, rotateX, rotateY, rotateZ, range1, range2, radius,
                                     speed);
+    break;
+  }
+  case SBIG('PLNE'): {
+    CVectorElement* position = GetVectorElement(in);
+    CVectorElement* euler = GetVectorElement(in);
+    CVectorElement* velocity = GetVectorElement(in);
+    CRealElement* wx = GetRealElement(in);
+    CRealElement* wz = GetRealElement(in);
+    CRealElement* spread = GetRealElement(in);
+    ret = rs_new CEEPortPlane(position, euler, velocity, wx, wz, spread);
+    break;
+  }
+  case SBIG('PLNV'): {
+    CVectorElement* position = GetVectorElement(in);
+    CVectorElement* euler = GetVectorElement(in);
+    CRealElement* velocityY = GetRealElement(in);
+    CRealElement* wx = GetRealElement(in);
+    CRealElement* wz = GetRealElement(in);
+    CRealElement* spread = GetRealElement(in);
+    CIntElement* countX = GetIntElement(in);
+    CRealElement* varianceX = GetRealElement(in);
+    CIntElement* countZ = GetIntElement(in);
+    CRealElement* varianceZ = GetRealElement(in);
+    const u8 shuffle = u8(in.ReadChar());
+    ret = rs_new CEEPortPlaneVariance(position, euler, velocityY, wx, wz, spread, countX,
+                                      varianceX, countZ, varianceZ, shuffle);
     break;
   }
 #endif

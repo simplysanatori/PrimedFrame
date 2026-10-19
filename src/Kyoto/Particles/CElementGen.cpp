@@ -698,6 +698,7 @@ bool CElementGen::InternalUpdate(double dt) {
     CParticleGlobals::SetEmitterTime(x74_curFrame);
 #ifdef TARGET_PC
     PortStepMover();
+    PortStepPemv();
 #endif
     UpdateExistingParticles();
     CParticleGlobals::SetParticleLifetime(x268_PSLT);
@@ -1516,6 +1517,31 @@ void CElementGen::PortStepMover() {
   ++xPortMover.frame;
   PortKssmEvaluate(xPortMover);
   PortFollowEmitter(before);
+}
+
+// CVEVelocityCalc (SetupTransformMode 0x2893f8): V12(f) - V12(f-1), 0 at the first, no time step.
+// V12 is the reciprocal of the system scale times its translation, per component (CVEReciprocal
+// then multiply, not a division), plus the constant POFS under XFMD 5 (the CVEAdd at 0x289338).
+// The delta is in the port's axes and the converter's BSIS takes it into Remastered's.
+void CElementGen::PortStepPemv() {
+  const u8 mode = x28_loadedGenDesc->xPortPemv;
+  if (mode == 0) {
+    return;
+  }
+  const CVector3f t = mode >= 2 ? xdc_translation : PortExternalTranslation();
+  const CVector3f s = PortExternalScale();
+  CVector3f cur((1.f / s.GetX()) * t.GetX(), (1.f / s.GetY()) * t.GetY(), (1.f / s.GetZ()) * t.GetZ());
+  if (mode == 3) {
+    cur = CVector3f(cur.GetX() + xf4_POFS.GetX(), cur.GetY() + xf4_POFS.GetY(), cur.GetZ() + xf4_POFS.GetZ());
+  }
+  if (xPortPemvStarted) {
+    xPortPemvDelta = CVector3f(cur.GetX() - xPortPemvPrev.GetX(), cur.GetY() - xPortPemvPrev.GetY(),
+                               cur.GetZ() - xPortPemvPrev.GetZ());
+  } else {
+    xPortPemvDelta = CVector3f::Zero();
+    xPortPemvStarted = true;
+  }
+  xPortPemvPrev = cur;
 }
 
 // Holds the child where its component puts it: it keeps the parent's global translation and

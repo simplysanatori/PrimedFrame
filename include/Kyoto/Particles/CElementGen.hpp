@@ -22,6 +22,8 @@ class CModVectorElement;
 #ifdef TARGET_PC
 #include "Kyoto/Particles/CGenDescription.hpp" // PortKssmChild points at a CGenDescription::PortKssm
 #include "Kyoto/Particles/CPortVfxConstants.hpp"
+#include "Kyoto/Particles/PortParticleMath.hpp"
+#include <utility>
 #include <vector>
 struct CPortVfxMeshBatch;
 #endif
@@ -454,6 +456,28 @@ private:
   // Update, stepped at the start of each tick. Its pos/rot are T_g/Q_g.
   PortKssmChild xPortMover;
   bool xPortMoverInit = false;
+public:
+  // PLNV's index shufflers, one per element (CIndexShuffler's bitset lives in the generator's
+  // variable memory); created zeroed on first use.
+  std::vector< std::pair< const void*, PortParticleMath::IndexShuffler > > xPortShufflers;
+  PortParticleMath::IndexShuffler& PortShuffler(const void* element) {
+    for (auto& entry : xPortShufflers) {
+      if (entry.first == element) {
+        return entry.second;
+      }
+    }
+    xPortShufflers.emplace_back(element, PortParticleMath::IndexShuffler());
+    return xPortShufflers.back().second;
+  }
+  // PEMV (Remastered EMRV, var 0x16, CVEVelocityCalc): the change of the system translation (over
+  // its scale, per component) since the previous tick, 0 on the first. Updated once per tick.
+  CVector3f xPortPemvPrev = CVector3f::Zero();
+  CVector3f xPortPemvDelta = CVector3f::Zero();
+  bool xPortPemvStarted = false;
+  void PortStepPemv();
+  const CVector3f& PortEmitterVelocity() const { return xPortPemvDelta; }
+
+private:
   bool PortHasMover() const;
   void PortInitMover();
   void PortEvalSys(bool init);

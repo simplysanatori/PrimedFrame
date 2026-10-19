@@ -191,6 +191,8 @@ const Signatures& ElementsOf(Type type) {
       {F("PANM"), "rrrrrr"}, {F("PMAC"), "rrrrr"}, {F("PMCN"), "vr"},
       // Port-only CVEPortAbs: Remastered's CVEAbsoluteValue, in whatever space the child is in.
       {F("ABS_"), "v"},
+      // Port-only PEMV: Remastered's EMRV, the mode word (0 external translation, 1 local).
+      {F("PEMV"), "#"},
   };
   static const Signatures modVectorElements = {
       {F("NONE"), ""},     {F("CNST"), "rrr"},  {F("GRAV"), "v"},    {F("WIND"), "vr"},  {F("EXPL"), "rr"},
@@ -208,6 +210,11 @@ const Signatures& ElementsOf(Type type) {
       {F("NONE"), ""}, {F("SEMR"), "vv"}, {F("SPHE"), "vrr"}, {F("ASPH"), "vrrrrrr"},
       // Port-only CEEPortAngleSphere: Remastered's ASPR with its REUL as three angles.
       {F("ASPR"), "vrrrrrrr"},
+      // PLNE (position, euler, velocity, x and z half-extent, spread) and the port-only PLNV
+      // (position, euler, velocity y, x and z half-extent, spread, x count and variance, z count
+      // and variance, then the shuffle byte): Remastered's plane emitters, all in its axes.
+      {F("PLNE"), "vvvrrr"},
+      {F("PLNV"), "vvrrrrirird"},
       // Port-only CODE: a null emitter, the generator spawns only from code.
       {F("CODE"), ""},
   };
@@ -1144,6 +1151,113 @@ public:
           return false;
         }
       }
+      return true;
+    }
+    // PLNE(position, euler, velocity, wx, wz, spread): the plane emitter. The port's PLNE builds
+    // its matrix from the euler and the spread when it is made, so those two must be constants;
+    // the arguments stay in Remastered's axes and the emitter turns its outputs to the port's.
+    if (value.fourcc == F("PLNE") && type == Type::Emitter && value.args.size() == 6) {
+      if (!IsConstantValue(value.args[1]) || !IsConstantValue(value.args[5])) {
+        why = "PLNE with a euler or spread that is not a constant";
+        return false;
+      }
+      AppendBE32(out, F("PLNE"));
+      for (size_t i = 0; i < 3; ++i) {
+        if (!Element(value.args[i], Type::Vector, out, why)) {
+          return false;
+        }
+      }
+      for (size_t i = 3; i < 6; ++i) {
+        if (!Element(value.args[i], Type::Real, out, why)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    // PLNV(position, euler, velocity y, wx, wz, spread, x count, x variance, z count, z variance,
+    // shuffle): the port-only PLNV, the same way. The last byte is the size of Remastered's index
+    // shuffler, 0 for none. CSectionedElementData::Init 0x2a69b8 allocates one when the flag is set
+    // and no constant count is 0 (a count that is not constant does not stop it), sized by the
+    // product of the constant counts (a count that is not constant is 1) through
+    // SetUpShuffledIndexing 0x26ffe4: below 2 it is 1, and the size is kept in a byte. Without one
+    // the index is the creation count modulo the grid.
+    if (value.fourcc == F("PLNV") && type == Type::Emitter && value.args.size() == 11) {
+      if (!IsConstantValue(value.args[1]) || !IsConstantValue(value.args[5])) {
+        why = "PLNV with a euler or spread that is not a constant";
+        return false;
+      }
+      const EffectValue& flag = value.args[10];
+      if (flag.kind != EffectValue::Kind::Byte && flag.kind != EffectValue::Kind::Word) {
+        why = "PLNV with a shuffle flag that is not a byte";
+        return false;
+      }
+      uint32_t shuffle = 0;
+      if (flag.word != 0) {
+        bool allocated = true;
+        uint64_t size = 1;
+        for (size_t at : {size_t(6), size_t(8)}) {
+          uint32_t count;
+          if (!ConstWord(value.args[at], count)) {
+            continue;
+          }
+          if (count == 0) {
+            allocated = false;
+          } else if (count > 255) {
+            why = "PLNV with a constant count over 255 (Remastered keeps it in a byte)";
+            return false;
+          }
+          size *= count;
+        }
+        if (allocated) {
+          shuffle = uint32_t(std::max<uint64_t>(size, 1) & 0xff);
+          if (shuffle == 0) {
+            why = "PLNV with a shuffler of a multiple of 256 cells";
+            return false;
+          }
+        }
+      }
+      AppendBE32(out, F("PLNV"));
+      static const Type kTypes[] = {Type::Vector, Type::Vector, Type::Real, Type::Real, Type::Real, Type::Real,
+                                    Type::Int,    Type::Real,   Type::Int,  Type::Real};
+      for (size_t i = 0; i < 10; ++i) {
+        if (!Element(value.args[i], kTypes[i], out, why)) {
+          return false;
+        }
+      }
+      out.push_back(uint8_t(shuffle));
+      return true;
+    }
+    // EMRV: the per-tick change of the system's translation (CVEVelocityCalc), in Remastered's
+    // axes. The port-only PEMV gives it in the port's, so BSIS turns it back. XFMD 0, 3 and 6 give
+    // the translation a zero constant, so EMRV is zero; 1 and 4 are undecoded.
+    if (value.fourcc == F("EMRV") && type == Type::Vector && value.args.empty()) {
+      if (m_swoosh) {
+        why = "EMRV in a swoosh";
+        return false;
+      }
+      if (m_xfmd == 0 || m_xfmd == 3 || m_xfmd == 6) {
+        AppendBE32(out, F("CNST"));
+        for (int i = 0; i < 3; ++i) {
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, 0);
+        }
+        return true;
+      }
+      if (m_xfmd != 2 && m_xfmd != 5) {
+        why = "EMRV under XFMD " + std::to_string(m_xfmd);
+        return false;
+      }
+      // XFMD 5 adds the generator's POFS element (SetupTransformMode 0x289338, a CVEAdd of the old
+      // +0x58 element) to the local translation over the scale. Only a constant POFS is exact: the
+      // port keeps the value its own update evaluated, where Remastered evaluates the element
+      // again here, which a random or time-varying one would not repeat.
+      if (m_xfmd == 5 && m_pofs == 2) {
+        why = "EMRV under XFMD 5 with a POFS that is not a constant";
+        return false;
+      }
+      AppendBE32(out, F("BSIS"));
+      AppendBE32(out, F("PEMV"));
+      AppendBE32(out, m_xfmd == 5 ? (m_pofs == 1 ? 2 : 1) : 0);
       return true;
     }
     // MPAC(x centre, y centre, x range, y range, magnitude): the port-only PMAC runs
@@ -3129,6 +3243,17 @@ public:
       additive = additive || property.fourcc == F("AALP");
     }
     m_swoosh = node.form == F("SWSH");
+    m_xfmd = 2;
+    m_pofs = 0;
+    for (const EffectProperty& property : node.properties) {
+      uint32_t mode;
+      if (property.fourcc == F("XFMD") && SmallConst(property, mode)) {
+        m_xfmd = mode;
+      }
+      if (property.fourcc == F("POFS") && !property.value.empty()) {
+        m_pofs = IsConstantValue(property.value[0]) ? 1 : 2;
+      }
+    }
     m_vars.clear();
     for (const EffectProperty& property : node.properties) {
       if (property.fourcc == F("PVAR") && property.value.size() == 1 &&
@@ -3841,6 +3966,8 @@ private:
   mutable bool m_keeps = false;                     // a KPIN may be a per-particle PKPR
   mutable uint32_t m_keepNext = 0;                  // the next PKPR slot
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
+  mutable uint32_t m_xfmd = 2;                      // its XFMD mode, 2 without one
+  mutable uint32_t m_pofs = 0;                      // its POFS: 0 none, 1 constant, 2 anything else
   mutable bool m_mp1Space = false;                  // inside MPCB(mod vector): its vectors are retail's
   mutable int m_lifetimeOffset = -1;                // LifetimeOffset of the property being written
 };
@@ -3991,6 +4118,9 @@ public:
       }
       case 'B':
         ok = Bool();
+        break;
+      case 'd':
+        ok = Skip(1);
         break;
       default:
         ok = Element(TypeOfLetter(*c));

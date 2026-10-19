@@ -141,6 +141,9 @@ public:
   // port-only PMRF: Remastered PMRB/PMCF. 0 = retail (orientation * PMRT, PMOP turned by the
   // orientation), 1 = PMRT alone, 2 = orientation * PMRT; for 1 and 2 PMOP turns with the model.
   u8 xPortPmrqFrame = 0;
+  // port-only PEMV (Remastered EMRV, var 0x16): the description reads the per-tick system
+  // velocity. 0 none, 1 the external (global + local) translation, 2 the local translation.
+  u8 xPortPemv = 0;
   // port-only PIRN: a converted Remastered effect, whose nested IRND elements are stable per particle
   bool xPortIrnd = false;
   // port-only PGID: the first word of a converted Remastered PART's GUID (CElementGen::PortChildSeed)

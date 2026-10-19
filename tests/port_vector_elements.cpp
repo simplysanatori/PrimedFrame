@@ -146,9 +146,18 @@ void* IElement::operator new(size_t size, const char* file, const char* type) {
 }
 void IElement::operator delete(void* ptr, size_t size) { CElementAllocator::Free(ptr, size); }
 
+// PEMV outside a generator evaluation is zero.
+void TestEmitterVelocity() {
+  CVEPortEmitterVelocity element;
+  CVector3f out(1.f, 2.f, 3.f);
+  CHECK(!element.GetValue(0, out));
+  CHECK(out.GetX() == 0.f && out.GetY() == 0.f && out.GetZ() == 0.f);
+}
+
 int main() {
   TestMpac();
   TestCone();
   TestAngleCone();
+  TestEmitterVelocity();
   return PORT_TEST_RESULT();
 }

@@ -451,7 +451,7 @@ inline Quat QuatFromMatrix(const float m[9]) {
 // REUL in axis order 0 (CERotationEuler::GetValue 0x29c944, QuatGeneric 0x29ca18): the angles in
 // degrees, each axis's FastSinR/FastCosR pair scaled by one refined FRSQRTE of s^2 + c^2, the
 // matrix Rz * Ry * Rx built term by term, then FromMatrix.
-inline Quat EulerQuat(float xDegrees, float yDegrees, float zDegrees) {
+inline void EulerMatrix(float xDegrees, float yDegrees, float zDegrees, float m[9]) {
   const float degrees = BitsFloat(0x3c8efa35);
   const float angles[3] = {xDegrees * degrees, yDegrees * degrees, zDegrees * degrees};
   float s[3], c[3];
@@ -472,7 +472,6 @@ inline Quat EulerQuat(float xDegrees, float yDegrees, float zDegrees) {
   const float cx = c[0], cy = c[1], cz = c[2];
   const float sxsy = sx * sy;
   const float cxsy = cx * sy;
-  float m[9];
   m[0] = cy * cz;
   const float sxsycz = sxsy * cz, cxsz = cx * sz;
   m[1] = sxsycz - cxsz;
@@ -486,6 +485,11 @@ inline Quat EulerQuat(float xDegrees, float yDegrees, float zDegrees) {
   m[6] = -sy;
   m[7] = sx * cy;
   m[8] = cx * cy;
+}
+
+inline Quat EulerQuat(float xDegrees, float yDegrees, float zDegrees) {
+  float m[9];
+  EulerMatrix(xDegrees, yDegrees, zDegrees, m);
   return QuatFromMatrix(m);
 }
 
@@ -553,6 +557,153 @@ inline CVector3f NormalizeInPlace(const CVector3f& v) {
   return CVector3f(MultiplyExtended(v.GetX(), e), MultiplyExtended(v.GetY(), e),
                    MultiplyExtended(v.GetZ(), e));
 }
+
+// CVector3f::Magnitude 0x6b218: SqrtF of (x*x + y*y) + z*z.
+inline float VectorMagnitude(const CVector3f& v) {
+  const float xx = v.GetX() * v.GetX();
+  const float yy = v.GetY() * v.GetY();
+  const float zz = v.GetZ() * v.GetZ();
+  const float xy = xx + yy;
+  return SqrtF(xy + zz);
+}
+
+// M * v of the row-major EulerMatrix, each row (x*m0 + y*m1) + z*m2 (PLNE/PLNV).
+inline CVector3f MatrixTimes(const float m[9], const CVector3f& v) {
+  const float x = v.GetX(), y = v.GetY(), z = v.GetZ();
+  const float x0 = x * m[0], x1 = y * m[1], x2 = z * m[2];
+  const float y0 = x * m[3], y1 = y * m[4], y2 = z * m[5];
+  const float z0 = x * m[6], z1 = y * m[7], z2 = z * m[8];
+  return CVector3f((x0 + x1) + x2, (y0 + y1) + y2, (z0 + z1) + z2);
+}
+
+// The spread of PLNE/PLNV: sin and cos of the spread angle (degrees), identity when zero.
+struct PlaneSpread {
+  bool enabled = false;
+  float sin = 0.f;
+  float cos = 1.f;
+};
+
+// PLNE (0x2cc2ec): FastSinR/FastCosR of the angle in radians.
+inline PlaneSpread PlaneSpreadFast(float spreadDegrees) {
+  PlaneSpread s;
+  if (spreadDegrees != 0.f) {
+    const float rad = spreadDegrees * BitsFloat(0x3c8efa35);
+    s.cos = FastCosR(rad);
+    s.sin = FastSinR(rad);
+    s.enabled = true;
+  }
+  return s;
+}
+
+// PLNV: the parabolic law, the cosine as the sine of the wrapped angle plus pi/2.
+inline PlaneSpread PlaneSpreadParabolic(float spreadDegrees) {
+  PlaneSpread s;
+  if (spreadDegrees != 0.f) {
+    const float rad = spreadDegrees * BitsFloat(0x3c8efa35);
+    s.sin = ParabolicSin(WrapAngle(rad));
+    s.cos = ParabolicSin(WrapAngle(rad + BitsFloat(0x3fc90fdb)));
+    s.enabled = true;
+  }
+  return s;
+}
+
+// ModifyWithSpreadAngle 0x2cc490: the point's offset (local x, z) in the plane of half sizes
+// (wx, wz) lifts the velocity direction toward the plane's normal; the blend t grows with the
+// offset along the dominant axis. Only local.x and local.z are read.
+inline CVector3f PlaneModifyWithSpread(const CVector3f& local, const CVector3f& velIn, float wx,
+                                       float wz, const PlaneSpread& spread) {
+  const float x = local.GetX(), z = local.GetZ();
+  const float ax = std::fabs(x), az = std::fabs(z);
+  const bool selX = (wz - az) < (wx - ax);
+  const bool flagA = (wx == 0.f) || selX;
+  const bool useZ = wz != 0.f;
+  const bool c = useZ && flagA;
+  const float d = c ? wz : wx;
+  const float dimv = c ? az : ax;
+  if (spread.sin == 0.f || d == 0.f) {
+    return velIn;
+  }
+  const float len2 = x * x + z * z;
+  float r = 0.f;
+  if (len2 > 0.f) {
+    const float e = ReciprocalSqrtEstimate(len2);
+    r = e * ReciprocalSqrtStep(len2, e * e);
+  }
+  const float len = len2 * r;
+  if (len == 0.f) {
+    return velIn;
+  }
+  const float y = (len / spread.sin) * spread.cos;
+  CVector3f dir = NormalizeInPlace(CVector3f(x, y, z));
+  const float mag = VectorMagnitude(velIn);
+  float dx = mag * dir.GetX(), dy = mag * dir.GetY(), dz = mag * dir.GetZ();
+  if ((velIn.GetY() >= 0.f ? 1 : -1) != (dy >= 0.f ? 1 : -1)) {
+    dy = -dy;
+  }
+  float t;
+  if (wx == wz) {
+    t = dimv / d;
+  } else {
+    const float dd = std::fabs(wx - wz);
+    const float tA = (dimv - dd) / (d - dd);
+    const float tB = dimv / d;
+    t = ((wx > wz) != c) ? tA : tB;
+  }
+  const float u = 1.f - t;
+  return CVector3f(t * dx + u * velIn.GetX(), t * dy + u * velIn.GetY(), t * dz + u * velIn.GetZ());
+}
+
+// PLNV's index shuffler (a 255-bit used set): a random pick, moved to the next free index when
+// taken, the set cleared (its first ((N+31)>>3)&0x1c bytes) when none is.
+struct IndexShuffler {
+  uint8_t n = 0;
+  uint32_t bits[8] = {};
+
+  template <typename Draw>
+  int Next(int count, Draw&& draw) {
+    n = uint8_t(count);
+    const int N = n;
+    const int lastW = int(((N + 31) >> 5) & 7) - 1;
+    const int tail = N & 31;
+    const int r = int(draw() % uint32_t(N));
+    const int w = (r >> 5) & 7;
+    const uint32_t m = 1u << (r & 31);
+    if (!(bits[w] & m)) {
+      bits[w] |= m;
+      return r;
+    }
+    for (int k = w; k < 8; ++k) {
+      const uint32_t free = ~bits[k];
+      const int c = free == 0 ? 32 : __builtin_ctz(free);
+      if (k < lastW) {
+        if (c < 32) {
+          bits[k] |= 1u << c;
+          return k * 32 + c;
+        }
+        continue;
+      }
+      if (c < 32 && (tail == 0 || c < tail)) {
+        bits[k] |= 1u << c;
+        return k * 32 + c;
+      }
+      break;
+    }
+    for (int k = 0; k < w && k <= 6; ++k) {
+      const uint32_t free = ~bits[k];
+      const int c = free == 0 ? 32 : __builtin_ctz(free);
+      if (c < 32) {
+        bits[k] |= 1u << c;
+        return k * 32 + c;
+      }
+    }
+    const int words = (((N + 31) >> 3) & 0x1c) / 4;
+    for (int k = 0; k < words; ++k) {
+      bits[k] = 0;
+    }
+    bits[w] |= m;
+    return r;
+  }
+};
 
 // An ANCR/ASPR angle in radians: ((range/2 - range*u) + 0) in degrees, wrapped.
 inline float ConeAngle(float range, float u) {

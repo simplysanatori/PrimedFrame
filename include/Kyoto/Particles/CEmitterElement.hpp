@@ -2,6 +2,9 @@
 #define _CEMITTERELEMENT
 
 #include "Kyoto/Particles/IElement.hpp"
+#ifdef TARGET_PC
+#include "Kyoto/Particles/PortParticleMath.hpp"
+#endif
 
 class CEESimpleEmitter : public CEmitterElement {
 public:
@@ -67,6 +70,54 @@ private:
   CRealElement* mRange2;
   CRealElement* mRadius;
   CRealElement* mSpeed;
+};
+
+// Remastered PLNE (0x2cc2ec): a point in a plane of half sizes (wx, wz), turned by the Euler
+// matrix, with a spread of the velocity toward the plane's normal. All in Remastered's axes;
+// the position and velocity are turned by the basis (-x, z, y) on the way out.
+class CEEPortPlane : public CEmitterElement {
+public:
+  CEEPortPlane(CVectorElement* position, CVectorElement* euler, CVectorElement* velocity,
+               CRealElement* wx, CRealElement* wz, CRealElement* spread);
+  ~CEEPortPlane();
+
+  bool GetValue(int frame, CVector3f& pPos, CVector3f& pVel) const;
+
+private:
+  CVectorElement* mPosition;
+  CVectorElement* mEuler;
+  CVectorElement* mVelocity;
+  CRealElement* mWx;
+  CRealElement* mWz;
+  CRealElement* mSpread;
+};
+
+// Port-only PLNV (Remastered's plane with variance, GetValue 0x2cc9b8): a grid of nx by nz cells
+// walked by the creation count (or shuffled), jittered by the variances. Same axes as PLNE.
+class CEEPortPlaneVariance : public CEmitterElement {
+public:
+  CEEPortPlaneVariance(CVectorElement* position, CVectorElement* euler, CRealElement* velocityY,
+                       CRealElement* wx, CRealElement* wz, CRealElement* spread,
+                       CIntElement* countX, CRealElement* varianceX, CIntElement* countZ,
+                       CRealElement* varianceZ, u8 shuffle);
+  ~CEEPortPlaneVariance();
+
+  bool GetValue(int frame, CVector3f& pPos, CVector3f& pVel) const;
+
+private:
+  CVectorElement* mPosition;
+  CVectorElement* mEuler;
+  CRealElement* mVelocityY;
+  CRealElement* mWx;
+  CRealElement* mWz;
+  CRealElement* mSpread;
+  CIntElement* mCountX;
+  CRealElement* mVarianceX;
+  CIntElement* mCountZ;
+  CRealElement* mVarianceZ;
+  u8 mShuffle; // the size of Remastered's index shuffler (SetUpShuffledIndexing 0x26ffe4), 0 for none
+  // The shuffler when there is no current generator.
+  mutable PortParticleMath::IndexShuffler mFallbackShuffler;
 };
 #endif
 

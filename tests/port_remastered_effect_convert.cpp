@@ -689,6 +689,95 @@ void TestPortVectors() {
   CHECK_MSG(ancm, "an ANCM on a non-REUL rotation is dropped, naming it");
 }
 
+// PLNE and PLNV become the port's plane emitters, EMRV the port-only PEMV (under BSIS, which the property boundary cancels) under XFMD 2 and 5,
+// a constant zero under 3, and is dropped under 4. A PLNE with a euler that is not a constant is dropped.
+void TestPlaneElements() {
+  auto vec = [](std::vector<uint8_t>& o, float x, float y, float z) {
+    PutFourCC(o, "CNST");
+    PutConstant(o, Bits(x));
+    PutConstant(o, Bits(y));
+    PutConstant(o, Bits(z));
+  };
+  auto build = [&](uint32_t xfmd, bool plnv, bool badEuler, bool constPofs = false) {
+    std::vector<uint8_t> out(0x3c, 0);
+    std::memcpy(out.data(), "RFRM", 4);
+    std::memcpy(out.data() + 0x14, "GENP", 4);
+    PutGenerator(out, false);
+    PutProperty(out, "XFMD", 0);
+    PutConstant(out, xfmd);
+    PutProperty(out, "EMTR", 3);
+    PutFourCC(out, plnv ? "PLNV" : "PLNE");
+    vec(out, 0, 0, 0);
+    if (badEuler) {
+      PutFourCC(out, "EMRV");
+    } else {
+      vec(out, 10, 20, 30);
+    }
+    if (plnv) {
+      PutConstant(out, Bits(5.0f));
+      PutConstant(out, Bits(2.0f));
+      PutConstant(out, Bits(3.0f));
+      PutConstant(out, Bits(15.0f));
+      PutConstant(out, 4);
+      PutConstant(out, 1);
+      PutConstant(out, 3);
+      PutConstant(out, 0);
+      out.push_back(1);
+    } else {
+      vec(out, 0, 0, 4);
+      PutConstant(out, Bits(2.0f));
+      PutConstant(out, Bits(3.0f));
+      PutConstant(out, Bits(15.0f));
+    }
+    PutProperty(out, "POFS", 0);
+    if (constPofs) {
+      vec(out, 1, 2, 3);
+      PutProperty(out, "ILOC", 0);
+      PutFourCC(out, "EMRV");
+    } else {
+      PutFourCC(out, "EMRV");
+    }
+    PutProperty(out, "_END", 4);
+    return out;
+  };
+  auto convert = [&](const std::vector<uint8_t>& out, const std::string& ok) {
+    EffectNode effect;
+    std::string error;
+    CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), ok + " parses");
+    return ConvertEffect(effect, out.data(), {});
+  };
+  auto has = [](const ConvertedPart& part, const char* fourcc) {
+    return std::search(part.part.begin(), part.part.end(), fourcc, fourcc + 4) != part.part.end();
+  };
+  auto dropped = [](const ConvertedPart& part, const char* what) {
+    for (const std::string& d : part.dropped) {
+      if (d.find(what) != std::string::npos) {
+        return true;
+      }
+    }
+    return false;
+  };
+  for (int plnv = 0; plnv < 2; ++plnv) {
+    const char* name = plnv ? "PLNV" : "PLNE";
+    const std::vector<ConvertedPart> parts = convert(build(2, plnv != 0, false), name);
+    CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), std::string(name) + " and EMRV under XFMD 2 drop nothing");
+    CHECK_MSG(parts.size() == 1 && has(parts[0], name) && has(parts[0], "PEMV"),
+              std::string(name) + " is kept and EMRV becomes PEMV (POFS's turn cancels the BSIS)");
+  }
+  std::vector<ConvertedPart> parts = convert(build(3, false, false), "XFMD 3");
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() && !has(parts[0], "PEMV"), "EMRV under XFMD 3 is a constant zero");
+  parts = convert(build(4, false, false), "XFMD 4");
+  CHECK_MSG(parts.size() == 1 && dropped(parts[0], "EMRV under XFMD 4"), "EMRV under XFMD 4 is dropped, naming it");
+  parts = convert(build(5, false, false, true), "XFMD 5 constant POFS");
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() && has(parts[0], "PEMV"), "EMRV under XFMD 5 with a constant POFS is PEMV mode 2");
+  parts = convert(build(5, false, false, false), "XFMD 5 variable POFS");
+  CHECK_MSG(parts.size() == 1 && dropped(parts[0], "EMRV under XFMD 5"), "EMRV under XFMD 5 with a variable POFS is dropped, naming it");
+  parts = convert(build(2, true, false), "zero-count PLNV");
+  CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty(), "a flagged PLNV with a zero count is exact, not approximated");
+  parts = convert(build(2, false, true), "bad euler");
+  CHECK_MSG(parts.size() == 1 && dropped(parts[0], "PLNE with a euler"), "a PLNE with a variable euler is dropped, naming it");
+}
+
 // ABS_, COSE, RSGN, IRSN (the port-only PIRS) and an EMTR CODE are converted, not dropped.
 void TestScalarElements() {
   std::vector<uint8_t> out(0x3c, 0);
@@ -3718,6 +3807,7 @@ int main() {
   TestMappedElements();
   TestScalarElements();
   TestPortVectors();
+  TestPlaneElements();
   TestExternalValue();
   TestSplitRejects();
   TestShapes();

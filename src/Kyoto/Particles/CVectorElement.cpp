@@ -594,6 +594,15 @@ bool CVEPortSystemVector::GetValue(int, CVector3f& valOut) const {
   return false;
 }
 
+bool CVEPortEmitterVelocity::GetValue(int, CVector3f& valOut) const {
+  valOut = CVector3f::Zero();
+  CParticleGlobals::SParticleSystem* sys = CParticleGlobals::GetCurrentParticleSystem();
+  if (CParticleGlobals::xPortSwooshEval == nullptr && sys != nullptr && sys->x4_system != nullptr) {
+    valOut = sys->x4_system->PortEmitterVelocity();
+  }
+  return false;
+}
+
 CVEPortRandomVector::CVEPortRandomVector(CRealElement* magnitude) : mMagnitude(magnitude) {}
 
 CVEPortRandomVector::~CVEPortRandomVector() { delete mMagnitude; }
