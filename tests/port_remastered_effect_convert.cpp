@@ -3690,7 +3690,7 @@ void TestVmatIceChargeBeamRecipe() {
     for (size_t n = 0; n < rows.size(); ++n) {
       mati[0x69] += 1;
       mati.push_back(3);
-      mati.insert(mati.end(), {'C', 'C', 'H', char('0' + n)});
+      mati.insert(mati.end(), {'C', 'C', 'H', uint8_t('0' + n)});
       for (const float f : rows[n]) {
         Put32(mati, Bits(f));
       }
@@ -3793,7 +3793,7 @@ void TestVmatIceChargeCollisionRecipe() {
   for (int n = 0; n < 7; ++n) {
     mati[0x69] += 1;
     mati.push_back(n == 0 || n == 1 || n == 4 || n == 6 ? 4 : 3);
-    mati.insert(mati.end(), {'C', 'C', 'H', char('0' + n)});
+    mati.insert(mati.end(), {'C', 'C', 'H', uint8_t('0' + n)});
     for (int c = 0; c < 4; ++c) {
       Put32(mati, Bits(float(n) + 0.25f * float(c)));
     }
