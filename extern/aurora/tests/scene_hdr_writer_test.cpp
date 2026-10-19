@@ -673,7 +673,7 @@ TEST(SceneHdrVfx, ThePolicyBitIsNotAShaderFeature) {
   EXPECT_EQ(shaderBits & AlreadyExposed, 0u);
   EXPECT_EQ(shader_features(shaderBits), shaderBits);
   EXPECT_EQ(shader_features(shaderBits | AlreadyExposed), shaderBits);
-  EXPECT_EQ(shader_features(ColorTex | DepthSoften | AlreadyExposed), uint32_t(ColorTex));
+  EXPECT_EQ(shader_features(ColorTex | DepthSoften | AlreadyExposed), uint32_t(ColorTex | DepthSoften));
   for (const bool hdr : {false, true}) {
     PipelineConfig flagged = vfxConfig(5, hdr);
     flagged.features = shader_features(flagged.features | AlreadyExposed);

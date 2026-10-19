@@ -4,7 +4,9 @@
 // The point of CStateManager::DrawWorld where Remastered copies the opaque scene
 // (RenderPrimaryPass: CopyOpaqueDepthBuffer, CopyOpaqueColorBuffer): every visible area's
 // opaque world and models, the sky and the decals have drawn, and no area's transparents or
-// particles yet. Empty for now.
-inline void PortSceneCopyPoint() {}
+// particles yet. The vfx draws after it read the copy (DepthSoften).
+#include <aurora/vfx.hpp>
+
+inline void PortSceneCopyPoint() { aurora::gfx::vfx::capture_scene(); }
 
 #endif

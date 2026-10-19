@@ -3404,7 +3404,22 @@ public:
       AppendBE32(blob, FloatBits(srcValue[i]));
     }
     AppendBE32(blob, FloatBits(1.0f));  // modulate
-    AppendBE32(blob, FloatBits(0.0f));  // depthSoften
+    // depthSoften: SFTD, the softness distance Remastered's soft-particle shaders
+    // divide the scene-depth gap by (desc+0x524, through the node's PZSO scalar).
+    // Every SFTD in the shipped effects is a CNST; anything else (or none) is 0,
+    // which the shader takes as no softening.
+    uint32_t softness = 0;
+    if (const EffectProperty* sftd = findUnique(F("SFTD")); sftd != nullptr && SmallConst(*sftd, softness)) {
+      if (sftd->value[0].args[0].kind == EffectValue::Kind::Byte) {
+        softness = FloatBits(float(softness));
+      }
+      if (!(FloatFromBits(softness) > 0.0f)) {
+        softness = 0;
+      }
+    } else {
+      softness = 0;
+    }
+    AppendBE32(blob, softness);  // depthSoften
     AppendBE32(blob, spriteCenter);
     if (opacityGainBias) {
       AppendBE32(blob, FloatBits(cch0[2]));

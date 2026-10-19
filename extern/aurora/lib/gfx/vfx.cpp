@@ -5,6 +5,7 @@
 #include "../gx/texture.hpp"
 #include "../logging.hpp"
 #include "../webgpu/gpu.hpp"
+#include "frame.hpp"
 #include "fx_pipelines.hpp"
 #include "hdr_tone.hpp"
 #include "pipeline_cache.hpp"
@@ -66,15 +67,16 @@ struct Uniform {
   float fogColor[4];
   float fog[4];     // type, a, b, c
   float misc[4];    // modulate, reversed Z, ramp row 0, ramp row 1
-  float misc2[4];   // add row, opacity gain, opacity bias, unused (layout unchanged)
+  float misc2[4];   // add row, opacity gain, opacity bias, DepthSoften softness
   float srcs[6][4]; // Src i = (code, value) at [i / 2][2 * (i % 2)]; code = -1 or row * 4 + comp
   float uvSets[4];  // per slot
   float layers[4];  // per slot
   float warp[2][4]; // per slot (x, y): slots 0, 1 in warp[0], slots 2, 3 in warp[1]
-  float pad[32];
+  float soft[4];    // DepthSoften: the viewport's depth range (min, max) and whether the scene depth is bound
+  float pad[28];
 };
 static_assert(sizeof(Uniform) == UniformSize);
-static_assert(offsetof(Uniform, misc2) == 208 && offsetof(Uniform, srcs) == 224);
+static_assert(offsetof(Uniform, misc2) == 208 && offsetof(Uniform, srcs) == 224 && offsetof(Uniform, soft) == 384);
 
 // ---- Array textures ----
 // A slot's texture as a texture_2d_array: a 1-layer view of the GX texture itself, or, for an atlas,
@@ -104,11 +106,24 @@ struct State_ {
   wgpu::BindGroupLayout bindLayout;
   wgpu::PipelineLayout pipelineLayout;
   std::map<std::array<uint64_t, 7>, wgpu::RenderPipeline> pipelines;
-  std::map<std::array<const void*, 1 + 2 * SlotCount>, wgpu::BindGroup> groups;
+  std::map<std::array<const void*, 3 + 2 * SlotCount>, wgpu::BindGroup> groups;
   // Set when an atlas is evicted: the cached bind groups still hold its views, so the render thread drops them.
   std::atomic<bool> groupsStale{false};
   wgpu::Texture dummyTexture;
   wgpu::TextureView dummyView;
+  wgpu::TextureView dummyColorView; // dummyTexture as a texture_2d
+  wgpu::Texture dummyDepthTexture;  // 1x1 R32Float
+  wgpu::TextureView dummyDepthView;
+  // The scene copy per frame slot. The game thread writes a slot's only while it records that slot,
+  // which it gets back once the render worker has encoded it, so the render thread reads it unlocked.
+  struct SceneCopy {
+    uint32_t frame = UINT32_MAX; // current_frame() when it was taken
+    uint32_t width = 0, height = 0;
+    bool hdr = false;
+    wgpu::TextureView depth; // the pass snapshot pool's (null: the device can't snapshot depth)
+    TextureHandle color;
+  };
+  std::array<SceneCopy, detail::FrameSlotCount> scene;
 };
 State_ g_state;
 
@@ -126,8 +141,10 @@ struct Payload {
   uint8_t wrapS[SlotCount];
   uint8_t wrapT[SlotCount];
   uint8_t linear[SlotCount];
+  uint8_t sceneSlot; // the frame slot whose scene copy the draw binds, NoScene: the dummies
 };
 static_assert(sizeof(Payload) <= InlineDrawPayloadSize);
+constexpr uint8_t NoScene = 0xff;
 
 const char* ShaderSource = R"(
 struct U {
@@ -145,6 +162,7 @@ struct U {
   layers: vec4f,
   warp01: vec4f,
   warp23: vec4f,
+  soft: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var t0: texture_2d_array<f32>;
@@ -155,6 +173,10 @@ struct U {
 @group(0) @binding(6) var s1: sampler;
 @group(0) @binding(7) var s2: sampler;
 @group(0) @binding(8) var s3: sampler;
+// The opaque scene at the copy point (capture_scene): raw depth, and colour for SceneWarp-style reads.
+@group(0) @binding(9) var sceneDepth: texture_2d<f32>;
+@group(0) @binding(10) var sceneColor: texture_2d<f32>;
+@group(0) @binding(11) var sceneSampler: sampler;
 
 struct VIn {
   @location(0) pos: vec3f,
@@ -179,6 +201,7 @@ struct VOut {
   @location(6) e3: vec4f,
   @location(7) nrm: vec3f,
   @location(8) uv2: vec3f,
+  @location(9) vz: f32,
 }
 
 @vertex
@@ -195,6 +218,7 @@ fn vs_main(in: VIn) -> VOut {
   out.e2 = in.e2;
   out.e3 = in.e3;
   out.nrm = in.nrm;
+  out.vz = mv.z;
   return out;
 }
 
@@ -368,7 +392,17 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   if ((FEAT & 4u) != 0u) {
     x = max(0.0, x - src(in, 0));
   }
-  let a = x * vc.w;
+  var a = x * vc.w;
+  if ((FEAT & 32u) != 0u && u.soft.z > 0.5 && u.misc2.w > 0.0) {
+    // DepthSoften, as VFX_DualModColorRamp_Indirect_Unlit (71dc2465, perm 000) does it: the opaque
+    // scene's depth at this pixel back to view space through the draw's own projection, and the
+    // view-z gap to the fragment over the softness, smoothstepped, scales the alpha before the test.
+    let b = textureLoad(sceneDepth, vec2i(in.pos.xy), 0).x;
+    let n = (b - u.soft.x) / (u.soft.y - u.soft.x);
+    let sz = (u.proj[2].w - n * u.proj[3].w) / (n * u.proj[3].z - u.proj[2].z);
+    let f = clamp((1.0 / u.misc2.w) * abs(sz - in.vz), 0.0, 1.0);
+    a = (3.0 - 2.0 * f) * f * f * a;
+  }
   if (a <= 0.0) { discard; }
   var alpha = clamp(a, 0.0, 1.0);
   if (BLEND == 4u) {
@@ -511,7 +545,7 @@ void ensure_static(const wgpu::Device& device) {
   if (g_state.pipelineLayout) {
     return;
   }
-  wgpu::BindGroupLayoutEntry entries[1 + 2 * SlotCount]{};
+  wgpu::BindGroupLayoutEntry entries[4 + 2 * SlotCount]{};
   entries[0] = {
       .binding = 0,
       .visibility = wgpu::ShaderStage::Vertex | wgpu::ShaderStage::Fragment,
@@ -529,9 +563,25 @@ void ensure_static(const wgpu::Device& device) {
         .sampler = {.type = wgpu::SamplerBindingType::Filtering},
     };
   }
+  entries[1 + 2 * SlotCount] = {
+      .binding = 1 + 2 * SlotCount,
+      .visibility = wgpu::ShaderStage::Fragment,
+      .texture = {.sampleType = wgpu::TextureSampleType::UnfilterableFloat,
+                  .viewDimension = wgpu::TextureViewDimension::e2D},
+  };
+  entries[2 + 2 * SlotCount] = {
+      .binding = 2 + 2 * SlotCount,
+      .visibility = wgpu::ShaderStage::Fragment,
+      .texture = {.sampleType = wgpu::TextureSampleType::Float, .viewDimension = wgpu::TextureViewDimension::e2D},
+  };
+  entries[3 + 2 * SlotCount] = {
+      .binding = 3 + 2 * SlotCount,
+      .visibility = wgpu::ShaderStage::Fragment,
+      .sampler = {.type = wgpu::SamplerBindingType::Filtering},
+  };
   const wgpu::BindGroupLayoutDescriptor layoutDescriptor{
       .label = "VFX Bind Group Layout",
-      .entryCount = 1 + 2 * SlotCount,
+      .entryCount = std::size(entries),
       .entries = entries,
   };
   g_state.bindLayout = device.CreateBindGroupLayout(&layoutDescriptor);
@@ -548,7 +598,7 @@ PipelineConfig make_config(const RenderTargetLayout& layout, const Payload& p) {
       .depthStencilFormat = layout.depthStencilFormat,
       .colorAttachmentCount = layout.colorAttachmentCount,
       .msaaSamples = layout.sampleCount,
-      .features = p.features & ~uint32_t(DepthSoften),
+      .features = p.features,
       .slotKey = p.slotKey,
       .blend = p.blend,
       .compare = p.compare,
@@ -640,6 +690,20 @@ void ensure_dummy(const DrawContext& ctx) {
   ctx.queue.WriteTexture(&dst, white, 4, &layout, &size);
   const wgpu::TextureViewDescriptor view{.dimension = wgpu::TextureViewDimension::e2DArray, .arrayLayerCount = 1};
   g_state.dummyView = g_state.dummyTexture.CreateView(&view);
+  const wgpu::TextureViewDescriptor view2D{.dimension = wgpu::TextureViewDimension::e2D};
+  g_state.dummyColorView = g_state.dummyTexture.CreateView(&view2D);
+  const wgpu::TextureDescriptor depthDescriptor{
+      .label = "VFX Dummy Scene Depth",
+      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
+      .size = {1, 1, 1},
+      .format = wgpu::TextureFormat::R32Float,
+  };
+  AURORA_NOTE_TEXTURE(&depthDescriptor);
+  g_state.dummyDepthTexture = ctx.device.CreateTexture(&depthDescriptor);
+  const float zero = 0.f;
+  const wgpu::TexelCopyTextureInfo depthDst{.texture = g_state.dummyDepthTexture};
+  ctx.queue.WriteTexture(&depthDst, &zero, 4, &layout, &size);
+  g_state.dummyDepthView = g_state.dummyDepthTexture.CreateView();
 }
 
 std::shared_ptr<ArrayEntry> find_entry(uint32_t id) {
@@ -760,7 +824,7 @@ bool ensure_registered() {
                 .maxAnisotropy = 1,
             });
           }
-          const std::array<uint64_t, 7> pipelineKey{p.features & ~uint32_t(DepthSoften),
+          const std::array<uint64_t, 7> pipelineKey{p.features,
                                                     p.slotKey,
                                                     p.blend,
                                                     p.compare,
@@ -776,12 +840,34 @@ bool ensure_registered() {
             }
             pipeline = g_state.pipelines.emplace(pipelineKey, std::move(created)).first;
           }
-          std::array<const void*, 1 + 2 * SlotCount> groupKey{};
+          wgpu::TextureView sceneDepth = g_state.dummyDepthView;
+          wgpu::TextureView sceneColor = g_state.dummyColorView;
+          if (p.sceneSlot < detail::FrameSlotCount) {
+            const auto& scene = g_state.scene[p.sceneSlot];
+            if (scene.depth) {
+              sceneDepth = scene.depth;
+            }
+            if (scene.color) {
+              sceneColor = scene.color->sampleTextureView;
+            }
+          }
+          // SpecialEffectDrawUtils' scene copy reads: textureLod(..., 0), bilinear, clamped.
+          const wgpu::Sampler sceneSampler = sampler_ref(wgpu::SamplerDescriptor{
+              .addressModeU = wgpu::AddressMode::ClampToEdge,
+              .addressModeV = wgpu::AddressMode::ClampToEdge,
+              .magFilter = wgpu::FilterMode::Linear,
+              .minFilter = wgpu::FilterMode::Linear,
+              .mipmapFilter = wgpu::MipmapFilterMode::Nearest,
+              .maxAnisotropy = 1,
+          });
+          std::array<const void*, 3 + 2 * SlotCount> groupKey{};
           for (uint32_t i = 0; i < SlotCount; ++i) {
             groupKey[i] = views[i].Get();
             groupKey[SlotCount + i] = samplers[i].Get();
           }
           groupKey[2 * SlotCount] = ctx.uniformBuffer.Get();
+          groupKey[2 * SlotCount + 1] = sceneDepth.Get();
+          groupKey[2 * SlotCount + 2] = sceneColor.Get();
           if (g_state.groupsStale.exchange(false, std::memory_order_acq_rel)) {
             g_state.groups.clear();
           }
@@ -790,12 +876,15 @@ bool ensure_registered() {
             if (g_state.groups.size() > 512) {
               g_state.groups.clear();
             }
-            std::array<wgpu::BindGroupEntry, 1 + 2 * SlotCount> entries{};
+            std::array<wgpu::BindGroupEntry, 4 + 2 * SlotCount> entries{};
             entries[0] = {.binding = 0, .buffer = ctx.uniformBuffer, .offset = 0, .size = UniformSize};
             for (uint32_t i = 0; i < SlotCount; ++i) {
               entries[1 + i] = {.binding = 1 + i, .textureView = views[i]};
               entries[1 + SlotCount + i] = {.binding = 1 + SlotCount + i, .sampler = samplers[i]};
             }
+            entries[1 + 2 * SlotCount] = {.binding = 1 + 2 * SlotCount, .textureView = sceneDepth};
+            entries[2 + 2 * SlotCount] = {.binding = 2 + 2 * SlotCount, .textureView = sceneColor};
+            entries[3 + 2 * SlotCount] = {.binding = 3 + 2 * SlotCount, .sampler = sceneSampler};
             const wgpu::BindGroupDescriptor descriptor{
                 .label = "VFX Bind Group",
                 .layout = g_state.bindLayout,
@@ -1010,6 +1099,19 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   u.misc2[0] = float(desc.addRow);
   u.misc2[1] = desc.opacityGain;
   u.misc2[2] = desc.opacityBias;
+  u.misc2[3] = desc.depthSoften;
+  // The scene copy this draw may read: this frame's, taken earlier in it, of the target it draws into.
+  const size_t frameSlot = current_frame_slot();
+  const auto& scene = g_state.scene[frameSlot];
+  const auto target = get_render_target_size();
+  const bool sceneValid = scene.frame == current_frame() && !is_offscreen() && scene.width == target.x &&
+                          scene.height == target.y;
+  if (sceneValid && scene.depth) {
+    const auto& vp = gx.logicalViewport;
+    u.soft[0] = gx::UseReversedZ ? 1.f - vp.zfar : vp.znear;
+    u.soft[1] = gx::UseReversedZ ? 1.f - vp.znear : vp.zfar;
+    u.soft[2] = u.soft[1] > u.soft[0] ? 1.f : 0.f;
+  }
   const Src* srcs[SrcCount] = {&desc.erosion,   &desc.thrX,      &desc.thrY,        &desc.thrW,
                                &desc.fresnelX,  &desc.fresnelY,  &desc.fadeX,       &desc.fadeY,
                                &desc.indexScale, &desc.indexOffset, &desc.indexRow};
@@ -1062,6 +1164,7 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
     p.wrapT[i] = uint8_t(t.wrapT);
     p.linear[i] = t.linear ? 1 : 0;
   }
+  p.sceneSlot = sceneValid ? uint8_t(frameSlot) : NoScene;
   push_custom_draw(g_state.drawType, &p, sizeof(p));
 }
 
@@ -1082,9 +1185,56 @@ void draw_triangles(const DrawDesc& desc, const Vertex* verts, uint32_t triCount
   }
 }
 
+void capture_scene() {
+  gx::fifo::drain();
+  if (is_offscreen()) {
+    return;
+  }
+  const auto target = get_render_target_size();
+  if (target.x == 0 || target.y == 0) {
+    return;
+  }
+  auto& scene = g_state.scene[current_frame_slot()];
+  if (scene.frame == current_frame()) {
+    return; // one copy per frame
+  }
+  const bool hdr = scene_hdr_pass_active();
+  // CopyOpaqueColorBuffer (0xb32f08, flag 3): half size (at least 1), a full mip chain.
+  const uint32_t width = std::max(target.x >> 1, 1u);
+  const uint32_t height = std::max(target.y >> 1, 1u);
+  if (!scene.color || scene.color->size.width != width || scene.color->size.height != height || scene.hdr != hdr) {
+    uint32_t mips = 1;
+    for (uint32_t edge = std::max(width, height); edge > 1; edge >>= 1) {
+      ++mips;
+    }
+    // HDR: the exposed linear scene, as GXPortCopyScene's. Without the HDR scene the display copy is
+    // what there is (Remastered always renders HDR).
+    scene.color = hdr ? new_render_texture(width, height, GX_TF_RGBA8, "VFX Scene Copy", mips,
+                                           wgpu::TextureFormat::RGBA16Float)
+                      : new_render_texture(width, height, GX_TF_RGBA8, "VFX Scene Copy", mips);
+    scene.hdr = hdr;
+    g_state.groupsStale.store(true, std::memory_order_release);
+  }
+  ResolveHdr resolveHdr{.linear = true};
+  static_assert(sizeof(resolveHdr.tone) == sizeof(gx::g_gxState.pbrTone));
+  std::memcpy(resolveHdr.tone.data(), gx::g_gxState.pbrTone.data(), sizeof(resolveHdr.tone));
+  wgpu::TextureView depth;
+  if (!resolve_scene_copy(scene.color, hdr ? &resolveHdr : nullptr, depth)) {
+    return;
+  }
+  scene.frame = current_frame();
+  scene.width = target.x;
+  scene.height = target.y;
+  scene.depth = std::move(depth);
+}
+
 void shutdown() {
   g_state.pipelines.clear();
   g_state.groups.clear();
+  g_state.scene = {};
+  g_state.dummyColorView = {};
+  g_state.dummyDepthView = {};
+  g_state.dummyDepthTexture = {};
   g_state.dummyView = {};
   g_state.dummyTexture = {};
   g_state.bindLayout = {};

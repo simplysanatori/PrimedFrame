@@ -21,7 +21,7 @@ enum Feature : uint32_t {
   Erosion = 4,          // a = max(0, a - erosion)
   Ramp = 8,             // rampSlot: t3 = r.x^3, rgb = mix(c0, c1, t3), a = r.y * mix(c0.w, c1.w, t3)
   Indirect = 16,        // indirectSlot: w = d.xy * 0.99609375 - 0.5; a `warped` slot's uv += w * warpScale
-  DepthSoften = 32,     // accepted and ignored: the scene depth is the pass's attachment and can't be sampled
+  DepthSoften = 32,     // fades the alpha where the particle nears the opaque scene's depth (capture_scene)
   Thresholding = 64,    // thresholdSlot (xy), thrX/thrY, thrW: a *= S(t1) * S(t2)
   DualMod = 128,        // with Ramp: ramp2Slot too, t3 = (r.x * r2.x)^3, a = r.y * r2.y * mix(c0.w, c1.w, t3)
   OpacityFresnel = 256, // a *= S(sat((|vec.z|/|vec| - F.x) / (F.y - F.x)))
@@ -93,7 +93,7 @@ struct DrawDesc {
   int8_t colorSlot = -1, opacitySlot = -1, rampSlot = -1, ramp2Slot = -1, thresholdSlot = -1, indirectSlot = -1,
          paletteSlot = -1;
   float modulate = 1.f;
-  float depthSoften = 0.f;
+  float depthSoften = 0.f; // DepthSoften's softness (SFTD): the view-space distance the fade spans; <= 0: none
   float opacityGain = 1.f, opacityBias = 0.f; // gain * clamp(smooth3(f) - bias, 0, 1)
   int8_t rampRow[2] = {0, 1}; // extra[] rows read whole as the ramp colours c0, c1
   int8_t addRow = 0;          // AddColor: the extra[] row (add.rgb, scale)
@@ -117,5 +117,11 @@ void draw_quads(const DrawDesc& desc, const Vertex* verts, uint32_t quadCount);
 // into draws of MaxTrianglesPerDraw (a draw holds at most 65536 vertices; this is a multiple of 3).
 constexpr uint32_t MaxTrianglesPerDraw = (1u << 14) * 4 / 3;
 void draw_triangles(const DrawDesc& desc, const Vertex* verts, uint32_t triCount);
+// Remastered's CopyOpaqueColorBuffer point, between the opaque and the sorted geometry: copies the
+// EFB's depth (raw, full size) and its colour (half size with a mip chain; linear RGBA16F in the HDR
+// scene, else the RGBA8 display copy) for the later draws of this frame to read, at one pass break.
+// Call once per frame from the game thread. Draws of a frame without a copy, before it, or into
+// another target (an offscreen pass) bind 1x1 dummies and do no DepthSoften.
+void capture_scene();
 void shutdown();
 } // namespace aurora::gfx::vfx
