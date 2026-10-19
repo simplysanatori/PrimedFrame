@@ -1,11 +1,11 @@
 name: android
 
+# Started by hand (Actions tab, or `gh workflow run android -r port`) when a
+# tester needs an APK; pushes do not build one.
 on:
   workflow_dispatch:
-  push:
-    branches: [port]
 
-# Pushes often arrive a few minutes apart; only the newest one's result matters.
+# Only the newest run per branch matters.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
