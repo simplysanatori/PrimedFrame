@@ -1312,6 +1312,16 @@ public:
       AppendBE32(out, F("RNDV"));
       return Element(value.args[0], Type::Real, out, why);
     }
+    // KESP is KEYP on time slot 2, which is always zero (CREKeyframeEmitterSpecific), so it
+    // is its first key: CNST(keys[0]).
+    if (value.fourcc == F("KESP") && type == Type::Real && value.args.size() == 1 &&
+        value.args[0].kind == EffectValue::Kind::Keys && value.args[0].size >= 26 &&
+        ReadLE32(m_data + value.args[0].offset + 18) >= 1 &&
+        value.args[0].size - 22 == size_t(ReadLE32(m_data + value.args[0].offset + 18)) * 4) {
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, ReadLE32(m_data + value.args[0].offset + 22));
+      return true;
+    }
     if (value.fourcc == F("GRAD") && type == Type::Color) {
       return Gradient(value, out, why);
     }
@@ -1674,6 +1684,15 @@ public:
     if (stops == 0 || at > size) {
       why = "GRAD without its stops";
       return false;
+    }
+    // One stop and no period (CCEFastConstant: 13 bytes, no tail) is that stop's colour, whatever
+    // the age: a constant colour, the halves decoded exactly.
+    if (stops == 1 && size == 13) {
+      AppendBE32(out, F("CNST"));
+      for (size_t c = 0; c < 4; ++c) {
+        AppendBE32(out, FloatBits(HalfToFloat(uint16_t(p[1 + 2 * c] | p[2 + 2 * c] << 8))));
+      }
+      return true;
     }
     AppendBE32(out, F("PGRD"));
     AppendBE32(out, uint32_t(stops));

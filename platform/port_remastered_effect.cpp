@@ -192,7 +192,7 @@ constexpr PropertyType kPropertyTypes[] = {
     {'R', "PSTS GRTE SIZE ROTA LENG WIDT LINT LFOR LSLA ADV1 ADV2 ADV3 ADV4 ADV5 ADV6 ADV7 ADV8"},
     {'V', "PSIV PSOV ILOC IVEC POFS PMOP PMRT PMSC SSPO SEPO LOFF LDIR"},
     {'M', "PSVM VEL1 VEL2 VEL3 VEL4"},
-    {'C', "COLR PMCL LCLR"},
+    {'C', "COLR PMCL LCLR NCLR"},
     {'E', "EMTR"},
     {'Q', "PMRQ"},
 };
