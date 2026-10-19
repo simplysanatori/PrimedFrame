@@ -37,6 +37,8 @@
 #include "rstl/algorithm.hpp"
 #include "rstl/list.hpp"
 #include "rstl/optional_object.hpp"
+
+#include <cstring>
 #define SBIG(v) v
 
 CTexture* CreateTexture(int value);
@@ -675,6 +677,21 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortIrnd = in.ReadLong() != 0;
       break;
+    // Port-only visor effect data of a converted Remastered PART: present, and the splat size
+    // range (VESN/VESM as float bits).
+    case SBIG('PVSD'):
+      GetClassID(in);
+      desc->xPortVisorData = in.ReadLong() != 0;
+      break;
+    case SBIG('PVSN'):
+    case SBIG('PVSM'): {
+      GetClassID(in);
+      const uint bits = in.ReadLong();
+      float value;
+      std::memcpy(&value, &bits, sizeof(value));
+      (clsId == SBIG('PVSN') ? desc->xPortVisorMinScale : desc->xPortVisorMaxScale) = value;
+      break;
+    }
     // Port-only first word of a converted Remastered PART's GUID (the child seed hashes it).
     case SBIG('PGID'):
       GetClassID(in);

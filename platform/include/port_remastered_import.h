@@ -98,7 +98,8 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 72: Remastered's swooshes the disc's WPSC has no field for (plasma ASW1/ASW2) are imported under synthetic ids,
 //     and the WPSC is written into the mod with the field added (AddRetailLink).
 // 73: recipe 1c651f97 (VFX_IceChargeCollision_Unlit, the vfx IceChargeCollision feature; VPRM v2, SMTR colours).
-inline constexpr int kEffects = 73;    // port_remastered_effect_import and the particle converters
+// 74: the root PART's visor effect data (VESN/VESM as PVSD/PVSN/PVSM) for the VisorGoo splat manager.
+inline constexpr int kEffects = 74;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 inline constexpr int kRooms = 20;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
