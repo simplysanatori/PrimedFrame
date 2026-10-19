@@ -618,6 +618,7 @@ void SetGyroAutoCalibrate(int mode); // 0 off, 1 always, 2 only in menus
 void StartGyroRecalibration();
 void CancelGyroRecalibration();
 float GyroRecalibrationCountdown(); // seconds left, or negative when none pending
+float GyroManualCalibrationProgress(); // 0..1 while Recalibrate samples, or negative
 bool GyroCalibrating();             // auto calibration is learning right now
 void ResetGyroCalibration();
 float GyroCalibrationConfidence();

@@ -87,6 +87,9 @@ struct Settings {
   // screen (degrees), and whether the gyro also turns the camera as in direct aim.
   float gyroCursorAngle = kGyroCursorAngleDefault;
   bool gyroCursorCamera = false;
+  // The "Reset aim" action recentres the pointer under pointer aim and levels
+  // the camera without it; on, it does both either way.
+  bool resetAimBoth = false;
   // An old gyro_rate line (aim pixels per rad/s, scaled by the mouse sensitivity)
   // and whether gyro_sensitivity was read since the last PostLoad, which turns the
   // first into the second when only it was there.

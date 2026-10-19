@@ -162,8 +162,12 @@ void SetGyroAutoCalibrate(int mode) {
 
 namespace {
 constexpr double kRecalibrateSeconds = 5.0;
-// SDL_GetTicksNS() the pending recalibration fires at, or 0.
+// How long a manual calibration averages the still pad.
+constexpr double kManualCalibrationSeconds = 3.0;
+// SDL_GetTicksNS() the pending recalibration starts sampling at, or 0.
 uint64_t sRecalibrateAtNs = 0;
+// SDL_GetTicksNS() the running manual calibration ends at, or 0.
+uint64_t sManualCalibrationEndNs = 0;
 // Whether auto calibration ran on the last gyro sample.
 bool sGyroCalibrating = false;
 // Set by the "Reset aim" action, taken by the next aim tick.
@@ -172,16 +176,28 @@ std::atomic<bool> sResetAimRequested{false};
 // aim it moves the pointer, so the sticks turn the camera.
 bool sGyroDrivesAim = false;
 
+uint64_t NsFromSeconds(double seconds) { return static_cast<uint64_t>(seconds * 1e9); }
+
+// Countdown over: average the still pad for a while (auto calibration waits),
+// then keep that as the drift, whatever auto calibrate is set to.
 void FireRecalibration() {
-  if (sRecalibrateAtNs != 0 && SDL_GetTicksNS() >= sRecalibrateAtNs) {
+  const uint64_t now = SDL_GetTicksNS();
+  if (sRecalibrateAtNs != 0 && now >= sRecalibrateAtNs) {
     sRecalibrateAtNs = 0;
-    sGyroMotion.Reset();
+    sGyroMotion.BeginManualCalibration();
+    sManualCalibrationEndNs = now + NsFromSeconds(kManualCalibrationSeconds);
+  }
+  if (sManualCalibrationEndNs != 0 && now >= sManualCalibrationEndNs) {
+    sManualCalibrationEndNs = 0;
+    sGyroMotion.EndManualCalibration();
   }
 }
 } // namespace
 
 void StartGyroRecalibration() {
-  sRecalibrateAtNs = SDL_GetTicksNS() + static_cast<uint64_t>(kRecalibrateSeconds * 1e9);
+  sGyroMotion.EndManualCalibration();
+  sManualCalibrationEndNs = 0;
+  sRecalibrateAtNs = SDL_GetTicksNS() + NsFromSeconds(kRecalibrateSeconds);
 }
 
 void CancelGyroRecalibration() { sRecalibrateAtNs = 0; }
@@ -194,7 +210,16 @@ float GyroRecalibrationCountdown() {
   return static_cast<float>(double(sRecalibrateAtNs - SDL_GetTicksNS()) * 1e-9);
 }
 
-bool GyroCalibrating() { return sGyroCalibrating; }
+float GyroManualCalibrationProgress() {
+  FireRecalibration();
+  if (sManualCalibrationEndNs == 0 || !sGyroMotion.ManualCalibrating()) {
+    return -1.f;
+  }
+  const double left = double(sManualCalibrationEndNs - SDL_GetTicksNS()) * 1e-9;
+  return std::clamp(static_cast<float>(1.0 - left / kManualCalibrationSeconds), 0.f, 1.f);
+}
+
+bool GyroCalibrating() { return sGyroCalibrating || sGyroMotion.ManualCalibrating(); }
 
 void ResetGyroCalibration() { sGyroMotion.Reset(); }
 
@@ -332,8 +357,7 @@ bool ReadGyroRates(float& pitch, float& yaw, float dt) {
   const bool inMenus = Visible() || PausedMenuOpen() || !sMouseGameplayActive;
   const bool calibrate = sInput.gyroAutoCalibrate == 1 || (sInput.gyroAutoCalibrate == 2 && inMenus);
   sGyroCalibrating = haveAccel && calibrate;
-  sGyroMotion.Process(gyro, haveAccel ? accel : nullptr, dt, sInput.gyroSpace, calibrate, pitch, yaw,
-                      sInput.gyroAutoCalibrate == 2);
+  sGyroMotion.Process(gyro, haveAccel ? accel : nullptr, dt, sInput.gyroSpace, calibrate, pitch, yaw);
   sGyroFilter.Apply(pitch, yaw, dt, sInput.gyroSmoothing, sInput.gyroTightening);
   return true;
 }
@@ -368,6 +392,12 @@ void PollGyro() {
   float pitch = 0.f;
   if (!ReadGyroRates(pitch, yaw, dt)) {
     sGyroStatus = "no gyro found";
+    sSpringFlickArmed = true;
+    return;
+  }
+  if (sGyroMotion.ManualCalibrating()) {
+    // The pad is meant to lie still: nothing it reads now aims or flicks.
+    sGyroStatus = "calibrating, keep the pad still";
     sSpringFlickArmed = true;
     return;
   }
@@ -559,10 +589,13 @@ bool UpdateMouseAim(bool active, bool locked, float x, float y, float z) {
   const PortMouse::AimState lastAim = sMouseAimState;
   const PortMouse::PointerAim lastPointer = sPointerAim;
   const bool pointer = PointerAim();
-  // Reset aim: recentre the pointer and look level (pitch 0). Yaw stays.
+  // Reset aim: under pointer aim recentre the pointer, otherwise look level
+  // (pitch 0; yaw stays). reset_aim_both does both either way.
   if (sResetAimRequested.exchange(false, std::memory_order_acq_rel)) {
-    sPointerAim.Center();
-    if (sMouseAimState.initialized) {
+    if (pointer || sInput.resetAimBoth) {
+      sPointerAim.Center();
+    }
+    if ((!pointer || sInput.resetAimBoth) && sMouseAimState.initialized) {
       sMouseAimState.pitch = 0.f;
       sMouseAimState.lagPitch = 0.f;
     }

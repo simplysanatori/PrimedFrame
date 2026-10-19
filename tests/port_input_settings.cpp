@@ -120,6 +120,10 @@ int main() {
   REQUIRE_MSG(Text().find("gyro_cursor_angle=60\n") != std::string::npos &&
                   Text().find("gyro_cursor_camera=1\n") != std::string::npos,
               "gyro cursor written");
+  REQUIRE_MSG(!Get().resetAimBoth, "reset_aim_both default off");
+  ApplySetting("reset_aim_both", "1");
+  REQUIRE_MSG(Get().resetAimBoth && Text().find("reset_aim_both=1\n") != std::string::npos,
+              "reset_aim_both");
   ApplySetting("shift_key_alt", "44");
   ApplySetting("turbo_pad", "3");
   REQUIRE_MSG(Get().shiftBindings[1] == 44 && Get().turboBindings[2] == 3, "bindings");

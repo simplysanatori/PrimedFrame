@@ -102,6 +102,13 @@ void DrawControlsOptions() {
   }
   ImGui::SetItemTooltip("The turn speed with the crosshair at the screen edge.");
   ImGui::EndDisabled();
+  bool resetAimBoth = sInput.resetAimBoth;
+  if (ImGui::Checkbox("Reset aim resets pointer and camera", &resetAimBoth)) {
+    sInput.resetAimBoth = resetAimBoth;
+    MarkDirty();
+  }
+  ItemHelp("The Reset aim action (unbound by default; Remap, Gyro group) recentres the crosshair "
+           "when pointer aim is on and levels the camera when it is off. On, it does both every time.");
 
   ImGui::SeparatorText("Morph ball");
   bool fastMorph = sInput.fastMorph;
@@ -497,7 +504,12 @@ void DrawControlsTouchGyro() {
            "accelerometer. Only in menus learns while the game is paused, on a menu screen or "
            "with this overlay open, and keeps what it learned while you play.");
   const float countdown = GyroRecalibrationCountdown();
-  if (countdown >= 0.f) {
+  const float manual = GyroManualCalibrationProgress();
+  if (manual >= 0.f) {
+    ImGui::BeginDisabled();
+    ImGui::Button(("Calibrating, keep the pad still... " + std::to_string(int(manual * 100.f)) + "%").c_str());
+    ImGui::EndDisabled();
+  } else if (countdown >= 0.f) {
     ImGui::BeginDisabled();
     ImGui::Button(("Calibrating in " + std::to_string(int(std::ceil(countdown))) + "...").c_str());
     ImGui::EndDisabled();
@@ -508,8 +520,9 @@ void DrawControlsTouchGyro() {
   } else if (ImGui::Button("Recalibrate")) {
     StartGyroRecalibration();
   }
-  ItemHelp("Waits 5 seconds so you can put the pad down, then clears the gyro's drift "
-           "measurement and learns it again.");
+  ItemHelp("Waits 5 seconds so you can put the pad down, then measures the gyro's drift for 3 "
+           "seconds and removes it. Auto calibration waits meanwhile, then refines the result. "
+           "Works with auto calibrate off too; the gyro must be in use (a mode other than off).");
   const float confidence = GyroCalibrationConfidence();
   if (confidence >= 0.f) {
     ImGui::Text("Calibration: %d%%%s", int(confidence * 100.f + 0.5f),
