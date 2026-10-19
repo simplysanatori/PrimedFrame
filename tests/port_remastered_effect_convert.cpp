@@ -2258,10 +2258,7 @@ void TestCurlNoise() {
     CHECK_MSG(parts.size() == 1 && parts[0].dropped.size() == 1 &&
                   parts[0].dropped[0].find("CRLN slice 2 not ported") != std::string::npos,
               "CRLN slice 2 drops with a reason");
-    auto octaves = convert(0, field, true, 0, 0.0f);
-    CHECK_MSG(octaves.size() == 1 && octaves[0].dropped.size() == 1 &&
-                  octaves[0].dropped[0].find("CRLN octaves not ported") != std::string::npos,
-              "CRLN octaves drop with a reason");
+    // Octaves convert to PCRO (tests/port_remastered_effect_convert_crlnoct.cpp).
     auto unknown = convert(0, EffectGuid{0x11}, false, 0, 0.0f);
     CHECK_MSG(unknown.size() == 1 && unknown[0].dropped.size() == 1 &&
                   unknown[0].dropped[0].find("not imported") != std::string::npos,

@@ -1608,8 +1608,23 @@ public:
       return false;
     }
     if (!IsElement(a[4], F("NONE"))) {
-      why = "CRLN octaves not ported";
-      return false;
+      // Octaves: the port-only PCRO (P, freq, octaves, gain, A). The VECF is released in
+      // Remastered's octave class, so it is not carried.
+      std::vector<uint8_t> octave;
+      AppendBE32(octave, F("PCRO"));
+      if (!Element(a[2], Type::Vector, octave, why) || !Element(a[3], Type::Real, octave, why) ||
+          !Element(a[4], Type::Int, octave, why) || !Element(a[5], Type::Real, octave, why) ||
+          !Element(a[6], Type::Vector, octave, why)) {
+        return false;
+      }
+      AppendBE32(out, F("PCRM"));
+      AppendBE32(out, a[7].word);
+      if (m_mp1Space) {
+        out.insert(out.end(), octave.begin(), octave.end());
+      } else {
+        Basis(F("BSIS"), octave, out);
+      }
+      return Element(a[8], Type::Real, out, why);
     }
     std::vector<uint8_t> noise;
     AppendBE32(noise, F("PCRN"));
@@ -4164,6 +4179,11 @@ public:
     // Port-only PCRM: the raw u32 mode, the V vector, then t as a real element.
     if (fourcc == F("PCRM") && type == Type::ModVector) {
       return Skip(4) && Element(Type::Vector) && Element(Type::Real);
+    }
+    // Port-only PCRO: P, the frequency, the octave count, the gain, then the amplitude A.
+    if (fourcc == F("PCRO") && type == Type::Vector) {
+      return Element(Type::Vector) && Element(Type::Real) && Element(Type::Int) &&
+             Element(Type::Real) && Element(Type::Vector);
     }
     // Port-only PCRN: P and F, the amplitude A, then NONE or CNST and a VECF id.
     if (fourcc == F("PCRN") && type == Type::Vector) {

@@ -1437,6 +1437,16 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
     ret = rs_new CVEPortCurlNoise(pos, freq, amp, handle);
     break;
   }
+  case SBIG('PCRO'): {
+    // CVECurlNoise_PerlinOctave3d: P, the frequency, the octave count, the gain, A.
+    CVectorElement* pos = GetVectorElement(in);
+    CRealElement* freq = GetRealElement(in);
+    CIntElement* octaves = GetIntElement(in);
+    CRealElement* gain = GetRealElement(in);
+    CVectorElement* amp = GetVectorElement(in);
+    ret = rs_new CVEPortCurlNoiseOctave(pos, freq, octaves, gain, amp);
+    break;
+  }
   case SBIG('PRTV'): {
     // Port-only ROTV: the vector, the rotation kind, and REUL's three angles.
     CVectorElement* vec = GetVectorElement(in);

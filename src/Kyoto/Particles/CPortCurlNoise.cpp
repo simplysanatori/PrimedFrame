@@ -102,6 +102,39 @@ CVector3f CurlNoise3d(float x, float y, float z, float e, int period) {
   const float dz = s * (PerlinNoise(x, y, z + e, period) - PerlinNoise(x, y, z - e, period));
   return CVector3f(dy - dz, dz - dx, dx - dy);
 }
+
+namespace {
+// One probe of the octave sum: amp0 = 1, f0 = freq, f(k+1) = fk + fk, amp(k+1) = amp(k) * gain,
+// summed in order. The offset is already in the coordinates, ahead of the frequency.
+float OctaveSum(int octaves, float x, float y, float z, float freq, float gain) {
+  float sum = 0.f;
+  float f = freq;
+  float amp = 1.f;
+  for (int k = 0; k < octaves; ++k) {
+    const float fx = x * f;
+    const float fy = f * y;
+    const float fz = f * z;
+    const float noise = PerlinNoise(fx, fy, fz, 256);
+    const float term = amp * noise;
+    sum = sum + term;
+    f = f + f;
+    amp = amp * gain;
+  }
+  return sum;
+}
+} // namespace
+
+CVector3f CurlNoiseOctave3d(int octaves, float x, float y, float z, float freq, float gain,
+                            float e) {
+  const float s = 1.0f / (e + e);
+  const float dx = s * (OctaveSum(octaves, x + e, y, z, freq, gain) -
+                        OctaveSum(octaves, x - e, y, z, freq, gain));
+  const float dy = s * (OctaveSum(octaves, x, y + e, z, freq, gain) -
+                        OctaveSum(octaves, x, y - e, z, freq, gain));
+  const float dz = s * (OctaveSum(octaves, x, y, z + e, freq, gain) -
+                        OctaveSum(octaves, x, y, z - e, freq, gain));
+  return CVector3f(dy - dz, dz - dx, dx - dy);
+}
 } // namespace PortCurlNoise
 
 CVectorField::CVectorField(int dimX, int dimY, int dimZ, const CVector3f& min,
@@ -202,6 +235,47 @@ bool CVEPortCurlNoise::GetValue(int frame, CVector3f& valOut) const {
     n = PortCurlNoise::CurlNoise3d(p.GetX() * f, p.GetY() * f, p.GetZ() * f, 1.0e-5f, 256);
   }
   valOut = CVector3f(n.GetX() * a.GetX(), n.GetY() * a.GetY(), n.GetZ() * a.GetZ());
+  return false;
+}
+
+CVEPortCurlNoiseOctave::CVEPortCurlNoiseOctave(CVectorElement* p, CRealElement* freq,
+                                               CIntElement* octaves, CRealElement* gain,
+                                               CVectorElement* a)
+: mP(p), mFreq(freq), mOctaves(octaves), mGain(gain), mA(a) {}
+
+CVEPortCurlNoiseOctave::~CVEPortCurlNoiseOctave() {
+  delete mP;
+  delete mFreq;
+  delete mOctaves;
+  delete mGain;
+  delete mA;
+}
+
+bool CVEPortCurlNoiseOctave::GetValue(int frame, CVector3f& valOut) const {
+  // The original's order: P, frequency, octaves, gain, amplitude.
+  CVector3f p = CVector3f::Zero();
+  if (mP) {
+    mP->GetValue(frame, p);
+  }
+  float freq = 1.0f;
+  if (mFreq) {
+    mFreq->GetValue(frame, freq);
+  }
+  int octaves = 1;
+  if (mOctaves) {
+    mOctaves->GetValue(frame, octaves);
+  }
+  float gain = 1.0f;
+  if (mGain) {
+    mGain->GetValue(frame, gain);
+  }
+  CVector3f a = CVector3f::Zero();
+  if (mA) {
+    mA->GetValue(frame, a);
+  }
+  const CVector3f n = PortCurlNoise::CurlNoiseOctave3d(octaves, p.GetX(), p.GetY(), p.GetZ(),
+                                                       freq, gain, 1.0e-5f);
+  valOut = CVector3f(a.GetX() * n.GetX(), a.GetY() * n.GetY(), a.GetZ() * n.GetZ());
   return false;
 }
 
