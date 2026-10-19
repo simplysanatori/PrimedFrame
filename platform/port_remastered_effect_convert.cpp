@@ -665,6 +665,14 @@ const Recipe* RecipeOf(uint32_t shader) {
       {0xfa49ff3c, kRamp | kIndirect,
        {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
        {}},
+      // 20a05041 VFX_ColorRamp_Indirect_Unlit (+ depth soften): fa49ff3c's maths times the soften factor.
+      {0x20a05041, kRamp | kIndirect | kDepthSoften,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {}},
+      // 3fe57e12 VFX_ColorRamp_Indirect_Lit: perm 000_0 folds identical to fa49ff3c's.
+      {0x3fe57e12, kRamp | kIndirect,
+       {{"TCH0", Role::Ramp, 0, 1}, {"TCH1", Role::Indirect, -1, -1}},
+       {}},
       {0x8177c4e0, kOpacityTex | kRamp | kDepthSoften,
        {{"TCH0", Role::Ramp, -1, -1}, {"TCH2", Role::Opacity, -1, -1}},
        {}},
@@ -692,6 +700,10 @@ const Recipe* RecipeOf(uint32_t shader) {
       {0x8e97872f, kRamp | kIndirect | kDepthSoften | kThresholding,
        {{"TCH0", Role::Ramp, 1, 2}, {"TCH1", Role::Threshold, -1, -1}, {"TCH2", Role::Indirect, -1, -1}},
        {{kSrcThrX, 2, 0}, {kSrcThrY, 2, 1}, {kSrcThrW, -1, 0}}},
+      // a0482072 VFX_ColorIndexing_Unlit: 28bf8533's lookup and palette without the opacity read.
+      {0xa0482072, kColorIndexing,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Palette, -1, -1}},
+       {{kSrcIndexScale, 0, 0}, {kSrcIndexOffset, 0, 1}, {kSrcIndexRow, 0, 2}}},
       {0x28bf8533, kOpacityTex | kColorIndexing,
        {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Palette, -1, -1}, {"TCH1", Role::Opacity, -1, -1}},
        {{kSrcIndexScale, 0, 0}, {kSrcIndexOffset, 0, 1}, {kSrcIndexRow, 0, 2}}},
@@ -813,6 +825,10 @@ const Recipe* RecipeOf(uint32_t shader) {
        {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Palette, -1, -1}, {"TCH1", Role::Opacity, -1, -1}},
        {{kSrcIndexScale, 0, 0}, {kSrcIndexOffset, 0, 1}, {kSrcIndexRow, 0, 2}}},
       {0xcc9405ea, kRamp | kDualMod,
+       {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}},
+       {}},
+      // f0e276eb VFX_DualModColorRamp_Lit: perm 000_0 folds identical to cc9405ea's.
+      {0xf0e276eb, kRamp | kDualMod,
        {{"TCH0", Role::Ramp, -1, -1}, {"TCH1", Role::Ramp2, -1, -1}},
        {}},
       {0x9ea86831, kRamp | kDualMod,
@@ -1793,9 +1809,10 @@ public:
              Element(value.args[1], Type::Real, out, why);
     }
     // GPUA is CREGPUAvailabilty, how much GPU time is free (to thin effects
-    // out under load): taken as 1, all of it.
+    // out under load). Remastered's value is exactly 1.0 whenever the GPU frame
+    // time is at or below 14 ms, so 1 is exact on a healthy frame and is not
+    // reported as approximated; only the load-shedding below 1 is not ported.
     if (value.fourcc == F("GPUA") && value.args.empty() && type == Type::Real) {
-      m_approximated.push_back("GPUA taken as 1");
       AppendBE32(out, F("CNST"));
       AppendBE32(out, FloatBits(1.0f));
       return true;
@@ -2139,7 +2156,13 @@ public:
   // 1, 4 -> slot 2, else 0). Slot 0 is the system's PSLT (CElementGen ctor 0x244cfc), as the port's
   // light update has it; slot 1 a particle's LTM2 (0x24c0dc), one above the port's LTME (Property),
   // or a swoosh's life, which the port's swoosh lifetime equals.
-  static int LifetimeOffset(bool part, bool swoosh, const EffectProperty& property) {
+  // An ELC2's COLR (tag 3) reads slot 1 = the bolt's end - start (UpdateBolt 0xb77638 sets ctx+0x70
+  // = param_2[3] - param_2[2] and calls the colour element with the bolt's age), the lifetime the
+  // port's bolt sets, so its offset is 0.
+  static int LifetimeOffset(bool part, bool swoosh, bool electric, const EffectProperty& property) {
+    if (electric && property.tag == 3 && property.fourcc == F("COLR")) {
+      return 0;
+    }
     if (part && property.tag == 3) {
       return 1;
     }
@@ -3160,10 +3183,10 @@ public:
 
     // The node's properties by fourcc.
     // Also takes the found property's lifetime context for the ILPTs written from it.
-    auto find = [this, &node, swoosh](uint32_t fourcc) -> const EffectProperty* {
+    auto find = [this, &node, swoosh, electric](uint32_t fourcc) -> const EffectProperty* {
       for (const EffectProperty& property : node.properties) {
         if (property.fourcc == fourcc) {
-          m_lifetimeOffset = LifetimeOffset(!swoosh, false, property);
+          m_lifetimeOffset = LifetimeOffset(!swoosh, false, electric, property);
           return &property;
         }
       }
@@ -3210,10 +3233,11 @@ public:
 
     uint32_t blend = 0;
     if (const EffectProperty* ebdm = electric ? find(F("EBDM")) : nullptr) {
-      // InitStaticRenderStateImpl (0xb72618) indexes a 6-entry table: 1 reads row 2 and 2 row 1 of the
-      // PBDM-style rows (0 alpha, 1 premultiplied, 2 additive); 3-5 read row 0. Row meaning UNVERIFIED.
+      // EBDM is a raw Byte. InitStaticRenderStateImpl (0xb72618) maps it by the table [0,2,1,0,0,0]
+      // (0x1d1eebc) to the shared blend rows (0x45767bc): 0 alpha, 1 premultiplied, 2 additive. So
+      // 1 is additive, 2 premultiplied, and 0 and 3-5 alpha. Depth is LEQUAL test, write off.
       uint32_t word = 0;
-      if (SmallConst(*ebdm, word) && word <= 5) {
+      if (SmallInteger(*ebdm, word) && word <= 5) {
         blend = word == 1 ? 2 : word == 2 ? 1 : 0;
       } else {
         m_approximated.push_back("VMAT: EBDM taken as alpha blend");
@@ -3853,7 +3877,7 @@ public:
     const bool modelsOnly = part && !has(F("TEXR")) && !has(F("MTIN")) && has(F("PMDL"));
     for (const EffectProperty& property : node.properties) {
       uint32_t fourcc = property.fourcc;
-      m_lifetimeOffset = LifetimeOffset(part, swoosh, property);
+      m_lifetimeOffset = LifetimeOffset(part, swoosh, electric, property);
       if (swoosh && (fourcc == F("ADV9") || (partVarId(fourcc) >= 9))) {
         result.dropped.push_back(EffectFourCCString(fourcc) + ": a swoosh has no per-particle variables");
         continue;

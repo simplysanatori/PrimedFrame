@@ -2191,7 +2191,7 @@ void TestBlendMode() {
             "PBDM 4 is listed as approximated");
 }
 
-// GPUA (how much GPU time is free) is taken as 1.
+// GPUA (how much GPU time is free) is 1.0 exactly at a GPU frame time of 14 ms or less.
 void TestGpuAvailability() {
   auto parts = ConvertOne(OneGenerator([](auto& o) {
                  PutProperty(o, "SIZE", 3);
@@ -2203,8 +2203,7 @@ void TestGpuAvailability() {
   want.f("GPSM").f("SIZE").f("CNST").w(Bits(1.0f));
   want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
   CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "GPUA becomes CNST 1");
-  CHECK_MSG(!parts.empty() && parts[0].approximated.size() == 1 && parts[0].approximated[0] == "GPUA taken as 1",
-            "GPUA is listed as approximated");
+  CHECK_MSG(!parts.empty() && parts[0].approximated.empty(), "GPUA is exact, not approximated");
 }
 
 // A mod-vector CRLN (CMVECurlNoise) is the port-only PCRM (mode, V, t) around its V child's
@@ -3699,6 +3698,128 @@ void TestVmatNewRecipes() {
   CHECK_MSG(ice.first.size() == 1 && ice.first[0].approximated.empty(), "9e0605cd approximates nothing");
 }
 
+bool Contains(const std::vector<uint8_t>& bytes, const std::vector<uint8_t>& what) {
+  return std::search(bytes.begin(), bytes.end(), what.begin(), what.end()) != bytes.end();
+}
+
+// Batch 4: the recipes for 20a05041, 3fe57e12, f0e276eb and a0482072.
+void TestVmatBatch4Recipes() {
+  auto features = [](uint32_t shader, std::vector<std::pair<const char*, EffectGuid>> textures, uint32_t& count) {
+    auto result = ConvertVmat(Mati(shader, textures));
+    count = VmatWord(result.second, 20);
+    CHECK_MSG(result.first.size() == 1 && !result.second.empty() && result.first[0].approximated.empty(),
+              "the batch 4 shader writes an exact VMAT");
+    return VmatWord(result.second, 12);
+  };
+  // aurora::gfx::vfx::Feature bits.
+  constexpr uint32_t kRamp = 8, kIndirect = 16, kDepthSoften = 32, kDualMod = 128, kColorIndexing = 512;
+  uint32_t count = 0;
+  const EffectGuid t = Fresh(8);
+  CHECK_MSG(features(0x20a05041, {{"TCH0", t}, {"TCH1", t}}, count) == (kRamp | kIndirect | kDepthSoften) && count == 2,
+            "20a05041 is fa49ff3c with DepthSoften");
+  CHECK_MSG(features(0x3fe57e12, {{"TCH0", t}, {"TCH1", t}}, count) == (kRamp | kIndirect) && count == 2,
+            "3fe57e12 is fa49ff3c's recipe");
+  CHECK_MSG(features(0xf0e276eb, {{"TCH0", t}, {"TCH1", t}}, count) == (kRamp | kDualMod) && count == 2,
+            "f0e276eb is cc9405ea's recipe");
+  CHECK_MSG(features(0xa0482072, {{"BCLR", t}, {"TCH0", t}}, count) == kColorIndexing && count == 2,
+            "a0482072 is 28bf8533's without the opacity texture");
+}
+
+// An ELC2 child of a root, with `body` writing its properties.
+template <typename Body>
+std::vector<ConvertedPart> ConvertElc2(Body body) {
+  std::vector<uint8_t> out(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  PutProperty(out, "SSWH", 0);
+  PutGuid(out, Legacy(0x0000BBBB));
+  PutProperty(out, "_END", 4);
+  Put32(out, 1);
+  PutGuid(out, Legacy(0x0000BBBB));
+  PutFourCC(out, "ELC2");
+  PutProperty(out, "SCNT", 1);
+  PutConstant(out, 4);
+  body(out);
+  PutProperty(out, "_END", 4);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "ELC2 effect parses");
+  EffectConvertIO io;
+  io.materialTexture = [](const EffectGuid& material) { return material == Fresh(7) ? 0x5EED0007u : 0u; };
+  io.materialData = [](const EffectGuid&) { return Mati(0x461071b8, {{"TCH0", Fresh(8)}}); };
+  io.vfxTexture = [](const EffectGuid& texture) {
+    FlipbookAtlas atlas;
+    if (texture == Fresh(8)) {
+      atlas.id = 0x5EED0008;
+    }
+    return atlas;
+  };
+  std::vector<ConvertedPart> parts = ConvertEffect(effect, out.data(), io);
+  return parts.size() == 2 ? std::vector<ConvertedPart>{parts[1]} : std::vector<ConvertedPart>{};
+}
+
+// An ELC2's EBDM is a raw byte (0 alpha, 1 additive, 2 premultiplied), and its COLR GRAD over ILPT
+// reads the bolt's life, offset 0.
+void TestElc2BlendAndLifetime() {
+  const uint32_t want[] = {0, 2, 1};  // aurora::gfx::vfx::Blend of EBDM 0, 1, 2
+  for (uint8_t ebdm = 0; ebdm < 3; ++ebdm) {
+    auto parts = ConvertElc2([ebdm](auto& o) {
+      PutProperty(o, "EBDM", 1);
+      o.push_back(ebdm);
+      PutProperty(o, "MTIN", 0);
+      o.push_back(1);
+      PutGuid(o, Fresh(7));
+    });
+    CHECK_MSG(parts.size() == 1, "ELC2 converts");
+    if (parts.size() != 1) {
+      continue;
+    }
+    std::string error;
+    std::vector<RetailPartProperty> properties;
+    CHECK_MSG(SplitRetailEffect(parts[0].type, parts[0].part.data(), parts[0].part.size(), properties, error),
+              "ELC2 reads as retail");
+    const RetailPartProperty* vmat = nullptr;
+    for (const RetailPartProperty& property : properties) {
+      if (property.fourcc == EffectFourCC("VMAT")) {
+        vmat = &property;
+      }
+    }
+    CHECK_MSG(vmat != nullptr, "an ELC2 with a material writes VMAT");
+    if (vmat != nullptr) {
+      CHECK_MSG(VmatWord(vmat->value, 16) == want[ebdm], "EBDM maps to the right blend");
+    }
+    CHECK_MSG(parts[0].approximated.empty(), "a byte EBDM approximates nothing");
+  }
+
+  auto parts = ConvertElc2([](auto& o) {
+    PutProperty(o, "COLR", 3);
+    PutFourCC(o, "GRAD");
+    o.push_back(2);
+    for (uint16_t half : {0x3c00, 0x0000, 0x0000, 0x3c00}) {
+      o.push_back(uint8_t(half));
+      o.push_back(uint8_t(half >> 8));
+    }
+    Put32(o, Bits(0.0f));
+    for (uint16_t half : {0x0000, 0x0000, 0x3c00, 0x0000}) {
+      o.push_back(uint8_t(half));
+      o.push_back(uint8_t(half >> 8));
+    }
+    Put32(o, Bits(1.0f));
+    PutFourCC(o, "ILPT");
+    PutConstant(o, 100);
+    o.push_back(1);
+  });
+  CHECK_MSG(parts.size() == 1, "ELC2 with a COLR GRAD converts");
+  if (parts.size() == 1) {
+    Retail plpt;
+    plpt.f("PLPT").w(0).f("CNST").w(100).b(1);
+    CHECK_MSG(Contains(parts[0].part, plpt.bytes), "ELC2 COLR GRAD over ILPT is PLPT offset 0");
+    CHECK_MSG(parts[0].approximated.empty(), "the ELC2 COLR GRAD is exact");
+  }
+}
+
 // A generator with a PMDL but no TEXR or MTIN draws only models: its SIZE is
 // left out and a SIZE of 0 written instead, as with one that draws nothing.
 void TestModelsOnly() {
@@ -3853,6 +3974,8 @@ int main() {
   TestComposedModelRotation();
   TestModelRotationBasisEvaluation();
   TestVmatNewRecipes();
+  TestVmatBatch4Recipes();
+  TestElc2BlendAndLifetime();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();
   TestPowerBallExposurePolicy();

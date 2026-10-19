@@ -88,8 +88,13 @@ CAABox CParticleElectric2Port::Bounds() const {
   return CAABox(CVector3f(lo.x - rad, lo.y - rad, lo.z - rad), CVector3f(hi.x + rad, hi.y + rad, hi.z + rad));
 }
 
-void CParticleElectric2Port::UpdateBolt(Bolt& bolt, int frame) {
+void CParticleElectric2Port::UpdateBolt(Bolt& bolt, int systemFrame) {
   // UpdateBolt 0xb77638: radii (LLRD copies LRAD to RRAD), colour, material point values.
+  // Every element in it (the material point values desc+0x140, RADS/LRAD/RRAD desc+0x138/0x128/0x130,
+  // COLR desc+0x148) is called with iVar1 = this[0x2c] - bolt start, the bolt's age, and the
+  // lifetime context slot 1 = end - start. CreateNewParticles 0xb76508 calls it right after the
+  // bolt starts, so the age is 0 there.
+  const int frame = systemFrame - bolt.startFrame;
   const float rads = RealOr(mDesc->xPortRADS, frame, 1.f);
   const float lrad = RealOr(mDesc->xPortLRAD, frame, 0.1f);
   float rrad = RealOr(mDesc->xPortRRAD, frame, 0.1f);
