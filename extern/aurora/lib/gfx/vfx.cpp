@@ -73,10 +73,12 @@ struct Uniform {
   float layers[4];  // per slot
   float warp[2][4]; // per slot (x, y): slots 0, 1 in warp[0], slots 2, 3 in warp[1]
   float soft[4];    // DepthSoften: the viewport's depth range (min, max) and whether the scene depth is bound
-  float pad[28];
+  float scene[4];   // SceneWarp: 1 / the copied target's size (x, y), the camera's near plane, whether the colour is bound
+  float pad[24];
 };
 static_assert(sizeof(Uniform) == UniformSize);
-static_assert(offsetof(Uniform, misc2) == 208 && offsetof(Uniform, srcs) == 224 && offsetof(Uniform, soft) == 384);
+static_assert(offsetof(Uniform, misc2) == 208 && offsetof(Uniform, srcs) == 224 && offsetof(Uniform, soft) == 384 &&
+              offsetof(Uniform, scene) == 400);
 
 // ---- Array textures ----
 // A slot's texture as a texture_2d_array: a 1-layer view of the GX texture itself, or, for an atlas,
@@ -163,6 +165,7 @@ struct U {
   warp01: vec4f,
   warp23: vec4f,
   soft: vec4f,
+  scene: vec4f,
 }
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var t0: texture_2d_array<f32>;
@@ -202,6 +205,7 @@ struct VOut {
   @location(7) nrm: vec3f,
   @location(8) uv2: vec3f,
   @location(9) vz: f32,
+  @location(10) sw: f32,
 }
 
 @vertex
@@ -219,6 +223,10 @@ fn vs_main(in: VIn) -> VOut {
   out.e3 = in.e3;
   out.nrm = in.nrm;
   out.vz = mv.z;
+  if ((FEAT & 32768u) != 0u) {
+    // SceneWarp: the warp's perspective scale, near / view distance (the VS's o3.x = vp_c4[0].w / -viewZ).
+    out.sw = u.scene.z / -mv.z;
+  }
   return out;
 }
 
@@ -421,6 +429,19 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   }
   if ((FEAT & 4u) != 0u) {
     x = max(0.0, x - src(in, 0));
+  }
+  if ((FEAT & 32768u) != 0u) {
+    // VFX_FrameBuffer_Indirect_* (cc155f99 = 04276ae1, d955396d; perms 000_0 and 016_0): the scene
+    // copy at this pixel, offset by the warp map's (d * 0.99609375 - 0.5) x CCH0.xy x near / view
+    // distance (v down: -y), times the colour. The copy is exposed, so x the inverse exposure: the
+    // tail exposes it again. No copy bound: nothing to draw.
+    if (u.scene.w < 0.5) { discard; }
+    let d = sample_slot(in, S_INDIRECT, vec2f(0.0)).xy;
+    let o = (d * 0.99609375 - vec2f(0.5)) * warp_of(max(S_INDIRECT, 0)) * in.sw;
+    let fbuv = vec2f(in.pos.x * u.scene.x + o.x, in.pos.y * u.scene.y - o.y);
+    var ie = 1.0;
+    if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { ie = 1.0 / u.tone0.w; }
+    rgb = scene_light(textureSampleLevel(sceneColor, sceneSampler, fbuv, 0.0).rgb) * rgb * ie;
   }
   var a = x * vc.w;
   if ((FEAT & 32u) != 0u && u.soft.z > 0.5 && u.misc2.w > 0.0) {
@@ -1024,9 +1045,20 @@ std::string pipeline_source(const PipelineConfig& p) {
     const uint32_t v = (p.slotKey >> (3 * i)) & 7;
     source += std::string("const ") + SlotNames[i] + ": i32 = " + (v == 7 ? "-1" : std::to_string(v)) + ";\n";
   }
+  // The scene copy's light as the exposed linear the HDR tail writes: the HDR copy is that already;
+  // the display copy (RGBA8) goes back through the room's curve, exact below the white it clipped at.
+  static constexpr std::string_view SceneLight = "fn scene_light(c: vec3f) -> vec3f { return c; }\n";
+  static constexpr std::string_view SceneLightDisplay =
+      "fn scene_light(c: vec3f) -> vec3f { return hdr_exposed(c, u.tone0, u.tone1, u.tone2); }\n";
   if (!hdr) {
-    // LDR: the source as it always was, byte for byte.
+    // LDR: the source as it always was, and the curve's inverse only where SceneWarp reads it.
     source += ShaderSource;
+    if ((p.features & SceneWarp) != 0) {
+      source += SceneLightDisplay;
+      source += hdr::ToneWgsl;
+    } else {
+      source += SceneLight;
+    }
     return source;
   }
   source += "const HDR: bool = true;\n";
@@ -1052,6 +1084,7 @@ std::string pipeline_source(const PipelineConfig& p) {
   }
   body.insert(at, HdrTail);
   source += body;
+  source += SceneLight;
   source += hdr::ToneWgsl;
   return source;
 }
@@ -1070,7 +1103,7 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
       {Ramp | Pyro, desc.rampSlot},
       {Ramp | DualMod, desc.ramp2Slot},
       {Thresholding, desc.thresholdSlot},
-      {Indirect, desc.indirectSlot},
+      {Indirect | SceneWarp, desc.indirectSlot},
       {ColorIndexing, desc.paletteSlot},
   };
   uint32_t slotKey = 0;
@@ -1141,6 +1174,14 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
     u.soft[0] = gx::UseReversedZ ? 1.f - vp.zfar : vp.znear;
     u.soft[1] = gx::UseReversedZ ? 1.f - vp.znear : vp.zfar;
     u.soft[2] = u.soft[1] > u.soft[0] ? 1.f : 0.f;
+  }
+  // SceneWarp: the copy of this pass's scene (HDR or display), under a perspective camera, whose near
+  // plane GX's projection gives as m23 / (m22 - 1).
+  if (sceneValid && scene.color && scene.hdr == hdr && gx.projType == GX_PERSPECTIVE && gx.proj.m2[2] != 1.f) {
+    u.scene[0] = 1.f / float(scene.width);
+    u.scene[1] = 1.f / float(scene.height);
+    u.scene[2] = gx.proj.m2[3] / (gx.proj.m2[2] - 1.f);
+    u.scene[3] = 1.f;
   }
   const Src* srcs[SrcCount] = {&desc.erosion,   &desc.thrX,      &desc.thrY,        &desc.thrW,
                                &desc.fresnelX,  &desc.fresnelY,  &desc.fadeX,       &desc.fadeY,

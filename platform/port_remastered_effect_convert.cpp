@@ -502,8 +502,9 @@ bool FlipbookTransform(const EffectValue& value, bool& flip) {
 // aurora::gfx::vfx::Feature.
 constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kIndirect = 16, kDepthSoften = 32,
                    kThresholding = 64, kDualMod = 128, kOpacityFresnel = 256, kColorIndexing = 512, kAddColor = 1024,
-                   kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192, kDisintegration = 16384;
-// aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders.
+                   kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192, kDisintegration = 16384,
+                   kSceneWarp = 32768;
+// aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders without a SceneWarp recipe.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
 // aurora::gfx::vfx::AlreadyExposed: an exposure policy carried in the features word, not a shader feature.
@@ -579,12 +580,21 @@ struct Recipe {
 // maths.
 const Recipe* RecipeOf(uint32_t shader) {
   static const std::vector<Recipe> table = {
-      // FrameBuffer_Indirect(_Opacity)_Unlit: the scene behind at the fragment, offset by TCH0's
-      // (resp. TCH1's) warp x CCH0.xy, times vc.rgb; alpha vc.a (resp. x TCH0.x). The warp is dropped.
+      // FrameBuffer_Indirect_Unlit: the scene behind at the fragment, times vc.rgb. The warp is dropped.
       {0x3db95827, 0, {}, {}, -1, false, true},
-      {0xd955396d, kOpacityTex,
-       {{"TCH0", Role::Opacity, -1, -1}},
-       {}, -1, false, true},
+      // VFX_FrameBuffer_Indirect_* (perms 000_0 and 016_0): the scene copy at the fragment, offset by the
+      // warp map's (d x 0.99609375 - 0.5) x CCH0.xy x near / view distance, times the colour and vc.rgb
+      // (cc155f99 = 04276ae1: BCLR, warp TCH0; alpha BCLR.a x vc.a), or times vc.rgb with alpha
+      // TCH0.x x vc.a (d955396d: warp TCH1). The warp scale rides on the map's slot.
+      {0xcc155f99, kColorTex | kSceneWarp,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Indirect, 0, 1}},
+       {}},
+      {0x04276ae1, kColorTex | kSceneWarp,
+       {{"BCLR", Role::Color, -1, -1}, {"TCH0", Role::Indirect, 0, 1}},
+       {}},
+      {0xd955396d, kOpacityTex | kSceneWarp,
+       {{"TCH0", Role::Opacity, -1, -1}, {"TCH1", Role::Indirect, 0, 1}},
+       {}},
       // VFX_IceChargeBeam (Lit): the PMTR colour pair blended by BCLR.x x NMAP.x, plus BCLR.rgb lit
       // through NMAP, x vc.rgb; alpha is vc.a alone. Approximated as BCLR.rgb x vc.rgb.
       {0x9e0605cd, kColorTex | kColorRgbOnly,

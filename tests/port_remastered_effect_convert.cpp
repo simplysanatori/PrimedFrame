@@ -3652,7 +3652,7 @@ void TestWaveOrbHeaderBlend() {
   TestWaveOrbSwoosh(orb(0x642dd72b, 1));
 }
 
-// The new recipes: the FrameBuffer shaders draw as a multiply (blend 4), and
+// The new recipes: 3db95827 draws as a multiply (blend 4), and
 // the ice charge beam reads its colour from BCLR alone.
 void TestVmatNewRecipes() {
   // FrameBuffer_Indirect_Unlit with no warp: features 0, blend Multiply, no textures.
@@ -3674,17 +3674,6 @@ void TestVmatNewRecipes() {
                 warped.first[0].approximated[0] ==
                     "VMAT: shader 3db95827's scene warp dropped (drawn as a multiply)",
             "a warped 3db95827 notes its scene warp dropped");
-
-  // FrameBuffer_Opacity_Unlit: the opacity texture, still a multiply.
-  auto opacity = ConvertVmat(Mati(0xd955396d, {{"TCH0", Fresh(8)}}));
-  CHECK_MSG(opacity.first.size() == 1 && !opacity.second.empty(), "a d955396d material writes VMAT");
-  if (!opacity.second.empty()) {
-    CHECK_MSG(VmatWord(opacity.second, 8) == 2 && VmatWord(opacity.second, 12) == 2 &&
-                  VmatWord(opacity.second, 16) == 4 && VmatWord(opacity.second, 20) == 1,
-              "d955396d VMAT v2, OpacityTex, blend 4, one texture");
-    CHECK_MSG(VmatWord(opacity.second, 24) == 0x5EED0008, "d955396d reads the TCH0 texture");
-  }
-  CHECK_MSG(opacity.first.size() == 1 && opacity.first[0].approximated.empty(), "d955396d approximates nothing");
 
   // VFX_IceChargeBeam: BCLR as the colour texture, rgb only.
   auto ice = ConvertVmat(Mati(0x9e0605cd, {{"BCLR", Fresh(8)}}));
@@ -3750,6 +3739,36 @@ void TestVmatDisintegrationRecipe() {
   // aurora::gfx::vfx::Feature::Disintegration, on the TCH0 mask only.
   CHECK_MSG(VmatWord(result.second, 12) == 16384 && VmatWord(result.second, 20) == 1,
             "d749057f is VFX_Disintegration on TCH0");
+}
+
+// VFX_FrameBuffer_Indirect_*: the SceneWarp feature, the warp scale CCH0.xy on the warp map's slot, the
+// blend the generator's (no multiply) and nothing approximated.
+void TestVmatSceneWarpRecipes() {
+  constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kSceneWarp = 32768;
+  // Texture records are 11 words from 24 (both textures the one the test resolves); the slot of each
+  // role follows them.
+  const auto check = [](uint32_t shader, const char* first, const char* map, uint32_t features, int role,
+                        const char* what) {
+    auto [parts, blob] = ConvertVmat(MatiCch0(shader, {{first, Fresh(8)}, {map, Fresh(8)}}, 0.25f, -0.125f, 1.0f, 1.0f));
+    CHECK_MSG(parts.size() == 1 && !blob.empty() && parts[0].approximated.empty(), what);
+    if (blob.size() < 24 + 2 * 44 + 7 * 4) {
+      return;
+    }
+    CHECK_MSG(VmatWord(blob, 12) == features && VmatWord(blob, 16) != 4 && VmatWord(blob, 20) == 2, what);
+    CHECK_MSG(VmatWord(blob, 24) == 0x5EED0008 && VmatWord(blob, 68) == 0x5EED0008, what);
+    // The first slot is not warped; the map's carries CCH0.x, CCH0.y.
+    CHECK_MSG(VmatWord(blob, 24 + 32) == 0 && VmatWord(blob, 68 + 32) == 1, what);
+    float u = 0.f, v = 0.f;
+    const uint32_t uw = VmatWord(blob, 68 + 36), vw = VmatWord(blob, 68 + 40);
+    std::memcpy(&u, &uw, 4);
+    std::memcpy(&v, &vw, 4);
+    CHECK_MSG(u == 0.25f && v == -0.125f, what);
+    // Role slots: Color, Opacity, Ramp, Ramp2, Threshold, Indirect, Palette.
+    CHECK_MSG(VmatWord(blob, 112 + 4 * role) == 0 && VmatWord(blob, 112 + 4 * 5) == 1, what);
+  };
+  check(0xcc155f99, "BCLR", "TCH0", kColorTex | kSceneWarp, 0, "cc155f99 is SceneWarp on BCLR, warped by TCH0");
+  check(0x04276ae1, "BCLR", "TCH0", kColorTex | kSceneWarp, 0, "04276ae1 is SceneWarp on BCLR, warped by TCH0");
+  check(0xd955396d, "TCH0", "TCH1", kOpacityTex | kSceneWarp, 1, "d955396d is SceneWarp on TCH0, warped by TCH1");
 }
 
 // An ELC2 child of a root, with `body` writing its properties.
@@ -4004,6 +4023,7 @@ int main() {
   TestVmatBatch4Recipes();
   TestVmatPyroRecipes();
   TestVmatDisintegrationRecipe();
+  TestVmatSceneWarpRecipes();
   TestElc2BlendAndLifetime();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();
