@@ -52,13 +52,15 @@ void CParticleGlobals::PortSetSystemTime(int frame, int lifetime) {
     xPortSystemTween = 0.f;
     return;
   }
+  // UpdateLifetimeTweenValues 0x24ef38: the reciprocal of the lifetime is FRECPE refined by two
+  // FRECPS steps (InverseScale), frame * that, then the two fcsel clamps (0 - t >= 0 gives 0,
+  // t - 1 >= 0 gives 1; a NaN fails both and stays).
   const float lifeF = lifetime != 0 ? static_cast< float >(lifetime) : 1.f;
-  const float recip = 1.f / lifeF;
-  float tween = static_cast< float >(frame) * recip;
-  if (tween < 0.f) {
+  float tween = static_cast< float >(frame) * PortParticleMath::InverseScale(lifeF);
+  if (0.f - tween >= 0.f) {
     tween = 0.f;
   }
-  if (tween > 1.f) {
+  if (tween + -1.f >= 0.f) {
     tween = 1.f;
   }
   xPortSystemTween = tween;
