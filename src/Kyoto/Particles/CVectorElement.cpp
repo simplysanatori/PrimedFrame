@@ -850,12 +850,15 @@ bool CVEPortRotateVector::GetValue(int frame, CVector3f& valOut) const {
       q = {r.GetScalar(), -r.AxisX(), r.AxisZ(), r.AxisY()};
     }
   } break;
-  default: {
+  case 'CMRT': {
     // CMRT: CERotationFromCamera 0x29d180, CQuaternion::FromMatrix of the camera transform
     // (CVECameraPositionInWorldSpace's matrix, the view matrix), in Remastered's space.
     const CQuaternion r = CQuaternion::FromMatrix(CGraphics::GetViewMatrix());
     q = {r.GetScalar(), -r.AxisX(), r.AxisZ(), r.AxisY()};
   } break;
+  default:
+    // A rotation kind the converter does not decode (it drops those): the vector passes through.
+    break;
   }
   CVector3f v = CVector3f::Zero();
   if (mVector) {
