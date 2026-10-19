@@ -806,6 +806,15 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
+    # Element batch 2 (NEGT, PLNV counts, CRCV, SPEV, ELPS): converter output.
+    mp_port_test(port_elem2_convert_tests
+        SOURCES tests/port_elem2_convert.cpp
+            platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp
+            src/Kyoto/Particles/CVectorElement.cpp src/Kyoto/Math/CQuaternion.cpp
+            src/Kyoto/Math/CVector3f.cpp src/Kyoto/Math/CMatrix3f.cpp
+        INCLUDES platform/include include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
     mp_port_test(port_electric2_bolt_tests
         SOURCES tests/port_electric2_bolt.cpp
         INCLUDES platform/include)

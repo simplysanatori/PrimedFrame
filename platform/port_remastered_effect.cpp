@@ -55,7 +55,7 @@ struct ElementSig {
   const char* sigs;
 };
 constexpr ElementSig kElementSigs[] = {
-    {"ABS_", "e"},     {"COSE", "eee"},   {"MPXV", "ee"},        {"CODE", "-"},       {"IRSN", "e"},       {"RSGN", "e"},
+    {"ABS_", "e"},     {"COSE", "eee"},   {"MPXV", "ee"},        {"CODE", "-"},       {"IRSN", "e"},       {"RSGN", "e"},       {"NEGT", "e"},
     {"ADD_", "ee"},    {"ANCR", "eeee ebeee"}, {"ANGC", "eeeee"},   {"ASPH", "eeeeeee"},
     {"ASPR", "eeeeee"}, {"ATEX", "geeeeee geeeeeb"}, {"ATX2", "geeee"}, {"BNCE", "eeeeb"}, {"CCLU", "eeee"},
     {"CEQL", "eeee"},  {"CEXT", "e"},          {"CFDE", "eeee"},    {"CHAN", "eee"},
@@ -126,6 +126,7 @@ constexpr ElementSig kRealSigs[] = {
     {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR"},
     {"CREL", "BRR"}, {"DFCS", "RR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
     {"SLCT", "Re"},   {"DIVD", "RR"},   {"ABS_", "R"},    {"MPXV", "IR"},   {"COSE", "RRR"},  {"RSGN", "R"},     {"IRSN", "R"},
+    {"NEGT", "R"},
 };
 constexpr ElementSig kVectorSigs[] = {
     {"NONE", "-"},   {"CNST", "RRR"},   {"KEYE", "k"},    {"KEYP", "k"},   {"ANGC", "RRRRR"}, {"CONE", "VR"},

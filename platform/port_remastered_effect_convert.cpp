@@ -1066,6 +1066,17 @@ public:
       out.insert(out.end(), kept.begin(), kept.end());
       return true;
     }
+    // NEGT(x) is CRENegate 0x294f20: -x, which retail has as MULT(x, CNST -1) (x * -1 is -x
+    // bit for bit, a zero's sign included; the child is evaluated once, first).
+    if (type == Type::Real && value.fourcc == F("NEGT") && value.args.size() == 1) {
+      AppendBE32(out, F("MULT"));
+      if (!Element(value.args[0], type, out, why)) {
+        return false;
+      }
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, FloatBits(-1.0f));
+      return true;
+    }
     // MPXV(i, fallback) is MPT_CREExternalValue 0x29715c: the port-only PMXV, the int then the real.
     if (type == Type::Real && value.fourcc == F("MPXV") && value.args.size() == 2) {
       AppendBE32(out, F("PMXV"));
