@@ -388,34 +388,49 @@ uint32_t SystemReadsOf(const EffectValue& value) {
   return mask;
 }
 
-// Remastered's IsConstantAfterStart (0x250b18) of a variable's tree, `(flags & 3) != 0`: bit 0 is
-// IsNodeConst (a CNST; a composite whose children all are), bit 1 IsNodeInitialOnly (an IRND of
-// constants, CIEInitialRandomConstant; a composite with one such child whose children are all
-// either, ResolveInitialOnlyConflict 0x250994). A variable read (PAPn) or anything else is neither.
-uint32_t ConstantFlags(const EffectValue& value) {
+// Remastered's IsConstantAfterStart (0x250b18) of a variable's tree, `(flags & 3) != 0`, with the
+// flags CElementDep::Finish (0x24f9a4) fills from the node's own virtuals (IsNodeConst slot
+// +0xe8, IsNodeInitialOnly +0xf0, GetConstOverride +0x148) and its children:
+//  - a node with no registered children keeps its own bits: CNST (CIEConstant, CREConstant,
+//    CVEConstant ... override IsNodeConst) is bit 0; the "...Constant" specialisations the
+//    factory builds for constant arguments (RAND of two CNST is CRERandomConstant 0x29598c, a
+//    leaf) have neither;
+//  - otherwise bit 0 is the AND of the children's bit 0 (the node's own is dropped), then
+//    GetConstOverride (CRERandom 0x299dbc, CRESineWave, CREPulse, CRETimeChain, CREKeyframe*,
+//    the SPAF/TPVF/DPVF reads ... all return false) may overwrite it;
+//  - bit 1 is the node's own IsNodeInitialOnly (IRND: CIEInitialRandom(Constant) 0x2aa320 /
+//    0x2aa360, KPIN: CREKeepInitial 0x299d3c), else a child's bit 1 with every child
+//    constant-after-start (ResolveInitialOnlyConflict 0x250994).
+// Only the shapes decoded are claimed constant: CNST, IRND and KPIN, and the plain composites
+// ADD_, SUB_ and DIVD over reals (GetRealElement 0x260de4 builds CREAdd/CRESubtract/CREDivide
+// over two registered children; none overrides GetConstOverride or IsNodeInitialOnly). Anything
+// else (RAND, SPAF, TPVF, MPXV, SINE, PULS, CHAN, a variable read ...) is 0, i.e. re-evaluated
+// every frame, which is only ever the safe side.
+uint32_t ConstantFlags(const EffectValue& value, Type type) {
   if (value.kind != EffectValue::Kind::Element) {
     return 0;
   }
   if (value.fourcc == F("CNST")) {
     return 1;
   }
-  uint32_t all = 1, any2 = 0, children = 0;
+  if (value.fourcc == F("IRND") && type != Type::Vector && type != Type::Color) {
+    return 2;
+  }
+  if (value.fourcc == F("KPIN") && type == Type::Real) {
+    return 2;
+  }
+  const bool plain = type == Type::Real && value.args.size() == 2 &&
+                     (value.fourcc == F("ADD_") || value.fourcc == F("SUB_") || value.fourcc == F("DIVD"));
+  if (!plain) {
+    return 0;
+  }
+  uint32_t all = 1, any2 = 0;
   bool every = true;
   for (const EffectValue& arg : value.args) {
-    if (arg.kind != EffectValue::Kind::Element) {
-      continue;
-    }
-    const uint32_t flags = ConstantFlags(arg);
-    ++children;
+    const uint32_t flags = ConstantFlags(arg, type);
     all &= flags;
     any2 |= flags & 2;
     every = every && (flags & 3) != 0;
-  }
-  if (children == 0) {
-    return 0;
-  }
-  if (value.fourcc == F("IRND") && value.args.size() == 2 && all == 1) {
-    return 2;
   }
   return all | (any2 != 0 && every ? 2u : 0u);
 }
@@ -4069,7 +4084,8 @@ public:
         if (property.value.size() != 1) {
           why = "not one element";
         } else if (varId >= 9 && IsElement(property.value[0], F("IRND")) && property.value[0].args.size() == 2 &&
-                   ConstantFlags(property.value[0]) == 2) {
+                   ConstantFlags(property.value[0].args[0], Type::Int) == 1 &&
+                   ConstantFlags(property.value[0].args[1], Type::Int) == 1) {
           // IRND(CNST, CNST) is CIEInitialRandomConstant (0x2a8c40): one draw of the one RNG at
           // spawn, never again (PPVR runs it at spawn only): min + Next() % (max - min + 1).
           AppendBE32(var.element, F("PRAN"));
@@ -4081,7 +4097,7 @@ public:
           var.converted = Element(property.value[0], varId >= 9 ? Type::Int : Type::Real, var.element, why);
         }
         var.reads = m_varReads;
-        var.flags = property.value.size() == 1 ? ConstantFlags(property.value[0]) : 0;
+        var.flags = property.value.size() == 1 ? ConstantFlags(property.value[0], varId >= 9 ? Type::Int : Type::Real) : 0;
         if (!var.converted) {
           result.dropped.push_back(EffectFourCCString(property.fourcc) + ": " + why);
         }
@@ -4125,7 +4141,7 @@ public:
       if (varId >= 0) {
         PartVar var{uint32_t(varId)};
         var.reads = m_varReads;
-        var.flags = property.value.size() == 1 ? ConstantFlags(property.value[0]) : 0;
+        var.flags = property.value.size() == 1 ? ConstantFlags(property.value[0], Type::Real) : 0;
         var.converted = propertyOk;
         partVars.push_back(std::move(var));
       }

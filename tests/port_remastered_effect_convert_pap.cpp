@@ -166,6 +166,34 @@ void TestPap9Leaf() {
   CHECK_MSG(Contains(parts[0].part, size), "SIZE keeps its PAP9 leaf");
 }
 
+// The PPVR constant-after-start flag follows CElementDep::Finish (0x24f9a4): ADD_(CNST, CNST) is
+// constant, RAND(CNST, CNST) is not (CRERandom::GetConstOverride 0x299dbc), a plain IRND is
+// initial-only (flag 1, evaluated at spawn).
+void TestConstantFlag() {
+  struct Case {
+    const char* op;
+    uint32_t flag;
+  };
+  for (const Case c : {Case{"ADD_", 1}, Case{"RAND", 0}}) {
+    std::vector<uint8_t> out = Header();
+    PutProperty(out, "ADV9", 0);
+    PutFourCC(out, c.op);
+    PutCnst(out, Bits(1.0f));
+    PutCnst(out, Bits(2.0f));
+    PutTexr(out, 0x1234ABCD);
+    PutProperty(out, "_END", 4);
+    const std::vector<ConvertedPart> parts = Convert(out);
+    CHECK_MSG(parts.size() == 1, "one part");
+    if (parts.size() != 1) {
+      continue;
+    }
+    std::vector<uint8_t> item = Four("PPVR");
+    Append(item, Four("CNST"));
+    Be(item, {1, 1, 8, c.flag});
+    CHECK_MSG(Contains(parts[0].part, item), c.op);
+  }
+}
+
 // ADV1..8 only: no PPVR, and the identity order writes no PADO either.
 void TestNoPpvr() {
   std::vector<uint8_t> out = Header();
@@ -187,5 +215,6 @@ int main() {
   TestPpvr();
   TestPap9Leaf();
   TestNoPpvr();
+  TestConstantFlag();
   return PORT_TEST_RESULT();
 }
