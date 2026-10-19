@@ -334,6 +334,13 @@ bool CREParticleAccessParameter8::GetValue(int, float& valOut) const {
   return false;
 }
 
+#ifdef TARGET_PC
+bool CREParticleAccessParameter9::GetValue(int, float& valOut) const {
+  valOut = CParticleGlobals::GetParticleAccessParameters()[8];
+  return false;
+}
+#endif
+
 bool CREParticleSizeOrLineLength::GetValue(int, float& valOut) const {
   valOut = CParticleGlobals::GetCurrentParticle()->x2c_lineLengthOrSize;
   return false;

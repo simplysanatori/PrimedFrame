@@ -99,7 +99,12 @@ public:
     {}
   };
   struct CAdvancedValues {
+#ifdef TARGET_PC
+    // 0..8 ADV1..9 (ADV9 is Remastered's), 9..12 the bits of IAV0..3 (Remastered's int variables).
+    float values[13] = {};
+#else
     float values[8];
+#endif
   };
 
   CElementGen();
@@ -148,7 +153,7 @@ public:
 
   bool InternalUpdate(double dt);
   void UpdateLightParameters();
-  void UpdateAdvanceAccessParameters(int, int);
+  void UpdateAdvanceAccessParameters(int, int, bool spawn = false);
   bool UpdateVelocitySource(int, int, CParticle&);
   void UpdateExistingParticles();
   void CreateNewParticles(int);

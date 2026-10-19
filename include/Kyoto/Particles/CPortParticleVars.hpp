@@ -85,6 +85,61 @@ public:
   }
 };
 
+// Remastered's particle variables (GPSM ADV1..9 and IAV0..3), in its SortVars order: one is
+// evaluated after those it reads. At spawn every variable runs; on later frames only those that are
+// not constant after start (CVarContext IsConstantAfterStart), so the one RNG sequence is the same
+// as Remastered's. A kind 0 item runs the generator's own ADVn element.
+enum class EPortPartVarKind : u32 { RealAdv = 0, RealOwn = 1, Int = 2 };
+
+struct SPortPartVarItem {
+  EPortPartVarKind kind = EPortPartVarKind::RealAdv;
+  u32 slot = 0;
+  bool constAfterStart = false;
+  CRealElement* real = nullptr;  // kind 1: ADV9
+  CIntElement* intE = nullptr;   // kind 2: IAV<slot>
+};
+
+class CPortPartVars {
+public:
+  std::vector< SPortPartVarItem > items;
+
+  CPortPartVars() = default;
+  CPortPartVars(const CPortPartVars&) = delete;
+  CPortPartVars& operator=(const CPortPartVars&) = delete;
+  ~CPortPartVars() {
+    for (size_t i = 0; i < items.size(); ++i) {
+      delete items[i].real;
+      delete items[i].intE;
+    }
+  }
+
+  // values: ADV1..9 at 0..8, then the bits of IAV0..3 (CAdvancedValues). advs: the generator's
+  // ADV1..8 elements.
+  void Eval(CRealElement* const advs[8], bool spawn, int frame, float* values) const {
+    for (const SPortPartVarItem& item : items) {
+      if (!spawn && item.constAfterStart) {
+        continue;
+      }
+      switch (item.kind) {
+      case EPortPartVarKind::RealAdv:
+        if (advs[item.slot] != nullptr) {
+          advs[item.slot]->GetValue(frame, values[item.slot]);
+        }
+        break;
+      case EPortPartVarKind::RealOwn:
+        item.real->GetValue(frame, values[item.slot]);
+        break;
+      case EPortPartVarKind::Int: {
+        int v = 0;
+        item.intE->GetValue(frame, v);
+        std::memcpy(&values[9 + item.slot], &v, sizeof(v));
+        break;
+      }
+      }
+    }
+  }
+};
+
 // The live values of one system. Without a table nothing is stored and every bind is a no-op.
 class CPortVarMemory {
 public:

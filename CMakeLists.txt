@@ -814,6 +814,16 @@ if(MP_BUILD_TESTS)
         INCLUDES platform/include include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
+    # ADV9 / IAV0..3 / PAP0 / PAP9 converter output (PPVR).
+    mp_port_test(port_remastered_effect_convert_pap_tests
+        SOURCES tests/port_remastered_effect_convert_pap.cpp
+            platform/port_remastered_effect_convert.cpp platform/port_remastered_effect.cpp
+            src/Kyoto/Particles/CVectorElement.cpp src/Kyoto/Math/CQuaternion.cpp
+            src/Kyoto/Math/CVector3f.cpp src/Kyoto/Math/CMatrix3f.cpp
+        INCLUDES platform/include include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
+
     mp_port_test(port_electric2_bolt_tests
         SOURCES tests/port_electric2_bolt.cpp
         INCLUDES platform/include)
@@ -829,6 +839,12 @@ if(MP_BUILD_TESTS)
     # ABS_, COSE, RSGN and PIRS: header-only elements (CPortParticleVars.hpp).
     mp_port_test(port_scalar_elements_tests
         SOURCES tests/port_scalar_elements.cpp src/Kyoto/Particles/CParticleGlobals.cpp src/Kyoto/CRandom16.cpp src/Kyoto/Math/CVector3f.cpp
+        INCLUDES include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
+    # ADV9, IAV0..3 and the constant-after-start rule (CPortPartVars).
+    mp_port_test(port_part_vars_tests
+        SOURCES tests/port_part_vars.cpp src/Kyoto/Particles/CParticleGlobals.cpp src/Kyoto/CRandom16.cpp src/Kyoto/Math/CVector3f.cpp
         INCLUDES include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)

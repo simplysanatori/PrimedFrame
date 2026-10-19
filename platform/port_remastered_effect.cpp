@@ -73,7 +73,7 @@ constexpr ElementSig kElementSigs[] = {
     {"LMPL", "eeeeb"}, {"MMSI", "eg"},         {"MODU", "ee"},      {"MULT", "ee"},
     {"NONE", "-"},     {"PAP1", "-"},          {"PAP2", "-"},       {"PAP3", "-"},
     {"PAP4", "-"},     {"PAP5", "-"},          {"PAP6", "-"},       {"PAP7", "-"},
-    {"PAP8", "-"},     {"PCOL", "-"},          {"PEOD", "e"},       {"PLCO", "-"},
+    {"PAP0", "-"},     {"PAP9", "-"},     {"PAP8", "-"},     {"PCOL", "-"},          {"PEOD", "e"},       {"PLCO", "-"},
     {"PLOC", "-"},     {"PRLW", "-"},          {"PSLL", "-"},       {"PSOF", "-"},
     {"PSOR", "-"},     {"PSOU", "-"},          {"PSTR", "-"},       {"PULS", "eeee"},
     {"PVEL", "-"},     {"RADD", "ee"},         {"RAND", "ee"},      {"REUL", "eeeb"},
@@ -114,14 +114,15 @@ constexpr ElementSig kIntSigs[] = {
     {"ADD_", "II"},  {"MULT", "II"},  {"MODU", "II"},  {"RAND", "II"},   {"IMPL", "I"},   {"ILPT", "I"},
     {"ABS_", "I"},   {"SPAH", "III"}, {"IRND", "II"},  {"CLMP", "III"}, {"PULS", "IIII"}, {"NONE", "-"},   {"RTOI", "RR"},
     {"SUB_", "II"},  {"GTCP", "-"},   {"GAPC", "-"},   {"GEMT", "-"},    {"MPRD", "II eeee"},
-    {"TPVI", "gI"},  {"DPVI", "gI"},  {"SPAI", "bI"},
+    {"TPVI", "gI"},  {"DPVI", "gI"},  {"SPAI", "bI"},  {"PAP0", "-"},   {"PAP1", "-"},   {"PAP2", "-"},
+    {"PAP3", "-"},
 };
 constexpr ElementSig kRealSigs[] = {
     {"CNST", "w"},    {"NONE", "-"},    {"KEYE", "k"},    {"KEYP", "k"},     {"SCAL", "R"},    {"SINE", "RRR"},
     {"ADD_", "RR"},   {"MULT", "RR"},   {"DOTP", "VV"},   {"RAND", "RR"},    {"IRND", "RR"},   {"CHAN", "RRI"},
     {"CLMP", "RRR"},  {"PULS", "IIRR"}, {"RLPT", "R"},    {"LFTW", "RR"},    {"PRLW", "-"},    {"PSLL", "-"},
     {"PAP1", "-"},    {"PAP2", "-"},    {"PAP3", "-"},    {"PAP4", "-"},     {"PAP5", "-"},    {"PAP6", "-"},
-    {"PAP7", "-"},    {"PAP8", "-"},    {"VXTR", "V"},    {"VYTR", "V"},     {"VZTR", "V"},    {"VMAG", "V"},
+    {"PAP7", "-"},    {"PAP8", "-"},    {"PAP9", "-"},    {"VXTR", "V"},    {"VYTR", "V"},     {"VZTR", "V"},    {"VMAG", "V"},
     {"ISWT", "RR"},   {"CLTN", "RRRR"}, {"CEQL", "RRRR"}, {"CRNG", "RRRRR"}, {"CEXT", "I"},    {"ITRL", "IR"},
     {"SUB_", "RR"},   {"GTCR", "C"},    {"GTCG", "C"},    {"GTCB", "C"},     {"GTCA", "C"},    {"DFCP", "RR"},
     {"CREL", "BRR"}, {"DFCS", "RR"}, {"MPRD", "RR eeee"}, {"TPVF", "gR"}, {"DPVF", "gR"}, {"SPAF", "bR"}, {"KPIN", "R"},
@@ -188,8 +189,8 @@ struct PropertyType {
   const char* fourccs;
 };
 constexpr PropertyType kPropertyTypes[] = {
-    {'I', "PSLT PSWT MBSP MAXP LTME LTM2 SEED NCSY CSSD NDSY PISY SISY SSSD SESD LTYP LFOT"},
-    {'R', "PSTS GRTE SIZE ROTA LENG WIDT LINT LFOR LSLA ADV1 ADV2 ADV3 ADV4 ADV5 ADV6 ADV7 ADV8"},
+    {'I', "PSLT PSWT MBSP MAXP LTME LTM2 SEED NCSY CSSD NDSY PISY SISY SSSD SESD LTYP LFOT IAV0 IAV1 IAV2 IAV3"},
+    {'R', "PSTS GRTE SIZE ROTA LENG WIDT LINT LFOR LSLA ADV1 ADV2 ADV3 ADV4 ADV5 ADV6 ADV7 ADV8 ADV9"},
     {'V', "PSIV PSOV ILOC IVEC POFS PMOP PMRT PMSC SSPO SEPO LOFF LDIR"},
     {'M', "PSVM VEL1 VEL2 VEL3 VEL4"},
     {'C', "COLR PMCL LCLR NCLR"},
@@ -206,8 +207,8 @@ constexpr const char* kLooseElements =
 // that is in neither list may still be a property (the grammar lets unknown
 // FourCCs be both), but one that is only an element never is.
 constexpr const char* kProperties =
-    "AAPH ANTH ADV1 ADV2 ADV3 ADV4 ADV5 ADV6 ADV7 ADV8 BLIT CIND COLR CSSD DBIS DFOG DVVN EMTR FRMD FXBM FXBR FXLL GRTE "
-    "ICTS IDTS IEXP IITS ILOC INTS ISVF ITEN IVEC KPAL KSSM LCLR LDIR LENG LFOR LFOT LINE LINT LIT_ LIXP LOFF LSLA "
+    "AAPH ANTH ADV1 ADV2 ADV3 ADV4 ADV5 ADV6 ADV7 ADV8 ADV9 BLIT CIND COLR CSSD DBIS DFOG DVVN EMTR FRMD FXBM FXBR FXLL GRTE "
+    "IAV0 IAV1 IAV2 IAV3 ICTS IDTS IEXP IITS ILOC INTS ISVF ITEN IVEC KPAL KSSM LCLR LDIR LENG LFOR LFOT LINE LINT LIT_ LIXP LOFF LSLA "
     "LTM2 LTME LTYP MAXP MBLR MBSP MTIN NCSY NDSY OPTS ORNT OSDM PBDM PISY PMAB PMCL PMDL PMOO PMOP PMRT PMSC PMTR "
     "PMUS POFS PSIV PSLT PSOV PSPS PSTS PSVM PSWT PVAR ROTA RSOP SCTR SEED SELC SEPO SESD SFTD SHTM SISY SIZE SMTR "
     "SMVR SNRA SNRD SORT SSPO SSSD SSWH SSZE SVC0 SVI0 SVR3 SVR4 SVR5 SVR6 SVV0 TEXR TIND TMTR VEL1 VEL2 VEL3 VEL4 "

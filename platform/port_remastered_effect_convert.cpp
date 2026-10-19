@@ -145,6 +145,8 @@ const Signatures& ElementsOf(Type type) {
       {F("IMPL"), "i"},  {F("ILPT"), "i"},  {F("SPAH"), "iii"}, {F("IRND"), "ii"}, {F("CLMP"), "iii"},
       {F("PULS"), "iiii"}, {F("NONE"), ""}, {F("RTOI"), "rr"},  {F("SUB_"), "ii"}, {F("GTCP"), ""},
       {F("GAPC"), ""},   {F("GEMT"), ""},
+      // Port-only CIEPortParticleVar: Remastered's PAP0..3, the per-particle ints IAV0..3.
+      {F("PAP0"), ""},   {F("PAP1"), ""},   {F("PAP2"), ""},   {F("PAP3"), ""},
       // Port-only (CParticleDataFactory under TARGET_PC): FIAT start, count, divisor, loop.
       {F("FIAT"), "iiiB"},
       // Port-only PRAN: Remastered's int RAND (CIEPortRandom), min and max.
@@ -158,7 +160,7 @@ const Signatures& ElementsOf(Type type) {
       {F("IRND"), "rr"},  {F("CHAN"), "rri"}, {F("CLMP"), "rrr"},  {F("PULS"), "iirr"}, {F("RLPT"), "r"},
       {F("LFTW"), "rr"},  {F("PRLW"), ""},    {F("PSLL"), ""},     {F("PAP1"), ""},    {F("PAP2"), ""},
       {F("PAP3"), ""},    {F("PAP4"), ""},    {F("PAP5"), ""},     {F("PAP6"), ""},    {F("PAP7"), ""},
-      {F("PAP8"), ""},    {F("VXTR"), "v"},   {F("VYTR"), "v"},    {F("VZTR"), "v"},   {F("VMAG"), "v"},
+      {F("PAP8"), ""},    {F("PAP9"), ""},    {F("VXTR"), "v"},   {F("VYTR"), "v"},    {F("VZTR"), "v"},   {F("VMAG"), "v"},
       {F("ISWT"), "rr"},  {F("CLTN"), "rrrr"}, {F("CEQL"), "rrrr"}, {F("CRNG"), "rrrrr"}, {F("CEXT"), "i"},
       {F("ITRL"), "ir"},  {F("PSSZ"), ""},    {F("SUB_"), "rr"},  {F("GTCR"), "c"},    {F("GTCG"), "c"},   {F("GTCB"), "c"},
       {F("GTCA"), "c"},
@@ -381,21 +383,36 @@ uint32_t SystemReadsOf(const EffectValue& value) {
   return mask;
 }
 
-// The ADVn (bit n - 1) a tree reads through PAP1..PAP8.
-uint32_t AdvReadsOf(const EffectValue& value) {
-  uint32_t mask = 0;
-  if (value.kind == EffectValue::Kind::Element && value.args.empty()) {
-    for (uint32_t n = 0; n < 8; ++n) {
-      const char name[5] = {'P', 'A', 'P', char('1' + n), 0};
-      if (value.fourcc == F(name)) {
-        mask |= 1u << n;
-      }
-    }
+// Remastered's IsConstantAfterStart (0x250b18) of a variable's tree, `(flags & 3) != 0`: bit 0 is
+// IsNodeConst (a CNST; a composite whose children all are), bit 1 IsNodeInitialOnly (an IRND of
+// constants, CIEInitialRandomConstant; a composite with one such child whose children are all
+// either, ResolveInitialOnlyConflict 0x250994). A variable read (PAPn) or anything else is neither.
+uint32_t ConstantFlags(const EffectValue& value) {
+  if (value.kind != EffectValue::Kind::Element) {
+    return 0;
   }
+  if (value.fourcc == F("CNST")) {
+    return 1;
+  }
+  uint32_t all = 1, any2 = 0, children = 0;
+  bool every = true;
   for (const EffectValue& arg : value.args) {
-    mask |= AdvReadsOf(arg);
+    if (arg.kind != EffectValue::Kind::Element) {
+      continue;
+    }
+    const uint32_t flags = ConstantFlags(arg);
+    ++children;
+    all &= flags;
+    any2 |= flags & 2;
+    every = every && (flags & 3) != 0;
   }
-  return mask;
+  if (children == 0) {
+    return 0;
+  }
+  if (value.fourcc == F("IRND") && value.args.size() == 2 && all == 1) {
+    return 2;
+  }
+  return all | (any2 != 0 && every ? 2u : 0u);
 }
 
 // Whether IElement::IsConstant holds: a CNST of words or of constants.
@@ -999,6 +1016,21 @@ public:
     if (value.kind != EffectValue::Kind::Element) {
       why = "a bare value where retail reads an element";
       return false;
+    }
+    // The particle variables a tree reads (m_varReads): real ids 0..8 are PAP1..9, int ids 9..12
+    // PAP0..3.
+    if (value.args.empty()) {
+      for (uint32_t n = 0; n < 10; ++n) {
+        const char name[5] = {'P', 'A', 'P', char('0' + n), 0};
+        if (value.fourcc != F(name)) {
+          continue;
+        }
+        if (type == Type::Real && n >= 1) {
+          m_varReads |= 1u << (n - 1);
+        } else if (type == Type::Int && n <= 3) {
+          m_varReads |= 1u << (9 + n);
+        }
+      }
     }
     // In a system variable, KPIN(x) and IRND(a, b) are evaluated once, by
     // CAddVarSystem::Init (CComplexKeepInitial::RebaseComplexOp; IRND is
@@ -3352,48 +3384,30 @@ public:
         }
       }
     }
-    // ADV1..8 in the order Remastered evaluates them (SortVars 0x276188 orders its variables so
-    // that each comes after those it reads, otherwise by index): ADV1 = KPIN(PAP2 + ..) reads
-    // ADV2 = 0.5 of the same particle. Written as the port-only PADO when it is not 1..8.
-    std::vector<uint32_t> advOrder;
-    if (part) {
-      uint32_t reads[8] = {};
-      uint32_t present = 0;
-      for (const EffectProperty& property : node.properties) {
-        for (uint32_t n = 0; n < 8; ++n) {
-          const char name[5] = {'A', 'D', 'V', char('1' + n), 0};
-          if (property.fourcc == F(name)) {
-            present |= 1u << n;
-            for (const EffectValue& value : property.value) {
-              reads[n] |= AdvReadsOf(value);
-            }
-          }
+    // The particle variables (GPSM ADV1..9, IAV0..3) the node declares, in stream order.
+    struct PartVar {
+      uint32_t id;           // 0..8 ADV1..9, 9..12 IAV0..3
+      uint32_t reads = 0;    // the variables its tree reads (m_varReads)
+      uint32_t flags = 0;    // ConstantFlags
+      bool converted = false;
+      std::vector<uint8_t> element;  // ADV9 and IAVn: the converted tree
+    };
+    std::vector<PartVar> partVars;
+    const auto partVarId = [](uint32_t fourcc) -> int {
+      for (uint32_t n = 0; n < 9; ++n) {
+        const char name[5] = {'A', 'D', 'V', char('1' + n), 0};
+        if (fourcc == F(name)) {
+          return int(n);
         }
       }
-      uint32_t done = 0;
-      while (advOrder.size() < 8) {
-        uint32_t pick = 8;
-        for (uint32_t n = 0; n < 8 && pick == 8; ++n) {
-          if ((done & 1u << n) == 0 && (reads[n] & present & ~done & ~(1u << n)) == 0) {
-            pick = n;
-          }
+      for (uint32_t n = 0; n < 4; ++n) {
+        const char name[5] = {'I', 'A', 'V', char('0' + n), 0};
+        if (fourcc == F(name)) {
+          return int(9 + n);
         }
-        for (uint32_t n = 0; n < 8 && pick == 8; ++n) {
-          if ((done & 1u << n) == 0) {
-            pick = n;  // a cycle: index order
-          }
-        }
-        done |= 1u << pick;
-        advOrder.push_back(pick);
       }
-      bool identity = true;
-      for (uint32_t n = 0; n < 8; ++n) {
-        identity = identity && advOrder[n] == n;
-      }
-      if (identity) {
-        advOrder.clear();
-      }
-    }
+      return -1;
+    };
     bool texture = false;
     uint32_t pmdl = 0;          // the PMDL's id, when it is one constant
     bool pmdlVariants = false;  // a PMDV was written (a mesh would cover only one model)
@@ -3747,6 +3761,34 @@ public:
       if (part && SystemVarWrite(property.fourcc).first != ~0u) {
         continue;  // written as PSYS
       }
+      const int varId = part ? partVarId(fourcc) : -1;
+      // ADV9 and IAV0..3 have no retail property: they are written in the port-only PPVR.
+      if (varId >= 8) {
+        PartVar var{uint32_t(varId)};
+        std::string why;
+        m_varReads = 0;
+        if (property.value.size() != 1) {
+          why = "not one element";
+        } else if (varId >= 9 && IsElement(property.value[0], F("IRND")) && property.value[0].args.size() == 2 &&
+                   ConstantFlags(property.value[0]) == 2) {
+          // IRND(CNST, CNST) is CIEInitialRandomConstant (0x2a8c40): one draw of the one RNG at
+          // spawn, never again (PPVR runs it at spawn only): min + Next() % (max - min + 1).
+          AppendBE32(var.element, F("PRAN"));
+          if (Element(property.value[0].args[0], Type::Int, var.element, why) &&
+              Element(property.value[0].args[1], Type::Int, var.element, why)) {
+            var.converted = true;
+          }
+        } else {
+          var.converted = Element(property.value[0], varId >= 9 ? Type::Int : Type::Real, var.element, why);
+        }
+        var.reads = m_varReads;
+        var.flags = property.value.size() == 1 ? ConstantFlags(property.value[0]) : 0;
+        if (!var.converted) {
+          result.dropped.push_back(EffectFourCCString(property.fourcc) + ": " + why);
+        }
+        partVars.push_back(std::move(var));
+        continue;
+      }
       const auto found = retail.find(fourcc);
       if (found == retail.end()) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": Remastered only");
@@ -3779,7 +3821,16 @@ public:
         }
         continue;
       }
-      if (!Property(fourcc, found->second, property.value, bytes, why)) {
+      m_varReads = 0;
+      const bool propertyOk = Property(fourcc, found->second, property.value, bytes, why);
+      if (varId >= 0) {
+        PartVar var{uint32_t(varId)};
+        var.reads = m_varReads;
+        var.flags = property.value.size() == 1 ? ConstantFlags(property.value[0]) : 0;
+        var.converted = propertyOk;
+        partVars.push_back(std::move(var));
+      }
+      if (!propertyOk) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": " + why);
         ++result.droppedRetail;
         continue;
@@ -3913,12 +3964,88 @@ public:
         out.insert(out.end(), item.element.begin(), item.element.end());
       }
     }
-    if (!advOrder.empty()) {
-      AppendBE32(out, F("PADO"));
-      AppendBE32(out, F("CNST"));
-      AppendBE32(out, uint32_t(advOrder.size()));
-      for (const uint32_t n : advOrder) {
-        AppendBE32(out, n);
+    // The variables in the order Remastered evaluates them (SortVars 0x276188 orders its variables
+    // so that each comes after those it reads, otherwise by stream order): ADV1 = KPIN(PAP2 + ..)
+    // reads ADV2 = 0.5 of the same particle. A node with ADV9 or an IAVn writes them all as the
+    // port-only PPVR (with each one's constant-after-start flag); otherwise ADV1..8 are the
+    // port-only PADO, in index order, when that is not 1..8.
+    if (part && !partVars.empty()) {
+      const bool ppvr = std::any_of(partVars.begin(), partVars.end(), [](const PartVar& v) {
+        return v.id >= 8 && v.converted;
+      });
+      std::vector<const PartVar*> pending;
+      for (const PartVar& v : partVars) {
+        if (ppvr || v.id < 8) {  // a dropped ADV9 or IAVn is not evaluated
+          pending.push_back(&v);
+        }
+      }
+      uint32_t present = 0;
+      for (const PartVar* v : pending) {
+        present |= 1u << v->id;
+      }
+      // PADO lists all of ADV1..8, an absent one waiting on nothing, in index order.
+      std::vector<PartVar> absent;
+      if (!ppvr) {
+        absent.reserve(8);
+        for (uint32_t n = 0; n < 8; ++n) {
+          if ((present & 1u << n) == 0) {
+            absent.push_back(PartVar{n});
+            pending.push_back(&absent.back());
+          }
+        }
+        std::stable_sort(pending.begin(), pending.end(), [](const PartVar* a, const PartVar* b) { return a->id < b->id; });
+      }
+      std::vector<const PartVar*> sorted;
+      uint32_t done = 0;
+      while (!pending.empty()) {
+        auto pick = pending.end();
+        for (auto it = pending.begin(); it != pending.end() && pick == pending.end(); ++it) {
+          if (((*it)->reads & present & ~done & ~(1u << (*it)->id)) == 0) {
+            pick = it;
+          }
+        }
+        if (pick == pending.end()) {
+          pick = pending.begin();  // a cycle: stream order
+        }
+        done |= 1u << (*pick)->id;
+        sorted.push_back(*pick);
+        pending.erase(pick);
+      }
+      if (ppvr) {
+        std::vector<const PartVar*> written;
+        for (const PartVar* v : sorted) {
+          if (v->converted) {
+            written.push_back(v);
+          }
+        }
+        AppendBE32(out, F("PPVR"));
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, uint32_t(written.size()));
+        for (const PartVar* v : written) {
+          const bool ints = v->id >= 9;
+          AppendBE32(out, ints ? 2 : v->id == 8 ? 1 : 0);
+          AppendBE32(out, ints ? v->id - 9 : v->id);
+          AppendBE32(out, (v->flags & 3) != 0);
+          out.insert(out.end(), v->element.begin(), v->element.end());
+        }
+      } else {
+        // PADO: all of ADV1..8.
+        std::vector<uint32_t> advOrder;
+        for (const PartVar* v : sorted) {
+          advOrder.push_back(v->id);
+        }
+        bool identity = true;
+        for (uint32_t n = 0; n < 8; ++n) {
+          identity = identity && advOrder[n] == n;
+        }
+        if (!identity) {
+          AppendBE32(out, F("PADO"));
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, uint32_t(advOrder.size()));
+          for (const uint32_t n : advOrder) {
+            AppendBE32(out, n);
+          }
+        }
       }
     }
     // Without a PSLT, Remastered's system lifetime is 0x1000000 (CElementGen ctor 0x244cfc), which
@@ -3984,6 +4111,7 @@ private:
   mutable std::vector<std::string> m_approximated;  // for the generator being written
   mutable bool m_keeps = false;                     // a KPIN may be a per-particle PKPR
   mutable uint32_t m_keepNext = 0;                  // the next PKPR slot
+  mutable uint32_t m_varReads = 0;                  // the particle variables Element() has read
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
   mutable uint32_t m_xfmd = 2;                      // its XFMD mode, 2 without one
   mutable uint32_t m_pofs = 0;                      // its POFS: 0 none, 1 constant, 2 anything else
@@ -4312,6 +4440,27 @@ public:
     return true;
   }
 
+  // The port-only PPVR property: CNST, a count up to 13, then per variable its kind, slot and
+  // constant-after-start flag, and for kinds 1 (a real) and 2 (an int) the element.
+  bool PortPartVars() {
+    uint32_t fourcc, count;
+    if (!Word(fourcc) || fourcc != F("CNST") || !Word(count) || count > 13) {
+      return false;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+      uint32_t kind, slot, flag;
+      if (!Word(kind) || kind > 2 || !Word(slot) || slot >= (kind == 2 ? 4u : kind == 1 ? 9u : 8u) ||
+          (kind == 1 && slot != 8) || !Word(flag) || flag > 1 ||
+          (kind != 0 && !Element(kind == 1 ? Type::Real : Type::Int))) {
+        if (m_error.empty()) {
+          m_error = "bad PPVR";
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
   // The port-only PSWX property: CNST, a count, then an id and a frame each.
   bool PortExtraSwooshes() {
     uint32_t fourcc, count;
@@ -4522,6 +4671,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortSystemVars();
     } else if (part && fourcc == F("PADO")) {
       ok = reader.PortWords();
+    } else if (part && fourcc == F("PPVR")) {
+      ok = reader.PortPartVars();
     } else if (part && fourcc == F("PSWX")) {
       ok = reader.PortExtraSwooshes();
     } else if (part && fourcc == F("PKSM")) {

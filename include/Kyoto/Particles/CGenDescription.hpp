@@ -163,6 +163,9 @@ public:
   bool xPortCodeSpawn = false;
   // port-only PADO: the order ADV1..8 are evaluated in (0-based), when it is not 1..8
   std::vector< u8 > xPortAdvOrder;
+  // port-only PPVR: ADV1..9 and IAV0..3 in Remastered's sorted order with constant-after-start
+  // flags; supersedes PADO (CElementGen::UpdateAdvanceAccessParameters).
+  std::unique_ptr< CPortPartVars > xPortPartVars;
   // Port-only PSYS: the system variables (CElementGen::PortEvalSys).
   std::unique_ptr< CPortSys > xPortSys;
   // port-only PSHP: Remastered SSHP sprite mesh (0 quad; 3 triangle, 4 pentagon, 5 hexagon, 6 octagon)
