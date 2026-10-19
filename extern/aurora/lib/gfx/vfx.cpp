@@ -74,7 +74,9 @@ struct Uniform {
   float warp[2][4]; // per slot (x, y): slots 0, 1 in warp[0], slots 2, 3 in warp[1]
   float soft[4];    // DepthSoften: the viewport's depth range (min, max) and whether the scene depth is bound
   float scene[4];   // SceneWarp: 1 / the copied target's size (x, y), the camera's near plane, whether the colour is bound
-  float ice[8][4];  // IceCharge*: CCH0..6 (IceChargeBeam: 0..2), then (modular simulation time, 0, 0, 0)
+  // IceCharge*: CCH0..6 (IceChargeBeam: 0..2) and, at [7], the modular simulation time; VisorRunOff:
+  // CCH0..4. Rows past the recipe's stay zero.
+  float ice[8][4];
   float pad[56];
 };
 static_assert(sizeof(Uniform) == UniformSize);
@@ -451,6 +453,42 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let col = b.x * b.x * (c1.rgb - c0.rgb) + c0.rgb;
     let base = desat + b.y * c5.x * col + b.x * g * env * c2.y * u.ice4.rgb;
     rgb = (fs * u.ice6.rgb * c5.y + base) * (c5.z * ie + vc.rgb) * M;
+  } else if ((FEAT & (8388608u | 16777216u)) != 0u) {
+    // VFX_VisorRunOff (b5e12668 unlit, d85d4169 lit; FS perm 000; SPEC-fb-visor.md sections 5/6). The
+    // TCH0 flow map, scrolled by CCH1 (u by .w, v by .x x CCH2.y), gives the mask m from its y and w and
+    // the glow's signed u. The scene copy at the fragment is offset by CCH0.x x CCH1.z x the map x
+    // 0.01 (c1[0].x) and tinted between CCH3.rgb and CCH4.rgb by m: x the tint (b5e12668) or lerped
+    // toward it by m^CCH4.w (d85d4169). The fade (CCH1.z x CCH3.w) is per particle; v2.w is unresolved
+    // and taken as 1, so alpha is the instance alpha (x stays 1 below).
+    let c0 = u.ice0;
+    let c1 = u.ice1;
+    let c2 = u.ice2;
+    let c3 = u.ice3;
+    let c4 = u.ice4;
+    let uvs = uv_of(in, u.uvSets[max(S_COLOR, 0)]);
+    let g = sample_raw(S_COLOR, vec2f(uvs.x + c1.w, uvs.y + c1.x * c2.y), layer(uvs.z, u.layers[max(S_COLOR, 0)]));
+    let uu = g.y * 2.0 - 1.0;
+    let k = g.w * c2.x;
+    let m = 1.0 - sat(sat(c1.x * c1.y + uvs.y + k - 1.0) * sat(c1.x * c0.y + g.z * c0.z + uvs.y - 1.0) * c2.w);
+    let T = c0.x * c1.z;
+    var fb = vec3f(0.0);
+    if (u.scene.w > 0.5) {
+      // v down: the y offset negates. The copy is exposed, so x the inverse exposure (the tail re-exposes).
+      let o = vec2f(T * (g.x * 2.0 - 1.0) * c1.z * 0.01,
+                    -(T * uu * c1.z + m * k * (-(c1.z * c0.w))) * 0.01);
+      let fbuv = vec2f(in.pos.x * u.scene.x + o.x, in.pos.y * u.scene.y + o.y);
+      var ie = 1.0;
+      if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { ie = 1.0 / u.tone0.w; }
+      fb = scene_light(textureSampleLevel(sceneColor, sceneSampler, fbuv, 0.0).rgb) * ie;
+    }
+    let fade = (c1.z * c3.w - c1.z) + 1.0;
+    let glow = (m * 0.5 + 0.5) * uu * uu * c2.z * c1.z * 0.01;
+    let tint = mix(c3.rgb, c4.rgb, m);
+    if ((FEAT & 16777216u) != 0u) {
+      rgb = (glow + fb + pow(max(m, 0.0), c4.w) * (tint - fb)) * fade * vc.rgb * M;
+    } else {
+      rgb = ((tint + c1.x * (vec3f(1.0) - tint)) * fb + glow) * fade * vc.rgb * M;
+    }
   } else if ((FEAT & 16384u) != 0u) {
     // VFX_Disintegration (d749057f, perm 000_0): the mask's x squared, PMTR rows 0..2 as the colours at
     // s = 0 and 1 and the edge colour, row 3 as (threshold, edge width, alpha lo, alpha hi). ceil(e)
@@ -1165,7 +1203,7 @@ std::string pipeline_source(const PipelineConfig& p) {
   if (!hdr) {
     // LDR: the source as it always was, and the curve's inverse only where SceneWarp reads it.
     source += ShaderSource;
-    if ((p.features & (SceneWarp | IceChargeCollision)) != 0) {
+    if ((p.features & (SceneWarp | IceChargeCollision | VisorRunOff | VisorRunOffLit)) != 0) {
       source += SceneLightDisplay;
       source += hdr::ToneWgsl;
     } else {
@@ -1210,7 +1248,8 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   const uint32_t features = shader_features(desc.features);
   // The slots each enabled feature reads; a slot nothing reads is left unbound (the dummy).
   const std::pair<uint32_t, int8_t> reads[] = {
-      {ColorTex | ColorIndexing | Pyro | Disintegration | VisorSplat | IceChargeBeam | IceChargeCollision,
+      {ColorTex | ColorIndexing | Pyro | Disintegration | VisorSplat | IceChargeBeam | IceChargeCollision |
+           VisorRunOff | VisorRunOffLit,
        desc.colorSlot},
       {OpacityTex, desc.opacitySlot},
       {Ramp | Pyro, desc.rampSlot},
@@ -1298,8 +1337,10 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
     u.scene[2] = gx.proj.m2[3] / (gx.proj.m2[2] - 1.f);
     u.scene[3] = 1.f;
   }
-  if ((features & (IceChargeBeam | IceChargeCollision)) != 0) {
-    const uint32_t rows = (features & IceChargeCollision) != 0 ? 7 : 3;
+  if ((features & (IceChargeBeam | IceChargeCollision | VisorRunOff | VisorRunOffLit)) != 0) {
+    const uint32_t rows = (features & IceChargeCollision) != 0 ? 7
+                          : (features & (VisorRunOff | VisorRunOffLit)) != 0 ? 5
+                                                                             : 3;
     for (uint32_t i = 0; i < rows; ++i) {
       std::memcpy(u.ice[i], desc.params[i], sizeof(u.ice[i]));
     }

@@ -53,6 +53,15 @@ enum Feature : uint32_t {
   IceChargeCollision = 1u << 21,
   // With IceChargeCollision: the draw is Remastered's perm 000 (DFOG 1), so the port's fog is not mixed in.
   Unfogged = 1u << 22,
+  // VFX_VisorRunOff (b5e12668, FS perm 000): a model particle whose TCH0 (colorSlot) flow map, scrolled
+  // by CCH1, gives a mask m and a glow; the scene copy (capture_scene) at the fragment, offset by
+  // CCH0.x x CCH1.z x the map x 0.01, is tinted between CCH3.rgb and CCH4.rgb by m, and the result
+  // scaled by a fade (CCH1.z x CCH3.w) x vc.rgb. params = CCH0..4 (SMTR-animated); alpha vc.a.
+  VisorRunOff = 1u << 23,
+  // VFX_VisorRunOff's second variant (d85d4169, the lit one: FS perm 000 with c1[0].x = 0.01): the
+  // same feed and mask, but the scene is lerped toward the tint by m^CCH4.w instead of being
+  // multiplied by it. Drawn Unfogged (the visor composite pass has no fog).
+  VisorRunOffLit = 1u << 24,
   // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
   // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
   AlreadyExposed = 1u << 31
