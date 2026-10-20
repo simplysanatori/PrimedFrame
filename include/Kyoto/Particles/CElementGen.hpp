@@ -249,9 +249,9 @@ public:
     return CQuaternion::FromMatrix(x22c_globalOrientation * x1d8_orientation);
   }
   CVector3f PortExternalScale() const {
-    return CVector3f(x100_globalScale.GetX() * x16c_localScale.GetX(),
-                     x100_globalScale.GetY() * x16c_localScale.GetY(),
-                     x100_globalScale.GetZ() * x16c_localScale.GetZ());
+    return CVector3f(xPortExternalScale.GetX() * x16c_localScale.GetX(),
+                     xPortExternalScale.GetY() * x16c_localScale.GetY(),
+                     xPortExternalScale.GetZ() * x16c_localScale.GetZ());
   }
   // The global frame T_g/Q_g/S_g (desc +0xa8/+0xac/+0xb0, SetupTransformMode 0x2887d8) for the
   // XFMD mode: 2 = zero/identity/external scale, 3 = the external T/Q/S, 4 = the mover's
@@ -492,6 +492,11 @@ private:
   void PortInitMover();
   void PortEvalSys(bool init);
   void PortStepMover();
+  // The system scale: INTS (PINS) evaluated when authored, else the external scale.
+  CVector3f PortSystemScale();
+  void PortSetSystemScale(const CVector3f& scale);
+  // The scale the owner (or parent) set, which EXTS reads; x100_globalScale is the system's.
+  CVector3f xPortExternalScale{1.f, 1.f, 1.f};
   void PortVfxUpdateSystem();
   // XFMD 3/4: the spawn-baked part of the emitter's transform, and moving the live particles from
   // one such frame to the next.

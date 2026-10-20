@@ -4403,6 +4403,23 @@ public:
         }
         continue;
       }
+      // INTS, the system scale in place of the external one (Compile 0x289af0), as the port-only
+      // PINS: Remastered's scale numbers, so BSSC turns them into the port's. XFMD 5 frees it
+      // unread (SetupTransformMode 0x289338).
+      if (part && fourcc == F("INTS")) {
+        std::vector<uint8_t> inner;
+        std::string why = "not one element";
+        if (m_xfmd == 5) {
+          continue;
+        }
+        if (property.value.size() != 1 || !Element(property.value[0], Type::Vector, inner, why)) {
+          result.dropped.push_back("INTS: " + why);
+          continue;
+        }
+        AppendBE32(out, F("PINS"));
+        Basis(F("BSSC"), inner, out);
+        continue;
+      }
       const auto found = retail.find(fourcc);
       if (found == retail.end()) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": Remastered only");
@@ -5364,6 +5381,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if ((part && (fourcc == F("SSZE") || fourcc == F("PIR0") || fourcc == F("POR0"))) ||
                (vfx && fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
+    } else if (part && fourcc == F("PINS")) {
+      ok = reader.Element(Type::Vector);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
                          fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID") || fourcc == F("PBDM") ||
                          fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||

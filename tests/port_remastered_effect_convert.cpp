@@ -2578,6 +2578,50 @@ void TestComposedModelRotation() {
             "ordered PMRQ refuses a non-REUL operand rather than adding Euler components");
 }
 
+// INTS is the system scale in place of the external one (Compile 0x289af0): the port-only PINS,
+// turned into the port's numbers by BSSC; EXTS inside it stays the external scale. XFMD 5 frees it.
+void TestIntScale() {
+  const auto withInts = [](int mode, bool exts) {
+    return ConvertOne(OneGenerator([&](auto& o) {
+                        PutProperty(o, "INTS", 3);
+                        if (exts) {
+                          PutFourCC(o, "MULT");
+                          PutFourCC(o, "EXTS");
+                        }
+                        PutFourCC(o, "RTOV");
+                        PutConstant(o, Bits(0.6f));
+                        if (mode != 0) {
+                          PutProperty(o, "XFMD", 0);
+                          PutConstant(o, mode);
+                        }
+                        PutTexr(o, 0x1234ABCD);
+                      }),
+                      {});
+  };
+  auto parts = withInts(0, false);
+  Retail want;
+  want.f("GPSM").f("PINS").f("BSSC").f("RTOV").f("CNST").w(Bits(0.6f));
+  want.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes && parts[0].dropped.empty(), "INTS RTOV(0.6) is PINS");
+  if (!parts.empty()) {
+    std::vector<RetailPartProperty> properties;
+    std::string error;
+    CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
+              "a PART with PINS passes the retail element reader");
+  }
+  parts = withInts(0, true);
+  Retail scaled;
+  scaled.f("GPSM").f("PINS").f("BSSC").f("MULT").f("BSSC").f("EXTS").f("RTOV").f("CNST").w(Bits(0.6f));
+  scaled.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == scaled.bytes && parts[0].dropped.empty(),
+            "INTS MULT(EXTS, RTOV(0.6)) reads the external scale");
+  parts = withInts(5, false);
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() &&
+                std::search(parts[0].part.begin(), parts[0].part.end(), want.bytes.begin() + 4,
+                            want.bytes.begin() + 8) == parts[0].part.end(),
+            "INTS under XFMD 5 writes no PINS");
+}
+
 bool HasPmrf(const ConvertedPart& part, uint32_t frame) {
   Retail pmrf;
   pmrf.f("PMRF").f("CNST").w(frame);
@@ -4472,6 +4516,7 @@ int main() {
   TestModelsOnly();
   TestFacingRotation();
   TestModelRotationFrames();
+  TestIntScale();
   if (port_test::Failures() == 0) {
     std::printf("port_remastered_effect_convert: ok\n");
   }

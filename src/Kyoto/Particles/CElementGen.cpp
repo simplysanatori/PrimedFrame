@@ -555,6 +555,27 @@ const CColor& CElementGen::GetModulationColor() const { return x338_moduColor; }
 
 void CElementGen::SetGlobalScale(const CVector3f& scale) {
 #ifdef TARGET_PC
+  xPortExternalScale = scale;
+  PortSetSystemScale(PortSystemScale());
+}
+
+// CParticleDescription::Compile 0x289af0 (XFMD != 5): the system scale (+0x40) is INTS's when it
+// is authored, in place of the external scale (+0x30); it composes with the external one only
+// through an EXTS read inside it. The system draws at it and hands it to its children (SetupSpawn,
+// +0x2a0 = +0x40). Remastered has no local scale: the port's composes with it as retail's does.
+CVector3f CElementGen::PortSystemScale() {
+  const CVectorElement* ints = x28_loadedGenDesc->xPortIntScale;
+  if (ints == nullptr) {
+    return xPortExternalScale;
+  }
+  CParticleGlobals::SParticleSystem thisSystem('PART', this);
+  CPortVarScope portVarScope(&xPortVars);
+  CVector3f scale = xPortExternalScale;
+  ints->GetValue(x74_curFrame, scale);
+  return scale;
+}
+
+void CElementGen::PortSetSystemScale(const CVector3f& scale) {
   const CTransform4f portBefore = PortFollowsEmitter() ? PortEmitterFrame() : CTransform4f::Identity();
 #endif
   x100_globalScale = scale;
@@ -659,6 +680,9 @@ const bool CElementGen::Update(double dt) {
     CParticleGlobals::PortSetSystemTime(x74_curFrame, x268_PSLT);
 #endif
     PortEvalSys(true);
+    if (x28_loadedGenDesc->xPortIntScale != nullptr) {
+      PortSetSystemScale(PortSystemScale());
+    }
     PortInitMover();
   }
 #endif
@@ -1551,6 +1575,12 @@ void CElementGen::PortEvalSys(bool init) {
 // particles update and spawn. The live particles stay put in the mover's frame.
 void CElementGen::PortStepMover() {
   PortEvalSys(false);
+  if (x28_loadedGenDesc->xPortIntScale != nullptr) {
+    const CVector3f scale = PortSystemScale();
+    if (scale != x100_globalScale) {
+      PortSetSystemScale(scale);
+    }
+  }
   if (xPortMover.kssm == nullptr) {
     return;
   }

@@ -110,6 +110,7 @@ CGenDescription::~CGenDescription() {
 #ifdef TARGET_PC
   delete xPortNestedLightInnerRadius;
   delete xPortNestedLightOuterRadius;
+  delete xPortIntScale;
 #endif
 }
 
