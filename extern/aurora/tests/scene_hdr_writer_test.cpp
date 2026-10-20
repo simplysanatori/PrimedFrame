@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "frame_staging.hpp"
 #include "gfx/frame_packet.hpp"
 #include "gfx/fx_pipelines.hpp"
 #include "gfx/hash.hpp"
@@ -435,7 +436,9 @@ TEST(SceneHdrGx, TheTevToneRowsAreInTheUniformOnlyInHdr) {
   const auto saved = gfx::detail::resources().limits.minUniformBufferOffsetAlignment;
   gfx::detail::resources().limits.minUniformBufferOffsetAlignment = 256;
   const auto savedTone = g_gxState.pbrTone;
+  gfx::detail::testing::StagingPool staging;
   gfx::detail::FramePacket frame;
+  staging.attach(frame);
   gfx::detail::begin_recording(frame, 0);
   struct Cleanup {
     u32 alignment;
@@ -492,7 +495,9 @@ TEST(SceneHdrGx, ActualBlendFlagFollowsToneRowsWithinTheBindingWindow) {
   const auto savedDst = g_gxState.blendFacDst;
   const u32 alignment = gfx::detail::resources().limits.minUniformBufferOffsetAlignment;
   gfx::detail::resources().limits.minUniformBufferOffsetAlignment = 16;
+  gfx::detail::testing::StagingPool staging;
   gfx::detail::FramePacket frame;
+  staging.attach(frame);
   gfx::detail::begin_recording(frame, 0);
   struct Cleanup {
     std::array<Vec4<float>, 3> tone;

@@ -4,6 +4,7 @@
 
 #include "gfx/bloom.hpp"
 #include "gfx/frame.hpp"
+#include "frame_staging.hpp"
 #include "gfx/frame_packet.hpp"
 #include "gfx/fx_pipelines.hpp"
 #include "gfx/hdr_tone.hpp"
@@ -116,6 +117,10 @@ protected:
     make_efb(1);
     webgpu::release_scene_hdr_target();
     detail::testing::suppress_render_worker(true);
+    // The Null device reports no offset alignment (all ones), which no uniform push can honour.
+    savedUniformAlignment = detail::resources().limits.minUniformBufferOffsetAlignment;
+    detail::resources().limits.minUniformBufferOffsetAlignment = 256;
+    staging.attach(frame);
     detail::begin_recording(frame, 0);
     started = true;
     ASSERT_TRUE(bloom::ensure_task());
@@ -131,6 +136,7 @@ protected:
     }
     if (started) {
       detail::shutdown_recording();
+      detail::resources().limits.minUniformBufferOffsetAlignment = savedUniformAlignment;
     }
     bloom::shutdown();
     webgpu::release_scene_hdr_target();
@@ -174,14 +180,18 @@ protected:
       webgpu::release_scene_hdr_target();
     }
     frames.emplace_back();
+    staging.attach(frames.back());
     detail::begin_recording(frames.back(), 0);
   }
 
   static inline uint32_t sMaxDimension = 0;
+  // Declared before the packets, which wrap its memory.
+  detail::testing::StagingPool staging;
   std::deque<detail::FramePacket> frames = std::deque<detail::FramePacket>(1);
   detail::FramePacket& frame = frames.front();
   bool started = false;
   bool recording = true;
+  uint32_t savedUniformAlignment = 0;
 };
 
 TEST_F(SceneHdrTest, OffKeepsTheLdrLayoutAndKey) {
@@ -394,6 +404,7 @@ TEST_F(SceneHdrTest, ModeDoesNotLeakIntoTheNextFrame) {
   EXPECT_FALSE(scene_hdr_active());
 
   frames.emplace_back();
+  staging.attach(frames.back());
   detail::begin_recording(frames.back(), 0);
   EXPECT_FALSE(scene_hdr_active());
   EXPECT_EQ(current_pass().target_layout().key, ldr_layout(1).key);
