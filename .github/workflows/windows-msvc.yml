@@ -4,9 +4,14 @@ name: windows-msvc
 # gets by default (issue #170). The supported Windows compiler is clang-cl
 # (windows.yml); this job only finds what cl.exe rejects. It keeps going past
 # errors so one run lists them all (errors.txt in the artifact), and fails if
-# there are any. No tests, no package. Manual only.
+# there are any. No tests, no package. Manual, and on a push that changes this
+# file (a manual start needs the workflow on the default branch, which is not
+# port).
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/windows-msvc.yml
 
 permissions:
   contents: read
