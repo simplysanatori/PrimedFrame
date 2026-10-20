@@ -185,9 +185,9 @@ const Signatures& ElementsOf(Type type) {
       {F("SUB_"), "vv"},    {F("CTVC"), "c"},     {F("PQAD"), "vv"},
       // Port-only (CParticleDataFactory under TARGET_PC): NORM, and the generator's system
       // vectors (camera in world and in system space, external translation, scale and rotation as
-      // Euler degrees), and PRZY.
+      // Euler degrees, the camera rotation as Euler degrees), and PRZY.
       {F("NORM"), "v"},     {F("CMPS"), ""},      {F("CPSS"), ""},      {F("EXTT"), ""},
-      {F("EXTS"), ""},      {F("EXTR"), ""},      {F("PRZY"), "vvv"},
+      {F("EXTS"), ""},      {F("EXTR"), ""},      {F("CMRT"), ""},      {F("PRZY"), "vvv"},
       // Port-only CVEPortBasis: Remastered's particle space to retail's and back.
       {F("BSIS"), "v"},     {F("BSSC"), "v"},
       // Port-only CVEPortAngleCone: Remastered's ANCR with its REUL as three angles.
