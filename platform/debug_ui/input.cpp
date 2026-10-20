@@ -145,6 +145,14 @@ void SetGyroSensitivity(float scale) {
   }
 }
 
+void SetGyroSensitivityY(float scale) {
+  EnsureInitialized();
+  if (std::isfinite(scale)) {
+    sInput.gyroSensitivityY = std::clamp(scale, PortInput::kGyroSensitivityMin, PortInput::kGyroSensitivityMax);
+    MarkDirty();
+  }
+}
+
 void SetGyroSpace(int space) {
   EnsureInitialized();
   if (space < 0 || space >= PortGyro::kSpaceCount) {
@@ -443,9 +451,11 @@ void PollGyro() {
   const float sx = MouseInvertX() ? -1.f : 1.f;
   const float sy = MouseInvertY() ? -1.f : 1.f;
   const float scale = sInput.gyroSensitivity * dt / perPixel;
+  const float ySense = sInput.gyroSplit ? sInput.gyroSensitivityY : sInput.gyroSensitivity;
+  const float scaleY = ySense * dt / perPixel;
   if (!PointerAim()) {
     sGyroPendingX += sx * yaw * scale;
-    sGyroPendingY -= sy * pitch * scale;
+    sGyroPendingY -= sy * pitch * scaleY;
     return;
   }
   // Pointer aim: gyro_cursor_angle degrees of pad turn sweep the pointer across
@@ -457,11 +467,11 @@ void PollGyro() {
   if (px > 0.f && sweep > 0.f) {
     const float cursor = 2.f / sweep * dt / px;
     sGyroPendingX += yaw * cursor;
-    sGyroPendingY -= pitch * cursor;
+    sGyroPendingY -= pitch * cursor * (ySense / sInput.gyroSensitivity);
   }
   if (sInput.gyroCursorCamera) {
     sGyroCameraPendingX += sx * yaw * scale;
-    sGyroCameraPendingY -= sy * pitch * scale;
+    sGyroCameraPendingY -= sy * pitch * scaleY;
   }
 }
 
@@ -658,10 +668,24 @@ void SetMouseSensitivity(float radiansPerPixel) {
   }
 }
 
+void SetMouseSensitivityY(float radiansPerPixel) {
+  EnsureInitialized();
+  if (std::isfinite(radiansPerPixel) && radiansPerPixel > 0.f) {
+    sInput.mouseSensitivityY = radiansPerPixel;
+  }
+}
+
 void AddMouseDelta(float dx, float dy) {
   if (!sMouseCaptured || !(MouseAim() || PortPhoto::Active()) || Visible() || !std::isfinite(dx) ||
       !std::isfinite(dy)) {
     return;
+  }
+  if (sInput.mouseSensitivitySplit) {
+    // Vertical counts become the horizontal-equivalent counts that turn at the Y sensitivity.
+    const float ratio = sInput.mouseSensitivityY / sInput.mouseSensitivity;
+    if (std::isfinite(ratio) && ratio > 0.f) {
+      dy *= ratio;
+    }
   }
   sMousePendingX += dx;
   sMousePendingY += dy;
@@ -965,6 +989,14 @@ void SetTouchAimSpeed(float pixelsPerDp) {
   }
 }
 
+void SetTouchAimSpeedY(float pixelsPerDp) {
+  EnsureInitialized();
+  if (std::isfinite(pixelsPerDp)) {
+    sInput.touchAimSpeedY = std::clamp(pixelsPerDp, 0.25f, 10.f);
+    MarkDirty();
+  }
+}
+
 // Called from the Android UI thread; the game thread drains it in
 // BeginFrameMouse.
 void AddTouchAim(float dxDp, float dyDp) {
@@ -974,7 +1006,7 @@ void AddTouchAim(float dxDp, float dyDp) {
   }
   std::lock_guard lock(sTouchAimMutex);
   sTouchAimPendingX += dxDp * sInput.touchAimSpeed;
-  sTouchAimPendingY += dyDp * sInput.touchAimSpeed;
+  sTouchAimPendingY += dyDp * (sInput.touchAimSplit ? sInput.touchAimSpeedY : sInput.touchAimSpeed);
 }
 
 void BeginFrameMouse() {

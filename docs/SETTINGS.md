@@ -142,6 +142,9 @@
   turned. It ignores the mouse sensitivity and invert. An older `gyro_rate` (aim
   pixels per rad/s, which also scaled with the mouse sensitivity) is read once as
   `gyro_rate × mouse_sensitivity` and no longer written.
+  With `gyro_split=1` (F1 "Separate vertical speed"), `gyro_sensitivity_y`
+  (same range, default 2) drives pitch and `gyro_sensitivity` only yaw; under
+  pointer aim it also scales the pointer's vertical travel.
   `gyro_space` picks which turn moves the camera left/right (GyroWiki's terms):
   1 player (default: turning the pad, flat or upright), 2 world (turning about
   the real vertical only), 0 local yaw (the pad's flat turn), 3 local roll (the
@@ -203,7 +206,8 @@
   (`touch_side_margin`, `touch_stick_inset`, `touch_button_inset`) move those
   controls instead, in dp.
   **Touch aim** (Android, `touch_aim`, on by default; `touch_aim_speed`, default
-  2.25 aim px per dp): with twin stick on, the right stick is gone and a finger
+  2.25 aim px per dp; with `touch_aim_split=1`, `touch_aim_speed_y`, same range,
+  sets the vertical speed and `touch_aim_speed` only the horizontal): with twin stick on, the right stick is gone and a finger
   dragged on the free screen area turns the view by the distance dragged, like a
   mouse (`AddTouchAim`, drained in `BeginFrameMouse`). Off, the right stick sets
   a turn rate as before. In the GameCube layout (neither mouse aim nor twin
@@ -968,6 +972,9 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   while the overlay is visible or relative capture/focus is absent. Mouse mode
   uses immediate yaw/pitch with an approximately ±87° pitch range. Up moves aim
   up by default; `MP_MOUSE_INVERT_X=1` and `MP_MOUSE_INVERT_Y=1` invert either axis.
+  With `mouse_sensitivity_split=1` (F1 "Separate vertical speed"),
+  `mouse_sensitivity_y` (radians per count, default 0.0035) sets the vertical
+  speed and `mouse_sensitivity` only the horizontal; free camera ignores it.
   `MP_MOUSE_SENS` and `mouse_sensitivity` are radians per mouse count; the F1
   slider shows them on the Quake/Source/Apex scale (0.022 degrees a count per
   unit, so the default 0.0035 is about 9.12), with a cm/360 readout for
