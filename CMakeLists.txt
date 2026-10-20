@@ -345,11 +345,15 @@ endif()
 # FourCC constants. -Wno-unused-parameter and -Wno-ignored-qualifiers: every hit
 # is inside decompiled headers (include/) that platform sources include and that
 # must not be edited (named-but-unused params and const-qualified return types
-# are the decomp style); platform sources themselves have none. MSVC gets nothing
-# here (its own flags live elsewhere).
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+# are the decomp style); platform sources themselves have none. clang-cl reads
+# -Wall as -Weverything (540k warnings per Windows CI run), so it gets /W4, its
+# spelling of -Wall -Wextra. cl.exe gets nothing here (its own flags live elsewhere).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT MSVC)
     set_source_files_properties(${MP_PORT_SOURCES} platform/smoke.cpp PROPERTIES
         COMPILE_OPTIONS "-Wall;-Wextra;-Wno-multichar;-Wno-unused-parameter;-Wno-ignored-qualifiers")
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    set_source_files_properties(${MP_PORT_SOURCES} platform/smoke.cpp PROPERTIES
+        COMPILE_OPTIONS "/W4;-Wno-multichar;-Wno-unused-parameter;-Wno-ignored-qualifiers")
 endif()
 if(ANDROID)
     add_library(metroid_prime_port SHARED ${MP_PORT_SOURCES})
