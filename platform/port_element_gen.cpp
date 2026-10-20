@@ -172,8 +172,8 @@ void CElementGen::PortRestoreNewborns() {
 uint CElementGen::PortFxAsset() const { return CToken(x1c_genDesc).GetTag().GetId(); }
 
 void CElementGen::PortCollectNestedLightSnapshots(
-    std::vector< CPortNestedLightSnapshot >& out) const {
-  if (x28_loadedGenDesc->xPortNestedHdrLight &&
+    std::vector< CPortNestedLightSnapshot >& out, bool includeSelf) const {
+  if (includeSelf && x28_loadedGenDesc->xPortNestedHdrLight &&
       x28_loadedGenDesc->xPortNestedLightInnerRadius != nullptr &&
       x28_loadedGenDesc->xPortNestedLightOuterRadius != nullptr && SystemHasLight() &&
       xPortNestedHdrRadiiValid) {
@@ -181,14 +181,15 @@ void CElementGen::PortCollectNestedLightSnapshots(
     // CGameLight applies its actor transform to this zero local position;
     // its PBR carrier then uses this same world origin with no EMTR/LOFF.
     PortSetNestedHdrCarrier(light, xPortNestedHdrColor, x310_LINT, xPortNestedHdrInnerRadius,
-                            xPortNestedHdrOuterRadius);
+                            xPortNestedHdrOuterRadius,
+                            x28_loadedGenDesc->xPortNestedLightFalloff);
     out.push_back({this, PortSystemOrigin(), light});
   }
 
   for (int i = 0; i < GetNumActiveChildParticles(); ++i) {
     CParticleGen* child = GetActiveChildParticle(i);
     if (child != nullptr && child->Get4CharId() == 'PART') {
-      static_cast< CElementGen* >(child)->PortCollectNestedLightSnapshots(out);
+      static_cast< CElementGen* >(child)->PortCollectNestedLightSnapshots(out, true);
     }
   }
 }

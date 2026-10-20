@@ -3975,12 +3975,14 @@ public:
       AppendBE32(out, F("CNST"));
       AppendBE32(out, 1);
     }
-    // This is deliberately not a general Remastered particle-light mapping:
-    // source proof covers only this embedded Plasma impact child.
+    // Remastered builds a real scene light for every generator with a point LTYP, from
+    // LCLR*LINT, LIRD/LORD and LFOT. Those become the port-only PHDR/PIR0/POR0/PHFO that
+    // CElementGen carries as an HDR light (spot lights stay on the retail GX path).
     std::vector<uint8_t> nestedLightInnerRadius;
     std::vector<uint8_t> nestedLightOuterRadius;
     bool nestedHdrLight = false;
-    if (part && EffectGuidString(node.id) == "f911701f-ec15-458b-ae13-ca2bf65d42f6") {
+    uint32_t nestedLightFalloff = 3;
+    if (part) {
       auto unique = [&node](uint32_t fourcc) -> const EffectProperty* {
         const EffectProperty* found = nullptr;
         for (const EffectProperty& property : node.properties) {
@@ -4008,13 +4010,15 @@ public:
                        lclr != nullptr && lint != nullptr && lclr->value.size() == 1 &&
                        lint->value.size() == 1 &&
                        SmallInteger(*ltyp, lightType) && lightType == 2 && SmallInteger(*lfot, falloff) &&
-                       falloff == 3 && lird->value.size() == 1 && lord->value.size() == 1 &&
+                       falloff <= 3 && lird->value.size() == 1 && lord->value.size() == 1 &&
                        Element(lclr->value[0], Type::Color, colorProbe, why) &&
                        Element(lint->value[0], Type::Real, intensityProbe, why) &&
                        Element(lird->value[0], Type::Real, nestedLightInnerRadius, why) &&
                        Element(lord->value[0], Type::Real, nestedLightOuterRadius, why);
-      if (!nestedHdrLight) {
-        result.dropped.push_back("PHDR: exact Plasma child lacks constant point/smooth light or supported LIRD/LORD");
+      if (nestedHdrLight) {
+        nestedLightFalloff = falloff;
+      } else if (ltyp != nullptr && SmallInteger(*ltyp, lightType) && lightType == 2) {
+        result.dropped.push_back("PHDR: point light lacks constant LFOT or supported LCLR/LINT/LIRD/LORD");
       }
     }
     // Swooshes: SBDM is Remastered's blend mode, 0 or 1, which retail has as
@@ -4673,6 +4677,9 @@ public:
                       [this](const EffectProperty& other) { return other.fourcc == F("INTT") && IntIsPofs(other); })) {
         continue;
       }
+      if (nestedHdrLight && (fourcc == F("LIRD") || fourcc == F("LORD"))) {
+        continue;  // consumed as PIR0/POR0 below
+      }
       const auto found = retail.find(fourcc);
       if (found == retail.end()) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": Remastered only");
@@ -5022,6 +5029,11 @@ public:
       out.insert(out.end(), nestedLightInnerRadius.begin(), nestedLightInnerRadius.end());
       AppendBE32(out, F("POR0"));
       out.insert(out.end(), nestedLightOuterRadius.begin(), nestedLightOuterRadius.end());
+      if (nestedLightFalloff != 3) {  // absent PHFO is the smooth falloff
+        AppendBE32(out, F("PHFO"));
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, nestedLightFalloff);
+      }
     }
     AppendBE32(out, F("_END"));
     result.approximated = std::move(m_approximated);
@@ -5647,7 +5659,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if (part && (fourcc == F("PINS") || fourcc == F("PINR") || fourcc == F("PINT"))) {
       ok = reader.Element(Type::Vector);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
-                         fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID") || fourcc == F("PBDM") ||
+                         fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PHFO") || fourcc == F("PGID") || fourcc == F("PBDM") ||
                          fourcc == F("PDFG") ||
                          fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||
                          fourcc == F("PVSM"))) ||

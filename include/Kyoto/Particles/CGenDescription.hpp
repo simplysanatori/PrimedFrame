@@ -165,11 +165,13 @@ public:
   float xPortVisorMaxScale = 2.1f;
   // port-only PGID: the first word of a converted Remastered PART's GUID (CElementGen::PortChildSeed)
   u32 xPortGuidWord = 0;
-  // Exact-source nested Remastered point-light metadata (PHDR/PIR0/POR0). The
+  // Nested Remastered point-light metadata (PHDR/PIR0/POR0/PHFO). The
   // radius elements are owned here and evaluated by the live generator.
   bool xPortNestedHdrLight = false;
   CRealElement* xPortNestedLightInnerRadius = nullptr;
   CRealElement* xPortNestedLightOuterRadius = nullptr;
+  // port-only PHFO: the authored LFOT (CLight::EPortHdrFalloff 0..3); absent = smooth
+  u8 xPortNestedLightFalloff = 3;
   // port-only PINS: Remastered's INTS, the system scale in place of the external one (EXTS still
   // reads the external scale; CElementGen::PortSystemScale). Owned here; null = the external scale.
   CVectorElement* xPortIntScale = nullptr;

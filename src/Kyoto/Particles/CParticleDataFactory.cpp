@@ -712,7 +712,7 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortGuidWord = in.ReadLong();
       break;
-    // Port-only metadata for the one source-proven nested smooth point light.
+    // Port-only metadata for the one nested Remastered point light (any child generator).
     case SBIG('PHDR'):
       GetClassID(in);
       desc->xPortNestedHdrLight = in.ReadLong() != 0;
@@ -720,6 +720,10 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
     case SBIG('PIR0'):
       delete desc->xPortNestedLightInnerRadius;
       desc->xPortNestedLightInnerRadius = GetRealElement(in);
+      break;
+    case SBIG('PHFO'):
+      GetClassID(in);
+      desc->xPortNestedLightFalloff = static_cast< u8 >(in.ReadLong() & 3);
       break;
     case SBIG('POR0'):
       delete desc->xPortNestedLightOuterRadius;

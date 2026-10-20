@@ -243,12 +243,14 @@ public:
                      globalTranslation.GetZ() + transformed.GetZ());
   }
   static void PortSetNestedHdrCarrier(CLight& light, const float sourceRgba[4], float intensity,
-                                      float innerRadius, float outerRadius) {
+                                      float innerRadius, float outerRadius,
+                                      u8 falloff = CLight::kPHF_Smooth) {
     const float linearColor[3] = {sourceRgba[0] * intensity, sourceRgba[1] * intensity,
                                   sourceRgba[2] * intensity};
     const CVector3f noOffset = CVector3f::Zero();
     light.SetPosition(noOffset);
-    light.SetPortHdr(linearColor, noOffset, innerRadius, outerRadius, CLight::kPHF_Smooth);
+    light.SetPortHdr(linearColor, noOffset, innerRadius, outerRadius,
+                      static_cast< CLight::EPortHdrFalloff >(falloff & 3));
     light.SetPortHdrBoundsRadius(outerRadius);
   }
   CVector3f PortSystemOrigin() const { return PortWorldFromLocal(xdc_translation); }
@@ -309,7 +311,13 @@ public:
   // The global translation just set is already the presented one (placed from
   // the presented camera on every drawn frame): draw it as is, unblended.
   void PortGlobalIsPresented();
-  void PortCollectNestedLightSnapshots(std::vector< CPortNestedLightSnapshot >& out) const;
+  // The lights of the active nested child generators (PHDR); not this generator's own, which the
+  // host carries as the retail root light.
+  void PortCollectNestedLightSnapshots(std::vector< CPortNestedLightSnapshot >& out) const {
+    PortCollectNestedLightSnapshots(out, false);
+  }
+  void PortCollectNestedLightSnapshots(std::vector< CPortNestedLightSnapshot >& out,
+                                       bool includeSelf) const;
 #endif
 
 private:

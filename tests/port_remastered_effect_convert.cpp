@@ -382,21 +382,59 @@ void TestPlasmaNestedHdrLight() {
           "the unmarked root does not get a duplicate nested-light proxy");
   }
 
-  const auto wrongGuid = ConvertOne(NestedLightEffect(Fresh(7)), {});
-  CHECK_MSG(wrongGuid.size() == 2 &&
-            std::search(wrongGuid[1].part.begin(), wrongGuid[1].part.end(), "PHDR", "PHDR" + 4) ==
-                wrongGuid[1].part.end(),
-        "the same light properties on another child do not enable the feature");
+  auto findIn = [](const ConvertedPart& part, const char* name, std::vector<RetailPartProperty>& props) -> const RetailPartProperty* {
+    std::string err;
+    if (!SplitRetailPart(part.part.data(), part.part.size(), props, err)) {
+      return nullptr;
+    }
+    const uint32_t fourcc = uint32_t(uint8_t(name[0])) << 24 | uint32_t(uint8_t(name[1])) << 16 |
+                            uint32_t(uint8_t(name[2])) << 8 | uint32_t(uint8_t(name[3]));
+    for (const RetailPartProperty& property : props) {
+      if (property.fourcc == fourcc) {
+        return &property;
+      }
+    }
+    return nullptr;
+  };
+  auto droppedHas = [](const ConvertedPart& part, const char* text) {
+    return std::any_of(part.dropped.begin(), part.dropped.end(),
+                       [text](const std::string& d) { return d.find(text) != std::string::npos; });
+  };
+  {
+    // The Plasma child (smooth) writes no PHFO: an absent PHFO is smooth.
+    std::vector<RetailPartProperty> props;
+    CHECK_MSG(parts.size() == 2 && findIn(parts[1], "PHFO", props) == nullptr,
+              "a smooth (LFOT 3) light writes no PHFO");
+    CHECK_MSG(parts.size() == 2 && !droppedHas(parts[1], "LIRD") && !droppedHas(parts[1], "LORD"),
+              "LIRD and LORD are consumed, not dropped as Remastered only");
+  }
+  // Any child with a constant point light is converted, with its authored falloff.
+  const auto anyChild = ConvertOne(NestedLightEffect(Fresh(7), 2, 2), {});
+  CHECK_MSG(anyChild.size() == 2, "a generic child converts");
+  if (anyChild.size() == 2) {
+    std::vector<RetailPartProperty> props;
+    const RetailPartProperty* marker = findIn(anyChild[1], "PHDR", props);
+    CHECK_MSG(marker != nullptr && marker->value.size() == 8 && marker->value[7] == 1,
+              "a generic point-light child gets PHDR");
+    const RetailPartProperty* falloff = findIn(anyChild[1], "PHFO", props);
+    CHECK_MSG(falloff != nullptr && falloff->value.size() == 8 &&
+                  std::memcmp(falloff->value.data(), "CNST", 4) == 0 && falloff->value[7] == 2,
+              "LFOT 2 is written as PHFO 2");
+    CHECK_MSG(findIn(anyChild[1], "PIR0", props) != nullptr && findIn(anyChild[1], "POR0", props) != nullptr,
+              "a generic child keeps PIR0/POR0");
+    CHECK_MSG(!droppedHas(anyChild[1], "LIRD") && !droppedHas(anyChild[1], "LORD"),
+              "LIRD/LORD of a generic child are not in dropped");
+  }
+  // A spot light (LTYP 3) stays on the retail path.
+  const auto spot = ConvertOne(NestedLightEffect(Fresh(7), 3, 2), {});
+  CHECK_MSG(spot.size() == 2 &&
+            std::search(spot[1].part.begin(), spot[1].part.end(), "PHDR", "PHDR" + 4) == spot[1].part.end(),
+        "a spot light is not converted to an HDR light");
   const auto wrongType = ConvertOne(NestedLightEffect(kPlasmaNestedLight, 1, 3), {});
   CHECK_MSG(wrongType.size() == 2 &&
             std::search(wrongType[1].part.begin(), wrongType[1].part.end(), "PHDR", "PHDR" + 4) ==
                 wrongType[1].part.end(),
         "a non-point LTYP does not enable the feature");
-  const auto wrongFalloff = ConvertOne(NestedLightEffect(kPlasmaNestedLight, 2, 2), {});
-  CHECK_MSG(wrongFalloff.size() == 2 &&
-            std::search(wrongFalloff[1].part.begin(), wrongFalloff[1].part.end(), "PHDR", "PHDR" + 4) ==
-                wrongFalloff[1].part.end(),
-        "a non-smooth LFOT does not enable the feature");
   const auto missingRadius = ConvertOne(NestedLightEffect(kPlasmaNestedLight, 2, 3, false), {});
   CHECK_MSG(missingRadius.size() == 2 &&
             std::search(missingRadius[1].part.begin(), missingRadius[1].part.end(), "PHDR", "PHDR" + 4) ==
