@@ -575,6 +575,13 @@ bool CVEPortSystemVector::GetValue(int, CVector3f& valOut) const {
     valOut = EulerDegreesFromQuaternion(
         CQuaternion(q.GetScalar(), CVector3f(-q.AxisX(), q.AxisZ(), q.AxisY())));
   } break;
+  case 'CMRT': {
+    // CERotationFromCamera 0x29d180: FromMatrix of GetCameraTransform's camera-to-world matrix
+    // (the view matrix), as EXTR in Remastered's particle space.
+    const CQuaternion q = CQuaternion::FromMatrix(CGraphics::GetViewMatrix());
+    valOut = EulerDegreesFromQuaternion(
+        CQuaternion(q.GetScalar(), CVector3f(-q.AxisX(), q.AxisZ(), q.AxisY())));
+  } break;
   case 'CMPS':
     // CVECameraPositionInWorldSpace 0x2a23ec: GetCameraTransform 0x27b304's translation; the view
     // matrix is camera-to-world.

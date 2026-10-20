@@ -415,7 +415,7 @@ public:
 // Remastered system vectors of the generator being evaluated: CMPS (the camera position in world
 // space, CVECameraPositionInWorldSpace 0x2a23ec), CPSS (the camera position in the system's global
 // frame, CVECameraPositionInSystemSpace 0x2a24fc), EXTT and EXTS (the external translation and
-// scale, CVEExternalValue 0x2a2774). Zero outside a generator evaluation (swooshes).
+// scale, CVEExternalValue 0x2a2774), and CMRT (the camera's rotation as EXTR's Euler vector). Zero outside a generator evaluation (swooshes).
 class CVEPortSystemVector : public CVectorElement {
 public:
   explicit CVEPortSystemVector(FourCC kind) : mKind(kind) {}

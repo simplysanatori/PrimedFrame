@@ -1676,6 +1676,7 @@ CVectorElement* CParticleDataFactory::GetVectorElement(CInputStream& in) {
   case SBIG('EXTT'):
   case SBIG('EXTS'):
   case SBIG('EXTR'):
+  case SBIG('CMRT'):
     ret = rs_new CVEPortSystemVector(clsId);
     break;
 #endif

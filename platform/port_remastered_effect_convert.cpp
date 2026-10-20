@@ -2086,7 +2086,7 @@ public:
   // (0x29d69c), so it conjugates back to R.
   bool ModelRotation(const std::vector<EffectValue>& value, std::vector<uint8_t>& out, std::string& why) const {
     if (value.size() != 1) {
-      why = "a rotation that is not REUL/RADD/RAZY/MPCB/EXTR";
+      why = "a rotation that is not REUL/RADD/RAZY/MPCB/EXTR/CMRT";
       return false;
     }
     if (IsElement(value[0], F("MPCB")) && value[0].args.size() == 1) {
@@ -2109,7 +2109,13 @@ public:
   // fallback when either is degenerate). PRZY's vectors stay in Remastered's space.
   // MPCB(r) -> PQAD(B, PQAD(r, B)) (qB * r * qB, 0x29d69c); EXTR (AddRefVar(0, 4, 10),
   // GetRotationElement 0x25d59c) -> the port-only EXTR vector, the system orientation.
-  bool SourceRotation(const EffectValue& rot, std::vector<uint8_t>& out, std::string& why) const {
+  // `keep`: the rotation sits under a KPIN (CERotationKeepInitial 0x29c214, the child's value at
+  // time 0 and 0 after), so it is pushed onto the three angles of each REUL, which a system
+  // variable turns into init-only hidden reals (KPIN(REUL(a, b, c)) = REUL(KPIN a, KPIN b, KPIN c)).
+  bool SourceRotation(const EffectValue& rot, std::vector<uint8_t>& out, std::string& why, bool keep = false) const {
+    if (IsElement(rot, F("KPIN")) && rot.args.size() == 1 && m_sysItems != nullptr) {
+      return SourceRotation(rot.args[0], out, why, true);
+    }
     if (IsElement(rot, F("REUL")) && rot.args.size() == 4) {
       const EffectValue& order = rot.args[3];
       if ((order.kind != EffectValue::Kind::Byte && order.kind != EffectValue::Kind::Word) || order.word != 0) {
@@ -2118,7 +2124,15 @@ public:
       }
       AppendBE32(out, F("CNST"));
       for (size_t i = 0; i < 3; ++i) {
-        if (!Element(rot.args[i], Type::Real, out, why)) {
+        // A constant angle is its own initial value; any other is kept through a KPIN.
+        if (keep && (ConstantFlags(rot.args[i], Type::Real) & 3) == 0) {
+          EffectValue kept;
+          kept.fourcc = F("KPIN");
+          kept.args.push_back(rot.args[i]);
+          if (!Element(kept, Type::Real, out, why)) {
+            return false;
+          }
+        } else if (!Element(rot.args[i], Type::Real, out, why)) {
           return false;
         }
       }
@@ -2126,7 +2140,7 @@ public:
     }
     if (IsElement(rot, F("RADD")) && rot.args.size() == 2) {
       AppendBE32(out, F("PQAD"));
-      return SourceRotation(rot.args[0], out, why) && SourceRotation(rot.args[1], out, why);
+      return SourceRotation(rot.args[0], out, why, keep) && SourceRotation(rot.args[1], out, why, keep);
     }
     if (IsElement(rot, F("RAZY")) && rot.args.size() == 3) {
       AppendBE32(out, F("PRZY"));
@@ -2137,17 +2151,23 @@ public:
       AppendBE32(out, F("PQAD"));
       AppendRotationBasis(out);
       AppendBE32(out, F("PQAD"));
-      if (!SourceRotation(rot.args[0], out, why)) {
+      if (!SourceRotation(rot.args[0], out, why, keep)) {
         return false;
       }
       AppendRotationBasis(out);
       return true;
     }
-    if (IsElement(rot, F("EXTR")) && rot.args.empty()) {
+    if (!keep && IsElement(rot, F("EXTR")) && rot.args.empty()) {
       AppendBE32(out, F("EXTR"));
       return true;
     }
-    why = "a rotation that is not REUL/RADD/RAZY/MPCB/EXTR";
+    // CMRT: the game camera's rotation (CERotationFromCamera 0x29d180), never constant, so a
+    // system variable holding it is re-evaluated every tick (CAddVarSystem::Update).
+    if (!keep && IsElement(rot, F("CMRT")) && rot.args.empty()) {
+      AppendBE32(out, F("CMRT"));
+      return true;
+    }
+    why = "a rotation that is not REUL/RADD/RAZY/MPCB/EXTR/CMRT";
     return false;
   }
 
@@ -4430,7 +4450,9 @@ public:
       // port-only PINR: an Euler vector in the port's space, as PMRQ's is (ModelRotation); EXTR
       // inside it reads the external orientation. XFMD 2 bakes it at spawn (Q_l), 3 makes it the
       // live global frame (SetupTransformMode 0x2887d8); 4's mover overrides it and 5 frees it.
-      // IRND would be drawn again on each evaluation, where Remastered's var holds one draw.
+      // The system var is evaluated once at creation (IRND, KPIN: init-only) or every tick (CMRT):
+      // an IRND or KPIN inside it becomes a hidden init-only PSYR slot (m_sysItems), one draw per
+      // system as in Remastered.
       if (part && fourcc == F("INTR")) {
         std::vector<uint8_t> bytes;
         std::string why;
@@ -4439,12 +4461,21 @@ public:
         }
         if (m_xfmd != 2 && m_xfmd != 3) {
           why = "under XFMD " + std::to_string(m_xfmd);
-        } else if (property.value.size() == 1 && ContainsElement(property.value[0], F("IRND"))) {
-          why = "IRND, drawn again on each evaluation of the system orientation";
-        } else if (ModelRotation(property.value, bytes, why)) {
-          AppendBE32(out, F("PINR"));
-          out.insert(out.end(), bytes.begin(), bytes.end());
-          continue;
+        } else {
+          std::vector<SystemItem> items;
+          const uint32_t hidden = m_sysNextHidden;
+          m_sysItems = &items;
+          const bool ok = ModelRotation(property.value, bytes, why);
+          m_sysItems = nullptr;
+          if (ok) {
+            AppendBE32(out, F("PINR"));
+            out.insert(out.end(), bytes.begin(), bytes.end());
+            for (SystemItem& sys : items) {
+              sysItems.push_back(std::move(sys));
+            }
+            continue;
+          }
+          m_sysNextHidden = hidden;
         }
         result.dropped.push_back("INTR: " + why);
         continue;
