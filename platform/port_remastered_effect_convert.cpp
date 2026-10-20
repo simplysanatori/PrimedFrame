@@ -2072,10 +2072,16 @@ public:
     if (value.fourcc == F("SUST") && type == Type::Real && value.args.size() == 1 && m_swoosh) {
       return Element(value.args[0], type, out, why);
     }
-    // SDTR (CREShutdownTimeRemaining 0x2999e0) is the shutdown countdown's remaining over total.
+    // SDTR (CREShutdownTimeRemaining 0x2999e0) is the shutdown countdown's remaining over total
+    // (1 with none running): the port-only PSDT, read off the generator's SHTT countdown. A
+    // swoosh or electric has none in the port.
     if (value.fourcc == F("SDTR") && type == Type::Real) {
-      why = "SDTR needs Remastered's shutdown countdown (SHTT)";
-      return false;
+      if (!m_gpsm || !value.args.empty()) {
+        why = "SDTR outside a generator needs Remastered's shutdown countdown";
+        return false;
+      }
+      AppendBE32(out, F("PSDT"));
+      return true;
     }
     const Signatures& elements = ElementsOf(type);
     const auto found = elements.find(value.fourcc);
@@ -4033,6 +4039,7 @@ public:
       additive = additive || property.fourcc == F("AALP");
     }
     m_swoosh = node.form == F("SWSH");
+    m_gpsm = node.form == F("GPSM");
     m_xfmd = 2;
     m_pofs = 0;
     m_maxp = -1;
@@ -4761,6 +4768,69 @@ public:
         Basis(F("BSIS"), inner, out);
         continue;
       }
+      // SHTM (CreateGPSM 0x256b7c, desc+0xcc): what a shutdown does (CParticleGen::DoShutdownBehavior
+      // 0x27b88c). 0 stops emission, 1 also destroys the live particles. The port-only PSHM, for 1.
+      if (part && fourcc == F("SHTM")) {
+        uint32_t mode = 0;
+        if (!SmallInteger(property, mode) || mode > 1) {
+          result.dropped.push_back(mode > 1 ? "SHTM: mode " + std::to_string(mode)
+                                            : std::string("SHTM: not a constant"));
+        } else if (mode == 1) {
+          AppendBE32(out, F("PSHM"));
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, 1);
+        }
+        continue;
+      }
+      // SHTT, the delayed shutdown (ShutdownEffect 0x27a66c, UpdateCountdownTimerForShutdown
+      // 0x27b864): an int number of ticks, counted down once per tick after the owner's shutdown.
+      if (part && fourcc == F("SHTT")) {
+        std::vector<uint8_t> inner;
+        std::string why = "not one element";
+        if (property.value.size() != 1 || !Element(property.value[0], Type::Int, inner, why)) {
+          result.dropped.push_back("SHTT: " + why);
+          continue;
+        }
+        AppendBE32(out, F("PSHT"));
+        out.insert(out.end(), inner.begin(), inner.end());
+        continue;
+      }
+      // PMOV, the per-particle model direction (SolveParticleTransform 0x246f14), and PMPV, the
+      // pivot offset in the model's final frame: vectors in Remastered's numbers, as the port-only
+      // properties of the same names, in the port's space (BSIS, as PMOP's). Fixup 0x28ec98 deletes
+      // PMOV under a PMRQ base rotation (PMRB or PMCF); EMTU makes the model's up the system's.
+      if (part && (fourcc == F("PMOV") || fourcc == F("PMPV"))) {
+        std::vector<uint8_t> inner;
+        std::string why = "not one element";
+        if (fourcc == F("PMOV")) {
+          bool pmrqBase = false;
+          bool emtu = false;
+          bool emtuUnknown = false;
+          for (const EffectProperty& other : node.properties) {
+            uint32_t word = 0;
+            if (other.fourcc == F("PMRB") || other.fourcc == F("PMCF")) {
+              pmrqBase = pmrqBase || (SmallConst(other, word) && word != 0);
+            } else if (other.fourcc == F("EMTU")) {
+              emtuUnknown = !SmallConst(other, word);
+              emtu = word != 0;
+            }
+          }
+          if (pmrqBase) {
+            continue;
+          }
+          if (emtu || emtuUnknown) {
+            result.dropped.push_back("PMOV: EMTU makes its up the system's");
+            continue;
+          }
+        }
+        if (property.value.size() != 1 || !Element(property.value[0], Type::Vector, inner, why)) {
+          result.dropped.push_back(EffectFourCCString(property.fourcc) + ": " + why);
+          continue;
+        }
+        AppendBE32(out, fourcc);
+        Basis(F("BSIS"), inner, out);
+        continue;
+      }
       // A POFS goes out with an INTT written as POFS above, added to it.
       if (part && fourcc == F("POFS") &&
           std::any_of(node.properties.begin(), node.properties.end(),
@@ -5181,6 +5251,7 @@ private:
   mutable uint32_t m_keepNext = 0;                  // the next PKPR slot
   mutable uint32_t m_varReads = 0;                  // the particle variables Element() has read
   mutable bool m_swoosh = false;                    // the node being written is a SWSH
+  mutable bool m_gpsm = false;                      // the node being written is a GPSM
   mutable uint32_t m_xfmd = 2;                      // its XFMD mode, 2 without one
   mutable const EffectValue* m_semrPos = nullptr;   // the position child of the SEMR being written
   mutable int64_t m_maxp = -1;                      // its MAXP when a constant, else -1
@@ -5245,6 +5316,10 @@ public:
     if ((fourcc == F("VARF") && type == Type::Real) || (fourcc == F("VARI") && type == Type::Int) ||
         (fourcc == F("VARV") && type == Type::Vector) || (fourcc == F("VARC") && type == Type::Color)) {
       return Skip(4);
+    }
+    // Port-only PSDT: the shutdown countdown's remaining over its total, no payload.
+    if (fourcc == F("PSDT") && type == Type::Real) {
+      return true;
     }
     // Port-only PSYR/PSYI: a PSYS slot.
     if ((fourcc == F("PSYR") && type == Type::Real) || (fourcc == F("PSYI") && type == Type::Int)) {
@@ -5771,12 +5846,15 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if ((part && (fourcc == F("SSZE") || fourcc == F("PIR0") || fourcc == F("POR0"))) ||
                (vfx && (fourcc == F("ITEN") || fourcc == F("PDBS")))) {
       ok = reader.Element(Type::Real);
-    } else if (part && (fourcc == F("PINS") || fourcc == F("PINR") || fourcc == F("PINT"))) {
+    } else if (part && (fourcc == F("PINS") || fourcc == F("PINR") || fourcc == F("PINT") || fourcc == F("PMOV") ||
+                        fourcc == F("PMPV"))) {
       ok = reader.Element(Type::Vector);
+    } else if (part && fourcc == F("PSHT")) {
+      ok = reader.Element(Type::Int);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
                          fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PHFO") || fourcc == F("PLIX") || fourcc == F("PGID") || fourcc == F("PBDM") ||
                          fourcc == F("PDFG") || fourcc == F("PZTS") || fourcc == F("PIVS") ||
-                         fourcc == F("PITP") ||
+                         fourcc == F("PITP") || fourcc == F("PSHM") ||
                          fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||
                          fourcc == F("PVSM"))) ||
                (vfx && fourcc == F("PIRN"))) {

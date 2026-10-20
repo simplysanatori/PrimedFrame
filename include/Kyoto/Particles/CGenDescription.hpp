@@ -221,6 +221,16 @@ public:
   // port-only PDBS: Remastered's DBIS (desc+0xd4), the depth bias in world units, negative toward the
   // camera (CPortParticleDepthBias). 0 = none.
   float xPortDepthBias = 0.f;
+  // port-only PSHM: Remastered's SHTM, what a shutdown does (CParticleGen::DoShutdownBehavior
+  // 0x27b88c): 0 stops emission, 1 also destroys the live particles. Other values do neither.
+  u8 xPortShutdownMode = 0;
+  // port-only PSHT: Remastered's SHTT, the shutdown countdown in ticks (ShutdownEffect 0x27a66c,
+  // UpdateCountdownTimerForShutdown 0x27b864). Owned; null = a shutdown acts at once.
+  CIntElement* xPortShutdownTime = nullptr;
+  // port-only PMOV/PMPV: Remastered's per-particle model orientation direction and pivot offset
+  // (SolveParticleTransform 0x246f14), in the port's space. Owned; null = none.
+  CVectorElement* xPortPmov = nullptr;
+  CVectorElement* xPortPmpv = nullptr;
   // port-only PSWX: swooshes started beyond SSWH's one, each with its start frame
   struct PortExtraSwoosh {
     TCachedToken< CSwooshDescription > swoosh;

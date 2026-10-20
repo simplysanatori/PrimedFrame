@@ -878,6 +878,24 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       sPortPemv = u8(in.ReadLong() + 1);
       desc->xPortSpread = true;
       break;
+    // Port-only: Remastered's SHTM, SHTT, PMOV and PMPV (CGenDescription::xPortShutdownMode and
+    // the elements after it).
+    case SBIG('PSHM'):
+      GetClassID(in);
+      desc->xPortShutdownMode = u8(in.ReadLong());
+      break;
+    case SBIG('PSHT'):
+      delete desc->xPortShutdownTime;
+      desc->xPortShutdownTime = GetIntElement(in);
+      break;
+    case SBIG('PMOV'):
+      delete desc->xPortPmov;
+      desc->xPortPmov = GetVectorElement(in);
+      break;
+    case SBIG('PMPV'):
+      delete desc->xPortPmpv;
+      desc->xPortPmpv = GetVectorElement(in);
+      break;
     // Port-only: Remastered's DFOG 1 (xPortUnfogged).
     case SBIG('PDFG'):
       GetClassID(in);
@@ -1243,6 +1261,9 @@ CRealElement* CParticleDataFactory::GetRealElement(CInputStream& in) {
   // Port-only VARF: a Remastered particle variable of the system being evaluated (PVRT index).
   case SBIG('VARF'):
     return rs_new CREPortVar(in.ReadLong());
+  // Port-only PSDT: the system's shutdown countdown fraction left (SDTR).
+  case SBIG('PSDT'):
+    return rs_new CREPortShutdownRemaining();
   // Port-only PSYR: a PSYS real slot of the system being evaluated.
   case SBIG('PSYR'):
     return rs_new CREPortSysVar(in.ReadLong());

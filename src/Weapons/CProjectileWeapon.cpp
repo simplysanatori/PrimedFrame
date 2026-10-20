@@ -502,11 +502,12 @@ rstl::optional_object< TLockedToken< CGenDescription > > CProjectileWeapon::Coll
   }
 
   x124_24_active = false;
+  // Remastered's DeactivateProjectile calls ShutdownEffect here (SHTM/SHTT, PSHM/PSHT).
   if (xfc_APSMGen) {
-    xfc_APSMGen->SetParticleEmission(false);
+    xfc_APSMGen->ShutdownEffect();
   }
   if (x100_APS2Gen) {
-    x100_APS2Gen->SetParticleEmission(false);
+    x100_APS2Gen->ShutdownEffect();
   }
   if (x118_swoosh1) {
     x118_swoosh1->SetParticleEmission(false);

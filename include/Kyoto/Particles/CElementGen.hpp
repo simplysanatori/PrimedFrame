@@ -121,6 +121,14 @@ public:
   virtual void SetGlobalScale(const CVector3f& scale) override;
   virtual void SetLocalScale(const CVector3f& scale) override;
   virtual void SetParticleEmission(const bool emission) override;
+#ifdef TARGET_PC
+  // SHTM/SHTT (PSHM/PSHT). ShutdownEffect starts the countdown if the description has one, else
+  // acts at once; PortDoShutdownBehavior(0xff) uses the description's mode.
+  void ShutdownEffect() override;
+  void PortDoShutdownBehavior(u32 mode);
+  // SDTR: the countdown's remaining over its total, 1 when none is running.
+  float PortShutdownTimeRemaining() const;
+#endif
   virtual void SetModulationColor(const CColor& col) override;
   virtual void SetGeneratorRate(float rate) override;
 #ifdef TARGET_PC
@@ -392,6 +400,8 @@ private:
   CModVectorElement* x280_VELSources[4];
 #ifdef TARGET_PC
   bool xPortVelFinalizes = false;
+  int xPortShutdownCountdown = -1; // ticks to the delayed shutdown, -1 = not counting
+  int xPortShutdownTotal = 0;
 #endif
   rstl::vector< CParticleGen* > x290_activePartChildren;
   int x2a0_CSSD;

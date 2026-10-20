@@ -255,7 +255,12 @@ void CScriptEffect::AcceptScriptMsg(EScriptObjectMessage msg, TUniqueId uid, CSt
     }
     x110_24_enable = true;
     if (x104_particleSystem.get()) {
-      x104_particleSystem->SetParticleEmission(GetActive());
+      if (GetActive()) {
+        x104_particleSystem->SetParticleEmission(true);
+      } else {
+        // Remastered's CScriptEffectMP1::DoUpdate shuts the effect down (SHTM/SHTT).
+        x104_particleSystem->ShutdownEffect();
+      }
     }
     if (xf4_electric.get()) {
       xf4_electric->SetParticleEmission(GetActive());

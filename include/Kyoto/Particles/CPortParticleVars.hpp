@@ -337,6 +337,15 @@ public:
   }
 };
 
+// PSDT (port-only; Remastered's SDTR, CREShutdownTimeRemaining 0x2999e0): the current system's
+// shutdown countdown remaining over its total (SHTT), 1 when none is running.
+class CREPortShutdownRemaining : public CRealElement {
+public:
+  CREPortShutdownRemaining() {}
+  ~CREPortShutdownRemaining() override {}
+  bool GetValue(int frame, float& out) const override;
+};
+
 // PSYI (port-only; a hidden init-only int, such as a PEOD IRND): the current system's int slot.
 class CIEPortSysVar : public CIntElement {
   u32 x4_slot;

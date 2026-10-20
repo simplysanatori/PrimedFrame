@@ -2753,6 +2753,90 @@ void TestComposedModelRotation() {
             "ordered PMRQ refuses a non-REUL operand rather than adding Euler components");
 }
 
+// SHTM 1 (shutdown kills the live particles) is the port-only PSHM, 0 the default; SHTT is the
+// shutdown countdown, PSHT; PMOV and PMPV are the model direction and pivot, vectors in the port's
+// space (BSIS, folded for a constant). PMOV is deleted by Remastered under a PMRQ base rotation
+// (PMRB/PMCF) and is not converted with EMTU.
+void TestShutdownAndPivot() {
+  const auto convert = [](auto&& body) {
+    return ConvertOne(OneGenerator([&](auto& o) {
+                        body(o);
+                        PutTexr(o, 0x1234ABCD);
+                      }),
+                      {});
+  };
+  const auto shtm = [&](uint8_t mode) {
+    return convert([&](auto& o) {
+      PutProperty(o, "SHTM", 0);
+      o.push_back(mode);
+    });
+  };
+  auto parts = shtm(1);
+  Retail want;
+  want.f("GPSM").f("PSHM").f("CNST").w(1).f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes && parts[0].dropped.empty(), "SHTM 1 is PSHM 1");
+  parts = shtm(0);
+  Retail none;
+  none.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == none.bytes && parts[0].dropped.empty(), "SHTM 0 writes nothing");
+  parts = shtm(2);
+  CHECK_MSG(parts.size() == 1 && parts[0].part == none.bytes && parts[0].dropped.size() == 1 &&
+                parts[0].dropped[0] == "SHTM: mode 2",
+            "SHTM 2 is dropped with its reason");
+
+  parts = convert([](auto& o) {
+    PutProperty(o, "SHTT", 1);
+    PutConstant(o, 30);
+  });
+  Retail shtt;
+  shtt.f("GPSM").f("PSHT").f("CNST").w(30).f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == shtt.bytes && parts[0].dropped.empty(), "SHTT CNST(30) is PSHT");
+  if (!parts.empty()) {
+    std::vector<RetailPartProperty> properties;
+    std::string error;
+    CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
+              "a PART with PSHT passes the retail element reader");
+  }
+
+  parts = convert([](auto& o) {
+    PutProperty(o, "PMOV", 3);
+    PutFourCC(o, "PVEL");
+    PutProperty(o, "PMPV", 3);
+    PutFourCC(o, "CNST");
+    PutConstant(o, Bits(0.f));
+    PutConstant(o, Bits(0.4f));
+    PutConstant(o, Bits(0.f));
+  });
+  Retail pivot;
+  pivot.f("GPSM").f("PMOV").f("PVEL");
+  pivot.f("PMPV").f("CNST").f("CNST").w(Bits(-0.f)).f("CNST").w(Bits(0.f)).f("CNST").w(Bits(0.4f));
+  pivot.f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == pivot.bytes && parts[0].dropped.empty(),
+            "PMOV PVEL and PMPV CNST(0, 0.4, 0) are written in the port's space");
+  if (!parts.empty()) {
+    std::vector<RetailPartProperty> properties;
+    std::string error;
+    CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
+              "a PART with PMOV and PMPV passes the retail element reader");
+  }
+
+  const auto pmov = [&](const char* flag, uint8_t value) {
+    return convert([&](auto& o) {
+      PutProperty(o, flag, 0);
+      PutFourCC(o, "CNST");
+      o.push_back(value);
+      PutProperty(o, "PMOV", 3);
+      PutFourCC(o, "PVEL");
+    });
+  };
+  parts = pmov("PMRB", 1);
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty(), "PMOV under PMRB drops nothing");
+  parts = pmov("EMTU", 1);
+  CHECK_MSG(parts.size() == 1 &&
+                std::count(parts[0].dropped.begin(), parts[0].dropped.end(), "PMOV: EMTU makes its up the system's") == 1,
+            "PMOV with EMTU is dropped with its reason");
+}
+
 // INTS is the system scale in place of the external one (Compile 0x289af0): the port-only PINS,
 // turned into the port's numbers by BSSC; EXTS inside it stays the external scale. XFMD 5 frees it.
 void TestIntScale() {
@@ -4831,6 +4915,7 @@ int main() {
   TestUnfogged();
   TestInheritedMotion();
   TestDepthBias();
+  TestShutdownAndPivot();
   TestGpuAvailability();
   TestCurlNoise();
   TestParentRead();

@@ -66,6 +66,11 @@ public:
   virtual bool SystemHasLight() const = 0;
   virtual CLight GetLight() const = 0;
   virtual void DestroyParticles() = 0;
+#ifdef TARGET_PC
+  // The owner ends the effect (Remastered's CParticleGen::ShutdownEffect, vtable +0x98): stop
+  // emitting. CElementGen adds the description's SHTM (kill live particles) and SHTT (delay).
+  virtual void ShutdownEffect() { SetParticleEmission(false); }
+#endif
   virtual void AddModifier(CWarp*);
   virtual uint Get4CharId() const = 0;
 
