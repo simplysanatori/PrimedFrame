@@ -90,6 +90,9 @@ struct Settings {
   // The "Reset aim" action recentres the pointer under pointer aim and levels
   // the camera without it; on, it does both either way.
   bool resetAimBoth = false;
+  // Under direct aim, a lock-on with no target holds the camera pitch it had
+  // instead of levelling the view. Off = retail.
+  bool lockKeepsPitch = false;
   // An old gyro_rate line (aim pixels per rad/s, scaled by the mouse sensitivity)
   // and whether gyro_sensitivity was read since the last PostLoad, which turns the
   // first into the second when only it was there.

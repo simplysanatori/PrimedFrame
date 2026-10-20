@@ -124,6 +124,10 @@ int main() {
   ApplySetting("reset_aim_both", "1");
   REQUIRE_MSG(Get().resetAimBoth && Text().find("reset_aim_both=1\n") != std::string::npos,
               "reset_aim_both");
+  REQUIRE_MSG(!Get().lockKeepsPitch, "lock_keeps_pitch default off");
+  ApplySetting("lock_keeps_pitch", "1");
+  REQUIRE_MSG(Get().lockKeepsPitch && Text().find("lock_keeps_pitch=1\n") != std::string::npos,
+              "lock_keeps_pitch");
   ApplySetting("shift_key_alt", "44");
   ApplySetting("turbo_pad", "3");
   REQUIRE_MSG(Get().shiftBindings[1] == 44 && Get().turboBindings[2] == 3, "bindings");

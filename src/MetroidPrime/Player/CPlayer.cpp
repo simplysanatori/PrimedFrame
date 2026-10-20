@@ -912,6 +912,10 @@ bool CPlayer::MouseLookIsFree(const CStateManager& mgr) const {
   return MouseControlsAllowed(mgr) && (x304_orbitState == kOS_NoOrbit || x304_orbitState == kOS_Grapple);
 }
 
+bool CPlayer::PortEmptyLockKeepsPitch(const CStateManager& mgr) const {
+  return MouseControlsAllowed(mgr) && PortDebug::LockKeepsPitch() && x304_orbitState == kOS_OrbitPoint;
+}
+
 void CPlayer::UpdateMouseAim(CStateManager& mgr) {
   const bool active = MouseControlsAllowed(mgr);
   if (!active && PortDebug::MouseAim() && PortDebug::MouseGameplayActive()) {

@@ -118,6 +118,8 @@ bool ApplySetting(std::string_view keyView, std::string_view valueView) {
     s.gyroCursorCamera = ParseBool(value);
   } else if (key == "reset_aim_both") {
     s.resetAimBoth = ParseBool(value);
+  } else if (key == "lock_keeps_pitch") {
+    s.lockKeepsPitch = ParseBool(value);
   } else if (key == "gyro_sensitivity") {
     const float f = ParseFloat(value);
     if (std::isfinite(f) && f >= kGyroSensitivityMin && f <= kGyroSensitivityMax) {
@@ -327,6 +329,7 @@ void WriteAimSettings(std::ostream& out) {
   out << "gyro_cursor_angle=" << s.gyroCursorAngle << '\n';
   out << "gyro_cursor_camera=" << (s.gyroCursorCamera ? 1 : 0) << '\n';
   out << "reset_aim_both=" << (s.resetAimBoth ? 1 : 0) << '\n';
+  out << "lock_keeps_pitch=" << (s.lockKeepsPitch ? 1 : 0) << '\n';
   out << "touch_aim=" << (s.touchAim ? 1 : 0) << '\n';
   out << "touch_aim_speed=" << s.touchAimSpeed << '\n';
   out << "touch_side_margin=" << s.touchSideMargin.load() << '\n';

@@ -502,6 +502,7 @@ bool MouseInvertX() { EnsureInitialized(); return sInput.mouseInvertX; }
 bool MouseInvertY() { EnsureInitialized(); return sInput.mouseInvertY; }
 bool MouseButtons() { EnsureInitialized(); return sInput.mouseButtons; }
 bool MouseCrosshair() { EnsureInitialized(); return sInput.mouseCrosshair; }
+bool LockKeepsPitch() { EnsureInitialized(); return sInput.lockKeepsPitch; }
 // Window travel (pixels) to pointer units (-1..1 of the half view). At the default
 // sensitivity the pointer follows the cursor's speed; the sensitivity slider scales it.
 static void PointerAimScale(float& sx, float& sy) {

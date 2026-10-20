@@ -109,6 +109,14 @@ void DrawControlsOptions() {
   }
   ItemHelp("The Reset aim action (unbound by default; Remap, Gyro group) recentres the crosshair "
            "when pointer aim is on and levels the camera when it is off. On, it does both every time.");
+  bool lockKeepsPitch = sInput.lockKeepsPitch;
+  if (ImGui::Checkbox("Empty lock-on keeps pitch", &lockKeepsPitch)) {
+    sInput.lockKeepsPitch = lockKeepsPitch;
+    MarkDirty();
+  }
+  ItemHelp("Direct aim only (mouse look, twin stick, touch aim). Pressing lock-on with no target "
+           "holds the camera pitch it had instead of levelling the view. Off = retail "
+           "levelling.");
 
   ImGui::SeparatorText("Morph ball");
   bool fastMorph = sInput.fastMorph;

@@ -132,7 +132,9 @@
   The "Reset aim" action (`reset_aim`, unbound by default, same group) recentres
   the crosshair with pointer aim on, or levels the camera pitch (yaw is kept)
   with it off, so lock-on isn't needed as a reset; `reset_aim_both` (F1 Controls
-  > Options, default off) makes it do both every time. With pointer aim and gyro on, the twin-stick look
+  > Options, default off) makes it do both every time. `lock_keeps_pitch` (same page, default off) makes
+  a lock-on with no target under direct aim hold the camera pitch it had instead
+  of levelling the view. With pointer aim and gyro on, the twin-stick look
   stick and keyboard look keys turn the camera as without pointer aim while the
   gyro moves the pointer.
   `gyro_source` is 0 auto, 1 controller, 2 phone. `gyro_sensitivity` (0.1-10,
