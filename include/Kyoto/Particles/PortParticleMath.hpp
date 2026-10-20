@@ -5,6 +5,7 @@
 // CCEGradient::GetValue 0x2c8d48 and CVERandomVector::GetValue 0x29e954.
 #ifdef TARGET_PC
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -735,7 +736,7 @@ struct IndexShuffler {
     }
     for (int k = w; k < 8; ++k) {
       const uint32_t free = ~bits[k];
-      const int c = free == 0 ? 32 : __builtin_ctz(free);
+      const int c = std::countr_zero(free);
       if (k < lastW) {
         if (c < 32) {
           bits[k] |= 1u << c;
@@ -751,7 +752,7 @@ struct IndexShuffler {
     }
     for (int k = 0; k < w && k <= 6; ++k) {
       const uint32_t free = ~bits[k];
-      const int c = free == 0 ? 32 : __builtin_ctz(free);
+      const int c = std::countr_zero(free);
       if (c < 32) {
         bits[k] |= 1u << c;
         return k * 32 + c;
