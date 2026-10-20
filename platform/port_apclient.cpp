@@ -1082,6 +1082,27 @@ bool OwnsMemo(uint32_t world, uint32_t area, uint32_t entity) {
   }
 }
 
+bool PickupJingle(uint32_t world, uint32_t area, uint32_t entity, std::string& out) {
+  try {
+    const MetroidPrime::Location* location = MetroidPrime::FindAudio(world, area, entity);
+    if (location == nullptr || !BuiltinRules())
+      return false;
+    int64_t item = 0;
+    bool sameGame = false;
+    {
+      Runtime& runtime = GetRuntime();
+      std::lock_guard<std::mutex> lock(runtime.mutex);
+      if (!runtime.enabled || runtime.session == nullptr ||
+          !runtime.session->ScoutedAt(location->id, item, sameGame, nullptr))
+        return false;
+    }
+    out = MetroidPrime::JingleFile(item, sameGame);
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
 void RecordPickup(uint32_t world, uint32_t area, uint32_t entity) {
   try {
     const int bit = CheckedBit(MetroidPrime::FindPickup(world, area, entity));

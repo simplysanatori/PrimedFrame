@@ -155,6 +155,10 @@ void QueueCheck(const char* locationKey);
 // off too.
 bool OwnsPickup(uint32_t world, uint32_t area, uint32_t entity);
 bool OwnsMemo(uint32_t world, uint32_t area, uint32_t entity);
+// The jingle file for the StreamedAudio `entity` when it is an AP location's
+// pickup jingle and the item placed there is known (scouted), so the pickup
+// plays the placed item's jingle, not the retail item's. False: leave it.
+bool PickupJingle(uint32_t world, uint32_t area, uint32_t entity, std::string& out);
 // Records an owned pickup in the game's save, so the check reaches the server
 // on a later connection if this one cannot send it. Call before QueueCheck.
 void RecordPickup(uint32_t world, uint32_t area, uint32_t entity);
