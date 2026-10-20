@@ -4392,7 +4392,9 @@ void CStateManager::SetBossParams(TUniqueId bossId, float maxEnergy, uint string
   xf20_bossStringIdx = stringIdx;
 }
 
+#ifndef _MSC_VER
 const CPlayer* CStateManager::GetPlayer() const { return x84c_player; }
+#endif
 
 void CStateManager::QueueMessage(int frameCount, CAssetId msg, float f1) {
   xf84_ = frameCount;

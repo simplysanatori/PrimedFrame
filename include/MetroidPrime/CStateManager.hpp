@@ -216,7 +216,8 @@ public:
   void SetSinglePathMaze(rstl::single_ptr< CSinglePathMaze > maze);
 
   CPlayer* Player() { return x84c_player; }
-#ifdef CSTATEMANAGER_OUT_OF_LINE_GETPLAYER
+// MSVC's linker rejects the out-of-line copy next to the inline ones (LNK2005).
+#if defined(CSTATEMANAGER_OUT_OF_LINE_GETPLAYER) && !defined(_MSC_VER)
   const CPlayer* GetPlayer() const;
 #else
   const CPlayer* GetPlayer() const { return x84c_player; }
