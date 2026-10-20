@@ -106,6 +106,13 @@ add_subdirectory(extern/aurora EXCLUDE_FROM_ALL)
 if(TARGET aurora_mtx)
     target_compile_definitions(aurora_mtx PRIVATE MTX_USE_PS=1)
 endif()
+# EXCLUDE_FROM_ALL also keeps Aurora's tests out of the default build, but ctest still runs them,
+# so a stale binary from an older build passed or failed in place of the current code.
+if(AURORA_ENABLE_TESTS)
+    get_property(aurora_test_targets DIRECTORY extern/aurora/tests PROPERTY BUILDSYSTEM_TARGETS)
+    add_custom_target(aurora_tests ALL)
+    add_dependencies(aurora_tests ${aurora_test_targets})
+endif()
 
 # MusyX is the game's audio engine; the vendored fork is portable.
 add_subdirectory(extern/musyx EXCLUDE_FROM_ALL)
