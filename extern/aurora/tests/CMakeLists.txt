@@ -193,6 +193,7 @@ if (AURORA_ENABLE_GX)
     gx_suit_glass_test.cpp
     gx_inventory_visor_test.cpp
     vfx_blend_test.cpp
+    vfx_cluster_test.cpp
     render_target_layout_test.cpp
     scene_hdr_test.cpp
     scene_hdr_writer_test.cpp
