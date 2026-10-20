@@ -2271,6 +2271,72 @@ void TestUnfogged() {
   }
 }
 
+// ZTES 0 becomes the port-only PZTS 0 (depth compare ALWAYS instead of LEQUAL, ctor 0x28c2fc/0x28c384),
+// in a generator and a swoosh; IVSE 0 the port-only PIVS 0 (retail always turns the emitter's velocity);
+// ISVF the port-only PISV (EMRV's mode word, then the factor) and an authored ITPE 1 the port-only PITP
+// (the mode word). The defaults, an authored ITPE 0 and XFMD 3 (EMRV is zero there) write nothing;
+// an XFMD that EMRV is not decoded for drops ISVF, naming it.
+void TestInheritedMotion() {
+  const auto one = [](uint8_t ztes, uint8_t ivse, bool isvf, int itpe, uint32_t xfmd) {
+    return ConvertOne(OneGenerator([=](auto& o) {
+                        PutProperty(o, "XFMD", 0);
+                        PutConstant(o, xfmd);
+                        PutProperty(o, "ZTES", 0);
+                        PutFourCC(o, "CNST");
+                        o.push_back(ztes);
+                        PutProperty(o, "IVSE", 0);
+                        PutFourCC(o, "CNST");
+                        o.push_back(ivse);
+                        if (isvf) {
+                          PutProperty(o, "ISVF", 1);
+                          PutConstant(o, Bits(0.5f));
+                        }
+                        if (itpe >= 0) {
+                          PutProperty(o, "ITPE", 0);
+                          PutFourCC(o, "CNST");
+                          o.push_back(uint8_t(itpe));
+                        }
+                        PutTexr(o, 0x1234ABCD);
+                      }),
+                      {});
+  };
+  // XFMD 2 (the default) writes PZTS, PIVS and PITP at the end, PISV where ISVF stood
+  auto parts = one(0, 0, true, 1, 2);
+  Retail want;
+  want.f("GPSM").f("PISV").f("CNST").w(0).f("CNST").w(Bits(0.5f)).f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
+  want.f("PZTS").f("CNST").w(0).f("PIVS").f("CNST").w(0).f("PITP").f("CNST").w(0);
+  want.end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "ZTES 0, IVSE 0, ISVF and ITPE 1 become PZTS, PIVS, PISV, PITP");
+  CHECK_MSG(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(), "they are exact");
+  parts = one(1, 1, false, 0, 2);
+  Retail plain;
+  plain.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == plain.bytes && parts[0].dropped.empty(),
+            "ZTES 1, IVSE 1 and ITPE 0 write nothing");
+  const auto has = [](const ConvertedPart& part, const char* fourcc) {
+    return std::search(part.part.begin(), part.part.end(), fourcc, fourcc + 4) != part.part.end();
+  };
+  parts = one(1, 1, true, 1, 3);
+  CHECK_MSG(parts.size() == 1 && !has(parts[0], "PISV") && !has(parts[0], "PITP") && parts[0].dropped.empty(),
+            "ISVF and ITPE under XFMD 3 write nothing (EMRV is zero there)");
+  parts = one(1, 1, true, 1, 4);
+  CHECK_MSG(parts.size() == 1 && !has(parts[0], "PISV") && !has(parts[0], "PITP") && parts[0].dropped.size() == 2 &&
+                parts[0].dropped[0].find("ISVF under XFMD 4") != std::string::npos &&
+                parts[0].dropped[1].find("ITPE under XFMD 4") != std::string::npos,
+            "ISVF and ITPE under XFMD 4 are dropped, naming it");
+  const auto swoosh = [](uint8_t ztes) {
+    return ConvertSwoosh([=](auto& o) {
+      PutProperty(o, "ZTES", 0);
+      PutFourCC(o, "CNST");
+      o.push_back(ztes);
+    });
+  };
+  ConvertedPart part = swoosh(0);
+  CHECK_MSG(has(part, "PZTS") && part.dropped.empty(), "a swoosh's ZTES 0 becomes PZTS");
+  part = swoosh(1);
+  CHECK_MSG(!has(part, "PZTS") && part.dropped.empty(), "a swoosh's ZTES 1 writes nothing");
+}
+
 // GPUA (how much GPU time is free) is 1.0 exactly at a GPU frame time of 14 ms or less.
 void TestGpuAvailability() {
   auto parts = ConvertOne(OneGenerator([](auto& o) {
@@ -4733,6 +4799,7 @@ int main() {
   TestDrawsNothing();
   TestBlendMode();
   TestUnfogged();
+  TestInheritedMotion();
   TestGpuAvailability();
   TestCurlNoise();
   TestParentRead();

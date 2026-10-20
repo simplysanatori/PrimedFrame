@@ -854,6 +854,30 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortBlend = u8(in.ReadLong());
       break;
+    // Port-only: Remastered's ZTES 0 (xPortNoZTest).
+    case SBIG('PZTS'):
+      GetClassID(in);
+      desc->xPortNoZTest = in.ReadLong() == 0;
+      break;
+    // Port-only: Remastered's IVSE 0 (xPortNoIvse).
+    case SBIG('PIVS'):
+      GetClassID(in);
+      desc->xPortNoIvse = in.ReadLong() == 0;
+      break;
+    // Port-only: Remastered's ISVF (xPortInheritVel), after PEMV's mode word.
+    case SBIG('PISV'): {
+      GetClassID(in);
+      sPortPemv = u8(in.ReadLong() + 1);
+      delete desc->xPortInheritVel;
+      desc->xPortInheritVel = GetRealElement(in);
+      break;
+    }
+    // Port-only: Remastered's ITPE 1 (xPortSpread), with PEMV's mode word.
+    case SBIG('PITP'):
+      GetClassID(in);
+      sPortPemv = u8(in.ReadLong() + 1);
+      desc->xPortSpread = true;
+      break;
     // Port-only: Remastered's DFOG 1 (xPortUnfogged).
     case SBIG('PDFG'):
       GetClassID(in);

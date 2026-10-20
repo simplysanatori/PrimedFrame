@@ -69,6 +69,8 @@ public:
   bool xPortIrnd = false;
   // port-only PDFG: Remastered's DFOG 1, drawn without volumetric fog (CGenDescription::xPortUnfogged)
   bool xPortUnfogged = false;
+  // port-only PZTS: Remastered's ZTES 0, the depth test passes everywhere (compare ALWAYS)
+  bool xPortNoZTest = false;
   // port-only PVRT: Remastered particle variables (names, types, defaults)
   std::unique_ptr< CPortVarTable > xPortVars;
   // port-only: the PKPR elements (per-point KPIN latches), latched at a point's birth in this

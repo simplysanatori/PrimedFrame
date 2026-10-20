@@ -205,6 +205,19 @@ public:
   // port-only PDFG: Remastered's DFOG 1, the static render state's "no fog" flag (0x8000): the
   // particles are not volumetric-fogged whatever their blend (PortFx::RenderScope)
   bool xPortUnfogged = false;
+  // port-only PZTS: Remastered's ZTES 0 (static render state ctor 0x28c2fc: depth compare 1, which
+  // the GPU table 0x1d0c3a8 maps to ALWAYS, instead of 4 = LEQUAL). The depth test passes everywhere;
+  // writes (ZBUF) are as authored.
+  bool xPortNoZTest = false;
+  // port-only PIVS: Remastered's IVSE 0 (desc+0x2fa bit 2 clear, CreateNewParticles 0x24a9fc): the
+  // emitter's velocity is not turned by the system orientation (retail always turns it).
+  bool xPortNoIvse = false;
+  // port-only PISV: Remastered's ISVF, the factor of the system's per-tick translation change
+  // (PEMV's delta, no time step) added to a new particle's velocity. Owned here; null = none.
+  CRealElement* xPortInheritVel = nullptr;
+  // port-only PITP: Remastered's ITPE 1: with several particles born in a tick and a moving system,
+  // their positions are spread back along the change of translation (CreateNewParticles 0x24a630).
+  bool xPortSpread = false;
   // port-only PSWX: swooshes started beyond SSWH's one, each with its start frame
   struct PortExtraSwoosh {
     TCachedToken< CSwooshDescription > swoosh;

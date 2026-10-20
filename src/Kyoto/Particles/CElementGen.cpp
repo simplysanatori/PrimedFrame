@@ -1194,6 +1194,24 @@ void CElementGen::CreateNewParticles(int count) {
 
   CParticleGlobals::mParticleAccessParameters = NULL;
 
+#ifdef TARGET_PC
+  // CreateNewParticles 0x24a4cc: the system's change of translation since the last tick (EMRV, 0 on
+  // the first) scaled by ISVF joins each new velocity (the element is read once, with no clamp
+  // variable: the shipped ones are constants), and ITPE spreads the `count` particles of a tick
+  // back along it when it is above 2^-23 (0x24a630: step = delta / (count + 1), the i-th of count
+  // is put (count - i) steps back, so the last is one step behind the system).
+  CVector3f inheritVel = CVector3f::Zero();
+  if (const CRealElement* isvf = x28_loadedGenDesc->xPortInheritVel) {
+    float factor = 0.f;
+    isvf->GetValue(x74_curFrame, factor);
+    inheritVel = PortEmitterVelocity() * factor;
+  }
+  CVector3f spreadStep = CVector3f::Zero();
+  if (x28_loadedGenDesc->xPortSpread && count >= 2 && PortEmitterVelocity().Magnitude() > 1.1920929e-7f) {
+    spreadStep = PortEmitterVelocity() * (1.f / float(count + 1));
+  }
+#endif
+
   for (int i = 0; i < newCount; ++i) {
     // TODO: The x1c_vel values somehow get frsp'd, despite being
     // floats from CVector3f::Zero and being stored as floats in CParticle.
@@ -1258,7 +1276,9 @@ void CElementGen::CreateNewParticles(int count) {
         // Also turned by the global orientation, which PortFollowEmitter follows.
         const CTransform4f frame = PortEmitterFrame();
         particle.x4_pos = frame * particle.x4_pos + xf4_POFS;
-        particle.x1c_vel = frame.Rotate(particle.x1c_vel);
+        if (!x28_loadedGenDesc->xPortNoIvse) {
+          particle.x1c_vel = frame.Rotate(particle.x1c_vel);
+        }
       } else
 #endif
       {
@@ -1267,7 +1287,10 @@ void CElementGen::CreateNewParticles(int count) {
             ((x13c_globalScaleTransformInverse * x1a8_localScaleTransformInverse) *
              xdc_translation) +
             xf4_POFS;
-        particle.x1c_vel = x1d8_orientation.Rotate(particle.x1c_vel);
+        // IVSE 0 (PIVS): the velocity is not turned by the system orientation
+        if (!x28_loadedGenDesc->xPortNoIvse) {
+          particle.x1c_vel = x1d8_orientation.Rotate(particle.x1c_vel);
+        }
       }
     } else {
 #ifdef TARGET_PC
@@ -1283,6 +1306,10 @@ void CElementGen::CreateNewParticles(int count) {
       particle.x1c_vel = CVector3f::Zero();
     }
 
+#ifdef TARGET_PC
+    particle.x4_pos = particle.x4_pos - spreadStep * float(count - i);
+    particle.x1c_vel = particle.x1c_vel + inheritVel;
+#endif
     particle.x10_prevPos = particle.x4_pos;
 #ifdef TARGET_PC
     PortVfxSetLaunchDir(particle);
@@ -2614,10 +2641,10 @@ void CElementGen::RenderParticles() {
     GXSetTevSwapMode(nextStage, GX_TEV_SWAP0, GX_TEV_SWAP1);
     nextStage = static_cast< GXTevStageID >(nextStage + 1);
   } else if (x26c_26_AAPH) {
-    CGraphics::SetDepthWriteMode(x26c_28_zTest, kE_LEqual, false);
+    CGraphics::SetDepthWriteMode(x26c_28_zTest, (PortNoZTest() ? kE_Always : kE_LEqual), false);
     CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_One, kLO_Clear);
   } else {
-    CGraphics::SetDepthWriteMode(x26c_28_zTest, kE_LEqual, x26c_27_ZBUF);
+    CGraphics::SetDepthWriteMode(x26c_28_zTest, (PortNoZTest() ? kE_Always : kE_LEqual), x26c_27_ZBUF);
 #ifdef TARGET_PC
     CGraphics::SetBlendMode(kBM_Blend, PortBlendSrc(x28_loadedGenDesc), PortBlendDst(x28_loadedGenDesc), kLO_Clear);
 #else
@@ -3329,10 +3356,10 @@ void CElementGen::RenderParticlesIndirectTexture() {
   CGX::SetAlphaCompare(GX_ALWAYS, 0, GX_AOP_AND, GX_ALWAYS, 0);
 
   if (x26c_26_AAPH) {
-    CGX::SetZMode(true, GX_LEQUAL, false);
+    CGX::SetZMode(true, (PortNoZTest() ? GX_ALWAYS : GX_LEQUAL), false);
     CGX::SetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_CLEAR);
   } else {
-    CGX::SetZMode(true, GX_LEQUAL, x26c_27_ZBUF);
+    CGX::SetZMode(true, (PortNoZTest() ? GX_ALWAYS : GX_LEQUAL), x26c_27_ZBUF);
 #ifdef TARGET_PC
     CGX::SetBlendMode(GX_BM_BLEND, GXBlendFactor(PortBlendSrc(x28_loadedGenDesc)), GXBlendFactor(PortBlendDst(x28_loadedGenDesc)),
                       GX_LO_CLEAR);
@@ -3628,10 +3655,10 @@ void CElementGen::RenderLines() {
   CGraphics::SetAlphaCompare(kAF_Always, 0, kAO_And, kAF_Always, 0);
 
   if (x26c_26_AAPH) {
-    CGraphics::SetDepthWriteMode(true, kE_LEqual, false);
+    CGraphics::SetDepthWriteMode(true, (PortNoZTest() ? kE_Always : kE_LEqual), false);
     CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_One, kLO_Clear);
   } else {
-    CGraphics::SetDepthWriteMode(true, kE_LEqual, true);
+    CGraphics::SetDepthWriteMode(true, (PortNoZTest() ? kE_Always : kE_LEqual), true);
 #ifdef TARGET_PC
     CGraphics::SetBlendMode(kBM_Blend, PortBlendSrc(x28_loadedGenDesc), PortBlendDst(x28_loadedGenDesc), kLO_Clear);
 #else
@@ -3809,7 +3836,7 @@ void CElementGen::RenderModels() {
     moveRedToAlphaBuffer = enableMRTA;
 
     if (x28_loadedGenDesc->x31_25_PMAB) {
-      CGraphics::SetDepthWriteMode(true, kE_LEqual, false);
+      CGraphics::SetDepthWriteMode(true, (PortNoZTest() ? kE_Always : kE_LEqual), false);
       if (enableMRTA) {
         CGraphics::SetBlendMode(kBM_Blend, kBF_One, kBF_One, kLO_Clear);
       } else {
@@ -3817,7 +3844,7 @@ void CElementGen::RenderModels() {
         CGraphics::SetAlphaCompare(kAF_Greater, 0, kAO_And, kAF_Always, 0);
       }
     } else {
-      CGraphics::SetDepthWriteMode(true, kE_LEqual, true);
+      CGraphics::SetDepthWriteMode(true, (PortNoZTest() ? kE_Always : kE_LEqual), true);
 #ifdef TARGET_PC
       CGraphics::SetBlendMode(kBM_Blend, PortBlendSrc(x28_loadedGenDesc), PortBlendDst(x28_loadedGenDesc), kLO_Clear);
 #else

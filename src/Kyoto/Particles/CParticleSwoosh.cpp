@@ -559,7 +559,7 @@ void CParticleSwoosh::Render() {
     CParticleGlobals::SetParticleLifetime(x1b4_LENG);
     CGlobalRandom random(x1c0_rand);
     CGraphics::DisableAllLights();
-    CGraphics::SetDepthWriteMode(true, kE_LEqual, x1c_desc->x45_24_ZBUF);
+    CGraphics::SetDepthWriteMode(true, x1c_desc->xPortNoZTest ? kE_Always : kE_LEqual, x1c_desc->x45_24_ZBUF);
     if (x1d0_25_AALP) {
       CGraphics::SetBlendMode(kBM_Blend, kBF_SrcAlpha, kBF_One, kLO_Clear);
     } else {

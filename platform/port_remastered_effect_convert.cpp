@@ -4178,6 +4178,9 @@ public:
     const EffectProperty* xfmd = nullptr;
     uint32_t spriteShape = 0;
     bool unfogged = false;  // DFOG 1, port-only PDFG
+    bool noZTest = false;   // ZTES 0, port-only PZTS
+    bool noIvse = false;    // IVSE 0, port-only PIVS
+    int spreadMode = -1;    // ITPE 1, port-only PITP with EMRV's mode word (-1 none)
     const EffectProperty* mover = nullptr;
     std::vector<uint32_t> portOnly;  // material data, written only with a VMAT
     const bool textured = retail.count(F("TEXR")) != 0;
@@ -4243,6 +4246,74 @@ public:
         } else {
           unfogged = on != 0;
         }
+        continue;
+      }
+      // ZTES 0 (GPSM desc+0x1b8 bit 1, SWSH desc+0x22c bit 9) makes the static render state's depth
+      // compare 1 instead of 4 (ctor 0x28c2fc/0x28c384); the GPU's table 0x1d0c3a8 maps 1 to ALWAYS
+      // and 4 to LEQUAL, so the test passes everywhere (writes stay with ZBUF). Default on.
+      // Retail has no such property: the port-only PZTS.
+      if ((part || swoosh) && fourcc == F("ZTES")) {
+        uint32_t on = 0;
+        if (!SmallInteger(property, on)) {
+          result.dropped.push_back("ZTES: not a constant");
+        } else {
+          noZTest = on == 0;
+        }
+        continue;
+      }
+      // IVSE (desc+0x2fa bit 2, default on): the initial velocity goes through
+      // CCoords::TransformVelocity (CreateNewParticles 0x24a9fc). Retail always turns it by the
+      // system orientation, so only IVSE 0 differs: the port-only PIVS.
+      if (part && fourcc == F("IVSE")) {
+        uint32_t on = 0;
+        if (!SmallInteger(property, on)) {
+          result.dropped.push_back("IVSE: not a constant");
+        } else {
+          noIvse = on == 0;
+        }
+        continue;
+      }
+      // ISVF and ITPE read the system's per-tick change of translation (EMRV, var 0x16: the delta
+      // CreateNewParticles gets as its third argument). XFMD 0, 3 and 6 give it a constant zero, so
+      // neither does anything there; 2 and 5 are PEMV's modes; the others are not decoded. ITPE is
+      // on by default in Remastered (desc ctor 0x290c10); only an authored 1 is written, the port
+      // keeps the unmarked effects as they were.
+      if (part && (fourcc == F("ISVF") || fourcc == F("ITPE"))) {
+        const std::string name = EffectFourCCString(property.fourcc);
+        uint32_t on = 1;
+        if (fourcc == F("ITPE") && !SmallInteger(property, on)) {
+          result.dropped.push_back("ITPE: not a constant");
+          continue;
+        }
+        if (fourcc == F("ITPE") && on == 0) {
+          continue;  // retail never spreads
+        }
+        if (m_xfmd == 0 || m_xfmd == 3 || m_xfmd == 6) {
+          continue;
+        }
+        if (m_xfmd != 2 && m_xfmd != 5) {
+          result.dropped.push_back(name + " under XFMD " + std::to_string(m_xfmd));
+          continue;
+        }
+        if (m_xfmd == 5 && m_pofs == 2) {
+          result.dropped.push_back(name + " under XFMD 5 with a POFS that is not a constant");
+          continue;
+        }
+        const uint32_t mode = m_xfmd == 5 ? (m_pofs == 1 ? 2 : 1) : 0;
+        if (fourcc == F("ITPE")) {
+          spreadMode = int(mode);
+          continue;
+        }
+        std::vector<uint8_t> inner;
+        std::string why = "not one element";
+        if (property.value.size() != 1 || !Element(property.value[0], Type::Real, inner, why)) {
+          result.dropped.push_back("ISVF: " + why);
+          continue;
+        }
+        AppendBE32(out, F("PISV"));
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, mode);
+        out.insert(out.end(), inner.begin(), inner.end());
         continue;
       }
       // PBDM is Remastered's blend mode, from the table CParticleStaticRenderState
@@ -4874,6 +4945,21 @@ public:
       AppendBE32(out, F("PDFG"));
       AppendBE32(out, F("CNST"));
       AppendBE32(out, 1);
+    }
+    if (noZTest) {
+      AppendBE32(out, F("PZTS"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, 0);
+    }
+    if (noIvse) {
+      AppendBE32(out, F("PIVS"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, 0);
+    }
+    if (spreadMode >= 0) {
+      AppendBE32(out, F("PITP"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, uint32_t(spreadMode));
     }
     if ((part || swoosh) && !m_vars.empty()) {
       // Port-only: the effect's PVAR table (names, kinds, defaults) for VARF/VARI/VARV/VARC.
@@ -5670,7 +5756,8 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.Element(Type::Vector);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
                          fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PHFO") || fourcc == F("PLIX") || fourcc == F("PGID") || fourcc == F("PBDM") ||
-                         fourcc == F("PDFG") ||
+                         fourcc == F("PDFG") || fourcc == F("PZTS") || fourcc == F("PIVS") ||
+                         fourcc == F("PITP") ||
                          fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||
                          fourcc == F("PVSM"))) ||
                (vfx && fourcc == F("PIRN"))) {
@@ -5689,8 +5776,11 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortSpawnTables();
     } else if (part && fourcc == F("PSMV")) {
       ok = reader.PortMover();
-    } else if (!part && vfx && (fourcc == F("PSRO") || fourcc == F("PRAF") || fourcc == F("XFMD") || fourcc == F("PDFG"))) {
+    } else if (!part && vfx && (fourcc == F("PSRO") || fourcc == F("PRAF") || fourcc == F("XFMD") || fourcc == F("PDFG") ||
+                          fourcc == F("PZTS"))) {
       ok = reader.PortWord();
+    } else if (part && fourcc == F("PISV")) {
+      ok = reader.PortWord() && reader.Element(Type::Real);
     } else if (!part && vfx && fourcc == F("PRAZ")) {
       ok = reader.Element(Type::Vector);
     } else if (!part && vfx && fourcc == F("PROZ")) {

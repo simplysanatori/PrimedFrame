@@ -521,6 +521,8 @@ public:
   bool xPortPemvStarted = false;
   void PortStepPemv();
   const CVector3f& PortEmitterVelocity() const { return xPortPemvDelta; }
+  // PZTS (Remastered ZTES 0): the depth test passes everywhere (static render state compare 1 = ALWAYS)
+  bool PortNoZTest() const { return x28_loadedGenDesc->xPortNoZTest; }
 
 private:
   bool PortHasMover() const;

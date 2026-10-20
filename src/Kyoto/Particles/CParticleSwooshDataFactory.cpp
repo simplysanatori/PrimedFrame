@@ -166,6 +166,11 @@ bool CParticleSwooshDataFactory::CreateWPSM(CSwooshDescription* swoosh, CInputSt
       }
       swoosh->xPortRotZ.reset(CParticleDataFactory::GetRealElement(in));
       break;
+    // Port-only: Remastered's ZTES 0 (xPortNoZTest).
+    case 'PZTS':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortNoZTest = in.ReadLong() == 0;
+      break;
     // Port-only: Remastered's DFOG 1 (xPortUnfogged).
     case 'PDFG':
       CParticleDataFactory::GetClassID(in);

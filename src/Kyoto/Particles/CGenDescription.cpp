@@ -111,6 +111,7 @@ CGenDescription::~CGenDescription() {
   delete xPortNestedLightInnerRadius;
   delete xPortNestedLightOuterRadius;
   delete xPortIntScale;
+  delete xPortInheritVel;
   delete xPortIntRotation;
   delete xPortIntTranslation;
 #endif
