@@ -54,9 +54,12 @@ jobs:
         run: |
           cmake --build build-msvc -- -k 0 2>&1 | Tee-Object -FilePath build.log
           $code = $LASTEXITCODE
-          Select-String -Path build.log -Pattern ': (fatal )?error [A-Z]+[0-9]+' |
-            ForEach-Object { $_.Line.Trim() } | Sort-Object -Unique | Set-Content errors.txt
-          $count = (Get-Content errors.txt | Measure-Object -Line).Lines
+          # With no errors the pipeline is empty and Set-Content writes no
+          # file, so collect into an array and always write errors.txt.
+          $errors = @(Select-String -Path build.log -Pattern ': (fatal )?error [A-Z]+[0-9]+' |
+            ForEach-Object { $_.Line.Trim() } | Sort-Object -Unique)
+          [IO.File]::WriteAllLines("$PWD/errors.txt", [string[]]$errors)
+          $count = $errors.Count
           "$count distinct errors" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           if ($code -ne 0) { exit $code }
 
