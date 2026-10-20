@@ -211,6 +211,9 @@ CElementGen::CElementGen(TToken< CGenDescription > gen, EModelOrientationType or
 #endif
 {
 #ifdef TARGET_PC
+  xPortIntFrame = (x28_loadedGenDesc->xPortIntRotation != nullptr ||
+                   x28_loadedGenDesc->xPortIntTranslation != nullptr) &&
+                  x28_loadedGenDesc->xPortXfmd != kPortXfmdFollowUnscaled;
   xPortVars.Init(x28_loadedGenDesc->xPortVars.get());
   xPortVars.InitSys(x28_loadedGenDesc->xPortSys.get());
   // A child is built inside its parent's update (or constructor), whose memory is current.
@@ -482,6 +485,11 @@ void CElementGen::PortFollowEmitter(const CTransform4f& before) {
 
 void CElementGen::SetTranslation(const CVector3f& translation) {
 #ifdef TARGET_PC
+  if (xPortIntFrame) {
+    xPortExtTranslation = translation;
+    PortApplyIntFrame(true);
+    return;
+  }
   const CTransform4f portBefore = PortFollowsEmitter() ? PortEmitterFrame() : CTransform4f::Identity();
 #endif
   xdc_translation = translation;
@@ -512,6 +520,11 @@ void CElementGen::SetGlobalTranslation(const CVector3f& translation) {
   if (xPortGlobalGeneration != gen) {
     xPortPrevGlobalTranslation = xPortGlobalGeneration == 0 ? translation : xe8_globalTranslation;
     xPortGlobalGeneration = gen;
+  }
+  if (xPortIntFrame) {
+    xe8_globalTranslation = translation;
+    PortApplyIntFrame(true);
+    return;
   }
   // A mover's frame is held in world space (PortEmitterFrame), so it does not move with GT.
   const CTransform4f portBefore = PortHasMover() ? PortEmitterFrame() : CTransform4f::Identity();
@@ -619,6 +632,11 @@ void CElementGen::SetLocalScale(const CVector3f& scale) {
 
 void CElementGen::SetOrientation(const CTransform4f& orientation) {
 #ifdef TARGET_PC
+  if (xPortIntFrame) {
+    xPortExtOrientation = orientation;
+    PortApplyIntFrame(true);
+    return;
+  }
   const CTransform4f portBefore = PortFollowsEmitter() ? PortEmitterFrame() : CTransform4f::Identity();
 #endif
   x1d8_orientation = orientation;
@@ -639,6 +657,11 @@ void CElementGen::SetOrientation(const CTransform4f& orientation) {
 
 void CElementGen::SetGlobalOrientation(const CTransform4f& orientation) {
 #ifdef TARGET_PC
+  if (xPortIntFrame) {
+    xPortExtGlobalOrientation.SetRotation(orientation);
+    PortApplyIntFrame(true);
+    return;
+  }
   const CTransform4f portBefore = PortFollowsEmitter() ? PortEmitterFrame() : CTransform4f::Identity();
 #endif
   x22c_globalOrientation.SetRotation(orientation);
@@ -655,6 +678,72 @@ void CElementGen::SetGlobalOrientation(const CTransform4f& orientation) {
 #endif
   }
 }
+
+#ifdef TARGET_PC
+// CParticleDescription::Compile 0x289af0 (XFMD != 5): the system orientation (+0x38) and
+// translation (+0x3c) are INTR's and INTT's when authored, in place of the external ones; they
+// read those only through EXTR/EXTT. XFMD 2 bakes them at spawn (Q_l, vec 0x12 = T / S) with an
+// identity, zero global frame; 3 makes them the live global frame (SetupTransformMode 0x2887d8).
+// The port puts both in x1d8/xdc with x22c identity, which its spawn bakes and PortEmitterFrame
+// follows, and keeps xe8 the owner's so the presented-translation tracking is unchanged. Children
+// get the system values as their external ones (SetupSpawn +0x298/+0x29c, 0x246508).
+void CElementGen::PortApplyIntFrame(bool force) {
+  const CGenDescription& desc = *x28_loadedGenDesc;
+  CVector3f euler = CVector3f::Zero();
+  CVector3f translation = PortExternalTranslation();
+  {
+    CParticleGlobals::SParticleSystem thisSystem('PART', this);
+    CPortVarScope portVarScope(&xPortVars);
+    if (desc.xPortIntRotation != nullptr) {
+      desc.xPortIntRotation->GetValue(x74_curFrame, euler);
+    }
+    if (desc.xPortIntTranslation != nullptr) {
+      desc.xPortIntTranslation->GetValue(x74_curFrame, translation);
+    }
+  }
+  if (!force && euler == xPortIntEuler && translation == xPortIntTranslation) {
+    return;
+  }
+  xPortIntEuler = euler;
+  xPortIntTranslation = translation;
+  const CTransform4f portBefore = PortFollowsEmitter() ? PortEmitterFrame() : CTransform4f::Identity();
+  if (desc.xPortIntRotation != nullptr) {
+    // PINR's Euler vector as PMRT's is turned into a rotation.
+    CTransform4f rotation = CTransform4f::RotateZ(CRelAngle::FromDegrees(euler.GetZ()));
+    rotation.RotateLocalY(CRelAngle::FromDegrees(euler.GetY()));
+    rotation.RotateLocalX(CRelAngle::FromDegrees(euler.GetX()));
+    x22c_globalOrientation = CTransform4f::Identity();
+    x1d8_orientation = rotation;
+  } else {
+    x22c_globalOrientation = xPortExtGlobalOrientation;
+    x1d8_orientation = xPortExtOrientation;
+  }
+  x208_orientationInverse = x1d8_orientation.GetQuickInverse().BuildMatrix3f();
+  xdc_translation =
+      desc.xPortIntTranslation != nullptr ? translation - xe8_globalTranslation : xPortExtTranslation;
+  PortFollowEmitter(portBefore);
+  for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
+    CParticleGen* ch = *it;
+    const PortKssmChild* state = xPortKssmChildren.empty() ? nullptr : PortFindKssmChild(ch);
+    ch->SetGlobalTranslation(xe8_globalTranslation);
+    if (state != nullptr) {
+      ch->SetTranslation(state->pos - xe8_globalTranslation); // its component places it
+    } else if (ch->Get4CharId() == 'ELSC') {
+      ch->SetTranslation(xdc_translation + x2c0_SEPO);
+    } else if (ch->Get4CharId() == 'SWHC') {
+      ch->SetTranslation(xdc_translation + x2b0_SSPO);
+    } else {
+      ch->SetTranslation(xdc_translation);
+    }
+    ch->SetGlobalOrientation(x22c_globalOrientation);
+    if (state != nullptr && state->hasRot) {
+      ch->SetOrientation(x22c_globalOrientation.GetQuickInverse() * state->rot);
+    } else {
+      ch->SetOrientation(x1d8_orientation);
+    }
+  }
+}
+#endif
 
 void CElementGen::SetGlobalOrientAndTrans(const CTransform4f& xf) {
   SetGlobalOrientation(xf);
@@ -682,6 +771,9 @@ const bool CElementGen::Update(double dt) {
     PortEvalSys(true);
     if (x28_loadedGenDesc->xPortIntScale != nullptr) {
       PortSetSystemScale(PortSystemScale());
+    }
+    if (xPortIntFrame) {
+      PortApplyIntFrame(true);
     }
     PortInitMover();
   }
@@ -1476,8 +1568,8 @@ void CElementGen::PortKssmEvaluate(PortKssmChild& state) {
 void CElementGen::PortGlobalFrame(CVector3f& t, CQuaternion& q, CVector3f& s) const {
   switch (x28_loadedGenDesc->xPortXfmd) {
   case kPortXfmdFollow:
-    t = PortExternalTranslation();
-    q = PortExternalRotation();
+    t = PortSystemTranslation();
+    q = PortSystemRotation();
     s = PortExternalScale();
     break;
   case kPortXfmdFollowUnscaled:
@@ -1581,6 +1673,9 @@ void CElementGen::PortStepMover() {
       PortSetSystemScale(scale);
     }
   }
+  if (xPortIntFrame) {
+    PortApplyIntFrame(false);
+  }
   if (xPortMover.kssm == nullptr) {
     return;
   }
@@ -1592,14 +1687,15 @@ void CElementGen::PortStepMover() {
 
 // CVEVelocityCalc (SetupTransformMode 0x2893f8): V12(f) - V12(f-1), 0 at the first, no time step.
 // V12 is the reciprocal of the system scale times its translation, per component (CVEReciprocal
-// then multiply, not a division), plus the constant POFS under XFMD 5 (the CVEAdd at 0x289338).
+// then multiply, not a division), plus the constant POFS (Remastered's INTT) under XFMD 5 (the
+// CVEAdd at 0x289338).
 // The delta is in the port's axes and the converter's BSIS takes it into Remastered's.
 void CElementGen::PortStepPemv() {
   const u8 mode = x28_loadedGenDesc->xPortPemv;
   if (mode == 0) {
     return;
   }
-  const CVector3f t = mode >= 2 ? xdc_translation : PortExternalTranslation();
+  const CVector3f t = mode >= 2 ? xdc_translation : PortSystemTranslation();
   const CVector3f s = PortExternalScale();
   CVector3f cur((1.f / s.GetX()) * t.GetX(), (1.f / s.GetY()) * t.GetY(), (1.f / s.GetZ()) * t.GetZ());
   if (mode == 3) {
@@ -4144,7 +4240,14 @@ bool CElementGen::IsIndirectTextured() const {
 
 bool CElementGen::GetParticleEmission() const { return x88_particleEmission; }
 
-const CTransform4f& CElementGen::GetGlobalOrientation() const { return x22c_globalOrientation; }
+const CTransform4f& CElementGen::GetGlobalOrientation() const {
+#ifdef TARGET_PC
+  if (xPortIntFrame) {
+    return xPortExtGlobalOrientation; // what the owner set (PortApplyIntFrame)
+  }
+#endif
+  return x22c_globalOrientation;
+}
 
 const CVector3f& CElementGen::GetGlobalTranslation() const { return xe8_globalTranslation; }
 
