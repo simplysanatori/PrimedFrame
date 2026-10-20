@@ -176,6 +176,11 @@ bool CParticleSwooshDataFactory::CreateWPSM(CSwooshDescription* swoosh, CInputSt
       CParticleDataFactory::GetClassID(in);
       swoosh->xPortUnfogged = in.ReadLong() != 0;
       break;
+    // Port-only: Remastered's DBIS (xPortDepthBias), a constant real.
+    case 'PDBS':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortDepthBias = in.ReadFloat();
+      break;
     // Port-only Remastered transform mode; only 3 (xPortXfmdFollow) and 4 (xPortXfmdMover) are written.
     case 'XFMD': {
       CParticleDataFactory::GetClassID(in);

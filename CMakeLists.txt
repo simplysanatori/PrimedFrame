@@ -989,6 +989,12 @@ if(MP_BUILD_TESTS)
         INCLUDES include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
+    # DBIS (Remastered's particle depth bias, the port-only PDBS): the projection m22 offset.
+    mp_port_test(port_particle_depth_bias_tests
+        SOURCES tests/port_particle_depth_bias.cpp
+        INCLUDES include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
     # CRCV (Remastered's circle with variance, the port-only PCRC).
     mp_port_test(port_circle_variance_tests
         SOURCES tests/port_circle_variance.cpp src/Kyoto/Particles/CParticleGlobals.cpp src/Kyoto/CRandom16.cpp

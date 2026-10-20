@@ -2337,6 +2337,36 @@ void TestInheritedMotion() {
   CHECK_MSG(!has(part, "PZTS") && part.dropped.empty(), "a swoosh's ZTES 1 writes nothing");
 }
 
+// DBIS (Remastered's particle depth bias, desc+0xd4) becomes the port-only PDBS on a generator and
+// a swoosh; 0 is the default and writes nothing.
+void TestDepthBias() {
+  for (float bias : {-0.5f, 0.0f}) {
+    const auto parts = ConvertOne(OneGenerator([bias](auto& o) {
+                                    PutProperty(o, "DBIS", 3);
+                                    PutConstant(o, Bits(bias));
+                                    PutTexr(o, 0x1234ABCD);
+                                  }),
+                                  {});
+    Retail want;
+    want.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
+    if (bias != 0.0f) {
+      want.f("PDBS").f("CNST").w(Bits(bias));
+    }
+    want.end();
+    CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "DBIS becomes PDBS, 0 nothing");
+    CHECK_MSG(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(), "DBIS is exact");
+  }
+  const ConvertedPart swoosh = ConvertSwoosh([](auto& o) {
+    PutProperty(o, "DBIS", 3);
+    PutConstant(o, Bits(-2.0f));
+  });
+  Retail pdbs;
+  pdbs.f("PDBS").f("CNST").w(Bits(-2.0f));
+  CHECK_MSG(std::search(swoosh.part.begin(), swoosh.part.end(), pdbs.bytes.begin(), pdbs.bytes.end()) != swoosh.part.end() &&
+                swoosh.dropped.empty(),
+            "a swoosh's DBIS becomes PDBS");
+}
+
 // GPUA (how much GPU time is free) is 1.0 exactly at a GPU frame time of 14 ms or less.
 void TestGpuAvailability() {
   auto parts = ConvertOne(OneGenerator([](auto& o) {
@@ -4800,6 +4830,7 @@ int main() {
   TestBlendMode();
   TestUnfogged();
   TestInheritedMotion();
+  TestDepthBias();
   TestGpuAvailability();
   TestCurlNoise();
   TestParentRead();

@@ -883,6 +883,11 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortUnfogged = in.ReadLong() != 0;
       break;
+    // Port-only: Remastered's DBIS (xPortDepthBias), a constant real.
+    case SBIG('PDBS'):
+      GetClassID(in);
+      desc->xPortDepthBias = in.ReadFloat();
+      break;
     // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
     case SBIG('VMAT'):
     case SBIG('VMSH'):

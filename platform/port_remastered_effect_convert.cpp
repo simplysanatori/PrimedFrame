@@ -4181,6 +4181,7 @@ public:
     bool noZTest = false;   // ZTES 0, port-only PZTS
     bool noIvse = false;    // IVSE 0, port-only PIVS
     int spreadMode = -1;    // ITPE 1, port-only PITP with EMRV's mode word (-1 none)
+    uint32_t depthBias = 0;  // DBIS as float bits (nonzero), port-only PDBS
     const EffectProperty* mover = nullptr;
     std::vector<uint32_t> portOnly;  // material data, written only with a VMAT
     const bool textured = retail.count(F("TEXR")) != 0;
@@ -4314,6 +4315,19 @@ public:
         AppendBE32(out, F("CNST"));
         AppendBE32(out, mode);
         out.insert(out.end(), inner.begin(), inner.end());
+        continue;
+      }
+      // DBIS is the particle depth bias (desc+0xd4 of CreateGPSM, the SWSH one too; constant only),
+      // a world-unit shift along the view depth that CParticleSceneNode::ConstructDepthBias 0x2b1004
+      // turns into a projection m22 offset (CScopedGraphicsDepthBias::CalculateProjMatrixDepthBias
+      // 0x22a604). Retail has no such property: the port-only PDBS.
+      if ((part || swoosh) && fourcc == F("DBIS")) {
+        uint32_t bits = 0;
+        if (property.value.size() != 1 || !ConstWord(property.value[0], bits)) {
+          result.dropped.push_back("DBIS: not a constant");
+        } else if ((bits & 0x7fffffffu) != 0) {
+          depthBias = bits;
+        }
         continue;
       }
       // PBDM is Remastered's blend mode, from the table CParticleStaticRenderState
@@ -4960,6 +4974,11 @@ public:
       AppendBE32(out, F("PITP"));
       AppendBE32(out, F("CNST"));
       AppendBE32(out, uint32_t(spreadMode));
+    }
+    if (depthBias != 0) {
+      AppendBE32(out, F("PDBS"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, depthBias);
     }
     if ((part || swoosh) && !m_vars.empty()) {
       // Port-only: the effect's PVAR table (names, kinds, defaults) for VARF/VARI/VARV/VARC.
@@ -5750,7 +5769,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if (vfx && (fourcc == F("VPMT") || fourcc == F("VSMT"))) {
       ok = reader.PerParticle(fourcc == F("VSMT"));
     } else if ((part && (fourcc == F("SSZE") || fourcc == F("PIR0") || fourcc == F("POR0"))) ||
-               (vfx && fourcc == F("ITEN"))) {
+               (vfx && (fourcc == F("ITEN") || fourcc == F("PDBS")))) {
       ok = reader.Element(Type::Real);
     } else if (part && (fourcc == F("PINS") || fourcc == F("PINR") || fourcc == F("PINT"))) {
       ok = reader.Element(Type::Vector);

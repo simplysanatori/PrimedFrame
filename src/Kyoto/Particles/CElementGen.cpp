@@ -16,6 +16,7 @@
 #include "Kyoto/Math/CVector3f.hpp"
 #include "Kyoto/Math/CloseEnough.hpp"
 #include "Kyoto/Particles/CGenDescription.hpp"
+#include "Kyoto/Particles/CParticleDepthBias.hpp"
 #include "Kyoto/Particles/CParticleElectric.hpp"
 #include "Kyoto/Particles/CParticleGlobals.hpp"
 #include "Kyoto/Particles/CParticleSwoosh.hpp"
@@ -2299,6 +2300,7 @@ void CElementGen::Render() {
   CStopwatch timer;
 #ifdef TARGET_PC
   PortFx::RenderScope fxScope(x28_loadedGenDesc->xPortUnfogged);
+  CPortParticleDepthBias portDepthBias(*this, x28_loadedGenDesc->xPortDepthBias);
 #endif
 
   x274_backupLightActive = CGraphics::GetLightMask();

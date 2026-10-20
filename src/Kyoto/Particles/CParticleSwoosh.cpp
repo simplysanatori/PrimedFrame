@@ -7,6 +7,7 @@
 #include "Kyoto/Graphics/CTexture.hpp"
 #include "Kyoto/Math/CAABox.hpp"
 #include "Kyoto/Math/CRelAngle.hpp"
+#include "Kyoto/Particles/CParticleDepthBias.hpp"
 #include "Kyoto/Particles/CParticleGlobals.hpp"
 #include "Kyoto/Particles/CSwooshDescription.hpp"
 
@@ -538,6 +539,7 @@ bool CParticleSwoosh::IsSystemDeletable() const {
 void CParticleSwoosh::Render() {
 #ifdef TARGET_PC
   PortFx::RenderScope fxScope(x1c_desc->xPortUnfogged);
+  CPortParticleDepthBias portDepthBias(*this, x1c_desc->xPortDepthBias);
   if (PortFx::gMuteActive && PortFx::IsMuted(*this)) {
     return;
   }

@@ -218,6 +218,9 @@ public:
   // port-only PITP: Remastered's ITPE 1: with several particles born in a tick and a moving system,
   // their positions are spread back along the change of translation (CreateNewParticles 0x24a630).
   bool xPortSpread = false;
+  // port-only PDBS: Remastered's DBIS (desc+0xd4), the depth bias in world units, negative toward the
+  // camera (CPortParticleDepthBias). 0 = none.
+  float xPortDepthBias = 0.f;
   // port-only PSWX: swooshes started beyond SSWH's one, each with its start frame
   struct PortExtraSwoosh {
     TCachedToken< CSwooshDescription > swoosh;
