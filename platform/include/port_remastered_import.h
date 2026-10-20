@@ -103,7 +103,8 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 76: a generator's SVCn/SVRn/SVIn/SVVn tag-1 ILPT is the system's PSLT, which PortEvalSys holds while it runs (PLPT offset 0).
 // 77: recipe 390fc33b (VFX_IceChargeCollision_Lit, the vfx IceChargeCollisionLit feature; the runtime's clustered
 //     light gather from the room lights and the probe from the room env).
-inline constexpr int kEffects = 77;    // port_remastered_effect_import and the particle converters
+// 78: a VFX material's BC5 texture keeps its red and green as (R, G, 0, 1), not grey plus alpha.
+inline constexpr int kEffects = 78;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 inline constexpr int kRooms = 20;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail

@@ -2095,6 +2095,13 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       return remastered.ReadTexture(id, raw, ignored) && ReadTxtrInfo(raw.data(), raw.size(), info, ignored) &&
              info.srgb;
     };
+    effectIO.textureRg = [&](const EffectGuid& id) {
+      std::vector<uint8_t> raw;
+      std::string ignored;
+      TxtrImage info;
+      return remastered.ReadTexture(id, raw, ignored) && ReadTxtrInfo(raw.data(), raw.size(), info, ignored) &&
+             (info.format == kTxtrFormatBc5Unorm || info.format == kTxtrFormatBc5Snorm);
+    };
     effectIO.layers = [&](const EffectGuid& id, int& width, int& height, int& layers, std::vector<uint8_t>& rgba,
                           std::string& effectError) {
       std::vector<uint8_t> raw;

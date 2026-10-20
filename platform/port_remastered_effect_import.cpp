@@ -906,11 +906,36 @@ public:
            m_io.write(Hex8(id) + ".TXTR", EncodeTxtrRgba8(stub));
   }
 
+  // Whether a VFX material's copy of the texture differs from the legacy one: sRGB bytes decode
+  // to linear, and a BC5's grey plus alpha go back to (R, G, 0, 1), the channels a GPU gives
+  // the shader (VFX_DualModColorRamp_Unlit's ramps and the indirect maps read .x and .y).
+  bool VfxCopy(const EffectGuid& id, bool& linear, bool& rg) const {
+    linear = m_io.textureSrgb && m_io.textureSrgb(id);
+    rg = m_io.textureRg && m_io.textureRg(id);
+    return linear || rg;
+  }
+
+  static void ToVfx(std::vector<uint8_t>& rgba, bool linear, bool rg) {
+    for (size_t i = 0; i + 3 < rgba.size(); i += 4) {
+      if (rg) {
+        rgba[i + 1] = rgba[i + 3];
+        rgba[i + 2] = 0;
+        rgba[i + 3] = 0xFF;
+      } else if (linear) {
+        for (size_t c = 0; c < 3; ++c) {
+          rgba[i + c] = SrgbToLinearByte(rgba[i + c]);
+        }
+      }
+    }
+  }
+
   // `vfx`: the texture is sampled by a VFX material, whose shader reads it raw. Remastered's
   // sRGB textures reach its shaders decoded, so those are written as linear values (under an
-  // id of their own, the legacy path wants the sRGB bytes) and filtered as data.
+  // id of their own, the legacy path wants the sRGB bytes) and filtered as data; a BC5 gets
+  // its red and green back (VfxCopy).
   uint32_t Texture(const EffectGuid& id, bool vfx = false) {
-    vfx = vfx && m_io.textureSrgb && m_io.textureSrgb(id);
+    bool linear = false, rg = false;
+    vfx = vfx && VfxCopy(id, linear, rg);
     auto& cache = vfx ? m_vfxTextures : m_textures;
     const auto known = cache.find(id);
     if (known != cache.end()) {
@@ -934,11 +959,7 @@ public:
         image = Resize(image, width, height);
       }
       if (vfx) {
-        for (size_t i = 0; i + 3 < image.rgba.size(); i += 4) {
-          for (size_t c = 0; c < 3; ++c) {
-            image.rgba[i + c] = SrgbToLinearByte(image.rgba[i + c]);
-          }
-        }
+        ToVfx(image.rgba, linear, rg);
       }
       out = m_io.freshId(Hash(id, vfx ? kTxtr ^ 0x5F1Du : kTxtr));
       if (WriteTexture(out, image, vfx ? MapKind::Data : MapKind::Colour)) {
@@ -956,7 +977,8 @@ public:
   // over kMaxAtlasSide. Id 0 when it cannot be.
   // `vfx`: as for Texture(), a linear-light copy (under an id of its own) for a VFX material.
   FlipbookAtlas Flipbook(const EffectGuid& id, bool vfx = false) {
-    vfx = vfx && m_io.textureSrgb && m_io.textureSrgb(id);
+    bool linear = false, rg = false;
+    vfx = vfx && VfxCopy(id, linear, rg);
     auto& cache = vfx ? m_vfxFlipbooks : m_flipbooks;
     const auto known = cache.find(id);
     if (known != cache.end()) {
@@ -1003,11 +1025,7 @@ public:
         }
       }
       if (vfx) {
-        for (size_t i = 0; i + 3 < atlas.rgba.size(); i += 4) {
-          for (size_t c = 0; c < 3; ++c) {
-            atlas.rgba[i + c] = SrgbToLinearByte(atlas.rgba[i + c]);
-          }
-        }
+        ToVfx(atlas.rgba, linear, rg);
       }
       const uint32_t fresh = m_io.freshId(Hash(id, kTxtr ^ (vfx ? 0xF11Cu : 0xF11Bu)));
       if (WriteTexture(fresh, atlas, vfx ? MapKind::Data : MapKind::Colour)) {
