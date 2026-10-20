@@ -467,6 +467,65 @@ void TestVarianceEmitters() {
   }
 }
 
+// BNPS(SLCT(RAND, ARRY(BNID(name, flag)...))) as a SEMR's position: the bone name is a string
+// constant, so the ARRY's entries are not read across it. ATFB: an id, an int as a real, a flag.
+void PutBone(std::vector<uint8_t>& out, const char* name) {
+  PutFourCC(out, "BNID");
+  PutFourCC(out, "CNST");
+  Put32(out, uint32_t(std::strlen(name)));
+  out.insert(out.end(), name, name + std::strlen(name));
+  PutFourCC(out, "CNST");
+  out.push_back(1);
+}
+
+void TestBoneAndFlipbook() {
+  std::vector<uint8_t> out = EmitterEffect();
+  PutFourCC(out, "SEMR");
+  PutFourCC(out, "BNPS");
+  PutFourCC(out, "SLCT");
+  PutFourCC(out, "RAND");
+  PutIntConstant(out, 0);
+  PutIntConstant(out, 2);
+  PutFourCC(out, "ARRY");
+  Put32(out, 2);
+  PutBone(out, "L_ankle");
+  PutBone(out, "Head_1");
+  PutVector(out, 0.0f, 0.0f, 0.0f);
+  FinishEffect(out);
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "BNPS over BNID parses");
+  if (effect.properties.size() == 1 && effect.properties[0].value.size() == 1) {
+    const EffectValue& semr = effect.properties[0].value[0];
+    CHECK_MSG(semr.fourcc == EffectFourCC("SEMR") && semr.args.size() == 2 &&
+                  semr.args[0].fourcc == EffectFourCC("BNPS") && semr.args[0].args.size() == 1 &&
+                  semr.args[0].args[0].fourcc == EffectFourCC("SLCT"),
+              "SEMR holds a BNPS over a SLCT");
+  } else {
+    CHECK_MSG(false, "one EMTR");
+  }
+
+  out.assign(0x3c, 0);
+  std::memcpy(out.data(), "RFRM", 4);
+  std::memcpy(out.data() + 0x14, "GENP", 4);
+  PutGenerator(out, true);
+  const EffectGuid id = Guid(0x20);
+  PutProperty(out, "TEXR", 1);
+  PutFourCC(out, "ATFB");
+  out.insert(out.end(), id.begin(), id.end());
+  PutIntConstant(out, 120);
+  PutFourCC(out, "CNST");
+  out.push_back(1);
+  PutProperty(out, "_END", 4);
+  Put32(out, 0);
+  out.insert(out.end(), {'F', 'O', 'O', 'T'});
+  CHECK_MSG(ParseEffect(out.data(), out.size(), effect, error), "ATFB parses");
+  CHECK_MSG(effect.properties.size() == 1 && effect.properties[0].value.size() == 1 &&
+                effect.properties[0].value[0].fourcc == EffectFourCC("ATFB") &&
+                effect.properties[0].value[0].args.size() == 3,
+            "ATFB has an id and two arguments");
+}
+
 int main() {
   TestParse();
   TestFailure();
@@ -476,6 +535,7 @@ int main() {
   TestGeneratorFlags();
   TestDeepNesting();
   TestVarianceEmitters();
+  TestBoneAndFlipbook();
   if (port_test::Failures() == 0) {
     std::printf("port_remastered_effect: ok\n");
   }

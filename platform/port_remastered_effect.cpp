@@ -45,7 +45,8 @@ constexpr uint32_t kForms[] = {kGpsm,
 
 // Element signatures. Each letter is one argument: e an element, w four raw
 // bytes, b a raw byte, g a 16-byte id, k a keyframe block, K one with the
-// 30-byte header only (KEYF's, which is followed by its input element); '-'
+// 30-byte header only (KEYF's, which is followed by its input element); S a
+// string constant ("CNST", a word length, the characters: BNID's bone name); '-'
 // is no arguments. Alternatives are separated by spaces and tried in order. These are
 // retail's element arities (merged across the int/real/vector/colour/... slots,
 // since the file does not say which slot it is in) with Remastered's changes
@@ -99,6 +100,9 @@ constexpr ElementSig kElementSigs[] = {
     // ANTH is a property whose value is an ANTH element: an id, TRST, two keyframe
     // blocks and a real.
     {"ANTH", "eeeee"},  {"TXP2", "geee"},   {"TXFB", "ge gee geee geeee"},
+    // ATFB (CUVEAnimFlipBookTexture, ctor in GetTextureElement 0x266ba4): an id, the animation time as
+    // an int read as a real, a flag. BNID (CIEBoneIndex, GetIntElement 0x26a910): a bone name and a flag.
+    {"ATFB", "gee"},    {"BNID", "Se"},
 };
 
 // Elements by the type of value they are read as, with typed arguments: I an
@@ -142,6 +146,8 @@ constexpr ElementSig kVectorSigs[] = {
     {"MCBS", "V"},
     // LINV is CVELineWithVariance (GetVectorElement 0x251974): V V I R b.
     {"LINV", "VVIRb"},
+    // CVEBonePosition (GetVectorElement 0x251974, GetValue 0x2a2690): the bone index element.
+    {"BNPS", "e"},
 };
 constexpr ElementSig kModVectorSigs[] = {
     {"NONE", "-"},     {"CNST", "RRR"},   {"GRAV", "V"},     {"WIND", "VR"},   {"EXPL", "RR"},
@@ -868,6 +874,11 @@ public:
           break;
         case 'e':
           AddEnds(next, Element(pos));
+          break;
+        case 'S':
+          if (const size_t end = StringConst(pos)) {
+            AddEnd(next, end);
+          }
           break;
         default:
           AddEnds(next, Typed(pos, TypeIndex(arg)));
@@ -1753,6 +1764,17 @@ private:
     out.push_back(std::move(raw));
   }
 
+  // A string constant as CIEBoneIndex reads one: "CNST", a word length, the characters. Returns the
+  // end, or 0 when it is not one.
+  size_t StringConst(size_t at) const {
+    if (at + 8 > m_size ||
+        (m_reversedFourCC ? ReadLE32(m_data + at) : port::ReadBE32(m_data + at)) != kCnst) {
+      return 0;
+    }
+    const size_t length = ReadLE32(m_data + at + 4);
+    return length < 256 && at + 8 + length <= m_size ? at + 8 + length : 0;
+  }
+
   // Splits [at, end) into the arguments sig[index...].
   bool BuildArgs(size_t at, const std::string& sig, size_t index, size_t end, std::vector<EffectValue>& out) {
     if (index == sig.size()) {
@@ -1778,6 +1800,11 @@ private:
       break;
     case 'e':
       options = Element(at);
+      break;
+    case 'S':
+      if (const size_t end = StringConst(at)) {
+        options = {end};
+      }
       break;
     default:
       options = Typed(at, TypeIndex(sig[index]));
@@ -1811,6 +1838,10 @@ private:
         if (!BuildElement(at, next, value)) {
           continue;
         }
+        break;
+      case 'S':
+        value.kind = EffectValue::Kind::Word;
+        value.word = ReadLE32(m_data + at + 4);
         break;
       default:
         if (!BuildTyped(at, next, TypeIndex(sig[index]), value)) {
