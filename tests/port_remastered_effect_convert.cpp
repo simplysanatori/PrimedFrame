@@ -2716,13 +2716,26 @@ void TestIntFrame() {
     PutConstant(o, Bits(0.4f));
     PutConstant(o, Bits(0.1f));
   };
-  part = convert(2, constant);
-  CHECK_MSG(part.dropped.size() == 1 &&
-                part.dropped[0] == "INTT: a constant under XFMD 2, a world position by the static RE (unconfirmed)",
-            "a constant INTT under XFMD 2 is dropped with the reason");
-  part = convert(5, constant);
   Retail pofs;
   pofs.f("POFS").f("CNST").f("CNST").w(0x80000000u).f("CNST").w(Bits(0.1f)).f("CNST").w(Bits(0.4f));
+  for (int mode : {2, 3}) {
+    part = convert(mode, constant);
+    CHECK_MSG(Contains(part.part, pofs.bytes) && part.dropped.empty() && !Contains(part.part, {'P', 'I', 'N', 'T'}),
+              "a constant INTT under XFMD 2/3 is the retail POFS");
+  }
+  part = convert(2, [&](auto& o) {
+    constant(o);
+    PutProperty(o, "POFS", 3);
+    PutFourCC(o, "CNST");
+    PutConstant(o, 0);
+    PutConstant(o, Bits(1.f));
+    PutConstant(o, 0);
+  });
+  Retail both;
+  both.f("POFS").f("BSIS").f("ADD_");
+  CHECK_MSG(Contains(part.part, both.bytes) && part.dropped.empty() && !Contains(part.part, {'P', 'I', 'N', 'T'}),
+            "a constant INTT and a POFS under XFMD 2 are added");
+  part = convert(5, constant);
   CHECK_MSG(Contains(part.part, pofs.bytes) && part.dropped.empty() && !Contains(part.part, {'P', 'I', 'N', 'T'}),
             "INTT under XFMD 5 is the spawn offset POFS");
 }

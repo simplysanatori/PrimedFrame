@@ -3893,9 +3893,9 @@ public:
         m_pofs = std::max(m_pofs, IsConstantValue(property.value[0]) ? 1u : 2u);
       }
     }
-    // XFMD 5's INTT is written as POFS (below), so it is the offset EMRV adds.
+    // An INTT written as POFS (below, IntIsPofs) is the offset EMRV adds.
     for (const EffectProperty& property : node.properties) {
-      if (m_xfmd == 5 && property.fourcc == F("INTT") && !property.value.empty()) {
+      if (property.fourcc == F("INTT") && !property.value.empty() && IntIsPofs(property)) {
         m_pofs = std::max(m_pofs, IsConstantValue(property.value[0]) ? 1u : 2u);
       }
     }
@@ -4450,10 +4450,11 @@ public:
         continue;
       }
       // INTT, the system translation in place of the external one (Compile 0x289af0). Under XFMD 2
-      // and 3 it is the port-only PINT, the system's world position; only one relative to EXTT is
-      // taken, as one that is not would sit at a fixed world point (s-intrt-20261020 REPORT §3,
-      // unconfirmed at runtime). XFMD 4's mover overrides it. XFMD 5 adds it to each particle's
-      // spawn offset (vec 0x12, SetupTransformMode 0x289338): retail's POFS, added to a POFS.
+      // and 3 one reading EXTT is the port-only PINT, the system's world position. One reading no
+      // EXTT is Retro's carry-over of the retail POFS (s-intrt-20261020 REPORT §7: 6 of 7 paired
+      // cases equal it), written as POFS. XFMD 4's mover overrides it. XFMD 5 adds it to each
+      // particle's spawn offset (vec 0x12, SetupTransformMode 0x289338): retail's POFS, added to a
+      // POFS.
       if (part && fourcc == F("INTT")) {
         std::vector<uint8_t> inner;
         std::string why = "not one element";
@@ -4464,16 +4465,10 @@ public:
           result.dropped.push_back("INTT: under XFMD " + std::to_string(m_xfmd));
           continue;
         }
-        if (property.value.size() == 1 && m_xfmd != 5 && !ContainsElement(property.value[0], F("EXTT"))) {
-          result.dropped.push_back(std::string("INTT: ") +
-                                   (IsConstantValue(property.value[0]) ? "a constant" : "not relative to EXTT") +
-                                   " under XFMD " + std::to_string(m_xfmd) +
-                                   ", a world position by the static RE (unconfirmed)");
-          continue;
-        }
+        const bool asPofs = IntIsPofs(property);
         const EffectProperty* pofs = nullptr;
         for (const EffectProperty& other : node.properties) {
-          if (m_xfmd == 5 && other.fourcc == F("POFS")) {
+          if (asPofs && other.fourcc == F("POFS")) {
             pofs = &other;
           }
         }
@@ -4491,17 +4486,17 @@ public:
           result.dropped.push_back("INTT: " + why);
           continue;
         }
-        if (m_xfmd == 5) {
+        if (asPofs) {
           written.insert(F("POFS"));
         }
-        AppendBE32(out, m_xfmd == 5 ? F("POFS") : F("PINT"));
+        AppendBE32(out, asPofs ? F("POFS") : F("PINT"));
         Basis(F("BSIS"), inner, out);
         continue;
       }
-      // Under XFMD 5 a POFS goes out with the INTT above, added to it.
-      if (part && fourcc == F("POFS") && m_xfmd == 5 &&
+      // A POFS goes out with an INTT written as POFS above, added to it.
+      if (part && fourcc == F("POFS") &&
           std::any_of(node.properties.begin(), node.properties.end(),
-                      [](const EffectProperty& other) { return other.fourcc == F("INTT"); })) {
+                      [this](const EffectProperty& other) { return other.fourcc == F("INTT") && IntIsPofs(other); })) {
         continue;
       }
       const auto found = retail.find(fourcc);
@@ -4883,7 +4878,12 @@ private:
   mutable uint32_t m_xfmd = 2;                      // its XFMD mode, 2 without one
   mutable const EffectValue* m_semrPos = nullptr;   // the position child of the SEMR being written
   mutable int64_t m_maxp = -1;                      // its MAXP when a constant, else -1
-  mutable uint32_t m_pofs = 0;                      // its POFS (and XFMD 5 INTT): 0 none, 1 constant, 2 other
+  // XFMD 5's INTT, and one under XFMD 2/3 that reads no EXTT, is written as retail's POFS.
+  bool IntIsPofs(const EffectProperty& intt) const {
+    return m_xfmd == 5 || ((m_xfmd == 2 || m_xfmd == 3) && intt.value.size() == 1 &&
+                           !ContainsElement(intt.value[0], F("EXTT")));
+  }
+  mutable uint32_t m_pofs = 0;                      // its POFS (and an INTT written as POFS): 0 none, 1 constant, 2 other
   mutable bool m_mp1Space = false;                  // inside MPCB(mod vector): its vectors are retail's
   mutable int m_lifetimeOffset = -1;                // LifetimeOffset of the property being written
 };
