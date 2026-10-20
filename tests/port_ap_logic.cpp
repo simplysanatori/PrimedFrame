@@ -257,6 +257,11 @@ int main() {
     // Another game's item, whatever its id, is the short jingle.
     REQUIRE(std::strcmp(Mp::JingleFile(kBase + 29, false), kShort) == 0);
     REQUIRE(std::strcmp(Mp::JingleFile(123, false), kShort) == 0);
+    // An offline seed's item type picks the same jingle as the AP item id.
+    REQUIRE(std::strcmp(Mp::JingleForItemType(29), kArtifact) == 0);
+    REQUIRE(std::strcmp(Mp::JingleForItemType(4), kShort) == 0);
+    REQUIRE(std::strcmp(Mp::JingleForItemType(22), kItem) == 0);
+    REQUIRE(Mp::JingleForItemType(-1) == nullptr && Mp::JingleForItemType(41) == nullptr);
     // Every location names its jingle object, and the two sides find each other.
     for (size_t i = 0; i < locationCount; ++i) {
       REQUIRE(locations[i].audio != 0 && locations[i].audio != locations[i].pickup);

@@ -332,6 +332,12 @@ const char* JingleFile(int64_t itemId, bool sameGame) {
   }
 }
 
+const char* JingleForItemType(int itemType) {
+  if (itemType < 0 || itemType > kArtifactNewborn)
+    return nullptr;
+  return JingleFile(kItemBase + itemType, true);
+}
+
 bool IsAmmoItem(int64_t itemId, bool& missiles) {
   const int64_t local = itemId - kItemBase;
   if (local == kMissileExpansion || local == kMissileLauncher) {

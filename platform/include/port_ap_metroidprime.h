@@ -107,6 +107,9 @@ int OtherGameModelKey(int64_t flags);
 // the short one for expansions, Energy Tanks, refills and anything that isn't
 // an item of this game; `sameGame` is false for another game's item.
 const char* JingleFile(int64_t itemId, bool sameGame);
+// The same for a player-state item type an offline seed placed (0-40, the AP
+// item ids' own range); null for anything else.
+const char* JingleForItemType(int itemType);
 
 } // namespace MetroidPrime
 } // namespace PortAp
