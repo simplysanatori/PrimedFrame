@@ -22,6 +22,7 @@
 #include "MetroidPrime/ScriptObjects/CScriptMemoryRelay.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptMidi.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptPlatform.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptSpiderBallWaypoint.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptStreamedMusic.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptTimer.hpp"
 #include "MetroidPrime/TCastTo.hpp"
@@ -97,19 +98,64 @@ struct PortRoomState {
     p.x25c_currentSpeed = speed;
     p.x260_moveDelay = delay;
   }
-  // Puts a platform at its saved pose and carries its slaves with it, by the path
-  // its own Think moves them (slaves keep only their offset from the room load, so
-  // a bare SetTransform leaves the flame jets of a piston where the room loaded
-  // them). A slave with a saved pose of its own gets it after this.
-  static void RestorePlatformPose(CStateManager& mgr, CScriptPlatform& p, const CTransform4f& xf) {
-    const CVector3f delta = xf.GetTranslation() - p.GetTranslation();
+  // Applies `move` (the platform's step from its loaded pose to its saved one) to
+  // every slave, nested platforms' too, and keeps each slave's offset the way
+  // CScriptActorRotate leaves it after a turn (orientation, translation from the
+  // platform), so the next turn starts from the restored pose. Returns whether a
+  // spider ball waypoint moved.
+  static bool CarrySlaves(CStateManager& mgr, CScriptPlatform& p, const CTransform4f& move,
+                          CScriptPlatform::TMovedList& moved) {
+    bool waypoints = false;
+    rstl::vector< SRiders >* lists[] = {&p.x328_slavesStatic, &p.x338_slavesDynamic};
+    for (rstl::vector< SRiders >* list : lists) {
+      for (rstl::vector< SRiders >::iterator it = list->begin(); it != list->end(); ++it) {
+        CActor* act = TCastToPtr< CActor >(mgr.ObjectById(it->x0_uid));
+        if (act == nullptr || CScriptPlatform::IsInMovedList(act->GetUniqueId(), moved))
+          continue;
+        moved.push_back(act->GetUniqueId().Value());
+        act->SetTransform(move * act->GetTransform());
+        CTransform4f offset = act->GetTransform();
+        offset.SetTranslation(act->GetTranslation() - p.GetTranslation());
+        it->x8_transform = offset;
+        if (TCastToPtr< CScriptSpiderBallWaypoint >(act) != nullptr)
+          waypoints = true;
+        if (CScriptPlatform* child = TCastToPtr< CScriptPlatform >(act))
+          waypoints |= CarrySlaves(mgr, *child, move, moved);
+      }
+    }
+    return waypoints;
+  }
+  // Puts a platform at its saved pose and carries its slaves with it, turned as well
+  // as moved (slaves keep only their pose from the room load, so a bare SetTransform
+  // leaves the flame jets of a piston where the room loaded them, and Ore
+  // Processing's spider tracks unturned on a turned column, issue #172). A slave
+  // with a saved pose of its own gets it after this. Returns whether a spider ball
+  // waypoint moved.
+  static bool RestorePlatformPose(CStateManager& mgr, CScriptPlatform& p, const CTransform4f& xf) {
+    const CTransform4f move = xf * p.GetTransform().GetInverse();
     p.SetTransform(xf);
     CScriptPlatform::TMovedList moved;
     moved.push_back(p.GetUniqueId().Value());
-    p.DragSlaves(mgr, moved, delta);
+    const bool waypoints = CarrySlaves(mgr, p, move, moved);
     // A delta PreThink worked out from the pose before this one would move the
     // slaves again on the next Think.
     p.x270_dragDelta = CVector3f::Zero();
+    return waypoints;
+  }
+  // What CScriptActorRotate does after turning a waypoint: every waypoint's path and
+  // touch bounds are rebuilt from the poses now in place.
+  static void RebuildSpiderBallWaypoints(CStateManager& mgr) {
+    std::vector< CScriptSpiderBallWaypoint* > waypoints;
+    CObjectList& list = mgr.ObjectListById(kOL_All);
+    for (int i = list.GetFirstObjectIndex(); i != -1; i = list.GetNextObjectIndex(i))
+      if (CScriptSpiderBallWaypoint* wp = TCastToPtr< CScriptSpiderBallWaypoint >(list[i]))
+        waypoints.push_back(wp);
+    for (CScriptSpiderBallWaypoint* wp : waypoints)
+      wp->ClearWaypoints();
+    for (CScriptSpiderBallWaypoint* wp : waypoints) {
+      wp->BuildWaypointListAndBounds(mgr);
+      wp->SetTransformDirty(true);
+    }
   }
 };
 
@@ -448,8 +494,9 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomAp
 
 // The saved platform poses of the areas applied now, each carrying its slaves,
 // parents ahead of the platforms they carry. ApplyObject then sets the same pose
-// again (a no-op) and the absolute pose of any saved slave.
-void RestorePlatforms(CStateManager& mgr, const RoomState& room, const std::set< int >& now) {
+// again (a no-op) and the absolute pose of any saved slave. Returns whether a
+// spider ball waypoint moved.
+bool RestorePlatforms(CStateManager& mgr, const RoomState& room, const std::set< int >& now) {
   struct Saved {
     CScriptPlatform* platform;
     CTransform4f xf;
@@ -481,10 +528,12 @@ void RestorePlatforms(CStateManager& mgr, const RoomState& room, const std::set<
   if (!PlatformRestoreOrder(parents, order)) {
     // Each platform still gets its saved pose from ApplyObject, without its slaves.
     PortLog::Write("[savestate] platforms carry each other in a cycle; their slaves stay as loaded\n");
-    return;
+    return false;
   }
+  bool waypoints = false;
   for (size_t i : order)
-    PortRoomState::RestorePlatformPose(mgr, *saved[i].platform, saved[i].xf);
+    waypoints |= PortRoomState::RestorePlatformPose(mgr, *saved[i].platform, saved[i].xf);
+  return waypoints;
 }
 
 
@@ -698,7 +747,7 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
     mgr.DeleteObjectRequest(uid);
     ++stats.removed;
   }
-  RestorePlatforms(mgr, room, now);
+  const bool waypointsMoved = RestorePlatforms(mgr, room, now);
   std::vector< const RoomObject* > copies;
   for (const RoomObject& obj : room.objects) {
     if (now.count(TEditorId(obj.editorId).AreaNum()) == 0)
@@ -732,6 +781,8 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
     ApplyObject(mgr, *ent, *obj, stats);
     ++stats.generated;
   }
+  if (waypointsMoved)
+    PortRoomState::RebuildSpiderBallWaypoints(mgr);
   done.insert(done.end(), now.begin(), now.end());
   return waiting;
 }
