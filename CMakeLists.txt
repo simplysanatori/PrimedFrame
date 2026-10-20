@@ -82,6 +82,9 @@ endfunction()
 # /vmg uses the general representation everywhere, as Itanium's fixed one does.
 if(MSVC)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/vmg>)
+    # cl.exe reports __cplusplus as 199711L without this whatever the standard,
+    # so the SDK's AUTO fell back to __typeof__, which it lacks (issue #170).
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/Zc:__cplusplus>)
 endif()
 
 if(MP_ANDROID_NOD_STUB)
