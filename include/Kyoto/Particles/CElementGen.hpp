@@ -123,8 +123,19 @@ public:
   virtual void SetParticleEmission(const bool emission) override;
   virtual void SetModulationColor(const CColor& col) override;
   virtual void SetGeneratorRate(float rate) override;
+#ifdef TARGET_PC
+  // With INTR/INTT the owner reads back what it set, as Remastered's getters return the external
+  // vars (0x24d880/0x24d8ac); the system's own are PortSystemRotation/PortSystemTranslation.
+  virtual const CTransform4f& GetOrientation() const override {
+    return xPortIntFrame ? xPortExtOrientation : x1d8_orientation;
+  }
+  virtual const CVector3f& GetTranslation() const override {
+    return xPortIntFrame ? xPortExtTranslation : xdc_translation;
+  }
+#else
   virtual const CTransform4f& GetOrientation() const override { return x1d8_orientation; }
   virtual const CVector3f& GetTranslation() const override { return xdc_translation; }
+#endif
   virtual const CTransform4f& GetGlobalOrientation() const override;
   virtual const CVector3f& GetGlobalTranslation() const override;
   virtual const CVector3f& GetGlobalScale() const override { return x100_globalScale; }
@@ -243,9 +254,19 @@ public:
   CVector3f PortSystemOrigin() const { return PortWorldFromLocal(xdc_translation); }
   // Remastered's external translation/rotation/scale (EXTT/EXTR/EXTS, system vars 0xb/0xc/0xa):
   // what the owner hands CParticleGen::SetExternalDataSet 0x27b3d8. Remastered has one translation,
-  // one rotation and no local scale; the port's retail split is folded into them.
-  CVector3f PortExternalTranslation() const { return xe8_globalTranslation + xdc_translation; }
+  // one rotation and no local scale; the port's retail split is folded into them. With INTT/INTR
+  // (PINT/PINR) they are what the owner set, not the system's own (PortApplyIntFrame).
+  CVector3f PortExternalTranslation() const {
+    return xe8_globalTranslation + (xPortIntFrame ? xPortExtTranslation : xdc_translation);
+  }
   CQuaternion PortExternalRotation() const {
+    return xPortIntFrame ? CQuaternion::FromMatrix(xPortExtGlobalOrientation * xPortExtOrientation)
+                         : PortSystemRotation();
+  }
+  // The system translation/rotation (Compile 0x289af0 +0x3c/+0x38): INTT/INTR's when authored,
+  // else the external ones.
+  CVector3f PortSystemTranslation() const { return xe8_globalTranslation + xdc_translation; }
+  CQuaternion PortSystemRotation() const {
     return CQuaternion::FromMatrix(x22c_globalOrientation * x1d8_orientation);
   }
   CVector3f PortExternalScale() const {
@@ -497,6 +518,18 @@ private:
   void PortSetSystemScale(const CVector3f& scale);
   // The scale the owner (or parent) set, which EXTS reads; x100_globalScale is the system's.
   CVector3f xPortExternalScale{1.f, 1.f, 1.f};
+  // The system orientation and translation: INTR (PINR) and INTT (PINT) evaluated, applied as
+  // x22c = identity, x1d8 = INTR and xdc = INTT - xe8 (xe8 stays the owner's), and handed to the
+  // children. force = the external values changed; otherwise only a changed value is applied.
+  void PortApplyIntFrame(bool force);
+  // A PINR or PINT outside XFMD 4 (whose mover overrides them): the setters keep the owner's
+  // orientations and local translation here, which EXTR/EXTT and the getters read.
+  bool xPortIntFrame = false;
+  CTransform4f xPortExtOrientation = CTransform4f::Identity();
+  CTransform4f xPortExtGlobalOrientation = CTransform4f::Identity();
+  CVector3f xPortExtTranslation{0.f, 0.f, 0.f};
+  CVector3f xPortIntEuler{0.f, 0.f, 0.f};
+  CVector3f xPortIntTranslation{0.f, 0.f, 0.f};
   void PortVfxUpdateSystem();
   // XFMD 3/4: the spawn-baked part of the emitter's transform, and moving the live particles from
   // one such frame to the next.

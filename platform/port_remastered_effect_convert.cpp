@@ -1543,10 +1543,10 @@ public:
         why = "EMRV under XFMD " + std::to_string(m_xfmd);
         return false;
       }
-      // XFMD 5 adds the generator's POFS element (SetupTransformMode 0x289338, a CVEAdd of the old
-      // +0x58 element) to the local translation over the scale. Only a constant POFS is exact: the
-      // port keeps the value its own update evaluated, where Remastered evaluates the element
-      // again here, which a random or time-varying one would not repeat.
+      // XFMD 5 adds the generator's INTT (SetupTransformMode 0x289338, a CVEAdd of the +0x58
+      // element), written as retail's POFS, to the local translation over the scale. Only a
+      // constant one is exact: the port keeps the value its own update evaluated, where Remastered
+      // evaluates the element again here, which a random or time-varying one would not repeat.
       if (m_xfmd == 5 && m_pofs == 2) {
         why = "EMRV under XFMD 5 with a POFS that is not a constant";
         return false;
@@ -3890,7 +3890,13 @@ public:
         m_xfmd = mode;
       }
       if (property.fourcc == F("POFS") && !property.value.empty()) {
-        m_pofs = IsConstantValue(property.value[0]) ? 1 : 2;
+        m_pofs = std::max(m_pofs, IsConstantValue(property.value[0]) ? 1u : 2u);
+      }
+    }
+    // XFMD 5's INTT is written as POFS (below), so it is the offset EMRV adds.
+    for (const EffectProperty& property : node.properties) {
+      if (m_xfmd == 5 && property.fourcc == F("INTT") && !property.value.empty()) {
+        m_pofs = std::max(m_pofs, IsConstantValue(property.value[0]) ? 1u : 2u);
       }
     }
     m_vars.clear();
@@ -4420,6 +4426,84 @@ public:
         Basis(F("BSSC"), inner, out);
         continue;
       }
+      // INTR, the system orientation in place of the external one (Compile 0x289af0), as the
+      // port-only PINR: an Euler vector in the port's space, as PMRQ's is (ModelRotation); EXTR
+      // inside it reads the external orientation. XFMD 2 bakes it at spawn (Q_l), 3 makes it the
+      // live global frame (SetupTransformMode 0x2887d8); 4's mover overrides it and 5 frees it.
+      // IRND would be drawn again on each evaluation, where Remastered's var holds one draw.
+      if (part && fourcc == F("INTR")) {
+        std::vector<uint8_t> bytes;
+        std::string why;
+        if (m_xfmd == 4 || m_xfmd == 5) {
+          continue;
+        }
+        if (m_xfmd != 2 && m_xfmd != 3) {
+          why = "under XFMD " + std::to_string(m_xfmd);
+        } else if (property.value.size() == 1 && ContainsElement(property.value[0], F("IRND"))) {
+          why = "IRND, drawn again on each evaluation of the system orientation";
+        } else if (ModelRotation(property.value, bytes, why)) {
+          AppendBE32(out, F("PINR"));
+          out.insert(out.end(), bytes.begin(), bytes.end());
+          continue;
+        }
+        result.dropped.push_back("INTR: " + why);
+        continue;
+      }
+      // INTT, the system translation in place of the external one (Compile 0x289af0). Under XFMD 2
+      // and 3 it is the port-only PINT, the system's world position; only one relative to EXTT is
+      // taken, as one that is not would sit at a fixed world point (s-intrt-20261020 REPORT §3,
+      // unconfirmed at runtime). XFMD 4's mover overrides it. XFMD 5 adds it to each particle's
+      // spawn offset (vec 0x12, SetupTransformMode 0x289338): retail's POFS, added to a POFS.
+      if (part && fourcc == F("INTT")) {
+        std::vector<uint8_t> inner;
+        std::string why = "not one element";
+        if (m_xfmd == 4) {
+          continue;
+        }
+        if (m_xfmd != 2 && m_xfmd != 3 && m_xfmd != 5) {
+          result.dropped.push_back("INTT: under XFMD " + std::to_string(m_xfmd));
+          continue;
+        }
+        if (property.value.size() == 1 && m_xfmd != 5 && !ContainsElement(property.value[0], F("EXTT"))) {
+          result.dropped.push_back(std::string("INTT: ") +
+                                   (IsConstantValue(property.value[0]) ? "a constant" : "not relative to EXTT") +
+                                   " under XFMD " + std::to_string(m_xfmd) +
+                                   ", a world position by the static RE (unconfirmed)");
+          continue;
+        }
+        const EffectProperty* pofs = nullptr;
+        for (const EffectProperty& other : node.properties) {
+          if (m_xfmd == 5 && other.fourcc == F("POFS")) {
+            pofs = &other;
+          }
+        }
+        if (pofs != nullptr && pofs->value.size() == 1) {
+          inner.clear();
+          AppendBE32(inner, F("ADD_"));
+          if (!Element(pofs->value[0], Type::Vector, inner, why)) {
+            result.dropped.push_back("POFS: " + why);
+            inner.clear();
+          }
+        } else if (pofs != nullptr) {
+          result.dropped.push_back("POFS: not one element");
+        }
+        if (property.value.size() != 1 || !Element(property.value[0], Type::Vector, inner, why)) {
+          result.dropped.push_back("INTT: " + why);
+          continue;
+        }
+        if (m_xfmd == 5) {
+          written.insert(F("POFS"));
+        }
+        AppendBE32(out, m_xfmd == 5 ? F("POFS") : F("PINT"));
+        Basis(F("BSIS"), inner, out);
+        continue;
+      }
+      // Under XFMD 5 a POFS goes out with the INTT above, added to it.
+      if (part && fourcc == F("POFS") && m_xfmd == 5 &&
+          std::any_of(node.properties.begin(), node.properties.end(),
+                      [](const EffectProperty& other) { return other.fourcc == F("INTT"); })) {
+        continue;
+      }
       const auto found = retail.find(fourcc);
       if (found == retail.end()) {
         result.dropped.push_back(EffectFourCCString(property.fourcc) + ": Remastered only");
@@ -4799,7 +4883,7 @@ private:
   mutable uint32_t m_xfmd = 2;                      // its XFMD mode, 2 without one
   mutable const EffectValue* m_semrPos = nullptr;   // the position child of the SEMR being written
   mutable int64_t m_maxp = -1;                      // its MAXP when a constant, else -1
-  mutable uint32_t m_pofs = 0;                      // its POFS: 0 none, 1 constant, 2 anything else
+  mutable uint32_t m_pofs = 0;                      // its POFS (and XFMD 5 INTT): 0 none, 1 constant, 2 other
   mutable bool m_mp1Space = false;                  // inside MPCB(mod vector): its vectors are retail's
   mutable int m_lifetimeOffset = -1;                // LifetimeOffset of the property being written
 };
@@ -5381,7 +5465,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if ((part && (fourcc == F("SSZE") || fourcc == F("PIR0") || fourcc == F("POR0"))) ||
                (vfx && fourcc == F("ITEN"))) {
       ok = reader.Element(Type::Real);
-    } else if (part && fourcc == F("PINS")) {
+    } else if (part && (fourcc == F("PINS") || fourcc == F("PINR") || fourcc == F("PINT"))) {
       ok = reader.Element(Type::Vector);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
                          fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID") || fourcc == F("PBDM") ||
