@@ -107,7 +107,8 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 79: INTS is the system scale (port-only PINS).
 // 80: INTR and INTT are the system orientation and translation (port-only PINR/PINT); XFMD 5's INTT is POFS.
 // 85: DFOG 1 is the port-only PDFG (the particles are not volumetric-fogged).
-inline constexpr int kEffects = 87;    // port_remastered_effect_import and the particle converters
+// 88: ZTES/IVSE/ISVF/ITPE, DBIS, SHTM/SHTT/PMOV/PMPV/SDTR as port-only tags; a DVVN sprite without SIZE is 1.0.
+inline constexpr int kEffects = 88;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 inline constexpr int kRooms = 21;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps

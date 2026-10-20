@@ -4936,6 +4936,20 @@ public:
       AppendBE32(out, F("SIZE"));
       AppendBE32(out, F("CNST"));
       AppendBE32(out, FloatBits(0.0f));
+    } else if (part && !has(F("SIZE"))) {
+      // DVVN 1..4 makes a sprite's missing SIZE 1.0 (SSpritePrim::Fixup 0x28e640,
+      // GetDefaultParticleSize 0x28e6c8), where retail's default is 0.1.
+      uint32_t dvvn = 0;
+      for (const EffectProperty& property : node.properties) {
+        if (property.fourcc == F("DVVN") && !SmallInteger(property, dvvn)) {
+          dvvn = 0;
+        }
+      }
+      if (dvvn >= 1 && dvvn <= 4) {
+        AppendBE32(out, F("SIZE"));
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, FloatBits(1.0f));
+      }
     }
     // A material instance draws with its texture where there is no TEXR.
     if (material != nullptr && !texture && !electric) {

@@ -2339,6 +2339,40 @@ void TestInheritedMotion() {
 
 // DBIS (Remastered's particle depth bias, desc+0xd4) becomes the port-only PDBS on a generator and
 // a swoosh; 0 is the default and writes nothing.
+// A drawing sprite with DVVN 1..4 and no SIZE gets Remastered's default SIZE 1.0 (retail's is 0.1);
+// DVVN 0 or an authored SIZE writes none.
+void TestDvvnDefaultSize() {
+  const auto one = [](uint8_t dvvn, bool size) {
+    return ConvertOne(OneGenerator([=](auto& o) {
+                        PutProperty(o, "DVVN", 0);
+                        PutFourCC(o, "CNST");
+                        o.push_back(dvvn);
+                        if (size) {
+                          PutProperty(o, "SIZE", 1);
+                          PutConstant(o, Bits(0.5f));
+                        }
+                        PutTexr(o, 0x1234ABCD);
+                      }),
+                      {});
+  };
+  const auto sizes = [](const ConvertedPart& part) {
+    const char tag[4] = {'S', 'I', 'Z', 'E'};
+    int n = 0;
+    for (auto it = part.part.begin(); (it = std::search(it, part.part.end(), tag, tag + 4)) != part.part.end(); ++it) {
+      ++n;
+    }
+    return n;
+  };
+  auto parts = one(4, false);
+  Retail want;
+  want.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("SIZE").f("CNST").w(Bits(1.0f)).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "DVVN 4 without SIZE writes SIZE 1.0");
+  parts = one(0, false);
+  CHECK_MSG(parts.size() == 1 && sizes(parts[0]) == 0, "DVVN 0 writes no SIZE");
+  parts = one(1, true);
+  CHECK_MSG(parts.size() == 1 && sizes(parts[0]) == 1, "an authored SIZE is kept alone");
+}
+
 void TestDepthBias() {
   for (float bias : {-0.5f, 0.0f}) {
     const auto parts = ConvertOne(OneGenerator([bias](auto& o) {
@@ -4915,6 +4949,7 @@ int main() {
   TestUnfogged();
   TestInheritedMotion();
   TestDepthBias();
+  TestDvvnDefaultSize();
   TestShutdownAndPivot();
   TestGpuAvailability();
   TestCurlNoise();
