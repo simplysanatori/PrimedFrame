@@ -181,6 +181,7 @@ static_assert(sizeof(Payload) <= InlineDrawPayloadSize);
 constexpr uint8_t NoScene = 0xff;
 constexpr uint8_t NoMask = 0xff;
 
+// In pieces: MSVC rejects one string literal over 16 KB (adjacent ones join).
 const char* ShaderSource = R"(
 struct U {
   proj: mat4x4f,
@@ -493,7 +494,8 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let uv = in.uv0.xy;
     let d = c1.y * 0.1 * ((sample_raw(S_COLOR, uv, 0).w - 0.5) * sin(tm));
     let uv2 = vec2f(fma(tm, c1.z, fma(d, 2.0, uv.x)), fma(d, 2.0, uv.y));
-    let nm = sample_raw(S_NORMAL, uv2, 0).xy;
+)"
+R"(    let nm = sample_raw(S_NORMAL, uv2, 0).xy;
     let tc = sample_raw(S_COLOR, uv2, 0);
     // vec and tan are camera-local in (x, z, y) order; Remastered's view space is (x, y, -z) of that.
     let N = normalize(vec3f(in.nrm.x, in.nrm.y, -in.nrm.z));
@@ -725,7 +727,8 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
   }
   var col = tone(rgb);
   // Remastered blends in HDR: a sparse web at intensity 35 and alpha 0.2 still adds 7 and blooms white.
-  // The tone map runs before this blend, so an alpha blend brighter than 1 trades alpha for brightness.
+)"
+R"(  // The tone map runs before this blend, so an alpha blend brighter than 1 trades alpha for brightness.
   let hdr = max(rgb.r, max(rgb.g, rgb.b));
   if (BLEND == 0u && hdr > 1.0) {
     alpha = clamp(a * hdr, 0.0, 1.0);

@@ -1335,6 +1335,11 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_ap_scan_hint_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_ap_scan_hint_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # No raw string literal piece grows past MSVC's 16 KB limit (issue #170).
+        add_test(NAME port_msvc_string_limit
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_msvc_string_limit.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_msvc_string_limit PROPERTIES TIMEOUT 30 LABELS port)
         # The map side file reaches its staging, its flush and its load from the
         # card driver, and the save state carries the same data in its blob.
         add_test(NAME port_map_side_wiring
