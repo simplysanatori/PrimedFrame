@@ -749,6 +749,57 @@ bool CVEPortCircle::GetValue(int frame, CVector3f& valOut) const {
   return false;
 }
 
+CVEPortLine::CVEPortLine(CVectorElement* start, CVectorElement* end, CIntElement* count, CRealElement* variance,
+                         u8 shuffle)
+: mStart(start), mEnd(end), mCount(count), mVariance(variance), mShuffle(shuffle) {}
+
+CVEPortLine::~CVEPortLine() {
+  delete mStart;
+  delete mEnd;
+  delete mCount;
+  delete mVariance;
+}
+
+// Children in order (start, end, count, variance); a count below 2 is 1. Only a segment of length
+// 1e-5 or more takes the index (the creation count modulo n, or the shuffler's pick) and the one draw.
+bool CVEPortLine::GetValue(int frame, CVector3f& valOut) const {
+  CVector3f start = CVector3f::Zero();
+  CVector3f end = CVector3f::Zero();
+  int count = 0;
+  float variance = 0.f;
+  mStart->GetValue(frame, start);
+  mEnd->GetValue(frame, end);
+  mCount->GetValue(frame, count);
+  mVariance->GetValue(frame, variance);
+  count = count < 2 ? 1 : count;
+  const float dx = end.GetX() - start.GetX();
+  const float dy = end.GetY() - start.GetY();
+  const float dz = end.GetZ() - start.GetZ();
+  const float len = PortParticleMath::SqrtF((dx * dx + dy * dy) + dz * dz);
+  if (!(std::fabs(len) >= 1e-5f)) {
+    valOut = start;
+    return false;
+  }
+  CRandom16* random = CRandom16::GetRandomNumber();
+  CElementGen* generator = nullptr;
+  const CParticleGlobals::SParticleSystem* system = CParticleGlobals::GetCurrentParticleSystem();
+  if (system != nullptr && CParticleGlobals::xPortSwooshEval == nullptr) {
+    generator = system->x4_system;
+  }
+  int index;
+  if (mShuffle != 0) {
+    PortParticleMath::IndexShuffler& shuffler =
+        generator != nullptr ? generator->PortShuffler(this) : mFallbackShuffler;
+    index = shuffler.Next(mShuffle, [random] { return uint32_t(random->Next()); }) & 0xff;
+  } else {
+    const int total = generator != nullptr ? std::max(generator->GetCumulativeParticleCount() - 1, 0) : 0;
+    index = total % count;
+  }
+  const float d = random->PortFloat28();
+  valOut = PortParticleMath::LinePoint(start, end, count, variance, index, d, len);
+  return false;
+}
+
 CVEPortCone::CVEPortCone(CVectorElement* direction, CRealElement* radius)
 : mDirection(direction), mRadius(radius), mU(0.f, 0.f, 0.f), mV(0.f, 0.f, 0.f) {}
 

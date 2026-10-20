@@ -170,6 +170,100 @@ bool CEEPortAngleSphere::GetValue(int frame, CVector3f& pPos, CVector3f& pVel) c
   pVel = CVector3f(dx * speed, dy * speed, dz * speed);
   return false;
 }
+CEEPortAngleSphereVariance::CEEPortAngleSphereVariance(CVectorElement* origin, CRealElement* rotateX,
+                                                       CRealElement* rotateY, CRealElement* rotateZ,
+                                                       CRealElement* range1, CRealElement* range2,
+                                                       CIntElement* polarCount, CRealElement* polarVariance,
+                                                       CRealElement* azimuthRange, CIntElement* azimuthCount,
+                                                       CRealElement* azimuthVariance, CRealElement* radius,
+                                                       CRealElement* speed, u8 shuffle)
+: mOrigin(origin)
+, mRotate{rotateX, rotateY, rotateZ}
+, mRange1(range1)
+, mRange2(range2)
+, mPolarCount(polarCount)
+, mPolarVariance(polarVariance)
+, mAzimuthRange(azimuthRange)
+, mAzimuthCount(azimuthCount)
+, mAzimuthVariance(azimuthVariance)
+, mRadius(radius)
+, mSpeed(speed)
+, mShuffle(shuffle) {}
+
+CEEPortAngleSphereVariance::~CEEPortAngleSphereVariance() {
+  delete mOrigin;
+  for (CRealElement* angle : mRotate) {
+    delete angle;
+  }
+  delete mRange1;
+  delete mRange2;
+  delete mPolarCount;
+  delete mPolarVariance;
+  delete mAzimuthRange;
+  delete mAzimuthCount;
+  delete mAzimuthVariance;
+  delete mRadius;
+  delete mSpeed;
+}
+
+// ASPV GetValue 0x2cb6b0: children in order (origin, rotation, range 1, range 2, polar count, polar
+// variance, azimuth range, azimuth count, azimuth variance, radius, speed; a count below 2 is 1), the
+// cell index (the creation count modulo the cells, or the shuffler's pick) before the two draws,
+// polar first.
+bool CEEPortAngleSphereVariance::GetValue(int frame, CVector3f& pPos, CVector3f& pVel) const {
+  CVector3f origin = CVector3f::Zero();
+  float angles[3] = {0.f, 0.f, 0.f};
+  float range1 = 0.f;
+  float range2 = 0.f;
+  int polarCount = 0;
+  float polarVariance = 0.f;
+  float azimuthRange = 0.f;
+  int azimuthCount = 0;
+  float azimuthVariance = 0.f;
+  float radius = 0.f;
+  float speed = 0.f;
+  mOrigin->GetValue(frame, origin);
+  for (int i = 0; i < 3; ++i) {
+    mRotate[i]->GetValue(frame, angles[i]);
+  }
+  mRange1->GetValue(frame, range1);
+  mRange2->GetValue(frame, range2);
+  mPolarCount->GetValue(frame, polarCount);
+  mPolarVariance->GetValue(frame, polarVariance);
+  mAzimuthRange->GetValue(frame, azimuthRange);
+  mAzimuthCount->GetValue(frame, azimuthCount);
+  mAzimuthVariance->GetValue(frame, azimuthVariance);
+  mRadius->GetValue(frame, radius);
+  mSpeed->GetValue(frame, speed);
+  polarCount = polarCount < 2 ? 1 : polarCount;
+  azimuthCount = azimuthCount < 2 ? 1 : azimuthCount;
+  CRandom16* random = CRandom16::GetRandomNumber();
+  CElementGen* generator = nullptr;
+  const CParticleGlobals::SParticleSystem* system = CParticleGlobals::GetCurrentParticleSystem();
+  if (system != nullptr && CParticleGlobals::xPortSwooshEval == nullptr) {
+    generator = system->x4_system;
+  }
+  int index;
+  if (mShuffle != 0) {
+    PortParticleMath::IndexShuffler& shuffler =
+        generator != nullptr ? generator->PortShuffler(this) : mFallbackShuffler;
+    index = shuffler.Next(mShuffle, [random] { return uint32_t(random->Next()); }) & 0xff;
+  } else {
+    // Retail counts a particle before its emitter runs; Remastered's total is one less.
+    const int total = generator != nullptr ? std::max(generator->GetCumulativeParticleCount() - 1, 0) : 0;
+    index = total % (polarCount * azimuthCount);
+  }
+  const float d1 = random->PortFloat28();
+  const float d2 = random->PortFloat28();
+  const PortParticleMath::Quat q = PortParticleMath::EulerQuat(angles[0], angles[1], angles[2]);
+  const PortParticleMath::SpherePoint point = PortParticleMath::AngleSphereWithVariance(
+      origin, q, range1, range2, polarCount, polarVariance, azimuthRange, azimuthCount, azimuthVariance, radius,
+      speed, index, d1, d2);
+  pPos = point.position;
+  pVel = point.velocity;
+  return false;
+}
+
 namespace {
 // The Euler matrix and spread both Remastered's factory folds at construction.
 void PortPlaneMatrix(const CVectorElement* euler, float m[9]) {

@@ -72,6 +72,35 @@ private:
   CRealElement* mSpeed;
 };
 
+// Remastered ASPV (CVEAngleSphereWithVariance::GetValue 0x2cb6b0), the REUL as three angles: ASPR's
+// sphere split into polar bands by azimuth sectors, each cell jittered by a draw, the cell the creation
+// count or a shuffler's pick (as PSPV). The origin, position and velocity are in the port's space.
+class CEEPortAngleSphereVariance : public CEmitterElement {
+public:
+  CEEPortAngleSphereVariance(CVectorElement* origin, CRealElement* rotateX, CRealElement* rotateY,
+                             CRealElement* rotateZ, CRealElement* range1, CRealElement* range2, CIntElement* polarCount,
+                             CRealElement* polarVariance, CRealElement* azimuthRange, CIntElement* azimuthCount,
+                             CRealElement* azimuthVariance, CRealElement* radius, CRealElement* speed, u8 shuffle);
+  ~CEEPortAngleSphereVariance();
+
+  bool GetValue(int frame, CVector3f& pPos, CVector3f& pVel) const;
+
+private:
+  CVectorElement* mOrigin;
+  CRealElement* mRotate[3];
+  CRealElement* mRange1;
+  CRealElement* mRange2;
+  CIntElement* mPolarCount;
+  CRealElement* mPolarVariance;
+  CRealElement* mAzimuthRange;
+  CIntElement* mAzimuthCount;
+  CRealElement* mAzimuthVariance;
+  CRealElement* mRadius;
+  CRealElement* mSpeed;
+  u8 mShuffle; // the size of Remastered's index shuffler, 0 for none
+  mutable PortParticleMath::IndexShuffler mFallbackShuffler;
+};
+
 // Remastered PLNE (0x2cc2ec): a point in a plane of half sizes (wx, wz), turned by the Euler
 // matrix, with a spread of the velocity toward the plane's normal. All in Remastered's axes;
 // the position and velocity are turned by the basis (-x, z, y) on the way out.

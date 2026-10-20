@@ -977,6 +977,51 @@ inline SpherePoint SphereWithVariance(const CVector3f& p, float radius, float sp
                      CVector3f(dx * speed, c * speed, dz * speed)};
 }
 
+// ASPV GetValue 0x2cb6b0 (CVEAngleSphereWithVariance): `a` and `b` are the two polar angles in degrees;
+// the polar band of cell `index / nA` is the stratum of cos a .. cos b (FastCosR) split into nP
+// (step (cos a - cos b) / nP, starting at cos b), the azimuth the range `azRange` degrees centred on 0
+// split into nA, each jittered by its draw (d1 polar, d2 azimuth) times its variance. The direction
+// (sin az * s, c, cos az * s), s = sqrt(1 - c * c), is turned by q; the point is origin + radius * that
+// and the velocity speed * that. The origin is in the port's space, the direction is drawn in
+// Remastered's and turned by the basis (-x, z, y) (as ASPR's, CEEPortAngleSphere).
+inline SpherePoint AngleSphereWithVariance(const CVector3f& origin, const Quat& q, float a, float b, int nP,
+                                           float variance1, float azRange, int nA, float variance2, float radius,
+                                           float speed, int index, float d1, float d2) {
+  const float degrees = BitsFloat(0x3c8efa35);
+  const float cosA = FastCosR(a * degrees);
+  const float cosB = FastCosR(b * degrees);
+  const float st1 = (cosA - cosB) / float(nP);
+  const int i1 = index / nA;
+  const int i2 = index - i1 * nA;
+  const float h1 = variance1 * (st1 * .5f);
+  const float st2 = azRange / float(nA);
+  const float h2 = variance2 * (st2 * .5f);
+  const float az = WrapAngle(((st2 * float(i2) + st2 * .5f) + ((h2 + h2) * d2 - h2) - azRange * .5f) * degrees);
+  const float c = ((st1 * .5f + cosB) + st1 * float(i1)) + ((h1 + h1) * d1 - h1);
+  const float s = SqrtF(1.f - c * c);
+  const float sx = s * ParabolicSin(az);
+  const float sz = s * ParabolicSin(WrapAngle(az + BitsFloat(0x3fc90fdb)));
+  const CVector3f d = QuatTransform(q, CVector3f(sx, c, sz));
+  const float dx = -d.GetX();
+  const float dy = d.GetZ();
+  const float dz = d.GetY();
+  return SpherePoint{CVector3f(origin.GetX() + dx * radius, origin.GetY() + dy * radius, origin.GetZ() + dz * radius),
+                     CVector3f(dx * speed, dy * speed, dz * speed)};
+}
+
+// LINV GetValue 0x2a119c (CVELineWithVariance): the point of the segment start..end (length `len`) in
+// the cell `index % n` of n, jittered by the draw d times the variance: the fraction
+// (len / n * .5 + len / n * index + jitter) / len along the way.
+inline CVector3f LinePoint(const CVector3f& start, const CVector3f& end, int n, float variance, int index, float d,
+                           float len) {
+  const float step = len / float(n);
+  const float half = step * .5f;
+  const float g = variance * half;
+  const float t = ((half + step * float(index)) + ((g + g) * d - g)) / len;
+  return CVector3f(start.GetX() + (end.GetX() - start.GetX()) * t, start.GetY() + (end.GetY() - start.GetY()) * t,
+                   start.GetZ() + (end.GetZ() - start.GetZ()) * t);
+}
+
 // CVector3f::IsNormalizable 0x6b030: false when any lane is inf/NaN (exponent all ones), else
 // (x*x + y*y) + z*z >= 1e-28 (0x10fd87b5; not CParticleValues::skMinNormalizableMagSqd).
 inline bool IsNormalizableVec(const CVector3f& v) {

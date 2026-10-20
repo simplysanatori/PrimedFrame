@@ -980,6 +980,14 @@ if(MP_BUILD_TESTS)
         INCLUDES include extern/aurora/include
         DEFINITIONS TARGET_PC VERSION=0
         GC_SECTIONS)
+    # ASPV and LINV (Remastered's angle sphere and line with variance, the port-only PASV and PLWV).
+    mp_port_test(port_variance_emitters_tests
+        SOURCES tests/port_variance_emitters.cpp src/Kyoto/Particles/CParticleGlobals.cpp src/Kyoto/CRandom16.cpp
+            src/Kyoto/Particles/CEmitterElement.cpp src/Kyoto/Particles/CVectorElement.cpp
+            src/Kyoto/Math/CQuaternion.cpp src/Kyoto/Math/CVector3f.cpp src/Kyoto/Math/CMatrix3f.cpp
+        INCLUDES include extern/aurora/include
+        DEFINITIONS TARGET_PC VERSION=0
+        GC_SECTIONS)
     # CRCV (Remastered's circle with variance, the port-only PCRC).
     mp_port_test(port_circle_variance_tests
         SOURCES tests/port_circle_variance.cpp src/Kyoto/Particles/CParticleGlobals.cpp src/Kyoto/CRandom16.cpp

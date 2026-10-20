@@ -538,6 +538,95 @@ void TestSphereConvert() {
             "a zero count with a variable MAXP is dropped, naming it");
 }
 
+// ASPV(origin, REUL, A, B, nP, vP, range, nA, vA, radius, speed, flag) in an EMTR with a MAXP.
+std::vector<ConvertedPart> ConvertAspv(uint32_t maxp, uint32_t nP, uint32_t nA, int flag, std::vector<uint8_t>& out) {
+  EffectNode effect;
+  return ConvertGen(
+      [&](std::vector<uint8_t>& o) {
+        PutProperty(o, "MAXP", 3);
+        PutConstant(o, maxp);
+        PutProperty(o, "EMTR", 3);
+        PutFourCC(o, "ASPV");
+        PutFourCC(o, "CNST");
+        PutConstant(o, Bits(0.0f));
+        PutConstant(o, Bits(0.0f));
+        PutConstant(o, Bits(0.0f));
+        PutFourCC(o, "REUL");
+        PutConstant(o, 0);
+        PutConstant(o, 0);
+        PutConstant(o, 0);
+        o.push_back(0);
+        PutConstant(o, Bits(180.0f));
+        PutConstant(o, Bits(0.0f));
+        PutConstant(o, nP);
+        PutConstant(o, Bits(1.0f));
+        PutConstant(o, Bits(360.0f));
+        PutConstant(o, nA);
+        PutConstant(o, Bits(1.0f));
+        PutConstant(o, Bits(2.0f));
+        PutConstant(o, Bits(3.0f));
+        o.push_back(uint8_t(flag));
+      },
+      effect, out);
+}
+
+void TestAngleSphereVarianceConvert() {
+  std::vector<uint8_t> out;
+  auto parts = ConvertAspv(10, 4, 2, 1, out);
+  Retail tail;
+  tail.f("CNST").w(4).f("CNST").w(Bits(1.0f)).f("CNST").w(Bits(360.0f)).f("CNST").w(2).f("CNST").w(Bits(1.0f))
+      .f("CNST").w(Bits(2.0f)).f("CNST").w(Bits(3.0f)).b(8);
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() && Contains(parts[0].part, Retail().f("PASV").bytes) &&
+                Contains(parts[0].part, tail.bytes),
+            "ASPV converts to PASV, constant counts, 8-cell shuffler, nothing dropped");
+  parts = ConvertAspv(10, 0, 0, 0, out);
+  Retail grid;
+  grid.f("CNST").w(3).f("CNST").w(Bits(1.0f)).f("CNST").w(Bits(360.0f)).f("CNST").w(3);
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() && Contains(parts[0].part, grid.bytes),
+            "ASPV with MAXP 10 and zero counts: a 3 x 3 grid");
+}
+
+// LINV(start, end, n, variance, flag) as a SEMR's position.
+std::vector<ConvertedPart> ConvertLinv(uint32_t n, int flag, std::vector<uint8_t>& out) {
+  EffectNode effect;
+  auto vec = [](std::vector<uint8_t>& o, float x, float y, float z) {
+    PutFourCC(o, "CNST");
+    PutConstant(o, Bits(x));
+    PutConstant(o, Bits(y));
+    PutConstant(o, Bits(z));
+  };
+  return ConvertGen(
+      [&](std::vector<uint8_t>& o) {
+        PutProperty(o, "MAXP", 3);
+        PutConstant(o, 5);
+        PutProperty(o, "EMTR", 3);
+        PutFourCC(o, "SEMR");
+        PutFourCC(o, "LINV");
+        vec(o, 0, 0, 0);
+        vec(o, 10, 0, 0);
+        PutConstant(o, n);
+        PutConstant(o, Bits(1.0f));
+        o.push_back(uint8_t(flag));
+        vec(o, 0, 0, 0);
+      },
+      effect, out);
+}
+
+void TestLineVarianceConvert() {
+  std::vector<uint8_t> out;
+  auto parts = ConvertLinv(4, 1, out);
+  Retail tail;
+  tail.f("CNST").w(4).f("CNST").w(Bits(1.0f)).b(4);
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() && Contains(parts[0].part, Retail().f("PLWV").bytes) &&
+                Contains(parts[0].part, tail.bytes),
+            "LINV converts to PLWV with a 4-cell shuffler, nothing dropped");
+  parts = ConvertLinv(0, 1, out);
+  Retail zero;
+  zero.f("CNST").w(5).f("CNST").w(Bits(1.0f)).b(5);
+  CHECK_MSG(parts.size() == 1 && parts[0].dropped.empty() && Contains(parts[0].part, zero.bytes),
+            "LINV with a zero count in a SEMR's position takes MAXP");
+}
+
 // ELPS(centre, size, euler, speed, flag).
 std::vector<ConvertedPart> ConvertElps(bool zeroEuler, int flag, std::vector<uint8_t>& out) {
   EffectNode effect;
@@ -582,6 +671,8 @@ int main() {
   TestNonConstantCounts();
   TestSphereConvert();
   TestEllipsoidConvert();
+  TestAngleSphereVarianceConvert();
+  TestLineVarianceConvert();
   if (port_test::Failures() == 0) {
     std::printf("port_elem2_convert: ok\n");
   }

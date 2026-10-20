@@ -199,6 +199,8 @@ const Signatures& ElementsOf(Type type) {
       {F("ABS_"), "v"},
       // Port-only PEMV: Remastered's EMRV, the mode word (0 external translation, 1 local).
       {F("PEMV"), "#"},
+      // Port-only PLWV: Remastered's LINV (start, end, count, variance, shuffler size).
+      {F("PLWV"), "vvird"},
   };
   static const Signatures modVectorElements = {
       {F("NONE"), ""},     {F("CNST"), "rrr"},  {F("GRAV"), "v"},    {F("WIND"), "vr"},  {F("EXPL"), "rr"},
@@ -216,6 +218,9 @@ const Signatures& ElementsOf(Type type) {
       {F("NONE"), ""}, {F("SEMR"), "vv"}, {F("SPHE"), "vrr"}, {F("ASPH"), "vrrrrrr"},
       // Port-only CEEPortAngleSphere: Remastered's ASPR with its REUL as three angles.
       {F("ASPR"), "vrrrrrrr"},
+      // Port-only PASV: Remastered's ASPV (origin, REUL as three angles, polar range 1 and 2, polar
+      // count and variance, azimuth range, count and variance, radius, speed, shuffler size).
+      {F("PASV"), "vrrrrrirrirrrd"},
       // PLNE (position, euler, velocity, x and z half-extent, spread) and the port-only PLNV
       // (position, euler, velocity y, x and z half-extent, spread, x count and variance, z count
       // and variance, then the shuffle byte): Remastered's plane emitters, all in its axes.
@@ -1315,6 +1320,80 @@ public:
       }
       return true;
     }
+    // ASPV(origin, REUL, A, B, polar count, polar variance, azimuth range, azimuth count, azimuth
+    // variance, radius, speed, shuffle): the port-only PASV (CVEAngleSphereWithVariance::GetValue
+    // 0x2cb6b0), the REUL as three angles like ASPR's. The counts and the shuffler are SPEV's
+    // (Compile2d 0x2a6b90 after Init 0x2a69b8, as CVEAngleSphereWithVariance::Compile 0x2cbc08).
+    if (value.fourcc == F("ASPV") && type == Type::Emitter && value.args.size() == 12) {
+      const EffectValue& flag = value.args[11];
+      if (flag.kind != EffectValue::Kind::Byte && flag.kind != EffectValue::Kind::Word) {
+        why = "ASPV with a shuffle flag that is not a byte";
+        return false;
+      }
+      uint32_t counts[2] = {1, 1};
+      bool known[2] = {false, false};
+      bool anyZero = false;
+      for (int i = 0; i < 2; ++i) {
+        known[i] = ConstWord(value.args[i == 0 ? 4 : 7], counts[i]);
+        if (known[i] && counts[i] > 255) {
+          why = "ASPV with a constant count over 255 (Remastered keeps it in a byte)";
+          return false;
+        }
+        anyZero = anyZero || (known[i] && counts[i] == 0);
+      }
+      uint32_t shuffle = 0;
+      bool resolved = false;
+      if (anyZero) {
+        if (!known[0] || !known[1]) {
+          why = "ASPV with a constant 0 count and a count that is not a constant";
+          return false;
+        }
+        if (m_maxp < 0) {
+          why = "ASPV with a constant 0 count and a MAXP that is not a constant";
+          return false;
+        }
+        const PortParticleMath::SectionCounts grid = PortParticleMath::SectionCompile2d(
+            int(counts[0]), int(counts[1]), counts[0] == 0, counts[1] == 0, PortParticleMath::SectionTotal(int32_t(uint32_t(m_maxp))));
+        counts[0] = uint32_t(grid.n1);
+        counts[1] = uint32_t(grid.n2);
+        resolved = true;
+        if (flag.word != 0) {
+          shuffle = uint32_t(std::max<uint64_t>(uint64_t(counts[0]) * counts[1], 1) & 0xff);
+          if (shuffle == 0) {
+            why = "ASPV with a shuffler of a multiple of 256 cells";
+            return false;
+          }
+        }
+      } else if (flag.word != 0) {
+        if (!known[0] || !known[1]) {
+          why = "ASPV with a shuffler and a count that is not a constant";
+          return false;
+        }
+        shuffle = uint32_t(std::max<uint64_t>(uint64_t(counts[0]) * counts[1], 1) & 0xff);
+        if (shuffle == 0) {
+          why = "ASPV with a shuffler of a multiple of 256 cells";
+          return false;
+        }
+      }
+      AppendBE32(out, F("PASV"));
+      if (!PortVector(value.args[0], out, why) || !ConeRotation(value.args[1], out, why)) {
+        return false;
+      }
+      static const Type kTypes[] = {Type::Vector, Type::Vector, Type::Real, Type::Real, Type::Int, Type::Real,
+                                    Type::Real,   Type::Int,    Type::Real, Type::Real, Type::Real};
+      for (size_t i = 2; i < 11; ++i) {
+        if (resolved && (i == 4 || i == 7)) {
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, counts[i == 4 ? 0 : 1]);
+          continue;
+        }
+        if (!Element(value.args[i], kTypes[i], out, why)) {
+          return false;
+        }
+      }
+      out.push_back(uint8_t(shuffle));
+      return true;
+    }
     // PLNE(position, euler, velocity, wx, wz, spread): the plane emitter. The port's PLNE builds
     // its matrix from the euler and the spread when it is made, so those two must be constants;
     // the arguments stay in Remastered's axes and the emitter turns its outputs to the port's.
@@ -1604,6 +1683,56 @@ public:
       static const Type kTypes[] = {Type::Vector, Type::Vector, Type::Real, Type::Int, Type::Real, Type::Real};
       for (size_t i = 0; i < 6; ++i) {
         if (resolved && i == 3) {
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, count);
+          continue;
+        }
+        if (!Element(value.args[i], kTypes[i], out, why)) {
+          return false;
+        }
+      }
+      out.push_back(uint8_t(shuffle));
+      return true;
+    }
+    // LINV(start, end, count, variance, shuffle): the port-only PLWV (CVELineWithVariance::GetValue
+    // 0x2a119c), in Remastered's numbers like PCRC. The shuffler and a constant 0 count are CRCV's
+    // (Init 0x2a68dc; Compile1d 0x2a6ae4, which CVELineWithVariance::Compile 0x2a1418 also calls,
+    // only for a SEMR's position).
+    if (value.fourcc == F("LINV") && type == Type::Vector && value.args.size() == 5) {
+      const EffectValue& flag = value.args[4];
+      if (flag.kind != EffectValue::Kind::Byte && flag.kind != EffectValue::Kind::Word) {
+        why = "LINV with a shuffle flag that is not a byte";
+        return false;
+      }
+      uint32_t count = 0;
+      const bool known = ConstWord(value.args[2], count);
+      bool resolved = false;
+      uint32_t shuffle = 0;
+      if (known && count == 0) {
+        if (&value != m_semrPos) {
+          why = "LINV with a constant 0 count that is not a SEMR's position";
+          return false;
+        }
+        if (m_maxp < 0) {
+          why = "LINV with a constant 0 count and a MAXP that is not a constant";
+          return false;
+        }
+        count = uint32_t(PortParticleMath::SectionTotal(int32_t(uint32_t(m_maxp))));
+        resolved = true;
+        shuffle = flag.word != 0 ? count & 0xff : 0;
+      } else if (known) {
+        if (count > 255) {
+          why = "LINV with a constant count over 255 (Remastered keeps it in a byte)";
+          return false;
+        }
+        if (flag.word != 0) {
+          shuffle = std::max<uint32_t>(count, 1) & 0xff;
+        }
+      }
+      AppendBE32(out, F("PLWV"));
+      static const Type kTypes[] = {Type::Vector, Type::Vector, Type::Int, Type::Real};
+      for (size_t i = 0; i < 4; ++i) {
+        if (resolved && i == 2) {
           AppendBE32(out, F("CNST"));
           AppendBE32(out, count);
           continue;
