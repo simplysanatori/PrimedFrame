@@ -10,6 +10,7 @@
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/CWorld.hpp"
 #include "MetroidPrime/Cameras/CCinematicCamera.hpp"
+#include "MetroidPrime/Enemies/COmegaPirate.hpp"
 #include "MetroidPrime/Enemies/CPatterned.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
 #include "MetroidPrime/Player/CWorldState.hpp"
@@ -381,8 +382,15 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomAp
     if (const RoomBlock* b = FindBlock(obj, kTagTransform)) {
       BlockReader r(b->data);
       CTransform4f xf = CTransform4f::Identity();
-      if (GetTransform(r, xf))
+      if (GetTransform(r, xf)) {
         physics->SetTransform(xf);
+        // An enemy's path destination is where it stands, not the room origin (the
+        // rebuilt object's zero). AI states only move it off that when the player is
+        // out of range: Omega Pirate restored inside its attack range searched a path
+        // to the origin, failed, and a shagged path keeps it from turning or attacking.
+        if (CPatterned* patterned = TCastToPtr< CPatterned >(&ent))
+          patterned->SetDestPos(xf.GetTranslation());
+      }
     }
     if (const RoomBlock* b = FindBlock(obj, kTagMotion)) {
       BlockReader r(b->data);
@@ -394,6 +402,9 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomAp
       }
     }
   }
+  // Omega Pirate keeps its health in a collision actor and needs its intro's Reset later.
+  if (COmegaPirate* omega = dynamic_cast< COmegaPirate* >(&ent))
+    omega->PortRestoredFromSave(mgr);
   if (CScriptTimer* timer = TCastToPtr< CScriptTimer >(&ent)) {
     if (const RoomBlock* b = FindBlock(obj, kTagTimer)) {
       BlockReader r(b->data);
