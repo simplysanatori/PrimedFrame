@@ -209,6 +209,11 @@ void TestNumbering() {
     seen.insert(bit);
   }
   CHECK_MSG(paired, "both sides of a doorway share a bit");
+  // Fungal Hall Access's doors are Plasma Beam on the disc (the apworld says
+  // Blue, #174): they share the doorways of Elevator B's and Fungal Hall A's.
+  CHECK_MSG(BeamDoorwayBit(404) >= 0 && BeamDoorwayBit(404) == BeamDoorwayBit(389) &&
+                BeamDoorwayBit(403) >= 0 && BeamDoorwayBit(403) == BeamDoorwayBit(402),
+            "Fungal Hall Access's doors are beam doors");
   for (int i = 0; i < 600; ++i) {
     const int bit = BeamDoorwayBit(i);
     if (bit < 0)
