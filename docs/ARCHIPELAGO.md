@@ -498,6 +498,9 @@ Without Archipelago, a seed's pickups log `randomizer: picked up <key>: <item>, 
 
 - **Hints.** `!hint <name>` on the Archipelago page's Chat sub-tab asks the server, and the Artifact
   Temple totems name each artifact's location (from `artifact_locations` slot
-  data, stored hints or scouts). There is no hint list beyond that.
+  data, stored hints or scouts). Finishing a totem scan (not the text refresh at room load) also asks the server to hint that artifact
+  (`LocationScouts` with `create_as_hint` 2, once per location) when it is in this slot's own
+  world; one in another player's world is left to the AP world's start-of-game hints. There is
+  no hint list beyond that.
 - **Pickup models.** Models come from the connect-time scouts, which are not
   saved, so an offline session shows retail models.

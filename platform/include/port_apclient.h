@@ -178,6 +178,10 @@ bool PickupScanText(uint32_t world, uint32_t area, uint32_t entity, std::string&
 // The Artifact Temple totem text for an artifact item type (29-40): where the
 // multiworld put it. False when AP is off or not connected.
 bool ArtifactHint(int itemType, std::string& out);
+// The player finished scanning an artifact's totem: asks the server to hint
+// where the artifact is when it is in this slot's own world. Reading the text
+// (ArtifactHint) never does: that runs when the room loads.
+void ArtifactScanned(int itemType);
 
 // A spawn point's Reset message replaced the whole inventory. Any received items
 // the game held are gone, so the next Poll rewinds the session and the server

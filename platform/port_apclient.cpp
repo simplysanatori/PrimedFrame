@@ -492,6 +492,7 @@ void Restart(Runtime& runtime) {
   runtime.queuedChecks.clear();
   runtime.notifications.clear();
   runtime.pendingSay.clear();
+  runtime.pendingHintScouts.clear();
   runtime.pendingBounce.clear();
   runtime.syncWanted = false;
   runtime.stateDirty = false;
@@ -1202,6 +1203,23 @@ bool ArtifactHint(int itemType, std::string& out) {
     return !out.empty();
   } catch (...) {
     return false;
+  }
+}
+
+void ArtifactScanned(int itemType) {
+  try {
+    if (itemType < MetroidPrime::kArtifactTruth || itemType > MetroidPrime::kArtifactNewborn ||
+        !BuiltinRules())
+      return;
+    Runtime& runtime = GetRuntime();
+    std::lock_guard<std::mutex> lock(runtime.mutex);
+    if (!runtime.enabled || runtime.session == nullptr || !runtime.session->HandshakeComplete())
+      return;
+    // The session gives each location once, so a totem scanned again sends nothing.
+    int64_t location = 0;
+    if (runtime.session->TakeArtifactScanHint(MetroidPrime::kItemBase + itemType, location))
+      runtime.pendingHintScouts.push_back(location);
+  } catch (...) {
   }
 }
 
