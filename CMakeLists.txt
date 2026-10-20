@@ -165,6 +165,12 @@ target_link_libraries(mp_game PUBLIC
 if(MSVC)
     target_compile_options(mp_game PRIVATE /W3
         /FI${CMAKE_CURRENT_SOURCE_DIR}/platform/compat.h)
+    # C++20 makes cl.exe /permissive-, which rejects a string literal bound to
+    # char* (C2440, CZipSupport.cpp); the decomp does that, as -Wno-write-strings
+    # allows elsewhere (issue #170). clang-cl only warns.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        target_compile_options(mp_game PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/Zc:strictStrings->)
+    endif()
 else()
     target_compile_options(mp_game PRIVATE
         -Wformat -Werror=return-type -Wno-narrowing -Wno-multichar -Wno-write-strings
