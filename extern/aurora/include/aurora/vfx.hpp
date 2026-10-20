@@ -62,6 +62,12 @@ enum Feature : uint32_t {
   // same feed and mask, but the scene is lerped toward the tint by m^CCH4.w instead of being
   // multiplied by it. Drawn Unfogged (the visor composite pass has no fog).
   VisorRunOffLit = 1u << 24,
+  // VFX_IceChargeCollision_Lit (390fc33b, the lit perm of IceChargeCollision): the same feed and refraction
+  // as IceChargeCollision, plus Remastered's clustered light gather — the 0xa30 constant block (c5[0..2]
+  // header, then 32 unshadowed lights of 80 bytes) and its R32 mask texture, one 32-bit word per
+  // (tile, slice). Phase B: the bindings are filled and read, the sum is still zero (Phase C is the loop).
+  // Set with IceChargeCollision's slots (colorSlot, normalSlot, envSlot) and its 7 params rows.
+  IceChargeCollisionLit = 1u << 25,
   // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
   // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
   AlreadyExposed = 1u << 31
@@ -120,6 +126,55 @@ struct Src {
   float value = 0;
 };
 
+// ---- The clustered light gather (IceChargeCollisionLit) ----
+// Remastered's CClusteredLightingMaterialData block (build_clustered_light_material_data 0x3b8750), 0xa30
+// bytes: c5[0..2] is a 12-float header — (1/pptX, 1/pptY, tilesX, tilesY), (1, slices/maxDepth, depth
+// origin, maxDepth), then tilesX*tilesY and tilesX as int bits, the validity mask and the mask source —
+// and c5[3] is the first of 32 records of 20 floats (80 bytes: colour x intensity, widen, view position,
+// direction, A/B, zeros, the falloff cubic). The port's CPU gather is platform/port_clustered_lights.h,
+// whose Frame::header and Frame::records are that block contiguously; these constants mirror its.
+inline constexpr uint32_t ClusterHeaderFloats = 12;
+inline constexpr uint32_t ClusterRecordFloats = 20;
+inline constexpr uint32_t ClusterMaxLights = 32;
+inline constexpr uint32_t ClusterBlockFloats = ClusterHeaderFloats + ClusterMaxLights * ClusterRecordFloats; // 652
+// Where the block sits in the vfx uniform, in bytes: after every field an earlier recipe reads, so no
+// existing shader's offsets move. The shader reads it as u.cluster (c5[i] = u.cluster[i]).
+inline constexpr uint32_t ClusterBlockOffset = 768;
+// The uniform's size: the fields before the block, then the block itself.
+inline constexpr uint32_t VfxUniformSize = ClusterBlockOffset + 4 * ClusterBlockFloats; // 3376
+// The mask texture: one R32Uint word per (tile, slice), tilesX*tilesY wide (at most 34*19) and 32 tall.
+inline constexpr uint32_t ClusterMaskMaxWidth = 34 * 19;
+inline constexpr uint32_t ClusterMaskHeight = 32;
+
+// The clustered light gather a draw carries. Its block is copied into the uniform, its mask uploaded to
+// the draw's frame slot; both are read only by IceChargeCollisionLit.
+struct ClusterView {
+  // ClusterBlockFloats floats: the header, then the 32 records (PortClusteredLights::Frame::header).
+  const float* block = nullptr;
+  // maskWidth x maskHeight words, texel (tileY * maskWidth + tileX, slice). Null: the shader reads a 1x1
+  // dummy instead (maskWidth and maskHeight then 0).
+  const uint32_t* mask = nullptr;
+  uint32_t maskWidth = 0, maskHeight = 0;
+};
+
+// Whether the view can be bound: a block, and either no mask at all (a null mask with zero dimensions)
+// or one sized 1..ClusterMaskMaxWidth by 1..ClusterMaskHeight. A draw with an invalid view binds the dummy
+// mask and leaves the block zeroed.
+constexpr bool valid_cluster_view(const ClusterView& view) noexcept {
+  if (view.block == nullptr) {
+    return false;
+  }
+  if (view.mask == nullptr) {
+    return view.maskWidth == 0 && view.maskHeight == 0;
+  }
+  return view.maskWidth >= 1 && view.maskWidth <= ClusterMaskMaxWidth && view.maskHeight >= 1 &&
+         view.maskHeight <= ClusterMaskHeight;
+}
+
+// Writes view.block into a uniform's cluster block (the bytes at ClusterBlockOffset). `uniform` holds at
+// least VfxUniformSize / 4 floats; this is the copy draw_prims makes.
+void write_cluster_block(const ClusterView& view, float* uniform);
+
 struct DrawDesc {
   uint32_t features = 0;
   Blend blend = Blend::Alpha;
@@ -147,6 +202,9 @@ struct DrawDesc {
   int8_t envSlot = -1; // IceChargeCollision: TCH0, the reflection map
   float params[7][4] = {};
   float time = 0.f;
+  // IceChargeCollisionLit: the clustered light gather's block and mask (see ClusterView). Ignored by every
+  // other feature.
+  ClusterView cluster;
 };
 
 // Records quadCount quads (4 vertices each, drawn as two triangles) into the current pass with the
