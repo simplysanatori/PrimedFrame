@@ -2,6 +2,7 @@
 
 #include "port_console.h"
 #include "port_debug.h"
+#include "port_hints.h"
 #include "port_mouse.h"
 #include "port_freecam.h"
 
@@ -2836,6 +2837,7 @@ void CPlayer::UpdateScanningState(const CFinalInput& input, CStateManager& mgr, 
                                          x3ac_scanningTime / totalTime);
           if (x3ac_scanningTime >= totalTime &&
               x3b0_curScanTime >= gpTweakGui->GetScanSidesStartTime()) {
+            PortHints::ScanCompleted(static_cast< uint32_t >(scanInfo->GetStringTableId()));
             SetScanningState(kSS_ScanComplete, mgr);
           }
         }

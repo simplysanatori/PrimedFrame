@@ -1329,6 +1329,12 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_boss_save_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_boss_save_wiring PROPERTIES TIMEOUT 15 LABELS port)
+        # A totem scan, not the text refresh at room load, asks the AP server for
+        # the artifact hint (issue #170).
+        add_test(NAME port_ap_scan_hint_wiring
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_ap_scan_hint_wiring.py
+                    ${CMAKE_CURRENT_SOURCE_DIR})
+        set_tests_properties(port_ap_scan_hint_wiring PROPERTIES TIMEOUT 15 LABELS port)
         # The map side file reaches its staging, its flush and its load from the
         # card driver, and the save state carries the same data in its blob.
         add_test(NAME port_map_side_wiring
