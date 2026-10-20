@@ -140,6 +140,8 @@ constexpr ElementSig kVectorSigs[] = {
     {"CPSS", "-"},  {"ABS_", "V"}, {"PNCV", "-"}, {"SCLE", "VR"},
     // MCBS is MPCB's scale form (MPT_CVEConvertScaleToXLeftYUpZForward 0x2a30f8).
     {"MCBS", "V"},
+    // LINV is CVELineWithVariance (GetVectorElement 0x251974): V V I R b.
+    {"LINV", "VVIRb"},
 };
 constexpr ElementSig kModVectorSigs[] = {
     {"NONE", "-"},     {"CNST", "RRR"},   {"GRAV", "V"},     {"WIND", "VR"},   {"EXPL", "RR"},
@@ -157,6 +159,8 @@ constexpr ElementSig kBoolSigs[] = {{"LTHN", "RR"}};
 
 constexpr ElementSig kEmitterSigs[] = {
     {"NONE", "-"}, {"SEMR", "VV"}, {"SPHE", "VRR"}, {"ASPH", "VRRRRRR"}, {"ASPR", "VeRRRR"},
+    // ASPV is CVEAngleSphereWithVariance (GetEmitterElement 0x264bc4): V Q R R I R R I R R R b.
+    {"ASPV", "VQRRIRRIRRRb"},
     {"CODE", "-"}, {"PLNE", "VVVRRR"}, {"ELPS", "VVVRe"}, {"PLNV", "VVRRRRIRIRb"}, {"SPEV", "VRRIRIRb"},
 };
 
