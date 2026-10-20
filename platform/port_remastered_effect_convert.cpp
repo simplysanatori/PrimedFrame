@@ -4168,6 +4168,7 @@ public:
     const EffectProperty* material = nullptr;
     const EffectProperty* xfmd = nullptr;
     uint32_t spriteShape = 0;
+    bool unfogged = false;  // DFOG 1, port-only PDFG
     const EffectProperty* mover = nullptr;
     std::vector<uint32_t> portOnly;  // material data, written only with a VMAT
     const bool textured = retail.count(F("TEXR")) != 0;
@@ -4220,6 +4221,19 @@ public:
       }
       if ((drawsNothing || modelsOnly) && fourcc == F("SIZE")) {
         result.dropped.push_back(drawsNothing ? "SIZE: the generator draws nothing" : "SIZE: the generator draws models only");
+        continue;
+      }
+      // DFOG 1 sets the description's no-fog bit (CreateGPSM 0x25a560, CreateSWSH 0x2dce88: desc+0x6b
+      // bit 3), which the static render state carries as 0x8000 (ctor 0x28bfc4) and which keeps
+      // RenderSpriteEntries/RenderSwooshEntries from injecting the fog block, whatever the blend.
+      // Retail has no such property: the port-only PDFG.
+      if ((part || swoosh) && fourcc == F("DFOG")) {
+        uint32_t on = 0;
+        if (!SmallInteger(property, on)) {
+          result.dropped.push_back("DFOG: not a constant");
+        } else {
+          unfogged = on != 0;
+        }
         continue;
       }
       // PBDM is Remastered's blend mode, from the table CParticleStaticRenderState
@@ -4843,6 +4857,11 @@ public:
       AppendBE32(out, F("PSHP"));
       AppendBE32(out, F("CNST"));
       AppendBE32(out, spriteShape);
+    }
+    if (unfogged) {
+      AppendBE32(out, F("PDFG"));
+      AppendBE32(out, F("CNST"));
+      AppendBE32(out, 1);
     }
     if ((part || swoosh) && !m_vars.empty()) {
       // Port-only: the effect's PVAR table (names, kinds, defaults) for VARF/VARI/VARV/VARC.
@@ -5629,6 +5648,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.Element(Type::Vector);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
                          fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PGID") || fourcc == F("PBDM") ||
+                         fourcc == F("PDFG") ||
                          fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||
                          fourcc == F("PVSM"))) ||
                (vfx && fourcc == F("PIRN"))) {
@@ -5647,7 +5667,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.PortSpawnTables();
     } else if (part && fourcc == F("PSMV")) {
       ok = reader.PortMover();
-    } else if (!part && vfx && (fourcc == F("PSRO") || fourcc == F("PRAF") || fourcc == F("XFMD"))) {
+    } else if (!part && vfx && (fourcc == F("PSRO") || fourcc == F("PRAF") || fourcc == F("XFMD") || fourcc == F("PDFG"))) {
       ok = reader.PortWord();
     } else if (!part && vfx && fourcc == F("PRAZ")) {
       ok = reader.Element(Type::Vector);

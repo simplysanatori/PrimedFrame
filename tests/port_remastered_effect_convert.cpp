@@ -2193,6 +2193,28 @@ void TestBlendMode() {
             "PBDM 4 is listed as approximated");
 }
 
+// DFOG 1 (Remastered's no-fog bit, CreateGPSM 0x25a560) becomes the port-only PDFG; DFOG 0 is
+// the default and writes nothing. The effects store it as an element, CNST and a byte.
+void TestUnfogged() {
+  for (uint8_t on : {uint8_t(1), uint8_t(0)}) {
+    const auto parts = ConvertOne(OneGenerator([on](auto& o) {
+                                    PutProperty(o, "DFOG", 0);
+                                    PutFourCC(o, "CNST");
+                                    o.push_back(on);
+                                    PutTexr(o, 0x1234ABCD);
+                                  }),
+                                  {});
+    Retail want;
+    want.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD);
+    if (on != 0) {
+      want.f("PDFG").f("CNST").w(1);
+    }
+    want.end();
+    CHECK_MSG(parts.size() == 1 && parts[0].part == want.bytes, "DFOG 1 becomes PDFG, DFOG 0 nothing");
+    CHECK_MSG(!parts.empty() && parts[0].dropped.empty() && parts[0].approximated.empty(), "DFOG is exact");
+  }
+}
+
 // GPUA (how much GPU time is free) is 1.0 exactly at a GPU frame time of 14 ms or less.
 void TestGpuAvailability() {
   auto parts = ConvertOne(OneGenerator([](auto& o) {
@@ -4654,6 +4676,7 @@ int main() {
   TestPortMover();
   TestDrawsNothing();
   TestBlendMode();
+  TestUnfogged();
   TestGpuAvailability();
   TestCurlNoise();
   TestParentRead();

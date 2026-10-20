@@ -106,7 +106,8 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 78: a VFX material's BC5 texture keeps its red and green as (R, G, 0, 1), not grey plus alpha.
 // 79: INTS is the system scale (port-only PINS).
 // 80: INTR and INTT are the system orientation and translation (port-only PINR/PINT); XFMD 5's INTT is POFS.
-inline constexpr int kEffects = 84;    // port_remastered_effect_import and the particle converters
+// 85: DFOG 1 is the port-only PDFG (the particles are not volumetric-fogged).
+inline constexpr int kEffects = 85;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 inline constexpr int kRooms = 20;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail

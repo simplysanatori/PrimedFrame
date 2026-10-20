@@ -198,6 +198,9 @@ public:
   // port-only PBDM: Remastered's blend row where the alpha blend stands in for it
   // (CElementGen::PortBlendSrc/Dst). 0 = retail alpha, 1 premultiplied, 3 opaque; 2 is AAPH.
   u8 xPortBlend = 0;
+  // port-only PDFG: Remastered's DFOG 1, the static render state's "no fog" flag (0x8000): the
+  // particles are not volumetric-fogged whatever their blend (PortFx::RenderScope)
+  bool xPortUnfogged = false;
   // port-only PSWX: swooshes started beyond SSWH's one, each with its start frame
   struct PortExtraSwoosh {
     TCachedToken< CSwooshDescription > swoosh;

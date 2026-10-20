@@ -2271,7 +2271,7 @@ bool CElementGen::IsSystemDeletable() const {
 void CElementGen::Render() {
   CStopwatch timer;
 #ifdef TARGET_PC
-  PortFx::RenderScope fxScope;
+  PortFx::RenderScope fxScope(x28_loadedGenDesc->xPortUnfogged);
 #endif
 
   x274_backupLightActive = CGraphics::GetLightMask();

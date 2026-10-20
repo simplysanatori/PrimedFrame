@@ -166,6 +166,11 @@ bool CParticleSwooshDataFactory::CreateWPSM(CSwooshDescription* swoosh, CInputSt
       }
       swoosh->xPortRotZ.reset(CParticleDataFactory::GetRealElement(in));
       break;
+    // Port-only: Remastered's DFOG 1 (xPortUnfogged).
+    case 'PDFG':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortUnfogged = in.ReadLong() != 0;
+      break;
     // Port-only Remastered transform mode; only 3 (xPortXfmdFollow) and 4 (xPortXfmdMover) are written.
     case 'XFMD': {
       CParticleDataFactory::GetClassID(in);

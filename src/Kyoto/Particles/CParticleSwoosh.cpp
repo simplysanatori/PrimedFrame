@@ -537,7 +537,7 @@ bool CParticleSwoosh::IsSystemDeletable() const {
 
 void CParticleSwoosh::Render() {
 #ifdef TARGET_PC
-  PortFx::RenderScope fxScope;
+  PortFx::RenderScope fxScope(x1c_desc->xPortUnfogged);
   if (PortFx::gMuteActive && PortFx::IsMuted(*this)) {
     return;
   }

@@ -846,6 +846,11 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortBlend = u8(in.ReadLong());
       break;
+    // Port-only: Remastered's DFOG 1 (xPortUnfogged).
+    case SBIG('PDFG'):
+      GetClassID(in);
+      desc->xPortUnfogged = in.ReadLong() != 0;
+      break;
     // Port-only Remastered particle material (build/mpr/vfx/DESIGN.md section 1).
     case SBIG('VMAT'):
     case SBIG('VMSH'):
