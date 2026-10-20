@@ -506,7 +506,7 @@ constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kInd
                    kOpacityFade = 2048, kColorRgbOnly = 4096, kPyro = 8192, kDisintegration = 16384,
                    kSceneWarp = 32768, kVisorSplat = 65536, kIceChargeBeam = 1u << 20,
                    kIceChargeCollision = 1u << 21, kUnfogged = 1u << 22, kVisorRunOff = 1u << 23,
-                   kVisorRunOffLit = 1u << 24;
+                   kVisorRunOffLit = 1u << 24, kIceChargeCollisionLit = 1u << 25;
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders without a SceneWarp recipe.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
@@ -615,6 +615,15 @@ const Recipe* RecipeOf(uint32_t shader) {
       // CCH6 rim, x (CCH5.z / exposure + vc.rgb); alpha vc.a. The VS's tangent frame runs in
       // CPortVfxMeshBatch::Add. CCH0..6 in VPRM v2 with the NMAP and TCH0 slots.
       {0x1c651f97, kIceChargeCollision,
+       {{"BCLR", Role::Color, -1, -1}, {"NMAP", Role::Normal, -1, -1}, {"TCH0", Role::Env, -1, -1}},
+       {}, -1, false, false, 7, true},
+      // VFX_IceChargeCollision_Lit (390fc33b, Effect_IcePop; the lit perm of IceChargeCollision, REPORT.md
+      // sections 3-5): the same feed, slots and CCH0..6 as 1c651f97, and the front end it shares. The tail
+      // adds Remastered's clustered light gather and baked probe, which the runtime fills: the gather from
+      // the port's room lights, the probe from the room's baked ambient at the particle. The perm has no
+      // CCH6 rim term, and its BLCM and PCMD are material uniforms the IcePop MATI does not carry (white and
+      // 1). Fogged without DFOG 1 as the unlit perm is; the blend is additive, so the port's fog never mixes.
+      {0x390fc33b, kIceChargeCollision | kIceChargeCollisionLit,
        {{"BCLR", Role::Color, -1, -1}, {"NMAP", Role::Normal, -1, -1}, {"TCH0", Role::Env, -1, -1}},
        {}, -1, false, false, 7, true},
       // VFX_VisorRunOff (b5e12668 unlit, d85d4169 lit; FS perm 000; SPEC-fb-visor.md sections 5/6): the

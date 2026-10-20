@@ -1,5 +1,6 @@
 #pragma once
 
+#include "port_clustered_lights.h"
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -565,6 +566,11 @@ struct Selection {
 // The room cube and baked ambient for a model at `pos`; false when no loaded area has
 // either (or MP_ROOM_ENV=0).
 bool Select(const float pos[3], Selection& out);
+// The baked ambient at a point as the bake holds it (mean, lobe, sharpness, world-space direction),
+// before the frame's exposure: Remastered's BLPD probe record has these numbers, and its Lit particle
+// material (390fc33b) evaluates them at the fragment. False when no loaded area's grid holds the point
+// (or MP_ROOM_ENV is off, or MP_ROOM_ENV_AMBIENT is 0).
+bool AmbientAt(const float pos[3], Ambient& out);
 // Room geometry is lit by the baked ambient alone, per pixel. It announces the area and
 // the middle of what it draws next, and the following Select answers with that area's
 // grid as a volume (and picks the cube by that point, not the model's origin); Clear
@@ -656,6 +662,10 @@ std::string SunInfo();
 // timelines step in UpdateFog. Nothing when the rooms aren't exposed (see Sun), MP_ROOM_LIGHTS=0
 // or MP_ROOM_ENV is off.
 void RoomLights(const float worldToView[3][4], std::vector<float>& out);
+// The same lights in the shape Remastered's clustered gather takes them (PortClusteredLights::LightSource:
+// world space, colour x intensity, no exposure and no 1/pi), for PortClusteredLights::MakeLight. The vacated
+// particle material (VFX_IceChargeCollision_Lit, 390fc33b) reads that gather instead of the PBR records.
+void RoomLights(std::vector< PortClusteredLights::LightSource >& out);
 // The console's `shadow`: each loaded area's point and spot lights and their state.
 std::string RoomLightInfo();
 // Remastered's volumetric fog hints (CVolumetricFogManager), picked as the grade's are.

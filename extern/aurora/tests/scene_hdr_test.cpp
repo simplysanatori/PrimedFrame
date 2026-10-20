@@ -803,6 +803,34 @@ TEST_F(SceneHdrTest, VfxWritersBuildHdrPipelines) {
   EXPECT_TRUE(g_uncapturedErrors.empty());
 }
 
+// VFX_IceChargeCollision_Lit's pipeline: the WGSL the clustered gather, the probe and the light loop add
+// has to build in both targets (the port draws particles into the HDR scene, and an LDR run of the same
+// material into the display EFB).
+TEST_F(SceneHdrTest, LitVfxPipelineBuildsInBothTargets) {
+  // The slots the Lit recipe carries: BCLR, NMAP, TCH0.
+  static constexpr int8_t Slots[] = {0, 7, 7, 7, 7, 7, 7, 1, 2};
+  uint32_t slotKey = 0;
+  for (uint32_t i = 0; i < std::size(Slots); ++i) {
+    slotKey |= uint32_t(Slots[i]) << (3 * i);
+  }
+  for (const bool hdr : {false, true}) {
+    SCOPED_TRACE(testing::Message() << "hdr " << hdr);
+    vfx::PipelineConfig config;
+    config.colorFormats[0] = hdr ? webgpu::SceneHdrFormat : ColorFormat;
+    config.depthStencilFormat = DepthFormat;
+    config.colorAttachmentCount = 1;
+    config.features = vfx::IceChargeCollision | vfx::IceChargeCollisionLit | vfx::Unfogged;
+    config.slotKey = slotKey;
+    config.blend = 2 | (hdr ? vfx::BlendSceneHdr : 0u); // PBDM 2: additive
+    config.compare = static_cast<uint32_t>(wgpu::CompareFunction::LessEqual);
+    EXPECT_EQ(module_error(vfx::pipeline_source(config)), "");
+    wgpu::RenderPipeline pipeline;
+    EXPECT_EQ(validation_error([&] { pipeline = vfx::create_pipeline(config); }), "");
+    EXPECT_TRUE(pipeline);
+  }
+  EXPECT_TRUE(g_uncapturedErrors.empty());
+}
+
 // The HDR scene's post (GXPortPostProcessScene): what it records and where the FIFO goes on after it.
 bloom::Params scene_post() {
   bloom::Params params{};
