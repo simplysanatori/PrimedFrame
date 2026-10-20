@@ -889,8 +889,9 @@ void PortVfxClusterAmbient(const PortClusteredLights::Camera& camera, const floa
 
 // The clustered gather for this camera, from the port's room lights. Remastered masks every light scene node
 // in the scene (muzzle, beam, ball and explosion lights included) and culls it on the GPU; the port has only
-// the room's LightDynamic lights, which is what RoomLights walks. AMBS (the flat ambient c6[0].xyz) has no
-// port equivalent at a particle and stays zero: the probe's own mean is the ambient the effect shows.
+// the room's LightDynamic lights, which is what RoomLights walks. AMBS (the flat ambient c6[0].xyz) is the
+// ambient colour the game set for this area (CGraphics::SetAmbientColor, GX channel 0's), which is the same
+// quantity Remastered's lighting manager hands the material.
 void PortVfxClusterView(const float pos[3], aurora::gfx::vfx::DrawDesc& desc) {
   PortClusteredLights::Camera camera;
   PortVfxClusterCamera(camera);
@@ -912,6 +913,10 @@ void PortVfxClusterView(const float pos[3], aurora::gfx::vfx::DrawDesc& desc) {
     desc.cluster.maskHeight = uint32_t(PortClusteredLights::kSlices);
   }
   PortVfxClusterAmbient(camera, pos, desc.lit);
+  const CColor ambient = CGraphics::GetAmbientColor();
+  desc.lit.ambient[0] = ambient.GetRed();
+  desc.lit.ambient[1] = ambient.GetGreen();
+  desc.lit.ambient[2] = ambient.GetBlue();
 }
 
 } // namespace
