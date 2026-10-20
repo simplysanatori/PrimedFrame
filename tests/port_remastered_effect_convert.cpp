@@ -3899,6 +3899,85 @@ void TestVmatIceChargeCollisionRecipe() {
             "1c651f97 under DFOG 1 is Unfogged");
 }
 
+// VFX_IceChargeCollision_Lit (390fc33b, Effect_IcePop): the unlit recipe's slots and CCH0..6 plus the
+// IceChargeCollisionLit bit (the runtime's clustered gather and baked probe), and Unfogged only under
+// DFOG 1 as 1c651f97 is.
+void TestVmatIceChargeCollisionLitRecipe() {
+  constexpr uint32_t kIceChargeCollision = 1u << 21, kUnfogged = 1u << 22, kIceChargeCollisionLit = 1u << 25;
+  // The disc's MATI: BCLR/NMAP/TCH0 and CCH0..6, as it lists them.
+  std::vector<uint8_t> mati =
+      Mati(0x390fc33b, {{"BCLR", Fresh(8)}, {"NMAP", Fresh(8)}, {"TCH0", Fresh(8)}});
+  mati[0x6d + 41] = 5;
+  for (int n = 0; n < 7; ++n) {
+    mati[0x69] += 1;
+    mati.push_back(n == 0 || n == 1 || n == 4 || n == 6 ? 4 : 3);
+    mati.insert(mati.end(), {'C', 'C', 'H', uint8_t('0' + n)});
+    for (int c = 0; c < 4; ++c) {
+      Put32(mati, Bits(float(n) + 0.25f * float(c)));
+    }
+  }
+  const auto effect = [](bool dfog) {
+    // PBDM 2: the additive blend the IcePop generators carry.
+    std::vector<uint8_t> data = VmatEffect(true, Fresh(7), 2);
+    std::vector<uint8_t> extra;
+    if (dfog) {
+      PutProperty(extra, "DFOG", 1);
+      PutConstant(extra, 1);
+    }
+    data.insert(data.end() - 13, extra.begin(), extra.end());
+    return data;
+  };
+  const auto convert = [&mati](const std::vector<uint8_t>& data, std::vector<RetailPartProperty>& properties) {
+    EffectNode node;
+    std::string error;
+    CHECK_MSG(ParseEffect(data.data(), data.size(), node, error), "the ice pop effect parses");
+    EffectConvertIO io;
+    io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+    io.materialData = [&mati](const EffectGuid& material) {
+      return material == Fresh(7) ? mati : std::vector<uint8_t>();
+    };
+    io.vfxTexture = [](const EffectGuid& texture) {
+      FlipbookAtlas atlas;
+      atlas.id = texture == Fresh(8) ? 0x5EED0008 : 0;
+      return atlas;
+    };
+    io.modelMesh = [](uint32_t) { return std::vector<uint8_t>{0, 0, 0, 2}; };
+    std::vector<ConvertedPart> parts = ConvertEffect(node, data.data(), io);
+    if (parts.size() == 1) {
+      SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error);
+    }
+    return parts;
+  };
+  const auto value = [](const std::vector<RetailPartProperty>& properties, uint32_t fourcc) {
+    for (const RetailPartProperty& property : properties) {
+      if (property.fourcc == fourcc) {
+        return property.value;
+      }
+    }
+    return std::vector<uint8_t>();
+  };
+  std::vector<RetailPartProperty> properties;
+  std::vector<ConvertedPart> parts = convert(effect(false), properties);
+  CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty(), "390fc33b without DFOG approximates nothing");
+  const std::vector<uint8_t> vmat = value(properties, EffectFourCC("VMAT"));
+  CHECK_MSG(VmatWord(vmat, 12) == (kIceChargeCollision | kIceChargeCollisionLit) && VmatWord(vmat, 16) == 2 &&
+                VmatWord(vmat, 20) == 3,
+            "390fc33b VMAT: IceChargeCollision + IceChargeCollisionLit (fogged), blend 2 (PBDM 2), three textures");
+  CHECK_MSG(VmatWord(vmat, 156) == 0, "390fc33b's BCLR is the colour slot");
+  const std::vector<uint8_t> vprm = value(properties, EffectFourCC("VPRM"));
+  CHECK_MSG(vprm.size() == 8 + 16 + 7 * 16 && VmatWord(vprm, 8) == 2 && VmatWord(vprm, 12) == 1 &&
+                VmatWord(vprm, 16) == 2 && VmatWord(vprm, 20) == 7,
+            "VPRM v2: the NMAP slot 1, the TCH0 slot 2 and seven CCH rows");
+  CHECK_MSG(VmatWord(vprm, 24 + 6 * 16 + 12) == Bits(6.75f), "VPRM carries the MATI's CCH0..6");
+
+  properties.clear();
+  parts = convert(effect(true), properties);
+  const std::vector<uint8_t> unfogged = value(properties, EffectFourCC("VMAT"));
+  CHECK_MSG(parts.size() == 1 && parts[0].approximated.empty() &&
+                VmatWord(unfogged, 12) == (kIceChargeCollision | kIceChargeCollisionLit | kUnfogged),
+            "390fc33b under DFOG 1 is Unfogged");
+}
+
 // VFX_VisorRunOff (b5e12668 / d85d4169): one TCH0 flow map as the colour slot, CCH0..4 whole in VPRM
 // v1 and SMTR overrides of any of them to their VPRM targets, Unfogged without a DFOG 1 (the visor
 // composite pass has no fog), and the second shader on its own feature bit.
@@ -4382,6 +4461,7 @@ int main() {
   TestVmatSceneWarpRecipes();
   TestVmatIceChargeBeamRecipe();
   TestVmatIceChargeCollisionRecipe();
+  TestVmatIceChargeCollisionLitRecipe();
   TestElc2BlendAndLifetime();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();

@@ -126,15 +126,41 @@ TEST(VfxCluster, BlockAndMaskAreDeclaredForTheLitFeature) {
   PipelineConfig config{};
   config.features = IceChargeCollisionLit;
   const std::string source = pipeline_source(config);
-  // The block: 14 vec4f of padding (the pre-block fields' trailing bytes) then 163 vec4f of cluster, which
-  // is ClusterBlockFloats / 4 — the layout vfx.cpp's static_asserts pin to the C++ struct.
+  // The block: 14 vec4f after the pre-block fields. lit0..lit6 (AMBS, the probe's mean/lobe/lobes and
+  // BLCM) take the first seven, the rest is padding, then 163 vec4f of cluster, which is
+  // ClusterBlockFloats / 4 — the layout vfx.cpp's static_asserts pin to the C++ struct.
   EXPECT_NE(source.find("cluster: array<vec4f, 163>"), std::string::npos);
-  EXPECT_NE(source.find("padCluster: array<vec4f, 14>"), std::string::npos);
+  EXPECT_NE(source.find("lit6: vec4f,\n  padCluster: array<vec4f, 7>"), std::string::npos);
   // The mask, at its own binding, R32Uint (texture_2d<u32>).
   EXPECT_NE(source.find("@binding(12) var clusterMask: texture_2d<u32>"), std::string::npos);
   EXPECT_NE(source.find("textureLoad(clusterMask"), std::string::npos);
   // The lit perm runs the unlit recipe's branch.
   EXPECT_NE(source.find("33554432u"), std::string::npos);
+}
+
+TEST(VfxCluster, LitTailIsTheReportedEquation) {
+  // REPORT.md sections 3 to 5, as the shader writes them: the mask's lowest set bit indexes a record of
+  // 5 vec4f at c5[3], the probe is three lobes of mean - lobe + lobe * (1 + s) * 2 * q^(1 + 2s), and the
+  // tail is (vc.rgb * base * lit * BLCM) / pi + base * CCH5.z / exposure, x PCMD.
+  PipelineConfig config{};
+  config.features = IceChargeCollision | IceChargeCollisionLit | Unfogged;
+  const std::string source = pipeline_source(config);
+  // The loop, one bit at a time, and the record's stride.
+  EXPECT_NE(source.find("let bit = firstTrailingBit(mask);"), std::string::npos);
+  EXPECT_NE(source.find("mask = mask & (mask - 1u);"), std::string::npos);
+  EXPECT_NE(source.find("let i = 3u + bit * 5u;"), std::string::npos);
+  EXPECT_NE(source.find("if (mask == 0u) { break; }"), std::string::npos);
+  // The per-light terms: N.L, the cone, and the cubic falloff at sat(d * A + B).
+  EXPECT_NE(source.find("let cone = sat(dot(l, r2.xyz) * r1.w + r2.w);"), std::string::npos);
+  EXPECT_NE(source.find("let t = sat(fma(d, r3.x, r3.y));"), std::string::npos);
+  EXPECT_NE(source.find("let poly = ((r4.x * t + r4.y) * t + r4.z) * t + r4.w;"), std::string::npos);
+  // The probe: the 1 + 2s lane is the record's w, and 1 + s is 0.5 * w + 0.5.
+  EXPECT_NE(source.find("return fma(lobe * (sharp + 1.0), pow(q, sharp), mean - lobe);"), std::string::npos);
+  EXPECT_NE(source.find("let q = sat(dot(n, dir) * 0.5 + 0.5);"), std::string::npos);
+  // The tail: AMBS + probe + lights, BLCM, 1/pi, the exposed base's inverse exposure, PCMD (M).
+  EXPECT_NE(source.find("u.lit0.xyz + probe_ambient(N) + cluster_lights(in, N)"), std::string::npos);
+  EXPECT_NE(source.find("let shaded = vc.rgb * base * lighting * u.lit6.rgb;"), std::string::npos);
+  EXPECT_NE(source.find("(shaded * 0.3183098862 + base * (c5.z * ie)) * M"), std::string::npos);
 }
 
 TEST(VfxCluster, MaskDimensionsAreValidated) {

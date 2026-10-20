@@ -65,8 +65,10 @@ enum Feature : uint32_t {
   // VFX_IceChargeCollision_Lit (390fc33b, the lit perm of IceChargeCollision): the same feed and refraction
   // as IceChargeCollision, plus Remastered's clustered light gather — the 0xa30 constant block (c5[0..2]
   // header, then 32 unshadowed lights of 80 bytes) and its R32 mask texture, one 32-bit word per
-  // (tile, slice). Phase B: the bindings are filled and read, the sum is still zero (Phase C is the loop).
-  // Set with IceChargeCollision's slots (colorSlot, normalSlot, envSlot) and its 7 params rows.
+  // (tile, slice) — and the baked probe: rgb = (vc.rgb * base * lit * BLCM) / pi + base * CCH5.z /
+  // exposure, x PCMD, where lit = AMBS + the probe's three lobes + the mask's lights (build/
+  // s-tiledlight-20261020/REPORT.md sections 3 to 5). Set with IceChargeCollision's slots (colorSlot,
+  // normalSlot, envSlot) and its 7 params rows, and a DrawDesc::lit for the ambient and the probe.
   IceChargeCollisionLit = 1u << 25,
   // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
   // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
@@ -175,6 +177,23 @@ constexpr bool valid_cluster_view(const ClusterView& view) noexcept {
 // least VfxUniformSize / 4 floats; this is the copy draw_prims makes.
 void write_cluster_block(const ClusterView& view, float* uniform);
 
+// IceChargeCollisionLit's other input: Remastered's baked lighting for the particle, in the shape
+// 390fc33b reads it (REPORT.md section 4). The shader evaluates, per colour channel c and for the
+// fragment's view normal n,
+//   mean[c] - lobe[c] + 2 * lobe[c] * (1 + s[c]) * q ^ (1 + 2 * s[c]),  q = sat(0.5 + 0.5 * dot(n, dir[c]))
+// with s[c] = (dir[c][3] - 1) / 2 (the record's lane w is 1 + 2s), and adds it to ambient[] (AMBS,
+// c6[0].xyz) and the clustered lights as the `lit` term. The baked light is radiance before the
+// frame's exposure; the directions are view space, as the shader's normal is, and need not be unit.
+struct LitAmbient {
+  float ambient[3] = {};      // AMBS (c6[0].xyz): the flat ambient light colour
+  float mean[3] = {};         // BLPD +0x00: the bake's midpoint
+  float lobe[3] = {};         // BLPD +0x10: its range
+  float dir[3][4] = {};       // BLPD +0x20/+0x30/+0x40: dir[3] is view space, dir[c][3] = 1 + 2 * sharpness
+  // BLCM (c6[2]): the baked-light colour modulation. The IcePop MATI carries no such parameter, so the
+  // port leaves it white; it rides here rather than in params[] so the 7 rows stay CCH0..CCH6.
+  float modulate[3] = {1.f, 1.f, 1.f};
+};
+
 struct DrawDesc {
   uint32_t features = 0;
   Blend blend = Blend::Alpha;
@@ -205,6 +224,8 @@ struct DrawDesc {
   // IceChargeCollisionLit: the clustered light gather's block and mask (see ClusterView). Ignored by every
   // other feature.
   ClusterView cluster;
+  // IceChargeCollisionLit: the baked ambient and probe (see LitAmbient). Ignored by every other feature.
+  LitAmbient lit;
 };
 
 // Records quadCount quads (4 vertices each, drawn as two triangles) into the current pass with the

@@ -1,4 +1,5 @@
 #include "port_fx_debug.h"
+#include "port_room_env.h"
 #include "port_vfx_opacity.h"
 #include "port_vfx_particles.h"
 
@@ -771,6 +772,13 @@ void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
   const u32 nv = vfx.meshVerts;
   const bool wide = !vfx.meshIdx32.empty();
   const CTransform4f view(CGraphics::GetViewMatrix());
+  if (!probePosSet) {
+    const CVector3f origin = model.GetTranslation();
+    probePos[0] = origin.GetX();
+    probePos[1] = origin.GetY();
+    probePos[2] = origin.GetZ();
+    probePosSet = true;
+  }
 
   Tm tm[3];
   for (u32 s = 0; s < 3 && s < vfx.vtmtCount; ++s) {
@@ -834,6 +842,80 @@ void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
   }
 }
 
+namespace {
+
+// The camera Remastered's cluster grid and its cull are built from: GX's view matrix as rows (the same
+// rows CStateManager hands the PBR lights) and the projection's half tangents, near and far.
+void PortVfxClusterCamera(PortClusteredLights::Camera& camera) {
+  const CTransform4f& view = CGraphics::GetViewMatrix();
+  const CVector3f eye = view.GetTranslation();
+  const float axes[3][3] = {
+      {view.Get00(), view.Get10(), view.Get20()},
+      {view.Get02(), view.Get12(), view.Get22()},
+      {-view.Get01(), -view.Get11(), -view.Get21()},
+  };
+  float worldToView[3][4];
+  for (int r = 0; r < 3; ++r) {
+    worldToView[r][0] = axes[r][0];
+    worldToView[r][1] = axes[r][1];
+    worldToView[r][2] = axes[r][2];
+    worldToView[r][3] = -(axes[r][0] * eye.GetX() + axes[r][1] * eye.GetY() + axes[r][2] * eye.GetZ());
+  }
+  const CGraphics::CProjectionState& proj = CGraphics::GetProjectionState();
+  camera = PortClusteredLights::MakeCamera(worldToView, proj.GetLeft(), proj.GetRight(), proj.GetTop(),
+                                          proj.GetBottom(), proj.GetNear(), proj.GetFar());
+}
+
+// The Lit material's baked ambient: Remastered indexes a BLPD probe record with the instance's BLPI, which
+// the port has no equivalent of, so the room's grid at the particle stands in (unexposed, as the bake's
+// record is). The record's lobe directions are view space, as the fragment's normal is.
+void PortVfxClusterAmbient(const PortClusteredLights::Camera& camera, const float pos[3],
+                           aurora::gfx::vfx::LitAmbient& lit) {
+  PortRoomEnv::Ambient ambient;
+  if (!PortRoomEnv::AmbientAt(pos, ambient)) {
+    return;
+  }
+  for (int c = 0; c < 3; ++c) {
+    lit.mean[c] = ambient.mean[c];
+    lit.lobe[c] = ambient.lobe[c];
+    for (int r = 0; r < 3; ++r) {
+      const float* m = camera.worldToView[r];
+      lit.dir[c][r] = m[0] * ambient.direction[c][0] + m[1] * ambient.direction[c][1] +
+                      m[2] * ambient.direction[c][2];
+    }
+    lit.dir[c][3] = 1.f + 2.f * ambient.sharpness[c];
+  }
+}
+
+// The clustered gather for this camera, from the port's room lights. Remastered masks every light scene node
+// in the scene (muzzle, beam, ball and explosion lights included) and culls it on the GPU; the port has only
+// the room's LightDynamic lights, which is what RoomLights walks. AMBS (the flat ambient c6[0].xyz) has no
+// port equivalent at a particle and stays zero: the probe's own mean is the ambient the effect shows.
+void PortVfxClusterView(const float pos[3], aurora::gfx::vfx::DrawDesc& desc) {
+  PortClusteredLights::Camera camera;
+  PortVfxClusterCamera(camera);
+  static std::vector< PortClusteredLights::LightSource > sources;
+  sources.clear();
+  PortRoomEnv::RoomLights(sources);
+  static std::vector< PortClusteredLights::RawLight > lights;
+  lights.clear();
+  for (const PortClusteredLights::LightSource& source : sources) {
+    lights.push_back(PortClusteredLights::MakeLight(source, camera.worldToView));
+  }
+  const PortClusteredLights::Frame& frame = PortClusteredLights::Update(
+      camera, uint32_t(CGraphics::GetViewportWidth()), uint32_t(CGraphics::GetViewportHeight()), lights.data(),
+      int(lights.size()));
+  desc.cluster.block = frame.header;
+  if (!frame.mask.empty() && frame.grid.tilesX > 0 && frame.grid.tilesY > 0) {
+    desc.cluster.mask = frame.mask.data();
+    desc.cluster.maskWidth = uint32_t(frame.grid.tilesX * frame.grid.tilesY);
+    desc.cluster.maskHeight = uint32_t(PortClusteredLights::kSlices);
+  }
+  PortVfxClusterAmbient(camera, pos, desc.lit);
+}
+
+} // namespace
+
 void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
   if (batch.verts.empty()) {
     return;
@@ -855,6 +937,10 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
                    aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit)) != 0) {
     PortVfxEvalParams(vfx, x74_curFrame, desc.params);
   }
+  // VFX_IceChargeCollision_Lit's lighting: the clustered gather (block and mask) and the baked probe.
+  if ((features & aurora::gfx::vfx::IceChargeCollisionLit) != 0) {
+    PortVfxClusterView(batch.probePos, desc);
+  }
   // This is a model draw, so a material whose mesh permutation was read against the shader takes its
   // fade from the view-space normal (aurora's OpacityFresnel); every other material keeps the form
   // its VMAT carries. port_vfx_opacity.h has the formula and why it is pinned to one recipe.
@@ -869,4 +955,5 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
   ++PortFx::gDraws;
   aurora::gfx::vfx::draw_triangles(desc, batch.verts.data(), static_cast< uint32_t >(batch.verts.size() / 3));
   batch.verts.clear();
+  batch.probePosSet = false;
 }

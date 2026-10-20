@@ -30,6 +30,11 @@ void PortVfxSetLaunchDir(CElementGen::CParticle& particle);
 // PART's VMAT. A PART with PMDV variants keeps the retail model path (VMSH holds one model).
 struct CPortVfxMeshBatch {
   std::vector< aurora::gfx::vfx::Vertex > verts;
+  // Where the batch's clustered lighting looks: the Lit material (IceChargeCollisionLit) samples the
+  // room's baked probe at the first particle's model origin, as the stand-in for Remastered's per-instance
+  // BLPD record. The cluster grid and its light list need nothing per batch (they are per camera).
+  float probePos[3] = {};
+  bool probePosSet = false;
 
   // True when adding `vfx`'s mesh would take the batch past one aurora draw (the size
   // draw_triangles splits at); the caller draws and clears it first, so it stays bounded.

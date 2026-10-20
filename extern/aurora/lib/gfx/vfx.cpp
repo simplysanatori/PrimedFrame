@@ -79,7 +79,11 @@ struct Uniform {
   // IceCharge*: CCH0..6 (IceChargeBeam: 0..2) and, at [7], the modular simulation time; VisorRunOff:
   // CCH0..4. Rows past the recipe's stay zero.
   float ice[8][4];
-  float pad[56];
+  // IceChargeCollisionLit: AMBS (ambient), the probe's mean, its lobe, then (view-space direction,
+  // 1 + 2 * sharpness) per colour channel, and BLCM. These are the 7 vec4f of padding the uniform
+  // already had before the cluster block, so nothing above or below moves.
+  float lit[7][4];
+  float pad[28];
   // IceChargeCollisionLit: Remastered's clustered light block, c5[0..2] then 32 records of 20 floats, at
   // ClusterBlockOffset (after every field above, so no earlier recipe's offsets move). Zero elsewhere.
   float cluster[ClusterBlockFloats];
@@ -89,9 +93,10 @@ static_assert(offsetof(Uniform, misc2) == 208 && offsetof(Uniform, srcs) == 224 
               offsetof(Uniform, scene) == 400);
 static_assert(offsetof(Uniform, ice) == 416);
 // The block starts at ClusterBlockOffset, where the ShaderSource's 14 vec4f of padding put it, and fills
-// the rest of the uniform: 163 vec4f.
-static_assert(offsetof(Uniform, pad) == 544 && offsetof(Uniform, cluster) == ClusterBlockOffset);
-static_assert(544 + 14 * 16 == ClusterBlockOffset && ClusterBlockFloats == 163 * 4 && UniformSize == 3376);
+// the rest of the uniform: 163 vec4f. The lit block takes the padding's first 7 vec4f.
+static_assert(offsetof(Uniform, lit) == 544 && offsetof(Uniform, cluster) == ClusterBlockOffset);
+static_assert(544 + 7 * 16 + sizeof(Uniform::pad) == ClusterBlockOffset && ClusterBlockFloats == 163 * 4 &&
+              UniformSize == 3376);
 
 // ---- Array textures ----
 // A slot's texture as a texture_2d_array: a 1-layer view of the GX texture itself, or, for an atlas,
@@ -203,8 +208,16 @@ struct U {
   ice6: vec4f,
   ice7: vec4f,
   // The clustered light block (IceChargeCollisionLit) at ClusterBlockOffset: c5[0..2] then 32 records of
-  // 5 vec4f. The 14 vec4f before it keep every member above at its old offset.
-  padCluster: array<vec4f, 14>,
+  // 5 vec4f. The 14 vec4f before it keep every member above at its old offset; lit0..lit6 are the first
+  // seven (the baked ambient and probe), the rest is padding.
+  lit0: vec4f,
+  lit1: vec4f,
+  lit2: vec4f,
+  lit3: vec4f,
+  lit4: vec4f,
+  lit5: vec4f,
+  lit6: vec4f,
+  padCluster: array<vec4f, 7>,
   cluster: array<vec4f, 163>,
 }
 @group(0) @binding(0) var<uniform> u: U;
@@ -380,6 +393,49 @@ fn cluster_mask_word(in: VOut) -> u32 {
   return textureLoad(clusterMask, vec2i(row + col, slice), 0).x;
 }
 
+// One colour channel of Remastered's baked probe (BLPD, REPORT.md section 4): the record's mean and range
+// with its own lobe direction. `sharp` is the record's lane w, 1 + 2 * s, so 0.5 * w + 0.5 is 1 + s.
+fn ambient_lobe(mean: f32, lobe: f32, sharp: f32, dir: vec3f, n: vec3f) -> f32 {
+  let q = sat(dot(n, dir) * 0.5 + 0.5);
+  return fma(lobe * (sharp + 1.0), pow(q, sharp), mean - lobe);
+}
+
+// The probe's three channels. The port has no BLPD buffer and no BLPI index; the runtime fills u.lit1..
+// lit5 from the room's baked ambient at the particle (PortRoomEnv::AmbientAt), view space.
+fn probe_ambient(ngeo: vec3f) -> vec3f {
+  return vec3f(ambient_lobe(u.lit1.x, u.lit2.x, u.lit3.w, u.lit3.xyz, ngeo),
+               ambient_lobe(u.lit1.y, u.lit2.y, u.lit4.w, u.lit4.xyz, ngeo),
+               ambient_lobe(u.lit1.z, u.lit2.z, u.lit5.w, u.lit5.xyz, ngeo));
+}
+
+// The clustered lights 390fc33b sums (REPORT.md section 3): one 32-bit word per (tile, slice) names the
+// records that reach this cluster, each 80 bytes = 5 vec4f after the 3-slot header. A light adds its
+// colour x intensity x sat(dot(N, L)) x the cone x the falloff cubic at t = sat(d * A + B), with L from
+// the view position and no shadow and no specular term. Record 0 is c5[3], record i at c5[3 + 5i].
+fn cluster_lights(in: VOut, ngeo: vec3f) -> vec3f {
+  var mask = cluster_mask_word(in);
+  var sum = vec3f(0.0);
+  loop {
+    if (mask == 0u) { break; }
+    let bit = firstTrailingBit(mask);
+    mask = mask & (mask - 1u);
+    let i = 3u + bit * 5u;
+    let r0 = u.cluster[i];      // +0x00 colour x intensity, +0x0c widen
+    let r1 = u.cluster[i + 1u]; // +0x10 view position, +0x1c cone scale
+    let r2 = u.cluster[i + 2u]; // +0x20 unit direction surface -> light, +0x2c cone bias
+    let r3 = u.cluster[i + 3u]; // +0x30 A, +0x34 B
+    let r4 = u.cluster[i + 4u]; // +0x40 a3, a2, a1, a0
+    let dv = r1.xyz - in.vp;
+    let d = length(dv);
+    let l = dv / max(d, 1e-8);
+    let cone = sat(dot(l, r2.xyz) * r1.w + r2.w);
+    let t = sat(fma(d, r3.x, r3.y));
+    let poly = ((r4.x * t + r4.y) * t + r4.z) * t + r4.w;
+    sum = sum + r0.rgb * (sat(dot(ngeo, l)) * cone * poly);
+  }
+  return sum;
+}
+
 fn fog_factor(fz: f32) -> f32 {
   let ft = i32(u.fog.x);
   if (ft == 0) { return 0.0; }
@@ -499,16 +555,18 @@ fn fs_main(in: VOut) -> @location(0) vec4f {
     let desat = (sc - vec3f(sum * 0.33)) * c3.x + vec3f(sum * 0.33);
     let col = b.x * b.x * (c1.rgb - c0.rgb) + c0.rgb;
     let base = desat + b.y * c5.x * col + b.x * g * env * c2.y * u.ice4.rgb;
-    // VFX_IceChargeCollision_Lit (390fc33b): Phase B reads the gather's block (c5[0..2] through
-    // cluster_mask_word, then record 0 at c5[3]) and this fragment's mask word, so both bindings are live.
-    // Nothing is summed: the perm draws what ..._Unlit draws until Phase C replaces `cl` with the loop
-    // (while (mask != 0) { bit = findLSB(mask); … u.cluster[3 + bit * 5] … }).
-    var cl = vec3f(0.0);
+    // VFX_IceChargeCollision_Lit (390fc33b, perm 000; REPORT.md sections 3 to 5). Same front end; the tail
+    // is Remastered's "ambient + probes + clustered lights" instead of the unlit rim:
+    //   lit = AMBS + probe + sum over the mask's records
+    //   rgb = (vc.rgb * base * lit * BLCM) / pi + base * CCH5.z / exposure, then x PCMD
+    // with N_geo the interpolated view normal (no bump), and no CCH6 rim term in this perm.
     if ((FEAT & 33554432u) != 0u) {
-      let cmask = cluster_mask_word(in);
-      if (cmask != 0u) { cl = u.cluster[3].rgb * 0.0; }
+      let lighting = u.lit0.xyz + probe_ambient(N) + cluster_lights(in, N);
+      let shaded = vc.rgb * base * lighting * u.lit6.rgb;
+      rgb = (shaded * 0.3183098862 + base * (c5.z * ie)) * M;
+    } else {
+      rgb = (fs * u.ice6.rgb * c5.y + base) * (c5.z * ie + vc.rgb) * M;
     }
-    rgb = (fs * u.ice6.rgb * c5.y + base + cl) * (c5.z * ie + vc.rgb) * M;
   } else if ((FEAT & (8388608u | 16777216u)) != 0u) {
     // VFX_VisorRunOff (b5e12668 unlit, d85d4169 lit; FS perm 000; SPEC-fb-visor.md sections 5/6). The
     // TCH0 flow map, scrolled by CCH1 (u by .w, v by .x x CCH2.y), gives the mask m from its y and w and
@@ -1483,6 +1541,18 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
       std::memcpy(u.ice[i], desc.params[i], sizeof(u.ice[i]));
     }
     u.ice[7][0] = desc.time;
+  }
+  // IceChargeCollisionLit: AMBS, the probe record's mean/lobe/three lobes and BLCM into the padding before
+  // the cluster block (u.lit0..u.lit6).
+  if ((features & IceChargeCollisionLit) != 0) {
+    const LitAmbient& lit = desc.lit;
+    std::memcpy(u.lit[0], lit.ambient, sizeof(lit.ambient));
+    std::memcpy(u.lit[1], lit.mean, sizeof(lit.mean));
+    std::memcpy(u.lit[2], lit.lobe, sizeof(lit.lobe));
+    for (int c = 0; c < 3; ++c) {
+      std::memcpy(u.lit[3 + c], lit.dir[c], sizeof(lit.dir[c]));
+    }
+    std::memcpy(u.lit[6], lit.modulate, sizeof(lit.modulate));
   }
   // IceChargeCollisionLit: the gather's block into the uniform (c5[0] at ClusterBlockOffset) and its mask
   // into this frame slot's texture. Validated once here; an unusable view leaves the block zeroed and the
