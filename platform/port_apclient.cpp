@@ -1622,11 +1622,43 @@ bool RandomizedGame() {
   }
 }
 
-int SpringBallRule() {
+bool HasChargeBeamRule(const CPlayerState* playerState) {
   namespace Prime = MetroidPrime;
   try {
     Runtime& runtime = GetRuntime();
     std::lock_guard<std::mutex> lock(runtime.mutex);
+    if (!runtime.enabled || !runtime.config.builtin || runtime.session == nullptr ||
+        !runtime.session->GetSlotData().received)
+      return false;
+    if (runtime.session->GetSlotData().progressiveBeamUpgrades) {
+      switch (playerState->GetCurrentBeam()) {
+      case CPlayerState::EBeamId::kBI_Power:
+        return runtime.session->ReceivedCount(Prime::kItemBase + Prime::kProgressiveBeam) >= 2;
+      case CPlayerState::EBeamId::kBI_Ice:
+        return runtime.session->ReceivedCount(Prime::kItemBase + Prime::kProgressiveBeam + 2) >= 2;
+      case CPlayerState::EBeamId::kBI_Wave:
+        return runtime.session->ReceivedCount(Prime::kItemBase + Prime::kProgressiveBeam + 3) >= 2;
+      case CPlayerState::EBeamId::kBI_Plasma:
+        return runtime.session->ReceivedCount(Prime::kItemBase + Prime::kProgressiveBeam + 4) >= 2;
+      default:
+        // aka Phazon Beam
+        return true;
+      }
+    } else {
+      // if not using Progressive Beam Upgrades then only check for Charge Beam
+      // or if not Archipelago rando
+      return playerState->GetItemCapacity(CPlayerState::EItemType::kIT_ChargeBeam) > 0;
+    }
+  } catch (...) {
+    return false;
+  }
+}
+
+int SpringBallRule() {
+  namespace Prime = MetroidPrime;
+  try {
+    Runtime& runtime = GetRuntime();
+    std::lock_guard< std::mutex > lock(runtime.mutex);
     if (!runtime.enabled || !runtime.config.builtin || runtime.session == nullptr ||
         !runtime.session->GetSlotData().received)
       return -1;
@@ -1636,8 +1668,7 @@ int SpringBallRule() {
     case 2:
       return runtime.session->ReceivedCount(Prime::kItemBase + Prime::kSpringBall) > 0 ? 2 : 0;
     case 3:
-      return runtime.session->ReceivedCount(Prime::kItemBase + Prime::kProgressiveBomb) > 0 ? 2
-                                                                                            : 0;
+      return runtime.session->ReceivedCount(Prime::kItemBase + Prime::kProgressiveBomb) > 0 ? 2 : 0;
     default:
       // The seed leaves Spring Ball out of logic: the port's own setting applies.
       return -1;

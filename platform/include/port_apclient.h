@@ -7,6 +7,7 @@
 #include <vector>
 
 class CStateManager;
+class CPlayerState;
 namespace PortRandomizer {
 struct PickupModel;
 }
@@ -269,6 +270,11 @@ bool VariaOnlyHeatProtection();
 // Progressive Bomb, has been received). -1 when no such seed is connected or
 // the seed has Spring Ball off, so the port's own setting applies.
 int SpringBallRule();
+
+// Checks for Progressive Beam and disable/enable Charge Beam based on current
+// beam. True if has Charge Beam for current beam or false if not. Else if
+// Progressive Beam is not on it checks for normal Charge Beam instead.
+bool HasChargeBeamRule(const CPlayerState* playerState);
 
 // The connected seed's pre_scan_elevators: 1 on, 0 off (or AP off), -1 while
 // the client is on but its slot_data has not arrived yet.
