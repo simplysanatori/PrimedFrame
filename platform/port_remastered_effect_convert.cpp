@@ -3574,10 +3574,10 @@ public:
     }
     // LIT_ 1 on a VFX_*_Lit sprite shader draws its lit perm (20e149b2 080_0..091_0): the unlit recipe's
     // colour x (AMBS + the baked probe + the clustered lights) x BLCM x PCMD / pi, alpha unchanged. The
-    // runtime fills the light. IEXP (explicit, or DVVN 3/4's default, GetDefaultInverseExposure 0x29181c)
-    // scales the CPU colour by the inverse exposure and the post exposes it back, so a lit draw's light,
-    // radiance before exposure, reaches the HDR scene at exposure 1: AlreadyExposed. Unlit draws keep the
-    // room's exposure (that policy is held for them).
+    // runtime fills the light. The lit vertex perm (080_1) passes the particle colour through (o6 = v3) and
+    // never reads the ITEN x inverse exposure scalar the vertex-lit perm 000_1 multiplies in (v2.z), so IEXP
+    // has no effect: the light is radiance, exposed by the room as the scene is, and the runtime leaves ITEN
+    // out of a lit particle's colour.
     uint32_t lit = 0;
     if (!swoosh && !electric && IsLitTailShader(mati.shader)) {
       if (const EffectProperty* litProperty = find(F("LIT_"))) {
@@ -3588,19 +3588,7 @@ public:
       }
     }
     if (lit != 0) {
-      features |= kParticleLit;
-      uint32_t inverseExposed = 0;
-      if (const EffectProperty* iexp = findUnique(F("IEXP"))) {
-        if (!SmallInteger(*iexp, inverseExposed)) {
-          inverseExposed = 0;
-        }
-      } else if (const EffectProperty* dvvn = findUnique(F("DVVN"))) {
-        uint32_t version = 0;
-        inverseExposed = SmallInteger(*dvvn, version) && (version == 3 || version == 4) ? 1 : 0;
-      }
-      if (inverseExposed != 0) {
-        features |= kAlreadyExposed;
-      }
+      features = (features | kParticleLit) & ~kAlreadyExposed;
     }
     if (recipe->frameBuffer) {
       if (cch0[0] != 0.0f || cch0[1] != 0.0f) {

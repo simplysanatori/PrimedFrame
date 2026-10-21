@@ -4606,11 +4606,11 @@ void TestVmatParticleLit() {
   CHECK_MSG(features(0x20e149b2, -1, -1, -1) == unlit, "20e149b2 without LIT_ is the unlit recipe");
   CHECK_MSG(features(0x20e149b2, 0, 1, 4) == unlit, "LIT_ 0 is the unlit recipe, IEXP or not");
   CHECK_MSG(features(0x20e149b2, 1, 0, 1) == (unlit | kParticleLit), "LIT_ 1: ParticleLit, at the room's exposure");
-  CHECK_MSG(features(0x20e149b2, 1, 1, 1) == (unlit | kParticleLit | kAlreadyExposedBit),
-            "LIT_ 1 + IEXP 1: ParticleLit, AlreadyExposed");
-  CHECK_MSG(features(0x20e149b2, 1, -1, 4) == (unlit | kParticleLit | kAlreadyExposedBit),
-            "LIT_ 1 under DVVN 4 (IEXP's default on): AlreadyExposed");
-  CHECK_MSG(features(0x20e149b2, 1, 0, 4) == (unlit | kParticleLit), "an explicit IEXP 0 beats DVVN 4's default");
+  // The lit vertex perm reads no inverse exposure (080_1: o6 = v3, v2.z unread), so IEXP never makes a lit
+  // draw AlreadyExposed.
+  CHECK_MSG(features(0x20e149b2, 1, 1, 1) == (unlit | kParticleLit), "LIT_ 1 + IEXP 1 is lit at the room exposure");
+  CHECK_MSG(features(0x20e149b2, 1, -1, 4) == (unlit | kParticleLit), "LIT_ 1 under DVVN 4 is lit at the room exposure");
+  CHECK_MSG(features(0x20e149b2, 1, 0, 4) == (unlit | kParticleLit), "LIT_ 1 + IEXP 0 is lit at the room exposure");
   const uint32_t other = features(0x461071b8, 1, 1, 4);
   CHECK_MSG(other != ~0u && (other & (kParticleLit | kAlreadyExposedBit)) == 0, "a shader off the lit-tail list stays unlit");
 }

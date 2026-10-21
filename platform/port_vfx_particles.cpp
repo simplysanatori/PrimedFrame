@@ -399,7 +399,8 @@ void CElementGen::PortRenderParticlesVfx() {
   }
   // A VFX_*_Lit shader under LIT_ 1 (ParticleLit): the clustered gather and the baked probe at the emitter,
   // as the mesh path takes them at its first model.
-  if ((desc.features & aurora::gfx::vfx::ParticleLit) != 0) {
+  const bool lit = (desc.features & aurora::gfx::vfx::ParticleLit) != 0;
+  if (lit) {
     const float probePos[3] = {xe8_globalTranslation.GetX(), xe8_globalTranslation.GetY(),
                                xe8_globalTranslation.GetZ()};
     PortVfxClusterView(probePos, desc);
@@ -491,8 +492,9 @@ void CElementGen::PortRenderParticlesVfx() {
       tm[s].f = EvalReal(r[5], partFrame, 0.f);
     }
 
-    float color[4] = {p.xPortColor[0] * p.xPortIten, p.xPortColor[1] * p.xPortIten,
-                      p.xPortColor[2] * p.xPortIten, p.xPortColor[3]};
+    // A lit perm (ParticleLit) reads no ITEN: Remastered's 080_1 passes the colour through without it.
+    const float iten = lit ? 1.f : p.xPortIten;
+    float color[4] = {p.xPortColor[0] * iten, p.xPortColor[1] * iten, p.xPortColor[2] * iten, p.xPortColor[3]};
     if (hasModu) {
       for (int i = 0; i < 4; ++i) {
         color[i] *= modu[i];
@@ -805,9 +807,11 @@ void CPortVfxMeshBatch::Add(const CPortVfxData& vfx, const CTransform4f& model,
     tm[s].sinE = std::sin(e);
     tm[s].f = EvalReal(r[5], partFrame, 0.f);
   }
-  const float color[4] = {p.xPortColor[0] * p.xPortIten * modulate.GetRed(),
-                          p.xPortColor[1] * p.xPortIten * modulate.GetGreen(),
-                          p.xPortColor[2] * p.xPortIten * modulate.GetBlue(),
+  // ParticleLit reads no ITEN (see the sprite path).
+  const float iten = (vfx.mat.features & aurora::gfx::vfx::ParticleLit) != 0 ? 1.f : p.xPortIten;
+  const float color[4] = {p.xPortColor[0] * iten * modulate.GetRed(),
+                          p.xPortColor[1] * iten * modulate.GetGreen(),
+                          p.xPortColor[2] * iten * modulate.GetBlue(),
                           p.xPortColor[3] * modulate.GetAlpha()};
 
   // The vertices once, in world space; the triangles index them. One scratch buffer serves every
