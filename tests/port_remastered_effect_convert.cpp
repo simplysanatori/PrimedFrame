@@ -3258,7 +3258,8 @@ std::vector<uint8_t> Mati(uint32_t shader, const std::vector<std::pair<const cha
 }
 
 // A root generator whose material is `Fresh(7)`, with a blend mode and sprite centre.
-std::vector<uint8_t> VmatEffect(bool model = false, const EffectGuid& material = Fresh(7), uint32_t pbdm = 2) {
+std::vector<uint8_t> VmatEffect(bool model = false, const EffectGuid& material = Fresh(7), uint32_t pbdm = 2,
+                                float sftd = 0) {
   std::vector<uint8_t> out(0x3c, 0);
   std::memcpy(out.data(), "RFRM", 4);
   std::memcpy(out.data() + 0x14, "GENP", 4);
@@ -3274,10 +3275,42 @@ std::vector<uint8_t> VmatEffect(bool model = false, const EffectGuid& material =
     PutProperty(out, "PMDL", 0);
     PutGuid(out, Legacy(0x1234ABCD));
   }
+  if (sftd > 0) {
+    PutProperty(out, "SFTD", 3);
+    PutConstant(out, Bits(sftd));
+  }
   PutProperty(out, "_END", 4);
   Put32(out, 0);
   out.insert(out.end(), {'F', 'O', 'O', 'T'});
   return out;
+}
+
+// SFTD goes into the VMAT (its depthSoften), so it is reported only when no VMAT comes out.
+void TestSftdReport() {
+  const std::vector<uint8_t> data = VmatEffect(false, Fresh(7), 2, 3.0f);
+  EffectNode effect;
+  std::string error;
+  CHECK_MSG(ParseEffect(data.data(), data.size(), effect, error), "sftd effect parses");
+  EffectConvertIO io;
+  io.materialTexture = [](const EffectGuid& material) { return material == Fresh(7) ? 0x5EED0007u : 0u; };
+  io.materialData = [](const EffectGuid&) { return Mati(0x461071b8, {{"TCH0", Fresh(8)}}); };
+  io.vfxTexture = [](const EffectGuid&) {
+    FlipbookAtlas atlas;
+    atlas.id = 0x5EED0008;
+    return atlas;
+  };
+  auto dropped = [](const ConvertedPart& part, const std::string& line) {
+    return std::find(part.dropped.begin(), part.dropped.end(), line) != part.dropped.end();
+  };
+  std::vector<ConvertedPart> parts = ConvertEffect(effect, data.data(), io);
+  CHECK_MSG(parts.size() == 1, "one sftd part");
+  if (parts.size() == 1) {
+    CHECK_MSG(!dropped(parts[0], "SFTD: Remastered only") && !dropped(parts[0], "SFTD: no VMAT"),
+              "an SFTD the VMAT takes is not reported dropped");
+  }
+  io.materialData = [](const EffectGuid&) { return Mati(0x12345678, {}); };
+  parts = ConvertEffect(effect, data.data(), io);
+  CHECK_MSG(parts.size() == 1 && dropped(parts[0], "SFTD: no VMAT"), "without a VMAT, SFTD is dropped as no VMAT");
 }
 
 // A model particle with a VMAT carries its converted model as VMSH, when the import has the mesh.
@@ -4917,6 +4950,7 @@ void TestFacingRotation() {
 int main() {
   TestVmat();
   TestVmsh();
+  TestSftdReport();
   TestAtlasTexture();
   TestModelChoice();
   TestColourChoice();

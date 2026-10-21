@@ -4497,12 +4497,13 @@ public:
         continue;
       }
       if (part && (fourcc == F("TMTR") || fourcc == F("PMTR") || fourcc == F("SMTR") || fourcc == F("SSZE") ||
-                   fourcc == F("ITEN") || fourcc == F("SCTR"))) {
+                   fourcc == F("ITEN") || fourcc == F("SCTR") || fourcc == F("SFTD"))) {
         portOnly.push_back(fourcc);
         continue;
       }
       if ((swoosh || electric) &&
-          (fourcc == F("TMTR") || fourcc == F("PMTR") || fourcc == F("SMTR") || fourcc == F("ITEN"))) {
+          (fourcc == F("TMTR") || fourcc == F("PMTR") || fourcc == F("SMTR") || fourcc == F("ITEN") ||
+           fourcc == F("SFTD"))) {
         portOnly.push_back(fourcc);
         continue;
       }
