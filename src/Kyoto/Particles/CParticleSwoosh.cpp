@@ -1719,6 +1719,20 @@ bool CParticleSwoosh::SystemHasLight() const { return false; }
 void CParticleSwoosh::DestroyParticles() {}
 bool CParticleSwoosh::GetParticleEmission() const { return x1d0_24_emitting; }
 #ifdef TARGET_PC
+// CParticleGen::ShutdownEffect (0x27a66c) -> DoShutdownBehavior (0x27b88c) with the description's
+// SHTM: 0 stops the emission, 1 also runs Remastered's CParticleSwoosh::DestroyParticles (0x27f744),
+// which empties the segment ring (current index, live counts to 0), so the trail vanishes at once.
+// The retail DestroyParticles stays empty.
+void CParticleSwoosh::ShutdownEffect() {
+  SetParticleEmission(false);
+  if (x1c_desc->xPortShutdownMode == 1) {
+    x158_curParticle = 0;
+    x1ac_particleCount = 0;
+    for (int i = 0; i < x15c_swooshes.capacity(); ++i) {
+      x15c_swooshes.data()[i].mActive = false;
+    }
+  }
+}
 // XFMD 3: the getters read the one system var too (MPT_GetTranslation 0x27fb54).
 const CTransform4f& CParticleSwoosh::GetOrientation() const {
   return x1c_desc->xPortXfmdFollow ? xb0_globalOrientation : x44_orientation;

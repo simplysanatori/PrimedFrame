@@ -171,6 +171,11 @@ bool CParticleSwooshDataFactory::CreateWPSM(CSwooshDescription* swoosh, CInputSt
       CParticleDataFactory::GetClassID(in);
       swoosh->xPortNoZTest = in.ReadLong() == 0;
       break;
+    // Port-only: Remastered's SHTM (xPortShutdownMode), written for 1 only.
+    case 'PSHM':
+      CParticleDataFactory::GetClassID(in);
+      swoosh->xPortShutdownMode = u8(in.ReadLong());
+      break;
     // Port-only: Remastered's DFOG 1 (xPortUnfogged).
     case 'PDFG':
       CParticleDataFactory::GetClassID(in);

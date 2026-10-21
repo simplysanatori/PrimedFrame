@@ -4774,14 +4774,17 @@ public:
         Basis(F("BSIS"), inner, out);
         continue;
       }
-      // SHTM (CreateGPSM 0x256b7c, desc+0xcc): what a shutdown does (CParticleGen::DoShutdownBehavior
-      // 0x27b88c). 0 stops emission, 1 also destroys the live particles. The port-only PSHM, for 1.
-      if (part && fourcc == F("SHTM")) {
+      // SHTM (CreateGPSM 0x256b7c, CreateSWSH 0x2db8a4, CreateELSM/CreateELC2, desc+0xcc): what a shutdown
+      // does (CParticleGen::DoShutdownBehavior 0x27b88c). 0 stops emission, 1 also destroys the live
+      // particles: the port-only PSHM, for a PART and a swoosh (CParticleSwoosh::DestroyParticles
+      // 0x27f744 empties the ring). An electric's DestroyParticles (0x286554, 0xb78e8c) is a no-op,
+      // so its 0 and 1 both just stop emitting, which is what the port's ShutdownEffect does.
+      if ((part || swoosh || type == F("ELSC")) && fourcc == F("SHTM")) {
         uint32_t mode = 0;
         if (!SmallInteger(property, mode) || mode > 1) {
           result.dropped.push_back(mode > 1 ? "SHTM: mode " + std::to_string(mode)
                                             : std::string("SHTM: not a constant"));
-        } else if (mode == 1) {
+        } else if (mode == 1 && (part || swoosh)) {
           AppendBE32(out, F("PSHM"));
           AppendBE32(out, F("CNST"));
           AppendBE32(out, 1);
@@ -5899,7 +5902,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if (part && fourcc == F("PSMV")) {
       ok = reader.PortMover();
     } else if (!part && vfx && (fourcc == F("PSRO") || fourcc == F("PRAF") || fourcc == F("XFMD") || fourcc == F("PDFG") ||
-                          fourcc == F("PZTS"))) {
+                          fourcc == F("PZTS") || fourcc == F("PSHM"))) {
       ok = reader.PortWord();
     } else if (part && fourcc == F("PISV")) {
       ok = reader.PortWord() && reader.Element(Type::Real);
