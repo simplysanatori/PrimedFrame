@@ -706,6 +706,14 @@ R"(    let nm = sample_raw(S_NORMAL, uv2, 0).xy;
     if (u.tone1.x > 0.0 && u.tone0.w > 0.0) { ie = 1.0 / u.tone0.w; }
     rgb = scene_light(textureSampleLevel(sceneColor, sceneSampler, fbuv, 0.0).rgb) * rgb * ie;
   }
+  if ((FEAT & 67108864u) != 0u) {
+    // ParticleLit: a VFX_*_Lit shader's lit perm (20e149b2 080_0..091_0) is its unlit colour x (AMBS +
+    // the probe + the clustered lights) x BLCM x PCMD / pi; PCMD (M) is already in rgb. vec is camera-
+    // local (x, z, y); Remastered's view normal is (x, y, -z) of it.
+    let N = normalize(vec3f(in.nrm.x, in.nrm.y, -in.nrm.z) + vec3f(0.0, 0.0, 1e-6));
+    let lighting = u.lit0.xyz + probe_ambient(N) + cluster_lights(in, N);
+    rgb = rgb * lighting * u.lit6.rgb * 0.3183098862;
+  }
   var a = x * vc.w;
   if ((FEAT & 32u) != 0u && u.soft.z > 0.5 && u.misc2.w > 0.0) {
     // DepthSoften, as VFX_DualModColorRamp_Indirect_Unlit (71dc2465, perm 000) does it: the opaque
@@ -1547,7 +1555,7 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   }
   // IceChargeCollisionLit: AMBS, the probe record's mean/lobe/three lobes and BLCM into the padding before
   // the cluster block (u.lit0..u.lit6).
-  if ((features & IceChargeCollisionLit) != 0) {
+  if ((features & (IceChargeCollisionLit | ParticleLit)) != 0) {
     const LitAmbient& lit = desc.lit;
     std::memcpy(u.lit[0], lit.ambient, sizeof(lit.ambient));
     std::memcpy(u.lit[1], lit.mean, sizeof(lit.mean));
@@ -1561,7 +1569,7 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   // into this frame slot's texture. Validated once here; an unusable view leaves the block zeroed and the
   // draw on the dummy mask.
   uint8_t maskSlot = NoMask;
-  if ((features & IceChargeCollisionLit) != 0 && valid_cluster_view(desc.cluster)) {
+  if ((features & (IceChargeCollisionLit | ParticleLit)) != 0 && valid_cluster_view(desc.cluster)) {
     write_cluster_block(desc.cluster, reinterpret_cast<float*>(&u));
     if (upload_cluster_mask(desc.cluster)) {
       maskSlot = uint8_t(frameSlot);

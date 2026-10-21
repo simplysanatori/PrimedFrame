@@ -70,6 +70,11 @@ enum Feature : uint32_t {
   // s-tiledlight-20261020/REPORT.md sections 3 to 5). Set with IceChargeCollision's slots (colorSlot,
   // normalSlot, envSlot) and its 7 params rows, and a DrawDesc::lit for the ambient and the probe.
   IceChargeCollisionLit = 1u << 25,
+  // The lit perm of a VFX_*_Lit sprite shader (20e149b2 VFX_Color_Opacity_Lit and the converter's
+  // IsLitTailShader list; perms 080_0..091_0): whatever the recipe's colour is, rgb x (AMBS + the baked
+  // probe + the clustered lights) x BLCM / pi, alpha unchanged. N is the view normal from vec (toward the
+  // eye for a sprite). Takes DrawDesc::lit and DrawDesc::cluster as IceChargeCollisionLit does.
+  ParticleLit = 1u << 26,
   // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
   // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
   AlreadyExposed = 1u << 31
@@ -221,10 +226,10 @@ struct DrawDesc {
   int8_t envSlot = -1; // IceChargeCollision: TCH0, the reflection map
   float params[7][4] = {};
   float time = 0.f;
-  // IceChargeCollisionLit: the clustered light gather's block and mask (see ClusterView). Ignored by every
-  // other feature.
+  // IceChargeCollisionLit, ParticleLit: the clustered light gather's block and mask (see ClusterView).
+  // Ignored by every other feature.
   ClusterView cluster;
-  // IceChargeCollisionLit: the baked ambient and probe (see LitAmbient). Ignored by every other feature.
+  // IceChargeCollisionLit, ParticleLit: the baked ambient and probe (see LitAmbient). Ignored by every other feature.
   LitAmbient lit;
 };
 

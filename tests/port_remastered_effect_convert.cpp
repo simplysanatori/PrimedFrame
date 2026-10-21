@@ -4556,6 +4556,65 @@ void TestVmatIceChargeCollisionLitRecipe() {
             "390fc33b under DFOG 1 is Unfogged");
 }
 
+// VFX_Color_Opacity_Lit (20e149b2, the Landing Site mist): LIT_ 1 selects the lit perm, the ParticleLit bit,
+// and its inverse exposure (IEXP, or DVVN 3/4's default) makes the draw AlreadyExposed. LIT_ 0 is the unlit
+// recipe alone, and so is a shader without a lit tail.
+void TestVmatParticleLit() {
+  constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kDepthSoften = 32, kParticleLit = 1u << 26;
+  const auto features = [](uint32_t shader, int lit, int iexp, int dvvn) {
+    std::vector<uint8_t> data = VmatEffect(false, Fresh(7), 0);
+    std::vector<uint8_t> extra;
+    if (lit >= 0) {
+      PutProperty(extra, "LIT_", 0);
+      extra.push_back(uint8_t(lit));
+    }
+    if (iexp >= 0) {
+      PutProperty(extra, "IEXP", 1);
+      extra.push_back(uint8_t(iexp));
+    }
+    if (dvvn >= 0) {
+      PutProperty(extra, "DVVN", 1);
+      extra.push_back(uint8_t(dvvn));
+    }
+    data.insert(data.end() - 13, extra.begin(), extra.end());
+    EffectNode node;
+    std::string error;
+    CHECK_MSG(ParseEffect(data.data(), data.size(), node, error), "the lit sprite effect parses");
+    EffectConvertIO io;
+    io.materialTexture = [](const EffectGuid&) { return 0x5EED0007u; };
+    io.materialData = [shader](const EffectGuid& material) {
+      return material == Fresh(7) ? Mati(shader, {{"BCLR", Fresh(8)}, {"TCH0", Fresh(9)}}) : std::vector<uint8_t>();
+    };
+    io.vfxTexture = [](const EffectGuid& texture) {
+      FlipbookAtlas atlas;
+      atlas.id = texture == Fresh(8) ? 0x5EED0008 : texture == Fresh(9) ? 0x5EED0009 : 0;
+      return atlas;
+    };
+    std::vector<ConvertedPart> parts = ConvertEffect(node, data.data(), io);
+    std::vector<RetailPartProperty> properties;
+    if (parts.size() != 1 || !SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error)) {
+      return ~0u;
+    }
+    for (const RetailPartProperty& property : properties) {
+      if (property.fourcc == EffectFourCC("VMAT")) {
+        return VmatWord(property.value, 12);
+      }
+    }
+    return ~0u;
+  };
+  const uint32_t unlit = kColorTex | kOpacityTex | kDepthSoften;
+  CHECK_MSG(features(0x20e149b2, -1, -1, -1) == unlit, "20e149b2 without LIT_ is the unlit recipe");
+  CHECK_MSG(features(0x20e149b2, 0, 1, 4) == unlit, "LIT_ 0 is the unlit recipe, IEXP or not");
+  CHECK_MSG(features(0x20e149b2, 1, 0, 1) == (unlit | kParticleLit), "LIT_ 1: ParticleLit, at the room's exposure");
+  CHECK_MSG(features(0x20e149b2, 1, 1, 1) == (unlit | kParticleLit | kAlreadyExposedBit),
+            "LIT_ 1 + IEXP 1: ParticleLit, AlreadyExposed");
+  CHECK_MSG(features(0x20e149b2, 1, -1, 4) == (unlit | kParticleLit | kAlreadyExposedBit),
+            "LIT_ 1 under DVVN 4 (IEXP's default on): AlreadyExposed");
+  CHECK_MSG(features(0x20e149b2, 1, 0, 4) == (unlit | kParticleLit), "an explicit IEXP 0 beats DVVN 4's default");
+  const uint32_t other = features(0x461071b8, 1, 1, 4);
+  CHECK_MSG(other != ~0u && (other & (kParticleLit | kAlreadyExposedBit)) == 0, "a shader off the lit-tail list stays unlit");
+}
+
 // VFX_VisorRunOff (b5e12668 / d85d4169): one TCH0 flow map as the colour slot, CCH0..4 whole in VPRM
 // v1 and SMTR overrides of any of them to their VPRM targets, Unfogged without a DFOG 1 (the visor
 // composite pass has no fog), and the second shader on its own feature bit.
@@ -5046,6 +5105,7 @@ int main() {
   TestVmatIceChargeBeamRecipe();
   TestVmatIceChargeCollisionRecipe();
   TestVmatIceChargeCollisionLitRecipe();
+  TestVmatParticleLit();
   TestElc2BlendAndLifetime();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();

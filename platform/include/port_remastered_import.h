@@ -112,7 +112,8 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 90: a swoosh generator's SHTM 1 (shutdown destroys the live particles) is the port-only PSHM.
 // 91: ISDT 0 (a shutdown reaches the children as their own ShutdownEffect) is the port-only PISD 0.
 // 92: the GENPs of the rooms' own effect actors, under RoomEffectId (for the .roomfx files).
-inline constexpr int kEffects = 92;    // port_remastered_effect_import and the particle converters
+// 93: LIT_ 1 on a VFX_*_Lit sprite shader is the vfx ParticleLit feature (AlreadyExposed under IEXP).
+inline constexpr int kEffects = 93;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).

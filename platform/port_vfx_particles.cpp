@@ -376,6 +376,10 @@ bool PortVfxBuildDesc(const CPortVfxData& vfx, const float* vsmt, uint vsmtMask,
   return true;
 }
 
+namespace {
+void PortVfxClusterView(const float pos[3], aurora::gfx::vfx::DrawDesc& desc);
+} // namespace
+
 void CElementGen::PortRenderParticlesVfx() {
   const CPortVfxData& vfx = *x28_loadedGenDesc->xPortVfx;
   const CPortVfxMat& mat = vfx.mat;
@@ -392,6 +396,13 @@ void CElementGen::PortRenderParticlesVfx() {
   // material still reads CCH0..4: evaluate them rather than draw from zeroed uniforms.
   if ((desc.features & (aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit)) != 0) {
     PortVfxEvalParams(vfx, x74_curFrame, desc.params);
+  }
+  // A VFX_*_Lit shader under LIT_ 1 (ParticleLit): the clustered gather and the baked probe at the emitter,
+  // as the mesh path takes them at its first model.
+  if ((desc.features & aurora::gfx::vfx::ParticleLit) != 0) {
+    const float probePos[3] = {xe8_globalTranslation.GetX(), xe8_globalTranslation.GetY(),
+                               xe8_globalTranslation.GetZ()};
+    PortVfxClusterView(probePos, desc);
   }
 
   // The retail frame: the same model matrix as the non-ORNT path. Particles are placed in a
@@ -501,7 +512,9 @@ void CElementGen::PortRenderParticlesVfx() {
     // width B (perpendicular to the direction and to the view) and length C.
     CVector3f center = vp;
     CVector3f axisU(1.f, 0.f, 0.f), axisW(0.f, 0.f, 1.f);
-    float vec[3] = {0.f, 0.f, 1.f}; // [I] view-space quad normal, depth component in z
+    // [I] view-space quad normal, depth component in z: toward the eye (camera-local -y), as the
+    // vector-oriented normal below is; the fresnel reads only |z|, ParticleLit the direction.
+    float vec[3] = {0.f, 0.f, -1.f};
     if (vfx.vorn != 0) {
       CVector3f dir;
       if (vfx.vorn == 1) {
@@ -943,7 +956,7 @@ void CElementGen::PortRenderMeshesVfx(CPortVfxMeshBatch& batch) {
     PortVfxEvalParams(vfx, x74_curFrame, desc.params);
   }
   // VFX_IceChargeCollision_Lit's lighting: the clustered gather (block and mask) and the baked probe.
-  if ((features & aurora::gfx::vfx::IceChargeCollisionLit) != 0) {
+  if ((features & (aurora::gfx::vfx::IceChargeCollisionLit | aurora::gfx::vfx::ParticleLit)) != 0) {
     PortVfxClusterView(batch.probePos, desc);
   }
   // This is a model draw, so a material whose mesh permutation was read against the shader takes its
