@@ -26,6 +26,7 @@ constexpr uint32_t kPropCombatVisor = 0x155fa3e4;
 constexpr uint32_t kPropThermalVisor = 0x880e9b91;
 constexpr uint32_t kPropXrayVisor = 0x2ada726b;
 constexpr uint32_t kPropDieWhenDone = 0xf13f4e03;
+constexpr uint32_t kPropExternalVariables = 0x3def0de6;  // CScriptEffectMP1::InitializeExternalVariables
 
 constexpr uint8_t kRetailEffect = 7;
 // A retail effect no object matched, with an added one this near, is the one it replaces.
@@ -121,7 +122,7 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
   std::set<uint32_t> skips;
   std::vector<Vec3> added;
   std::set<int> seen;
-  size_t connectedCount = 0, noPart = 0, noLayer = 0, kept = 0, keptOwn = 0, full = 0;
+  size_t connectedCount = 0, noPart = 0, noLayer = 0, kept = 0, keptOwn = 0, full = 0, badVars = 0;
   for (const Component* c : effects) {
     if (c->entity < 0 || !seen.insert(c->entity).second) {
       continue;
@@ -207,9 +208,16 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
     e.thermalVisorVisible = flag(kPropThermalVisor, true);
     e.xrayVisorVisible = flag(kPropXrayVisor, true);
     e.dieWhenSystemsDone = flag(kPropDieWhenDone, false);
+    std::vector<PortRoomEffects::Variable> vars;
+    const auto ext = f.find(kPropExternalVariables);
+    if (ext != f.end() && !PortRoomEffects::ReadExternalVariables(room.Bytes(ext->second), ext->second.size, vars)) {
+      ++badVars;  // the effect still comes, with its system's defaults
+      vars.clear();
+    }
     PortRoomEffects::Layer& layer = layers[retailLayer];
     layer.layer = retailLayer;
     PortRoomEffects::AppendEffect(e, layer.objects);
+    layer.vars.push_back(std::move(vars));
     ++layer.count;
     added.push_back(w);
   }
@@ -233,9 +241,9 @@ std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t
   std::snprintf(line, sizeof line,
                 "  %s: %zu effect actor(s) added, %zu retail effect(s) replaced, %zu connected and left out, %zu "
                 "matched a retail object (%zu of them with an effect of Remastered's own), %zu without a PART, %zu on "
-                "an unknown layer%s",
+                "an unknown layer%s%s",
                 name.c_str(), added.size(), replacedNear, connectedCount, kept + keptOwn, keptOwn, noPart, noLayer,
-                full != 0 ? ", the id range is full" : "");
+                full != 0 ? ", the id range is full" : "", badVars != 0 ? ", unreadable particle variables" : "");
   if (added.empty()) {
     return line;
   }

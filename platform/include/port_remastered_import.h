@@ -118,7 +118,8 @@ inline constexpr int kEffects = 92;    // port_remastered_effect_import and the 
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).
 // 23: a hint (grade, backlight, fog) marks whether it is the master's, so the room's own wins (HintOutranks).
 // 24: a room's effect actors of Remastered's own, as <MREA>.roomfx (port_room_effects.h).
-inline constexpr int kRooms = 24;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
+// 25: .roomfx v2 carries each actor's particle variable values (property 3def0de6).
+inline constexpr int kRooms = 25;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 inline constexpr int kHud = 7;         // port_remastered_hud, port_remastered_map

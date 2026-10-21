@@ -213,6 +213,11 @@ void CScriptEffect::AcceptScriptMsg(EScriptObjectMessage msg, TUniqueId uid, CSt
         x104_particleSystem->SetGlobalScale(scale);
         x104_particleSystem->SetLeaveLightsEnabledForModelRender(x138_actorLights.get() != nullptr);
         x104_particleSystem->SetModulationColor(color);
+#ifdef TARGET_PC
+        for (size_t i = 0; i < xPortExternalVars.size(); ++i) {
+          x104_particleSystem->PortBindExternal(xPortExternalVars[i]);
+        }
+#endif
       }
       if (xf4_electric.get()) {
         const CVector3f scale = xf4_electric->GetGlobalScale();
@@ -352,6 +357,17 @@ void CScriptEffect::PreRender(CStateManager& mgr, const CFrustumPlanes& frustum)
 }
 
 ENTITY_ACCEPT_IMPL(CScriptEffect)
+
+#ifdef TARGET_PC
+void CScriptEffect::PortSetExternalVars(const std::vector< SPortExternalVar >& vars) {
+  xPortExternalVars = vars;
+  if (x104_particleSystem.get()) {
+    for (size_t i = 0; i < vars.size(); ++i) {
+      x104_particleSystem->PortBindExternal(vars[i]);
+    }
+  }
+}
+#endif
 
 void CScriptEffect::ResetParticleCounts() {
   mNumParticlesDrawing = 0;

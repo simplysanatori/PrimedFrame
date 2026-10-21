@@ -321,6 +321,7 @@ public:
   void PortBindVector(const PortGuid& g, const CVector3f& v) {
     xPortVars.BindVector(PortGetVectorHandle(g), v);
   }
+  void PortBindExternal(const SPortExternalVar& v) { xPortVars.BindExternal(v); }
   const CPortVarMemory& PortVars() const { return xPortVars; }
   // The global translation just set is already the presented one (placed from
   // the presented camera on every drawn frame): draw it as is, unblended.

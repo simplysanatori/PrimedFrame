@@ -66,6 +66,12 @@ struct BEReader {
   }
 };
 
+void PutLEFloat(std::vector<uint8_t>& out, float f) {
+  uint32_t v;
+  std::memcpy(&v, &f, 4);
+  PutLE32(out, v);
+}
+
 bool ReadLE32(const std::vector<uint8_t>& d, size_t& at, uint32_t& v) {
   if (at > d.size() || d.size() - at < 4) {
     return false;
@@ -183,6 +189,24 @@ std::vector<uint8_t> Write(const File& file) {
     PutLE32(out, layer.count);
     PutLE32(out, uint32_t(layer.objects.size()));
     out.insert(out.end(), layer.objects.begin(), layer.objects.end());
+    for (uint32_t i = 0; i < layer.count; ++i) {
+      const std::vector<Variable>* vars = i < layer.vars.size() ? &layer.vars[i] : nullptr;
+      PutLE32(out, vars != nullptr ? uint32_t(vars->size()) : 0);
+      if (vars == nullptr) {
+        continue;
+      }
+      for (const Variable& v : *vars) {
+        out.insert(out.end(), v.guid.begin(), v.guid.end());
+        for (float f : v.color) {
+          PutLEFloat(out, f);
+        }
+        for (float f : v.vec) {
+          PutLEFloat(out, f);
+        }
+        PutLEFloat(out, v.real);
+        PutLE32(out, uint32_t(v.integer));
+      }
+    }
   }
   return out;
 }
@@ -195,7 +219,7 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
     error = "not a roomfx file";
     return false;
   }
-  if (!ReadLE32(data, at, version) || version != kFileVersion) {
+  if (!ReadLE32(data, at, version) || version < 1 || version > kFileVersion) {
     error = "unknown version";
     return false;
   }
@@ -241,6 +265,27 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
       error = "layer " + std::to_string(layer.layer) + ": bytes after the objects";
       return false;
     }
+    layer.vars.resize(layer.count);
+    for (uint32_t i = 0; version >= 2 && i < layer.count; ++i) {
+      uint32_t n = 0;
+      if (!ReadLE32(data, at, n) || n > kMaxVariables || n > (data.size() - at) / kVariableBytes) {
+        error = "layer " + std::to_string(layer.layer) + ": truncated variables of object " + std::to_string(i);
+        return false;
+      }
+      std::vector<Variable>& vars = layer.vars[i];
+      vars.resize(n);
+      for (Variable& v : vars) {
+        std::memcpy(v.guid.data(), data.data() + at, 16);
+        at += 16;
+        uint32_t bits = 0;
+        for (float* f : {&v.color[0], &v.color[1], &v.color[2], &v.color[3], &v.vec[0], &v.vec[1], &v.vec[2], &v.real}) {
+          ReadLE32(data, at, bits);
+          std::memcpy(f, &bits, 4);
+        }
+        ReadLE32(data, at, bits);
+        v.integer = int32_t(bits);
+      }
+    }
     total += layer.count;
     out.layers.push_back(std::move(layer));
   }
@@ -253,6 +298,83 @@ bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error) {
     return false;
   }
   return true;
+}
+
+bool ReadExternalVariables(const uint8_t* data, size_t size, std::vector<Variable>& out) {
+  constexpr uint32_t kInfo = 0xae893172, kGuid = 0x82dde61c;
+  constexpr uint32_t kReal = 0xfd41dc4b, kInt = 0xcd774f7a, kColor = 0x45eff31d, kVector = 0x282df928;
+  auto le16 = [&](size_t at) { return uint32_t(data[at]) | uint32_t(data[at + 1]) << 8; };
+  auto le32 = [&](size_t at) { return le16(at) | le16(at + 2) << 16; };
+  auto f32 = [&](size_t at) {
+    const uint32_t v = le32(at);
+    float f;
+    std::memcpy(&f, &v, 4);
+    return f;
+  };
+  out.clear();
+  if (size < 4) {
+    return false;
+  }
+  const uint32_t count = le32(0);
+  if (count > kMaxVariables) {
+    return false;
+  }
+  size_t at = 4;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (size - at < 2) {
+      return false;
+    }
+    const uint32_t props = le16(at);
+    at += 2;
+    Variable v;
+    bool guid = false;
+    for (uint32_t k = 0; k < props; ++k) {
+      if (size - at < 6) {
+        return false;
+      }
+      const uint32_t id = le32(at);
+      const size_t n = le16(at + 4);
+      at += 6;
+      if (size - at < n) {
+        return false;
+      }
+      if (id == kInfo) {
+        // A property list of its own: the guid is the one 16-byte property it needs.
+        size_t p = at + 2;
+        for (uint32_t j = 0, m = n >= 2 ? le16(at) : 0; j < m && at + n - p >= 6; ++j) {
+          const uint32_t sub = le32(p);
+          const size_t subSize = le16(p + 4);
+          p += 6;
+          if (at + n - p < subSize) {
+            return false;
+          }
+          if (sub == kGuid && subSize == 16) {
+            std::memcpy(v.guid.data(), data + p, 16);
+            guid = true;
+          }
+          p += subSize;
+        }
+      } else if (id == kReal && n == 4) {
+        v.real = f32(at);
+      } else if (id == kInt && n == 4) {
+        v.integer = int32_t(le32(at));
+      } else if (id == kColor && n == 16) {
+        for (int c = 0; c < 4; ++c) {
+          v.color[c] = f32(at + 4 * size_t(c));
+        }
+      } else if (id == kVector && n == 12) {
+        for (int c = 0; c < 3; ++c) {
+          v.vec[c] = f32(at + 4 * size_t(c));
+        }
+      }
+      at += n;
+    }
+    if (!guid) {
+      return false;
+    }
+    out.push_back(v);
+  }
+  return at == size;
 }
 
 bool ParseFileName(const std::string& fileName, uint32_t& id) {

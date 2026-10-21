@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -26,15 +27,20 @@ class CStateManager;
 //   u32 connected (effects left out because something connects to them; for the log)
 //   u32 layers, then per layer: u32 retail layer, u32 objects, u32 bytes, then that many
 //   bytes of retail SCLY objects (u8 type, then big endian: u32 length, u32 editor id,
-//   u32 connections (0), u32 property count, properties), all of type Effect (7).
+//   u32 connections (0), u32 property count, properties), all of type Effect (7);
+//   version 2 then has, per object in order, u32 variables and that many Variable
+//   records (16 guid bytes as the particle tables store them, f32 colour[4], f32 vector[3],
+//   f32 real, s32 int). Version 1 files have no variables.
 namespace PortRoomEffects {
 
 constexpr uint32_t kFileMagic = 0x4652504D;  // 'MPRF'
-constexpr uint32_t kFileVersion = 1;
+constexpr uint32_t kFileVersion = 2;
 constexpr uint8_t kEffectType = 7;
 constexpr uint32_t kEffectProps = 24;
 constexpr uint32_t kFirstInstance = 0xF000;
 constexpr uint32_t kMaxAddOns = 0x10000 - kFirstInstance;
+constexpr size_t kVariableBytes = 52;
+constexpr uint32_t kMaxVariables = 256;  // an object's; Remastered's most is 14
 
 // Whether an editor id is in the add-ons' range.
 constexpr bool IsAddOnId(uint32_t eid) { return (eid & 0xFFFF) >= kFirstInstance; }
@@ -71,10 +77,21 @@ struct Effect {
   bool dieWhenSystemsDone = false;
 };
 
+// A Remastered effect actor's value for one of its system's particle variables
+// (EffectMP1 property 3def0de6): one value of each type, the variable's own type picks one.
+struct Variable {
+  std::array<uint8_t, 16> guid{};
+  float color[4] = {1, 1, 1, 1};
+  float vec[3] = {0, 0, 0};
+  float real = 0;
+  int32_t integer = 0;
+};
+
 struct Layer {
   uint32_t layer = 0;
   uint32_t count = 0;
-  std::vector<uint8_t> objects;  // `count` SCLY objects
+  std::vector<uint8_t> objects;               // `count` SCLY objects
+  std::vector<std::vector<Variable>> vars;    // per object; empty, or `count` of them
 };
 
 struct File {
@@ -91,6 +108,11 @@ bool ReadEffect(const uint8_t* data, size_t size, Effect& out, size_t& used);
 std::vector<uint8_t> Write(const File& file);
 // Checks every object's framing, type and id range too.
 bool Parse(const std::vector<uint8_t>& data, File& out, std::string& error);
+// Reads an EffectMP1's external variable list (property 3def0de6: u32 count, then per entry a
+// property list with the variable guid, in an 0xae893172 list as 0x82dde61c, and at most one
+// value, real 0xfd41dc4b, int 0xcd774f7a, colour 0x45eff31d or vector 0x282df928; the others
+// keep their defaults). False if it is malformed.
+bool ReadExternalVariables(const uint8_t* data, size_t size, std::vector<Variable>& out);
 // "1A2B3C4D.roomfx" (any case) -> 0x1A2B3C4D.
 bool ParseFileName(const std::string& fileName, uint32_t& id);
 
@@ -111,6 +133,7 @@ struct Spawned {
   uint16_t uid;
   uint32_t part;
   std::string name;
+  size_t vars;  // particle variables it sets
 };
 // The add-ons created for an area, as loaded (the console checks they still live).
 std::vector<Spawned> List(uint32_t mrea);

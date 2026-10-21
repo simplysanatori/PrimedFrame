@@ -39,6 +39,17 @@ struct SPortVar {
   float def[4] = {};
 };
 
+// A value an owner sets on a system's variable by guid, whatever its type
+// (SLdrEffectExternalVariableDefaultInfo, 0xaa8860: one record carries a value of each type,
+// and the variable's type in the system picks one).
+struct SPortExternalVar {
+  PortGuid guid;
+  float color[4] = {1.f, 1.f, 1.f, 1.f};
+  float vec[3] = {0.f, 0.f, 0.f};
+  float real = 0.f;
+  s32 integer = 0;
+};
+
 class CPortVarTable {
 public:
   std::vector< SPortVar > vars;
@@ -213,6 +224,33 @@ public:
   void BindVector(u16 h, const CVector3f& v) {
     if (Valid(h, EPortVarType::Vector)) {
       x_values[h] = {v.GetX(), v.GetY(), v.GetZ(), 0.f};
+    }
+  }
+  // Every variable of that guid takes the record's value of its type.
+  void BindExternal(const SPortExternalVar& e) {
+    if (x_table == nullptr) {
+      return;
+    }
+    for (size_t i = 0; i < x_values.size(); ++i) {
+      if (x_table->vars[i].guid != e.guid) {
+        continue;
+      }
+      switch (x_table->vars[i].type) {
+      case EPortVarType::Real:
+        x_values[i][0] = e.real;
+        break;
+      case EPortVarType::Int:
+        x_values[i][0] = static_cast< float >(e.integer);
+        break;
+      case EPortVarType::Color:
+        x_values[i] = {e.color[0], e.color[1], e.color[2], e.color[3]};
+        break;
+      case EPortVarType::Vector:
+        x_values[i] = {e.vec[0], e.vec[1], e.vec[2], 0.f};
+        break;
+      default:
+        break;
+      }
     }
   }
 

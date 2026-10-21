@@ -7,6 +7,8 @@
 
 #include "Kyoto/Streams/CMemoryInStream.hpp"
 #include "MetroidPrime/CStateManager.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptEffect.hpp"
+#include "MetroidPrime/TCastTo.hpp"
 
 #include <algorithm>
 #include <fstream>
@@ -95,7 +97,22 @@ void LoadLayer(CStateManager& mgr, int area, uint32_t layer, std::vector<uint32_
         continue;  // e.g. its PART is not in the mods
       }
       ids.push_back(made.first.value);
-      sSpawned[sMrea].push_back({sMrea, made.first.value, made.second.value, info.part, info.name});
+      if (i < l.vars.size() && !l.vars[i].empty()) {
+        if (CScriptEffect* const effect = TCastToPtr< CScriptEffect >(mgr.ObjectById(made.second))) {
+          std::vector< SPortExternalVar > vars(l.vars[i].size());
+          for (size_t k = 0; k < vars.size(); ++k) {
+            const Variable& v = l.vars[i][k];
+            std::copy(v.guid.begin(), v.guid.end(), vars[k].guid.bytes.begin());
+            std::copy(std::begin(v.color), std::end(v.color), vars[k].color);
+            std::copy(std::begin(v.vec), std::end(v.vec), vars[k].vec);
+            vars[k].real = v.real;
+            vars[k].integer = v.integer;
+          }
+          effect->PortSetExternalVars(vars);
+        }
+      }
+      sSpawned[sMrea].push_back({sMrea, made.first.value, made.second.value, info.part, info.name,
+                                 i < l.vars.size() ? l.vars[i].size() : 0});
     }
   }
 }

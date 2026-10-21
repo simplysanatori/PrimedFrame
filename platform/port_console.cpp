@@ -1072,8 +1072,8 @@ void CmdFxQuery() {
       uid.value = s.uid;
       const CEntity* const ent = mgr->GetObjectById(uid);
       const bool alive = ent != nullptr && ent->GetEditorId().Value() == (s.eid & 0x3FFFFFF);
-      Out("  %08X u%u PART %08X %s %s", s.eid, unsigned(s.uid), s.part,
-          !alive ? "gone" : ent->GetActive() ? "active" : "inactive", s.name.c_str());
+      Out("  %08X u%u PART %08X %s %s, %zu variable(s) set", s.eid, unsigned(s.uid), s.part,
+          !alive ? "gone" : ent->GetActive() ? "active" : "inactive", s.name.c_str(), s.vars);
     }
   } else if (sub == "mute" || sub == "solo") {
     const std::string arg = sCmd.args.size() > 2 ? Lower(sCmd.args[2]) : "";
