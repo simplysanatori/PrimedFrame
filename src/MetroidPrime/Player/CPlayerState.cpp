@@ -17,6 +17,7 @@
 #include <math.h>
 #ifdef TARGET_PC
 #include <map>
+#include "port_apclient.h"
 
 // Scans the save does not track (a randomized pickup's made-up SCAN): kept
 // until the next new game or load, like an unsaved retail scan, but never
@@ -325,6 +326,10 @@ const bool CPlayerState::HasPowerUp(const CPlayerState::EItemType type) const {
   if (type < 0 || kIT_Max - 1 < type) {
     return false;
   }
+
+  if (type == CPlayerState::EItemType::kIT_ChargeBeam)
+    return PortAp::HasChargeBeamRule(this);
+
   return x24_powerups[uint(type)].x4_capacity > 0;
 }
 
