@@ -3109,6 +3109,13 @@ void CStateManager::PortCaptureProbeFace() const {
   // Remastered's grade hints that follow the player in a fluid and the camera under water.
   PortRoomEnv::SetFluid(x84c_player != nullptr && x84c_player->IsInFluid(),
                         x870_cameraManager->GetFluidCounter() > 0);
+  {
+    // And the world's hints that follow the camera through the master's trigger volumes (the
+    // game camera, as the room geometry's camera volumes see it).
+    const CVector3f eye = x870_cameraManager->GetCurrentCameraTransform(*this).GetTranslation();
+    const float at[3] = {eye.GetX(), eye.GetY(), eye.GetZ()};
+    PortRoomEnv::SetCameraPoint(at);
+  }
   PortRoomGeo::SetLoadedAreas(mreas, mreaCount);
   PortRoomLiquid::SetLoadedAreas(mreas, mreaCount);
   {

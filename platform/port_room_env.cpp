@@ -82,6 +82,9 @@ int sVolFog = -1;
 bool sFogRegions = true;
 bool sPlayerFluid = false;
 bool sCameraWater = false;
+std::vector<WorldVolume> sWorldVolumes;
+WorldVolumeState sWorldVolumeState;
+float sCameraPoint[3] = {};
 // LUTs handed to Aurora already; they are kept there for the run.
 std::unordered_set<uint32_t> sGradeLuts;
 // Model draws come in runs at one position; the last answer is kept until the frame or a
@@ -1688,6 +1691,20 @@ std::string FogInfo() {
   }
   std::snprintf(line, sizeof(line), "regions on in loaded areas: %zu\n", on.size());
   out += line;
+  if (!sWorldVolumes.empty()) {
+    std::snprintf(line, sizeof(line), "world volumes: %zu, camera %.1f %.1f %.1f\n", sWorldVolumes.size(),
+                  sCameraPoint[0], sCameraPoint[1], sCameraPoint[2]);
+    out += line;
+  }
+  for (size_t i = 0; i < sWorldVolumes.size(); ++i) {
+    const WorldVolume& v = sWorldVolumes[i];
+    const bool inside = i < sWorldVolumeState.inside.size() && sWorldVolumeState.inside[i] != 0;
+    const uint64_t entered = i < sWorldVolumeState.entered.size() ? sWorldVolumeState.entered[i] : 0;
+    std::snprintf(line, sizeof(line), "world volume %zu: %s centre %.1f %.1f %.1f half %.1f %.1f %.1f entered #%llu\n",
+                  i, inside ? "inside " : "outside", v.centre[0], v.centre[1], v.centre[2], v.half[0], v.half[1],
+                  v.half[2], (unsigned long long)entered);
+    out += line;
+  }
   return out;
 }
 
@@ -1736,9 +1753,30 @@ void SetFluid(bool player, bool camera) {
   }
 }
 
+void SetCameraPoint(const float pos[3]) {
+  if (!std::isfinite(pos[0]) || !std::isfinite(pos[1]) || !std::isfinite(pos[2])) {
+    return;
+  }
+  std::memcpy(sCameraPoint, pos, sizeof(sCameraPoint));
+  static std::vector<WorldVolumeState::Event> events;
+  events.clear();
+  sWorldVolumeState.Update(sWorldVolumes, pos, events);
+  for (const WorldVolumeState::Event& e : events) {
+    PortLog::Write("room env: camera %s world volume %u at %.1f %.1f %.1f\n", e.state == 0 ? "entered" : "left",
+                   e.volume, pos[0], pos[1], pos[2]);
+    for (auto& [mrea, area] : sAreas) {
+      // One still loading hears the state so far when it finishes (ReplayWorldVolumes).
+      if (!area.pending.valid()) {
+        DriveGrades(mrea, area, kSenderWorldVolume + e.volume, e.state);
+      }
+    }
+  }
+}
+
 void ResetGrades() {
   sPlayerFluid = false;
   sCameraWater = false;
+  sWorldVolumeState.Clear();
   sGradeIndex = -1;
   sBacklight = {};
   sFog = {};
@@ -2060,6 +2098,8 @@ void Reset() {
   sGradeIndex = -1;
   sBacklight = {};
   sFog = {};
+  sWorldVolumes.clear();
+  sWorldVolumeState.Clear();
 }
 
 void SetLoadedAreas(const uint32_t* mreas, size_t count) {
