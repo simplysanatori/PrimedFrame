@@ -28,7 +28,11 @@ enum : int64_t {
   kMissileLauncher = 43,
   kMainPowerBomb = 44,
   kSpringBall = 45,
-  kProgressiveBeam = 49, // Power Beam, Ice Beam, Wave Beam and Plasma Beam
+  // Each beam, then its Charge Beam, then its combo.
+  kProgressivePowerBeam = 49,
+  kProgressiveIceBeam = 51,
+  kProgressiveWaveBeam = 52,
+  kProgressivePlasmaBeam = 53,
   kProgressiveBomb = 54, // Spring Ball first, then the Morph Ball Bombs
 };
 

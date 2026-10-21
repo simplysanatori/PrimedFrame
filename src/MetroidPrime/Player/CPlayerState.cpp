@@ -326,10 +326,12 @@ const bool CPlayerState::HasPowerUp(const CPlayerState::EItemType type) const {
   if (type < 0 || kIT_Max - 1 < type) {
     return false;
   }
-
-  if (type == CPlayerState::EItemType::kIT_ChargeBeam)
-    return PortAp::HasChargeBeamRule(this);
-
+#ifdef TARGET_PC
+  // An AP seed with progressive beams charges only the beams that have their
+  // Charge Beam upgrade.
+  if (type == kIT_ChargeBeam && x24_powerups[uint(type)].x4_capacity > 0)
+    return PortAp::ChargeBeamRule(GetCurrentBeam());
+#endif
   return x24_powerups[uint(type)].x4_capacity > 0;
 }
 
