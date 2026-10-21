@@ -829,6 +829,9 @@ void InstallPending() {
       gpGameState->PortBeamDoorBits()[i] = keptBeam[i];
     }
   }
+  if (gpGameState != nullptr) {
+    gpGameState->PortBackUpBeamDoors();
+  }
   LoadMapData(sPendingBlob);
   // Rebuild the areas with the layers their objects were spawned with (#161); each area puts
   // the saved live bits back as its objects are spawned.
