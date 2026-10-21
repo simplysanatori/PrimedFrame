@@ -377,7 +377,7 @@ bool PortVfxBuildDesc(const CPortVfxData& vfx, const float* vsmt, uint vsmtMask,
 }
 
 namespace {
-void PortVfxClusterView(const float pos[3], aurora::gfx::vfx::DrawDesc& desc);
+void PortVfxClusterView(const float* pos, aurora::gfx::vfx::DrawDesc& desc);
 } // namespace
 
 void CElementGen::PortRenderParticlesVfx() {
@@ -397,13 +397,14 @@ void CElementGen::PortRenderParticlesVfx() {
   if ((desc.features & (aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit)) != 0) {
     PortVfxEvalParams(vfx, x74_curFrame, desc.params);
   }
-  // A VFX_*_Lit shader under LIT_ 1 (ParticleLit): the clustered gather and the baked probe at the emitter,
-  // as the mesh path takes them at its first model.
+  // A VFX_*_Lit shader under LIT_ 1 (ParticleLit): AMBS and the clustered gather, no baked probe. A sprite's
+  // probe would come from CParticleSceneNode::AppendBakedLightingIfRequested (0x2b12a8), which appends
+  // nothing because CSceneRenderContext+0x990 (the baked-lighting manager) is never set, and no particle code
+  // requests a BLPD record (AddLightProbeQuery's callers are model scene nodes only). So Remastered draws
+  // the probe-less lit perm (20e149b2 084/086), and the probe terms stay zero.
   const bool lit = (desc.features & aurora::gfx::vfx::ParticleLit) != 0;
   if (lit) {
-    const float probePos[3] = {xe8_globalTranslation.GetX(), xe8_globalTranslation.GetY(),
-                               xe8_globalTranslation.GetZ()};
-    PortVfxClusterView(probePos, desc);
+    PortVfxClusterView(nullptr, desc);
   }
 
   // The retail frame: the same model matrix as the non-ORNT path. Particles are placed in a
@@ -909,7 +910,8 @@ void PortVfxClusterAmbient(const PortClusteredLights::Camera& camera, const floa
 // the room's LightDynamic lights, which is what RoomLights walks. AMBS (the flat ambient c6[0].xyz) is the
 // ambient colour the game set for this area (CGraphics::SetAmbientColor, GX channel 0's), which is the same
 // quantity Remastered's lighting manager hands the material.
-void PortVfxClusterView(const float pos[3], aurora::gfx::vfx::DrawDesc& desc) {
+// Without pos (a sprite draw), no baked probe: desc.lit keeps its zero mean, lobe and directions.
+void PortVfxClusterView(const float* pos, aurora::gfx::vfx::DrawDesc& desc) {
   PortClusteredLights::Camera camera;
   PortVfxClusterCamera(camera);
   static std::vector< PortClusteredLights::LightSource > sources;
@@ -929,7 +931,9 @@ void PortVfxClusterView(const float pos[3], aurora::gfx::vfx::DrawDesc& desc) {
     desc.cluster.maskWidth = uint32_t(frame.grid.tilesX * frame.grid.tilesY);
     desc.cluster.maskHeight = uint32_t(PortClusteredLights::kSlices);
   }
-  PortVfxClusterAmbient(camera, pos, desc.lit);
+  if (pos != nullptr) {
+    PortVfxClusterAmbient(camera, pos, desc.lit);
+  }
   const CColor ambient = CGraphics::GetAmbientColor();
   desc.lit.ambient[0] = ambient.GetRed();
   desc.lit.ambient[1] = ambient.GetGreen();
