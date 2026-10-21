@@ -1622,7 +1622,11 @@ public:
 
   EffectImportResult Run() {
     for (const EffectGuid& id : m_io.effects) {
-      const std::vector<Pairing> pairings = RetailEffects(id, m_io.pairings);
+      std::vector<Pairing> pairings = RetailEffects(id, m_io.pairings);
+      if (pairings.empty() && m_io.typeOf && m_io.typeOf(id) == EffectFourCC("GENP") &&
+          std::find(m_io.roomOnly.begin(), m_io.roomOnly.end(), id) != m_io.roomOnly.end()) {
+        pairings.push_back({RoomEffectId(id), "room"});
+      }
       if (pairings.empty() && m_io.report) {
         EffectReportRow row;
         row.genp = EffectGuidString(Swap(id));
@@ -1653,5 +1657,7 @@ private:
 bool WantsRemasteredEffects() { return port::EnvFlag("MP_REMASTERED_EFFECTS", true); }
 
 EffectImportResult ImportEffects(const EffectImportIO& io) { return Importer(io).Run(); }
+
+uint32_t RoomEffectId(const EffectGuid& id) { return SyntheticEffectId(EffectGuidString(Swap(id)).c_str()); }
 
 }  // namespace PortRemastered

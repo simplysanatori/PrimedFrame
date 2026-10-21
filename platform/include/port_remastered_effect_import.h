@@ -39,6 +39,9 @@ struct EffectImportIO {
   // Optional: pairings the image itself gives (a projectile's particles, from its WPSM and the
   // disc's WPSC), used after the importer's own table.
   std::vector<EffectPairing> pairings;
+  // Optional: GENPs a room's effect actors use (RoomEffectGenps) that stand for no disc PART:
+  // each is written under RoomEffectId(), for the rooms' .roomfx files to name.
+  std::vector<EffectGuid> roomOnly;
   // A Remastered asset's bytes by type ('GENP', 'MATI', 'TXTR') and id; false
   // when the image has none.
   std::function<bool(uint32_t type, const EffectGuid& id, std::vector<uint8_t>& out, std::string& error)> read;
@@ -97,6 +100,10 @@ struct EffectImportResult {
 bool WantsRemasteredEffects();
 
 EffectImportResult ImportEffects(const EffectImportIO& io);
+
+// The synthetic id (port_synthetic_effect.h) of a GENP only room effect actors use: of its id
+// (in a pak's byte order) as it prints, 8-4-4-4-12 in lower case.
+uint32_t RoomEffectId(const EffectGuid& id);
 
 }  // namespace PortRemastered
 

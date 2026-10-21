@@ -624,6 +624,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       continue;
     }
     ++result.matched;
+    result.retail[ents[k].entity] = size_t(match[k]);
     const uint8_t layer = uint8_t(objects[size_t(match[k])].id >> 26);
     auto& v = votes[ents[k].layer];
     auto it = std::find_if(v.begin(), v.end(), [&](const auto& p) { return p.first == layer; });

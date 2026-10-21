@@ -1,4 +1,5 @@
 #include "port_remastered_import_internal.h"
+#include "port_remastered_effect_convert.h"
 
 namespace PortRemastered {
 namespace ImportDetail {
@@ -2184,6 +2185,44 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         PortLog::Write("remastered import: projectile %s\n", line.c_str());
       }
       AddLine("effects: " + std::to_string(effectIO.pairings.size()) + " projectile effects paired");
+
+      // The GENPs of the rooms' own effect actors, under ids no disc resource, other synthetic
+      // effect or other such GENP has (the rooms' .roomfx files name them).
+      std::unordered_set<uint32_t> synthetic;
+      for (const char* name : kSyntheticEffectNames) {
+        synthetic.insert(SyntheticEffectId(name));
+      }
+      for (const EffectIdRemap& remap : remaps) {
+        synthetic.insert(remap.synthetic);
+      }
+      for (const WpscSwoosh& addition : wpscSwooshes) {
+        synthetic.insert(addition.synthetic);
+      }
+      size_t roomGenps = 0, collisions = 0;
+      for (const RoomWorld& world : RoomWorlds()) {
+        RoomPak master;
+        std::vector<RoomPak> rooms;
+        remastered.World(world.dir, master, rooms);
+        rooms.push_back(master);
+        for (const EffectGuid& genp : RoomEffectGenps(rooms)) {
+          if (std::find(effectIO.roomOnly.begin(), effectIO.roomOnly.end(), genp) != effectIO.roomOnly.end()) {
+            continue;
+          }
+          ++roomGenps;
+          const uint32_t id = RoomEffectId(genp);
+          if (retail.HasId(id) || !synthetic.insert(id).second) {
+            ++collisions;
+            PortLog::Write("remastered import: room effect %s: its id %s is taken, left out\n",
+                           EffectGuidString(genp).c_str(), Hex8(id).c_str());
+            continue;
+          }
+          effectIO.roomOnly.push_back(genp);
+          std::lock_guard<std::mutex> lock(takenMutex);
+          taken.insert(id);
+        }
+      }
+      AddLine("effects: " + std::to_string(roomGenps) + " effects of the rooms' own effect actors, " +
+              std::to_string(collisions) + " left out (id taken)");
     }
     std::set<std::string> effectWritten;  // the files the effects wrote (the converters write on every thread)
     {
@@ -2512,6 +2551,22 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       io.piece = pieceId;
       io.liquid = liquidId;
       io.water = waterSurface;
+      // A room effect actor's PART: the one the effects step wrote for its GENP, else the disc's
+      // it carries the id of.
+      io.effect = [&](const std::array<uint8_t, 16>& genp) -> uint32_t {
+        std::error_code ec;
+        const uint32_t own = RoomEffectId(genp);
+        if (fs::exists(staging / PathFromString(Hex8(own) + ".PART"), ec)) {
+          return own;
+        }
+        std::array<uint8_t, 16> property = genp;
+        std::swap(property[0], property[3]);
+        std::swap(property[1], property[2]);
+        std::swap(property[4], property[5]);
+        std::swap(property[6], property[7]);
+        const std::optional<uint32_t> carried = EffectRetailId(property);
+        return carried && retail.HasId(*carried) ? *carried : 0;
+      };
       io.wantsGeometry = WantsGeometry;
       io.cancelled = [] { return sCancel.load(); };
       // One line a room (what was left out and why): too many for the panel, so the log.

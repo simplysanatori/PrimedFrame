@@ -2734,6 +2734,12 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   const SceneryScripts scripts = MatchScripts(r.room, *m.area);
+  {
+    const std::string line = WriteRoomEffects(r.name, r.room, m.mrea, *m.area, scripts, m_io);
+    if (!line.empty()) {
+      Log(line);
+    }
+  }
   std::vector<uint8_t> probes;
   size_t probeCount = 0;
   std::vector<std::vector<uint8_t>> cubes;

@@ -695,6 +695,7 @@ struct SceneryScripts {
   std::map<int, std::string> unresolvedHow;              // a grade hint's: sender type/event/action
   std::map<std::string, std::pair<size_t, std::set<int>>> missStats;  // MP_REMASTERED_MISS: class -> connections, entities
   std::map<int, const ScriptObject*> platform;           // by entity: the platform carrying it
+  std::map<int, size_t> retail;                           // by entity: the retail object it matched
   size_t entities = 0, matched = 0;
   // Remastered's own objects in between (camera volumes, counters, relays) and the
   // entities they show and hide, by group number.
@@ -715,6 +716,15 @@ struct SceneryScripts {
   };
   std::map<int, std::vector<Driver>> drivers;
 };
+
+// Remastered's own particle effect actors (port_remastered_room_effects.cpp).
+constexpr uint32_t kEffectMP1 = 0xb421cdcb;
+// The room's EffectMP1 actors the disc has no object for, as "<MREA id>.roomfx"
+// (port_room_effects.h); a line for the log, empty when there is nothing to say.
+std::string WriteRoomEffects(const std::string& name, const Room& room, uint32_t mrea, const Area& area,
+                             const SceneryScripts& scripts, const RoomIO& io);
+// The entities (their Entity components) that some connection in the room reaches.
+std::set<int> ConnectedEntities(const Room& room);
 
 bool SingleDriverStart(const std::vector<PortRoomGeo::Link>& starts, PortRoomGeo::Link& first);
 int DriverSlot(const std::vector<PortRemastered::ModelMaterial>& materials, const SceneryScripts::Driver& d);

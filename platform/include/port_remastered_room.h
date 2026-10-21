@@ -90,6 +90,10 @@ struct RoomIO {
   // and writes its maps. Each is asked once per surface; without `water` those are dropped.
   std::function<bool(const RoomLiquid& liquid, uint32_t& cmdl)> liquid;
   std::function<bool(const RoomLiquid& liquid, RoomWaterAssets& assets)> water;
+  // Optional; with it each room's particle effect actors of Remastered's own are written too,
+  // as "<MREA id>.roomfx" (read by port_room_effects.h). The PART the mod or the disc has for
+  // a GENP (in a pak's byte order), 0 for none: such an actor is left out.
+  std::function<uint32_t(const std::array<uint8_t, 16>& genp)> effect;
   // Optional: the rooms (by pak name) to write geometry for; all of them without.
   std::function<bool(const std::string& room)> wantsGeometry;
   std::function<void(const std::string& line)> log;  // optional
@@ -108,6 +112,10 @@ struct RoomWorld {
   uint32_t mlvl;
 };
 const std::vector<RoomWorld>& RoomWorlds();
+
+// The GENPs (in a pak's byte order) of the particle effect actors (EffectMP1) in `rooms` that
+// no connection reaches, each once, in the order first met: those a room's .roomfx may add.
+std::vector<std::array<uint8_t, 16>> RoomEffectGenps(const std::vector<RoomPak>& rooms);
 
 // Writes the files of one world. `master` is the world's own pak, `rooms` its
 // other paks; a room is a pak holding a ROOM asset, and `_Copy` rooms are

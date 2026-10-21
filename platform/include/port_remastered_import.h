@@ -111,12 +111,14 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 89: a PART without ITPE under XFMD 2/5 gets Remastered's default 1 (PITP flagged 0x100).
 // 90: a swoosh generator's SHTM 1 (shutdown destroys the live particles) is the port-only PSHM.
 // 91: ISDT 0 (a shutdown reaches the children as their own ShutdownEffect) is the port-only PISD 0.
-inline constexpr int kEffects = 91;    // port_remastered_effect_import and the particle converters
+// 92: the GENPs of the rooms' own effect actors, under RoomEffectId (for the .roomfx files).
+inline constexpr int kEffects = 92;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).
 // 23: a hint (grade, backlight, fog) marks whether it is the master's, so the room's own wins (HintOutranks).
-inline constexpr int kRooms = 23;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
+// 24: a room's effect actors of Remastered's own, as <MREA>.roomfx (port_room_effects.h).
+inline constexpr int kRooms = 24;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 inline constexpr int kHud = 7;         // port_remastered_hud, port_remastered_map

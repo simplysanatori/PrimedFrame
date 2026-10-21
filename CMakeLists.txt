@@ -330,6 +330,7 @@ set(MP_PORT_SOURCES
     platform/port_remastered_room_file.cpp
     platform/port_remastered_room_retail.cpp
     platform/port_remastered_room_scripts.cpp
+    platform/port_remastered_room_effects.cpp
     platform/port_remastered_anim.cpp
     platform/port_remastered_text.cpp
     platform/port_custom_res.cpp
@@ -1098,6 +1099,7 @@ if(MP_BUILD_TESTS)
         SOURCES tests/port_remastered_driver_tests.cpp
             platform/port_remastered_room_file.cpp platform/port_remastered_room_retail.cpp
             platform/port_remastered_room_scripts.cpp
+            platform/port_remastered_room_effects.cpp platform/port_room_effects_file.cpp
             platform/port_remastered_anim.cpp platform/port_remastered_cmdl.cpp
             platform/port_remastered_txtr.cpp platform/port_room_env_file.cpp
             platform/port_remastered_tegra_swizzle.cpp platform/port_remastered_bcdec.cpp
