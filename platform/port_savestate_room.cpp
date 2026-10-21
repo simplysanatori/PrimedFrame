@@ -1,5 +1,6 @@
 #include "port_savestate.h"
 #include "port_log.h"
+#include "port_room_effects.h"
 
 #include "Kyoto/Math/CTransform4f.hpp"
 #include "MetroidPrime/CGameArea.hpp"
@@ -232,9 +233,11 @@ void LoadedScriptData(const CWorld& world, int area, const uint8_t*& data, size_
 }
 
 // The object's editor id when it is a scripted object of a captured-or-
-// applied area (dynamic objects have none), else kNoEditorId.
+// applied area (dynamic objects have none), else kNoEditorId. A mod's Remastered effect
+// actors (port_room_effects.h) are in no layer buffer, so they are left to the area load too.
 uint32_t ScriptId(const CEntity& ent) {
-  if (ent.IsInGraveyard() || ent.GetEditorId() == kInvalidEditorId)
+  if (ent.IsInGraveyard() || ent.GetEditorId() == kInvalidEditorId ||
+      PortRoomEffects::IsAddOnId(ent.GetEditorId().value))
     return kNoEditorId;
   return ent.GetEditorId().Value();
 }

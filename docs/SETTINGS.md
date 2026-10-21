@@ -1148,6 +1148,9 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
 - `MP_ROOM_LIQUID=0`: ignore the mods' `.roomliquid` files and draw the
   retail fluid planes (console `roomliquid [on|off]`, which also counts what is
   loaded and drawn).
+- `MP_REMASTERED_EFFECT_ACTORS=0`: ignore the mods' `.roomfx` files (the
+  Remastered effect actors added to an area, and the retail effects they
+  replace), applied when an area loads (console `fx addons` lists them).
 - `MP_ROOM_ENV=0`: ignore the mods' `.roomenv` files (console `roomenv
   [on|off]`, which also counts what is loaded). For tuning:
   `MP_ROOM_ENV_GAIN` (exposure, default 1), `MP_ROOM_ENV_LOD` (a cap on

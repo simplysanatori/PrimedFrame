@@ -26,6 +26,7 @@
 #include "port_remastered_text.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
+#include "port_room_effects.h"
 #include "port_room_liquid.h"
 #include "port_console.h"
 #include "port_controls.h"
@@ -1055,6 +1056,25 @@ void CmdFxQuery() {
     }
   } else if (sub == "stats") {
     PortFx::Stats(emit);
+  } else if (sub == "addons") {
+    // The current area's Remastered effect actors (port_room_effects.h) and whether each lives.
+    const CStateManager* const mgr = PortDebug::StateManager();
+    const CWorld* const world = mgr != nullptr ? mgr->GetWorld() : nullptr;
+    if (world == nullptr || world->GetCurrentAreaId() == kInvalidAreaId) {
+      return Finish("no area");
+    }
+    const uint32_t mrea = static_cast< uint32_t >(world->GetAreaAlways(world->GetCurrentAreaId()).GetAreaAssetId());
+    const std::vector< PortRoomEffects::Spawned > list = PortRoomEffects::List(mrea);
+    Out("fx addons %s: area %08X, %zu added, %zu retail effect(s) left out", PortRoomEffects::Enabled() ? "on" : "off",
+        mrea, list.size(), PortRoomEffects::SkippedCount(mrea));
+    for (const PortRoomEffects::Spawned& s : list) {
+      TUniqueId uid;
+      uid.value = s.uid;
+      const CEntity* const ent = mgr->GetObjectById(uid);
+      const bool alive = ent != nullptr && ent->GetEditorId().Value() == (s.eid & 0x3FFFFFF);
+      Out("  %08X u%u PART %08X %s %s", s.eid, unsigned(s.uid), s.part,
+          !alive ? "gone" : ent->GetActive() ? "active" : "inactive", s.name.c_str());
+    }
   } else if (sub == "mute" || sub == "solo") {
     const std::string arg = sCmd.args.size() > 2 ? Lower(sCmd.args[2]) : "";
     if (arg == "clear" || (sub == "mute" && arg.empty())) {
@@ -1084,7 +1104,7 @@ void CmdFxQuery() {
     PortFx::gTimeScale = v;
     Out("particle time scale %g (the world keeps its own time)", v);
   } else {
-    return Finish("usage: fx <PART id>|off|list|tree|stats|mute|solo|timescale");
+    return Finish("usage: fx <PART id>|off|list|tree|stats|addons|mute|solo|timescale");
   }
   Finish();
 }
@@ -3491,7 +3511,7 @@ struct CommandSpec {
 // fx's queries, which read the particle debug state rather than the world.
 bool FxIsQuery() {
   if (sCmd.args.size() > 1) {
-    static const char* const queries[] = {"list", "tree", "stats", "mute", "solo", "timescale"};
+    static const char* const queries[] = {"list", "tree", "stats", "addons", "mute", "solo", "timescale"};
     for (const char* q : queries) {
       if (Lower(sCmd.args[1]) == q) {
         return true;
@@ -3519,6 +3539,7 @@ const CommandSpec kCommands[] = {
      "fx list [filter]           live root generators: kind, asset, position, particles, flags, native VFX props\n"
      "fx tree <#id>              one generator and its children, recursively\n"
      "fx stats                   live generators, vfx quads/triangles and CPU ms (update, render) last frame\n"
+     "fx addons                  this area's Remastered effect actors a mod added, and the retail ones they replace\n"
      "fx mute <asset>|clear|list  hide a PART/SWHC/ELSC asset (it still updates); fx solo <asset|#id> hides the rest\n"
      "fx timescale <s>           particle time scale (0 freezes particles only; 1 = off)",
      FxIsQuery},

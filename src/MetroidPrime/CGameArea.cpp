@@ -24,6 +24,7 @@
 
 #ifdef TARGET_PC
 #include "port_randomizer.h"
+#include "port_room_effects.h"
 #include "port_room_geo.h"
 #include "port_savestate.h"
 #include "port_skip_cutscenes.h"
@@ -652,6 +653,9 @@ void CGameArea::LoadScriptObjects(CStateManager& mgr) {
 #ifdef TARGET_PC
   // PORT: a save state records the layer bits this area spawns with and rebuilds with them (#161).
   PortSaveState::NoteAreaSpawnBegin(mgr, x4_selfIdx.Value());
+  // PORT: a mod's Remastered effect actors (port_room_effects.h): the retail objects they
+  // replace are left out, and each active layer's are created after its own.
+  PortRoomEffects::BeginArea(static_cast< uint32_t >(x84_mrea));
 #endif
   rstl::vector< TEditorId > ids;
   const CScriptLayerManager& layers = *mgr.WorldLayerState();
@@ -662,6 +666,12 @@ void CGameArea::LoadScriptObjects(CStateManager& mgr) {
       rstl::pair< const uchar*, int > buffer = GetLayerScriptBuffer(layer);
       CMemoryInStream stream(buffer.first, buffer.second);
       mgr.LoadScriptObjects(GetId(), stream, ids);
+#ifdef TARGET_PC
+      std::vector< uint32_t > added;
+      PortRoomEffects::LoadLayer(mgr, GetId().Value(), static_cast< uint32_t >(i), added);
+      for (size_t k = 0; k < added.size(); ++k)
+        ids.push_back(TEditorId(added[k]));
+#endif
     }
 #ifdef TARGET_PC
     else if (PortRandomizer::DumpEnabled() && mgr.GetWorld() != nullptr) {
@@ -669,6 +679,9 @@ void CGameArea::LoadScriptObjects(CStateManager& mgr) {
     }
 #endif
   }
+#ifdef TARGET_PC
+  PortRoomEffects::EndArea();
+#endif
   mgr.InitScriptObjects(ids);
 #ifdef TARGET_PC
   PortSaveState::NoteAreaSpawnEnd(mgr, x4_selfIdx.Value()); // PORT: puts the saved live layer bits back

@@ -16,6 +16,7 @@
 #include "port_remastered_import.h"
 #include "port_room_env.h"
 #include "port_room_geo.h"
+#include "port_room_effects.h"
 #include "port_room_liquid.h"
 
 #include <aurora/dvd.h>
@@ -62,6 +63,7 @@ std::vector<std::string> sRoomLods;
 std::string sFont;
 std::unordered_map<uint32_t, std::string> sRoomGeos;
 std::unordered_map<uint32_t, std::string> sRoomLiquids;
+std::unordered_map<uint32_t, std::string> sRoomEffects;
 // <FRME id>.hudbars files, by frame.
 std::unordered_map<uint32_t, std::string> sHudBars;
 // thermal.lut: the thermal visor's heat gradient (port_thermal.h).
@@ -422,6 +424,11 @@ std::string RoomGeoPath(uint32_t mrea) {
 
 bool RoomGeometryLoaded() { return !sRoomGeos.empty(); }
 
+std::string RoomEffectsPath(uint32_t mrea) {
+  const auto found = sRoomEffects.find(mrea);
+  return found != sRoomEffects.end() ? found->second : std::string();
+}
+
 std::string RoomLiquidPath(uint32_t mrea) {
   const auto found = sRoomLiquids.find(mrea);
   return found != sRoomLiquids.end() ? found->second : std::string();
@@ -465,6 +472,7 @@ void Initialize() {
   sFont.clear();
   sRoomGeos.clear();
   sRoomLiquids.clear();
+  sRoomEffects.clear();
   sHudBars.clear();
   sThermalLut.clear();
   {
@@ -597,6 +605,10 @@ void Initialize() {
       }
       if (PortRoomLiquid::ParseFileName(name, id)) {
         sRoomLiquids[id] = PathString(file);
+        continue;
+      }
+      if (PortRoomEffects::ParseFileName(name, id)) {
+        sRoomEffects[id] = PathString(file);
         continue;
       }
       if (ParseLooseName(name, type, id)) {

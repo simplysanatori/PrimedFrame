@@ -232,6 +232,8 @@ uint32_t RemapEffectId(uint32_t owner, uint32_t field, uint32_t id);
 std::string RoomGeoPath(uint32_t mrea);
 // The same for its liquid surfaces (port_room_liquid.h).
 std::string RoomLiquidPath(uint32_t mrea);
+// The same for its Remastered effect actors (port_room_effects.h).
+std::string RoomEffectsPath(uint32_t mrea);
 // Every roomgeo/lods.bin the mods supply (port_room_geo.h), in mod order: a later one's
 // entry for a model stands in for an earlier one's.
 std::vector<std::string> RoomLodPaths();

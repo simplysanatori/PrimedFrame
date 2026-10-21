@@ -200,6 +200,16 @@ which are authoritative. Inside a mod:
   shade it as they shade a fluid plane (the hot pass adds it), and the X-Ray
   visor draws it unchanged. `MP_ROOM_LIQUID=0` or the
   console's `roomliquid off` draws the retail planes instead.
+- a file named `<MREA id, 8 hex digits>.roomfx`, anywhere in the mod, adds
+  particle effect actors to that area: retail Effect objects, per script layer,
+  created after the layer's own objects while it is active, and a list of the
+  area's retail objects not to create (the effects they replace). Their editor
+  ids use instance numbers 0xF000 to 0xFFFF, which no retail area has; nothing
+  saves them, and nothing can send them a message. The Remastered import writes
+  one for each room with effects of Remastered's own that nothing connects to.
+  The layout is in `platform/include/port_room_effects.h`.
+  `MP_REMASTERED_EFFECT_ACTORS=0` ignores the files; the console's `fx addons`
+  lists the current area's.
 - a PBR material (flag bit 14) may end in a 28-byte record: six big-endian floats
   (emissive multiplier rgb, backlight) and the tag `PBRM`, inside the
   material's own span in the offset table. The multiplier scales the emissive map.

@@ -20,6 +20,7 @@
 #include "port_skip_cutscenes.h"
 #include "port_viewmodel.h"
 #include "port_console.h"
+#include "port_room_effects.h"
 #ifdef MP_ENABLE_SMOKE_DRIVER
 #include "port_smoke.h"
 #endif
@@ -2331,6 +2332,14 @@ CStateManager::LoadScriptObject(TAreaId aid, EScriptObjectType type, unsigned in
   uint bytesLeft = length;
   bool failed = false;
   const TEditorId eid = in.ReadLong();
+#ifdef TARGET_PC
+  // PORT: an effect a mod's Remastered effect actor replaces (port_room_effects.h).
+  if (PortRoomEffects::Skips(eid.value)) {
+    for (uint b = 4; b < length; ++b)
+      in.ReadChar();
+    return rstl::pair< TEditorId, TUniqueId >(kInvalidEditorId, kInvalidUniqueId);
+  }
+#endif
 
   rstl::vector< SConnection > conns;
   const int connCount = in.Get< int >();
