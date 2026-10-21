@@ -125,7 +125,7 @@ public:
   // SHTM/SHTT (PSHM/PSHT). ShutdownEffect starts the countdown if the description has one, else
   // acts at once; PortDoShutdownBehavior(0xff) uses the description's mode.
   void ShutdownEffect() override;
-  void PortDoShutdownBehavior(u32 mode);
+  void PortDoShutdownBehavior(u32 mode) override;
   // SDTR: the countdown's remaining over its total, 1 when none is running.
   float PortShutdownTimeRemaining() const;
 #endif

@@ -110,7 +110,8 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 88: ZTES/IVSE/ISVF/ITPE, DBIS, SHTM/SHTT/PMOV/PMPV/SDTR as port-only tags; a DVVN sprite without SIZE is 1.0.
 // 89: a PART without ITPE under XFMD 2/5 gets Remastered's default 1 (PITP flagged 0x100).
 // 90: a swoosh generator's SHTM 1 (shutdown destroys the live particles) is the port-only PSHM.
-inline constexpr int kEffects = 90;    // port_remastered_effect_import and the particle converters
+// 91: ISDT 0 (a shutdown reaches the children as their own ShutdownEffect) is the port-only PISD 0.
+inline constexpr int kEffects = 91;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).

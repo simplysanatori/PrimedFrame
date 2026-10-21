@@ -899,6 +899,10 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       GetClassID(in);
       desc->xPortShutdownMode = u8(in.ReadLong());
       break;
+    case SBIG('PISD'):
+      GetClassID(in);
+      desc->xPortChildShutdownByMode = in.ReadLong() != 0;
+      break;
     case SBIG('PSHT'):
       delete desc->xPortShutdownTime;
       desc->xPortShutdownTime = GetIntElement(in);

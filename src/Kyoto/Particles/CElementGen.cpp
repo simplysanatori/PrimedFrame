@@ -2155,8 +2155,9 @@ void CElementGen::ShutdownEffect() {
 }
 
 // CParticleGen::DoShutdownBehavior (0x27b88c): mode 0xff is the description's SHTM. Modes 0 and 1
-// stop the emission and mode 1 also destroys the live particles; the children are shut down by
-// their own ShutdownEffect.
+// stop the emission and mode 1 also destroys the live particles. With ISDT (the default) the
+// children get the same call with the same mode, so 0xff acts at once on each one's own SHTM
+// (CElementGen's override 0x2499b8 does the same); without it they get their own ShutdownEffect.
 void CElementGen::PortDoShutdownBehavior(u32 mode) {
   const u32 use = mode == 0xff ? x28_loadedGenDesc->xPortShutdownMode : (mode & 0xff);
   if (use < 2) {
@@ -2165,8 +2166,13 @@ void CElementGen::PortDoShutdownBehavior(u32 mode) {
       DestroyParticles();
     }
   }
+  const bool byMode = x28_loadedGenDesc->xPortChildShutdownByMode;
   for (AUTO(it, x290_activePartChildren.begin()); it != x290_activePartChildren.end(); ++it) {
-    (*it)->ShutdownEffect();
+    if (byMode) {
+      (*it)->PortDoShutdownBehavior(mode);
+    } else {
+      (*it)->ShutdownEffect();
+    }
   }
 }
 

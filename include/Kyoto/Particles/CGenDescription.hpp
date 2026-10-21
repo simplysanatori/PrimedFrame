@@ -227,6 +227,9 @@ public:
   // port-only PSHT: Remastered's SHTT, the shutdown countdown in ticks (ShutdownEffect 0x27a66c,
   // UpdateCountdownTimerForShutdown 0x27b864). Owned; null = a shutdown acts at once.
   CIntElement* xPortShutdownTime = nullptr;
+  // port-only PISD 0: Remastered's ISDT (desc+0x6c bit 1), on by default. On, a shutdown reaches the
+  // children as DoShutdownBehavior(mode) (their own SHTM at once, no SHTT); off, as ShutdownEffect.
+  bool xPortChildShutdownByMode = true;
   // port-only PMOV/PMPV: Remastered's per-particle model orientation direction and pivot offset
   // (SolveParticleTransform 0x246f14), in the port's space. Owned; null = none.
   CVectorElement* xPortPmov = nullptr;

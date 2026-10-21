@@ -4791,6 +4791,21 @@ public:
         }
         continue;
       }
+      // ISDT (CreateGPSM, desc+0x6c bit 1, on by default from the CParticleDescription ctor 0x288314):
+      // a shutdown reaches the children as DoShutdownBehavior with the parent's mode (0x27b88c,
+      // 0x2499b8), so each acts at once on its own SHTM and its SHTT is never armed. 0 calls each
+      // child's ShutdownEffect instead: the port-only PISD 0. 1 is the port's default.
+      if (part && fourcc == F("ISDT")) {
+        uint32_t value = 0;
+        if (!SmallInteger(property, value) || value > 1) {
+          result.dropped.push_back("ISDT: not a constant 0 or 1");
+        } else if (value == 0) {
+          AppendBE32(out, F("PISD"));
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, 0);
+        }
+        continue;
+      }
       // SHTT, the delayed shutdown (ShutdownEffect 0x27a66c, UpdateCountdownTimerForShutdown
       // 0x27b864): an int number of ticks, counted down once per tick after the owner's shutdown.
       if (part && fourcc == F("SHTT")) {
@@ -5882,7 +5897,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
                          fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PHFO") || fourcc == F("PLIX") || fourcc == F("PGID") || fourcc == F("PBDM") ||
                          fourcc == F("PDFG") || fourcc == F("PZTS") || fourcc == F("PIVS") ||
-                         fourcc == F("PITP") || fourcc == F("PSHM") ||
+                         fourcc == F("PITP") || fourcc == F("PSHM") || fourcc == F("PISD") ||
                          fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||
                          fourcc == F("PVSM"))) ||
                (vfx && fourcc == F("PIRN"))) {

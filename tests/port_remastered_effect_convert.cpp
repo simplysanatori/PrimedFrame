@@ -2841,6 +2841,26 @@ void TestShutdownAndPivot() {
                 parts[0].dropped[0] == "SHTM: mode 2",
             "SHTM 2 is dropped with its reason");
 
+  const auto isdt = [&](uint8_t value) {
+    return convert([&](auto& o) {
+      PutProperty(o, "ISDT", 0);
+      o.push_back(value);
+    });
+  };
+  parts = isdt(0);
+  Retail pisd;
+  pisd.f("GPSM").f("PISD").f("CNST").w(0).f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == pisd.bytes && parts[0].dropped.empty(), "ISDT 0 is PISD 0");
+  if (!parts.empty()) {
+    std::vector<RetailPartProperty> properties;
+    std::string error;
+    CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
+              "a PART with PISD passes the retail element reader");
+  }
+  parts = isdt(1);
+  CHECK_MSG(parts.size() == 1 && parts[0].part == none.bytes && parts[0].dropped.empty(),
+            "ISDT 1, the default, writes nothing");
+
   parts = convert([](auto& o) {
     PutProperty(o, "SHTT", 1);
     PutConstant(o, 30);

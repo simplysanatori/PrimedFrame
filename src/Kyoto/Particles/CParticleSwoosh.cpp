@@ -1723,9 +1723,15 @@ bool CParticleSwoosh::GetParticleEmission() const { return x1d0_24_emitting; }
 // SHTM: 0 stops the emission, 1 also runs Remastered's CParticleSwoosh::DestroyParticles (0x27f744),
 // which empties the segment ring (current index, live counts to 0), so the trail vanishes at once.
 // The retail DestroyParticles stays empty.
-void CParticleSwoosh::ShutdownEffect() {
+void CParticleSwoosh::ShutdownEffect() { PortDoShutdownBehavior(0xff); }
+
+void CParticleSwoosh::PortDoShutdownBehavior(u32 mode) {
+  const u32 use = mode == 0xff ? x1c_desc->xPortShutdownMode : (mode & 0xff);
+  if (use >= 2) {
+    return;
+  }
   SetParticleEmission(false);
-  if (x1c_desc->xPortShutdownMode == 1) {
+  if (use == 1) {
     x158_curParticle = 0;
     x1ac_particleCount = 0;
     for (int i = 0; i < x15c_swooshes.capacity(); ++i) {
