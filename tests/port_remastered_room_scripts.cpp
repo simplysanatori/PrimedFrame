@@ -1,10 +1,12 @@
 // The world master's script resolver (port_remastered_room_scripts.cpp): FluidSender, which names
 // the senders retail has no object for (the player in a fluid, the camera under water, and the
 // InventoryActivator the camera water proxy fires), and MasterScripts, which follows a fog hint's
-// links back through Relays to those and to camera-detecting TriggerMP1s. The ROOM files are
-// built here, with only the components and connections the resolver reads.
+// links back through Relays to those and to camera-detecting TriggerMP1s. Also the rooms' own
+// effect actors as a .roomfx (port_remastered_room_effects.cpp). The ROOM files are built here,
+// with only the components and connections these read.
 
 #include "port_remastered_room_internal.h"
+#include "port_room_effects.h"
 #include "port_test.h"
 
 #include <cstdio>
@@ -355,12 +357,110 @@ void TestMasterCameraWater() {
   CHECK_MSG(u.links.empty() && u.unresolved.count(hint) == 1 && u.unresolved.at(hint) == 2, "another function stays unresolved");
 }
 
+// An EffectMP1 with GENP Guid(100 + genp) and, if `vars`, one external variable (a real).
+Fixture::Comp EffectActor(int genp, bool vars = false) {
+  Fixture::Comp c = Plain(kEffectMP1);
+  Props props;
+  if (genp >= 0) {
+    props.Add(0x88fc08e6, Guid(size_t(100 + genp)));
+  }
+  if (vars) {
+    Props guid;
+    guid.Add(0x82dde61c, Guid(200));
+    Bytes value;
+    PutFloat(value, 0.65f);
+    Props entry;
+    entry.Add(0xae893172, guid.b).Add(0xfd41dc4b, value);
+    Bytes list = U32(1);
+    Append(list, entry.b);
+    props.Add(0x3def0de6, list);
+  }
+  c.props = props.b;
+  return c;
+}
+
+ScriptObject RetailObject(uint32_t id, uint8_t type, Vec3 pos, std::vector<uint32_t> targets = {}) {
+  ScriptObject o;
+  o.id = id;
+  o.type = type;
+  o.hasPos = true;
+  o.pos = pos;
+  o.targets = std::move(targets);
+  return o;
+}
+
+void TestRoomEffects() {
+  // 0 added (layer 1, with a variable), 1 matched to a retail object, 2 connected (3 links to it),
+  // 4 no GENP, 5 a GENP with no PART, 6 on a layer no entity matched.
+  Fixture f;
+  f.comps = {EffectActor(0, true), EffectActor(1), EffectActor(0), Plain(kRelay, {{2, kEventRelayFired, kActionAction}}),
+             EffectActor(-1), EffectActor(2), EffectActor(0)};
+  f.comps[0].pos[0] = 1.f;
+  f.comps[0].pos[1] = 2.f;
+  f.comps[0].pos[2] = 3.f;
+  const Parsed p(f);
+  Area area;
+  area.mrea = 0x1A2B3C4D;
+  area.xf = {{{1, 0, 0, 10}, {0, 1, 0, 20}, {0, 0, 1, 30}}};
+  const Vec3 w = Apply(area.xf, MulR2G({1, 2, 3}));
+  const Vec3 near{w[0] + 1, w[1], w[2]};
+  // 0 near the added one: replaced. 1 far. 2 near but a retail connection reaches it. 3 sends
+  // that. 4 the one actor 1 matched.
+  area.objects = {RetailObject(0x041A0010, 7, near), RetailObject(0x041A0011, 7, {w[0] + 50, w[1], w[2]}),
+                  RetailObject(0x041A0012, 7, near), RetailObject(0x041A0013, 0x15, near, {0x041A0012}),
+                  RetailObject(0x041A0014, 7, near)};
+  SceneryScripts scripts;
+  scripts.layer[int(f.Entity(0))] = 1;
+  scripts.retail[int(f.Entity(1))] = 4;
+  std::map<std::string, Bytes> written;
+  RoomIO io;
+  io.write = [&](const std::string& name, const Bytes& data) {
+    written[name] = data;
+    return true;
+  };
+  io.effect = [](const std::array<uint8_t, 16>& genp) -> uint32_t {
+    return genp == SwapUuid(Guid(102).data()) ? 0 : 0xFE000000u | genp[0];
+  };
+  const std::string line = WriteRoomEffects("room", p.room, area.mrea, area, scripts, io);
+  CHECK_MSG(line == "  room: 1 effect actor(s) added, 1 retail effect(s) replaced, 1 connected and left out, 1 matched a "
+                    "retail object (0 of them with an effect of Remastered's own), 2 without a PART, 1 on an unknown layer",
+            line.c_str());
+  REQUIRE_MSG(written.size() == 1 && written.count("1A2B3C4D.roomfx") == 1, "one .roomfx, named by the MREA");
+  PortRoomEffects::File file;
+  std::string error;
+  REQUIRE_MSG(PortRoomEffects::Parse(written.begin()->second, file, error), error.c_str());
+  CHECK_MSG(file.skips == std::vector<uint32_t>{0x041A0010}, "the near unmatched, untargeted one is skipped");
+  CHECK(file.connected == 1);
+  REQUIRE(file.layers.size() == 1 && file.layers[0].layer == 1 && file.layers[0].count == 1);
+  PortRoomEffects::Effect e;
+  size_t used = 0;
+  REQUIRE(PortRoomEffects::ReadEffect(file.layers[0].objects.data(), file.layers[0].objects.size(), e, used));
+  CHECK(e.id == PortRoomEffects::AddOnId(1, 0x1A, 0));
+  CHECK(e.part == (0xFE000000u | SwapUuid(Guid(100).data())[0]));
+  CHECK(e.pos[0] == float(w[0]) && e.pos[1] == float(w[1]) && e.pos[2] == float(w[2]));
+  CHECK(e.active && e.scale[0] == 1.f && e.duration == 0.2f && e.xrayVisorVisible);
+  REQUIRE(file.layers[0].vars.size() == 1 && file.layers[0].vars[0].size() == 1);
+  const PortRoomEffects::Variable& v = file.layers[0].vars[0][0];
+  CHECK(v.real == 0.65f && std::equal(v.guid.begin(), v.guid.end(), Guid(200).begin()));
+
+  // A retail object already in the add-on range: nothing written.
+  written.clear();
+  Area taken = area;
+  taken.objects.push_back(RetailObject(PortRoomEffects::AddOnId(0, 0x1A, 3), 7, near));
+  const std::string refused = WriteRoomEffects("room", p.room, area.mrea, taken, scripts, io);
+  CHECK_MSG(refused.find("is in the add-on id range") != std::string::npos && written.empty(), refused.c_str());
+  // Without an effect lookup the stage writes nothing and says nothing.
+  io.effect = nullptr;
+  CHECK(WriteRoomEffects("room", p.room, area.mrea, area, scripts, io).empty() && written.empty());
+}
+
 }  // namespace
 
 int main() {
   TestFluidSenders();
   TestMasterTrigger();
   TestMasterCameraWater();
+  TestRoomEffects();
   if (port_test::Failures() == 0) {
     std::printf("port_remastered_room_scripts_tests: ok\n");
   }
