@@ -504,6 +504,8 @@ rstl::optional_object< TLockedToken< CGenDescription > > CProjectileWeapon::Coll
   x124_24_active = false;
   // Remastered's DeactivateProjectile (0xb7bee4) calls ShutdownEffect (vptr+0x98) on the APSM and
   // APS2 gens (+0x140, +0x148) and the three swooshes (+0x168, +0x170, +0x178): SHTM/SHTT, PSHM/PSHT.
+  // It then calls DestroyParticles(1) on APSM/APS2 if WPSM DP1C/DP2C is set (desc+0xe1 bits 3/6).
+  // Both default to off and no shipped WPSM has either, so that call is not ported.
   if (xfc_APSMGen) {
     xfc_APSMGen->ShutdownEffect();
   }
