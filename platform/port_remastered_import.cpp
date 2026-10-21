@@ -1519,9 +1519,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     if (reuse && !requiredFile.empty()) {
       reuse = std::find(old->second.files.begin(), old->second.files.end(), requiredFile) != old->second.files.end();
     }
+    // Said only once its files are in: a stage whose files are gone is made again.
     if (reuse) {
-      SetMessage("Reusing the previous import's " + name);
       reuse = LinkFiles(source, staging, old->second.files);
+      SetMessage(reuse ? "Reusing the previous import's " + name
+                       : "Making the " + name + " again: the previous import's files are gone");
     }
     if (reuse) {
       StageRecord& kept = made[name] = old->second;
