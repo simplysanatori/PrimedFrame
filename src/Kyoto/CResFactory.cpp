@@ -11,10 +11,42 @@
 #include <dolphin/ar.h>
 #include <dolphin/os.h>
 
+#ifdef TARGET_PC
+#include "Kyoto/CPakFile.hpp"
+#include "port_log.h"
+
+#include <cstring>
+#include <exception>
+#endif
+
 static const int kDecompChunkSize = 4096;
 
 // Written by CMFGameLoader; its purpose is not yet identified.
 int gResFactoryUnknown = 2;
+
+#ifdef TARGET_PC
+static void PortReportBadResource(CResLoader& loader, const SObjectTag& tag, int size, int compression,
+                                  const uint* head, const char* what) {
+  const uint type = tag.GetType();
+  const uint id = tag.GetId();
+  const uchar* bytes = reinterpret_cast< const uchar* >(head);
+  PortLog::Write("resource: %c%c%c%c %08X failed to load (%s): %d byte(s) given, compression %d, "
+                 "first bytes %02X%02X%02X%02X %02X%02X%02X%02X\n",
+                 char(type >> 24), char(type >> 16), char(type >> 8), char(type), id, what, size, compression,
+                 bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]);
+  for (int i = 0; i < loader.GetPakCount(); ++i) {
+    CPakFile* pak = loader.GetPakFile(i);
+    const CPakFile::SResInfo* info = pak->GetResInfo(id);
+    if (info != nullptr) {
+      PortLog::Write("resource:   in %s: offset %u, size %u, %s%s\n", pak->GetDvdFile().GetFilename().data(),
+                     info->GetOffset(), info->GetSize(), info->IsCompressed() ? "compressed" : "uncompressed",
+                     pak->IsWorldPak() ? ", world PAK" : "");
+    } else if (pak->IsStashedInARAM()) {
+      PortLog::Write("resource:   %s: table stashed in ARAM\n", pak->GetDvdFile().GetFilename().data());
+    }
+  }
+}
+#endif
 
 CResFactory::CResFactory() {}
 
@@ -166,12 +198,30 @@ bool CResFactory::PumpResource(const LoadList::iterator& it, uint time) {
     }
     SLoadingData data(*it);
     EraseFromLoadList(it);
+#ifdef TARGET_PC
+    // Port: a resource the factory cannot read aborts the game; name it, and
+    // where it was read from, so a crash report says which one.
+    const SObjectTag tag = data.x0_tag;
+    const int size = data.x2c_size;
+    const int compression = data.x30_compression;
+    uint head[2] = {0, 0};
+    if (data.x14_buffer.get() != nullptr) {
+      memcpy(head, data.x14_buffer.get(), rstl::min_val< int >(sizeof(head), rstl::max_val(size, 0)));
+    }
+    try {
+#endif
     *data.x10_target =
         x5c_factoryMgr
             .MakeObjectFromMemory(data.x0_tag, data.x14_buffer.release(), data.x2c_size,
                                   data.x30_compression != CResLoader::kCompressionType_Uncompressed,
                                   data.x34_params)
             .release();
+#ifdef TARGET_PC
+    } catch (const std::exception& e) {
+      PortReportBadResource(x4_resLoader, tag, size, compression, head, e.what());
+      throw;
+    }
+#endif
     return true;
   }
   return false;
