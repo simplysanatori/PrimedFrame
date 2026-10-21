@@ -575,6 +575,7 @@ constexpr uint32_t kActionDeactivate = 0xdd169ff3;
 constexpr uint32_t kActionIncrement = 0xd5883f10;
 constexpr uint32_t kActionDecrement = 0x767a0969;
 constexpr uint32_t kActionToggleActive = 0xcdeb03ba;
+constexpr uint32_t kActionAction = 0xd5be6778;  // Action (19): every Timer/Trigger -> SpecialFunction link
 // What an Entity is told to do with itself and every component it holds.
 constexpr uint32_t kActionEntityActivate = 0x41435456;    // 'ACTV'
 constexpr uint32_t kActionEntityDeactivate = 0x49435456;  // 'ICTV'
@@ -643,6 +644,14 @@ constexpr uint32_t kEventCameraWaterIn = 0x99655851;
 constexpr uint32_t kEventCameraWaterOut = 0x5b16cc17;
 constexpr uint32_t kEventCounterUp = 0x40e54906;
 constexpr uint32_t kEventCounterDown = 0xc163beb5;
+// SpecialFunctionMP1: the function (5, InventoryActivator) and its item (an EItemType); on
+// Action it sends Zero if the player has the item, MaxReached if not.
+constexpr uint32_t kSpecialFunction = 0x71337f4f;
+constexpr uint32_t kPropSpecialFunctionType = 0x0d86d1bf;
+constexpr uint32_t kPropSpecialFunctionItem = 0x04fc7524;
+constexpr uint32_t kSpecialFunctionInventoryActivator = 5;
+constexpr uint32_t kEventSpecialFunctionZero = 0x58951d90;
+constexpr uint32_t kEventSpecialFunctionMaxReached = 0x52583665;
 constexpr double kMatchTolerance = 0.02;
 constexpr double kMatchNear = 2.0;
 // A model carried over from retail, in a room's byte order (EffectRetailId); the last
@@ -711,8 +720,8 @@ bool SingleDriverStart(const std::vector<PortRoomGeo::Link>& starts, PortRoomGeo
 int DriverSlot(const std::vector<PortRemastered::ModelMaterial>& materials, const SceneryScripts::Driver& d);
 std::map<int, std::vector<SceneryScripts::Driver>> FindMaterialDrivers(const Room& room, std::set<int>& driverStarts);
 SceneryScripts MatchScripts(const Room& room, const Area& area);
-uint32_t FluidSender(const std::vector<Component>& comps,
-                     const std::map<int, std::vector<const Connection*>>& incoming, const Connection& c, int& state);
+uint32_t FluidSender(const Room& room, const std::map<int, std::vector<const Connection*>>& incoming,
+                     const Connection& c, int& state);
 void CameraBox(const Vec3& pos, const Vec3& rot, const Vec3& scale, float centre[3], float half[3], float axes[9]);
 SceneryScripts MasterScripts(const Room& room, const Vec3& shift, std::vector<PortRoomEnv::WorldVolume>& volumes);
 

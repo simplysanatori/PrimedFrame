@@ -150,10 +150,11 @@ bool PassFires(int retailType, uint32_t action) {
 }
 
 // A grade hint's sender that is no retail object: PortRoomEnv's kSenderPlayerFluid or
-// kSenderCameraWater, with the state (0: in, 1: out); 0 for any other. `incoming` is by
-// target entity.
-uint32_t FluidSender(const std::vector<Component>& comps,
-                     const std::map<int, std::vector<const Connection*>>& incoming, const Connection& c, int& state) {
+// kSenderCameraWater, with the state (0: in, 1: out), or kSenderCameraWaterItem + item (0: in
+// with the item, 1: in without); 0 for any other. `incoming` is by target entity.
+uint32_t FluidSender(const Room& room, const std::map<int, std::vector<const Connection*>>& incoming,
+                     const Connection& c, int& state) {
+  const std::vector<Component>& comps = room.Components();
   const Component& sender = comps[c.sender];
   if (sender.type == kProxyPlayer && (c.event == kEventPlayerFluidIn || c.event == kEventPlayerFluidOut)) {
     state = c.event == kEventPlayerFluidIn ? 0 : 1;
@@ -162,6 +163,30 @@ uint32_t FluidSender(const std::vector<Component>& comps,
   if (sender.type == kCameraWaterProxy && (c.event == kEventCameraWaterIn || c.event == kEventCameraWaterOut)) {
     state = c.event == kEventCameraWaterIn ? 0 : 1;
     return PortRoomEnv::kSenderCameraWater;
+  }
+  // An InventoryActivator fired only by the camera going under water: Zero (the item held) or
+  // MaxReached (not) as it goes in (the water fogs of Tallon's and Phendrana's masters).
+  if (sender.type == kSpecialFunction && sender.entity >= 0 &&
+      (c.event == kEventSpecialFunctionZero || c.event == kEventSpecialFunctionMaxReached)) {
+    const auto f = room.Flat(sender);
+    const auto type = f.find(kPropSpecialFunctionType);
+    const auto item = f.find(kPropSpecialFunctionItem);
+    if (type == f.end() || type->second.size != 4 || ReadLE32(room.Bytes(type->second)) != kSpecialFunctionInventoryActivator ||
+        item == f.end() || item->second.size != 4 || ReadLE32(room.Bytes(item->second)) >= PortRoomEnv::kCameraWaterItems) {
+      return 0;
+    }
+    const auto in = incoming.find(sender.entity);
+    if (in == incoming.end() || in->second.empty()) {
+      return 0;
+    }
+    for (const Connection* feed : in->second) {
+      if (comps[feed->sender].type != kCameraWaterProxy || feed->event != kEventCameraWaterIn ||
+          feed->action != kActionAction) {
+        return 0;
+      }
+    }
+    state = c.event == kEventSpecialFunctionZero ? 0 : 1;
+    return PortRoomEnv::kSenderCameraWaterItem + ReadLE32(room.Bytes(item->second));
   }
   // A Counter fed only by camera water proxies is non-zero while the camera is in water.
   if (sender.type != kCounter || sender.entity < 0) {
@@ -678,7 +703,7 @@ SceneryScripts MatchScripts(const Room& room, const Area& area) {
       lightEntities.insert(c.entity);
     }
   }
-  auto fluidSender = [&](const Connection& c, int& state) { return FluidSender(comps, incoming, c, state); };
+  auto fluidSender = [&](const Connection& c, int& state) { return FluidSender(room, incoming, c, state); };
   // A counter Remastered added for a grade hint that counts what a retail counter counts (a
   // fight's deaths, say) is that retail counter: the one every matched sender feeding it also targets.
   auto RetailCounterFor = [&](int entity) -> const ScriptObject* {
@@ -1114,7 +1139,7 @@ SceneryScripts MasterScripts(const Room& room, const Vec3& shift, std::vector<Po
         const uint32_t first = depth == 0 ? c->action : action;
         const uint8_t act = LinkAct(first);
         int state = 0;
-        const uint32_t fluid = FluidSender(comps, incoming, *c, state);
+        const uint32_t fluid = FluidSender(room, incoming, *c, state);
         if (fluid != 0 && act != 0) {
           links.push_back({fluid, uint8_t(state), act});
         } else if (sender.type == kTriggerMP1 && (c->event == kEventEntered || c->event == kEventExited) && act != 0 &&

@@ -212,6 +212,11 @@ constexpr uint32_t kSenderCameraWater = 0xfffffff1;
 // below the two senders above.
 constexpr uint32_t kSenderWorldVolume = 0xfff00000;
 constexpr uint32_t kMaxWorldVolumes = 0x10000;
+// The camera going under water as the player holds item k (an EItemType) or not: a master's
+// InventoryActivator fired by its camera water proxy. kSenderCameraWaterItem + k, state 0 with
+// the item, 1 without; nothing as the camera comes out.
+constexpr uint32_t kSenderCameraWaterItem = 0xffff0000;
+constexpr uint32_t kCameraWaterItems = 64;
 // A sender that is no retail script object (keeps its high bits).
 inline bool PseudoSender(uint32_t sender) { return sender >= kSenderWorldVolume; }
 
@@ -759,9 +764,10 @@ std::string FogInfo();
 void OnScriptState(uint32_t mrea, uint32_t sender, int state);
 // The console's `roomenv state`: as if `sender` sent `state` in every loaded area.
 void SendScriptState(uint32_t sender, int state);
-// Once a frame: whether the player and the camera are in a fluid. A change drives the
-// grades of the loaded areas linked to kSenderPlayerFluid / kSenderCameraWater.
-void SetFluid(bool player, bool camera);
+// Once a frame: whether the player and the camera are in a fluid, and the items the player holds
+// (bit k: EItemType k). A change drives the grades of the loaded areas linked to
+// kSenderPlayerFluid / kSenderCameraWater; the camera going in, kSenderCameraWaterItem too.
+void SetFluid(bool player, bool camera, uint64_t items);
 // Once a frame: where the camera is. Going into or out of one of the world's volumes (the table
 // of the last loaded area's file that has one) drives the hints of every loaded area linked to
 // kSenderWorldVolume + k; an area that loads later hears the entries and exits so far

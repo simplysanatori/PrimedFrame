@@ -3107,8 +3107,16 @@ void CStateManager::PortCaptureProbeFace() const {
     PortRoomEnv::SetViewArea(x850_world->GetArea(x8cc_nextAreaId)->GetAreaAssetId());
   }
   // Remastered's grade hints that follow the player in a fluid and the camera under water.
-  PortRoomEnv::SetFluid(x84c_player != nullptr && x84c_player->IsInFluid(),
-                        x870_cameraManager->GetFluidCounter() > 0);
+  {
+    uint64_t items = 0;
+    for (int i = 0; i < CPlayerState::kIT_Max && i < int(PortRoomEnv::kCameraWaterItems); ++i) {
+      if (GetPlayerState()->HasPowerUp(static_cast< CPlayerState::EItemType >(i))) {
+        items |= uint64_t(1) << i;
+      }
+    }
+    PortRoomEnv::SetFluid(x84c_player != nullptr && x84c_player->IsInFluid(),
+                          x870_cameraManager->GetFluidCounter() > 0, items);
+  }
   {
     // And the world's hints that follow the camera through the master's trigger volumes (the
     // game camera, as the room geometry's camera volumes see it).

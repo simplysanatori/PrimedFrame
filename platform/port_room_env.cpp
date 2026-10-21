@@ -82,6 +82,7 @@ int sVolFog = -1;
 bool sFogRegions = true;
 bool sPlayerFluid = false;
 bool sCameraWater = false;
+uint64_t sItems = 0;
 std::vector<WorldVolume> sWorldVolumes;
 WorldVolumeState sWorldVolumeState;
 float sCameraPoint[3] = {};
@@ -1745,7 +1746,8 @@ void SendScriptState(uint32_t sender, int state) {
   }
 }
 
-void SetFluid(bool player, bool camera) {
+void SetFluid(bool player, bool camera, uint64_t items) {
+  sItems = items;
   // State 0 as the fluid is entered, 1 as it is left (the writer's convention).
   if (player != sPlayerFluid) {
     sPlayerFluid = player;
@@ -1757,6 +1759,9 @@ void SetFluid(bool player, bool camera) {
     sCameraWater = camera;
     for (auto& [mrea, area] : sAreas) {
       DriveGrades(mrea, area, kSenderCameraWater, camera ? 0 : 1);
+      if (camera) {
+        DriveCameraWaterItems(mrea, area, items);
+      }
       // The hints hear the camera's fluid state in every loaded area (once their file is in).
       if (area.hasFile && area.hints.Set(area.file.fluidHints, camera)) {
         area.hintSnap = true;
