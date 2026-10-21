@@ -858,6 +858,18 @@ float GlowGain(bool frameExposed) {
   return std::isfinite(gain) && gain > 0.f ? gain : kFallback;
 }
 
+float ParticleLightGain(bool inverseExposed) {
+  // MP_PARTICLE_LIGHT_SCALE multiplies it (debug).
+  static const float sScale = std::max(port::EnvFloat("MP_PARTICLE_LIGHT_SCALE", 1.f), 0.f);
+  const float invPi = sScale / 3.14159265f;
+  const float exposure = Enabled() && RoomExposed() ? sFrame.exposure : 0.f;
+  if (!(exposure > 0.f) || !std::isfinite(exposure)) {
+    return invPi;
+  }
+  // GlowScale is E / E_static, or 1 where the static exposure is off (the frame's stands in).
+  return (inverseExposed ? GlowScale() : exposure) * LightGain() * invPi;
+}
+
 float UnlitGain(bool frameExposed) {
   // Outside an exposed room Remastered's static default (exposure 1) applies: nothing to add.
   if (!sFrame.hasTone || !Enabled() || !RoomExposed()) {

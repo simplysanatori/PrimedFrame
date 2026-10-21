@@ -3982,6 +3982,8 @@ public:
     std::vector<uint8_t> nestedLightOuterRadius;
     bool nestedHdrLight = false;
     uint32_t nestedLightFalloff = 3;
+    // LIXP: CParticleLight::Create 0x2df010 multiplies LINT by the static inverse exposure.
+    bool nestedLightInverseExposure = false;
     if (part) {
       auto unique = [&node](uint32_t fourcc) -> const EffectProperty* {
         const EffectProperty* found = nullptr;
@@ -4017,6 +4019,9 @@ public:
                        Element(lord->value[0], Type::Real, nestedLightOuterRadius, why);
       if (nestedHdrLight) {
         nestedLightFalloff = falloff;
+        const EffectProperty* lixp = unique(F("LIXP"));
+        uint32_t inverseExposed = 0;
+        nestedLightInverseExposure = lixp != nullptr && SmallInteger(*lixp, inverseExposed) && inverseExposed != 0;
       } else if (ltyp != nullptr && SmallInteger(*ltyp, lightType) && lightType == 2) {
         result.dropped.push_back("PHDR: point light lacks constant LFOT or supported LCLR/LINT/LIRD/LORD");
       }
@@ -4677,8 +4682,8 @@ public:
                       [this](const EffectProperty& other) { return other.fourcc == F("INTT") && IntIsPofs(other); })) {
         continue;
       }
-      if (nestedHdrLight && (fourcc == F("LIRD") || fourcc == F("LORD"))) {
-        continue;  // consumed as PIR0/POR0 below
+      if (nestedHdrLight && (fourcc == F("LIRD") || fourcc == F("LORD") || fourcc == F("LIXP"))) {
+        continue;  // consumed as PIR0/POR0/PLIX below
       }
       const auto found = retail.find(fourcc);
       if (found == retail.end()) {
@@ -5033,6 +5038,11 @@ public:
         AppendBE32(out, F("PHFO"));
         AppendBE32(out, F("CNST"));
         AppendBE32(out, nestedLightFalloff);
+      }
+      if (nestedLightInverseExposure) {  // absent PLIX is LIXP off, CParticleLightDescription's default
+        AppendBE32(out, F("PLIX"));
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, 1);
       }
     }
     AppendBE32(out, F("_END"));
@@ -5659,7 +5669,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if (part && (fourcc == F("PINS") || fourcc == F("PINR") || fourcc == F("PINT"))) {
       ok = reader.Element(Type::Vector);
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
-                         fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PHFO") || fourcc == F("PGID") || fourcc == F("PBDM") ||
+                         fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PHFO") || fourcc == F("PLIX") || fourcc == F("PGID") || fourcc == F("PBDM") ||
                          fourcc == F("PDFG") ||
                          fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||
                          fourcc == F("PVSM"))) ||

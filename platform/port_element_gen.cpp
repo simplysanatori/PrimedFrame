@@ -49,6 +49,7 @@
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "port_debug.h"
 #include "port_fx_debug.h"
+#include "port_room_env.h"
 #include "port_vfx_particles.h"
 #endif
 
@@ -180,7 +181,9 @@ void CElementGen::PortCollectNestedLightSnapshots(
     CLight light = GetLight();
     // CGameLight applies its actor transform to this zero local position;
     // its PBR carrier then uses this same world origin with no EMTR/LOFF.
-    PortSetNestedHdrCarrier(light, xPortNestedHdrColor, x310_LINT, xPortNestedHdrInnerRadius,
+    const float intensity = x310_LINT * PortRoomEnv::ParticleLightGain(
+                                            x28_loadedGenDesc->xPortNestedLightInverseExposure);
+    PortSetNestedHdrCarrier(light, xPortNestedHdrColor, intensity, xPortNestedHdrInnerRadius,
                             xPortNestedHdrOuterRadius,
                             x28_loadedGenDesc->xPortNestedLightFalloff);
     out.push_back({this, PortSystemOrigin(), light});

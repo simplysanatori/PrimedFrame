@@ -289,7 +289,8 @@ void PutRealKey(std::vector<uint8_t>& out, float first, float second) {
 }
 
 std::vector<uint8_t> NestedLightEffect(const EffectGuid& childId, uint8_t lightType = 2,
-                                       uint8_t falloff = 3, bool includeRadii = true) {
+                                       uint8_t falloff = 3, bool includeRadii = true,
+                                       int inverseExposed = 1) {
   std::vector<uint8_t> out(0x3c, 0);
   std::memcpy(out.data(), "RFRM", 4);
   std::memcpy(out.data() + 0x14, "GENP", 4);
@@ -331,6 +332,10 @@ std::vector<uint8_t> NestedLightEffect(const EffectGuid& childId, uint8_t lightT
     PutConstant(out, Bits(0.25f));
     PutProperty(out, "LORD", 0);
     PutConstant(out, Bits(3.f));
+  }
+  if (inverseExposed >= 0) {  // the Plasma child authors LIXP 1
+    PutProperty(out, "LIXP", 0);
+    out.push_back(uint8_t(inverseExposed));
   }
   PutProperty(out, "_END", 4);
   out.insert(out.end(), {'F', 'O', 'O', 'T'});
@@ -424,6 +429,19 @@ void TestPlasmaNestedHdrLight() {
               "a generic child keeps PIR0/POR0");
     CHECK_MSG(!droppedHas(anyChild[1], "LIRD") && !droppedHas(anyChild[1], "LORD"),
               "LIRD/LORD of a generic child are not in dropped");
+    const RetailPartProperty* inverse = findIn(anyChild[1], "PLIX", props);
+    CHECK_MSG(inverse != nullptr && inverse->value.size() == 8 &&
+                  std::memcmp(inverse->value.data(), "CNST", 4) == 0 && inverse->value[7] == 1,
+              "LIXP 1 is written as PLIX 1");
+    CHECK_MSG(!droppedHas(anyChild[1], "LIXP"), "LIXP of a lit child is consumed, not dropped");
+  }
+  // LIXP 0 and no LIXP both write no PLIX (CParticleLightDescription's default is off).
+  for (int lixp : {0, -1}) {
+    const auto plain = ConvertOne(NestedLightEffect(Fresh(7), 2, 2, true, lixp), {});
+    std::vector<RetailPartProperty> props;
+    CHECK_MSG(plain.size() == 2 && findIn(plain[1], "PHDR", props) != nullptr &&
+                  findIn(plain[1], "PLIX", props) == nullptr,
+              "a light without LIXP writes no PLIX");
   }
   // A spot light (LTYP 3) stays on the retail path.
   const auto spot = ConvertOne(NestedLightEffect(Fresh(7), 3, 2), {});

@@ -249,6 +249,12 @@ public:
                                   sourceRgba[2] * intensity};
     const CVector3f noOffset = CVector3f::Zero();
     light.SetPosition(noOffset);
+    // Draws without PBR (TEV) take the retail light: GetLight's custom light carries the raw LINT
+    // (up to 256) as its angle constant over 1/d^2, which whites out everything near it. Give it
+    // the same intensity, bounded at the source and at half strength halfway to the outer radius.
+    const float half = outerRadius > 0.f ? 0.5f * outerRadius : 1.f;
+    light.SetAttenuation(1.f, 0.f, 1.f / (half * half));
+    light.SetAngleAttenuation(intensity, 0.f, 0.f);
     light.SetPortHdr(linearColor, noOffset, innerRadius, outerRadius,
                       static_cast< CLight::EPortHdrFalloff >(falloff & 3));
     light.SetPortHdrBoundsRadius(outerRadius);

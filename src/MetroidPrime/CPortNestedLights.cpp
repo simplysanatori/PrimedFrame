@@ -5,6 +5,8 @@
 
 #include "Kyoto/Particles/CElementGen.hpp"
 
+#include "port_env.h"
+
 void CPortNestedLights::Delete(CStateManager& mgr, TUniqueId host) {
   for (const Proxy& proxy : xLights) {
     mgr.SendScriptMsgAlways(proxy.light, host, kSM_Deactivate);
@@ -32,7 +34,9 @@ void CPortNestedLights::Update(CStateManager& mgr, const CParticleGen* generator
   const CElementGen* root = generator != nullptr && generator->Get4CharId() == 'PART'
                                 ? static_cast< const CElementGen* >(generator)
                                 : nullptr;
-  if (!active || root == nullptr) {
+  // MP_NESTED_LIGHTS=0: no child particle lights (debug).
+  static const bool sOn = port::EnvFlag("MP_NESTED_LIGHTS", true);
+  if (!sOn || !active || root == nullptr) {
     Delete(mgr, host);
     return;
   }

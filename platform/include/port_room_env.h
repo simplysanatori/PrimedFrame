@@ -849,6 +849,11 @@ float SkyGain();
 // pass) takes the frame's. 0.10 where rooms are not exposed or MP_REMASTERED_GLOW_EXPOSURE=0,
 // the constant the glow used to be baked at.
 float GlowGain(bool frameExposed);
+// What a Remastered particle light's LCLR x LINT is multiplied by for the PBR HDR carrier, as the
+// room lights' (RoomLights): the frame's exposure, over pi. With LIXP (`inverseExposed`)
+// CParticleLight::Create 0x2df010 has already divided LINT by the static exposure, so it is
+// 2^(static EV - EV) / pi (GlowScale's ratio). 1 / pi where rooms are not exposed.
+float ParticleLightGain(bool inverseExposed);
 // What a bare unlit surface (mode bit 131072: the Surface shaders 67135a0b / 6fc4d540) is
 // multiplied by besides GlowScale, so that it is exposed at the frame's 2^(3 - EV) as the
 // tonemap exposes it; GlowGain's rule without the 0.10 fallback (1 outside exposed rooms).
