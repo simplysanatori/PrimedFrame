@@ -2316,6 +2316,29 @@ void TestInheritedMotion() {
   const auto has = [](const ConvertedPart& part, const char* fourcc) {
     return std::search(part.part.begin(), part.part.end(), fourcc, fourcc + 4) != part.part.end();
   };
+  // With the import's spreadDefault, an absent ITPE is Remastered's default 1, flagged 0x100, and noted.
+  {
+    EffectConvertIO io;
+    io.spreadDefault = true;
+    const auto spread = [&](uint32_t xfmd) {
+      return ConvertOne(OneGenerator([=](auto& o) {
+                          PutProperty(o, "XFMD", 0);
+                          PutConstant(o, xfmd);
+                          PutTexr(o, 0x1234ABCD);
+                        }),
+                        io);
+    };
+    parts = spread(2);
+    Retail flagged;
+    flagged.f("GPSM").f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).f("PITP").f("CNST").w(0x100).end();
+    CHECK_MSG(parts.size() == 1 && parts[0].part == flagged.bytes, "no ITPE under XFMD 2 is PITP 0x100");
+    CHECK_MSG(parts.size() == 1 &&
+                  std::count(parts[0].approximated.begin(), parts[0].approximated.end(),
+                             std::string("ITPE: absent, Remastered's default 1")) == 1,
+              "the default is noted");
+    parts = spread(3);
+    CHECK_MSG(parts.size() == 1 && !has(parts[0], "PITP"), "no ITPE under XFMD 3 writes nothing");
+  }
   parts = one(1, 1, true, 1, 3);
   CHECK_MSG(parts.size() == 1 && !has(parts[0], "PISV") && !has(parts[0], "PITP") && parts[0].dropped.empty(),
             "ISVF and ITPE under XFMD 3 write nothing (EMRV is zero there)");

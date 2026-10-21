@@ -1232,6 +1232,7 @@ public:
   EffectConvertIO ConvertIO(const std::map<EffectGuid, Child>& children,
                             const std::map<EffectGuid, ExternalSwoosh>& externalSwooshes) {
     EffectConvertIO io;
+    io.spreadDefault = true;
     io.assetId = [&](const EffectGuid& stored, uint32_t type) -> uint32_t {
       if (type == kVecf) {
         return VectorField(stored);

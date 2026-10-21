@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #ifdef TARGET_PC
+#include <cstdlib>
 #include "aurora/vfx.hpp"
 #include "port_log.h"
 #include "port_vfx_read.h"
@@ -52,6 +53,16 @@ CElementAllocationChunk* IElement::CElementAllocator::sFreeChunk = nullptr;
 static bool sPortCodeEmitter = false;
 // Set by a PEMV vector (CGenDescription::xPortPemv), collected per description in GetGPSM.
 static u8 sPortPemv = 0;
+// A PITP mode word with this bit is an ITPE the effect left out (Remastered's default 1);
+// MP_ITPE_DEFAULT=0 drops those, to compare.
+static const u32 kPortSpreadDefault = 0x100;
+static bool PortSpreadDefault() {
+  static const bool on = [] {
+    const char* env = getenv("MP_ITPE_DEFAULT");
+    return env == nullptr || env[0] != '0';
+  }();
+  return on;
+}
 
 namespace {
 // Port-only SLCT (the converter's Writer::Element): an int index, a count word, then count
@@ -873,11 +884,15 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       break;
     }
     // Port-only: Remastered's ITPE 1 (xPortSpread), with PEMV's mode word.
-    case SBIG('PITP'):
+    case SBIG('PITP'): {
       GetClassID(in);
-      sPortPemv = u8(in.ReadLong() + 1);
-      desc->xPortSpread = true;
+      const u32 word = in.ReadLong();
+      if ((word & kPortSpreadDefault) == 0 || PortSpreadDefault()) {
+        sPortPemv = u8((word & 0xff) + 1);
+        desc->xPortSpread = true;
+      }
       break;
+    }
     // Port-only: Remastered's SHTM, SHTT, PMOV and PMPV (CGenDescription::xPortShutdownMode and
     // the elements after it).
     case SBIG('PSHM'):

@@ -22,6 +22,9 @@ constexpr uint32_t F(const char (&text)[5]) { return EffectFourCC(text); }
 
 // The per-particle KPIN latches a generator or swoosh can carry (SPortKeep::kMax).
 constexpr uint32_t kKeepSlots = 8;
+// PITP's mode word with this bit: an ITPE that was absent (Remastered's default 1), which
+// MP_ITPE_DEFAULT=0 turns off at load.
+constexpr int kSpreadDefault = 0x100;
 
 // The types CParticleDataFactory reads a value as.
 enum class Type : uint8_t { Int, Real, Vector, ModVector, Color, Emitter, Texture, Bool, Asset };
@@ -4188,6 +4191,7 @@ public:
     bool noZTest = false;   // ZTES 0, port-only PZTS
     bool noIvse = false;    // IVSE 0, port-only PIVS
     int spreadMode = -1;    // ITPE 1, port-only PITP with EMRV's mode word (-1 none)
+    bool itpe = false;      // the node has an ITPE of its own
     uint32_t depthBias = 0;  // DBIS as float bits (nonzero), port-only PDBS
     const EffectProperty* mover = nullptr;
     std::vector<uint32_t> portOnly;  // material data, written only with a VMAT
@@ -4284,10 +4288,11 @@ public:
       // ISVF and ITPE read the system's per-tick change of translation (EMRV, var 0x16: the delta
       // CreateNewParticles gets as its third argument). XFMD 0, 3 and 6 give it a constant zero, so
       // neither does anything there; 2 and 5 are PEMV's modes; the others are not decoded. ITPE is
-      // on by default in Remastered (desc ctor 0x290c10); only an authored 1 is written, the port
-      // keeps the unmarked effects as they were.
+      // on by default in Remastered (desc ctor 0x290c10): one that is absent is written after the
+      // loop, flagged kSpreadDefault.
       if (part && (fourcc == F("ISVF") || fourcc == F("ITPE"))) {
         const std::string name = EffectFourCCString(property.fourcc);
+        itpe = itpe || fourcc == F("ITPE");
         uint32_t on = 1;
         if (fourcc == F("ITPE") && !SmallInteger(property, on)) {
           result.dropped.push_back("ITPE: not a constant");
@@ -5054,6 +5059,11 @@ public:
       AppendBE32(out, F("PIVS"));
       AppendBE32(out, F("CNST"));
       AppendBE32(out, 0);
+    }
+    // No ITPE: Remastered's default 1, where the system's translation change is decoded.
+    if (part && m_io.spreadDefault && !itpe && (m_xfmd == 2 || m_xfmd == 5) && !(m_xfmd == 5 && m_pofs == 2)) {
+      spreadMode = int(m_xfmd == 5 ? (m_pofs == 1 ? 2 : 1) : 0) | kSpreadDefault;
+      m_approximated.push_back("ITPE: absent, Remastered's default 1");
     }
     if (spreadMode >= 0) {
       AppendBE32(out, F("PITP"));
