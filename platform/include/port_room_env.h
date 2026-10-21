@@ -231,6 +231,9 @@ struct Grade {
   float fadeIn = 0.f;
   float fadeOut = 0.f;
   bool on = true;  // requested from the start (Remastered's global hints)
+  // The world's master area's (Over_Master's), not the room's own: shown only while the
+  // room has none on (HintOutranks). The byte after `on`; older imports wrote 0.
+  bool master = false;
   int32_t priority = 0;
   std::vector<GradeLink> links;
   size_t offset = 0; // of the LUT, in File::data
@@ -244,6 +247,7 @@ struct BacklightHint {
   float fadeIn = 1.f;
   float fadeOut = 1.f;
   bool on = false;
+  bool master = false;  // as Grade::master
   int32_t priority = 50;
   float top = 1.f;
   float back = 1.f;
@@ -264,6 +268,7 @@ struct FogHint {
   PortMayaSpline fadeInSpline;
   PortMayaSpline fadeOutSpline;
   bool on = false;
+  bool master = false;  // as Grade::master
   int32_t priority = 50;
   float range = 0.f;
   float scatter = 0.f;
@@ -283,6 +288,22 @@ struct FogHint {
   float lut[64] = {};
   std::vector<GradeLink> links;
 };
+
+// Whether a requested hint (grade, backlight or fog), turned on at `order`, replaces `pick`,
+// as CAreaPrioritizedGameHintManager::Update (0x5e4de4) picks: each area keeps its own
+// hint manager and the view area's current hint wins; only when the area has none does it
+// fall back to its parent, the master. Within one area, the highest priority, then the
+// one turned on last.
+template <class Hint>
+bool HintOutranks(const Hint& hint, uint64_t order, const Hint* pick, uint64_t pickOrder) {
+  if (pick == nullptr) {
+    return true;
+  }
+  if (hint.master != pick->master) {
+    return pick->master;
+  }
+  return hint.priority > pick->priority || (hint.priority == pick->priority && order >= pickOrder);
+}
 
 // A VolumetricFogRegion (CVolumetricFogRegionGOC::AddRegion, RebuildPositionalData). The
 // rows of m take a retail world point to 0..1 over the region's box; with l = 2 * that - 1,

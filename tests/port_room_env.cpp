@@ -273,14 +273,14 @@ void TestGrid() {
     extra1.insert(extra1.end(), {0, 1, 0, 0});
     Put32(extra1, 0x04100022);
     extra1.insert(extra1.end(), {9, 2, 0, 0});
-    std::vector<uint8_t> extra0 = {1, 0, 0, 0};
+    std::vector<uint8_t> extra0 = {1, 1, 0, 0};  // on, the master's
     Put32(extra0, 50);
     Put32(extra0, 0);
     v10.insert(v10.begin() + std::ptrdiff_t(first + record + 12), extra1.begin(), extra1.end());
     v10.insert(v10.begin() + std::ptrdiff_t(first + 12), extra0.begin(), extra0.end());
     CHECK_MSG(PortRoomEnv::Parse(std::vector<uint8_t>(v10), file, error) && file.grades.size() == 2 &&
-                  file.grades[0].on && file.grades[0].priority == 50 && file.grades[0].links.empty() &&
-                  !file.grades[1].on && file.grades[1].priority == 55 && file.grades[1].links.size() == 2 &&
+                  file.grades[0].on && file.grades[0].master && file.grades[0].priority == 50 &&
+                  file.grades[0].links.empty() && !file.grades[1].on && !file.grades[1].master && file.grades[1].priority == 55 && file.grades[1].links.size() == 2 &&
                   file.grades[1].links[0].sender == PortRoomEnv::kSenderCameraWater && file.grades[1].links[0].action == 1 &&
                   file.grades[1].links[1].sender == 0x04100022 && file.grades[1].links[1].state == 9 &&
                   file.grades[1].fadeOut == 0.5f && file.grades[1].id != 0 && file.exposureSigma == 32.f,
@@ -298,7 +298,7 @@ void TestGrid() {
       Put32(v11, i == 0 ? uint32_t(-1) : 3u);
       PutFloat(v11, i == 0 ? 1.f : 0.f);
       PutFloat(v11, 0.5f);
-      v11.insert(v11.end(), {uint8_t(i == 0 ? 1 : 0), 0, 0, 0});
+      v11.insert(v11.end(), {uint8_t(i == 0 ? 1 : 0), uint8_t(i == 1 ? 1 : 0), 0, 0});
       Put32(v11, i == 0 ? 50 : 70);
       PutFloat(v11, i == 0 ? 1.f : 3.f);
       PutFloat(v11, i == 0 ? 1.f : 0.25f);
@@ -310,7 +310,8 @@ void TestGrid() {
     }
     CHECK_MSG(PortRoomEnv::Parse(std::vector<uint8_t>(v11), file, error) && file.backlights.size() == 2 &&
                   file.backlights[0].layer == -1 && file.backlights[0].on && file.backlights[0].priority == 50 &&
-                  file.backlights[0].links.empty() && file.backlights[1].layer == 3 && !file.backlights[1].on &&
+                  file.backlights[0].links.empty() && !file.backlights[0].master && file.backlights[1].master &&
+                  file.backlights[1].layer == 3 && !file.backlights[1].on &&
                   file.backlights[1].fadeIn == 0.f && file.backlights[1].fadeOut == 0.5f &&
                   file.backlights[1].top == 3.f && file.backlights[1].back == 0.25f &&
                   file.backlights[1].links.size() == 1 &&
@@ -1022,6 +1023,48 @@ std::vector<uint8_t> MakeVolumeFile(const std::vector<PortRoomEnv::WorldVolume>&
   return out;
 }
 
+// CAreaPrioritizedGameHintManager::Update (0x5e4de4): the view area's own hint, by priority
+// then the last turned on, wins over any of the master's; the master's shows only when the
+// room has none on.
+void TestHintOutranks() {
+  PortRoomEnv::Grade master, room, room2;
+  master.master = true;
+  master.priority = 90;
+  room.priority = 10;
+  room2.priority = 10;
+  CHECK_MSG(PortRoomEnv::HintOutranks(master, 0, static_cast<const PortRoomEnv::Grade*>(nullptr), 0),
+            "hint: anything beats none");
+  CHECK_MSG(PortRoomEnv::HintOutranks(room, 1, &master, 0) && !PortRoomEnv::HintOutranks(master, 1, &room, 0),
+            "hint: the room's beats a higher-priority master's");
+  PortRoomEnv::Grade master2 = master;
+  master2.priority = 95;
+  CHECK_MSG(PortRoomEnv::HintOutranks(master2, 1, &master, 0) && !PortRoomEnv::HintOutranks(master, 0, &master2, 1),
+            "hint: the master's by priority among themselves");
+  CHECK_MSG(PortRoomEnv::HintOutranks(room2, 2, &room, 1) && !PortRoomEnv::HintOutranks(room, 1, &room2, 2),
+            "hint: equal priorities, the last turned on");
+  // The same rule for the fogs and backlights, and as a scan over a room's list.
+  std::vector<PortRoomEnv::FogHint> fogs(3);
+  fogs[0].master = true;
+  fogs[0].priority = 10;
+  fogs[1].priority = 5;
+  fogs[2].master = true;
+  fogs[2].priority = 20;
+  const PortRoomEnv::FogHint* pick = nullptr;
+  uint64_t pickOrder = 0;
+  for (size_t i = 0; i < fogs.size(); ++i) {
+    if (PortRoomEnv::HintOutranks(fogs[i], i, pick, pickOrder)) {
+      pick = &fogs[i];
+      pickOrder = i;
+    }
+  }
+  CHECK_MSG(pick == &fogs[1], "hint: fog, the room's over the master's");
+  PortRoomEnv::BacklightHint b0, b1;
+  b0.master = true;
+  b0.priority = 90;
+  b1.priority = 50;
+  CHECK_MSG(PortRoomEnv::HintOutranks(b1, 0, &b0, 1), "hint: backlight, the room's over the master's");
+}
+
 void TestWorldVolumes() {
   using PortRoomEnv::WorldVolume;
   using Event = PortRoomEnv::WorldVolumeState::Event;
@@ -1091,6 +1134,7 @@ int main() {
   TestGrid();
   TestLod();
   TestExposureHints();
+  TestHintOutranks();
   if (port_test::Failures() == 0) {
     std::puts("port_room_env tests passed");
   }

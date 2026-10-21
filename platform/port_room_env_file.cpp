@@ -430,6 +430,7 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
         }
         const uint8_t* q = data.data() + at;
         grade.on = q[0] != 0;
+        grade.master = q[1] != 0;
         grade.priority = int32_t(ReadLE32(q + 4));
         const uint32_t links = ReadLE32(q + 8);
         at += 12;
@@ -492,6 +493,7 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
       light.fadeIn = ReadLEFloat(p + 4);
       light.fadeOut = ReadLEFloat(p + 8);
       light.on = p[12] != 0;
+      light.master = p[13] != 0;
       light.priority = int32_t(ReadLE32(p + 16));
       light.top = ReadLEFloat(p + 20);
       light.back = ReadLEFloat(p + 24);
@@ -545,6 +547,7 @@ bool Parse(std::vector<uint8_t>&& data, File& out, std::string& error) {
       fog.fadeIn = ReadLEFloat(p + 4);
       fog.fadeOut = ReadLEFloat(p + 8);
       fog.on = p[12] != 0;
+      fog.master = p[13] != 0;
       fog.priority = int32_t(ReadLE32(p + 16));
       float* scalars[10] = {&fog.range,    &fog.scatter,    &fog.absorb,       &fog.m1z,         &fog.decay,
                             &fog.attenSlope, &fog.attenBias, &fog.noiseFreq, &fog.noiseStrength, &fog.lightCap};

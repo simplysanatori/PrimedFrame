@@ -949,8 +949,9 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
     sGradeFade.started = false;
     return false;
   }
-  // The room's grade, as CAreaPrioritizedGameHintManager picks it: of the requested ones
-  // whose layer is active, the highest priority, then the one turned on last. A room
+  // The room's grade, as CAreaPrioritizedGameHintManager picks it (HintOutranks): of the
+  // requested ones whose layer is active, the room's own before the master's, then the
+  // highest priority, then the one turned on last. A room
   // without a file keeps whatever the frame had, as the doors between two rooms do.
   const auto view = sAreas.find(sViewArea);
   if (view != sAreas.end() && view->second.hasFile) {
@@ -966,8 +967,7 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
       if (!on || (grade.layer >= 0 && layerActive != nullptr && !layerActive(grade.layer, context))) {
         continue;
       }
-      if (pick == nullptr || grade.priority > pick->priority ||
-          (grade.priority == pick->priority && order >= pickOrder)) {
+      if (HintOutranks(grade, order, pick, pickOrder)) {
         pick = &grade;
         pickIndex = int(i);
         pickOrder = order;
@@ -1055,8 +1055,7 @@ void UpdateBacklight(LayerActive layerActive, void* context) {
   }
   const Area& area = view->second;
   const File& file = area.file;
-  // As CAreaPrioritizedGameHintManager picks (see ColorGrade): of the requested hints whose
-  // layer is active, the highest priority, then the one turned on last.
+  // As CAreaPrioritizedGameHintManager picks (HintOutranks, see ColorGrade).
   const BacklightHint* pick = nullptr;
   int pickIndex = -1;
   uint64_t pickOrder = 0;
@@ -1067,7 +1066,7 @@ void UpdateBacklight(LayerActive layerActive, void* context) {
     if (!on || (hint.layer >= 0 && layerActive != nullptr && !layerActive(hint.layer, context))) {
       continue;
     }
-    if (pick == nullptr || hint.priority > pick->priority || (hint.priority == pick->priority && order >= pickOrder)) {
+    if (HintOutranks(hint, order, pick, pickOrder)) {
       pick = &hint;
       pickIndex = int(i);
       pickOrder = order;
@@ -1501,8 +1500,7 @@ void UpdateFog(LayerActive layerActive, void* context, float dt) {
     StepTransitions(area, dt);
     StepLights(mrea, area, dt);
   }
-  // As the backlight picks: of the requested hints whose layer is active, the highest
-  // priority, then the one turned on last. A room without a file has no hints.
+  // As the backlight picks (HintOutranks). A room without a file has no hints.
   const FogHint* pick = nullptr;
   int pickIndex = -1;
   const auto view = sAreas.find(sViewArea);
@@ -1517,7 +1515,7 @@ void UpdateFog(LayerActive layerActive, void* context, float dt) {
       if (!on || (hint.layer >= 0 && layerActive != nullptr && !layerActive(hint.layer, context))) {
         continue;
       }
-      if (pick == nullptr || hint.priority > pick->priority || (hint.priority == pick->priority && order >= pickOrder)) {
+      if (HintOutranks(hint, order, pick, pickOrder)) {
         pick = &hint;
         pickIndex = int(i);
         pickOrder = order;
@@ -1672,9 +1670,9 @@ std::string FogInfo() {
     const bool on = i < area.fogs.size() ? area.fogs[i].on : hint.on;
     const bool shown = sFog.hinted && sViewArea == sFog.area && int(i) == sFog.index;
     std::snprintf(line, sizeof(line),
-                  "%08X fog %zu: %s priority %d layer %d fade %g/%g range %g decay %g links %zu%s\n", sViewArea, i,
-                  on ? "on " : "off", int(hint.priority), int(hint.layer), hint.fadeIn, hint.fadeOut, hint.range,
-                  hint.decay, hint.links.size(), shown ? " (shown)" : "");
+                  "%08X fog %zu: %s priority %d%s layer %d fade %g/%g range %g decay %g links %zu%s\n", sViewArea, i,
+                  on ? "on " : "off", int(hint.priority), hint.master ? " master" : "", int(hint.layer), hint.fadeIn,
+                  hint.fadeOut, hint.range, hint.decay, hint.links.size(), shown ? " (shown)" : "");
     out += line;
   }
   std::vector<const FogRegion*> on;
@@ -1852,9 +1850,10 @@ std::string GradeInfo() {
       const BacklightHint& hint = file.backlights[i];
       const bool on = i < area.backlights.size() ? area.backlights[i].on : hint.on;
       const bool shown = sBacklight.hinted && mrea == sBacklight.area && int(i) == sBacklight.index;
-      std::snprintf(line, sizeof(line), "%08X backlight %zu: %s priority %d layer %d fade %g/%g top %g back %g links %zu%s\n",
-                    mrea, i, on ? "on " : "off", int(hint.priority), int(hint.layer), hint.fadeIn, hint.fadeOut,
-                    hint.top, hint.back, hint.links.size(), shown ? " (shown)" : "");
+      std::snprintf(line, sizeof(line),
+                    "%08X backlight %zu: %s priority %d%s layer %d fade %g/%g top %g back %g links %zu%s\n", mrea, i,
+                    on ? "on " : "off", int(hint.priority), hint.master ? " master" : "", int(hint.layer), hint.fadeIn,
+                    hint.fadeOut, hint.top, hint.back, hint.links.size(), shown ? " (shown)" : "");
       out += line;
     }
     if (file.grades.empty()) {
@@ -1867,9 +1866,9 @@ std::string GradeInfo() {
       const Grade& grade = file.grades[i];
       const bool on = i < area.grades.size() ? area.grades[i].on : grade.on;
       const bool shown = mrea == sGradeArea && int(i) == sGradeIndex;
-      std::snprintf(line, sizeof(line), "  %zu: %s priority %d layer %d fade %g/%g links %zu lut %08X%s\n", i,
-                    on ? "on " : "off", int(grade.priority), int(grade.layer), grade.fadeIn, grade.fadeOut,
-                    grade.links.size(), grade.id, shown ? " (shown)" : "");
+      std::snprintf(line, sizeof(line), "  %zu: %s priority %d%s layer %d fade %g/%g links %zu lut %08X%s\n", i,
+                    on ? "on " : "off", int(grade.priority), grade.master ? " master" : "", int(grade.layer),
+                    grade.fadeIn, grade.fadeOut, grade.links.size(), grade.id, shown ? " (shown)" : "");
       out += line;
       for (const GradeLink& link : grade.links) {
         std::snprintf(line, sizeof(line), "     by %08X state %d action %d\n", link.sender, int(link.state),

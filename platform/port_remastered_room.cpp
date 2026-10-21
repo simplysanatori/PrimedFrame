@@ -40,6 +40,7 @@ struct GradeData {
   int32_t layer = -1;
   float fadeIn = 0, fadeOut = 0;
   bool on = true;
+  bool master = false;  // the world's master area's (see PortRoomEnv::Grade::master)
   int32_t priority = 50;
   std::vector<PortRoomGeo::Link> links;
   std::vector<uint8_t> lut;
@@ -50,6 +51,7 @@ struct BacklightData {
   int32_t layer = -1;
   float fadeIn = 1, fadeOut = 1;
   bool on = false;
+  bool master = false;
   int32_t priority = 50;
   float top = 1, back = 1;
   std::vector<PortRoomGeo::Link> links;
@@ -61,6 +63,7 @@ struct FogData {
   // The raw fade splines; empty: no interpolation, the fog changes at once.
   std::vector<uint8_t> fadeIn, fadeOut;
   bool on = false;
+  bool master = false;
   int32_t priority = 50;
   float s[10] = {};  // range, scatter, absorb, m1z, decay, attenSlope, attenBias, noiseFreq, noiseStrength, lightCap
   float wind[3] = {};
@@ -2902,6 +2905,9 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     }
   }
   std::vector<GradeData> grades = worldGrades;
+  for (GradeData& h : grades) {
+    h.master = true;
+  }
   ReadGrades(r, m.area, grades);
   AppendLE32(out, uint32_t(grades.size()));
   for (const GradeData& g : grades) {
@@ -2909,7 +2915,8 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     AppendLEFloat(out, g.fadeIn);
     AppendLEFloat(out, g.fadeOut);
     out.push_back(g.on ? 1 : 0);
-    out.insert(out.end(), 3, 0);
+    out.push_back(g.master ? 1 : 0);
+    out.insert(out.end(), 2, 0);
     AppendLE32(out, uint32_t(g.priority));
     AppendLE32(out, uint32_t(g.links.size()));
     for (const PortRoomGeo::Link& link : g.links) {
@@ -2923,6 +2930,9 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   AppendLEFloat(out, exposure[3]);
   AppendLEFloat(out, exposure[4]);
   std::vector<BacklightData> backlights = worldBacklights;
+  for (BacklightData& h : backlights) {
+    h.master = true;
+  }
   ReadBacklights(r, m.area, backlights);
   AppendLE32(out, uint32_t(backlights.size()));
   for (const BacklightData& b : backlights) {
@@ -2930,7 +2940,8 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     AppendLEFloat(out, b.fadeIn);
     AppendLEFloat(out, b.fadeOut);
     out.push_back(b.on ? 1 : 0);
-    out.insert(out.end(), 3, 0);
+    out.push_back(b.master ? 1 : 0);
+    out.insert(out.end(), 2, 0);
     AppendLE32(out, uint32_t(b.priority));
     AppendLEFloat(out, b.top);
     AppendLEFloat(out, b.back);
@@ -2943,6 +2954,9 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
     }
   }
   std::vector<FogData> fogs = worldFogs;
+  for (FogData& h : fogs) {
+    h.master = true;
+  }
   ReadFogs(r, m.area, fogs);
   AppendLE32(out, uint32_t(fogs.size()));
   for (const FogData& g : fogs) {
@@ -2952,7 +2966,8 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       AppendLEFloat(out, sline.Load(fade->data(), fade->size()) ? std::max(0.f, sline.LastTime()) : 0.f);
     }
     out.push_back(g.on ? 1 : 0);
-    out.insert(out.end(), 3, 0);
+    out.push_back(g.master ? 1 : 0);
+    out.insert(out.end(), 2, 0);
     AppendLE32(out, uint32_t(g.priority));
     for (size_t i = 0; i < 10; ++i) {
       // The height term over retail z: the room's shift moves the heights.

@@ -115,7 +115,8 @@ inline constexpr int kEffects = 91;    // port_remastered_effect_import and the 
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).
-inline constexpr int kRooms = 22;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
+// 23: a hint (grade, backlight, fog) marks whether it is the master's, so the room's own wins (HintOutranks).
+inline constexpr int kRooms = 23;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 inline constexpr int kHud = 7;         // port_remastered_hud, port_remastered_map
