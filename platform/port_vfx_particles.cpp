@@ -908,8 +908,10 @@ void PortVfxClusterAmbient(const PortClusteredLights::Camera& camera, const floa
 // The clustered gather for this camera, from the port's room lights. Remastered masks every light scene node
 // in the scene (muzzle, beam, ball and explosion lights included) and culls it on the GPU; the port has only
 // the room's LightDynamic lights, which is what RoomLights walks. AMBS (the flat ambient c6[0].xyz) is the
-// ambient colour the game set for this area (CGraphics::SetAmbientColor, GX channel 0's), which is the same
-// quantity Remastered's lighting manager hands the material.
+// ambient colour the game set for this area (CGraphics::SetAmbientColor, GX channel 0's). This is the port's
+// stand-in, not Remastered's value: there AMBS is the scene's ambient light sum (kb topic/ambient-constant.md),
+// 0 at the Landing Site, which has no LightDynamic either. That would draw the white LIT_ 1 waterfall mist
+// (GENP 1d3d2dfc) black, but the reference shows a pale haze, so some light source is still unaccounted for.
 // Without pos (a sprite draw), no baked probe: desc.lit keeps its zero mean, lobe and directions.
 void PortVfxClusterView(const float* pos, aurora::gfx::vfx::DrawDesc& desc) {
   PortClusteredLights::Camera camera;
