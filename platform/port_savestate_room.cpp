@@ -40,9 +40,8 @@ enum RoomTag : uint32_t {
   kTagTransform = 1,  // 12 floats, the CActor transform
   kTagMotion = 2,     // velocity, momentum (CPhysicsActor)
   kTagHealth = 3,     // hp, knockback resistance
-  // 4 was the AI state: forcing one skips what the enemy class sets up around it
-  // (a parasite put into Patrol from Generate deletes itself), so enemies resume
-  // through their own Start.
+  // 4 was the AI state, forced without the enemy's own fields (a parasite put into
+  // Patrol from Generate deleted itself). kTagFields now carries it with them.
   kTagTimer = 5,      // time, timing
   kTagCounter = 6,    // current
   kTagDoor = 7,       // open

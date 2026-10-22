@@ -2,13 +2,22 @@
 
 #include "port_entity_schema.h"
 
+#include "Kyoto/Animation/CAnimTreeNode.hpp"
+#include "MetroidPrime/BodyState/CAdditiveBodyState.hpp"
+#include "MetroidPrime/BodyState/CBodyController.hpp"
+#include "MetroidPrime/BodyState/CBodyState.hpp"
+#include "MetroidPrime/CAnimData.hpp"
+#include "MetroidPrime/CAnimPlaybackParms.hpp"
 #include "MetroidPrime/CEntity.hpp"
+#include "MetroidPrime/CModelData.hpp"
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/Enemies/CPatterned.hpp"
+#include "MetroidPrime/Enemies/CStateMachine.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 #include <vector>
 
 // The kTagFields block: an enemy's own fields, read and written through the generated
@@ -21,17 +30,259 @@
 // Saved: the plain kinds (bool, int, float, bitfield, math), pod structs, and uids, which
 // go by the editor id of the object they name. A uid naming an object without one (a
 // collision actor or projectile the enemy made) is left as the rebuilt enemy has it.
-// Not saved: pointers, smart pointers, containers and the kinds that need a codec of
-// their own (state machine, body controller, animation; docs/SAVESTATE_SCHEMA.md),
+// The state machine, body controller and animation go through the codecs below, each
+// as a length and its payload, and are applied before the plain fields, in table order
+// (the AI state, then the body state, then the animation), so that what entering the
+// saved states sets up is then overwritten by the saved values.
+// Not saved: pointers, smart pointers, containers, the kinds without a codec
+// (docs/SAVESTATE_SCHEMA.md),
 // CEntity's fields (the room record's own), most of CActor's and CPhysicsActor's (pose,
 // motion and health are restored by their tags; the rest is render and collision
 // bookkeeping the engine keeps), and the port's interpolation fields.
+
+// Friend of CStateMachineState, CBodyController, CBodyStateInfo and CAnimData.
+struct PortStateCodec {
+  using BlockWriter = PortSaveState::BlockWriter;
+  using BlockReader = PortSaveState::BlockReader;
+
+  // State name, time, random, delay, fixed random, code trigger.
+  static void PutStateMachine(const CStateMachineState& sm, BlockWriter& w) {
+    w.Str(sm.x4_state != nullptr ? sm.x4_state->GetName() : "");
+    w.F32(sm.x8_time);
+    w.F32(sm.xc_random);
+    w.F32(sm.x10_delay);
+    w.F32(sm.x14_fixedRandom);
+    w.U8(sm.x18_24_codeTrigger ? 1 : 0);
+  }
+
+  // Enters the saved state through SetState (the current state's Exit, the saved one's
+  // Start) when the enemy is in another, then puts back its time and randoms.
+  static bool GetStateMachine(CStateManager& mgr, CAi& ai, CStateMachineState& sm, BlockReader& r) {
+    const std::string name = r.Str();
+    const float time = r.F32();
+    const float random = r.F32();
+    const float delay = r.F32();
+    const float fixedRandom = r.F32();
+    const bool codeTrigger = r.U8() != 0;
+    if (!r.ok || name.empty())
+      return false;
+    for (float v : {time, random, delay, fixedRandom})
+      if (!(v == v) || v > 1e9f || v < -1e9f)
+        return false;
+    // The rebuilt enemy has not started its machine yet (its first Think does, at Start).
+    if (sm.x0_machine == nullptr) {
+      const CStateMachine* machine = ai.GetStateMachine();
+      if (machine == nullptr)
+        return false;
+      sm.Setup(machine);
+    }
+    const rstl::vector< CAiState >& states = sm.x0_machine->GetStateVector();
+    int idx = -1;
+    for (int i = 0; i < static_cast< int >(states.size()) && idx < 0; ++i)
+      if (name == states[i].GetName())
+        idx = i;
+    if (idx < 0)
+      return false;
+    if (sm.x4_state != &states[idx])
+      sm.SetState(mgr, ai, idx);
+    // Exit or Start may have moved the enemy into another state (or deleted it).
+    if (sm.x4_state != &states[idx])
+      return false;
+    sm.x8_time = time;
+    sm.xc_random = random;
+    sm.x10_delay = delay;
+    sm.x14_fixedRandom = fixedRandom;
+    sm.x18_24_codeTrigger = codeTrigger;
+    return true;
+  }
+
+  // Every command of the manager, in member order. A command keeps the values it was
+  // last delivered with after the frame it was delivered on.
+  template < class M, class F >
+  static void ForEachCmd(M& m, F f) {
+    f(m.xb8_getup), f(m.xc4_step), f(m.xd4_die), f(m.xdc_knockDown), f(m.xf4_knockBack);
+    f(m.x10c_meleeAttack), f(m.x128_projectileAttack), f(m.x144_loopAttack);
+    f(m.x154_loopReaction), f(m.x160_loopHitReaction), f(m.x16c_exitState);
+    f(m.x174_leanFromCover), f(m.x17c_nextState), f(m.x184_maintainVelocity);
+    f(m.x18c_generate), f(m.x1ac_hurled), f(m.x1d0_jump), f(m.x1f8_slide), f(m.x210_taunt);
+    f(m.x21c_scripted), f(m.x230_cover), f(m.x254_wallHang), f(m.x260_locomotion);
+    f(m.x268_additiveIdle), f(m.x270_additiveAim), f(m.x278_additiveFlinch);
+    f(m.x284_additiveReaction), f(m.x298_stopReaction);
+  }
+
+  // A command's values: its bytes after the vtable pointer (all are plain values).
+  template < class T >
+  static constexpr size_t CmdSize() {
+    return sizeof(T) - sizeof(void*);
+  }
+  template < class T >
+  static const char* CmdBytes(const T& cmd) {
+    return reinterpret_cast< const char* >(&cmd) + sizeof(void*);
+  }
+
+  static void PutBody(const CBodyController& bc, BlockWriter& w) {
+    w.U32(static_cast< uint32_t >(bc.x2a4_bodyStateInfo.x14_state));
+    w.U32(static_cast< uint32_t >(bc.x2a4_bodyStateInfo.x2c_additiveState));
+    w.U32(static_cast< uint32_t >(bc.x2ec_locomotionType));
+    w.U32(static_cast< uint32_t >(bc.x2f0_fallState));
+    w.U32(static_cast< uint32_t >(bc.x2f8_curAnim));
+    w.F32(bc.x2fc_turnSpeed);
+    w.U8((bc.x300_24_animationOver ? 1 : 0) | (bc.x300_25_active ? 2 : 0) | (bc.x300_26_frozen ? 4 : 0) |
+         (bc.x300_27_hasBeenFrozen ? 8 : 0) | (bc.x300_28_playDeathAnims ? 16 : 0));
+    const float floats[] = {bc.x304_intoFreezeDur,     bc.x308_frozenDur,          bc.x30c_breakoutDur,
+                            bc.x310_timeFrozen,        bc.x314_backedUpForce.GetX(), bc.x314_backedUpForce.GetY(),
+                            bc.x314_backedUpForce.GetZ(), bc.x320_fireDur,          bc.x324_electrocutionDur,
+                            bc.x328_timeOnFire,        bc.x32c_timeElectrocuting,  bc.x330_restrictedFlyerMoveSpeed,
+                            bc.x2a4_bodyStateInfo.x30_maxPitch};
+    for (float f : floats)
+      w.F32(f);
+    w.U8(bc.x2a4_bodyStateInfo.x34_24_changeLocoAtEndOfAnimOnly ? 1 : 0);
+    BlockWriter cmds;
+    int count = 0;
+    ForEachCmd(bc.x4_cmdMgr, [&](const auto& cmd) {
+      using T = std::remove_cvref_t< decltype(cmd) >;
+      cmds.U32(static_cast< uint32_t >(CmdSize< T >()));
+      cmds.bytes.append(CmdBytes(cmd), CmdSize< T >());
+      ++count;
+    });
+    w.U8(static_cast< uint8_t >(count));
+    w.bytes += cmds.bytes;
+  }
+
+  // Moves the body into the saved state and additive state (the current one's Shutdown,
+  // the saved one's Start, as UpdateBody does) and puts back the controller's values.
+  // A state's Start reads the command that sent the body there, which is only there for
+  // the frame it was delivered: the saved commands are put back first and Start sees
+  // every command as delivered, so it makes the choices it made before the save (a
+  // default command can pick animation -1, which SetAnimation indexes with). A state's
+  // other members start over; its animation and phase are put back by the anim_data
+  // codec after. Returns whether the controller's values were applied.
+  static bool GetBody(CStateManager& mgr, CBodyController& bc, BlockReader& r) {
+    const pas::EAnimationState state = static_cast< pas::EAnimationState >(r.U32());
+    const pas::EAnimationState additive = static_cast< pas::EAnimationState >(r.U32());
+    const pas::ELocomotionType loco = static_cast< pas::ELocomotionType >(r.U32());
+    const pas::EFallState fall = static_cast< pas::EFallState >(r.U32());
+    const int curAnim = static_cast< int >(r.U32());
+    const float turnSpeed = r.F32();
+    const uint8_t bits = r.U8();
+    float f[13];
+    for (float& v : f)
+      v = r.F32();
+    const bool changeLoco = r.U8() != 0;
+    // The commands, all or none: a count or size this build does not have drops them.
+    std::vector< std::string > saved(r.U8());
+    for (std::string& cmd : saved) {
+      const uint32_t size = r.U32();
+      if (!r.ok || r.bytes.size() - r.pos < size) {
+        r.ok = false;
+        break;
+      }
+      cmd = r.bytes.substr(r.pos, size);
+      r.pos += size;
+    }
+    if (!r.ok)
+      return false;
+    for (float v : f)
+      if (!(v == v) || v > 1e9f || v < -1e9f)
+        return false;
+    size_t want = 0;
+    bool fits = true;
+    ForEachCmd(bc.x4_cmdMgr, [&](auto& cmd) {
+      using T = std::remove_cvref_t< decltype(cmd) >;
+      fits = fits && want < saved.size() && saved[want].size() == CmdSize< T >();
+      ++want;
+    });
+    fits = fits && want == saved.size();
+    if (fits) {
+      size_t i = 0;
+      ForEachCmd(bc.x4_cmdMgr, [&](auto& cmd) {
+        using T = std::remove_cvref_t< decltype(cmd) >;
+        std::memcpy(const_cast< char* >(CmdBytes(cmd)), saved[i++].data(), CmdSize< T >());
+      });
+    }
+    CBodyStateInfo& info = bc.x2a4_bodyStateInfo;
+    if (bc.x300_25_active && (bits & 2) != 0) {
+      if (fits && state != info.x14_state && info.x0_stateMap.find(state) != info.x0_stateMap.end()) {
+        if (info.x0_stateMap.find(info.x14_state) != info.x0_stateMap.end())
+          info.GetCurrentState()->Shutdown(bc);
+        info.SetState(state);
+        CBodyStateCmdMgr& cmds = bc.x4_cmdMgr;
+        const uint delivered = cmds.xb4_deliveredCmdMask;
+        cmds.xb4_deliveredCmdMask = ~0u;
+        info.GetCurrentState()->Start(bc, mgr);
+        cmds.xb4_deliveredCmdMask = delivered;
+      }
+      if (additive != info.x2c_additiveState && info.GetCurrentAdditiveState() != nullptr) {
+        CAdditiveBodyState* now = info.GetCurrentAdditiveState();
+        info.SetAdditiveState(additive);
+        if (info.GetCurrentAdditiveState() != now) {
+          now->Shutdown(bc);
+          info.GetCurrentAdditiveState()->Start(bc, mgr);
+        }
+      }
+    }
+    bc.x2ec_locomotionType = loco;
+    bc.x2f0_fallState = fall;
+    bc.x2f8_curAnim = curAnim;
+    bc.x2fc_turnSpeed = turnSpeed;
+    bc.x300_24_animationOver = (bits & 1) != 0;
+    bc.x300_26_frozen = (bits & 4) != 0;
+    bc.x300_27_hasBeenFrozen = (bits & 8) != 0;
+    bc.x300_28_playDeathAnims = (bits & 16) != 0;
+    bc.x304_intoFreezeDur = f[0];
+    bc.x308_frozenDur = f[1];
+    bc.x30c_breakoutDur = f[2];
+    bc.x310_timeFrozen = f[3];
+    bc.x314_backedUpForce = CVector3f(f[4], f[5], f[6]);
+    bc.x320_fireDur = f[7];
+    bc.x324_electrocutionDur = f[8];
+    bc.x328_timeOnFire = f[9];
+    bc.x32c_timeElectrocuting = f[10];
+    bc.x330_restrictedFlyerMoveSpeed = f[11];
+    info.x30_maxPitch = f[12];
+    info.x34_24_changeLocoAtEndOfAnimOnly = changeLoco;
+    return true;
+  }
+
+  // Animation id, loop and animating, speed, and the phase of the root animation
+  // (-1 without one). An animation blend in progress comes back as its target alone.
+  static void PutAnim(const CAnimData& ad, BlockWriter& w) {
+    w.U32(static_cast< uint32_t >(static_cast< int >(ad.x208_currentAnim)));
+    w.U8((ad.x220_25_loop ? 1 : 0) | (ad.x220_24_animating ? 2 : 0));
+    w.F32(ad.x200_speedScale);
+    float phase = -1.f;
+    if (ad.x1f8_animRoot.GetPtr() != nullptr) {
+      const float duration = ad.x1f8_animRoot->VGetSteadyStateAnimInfo().GetDuration().GetSeconds();
+      const float remaining = ad.x1f8_animRoot->VGetTimeRemaining().GetSeconds();
+      if (duration > 0.f)
+        phase = rstl::min_val(rstl::max_val(1.f - remaining / duration, 0.f), 1.f);
+    }
+    w.F32(phase);
+  }
+
+  static bool GetAnim(CAnimData& ad, BlockReader& r) {
+    const int anim = static_cast< int >(r.U32());
+    const uint8_t bits = r.U8();
+    const float speed = r.F32();
+    const float phase = r.F32();
+    if (!r.ok || !(speed == speed) || !(phase == phase))
+      return false;
+    if (anim >= 0 && anim != ad.x208_currentAnim)
+      ad.SetAnimation(CAnimPlaybackParms(anim, -1, 1.f, (bits & 2) != 0), false);
+    ad.x220_25_loop = (bits & 1) != 0;
+    ad.x220_24_animating = (bits & 2) != 0;
+    ad.x200_speedScale = speed;
+    if (phase >= 0.f && phase <= 1.f && ad.x1f8_animRoot.GetPtr() != nullptr)
+      ad.SetPhase(phase);
+    return anim < 0 || ad.x208_currentAnim == anim;
+  }
+};
 
 namespace PortSaveState {
 namespace {
 
 // Bump when what SavedField picks or how a kind is written changes.
-constexpr uint32_t kFieldPolicy = 1;
+constexpr uint32_t kFieldPolicy = 2;
 
 constexpr uint32_t kUidNone = 0xFFFFFFFFu;    // kInvalidUniqueId
 constexpr uint32_t kUidDynamic = 0xFFFFFFFEu; // an object without an editor id: left alone
@@ -56,6 +307,9 @@ bool SavedField(const PortSchemaClass& cls, const PortSchemaField& f) {
   case PortSchemaKind::math:
   case PortSchemaKind::uid:
   case PortSchemaKind::pod:
+  case PortSchemaKind::state_machine:
+  case PortSchemaKind::body_controller:
+  case PortSchemaKind::anim_data:
     break;
   default:
     return false;
@@ -65,7 +319,7 @@ bool SavedField(const PortSchemaClass& cls, const PortSchemaField& f) {
   if (std::strcmp(cls.name, "CEntity") == 0)
     return false;
   if (std::strcmp(cls.name, "CActor") == 0)
-    return Named(f.name, {"xb4_drawFlags", "xd0_damageMag", "xe5_26_muted", "xe5_28_callTouch",
+    return Named(f.name, {"x64_modelData", "xb4_drawFlags", "xd0_damageMag", "xe5_26_muted", "xe5_28_callTouch",
                           "xe6_27_thermalVisorFlags", "xe6_29_renderParticleDBInside",
                           "xe6_31_targetableVisorFlags", "xe7_27_enableRender", "xe7_29_drawEnabled",
                           "xe7_30_doTargetDistanceTest", "xe7_31_targetable"});
@@ -76,6 +330,74 @@ bool SavedField(const PortSchemaClass& cls, const PortSchemaField& f) {
   if (std::strcmp(cls.name, "CAi") == 0)
     return std::strcmp(f.name, "x258_healthInfo") != 0;
   return true;
+}
+
+bool IsCodec(PortSchemaKind kind) {
+  return kind == PortSchemaKind::state_machine || kind == PortSchemaKind::body_controller ||
+         kind == PortSchemaKind::anim_data;
+}
+
+// The animation of an anim_data field: CModelData or a single_ptr to one.
+CAnimData* FieldAnim(CEntity& ent, const PortSchemaField& f) {
+  CModelData* model = nullptr;
+  if (std::strcmp(f.type, "CModelData") == 0)
+    model = static_cast< CModelData* >(f.addr(ent));
+  else if (std::strcmp(f.type, "rstl::single_ptr<CModelData>") == 0)
+    model = static_cast< rstl::single_ptr< CModelData >* >(f.addr(ent))->get();
+  return model != nullptr ? model->AnimationData() : nullptr;
+}
+
+CBodyController* FieldBody(CEntity& ent, const PortSchemaField& f) {
+  if (std::strcmp(f.type, "rstl::single_ptr<CBodyController>") != 0)
+    return nullptr;
+  return static_cast< rstl::single_ptr< CBodyController >* >(f.addr(ent))->get();
+}
+
+CStateMachineState* FieldStateMachine(CEntity& ent, const PortSchemaField& f) {
+  if (std::strcmp(f.type, "CStateMachineState") != 0)
+    return nullptr;
+  return static_cast< CStateMachineState* >(f.addr(ent));
+}
+
+// The payload of a codec field; empty when the entity has none there.
+std::string PutCodec(CEntity& ent, const PortSchemaField& f) {
+  BlockWriter w;
+  switch (f.kind) {
+  case PortSchemaKind::state_machine:
+    if (const CStateMachineState* sm = FieldStateMachine(ent, f))
+      PortStateCodec::PutStateMachine(*sm, w);
+    break;
+  case PortSchemaKind::body_controller:
+    if (const CBodyController* bc = FieldBody(ent, f))
+      PortStateCodec::PutBody(*bc, w);
+    break;
+  default:
+    if (const CAnimData* ad = FieldAnim(ent, f))
+      PortStateCodec::PutAnim(*ad, w);
+    break;
+  }
+  return std::move(w.bytes);
+}
+
+bool GetCodec(CStateManager& mgr, CEntity& ent, const PortSchemaField& f, const std::string& data) {
+  if (data.empty())
+    return false;
+  BlockReader r(data);
+  switch (f.kind) {
+  case PortSchemaKind::state_machine: {
+    CStateMachineState* sm = FieldStateMachine(ent, f);
+    CAi* ai = TCastToPtr< CPatterned >(&ent);
+    return sm != nullptr && ai != nullptr && PortStateCodec::GetStateMachine(mgr, *ai, *sm, r);
+  }
+  case PortSchemaKind::body_controller: {
+    CBodyController* bc = FieldBody(ent, f);
+    return bc != nullptr && PortStateCodec::GetBody(mgr, *bc, r);
+  }
+  default: {
+    CAnimData* ad = FieldAnim(ent, f);
+    return ad != nullptr && PortStateCodec::GetAnim(*ad, r);
+  }
+  }
 }
 
 bool Enabled() {
@@ -133,6 +455,12 @@ bool GetBytes(BlockReader& r, void* p, size_t n) {
 }
 
 void PutField(const CStateManager& mgr, CEntity& ent, const PortSchemaField& f, BlockWriter& w) {
+  if (IsCodec(f.kind)) {
+    const std::string payload = PutCodec(ent, f);
+    w.U32(static_cast< uint32_t >(payload.size()));
+    w.bytes += payload;
+    return;
+  }
   switch (f.kind) {
   case PortSchemaKind::bool_:
   case PortSchemaKind::int_:
@@ -163,8 +491,45 @@ void PutField(const CStateManager& mgr, CEntity& ent, const PortSchemaField& f, 
   }
 }
 
+// Reads past one field as PutField wrote it.
+void SkipField(const PortSchemaField& f, BlockReader& r) {
+  switch (f.kind) {
+  case PortSchemaKind::bool_:
+  case PortSchemaKind::int_:
+  case PortSchemaKind::bitfield:
+    GetVar(r);
+    return;
+  case PortSchemaKind::uid:
+    r.U32();
+    return;
+  default: {
+    const uint32_t size = r.U32();
+    if (!r.ok || r.bytes.size() - r.pos < size)
+      r.ok = false;
+    else
+      r.pos += size;
+    return;
+  }
+  }
+}
+
 // Returns whether the field was set; false with r.ok still true is a field skipped.
-bool GetField(CStateManager& mgr, CEntity& ent, const PortSchemaField& f, BlockReader& r) {
+// The codec fields are applied on the first pass, the plain ones on the second.
+bool GetField(CStateManager& mgr, CEntity& ent, const PortSchemaField& f, BlockReader& r, int pass) {
+  if ((pass == 0) != IsCodec(f.kind)) {
+    SkipField(f, r);
+    return false;
+  }
+  if (IsCodec(f.kind)) {
+    const uint32_t size = r.U32();
+    if (!r.ok || r.bytes.size() - r.pos < size) {
+      r.ok = false;
+      return false;
+    }
+    const std::string payload = r.bytes.substr(r.pos, size);
+    r.pos += size;
+    return GetCodec(mgr, ent, f, payload);
+  }
   switch (f.kind) {
   case PortSchemaKind::bool_:
   case PortSchemaKind::int_:
@@ -215,6 +580,33 @@ bool GetField(CStateManager& mgr, CEntity& ent, const PortSchemaField& f, BlockR
   }
 }
 
+// One pass over the classes of a kTagFields block (GetField's `pass`).
+int ApplyClasses(CStateManager& mgr, CEntity& ent, const std::vector< const PortSchemaClass* >& chain,
+                 int classes, BlockReader& r, int pass) {
+  int set = 0;
+  for (int c = 0; c < classes && r.ok; ++c) {
+    const uint64_t lo = r.U32();
+    const uint64_t fingerprint = lo | (static_cast< uint64_t >(r.U32()) << 32);
+    const uint32_t len = r.U32();
+    if (!r.ok || r.bytes.size() - r.pos < len)
+      break;
+    const PortSchemaClass* cls = nullptr;
+    for (const PortSchemaClass* k : chain)
+      if (k->fingerprint == fingerprint)
+        cls = k;
+    const size_t end = r.pos + len;
+    if (cls != nullptr) {
+      const std::string body = r.bytes.substr(r.pos, len);
+      BlockReader br(body);
+      for (int i = 0; i < cls->fieldCount && br.ok && !ent.IsInGraveyard(); ++i)
+        if (SavedField(*cls, cls->fields[i]) && GetField(mgr, ent, cls->fields[i], br, pass))
+          ++set;
+    }
+    r.pos = end;
+  }
+  return set;
+}
+
 } // namespace
 
 bool CaptureEntityFields(const CStateManager& mgr, CEntity& ent, std::string& out) {
@@ -246,26 +638,15 @@ int ApplyEntityFields(CStateManager& mgr, CEntity& ent, const std::string& data)
     return 0;
   const std::vector< const PortSchemaClass* > chain = Chain(ent);
   const int classes = r.U8();
+  const size_t start = r.pos;
+  const TUniqueId uid = ent.GetUniqueId();
   int set = 0;
-  for (int c = 0; c < classes && r.ok; ++c) {
-    const uint64_t lo = r.U32();
-    const uint64_t fingerprint = lo | (static_cast< uint64_t >(r.U32()) << 32);
-    const uint32_t len = r.U32();
-    if (!r.ok || r.bytes.size() - r.pos < len)
+  for (int pass = 0; pass < 2; ++pass) {
+    r.pos = start;
+    // Entering a saved state may delete the enemy (an enemy told to go away).
+    if (pass == 1 && (mgr.ObjectById(uid) != &ent || ent.IsInGraveyard()))
       break;
-    const PortSchemaClass* cls = nullptr;
-    for (const PortSchemaClass* k : chain)
-      if (k->fingerprint == fingerprint)
-        cls = k;
-    const size_t end = r.pos + len;
-    if (cls != nullptr) {
-      const std::string body = data.substr(r.pos, len);
-      BlockReader br(body);
-      for (int i = 0; i < cls->fieldCount && br.ok; ++i)
-        if (SavedField(*cls, cls->fields[i]) && GetField(mgr, ent, cls->fields[i], br))
-          ++set;
-    }
-    r.pos = end;
+    set += ApplyClasses(mgr, ent, chain, classes, r, pass);
   }
   return set;
 }
