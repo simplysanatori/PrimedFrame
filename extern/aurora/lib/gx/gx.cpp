@@ -131,7 +131,7 @@ wgpu::CompareFunction to_compare_function(GXCompare func) {
 }
 
 wgpu::BlendState to_blend_state(GXBlendMode mode, GXBlendFactor srcFac, GXBlendFactor dstFac, GXLogicOp op,
-                                u32 dstAlpha) {
+                                u32 dstAlpha, bool dualSource) {
   wgpu::BlendComponent colorBlendComponent;
   switch (mode) {
     DEFAULT_FATAL("unsupported blend mode {}", underlying(mode));
@@ -182,6 +182,20 @@ wgpu::BlendState to_blend_state(GXBlendMode mode, GXBlendFactor srcFac, GXBlendF
       break;
     }
     break;
+  }
+  if (dualSource) {
+    // The TEV alpha is the second source; the first's alpha is 1 (DstAlphaMode::DualSource).
+    const auto remap = [](wgpu::BlendFactor factor) {
+      if (factor == wgpu::BlendFactor::SrcAlpha) {
+        return wgpu::BlendFactor::Src1Alpha;
+      }
+      if (factor == wgpu::BlendFactor::OneMinusSrcAlpha) {
+        return wgpu::BlendFactor::OneMinusSrc1Alpha;
+      }
+      return factor;
+    };
+    colorBlendComponent.srcFactor = remap(colorBlendComponent.srcFactor);
+    colorBlendComponent.dstFactor = remap(colorBlendComponent.dstFactor);
   }
   wgpu::BlendComponent alphaBlendComponent;
   if (dstAlpha != UINT32_MAX) {
@@ -350,8 +364,29 @@ u16 draw_sync_token() noexcept { return sDrawSyncToken.load(std::memory_order_ac
 
 const gfx::TextureBind& get_texture(GXTexMapID id) noexcept { return g_gxState.textures[static_cast<size_t>(id)]; }
 
+DstAlphaMode dst_alpha_mode(const PipelineConfig& config) noexcept {
+  // A zero constant times any source alpha is still zero.
+  if (config.shadowPass != 0 || !config.alphaUpdate || config.dstAlpha == UINT32_MAX || config.dstAlpha == 0) {
+    return DstAlphaMode::None;
+  }
+  // The draw-id and actor-decal shaders end in their own return (alpha 1).
+  const auto& sc = config.shaderConfig;
+  if (sc.drawId || (sc.actorDecal != 0 && sc.lineMode == 0)) {
+    return DstAlphaMode::None;
+  }
+  const auto usesSourceAlpha = [](GXBlendFactor factor) {
+    return factor == GX_BL_SRCALPHA || factor == GX_BL_INVSRCALPHA;
+  };
+  const bool needsSourceAlpha = config.colorUpdate && config.blendMode == GX_BM_BLEND &&
+                                (usesSourceAlpha(config.blendFacSrc) || usesSourceAlpha(config.blendFacDst));
+  if (!needsSourceAlpha) {
+    return DstAlphaMode::Replace;
+  }
+  return webgpu::g_dualSourceBlendingSupported ? DstAlphaMode::DualSource : DstAlphaMode::None;
+}
+
 wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu::VertexBufferLayout> vtxBuffers,
-                                    wgpu::ShaderModule shader, const char* label) noexcept {
+                                    wgpu::ShaderModule shader, const char* label, DstAlphaMode dstAlphaMode) noexcept {
   ZoneScoped;
   if (config.shadowPass != 0) {
     // The sun's shadow map: depth only, culled as the draw is, with Remastered's shadow pass bias
@@ -399,7 +434,8 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
       .depthBiasClamp = depthBiasClamp,
   };
   const auto blendState =
-      to_blend_state(config.blendMode, config.blendFacSrc, config.blendFacDst, config.blendOp, config.dstAlpha);
+      to_blend_state(config.blendMode, config.blendFacSrc, config.blendFacDst, config.blendOp, config.dstAlpha,
+                     dstAlphaMode == DstAlphaMode::DualSource);
   const std::array colorTargets{wgpu::ColorTargetState{
       // The HDR scene's RGBA16F target is a different format from every other pass's.
       .format = config.shaderConfig.sceneHdr ? webgpu::SceneHdrFormat : g_graphicsConfig.surfaceConfiguration.format,

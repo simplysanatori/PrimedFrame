@@ -55,6 +55,7 @@ void increment_merged_draw_count() noexcept {}
 
 namespace aurora::webgpu {
 GraphicsConfig g_graphicsConfig{};
+bool g_dualSourceBlendingSupported = false;
 // Tests clear it to see GXPortSceneHdr fail closed.
 bool g_testSceneHdrSupported = true;
 bool scene_hdr_supported() noexcept { return g_testSceneHdrSupported; }

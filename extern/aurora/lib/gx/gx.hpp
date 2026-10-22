@@ -710,12 +710,22 @@ inline bool wants_per_pixel_light(const ShaderConfig& config) noexcept {
   }
   return false;
 }
+// How a draw writes GXSetDstAlpha's constant alpha (the pipeline's blend constant). None: alpha as blended
+// (no dst alpha, or a zero one, or the fallback below). Replace: the shader writes alpha 1 and the blend takes
+// the constant times it. DualSource: as Replace, the TEV alpha going to the colour blend as the second source,
+// for a draw whose colour blend reads the source alpha. Without the device feature that draw stays None: its
+// alpha is then the constant times the TEV alpha.
+enum class DstAlphaMode : u8 { None, Replace, DualSource };
+DstAlphaMode dst_alpha_mode(const PipelineConfig& config) noexcept;
 wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu::VertexBufferLayout> vtxBuffers,
-                                    wgpu::ShaderModule shader, const char* label) noexcept;
+                                    wgpu::ShaderModule shader, const char* label,
+                                    DstAlphaMode dstAlphaMode = DstAlphaMode::None) noexcept;
 std::string build_shader_source(const ShaderConfig& config) noexcept;
+// source (build_shader_source's) writing its alpha as mode has it.
+void apply_dst_alpha_mode(std::string& source, DstAlphaMode mode) noexcept;
 // Whether the config's shader has the alpha-tested sun shadow caster (shadowPass 2: vs_shadow_cut, fs_shadow).
 bool shader_has_cut_caster(const ShaderConfig& config) noexcept;
-wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept;
+wgpu::ShaderModule build_shader(const ShaderConfig& config, DstAlphaMode dstAlphaMode = DstAlphaMode::None) noexcept;
 // Shader debugging (MP_WGSL_DUMP / MP_WGSL_OVERRIDE, console `shader`). dump_shaders writes every module built so
 // far to dir (and keeps writing new ones) and returns how many files it made; set_shader_override_dir turns the
 // override on (empty = off).
