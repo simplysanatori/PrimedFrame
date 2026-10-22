@@ -311,21 +311,38 @@ final class TouchControlsView extends View {
     private static final float SCALE_STEP = 0.1f;
     // A saved offset beyond this many layout heights is junk, not a layout.
     private static final float MAX_OFFSET = 4f;
-    // The editor's toolbar: -, +, Reset, Reset all, Done.
-    private static final String[] EDIT_LABELS = {"−", "+", "Reset", "Reset all", "Done"};
-    private static final float[] EDIT_WIDTHS_DP = {48f, 48f, 72f, 96f, 72f};
+    // The editor's toolbar: -, +, Opacity, Hide/Show, Reset, Reset all, Done.
+    private static final String[] EDIT_LABELS =
+        {"−", "+", "Opacity", "Hide", "Reset", "Reset all", "Done"};
+    private static final float[] EDIT_WIDTHS_DP = {44f, 44f, 76f, 60f, 64f, 88f, 64f};
     private static final float EDIT_BAR_HEIGHT_DP = 44f;
     private static final float EDIT_BAR_GAP_DP = 6f;
     private static final float EDIT_GRAB_DP = 8f; // slack round a control's bounds
     private static final int EDIT_MINUS = 0;
     private static final int EDIT_PLUS = 1;
-    private static final int EDIT_RESET = 2;
-    private static final int EDIT_RESET_ALL = 3;
-    private static final int EDIT_DONE = 4;
+    private static final int EDIT_OPACITY = 2;
+    private static final int EDIT_HIDE = 3;
+    private static final int EDIT_RESET = 4;
+    private static final int EDIT_RESET_ALL = 5;
+    private static final int EDIT_DONE = 6;
+    // A control's own opacity cycles through these (percent). MENU stops at
+    // MENU_MIN_ALPHA: it is the only way into F1 on a touch-only device.
+    private static final int[] ALPHA_STEPS = {100, 75, 50, 25, 0};
+    private static final int MENU_MIN_ALPHA = 25;
+    // The editor draws hidden and fainter controls at least this opaque, to find them.
+    private static final int EDIT_MIN_ALPHA = 30;
+    // pushControl's results besides a saved layer's count.
+    private static final int LAYER_NONE = -1;
+    private static final int LAYER_SKIP = -2;
+    private static final float LAYER_SLACK_DP = 24f; // strokes and labels past the bounds
 
     private final float[] ovDx = new float[CONTROLS];
     private final float[] ovDy = new float[CONTROLS];
     private final float[] ovScale = new float[CONTROLS];
+    // Per control: its own opacity in percent, and whether it is hidden. A hidden
+    // control is gone (touches fall through); opacity 0 is invisible but still active.
+    private final int[] ovAlpha = new int[CONTROLS];
+    private final boolean[] ovHidden = new boolean[CONTROLS];
     // The layout string last read from or written to the native config.
     private String layoutText = "";
     // F1's "Edit layout" was pressed; the editor opens once the overlay is gone.
@@ -437,6 +454,7 @@ final class TouchControlsView extends View {
     // Fingers passed on to SDL; see forwardToSdl.
     private final Set<Integer> forwarded = new HashSet<>();
     private final RectF hideBounds = new RectF();
+    private final RectF layerRect = new RectF();
     private final Path shapePath = new Path();
     private final Path crossArmPath = new Path();
     private static native boolean nativeDebugOverlayVisible();
@@ -734,41 +752,71 @@ final class TouchControlsView extends View {
         }
         bottomButtonRect(0, true, width, height, hideBounds);
         if (leftPointer != -1 && leftFloated) {
-            drawStick(canvas, floatX, floatY, leftStickRadius(height), leftPointer, 0);
+            final float r = leftStickRadius(height);
+            layerRect.set(floatX - r, floatY - r, floatX + r, floatY + r);
+            final int layer = pushLayer(canvas, C_LSTICK, layerRect);
+            if (layer != LAYER_SKIP) {
+                drawStick(canvas, floatX, floatY, r, leftPointer, 0);
+                popLayer(canvas, layer);
+            }
         } else if (!floatingStick()) {
-            drawStick(canvas, leftStickX(width, height), leftStickY(width, height),
-                      leftStickRadius(height), leftPointer, 0);
+            final int layer = pushControl(canvas, C_LSTICK, width, height);
+            if (layer != LAYER_SKIP) {
+                drawStick(canvas, leftStickX(width, height), leftStickY(width, height),
+                          leftStickRadius(height), leftPointer, 0);
+                popLayer(canvas, layer);
+            }
         }
         // The right stick is the C-stick, yellow on the GameCube pad, in the classic
         // layout; in twin stick it aims, plain like the left. Otherwise a drag
         // anywhere free aims.
         if (cStick) {
-            drawStick(canvas, rightStickX(width, height), rightStickY(height),
-                      rightStickRadius(height), rightPointer, colored && !twin ? GC_YELLOW : 0);
+            final int layer = pushControl(canvas, twin ? C_RSTICK : C_CSTICK, width, height);
+            if (layer != LAYER_SKIP) {
+                drawStick(canvas, rightStickX(width, height), rightStickY(height),
+                          rightStickRadius(height), rightPointer, colored && !twin ? GC_YELLOW : 0);
+                popLayer(canvas, layer);
+            }
         }
 
         rHiddenNow = !editing && rHidden();
         labelContextNow = labels ? labelContext() : LABELS_PLAY;
         for (PillButton pill : pills) {
             if (pillShown(pill)) {
-                drawPillButton(canvas, pill, width, height);
+                final int layer = pushControl(canvas, pillControl(pill), width, height);
+                if (layer != LAYER_SKIP) {
+                    drawPillButton(canvas, pill, width, height);
+                    popLayer(canvas, layer);
+                }
             }
         }
         for (ControlButton button : face) {
-            drawButton(canvas, button, width, height);
+            drawControlButton(canvas, button, width, height);
         }
         if (turboButton != null) {
-            drawButton(canvas, turboButton, width, height);
+            drawControlButton(canvas, turboButton, width, height);
         }
         if (wheels) {
             drawWheelButtons(canvas, width, height);
         } else {
-            drawDpad(canvas, width, height);
+            final int layer = pushControl(canvas, C_DPAD, width, height);
+            if (layer != LAYER_SKIP) {
+                drawDpad(canvas, width, height);
+                popLayer(canvas, layer);
+            }
         }
-        drawEye(canvas, hideBounds);
+        final int eyeLayer = pushLayer(canvas, C_EYE, hideBounds);
+        if (eyeLayer != LAYER_SKIP) {
+            drawEye(canvas, hideBounds);
+            popLayer(canvas, eyeLayer);
+        }
         mapButtonShown = mapButtonState(width, height);
         if (mapButtonShown) {
-            drawMapButton(canvas);
+            final int layer = pushLayer(canvas, C_MAP, mapButtonRect);
+            if (layer != LAYER_SKIP) {
+                drawMapButton(canvas);
+                popLayer(canvas, layer);
+            }
         }
         removeCallbacks(mapButtonPoll);
         postDelayed(mapButtonPoll, MAP_BUTTON_POLL_MS);
@@ -777,6 +825,64 @@ final class TouchControlsView extends View {
         }
         if (editing) {
             drawEditOverlay(canvas, width, height);
+        }
+    }
+
+    // Whether a saved layout hides this control from play. Not in the editor
+    // (which still shows and selects it) nor in the controls-off view, where
+    // START and MENU ignore the layout.
+    private boolean ctrlHidden(int control) {
+        return controlsOnNow && !editing && ovHidden[control];
+    }
+
+    // The percent this control is drawn at, or -1 for not at all.
+    private int controlAlpha(int control) {
+        if (editing) {
+            return ovHidden[control] ? EDIT_MIN_ALPHA : Math.max(EDIT_MIN_ALPHA, ovAlpha[control]);
+        }
+        if (!controlsOnNow) {
+            return 100;
+        }
+        return ovHidden[control] ? -1 : ovAlpha[control];
+    }
+
+    // Opens a layer for one control's own opacity round `bounds` (plus slack for
+    // strokes and labels), or LAYER_SKIP for a hidden one. At 100% there is no
+    // layer, so default layouts cost nothing. Pair with popLayer.
+    private int pushLayer(Canvas canvas, int control, RectF bounds) {
+        final int alpha = controlAlpha(control);
+        if (alpha < 0) {
+            return LAYER_SKIP;
+        }
+        if (alpha >= 100) {
+            return LAYER_NONE;
+        }
+        final float slack = dp(LAYER_SLACK_DP);
+        return canvas.saveLayerAlpha(bounds.left - slack, bounds.top - slack,
+                                     bounds.right + slack, bounds.bottom + slack,
+                                     Math.round(alpha * 2.55f));
+    }
+
+    private int pushControl(Canvas canvas, int control, float width, float height) {
+        if (controlAlpha(control) >= 100) {
+            return LAYER_NONE; // skip the bounds work too
+        }
+        controlBounds(control, width, height, layerRect);
+        return pushLayer(canvas, control, layerRect);
+    }
+
+    private static void popLayer(Canvas canvas, int layer) {
+        if (layer >= 0) {
+            canvas.restoreToCount(layer);
+        }
+    }
+
+    private void drawControlButton(Canvas canvas, ControlButton button, float width,
+                                   float height) {
+        final int layer = pushControl(canvas, controlOf(button), width, height);
+        if (layer != LAYER_SKIP) {
+            drawButton(canvas, button, width, height);
+            popLayer(canvas, layer);
         }
     }
 
@@ -980,11 +1086,12 @@ final class TouchControlsView extends View {
                 invalidate();
                 return true;
             }
-            if (controlsOnNow && hideBounds.contains(x, y)) {
+            if (controlsOnNow && !ctrlHidden(C_EYE) && hideBounds.contains(x, y)) {
                 targets.put(pointerId, new TouchTarget(HIDE, 0));
                 return true;
             }
-            if (controlsOnNow && mapButtonShown && mapButtonRect.contains(x, y)) {
+            if (controlsOnNow && mapButtonShown && !ctrlHidden(C_MAP) &&
+                mapButtonRect.contains(x, y)) {
                 targets.put(pointerId, TouchTarget.begin(MAP_TAP, 0, x, y));
                 return true;
             }
@@ -1167,7 +1274,7 @@ final class TouchControlsView extends View {
             return; // only the two menu pills above; the rest of the screen does nothing
         }
         for (ControlButton button : face) {
-            if (hitButton(button, x, y, width, height)) {
+            if (!ctrlHidden(controlOf(button)) && hitButton(button, x, y, width, height)) {
                 final TouchTarget target = TouchTarget.begin(BUTTON, button.button, x, y);
                 target.control = button;
                 targets.put(pointerId, target);
@@ -1175,7 +1282,8 @@ final class TouchControlsView extends View {
                 return;
             }
         }
-        if (turboButton != null && hitButton(turboButton, x, y, width, height)) {
+        if (turboButton != null && !ctrlHidden(controlOf(turboButton)) &&
+            hitButton(turboButton, x, y, width, height)) {
             final TouchTarget target = TouchTarget.begin(BUTTON, TURBO_FIRE, x, y);
             target.control = turboButton;
             targets.put(pointerId, target);
@@ -1202,7 +1310,7 @@ final class TouchControlsView extends View {
                 return;
             }
         }
-        int dpadButton = wheels ? -1 : dpadButtonAt(x, y, width, height);
+        int dpadButton = wheels || ctrlHidden(C_DPAD) ? -1 : dpadButtonAt(x, y, width, height);
         if (dpadButton != -1) {
             targets.put(pointerId, new TouchTarget(BUTTON, dpadButton));
             pressControl(dpadButton);
@@ -1215,8 +1323,9 @@ final class TouchControlsView extends View {
             targets.put(pointerId, TouchTarget.begin(MAP_TAP, 0, x, y));
             return;
         }
-        final boolean floatHere = floatingStick() && x < width * 0.5f;
-        if ((floatHere || (!floatingStick() && onLeftStick(x, y, width, height))) &&
+        final boolean leftHidden = ctrlHidden(C_LSTICK);
+        final boolean floatHere = !leftHidden && floatingStick() && x < width * 0.5f;
+        if ((floatHere || (!leftHidden && !floatingStick() && onLeftStick(x, y, width, height))) &&
             leftPointer == -1) {
             if (floatHere) {
                 final float radius = leftStickRadius(height);
@@ -1239,7 +1348,8 @@ final class TouchControlsView extends View {
                 pan2Pointer = pointerId;
                 targets.put(pointerId, TouchTarget.begin(MAP_PAN2, 0, x, y));
             }
-        } else if (cStick && inRightStickGrab(x, y, width, height)) {
+        } else if (cStick && !ctrlHidden(twin ? C_RSTICK : C_CSTICK) &&
+                   inRightStickGrab(x, y, width, height)) {
             if (rightPointer == -1) {
                 TouchTarget target = new TouchTarget(RIGHT_STICK, 0);
                 rightPointer = pointerId;
@@ -1968,7 +2078,8 @@ final class TouchControlsView extends View {
         if (!controlsOnNow && !editing) {
             return isMenuPill(pill);
         }
-        return !pillHidden(pill) && !(pill.axis == AXIS_TRIGGER_R && rHiddenNow);
+        return !pillHidden(pill) && !(pill.axis == AXIS_TRIGGER_R && rHiddenNow) &&
+               !ctrlHidden(pillControl(pill));
     }
 
     private final Path facePath = new Path();
@@ -2378,6 +2489,9 @@ final class TouchControlsView extends View {
 
     private int wheelButtonAt(float x, float y, float width, float height) {
         for (int wheel = 0; wheel < 2; ++wheel) {
+            if (ctrlHidden(C_VISOR + wheel)) {
+                continue; // the touch falls through, wheel or no wheel
+            }
             final float radius = wheelButtonRadius(wheel, height) * 1.1f;
             final double dx = x - wheelButtonX(wheel, width, height);
             final double dy = y - wheelButtonY(wheel, height);
@@ -2454,6 +2568,11 @@ final class TouchControlsView extends View {
             final float cx = wheelButtonX(wheel, width, height);
             final float cy = wheelButtonY(wheel, height);
             final float radius = wheelButtonRadius(wheel, height);
+            layerRect.set(cx - radius, cy - radius, cx + radius, cy + radius);
+            final int layer = pushLayer(canvas, C_VISOR + wheel, layerRect);
+            if (layer == LAYER_SKIP) {
+                continue;
+            }
             final boolean active = wheelPointer != -1 && wheelTarget() != null &&
                                    wheelTarget().id == wheel;
             fillPaint.setColor(active ? 0xCC48C8E8 : 0x77081218);
@@ -2465,6 +2584,7 @@ final class TouchControlsView extends View {
                 drawCenteredLabel(canvas, WHEEL_BUTTON_LABELS[wheel], cx, cy,
                                   dp(13) * ovScale[C_VISOR + wheel]);
             }
+            popLayer(canvas, layer);
         }
     }
 
@@ -2576,12 +2696,15 @@ final class TouchControlsView extends View {
         }
     }
 
-    // `id:dx,dy,scale;...`. Unknown ids and malformed entries are skipped, so a
+    // `id:dx,dy,scale[,opacity[,hidden]];...` (opacity in percent, hidden 0 or 1).
+    // Unknown ids and malformed entries are skipped, so a
     // layout from a newer version still loads what this one knows.
     private void loadLayout(String text) {
         Arrays.fill(ovDx, 0f);
         Arrays.fill(ovDy, 0f);
         Arrays.fill(ovScale, 1f);
+        Arrays.fill(ovAlpha, 100);
+        Arrays.fill(ovHidden, false);
         for (String entry : text.split(";")) {
             final int colon = entry.indexOf(':');
             if (colon <= 0) {
@@ -2596,7 +2719,7 @@ final class TouchControlsView extends View {
                 }
             }
             final String[] parts = entry.substring(colon + 1).split(",");
-            if (control < 0 || parts.length != 3) {
+            if (control < 0 || parts.length < 3 || parts.length > 5) {
                 continue;
             }
             try {
@@ -2607,9 +2730,27 @@ final class TouchControlsView extends View {
                     Float.isInfinite(dy) || Float.isNaN(scale) || Float.isInfinite(scale)) {
                     continue;
                 }
+                float alpha = 100f;
+                boolean off = false;
+                if (parts.length > 3) {
+                    alpha = Float.parseFloat(parts[3].trim());
+                    if (Float.isNaN(alpha) || Float.isInfinite(alpha)) {
+                        continue;
+                    }
+                }
+                if (parts.length > 4) {
+                    off = Float.parseFloat(parts[4].trim()) != 0f;
+                }
                 ovDx[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, dx));
                 ovDy[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, dy));
                 ovScale[control] = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+                ovAlpha[control] = Math.max(0, Math.min(100, Math.round(alpha)));
+                ovHidden[control] = off;
+                if (control == C_MENU) {
+                    // A hand-edited layout can't lock the only way into F1 away.
+                    ovAlpha[control] = Math.max(MENU_MIN_ALPHA, ovAlpha[control]);
+                    ovHidden[control] = false;
+                }
             } catch (NumberFormatException e) {
                 // A malformed entry: leave the control at its default.
             }
@@ -2620,7 +2761,8 @@ final class TouchControlsView extends View {
     private String serializeLayout() {
         final StringBuilder out = new StringBuilder();
         for (int i = 0; i < CONTROLS; ++i) {
-            if (ovDx[i] == 0f && ovDy[i] == 0f && ovScale[i] == 1f) {
+            if (ovDx[i] == 0f && ovDy[i] == 0f && ovScale[i] == 1f && ovAlpha[i] == 100 &&
+                !ovHidden[i]) {
                 continue;
             }
             if (out.length() > 0) {
@@ -2628,6 +2770,12 @@ final class TouchControlsView extends View {
             }
             out.append(String.format(Locale.ROOT, "%s:%.4f,%.4f,%.3f", CONTROL_IDS[i], ovDx[i],
                                      ovDy[i], ovScale[i]));
+            // Only as many fields as needed, so older layouts serialize as before.
+            if (ovHidden[i]) {
+                out.append(',').append(ovAlpha[i]).append(",1");
+            } else if (ovAlpha[i] != 100) {
+                out.append(',').append(ovAlpha[i]);
+            }
         }
         return out.toString();
     }
@@ -2636,6 +2784,8 @@ final class TouchControlsView extends View {
         ovDx[control] = 0f;
         ovDy[control] = 0f;
         ovScale[control] = 1f;
+        ovAlpha[control] = 100;
+        ovHidden[control] = false;
     }
 
     // The editor: every touch is consumed, so nothing reaches the game (F1 does
@@ -2860,6 +3010,17 @@ final class TouchControlsView extends View {
         return -1;
     }
 
+    // The next opacity in the 100, 75, 50, 25, 0 cycle; MENU wraps after 25.
+    private int nextAlpha(int control) {
+        final int floor = control == C_MENU ? MENU_MIN_ALPHA : 0;
+        for (int step : ALPHA_STEPS) {
+            if (step < ovAlpha[control] && step >= floor) {
+                return step;
+            }
+        }
+        return 100;
+    }
+
     private void editAction(int action, float width, float height) {
         switch (action) {
             case EDIT_MINUS:
@@ -2870,6 +3031,16 @@ final class TouchControlsView extends View {
                     ovScale[selected] = Math.max(MIN_SCALE, Math.min(MAX_SCALE,
                         Math.round((ovScale[selected] + step) * 100f) / 100f));
                     clampToScreen(selected, width, height);
+                }
+                break;
+            case EDIT_OPACITY:
+                if (selected >= 0) {
+                    ovAlpha[selected] = nextAlpha(selected);
+                }
+                break;
+            case EDIT_HIDE:
+                if (selected >= 0 && selected != C_MENU) {
+                    ovHidden[selected] = !ovHidden[selected];
                 }
                 break;
             case EDIT_RESET:
@@ -3037,9 +3208,14 @@ final class TouchControlsView extends View {
                 editPaint.setColor(0xFFFFE04A);
             } else {
                 editPaint.setPathEffect(dashes);
-                editPaint.setColor(0xCCFFFFFF);
+                // Hidden ones in orange, so they stand out from the faint ones.
+                editPaint.setColor(ovHidden[c] ? 0xFFFF9A3C : 0xCCFFFFFF);
             }
             canvas.drawRoundRect(editRect, corner, corner, editPaint);
+            if (ovHidden[c]) {
+                drawCenteredLabel(canvas, "hidden", editRect.centerX(), editRect.top + dp(10),
+                                  dp(10));
+            }
         }
         editPaint.setPathEffect(null);
 
@@ -3050,13 +3226,22 @@ final class TouchControlsView extends View {
             final float corner = dp(8);
             canvas.drawRoundRect(editBar[i], corner, corner, fillPaint);
             canvas.drawRoundRect(editBar[i], corner, corner, strokePaint);
-            drawCenteredLabel(canvas, EDIT_LABELS[i], editBar[i].centerX(), editBar[i].centerY(),
+            final String label = i == EDIT_HIDE && selected >= 0 && ovHidden[selected]
+                ? "Show" : EDIT_LABELS[i];
+            drawCenteredLabel(canvas, label, editBar[i].centerX(), editBar[i].centerY(),
                               i < 2 ? dp(22) : dp(14));
         }
 
-        final String hint = selected >= 0
-            ? CONTROL_NAMES[selected] + "  " + Math.round(ovScale[selected] * 100f) + "%"
-            : "Drag a control to move it; pinch to resize";
+        String hint = "Drag a control to move it; pinch to resize";
+        if (selected >= 0) {
+            hint = CONTROL_NAMES[selected] + "  " + Math.round(ovScale[selected] * 100f) + "%";
+            if (ovAlpha[selected] != 100) {
+                hint += "  · opacity " + ovAlpha[selected] + "%";
+            }
+            if (ovHidden[selected]) {
+                hint += "  · hidden";
+            }
+        }
         textPaint.setTextSize(dp(13));
         final float textW = textPaint.measureText(hint);
         final float top = editBar[0].bottom + dp(EDIT_BAR_GAP_DP);

@@ -202,7 +202,14 @@
   (`TouchControlsView.onDraw` draws the gameplay controls inside a
   `canvas.saveLayerAlpha`, F1's value through `nativeTouchOpacity` /
   `PortDebug::TouchOpacity`), so it applies at once, and at 100% exactly as
-  before. Side margin, Stick inset and Button inset on the same page
+  before. Each control also has its own opacity in the layout editor (the
+  "Opacity" button cycles the selected control 100, 75, 50, 25, 0%; it nests
+  inside this one): 0% is invisible but still active, handy for a button placed
+  over a HUD icon. The "Hide"/"Show" button removes a control from play; its
+  touches fall through to whatever is under it (aim, stick), and the editor still
+  draws it faintly with an orange outline. MENU can't be hidden and stops at 25%.
+  Saved as `id:dx,dy,scale[,opacity[,hidden]]` in the layout string. Side
+  margin, Stick inset and Button inset on the same page
   (`touch_side_margin`, `touch_stick_inset`, `touch_button_inset`) move those
   controls instead, in dp.
   **Touch aim** (Android, `touch_aim`, on by default; `touch_aim_speed`, default
