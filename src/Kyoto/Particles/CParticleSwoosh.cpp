@@ -293,6 +293,11 @@ void CParticleSwoosh::SetOrientation(const CTransform4f& orientation) {
   if (x1c_desc->xPortRazyAxis || x1c_desc->xPortRotZ) {
     return;
   }
+  // An undersized swoosh (!IsLargeEnough) never fills the ring; retail wrote
+  // through the empty vector into low memory.
+  if (x15c_swooshes.empty()) {
+    return;
+  }
 #endif
   x15c_swooshes[x158_curParticle].mOrientation = x44_orientation;
 }
@@ -1700,6 +1705,12 @@ CLight CParticleSwoosh::GetLight() const {
 uint CParticleSwoosh::Get4CharId() const { return 'SWHC'; }
 
 void CParticleSwoosh::UpdateSwooshTranslation(const CVector3f& translation) {
+#ifdef TARGET_PC
+  // SetTranslation reaches here for an undersized swoosh too (see SetOrientation).
+  if (x15c_swooshes.empty()) {
+    return;
+  }
+#endif
   x15c_swooshes[x158_curParticle].mTranslation = x11c_invScaleXf * translation;
 }
 
