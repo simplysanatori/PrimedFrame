@@ -55,6 +55,12 @@
        android/app/build.gradle; tools/make_flatpak.sh refuses to build when the
        two differ, since Flatpak reports the newest entry as the app's version. -->
   <releases>
+    <release version="0.32.0" date="2026-10-22">
+      <description>
+        <p>Suit colour customisation with a random colours button, the Fusion Suit from the F1 menu, a touch layout editor that adds your own buttons, deletes stock ones and sets per-control opacity, a fix for the crash in the Meta Ridley fight, Aurora graphics fixes (EFB alpha, partial copy clears, texture coordinate generation and minification), Ridley, Thardus, Flaahgra and Metroid Prime restored mid-fight by savestates, a check of the whole disc image against its Redump release, and safer save, movie and disc reads.</p>
+      </description>
+      <url type="details">https://github.com/Odrannnn/MetroidPrimePort/releases/tag/v0.32.0</url>
+    </release>
     <release version="0.31.1" date="2026-10-21">
       <description>
         <p>Fewer missing or wrongly sized Remastered effects (sprites without a size, shutdown behaviour of trails and child particles, particle depth bias and motion spread), water fogs that follow the Gravity Suit in Tallon Overworld and Phendrana, progressive beam upgrades for Archipelago, a likely fix for a crash after the Frigate escape on Android, and Windows builds from a plain Visual Studio setup.</p>
