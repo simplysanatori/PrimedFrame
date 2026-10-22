@@ -3280,14 +3280,21 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
   std::array<bool, MaxTevRegs> alphaNormalized{};
   for (u32 idx = 0; idx < config.tevStageCount; ++idx) {
     const auto& stage = config.tevStages[idx];
+    const auto color_arg = [&](GXTevColorArg arg) {
+      auto value = color_arg_reg(arg, idx, config, stage);
+      if (tev_color_arg_is_normalized(arg, colorNormalized, alphaNormalized)) {
+        return fmt::format("vec3f({})", value);
+      }
+      return fmt::format("tev_overflow_vec3f({})", value);
+    };
+    const bool alphaCompareColor =
+        stage.alphaOp.op >= GX_TEV_COMP_R8_GT && stage.alphaOp.op <= GX_TEV_COMP_BGR24_EQ;
+    // Packed alpha comparisons use color A/B from before this stage writes its color result.
+    if (alphaCompareColor) {
+      fragmentFn += fmt::format("\n    let tev_cmp_a{0} = {1};\n    let tev_cmp_b{0} = {2};", idx,
+                                color_arg(stage.colorPass.a), color_arg(stage.colorPass.b));
+    }
     {
-      const auto color_arg = [&](GXTevColorArg arg) {
-        auto value = color_arg_reg(arg, idx, config, stage);
-        if (tev_color_arg_is_normalized(arg, colorNormalized, alphaNormalized)) {
-          return fmt::format("vec3f({})", value);
-        }
-        return fmt::format("tev_overflow_vec3f({})", value);
-      };
       std::string_view outReg = regName[stage.colorOp.outReg];
       std::string op = tev_color_op(stage.colorOp.op, tev_bias(stage.colorOp.bias), tev_scale(stage.colorOp.scale),
                                     stage.colorOp.clamp, color_arg(stage.colorPass.a), color_arg(stage.colorPass.b),
@@ -3304,9 +3311,11 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
         return fmt::format("tev_overflow_f32({})", value);
       };
       std::string_view outReg = regName[stage.alphaOp.outReg];
-      std::string op = tev_alpha_op(stage.alphaOp.op, tev_bias(stage.alphaOp.bias), tev_scale(stage.alphaOp.scale),
-                                    stage.alphaOp.clamp, alpha_arg(stage.alphaPass.a), alpha_arg(stage.alphaPass.b),
-                                    alpha_arg(stage.alphaPass.c), alpha_arg_reg(stage.alphaPass.d, idx, config, stage));
+      std::string op = tev_alpha_op(
+          stage.alphaOp.op, tev_bias(stage.alphaOp.bias), tev_scale(stage.alphaOp.scale), stage.alphaOp.clamp,
+          alphaCompareColor ? fmt::format("tev_cmp_a{}", idx) : alpha_arg(stage.alphaPass.a),
+          alphaCompareColor ? fmt::format("tev_cmp_b{}", idx) : alpha_arg(stage.alphaPass.b),
+          alpha_arg(stage.alphaPass.c), alpha_arg_reg(stage.alphaPass.d, idx, config, stage));
       fragmentFn += fmt::format("\n    {0}.a = {1};", outReg, op);
       alphaNormalized[stage.alphaOp.outReg] = stage.alphaOp.clamp;
     }
@@ -3436,14 +3445,26 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
     if (tcg.src >= GX_TG_TEX0 && tcg.src <= GX_TG_TEX7) {
       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0, 1.0);", i,
                                  vtx_attr(config, GXAttr(GX_VA_TEX0 + (tcg.src - GX_TG_TEX0))));
+    } else if (tcg.src >= GX_TG_TEXCOORD0 && tcg.src <= GX_TG_TEXCOORD6) {
+      vtxXfrAttrs += fmt::format("\n    var tc{} = tc{};", i, (tcg.src - GX_TG_TEXCOORD0));
     } else if (tcg.src == GX_TG_POS) {
       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0);", i, vtx_attr(config, GX_VA_POS));
     } else if (tcg.src == GX_TG_NRM) {
       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0);", i, vtx_attr(config, GX_VA_NRM));
     } else if (tcg.src == GX_TG_COLOR0) {
-      vtxXfrAttrs += fmt::format("\n    var tc{} = {};", i, vtx_attr(config, GX_VA_CLR0));
+      // Per-pixel lighting has no vertex-stage out.cc0; fall back to the raw vertex colour there.
+      if (config.perPixelLight) {
+        vtxXfrAttrs += fmt::format("\n    var tc{} = {};", i, vtx_attr(config, GX_VA_CLR0));
+      } else {
+        vtxXfrAttrs += fmt::format("\n    var tc{} = out.cc0;", i);
+      }
     } else if (tcg.src == GX_TG_COLOR1) {
-      vtxXfrAttrs += fmt::format("\n    var tc{} = {};", i, vtx_attr(config, GX_VA_CLR1));
+      // Per-pixel lighting has no vertex-stage out.cc1; fall back to the raw vertex colour there.
+      if (config.perPixelLight) {
+        vtxXfrAttrs += fmt::format("\n    var tc{} = {};", i, vtx_attr(config, GX_VA_CLR1));
+      } else {
+        vtxXfrAttrs += fmt::format("\n    var tc{} = out.cc1;", i);
+      }
     } else if (tcg.src == GX_TG_BINRM) {
       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0);", i, nbt_slice_local(NbtSlice::B));
     } else if (tcg.src == GX_TG_TANGENT) {
