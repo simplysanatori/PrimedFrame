@@ -674,6 +674,8 @@ def start_run(a):
         env["MP_BOOT_WORLD"] = a.room
     if not a.cutscenes:
         env["MP_SKIP_CUTSCENES"] = "1"
+    # Test runs die to hazards and enemies while an agent reads a screenshot; damage tests opt in.
+    env["MP_GODMODE"] = "0" if getattr(a, "mortal", False) else "1"
     for kv in a.env:
         k, v = kv.split("=", 1)
         env[k] = v
@@ -1201,6 +1203,8 @@ def build_parser():
         s.add_argument("--cutscenes", action="store_true",
                        help="keep cutscenes (default: MP_SKIP_CUTSCENES=1 + skippable_cutscenes=1, which also "
                             "applies randomprime's room patches; with --room, start waits for gameplay)")
+        s.add_argument("--mortal", action="store_true",
+                       help="the player can take damage and die (default: MP_GODMODE=1, as `god on`)")
         s.add_argument("--saves", action="store_true", help="copy USA/ and savestates/ from the real user dir")
         s.add_argument("--size", default="1280x720", help="Xvfb screen size WxH")
         s.add_argument("--wait", type=float, default=120, help="seconds to wait for the console")

@@ -29,13 +29,30 @@ vs the current `kImportVersion`, `/tmp` space, stale runs).
 (even unseen ones) and the fade-in after them has run. Pass `--cutscenes` to see them. Use your own run names so sessions stay apart.
 `--room` takes a room name too (`--room "landing site"`; `rooms [filter]` lists them).
 
+Runs start in god mode (`MP_GODMODE=1`): the player takes no damage, so a run doesn't die to an
+enemy or lava while you read a screenshot. Pass `--mortal` only to test damage or death. (`hurt` bypasses god mode: it hits the player
+without taking energy either way.)
+
+Getting somewhere fast (every move is one `cmd` call with many commands, never a walk):
+
+- Never walk with `press`/`stick` to reach a place: those are for testing movement or input.
+  Boot into the room (`--room "<name>"`), then `goto <id>` (stands on the floor 6 units from an
+  actor, facing it; use the hex editor id from `objs [filter]`, which stays the same across loads,
+  unlike `u<uid>`; a `goto` onto a pickup can collect it and pause the game until `press a 1`), `tp x y z` + `face <yaw>`, `look <id>`, or a saved view
+  (`--at VIEW`, `view save`). `room <area>` jumps to another area of the world.
+- Clear what is in the way rather than playing through it: `kill <id>` (bosses too), `send <id> <msg>`
+  (open a door, start a trigger), `give <item> [n]` (missing beam, visor, Morph Ball, missiles).
+- Put a whole step in one call: `$M cmd t1 'goto 00080072' 'visor thermal' 'wait 30' status`, or
+  `shot` with the commands; several rooms are one `shots` call. Read `status` before a screenshot:
+  it is text and costs no image.
+
 **Settled** = `status --json` says first person, no cinematic and `fade` false (the in-game fade-in
 filter, `CInGameGuiManager::StartFadeIn`, is done), on two polls at least 12 frames apart. `start --room`,
 a `warp` sent through `cmd`/`shot`, and `shot` wait for it (not on `--cutscenes` runs).
 
 ## Subcommands
 
-- `start <name> [--build B] [--room MLVL[:MREA]|NAME] [--at VIEW] [--env K=V]... [--mods DIR|none] [--settings FILE|none] [--saves] [--size WxH] [--wait S] [--cutscenes] [--gdb] [--replace]`:
+- `start <name> [--build B] [--room MLVL[:MREA]|NAME] [--at VIEW] [--env K=V]... [--mods DIR|none] [--settings FILE|none] [--saves] [--mortal] [--size WxH] [--wait S] [--cutscenes] [--gdb] [--replace]`:
   `--build` is a dir under `build/` or a path (default `port-gcc`). The user dir is fresh: only
   `port_settings.ini` and `imgui.ini` are copied (`--saves` adds `USA/`, `savestates/`). Mods
   default to the real user's (read-only); `--mods none` is an empty folder. On a startup crash

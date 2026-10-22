@@ -47,6 +47,8 @@
 #include "Kyoto/Text/CStringTable.hpp"
 #include "Kyoto/Animation/CSkinnedModel.hpp"
 #include "MetroidPrime/CActor.hpp"
+#include "MetroidPrime/CGameCollision.hpp"
+#include <Collision/CRayCastResult.hpp>
 #include "MetroidPrime/CExplosion.hpp"
 #include "Kyoto/Particles/CGenDescription.hpp"
 #include "MetroidPrime/CAnimData.hpp"
@@ -938,6 +940,73 @@ void CmdTp(CStateManager& mgr) {
     return Finish("usage: tp <x> <y> <z>");
   }
   TeleportPlayer(mgr, CVector3f(x, y, z), mgr.GetPlayer()->GetTransform().GetForward());
+  Finish();
+}
+
+// goto <id> [dist]: stands on the floor dist units (default 6) from an actor, facing it. Saves
+// walking there. Tries the side toward the player first, then around the actor and closer in;
+// a spot needs floor near the actor's height (origins over pits or under the floor don't count)
+// and is preferred with a clear line of sight to it.
+void CmdGoto(CStateManager& mgr) {
+  float dist = 6.f;
+  if (sCmd.args.size() < 2 || (sCmd.args.size() > 2 && !ParseFloat(sCmd.args[2], dist))) {
+    return Finish("usage: goto <id> [dist]");
+  }
+  const CActor* actor = TCastToConstPtr< CActor >(FindObject(mgr, sCmd.args[1]));
+  if (actor == nullptr) {
+    return Finish("no such actor");
+  }
+  const CVector3f target = actor->GetTranslation();
+  CVector3f away = mgr.GetPlayer()->GetTranslation() - target;
+  away.SetZ(0.f);
+  if (!away.CanBeNormalized()) {
+    away = actor->GetTransform().GetForward();
+    away.SetZ(0.f);
+  }
+  if (!away.CanBeNormalized()) {
+    away = CVector3f(0.f, -1.f, 0.f);
+  }
+  away = away.AsNormalized();
+  const CMaterialFilter solid = CMaterialFilter::MakeIncludeExclude(CMaterialList(kMT_Solid), CMaterialList());
+  const CVector3f down(0.f, 0.f, -1.f);
+  const CVector3f eye(0.f, 0.f, 1.6f);
+  // The actor's own centre is usually above its origin; aim the sight line there.
+  const CVector3f aim = target + CVector3f(0.f, 0.f, 1.f);
+  bool found = false;
+  bool clear = false;
+  CVector3f pos;
+  for (const float scale : {1.f, 0.5f}) {
+    for (int i = 0; i < 8 && !clear; ++i) {
+      const float a = static_cast<float>((i + 1) / 2) * (i % 2 != 0 ? 0.785398f : -0.785398f);
+      const CVector3f dir(away.GetX() * std::cos(a) - away.GetY() * std::sin(a),
+                          away.GetX() * std::sin(a) + away.GetY() * std::cos(a), 0.f);
+      const CVector3f top = target + dir * (dist * scale) + CVector3f(0.f, 0.f, 3.f);
+      const CRayCastResult floor = CGameCollision::RayStaticIntersection(mgr, top, down, 15.f, solid);
+      if (!floor.IsValid()) {
+        continue;
+      }
+      // A metre up: the ray can stop on a solid face a little under the surface the player stands
+      // on (Main Plaza's catwalk, 0.43 lower), and a player placed inside it is pushed off the edge.
+      const CVector3f stand = top + down * floor.GetTime() + CVector3f(0.f, 0.f, 1.f);
+      const CVector3f sight = aim - (stand + eye);
+      const bool see = !sight.CanBeNormalized() ||
+                       CGameCollision::RayStaticIntersectionBool(mgr, stand + eye, sight.AsNormalized(),
+                                                                 sight.Magnitude(), solid);
+      if (!found || (see && !clear)) {
+        pos = stand;
+        found = true;
+        clear = see;
+      }
+    }
+    if (clear) {
+      break;
+    }
+  }
+  if (!found) {
+    return Finish("no floor near that actor (tp to it by hand)");
+  }
+  TeleportPlayer(mgr, pos, target - pos);
+  Out("at %.2f %.2f %.2f%s", pos.GetX(), pos.GetY(), pos.GetZ(), clear ? "" : " (no clear sight of it)");
   Finish();
 }
 
@@ -3583,6 +3652,7 @@ const CommandSpec kCommands[] = {
     {"room", nullptr, [](CStateManager&) { CmdRoom(); },
      "room <area>                teleport to a loaded area's spawn point (the F1 room list)"},
     {"tp", nullptr, CmdTp, "tp <x> <y> <z>             move the player"},
+    {"goto", nullptr, CmdGoto, "goto <id> [dist]           stand dist (6) short of an actor, facing it"},
     {"lift", nullptr, CmdLift, "lift <id> <dz>             move an actor up (dz > 0) or down"},
     {"fx", CmdFxQuery, CmdFx,
      "fx <PART id>|off [dist] [scale] [loop]  play one particle effect in front of the camera; prints its #id\n"
