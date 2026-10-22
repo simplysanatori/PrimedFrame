@@ -347,7 +347,7 @@ final class TouchControlsView extends View {
     // Nothing selected, a stock control, an added button.
     private static final int[] EDIT_TOOLS_NONE = {EDIT_ADD, EDIT_RESET_ALL, EDIT_DONE};
     private static final int[] EDIT_TOOLS_STOCK =
-        {EDIT_MINUS, EDIT_PLUS, EDIT_OPACITY, EDIT_HIDE, EDIT_RESET, EDIT_DONE};
+        {EDIT_MINUS, EDIT_PLUS, EDIT_OPACITY, EDIT_HIDE, EDIT_RESET, EDIT_DELETE, EDIT_DONE};
     private static final int[] EDIT_TOOLS_CUSTOM =
         {EDIT_MINUS, EDIT_PLUS, EDIT_OPACITY, EDIT_HIDE, EDIT_ACTION, EDIT_DELETE, EDIT_DONE};
     // A control's own opacity cycles through these (percent). MENU stops at
@@ -369,6 +369,10 @@ final class TouchControlsView extends View {
     // control is gone (touches fall through); opacity 0 is invisible but still active.
     private final int[] ovAlpha = new int[ALL_CONTROLS];
     private final boolean[] ovHidden = new boolean[ALL_CONTROLS];
+    // A stock control deleted in the editor: gone from play and from the editor
+    // too, until Add's list restores it. Saved as hidden = 2, which a version
+    // without deleting reads as hidden.
+    private final boolean[] ovRemoved = new boolean[CONTROLS];
     // Each added button's action key, or null for a free slot.
     private final String[] customAction = new String[CUSTOM_SLOTS];
     // Why the last editor tool did nothing (Add with every slot used), shown in
@@ -869,11 +873,18 @@ final class TouchControlsView extends View {
     // (which still shows and selects it) nor in the controls-off view, where
     // START and MENU ignore the layout.
     private boolean ctrlHidden(int control) {
-        return controlsOnNow && !editing && ovHidden[control];
+        return controlsOnNow && !editing && (ovHidden[control] || removed(control));
+    }
+
+    private boolean removed(int control) {
+        return control >= 0 && control < CONTROLS && ovRemoved[control];
     }
 
     // The percent this control is drawn at, or -1 for not at all.
     private int controlAlpha(int control) {
+        if (removed(control)) {
+            return -1; // the controls-off view draws START and MENU without this
+        }
         if (editing) {
             return ovHidden[control] ? EDIT_MIN_ALPHA : Math.max(EDIT_MIN_ALPHA, ovAlpha[control]);
         }
@@ -2897,6 +2908,7 @@ final class TouchControlsView extends View {
         Arrays.fill(ovScale, 1f);
         Arrays.fill(ovAlpha, 100);
         Arrays.fill(ovHidden, false);
+        Arrays.fill(ovRemoved, false);
         Arrays.fill(customAction, null);
         for (String entry : text.split(";")) {
             final int colon = entry.indexOf(':');
@@ -2930,6 +2942,7 @@ final class TouchControlsView extends View {
                 }
                 float alpha = 100f;
                 boolean off = false;
+                boolean gone = false;
                 if (parts.length > 3) {
                     alpha = Float.parseFloat(parts[3].trim());
                     if (Float.isNaN(alpha) || Float.isInfinite(alpha)) {
@@ -2937,13 +2950,18 @@ final class TouchControlsView extends View {
                     }
                 }
                 if (parts.length > 4) {
-                    off = Float.parseFloat(parts[4].trim()) != 0f;
+                    final float flag = Float.parseFloat(parts[4].trim());
+                    off = flag != 0f;
+                    gone = flag == 2f && !custom; // an added button is deleted outright
                 }
                 ovDx[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, dx));
                 ovDy[control] = Math.max(-MAX_OFFSET, Math.min(MAX_OFFSET, dy));
                 ovScale[control] = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
                 ovAlpha[control] = Math.max(0, Math.min(100, Math.round(alpha)));
                 ovHidden[control] = off;
+                if (gone) {
+                    ovRemoved[control] = true;
+                }
                 if (custom) {
                     customAction[control - C_CUSTOM] = key;
                 }
@@ -2951,6 +2969,7 @@ final class TouchControlsView extends View {
                     // A hand-edited layout can't lock the only way into F1 away.
                     ovAlpha[control] = Math.max(MENU_MIN_ALPHA, ovAlpha[control]);
                     ovHidden[control] = false;
+                    ovRemoved[control] = false;
                 }
             } catch (NumberFormatException e) {
                 // A malformed entry: leave the control at its default.
@@ -2963,7 +2982,7 @@ final class TouchControlsView extends View {
         final StringBuilder out = new StringBuilder();
         for (int i = 0; i < CONTROLS; ++i) {
             if (ovDx[i] == 0f && ovDy[i] == 0f && ovScale[i] == 1f && ovAlpha[i] == 100 &&
-                !ovHidden[i]) {
+                !ovHidden[i] && !ovRemoved[i]) {
                 continue;
             }
             if (out.length() > 0) {
@@ -2972,7 +2991,9 @@ final class TouchControlsView extends View {
             out.append(String.format(Locale.ROOT, "%s:%.4f,%.4f,%.3f", CONTROL_IDS[i], ovDx[i],
                                      ovDy[i], ovScale[i]));
             // Only as many fields as needed, so older layouts serialize as before.
-            if (ovHidden[i]) {
+            if (ovRemoved[i]) {
+                out.append(',').append(ovAlpha[i]).append(",2");
+            } else if (ovHidden[i]) {
                 out.append(',').append(ovAlpha[i]).append(",1");
             } else if (ovAlpha[i] != 100) {
                 out.append(',').append(ovAlpha[i]);
@@ -3002,6 +3023,9 @@ final class TouchControlsView extends View {
         ovScale[control] = 1f;
         ovAlpha[control] = 100;
         ovHidden[control] = false;
+        if (control < CONTROLS) {
+            ovRemoved[control] = false;
+        }
     }
 
     // The editor: every touch is consumed, so nothing reaches the game (F1 does
@@ -3041,6 +3065,12 @@ final class TouchControlsView extends View {
 
     // Whether the current settings draw this control.
     private boolean editShown(int control) {
+        return !removed(control) && layoutShows(control);
+    }
+
+    // Whether the current layout and settings have this control at all, deleted
+    // or not (Add's list restores only those).
+    private boolean layoutShows(int control) {
         if (control >= C_CUSTOM) {
             return customAction[control - C_CUSTOM] != null;
         }
@@ -3264,24 +3294,34 @@ final class TouchControlsView extends View {
     // Lists the actions an added button can take; a pick adds a button in the
     // first free slot (control -1, then selected) or changes `control`'s action.
     private void pickAction(final int control) {
-        final String[] list = buttonActions();
-        if (list.length < 2) {
+        // Adding also lists the deleted stock controls this layout has, first;
+        // the actions only while a slot is free.
+        final int[] restore = control < 0 ? restorable() : new int[0];
+        final String[] list = control >= 0 || freeSlot() >= 0 ? buttonActions() : new String[0];
+        if (restore.length + list.length / 2 == 0) {
             return;
         }
         final String current = control >= C_CUSTOM ? customAction[control - C_CUSTOM] : null;
-        final String[] labels = new String[list.length / 2];
+        final String[] labels = new String[restore.length + list.length / 2];
         int checked = -1;
-        for (int i = 0; i < labels.length; ++i) {
-            labels[i] = list[2 * i + 1];
+        for (int i = 0; i < restore.length; ++i) {
+            labels[i] = "Restore " + CONTROL_NAMES[restore[i]];
+        }
+        for (int i = 0; i < list.length / 2; ++i) {
+            labels[restore.length + i] = list[2 * i + 1];
             if (list[2 * i].equals(current)) {
-                checked = i;
+                checked = restore.length + i;
             }
         }
         final DialogInterface.OnClickListener pick = new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
                 dialog.dismiss();
-                applyAction(control, list[2 * which]);
+                if (which < restore.length) {
+                    restoreControl(restore[which]);
+                } else {
+                    applyAction(control, list[2 * (which - restore.length)]);
+                }
             }
         };
         final AlertDialog.Builder builder = new AlertDialog.Builder(getContext())
@@ -3293,6 +3333,34 @@ final class TouchControlsView extends View {
             builder.setItems(labels, pick);
         }
         builder.show();
+    }
+
+    // The deleted stock controls the current layout has.
+    private int[] restorable() {
+        int count = 0;
+        for (int c = 0; c < CONTROLS; ++c) {
+            if (ovRemoved[c] && layoutShows(c)) {
+                ++count;
+            }
+        }
+        final int[] out = new int[count];
+        count = 0;
+        for (int c = 0; c < CONTROLS; ++c) {
+            if (ovRemoved[c] && layoutShows(c)) {
+                out[count++] = c;
+            }
+        }
+        return out;
+    }
+
+    private void restoreControl(int control) {
+        if (!editing) {
+            return; // the editor closed under the list
+        }
+        ovRemoved[control] = false;
+        ovHidden[control] = false;
+        selected = control;
+        invalidate();
     }
 
     private void applyAction(int control, String key) {
@@ -3358,7 +3426,7 @@ final class TouchControlsView extends View {
                 Arrays.fill(customAction, null); // the added buttons go too
                 break;
             case EDIT_ADD:
-                if (freeSlot() < 0) {
+                if (freeSlot() < 0 && restorable().length == 0) {
                     editNotice = "All " + CUSTOM_SLOTS + " buttons are in use: delete one to add another";
                 } else {
                     pickAction(-1);
@@ -3373,6 +3441,10 @@ final class TouchControlsView extends View {
                 if (selected >= C_CUSTOM) {
                     customAction[selected - C_CUSTOM] = null;
                     resetControl(selected);
+                    selected = -1;
+                } else if (selected >= 0 && selected != C_MENU) {
+                    // Kept where it was, so a restore brings it back as it was.
+                    ovRemoved[selected] = true;
                     selected = -1;
                 }
                 break;
@@ -3563,15 +3635,16 @@ final class TouchControlsView extends View {
                 label = "Opacity " + ovAlpha[selected] + "%"; // a tap steps it down
             }
             // Tools that can't act now are dimmed: Hide on MENU, Add with no free slot.
-            final boolean idle = (i == EDIT_HIDE && selected == C_MENU) ||
-                                 (i == EDIT_ADD && freeSlot() < 0);
+            final boolean idle =
+                ((i == EDIT_HIDE || i == EDIT_DELETE) && selected == C_MENU) ||
+                (i == EDIT_ADD && freeSlot() < 0 && restorable().length == 0);
             textPaint.setAlpha(idle ? 90 : 255);
             drawCenteredLabel(canvas, label, editBar[i].centerX(), editBar[i].centerY(),
                               i <= EDIT_PLUS ? dp(22) : dp(14));
             textPaint.setAlpha(255);
         }
 
-        String hint = "Tap a control to select it: drag to move, pinch to resize. Add: a new button";
+        String hint = "Tap a control to select it: drag to move, pinch to resize. Add: a new or deleted button";
         if (editNotice != null) {
             hint = editNotice;
         } else if (selected >= 0) {

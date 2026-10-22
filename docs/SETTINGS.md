@@ -207,8 +207,11 @@
   inside this one): 0% is invisible but still active, handy for a button placed
   over a HUD icon. The "Hide"/"Show" button removes a control from play; its
   touches fall through to whatever is under it (aim, stick), and the editor still
-  draws it faintly with an orange outline. MENU can't be hidden and stops at 25%.
-  Saved as `id:dx,dy,scale[,opacity[,hidden]]` in the layout string. Side
+  draws it faintly with an orange outline. "Delete" also takes it out of the
+  editor (saved as hidden = 2, which older versions read as hidden); Add's list
+  offers "Restore <control>" for the deleted controls the current layout has,
+  and Reset all brings them all back. MENU can't be hidden or deleted and stops
+  at 25%. Saved as `id:dx,dy,scale[,opacity[,hidden]]` in the layout string. Side
   margin, Stick inset and Button inset on the same page
   (`touch_side_margin`, `touch_stick_inset`, `touch_button_inset`) move those
   controls instead, in dp.
