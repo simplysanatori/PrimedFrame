@@ -198,6 +198,10 @@ struct RoomApplyStats {
   int replayed = 0;   // journalled script messages sent again
   int generated = 0;  // script generator copies made again
   int fields = 0;     // enemy fields set from kTagFields blocks
+  // Saved areas not loaded yet that the last ApplyRoomState call asked the world to
+  // stream in (or found streaming): they get their state when they finish, no longer
+  // held against the restore's end. Set by each call, not summed.
+  int late = 0;
 };
 // Script message journal (boss fights). The room script wakes an enemy with a
 // message (a trigger sends Thardus Action) and then never sends it again, so an
@@ -238,6 +242,15 @@ bool ScriptTimerState(CEntity& ent, float& time, bool& timing);
 bool ScriptCounterState(CEntity& ent, int& current);
 int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32_t >& done,
                    RoomApplyStats& stats);
+// Whether the saved room state will be applied to `area` (a saved area, not applied yet,
+// whose room script is the one saved against). CStateManager::AreaLoaded then skips the
+// mailbox: the area's messages were already delivered and played out before the save,
+// and the saved objects carry the result - sending them again fires relays after the
+// restore (a timer started, a point of interest woken that the save had finished with).
+bool RoomRestoreOwnsArea(CStateManager& mgr, int area);
+// The test behind it, for a given room state and list of areas done.
+bool RoomAreaAwaitsRestore(CStateManager& mgr, const RoomState& room,
+                           const std::vector< int32_t >& done, int area);
 // The kTagFields block (port_savestate_fields.cpp): an enemy's own fields through the
 // generated entity schema. Capture returns false for an entity it does not cover; Apply
 // returns how many fields it set (0 for a block of another policy). MP_SAVESTATE_FIELDS=0

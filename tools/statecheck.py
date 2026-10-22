@@ -18,7 +18,9 @@ ticks, also while held):
      later: the natural drift of anything that moves or counts);
   4. `state load 8`, then `step 1` until the log shows `[savestate] room state: ...` (the restore of
      the rooms' objects, applied inside a tick), and `statedump B` at once. B holds the restored world
-     plus at most the rest of the applying tick.
+     plus at most the rest of the applying tick. When the line says `neighbour areas still streaming`
+     (areas resident at the save, streamed in after the load), B waits for the later
+     `room state, neighbour areas` line.
 A field that differs between A and B is STRICT only if B also differs from A1: a value B shares with A1
 is one that just moves each tick (a timer, a position), not a save-state gap.
 
@@ -45,6 +47,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 RESTORE_RE = re.compile(r"\[savestate\] room state:")
+LATE_RE = re.compile(r"\[savestate\] room state, neighbour areas")
 
 # STRICT: any difference (floats within their tolerance) is a save-state gap.
 STRICT = ["active", "hp", "kbres", "door_open", "timer", "timing", "counter", "boss", "ai", "body", "loco"]
@@ -108,6 +111,10 @@ class Rig:
         log = Path(self.run["log"])
         return len(RESTORE_RE.findall(log.read_text(errors="replace"))) if log.exists() else 0
 
+    def lates(self):
+        log = Path(self.run["log"])
+        return len(LATE_RE.findall(log.read_text(errors="replace"))) if log.exists() else 0
+
     def last_restore_line(self):
         log = Path(self.run["log"])
         lines = [l for l in log.read_text(errors="replace").splitlines() if RESTORE_RE.search(l)]
@@ -156,9 +163,18 @@ def roundtrip(rig, tag, outdir, a):
     for i in range(a.max_steps):
         rig.cmd("step 1")
         if rig.restores() > n:
+            print(f"room state restore landed after {i + 1} steps")
             break
     else:
         return paths, f"no '[savestate] room state' line after {a.max_steps} steps of the load"
+    if "neighbour areas still streaming" in rig.last_restore_line():
+        # The resident neighbours of the saved room load after the room's own restore;
+        # B is taken once they have their state too (or were given up on).
+        for i in range(a.max_steps):
+            rig.cmd("step 1")
+            if rig.lates() > 0:
+                print(f"neighbour areas restored after {i + 1} more steps")
+                break
     rig.cmd(f"statedump {paths['B']}")
     after = selected_slot(rig)
     if before is not None and after != before:

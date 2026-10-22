@@ -832,6 +832,49 @@ static void HoldRestoredTimers(CStateManager& mgr, const RoomState& room,
   }
 }
 
+// A saved area the rebuilt world has not loaded. The game streams in a room's
+// neighbours from the load-other flags of the docks (CStateManager::Update runs
+// TravelToArea(LoadAdjacent) every tick), and those flags are runtime state a state load
+// does not bring back: only the room's own area comes up. Raises the flag of the current
+// room's dock that leads to the saved area, as the dock does when the door nearest it is
+// approached, so a neighbour that was resident at the save streams in again (and gets
+// its saved state when it does). False for an area no dock of the current room leads to
+// (or that the world cannot stream: inactive).
+static bool RequestResidentArea(CStateManager& mgr, int current, int area) {
+  CWorld* world = mgr.World();
+  if (world == nullptr || area < 0 || area >= world->GetNumAreas())
+    return false;
+  CGameArea* target = world->Area(TAreaId(area));
+  if (!target->IsActive())
+    return false;
+  CGameArea* from = world->Area(TAreaId(current));
+  for (int d = 0; d < from->GetDockCount(); ++d) {
+    const IGameArea::Dock& dock = from->GetDock(d);
+    const int refs = static_cast< int >(dock.GetDockRefs().size());
+    for (int r = 0; r < refs; ++r) {
+      if (dock.GetConnectedAreaId(r).Value() == area) {
+        if (!dock.ShouldLoadOtherArea(r))
+          from->DockNC(d).SetShouldLoadOther(r, true);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+bool RoomAreaAwaitsRestore(CStateManager& mgr, const RoomState& room,
+                           const std::vector< int32_t >& done, int area) {
+  const CWorld* world = mgr.GetWorld();
+  if (world == nullptr || area < 0 || area >= world->GetNumAreas() ||
+      std::find(room.areas.begin(), room.areas.end(), area) == room.areas.end() ||
+      std::find(done.begin(), done.end(), area) != done.end() || !AreaReady(*world, area))
+    return false;
+  const uint8_t* data = nullptr;
+  size_t size = 0;
+  LoadedScriptData(*world, area, data, size);
+  return DecideAreaRestore(room, area, data, size) == RoomAreaRestore::kRestore;
+}
+
 int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32_t >& done,
                    RoomApplyStats& stats) {
   const CWorld* world = mgr.GetWorld();
@@ -839,11 +882,19 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
     return 0;
   std::set< int > now;
   int waiting = 0;
+  stats.late = 0;
+  const int current = world->GetCurrentAreaId().Value();
+  const bool currentReady = current >= 0 && current < world->GetNumAreas() && AreaReady(*world, current);
   for (int32_t area : room.areas) {
     if (std::find(done.begin(), done.end(), area) != done.end())
       continue;
     if (!AreaReady(*world, area)) {
-      ++waiting;
+      // The room Samus stands in is held for; the neighbours that were resident at the
+      // save are streamed in and take their state whenever they finish.
+      if (currentReady && area != current && RequestResidentArea(mgr, current, area))
+        ++stats.late;
+      else
+        ++waiting;
       continue;
     }
     // A rebuilt area may have loaded a different room script than the snapshot

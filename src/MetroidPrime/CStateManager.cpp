@@ -984,7 +984,11 @@ void CStateManager::BuildNearList(TEntityList& nearList, const CVector3f& pos, c
 }
 
 void CStateManager::AreaLoaded(TAreaId aid) {
-  x8bc_mailbox->SendMsgs(aid, *this);
+#ifdef TARGET_PC
+  // PORT: a save state's room state carries what the mailbox's messages did (see RoomRestoreOwnsArea).
+  if (!PortSaveState::RoomRestoreOwnsArea(*this, aid.Value()))
+#endif
+    x8bc_mailbox->SendMsgs(aid, *this);
   x880_envFxManager->AreaLoaded();
 }
 

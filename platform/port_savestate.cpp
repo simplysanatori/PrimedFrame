@@ -88,7 +88,12 @@ std::vector< uint8_t > sPendingBlob;
 // up. Areas that load later than kRoomApplyFrames ticks after the place keep
 // the memory card load's fresh objects (the player may have left and come back).
 constexpr int kRoomApplyFrames = 600;
+constexpr int kRoomLateFrames = 3600;
 bool sRoomPending = false;
+// The primary restore is over (the log line is out) but neighbour areas that were
+// resident at the save are still streaming in; each takes its state when it finishes.
+// Ends when all have, when Samus leaves the saved room, or after kRoomLateFrames.
+bool sRoomLate = false;
 int sRoomFrames = 0;
 std::vector< int32_t > sRoomDone;
 RoomApplyStats sRoomStats;
@@ -308,6 +313,7 @@ void QuitToPending(CStateManager& mgr) {
   sInstallPending = true;
   sPlacePending = false;
   sRoomPending = false;
+  sRoomLate = false;
 
   // As the debug world warp: stop the outgoing world's loads, retire its PAKs
   // and quit to CMainFlow, which starts the next game (InstallPending).
@@ -505,24 +511,50 @@ void Place(CStateManager& mgr) {
   sRoomPending = PortDebug::SaveStateRoomState() && !h.roomState.empty();
   if (!sRoomPending)
     DisarmSpawnLayers();  // no restore will run to the end that disarms them
+  sRoomLate = false;
   sRoomFrames = 0;
   sRoomDone.clear();
   sRoomStats = {};
 }
 
+void EndRoomState() {
+  sRoomPending = false;
+  sRoomLate = false;
+  DisarmSpawnLayers();
+}
+
 // Puts the saved room objects on the rebuilt areas as each one finishes loading.
 void TickRoomState(CStateManager& mgr) {
-  if (!sRoomPending || mgr.GetWantsToQuit())
+  if (!(sRoomPending || sRoomLate) || mgr.GetWantsToQuit())
     return;
   const int waiting = ApplyRoomState(mgr, sPendingHeader.roomState, sRoomDone, sRoomStats);
+  if (sRoomLate) {
+    ++sRoomFrames;
+    if (sRoomStats.late == 0 || sRoomFrames >= kRoomLateFrames ||
+        mgr.GetWorld()->GetCurrentAreaId().Value() != static_cast< int >(sPendingHeader.areaId)) {
+      PortLog::Write("[savestate] room state, neighbour areas: %d applied in total, %d areas %s\n",
+                     sRoomStats.applied, sRoomStats.late,
+                     sRoomStats.late == 0 ? "all loaded" : "never loaded; left as loaded");
+      EndRoomState();
+    }
+    return;
+  }
   if (waiting > 0 && ++sRoomFrames < kRoomApplyFrames)
     return;
-  sRoomPending = false;
-  DisarmSpawnLayers();
+  const bool late = sRoomStats.late > 0;
   PortLog::Write("[savestate] room state: %d applied, %d generated, %d removed, %d unmatched, "
-                 "%d areas skipped, %d script messages replayed, %d enemy fields set\n",
+                 "%d areas skipped, %d script messages replayed, %d enemy fields set%s\n",
                  sRoomStats.applied, sRoomStats.generated, sRoomStats.removed, sRoomStats.unmatched,
-                 sRoomStats.skipped, sRoomStats.replayed, sRoomStats.fields);
+                 sRoomStats.skipped, sRoomStats.replayed, sRoomStats.fields,
+                 late ? ", neighbour areas still streaming" : "");
+  sRoomPending = false;
+  if (late) {
+    // The armed spawn layers stay: those areas spawn with the bits they had at the save.
+    sRoomLate = true;
+    sRoomFrames = 0;
+  } else {
+    EndRoomState();
+  }
 }
 
 
@@ -742,6 +774,14 @@ bool RequestModReload() {
 
 std::string LastMessage() { return sMessage; }
 
+bool RoomRestoreOwnsArea(CStateManager& mgr, int area) {
+  if (!(sPlacePending || sRoomPending || sRoomLate) || !PortDebug::SaveStateRoomState() ||
+      mgr.GetWorld() == nullptr ||
+      static_cast< uint32_t >(mgr.GetWorld()->IGetWorldAssetId()) != sPendingHeader.worldId)
+    return false;
+  return RoomAreaAwaitsRestore(mgr, sPendingHeader.roomState, sRoomDone, area);
+}
+
 bool Tick(CStateManager& mgr) {
   if (sPlacePending && !mgr.GetWantsToQuit() && mgr.GetWorld() != nullptr &&
       mgr.GetGameState() == CStateManager::kGS_Running) {
@@ -804,6 +844,7 @@ void SetInFrontEnd(bool inFrontEnd) {
     // Back at the title: the snapshot, a room restore still running and the layers
     // armed for it belong to a game that was left.
     sRoomPending = false;
+    sRoomLate = false;
     DisarmSpawnLayers();
     std::lock_guard< std::mutex > lock(sSnapMutex);
     sSnap.valid = false;
