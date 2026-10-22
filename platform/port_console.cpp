@@ -7,6 +7,7 @@
 #include "port_ap_world.h"
 #include "port_apclient.h"
 #include "port_beam_doors.h"
+#include "port_disc_verify.h"
 #include "port_log.h"
 #include "port_env.h"
 #include "port_strings.h"
@@ -3124,6 +3125,37 @@ void CmdLiveSplit() {
   Finish();
 }
 
+void CmdDisc() {
+  const std::string action = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "";
+  const std::string what = sCmd.args.size() > 2 ? Lower(sCmd.args[2]) : "";
+  if (action == "verify" && what.empty()) {
+    if (!PortDiscVerify::Start()) {
+      return Finish("a disc check is already running, or no disc is mounted");
+    }
+    Out("disc verify: started");
+    return Finish();
+  }
+  if (action == "verify" && what == "cancel") {
+    PortDiscVerify::Cancel();
+    return Finish();
+  }
+  if (action != "verify" || what != "status") {
+    return Finish("usage: disc verify | disc verify status | disc verify cancel");
+  }
+  const PortDiscVerify::Result r = PortDiscVerify::Snapshot();
+  static const char* const kStates[] = {"idle", "running", "done", "cancelled", "error"};
+  Out("disc verify: %s", kStates[static_cast<int>(r.state)]);
+  if (r.state == PortDiscVerify::State::Running) {
+    Out("progress: %.1f%% (%llu of %llu MiB)", r.Progress() * 100.0, static_cast<unsigned long long>(r.bytesDone >> 20),
+        static_cast<unsigned long long>(r.bytesTotal >> 20));
+  } else if (r.state != PortDiscVerify::State::Idle) {
+    Out("%s", PortDiscVerify::Summary(r).c_str());
+    Out("result: %s", r.Ok() ? "ok" : (r.state == PortDiscVerify::State::Done ? "damaged" : "none"));
+    Out("seconds: %.1f", r.seconds);
+  }
+  Finish();
+}
+
 void CmdDiscord() {
   const std::string action = sCmd.args.size() > 1 ? Lower(sCmd.args[1]) : "status";
   if (action == "0" || action == "1") {
@@ -3743,6 +3775,8 @@ const CommandSpec kCommands[] = {
     {"igt", CmdIgt, nullptr, ""},
     {"livesplit", CmdLiveSplit, nullptr,
      "livesplit <0|1> | addr <host:port> | send <command> | status   LiveSplit Server client"},
+    {"disc", CmdDisc, nullptr,
+     "disc verify [status|cancel]   check the whole disc image against Redump, in the background; status prints progress or the result"},
     {"discord", CmdDiscord, nullptr, "discord <0|1> | status   Discord Rich Presence"},
     {"gci", CmdGci, nullptr,
      "gci list | share on|off | emulator <folder|auto> | import <path> | export <dir or .raw> | dolphin import|export   memory card transfer"},

@@ -436,6 +436,7 @@ void DrawCheats();
 void DrawFreeCam();
 void DrawRendering();
 void DrawLogSection();
+void DrawDiscCheckSection();
 void DrawDebugTab();
 void DrawPerformanceTab();
 void DrawLanguageSection();

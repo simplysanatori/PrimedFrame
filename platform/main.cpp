@@ -28,6 +28,7 @@
 #include "port_textures.h"
 #include "port_prompts.h"
 #include "port_build_info.h"
+#include "port_disc_verify.h"
 #include "port_log.h"
 #include "port_log_file.h"
 #include "port_memory_log.h"
@@ -1387,6 +1388,7 @@ int main(int argc, char** argv) {
         discPath = discImage.c_str();
     }
     PortLog::Write("metroid_prime_port: disc mounted: %s\n", discPath);
+    PortDiscVerify::SetImagePath(discImage);
     PortLog::Write("metroid_prime_port: disc is %s%s\n", PortDisc::Name(PortDisc::Current()),
                    PortDisc::Current() == PortDisc::Version::Pal ? " (experimental support)" : "");
     // Saves are the disc's region's (a PAL save's worlds are laid out
@@ -1455,6 +1457,7 @@ int main(int argc, char** argv) {
     AIPortShutdown();
     // An import still running reads the disc.
     PortRemastered::StopImport();
+    PortDiscVerify::Shutdown();
     PortActorCollisionBounds::Reset();
     aurora_dvd_close();
     aurora_shutdown();

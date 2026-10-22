@@ -338,6 +338,8 @@ set(MP_PORT_SOURCES
     platform/port_ball_looks_disc.cpp
     platform/port_hints.cpp
     platform/port_ws.cpp
+    platform/port_disc_verify.cpp
+    platform/port_disc_verify_core.cpp
     platform/touch_pad.cpp
     platform/glibc_compat.c
     platform/ai_dma.cpp)
@@ -745,6 +747,10 @@ if(MP_BUILD_TESTS)
         SOURCES tests/port_disc.cpp platform/disc.cpp
         INCLUDES platform/include extern/aurora/include
         DEFINITIONS TARGET_PC
+        LIBRARIES ZLIB::ZLIB)
+    mp_port_test(port_disc_verify_tests
+        SOURCES tests/port_disc_verify.cpp platform/port_disc_verify_core.cpp
+        INCLUDES platform/include platform
         LIBRARIES ZLIB::ZLIB)
     mp_port_test(port_mouse_tests SOURCES tests/port_mouse.cpp INCLUDES platform/include)
     # Drives a real SDL virtual gamepad through the touch overlay's own code.
