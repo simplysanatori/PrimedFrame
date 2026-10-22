@@ -646,8 +646,6 @@ bool MouseInvertX();
 bool MouseInvertY();
 bool MouseButtons();
 bool MouseCrosshair();
-// Direct aim: an empty lock-on keeps the camera pitch instead of levelling it.
-bool LockKeepsPitch();
 // The free-aim crosshair under direct aim: the setting, or always with pointer aim.
 bool AimCrosshair();
 // Pointer aim (Trilogy style, any direct aim): the mouse, right stick, gyro or a

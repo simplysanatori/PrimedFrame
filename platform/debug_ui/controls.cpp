@@ -103,13 +103,6 @@ void DrawControlsOptions() {
   }
   ItemHelp("Reset aim (unbound by default) recentres the crosshair with pointer aim on, or levels "
            "the camera with it off. On: it does both.");
-  bool lockKeepsPitch = sInput.lockKeepsPitch;
-  if (ImGui::Checkbox("Empty lock-on keeps pitch", &lockKeepsPitch)) {
-    sInput.lockKeepsPitch = lockKeepsPitch;
-    MarkDirty();
-  }
-  ItemHelp("Direct aim only. Lock-on with no target keeps your camera pitch instead of levelling "
-           "the view.");
 
   ImGui::SeparatorText("Morph ball");
   bool fastMorph = sInput.fastMorph;
