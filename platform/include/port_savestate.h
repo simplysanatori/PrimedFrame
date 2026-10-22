@@ -257,6 +257,10 @@ bool RoomAreaAwaitsRestore(CStateManager& mgr, const RoomState& room,
 // turns both off.
 bool CaptureEntityFields(const CStateManager& mgr, CEntity& ent, std::string& out);
 int ApplyEntityFields(CStateManager& mgr, CEntity& ent, const std::string& data);
+// Whether the block carries every schema class of `ent` (this build's fingerprints): then
+// the room restore leaves the enemy's state to it and skips the message replay and the
+// per-boss restore, which only older saves and changed classes still need.
+bool EntityFieldsCover(CEntity& ent, const std::string& data);
 
 // Spawn layers (issue #161), game thread only. CGameArea::LoadScriptObjects calls
 // NoteAreaSpawn{Begin,End} around spawning an area's script objects: Begin records

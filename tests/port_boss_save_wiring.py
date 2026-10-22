@@ -61,10 +61,13 @@ class Wiring(WiringCase):
         room = ROOM.read_text()
         body = braced(room, "void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj,", str(ROOM))
         active = body.index("RestoreActive(mgr, ent, obj.active);")
-        replay = body.index("stats.replayed += ReplayScriptMsgs(mgr, ent, obj);")
+        replay = body.index("stats.replayed += ReplayScriptMsgs(mgr, ent, obj, !generic);")
         health = body.index("FindBlock(obj, kTagHealth)")
         self.assertLess(active, replay)
         self.assertLess(replay, health)
+        # An enemy its fields block covers skips the replay and the per-boss restore.
+        self.assertLess(body.index("EntityFieldsCover(ent, fields->data)"), replay)
+        self.assertIn("if (!generic) {", body)
         # The replayed journal is kept for the next save.
         replayer = braced(room, "int ReplayScriptMsgs(", str(ROOM))
         self.assertIn("NoteFor(mgr, uid).msgs = journal;", replayer)

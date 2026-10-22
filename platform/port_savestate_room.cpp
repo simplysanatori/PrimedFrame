@@ -490,28 +490,39 @@ void RestoreActive(CStateManager& mgr, CEntity& ent, bool active) {
 // Sends the enemy the script messages it had been sent before the save, in order (what
 // woke a boss: a trigger's Action to Thardus), and keeps them for the next save.
 // Senders are the objects of the rebuilt room with the saved editor ids.
-int ReplayScriptMsgs(CStateManager& mgr, CEntity& ent, const RoomObject& obj) {
+// With `deliver` false (an enemy its kTagFields block restores) the journal is only kept.
+int ReplayScriptMsgs(CStateManager& mgr, CEntity& ent, const RoomObject& obj, bool deliver) {
   const RoomBlock* b = FindBlock(obj, kTagMessages);
   std::vector< ScriptMsgEntry > journal;
   if (b == nullptr || !DecodeScriptMsgs(b->data, journal) || journal.empty())
     return 0;
   const TUniqueId uid = ent.GetUniqueId();
+  int replayed = 0;
   for (const ScriptMsgEntry& e : journal) {
+    if (!deliver)
+      break;
     const TUniqueId sender =
         e.sender == kNoEditorId ? kInvalidUniqueId : mgr.GetIdForScript(TEditorId(e.sender));
     DeliverUnlinked(mgr, ent, sender, static_cast< EScriptObjectMessage >(e.msg));
+    ++replayed;
     // A handler may delete the object (an enemy told to go away).
     if (mgr.ObjectById(uid) != &ent || ent.IsInGraveyard())
       break;
   }
   NoteFor(mgr, uid).msgs = journal;
-  return static_cast< int >(journal.size());
+  return replayed;
 }
 
 void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomApplyStats& stats) {
   RestoreActive(mgr, ent, obj.active);
+  // An enemy whose fields block covers it gets its state (AI, body, animation, boss phase)
+  // from that block, on top of the Activate above: replaying its messages and the per-boss
+  // restore would only be undone (2026-10-23 sweep, 19 enemy/boss scenarios). Saves without
+  // the block, or with a class this build changed, still go the old way.
+  const RoomBlock* fields = FindBlock(obj, kTagFields);
+  const bool generic = fields != nullptr && EntityFieldsCover(ent, fields->data);
   // Before the saved health and pose, which then win over whatever a message reset.
-  stats.replayed += ReplayScriptMsgs(mgr, ent, obj);
+  stats.replayed += ReplayScriptMsgs(mgr, ent, obj, !generic);
   if (ent.IsInGraveyard())
     return;
 
@@ -557,12 +568,14 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomAp
   if (COmegaPirate* omega = dynamic_cast< COmegaPirate* >(&ent))
     omega->PortRestoredFromSave(mgr);
   // After health and pose: a boss's phase is worked out from them when the save has no block.
-  const RoomBlock* boss = FindBlock(obj, kTagBoss);
-  RestoreBossState(mgr, ent, boss != nullptr ? &boss->data : nullptr);
+  if (!generic) {
+    const RoomBlock* boss = FindBlock(obj, kTagBoss);
+    RestoreBossState(mgr, ent, boss != nullptr ? &boss->data : nullptr);
+  }
   // Last of an enemy's blocks: the saved values win over what the replayed messages and
   // the boss restore set up.
-  if (const RoomBlock* b = FindBlock(obj, kTagFields))
-    stats.fields += ApplyEntityFields(mgr, ent, b->data);
+  if (fields != nullptr)
+    stats.fields += ApplyEntityFields(mgr, ent, fields->data);
   if (CScriptTimer* timer = TCastToPtr< CScriptTimer >(&ent)) {
     if (const RoomBlock* b = FindBlock(obj, kTagTimer)) {
       BlockReader r(b->data);

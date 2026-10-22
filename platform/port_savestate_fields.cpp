@@ -736,4 +736,27 @@ int ApplyEntityFields(CStateManager& mgr, CEntity& ent, const std::string& data)
   return set;
 }
 
+bool EntityFieldsCover(CEntity& ent, const std::string& data) {
+  if (!Enabled())
+    return false;
+  BlockReader r(data);
+  if (r.U32() != kFieldPolicy || !r.ok)
+    return false;
+  const std::vector< const PortSchemaClass* > chain = Chain(ent);
+  const int classes = r.U8();
+  int matched = 0;
+  for (int c = 0; c < classes && r.ok; ++c) {
+    const uint64_t lo = r.U32();
+    const uint64_t fingerprint = lo | (static_cast< uint64_t >(r.U32()) << 32);
+    const uint32_t len = r.U32();
+    if (!r.ok || r.bytes.size() - r.pos < len)
+      return false;
+    for (const PortSchemaClass* k : chain)
+      if (k->fingerprint == fingerprint)
+        ++matched;
+    r.pos += len;
+  }
+  return !chain.empty() && matched == static_cast< int >(chain.size());
+}
+
 } // namespace PortSaveState
