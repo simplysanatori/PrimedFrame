@@ -492,6 +492,9 @@ void Place(CStateManager& mgr) {
     look = CVector3f(0.f, 1.f, 0.f);
   player.Teleport(CTransform4f::LookAt(pos, pos + look, CVector3f(0.f, 0.f, 1.f)), mgr, true);
   player.SetVelocityWR(CVector3f(0.f, 0.f, 0.f));
+  // The rebuilt player has no area until its own first Update, which runs after the
+  // enemies' (a Metroid whose target is the player loses interest while it reads -1).
+  mgr.SetActorAreaId(player, mgr.GetWorld()->GetCurrentAreaId());
   const bool morphed = player.GetMorphballTransitionState() == CPlayer::kMS_Morphed;
   if (h.morphed != morphed) {
     player.SetSpawnedMorphBallState(h.morphed ? CPlayer::kMS_Morphed : CPlayer::kMS_Unmorphed,
