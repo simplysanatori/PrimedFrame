@@ -16,6 +16,7 @@
 #include "MetroidPrime/Enemies/CPatterned.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
 #include "MetroidPrime/Player/CWorldState.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptActorRotate.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptCounter.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptDoor.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptEMPulse.hpp"
@@ -49,6 +50,7 @@ enum RoomTag : uint32_t {
   kTagGenerated = 9,  // empty: a script generator's copy of the enemy with this editor id
   kTagMessages = 10,  // the script messages the enemy was sent (EncodeScriptMsgs)
   kTagBoss = 11,      // a boss's fight state beyond its health (port_savestate_boss.h)
+  kTagRotate = 12,    // a turn in progress: flags, time, then per actor editor id + start rotation
 };
 
 // Friend of the script classes whose state is private.
@@ -144,6 +146,78 @@ struct PortRoomState {
     // slaves again on the next Think.
     p.x270_dragDelta = CVector3f::Zero();
     return waypoints;
+  }
+  // A turn in progress (Ore Processing's column, issue #172): without it the rebuilt
+  // ActorRotate is idle, the column stays where the save caught it, and the next turn
+  // starts from there, so the tracks never line up again. Only a turn in progress is
+  // written; a finished one is in the actors' poses.
+  static bool PutRotate(const CStateManager& mgr, const CScriptActorRotate& a,
+                        PortSaveState::BlockWriter& w) {
+    if (!a.x58_24_updateRotation)
+      return false;
+    w.U8(a.x58_25_updateSpiderBallWaypoints ? 1 : 0);
+    w.F32(a.x44_currentTime);
+    w.U32(static_cast< uint32_t >(a.x48_actors.size()));
+    for (const auto& actor : a.x48_actors) {
+      w.U32(WaypointId(mgr, actor.first));
+      const CTransform4f& xf = actor.second;
+      const float m[9] = {xf.Get00(), xf.Get01(), xf.Get02(), xf.Get10(), xf.Get11(),
+                          xf.Get12(), xf.Get20(), xf.Get21(), xf.Get22()};
+      for (float f : m)
+        w.F32(f);
+    }
+    return true;
+  }
+  static void GetRotate(CStateManager& mgr, CScriptActorRotate& a, PortSaveState::BlockReader& r) {
+    const bool waypoints = r.U8() != 0;
+    const float time = r.F32();
+    const uint32_t count = r.U32();
+    if (!r.ok || !(time >= 0.f) || count > 1024)
+      return;
+    rstl::vector< rstl::pair< TUniqueId, CTransform4f > > actors;
+    for (uint32_t i = 0; i < count; ++i) {
+      const uint32_t id = r.U32();
+      float m[9];
+      for (float& f : m)
+        f = r.F32();
+      if (!r.ok)
+        return;
+      const TUniqueId uid = id == 0xFFFFFFFFu ? kInvalidUniqueId : mgr.GetIdForScript(TEditorId(id));
+      if (uid != kInvalidUniqueId)
+        actors.push_back(rstl::pair< TUniqueId, CTransform4f >(
+            uid, CTransform4f(m[0], m[1], m[2], 0.f, m[3], m[4], m[5], 0.f, m[6], m[7], m[8], 0.f)));
+    }
+    if (actors.empty())
+      return;
+    a.x48_actors = actors;
+    a.x44_currentTime = time < a.x40_maxTime ? time : a.x40_maxTime;
+    a.x58_24_updateRotation = true;
+    a.x58_25_updateSpiderBallWaypoints = waypoints;
+    // Think puts a turned platform's riders at turn * offset, the offset from before
+    // the turn; RestorePlatforms left the offsets of the pose the save caught.
+    const float t = a.x40_maxTime > 0.f ? a.x44_currentTime / a.x40_maxTime : 1.f;
+    const CTransform4f turn = CTransform4f::RotateX(CRelAngle::FromDegrees(t * a.x34_rotation.GetX())) *
+                              CTransform4f::RotateY(CRelAngle::FromDegrees(t * a.x34_rotation.GetY())) *
+                              CTransform4f::RotateZ(CRelAngle::FromDegrees(t * a.x34_rotation.GetZ()));
+    const CTransform4f undo = turn.GetInverse();
+    CScriptPlatform::TMovedList seen;
+    for (const auto& actor : a.x48_actors)
+      if (CScriptPlatform* p = TCastToPtr< CScriptPlatform >(mgr.ObjectById(actor.first)))
+        UnturnRiders(mgr, *p, undo, seen);
+  }
+  static void UnturnRiders(CStateManager& mgr, CScriptPlatform& p, const CTransform4f& undo,
+                           CScriptPlatform::TMovedList& seen) {
+    if (CScriptPlatform::IsInMovedList(p.GetUniqueId(), seen))
+      return;
+    seen.push_back(p.GetUniqueId().Value());
+    rstl::vector< SRiders >* lists[] = {&p.x328_slavesStatic, &p.x338_slavesDynamic};
+    for (rstl::vector< SRiders >* list : lists) {
+      for (rstl::vector< SRiders >::iterator it = list->begin(); it != list->end(); ++it) {
+        it->x8_transform = undo * it->x8_transform;
+        if (CScriptPlatform* child = TCastToPtr< CScriptPlatform >(mgr.ObjectById(it->x0_uid)))
+          UnturnRiders(mgr, *child, undo, seen);
+      }
+    }
   }
   // What CScriptActorRotate does after turning a waypoint: every waypoint's path and
   // touch bounds are rebuilt from the poses now in place.
@@ -351,6 +425,11 @@ void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
     PortRoomState::PutPlatform(mgr, *platform, w);
     obj.blocks.push_back({kTagPlatform, w.bytes});
   }
+  if (CScriptActorRotate* rotate = dynamic_cast< CScriptActorRotate* >(&ent)) {
+    BlockWriter w;
+    if (PortRoomState::PutRotate(mgr, *rotate, w))
+      obj.blocks.push_back({kTagRotate, w.bytes});
+  }
   std::string boss;
   if (CaptureBossState(mgr, ent, boss))
     obj.blocks.push_back({kTagBoss, boss});
@@ -499,6 +578,12 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomAp
     if (const RoomBlock* b = FindBlock(obj, kTagPlatform)) {
       BlockReader r(b->data);
       PortRoomState::GetPlatform(mgr, *platform, r);
+    }
+  }
+  if (CScriptActorRotate* rotate = dynamic_cast< CScriptActorRotate* >(&ent)) {
+    if (const RoomBlock* b = FindBlock(obj, kTagRotate)) {
+      BlockReader r(b->data);
+      PortRoomState::GetRotate(mgr, *rotate, r);
     }
   }
 }

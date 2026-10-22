@@ -9,6 +9,8 @@ struct SRiders;
 class CScriptPlatform;
 
 class CScriptActorRotate : public CEntity {
+  friend struct PortRoomState;
+
 public:
   CScriptActorRotate(TUniqueId, const rstl::string&, const CEntityInfo&, const CVector3f&,
                      float, bool, bool, bool);
