@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <bitset>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -57,10 +58,18 @@ bool sUserLoaded = false;
 std::filesystem::file_time_type sUserTime{};
 std::chrono::steady_clock::time_point sUserChecked{};
 
-// Touch overlay controls held now (codes 0..kTouchControlCount-1), set from Android's
-// UI thread.
-std::atomic<uint64_t> sTouchControls{0};
-std::atomic<uint64_t> sTouchBound{0};
+// Touch overlay controls held now (codes 0..kTouchControlCount-1, and the added
+// buttons' from kTouchCustomBase), set from Android's UI thread.
+// Two words for 128 codes, each lock-free on its own: a press and a release only
+// ever touch one bit of one word.
+std::atomic<uint64_t> sTouchControls[2]{};
+std::atomic<uint64_t> sTouchBound[2]{};
+static_assert(PortInput::kTouchCount == 128);
+
+std::bitset<PortInput::kTouchCount> TouchBits(const std::atomic<uint64_t> (&words)[2]) {
+  return std::bitset<PortInput::kTouchCount>(words[1].load(std::memory_order_relaxed)) << 64 |
+         std::bitset<PortInput::kTouchCount>(words[0].load(std::memory_order_relaxed));
+}
 
 // Mouse wheel notches since the last poll (x1000, vertical then horizontal), added
 // by an SDL event watch on the event thread.
@@ -502,10 +511,10 @@ void FillRawState(PortInput::RawState& raw, unsigned mouseHeld, bool focused) {
     }
   }
 
-  raw.touch = sTouchControls.load(std::memory_order_relaxed);
-  if (PortDebug::TouchBeamShift()) raw.touch |= uint64_t{1} << kTouchBeamShift;
-  if (PortDebug::TouchTurboFire()) raw.touch |= uint64_t{1} << kTouchTurbo;
-  if (PortDebug::ConsumeMapTapZ()) raw.touch |= uint64_t{1} << kTouchMapTap;
+  raw.touch = TouchBits(sTouchControls);
+  if (PortDebug::TouchBeamShift()) raw.touch.set(kTouchBeamShift);
+  if (PortDebug::TouchTurboFire()) raw.touch.set(kTouchTurbo);
+  if (PortDebug::ConsumeMapTapZ()) raw.touch.set(kTouchMapTap);
 }
 
 // Aurora's stick conversion: x/256 truncated, y negated (SDL's y points down).
@@ -760,32 +769,41 @@ bool SetUserBindings(const PortInput::UserBindings& bindings) {
   return true;
 }
 
+static bool TouchControlCode(int control) {
+  return (control >= 0 && control < kTouchControlCount) ||
+         (control >= kTouchCustomBase && control < kTouchCustomBase + kTouchCustomCount);
+}
+static_assert(kTouchCustomBase == PortInput::kTouchButtonBase && kTouchCustomCount == PortInput::kTouchButtonSlots);
+static_assert(kTouchCustomBase + kTouchCustomCount <= PortInput::kTouchCount);
+
 void SetTouchControl(int control, bool down) {
-  if (control < 0 || control >= kTouchControlCount) return;
-  const uint64_t bit = uint64_t{1} << control;
-  if (down) sTouchControls.fetch_or(bit, std::memory_order_relaxed);
-  else sTouchControls.fetch_and(~bit, std::memory_order_relaxed);
+  if (!TouchControlCode(control)) return;
+  const uint64_t bit = uint64_t{1} << (control & 63);
+  std::atomic<uint64_t>& word = sTouchControls[control >> 6];
+  if (down) word.fetch_or(bit, std::memory_order_relaxed);
+  else word.fetch_and(~bit, std::memory_order_relaxed);
 }
 
 // Read from the Android UI thread: the mask is published by the game thread's
 // poll, so no SDL calls or file reads happen there.
 bool TouchControlBound(int control) {
-  if (control < 0 || control >= kTouchControlCount) return false;
-  return (sTouchBound.load(std::memory_order_relaxed) >> control) & 1;
+  if (!TouchControlCode(control)) return false;
+  return (sTouchBound[control >> 6].load(std::memory_order_relaxed) >> (control & 63)) & 1;
 }
 
-static uint64_t TouchBoundMask(const SActiveProfiles& active) {
-  uint64_t mask = 0;
+static void PublishTouchBound(const SActiveProfiles& active) {
+  uint64_t mask[2] = {};
   for (const PortInput::UserProfile* p : {active.sel.base, active.sel.pad}) {
     if (p == nullptr) continue;
     for (const Binding& b : p->bindings) {
       for (int i = 0; i < b.count; ++i) {
         const Input& in = b.inputs[size_t(i)];
-        if (in.device == Device::Touch && in.code < kTouchControlCount) mask |= uint64_t{1} << in.code;
+        if (in.device == Device::Touch && TouchControlCode(in.code)) mask[in.code >> 6] |= uint64_t{1} << (in.code & 63);
       }
     }
   }
-  return mask;
+  sTouchBound[0].store(mask[0], std::memory_order_relaxed);
+  sTouchBound[1].store(mask[1], std::memory_order_relaxed);
 }
 
 bool ActivePad(std::string& guid, std::string& type, std::string& name) {
@@ -830,7 +848,7 @@ void ReadRaw(PortInput::RawState& raw) {
     }
   }
   raw.mouseButtons = (SDL_GetMouseState(nullptr, nullptr) & PortInputMap::kMouseButtonMask) << kMouseKeySlot;
-  raw.touch = sTouchControls.load(std::memory_order_relaxed);
+  raw.touch = TouchBits(sTouchControls);
 }
 
 std::vector<SPadInfo> ConnectedPads() {
@@ -879,9 +897,12 @@ void KeepPortMenuReachable(Profile& p) {
 void BuildProfile(Profile& out) {
   BuildBaseProfile(out);
   const SActiveProfiles user = ActiveUserProfiles();
-  sTouchBound.store(TouchBoundMask(user), std::memory_order_relaxed);
+  PublishTouchBound(user);
   if (user.sel.base != nullptr) PortInput::Overlay(out, *user.sel.base);
   if (user.sel.pad != nullptr) PortInput::Overlay(out, *user.sel.pad);
+  // After the overlay: a controls.toml touch binding of the same action must not
+  // drop the layout's own buttons. Re-read every poll, so an added one works at once.
+  PortInput::BindTouchButtons(out, PortDebug::TouchLayout());
   KeepPortMenuReachable(out);
 }
 

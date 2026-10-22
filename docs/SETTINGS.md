@@ -212,6 +212,21 @@
   margin, Stick inset and Button inset on the same page
   (`touch_side_margin`, `touch_stick_inset`, `touch_button_inset`) move those
   controls instead, in dp.
+  **Added touch buttons** (Android, Edit layout; #92): with nothing selected the
+  editor's toolbar shows Add, Reset all and Done. Add lists the digital actions
+  (the controls.toml action list without sticks, aim, look, layers and menu
+  rows; `nativeTouchButtonActions`) and puts a round button for the pick at the
+  screen's centre, selected; up to 64. A selected added button has −, +,
+  Opacity, Hide, Action (pick another action) and Delete. It shows the game's
+  icon for a beam or visor action, else a short label, and works in every touch
+  layout (default, classic, twin stick); in play it takes a touch before the face
+  buttons, and it is gone with the controls off and on pointer screens. Reset all
+  removes every added button.
+  Saved in the layout string as `k<slot>:dx,dy,scale,opacity,hidden,<action>`
+  (all six fields, slot 0..63); the native side binds each to touch code
+  64 + slot (`PortInput::BindTouchButtons`, after controls.toml's bindings), so
+  controls.toml can also bind `touch:k<slot>`. A layout without added buttons
+  saves as before.
   **Touch aim** (Android, `touch_aim`, on by default; `touch_aim_speed`, default
   2.25 aim px per dp; with `touch_aim_split=1`, `touch_aim_speed_y`, same range,
   sets the vertical speed and `touch_aim_speed` only the horizontal): with twin stick on, the right stick is gone and a finger

@@ -49,7 +49,7 @@ constexpr int kKeyCount = 512;
 constexpr int kMouseButtonCount = 32;
 constexpr int kPadButtonCount = 32;
 constexpr int kPadAxisCount = 8;
-constexpr int kTouchCount = 64;
+constexpr int kTouchCount = 128;
 constexpr int kTouchAxisCount = 8;
 
 // One physical input. dir: 0 the whole axis (analog, signed), +1/-1 one half of
@@ -74,7 +74,7 @@ struct RawState {
   float mouseDelta[2] = {};
   uint32_t padButtons = 0;
   float padAxes[kPadAxisCount] = {};
-  uint64_t touch = 0;
+  std::bitset<kTouchCount> touch;
   float touchAxes[kTouchAxisCount] = {};
   float gyro[3] = {};
 

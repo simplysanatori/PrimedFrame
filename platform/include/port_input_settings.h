@@ -47,7 +47,7 @@ constexpr float kTouchButtonInsetDefault = 0.f;
 constexpr float kTouchOpacityDefault = 100.f;
 constexpr float kTouchOpacityMin = 10.f;
 constexpr float kTouchOpacityMax = 100.f;
-constexpr std::size_t kTouchLayoutMaxLen = 4096;
+constexpr std::size_t kTouchLayoutMaxLen = 16384; // 64 added buttons fit (issue #92)
 // SDL_SCANCODE_LSHIFT (SDL3), the default beam-shift key; debug_ui.cpp checks it.
 constexpr int kScancodeLShift = 225;
 

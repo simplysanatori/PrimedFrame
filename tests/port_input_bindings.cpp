@@ -81,7 +81,8 @@ void TestInputText() {
   REQUIRE(!InputFromText("pad:a@101", in));
   REQUIRE(!InputFromText("pad:nope", in));
   REQUIRE(!InputFromText("pad:32", in));
-  REQUIRE(!InputFromText("touch:64", in));
+  REQUIRE(!InputFromText("touch:128", in));
+  REQUIRE(InputFromText("touch:127", in) && in == In(Device::Touch, 127));
   REQUIRE(!InputFromText("key:space", in)); // no key names installed
   REQUIRE(!InputFromText("bogus:1", in));
   REQUIRE(!InputFromText("pad:", in));
@@ -103,6 +104,7 @@ void TestInputText() {
   REQUIRE(InputToText(In(Device::Touch, 28)) == "touch:tturbo");
   REQUIRE(InputToText(In(Device::Touch, 32)) == "touch:beam_shift");
   REQUIRE(InputToText(In(Device::Touch, 40)) == "touch:40");
+  REQUIRE(InputToText(In(Device::Touch, 63)) == "touch:63");
   REQUIRE(InputFromText("touch:missile", in) && in == In(Device::Touch, 20));
   REQUIRE(InputFromText("touch:map_tap", in) && in == In(Device::Touch, 34));
   REQUIRE(InputFromText("touch:5", in) && in == In(Device::Touch, 5));
@@ -368,9 +370,89 @@ void TestDuplicateBindings() {
   AddUserBinding(controllerProfile, key);
   REQUIRE(controllerProfile.bindings.size() == 1);
 }
+// Issue #92: the layout editor's buttons, from the touch layout string.
+void TestTouchButtons() {
+  REQUIRE(ParseTouchButtons("").empty());
+  // The stock entries, old (3 and 5 fields) and new, are not buttons.
+  REQUIRE(ParseTouchButtons("a:0.1000,0.0000,1.200;menu:0,0,1,25;eye:0,0,1,100,1").empty());
+  const std::vector<TouchButton> got = ParseTouchButtons(
+      "a:0.1,0,1;k3:0,0,1,100,0,visor_scan; k0 :-0.5,0.25,1.5,50,1, beam_wave ;k63:0,0,1,100,0,save_state");
+  REQUIRE(got.size() == 3);
+  REQUIRE((got[0] == TouchButton{0, Action::BeamWave}));
+  REQUIRE((got[1] == TouchButton{3, Action::VisorScan}));
+  REQUIRE((got[2] == TouchButton{63, Action::SaveState}));
+  // Bad slots, field counts and actions are skipped, the rest still load.
+  for (const char* bad : {"k64:0,0,1,100,0,pad_a", "k-1:0,0,1,100,0,pad_a", "k:0,0,1,100,0,pad_a",
+                          "k01:0,0,1,100,0,pad_a", "kx:0,0,1,100,0,pad_a", "k100:0,0,1,100,0,pad_a",
+                          "k1:0,0,1,100,pad_a", "k1:0,0,1,100,0,pad_a,1", "k1:0,0,1,100,0,", "k1:0,0,1,100,0,warp",
+                          "k1:0,0,1,100,0,none", "k1:0,0,1,100,0,stick_up", "k1:0,0,1,100,0,look_x",
+                          "k1:0,0,1,100,0,layer_1", "k1:0,0,1,100,0,menu_a", "k1", "K1:0,0,1,100,0,pad_a"}) {
+    const std::string text = std::string(bad) + ";k2:0,0,1,100,0,pad_y";
+    const std::vector<TouchButton> one = ParseTouchButtons(text);
+    REQUIRE(one.size() == 1);
+    REQUIRE((one[0] == TouchButton{2, Action::PadY}));
+  }
+  // A repeated slot keeps its last valid entry.
+  const std::vector<TouchButton> twice = ParseTouchButtons("k4:0,0,1,100,0,pad_a;k4:0,0,1,100,0,pad_b;k4:0,0,1,100,0,warp");
+  REQUIRE(twice.size() == 1 && twice[0].action == Action::PadB);
+  // All 64 at once.
+  std::string full;
+  for (int slot = 0; slot < kTouchButtonSlots; ++slot)
+    full += "k" + std::to_string(slot) + ":0.1234,-0.5678,1.250,75,0,spring_ball;";
+  REQUIRE(ParseTouchButtons(full).size() == size_t(kTouchButtonSlots));
+
+  REQUIRE(TouchButtonAction(Action::PadA));
+  REQUIRE(TouchButtonAction(Action::SpringBall));
+  REQUIRE(TouchButtonAction(Action::PortMenu));
+  REQUIRE(!TouchButtonAction(Action::None));
+  REQUIRE(!TouchButtonAction(Action::AimUp));
+  REQUIRE(!TouchButtonAction(Action::LookY));
+  REQUIRE(!TouchButtonAction(Action::Layer4));
+  REQUIRE(!TouchButtonAction(Action::MenuRight));
+
+  // The codes reach the profile as single-input presses, after what was there,
+  // and a user's touch rebinding of the same action (Overlay first) keeps them.
+  Profile p;
+  p.bindings.push_back(Bind(Action::VisorScan, {In(Device::Touch, 5)}));
+  UserProfile user;
+  user.bindings.push_back(Bind(Action::VisorScan, {In(Device::Touch, 6)}));
+  Overlay(p, user);
+  BindTouchButtons(p, "k1:0,0,1,100,0,visor_scan;k7:0,0,1,100,1,spring_ball;k63:0,0,1,0,0,beam_ice");
+  REQUIRE(p.bindings.size() == 4);
+  REQUIRE((p.bindings[0] == Bind(Action::VisorScan, {In(Device::Touch, 6)})));
+  REQUIRE((p.bindings[1] == Bind(Action::VisorScan, {In(Device::Touch, 65)})));
+  REQUIRE((p.bindings[2] == Bind(Action::SpringBall, {In(Device::Touch, 71)})));
+  REQUIRE((p.bindings[3] == Bind(Action::BeamIce, {In(Device::Touch, 127)})));
+  REQUIRE(p.bindings[1].trigger == Trigger::Press && p.bindings[1].contexts == kCtxAll);
+
+  // The top slot's code is read through the 128-bit touch state and fires its action.
+  RawState raw;
+  REQUIRE(raw.Value(In(Device::Touch, 127)) == 0.f);
+  raw.touch.set(127);
+  REQUIRE(raw.Value(In(Device::Touch, 127)) == 1.f);
+  REQUIRE(raw.Value(In(Device::Touch, 63)) == 0.f);
+  REQUIRE(raw.Value(In(Device::Touch, 128)) == 0.f);
+  Runtime runtime;
+  runtime.SetProfile(&p);
+  raw.touch.reset();
+  runtime.Poll(raw, kCtxGameplay, 1000);
+  REQUIRE(!runtime.Last().Held(Action::BeamIce));
+  raw.touch.set(127);
+  REQUIRE(runtime.Poll(raw, kCtxGameplay, 1016).Held(Action::BeamIce));
+  REQUIRE(!runtime.Last().Held(Action::SpringBall));
+  raw.touch.reset(127);
+  REQUIRE(!runtime.Poll(raw, kCtxGameplay, 1032).Held(Action::BeamIce));
+
+  // Named in controls.toml by their layout ids.
+  REQUIRE(InputToText(In(Device::Touch, 64)) == "touch:k0");
+  REQUIRE(InputToText(In(Device::Touch, 127)) == "touch:k63");
+  Input back;
+  REQUIRE(InputFromText("touch:k9", back) && back == In(Device::Touch, 73));
+}
 } // namespace
 
 int main() {
+  TestTouchButtons();
   TestDuplicateBindings();
   TestFamilyEditing();
   TestInputText();
