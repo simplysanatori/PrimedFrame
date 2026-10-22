@@ -10,6 +10,7 @@
 #include "MetroidPrime/CAnimRes.hpp"
 
 class CMetroidPrimeRelay : public CEntity {
+  friend struct PortEntitySchema; // save-state field schema (platform/include/port_entity_schema.h)
 #ifdef TARGET_PC
   friend struct PortBossState; // save-state fight state (platform/port_savestate_boss.h)
 #endif

@@ -146,11 +146,17 @@ list(APPEND MP_GAME_SOURCES
     platform/port_automapper.cpp
     platform/port_particle_vfx_read.cpp
     platform/port_element_gen.cpp
+    platform/port_entity_schema.cpp
     src/MetroidPrime/CPortNestedLights.cpp)
 # The port has an explicit source manifest, including registration-only and
 # shim-dependent translation units. Link those objects directly on both ELF and
 # COFF rather than relying on archive extraction or suppressing duplicate symbols.
 add_library(mp_game OBJECT ${MP_GAME_SOURCES})
+# The entity schema table holds a few thousand accessor lambdas, each its own COMDAT
+# section on COFF: past the 65k sections an object holds without /bigobj.
+if(MSVC)
+    set_source_files_properties(platform/port_entity_schema.cpp PROPERTIES COMPILE_OPTIONS /bigobj)
+endif()
 mp_signed_char(mp_game)
 target_include_directories(mp_game PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/platform/include
@@ -777,6 +783,19 @@ if(MP_BUILD_TESTS)
         DEFINITIONS TARGET_PC)
     # The `status --json` physics components: a non-finite value must be JSON null,
     # checked by parsing the production helper's output with the strict reader above.
+    # The generated entity field schema (tools/gen_entity_schema.py): it compiles the
+    # accessors against every entity header as mp_game does, forced include and all.
+    mp_port_test(port_entity_schema_tests
+        SOURCES tests/port_entity_schema.cpp platform/port_entity_schema.cpp
+        INCLUDES platform/include include extern/aurora/include extern/musyx/include
+        DEFINITIONS TARGET_PC AURORA AURORA_ENABLE_GX MUSY_TARGET=MUSY_TARGET_PC)
+    mp_signed_char(port_entity_schema_tests)
+    if(MSVC)
+        target_compile_options(port_entity_schema_tests PRIVATE /FI${CMAKE_CURRENT_SOURCE_DIR}/platform/compat.h)
+    else()
+        target_compile_options(port_entity_schema_tests PRIVATE -Wno-narrowing -Wno-multichar
+            -Wno-write-strings -include ${CMAKE_CURRENT_SOURCE_DIR}/platform/compat.h)
+    endif()
     mp_port_test(port_console_physics_tests
         SOURCES tests/port_console_physics.cpp platform/port_json.cpp
         INCLUDES platform/include
@@ -1389,6 +1408,11 @@ if(MP_BUILD_TESTS)
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_settings_index.py
                     ${CMAKE_CURRENT_SOURCE_DIR})
         set_tests_properties(port_settings_index PROPERTIES TIMEOUT 15 LABELS port)
+        # The committed entity schema against the headers; skips (77) without clang-19.
+        add_test(NAME port_entity_schema_current
+            COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tools/gen_entity_schema.py --check)
+        set_tests_properties(port_entity_schema_current PROPERTIES TIMEOUT 300 LABELS port
+            SKIP_RETURN_CODE 77)
         add_test(NAME port_air_mover_wiring
             COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_CURRENT_SOURCE_DIR}/tests/port_air_mover_wiring.py
                     ${CMAKE_CURRENT_SOURCE_DIR}/platform/port_remastered_movers.cpp)

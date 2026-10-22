@@ -6,6 +6,7 @@
 #include "Kyoto/Audio/CMidiManager.hpp"
 
 class CScriptMidi : public CEntity {
+  friend struct PortEntitySchema; // save-state field schema (platform/include/port_entity_schema.h)
 public:
   CScriptMidi(TUniqueId id, const CEntityInfo& info, const rstl::string& name, bool active,
               CAssetId csng, float, float, int);

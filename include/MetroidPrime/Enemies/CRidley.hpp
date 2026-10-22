@@ -69,6 +69,7 @@ public:
 CHECK_SIZEOF(CRidleyData, 0x418)
 
 class CRidley : public CPatterned {
+  friend struct PortEntitySchema; // save-state field schema (platform/include/port_entity_schema.h)
 #ifdef TARGET_PC
   friend struct PortBossState; // save-state fight state (platform/port_savestate_boss.h)
 #endif

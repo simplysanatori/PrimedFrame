@@ -40,6 +40,7 @@ enum EPlayerMovementState {
 };
 
 class CPlayer : public CPhysicsActor, public TOneStatic< CPlayer > {
+  friend struct PortEntitySchema; // save-state field schema (platform/include/port_entity_schema.h)
   friend class CMorphBall;
 
   struct CVisorSteam {

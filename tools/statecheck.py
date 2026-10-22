@@ -22,6 +22,10 @@ ticks, also while held):
 A field that differs between A and B is STRICT only if B also differs from A1: a value B shares with A1
 is one that just moves each tick (a timer, a position), not a save-state gap.
 
+Each object's `fields` (every plain-data field of its class chain, from the generated entity schema,
+platform/include/port_entity_schema.h) are diffed the same way, all STRICT, and reported in their own
+"schema fields" section grouped by class and field.
+
 Objects are matched by (area MREA, editor id, class); generated copies and objects with no editor id
 (effects, projectiles: not saved by design) match by class and unique id order. Missing or extra objects
 with an editor id are strict; those without one are warnings.
@@ -210,6 +214,22 @@ def show(v):
     return str(v)
 
 
+def schema_differ(x, y, a):
+    """A `fields` entry: numbers within --tol-field (relative above 1), lists element-wise."""
+    if x is None and y is None:
+        return None
+    if x is None or y is None:
+        return "absent" if x is None else "gone"
+    if isinstance(x, list) and isinstance(y, list) and len(x) == len(y):
+        worst = max((schema_differ(p, q, a) is not None for p, q in zip(x, y)), default=False)
+        return "differs" if worst else None
+    if isinstance(x, (int, float)) and isinstance(y, (int, float)) and not isinstance(x, bool):
+        if isinstance(x, int) and isinstance(y, int):
+            return None if x == y else "differs"
+        return None if abs(x - y) <= a.tol_field * max(1.0, abs(x)) else "differs"
+    return None if x == y else "differs"
+
+
 def boss_note(x, y):
     """Byte offsets where two boss block hex strings differ."""
     if x is None or y is None or len(x) != len(y):
@@ -221,7 +241,9 @@ def boss_note(x, y):
 class Report:
     def __init__(self):
         self.rows = []  # (severity, class, label, kind, text)
+        self.fields = []  # schema fields: (class, field, label, text), all strict
         self.drift = collections.Counter()
+        self.field_drift = collections.Counter()
         self.total = 0
 
     def add(self, sev, cls, label, kind, text):
@@ -229,6 +251,9 @@ class Report:
 
     def strict(self):
         return [r for r in self.rows if r[0] == "STRICT"]
+
+    def failed(self):
+        return bool(self.strict() or self.fields)
 
 
 def compare(da, da1, db, a):
@@ -268,6 +293,16 @@ def compare(da, da1, db, a):
                     extra = boss_note(vx, vy) if f == "boss" else ""
                     rep.add("STRICT" if strict else "WARN", cls, label, f,
                             f"{show(vx)} -> {show(vy)} ({d}){extra}")
+            fx, fy = x.get("fields") or {}, y.get("fields") or {}
+            fz = (z.get("fields") or {}) if z is not None else None
+            for f in sorted(set(fx) | set(fy)):
+                d = schema_differ(fx.get(f), fy.get(f), a)
+                if d is None:
+                    continue
+                if fz is not None and schema_differ(fz.get(f), fy.get(f), a) is None:
+                    rep.field_drift[(cls, f)] += 1
+                    continue
+                rep.fields.append((cls, f, label, f"{show(fx.get(f))} -> {show(fy.get(f))}"))
     # the player
     pa, pb, p1 = da["player"], db["player"], da1["player"]
     for strict, fields in ((True, PLAYER_STRICT), (False, PLAYER_LOOSE)):
@@ -293,6 +328,7 @@ def print_report(title, rep, a):
     classes = sorted({r[1] for r in rep.rows})
     if not classes:
         print("no differences")
+        print_fields(rep, a)
         return
     print("\nby class (objects in the room; STRICT diffs / warnings by kind):")
     for cls in classes:
@@ -308,6 +344,24 @@ def print_report(title, rep, a):
             print(f"    {'!' if sev == 'STRICT' else '~'} {label}: {kind} {text}")
         if not a.all and len(rows) > a.detail:
             print(f"    ... {len(rows) - a.detail} more (--all)")
+    print()
+    print_fields(rep, a)
+
+
+def print_fields(rep, a):
+    """The schema-field section: one line per class.field, then its objects."""
+    groups = collections.defaultdict(list)
+    for cls, f, label, text in rep.fields:
+        groups[(cls, f)].append((label, text))
+    drift = len(rep.field_drift)
+    print(f"schema fields: {len(rep.fields)} strict diff(s) in {len(groups)} class.field(s)"
+          f"{f'; {drift} class.field(s) only moved a tick (ignored)' if drift else ''}")
+    for (cls, f), rows in sorted(groups.items()):
+        print(f"  ! {cls}.{f} x{len(rows)}")
+        for label, text in rows[:a.detail] if not a.all else rows:
+            print(f"      {label}: {text}")
+        if not a.all and len(rows) > a.detail:
+            print(f"      ... {len(rows) - a.detail} more (--all)")
 
 
 # --- scenarios ---------------------------------------------------------------------------
@@ -345,6 +399,8 @@ def main():
     ap.add_argument("--tol-vel", type=float, default=0.5)
     ap.add_argument("--tol-hp", type=float, default=0.01)
     ap.add_argument("--tol-time", type=float, default=0.1, help="timer / ai_time difference in seconds")
+    ap.add_argument("--tol-field", type=float, default=0.001,
+                    help="schema float field difference (relative above 1; default %(default)s)")
     ap.add_argument("--detail", type=int, default=8, help="detail lines per class (default 8)")
     ap.add_argument("--all", action="store_true", help="print every detail line")
     a = ap.parse_args()
@@ -381,8 +437,9 @@ def main():
             rep = compare(read_dump(paths["A"]), read_dump(paths["A1"]), read_dump(paths["B"]), a)
             print_report(title, rep, a)
             print(f"{rig_line}\ndumps: {paths['A']} {paths['A1']} {paths['B']}\n")
-            failed = failed or bool(rep.strict())
+            failed = failed or rep.failed()
             kinds = collections.Counter((r[1], r[3]) for r in rep.strict())
+            kinds.update((c, "fields") for c, *_ in rep.fields)
             summary.append((title, ", ".join(f"{c}.{k}" + (f" x{n}" if n > 1 else "")
                                              for (c, k), n in sorted(kinds.items())) or "ok"))
         rig.cmd("hold 0", check=False)

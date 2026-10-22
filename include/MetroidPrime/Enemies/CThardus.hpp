@@ -13,6 +13,7 @@ class CJointCollisionDescription;
 class CCollisionActorManager;
 
 class CDestroyableRock : public CAi {
+  friend struct PortEntitySchema; // save-state field schema (platform/include/port_entity_schema.h)
 public:
   CDestroyableRock(TUniqueId id, bool active, const rstl::string& name, const CEntityInfo& info,
                    const CTransform4f& xf, const CModelData& modelData, float mass,
@@ -59,6 +60,7 @@ private:
 CHECK_SIZEOF(CDestroyableRock, (VERSION >= VERSION_GM8P_00 ? 0x358 : 0x348))
 
 class CThardus : public CPatterned {
+  friend struct PortEntitySchema; // save-state field schema (platform/include/port_entity_schema.h)
 #ifdef TARGET_PC
   friend struct PortBossState; // save-state fight state (platform/port_savestate_boss.h)
 #endif

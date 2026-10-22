@@ -148,7 +148,10 @@ player's `morph` and `hp`, and missing/extra objects that have an editor id. **W
 position/velocity/forward beyond a tolerance (`--tol-pos`, `--tol-vel`), animation, AI state time and
 missing/extra objects with no editor id (effects and projectiles are not saved by design). A field that
 differs from A but equals A1 (the world one tick later) is "tick drift" and only counted. Exit 0 with no
-strict diff, 1 otherwise, 2 if the harness failed. The cinematic cameras, waypoints and sounds always show
+strict diff, 1 otherwise, 2 if the harness failed. A last section, "schema fields", diffs each object's
+`fields` (every bool/int/float/bitfield/math/TUniqueId member of its class chain, from the generated
+schema in `docs/SAVESTATE_SCHEMA.md`; references as `eid:` editor ids), all strict, grouped by
+class.field; `--tol-field` is the float tolerance. The cinematic cameras, waypoints and sounds always show
 position warnings: they are moved by scripts the restore does not replay; ignore them.
 
 ## Shaders

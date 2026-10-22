@@ -8,6 +8,7 @@ class CElectricDescription;
 class CParticleGen;
 
 class CHUDBillboardEffect : public CEffect {
+  friend struct PortEntitySchema; // save-state field schema (platform/include/port_entity_schema.h)
 public:
   CHUDBillboardEffect(const rstl::optional_object< TToken< CGenDescription > >& particle,
                       const rstl::optional_object< TToken< CElectricDescription > >& electric,

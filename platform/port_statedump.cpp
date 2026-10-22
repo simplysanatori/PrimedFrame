@@ -1,5 +1,6 @@
 #include "port_statedump.h"
 
+#include "port_entity_schema.h"
 #include "port_savestate.h"
 #include "port_savestate_boss.h"
 #include "MetroidPrime/BodyState/CBodyController.hpp"
@@ -15,9 +16,11 @@
 #include "MetroidPrime/ScriptObjects/CScriptDoor.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <set>
 #include <string>
 #include <typeinfo>
 #if defined(__GNUC__)
@@ -79,6 +82,57 @@ std::string Hex(const std::string& bytes) {
   return out;
 }
 
+std::string Num(double v) { return std::isfinite(v) ? Fmt("%.4f", v) : "null"; }
+
+// A reference by what survives a reload: the editor id of a script object, else its class.
+std::string UidRef(CStateManager& mgr, TUniqueId uid) {
+  if (uid == kInvalidUniqueId)
+    return "\"none\"";
+  const CEntity* ent = mgr.GetObjectById(uid);
+  if (ent == nullptr)
+    return "\"gone\"";
+  const uint32_t eid = ent->GetEditorId().Value();
+  if ((eid & 0xFFFFFF) != 0xFFFFFF)
+    return Fmt("\"eid:%08X\"", eid);
+  return "\"cls:" + Esc(ClassName(*ent).c_str()) + "\"";
+}
+
+// Every plain-data field the schema (port_entity_schema.h) lists for the object's class
+// chain, keyed by field name (Class::name where a base already used the name).
+std::string SchemaFields(CStateManager& mgr, CEntity& ent) {
+  std::string out;
+  std::set< std::string > used;
+  for (const PortSchemaClass* cls = PortEntitySchema::For(ent); cls != nullptr; cls = PortEntitySchema::Base(*cls)) {
+    for (int i = 0; i < cls->fieldCount; ++i) {
+      const PortSchemaField& f = cls->fields[i];
+      if (!PortEntitySchema::IsPlain(f.kind))
+        continue;
+      std::string key = f.name;
+      if (!used.insert(key).second)
+        key = std::string(cls->name) + "::" + key;
+      std::string value;
+      if (f.getInt != nullptr) {
+        value = Fmt("%lld", f.getInt(ent));
+      } else if (f.addr != nullptr && f.kind == PortSchemaKind::float_) {
+        const void* p = f.addr(ent);
+        value = Num(f.size == sizeof(double) ? *static_cast< const double* >(p) : *static_cast< const float* >(p));
+      } else if (f.addr != nullptr && f.kind == PortSchemaKind::math) {
+        const float* p = static_cast< const float* >(f.addr(ent));
+        value = "[";
+        for (int j = 0; j < static_cast< int >(f.size / sizeof(float)); ++j)
+          value += (j != 0 ? "," : "") + Num(p[j]);
+        value += "]";
+      } else if (f.addr != nullptr && f.kind == PortSchemaKind::uid) {
+        value = UidRef(mgr, *static_cast< const TUniqueId* >(f.addr(ent)));
+      } else {
+        continue;
+      }
+      out += (out.empty() ? "\"" : ",\"") + Esc(key.c_str()) + "\":" + value;
+    }
+  }
+  return ",\"fields\":{" + out + "}";
+}
+
 std::string ObjectLine(CStateManager& mgr, CEntity& ent) {
   const int area = ent.GetAreaId().Value();
   uint32_t mrea = 0;
@@ -122,6 +176,7 @@ std::string ObjectLine(CStateManager& mgr, CEntity& ent) {
   std::string boss;
   if (PortSaveState::CaptureBossState(mgr, ent, boss))
     line += ",\"boss\":\"" + Hex(boss) + "\"";
+  line += SchemaFields(mgr, ent);
   return line + "}\n";
 }
 
