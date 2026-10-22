@@ -253,6 +253,10 @@ void CFlaahgra::AcceptScriptMsg(EScriptObjectMessage msg, TUniqueId uid, CStateM
     }
     break;
   case kSM_Deleted:
+#ifdef TARGET_PC
+    // Deleted before its FadeIn ran: a later Flaahgra at this address must not skip its sends.
+    PortBossState::ConsumeFlaahgraRestart(*this);
+#endif
     if (x8e5_27_) {
       x79c_leftArmCollision->Destroy(mgr);
       x7a0_rightArmCollision->Destroy(mgr);
