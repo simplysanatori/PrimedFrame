@@ -718,7 +718,7 @@ TEST_F(SceneHdrTest, CopyDomainPipelinesValidate) {
     const tex_copy_conv::ConvRequest req{
         .fmt = fmt,
         .srcView = srcView,
-        .uniformRange = {0, 16},
+        .uniformRange = {0, sizeof(tex_copy_conv::Uniforms)},
         .dst = new_conv_texture(64, 32, fmt, "HDR copy test"),
         .domain = tex_copy_conv::CopyDomain::HdrDisplay,
         .toneRange = {256, sizeof(hdr::Tone)},
@@ -729,7 +729,7 @@ TEST_F(SceneHdrTest, CopyDomainPipelinesValidate) {
   const tex_copy_conv::ConvRequest display{
       .fmt = GX_TF_RGBA8,
       .srcView = srcView,
-      .uniformRange = {0, 16},
+      .uniformRange = {0, sizeof(tex_copy_conv::Uniforms)},
       .dst = new_render_texture(64, 32, GX_TF_RGBA8, "HDR copy test"),
       .domain = tex_copy_conv::CopyDomain::HdrDisplay,
       .toneRange = {256, sizeof(hdr::Tone)},
@@ -740,7 +740,7 @@ TEST_F(SceneHdrTest, CopyDomainPipelinesValidate) {
     const tex_copy_conv::ConvRequest req{
         .fmt = fmt,
         .srcView = srcView,
-        .uniformRange = {0, 16},
+        .uniformRange = {0, sizeof(tex_copy_conv::Uniforms)},
         .dst = new_render_texture(64, 32, fmt, "Linear copy test", 1, webgpu::SceneHdrFormat),
         .domain = tex_copy_conv::CopyDomain::Linear,
     };

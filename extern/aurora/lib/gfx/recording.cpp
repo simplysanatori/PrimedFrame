@@ -1111,7 +1111,7 @@ PipelineRef pipeline_ref(const clear::PipelineConfig& config) {
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                       int probeFace, bool resolveMips, const ResolveHdr* hdr) {
+                       int probeFace, bool resolveMips, const ResolveHdr* hdr, bool opaqueAlpha) {
   if (scene_hdr_pass_active()) {
     // The scene holds exposed linear light: a display copy post-tones it, a linear copy keeps it,
     // and the clear colour (display-referred) goes in as the light that post-tones back to it.
@@ -1133,21 +1133,20 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
   prevPass.resolveFormat = resolveFormat;
   prevPass.resolveMips = resolveMips;
   if (resolveMips) {
-    prevPass.resolveMipsUniformRange = push_uniform(std::array{0.f, 0.f, 1.f, 1.f});
+    prevPass.resolveMipsUniformRange = push_uniform(tex_copy_conv::Uniforms{});
   }
-  // Push UV transform uniform for tex_copy_conv (crop region in UV space)
+  // tex_copy_conv's uniforms: the crop region in UV space, and whether the source has alpha
   const auto srcW = static_cast<float>(prevPass.colorAttachments[SceneColorAttachmentIndex].size.width);
   const auto srcH = static_cast<float>(prevPass.colorAttachments[SceneColorAttachmentIndex].size.height);
-  const std::array uvTransform{
-      static_cast<float>(rect.x) / srcW,
-      static_cast<float>(rect.y) / srcH,
-      static_cast<float>(rect.width) / srcW,
-      static_cast<float>(rect.height) / srcH,
+  const tex_copy_conv::Uniforms uniforms{
+      .offset = {static_cast<float>(rect.x) / srcW, static_cast<float>(rect.y) / srcH},
+      .scale = {static_cast<float>(rect.width) / srcW, static_cast<float>(rect.height) / srcH},
+      .opaqueAlpha = opaqueAlpha,
   };
-  prevPass.resolveUniformRange = push_uniform(uvTransform);
+  prevPass.resolveUniformRange = push_uniform(uniforms);
   if (probeFace >= 0) {
     prevPass.probeFace = probeFace;
-    prevPass.probeUniformRange = push_uniform(std::array{0.f, 0.f, 1.f, 1.f});
+    prevPass.probeUniformRange = push_uniform(tex_copy_conv::Uniforms{});
   }
   // GXCopyTex clears only the rectangle it copies: the whole target clears through the
   // continuation's load ops, a part of it with a clear draw scissored to it.

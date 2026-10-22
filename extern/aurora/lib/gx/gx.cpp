@@ -660,10 +660,21 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
   config.depthFunc = depthEqual ? GX_EQUAL : g_gxState.depthFunc;
   config.cullMode = cullMode;
   config.blendMode = drawId ? GX_BM_NONE : g_gxState.blendMode;
-  config.blendFacSrc = g_gxState.blendFacSrc;
-  config.blendFacDst = g_gxState.blendFacDst;
+  // An EFB without alpha: its alpha reads as 1 and is never written (nor is GXSetDstAlpha's).
+  const bool hasAlpha = efb_has_alpha(g_gxState.pixelFmt);
+  const auto blendFactor = [hasAlpha](GXBlendFactor factor) {
+    if (!hasAlpha && factor == GX_BL_DSTALPHA) {
+      return GX_BL_ONE;
+    }
+    if (!hasAlpha && factor == GX_BL_INVDSTALPHA) {
+      return GX_BL_ZERO;
+    }
+    return factor;
+  };
+  config.blendFacSrc = blendFactor(g_gxState.blendFacSrc);
+  config.blendFacDst = blendFactor(g_gxState.blendFacDst);
   config.blendOp = g_gxState.blendOp;
-  config.dstAlpha = g_gxState.dstAlpha;
+  config.dstAlpha = hasAlpha && g_gxState.alphaUpdate ? g_gxState.dstAlpha : UINT32_MAX;
   config.polygonOffsetBits = std::bit_cast<uint32_t>(polygonOffset);
   config.polygonOffsetScaleBits = std::bit_cast<uint32_t>(polygonOffsetScale);
   config.polygonOffsetClampBits = std::bit_cast<uint32_t>(g_gxState.clamp);
@@ -682,7 +693,7 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
     // The receiver keeps its own cull (back faces for the world's geometry), as Remastered's
     // decal draw does.
   }
-  config.alphaUpdate = g_gxState.alphaUpdate && !depthOnly;
+  config.alphaUpdate = hasAlpha && g_gxState.alphaUpdate && !depthOnly;
   config.colorUpdate = g_gxState.colorUpdate && !depthOnly;
   static_assert(sizeof(PipelineConfig) == sizeof(ShaderConfig) + 13 * sizeof(uint32_t) + 4 * sizeof(bool),
                 "a new PipelineConfig field must be written above");

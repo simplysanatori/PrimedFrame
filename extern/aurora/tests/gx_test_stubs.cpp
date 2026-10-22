@@ -319,7 +319,7 @@ bool lastResolveMips = false;
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat, int probeFace,
-                       bool resolveMips, const ResolveHdr* hdr) {
+                       bool resolveMips, const ResolveHdr* hdr, bool opaqueAlpha) {
   testing::resolvePassCount.fetch_add(1, std::memory_order_release);
   testing::lastResolveHasHdr = hdr != nullptr;
   testing::lastResolveHdr = hdr != nullptr ? *hdr : ResolveHdr{};
