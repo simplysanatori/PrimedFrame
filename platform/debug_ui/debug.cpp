@@ -75,8 +75,8 @@ void DrawDiscCheckSection() {
   }
   switch (r.state) {
   case State::Idle:
-    ImGui::TextWrapped("Reads the whole disc image and compares it with the original release, so a damaged copy is "
-                       "found and named. It runs in the background and takes a minute or two.");
+    ImGui::TextWrapped("Compares the whole disc image with the original release to find damage. "
+                       "Runs in the background and takes a minute or two.");
     break;
   case State::Running:
     ImGui::TextWrapped("Checking the disc image (%.0f%%)...", r.Progress() * 100.0);

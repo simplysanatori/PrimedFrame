@@ -38,61 +38,55 @@ void DrawControlsOptions() {
     sPromptGlyphs.store(glyphs, std::memory_order_relaxed);
     MarkDirty();
   }
-  ItemHelp("Which buttons the game's prompts and tutorials show. Follow: the keyboard, controller or "
-           "touch layout you last used. GameCube shows the game's own art.");
+  ItemHelp("Which buttons the game's prompts show. Follow uses the device you last used; GameCube "
+           "shows the game's own art.");
 
   ImGui::SeparatorText("Buttons");
   bool lockOnToggle = sInput.lockOnToggle;
   if (ImGui::Checkbox("Toggle Lock-On", &lockOnToggle)) {
     SetLockOnToggle(lockOnToggle);
   }
-  ItemHelp("Press L once to lock on, scan or grapple, and again to let go. With nothing to lock "
-           "on, L works as usual (strafe while held). The lock also lets go by itself when its "
-           "target is gone.");
+  ItemHelp("Press L once to lock on, scan or grapple, and again to let go. With no target, L works "
+           "as usual.");
   bool stickyCharge = sInput.stickyCharge;
   if (ImGui::Checkbox("Sticky Charge", &stickyCharge)) {
     SetStickyCharge(stickyCharge);
   }
-  ItemHelp("Taps fire as usual. Hold fire for a moment and let go, and the beam keeps charging; press "
-           "fire again to shoot. Needs the Charge Beam.");
+  ItemHelp("Tap to fire as usual. Hold fire, let go, and the beam keeps charging; press fire again "
+           "to shoot. Needs the Charge Beam.");
   bool rapidCharge = sInput.rapidCharge;
   if (ImGui::Checkbox("Remastered charge (rapid fire)", &rapidCharge)) {
     SetRapidCharge(rapidCharge);
   }
-  ItemHelp("As in Metroid Prime Remastered: holding fire fires a few shots before charging (3 in all "
-           "with Power, 2 with Wave or Plasma, 1 with Ice), then charges faster, so a full charge takes about as "
-           "long as before. Without the Charge Beam it fires the same shots, then waits for you to let go.");
+  ItemHelp("As in Metroid Prime Remastered: holding fire shoots a few shots (depending on the "
+           "beam), then charges faster.");
   bool swapScanXray = sInput.swapScanXray;
   if (ImGui::Checkbox("Swap the Scan and X-Ray visor buttons", &swapScanXray)) {
     SetSwapScanXray(swapScanXray);
   }
-  ImGui::SetItemTooltip("Each takes the other's D-pad direction, as in Metroid Prime\n"
-                        "Remastered's Dual Sticks layout. The Remastered controller preset\n"
-                        "turns it on and the other presets off.");
+  ImGui::SetItemTooltip("Swaps the two buttons' D-pad directions, as in Remastered's Dual Sticks "
+                        "layout.\nThe controller presets set it.");
 
   ImGui::SeparatorText("Aiming");
   if (ImGui::Checkbox("Auto-aim", &sAutoAim)) {
     MarkDirty();
   }
-  ItemHelp("On, as the original: without Lock-On, the arm cannon turns toward the enemy nearest the "
-           "middle of the screen and shots home in on it. Off, shots go where you aim; Lock-On still "
-           "aims at its target.");
+  ItemHelp("On, as the original: without Lock-On, shots home in on the enemy nearest the screen "
+           "centre. Off: shots go where you aim.");
   bool pointerAim = sInput.pointerAim;
   if (ImGui::Checkbox("Pointer aim (Trilogy style)", &pointerAim)) {
     SetPointerAim(pointerAim);
   }
-  ItemHelp("The mouse, the right stick (twin stick), gyro or a touch drag moves the crosshair over "
-           "the screen and the shots follow it; the view turns only when the crosshair passes the "
-           "dead box, faster the closer it gets to the edge. Lock-on, scanning and grappling still "
-           "aim through the centre. Needs Mouse aim, Twin stick or the modern touch layout; Invert "
-           "X/Y do not apply.");
+  ItemHelp(
+      "Mouse, right stick, gyro or a touch drag moves a crosshair and shots follow it; the view "
+      "turns when it nears the edge. Needs Mouse aim, Twin stick or the modern touch layout.");
   ImGui::BeginDisabled(!sInput.pointerAim);
   if (ImGui::SliderInt("Dead box", &sInput.pointerAimBox, PortInput::kPointerAimBoxMin, PortInput::kPointerAimBoxMax,
                        "%d%%")) {
     sInput.pointerAimBox = std::clamp(sInput.pointerAimBox, PortInput::kPointerAimBoxMin, PortInput::kPointerAimBoxMax);
     MarkDirty();
   }
-  ImGui::SetItemTooltip("How far from the centre (percent of the half screen) the crosshair moves "
+  ImGui::SetItemTooltip("How far the crosshair moves from the centre (percent of the half screen) "
                         "before the view turns.");
   if (ImGui::SliderInt("Edge turn speed", &sInput.pointerAimTurn, PortInput::kPointerAimTurnMin,
                        PortInput::kPointerAimTurnMax, "%d deg/s")) {
@@ -100,32 +94,29 @@ void DrawControlsOptions() {
         std::clamp(sInput.pointerAimTurn, PortInput::kPointerAimTurnMin, PortInput::kPointerAimTurnMax);
     MarkDirty();
   }
-  ImGui::SetItemTooltip("The turn speed with the crosshair at the screen edge.");
+  ImGui::SetItemTooltip("Turn speed with the crosshair at the screen edge.");
   ImGui::EndDisabled();
   bool resetAimBoth = sInput.resetAimBoth;
   if (ImGui::Checkbox("Reset aim resets pointer and camera", &resetAimBoth)) {
     sInput.resetAimBoth = resetAimBoth;
     MarkDirty();
   }
-  ItemHelp("The Reset aim action (unbound by default; Remap, Gyro group) recentres the crosshair "
-           "when pointer aim is on and levels the camera when it is off. On, it does both every time.");
+  ItemHelp("Reset aim (unbound by default) recentres the crosshair with pointer aim on, or levels "
+           "the camera with it off. On: it does both.");
   bool lockKeepsPitch = sInput.lockKeepsPitch;
   if (ImGui::Checkbox("Empty lock-on keeps pitch", &lockKeepsPitch)) {
     sInput.lockKeepsPitch = lockKeepsPitch;
     MarkDirty();
   }
-  ItemHelp("Direct aim only (mouse look, twin stick, touch aim). Pressing lock-on with no target "
-           "holds the camera pitch it had instead of levelling the view. Off = retail "
-           "levelling.");
+  ItemHelp("Direct aim only. Lock-on with no target keeps your camera pitch instead of levelling "
+           "the view.");
 
   ImGui::SeparatorText("Morph ball");
   bool fastMorph = sInput.fastMorph;
   if (ImGui::Checkbox("Fast Morph", &fastMorph)) {
     SetFastMorph(fastMorph);
   }
-  ItemHelp("Morphing and unmorphing take a fraction of a second and keep your momentum, as in "
-           "Metroid Prime 4. Unmorphing on the ground caps speed at walking speed; in the air the "
-           "whole jump arc carries over.");
+  ItemHelp("Morphing is quick and keeps your momentum, as in Metroid Prime 4.");
   const int springRule = PortAp::SpringBallRule();
   ImGui::BeginDisabled(springRule >= 0);
   bool springBall = sInput.springBall;
@@ -139,9 +130,8 @@ void DrawControlsOptions() {
                                                              : springRule == 1 ? "with the Bombs"
                                                                                : "unlocked");
   } else {
-    ItemHelp("A small jump in morph ball, as in Metroid Prime Trilogy, once the Morph Ball Bombs are "
-             "held. Twin stick still passes the right stick up to it, and the beam shift (X in the "
-             "Remastered preset) springs too.");
+    ItemHelp(
+        "A small jump in morph ball, as in Metroid Prime Trilogy. Needs the Morph Ball Bombs.");
   }
   EndOriginalLocked(locked);
 
@@ -154,8 +144,8 @@ void DrawControlsOptions() {
     gpGameState->GameOptions().SetIsRumbleEnabled(rumble);
   }
   ImGui::EndDisabled();
-  ItemHelp("Controller vibration, the same switch as Rumble in the pause menu's options. A controller "
-           "never rumbles while the keyboard or mouse was the last input used.");
+  ItemHelp("Same switch as Rumble in the pause menu. A controller doesn't rumble while you last "
+           "used the keyboard or mouse.");
 }
 
 void DrawControlsKeyboardMouse() {
@@ -177,13 +167,13 @@ void DrawControlsKeyboardMouse() {
     SetMouseSensitivity(PortMouse::RadiansFromSource(sourceSensitivity));
     MarkDirty();
   }
-  ImGui::SetItemTooltip("The scale of Quake, Source and Apex Legends games (0.022 degrees a count "
-                        "per unit): the same number turns the same. Ctrl+click to type a value.");
+  ImGui::SetItemTooltip("Same scale as Quake, Source and Apex games: the same number turns the "
+                        "same.\nCtrl+click to type a value.");
   if (ImGui::Checkbox("Separate vertical speed##mouse", &sInput.mouseSensitivitySplit)) {
     if (sInput.mouseSensitivitySplit) sInput.mouseSensitivityY = sInput.mouseSensitivity;
     MarkDirty();
   }
-  ItemHelp("Gives looking up and down its own sensitivity; Sensitivity then sets only left and right.");
+  ItemHelp("Own sensitivity for looking up and down; Sensitivity then sets left and right only.");
   if (sInput.mouseSensitivitySplit) {
     float sourceSensitivityY = PortMouse::SourceFromRadians(sInput.mouseSensitivityY);
     if (ImGui::SliderFloat("Vertical sensitivity", &sourceSensitivityY, 0.05f, 30.f, "%.3f",
@@ -191,7 +181,6 @@ void DrawControlsKeyboardMouse() {
       SetMouseSensitivityY(PortMouse::RadiansFromSource(sourceSensitivityY));
       MarkDirty();
     }
-    ItemHelp("How fast the mouse turns the camera up and down, on the same scale as Sensitivity.");
   }
   ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.f);
   if (ImGui::InputInt("Mouse DPI", &sInput.mouseDpi, 0, 0)) {
@@ -202,7 +191,7 @@ void DrawControlsKeyboardMouse() {
   ImGui::TextDisabled("%.1f cm (%.1f in) per 360 degrees",
                       PortMouse::CentimetresPer360(sInput.mouseSensitivity, float(sInput.mouseDpi)),
                       PortMouse::CentimetresPer360(sInput.mouseSensitivity, float(sInput.mouseDpi)) / 2.54f);
-  ImGui::SetItemTooltip("Only for this readout; the game reads mouse counts.");
+  ImGui::SetItemTooltip("Only used for this readout.");
   if (ImGui::Checkbox("Invert X", &sInput.mouseInvertX)) {
     MarkDirty();
   }
@@ -215,12 +204,11 @@ void DrawControlsKeyboardMouse() {
     sMouseButtonGate.Reset();
     MarkDirty();
   }
-  ImGui::SetItemTooltip("Mouse buttons are set below and in Controls > Remap. Existing "
-                        "keyboard/controller weapon bindings also work.");
+  ImGui::SetItemTooltip("Mouse buttons are set in Controls > Remap; keyboard and controller weapon "
+                        "bindings also work.");
   if (ImGui::Checkbox("Crosshair", &sInput.mouseCrosshair)) {
     MarkDirty();
   }
-  ImGui::SetItemTooltip("A crosshair at the aim point while mouse aiming.");
   ImGui::SameLine();
   int crosshairSize = sInput.crosshairSize;
   ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.f);
@@ -240,17 +228,14 @@ void DrawControlsController() {
     SetTwinStick(twinStick);
     MarkDirty();
   }
-  ItemHelp("Twin stick uses the right stick as a direct camera aim (the same path as the mouse) and "
-           "consumes it, so it no longer free-looks. Fire stays on whatever is bound to A; remap it "
-           "in Controls > Remap.");
+  ItemHelp("Aims with the right stick like the mouse, so it no longer free-looks. Fire stays on A; "
+           "change it in Controls > Remap.");
   bool remasteredMovement = sInput.remasteredMovement;
   if (ImGui::Checkbox("Remastered movement (twin stick and mouse aim)", &remasteredMovement)) {
     SetRemasteredMovement(remasteredMovement);
   }
-  ItemHelp("Moves as Metroid Prime Remastered and PrimeHack do: diagonals as fast as straight "
-           "ahead, and a steady air drag, so a jump keeps a smooth arc. Off, jumps move as on the "
-           "GameCube, whose speed dips at takeoff and picks up again near the top. Classic "
-           "controls always move as on the GameCube.");
+  ItemHelp("Moves as in Remastered and PrimeHack: even diagonal speed and a smooth jump arc. Off: "
+           "GameCube movement. Classic controls always use GameCube movement.");
   // Shown only with twin stick on, as the pause menu's Stick Aim Speed row.
   if (sInput.twinStick) {
     float stickRate = sInput.stickAimRate;
@@ -258,11 +243,8 @@ void DrawControlsController() {
                            ImGuiSliderFlags_Logarithmic)) {
       SetStickAimRate(stickRate);
     }
-    ItemHelp(sInput.stickAimSplit
-                 ? "How fast the right stick turns the camera left and right at full tilt. 900 px/s "
-                   "(the default) is about 180 degrees a second at the default mouse sensitivity."
-                 : "How fast the right stick turns the camera at full tilt. 900 px/s (the default) is "
-                   "about 180 degrees a second at the default mouse sensitivity.");
+    ItemHelp(sInput.stickAimSplit ? "How fast the right stick turns left and right at full tilt."
+                                  : "How fast the right stick turns the camera at full tilt.");
     bool split = sInput.stickAimSplit;
     if (ImGui::Checkbox("Separate vertical speed", &split)) {
       sInput.stickAimSplit = split;
@@ -270,8 +252,7 @@ void DrawControlsController() {
       if (split) sInput.stickAimRateY = sInput.stickAimRate;
       MarkDirty();
     }
-    ItemHelp("Gives looking up and down its own speed; Stick aim speed then sets only left and "
-             "right.");
+    ItemHelp("Own speed for looking up and down; Stick aim speed then sets left and right only.");
     if (sInput.stickAimSplit) {
       float stickRateY = sInput.stickAimRateY;
       if (ImGui::SliderFloat("Vertical stick aim speed", &stickRateY, 100.f, 8100.f, "%.0f px/s",
@@ -280,7 +261,6 @@ void DrawControlsController() {
         sInput.stickAimRateY = stickRateY;
         MarkDirty();
       }
-      ItemHelp("How fast the right stick turns the camera up and down at full tilt.");
     }
     // The game's own option, saved with its settings; free look uses it too.
     ImGui::BeginDisabled(gpGameState == nullptr);
@@ -398,19 +378,16 @@ void DrawControlsTouchGyro() {
                          ImGuiSliderFlags_Logarithmic)) {
     SetTouchAimSpeed(touchAimSpeed);
   }
-  ItemHelp("How fast the view turns as you drag.");
   if (ImGui::Checkbox("Separate vertical speed##touch", &sInput.touchAimSplit)) {
     if (sInput.touchAimSplit) sInput.touchAimSpeedY = sInput.touchAimSpeed;
     MarkDirty();
   }
-  ItemHelp("Set up/down speed separately from left/right.");
   if (sInput.touchAimSplit) {
     float touchAimSpeedY = sInput.touchAimSpeedY;
     if (ImGui::SliderFloat("Vertical touch aim speed", &touchAimSpeedY, 0.5f, 6.f, "%.2f px/dp",
                            ImGuiSliderFlags_Logarithmic)) {
       SetTouchAimSpeedY(touchAimSpeedY);
     }
-    ItemHelp("How fast the view looks up and down as you drag.");
   }
   ImGui::EndDisabled();
   bool springSwipe = sInput.springSwipe;
@@ -435,7 +412,6 @@ void DrawControlsTouchGyro() {
     sInput.touchStickInset.store(stickInset);
     MarkDirty();
   }
-  ItemHelp("Moves the left stick further in from the edge.");
   float buttonInset = sInput.touchButtonInset.load();
   if (ImGui::SliderFloat("Button inset", &buttonInset, 0.f, kTouchMarginMaxDp, "%.0f dp")) {
     sInput.touchButtonInset.store(buttonInset);
@@ -451,13 +427,11 @@ void DrawControlsTouchGyro() {
   if (ImGui::Combo("Mode", &gyroMode, gyroModes, IM_ARRAYSIZE(gyroModes))) {
     SetGyroMode(gyroMode);
   }
-  ItemHelp("Tilt the pad or the phone to aim. Hold to aim aims only while the Gyro aim button is "
-           "held; hold to pause aims all the time except while it is held, so you can recentre the "
-           "pad (ratcheting). Toggle to aim starts off: press once to aim, again to stop. "
-           "The button is right stick click or left ctrl by default; change it on the Remap page. "
-           "With toggle mode, leave the binding itself as a normal press. Needs mouse aim, twin stick "
-           "or the touch controls "
-           "(not the classic layout), since the gyro feeds that same aim.");
+  ItemHelp("Tilt the pad or phone to aim. Hold to aim: only while the Gyro aim button is held. "
+           "Hold to pause: always, except while it is held (to recentre). Toggle: press to start "
+           "and stop. The button is right stick click or left Ctrl (Remap page). Needs mouse aim, "
+           "twin stick or the touch "
+           "controls (not the classic layout).");
   ImGui::BeginDisabled(sInput.gyroMode == 0 && !sInput.springFlick);
   const char* gyroSources[] = {"Auto", "Controller", "Phone"};
   int gyroSource = sInput.gyroSource;
@@ -478,17 +452,14 @@ void DrawControlsTouchGyro() {
           std::clamp(cursorAngle, PortInput::kGyroCursorAngleMin, PortInput::kGyroCursorAngleMax);
       MarkDirty();
     }
-    ItemHelp("Pointer aim is on, so the gyro moves the pointer like a mouse cursor: this is how far "
-             "the pad turns to sweep the pointer from one side of the screen to the other. Smaller "
-             "is faster. Independent of the mouse sensitivity.");
+    ItemHelp("How far the pad turns to sweep the pointer across the screen. Smaller is faster.");
     bool cursorCamera = sInput.gyroCursorCamera;
     if (ImGui::Checkbox("Gyro also turns the camera", &cursorCamera)) {
       sInput.gyroCursorCamera = cursorCamera;
       MarkDirty();
     }
-    ItemHelp("Turns the camera with the gyro as without pointer aim (at the Sensitivity below) while "
-             "it also moves the pointer, so the view follows the pad and the pointer fine-tunes "
-             "the aim.");
+    ItemHelp("Also turns the camera with the gyro, at the Sensitivity below, while it moves the "
+             "pointer.");
   }
   ImGui::BeginDisabled(gyroPointer && !sInput.gyroCursorCamera);
   float gyroSensitivity = sInput.gyroSensitivity;
@@ -497,23 +468,20 @@ void DrawControlsTouchGyro() {
                          PortInput::kGyroSensitivityMax, "%.2fx", ImGuiSliderFlags_Logarithmic)) {
     SetGyroSensitivity(gyroSensitivity);
   }
-  ItemHelp("How far the camera turns per turn of the pad: at 1.00x turning the pad 90 degrees turns "
-           "the camera 90 degrees, at 2.00x 180. Independent of the mouse sensitivity and invert. "
-           "With pointer aim it applies only if the gyro also turns the camera.");
+  ItemHelp("How far the camera turns per turn of the pad: at 1.00x a 90 degree turn gives 90. With "
+           "pointer aim it applies only if the gyro also turns the camera.");
   if (ImGui::Checkbox("Separate vertical speed##gyro", &sInput.gyroSplit)) {
     if (sInput.gyroSplit) sInput.gyroSensitivityY = sInput.gyroSensitivity;
     MarkDirty();
   }
-  ItemHelp("Gives tilting the pad up and down its own sensitivity; Sensitivity then sets only turning "
-           "left and right. With pointer aim it also scales the pointer's vertical travel.");
+  ItemHelp("Own sensitivity for tilting up and down; Sensitivity then sets left and right only. "
+           "With pointer aim it scales the pointer's vertical travel.");
   if (sInput.gyroSplit) {
     float gyroSensitivityY = sInput.gyroSensitivityY;
     if (ImGui::SliderFloat("Vertical sensitivity##gyro", &gyroSensitivityY, PortInput::kGyroSensitivityMin,
                            PortInput::kGyroSensitivityMax, "%.2fx", ImGuiSliderFlags_Logarithmic)) {
       SetGyroSensitivityY(gyroSensitivityY);
     }
-    ItemHelp("How far the camera turns up and down per tilt of the pad, as Sensitivity does for left and "
-             "right.");
   }
   ImGui::EndDisabled();
   // Listed by how common they are; the setting keeps PortGyro::Space's numbers.
@@ -530,20 +498,18 @@ void DrawControlsTouchGyro() {
   if (ImGui::Combo("Space", &spaceRow, kSpaceNames, PortGyro::kSpaceCount)) {
     SetGyroSpace(kSpaceOrder[spaceRow]);
   }
-  ItemHelp("Which turn of the pad turns the camera left and right. Player: turning the pad left "
-           "and right, whether it is held flat or upright (the usual choice). World: turning about "
-           "the real vertical only. Local yaw: the pad's own flat turn, best held flat. Local roll: "
-           "the turn of a pad held upright (as a handheld). Local yaw and roll: both at once. Player "
-           "and world need an accelerometer; without one they act as local yaw.");
+  ItemHelp("Which pad turn moves the camera left and right. Player: left/right turns, flat or "
+           "upright (the usual choice). World: turns about the real vertical. Local yaw: flat "
+           "turns. Local roll: upright turns (handheld). Player and World need an accelerometer; "
+           "without one they act as Local yaw.");
   static constexpr const char* kCalibrateNames[] = {"Off", "Always", "Only in menus"};
   int autoCalibrate = std::clamp(sInput.gyroAutoCalibrate, 0, 2);
   if (ImGui::Combo("Auto calibrate", &autoCalibrate, kCalibrateNames, 3)) {
     SetGyroAutoCalibrate(autoCalibrate);
   }
-  ItemHelp("Measures the gyro's drift whenever the pad is still and removes it, so the camera "
-           "doesn't creep. Put the pad down for a couple of seconds to calibrate. Needs an "
-           "accelerometer. Only in menus learns while the game is paused, on a menu screen or "
-           "with this overlay open, and keeps what it learned while you play.");
+  ItemHelp("Removes gyro drift while the pad is still, so the camera doesn't creep; put it down "
+           "for a couple of seconds. Needs an accelerometer. Only in menus learns only while "
+           "paused or in menus, and keeps it while you play.");
   const float countdown = GyroRecalibrationCountdown();
   const float manual = GyroManualCalibrationProgress();
   if (manual >= 0.f) {
@@ -561,9 +527,8 @@ void DrawControlsTouchGyro() {
   } else if (ImGui::Button("Recalibrate")) {
     StartGyroRecalibration();
   }
-  ItemHelp("Waits 5 seconds so you can put the pad down, then measures the gyro's drift for 3 "
-           "seconds and removes it. Auto calibration waits meanwhile, then refines the result. "
-           "Works with auto calibrate off too; the gyro must be in use (a mode other than off).");
+  ItemHelp("Waits 5 seconds so you can put the pad down, then measures drift for 3. Needs the gyro "
+           "in use.");
   const float confidence = GyroCalibrationConfidence();
   if (confidence >= 0.f) {
     ImGui::Text("Calibration: %d%%%s", int(confidence * 100.f + 0.5f),
@@ -577,25 +542,24 @@ void DrawControlsTouchGyro() {
     sInput.gyroSmoothing = std::clamp(gyroSmoothing, 0.f, PortInput::kGyroThresholdMax);
     MarkDirty();
   }
-  ItemHelp("Averages slow turns of the pad over a few frames to hide sensor jitter; faster turns, "
-           "above twice this speed, stay direct. Adds a little lag to fine aim. Off by default.");
+  ItemHelp("Averages slow turns to hide sensor jitter; faster turns stay direct. Adds a little lag "
+           "to fine aim.");
   float gyroTightening = sInput.gyroTightening;
   if (ImGui::SliderFloat("Tightening", &gyroTightening, 0.f, PortInput::kGyroThresholdMax,
                          gyroTightening > 0.f ? "below %.0f deg/s" : "off")) {
     sInput.gyroTightening = std::clamp(gyroTightening, 0.f, PortInput::kGyroThresholdMax);
     MarkDirty();
   }
-  ItemHelp("Turns slower than this are scaled down (the slower, the more), so a pad held still "
-           "doesn't wobble the aim. Keep it low: high values make fine aim sluggish. Off by "
-           "default.");
+  ItemHelp("Scales down turns slower than this so a pad held still doesn't wobble the aim. High "
+           "values make fine aim sluggish.");
   ImGui::EndDisabled();
 
   bool springFlick = sInput.springFlick;
   if (ImGui::Checkbox("Spring Ball on gyro flick", &springFlick)) {
     SetSpringBallFlick(springFlick);
   }
-  ItemHelp("Tilt the pad or phone up sharply to spring, like Trilogy's nunchuk flick. Uses the gyro "
-           "source below; gyro aim can stay off. Raise the strength if it springs by accident.");
+  ItemHelp("Tilt the pad or phone up sharply to spring, like Trilogy's nunchuk flick. Works with "
+           "gyro aim off. Raise the strength if it triggers by accident.");
   ImGui::BeginDisabled(!sInput.springFlick);
   float flickRate = sInput.springFlickRate;
   if (ImGui::SliderFloat("Flick strength", &flickRate, 2.f, 20.f, "%.1f rad/s")) {

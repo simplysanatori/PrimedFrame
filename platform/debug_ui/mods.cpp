@@ -85,16 +85,15 @@ void DrawRemasteredImport() {
     return;
   }
   const PortRemastered::ImportState state = PortRemastered::ImportStatus();
-  ImGui::TextWrapped("Converts the models of your own copy of Metroid Prime Remastered into a mod. It needs the "
-                     "game's .nsp or .xci and your console's key file (prod.keys), and takes a few minutes.");
+  ImGui::TextWrapped(
+      "Converts the models of your own Metroid Prime Remastered copy into a mod. Needs the game's "
+      ".nsp or .xci and your console's prod.keys; takes a few minutes.");
 #if defined(__ANDROID__)
-  ImGui::TextDisabled("It is installed into the app's own storage (remastered-imports), not into the mods folder: "
-                      "with the data folder on shared storage, moving a folder there goes file by file through "
-                      "Android's media provider, which is what made an install slow. The data folder setting does "
-                      "not move it, an app update keeps it, and an uninstall or \"clear data\" removes it, so it "
-                      "has to be imported again.");
-  ImGui::TextDisabled("A remastered-models in the mods folder keeps working as the fallback until a full import "
-                      "installs the app's own copy; nothing deletes it by itself.");
+  ImGui::TextDisabled(
+      "It is installed into the app's own storage, not the mods folder. An app update keeps it; an "
+      "uninstall or \"clear data\" removes it, so it must be imported again.");
+  ImGui::TextDisabled("A remastered-models folder in the mods folder keeps working as a fallback "
+                      "until a full import installs the app's own copy.");
 #endif
   if (PortMods::StaleRemasteredImport() != nullptr) {
     ImGui::TextColored(ThemeWarnColor(),
@@ -162,8 +161,8 @@ void DrawRemasteredImport() {
       PortRemastered::ImportParts parts = RemasteredImportParts();
       bool changed = false;
       changed |= ImGui::Checkbox("Room geometry", &parts.geometry);
-      ItemHelp("Every model the rooms place. Most of the import's size (about 5.5 GB of 6.5 GB) and time; "
-               "the game has to be restarted to draw it.");
+      ItemHelp("Every model the rooms place. Most of the import's size (about 5.5 of 6.5 GB) and "
+               "time; restart the game to draw it.");
       changed |= ImGui::Checkbox("Particle effects", &parts.effects);
       changed |= ImGui::Checkbox("HUD", &parts.hud);
       changed |= ImGui::Checkbox("Text", &parts.text);
@@ -172,7 +171,7 @@ void DrawRemasteredImport() {
       if (changed) {
         SetRemasteredImportParts(parts);
       }
-      ImGui::TextDisabled("Used by the next import. The MP_REMASTERED_* switches can still leave a part out.");
+      ImGui::TextDisabled("Applies to the next import.");
       ImGui::TreePop();
     }
     ImGui::BeginDisabled(sImage[0] == '\0' || sKeys[0] == '\0');
@@ -198,8 +197,8 @@ void DrawRemasteredImport() {
     if (ImGui::Checkbox("Full import (no reuse)##remastered", &remakeAll)) {
       PortRemastered::SetRemakeAll(remakeAll);
     }
-    ItemHelp("Converts everything again instead of reusing the previous import, so it takes as long "
-             "as the first one. Normally only the stages whose inputs changed are made again. Lasts until the game is closed.");
+    ItemHelp("Converts everything again instead of reusing the previous import, so it takes as "
+             "long as the first. Lasts until the game is closed.");
     if (state.finished && state.ok) {
       ImGui::PushStyleColor(ImGuiCol_Text, ThemeGoodColor(ImVec4(0.5f, 1.f, 0.5f, 1.f)));
       ImGui::TextWrapped("%s", state.message.c_str());
@@ -264,8 +263,8 @@ void DrawImporters() {
   ImGui::BeginDisabled(state.running);
   ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.6f);
   ImGui::InputTextWithHint("Argument", "optional, e.g. the file to import", sArgument, sizeof(sArgument));
-  ItemHelp("An importer is a program in the importers folder beside the mods folder; it builds a mod "
-           "from files of your own. The argument is passed to it.");
+  ItemHelp("An importer is a program in the importers folder beside the mods folder that builds a "
+           "mod from your own files. The argument is passed to it.");
   for (const std::string& name : sNames) {
     if (ImGui::Button(("Run " + name).c_str())) {
       PortImporters::Start(name, sArgument);
@@ -308,8 +307,7 @@ void DrawMods() {
     SetModsEnabled(enabled);
   }
   ItemHelp("Each folder in the mods folder is a mod; later names win. A file at a disc path "
-           "(Metroid1.pak, Audio/..., Video/...) replaces that file, and a resource named by id and "
-           "type (1A2B3C4D.TXTR) replaces it in every PAK. Mods load at startup.");
+           "(Metroid1.pak, Audio/...) replaces that file. Mods load at startup.");
   // What the settings would load next time, against what this launch loaded.
   std::vector<std::string> disabled = PortMods::SplitDisabled(sModsDisabled);
   bool changed = ModsEnabled() != status.active;

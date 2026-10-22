@@ -531,8 +531,8 @@ void DrawEmulatorCard() {
     OpenCardDialog(kCardPick_Emulator);
   }
   ImGui::EndDisabled();
-  ItemHelp("The Dolphin or PrimeHack user folder, the one that contains GC/. Needed for portable installs; "
-           "otherwise it is found by itself. A GC folder or a card folder works too.");
+  ItemHelp("The Dolphin or PrimeHack user folder (the one containing GC/). Only needed for "
+           "portable installs.");
   ImGui::SameLine();
   ImGui::BeginDisabled(chosen.empty());
   if (ImGui::Button("Auto")) {
@@ -561,8 +561,7 @@ void DrawEmulatorCard() {
       }
       ImGui::EndCombo();
     }
-    ItemHelp("Dolphin and PrimeHack installs found on this computer. Pick one to use it instead of the "
-             "automatic choice.");
+    ItemHelp("Installs found on this computer. Pick one instead of the automatic choice.");
   }
   bool share = PortGci::ShareEmulatorCard();
   ImGui::BeginDisabled(inGame);
@@ -572,10 +571,9 @@ void DrawEmulatorCard() {
     SaveSettings();
   }
   ImGui::EndDisabled();
-  ItemHelp("The port and the emulator read and write the same save files. Never run both at the same time: "
-           "one overwrites the other's saves. GameCube Metroid Prime only; the Wii Trilogy save cannot be "
-           "shared (use Export as Wii Trilogy). Randomizer and Archipelago keep their own cards. Takes "
-           "effect at the title screen.");
+  ItemHelp("The port and the emulator share the same saves: never run both at once. GameCube "
+           "Metroid Prime only; Randomizer and Archipelago keep their own cards. Takes effect at "
+           "the title screen.");
   if (!share) {
     return;
   }
@@ -601,8 +599,8 @@ void DrawEmulatorCard() {
     }
   }
   ImGui::EndDisabled();
-  ItemHelp("Copies the saves of the port's own card into the shared card; the shared card's own saves move to "
-           "_replaced first.");
+  ItemHelp("Copies the port's own card saves into the shared card; the shared card's own saves "
+           "move to _replaced first.");
 }
 #endif
 } // namespace
@@ -626,9 +624,9 @@ void DrawMemoryCard() {
   if (ImGui::Button("Import file...")) {
     OpenCardDialog(kCardPick_Import);
   }
-  ItemHelp("Dolphin .gci saves, a whole card image (.raw) or a Wii Trilogy data.bin/save.bin. Saves of the "
-           "other release (USA/PAL) or the Trilogy are converted to this disc's format. An import replaces "
-           "the card's saves; the old ones move to _replaced in the card folder.");
+  ItemHelp(
+      "Dolphin .gci saves, a card image (.raw) or a Wii Trilogy data.bin/save.bin, converted from "
+      "the other release if needed. Replaces the card's saves; the old ones move to _replaced.");
 #if !defined(__ANDROID__)
   ImGui::SameLine();
   if (ImGui::Button("Import from Dolphin/PrimeHack")) {
@@ -646,12 +644,9 @@ void DrawMemoryCard() {
                            "Wii Trilogy (save.bin)"};
   ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
   ImGui::Combo("Export as", &sCardExportChoice, choices, IM_ARRAYSIZE(choices));
-  ItemHelp("The release the exported save is for. A save of another release is converted from the newest "
-           "save on the card; it replaces that release's saves at the destination. The Trilogy's save is "
-           "written into an existing save.bin (Dolphin's, or one exported from a Wii and decrypted): the "
-           "newest save replaces the Metroid Prime game the Trilogy shows (start one there and save once "
-           "first); Echoes and Corruption are kept. A Wii's data.bin is signed by the console, so it "
-           "cannot be made here.");
+  ItemHelp("The release to export for; saves of another release are converted. For the Trilogy, "
+           "start a Metroid Prime game in an existing save.bin and save once first: that game is "
+           "replaced. A Wii's signed data.bin can't be made here.");
   const char* format = kCardExportWords[sCardExportChoice];
   const bool trilogy = CardExportFormat(format) == PortGci::ExportFormat::WiiSave;
 #if defined(__ANDROID__)
