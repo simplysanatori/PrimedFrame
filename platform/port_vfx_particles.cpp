@@ -397,14 +397,22 @@ void CElementGen::PortRenderParticlesVfx() {
   if ((desc.features & (aurora::gfx::vfx::VisorRunOff | aurora::gfx::vfx::VisorRunOffLit)) != 0) {
     PortVfxEvalParams(vfx, x74_curFrame, desc.params);
   }
-  // A VFX_*_Lit shader under LIT_ 1 (ParticleLit): AMBS and the clustered gather, no baked probe. A sprite's
-  // probe would come from CParticleSceneNode::AppendBakedLightingIfRequested (0x2b12a8), which appends
-  // nothing because CSceneRenderContext+0x990 (the baked-lighting manager) is never set, and no particle code
-  // requests a BLPD record (AddLightProbeQuery's callers are model scene nodes only). So Remastered draws
-  // the probe-less lit perm (20e149b2 084/086), and the probe terms stay zero.
+  // A VFX_*_Lit shader under LIT_ 1 (ParticleLit): AMBS and the clustered gather, and with BLIT 1 (PBLT)
+  // the room's baked probe. CParticleSceneNode::AppendBakedLightingIfRequested (0x2b12a8) appends the probe
+  // texture (BPTX) and BLCM only for a BLIT generator; CSceneRenderContext+0x990, the baked-lighting manager
+  // it reads, is set every main frame (RenderPrimaryPass). Remastered samples the texture per fragment
+  // (20e149b2 084_0..087_0); the port takes the room's grid at the emitter. Without BLIT, the probe-less lit
+  // perm (088_0..091_0): the probe terms stay zero.
   const bool lit = (desc.features & aurora::gfx::vfx::ParticleLit) != 0;
   if (lit) {
-    PortVfxClusterView(nullptr, desc);
+    const float probePos[3] = {xe8_globalTranslation.GetX(), xe8_globalTranslation.GetY(),
+                               xe8_globalTranslation.GetZ()};
+    PortVfxClusterView(x28_loadedGenDesc->xPortBakedLighting ? probePos : nullptr, desc);
+    // BLCM (c6[7]) comes with the probe: CBakedLightingManager::GetModulationColor, the colour the room's
+    // models take too (power-bomb flash, X-ray). Without BLIT it is not appended and stays white.
+    if (x28_loadedGenDesc->xPortBakedLighting) {
+      PortRoomEnv::BakedLightModulation(desc.lit.modulate);
+    }
   }
 
   // The retail frame: the same model matrix as the non-ORNT path. Particles are placed in a
@@ -908,11 +916,10 @@ void PortVfxClusterAmbient(const PortClusteredLights::Camera& camera, const floa
 // The clustered gather for this camera, from the port's room lights. Remastered masks every light scene node
 // in the scene (muzzle, beam, ball and explosion lights included) and culls it on the GPU; the port has only
 // the room's LightDynamic lights, which is what RoomLights walks. AMBS (the flat ambient c6[0].xyz) is the
-// ambient colour the game set for this area (CGraphics::SetAmbientColor, GX channel 0's). This is the port's
-// stand-in, not Remastered's value: there AMBS is the scene's ambient light sum (kb topic/ambient-constant.md),
-// 0 at the Landing Site, which has no LightDynamic either. That would draw the white LIT_ 1 waterfall mist
-// (GENP 1d3d2dfc) black, but the reference shows a pale haze, so some light source is still unaccounted for.
-// Without pos (a sprite draw), no baked probe: desc.lit keeps its zero mean, lobe and directions.
+// scene's ambient light-node sum (kb topic/ambient-constant.md); the port has no such nodes, so it is the
+// fallback SFlatAmbientSourcePOD constant (0x1d0e184), black. The LIT_ 1 waterfall mist (GENP 1d3d2dfc) is
+// lit by the baked probe instead: both its generators are BLIT 1.
+// Without pos (a sprite without BLIT), no baked probe: desc.lit keeps its zero mean, lobe and directions.
 void PortVfxClusterView(const float* pos, aurora::gfx::vfx::DrawDesc& desc) {
   PortClusteredLights::Camera camera;
   PortVfxClusterCamera(camera);
@@ -936,10 +943,9 @@ void PortVfxClusterView(const float* pos, aurora::gfx::vfx::DrawDesc& desc) {
   if (pos != nullptr) {
     PortVfxClusterAmbient(camera, pos, desc.lit);
   }
-  const CColor ambient = CGraphics::GetAmbientColor();
-  desc.lit.ambient[0] = ambient.GetRed();
-  desc.lit.ambient[1] = ambient.GetGreen();
-  desc.lit.ambient[2] = ambient.GetBlue();
+  desc.lit.ambient[0] = 0.f;
+  desc.lit.ambient[1] = 0.f;
+  desc.lit.ambient[2] = 0.f;
 }
 
 } // namespace

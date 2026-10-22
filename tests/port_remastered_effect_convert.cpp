@@ -2861,6 +2861,26 @@ void TestShutdownAndPivot() {
   CHECK_MSG(parts.size() == 1 && parts[0].part == none.bytes && parts[0].dropped.empty(),
             "ISDT 1, the default, writes nothing");
 
+  const auto blit = [&](uint8_t value) {
+    return convert([&](auto& o) {
+      PutProperty(o, "BLIT", 0);
+      o.push_back(value);
+    });
+  };
+  parts = blit(1);
+  Retail pblt;
+  pblt.f("GPSM").f("PBLT").f("CNST").w(1).f("TEXR").f("CNST").f("CNST").w(0x1234ABCD).end();
+  CHECK_MSG(parts.size() == 1 && parts[0].part == pblt.bytes && parts[0].dropped.empty(), "BLIT 1 is PBLT 1");
+  if (!parts.empty()) {
+    std::vector<RetailPartProperty> properties;
+    std::string error;
+    CHECK_MSG(SplitRetailPart(parts[0].part.data(), parts[0].part.size(), properties, error),
+              "a PART with PBLT passes the retail element reader");
+  }
+  parts = blit(0);
+  CHECK_MSG(parts.size() == 1 && parts[0].part == none.bytes && parts[0].dropped.empty(),
+            "BLIT 0, the default, writes nothing");
+
   parts = convert([](auto& o) {
     PutProperty(o, "SHTT", 1);
     PutConstant(o, 30);

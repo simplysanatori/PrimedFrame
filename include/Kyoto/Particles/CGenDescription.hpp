@@ -230,6 +230,9 @@ public:
   // port-only PISD 0: Remastered's ISDT (desc+0x6c bit 1), on by default. On, a shutdown reaches the
   // children as DoShutdownBehavior(mode) (their own SHTM at once, no SHTT); off, as ShutdownEffect.
   bool xPortChildShutdownByMode = true;
+  // port-only PBLT 1: Remastered's BLIT (static-state bit 0x4000). A lit sprite takes the room's baked
+  // probe only with it (CParticleSceneNode::AppendBakedLightingIfRequested 0x2b12a8).
+  bool xPortBakedLighting = false;
   // port-only PMOV/PMPV: Remastered's per-particle model orientation direction and pivot offset
   // (SolveParticleTransform 0x246f14), in the port's space. Owned; null = none.
   CVectorElement* xPortPmov = nullptr;

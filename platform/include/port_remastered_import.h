@@ -114,7 +114,8 @@ inline constexpr int kModels = 8;      // the table's models, their looks and th
 // 92: the GENPs of the rooms' own effect actors, under RoomEffectId (for the .roomfx files).
 // 93: LIT_ 1 on a VFX_*_Lit sprite shader is the vfx ParticleLit feature (AlreadyExposed under IEXP).
 // 94: a ParticleLit material is never AlreadyExposed (the lit perm reads no inverse exposure).
-inline constexpr int kEffects = 94;    // port_remastered_effect_import and the particle converters
+// 95: BLIT 1 (a lit sprite takes the room's baked probe) is the port-only PBLT 1.
+inline constexpr int kEffects = 95;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).

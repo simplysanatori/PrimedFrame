@@ -4834,6 +4834,20 @@ public:
         }
         continue;
       }
+      // BLIT (static-state word0 bit 14, 0x4000): CParticleSceneNode::AppendBakedLightingIfRequested
+      // 0x2b12a8 appends the room's baked probe texture (BPTX) and BLCM to a lit sprite's draw only with
+      // it set. 1 is the port-only PBLT 1; 0 (the default) writes nothing.
+      if (part && fourcc == F("BLIT")) {
+        uint32_t value = 0;
+        if (!SmallInteger(property, value) || value > 1) {
+          result.dropped.push_back("BLIT: not a constant 0 or 1");
+        } else if (value == 1) {
+          AppendBE32(out, F("PBLT"));
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, 1);
+        }
+        continue;
+      }
       // SHTT, the delayed shutdown (ShutdownEffect 0x27a66c, UpdateCountdownTimerForShutdown
       // 0x27b864): an int number of ticks, counted down once per tick after the owner's shutdown.
       if (part && fourcc == F("SHTT")) {
@@ -5925,7 +5939,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
     } else if ((part && (fourcc == F("VORN") || fourcc == F("XFMD") ||
                          fourcc == F("PSHP") || fourcc == F("PHDR") || fourcc == F("PHFO") || fourcc == F("PLIX") || fourcc == F("PGID") || fourcc == F("PBDM") ||
                          fourcc == F("PDFG") || fourcc == F("PZTS") || fourcc == F("PIVS") ||
-                         fourcc == F("PITP") || fourcc == F("PSHM") || fourcc == F("PISD") ||
+                         fourcc == F("PITP") || fourcc == F("PSHM") || fourcc == F("PISD") || fourcc == F("PBLT") ||
                          fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||
                          fourcc == F("PVSM"))) ||
                (vfx && fourcc == F("PIRN"))) {
