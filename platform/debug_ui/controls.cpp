@@ -304,24 +304,37 @@ void DrawControlsController() {
 void DrawControlsTouchGyro() {
 #if defined(__ANDROID__)
   ImGui::SeparatorText("Touch controls");
+  // First on the page: the layout is what touch players come here to change.
+  if (ImGui::Button("Edit layout")) {
+    // The touch view takes the request and opens its editor over the game.
+    sTouchEditRequested.store(true, std::memory_order_release);
+    RequestToggle();
+  }
+  ItemHelp("Move, resize, fade, hide or delete each on-screen control, and add your own buttons. "
+           "Done saves.");
+  if (ImGui::Button("Reset margins")) {
+    sInput.touchSideMargin.store(kTouchSideMarginDefault);
+    sInput.touchStickInset.store(kTouchStickInsetDefault);
+    sInput.touchButtonInset.store(kTouchButtonInsetDefault);
+    MarkDirty();
+  }
+  ItemHelp("Puts Side margin, Stick inset and Button inset back to 0.");
   bool touchControls = sInput.touchControls.load();
   if (ImGui::Checkbox("On-screen controls", &touchControls)) {
     sInput.touchControls.store(touchControls);
     MarkDirty();
   }
-  ItemHelp("Off, only the MENU and START buttons stay on screen, so a pad player's stray touches "
-           "don't bring the controls back. The F1 menu is always reachable from MENU.");
+  ItemHelp("Off: only MENU and START stay, so stray touches don't bring the controls back while "
+           "you play on a pad.");
   ImGui::BeginDisabled(!touchControls);
   if (ImGui::Checkbox("Coloured buttons", &sInput.touchColors)) {
     MarkDirty();
   }
-  ItemHelp("Draws the on-screen buttons in the GameCube pad's colours: green A, red B, yellow "
-           "C-stick, purple Z. Off, they are plain and see-through.");
+  ItemHelp("GameCube colours: green A, red B, yellow C-stick, purple Z.");
   if (ImGui::Checkbox("Button descriptions", &sInput.touchLabels)) {
     MarkDirty();
   }
-  ItemHelp("Writes what each on-screen button does next to its letter (Fire, Jump, Lock...). "
-           "Off, only the letters are shown.");
+  ItemHelp("Shows what each button does (Fire, Jump, Lock...) next to its letter.");
   ImGui::BeginDisabled(sOriginalExperience);
   if (ImGui::Checkbox("Turbo fire button", &sInput.touchTurbo)) {
     if (!sInput.touchTurbo) {
@@ -330,14 +343,12 @@ void DrawControlsTouchGyro() {
     MarkDirty();
   }
   ImGui::EndDisabled();
-  ItemHelp("Adds a Turbo button next to Fire: holding it fires as if Fire were tapped as fast as the "
-           "game accepts. It can be moved and resized in Edit layout.");
+  ItemHelp("Adds a Turbo button next to Fire: hold it to fire as fast as the game allows.");
   if (ImGui::Checkbox("Floating left stick", &sInput.touchFloatingStick)) {
     MarkDirty();
   }
-  ItemHelp("Hides the left stick until a finger touches a free spot on the left half of the screen, "
-           "then centres it under that finger. Another finger on the left half aims, like the rest "
-           "of the free area. The map screen keeps the fixed stick.");
+  ItemHelp("The left stick appears wherever your thumb lands on the left half of the screen. "
+           "The map keeps the fixed stick.");
   int touchLayout = sInput.touchClassic ? 1 : sInput.touchTwinStick ? 2 : 0;
   static const char* const kTouchLayouts[] = {"Default", "Classic GameCube", "Twin stick (Remastered)"};
   if (ImGui::Combo("Layout", &touchLayout, kTouchLayouts, 3)) {
@@ -348,41 +359,37 @@ void DrawControlsTouchGyro() {
       SetTouchWheels(false);
     }
   }
-  ItemHelp("Default: the GameCube pad without a C-stick; drag the free screen area to aim like a "
-           "mouse (the left stick strafes), and beams and visors come from the Visor and Beam "
-           "wheels. Classic GameCube: brings back the C-stick and the D-pad. Twin stick "
-           "(Remastered): a right stick that aims, with Remastered's Dual Sticks buttons (Jump, "
-           "Fire, Morph, Missile, LT Lock) and a D-pad for visors; hold Y (Beam) and press the D-pad to pick "
-           "a beam. The free-area drag stays on; the wheels can replace the D-pad.");
+  ItemHelp("Default: GameCube buttons, drag the screen to aim, Visor and Beam wheels.\n"
+           "Classic GameCube: adds the C-stick and D-pad.\n"
+           "Twin stick (Remastered): a right stick aims; Jump, Fire, Morph, Missile, LT Lock; "
+           "D-pad for visors, Y + D-pad for beams.");
   ImGui::BeginDisabled(!sInput.touchClassic);
   bool touchAim = sInput.touchAim;
   if (ImGui::Checkbox("Touch aim", &touchAim)) {
     SetTouchAim(touchAim);
   }
-  ItemHelp("Drag a finger on the free screen area. Classic layout with twin stick off: dragging "
-           "sideways turns Samus, dragging up or down looks up or down like R free look and "
-           "levels out when you let go. Otherwise the view aims like a mouse, by the distance "
-           "dragged. Not while locked on or in the ball.");
+  ItemHelp("Drag the free screen area to turn and look around (classic layout). Looking up or "
+           "down levels out when you let go. Not while locked on or in the ball.");
   ImGui::EndDisabled();
   bool touchMapTap = sInput.touchMapTap;
   if (ImGui::Checkbox("Tap minimap for map", &touchMapTap)) {
     SetTouchMapTap(touchMapTap);
   }
-  ItemHelp("Tapping the minimap opens the map; hides the GameCube layout's Z button.");
+  ItemHelp("Tap the minimap to open the map. Replaces the Z button.");
   ImGui::BeginDisabled(!sInput.touchClassic && !sInput.touchTwinStick);
   bool touchWheels = sInput.touchWheels;
   if (ImGui::Checkbox("Beam and visor wheels", &touchWheels)) {
     SetTouchWheels(touchWheels);
   }
-  ItemHelp("Replaces the D-pad with a Visor and a Beam button. Hold one, slide to a sector, "
-           "let go to pick. Letting go in the middle cancels. Off, the D-pad is back.");
+  ItemHelp("Replaces the D-pad with Visor and Beam buttons: hold, slide to one, let go. "
+           "Let go in the middle to cancel.");
   ImGui::EndDisabled();
   ImGui::BeginDisabled(!((!sInput.touchClassic && !sInput.touchTwinStick) || sInput.touchWheels));
   bool touchVisorTapScan = sInput.touchVisorTapScan;
   if (ImGui::Checkbox("Tap Visor for Scan Visor", &touchVisorTapScan)) {
     SetTouchVisorTapScan(touchVisorTapScan);
   }
-  ItemHelp("A quick tap on the Visor button (no slide) selects the Scan Visor.");
+  ItemHelp("A quick tap on Visor switches to the Scan Visor.");
   ImGui::EndDisabled();
   ImGui::BeginDisabled(!(!sInput.touchClassic || sInput.touchAim));
   float touchAimSpeed = sInput.touchAimSpeed;
@@ -390,70 +397,51 @@ void DrawControlsTouchGyro() {
                          ImGuiSliderFlags_Logarithmic)) {
     SetTouchAimSpeed(touchAimSpeed);
   }
-  ItemHelp("How far the view turns per dp of finger travel. The default turns about 180 degrees "
-           "over a 400 dp drag at the default mouse sensitivity.");
+  ItemHelp("How fast the view turns as you drag.");
   if (ImGui::Checkbox("Separate vertical speed##touch", &sInput.touchAimSplit)) {
     if (sInput.touchAimSplit) sInput.touchAimSpeedY = sInput.touchAimSpeed;
     MarkDirty();
   }
-  ItemHelp("Gives looking up and down its own speed; Touch aim speed then sets only left and right.");
+  ItemHelp("Set up/down speed separately from left/right.");
   if (sInput.touchAimSplit) {
     float touchAimSpeedY = sInput.touchAimSpeedY;
     if (ImGui::SliderFloat("Vertical touch aim speed", &touchAimSpeedY, 0.5f, 6.f, "%.2f px/dp",
                            ImGuiSliderFlags_Logarithmic)) {
       SetTouchAimSpeedY(touchAimSpeedY);
     }
-    ItemHelp("How far the view turns up and down per dp of finger travel.");
+    ItemHelp("How fast the view looks up and down as you drag.");
   }
   ImGui::EndDisabled();
   bool springSwipe = sInput.springSwipe;
   if (ImGui::Checkbox("Spring Ball on swipe up", &springSwipe)) {
     SetSpringBallSwipe(springSwipe);
   }
-  ItemHelp("In morph ball, a quick swipe up on the free screen area (or a fast slide up from "
-           "Fire or Jump) springs, without a gyro flick. Needs the Spring Ball option.");
+  ItemHelp("In morph ball, swipe up to jump. Needs the Spring Ball option.");
   float touchOpacity = sInput.touchOpacity.load();
   if (ImGui::SliderFloat("Opacity", &touchOpacity, kTouchOpacityMin, kTouchOpacityMax, "%.0f%%")) {
     sInput.touchOpacity.store(touchOpacity);
     MarkDirty();
   }
-  ItemHelp("How visible the on-screen controls are. Lower lets more of the game show through; "
-           "the layout editor and the menu buttons stay fully visible.");
+  ItemHelp("How visible all on-screen controls are. Edit layout sets single controls.");
   float sideMargin = sInput.touchSideMargin.load();
   if (ImGui::SliderFloat("Side margin", &sideMargin, 0.f, kTouchMarginMaxDp, "%.0f dp")) {
     sInput.touchSideMargin.store(sideMargin);
     MarkDirty();
   }
-  ItemHelp("Moves every on-screen control in from the left and right edges, for curved screen "
-           "edges or a case.");
+  ItemHelp("Moves every control in from the left and right edges (curved screens, cases).");
   float stickInset = sInput.touchStickInset.load();
   if (ImGui::SliderFloat("Stick inset", &stickInset, 0.f, kTouchMarginMaxDp, "%.0f dp")) {
     sInput.touchStickInset.store(stickInset);
     MarkDirty();
   }
-  ItemHelp("Extra room between the left stick and the screen's left edge, on top of the side "
-           "margin.");
+  ItemHelp("Moves the left stick further in from the edge.");
   float buttonInset = sInput.touchButtonInset.load();
   if (ImGui::SliderFloat("Button inset", &buttonInset, 0.f, kTouchMarginMaxDp, "%.0f dp")) {
     sInput.touchButtonInset.store(buttonInset);
     MarkDirty();
   }
-  ItemHelp("Extra room between the face buttons (and the classic C-stick) and the screen's right "
-           "edge, on top of the side margin.");
-  if (ImGui::Button("Reset margins")) {
-    sInput.touchSideMargin.store(kTouchSideMarginDefault);
-    sInput.touchStickInset.store(kTouchStickInsetDefault);
-    sInput.touchButtonInset.store(kTouchButtonInsetDefault);
-    MarkDirty();
-  }
+  ItemHelp("Moves the face buttons (and the classic C-stick) further in from the edge.");
   ImGui::EndDisabled();
-  if (ImGui::Button("Edit layout")) {
-    // The touch view takes the request and opens its editor over the game.
-    sTouchEditRequested.store(true, std::memory_order_release);
-    RequestToggle();
-  }
-  ItemHelp("Closes this menu and lets you drag each on-screen control to where you want it and "
-           "pinch it to resize. Done saves; Reset all puts everything back.");
 #endif
 
   ImGui::SeparatorText("Gyro aim");
