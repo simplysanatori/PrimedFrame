@@ -618,7 +618,10 @@ final class TouchControlsView extends View {
         textPaint.setFakeBoldText(true);
         editPaint.setStyle(Paint.Style.STROKE);
         editPaint.setStrokeWidth(dp(2));
+        // An empty saved layout is never parsed (syncLayout skips text equal to
+        // layoutText's ""), so the defaults must be set here too.
         Arrays.fill(ovScale, 1f);
+        Arrays.fill(ovAlpha, 100);
         for (int i = 0; i < editBar.length; ++i) {
             editBar[i] = new RectF();
         }
