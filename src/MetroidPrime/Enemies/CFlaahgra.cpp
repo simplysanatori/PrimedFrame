@@ -1,4 +1,7 @@
 #include "MetroidPrime/Enemies/CFlaahgra.hpp"
+#ifdef TARGET_PC
+#include "port_savestate_boss.h"
+#endif
 
 #include "Kyoto/Animation/CInt32POINode.hpp"
 #include "Kyoto/Math/CMatrix3f.hpp"
@@ -597,6 +600,11 @@ void CFlaahgra::FadeOut(CStateManager& mgr, EStateMsg msg, float arg) {
 
 void CFlaahgra::FadeIn(CStateManager& mgr, EStateMsg msg, float arg) {
   if (msg == kStateMsg_Activate) {
+#ifdef TARGET_PC
+    if (PortBossState::ConsumeFlaahgraRestart(*this)) {
+      return;
+    }
+#endif
     if (HealthInfo(mgr)->GetHP() > 0.f) {
       SendScriptMsgs(kSS_Exited, mgr, kSM_None);
     }

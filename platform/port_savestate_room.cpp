@@ -810,6 +810,21 @@ void CaptureRoomState(CStateManager& mgr, RoomState& out) {
   });
 }
 
+static void HoldRestoredTimers(CStateManager& mgr, const RoomState& room,
+                               const std::vector< int32_t >& done) {
+  for (const RoomObject& obj : room.objects) {
+    const RoomBlock* b = FindBlock(obj, kTagTimer);
+    if (b == nullptr ||
+        std::find(done.begin(), done.end(), TEditorId(obj.editorId).AreaNum()) == done.end())
+      continue;
+    CEntity* ent = mgr.ObjectById(mgr.GetIdForScript(TEditorId(obj.editorId)));
+    if (CScriptTimer* timer = ent != nullptr ? TCastToPtr< CScriptTimer >(ent) : nullptr) {
+      BlockReader r(b->data);
+      PortRoomState::GetTimer(*timer, r);
+    }
+  }
+}
+
 int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32_t >& done,
                    RoomApplyStats& stats) {
   const CWorld* world = mgr.GetWorld();
@@ -842,6 +857,10 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
     }
     now.insert(area);
   }
+  // Areas load on different ticks: a timer put back early would count down the
+  // ticks the rest still wait for. Held at its saved value until the last area.
+  if (!done.empty())
+    HoldRestoredTimers(mgr, room, done);
   if (now.empty())
     return waiting;
 

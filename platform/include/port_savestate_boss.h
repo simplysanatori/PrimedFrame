@@ -56,6 +56,9 @@ struct PortBossState {
   static const uint8_t kFlaahgraVersion;
   static void PutFlaahgra(CStateManager& mgr, CFlaahgra& b, PortSaveState::BlockWriter& w);
   static void RestoreFlaahgra(CStateManager& mgr, CFlaahgra& b, PortSaveState::BlockReader* r);
+  // True once for a restored Flaahgra whose FSM restarts: the FadeIn start state must not
+  // send its Exited/CloseIn again (the script objects already hold their results).
+  static bool ConsumeFlaahgraRestart(const CFlaahgra& b);
   // port_boss_prime.cpp. The exo has no editor id (CMetroidPrimeRelay makes it at
   // InitializedInArea), so its state rides on the relay's record; Put returns
   // false when the relay has no live exo.

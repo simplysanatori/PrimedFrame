@@ -8,6 +8,15 @@
 // mirrors and their waypoints are script objects the room restore rebuilds.
 const uint8_t PortBossState::kFlaahgraVersion = 1;
 
+static const CFlaahgra* sRestartedFlaahgra = nullptr;
+
+bool PortBossState::ConsumeFlaahgraRestart(const CFlaahgra& b) {
+  if (sRestartedFlaahgra != &b)
+    return false;
+  sRestartedFlaahgra = nullptr;
+  return true;
+}
+
 void PortBossState::PutFlaahgra(CStateManager&, CFlaahgra& b, PortSaveState::BlockWriter& w) {
   w.U32(static_cast< uint32_t >(b.x788_stage));
   w.F32(b.x810_);
@@ -38,4 +47,7 @@ void PortBossState::RestoreFlaahgra(CStateManager& mgr, CFlaahgra& b,
   b.x7f8_ = 0;
   b.x814_ = 0.f;
   b.x818_curHp = b.HealthInfo(mgr)->GetHP();
+  // A fight in progress (saved with a block, awake) already ran FadeIn once; without
+  // this its restart replayed Exited/CloseIn, which moved a counter, a relay and a timer.
+  sRestartedFlaahgra = (r != nullptr && b.GetActive()) ? &b : nullptr;
 }
