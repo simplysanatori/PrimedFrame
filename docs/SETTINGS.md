@@ -411,6 +411,22 @@
   the port's generator or the disc changes), and served with mods on or off, under every
   mod. A mod with its own look of a ball, such as the Remastered import (both balls), keeps
   its own; the other looks are still made.
+- Suit colours (Video > Display "Suit colours": pick a suit, then its colours; "Apply suit
+  colours" reloads the mods; persisted as `suit_colour_power`, `suit_colour_gravity`,
+  `suit_colour_varia`, `suit_colour_phazon`, `suit_colour_fusion`,
+  `suit_colour_fusion_gravity`, `suit_colour_fusion_varia`, `suit_colour_fusion_phazon`;
+  unset by default; ignored under Original experience). Each value is the suit's slots in
+  order, comma-separated, each `RRGGBB` or `-` for the original: Power and Varia have
+  primary and secondary (`suit_colour_power=2050FF,-`), Gravity and the Fusion suits
+  primary, secondary and accent, the Phazon Suit glow and accent (its body is nearly black
+  and stays as it is). The suit's own diffuse textures are recoloured from your disc (the
+  slot texels' hues move to the picked one, keeping their shading), so cutscenes, the pause
+  screen's doll, the first-person arm and the morph ball (the generated balls above too)
+  all change; Samus's face and the glow, visor and reflection maps stay. Made on Apply and
+  kept in `generated/suit-colours/<suit>/` in the user folder (remade when the picks, the
+  generator or the disc change). A texture a mod brings (the Remastered import) is left as
+  it is. With "Suit-coloured morph balls" off, a suit that borrows another's ball shows
+  that suit's colours on it.
 - `MP_HUD_WIDE=0|1` (Video > Display, persisted as `hud_wide`, default on): widescreen HUD. The
   aspect-matched in-game HUD frames keep each element's shape but move it away
   from the screen centre, so edge elements (scan panels, energy bar, map) reach

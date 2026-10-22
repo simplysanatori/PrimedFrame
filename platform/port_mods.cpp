@@ -7,6 +7,7 @@
 #include "port_strings.h"
 #include "port_paths.h"
 #include "port_ball_looks.h"
+#include "port_suit_colours.h"
 #include "port_remastered_storage.h"
 
 #include "port_debug.h"
@@ -489,6 +490,7 @@ void Initialize() {
   if (sStatus.folder.empty() && scan.empty()) {
     // No user folder: the generated layer has nowhere to keep its cache either.
     PortBallLooks::SetState(false, 0);
+    PortSuitColours::SetServed({});
     return;
   }
   const std::vector<std::string> disabled = SplitDisabled(PortDebug::ModsDisabled());
@@ -669,6 +671,25 @@ void Initialize() {
       }
     }
     PortBallLooks::SetState(wanted, active);
+  }
+
+  // The picked suit colours (port_suit_colours.h): after the ball looks, whose
+  // generated textures they recolour too, and under every mod's own.
+  {
+    std::array<std::string, PortSuitColours::kSuitCount> served{};
+    if (!sSuspended && !PortDebug::OriginalExperience()) {
+      for (int suit = 0; suit < PortSuitColours::kSuitCount; ++suit) {
+        // One snapshot: the UI may change the picks meanwhile. Recorded even
+        // when nothing could be made, so Apply does not stay pending.
+        const PortSuitColours::Picks picks = PortSuitColours::SuitPicks(suit);
+        served[suit] = PortSuitColours::PicksKey(suit, picks);
+        std::vector<LooseResource> made = PortSuitColours::Collect(suit, picks, loose, &HasNativeTexture);
+        for (LooseResource& resource : made) {
+          loose[{resource.type, resource.id}] = std::move(resource);
+        }
+      }
+    }
+    PortSuitColours::SetServed(served);
   }
 
   // Which loose resources each PAK takes. Ids no PAK holds are added to

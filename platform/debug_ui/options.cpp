@@ -15,6 +15,7 @@
 #include "port_paths.h"
 #include "port_mods.h"
 #include "port_ball_looks.h"
+#include "port_suit_colours.h"
 #include "port_remastered_text.h"
 #include "port_discord.h"
 #include "port_savestate.h"
@@ -1036,7 +1037,7 @@ void SetOriginalExperience(bool enabled) {
   VISetFrameBufferScale(EffectiveRenderScale());
   ApplyGraphicsQuality();
   if ((PortMods::CurrentStatus().active != ModsEnabled() ||
-       PortBallLooks::Requested() != GeneratedBallLooks()) &&
+       PortBallLooks::Requested() != GeneratedBallLooks() || PortSuitColours::Pending(!sOriginalExperience)) &&
       !PortMods::Suspended()) {
     PortSaveState::RequestModReload();
   }

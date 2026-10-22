@@ -15,6 +15,7 @@
 #include "port_input_devices.h"
 #include "port_gci.h"
 #include "port_discord.h"
+#include "port_suit_colours.h"
 
 #include <algorithm>
 #include <atomic>
@@ -73,6 +74,17 @@ void WriteHudOpacity(std::ostream& out, PortDebug::HudOpacityPart part) {
   }
 }
 
+// suit_colour_<suit>: PortSuitColours::PicksKey, a slot each ("FFD000,-").
+template < int Suit >
+void ReadSuitColours(const std::string& value) {
+  PortSuitColours::SetPicksKey(Suit, value);
+}
+
+template < int Suit >
+void WriteSuitColours(std::ostream& out) {
+  out << PortSuitColours::PicksKey(Suit);
+}
+
 // A key that is one bool: read with ParseBool, written as 1 or 0, sampled with both.
 template < bool* Flag >
 constexpr SettingKey BoolKey(const char* key) {
@@ -101,6 +113,14 @@ const SettingKey kSettingKeys[] = {
     BoolKey< &sCinemaBars >("cinema_bars"),
     BoolKey< &sSharpScanWindow >("sharp_scan_window"),
     BoolKey< &sGeneratedBallLooks >("power_spider_ball"),
+    {"suit_colour_power", &ReadSuitColours< 0 >, &WriteSuitColours< 0 >, true, "FF4000,-", "-,2050FF"},
+    {"suit_colour_gravity", &ReadSuitColours< 1 >, &WriteSuitColours< 1 >, true, "FF4000,-,-", "-,-,2050FF"},
+    {"suit_colour_varia", &ReadSuitColours< 2 >, &WriteSuitColours< 2 >, true, "FF4000,-", "-,2050FF"},
+    {"suit_colour_phazon", &ReadSuitColours< 3 >, &WriteSuitColours< 3 >, true, "FF4000,-", "-,2050FF"},
+    {"suit_colour_fusion", &ReadSuitColours< 4 >, &WriteSuitColours< 4 >, true, "FF4000,-,-", "-,-,2050FF"},
+    {"suit_colour_fusion_gravity", &ReadSuitColours< 5 >, &WriteSuitColours< 5 >, true, "FF4000,-,-", "-,-,2050FF"},
+    {"suit_colour_fusion_varia", &ReadSuitColours< 6 >, &WriteSuitColours< 6 >, true, "FF4000,-,-", "-,-,2050FF"},
+    {"suit_colour_fusion_phazon", &ReadSuitColours< 7 >, &WriteSuitColours< 7 >, true, "FF4000,-,-", "-,-,2050FF"},
     BoolKey< &sAutoAim >("auto_aim"),
     {"scan_speed",
      [](const std::string& value) {

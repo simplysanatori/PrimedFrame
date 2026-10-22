@@ -14,6 +14,9 @@
 #include "port_config_reset.h"
 #include "port_textures.h"
 #include "port_gpu_driver.h"
+#include "port_mods.h"
+#include "port_savestate.h"
+#include "port_suit_colours.h"
 
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 
@@ -81,6 +84,60 @@ void DrawVideoDisplay() {
                         "Gravity and Phazon Suit balls before the Spider Ball.\n"
                         "Off: the original, where the Power Suit's spider ball is the Gravity\n"
                         "Suit's, and the Gravity and Phazon Suits use the Power Suit's ball.");
+
+  ImGui::SeparatorText("Suit colours");
+  {
+    static int sSuitColoursSuit = 0;
+    const PortSuitColours::Suit& suit = PortSuitColours::SuitInfo(sSuitColoursSuit);
+    if (ImGui::BeginCombo("Suit", suit.name)) {
+      for (int i = 0; i < PortSuitColours::kSuitCount; ++i) {
+        const bool custom = !PortSuitColours::PicksKey(i).empty();
+        const std::string label = std::string(PortSuitColours::SuitInfo(i).name) + (custom ? " *" : "");
+        if (ImGui::Selectable(label.c_str(), i == sSuitColoursSuit)) {
+          sSuitColoursSuit = i;
+        }
+      }
+      ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Each suit's colours, saved per suit (* = changed). The suit's own textures are\n"
+                          "recoloured from your disc, so the change shows everywhere: in cutscenes,\n"
+                          "on the pause screen, on the arm cannon and on the morph ball.\n"
+                          "A mod's own suit textures (the Remastered import) are left as they are.");
+    for (int slot = 0; slot < suit.slots; ++slot) {
+      ImGui::PushID(slot);
+      const std::optional< uint32_t > picked = PortSuitColours::Colour(sSuitColoursSuit, slot);
+      const uint32_t shown = picked ? *picked : PortSuitColours::DefaultColour(sSuitColoursSuit, slot);
+      float rgb[3] = {float((shown >> 16) & 255) / 255.f, float((shown >> 8) & 255) / 255.f,
+                      float(shown & 255) / 255.f};
+      if (ImGui::ColorEdit3(suit.slotNames[slot], rgb, ImGuiColorEditFlags_NoInputs)) {
+        uint32_t value = 0;
+        for (const float c : rgb) {
+          value = (value << 8) | uint32_t(std::clamp(std::lround(c * 255.f), 0l, 255l));
+        }
+        PortSuitColours::SetColour(sSuitColoursSuit, slot, value);
+        MarkDirty();
+      }
+      if (sSuitColoursSuit == 3) {
+        ImGui::SetItemTooltip("The Phazon Suit's body is nearly black: only its glow and accent change.");
+      }
+      ImGui::SameLine();
+      ImGui::BeginDisabled(!picked);
+      if (ImGui::SmallButton("Reset")) {
+        PortSuitColours::SetColour(sSuitColoursSuit, slot, std::nullopt);
+        MarkDirty();
+      }
+      ImGui::EndDisabled();
+      ImGui::PopID();
+    }
+    const bool pending = PortSuitColours::Pending(!sOriginalExperience);
+    ImGui::BeginDisabled(!pending || PortMods::Suspended());
+    if (ImGui::Button("Apply suit colours")) {
+      PortSaveState::RequestModReload();
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Makes the recoloured textures and reloads the mods (a moment; the game\n"
+                          "carries on where it was). Original experience uses the original colours.");
+  }
 
   ImGui::SeparatorText("HUD and view");
   bool hudWide = sHudWide;

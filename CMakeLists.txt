@@ -341,6 +341,9 @@ set(MP_PORT_SOURCES
     platform/port_custom_res.cpp
     platform/port_ball_looks.cpp
     platform/port_ball_looks_disc.cpp
+    platform/port_disc_reader.cpp
+    platform/port_suit_colours.cpp
+    platform/port_suit_colours_disc.cpp
     platform/port_hints.cpp
     platform/port_ws.cpp
     platform/port_disc_verify.cpp
@@ -1156,6 +1159,10 @@ if(MP_BUILD_TESTS)
     mp_port_test(port_ball_looks_tests
         SOURCES tests/port_ball_looks.cpp platform/port_ball_looks.cpp
             platform/port_remastered_image.cpp
+        INCLUDES platform/include
+        LIBRARIES astcenc)
+    mp_port_test(port_suit_colours_tests
+        SOURCES tests/port_suit_colours.cpp platform/port_suit_colours.cpp
         INCLUDES platform/include
         LIBRARIES astcenc)
     mp_port_test(port_custom_res_tests
