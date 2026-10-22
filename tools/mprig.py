@@ -631,6 +631,19 @@ def start_run(a):
             die(f"--settings file not found: {src}")
         if src.is_file():
             shutil.copy(src, user / "port_settings.ini")
+    ini = user / "port_settings.ini"
+    if a.mods != "none" and ini.is_file():
+        # The real settings may have the Remastered mod switched off (mods_disabled); a rig run
+        # is meant to test it, so it is always on here. --mods none is the retail A/B.
+        lines = []
+        for l in ini.read_text().splitlines():
+            if l.startswith("mods_disabled="):
+                rest = [m for m in l.split("=", 1)[1].split(",") if m and m != "remastered-models"]
+                if not rest:
+                    continue
+                l = "mods_disabled=" + ",".join(rest)
+            lines.append(l)
+        ini.write_text("\n".join(lines) + "\n")
     if not a.cutscenes:
         # Cutscenes become skippable on first sight (and get randomprime's room patches, as
         # with the F1 setting), so MP_SKIP_CUTSCENES skips them instead of fast-forwarding x8.
@@ -1146,7 +1159,8 @@ def cmd_doctor(a):
         rep("WARN", "no remastered-models mod installed")
     else:
         st = mod / ".import-version"
-        have = st.read_text().strip() if st.is_file() else None
+        # First line: the version; the second is the commit that imported it.
+        have = st.read_text().split("\n", 1)[0].strip() if st.is_file() else None
         if have is None:
             rep("WARN", f"remastered-models has no .import-version (current kImportVersion={cur})")
         elif cur is not None and str(cur) != have:
