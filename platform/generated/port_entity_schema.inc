@@ -261,13 +261,13 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CAtomicAlpha >() 
       {"x574_bombRappearTime", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CAtomicAlpha::x574_bombRappearTime), PES_ADDR(CAtomicAlpha, x574_bombRappearTime), nullptr, nullptr},
       {"x578_bombTime", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CAtomicAlpha::x578_bombTime), PES_ADDR(CAtomicAlpha, x578_bombTime), nullptr, nullptr},
       {"x57c_curBomb", "int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CAtomicAlpha::x57c_curBomb), PES_ADDR(CAtomicAlpha, x57c_curBomb), PES_GETI(CAtomicAlpha, x57c_curBomb), PES_SETI(CAtomicAlpha, x57c_curBomb)},
-      {"x580_pathFind", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CAtomicAlpha::x580_pathFind), PES_ADDR(CAtomicAlpha, x580_pathFind), nullptr, nullptr},
+      {"x580_pathFind", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CAtomicAlpha::x580_pathFind), PES_ADDR(CAtomicAlpha, x580_pathFind), nullptr, nullptr},
       {"x664_steeringBehaviors", "CSteeringBehaviors", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CAtomicAlpha::x664_steeringBehaviors), PES_ADDR(CAtomicAlpha, x664_steeringBehaviors), nullptr, nullptr},
       {"x668_bombProjectile", "CProjectileInfo", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CAtomicAlpha::x668_bombProjectile), PES_ADDR(CAtomicAlpha, x668_bombProjectile), nullptr, nullptr},
       {"x690_bombModel", "CModelData", PortSchemaKind::anim_data, 0, kPortSchemaPrivate, sizeof(CAtomicAlpha::x690_bombModel), PES_ADDR(CAtomicAlpha, x690_bombModel), nullptr, nullptr},
       {"x6dc_bombLocators", "rstl::reserved_vector<CAtomicAlpha::SBomb, 4>", PortSchemaKind::container, 0, kPortSchemaPrivate, sizeof(CAtomicAlpha::x6dc_bombLocators), PES_ADDR(CAtomicAlpha, x6dc_bombLocators), nullptr, nullptr},
   };
-  static const PortSchemaClass desc = {"CAtomicAlpha", "CPatterned", fields, 13, 0x354512D1D9D4E50Dull};
+  static const PortSchemaClass desc = {"CAtomicAlpha", "CPatterned", fields, 13, 0xA081D3359FB9E60Full};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CAtomicBeta >() {
@@ -306,8 +306,8 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CBabygoth >() {
       {"x56c_shellState", "CBabygoth::EShellCrackState", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CBabygoth::x56c_shellState), PES_ADDR(CBabygoth, x56c_shellState), PES_GETI(CBabygoth, x56c_shellState), PES_SETI(CBabygoth, x56c_shellState)},
       {"x570_babyData", "CBabygothData", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CBabygoth::x570_babyData), PES_ADDR(CBabygoth, x570_babyData), nullptr, nullptr},
       {"x6e8_teamMgr", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CBabygoth::x6e8_teamMgr), PES_ADDR(CBabygoth, x6e8_teamMgr), nullptr, nullptr},
-      {"x6ec_pathSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CBabygoth::x6ec_pathSearch), PES_ADDR(CBabygoth, x6ec_pathSearch), nullptr, nullptr},
-      {"x7d0_approachPathSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CBabygoth::x7d0_approachPathSearch), PES_ADDR(CBabygoth, x7d0_approachPathSearch), nullptr, nullptr},
+      {"x6ec_pathSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CBabygoth::x6ec_pathSearch), PES_ADDR(CBabygoth, x6ec_pathSearch), nullptr, nullptr},
+      {"x7d0_approachPathSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CBabygoth::x7d0_approachPathSearch), PES_ADDR(CBabygoth, x7d0_approachPathSearch), nullptr, nullptr},
       {"x8b4_pathFindMode", "CBabygoth::EPathFindMode", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CBabygoth::x8b4_pathFindMode), PES_ADDR(CBabygoth, x8b4_pathFindMode), PES_GETI(CBabygoth, x8b4_pathFindMode), PES_SETI(CBabygoth, x8b4_pathFindMode)},
       {"x8b8_backupDestPos", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CBabygoth::x8b8_backupDestPos), PES_ADDR(CBabygoth, x8b8_backupDestPos), nullptr, nullptr},
       {"x8c4_initialFaceDir", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CBabygoth::x8c4_initialFaceDir), PES_ADDR(CBabygoth, x8c4_initialFaceDir), nullptr, nullptr},
@@ -351,7 +351,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CBabygoth >() {
       {"xa49_28_onApproachPath", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CBabygoth, xa49_28_onApproachPath), PES_SETI(CBabygoth, xa49_28_onApproachPath)},
       {"xa49_29_objectSpaceCollision", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CBabygoth, xa49_29_objectSpaceCollision), PES_SETI(CBabygoth, xa49_29_objectSpaceCollision)},
   };
-  static const PortSchemaClass desc = {"CBabygoth", "CPatterned", fields, 48, 0x3557FA9BD66BEE2Bull};
+  static const PortSchemaClass desc = {"CBabygoth", "CPatterned", fields, 48, 0x4CB8FD8176977C17ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CBallCamera >() {
@@ -506,7 +506,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CBeetle >() {
       {"x5a4_jumpBackwardDist", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CBeetle::x5a4_jumpBackwardDist), PES_ADDR(CBeetle, x5a4_jumpBackwardDist), nullptr, nullptr},
       {"x5a8_animTimeRem", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CBeetle::x5a8_animTimeRem), PES_ADDR(CBeetle, x5a8_animTimeRem), nullptr, nullptr},
       {"x5ac_tailModel", "rstl::optional_object<CModelData>", PortSchemaKind::container, 0, kPortSchemaPrivate, sizeof(CBeetle::x5ac_tailModel), PES_ADDR(CBeetle, x5ac_tailModel), nullptr, nullptr},
-      {"x5fc_pathFindSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CBeetle::x5fc_pathFindSearch), PES_ADDR(CBeetle, x5fc_pathFindSearch), nullptr, nullptr},
+      {"x5fc_pathFindSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CBeetle::x5fc_pathFindSearch), PES_ADDR(CBeetle, x5fc_pathFindSearch), nullptr, nullptr},
       {"x6e0_retreatPoints", "rstl::reserved_vector<CVector3f, 8>", PortSchemaKind::container, 0, kPortSchemaPrivate, sizeof(CBeetle::x6e0_retreatPoints), PES_ADDR(CBeetle, x6e0_retreatPoints), nullptr, nullptr},
       {"x744_platingVuln", "CDamageVulnerability", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CBeetle::x744_platingVuln), PES_ADDR(CBeetle, x744_platingVuln), nullptr, nullptr},
       {"x7ac_tailVuln", "CDamageVulnerability", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CBeetle::x7ac_tailVuln), PES_ADDR(CBeetle, x7ac_tailVuln), nullptr, nullptr},
@@ -523,7 +523,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CBeetle >() {
       {"x838_27_reset", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CBeetle, x838_27_reset), PES_SETI(CBeetle, x838_27_reset)},
       {"x839_pad", "uchar[7]", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CBeetle::x839_pad), PES_ADDR(CBeetle, x839_pad), nullptr, nullptr},
   };
-  static const PortSchemaClass desc = {"CBeetle", "CPatterned", fields, 27, 0xA427A5C459DF895Aull};
+  static const PortSchemaClass desc = {"CBeetle", "CPatterned", fields, 27, 0x1C0DBEA3113110A8ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CBloodFlower >() {
@@ -589,7 +589,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CBouncyGrenade >(
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CBurrower >() {
   static const PortSchemaField fields[] = {
-      {"x568_pathFindSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CBurrower::x568_pathFindSearch), PES_ADDR(CBurrower, x568_pathFindSearch), nullptr, nullptr},
+      {"x568_pathFindSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CBurrower::x568_pathFindSearch), PES_ADDR(CBurrower, x568_pathFindSearch), nullptr, nullptr},
       {"x64c_projectileInfo", "CProjectileInfo", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CBurrower::x64c_projectileInfo), PES_ADDR(CBurrower, x64c_projectileInfo), nullptr, nullptr},
       {"x674_jumpParticle", "rstl::single_ptr<CElementGen>", PortSchemaKind::smart_ptr, 0, kPortSchemaPrivate, sizeof(CBurrower::x674_jumpParticle), PES_ADDR(CBurrower, x674_jumpParticle), nullptr, nullptr},
       {"x678_trailParticle", "rstl::single_ptr<CElementGen>", PortSchemaKind::smart_ptr, 0, kPortSchemaPrivate, sizeof(CBurrower::x678_trailParticle), PES_ADDR(CBurrower, x678_trailParticle), nullptr, nullptr},
@@ -603,7 +603,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CBurrower >() {
       {"x6ac_24_doFacePlayer", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CBurrower, x6ac_24_doFacePlayer), PES_SETI(CBurrower, x6ac_24_doFacePlayer)},
       {"x6ac_25_inAir", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CBurrower, x6ac_25_inAir), PES_SETI(CBurrower, x6ac_25_inAir)},
   };
-  static const PortSchemaClass desc = {"CBurrower", "CPatterned", fields, 13, 0x15E32D63CA0025AEull};
+  static const PortSchemaClass desc = {"CBurrower", "CPatterned", fields, 13, 0xC340E0359DD6B6C4ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CChozoGhost >() {
@@ -776,7 +776,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CDrone >() {
       {"x67c_", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CDrone::x67c_), PES_ADDR(CDrone, x67c_), nullptr, nullptr},
       {"x688_teamMgr", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CDrone::x688_teamMgr), PES_ADDR(CDrone, x688_teamMgr), nullptr, nullptr},
       {"x690_colSphere", "CCollidableSphere", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CDrone::x690_colSphere), PES_ADDR(CDrone, x690_colSphere), nullptr, nullptr},
-      {"x6b0_pathFind", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CDrone::x6b0_pathFind), PES_ADDR(CDrone, x6b0_pathFind), nullptr, nullptr},
+      {"x6b0_pathFind", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CDrone::x6b0_pathFind), PES_ADDR(CDrone, x6b0_pathFind), nullptr, nullptr},
       {"x794_", "CAxisAngle", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CDrone::x794_), PES_ADDR(CDrone, x794_), nullptr, nullptr},
       {"x7a0_", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CDrone::x7a0_), PES_ADDR(CDrone, x7a0_), nullptr, nullptr},
       {"x7ac_lightPos", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CDrone::x7ac_lightPos), PES_ADDR(CDrone, x7ac_lightPos), nullptr, nullptr},
@@ -809,7 +809,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CDrone >() {
       {"x835_25_", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CDrone, x835_25_), PES_SETI(CDrone, x835_25_)},
       {"x835_26_", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CDrone, x835_26_), PES_SETI(CDrone, x835_26_)},
   };
-  static const PortSchemaClass desc = {"CDrone", "CPatterned", fields, 86, 0x55BDC97FF543748Bull};
+  static const PortSchemaClass desc = {"CDrone", "CPatterned", fields, 86, 0x5FD064C9662B50F5ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CDroneLaser >() {
@@ -867,7 +867,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CElitePirate >() 
       {"x7c4_absorbUpdateTimer", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CElitePirate::x7c4_absorbUpdateTimer), PES_ADDR(CElitePirate, x7c4_absorbUpdateTimer), nullptr, nullptr},
       {"x7c8_currAnimId", "int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CElitePirate::x7c8_currAnimId), PES_ADDR(CElitePirate, x7c8_currAnimId), PES_GETI(CElitePirate, x7c8_currAnimId), PES_SETI(CElitePirate, x7c8_currAnimId)},
       {"x7cc_activeMaterialSet", "unsigned int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CElitePirate::x7cc_activeMaterialSet), PES_ADDR(CElitePirate, x7cc_activeMaterialSet), PES_GETI(CElitePirate, x7cc_activeMaterialSet), PES_SETI(CElitePirate, x7cc_activeMaterialSet)},
-      {"x7d0_pathFindSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CElitePirate::x7d0_pathFindSearch), PES_ADDR(CElitePirate, x7d0_pathFindSearch), nullptr, nullptr},
+      {"x7d0_pathFindSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CElitePirate::x7d0_pathFindSearch), PES_ADDR(CElitePirate, x7d0_pathFindSearch), nullptr, nullptr},
       {"x8b4_targetDestPos", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CElitePirate::x8b4_targetDestPos), PES_ADDR(CElitePirate, x8b4_targetDestPos), nullptr, nullptr},
       {"x8c0_positionHistory", "SPositionHistory", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CElitePirate::x8c0_positionHistory), PES_ADDR(CElitePirate, x8c0_positionHistory), nullptr, nullptr},
       {"x988_24_damageOn", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CElitePirate, x988_24_damageOn), PES_SETI(CElitePirate, x988_24_damageOn)},
@@ -880,7 +880,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CElitePirate >() 
       {"x988_31_running", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CElitePirate, x988_31_running), PES_SETI(CElitePirate, x988_31_running)},
       {"x989_24_onPath", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CElitePirate, x989_24_onPath), PES_SETI(CElitePirate, x989_24_onPath)},
   };
-  static const PortSchemaClass desc = {"CElitePirate", "CPatterned", fields, 37, 0xE5EC8D956A88F03Aull};
+  static const PortSchemaClass desc = {"CElitePirate", "CPatterned", fields, 37, 0x55E3BD6BD7A2F390ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CEnergyBall >() {
@@ -994,9 +994,9 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CFireFlea >() {
       {"x570_nearList", "rstl::reserved_vector<TUniqueId, 1024>", PortSchemaKind::container, 0, kPortSchemaPrivate, sizeof(CFireFlea::x570_nearList), PES_ADDR(CFireFlea, x570_nearList), nullptr, nullptr},
       {"xd74_", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CFireFlea::xd74_), PES_ADDR(CFireFlea, xd74_), nullptr, nullptr},
       {"xd80_targetPos", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CFireFlea::xd80_targetPos), PES_ADDR(CFireFlea, xd80_targetPos), nullptr, nullptr},
-      {"xd8c_pathFind", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CFireFlea::xd8c_pathFind), PES_ADDR(CFireFlea, xd8c_pathFind), nullptr, nullptr},
+      {"xd8c_pathFind", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CFireFlea::xd8c_pathFind), PES_ADDR(CFireFlea, xd8c_pathFind), nullptr, nullptr},
   };
-  static const PortSchemaClass desc = {"CFireFlea", "CPatterned", fields, 6, 0xE6B447EC6B19E9B1ull};
+  static const PortSchemaClass desc = {"CFireFlea", "CPatterned", fields, 6, 0xE66F741AD2E9E6EBull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CFireFlea::CDeathCameraEffect >() {
@@ -1253,7 +1253,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CFlyingPirate >()
       {"x6a2_28_", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CFlyingPirate, x6a2_28_), PES_SETI(CFlyingPirate, x6a2_28_)},
       {"x6a4_currentCoverPoint", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CFlyingPirate::x6a4_currentCoverPoint), PES_ADDR(CFlyingPirate, x6a4_currentCoverPoint), nullptr, nullptr},
       {"x6a6_id2", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CFlyingPirate::x6a6_id2), PES_ADDR(CFlyingPirate, x6a6_id2), nullptr, nullptr},
-      {"x6a8_pathFindSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CFlyingPirate::x6a8_pathFindSearch), PES_ADDR(CFlyingPirate, x6a8_pathFindSearch), nullptr, nullptr},
+      {"x6a8_pathFindSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CFlyingPirate::x6a8_pathFindSearch), PES_ADDR(CFlyingPirate, x6a8_pathFindSearch), nullptr, nullptr},
       {"x78c_", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CFlyingPirate::x78c_), PES_ADDR(CFlyingPirate, x78c_), nullptr, nullptr},
       {"x790_", "int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CFlyingPirate::x790_), PES_ADDR(CFlyingPirate, x790_), PES_GETI(CFlyingPirate, x790_), PES_SETI(CFlyingPirate, x790_)},
       {"x794_initialHealth", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CFlyingPirate::x794_initialHealth), PES_ADDR(CFlyingPirate, x794_initialHealth), nullptr, nullptr},
@@ -1285,7 +1285,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CFlyingPirate >()
       {"x8a0_patrolTarget", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CFlyingPirate::x8a0_patrolTarget), PES_ADDR(CFlyingPirate, x8a0_patrolTarget), nullptr, nullptr},
       {"x8a4_", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CFlyingPirate::x8a4_), PES_ADDR(CFlyingPirate, x8a4_), nullptr, nullptr},
   };
-  static const PortSchemaClass desc = {"CFlyingPirate", "CPatterned", fields, 57, 0xFA4F221C62C64773ull};
+  static const PortSchemaClass desc = {"CFlyingPirate", "CPatterned", fields, 57, 0xB91CB203AB27B251ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CGameCamera >() {
@@ -1445,8 +1445,8 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CIceSheegoth >() 
   static const PortSchemaField fields[] = {
       {"x568_state", "int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CIceSheegoth::x568_state), PES_ADDR(CIceSheegoth, x568_state), PES_GETI(CIceSheegoth, x568_state), PES_SETI(CIceSheegoth, x568_state)},
       {"x56c_data", "CIceSheegothData", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CIceSheegoth::x56c_data), PES_ADDR(CIceSheegoth, x56c_data), nullptr, nullptr},
-      {"x760_pathSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CIceSheegoth::x760_pathSearch), PES_ADDR(CIceSheegoth, x760_pathSearch), nullptr, nullptr},
-      {"x844_approachSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CIceSheegoth::x844_approachSearch), PES_ADDR(CIceSheegoth, x844_approachSearch), nullptr, nullptr},
+      {"x760_pathSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CIceSheegoth::x760_pathSearch), PES_ADDR(CIceSheegoth, x760_pathSearch), nullptr, nullptr},
+      {"x844_approachSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CIceSheegoth::x844_approachSearch), PES_ADDR(CIceSheegoth, x844_approachSearch), nullptr, nullptr},
       {"x928_pathFindMode", "CIceSheegoth::EPathFindMode", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CIceSheegoth::x928_pathFindMode), PES_ADDR(CIceSheegoth, x928_pathFindMode), PES_GETI(CIceSheegoth, x928_pathFindMode), PES_SETI(CIceSheegoth, x928_pathFindMode)},
       {"x92c_lastDest", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CIceSheegoth::x92c_lastDest), PES_ADDR(CIceSheegoth, x92c_lastDest), nullptr, nullptr},
       {"x938_", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CIceSheegoth::x938_), PES_ADDR(CIceSheegoth, x938_), nullptr, nullptr},
@@ -1505,7 +1505,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CIceSheegoth >() 
       {"xb29_28_", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CIceSheegoth, xb29_28_), PES_SETI(CIceSheegoth, xb29_28_)},
       {"xb29_29_scanned", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CIceSheegoth, xb29_29_scanned), PES_SETI(CIceSheegoth, xb29_29_scanned)},
   };
-  static const PortSchemaClass desc = {"CIceSheegoth", "CPatterned", fields, 61, 0x3F677EA8A4AA6D75ull};
+  static const PortSchemaClass desc = {"CIceSheegoth", "CPatterned", fields, 61, 0xC7E46B907F7CC29Dull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CInterpolationCamera >() {
@@ -1617,7 +1617,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CMetroid >() {
       {"mMetroidData", "CMetroidData", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CMetroid::mMetroidData), PES_ADDR(CMetroid, mMetroidData), nullptr, nullptr},
       {"mTeamAiManagerId", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CMetroid::mTeamAiManagerId), PES_ADDR(CMetroid, mTeamAiManagerId), nullptr, nullptr},
       {"mCollisionPrimitive", "CCollidableSphere", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CMetroid::mCollisionPrimitive), PES_ADDR(CMetroid, mCollisionPrimitive), nullptr, nullptr},
-      {"mPathFindSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CMetroid::mPathFindSearch), PES_ADDR(CMetroid, mPathFindSearch), nullptr, nullptr},
+      {"mPathFindSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CMetroid::mPathFindSearch), PES_ADDR(CMetroid, mPathFindSearch), nullptr, nullptr},
       {"x7a4", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CMetroid::x7a4), PES_ADDR(CMetroid, x7a4), nullptr, nullptr},
       {"mAttackTarget", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CMetroid::mAttackTarget), PES_ADDR(CMetroid, mAttackTarget), nullptr, nullptr},
       {"mAttackChance", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CMetroid::mAttackChance), PES_ADDR(CMetroid, mAttackChance), nullptr, nullptr},
@@ -1652,7 +1652,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CMetroid >() {
       {"mRestoreCharacterCollision", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CMetroid, mRestoreCharacterCollision), PES_SETI(CMetroid, mRestoreCharacterCollision)},
       {"mIsEnergyDrainVulnerable", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CMetroid, mIsEnergyDrainVulnerable), PES_SETI(CMetroid, mIsEnergyDrainVulnerable)},
   };
-  static const PortSchemaClass desc = {"CMetroid", "CPatterned", fields, 38, 0x924FD8B516C94F41ull};
+  static const PortSchemaClass desc = {"CMetroid", "CPatterned", fields, 38, 0xE3BC1EBFF53A9EBFull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CMetroidBeta >() {
@@ -1660,7 +1660,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CMetroidBeta >() 
       {"x568_progState", "int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CMetroidBeta::x568_progState), PES_ADDR(CMetroidBeta, x568_progState), PES_GETI(CMetroidBeta, x568_progState), PES_SETI(CMetroidBeta, x568_progState)},
       {"x56c_data", "CMetroidBetaData", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CMetroidBeta::x56c_data), PES_ADDR(CMetroidBeta, x56c_data), nullptr, nullptr},
       {"x678_teamMgr", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CMetroidBeta::x678_teamMgr), PES_ADDR(CMetroidBeta, x678_teamMgr), nullptr, nullptr},
-      {"x67c_pathFind", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CMetroidBeta::x67c_pathFind), PES_ADDR(CMetroidBeta, x67c_pathFind), nullptr, nullptr},
+      {"x67c_pathFind", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CMetroidBeta::x67c_pathFind), PES_ADDR(CMetroidBeta, x67c_pathFind), nullptr, nullptr},
       {"x760_leftClaw", "CSegId", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CMetroidBeta::x760_leftClaw), PES_ADDR(CMetroidBeta, x760_leftClaw), nullptr, nullptr},
       {"x761_rightClaw", "CSegId", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CMetroidBeta::x761_rightClaw), PES_ADDR(CMetroidBeta, x761_rightClaw), nullptr, nullptr},
       {"x764_collisionManager", "rstl::single_ptr<CCollisionActorManager>", PortSchemaKind::smart_ptr, 0, kPortSchemaPrivate, sizeof(CMetroidBeta::x764_collisionManager), PES_ADDR(CMetroidBeta, x764_collisionManager), nullptr, nullptr},
@@ -1700,7 +1700,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CMetroidBeta >() 
       {"x840_30_", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CMetroidBeta, x840_30_), PES_SETI(CMetroidBeta, x840_30_)},
       {"x840_31_", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CMetroidBeta, x840_31_), PES_SETI(CMetroidBeta, x840_31_)},
   };
-  static const PortSchemaClass desc = {"CMetroidBeta", "CPatterned", fields, 42, 0x43790162B00C5E36ull};
+  static const PortSchemaClass desc = {"CMetroidBeta", "CPatterned", fields, 42, 0x2ACCC71CE4BD4010ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CMetroidPrime >() {
@@ -1839,7 +1839,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CMetroidPrimeRela
 template <> const PortSchemaClass& PortEntitySchema::Describe< CMetroidPrimeStage2 >() {
   static const PortSchemaField fields[] = {
       {"x568_particleDesc", "TLockedToken<CGenDescription>", PortSchemaKind::smart_ptr, 0, kPortSchemaPrivate, sizeof(CMetroidPrimeStage2::x568_particleDesc), PES_ADDR(CMetroidPrimeStage2, x568_particleDesc), nullptr, nullptr},
-      {"x574_searchPath", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CMetroidPrimeStage2::x574_searchPath), PES_ADDR(CMetroidPrimeStage2, x574_searchPath), nullptr, nullptr},
+      {"x574_searchPath", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CMetroidPrimeStage2::x574_searchPath), PES_ADDR(CMetroidPrimeStage2, x574_searchPath), nullptr, nullptr},
       {"x658_collisionManager", "rstl::single_ptr<CCollisionActorManager>", PortSchemaKind::smart_ptr, 0, kPortSchemaPrivate, sizeof(CMetroidPrimeStage2::x658_collisionManager), PES_ADDR(CMetroidPrimeStage2, x658_collisionManager), nullptr, nullptr},
       {"x65c_elementGen", "rstl::single_ptr<CElementGen>", PortSchemaKind::smart_ptr, 0, kPortSchemaPrivate, sizeof(CMetroidPrimeStage2::x65c_elementGen), PES_ADDR(CMetroidPrimeStage2, x65c_elementGen), nullptr, nullptr},
       {"x660_particle1", "unsigned int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CMetroidPrimeStage2::x660_particle1), PES_ADDR(CMetroidPrimeStage2, x660_particle1), PES_GETI(CMetroidPrimeStage2, x660_particle1), PES_SETI(CMetroidPrimeStage2, x660_particle1)},
@@ -1877,7 +1877,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CMetroidPrimeStag
       {"x70e_30_isMorphing", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CMetroidPrimeStage2, x70e_30_isMorphing), PES_SETI(CMetroidPrimeStage2, x70e_30_isMorphing)},
       {"x70e_31_hasEventStarted", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CMetroidPrimeStage2, x70e_31_hasEventStarted), PES_SETI(CMetroidPrimeStage2, x70e_31_hasEventStarted)},
   };
-  static const PortSchemaClass desc = {"CMetroidPrimeStage2", "CPatterned", fields, 38, 0xCD184A680B1E34E8ull};
+  static const PortSchemaClass desc = {"CMetroidPrimeStage2", "CPatterned", fields, 38, 0xAE1C245C61114A86ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CNewFlameThrower >() {
@@ -3907,7 +3907,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CScriptWorldTelep
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CSeedling >() {
   static const PortSchemaField fields[] = {
-      {"x5d8_searchPath", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CSeedling::x5d8_searchPath), PES_ADDR(CSeedling, x5d8_searchPath), nullptr, nullptr},
+      {"x5d8_searchPath", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CSeedling::x5d8_searchPath), PES_ADDR(CSeedling, x5d8_searchPath), nullptr, nullptr},
       {"x6bc_spikeData", "rstl::single_ptr<CModelData>", PortSchemaKind::anim_data, 0, kPortSchemaPrivate, sizeof(CSeedling::x6bc_spikeData), PES_ADDR(CSeedling, x6bc_spikeData), nullptr, nullptr},
       {"x6c0_projectileInfo", "CProjectileInfo", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CSeedling::x6c0_projectileInfo), PES_ADDR(CSeedling, x6c0_projectileInfo), nullptr, nullptr},
       {"x6e8_deathDamage", "CDamageInfo", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CSeedling::x6e8_deathDamage), PES_ADDR(CSeedling, x6e8_deathDamage), nullptr, nullptr},
@@ -3917,7 +3917,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CSeedling >() {
       {"x722_24_renderOnlyClusterA", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CSeedling, x722_24_renderOnlyClusterA), PES_SETI(CSeedling, x722_24_renderOnlyClusterA)},
       {"x722_25_curNeedleCluster", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CSeedling, x722_25_curNeedleCluster), PES_SETI(CSeedling, x722_25_curNeedleCluster)},
   };
-  static const PortSchemaClass desc = {"CSeedling", "CWallWalker", fields, 9, 0xDA806D8CC0EA5342ull};
+  static const PortSchemaClass desc = {"CSeedling", "CWallWalker", fields, 9, 0x4B62E0BC9204121Cull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CShockWave >() {
@@ -4046,7 +4046,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CSpacePirate >() 
       {"x644_steeringSpeed", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x644_steeringSpeed), PES_ADDR(CSpacePirate, x644_steeringSpeed), nullptr, nullptr},
       {"x648_targetDelta", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x648_targetDelta), PES_ADDR(CSpacePirate, x648_targetDelta), nullptr, nullptr},
       {"x654_coverPointRearDir", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x654_coverPointRearDir), PES_ADDR(CSpacePirate, x654_coverPointRearDir), nullptr, nullptr},
-      {"x660_pathFindSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x660_pathFindSearch), PES_ADDR(CSpacePirate, x660_pathFindSearch), nullptr, nullptr},
+      {"x660_pathFindSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x660_pathFindSearch), PES_ADDR(CSpacePirate, x660_pathFindSearch), nullptr, nullptr},
       {"x744_unkTimer", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x744_unkTimer), PES_ADDR(CSpacePirate, x744_unkTimer), nullptr, nullptr},
       {"x748_steeringDelayTimer", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x748_steeringDelayTimer), PES_ADDR(CSpacePirate, x748_steeringDelayTimer), nullptr, nullptr},
       {"x74c_", "unsigned int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x74c_), PES_ADDR(CSpacePirate, x74c_), PES_GETI(CSpacePirate, x74c_), PES_SETI(CSpacePirate, x74c_)},
@@ -4098,7 +4098,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CSpacePirate >() 
       {"x8d8_holdPositionTime", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x8d8_holdPositionTime), PES_ADDR(CSpacePirate, x8d8_holdPositionTime), nullptr, nullptr},
       {"x8dc_leashTimer", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CSpacePirate::x8dc_leashTimer), PES_ADDR(CSpacePirate, x8dc_leashTimer), nullptr, nullptr},
   };
-  static const PortSchemaClass desc = {"CSpacePirate", "CPatterned", fields, 107, 0xCFCB19BFCEAAB937ull};
+  static const PortSchemaClass desc = {"CSpacePirate", "CPatterned", fields, 107, 0x7CD9133D3A063B95ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CSpankWeed >() {
@@ -4228,7 +4228,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CThardus >() {
       {"x7cc_", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CThardus::x7cc_), PES_ADDR(CThardus, x7cc_), nullptr, nullptr},
       {"x7d8_", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CThardus::x7d8_), PES_ADDR(CThardus, x7d8_), nullptr, nullptr},
       {"x7e4_", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CThardus::x7e4_), PES_ADDR(CThardus, x7e4_), nullptr, nullptr},
-      {"x7f0_pathFindSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CThardus::x7f0_pathFindSearch), PES_ADDR(CThardus, x7f0_pathFindSearch), nullptr, nullptr},
+      {"x7f0_pathFindSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CThardus::x7f0_pathFindSearch), PES_ADDR(CThardus, x7f0_pathFindSearch), nullptr, nullptr},
       {"x8d4_", "bool", PortSchemaKind::bool_, 0, kPortSchemaPrivate, sizeof(CThardus::x8d4_), PES_ADDR(CThardus, x8d4_), PES_GETI(CThardus, x8d4_), PES_SETI(CThardus, x8d4_)},
       {"x8d8_", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CThardus::x8d8_), PES_ADDR(CThardus, x8d8_), nullptr, nullptr},
       {"x8e4_", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CThardus::x8e4_), PES_ADDR(CThardus, x8e4_), nullptr, nullptr},
@@ -4259,7 +4259,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CThardus >() {
       {"x95d_", "unsigned char", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CThardus::x95d_), PES_ADDR(CThardus, x95d_), PES_GETI(CThardus, x95d_), PES_SETI(CThardus, x95d_)},
       {"x95e_", "bool", PortSchemaKind::bool_, 0, kPortSchemaPrivate, sizeof(CThardus::x95e_), PES_ADDR(CThardus, x95e_), PES_GETI(CThardus, x95e_), PES_SETI(CThardus, x95e_)},
   };
-  static const PortSchemaClass desc = {"CThardus", "CPatterned", fields, 101, 0x3D09331FA757B261ull};
+  static const PortSchemaClass desc = {"CThardus", "CPatterned", fields, 101, 0x70E811781322B967ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CThardusRockProjectile >() {
@@ -4295,7 +4295,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CThardusRockProje
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CTryclops >() {
   static const PortSchemaField fields[] = {
-      {"x568_pathFindSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CTryclops::x568_pathFindSearch), PES_ADDR(CTryclops, x568_pathFindSearch), nullptr, nullptr},
+      {"x568_pathFindSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CTryclops::x568_pathFindSearch), PES_ADDR(CTryclops, x568_pathFindSearch), nullptr, nullptr},
       {"x64c_playerRotation", "CTransform4f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CTryclops::x64c_playerRotation), PES_ADDR(CTryclops, x64c_playerRotation), nullptr, nullptr},
       {"x67c_suckForceMultiplier", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CTryclops::x67c_suckForceMultiplier), PES_ADDR(CTryclops, x67c_suckForceMultiplier), nullptr, nullptr},
       {"x680_minSuckAngleProj", "float", PortSchemaKind::float_, 0, kPortSchemaPrivate, sizeof(CTryclops::x680_minSuckAngleProj), PES_ADDR(CTryclops, x680_minSuckAngleProj), nullptr, nullptr},
@@ -4310,7 +4310,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CTryclops >() {
       {"x698_26_vulnerable", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CTryclops, x698_26_vulnerable), PES_SETI(CTryclops, x698_26_vulnerable)},
       {"x698_27_dizzy", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CTryclops, x698_27_dizzy), PES_SETI(CTryclops, x698_27_dizzy)},
   };
-  static const PortSchemaClass desc = {"CTryclops", "CPatterned", fields, 14, 0x3FF05475E7C4BA01ull};
+  static const PortSchemaClass desc = {"CTryclops", "CPatterned", fields, 14, 0x0D6B50DFE504F4CFull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CWallCrawlerSwarm >() {
@@ -4397,7 +4397,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CWarWasp >() {
   static const PortSchemaField fields[] = {
       {"x568_stateProg", "int", PortSchemaKind::int_, 0, kPortSchemaPrivate, sizeof(CWarWasp::x568_stateProg), PES_ADDR(CWarWasp, x568_stateProg), PES_GETI(CWarWasp, x568_stateProg), PES_SETI(CWarWasp, x568_stateProg)},
       {"x570_cSphere", "CCollidableSphere", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CWarWasp::x570_cSphere), PES_ADDR(CWarWasp, x570_cSphere), nullptr, nullptr},
-      {"x590_pfSearch", "CPathFindSearch", PortSchemaKind::other, 0, kPortSchemaPrivate, sizeof(CWarWasp::x590_pfSearch), PES_ADDR(CWarWasp, x590_pfSearch), nullptr, nullptr},
+      {"x590_pfSearch", "CPathFindSearch", PortSchemaKind::path_search, 0, kPortSchemaPrivate, sizeof(CWarWasp::x590_pfSearch), PES_ADDR(CWarWasp, x590_pfSearch), nullptr, nullptr},
       {"x674_aiMgr", "TUniqueId", PortSchemaKind::uid, 0, kPortSchemaPrivate, sizeof(CWarWasp::x674_aiMgr), PES_ADDR(CWarWasp, x674_aiMgr), nullptr, nullptr},
       {"x678_targetPos", "CVector3f", PortSchemaKind::math, 0, kPortSchemaPrivate, sizeof(CWarWasp::x678_targetPos), PES_ADDR(CWarWasp, x678_targetPos), nullptr, nullptr},
       {"x684_contactDamage", "CDamageInfo", PortSchemaKind::pod, 0, kPortSchemaPrivate, sizeof(CWarWasp::x684_contactDamage), PES_ADDR(CWarWasp, x684_contactDamage), nullptr, nullptr},
@@ -4425,7 +4425,7 @@ template <> const PortSchemaClass& PortEntitySchema::Describe< CWarWasp >() {
       {"x72e_30_isRetreating", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CWarWasp, x72e_30_isRetreating), PES_SETI(CWarWasp, x72e_30_isRetreating)},
       {"x72e_31_heardNoise", "bool", PortSchemaKind::bitfield, 1, kPortSchemaPrivate, 0, nullptr, PES_GETI(CWarWasp, x72e_31_heardNoise), PES_SETI(CWarWasp, x72e_31_heardNoise)},
   };
-  static const PortSchemaClass desc = {"CWarWasp", "CPatterned", fields, 29, 0xAB7B6E1908BE760Bull};
+  static const PortSchemaClass desc = {"CWarWasp", "CPatterned", fields, 29, 0x1A3AE34145B9F131ull};
   return desc;
 }
 template <> const PortSchemaClass& PortEntitySchema::Describe< CWaveBuster >() {

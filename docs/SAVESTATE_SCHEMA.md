@@ -20,13 +20,13 @@ Written by `tools/gen_entity_schema.py`; do not edit. The table itself is
 | state_machine | 1 |
 | body_controller | 1 |
 | anim_data | 14 |
-| other | 137 |
+| path_search | 19 |
+| other | 118 |
 
 ## `other`: types without a codec yet (by field count)
 
 - 23 `CSfxHandle`
 - 20 `CProjectileInfo`
-- 19 `CPathFindSearch`
 - 10 `CBoneTracking`
 - 8 `CCameraShakeData`
 - 6 `CCollidableAABox`

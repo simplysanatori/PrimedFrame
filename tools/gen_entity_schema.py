@@ -42,7 +42,7 @@ FLAGS = ["-x", "c++", "-std=gnu++20", "-fsigned-char", "-fsyntax-only", "-Wno-ev
 
 # Kinds, in PortSchemaKind order.
 KINDS = ["bool", "int", "float", "bitfield", "math", "uid", "pod", "pointer", "smart_ptr",
-         "container", "state_machine", "body_controller", "anim_data", "other"]
+         "container", "state_machine", "body_controller", "anim_data", "path_search", "other"]
 PLAIN = {"bool", "int", "float", "bitfield", "math", "uid"}
 
 MATH = {"CVector2f", "CVector3f", "CVector3d", "CUnitVector3f", "CTransform4f", "CQuaternion",
@@ -238,6 +238,8 @@ class Model:
             return "uid"
         if c == "CStateMachineState":
             return "state_machine"
+        if c == "CPathFindSearch":
+            return "path_search"
         if c == "CBodyController":
             return "body_controller"
         if c in ("CAnimData", "CModelData"):

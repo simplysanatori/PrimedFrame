@@ -135,6 +135,8 @@ const char* PortEntitySchema::KindName(PortSchemaKind kind) {
     return "body_controller";
   case PortSchemaKind::anim_data:
     return "anim_data";
+  case PortSchemaKind::path_search:
+    return "path_search";
   case PortSchemaKind::other:
     return "other";
   }

@@ -27,6 +27,7 @@ enum class PortSchemaKind : uint8_t {
   state_machine,   // CStateMachineState
   body_controller, // CBodyController, or a smart pointer to one
   anim_data,       // CAnimData/CModelData, or a smart pointer to one
+  path_search,     // CPathFindSearch
   other,           // anything else: needs its own codec (docs/SAVESTATE_SCHEMA.md lists them)
 };
 

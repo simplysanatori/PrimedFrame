@@ -13,6 +13,8 @@
 #include "MetroidPrime/CStateManager.hpp"
 #include "MetroidPrime/Enemies/CPatterned.hpp"
 #include "MetroidPrime/Enemies/CStateMachine.hpp"
+#include "MetroidPrime/PathFinding/CPathFindSearch.hpp"
+#include "MetroidPrime/Player/CPlayer.hpp"
 #include "MetroidPrime/TCastTo.hpp"
 
 #include <cstdlib>
@@ -28,12 +30,15 @@
 // restore the other tags do.
 //
 // Saved: the plain kinds (bool, int, float, bitfield, math), pod structs, and uids, which
-// go by the editor id of the object they name. A uid naming an object without one (a
-// collision actor or projectile the enemy made) is left as the rebuilt enemy has it.
+// go by the editor id of the object they name (the player by a mark of its own). A uid
+// naming an object without one (a collision actor or projectile the enemy made) is left
+// as the rebuilt enemy has it.
 // The state machine, body controller and animation go through the codecs below, each
-// as a length and its payload, and are applied before the plain fields, in table order
-// (the AI state, then the body state, then the animation), so that what entering the
-// saved states sets up is then overwritten by the saved values.
+// as a length and its payload. They are applied between two applications of the plain
+// fields, in table order (the AI state, then the body state, then the animation), so
+// that entering the saved states starts from the saved values and what it sets up is
+// then overwritten by them. A path search is put back after the states, before the
+// plain fields go in again.
 // Not saved: pointers, smart pointers, containers, the kinds without a codec
 // (docs/SAVESTATE_SCHEMA.md),
 // CEntity's fields (the room record's own), most of CActor's and CPhysicsActor's (pose,
@@ -45,9 +50,18 @@ struct PortStateCodec {
   using BlockWriter = PortSaveState::BlockWriter;
   using BlockReader = PortSaveState::BlockReader;
 
-  // State name, time, random, delay, fixed random, code trigger.
+  // State name and index (a machine can have two states of one name, with different
+  // triggers), time, random, delay, fixed random, code trigger.
   static void PutStateMachine(const CStateMachineState& sm, BlockWriter& w) {
     w.Str(sm.x4_state != nullptr ? sm.x4_state->GetName() : "");
+    int index = -1;
+    if (sm.x4_state != nullptr && sm.x0_machine != nullptr) {
+      const rstl::vector< CAiState >& states = sm.x0_machine->GetStateVector();
+      for (int i = 0; i < static_cast< int >(states.size()) && index < 0; ++i)
+        if (&states[i] == sm.x4_state)
+          index = i;
+    }
+    w.U32(static_cast< uint32_t >(index));
     w.F32(sm.x8_time);
     w.F32(sm.xc_random);
     w.F32(sm.x10_delay);
@@ -59,6 +73,7 @@ struct PortStateCodec {
   // Start) when the enemy is in another, then puts back its time and randoms.
   static bool GetStateMachine(CStateManager& mgr, CAi& ai, CStateMachineState& sm, BlockReader& r) {
     const std::string name = r.Str();
+    const int savedIdx = static_cast< int >(r.U32());
     const float time = r.F32();
     const float random = r.F32();
     const float delay = r.F32();
@@ -78,6 +93,8 @@ struct PortStateCodec {
     }
     const rstl::vector< CAiState >& states = sm.x0_machine->GetStateVector();
     int idx = -1;
+    if (savedIdx >= 0 && savedIdx < static_cast< int >(states.size()) && name == states[savedIdx].GetName())
+      idx = savedIdx;
     for (int i = 0; i < static_cast< int >(states.size()) && idx < 0; ++i)
       if (name == states[i].GetName())
         idx = i;
@@ -201,6 +218,10 @@ struct PortStateCodec {
       });
     }
     CBodyStateInfo& info = bc.x2a4_bodyStateInfo;
+    // The rebuilt enemy's controller is started by its first Think (into the default
+    // state, which would then replace the saved one): start it here, as that Think would.
+    if (!bc.x300_25_active && (bits & 2) != 0)
+      bc.Activate(mgr);
     if (bc.x300_25_active && (bits & 2) != 0) {
       if (fits && state != info.x14_state && info.x0_stateMap.find(state) != info.x0_stateMap.end()) {
         if (info.x0_stateMap.find(info.x14_state) != info.x0_stateMap.end())
@@ -260,6 +281,43 @@ struct PortStateCodec {
     w.F32(phase);
   }
 
+  // The path being followed: its waypoints, the current one and the search result.
+  static void PutPath(const CPathFindSearch& ps, BlockWriter& w) {
+    w.U8(static_cast< uint8_t >(ps.x4_waypoints.size()));
+    for (const CVector3f& p : ps.x4_waypoints) {
+      w.F32(p.GetX());
+      w.F32(p.GetY());
+      w.F32(p.GetZ());
+    }
+    w.U32(static_cast< uint32_t >(ps.xc8_curWaypoint));
+    w.U32(static_cast< uint32_t >(ps.xcc_result));
+  }
+
+  // Applied after the AI state, whose Activate may have searched a new path.
+  static bool GetPath(CPathFindSearch& ps, BlockReader& r) {
+    const int count = r.U8();
+    if (count > static_cast< int >(ps.x4_waypoints.capacity()))
+      return false;
+    CVector3f points[16];
+    for (int i = 0; i < count; ++i) {
+      const float x = r.F32(), y = r.F32(), z = r.F32();
+      for (float v : {x, y, z})
+        if (!(v == v) || v > 1e9f || v < -1e9f)
+          return false;
+      points[i] = CVector3f(x, y, z);
+    }
+    const int cur = static_cast< int >(r.U32());
+    const uint32_t result = r.U32();
+    if (!r.ok || cur < 0 || (count > 0 && cur >= count) || result > CPathFindSearch::kR_NoPath)
+      return false;
+    ps.x4_waypoints.clear();
+    for (int i = 0; i < count; ++i)
+      ps.x4_waypoints.push_back(points[i]);
+    ps.xc8_curWaypoint = cur;
+    ps.xcc_result = static_cast< CPathFindSearch::EResult >(result);
+    return true;
+  }
+
   static bool GetAnim(CAnimData& ad, BlockReader& r) {
     const int anim = static_cast< int >(r.U32());
     const uint8_t bits = r.U8();
@@ -282,10 +340,11 @@ namespace PortSaveState {
 namespace {
 
 // Bump when what SavedField picks or how a kind is written changes.
-constexpr uint32_t kFieldPolicy = 2;
+constexpr uint32_t kFieldPolicy = 3;
 
 constexpr uint32_t kUidNone = 0xFFFFFFFFu;    // kInvalidUniqueId
 constexpr uint32_t kUidDynamic = 0xFFFFFFFEu; // an object without an editor id: left alone
+constexpr uint32_t kUidPlayer = 0xFFFFFFFDu;  // the player (no editor id, same uid every load)
 
 bool Named(const char* name, std::initializer_list< const char* > names) {
   for (const char* n : names)
@@ -334,7 +393,13 @@ bool SavedField(const PortSchemaClass& cls, const PortSchemaField& f) {
 
 bool IsCodec(PortSchemaKind kind) {
   return kind == PortSchemaKind::state_machine || kind == PortSchemaKind::body_controller ||
-         kind == PortSchemaKind::anim_data;
+         kind == PortSchemaKind::anim_data || kind == PortSchemaKind::path_search;
+}
+
+// The pass a field is applied on (ApplyEntityFields): the plain fields on 1, the AI, body
+// and animation codecs on 0, the path on 2 (after the AI state's Activate searched one).
+int FieldPass(PortSchemaKind kind) {
+  return kind == PortSchemaKind::path_search ? 2 : IsCodec(kind) ? 0 : 1;
 }
 
 // The animation of an anim_data field: CModelData or a single_ptr to one.
@@ -371,6 +436,10 @@ std::string PutCodec(CEntity& ent, const PortSchemaField& f) {
     if (const CBodyController* bc = FieldBody(ent, f))
       PortStateCodec::PutBody(*bc, w);
     break;
+  case PortSchemaKind::path_search:
+    if (std::strcmp(f.type, "CPathFindSearch") == 0)
+      PortStateCodec::PutPath(*static_cast< const CPathFindSearch* >(f.addr(ent)), w);
+    break;
   default:
     if (const CAnimData* ad = FieldAnim(ent, f))
       PortStateCodec::PutAnim(*ad, w);
@@ -393,6 +462,9 @@ bool GetCodec(CStateManager& mgr, CEntity& ent, const PortSchemaField& f, const 
     CBodyController* bc = FieldBody(ent, f);
     return bc != nullptr && PortStateCodec::GetBody(mgr, *bc, r);
   }
+  case PortSchemaKind::path_search:
+    return std::strcmp(f.type, "CPathFindSearch") == 0 &&
+           PortStateCodec::GetPath(*static_cast< CPathFindSearch* >(f.addr(ent)), r);
   default: {
     CAnimData* ad = FieldAnim(ent, f);
     return ad != nullptr && PortStateCodec::GetAnim(*ad, r);
@@ -474,10 +546,13 @@ void PutField(const CStateManager& mgr, CEntity& ent, const PortSchemaField& f, 
       // A script generator's copy carries its template's editor id: not a name for it.
       const CEntity* target = mgr.GetObjectById(uid);
       const TEditorId eid = mgr.GetEditorIdForUniqueId(uid);
-      id = target != nullptr && eid != kInvalidEditorId &&
-                   !IsScriptGeneratedCopy(mgr, const_cast< CEntity& >(*target))
-               ? eid.Value()
-               : kUidDynamic;
+      if (target != nullptr && target == mgr.GetPlayer())
+        id = kUidPlayer;
+      else
+        id = target != nullptr && eid != kInvalidEditorId &&
+                     !IsScriptGeneratedCopy(mgr, const_cast< CEntity& >(*target))
+                 ? eid.Value()
+                 : kUidDynamic;
     }
     w.U32(id);
     return;
@@ -514,9 +589,9 @@ void SkipField(const PortSchemaField& f, BlockReader& r) {
 }
 
 // Returns whether the field was set; false with r.ok still true is a field skipped.
-// The codec fields are applied on the first pass, the plain ones on the second.
+// Only a field of the given pass is set (FieldPass); the rest are read past.
 bool GetField(CStateManager& mgr, CEntity& ent, const PortSchemaField& f, BlockReader& r, int pass) {
-  if ((pass == 0) != IsCodec(f.kind)) {
+  if (FieldPass(f.kind) != pass) {
     SkipField(f, r);
     return false;
   }
@@ -547,7 +622,11 @@ bool GetField(CStateManager& mgr, CEntity& ent, const PortSchemaField& f, BlockR
     if (!r.ok || id == kUidDynamic)
       return false;
     TUniqueId uid = kInvalidUniqueId;
-    if (id != kUidNone) {
+    if (id == kUidPlayer) {
+      if (mgr.GetPlayer() == nullptr)
+        return false;
+      uid = mgr.GetPlayer()->GetUniqueId();
+    } else if (id != kUidNone) {
       uid = mgr.GetIdForScript(TEditorId(id));
       if (uid == kInvalidUniqueId)
         return false;
@@ -640,13 +719,19 @@ int ApplyEntityFields(CStateManager& mgr, CEntity& ent, const std::string& data)
   const int classes = r.U8();
   const size_t start = r.pos;
   const TUniqueId uid = ent.GetUniqueId();
+  // The plain fields go in before the codecs too, so the saved state's Activate starts
+  // from the saved fields (a path searched to the saved destination, a saved target),
+  // and again after, over what entering the states changed. Only the last three count.
   int set = 0;
-  for (int pass = 0; pass < 2; ++pass) {
+  const int passes[] = {1, 0, 2, 1};
+  for (int i = 0; i < 4; ++i) {
     r.pos = start;
     // Entering a saved state may delete the enemy (an enemy told to go away).
-    if (pass == 1 && (mgr.ObjectById(uid) != &ent || ent.IsInGraveyard()))
+    if (i >= 2 && (mgr.ObjectById(uid) != &ent || ent.IsInGraveyard()))
       break;
-    set += ApplyClasses(mgr, ent, chain, classes, r, pass);
+    const int n = ApplyClasses(mgr, ent, chain, classes, r, passes[i]);
+    if (i > 0)
+      set += n;
   }
   return set;
 }
