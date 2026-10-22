@@ -34,6 +34,7 @@
 #include "port_controls.h"
 #include "port_mods.h"
 #include "port_savestate.h"
+#include "port_statedump.h"
 #include "port_tracker.h"
 #include "port_viewmodel.h"
 #include "touch_pad.h"
@@ -862,6 +863,24 @@ void CmdObj(CStateManager& mgr) {
         NameOr(kMessageNames, kMessageCount, c.x4_msg), c.x8_objId.Value(),
         target != nullptr ? target->GetDebugName().data() : "(not loaded)");
   }
+  Finish();
+}
+
+// Frame command (runs while `hold 1` too): the dump is of the world as the last tick left it.
+void CmdStateDump() {
+  if (sCmd.args.size() < 2) {
+    return Finish("usage: statedump <file>");
+  }
+  CStateManager* mgr = PortDebug::StateManager();
+  if (mgr == nullptr || mgr->GetWorld() == nullptr || mgr->Player() == nullptr) {
+    return Finish("no world");
+  }
+  std::string error;
+  const int count = PortStateDump::Write(*mgr, sCmd.args[1], error);
+  if (count < 0) {
+    return Finish(error.c_str());
+  }
+  Out("%d objects -> %s", count, sCmd.args[1].c_str());
   Finish();
 }
 
@@ -3679,6 +3698,8 @@ const CommandSpec kCommands[] = {
     {"look", nullptr, CmdLook, ""},
     {"objs", nullptr, CmdObjs, "objs [filter]              objects whose class or name contains filter"},
     {"obj", nullptr, CmdObj, "obj <id>                   one object: state, health, animation, connections"},
+    {"statedump", CmdStateDump, nullptr,
+     "statedump <file>           every live object's state as JSON lines (tools/statecheck.py)"},
     {"send", nullptr, CmdSend,
      "send <id> <msg>            deliver a script message (name or number; relays fire on SetToZero)"},
     {"give", nullptr, [](CStateManager& mgr) { CmdGive(mgr, false); },

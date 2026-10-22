@@ -74,6 +74,21 @@ struct PortRoomState {
   static void PutCounter(const CScriptCounter& c, PortSaveState::BlockWriter& w) {
     w.U32(static_cast< uint32_t >(c.x38_current));
   }
+  static bool TimerValue(CEntity& ent, float& time, bool& timing) {
+    const CScriptTimer* t = TCastToConstPtr< CScriptTimer >(&ent);
+    if (t == nullptr)
+      return false;
+    time = t->x34_time;
+    timing = t->x42_isTiming;
+    return true;
+  }
+  static bool CounterValue(CEntity& ent, int& current) {
+    const CScriptCounter* c = dynamic_cast< const CScriptCounter* >(&ent);
+    if (c == nullptr)
+      return false;
+    current = c->x38_current;
+    return true;
+  }
   static void GetCounter(CScriptCounter& c, PortSaveState::BlockReader& r) {
     const int current = static_cast< int >(r.U32());
     if (r.ok)
@@ -881,6 +896,17 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
     PortRoomState::RebuildSpiderBallWaypoints(mgr);
   done.insert(done.end(), now.begin(), now.end());
   return waiting;
+}
+
+// Read-only views of state the room save keeps, for the statedump console command.
+bool IsScriptGeneratedCopy(const CStateManager& mgr, CEntity& ent) { return IsGeneratedCopy(mgr, ent); }
+
+bool ScriptTimerState(CEntity& ent, float& time, bool& timing) {
+  return PortRoomState::TimerValue(ent, time, timing);
+}
+
+bool ScriptCounterState(CEntity& ent, int& current) {
+  return PortRoomState::CounterValue(ent, current);
 }
 
 } // namespace PortSaveState

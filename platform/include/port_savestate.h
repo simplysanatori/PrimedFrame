@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+class CEntity;
 class CStateManager;
 class CInputStream;
 
@@ -230,6 +231,10 @@ void NoteGenerated(CStateManager& mgr, uint16_t uid);
 void NoteRemoved(CStateManager& mgr, uint16_t uid);
 
 void CaptureRoomState(CStateManager& mgr, RoomState& out);
+// Debug views (port_statedump.cpp): a script generator's copy of an enemy; a timer's or counter's value.
+bool IsScriptGeneratedCopy(const CStateManager& mgr, CEntity& ent);
+bool ScriptTimerState(CEntity& ent, float& time, bool& timing);
+bool ScriptCounterState(CEntity& ent, int& current);
 int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32_t >& done,
                    RoomApplyStats& stats);
 

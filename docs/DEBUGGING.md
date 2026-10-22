@@ -124,6 +124,33 @@ the install needs a re-import. Use `--mods DIR` to test a mod build without touc
 **Two builds side by side**: start `a --build port-gcc` and `b --build <other>` with the same
 `--room`, then `shot` both with the same commands and `diff` / `sheet` them.
 
+## Save-state round-trip check
+
+`tools/statecheck.py` finds save-state gaps (a boss resuming in the wrong phase, a timer or door that
+comes back different) without a player: it dumps every live object (`statedump <file>` in the console,
+JSON lines from `platform/port_statedump.cpp`), saves to slot 8, loads it, dumps again and diffs.
+
+    S="python3 tools/statecheck.py --build port-gcc"          # --build etc. go to `mprig start`
+    $S --room "artifact temple" --setup 'send 001003D3 SetToZero' --setup 'wait 900'
+    $S --run mine --setup 'kill 00100101 1500' --setup 'wait 300'   # a run already in the room
+    $S --rooms scenarios.txt --out /tmp/sc                          # one game, many scenarios
+
+A scenario file has one line per scenario, `ROOM [| setup ; setup]` (`#` comments). The game is held
+for the round trip so the order is exact: dump A, `state save` (taken at the start of the next tick),
+`step 1`, dump A1, `state load`, `step 1` until `[savestate] room state:` is logged, dump B.
+Dumps are kept under `--out` (`NN-<room>-{A,A1,B}.jsonl`). Add `--turbo 8` for long setup waits if
+your `mprig` has it.
+
+Reading the report: first a per-class table (`!` strict, `~` warning, kind and count), then
+details per class. **Strict** fields are `active`, `hp`, `kbres`, `door_open`, `timer`/`timing`,
+`counter`, `boss` (hex block, with the differing byte offsets), `ai` (state name), `body`, `loco`, the
+player's `morph` and `hp`, and missing/extra objects that have an editor id. **Warnings** are
+position/velocity/forward beyond a tolerance (`--tol-pos`, `--tol-vel`), animation, AI state time and
+missing/extra objects with no editor id (effects and projectiles are not saved by design). A field that
+differs from A but equals A1 (the world one tick later) is "tick drift" and only counted. Exit 0 with no
+strict diff, 1 otherwise, 2 if the harness failed. The cinematic cameras, waypoints and sounds always show
+position warnings: they are moved by scripts the restore does not replay; ignore them.
+
 ## Shaders
 
 From "this pixel looks wrong" to the material, its PBR record and the generated WGSL:
