@@ -69,6 +69,9 @@ public:
 CHECK_SIZEOF(CRidleyData, 0x418)
 
 class CRidley : public CPatterned {
+#ifdef TARGET_PC
+  friend struct PortBossState; // save-state fight state (platform/port_savestate_boss.h)
+#endif
 public:
   ~CRidley() override;
   DECLARE_TYPES_MATCH_OR_ACCEPT;

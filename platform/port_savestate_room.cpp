@@ -1,5 +1,6 @@
 #include "port_savestate.h"
 #include "port_log.h"
+#include "port_savestate_boss.h"
 #include "port_room_effects.h"
 
 #include "Kyoto/Math/CTransform4f.hpp"
@@ -47,6 +48,7 @@ enum RoomTag : uint32_t {
   kTagPlatform = 8,   // current and target waypoint (editor ids), speed, move delay
   kTagGenerated = 9,  // empty: a script generator's copy of the enemy with this editor id
   kTagMessages = 10,  // the script messages the enemy was sent (EncodeScriptMsgs)
+  kTagBoss = 11,      // a boss's fight state beyond its health (port_savestate_boss.h)
 };
 
 // Friend of the script classes whose state is private.
@@ -349,6 +351,9 @@ void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
     PortRoomState::PutPlatform(mgr, *platform, w);
     obj.blocks.push_back({kTagPlatform, w.bytes});
   }
+  std::string boss;
+  if (CaptureBossState(mgr, ent, boss))
+    obj.blocks.push_back({kTagBoss, boss});
 }
 
 // Delivers `msg` with the entity's links cleared: the handler's own sends (kSS_Active
@@ -454,6 +459,9 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomAp
   // Omega Pirate keeps its health in a collision actor and needs its intro's Reset later.
   if (COmegaPirate* omega = dynamic_cast< COmegaPirate* >(&ent))
     omega->PortRestoredFromSave(mgr);
+  // After health and pose: a boss's phase is worked out from them when the save has no block.
+  const RoomBlock* boss = FindBlock(obj, kTagBoss);
+  RestoreBossState(mgr, ent, boss != nullptr ? &boss->data : nullptr);
   if (CScriptTimer* timer = TCastToPtr< CScriptTimer >(&ent)) {
     if (const RoomBlock* b = FindBlock(obj, kTagTimer)) {
       BlockReader r(b->data);

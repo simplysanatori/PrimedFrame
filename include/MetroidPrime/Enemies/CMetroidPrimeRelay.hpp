@@ -10,6 +10,9 @@
 #include "MetroidPrime/CAnimRes.hpp"
 
 class CMetroidPrimeRelay : public CEntity {
+#ifdef TARGET_PC
+  friend struct PortBossState; // save-state fight state (platform/port_savestate_boss.h)
+#endif
 public:
   CMetroidPrimeRelay(
       TUniqueId uid, const rstl::string& name, const CEntityInfo& info, bool active,

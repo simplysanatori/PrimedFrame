@@ -97,6 +97,9 @@ private:
 CHECK_SIZEOF(CFlaahgraRenderer, (VERSION >= VERSION_GM8P_00 ? 0x100 : 0xf0))
 
 class CFlaahgra : public CPatterned {
+#ifdef TARGET_PC
+  friend struct PortBossState; // save-state fight state (platform/port_savestate_boss.h)
+#endif
 public:
   CFlaahgra(TUniqueId uid, const rstl::string& name, const CEntityInfo& info,
             const CTransform4f& xf, const CAnimRes& animRes, const CPatternedInfo& pInfo,

@@ -59,6 +59,9 @@ private:
 CHECK_SIZEOF(CDestroyableRock, (VERSION >= VERSION_GM8P_00 ? 0x358 : 0x348))
 
 class CThardus : public CPatterned {
+#ifdef TARGET_PC
+  friend struct PortBossState; // save-state fight state (platform/port_savestate_boss.h)
+#endif
 public:
   DECLARE_TYPES_MATCH_OR_ACCEPT;
   void Think(float dt, CStateManager& mgr) override;

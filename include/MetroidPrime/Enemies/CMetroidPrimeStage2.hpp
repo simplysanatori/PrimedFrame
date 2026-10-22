@@ -21,6 +21,9 @@ class CShockWaveInfo;
 class CRayCastResult;
 
 class CMetroidPrimeStage2 : public CPatterned {
+#ifdef TARGET_PC
+  friend struct PortBossState; // save-state fight state (platform/port_savestate_boss.h)
+#endif
 public:
   CMetroidPrimeStage2(TUniqueId uid, const rstl::string& name, const CEntityInfo& info,
                       const CTransform4f& xf, const CModelData& mData, const CPatternedInfo& pInfo,

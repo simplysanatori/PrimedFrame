@@ -257,6 +257,11 @@ set(MP_PORT_SOURCES
     platform/port_savestate_format.cpp
     platform/port_dynamic_res.cpp
     platform/port_savestate_room.cpp
+    platform/port_savestate_boss.cpp
+    platform/port_boss_flaahgra.cpp
+    platform/port_boss_prime.cpp
+    platform/port_boss_ridley.cpp
+    platform/port_boss_thardus.cpp
     platform/port_skip_cutscenes.cpp
     platform/port_revision_scripts.cpp
     platform/port_skip_streams.cpp

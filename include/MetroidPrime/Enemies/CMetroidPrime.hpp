@@ -97,6 +97,9 @@ struct CMetroidPrimeParasiteQueenAttack {
 CHECK_SIZEOF(CMetroidPrimeParasiteQueenAttack, 0xA8)
 
 class CMetroidPrime : public CPatterned {
+#ifdef TARGET_PC
+  friend struct PortBossState; // save-state fight state (platform/port_savestate_boss.h)
+#endif
 public:
   ~CMetroidPrime() override;
   DECLARE_TYPES_MATCH_OR_ACCEPT;
