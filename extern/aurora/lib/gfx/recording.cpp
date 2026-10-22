@@ -1111,7 +1111,7 @@ PipelineRef pipeline_ref(const clear::PipelineConfig& config) {
 
 void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
                        Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat,
-                       int probeFace, bool resolveMips, const ResolveHdr* hdr) {
+                       int probeFace, bool resolveMips, const ResolveHdr* hdr, bool opaqueAlpha) {
   if (scene_hdr_pass_active()) {
     // The scene holds exposed linear light: a display copy post-tones it, a linear copy keeps it,
     // and the clear colour (display-referred) goes in as the light that post-tones back to it.
@@ -1133,24 +1133,33 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
   prevPass.resolveFormat = resolveFormat;
   prevPass.resolveMips = resolveMips;
   if (resolveMips) {
-    prevPass.resolveMipsUniformRange = push_uniform(std::array{0.f, 0.f, 1.f, 1.f});
+    prevPass.resolveMipsUniformRange = push_uniform(tex_copy_conv::Uniforms{});
   }
-  // Push UV transform uniform for tex_copy_conv (crop region in UV space)
+  // tex_copy_conv's uniforms: the crop region in UV space, and whether the source has alpha
   const auto srcW = static_cast<float>(prevPass.colorAttachments[SceneColorAttachmentIndex].size.width);
   const auto srcH = static_cast<float>(prevPass.colorAttachments[SceneColorAttachmentIndex].size.height);
-  const std::array uvTransform{
-      static_cast<float>(rect.x) / srcW,
-      static_cast<float>(rect.y) / srcH,
-      static_cast<float>(rect.width) / srcW,
-      static_cast<float>(rect.height) / srcH,
+  const tex_copy_conv::Uniforms uniforms{
+      .offset = {static_cast<float>(rect.x) / srcW, static_cast<float>(rect.y) / srcH},
+      .scale = {static_cast<float>(rect.width) / srcW, static_cast<float>(rect.height) / srcH},
+      .opaqueAlpha = opaqueAlpha,
   };
-  prevPass.resolveUniformRange = push_uniform(uvTransform);
+  prevPass.resolveUniformRange = push_uniform(uniforms);
   if (probeFace >= 0) {
     prevPass.probeFace = probeFace;
-    prevPass.probeUniformRange = push_uniform(std::array{0.f, 0.f, 1.f, 1.f});
+    prevPass.probeUniformRange = push_uniform(tex_copy_conv::Uniforms{});
   }
+  // GXCopyTex clears only the rectangle it copies: the whole target clears through the
+  // continuation's load ops, a part of it with a clear draw scissored to it.
+  const auto targetWidth = static_cast<int32_t>(prevPass.colorAttachments[SceneColorAttachmentIndex].size.width);
+  const auto targetHeight = static_cast<int32_t>(prevPass.colorAttachments[SceneColorAttachmentIndex].size.height);
+  const auto left = std::clamp<int32_t>(rect.x, 0, targetWidth);
+  const auto top = std::clamp<int32_t>(rect.y, 0, targetHeight);
+  const auto right = std::clamp<int32_t>(rect.x + rect.width, left, targetWidth);
+  const auto bottom = std::clamp<int32_t>(rect.y + rect.height, top, targetHeight);
+  const ClipRect clearRect{.x = left, .y = top, .width = right - left, .height = bottom - top};
+  const bool fullTarget = left == 0 && top == 0 && right == targetWidth && bottom == targetHeight;
   // The continuation's load op clears whatever the copy clears.
-  discard_dead_stores(prevPass, clearColor && clearAlpha, clearDepth);
+  discard_dead_stores(prevPass, clearColor && clearAlpha && fullTarget, clearDepth && fullTarget);
   enqueue_pass(current_frame_packet(), g_recorder.currentRenderPass);
   if (clearDepth && !g_recorder.inOffscreen) {
     g_recorder.efbDepthNear = std::min(g_recorder.efbDepthNear, gx_depth(clearDepthValue));
@@ -1169,11 +1178,11 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
       .copySourceDepthView = prevPass.copySourceDepthView,
       .msaaSamples = msaaSamples,
       .clearDepthValue = clearDepthValue,
-      .clearDepth = clearDepth,
+      .clearDepth = clearDepth && fullTarget,
       .hasDepth = prevPass.hasDepth,
       .hasStencil = prevPass.hasStencil,
   };
-  const bool fullColorClear = clearColor && clearAlpha;
+  const bool fullColorClear = clearColor && clearAlpha && fullTarget;
   for (uint32_t i = 0; i < newPass.colorAttachmentCount; ++i) {
     auto& color = newPass.colorAttachments[i];
     color.loadOp = wgpu::LoadOp::Undefined;
@@ -1190,11 +1199,15 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
   current_render_passes().emplace_back(std::move(newPass));
   ++g_recorder.currentRenderPass;
 
-  if (!fullColorClear && (clearColor || clearAlpha)) {
-    // If we're only clearing color _or_ alpha, perform a clear draw
+  const bool drawClearColor = clearColor && !fullColorClear;
+  const bool drawClearAlpha = clearAlpha && !fullColorClear;
+  const bool drawClearDepth = clearDepth && !fullTarget;
+  if (clearRect.width > 0 && clearRect.height > 0 && (drawClearColor || drawClearAlpha || drawClearDepth)) {
+    // Part of the target, or only its colour or alpha: a clear draw
     const auto targetLayout = current_render_passes()[g_recorder.currentRenderPass].target_layout();
     push_draw_command(clear::DrawData{
-        .pipeline = pipeline_ref(clear::make_pipeline_config(targetLayout, clearColor, clearAlpha, false)),
+        .pipeline = pipeline_ref(
+            clear::make_pipeline_config(targetLayout, drawClearColor, drawClearAlpha, drawClearDepth)),
         .color =
             wgpu::Color{
                 .r = clearColorValue.x(),
@@ -1202,6 +1215,8 @@ void resolve_pass_into(TextureHandle texture, ClipRect rect, bool clearColor, bo
                 .b = clearColorValue.z(),
                 .a = clearColorValue.w(),
             },
+        .depth = clearDepthValue,
+        .rect = clearRect,
     });
   }
   push_command(CommandType::SetViewport, Command::Data{.setViewport = g_recorder.cachedViewport});

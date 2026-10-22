@@ -24,11 +24,12 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
   }
 
   ZoneScoped;
-  const auto shader = build_shader(config.shaderConfig);
+  auto dstAlphaMode = dst_alpha_mode(config);
+  const auto shader = build_shader(config.shaderConfig, dstAlphaMode);
   const auto label =
       fmt::format("GX Pipeline {:x} shader {:x}", xxh3_hash(config, static_cast<HashType>(gfx::ShaderType::GX)),
                   xxh3_hash(config.shaderConfig));
-  return build_pipeline(config, {}, shader, label.c_str());
+  return build_pipeline(config, {}, shader, label.c_str(), dstAlphaMode);
 }
 
 void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {

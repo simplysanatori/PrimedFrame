@@ -2966,6 +2966,38 @@ void add_cut_caster(std::string& source, const ShaderConfig& config) {
 }
 } // namespace
 
+bool apply_dst_alpha_mode(std::string& source, DstAlphaMode mode) noexcept {
+  if (mode == DstAlphaMode::None) {
+    return true;
+  }
+  // fs_main's own return (the draw-id and actor-decal tails replace it and return alpha 1 already).
+  constexpr std::string_view tail = "    return prev;\n}";
+  const size_t at = source.rfind(tail);
+  if (mode == DstAlphaMode::Replace) {
+    if (at == std::string::npos) {
+      return false;
+    }
+    source.replace(at, tail.size(), "    return vec4f(prev.rgb, 1.0);\n}");
+    return true;
+  }
+  constexpr std::string_view head = "fn fs_main(in: VertexOutput) -> @location(0) vec4f {";
+  const size_t headAt = source.find(head);
+  if (at == std::string::npos || headAt == std::string::npos) {
+    Log.error("dual-source dst alpha: no fs_main to rewrite, using plain blending");
+    return false;
+  }
+  source.replace(at, tail.size(), "    return GxDstAlphaOut(vec4f(prev.rgb, 1.0), prev);\n}");
+  source.replace(headAt, head.size(), "fn fs_main(in: VertexOutput) -> GxDstAlphaOut {");
+  source.insert(0, "enable dual_source_blending;\n");
+  source += R"(
+struct GxDstAlphaOut {
+    @location(0) @blend_src(0) color: vec4f,
+    @location(0) @blend_src(1) blend: vec4f,
+};
+)";
+  return true;
+}
+
 bool shader_has_cut_caster(const ShaderConfig& config) noexcept {
   return build_shader_source(config).find("fn fs_shadow(") != std::string::npos;
 }
@@ -4878,10 +4910,14 @@ bool shader_overridden(u64 hash) noexcept {
   return std::filesystem::exists(std::filesystem::path{dir} / fmt::format("{:016x}.wgsl", hash), error);
 }
 
-wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
+wgpu::ShaderModule build_shader(const ShaderConfig& config, DstAlphaMode& dstAlphaMode) noexcept {
   ZoneScoped;
-  const auto shaderSource = build_shader_source(config);
-  const auto hash = xxh3_hash(config);
+  auto shaderSource = build_shader_source(config);
+  if (!apply_dst_alpha_mode(shaderSource, dstAlphaMode)) {
+    dstAlphaMode = DstAlphaMode::None;
+  }
+  // A dst alpha mode is its own module (a plain one keeps the config's hash, as dumps and overrides name it).
+  const auto hash = dstAlphaMode == DstAlphaMode::None ? xxh3_hash(config) : xxh3_hash(dstAlphaMode, xxh3_hash(config));
   const auto label = fmt::format("GX Shader {:x}", hash);
   auto& dbg = shader_debug();
   std::string overrideDir;
@@ -4898,7 +4934,11 @@ wgpu::ShaderModule build_shader(const ShaderConfig& config) noexcept {
     if (file) {
       const std::string edited{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
       std::string error;
-      if (auto module = create_module_checked(edited, label.c_str(), error)) {
+      if (dstAlphaMode == DstAlphaMode::DualSource && edited.find("@blend_src(1)") == std::string::npos) {
+        // The pipeline blends with the second source, which this module wouldn't write.
+        Log.error("wgsl override {:016x} has no @blend_src(1) output, using the generated source",
+                  static_cast<u64>(hash));
+      } else if (auto module = create_module_checked(edited, label.c_str(), error)) {
         Log.info("wgsl override {:016x}", static_cast<u64>(hash));
         return module;
       }

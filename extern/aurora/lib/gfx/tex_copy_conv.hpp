@@ -4,6 +4,8 @@
 
 #include <dolphin/gx/GXEnum.h>
 
+#include <array>
+
 namespace aurora::gfx::tex_copy_conv {
 
 enum class SampleFilter : uint8_t {
@@ -23,10 +25,20 @@ enum class CopyDomain : uint8_t {
   Linear,
 };
 
+// The copy shaders' uniform: the source region in UV space, and opaqueAlpha for a source without alpha
+// (an RGB8 EFB), whose alpha the copy reads as 1.
+struct alignas(16) Uniforms {
+  Vec2<float> offset{0.f, 0.f};
+  Vec2<float> scale{1.f, 1.f};
+  uint32_t opaqueAlpha = 0;
+  std::array<uint32_t, 3> _pad{};
+};
+static_assert(sizeof(Uniforms) == 32);
+
 struct ConvRequest {
   GXTexFmt fmt;
   wgpu::TextureView srcView; // View of resolved EFB / offscreen color/depth
-  Range uniformRange;        // UV transform uniform (offset + scale)
+  Range uniformRange;        // Uniforms
   TextureHandle dst;         // Destination texture
   SampleFilter sampleFilter = SampleFilter::Nearest;
   CopyDomain domain = CopyDomain::Display;

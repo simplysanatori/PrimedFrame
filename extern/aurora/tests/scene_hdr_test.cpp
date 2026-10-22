@@ -614,7 +614,8 @@ TEST_F(SceneHdrTest, WaterAndFogApplyCompileInBothDomains) {
 constexpr hdr::Tone CopyTone{{{20.f, 3.f, 0.5f, 1.5f}, {0.8f, 0.02f, 0.1f, 1.f}, {0.18f, 1.f, -1.f, 0.82f}}};
 
 TEST_F(SceneHdrTest, CopiesCarryTheirDomainAndClearInTheirScene) {
-  const ClipRect rect{0, 0, 64, 32};
+  // The whole target: the clear is the continuation's load op.
+  const ClipRect rect{0, 0, 640, 480};
   const Vec4<float> clear{0.5f, 0.25f, 0.f, 0.75f};
   const ResolveHdr display{.tone = CopyTone, .linear = false};
   const ResolveHdr linear{.tone = CopyTone, .linear = true};
@@ -657,6 +658,10 @@ TEST_F(SceneHdrTest, CopiesCarryTheirDomainAndClearInTheirScene) {
   EXPECT_EQ(clearValue().z(), 0.f);
   EXPECT_EQ(clearValue().w(), 0.f);
   EXPECT_TRUE(set_scene_hdr(false));
+
+  // Part of it: the load op keeps the rest, a clear draw clears the rectangle.
+  resolve_pass_into({}, {0, 0, 64, 32}, true, true, false, clear, 1.f, GX_TF_RGB565, -1, false, nullptr);
+  EXPECT_FALSE(current_pass().colorAttachments[SceneColorAttachmentIndex].clear);
 }
 
 TEST_F(SceneHdrTest, SnapshotsTakeTheActiveAttachmentsFormat) {
@@ -713,7 +718,7 @@ TEST_F(SceneHdrTest, CopyDomainPipelinesValidate) {
     const tex_copy_conv::ConvRequest req{
         .fmt = fmt,
         .srcView = srcView,
-        .uniformRange = {0, 16},
+        .uniformRange = {0, sizeof(tex_copy_conv::Uniforms)},
         .dst = new_conv_texture(64, 32, fmt, "HDR copy test"),
         .domain = tex_copy_conv::CopyDomain::HdrDisplay,
         .toneRange = {256, sizeof(hdr::Tone)},
@@ -724,7 +729,7 @@ TEST_F(SceneHdrTest, CopyDomainPipelinesValidate) {
   const tex_copy_conv::ConvRequest display{
       .fmt = GX_TF_RGBA8,
       .srcView = srcView,
-      .uniformRange = {0, 16},
+      .uniformRange = {0, sizeof(tex_copy_conv::Uniforms)},
       .dst = new_render_texture(64, 32, GX_TF_RGBA8, "HDR copy test"),
       .domain = tex_copy_conv::CopyDomain::HdrDisplay,
       .toneRange = {256, sizeof(hdr::Tone)},
@@ -735,7 +740,7 @@ TEST_F(SceneHdrTest, CopyDomainPipelinesValidate) {
     const tex_copy_conv::ConvRequest req{
         .fmt = fmt,
         .srcView = srcView,
-        .uniformRange = {0, 16},
+        .uniformRange = {0, sizeof(tex_copy_conv::Uniforms)},
         .dst = new_render_texture(64, 32, fmt, "Linear copy test", 1, webgpu::SceneHdrFormat),
         .domain = tex_copy_conv::CopyDomain::Linear,
     };
