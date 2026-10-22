@@ -70,6 +70,17 @@ class Wiring(WiringCase):
         self.assertIn("NoteFor(mgr, uid).msgs = journal;", replayer)
         self.assertIn("DeliverUnlinked(mgr, ent, sender,", replayer)
 
+    def test_boss_fight_state(self):
+        room = ROOM.read_text()
+        save = braced(room, "void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {", str(ROOM))
+        self.assertIn("if (CaptureBossState(mgr, ent, boss))", save)
+        self.assertIn("obj.blocks.push_back({kTagBoss, boss});", save)
+        body = braced(room, "void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj,", str(ROOM))
+        # After the saved health and pose, which a hook reads when the save has no block.
+        restore = body.index("RestoreBossState(mgr, ent, boss != nullptr ? &boss->data : nullptr);")
+        self.assertLess(body.index("FindBlock(obj, kTagHealth)"), restore)
+        self.assertLess(body.index("FindBlock(obj, kTagTransform)"), restore)
+
     def test_generated_copies(self):
         room = ROOM.read_text()
         capture = between(room, "void CaptureRoomState(", "\nint ApplyRoomState(", str(ROOM))
