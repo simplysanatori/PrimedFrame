@@ -28,6 +28,7 @@
 #include "port_textures.h"
 #include "port_prompts.h"
 #include "port_build_info.h"
+#include "port_disc_replace.h"
 #include "port_disc_verify.h"
 #include "port_log.h"
 #include "port_log_file.h"
@@ -134,7 +135,7 @@ bool IsDiscImage(const std::filesystem::path& path) {
 // region can be skipped before it fails to boot; the compressed formats keep
 // it elsewhere and are taken on trust, after any plain image that matched.
 bool IsSupportedId(const char* id6, unsigned diskNumber, unsigned version) {
-    return PortDisc::IsAccepted(PortDisc::Identify(id6, diskNumber, version));
+    return PortDiscReplace::IsSupportedId(id6, diskNumber, version);
 }
 
 enum class DiscMatch { No, Maybe, Yes };
@@ -384,20 +385,7 @@ const char* SupportedDiscText() {
 // What the user picked instead, in words: the usual mistakes are another
 // region or a later revision of the same game.
 std::string DescribeDisc(const char* id6, unsigned version) {
-    char id[7] = {};
-    for (int i = 0; i < 6; ++i) {
-        const char c = id6[i];
-        id[i] = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ? c : '?';
-    }
-    std::string text;
-    if (std::memcmp(id, "GM8", 3) == 0) {
-        const char* region = id[3] == 'E' ? "USA" : id[3] == 'P' ? "European" : id[3] == 'J' ? "Japanese" : "another";
-        text = std::string("This is the ") + region + " release of Metroid Prime (" + id + ", revision " +
-               std::to_string(version) + ").";
-    } else {
-        text = std::string("This disc image is not Metroid Prime (game id ") + id + ").";
-    }
-    return text;
+    return PortDiscReplace::DescribeDisc(id6, version);
 }
 
 std::string DescribeUnsupportedDisc(const DVDDiskID* id) {
@@ -529,131 +517,10 @@ bool DiscReadFailedLastTime(const std::string& path) {
 //
 // Returns the local copy's path, or an empty string if the copy failed.
 std::string CopyDiscFromContentUri(const std::string& uri) {
-    const std::string& folder = PortPaths::UserFolder();
-    if (folder.empty()) {
-        PortLog::Write( "metroid_prime_port: no data folder to copy the disc into\n");
-        return {};
-    }
-    const std::filesystem::path target = std::filesystem::path(folder) / "disc.iso";
-    // Copied under another name and renamed when complete: a copy killed part
-    // way (the app closed during a multi-minute copy) must not leave a
-    // truncated disc.iso, which ResolveDiscPath would prefer on every launch.
-    const std::filesystem::path partial = std::filesystem::path(folder) / "disc.iso.part";
-
-    SDL_IOStream* in = SDL_IOFromFile(uri.c_str(), "rb");
-    if (in == nullptr) {
-        PortLog::Write( "metroid_prime_port: could not read the picked image: %s: %s\n", uri.c_str(),
-                        SDL_GetError());
-        return {};
-    }
-    // A plain image names its game in the first bytes: refuse a wrong one
-    // before minutes of copying. Containers (RVZ, WBFS, CISO) are checked once
-    // mounted instead; returning nothing leaves the URI for that check.
-    Uint8 header[8] = {};
-    if (SDL_ReadIO(in, header, sizeof(header)) == sizeof(header)) {
-        const bool container = std::memcmp(header, "RVZ", 3) == 0 || std::memcmp(header, "WIA", 3) == 0 ||
-                               std::memcmp(header, "WBFS", 4) == 0 || std::memcmp(header, "CISO", 4) == 0;
-        if (!container && !IsSupportedId(reinterpret_cast<const char*>(header), header[6], header[7])) {
-            PortLog::Write("metroid_prime_port: not copying the picked image: %s\n",
-                           DescribeDisc(reinterpret_cast<const char*>(header), header[7]).c_str());
-            SDL_CloseIO(in);
-            return {};
-        }
-    }
-    if (SDL_SeekIO(in, 0, SDL_IO_SEEK_SET) != 0) {
-        // Some providers hand out a pipe, which cannot seek: start over.
-        SDL_CloseIO(in);
-        in = SDL_IOFromFile(uri.c_str(), "rb");
-        if (in == nullptr) {
-            PortLog::Write("metroid_prime_port: could not reopen the picked image: %s\n", SDL_GetError());
-            return {};
-        }
-    }
-    const Sint64 total = SDL_GetIOSize(in);
-    SDL_IOStream* out = SDL_IOFromFile(partial.string().c_str(), "wb");
-    if (out == nullptr) {
-        PortLog::Write( "metroid_prime_port: could not create %s: %s\n", partial.string().c_str(),
-                        SDL_GetError());
-        SDL_CloseIO(in);
-        return {};
-    }
-
-    char buffer[1 << 16];
-    Sint64 done = 0;
-    int lastPercent = -1;
-    bool ok = true;
-    for (;;) {
-        const size_t got = SDL_ReadIO(in, buffer, sizeof(buffer));
-        if (got == 0) {
-            // Zero is also what a failed read returns; only the stream status
-            // tells end of file from an error that would leave a truncated copy.
-            if (SDL_GetIOStatus(in) != SDL_IO_STATUS_EOF) {
-                PortLog::Write( "metroid_prime_port: reading the picked image failed: %s\n",
-                                SDL_GetError());
-                ok = false;
-            }
-            break;
-        }
-        if (SDL_WriteIO(out, buffer, got) != got) {
-            PortLog::Write( "metroid_prime_port: writing %s failed: %s\n", partial.string().c_str(),
-                            SDL_GetError());
-            ok = false;
-            break;
-        }
-        done += static_cast<Sint64>(got);
-        // The copy takes minutes on a device, long enough for the screen to go
-        // off; as in AskForDiscImage, nothing else drops a destroyed surface.
-        aurora_release_lost_surface();
-        if (total > 0) {
-            const int percent = static_cast<int>(done * 100 / total);
-            // Every 5% rather than every chunk: a 1.5 GB image would otherwise
-            // put 3000 lines in the log.
-            if (percent / 5 != lastPercent / 5) {
-                lastPercent = percent;
-                PortLog::Write( "metroid_prime_port: copying the disc image, %d%%\n", percent);
-            }
-        }
-    }
-    if (!SDL_FlushIO(out)) {
-        PortLog::Write( "metroid_prime_port: flushing %s failed: %s\n", partial.string().c_str(),
-                        SDL_GetError());
-        ok = false;
-    }
-    if (!SDL_CloseIO(in)) {
-        PortLog::Write( "metroid_prime_port: closing the picked image failed: %s\n", SDL_GetError());
-    }
-    if (!SDL_CloseIO(out)) {
-        PortLog::Write( "metroid_prime_port: closing %s failed: %s\n", partial.string().c_str(),
-                        SDL_GetError());
-        ok = false;
-    }
-    if (!ok) {
-        std::error_code ec;
-        std::filesystem::remove(partial, ec);
-        return {};
-    }
-    // What landed on disk, not what was handed to the writer: a short write that
-    // only fails at close looks identical to a good copy otherwise, and a
-    // truncated image fails to parse as a disc with no further clue.
-    std::error_code ec;
-    const auto written = std::filesystem::file_size(partial, ec);
-    if (ec || static_cast<Sint64>(written) != done || (total > 0 && done != total)) {
-        PortLog::Write( "metroid_prime_port: %s is %lld bytes on disk, copied %lld of %lld\n",
-                        partial.string().c_str(), static_cast<long long>(written),
-                        static_cast<long long>(done), static_cast<long long>(total));
-        std::filesystem::remove(partial, ec);
-        return {};
-    }
-    std::filesystem::rename(partial, target, ec);
-    if (ec) {
-        PortLog::Write( "metroid_prime_port: could not rename %s to %s: %s\n",
-                        partial.string().c_str(), target.string().c_str(), ec.message().c_str());
-        std::filesystem::remove(partial, ec);
-        return {};
-    }
-    PortLog::Write( "metroid_prime_port: copied the disc image to %s (%lld bytes)\n",
-                    target.string().c_str(), static_cast<long long>(done));
-    return target.string();
+    // Shared with the in-game "Replace disc image" (port_disc_replace.cpp). A
+    // refusal leaves the URI to be checked once mounted, as before.
+    std::string target;
+    return PortDiscReplace::CopyToUserFolder(uri, &target, nullptr, nullptr, nullptr).empty() ? target : std::string();
 }
 #endif  // __ANDROID__
 
@@ -1458,6 +1325,7 @@ int main(int argc, char** argv) {
     // An import still running reads the disc.
     PortRemastered::StopImport();
     PortDiscVerify::Shutdown();
+    PortDiscReplace::Shutdown();
     PortActorCollisionBounds::Reset();
     aurora_dvd_close();
     aurora_shutdown();

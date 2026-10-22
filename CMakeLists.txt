@@ -339,6 +339,7 @@ set(MP_PORT_SOURCES
     platform/port_hints.cpp
     platform/port_ws.cpp
     platform/port_disc_verify.cpp
+    platform/port_disc_replace.cpp
     platform/port_disc_verify_core.cpp
     platform/touch_pad.cpp
     platform/glibc_compat.c

@@ -7,6 +7,7 @@
 #include "port_ap_world.h"
 #include "port_apclient.h"
 #include "port_beam_doors.h"
+#include "port_disc_replace.h"
 #include "port_disc_verify.h"
 #include "port_log.h"
 #include "port_env.h"
@@ -3139,8 +3140,25 @@ void CmdDisc() {
     PortDiscVerify::Cancel();
     return Finish();
   }
+  if (action == "replace" && sCmd.args.size() > 2) {
+    std::string path = sCmd.args[2];
+    for (size_t i = 3; i < sCmd.args.size(); ++i) {
+      path += " " + sCmd.args[i];
+    }
+    std::error_code ec;
+    if (const auto absolute = std::filesystem::absolute(path, ec); !ec) {
+      path = absolute.string();
+    }
+    std::string revision;
+    if (const std::string bad = PortDiscReplace::CheckImage(path, &revision); !bad.empty()) {
+      return Finish(("not replaced: " + bad).c_str());
+    }
+    PortDiscReplace::Adopt(path, revision);
+    Out("disc replace: %s (%s); restart the game to use it", path.c_str(), revision.c_str());
+    return Finish();
+  }
   if (action != "verify" || what != "status") {
-    return Finish("usage: disc verify | disc verify status | disc verify cancel");
+    return Finish("usage: disc verify | disc verify status | disc verify cancel | disc replace <path>");
   }
   const PortDiscVerify::Result r = PortDiscVerify::Snapshot();
   static const char* const kStates[] = {"idle", "running", "done", "cancelled", "error"};

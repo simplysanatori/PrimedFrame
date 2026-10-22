@@ -295,3 +295,5 @@ revision named by the disc header (`platform/port_disc_verify_table.inc`, genera
 reported with the damaged MiB count, how many are all zeros, and the files from the disc's FST that
 overlap them (e.g. issue #176: zeros inside Metroid4.pak). The result is logged as
 `disc check: ...`. A full check takes about 10 s (cached) to 25 s (cold ISO) on a desktop.
+
+The same section shows the image path and a "Replace disc image..." button (always; the advice and the button lead when the check finds a damaged or unknown image; console: `disc replace <path>`). It asks for a file without blocking, refuses anything that is not a supported Metroid Prime disc, and remembers the new image for the next start (log: `disc image replaced: <path> (<revision>)`); the mounted disc is never swapped. On Android the picked file is copied to `disc.iso.part` on a background thread with a progress bar and renamed over `disc.iso` only when complete; Cancel keeps the old image. Disabled while a check or copy runs.

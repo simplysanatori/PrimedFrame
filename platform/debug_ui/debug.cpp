@@ -4,6 +4,7 @@
 #include "debug_ui_internal.h"
 
 #include "port_debug.h"
+#include "port_disc_replace.h"
 #include "port_disc_verify.h"
 #include "port_log.h"
 #include "port_log_file.h"
@@ -52,7 +53,15 @@ void DrawDiscCheckSection() {
   ImGui::SeparatorText("Disc image");
   const PortDiscVerify::Result r = PortDiscVerify::Snapshot();
   const bool running = r.state == State::Running;
-  ImGui::BeginDisabled(running);
+  const PortDiscReplace::Status replace = PortDiscReplace::Snapshot();
+  const bool replacing = replace.state == PortDiscReplace::State::Running;
+  // The result of a pick that finished: remembered here, on the main thread.
+  PortDiscReplace::Poll();
+  const bool needsNewImage = r.state == State::Done && !r.Ok();
+  if (const std::string image = PortDiscVerify::ImagePath(); !image.empty()) {
+    ImGui::TextWrapped("Disc image: %s", image.c_str());
+  }
+  ImGui::BeginDisabled(running || replacing);
   if (ImGui::Button("Check disc image")) {
     PortDiscVerify::Start();
   }
@@ -104,6 +113,35 @@ void DrawDiscCheckSection() {
       ImGui::TextWrapped("Copy the disc image again; this part of it is damaged.");
     }
     break;
+  }
+  ImGui::Spacing();
+  if (needsNewImage) {
+    ImGui::TextWrapped("Pick a good copy of the disc image to use from the next start:");
+  }
+  ImGui::BeginDisabled(running || replacing);
+  if (ImGui::Button("Replace disc image...")) {
+    PortDiscReplace::PickAsync();
+  }
+  ImGui::EndDisabled();
+  if (replacing) {
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel##replace")) {
+      PortDiscReplace::Cancel();
+    }
+    if (replace.copying) {
+      ImGui::ProgressBar(static_cast<float>(replace.bytesTotal ? static_cast<double>(replace.bytesDone) /
+                                                                    static_cast<double>(replace.bytesTotal)
+                                                                : 0.0),
+                         ImVec2(-FLT_MIN, 0.0f));
+      ImGui::TextWrapped("Copying the picked disc image...");
+    } else {
+      ImGui::TextWrapped("Checking the picked file...");
+    }
+  } else if (!replace.message.empty()) {
+    ImGui::TextWrapped("%s", replace.message.c_str());
+    if (replace.state == PortDiscReplace::State::Done) {
+      ImGui::TextDisabled("%s (%s)", replace.path.c_str(), replace.revision.c_str());
+    }
   }
 }
 

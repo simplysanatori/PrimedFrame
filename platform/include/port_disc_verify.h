@@ -90,6 +90,11 @@ std::string Summary(const Result& result, size_t maxFiles = 6);
 
 // The disc image being played, set once it is mounted.
 void SetImagePath(const std::string& path);
+// The image set above ("" before the disc is mounted).
+std::string ImagePath();
+// The first eight bytes of the disc (game id, maker, disc number, revision) of a plain image or a
+// container (RVZ, WIA, WBFS, CISO, GCZ), read through its own handle. "" on success, else why not.
+std::string ReadDiscHeader(const std::string& path, uint8_t out[8]);
 // Starts a check on its own thread; false if one is running or no disc is set.
 bool Start();
 void Cancel();

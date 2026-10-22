@@ -189,6 +189,27 @@ void SetImagePath(const std::string& path) {
   sImage = path;
 }
 
+std::string ImagePath() {
+  std::lock_guard lock(sMutex);
+  return sImage;
+}
+
+std::string ReadDiscHeader(const std::string& path, uint8_t out[8]) {
+  SDL_IOStream* io = SDL_IOFromFile(path.c_str(), "rb");
+  if (io == nullptr) {
+    return "the disc image can't be opened";
+  }
+  const NodDiscStream stream{.user_data = io, .read_at = ReadAt, .stream_len = Len, .close = Close};
+  const NodDiscOptions options{.preloader_threads = 1};
+  NodHandle* disc = nullptr;
+  if (nod_disc_open_stream(&stream, &options, &disc) != NOD_RESULT_OK || disc == nullptr) {
+    return "this is not a GameCube disc image";
+  }
+  const bool ok = ReadFull(disc, out, 8) == 8;
+  nod_free(disc);
+  return ok ? std::string() : "the disc image is too short";
+}
+
 bool Start() {
   std::lock_guard threadLock(sThreadMutex);
   std::string path;
