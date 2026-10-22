@@ -314,7 +314,7 @@ final class TouchControlsView extends View {
     // The editor's toolbar: -, +, Opacity, Hide/Show, Reset, Reset all, Done.
     private static final String[] EDIT_LABELS =
         {"−", "+", "Opacity", "Hide", "Reset", "Reset all", "Done"};
-    private static final float[] EDIT_WIDTHS_DP = {44f, 44f, 76f, 60f, 64f, 88f, 64f};
+    private static final float[] EDIT_WIDTHS_DP = {44f, 44f, 112f, 60f, 64f, 88f, 64f};
     private static final float EDIT_BAR_HEIGHT_DP = 44f;
     private static final float EDIT_BAR_GAP_DP = 6f;
     private static final float EDIT_GRAB_DP = 8f; // slack round a control's bounds
@@ -329,8 +329,9 @@ final class TouchControlsView extends View {
     // MENU_MIN_ALPHA: it is the only way into F1 on a touch-only device.
     private static final int[] ALPHA_STEPS = {100, 75, 50, 25, 0};
     private static final int MENU_MIN_ALPHA = 25;
-    // The editor draws hidden and fainter controls at least this opaque, to find them.
-    private static final int EDIT_MIN_ALPHA = 30;
+    // The editor draws a control at its own opacity, but hidden and 0% ones at
+    // this, so they can still be found (and 25% still looks fainter than 0%'s).
+    private static final int EDIT_MIN_ALPHA = 15;
     // pushControl's results besides a saved layer's count.
     private static final int LAYER_NONE = -1;
     private static final int LAYER_SKIP = -2;
@@ -3215,8 +3216,11 @@ final class TouchControlsView extends View {
                 editPaint.setColor(ovHidden[c] ? 0xFFFF9A3C : 0xCCFFFFFF);
             }
             canvas.drawRoundRect(editRect, corner, corner, editPaint);
-            if (ovHidden[c]) {
-                drawCenteredLabel(canvas, "hidden", editRect.centerX(), editRect.top + dp(10),
+            // Tag what isn't default, so a faded control reads as faded on purpose.
+            final String tag = ovHidden[c] ? "hidden"
+                : ovAlpha[c] != 100 ? ovAlpha[c] + "%" : null;
+            if (tag != null) {
+                drawCenteredLabel(canvas, tag, editRect.centerX(), editRect.top + dp(10),
                                   dp(10));
             }
         }
@@ -3229,13 +3233,21 @@ final class TouchControlsView extends View {
             final float corner = dp(8);
             canvas.drawRoundRect(editBar[i], corner, corner, fillPaint);
             canvas.drawRoundRect(editBar[i], corner, corner, strokePaint);
-            final String label = i == EDIT_HIDE && selected >= 0 && ovHidden[selected]
-                ? "Show" : EDIT_LABELS[i];
+            String label = EDIT_LABELS[i];
+            if (i == EDIT_HIDE && selected >= 0 && ovHidden[selected]) {
+                label = "Show";
+            } else if (i == EDIT_OPACITY && selected >= 0) {
+                label = "Opacity " + ovAlpha[selected] + "%"; // a tap steps it down
+            }
+            // The buttons that act on the selection are dimmed without one.
+            final boolean idle = selected < 0 && i != EDIT_RESET_ALL && i != EDIT_DONE;
+            textPaint.setAlpha(idle ? 90 : 255);
             drawCenteredLabel(canvas, label, editBar[i].centerX(), editBar[i].centerY(),
                               i < 2 ? dp(22) : dp(14));
+            textPaint.setAlpha(255);
         }
 
-        String hint = "Drag a control to move it; pinch to resize";
+        String hint = "Tap a control to select it: drag to move, pinch to resize";
         if (selected >= 0) {
             hint = CONTROL_NAMES[selected] + "  " + Math.round(ovScale[selected] * 100f) + "%";
             if (ovAlpha[selected] != 100) {
