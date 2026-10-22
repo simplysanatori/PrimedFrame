@@ -371,6 +371,12 @@ private:
   int x1440_;
   bool x1444_24_ : 1;
   bool x1444_25_ : 1;
+#ifdef TARGET_PC
+  // A save-state load of a stage in progress (platform/port_boss_prime.cpp): InActive's
+  // hand-over to the fight starts a stage's face hits afresh, so it takes these instead.
+  int mPortFaceHits; // -1: none pending
+  float mPortFaceHP;
+#endif
 };
 CHECK_SIZEOF(CMetroidPrime, (VERSION >= VERSION_GM8P_00 ? 0x1458 : 0x1448))
 NESTED_CHECK_SIZEOF(CMetroidPrime, CMissileTarget, (VERSION >= VERSION_GM8P_00 ? 0x268 : 0x258))

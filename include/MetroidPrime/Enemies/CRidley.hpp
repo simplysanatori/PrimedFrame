@@ -143,6 +143,10 @@ private:
   void SetupCollisionManagers(CStateManager& mgr);
   void SetStage2Vulnerability(CStateManager& mgr);
   void SetStage3Immunity(CStateManager& mgr);
+#ifdef TARGET_PC
+  // Wing effects of the stage 3 switch (skWingEffects is file-local); save-state restore.
+  void PortStage3WingEffects(CStateManager& mgr);
+#endif
   void SetStage3BreastVulnerability(CStateManager& mgr);
   void SetStage3ThroatVulnerability(CStateManager& mgr);
   void ScaleCollisionSpheres(CStateManager& mgr, float scale) const;

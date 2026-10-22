@@ -43,7 +43,9 @@ bool CaptureBossState(CStateManager& mgr, CEntity& ent, std::string& out) {
 }
 
 void RestoreBossState(CStateManager& mgr, CEntity& ent, const std::string* data) {
-  BlockReader reader(data != nullptr ? *data : std::string());
+  // A named string: the reader keeps a reference, which a ternary's temporary would leave dangling.
+  const std::string empty;
+  BlockReader reader(data != nullptr ? *data : empty);
   const uint8_t kind = data != nullptr ? reader.U8() : 0;
   const uint8_t version = data != nullptr ? reader.U8() : 0;
   // The reader for a block of this kind and version, else null (no block, or one
