@@ -51,6 +51,7 @@ enum RoomTag : uint32_t {
   kTagMessages = 10,  // the script messages the enemy was sent (EncodeScriptMsgs)
   kTagBoss = 11,      // a boss's fight state beyond its health (port_savestate_boss.h)
   kTagRotate = 12,    // a turn in progress: flags, time, then per actor editor id + start rotation
+  kTagFields = 13,    // an enemy's own fields through the entity schema (port_savestate_fields.cpp)
 };
 
 // Friend of the script classes whose state is private.
@@ -448,6 +449,9 @@ void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
   std::string boss;
   if (CaptureBossState(mgr, ent, boss))
     obj.blocks.push_back({kTagBoss, boss});
+  std::string fields;
+  if (CaptureEntityFields(mgr, ent, fields))
+    obj.blocks.push_back({kTagFields, fields});
 }
 
 // Delivers `msg` with the entity's links cleared: the handler's own sends (kSS_Active
@@ -556,6 +560,10 @@ void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomAp
   // After health and pose: a boss's phase is worked out from them when the save has no block.
   const RoomBlock* boss = FindBlock(obj, kTagBoss);
   RestoreBossState(mgr, ent, boss != nullptr ? &boss->data : nullptr);
+  // Last of an enemy's blocks: the saved values win over what the replayed messages and
+  // the boss restore set up.
+  if (const RoomBlock* b = FindBlock(obj, kTagFields))
+    stats.fields += ApplyEntityFields(mgr, ent, b->data);
   if (CScriptTimer* timer = TCastToPtr< CScriptTimer >(&ent)) {
     if (const RoomBlock* b = FindBlock(obj, kTagTimer)) {
       BlockReader r(b->data);

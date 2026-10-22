@@ -154,6 +154,13 @@ schema in `docs/SAVESTATE_SCHEMA.md`; references as `eid:` editor ids), all stri
 class.field; `--tol-field` is the float tolerance. The cinematic cameras, waypoints and sounds always show
 position warnings: they are moved by scripts the restore does not replay; ignore them.
 
+Enemies (every `CPatterned`) save their schema fields in the room record's `kTagFields` block
+(`platform/port_savestate_fields.cpp`; the load log's "N enemy fields set"). For a baseline without it,
+start the game with `--start-arg=--env --start-arg=MP_SAVESTATE_FIELDS=0`. Expected leftovers in the
+"schema fields" section: `x254_` and other members the constructor never sets, `xPort*`, render and
+physics bookkeeping (`x9c_renderBounds`, `xc8_drawnToken`, `xfc_constantForce`), and what the AI state
+machine, body controller and animation change on the first tick (no codec for them yet).
+
 ## Shaders
 
 From "this pixel looks wrong" to the material, its PBR record and the generated WGSL:

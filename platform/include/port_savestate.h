@@ -197,6 +197,7 @@ struct RoomApplyStats {
   int skipped = 0;  // areas left alone: their loaded room script data differs
   int replayed = 0;   // journalled script messages sent again
   int generated = 0;  // script generator copies made again
+  int fields = 0;     // enemy fields set from kTagFields blocks
 };
 // Script message journal (boss fights). The room script wakes an enemy with a
 // message (a trigger sends Thardus Action) and then never sends it again, so an
@@ -237,6 +238,12 @@ bool ScriptTimerState(CEntity& ent, float& time, bool& timing);
 bool ScriptCounterState(CEntity& ent, int& current);
 int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32_t >& done,
                    RoomApplyStats& stats);
+// The kTagFields block (port_savestate_fields.cpp): an enemy's own fields through the
+// generated entity schema. Capture returns false for an entity it does not cover; Apply
+// returns how many fields it set (0 for a block of another policy). MP_SAVESTATE_FIELDS=0
+// turns both off.
+bool CaptureEntityFields(const CStateManager& mgr, CEntity& ent, std::string& out);
+int ApplyEntityFields(CStateManager& mgr, CEntity& ent, const std::string& data);
 
 // Spawn layers (issue #161), game thread only. CGameArea::LoadScriptObjects calls
 // NoteAreaSpawn{Begin,End} around spawning an area's script objects: Begin records

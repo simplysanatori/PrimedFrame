@@ -264,6 +264,7 @@ set(MP_PORT_SOURCES
     platform/port_dynamic_res.cpp
     platform/port_savestate_room.cpp
     platform/port_savestate_boss.cpp
+    platform/port_savestate_fields.cpp
     platform/port_statedump.cpp
     platform/port_boss_flaahgra.cpp
     platform/port_boss_prime.cpp

@@ -517,9 +517,9 @@ void TickRoomState(CStateManager& mgr) {
   sRoomPending = false;
   DisarmSpawnLayers();
   PortLog::Write("[savestate] room state: %d applied, %d generated, %d removed, %d unmatched, "
-                 "%d areas skipped, %d script messages replayed\n",
+                 "%d areas skipped, %d script messages replayed, %d enemy fields set\n",
                  sRoomStats.applied, sRoomStats.generated, sRoomStats.removed, sRoomStats.unmatched,
-                 sRoomStats.skipped, sRoomStats.replayed);
+                 sRoomStats.skipped, sRoomStats.replayed, sRoomStats.fields);
 }
 
 
