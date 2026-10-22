@@ -2847,6 +2847,7 @@ TEST_F(GXFifoTest, GetProjectionAndScissorShadowState) {
 }
 
 TEST_F(GXFifoTest, Scissor_EncodesBpAndDecodesLogicalState) {
+  GXSetScissorBoxOffset(0, 0);
   GXSetScissor(16, 24, 320, 240);
   auto bytes = capture_fifo();
 
