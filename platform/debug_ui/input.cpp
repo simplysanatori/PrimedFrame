@@ -276,7 +276,10 @@ bool ReadGyroRates(float& pitch, float& yaw, float dt) {
   const void* source = nullptr;
 
   if (wantController) {
-    if (SDL_Gamepad* pad = PADGetSDLGamepadForIndex(0)) {
+    // The player's pad, not the first one SDL lists: that can be another pad
+    // or a virtual one (Steam Input's, the Android touch pad) with no gyro.
+    const s32 padIndex = PADGetIndexForPort(PAD_CHAN0);
+    if (SDL_Gamepad* pad = PADGetSDLGamepadForIndex(padIndex >= 0 ? static_cast< u32 >(padIndex) : 0)) {
       if (SDL_GamepadHasSensor(pad, SDL_SENSOR_GYRO)) {
         // Asked per pad, so a reconnected or swapped pad gets its sensors on too.
         if (!SDL_GamepadSensorEnabled(pad, SDL_SENSOR_GYRO)) {
