@@ -669,6 +669,9 @@ def start_run(a):
         "MP_USER_PATH": str(user), "MP_CACHE_PATH": str(CACHE), "MP_MODS": str(mods),
         "MP_FAST_BOOT": "0" if getattr(a, "front", False) else "1", "MP_DISABLE_AI_AUDIO": "1", "MP_UPDATE_CHECK": "0", "MP_ASPECT": "16:9", "MP_CONSOLE": str(port),
         "ASAN_OPTIONS": "detect_leaks=0:abort_on_error=1",
+        # Xvfb presents are CPU copies (MESA_VK_WSI_DEBUG=sw); present one frame in 6. Every frame is
+        # still rendered and `shot` reads the EFB. --env AURORA_PRESENT_EVERY=1 to see every frame.
+        "AURORA_PRESENT_EVERY": "6",
     })
     if a.room:
         env["MP_BOOT_WORLD"] = a.room
@@ -676,6 +679,10 @@ def start_run(a):
         env["MP_SKIP_CUTSCENES"] = "1"
     # Test runs die to hazards and enemies while an agent reads a screenshot; damage tests opt in.
     env["MP_GODMODE"] = "0" if getattr(a, "mortal", False) else "1"
+    if getattr(a, "turbo", None) is not None:
+        if not 1 <= a.turbo <= 16:
+            die("--turbo takes 1..16 ticks per frame")
+        env["MP_TURBO"] = str(a.turbo)
     for kv in a.env:
         k, v = kv.split("=", 1)
         env[k] = v
@@ -1205,6 +1212,9 @@ def build_parser():
                             "applies randomprime's room patches; with --room, start waits for gameplay)")
         s.add_argument("--mortal", action="store_true",
                        help="the player can take damage and die (default: MP_GODMODE=1, as `god on`)")
+        s.add_argument("--turbo", type=int, nargs="?", const=8, metavar="TICKS",
+                       help="MP_TURBO: uncapped, TICKS (1..16, default 8) game ticks per drawn frame, so "
+                            "scripted runs finish sooner (one tick per frame during screen fades)")
         s.add_argument("--saves", action="store_true", help="copy USA/ and savestates/ from the real user dir")
         s.add_argument("--size", default="1280x720", help="Xvfb screen size WxH")
         s.add_argument("--wait", type=float, default=120, help="seconds to wait for the console")

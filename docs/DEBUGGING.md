@@ -7,7 +7,10 @@ non-zero with a one-line `mprig: <reason>` on stderr when it fails. State is in 
 (git-ignored): `build/rig/<name>/{run.json,game.log,user/,shots/}`.
 
 The Xvfb/RADV environment (`MESA_VK_WSI_DEBUG=sw`, `SDL_VIDEODRIVER=x11`, dummy audio,
-`MP_FAST_BOOT`, `MP_CONSOLE`, ...) is set automatically. **Never capture on `:0`**: GPU-heavy
+`MP_FAST_BOOT`, `MP_CONSOLE`, ...) is set automatically, with `AURORA_PRESENT_EVERY=6`: Aurora renders
+every frame but presents one in 6, since an Xvfb present is a CPU copy (`shot` reads the EFB, so it is
+unaffected; `--env AURORA_PRESENT_EVERY=1` presents them all). That only pays off uncapped: `start --turbo [ticks]`
+(`MP_TURBO`, default 8 ticks per drawn frame, no frame cap) for runs that wait on game time. **Never capture on `:0`**: GPU-heavy
 runs on the real display have taken the desktop session down.
 
 ## Setup

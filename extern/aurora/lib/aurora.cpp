@@ -497,9 +497,21 @@ void end_frame() noexcept {
     wgpu::TextureView currentView;
     auto surfaceStatus = wgpu::SurfaceGetCurrentTextureStatus::Error;
     bool acquireAttempted = false;
+    // Port: AURORA_PRESENT_EVERY=<n> presents one frame in n (test runs on Xvfb, where each present
+    // is a CPU copy under MESA_VK_WSI_DEBUG=sw). The frame is still rendered; screenshots read the EFB.
+    static const uint32_t presentEvery = [] {
+      const char* env = std::getenv("AURORA_PRESENT_EVERY");
+      const long n = env != nullptr ? std::strtol(env, nullptr, 10) : 1;
+      return n > 1 ? static_cast<uint32_t>(n) : 1u;
+    }();
+    static uint32_t presentCounter = 0;
+    const bool skipPresent = presentEvery > 1 && (presentCounter++ % presentEvery) != 0;
+    if (skipPresent) {
+      gfx::after_present();
+    }
     {
       window::SurfaceLock surfaceLock;
-      if (window::is_presentable() && g_surface) {
+      if (!skipPresent && window::is_presentable() && g_surface) {
         ZoneScopedN("Acquire texture");
         phase::set(phase::Render, "surface GetCurrentTexture");
         wgpu::SurfaceTexture surfaceTexture;
@@ -557,7 +569,7 @@ void end_frame() noexcept {
         imgui::render(pass, imguiDrawData);
         pass.End();
       }
-    } else {
+    } else if (!skipPresent) {
       Log.info("Skipping present; window not presentable");
     }
     webgpu::gpu_prof::frame_end(encoder);
