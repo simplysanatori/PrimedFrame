@@ -24,7 +24,7 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
   }
 
   ZoneScoped;
-  const auto dstAlphaMode = dst_alpha_mode(config);
+  auto dstAlphaMode = dst_alpha_mode(config);
   const auto shader = build_shader(config.shaderConfig, dstAlphaMode);
   const auto label =
       fmt::format("GX Pipeline {:x} shader {:x}", xxh3_hash(config, static_cast<HashType>(gfx::ShaderType::GX)),

@@ -722,10 +722,12 @@ wgpu::RenderPipeline build_pipeline(const PipelineConfig& config, ArrayRef<wgpu:
                                     DstAlphaMode dstAlphaMode = DstAlphaMode::None) noexcept;
 std::string build_shader_source(const ShaderConfig& config) noexcept;
 // source (build_shader_source's) writing its alpha as mode has it.
-void apply_dst_alpha_mode(std::string& source, DstAlphaMode mode) noexcept;
+// False (source unchanged) when it has no fs_main return to rewrite: the draw must then use DstAlphaMode::None.
+bool apply_dst_alpha_mode(std::string& source, DstAlphaMode mode) noexcept;
 // Whether the config's shader has the alpha-tested sun shadow caster (shadowPass 2: vs_shadow_cut, fs_shadow).
 bool shader_has_cut_caster(const ShaderConfig& config) noexcept;
-wgpu::ShaderModule build_shader(const ShaderConfig& config, DstAlphaMode dstAlphaMode = DstAlphaMode::None) noexcept;
+// dstAlphaMode falls back to None when the shader can't be rewritten for it; build the pipeline with that.
+wgpu::ShaderModule build_shader(const ShaderConfig& config, DstAlphaMode& dstAlphaMode) noexcept;
 // Shader debugging (MP_WGSL_DUMP / MP_WGSL_OVERRIDE, console `shader`). dump_shaders writes every module built so
 // far to dir (and keeps writing new ones) and returns how many files it made; set_shader_override_dir turns the
 // override on (empty = off).
