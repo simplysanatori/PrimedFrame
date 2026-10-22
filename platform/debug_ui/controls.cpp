@@ -310,15 +310,16 @@ void DrawControlsTouchGyro() {
     sTouchEditRequested.store(true, std::memory_order_release);
     RequestToggle();
   }
-  ItemHelp("Move, resize, fade, hide or delete each on-screen control, and add your own buttons. "
-           "Done saves.");
+  ImGui::SameLine();
   if (ImGui::Button("Reset margins")) {
     sInput.touchSideMargin.store(kTouchSideMarginDefault);
     sInput.touchStickInset.store(kTouchStickInsetDefault);
     sInput.touchButtonInset.store(kTouchButtonInsetDefault);
     MarkDirty();
   }
-  ItemHelp("Puts Side margin, Stick inset and Button inset back to 0.");
+  // One help line for the pair: inline help under the first would break the row.
+  ItemHelp("Edit layout: move, resize, fade, hide, delete or add on-screen buttons. "
+           "Reset margins: sets the three margins below back to 0.");
   bool touchControls = sInput.touchControls.load();
   if (ImGui::Checkbox("On-screen controls", &touchControls)) {
     sInput.touchControls.store(touchControls);
