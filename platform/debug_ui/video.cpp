@@ -50,7 +50,6 @@ void DrawVideoDisplay() {
   bool vsync = sVsyncEnabled;
   if (ImGui::Checkbox("Vsync", &vsync)) {
     SetVsyncEnabled(vsync);
-    MarkDirty();
   }
 
   const bool locked = BeginOriginalLocked();

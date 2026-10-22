@@ -15,6 +15,7 @@
 
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 
+#include <aurora/aurora.h>
 #include <aurora/gfx.h>
 #include <aurora/imgui.h>
 #include <dolphin/vi.h>
@@ -322,6 +323,9 @@ void DrawUI() {
     aurora_enable_vsync(sVsyncEnabled && !sTurbo);
     // The saved upscale sharpening, which nothing else sends until the scale changes.
     ApplyPresentSharpness();
+    // Saved per-pixel lighting: AuroraConfig has no field for it, and the setters
+    // only send it on change.
+    aurora_set_per_pixel_lighting(sPerPixelLighting && !sOriginalExperience);
   }
   if (sFullscreenHotkey.exchange(false, std::memory_order_acq_rel)) {
     SetFullscreen(!VIGetWindowFullscreen());

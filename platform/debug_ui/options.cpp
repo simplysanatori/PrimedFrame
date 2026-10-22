@@ -314,8 +314,12 @@ void SetVsyncEnabled(bool enabled) {
   // Always re-apply: the stored value can match while the surface still has the
   // previous present mode (e.g. the persisted value applied before the first
   // frame), which made the first toggle a no-op.
-  sVsyncEnabled = enabled;
-  aurora_enable_vsync(enabled);
+  if (sVsyncEnabled != enabled) {
+    sVsyncEnabled = enabled;
+    MarkDirty();
+  }
+  // Turbo keeps vsync off until it ends, as the first-frame apply does.
+  aurora_enable_vsync(enabled && !sTurbo);
 }
 
 bool Fullscreen() { return Loaded(sFullscreen); }

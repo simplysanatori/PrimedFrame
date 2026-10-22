@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -541,7 +542,7 @@ std::string SettingsText() {
 
 void LoadSettings() {
   const std::string path = SettingsFilePath();
-  std::ifstream file(path);
+  std::ifstream file(PortPaths::detail::FromUtf8(path));
   if (!file.is_open()) {
     return;
   }
@@ -583,14 +584,59 @@ void LogSettingChanges(const std::string& text) {
   sLoggedSettings = std::move(values);
 }
 
+// Settings an MP_* variable changed this run: key -> (file value, override value).
+std::map< std::string, std::pair< std::string, std::string > > sEnvOverrides;
+
+void NoteEnvOverrides(const std::string& fileText) {
+  const auto before = SettingsValues(fileText);
+  for (const auto& [key, value] : SettingsValues(SettingsText())) {
+    const auto old = before.find(key);
+    if (old != before.end() && old->second != value) {
+      sEnvOverrides[key] = {old->second, value};
+    }
+  }
+}
+
+// The text to store: a setting still at its MP_* override keeps the file's
+// value, so a per-run variable (MP_ORIGINAL=1 in a launcher) never becomes a
+// saved setting when something else is saved. One changed since is stored.
+std::string StoredSettingsText() {
+  std::string text = SettingsText();
+  if (sEnvOverrides.empty()) {
+    return text;
+  }
+  std::string stored;
+  std::istringstream lines(text);
+  std::string line;
+  while (std::getline(lines, line)) {
+    const size_t separator = line.find('=');
+    if (!line.empty() && line[0] != '#' && separator != std::string::npos) {
+      const auto found = sEnvOverrides.find(line.substr(0, separator));
+      if (found != sEnvOverrides.end() && line.compare(separator + 1, std::string::npos, found->second.second) == 0) {
+        line.resize(separator + 1);
+        line += found->second.first;
+      }
+    }
+    stored += line;
+    stored += '\n';
+  }
+  return stored;
+}
+
 void SaveSettings() {
   if (!sInitialized || !sSettingsDirty || sConfigReset) {
     return;
   }
-  const std::string text = SettingsText();
-  LogSettingChanges(text);
+  LogSettingChanges(SettingsText());
+  const std::string text = StoredSettingsText();
   const std::string path = SettingsFilePath();
-  std::ofstream file(path, std::ios::trunc);
+  // Write a temporary file and rename it over the settings, so a crash or kill
+  // mid-write (this runs on every slider release and at exit) cannot leave a
+  // truncated file that resets everything on the next start.
+  const std::filesystem::path target = PortPaths::detail::FromUtf8(path);
+  std::filesystem::path partial = target;
+  partial += ".tmp";
+  std::ofstream file(partial, std::ios::trunc);
   if (!file.is_open()) {
     PortLog::Write("metroid_prime_port: could not write settings to %s\n", path.c_str());
     return;
@@ -604,6 +650,13 @@ void SaveSettings() {
   file.close();
   if (file.fail()) {
     PortLog::Write("metroid_prime_port: could not write settings to %s (close failed)\n", path.c_str());
+    return;
+  }
+  std::error_code ec;
+  std::filesystem::rename(partial, target, ec);
+  if (ec) {
+    PortLog::Write("metroid_prime_port: could not replace settings at %s: %s\n", path.c_str(), ec.message().c_str());
+    std::filesystem::remove(partial, ec);
     return;
   }
   PortLog::Write("metroid_prime_port: saved settings to %s\n", path.c_str());

@@ -420,6 +420,7 @@ void EnsureInitialized() {
   }
   sInitialized = true;
   LoadSettings();
+  const std::string fileSettings = SettingsText();
 
   // Environment variables are explicit per-run overrides and win over the file.
   if (port::EnvFlag("MP_TRACE_TIMING")) {
@@ -510,6 +511,7 @@ void EnsureInitialized() {
   if (port::EnvString("MP_FPS_CAP") != nullptr) {
     sFpsCap = ClampFpsCap(port::EnvInt("MP_FPS_CAP", 0));
   }
+  NoteEnvOverrides(fileSettings);
 
   std::atexit(SaveSettings);
   ApplyLiveSplit();
