@@ -78,7 +78,8 @@ inline constexpr int kConverter = 52;
 // and Baked. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 3;
-inline constexpr int kModels = 8;      // the table's models, their looks and the ANCS copies
+// 9: a ColorUnlit mesh (the door shields) gets a back copy.
+inline constexpr int kModels = 9;      // the table's models, their looks and the ANCS copies
 // 63: ELPS reads its CNST surface flag; the system tween is 0 only at a 0x1000000 lifetime.
 // 62: NEGT, CRCV, SPEV, ELPS, ROTV, PNCV, KEYF, SLTW, CRLN octaves, KESP, one-stop GRAD, PAP0/9,
 //     ADV9 and IAV0..3 are converted; PLNV counts come from MAXP.
