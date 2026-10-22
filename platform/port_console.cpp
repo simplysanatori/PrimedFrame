@@ -910,6 +910,18 @@ void CmdGive(CStateManager& mgr, bool take) {
   Finish();
 }
 
+void CmdFusion(CStateManager& mgr) {
+  if (sCmd.args.size() > 1) {
+    unsigned on = 0;
+    if (!ParseUnsigned(sCmd.args[1], on) || on > 1) {
+      return Finish("usage: fusion [0|1]");
+    }
+    PortDebug::WearFusionSuit(mgr, on != 0);
+  }
+  Out("fusion %d", mgr.PlayerState()->GetIsFusionEnabled() ? 1 : 0);
+  Finish();
+}
+
 void CmdItems(CStateManager& mgr) {
   CPlayerState& ps = *mgr.PlayerState();
   for (int i = 0; i < kItemCount; ++i) {
@@ -3673,6 +3685,7 @@ const CommandSpec kCommands[] = {
      "give <item> [n]            add an item (name or number, see `items`)"},
     {"take", nullptr, [](CStateManager& mgr) { CmdGive(mgr, true); },
      "take <item> [n]            remove item capacity (drops a suit)"},
+    {"fusion", nullptr, CmdFusion, "fusion [0|1]               wear the Fusion Suit (no unlock needed)"},
     {"items", nullptr, CmdItems, "items                      the player's inventory"},
     {"visor", nullptr, CmdVisor,
      "visor <combat|xray|scan|thermal|0-3>, beam <power|ice|wave|plasma|0-3>  switch like the touch wheels"},

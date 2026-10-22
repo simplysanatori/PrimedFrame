@@ -14,6 +14,10 @@
 
 #include "MetroidPrime/Cameras/CCameraManager.hpp"
 #include "MetroidPrime/Player/CGameState.hpp"
+#include "MetroidPrime/CStateManager.hpp"
+#include "MetroidPrime/Player/CMorphBall.hpp"
+#include "MetroidPrime/Player/CPlayer.hpp"
+#include "MetroidPrime/Player/CPlayerState.hpp"
 
 #include <aurora/imgui.h>
 #include <imgui_internal.h>
@@ -102,6 +106,17 @@ void DrawCutscenesSection() {
   }
 }
 
+void WearFusionSuit(CStateManager& mgr, bool wearing) {
+  if (gpGameState != nullptr) {
+    gpGameState->SystemState().SetHasFusion(wearing);
+  }
+  mgr.PlayerState()->SetIsFusionEnabled(wearing);
+  mgr.Player()->AsyncLoadSuit(mgr);
+  if (mgr.Player()->GetMorphballTransitionState() != CPlayer::kMS_Unmorphed) {
+    mgr.Player()->MorphBall()->LoadMorphBallModel(mgr);
+  }
+}
+
 void DrawUnlocksSection() {
   ImGui::SeparatorText("Unlocks");
   const bool locked = BeginOriginalLocked();
@@ -124,6 +139,23 @@ void DrawUnlocksSection() {
     }
   }
   ImGui::SetItemTooltip("Under Fusion Bonus; retail needs a GBA link to Metroid Fusion.");
+  ImGui::SameLine();
+  // The Fusion Bonus menu's choice, switched in game: the suit, arm and ball
+  // load again as after a suit pickup.
+  {
+    CStateManager* mgr = StateManager();
+    const bool available = gpGameState != nullptr &&
+                           (UnlockFusionSuit() || (gpGameState->SystemState().GetFusionLinked() &&
+                                                   gpGameState->SystemState().GetNormalModeBeat()));
+    bool wearing = gpGameState != nullptr && gpGameState->PlayerState()->GetIsFusionEnabled();
+    ImGui::BeginDisabled(!available || mgr == nullptr);
+    if (ImGui::Checkbox("Wear Fusion Suit", &wearing)) {
+      WearFusionSuit(*mgr, wearing);
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Switch between the Fusion Suit and the normal suits now, without the\n"
+                          "Fusion Bonus menu. Needs the Fusion Suit unlocked, and a game running.");
+  }
   ImGui::SameLine();
   bool galleries = sUnlockGalleries;
   if (ImGui::Checkbox("Image galleries", &galleries)) {

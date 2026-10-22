@@ -447,6 +447,9 @@ bool UnlockHardMode();
 void SetUnlockHardMode(bool enabled);
 bool UnlockFusionSuit();
 void SetUnlockFusionSuit(bool enabled);
+// Puts the Fusion Suit on or off in game, as the Fusion Bonus menu's choice
+// would: the suit, arm and ball load again as after a suit pickup.
+void WearFusionSuit(CStateManager& mgr, bool wearing);
 bool UnlockGalleries();
 void SetUnlockGalleries(bool enabled);
 

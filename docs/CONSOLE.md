@@ -27,7 +27,7 @@ finishes; `fx off` removes it; `fx list [filter]`, `fx tree <#id>`, `fx stats`, 
 `face <yaw>`, `look <id>`, `objs [filter]`,
 `obj <id>` (AI state, health, a door's open or closed, body state and animation, connections, whether
 it is frustum-culled),
-`send <id> <msg>`, `give <item> [n]`, `take <item> [n]`, `items`, `heal`, `kill <id> [damage]` (deals an actor its remaining health, or the given damage, as Power
+`send <id> <msg>`, `give <item> [n]`, `take <item> [n]`, `fusion [0|1]` (wear the Fusion Suit, no unlock needed), `items`, `heal`, `kill <id> [damage]` (deals an actor its remaining health, or the given damage, as Power
 Beam damage, so bosses run their death scripts), `phazongun [off]` (lets the arm cannon fire the Phazon Beam, or stops it), `god [on|off]`,
 `hurt [n]` (hits the player for n, default 10, with the HUD flash and damage sound), `die` (empties the health),
 `memo <text>` (shows the text as a HUD message), `strg <id> [index]` (a string table, or one string of it, as the game loads it, mods included),

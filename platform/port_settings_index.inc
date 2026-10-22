@@ -17,6 +17,7 @@
 {"Game", "", "Cutscenes", "1.00 sequence-break compatibility", "revision v1 1.00 old version sequence break"},
 {"Game", "", "Unlocks", "Hard mode", "difficulty harder"},
 {"Game", "", "Unlocks", "Fusion Suit", "fusion unlock suit"},
+{"Game", "", "Unlocks", "Wear Fusion Suit", "fusion suit switch toggle wear change equip"},
 {"Game", "", "Unlocks", "Image galleries", "gallery pictures art unlock"},
 {"Game", "", "Audio", "Music volume", "volume sound loudness"},
 {"Game", "", "Audio", "Sound effects volume", "volume sfx loudness"},
