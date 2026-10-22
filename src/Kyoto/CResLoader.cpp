@@ -274,7 +274,14 @@ bool CResLoader::ResourceExists(CAssetId asset) {
 
 bool CResLoader::PortPakResourceExists(CAssetId asset) {
 #endif
+#ifdef TARGET_PC
+  // Port: ClearCache leaves kInvalidAssetId cached with no info, so an object
+  // without an X-ray model (asset -1) made right after it got a null info back
+  // (issue 179: a resume regenerating Metroid Prime Lair's Metroids).
+  if (x4c_cachedResId == asset && x50_cachedResInfo != nullptr) {
+#else
   if (x4c_cachedResId == asset) {
+#endif
     return true;
   }
 
