@@ -17,6 +17,7 @@
 
 #include <cstring>
 #include <exception>
+#include <stdexcept>
 #endif
 
 static const int kDecompChunkSize = 4096;
@@ -190,8 +191,55 @@ void CResFactory::PortLoadListCounts(int& total, int& pending) {
 }
 #endif
 
+#ifdef TARGET_PC
+// Port: a read that ended cancelled or short leaves the buffer unfilled, and the
+// factory would parse it anyway: a zeroed compressed TXTR inflates to 0 bytes and
+// aborts the game (issue #176). Read it again instead; give up after a few tries.
+bool CResFactory::PortRetryFailedRead(SLoadingData& data) {
+  if (data.x24_zip.get() != nullptr) {
+    return false; // already inflating, so its buffer was checked
+  }
+  const int transferred = data.x8_dvdReq->PortTransferred();
+  const char* how = nullptr;
+  if (data.x8_dvdReq->PortCancelled()) {
+    how = "cancelled";
+  } else if (transferred >= 0 && transferred < data.x2c_size) {
+    how = "short";
+  } else if (data.x30_compression == CResLoader::kCompressionType_Compressed && data.x2c_size >= 4 &&
+             *reinterpret_cast< const uint* >(data.x14_buffer.get()) == 0) {
+    how = "with an empty compressed header"; // no compressed resource inflates to 0 bytes
+  }
+  if (how == nullptr) {
+    return false;
+  }
+  const uint type = data.x0_tag.GetType();
+  const uint id = data.x0_tag.GetId();
+  const char* pakName = "?";
+  for (int i = 0; i < x4_resLoader.GetPakCount(); ++i) {
+    CPakFile* pak = x4_resLoader.GetPakFile(i);
+    if (pak->GetResInfo(id) != nullptr) {
+      pakName = pak->GetDvdFile().GetFilename().data();
+      break;
+    }
+  }
+  PortLog::Write("resource: %c%c%c%c %08X read ended %s, %d of %d bytes from %s; reading it again\n",
+                 char(type >> 24), char(type >> 16), char(type >> 8), char(type), id, how, transferred,
+                 data.x2c_size, pakName);
+  if (++data.xPortReadRetries > 3 || !x4_resLoader.ResourceExists(id)) {
+    throw std::runtime_error("Disc read failed");
+  }
+  data.x8_dvdReq = rstl::auto_ptr< CDvdRequest >(LoadResourceAsync(data.x0_tag, data.x14_buffer.get()));
+  return true;
+}
+#endif
+
 bool CResFactory::PumpResource(const LoadList::iterator& it, uint time) {
   if (it->x8_dvdReq->IsComplete()) {
+#ifdef TARGET_PC
+    if (PortRetryFailedRead(*it)) {
+      return false;
+    }
+#endif
     if (it->x30_compression == CResLoader::kCompressionType_Compressed &&
         !it->PumpDecompression(time)) {
       return false;
@@ -237,7 +285,12 @@ CResFactory::SLoadingData::SLoadingData(const SObjectTag& tag, CDvdRequest* requ
 , x14_buffer(static_cast< uchar* >(buffer))
 , x2c_size(size)
 , x30_compression(compression)
-, x34_params(params) {}
+, x34_params(params)
+#ifdef TARGET_PC
+, xPortReadRetries(0)
+#endif
+{
+}
 
 CResFactory::SLoadingData::~SLoadingData() {
   if (x24_zip.owner()) {
