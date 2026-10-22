@@ -752,7 +752,8 @@ int ImportGallery(const Remastered& remastered, const fs::path& target, int thre
   std::error_code ec;
   // Written beside the live folder and swapped in only if a picture came out, so a failed or
   // cancelled re-run keeps the old gallery.
-  const fs::path folder = target.string() + ".new";
+  fs::path folder = target;
+  folder += ".new";
   fs::remove_all(folder, ec);
   fs::create_directories(folder, ec);
   std::atomic<int> written{0};
@@ -762,28 +763,36 @@ int ImportGallery(const Remastered& remastered, const fs::path& target, int thre
     std::string error;
     TxtrImage image;
     std::vector<uint8_t> jpeg;
-    bool ok = DecodeTxtr(raw.data(), raw.size(), image, error);
-    ok = ok && PortGallery::EncodeGalleryJpeg(image.rgba.data(), int(image.width), int(image.height), jpeg);
-    if (ok) {
-      std::error_code fileError;
-      const fs::path tmp = folder / (std::string(name) + ".tmp");
-      {
-        std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
-        file.write(reinterpret_cast<const char*>(jpeg.data()), std::streamsize(jpeg.size()));
-        file.close();
-        ok = bool(file);
-      }
-      // Renamed, so a picture cut short never has the name.
+    bool ok = false;
+    // On a worker thread: an exception out of here (bad_alloc on a huge
+    // picture) would end the program, as the other stages' workers guard.
+    try {
+      ok = DecodeTxtr(raw.data(), raw.size(), image, error);
+      ok = ok && PortGallery::EncodeGalleryJpeg(image.rgba.data(), int(image.width), int(image.height), jpeg);
       if (ok) {
-        fs::rename(tmp, folder / name, fileError);
-        ok = !fileError;
+        std::error_code fileError;
+        const fs::path tmp = folder / (std::string(name) + ".tmp");
+        {
+          std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
+          file.write(reinterpret_cast<const char*>(jpeg.data()), std::streamsize(jpeg.size()));
+          file.close();
+          ok = bool(file);
+        }
+        // Renamed, so a picture cut short never has the name.
+        if (ok) {
+          fs::rename(tmp, folder / name, fileError);
+          ok = !fileError;
+        }
+        if (!ok) {
+          fs::remove(tmp, fileError);
+          error = "cannot write to the mod folder";
+        }
+      } else if (error.empty()) {
+        error = "cannot encode";
       }
-      if (!ok) {
-        fs::remove(tmp, fileError);
-        error = "cannot write to the mod folder";
-      }
-    } else if (error.empty()) {
-      error = "cannot encode";
+    } catch (const std::exception& e) {
+      ok = false;
+      error = e.what();
     }
     if (ok) {
       ++written;
