@@ -148,6 +148,22 @@ fs::path SlotPath(int slot) {
   return PortGci::PathFromString(folder) / ("slot" + std::to_string(slot) + ".mpss");
 }
 
+// A state the running game can build: Capture always writes kBlobSize bytes
+// (CGameState reads them without a bound), and its world must be one this disc
+// has, or SetCurrentWorldId sends the main flow to an MLVL that isn't there.
+bool Loadable(const Header& header, const std::vector< uint8_t >& blob) {
+  if (blob.size() != kBlobSize)
+    return false;
+  if (gpMemoryCard == nullptr)
+    return true;
+  const rstl::vector< CMemoryCard::MemoryWorld >& worlds = gpMemoryCard->GetMemoryWorlds();
+  for (int i = 0; i < worlds.size(); ++i) {
+    if (static_cast< uint32_t >(worlds[i].first) == header.worldId)
+      return true;
+  }
+  return false;
+}
+
 bool ReadSlot(int slot, Header& header, std::vector< uint8_t >& blob) {
   const fs::path path = SlotPath(slot);
   if (path.empty())
@@ -156,7 +172,7 @@ bool ReadSlot(int slot, Header& header, std::vector< uint8_t >& blob) {
   if (!file)
     return false;
   const std::string data = port::ReadAllText(file);
-  return Decode(data, header, blob);
+  return Decode(data, header, blob) && Loadable(header, blob);
 }
 
 bool WriteSlot(int slot, const Header& header, const std::vector< uint8_t >& blob) {
@@ -574,7 +590,7 @@ bool ReadResume(ResumeMeta& meta, Header& header, std::vector< uint8_t >& blob) 
     return false;
   const std::string data = port::ReadAllText(file);
   std::string state;
-  return DecodeResume(data, meta, state) && Decode(state, header, blob);
+  return DecodeResume(data, meta, state) && Decode(state, header, blob) && Loadable(header, blob);
 }
 
 ResumeContext GatherResumeContext() {
