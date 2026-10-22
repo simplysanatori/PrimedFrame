@@ -141,6 +141,13 @@ void TestPicks() {
   PSC::SetServed({});
   CHECK(!PSC::Pending(true));
 
+  PSC::Randomise(1, 1234);
+  const std::optional<uint32_t> a = PSC::Colour(1, 0), b = PSC::Colour(1, 1), c = PSC::Colour(1, 2);
+  CHECK(a && b && c && *a != *b && *b != *c);
+  PSC::Randomise(1, 1234);
+  CHECK(PSC::Colour(1, 0) == a);  // same seed, same picks
+  PSC::SetPicksKey(1, "");
+
   for (int suit = 0; suit < PSC::kSuitCount; ++suit) {
     const PSC::Suit& info = PSC::SuitInfo(suit);
     CHECK(info.slots >= 2 && info.slots <= PSC::kMaxSlots);

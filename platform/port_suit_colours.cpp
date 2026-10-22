@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <mutex>
+#include <random>
 
 namespace PortSuitColours {
 namespace {
@@ -291,6 +292,28 @@ Picks SuitPicks(int suit) {
   }
   std::lock_guard<std::mutex> lock(sMutex);
   return sPicks[suit];
+}
+
+void Randomise(int suit, uint32_t seed) {
+  if (suit < 0 || suit >= kSuitCount) {
+    return;
+  }
+  std::mt19937 random(seed);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  const double start = unit(random) * 360.0;
+  // The golden angle apart, jittered, so the slots never share a hue.
+  for (int slot = 0; slot < kSuits[suit].slots; ++slot) {
+    const double h = start + slot * 137.5 + (unit(random) - 0.5) * 30.0;
+    const double s = 0.55 + 0.45 * unit(random);
+    const double v = 0.6 + 0.4 * unit(random);
+    double rgb[3];
+    FromHsv(h, s, v, rgb);
+    uint32_t value = 0;
+    for (const double c : rgb) {
+      value = (value << 8) | uint32_t(std::clamp(std::lround(c), 0l, 255l));
+    }
+    SetColour(suit, slot, value);
+  }
 }
 
 std::string FormatColour(std::optional<uint32_t> rgb) {

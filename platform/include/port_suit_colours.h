@@ -72,6 +72,10 @@ std::optional<uint32_t> Colour(int suit, int slot);
 void SetColour(int suit, int slot, std::optional<uint32_t> rgb);
 Picks SuitPicks(int suit);
 
+// Random picks for every slot of the suit: hues spread round the circle from
+// a random start, saturated and bright enough to read.
+void Randomise(int suit, uint32_t seed);
+
 // Settings text of one slot: "RRGGBB", or empty for the original. Parse
 // accepts an optional '#'; anything else reads as the original.
 std::string FormatColour(std::optional<uint32_t> rgb);

@@ -34,6 +34,7 @@
 #include <cstdio>
 #include <mutex>
 #include <optional>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -129,6 +130,12 @@ void DrawVideoDisplay() {
       ImGui::EndDisabled();
       ImGui::PopID();
     }
+    if (ImGui::Button("Random")) {
+      PortSuitColours::Randomise(sSuitColoursSuit, std::random_device{}());
+      MarkDirty();
+    }
+    ImGui::SetItemTooltip("Random colours for every slot of this suit; Apply to see them.");
+    ImGui::SameLine();
     const bool pending = PortSuitColours::Pending(!sOriginalExperience);
     ImGui::BeginDisabled(!pending || PortMods::Suspended());
     if (ImGui::Button("Apply suit colours")) {

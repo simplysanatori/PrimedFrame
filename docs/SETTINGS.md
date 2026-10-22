@@ -411,8 +411,8 @@
   the port's generator or the disc changes), and served with mods on or off, under every
   mod. A mod with its own look of a ball, such as the Remastered import (both balls), keeps
   its own; the other looks are still made.
-- Suit colours (Video > Display "Suit colours": pick a suit, then its colours; "Apply suit
-  colours" reloads the mods; persisted as `suit_colour_power`, `suit_colour_gravity`,
+- Suit colours (Video > Display "Suit colours": pick a suit, then its colours; "Random" picks
+  random colours for every slot, "Apply suit colours" reloads the mods; persisted as `suit_colour_power`, `suit_colour_gravity`,
   `suit_colour_varia`, `suit_colour_phazon`, `suit_colour_fusion`,
   `suit_colour_fusion_gravity`, `suit_colour_fusion_varia`, `suit_colour_fusion_phazon`;
   unset by default; ignored under Original experience). Each value is the suit's slots in
