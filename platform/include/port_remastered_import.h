@@ -117,7 +117,8 @@ inline constexpr int kModels = 10;     // the table's models, their looks and th
 // 93: LIT_ 1 on a VFX_*_Lit sprite shader is the vfx ParticleLit feature (AlreadyExposed under IEXP).
 // 94: a ParticleLit material is never AlreadyExposed (the lit perm reads no inverse exposure).
 // 95: BLIT 1 (a lit sprite takes the room's baked probe) is the port-only PBLT 1.
-inline constexpr int kEffects = 96;    // port_remastered_effect_import and the particle converters
+// 97: a sprite/swoosh/ELC2 VMAT takes its MATI's EBlendMode over the PBDM/SBDM/EBDM row (Fogged pins the row's fog).
+inline constexpr int kEffects = 97;    // port_remastered_effect_import and the particle converters
 // 20: two rooms matching one area write only the closer match's files, not the later room's.
 // 21: roomenv version 22, the world master's hints driven by its camera volumes (the table in every roomenv).
 // 22: a master's InventoryActivator fired by the camera going under water drives its hints (kSenderCameraWaterItem).
