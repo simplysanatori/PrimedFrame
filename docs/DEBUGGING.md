@@ -149,12 +149,17 @@ position/velocity/forward beyond a tolerance (`--tol-pos`, `--tol-vel`), animati
 missing/extra objects with no editor id (effects and projectiles are not saved by design). A field that
 differs from A but equals A1 (the world one tick later) is "tick drift" and only counted. Exit 0 with no
 strict diff, 1 otherwise, 2 if the harness failed. A last section, "schema fields", diffs each object's
-`fields` (every bool/int/float/bitfield/math/TUniqueId member of its class chain, from the generated
-schema in `docs/SAVESTATE_SCHEMA.md`; references as `eid:` editor ids), all strict, grouped by
-class.field; `--tol-field` is the float tolerance. The cinematic cameras, waypoints and sounds always show
+`fields` (the bool/int/float/bitfield/math/TUniqueId members of its class chain, from the generated
+schema in `docs/SAVESTATE_SCHEMA.md`, that its `kTagFields` block saves; references as `eid:` editor
+ids), all strict, grouped by class.field; `--tol-field` is the float tolerance. The members no block
+saves (other classes' fields, CActor render state; dumped as `fields_other`) follow as one uncounted
+"unsaved schema fields" line, each diff with `--other-fields`: a gap finder, not a failure. Port-added
+members (`xPort*`, `xpc_*`) are skipped. `--post-wait N` also dumps C N ticks after B and prints C against A as a second,
+uncounted report, for a restore that hands over late (Metroid Prime's exo comes back inactive in B).
+The cinematic cameras, waypoints and sounds always show
 position warnings: they are moved by scripts the restore does not replay; ignore them.
 
-Enemies (every `CPatterned`) save their schema fields in the room record's `kTagFields` block
+Enemies (every `CPatterned`) and generated pickups save their schema fields in the room record's `kTagFields` block
 (`platform/port_savestate_fields.cpp`; the load log's "N enemy fields set"). For a baseline without it,
 start the game with `--start-arg=--env --start-arg=MP_SAVESTATE_FIELDS=0`. Expected leftovers in the
 "schema fields" section: `x254_` and other members the constructor never sets, `xPort*`, render and

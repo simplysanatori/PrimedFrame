@@ -24,9 +24,10 @@ ticks, also while held):
 A field that differs between A and B is STRICT only if B also differs from A1: a value B shares with A1
 is one that just moves each tick (a timer, a position), not a save-state gap.
 
-Each object's `fields` (every plain-data field of its class chain, from the generated entity schema,
-platform/include/port_entity_schema.h) are diffed the same way, all STRICT, and reported in their own
-"schema fields" section grouped by class and field.
+Each object's `fields` (the plain-data fields of its class chain, from the generated entity schema,
+platform/include/port_entity_schema.h, that the save's kTagFields block keeps) are diffed the same way,
+all STRICT, and reported in their own "schema fields" section grouped by class and field. Its
+`fields_other` (the rest: other classes, unsaved members) are listed after it and not counted.
 
 Objects are matched by (area MREA, editor id, class); generated copies and objects with no editor id
 (effects, projectiles: not saved by design) match by class and unique id order. Missing or extra objects
@@ -55,6 +56,9 @@ STRICT = ["active", "hp", "kbres", "door_open", "timer", "timing", "counter", "b
 LOOSE = ["pos", "vel", "mom", "fwd", "anim", "ai_time"]
 PLAYER_STRICT = ["morph", "hp"]
 PLAYER_LOOSE = ["pos", "fwd"]
+# Schema fields the port added (render interpolation, bookkeeping): never saved by design
+# (SavedField in platform/port_savestate_fields.cpp), so not diffed.
+PORT_FIELDS = ("xPort", "xpc_")
 
 
 def load_mprig(path):
@@ -150,8 +154,8 @@ def read_dump(path):
 
 
 def roundtrip(rig, tag, outdir, a):
-    """Run the A / A1 / B sequence on the current world. Returns three dump paths."""
-    paths = {k: str(Path(outdir).resolve() / f"{tag}-{k}.jsonl") for k in ("A", "A1", "B")}
+    """Run the A / A1 / B (and with --post-wait, C) sequence on the current world. Returns the dump paths."""
+    paths = {k: str(Path(outdir).resolve() / f"{tag}-{k}.jsonl") for k in ("A", "A1", "B", "C")}
     before = selected_slot(rig)
     rig.cmd("hold 1")
     rig.cmd(f"statedump {paths['A']}")
@@ -176,6 +180,9 @@ def roundtrip(rig, tag, outdir, a):
                 print(f"neighbour areas restored after {i + 1} more steps")
                 break
     rig.cmd(f"statedump {paths['B']}")
+    if a.post_wait:
+        rig.cmd(f"step {a.post_wait}")
+        rig.cmd(f"statedump {paths['C']}")
     after = selected_slot(rig)
     if before is not None and after != before:
         rig.cmd(f"state slot {before}")
@@ -257,7 +264,8 @@ def boss_note(x, y):
 class Report:
     def __init__(self):
         self.rows = []  # (severity, class, label, kind, text)
-        self.fields = []  # schema fields: (class, field, label, text), all strict
+        self.fields = []  # saved schema fields: (class, field, label, text), all strict
+        self.other = []  # schema fields the save does not keep: same, informational
         self.drift = collections.Counter()
         self.field_drift = collections.Counter()
         self.total = 0
@@ -309,16 +317,20 @@ def compare(da, da1, db, a):
                     extra = boss_note(vx, vy) if f == "boss" else ""
                     rep.add("STRICT" if strict else "WARN", cls, label, f,
                             f"{show(vx)} -> {show(vy)} ({d}){extra}")
-            fx, fy = x.get("fields") or {}, y.get("fields") or {}
-            fz = (z.get("fields") or {}) if z is not None else None
-            for f in sorted(set(fx) | set(fy)):
-                d = schema_differ(fx.get(f), fy.get(f), a)
-                if d is None:
-                    continue
-                if fz is not None and schema_differ(fz.get(f), fy.get(f), a) is None:
-                    rep.field_drift[(cls, f)] += 1
-                    continue
-                rep.fields.append((cls, f, label, f"{show(fx.get(f))} -> {show(fy.get(f))}"))
+            for key, out in (("fields", rep.fields), ("fields_other", rep.other)):
+                fx, fy = x.get(key) or {}, y.get(key) or {}
+                fz = (z.get(key) or {}) if z is not None else None
+                for f in sorted(set(fx) | set(fy)):
+                    if f.startswith(PORT_FIELDS):
+                        continue
+                    d = schema_differ(fx.get(f), fy.get(f), a)
+                    if d is None:
+                        continue
+                    if fz is not None and schema_differ(fz.get(f), fy.get(f), a) is None:
+                        if key == "fields":
+                            rep.field_drift[(cls, f)] += 1
+                        continue
+                    out.append((cls, f, label, f"{show(fx.get(f))} -> {show(fy.get(f))}"))
     # the player
     pa, pb, p1 = da["player"], db["player"], da1["player"]
     for strict, fields in ((True, PLAYER_STRICT), (False, PLAYER_LOOSE)):
@@ -365,7 +377,8 @@ def print_report(title, rep, a):
 
 
 def print_fields(rep, a):
-    """The schema-field section: one line per class.field, then its objects."""
+    """The schema-field section: one line per class.field, then its objects. Then the fields
+    the save does not keep, by class.field only (every detail with --other-fields)."""
     groups = collections.defaultdict(list)
     for cls, f, label, text in rep.fields:
         groups[(cls, f)].append((label, text))
@@ -378,6 +391,20 @@ def print_fields(rep, a):
             print(f"      {label}: {text}")
         if not a.all and len(rows) > a.detail:
             print(f"      ... {len(rows) - a.detail} more (--all)")
+    other = collections.defaultdict(list)
+    for cls, f, label, text in rep.other:
+        other[(cls, f)].append((label, text))
+    if not other:
+        return
+    print(f"unsaved schema fields (not kept by the save; not counted): {len(rep.other)} diff(s) in "
+          f"{len(other)} class.field(s)")
+    if not a.other_fields:
+        print("  " + ", ".join(f"{c}.{f} x{len(r)}" for (c, f), r in sorted(other.items())))
+        return
+    for (cls, f), rows in sorted(other.items()):
+        print(f"  ~ {cls}.{f} x{len(rows)}")
+        for label, text in rows:
+            print(f"      {label}: {text}")
 
 
 # --- scenarios ---------------------------------------------------------------------------
@@ -417,8 +444,13 @@ def main():
     ap.add_argument("--tol-time", type=float, default=0.1, help="timer / ai_time difference in seconds")
     ap.add_argument("--tol-field", type=float, default=0.001,
                     help="schema float field difference (relative above 1; default %(default)s)")
+    ap.add_argument("--post-wait", type=int, default=0, metavar="N",
+                    help="also dump C N ticks after B and report C against A (informational, "
+                         "not in the exit code): settles a restore that hands over late")
     ap.add_argument("--detail", type=int, default=8, help="detail lines per class (default 8)")
     ap.add_argument("--all", action="store_true", help="print every detail line")
+    ap.add_argument("--other-fields", action="store_true",
+                    help="print each diff of the schema fields the save does not keep")
     a = ap.parse_args()
     scenarios = parse_scenarios(a)
     if not a.run and not scenarios[0][0]:
@@ -453,6 +485,12 @@ def main():
             rep = compare(read_dump(paths["A"]), read_dump(paths["A1"]), read_dump(paths["B"]), a)
             print_report(title, rep, a)
             print(f"{rig_line}\ndumps: {paths['A']} {paths['A1']} {paths['B']}\n")
+            if a.post_wait:
+                # No drift reference this far from the save: every moving value shows up,
+                # so this report is read, not counted.
+                late = compare(read_dump(paths["A"]), read_dump(paths["A"]), read_dump(paths["C"]), a)
+                print_report(f"{title}, {a.post_wait} ticks after B (C vs A, not counted)", late, a)
+                print(f"dump: {paths['C']}\n")
             failed = failed or rep.failed()
             kinds = collections.Counter((r[1], r[3]) for r in rep.strict())
             kinds.update((c, "fields") for c, *_ in rep.fields)

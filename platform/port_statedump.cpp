@@ -98,10 +98,13 @@ std::string UidRef(CStateManager& mgr, TUniqueId uid) {
 }
 
 // Every plain-data field the schema (port_entity_schema.h) lists for the object's class
-// chain, keyed by field name (Class::name where a base already used the name).
+// chain, keyed by field name (Class::name where a base already used the name): `fields`
+// those the room record's kTagFields block keeps for this object, `fields_other` the rest.
 std::string SchemaFields(CStateManager& mgr, CEntity& ent) {
   std::string out;
+  std::string other;
   std::set< std::string > used;
+  const bool saved = PortSaveState::EntityFieldsSaved(mgr, ent);
   for (const PortSchemaClass* cls = PortEntitySchema::For(ent); cls != nullptr; cls = PortEntitySchema::Base(*cls)) {
     for (int i = 0; i < cls->fieldCount; ++i) {
       const PortSchemaField& f = cls->fields[i];
@@ -127,10 +130,11 @@ std::string SchemaFields(CStateManager& mgr, CEntity& ent) {
       } else {
         continue;
       }
-      out += (out.empty() ? "\"" : ",\"") + Esc(key.c_str()) + "\":" + value;
+      std::string& to = saved && PortSaveState::SchemaFieldSaved(*cls, f) ? out : other;
+      to += (to.empty() ? "\"" : ",\"") + Esc(key.c_str()) + "\":" + value;
     }
   }
-  return ",\"fields\":{" + out + "}";
+  return ",\"fields\":{" + out + "},\"fields_other\":{" + other + "}";
 }
 
 std::string ObjectLine(CStateManager& mgr, CEntity& ent) {

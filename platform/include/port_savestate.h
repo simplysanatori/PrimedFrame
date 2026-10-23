@@ -7,6 +7,8 @@
 class CEntity;
 class CStateManager;
 class CInputStream;
+struct PortSchemaClass;
+struct PortSchemaField;
 
 // Save states: save anywhere, load back to the same spot. A state is the
 // retail save data (the same CGameState stream a memory card save holds:
@@ -261,6 +263,9 @@ int ApplyEntityFields(CStateManager& mgr, CEntity& ent, const std::string& data)
 // the room restore leaves the enemy's state to it and skips the message replay and the
 // per-boss restore, which only older saves and changed classes still need.
 bool EntityFieldsCover(CEntity& ent, const std::string& data);
+// For statedump: whether `ent` gets a kTagFields block, and which schema fields it holds.
+bool EntityFieldsSaved(const CStateManager& mgr, CEntity& ent);
+bool SchemaFieldSaved(const PortSchemaClass& cls, const PortSchemaField& f);
 
 // Spawn layers (issue #161), game thread only. CGameArea::LoadScriptObjects calls
 // NoteAreaSpawn{Begin,End} around spawning an area's script objects: Begin records
