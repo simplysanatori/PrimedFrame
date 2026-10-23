@@ -143,6 +143,8 @@
 // Version 23 adds, at the end:
 //   f32 worldShift[3]: the world's origin move (retail world = Remastered's (-x, z, y) plus it;
 //         every room of a world has the same). The fog's noise is looked up in Remastered's world.
+// Version 24 adds to each sun: u8 casts, u8 pad[3] (after the group): LightFlags a103d675, the cast bit
+//   that makes Remastered build a shadow map for the light (none of the shipped lights has it set).
 // The tonemap is Remastered's: the exposure value without auto exposure, the radiance
 // that comes out as middle grey once exposed, and how far the curve's toe and shoulder
 // are pulled in.
@@ -374,6 +376,7 @@ struct SunLight {
   float toSun[3] = {};
   float color[3] = {};
   uint32_t group = 0xffffffff;  // PortRoomGeo::kNoGroup
+  bool casts = false;           // version 24: the cast bit (LightFlags a103d675)
 };
 
 // A point or spot LightDynamic (CLightDynamicGOC). Static: colour, range and cone as stored.
@@ -730,11 +733,20 @@ bool ColorGrade(LayerActive layerActive, void* context, uint32_t& a, uint32_t& b
 void UpdateBacklight(LayerActive layerActive, void* context);
 bool Backlight(float& top, float& back);
 // The camera area's sun for real-time shadows: of its directional lights that are on (as its
-// room geometry's script last set them, else as they start), on an active layer and shining
-// down, the strongest. A sun on a story layer (the hangar intro's) only lights its cinematic. `color` is as the PBR shader's lights take it:
-// the light's at the frame's exposure, over pi. False when there is none, no file, the rooms
-// aren't exposed (RoomExposed), or MP_ROOM_ENV is off.
+// room geometry's script last set them, else as they start) and on an active layer, the strongest
+// of those with the cast bit (LightFlags a103d675, the only lights Remastered builds a shadow map
+// for; none of the shipped rooms' has it). A sun on a story layer (the hangar intro's) only lights
+// its cinematic. `color` is as the PBR shader's lights take it: the light's at the frame's
+// exposure, over pi. False when there is none, no file, the rooms aren't exposed (RoomExposed),
+// or MP_ROOM_ENV is off. Which one Remastered shadows when several have the bit is not traced.
 bool Sun(LayerActive layerActive, void* context, bool cinematic, float toSun[3], float color[3]);
+// Whether the camera area is lit by its Remastered file (the conditions of Sun): then the retail
+// world's lights are not what lights or shadows it.
+bool SunOwnsLighting();
+// Every other directional light that shines (the cast-bit one is Sun's), as records of kind 2 in
+// GXPortSetRoomLights' format, appended to `out` (view space: `worldToView` as RoomLights').
+void SunLights(LayerActive layerActive, void* context, bool cinematic, const float worldToView[3][4],
+               std::vector<float>& out);
 // The camera area's suns, one line each, and what the last Sun call made of them (console).
 std::string SunInfo();
 // The loaded areas' point and spot lights that shine now (active, on an active layer, not black),

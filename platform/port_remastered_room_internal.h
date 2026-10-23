@@ -108,6 +108,8 @@ constexpr uint32_t kPropRegionColor = 0xc35e3f33;
 constexpr uint32_t kPropLightType = 0x932dd7d8;
 constexpr uint32_t kPropLightColor[2] = {0xb73ed9c3, 0x8f421907};
 constexpr uint32_t kPropLightIntensity[2] = {0xc3eabcbf, 0xbdfc8a9e};
+// SLdrLightFlags (35b27754): byte 0, a103d675, is the cast bit (kb func/light-dynamic.md).
+constexpr uint32_t kPropLightFlags[2] = {0x35b27754, 0xa103d675};
 constexpr uint32_t kLightDirectional = 1;
 constexpr uint32_t kLightPoint = 2;
 constexpr uint32_t kLightSpot = 3;

@@ -109,6 +109,7 @@ struct SunData {
   float toSun[3] = {}; // retail world, unit length
   float color[3] = {}; // linear colour times intensity
   uint32_t group = PortRoomGeo::kNoGroup; // the script group that shows and hides it
+  bool casts = false; // LightFlags a103d675 (SLdrLightFlags byte 0): the light builds a shadow map
 };
 
 // A point or spot LightDynamic (see PortRoomEnv::RoomLights), as SLdrLightDynamic::Load and
@@ -867,6 +868,11 @@ void Writer::ReadSuns(const RoomData& r, const SceneryScripts& scripts, const Ma
     for (int i = 0; i < 3; ++i) {
       s.toSun[i] = float(-d[size_t(i)] / len);
       s.color[i] = std::isfinite(color[i] * intensity) ? std::max(0.f, color[i] * intensity) : 0.f;
+    }
+    // LightFlags (35b27754) byte 0, a103d675: RebuildLightProxy gates the shadow map on it
+    // (build_directional_shadow_map_data 0x89da60); absent (the struct's count 0) is 0.
+    if (r.room.Nested(*c, {kPropLightFlags[0], kPropLightFlags[1]}, sp) && sp.size >= 1) {
+      s.casts = r.room.Bytes(sp)[0] != 0;
     }
     const auto layer = scripts.layer.find(c->entity);
     s.layer = layer != scripts.layer.end() ? int32_t(layer->second) : -1;
@@ -2879,7 +2885,7 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   }
 
   std::vector<uint8_t> out = {'M', 'P', 'E', 'V'};
-  AppendLE32(out, 23);
+  AppendLE32(out, 24);
   float tone[5];
   std::copy(tonemap, tonemap + 5, tone);
   Tonemap(r, tone);
@@ -3088,6 +3094,8 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
       AppendLEFloat(out, v);
     }
     AppendLE32(out, s.group);
+    out.push_back(s.casts ? 1 : 0);
+    out.insert(out.end(), 3, 0);
   }
   // The lightmap the room geometry's lookups index, or a width of 0.
   if (withLightmap) {
