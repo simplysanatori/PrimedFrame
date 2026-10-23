@@ -1361,10 +1361,12 @@ bool upload_cluster_mask(const ClusterView& view) {
     // Bind groups still hold the old view.
     g_state.groupsStale.store(true, std::memory_order_release);
   }
+  // Through the frame's uploads, not the queue: a queue write from this thread records into Dawn's pending
+  // command buffer, and past 16 MiB of pending staging Dawn submits it from here, under the render worker
+  // recording the last frame into it (Adreno crashes on the ended command buffer).
   const wgpu::TexelCopyTextureInfo dst{.texture = slot.texture};
-  const wgpu::TexelCopyBufferLayout layout{.bytesPerRow = 4 * view.maskWidth, .rowsPerImage = view.maskHeight};
-  const wgpu::Extent3D size{view.maskWidth, view.maskHeight, 1};
-  webgpu::g_queue.WriteTexture(&dst, view.mask, words * sizeof(uint32_t), &layout, &size);
+  const auto mask = reinterpret_cast<const uint8_t*>(view.mask);
+  queue_texture_upload_data(mask, 4 * view.maskWidth, view.maskHeight, dst, {view.maskWidth, view.maskHeight, 1});
   slot.frame = current_frame();
   slot.signature = signature;
   return true;

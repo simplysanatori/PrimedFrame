@@ -1250,6 +1250,14 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
       if (feature == wgpu::FeatureName::TimestampQuery) {
         requiredFeatures.push_back(feature);
       }
+#ifdef WEBGPU_DAWN
+      // The game thread creates textures and buffers (room env volumes, lightmaps, spilled uploads)
+      // while the render worker submits. Without this Dawn takes no device lock: its Vulkan memory
+      // allocator and pending command buffer would be shared between the two threads unguarded.
+      if (feature == wgpu::FeatureName::ImplicitDeviceSynchronization) {
+        requiredFeatures.push_back(feature);
+      }
+#endif
     }
     std::string featureList;
     for (auto featureName : requiredFeatures) {
