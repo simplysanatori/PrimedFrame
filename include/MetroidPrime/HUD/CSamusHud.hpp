@@ -62,6 +62,11 @@ public:
   // Smooth frames: true poses the HUD lag/bob at the presented time, false
   // puts the last tick's back.
   void PortPresentHudLag(bool present, bool mouseLookFree = false) const;
+  // Remastered mode with the HDR scene: the damage Add filter (slot A, shape 0) is added in the
+  // bloom composite, not drawn here. True with its colour when this HUD has one this frame.
+  bool PortCompositeTint(float rgba[4]) const;
+  // CMFGame sets it when the composite took the tint; Draw then skips the filter, once.
+  static void PortSetTintFolded(bool folded);
 #endif
   void ProcessControllerInput(const CFinalInput& input);
   void UpdateStateTransition(float dt, const CStateManager& mgr);
@@ -241,6 +246,7 @@ private:
     , valid(false) {}
   };
   SPortHudLag xPortLag[2];
+  static bool sPortTintFolded;
   uint xPortLagGeneration = 0;     // tick of xPortLag[1]
   uint xPortLagPrevGeneration = 0; // tick of xPortLag[0]
   bool xPortLagPresented = false;

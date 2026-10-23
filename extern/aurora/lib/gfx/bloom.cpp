@@ -74,6 +74,7 @@ struct Uniform {
   float tint[4]; // w: the threshold
   float tone[3][4];
   float grade[4]; // x: B's weight, y: A is a LUT, z: B is a LUT, w: bloom on
+  float add[4];   // the HDR composite's added term (Params::add)
 };
 static_assert(sizeof(Uniform) <= SlotSize);
 
@@ -83,6 +84,7 @@ struct Params {
   tint: vec4f,
   tone: array<vec4f, 3>,
   grade: vec4f,
+  add: vec4f,
 };
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var src: texture_2d<f32>;
@@ -339,6 +341,10 @@ fn fs_composite_hdr(in: VertexOutput) -> @location(0) vec4f {
   if (p.grade.w > 0.5) {
     let b = max(textureSampleLevel(bloomTex, samp, in.uv, 0.0).rgb, vec3f(0.0));
     graded += b / (1.0 + b);
+  }
+  // Remastered folds the HUD's damage Add filter in here (material 0007259), not after the encode.
+  if (p.add.w > 0.0) {
+    graded = composite_add(graded, p.add);
   }
   return vec4f(hdr_srgb_enc(graded), f.a);
 }
@@ -700,6 +706,7 @@ void ensure_hdr_pipelines() {
   std::string code{ShaderSource};
   code += hdr::ToneWgsl;
   code += hdr::PostToneWgsl;
+  code += CompositeAddWgsl;
   code += HdrSource;
   wgpu::ShaderSourceWGSL source{};
   source.code = code.c_str();
@@ -1009,6 +1016,7 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
     u.grade[1] = lutA ? 1.f : 0.f;
     u.grade[2] = lutB ? 1.f : 0.f;
     u.grade[3] = bloom ? 1.f : 0.f;
+    std::memcpy(u.add, params.add, sizeof(u.add));
     std::memcpy(slots[slot].data(), &u, sizeof(u));
   };
   uint32_t slot = 0;

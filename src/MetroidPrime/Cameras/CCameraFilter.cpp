@@ -387,6 +387,16 @@ void CCameraFilterPass::Draw() const {
   DrawFilter(x0_curType, x8_shape, x18_curColor, tex, t);
 }
 
+#ifdef TARGET_PC
+bool CCameraFilterPass::PortAddColor(CColor& out) const {
+  if (x0_curType != kFT_Add || x8_shape != kFS_Fullscreen || !x24_texObj.null()) {
+    return false;
+  }
+  out = x18_curColor;
+  return true;
+}
+#endif
+
 void CCameraFilterPass::DrawFilter(EFilterType type, EFilterShape shape, const CColor& color,
                                    const CTexture* tex, float lod) {
   if (type == kFT_Passthru) {

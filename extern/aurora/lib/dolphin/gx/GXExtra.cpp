@@ -96,6 +96,9 @@ struct PBRMaterialWrite {
 } // namespace
 
 namespace {
+// GXPortPostCompositeAdd's colour, for the next HDR scene post only (game thread).
+f32 sPostAdd[4] = {};
+
 aurora::gfx::bloom::Params post_process_params(GXBool bloom, f32 threshold, const f32 tints[5][3],
                                                const f32 tone[3][4], u32 gradeA, u32 gradeB, f32 gradeWeight,
                                                f32 exposure) {
@@ -132,8 +135,8 @@ bool write_post_process(const aurora::gfx::bloom::Params& params) {
   }
   // Through the FIFO: recording it directly would first wait for the FIFO thread to finish
   // everything the frame has drawn so far.
-  static_assert(sizeof(params) == 32 * sizeof(u32));
-  u32 words[32];
+  static_assert(sizeof(params) == 36 * sizeof(u32));
+  u32 words[36];
   std::memcpy(words, &params, sizeof(words));
   GX_WRITE_AURORA(GX_AURORA_PORT_POST_PROCESS);
   for (const u32 word : words) {
@@ -144,6 +147,14 @@ bool write_post_process(const aurora::gfx::bloom::Params& params) {
 } // namespace
 
 extern "C" {
+void GXPortPostCompositeAdd(const f32 rgba[4]) {
+  if (rgba == nullptr) {
+    std::memset(sPostAdd, 0, sizeof(sPostAdd));
+  } else {
+    std::memcpy(sPostAdd, rgba, sizeof(sPostAdd));
+  }
+}
+
 GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
                          u32 gradeB, f32 gradeWeight, f32 exposure) {
   if (GXGetPBRCostTest() == 10 || sDrawIdMode) {
@@ -160,6 +171,9 @@ GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3]
                               u32 gradeB, f32 gradeWeight, f32 exposure) {
   // The EFB the copies saw is about to change target (the HDR scene ends here).
   __GXPortInvalidateCopySerial();
+  f32 add[4];
+  std::memcpy(add, sPostAdd, sizeof(add));
+  GXPortPostCompositeAdd(nullptr);
   if (sDrawIdMode) {
     return true;
   }
@@ -168,6 +182,7 @@ GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3]
   auto params = noPost ? post_process_params(false, threshold, tints, tone, 0, 0, 0.f, 0.f)
                        : post_process_params(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, exposure);
   params.bloom |= aurora::gfx::bloom::ForceScene;
+  std::memcpy(params.add, add, sizeof(add));
   return write_post_process(params);
 }
 

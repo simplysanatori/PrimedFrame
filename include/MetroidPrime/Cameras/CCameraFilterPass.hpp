@@ -49,6 +49,8 @@ public:
   float GetT(bool invert) const;
   // Port: a filter is applied or still fading (the pass is not a settled passthru).
   bool PortIsActive() const { return x10_remTime > 0.f || x0_curType != kFT_Passthru; }
+  // Port: the colour of a plain fullscreen Add filter (what Draw would add), false for any other.
+  bool PortAddColor(CColor& out) const;
 
   static void DrawWideScreen(const CColor& color, const CTexture* tex, float v);
   static void DrawFilter(EFilterType type, EFilterShape shape, const CColor& color,
