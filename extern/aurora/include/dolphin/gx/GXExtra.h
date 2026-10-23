@@ -249,15 +249,14 @@ void GXSetPBRModelModulation(const f32 diffuse[4], const f32 incan[4], f32 cover
 // no cap), tones it once through `tone` (none: clamped to 1), grades and blooms it into the display
 // EFB, and the frame goes on in the display EFB (the HDR scene ends; a later GXPortSceneHdr starts
 // it again). It always records there, with no bloom, grade or exposure too, as the scene must be
-// converted. On the display EFB (the HDR target could not be had) it blooms and grades the EFB as
-// drawn through the tone curve `tone` (as GXSetPBRTone), and does nothing when there is nothing to
-// do. At most two posts a frame. Cost test 10 keeps the conversion (bloom and grades off).
+// converted. Outside the HDR scene's pass (the HDR target could not be had) it records nothing and
+// returns false. At most two posts a frame. Cost test 10 keeps the conversion (bloom and grades off).
 GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4],
                               u32 gradeA, u32 gradeB, f32 gradeWeight, f32 exposure);
 // Port extension: a colour the next GXPortPostProcessScene adds in its composite, in linear light
 // before the sRGB encode: out = clamp(frame) + clamp(rgba).rgb * clamp(rgba).a (Remastered's
 // UberPost material 0007259, the HUD's damage filter folded in). Taken by that post and cleared;
-// NULL or alpha 0 adds nothing. The display-EFB composite does not take it.
+// NULL or alpha 0 adds nothing. Outside the HDR scene there is no composite to take it.
 void GXPortPostCompositeAdd(const f32 rgba[4]);
 // Port extension: Remastered's volumetric fog over the EFB as drawn so far: a froxel grid
 // (16x16 pixels by 64 slices out to `fog[0]`) of height and noise shaped density, lit by the

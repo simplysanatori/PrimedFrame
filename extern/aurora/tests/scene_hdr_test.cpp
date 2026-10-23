@@ -572,55 +572,47 @@ TEST_F(SceneHdrTest, GxWriterVariantsCompileInBothModes) {
   EXPECT_TRUE(g_uncapturedErrors.empty());
 }
 
-// Water and the full-screen fog's apply pass compile in both domains (stage 3B).
-TEST_F(SceneHdrTest, WaterAndFogApplyCompileInBothDomains) {
+// Water and the full-screen fog's apply pass compile on the HDR scene (stage 3B).
+TEST_F(SceneHdrTest, WaterAndFogApplyCompile) {
   size_t compiled = 0;
   for (const uint32_t flags : {0u, 1u, 2u, 3u}) {
-    for (const bool hdr : {false, true}) {
-      SCOPED_TRACE(testing::Message() << "water flags " << flags << " hdr " << hdr);
-      water::PipelineConfig config{};
-      config.colorAttachmentCount = 1;
-      config.colorFormats[0] = hdr ? webgpu::SceneHdrFormat : wgpu::TextureFormat::RGBA8Unorm;
-      config.depthStencilFormat = wgpu::TextureFormat::Depth24Plus;
-      config.flags = flags | (hdr ? water::WaterSceneHdr : 0u);
-      const std::string source = water::pipeline_source(config);
-      ASSERT_FALSE(source.empty());
-      EXPECT_EQ(module_error(source), "");
-      ++compiled;
-    }
-  }
-  for (const auto domain : {volfog::Domain::Ldr, volfog::Domain::Hdr}) {
-    for (const uint32_t samples : {1u, 4u}) {
-      SCOPED_TRACE(testing::Message() << "volfog hdr " << (domain == volfog::Domain::Hdr) << " samples " << samples);
-      const std::string source = volfog::apply_source(domain, samples);
-      ASSERT_FALSE(source.empty());
-      EXPECT_EQ(module_error(source), "");
-      ++compiled;
-    }
-  }
-  // The visor posts: one source per scene domain, the HDR one reading and writing the exposed
-  // linear light as it is (kb topic/visor-hdr-pipeline.md).
-  for (const auto domain : {thermal::Domain::Ldr, thermal::Domain::Hdr}) {
-    SCOPED_TRACE(testing::Message() << "thermal hdr " << (domain == thermal::Domain::Hdr));
-    const std::string source = thermal::source_for(domain);
+    SCOPED_TRACE(testing::Message() << "water flags " << flags);
+    water::PipelineConfig config{};
+    config.colorAttachmentCount = 1;
+    config.colorFormats[0] = webgpu::SceneHdrFormat;
+    config.depthStencilFormat = wgpu::TextureFormat::Depth24Plus;
+    config.flags = flags | water::WaterSceneHdr;
+    const std::string source = water::pipeline_source(config);
     ASSERT_FALSE(source.empty());
     EXPECT_EQ(module_error(source), "");
-    EXPECT_EQ(source.find("SCENE_FN"), std::string::npos);
-    EXPECT_EQ(source.find("ENC_FN"), std::string::npos);
     ++compiled;
   }
-  for (const auto domain : {xray::Domain::Ldr, xray::Domain::Hdr}) {
-    for (const uint32_t samples : {1u, 4u}) {
-      SCOPED_TRACE(testing::Message() << "xray hdr " << (domain == xray::Domain::Hdr) << " samples " << samples);
-      const std::string source = xray::source_for(domain, samples);
-      ASSERT_FALSE(source.empty());
-      EXPECT_EQ(module_error(source), "");
-      EXPECT_EQ(source.find("X_FROM_FRAME"), std::string::npos);
-      EXPECT_EQ(source.find("ENC_FN"), std::string::npos);
-      ++compiled;
-    }
+  for (const uint32_t samples : {1u, 4u}) {
+    SCOPED_TRACE(testing::Message() << "volfog samples " << samples);
+    const std::string source = volfog::apply_source(samples);
+    ASSERT_FALSE(source.empty());
+    EXPECT_EQ(module_error(source), "");
+    ++compiled;
   }
-  EXPECT_EQ(compiled, 8u + 4u + 2u + 4u);
+  // The visor posts read and write the HDR scene's exposed linear light as it is (kb
+  // topic/visor-hdr-pipeline.md).
+  {
+    SCOPED_TRACE("thermal");
+    const std::string source = thermal::source();
+    ASSERT_FALSE(source.empty());
+    EXPECT_EQ(module_error(source), "");
+    EXPECT_EQ(source.find("untone"), std::string::npos);
+    ++compiled;
+  }
+  for (const uint32_t samples : {1u, 4u}) {
+    SCOPED_TRACE(testing::Message() << "xray samples " << samples);
+    const std::string source = xray::source_for(samples);
+    ASSERT_FALSE(source.empty());
+    EXPECT_EQ(module_error(source), "");
+    EXPECT_EQ(source.find("untone"), std::string::npos);
+    ++compiled;
+  }
+  EXPECT_EQ(compiled, 4u + 2u + 1u + 2u);
   EXPECT_TRUE(g_uncapturedErrors.empty());
 }
 
@@ -908,9 +900,7 @@ TEST_F(SceneHdrTest, LitVfxPipelineBuildsInBothTargets) {
 
 // The HDR scene's post (GXPortPostProcessScene): what it records and where the FIFO goes on after it.
 bloom::Params scene_post() {
-  bloom::Params params{};
-  params.bloom = bloom::ForceScene;
-  return params;
+  return bloom::Params{};
 }
 
 // The composite's damage-tint term (Remastered UberPost 0007259, slot A): clamp(frame) +
@@ -1002,18 +992,18 @@ TEST_F(SceneHdrTest, ScenePostStartsTheNextWorldSceneWithFreshBlack) {
   bloom::shutdown();
 }
 
-TEST_F(SceneHdrTest, ScenePostWithNothingToDoOnTheDisplayEfbRecordsNothing) {
+TEST_F(SceneHdrTest, ScenePostOnTheDisplayEfbRecordsNothing) {
   bloom::shutdown();
   ASSERT_TRUE(bloom::ensure_task());
   const size_t passes = frame.renderPasses.size();
   const size_t tasks = frame.encoderTasks.size();
-  EXPECT_TRUE(bloom::record(scene_post()));
+  EXPECT_FALSE(bloom::record(scene_post()));
   EXPECT_EQ(frame.renderPasses.size(), passes);
   EXPECT_EQ(frame.encoderTasks.size(), tasks);
   bloom::shutdown();
 }
 
-TEST_F(SceneHdrTest, ThirdHdrSegmentFallsBackToTheDisplayEfb) {
+TEST_F(SceneHdrTest, ThirdHdrSegmentIsRefused) {
   bloom::shutdown();
   ASSERT_TRUE(bloom::ensure_task());
   EXPECT_TRUE(bloom::scene_post_available());
@@ -1028,7 +1018,7 @@ TEST_F(SceneHdrTest, ThirdHdrSegmentFallsBackToTheDisplayEfb) {
   EXPECT_FALSE(scene_hdr_active());
   const size_t tasks = frame.encoderTasks.size();
   const size_t passes = frame.renderPasses.size();
-  EXPECT_TRUE(bloom::record(scene_post())); // ForceScene is a no-op on the display EFB.
+  EXPECT_FALSE(bloom::record(scene_post())); // No post outside the HDR scene.
   EXPECT_EQ(frame.encoderTasks.size(), tasks);
   EXPECT_EQ(frame.renderPasses.size(), passes);
   EXPECT_FALSE(scene_hdr_active());

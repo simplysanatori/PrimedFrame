@@ -28,12 +28,9 @@
 //  - upscale (a1dc45c4) back to the frame: the target, darkened by vertical stripes of period
 //    width / 200 pixels (down to 0.896).
 // Remastered keeps this in HDR and divides the exposure out of the luminance (a shader constant
-// E on both sides), so in the port's exposed domain (the EFB undone through the room's tone
-// curve) E cancels. The EFB holds the tone-mapped colour sRGB encoded; the result is drawn
-// through the curve and encoded again.
-// On the HDR scene (Domain::Hdr, kb topic/visor-hdr-pipeline.md) the frame already holds the
-// exposed linear light: scene() takes it as it is, and enc() hands it back as it is, for the
-// post's tonemap to encode. Nothing else in the three passes changes.
+// E on both sides), so on the port's HDR scene (the exposed linear light, kb
+// topic/visor-hdr-pipeline.md) E cancels: scene() takes the light as it is, and enc() hands it
+// back as it is, for the post's tonemap to encode. Outside the HDR scene there is no thermal post.
 namespace aurora::gfx::thermal {
 namespace {
 Module Log("aurora::gfx::thermal");
@@ -71,51 +68,12 @@ fn vs_main(@builtin(vertex_index) i: u32) -> VertexOutput {
   return out;
 }
 
-fn tone(x: f32) -> f32 {
-  if (x < u.tone[1].z) {
-    return ((u.tone[0].x * x + u.tone[0].y) * x + u.tone[0].z) * x;
-  }
-  if (x < u.tone[1].w) {
-    return u.tone[1].x * x + u.tone[1].y;
-  }
-  let st = max(u.tone[2].y * x + u.tone[2].z, 0.0);
-  return u.tone[2].x * st / (1.0 + st) + u.tone[2].w;
+// The HDR scene holds the exposed linear light itself; the result goes back as it is, for the
+// post's tonemap to encode once.
+fn scene(uv: vec2f) -> vec3f {
+  return textureSampleLevel(src, clampSamp, uv, 0.0).rgb;
 }
-
-fn untone(y: f32) -> f32 {
-  let mid = u.tone[1].z;
-  let lineStart = u.tone[1].x * mid + u.tone[1].y;
-  if (y < lineStart) {
-    var x = y / max(lineStart, 1e-4) * mid;
-    for (var n = 0; n < 4; n++) {
-      let slope = (3.0 * u.tone[0].x * x + 2.0 * u.tone[0].y) * x + u.tone[0].z;
-      x = clamp(x - (tone(x) - y) / max(slope, 1e-4), 0.0, mid);
-    }
-    return x;
-  }
-  let top = u.tone[2].w;
-  if (y < top || u.tone[2].y <= 0.0) {
-    return (y - u.tone[1].y) / u.tone[1].x;
-  }
-  let t = min((y - top) / max(u.tone[2].x, 1e-4), 0.999);
-  return t / (1.0 - t) / u.tone[2].y + u.tone[1].w;
-}
-
-fn tone3(x: vec3f) -> vec3f { return vec3f(tone(x.r), tone(x.g), tone(x.b)); }
-fn untone3(y: vec3f) -> vec3f { return vec3f(untone(y.r), untone(y.g), untone(y.b)); }
-
-fn srgb_enc(c: vec3f) -> vec3f {
-  let l = clamp(c, vec3f(0.0), vec3f(1.0));
-  return select(1.055 * pow(l, vec3f(1.0 / 2.4)) - 0.055, 12.92 * l, l <= vec3f(0.0031308));
-}
-
-fn srgb_dec(c: vec3f) -> vec3f {
-  let e = clamp(c, vec3f(0.0), vec3f(1.0));
-  return select(pow((e + 0.055) / 1.055, vec3f(2.4)), e / 12.92, e <= vec3f(0.04045));
-}
-
-SCENE_FN
-ENC_FN
+fn enc(c: vec3f) -> vec3f { return c; }
 
 @fragment
 fn fs_cold(@builtin(position) pos: vec4f) -> @location(0) vec4f {
@@ -191,28 +149,6 @@ fn fs_upscale(@builtin(position) pos: vec4f) -> @location(0) vec4f {
 }
 )";
 
-// The two functions the domains spell differently: the frame read, and the result written.
-constexpr const char* SceneLdr = R"(
-// The exposed colour of the frame at a uv: the EFB undone through the room's curve.
-fn scene(uv: vec2f) -> vec3f {
-  return untone3(srgb_dec(textureSampleLevel(src, clampSamp, uv, 0.0).rgb));
-}
-)";
-constexpr const char* SceneHdr = R"(
-// The HDR scene holds the exposed linear light itself: nothing to undo.
-fn scene(uv: vec2f) -> vec3f {
-  return textureSampleLevel(src, clampSamp, uv, 0.0).rgb;
-}
-)";
-constexpr const char* EncodeLdr = R"(
-// Through the curve, then sRGB encoded, as the display EFB holds it.
-fn enc(c: vec3f) -> vec3f { return srgb_enc(tone3(c)); }
-)";
-constexpr const char* EncodeHdr = R"(
-// Exposed linear light, as the HDR scene holds it; the post's tonemap encodes it once.
-fn enc(c: vec3f) -> vec3f { return c; }
-)";
-
 struct Uniforms {
   Params params;
   float rt[4];
@@ -231,7 +167,6 @@ struct State {
   wgpu::BindGroupLayout layout;
   wgpu::TextureFormat pipelineFormat = wgpu::TextureFormat::Undefined;
   uint32_t pipelineSamples = 0;
-  Domain pipelineDomain = Domain::Ldr;
   wgpu::Buffer uniforms;
   wgpu::Sampler clampSampler;
   wgpu::Sampler repeatSampler;
@@ -262,7 +197,6 @@ bool g_lutUploaded = false;
 // The targets a slot reads and writes, taken at the FIFO: the recorder's HDR mode is reset every
 // frame, so the encode cannot ask it.
 struct Capture {
-  Domain domain = Domain::Ldr;
   webgpu::TextureWithSampler color;    // the pass's scene attachment (MSAA when samples > 1)
   webgpu::TextureWithSampler resolved; // its resolve target
 };
@@ -273,12 +207,11 @@ constexpr uint64_t SlotStride = 256;
 static_assert(sizeof(Uniforms) <= SlotStride);
 uint32_t g_nextSlot = 0;
 
-void ensure_pipelines(wgpu::TextureFormat format, uint32_t samples, Domain domain) {
-  if (g_state.cold && g_state.pipelineFormat == format && g_state.pipelineSamples == samples &&
-      g_state.pipelineDomain == domain) {
+void ensure_pipelines(wgpu::TextureFormat format, uint32_t samples) {
+  if (g_state.cold && g_state.pipelineFormat == format && g_state.pipelineSamples == samples) {
     return;
   }
-  const std::string code = source_for(domain);
+  const std::string code = Source;
   wgpu::ShaderSourceWGSL wgsl{};
   wgsl.code = code.c_str();
   const wgpu::ShaderModuleDescriptor moduleDescriptor{.nextInChain = &wgsl, .label = "Thermal Post"};
@@ -349,7 +282,6 @@ void ensure_pipelines(wgpu::TextureFormat format, uint32_t samples, Domain domai
   g_state.upscale = make("Thermal Upscale", "fs_upscale", &frameTarget, samples);
   g_state.pipelineFormat = format;
   g_state.pipelineSamples = samples;
-  g_state.pipelineDomain = domain;
   if (!g_state.uniforms) {
     const wgpu::BufferDescriptor bufferDescriptor{
         .label = "Thermal Post Uniforms",
@@ -481,27 +413,22 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   slot %= g_recorded.size();
   const Params& params = g_recorded[slot];
   const Capture& capture = g_recordedCapture[slot];
-  const Domain domain = capture.domain;
-  const bool hdr = domain == Domain::Hdr;
-  uint32_t hdrSamples = 1;
-  if (hdr && !hdr_capture_valid(capture, hdrSamples)) {
+  uint32_t samples = 1;
+  if (!hdr_capture_valid(capture, samples)) {
     return;
   }
   // The targets this frame was recorded against (a resize may have made newer ones since).
-  const auto efb = webgpu::efb_targets();
-  const auto& source = hdr ? (hdrSamples > 1 ? capture.resolved : capture.color) : webgpu::present_source();
-  const auto& target = hdr ? capture.color : efb.color;
-  const auto& resolveTarget = hdr ? capture.resolved : efb.resolved;
-  const uint32_t samples =
-      hdr ? hdrSamples : (webgpu::g_graphicsConfig.msaaSamples > 1 ? webgpu::g_graphicsConfig.msaaSamples : 1);
-  const auto format = hdr ? webgpu::SceneHdrFormat : webgpu::g_graphicsConfig.surfaceConfiguration.format;
+  const auto& source = samples > 1 ? capture.resolved : capture.color;
+  const auto& target = capture.color;
+  const auto& resolveTarget = capture.resolved;
+  const auto format = webgpu::SceneHdrFormat;
   const uint32_t width = source.size.width;
   const uint32_t height = source.size.height;
   if (width == 0 || height == 0 || !source.texture || !target.view) {
     return;
   }
   const bool hot = params.v[0] == 1.f;
-  ensure_pipelines(format, samples, domain);
+  ensure_pipelines(format, samples);
   ensure_frame(width, height, format);
   ensure_textures(ctx.queue);
   const uint32_t fullWidth = std::max(1u, width >> 1);
@@ -619,20 +546,8 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
 }
 } // namespace
 
-// The task's source for a domain: outside the anonymous namespace so it is the one declared in
-// thermal.hpp (the anonymous one would be a different function).
-std::string source_for(Domain domain) {
-  std::string code = Source;
-  const auto splice = [&code](const char* token, const char* snippet) {
-    const size_t at = code.find(token);
-    if (at != std::string::npos) {
-      code.replace(at, std::strlen(token), snippet);
-    }
-  };
-  splice("SCENE_FN", domain == Domain::Hdr ? SceneHdr : SceneLdr);
-  splice("ENC_FN", domain == Domain::Hdr ? EncodeHdr : EncodeLdr);
-  return code;
-}
+// The task's source: outside the anonymous namespace so it is the one declared in thermal.hpp.
+std::string source() { return Source; }
 
 bool set_lut(const uint8_t* rgba, uint32_t size) {
   if (rgba == nullptr || size != LutBytes + NoiseSize * NoiseSize) {
@@ -668,23 +583,19 @@ bool record(const Params& params) {
   if (g_state.task == InvalidEncoderTask) {
     return false;
   }
-  // The domain is the pass's, here at the FIFO; the encode never asks the recorder, whose HDR mode is
-  // reset every frame. The HDR scene on but this pass not its own (offscreen, a colour pass) has no
+  // The targets are the pass's, taken here at the FIFO; the encode never asks the recorder, whose HDR
+  // mode is reset every frame. Outside the HDR scene (no scene, offscreen, a colour pass) there is no
   // target this post knows: fail closed.
-  const bool hdr = scene_hdr_pass_active();
-  if (!hdr && scene_hdr_active()) {
+  if (!scene_hdr_pass_active()) {
     return false;
   }
-  const auto& size = hdr ? webgpu::g_sceneHdr.size : webgpu::present_source().size;
+  const auto& size = webgpu::g_sceneHdr.size;
   if (size.width == 0 || size.height == 0) {
     return false;
   }
   const uint32_t slot = g_nextSlot++ % g_recorded.size();
   g_recorded[slot] = params;
-  g_recordedCapture[slot] = hdr ? Capture{.domain = Domain::Hdr,
-                                          .color = webgpu::g_sceneHdr,
-                                          .resolved = webgpu::g_sceneHdrResolved}
-                                : Capture{};
+  g_recordedCapture[slot] = Capture{.color = webgpu::g_sceneHdr, .resolved = webgpu::g_sceneHdrResolved};
   record_encoder_task(g_state.task, &slot, sizeof(slot));
   return true;
 }

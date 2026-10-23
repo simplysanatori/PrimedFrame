@@ -6,12 +6,12 @@
 // as before: the sRGB decode, then the curve's inverse. Without tone data (row 1 x <= 0) the curve is
 // Remastered's static straight line at exposure 1: the decode alone.
 //
-// The inverse is bloom.cpp's untone where that one is exact (shoulder offset t2.z = -t2.y * t1.w and
+// The inverse is the one bloom.cpp had where that one is exact (shoulder offset t2.z = -t2.y * t1.w and
 // shoulder base t2.w = the line's end, as port_room_env.cpp writes them), in its general form
 // otherwise (the shoulder from where the line ends, through its own offset t2.z), and kept finite for
 // an RGBA16F target:
 // slopes below MinSlope count as MinSlope, the shoulder's asymptote is approached but never divided
-// by zero, and the reconstructed level is clamped to [0, HdrMax] (bloom caps it at 4.0 instead).
+// by zero, and the reconstructed level is clamped to [0, HdrMax].
 // Display white sits at the shoulder's asymptote, so it comes back as a large bounded level: that is
 // what an opaque white write needs to post-tone as white, not a claim that blends of it match LDR's.
 // Only this reconstruction is capped; genuine HDR writers (VFX's exposed tail) keep their values.

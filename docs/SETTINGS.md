@@ -1232,8 +1232,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   RGBA16F light, toned once by the frame's post), in every visor, as Remastered does; a room
   without tone data tones through the identity (Remastered's `STonemapParams::BuildLinear(3.0)`:
   exposure 1, clipped at 1). Retail never draws in it. HUD/UI and inventory remain LDR. If the
-  HDR target cannot be allocated the frame falls back to the display EFB, each draw toned on its
-  own. This is not full beam/effect parity: other legacy effects may still use inherited exposure.
+  HDR target cannot be allocated (logged once) the frame draws without the Remastered post: each
+  PBR draw is toned on its own, and bloom, grade, fog, water and the visor posts are skipped. This is not full beam/effect parity: other legacy effects may still use inherited exposure.
   Legacy non-PBR GX draws using SRCALPHA/ONE additive or SRCALPHA/INVSRCALPHA alpha-over
   blending (retail particles through `CElementGen`, glass) convert their
   alpha-weighted display colour into exposed light before blending, then divide RGB by the

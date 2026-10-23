@@ -571,7 +571,7 @@ TEST_F(GXPostProcessSceneFifoTest, NothingToDoStillRecordsTheSceneOne) {
   ASSERT_FALSE(bytes.empty());
   decode_fifo(bytes);
   ASSERT_EQ(stub::records, 1u);
-  EXPECT_EQ(stub::lastRecord.bloom, ForceScene);
+  EXPECT_EQ(stub::lastRecord.bloom, 0u);
   EXPECT_EQ(stub::lastRecord.gradeA, 0u);
   EXPECT_FLOAT_EQ(stub::lastRecord.tone[0][3], 0.f);
   // The tone curve still travels: the HDR composite converts with it.
@@ -587,7 +587,6 @@ TEST_F(GXPostProcessSceneFifoTest, CarriesTheEffects) {
   ASSERT_EQ(stub::records, 1u);
   const Params& scene = stub::lastRecord;
   EXPECT_NE(scene.bloom & 1u, 0u);
-  EXPECT_NE(scene.bloom & ForceScene, 0u);
   EXPECT_FLOAT_EQ(scene.threshold, 0.6f);
   EXPECT_EQ(scene.gradeA, 3u);
   EXPECT_EQ(scene.gradeB, 4u);
@@ -607,7 +606,6 @@ TEST_F(GXPostProcessSceneFifoTest, NoPostCostTestKeepsTheConversion) {
   EXPECT_EQ(stub::lastRecord.gradeA, 0u);
   EXPECT_EQ(stub::lastRecord.gradeB, 0u);
   EXPECT_FLOAT_EQ(stub::lastRecord.tone[0][3], 0.f);
-  EXPECT_NE(stub::lastRecord.bloom & ForceScene, 0u);
 }
 
 TEST_F(GXPostProcessSceneFifoTest, LeavingTheHdrSceneDirtiesThePipeline) {

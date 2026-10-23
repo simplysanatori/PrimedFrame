@@ -28,9 +28,8 @@
 //  - four upsamples back, each added to the next finer level, the coarsest first with
 //    tint 0 (four edge taps a texel out and four corners half one, the corners doubled, / 12);
 //  - the result b added to the frame as b / (1 + b).
-// The EFB holds the tone-mapped colour sRGB encoded, so the bright pass undoes the room's
-// tone curve to get X back (Remastered reads its HDR frame; this one is capped where the
-// curve has lost its level), and the frame is added to in linear terms.
+// It reads the HDR scene (gfx::set_scene_hdr), which holds the exposed linear light X itself, as
+// it is (HdrSource): no decode, no inverse curve, no cap, as Remastered reads its HDR frame.
 // The colour grade comes first in the same composite, as Remastered's tonemap shader does it
 // right after its tone curve: a 33^3 LUT over the tone-mapped linear colour, sampled at
 // c * 32/33 + 0.5/33; two LUTs mixed while a grade fades into another. The bloom is added to
@@ -45,9 +44,9 @@
 // Remastered's copy is R11G11B10F; this one is RGBA16F, as the device is not asked for
 // rg11b10ufloat-renderable (gpu.cpp) and RGBA16F renders and filters in core WebGPU. Remastered's
 // float11/10 rounding is not matched.
-// On the HDR scene (gfx::set_scene_hdr), which holds the exposed linear light itself, the same chain
-// reads it as it is (HdrSource): no decode, no inverse curve, no cap; the composite tones it once into
-// the display EFB, which the frame goes on drawing into.
+// The composite tones the scene once into the display EFB, which the frame goes on drawing into.
+// There is no post outside the HDR scene: without it (the target could not be had) the frame is
+// drawn without Remastered's post.
 namespace aurora::gfx::bloom {
 namespace {
 Module Log("aurora::gfx::bloom");
@@ -68,14 +67,12 @@ static_assert(detail::FrameSlotCount + 1 <= MeasureSlots, "measure slots would b
 constexpr uint32_t BloomOn = 1;
 constexpr uint32_t CompositeInPass = 2;
 
-// Each recorded post keeps its parameters, domain and (HDR) source, and its own uniform ranges, in a
+// Each recorded post keeps its parameters and source, and its own uniform ranges, in a
 // slot: two posts in one submit must not share either (queue writes all land before the submit). The
 // ring outlives every frame in flight at MaxPostsPerFrame; a post beyond that in one frame is refused.
 constexpr size_t RecordedSlots = 8;
 constexpr size_t MaxPostsPerFrame = 2;
 static_assert(MaxPostsPerFrame * detail::FrameSlotCount <= RecordedSlots, "bloom slots would be overwritten while pending");
-
-enum class Domain : uint8_t { Ldr, Hdr };
 
 struct Uniform {
   float texel[4];
@@ -116,100 +113,6 @@ fn vs_main(@builtin(vertex_index) i: u32) -> VertexOutput {
   return out;
 }
 
-// The tone curve, forwards (as the PBR shader draws it) for one channel.
-fn tone(x: f32) -> f32 {
-  if (x < p.tone[1].z) {
-    return ((p.tone[0].x * x + p.tone[0].y) * x + p.tone[0].z) * x;
-  }
-  if (x < p.tone[1].w) {
-    return p.tone[1].x * x + p.tone[1].y;
-  }
-  let st = max(p.tone[2].y * x + p.tone[2].z, 0.0);
-  return p.tone[2].x * st / (1.0 + st) + p.tone[2].w;
-}
-
-// And back: the exposed level that drew as y (linear).
-fn untone(y: f32) -> f32 {
-  let mid = p.tone[1].z;
-  let lineStart = p.tone[1].x * mid + p.tone[1].y;
-  if (y < lineStart) {
-    // The toe rises through the origin to the line's start; Newton from a straight guess.
-    var x = y / max(lineStart, 1e-4) * mid;
-    for (var n = 0; n < 4; n++) {
-      let slope = (3.0 * p.tone[0].x * x + 2.0 * p.tone[0].y) * x + p.tone[0].z;
-      x = clamp(x - (tone(x) - y) / max(slope, 1e-4), 0.0, mid);
-    }
-    return x;
-  }
-  let top = p.tone[2].w;
-  if (y < top || p.tone[2].y <= 0.0) {
-    return (y - p.tone[1].y) / p.tone[1].x;
-  }
-  let u = min((y - top) / max(p.tone[2].x, 1e-4), 0.999);
-  return u / (1.0 - u) / p.tone[2].y + p.tone[1].w;
-}
-
-// The EFB holds colour as Remastered's sRGB swapchain does: the exact piecewise sRGB curve.
-fn srgb_enc(c: vec3f) -> vec3f {
-  let l = clamp(c, vec3f(0.0), vec3f(1.0));
-  return select(1.055 * pow(l, vec3f(1.0 / 2.4)) - 0.055, 12.92 * l, l <= vec3f(0.0031308));
-}
-
-fn srgb_dec(c: vec3f) -> vec3f {
-  let e = clamp(c, vec3f(0.0), vec3f(1.0));
-  return select(pow((e + 0.055) / 1.055, vec3f(2.4)), e / 12.92, e <= vec3f(0.04045));
-}
-
-// A channel at white has lost its level: the shoulder's inverse runs off to hundreds there, which turned a
-// saturated orange hull into a red flood. Cap it where the curve draws about 0.97 of white (4.0 on these rooms).
-const MaxExposed = 4.0;
-
-fn exposed(c: vec3f) -> vec3f {
-  let y = srgb_dec(c);
-  return min(vec3f(untone(y.r), untone(y.g), untone(y.b)), vec3f(MaxExposed));
-}
-
-// One bilinear tap of Remastered's HDR frame at uv: the four texels it blends, each exposed (the
-// frame is filtered as light, not as the drawn colour), then the bright pass over the blend.
-// Remastered's 000d768 runs the bright pass on each filtered tap: X * min(max(s*L - t, 0), 8) /
-// max(s*L, 0.001) * s, L being X's luminance. The EFB texel is already exposed (s * X), so with
-// c = s * X that is c * min(max(lum(c) - t, 0), 8) / max(lum(c), 0.001).
-fn bright_tap(uv: vec2f, size: vec2i, dim: f32) -> vec3f {
-  let pos = uv * vec2f(size) - vec2f(0.5);
-  let base = floor(pos);
-  let f = pos - base;
-  let last = size - vec2i(1);
-  let j0 = clamp(vec2i(base), vec2i(0), last);
-  let j1 = clamp(vec2i(base) + vec2i(1), vec2i(0), last);
-  let d00 = textureLoad(src, vec2i(j0.x, j0.y), 0).rgb;
-  let d10 = textureLoad(src, vec2i(j1.x, j0.y), 0).rgb;
-  let d01 = textureLoad(src, vec2i(j0.x, j1.y), 0).rgb;
-  let d11 = textureLoad(src, vec2i(j1.x, j1.y), 0).rgb;
-  // A blend is no brighter than its brightest texel: all below the threshold's drawn value adds
-  // nothing (most of the frame in a dark room), and a texel's drawn value is monotonic in its level.
-  let hi = max(max(d00, d10), max(d01, d11));
-  if (max(max(hi.r, hi.g), hi.b) < dim) {
-    return vec3f(0.0);
-  }
-  let c = mix(mix(exposed(d00), exposed(d10), f.x), mix(exposed(d01), exposed(d11), f.x), f.y);
-  let l = dot(c, vec3f(0.2126, 0.7152, 0.0722));
-  return c * (min(max(l - p.tint.w, 0.0), 8.0) / max(l, 0.001));
-}
-
-// The bright pass and the reduction to 1/4 in one (Remastered's 000d768): four diagonal taps a
-// source texel out, each bright-passed, / 4, times the level's tint.
-@fragment
-fn fs_bright(in: VertexOutput) -> @location(0) vec4f {
-  let size = vec2i(textureDimensions(src));
-  let t = p.texel.xy;
-  let dim = srgb_enc(vec3f(tone(max(p.tint.w, 0.0)))).x * 0.999;
-  var sum = bright_tap(in.uv + vec2f(-t.x, -t.y), size, dim);
-  sum += bright_tap(in.uv + vec2f(t.x, -t.y), size, dim);
-  sum += bright_tap(in.uv + vec2f(-t.x, t.y), size, dim);
-  sum += bright_tap(in.uv + vec2f(t.x, t.y), size, dim);
-  return vec4f(sum * 0.25 * p.tint.rgb, 1.0);
-}
-
 // One texel of the measure chain: the source sampled bilinearly at this texel's centre (Remastered's
 // copy, bilinear and clamped). Each pow2 level averages the four texels of the one before.
 @fragment
@@ -243,27 +146,11 @@ fn fs_up(in: VertexOutput) -> @location(0) vec4f {
   return vec4f(c / 12.0 * p.tint.rgb, 1.0);
 }
 
-@fragment
-fn fs_composite(in: VertexOutput) -> @location(0) vec4f {
-  let size = vec2i(textureDimensions(src));
-  let f = textureLoad(src, min(vec2i(floor(in.pos.xy)), size - vec2i(1)), 0);
-  let lin = srgb_dec(f.rgb);
-  let at = lin * (32.0 / 33.0) + vec3f(0.5 / 33.0);
-  let a = select(lin, textureSampleLevel(lutA, samp, at, 0.0).rgb, p.grade.y > 0.5);
-  let g = select(lin, textureSampleLevel(lutB, samp, at, 0.0).rgb, p.grade.z > 0.5);
-  var graded = mix(a, g, p.grade.x);
-  // Remastered's bloom composite runs after the tonemap pass has graded the frame: the bloom's
-  // b / (1 + b) added to the graded colour, clamped.
-  if (p.grade.w > 0.5) {
-    let b = max(textureSampleLevel(bloomTex, samp, in.uv, 0.0).rgb, vec3f(0.0));
-    graded += b / (1.0 + b);
-  }
-  return vec4f(srgb_enc(graded), f.a);
-}
+
 )";
 
-// The HDR scene's entry points, appended after ShaderSource, hdr::ToneWgsl and hdr::PostToneWgsl in a
-// module of their own, so the LDR one keeps its bytes. src is the exposed linear scene.
+// The bright pass and the composite, appended after ShaderSource, hdr::ToneWgsl, hdr::PostToneWgsl and
+// CompositeAddWgsl in one module. src is the exposed linear scene.
 constexpr std::string_view HdrSource = R"(
 fn hdr_raw(c: vec3f) -> vec3f {
   return clamp(c, vec3f(0.0), vec3f(hdr_f16_max));
@@ -271,7 +158,10 @@ fn hdr_raw(c: vec3f) -> vec3f {
 
 const hdr_luma = vec3f(0.2126, 0.7152, 0.0722);
 
-// bright_tap on the scene's own texels, filtered as they are, then the bright pass over the blend.
+// One bilinear tap of the scene at uv: the four texels it blends, filtered as light, then the bright
+// pass over the blend. Remastered's 000d768 runs the bright pass on each filtered tap: X * min(max(s*L
+// - t, 0), 8) / max(s*L, 0.001) * s, L being X's luminance. The scene texel is already exposed (s * X),
+// so with c = s * X that is c * min(max(lum(c) - t, 0), 8) / max(lum(c), 0.001).
 fn bright_tap_hdr(uv: vec2f, size: vec2i) -> vec3f {
   let pos = uv * vec2f(size) - vec2f(0.5);
   let base = floor(pos);
@@ -293,6 +183,8 @@ fn bright_tap_hdr(uv: vec2f, size: vec2i) -> vec3f {
   return c * (min(max(l - p.tint.w, 0.0), 8.0) / max(l, 0.001));
 }
 
+// The bright pass and the reduction to 1/4 in one (Remastered's 000d768): four diagonal taps a
+// source texel out, each bright-passed, / 4, times the level's tint.
 @fragment
 fn fs_bright_hdr(in: VertexOutput) -> @location(0) vec4f {
   let size = vec2i(textureDimensions(src));
@@ -305,7 +197,8 @@ fn fs_bright_hdr(in: VertexOutput) -> @location(0) vec4f {
 }
 
 // The single tone of the HDR scene (hdr_display_linear: the curve, or its identity line), then the
-// grade and the bloom as fs_composite has them, encoded for the display EFB.
+// colour grade over the tone-mapped linear colour, and the bloom's b / (1 + b) added to the graded
+// colour (Remastered's composite runs after the tonemap pass), encoded for the display EFB.
 @fragment
 fn fs_composite_hdr(in: VertexOutput) -> @location(0) vec4f {
   let size = vec2i(textureDimensions(src));
@@ -357,14 +250,12 @@ struct BindGroupKeyHash {
 // A post as recorded (game thread), and what its encode left the in-pass composite (render worker).
 struct Recorded {
   Params params{};
-  Domain domain = Domain::Ldr;
   // The HDR scene the post reads, as it was when recorded.
   webgpu::TextureWithSampler color;
   webgpu::TextureWithSampler resolved;
 };
 struct Encoded {
   bool ready = false;
-  Domain domain = Domain::Ldr;
   wgpu::TextureView source;
   wgpu::TextureView lutA;
   wgpu::TextureView lutB;
@@ -379,9 +270,6 @@ std::array<Encoded, RecordedSlots> g_encoded;
 struct State {
   EncoderTaskId task = InvalidEncoderTask;
   wgpu::ShaderModule module;
-  // The HDR entry points' module (HdrSource), made on the first HDR post.
-  wgpu::ShaderModule hdrModule;
-  wgpu::RenderPipeline brightHdr;
   wgpu::BindGroupLayout layout;
   wgpu::PipelineLayout pipelineLayout;
   wgpu::Sampler sampler;
@@ -389,20 +277,12 @@ struct State {
   wgpu::RenderPipeline bright;
   wgpu::RenderPipeline down;
   wgpu::RenderPipeline up;
-  wgpu::RenderPipeline composite;
-  wgpu::TextureFormat compositeFormat = wgpu::TextureFormat::Undefined;
-  uint32_t compositeSamples = 0;
   // The composite as the first draw of the EFB pass after the task (see record), with the
   // pipeline for that pass's layout, and what the task left it to draw with.
   DrawTypeId compositeDraw = InvalidDrawType;
-  std::array<wgpu::RenderPipeline, 2> passComposite;
-  std::array<uint64_t, 2> passCompositeKey{};
-  // The frame as it was (LDR only), and the levels; remade when the frame's size or format changes.
-  wgpu::Texture frame;
-  wgpu::TextureView frameView;
-  wgpu::TextureFormat frameFormat = wgpu::TextureFormat::Undefined;
-  uint32_t frameWidth = 0;
-  uint32_t frameHeight = 0;
+  wgpu::RenderPipeline passComposite;
+  uint64_t passCompositeKey = 0;
+  // The levels; remade when the frame's size changes.
   uint32_t width = 0;
   uint32_t height = 0;
   std::array<Level, Levels> levels;
@@ -546,25 +426,23 @@ wgpu::TextureView find_lut(uint32_t id) {
 }
 
 wgpu::RenderPipeline make_pipeline(const char* label, const char* entry, wgpu::TextureFormat format,
-                                   uint32_t samples, const wgpu::BlendState* blend,
-                                   const wgpu::PipelineLayout& layout = {}, const wgpu::ShaderModule& module = {}) {
+                                   const wgpu::BlendState* blend) {
   const wgpu::ColorTargetState target{
       .format = format,
       .blend = blend,
       .writeMask = wgpu::ColorWriteMask::All,
   };
   const wgpu::FragmentState fragment{
-      .module = module ? module : g_state.module,
+      .module = g_state.module,
       .entryPoint = entry,
       .targetCount = 1,
       .targets = &target,
   };
   const wgpu::RenderPipelineDescriptor descriptor{
       .label = label,
-      .layout = layout ? layout : g_state.pipelineLayout,
+      .layout = g_state.pipelineLayout,
       .vertex = {.module = g_state.module, .entryPoint = "vs_main"},
       .primitive = {.topology = wgpu::PrimitiveTopology::TriangleList},
-      .multisample = {.count = samples, .mask = UINT32_MAX},
       .fragment = &fragment,
   };
   return g_device.CreateRenderPipeline(&descriptor);
@@ -574,8 +452,13 @@ void ensure_pipelines() {
   if (g_state.module) {
     return;
   }
+  std::string code{ShaderSource};
+  code += hdr::ToneWgsl;
+  code += hdr::PostToneWgsl;
+  code += CompositeAddWgsl;
+  code += HdrSource;
   wgpu::ShaderSourceWGSL source{};
-  source.code = ShaderSource;
+  source.code = code.c_str();
   const wgpu::ShaderModuleDescriptor moduleDescriptor{.nextInChain = &source, .label = "Bloom Module"};
   g_state.module = g_device.CreateShaderModule(&moduleDescriptor);
   const std::array entries{
@@ -636,8 +519,8 @@ void ensure_pipelines() {
       .size = SlotSize * PassCount * RecordedSlots,
   };
   g_state.uniforms = g_device.CreateBuffer(&bufferDescriptor);
-  g_state.bright = make_pipeline("Bloom Bright Pass", "fs_bright", LevelFormat, 1, nullptr);
-  g_state.down = make_pipeline("Bloom Downsample", "fs_down", LevelFormat, 1, nullptr);
+  g_state.bright = make_pipeline("Bloom Bright Pass", "fs_bright_hdr", LevelFormat, nullptr);
+  g_state.down = make_pipeline("Bloom Downsample", "fs_down", LevelFormat, nullptr);
   const wgpu::BlendState add{
       .color = {.operation = wgpu::BlendOperation::Add,
                 .srcFactor = wgpu::BlendFactor::One,
@@ -646,45 +529,8 @@ void ensure_pipelines() {
                 .srcFactor = wgpu::BlendFactor::Zero,
                 .dstFactor = wgpu::BlendFactor::One},
   };
-  g_state.up = make_pipeline("Bloom Upsample", "fs_up", LevelFormat, 1, &add);
-  g_state.measure = make_pipeline("Scene Measure", "fs_measure", MeasureFormat, 1, nullptr);
-}
-
-// The HDR entry points, in a module of their own so the LDR one keeps its source.
-void ensure_hdr_pipelines() {
-  if (g_state.hdrModule) {
-    return;
-  }
-  std::string code{ShaderSource};
-  code += hdr::ToneWgsl;
-  code += hdr::PostToneWgsl;
-  code += CompositeAddWgsl;
-  code += HdrSource;
-  wgpu::ShaderSourceWGSL source{};
-  source.code = code.c_str();
-  const wgpu::ShaderModuleDescriptor moduleDescriptor{.nextInChain = &source, .label = "Bloom HDR Module"};
-  g_state.hdrModule = g_device.CreateShaderModule(&moduleDescriptor);
-  g_state.brightHdr =
-      make_pipeline("Bloom Bright Pass (HDR)", "fs_bright_hdr", LevelFormat, 1, nullptr, {}, g_state.hdrModule);
-}
-
-void ensure_frame(uint32_t width, uint32_t height, wgpu::TextureFormat format) {
-  if (g_state.frame && g_state.frameWidth == width && g_state.frameHeight == height && g_state.frameFormat == format) {
-    return;
-  }
-  g_state.frameWidth = width;
-  g_state.frameHeight = height;
-  g_state.frameFormat = format;
-  g_state.groups.clear();
-  const wgpu::TextureDescriptor frameDescriptor{
-      .label = "Bloom Frame Copy",
-      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
-      .size = {width, height, 1},
-      .format = format,
-  };
-  AURORA_NOTE_TEXTURE(&frameDescriptor);
-  g_state.frame = g_device.CreateTexture(&frameDescriptor);
-  g_state.frameView = g_state.frame.CreateView();
+  g_state.up = make_pipeline("Bloom Upsample", "fs_up", LevelFormat, &add);
+  g_state.measure = make_pipeline("Scene Measure", "fs_measure", MeasureFormat, nullptr);
 }
 
 void ensure_levels(uint32_t width, uint32_t height) {
@@ -744,11 +590,9 @@ wgpu::BindGroup bind_group(uint32_t slot, const wgpu::TextureView& source, const
 }
 
 void draw(const wgpu::CommandEncoder& cmd, const char* name, const wgpu::RenderPipeline& pipeline,
-          const wgpu::BindGroup& group, const wgpu::TextureView& target, bool load,
-          const wgpu::TextureView& resolve = {}) {
+          const wgpu::BindGroup& group, const wgpu::TextureView& target, bool load) {
   const wgpu::RenderPassColorAttachment attachment{
       .view = target,
-      .resolveTarget = resolve,
       .loadOp = load ? wgpu::LoadOp::Load : wgpu::LoadOp::Clear,
       .storeOp = wgpu::StoreOp::Store,
       .clearValue = {0.0, 0.0, 0.0, 0.0},
@@ -768,9 +612,8 @@ void draw(const wgpu::CommandEncoder& cmd, const char* name, const wgpu::RenderP
 
 void draw(const wgpu::CommandEncoder& cmd, const char* name, const wgpu::RenderPipeline& pipeline, uint32_t slot,
           const wgpu::TextureView& source, const wgpu::TextureView& bloomSource, const wgpu::TextureView& target,
-          bool load, const wgpu::TextureView& resolve = {}, const wgpu::TextureView& lutA = {},
-          const wgpu::TextureView& lutB = {}) {
-  draw(cmd, name, pipeline, bind_group(slot, source, bloomSource, lutA, lutB), target, load, resolve);
+          bool load) {
+  draw(cmd, name, pipeline, bind_group(slot, source, bloomSource, {}, {}), target, load);
 }
 
 // The composite's pipeline for the EFB pass it is drawn in: the frame as its first target, the
@@ -809,8 +652,8 @@ wgpu::RenderPipeline make_pass_composite(const RenderTargetLayout& layout, const
 
 // The composite drawn first in the pass after the task, which cleared the frame rather than load
 // it: a full-resolution store and load fewer than a pass of its own (see record). The payload is the
-// post's slot. An HDR post's pass is the display EFB's (record_encoder_task_overwriting's
-// leaveSceneHdr): a scene-format target here would be the wrong one, and is left undrawn.
+// post's slot. The pass is the display EFB's (record_encoder_task_overwriting's leaveSceneHdr): a
+// scene-format target here would be the wrong one, and is left undrawn.
 void draw_pass_composite(const DrawContext& ctx, const wgpu::RenderPassEncoder& pass, const void* payload,
                          size_t payloadSize, void*) {
   uint32_t rec = 0;
@@ -827,19 +670,16 @@ void draw_pass_composite(const DrawContext& ctx, const wgpu::RenderPassEncoder& 
   }
   encoded.ready = false;
   const auto& frame = ctx.layout.colorAttachments[SceneColorAttachmentIndex];
-  const bool hdr = encoded.domain == Domain::Hdr;
-  if (hdr && frame.format == webgpu::SceneHdrFormat) {
+  if (frame.format == webgpu::SceneHdrFormat) {
     Log.warn("HDR post composite reached an HDR scene target; not drawn");
     encoded = {};
     return;
   }
-  const size_t d = hdr ? 1 : 0;
-  if (!g_state.passComposite[d] || g_state.passCompositeKey[d] != ctx.layout.key) {
-    g_state.passComposite[d] = hdr ? make_pass_composite(ctx.layout, g_state.hdrModule, "fs_composite_hdr")
-                                   : make_pass_composite(ctx.layout, g_state.module, "fs_composite");
-    g_state.passCompositeKey[d] = ctx.layout.key;
+  if (!g_state.passComposite || g_state.passCompositeKey != ctx.layout.key) {
+    g_state.passComposite = make_pass_composite(ctx.layout, g_state.module, "fs_composite_hdr");
+    g_state.passCompositeKey = ctx.layout.key;
   }
-  pass.SetPipeline(g_state.passComposite[d]);
+  pass.SetPipeline(g_state.passComposite);
   pass.SetBindGroup(0, bind_group(rec * PassCount + PassCount - 1, encoded.source, g_state.levels[0].view,
                                   encoded.lutA, encoded.lutB));
   pass.SetViewport(0.f, 0.f, float(frame.width), float(frame.height), 0.f, 1.f);
@@ -880,51 +720,24 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
     recorded = g_recorded[rec];
   }
   Params& params = recorded.params;
-  const bool hdr = recorded.domain == Domain::Hdr;
-  // The targets this frame was recorded against (a resize may have made newer ones since).
-  const auto efb = webgpu::efb_targets();
-  const auto& source = webgpu::present_source();
-  const auto& target = efb.color;
   const uint32_t samples = webgpu::g_graphicsConfig.msaaSamples > 1 ? webgpu::g_graphicsConfig.msaaSamples : 1;
-  const auto format = webgpu::g_graphicsConfig.surfaceConfiguration.format;
-  if (hdr && !hdr_source_valid(recorded.color, recorded.resolved, samples)) {
+  if (!hdr_source_valid(recorded.color, recorded.resolved, samples)) {
     // The pass after it was retargeted to the display EFB and clears it: its composite stays undrawn.
     Log.warn("HDR post: the recorded scene is not a valid {}-sample RGBA16F target; skipped", samples);
     return;
   }
   // The HDR scene is read where it is (resolved when multisampled): the composite writes the display EFB.
   const auto& hdrSource = samples > 1 ? recorded.resolved : recorded.color;
-  const uint32_t width = hdr ? hdrSource.size.width : source.size.width;
-  const uint32_t height = hdr ? hdrSource.size.height : source.size.height;
-  if (width == 0 || height == 0 || (!hdr && !source.texture) || !target.view) {
-    return;
-  }
+  const uint32_t width = hdrSource.size.width;
+  const uint32_t height = hdrSource.size.height;
   ensure_pipelines();
-  if (hdr) {
-    ensure_hdr_pipelines();
-  } else {
-    ensure_frame(width, height, format);
-  }
   ensure_levels(width, height);
   upload_pending(ctx.queue);
   const auto lutA = find_lut(params.gradeA);
   const auto lutB = find_lut(params.gradeB);
   const bool bloom = (params.bloom & BloomOn) != 0;
-  const bool inPass = (params.bloom & CompositeInPass) != 0;
   // tone[0][3] is unused (it carried the exposure of the frame average measure_scene replaced).
   params.tone[0][3] = 0.f;
-  // The pass after an in-pass composite clears the frame, so it must be drawn even before a
-  // LUT has been uploaded.
-  const bool post = bloom || lutA || lutB || inPass;
-  if (!post) {
-    return;
-  }
-  if (!hdr &&
-      (!g_state.composite || g_state.compositeFormat != format || g_state.compositeSamples != samples)) {
-    g_state.composite = make_pipeline("Bloom Composite", "fs_composite", format, samples, nullptr);
-    g_state.compositeFormat = format;
-    g_state.compositeSamples = samples;
-  }
 
   // Every pass's uniforms: bright, the downsamples, the upsamples, the composite; in the post's own
   // ranges, as another post in this submit writes its own before either runs.
@@ -959,24 +772,13 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
   put(slot++, 0.f, 0.f, nullptr);
   ctx.queue.WriteBuffer(g_state.uniforms, uint64_t(base) * SlotSize, slots.data(), sizeof(slots));
 
-  // The frame the chain reads: the HDR scene as it is (the composite writes another target), else a
-  // copy of the EFB the composite overwrites.
-  wgpu::TextureView frameView = g_state.frameView;
-  if (hdr) {
-    frameView = hdrSource.view;
-  } else {
-    const wgpu::TexelCopyTextureInfo copySource{.texture = source.texture};
-    const wgpu::TexelCopyTextureInfo copyTarget{.texture = g_state.frame};
-    const wgpu::Extent3D copySize{width, height, 1};
-    if ((params.bloom & CostNoFrameCopy) == 0) {
-      cmd.CopyTextureToTexture(&copySource, &copyTarget, &copySize);
-    }
-  }
+  // The chain reads the HDR scene as it is: the composite writes another target.
+  const wgpu::TextureView& frameView = hdrSource.view;
 
   slot = base;
   auto& levels = g_state.levels;
   if (bloom) {
-    draw(cmd, "Bloom bright", hdr ? g_state.brightHdr : g_state.bright, slot++, frameView, frameView, levels[0].view,
+    draw(cmd, "Bloom bright", g_state.bright, slot++, frameView, frameView, levels[0].view,
          false);
     for (uint32_t i = 1; i < Levels; ++i) {
       draw(cmd, "Bloom down", g_state.down, slot++, levels[i - 1].view, levels[i - 1].view, levels[i].view, false);
@@ -984,20 +786,9 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
     for (uint32_t i = Levels - 1; i-- > 0;) {
       draw(cmd, "Bloom up", g_state.up, slot++, levels[i + 1].view, levels[i + 1].view, levels[i].view, true);
     }
-  } else {
-    slot = base + PassCount - 1;
   }
-  if (inPass) {
-    g_encoded[rec] = {.ready = true, .domain = recorded.domain, .source = frameView, .lutA = lutA, .lutB = lutB};
-    return;
-  }
-  // The composite writes every pixel without blending, so the frame need not be loaded first
-  // (a full-resolution read on a tile-based GPU). An HDR post always composites in the pass (record).
-  if (hdr) {
-    return;
-  }
-  draw(cmd, "Bloom composite", g_state.composite, slot++, frameView, levels[0].view, target.view, false,
-       samples > 1 ? efb.resolved.view : wgpu::TextureView{}, lutA, lutB);
+  // The composite is the first draw of the display EFB's pass after the task (record).
+  g_encoded[rec] = {.ready = true, .source = frameView, .lutA = lutA, .lutB = lutB};
 }
 
 // The measures recorded by measure_scene, each the scene it reads and the exposure it was drawn at.
@@ -1178,34 +969,25 @@ bool record(const Params& params) {
   if (g_state.task == InvalidEncoderTask) {
     return false;
   }
-  const bool hdr = scene_hdr_pass_active();
-  if (!hdr && scene_hdr_active()) {
-    // The HDR scene is on but not this pass's target (an offscreen pass): there is no scene to read.
-    Log.warn("post recorded outside the HDR scene's pass; skipped");
+  if (!scene_hdr_pass_active()) {
+    // No HDR scene to read: outside it the frame is drawn without the post.
+    if (scene_hdr_active()) {
+      // The HDR scene is on but not this pass's target (an offscreen pass).
+      Log.warn("post recorded outside the HDR scene's pass; skipped");
+    }
     return false;
   }
-  const bool scene = (params.bloom & ForceScene) != 0;
-  Params task = params;
-  task.bloom &= BloomOn | CostNoFrameCopy | CostNoDepthReload | CostKeepDepth;
-  const bool effects = (task.bloom & BloomOn) || task.gradeA != 0 || task.gradeB != 0;
-  if (!hdr && scene && !effects) {
-    // GXPortPostProcessScene on the display EFB with nothing to do: it is already display colour.
-    return true;
-  }
-  if (hdr && g_state.compositeDraw == InvalidDrawType) {
+  if (g_state.compositeDraw == InvalidDrawType) {
     Log.warn("HDR post without the composite draw type; skipped");
     return false;
   }
-  // A frame that is composited draws it as the first thing in the pass that resumes the EFB: on a
+  // The composite is drawn as the first thing in the display EFB's pass the FIFO goes on in: on a
   // tile-based GPU a pass of its own stores the frame only for that pass to load it again. That pass
   // clears depth instead of loading it when nothing after the bloom (the HUD) tests against the world's.
-  // The HDR scene is converted to display colour whatever else the post does: its composite always
-  // draws, as the first draw of the display EFB's pass the FIFO goes on in.
-  const bool inPass = hdr || (g_state.compositeDraw != InvalidDrawType &&
-                              ((task.bloom & BloomOn) || task.gradeA != 0 || task.gradeB != 0));
-  if (inPass) {
-    task.bloom |= CompositeInPass;
-  }
+  // The HDR scene is converted to display colour whatever else the post does, so it always draws.
+  Params task = params;
+  task.bloom &= BloomOn | CostNoDepthReload | CostKeepDepth;
+  task.bloom |= CompositeInPass;
   uint32_t slot = 0;
   {
     const std::lock_guard lock(g_recordMutex);
@@ -1214,19 +996,15 @@ bool record(const Params& params) {
     }
     g_recorded[slot] = Recorded{
         .params = task,
-        .domain = hdr ? Domain::Hdr : Domain::Ldr,
-        .color = hdr ? webgpu::g_sceneHdr : webgpu::TextureWithSampler{},
-        .resolved = hdr ? webgpu::g_sceneHdrResolved : webgpu::TextureWithSampler{},
+        .color = webgpu::g_sceneHdr,
+        .resolved = webgpu::g_sceneHdrResolved,
     };
   }
   const auto depth = (task.bloom & CostNoDepthReload) ? DepthAfter::Clear
                      : (task.bloom & CostKeepDepth)   ? DepthAfter::Load
                                                       : DepthAfter::IfUnread;
-  if (inPass) {
-    return record_encoder_task_overwriting(g_state.task, &slot, sizeof(slot), g_state.compositeDraw, depth, &slot,
-                                           sizeof(slot), hdr);
-  }
-  return record_encoder_task(g_state.task, &slot, sizeof(slot));
+  return record_encoder_task_overwriting(g_state.task, &slot, sizeof(slot), g_state.compositeDraw, depth, &slot,
+                                         sizeof(slot), true);
 }
 
 void set_grade_lut(uint32_t id, const uint8_t* rgba) {
