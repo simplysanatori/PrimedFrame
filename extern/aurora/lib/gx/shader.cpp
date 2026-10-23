@@ -1991,15 +1991,17 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
                       pbr_bc * pbr_h0.w + pbr_sec.rgb * pbr_h2.w) * pbr_df.rgb * pbr_df.a;
           pbr_pass = pbr_sscene * pbr_h3.z * pbr_df.rgb * pbr_df.a;
           if (ubuf.pbr_shield[5].x > 0.5) {{
-              // 2f95a061: the bent room is tinted by CCH1, and what is behind keeps (o1) of itself
-              // (SRC1_COLOR): DIFC.a x (1 - CCH1 x (1 - vertex alpha)) per channel. Drawn opaque, the
-              // room (map 7 at the fragment, unbent) comes through pbr_pass.
+              // 2f95a061: the bent room is tinted by CCH1, and the second output o1 = DIFC.a x (1 - CCH1 x
+              // (1 - vertex alpha)) per channel. Every colour perm has MFC0 on (CPermutation bit 21), so the
+              // pack's override expr 0x25 sets blend mode 10, One / InvSrc1Color: what is behind keeps
+              // 1 - o1 of itself (kb material/2f95a061.md). Drawn opaque, the room (map 7 at the
+              // fragment, unbent) comes through pbr_pass.
               let pbr_h1 = ubuf.pbr_shield[1];
               let pbr_sdst = srgb_dec(textureSampleLevel(tex7, tex7_samp,
                                       clamp(in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5, vec2f(0.0), vec2f(1.0)), 0.0).rgb);
               pbr_alpha = 1.0;
               pbr_pass = pbr_sscene * pbr_h3.z * pbr_h1.rgb * pbr_df.rgb * pbr_df.a +
-                         pbr_sdst * (pbr_df.a * (vec3f(1.0) - pbr_h1.rgb * (1.0 - pbr_v5.a)));
+                         pbr_sdst * (vec3f(1.0) - pbr_df.a * (vec3f(1.0) - pbr_h1.rgb * (1.0 - pbr_v5.a)));
           }}
       }})""",
                           base,
@@ -2877,7 +2879,8 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
     // differs per kind is the fog of the sorted fog perms (VS froxel T, S):
     //   8 (231f8383 006): (lit + bent) T + A S.   29 (3991da00 006): DIFC.a ((..+bent) DIFC T + a S).
     //   11 (03407341 009), 29 dual (2f95a061 006): DIFC.a ((..+bent CCH3.z CCH1) DIFC T + S k),
-    //      k = 1 - CCH1 (1 - vertex alpha), plus the frame x DIFC.a k by the blend (o1): unbent, unfogged.
+    //      k = 1 - CCH1 (1 - vertex alpha), plus the frame x (1 - DIFC.a k) by the blend (One /
+    //      InvSrc1Color, o1 = DIFC.a k): unbent, unfogged.
     //   23/30 (24670bf0/cc8afd0f 003): lit T + S (1 - w) + w frame, w = BCLR x v3 x v3.a (23) or v3.a
     //      (30): the transmitted frame unfogged.   14 (6c1a4768, 6f53c775): no fog perm, no fog.
     // pbr_keep is what a blend keeps of the frame (unfogged); pbr_vfw/pbr_vfk a kind's in-scatter
@@ -2933,10 +2936,10 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
          "pbr_pass = pbr_sscene * pbr_h3.z * pbr_df.rgb * pbr_df.a;\n"
          "          pbr_vfw = vec3f(pbr_alpha);\n          pbr_vfk = true;");
     kind("pbr_pass = pbr_sscene * pbr_h3.z * pbr_h1.rgb * pbr_df.rgb * pbr_df.a +\n"
-         "                         pbr_sdst * (pbr_df.a * (vec3f(1.0) - pbr_h1.rgb * (1.0 - pbr_v5.a)));",
+         "                         pbr_sdst * (vec3f(1.0) - pbr_df.a * (vec3f(1.0) - pbr_h1.rgb * (1.0 - pbr_v5.a)));",
          "pbr_pass = pbr_sscene * pbr_h3.z * pbr_h1.rgb * pbr_df.rgb * pbr_df.a;\n"
          "              pbr_vfw = pbr_df.a * (vec3f(1.0) - pbr_h1.rgb * (1.0 - pbr_v5.a));\n"
-         "              pbr_keep = pbr_sdst * pbr_vfw;");
+         "              pbr_keep = pbr_sdst * (vec3f(1.0) - pbr_vfw);");
     kind("pbr_pass = select(pbr_xbase, vec3f(1.0), pbr_kind > 29.5) * pbr_xv3.w * pbr_xscene;",
          "let pbr_xw = select(pbr_xbase, vec3f(1.0), pbr_kind > 29.5) * pbr_xv3.w;\n"
          "          pbr_keep = pbr_xw * pbr_xscene;\n"

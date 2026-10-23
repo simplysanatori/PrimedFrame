@@ -804,7 +804,7 @@ TEST_F(SceneHdrTest, ScreenKindsFogAsTheirFogPermsInHdr) {
       EXPECT_EQ(count(hdr, "pbr_pass = pbr_hg * ubuf.pbr_emissive.rgb * ubuf.pbr_param.w;"), 1u);
     }
     if (kind == 29) {
-      EXPECT_EQ(count(hdr, "pbr_keep = pbr_sdst * pbr_vfw;"), 1u);
+      EXPECT_EQ(count(hdr, "pbr_keep = pbr_sdst * (vec3f(1.0) - pbr_vfw);"), 1u);
     }
     EXPECT_EQ(module_error(ldr), "");
     EXPECT_EQ(module_error(hdr), "");
