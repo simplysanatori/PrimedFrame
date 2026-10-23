@@ -18,6 +18,7 @@
 #include "MetroidPrime/Player/CWorldState.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptActorRotate.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptCounter.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptDock.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptDoor.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptEMPulse.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptHUDMemo.hpp"
@@ -51,6 +52,7 @@ enum RoomTag : uint32_t {
   kTagBoss = 11,      // a boss's fight state beyond its health (port_savestate_boss.h)
   kTagRotate = 12,    // a turn in progress: flags, time, then per actor editor id + start rotation
   kTagFields = 13,    // an enemy's own fields through the entity schema (port_savestate_fields.cpp)
+  kTagDock = 14,      // the dock's reference, then per reference its load-other flag
 };
 
 // Friend of the script classes whose state is private.
@@ -422,6 +424,21 @@ void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
     BlockWriter w;
     PortRoomState::PutCounter(*counter, w);
     obj.blocks.push_back({kTagCounter, w.bytes});
+  }
+  if (CScriptDock* dock = TCastToPtr< CScriptDock >(&ent)) {
+    const CWorld* world = mgr.GetWorld();
+    const int area = dock->GetAreaId().Value();
+    if (area >= 0 && area < world->GetNumAreas() &&
+        dock->GetDockId() < world->GetAreaAlways(TAreaId(area)).GetDockCount()) {
+      const IGameArea::Dock& d = world->GetAreaAlways(TAreaId(area)).GetDock(dock->GetDockId());
+      const int refs = static_cast< int >(d.GetDockRefs().size());
+      BlockWriter w;
+      w.U8(static_cast< uint8_t >(d.GetReferenceCount()));
+      w.U8(static_cast< uint8_t >(refs));
+      for (int i = 0; i < refs; ++i)
+        w.U8(d.GetShouldLoadOther(i) ? 1 : 0);
+      obj.blocks.push_back({kTagDock, w.bytes});
+    }
   }
   if (CScriptDoor* door = TCastToPtr< CScriptDoor >(&ent)) {
     DoorSaveState state;
@@ -875,6 +892,50 @@ static bool RequestResidentArea(CStateManager& mgr, int current, int area) {
   return false;
 }
 
+// Which neighbours an area streams in is the load-other flags of its docks, and a
+// rebuilt dock starts from its script property (load connected): every neighbour of the
+// room comes up, also the ones a script had shut (the Impact Crater relays close the
+// Subchambers' docks for the fight). Put back as saved, so the world streams what it
+// streamed at the save. A flag to a neighbour that was resident at the save stays up:
+// RequestResidentArea is still bringing that one back.
+static void RestoreDocks(CStateManager& mgr, const RoomState& room, const std::set< int >& now) {
+  CWorld* world = mgr.World();
+  for (const RoomObject& obj : room.objects) {
+    if (now.count(TEditorId(obj.editorId).AreaNum()) == 0)
+      continue;
+    const RoomBlock* b = FindBlock(obj, kTagDock);
+    if (b == nullptr)
+      continue;
+    CEntity* ent = mgr.ObjectById(mgr.GetIdForScript(TEditorId(obj.editorId)));
+    CScriptDock* dock = ent != nullptr ? TCastToPtr< CScriptDock >(ent) : nullptr;
+    if (dock == nullptr)
+      continue;
+    const int area = dock->GetAreaId().Value();
+    if (area < 0 || area >= world->GetNumAreas() ||
+        dock->GetDockId() >= world->Area(TAreaId(area))->GetDockCount())
+      continue;
+    IGameArea::Dock& d = world->Area(TAreaId(area))->DockNC(dock->GetDockId());
+    BlockReader r(b->data);
+    const int ref = r.U8();
+    const int refs = r.U8();
+    if (!r.ok || refs != static_cast< int >(d.GetDockRefs().size()) || ref >= refs)
+      continue;
+    std::vector< bool > load(refs);
+    for (int i = 0; i < refs; ++i)
+      load[i] = r.U8() != 0;
+    if (!r.ok)
+      continue;
+    if (ref != d.GetReferenceCount())
+      dock->SetDockReference(mgr, ref);
+    for (int i = 0; i < refs; ++i) {
+      const int other = d.GetConnectedAreaId(i).Value();
+      const bool resident =
+          std::find(room.areas.begin(), room.areas.end(), other) != room.areas.end();
+      d.SetShouldLoadOther(i, load[i] || resident);
+    }
+  }
+}
+
 bool RoomAreaAwaitsRestore(CStateManager& mgr, const RoomState& room,
                            const std::vector< int32_t >& done, int area) {
   const CWorld* world = mgr.GetWorld();
@@ -984,6 +1045,7 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
   }
   if (waypointsMoved)
     PortRoomState::RebuildSpiderBallWaypoints(mgr);
+  RestoreDocks(mgr, room, now);
   done.insert(done.end(), now.begin(), now.end());
   return waiting;
 }
