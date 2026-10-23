@@ -241,8 +241,9 @@ TEST(GxInventoryVisor, Kind37Wiring) {
   EXPECT_EQ(src.find("* inv_a * ubuf.pbr_light_scale.x"), std::string::npos);
 }
 
+// Kinds 0 and 3 read the model tint now (GxModelTint); the others still do not.
 TEST(GxInventoryVisor, OtherKindsDoNotReadModulation) {
-  for (const int kind : {0, 34, 35}) {
+  for (const int kind : {34, 35}) {
     const std::string src = build_shader_source(inventoryConfig(kind, true));
     // Only the uniform struct mentions the fields.
     EXPECT_EQ(count(src, "pbr_model_diffuse"), 1u) << kind;
@@ -254,6 +255,36 @@ TEST(GxInventoryVisor, OtherKindsDoNotReadModulation) {
   // Kind 34 keeps its own composition untouched.
   const std::string k34 = build_shader_source(inventoryConfig(34, true));
   EXPECT_NE(k34.find("pbr_pass += pbr_sdst * vec3f(1.0 - pbr_alpha);"), std::string::npos);
+}
+
+
+// --- model tint outside the visor (kb topic/model-flags-fade-tint.md) -------------------------------------------
+
+TEST(GxModelTint, StdKindsApplyDiffuseAndIncan) {
+  for (const int kind : {0, 3}) {
+    const std::string src = build_shader_source(inventoryConfig(kind, false));
+    const size_t diff = pos(src, "let pbr_diff = select(pbr_base * ubuf.pbr_model_diffuse.rgb * (1.0 - pbr_metal)");
+    EXPECT_NE(diff, std::string::npos) << "kind " << kind;
+    const size_t glow = pos(src, "pbr_glow += ubuf.pbr_model_incan.rgb;");
+    const size_t out = pos(src, "let pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));");
+    ASSERT_NE(glow, std::string::npos) << "kind " << kind;
+    EXPECT_LT(glow, out); // after the exposure scaling, before the output
+    EXPECT_EQ(count(src, "pbr_model_incan.rgb"), 1u);
+  }
+}
+
+TEST(GxModelTint, GlassTakesNoTint) {
+  const std::string src = build_shader_source(inventoryConfig(8, false));
+  EXPECT_EQ(pos(src, "pbr_model_diffuse.rgb"), std::string::npos);
+  EXPECT_EQ(pos(src, "pbr_model_incan.rgb"), std::string::npos);
+}
+
+TEST(GxModelTint, InventoryKindsNotDoubleApplied) {
+  for (const int kind : {36, 37}) {
+    const std::string src = build_shader_source(inventoryConfig(kind, true));
+    EXPECT_EQ(count(src, "pbr_model_diffuse.rgb"), 1u) << kind; // inv_b only
+    EXPECT_EQ(count(src, "pbr_model_incan.rgb"), 1u) << kind;
+  }
 }
 
 } // namespace

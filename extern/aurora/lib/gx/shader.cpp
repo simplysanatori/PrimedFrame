@@ -2791,6 +2791,22 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
           pbr_alpha = 1.0;
       })""");
   }
+  if (config.pbrKind == 0 || config.pbrKind == 3) {
+    // A model tint (GXSetPBRModelModulation outside the pause visor): Remastered feeds the model colour to the
+    // material as DIFC (id 0x20) or ICMC (id 0x24) (kb topic/model-flags-fade-tint.md, "Per-shader use"). Only the
+    // kinds that read them through the generic albedo take it: kind 0 (bfb300b6 and its 0a52b67f/ae819893/60989bc1
+    // variants) and kind 3 (lava, 023388cd). DIFC rgb multiplies the diffuse (not F0 in bfb300b6; ae819893 also puts
+    // it in F0, unwired). The material's own DIFC is 1 on almost all materials, so multiplying equals the
+    // kb's "replace" (unverified otherwise). The ICMC is added linearly after the exposure scaling, like kinds 36/37.
+    // Glass (8) and the other kinds read neither.
+    const std::string_view diff = "let pbr_diff = select(pbr_base * (1.0 - pbr_metal)";
+    const size_t dat = source.find(diff);
+    assert(dat != std::string::npos);
+    source.replace(dat, diff.size(), "let pbr_diff = select(pbr_base * ubuf.pbr_model_diffuse.rgb * (1.0 - pbr_metal)");
+    const size_t out = source.find("      let pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));");
+    assert(out != std::string::npos);
+    source.insert(out, "      pbr_glow += ubuf.pbr_model_incan.rgb;\n");
+  }
   if (inventory) {
     // The incandescence ICMC (rgb only; its alpha is not DMGI) is added linearly after the exposure scaling.
     // DMGI is CCH2.y = 1 on all three inventory materials and is not carried: the bounded default 1.
