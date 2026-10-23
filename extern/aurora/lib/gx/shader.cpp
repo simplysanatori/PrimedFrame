@@ -1799,7 +1799,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // over the distance, and tinted by pbr_emissive where the vertex alpha and pbr_param.w
     // say. Over it the reflection (its fresnel scaled by the vertex alpha and
     // pbr_layer_height.z), map 0 (weight x) and the linearised, doubled vertex colour
-    // (weight y). Drawn premultiplied and opaque: the room comes through pbr_pass.
+    // (weight y), all times DIFC (pbr_shield row 7). Its MTRL is 2f95a061's override tail, MFC0 set in
+    // every colour perm (CPermutation bit 21), so the blend is One / InvSrc1Color with o1 = DIFC.a x
+    // (1 - CCH1 x (1 - vertex alpha)): what is behind keeps 1 - o1 of itself (kb material/03407341.md).
+    // Drawn opaque: the room (map 7 at the fragment, unbent) comes through pbr_pass.
     std::string holo;
     if (screen) {
       holo = fmt::format(R"""(
@@ -1808,16 +1811,20 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_hd = pbr_hn * (ubuf.pbr_param.z * min(1.0 / max(length(in.pbr_pos), 1e-3), 1.0)) * vec2f(1.0, -1.0);
           let pbr_huv = in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5 + pbr_hd;
           let pbr_hg = textureSampleLevel(tex7, tex7_samp, clamp(pbr_huv, vec2f(0.0), vec2f(1.0)), 0.0).rgb;
-          pbr_pass = srgb_dec(pbr_hg) *
-                     max(vec3f(1.0) + ubuf.pbr_emissive.rgb * (ubuf.pbr_param.w - 1.0 + pbr_vraw.a), vec3f(0.0));)""",
+          let pbr_sdst = srgb_dec(textureSampleLevel(tex7, tex7_samp,
+                                  clamp(in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5, vec2f(0.0), vec2f(1.0)), 0.0).rgb);
+          pbr_pass = srgb_dec(pbr_hg) * ubuf.pbr_emissive.rgb * ubuf.pbr_param.w * pbr_df.rgb * pbr_df.a +
+                     pbr_sdst * (vec3f(1.0) - pbr_df.a * (vec3f(1.0) - ubuf.pbr_emissive.rgb * (1.0 - pbr_vraw.a)));)""",
                          underlying(inner4.texMapId), underlying(inner4.texCoordId));
     }
     liquid += fmt::format(R"""(
       if (pbr_kind > 10.5 && pbr_kind < 11.5) {{
+          let pbr_df = ubuf.pbr_shield[7];
           pbr_alpha = 1.0;
-          pbr_lo = pbr_envspec * (pbr_ab.x * pbr_vraw.a * ubuf.pbr_layer_height.z + pbr_ab.y) +
-                   max({0}.rgb, vec3f(0.0)) * ubuf.pbr_layer_height.x +
-                   2.0 * pow(max(pbr_vraw.rgb, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_layer_height.y;
+          pbr_lo = (pbr_envspec * (pbr_ab.x * pbr_vraw.a * ubuf.pbr_layer_height.z + pbr_ab.y) +
+                    max({0}.rgb, vec3f(0.0)) * ubuf.pbr_layer_height.x +
+                    2.0 * pow(max(pbr_vraw.rgb, vec3f(0.0)), vec3f(2.2)) * ubuf.pbr_layer_height.y) *
+                   pbr_df.rgb * pbr_df.a;
           pbr_glow = vec3f(0.0);{1}
       }})""",
                           base, holo);
@@ -2924,12 +2931,12 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
     kind("pbr_pass = pbr_gs * max(ubuf.pbr_emissive.rgb, vec3f(0.0)) * pbr_gt;",
          "pbr_pass = pbr_gs * max(ubuf.pbr_emissive.rgb, vec3f(0.0)) * pbr_gt;\n"
          "          pbr_vfw = vec3f(pbr_alpha);\n          pbr_vfk = true;");
-    kind("pbr_pass = pbr_hg *\n                     max(vec3f(1.0) + ubuf.pbr_emissive.rgb * (ubuf.pbr_param.w - 1.0 + pbr_vraw.a), vec3f(0.0));",
-         "pbr_pass = pbr_hg * ubuf.pbr_emissive.rgb * ubuf.pbr_param.w;\n"
-         "          pbr_vfw = vec3f(1.0) - ubuf.pbr_emissive.rgb * (1.0 - pbr_vraw.a);\n"
+    kind("pbr_pass = pbr_hg * ubuf.pbr_emissive.rgb * ubuf.pbr_param.w * pbr_df.rgb * pbr_df.a +\n"
+         "                     pbr_sdst * (vec3f(1.0) - pbr_df.a * (vec3f(1.0) - ubuf.pbr_emissive.rgb * (1.0 - pbr_vraw.a)));",
+         "pbr_pass = pbr_hg * ubuf.pbr_emissive.rgb * ubuf.pbr_param.w * pbr_df.rgb * pbr_df.a;\n"
+         "          pbr_vfw = pbr_df.a * (vec3f(1.0) - ubuf.pbr_emissive.rgb * (1.0 - pbr_vraw.a));\n"
          "          pbr_vfk = true;\n"
-         "          pbr_keep = textureSampleLevel(tex7, tex7_samp, clamp(in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5,\n"
-         "                                        vec2f(0.0), vec2f(1.0)), 0.0).rgb * pbr_vfw;");
+         "          pbr_keep = pbr_sdst * (vec3f(1.0) - pbr_vfw);");
     kind("pbr_pass = pbr_sfb * pbr_c4.x * pbr_vraw.rgb;",
          "pbr_pass = pbr_sfb * pbr_c4.x * pbr_vraw.rgb;\n          pbr_vfon = false;");
     kind("pbr_pass = pbr_sscene * pbr_h3.z * pbr_df.rgb * pbr_df.a;",

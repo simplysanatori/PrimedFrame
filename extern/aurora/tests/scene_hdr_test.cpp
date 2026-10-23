@@ -801,10 +801,19 @@ TEST_F(SceneHdrTest, ScreenKindsFogAsTheirFogPermsInHdr) {
       EXPECT_EQ(count(hdr, "pbr_vfw = vec3f(1.0) - pbr_xw;"), 1u);
     }
     if (kind == 11) {
-      EXPECT_EQ(count(hdr, "pbr_pass = pbr_hg * ubuf.pbr_emissive.rgb * ubuf.pbr_param.w;"), 1u);
+      // MFC0 on (03407341's MTRL tail, as 2f95a061's): the blend is One / InvSrc1Color, o1 = DIFC.a k, so the
+      // frame is kept by 1 - o1, never by o1, and DIFC scales the lit and bent terms.
+      EXPECT_EQ(count(hdr, "pbr_pass = pbr_hg * ubuf.pbr_emissive.rgb * ubuf.pbr_param.w * pbr_df.rgb * pbr_df.a;"), 1u);
+      EXPECT_EQ(count(hdr, "pbr_vfw = pbr_df.a * (vec3f(1.0) - ubuf.pbr_emissive.rgb * (1.0 - pbr_vraw.a));"), 1u);
+      // Kinds 11 and 29 share one source (branched on pbr_kind), each with its own keep line.
+      EXPECT_EQ(count(hdr, "pbr_keep = pbr_sdst * (vec3f(1.0) - pbr_vfw);"), 2u);
+      EXPECT_EQ(count(ldr, "pbr_sdst * (vec3f(1.0) - pbr_df.a * (vec3f(1.0) - ubuf.pbr_emissive.rgb * (1.0 - pbr_vraw.a)));"),
+                1u);
+      EXPECT_EQ(count(ldr, "pbr_sdst * (pbr_df.a *"), 0u);
     }
     if (kind == 29) {
-      EXPECT_EQ(count(hdr, "pbr_keep = pbr_sdst * (vec3f(1.0) - pbr_vfw);"), 1u);
+      // Kinds 11 and 29 share one source (branched on pbr_kind), each with its own keep line.
+      EXPECT_EQ(count(hdr, "pbr_keep = pbr_sdst * (vec3f(1.0) - pbr_vfw);"), 2u);
     }
     EXPECT_EQ(module_error(ldr), "");
     EXPECT_EQ(module_error(hdr), "");
@@ -826,9 +835,8 @@ TEST_F(SceneHdrTest, ScreenReadsAreRawOnlyInHdr) {
     EXPECT_GT(screen, 0u) << "the kind reads map 7";
     // Every other decode stays (base and cube maps).
     EXPECT_EQ(count(hdr, "srgb_dec("), count(ldr, "srgb_dec(") - screen);
-    // Kind 11 reads the frame its blend keeps (unbent, at the fragment) once more in HDR.
-    EXPECT_EQ(count(hdr, "textureSampleLevel(tex7, tex7_samp,"),
-              count(ldr, "textureSampleLevel(tex7, tex7_samp,") + (count(ldr, "pbr_hg") > 0 ? 1u : 0u));
+    // Kind 11 reads the frame its blend keeps (unbent, at the fragment) in both, as 29's dual does.
+    EXPECT_EQ(count(hdr, "textureSampleLevel(tex7, tex7_samp,"), count(ldr, "textureSampleLevel(tex7, tex7_samp,"));
     EXPECT_EQ(module_error(ldr), "");
     EXPECT_EQ(module_error(hdr), "");
   }
