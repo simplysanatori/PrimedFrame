@@ -82,10 +82,11 @@ inline constexpr int kTextures = 3;
 // 13: a retail model placed by the rooms takes its placements' orient as well as their offset.
 // 12: the retail models Remastered keeps under their retail ids, placed by the rooms, are
 //     converted too (retailmodels stage); 3C26F42B's table row goes.
+// 14: normals go through the orient's inverse transpose (a non-uniform orient kept them skewed).
 // 11: the Elite Quarters stasis tank 3C26F42B is in the table.
 // 10: a plain cutout over a retail fx material is drawn opaque, cut by the shader.
 // 9: a ColorUnlit mesh (the door shields) gets a back copy.
-inline constexpr int kModels = 13;     // the table's models, their looks and the ANCS copies
+inline constexpr int kModels = 14;     // the table's models, their looks and the ANCS copies
 // 63: ELPS reads its CNST surface flag; the system tween is 0 only at a 0x1000000 lifetime.
 // 62: NEGT, CRCV, SPEV, ELPS, ROTV, PNCV, KEYF, SLTW, CRLN octaves, KESP, one-stop GRAD, PAP0/9,
 //     ADV9 and IAV0..3 are converted; PLNV counts come from MAXP.
