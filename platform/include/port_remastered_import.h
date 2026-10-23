@@ -124,7 +124,8 @@ inline constexpr int kEffects = 95;    // port_remastered_effect_import and the 
 // 23: a hint (grade, backlight, fog) marks whether it is the master's, so the room's own wins (HintOutranks).
 // 24: a room's effect actors of Remastered's own, as <MREA>.roomfx (port_room_effects.h).
 // 25: .roomfx v2 carries each actor's particle variable values (property 3def0de6).
-inline constexpr int kRooms = 25;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
+// 26: roomenv version 23, the world shift (the fog's noise is read in Remastered's world).
+inline constexpr int kRooms = 26;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 inline constexpr int kHud = 8;         // port_remastered_hud, port_remastered_map

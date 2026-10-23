@@ -111,7 +111,8 @@ fn cs_main(@builtin(global_invocation_id) id: vec3u) {
       height = max(0.0, height * k + mask * p.regions[b + 6u].x);
       cap = max(0.0, cap * k + mask * p.regions[b + 4u].w);
     }
-    let n = textureSampleLevel(noiseTex, repeatSamp, (world + p.noise.xyz) * p.shape.z, 0.0).r;
+    // The noise in Remastered's world: retail's turned to (-x, z, y); noise.xyz holds its origin.
+    let n = textureSampleLevel(noiseTex, repeatSamp, (vec3f(-world.x, world.z, world.y) + p.noise.xyz) * p.shape.z, 0.0).r;
     let density = (1.0 - p.shape.w + p.shape.w * n) * height * lut_at(min(t0, 1.0));
     var light = added;
     if (p.misc.x != 0u) {

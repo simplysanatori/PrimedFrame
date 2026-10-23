@@ -289,6 +289,7 @@ struct FogCore {
   float attenSlope = 0.f, attenBias = 1.f;
   float noiseFreq = 0.f, noiseStrength = 0.f, lightCap = 65535.f;
   float wind[3] = {};
+  float worldShift[3] = {};
   float colorB[4] = {1.f, 1.f, 1.f, 1.f}, colorA[3] = {1.f, 1.f, 1.f};
   bool noProbe = false;
   float lut[64] = {};

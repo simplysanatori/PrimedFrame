@@ -1085,6 +1085,17 @@ void TestWorldVolumes() {
             "volumes: read back");
   CHECK_MSG(!PortRoomEnv::Parse(std::vector<uint8_t>(good.begin(), good.end() - 4), file, error),
             "volumes: cut short");
+  CHECK_MSG(file.worldShift[0] == 0.f && file.worldShift[2] == 0.f, "volumes: version 22 has no world shift");
+  // Version 23 adds the world shift at the end.
+  std::vector<uint8_t> v23 = good;
+  v23[4] = 23;
+  CHECK_MSG(!PortRoomEnv::Parse(std::vector<uint8_t>(v23), file, error), "shift: cut short");
+  for (float f : {1.5f, -2.f, 30.f}) {
+    PutFloat(v23, f);
+  }
+  CHECK_MSG(PortRoomEnv::Parse(std::vector<uint8_t>(v23), file, error) && file.worldShift[0] == 1.5f &&
+                file.worldShift[1] == -2.f && file.worldShift[2] == 30.f && file.worldVolumes.size() == 2,
+            "shift: version 23 read back");
   const float inB[3] = {10.f, 1.5f, 0.f}, outB[3] = {11.5f, 0.f, 0.f};
   CHECK_MSG(PortRoomEnv::InsideWorldVolume(b, inB) && !PortRoomEnv::InsideWorldVolume(b, outB), "volumes: turned box");
 

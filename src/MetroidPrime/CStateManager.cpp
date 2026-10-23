@@ -3022,8 +3022,8 @@ static void PortDrawVolumetricFog(const CStateManager& mgr, const CTransform4f& 
   p.shape[2] = fog.noiseFreq;
   p.shape[3] = fog.noiseStrength;
   for (int i = 0; i < 3; ++i) {
-    // Remastered offsets the noise by minus the wind's travel: it drifts with the wind.
-    p.noise[i] = -fog.noiseOffset[i];
+    // Remastered's world axes and origin, offset by minus the wind's travel (PortRoomEnv::Fog).
+    p.noise[i] = fog.noiseOffset[i];
     p.colorB[i] = fog.colorB[i];
     p.colorA[i] = fog.colorA[i];
   }

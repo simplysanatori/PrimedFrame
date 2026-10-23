@@ -1421,6 +1421,7 @@ FogCore FogOf(const FogHint& h) {
   c.lightCap = h.lightCap;
   for (int i = 0; i < 3; ++i) {
     c.wind[i] = h.useScriptWind ? h.wind[i] : 0.f;
+    c.worldShift[i] = h.worldShift[i];
     c.colorB[i] = h.colorB[i];
     c.colorA[i] = h.colorA[i];
   }
@@ -1455,6 +1456,7 @@ FogCore BlendFog(const FogCore& a, const FogCore& b, float t) {
   o.lightCap = mix(a.lightCap, b.lightCap);
   for (int i = 0; i < 3; ++i) {
     o.wind[i] = b.wind[i]; // snaps
+    o.worldShift[i] = b.worldShift[i];
     o.colorB[i] = mix(a.colorB[i], b.colorB[i]);
     o.colorA[i] = mix(a.colorA[i], b.colorA[i]);
   }
@@ -1631,8 +1633,13 @@ bool VolumetricFog(Fog& out) {
   out.noiseFreq = c.noiseFreq;
   out.noiseStrength = c.noiseStrength;
   out.lightCap = c.lightCap;
+  // Remastered's m3 (minus the wind's travel) plus its world's origin, in its axes (-x, z, y).
+  const float travel[3] = {c.worldShift[0] + c.wind[0] * sFog.time, c.worldShift[1] + c.wind[1] * sFog.time,
+                           c.worldShift[2] + c.wind[2] * sFog.time};
+  out.noiseOffset[0] = travel[0];
+  out.noiseOffset[1] = -travel[2];
+  out.noiseOffset[2] = -travel[1];
   for (int i = 0; i < 3; ++i) {
-    out.noiseOffset[i] = c.wind[i] * sFog.time;
     out.colorB[i] = c.colorB[i];
     out.colorA[i] = c.colorA[i];
   }
