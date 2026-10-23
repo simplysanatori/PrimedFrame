@@ -2744,12 +2744,12 @@ static void EditorBasis(const Vec3& rot, const Vec3& scale, double out[3][3]) {
 }
 
 // Remastered keeps many retail models under their retail ids and places them with entities of
-// its own. Most are built around their own origin and stand where the retail object does; some
-// are built in the room's space, their entity at the room's origin (Elite Quarters' stasis tank,
-// 3C26F42B). The retail object that names the model draws it, so the model's offset in its own
-// space is where the entity puts it as the object sees it: with the same rotation and scale, the
-// object's inverse transform applied to the entity's position. Among the room's entities that
-// carry the model, the one of the object's rotation and scale that needs the least offset is it.
+// its own. The ROOM keeps no retail editor id (an entity's IDTA is a guid of its own), but its
+// entities stand in the retail area's script order: the objects of a layer in turn, each in its
+// SCLY order. So the n-th object of the area naming a model is the n-th entity of the room
+// carrying it, when the two counts are equal. The retail object draws the model, so the model's
+// transform in its own space is where the entity puts it as the object sees it: the object's
+// inverse transform times the entity's (orient) and applied to the entity's position (offset).
 void Writer::PairRetailModels(const RoomData& r, const Area& area) {
   m_retailEntities.clear();
   if (!m_io.retailModel) {
@@ -2798,13 +2798,18 @@ void Writer::PairRetailModels(const RoomData& r, const Area& area) {
       }
     }
   }
-  for (const auto& [retail, entry] : byRetail) {
-    const auto& [model, placed] = entry;
+  for (auto& [retail, entry] : byRetail) {
+    auto& [model, placed] = entry;
+    std::sort(placed.begin(), placed.end(), [](const Placed& a, const Placed& b) { return a.entity < b.entity; });
     const uint8_t be[4] = {uint8_t(retail >> 24), uint8_t(retail >> 16), uint8_t(retail >> 8), uint8_t(retail)};
+    std::vector<const ScriptObject*> named;
     for (const ScriptObject& o : area.objects) {
-      if (!o.hasXf || std::search(o.props.begin(), o.props.end(), be, be + 4) == o.props.end()) {
-        continue;
+      if (o.hasXf && std::search(o.props.begin(), o.props.end(), be, be + 4) != o.props.end()) {
+        named.push_back(&o);
       }
+    }
+    for (size_t n = 0; n < named.size(); ++n) {
+      const ScriptObject& o = *named[n];
       RetailPlacement out;
       std::copy(model.begin(), model.end(), out.model.begin());
       out.retail = retail;
@@ -2813,36 +2818,19 @@ void Writer::PairRetailModels(const RoomData& r, const Area& area) {
       out.room = r.name;
       double basis[3][3], inverse[3][3];
       EditorBasis(o.rot, o.scale, basis);
-      double size = 1.0;
-      for (const double v : o.scale) {
-        size = std::max(size, std::fabs(v));
-      }
-      const Placed* best = nullptr;
-      double bestOffset[3] = {0, 0, 0}, bestLength = 1e300;
-      for (const Placed& p : placed) {
-        bool same = Invert3(basis, inverse);
-        for (int i = 0; same && i < 9; ++i) {
-          same = std::fabs(p.basis[i / 3][i % 3] - basis[i / 3][i % 3]) < 1e-3 * size;
-        }
-        if (!same) {
-          continue;
-        }
-        double offset[3];
-        for (int i = 0; i < 3; ++i) {
-          offset[i] = inverse[i][0] * (p.pos[0] - o.pos[0]) + inverse[i][1] * (p.pos[1] - o.pos[1]) +
-                      inverse[i][2] * (p.pos[2] - o.pos[2]);
-        }
-        const double length = std::sqrt(offset[0] * offset[0] + offset[1] * offset[1] + offset[2] * offset[2]);
-        if (length < bestLength) {
-          best = &p;
-          bestLength = length;
-          std::copy(offset, offset + 3, bestOffset);
-        }
-      }
-      if (best != nullptr) {
+      if (named.size() == placed.size() && Invert3(basis, inverse)) {
+        const Placed& p = placed[n];
         out.ok = true;
-        std::copy(bestOffset, bestOffset + 3, out.offset);
-        m_retailEntities.insert(best->entity);
+        out.entity = p.entity;
+        for (int i = 0; i < 3; ++i) {
+          for (int j = 0; j < 3; ++j) {
+            out.orient[i][j] =
+                inverse[i][0] * p.basis[0][j] + inverse[i][1] * p.basis[1][j] + inverse[i][2] * p.basis[2][j];
+          }
+          out.offset[i] = inverse[i][0] * (p.pos[0] - o.pos[0]) + inverse[i][1] * (p.pos[1] - o.pos[1]) +
+                          inverse[i][2] * (p.pos[2] - o.pos[2]);
+        }
+        m_retailEntities.insert(p.entity);
       }
       m_io.retailModel(out);
     }

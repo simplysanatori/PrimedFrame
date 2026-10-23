@@ -2611,7 +2611,8 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   };
   // What the room models stage needs from this one, as the record's `extra` lines:
   // "g <uuid> <id> <joint> <liquid>" a model, "l <lava values>" a lava pool, in order;
-  // "r <uuid> <retail> <mrea> <object> <ok> <offset x y z> <room>" a retail model's placement.
+  // "r <uuid> <retail> <mrea> <object> <ok> <entity> <orient, 9> <offset x y z> <room>" a retail
+  // model's placement.
   if (roomsReused) {
     StageRecord& kept = made["rooms"];
     roomFiles = int(kept.counts["files"]);
@@ -2629,12 +2630,18 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         geometry.push_back(g);
       } else if (tag == "r") {
         std::string uuid;
-        std::string offset[3];
+        std::string orient[9], offset[3];
         RetailPlacement& p = retailPlacements.emplace_back();
-        in >> uuid >> std::hex >> p.retail >> p.mrea >> p.object >> std::dec >> p.ok >> offset[0] >> offset[1] >>
-            offset[2] >> p.room;
+        in >> uuid >> std::hex >> p.retail >> p.mrea >> p.object >> std::dec >> p.ok >> p.entity;
+        for (std::string& value : orient) {
+          in >> value;
+        }
+        in >> offset[0] >> offset[1] >> offset[2] >> p.room;
         for (size_t b = 0; b < p.model.size() && b * 2 + 1 < uuid.size(); ++b) {
           p.model[b] = uint8_t(std::strtoul(uuid.substr(b * 2, 2).c_str(), nullptr, 16));
+        }
+        for (int i = 0; i < 9; ++i) {
+          p.orient[i / 3][i % 3] = std::strtod(orient[i].c_str(), nullptr);
         }
         for (int i = 0; i < 3; ++i) {
           p.offset[i] = std::strtod(offset[i].c_str(), nullptr);
@@ -2679,9 +2686,14 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     }
     for (const RetailPlacement& p : retailPlacements) {
       char line[256];
-      std::snprintf(line, sizeof(line), "r %s %08X %08X %08X %d %a %a %a %s", UuidText(p.model).c_str(), p.retail, p.mrea,
-                    p.object, int(p.ok), p.offset[0], p.offset[1], p.offset[2], p.room.c_str());
-      stage.extra.push_back(line);
+      std::snprintf(line, sizeof(line), "r %s %08X %08X %08X %d %d", UuidText(p.model).c_str(), p.retail, p.mrea,
+                    p.object, int(p.ok), p.entity);
+      std::string text = line;
+      for (int i = 0; i < 12; ++i) {
+        std::snprintf(line, sizeof(line), " %a", i < 9 ? p.orient[i / 3][i % 3] : p.offset[i - 9]);
+        text += line;
+      }
+      stage.extra.push_back(text + " " + p.room);
     }
     endStage();
     if (brdfMissing) {
@@ -2690,12 +2702,13 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
   }
 
   // The retail models Remastered keeps under their retail ids that the table doesn't pair. The
-  // offset is the model's own (where its vertices sit against retail's), so one replaces its
-  // retail model when the retail objects that found their entity (RetailPlacement) all found it at
-  // one offset: "paired", or "partial" when other objects naming it found none (Remastered may have
-  // dropped those). One whose placements disagree, or that no object found, stays retail.
-  // reports/retailmodels.tsv lists each with its placements. Other assets share the id prefix
-  // (textures, effects), so only Remastered's models count.
+  // orient and offset are the model's own (where its vertices sit against retail's), so one
+  // replaces its retail model when the retail objects paired with their entities (RetailPlacement)
+  // all found it at one transform: "paired", or "partial" when other objects naming it are in an
+  // area whose count of them differs from its room's entities. One whose placements differ
+  // ("per-instance": Remastered moved some of its objects on their own), or that no object paired
+  // with ("unpaired"), stays retail. reports/retailmodels.tsv lists each with its placements. Other
+  // assets share the id prefix (textures, effects), so only Remastered's models count.
   {
     std::sort(retailPlacements.begin(), retailPlacements.end(), [](const RetailPlacement& a, const RetailPlacement& b) {
       return std::tie(a.retail, a.mrea, a.object, a.room) < std::tie(b.retail, b.mrea, b.object, b.room);
@@ -2709,15 +2722,35 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     struct RetailModel {
       ModelUuid uuid;
       uint32_t retail;
+      double orient[3][3];
       double offset[3];
     };
     std::vector<RetailModel> retailModels;
-    std::string report = "retail\tstatus\toffset\ttable offset\tplacements (room object ok offset)\n";
+    std::string report = "retail\tstatus\torient\toffset\ttable orient\ttable offset\t"
+                         "placements (room object entity ok orient offset)\n";
     std::map<std::string, int> statusCount;
     const auto offsetText = [](const double* o) {
       char text[96];
       std::snprintf(text, sizeof(text), "%.3f,%.3f,%.3f", o[0], o[1], o[2]);
       return std::string(text);
+    };
+    const auto orientText = [](const double (*m)[3]) {
+      std::string text;
+      for (int i = 0; i < 9; ++i) {
+        char value[32];
+        std::snprintf(value, sizeof(value), "%s%.3f", i == 0 ? "" : ",", m[i / 3][i % 3] + 0.0);
+        text += value;
+      }
+      return text;
+    };
+    const auto same = [](const RetailPlacement& a, const RetailPlacement& b) {
+      for (int i = 0; i < 9; ++i) {
+        if (std::fabs(a.orient[i / 3][i % 3] - b.orient[i / 3][i % 3]) >= 1e-3) {
+          return false;
+        }
+      }
+      return std::fabs(a.offset[0] - b.offset[0]) < 0.01 && std::fabs(a.offset[1] - b.offset[1]) < 0.01 &&
+             std::fabs(a.offset[2] - b.offset[2]) < 0.01;
     };
     for (auto first = retailPlacements.begin(); first != retailPlacements.end();) {
       const auto last = std::find_if(first, retailPlacements.end(),
@@ -2728,38 +2761,46 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
       const auto ok = std::find_if(first, last, [](const RetailPlacement& p) { return p.ok; });
       const bool all = std::all_of(first, last, [](const RetailPlacement& p) { return p.ok; });
-      const bool agree = ok != last && std::all_of(first, last, [&](const RetailPlacement& p) {
-        return !p.ok || (std::fabs(p.offset[0] - ok->offset[0]) < 0.01 && std::fabs(p.offset[1] - ok->offset[1]) < 0.01 &&
-                         std::fabs(p.offset[2] - ok->offset[2]) < 0.01);
-      });
+      const bool agree =
+          ok != last && std::all_of(first, last, [&](const RetailPlacement& p) { return !p.ok || same(p, *ok); });
       const auto table = inTable.find(first->retail);
-      const char* status = ok == last                  ? "unplaced"
-                           : !agree                    ? "disagree"
+      const char* status = ok == last                  ? "unpaired"
+                           : !agree                    ? "per-instance"
                            : table != inTable.end()    ? "table"
                            : all                       ? "paired"
                                                        : "partial";
       ++statusCount[status];
       char head[32];
       std::snprintf(head, sizeof(head), "%08X\t", first->retail);
-      report += head + std::string(status) + "\t" + (agree ? offsetText(ok->offset) : "-") + "\t" +
-                (table != inTable.end() ? offsetText(table->second->offset) : "-") + "\t";
+      report += head + std::string(status) + "\t" + (agree ? orientText(ok->orient) : "-") + "\t" +
+                (agree ? offsetText(ok->offset) : "-") + "\t";
+      if (table != inTable.end()) {
+        double orient[3][3];
+        for (int i = 0; i < 9; ++i) {
+          orient[i / 3][i % 3] = table->second->orient[i];
+        }
+        report += orientText(orient) + "\t" + offsetText(table->second->offset) + "\t";
+      } else {
+        report += "-\t-\t";
+      }
       for (auto p = first; p != last; ++p) {
         char text[64];
-        std::snprintf(text, sizeof(text), " %08X %d ", p->object, int(p->ok));
-        report += (p == first ? "" : "; ") + p->room + text + offsetText(p->offset);
+        std::snprintf(text, sizeof(text), " %08X #%d %d ", p->object, p->entity, int(p->ok));
+        report += (p == first ? "" : "; ") + p->room + text + orientText(p->orient) + " " + offsetText(p->offset);
       }
       report += '\n';
       if (agree && table == inTable.end()) {
         RetailModel& m = retailModels.emplace_back();
         std::copy(first->model.begin(), first->model.end(), m.uuid.begin());
         m.retail = first->retail;
+        std::copy(&ok->orient[0][0], &ok->orient[0][0] + 9, &m.orient[0][0]);
         std::copy(ok->offset, ok->offset + 3, m.offset);
       }
       first = last;
     }
     std::string list;
     for (const RetailModel& m : retailModels) {
-      list += UuidText(m.uuid) + " " + Hex8(m.retail) + " " + offsetText(m.offset) + "\n";
+      list += UuidText(m.uuid) + " " + Hex8(m.retail) + " " + orientText(m.orient) + " " + offsetText(m.offset) + "\n";
     }
     {
       std::string counts;
@@ -2790,6 +2831,14 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
           ConvertOptions options;
           options.retail = m.retail;
           options.source = UuidText(m.uuid);
+          // The placement's orient after kR2G, the default orient.
+          const ConvertOptions defaults;
+          for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) {
+              options.orient[r][c] = m.orient[r][0] * defaults.orient[0][c] + m.orient[r][1] * defaults.orient[1][c] +
+                                     m.orient[r][2] * defaults.orient[2][c];
+            }
+          }
           std::copy(m.offset, m.offset + 3, options.offset);
           options.pbr = true;
           std::string modelError;
