@@ -95,6 +95,19 @@ fn hdr_tev_srcalpha_add(c: vec3f, alpha: f32, t0: vec4f, t1: vec4f, t2: vec4f) -
   }
   return hdr_exposed(clamp(c, vec3f(0.0), vec3f(1.0)) * a, t0, t1, t2) / a;
 }
+
+// Legacy GX blends where the source colour scales the destination (hdr_tev_blend.y): 1 is
+// dst * src (ZERO/SRCCLR, DSTCLR/ZERO), 2 is dst * (1 + src) (DSTCLR/ONE). The source is a factor,
+// not light: a display factor k on the encoded picture is about k^2.2 on its linear light, and the
+// exposed scene is that light scaled, so the factor goes over linear, not through the inverse curve
+// (which made it depend on the room's exposure and takes white to the shoulder's asymptote).
+fn hdr_tev_dst_factor(c: vec3f, mode: f32) -> vec3f {
+  let k = clamp(c, vec3f(0.0), vec3f(1.0));
+  if (mode > 1.5) {
+    return pow(vec3f(1.0) + k, vec3f(2.2)) - vec3f(1.0);
+  }
+  return hdr_srgb_dec(k);
+}
 )""";
 
 // The single post-tone (post_tone below) for a shader that turns exposed scene light into display
@@ -179,6 +192,12 @@ inline float tev_srcalpha_add(float c, float alpha, const Tone& t) noexcept {
     return 0.f;
   }
   return exposed(std::clamp(c, 0.f, 1.f) * a, t) / a;
+}
+
+// CPU reference for hdr_tev_dst_factor (mode 1: dst * src, 2: dst * (1 + src)).
+inline float tev_dst_factor(float c, int mode) noexcept {
+  const float k = std::clamp(c, 0.f, 1.f);
+  return mode == 2 ? std::pow(1.f + k, 2.2f) - 1.f : srgb_dec(k);
 }
 
 // What the single post-tone after the HDR scene draws for an exposed level: the LDR PBR encode

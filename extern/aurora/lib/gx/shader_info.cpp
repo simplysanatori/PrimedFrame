@@ -556,7 +556,18 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
     }
     const bool compatSrcAlphaAdditive = g_gxState.blendMode == GX_BM_BLEND && g_gxState.blendFacSrc == GX_BL_SRCALPHA &&
                                         g_gxState.blendFacDst == GX_BL_ONE;
-    buf.append(Vec4<float>{compatSrcAlphaAdditive ? 1.f : 0.f, 0.f, 0.f, 0.f});
+    // y: the source colour scales the destination (hdr_tev_dst_factor): 1 dst * src, 2 dst * (1 + src).
+    float dstFactor = 0.f;
+    if (g_gxState.blendMode == GX_BM_BLEND) {
+      const auto src = g_gxState.blendFacSrc;
+      const auto dst = g_gxState.blendFacDst;
+      if ((src == GX_BL_ZERO && dst == GX_BL_SRCCLR) || (src == GX_BL_DSTCLR && dst == GX_BL_ZERO)) {
+        dstFactor = 1.f;
+      } else if (src == GX_BL_DSTCLR && dst == GX_BL_ONE) {
+        dstFactor = 2.f;
+      }
+    }
+    buf.append(Vec4<float>{compatSrcAlphaAdditive ? 1.f : 0.f, dstFactor, 0.f, 0.f});
   }
   if (info.usesHudDyin) {
     buf.append(g_gxState.hudDyin);

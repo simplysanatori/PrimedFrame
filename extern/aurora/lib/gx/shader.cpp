@@ -4118,7 +4118,7 @@ fn vf_apply_hdr(c: vec4f, fog: vec4f, w: f32) -> vec4f {
   }
   if (info.usesHdrTone) {
     uniBufAttrs += "\n    hdr_tone: array<vec4f, 3>,";
-    uniBufAttrs += "\n    hdr_tev_blend: vec4f, // x: compatSrcAlphaAdditive";
+    uniBufAttrs += "\n    hdr_tev_blend: vec4f, // x: compatSrcAlphaAdditive, y: dst factor mode";
   }
   // The tone rows a display colour goes back through into the HDR scene.
   const std::string_view hdrTone = config.pbr ? "ubuf.pbr_tone[0], ubuf.pbr_tone[1], ubuf.pbr_tone[2]"
@@ -4132,6 +4132,8 @@ fn vf_apply_hdr(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     return fmt::format(
         "\n    // HDR scene\n    if (ubuf.hdr_tev_blend.x > 0.5) {{\n"
         "        prev = vec4f(hdr_tev_srcalpha_add(prev.rgb, prev.a, {}), prev.a);\n"
+        "    }} else if (ubuf.hdr_tev_blend.y > 0.5) {{\n"
+        "        prev = vec4f(hdr_tev_dst_factor(prev.rgb, ubuf.hdr_tev_blend.y), prev.a);\n"
         "    }} else {{\n        {}\n    }}",
         hdrTone, original);
   };
@@ -4273,7 +4275,8 @@ fn vf_apply_hdr(c: vec4f, fog: vec4f, w: f32) -> vec4f {
   }
   if (config.sceneHdr && !pbrEmitted && !hdrConverted) {
     // Retail TEV (and SDF) colour is display sRGB: decoded and taken back through the room's tone
-    // curve. SRCALPHA/ONE weights display RGB first; other blends keep the original inverse.
+    // curve. SRCALPHA/ONE weights display RGB first; blends where the source scales the destination
+    // (multiply, add-dest-colour) take it as a linear factor; other blends keep the original inverse.
     // Alpha is preserved in both branches; hardware blending still operates on exposed light.
     fragmentFn += hdrTevConvert();
   }

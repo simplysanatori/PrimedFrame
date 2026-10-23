@@ -1234,6 +1234,12 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   contribution: TEV alpha can slightly exceed one, and subsequent volumetric fog attenuates light.
   Other legacy SRCALPHA/ONE effects intentionally share this policy; this is not full visual
   certification of those effects.
+  Draws whose source colour scales the destination (ZERO/SRCCLR and DSTCLR/ZERO multiply, the
+  camera filters' DSTCLR/ONE add-dest-colour) take it as a linear gain instead (sRGB decode;
+  `(1 + c)^2.2 - 1` for add-dest-colour): through the inverse curve the factor depended on the
+  room's exposure (the underwater filter darkened Frigate Crash Site; white would go to the
+  shoulder's asymptote). The inverting filter (INVDSTCLR/ZERO) and
+  destination-alpha blends are not converted.
   This is not exact LDR compositing over a nonblack background: the tone curve is nonlinear.
   It does not claim Remastered parity or change other blend modes, native HDR writers, bloom,
   room tone or exposure.
