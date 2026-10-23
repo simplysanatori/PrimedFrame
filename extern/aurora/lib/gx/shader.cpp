@@ -4118,7 +4118,7 @@ fn vf_apply_hdr(c: vec4f, fog: vec4f, w: f32) -> vec4f {
   }
   if (info.usesHdrTone) {
     uniBufAttrs += "\n    hdr_tone: array<vec4f, 3>,";
-    uniBufAttrs += "\n    hdr_tev_blend: vec4f, // x: compatSrcAlphaAdditive, y: dst factor mode";
+    uniBufAttrs += "\n    hdr_tev_blend: vec4f, // x: SRCALPHA/ONE or SRCALPHA/INVSRCALPHA, y: dst factor mode";
   }
   // The tone rows a display colour goes back through into the HDR scene.
   const std::string_view hdrTone = config.pbr ? "ubuf.pbr_tone[0], ubuf.pbr_tone[1], ubuf.pbr_tone[2]"

@@ -78,11 +78,17 @@ fn hdr_exposed(c: vec3f, t0: vec4f, t1: vec4f, t2: vec4f) -> vec3f {
 }
 )""";
 
-// Legacy GX SRCALPHA/ONE only: weight in display space BEFORE the nonlinear inverse.
+// Legacy GX SRCALPHA/ONE and SRCALPHA/INVSRCALPHA (retail particles' and glass's alpha blend): the
+// source term is a * c in both, so weight it in display space BEFORE the nonlinear inverse. The plain
+// inverse sent an alpha-blended white to the shoulder's asymptote, and a * that stayed in the hundreds
+// (Elite Quarters' tank glass drew flat saturated blue). ONE/INVSRCALPHA needs no conversion: its source
+// is premultiplied, so the plain inverse already gives the source term exactly.
 // With local a = clamp(alpha,0,1), post_tone(a * H_add(c,alpha)) equals clamp(c,0,1) * a,
 // within inverse/target precision. Hardware multiplies by the preserved TEV alpha once, so
 // this over-black display identity assumes normalized alpha in [0,1] and an isolated,
 // unfogged contribution: TEV alpha can slightly exceed 1, and later volumetric fog attenuates light.
+// Over a nonblack background an alpha-over layer draws darker than LDR's display blend (mid grey at
+// alpha 0.5 over itself: about 0.43 for 0.5), where the plain inverse drew it brighter over dark ones.
 // Other legacy SRCALPHA/ONE effects intentionally share this policy; this is not full visual
 // certification, exact LDR compositing over nonblack backgrounds (the curve is nonlinear),
 // or Remastered parity.

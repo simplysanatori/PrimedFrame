@@ -553,7 +553,7 @@ static void push_gx_draw(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, gfx::Rang
     cache.lineMode = lineMode;
     cache.hasPipeline = true;
     // BP cmode0 (blend state) is DirtyPipeline. Always refresh uniforms even when only that
-    // register changed: non-PBR HDR's hdr_tev_blend follows the actual SRCALPHA/ONE blend.
+    // register changed: non-PBR HDR's hdr_tev_blend follows the actual SRCALPHA/ONE or SRCALPHA/INVSRCALPHA blend.
     state.dirty = (state.dirty & ~DirtyPipeline) | DirtyUniform;
     if (!hadPipeline || prevSampledTextures != cache.shaderInfo.sampledTextures ||
         prevSampledIndTextures != cache.shaderInfo.sampledIndTextures ||

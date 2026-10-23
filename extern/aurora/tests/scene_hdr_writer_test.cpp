@@ -61,6 +61,26 @@ TEST(SceneHdrTone, SrcAlphaAdditiveWeightsDisplayBeforeTheInverse) {
   EXPECT_EQ(gfx::hdr::tev_srcalpha_add(1.f, 2.f, RainTone), gfx::hdr::exposed(1.f, RainTone));
 }
 
+TEST(SceneHdrTone, AlphaOverWeightsTheSourceLikeAdditive) {
+  // SRCALPHA/INVSRCALPHA draws src * a + dst * (1 - a). Over black the converted source draws as LDR's
+  // a * c; the plain inverse drew a white at alpha 0.3 as white.
+  for (const float a : {0.1f, 0.3f, 0.5f}) {
+    const float h = gfx::hdr::tev_srcalpha_add(1.f, a, RainTone);
+    EXPECT_NEAR(gfx::hdr::post_tone(a * h, RainTone), a, 2e-3f) << a;
+    EXPECT_GT(gfx::hdr::post_tone(a * gfx::hdr::exposed(1.f, RainTone), RainTone), 0.99f) << a;
+  }
+  // Over a nonblack background it is not LDR's display blend (the curve is nonlinear): a layer over its
+  // own colour draws somewhat darker, never brighter.
+  for (const float c : {0.25f, 0.5f, 0.8f}) {
+    for (const float a : {0.3f, 0.5f, 0.7f}) {
+      const float dst = gfx::hdr::exposed(c, RainTone);
+      const float out = gfx::hdr::post_tone(a * gfx::hdr::tev_srcalpha_add(c, a, RainTone) + (1.f - a) * dst, RainTone);
+      EXPECT_LE(out, c + 2e-3f) << c << " " << a;
+      EXPECT_GT(out, c - 0.12f) << c << " " << a;
+    }
+  }
+}
+
 TEST(SceneHdrTone, DstFactorBlendsScaleTheSceneLinearly) {
   // A multiply factor is a gain on the light, never the inverse curve's white (65504).
   EXPECT_EQ(gfx::hdr::tev_dst_factor(1.f, 1), 1.f);
@@ -556,7 +576,9 @@ TEST(SceneHdrGx, ActualBlendFlagFollowsToneRowsWithinTheBindingWindow) {
         ASSERT_LE(at + sizeof(RainTone) + 16, range.offset + range.size);
         std::array<float, 4> flag{};
         std::memcpy(flag.data(), frame.uniforms.data() + at + sizeof(RainTone), sizeof(flag));
-        EXPECT_EQ(flag[0], mode == GX_BM_BLEND && src == GX_BL_SRCALPHA && dst == GX_BL_ONE ? 1.f : 0.f);
+        EXPECT_EQ(flag[0],
+                  mode == GX_BM_BLEND && src == GX_BL_SRCALPHA && (dst == GX_BL_ONE || dst == GX_BL_INVSRCALPHA) ? 1.f
+                                                                                                                : 0.f);
         EXPECT_EQ(flag[1], 0.f);
         EXPECT_EQ(flag[2], 0.f);
         EXPECT_EQ(flag[3], 0.f);

@@ -156,7 +156,8 @@ bool g_testUniformCompatSrcAlphaAdditive = false;
 gfx::Range build_uniform(const ShaderInfo& info) noexcept {
   ++g_testUniformBuildCount;
   g_testUniformCompatSrcAlphaAdditive = info.usesHdrTone && g_gxState.blendMode == GX_BM_BLEND &&
-                                        g_gxState.blendFacSrc == GX_BL_SRCALPHA && g_gxState.blendFacDst == GX_BL_ONE;
+                                        g_gxState.blendFacSrc == GX_BL_SRCALPHA &&
+                                        (g_gxState.blendFacDst == GX_BL_ONE || g_gxState.blendFacDst == GX_BL_INVSRCALPHA);
   return {.offset = g_testUniformBuildCount, .size = 1};
 }
 void resolve_sampled_textures(const ShaderInfo& info) noexcept {}

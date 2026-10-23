@@ -1225,7 +1225,8 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   applies to Remastered room-environment scenes with a valid tone curve in the Combat or Scan
   visor, outside visor transitions; Thermal/X-ray, HUD/UI, and inventory remain LDR. This is
   not full beam/effect parity: other legacy effects may still use inherited exposure.
-  Legacy non-PBR GX draws using exactly SRCALPHA/ONE additive blending convert their
+  Legacy non-PBR GX draws using SRCALPHA/ONE additive or SRCALPHA/INVSRCALPHA alpha-over
+  blending (retail particles through `CElementGen`, glass) convert their
   alpha-weighted display colour into exposed light before blending, then divide RGB by the
   locally clamped alpha (zero alpha emits zero RGB). With `a = clamp(alpha, 0, 1)`, the helper
   obeys `postTone(a * H_add(c, alpha)) = clamp(c, 0, 1) * a`, within inverse-curve/target precision.
@@ -1233,7 +1234,11 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   times alpha identity therefore assumes normalized alpha in [0,1] and an isolated, unfogged
   contribution: TEV alpha can slightly exceed one, and subsequent volumetric fog attenuates light.
   Other legacy SRCALPHA/ONE effects intentionally share this policy; this is not full visual
-  certification of those effects.
+  certification of those effects. For alpha over, the plain inverse sent a blended white to the
+  curve's shoulder (Elite Quarters' tank glass drew flat saturated blue); converted, a layer over a
+  nonblack background draws somewhat darker than LDR's display blend instead (mid grey at alpha 0.5
+  over itself: about 0.43 for 0.5). ONE/INVSRCALPHA (premultiplied, Remastered's PBDM 1) is left
+  as is: its source term is already exact through the plain inverse.
   Draws whose source colour scales the destination (ZERO/SRCCLR and DSTCLR/ZERO multiply, the
   camera filters' DSTCLR/ONE add-dest-colour) take it as a linear gain instead (sRGB decode;
   `(1 + c)^2.2 - 1` for add-dest-colour): through the inverse curve the factor depended on the

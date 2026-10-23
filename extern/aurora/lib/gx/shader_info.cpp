@@ -554,8 +554,12 @@ static void fill_uniform(ByteBuffer& buf, const ShaderInfo& info) noexcept {
     for (const auto& v : g_gxState.pbrTone) {
       buf.append(v);
     }
-    const bool compatSrcAlphaAdditive = g_gxState.blendMode == GX_BM_BLEND && g_gxState.blendFacSrc == GX_BL_SRCALPHA &&
-                                        g_gxState.blendFacDst == GX_BL_ONE;
+    // x: a source weighted by its alpha, SRCALPHA/ONE (additive) or SRCALPHA/INVSRCALPHA (alpha over), goes
+    // through the inverse curve already weighted (hdr_tev_srcalpha_add). ONE/INVSRCALPHA needs nothing: its
+    // source is premultiplied, so the plain inverse already gives the source term exactly.
+    const bool compatSrcAlphaAdditive =
+        g_gxState.blendMode == GX_BM_BLEND && g_gxState.blendFacSrc == GX_BL_SRCALPHA &&
+        (g_gxState.blendFacDst == GX_BL_ONE || g_gxState.blendFacDst == GX_BL_INVSRCALPHA);
     // y: the source colour scales the destination (hdr_tev_dst_factor): 1 dst * src, 2 dst * (1 + src).
     float dstFactor = 0.f;
     if (g_gxState.blendMode == GX_BM_BLEND) {

@@ -389,7 +389,8 @@ TEST_F(GXSceneHdrFifoTest, BlendOnlyTransitionsRefreshTheHdrUniform) {
         Blend{GX_BM_BLEND, GX_BL_ONE, GX_BL_ONE, false}, Blend{GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, true},
         Blend{GX_BM_SUBTRACT, GX_BL_SRCALPHA, GX_BL_ONE, false}, Blend{GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, true},
         Blend{GX_BM_LOGIC, GX_BL_SRCALPHA, GX_BL_ONE, false}, Blend{GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, true},
-        Blend{GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, false}}) {
+        Blend{GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, true}, Blend{GX_BM_BLEND, GX_BL_ONE, GX_BL_INVSRCALPHA, false},
+        Blend{GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, true}}) {
     const u32 before = g_testUniformBuildCount;
     GXSetBlendMode(b.mode, b.src, b.dst, GX_LO_COPY);
     draw();
