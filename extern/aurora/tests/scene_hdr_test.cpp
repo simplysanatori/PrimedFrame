@@ -110,7 +110,6 @@ protected:
       GTEST_SKIP() << "no Dawn Null-backend device";
     }
     g_uncapturedErrors.clear();
-    // The policy gate under test; the Null adapter's own feature list is irrelevant to it.
     webgpu::g_hasCoreFeatures = true;
     webgpu::g_graphicsConfig.surfaceConfiguration.format = ColorFormat;
     webgpu::g_graphicsConfig.depthFormat = DepthFormat;
@@ -210,20 +209,12 @@ TEST_F(SceneHdrTest, OffKeepsTheLdrLayoutAndKey) {
   EXPECT_EQ(frame.renderPasses.front().target_layout().key, ldr_layout(1).key);
 }
 
-TEST_F(SceneHdrTest, NoCoreDeviceFailsClosedAndAllocatesNothing) {
+TEST_F(SceneHdrTest, CompatibilityDeviceStillGetsTheHdrTarget) {
   webgpu::g_hasCoreFeatures = false;
-  EXPECT_FALSE(webgpu::scene_hdr_supported());
-  EXPECT_FALSE(webgpu::ensure_scene_hdr_target());
-  EXPECT_FALSE(set_scene_hdr(true));
-  EXPECT_FALSE(scene_hdr_active());
-  EXPECT_FALSE(webgpu::g_sceneHdr.texture);
-  EXPECT_FALSE(webgpu::g_sceneHdrResolved.texture);
-  EXPECT_EQ(webgpu::scene_hdr_sample_count(), 0u);
-  EXPECT_EQ(frame.renderPasses.size(), 1u);
-  EXPECT_EQ(current_pass().colorAttachments[SceneColorAttachmentIndex].format, ColorFormat);
-  // Turning it off when it is already off is a no-op that succeeds.
-  EXPECT_TRUE(set_scene_hdr(false));
-  EXPECT_EQ(frame.renderPasses.size(), 1u);
+  EXPECT_TRUE(webgpu::scene_hdr_supported());
+  EXPECT_TRUE(webgpu::ensure_scene_hdr_target());
+  EXPECT_TRUE(webgpu::g_sceneHdr.texture && webgpu::g_sceneHdrResolved.texture);
+  EXPECT_EQ(webgpu::scene_hdr_sample_count(), 1u);
 }
 
 TEST_F(SceneHdrTest, AllocatesRealTexturesAtTheEfbSampleCount) {

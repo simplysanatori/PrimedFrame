@@ -371,7 +371,6 @@ uint32_t g_sceneHdrSamples = 0;
 // changes or release_scene_hdr_target() runs.
 wgpu::Extent3D g_sceneHdrFailedSize{};
 uint32_t g_sceneHdrFailedSamples = 0;
-bool g_sceneHdrNoCoreLogged = false;
 
 bool scene_hdr_handles_valid(const TextureWithSampler& target) noexcept {
   return target.texture && target.view && target.format == SceneHdrFormat;
@@ -439,7 +438,7 @@ bool create_scene_hdr_textures(uint32_t width, uint32_t height, std::string& err
 }
 } // namespace
 
-bool scene_hdr_supported() noexcept { return g_device && g_hasCoreFeatures; }
+bool scene_hdr_supported() noexcept { return static_cast<bool>(g_device); }
 
 bool ensure_scene_hdr_target() {
   const auto size = g_frameBuffer.size;
@@ -452,13 +451,6 @@ bool ensure_scene_hdr_target() {
   // Stale (other size or sample count) or partial: never reused.
   release_scene_hdr_textures();
   if (!g_device || size.width == 0 || size.height == 0) {
-    return false;
-  }
-  if (!g_hasCoreFeatures) {
-    if (!g_sceneHdrNoCoreLogged) {
-      g_sceneHdrNoCoreLogged = true;
-      Log.info("HDR scene target disabled: the device lacks CoreFeaturesAndLimits");
-    }
     return false;
   }
   if (g_sceneHdrFailedSamples == samples && g_sceneHdrFailedSize.width == size.width &&
@@ -474,6 +466,7 @@ bool ensure_scene_hdr_target() {
     return false;
   }
   g_sceneHdrSamples = samples;
+  Log.info("HDR scene target {}x{} ({} samples) allocated", size.width, size.height, samples);
   g_sceneHdrFailedSize = {};
   g_sceneHdrFailedSamples = 0;
   return true;
@@ -1234,6 +1227,12 @@ static bool initialize_once(AuroraBackend auroraBackend, bool allowCpu) {
           feature == wgpu::FeatureName::TextureCompressionASTC ||
           feature == wgpu::FeatureName::TextureComponentSwizzle || feature == wgpu::FeatureName::DualSourceBlending) {
         if (feature == wgpu::FeatureName::CoreFeaturesAndLimits) {
+          // MP_GPU_NO_CORE=1 leaves it out, so Dawn validates the device as a Compatibility one
+          // (to test those paths on a Vulkan desktop).
+          if (const char* noCore = std::getenv("MP_GPU_NO_CORE"); noCore != nullptr && noCore[0] == '1') {
+            Log.info("MP_GPU_NO_CORE=1: not requesting CoreFeaturesAndLimits");
+            continue;
+          }
           g_hasCoreFeatures = true;
         } else if (feature == wgpu::FeatureName::TextureCompressionBC) {
           g_bcTexturesSupported = true;
