@@ -39,10 +39,8 @@
 // its HDR frame; here a 16x16 grid of tiles, each the mean of 8x8 exposed samples, read back
 // a few frames later and divided by the exposure the frame was drawn at.
 // On the HDR scene (gfx::set_scene_hdr), which holds the exposed linear light itself, the same chain
-// reads it as it is (HdrSource): no decode, no inverse curve; the composite tones it once into the
-// display EFB, which the frame goes on drawing into. Its bright pass keeps the cap, as retail TEV draws
-// still reach that scene through the inverse curve (hdr_exposed), display white as the shoulder's
-// asymptote, and blends of it hold hundreds to thousands where the LDR pass reads 4.0.
+// reads it as it is (HdrSource): no decode, no inverse curve, no cap; the composite tones it once into
+// the display EFB, which the frame goes on drawing into.
 namespace aurora::gfx::bloom {
 namespace {
 Module Log("aurora::gfx::bloom");
@@ -283,14 +281,6 @@ fn hdr_raw(c: vec3f) -> vec3f {
 
 const hdr_luma = vec3f(0.2126, 0.7152, 0.0722);
 
-// A scene texel as the bright pass takes it: capped at MaxExposed, as exposed() caps the EFB's. A retail
-// TEV draw's white comes back through the inverse curve as its asymptote, and a blend of it (a tank's
-// glass) holds a channel in the thousands; the pass, which scales each tap to luminance 8 at most,
-// turned that channel into a saturated halo far wider than the LDR bloom's.
-fn bloom_raw(c: vec3f) -> vec3f {
-  return min(hdr_raw(c), vec3f(MaxExposed));
-}
-
 // bright_tap on the scene's own texels, filtered as they are, then the bright pass over the blend.
 fn bright_tap_hdr(uv: vec2f, size: vec2i) -> vec3f {
   let pos = uv * vec2f(size) - vec2f(0.5);
@@ -299,10 +289,10 @@ fn bright_tap_hdr(uv: vec2f, size: vec2i) -> vec3f {
   let last = size - vec2i(1);
   let j0 = clamp(vec2i(base), vec2i(0), last);
   let j1 = clamp(vec2i(base) + vec2i(1), vec2i(0), last);
-  let d00 = bloom_raw(textureLoad(src, vec2i(j0.x, j0.y), 0).rgb);
-  let d10 = bloom_raw(textureLoad(src, vec2i(j1.x, j0.y), 0).rgb);
-  let d01 = bloom_raw(textureLoad(src, vec2i(j0.x, j1.y), 0).rgb);
-  let d11 = bloom_raw(textureLoad(src, vec2i(j1.x, j1.y), 0).rgb);
+  let d00 = hdr_raw(textureLoad(src, vec2i(j0.x, j0.y), 0).rgb);
+  let d10 = hdr_raw(textureLoad(src, vec2i(j1.x, j0.y), 0).rgb);
+  let d01 = hdr_raw(textureLoad(src, vec2i(j0.x, j1.y), 0).rgb);
+  let d11 = hdr_raw(textureLoad(src, vec2i(j1.x, j1.y), 0).rgb);
   // The blend's luminance is a weighted mean of its texels': none above the threshold adds nothing.
   let hi = max(max(dot(d00, hdr_luma), dot(d10, hdr_luma)), max(dot(d01, hdr_luma), dot(d11, hdr_luma)));
   if (hi <= p.tint.w) {
