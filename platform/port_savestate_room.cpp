@@ -55,6 +55,7 @@ enum RoomTag : uint32_t {
   kTagRotate = 12,    // a turn in progress: flags, time, then per actor editor id + start rotation
   kTagFields = 13,    // an enemy's own fields through the entity schema (port_savestate_fields.cpp)
   kTagDock = 14,      // the dock's reference, then per reference its load-other flag
+  kTagCinematic = 15, // a running cinematic camera: elapsed time, passed view point, passed target
 };
 
 // Friend of the script classes whose state is private.
@@ -456,6 +457,15 @@ void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
       obj.blocks.push_back({kTagDock, w.bytes});
     }
   }
+  if (CCinematicCamera* cine = TCastToPtr< CCinematicCamera >(&ent)) {
+    if (cine->GetActive()) {
+      BlockWriter w;
+      w.F32(cine->PortElapsed());
+      w.U32(static_cast< uint32_t >(cine->PortPassedViewPoint()));
+      w.U32(static_cast< uint32_t >(cine->PortPassedTarget()));
+      obj.blocks.push_back({kTagCinematic, w.bytes});
+    }
+  }
   if (CScriptDoor* door = TCastToPtr< CScriptDoor >(&ent)) {
     DoorSaveState state;
     state.open = door->IsOpen();
@@ -548,6 +558,18 @@ int ReplayScriptMsgs(CStateManager& mgr, CEntity& ent, const RoomObject& obj, bo
 
 void ApplyObject(CStateManager& mgr, CEntity& ent, const RoomObject& obj, RoomApplyStats& stats) {
   RestoreActive(mgr, ent, obj.active);
+  // A cinematic camera saved mid-shot picks the shot up where it was (RestoreActive only
+  // set its flag: its Activate handler would restart it). Saves without the block keep that.
+  if (CCinematicCamera* cine = TCastToPtr< CCinematicCamera >(&ent)) {
+    const RoomBlock* b = FindBlock(obj, kTagCinematic);
+    if (b != nullptr && obj.active && cine->GetActive()) {
+      BlockReader r(b->data);
+      const float t = r.F32();
+      const int viewPoint = static_cast< int >(r.U32());
+      const int target = static_cast< int >(r.U32());
+      cine->PortResumeCinematic(t, viewPoint, target, mgr);
+    }
+  }
   // An enemy whose fields block covers it gets its state (AI, body, animation, boss phase)
   // from that block, on top of the Activate above: replaying its messages and the per-boss
   // restore would only be undone (2026-10-23 sweep, 19 enemy/boss scenarios). Saves without
