@@ -340,7 +340,7 @@ namespace PortSaveState {
 namespace {
 
 // Bump when what SavedField picks or how a kind is written changes.
-constexpr uint32_t kFieldPolicy = 3;
+constexpr uint32_t kFieldPolicy = 4;
 
 constexpr uint32_t kUidNone = 0xFFFFFFFFu;    // kInvalidUniqueId
 constexpr uint32_t kUidDynamic = 0xFFFFFFFEu; // an object without an editor id: left alone
@@ -383,8 +383,14 @@ bool SavedField(const PortSchemaClass& cls, const PortSchemaField& f) {
                           "xe6_31_targetableVisorFlags", "xe7_27_enableRender", "xe7_29_drawEnabled",
                           "xe7_30_doTargetDistanceTest", "xe7_31_targetable"});
   if (std::strcmp(cls.name, "CPhysicsActor") == 0)
-    return Named(f.name, {"xf8_24_movable", "xf8_25_angularEnabled", "x108_angularMomentum",
-                          "x144_angularVelocity", "x24c_numTicksStuck"});
+    // Motion too, though kTagMotion has velocity and momentum: these are applied after
+    // the codecs, and the force/impulse a Think queued for the next physics step would
+    // otherwise be lost (war wasps' x168_impulse).
+    return Named(f.name, {"xf8_24_movable", "xf8_25_angularEnabled", "xfc_constantForce",
+                          "x108_angularMomentum", "x138_velocity", "x144_angularVelocity",
+                          "x150_momentum", "x15c_force", "x168_impulse", "x174_torque",
+                          "x180_angularImpulse", "x18c_moveImpulse", "x198_moveAngularImpulse",
+                          "x24c_numTicksStuck"});
   // CAi's health is the kTagHealth block's (Omega Pirate keeps its own elsewhere).
   if (std::strcmp(cls.name, "CAi") == 0)
     return std::strcmp(f.name, "x258_healthInfo") != 0;
