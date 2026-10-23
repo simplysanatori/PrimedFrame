@@ -3652,11 +3652,13 @@ void CStateManager::DrawWorld() const {
   // Opaque world, opaque models, sky and decals are all down (port_scene_copy.h).
   PortSceneCopyPoint();
   // Remastered's auto-exposure measure: the opaque colour copy, before the transparents
-  // (kb topic/auto-exposure-average.md). Thermal and X-Ray frames are not measured.
+  // (kb topic/auto-exposure-average.md), measured in every visor too: Remastered measures the
+  // visor target's opaque frame, before X-ray pass A or the thermal cold blend
+  // (kb topic/visor-hdr-pipeline.md, step 5). The port draws the world at full size, so it
+  // measures the frame's own opaque copy. The visor-change exposure hint A/B swap is not
+  // implemented: the port has no CAutoExposureHintMP1GOC data (same kb, "Exposure on visor change").
   if (portSceneHdrRequested && !portZoomed) {
-    const CPlayerState::EPlayerVisor visor = x8b8_playerState->GetActiveVisor(*this);
-    if (visor != CPlayerState::kPV_Thermal && visor != CPlayerState::kPV_XRay)
-      GXPortMeasureScene(PortRoomEnv::MeasureExposure());
+    GXPortMeasureScene(PortRoomEnv::MeasureExposure());
   }
   // Pass B: each area's sorted drawables and world surfaces, in the same order and with the
   // fog, light fade, PVS, draw token and room-geometry state pass A had for that area.
