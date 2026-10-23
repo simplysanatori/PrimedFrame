@@ -380,7 +380,9 @@ TEST(SceneHdrGx, PbrSourcesSkipTheEncodeOnlyInHdr) {
     EXPECT_NE(hdr.find("fn hdr_untone("), std::string::npos);
     EXPECT_NE(hdr.find("var pbr_lin = pbr_out;"), std::string::npos);
     if (kind == 36) {
-      EXPECT_NE(hdr.find("pbr_lin *= inv_c;"), std::string::npos);
+      // C is in pbr_out, before the tone, so pbr_lin carries it without a second scale.
+      EXPECT_NE(hdr.find("let pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0)) * inv_c;"), std::string::npos);
+      EXPECT_EQ(hdr.find("*= inv_c"), std::string::npos);
     }
 
     // Every line HDR adds is about HDR; every LDR line it drops is an output it replaced.

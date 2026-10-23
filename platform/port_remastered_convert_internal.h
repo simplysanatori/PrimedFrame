@@ -332,10 +332,10 @@ const int kPbrStub[kMaps] = {128, 32, 32, 32};
 // The PBR emissive map is stored as authored. Remastered's glow is the bare ICAN x ICNC
 // in scene radiance, which the post tonemap then multiplies by 2^(3 - EV) (0.03-0.09 in
 // the rooms seen); the port does the same at run time (record mode bit 32, see
-// PortSetPBRMaterial). kPbrEmissive, 0.10, is what stood in for that exposure before, and
-// is the factor the runtime falls back on outside a Remastered room. Here it only sizes a
-// ramp's mean, which is not an authored map.
-const double kPbrEmissive = 0.10;
+// PortSetPBRMaterial). Without tone data Remastered's exposure is 1 (STonemapParams::
+// BuildLinear(3.0), kb topic/post-output.md), so the glow is left as authored: 1, which is
+// also what the TEV fallback adds and what sizes a ramp's mean (not an authored map).
+const double kPbrEmissive = 1.0;
 // Ceiling on the metalness channel. Remastered applies none (the MR map is read as is);
 // it was 0.6 before the BRDF LUT and the room probe cubes, when full metals went near-black.
 const double kPbrMetalMax = 1.0;

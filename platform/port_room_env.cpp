@@ -391,6 +391,14 @@ float FrameExposure(const Area& area) {
   return sFrame.exposure > 0.f ? sFrame.exposure : area.exposure;
 }
 
+// The exposure baked light is read at: the frame's, or 1 with no tone data, where Remastered draws
+// through STonemapParams::BuildLinear(3.0) (E = 1) and uses the baked values as they are. RoomExposed
+// off (the user's toggle, not a Remastered mode) takes that same E = 1.
+float ProbeExposure(const Area& area) {
+  const float exposure = RoomExposed() ? FrameExposure(area) : 0.f;
+  return exposure > 0.f ? exposure : 1.f;
+}
+
 // MP_ROOM_ENV_GAIN: scales the room's baked and sun light alike.
 float LightGain() {
   static const float gain = port::EnvFloat("MP_ROOM_ENV_GAIN", 1.f);
@@ -848,8 +856,9 @@ float SkyGain() {
 }
 
 float GlowGain(bool frameExposed) {
-  // Before Remastered's exposure was applied the converter folded 0.10 into the glow.
-  constexpr float kFallback = 0.10f;
+  // Without tone data Remastered draws through STonemapParams::BuildLinear(3.0) (0x211ab0):
+  // exposure 1, so the glow is left as authored (kb topic/post-output.md "No tonemap data").
+  constexpr float kFallback = 1.f;
   static const bool sOff = !port::EnvFlag("MP_REMASTERED_GLOW_EXPOSURE", true);
   if (sOff || !sFrame.hasTone || !Enabled() || !RoomExposed()) {
     return kFallback;
@@ -2432,35 +2441,28 @@ bool Compose(const Located& located, Selection& out) {
       average = heaviest->gpu->average;
       mips = heaviest->gpu->mipCount;
     }
-    const float exposure = RoomExposed() ? FrameExposure(*heaviest->area) : 0.f;
-    const bool room = exposure > 0.f;
-    out.params[0] = room ? exposure * blend.intensity * share * gain : grey / average;
-    out.cubeIntensity = room ? blend.intensity * share : 1.f;
+    const float exposure = ProbeExposure(*heaviest->area);
+    out.params[0] = exposure * blend.intensity * share * gain;
+    out.cubeIntensity = blend.intensity * share;
     out.params[1] = PortRoomEnvLod::CubeLod(mips, lod);
     out.params[2] = float(mips > 2 ? mips - 2 : 0);
-    out.params[3] = ambient > 0.f ? 1.f / (room ? average * out.params[0] : grey) : 0.f;
     // Each probe's cube may be turned its own way; the blend takes the heaviest one's.
     std::memcpy(out.worldToCube, heaviest->probe->worldToCube, sizeof(out.worldToCube));
-    if (room && blend.max > 1e-6f && std::fabs(blend.intensity) >= 1e-5f) {
+    if (blend.max > 1e-6f && std::fabs(blend.intensity) >= 1e-5f) {
       out.occlusionMin = blend.min / blend.intensity;
       out.occlusionInvMax = 1.f / blend.max;
     }
   } else if (located.cube != nullptr) {
     const Probe& probe = *located.probe;
     const GpuCube& gpu = *located.cube;
-    // The cube is exposed so that its average direction is middle grey, which is what
-    // Remastered's auto exposure aims for (its Tonemap's key is 0.18 too); the lamps in
-    // it then come out many times brighter than white, as they should.
-    // With the room's exposure the cube keeps its level instead: a probe in a dark
+    // The cube keeps its level at the frame's exposure (1 with no tone data): a probe in a dark
     // corner reflects a dark corner.
-    const float exposure = RoomExposed() ? FrameExposure(*located.cubeArea) : 0.f;
-    const bool room = exposure > 0.f;
+    const float exposure = ProbeExposure(*located.cubeArea);
     out.cube = gpu.id;
-    out.params[0] = room ? exposure * probe.scale * gain : grey / gpu.average;
-    out.cubeIntensity = room ? probe.scale : 1.f;
+    out.params[0] = exposure * probe.scale * gain;
+    out.cubeIntensity = probe.scale;
     out.params[1] = PortRoomEnvLod::CubeLod(gpu.mipCount, lod);
     out.params[2] = float(gpu.mipCount > 2 ? gpu.mipCount - 2 : 0);
-    out.params[3] = ambient > 0.f ? 1.f / (room ? gpu.average * out.params[0] : grey) : 0.f;
     std::memcpy(out.worldToCube, probe.worldToCube, sizeof(out.worldToCube));
   }
   if (located.volume != 0) {
@@ -2478,34 +2480,21 @@ bool Compose(const Located& located, Selection& out) {
         out.worldToAxes[row * 3 + col] = m[row * 4 + col] / scale;
       }
     }
-    // The baked light is the level, at the frame's exposure; without one, the grid's
-    // average comes out at the key. The grid holds irradiance, and a diffuse surface
-    // sends 1/pi of that back.
-    const float exposure = RoomExposed() ? FrameExposure(*located.volumeArea) : 0.f;
-    out.volumeLevel = (exposure > 0.f ? exposure * gain : 0.18f / grid.average) / 3.14159265f;
+    // The baked light is the level, at the frame's exposure (1 with no tone data). The grid
+    // holds irradiance, and a diffuse surface sends 1/pi of that back.
+    out.volumeLevel = ProbeExposure(*located.volumeArea) * gain / 3.14159265f;
     out.volumeBias = volumeBias;
     out.volumeDiagnostic = static_cast<float>(VolumeView());
   }
   if (located.ambientArea != nullptr) {
     const Ambient& sample = located.sample;
-    const float average = located.average;
-    const float roomExposure = FrameExposure(*located.ambientArea);
+    // The baked level itself, at the frame's exposure (1 with no tone data): Remastered adds no
+    // ambient constant in a shipped room (kb topic/ambient-constant.md Round 3), so the retail
+    // area ambient takes no part. The grid holds irradiance, of which a diffuse surface sends 1/pi
+    // back, as the volume's level has it.
+    const float exposure = ProbeExposure(*located.ambientArea) * ambient * gain / 3.14159265f;
     out.hasAmbient = true;
-    // The grid gives the light's colour and direction; how bright it is stays the game's
-    // ambient, which the shader multiplies in. The baked levels are HDR that Remastered
-    // exposes by what is on screen (one room spans 0.0001 to 100), and the world around
-    // the model is still lit the retail way. Of the level only this is kept: a spot
-    // darker or brighter than its room is, within a factor of two.
-    const float luminance = 0.2126f * sample.mean[0] + 0.7152f * sample.mean[1] + 0.0722f * sample.mean[2];
-    const float level = std::min(std::max(std::sqrt(luminance / average), 0.5f), 2.f);
-    float exposure = luminance > 0.f ? level / luminance * ambient : 0.f;
-    if (RoomExposed() && roomExposure > 0.f) {
-      // Or the baked level itself, at the room's exposure: the game's ambient is left out.
-      // The grid holds irradiance, of which a diffuse surface sends 1/pi back, as the
-      // volume's level has it.
-      exposure = roomExposure * ambient * gain / 3.14159265f;
-      out.ambientAbsolute = true;
-    }
+    out.ambientAbsolute = true;
     for (int i = 0; i < 3; ++i) {
       out.ambient[0][i] = (sample.mean[i] - sample.lobe[i]) * exposure;
       out.ambient[1][i] = 2.f * sample.lobe[i] * (1.f + sample.sharpness[i]) * exposure;
@@ -2514,13 +2503,12 @@ bool Compose(const Located& located, Selection& out) {
     }
     if (out.volume == 0 && out.occlusionInvMax > 0.f) {
       // The shader occludes the reflection by the grid at each pixel; without the grid on
-      // the GPU, the model's spot stands for all of it. The ambient the cube shapes stays.
+      // the GPU, the model's spot stands for all of it.
       const float brightest = std::max(std::max(sample.mean[0], sample.mean[1]), sample.mean[2]);
       const float seen = std::min(std::max(brightest * out.occlusionInvMax, 0.f), 1.f);
       // Not 0: the shader takes an exposure of 0 for a cube that is not HDR.
       const float factor = std::max(out.occlusionMin + (1.f - out.occlusionMin) * seen, 1e-4f);
       out.params[0] *= factor;
-      out.params[3] /= factor;
       out.occlusionMin = 0.f;
       out.occlusionInvMax = 0.f;
     }
