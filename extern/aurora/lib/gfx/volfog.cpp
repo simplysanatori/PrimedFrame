@@ -1,4 +1,5 @@
 #include "volfog.hpp"
+#include "tex_copy_conv.hpp"
 
 #include "../logging.hpp"
 #include "../webgpu/gpu.hpp"
@@ -277,6 +278,7 @@ struct State {
   std::array<wgpu::Buffer, RecordedSlots> uniforms;
   wgpu::Sampler repeatSampler;
   wgpu::Sampler clampSampler;
+  wgpu::Sampler nearestSampler; // Compatibility: depth is read through a comparison sampler
   wgpu::TextureView noise;
   // The apply pass for the frame's format and sample count, one per domain (an HDR pipeline can't be
   // taken for an LDR frame or the reverse, whatever the formats).
@@ -417,6 +419,16 @@ void ensure_clamp_sampler() {
       .minFilter = wgpu::FilterMode::Linear,
   };
   g_state.clampSampler = g_device.CreateSampler(&clampDescriptor);
+  const wgpu::SamplerDescriptor nearestDescriptor{
+      .label = "Volumetric Fog Depth Sampler",
+      .addressModeU = wgpu::AddressMode::ClampToEdge,
+      .addressModeV = wgpu::AddressMode::ClampToEdge,
+      .addressModeW = wgpu::AddressMode::ClampToEdge,
+      .magFilter = wgpu::FilterMode::Nearest,
+      .minFilter = wgpu::FilterMode::Nearest,
+      .compare = wgpu::CompareFunction::LessEqual,
+  };
+  g_state.nearestSampler = g_device.CreateSampler(&nearestDescriptor);
 }
 
 void ensure_compute(const wgpu::Queue& queue) {
@@ -532,10 +544,16 @@ void ensure_apply(Domain domain, wgpu::TextureFormat format, uint32_t samples) {
           .visibility = wgpu::ShaderStage::Fragment,
           .sampler = {.type = wgpu::SamplerBindingType::Filtering},
       },
+      // Compatibility only: the depth is sampled through a Nearest sampler (see apply_source)
+      wgpu::BindGroupLayoutEntry{
+          .binding = 5,
+          .visibility = wgpu::ShaderStage::Fragment,
+          .sampler = {.type = wgpu::SamplerBindingType::Comparison},
+      },
   };
   const wgpu::BindGroupLayoutDescriptor layoutDescriptor{
       .label = "Volumetric Fog Apply Layout",
-      .entryCount = entries.size(),
+      .entryCount = webgpu::g_hasCoreFeatures ? 5u : 6u,
       .entries = entries.data(),
   };
   apply.layout = g_device.CreateBindGroupLayout(&layoutDescriptor);
@@ -702,11 +720,12 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
       wgpu::BindGroupEntry{.binding = 2, .textureView = depth.view},
       wgpu::BindGroupEntry{.binding = 3, .textureView = froxelView},
       wgpu::BindGroupEntry{.binding = 4, .sampler = g_state.clampSampler},
+      wgpu::BindGroupEntry{.binding = 5, .sampler = g_state.nearestSampler},
   };
   const wgpu::BindGroupDescriptor applyGroupDescriptor{
       .label = "Volumetric Fog Apply",
       .layout = apply.layout,
-      .entryCount = applyEntries.size(),
+      .entryCount = webgpu::g_hasCoreFeatures ? 5u : 6u,
       .entries = applyEntries.data(),
   };
   const auto applyGroup = g_device.CreateBindGroup(&applyGroupDescriptor);
@@ -733,6 +752,11 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
 } // namespace
 
 bool ensure_task() {
+  // Compatibility devices cannot bind a multisampled depth texture: with MSAA on, the apply pass has no
+  // depth to read there, so the fog stays off (record() then fails closed).
+  if (!webgpu::g_hasCoreFeatures && webgpu::g_graphicsConfig.msaaSamples > 1) {
+    return false;
+  }
   if (g_state.task == InvalidEncoderTask) {
     g_state.task = register_encoder_task_type(EncoderTaskDescriptor{.label = "Volumetric Fog", .callback = encode});
     if (g_state.task == InvalidEncoderTask) {
@@ -778,6 +802,14 @@ std::string apply_source(Domain domain, uint32_t samples) {
   const std::string token = "DEPTH_TYPE";
   code.replace(code.find(token), token.size(),
                samples > 1 ? "texture_depth_multisampled_2d" : "texture_depth_2d");
+  if (!webgpu::g_hasCoreFeatures) {
+    // textureLoad on a depth texture is rejected there; a Nearest sample at the texel centre returns the same texel.
+    const std::string load = "textureLoad(depthTex, at, 0)";
+    code.replace(code.find(load), load.size(),
+                 "mp_depth_load(depthTex, depthSamp, at)");
+    code += "\n@group(0) @binding(5) var depthSamp: sampler_comparison;\n";
+    code += tex_copy_conv::compat_depth_load_wgsl();
+  }
   if (domain == Domain::Hdr) {
     const size_t at = code.find(LdrApplyTail);
     if (at == std::string::npos) {
