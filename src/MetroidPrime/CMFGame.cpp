@@ -293,8 +293,9 @@ void CMFGame::Draw() const {
     }
 #endif
 #ifdef TARGET_PC
-    // Remastered's bloom and colour grade, over the world and under the visor. Thermal and
-    // X-ray draw their own picture, not the room's exposed light, so they keep neither.
+    // Remastered's bloom and colour grade, over the world and under the visor. Thermal and X-ray
+    // take the same UberPost with flags 3 (kb topic/visor-hdr-pipeline.md): colour grade and the
+    // colour-blind state are off in both, bloom is off in X-ray only.
     const auto postProcess = [this](bool mainPost, bool sceneHdr) {
       const CPlayerState::EPlayerVisor visor = mStateManager->GetPlayerState()->GetActiveVisor(*mStateManager);
       const bool normalVisor = visor != CPlayerState::kPV_Thermal && visor != CPlayerState::kPV_XRay;
@@ -305,7 +306,8 @@ void CMFGame::Draw() const {
         float tints[5][3] = {};
         float tone[3][4] = {};
         const bool toned = PortRoomEnv::Tone(tone);
-        const bool bloom = normalVisor && toned && PortRoomEnv::Bloom(threshold, tints);
+        // X-ray's render context sets flag 0x400, which drops the bloom; thermal keeps it.
+        const bool bloom = visor != CPlayerState::kPV_XRay && toned && PortRoomEnv::Bloom(threshold, tints);
         struct Layers {
           CScriptLayerManager* layers;
           TAreaId area;
@@ -367,13 +369,13 @@ void CMFGame::Draw() const {
       const bool supportedVisor = CStateManager::PortIsSceneHdrVisorSupported(
           visor == CPlayerState::kPV_Combat, visor == CPlayerState::kPV_Scan,
           visor == CPlayerState::kPV_Thermal, visor == CPlayerState::kPV_XRay);
-      const bool visorTransitioning = playerState->GetIsVisorTransitioning();
-      const bool roomEnvEnabled = hdrSceneEnabled && supportedVisor && !visorTransitioning &&
-                                  PortRoomEnv::Enabled();
+      // A visor transition keeps the HDR scene: Remastered has no transition path, each frame
+      // renders exactly one visor (kb topic/visor-hdr-pipeline.md, "Visor transitions").
+      const bool roomEnvEnabled = hdrSceneEnabled && supportedVisor && PortRoomEnv::Enabled();
       float tone[3][4] = {};
       const bool hasRoomTone = roomEnvEnabled && PortRoomEnv::Tone(tone);
       const bool requestSceneHdr = CStateManager::PortShouldUseSceneHdr(
-          hdrSceneEnabled, roomEnvEnabled, hasRoomTone, supportedVisor, visorTransitioning);
+          hdrSceneEnabled, roomEnvEnabled, hasRoomTone, supportedVisor);
       CStateManager::sPortSceneHdrRequest = requestSceneHdr;
       mStateManager->DrawWorld();
       return requestSceneHdr;
