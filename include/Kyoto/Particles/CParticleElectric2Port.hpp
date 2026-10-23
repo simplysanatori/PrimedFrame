@@ -65,6 +65,9 @@ private:
                     const PortElectric2::BoltParams& prm, std::vector< std::vector< PortElectric2::V3 > >& out,
                     int frame);
   void UpdateBolt(Bolt& bolt, int frame);
+  // A bolt point in world space: points are baked at creation, or (XFMD 3) local and moved by the
+  // owner's current transform here.
+  PortElectric2::V3 WorldPoint(const PortElectric2::V3& p) const;
 
   const CElectricDescription* mDesc;
   PortElectric2::Rng mRng;
@@ -73,6 +76,8 @@ private:
   int mMaxBolts = 1;
   float mRem = 0.f;
   CColor mModu = CColor::White();
+  CTransform4f mXf = CTransform4f::Identity(); // the owner's latest xf, for XFMD 3 bolts
+  CVector3f mScale{1.f, 1.f, 1.f};              // global * local scale of the same
   std::vector< Bolt > mBolts;
 };
 

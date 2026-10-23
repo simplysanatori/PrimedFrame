@@ -2421,6 +2421,12 @@ public:
     if (electric && property.tag == 3 && property.fourcc == F("COLR")) {
       return 0;
     }
+    // An ELC2's NCLR (tag 5) reads slot 2 = nodes - 1 (UpdateBolt 0xb77638: ctx+0x84 = N-1,
+    // ctx+0x88 = (float)(N-1)); CParticleElectric2Port sets SSEG - 1 as the lifetime around the
+    // NCLR evaluation, so its offset is 0.
+    if (electric && property.tag == 5 && property.fourcc == F("NCLR")) {
+      return 0;
+    }
     if (part && property.tag == 1 && SystemVarWrite(property.fourcc).first != ~0u) {
       return 0;
     }
@@ -2431,6 +2437,11 @@ public:
       return 0;
     }
     if (swoosh && property.tag == 3 && property.fourcc == F("COLR")) {
+      return 0;
+    }
+    // A swoosh's PMTR (tag 3) reads slot 1 = LENG - 1 (CParticleSwoosh::Update 0x27dcf4,
+    // CreateNewParticle 0x27cdc8), the lifetime the port's swoosh sets (build/s-hdr14-20261024/SPEC-grad.md).
+    if (swoosh && property.tag == 3 && property.fourcc == F("PMTR")) {
       return 0;
     }
     return -1;
@@ -4595,6 +4606,22 @@ public:
           (fourcc == F("TMTR") || fourcc == F("PMTR") || fourcc == F("SMTR") || fourcc == F("ITEN") ||
            fourcc == F("SFTD"))) {
         portOnly.push_back(fourcc);
+        continue;
+      }
+      // Port-only: an ELC2's XFMD 3 has its bolts follow the emitter (CElectricDescription
+      // xPortXfmdFollow; InitBoltNodePosition 0xb76e18 leaves them local and UpdateRenderState
+      // 0xb760e0 copies the live transform every frame). Other modes keep the baked bolts.
+      if (electric && fourcc == F("XFMD")) {
+        uint32_t mode = 2;
+        if (!SmallConst(property, mode)) {
+          result.dropped.push_back("XFMD: not a constant");
+        } else if (mode == 3) {
+          AppendBE32(out, F("XFMD"));
+          AppendBE32(out, F("CNST"));
+          AppendBE32(out, mode);
+        } else if (mode != 2) {
+          result.dropped.push_back("XFMD " + std::to_string(mode));
+        }
         continue;
       }
       // Port-only ELC2 fields, written as the retail encoding under their own tags.

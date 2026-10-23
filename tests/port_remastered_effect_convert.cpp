@@ -4982,6 +4982,50 @@ void TestElc2BlendAndLifetime() {
   }
 }
 
+// An ELC2's NCLR GRAD over ILPT reads slot 2 = nodes - 1, which CParticleElectric2Port sets as the
+// lifetime around the evaluation: PLPT offset 0. Its XFMD 3 is the port-only follow flag; 2 is not written.
+void TestElc2NclrAndXfmd() {
+  auto parts = ConvertElc2([](auto& o) {
+    PutProperty(o, "NCLR", 5);
+    PutFourCC(o, "GRAD");
+    o.push_back(2);
+    for (uint16_t half : {0x3c00, 0x0000, 0x0000, 0x3c00}) {
+      o.push_back(uint8_t(half));
+      o.push_back(uint8_t(half >> 8));
+    }
+    Put32(o, Bits(0.0f));
+    for (uint16_t half : {0x0000, 0x0000, 0x3c00, 0x0000}) {
+      o.push_back(uint8_t(half));
+      o.push_back(uint8_t(half >> 8));
+    }
+    Put32(o, Bits(1.0f));
+    PutFourCC(o, "ILPT");
+    PutConstant(o, 100);
+    o.push_back(1);
+    PutProperty(o, "XFMD", 1);
+    PutConstant(o, 3);
+  });
+  CHECK_MSG(parts.size() == 1, "ELC2 with an NCLR GRAD and XFMD 3 converts");
+  if (parts.size() == 1) {
+    Retail plpt;
+    plpt.f("PLPT").w(0).f("CNST").w(100).b(1);
+    CHECK_MSG(Contains(parts[0].part, plpt.bytes), "ELC2 NCLR GRAD over ILPT is PLPT offset 0");
+    Retail follow;
+    follow.f("XFMD").f("CNST").w(3);
+    CHECK_MSG(Contains(parts[0].part, follow.bytes), "ELC2 XFMD 3 is written as the follow flag");
+    CHECK_MSG(parts[0].approximated.empty(), "the ELC2 NCLR GRAD is exact");
+  }
+  parts = ConvertElc2([](auto& o) {
+    PutProperty(o, "XFMD", 1);
+    PutConstant(o, 2);
+  });
+  if (parts.size() == 1) {
+    Retail follow;
+    follow.f("XFMD");
+    CHECK_MSG(!Contains(parts[0].part, follow.bytes), "ELC2 XFMD 2 is not written");
+  }
+}
+
 // A generator with a PMDL but no TEXR or MTIN draws only models: its SIZE is
 // left out and a SIZE of 0 written instead, as with one that draws nothing.
 void TestModelsOnly() {
@@ -5154,6 +5198,7 @@ int main() {
   TestVmatIceChargeCollisionLitRecipe();
   TestVmatParticleLit();
   TestElc2BlendAndLifetime();
+  TestElc2NclrAndXfmd();
   TestWaveOrbHeaderBlend();
   TestWaveOrbExposurePolicy();
   TestPowerBallExposurePolicy();
