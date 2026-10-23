@@ -1021,13 +1021,15 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.kind = 29;
     out.vcolor = true;
     // BCLR is the base map (its alpha the roughness); TCH0 and TCH2 are indirect offsets (raw) and TCH1
-    // a colour (sRGB), bound as the second layer's base, MR and normal on their own AUVI texcoords.
+    // a colour whose alpha is the scene blur's level, bound as the second layer's base, MR and normal on
+    // their own AUVI texcoords. All three are raw: TCH1 decodes as its source format says and keeps its
+    // alpha, as the shader samples it, never an MR map's metal clamp.
     // The shader's constants go to the runtime whole (rows 0-3 CCH0..CCH3, row 7 DIFC); row 4 x is the
     // per-object phase the game fills, row 6 w says whether the material has a cube of its own.
     set(kBase, tch[0]->texture, &out.layer[kBase]);
     set(kMr, tch[1]->texture, &out.layer[kMr]);
     set(kNormal, tch[2]->texture, &out.layer[kNormal]);
-    out.layer[kBase].raw = out.layer[kNormal].raw = true;
+    out.layer[kBase].raw = out.layer[kMr].raw = out.layer[kNormal].raw = true;
     out.kindParam[0] = 1.0;  // the game multiplies it by the time
     out.tint[0] = out.tint[1] = out.tint[2] = 0.0;
     double difc[4] = {1.0, 1.0, 1.0, 1.0};
