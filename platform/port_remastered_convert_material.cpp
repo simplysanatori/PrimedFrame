@@ -93,8 +93,9 @@ constexpr uint32_t kShaderIncanMaskSquared[] = {
 // The arm cannon's body: lit PBR that reflects its REFL cube (a Tallon forest, LDR) along
 // the reflection vector, at the roughness's mip, instead of a room probe. Drawn with the
 // room's cube the metal took the room's colours and read pale. The default REFL (black)
-// that most materials carry keeps the room's.
-constexpr uint32_t kShaderGunBody[] = {0x547E64E5, 0xD43DE005, 0x917F1415, 0xF495B260};
+// that most materials carry keeps the room's. A469DAAD (the third-person insets) and
+// 0C22AB97 (its barrel) are 917F1415's rigid twins: the same fragment code, unskinned.
+constexpr uint32_t kShaderGunBody[] = {0x547E64E5, 0xD43DE005, 0x917F1415, 0xF495B260, 0xA469DAAD, 0x0C22AB97};
 // The beam panels inside the Wave, Plasma and Phazon guns (lightning, magma, phazon): a
 // black base whose alpha masks an ICAN glow of ICNC 4-7. Only those three use the shader.
 // Under kPbrEmissive the magma read as faint dark red.
@@ -400,6 +401,7 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
   };
   bool bclr = false;
   bool refl = false;
+  MapRef incanMask;
   const ModelMaterialData* icnc = nullptr;
   const ModelMaterialData* bklt = nullptr;
   const ModelMaterialData* bkla = nullptr;
@@ -520,6 +522,11 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
         set(kEmissive, d.texture);
       }
       break;
+    case FourCC('T', 'C', 'H', '0'):
+      if (texture && std::find(std::begin(kShaderGunBody), std::end(kShaderGunBody), shader) != std::end(kShaderGunBody)) {
+        set(kBase, d.texture, &incanMask);
+      }
+      break;
     case FourCC('I', 'C', 'N', 'C'):
       if (d.kind == ModelMaterialData::Kind::Color) {
         icnc = &d;
@@ -579,6 +586,16 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.glowLinear = true;
     out.emissive = s;
     out.reason += "gun-body list: stripes ramp at inverse exposure; ";
+    // Compiled with USE_CUSTOM_INCAN_MASK, the glow is also multiplied by TCH0's red
+    // ("IncanMask"), read at the base map's texcoord. On the third-person barrel the
+    // ramp (206819a9) repeats and scrolls over the whole surface and the mask (cc7657ad,
+    // 8% of it bright) keeps it to a few strips: unmasked, the barrel glowed all over at
+    // 5x in a pattern that never held still.
+    if (incanMask.has && out.maps[kBase].has && incanMask.coord == out.maps[kBase].coord) {
+      out.maps[kBase].mask = {incanMask};
+      out.mask = true;
+      out.reason += "TCH0 incan mask as base alpha; ";
+    }
   } else if (out.maps[kEmissive].has && shader == kShaderGunPanel) {
     // The beam panels: ICAN x ICNC x base alpha with no exposure factor (only the lit
     // part is exposed), so like the inverse-exposed glows it is kept linear.

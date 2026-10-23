@@ -392,6 +392,9 @@ struct Converter::State {
         src = &rt[k];
         tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : src->mean ? ":mean" : "") +
               (src->volume ? ":vol" : "");
+        if (k == kBase && alpha == "mask" && !src->mask.empty() && !src->mean) {
+          tag += ":amask:" + src->mask[0].src;
+        }
         colourTex = k != kNormal && (k != kMr || src->raw);
         if (colourTex || k == kNormal) {
           srgbTex = Fact("srgb:" + src->src, [&] { return std::string(Open(*src).srgb ? "1" : "0"); }) == "1";
@@ -575,6 +578,15 @@ struct Converter::State {
         img.rgba[i * 4 + 3] = 255;
       }
       srgbTex = false;  // decoded: from here on it is data
+    }
+    if (k == kBase && alpha == "mask" && !src->mask.empty() && !src->mean) {
+      // The glow mask is another map's red: it becomes the base's alpha, linear as the
+      // shader reads it.
+      const Image& m = Open(src->mask[0]);
+      const Image t = m.width == img.width && m.height == img.height ? m : Resize(m, img.width, img.height, MapKind::Data);
+      for (size_t i = 0; i < count; ++i) {
+        img.rgba[i * 4 + 3] = m.srgb ? SrgbToLinearByte(t.rgba[i * 4]) : t.rgba[i * 4];
+      }
     }
     if (alpha == "blend" || alpha == "mask2") {
       // Remastered's shader squares the base map's alpha into the opacity, or

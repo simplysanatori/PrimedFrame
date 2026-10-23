@@ -370,6 +370,9 @@ struct MapRef {
   bool detail = false;  // kind 20's detail map, which rides in the emissive slot (that shader has no glow)
   bool volume = false;  // a 3D texture, kept whole as an 8 x 8 atlas of its 64 slices (ConvertIO::volume), RGBA8, level 0 only
   double metalMax = kPbrMetalMax;  // an MR map's metalness ceiling
+  // A base map's: at most one map on its texcoord whose red becomes its alpha (the gun
+  // body's IncanMask, TCH0), which the "mask" alpha then lays over the glow.
+  std::vector<MapRef> mask;
 };
 
 struct RemMaterial {
