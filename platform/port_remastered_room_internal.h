@@ -544,6 +544,10 @@ struct ScriptObject {
   std::vector<uint32_t> targets;  // of its connections
   bool hasPos = false;            // the three floats after its name, for any type
   Vec3 pos{};
+  // The six floats after those: an editor transform's rotation (degrees) and scale for the
+  // types that start with one, anything for the others.
+  bool hasXf = false;
+  Vec3 rot{}, scale{};
   std::vector<uint8_t> props;     // from the end of its name on: what names its model
 };
 

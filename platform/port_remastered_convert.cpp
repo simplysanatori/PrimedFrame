@@ -13,6 +13,23 @@
 
 namespace PortRemastered {
 
+void NormalMatrix(const double (*M)[3], double out[3][3]) {
+  // The cofactor matrix over the determinant is the inverse transpose.
+  const double det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
+                     M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+                     M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+  for (int r = 0; r < 3; ++r) {
+    for (int c = 0; c < 3; ++c) {
+      if (std::fabs(det) < 1e-12) {
+        out[r][c] = 0.0;
+        continue;
+      }
+      const int r1 = (r + 1) % 3, r2 = (r + 2) % 3, c1 = (c + 1) % 3, c2 = (c + 2) % 3;
+      out[r][c] = (M[r1][c1] * M[r2][c2] - M[r1][c2] * M[r2][c1]) / det;
+    }
+  }
+}
+
 using namespace ConvertDetail;
 
 // ---- textures ----
@@ -662,6 +679,9 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
                      M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
                      M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
 
+  double NM[3][3];
+  NormalMatrix(M, NM);
+
   // Primitives in GameCube space; a vertex buffer is shared by many meshes and
   // is transformed once.
   std::vector<RemMaterial> mats;
@@ -785,7 +805,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           double p = 0.0, q = 0.0;
           for (int c = 0; c < 3; ++c) {
             p += double(vb.positions[v * 3 + c]) * M[r][c];
-            q += double(vb.normals[v * 3 + c]) * M[r][c];
+            q += double(vb.normals[v * 3 + c]) * NM[r][c];
           }
           b.P[v * 3 + r] = p + opt.offset[r];
           nrm[r] = q;
@@ -893,13 +913,13 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
           for (int r = 0; r < 3; ++r) {
             vmshV.push_back(float(b.P[size_t(i) * 3 + r]));
           }
-          // The normal and tangent raw (orient x the buffer's, unnormalised), as Remastered's
+          // The normal and tangent raw (the normal matrix x the buffer's, unnormalised), as Remastered's
           // vertex shader takes them; the colour as its float attribute.
           const ModelVertexBuffer& src = *b.src;
           for (int r = 0; r < 3; ++r) {
             double q = 0.0;
             for (int c = 0; c < 3; ++c) {
-              q += double(src.normals[size_t(i) * 3 + c]) * M[r][c];
+              q += double(src.normals[size_t(i) * 3 + c]) * NM[r][c];
             }
             vmshV.push_back(float(q));
           }

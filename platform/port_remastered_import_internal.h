@@ -187,6 +187,7 @@ public:
   bool Open(const std::string& nspPath, const std::string& keysPath, std::string& error);
 
   bool ReadModel(const ModelUuid& id, std::vector<uint8_t>& out, std::string& error) const;
+  bool HasModel(const ModelUuid& id) const { return m_models.count(id) != 0; }
   bool ReadTexture(const ModelUuid& id, std::vector<uint8_t>& out, std::string& error) const;
 
   // The FONT assets, in id order. There are several, with different sets of characters.

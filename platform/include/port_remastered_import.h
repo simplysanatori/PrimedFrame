@@ -80,9 +80,14 @@ inline constexpr int kConverter = 55;
 // and Baked. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 4;
+// 14: normals go through the orient's inverse transpose (a non-uniform orient kept them skewed).
+// 13: a retail model placed by the rooms takes its placements' orient as well as their offset.
+// 12: the retail models Remastered keeps under their retail ids, placed by the rooms, are
+//     converted too (retailmodels stage); 3C26F42B's table row goes.
+// 11: the Elite Quarters stasis tank 3C26F42B is in the table.
 // 10: a plain cutout over a retail fx material is drawn opaque, cut by the shader.
 // 9: a ColorUnlit mesh (the door shields) gets a back copy.
-inline constexpr int kModels = 10;     // the table's models, their looks and the ANCS copies
+inline constexpr int kModels = 14;     // the table's models, their looks and the ANCS copies
 // 63: ELPS reads its CNST surface flag; the system tween is 0 only at a 0x1000000 lifetime.
 // 62: NEGT, CRCV, SPEV, ELPS, ROTV, PNCV, KEYF, SLTW, CRLN octaves, KESP, one-stop GRAD, PAP0/9,
 //     ADV9 and IAV0..3 are converted; PLNV counts come from MAXP.
@@ -128,7 +133,9 @@ inline constexpr int kEffects = 97;    // port_remastered_effect_import and the 
 // 24: a room's effect actors of Remastered's own, as <MREA>.roomfx (port_room_effects.h).
 // 25: .roomfx v2 carries each actor's particle variable values (property 3def0de6).
 // 26: roomenv version 23, the world shift (the fog's noise is read in Remastered's world).
-inline constexpr int kRooms = 27;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
+// 28: retail model placements (RetailPlacement); their entities leave the room's geometry.
+// 29: a retail model's objects pair with its entities by order (RetailPlacement orient, entity).
+inline constexpr int kRooms = 29;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 inline constexpr int kHud = 8;         // port_remastered_hud, port_remastered_map

@@ -1128,6 +1128,9 @@ if(MP_BUILD_TESTS)
     mp_port_test(port_remastered_lits_tests
         SOURCES tests/port_remastered_lits_tests.cpp
         LIBRARIES mp_test_remastered_convert)
+    mp_port_test(port_remastered_orient_normal_tests
+        SOURCES tests/port_remastered_orient_normal_tests.cpp
+        LIBRARIES mp_test_remastered_convert)
     mp_port_test(port_remastered_ice_tests
         SOURCES tests/port_remastered_ice_tests.cpp
         LIBRARIES mp_test_remastered_convert)

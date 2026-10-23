@@ -32,6 +32,11 @@
 
 namespace PortRemastered {
 
+// The matrix that carries a normal through the orient M (gc = M * remastered): the inverse
+// transpose of M, so a normal stays perpendicular to the surface under a non-uniform scale.
+// Equals M for a rotation or mirror. A singular M gives the zero matrix.
+void NormalMatrix(const double (*M)[3], double out[3][3]);
+
 struct ConvertOptions {
   uint32_t retail = 0;  // CMDL id the model replaces
   std::string source;   // a label for the Remastered model, for the materials report
