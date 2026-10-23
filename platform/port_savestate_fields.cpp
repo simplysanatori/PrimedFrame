@@ -760,7 +760,10 @@ int ApplyClasses(CStateManager& mgr, CEntity& ent, const std::vector< const Port
 } // namespace
 
 bool CaptureEntityFields(const CStateManager& mgr, CEntity& ent, std::string& out) {
-  if (!Enabled() || TCastToConstPtr< CPatterned >(&ent) == nullptr)
+  // Enemies, and the pickups a generator dropped (their life timer, generated flag).
+  const bool pickup = TCastToConstPtr< CScriptPickup >(&ent) != nullptr &&
+                      IsScriptGeneratedCopy(mgr, ent);
+  if (!Enabled() || (TCastToConstPtr< CPatterned >(&ent) == nullptr && !pickup))
     return false;
   const std::vector< const PortSchemaClass* > chain = Chain(ent);
   BlockWriter w;

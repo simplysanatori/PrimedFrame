@@ -25,6 +25,7 @@
 #include "MetroidPrime/ScriptObjects/CScriptMazeNode.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptMemoryRelay.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptMidi.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptPickup.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptPlatform.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptSpiderBallWaypoint.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptStreamedMusic.hpp"
@@ -47,7 +48,7 @@ enum RoomTag : uint32_t {
   kTagCounter = 6,    // current
   kTagDoor = 7,       // open
   kTagPlatform = 8,   // current and target waypoint (editor ids), speed, move delay
-  kTagGenerated = 9,  // empty: a script generator's copy of the enemy with this editor id
+  kTagGenerated = 9,  // empty: a script generator's copy of the enemy or pickup with this editor id
   kTagMessages = 10,  // the script messages the enemy was sent (EncodeScriptMsgs)
   kTagBoss = 11,      // a boss's fight state beyond its health (port_savestate_boss.h)
   kTagRotate = 12,    // a turn in progress: flags, time, then per actor editor id + start rotation
@@ -370,8 +371,9 @@ bool IsGone(const CEntity& ent) {
 }
 
 // A script generator's copy carries its template's editor id. Enemy copies are saved
-// as copies (fights count their deaths); other copies (pickups, maze walls) are not
-// saved at all, as before, but no longer overwrite their template's record.
+// as copies (fights count their deaths), and so are pickups (the Essence's drops);
+// other copies (maze walls) are not saved at all, but no longer overwrite their
+// template's record.
 bool IsGeneratedCopy(const CStateManager& mgr, CEntity& ent) {
   const Noted* n = FindNoted(mgr, ent.GetUniqueId());
   return n != nullptr && n->generated;
@@ -404,7 +406,10 @@ void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
     // platforms and anything moving are saved.
     const bool moving = physics->GetVelocityWR().IsNonZero() ||
                         physics->GetMomentumWR().IsNonZero();
-    if (moving || TCastToPtr< CPatterned >(&ent) != nullptr ||
+    // A generated pickup stands where its generator dropped it, not at its template.
+    const bool dropped =
+        TCastToPtr< CScriptPickup >(&ent) != nullptr && IsGeneratedCopy(mgr, ent);
+    if (moving || dropped || TCastToPtr< CPatterned >(&ent) != nullptr ||
         TCastToPtr< CScriptPlatform >(&ent) != nullptr) {
       BlockWriter xf;
       PutTransform(xf, physics->GetTransform());
@@ -836,7 +841,8 @@ void CaptureRoomState(CStateManager& mgr, RoomState& out) {
     if (id == kNoEditorId || areas.count(ent.GetEditorId().AreaNum()) == 0 || IsGone(ent))
       return;
     const bool generated = IsGeneratedCopy(mgr, ent);
-    if (generated && TCastToPtr< CPatterned >(&ent) == nullptr)
+    if (generated && TCastToPtr< CPatterned >(&ent) == nullptr &&
+        TCastToPtr< CScriptPickup >(&ent) == nullptr)
       return;
     // A copy's editor id is its template's: the template decides whether that id is present.
     if (!generated)
@@ -1026,10 +1032,11 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
     ApplyObject(mgr, *ent, obj, stats);
     ++stats.applied;
   }
-  // The enemies a script generator made (Hive Totem's wasps): the rebuilt room has
-  // only their templates, and a fight counting their deaths would wait forever.
-  // Made again from the template the way CScriptGenerator does, then given the
-  // copy's saved state (ApplyObject sends the Activate the generator sent).
+  // The enemies and pickups a script generator made (Hive Totem's wasps, the Essence's
+  // drops): the rebuilt room has only their templates, and a fight counting their
+  // deaths would wait forever. Made again from the template the way CScriptGenerator
+  // does, then given the copy's saved state (ApplyObject sends the Activate the
+  // generator sent).
   for (const RoomObject* obj : copies) {
     const bool wasGenerating = mgr.IsGeneratingObject();
     mgr.SetIsGeneratingObject(true);
@@ -1040,6 +1047,9 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
       ++stats.unmatched;
       continue;
     }
+    // Also in the fields block; set here for saves without one.
+    if (CScriptPickup* pickup = TCastToPtr< CScriptPickup >(ent))
+      pickup->SetWasGenerated();
     ApplyObject(mgr, *ent, *obj, stats);
     ++stats.generated;
   }
