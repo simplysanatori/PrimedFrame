@@ -130,6 +130,7 @@ struct State_ {
   // Set when an atlas is evicted: the cached bind groups still hold its views, so the render thread drops them.
   std::atomic<bool> groupsStale{false};
   wgpu::Texture dummyTexture;
+  wgpu::Texture dummyArrayTexture;
   wgpu::TextureView dummyView;
   wgpu::TextureView dummyColorView; // dummyTexture as a texture_2d
   wgpu::Texture dummyDepthTexture;  // 1x1 R32Float
@@ -1028,8 +1029,22 @@ void ensure_dummy(const DrawContext& ctx) {
   const wgpu::TexelCopyBufferLayout layout{.bytesPerRow = 4, .rowsPerImage = 1};
   const wgpu::Extent3D size{1, 1, 1};
   ctx.queue.WriteTexture(&dst, white, 4, &layout, &size);
+  // A Compatibility device fixes a texture's binding view dimension, so the array view gets a texture of its own.
+  wgpu::TextureBindingViewDimension arrayBinding;
+  arrayBinding.textureBindingViewDimension = wgpu::TextureViewDimension::e2DArray;
+  const wgpu::TextureDescriptor arrayDescriptor{
+      .nextInChain = &arrayBinding,
+      .label = "VFX Dummy Array",
+      .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
+      .size = {1, 1, 1},
+      .format = wgpu::TextureFormat::RGBA8Unorm,
+  };
+  AURORA_NOTE_TEXTURE(&arrayDescriptor);
+  g_state.dummyArrayTexture = ctx.device.CreateTexture(&arrayDescriptor);
+  const wgpu::TexelCopyTextureInfo arrayDst{.texture = g_state.dummyArrayTexture};
+  ctx.queue.WriteTexture(&arrayDst, white, 4, &layout, &size);
   const wgpu::TextureViewDescriptor view{.dimension = wgpu::TextureViewDimension::e2DArray, .arrayLayerCount = 1};
-  g_state.dummyView = g_state.dummyTexture.CreateView(&view);
+  g_state.dummyView = g_state.dummyArrayTexture.CreateView(&view);
   const wgpu::TextureViewDescriptor view2D{.dimension = wgpu::TextureViewDimension::e2D};
   g_state.dummyColorView = g_state.dummyTexture.CreateView(&view2D);
   const wgpu::TextureDescriptor depthDescriptor{
@@ -1106,13 +1121,20 @@ void build_array(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd,
   if (cw == 0 || ch == 0 || cw % block != 0 || ch % block != 0) {
     return fail("cell size");
   }
+  if (!webgpu::g_hasCoreFeatures && block != 1) {
+    // Compatibility devices can't copy compressed textures: the draw is skipped.
+    return fail("compressed source on a Compatibility device");
+  }
   // Mip m of a cell is its own copy only if the cell halves evenly that far (and stays block aligned).
   uint32_t mips = 1;
   while (mips < src.mipCount && (cw % (1u << mips)) == 0 && (ch % (1u << mips)) == 0 &&
          ((cw >> mips) % block) == 0 && ((ch >> mips) % block) == 0) {
     ++mips;
   }
+  wgpu::TextureBindingViewDimension arrayBinding;
+  arrayBinding.textureBindingViewDimension = wgpu::TextureViewDimension::e2DArray;
   const wgpu::TextureDescriptor descriptor{
+      .nextInChain = &arrayBinding,
       .label = "VFX Atlas",
       .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
       .size = {cw, ch, entry->layers},
@@ -1279,7 +1301,8 @@ bool resolve_slot(const Texture& tex, uint32_t& id) {
   const uint32_t cols = std::max(tex.cols, 1u);
   const uint32_t rows = std::max(tex.rows, 1u);
   const uint32_t layers = std::max(tex.layers, 1u);
-  const bool copy = layers > 1 || cols > 1 || rows > 1;
+  // Compatibility devices can't view a plain 2D texture as a 2D array, so every entry is a copy there.
+  const bool copy = layers > 1 || cols > 1 || rows > 1 || !webgpu::g_hasCoreFeatures;
   std::shared_ptr<ArrayEntry> entry;
   bool request = false;
   {
@@ -1716,6 +1739,7 @@ void shutdown() {
   g_state.dummyDepthTexture = {};
   g_state.dummyView = {};
   g_state.dummyTexture = {};
+  g_state.dummyArrayTexture = {};
   g_state.bindLayout = {};
   g_state.pipelineLayout = {};
   const auto task = g_state.task;

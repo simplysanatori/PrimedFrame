@@ -733,6 +733,11 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
 } // namespace
 
 bool ensure_task() {
+  // The apply pass reads the scene depth with textureLoad on a depth texture, which Compatibility
+  // devices reject: skip the volumetric fog there (record() then fails closed).
+  if (!webgpu::g_hasCoreFeatures) {
+    return false;
+  }
   if (g_state.task == InvalidEncoderTask) {
     g_state.task = register_encoder_task_type(EncoderTaskDescriptor{.label = "Volumetric Fog", .callback = encode});
     if (g_state.task == InvalidEncoderTask) {

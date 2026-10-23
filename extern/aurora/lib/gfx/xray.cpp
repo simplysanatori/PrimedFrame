@@ -496,6 +496,11 @@ std::string source_for(Domain domain, uint32_t samples) {
 }
 
 bool ensure_task() {
+  // The apply pass reads the scene depth with textureLoad on a depth texture, which Compatibility
+  // devices reject: skip the X-ray post there (record() then fails closed).
+  if (!webgpu::g_hasCoreFeatures) {
+    return false;
+  }
   if (g_state.task == InvalidEncoderTask) {
     g_state.task = register_encoder_task_type(EncoderTaskDescriptor{.label = "X-ray Post", .callback = encode});
     if (g_state.task == InvalidEncoderTask) {

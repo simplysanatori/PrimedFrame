@@ -179,7 +179,10 @@ void ensure() {
     return;
   }
   const auto format = webgpu::g_graphicsConfig.surfaceConfiguration.format;
+  wgpu::TextureBindingViewDimension cubeBinding;
+  cubeBinding.textureBindingViewDimension = wgpu::TextureViewDimension::Cube;
   const wgpu::TextureDescriptor textureDescriptor{
+      .nextInChain = &cubeBinding,
       .label = "PBR Probe",
       .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment,
       .dimension = wgpu::TextureDimension::e2D,
@@ -422,6 +425,11 @@ TextureHandle face(uint32_t face) {
 
 void encode_mips(const wgpu::CommandEncoder& cmd, uint32_t face, Range uvRange) {
   ensure();
+  // The mips are sampled through 2D views of a texture whose binding dimension is Cube, which Compatibility
+  // devices reject: the probe keeps its base level there.
+  if (!webgpu::g_hasCoreFeatures) {
+    return;
+  }
   const auto& mips = g_faces[face % FaceCount];
   for (uint32_t m = 1; m < MipCount; ++m) {
     // A 2:1 bilinear blit is a box filter.
@@ -451,7 +459,10 @@ void create_cube(uint32_t id, uint32_t size, uint32_t mipCount, const uint8_t* t
   if (id == 0 || size == 0 || mipCount == 0 || length < needed) {
     return;
   }
+  wgpu::TextureBindingViewDimension cubeBinding;
+  cubeBinding.textureBindingViewDimension = wgpu::TextureViewDimension::Cube;
   const wgpu::TextureDescriptor textureDescriptor{
+      .nextInChain = &cubeBinding,
       .label = "PBR room cube",
       .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst,
       .dimension = wgpu::TextureDimension::e2D,
@@ -556,7 +567,10 @@ bool blend_cubes(uint32_t dst, const uint32_t* src, const float* weights, uint32
     mipCount = std::max(mipCount, 1u);
     auto& target = g_roomCubes[dst];
     if (!target.texture || target.size != size || target.mipCount != mipCount || target.faces.empty()) {
+      wgpu::TextureBindingViewDimension cubeBinding;
+      cubeBinding.textureBindingViewDimension = wgpu::TextureViewDimension::Cube;
       const wgpu::TextureDescriptor textureDescriptor{
+          .nextInChain = &cubeBinding,
           .label = "PBR blended cube",
           .usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::RenderAttachment,
           .dimension = wgpu::TextureDimension::e2D,
