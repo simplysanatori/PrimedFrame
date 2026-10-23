@@ -163,6 +163,13 @@ public:
   bool xPortVisorData = false;
   float xPortVisorMinScale = 1.4f;
   float xPortVisorMaxScale = 2.1f;
+  // port-only PVSC/PVMC/PVTC/PVBS/PVDT: VESC/VEMC/VETC, VEBS and VEDT (ticks, -1 = never
+  // expires), read by the visor effect override manager (PortVisorOverrides). Owned here.
+  CColorElement* xPortVisorStartColor = nullptr;
+  CColorElement* xPortVisorMidColor = nullptr;
+  CColorElement* xPortVisorEndColor = nullptr;
+  CRealElement* xPortVisorBlend = nullptr;
+  int xPortVisorTicks = -1;
   // port-only PGID: the first word of a converted Remastered PART's GUID (CElementGen::PortChildSeed)
   u32 xPortGuidWord = 0;
   // Nested Remastered point-light metadata (PHDR/PIR0/POR0/PHFO). The

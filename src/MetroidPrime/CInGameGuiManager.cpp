@@ -339,6 +339,14 @@ bool CInGameGuiManager::PortCompositeTint(const CStateManager& mgr, float rgba[4
          IsInOrTransitioningToOrFromState(kIGGS_InGame) && x34_samusHud->PortCompositeTint(rgba);
 }
 
+bool CInGameGuiManager::PortCompositeRadial(const CStateManager& mgr, float c0[4], float c1[4],
+                                            float c2[4]) const {
+  return x34_samusHud.get() != nullptr && x3c_pauseScreenBlur->IsGameDraw() &&
+         !mgr.GetCameraManager()->IsInCinematicCamera() &&
+         IsInOrTransitioningToOrFromState(kIGGS_InGame) &&
+         x34_samusHud->PortCompositeRadial(c0, c1, c2);
+}
+
 void CInGameGuiManager::Draw(const CStateManager& mgr) const {
   if (!GetIsGameDraw()) {
     gpRender->SetRequestRGBA6(true);

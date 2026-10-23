@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <string>
@@ -907,8 +908,10 @@ bloom::Params scene_post() {
 // clamp(c).rgb * clamp(c).a in linear light. The Null backend runs no shader, so this checks the
 // shared WGSL through Tint and the wire layout, and the term itself against a CPU mirror.
 TEST_F(SceneHdrTest, CompositeAddTermCompilesAndKeepsItsWireLayout) {
-  static_assert(sizeof(bloom::Params) == 36 * sizeof(uint32_t));
+  static_assert(sizeof(bloom::Params) == 49 * sizeof(uint32_t));
   static_assert(offsetof(bloom::Params, add) == 32 * sizeof(uint32_t));
+  static_assert(offsetof(bloom::Params, radial) == 36 * sizeof(uint32_t));
+  static_assert(offsetof(bloom::Params, radialOn) == 48 * sizeof(uint32_t));
   const std::string source = std::string{bloom::CompositeAddWgsl} +
                              "@compute @workgroup_size(1) fn main() { let v = composite_add(vec3f(0.5), vec4f(1.0, 0.5, 0.0, 0.5)); _ = v; }";
   EXPECT_EQ(module_error(source), "");
@@ -941,6 +944,83 @@ TEST(CompositeAddMath, MatchesTheTracedShader) {
   EXPECT_FLOAT_EQ(out[0], 1.f);
   EXPECT_FLOAT_EQ(out[1], 0.f);
   EXPECT_FLOAT_EQ(out[2], 0.5f);
+}
+
+TEST_F(SceneHdrTest, CompositeRadialTermCompiles) {
+  const std::string source =
+      std::string{bloom::CompositeRadialWgsl} +
+      "@compute @workgroup_size(1) fn main() { let v = composite_radial(vec4f(0.5), vec2f(0.1, -0.2), "
+      "vec4f(1.0), vec4f(0.0), vec4f(1.0)); _ = v; }";
+  EXPECT_EQ(module_error(source), "");
+  // No fan recorded: the default params leave the radial term off.
+  EXPECT_EQ(scene_post().radialOn, 0u);
+}
+
+// CompositeRadialWgsl line for line on the CPU (module_error only compiles WGSL), checked against
+// the trace: apex c0 at the centre, rim c1 at (6.25 sin a, 3.6 cos a), the clamped frame times c2.
+TEST(CompositeRadialMath, MatchesTheTracedFan) {
+  const std::string wgsl{bloom::CompositeRadialWgsl};
+  EXPECT_NE(wgsl.find("let q = ndc / vec2f(6.25, 3.6);"), std::string::npos);
+  EXPECT_NE(wgsl.find("clamp(frame.rgb, vec3f(0.0), vec3f(1.0)) * m.rgb + v.rgb * v.a, frame.a * m.a"),
+            std::string::npos);
+  const float pi = 3.14159265358979f;
+  const auto clamp01 = [](float v) { return std::min(std::max(v, 0.f), 1.f); };
+  const auto term = [&](const float ndc[2], const float frame[4], const float c0[4], const float c1[4],
+                        const float c2[4], float out[4]) {
+    const float sector = pi / 8.f;
+    const float q[2] = {ndc[0] / 6.25f, ndc[1] / 3.6f};
+    float a = std::atan2(q[0], q[1]);
+    if (a < 0.f) {
+      a += 2.f * pi;
+    }
+    const float k = std::min(std::floor(a / sector), 15.f);
+    const float mid = (k + 0.5f) * sector;
+    const float t = (q[0] * std::sin(mid) + q[1] * std::cos(mid)) / std::cos(sector * 0.5f);
+    float v[4] = {};
+    if (t <= 1.f) {
+      for (int i = 0; i < 4; ++i) {
+        v[i] = clamp01(c0[i] + (c1[i] - c0[i]) * t);
+      }
+    }
+    for (int i = 0; i < 3; ++i) {
+      out[i] = clamp01(frame[i]) * clamp01(c2[i]) + v[i] * v[3];
+    }
+    out[3] = frame[3] * clamp01(c2[3]);
+  };
+  struct Case {
+    float ndc[2];
+    float frame[4];
+    float c0[4], c1[4], c2[4];
+    float want[4];
+  };
+  const float apothem = std::cos(pi / 16.f);
+  const Case cases[] = {
+      // The centre is the apex: c0 by its alpha, the frame clamped.
+      {{0.f, 0.f}, {2.f, 0.5f, -1.f, 1.f}, {1.f, 0.5f, 0.f, 0.5f}, {0.f, 0.f, 1.f, 1.f}, {1.f, 1.f, 1.f, 1.f},
+       {1.5f, 0.75f, 0.f, 1.f}},
+      // A rim vertex (a = 0: (0, 3.6)) is c1; so is a = 5 pi/8 at (6.25 sin a, 3.6 cos a).
+      {{0.f, 3.6f}, {0.f, 0.f, 0.f, 1.f}, {1.f, 0.f, 0.f, 1.f}, {0.f, 1.f, 0.f, 0.5f}, {1.f, 1.f, 1.f, 1.f},
+       {0.f, 0.5f, 0.f, 1.f}},
+      {{6.25f * std::sin(5.f * pi / 8.f), 3.6f * std::cos(5.f * pi / 8.f)}, {0.f, 0.f, 0.f, 1.f},
+       {1.f, 0.f, 0.f, 1.f}, {0.f, 1.f, 0.f, 0.5f}, {1.f, 1.f, 1.f, 1.f}, {0.f, 0.5f, 0.f, 1.f}},
+      // Half way to the middle of an edge (a = pi/16): an even mix of c0 and c1.
+      {{0.5f * apothem * 6.25f * std::sin(pi / 16.f), 0.5f * apothem * 3.6f * std::cos(pi / 16.f)},
+       {0.f, 0.f, 0.f, 1.f}, {1.f, 0.f, 0.f, 1.f}, {0.f, 1.f, 0.f, 1.f}, {1.f, 1.f, 1.f, 1.f},
+       {0.5f, 0.5f, 0.f, 1.f}},
+      // The mixed colour clamps after the interpolation (c0 below 0, as VEMC's -0.1 blue).
+      {{0.f, 0.f}, {0.f, 0.f, 0.f, 1.f}, {0.f, 0.f, -0.1f, 1.f}, {0.f, 0.f, 0.f, 1.f}, {1.f, 1.f, 1.f, 1.f},
+       {0.f, 0.f, 0.f, 1.f}},
+      // c2 multiplies the clamped frame (and its alpha) before the fan is added.
+      {{0.f, 0.f}, {0.8f, 1.5f, 0.4f, 0.5f}, {0.f, 0.f, 0.f, 0.f}, {0.f, 0.f, 0.f, 0.f}, {0.5f, 2.f, -1.f, 0.5f},
+       {0.4f, 1.f, 0.f, 0.25f}},
+  };
+  for (const Case& c : cases) {
+    float out[4];
+    term(c.ndc, c.frame, c.c0, c.c1, c.c2, out);
+    for (int i = 0; i < 4; ++i) {
+      EXPECT_NEAR(out[i], c.want[i], 1e-4f) << "case at (" << c.ndc[0] << ", " << c.ndc[1] << ") [" << i << "]";
+    }
+  }
 }
 
 TEST_F(SceneHdrTest, ScenePostHandsTheSceneToTheDisplayEfb) {

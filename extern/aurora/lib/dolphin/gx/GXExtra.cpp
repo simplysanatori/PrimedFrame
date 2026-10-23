@@ -98,6 +98,9 @@ struct PBRMaterialWrite {
 namespace {
 // GXPortPostCompositeAdd's colour, for the next HDR scene post only (game thread).
 f32 sPostAdd[4] = {};
+// GXPortPostCompositeRadial's c0, c1, c2, likewise; sPostRadialOn false: none.
+f32 sPostRadial[3][4] = {};
+bool sPostRadialOn = false;
 
 aurora::gfx::bloom::Params post_process_params(GXBool bloom, f32 threshold, const f32 tints[5][3],
                                                const f32 tone[3][4], u32 gradeA, u32 gradeB, f32 gradeWeight,
@@ -133,8 +136,8 @@ bool write_post_process(const aurora::gfx::bloom::Params& params) {
   }
   // Through the FIFO: recording it directly would first wait for the FIFO thread to finish
   // everything the frame has drawn so far.
-  static_assert(sizeof(params) == 36 * sizeof(u32));
-  u32 words[36];
+  static_assert(sizeof(params) == 49 * sizeof(u32));
+  u32 words[49];
   std::memcpy(words, &params, sizeof(words));
   GX_WRITE_AURORA(GX_AURORA_PORT_POST_PROCESS);
   for (const u32 word : words) {
@@ -153,6 +156,18 @@ void GXPortPostCompositeAdd(const f32 rgba[4]) {
   }
 }
 
+void GXPortPostCompositeRadial(const f32 c0[4], const f32 c1[4], const f32 c2[4]) {
+  if (c0 == nullptr || c1 == nullptr || c2 == nullptr) {
+    std::memset(sPostRadial, 0, sizeof(sPostRadial));
+    sPostRadialOn = false;
+    return;
+  }
+  std::memcpy(sPostRadial[0], c0, sizeof(sPostRadial[0]));
+  std::memcpy(sPostRadial[1], c1, sizeof(sPostRadial[1]));
+  std::memcpy(sPostRadial[2], c2, sizeof(sPostRadial[2]));
+  sPostRadialOn = true;
+}
+
 GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
                               u32 gradeB, f32 gradeWeight, f32 exposure) {
   // The EFB the copies saw is about to change target (the HDR scene ends here).
@@ -160,6 +175,10 @@ GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3]
   f32 add[4];
   std::memcpy(add, sPostAdd, sizeof(add));
   GXPortPostCompositeAdd(nullptr);
+  f32 radial[3][4];
+  std::memcpy(radial, sPostRadial, sizeof(radial));
+  const bool radialOn = sPostRadialOn;
+  GXPortPostCompositeRadial(nullptr, nullptr, nullptr);
   if (sDrawIdMode) {
     return true;
   }
@@ -168,6 +187,8 @@ GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3]
   auto params = noPost ? post_process_params(false, threshold, tints, tone, 0, 0, 0.f, 0.f)
                        : post_process_params(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, exposure);
   std::memcpy(params.add, add, sizeof(add));
+  std::memcpy(params.radial, radial, sizeof(radial));
+  params.radialOn = radialOn ? 1 : 0;
   return write_post_process(params);
 }
 

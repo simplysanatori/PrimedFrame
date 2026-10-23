@@ -39,6 +39,7 @@ extern const int gkPVSEnabled;
 #ifdef TARGET_PC
 #include "Kyoto/Particles/CPortParticleVars.hpp"
 #include "MetroidPrime/PortVisorGoo.hpp"
+#include "MetroidPrime/PortVisorOverrides.hpp"
 #endif
 
 class CAABox;
@@ -547,10 +548,14 @@ public:
     u16 sizeHandle = kPortNoVar;
   };
   PortVisorGooState& PortVisorGooManager() { return xPortVisorGoo; }
+  // Port: the same manager's visor effect overrides (the radial damage tint's colours).
+  PortVisorOverrides::State& PortVisorOverrideManager() { return xPortVisorOverrides; }
+  const PortVisorOverrides::State& PortVisorOverrideManager() const { return xPortVisorOverrides; }
 
 private:
   uint xPortSimTick = 0;
   PortVisorGooState xPortVisorGoo;
+  PortVisorOverrides::State xPortVisorOverrides;
 #endif
 };
 CHECK_SIZEOF(CStateManager, 0xf98)

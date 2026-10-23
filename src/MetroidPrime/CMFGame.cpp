@@ -327,11 +327,16 @@ void CMFGame::Draw() const {
         }
         // Remastered folds the HUD's damage Add filter into this composite (kept off the free
         // camera, whose frame has no HUD). Only the main post carries it.
+        // Its radial filter (slot B) likewise, always: Remastered never draws that one on its own.
         float tint[4] = {};
-        const bool folded = mainPost && !PortFreeCam::Active() &&
-                            mGuiManager->PortCompositeTint(*mStateManager, tint) && tint[3] > 0.f;
+        float radial[3][4];
+        const bool hud = mainPost && !PortFreeCam::Active();
+        bool folded = hud && mGuiManager->PortCompositeTint(*mStateManager, tint) && tint[3] > 0.f;
         if (folded) {
           GXPortPostCompositeAdd(tint);
+        } else if (hud && mGuiManager->PortCompositeRadial(*mStateManager, radial[0], radial[1], radial[2])) {
+          GXPortPostCompositeRadial(radial[0], radial[1], radial[2]);
+          folded = true;
         }
         if (mainPost) {
           CSamusHud::PortSetTintFolded(folded);
