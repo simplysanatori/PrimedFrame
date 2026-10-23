@@ -141,7 +141,7 @@ inline constexpr int kEffects = 98;    // port_remastered_effect_import and the 
 // 26: roomenv version 23, the world shift (the fog's noise is read in Remastered's world).
 // 28: retail model placements (RetailPlacement); their entities leave the room's geometry.
 // 29: a retail model's objects pair with its entities by order (RetailPlacement orient, entity).
-inline constexpr int kRooms = 29;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
+inline constexpr int kRooms = 30;      // port_remastered_room: roomenv/, .roomgeo, .roomliquid, .roomfx, water maps
 inline constexpr int kRoomModels = 1;  // the rooms' own models and their levels of detail
 inline constexpr int kText = 1;        // port_remastered_text, and the font (port_remastered_font)
 inline constexpr int kHud = 8;         // port_remastered_hud, port_remastered_map

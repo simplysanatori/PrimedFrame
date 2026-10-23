@@ -50,6 +50,9 @@ constexpr uint32_t kRoomController = 0x83cc17aa;
 constexpr uint32_t kTonemap = 0xddea916d;
 constexpr uint32_t kReflectionProbe = 0x27807e39;
 constexpr uint32_t kAutoExposureHint = 0x98694074;
+constexpr uint32_t kAutoExposureHintMP1 = 0x451c85b6;  // CAutoExposureHintMP1GOC: swaps two hints on the visor
+constexpr uint32_t kLinkExposureHintA = 0x9ea1739d;     // its link to the hint for the normal view
+constexpr uint32_t kLinkExposureHintB = 0x4ff221ac;     // its link to the thermal one
 constexpr uint32_t kBloomEffect = 0x7dcaf170;
 constexpr uint32_t kColorGrade = 0x6b091e44;
 constexpr uint32_t kColorGradeHint = 0xa36cd908;
@@ -691,6 +694,8 @@ struct Connection {
 
 std::vector<Connection> ReadConnections(const Room& room);
 std::vector<int> ReadEntityLinks(const Room& room, size_t i);
+// The same links with their link ids: (u32 id, linked component or -1).
+std::vector<std::pair<uint32_t, int>> ReadEntityLinkIds(const Room& room, size_t i);
 double MaxAbs(const Vec3& a, const Vec3& b);
 
 // What drives the scenery actors of a room.

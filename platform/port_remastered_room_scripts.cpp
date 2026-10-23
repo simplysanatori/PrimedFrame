@@ -316,8 +316,8 @@ std::vector<Connection> ReadConnections(const Room& room) {
 // A component's typed links, after its connections in its id data: u16 count, then per link
 // u32 link id, the target entity's guid, u32, u8, u8, and a guid (42 bytes). The linked
 // components (-1 for a guid the room lacks), in order.
-std::vector<int> ReadEntityLinks(const Room& room, size_t i) {
-  std::vector<int> out;
+std::vector<std::pair<uint32_t, int>> ReadEntityLinkIds(const Room& room, size_t i) {
+  std::vector<std::pair<uint32_t, int>> out;
   std::vector<Connection> conns;
   size_t o = 0;
   if (!ReadComponentConnections(room, i, conns, o)) {
@@ -337,7 +337,15 @@ std::vector<int> ReadEntityLinks(const Room& room, size_t i) {
   for (size_t k = 0; k < count; ++k, o += 42) {
     Id16 target;
     std::memcpy(target.data(), b + o + 4, 16);
-    out.push_back(room.ByGuid(target));
+    out.emplace_back(ReadLE32(b + o), room.ByGuid(target));
+  }
+  return out;
+}
+
+std::vector<int> ReadEntityLinks(const Room& room, size_t i) {
+  std::vector<int> out;
+  for (const auto& l : ReadEntityLinkIds(room, i)) {
+    out.push_back(l.second);
   }
   return out;
 }

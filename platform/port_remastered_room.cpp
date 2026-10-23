@@ -433,11 +433,55 @@ void Writer::Tonemap(const RoomData& r, float out[5]) const {
 // room, such as a cutscene) or a volume of their own. Hints with mode 1 or 2 (active while
 // the camera is inside a fluid / once it has left one) go to `fluid` with their mode. A value the hint leaves out is
 // SLdrAutoExposureHint's default.
+//
+// The two hints a CAutoExposureHintMP1 swaps between (role 1 for the one its 0x9ea1739d link
+// reaches, 2 for its 0x4ff221ac link; which is the normal view and which the thermal one is
+// inferred from the data (unverified)) go to `fluid` whatever their mode, with the
+// instance's number in `pair`, and out of the plain-hint pick.
 void Writer::Exposure(const RoomData& r, float out[5], std::vector<PortRoomEnv::FluidHint>* fluid) const {
   out[0] = out[1] = out[2] = 0.f;
   out[3] = 32.f;
   out[4] = 0.5f;
   int best = 0;
+  std::map<const Component*, std::pair<uint8_t, uint8_t>> paired;  // hint -> role, pair
+  {
+    const auto& comps = r.room.Components();
+    int instances = 0, unresolved = 0;
+    for (const Component* m : r.room.Of(kAutoExposureHintMP1)) {
+      bool ok = true;
+      for (const auto& l : ReadEntityLinkIds(r.room, size_t(m - comps.data()))) {
+        if (l.first != kLinkExposureHintA && l.first != kLinkExposureHintB) {
+          continue;
+        }
+        if (l.second < 0 || comps[size_t(l.second)].type != kAutoExposureHint || instances >= 255) {
+          ok = false;
+          continue;
+        }
+        paired[&comps[size_t(l.second)]] = {uint8_t(l.first == kLinkExposureHintA ? 1 : 2), uint8_t(instances)};
+      }
+      ++instances;
+      unresolved += ok ? 0 : 1;
+    }
+    std::string modes;  // "A modes / B modes", for the import log
+    for (int role = 1; role <= 2; ++role) {
+      modes += role == 1 ? " (A modes" : "; B modes";
+      for (const auto& [hint, rp] : paired) {
+        if (rp.first == role) {
+          const auto hf = r.room.Flat(*hint);
+          const auto mi = hf.find(kPropHintMode);
+          modes += " " + std::to_string(mi != hf.end() && mi->second.size >= 4
+                                            ? int(ReadLE32(r.room.Bytes(mi->second)))
+                                            : 0);
+        }
+      }
+    }
+    modes += ")";
+    if (instances > 0) {
+      Log("  " + r.name + ": exposure hint swap: " + std::to_string(instances) + " instance(s), " +
+          std::to_string(paired.size()) + " hints" + modes +
+          (unresolved > 0 ? ", WARNING " + std::to_string(unresolved) + " with an unresolved link" : ""));
+    }
+  }
   for (const Component* c : r.room.Of(kAutoExposureHint)) {
     const auto f = r.room.Flat(*c);
     const auto value = [&](uint32_t prop, float fallback) {
@@ -457,10 +501,15 @@ void Writer::Exposure(const RoomData& r, float out[5], std::vector<PortRoomEnv::
                         std::fabs(scale[2] - 1.0) < 1e-3);
     const auto modeIt = f.find(kPropHintMode);
     const int mode = modeIt != f.end() && modeIt->second.size >= 4 ? int(ReadLE32(r.room.Bytes(modeIt->second))) : 0;
-    if (mode == 1 || mode == 2) {
+    const auto pairIt = paired.find(c);
+    if (mode == 1 || mode == 2 || pairIt != paired.end()) {
       if (fluid != nullptr) {
         PortRoomEnv::FluidHint h;
-        h.mode = uint8_t(mode);
+        h.mode = uint8_t(std::clamp(mode, 0, 255));
+        if (pairIt != paired.end()) {
+          h.role = pairIt->second.first;
+          h.pair = pairIt->second.second;
+        }
         h.exposure[0] = range[0];
         h.exposure[1] = range[1];
         h.bias = std::isfinite(bias) ? bias : 0.f;
@@ -3287,7 +3336,9 @@ std::string Writer::WriteRoom(const RoomData& r, const std::map<std::string, Pla
   AppendLE32(out, uint32_t(fluidHints.size()));
   for (const PortRoomEnv::FluidHint& h : fluidHints) {
     out.push_back(h.mode);
-    out.insert(out.end(), 3, 0);
+    out.push_back(h.role);
+    out.push_back(h.pair);
+    out.push_back(0);
     AppendLEFloat(out, h.exposure[0]);
     AppendLEFloat(out, h.exposure[1]);
     AppendLEFloat(out, h.bias);

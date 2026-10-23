@@ -374,6 +374,7 @@ extern int sVolFog;
 extern bool sFogRegions;
 extern bool sPlayerFluid;
 extern bool sCameraWater;
+extern uint8_t sExposureSwap; // ExposureHints::SwapState of the frame
 extern uint64_t sItems;
 extern std::vector<WorldVolume> sWorldVolumes; // the world's camera volumes (SetCameraPoint)
 extern WorldVolumeState sWorldVolumeState;

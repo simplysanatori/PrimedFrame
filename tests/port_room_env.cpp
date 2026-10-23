@@ -928,6 +928,53 @@ void TestExposureHints() {
   g.Set(one, true);
   CHECK_MSG(!g.Set(one, false) && g.Pick(1) == -1, "hints: leaving only unregisters mode 1");
 
+  // CAutoExposureHintMP1: pair A (role 1) and B (role 2), plus an ordinary mode 1 hint.
+  {
+    using Swap = ExposureHints;
+    std::vector<FluidHint> pair(3);
+    pair[0].mode = 0;
+    pair[0].role = 1;
+    pair[1].mode = 0;
+    pair[1].role = 2;
+    pair[2].mode = 1;
+    ExposureHints p;
+    CHECK_MSG(!p.Load(pair, false, 1) && p.Pick(3) == 0, "pair: A registers at load, without a snap");
+    CHECK_MSG(!p.SetPair(pair, Swap::SwapState(true, false, false)), "pair: no change, no snap");
+    CHECK_MSG(p.SetPair(pair, Swap::SwapState(true, true, false)) && p.Pick(3) == 1, "pair: thermal registers B (snap)");
+    CHECK_MSG(!p.SetPair(pair, Swap::SwapState(true, true, false)), "pair: same state, no snap");
+    CHECK_MSG(p.SetPair(pair, Swap::SwapState(true, false, false)) && p.Pick(3) == 0, "pair: back to A (snap)");
+    CHECK_MSG(!p.SetPair(pair, Swap::SwapState(false, true, false)), "pair: morphed thermal stays on A");
+    CHECK_MSG(p.SetPair(pair, Swap::SwapState(true, true, true)) == false && p.Pick(3) == 0,
+              "pair: thermal in a cinematic stays on A");
+    CHECK_MSG(p.SetPair(pair, Swap::SwapState(true, true, false)) && p.Pick(3) == 1, "pair: thermal again picks B");
+    // The newest registered hint wins: a fluid hint registered after B outranks it.
+    CHECK_MSG(p.Set(pair, true) && p.Pick(3) == 2, "pair: the fluid hint registered last wins");
+    CHECK_MSG(p.SetPair(pair, 1) && p.Pick(3) == 0, "pair: A registers after the fluid hint and wins");
+    // Load straight into thermal: B, no snap.
+    ExposureHints q;
+    CHECK_MSG(!q.Load(pair, false, 0) && q.Pick(3) == 1, "pair: load in thermal starts B");
+    // Fluid-mode pair hint: eligible only inside the fluid while enabled.
+    std::vector<FluidHint> fl(2);
+    fl[0].mode = 1;
+    fl[0].role = 1;
+    fl[1].mode = 1;
+    fl[1].role = 2;
+    ExposureHints r;
+    r.Load(fl, false, 1);
+    CHECK_MSG(r.Pick(2) == -1, "pair: fluid-mode hints idle outside");
+    CHECK_MSG(r.Set(fl, true) && r.Pick(2) == 0, "pair: inside registers A only");
+    CHECK_MSG(r.SetPair(fl, 0) && r.Pick(2) == 1, "pair: swap inside registers B");
+    // Script modes never register.
+    std::vector<FluidHint> sc(2);
+    sc[0].mode = 5;
+    sc[0].role = 1;
+    sc[1].mode = 5;
+    sc[1].role = 2;
+    ExposureHints s5;
+    s5.Load(sc, true, 1);
+    CHECK_MSG(!s5.SetPair(sc, 0) && !s5.Set(sc, false) && s5.Pick(2) == -1, "pair: mode 5 never registers");
+  }
+
   const float a[6] = {1, 2, 3, 4, 5, 6};
   const float b[6] = {11, 12, 13, 14, 15, 16};
   const float c[6] = {21, 22, 23, 24, 25, 26};
