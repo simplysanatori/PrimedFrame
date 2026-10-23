@@ -262,6 +262,11 @@ GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], con
 // Cost test 10 keeps the conversion (bloom and grades off).
 GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4],
                               u32 gradeA, u32 gradeB, f32 gradeWeight, f32 exposure);
+// Port extension: a colour the next GXPortPostProcessScene adds in its composite, in linear light
+// before the sRGB encode: out = clamp(frame) + clamp(rgba).rgb * clamp(rgba).a (Remastered's
+// UberPost material 0007259, the HUD's damage filter folded in). Taken by that post and cleared;
+// NULL or alpha 0 adds nothing. The display-EFB composite does not take it.
+void GXPortPostCompositeAdd(const f32 rgba[4]);
 // Port extension: Remastered's volumetric fog over the EFB as drawn so far: a froxel grid
 // (16x16 pixels by 64 slices out to `fog[0]`) of height and noise shaped density, lit by the
 // ambient volume's mean light, integrated front to back and applied to every pixel at the

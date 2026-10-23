@@ -898,6 +898,46 @@ bloom::Params scene_post() {
   return params;
 }
 
+// The composite's damage-tint term (Remastered UberPost 0007259, slot A): clamp(frame) +
+// clamp(c).rgb * clamp(c).a in linear light. The Null backend runs no shader, so this checks the
+// shared WGSL through Tint and the wire layout, and the term itself against a CPU mirror.
+TEST_F(SceneHdrTest, CompositeAddTermCompilesAndKeepsItsWireLayout) {
+  static_assert(sizeof(bloom::Params) == 36 * sizeof(uint32_t));
+  static_assert(offsetof(bloom::Params, add) == 32 * sizeof(uint32_t));
+  const std::string source = std::string{bloom::CompositeAddWgsl} +
+                             "@compute @workgroup_size(1) fn main() { let v = composite_add(vec3f(0.5), vec4f(1.0, 0.5, 0.0, 0.5)); _ = v; }";
+  EXPECT_EQ(module_error(source), "");
+  EXPECT_NE(std::string{bloom::CompositeAddWgsl}.find("clamp(frame, vec3f(0.0), vec3f(1.0)) + t.rgb * t.a"),
+            std::string::npos);
+  // No tint recorded: the default params add nothing (alpha 0), so the shader leaves the frame alone.
+  EXPECT_EQ(scene_post().add[3], 0.f);
+}
+
+TEST(CompositeAddMath, MatchesTheTracedShader) {
+  const auto term = [](const float frame[3], const float c[4], float out[3]) {
+    const auto clamp01 = [](float v) { return std::min(std::max(v, 0.f), 1.f); };
+    const float a = clamp01(c[3]);
+    for (int i = 0; i < 3; ++i) {
+      out[i] = clamp01(frame[i]) + clamp01(c[i]) * a;
+    }
+  };
+  float out[3];
+  // The frame is clamped before the add, so it can exceed 1 only by the tint.
+  const float f1[3] = {1.4f, 0.2f, -0.1f};
+  const float c1[4] = {1.f, 0.5f, 0.25f, 0.5f};
+  term(f1, c1, out);
+  EXPECT_FLOAT_EQ(out[0], 1.5f);
+  EXPECT_FLOAT_EQ(out[1], 0.45f);
+  EXPECT_FLOAT_EQ(out[2], 0.125f);
+  // The colour clamps before it is weighted by its alpha.
+  const float f2[3] = {0.f, 0.f, 0.f};
+  const float c2[4] = {2.f, -1.f, 0.5f, 3.f};
+  term(f2, c2, out);
+  EXPECT_FLOAT_EQ(out[0], 1.f);
+  EXPECT_FLOAT_EQ(out[1], 0.f);
+  EXPECT_FLOAT_EQ(out[2], 0.5f);
+}
+
 TEST_F(SceneHdrTest, ScenePostHandsTheSceneToTheDisplayEfb) {
   bloom::shutdown();
   ASSERT_TRUE(bloom::ensure_task());

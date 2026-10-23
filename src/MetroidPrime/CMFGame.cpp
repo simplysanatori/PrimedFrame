@@ -32,6 +32,7 @@
 #include "port_photo.h"
 #include "MetroidPrime/CScriptLayerManager.hpp"
 #include "port_room_env.h"
+#include "MetroidPrime/HUD/CSamusHud.hpp"
 #include <dolphin/gx/GXExtra.h>
 
 CMFGame::CMFGame(rstl::ncrc_ptr< CStateManager > stateManager,
@@ -264,6 +265,7 @@ void CMFGame::Draw() const {
 #ifdef TARGET_PC
   // Do not let a request survive a non-game draw (or an early return) into another frame.
   CStateManager::sPortSceneHdrRequest = false;
+  CSamusHud::PortSetTintFolded(false);
 #endif
   if (!mInitialized) {
     return;
@@ -319,6 +321,17 @@ void CMFGame::Draw() const {
                        l.layers->IsLayerActive(l.area, TLayerId(layer));
               },
               &layers, gradeA, gradeB, gradeWeight);
+        }
+        // Remastered folds the HUD's damage Add filter into this composite (kept off the free
+        // camera, whose frame has no HUD). Only the main post carries it.
+        float tint[4] = {};
+        const bool folded = measure && !PortFreeCam::Active() &&
+                            mGuiManager->PortCompositeTint(*mStateManager, tint) && tint[3] > 0.f;
+        if (folded) {
+          GXPortPostCompositeAdd(tint);
+        }
+        if (measure) {
+          CSamusHud::PortSetTintFolded(folded);
         }
         GXPortPostProcessScene(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight,
                                toned && normalVisor && measure ? PortRoomEnv::MeasureExposure() : 0.f);

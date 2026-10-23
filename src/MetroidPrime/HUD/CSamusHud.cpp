@@ -1619,6 +1619,32 @@ void CSamusHud::DrawHelmet(const CStateManager& mgr, float camYOff) {
   }
 }
 
+#ifdef TARGET_PC
+bool CSamusHud::sPortTintFolded = false;
+
+void CSamusHud::PortSetTintFolded(bool folded) { sPortTintFolded = folded; }
+
+bool CSamusHud::PortCompositeTint(float rgba[4]) const {
+  // The Remastered HUD frames are the "Remastered mode" test (see UpdateHudDamage).
+  const bool remastered =
+      (x274_loadedFrmeBaseHud != nullptr && x274_loadedFrmeBaseHud->PortHasHudInterference()) ||
+      (x288_loadedSelectedHud != nullptr && x288_loadedSelectedHud->PortHasHudInterference());
+  CColor color;
+  if (!remastered || x2bc_nextState == kHS_None || !x3a8_camFilter.PortAddColor(color)) {
+    return false;
+  }
+  // Slot A only: UberPost material 0007259 adds clamp(c).rgb * clamp(c).a in the composite
+  // (kb: build/mpr/kb/topic/visorfx-damage-tint-steam-overrides.md). Slot B, the radial fan (filter
+  // shape 0xd, UberPost's c2 and the VE overrides), is NOT traced: where c2 comes from and the VE
+  // defaults are unknown, so it keeps the port's own draw after the composite.
+  rgba[0] = color.GetRed();
+  rgba[1] = color.GetGreen();
+  rgba[2] = color.GetBlue();
+  rgba[3] = color.GetAlpha();
+  return true;
+}
+#endif
+
 void CSamusHud::Draw(const CStateManager& mgr, float alpha, uint helmetVis, bool hudVis,
                      bool targetingManager) const {
   if (x2bc_nextState == kHS_None) {
@@ -1631,7 +1657,15 @@ void CSamusHud::Draw(const CStateManager& mgr, float alpha, uint helmetVis, bool
   } portDyinReset;
 #endif
   const CPlayer::EPlayerMorphBallState ballState = mgr.GetPlayer()->GetMorphballTransitionState();
+#ifdef TARGET_PC
+  CColor foldedTint;
+  if (!(sPortTintFolded && x3a8_camFilter.PortAddColor(foldedTint))) {
+    x3a8_camFilter.Draw();
+  }
+  sPortTintFolded = false;
+#else
   x3a8_camFilter.Draw();
+#endif
   if (ballState == CPlayer::kMS_Unmorphed) {
     DrawAttachedEnemyEffect(mgr);
     x51c_camFilter2.Draw();

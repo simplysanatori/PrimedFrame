@@ -15,8 +15,9 @@ struct Params {
   uint32_t gradeA;    // LUT ids from set_grade_lut; 0 is the identity
   uint32_t gradeB;
   float gradeWeight;  // 0 draws A, 1 draws B
+  float add[4];       // the HDR composite's added term, linear r, g, b, a (a 0: none); see CompositeAddWgsl
 };
-static_assert(sizeof(Params) <= 128);
+static_assert(sizeof(Params) <= 144);
 // Params::bloom bits for speed tests (GXSetPBRCostTest), which leave out one part of the work and
 // look wrong: no copy of the frame (the composite reads a stale one), and the pass after the bloom
 // clearing depth instead of loading it. CostKeepDepth looks right: it always loads depth after the
@@ -30,6 +31,17 @@ constexpr uint32_t CostKeepDepth = 16;
 constexpr uint32_t ForceScene = 32;
 
 static_assert(sizeof(Params) % 4 == 0);
+
+// The HDR composite's damage-tint term, Remastered's UberPost material 0007259 (the HUD camera-filter
+// quad folded into the composite): the tonemapped + graded + bloomed frame clamped to [0, 1], plus the
+// colour times its alpha (c clamped to [0, 1] first), all in linear light before the sRGB encode. The
+// frame's alpha is kept by the caller. Shared with the composite's WGSL so a test can run the same code.
+inline constexpr const char* CompositeAddWgsl = R"(
+fn composite_add(frame: vec3f, c: vec4f) -> vec3f {
+  let t = clamp(c, vec4f(0.0), vec4f(1.0));
+  return clamp(frame, vec3f(0.0), vec3f(1.0)) + t.rgb * t.a;
+}
+)";
 
 // Records the bloom at this point of the frame, in a pass of its own on the display EFB. False when it
 // could not be recorded (refused under the HDR scene). Waits for the FIFO to be processed first;
