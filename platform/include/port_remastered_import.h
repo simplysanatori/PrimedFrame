@@ -79,9 +79,10 @@ inline constexpr int kConverter = 54;
 // and Baked. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 3;
+// 11: the Elite Quarters stasis tank 3C26F42B is in the table.
 // 10: a plain cutout over a retail fx material is drawn opaque, cut by the shader.
 // 9: a ColorUnlit mesh (the door shields) gets a back copy.
-inline constexpr int kModels = 10;     // the table's models, their looks and the ANCS copies
+inline constexpr int kModels = 11;     // the table's models, their looks and the ANCS copies
 // 63: ELPS reads its CNST surface flag; the system tween is 0 only at a 0x1000000 lifetime.
 // 62: NEGT, CRCV, SPEV, ELPS, ROTV, PNCV, KEYF, SLTW, CRLN octaves, KESP, one-stop GRAD, PAP0/9,
 //     ADV9 and IAV0..3 are converted; PLNV counts come from MAXP.
