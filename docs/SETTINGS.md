@@ -615,6 +615,14 @@
 - Scan speed (Game > Cutscenes, `scan_speed`, `MP_SCAN_SPEED`, 100-500, default
   100): percent speed of the scan visor's progress bar and the scan's minimum
   time. 100 under Original experience.
+- Hint delay (Game > Cutscenes, `hint_delay`, `MP_HINT_DELAY`, 0-30 minutes,
+  default 0 = Game default): caps the wait before a hint first shows, also for
+  hints already waiting in a loaded save. Needs the in-game hint system on. Game
+  default under Original experience.
+- Show current hint (Game > Cutscenes button; console `hint show`): shows the hint
+  the game would show next. A hint already on screen comes back with its map
+  marker; otherwise the waiting hint due soonest shows now. Needs the in-game
+  hint system on.
 - Auto-aim (Controls > Options > Aiming, `auto_aim`, `MP_AUTO_AIM`, default on):
   off clears the gun's aim target unless Lock-On holds one, so free-aimed shots go
   straight to where you aim instead of turning toward the enemy nearest the screen

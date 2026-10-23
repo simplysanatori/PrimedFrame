@@ -463,6 +463,23 @@ bool AutoAim() {
   return sAutoAim || sOriginalExperience;
 }
 
+float HintDelaySeconds() {
+  EnsureInitialized();
+  return sOriginalExperience ? 0.f : static_cast< float >(sHintDelay) * 60.f;
+}
+
+static bool sShowHintRequested = false;
+
+void RequestShowHint() {
+  sShowHintRequested = true;
+}
+
+bool ConsumeShowHintRequest() {
+  const bool requested = sShowHintRequested;
+  sShowHintRequested = false;
+  return requested;
+}
+
 float ScanSpeed() {
   EnsureInitialized();
   return sOriginalExperience ? 1.f : static_cast< float >(sScanSpeed) / 100.f;

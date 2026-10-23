@@ -67,6 +67,20 @@ void DrawCutscenesSection() {
   }
   ItemHelp("How fast the scan visor fills its bar: 200% scans in half the time. What a scan "
            "records is unchanged.");
+  if (ImGui::SliderInt("Hint delay", &sHintDelay, kHintDelayMin, kHintDelayMax,
+                       sHintDelay == 0 ? "Game default" : "%d min", ImGuiSliderFlags_AlwaysClamp)) {
+    MarkDirty();
+  }
+  ItemHelp("The longest a hint waits before it first shows. Game default keeps the game's own "
+           "timing; a shorter wait also applies to hints already waiting in your save. Needs the "
+           "in-game hint system on.");
+  ImGui::BeginDisabled(gpGameState == nullptr || !gpGameState->GameOptions().GetIsHintSystemEnabled());
+  if (ImGui::Button("Show current hint")) {
+    RequestShowHint();
+  }
+  ImGui::EndDisabled();
+  ItemHelp("Shows the hint the game would show next, now: the one on screen again, or the one "
+           "due soonest. Needs the in-game hint system on.");
   bool beamDoors = sBeamDoorsStayUnlocked;
   if (ImGui::Checkbox("Unlock beam doors once opened", &beamDoors)) {
     SetBeamDoorsStayUnlocked(beamDoors);

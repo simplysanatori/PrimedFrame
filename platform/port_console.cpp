@@ -1334,6 +1334,15 @@ void CmdGod() {
   Finish();
 }
 
+void CmdHint() {
+  if (sCmd.args.size() < 2 || Lower(sCmd.args[1]) != "show") {
+    return Finish("usage: hint show");
+  }
+  PortDebug::RequestShowHint();
+  Out("hint requested");
+  Finish();
+}
+
 void CmdMemo() {
   std::wstring wide;
   for (size_t i = 1; i < sCmd.args.size(); ++i) {
@@ -3725,6 +3734,8 @@ const CommandSpec kCommands[] = {
     {"die", nullptr, CmdDie, ""},
     {"god", nullptr, [](CStateManager&) { CmdGod(); },
      "god [on|off]               the player takes no damage (no argument: show)"},
+    {"hint", nullptr, [](CStateManager&) { CmdHint(); },
+     "hint show                  show the hint the game would show next"},
     {"memo", nullptr, [](CStateManager&) { CmdMemo(); },
      "memo <text>                show text as a HUD message"},
     {"strg", nullptr, [](CStateManager&) { CmdStrg(); },

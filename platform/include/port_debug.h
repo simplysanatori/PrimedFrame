@@ -250,6 +250,15 @@ bool AutoAim();
 const int kScanSpeedMin = 100;
 const int kScanSpeedMax = 500;
 float ScanSpeed();
+// Hint delay in minutes (hint_delay=, MP_HINT_DELAY); 0 = the game's own timing. HintDelaySeconds()
+// caps the wait before a hint first shows (CHintOptions::Update); 0 when off or under Original
+// experience. RequestShowHint() (F1 button, `hint show`) asks the next CHintOptions::Update to show
+// the hint the game would show next; ConsumeShowHintRequest() takes the request.
+const int kHintDelayMin = 0;
+const int kHintDelayMax = 30;
+float HintDelaySeconds();
+void RequestShowHint();
+bool ConsumeShowHintRequest();
 // The next-target reticles (combat seeker, X-ray ring, thermal crosshair). Off hides them;
 // lock-on and scan reticles stay. On under Original experience.
 bool SecondaryCrosshairs();

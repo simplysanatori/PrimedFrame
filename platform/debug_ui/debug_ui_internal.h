@@ -74,6 +74,7 @@ extern bool sSharpScanWindow;
 extern bool sGeneratedBallLooks;
 extern bool sAutoAim;
 extern int sScanSpeed;
+extern int sHintDelay;
 extern bool sSecondaryCrosshairs;
 extern bool sMenuStandardButtons;
 extern std::atomic< int > sPromptGlyphs; // index into kPromptGlyphs

@@ -130,6 +130,14 @@ const SettingKey kSettingKeys[] = {
        }
      },
      [](std::ostream& out) { out << sScanSpeed; }, false, "100", "500"},
+    {"hint_delay",
+     [](const std::string& value) {
+       const int m = std::atoi(value.c_str());
+       if (m >= PortDebug::kHintDelayMin && m <= PortDebug::kHintDelayMax) {
+         sHintDelay = m;
+       }
+     },
+     [](std::ostream& out) { out << sHintDelay; }, false, "0", "30"},
     BoolKey< &sSecondaryCrosshairs >("secondary_crosshairs"),
     BoolKey< &sMenuStandardButtons >("menu_standard_buttons"),
     {"pointer_menus", [](const std::string& value) { PortPointer::SetEnabled(ParseBool(value)); },

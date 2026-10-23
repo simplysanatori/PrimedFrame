@@ -12,6 +12,8 @@
 {"Game", "", "Cutscenes", "Elevator ride", "elevator loading length skip"},
 {"Game", "", "Cutscenes", "Boot logos", "nintendo retro dolby startup intro skip"},
 {"Game", "", "Cutscenes", "Scan speed", "scanning visor fast quick"},
+{"Game", "", "Cutscenes", "Hint delay", "hints help wait timer minutes scan"},
+{"Game", "", "Cutscenes", "Show current hint", "hints help stuck next message map marker"},
 {"Game", "", "Cutscenes", "Unlock beam doors once opened", "door wave ice plasma power blue lock stay open"},
 {"Game", "", "Cutscenes", "Stack beams", "beams stack all fire together power ice wave plasma"},
 {"Game", "", "Cutscenes", "1.00 sequence-break compatibility", "revision v1 1.00 old version sequence break"},

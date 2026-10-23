@@ -30,7 +30,7 @@ it is frustum-culled),
 `send <id> <msg>`, `give <item> [n]`, `take <item> [n]`, `fusion [0|1]` (wear the Fusion Suit, no unlock needed), `items`, `heal`, `kill <id> [damage]` (deals an actor its remaining health, or the given damage, as Power
 Beam damage, so bosses run their death scripts), `phazongun [off]` (lets the arm cannon fire the Phazon Beam, or stops it), `god [on|off]`,
 `hurt [n]` (hits the player for n, default 10, with the HUD flash and damage sound), `die` (empties the health),
-`memo <text>` (shows the text as a HUD message), `strg <id> [index]` (a string table, or one string of it, as the game loads it, mods included),
+`hint show` (shows the hint the game would show next, as F1 > Game > Show current hint), `memo <text>` (shows the text as a HUD message), `strg <id> [index]` (a string table, or one string of it, as the game loads it, mods included),
 `language [en|<code>]` (the text language, switched while the game runs; no argument prints it),
 `visor [combat|xray|scan|thermal|0-3]` and `beam [power|ice|wave|plasma|0-3]` (switch as the touch wheels do, so the game's own rules apply: owned items only, not in the ball; no argument prints the current one), `press <a+b> [frames]`
 (`sx:<n>`, `sy:<n>`, `cx:<n>`, `cy:<n>` tokens hold stick axes along with
