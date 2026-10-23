@@ -142,6 +142,8 @@ public:
   bool HasId(uint32_t id) const { return m_ids.count(id) != 0; }
 
   bool HasUniqueResource(uint32_t type, uint32_t id) const;
+  // Whether any pak has a resource of this type and id (it may sit in several).
+  bool HasResource(uint32_t type, uint32_t id) const { return m_resourceCounts.count(Key(type, id)) != 0; }
 
   // The ids of every resource of `type` it reads, in no particular order.
   std::vector<uint32_t> Ids(uint32_t type) const;

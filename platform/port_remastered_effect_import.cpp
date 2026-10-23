@@ -807,6 +807,7 @@ constexpr MatchedEffect kMatchedEffects[] = {
     {"cdf30852-2632-4596-9dd1-e85e2908daea", 0x4A5F51FD},  // 65177C3A Fire1/Fire2
     {"4d818e87-ce9b-4581-aeba-e8155b813082", 0xD3BD37FC},  // 65177C3A Fire2/Fire3
     {"74d36fa3-690a-456e-9469-09b97fcc554a", 0x1233E83C},  // 65177C3A Fire3
+    {"db8e16a5-c5bb-4c7c-adfc-112df3d890f4", 0x43CD9074},  // F9F4B18F SpeedSwoosh (a SWHC)
     {"00aadc3b-c393-4e1b-b379-2b114bc1bbe8", 0x9884632F},  // 6B45F06D Eyes
     {"cc86c15d-0f2a-4807-a727-eda4723f3a9c", 0x273375E3},  // 8169653A TwoEyes
     {"#by-hand", 0},  // method of the entries below
@@ -1573,6 +1574,24 @@ public:
       ++m_result.failed;
       Log(name + ": only placeholder materials draw, the disc's is kept");
       Report(row, "failed", "draws nothing: its materials are placeholders");
+      return;
+    }
+    // A generator that draws nothing and only starts one swoosh stands for a retail SWHC (the
+    // CHPR's SpeedSwoosh): the swoosh itself replaces it, a PART under a SWHC's id would not.
+    if (rootType == kPart && m_io.retailHas && m_io.retailHas(kSwhc, retail)) {
+      error.clear();
+      if (parts.size() != 2 || !parts[0].drawsNothing || parts[1].type != kSwhc ||
+          !SplitRetailEffect(kSwhc, parts[1].part.data(), parts[1].part.size(), check, error) ||
+          !m_io.write(Hex8(retail) + ".SWHC", parts[1].part)) {
+        ++m_result.failed;
+        Log(name + ": a SWHC's stand-in is not a generator around one swoosh");
+        Report(row, "failed", "a retail SWHC's stand-in is not a generator around one swoosh");
+        return;
+      }
+      ++m_result.parts;
+      ++m_result.written;
+      m_result.dropped += parts[1].droppedRetail;
+      Report(row, "imported");
       return;
     }
     // Children first, so the root never names a child that was not written.
