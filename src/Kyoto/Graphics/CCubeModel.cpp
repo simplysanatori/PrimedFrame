@@ -9,6 +9,7 @@
 #include "Kyoto/Graphics/CGX.hpp"
 #include "Kyoto/Graphics/CGX_Impl.hpp" // IWYU pragma: keep
 #include "Kyoto/Graphics/CGraphics.hpp"
+#include "MetaRender/CCubeRenderer.hpp"
 #include "dolphin/gx/GXVert.h"
 #ifdef TARGET_PC
 #include <dolphin/gx/GXExtra.h>
@@ -713,11 +714,24 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   const bool outside = inventoryDraw == kPID_Outside;
   const bool inventory = inventoryDraw == kPID_Pbr;
   const CColor& tint = modelFlags.GetColorRef();
-  const bool pbrBlend = outside && modelFlags.GetTrans() == CModelFlags::kT_Blend && tint.GetRedu8() == 0xFF &&
-                        tint.GetGreenu8() == 0xFF && tint.GetBlueu8() == 0xFF &&
-                        material.IsFlagSet(kStateFlag_PortPBR) &&
-                        CCubeMaterial::PortPBRAllowed(opaqueFlags);
-  const bool solidBlend = pbrBlend && tint.GetAlphau8() == 0xFF;
+  const CModelFlags::ETrans trans = modelFlags.GetTrans();
+  const bool tintWhite = tint.GetRedu8() == 0xFF && tint.GetGreenu8() == 0xFF && tint.GetBlueu8() == 0xFF;
+  // Remastered never swaps a material for a model tint or fade: the flags only override the blend and hand the
+  // colour to the material as DIFC / ICMC (kb topic/model-flags-fade-tint.md). So a PBR material keeps its own
+  // shading under ColorModulate (kT_One), ColorAdd (kT_Two, kT_Three; retail's striped alpha on kT_Three is dropped
+  // as Remastered does), AlphaBlended (kT_Blend) and Additive (kT_Additive). kT_Additive2, kT_Four, black and
+  // thermal stay on the TEV fallback (a white blend keeps its thermal-PBR modes as before). Only the kinds whose
+  // shader takes the colour as Remastered's does (0 and 3, and glass, kind 8, which reads neither) are tinted in
+  // PBR; the others read DIFC elsewhere (GXSetPBRShield row 7, kind 35's DIFC.w), not wired yet, so they keep TEV.
+  const bool pbrOutside = outside && material.IsFlagSet(kStateFlag_PortPBR) && CCubeMaterial::PortPBRAllowed(opaqueFlags);
+  const bool tintKind = (portKind > -0.5f && portKind < 0.5f) || (portKind > 2.5f && portKind < 3.5f) ||
+                        (portKind > 7.5f && portKind < 8.5f);
+  const bool tintable = pbrOutside && tintKind && !CCubeRenderer::That()->GetThermal();
+  const bool tintOpaque =
+      tintable && (trans == CModelFlags::kT_One || trans == CModelFlags::kT_Two || trans == CModelFlags::kT_Three);
+  const bool pbrBlend = (pbrOutside && trans == CModelFlags::kT_Blend && tintWhite) ||
+                        (tintable && (trans == CModelFlags::kT_Blend || trans == CModelFlags::kT_Additive));
+  const bool solidBlend = pbrBlend && trans == CModelFlags::kT_Blend && tint.GetAlphau8() == 0xFF;
   const bool fadeBlend = pbrBlend && !solidBlend;
   f32 inventoryDiffuse[4];
   f32 inventoryIncan[4];
@@ -726,7 +740,7 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
       !PortInventoryModulation(sPortInventoryPass, inventoryDiffuse, inventoryIncan, inventoryCoverage)) {
     return;
   }
-  const CModelFlags drawFlags = PortDrawFlags(inventory, solidBlend, opaqueFlags, modelFlags);
+  const CModelFlags drawFlags = PortDrawFlags(inventory, solidBlend || tintOpaque, opaqueFlags, modelFlags);
   // The Ice Beam cannon's frost shell (kind 12) shows only while the beam charges
   // (PortSetChargeShell, or a console override of its first parameter), and only as PBR:
   // the TEV fallback has no dissolve and would freeze the gun for good.
@@ -1016,7 +1030,28 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
     if (inventory) {
       GXSetPBRModelModulation(inventoryDiffuse, inventoryIncan, inventoryCoverage);
     } else {
-      GXSetPBRModelModulation(nullptr, nullptr, 1.f);
+      // Outside the visor: the model colour as DIFC (kT_One; the blends' rgb, their alpha rides the fade) or ICMC
+      // (ColorAdd, when any rgb > 0, else none), identity when untinted so nothing leaks between draws. Remastered
+      // sets flag 0x4000 (ICMC x inverse exposure) at the damage-flash sites, so the add reaches the screen
+      // unexposed, as the shader adds it after the exposure scaling; CPatterned's 0x4000 gate (this+0x491 bit 1) is
+      // unverified, so every ColorAdd takes it.
+      f32 diffuse[4] = {1.f, 1.f, 1.f, 1.f};
+      f32 incan[4] = {0.f, 0.f, 0.f, 1.f};
+      if (tintOpaque || pbrBlend) {
+        if (trans == CModelFlags::kT_Two || trans == CModelFlags::kT_Three) {
+          if (tint.GetRed() > 0.f || tint.GetGreen() > 0.f || tint.GetBlue() > 0.f) {
+            incan[0] = tint.GetRed();
+            incan[1] = tint.GetGreen();
+            incan[2] = tint.GetBlue();
+          }
+        } else {
+          diffuse[0] = tint.GetRed();
+          diffuse[1] = tint.GetGreen();
+          diffuse[2] = tint.GetBlue();
+          diffuse[3] = trans == CModelFlags::kT_One ? tint.GetAlpha() : 1.f;
+        }
+      }
+      GXSetPBRModelModulation(diffuse, incan, 1.f);
     }
     GXSetPBR(GX_TRUE);
     ++CCubeMaterial::sPortPBRDraws;
