@@ -2878,10 +2878,19 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
     // Screen reads (map 7, kinds 8/11/14/23/29/30/34/36): in the HDR scene CCubeModel's copy is
     // GXPortCopyScene's linear RGBA16F one, so they read the scene raw (no sRGB decode, no second
     // exposure). Base and cube maps keep their decodes.
-    // NOT CLASSIFIED YET (stage 3): pbr_pass mixes terms LDR adds after the tone curve (display
-    // domain) with terms that may be light. Each producer needs its own domain from the material
-    // before HDR is activated or the render is called correct; until then this sum is not exact,
-    // and no blanket inverse of pbr_pass stands in for that classification.
+    // pbr_pass, classified from the fragment shaders (kb topic/hdr-pbr-pass.md): every screen-copy
+    // term is linear HDR light, added to the lit sum before the tonemap with no exposure factor (the
+    // copy is the HDR frame, sampled raw; 231f8383 002, 03407341 009, 6c1a4768 002, 24670bf0
+    // 018/002, cc8afd0f 002, 3991da00/2f95a061 002, 788360de/4c37625c's GPU blend). The scene holds
+    // exposed light and so does its copy, so the sum is the source's times the one exposure. What
+    // differs per kind is the fog of the sorted fog perms (VS froxel T, S):
+    //   8 (231f8383 006): (lit + bent) T + A S.   29 (3991da00 006): DIFC.a ((..+bent) DIFC T + a S).
+    //   11 (03407341 009), 29 dual (2f95a061 006): DIFC.a ((..+bent CCH3.z CCH1) DIFC T + S k),
+    //      k = 1 - CCH1 (1 - vertex alpha), plus the frame x DIFC.a k by the blend (o1): unbent, unfogged.
+    //   23/30 (24670bf0/cc8afd0f 003): lit T + S (1 - w) + w frame, w = BCLR x v3 x v3.a (23) or v3.a
+    //      (30): the transmitted frame unfogged.   14 (6c1a4768, 6f53c775): no fog perm, no fog.
+    // pbr_keep is what a blend keeps of the frame (unfogged); pbr_vfw/pbr_vfk a kind's in-scatter
+    // weight, pbr_vfon off where the shader has no fog perm.
     // Kind 36: the coverage C scales the light before the tone, which is the source's HDR coverage
     // (source (lit + ICMC) * C); LDR's C after the tone is a port workaround. The pause inventory
     // stays an LDR pass, so this is not its default.
@@ -2896,7 +2905,10 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
     if (source.find("      pbr_tm *= inv_c;\n") != std::string::npos) {
       put("      pbr_tm *= inv_c;\n", "      pbr_tm *= inv_c;\n      pbr_lin *= inv_c;\n");
     }
-    put("prev = vec4f(srgb_enc(pbr_tm + pbr_pass), pbr_alpha);", "prev = vec4f(pbr_lin + pbr_pass, pbr_alpha);");
+    put("prev = vec4f(srgb_enc(pbr_tm + pbr_pass), pbr_alpha);", "prev = vec4f(pbr_lin + pbr_pass + pbr_keep, pbr_alpha);");
+    put("      var pbr_pass = vec3f(0.0);\n", "      var pbr_pass = vec3f(0.0);\n      var pbr_keep = vec3f(0.0);\n"
+                                            "      var pbr_vfw = vec3f(1.0);\n      var pbr_vfk = false;\n"
+                                            "      var pbr_vfon = true;\n");
     put("prev = vec4f(clamp(pbr_dc, vec3f(0.0), vec3f(1.0)), prev.a);",
         "prev = vec4f(hdr_exposed(pbr_dc, ubuf.pbr_tone[0], ubuf.pbr_tone[1], ubuf.pbr_tone[2]), prev.a);");
     put("prev = vec4f(clamp(pbr_vdiag, vec3f(0.0), vec3f(1.0)), prev.a);",
@@ -2912,6 +2924,36 @@ R"""(      // Encoded as Remastered's sRGB swapchain does it: the exact piecewis
     rawScreen("srgb_dec(pbr_hg)", "pbr_hg");
     rawScreen("srgb_dec(pbr_sfb)", "pbr_sfb");
     rawScreen("srgb_dec(textureSampleLevel(tex7, tex7_samp,", "(textureSampleLevel(tex7, tex7_samp,");
+    // Per kind (only the kinds this shader has): the fog weights and the blend's kept frame above.
+    const auto kind = [&](std::string_view what, std::string_view with) {
+      const size_t at = source.find(what);
+      if (at != std::string::npos) {
+        source.replace(at, what.size(), with);
+      }
+    };
+    kind("pbr_pass = pbr_gs * max(ubuf.pbr_emissive.rgb, vec3f(0.0)) * pbr_gt;",
+         "pbr_pass = pbr_gs * max(ubuf.pbr_emissive.rgb, vec3f(0.0)) * pbr_gt;\n"
+         "          pbr_vfw = vec3f(pbr_alpha);\n          pbr_vfk = true;");
+    kind("pbr_pass = pbr_hg *\n                     max(vec3f(1.0) + ubuf.pbr_emissive.rgb * (ubuf.pbr_param.w - 1.0 + pbr_vraw.a), vec3f(0.0));",
+         "pbr_pass = pbr_hg * ubuf.pbr_emissive.rgb * ubuf.pbr_param.w;\n"
+         "          pbr_vfw = vec3f(1.0) - ubuf.pbr_emissive.rgb * (1.0 - pbr_vraw.a);\n"
+         "          pbr_vfk = true;\n"
+         "          pbr_keep = textureSampleLevel(tex7, tex7_samp, clamp(in.pbr_scr.xy / in.pbr_scr.w * vec2f(0.5, -0.5) + 0.5,\n"
+         "                                        vec2f(0.0), vec2f(1.0)), 0.0).rgb * pbr_vfw;");
+    kind("pbr_pass = pbr_sfb * pbr_c4.x * pbr_vraw.rgb;",
+         "pbr_pass = pbr_sfb * pbr_c4.x * pbr_vraw.rgb;\n          pbr_vfon = false;");
+    kind("pbr_pass = pbr_sscene * pbr_h3.z * pbr_df.rgb * pbr_df.a;",
+         "pbr_pass = pbr_sscene * pbr_h3.z * pbr_df.rgb * pbr_df.a;\n"
+         "          pbr_vfw = vec3f(pbr_alpha);\n          pbr_vfk = true;");
+    kind("pbr_pass = pbr_sscene * pbr_h3.z * pbr_h1.rgb * pbr_df.rgb * pbr_df.a +\n"
+         "                         pbr_sdst * (pbr_df.a * (vec3f(1.0) - pbr_h1.rgb * (1.0 - pbr_v5.a)));",
+         "pbr_pass = pbr_sscene * pbr_h3.z * pbr_h1.rgb * pbr_df.rgb * pbr_df.a;\n"
+         "              pbr_vfw = pbr_df.a * (vec3f(1.0) - pbr_h1.rgb * (1.0 - pbr_v5.a));\n"
+         "              pbr_keep = pbr_sdst * pbr_vfw;");
+    kind("pbr_pass = select(pbr_xbase, vec3f(1.0), pbr_kind > 29.5) * pbr_xv3.w * pbr_xscene;",
+         "let pbr_xw = select(pbr_xbase, vec3f(1.0), pbr_kind > 29.5) * pbr_xv3.w;\n"
+         "          pbr_keep = pbr_xw * pbr_xscene;\n"
+         "          pbr_vfw = vec3f(1.0) - pbr_xw;\n          pbr_vfk = true;");
   }
   return source;
 }
@@ -4088,12 +4130,28 @@ fn vf_apply_hdr(c: vec4f, fog: vec4f, w: f32) -> vec4f {
       const std::string_view what = "let pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));";
       const size_t at = pbr.find(what);
       assert(at != std::string::npos);
-      pbr.replace(at, what.size(),
-                  fmt::format("var pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));"
-                              "\n      let pbr_vf = {};"
-                              "\n      pbr_out = pbr_out * pbr_vf.a + max(pbr_vf.rgb, vec3f(0.0)) * ubuf.volfog.z * {};"
-                              "\n      pbr_pass *= pbr_vf.a;",
-                              volFogSample, volFogWeight("pbr_alpha")));
+      if (config.sceneHdr) {
+        // In the HDR scene each screen-copy kind fogs as its fog perm does (pbr_func's HDR notes):
+        // its own in-scatter weight, none where the shader has no fog perm, and the frame a blend
+        // keeps (pbr_keep) never dimmed.
+        pbr.replace(at, what.size(),
+                    fmt::format("var pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));"
+                                "\n      var pbr_vf = {};"
+                                "\n      if (!pbr_vfon) {{"
+                                "\n          pbr_vf = vec4f(0.0, 0.0, 0.0, 1.0);"
+                                "\n      }}"
+                                "\n      pbr_out = pbr_out * pbr_vf.a + max(pbr_vf.rgb, vec3f(0.0)) * ubuf.volfog.z *"
+                                "\n                select(vec3f({}), pbr_vfw, pbr_vfk);"
+                                "\n      pbr_pass *= pbr_vf.a;",
+                                volFogSample, volFogWeight("pbr_alpha")));
+      } else {
+        pbr.replace(at, what.size(),
+                    fmt::format("var pbr_out = max(pbr_lo + pbr_glow, vec3f(0.0));"
+                                "\n      let pbr_vf = {};"
+                                "\n      pbr_out = pbr_out * pbr_vf.a + max(pbr_vf.rgb, vec3f(0.0)) * ubuf.volfog.z * {};"
+                                "\n      pbr_pass *= pbr_vf.a;",
+                                volFogSample, volFogWeight("pbr_alpha")));
+      }
       pbrVolFog = true;
     }
     if (!pbr.empty()) {
