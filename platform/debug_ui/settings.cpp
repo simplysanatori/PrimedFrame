@@ -250,6 +250,14 @@ const SettingKey kSettingKeys[] = {
     BoolKey< &sSkippableCutscenes >("skippable_cutscenes"),
     BoolKey< &sBeamDoorsStayUnlocked >("beam_doors_stay_unlocked"),
     BoolKey< &sStackBeams >("stack_beams"),
+    {"walk_speed",
+     [](const std::string& value) {
+       const int s = std::atoi(value.c_str());
+       if (s >= PortDebug::kWalkSpeedMin && s <= PortDebug::kWalkSpeedMax) {
+         sWalkSpeed = s;
+       }
+     },
+     [](std::ostream& out) { out << sWalkSpeed; }, false, "50", "200"},
     BoolKey< &sRevision100Compatibility >("revision_100_compatibility"),
     // Normalised on the way in (NormalizeEmulatorFolder), so not sampled.
     {"emulator_folder", [](const std::string& value) { PortGci::SetEmulatorFolder(value); },

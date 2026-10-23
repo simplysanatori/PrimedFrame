@@ -94,6 +94,13 @@ void DrawCutscenesSection() {
   }
   ItemHelp("Each normal or charged shot also fires every other beam you own. Charge combos, "
            "missiles and the Phazon Beam are unchanged.");
+  int walkSpeed = sWalkSpeed;
+  if (ImGui::SliderInt("Walk speed", &walkSpeed, kWalkSpeedMin, kWalkSpeedMax, "%d%%",
+                       ImGuiSliderFlags_AlwaysClamp)) {
+    SetWalkSpeed(walkSpeed);
+  }
+  ItemHelp("How fast Samus moves on foot, walking, strafing and circle-strafing, in percent of "
+           "the original speed. Jumps, dashes, turning and the Morph Ball are unchanged.");
   EndOriginalLocked(locked);
 
   // Not under the Original experience lock: the stored choice applies there too.

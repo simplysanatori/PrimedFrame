@@ -618,6 +618,17 @@ bool StackBeams() {
 
 void SetStackBeams(bool enabled) { StoreSetting(sStackBeams, enabled); }
 
+int WalkSpeed() {
+  EnsureInitialized();
+  return sOriginalExperience ? kWalkSpeedDefault : sWalkSpeed;
+}
+
+void SetWalkSpeed(int percent) {
+  EnsureInitialized();
+  sWalkSpeed = std::clamp(percent, kWalkSpeedMin, kWalkSpeedMax);
+  MarkDirty();
+}
+
 bool Revision100Compatibility() { return Loaded(sRevision100Compatibility); }
 void SetRevision100Compatibility(bool enabled) { StoreSetting(sRevision100Compatibility, enabled); }
 

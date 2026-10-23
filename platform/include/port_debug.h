@@ -329,6 +329,16 @@ void SetBeamDoorsStayUnlocked(bool enabled);
 // and the Phazon Beam are unchanged. Off by default, and off in the Original experience.
 bool StackBeams();
 void SetStackBeams(bool enabled);
+// walk_speed (CPlayerDynamics WalkScale), in percent: Samus's on-foot top speed,
+// acceleration and friction (and the orbit strafe speeds) are scaled by it, so she
+// moves that much faster or slower and gets there in the same time. Jumps, dashes,
+// turning, grapple and the morph ball are unchanged. 100 (retail) by default, and
+// 100 in the Original experience.
+const int kWalkSpeedMin = 50;
+const int kWalkSpeedMax = 200;
+const int kWalkSpeedDefault = 100;
+int WalkSpeed();
+void SetWalkSpeed(int percent);
 // The stored 1.00 sequence-break compatibility choice (raw, not the effective
 // policy). Randomizer and Archipelago games force it on at use.
 bool Revision100Compatibility();

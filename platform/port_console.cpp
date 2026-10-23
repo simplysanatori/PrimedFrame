@@ -2341,6 +2341,18 @@ void CmdStackBeams() {
   Finish();
 }
 
+void CmdWalkSpeed() {
+  if (sCmd.args.size() > 1) {
+    const int value = std::atoi(sCmd.args[1].c_str());
+    if (value < PortDebug::kWalkSpeedMin || value > PortDebug::kWalkSpeedMax) {
+      return Finish("usage: walkspeed [50..200]");
+    }
+    PortDebug::SetWalkSpeed(value);
+  }
+  Out("walkspeed %d", PortDebug::WalkSpeed());
+  Finish();
+}
+
 void CmdSunShadow() {
   if (sCmd.args.size() > 1) {
     const std::string& v = sCmd.args[1];
@@ -3893,6 +3905,8 @@ const CommandSpec kCommands[] = {
      "mapui [0|1]                 the map's extra legend entries and the Mark room prompt"},
     {"stackbeams", CmdStackBeams, nullptr,
      "stackbeams [0|1]           every shot also fires the other owned beams' projectiles (stack_beams)"},
+    {"walkspeed", CmdWalkSpeed, nullptr,
+     "walkspeed [50..200]        on-foot movement speed in percent (walk_speed); no argument prints it"},
     {"beamdoors", nullptr, CmdBeamDoors,
      "beamdoors [status|on|off|list [here]|unlock <door index|all>|reset]  the beam doors opened for good\n"
      "                           (beam_doors_stay_unlocked; on/off, unlock restyle the loaded doors)"},

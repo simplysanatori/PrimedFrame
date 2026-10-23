@@ -103,6 +103,7 @@ extern bool sCheats;
 extern bool sSkippableCutscenes;
 extern bool sBeamDoorsStayUnlocked;
 extern bool sStackBeams;
+extern int sWalkSpeed;
 extern bool sRevision100Compatibility;
 extern std::string sTextLanguage;
 extern int sElevatorRide;

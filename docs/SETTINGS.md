@@ -761,6 +761,14 @@
   shot (nothing blocks). The other beams' projectile data is kept loaded while
   the setting is on and released when it is turned off. Shots fire at the
   selected beam's rate.
+- Walk speed (F1 > Game > Cutscenes, `walk_speed`, 50 to 200 percent, 100 by
+  default and 100 in the Original experience): scales how fast Samus moves on
+  foot. The top speed, acceleration and friction of walking and strafing (also
+  with direct aim and Remastered movement, on the ground, in the air and in
+  water) and the orbit strafe and approach speeds are all multiplied by it, so
+  she reaches k times the retail speed in the same time and stops in the same
+  time. Jump height, sideways dashes, turning, the grapple and the Morph Ball
+  are unchanged; speed carries into a jump. At 100 movement is exactly retail.
 - Unlock beam doors once opened (F1 > Game > Cutscenes, `beam_doors_stay_unlocked`,
   off by default and off in the Original experience): a door locked to the Wave,
   Ice, Plasma or Power Beam that you open by breaking its force field becomes a
