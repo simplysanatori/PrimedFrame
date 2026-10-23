@@ -80,6 +80,7 @@ struct Uniform {
   float tone[3][4];
   float grade[4]; // x: B's weight, y: A is a LUT, z: B is a LUT, w: bloom on
   float add[4];   // the HDR composite's added term (Params::add)
+  float radial[4][4]; // c0, c1, c2 (Params::radial); [3].x: on
 };
 static_assert(sizeof(Uniform) <= SlotSize);
 
@@ -90,6 +91,7 @@ struct Params {
   tone: array<vec4f, 3>,
   grade: vec4f,
   add: vec4f,
+  radial: array<vec4f, 4>,
 };
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var src: texture_2d<f32>;
@@ -215,6 +217,12 @@ fn fs_composite_hdr(in: VertexOutput) -> @location(0) vec4f {
   // Remastered folds the HUD's damage Add filter in here (material 0007259), not after the encode.
   if (p.add.w > 0.0) {
     graded = composite_add(graded, p.add);
+  }
+  // And the radial damage fan (shader 00075d2), the HUD's other filter shape.
+  if (p.radial[3].x > 0.5) {
+    let ndc = vec2f(in.uv.x * 2.0 - 1.0, 1.0 - in.uv.y * 2.0);
+    let o = composite_radial(vec4f(graded, f.a), ndc, p.radial[0], p.radial[1], p.radial[2]);
+    return vec4f(hdr_srgb_enc(o.rgb), o.a);
   }
   return vec4f(hdr_srgb_enc(graded), f.a);
 }
@@ -456,6 +464,7 @@ void ensure_pipelines() {
   code += hdr::ToneWgsl;
   code += hdr::PostToneWgsl;
   code += CompositeAddWgsl;
+  code += CompositeRadialWgsl;
   code += HdrSource;
   wgpu::ShaderSourceWGSL source{};
   source.code = code.c_str();
@@ -757,6 +766,8 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
     u.grade[2] = lutB ? 1.f : 0.f;
     u.grade[3] = bloom ? 1.f : 0.f;
     std::memcpy(u.add, params.add, sizeof(u.add));
+    std::memcpy(u.radial, params.radial, sizeof(params.radial));
+    u.radial[3][0] = params.radialOn != 0 ? 1.f : 0.f;
     std::memcpy(slots[slot].data(), &u, sizeof(u));
   };
   uint32_t slot = 0;

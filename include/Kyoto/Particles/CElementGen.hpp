@@ -300,6 +300,7 @@ public:
   // particles at the given local positions, at rest, the PART children first.
   void PortCreateParticlesAtPositions(int n, const CVector3f* pos);
   const CGenDescription* PortDesc() const { return x28_loadedGenDesc; }
+  int PortCurFrame() const { return x74_curFrame; }
   void PortCreateParticlesAtPositionsIncludingChildren(int n, const CVector3f* pos);
   // Remastered particle variables (PVRT): a handle is looked up once and then binds are cheap.
   // Binds are generator-wide, persist until rebound, and are no-ops when the variable is absent.

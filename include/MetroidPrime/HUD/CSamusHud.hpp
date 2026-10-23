@@ -65,6 +65,9 @@ public:
   // Remastered mode with the HDR scene: the damage Add filter (slot A, shape 0) is added in the
   // bloom composite, not drawn here. True with its colour when this HUD has one this frame.
   bool PortCompositeTint(float rgba[4]) const;
+  // Likewise the radial filter (slot B, shape 0xd): true with its gradient (apex c0, rim c1,
+  // frame multiplier c2) when this HUD has one this frame.
+  bool PortCompositeRadial(float c0[4], float c1[4], float c2[4]) const;
   // CMFGame sets it when the composite took the tint; Draw then skips the filter, once.
   static void PortSetTintFolded(bool folded);
 #endif
@@ -247,6 +250,8 @@ private:
   };
   SPortHudLag xPortLag[2];
   static bool sPortTintFolded;
+  // Remastered mode (its HUD frames) with a HUD drawn: the composite folds the filter in.
+  bool PortCompositeRemastered() const;
   uint xPortLagGeneration = 0;     // tick of xPortLag[1]
   uint xPortLagPrevGeneration = 0; // tick of xPortLag[0]
   bool xPortLagPresented = false;

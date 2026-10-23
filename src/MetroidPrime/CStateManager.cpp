@@ -123,6 +123,7 @@
 #include "rstl/math.hpp"
 
 #include "Kyoto/CFrameDelayedKiller.hpp"
+#include "MetroidPrime/ScriptObjects/CHUDBillboardEffect.hpp"
 
 const int gkPVSEnabled = 1;
 
@@ -1525,6 +1526,10 @@ void CStateManager::Update(float dt) {
   UpdateThermalVisor();
   nullsub_34(this);
   UpdateGameState();
+#ifdef TARGET_PC
+  // Remastered's CVisorEffectManagerMP1::Update; where it runs in the frame is (unverified).
+  CHUDBillboardEffect::PortUpdateVisorOverrides(*this, dt);
+#endif
 #ifdef MP_ENABLE_SMOKE_DRIVER
   PortSmokeAreaReload(*this);
   PortSmokeWorldTeleport(*this);

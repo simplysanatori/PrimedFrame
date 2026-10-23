@@ -155,7 +155,60 @@ void CHUDBillboardEffect::AcceptScriptMsg(EScriptObjectMessage msg, TUniqueId ui
       mgr.PortVisorGooManager().effect == GetUniqueId()) {
     PortSetVisorGoo(mgr, kInvalidUniqueId, 0.f);
   }
+  // A billboard whose PART has visor effect data is added to the override list
+  // (AddBillboardEffect); Remastered adds it from the ctor, the port on registration (unverified).
+  if (msg == kSM_Registered && x104_26_isElementGen) {
+    const CGenDescription* desc = static_cast< CElementGen& >(*xe8_generator).PortDesc();
+    if (desc != nullptr && desc->xPortVisorData) {
+      PortVisorOverrides::Add(mgr.PortVisorOverrideManager(), GetUniqueId());
+      xPortVisorOverride = true;
+    }
+  } else if (msg == kSM_Deleted && xPortVisorOverride) {
+    PortVisorOverrides::Remove(mgr.PortVisorOverrideManager(), GetUniqueId());
+    xPortVisorOverride = false;
+  }
   CEffect::AcceptScriptMsg(msg, uid, mgr);
+}
+
+// ExtractCurrentData: the generator's VE* values at its current frame (unverified: the frame the
+// KEYE/PULS elements are evaluated at). A missing element keeps white / 1.
+static void PortExtractVisorData(const CElementGen& gen, PortVisorOverrides::Data& d) {
+  const CGenDescription* desc = gen.PortDesc();
+  d.valid = desc != nullptr && desc->xPortVisorData;
+  if (!d.valid) {
+    return;
+  }
+  const int frame = gen.PortCurFrame();
+  if (desc->xPortVisorStartColor != nullptr) {
+    desc->xPortVisorStartColor->GetValueHdr(frame, d.c0);
+  }
+  if (desc->xPortVisorMidColor != nullptr) {
+    desc->xPortVisorMidColor->GetValueHdr(frame, d.c1);
+  }
+  if (desc->xPortVisorEndColor != nullptr) {
+    desc->xPortVisorEndColor->GetValueHdr(frame, d.c2);
+  }
+  if (desc->xPortVisorBlend != nullptr) {
+    desc->xPortVisorBlend->GetValue(frame, d.f);
+  }
+  d.ticks = desc->xPortVisorTicks;
+}
+
+void CHUDBillboardEffect::PortUpdateVisorOverrides(CStateManager& mgr, float dt) {
+  const bool unmorphed = mgr.GetPlayer()->GetMorphballTransitionState() == CPlayer::kMS_Unmorphed;
+  PortVisorOverrides::Update(
+      mgr.PortVisorOverrideManager(), dt, unmorphed,
+      [&mgr](TUniqueId id, PortVisorOverrides::Data& d, bool& active) {
+        const CHUDBillboardEffect* fx = TCastToPtr< CHUDBillboardEffect >(mgr.ObjectById(id));
+        if (!fx || !fx->x104_26_isElementGen) {
+          return false;
+        }
+        const CElementGen& gen = static_cast< const CElementGen& >(*fx->xe8_generator);
+        PortExtractVisorData(gen, d);
+        // The generator's vtable+0x40 check, read as "has live particles" (unverified).
+        active = gen.GetParticleCountAll() > 0;
+        return true;
+      });
 }
 
 bool CHUDBillboardEffect::PortHasVisorGoo(CStateManager& mgr) {

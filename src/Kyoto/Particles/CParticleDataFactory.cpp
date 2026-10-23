@@ -718,6 +718,27 @@ bool CParticleDataFactory::CreateGPSM(CGenDescription* desc, CInputStream& in,
       (clsId == SBIG('PVSN') ? desc->xPortVisorMinScale : desc->xPortVisorMaxScale) = value;
       break;
     }
+    // Port-only visor effect override data: the three colours, the blend and the ticks.
+    case SBIG('PVSC'):
+      delete desc->xPortVisorStartColor;
+      desc->xPortVisorStartColor = GetColorElement(in);
+      break;
+    case SBIG('PVMC'):
+      delete desc->xPortVisorMidColor;
+      desc->xPortVisorMidColor = GetColorElement(in);
+      break;
+    case SBIG('PVTC'):
+      delete desc->xPortVisorEndColor;
+      desc->xPortVisorEndColor = GetColorElement(in);
+      break;
+    case SBIG('PVBS'):
+      delete desc->xPortVisorBlend;
+      desc->xPortVisorBlend = GetRealElement(in);
+      break;
+    case SBIG('PVDT'):
+      GetClassID(in);
+      desc->xPortVisorTicks = static_cast< int >(in.ReadLong());
+      break;
     // Port-only first word of a converted Remastered PART's GUID (the child seed hashes it).
     case SBIG('PGID'):
       GetClassID(in);

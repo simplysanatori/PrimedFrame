@@ -4259,10 +4259,16 @@ public:
     std::vector<Started> started;  // by the spawn table
     std::set<uint32_t> written;    // retail properties
     // Remastered's visor effect data (CGenDescription::Compile 0x2a7d0c): any VE* property marks
-    // it present; the VisorGoo splat manager reads the size range VESN/VESM.
+    // it present; the VisorGoo splat manager reads the size range VESN/VESM, the visor effect
+    // override manager the colours VESC/VEMC/VETC, the blend VEBS and the duration VEDT.
     bool visorData = false;
     std::optional<uint32_t> visorMinScale;
     std::optional<uint32_t> visorMaxScale;
+    std::vector<uint8_t> visorStartColor;
+    std::vector<uint8_t> visorMidColor;
+    std::vector<uint8_t> visorEndColor;
+    std::vector<uint8_t> visorBlend;
+    std::optional<uint32_t> visorTicks;
     const EffectProperty* material = nullptr;
     const EffectProperty* xfmd = nullptr;
     uint32_t spriteShape = 0;
@@ -4753,6 +4759,21 @@ public:
         if ((fourcc == F("VESN") || fourcc == F("VESM")) && property.value.size() == 1 &&
             ConstWord(property.value[0], bits)) {
           (fourcc == F("VESN") ? visorMinScale : visorMaxScale) = bits;
+        } else if (fourcc == F("VEDT") && property.value.size() == 1 && ConstWord(property.value[0], bits)) {
+          visorTicks = bits;
+        } else if (fourcc == F("VESC") || fourcc == F("VEMC") || fourcc == F("VETC") || fourcc == F("VEBS")) {
+          std::vector<uint8_t>& bytes = fourcc == F("VESC")   ? visorStartColor
+                                        : fourcc == F("VEMC") ? visorMidColor
+                                        : fourcc == F("VETC") ? visorEndColor
+                                                              : visorBlend;
+          std::string why;
+          bytes.clear();
+          if (property.value.size() != 1 ||
+              !Element(property.value[0], fourcc == F("VEBS") ? Type::Real : Type::Color, bytes, why)) {
+            bytes.clear();
+            result.dropped.push_back(EffectFourCCString(property.fourcc) + ": " +
+                                     (why.empty() ? "visor effect element the port cannot convert" : why));
+          }
         } else {
           result.dropped.push_back(EffectFourCCString(property.fourcc) + ": visor effect data the port does not read");
         }
@@ -5326,6 +5347,21 @@ public:
         AppendBE32(out, F("PVSM"));
         AppendBE32(out, F("CNST"));
         AppendBE32(out, *visorMaxScale);
+      }
+      // The override colours, blend and duration (ticks, int) of CVisorEffectManagerMP1.
+      const std::pair<uint32_t, const std::vector<uint8_t>*> visorElements[] = {
+          {F("PVSC"), &visorStartColor}, {F("PVMC"), &visorMidColor},
+          {F("PVTC"), &visorEndColor},   {F("PVBS"), &visorBlend}};
+      for (const auto& [tag, bytes] : visorElements) {
+        if (!bytes->empty()) {
+          AppendBE32(out, tag);
+          out.insert(out.end(), bytes->begin(), bytes->end());
+        }
+      }
+      if (visorTicks) {
+        AppendBE32(out, F("PVDT"));
+        AppendBE32(out, F("CNST"));
+        AppendBE32(out, *visorTicks);
       }
     }
     const uint32_t guidWord = uint32_t(node.id[0]) | uint32_t(node.id[1]) << 8 |
@@ -5979,7 +6015,10 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
       ok = reader.TextureTransforms();
     } else if (vfx && (fourcc == F("VPMT") || fourcc == F("VSMT"))) {
       ok = reader.PerParticle(fourcc == F("VSMT"));
-    } else if ((part && (fourcc == F("SSZE") || fourcc == F("PIR0") || fourcc == F("POR0"))) ||
+    } else if (part && (fourcc == F("PVSC") || fourcc == F("PVMC") || fourcc == F("PVTC"))) {
+      ok = reader.Element(Type::Color);
+    } else if ((part && (fourcc == F("SSZE") || fourcc == F("PIR0") || fourcc == F("POR0") ||
+                         fourcc == F("PVBS"))) ||
                (vfx && (fourcc == F("ITEN") || fourcc == F("PDBS")))) {
       ok = reader.Element(Type::Real);
     } else if (part && (fourcc == F("PINS") || fourcc == F("PINR") || fourcc == F("PINT") || fourcc == F("PMOV") ||
@@ -5992,7 +6031,7 @@ bool SplitRetailEffect(uint32_t type, const uint8_t* data, size_t size, std::vec
                          fourcc == F("PDFG") || fourcc == F("PZTS") || fourcc == F("PIVS") ||
                          fourcc == F("PITP") || fourcc == F("PSHM") || fourcc == F("PISD") || fourcc == F("PBLT") ||
                          fourcc == F("PMRF") || fourcc == F("PVSD") || fourcc == F("PVSN") ||
-                         fourcc == F("PVSM"))) ||
+                         fourcc == F("PVSM") || fourcc == F("PVDT"))) ||
                (vfx && fourcc == F("PIRN"))) {
       ok = reader.PortWord();
     } else if (vfx && fourcc == F("PVRT")) {

@@ -258,6 +258,12 @@ GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3]
 // UberPost material 0007259, the HUD's damage filter folded in). Taken by that post and cleared;
 // NULL or alpha 0 adds nothing. Outside the HDR scene there is no composite to take it.
 void GXPortPostCompositeAdd(const f32 rgba[4]);
+// Port extension: Remastered's radial damage fan (shader 00075d2, the HUD's radial filter folded
+// in) for the next GXPortPostProcessScene's composite, after any GXPortPostCompositeAdd term: v is
+// the 16-triangle fan (apex c0 at the centre, rim c1 at NDC (6.25 sin a, 3.6 cos a)) clamped to
+// [0, 1], and out.rgb = clamp(frame) * clamp(c2).rgb + v.rgb * v.a, out.a = frame.a * clamp(c2).a.
+// Taken by that post and cleared; any NULL clears it.
+void GXPortPostCompositeRadial(const f32 c0[4], const f32 c1[4], const f32 c2[4]);
 // Port extension: Remastered's volumetric fog over the EFB as drawn so far: a froxel grid
 // (16x16 pixels by 64 slices out to `fog[0]`) of height and noise shaped density, lit by the
 // ambient volume's mean light, integrated front to back and applied to every pixel at the

@@ -1058,6 +1058,10 @@ void CSamusHud::UpdateHudDamage(float dt, const CStateManager& mgr, uint helmetV
       x3f4_damageFilterAmt > peak
           ? (x3f0_damageFilterAmtInit - x3f4_damageFilterAmt) / (x3f0_damageFilterAmtInit - peak)
           : x3f4_damageFilterAmt / peak;
+#ifdef TARGET_PC
+  // Remastered's s10: the ramp before the gain, capped at 0.05 (fcsel 0xcad8a4).
+  const float overrideMix = rstl::min_val(colorGain, 0.05f);
+#endif
   colorGain *= x3f8_damageFilterAmtGain;
   colorGain = CMath::Clamp(0.f, colorGain, 1.f);
 #ifdef TARGET_PC
@@ -1096,8 +1100,35 @@ void CSamusHud::UpdateHudDamage(float dt, const CStateManager& mgr, uint helmetV
       filterColor = filterColor.WithAlphaModulatedBy(0.75f);
     }
 #endif
+#ifdef TARGET_PC
+    // Remastered: a visor effect override (steam, goo, Burrower...) turns the damage filter into
+    // the radial fan, its colours mixed towards the damage colour by s10. s11 adds the pulser
+    // (hud+0x234, read as x3ec (unverified)) to the clamped gain.
+    const PortVisorOverrides::State& vo = mgr.PortVisorOverrideManager();
+    const float s11 = CMath::Clamp(0.f, colorGain + x3ec_damageLightPulser, 1.f);
+    if (remasteredTint && s11 != 1.f && PortVisorOverrides::HasDamageTintOverride(vo)) {
+      const float dmg[4] = {filterColor.GetRed(), filterColor.GetGreen(), filterColor.GetBlue(),
+                            filterColor.GetAlpha()};
+      float c0[4];
+      float c1[4];
+      for (int i = 0; i < 4; ++i) {
+        c0[i] = dmg[i] * overrideMix + vo.live[1][i] * (1.f - overrideMix);
+        c1[i] = dmg[i] * overrideMix + vo.live[0][i] * (1.f - overrideMix);
+      }
+      x3a8_camFilter.PortSetRadialFilter(CCameraFilterPass::kFT_Add, CColor::White(), c0, c1,
+                                         vo.live[2]);
+    } else
+#endif
     x3a8_camFilter.SetFilter(CCameraFilterPass::kFT_Add, CCameraFilterPass::kFS_Fullscreen, 0.f,
                              filterColor, kInvalidAssetId);
+#ifdef TARGET_PC
+  } else if (remasteredTint &&
+             PortVisorOverrides::HasDamageTintOverride(mgr.PortVisorOverrideManager())) {
+    // Not damaged: the override alone, as a Multiply fan {c0 VEMC, c1 VESC, c2 VETC}.
+    const PortVisorOverrides::State& vo = mgr.PortVisorOverrideManager();
+    x3a8_camFilter.PortSetRadialFilter(CCameraFilterPass::kFT_Multiply, CColor::White(),
+                                       vo.live[1], vo.live[0], vo.live[2]);
+#endif
   } else {
     x3a8_camFilter.DisableFilter(0.f);
   }
@@ -1624,24 +1655,33 @@ bool CSamusHud::sPortTintFolded = false;
 
 void CSamusHud::PortSetTintFolded(bool folded) { sPortTintFolded = folded; }
 
-bool CSamusHud::PortCompositeTint(float rgba[4]) const {
+bool CSamusHud::PortCompositeRemastered() const {
   // The Remastered HUD frames are the "Remastered mode" test (see UpdateHudDamage).
   const bool remastered =
       (x274_loadedFrmeBaseHud != nullptr && x274_loadedFrmeBaseHud->PortHasHudInterference()) ||
       (x288_loadedSelectedHud != nullptr && x288_loadedSelectedHud->PortHasHudInterference());
+  return remastered && x2bc_nextState != kHS_None;
+}
+
+bool CSamusHud::PortCompositeTint(float rgba[4]) const {
   CColor color;
-  if (!remastered || x2bc_nextState == kHS_None || !x3a8_camFilter.PortAddColor(color)) {
+  if (!PortCompositeRemastered() || !x3a8_camFilter.PortAddColor(color)) {
     return false;
   }
-  // Slot A only: UberPost material 0007259 adds clamp(c).rgb * clamp(c).a in the composite
-  // (kb: build/mpr/kb/topic/visorfx-damage-tint-steam-overrides.md). Slot B, the radial fan (filter
-  // shape 0xd, UberPost's c2 and the VE overrides), is NOT traced: where c2 comes from and the VE
-  // defaults are unknown, so it keeps the port's own draw after the composite.
+  // Slot A: UberPost material 0007259 adds clamp(c).rgb * clamp(c).a in the composite (kb:
+  // build/mpr/kb/topic/visorfx-damage-tint-steam-overrides.md). Slot B, the radial fan, is
+  // PortCompositeRadial.
   rgba[0] = color.GetRed();
   rgba[1] = color.GetGreen();
   rgba[2] = color.GetBlue();
   rgba[3] = color.GetAlpha();
   return true;
+}
+
+bool CSamusHud::PortCompositeRadial(float c0[4], float c1[4], float c2[4]) const {
+  // Slot B: the radial filter (shape 0xd, the VE overrides' gradient) is always consumed by the
+  // UberPost composite (shader 00075d2); Remastered never draws it on its own.
+  return PortCompositeRemastered() && x3a8_camFilter.PortRadialGradient(c0, c1, c2);
 }
 #endif
 
@@ -1659,7 +1699,10 @@ void CSamusHud::Draw(const CStateManager& mgr, float alpha, uint helmetVis, bool
   const CPlayer::EPlayerMorphBallState ballState = mgr.GetPlayer()->GetMorphballTransitionState();
 #ifdef TARGET_PC
   CColor foldedTint;
-  if (!(sPortTintFolded && x3a8_camFilter.PortAddColor(foldedTint))) {
+  float foldedRadial[3][4];
+  if (!(sPortTintFolded &&
+        (x3a8_camFilter.PortAddColor(foldedTint) ||
+         x3a8_camFilter.PortRadialGradient(foldedRadial[0], foldedRadial[1], foldedRadial[2])))) {
     x3a8_camFilter.Draw();
   }
   sPortTintFolded = false;

@@ -16,8 +16,10 @@ struct Params {
   uint32_t gradeB;
   float gradeWeight;  // 0 draws A, 1 draws B
   float add[4];       // the HDR composite's added term, linear r, g, b, a (a 0: none); see CompositeAddWgsl
+  float radial[3][4]; // the HDR composite's radial fan: apex c0, rim c1, frame multiplier c2; see CompositeRadialWgsl
+  uint32_t radialOn;  // 1: the radial term is applied
 };
-static_assert(sizeof(Params) <= 144);
+static_assert(sizeof(Params) <= 196);
 // Params::bloom bits for speed tests (GXSetPBRCostTest), which leave out one part of the work and
 // look wrong: the pass after the bloom clearing depth instead of loading it. CostKeepDepth looks
 // right: it always loads depth after the bloom, as before that pass learned to clear it when the HUD
@@ -35,6 +37,38 @@ inline constexpr const char* CompositeAddWgsl = R"(
 fn composite_add(frame: vec3f, c: vec4f) -> vec3f {
   let t = clamp(c, vec4f(0.0), vec4f(1.0));
   return clamp(frame, vec3f(0.0), vec3f(1.0)) + t.rgb * t.a;
+}
+)";
+
+// The HDR composite's radial damage-tint term, Remastered's UberPost shader 00075d2 (the HUD's
+// DrawFullScreenTintedRadialGradient fan folded into the composite): 16 triangles in NDC, apex c0 at
+// the centre, rim c1 at (6.25 sin a, 3.6 cos a), a in steps of pi/8. The fan's colour v at an NDC
+// point is the triangle's linear interpolation, clamped to [0, 1] (unverified: clamped after the
+// interpolation, as an 8-bit target would; outside the fan nothing is drawn, v = 0). The frame,
+// clamped to [0, 1], is multiplied by clamp(c2) and v added by its alpha:
+// rgb = clamp(frame) * clamp(c2).rgb + v.rgb * v.a, alpha = frame.a * clamp(c2).a.
+inline constexpr const char* CompositeRadialWgsl = R"(
+fn composite_radial_fan(ndc: vec2f, c0: vec4f, c1: vec4f) -> vec4f {
+  let sector = 3.14159265358979 / 8.0;
+  // The fan is a regular 16-gon of unit radius scaled by (6.25, 3.6): barycentrics survive the scale.
+  let q = ndc / vec2f(6.25, 3.6);
+  var a = atan2(q.x, q.y);
+  if (a < 0.0) {
+    a += 2.0 * 3.14159265358979;
+  }
+  let k = min(floor(a / sector), 15.0);
+  let mid = (k + 0.5) * sector;
+  let t = dot(q, vec2f(sin(mid), cos(mid))) / cos(sector * 0.5);
+  if (t > 1.0) {
+    return vec4f(0.0);
+  }
+  return clamp(mix(c0, c1, t), vec4f(0.0), vec4f(1.0));
+}
+
+fn composite_radial(frame: vec4f, ndc: vec2f, c0: vec4f, c1: vec4f, c2: vec4f) -> vec4f {
+  let v = composite_radial_fan(ndc, c0, c1);
+  let m = clamp(c2, vec4f(0.0), vec4f(1.0));
+  return vec4f(clamp(frame.rgb, vec3f(0.0), vec3f(1.0)) * m.rgb + v.rgb * v.a, frame.a * m.a);
 }
 )";
 

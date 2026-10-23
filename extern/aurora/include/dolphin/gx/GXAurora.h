@@ -247,7 +247,7 @@ extern "C" {
 // so far (see GXPortPostProcessScene). Queued, so the game thread does not wait for the FIFO to be
 // processed before it can record it.
 // Payload:
-//   36 u32: aurora::gfx::bloom::Params, word for word
+//   49 u32: aurora::gfx::bloom::Params, word for word
 #define GX_AURORA_PORT_POST_PROCESS 0x0052
 
 // Replaces one light's colour, position and attenuation in the following PBR draws with a
