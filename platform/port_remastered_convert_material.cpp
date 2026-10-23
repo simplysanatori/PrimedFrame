@@ -57,10 +57,6 @@ constexpr uint32_t kShaderMatcapShell = 0xC83E6FCD;
 // The macro-normal shaders (a3c367be, 72b34e42, b9e899f3, 7feb9e94 without vertex colour, f84ac32d
 // with MNMP on texcoord set 1; same whiteout fold, kb material/7feb9e94.md): NMAP in TANGENT_0's frame, then MNMP
 // (kept in layer[kNormal], map 6) added to it in TANGENT_1's frame (mode bit 16384).
-// AreaLight unlit (69edcc3c, c2b36795; kb material/69edcc3c.md): DIFT x DIFC x vertex colour + ICNC + ICMC. Their DIFT
-// (and ICAN) is the 1x1 white default a6cc3300, which is the whole base, not a missing one: the colour comes from the
-// vertices and constants, so the flat base must not send the surface back to retail's TEV material.
-constexpr uint32_t kShaderAreaLight[] = {0x69EDCC3C, 0xC2B36795};
 // 3c66aaef is d37039f7's two layers (both in TANGENT_0's frame) plus MNMP (kb material/3c66aaef.md): a layered
 // material whose macro normal is an 8th map.
 constexpr uint32_t kShaderLayeredMacro = 0x3C66AAEF;
@@ -1150,14 +1146,9 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
       out.shieldRows[28 + i] = difc[i];
     }
   }
-  if (std::find(std::begin(kShaderAreaLight), std::end(kShaderAreaLight), shader) != std::end(kShaderAreaLight)) {
-    out.maps[kBase].solid = true;
-  }
   const bool eyeGloss = IsEyeGloss(shader);
   if ((shader == kShaderGunFx || eyeGloss) && out.maps[kBase].has && out.layer[kBase].has && out.layer[kMr].has) {
     out.kind = eyeGloss ? 25 : 19;
-    // The Eyon's BCLR is a 1x1 black that is the base all the same (diffuse 0, F0 from METL): no TEV fallback.
-    out.maps[kBase].solid = eyeGloss;
     // Lit: REFV (map 5) x REFS (map 4, read at the view-space normal) x luminance(L) + DIFT x DIFC x L
     // + ICNC + ICMC. Row 6 = ICNC + ICMC, row 7 = DIFC; Remastered's mesh has no colour stream.
     out.layer[kMr].coord = out.layer[kBase].coord = 0;

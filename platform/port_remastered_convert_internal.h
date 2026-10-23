@@ -339,7 +339,6 @@ const double kPbrEmissive = 0.10;
 // Ceiling on the metalness channel. Remastered applies none (the MR map is read as is);
 // it was 0.6 before the BRDF LUT and the room probe cubes, when full metals went near-black.
 const double kPbrMetalMax = 1.0;
-const double kFlatStd = 3.0;
 const double kJointSplit = 0.05;
 // The PC skin reader (CVirtualBone, SKIN_MAX_WEIGHTS) keeps four weights a vertex
 // and drops the rest without renormalising, so more would leave the vertex pulled
@@ -366,7 +365,6 @@ struct MapRef {
   std::string src;  // how the texture is named in a tag
   bool raw = false;  // a shader's own data (a ramp, noise): every texel and channel kept as it is
   bool mean = false;  // drawn as its colour times alpha, averaged: one colour
-  bool solid = false;  // a flat map that is the surface's colour all the same (the Eyon gloss's black BCLR)
   bool detail = false;  // kind 20's detail map, which rides in the emissive slot (that shader has no glow)
   bool volume = false;  // a 3D texture, kept whole as an 8 x 8 atlas of its 64 slices (ConvertIO::volume), RGBA8, level 0 only
   double metalMax = kPbrMetalMax;  // an MR map's metalness ceiling
