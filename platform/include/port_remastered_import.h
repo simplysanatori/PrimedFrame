@@ -73,10 +73,11 @@ inline constexpr const char* kImportModName = "remastered-models";
 namespace ImportStage {
 // port_remastered_convert/cmdl: how models and materials are written (models, effects, rooms,
 // room models, HUD).
+// 57: HoloGlass_DX11 (03407341, kind 11) carries DIFC (PBR8 trailer), blend One / InvSrc1Color.
 // 56: HoloGlass (2f95a061) TCH1 is a raw colour map (sRGB, alpha kept).
 // 55: textures are used as authored (no flat-texture statistic, no :bare retail fallback).
 // 54: the glow added without a room's tone data is unscaled (kPbrEmissive 1, was 0.10).
-inline constexpr int kConverter = 56;
+inline constexpr int kConverter = 57;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get, Cube
 // and Baked. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.

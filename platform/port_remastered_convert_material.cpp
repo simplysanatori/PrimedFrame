@@ -781,6 +781,17 @@ RemMaterial ReadMaterial(const ModelMaterial& mat, const ConvertOptions& opt) {
     out.layerHeight[1] = ShortestDouble(cch[2]->color[1]);
     out.layerHeight[2] = ShortestDouble(cch[0]->color[1]);
     out.layerHeight[3] = 0.0;
+    // DIFC (row 7) scales the lit and bent terms and o1 (the fold's c6[0]); the PBR8 trailer carries it.
+    for (int i = 0; i < 4; ++i) {
+      out.shieldRows[28 + i] = 1.0;
+    }
+    for (const ModelMaterialData& d : mat.data) {
+      if (d.kind == ModelMaterialData::Kind::Color && d.usage == FourCC('D', 'I', 'F', 'C')) {
+        for (int i = 0; i < 4; ++i) {
+          out.shieldRows[28 + i] = ShortestDouble(d.color[i]);
+        }
+      }
+    }
   } else if (shader == kShaderFrozenShell && out.maps[kBase].has && tch[1] && cch[0] && cch[1] && cch[2]) {
     out.kind = 12;
     // The dissolve noise is bound as the second layer's base. The edge is
