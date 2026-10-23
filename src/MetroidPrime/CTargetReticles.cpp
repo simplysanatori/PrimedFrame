@@ -1444,9 +1444,11 @@ void CCompoundTargetReticle::DrawOrbitZoneGroup(const CMatrix3f& rot,
       const CVector3f cursor = targetPos + rot * (model->GetBoundingBox().GetCenterPoint() * scale);
       const float depth = (camXf.GetInverse() * cursor).GetY();
       if (depth > 0.f) {
-        const float kRemasteredFov = 55.f; // the vertical FOV Remastered's cursor size is tuned for
-        const float units = depth * tanf(0.5f * cam.GetRenderFov() * 3.14159265f / 180.f) /
-                            (1.25f * tanf(0.5f * kRemasteredFov * 3.14159265f / 180.f));
+        // Remastered places the cursor on a plane 1.25 along the camera's forward axis and draws
+        // it in the world camera's projection (CAimingCursorMP1::Update 0xcb6250,
+        // GetCursorPlaneDistance 0xcb6da4, CGameRenderJobMP1::RenderHUD 0xfa0fd8): drawn at
+        // `depth` instead, it keeps its angular size, and the FOV is the projection's.
+        const float units = depth / 1.25f;
         const float size = PortDebug::DirectAim() ? static_cast< float >(PortDebug::CrosshairSize()) / 100.f : 1.f;
         CColor rc = PortRemasteredCrosshairColor(x20_prevState, xPortXhairTargetT);
         rc = CColor(rc.GetRed(), rc.GetGreen(), rc.GetBlue(),
