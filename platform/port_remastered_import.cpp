@@ -1,5 +1,6 @@
 #include "port_remastered_import_internal.h"
 #include "port_remastered_effect_convert.h"
+#include "port_retail_placement.h"
 
 namespace PortRemastered {
 namespace ImportDetail {
@@ -2724,7 +2725,15 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       uint32_t retail;
       double orient[3][3];
       double offset[3];
+      bool modelSpace = false;  // per-instance: converted untransformed, placed per object
     };
+    std::vector<PortRetailPlacement::Record> placementRecords;
+    // Per-instance models: the largest difference between two of a model's placements, by
+    // decade, so the report shows whether they differ by float noise or by real moves.
+    std::map<int, int> orientSpread, offsetSpread;
+    int mirrored = 0;
+    std::string spreadReport = "retail\tplacements\torient spread\toffset spread\tmirrored\n";
+    const auto decade = [](double v) { return v <= 0 ? -99 : int(std::floor(std::log10(v))); };
     std::vector<RetailModel> retailModels;
     std::string report = "retail\tstatus\torient\toffset\ttable orient\ttable offset\t"
                          "placements (room object entity ok orient offset)\n";
@@ -2743,14 +2752,16 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
       return text;
     };
+    // Placements agree only when every component is the same float: ROOM and SCLY store their
+    // transforms as float, so a difference there is an object Remastered placed on its own.
     const auto same = [](const RetailPlacement& a, const RetailPlacement& b) {
       for (int i = 0; i < 9; ++i) {
-        if (std::fabs(a.orient[i / 3][i % 3] - b.orient[i / 3][i % 3]) >= 1e-3) {
+        if (float(a.orient[i / 3][i % 3]) != float(b.orient[i / 3][i % 3])) {
           return false;
         }
       }
-      return std::fabs(a.offset[0] - b.offset[0]) < 0.01 && std::fabs(a.offset[1] - b.offset[1]) < 0.01 &&
-             std::fabs(a.offset[2] - b.offset[2]) < 0.01;
+      return float(a.offset[0]) == float(b.offset[0]) && float(a.offset[1]) == float(b.offset[1]) &&
+             float(a.offset[2]) == float(b.offset[2]);
     };
     for (auto first = retailPlacements.begin(); first != retailPlacements.end();) {
       const auto last = std::find_if(first, retailPlacements.end(),
@@ -2764,8 +2775,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       const bool agree =
           ok != last && std::all_of(first, last, [&](const RetailPlacement& p) { return !p.ok || same(p, *ok); });
       const auto table = inTable.find(first->retail);
+      const bool perInstance = ok != last && !agree;
       const char* status = ok == last                  ? "unpaired"
-                           : !agree                    ? "per-instance"
+                           : perInstance && !all       ? "per-instance unplaced"
+                           : perInstance && table != inTable.end() ? "per-instance table"
+                           : perInstance               ? "per-instance"
                            : table != inTable.end()    ? "table"
                            : all                       ? "paired"
                                                        : "partial";
@@ -2789,7 +2803,61 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         report += (p == first ? "" : "; ") + p->room + text + orientText(p->orient) + " " + offsetText(p->offset);
       }
       report += '\n';
-      if (agree && table == inTable.end()) {
+      int flips = 0;
+      if (perInstance) {
+        double maxOrient = 0, maxOffset = 0;
+        for (auto a = first; a != last; ++a) {
+          const double(*o)[3] = a->orient;
+          const double det = o[0][0] * (o[1][1] * o[2][2] - o[1][2] * o[2][1]) -
+                             o[0][1] * (o[1][0] * o[2][2] - o[1][2] * o[2][0]) +
+                             o[0][2] * (o[1][0] * o[2][1] - o[1][1] * o[2][0]);
+          flips += a->ok && det < 0;
+          for (auto b = a + 1; b != last; ++b) {
+            if (!a->ok || !b->ok) {
+              continue;
+            }
+            for (int i = 0; i < 9; ++i) {
+              maxOrient = std::max(maxOrient, std::fabs(a->orient[i / 3][i % 3] - b->orient[i / 3][i % 3]));
+            }
+            for (int i = 0; i < 3; ++i) {
+              maxOffset = std::max(maxOffset, std::fabs(a->offset[i] - b->offset[i]));
+            }
+          }
+        }
+        ++orientSpread[decade(maxOrient)];
+        ++offsetSpread[decade(maxOffset)];
+        mirrored += flips;
+        if (all && flips != 0 && table == inTable.end()) {
+          // No runtime path for it (below) and no single placement to bake: it stays retail.
+          --statusCount[status];
+          ++statusCount["per-instance mirrored"];
+        }
+        char line[160];
+        std::snprintf(line, sizeof(line), "%08X\t%d\t%.3g\t%.3g\t%d\n", first->retail, int(last - first),
+                      maxOrient, maxOffset, flips);
+        spreadReport += line;
+      }
+      if (perInstance && all && flips == 0 && table == inTable.end()) {
+        // Remastered moved some of this model's objects on their own: the model converts once,
+        // untransformed, and each object's draw goes through its own placement. A mirrored
+        // placement stays out: the baked conversion swaps its winding, a runtime one could not.
+        RetailModel& m = retailModels.emplace_back();
+        std::copy(first->model.begin(), first->model.end(), m.uuid.begin());
+        m.retail = first->retail;
+        m.modelSpace = true;
+        for (auto p = first; p != last; ++p) {
+          PortRetailPlacement::Record& r = placementRecords.emplace_back();
+          r.mrea = p->mrea;
+          r.editorId = p->object;
+          r.model = p->retail;
+          for (int row = 0; row < 3; ++row) {
+            for (int c = 0; c < 3; ++c) {
+              r.correction[row * 4 + c] = float(p->orient[row][c]);
+            }
+            r.correction[row * 4 + 3] = float(p->offset[row]);
+          }
+        }
+      } else if (agree && table == inTable.end()) {
         RetailModel& m = retailModels.emplace_back();
         std::copy(first->model.begin(), first->model.end(), m.uuid.begin());
         m.retail = first->retail;
@@ -2800,20 +2868,37 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
     }
     std::string list;
     for (const RetailModel& m : retailModels) {
-      list += UuidText(m.uuid) + " " + Hex8(m.retail) + " " + orientText(m.orient) + " " + offsetText(m.offset) + "\n";
+      list += UuidText(m.uuid) + " " + Hex8(m.retail) + " " +
+              (m.modelSpace ? std::string("model space") : orientText(m.orient) + " " + offsetText(m.offset)) + "\n";
     }
+    const std::vector<uint8_t> placementFile = PortRetailPlacement::Encode(placementRecords);
+    list += "placements " + Hex64(Hash64(std::string(placementFile.begin(), placementFile.end()))) + "\n";
     {
       std::string counts;
       for (const auto& [status, n] : statusCount) {
         counts += " " + status + " " + std::to_string(n);
       }
       PortLog::Write("remastered import: retail models placed by the rooms:%s\n", counts.c_str());
+      std::string spreads;
+      for (const auto& [d, n] : orientSpread) {
+        spreads += " 1e" + std::to_string(d) + ":" + std::to_string(n);
+      }
+      spreads += "; offset";
+      for (const auto& [d, n] : offsetSpread) {
+        spreads += " 1e" + std::to_string(d) + ":" + std::to_string(n);
+      }
+      PortLog::Write("remastered import: per-instance spread by decade, orient%s; %d mirrored placements; "
+                     "%zu placements\n",
+                     spreads.c_str(), mirrored, placementRecords.size());
     }
     if (!beginStage("retailmodels", std::to_string(ImportStage::kModels) + " list " + Hex64(Hash64(list)) + keyConverter,
                     false, "reports/parts/retailmodels.materials.tsv")) {
       std::error_code reportError;
       fs::create_directories(staging / "reports", reportError);
       writeFile(staging / "reports" / "retailmodels.tsv", std::vector<uint8_t>(report.begin(), report.end()));
+      writeFile(staging / "reports" / "retailmodels.spread.tsv",
+                std::vector<uint8_t>(spreadReport.begin(), spreadReport.end()));
+      writeFile(staging / PortRetailPlacement::kFileName, placementFile);
       std::atomic<size_t> nextRetail{0};
       std::atomic<int> retailDone{0};
       std::mutex retailClaimMutex;
@@ -2831,15 +2916,18 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
           ConvertOptions options;
           options.retail = m.retail;
           options.source = UuidText(m.uuid);
-          // The placement's orient after kR2G, the default orient.
+          // The placement's orient after kR2G, the default orient; a per-instance model keeps
+          // the default, its placement applied at draw time.
           const ConvertOptions defaults;
-          for (int r = 0; r < 3; ++r) {
+          for (int r = 0; r < 3 && !m.modelSpace; ++r) {
             for (int c = 0; c < 3; ++c) {
               options.orient[r][c] = m.orient[r][0] * defaults.orient[0][c] + m.orient[r][1] * defaults.orient[1][c] +
                                      m.orient[r][2] * defaults.orient[2][c];
             }
           }
-          std::copy(m.offset, m.offset + 3, options.offset);
+          if (!m.modelSpace) {
+            std::copy(m.offset, m.offset + 3, options.offset);
+          }
           options.pbr = true;
           std::string modelError;
           bool ok = false;

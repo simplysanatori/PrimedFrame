@@ -224,6 +224,8 @@ std::vector<std::string> GalleryPaths();
 std::string HudBarsPath(uint32_t frame);
 // The thermal.lut a mod supplies (the thermal visor's heat gradient, 256x4 RGBA8); empty when none.
 std::string ThermalLutPath();
+// The retailplacements.bin a mod supplies (port_retail_placement.h); empty when none.
+std::string RetailPlacementPath();
 // The id a retail asset (a WPSC) reads for an effect in its field ('APS2'...), when a mod's
 // effectids.map gives that effect its own id (the Remastered import does so where two projectiles
 // share a disc id); `id` itself when none does. Safe from any thread.

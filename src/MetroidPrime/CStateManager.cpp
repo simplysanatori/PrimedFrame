@@ -2376,6 +2376,16 @@ CStateManager::LoadScriptObject(TAreaId aid, EScriptObjectType type, unsigned in
   }
 
   if (ent != nullptr) {
+#ifdef TARGET_PC
+    // PORT: a Remastered retail model converted once, in its own model space, is placed per
+    // object (port_retail_placement.h).
+    if (CActor* actor = TCastToPtr< CActor >(ent)) {
+      if (CModelData* modelData = actor->ModelData()) {
+        modelData->PortPlace(static_cast< uint >(World()->GetArea(aid)->GetAreaAssetId()),
+                             eid.value);
+      }
+    }
+#endif
     AddObject(*ent);
   } else {
     failed = true;
