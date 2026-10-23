@@ -1480,6 +1480,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // Without the colours (the inventory and cinematic guns) it is drawn as the ramp's mean,
     // a glow that does not move.
     const bool gunGlow = rem.kind == 9 && useColor;
+    // A plain lit cutout (flag 0x20): Remastered draws it in the opaque, depth-writing class 2, cut by
+    // the shader at alpha^2 < 0.25, whatever the retail model blended (kb topic/mesh-blend-class.md).
+    // Judged before the kinds below are reset: a cutout with a shader of its own is not this.
+    const bool plainCut = rem.cutout && (rem.kind == 0 || rem.kind == 24) && !rem.unlit && !rem.layered && !rem.macro;
     if (rem.kind == 9 && !gunGlow) {
       if (!rem.maps[kEmissive].has) {
         rem.maps[kEmissive] = rem.layer[kMr];
@@ -1515,7 +1519,8 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // 274D21BE; kb topic/mesh-blend-class.md).
     const bool lambertFx = rem.family == kShaderLambertFx || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2 ||
                            (!opt.standalone && !(rem.flags & (kTransparentFlag | kCutoutFlag)));
-    rem.opaqueFx = !opt.standalone && IsFx(pm) && !(rem.flags & (kTransparentFlag | kCutoutFlag));
+    const bool cutoutFx = !opt.standalone && plainCut && !glow && IsFx(pm);
+    rem.opaqueFx = !opt.standalone && IsFx(pm) && (!(rem.flags & (kTransparentFlag | kCutoutFlag)) || cutoutFx);
     if (rem.kind == 19 || rem.kind == 25) {
       // Row 6 w (unused by this kind otherwise): the retail konst alpha, a factor of the alpha of a particle model.
       rem.shieldRows[27] = GunFxParticle(pm) ? pm.konstAlpha : 1.0;
@@ -1585,10 +1590,10 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // test says nothing about what the Remastered map's alpha holds.
     // A plain lit cutout (no vertex colour) is Remastered's 1-bit alpha shader: full alpha,
     // cut by the shader. Any other keeps the CMPR punch and retail's alpha compare.
-    const bool exactCut = opt.standalone && rem.cutout && (rem.kind == 0 || rem.kind == 24) && !rem.unlit && !rem.layered;
+    const bool exactCut = (opt.standalone || cutoutFx) && rem.cutout && (rem.kind == 0 || rem.kind == 24) && !rem.unlit && !rem.layered;
     const char* const baseAlpha =
-        glow ? "blend" : !opt.standalone ? (inventory ? "mask" : frostShell || rem.mask || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2 || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
-    const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || inventory || lambertFx || !IsFx(pm)) &&
+        glow ? "blend" : cutoutFx ? "cut" : !opt.standalone ? (inventory ? "mask" : frostShell || rem.mask || rem.shader == kShaderVfxBase || rem.shader == kShaderVfxBase2 || (rem.kind >= 16 && rem.kind <= 18) ? (!frostShell && rem.maskSquared ? "mask2" : "mask") : "") : rem.cutout ? (exactCut ? "cut" : "punch") : rem.mask || rem.layered || rem.height > 0.0 ? "mask" : rem.blended ? "blend" : "";
+    const bool usePbr = opt.pbr && rt[kBase].has && (opt.standalone || glow || matcapShell || shield || inventory || lambertFx || cutoutFx || !IsFx(pm)) &&
                         Get("pbr:base", rt, baseAlpha, opt).has_value();
     // The base map keeps its whole alpha, and the shader cuts it as Remastered's does.
     rem.cutExact = usePbr && exactCut;
@@ -1724,7 +1729,7 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     const std::string tevReason =
         !opt.pbr ? "pbr off"
         : !rt[kBase].has ? "no base map"
-        : !(opt.standalone || glow || matcapShell || shield || inventory || lambertFx || !IsFx(pm)) ? "retail fx material keeps its TEV"
+        : !(opt.standalone || glow || matcapShell || shield || inventory || lambertFx || cutoutFx || !IsFx(pm)) ? "retail fx material keeps its TEV"
                                                    : "the base map did not resolve";
     // The TEV path: the retail material with each texture slot refilled from
     // the Remastered map that matches what its stage does.
