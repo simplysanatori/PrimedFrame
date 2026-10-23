@@ -778,6 +778,40 @@ size_t count(std::string_view source, std::string_view what) {
 constexpr std::string_view ScreenDecodes[] = {"srgb_dec(pbr_gs)", "srgb_dec(pbr_hg)", "srgb_dec(pbr_sfb)",
                                               "srgb_dec(textureSampleLevel(tex7, tex7_samp,"};
 
+// The screen-copy kinds fog in HDR as their Remastered fog perms do (kb topic/hdr-pbr-pass.md): the frame a
+// blend keeps (23/30 transmission, 29 dual and 11's o1) is never dimmed, each kind weights the in-scatter its own
+// way, and 14 (no fog perm) is not fogged. LDR keeps its single form.
+TEST_F(SceneHdrTest, ScreenKindsFogAsTheirFogPermsInHdr) {
+  for (const int kind : {8, 11, 14, 23, 29, 30}) {
+    SCOPED_TRACE(kind);
+    auto ldrConfig = screen_config(kind, false);
+    auto hdrConfig = screen_config(kind, true);
+    ldrConfig.volFog = hdrConfig.volFog = kind == 23 || kind == 30 ? gx::VolFogOpaque : gx::VolFogBlended;
+    const std::string ldr = gx::build_shader_source(ldrConfig);
+    const std::string hdr = gx::build_shader_source(hdrConfig);
+    EXPECT_EQ(count(ldr, "pbr_keep"), 0u);
+    EXPECT_EQ(count(hdr, "select(vec3f(1.0), pbr_vfw, pbr_vfk);"), 1u);
+    EXPECT_EQ(count(hdr, "pbr_vf = vec4f(0.0, 0.0, 0.0, 1.0);"), 1u);
+    EXPECT_EQ(count(hdr, "prev = vec4f(pbr_lin + pbr_pass + pbr_keep, pbr_alpha);"), 1u);
+    if (kind == 14) {
+      EXPECT_EQ(count(hdr, "pbr_vfon = false;"), 1u);
+    }
+    if (kind == 23 || kind == 30) {
+      EXPECT_EQ(count(hdr, "pbr_keep = pbr_xw * pbr_xscene;"), 1u);
+      EXPECT_EQ(count(hdr, "pbr_vfw = vec3f(1.0) - pbr_xw;"), 1u);
+    }
+    if (kind == 11) {
+      EXPECT_EQ(count(hdr, "pbr_pass = pbr_hg * ubuf.pbr_emissive.rgb * ubuf.pbr_param.w;"), 1u);
+    }
+    if (kind == 29) {
+      EXPECT_EQ(count(hdr, "pbr_keep = pbr_sdst * pbr_vfw;"), 1u);
+    }
+    EXPECT_EQ(module_error(ldr), "");
+    EXPECT_EQ(module_error(hdr), "");
+  }
+  EXPECT_TRUE(g_uncapturedErrors.empty());
+}
+
 TEST_F(SceneHdrTest, ScreenReadsAreRawOnlyInHdr) {
   for (const int kind : {8, 11, 14, 23, 29, 30, 34, 36}) {
     SCOPED_TRACE(kind);
@@ -792,7 +826,9 @@ TEST_F(SceneHdrTest, ScreenReadsAreRawOnlyInHdr) {
     EXPECT_GT(screen, 0u) << "the kind reads map 7";
     // Every other decode stays (base and cube maps).
     EXPECT_EQ(count(hdr, "srgb_dec("), count(ldr, "srgb_dec(") - screen);
-    EXPECT_EQ(count(hdr, "textureSampleLevel(tex7, tex7_samp,"), count(ldr, "textureSampleLevel(tex7, tex7_samp,"));
+    // Kind 11 reads the frame its blend keeps (unbent, at the fragment) once more in HDR.
+    EXPECT_EQ(count(hdr, "textureSampleLevel(tex7, tex7_samp,"),
+              count(ldr, "textureSampleLevel(tex7, tex7_samp,") + (count(ldr, "pbr_hg") > 0 ? 1u : 0u));
     EXPECT_EQ(module_error(ldr), "");
     EXPECT_EQ(module_error(hdr), "");
   }

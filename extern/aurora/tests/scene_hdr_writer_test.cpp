@@ -329,7 +329,8 @@ bool has_pbr_lin(std::string_view s) {
 
 bool hdr_line(std::string_view line) {
   return line.find("hdr_") != std::string_view::npos || has_pbr_lin(line) ||
-         line.find("HDR") != std::string_view::npos;
+         line.find("HDR") != std::string_view::npos || line.find("pbr_keep") != std::string_view::npos ||
+         line.find("pbr_vf") != std::string_view::npos;
 }
 
 // A line of an output statement the HDR branch rewrites (prev = vec4f(...), possibly wrapped).
@@ -372,7 +373,9 @@ TEST(SceneHdrGx, PbrSourcesSkipTheEncodeOnlyInHdr) {
     EXPECT_EQ(ldr.find("hdr_exposed"), std::string::npos);
     EXPECT_FALSE(has_pbr_lin(ldr));
     EXPECT_NE(ldr.find("prev = vec4f(srgb_enc(pbr_tm + pbr_pass), pbr_alpha);"), std::string::npos);
-    EXPECT_NE(hdr.find("prev = vec4f(pbr_lin + pbr_pass, pbr_alpha);"), std::string::npos);
+    EXPECT_NE(hdr.find("prev = vec4f(pbr_lin + pbr_pass + pbr_keep, pbr_alpha);"), std::string::npos);
+    EXPECT_EQ(ldr.find("pbr_keep"), std::string::npos);
+    EXPECT_EQ(ldr.find("pbr_vfw"), std::string::npos);
     EXPECT_EQ(hdr.find("srgb_enc(pbr_tm + pbr_pass)"), std::string::npos);
     EXPECT_NE(hdr.find("fn hdr_untone("), std::string::npos);
     EXPECT_NE(hdr.find("var pbr_lin = pbr_out;"), std::string::npos);
@@ -407,7 +410,8 @@ TEST(SceneHdrGx, PbrSourcesSkipTheEncodeOnlyInHdr) {
       if (line.find("pbr_alpha") != std::string::npos && line.find("prev = vec4f(") == std::string::npos)
         la.push_back(line);
     for (const auto& line : h)
-      if (line.find("pbr_alpha") != std::string::npos && line.find("prev = vec4f(") == std::string::npos)
+      if (line.find("pbr_alpha") != std::string::npos && line.find("prev = vec4f(") == std::string::npos &&
+          line.find("pbr_vfw") == std::string::npos)
         ha.push_back(line);
     EXPECT_FALSE(la.empty());
     EXPECT_EQ(la, ha);
