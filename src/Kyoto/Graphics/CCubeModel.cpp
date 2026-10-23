@@ -720,9 +720,13 @@ void CCubeModel::DrawSurface(const CCubeSurface& surface, const CModelFlags& mod
   // colour to the material as DIFC / ICMC (kb topic/model-flags-fade-tint.md). So a PBR material keeps its own
   // shading under ColorModulate (kT_One), ColorAdd (kT_Two, kT_Three; retail's striped alpha on kT_Three is dropped
   // as Remastered does), AlphaBlended (kT_Blend) and Additive (kT_Additive). kT_Additive2, kT_Four, black and
-  // thermal stay on the TEV fallback (a white blend keeps its thermal-PBR modes as before).
+  // thermal stay on the TEV fallback (a white blend keeps its thermal-PBR modes as before). Only the kinds whose
+  // shader takes the colour as Remastered's does (0 and 3, and glass, kind 8, which reads neither) are tinted in
+  // PBR; the others read DIFC elsewhere (GXSetPBRShield row 7, kind 35's DIFC.w), not wired yet, so they keep TEV.
   const bool pbrOutside = outside && material.IsFlagSet(kStateFlag_PortPBR) && CCubeMaterial::PortPBRAllowed(opaqueFlags);
-  const bool tintable = pbrOutside && !CCubeRenderer::That()->GetThermal();
+  const bool tintKind = (portKind > -0.5f && portKind < 0.5f) || (portKind > 2.5f && portKind < 3.5f) ||
+                        (portKind > 7.5f && portKind < 8.5f);
+  const bool tintable = pbrOutside && tintKind && !CCubeRenderer::That()->GetThermal();
   const bool tintOpaque =
       tintable && (trans == CModelFlags::kT_One || trans == CModelFlags::kT_Two || trans == CModelFlags::kT_Three);
   const bool pbrBlend = (pbrOutside && trans == CModelFlags::kT_Blend && tintWhite) ||
