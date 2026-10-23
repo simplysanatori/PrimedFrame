@@ -2752,14 +2752,16 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
       }
       return text;
     };
+    // Placements agree only when every component is the same float: ROOM and SCLY store their
+    // transforms as float, so a difference there is an object Remastered placed on its own.
     const auto same = [](const RetailPlacement& a, const RetailPlacement& b) {
       for (int i = 0; i < 9; ++i) {
-        if (std::fabs(a.orient[i / 3][i % 3] - b.orient[i / 3][i % 3]) >= 1e-3) {
+        if (float(a.orient[i / 3][i % 3]) != float(b.orient[i / 3][i % 3])) {
           return false;
         }
       }
-      return std::fabs(a.offset[0] - b.offset[0]) < 0.01 && std::fabs(a.offset[1] - b.offset[1]) < 0.01 &&
-             std::fabs(a.offset[2] - b.offset[2]) < 0.01;
+      return float(a.offset[0]) == float(b.offset[0]) && float(a.offset[1]) == float(b.offset[1]) &&
+             float(a.offset[2]) == float(b.offset[2]);
     };
     for (auto first = retailPlacements.begin(); first != retailPlacements.end();) {
       const auto last = std::find_if(first, retailPlacements.end(),
@@ -2801,9 +2803,9 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         report += (p == first ? "" : "; ") + p->room + text + orientText(p->orient) + " " + offsetText(p->offset);
       }
       report += '\n';
+      int flips = 0;
       if (perInstance) {
         double maxOrient = 0, maxOffset = 0;
-        int flips = 0;
         for (auto a = first; a != last; ++a) {
           const double(*o)[3] = a->orient;
           const double det = o[0][0] * (o[1][1] * o[2][2] - o[1][2] * o[2][1]) -
@@ -2825,6 +2827,11 @@ void Run(std::string nspPath, std::string keysPath, int threads, fs::path stagin
         ++orientSpread[decade(maxOrient)];
         ++offsetSpread[decade(maxOffset)];
         mirrored += flips;
+        if (all && flips != 0 && table == inTable.end()) {
+          // No runtime path for it (below) and no single placement to bake: it stays retail.
+          --statusCount[status];
+          ++statusCount["per-instance mirrored"];
+        }
         char line[160];
         std::snprintf(line, sizeof(line), "%08X\t%d\t%.3g\t%.3g\t%d\n", first->retail, int(last - first),
                       maxOrient, maxOffset, flips);

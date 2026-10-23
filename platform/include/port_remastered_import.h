@@ -81,6 +81,7 @@ inline constexpr int kConverter = 56;
 // and Baked. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 4;
+// 16: placements bake as one only when float-identical; any difference places per object.
 // 15: a per-instance retail model converts once, untransformed; retailplacements.bin places
 //     each of its objects (port_retail_placement.h).
 // 14: normals go through the orient's inverse transpose (a non-uniform orient kept them skewed).
@@ -90,7 +91,7 @@ inline constexpr int kTextures = 4;
 // 11: the Elite Quarters stasis tank 3C26F42B is in the table.
 // 10: a plain cutout over a retail fx material is drawn opaque, cut by the shader.
 // 9: a ColorUnlit mesh (the door shields) gets a back copy.
-inline constexpr int kModels = 15;     // the table's models, their looks and the ANCS copies
+inline constexpr int kModels = 16;     // the table's models, their looks and the ANCS copies
 // 63: ELPS reads its CNST surface flag; the system tween is 0 only at a 0x1000000 lifetime.
 // 62: NEGT, CRCV, SPEV, ELPS, ROTV, PNCV, KEYF, SLTW, CRLN octaves, KESP, one-stop GRAD, PAP0/9,
 //     ADV9 and IAV0..3 are converted; PLNV counts come from MAXP.
