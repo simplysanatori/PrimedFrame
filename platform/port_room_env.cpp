@@ -2045,6 +2045,36 @@ bool HasVolume(uint32_t mrea) {
 
 namespace {
 
+// What an area's lightmap is multiplied by, 0 for none yet. Like the volume's level (see
+// Compose): the lightmap holds irradiance as the grid does. Without the room's exposure,
+// the grid's average comes out at the key.
+float LightmapLevel(const Area& area) {
+  const float exposure = RoomExposed() ? FrameExposure(area) : 0.f;
+  if (exposure > 0.f) {
+    return exposure * LightGain();
+  }
+  if (!area.file.grids.empty() && area.file.grids[0].average > 0.f) {
+    return 0.18f / area.file.grids[0].average;
+  }
+  return 0.f;
+}
+
+} // namespace
+
+bool HasLightmapOnly(uint32_t mrea) {
+  if (!Enabled() || !VolumesEnabled()) {
+    return false;
+  }
+  const auto found = sAreas.find(mrea);
+  if (found == sAreas.end()) {
+    return false;
+  }
+  const Area& area = found->second;
+  return area.file.tiles == nullptr && area.file.grids.empty() && area.lightmap != 0 && LightmapLevel(area) > 0.f;
+}
+
+namespace {
+
 // The material cubes made so far, by file id; 0 for a file that could not be read.
 struct MaterialCubeGpu {
   uint32_t id = 0;
@@ -2441,24 +2471,13 @@ bool AddLightmap(Selection& out) {
   if (found == sAreas.end() || found->second.lightmap == 0) {
     return false;
   }
-  const Area& area = found->second;
-  // Like the volume's level (see Compose): the lightmap holds irradiance as the grid does.
-  // Without the room's exposure, the grid's average comes out at the key.
-  float level;
-  const float exposure = RoomExposed() ? FrameExposure(area) : 0.f;
-  if (exposure > 0.f) {
-    level = exposure * LightGain();
-  } else if (!area.file.grids.empty() && area.file.grids[0].average > 0.f) {
-    level = 0.18f / area.file.grids[0].average;
-  } else {
-    return false;
-  }
+  const float level = LightmapLevel(found->second);
   static const float scale = port::EnvFloat("MP_ROOM_ENV_LIGHTMAP_SCALE", 1.f);
   // The shader takes a level of 0 for no lightmap (a scale of 0 is a one-texel lookup).
   if (!(level * scale > 0.f)) {
     return false;
   }
-  out.lightmap = area.lightmap;
+  out.lightmap = found->second.lightmap;
   out.lightmapRect[0] = sHintLightmap[0];
   out.lightmapRect[1] = sHintLightmap[1];
   out.lightmapRect[2] = sHintLightmap[2];

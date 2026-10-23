@@ -673,6 +673,11 @@ struct ProbeOverrideScope {
 // Whether a model announced for this area would get a volume: false until all of the
 // area's volumes are on the GPU.
 bool HasVolume(uint32_t mrea);
+// An area with a lightmap and no grid (25 rooms, e.g. Energy Core Access): true once the
+// lightmap is on the GPU with a level. Remastered binds an area's lightmap to its world
+// models whenever it has one (CWorldModelRenderable::BindBakedLightingMaterialData), grid
+// or not, so its room geometry is lit as baked.
+bool HasLightmapOnly(uint32_t mrea);
 // MP_ROOM_ENV_VOLUME, the console's `roomenv volume`.
 void SetVolumesEnabled(bool on);
 bool VolumesEnabled();

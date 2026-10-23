@@ -1468,7 +1468,14 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
       item.following = false;
     }
   }
-  const bool baked = !AreaLights() && PortRoomEnv::HasVolume(gameArea.GetAreaAssetId());
+  const bool volumes = !AreaLights() && PortRoomEnv::HasVolume(gameArea.GetAreaAssetId());
+  // A room with a lightmap and no grid: what has a lookup into the lightmap is lit by it, as
+  // Remastered's world models are; the rest (a merged cluster, an instance without a lookup)
+  // keeps the area's lights, there being no grid to light it.
+  const bool lightmapOnly = !AreaLights() && !volumes && PortRoomEnv::HasLightmapOnly(gameArea.GetAreaAssetId());
+  const auto bakes = [&](const float* lookup) {
+    return volumes || (lightmapOnly && lookup != nullptr && HasLightmapLookup(lookup));
+  };
   CScriptLayerManager* const layers =
       area.gated ? const_cast< CStateManager& >(mgr).WorldLayerState().GetPtr() : nullptr;
   if (area.drawOrder.size() != area.items.size()) {
@@ -1521,7 +1528,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     }
     return picked;
   };
-  const auto light = [&](std::unique_ptr< CActorLights >& lights, bool& areaLit, const CAABox& bounds) {
+  const auto light = [&](std::unique_ptr< CActorLights >& lights, bool& areaLit, const CAABox& bounds, bool baked) {
     if (lights == nullptr || areaLit == baked) {
       // The baked ambient already holds the area's lights, so that set has room for none:
       // one that expects area lights and has none drops its dynamic lights too. Its
@@ -1601,7 +1608,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
         (!inView(area.models[cluster.model], cluster.bounds, casts) && !casts)) {
       continue;
     }
-    light(cluster.lights, cluster.areaLit, cluster.bounds);
+    light(cluster.lights, cluster.areaLit, cluster.bounds, bakes(nullptr));
     const int level = pickLevel(area.models[cluster.model], cluster.levels.size(), cluster.bounds, cluster.scaleSq);
     add(area.models[cluster.model], level < 0 ? *cluster.merged : *cluster.levels[level].merged, kIdentity,
         cluster.lights.get(), cluster.bounds, nullptr, nullptr, !casts);
@@ -1632,7 +1639,8 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     if (tooSmall(item.bounds) || (!inView(model, item.bounds, casts) && (!casts || item.alpha < 1.f))) {
       continue;
     }
-    light(item.lights, item.areaLit, item.bounds);
+    const bool baked = bakes(item.lightmap);
+    light(item.lights, item.areaLit, item.bounds, baked);
     item.volume = baked ? gameArea.GetAreaAssetId() : 0;
     // Blended surfaces (glass, decals) wait for the sorted pass, where they are drawn
     // back to front among the actors.
@@ -1667,7 +1675,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
     });
   }
   const auto drawOne = [&](const Visible& draw) {
-    if (baked) {
+    if (bakes(draw.lightmap)) {
       const CVector3f centre = draw.bounds->GetCenterPoint();
       const float at[3] = {centre.GetX(), centre.GetY(), centre.GetZ()};
       PortRoomEnv::SetVolumeHint(gameArea.GetAreaAssetId(), at);
@@ -1716,7 +1724,7 @@ bool Draw(const CStateManager& mgr, const CGameArea& gameArea, const CFrustumPla
   }
   gpRender->SetAmbientColor(CColor::White());
   CGraphics::DisableAllLights();
-  if (baked) {
+  if (volumes || lightmapOnly) {
     PortRoomEnv::ClearVolumeHint();
   }
   return GetMode() == Mode::Replace;
