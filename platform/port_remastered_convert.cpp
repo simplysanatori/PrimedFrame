@@ -69,42 +69,6 @@ struct Converter::State {
     return value;
   }
 
-  // Whether a map is more than a placeholder texel (over 4 px either way).
-  bool Real(const MapRef& map) {
-    int w = 0, h = 0;
-    const std::string text = Fact("size:" + map.src, [&] {
-      const Image& img = Open(map);
-      return std::to_string(img.width) + " " + std::to_string(img.height);
-    });
-    if (std::sscanf(text.c_str(), "%d %d", &w, &h) != 2) {
-      const Image& img = Open(map);
-      w = img.width;
-      h = img.height;
-    }
-    return w > 4 || h > 4;
-  }
-
-  // A flat fill has no surface detail to convert: Remastered keeps such a
-  // surface's pattern in its shader.
-  static bool FlatBase(const Image& img) {
-    if (std::max(img.width, img.height) <= 4) {
-      return true;
-    }
-    const size_t count = img.rgba.size() / 4;
-    uint64_t sum = 0, squares = 0;
-    for (size_t i = 0; i < count; ++i) {
-      for (int c = 0; c < 3; ++c) {
-        const uint64_t v = img.rgba[i * 4 + c];
-        sum += v;
-        squares += v * v;
-      }
-    }
-    const long double n = (long double)(count * 3);
-    const long double mean = (long double)sum / n;
-    const long double var = (long double)squares / n - mean * mean;
-    return std::sqrt(double(var > 0 ? var : 0)) < kFlatStd;
-  }
-
   uint32_t TexId(const std::string& tag) const {
     uint32_t h = Crc32("mprem:" + tag);
     while (io.retailId && io.retailId(h)) {
@@ -375,7 +339,6 @@ struct Converter::State {
     std::string tag;
     int ncap = 0;  // largest edge of the native .dds, 0 for none
     int k = -1;    // the PBR map, on that path
-    bool surface = true;  // the PBR base's normal map has a surface to it
     // A PBR colour texture (base, glow, a shader's ramp) follows its source format, as
     // Remastered's GPU does: an sRGB one is filtered in linear light and written sRGB, so
     // the GPU decodes it; a UNORM one is data, filtered and sampled raw. MR and normal
@@ -403,17 +366,6 @@ struct Converter::State {
         // Named fields, not positional: the size and the alpha follow them.
         if (k == kMr && !src->raw) {
           tag += ":mmax=" + FormatG(src->metalMax);
-        }
-        // Only a retail model has a retail texture to fall back on.
-        if (k == kBase && !opt.standalone) {
-          // A map that is more than a placeholder texel (not a mean, over 4 px).
-          auto real = [&](int m) { return rt[m].has && !rt[m].mean && Real(rt[m]); };
-          // The normal map is the surface. Failing that, the material's own MR or
-          // glow map still makes Remastered's draw its own (a flat suit light, the
-          // eye's shadow): a solid base under them is what it draws. Nothing but
-          // placeholders (the Eyon's) gives Remastered nothing to draw.
-          surface = real(kNormal) || real(kMr) || (rt[kEmissive].has && real(kEmissive)) || real(kBase) || rt[kBase].solid;
-          tag += surface ? "" : ":bare";
         }
       } else {
         tag = std::string("const:") + kMapNeutral[k];
@@ -557,7 +509,6 @@ struct Converter::State {
       img = Solid(mean[0], mean[1], mean[2]);
     }
     const size_t count = img.rgba.size() / 4;
-    const bool isBase = k == kBase || role == "diffuse";
     // How the image is filtered when it is resized and mipped: base, emissive
     // and the TEV colour slots are sRGB colour, the normal map a direction,
     // and the MR and reflect maps are plain data.
@@ -597,48 +548,6 @@ struct Converter::State {
       }
     }
     const bool keepAlpha = alpha == "punch" || alpha == "cut" || alpha == "blend" || alpha == "mask" || alpha == "mask2";
-    if (isBase && !raw && !keepAlpha && FlatBase(img)) {
-      // On the TEV path the retail texture is kept, which beats writing a flat
-      // grey over a textured model. On the PBR path a flat albedo is fine: the
-      // normal and MR maps carry the surface, so the material gets a solid base.
-      // Unless the normal map is a placeholder texel too (the Eyon's 9E5BDD71,
-      // every map 1x1): then Remastered gives nothing, and it drew a grey ball.
-      if (k != kBase || !surface) {
-        ids[tag] = std::nullopt;
-        Remember(key, "-", {});
-        return std::nullopt;
-      }
-      uint64_t sum[3] = {0, 0, 0};
-      for (size_t i = 0; i < count; ++i) {
-        for (int c = 0; c < 3; ++c) {
-          sum[c] += img.rgba[i * 4 + c];
-        }
-      }
-      uint8_t col[3];
-      for (int c = 0; c < 3; ++c) {
-        col[c] = uint8_t(std::nearbyint(double(sum[c]) / double(count)));
-      }
-      if (srgbTex) {
-        // Average in linear light. The .dds holds the sRGB bytes (the GPU decodes
-        // them); the TXTR stub, sampled raw, holds the linear ones.
-        double lin[3] = {0.0, 0.0, 0.0};
-        for (size_t i = 0; i < count; ++i) {
-          for (int c = 0; c < 3; ++c) {
-            lin[c] += double(SrgbByteToLinear(img.rgba[i * 4 + c]));
-          }
-        }
-        for (int c = 0; c < 3; ++c) {
-          col[c] = LinearToSrgbByteExact(float(lin[c] / double(count)));
-        }
-        Write(name + ".dds", EncodeDds(Solid(col[0], col[1], col[2]), ColourDdsFormat(), false, MapKind::Data, true));
-        Write(name + ".TXTR",
-              EncodeTxtrRgba8(Solid(SrgbToLinearByte(col[0]), SrgbToLinearByte(col[1]), SrgbToLinearByte(col[2])), 8));
-      } else {
-        Write(name + ".TXTR", EncodeTxtrRgba8(Solid(col[0], col[1], col[2]), 8));
-      }
-      Remember(key, name, writing.files);
-      return tid;
-    }
     // A PBR map's id is its tag's alone, so whoever wrote it wrote the same file.
     // Asked only now: up to here the tag alone decides whether there is a
     // texture at all (none, a solid, or a failed decode), so every converter
