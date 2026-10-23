@@ -1121,9 +1121,11 @@ void build_array(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd,
   if (cw == 0 || ch == 0 || cw % block != 0 || ch % block != 0) {
     return fail("cell size");
   }
-  if (!webgpu::g_hasCoreFeatures && block != 1) {
-    // Compatibility devices can't copy compressed textures: the draw is skipped.
-    return fail("compressed source on a Compatibility device");
+  // Compatibility devices can't copy compressed textures on the GPU; the layers are written from the bytes the
+  // source was uploaded from instead (kept by the texture upload on those devices).
+  const bool writeFromBytes = !webgpu::g_hasCoreFeatures && block != 1;
+  if (writeFromBytes && !src.cpuBytes) {
+    return fail("compressed source without its uploaded bytes on a Compatibility device");
   }
   // Mip m of a cell is its own copy only if the cell halves evenly that far (and stays block aligned).
   uint32_t mips = 1;
@@ -1143,12 +1145,51 @@ void build_array(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd,
   };
   AURORA_NOTE_TEXTURE(&descriptor);
   entry->texture = ctx.device.CreateTexture(&descriptor);
+  // Byte offset of each source mip in cpuBytes, and its row pitch in blocks.
+  std::array<size_t, 16> mipOffset{};
+  std::array<uint32_t, 16> mipBlocksWide{};
+  if (writeFromBytes) {
+    const auto info = format_info(src.format);
+    size_t offset = 0;
+    for (uint32_t mip = 0; mip < mips && mip < mipOffset.size(); ++mip) {
+      const uint32_t w = std::max(src.size.width >> mip, 1u);
+      const uint32_t h = std::max(src.size.height >> mip, 1u);
+      const uint32_t wideBlocks = (w + info.blockWidth - 1) / info.blockWidth;
+      const uint32_t highBlocks = (h + info.blockHeight - 1) / info.blockHeight;
+      mipOffset[mip] = offset;
+      mipBlocksWide[mip] = wideBlocks;
+      offset += size_t(wideBlocks) * highBlocks * info.blockSize;
+    }
+    if (mips > mipOffset.size() || offset > src.cpuBytes->size()) {
+      return fail("kept source bytes don't cover the mip chain");
+    }
+  }
+  std::vector<uint8_t> cell;
   for (uint32_t layer = 0; layer < entry->layers; ++layer) {
     const uint32_t col = layer % entry->cols;
     const uint32_t row = layer / entry->cols;
     for (uint32_t mip = 0; mip < mips; ++mip) {
       const uint32_t w = cw >> mip;
       const uint32_t h = ch >> mip;
+      if (writeFromBytes) {
+        const auto info = format_info(src.format);
+        const uint32_t cellBlocksWide = w / info.blockWidth;
+        const uint32_t cellBlocksHigh = h / info.blockHeight;
+        const size_t rowBytes = size_t(cellBlocksWide) * info.blockSize;
+        cell.resize(rowBytes * cellBlocksHigh);
+        const size_t firstBlockX = size_t(col) * cellBlocksWide;
+        const size_t firstBlockY = size_t(row) * cellBlocksHigh;
+        for (uint32_t by = 0; by < cellBlocksHigh; ++by) {
+          const size_t from =
+              mipOffset[mip] + ((firstBlockY + by) * mipBlocksWide[mip] + firstBlockX) * info.blockSize;
+          std::memcpy(cell.data() + by * rowBytes, src.cpuBytes->data() + from, rowBytes);
+        }
+        const wgpu::TexelCopyTextureInfo to{.texture = entry->texture, .mipLevel = mip, .origin = {0, 0, layer}};
+        const wgpu::TexelCopyBufferLayout layout{.bytesPerRow = uint32_t(rowBytes), .rowsPerImage = cellBlocksHigh};
+        const wgpu::Extent3D extent{w, h, 1};
+        ctx.queue.WriteTexture(&to, cell.data(), cell.size(), &layout, &extent);
+        continue;
+      }
       const wgpu::TexelCopyTextureInfo from{.texture = src.texture, .mipLevel = mip, .origin = {col * w, row * h, 0}};
       const wgpu::TexelCopyTextureInfo to{.texture = entry->texture, .mipLevel = mip, .origin = {0, 0, layer}};
       const wgpu::Extent3D extent{w, h, 1};

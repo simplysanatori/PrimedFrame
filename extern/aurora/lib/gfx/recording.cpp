@@ -1397,7 +1397,7 @@ bool resolve_scene_copy(TextureHandle color, const ResolveHdr* hdr, wgpu::Textur
   const auto& attachment = pass.colorAttachments[SceneColorAttachmentIndex];
   const uint32_t width = attachment.size.width;
   const uint32_t height = attachment.size.height;
-  if (pass.hasDepth && tex_copy_conv::snapshot_depth_supported()) {
+  if (pass.hasDepth && tex_copy_conv::snapshot_depth_supported(pass.msaaSamples)) {
     auto& entry = acquire_pass_snapshot(width, height, attachment.format, pass.msaaSamples, false, true);
     pass.snapshotDepthDst = entry.depth.view;
     depth = entry.depth.view;
@@ -1419,13 +1419,13 @@ bool resolve_pass(const ResolveDesc& desc, ResolvedTargets& out) {
     return false;
   }
 
+  auto& prevPass = current_render_passes()[g_recorder.currentRenderPass];
   bool wantDepth = desc.depth;
-  if (wantDepth && !tex_copy_conv::snapshot_depth_supported()) {
+  if (wantDepth && !tex_copy_conv::snapshot_depth_supported(prevPass.msaaSamples)) {
     Log.warn("resolve_pass: depth snapshots are unsupported on this device");
     wantDepth = false;
   }
 
-  auto& prevPass = current_render_passes()[g_recorder.currentRenderPass];
   const uint32_t width = prevPass.colorAttachments[SceneColorAttachmentIndex].size.width;
   const uint32_t height = prevPass.colorAttachments[SceneColorAttachmentIndex].size.height;
   // Requesting no snapshots is a plain pass break (or offscreen close, discarding its output).

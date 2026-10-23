@@ -1,4 +1,5 @@
 #include "xray.hpp"
+#include "tex_copy_conv.hpp"
 
 #include "../logging.hpp"
 #include "../webgpu/gpu.hpp"
@@ -205,6 +206,7 @@ struct State {
   Domain pipelineDomain = Domain::Ldr;
   wgpu::Buffer uniforms;
   wgpu::Sampler sampler;
+  wgpu::Sampler nearestSampler; // Compatibility: depth is read through a comparison sampler
   wgpu::Texture frame;
   wgpu::TextureView frameView;
   wgpu::TextureFormat frameFormat = wgpu::TextureFormat::Undefined;
@@ -263,10 +265,16 @@ void ensure_pipelines(wgpu::TextureFormat format, uint32_t samples, Domain domai
           .visibility = wgpu::ShaderStage::Fragment,
           .sampler = {.type = wgpu::SamplerBindingType::Filtering},
       },
+      // Compatibility only: the depth is sampled through a Nearest sampler (see source_for)
+      wgpu::BindGroupLayoutEntry{
+          .binding = 4,
+          .visibility = wgpu::ShaderStage::Fragment,
+          .sampler = {.type = wgpu::SamplerBindingType::Comparison},
+      },
   };
   const wgpu::BindGroupLayoutDescriptor layoutDescriptor{
       .label = "X-ray Post Layout",
-      .entryCount = entries.size(),
+      .entryCount = webgpu::g_hasCoreFeatures ? 4u : 5u,
       .entries = entries.data(),
   };
   g_state.layout = g_device.CreateBindGroupLayout(&layoutDescriptor);
@@ -312,6 +320,15 @@ void ensure_pipelines(wgpu::TextureFormat format, uint32_t samples, Domain domai
         .minFilter = wgpu::FilterMode::Linear,
     };
     g_state.sampler = g_device.CreateSampler(&samplerDescriptor);
+    const wgpu::SamplerDescriptor nearestDescriptor{
+        .label = "X-ray Post Depth Sampler",
+        .addressModeU = wgpu::AddressMode::ClampToEdge,
+        .addressModeV = wgpu::AddressMode::ClampToEdge,
+        .magFilter = wgpu::FilterMode::Nearest,
+        .minFilter = wgpu::FilterMode::Nearest,
+        .compare = wgpu::CompareFunction::LessEqual,
+    };
+    g_state.nearestSampler = g_device.CreateSampler(&nearestDescriptor);
   }
 }
 
@@ -419,11 +436,12 @@ void encode(const EncoderTaskContext& ctx, const wgpu::CommandEncoder& cmd, cons
         wgpu::BindGroupEntry{.binding = 1, .textureView = view},
         wgpu::BindGroupEntry{.binding = 2, .textureView = depth.view},
         wgpu::BindGroupEntry{.binding = 3, .sampler = g_state.sampler},
+        wgpu::BindGroupEntry{.binding = 4, .sampler = g_state.nearestSampler},
     };
     const wgpu::BindGroupDescriptor groupDescriptor{
         .label = label,
         .layout = g_state.layout,
-        .entryCount = groupEntries.size(),
+        .entryCount = webgpu::g_hasCoreFeatures ? 4u : 5u,
         .entries = groupEntries.data(),
     };
     return g_device.CreateBindGroup(&groupDescriptor);
@@ -484,6 +502,17 @@ std::string source_for(Domain domain, uint32_t samples) {
     code.replace(depthAt, depthToken.size(),
                  samples > 1 ? "texture_depth_multisampled_2d" : "texture_depth_2d");
   }
+  if (!webgpu::g_hasCoreFeatures) {
+    // textureLoad on a depth texture is rejected there; a Nearest sample at the texel centre returns the same texel.
+    const std::string load = "textureLoad(depthTex, at, 0)";
+    const size_t at = code.find(load);
+    if (at != std::string::npos) {
+      code.replace(at, load.size(),
+                   "mp_depth_load(depthTex, depthSamp, at)");
+    }
+    code += "\n@group(0) @binding(4) var depthSamp: sampler_comparison;\n";
+    code += tex_copy_conv::compat_depth_load_wgsl();
+  }
   const auto splice = [&code](const char* token, const char* snippet) {
     const size_t at = code.find(token);
     if (at != std::string::npos) {
@@ -496,9 +525,9 @@ std::string source_for(Domain domain, uint32_t samples) {
 }
 
 bool ensure_task() {
-  // The apply pass reads the scene depth with textureLoad on a depth texture, which Compatibility
-  // devices reject: skip the X-ray post there (record() then fails closed).
-  if (!webgpu::g_hasCoreFeatures) {
+  // Compatibility devices cannot bind a multisampled depth texture: with MSAA on, the distortion pass has no
+  // depth to read there, so the X-ray post stays off (record() then fails closed).
+  if (!webgpu::g_hasCoreFeatures && webgpu::g_graphicsConfig.msaaSamples > 1) {
     return false;
   }
   if (g_state.task == InvalidEncoderTask) {
