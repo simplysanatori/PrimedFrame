@@ -1214,6 +1214,40 @@ void Convergence::Step(float target) {
   value = float(next);
 }
 
+void ExposureAverage::Reset() {
+  L = -1.f;
+  created = false;
+}
+
+void ExposureAverage::Take(const float rgb[3]) {
+  L = std::max(std::max(rgb[0], rgb[1]), rgb[2]);
+}
+
+float ExposureAverage::Update(bool hint, float tonemapEv, float lo, float hi, float bias, float s, bool snap,
+                              int steps, float* target) {
+  constexpr float kGrey = 0.2158605f; // sRGB 128, linear
+  if (!hint || !(L >= 0.f)) {
+    *target = tonemapEv;
+    return tonemapEv;
+  }
+  if (sigma != s) {
+    sigma = s;
+    ev.SetSigma(s);
+  }
+  *target = std::min(std::max(std::log2(L / kGrey) + 3.f + bias, lo), hi);
+  if (!created) {
+    created = true;
+    ev.SetValue(*target);
+  } else if (snap) {
+    ev.SetValue(*target);
+  } else {
+    for (int i = steps; i > 0; --i) {
+      ev.Step(*target);
+    }
+  }
+  return ev.value;
+}
+
 void SetExtents(Probe& probe) {
   float volume = 8.f;
   for (int row = 0; row < 3; ++row) {

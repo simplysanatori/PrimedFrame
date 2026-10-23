@@ -576,6 +576,7 @@ CStateManager::CStateManager(const rstl::ncrc_ptr< CScriptMailbox >& mailbox,
 {
   PortRoomGeo::ResetScriptState();
   PortRoomEnv::ResetGrades();
+  PortRoomEnv::ResetExposure();
   x808_objectLists[0] = rs_new CObjectList(kOL_All);
   x808_objectLists[1] = rs_new CActorList();
   x808_objectLists[2] = rs_new CPhysicsActorList();
@@ -3650,6 +3651,13 @@ void CStateManager::DrawWorld() const {
 #ifdef TARGET_PC
   // Opaque world, opaque models, sky and decals are all down (port_scene_copy.h).
   PortSceneCopyPoint();
+  // Remastered's auto-exposure measure: the opaque colour copy, before the transparents
+  // (kb topic/auto-exposure-average.md). Thermal and X-Ray frames are not measured.
+  if (portSceneHdrRequested && !portZoomed) {
+    const CPlayerState::EPlayerVisor visor = x8b8_playerState->GetActiveVisor(*this);
+    if (visor != CPlayerState::kPV_Thermal && visor != CPlayerState::kPV_XRay)
+      GXPortMeasureScene(PortRoomEnv::MeasureExposure());
+  }
   // Pass B: each area's sorted drawables and world surfaces, in the same order and with the
   // fog, light fade, PVS, draw token and room-geometry state pass A had for that area.
   for (int i = 0; i < areas.size(); ++i) {

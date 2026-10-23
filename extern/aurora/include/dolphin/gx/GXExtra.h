@@ -246,9 +246,7 @@ void GXSetPBRModelModulation(const f32 diffuse[4], const f32 incan[4], f32 cover
 // could not be recorded. Then the colour grade: the LUTs gradeA and gradeB (ids from
 // GXPortColorGradeLut, 0 = none) over the tone-mapped colour, mixed by gradeWeight (1 = B).
 // Without bloom (bloom false) only the grade runs, and nothing when there is none either.
-// Before both, with an `exposure` above 0 (and a tone curve), the frame is averaged for auto
-// exposure: the mean exposed level, undone by the curve and divided by `exposure`, comes
-// back through GXPortFrameRadiance a few frames later.
+// `exposure` is unused (auto exposure measures through GXPortMeasureScene).
 GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
                          u32 gradeB, f32 gradeWeight, f32 exposure);
 // Port extension: GXPortPostProcess as the end of the HDR scene (GXPortSceneHdr). Same parameters.
@@ -333,8 +331,14 @@ GXBool GXPortSceneHdr(GXBool on);
 void GXPortCopyScene(void* dest, GXBool clear);
 // Stores a 33x33x33 RGBA8 colour grade LUT (red fastest) under a non-zero id.
 void GXPortColorGradeLut(u32 id, const u8* rgba);
-// The average radiance (linear rgb) of the latest frame measured by GXPortPostProcess, and a
-// count that goes up with each new one. False before the first.
+// Port extension: Remastered's auto-exposure measure (lib/gfx/bloom.cpp), at the opaque/sorted
+// boundary of the HDR scene's pass: the scene to a pow2 half-size mip chain down to 1x1, read back
+// at least a frame later. `exposure` is the one the scene is drawn at; the readback is divided by
+// it. Once a frame; false (nothing recorded) outside the HDR scene's pass or for exposure <= 0.
+// Ends the current pass, as a post does.
+GXBool GXPortMeasureScene(f32 exposure);
+// The radiance (linear rgb) of the newest finished GXPortMeasureScene, and a count that goes up
+// with each new one. False before the first.
 GXBool GXPortFrameRadiance(f32 out[3], u32* serial);
 // The sun's shadow. Each frame, GXPortSetShadowFrame gives the view (world -> view rows), the camera's
 // frustum (left, right, top, bottom on the near plane, near, far), the sun's direction (world, the

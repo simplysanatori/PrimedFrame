@@ -600,6 +600,26 @@ struct Convergence {
   void Step(float target);
 };
 
+// CPostFXManager's auto exposure (kb topic/auto-exposure-average.md): L is the largest
+// channel of the newest finished 1x1 readback of the frame's opaque colour (-1 before the
+// first; a failed map keeps the last). UpdateTonemapping 0xaffb18 uses the tonemap's EV
+// without a hint or while L < 0 (a NaN L fails that test too); otherwise the target is
+// clamp(log2(L / grey) + 3 + bias, lo, hi), and the first one creates the Gaussian at the
+// target. A new CStateManager starts over (Reset); doors and area loads do not.
+struct ExposureAverage {
+  float L = -1.f;
+  bool created = false;
+  Convergence ev;
+  float sigma = -1.f;
+  uint32_t serial = 0; // of the last readback taken
+  void Reset();
+  void Take(const float rgb[3]);
+  // The frame's EV. `snap`: a hint registered this frame (type 1), SetValue instead of
+  // stepping; `steps`: 60 Hz steps due. `target` gets the EV aimed at.
+  float Update(bool hint, float tonemapEv, float lo, float hi, float bias, float sigma, bool snap, int steps,
+               float* target);
+};
+
 // --- The game side (port_room_env.cpp) -----------------------------------------
 
 // The areas in memory now. Loads the files of new ones and frees those of areas that left.
@@ -851,6 +871,8 @@ struct ParamTransition {
 };
 // A new game: every grade back to how it starts.
 void ResetGrades();
+// A new CStateManager: no measurement and no Gaussian yet (ExposureAverage::Reset).
+void ResetExposure();
 // The console's `roomenv grades`: the camera area's grades and which are on.
 std::string GradeInfo();
 void SetViewGradesOn(bool on); // debug: every grade request of the viewed room on or off
@@ -861,12 +883,13 @@ bool ColorGradeEnabled();
 void SetViewArea(uint32_t mrea);
 // Once a frame, after SetViewArea: moves the frame's exposure and tone curve on
 // (CPostFXManager::UpdateTonemapping). The tonemap moves linearly to the camera room's
-// over a second; with an auto exposure hint, the exposure value eases through a
-// Convergence towards the one measured from the last frames' average radiance
-// (GXPortFrameRadiance) when `roomGeoDrawing` (only then does the picture follow the
-// exposure, so measuring it can settle), else towards the one of the room's probes. It
-// jumps when the camera's previous room is gone (a world load or a teleport). Also hands
-// one cube or volume the worker has finished to the GPU.
+// over a second; with an auto exposure hint the exposure is the tonemap's EV until the
+// first measurement of the frame's average radiance (GXPortFrameRadiance), then eases
+// through the ExposureAverage's Gaussian. It is measured only when `roomGeoDrawing` (only
+// then does the picture follow the exposure, so measuring it can settle); a frame that is
+// not uses the tonemap's EV and leaves the Gaussian where it is. The tonemap jumps when the
+// camera's previous room is gone (a world load or a teleport); the Gaussian does not. Also
+// hands one cube or volume the worker has finished to the GPU.
 void UpdateFrame(bool roomGeoDrawing);
 // How long the player's power bomb has been going off, or a negative value for none; the next
 // UpdateFrame tints the baked light with it (PowerBombBakedLight) unless
@@ -874,13 +897,13 @@ void UpdateFrame(bool roomGeoDrawing);
 void SetPowerBombTime(float seconds);
 // The baked light's modulation the last UpdateFrame set (GXSetPBRBakedLightModulation).
 void BakedLightModulation(float rgb[3]);
-// The exposure to measure the frame at, for GXPortPostProcess; 0 when nothing would use
-// the measurement.
+// The exposure the frame is drawn at, for GXPortMeasureScene (the measurement is divided
+// by it); 0 when nothing would use the measurement.
 float MeasureExposure();
 // The frame's exposure (2^(3 - EV)); 0 before it has one.
 float FrameExposure();
 // Whether the exposure follows the frame (MP_ROOM_ENV_AUTO_EXPOSURE, the console's
-// `roomenv auto`); otherwise it follows the room's probes.
+// `roomenv auto`); otherwise it is the tonemap's EV.
 void SetAutoExposure(bool on);
 bool AutoExposure();
 // What emissive and unlit light in the opaque pass is multiplied by: Remastered draws it
