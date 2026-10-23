@@ -1174,29 +1174,6 @@ bool scene_post_available() {
   return claimed < MaxPostsPerFrame;
 }
 
-bool push(const Params& params) {
-  if (!ensure_task()) {
-    return false;
-  }
-  // Pending FIFO commands first, so the post lands after what they draw.
-  gx::fifo::drain();
-  if (scene_hdr_active()) {
-    Log.warn("bloom::push under the HDR scene; use GXPortPostProcessScene");
-    return false;
-  }
-  Params task = params;
-  task.bloom = task.bloom != 0 ? BloomOn : 0;
-  uint32_t slot = 0;
-  {
-    const std::lock_guard lock(g_recordMutex);
-    if (!claim_slot(slot)) {
-      return false;
-    }
-    g_recorded[slot] = Recorded{.params = task};
-  }
-  return record_encoder_task(g_state.task, &slot, sizeof(slot));
-}
-
 bool record(const Params& params) {
   if (g_state.task == InvalidEncoderTask) {
     return false;

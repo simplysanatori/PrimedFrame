@@ -155,18 +155,6 @@ void GXPortPostCompositeAdd(const f32 rgba[4]) {
   }
 }
 
-GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
-                         u32 gradeB, f32 gradeWeight, f32 exposure) {
-  if (GXGetPBRCostTest() == 10 || sDrawIdMode) {
-    return true;
-  }
-  const auto params = post_process_params(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, exposure);
-  if (!params.bloom && gradeA == 0 && gradeB == 0) {
-    return true;
-  }
-  return write_post_process(params);
-}
-
 GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
                               u32 gradeB, f32 gradeWeight, f32 exposure) {
   // The EFB the copies saw is about to change target (the HDR scene ends here).

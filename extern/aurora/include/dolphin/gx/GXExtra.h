@@ -163,7 +163,7 @@ void GXSetPBRDebugView(u32 view);
 // 5 no normal maps, 6 no metal/roughness and emissive maps, 7 flat but with every map
 // still read, 8 full shading with the maps' anisotropy off, 9 as 8 with nearest mips.
 // Takes effect at the next GXSetPBR(GX_TRUE). Two leave the shading alone and measure the
-// frame around it: 10 no post-processing (GXPortPostProcess does nothing), 11 no screen
+// frame around it: 10 no post-processing (GXPortPostProcessScene only converts the scene), 11 no screen
 // copies (GXCopyTex without a clear copies nothing, so the frame stays one render pass;
 // what samples the copy sees stale texels).
 void GXSetPBRCostTest(u32 test);
@@ -239,25 +239,19 @@ void GXSetPBRLightScale(f32 diffuse, f32 f0, f32 alpha, GXBool alphaReplaces);
 // neutral coverage.
 void GXSetPBRModelModulation(const f32 diffuse[4], const f32 incan[4], f32 coverage);
 
-// Aurora extension: Remastered's bloom over what the EFB holds now (see lib/gfx/bloom.cpp).
-// The EFB is taken as drawn through the tone curve `tone` (as GXSetPBRTone); light above
-// `threshold` (exposed luminance) blooms, tints 0 to 3 weight the levels from the coarsest
-// and tint 4 the bright pass. Not a FIFO command: it ends the current pass. False when it
-// could not be recorded. Then the colour grade: the LUTs gradeA and gradeB (ids from
-// GXPortColorGradeLut, 0 = none) over the tone-mapped colour, mixed by gradeWeight (1 = B).
-// Without bloom (bloom false) only the grade runs, and nothing when there is none either.
-// `exposure` is unused (auto exposure measures through GXPortMeasureScene).
-GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
-                         u32 gradeB, f32 gradeWeight, f32 exposure);
-// Port extension: GXPortPostProcess as the end of the HDR scene (GXPortSceneHdr). Same parameters.
+// Port extension: Remastered's bloom and colour grade at the end of the HDR scene (GXPortSceneHdr;
+// see lib/gfx/bloom.cpp). Light above `threshold` (exposed luminance) blooms, tints 0 to 3 weight
+// the levels from the coarsest and tint 4 the bright pass; then the colour grade: the LUTs gradeA
+// and gradeB (ids from GXPortColorGradeLut, 0 = none) over the tone-mapped colour, mixed by
+// gradeWeight (1 = B). `exposure` is unused (auto exposure measures through GXPortMeasureScene).
+// Not a FIFO command: it ends the current pass. False when it could not be recorded.
 // In the HDR scene's pass it reads the linear RGBA16F scene as it is (no decode, no inverse curve,
 // no cap), tones it once through `tone` (none: clamped to 1), grades and blooms it into the display
 // EFB, and the frame goes on in the display EFB (the HDR scene ends; a later GXPortSceneHdr starts
 // it again). It always records there, with no bloom, grade or exposure too, as the scene must be
-// converted. On the display EFB it is GXPortPostProcess, and nothing when there is nothing to do.
-// At most two posts (either call) a frame. Plain GXPortPostProcess in the HDR scene is not this
-// contract: it does nothing without an effect and leaves the conversion to chance; use this one.
-// Cost test 10 keeps the conversion (bloom and grades off).
+// converted. On the display EFB (the HDR target could not be had) it blooms and grades the EFB as
+// drawn through the tone curve `tone` (as GXSetPBRTone), and does nothing when there is nothing to
+// do. At most two posts a frame. Cost test 10 keeps the conversion (bloom and grades off).
 GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4],
                               u32 gradeA, u32 gradeB, f32 gradeWeight, f32 exposure);
 // Port extension: a colour the next GXPortPostProcessScene adds in its composite, in linear light
@@ -270,7 +264,7 @@ void GXPortPostCompositeAdd(const f32 rgba[4]);
 // ambient volume's mean light, integrated front to back and applied to every pixel at the
 // world's depth (the viewmodel, drawn nearer than depth[2], is left alone). The EFB is undone
 // through the tone curve and exposure the frame was drawn with, fogged, and drawn through them
-// again. Call it before GXPortPostProcess. View space is GX's (x right, y up, z towards the camera).
+// again. Call it before GXPortPostProcessScene. View space is GX's (x right, y up, z towards the camera).
 typedef struct {
   f32 viewToWorld[3][4];   // rows: world = row . (view, 1)
   f32 worldToVolume[3][4]; // rows: world -> the ambient volume's texture coordinates

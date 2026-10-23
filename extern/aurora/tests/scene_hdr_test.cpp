@@ -1013,19 +1013,6 @@ TEST_F(SceneHdrTest, ScenePostWithNothingToDoOnTheDisplayEfbRecordsNothing) {
   bloom::shutdown();
 }
 
-TEST_F(SceneHdrTest, PlainPushIsRefusedInTheHdrScene) {
-  bloom::shutdown();
-  ASSERT_TRUE(bloom::ensure_task());
-  ASSERT_TRUE(set_scene_hdr(true));
-  const size_t tasks = frame.encoderTasks.size();
-  bloom::Params params{};
-  params.bloom = 1;
-  EXPECT_FALSE(bloom::push(params));
-  EXPECT_EQ(frame.encoderTasks.size(), tasks);
-  EXPECT_TRUE(scene_hdr_active());
-  bloom::shutdown();
-}
-
 TEST_F(SceneHdrTest, ThirdHdrSegmentFallsBackToTheDisplayEfb) {
   bloom::shutdown();
   ASSERT_TRUE(bloom::ensure_task());

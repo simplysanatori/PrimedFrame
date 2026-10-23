@@ -3,7 +3,7 @@
 #include <cstdint>
 
 // Port extension: Remastered's frame bloom (CRenderPass_Bloom) and colour grade, run on the
-// finished EFB between two passes (see GXPortPostProcess).
+// finished EFB between two passes (see GXPortPostProcessScene).
 namespace aurora::gfx::bloom {
 constexpr uint32_t GradeLutSize = 33;
 
@@ -43,10 +43,6 @@ fn composite_add(frame: vec3f, c: vec4f) -> vec3f {
 }
 )";
 
-// Records the bloom at this point of the frame, in a pass of its own on the display EFB. False when it
-// could not be recorded (refused under the HDR scene). Waits for the FIFO to be processed first;
-// GXPortPostProcess queues it instead.
-bool push(const Params& params);
 // Registers the bloom's encoder task (game thread); false if it could not be.
 bool ensure_task();
 // Read-only FIFO preflight for entering the HDR scene: the task and composite draw must still be
