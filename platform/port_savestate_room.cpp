@@ -374,9 +374,12 @@ TUniqueId RawId(uint16_t value) {
   return uid;
 }
 
+// A dead enemy that is still active plays out its death and deletes itself. One killed
+// while inactive never does: it stays, and may be a script generator's template (Hive
+// Totem's wasps, each one a generator's), so it is saved like any other object.
 bool IsGone(const CEntity& ent) {
   const CPatterned* patterned = TCastToConstPtr< CPatterned >(const_cast< CEntity* >(&ent));
-  return patterned != nullptr && !patterned->IsAlive();
+  return patterned != nullptr && !patterned->IsAlive() && patterned->GetActive();
 }
 
 // A script generator's copy carries its template's editor id. Enemy copies are saved
