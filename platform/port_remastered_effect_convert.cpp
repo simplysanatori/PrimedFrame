@@ -518,6 +518,32 @@ constexpr uint32_t kColorTex = 1, kOpacityTex = 2, kErosion = 4, kRamp = 8, kInd
 // aurora::gfx::vfx::Blend::Multiply, the port's stand-in for the FrameBuffer_* shaders without a SceneWarp recipe.
 constexpr uint32_t kBlendMultiply = 4;
 constexpr uint32_t kBlendAdditiveOne = 5;  // aurora::gfx::vfx::Blend::AdditiveOne (RGB One/One)
+// aurora::gfx::vfx::Fogged: fogged whatever the blend (the row's fog under a MATI EBlendMode's factors).
+constexpr uint32_t kFogged = 1u << 27;
+
+// A MATI header EBlendMode as the VMAT blend, or kNoHeaderBlend where the port has no exact state for it.
+// SBlendModeState(EBlendMode) 0xf0164 reads colour (eq, src, dst) at 0x1d0cc48 and alpha at 0x1d0cd38, 16 bytes
+// a mode; eq 0 is Add, factors 0 Zero, 1 One, 6 SrcAlpha, 7 InvSrcAlpha (CGraphicsStateCache_NVN::SetBlendMode
+// 0x1addf0, factor table 0x1d11bd0). 0: One/Zero both = Opaque; 1: One/One, alpha Zero/One = AdditiveOne;
+// 2: SrcAlpha/InvSrcAlpha, alpha One/InvSrcAlpha = Alpha; 5: One/InvSrcAlpha both = PremultipliedAlpha;
+// 6: SrcAlpha/One both = AdditiveAlpha. Unported: 3 (Zero/SrcAlpha), 4 (Zero/Zero), 7-8 (Min/Max), 9
+// (DstColor/Zero, alpha One/Zero), 10 (One/InvSrc1Color: dual source), 11-14 (Sub/RevSub).
+uint32_t MatiBlend(uint32_t mode) {
+  switch (mode) {
+  case 0:
+    return 3;
+  case 1:
+    return kBlendAdditiveOne;
+  case 2:
+    return 0;
+  case 5:
+    return 6;
+  case 6:
+    return 7;
+  default:
+    return 0xffffffffu;
+  }
+}
 // aurora::gfx::vfx::AlreadyExposed: an exposure policy carried in the features word, not a shader feature.
 constexpr uint32_t kAlreadyExposed = 1u << 31;
 
@@ -3494,6 +3520,31 @@ public:
         m_approximated.push_back("VMAT: PBDM taken as alpha blend");
       }
     }
+    // The factors a sprite, swoosh or ELC2 draws with: CParticleSceneNode::BindGraphicsState 0x2b10e4 (from
+    // RenderSpriteEntries 0x2b13a8 and RenderSwooshEntries 0x2b18b8, CParticleDrawParams -1) takes the row
+    // above only while the node's material instance resource (node+0x148, set by
+    // UpdateCustomMaterialReadyToRender 0x2b0ad4 for every generator with a MATI) has EBlendMode -1 (+0x24,
+    // the header's u32 at 0x61); otherwise SBlendModeState(EBlendMode) (MatiBlend). The fog stays the row's
+    // (static state bit 0x8000, SetupFogFromBlendMode on PBDM), pinned here as the shader keys it on the
+    // blend. Model particles (PMDL) take FUN_002bed10's mesh states instead: the wave orb below.
+    const bool model = !swoosh && std::any_of(node.properties.begin(), node.properties.end(),
+                                              [](const EffectProperty& p) { return p.fourcc == F("PMDL"); });
+    uint32_t fogPin = 0;
+    if (!model && mati.headerBlend != kNoHeaderBlend) {
+      const uint32_t matiBlend = MatiBlend(mati.headerBlend);
+      if (matiBlend == 0xffffffffu) {
+        m_approximated.push_back("VMAT: MATI EBlendMode " + std::to_string(int32_t(mati.headerBlend)) +
+                                 " has no port blend, the row's taken");
+      } else {
+        const auto fogged = [](uint32_t b) { return b == 0 || b == 3; };
+        if (fogged(blend) && !fogged(matiBlend)) {
+          fogPin = kFogged;
+        } else if (!fogged(blend) && fogged(matiBlend)) {
+          fogPin = kUnfogged;
+        }
+        blend = matiBlend;
+      }
+    }
     // The wave beam's orb is the one known particle model whose MATI header blend
     // (EBlendMode 1, Remastered's One/One) wins over PBDM, which is 0 there: the
     // model draw passes -1 and resolves it to the MATI resource's mode
@@ -3507,7 +3558,7 @@ public:
     // multiplies it back, so the light it adds to the (already exposed) HDR scene is T * COLR * ITEN,
     // net exposure 1. Validated for this MATI only; every other effect keeps the room's exposure.
     // Its own test, not read off the blend: a later blend change must not move the policy.
-    uint32_t features = recipe->features;
+    uint32_t features = recipe->features | fogPin;
     if (!swoosh && find(F("PMDL")) != nullptr && guid->guid == kWaveOrbMati && mati.shader == 0x642dd72b &&
         mati.headerBlend == 1) {
       features |= kAlreadyExposed;

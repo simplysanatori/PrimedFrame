@@ -75,6 +75,9 @@ enum Feature : uint32_t {
   // probe + the clustered lights) x BLCM / pi, alpha unchanged. N is the view normal from vec (toward the
   // eye for a sprite). Takes DrawDesc::lit and DrawDesc::cluster as IceChargeCollisionLit does.
   ParticleLit = 1u << 26,
+  // Fogged whatever the blend: the fog follows the generator's PBDM/SBDM/EBDM row (SetupFogFromBlendMode), the
+  // factors its MATI's EBlendMode, so a MATI additive or premultiplied draw over a fogged row keeps the fog.
+  Fogged = 1u << 27,
   // Not a shader feature: a VMAT blob's exposure policy, carried in its features word. The loader moves
   // it to DrawDesc::alreadyExposed; a draw ignores it in `features` (no shader or pipeline key sees it).
   AlreadyExposed = 1u << 31
@@ -82,11 +85,23 @@ enum Feature : uint32_t {
 // Multiply is port-only: the stand-in for the FrameBuffer_* shaders without a SceneWarp recipe
 // (3db95827). The warp is dropped and the target is multiplied by mix(1, rgb, a) instead.
 // AdditiveOne is the wave orb's model blend: RGB One/One, alpha Zero/One, drawn with depth write off.
-// The values are serialised in VMAT blobs (0..4 older, 5 new) and form part of the pipeline key.
-enum class Blend : uint32_t { Alpha = 0, Premultiplied = 1, Additive = 2, Opaque = 3, Multiply = 4, AdditiveOne = 5 };
+// PremultipliedAlpha and AdditiveAlpha are Remastered's EBlendMode 5 and 6 (SBlendModeState 0xf0164, tables
+// 0x1d0cc48/0x1d0cd38): One/InvSrcAlpha and SrcAlpha/One for colour and alpha alike, where the PBDM rows
+// Premultiplied and Additive keep the target's alpha (Zero/One).
+// The values are serialised in VMAT blobs (0..4 older, 5..7 new) and form part of the pipeline key.
+enum class Blend : uint32_t {
+  Alpha = 0,
+  Premultiplied = 1,
+  Additive = 2,
+  Opaque = 3,
+  Multiply = 4,
+  AdditiveOne = 5,
+  PremultipliedAlpha = 6,
+  AdditiveAlpha = 7
+};
 
 // The highest Blend value a VMAT blob may carry.
-inline constexpr uint32_t MaxBlend = uint32_t(Blend::AdditiveOne);
+inline constexpr uint32_t MaxBlend = uint32_t(Blend::AdditiveAlpha);
 
 // A model draw of this blend never writes depth and always depth-tests (LEqual), whatever its generator asked for.
 inline constexpr bool forces_depth_write_off(Blend blend) { return blend == Blend::AdditiveOne; }
