@@ -18,6 +18,7 @@
 #include "MetroidPrime/Player/CWorldState.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptActorRotate.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptCounter.hpp"
+#include "MetroidPrime/ScriptObjects/CScriptDebris.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptDock.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptDoor.hpp"
 #include "MetroidPrime/ScriptObjects/CScriptEMPulse.hpp"
@@ -336,6 +337,14 @@ uint32_t ScriptId(const CEntity& ent) {
   return ent.GetEditorId().Value();
 }
 
+// The area an object lives in, which owns its record. Usually its editor id's area, but
+// not always (Subchamber Two holds a relay, 000600B5, with Subchamber One's area bits):
+// keyed by the id, the restore of the area it is in would neither save nor delete it.
+int OwnerArea(const CEntity& ent) {
+  const int area = ent.GetAreaId().Value();
+  return area >= 0 ? area : ent.GetEditorId().AreaNum();
+}
+
 // What the CStateManager hooks noted per object (raw TUniqueId value), tagged with
 // the manager it belongs to so a world being torn down never touches the next one's.
 struct Noted {
@@ -371,9 +380,9 @@ bool IsGone(const CEntity& ent) {
 }
 
 // A script generator's copy carries its template's editor id. Enemy copies are saved
-// as copies (fights count their deaths), and so are pickups (the Essence's drops);
-// other copies (maze walls) are not saved at all, but no longer overwrite their
-// template's record.
+// as copies (fights count their deaths), and so are pickups (the Essence's drops) and
+// debris (SavesGeneratedCopy); other copies (maze walls, sounds) are not saved at all,
+// but no longer overwrite their template's record.
 bool IsGeneratedCopy(const CStateManager& mgr, CEntity& ent) {
   const Noted* n = FindNoted(mgr, ent.GetUniqueId());
   return n != nullptr && n->generated;
@@ -406,9 +415,8 @@ void CaptureObject(CStateManager& mgr, CEntity& ent, RoomObject& obj) {
     // platforms and anything moving are saved.
     const bool moving = physics->GetVelocityWR().IsNonZero() ||
                         physics->GetMomentumWR().IsNonZero();
-    // A generated pickup stands where its generator dropped it, not at its template.
-    const bool dropped =
-        TCastToPtr< CScriptPickup >(&ent) != nullptr && IsGeneratedCopy(mgr, ent);
+    // A generated pickup or debris stands where its generator dropped it, not at its template.
+    const bool dropped = IsGeneratedCopy(mgr, ent);
     if (moving || dropped || TCastToPtr< CPatterned >(&ent) != nullptr ||
         TCastToPtr< CScriptPlatform >(&ent) != nullptr) {
       BlockWriter xf;
@@ -838,11 +846,10 @@ void CaptureRoomState(CStateManager& mgr, RoomState& out) {
   }
   ForEachObject(mgr, [&](CEntity& ent) {
     const uint32_t id = ScriptId(ent);
-    if (id == kNoEditorId || areas.count(ent.GetEditorId().AreaNum()) == 0 || IsGone(ent))
+    if (id == kNoEditorId || areas.count(OwnerArea(ent)) == 0 || IsGone(ent))
       return;
     const bool generated = IsGeneratedCopy(mgr, ent);
-    if (generated && TCastToPtr< CPatterned >(&ent) == nullptr &&
-        TCastToPtr< CScriptPickup >(&ent) == nullptr)
+    if (generated && !SavesGeneratedCopy(ent))
       return;
     // A copy's editor id is its template's: the template decides whether that id is present.
     if (!generated)
@@ -1006,7 +1013,7 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
   std::vector< TUniqueId > doomed;
   ForEachObject(mgr, [&](CEntity& ent) {
     const uint32_t id = ScriptId(ent);
-    if (id == kNoEditorId || now.count(ent.GetEditorId().AreaNum()) == 0)
+    if (id == kNoEditorId || now.count(OwnerArea(ent)) == 0)
       return;
     if (present.count(id) == 0 || IsGone(ent))
       doomed.push_back(ent.GetUniqueId());
@@ -1018,17 +1025,19 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
   const bool waypointsMoved = RestorePlatforms(mgr, room, now);
   std::vector< const RoomObject* > copies;
   for (const RoomObject& obj : room.objects) {
-    if (now.count(TEditorId(obj.editorId).AreaNum()) == 0)
-      continue;
     if (FindBlock(obj, kTagGenerated) != nullptr) {
-      copies.push_back(&obj);
+      if (now.count(TEditorId(obj.editorId).AreaNum()) != 0)
+        copies.push_back(&obj);
       continue;
     }
     CEntity* ent = mgr.ObjectById(mgr.GetIdForScript(TEditorId(obj.editorId)));
     if (ent == nullptr || ent->IsInGraveyard()) {
-      ++stats.unmatched;
+      if (now.count(TEditorId(obj.editorId).AreaNum()) != 0)
+        ++stats.unmatched;
       continue;
     }
+    if (now.count(OwnerArea(*ent)) == 0)
+      continue;
     ApplyObject(mgr, *ent, obj, stats);
     ++stats.applied;
   }
@@ -1062,6 +1071,12 @@ int ApplyRoomState(CStateManager& mgr, const RoomState& room, std::vector< int32
 
 // Read-only views of state the room save keeps, for the statedump console command.
 bool IsScriptGeneratedCopy(const CStateManager& mgr, CEntity& ent) { return IsGeneratedCopy(mgr, ent); }
+
+// A sound copy is left out: made again it would play from its start a second time.
+bool SavesGeneratedCopy(CEntity& ent) {
+  return TCastToPtr< CPatterned >(&ent) != nullptr || TCastToPtr< CScriptPickup >(&ent) != nullptr ||
+         dynamic_cast< CScriptDebris* >(&ent) != nullptr;
+}
 
 bool ScriptTimerState(CEntity& ent, float& time, bool& timing) {
   return PortRoomState::TimerValue(ent, time, timing);

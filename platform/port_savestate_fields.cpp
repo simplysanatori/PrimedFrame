@@ -760,10 +760,9 @@ int ApplyClasses(CStateManager& mgr, CEntity& ent, const std::vector< const Port
 } // namespace
 
 bool EntityFieldsSaved(const CStateManager& mgr, CEntity& ent) {
-  // Enemies, and the pickups a generator dropped (their life timer, generated flag).
-  const bool pickup = TCastToConstPtr< CScriptPickup >(&ent) != nullptr &&
-                      IsScriptGeneratedCopy(mgr, ent);
-  return Enabled() && (TCastToConstPtr< CPatterned >(&ent) != nullptr || pickup);
+  // Enemies, and the pickups and debris a generator made (life timers, generated flag).
+  return Enabled() && (TCastToConstPtr< CPatterned >(&ent) != nullptr ||
+                       (IsScriptGeneratedCopy(mgr, ent) && SavesGeneratedCopy(ent)));
 }
 
 bool SchemaFieldSaved(const PortSchemaClass& cls, const PortSchemaField& f) { return SavedField(cls, f); }
