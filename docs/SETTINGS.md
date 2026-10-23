@@ -759,8 +759,8 @@
   setting does nothing while the Phazon Beam is active), unowned beams never
   fire, and a beam whose projectile data isn't loaded yet is skipped for that
   shot (nothing blocks). The other beams' projectile data is kept loaded while
-  the setting is on and released when it is turned off. Shots wait for the
-  slowest owned beam's cool down (the Ice Beam's), whichever beam is selected.
+  the setting is on and released when it is turned off. Shots fire at the
+  selected beam's rate.
 - Unlock beam doors once opened (F1 > Game > Cutscenes, `beam_doors_stay_unlocked`,
   off by default and off in the Original experience): a door locked to the Wave,
   Ice, Plasma or Power Beam that you open by breaking its force field becomes a

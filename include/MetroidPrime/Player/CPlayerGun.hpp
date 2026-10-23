@@ -126,7 +126,6 @@ public:
   void PortFireStackedBeams(float dt, CStateManager& mgr, const CTransform4f& xf,
                             uint targetHoming);
   void PortReleaseStackedBeams();
-  float PortShotCoolDown(const CStateManager& mgr) const;
   void PortShotFromDrawnMuzzle(const CStateManager&, CTransform4f& xf, bool aim = true) const;
   // Port: where a shot from `from` along `dir` would arrive (the aim target at its depth, else
   // the first thing on the line, else far ahead), for re-aiming a moved shot at it.
