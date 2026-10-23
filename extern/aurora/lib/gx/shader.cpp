@@ -3953,64 +3953,7 @@ fn vf_depth(viewz: f32, z: f32) -> f32 {
     }
     return viewz;
 }
-
-fn vf_tone(x: f32) -> f32 {
-    if (x < ubuf.volfog_tone[1].z) {
-        return ((ubuf.volfog_tone[0].x * x + ubuf.volfog_tone[0].y) * x + ubuf.volfog_tone[0].z) * x;
-    }
-    if (x < ubuf.volfog_tone[1].w) {
-        return ubuf.volfog_tone[1].x * x + ubuf.volfog_tone[1].y;
-    }
-    let st = max(ubuf.volfog_tone[2].y * x + ubuf.volfog_tone[2].z, 0.0);
-    return ubuf.volfog_tone[2].x * st / (1.0 + st) + ubuf.volfog_tone[2].w;
-}
-
-fn vf_untone(y: f32) -> f32 {
-    let mid = ubuf.volfog_tone[1].z;
-    let lineStart = ubuf.volfog_tone[1].x * mid + ubuf.volfog_tone[1].y;
-    if (y < lineStart) {
-        var x = y / max(lineStart, 1e-4) * mid;
-        for (var n = 0; n < 4; n++) {
-            let slope = (3.0 * ubuf.volfog_tone[0].x * x + 2.0 * ubuf.volfog_tone[0].y) * x + ubuf.volfog_tone[0].z;
-            x = clamp(x - (vf_tone(x) - y) / max(slope, 1e-4), 0.0, mid);
-        }
-        return x;
-    }
-    let top = ubuf.volfog_tone[2].w;
-    if (y < top || ubuf.volfog_tone[2].y <= 0.0) {
-        return (y - ubuf.volfog_tone[1].y) / ubuf.volfog_tone[1].x;
-    }
-    let u = min((y - top) / max(ubuf.volfog_tone[2].x, 1e-4), 0.999);
-    return u / (1.0 - u) / ubuf.volfog_tone[2].y + ubuf.volfog_tone[1].w;
-}
-
-// The EFB holds colour as Remastered's sRGB swapchain does: the exact piecewise sRGB curve.
-fn vf_srgb_enc(c: vec3f) -> vec3f {
-  let l = clamp(c, vec3f(0.0), vec3f(1.0));
-  return select(1.055 * pow(l, vec3f(1.0 / 2.4)) - 0.055, 12.92 * l, l <= vec3f(0.0031308));
-}
-
-fn vf_srgb_dec(c: vec3f) -> vec3f {
-  let e = clamp(c, vec3f(0.0), vec3f(1.0));
-  return select(pow((e + 0.055) / 1.055, vec3f(2.4)), e / 12.92, e <= vec3f(0.04045));
-}
-
-fn vf_exposed(c: vec3f) -> vec3f {
-    let y = vf_srgb_dec(c);
-    return min(vec3f(vf_untone(y.r), vf_untone(y.g), vf_untone(y.b)), vec3f(4.0));
-}
-
-// A display-referred colour fogged in the light: back through the tone curve, times the
-// transmittance plus w of the in-scatter, and on through the curve again.
-fn vf_apply(c: vec4f, fog: vec4f, w: f32) -> vec4f {
-    let light = max(fog.rgb, vec3f(0.0)) * ubuf.volfog.z * w;
-    if (fog.a > 0.9995 && max(max(light.r, light.g), light.b) < 1e-4) {
-        return c;
-    }
-    let x = vf_exposed(c.rgb) * fog.a + light;
-    let drawn = vec3f(vf_tone(x.r), vf_tone(x.g), vf_tone(x.b));
-    return vec4f(vf_srgb_enc(drawn), c.a);
-})""";
+)""";
     if (config.sceneHdr) {
       uniformPre += R"""(
 
@@ -4311,10 +4254,9 @@ fn vf_apply_hdr(c: vec4f, fog: vec4f, w: f32) -> vec4f {
     hdrConverted = true;
     fragmentFn += fmt::format("\n    // Volumetric fog\n    prev = vf_apply_hdr(prev, {}, {});", volFogSample,
                               volFogWeight("clamp(prev.a, 0.0, 1.0)"));
-  } else if (info.usesVolFog && !pbrVolFog) {
-    fragmentFn += fmt::format("\n    // Volumetric fog\n    prev = vf_apply(prev, {}, {});", volFogSample,
-                              volFogWeight("clamp(prev.a, 0.0, 1.0)"));
   }
+  // Outside the HDR scene (offscreen, probe faces) a TEV draw has no fog to apply: the fog fogs the
+  // HDR scene's light only.
   if (config.alphaCompare) {
     const auto discard = alpha_compare_discard(config);
     if (discard.constant == 1) {

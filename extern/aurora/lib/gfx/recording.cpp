@@ -1270,11 +1270,17 @@ bool set_scene_hdr(bool on) {
     return false;
   }
   // An HDR scene must be convertible before its first draw. Check the same FIFO-owned post budget
-  // used by bloom::record so an unsupported third segment falls back to the display EFB here.
+  // used by bloom::record so an unsupported third segment is refused here, and draws without the post.
   if (on && !bloom::scene_post_available()) {
     return false;
   }
   if (on && !webgpu::ensure_scene_hdr_target()) {
+    // No retail fallback: the frame draws without the Remastered post, each PBR draw toned on its own.
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      Log.warn("HDR scene unavailable: the frame draws without the Remastered post (warned once)");
+    }
     return false;
   }
 

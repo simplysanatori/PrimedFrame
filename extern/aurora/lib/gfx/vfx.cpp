@@ -1478,20 +1478,12 @@ std::string pipeline_source(const PipelineConfig& p) {
     const uint32_t v = (p.slotKey >> (3 * i)) & 7;
     source += std::string("const ") + SlotNames[i] + ": i32 = " + (v == 7 ? "-1" : std::to_string(v)) + ";\n";
   }
-  // The scene copy's light as the exposed linear the HDR tail writes: the HDR copy is that already;
-  // the display copy (RGBA8) goes back through the room's curve, exact below the white it clipped at.
+  // The scene copy's light: the HDR copy holds the exposed linear the HDR tail writes already. LDR
+  // draws never read a scene copy (draw_prims drops them), so theirs is never called.
   static constexpr std::string_view SceneLight = "fn scene_light(c: vec3f) -> vec3f { return c; }\n";
-  static constexpr std::string_view SceneLightDisplay =
-      "fn scene_light(c: vec3f) -> vec3f { return hdr_exposed(c, u.tone0, u.tone1, u.tone2); }\n";
   if (!hdr) {
-    // LDR: the source as it always was, and the curve's inverse only where SceneWarp reads it.
     source += ShaderSource;
-    if ((p.features & (SceneWarp | IceChargeCollision | IceChargeCollisionLit | VisorRunOff | VisorRunOffLit)) != 0) {
-      source += SceneLightDisplay;
-      source += hdr::ToneWgsl;
-    } else {
-      source += SceneLight;
-    }
+    source += SceneLight;
     return source;
   }
   source += "const HDR: bool = true;\n";
@@ -1586,6 +1578,10 @@ static void draw_prims(const DrawDesc& desc, const Vertex* verts, uint32_t verte
   std::memcpy(u.tone, &gx.pbrTone, sizeof(u.tone));
   // Per draw: the GX state keeps the room's exposure for every later draw.
   const bool hdr = scene_hdr_pass_active();
+  if (!hdr && (features & (SceneWarp | IceChargeCollision | IceChargeCollisionLit | VisorRunOff | VisorRunOffLit)) != 0) {
+    // The scene-reading effects read the HDR scene's light; outside it there is none to read.
+    return;
+  }
   u.tone[0][3] = draw_exposure(u.tone[0][3], hdr, desc.alreadyExposed);
   std::memcpy(u.fogColor, &gx.fog.color, sizeof(u.fogColor));
   u.fog[0] = float(gx.fog.type);

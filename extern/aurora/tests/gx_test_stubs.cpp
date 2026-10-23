@@ -360,7 +360,6 @@ uint32_t records = 0;
 Params lastRecord{};
 bool leaveScene = false; // record leaves the HDR scene, as the real one does
 } // namespace testing
-bool push(const Params& params) { return false; }
 bool ensure_task() { return testing::task; }
 bool record(const Params& params) {
   ++testing::records;

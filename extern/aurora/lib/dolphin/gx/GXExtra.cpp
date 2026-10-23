@@ -103,13 +103,11 @@ aurora::gfx::bloom::Params post_process_params(GXBool bloom, f32 threshold, cons
                                                const f32 tone[3][4], u32 gradeA, u32 gradeB, f32 gradeWeight,
                                                f32 exposure) {
   aurora::gfx::bloom::Params params{};
-  // Cost tests 12-14 price the bloom, the frame copy and the depth reload after the break; 15
-  // always reloads the depth, to price clearing it when the HUD doesn't need it.
+  // Cost tests 12 and 14 price the bloom and the depth reload after the break; 15 always reloads
+  // the depth, to price clearing it when the HUD doesn't need it.
   const u32 costTest = GXGetPBRCostTest();
   params.bloom = bloom && costTest != 12 ? 1 : 0;
-  if (costTest == 13) {
-    params.bloom |= aurora::gfx::bloom::CostNoFrameCopy;
-  } else if (costTest == 14) {
+  if (costTest == 14) {
     params.bloom |= aurora::gfx::bloom::CostNoDepthReload;
   } else if (costTest == 15) {
     params.bloom |= aurora::gfx::bloom::CostKeepDepth;
@@ -155,18 +153,6 @@ void GXPortPostCompositeAdd(const f32 rgba[4]) {
   }
 }
 
-GXBool GXPortPostProcess(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
-                         u32 gradeB, f32 gradeWeight, f32 exposure) {
-  if (GXGetPBRCostTest() == 10 || sDrawIdMode) {
-    return true;
-  }
-  const auto params = post_process_params(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, exposure);
-  if (!params.bloom && gradeA == 0 && gradeB == 0) {
-    return true;
-  }
-  return write_post_process(params);
-}
-
 GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3], const f32 tone[3][4], u32 gradeA,
                               u32 gradeB, f32 gradeWeight, f32 exposure) {
   // The EFB the copies saw is about to change target (the HDR scene ends here).
@@ -181,7 +167,6 @@ GXBool GXPortPostProcessScene(GXBool bloom, f32 threshold, const f32 tints[5][3]
   const bool noPost = GXGetPBRCostTest() == 10;
   auto params = noPost ? post_process_params(false, threshold, tints, tone, 0, 0, 0.f, 0.f)
                        : post_process_params(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, exposure);
-  params.bloom |= aurora::gfx::bloom::ForceScene;
   std::memcpy(params.add, add, sizeof(add));
   return write_post_process(params);
 }
