@@ -77,11 +77,13 @@ namespace ImportStage {
 // 56: HoloGlass (2f95a061) TCH1 is a raw colour map (sRGB, alpha kept).
 // 55: textures are used as authored (no flat-texture statistic, no :bare retail fallback).
 // 54: the glow added without a room's tone data is unscaled (kPbrEmissive 1, was 0.10).
-inline constexpr int kConverter = 57;
+// 58: the beam glow (kind 9) is drawn as kind 9 without vertex colours too (no ramp mean).
+inline constexpr int kConverter = 58;
 // What a converted texture holds: port_remastered_image/txtr/dds/astc, and Converter's Get, Cube
 // and Baked. Each converted texture is kept across imports under its tag and this number, so a
 // kConverter bump re-imports the models without converting their textures again.
 inline constexpr int kTextures = 4;
+// 17: the inventory and cinematic guns draw the animated beam glow (kConverter 58).
 // 16: placements bake as one only when float-identical; any difference places per object.
 // 15: a per-instance retail model converts once, untransformed; retailplacements.bin places
 //     each of its objects (port_retail_placement.h).
@@ -92,7 +94,7 @@ inline constexpr int kTextures = 4;
 // 11: the Elite Quarters stasis tank 3C26F42B is in the table.
 // 10: a plain cutout over a retail fx material is drawn opaque, cut by the shader.
 // 9: a ColorUnlit mesh (the door shields) gets a back copy.
-inline constexpr int kModels = 16;     // the table's models, their looks and the ANCS copies
+inline constexpr int kModels = 17;     // the table's models, their looks and the ANCS copies
 // 63: ELPS reads its CNST surface flag; the system tween is 0 only at a 0x1000000 lifetime.
 // 62: NEGT, CRCV, SPEV, ELPS, ROTV, PNCV, KEYF, SLTW, CRLN octaves, KESP, one-stop GRAD, PAP0/9,
 //     ADV9 and IAV0..3 are converted; PLNV counts come from MAXP.

@@ -1059,7 +1059,10 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
   // which would lose it. A retail model's colours are not a tint.
   // A special surface (the kind in pbr_layer.y, built into the shader as ShaderConfig::pbrKind
   // so the other kinds' code drops out) reads the colour its own way, tint or not.
-  std::string tint, tintAlpha, vclr = "vec4f(1.0)";
+  // The beam glow (kind 9) has no colourless variant in Remastered: a gun without colours
+  // (the inventory and cinematic ones) reads the missing attribute's default, (0,0,0,1)
+  // (inferred; kb topic/gun-beam-glow-no-vtxcolor.md).
+  std::string tint, tintAlpha, vclr = config.pbrKind == 9 ? "vec4f(0.0, 0.0, 0.0, 1.0)" : "vec4f(1.0)";
   if (config.attrs[GX_VA_CLR0].attrType != GX_NONE) {
     vtxOutAttrs += fmt::format("\n    @location({}) pbr_vclr: vec4f,", vtxOutIdx++);
     vtxXfrAttrs += fmt::format("\n    out.pbr_vclr = {};", vtx_attr(config, GX_VA_CLR0));
@@ -1565,7 +1568,8 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
     // scaled by its own alpha and pbr_layer.z. The surface under it stays lit. Both maps are
     // sRGB in Remastered, and so are the converted textures (written sRGB when their source
     // format is), so the sampler linearises the noise as well as the ramp; the vertex colour is
-    // a plain UNORM attribute and stays as it is.
+    // a plain UNORM attribute and stays as it is. The ramp's sampler repeats (TCH1 wrap 1 =
+    // NVN repeat), so u, which runs well past 0..1, wraps round it.
     if (mapStage[5] != -1) {
       kinds += fmt::format(R"""(
       if (pbr_kind > 8.5 && pbr_kind < 9.5) {{
@@ -1580,7 +1584,7 @@ auto pbr_func(const ShaderConfig& config, const ShaderInfo& info, std::string& v
           let pbr_gs = pbr_gl.x + pbr_gl.y + pbr_gl.z;
           let pbr_gu = pbr_gs - 2.0 * (pbr_vraw.r + pbr_vraw.g + pbr_vraw.b) + 3.0 + ubuf.pbr_param.w;
           let pbr_gramp = textureSampleLevel(tex{2}, tex{2}_samp,
-                                             clamp(vec2f(pbr_gu, 1.0 - pbr_vraw.a), vec2f(0.02), vec2f(0.98)), 0.0);
+                                             vec2f(pbr_gu, 1.0 - pbr_vraw.a), 0.0);
           pbr_kglow = max(pbr_gramp.rgb, vec3f(0.0)) * (pbr_gramp.a * ubuf.pbr_layer.z);
       }})""",
                            underlying(inner.texMapId), underlying(inner.texCoordId),

@@ -48,10 +48,10 @@ int PbrMode(const RemMaterial& m);
 
 // Whether the glow is Remastered's bare ICAN x ICNC in scene radiance, which the frame's
 // exposure multiplies: the port's runtime scales it (bit 32). Not the inverse-exposed
-// glows (glowLinear: they are drawn as the screen shows them), a ramp's mean, nor a
-// liquid or glass, whose first three floats are a tint.
+// glows (glowLinear: they are drawn as the screen shows them), nor a liquid
+// or glass, whose first three floats are a tint.
 bool ExposedGlow(const RemMaterial& m) {
-  return !m.glowLinear && m.maps[kEmissive].has && !m.maps[kEmissive].mean && m.kind != 7 && m.kind != 20 &&
+  return !m.glowLinear && m.maps[kEmissive].has && m.kind != 7 && m.kind != 20 &&
          m.kind != 8 && m.kind != 11 && m.kind != 14 && m.kind != 21 && m.kind != 24;
 }
 
@@ -186,7 +186,7 @@ Blob PbrMaterial(const RetailMaterial& pm, uint32_t vtx, const uint32_t* texIdx,
   // The emissive map is stored as authored (the PBR path scales it at run time), but the
   // fallback adds it as it is: it took the 0.10 the converter used to bake in, as a konst
   // (in the gamma domain TEV works in, that is 0.10^(1/2.2) of the byte).
-  const bool emissiveKonst = rem.maps[kEmissive].has && !rem.maps[kEmissive].mean && !rem.maps[kEmissive].raw &&
+  const bool emissiveKonst = rem.maps[kEmissive].has && !rem.maps[kEmissive].raw &&
                              !rem.maps[kEmissive].detail;
   const uint32_t emissiveSel = colorUnlit ? 0x0Du : 0x0Cu;  // GX_TEV_KCSEL_K1 / K0
   const uint32_t flags = (pm.flags & 0xFFFF & ~uint32_t(0x8 | 0x40 | 0x100 | 0x400 | 0x800 | 0x2000)) |

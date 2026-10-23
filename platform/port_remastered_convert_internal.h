@@ -364,7 +364,6 @@ struct MapRef {
   int32_t wrap[2] = {1, 1};  // the sampler's U and V modes (0 clamp, 1 repeat, 2 mirror)
   std::string src;  // how the texture is named in a tag
   bool raw = false;  // a shader's own data (a ramp, noise): every texel and channel kept as it is
-  bool mean = false;  // drawn as its colour times alpha, averaged: one colour
   bool detail = false;  // kind 20's detail map, which rides in the emissive slot (that shader has no glow)
   bool volume = false;  // a 3D texture, kept whole as an 8 x 8 atlas of its 64 slices (ConvertIO::volume), RGBA8, level 0 only
   double metalMax = kPbrMetalMax;  // an MR map's metalness ceiling

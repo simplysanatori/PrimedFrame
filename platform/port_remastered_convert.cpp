@@ -370,9 +370,9 @@ struct Converter::State {
       }
       if (rt[k].has) {
         src = &rt[k];
-        tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : src->mean ? ":mean" : "") +
+        tag = std::string("pbr:") + kMapName[k] + ":" + src->src + (src->raw ? ":raw" : "") +
               (src->volume ? ":vol" : "");
-        if (k == kBase && alpha == "mask" && !src->mask.empty() && !src->mean) {
+        if (k == kBase && alpha == "mask" && !src->mask.empty()) {
           tag += ":amask:" + src->mask[0].src;
         }
         colourTex = k != kNormal && (k != kMr || src->raw);
@@ -508,23 +508,6 @@ struct Converter::State {
     }
     Writing writing(*this);
     Image img = Open(*src);
-    if (src->mean) {
-      // An sRGB texture is averaged in linear light, then encoded again.
-      double sum[3] = {0.0, 0.0, 0.0};
-      const size_t n = img.rgba.size() / 4;
-      for (size_t i = 0; i < n; ++i) {
-        for (int c = 0; c < 3; ++c) {
-          const double v = srgbTex ? double(SrgbByteToLinear(img.rgba[i * 4 + c])) : double(img.rgba[i * 4 + c]);
-          sum[c] += v * double(img.rgba[i * 4 + 3]) / 255.0;
-        }
-      }
-      uint8_t mean[3];
-      for (int c = 0; c < 3; ++c) {
-        const double m = sum[c] / double(n);
-        mean[c] = srgbTex ? LinearToSrgbByteExact(float(m)) : uint8_t(std::nearbyint(m));
-      }
-      img = Solid(mean[0], mean[1], mean[2]);
-    }
     const size_t count = img.rgba.size() / 4;
     // How the image is filtered when it is resized and mipped: base, emissive
     // and the TEV colour slots are sRGB colour, the normal map a direction,
@@ -547,7 +530,7 @@ struct Converter::State {
       }
       srgbTex = false;  // decoded: from here on it is data
     }
-    if (k == kBase && alpha == "mask" && !src->mask.empty() && !src->mean) {
+    if (k == kBase && alpha == "mask" && !src->mask.empty()) {
       // The glow mask is another map's red: it becomes the base's alpha, linear as the
       // shader reads it.
       const Image& m = Open(src->mask[0]);
@@ -1418,27 +1401,13 @@ void Converter::State::Convert(const Model& model, const ConvertOptions& opt) {
     // A shader of its own needs none: without colours the up-facing one goes by
     // the normal alone.
     // The beam glow is the exception: it is the vertex colour's, on the gun's own vertices.
-    // Without the colours (the inventory and cinematic guns) it is drawn as the ramp's mean,
-    // a glow that does not move.
-    const bool gunGlow = rem.kind == 9 && useColor;
+    // Without the colours (the inventory and cinematic guns) the shader reads (0,0,0,1)
+    // in their place: Remastered has no colourless variant (kb topic/gun-beam-glow-no-vtxcolor.md).
+    const bool gunGlow = rem.kind == 9;
     // A plain lit cutout (flag 0x20): Remastered draws it in the opaque, depth-writing class 2, cut by
     // the shader at alpha^2 < 0.25, whatever the retail model blended (kb topic/mesh-blend-class.md).
     // Judged before the kinds below are reset: a cutout with a shader of its own is not this.
     const bool plainCut = rem.cutout && (rem.kind == 0 || rem.kind == 24) && !rem.unlit && !rem.layered && !rem.macro;
-    if (rem.kind == 9 && !gunGlow) {
-      if (!rem.maps[kEmissive].has) {
-        rem.maps[kEmissive] = rem.layer[kMr];
-        rem.maps[kEmissive].raw = false;
-        rem.maps[kEmissive].mean = true;
-        rem.maps[kEmissive].coord = 0;  // one colour: any texcoord does
-        rem.emissive = rem.kindStrength / kPbrEmissive;
-        rem.glowLinear = true;
-      }
-      loopNotes += "gun-glow without vertex colours: drawn as the ramp's mean; ";
-      rem.kind = 0;
-      rem.vcolor = false;
-      rem.layered = false;
-    }
     // So is the Ice Beam cannon's frost shell, which needs no vertex colours: drawn as a
     // plain surface it would freeze the gun for good.
     const bool frostShell = rem.kind == 12;
