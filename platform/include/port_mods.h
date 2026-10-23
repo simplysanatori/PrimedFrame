@@ -248,6 +248,9 @@ bool HasRoomGeometry();
 bool AnyModEnabled();
 // Whether the loaded mods supply room geometry for any area.
 bool RoomGeometryLoaded();
+// Whether the loaded mods supply a room environment for any area (Remastered's lighting and tone,
+// which CMFGame draws in the HDR scene).
+bool RoomEnvLoaded();
 
 // Folder names the settings disable, '/'-separated (no folder name has one).
 std::vector<std::string> SplitDisabled(const std::string& list);

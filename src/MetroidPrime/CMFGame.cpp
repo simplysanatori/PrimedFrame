@@ -29,6 +29,7 @@
 #include "port_debug.h"
 #include "port_env.h"
 #include "port_freecam.h"
+#include "port_mods.h"
 #include "port_photo.h"
 #include "MetroidPrime/CScriptLayerManager.hpp"
 #include "port_room_env.h"
@@ -337,33 +338,9 @@ void CMFGame::Draw() const {
         }
         // The frame is measured at the opaque/sorted boundary (CStateManager::DrawWorld).
         GXPortPostProcessScene(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, 0.f);
-      } else if (normalVisor) {
-        // Keep the non-experimental LDR path and its FIFO commands unchanged.
-        float threshold = 0.f;
-        float tints[5][3] = {};
-        float tone[3][4] = {};
-        const bool toned = PortRoomEnv::Tone(tone);
-        const bool bloom = toned && PortRoomEnv::Bloom(threshold, tints);
-        struct Layers {
-          CScriptLayerManager* layers;
-          TAreaId area;
-        } layers{mStateManager->WorldLayerState().GetPtr(), mStateManager->GetNextAreaId()};
-        uint32_t gradeA = 0;
-        uint32_t gradeB = 0;
-        float gradeWeight = 0.f;
-        PortRoomEnv::ColorGrade(
-            [](int32_t layer, void* context) {
-              const Layers& l = *static_cast< const Layers* >(context);
-              return l.layers == nullptr || l.area == kInvalidAreaId ||
-                     l.layers->IsLayerActive(l.area, TLayerId(layer));
-            },
-            &layers, gradeA, gradeB, gradeWeight);
-        // Without the HDR scene there is nothing to measure: the exposure stays the tonemap's.
-        GXPortPostProcess(bloom, threshold, tints, tone, gradeA, gradeB, gradeWeight, 0.f);
       }
     };
     const auto drawWorld = [this]() {
-      const bool hdrSceneEnabled = PortRoomEnv::HdrScene();
       const CPlayerState* playerState = mStateManager->GetPlayerState();
       const CPlayerState::EPlayerVisor visor = playerState->GetActiveVisor(*mStateManager);
       const bool supportedVisor = CStateManager::PortIsSceneHdrVisorSupported(
@@ -371,11 +348,10 @@ void CMFGame::Draw() const {
           visor == CPlayerState::kPV_Thermal, visor == CPlayerState::kPV_XRay);
       // A visor transition keeps the HDR scene: Remastered has no transition path, each frame
       // renders exactly one visor (kb topic/visor-hdr-pipeline.md, "Visor transitions").
-      const bool roomEnvEnabled = hdrSceneEnabled && supportedVisor && PortRoomEnv::Enabled();
-      float tone[3][4] = {};
-      const bool hasRoomTone = roomEnvEnabled && PortRoomEnv::Tone(tone);
-      const bool requestSceneHdr = CStateManager::PortShouldUseSceneHdr(
-          hdrSceneEnabled, roomEnvEnabled, hasRoomTone, supportedVisor);
+      // Remastered draws only through the HDR scene; a room without tone data tones through the
+      // identity (BuildLinear(3.0)). Retail, with no room environment loaded, never requests it.
+      const bool roomEnvActive = PortRoomEnv::Enabled() && PortMods::RoomEnvLoaded();
+      const bool requestSceneHdr = CStateManager::PortShouldUseSceneHdr(roomEnvActive, supportedVisor);
       CStateManager::sPortSceneHdrRequest = requestSceneHdr;
       mStateManager->DrawWorld();
       return requestSceneHdr;

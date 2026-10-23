@@ -1228,11 +1228,12 @@ other `X:\Users\<name>`: `X:\Users\<user>`); the
   the grid; adding them as well blew actors out near lamps.
   `MP_ROOM_ENV_AREA_LIGHTS=1` (console `roomenv arealights on|off`) adds them
   back. This also applies to room geometry under `MP_ROOM_GEO_AREA_LIGHTS=1`.
-  `MP_HDR_SCENE=1` (F1 > Debug > Remastered materials and lighting "HDR scene", console `roomenv hdr on|off`, both live)
-  opts into experimental HDR scene rendering. It is default-off and only
-  applies to Remastered room-environment scenes with a valid tone curve in the Combat or Scan
-  visor, outside visor transitions; Thermal/X-ray, HUD/UI, and inventory remain LDR. This is
-  not full beam/effect parity: other legacy effects may still use inherited exposure.
+  With a Remastered room environment loaded the world always draws in the HDR scene (linear
+  RGBA16F light, toned once by the frame's post), in every visor, as Remastered does; a room
+  without tone data tones through the identity (Remastered's `STonemapParams::BuildLinear(3.0)`:
+  exposure 1, clipped at 1). Retail never draws in it. HUD/UI and inventory remain LDR. If the
+  HDR target cannot be allocated the frame falls back to the display EFB, each draw toned on its
+  own. This is not full beam/effect parity: other legacy effects may still use inherited exposure.
   Legacy non-PBR GX draws using SRCALPHA/ONE additive or SRCALPHA/INVSRCALPHA alpha-over
   blending (retail particles through `CElementGen`, glass) convert their
   alpha-weighted display colour into exposed light before blending, then divide RGB by the

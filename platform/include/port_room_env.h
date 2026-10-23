@@ -738,7 +738,7 @@ bool Bloom(float& threshold, float tints[5][3]);
 void SetBloomEnabled(bool on);
 bool BloomEnabled();
 // The frame's colour grade (Remastered's ColorGrade + ColorGradeHint): the LUTs to blend,
-// for GXPortPostProcess (0: the identity) and how far towards `b` (0 to 1). `layerActive`
+// for GXPortPostProcessScene (0: the identity) and how far towards `b` (0 to 1). `layerActive`
 // says whether a layer of the camera's area is active. Moving between grades fades over
 // the new one's fade-in, or the old one's fade-out when it was turned off. False when there
 // is nothing to grade, or MP_COLOR_GRADE=0.
@@ -940,10 +940,6 @@ bool StaticExposure();
 // (the console's `roomenv arealights`).
 void SetAreaLights(bool on);
 bool AreaLights();
-// Whether the world is drawn into the HDR scene frame (CMFGame's drawWorld; docs/SETTINGS.md).
-// Experimental, off unless MP_HDR_SCENE=1 (F1 > Debug, the console's `roomenv hdr`).
-void SetHdrScene(bool on);
-bool HdrScene();
 // Whether the reflection is Remastered's blend of probes around the camera (UpdateBlend,
 // drawn into one cube on the GPU) with its ambient occlusion; otherwise each model reflects
 // the one probe it stands in (PickProbe). MP_ROOM_ENV_BLEND=0, the console's `roomenv blend`.

@@ -430,6 +430,8 @@ std::string RoomGeoPath(uint32_t mrea) {
 
 bool RoomGeometryLoaded() { return !sRoomGeos.empty(); }
 
+bool RoomEnvLoaded() { return !sRoomEnvs.empty(); }
+
 std::string RoomEffectsPath(uint32_t mrea) {
   const auto found = sRoomEffects.find(mrea);
   return found != sRoomEffects.end() ? found->second : std::string();

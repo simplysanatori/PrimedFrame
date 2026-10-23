@@ -348,6 +348,5 @@
 {"Debug", "", "Remastered materials and lighting", "Room environments", "remastered environment room reflections"},
 {"Debug", "", "Remastered materials and lighting", "Exposure by room", "remastered exposure room brightness"},
 {"Debug", "", "Remastered materials and lighting", "Baked light per pixel", "remastered baked light lightmap pixel"},
-{"Debug", "", "Remastered materials and lighting", "HDR scene (experimental)", "remastered hdr high dynamic range tone exposure bloom"},
 {"Debug", "", "Remastered materials and lighting", "Baked ambient scale", "remastered baked ambient scale light"},
 {"Debug", "", "Remastered materials and lighting", "Baked surfaces show", "remastered baked surfaces show lightmap"}

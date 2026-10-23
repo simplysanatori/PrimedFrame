@@ -14,16 +14,14 @@ int main() {
   if (CStateManager::PortIsSceneHdrVisorSupported(false, false, false, false)) // first person, no visor
     return 5;
 
-  if (!CStateManager::PortShouldUseSceneHdr(true, true, true, true)) // enabled with Remastered tone
+  // The HDR scene is the only Remastered path, with or without the room's tone data; retail never
+  // takes it.
+  if (!CStateManager::PortShouldUseSceneHdr(true, true)) // Remastered room environment
     return 6;
-  if (CStateManager::PortShouldUseSceneHdr(false, true, true, true)) // MP_HDR_SCENE unset / 0
+  if (CStateManager::PortShouldUseSceneHdr(false, true)) // retail: no room environment
     return 7;
-  if (CStateManager::PortShouldUseSceneHdr(true, false, false, true)) // room env mod disabled
+  if (CStateManager::PortShouldUseSceneHdr(true, false)) // no supported visor
     return 8;
-  if (CStateManager::PortShouldUseSceneHdr(true, true, false, true)) // tone absent
-    return 9;
-  if (CStateManager::PortShouldUseSceneHdr(true, true, true, false)) // no supported visor
-    return 10;
   // A visor transition no longer drops the scene: Remastered has no transition path, so nothing here
   // can express one (the parameter is gone rather than ignored).
 }
